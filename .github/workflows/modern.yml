@@ -1,0 +1,79 @@
+name: Modern stack (Rust + TypeScript + Nginx)
+
+# 新架构的检查。只在分支 modernize/** 和对 main 的拉取请求上跑，**从不发布镜像**：
+# 发布仍由 docker.yml 在 main 上负责（切换提交之后再把发布逻辑接过来）。
+on:
+  push:
+    branches: ['modernize/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: modern-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  frontend:
+    name: frontend (tsc, unit tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  backend:
+    name: backend (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.99.1
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+
+  stack:
+    name: stack (images, nginx checks, end to end)
+    needs: [frontend, backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the nginx image and run the proxy checks
+        run: |
+          docker build -f nginx/Dockerfile -t xexam-web:test .
+          python3 -I tests/integration/nginx_check.py xexam-web:test 18080
+      - name: End to end (compose up, import, attempts, persistence, docker stop)
+        run: python3 -I tests/integration/stack_check.py 18090
