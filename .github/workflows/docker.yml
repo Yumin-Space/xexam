@@ -1,9 +1,8 @@
-name: Build and publish image
+name: Build, test and publish image
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -16,18 +15,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # 两种 CPU 架构各自构建、各自跑一遍冒烟测试：x86 服务器/电脑用 amd64，ARM 服务器/树莓派/苹果芯片用 arm64。
+  # arm64 在标准 runner 上用 QEMU 模拟运行（免费，所有套餐都能用；比原生慢，但这个镜像很小）。
+  test:
+    name: test (${{ matrix.short }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
-      packages: write          # 推送到 ghcr.io 需要
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            short: amd64
+          - platform: linux/arm64
+            short: arm64
     steps:
       - uses: actions/checkout@v7
 
-      # 镜像名必须全小写，而 GitHub 用户名可能有大写（Yumin-Space），所以先转成小写
-      - name: Image name
-        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/xexam" >> "$GITHUB_ENV"
+      # 每次更新都必须先在 README 的「更新日志」里写一条，并且和 VERSION 文件一致，否则不让构建
+      - name: Check version and changelog
+        run: |
+          set -eu
+          v=$(tr -d '[:space:]' < VERSION)
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION 格式不对：$v（应像 0.1 或 0.1.2）"; exit 1; }
+          top=$(grep -m1 -E '^### v[0-9]' README.md | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
+          [ "$top" = "$v" ] || { echo "README 更新日志最上面一条是 v${top:-（没找到）}，但 VERSION 是 $v。每次更新都要先在 README 里写更新日志，并和 VERSION 保持一致。"; exit 1; }
+          echo "版本 v$v，更新日志已写"
+
+      - uses: docker/setup-qemu-action@v4
+        if: matrix.short == 'arm64'
+        with:
+          platforms: arm64
 
       - uses: docker/setup-buildx-action@v4
 
@@ -36,33 +56,57 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          platforms: ${{ matrix.platform }}
           load: true
+          provenance: false
           tags: xexam:test
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.short }}
+          cache-to: type=gha,scope=${{ matrix.short }},mode=max
 
       - name: Smoke test
+        env:
+          PLATFORM: ${{ matrix.platform }}
+          SHORT: ${{ matrix.short }}
         run: |
           set -eu
+
+          # 镜像真的是这个架构（不是悄悄构建成了另一个架构）
+          img_arch=$(docker image inspect xexam:test --format '{{.Architecture}}')
+          echo "镜像架构：$img_arch（期望 $SHORT）"
+          test "$img_arch" = "$SHORT" || { echo "镜像架构不对"; exit 1; }
+
           # 和 docker-compose.yml 一样用命名卷（不是宿主机目录）保存数据
           docker volume create xexam-test-data >/dev/null
           run_app() {
-            docker run -d --name xexam-test -p 127.0.0.1:18765:8765 -v xexam-test-data:/data xexam:test
+            docker run -d --platform "$PLATFORM" --name xexam-test -p 127.0.0.1:18765:8765 -v xexam-test-data:/data xexam:test
           }
-          run_app
+          wait_up() {
+            for i in $(seq 1 60); do
+              if curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1; then return 0; fi
+              sleep 1
+            done
+            docker logs xexam-test
+            return 1
+          }
 
-          ok=0
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1; then ok=1; break; fi
-            sleep 1
-          done
-          if [ "$ok" != 1 ]; then docker logs xexam-test; echo "服务没有在 30 秒内启动"; exit 1; fi
+          run_app
+          wait_up || { echo "服务没有在 60 秒内启动"; exit 1; }
 
           echo "容器里运行的用户："; docker exec xexam-test id
+          echo "容器里报告的 CPU：$(docker exec xexam-test uname -m)"
           test "$(docker exec xexam-test id -u)" != 0 || { echo "容器不应该以 root 运行"; exit 1; }
 
-          curl -fsS http://127.0.0.1:18765/ | grep -q "CCARP" || { echo "首页内容不对"; exit 1; }
+          curl -fsS http://127.0.0.1:18765/ | grep -q "Xexam" || { echo "首页内容不对"; exit 1; }
           curl -fsS http://127.0.0.1:18765/api/info | grep -q '"bankCount": 0' || { echo "全新数据目录的题数应为 0"; exit 1; }
+
+          # 镜像里带的版本号 = 仓库里的 VERSION
+          want="$(tr -d '[:space:]' < VERSION)"
+          curl -fsS http://127.0.0.1:18765/api/info | grep -q "\"version\": \"$want\"" || { echo "镜像里的版本号不是 $want"; curl -fsS http://127.0.0.1:18765/api/info; exit 1; }
+
+          # iPhone 要用的图标和页面能取到
+          for f in apple-touch-icon.png icon.svg; do
+            curl -fsS -o /dev/null "http://127.0.0.1:18765/$f" || { echo "取不到 $f"; exit 1; }
+          done
 
           # 陌生 Host 必须被拒绝（防 DNS 重绑定）
           code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://127.0.0.1:18765/api/bank)
@@ -73,11 +117,10 @@ jobs:
 
           # 重启后数据库仍在、服务仍能起来
           docker restart xexam-test
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1 && break; sleep 1; done
-          curl -fsS http://127.0.0.1:18765/api/info >/dev/null || { docker logs xexam-test; exit 1; }
+          wait_up || exit 1
 
           # 健康检查状态
-          for i in $(seq 1 40); do
+          for i in $(seq 1 50); do
             s=$(docker inspect -f '{{.State.Health.Status}}' xexam-test)
             [ "$s" = healthy ] && break
             sleep 2
@@ -89,40 +132,78 @@ jobs:
           docker exec xexam-test sh -c 'echo persisted > /data/marker.txt'
           docker rm -f xexam-test >/dev/null
           run_app
-          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1 && break; sleep 1; done
-          curl -fsS http://127.0.0.1:18765/api/info >/dev/null || { docker logs xexam-test; exit 1; }
+          wait_up || exit 1
           test "$(docker exec xexam-test cat /data/marker.txt)" = persisted || { echo "删除容器重建后，卷里的数据丢了"; exit 1; }
           docker exec xexam-test test -f /data/ccarp.db || { echo "删除容器重建后，数据库丢了"; exit 1; }
           echo "删除容器后用同一个卷重建，数据仍在"
           docker rm -f xexam-test >/dev/null
           docker volume rm xexam-test-data >/dev/null
 
-      # 只有 main 分支和 v* 标签才发布；拉取请求只构建和测试
+  # 两种架构的测试都通过，才把「amd64 + arm64」合成一个镜像发布。拉取请求只测试，不发布。
+  publish:
+    name: publish (amd64 + arm64)
+    needs: test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write          # 推送到 ghcr.io 需要
+    steps:
+      - uses: actions/checkout@v7
+
+      # 镜像名必须全小写，而 GitHub 用户名可能有大写（Yumin-Space），所以先转成小写
+      - name: Version and image name
+        run: |
+          set -eu
+          echo "VERSION=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/xexam" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
       - name: Log in to ghcr.io
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # latest = 最新一次构建；vX.Y = 这个版本；sha-xxxx = 这次提交（不会被覆盖）
       - name: Image tags
-        if: github.event_name != 'pull_request'
         id: meta
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ env.VERSION }}
             type=sha,format=short
-            type=semver,pattern={{version}}
+          labels: |
+            org.opencontainers.image.version=v${{ env.VERSION }}
 
-      - name: Build and push
-        if: github.event_name != 'pull_request'
+      - name: Build and push (amd64 + arm64)
         uses: docker/build-push-action@v7
         with:
           context: .
+          platforms: linux/amd64,linux/arm64
+          provenance: false        # 不额外生成 unknown/unknown 条目，群晖、树莓派、Portainer 等老一点的工具才不会出问题
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
+          cache-from: |
+            type=gha,scope=amd64
+            type=gha,scope=arm64
+
+      # 发布完回头看一眼：镜像清单里必须同时有 amd64 和 arm64
+      - name: Verify published manifest
+        run: |
+          set -eu
+          out=$(docker buildx imagetools inspect "$IMAGE:latest")
+          echo "$out"
+          echo "$out" | grep -q 'Platform: *linux/amd64' || { echo "发布的镜像缺少 amd64"; exit 1; }
+          echo "$out" | grep -q 'Platform: *linux/arm64' || { echo "发布的镜像缺少 arm64"; exit 1; }
+          echo "已发布：$IMAGE:latest 和 $IMAGE:v$VERSION，同时包含 amd64 和 arm64"

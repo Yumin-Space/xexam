@@ -1,4 +1,4 @@
-/* CCARP 模拟考 —— 答题卡（マークシート）风格
+/* Xexam —— 答题卡（マークシート）风格
    纸：冷灰   印刷色：答题卡蓝   涂卡：石墨   批改：绿 / 红 */
 
 :root {
@@ -24,7 +24,8 @@
 }
 
 * { box-sizing: border-box; }
-html { background: var(--page); }
+html { background: var(--page); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+button, label, input, summary { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
 body {
   margin: 0;
   color: var(--ink);
@@ -40,7 +41,10 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .dim { color: var(--ink3); }
 .pre { white-space: pre-line; }
 
-.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 20px 72px; }
+.wrap {
+  max-width: 1120px; margin: 0 auto; padding: 28px 20px 72px;
+  padding: max(28px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
 
 /* ---------- 按钮 ---------- */
 .btn {
@@ -49,13 +53,13 @@ button { font: inherit; color: inherit; cursor: pointer; }
   border: 1.5px solid var(--ink); border-radius: 4px;
   background: transparent; font-weight: 600;
 }
-.btn:hover:not(:disabled) { background: var(--print-soft); }
+@media (hover: hover) { .btn:hover:not(:disabled) { background: var(--print-soft); } }
 .btn.primary { background: var(--ink); color: #fff; }
-.btn.primary:hover:not(:disabled) { background: #0F1A30; }
+@media (hover: hover) { .btn.primary:hover:not(:disabled) { background: #0F1A30; } }
 .btn.quiet { border-color: transparent; color: var(--ink2); font-weight: 500; padding-inline: 10px; }
-.btn.quiet:hover:not(:disabled) { background: var(--tint); }
+@media (hover: hover) { .btn.quiet:hover:not(:disabled) { background: var(--tint); } }
 .btn.danger { border-color: var(--wrong); color: var(--wrong); }
-.btn.danger:hover:not(:disabled) { background: var(--wrong-soft); }
+@media (hover: hover) { .btn.danger:hover:not(:disabled) { background: var(--wrong-soft); } }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.big { min-height: 52px; padding-inline: 32px; font-size: 17px; }
 
@@ -129,7 +133,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .phead .lang { margin-left: auto; display: inline-flex; border: 1.5px solid var(--ink); border-radius: 4px; overflow: hidden; }
 .lang-btn { border: 0; background: transparent; padding: 4px 16px; min-height: 34px; font-weight: 600; font-size: 14.5px; color: var(--ink); }
 .lang-btn + .lang-btn { border-left: 1.5px solid var(--ink); }
-.lang-btn:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--print-soft); }
+@media (hover: hover) { .lang-btn:hover:not(:disabled):not([aria-pressed="true"]) { background: var(--print-soft); } }
 .lang-btn[aria-pressed="true"] { background: var(--ink); color: #fff; }
 .lang-btn:disabled { opacity: .4; cursor: not-allowed; }
 .badge.ok { border-color: var(--right); color: var(--right); background: var(--right-soft); }
@@ -143,7 +147,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
   display: flex; align-items: flex-start; gap: 14px; width: 100%; text-align: left;
   padding: 12px 16px 12px 12px; border: 1px solid var(--line); border-radius: 4px; background: #fff;
 }
-.opt:hover { border-color: var(--print); }
+@media (hover: hover) { .opt:hover { border-color: var(--print); } }
 .opt .t { font-size: 16px; line-height: 1.85; padding-top: 1px; overflow-wrap: anywhere; white-space: pre-line; }
 .bubble {
   flex: none; width: 30px; height: 30px; display: grid; place-items: center;
@@ -163,7 +167,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
   display: inline-flex; align-items: center; gap: 8px; padding: 6px 16px 6px 8px;
   border: 1px solid var(--line); border-radius: 999px; background: #fff; font-size: 15px;
 }
-.chip:hover { border-color: var(--print); }
+@media (hover: hover) { .chip:hover { border-color: var(--print); } }
 .chip .dot { width: 18px; height: 18px; border: 1.5px solid var(--print); border-radius: 50%; flex: none; background: #fff; }
 .chip[aria-pressed="true"] { border-color: var(--graphite); background: var(--tint); font-weight: 600; }
 .chip[aria-pressed="true"] .dot { background: var(--graphite); border-color: var(--graphite); }
@@ -208,7 +212,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 
 .strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 28px; }
 .strip button { width: 40px; padding: 4px 0 6px; border: 1px solid var(--line); border-radius: 4px; background: var(--sheet); display: grid; justify-items: center; gap: 2px; }
-.strip button:hover { border-color: var(--ink); }
+@media (hover: hover) { .strip button:hover { border-color: var(--ink); } }
 .strip .n { font: 600 11.5px var(--num); color: var(--ink3); }
 .strip svg { width: 20px; height: 20px; }
 .strip .ok svg { stroke: var(--right); }
@@ -230,7 +234,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .verdict .r { color: var(--right); font-weight: 700; }
 
 .opt.review { cursor: default; }
-.opt.review:hover { border-color: var(--line); }
+@media (hover: hover) { .opt.review:hover { border-color: var(--line); } }
 .opt.is-ans { border-color: var(--right); background: var(--right-soft); }
 .opt.is-ans .bubble { background: var(--right); border-color: var(--right); color: #fff; }
 .opt.is-bad { border-color: var(--wrong); background: var(--wrong-soft); }
@@ -295,6 +299,7 @@ dialog .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   background: var(--ink); color: #fff; padding: 10px 18px; border-radius: 4px; font-size: 14.5px;
   max-width: calc(100% - 32px); opacity: 0; pointer-events: none;
+  bottom: calc(24px + env(safe-area-inset-bottom));
 }
 #toast.show { opacity: 1; }
 
@@ -305,8 +310,35 @@ dialog .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8
   .tiles { grid-template-columns: repeat(8, 1fr); }
   .score { grid-template-columns: minmax(0, 1fr); }
   .paper { padding: 20px 16px; }
+  /* 答题时「上一题 / 下一题」固定在屏幕底部，长题目不用滑到底才能翻页 */
+  .quiz-grid .pfoot {
+    position: sticky; bottom: 0; z-index: 5;
+    margin: 24px -16px -20px; padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    background: var(--sheet); border-radius: 0 0 6px 6px;
+    box-shadow: 0 -8px 12px -10px rgba(27, 42, 71, .35);
+  }
 }
 @media (max-width: 480px) {
   .tiles { grid-template-columns: repeat(5, 1fr); }
-  .wrap { padding-inline: 12px; }
+  .wrap { padding-inline: 12px; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+  .brand h1 { font-size: 24px; }
+  .pfoot .btn { padding-inline: 14px; }
 }
+
+/* ---------- 触屏（iPhone / iPad）：点按区域不小于 44px（Apple 的建议值） ---------- */
+@media (pointer: coarse), (max-width: 480px) {
+  .btn { min-height: 44px; }
+  .btn.quiet { min-width: 44px; }
+  .lang-btn { min-height: 44px; padding-inline: 18px; font-size: 15px; }
+  .seg button { min-height: 44px; }
+  .inline label { min-height: 44px; }
+  .inline input[type="number"] { min-height: 44px; }
+  .row-opt { min-height: 52px; }
+  .row-opt input, .inline input[type="checkbox"] { width: 22px; height: 22px; }
+  .chip { min-height: 44px; }
+  .strip button { width: 44px; min-height: 48px; }
+  .skipbox summary, .tr summary { padding-block: 10px; }
+}
+/* 键盘快捷键的提示在没有键盘的设备上没有意义 */
+@media (hover: none) { .keys { display: none; } }

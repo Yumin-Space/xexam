@@ -1,9 +1,9 @@
 @echo off
-rem CCARP quiz launcher WITHOUT Docker. Double-click this file. Keep this window open while you study.
-rem (With Docker, use:  docker compose up -d --build  )
+rem Xexam launcher WITHOUT Docker. Double-click this file. Keep this window open while you study.
+rem (With Docker, use:  docker compose up -d  -- see README.md)
 cd /d "%~dp0"
 chcp 65001 >nul
-title CCARP quiz
+title Xexam
 
 where python >nul 2>nul
 if errorlevel 1 (

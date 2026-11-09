@@ -1,5 +1,5 @@
 'use strict';
-/* CCARP 模拟考 —— 前端。所有来自 Excel 的文字都用 textContent 写入页面，不拼 HTML。 */
+/* Xexam —— 前端。所有来自 Excel 的文字都用 textContent 写入页面，不拼 HTML。 */
 
 const LS_KEY = 'ccarp.session.v1';
 const LS_LANG = 'ccarp.lang.v1';
@@ -9,7 +9,7 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 const S = {
   lang: (() => { try { return localStorage.getItem(LS_LANG) === 'zh' ? 'zh' : 'ja'; } catch (e) { return 'ja'; } })(),   // 答题时题目显示的语言
   view: 'loading',          // loading | fatal | home | admin | quiz | result
-  info: { canShutdown: false },
+  info: { version: '', canShutdown: false },
   admin: { preview: null, busy: false, imports: [], done: null, error: '' },
   bank: null,
   progress: null,
@@ -369,6 +369,7 @@ function renderHome() {
         'C 列：先写「【答案】C、E」（热点题写「1 是；2 否；…」），再写「【解析·怎么选】」和「【记忆口诀】」。\n' +
         '上传后会先显示「新增几题、更新几题、下架几题、哪几题读不出来」，你确认了才会真正导入。')),
     h('footer', { class: 'foot' },
+      S.info.version ? h('span', { class: 'num' }, 'Xexam v' + S.info.version) : null,
       h('span', null, '题库里的答案是根据题意推理的，不是官方标准答案；把握度较低的题，会在答题后的备注里写明。'),
       S.info.canShutdown ? h('button', { class: 'btn quiet', type: 'button', onclick: quitProgram }, '关闭程序') : null));
 }
@@ -376,7 +377,7 @@ function renderHome() {
 function brand() {
   return h('div', { class: 'brand' },
     h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i', { class: 'on' }), h('i'), h('i', { class: 'on' }), h('i')),
-    h('h1', null, 'CCARP 模拟考'));
+    h('h1', null, 'Xexam'));
 }
 
 function historyPanel() {
@@ -528,7 +529,7 @@ function previewView(pv) {
 
 function renderAdmin() {
   const A = S.admin, b = S.bank;
-  const input = h('input', { type: 'file', accept: '.xlsx', id: 'xlsx-input', hidden: true, onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; uploadFile(f); } });
+  const input = h('input', { type: 'file', accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', id: 'xlsx-input', hidden: true, onchange: (e) => { const f = e.target.files[0]; e.target.value = ''; uploadFile(f); } });
   const drop = h('div', { class: 'drop' + (A.busy ? ' busy' : ''), role: 'group', 'aria-label': '上传 Excel' },
     h('p', { class: 'drop-t' }, A.busy ? '正在读取和检查…' : '选择你更新后的 Excel 文件'),
     h('p', { class: 'dim' }, '需要 .xlsx 格式，最大 20 MB。请上传包含全部题目的完整文件。'),
@@ -841,7 +842,7 @@ function render() {
   else if (S.view === 'result' && S.result) view = renderResult();
   else { S.view = 'home'; view = renderHome(); }
   document.getElementById('app').replaceChildren(view);
-  document.title = S.view === 'quiz' ? `第 ${S.session.idx + 1} / ${S.session.qs.length} 题 - CCARP 模拟考` : 'CCARP 模拟考';
+  document.title = S.view === 'quiz' ? `第 ${S.session.idx + 1} / ${S.session.qs.length} 题 - Xexam` : 'Xexam';
 }
 
 (async function init() {

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""CCARP 模拟考 - 服务端（只用 Python 标准库）。
+"""Xexam - 服务端（只用 Python 标准库）。
 
 题库和学习记录都保存在 SQLite（<data目录>/ccarp.db）。更新题库：在管理页上传 Excel。
 
@@ -14,6 +14,7 @@ import argparse
 import io
 import json
 import os
+import platform
 import re
 import secrets
 import sys
@@ -30,6 +31,19 @@ sys.path.insert(0, APP_DIR)
 from app import db, xlsx_parser          # noqa: E402
 
 WEB_DIR = os.path.join(APP_DIR, 'web')
+
+
+def read_version():
+    """版本号来自 VERSION 文件（镜像里也带着它）。读不到就显示 dev。"""
+    try:
+        with open(os.path.join(APP_DIR, 'VERSION'), encoding='utf-8') as f:
+            v = f.read().strip()
+    except OSError:
+        return 'dev'
+    return v if re.fullmatch(r'[0-9A-Za-z.+-]{1,20}', v) else 'dev'
+
+
+VERSION = read_version()
 MAX_JSON = 1_000_000
 MAX_UPLOAD = 20 * 1024 * 1024           # 上传的 Excel 最大 20 MB（几千道题也只有 1-2 MB）
 PENDING_TTL = 30 * 60                   # 上传后的预览 30 分钟内有效
@@ -135,13 +149,13 @@ def preview_payload(plan, filename, token):
 
 MIME = {
     '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8',
-    '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.ico': 'image/x-icon',
+    '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon',
     '.json': 'application/json; charset=utf-8',
 }
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = 'CCARPQuiz/2.0'
+    server_version = 'Xexam/' + VERSION
 
     def log_message(self, fmt, *args):
         pass
@@ -153,7 +167,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Cache-Control', 'no-store')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.end_headers()
-        self.wfile.write(body)
+        if not getattr(self, '_head_only', False):
+            self.wfile.write(body)
 
     def _json(self, obj, code=200):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode('utf-8'), MIME['.json'])
@@ -168,13 +183,22 @@ class Handler(BaseHTTPRequestHandler):
         origin = self.headers.get('Origin')
         return origin is None or origin == 'http://' + (self.headers.get('Host') or '')
 
+    def do_HEAD(self):
+        """反向代理和一些健康检查工具会用 HEAD。响应头和 GET 完全一样，只是不带正文。"""
+        self._head_only = True
+        try:
+            self.do_GET()
+        finally:
+            self._head_only = False
+
     def do_GET(self):
         if not self._host_ok():
             return self._send(403, 'Forbidden host。如果你是通过别的地址访问（比如局域网 IP），请设置环境变量 CCARP_ALLOWED_HOSTS。'.encode('utf-8'), 'text/plain; charset=utf-8')
         path = urlparse(self.path).path
         cfg = self.server.cfg
         if path == '/api/info':
-            return self._json({'canShutdown': cfg.allow_shutdown, 'bankCount': cfg.store.count_active()})
+            return self._json({'version': VERSION, 'arch': platform.machine() or 'unknown',
+                               'canShutdown': cfg.allow_shutdown, 'bankCount': cfg.store.count_active()})
         if path == '/api/bank':
             return self._json(cfg.store.bank())
         if path == '/api/progress':
@@ -296,7 +320,7 @@ def open_store(data_dir):
 
 
 def main():
-    ap = argparse.ArgumentParser(description='CCARP 模拟考')
+    ap = argparse.ArgumentParser(description='Xexam')
     ap.add_argument('--data', default=os.environ.get('CCARP_DATA') or os.path.join(APP_DIR, 'data'), help='数据目录（里面是 ccarp.db）')
     ap.add_argument('--host', default=os.environ.get('CCARP_HOST', '127.0.0.1'))
     ap.add_argument('--port', type=int, default=int(os.environ.get('CCARP_PORT', '8765')))
@@ -343,7 +367,7 @@ def main():
         store=store, pending=Pending(), allow_shutdown=args.allow_shutdown,
         allowed_hosts={'localhost', '127.0.0.1', '::1'} | extra)
     url = 'http://localhost:%d/' % port
-    say('CCARP 模拟考已启动：' + url)
+    say('Xexam v%s 已启动：%s' % (VERSION, url))
     say('数据目录：' + os.path.abspath(args.data))
     if store.count_active() == 0:
         say('题库还是空的：打开页面后在「题库管理」里上传 Excel。')
