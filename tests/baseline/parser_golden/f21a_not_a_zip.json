@@ -1,0 +1,32 @@
+{
+ "input": {
+  "name": "f21a_not_a_zip.xlsx",
+  "size": 131
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "error": "这个文件不是有效的 .xlsx（可能是 .xls、.csv，或者文件已损坏）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。",
+  "exc": "ValueError",
+  "ok": false
+ },
+ "reader": {
+  "error": "File is not a zip file",
+  "exc": "BadZipFile",
+  "ok": false
+ },
+ "server_outcome": {
+  "error": "这个文件不是 .xlsx（可能是 .csv、.pdf 或别的格式）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。",
+  "status": 400
+ },
+ "upload_check": {
+  "error": "这个文件不是 .xlsx（可能是 .csv、.pdf 或别的格式）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。",
+  "exc": "ValueError",
+  "ok": false
+ }
+}

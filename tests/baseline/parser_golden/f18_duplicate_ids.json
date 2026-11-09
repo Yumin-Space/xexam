@@ -1,0 +1,442 @@
+{
+ "input": {
+  "name": "f18_duplicate_ids.xlsx",
+  "size": 2390
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4d03365a00d5",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "dupA",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4d03365a00d5-2",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 2,
+    "sheet": "dupA",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4d03365a00d5-3",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 3,
+    "sheet": "dupA",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "5ebca53ad9ab",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "dupB",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dupA",
+    "skipped": [],
+    "total": 3,
+    "usable": 3
+   },
+   {
+    "name": "dupB",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "dupA",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "次のうち、首都はどれですか。\n \nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "dupB",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4d03365a00d5",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "dupA",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4d03365a00d5-2",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 2,
+    "sheet": "dupA",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4d03365a00d5-3",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 3,
+    "sheet": "dupA",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "5ebca53ad9ab",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "dupB",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dupA",
+    "skipped": [],
+    "total": 3,
+    "usable": 3
+   },
+   {
+    "name": "dupB",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

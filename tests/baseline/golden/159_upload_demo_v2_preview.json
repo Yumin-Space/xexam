@@ -1,0 +1,95 @@
+{
+ "name": "upload_demo_v2_preview",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo_v2.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "<2918 bytes>"
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:07 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "413",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "413",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 413,
+ "body_md5": "501c33f5eca06e82e97ce9b8d9daa788",
+ "raw_body": "{\"sheets\": [{\"name\": \"demo\", \"total\": 6, \"usable\": 6, \"skipped\": [], \"added\": 2, \"updated\": 1, \"removed\": 1, \"restored\": 0, \"skippedMore\": 0, \"skippedCount\": 0}], \"added\": 2, \"updated\": 1, \"unchanged\": 3, \"restored\": 0, \"removed\": 1, \"skipped\": 0, \"usable\": 6, \"removed_samples\": [\"信号が赤のとき、どうしますか？\"], \"removed_stats\": 1, \"filename\": \"demo_v2.xlsx\", \"token\": \"E0LdWumS36F7h5hMIVQZ6g\"}",
+ "json": {
+  "sheets": [
+   {
+    "name": "demo",
+    "total": 6,
+    "usable": 6,
+    "skipped": [],
+    "added": 2,
+    "updated": 1,
+    "removed": 1,
+    "restored": 0,
+    "skippedMore": 0,
+    "skippedCount": 0
+   }
+  ],
+  "added": 2,
+  "updated": 1,
+  "unchanged": 3,
+  "restored": 0,
+  "removed": 1,
+  "skipped": 0,
+  "usable": 6,
+  "removed_samples": [
+   "信号が赤のとき、どうしますか？"
+  ],
+  "removed_stats": 1,
+  "filename": "demo_v2.xlsx",
+  "token": "E0LdWumS36F7h5hMIVQZ6g"
+ },
+ "normalized": {
+  "sheets": [
+   {
+    "name": "demo",
+    "total": 6,
+    "usable": 6,
+    "skipped": [],
+    "added": 2,
+    "updated": 1,
+    "removed": 1,
+    "restored": 0,
+    "skippedMore": 0,
+    "skippedCount": 0
+   }
+  ],
+  "added": 2,
+  "updated": 1,
+  "unchanged": 3,
+  "restored": 0,
+  "removed": 1,
+  "skipped": 0,
+  "usable": 6,
+  "removed_samples": [
+   "信号が赤のとき、どうしますか？"
+  ],
+  "removed_stats": 1,
+  "filename": "demo_v2.xlsx",
+  "token": "<VOLATILE>"
+ }
+}

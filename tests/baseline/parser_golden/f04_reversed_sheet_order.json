@@ -1,0 +1,256 @@
+{
+ "input": {
+  "name": "f04_reversed_sheet_order.xlsx",
+  "size": 2345
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "水果。",
+    "id": "701414ac33bf",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 1,
+    "sheet": "Alpha",
+    "stem": "果物を2つ選んでください。",
+    "tag": "",
+    "translation": "选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+    "zh": {
+     "options": [
+      "苹果",
+      "胡萝卜",
+      "香蕉",
+      "洋葱"
+     ],
+     "stem": "选出两个水果。"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "fec90dc170e7",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "Beta",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "Alpha",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   },
+   {
+    "name": "Beta",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "Alpha",
+   "rows": [
+    [
+     1,
+     {
+      "0": "果物を2つ選んでください。\n\nA. りんご\nB. にんじん\nC. バナナ\nD. たまねぎ",
+      "1": "【中文翻译】\n选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+      "2": "【答案】A、C\n\n【解析·怎么选】水果。"
+     }
+    ]
+   ]
+  },
+  {
+   "name": "Beta",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "水果。",
+    "id": "701414ac33bf",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 1,
+    "sheet": "Alpha",
+    "stem": "果物を2つ選んでください。",
+    "tag": "",
+    "translation": "选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+    "zh": {
+     "options": [
+      "苹果",
+      "胡萝卜",
+      "香蕉",
+      "洋葱"
+     ],
+     "stem": "选出两个水果。"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "fec90dc170e7",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "Beta",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "Alpha",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   },
+   {
+    "name": "Beta",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

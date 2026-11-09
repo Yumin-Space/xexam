@@ -1,0 +1,43 @@
+{
+ "name": "upload_not_zip_text",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "a,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\na,b,c\n1,2,3\n"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "148",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "148",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 148,
+ "body_md5": "7890dc24d0a6ebda0c2293b8fc77882f",
+ "raw_body": "{\"error\": \"这个文件不是 .xlsx（可能是 .csv、.pdf 或别的格式）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。\"}",
+ "json": {
+  "error": "这个文件不是 .xlsx（可能是 .csv、.pdf 或别的格式）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。"
+ },
+ "normalized": {
+  "error": "这个文件不是 .xlsx（可能是 .csv、.pdf 或别的格式）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。"
+ }
+}

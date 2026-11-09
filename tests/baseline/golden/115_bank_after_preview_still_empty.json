@@ -1,0 +1,48 @@
+{
+ "name": "bank_after_preview_still_empty",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/api/bank",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "69",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "69",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 69,
+ "body_md5": "62eaf513cc04d425261f507e1709b44b",
+ "raw_body": "{\"file\": \"\", \"mtime\": \"\", \"error\": \"\", \"questions\": [], \"sheets\": []}",
+ "json": {
+  "file": "",
+  "mtime": "",
+  "error": "",
+  "questions": [],
+  "sheets": []
+ },
+ "normalized": {
+  "file": "",
+  "mtime": "",
+  "error": "",
+  "questions": [],
+  "sheets": []
+ }
+}

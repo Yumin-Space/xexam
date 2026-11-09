@@ -1,0 +1,42 @@
+{
+ "name": "post_host_evil",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/import/cancel",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "host_header": "evil.example.com",
+  "body": "{}"
+ },
+ "status": 403,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "207",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "207",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 207,
+ "body_md5": "14ec9e3e444f54790ae9b1c1a8bbe0ee",
+ "raw_body": "{\"error\": \"被拒绝：这个请求的 Host 是「evil.example.com」，不在允许的列表里。请把它加进 XEXAM_ALLOWED_HOSTS（或设 XEXAM_ALLOW_ANY_HOST=1，只在前面有身份验证时）。\"}",
+ "json": {
+  "error": "被拒绝：这个请求的 Host 是「evil.example.com」，不在允许的列表里。请把它加进 XEXAM_ALLOWED_HOSTS（或设 XEXAM_ALLOW_ANY_HOST=1，只在前面有身份验证时）。"
+ },
+ "normalized": {
+  "error": "被拒绝：这个请求的 Host 是「evil.example.com」，不在允许的列表里。请把它加进 XEXAM_ALLOWED_HOSTS（或设 XEXAM_ALLOW_ANY_HOST=1，只在前面有身份验证时）。"
+ }
+}

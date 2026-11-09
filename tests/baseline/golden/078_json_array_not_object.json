@@ -1,0 +1,42 @@
+{
+ "name": "json_array_not_object",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/attempt",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "[1,2]"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "21",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "21",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 21,
+ "body_md5": "044d22aefc8a6e41bd92d78e58ca12b7",
+ "raw_body": "{\"error\": \"bad json\"}",
+ "json": {
+  "error": "bad json"
+ },
+ "normalized": {
+  "error": "bad json"
+ }
+}

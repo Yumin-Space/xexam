@@ -1,0 +1,43 @@
+{
+ "name": "upload_pk_but_corrupt",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "<354 bytes>"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "99",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "99",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 99,
+ "body_md5": "831fb9b8ffae692c03cdac496dec35d6",
+ "raw_body": "{\"error\": \"这个 .xlsx 文件已损坏，打不开。请用 Excel 重新保存一份再上传。\"}",
+ "json": {
+  "error": "这个 .xlsx 文件已损坏，打不开。请用 Excel 重新保存一份再上传。"
+ },
+ "normalized": {
+  "error": "这个 .xlsx 文件已损坏，打不开。请用 Excel 重新保存一份再上传。"
+ }
+}

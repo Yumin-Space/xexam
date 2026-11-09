@@ -1,0 +1,43 @@
+{
+ "name": "upload_zip_workbook_no_rels",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "PK\u0003\u0004\u0014\u0000\u0000\u0000\b\u0000b5j]\u0014\u0015��Y\u0000\u0000\u0000�\u0000\u0000\u0000\u000f\u0000\u0000\u0000xl/workbook.xml�)�/�N���V����+�U�())���/N�H�M,��/H�\u0003ʤ�\u0017�&�\u0000�E���\u0005E��)�\u0019��%�9�F\u0006\u0006f����yJv6`�b};\u001b}��v\nt\u0000\u0000PK\u0001\u0002\u0014\u0000\u0014\u0000\u0000\u0000\b\u0000b5j]\u0014\u0015��Y\u0000\u0000\u0000�\u0000\u0000\u0000\u000f\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�\u0001\u0000\u0000\u0000\u0000xl/workbook.xmlPK\u0005\u0006\u0000\u0000\u0000\u0000\u0001\u0000\u0001\u0000=\u0000\u0000\u0000�\u0000\u0000\u0000\u0000\u0000"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "150",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "150",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 150,
+ "body_md5": "3688bb4360c2c92b4abbcbc7eb72d939",
+ "raw_body": "{\"error\": \"这个文件缺少 .xlsx 必需的内容（\\\"There is no item named 'xl/_rels/workbook.xml.rels' in the archive\\\"），可能已损坏。\"}",
+ "json": {
+  "error": "这个文件缺少 .xlsx 必需的内容（\"There is no item named 'xl/_rels/workbook.xml.rels' in the archive\"），可能已损坏。"
+ },
+ "normalized": {
+  "error": "这个文件缺少 .xlsx 必需的内容（\"There is no item named 'xl/_rels/workbook.xml.rels' in the archive\"），可能已损坏。"
+ }
+}

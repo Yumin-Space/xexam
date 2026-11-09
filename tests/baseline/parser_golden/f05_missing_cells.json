@@ -1,0 +1,520 @@
+{
+ "input": {
+  "name": "f05_missing_cells.xlsx",
+  "size": 2193
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "569e94b1347c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "cells",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "水果。",
+    "id": "ce57bb99d40c",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 2,
+    "sheet": "cells",
+    "stem": "果物を2つ選んでください。",
+    "tag": "",
+    "translation": "选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+    "zh": {
+     "options": [
+      "苹果",
+      "胡萝卜",
+      "香蕉",
+      "洋葱"
+     ],
+     "stem": "选出两个水果。"
+    }
+   },
+   {
+    "answer": [
+     "B",
+     "D"
+    ],
+    "explanation": "水果。",
+    "id": "fe31824e7d96",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 3,
+    "sheet": "cells",
+    "stem": "野菜を2つ選んでください。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "f0531a5af4de",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 10,
+    "sheet": "cells",
+    "stem": "果物を選べ（順序入替）。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "dd57ca580e01",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "赤"
+     },
+     {
+      "key": "B",
+      "text": "青"
+     }
+    ],
+    "row": 8,
+    "sheet": "cells",
+    "stem": "色を選べ。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "ae46a6a2eac4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "丙"
+     },
+     {
+      "key": "B",
+      "text": "丁"
+     }
+    ],
+    "row": 11,
+    "sheet": "cells",
+    "stem": "二番目の A11 が勝つ。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "cells",
+    "skipped": [
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 12
+     }
+    ],
+    "total": 7,
+    "usable": 6
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "cells",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "果物を2つ選んでください。\n\nA. りんご\nB. にんじん\nC. バナナ\nD. たまねぎ",
+      "1": "【中文翻译】\n选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+      "2": "【答案】A、C\n\n【解析·怎么选】水果。",
+      "4": "ignored column E"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "野菜を2つ選んでください。\n\nA. りんご\nB. にんじん\nC. バナナ\nD. たまねぎ",
+      "2": "【答案】B、D\n\n【解析·怎么选】水果。"
+     }
+    ],
+    [
+     4,
+     {
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ],
+    [
+     10,
+     {
+      "0": "果物を選べ（順序入替）。\n\nA. 甲\nB. 乙",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     8,
+     {
+      "0": "色を選べ。\n\nA. 赤\nB. 青",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     11,
+     {
+      "0": "二番目の A11 が勝つ。\n\nA. 丙\nB. 丁",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     12,
+     {
+      "0": "次のうち、都市はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋"
+     }
+    ],
+    [
+     13,
+     {
+      "2": "x",
+      "26": "column 27"
+     }
+    ],
+    [
+     15,
+     {
+      "2": "【答案】A"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "569e94b1347c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "cells",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "水果。",
+    "id": "ce57bb99d40c",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 2,
+    "sheet": "cells",
+    "stem": "果物を2つ選んでください。",
+    "tag": "",
+    "translation": "选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+    "zh": {
+     "options": [
+      "苹果",
+      "胡萝卜",
+      "香蕉",
+      "洋葱"
+     ],
+     "stem": "选出两个水果。"
+    }
+   },
+   {
+    "answer": [
+     "B",
+     "D"
+    ],
+    "explanation": "水果。",
+    "id": "fe31824e7d96",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 3,
+    "sheet": "cells",
+    "stem": "野菜を2つ選んでください。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "f0531a5af4de",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 10,
+    "sheet": "cells",
+    "stem": "果物を選べ（順序入替）。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "dd57ca580e01",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "赤"
+     },
+     {
+      "key": "B",
+      "text": "青"
+     }
+    ],
+    "row": 8,
+    "sheet": "cells",
+    "stem": "色を選べ。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "ae46a6a2eac4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "丙"
+     },
+     {
+      "key": "B",
+      "text": "丁"
+     }
+    ],
+    "row": 11,
+    "sheet": "cells",
+    "stem": "二番目の A11 が勝つ。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "cells",
+    "skipped": [
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 12
+     }
+    ],
+    "total": 7,
+    "usable": 6
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

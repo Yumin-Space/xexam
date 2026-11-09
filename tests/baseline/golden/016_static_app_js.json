@@ -1,0 +1,33 @@
+{
+ "name": "static_app_js",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/app.js",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "content-type": "text/javascript; charset=utf-8",
+  "content-length": "45514",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "text/javascript; charset=utf-8",
+  "content-length": "45514",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 45514,
+ "body_md5": "da9c02aca7d2bf024f5fb40003a693bd"
+}

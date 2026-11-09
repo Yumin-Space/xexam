@@ -1,0 +1,598 @@
+{
+ "demo": {
+  "status": 200,
+  "error": null,
+  "nq": 5,
+  "sheets": [
+   [
+    "demo",
+    5,
+    5,
+    0
+   ]
+  ]
+ },
+ "f01_inline_basic": {
+  "status": 200,
+  "error": null,
+  "nq": 3,
+  "sheets": [
+   [
+    "basic",
+    3,
+    3,
+    0
+   ]
+  ]
+ },
+ "f02_sharedstrings_rich_phonetic": {
+  "status": 200,
+  "error": null,
+  "nq": 2,
+  "sheets": [
+   [
+    "sst",
+    2,
+    2,
+    0
+   ]
+  ]
+ },
+ "f03_sheet_part_names": {
+  "status": 200,
+  "error": null,
+  "nq": 4,
+  "sheets": [
+   [
+    "byname",
+    1,
+    1,
+    0
+   ],
+   [
+    "nested",
+    1,
+    1,
+    0
+   ],
+   [
+    "absolute",
+    1,
+    1,
+    0
+   ],
+   [
+    "dotdot",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f04_reversed_sheet_order": {
+  "status": 200,
+  "error": null,
+  "nq": 2,
+  "sheets": [
+   [
+    "Alpha",
+    1,
+    1,
+    0
+   ],
+   [
+    "Beta",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f05_missing_cells": {
+  "status": 200,
+  "error": null,
+  "nq": 6,
+  "sheets": [
+   [
+    "cells",
+    7,
+    6,
+    1
+   ]
+  ]
+ },
+ "f06_leading_empty_column": {
+  "status": 200,
+  "error": null,
+  "nq": 0,
+  "sheets": []
+ },
+ "f07_numbers_booleans": {
+  "status": 200,
+  "error": null,
+  "nq": 2,
+  "sheets": [
+   [
+    "types",
+    13,
+    2,
+    11
+   ]
+  ]
+ },
+ "f08_hidden_sheet": {
+  "status": 200,
+  "error": null,
+  "nq": 3,
+  "sheets": [
+   [
+    "visible-1",
+    1,
+    1,
+    0
+   ],
+   [
+    "explicit-visible",
+    1,
+    1,
+    0
+   ],
+   [
+    "odd-state",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f09_whitespace_crlf_tab_u3000": {
+  "status": 200,
+  "error": null,
+  "nq": 6,
+  "sheets": [
+   [
+    "ws",
+    6,
+    6,
+    0
+   ]
+  ]
+ },
+ "f10_option_label_forms": {
+  "status": 200,
+  "error": null,
+  "nq": 10,
+  "sheets": [
+   [
+    "labels",
+    18,
+    10,
+    8
+   ]
+  ]
+ },
+ "f11_nine_options": {
+  "status": 200,
+  "error": null,
+  "nq": 3,
+  "sheets": [
+   [
+    "nine",
+    5,
+    3,
+    2
+   ]
+  ]
+ },
+ "f12_duplicate_letters": {
+  "status": 200,
+  "error": null,
+  "nq": 4,
+  "sheets": [
+   [
+    "dups",
+    9,
+    4,
+    5
+   ]
+  ]
+ },
+ "f13_hotspot_variants": {
+  "status": 200,
+  "error": null,
+  "nq": 13,
+  "sheets": [
+   [
+    "hot",
+    20,
+    13,
+    7
+   ]
+  ]
+ },
+ "f14_answer_forms": {
+  "status": 200,
+  "error": null,
+  "nq": 27,
+  "sheets": [
+   [
+    "answers",
+    40,
+    27,
+    13
+   ]
+  ]
+ },
+ "f15_translation_match_mismatch": {
+  "status": 200,
+  "error": null,
+  "nq": 16,
+  "sheets": [
+   [
+    "tr",
+    16,
+    16,
+    0
+   ]
+  ]
+ },
+ "f16a_doctype_in_sheet": {
+  "status": 400,
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f16b_doctype_no_entity": {
+  "status": 400,
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f16c_entity_expansion_small": {
+  "status": 400,
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f16d_doctype_in_workbook": {
+  "status": 400,
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f16e_undefined_entity": {
+  "status": 400,
+  "error": "文件里的 XML 读不了：undefined entity: line 1, column 293",
+  "nq": 0,
+  "sheets": []
+ },
+ "f17a_header_only": {
+  "status": 200,
+  "error": null,
+  "nq": 0,
+  "sheets": []
+ },
+ "f17b_empty_sheets": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "no-rows",
+    0,
+    0,
+    0
+   ],
+   [
+    "no-sheetdata",
+    0,
+    0,
+    0
+   ],
+   [
+    "blank-cells-only",
+    0,
+    0,
+    0
+   ],
+   [
+    "real",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f17c_headings_and_remarks": {
+  "status": 200,
+  "error": null,
+  "nq": 0,
+  "sheets": [
+   [
+    "heads",
+    4,
+    0,
+    4
+   ]
+  ]
+ },
+ "f18_duplicate_ids": {
+  "status": 200,
+  "error": null,
+  "nq": 4,
+  "sheets": [
+   [
+    "dupA",
+    3,
+    3,
+    0
+   ],
+   [
+    "dupB",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f19_sheet_names": {
+  "status": 200,
+  "error": null,
+  "nq": 5,
+  "sheets": [
+   [
+    "",
+    1,
+    1,
+    0
+   ],
+   [
+    "日本語シート & <特殊> \"q\"",
+    1,
+    1,
+    0
+   ],
+   [
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    1,
+    1,
+    0
+   ],
+   [
+    "same",
+    1,
+    1,
+    0
+   ],
+   [
+    "same",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f20a_missing_rels": {
+  "status": 400,
+  "error": "这个文件缺少 .xlsx 必需的内容（\"There is no item named 'xl/_rels/workbook.xml.rels' in the archive\"），可能已损坏。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f20b_missing_workbook": {
+  "status": 400,
+  "error": "这个文件里没有 Excel 工作簿的内容，不是有效的 .xlsx。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f20c_broken_sheet_xml": {
+  "status": 400,
+  "error": "文件里的 XML 读不了：no element found: line 15, column 25",
+  "nq": 0,
+  "sheets": []
+ },
+ "f20d_bad_sharedstrings_xml": {
+  "status": 400,
+  "error": "文件里的 XML 读不了：no element found: line 1, column 24",
+  "nq": 0,
+  "sheets": []
+ },
+ "f20e_no_sheets_element": {
+  "status": 200,
+  "error": null,
+  "nq": 0,
+  "sheets": []
+ },
+ "f20f_prefixed_namespace": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "pfx",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f20g_wrong_namespace_sheet": {
+  "status": 200,
+  "error": null,
+  "nq": 0,
+  "sheets": [
+   [
+    "wrongns",
+    0,
+    0,
+    0
+   ]
+  ]
+ },
+ "f20h_strict_ooxml_namespace": {
+  "status": 200,
+  "error": null,
+  "nq": 0,
+  "sheets": [
+   [
+    "strict",
+    0,
+    0,
+    0
+   ]
+  ]
+ },
+ "f20i_backslash_member_name": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "bs",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f20j_duplicate_zip_entries": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "dup",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f21a_not_a_zip": {
+  "status": 400,
+  "error": "这个文件不是 .xlsx（可能是 .csv、.pdf 或别的格式）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f21b_legacy_xls_header": {
+  "status": 400,
+  "error": "这是旧版 .xls 格式，或者是设置了密码的 Excel 文件。请在 Excel 里去掉密码，并另存为「Excel 工作簿(.xlsx)」再上传。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f21c_empty": {
+  "status": 400,
+  "error": "文件是空的，或者没有上传完整。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f21d_pk_but_truncated": {
+  "status": 400,
+  "error": "这个 .xlsx 文件已损坏，打不开。请用 Excel 重新保存一份再上传。",
+  "nq": 0,
+  "sheets": []
+ },
+ "f22a_utf8_bom_sheet": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "bom",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f22b_utf16_sheet": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "u16",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f23_unicode_astral_nfd": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "uni😀",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f24_3000_rows": {
+  "status": 200,
+  "error": null,
+  "nq": 3000,
+  "sheets": [
+   [
+    "big",
+    3000,
+    3000,
+    0
+   ]
+  ]
+ },
+ "f25_wide_row": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "wide",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f26a_doctype_in_utf16_sheet": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "u16ent",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f26b_doctype_in_nonxml_extension": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "dat",
+    1,
+    1,
+    0
+   ]
+  ]
+ },
+ "f26c_doctype_in_uppercase_ext": {
+  "status": 200,
+  "error": null,
+  "nq": 1,
+  "sheets": [
+   [
+    "UP",
+    1,
+    1,
+    0
+   ]
+  ]
+ }
+}

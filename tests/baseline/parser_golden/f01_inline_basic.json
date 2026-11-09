@@ -1,0 +1,335 @@
+{
+ "input": {
+  "name": "f01_inline_basic.xlsx",
+  "size": 2109
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4879352bb56c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 2,
+    "sheet": "basic",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "水果。",
+    "id": "5ab0594bd945",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 3,
+    "sheet": "basic",
+    "stem": "果物を2つ選んでください。",
+    "tag": "",
+    "translation": "选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+    "zh": {
+     "options": [
+      "苹果",
+      "胡萝卜",
+      "香蕉",
+      "洋葱"
+     ],
+     "stem": "选出两个水果。"
+    }
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "月亮是卫星。",
+    "id": "a9350441e0f7",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 4,
+    "sheet": "basic",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n1. 太阳从东边升起。\n2. 月亮是恒星。",
+    "zh": {
+     "items": [
+      "太阳从东边升起。",
+      "月亮是恒星。"
+     ],
+     "stem": "下面的句子对吗？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "basic",
+    "skipped": [],
+    "total": 3,
+    "usable": 3
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "basic",
+   "rows": [
+    [
+     1,
+     {
+      "0": "题目",
+      "1": "翻译",
+      "2": "答案"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "果物を2つ選んでください。\n\nA. りんご\nB. にんじん\nC. バナナ\nD. たまねぎ",
+      "1": "【中文翻译】\n选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+      "2": "【答案】A、C\n\n【解析·怎么选】水果。"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "ホットスポット\n次の文は正しいですか。\n\n1. 太陽は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+      "1": "【中文翻译】\n热点题：下面的句子对吗？\n1. 太阳从东边升起。\n2. 月亮是恒星。",
+      "2": "【答案】1 是；2 否\n\n【解析·怎么选】月亮是卫星。"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "4879352bb56c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 2,
+    "sheet": "basic",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "水果。",
+    "id": "5ab0594bd945",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "りんご"
+     },
+     {
+      "key": "B",
+      "text": "にんじん"
+     },
+     {
+      "key": "C",
+      "text": "バナナ"
+     },
+     {
+      "key": "D",
+      "text": "たまねぎ"
+     }
+    ],
+    "row": 3,
+    "sheet": "basic",
+    "stem": "果物を2つ選んでください。",
+    "tag": "",
+    "translation": "选出两个水果。\nA. 苹果\nB. 胡萝卜\nC. 香蕉\nD. 洋葱",
+    "zh": {
+     "options": [
+      "苹果",
+      "胡萝卜",
+      "香蕉",
+      "洋葱"
+     ],
+     "stem": "选出两个水果。"
+    }
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "月亮是卫星。",
+    "id": "a9350441e0f7",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 4,
+    "sheet": "basic",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n1. 太阳从东边升起。\n2. 月亮是恒星。",
+    "zh": {
+     "items": [
+      "太阳从东边升起。",
+      "月亮是恒星。"
+     ],
+     "stem": "下面的句子对吗？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "basic",
+    "skipped": [],
+    "total": 3,
+    "usable": 3
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

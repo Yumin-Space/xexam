@@ -1,0 +1,909 @@
+{
+ "input": {
+  "name": "f10_option_label_forms.xlsx",
+  "size": 2217
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "c9e70d38f61d",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 1,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X.]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "47ebeda2f843",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 2,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X)]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "6f5d3bd87bbd",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 3,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X、]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "feeeb19a285c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 4,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X:]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "70ae0004aaf6",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 5,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X：]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "bcf6d2633e90",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 6,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X）]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "873b53b94585",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 7,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X．]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "49bce0e28cd8",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     }
+    ],
+    "row": 15,
+    "sheet": "labels",
+    "stem": "ラベル小文字",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "eab94804f13f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲の内容"
+     },
+     {
+      "key": "B",
+      "text": "乙の内容"
+     },
+     {
+      "key": "C",
+      "text": "丙の内容"
+     }
+    ],
+    "row": 17,
+    "sheet": "labels",
+    "stem": "ラベルだけの行（A 換行 内容）",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "a5b7e96daf63",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "本物の甲"
+     },
+     {
+      "key": "B",
+      "text": "本物の乙"
+     }
+    ],
+    "row": 18,
+    "sheet": "labels",
+    "stem": "A の文字で始まる行\n\nA は最初の文字です",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "labels",
+    "skipped": [
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 8
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 9
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 10
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 11
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 12
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 13
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 14
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 16
+     }
+    ],
+    "total": 18,
+    "usable": 10
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "labels",
+   "rows": [
+    [
+     1,
+     {
+      "0": "ラベルの形式テスト [X.]\n\nA. 選択肢A\nB. 選択肢B\nC. 選択肢C\nD. 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "ラベルの形式テスト [X)]\n\nA) 選択肢A\nB) 選択肢B\nC) 選択肢C\nD) 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "ラベルの形式テスト [X、]\n\nA、 選択肢A\nB、 選択肢B\nC、 選択肢C\nD、 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "ラベルの形式テスト [X:]\n\nA: 選択肢A\nB: 選択肢B\nC: 選択肢C\nD: 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     5,
+     {
+      "0": "ラベルの形式テスト [X：]\n\nA： 選択肢A\nB： 選択肢B\nC： 選択肢C\nD： 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     6,
+     {
+      "0": "ラベルの形式テスト [X）]\n\nA） 選択肢A\nB） 選択肢B\nC） 選択肢C\nD） 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     7,
+     {
+      "0": "ラベルの形式テスト [X．]\n\nA． 選択肢A\nB． 選択肢B\nC． 選択肢C\nD． 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     8,
+     {
+      "0": "ラベルの形式テスト [(X)]\n\n(A) 選択肢A\n(B) 選択肢B\n(C) 選択肢C\n(D) 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     9,
+     {
+      "0": "ラベルの形式テスト [（X）]\n\n（A） 選択肢A\n（B） 選択肢B\n（C） 選択肢C\n（D） 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     10,
+     {
+      "0": "ラベルの形式テスト [[X]]\n\n[A] 選択肢A\n[B] 選択肢B\n[C] 選択肢C\n[D] 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     11,
+     {
+      "0": "ラベルの形式テスト [X ]\n\nA  選択肢A\nB  選択肢B\nC  選択肢C\nD  選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     12,
+     {
+      "0": "ラベルの形式テスト [X　]\n\nA　 選択肢A\nB　 選択肢B\nC　 選択肢C\nD　 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     13,
+     {
+      "0": "ラベルの形式テスト [X-]\n\nA- 選択肢A\nB- 選択肢B\nC- 選択肢C\nD- 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     14,
+     {
+      "0": "ラベルの形式テスト [X。]\n\nA。 選択肢A\nB。 選択肢B\nC。 選択肢C\nD。 選択肢D",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     15,
+     {
+      "0": "ラベル小文字\n\na. 甲\nb. 乙\nc. 丙",
+      "2": "【答案】b"
+     }
+    ],
+    [
+     16,
+     {
+      "0": "ラベル全角\n\nＡ. 甲\nＢ. 乙",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     17,
+     {
+      "0": "ラベルだけの行（A 換行 内容）\n\nA\n甲の内容\nB\n乙の内容\nC\n丙の内容",
+      "2": "【答案】C"
+     }
+    ],
+    [
+     18,
+     {
+      "0": "A の文字で始まる行\n\nA は最初の文字です\nA. 本物の甲\nB. 本物の乙",
+      "2": "【答案】B"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "c9e70d38f61d",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 1,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X.]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "47ebeda2f843",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 2,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X)]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "6f5d3bd87bbd",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 3,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X、]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "feeeb19a285c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 4,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X:]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "70ae0004aaf6",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 5,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X：]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "bcf6d2633e90",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 6,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X）]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "873b53b94585",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     }
+    ],
+    "row": 7,
+    "sheet": "labels",
+    "stem": "ラベルの形式テスト [X．]",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "49bce0e28cd8",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     }
+    ],
+    "row": 15,
+    "sheet": "labels",
+    "stem": "ラベル小文字",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "eab94804f13f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲の内容"
+     },
+     {
+      "key": "B",
+      "text": "乙の内容"
+     },
+     {
+      "key": "C",
+      "text": "丙の内容"
+     }
+    ],
+    "row": 17,
+    "sheet": "labels",
+    "stem": "ラベルだけの行（A 換行 内容）",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "a5b7e96daf63",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "本物の甲"
+     },
+     {
+      "key": "B",
+      "text": "本物の乙"
+     }
+    ],
+    "row": 18,
+    "sheet": "labels",
+    "stem": "A の文字で始まる行\n\nA は最初の文字です",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "labels",
+    "skipped": [
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 8
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 9
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 10
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 11
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 12
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 13
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 14
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 16
+     }
+    ],
+    "total": 18,
+    "usable": 10
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

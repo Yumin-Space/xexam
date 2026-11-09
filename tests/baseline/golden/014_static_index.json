@@ -1,0 +1,33 @@
+{
+ "name": "static_index",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/index.html",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "content-type": "text/html; charset=utf-8",
+  "content-length": "956",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "text/html; charset=utf-8",
+  "content-length": "956",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 956,
+ "body_md5": "738e7167a1c666410cc6830e834917a2"
+}

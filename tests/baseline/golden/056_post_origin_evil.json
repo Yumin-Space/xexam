@@ -1,0 +1,43 @@
+{
+ "name": "post_origin_evil",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/import/cancel",
+  "headers": {
+   "Content-Type": "application/json",
+   "Origin": "https://evil.example.com"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "{}"
+ },
+ "status": 403,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "267",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "267",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 267,
+ "body_md5": "7a416717491174e90145e60cb9aa2684",
+ "raw_body": "{\"error\": \"被拒绝：这个请求来自「evil.example.com」，和服务看到的 Host「127.0.0.1」不是同一个主机。如果你在 Cloudflare Tunnel 等反向代理后面且代理改写了 Host，请把「evil.example.com」加进 XEXAM_ALLOWED_ORIGINS。\"}",
+ "json": {
+  "error": "被拒绝：这个请求来自「evil.example.com」，和服务看到的 Host「127.0.0.1」不是同一个主机。如果你在 Cloudflare Tunnel 等反向代理后面且代理改写了 Host，请把「evil.example.com」加进 XEXAM_ALLOWED_ORIGINS。"
+ },
+ "normalized": {
+  "error": "被拒绝：这个请求来自「evil.example.com」，和服务看到的 Host「127.0.0.1」不是同一个主机。如果你在 Cloudflare Tunnel 等反向代理后面且代理改写了 Host，请把「evil.example.com」加进 XEXAM_ALLOWED_ORIGINS。"
+ }
+}

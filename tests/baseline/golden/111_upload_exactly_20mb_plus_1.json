@@ -1,0 +1,43 @@
+{
+ "name": "upload_exactly_20mb_plus_1",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "<20971521 bytes>"
+ },
+ "status": 413,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "106",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "106",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 106,
+ "body_md5": "f623a00a3762b28a4295af5747ef182b",
+ "raw_body": "{\"error\": \"文件太大了（最大 20 MB）。题库通常只有 1–2 MB，请确认选对了文件。\"}",
+ "json": {
+  "error": "文件太大了（最大 20 MB）。题库通常只有 1–2 MB，请确认选对了文件。"
+ },
+ "normalized": {
+  "error": "文件太大了（最大 20 MB）。题库通常只有 1–2 MB，请确认选对了文件。"
+ }
+}

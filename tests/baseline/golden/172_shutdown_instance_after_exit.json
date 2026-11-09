@@ -1,0 +1,14 @@
+{
+ "name": "shutdown_instance_after_exit",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/api/info",
+  "headers": {},
+  "host_header": "127.0.0.1:8703",
+  "body": null
+ },
+ "status": null,
+ "no_response": "ConnectionRefusedError: [WinError 10061] 由于目标计算机积极拒绝，无法连接。",
+ "normalized": null
+}

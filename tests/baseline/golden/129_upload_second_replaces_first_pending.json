@@ -1,0 +1,91 @@
+{
+ "name": "upload_second_replaces_first_pending",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "first.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "<2828 bytes>"
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "364",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "364",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 364,
+ "body_md5": "b3e923a8b933a2b925b6da34d2fdd17e",
+ "raw_body": "{\"sheets\": [{\"name\": \"demo\", \"total\": 5, \"usable\": 5, \"skipped\": [], \"added\": 0, \"updated\": 0, \"removed\": 0, \"restored\": 0, \"skippedMore\": 0, \"skippedCount\": 0}], \"added\": 0, \"updated\": 0, \"unchanged\": 5, \"restored\": 0, \"removed\": 0, \"skipped\": 0, \"usable\": 5, \"removed_samples\": [], \"removed_stats\": 0, \"filename\": \"first.xlsx\", \"token\": \"qOKqSIhiZVv8kJNDA1ZoDw\"}",
+ "json": {
+  "sheets": [
+   {
+    "name": "demo",
+    "total": 5,
+    "usable": 5,
+    "skipped": [],
+    "added": 0,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skippedMore": 0,
+    "skippedCount": 0
+   }
+  ],
+  "added": 0,
+  "updated": 0,
+  "unchanged": 5,
+  "restored": 0,
+  "removed": 0,
+  "skipped": 0,
+  "usable": 5,
+  "removed_samples": [],
+  "removed_stats": 0,
+  "filename": "first.xlsx",
+  "token": "qOKqSIhiZVv8kJNDA1ZoDw"
+ },
+ "normalized": {
+  "sheets": [
+   {
+    "name": "demo",
+    "total": 5,
+    "usable": 5,
+    "skipped": [],
+    "added": 0,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skippedMore": 0,
+    "skippedCount": 0
+   }
+  ],
+  "added": 0,
+  "updated": 0,
+  "unchanged": 5,
+  "restored": 0,
+  "removed": 0,
+  "skipped": 0,
+  "usable": 5,
+  "removed_samples": [],
+  "removed_stats": 0,
+  "filename": "first.xlsx",
+  "token": "<VOLATILE>"
+ }
+}

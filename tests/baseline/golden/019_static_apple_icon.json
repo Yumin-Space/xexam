@@ -1,0 +1,33 @@
+{
+ "name": "static_apple_icon",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/apple-touch-icon.png",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "content-type": "image/png",
+  "content-length": "1192",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "image/png",
+  "content-length": "1192",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 1192,
+ "body_md5": "9bd5349bf439dca786f30e2674a95cc4"
+}

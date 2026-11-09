@@ -1,0 +1,93 @@
+{
+ "input": {
+  "name": "f16d_doctype_in_workbook.xlsx",
+  "size": 1787
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "6a1ffdabfd3e",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "ok",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   }
+  ],
+  "sheets": [
+   {
+    "name": "ok",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "ok",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "status": 400
+ },
+ "upload_check": {
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "exc": "ValueError",
+  "ok": false
+ }
+}

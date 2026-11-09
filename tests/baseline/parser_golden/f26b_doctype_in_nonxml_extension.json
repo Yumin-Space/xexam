@@ -1,0 +1,110 @@
+{
+ "input": {
+  "name": "f26b_doctype_in_nonxml_extension.xlsx",
+  "size": 1588
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "ca2054cfcc5f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 1,
+    "sheet": "dat",
+    "stem": "EXPANDED",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dat",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "dat",
+   "rows": [
+    [
+     1,
+     {
+      "0": "EXPANDED\n\nA. 甲\nB. 乙",
+      "2": "【答案】A"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "ca2054cfcc5f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 1,
+    "sheet": "dat",
+    "stem": "EXPANDED",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dat",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

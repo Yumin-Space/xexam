@@ -1,0 +1,35 @@
+{
+ "name": "get_trailing_slash_api_bank",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/api/bank/",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 404,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "content-type": "text/plain; charset=utf-8",
+  "content-length": "9",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "text/plain; charset=utf-8",
+  "content-length": "9",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 9,
+ "body_md5": "d8f4a1993546cc4b850cde3599e27aec",
+ "raw_body": "not found",
+ "normalized": "not found"
+}

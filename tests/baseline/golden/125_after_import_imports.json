@@ -1,0 +1,64 @@
+{
+ "name": "after_import_imports",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/api/imports",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "156",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "156",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 156,
+ "body_md5": "7de24970febb676b4723d2f8742d152f",
+ "raw_body": "{\"imports\": [{\"id\": 1, \"at\": \"2026-11-10 06:43\", \"filename\": \"demo.xlsx\", \"added\": 5, \"updated\": 0, \"removed\": 0, \"restored\": 0, \"skipped\": 0, \"total\": 5}]}",
+ "json": {
+  "imports": [
+   {
+    "id": 1,
+    "at": "2026-11-10 06:43",
+    "filename": "demo.xlsx",
+    "added": 5,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skipped": 0,
+    "total": 5
+   }
+  ]
+ },
+ "normalized": {
+  "imports": [
+   {
+    "id": 1,
+    "at": "<VOLATILE>",
+    "filename": "demo.xlsx",
+    "added": 5,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skipped": 0,
+    "total": 5
+   }
+  ]
+ }
+}

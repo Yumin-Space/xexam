@@ -1,0 +1,42 @@
+{
+ "name": "json_post_to_info_is_404",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/info",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "{}"
+ },
+ "status": 404,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "22",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "22",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 22,
+ "body_md5": "932c6ad3aaa5c4086c2c76c3c8537027",
+ "raw_body": "{\"error\": \"not found\"}",
+ "json": {
+  "error": "not found"
+ },
+ "normalized": {
+  "error": "not found"
+ }
+}

@@ -1,0 +1,43 @@
+{
+ "name": "upload_zip_workbook_not_xml",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "PK\u0003\u0004\u0014\u0000\u0000\u0000\b\u0000b5j]�I�|\u0015\u0000\u0000\u0000@\u0001\u0000\u0000\u000f\u0000\u0000\u0000xl/workbook.xml+��,V\u0000���\u0012���\u001c��Q>I|\u0000PK\u0001\u0002\u0014\u0000\u0014\u0000\u0000\u0000\b\u0000b5j]�I�|\u0015\u0000\u0000\u0000@\u0001\u0000\u0000\u000f\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�\u0001\u0000\u0000\u0000\u0000xl/workbook.xmlPK\u0005\u0006\u0000\u0000\u0000\u0000\u0001\u0000\u0001\u0000=\u0000\u0000\u0000B\u0000\u0000\u0000\u0000\u0000"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "72",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "72",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 72,
+ "body_md5": "78de0f67f7b27eea4f61dbbdeb190f4f",
+ "raw_body": "{\"error\": \"文件里的 XML 读不了：syntax error: line 1, column 0\"}",
+ "json": {
+  "error": "文件里的 XML 读不了：syntax error: line 1, column 0"
+ },
+ "normalized": {
+  "error": "文件里的 XML 读不了：syntax error: line 1, column 0"
+ }
+}

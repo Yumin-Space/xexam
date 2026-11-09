@@ -1,0 +1,33 @@
+{
+ "name": "static_icon_svg",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/icon.svg",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "content-type": "image/svg+xml",
+  "content-length": "508",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "image/svg+xml",
+  "content-length": "508",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 508,
+ "body_md5": "c1b10c05289f760c4692b7a0e9aab6d2"
+}

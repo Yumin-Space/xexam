@@ -1,0 +1,43 @@
+{
+ "name": "upload_wrong_ctype_json",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/json",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "<2828 bytes>"
+ },
+ "status": 415,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "29",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "29",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 29,
+ "body_md5": "f7b0202c8bc1abeeac3440293b6c9066",
+ "raw_body": "{\"error\": \"bad content type\"}",
+ "json": {
+  "error": "bad content type"
+ },
+ "normalized": {
+  "error": "bad content type"
+ }
+}

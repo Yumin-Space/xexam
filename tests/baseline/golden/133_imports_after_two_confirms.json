@@ -1,0 +1,86 @@
+{
+ "name": "imports_after_two_confirms",
+ "note": "",
+ "request": {
+  "method": "GET",
+  "path": "/api/imports",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "301",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "301",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 301,
+ "body_md5": "851fef72b7b63025780adf38c2ee85ae",
+ "raw_body": "{\"imports\": [{\"id\": 2, \"at\": \"2026-11-10 06:43\", \"filename\": \"second.xlsx\", \"added\": 0, \"updated\": 0, \"removed\": 0, \"restored\": 0, \"skipped\": 0, \"total\": 5}, {\"id\": 1, \"at\": \"2026-11-10 06:43\", \"filename\": \"demo.xlsx\", \"added\": 5, \"updated\": 0, \"removed\": 0, \"restored\": 0, \"skipped\": 0, \"total\": 5}]}",
+ "json": {
+  "imports": [
+   {
+    "id": 2,
+    "at": "2026-11-10 06:43",
+    "filename": "second.xlsx",
+    "added": 0,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skipped": 0,
+    "total": 5
+   },
+   {
+    "id": 1,
+    "at": "2026-11-10 06:43",
+    "filename": "demo.xlsx",
+    "added": 5,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skipped": 0,
+    "total": 5
+   }
+  ]
+ },
+ "normalized": {
+  "imports": [
+   {
+    "id": 2,
+    "at": "<VOLATILE>",
+    "filename": "second.xlsx",
+    "added": 0,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skipped": 0,
+    "total": 5
+   },
+   {
+    "id": 1,
+    "at": "<VOLATILE>",
+    "filename": "demo.xlsx",
+    "added": 5,
+    "updated": 0,
+    "removed": 0,
+    "restored": 0,
+    "skipped": 0,
+    "total": 5
+   }
+  ]
+ }
+}

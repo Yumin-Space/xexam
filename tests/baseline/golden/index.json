@@ -1,0 +1,25 @@
+{
+ "captured_at_utc": "2026-11-09T21:43:10Z",
+ "base_url": "http://127.0.0.1:8701",
+ "python": "3.10.11 (tags/v3.10.11:7d4cc5a, Apr  5 2023, 00:38:17) [MSC v.1929 64 bit (AMD64)]",
+ "platform": "win32",
+ "md5": {
+  "server.py": "fb9e06bf74b8db40c586108f77aa8950",
+  "app/db.py": "3ea04694b3148ba1c66d5edc509176e2",
+  "app/xlsx_parser.py": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "demo_md5": "0771c043b0433eee89438445513e88f3",
+ "demo2_md5": "5c7007f32a0dd260d0d33bb5b671b8d5",
+ "volatile_json_keys": [
+  "arch",
+  "at",
+  "mtime",
+  "token",
+  "version"
+ ],
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "captures": 172
+}

@@ -1,0 +1,42 @@
+{
+ "name": "confirm_token_null",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/import/confirm",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "{\"token\": null}"
+ },
+ "status": 409,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "82",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "82",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 82,
+ "body_md5": "b9e0bb31713e325093256dba11aa94c5",
+ "raw_body": "{\"error\": \"这次上传的预览已经过期或已被处理，请重新上传。\"}",
+ "json": {
+  "error": "这次上传的预览已经过期或已被处理，请重新上传。"
+ },
+ "normalized": {
+  "error": "这次上传的预览已经过期或已被处理，请重新上传。"
+ }
+}

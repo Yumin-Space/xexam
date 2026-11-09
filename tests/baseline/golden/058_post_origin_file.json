@@ -1,0 +1,43 @@
+{
+ "name": "post_origin_file",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/import/cancel",
+  "headers": {
+   "Content-Type": "application/json",
+   "Origin": "file://"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "{}"
+ },
+ "status": 403,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "88",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "88",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 88,
+ "body_md5": "bd6abb862f8ef18ba6bf289c6e0d9bf9",
+ "raw_body": "{\"error\": \"被拒绝：这个请求的 Origin 是「file://」，不是一个网址。\"}",
+ "json": {
+  "error": "被拒绝：这个请求的 Origin 是「file://」，不是一个网址。"
+ },
+ "normalized": {
+  "error": "被拒绝：这个请求的 Origin 是「file://」，不是一个网址。"
+ }
+}

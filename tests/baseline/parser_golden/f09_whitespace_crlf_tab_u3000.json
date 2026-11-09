@@ -1,0 +1,451 @@
+{
+ "input": {
+  "name": "f09_whitespace_crlf_tab_u3000.xlsx",
+  "size": 1966
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "解析第一行\n解析第二行",
+    "id": "e12a946406cf",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     }
+    ],
+    "row": 1,
+    "sheet": "ws",
+    "stem": "CRLF の問題。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "a2740dc43ecf",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 2,
+    "sheet": "ws",
+    "stem": "literal CRLF in file",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "e016798a75b4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 3,
+    "sheet": "ws",
+    "stem": "lone CR char ref",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "81a8f155b168",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙(NBSP)"
+     }
+    ],
+    "row": 4,
+    "sheet": "ws",
+    "stem": "タブ区切り。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "55cd140f843a",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "項目一"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "項目二"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 5,
+    "sheet": "ws",
+    "stem": "",
+    "tag": "ホットスポット",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "636097ea0c10",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "本物A"
+     },
+     {
+      "key": "B",
+      "text": "本物B"
+     }
+    ],
+    "row": 6,
+    "sheet": "ws",
+    "stem": "U+2028 と U+0085 の問題 A. 甲 B. 乙C. 丙",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "ws",
+    "skipped": [],
+    "total": 6,
+    "usable": 6
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "ws",
+   "rows": [
+    [
+     1,
+     {
+      "0": "CRLF の問題。\r\n\r\nA. 甲\r\nB. 乙\r\nC. 丙",
+      "2": "【答案】\r\nB\r\n\r\n【解析·怎么选】\r\n解析第一行\r\n解析第二行"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "literal CRLF in file\n\nA. 甲\nB. 乙",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "lone CR char ref\r\rA. 甲\rB. 乙",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "タブ区切り。\n\n\tA.\t甲\n　B.　乙\n C. 丙(NBSP)",
+      "2": "【答案】　C"
+     }
+    ],
+    [
+     5,
+     {
+      "0": "ホットスポット\n1. 項目一\t　はい / いいえ　\t\n2. 項目二　　はい / いいえ",
+      "2": "【答案】1 はい；2 いいえ"
+     }
+    ],
+    [
+     6,
+     {
+      "0": "U+2028 と U+0085 の問題 A. 甲 B. 乙C. 丙\n\nA. 本物A\nB. 本物B",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     7,
+     {
+      "0": "plain row"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "解析第一行\n解析第二行",
+    "id": "e12a946406cf",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     }
+    ],
+    "row": 1,
+    "sheet": "ws",
+    "stem": "CRLF の問題。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "a2740dc43ecf",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 2,
+    "sheet": "ws",
+    "stem": "literal CRLF in file",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "e016798a75b4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 3,
+    "sheet": "ws",
+    "stem": "lone CR char ref",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "81a8f155b168",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙(NBSP)"
+     }
+    ],
+    "row": 4,
+    "sheet": "ws",
+    "stem": "タブ区切り。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "55cd140f843a",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "項目一"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "項目二"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 5,
+    "sheet": "ws",
+    "stem": "",
+    "tag": "ホットスポット",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "636097ea0c10",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "本物A"
+     },
+     {
+      "key": "B",
+      "text": "本物B"
+     }
+    ],
+    "row": 6,
+    "sheet": "ws",
+    "stem": "U+2028 と U+0085 の問題 A. 甲 B. 乙C. 丙",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "ws",
+    "skipped": [],
+    "total": 6,
+    "usable": 6
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

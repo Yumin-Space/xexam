@@ -9,8 +9,8 @@
 
 | | |
 |---|---|
-| 当前版本 | **v0.2.1**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看） |
-| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.2.1` / `sha-<提交>` |
+| 当前版本 | **v0.2.2**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看） |
+| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.2.2` / `sha-<提交>` |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 
@@ -658,10 +658,15 @@ docker compose start
 
 每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
+### v0.2.2 — 2026-11-10
+
+- 新增 `tests/baseline/`：旧版 Python 的行为基线（172 份真实响应、50 个 XLSX 夹具及解析输出、85 条题目 id 向量、示例数据库、安全探针、Host/Origin 检查和隧道模拟脚本），后面的 Rust 重写要和它逐项对照。工具里不再写死任何本机路径，可用 `XEXAM_LEGACY_ROOT` 指定被测代码。
+- 修正上一版更新日志里关于 v0.2 Release 的说法。
+
 ### v0.2.1 — 2026-11-10
 
 - **每次构建成功后自动在 GitHub 的 Releases 页建一个 Release**（以前只推了镜像，Releases 页一直是空的）：流水线新增第 4 个 job `release`，在镜像发布并核对成功之后运行，说明取自本更新日志这个版本的那一段，并自动打 git 标签 `v<版本>`。
-- v0.2 的 Release 补建了一次（对应 v0.2 的提交）。
+- v0.2 的 Release 手动补建了一次（对应 v0.2 的提交 `1ee64c8`，没有标成 Latest）；从 v0.2.1 起由流水线自动建。
 - 新增 `scripts/release-notes.py`：从 README 抽出某个版本的更新日志；本机也能运行，用来预览 Release 页会显示什么。
 
 ### v0.2 — 2026-11-10

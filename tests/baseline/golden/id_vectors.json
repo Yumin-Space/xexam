@@ -1,0 +1,1283 @@
+{
+ "generator": "gen_vectors.py",
+ "algorithm": "sha1( sheet + \"\\n\" + re.sub(r\"\\s+\",\"\",stem)[:300] + \"|\" + re.sub(r\"\\s+\",\"\",first)[:200] ).hexdigest()[:12]; then in parse_workbook: while id in seen: id = base-N (N=2,3,...)",
+ "python_whitespace_regex_class_\\s": [
+  "0009",
+  "000A",
+  "000B",
+  "000C",
+  "000D",
+  "001C",
+  "001D",
+  "001E",
+  "001F",
+  "0020",
+  "0085",
+  "00A0",
+  "1680",
+  "2000",
+  "2001",
+  "2002",
+  "2003",
+  "2004",
+  "2005",
+  "2006",
+  "2007",
+  "2008",
+  "2009",
+  "200A",
+  "2028",
+  "2029",
+  "202F",
+  "205F",
+  "3000"
+ ],
+ "counts": {
+  "make_id_vectors": 54,
+  "pipeline_cases": 12,
+  "pipeline_ids": 31,
+  "total_id_assertions": 85
+ },
+ "vectors": [
+  {
+   "kind": "make_id",
+   "name": "basic_ja",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "plain Japanese"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_changes_id",
+   "sheet": "demo2",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f320ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "0c6638602581",
+   "note": "same stem, other sheet name -> other id"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_case_matters",
+   "sheet": "Demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "44656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "1fe12b08c7e4",
+   "note": "sheet name is case-sensitive"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_trailing_space_kept",
+   "sheet": "demo ",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f200ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "b29caa0fc3fa",
+   "note": "sheet name is NOT stripped"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_empty",
+   "sheet": "",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "0c6712181af1",
+   "note": "empty sheet name"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_nfd_vs_nfc_a",
+   "sheet": "café",
+   "stem": "q",
+   "first": "a",
+   "hash_input_utf8_hex": "636166c3a90a717c61",
+   "id": "18d8d5763f31",
+   "note": "sheet NFC e-acute"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_nfd_vs_nfc_b",
+   "sheet": "café",
+   "stem": "q",
+   "first": "a",
+   "hash_input_utf8_hex": "63616665cc810a717c61",
+   "id": "c62df9793276",
+   "note": "sheet NFD e + U+0301: different id from NFC (no normalisation)"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_jp",
+   "sheet": "スコープ１",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "e382b9e382b3e383bce38397efbc910ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "f28e46e0e999",
+   "note": "Japanese sheet name with full-width digit"
+  },
+  {
+   "kind": "make_id",
+   "name": "sheet_newline_inside",
+   "sheet": "a\nb",
+   "stem": "q",
+   "first": "a",
+   "hash_input_utf8_hex": "610a620a717c61",
+   "id": "5447723af518",
+   "note": "newline inside sheet name is kept"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_trailing_space",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？   ",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "trailing ASCII spaces ignored (== basic_ja)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_trailing_newline",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？\n\n",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "trailing newlines ignored (== basic_ja)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_crlf_inside",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。\r\n日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "CRLF removed as whitespace"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_lf_inside",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。\n日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "LF removed (== crlf case)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_tab_inside",
+   "sheet": "demo",
+   "stem": "東京は\t日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "tab removed"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_ideographic_space",
+   "sheet": "demo",
+   "stem": "東京は　日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "U+3000 removed (== tab case)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_nbsp",
+   "sheet": "demo",
+   "stem": "東京は 日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "U+00A0 NBSP removed by \\s"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_u2003_emspace",
+   "sheet": "demo",
+   "stem": "東京は 日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "U+2003 removed"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_u0085_nel",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "U+0085 NEL removed by Python \\s (XML parser accepts it raw)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_u001c",
+   "sheet": "demo",
+   "stem": "東京は\u001c日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "U+001C removed by Python \\s but NOT by Rust regex \\s / char::is_whitespace; unreachable through XLSX (XML forbids it)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_u2028",
+   "sheet": "demo",
+   "stem": "東京は 日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "94e4bfe00e8d",
+   "note": "U+2028 LINE SEPARATOR removed"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_zwsp_kept",
+   "sheet": "demo",
+   "stem": "東京は​日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe2808be697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "bfbfbb198618",
+   "note": "U+200B ZERO WIDTH SPACE is NOT whitespace for Python: kept -> different id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_bom_kept",
+   "sheet": "demo",
+   "stem": "﻿東京は日本の首都です。日本の首都はどこですか？",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0aefbbbfe69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
+   "id": "c288db2e4260",
+   "note": "U+FEFF kept -> different id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_fullwidth_qmark_vs_ascii",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか?",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818b3f7ce5a4a7e998aa",
+   "id": "66bb00ea3705",
+   "note": "ASCII ? instead of U+FF1F: different id (no NFKC)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_fullwidth_digits",
+   "sheet": "demo",
+   "stem": "１ + １ は いくつですか？",
+   "first": "Ａ",
+   "hash_input_utf8_hex": "64656d6f0aefbc912befbc91e381afe38184e3818fe381a4e381a7e38199e3818befbc9f7cefbca1",
+   "id": "aebcea5154e2",
+   "note": "full-width digits and Latin kept as is"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_halfwidth_digits",
+   "sheet": "demo",
+   "stem": "1 + 1 は いくつですか?",
+   "first": "A",
+   "hash_input_utf8_hex": "64656d6f0a312b31e381afe38184e3818fe381a4e381a7e38199e3818b3f7c41",
+   "id": "4694be3920d1",
+   "note": "half-width counterpart: different id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_halfwidth_kana",
+   "sheet": "demo",
+   "stem": "ﾄｳｷｮｳは日本の首都です",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0aefbe84efbdb3efbdb7efbdaeefbdb3e381afe697a5e69cace381aee9a696e983bde381a7e381997ce5a4a7e998aa",
+   "id": "87667cf586c9",
+   "note": "half-width katakana kept (no NFKC)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_fullwidth_kana",
+   "sheet": "demo",
+   "stem": "トウキョウは日本の首都です",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0ae38388e382a6e382ade383a7e382a6e381afe697a5e69cace381aee9a696e983bde381a7e381997ce5a4a7e998aa",
+   "id": "c57c8e37bf12",
+   "note": "full-width counterpart: different id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_dakuten_precomposed",
+   "sheet": "demo",
+   "stem": "がぎぐげご",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae3818ce3818ee38190e38192e381947c78",
+   "id": "dd2ecdb385b2",
+   "note": "precomposed hiragana (NFC)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_dakuten_combining",
+   "sheet": "demo",
+   "stem": "がぎぐげご",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae3818be38299e3818de38299e3818fe38299e38191e38299e38193e382997c78",
+   "id": "ed3b59e7996a",
+   "note": "base + U+3099 combining (NFD): different id from precomposed"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_latin_case",
+   "sheet": "demo",
+   "stem": "What is AWS?",
+   "first": "Amazon",
+   "hash_input_utf8_hex": "64656d6f0a5768617469734157533f7c416d617a6f6e",
+   "id": "ff45b59864df",
+   "note": "case is preserved (no lower/casefold)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_latin_case_lower",
+   "sheet": "demo",
+   "stem": "what is aws?",
+   "first": "amazon",
+   "hash_input_utf8_hex": "64656d6f0a7768617469736177733f7c616d617a6f6e",
+   "id": "0a9a1b3b931c",
+   "note": "lowercase: different id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_sharp_s",
+   "sheet": "demo",
+   "stem": "Straße",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0a53747261c39f657c78",
+   "id": "7a25def8d64a",
+   "note": "U+00DF: str.lower()/casefold() would matter if used; here untouched"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_turkish_dotted_i",
+   "sheet": "demo",
+   "stem": "İstanbul",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ac4b07374616e62756c7c78",
+   "id": "391990dfb4da",
+   "note": "U+0130 untouched"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_nonbmp_cjk",
+   "sheet": "demo",
+   "stem": "𠮷野家で食べる",
+   "first": "牛丼",
+   "hash_input_utf8_hex": "64656d6f0af0a0aeb7e9878ee5aeb6e381a7e9a39fe381b9e3828b7ce7899be4b8bc",
+   "id": "0cd2c97cb777",
+   "note": "non-BMP CJK (surrogate pair in UTF-16, 4 bytes in UTF-8)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_emoji",
+   "sheet": "demo",
+   "stem": "Which is a fruit? 🍎",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0a576869636869736166727569743ff09f8d8e7c78",
+   "id": "8bffcec822fb",
+   "note": "emoji"
+  },
+  {
+   "kind": "make_id",
+   "name": "first_empty",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7c",
+   "id": "ac7f8259f8f4",
+   "note": "empty first option text"
+  },
+  {
+   "kind": "make_id",
+   "name": "first_whitespace_only",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": " \t　\n",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7c",
+   "id": "ac7f8259f8f4",
+   "note": "whitespace-only first -> same as empty"
+  },
+  {
+   "kind": "make_id",
+   "name": "first_inner_whitespace",
+   "sheet": "demo",
+   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "first": "り ん\tご",
+   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce3828ae38293e38194",
+   "id": "b834ee698671",
+   "note": "inner whitespace removed"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_empty",
+   "sheet": "demo",
+   "stem": "",
+   "first": "大阪",
+   "hash_input_utf8_hex": "64656d6f0a7ce5a4a7e998aa",
+   "id": "6b4a0237d772",
+   "note": "empty stem"
+  },
+  {
+   "kind": "make_id",
+   "name": "both_empty",
+   "sheet": "demo",
+   "stem": "",
+   "first": "",
+   "hash_input_utf8_hex": "64656d6f0a7c",
+   "id": "a332ddd1097b",
+   "note": "empty stem and first"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_only_ws",
+   "sheet": "demo",
+   "stem": " \n\t",
+   "first": "",
+   "hash_input_utf8_hex": "64656d6f0a7c",
+   "id": "a332ddd1097b",
+   "note": "whitespace-only stem"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_pipe_char",
+   "sheet": "demo",
+   "stem": "a|b",
+   "first": "c",
+   "hash_input_utf8_hex": "64656d6f0a617c627c63",
+   "id": "4015984d045d",
+   "note": "literal | in stem: \"a|b|c\" collides with stem \"a\" first \"b|c\""
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_pipe_collision",
+   "sheet": "demo",
+   "stem": "a",
+   "first": "b|c",
+   "hash_input_utf8_hex": "64656d6f0a617c627c63",
+   "id": "4015984d045d",
+   "note": "collides with stem_pipe_char (same raw string a|b|c) -> same id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_newline_sheet_collision_a",
+   "sheet": "x",
+   "stem": "y|z",
+   "first": "w",
+   "hash_input_utf8_hex": "780a797c7a7c77",
+   "id": "16dd8e6126e3",
+   "note": "sheet \"x\" stem \"y|z\""
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_newline_sheet_collision_b",
+   "sheet": "x\ny",
+   "stem": "z",
+   "first": "w",
+   "hash_input_utf8_hex": "780a790a7a7c77",
+   "id": "5b06a4198475",
+   "note": "NOT a collision here: sheet \"x\\ny\" stem \"z\" (separator is \\n then stem; whitespace removed only inside stem)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_len_300_exact",
+   "sheet": "demo",
+   "stem": "ああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e381827c78",
+   "id": "87297b8c196b",
+   "note": "exactly 300 chars"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_len_301_same_as_300",
+   "sheet": "demo",
+   "stem": "あああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああああ",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e381827c78",
+   "id": "87297b8c196b",
+   "note": "301st char ignored: same id as exactly-300"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_len_360_ja",
+   "sheet": "demo",
+   "stem": "日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9e7c78",
+   "id": "25ec63358da8",
+   "note": "truncation by code points (not bytes)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_len_360_ja_tail_changed",
+   "sheet": "demo",
+   "stem": "日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語違う",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9ee697a5e69cace8aa9e7c78",
+   "id": "25ec63358da8",
+   "note": "change after char 300 does not change the id"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_trunc_with_ws_removed",
+   "sheet": "demo",
+   "stem": "あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ あ ",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0ae38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e38182e381827c78",
+   "id": "87297b8c196b",
+   "note": "whitespace removed BEFORE truncating (800 chars in, 300 hashed)"
+  },
+  {
+   "kind": "make_id",
+   "name": "stem_trunc_nonbmp",
+   "sheet": "demo",
+   "stem": "𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷𠮷",
+   "first": "x",
+   "hash_input_utf8_hex": "64656d6f0af0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb7f0a0aeb77c78",
+   "id": "b85bc7f4103d",
+   "note": "305 non-BMP chars: truncation counts code points, UTF-16 slicing would differ"
+  },
+  {
+   "kind": "make_id",
+   "name": "first_len_200_exact",
+   "sheet": "demo",
+   "stem": "q",
+   "first": "いいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいい",
+   "hash_input_utf8_hex": "64656d6f0a717ce38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184",
+   "id": "18b033b2747a",
+   "note": "exactly 200 chars"
+  },
+  {
+   "kind": "make_id",
+   "name": "first_len_201_same_as_200",
+   "sheet": "demo",
+   "stem": "q",
+   "first": "いいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいいい",
+   "hash_input_utf8_hex": "64656d6f0a717ce38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184e38184",
+   "id": "18b033b2747a",
+   "note": "201st char ignored"
+  },
+  {
+   "kind": "make_id",
+   "name": "first_trunc_nonbmp",
+   "sheet": "demo",
+   "stem": "q",
+   "first": "🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎🍎",
+   "hash_input_utf8_hex": "64656d6f0a717cf09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8ef09f8d8e",
+   "id": "6a62d912c8ab",
+   "note": "205 emoji: 200 code points hashed"
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_single_sheet",
+   "note": "three question kinds in order",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "信号が赤のとき、どうしますか？\n\nA. 進む\nB. 止まる\nC. 走る",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "ホットスポット\n次の文について選択してください。\n\n1. 太陽は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+       "",
+       "【答案】1 はい；2 いいえ"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 3,
+     "usable": 3,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c"
+    },
+    {
+     "sheet": "S",
+     "row": 2,
+     "kind": "single",
+     "stem": "信号が赤のとき、どうしますか？",
+     "first": "進む",
+     "id": "52f9a4842d55"
+    },
+    {
+     "sheet": "S",
+     "row": 3,
+     "kind": "hotspot",
+     "stem": "次の文について選択してください。",
+     "first": "太陽は東から昇る。",
+     "id": "837a84840bf1"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_reordered_rows",
+   "note": "same questions, rows reordered: ids must be identical to p_single_sheet",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "ホットスポット\n次の文について選択してください。\n\n1. 太陽は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+       "",
+       "【答案】1 はい；2 いいえ"
+      ],
+      [
+       "信号が赤のとき、どうしますか？\n\nA. 進む\nB. 止まる\nC. 走る",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 3,
+     "usable": 3,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "hotspot",
+     "stem": "次の文について選択してください。",
+     "first": "太陽は東から昇る。",
+     "id": "837a84840bf1"
+    },
+    {
+     "sheet": "S",
+     "row": 2,
+     "kind": "single",
+     "stem": "信号が赤のとき、どうしますか？",
+     "first": "進む",
+     "id": "52f9a4842d55"
+    },
+    {
+     "sheet": "S",
+     "row": 3,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_same_stem_two_sheets",
+   "note": "same question in two sheets: different ids (sheet is hashed)",
+   "sheets_in": [
+    {
+     "name": "S1",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    },
+    {
+     "name": "S2",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S1",
+     "total": 1,
+     "usable": 1,
+     "skipped": []
+    },
+    {
+     "name": "S2",
+     "total": 1,
+     "usable": 1,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S1",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "08fe1a42c5ea"
+    },
+    {
+     "sheet": "S2",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "4e9e1724fad4"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_dup_in_sheet",
+   "note": "identical fingerprint 3x: ids base, base-2, base-3",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】C\n\n【解析·怎么选】second copy"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 京都",
+       "",
+       "【答案】A\n\n【解析·怎么选】third copy"
+      ],
+      [
+       "信号が赤のとき、どうしますか？\n\nA. 進む\nB. 止まる\nC. 走る",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 4,
+     "usable": 4,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c"
+    },
+    {
+     "sheet": "S",
+     "row": 2,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c-2"
+    },
+    {
+     "sheet": "S",
+     "row": 3,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c-3"
+    },
+    {
+     "sheet": "S",
+     "row": 4,
+     "kind": "single",
+     "stem": "信号が赤のとき、どうしますか？",
+     "first": "進む",
+     "id": "52f9a4842d55"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_dup_reordered",
+   "note": "same three copies in other order: suffix follows row order, so the id of each CONTENT changes",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 京都",
+       "",
+       "【答案】A\n\n【解析·怎么选】third copy"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】C\n\n【解析·怎么选】second copy"
+      ],
+      [
+       "信号が赤のとき、どうしますか？\n\nA. 進む\nB. 止まる\nC. 走る",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 4,
+     "usable": 4,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c"
+    },
+    {
+     "sheet": "S",
+     "row": 2,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c-2"
+    },
+    {
+     "sheet": "S",
+     "row": 3,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c-3"
+    },
+    {
+     "sheet": "S",
+     "row": 4,
+     "kind": "single",
+     "stem": "信号が赤のとき、どうしますか？",
+     "first": "進む",
+     "id": "52f9a4842d55"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_dup_across_sheets_no_suffix",
+   "note": "duplicates are counted globally over the workbook (\"seen\" is shared) but sheet differs so only in-sheet dups get suffix",
+   "sheets_in": [
+    {
+     "name": "S1",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】C\n\n【解析·怎么选】second copy"
+      ]
+     ]
+    },
+    {
+     "name": "S2",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】C\n\n【解析·怎么选】second copy"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S1",
+     "total": 2,
+     "usable": 2,
+     "skipped": []
+    },
+    {
+     "name": "S2",
+     "total": 2,
+     "usable": 2,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S1",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "08fe1a42c5ea"
+    },
+    {
+     "sheet": "S1",
+     "row": 2,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "08fe1a42c5ea-2"
+    },
+    {
+     "sheet": "S2",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "4e9e1724fad4"
+    },
+    {
+     "sheet": "S2",
+     "row": 2,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "4e9e1724fad4-2"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_dup_removed_first",
+   "note": "if the first copy is deleted from Excel the second copy inherits the unsuffixed id",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】C\n\n【解析·怎么选】second copy"
+      ],
+      [
+       "信号が赤のとき、どうしますか？\n\nA. 進む\nB. 止まる\nC. 走る",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 2,
+     "usable": 2,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "228692b5276c"
+    },
+    {
+     "sheet": "S",
+     "row": 2,
+     "kind": "single",
+     "stem": "信号が赤のとき、どうしますか？",
+     "first": "進む",
+     "id": "52f9a4842d55"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_fullwidth_digits",
+   "note": "full-width digits/latin in stem",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "１ + １ は いくつですか？\n\nA. １\nB. ２\nC. ３",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "Which is a fruit?\n\nA. りんご\nB. にんじん",
+       "",
+       "【答案】A\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 2,
+     "usable": 2,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "１ + １ は いくつですか？",
+     "first": "１",
+     "id": "8cbb2ebf89cd"
+    },
+    {
+     "sheet": "S",
+     "row": 2,
+     "kind": "single",
+     "stem": "Which is a fruit?",
+     "first": "りんご",
+     "id": "62b1f9556c0d"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_unicode_ws_in_cells",
+   "note": "U+3000 / tab / CRLF inside the stem cell",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "東京は　日本の\t首都\r\nです。\n\nA. 大阪\nB. 東京",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 1,
+     "usable": 1,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "東京は　日本の\t首都\nです。",
+     "first": "大阪",
+     "id": "82ed8980d4cc"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_trailing_ws_in_option",
+   "note": "trailing spaces after option A text",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "末尾の空白\n\nA. 大阪   \nB. 東京",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 1,
+     "usable": 1,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "末尾の空白",
+     "first": "大阪",
+     "id": "8574b6d2192a"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_nfd_stem",
+   "note": "NFD stem stays NFD in the id input",
+   "sheets_in": [
+    {
+     "name": "S",
+     "rows": [
+      [
+       "がぎぐは何ですか\n\nA. あ\nB. い",
+       "",
+       "【答案】A\n\n【解析·怎么选】x"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "S",
+     "total": 1,
+     "usable": 1,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "S",
+     "row": 1,
+     "kind": "single",
+     "stem": "がぎぐは何ですか",
+     "first": "あ",
+     "id": "d5251b9f6b47"
+    }
+   ]
+  },
+  {
+   "kind": "pipeline",
+   "name": "p_two_sheets_mixed",
+   "note": "Japanese sheet names",
+   "sheets_in": [
+    {
+     "name": "スコープ１",
+     "rows": [
+      [
+       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ],
+      [
+       "信号が赤のとき、どうしますか？\n\nA. 進む\nB. 止まる\nC. 走る",
+       "",
+       "【答案】B\n\n【解析·怎么选】x"
+      ]
+     ]
+    },
+    {
+     "name": "スコープ２",
+     "rows": [
+      [
+       "日本の四季は？\n\nA. 春夏秋冬\nB. 雨季乾季",
+       "",
+       "【答案】A\n\n【解析·怎么选】x"
+      ],
+      [
+       "ホットスポット\n次の文について選択してください。\n\n1. 太陽は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+       "",
+       "【答案】1 はい；2 いいえ"
+      ]
+     ]
+    }
+   ],
+   "sheets_out": [
+    {
+     "name": "スコープ１",
+     "total": 2,
+     "usable": 2,
+     "skipped": []
+    },
+    {
+     "name": "スコープ２",
+     "total": 2,
+     "usable": 2,
+     "skipped": []
+    }
+   ],
+   "ids": [
+    {
+     "sheet": "スコープ１",
+     "row": 1,
+     "kind": "single",
+     "stem": "次のうち、首都はどれですか？",
+     "first": "大阪",
+     "id": "7ea0ac756021"
+    },
+    {
+     "sheet": "スコープ１",
+     "row": 2,
+     "kind": "single",
+     "stem": "信号が赤のとき、どうしますか？",
+     "first": "進む",
+     "id": "cf1a63912f58"
+    },
+    {
+     "sheet": "スコープ２",
+     "row": 1,
+     "kind": "single",
+     "stem": "日本の四季は？",
+     "first": "春夏秋冬",
+     "id": "2b1ff92b1178"
+    },
+    {
+     "sheet": "スコープ２",
+     "row": 2,
+     "kind": "hotspot",
+     "stem": "次の文について選択してください。",
+     "first": "太陽は東から昇る。",
+     "id": "b283f7b15e29"
+    }
+   ]
+  }
+ ]
+}

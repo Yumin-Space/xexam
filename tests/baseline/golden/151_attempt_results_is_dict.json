@@ -1,0 +1,42 @@
+{
+ "name": "attempt_results_is_dict",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/attempt",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "{\"results\": {\"a\": 1}}"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "34",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "34",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 34,
+ "body_md5": "e1dfe69e562bcb800e043f81672ff3ef",
+ "raw_body": "{\"error\": \"成绩的格式不对\"}",
+ "json": {
+  "error": "成绩的格式不对"
+ },
+ "normalized": {
+  "error": "成绩的格式不对"
+ }
+}

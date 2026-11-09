@@ -1,0 +1,35 @@
+{
+ "name": "head_info",
+ "note": "",
+ "request": {
+  "method": "HEAD",
+  "path": "/api/info",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": null
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "73",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "73",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 0,
+ "body_md5": "d41d8cd98f00b204e9800998ecf8427e",
+ "raw_body": "",
+ "normalized": ""
+}

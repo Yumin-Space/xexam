@@ -1,0 +1,118 @@
+{
+ "input": {
+  "name": "f23_unicode_astral_nfd.xlsx",
+  "size": 1648
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "768ceef794c1",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "😀 甲"
+     },
+     {
+      "key": "B",
+      "text": "é (NFD)"
+     },
+     {
+      "key": "C",
+      "text": "é (NFC)"
+     }
+    ],
+    "row": 1,
+    "sheet": "uni😀",
+    "stem": "Unicode: 😀 絵文字を含む問題",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "uni😀",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "uni😀",
+   "rows": [
+    [
+     1,
+     {
+      "0": "Unicode: 😀 絵文字を含む問題\n\nA. 😀 甲\nB. é (NFD)\nC. é (NFC)",
+      "2": "【答案】B"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "768ceef794c1",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "😀 甲"
+     },
+     {
+      "key": "B",
+      "text": "é (NFD)"
+     },
+     {
+      "key": "C",
+      "text": "é (NFC)"
+     }
+    ],
+    "row": 1,
+    "sheet": "uni😀",
+    "stem": "Unicode: 😀 絵文字を含む問題",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "uni😀",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

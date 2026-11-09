@@ -1,0 +1,33 @@
+{
+ "name": "method_patch_api_info",
+ "note": "",
+ "request": {
+  "method": "PATCH",
+  "path": "/api/info",
+  "headers": {},
+  "host_header": "127.0.0.1:8701",
+  "body": ""
+ },
+ "status": 501,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:03 GMT",
+  "connection": "close",
+  "content-type": "text/html;charset=utf-8",
+  "content-length": "498"
+ },
+ "headers_stable": {
+  "connection": "close",
+  "content-type": "text/html;charset=utf-8",
+  "content-length": "498"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 498,
+ "body_md5": "197bbfdb27c7f29afd9de2b0ebddf960",
+ "raw_body": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\"\n        \"http://www.w3.org/TR/html4/strict.dtd\">\n<html>\n    <head>\n        <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 501</p>\n        <p>Message: Unsupported method ('PATCH').</p>\n        <p>Error code explanation: HTTPStatus.NOT_IMPLEMENTED - Server does not support this operation.</p>\n    </body>\n</html>\n",
+ "normalized": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01//EN\"\n        \"http://www.w3.org/TR/html4/strict.dtd\">\n<html>\n    <head>\n        <meta http-equiv=\"Content-Type\" content=\"text/html;charset=utf-8\">\n        <title>Error response</title>\n    </head>\n    <body>\n        <h1>Error response</h1>\n        <p>Error code: 501</p>\n        <p>Message: Unsupported method ('PATCH').</p>\n        <p>Error code explanation: HTTPStatus.NOT_IMPLEMENTED - Server does not support this operation.</p>\n    </body>\n</html>\n"
+}

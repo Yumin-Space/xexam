@@ -1,0 +1,13 @@
+{
+ "take_twice_second_is_none": true,
+ "expired_take_none": true,
+ "expired_item_NOT_cleared_still_in_memory": true,
+ "expired_by_clock_take_none": true,
+ "second_put_replaces_first": true,
+ "drop_then_take_none": true,
+ "wrong_token_keeps_item": true,
+ "concurrent_take_winners": 1,
+ "non_ascii_token": "TypeError",
+ "token_len": 22,
+ "token_alphabet_urlsafe": true
+}

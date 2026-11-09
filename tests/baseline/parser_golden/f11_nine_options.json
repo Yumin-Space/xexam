@@ -1,0 +1,410 @@
+{
+ "input": {
+  "name": "f11_nine_options.xlsx",
+  "size": 1722
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "H"
+    ],
+    "explanation": "",
+    "id": "5f3c0fe9b82e",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     },
+     {
+      "key": "E",
+      "text": "選択肢E"
+     },
+     {
+      "key": "F",
+      "text": "選択肢F"
+     },
+     {
+      "key": "G",
+      "text": "選択肢G"
+     },
+     {
+      "key": "H",
+      "text": "選択肢H\nI. 選択肢I"
+     }
+    ],
+    "row": 1,
+    "sheet": "nine",
+    "stem": "ラベル9個",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "020d445fbc57",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     },
+     {
+      "key": "E",
+      "text": "選択肢E"
+     },
+     {
+      "key": "F",
+      "text": "選択肢F"
+     },
+     {
+      "key": "G",
+      "text": "選択肢G"
+     },
+     {
+      "key": "H",
+      "text": "選択肢H\nI. 選択肢I\nJ. 選択肢J"
+     }
+    ],
+    "row": 3,
+    "sheet": "nine",
+    "stem": "ラベル10個",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "G",
+     "H"
+    ],
+    "explanation": "",
+    "id": "7d84dd0210da",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     },
+     {
+      "key": "E",
+      "text": "選択肢E"
+     },
+     {
+      "key": "F",
+      "text": "選択肢F"
+     },
+     {
+      "key": "G",
+      "text": "選択肢G"
+     },
+     {
+      "key": "H",
+      "text": "選択肢H"
+     }
+    ],
+    "row": 4,
+    "sheet": "nine",
+    "stem": "ラベル8個",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "nine",
+    "skipped": [
+     {
+      "reason": "答案「I」里没有找到选项字母",
+      "row": 2
+     },
+     {
+      "reason": "答案「ABCDEFGH」里没有找到选项字母",
+      "row": 5
+     }
+    ],
+    "total": 5,
+    "usable": 3
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "nine",
+   "rows": [
+    [
+     1,
+     {
+      "0": "ラベル9個\n\nA. 選択肢A\nB. 選択肢B\nC. 選択肢C\nD. 選択肢D\nE. 選択肢E\nF. 選択肢F\nG. 選択肢G\nH. 選択肢H\nI. 選択肢I",
+      "2": "【答案】H"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "ラベル9b個\n\nA. 選択肢A\nB. 選択肢B\nC. 選択肢C\nD. 選択肢D\nE. 選択肢E\nF. 選択肢F\nG. 選択肢G\nH. 選択肢H\nI. 選択肢I",
+      "2": "【答案】I"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "ラベル10個\n\nA. 選択肢A\nB. 選択肢B\nC. 選択肢C\nD. 選択肢D\nE. 選択肢E\nF. 選択肢F\nG. 選択肢G\nH. 選択肢H\nI. 選択肢I\nJ. 選択肢J",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "ラベル8個\n\nA. 選択肢A\nB. 選択肢B\nC. 選択肢C\nD. 選択肢D\nE. 選択肢E\nF. 選択肢F\nG. 選択肢G\nH. 選択肢H",
+      "2": "【答案】H、G"
+     }
+    ],
+    [
+     5,
+     {
+      "0": "ラベル8b個\n\nA. 選択肢A\nB. 選択肢B\nC. 選択肢C\nD. 選択肢D\nE. 選択肢E\nF. 選択肢F\nG. 選択肢G\nH. 選択肢H",
+      "2": "【答案】ABCDEFGH"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "H"
+    ],
+    "explanation": "",
+    "id": "5f3c0fe9b82e",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     },
+     {
+      "key": "E",
+      "text": "選択肢E"
+     },
+     {
+      "key": "F",
+      "text": "選択肢F"
+     },
+     {
+      "key": "G",
+      "text": "選択肢G"
+     },
+     {
+      "key": "H",
+      "text": "選択肢H\nI. 選択肢I"
+     }
+    ],
+    "row": 1,
+    "sheet": "nine",
+    "stem": "ラベル9個",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "020d445fbc57",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     },
+     {
+      "key": "E",
+      "text": "選択肢E"
+     },
+     {
+      "key": "F",
+      "text": "選択肢F"
+     },
+     {
+      "key": "G",
+      "text": "選択肢G"
+     },
+     {
+      "key": "H",
+      "text": "選択肢H\nI. 選択肢I\nJ. 選択肢J"
+     }
+    ],
+    "row": 3,
+    "sheet": "nine",
+    "stem": "ラベル10個",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "G",
+     "H"
+    ],
+    "explanation": "",
+    "id": "7d84dd0210da",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "選択肢A"
+     },
+     {
+      "key": "B",
+      "text": "選択肢B"
+     },
+     {
+      "key": "C",
+      "text": "選択肢C"
+     },
+     {
+      "key": "D",
+      "text": "選択肢D"
+     },
+     {
+      "key": "E",
+      "text": "選択肢E"
+     },
+     {
+      "key": "F",
+      "text": "選択肢F"
+     },
+     {
+      "key": "G",
+      "text": "選択肢G"
+     },
+     {
+      "key": "H",
+      "text": "選択肢H"
+     }
+    ],
+    "row": 4,
+    "sheet": "nine",
+    "stem": "ラベル8個",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "nine",
+    "skipped": [
+     {
+      "reason": "答案「I」里没有找到选项字母",
+      "row": 2
+     },
+     {
+      "reason": "答案「ABCDEFGH」里没有找到选项字母",
+      "row": 5
+     }
+    ],
+    "total": 5,
+    "usable": 3
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

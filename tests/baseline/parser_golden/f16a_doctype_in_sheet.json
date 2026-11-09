@@ -1,0 +1,76 @@
+{
+ "input": {
+  "name": "f16a_doctype_in_sheet.xlsx",
+  "size": 1586
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "4fb48c466787",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 1,
+    "sheet": "dt",
+    "stem": "&e;",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dt",
+    "skipped": [],
+    "total": 1,
+    "usable": 1
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "dt",
+   "rows": [
+    [
+     1,
+     {
+      "0": "&e;\n\nA. 甲\nB. 乙",
+      "2": "【答案】A"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "status": 400
+ },
+ "upload_check": {
+  "error": "文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。",
+  "exc": "ValueError",
+  "ok": false
+ }
+}

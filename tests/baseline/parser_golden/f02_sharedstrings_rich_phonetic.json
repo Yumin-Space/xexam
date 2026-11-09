@@ -1,0 +1,186 @@
+{
+ "input": {
+  "name": "f02_sharedstrings_rich_phonetic.xlsx",
+  "size": 2113
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "b2aa4b31199f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "とうきょう"
+     },
+     {
+      "key": "B",
+      "text": "おおさか"
+     },
+     {
+      "key": "C",
+      "text": "きょうと"
+     }
+    ],
+    "row": 1,
+    "sheet": "sst",
+    "stem": "次のうち、東京の読みはどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "ac977f8d6252",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 2,
+    "sheet": "sst",
+    "stem": "次の文を選べ。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "sst",
+    "skipped": [],
+    "total": 2,
+    "usable": 2
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "sst",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、東京の読みはどれですか。\n\nA. とうきょう\nB. おおさか\nC. きょうと",
+      "1": "中文翻译不会被使用",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "次の文を選べ。\n\nA. 甲\nB. 乙",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "漢字"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "b2aa4b31199f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "とうきょう"
+     },
+     {
+      "key": "B",
+      "text": "おおさか"
+     },
+     {
+      "key": "C",
+      "text": "きょうと"
+     }
+    ],
+    "row": 1,
+    "sheet": "sst",
+    "stem": "次のうち、東京の読みはどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "ac977f8d6252",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 2,
+    "sheet": "sst",
+    "stem": "次の文を選べ。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "sst",
+    "skipped": [],
+    "total": 2,
+    "usable": 2
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

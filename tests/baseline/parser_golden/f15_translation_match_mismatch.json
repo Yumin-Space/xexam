@@ -1,0 +1,1407 @@
+{
+ "input": {
+  "name": "f15_translation_match_mismatch.xlsx",
+  "size": 2494
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "f1183b4c6fb8",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "tr",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "4fe3ca696b41",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 2,
+    "sheet": "tr",
+    "stem": "次のうち、都2はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "249fb55fd5c0",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 3,
+    "sheet": "tr",
+    "stem": "次のうち、都3はどれですか。",
+    "tag": "",
+    "translation": "没有选项字母的翻译。",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "b22b38814d37",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 4,
+    "sheet": "tr",
+    "stem": "次のうち、都4はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋 这是没有括号标记的长翻译，长度超过四十个字符才会被当作翻译使用",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋 这是没有括号标记的长翻译，长度超过四十个字符才会被当作翻译使用"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "507f0a7ca64f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 5,
+    "sheet": "tr",
+    "stem": "次のうち、都5はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "月亮是卫星。",
+    "id": "0262a92ed40e",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 6,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n1. 太阳从东边升起。\n2. 月亮是恒星。",
+    "zh": {
+     "items": [
+      "太阳从东边升起。",
+      "月亮是恒星。"
+     ],
+     "stem": "下面的句子对吗？"
+    }
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "c113c5a56d2d",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽2は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 7,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n1. 太阳从东边升起。",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "7dde62854bc5",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽3は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 8,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n2. 太阳从东边升起。\n1. 月亮是恒星。",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "1eeb6aab9116",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽4は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 9,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "Hotspot: 下面的句子对吗？\n1) 太阳从东边升起。\n续行\n2、月亮是恒星。",
+    "zh": {
+     "items": [
+      "太阳从东边升起。\n续行",
+      "月亮是恒星。"
+     ],
+     "stem": "下面的句子对吗？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "56a14ef5efc4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 10,
+    "sheet": "tr",
+    "stem": "次のうち、都6はどれですか。",
+    "tag": "",
+    "translation": "Ａ. 全角字母\nＢ. 乙",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "46bcdc44a14b",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 11,
+    "sheet": "tr",
+    "stem": "次のうち、都7はどれですか。",
+    "tag": "",
+    "translation": "题干\n\nA\n大阪\nB\n东京\nC\n京都\nD\n名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "cfe0247591bc",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 12,
+    "sheet": "tr",
+    "stem": "次のうち、都8はどれですか。",
+    "tag": "",
+    "translation": "题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "124e177fb8e6",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 13,
+    "sheet": "tr",
+    "stem": "次のうち、都9はどれですか。",
+    "tag": "",
+    "translation": "题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "e6cfcbe2e9a6",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 14,
+    "sheet": "tr",
+    "stem": "次のうち、都10はどれですか。",
+    "tag": "",
+    "translation": "题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "在B列的解析\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "id": "12b2abfea178",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 15,
+    "sheet": "tr",
+    "stem": "次のうち、都11はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "c9e39bad6434",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 16,
+    "sheet": "tr",
+    "stem": "次のうち、都12はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "tr",
+    "skipped": [],
+    "total": 16,
+    "usable": 16
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "tr",
+   "rows": [
+    [
+     1,
+     {
+      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "次のうち、都2はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "次のうち、都3はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n没有选项字母的翻译。",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "次のうち、都4はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋 这是没有括号标记的长翻译，长度超过四十个字符才会被当作翻译使用",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     5,
+     {
+      "0": "次のうち、都5はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "短翻译\nA. 大阪\nB. 东京",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     6,
+     {
+      "0": "ホットスポット\n次の文は正しいですか。\n\n1. 太陽は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+      "1": "【中文翻译】\n热点题：下面的句子对吗？\n1. 太阳从东边升起。\n2. 月亮是恒星。",
+      "2": "【答案】1 是；2 否\n\n【解析·怎么选】月亮是卫星。"
+     }
+    ],
+    [
+     7,
+     {
+      "0": "ホットスポット\n次の文は正しいですか。\n\n1. 太陽2は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+      "1": "【中文翻译】\n热点题：下面的句子对吗？\n1. 太阳从东边升起。",
+      "2": "【答案】1 是；2 否"
+     }
+    ],
+    [
+     8,
+     {
+      "0": "ホットスポット\n次の文は正しいですか。\n\n1. 太陽3は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+      "1": "【中文翻译】\n热点题：下面的句子对吗？\n2. 太阳从东边升起。\n1. 月亮是恒星。",
+      "2": "【答案】1 是；2 否"
+     }
+    ],
+    [
+     9,
+     {
+      "0": "ホットスポット\n次の文は正しいですか。\n\n1. 太陽4は東から昇る。　はい / いいえ\n\n2. 月は恒星である。　はい / いいえ",
+      "1": "【中文翻译】\nHotspot: 下面的句子对吗？\n1) 太阳从东边升起。\n续行\n2、月亮是恒星。",
+      "2": "【答案】1 是；2 否"
+     }
+    ],
+    [
+     10,
+     {
+      "0": "次のうち、都6はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\nＡ. 全角字母\nＢ. 乙",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     11,
+     {
+      "0": "次のうち、都7はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n题干\n\nA\n大阪\nB\n东京\nC\n京都\nD\n名古屋",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     12,
+     {
+      "0": "次のうち、都8はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n【翻译】另一个翻译标题在C列"
+     }
+    ],
+    [
+     13,
+     {
+      "0": "次のうち、都9はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【答案】B\n【中文翻译】\n题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋"
+     }
+    ],
+    [
+     14,
+     {
+      "0": "次のうち、都10はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B\n【中文翻译】第二个翻译标题被忽略"
+     }
+    ],
+    [
+     15,
+     {
+      "0": "次のうち、都11はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "1": "【中文翻译】\n【解析·怎么选】在B列的解析\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     16,
+     {
+      "0": "次のうち、都12はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
+      "2": "【答案】B"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "东京是首都。",
+    "id": "f1183b4c6fb8",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "首都看题干。",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 1,
+    "sheet": "tr",
+    "stem": "次のうち、首都はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "4fe3ca696b41",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 2,
+    "sheet": "tr",
+    "stem": "次のうち、都2はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "249fb55fd5c0",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 3,
+    "sheet": "tr",
+    "stem": "次のうち、都3はどれですか。",
+    "tag": "",
+    "translation": "没有选项字母的翻译。",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "b22b38814d37",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 4,
+    "sheet": "tr",
+    "stem": "次のうち、都4はどれですか。",
+    "tag": "",
+    "translation": "下面哪个是首都？\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋 这是没有括号标记的长翻译，长度超过四十个字符才会被当作翻译使用",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋 这是没有括号标记的长翻译，长度超过四十个字符才会被当作翻译使用"
+     ],
+     "stem": "下面哪个是首都？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "507f0a7ca64f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 5,
+    "sheet": "tr",
+    "stem": "次のうち、都5はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "月亮是卫星。",
+    "id": "0262a92ed40e",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 6,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n1. 太阳从东边升起。\n2. 月亮是恒星。",
+    "zh": {
+     "items": [
+      "太阳从东边升起。",
+      "月亮是恒星。"
+     ],
+     "stem": "下面的句子对吗？"
+    }
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "c113c5a56d2d",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽2は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 7,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n1. 太阳从东边升起。",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "7dde62854bc5",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽3は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 8,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "热点题：下面的句子对吗？\n2. 太阳从东边升起。\n1. 月亮是恒星。",
+    "zh": null
+   },
+   {
+    "answer": [
+     0,
+     1
+    ],
+    "explanation": "",
+    "id": "1eeb6aab9116",
+    "items": [
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "太陽4は東から昇る。"
+     },
+     {
+      "choices": [
+       "はい",
+       "いいえ"
+      ],
+      "text": "月は恒星である。"
+     }
+    ],
+    "kind": "hotspot",
+    "mnemonic": "",
+    "note": "",
+    "options": [],
+    "row": 9,
+    "sheet": "tr",
+    "stem": "次の文は正しいですか。",
+    "tag": "ホットスポット",
+    "translation": "Hotspot: 下面的句子对吗？\n1) 太阳从东边升起。\n续行\n2、月亮是恒星。",
+    "zh": {
+     "items": [
+      "太阳从东边升起。\n续行",
+      "月亮是恒星。"
+     ],
+     "stem": "下面的句子对吗？"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "56a14ef5efc4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 10,
+    "sheet": "tr",
+    "stem": "次のうち、都6はどれですか。",
+    "tag": "",
+    "translation": "Ａ. 全角字母\nＢ. 乙",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "46bcdc44a14b",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 11,
+    "sheet": "tr",
+    "stem": "次のうち、都7はどれですか。",
+    "tag": "",
+    "translation": "题干\n\nA\n大阪\nB\n东京\nC\n京都\nD\n名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "cfe0247591bc",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 12,
+    "sheet": "tr",
+    "stem": "次のうち、都8はどれですか。",
+    "tag": "",
+    "translation": "题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "124e177fb8e6",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 13,
+    "sheet": "tr",
+    "stem": "次のうち、都9はどれですか。",
+    "tag": "",
+    "translation": "题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "e6cfcbe2e9a6",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 14,
+    "sheet": "tr",
+    "stem": "次のうち、都10はどれですか。",
+    "tag": "",
+    "translation": "题干\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "zh": {
+     "options": [
+      "大阪",
+      "东京",
+      "京都",
+      "名古屋"
+     ],
+     "stem": "题干"
+    }
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "在B列的解析\nA. 大阪\nB. 东京\nC. 京都\nD. 名古屋",
+    "id": "12b2abfea178",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 15,
+    "sheet": "tr",
+    "stem": "次のうち、都11はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "c9e39bad6434",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "大阪"
+     },
+     {
+      "key": "B",
+      "text": "東京"
+     },
+     {
+      "key": "C",
+      "text": "京都"
+     },
+     {
+      "key": "D",
+      "text": "名古屋"
+     }
+    ],
+    "row": 16,
+    "sheet": "tr",
+    "stem": "次のうち、都12はどれですか。",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "tr",
+    "skipped": [],
+    "total": 16,
+    "usable": 16
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

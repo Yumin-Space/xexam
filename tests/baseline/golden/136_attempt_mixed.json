@@ -1,0 +1,176 @@
+{
+ "name": "attempt_mixed",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/attempt",
+  "headers": {
+   "Content-Type": "application/json"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "{\"results\": [{\"id\": \"94e4bfe00e8d\", \"correct\": false}, {\"id\": \"ecc1b68f6a2f\", \"correct\": true}, {\"id\": \"768a1f567043\", \"correct\": false}], \"sheets\": [\"demo\"], \"mode\": \"retry\", \"seconds\": 40}"
+ },
+ "status": 200,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:05 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "865",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "865",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 865,
+ "body_md5": "1168c8853a9e034ff4d34a7e61a96ad9",
+ "raw_body": "{\"version\": 1, \"questions\": {\"94e4bfe00e8d\": {\"attempts\": 2, \"correct\": 1, \"wrong\": 1, \"streak\": 0, \"last\": false, \"at\": \"2026-11-10 06:43\"}, \"ecc1b68f6a2f\": {\"attempts\": 2, \"correct\": 2, \"wrong\": 0, \"streak\": 2, \"last\": true, \"at\": \"2026-11-10 06:43\"}, \"768a1f567043\": {\"attempts\": 2, \"correct\": 1, \"wrong\": 1, \"streak\": 0, \"last\": false, \"at\": \"2026-11-10 06:43\"}, \"4ae830b3bd98\": {\"attempts\": 1, \"correct\": 1, \"wrong\": 0, \"streak\": 1, \"last\": true, \"at\": \"2026-11-10 06:43\"}, \"822349f3b921\": {\"attempts\": 1, \"correct\": 1, \"wrong\": 0, \"streak\": 1, \"last\": true, \"at\": \"2026-11-10 06:43\"}}, \"history\": [{\"at\": \"2026-11-10 06:43\", \"sheets\": [\"demo\"], \"mode\": \"retry\", \"total\": 3, \"correct\": 1, \"percent\": 33, \"seconds\": 40}, {\"at\": \"2026-11-10 06:43\", \"sheets\": [\"demo\"], \"mode\": \"all\", \"total\": 5, \"correct\": 5, \"percent\": 100, \"seconds\": 125}], \"masterStreak\": 2}",
+ "json": {
+  "version": 1,
+  "questions": {
+   "94e4bfe00e8d": {
+    "attempts": 2,
+    "correct": 1,
+    "wrong": 1,
+    "streak": 0,
+    "last": false,
+    "at": "2026-11-10 06:43"
+   },
+   "ecc1b68f6a2f": {
+    "attempts": 2,
+    "correct": 2,
+    "wrong": 0,
+    "streak": 2,
+    "last": true,
+    "at": "2026-11-10 06:43"
+   },
+   "768a1f567043": {
+    "attempts": 2,
+    "correct": 1,
+    "wrong": 1,
+    "streak": 0,
+    "last": false,
+    "at": "2026-11-10 06:43"
+   },
+   "4ae830b3bd98": {
+    "attempts": 1,
+    "correct": 1,
+    "wrong": 0,
+    "streak": 1,
+    "last": true,
+    "at": "2026-11-10 06:43"
+   },
+   "822349f3b921": {
+    "attempts": 1,
+    "correct": 1,
+    "wrong": 0,
+    "streak": 1,
+    "last": true,
+    "at": "2026-11-10 06:43"
+   }
+  },
+  "history": [
+   {
+    "at": "2026-11-10 06:43",
+    "sheets": [
+     "demo"
+    ],
+    "mode": "retry",
+    "total": 3,
+    "correct": 1,
+    "percent": 33,
+    "seconds": 40
+   },
+   {
+    "at": "2026-11-10 06:43",
+    "sheets": [
+     "demo"
+    ],
+    "mode": "all",
+    "total": 5,
+    "correct": 5,
+    "percent": 100,
+    "seconds": 125
+   }
+  ],
+  "masterStreak": 2
+ },
+ "normalized": {
+  "version": 1,
+  "questions": {
+   "94e4bfe00e8d": {
+    "attempts": 2,
+    "correct": 1,
+    "wrong": 1,
+    "streak": 0,
+    "last": false,
+    "at": "<VOLATILE>"
+   },
+   "ecc1b68f6a2f": {
+    "attempts": 2,
+    "correct": 2,
+    "wrong": 0,
+    "streak": 2,
+    "last": true,
+    "at": "<VOLATILE>"
+   },
+   "768a1f567043": {
+    "attempts": 2,
+    "correct": 1,
+    "wrong": 1,
+    "streak": 0,
+    "last": false,
+    "at": "<VOLATILE>"
+   },
+   "4ae830b3bd98": {
+    "attempts": 1,
+    "correct": 1,
+    "wrong": 0,
+    "streak": 1,
+    "last": true,
+    "at": "<VOLATILE>"
+   },
+   "822349f3b921": {
+    "attempts": 1,
+    "correct": 1,
+    "wrong": 0,
+    "streak": 1,
+    "last": true,
+    "at": "<VOLATILE>"
+   }
+  },
+  "history": [
+   {
+    "at": "<VOLATILE>",
+    "sheets": [
+     "demo"
+    ],
+    "mode": "retry",
+    "total": 3,
+    "correct": 1,
+    "percent": 33,
+    "seconds": 40
+   },
+   {
+    "at": "<VOLATILE>",
+    "sheets": [
+     "demo"
+    ],
+    "mode": "all",
+    "total": 5,
+    "correct": 5,
+    "percent": 100,
+    "seconds": 125
+   }
+  ],
+  "masterStreak": 2
+ }
+}

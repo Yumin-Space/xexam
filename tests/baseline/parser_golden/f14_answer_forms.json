@@ -1,0 +1,2346 @@
+{
+ "input": {
+  "name": "f14_answer_forms.xlsx",
+  "size": 2409
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "83e19a03fece",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 1,
+    "sheet": "answers",
+    "stem": "答案形式の問題 1",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "883deeb5defd",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 2,
+    "sheet": "answers",
+    "stem": "答案形式の問題 2",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "15e258946c7f",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 3,
+    "sheet": "answers",
+    "stem": "答案形式の問題 3",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "61339289798f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 4,
+    "sheet": "answers",
+    "stem": "答案形式の問題 4",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "75b7644631f4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "理由略",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 6,
+    "sheet": "answers",
+    "stem": "答案形式の問題 6",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "1c1b442e1d17",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 7,
+    "sheet": "answers",
+    "stem": "答案形式の問題 7",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "9a0fcdfdc224",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 8,
+    "sheet": "answers",
+    "stem": "答案形式の問題 8",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B",
+     "C"
+    ],
+    "explanation": "",
+    "id": "02be16f66a5e",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 9,
+    "sheet": "answers",
+    "stem": "答案形式の問題 9",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "74b534588383",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 11,
+    "sheet": "answers",
+    "stem": "答案形式の問題 11",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "79dfeae6da00",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 12,
+    "sheet": "answers",
+    "stem": "答案形式の問題 12",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "cdb0e18f27f8",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 13,
+    "sheet": "answers",
+    "stem": "答案形式の問題 13",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "D"
+    ],
+    "explanation": "",
+    "id": "eca444cc306f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 14,
+    "sheet": "answers",
+    "stem": "答案形式の問題 14",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "88fd6dd91e3c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 15,
+    "sheet": "answers",
+    "stem": "答案形式の問題 15",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "bee2ec120876",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 16,
+    "sheet": "answers",
+    "stem": "答案形式の問題 16",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "57fb0de670c3",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 17,
+    "sheet": "answers",
+    "stem": "答案形式の問題 17",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B"
+    ],
+    "explanation": "",
+    "id": "b349d8f3cc58",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 20,
+    "sheet": "answers",
+    "stem": "答案形式の問題 20",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "294179b30b12",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 21,
+    "sheet": "answers",
+    "stem": "答案形式の問題 21",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "bc899e3b67bc",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 22,
+    "sheet": "answers",
+    "stem": "答案形式の問題 22",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "714481759f6b",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 23,
+    "sheet": "answers",
+    "stem": "答案形式の問題 23",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "选B",
+    "id": "3fd4dffafa24",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 24,
+    "sheet": "answers",
+    "stem": "答案形式の問題 24",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "60be6bf6ae70",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "B",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 26,
+    "sheet": "answers",
+    "stem": "答案形式の問題 26",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B",
+     "C"
+    ],
+    "explanation": "",
+    "id": "6a46b7d6cdee",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 27,
+    "sheet": "answers",
+    "stem": "答案形式の問題 27",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "7747c985e8ca",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 28,
+    "sheet": "answers",
+    "stem": "答案形式の問題 28",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B"
+    ],
+    "explanation": "",
+    "id": "f2b5ccf43618",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 29,
+    "sheet": "answers",
+    "stem": "答案形式の問題 29",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "07002faf639a",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 31,
+    "sheet": "answers",
+    "stem": "答案形式の問題 31",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "d9e3d7d618ff",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 33,
+    "sheet": "answers",
+    "stem": "答案形式の問題 33",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "00202eb8b949",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 36,
+    "sheet": "answers",
+    "stem": "答案形式の問題 B列に答え",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "answers",
+    "skipped": [
+     {
+      "reason": "答案「Ａ」里没有找到选项字母",
+      "row": 5
+     },
+     {
+      "reason": "答案「Z」里没有找到选项字母",
+      "row": 10
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 18
+     },
+     {
+      "reason": "答案「ABCDEFGHI」里没有找到选项字母",
+      "row": 19
+     },
+     {
+      "reason": "答案「(A)(B)」里没有找到选项字母",
+      "row": 25
+     },
+     {
+      "reason": "答案「CAT」里没有找到选项字母",
+      "row": 30
+     },
+     {
+      "reason": "答案 E 不在选项 A、B、C、D 里",
+      "row": 32
+     },
+     {
+      "reason": "答案「1」里没有找到选项字母",
+      "row": 34
+     },
+     {
+      "reason": "答案「甲」里没有找到选项字母",
+      "row": 35
+     },
+     {
+      "reason": "答案「短い翻訳です」里没有找到选项字母",
+      "row": 37
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 38
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 39
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 40
+     }
+    ],
+    "total": 40,
+    "usable": 27
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "answers",
+   "rows": [
+    [
+     1,
+     {
+      "0": "答案形式の問題 1\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "答案形式の問題 2\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】A、C"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "答案形式の問題 3\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】AC"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "答案形式の問題 4\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】b"
+     }
+    ],
+    [
+     5,
+     {
+      "0": "答案形式の問題 5\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】Ａ"
+     }
+    ],
+    [
+     6,
+     {
+      "0": "答案形式の問題 6\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】B（理由略）"
+     }
+    ],
+    [
+     7,
+     {
+      "0": "答案形式の問題 7\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】A, C"
+     }
+    ],
+    [
+     8,
+     {
+      "0": "答案形式の問題 8\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】A/C"
+     }
+    ],
+    [
+     9,
+     {
+      "0": "答案形式の問題 9\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】ABC"
+     }
+    ],
+    [
+     10,
+     {
+      "0": "答案形式の問題 10\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】Z"
+     }
+    ],
+    [
+     11,
+     {
+      "0": "答案形式の問題 11\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】答えはB"
+     }
+    ],
+    [
+     12,
+     {
+      "0": "答案形式の問題 12\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "答案：B"
+     }
+    ],
+    [
+     13,
+     {
+      "0": "答案形式の問題 13\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "Answer: C"
+     }
+    ],
+    [
+     14,
+     {
+      "0": "答案形式の問題 14\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "ANS = D"
+     }
+    ],
+    [
+     15,
+     {
+      "0": "答案形式の問題 15\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "正解：A"
+     }
+    ],
+    [
+     16,
+     {
+      "0": "答案形式の問題 16\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "正确答案: B"
+     }
+    ],
+    [
+     17,
+     {
+      "0": "答案形式の問題 17\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "B"
+     }
+    ],
+    [
+     18,
+     {
+      "0": "答案形式の問題 18\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】"
+     }
+    ],
+    [
+     19,
+     {
+      "0": "答案形式の問題 19\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】ABCDEFGHI"
+     }
+    ],
+    [
+     20,
+     {
+      "0": "答案形式の問題 20\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】A、A、B"
+     }
+    ],
+    [
+     21,
+     {
+      "0": "答案形式の問題 21\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】\nB"
+     }
+    ],
+    [
+     22,
+     {
+      "0": "答案形式の問題 22\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【正解】B"
+     }
+    ],
+    [
+     23,
+     {
+      "0": "答案形式の問題 23\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案与解析】C"
+     }
+    ],
+    [
+     24,
+     {
+      "0": "答案形式の問題 24\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【解析】选B\n【答案】A"
+     }
+    ],
+    [
+     25,
+     {
+      "0": "答案形式の問題 25\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】(A)(B)"
+     }
+    ],
+    [
+     26,
+     {
+      "0": "答案形式の問題 26\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】A（B）"
+     }
+    ],
+    [
+     27,
+     {
+      "0": "答案形式の問題 27\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】 A B C"
+     }
+    ],
+    [
+     28,
+     {
+      "0": "答案形式の問題 28\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】Option B"
+     }
+    ],
+    [
+     29,
+     {
+      "0": "答案形式の問題 29\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】BA"
+     }
+    ],
+    [
+     30,
+     {
+      "0": "答案形式の問題 30\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】CAT"
+     }
+    ],
+    [
+     31,
+     {
+      "0": "答案形式の問題 31\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】a、c"
+     }
+    ],
+    [
+     32,
+     {
+      "0": "答案形式の問題 32\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】E"
+     }
+    ],
+    [
+     33,
+     {
+      "0": "答案形式の問題 33\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】B。"
+     }
+    ],
+    [
+     34,
+     {
+      "0": "答案形式の問題 34\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】1"
+     }
+    ],
+    [
+     35,
+     {
+      "0": "答案形式の問題 35\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "【答案】甲"
+     }
+    ],
+    [
+     36,
+     {
+      "0": "答案形式の問題 B列に答え\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "1": "B"
+     }
+    ],
+    [
+     37,
+     {
+      "0": "答案形式の問題 C空B翻訳\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "1": "短い翻訳です"
+     }
+    ],
+    [
+     38,
+     {
+      "0": "答案形式の問題 長すぎる\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "Bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+     }
+    ],
+    [
+     39,
+     {
+      "0": "答案形式の問題 C改行\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁",
+      "2": "B\nそのほか"
+     }
+    ],
+    [
+     40,
+     {
+      "0": "答案形式の問題 C空2\n\nA. 甲\nB. 乙\nC. 丙\nD. 丁"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "83e19a03fece",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 1,
+    "sheet": "answers",
+    "stem": "答案形式の問題 1",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "883deeb5defd",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 2,
+    "sheet": "answers",
+    "stem": "答案形式の問題 2",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "15e258946c7f",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 3,
+    "sheet": "answers",
+    "stem": "答案形式の問題 3",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "61339289798f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 4,
+    "sheet": "answers",
+    "stem": "答案形式の問題 4",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "75b7644631f4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "理由略",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 6,
+    "sheet": "answers",
+    "stem": "答案形式の問題 6",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "1c1b442e1d17",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 7,
+    "sheet": "answers",
+    "stem": "答案形式の問題 7",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "9a0fcdfdc224",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 8,
+    "sheet": "answers",
+    "stem": "答案形式の問題 8",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B",
+     "C"
+    ],
+    "explanation": "",
+    "id": "02be16f66a5e",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 9,
+    "sheet": "answers",
+    "stem": "答案形式の問題 9",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "74b534588383",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 11,
+    "sheet": "answers",
+    "stem": "答案形式の問題 11",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "79dfeae6da00",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 12,
+    "sheet": "answers",
+    "stem": "答案形式の問題 12",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "cdb0e18f27f8",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 13,
+    "sheet": "answers",
+    "stem": "答案形式の問題 13",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "D"
+    ],
+    "explanation": "",
+    "id": "eca444cc306f",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 14,
+    "sheet": "answers",
+    "stem": "答案形式の問題 14",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "88fd6dd91e3c",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 15,
+    "sheet": "answers",
+    "stem": "答案形式の問題 15",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "bee2ec120876",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 16,
+    "sheet": "answers",
+    "stem": "答案形式の問題 16",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "57fb0de670c3",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 17,
+    "sheet": "answers",
+    "stem": "答案形式の問題 17",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B"
+    ],
+    "explanation": "",
+    "id": "b349d8f3cc58",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 20,
+    "sheet": "answers",
+    "stem": "答案形式の問題 20",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "294179b30b12",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 21,
+    "sheet": "answers",
+    "stem": "答案形式の問題 21",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "bc899e3b67bc",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 22,
+    "sheet": "answers",
+    "stem": "答案形式の問題 22",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "714481759f6b",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 23,
+    "sheet": "answers",
+    "stem": "答案形式の問題 23",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "选B",
+    "id": "3fd4dffafa24",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 24,
+    "sheet": "answers",
+    "stem": "答案形式の問題 24",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "60be6bf6ae70",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "B",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 26,
+    "sheet": "answers",
+    "stem": "答案形式の問題 26",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B",
+     "C"
+    ],
+    "explanation": "",
+    "id": "6a46b7d6cdee",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 27,
+    "sheet": "answers",
+    "stem": "答案形式の問題 27",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "7747c985e8ca",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 28,
+    "sheet": "answers",
+    "stem": "答案形式の問題 28",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "B"
+    ],
+    "explanation": "",
+    "id": "f2b5ccf43618",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 29,
+    "sheet": "answers",
+    "stem": "答案形式の問題 29",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A",
+     "C"
+    ],
+    "explanation": "",
+    "id": "07002faf639a",
+    "items": [],
+    "kind": "multi",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 31,
+    "sheet": "answers",
+    "stem": "答案形式の問題 31",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "d9e3d7d618ff",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 33,
+    "sheet": "answers",
+    "stem": "答案形式の問題 33",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "00202eb8b949",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     },
+     {
+      "key": "D",
+      "text": "丁"
+     }
+    ],
+    "row": 36,
+    "sheet": "answers",
+    "stem": "答案形式の問題 B列に答え",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "answers",
+    "skipped": [
+     {
+      "reason": "答案「Ａ」里没有找到选项字母",
+      "row": 5
+     },
+     {
+      "reason": "答案「Z」里没有找到选项字母",
+      "row": 10
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 18
+     },
+     {
+      "reason": "答案「ABCDEFGHI」里没有找到选项字母",
+      "row": 19
+     },
+     {
+      "reason": "答案「(A)(B)」里没有找到选项字母",
+      "row": 25
+     },
+     {
+      "reason": "答案「CAT」里没有找到选项字母",
+      "row": 30
+     },
+     {
+      "reason": "答案 E 不在选项 A、B、C、D 里",
+      "row": 32
+     },
+     {
+      "reason": "答案「1」里没有找到选项字母",
+      "row": 34
+     },
+     {
+      "reason": "答案「甲」里没有找到选项字母",
+      "row": 35
+     },
+     {
+      "reason": "答案「短い翻訳です」里没有找到选项字母",
+      "row": 37
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 38
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 39
+     },
+     {
+      "reason": "没有找到答案（C 列要写「【答案】…」）",
+      "row": 40
+     }
+    ],
+    "total": 40,
+    "usable": 27
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

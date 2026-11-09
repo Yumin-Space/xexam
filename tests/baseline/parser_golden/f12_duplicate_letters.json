@@ -1,0 +1,386 @@
+{
+ "input": {
+  "name": "f12_duplicate_letters.xlsx",
+  "size": 1832
+ },
+ "meta": {
+  "expat": "expat_2.5.0",
+  "platform": "win32",
+  "python": "3.10.11",
+  "server_md5": "48306e1f716d5dadeeedb63e805cebae",
+  "xlsx_parser_md5": "239b594ef8cbba5206e9a6f116178afe"
+ },
+ "parse": {
+  "ok": true,
+  "questions": [
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "583c96653cbc",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙\nB. 乙二"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     }
+    ],
+    "row": 1,
+    "sheet": "dups",
+    "stem": "重複A",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "3078bc847f63",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲\nA. 甲二"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 2,
+    "sheet": "dups",
+    "stem": "重複A2",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "2e680849e4b3",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙\nD. 丁"
+     }
+    ],
+    "row": 3,
+    "sheet": "dups",
+    "stem": "欠番",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "67bdf9f2f1e4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲\n続き"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙\n最後"
+     }
+    ],
+    "row": 8,
+    "sheet": "dups",
+    "stem": "複数行の選択肢",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dups",
+    "skipped": [
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 4
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 5
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 6
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 7
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 9
+     }
+    ],
+    "total": 9,
+    "usable": 4
+   }
+  ]
+ },
+ "reader": [
+  {
+   "name": "dups",
+   "rows": [
+    [
+     1,
+     {
+      "0": "重複A\n\nA. 甲\nB. 乙\nB. 乙二\nC. 丙",
+      "2": "【答案】C"
+     }
+    ],
+    [
+     2,
+     {
+      "0": "重複A2\n\nA. 甲\nA. 甲二\nB. 乙",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     3,
+     {
+      "0": "欠番\n\nA. 甲\nB. 乙\nD. 丁",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     4,
+     {
+      "0": "順序違い\n\nB. 乙\nA. 甲\nC. 丙",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     5,
+     {
+      "0": "選択肢が1つだけ\n\nA. 甲",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     6,
+     {
+      "0": "空の選択肢\n\nA.\nB. 乙",
+      "2": "【答案】B"
+     }
+    ],
+    [
+     7,
+     {
+      "0": "空の選択肢2\n\nA. 甲\nB.\nC. 丙",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     8,
+     {
+      "0": "複数行の選択肢\n\nA. 甲\n続き\nB. 乙\n\nC. 丙\n最後",
+      "2": "【答案】A"
+     }
+    ],
+    [
+     9,
+     {
+      "0": "Aがない\n\nB. 乙\nC. 丙",
+      "2": "【答案】B"
+     }
+    ]
+   ]
+  }
+ ],
+ "server_outcome": {
+  "questions": [
+   {
+    "answer": [
+     "C"
+    ],
+    "explanation": "",
+    "id": "583c96653cbc",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙\nB. 乙二"
+     },
+     {
+      "key": "C",
+      "text": "丙"
+     }
+    ],
+    "row": 1,
+    "sheet": "dups",
+    "stem": "重複A",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "3078bc847f63",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲\nA. 甲二"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     }
+    ],
+    "row": 2,
+    "sheet": "dups",
+    "stem": "重複A2",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "B"
+    ],
+    "explanation": "",
+    "id": "2e680849e4b3",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲"
+     },
+     {
+      "key": "B",
+      "text": "乙\nD. 丁"
+     }
+    ],
+    "row": 3,
+    "sheet": "dups",
+    "stem": "欠番",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   },
+   {
+    "answer": [
+     "A"
+    ],
+    "explanation": "",
+    "id": "67bdf9f2f1e4",
+    "items": [],
+    "kind": "single",
+    "mnemonic": "",
+    "note": "",
+    "options": [
+     {
+      "key": "A",
+      "text": "甲\n続き"
+     },
+     {
+      "key": "B",
+      "text": "乙"
+     },
+     {
+      "key": "C",
+      "text": "丙\n最後"
+     }
+    ],
+    "row": 8,
+    "sheet": "dups",
+    "stem": "複数行の選択肢",
+    "tag": "",
+    "translation": "",
+    "zh": null
+   }
+  ],
+  "sheets": [
+   {
+    "name": "dups",
+    "skipped": [
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 4
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 5
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 6
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 7
+     },
+     {
+      "reason": "没有找到选项（A、B、C…）或带「はい / いいえ」的小项",
+      "row": 9
+     }
+    ],
+    "total": 9,
+    "usable": 4
+   }
+  ],
+  "status": 200
+ },
+ "upload_check": {
+  "ok": true
+ }
+}

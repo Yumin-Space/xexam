@@ -1,0 +1,43 @@
+{
+ "name": "upload_zip_without_workbook",
+ "note": "",
+ "request": {
+  "method": "POST",
+  "path": "/api/upload",
+  "headers": {
+   "Content-Type": "application/octet-stream",
+   "X-Filename": "demo.xlsx"
+  },
+  "host_header": "127.0.0.1:8701",
+  "body": "PK\u0003\u0004\u0014\u0000\u0000\u0000\b\u0000b5j]\u0013-C\u001b\u0007\u0000\u0000\u0000,\u0001\u0000\u0000\t\u0000\u0000\u0000hello.txt��\u0018\u0005�\u0002\u0000PK\u0001\u0002\u0014\u0000\u0014\u0000\u0000\u0000\b\u0000b5j]\u0013-C\u001b\u0007\u0000\u0000\u0000,\u0001\u0000\u0000\t\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000�\u0001\u0000\u0000\u0000\u0000hello.txtPK\u0005\u0006\u0000\u0000\u0000\u0000\u0001\u0000\u0001\u00007\u0000\u0000\u0000.\u0000\u0000\u0000\u0000\u0000"
+ },
+ "status": 400,
+ "http_version": "HTTP/1.0",
+ "headers": {
+  "server": "Xexam/0.2 Python/3.10.11",
+  "date": "Mon, 09 Nov 2026 21:43:04 GMT",
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "86",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "headers_stable": {
+  "content-type": "application/json; charset=utf-8",
+  "content-length": "86",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff"
+ },
+ "volatile_headers": [
+  "date",
+  "server"
+ ],
+ "body_len": 86,
+ "body_md5": "988e25786fec4adf833127332bd1b04b",
+ "raw_body": "{\"error\": \"这个文件里没有 Excel 工作簿的内容，不是有效的 .xlsx。\"}",
+ "json": {
+  "error": "这个文件里没有 Excel 工作簿的内容，不是有效的 .xlsx。"
+ },
+ "normalized": {
+  "error": "这个文件里没有 Excel 工作簿的内容，不是有效的 .xlsx。"
+ }
+}
