@@ -1,0 +1,113 @@
+name: Build and publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 默认不给任何权限，下面每个 job 只开自己需要的
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository_owner }}/ccarp-quiz
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write          # 推送到 ghcr.io 需要
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      # 先构建一份本地镜像做冒烟测试：不通过就不会发布
+      - name: Build (local, for smoke test)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: ccarp-quiz:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -eu
+          # 挂载目录给任意用户可写：模拟 Docker Desktop 挂载进来的目录
+          mkdir -p "$RUNNER_TEMP/data" && chmod 777 "$RUNNER_TEMP/data"
+          docker run -d --name t -p 127.0.0.1:18765:8765 -v "$RUNNER_TEMP/data:/data" ccarp-quiz:test
+
+          ok=0
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1; then ok=1; break; fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then docker logs t; echo "服务没有在 30 秒内启动"; exit 1; fi
+
+          echo "容器里运行的用户："; docker exec t id
+          test "$(docker exec t id -u)" != 0 || { echo "容器不应该以 root 运行"; exit 1; }
+
+          curl -fsS http://127.0.0.1:18765/ | grep -q "CCARP" || { echo "首页内容不对"; exit 1; }
+          curl -fsS http://127.0.0.1:18765/api/info | grep -q '"bankCount": 0' || { echo "全新数据目录的题数应为 0"; exit 1; }
+
+          # 陌生 Host 必须被拒绝（防 DNS 重绑定）
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://127.0.0.1:18765/api/bank)
+          test "$code" = 403 || { echo "陌生 Host 应返回 403，实际 $code"; exit 1; }
+
+          # 数据库写到了挂载目录里
+          test -f "$RUNNER_TEMP/data/ccarp.db" || { echo "没有在挂载目录里生成 ccarp.db"; ls -la "$RUNNER_TEMP/data"; exit 1; }
+
+          # 重启后数据库仍在、服务仍能起来
+          docker restart t
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1 && break; sleep 1; done
+          curl -fsS http://127.0.0.1:18765/api/info >/dev/null || { docker logs t; exit 1; }
+
+          # 健康检查状态
+          for i in $(seq 1 40); do
+            s=$(docker inspect -f '{{.State.Health.Status}}' t)
+            [ "$s" = healthy ] && break
+            sleep 2
+          done
+          echo "健康状态：$s"
+          test "$s" = healthy || { docker logs t; exit 1; }
+          docker rm -f t >/dev/null
+
+      # 只有 main 分支和 v* 标签才发布；拉取请求只构建和测试
+      - name: Log in to ghcr.io
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image tags
+        if: github.event_name != 'pull_request'
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
