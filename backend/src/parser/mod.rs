@@ -7,17 +7,31 @@
 //!
 //! 行为依据：`docs/audit/xlsx-parser.md`、`tests/baseline/parser_golden/`（50 个夹具的旧版输出）、
 //! `tests/baseline/golden/id_vectors.json`（85 条 id 断言）。
+//!
+//! 内部分层：`zip_guard`（zip 层与上限）→ `xml`（quick-xml 事件 → 与 ElementTree 等价的小树）→
+//! `workbook`（工作簿 / 共享字符串 / 单元格）→ `question`（纯字符串的题目解析）。
 use crate::error::ImportError;
 use crate::models::ParsedWorkbook;
 
-pub fn check_xlsx(_data: &[u8]) -> Result<(), ImportError> {
-    unimplemented!("parser::check_xlsx")
+mod digits_table;
+mod id;
+pub mod py_space;
+mod question;
+mod workbook;
+mod xml;
+mod zip_guard;
+
+/// 上传内容检查：必须像一个正常的 .xlsx，没有压缩炸弹，没有 DOCTYPE / 实体声明。
+pub fn check_xlsx(data: &[u8]) -> Result<(), ImportError> {
+    zip_guard::check_xlsx(data)
 }
 
-pub fn parse_workbook(_data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
-    unimplemented!("parser::parse_workbook")
+/// 解析整份工作簿（`sheets` + `questions`）。
+pub fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
+    workbook::parse_workbook(data)
 }
 
-pub fn make_id(_sheet: &str, _stem: &str, _first: &str) -> String {
-    unimplemented!("parser::make_id")
+/// 题目 id：`sha1(sheet + "\n" + 去空白(stem)[:300] + "|" + 去空白(first)[:200])` 的前 12 位十六进制。
+pub fn make_id(sheet: &str, stem: &str, first: &str) -> String {
+    id::make_id(sheet, stem, first)
 }

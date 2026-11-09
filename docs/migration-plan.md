@@ -170,8 +170,9 @@ docs/       见 §9
 | 5 回归 | ⬜ |
 | 6 文档 | ⬜ |
 
-## 11. 开放事项（需要业主在方便时看）
+## 11. 开放事项
 
-1. **GHCR 写权限**：v0.2.2 的 `publish` 被拒（`permission_denied: write_package`），而 v0.2、v0.2.1 成功。令牌权限和代码都一样，原因很可能在包的设置里（见 [GitHub 文档](https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions) 所说的"Manage Actions access"）。需要业主在 GitHub → 个人资料 → Packages → `xexam` → Package settings → Manage Actions access 里确认本仓库有 **Write**。
-2. 业主真实数据库的副本（可选）：有了才能做一次真实数据的差分；没有就只用合成数据。
+1. **GHCR 写权限（已解决）**：v0.2.2 的 `publish` 曾被拒（`permission_denied: write_package`），而 v0.2、v0.2.1 成功。原因在包的设置里：业主在 GitHub → Packages → `xexam` → Package settings → Manage Actions access 里把本仓库的角色设为 **Admin** 之后，重跑通过。新镜像（`xexam-web`、`xexam-backend`）第一次发布时也要做同样的设置。
+2. 业主真实数据库的副本（可选）：有了才能做一次真实数据的差分；没有就只用合成数据。切换前**不由我执行**。
 3. v0.2 的 Release 已手动补建；之后由流水线自动建。
+4. 新栈的 compose 文件目前叫 `docker-compose.modern.yml`（和旧的 `docker-compose.yml` 并存，不会改变业主现在拉到的东西）。切换提交时才改名。

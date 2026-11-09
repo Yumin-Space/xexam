@@ -1,0 +1,57 @@
+//! 题目 id 的 85 条断言（旧版生成的向量）。
+use serde_json::Value;
+use xexam_backend::parser::make_id;
+
+fn vectors() -> Value {
+    let p = "C:/Users/Min/Desktop/Claude/xexam/tests/baseline/golden/id_vectors.json";
+    serde_json::from_str(&std::fs::read_to_string(p).expect("read vectors")).expect("json")
+}
+
+#[test]
+fn direct_make_id_vectors() {
+    let v = vectors();
+    let list = v.get("vectors").and_then(Value::as_array).expect("vectors");
+    let mut n = 0;
+    for x in list {
+        if x.get("kind").and_then(Value::as_str) != Some("make_id") {
+            continue;
+        }
+        let s = |k: &str| x.get(k).and_then(Value::as_str).expect(k);
+        assert_eq!(
+            make_id(s("sheet"), s("stem"), s("first")),
+            s("id"),
+            "vector {}",
+            s("name")
+        );
+        n += 1;
+    }
+    assert_eq!(n, 54);
+}
+
+/// pipeline 用例里每个 id 也是 (sheet, stem, first) 的 make_id（去重后缀在 workbook 层，由 golden 夹具 f18 覆盖）。
+#[test]
+fn pipeline_ids_without_suffix() {
+    let v = vectors();
+    let list = v.get("vectors").and_then(Value::as_array).expect("vectors");
+    let mut n = 0;
+    for x in list {
+        if x.get("kind").and_then(Value::as_str) != Some("pipeline") {
+            continue;
+        }
+        for id in x.get("ids").and_then(Value::as_array).expect("ids") {
+            let s = |k: &str| id.get(k).and_then(Value::as_str).expect(k);
+            let want = s("id");
+            let base = make_id(s("sheet"), s("stem"), s("first"));
+            let base_of_want = want.split('-').next().unwrap_or("");
+            assert_eq!(
+                base,
+                base_of_want,
+                "pipeline {} row {}",
+                x.get("name").and_then(Value::as_str).unwrap_or("?"),
+                id.get("row").unwrap_or(&Value::Null)
+            );
+            n += 1;
+        }
+    }
+    assert_eq!(n, 31);
+}

@@ -80,7 +80,9 @@ pub enum AppError {
 impl From<ImportError> for AppError {
     fn from(e: ImportError) -> Self {
         match e {
-            ImportError::Unexpected => AppError::BadRequest("读取这个 Excel 时出错：文件内容不符合预期".to_string()),
+            ImportError::Unexpected => {
+                AppError::BadRequest("读取这个 Excel 时出错：文件内容不符合预期".to_string())
+            }
             other => AppError::BadRequest(other.to_string()),
         }
     }

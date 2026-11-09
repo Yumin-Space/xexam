@@ -211,7 +211,7 @@ class Ctx:
             row['body'] = r.text()[:140].replace('\n', ' ')
         self.results.append(row)
         if not self.quiet:
-            print('%-6s %-62s %-8s %s%s' % (pid, desc[:62], state, '' if ok else 'SURPRISE(want %s) ' % want, note[:60]))
+            print('%-6s %-62s %-8s %s%s' % (pid, desc[:62], state, '' if ok else 'SURPRISE(want %s) ' % want, (note or '')[:60]))
         return r
 
 
