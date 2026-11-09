@@ -1,0 +1,21 @@
+# 个人数据：题库（考试题）和学习记录，不要提交
+data/
+progress.json
+*.xlsx
+*.xls
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# 运行产生的文件
+__pycache__/
+*.pyc
+.claude/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+~$*

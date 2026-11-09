@@ -1,0 +1,12 @@
+data
+progress.json
+*.xlsx
+__pycache__
+*.pyc
+.claude
+.git
+使用说明.txt
+start.bat
+Dockerfile
+docker-compose.yml
+.dockerignore

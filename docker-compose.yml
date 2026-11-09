@@ -1,0 +1,16 @@
+services:
+  ccarp:
+    build: .
+    image: ccarp-quiz:latest
+    container_name: ccarp-quiz
+    restart: unless-stopped
+    ports:
+      # 只绑定本机：同一台电脑上的浏览器才能访问。
+      # 想让局域网里的手机/平板也能用，把下面这行改成  "8765:8765"，
+      # 并在 environment 里加  CCARP_ALLOWED_HOSTS: "你的电脑IP"  （注意这个服务没有登录，只在可信的家庭网络里这样做）
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # 所有数据（题库 + 学习记录）都在这个文件夹的 ccarp.db 里。备份 = 复制这个文件夹。
+      - ./data:/data
+    environment:
+      TZ: Asia/Tokyo
