@@ -107,7 +107,11 @@ class Store:
                 self.conn.execute('ROLLBACK')
                 raise
             else:
-                self.conn.execute('COMMIT')
+                try:
+                    self.conn.execute('COMMIT')
+                except BaseException:
+                    self.conn.execute('ROLLBACK')
+                    raise
 
     def _set_meta(self, key, value, only_if_missing=False):
         with self.lock:
@@ -285,16 +289,22 @@ class Store:
         if not os.path.isfile(path):
             return False, '没有找到旧的 progress.json'
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, 'r', encoding='utf-8-sig') as f:
                 d = json.load(f)
             qs, hist = d['questions'], d['history']
             assert isinstance(qs, dict) and isinstance(hist, list)
-        except (OSError, ValueError, KeyError, AssertionError) as e:
+        except (OSError, ValueError, KeyError, AssertionError, TypeError, AttributeError) as e:
             return False, '旧的 progress.json 读不了：%s' % e
         with self.lock:
             has = self.conn.execute('SELECT (SELECT COUNT(*) FROM stats) + (SELECT COUNT(*) FROM attempts) n').fetchone()['n']
         if has:
             return False, '数据库里已经有学习记录，没有覆盖'
+        try:
+            return self._migrate_rows(qs, hist)
+        except (TypeError, ValueError, KeyError, AttributeError) as e:
+            return False, '旧的 progress.json 里有格式不对的内容，没有迁移：%s' % e
+
+    def _migrate_rows(self, qs, hist):
         with self.tx() as c:
             for qid, r in qs.items():
                 c.execute('INSERT OR REPLACE INTO stats(question_id, attempts, correct, wrong, streak, last, at) VALUES(?,?,?,?,?,?,?)',

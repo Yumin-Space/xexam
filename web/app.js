@@ -1,8 +1,8 @@
 'use strict';
 /* Xexam —— 前端。所有来自 Excel 的文字都用 textContent 写入页面，不拼 HTML。 */
 
-const LS_KEY = 'ccarp.session.v1';
-const LS_LANG = 'ccarp.lang.v1';
+const LS_KEY = 'xexam.session.v1';
+const LS_LANG = 'xexam.lang.v1';
 const MODE_NAME = { all: '全部题目', weak: '错题本', retry: '重做错题' };
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -60,12 +60,19 @@ function shuffle(arr) {
 }
 
 let toastTimer;
-function toast(msg) {
+function toast(msg, ms = 3400) {
   const t = document.getElementById('toast');
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => t.classList.remove('show'), 3400);
+  toastTimer = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+// 和服务端（Python 的 round）一致：恰好 .5 时取偶数，这样成绩页和学习记录里的百分比不会差 1
+function roundHalfEven(x) {
+  const f = Math.floor(x), d = x - f;
+  if (Math.abs(d - 0.5) < 1e-9) return f % 2 === 0 ? f : f + 1;
+  return Math.round(x);
 }
 
 function ask({ title, body, ok = '确定', cancel = '取消', danger = false }) {
@@ -76,6 +83,7 @@ function ask({ title, body, ok = '确定', cancel = '取消', danger = false }) 
       h('div', { class: 'acts' },
         h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, cancel),
         h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), type: 'button', onclick: () => d.close('ok') }, ok)));
+    if (typeof d.showModal !== 'function') { resolve(window.confirm(title + '\n' + body)); return; }
     d.addEventListener('close', () => { d.remove(); resolve(d.returnValue === 'ok'); });
     document.body.append(d);
     d.showModal();
@@ -245,18 +253,18 @@ async function submit() {
     return { q, ans, correct: grade(q, ans) };
   });
   const seconds = Math.floor(elapsed(se));
-  clearSaved();
-  S.session = null;
   let prev = null;
   try {
     S.progress = await post('/api/attempt', {
       results: results.map((r) => ({ id: r.q.id, correct: r.correct })), sheets: se.sheets, mode: se.mode, seconds,
     });
+    clearSaved();
     const hist = S.progress.history || [];
     if (hist[1] && hist[1].mode === se.mode) prev = hist[1];
   } catch (e) {
-    toast('成绩没能保存到学习记录（本地服务没连上），这一场的结果仍然可以看');
+    toast('成绩没能保存到学习记录（服务没连上，或登录已过期）。这一场的答案还留在浏览器里：刷新页面重新登录后，在首页「继续作答」里再交一次卷', 7000);
   }
+  S.session = null;
   S.result = { results, seconds, mode: se.mode, prev };
   S.rvFilter = 'wrong';
   S.view = 'result';
@@ -290,9 +298,10 @@ function renderHome() {
     cfg.count = !v || v >= n ? null : Math.max(1, v);
     refreshSetup();
   });
-  startBtn.addEventListener('click', () => {
+  startBtn.addEventListener('click', async () => {
     const p = pool();
     if (!p.length) return;
+    if (loadSaved() && !(await ask({ title: '放弃没交卷的考试？', body: '有一场暂存的考试还没交卷。现在开始新的考试，会把它覆盖掉。', ok: '开始新考试', cancel: '回去继续', danger: true }))) return;
     let n = parseInt(countInput.value, 10);
     if (!(n >= 1)) n = p.length;
     n = Math.min(n, p.length);
@@ -449,11 +458,13 @@ async function uploadFile(file) {
       method: 'POST', body: file,
       headers: { 'Content-Type': 'application/octet-stream', 'X-Filename': encodeURIComponent(file.name) },
     });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok) A.error = d.error || `上传失败（HTTP ${r.status}）。`;
+    const isJson = /json/i.test(r.headers.get('Content-Type') || '');
+    const d = isJson ? await r.json().catch(() => ({})) : {};
+    if (!r.ok) A.error = d.error || `上传失败（HTTP ${r.status}）。${isJson ? '' : '如果你是通过域名访问的，可能是登录已过期，请刷新页面重新登录。'}`;
+    else if (!isJson || !d.token) A.error = '服务返回的不是预期的内容。如果你是通过域名访问的，可能是登录已过期，请刷新页面重新登录后再上传。';
     else A.preview = d;
   } catch (e) {
-    A.error = '上传失败：连不上服务。请确认程序（或 Docker 容器）还在运行，然后重试。';
+    A.error = '上传失败：连不上服务。请确认程序（或 Docker 容器）还在运行；如果你是通过域名访问的，也可能是登录已过期，请刷新页面重新登录。';
   }
   A.busy = false;
   if (S.view === 'admin') { render(); window.scrollTo(0, 0); }
@@ -480,7 +491,7 @@ async function confirmImport() {
     A.preview = null;
     A.imports = (await fetch('/api/imports').then((r) => r.json()).catch(() => ({ imports: A.imports }))).imports;
   } catch (e) {
-    let msg = '导入失败，题库没有任何改动。';
+    let msg = '导入失败。如果你是通过域名访问的，可能是登录已过期：请刷新页面重新登录，再重新上传。（如果刚才网络断了，导入可能已经完成，请看看题库里的题数。）';
     try { const j = JSON.parse(String(e.message).replace(/^HTTP \d+:\s*/, '')); if (j.error) msg = j.error; } catch (x) { /* 用默认 */ }
     A.error = msg;
     A.preview = null;
@@ -715,7 +726,7 @@ function toggleFlag(q) {
 }
 
 document.addEventListener('keydown', (e) => {
-  if (S.view !== 'quiz' || !S.session || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (S.view !== 'quiz' || !S.session || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
   if (document.querySelector('dialog[open]')) return;
   if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
   const se = S.session, q = se.qs[se.idx];
@@ -733,7 +744,7 @@ document.addEventListener('keydown', (e) => {
 function renderResult() {
   const R = S.result, n = R.results.length;
   const good = R.results.filter((r) => r.correct).length, wrong = n - good;
-  const pct = Math.round(100 * good / n);
+  const pct = roundHalfEven(100 * good / n);
 
   const list = h('div', { class: 'rvlist' });
   const segW = h('button', { type: 'button', 'aria-pressed': 'true' }, `只看错题（${wrong}）`);
@@ -836,7 +847,7 @@ function render() {
   let view;
   if (S.view === 'loading') view = h('div', { class: 'wrap' }, h('p', { class: 'dim' }, '正在读取题库…'));
   else if (S.view === 'fatal') view = h('div', { class: 'wrap' }, h('header', { class: 'top' }, brand()),
-    h('div', { class: 'err' }, h('p', null, '连不上服务。请确认程序（或 Docker 容器）还在运行，然后刷新这个页面。')));
+    h('div', { class: 'err' }, h('p', null, '连不上服务。请确认程序（或 Docker 容器）还在运行，然后刷新这个页面。如果你是通过域名访问的，也可能是登录已过期，刷新后重新登录即可。')));
   else if (S.view === 'admin') view = renderAdmin();
   else if (S.view === 'quiz' && S.session) view = renderQuiz();
   else if (S.view === 'result' && S.result) view = renderResult();

@@ -2,11 +2,11 @@
 # -*- coding: utf-8 -*-
 """Xexam - 服务端（只用 Python 标准库）。
 
-题库和学习记录都保存在 SQLite（<data目录>/ccarp.db）。更新题库：在管理页上传 Excel。
+题库和学习记录都保存在 SQLite（<data目录>/xexam.db）。更新题库：在管理页上传 Excel。
 
 用法：
     python server.py                         # 数据放在 ./data，自动打开浏览器
-    python server.py --data D:\\ccarp-data   # 指定数据目录
+    python server.py --data D:\\xexam-data   # 指定数据目录
     python server.py --import 题库.xlsx      # 不启动服务，直接把 Excel 导入数据库后退出
 Docker 里用：python server.py --host 0.0.0.0 --data /data --no-browser
 """
@@ -17,6 +17,7 @@ import os
 import platform
 import re
 import secrets
+import signal
 import sys
 import threading
 import time
@@ -84,6 +85,42 @@ def check_xlsx(data):
                 raise ValueError('文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。')
 
 
+def host_name(value):
+    """从 Host 头（或 URL 的 netloc）里取出主机名：去掉端口，保留 IPv6 的方括号内容，转小写，去掉末尾的点。"""
+    h = (value or '').strip().lower()
+    if h.startswith('['):
+        end = h.find(']')
+        name = h[1:end] if end > 0 else h
+    else:
+        name = h.rsplit(':', 1)[0] if ':' in h else h
+    return name.rstrip('.')
+
+
+def origin_host(origin):
+    """Origin 头形如 https://example.com:8443 ；返回主机名。不是 http/https 的（比如 null、file://）返回 None。"""
+    o = (origin or '').strip()
+    low = o.lower()
+    for scheme in ('http://', 'https://'):
+        if low.startswith(scheme):
+            rest = o[len(scheme):].split('/', 1)[0]
+            return host_name(rest) if rest and '@' not in rest else None
+    return None
+
+
+def parse_allowed_hosts(text):
+    """XEXAM_ALLOWED_HOSTS：逗号分隔。每一项可以带端口或 http(s):// 前缀，统一成主机名。"""
+    out = set()
+    for item in re.split(r'[,\s;]+', text or ''):
+        item = item.strip()
+        if not item:
+            continue
+        item = item.split('://', 1)[-1].split('/', 1)[0]
+        n = host_name(item)
+        if n:
+            out.add(n)
+    return out
+
+
 def clean_filename(raw):
     name = unquote(raw or '').replace('\\', '/').split('/')[-1]
     name = re.sub(r'[\x00-\x1f\x7f]', '', name).strip()
@@ -94,16 +131,20 @@ def clean_filename(raw):
 
 def clean_attempt(d):
     results = []
-    for r in (d.get('results') or [])[:2000]:
+    raw_results = d.get('results') or []
+    if not isinstance(raw_results, list):
+        raise ValueError('成绩的格式不对')
+    for r in raw_results[:2000]:
         if isinstance(r, dict) and isinstance(r.get('id'), str) and isinstance(r.get('correct'), bool):
             results.append({'id': r['id'][:64], 'correct': r['correct']})
     if not results:
         raise ValueError('没有成绩可保存')
-    sheets = [s[:80] for s in (d.get('sheets') or []) if isinstance(s, str)][:50]
+    raw_sheets = d.get('sheets') or []
+    sheets = [s[:80] for s in (raw_sheets if isinstance(raw_sheets, list) else []) if isinstance(s, str)][:50]
     mode = d.get('mode') if d.get('mode') in ('all', 'weak', 'retry') else 'all'
     try:
         seconds = max(0, min(int(d.get('seconds') or 0), 7 * 86400))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         seconds = 0
     return {'results': results, 'sheets': sheets, 'mode': mode, 'seconds': seconds}
 
@@ -127,7 +168,7 @@ class Pending:
         """取出并清掉。token 不对或已过期返回 None。"""
         with self.lock:
             it = self.item
-            if not it or not secrets.compare_digest(it['token'], str(token or '')) or it['expires'] < time.time():
+            if not it or not secrets.compare_digest(it['token'].encode('utf-8'), str(token or '').encode('utf-8')) or it['expires'] < time.time():
                 return None
             self.item = None
             return it
@@ -174,14 +215,27 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode('utf-8'), MIME['.json'])
 
     def _host_ok(self):
-        """只接受发给本机的请求，挡住「DNS 重绑定」：恶意网页让浏览器把自己的域名解析到 127.0.0.1 后来访问这个服务。"""
-        host = (self.headers.get('Host') or '').strip().lower()
-        name = host[1:host.index(']')] if host.startswith('[') and ']' in host else host.rsplit(':', 1)[0] if ':' in host else host
-        return name in self.server.cfg.allowed_hosts
+        """默认只接受发给本机或白名单域名的请求，挡住「DNS 重绑定」（恶意网页让浏览器把自己的域名解析到本机再来访问）。
+        放在 Cloudflare Tunnel 等有身份验证的反向代理后面时：把你的域名写进 XEXAM_ALLOWED_HOSTS，
+        或者设 XEXAM_ALLOW_ANY_HOST=1 不再检查 Host（这时安全完全靠前面的验证）。"""
+        cfg = self.server.cfg
+        if cfg.allow_any_host:
+            return True
+        return host_name(self.headers.get('Host')) in cfg.allowed_hosts
 
     def _origin_ok(self):
+        """写请求的 Origin 必须和 Host 是同一个主机名（协议和端口不比较），或者在 XEXAM_ALLOWED_ORIGINS 里：
+        经 HTTPS 反向代理时浏览器发的是 https://域名，而服务端看到的 Host 只有域名，所以不能要求 http:// 开头。
+        如果反向代理把 Host 改写成了源站地址（例如 cloudflared 的 httpHostHeader），Origin 仍是公网域名，
+        两者不一致，这时把公网域名写进 XEXAM_ALLOWED_ORIGINS。
+        没有 Origin 头的请求（比如命令行工具）放行：它不是浏览器里的跨站请求。"""
         origin = self.headers.get('Origin')
-        return origin is None or origin == 'http://' + (self.headers.get('Host') or '')
+        if origin is None:
+            return True
+        oh = origin_host(origin)
+        if oh is None:
+            return False
+        return oh == host_name(self.headers.get('Host')) or oh in self.server.cfg.allowed_origins
 
     def do_HEAD(self):
         """反向代理和一些健康检查工具会用 HEAD。响应头和 GET 完全一样，只是不带正文。"""
@@ -193,7 +247,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if not self._host_ok():
-            return self._send(403, 'Forbidden host。如果你是通过别的地址访问（比如局域网 IP），请设置环境变量 CCARP_ALLOWED_HOSTS。'.encode('utf-8'), 'text/plain; charset=utf-8')
+            seen = re.sub(r'[\x00-\x1f\x7f]', '', host_name(self.headers.get('Host')))[:80]
+            say('拒绝了一个请求：Host 是「%s」，不在允许的列表里（要放行请设置 XEXAM_ALLOWED_HOSTS）' % seen)
+            return self._send(403, ('Forbidden host: %s。通过别的地址访问（局域网 IP、你的域名）时，请把它加进环境变量 XEXAM_ALLOWED_HOSTS，'
+                                    '或设 XEXAM_ALLOW_ANY_HOST=1（只在前面有身份验证时）。' % seen).encode('utf-8'), 'text/plain; charset=utf-8')
         path = urlparse(self.path).path
         cfg = self.server.cfg
         if path == '/api/info':
@@ -237,15 +294,49 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return self.rfile.read(n)
 
+    def _drain_body(self):
+        """提前拒绝（403/415）时，把客户端已经在发的请求体读掉并丢弃（有上限）；否则连接被重置，浏览器看到的是网络错误而不是原因。"""
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            n = 0
+        left = min(max(n, 0), MAX_UPLOAD + 65536)
+        while left > 0:
+            chunk = self.rfile.read(min(65536, left))
+            if not chunk:
+                break
+            left -= len(chunk)
+        self.close_connection = True
+
+    def _deny_reason(self):
+        """POST 被拒绝时给出能照着做的原因。返回 None 表示没问题。"""
+        def short(v):
+            return re.sub(r'[\x00-\x1f\x7f]', '', str(v or ''))[:80]
+        if not self._host_ok():
+            return ('被拒绝：这个请求的 Host 是「%s」，不在允许的列表里。'
+                    '请把它加进 XEXAM_ALLOWED_HOSTS（或设 XEXAM_ALLOW_ANY_HOST=1，只在前面有身份验证时）。' % short(self.headers.get('Host')))
+        if not self._origin_ok():
+            o = origin_host(self.headers.get('Origin'))
+            if o is None:
+                return '被拒绝：这个请求的 Origin 是「%s」，不是一个网址。' % short(self.headers.get('Origin'))
+            return ('被拒绝：这个请求来自「%s」，和服务看到的 Host「%s」不是同一个主机。'
+                    '如果你在 Cloudflare Tunnel 等反向代理后面且代理改写了 Host，请把「%s」加进 XEXAM_ALLOWED_ORIGINS。'
+                    % (short(o), short(host_name(self.headers.get('Host'))), short(o)))
+        return None
+
     def do_POST(self):
-        if not self._host_ok() or not self._origin_ok():
-            return self._json({'error': 'forbidden'}, 403)
+        why = self._deny_reason()
+        if why:
+            self._drain_body()
+            say('拒绝了一个请求：%s %s | %s' % (self.command, re.sub(r'[\x00-\x1f\x7f]', '', self.path)[:80], why))
+            return self._json({'error': why}, 403)
         path = urlparse(self.path).path
         cfg = self.server.cfg
         ctype = self.headers.get('Content-Type') or ''
 
         if path == '/api/upload':
             if 'application/octet-stream' not in ctype:
+                self._drain_body()
                 return self._json({'error': 'bad content type'}, 415)
             body = self._body(MAX_UPLOAD)
             if body is None:
@@ -262,14 +353,15 @@ class Handler(BaseHTTPRequestHandler):
             token = cfg.pending.put(filename, sheets, questions)
             return self._json(preview_payload(plan, filename, token))
 
-        if 'application/json' not in ctype:
+        if ctype.split(';', 1)[0].strip().lower() != 'application/json':
+            self._drain_body()
             return self._json({'error': 'bad content type'}, 415)
         raw = self._body(MAX_JSON)
         if raw is None:
             return self._json({'error': 'too large'}, 413)
         try:
             data = json.loads(raw or b'{}')
-        except ValueError:
+        except (ValueError, RecursionError):
             return self._json({'error': 'bad json'}, 400)
         if not isinstance(data, dict):
             return self._json({'error': 'bad json'}, 400)
@@ -308,7 +400,14 @@ class Handler(BaseHTTPRequestHandler):
 
 def open_store(data_dir):
     os.makedirs(data_dir, exist_ok=True)
-    store = db.Store(os.path.join(data_dir, 'ccarp.db'))
+    path = os.path.join(data_dir, 'xexam.db')
+    if not os.path.exists(path):
+        # 早期版本的数据库文件名不同。新版只读 xexam.db，所以数据目录里有别的 .db 文件时先提醒，免得让人以为数据丢了
+        others = sorted(f for f in os.listdir(data_dir) if f.lower().endswith('.db'))
+        if others:
+            say('注意：数据目录里没有 xexam.db，但有别的数据库文件：%s。如果那是以前版本的题库，请先停止程序，把它改名为 xexam.db 再启动；'
+                '现在会新建一个空的 xexam.db。' % '、'.join(others))
+    store = db.Store(path)
     # 旧版把学习记录放在 progress.json：第一次启动时迁移进数据库（只迁移一次，不会覆盖已有记录）
     for cand in (os.path.join(data_dir, 'progress.json'), os.path.join(APP_DIR, 'progress.json')):
         if os.path.isfile(cand):
@@ -321,9 +420,9 @@ def open_store(data_dir):
 
 def main():
     ap = argparse.ArgumentParser(description='Xexam')
-    ap.add_argument('--data', default=os.environ.get('CCARP_DATA') or os.path.join(APP_DIR, 'data'), help='数据目录（里面是 ccarp.db）')
-    ap.add_argument('--host', default=os.environ.get('CCARP_HOST', '127.0.0.1'))
-    ap.add_argument('--port', type=int, default=int(os.environ.get('CCARP_PORT', '8765')))
+    ap.add_argument('--data', default=os.environ.get('XEXAM_DATA') or os.path.join(APP_DIR, 'data'), help='数据目录（里面是 xexam.db）')
+    ap.add_argument('--host', default=os.environ.get('XEXAM_HOST', '127.0.0.1'))
+    ap.add_argument('--port', type=int, default=int(os.environ.get('XEXAM_PORT', '8765')))
     ap.add_argument('--no-browser', action='store_true', help='不自动打开浏览器')
     ap.add_argument('--allow-shutdown', action='store_true', help='允许在页面里点「关闭程序」（本机运行时用，Docker 里不用）')
     ap.add_argument('--import', dest='import_file', help='不启动服务，直接把这个 Excel 导入数据库后退出')
@@ -362,17 +461,38 @@ def main():
         say('端口 %d-%d 都被占用了，请关掉其他占用的程序，或用 --port 换一个端口。' % (args.port, args.port + 19))
         sys.exit(1)
 
-    extra = {h.strip().lower() for h in (os.environ.get('CCARP_ALLOWED_HOSTS') or '').split(',') if h.strip()}
+    extra = parse_allowed_hosts(os.environ.get('XEXAM_ALLOWED_HOSTS'))
+    any_host = (os.environ.get('XEXAM_ALLOW_ANY_HOST') or '').strip().lower() in ('1', 'true', 'yes', 'on')
+    origins = parse_allowed_hosts(os.environ.get('XEXAM_ALLOWED_ORIGINS'))
     httpd.cfg = SimpleNamespace(
         store=store, pending=Pending(), allow_shutdown=args.allow_shutdown,
-        allowed_hosts={'localhost', '127.0.0.1', '::1'} | extra)
+        allow_any_host=any_host, allowed_hosts={'localhost', '127.0.0.1', '::1'} | extra,
+        allowed_origins=origins | extra)       # 白名单里的域名，既允许作为 Host，也允许作为 Origin
     url = 'http://localhost:%d/' % port
     say('Xexam v%s 已启动：%s' % (VERSION, url))
     say('数据目录：' + os.path.abspath(args.data))
+    if any_host:
+        say('注意：XEXAM_ALLOW_ANY_HOST 已打开，不再检查 Host。这个程序自己没有登录，请确保前面有身份验证（例如 Cloudflare Access）。')
+    elif extra:
+        say('允许的域名/地址：' + '、'.join(sorted(extra)))
+    if origins:
+        say('额外允许的 Origin：' + '、'.join(sorted(origins)))
     if store.count_active() == 0:
         say('题库还是空的：打开页面后在「题库管理」里上传 Excel。')
     if not args.no_browser:
         threading.Timer(0.6, webbrowser.open, [url]).start()
+    # docker stop 发的是 SIGTERM。Python 作为容器里的 1 号进程时默认会忽略它，要等 10 秒被 SIGKILL 强杀；
+    # 这里收到后让服务正常退出：先完成手头的请求，数据库连接关干净，再结束。
+    def _stop(signum, frame):
+        say('收到停止信号，正在退出……')
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
+    for name in ('SIGTERM', 'SIGINT'):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            try:
+                signal.signal(sig, _stop)
+            except (ValueError, OSError):
+                pass
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
@@ -380,6 +500,7 @@ def main():
     finally:
         httpd.server_close()
         store.close()
+        say('已退出。')
 
 
 if __name__ == '__main__':

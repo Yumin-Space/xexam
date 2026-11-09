@@ -9,8 +9,8 @@
 
 | | |
 |---|---|
-| 当前版本 | **v0.1**（见 [更新日志](#更新日志)） |
-| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.1` / `sha-<提交>` |
+| 当前版本 | **v0.2**（见 [更新日志](#更新日志)） |
+| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.2` / `sha-<提交>` |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 
@@ -28,6 +28,7 @@
 - [自动构建与发布](#自动构建与发布)
 - [不用 Docker](#不用-docker)
 - [让手机访问](#让手机访问)
+- [通过 Cloudflare Tunnel 从互联网访问](#通过-cloudflare-tunnel-从互联网访问)
 - [目录结构](#目录结构)
 - [安全说明](#安全说明)
 
@@ -105,51 +106,67 @@
 
 ### 1. 总览：谁和谁连着，数据怎么走
 
-一句话：**浏览器**只和**一个容器**说话；容器里的 Python 服务读写 **SQLite**；SQLite 文件放在 **Docker 卷**里；题库从你本机的 **Excel** 上传进来。
+一句话：**浏览器**只和**一个容器**说话；容器里的 Python 服务读写 **SQLite**；SQLite 文件放在 **Docker 卷**里；题库从你本机的 **Excel** 上传进来。在家里可以直接连容器；在外面经过 **Cloudflare**（你的域名 + Access 验证 + 隧道）连进来，路由器不用开任何端口。
 
 ```mermaid
-flowchart LR
-    subgraph USER["你的设备（电脑 / iPhone）"]
+flowchart TB
+    subgraph USER["你的设备（电脑 / iPhone，在家里或外面）"]
         direction TB
-        XLSX[("📄 Excel 题库<br/>A 题目 · B 中文翻译 · C 答案解析口诀<br/>留在你自己的电脑上")]
-        BROWSER["🌐 浏览器<br/>单页前端 web/app.js<br/>负责：显示、答题、判分、日语/中文切换"]
+        XLSX[("📄 Excel 题库<br/>A 题目 · B 中文翻译<br/>C 答案解析口诀<br/>留在你自己的电脑上")]
         LS[("浏览器本地存储 localStorage<br/>· 做到一半的考试（暂存）<br/>· 选的语言")]
+        BROWSER["🌐 浏览器<br/>单页前端 web/app.js<br/>负责：显示、答题、判分、<br/>日语/中文切换"]
+        XLSX -.->|"你选择文件"| BROWSER
+        LS <-.-> BROWSER
     end
 
-    subgraph HOST["Docker 主机（x86 或 ARM）"]
+    subgraph CF["Cloudflare（只有从互联网访问时才经过）"]
         direction TB
-        subgraph CONTAINER["容器 xexam（非 root 用户 uid 10001）"]
-            SERVER["⚙️ server.py<br/>HTTP 服务 :8765<br/>负责：接口、上传检查、导入预览/确认"]
-            PARSER["📖 app/xlsx_parser.py<br/>负责：读 .xlsx，解析成题目"]
-            DB["🗄️ app/db.py<br/>负责：SQLite 读写、导入计划、错题统计"]
-            SERVER --> PARSER
-            SERVER --> DB
-        end
-        VOL[("💾 Docker 卷 xexam_data<br/>挂载在容器的 /data<br/>里面只有一个文件 ccarp.db")]
-        DB <-->|"读写"| VOL
+        EDGE["🌍 你的域名<br/>xexam.你的域名.com<br/>HTTPS"]
+        ACCESS["🔐 Cloudflare Access<br/>你设的身份验证"]
+        EDGE --- ACCESS
     end
 
-    BROWSER -->|"① 上传 Excel<br/>POST /api/upload"| SERVER
-    SERVER -->|"② 预览：新增/更新/下架/读不出来"| BROWSER
-    BROWSER -->|"③ 确认导入<br/>POST /api/import/confirm"| SERVER
-    SERVER -->|"④ 题库 + 成绩<br/>GET /api/bank · /api/progress"| BROWSER
-    BROWSER -->|"⑤ 交卷成绩<br/>POST /api/attempt"| SERVER
-    XLSX -.->|"你选择文件"| BROWSER
-    BROWSER <-.-> LS
+    subgraph LAN["你的局域网"]
+        direction TB
+        CFD["🚇 cloudflared<br/>隧道客户端<br/>可以在局域网里<br/>任何一台机器上"]
+        subgraph HOST["Docker 主机（x86 或 ARM）"]
+            direction TB
+            subgraph CONTAINER["容器 xexam（非 root 用户 uid 10001）"]
+                direction TB
+                SERVER["⚙️ server.py<br/>Xexam 的 HTTP 服务 :8765<br/>负责：接口、上传检查、<br/>导入预览/确认<br/>检查 Host（白名单<br/>XEXAM_ALLOWED_HOSTS）<br/>和写请求的 Origin（可另加<br/>XEXAM_ALLOWED_ORIGINS）"]
+                PARSER["📖 app/xlsx_parser.py<br/>负责：读 .xlsx，<br/>解析成题目"]
+                DB["🗄️ app/db.py<br/>负责：SQLite 读写、<br/>导入计划、错题统计"]
+                SERVER --> PARSER
+                SERVER --> DB
+            end
+            VOL[("💾 Docker 卷 xexam_data<br/>挂载在容器的 /data<br/>题库、成绩、错题记录<br/>都在一个文件 xexam.db 里")]
+            DB <-->|"读写"| VOL
+        end
+        CFD -->|"HTTP 到 主机IP:8765"| SERVER
+    end
+
+    BROWSER -->|"B. 在外面：<br/>https://你的域名"| EDGE
+    ACCESS -.->|"隧道（出站连接，<br/>不用开路由器端口）"| CFD
+    BROWSER -->|"A. 在家里：直接访问<br/>http://主机IP:8765<br/>（别的设备连要先设<br/>XEXAM_BIND 和<br/>XEXAM_ALLOWED_HOSTS）"| SERVER
+    BROWSER -->|"① 上传 Excel · ③ 确认导入<br/>⑤ 交卷成绩"| SERVER
+    SERVER -->|"② 预览 / ④ 题库和成绩"| BROWSER
 
     classDef user fill:#E7EEF9,stroke:#2D56A6,color:#1B2A47
     classDef app fill:#EAF6EF,stroke:#1F7650,color:#1B2A47
     classDef store fill:#FBF3D7,stroke:#B59A1F,color:#1B2A47
+    classDef cf fill:#FDEBD8,stroke:#D9822B,color:#1B2A47
     class XLSX,BROWSER,LS user
     class SERVER,PARSER,DB app
     class VOL store
+    class ACCESS,EDGE,CFD cf
 ```
 
 **要点**
 
 - 判分发生在**浏览器**里（交卷时），服务端只负责保存结果和错题统计。
 - 服务端**从不修改**你的 Excel：Excel 只是上传的原料，上传后数据就在 SQLite 里了，之后不再依赖这份 Excel。
-- 浏览器和容器之间**只有 HTTP**，没有别的连接。
+- 浏览器和容器之间**只有 HTTP**，没有别的连接。经 Cloudflare 访问时，HTTPS 在 Cloudflare 那一端结束，隧道把请求以普通 HTTP 转给容器。
+- 程序**自己没有登录**。从互联网访问时，身份验证靠 Cloudflare Access；见 [通过 Cloudflare Tunnel 从互联网访问](#通过-cloudflare-tunnel-从互联网访问)。
 
 ### 2. 容器里面：每个文件做什么
 
@@ -157,38 +174,46 @@ flowchart LR
 flowchart TB
     REQ(["浏览器发来的请求"]) --> GUARD
 
-    subgraph SERVER["server.py：HTTP 服务（Python 标准库 http.server）"]
+    subgraph SERVER["server.py：Xexam 的 HTTP 服务（Python 标准库 http.server）"]
         direction TB
-        GUARD{"安全检查<br/>Host 必须是本机或白名单<br/>写请求的 Origin 必须同源"}
-        GUARD -->|"不通过"| REJECT["返回 403"]
-        GUARD -->|"通过"| ROUTE{"按路径分发"}
-        ROUTE -->|"/ 和 /*.js /*.css /*.png"| STATIC["静态文件<br/>从 web/ 目录读取<br/>（不允许 .. 穿越，也读不到数据库）"]
-        ROUTE -->|"POST /api/upload"| UPLOAD["check_xlsx：检查是不是正常的 .xlsx<br/>拒绝：空文件 · 旧 .xls · 损坏 · XML 实体 · 超过 20 MB"]
-        ROUTE -->|"POST /api/import/confirm · cancel"| PENDING["Pending：暂存上传后的预览<br/>30 分钟有效 · 一次性校验码"]
-        ROUTE -->|"GET /api/bank · /api/progress<br/>/api/info · /api/imports"| READ["读取接口"]
-        ROUTE -->|"POST /api/attempt · /api/reset"| WRITE["写入接口"]
+        GUARD{{"安全检查（每个请求先过）<br/>Host：本机，或<br/>XEXAM_ALLOWED_HOSTS<br/>里的域名/IP<br/>写请求若带 Origin：<br/>和 Host 同一个主机，<br/>或在<br/>XEXAM_ALLOWED_ORIGINS 里<br/>（没带 Origin 的，例如命令行，放行）"}}
+        REJECT["返回 403<br/>并说明是哪一条<br/>没通过、怎么放行"]
+        subgraph ROUTES["按路径分发"]
+            direction TB
+            UPLOAD["POST /api/upload<br/>超过 20 MB：读取时就拒绝<br/>check_xlsx：检查是不是<br/>正常的 .xlsx<br/>拒绝：空文件 · 旧 .xls<br/>非 .xlsx · 损坏<br/>XML 实体 · 解压后过大"]
+            PENDING["POST /api/import/confirm<br/>· /api/import/cancel<br/>Pending：暂存解析好的题目<br/>只留最近一次 · 30 分钟有效<br/>一次性校验码"]
+            READ["GET /api/bank<br/>/api/progress<br/>/api/info · /api/imports<br/>读取接口"]
+            WRITE["POST /api/attempt<br/>/api/reset<br/>写入接口"]
+            STATIC["GET / 及 web/ 下的文件<br/>静态文件：从 web/ 读取<br/>不允许 .. 穿越，<br/>也读不到数据库"]
+            UPLOAD ~~~ PENDING
+            STATIC ~~~ READ
+            READ ~~~ WRITE
+        end
+        GUARD -->|"不通过"| REJECT
+        GUARD -->|"通过"| ROUTES
+        REJECT ~~~ ROUTES
     end
 
     UPLOAD --> PARSER
     subgraph PARSE["app/xlsx_parser.py"]
         direction TB
-        PARSER["parse_workbook<br/>zipfile + ElementTree 读 .xlsx"] --> Q["parse_question<br/>识别：单选 · 多选 · 热点题<br/>取出：答案 · 解析 · 口诀"]
-        Q --> T["parse_translation<br/>把 B 列拆成和日语一样的结构<br/>拆不对就不提供中文切换"]
+        PARSER["parse_workbook<br/>zipfile + ElementTree<br/>读 .xlsx"] --> Q["parse_question<br/>识别：单选 · 多选 · 热点题<br/>取出：答案 · 解析 · 口诀"]
+        Q --> T["parse_translation<br/>把 B 列拆成和日语<br/>一样的结构；拆不对<br/>就不提供中文切换"]
     end
 
-    PARSER -->|"题目列表 + 读不出来的原因"| PENDING
-    PENDING -->|"plan_import：只算不写"| STORE
-    PENDING -->|"确认后 apply_import：一个事务"| STORE
+    PARSER -->|"题目列表<br/>+ 读不出来的原因"| PENDING
+    UPLOAD -->|"plan_import<br/>只算不写"| STORE
+    PENDING -->|"确认后 apply_import<br/>一个事务"| STORE
     READ --> STORE
     WRITE --> STORE
 
     subgraph DBM["app/db.py：Store"]
-        STORE["SQLite 读写<br/>journal_mode=DELETE · synchronous=FULL"]
+        STORE["SQLite 读写<br/>journal_mode=DELETE<br/>synchronous=FULL"]
     end
 
-    STORE --> FILE[("/data/ccarp.db")]
-    STATIC --> WEB["web/<br/>index.html · app.js · style.css<br/>icon.svg · apple-touch-icon.png"]
-
+    STORE --> FILE[("/data/xexam.db<br/>Docker 卷 xexam_data")]
+    STATIC --> WEB["web/<br/>index.html · app.js<br/>style.css · icon.svg<br/>apple-touch-icon.png"]
+    T ~~~ WEB
     classDef ok fill:#EAF6EF,stroke:#1F7650,color:#1B2A47
     classDef bad fill:#F9E3E0,stroke:#B2312A,color:#1B2A47
     classDef store fill:#FBF3D7,stroke:#B59A1F,color:#1B2A47
@@ -196,6 +221,8 @@ flowchart TB
     class REJECT bad
     class FILE store
 ```
+
+> 图里没画的一个接口：`POST /api/shutdown`。只有用 `--allow-shutdown` 启动（`start.bat`）时才可用，Docker 里一律返回 403。
 
 ### 3. 数据流 A：更新题库（上传 → 预览 → 确认）
 
@@ -205,38 +232,40 @@ flowchart TB
 sequenceDiagram
     autonumber
     actor U as 你
-    participant B as 浏览器
-    participant S as server.py
-    participant P as xlsx_parser
-    participant D as db.Store
-    participant F as ccarp.db（卷）
+    participant B as 浏览器<br/>web/app.js
+    participant S as server.py<br/>HTTP 服务
+    participant P as xlsx_parser<br/>解析 Excel
+    participant D as db.Store<br/>app/db.py
+    participant F as xexam.db<br/>卷 xexam_data
 
-    U->>B: 选择 / 拖入 Excel（.xlsx）
-    B->>S: POST /api/upload（文件内容 + 文件名）
-    S->>S: check_xlsx：格式、大小、有没有 XML 实体
-    alt 文件不合格
-        S-->>B: 400 + 中文原因（例如「这是旧版 .xls」）
+    U->>B: 选择 / 拖入<br/>Excel（.xlsx）
+    B->>S: POST /api/upload<br/>文件内容 + 文件名
+    S->>S: check_xlsx：是否正常的 .xlsx、<br/>解压后大小、有无 XML 实体声明
+    alt 文件不合格 / 读不了
+        S-->>B: 400（太大则 413）<br/>+ 中文原因<br/>如「这是旧版 .xls」
+        B-->>U: 显示错误原因<br/>（数据库没动）
     else 合格
-        S->>P: parse_workbook（在内存里解析，不写盘）
-        P-->>S: 题目列表 + 每个读不出来的题的「工作表 / 行号 / 原因」
-        S->>D: plan_import（只读，对比库里现有的题）
-        D->>F: SELECT 现有题目
-        D-->>S: 新增 / 更新 / 恢复上架 / 下架 / 没变化 的数量
-        S->>S: Pending.put：把解析结果暂存在内存，生成一次性校验码
+        S->>P: parse_workbook<br/>内存里解析，不写盘
+        P-->>S: 题目列表 +<br/>读不出来的题<br/>工作表 / 行号 / 原因
+        S->>D: plan_import：只读，对比库里现有的题
+        D->>F: SELECT questions<br/>有下架时再查 stats
+        D-->>S: 数量：新增 / 更新 / 恢复上架 /<br/>下架 / 没变化 / 读不出来
+        S->>S: Pending.put：暂存解析结果<br/>（只留最近一次），<br/>生成一次性校验码
         S-->>B: 预览结果 + 校验码
-    end
-    B-->>U: 显示「检查结果」（还没有写入）
-    alt 要下架一些题
-        B-->>U: 弹窗提醒「这次会下架 N 道题」
+        B-->>U: 显示「检查结果」<br/>（还没有写入）
     end
     U->>B: 点「确认导入」
-    B->>S: POST /api/import/confirm（校验码）
-    S->>S: Pending.take：校验码对、没过期才取出，用过即作废
-    S->>D: apply_import
-    D->>F: BEGIN → 写入 / 更新 / 下架 → 记一条导入记录 → COMMIT
-    Note over D,F: 一个事务：中途出错整体回滚，不会留下半截数据
-    D-->>S: 完成
-    S-->>B: 最新题库
+    alt 有题要下架
+        B-->>U: 弹窗：这次会<br/>下架 N 道题
+        U->>B: 点「继续导入」<br/>（点「回去检查」<br/>则中止）
+    end
+    B->>S: POST<br/>/api/import/confirm<br/>校验码
+    S->>S: Pending.take：校验码对、<br/>没过 30 分钟才取出，用过即作废
+    S->>D: apply_import：先重新比对一次
+    D->>F: BEGIN<br/>写入 / 更新 / 恢复<br/>下架 · 记导入记录<br/>COMMIT
+    Note over D,F: 一个事务：<br/>中途出错整体回滚，<br/>不留半截数据
+    D-->>S: 导入结果（各项数量）
+    S-->>B: 导入结果 + 最新题库
     B-->>U: 显示「已导入」
 ```
 
@@ -262,7 +291,7 @@ sequenceDiagram
     participant B as 浏览器（app.js）
     participant LS as localStorage
     participant S as server.py
-    participant F as ccarp.db（卷）
+    participant F as xexam.db（卷）
 
     B->>S: GET /api/bank、/api/progress、/api/info
     S->>F: 读取上架的题 + 成绩 + 错题统计
@@ -291,55 +320,57 @@ sequenceDiagram
 
 ### 5. 数据库：5 张表
 
-整个数据库就是 `/data/ccarp.db` 这一个文件。
+整个数据库就是 `/data/xexam.db` 这一个文件。
 
 ```mermaid
+%%{init: {"er": {"nodeSpacing": 40, "rankSpacing": 40}}}%%
 erDiagram
+    direction LR
     questions {
-        TEXT id PK "题目身份：工作表+题干+首选项的指纹"
-        TEXT sheet "工作表名"
-        INTEGER row_no "在 Excel 里的行号（仅供显示）"
+        TEXT id PK "指纹：工作表+题干+首选项/首小项"
+        TEXT sheet "工作表名（与 active 建有索引）"
+        INTEGER row_no "Excel 里的行号（只记录，不影响 id）"
         INTEGER seq "题库里的顺序"
-        TEXT data "整道题的 JSON：题干 选项 答案 解析 口诀 翻译"
+        TEXT data "整题 JSON：题干 选项 答案 解析 口诀 翻译"
         INTEGER active "1 上架 · 0 下架"
-        TEXT added_at
-        TEXT updated_at
+        TEXT added_at "首次入库时间"
+        TEXT updated_at "最近一次被导入或下架的时间"
     }
     stats {
-        TEXT question_id PK "对应 questions.id"
+        TEXT question_id PK "= questions.id，下架后仍保留"
         INTEGER attempts "累计答过几次"
         INTEGER correct "答对几次"
         INTEGER wrong "答错几次"
         INTEGER streak "当前连续答对几次"
-        INTEGER last "上一次对/错"
-        TEXT at "最近一次作答时间"
+        INTEGER last "上一次：1 对 · 0 错（可空）"
+        TEXT at "最近一次作答时间（可空）"
     }
     attempts {
-        INTEGER id PK
+        INTEGER id PK "自增，只留最近 60 场"
         TEXT at "交卷时间"
         TEXT sheets "考了哪些工作表（JSON）"
-        TEXT mode "全部题目 / 错题本 / 重做错题"
+        TEXT mode "all 全部题目 · weak 错题本 · retry 重做错题"
         INTEGER total "题数"
         INTEGER correct "答对数"
         INTEGER percent "得分百分比"
-        INTEGER seconds "用时"
+        INTEGER seconds "用时（秒）"
     }
     imports {
-        INTEGER id PK
+        INTEGER id PK "自增"
         TEXT at "导入时间"
         TEXT filename "上传的文件名"
-        INTEGER added "新增"
-        INTEGER updated "更新"
-        INTEGER removed "下架"
-        INTEGER restored "恢复"
-        INTEGER skipped "读不出来"
+        INTEGER added "新增的题数"
+        INTEGER updated "同 id 但内容变了的题数"
+        INTEGER removed "这次没出现而下架的题数"
+        INTEGER restored "下架后又出现而恢复的题数"
+        INTEGER skipped "读不出来而跳过的行数"
         INTEGER total "导入后上架的题数"
     }
     meta {
-        TEXT key PK
-        TEXT value "例如 schema 版本、是否迁移过旧记录"
+        TEXT key PK "如 schema、legacy_migrated"
+        TEXT value "版本号 / 迁移时间"
     }
-    questions ||--o| stats : "题目 id 对应（下架后 stats 仍保留）"
+    questions |o--o| stats : "按 id 对应<br/>无外键约束"
 ```
 
 **为什么 `stats` 不随题目一起删：** 题目下架只是把 `active` 改成 0，`stats` 里的答题记录原样保留；以后这道题重新出现在 Excel 里，会自动恢复上架，错题本也跟着回来。
@@ -348,41 +379,45 @@ erDiagram
 
 ### 6. 自动构建与发布（CI/CD）
 
-每次你把代码推到 GitHub，GitHub Actions 自动做完**检查 → 两种 CPU 各自构建并测试 → 都通过才发布**。
+每次你把代码推到 GitHub，GitHub Actions 自动做完**检查版本和更新日志 → 两种 CPU 各自构建并测试 → 都通过才发布**。
 
 ```mermaid
 flowchart TB
-    DEV["你：修改代码<br/>· 改 VERSION（如 0.1 → 0.2）<br/>· 在 README 更新日志写一条"] -->|"git push 到 main"| GH["GitHub 仓库 Yumin-Space/xexam"]
+    DEV["你：修改代码<br/>· 改 VERSION（如 0.2 → 0.3）<br/>· 在 README 更新日志写一条"] -->|"git push 到 main"| GH["GitHub 仓库 Yumin-Space/xexam"]
     GH -->|"触发"| WF
 
     subgraph WF["GitHub Actions：.github/workflows/docker.yml"]
         direction TB
-        PUB["job: publish<br/>构建 amd64+arm64 → 合成一个镜像清单<br/>→ 推送 → 回头检查清单里确实有两种架构"]
-        STOP["❌ 不发布<br/>ghcr.io 上的 latest 保持上一个能用的版本"]
-        subgraph TEST["job: test（并行跑两份）"]
+        CHK["job 1：check<br/>VERSION 格式正确，且 README 更新日志最上面一条 = VERSION"]
+        subgraph TEST["job 2：test（两种 CPU 并行）"]
             direction LR
             subgraph T1["amd64（x86）"]
                 direction TB
-                A1["① 检查：VERSION 格式正确<br/>且 README 更新日志最上面一条 = VERSION"] --> A2["② 构建镜像"] --> A3["③ 冒烟测试"]
+                A2["构建镜像"] --> A3["冒烟测试<br/>scripts/smoke-test.sh"]
             end
-            subgraph T2["arm64（ARM）"]
+            subgraph T2["arm64（ARM，QEMU 模拟）"]
                 direction TB
-                B0["QEMU 模拟 ARM"] --> B1["① 同样的检查"] --> B2["② 构建镜像"] --> B3["③ 同样的冒烟测试"]
+                B2["构建镜像"] --> B3["同一份冒烟测试"]
             end
         end
-        A3 -->|"amd64 和 arm64 都通过"| PUB
-        B3 -->|"amd64 和 arm64 都通过"| PUB
+        PUB["job 3：publish<br/>构建 amd64+arm64 → 合成一个镜像清单 → 推送<br/>→ 回头核对：清单里有两种架构，latest 和 vX.Y 指向刚推送的镜像"]
+        STOP["❌ 不发布<br/>ghcr.io 上的 latest 保持上一个能用的版本"]
+        CHK --> A2
+        CHK --> B2
+        A3 -->|"两种架构都通过"| PUB
+        B3 -->|"两种架构都通过"| PUB
+        CHK -.->|"没写更新日志 / 版本不一致"| STOP
         A3 -.->|"任何一个失败"| STOP
         B3 -.->|"任何一个失败"| STOP
     end
 
-    PUB --> REG[("ghcr.io/yumin-space/xexam<br/>标签：latest · v0.1 · sha-xxxxxxx")]
+    PUB --> REG[("ghcr.io/yumin-space/xexam<br/>标签：latest · v0.2 · sha-xxxxxxx")]
     REG -->|"docker compose pull<br/>x86 机器自动拿 amd64<br/>ARM 机器自动拿 arm64"| RUN["你的服务器 / 电脑 / 树莓派"]
 
     classDef ok fill:#EAF6EF,stroke:#1F7650,color:#1B2A47
     classDef bad fill:#F9E3E0,stroke:#B2312A,color:#1B2A47
     classDef store fill:#FBF3D7,stroke:#B59A1F,color:#1B2A47
-    class A1,A2,A3,B0,B1,B2,B3,PUB ok
+    class CHK,A2,A3,B2,B3,PUB ok
     class STOP bad
     class REG store
 ```
@@ -399,7 +434,9 @@ flowchart TB
 | 陌生 `Host` 被拒绝（403） | 防 DNS 重绑定 |
 | 数据库文件写进了卷 | 数据在卷里，不在容器里 |
 | 重启后服务正常、健康检查变 `healthy` | 稳定 |
+| 跨站 Origin 的 POST 被拒绝（403），同源的 POST 放行 | 防跨站操作，同时确认没有把正常使用拦住 |
 | **删除容器后用同一个卷重建，数据还在** | 这正是「更新镜像不丢数据」的保证 |
+| `docker stop` 在 9 秒内正常结束 | 程序响应停止信号，数据库干净关闭，不是等 10 秒被强杀 |
 
 ### 7. 页面之间怎么走
 
@@ -447,7 +484,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | `docker compose pull && docker compose up -d` |
-| 固定在某个版本 | 把 `docker-compose.yml` 里的 `:latest` 改成 `:v0.1`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里的 `:latest` 改成 `:v0.2`，再 `docker compose up -d` |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f` |
 | 看现在是哪个版本、什么架构 | 浏览器打开 <http://localhost:8765/api/info> |
@@ -458,16 +495,27 @@ docker compose up -d
 name: xexam
 services:
   xexam:
-    image: ghcr.io/yumin-space/xexam:latest   # latest = 最新；也可以写 :v0.1 固定版本
+    image: ghcr.io/yumin-space/xexam:latest   # latest = 最新；也可以写 :v0.2 固定版本
     container_name: xexam
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8765:8765"                 # 只绑定本机
+      - "${XEXAM_BIND:-127.0.0.1:8765}:8765"  # 默认只绑定本机；要给局域网里的 cloudflared 用，在 .env 里设 XEXAM_BIND=0.0.0.0:8765
     volumes:
       - data:/data                            # 题库和学习记录都在这个卷里
+    environment:
+      XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"   # 允许哪些域名/IP 访问；留空 = 只有本机
 volumes:
   data:
 ```
+
+可调的选项都通过 `docker-compose.yml` 旁边的 `.env` 文件设置（不需要改 compose 文件本身）：
+
+| `.env` 里的名字 | 默认 | 作用 |
+|---|---|---|
+| `XEXAM_BIND` | `127.0.0.1:8765` | 对外监听的地址和端口，必须写成 `IP:端口`。默认只有本机能连；`0.0.0.0:8765` = 局域网里别的机器也能连。⚠️ 只写端口号（如 `8766`）= 所有网卡都能连 |
+| `XEXAM_ALLOWED_HOSTS` | 空 | 允许用哪些域名 / IP 访问，逗号分隔，例如 `xexam.example.com,192.168.1.20` |
+| `XEXAM_ALLOWED_ORIGINS` | 空 | 反向代理把 Host 改写成源站地址时才需要：填你的公网域名 |
+| `XEXAM_ALLOW_ANY_HOST` | `0` | 设 `1` = 不再检查 Host（只在前面已经有身份验证时用） |
 
 ### 方式 B：从源码构建（改代码时用）
 
@@ -486,7 +534,7 @@ docker compose -f docker-compose.build.yml up -d --build
 | 标签 | 含义 | 什么时候用 |
 |---|---|---|
 | `latest` | 最近一次成功发布的版本 | 想一直用最新版 |
-| `v0.1`、`v0.2`… | 固定的某个版本 | 想锁定版本、需要回退 |
+| `v0.2`、`v0.3`… | 固定的某个版本（v0.2 是第一个发布的版本） | 想锁定版本、需要回退 |
 | `sha-xxxxxxx` | 某一次提交 | 排查问题 |
 
 ---
@@ -516,7 +564,7 @@ docker compose -f docker-compose.build.yml up -d --build
 
 ### 日语 / 中文对照
 
-题目右上角有「日语 / 中文」两个按钮。中文用的是 Excel 里 **B 列**的翻译。如果某道题 B 列没写翻译，或翻译里的选项 / 小项数量和 A 列对不上，这道题的「中文」按钮会**置灰**（不会显示错位的内容）。选项本身（`はい / いいえ`、`Model Stage` 这类答案原文）不翻译。
+题目右上角有「日语 / 中文」两个按钮。中文用的是 Excel 里 **B 列**的翻译。如果某道题 B 列没写翻译，或翻译里的选项 / 小项数量和 A 列对不上，这道题的「中文」按钮会**置灰**（不会显示错位的内容）。选项本身（`はい / いいえ`、`Apple` 这类答案原文）不翻译。
 
 ### 错题本
 
@@ -528,7 +576,7 @@ docker compose -f docker-compose.build.yml up -d --build
 
 ### 在 iPhone 上使用
 
-- 在 iPhone 的 Safari 里打开服务地址（需要先做 [让手机访问](#让手机访问)）。
+- 在 iPhone 的 Safari 里打开服务地址（需要先做 [让手机访问](#让手机访问)）。需要 **iOS 15.4 或更新**（更早的版本没有 `<dialog>`，页面会改用系统自带的确认框，样式略有不同）。
 - 点分享按钮 →「添加到主屏幕」，之后像独立应用一样全屏打开，图标是答题卡样式的 Xexam。
 - 所有按钮都不小于 44 px，适合手指点；刘海和底部横条的安全区已处理；「上一题 / 下一题」固定在屏幕底部。
 
@@ -547,7 +595,7 @@ docker compose -f docker-compose.build.yml up -d --build
 C 列的答案写法：
 
 - 单选 / 多选：`【答案】C` 或 `【答案】C、E`
-- 热点题：`【答案】1 是；2 否；3 是`。小项的答案可以写 `是/否`、`はい/いいえ`，或者直接写选项文字（比如 `Model Stage`）
+- 热点题：`【答案】1 是；2 否；3 是`。小项的答案可以写 `是/否`、`はい/いいえ`，或者直接写选项文字（比如 `Apple`）
 
 一个例子（C 列）：
 
@@ -567,7 +615,7 @@ C 列的答案写法：
 
 数据保存在一个 **Docker 命名卷**里，不是你电脑上看得见的文件夹。
 
-- 卷名是 `xexam_data`（项目名 `xexam` + 卷名 `data`），里面只有 `ccarp.db`：题库、成绩、错题记录都在这一个文件里。
+- 卷名是 `xexam_data`（项目名 `xexam` + 卷名 `data`），里面只有 `xexam.db`：题库、成绩、错题记录都在这一个文件里。
 - 更新镜像、`docker compose down`、删除并重建容器，**数据都还在**。
 - ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把卷一起删掉，数据就没了。
 
@@ -614,6 +662,27 @@ docker compose start
 
 每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
+### v0.2 — 2026-11-10
+
+- **可以通过自己的域名从互联网访问**（Cloudflare Tunnel + Cloudflare Access）：
+  - 允许的域名放进 `XEXAM_ALLOWED_HOSTS`；写请求的 `Origin` 改成只比较主机名，所以经 **HTTPS** 域名访问时上传、交卷不再被 403 拦下。
+  - 代理改写了 `Host` 时，可以用 `XEXAM_ALLOWED_ORIGINS` 单独放行公网域名；前面已有身份验证时可设 `XEXAM_ALLOW_ANY_HOST=1`。
+  - 被拒绝时会说明是哪一条没通过、该怎么放行；登录过期时页面会提示刷新重新登录。
+- 端口绑定改成可配置（`XEXAM_BIND`），默认仍然只绑定本机。
+- 收到 `docker stop` 的停止信号后正常退出（以前要等 10 秒被强杀），数据库干净关闭。
+- CI：拆成「检查版本和更新日志 → 两种架构各自测试 → 发布」三步；冒烟测试挪进 `scripts/smoke-test.sh`，本机装了 Docker 也能直接跑；发布后按摘要核对镜像清单。
+- `/api/info` 增加 `arch`（当前 CPU 架构）。
+- 审计后的修复（每一条都有对应的实测）：
+  - 服务端：提前拒绝的请求（403/415）先把请求体读掉再回复，浏览器看到的是真正的原因而不是「连不上服务」；被拒绝的请求在日志里留一行（`docker compose logs` 能看到）；畸形的 JSON（数字当列表、`Infinity`、过深嵌套、非 ASCII 的确认码）返回 400/409，而不是让连接断掉；POST 的 `Content-Type` 必须真的是 `application/json`；`XEXAM_ALLOWED_HOSTS` 用空格或分号分隔也能识别。
+  - 数据库：`COMMIT` 失败时会回滚，不会让连接一直卡在事务里；格式不对的旧 `progress.json` 不再让程序起不来；数据目录里只有别的 `.db` 文件时，启动日志会提醒（不会改动那个文件）。
+  - 页面：交卷时成绩提交成功才清掉暂存，失败会保留并提示「刷新页面重新登录后再交卷」；开始新考试前，如果有没交卷的考试会先确认；成绩页百分比与学习记录用同一种取整，不再差 1；提示条不再被底部翻页栏挡住；长英文串不再撑出横向滚动条；没有 `<dialog>` 的旧 Safari 改用系统确认框；长按字母键不会反复切换答案。
+  - 镜像和 CI：健康检查不走代理并跟随 `XEXAM_PORT`；`.dockerignore` 改成任意层级生效；`.gitignore` 加了备份压缩包和 `.env.*`；只从 `main` 发布，`main` 上排队不取消；冒烟测试里容器内路径在 Windows 的 Git Bash 里也能跑。
+  - 这版在本机用 Docker 真的构建了镜像（amd64），并用 CI 同一份冒烟测试跑通：非 root、Host/Origin 拦截、删除容器后数据还在、`docker stop` 1 秒。arm64 和发布仍要看 GitHub Actions 的结果。
+- 名称统一成 **xexam**：环境变量 `XEXAM_DATA` / `XEXAM_HOST` / `XEXAM_PORT` / `XEXAM_ALLOWED_HOSTS` / `XEXAM_ALLOWED_ORIGINS` / `XEXAM_ALLOW_ANY_HOST`，数据库文件 `xexam.db`，浏览器里保存的键名 `xexam.*`；文档里也不再写死你自己的 Excel 文件名。
+- ⚠️ **从 v0.1 升级时注意：** 数据库文件的名字变了，新版只读 `xexam.db`。如果你在更早的版本里已经导入过题库，请先停止程序，把数据目录里那个 `.db` 文件改名为 `xexam.db` 再启动，否则会看到空题库（旧文件不会被删，只是不会被读取）。浏览器里暂存的考试和语言选择用的键名也变了，升级前请先交卷，语言会恢复成日语。在自己改过的 compose 里设置过旧环境变量名的，要改成上面的 `XEXAM_*`，否则会被忽略。
+- `docker-compose.yml` 去掉了 `pull_policy: always`：`docker compose up -d` 不再每次联网检查，更新请用 `docker compose pull && docker compose up -d`。
+- `.env`（本机配置）加进 `.gitignore` 和 `.dockerignore`，不会被提交，也不会进镜像。
+
 ### v0.1 — 2026-11-10
 
 第一个版本。
@@ -625,7 +694,8 @@ docker compose start
 - 管理页**上传 Excel 更新题库**：先预览（新增 / 更新 / 恢复 / 下架 / 读不出来），确认后才写入；下架的题保留答题记录，传回来自动恢复。
 - 旧版的 `progress.json` 第一次启动时自动迁移。
 - 支持 **iPhone**：触控区域不小于 44 px、安全区、底部固定翻页栏、可添加到主屏幕。
-- Docker 镜像同时支持 **x86（amd64）和 ARM（arm64）**，由 GitHub Actions 构建并测试后发布到 `ghcr.io/yumin-space/xexam`（`latest` / `v0.1`）。
+- Docker 镜像同时支持 **x86（amd64）和 ARM（arm64）**，由 GitHub Actions 构建并测试。
+- ⚠️ v0.1 的「发布」步骤没有跑成，所以 `ghcr.io/yumin-space/xexam` 上**没有** `v0.1` 标签；镜像从 v0.2 起发布（`latest` / `v0.2`）。
 - 应用名改为 **Xexam**。
 
 <!-- 新版本写在这一行的上面，格式：### vX.Y — 日期 -->
@@ -656,15 +726,84 @@ python server.py --data D:\xexam-data  # 指定数据目录
 python server.py --import 题库.xlsx    # 不启动服务，直接把 Excel 导入数据库
 ```
 
+也可以用环境变量代替命令行参数：`XEXAM_DATA`（数据目录，等于 `--data`）、`XEXAM_HOST`（监听地址，等于 `--host`，默认 `127.0.0.1`）、`XEXAM_PORT`（端口，等于 `--port`，默认 `8765`）。Docker 镜像里它们已经设成 `/data`、`0.0.0.0`、`8765`。
+
 Windows 上也可以双击 `start.bat`（会带上 `--allow-shutdown`，页面右下角有「关闭程序」按钮；Docker 里没有这个按钮，用 `docker compose stop`）。
 
 ## 让手机访问
 
 **这个程序没有登录**，默认只绑定本机（`127.0.0.1`）。想让同一个家庭 Wi-Fi 里的 iPhone 访问，**只在你信任的网络里**这样做，不要在咖啡厅或公司网络里开：
 
-1. 把 `docker-compose.yml` 里的 `"127.0.0.1:8765:8765"` 改成 `"8765:8765"`。
-2. 在 `environment` 里加一行 `CCARP_ALLOWED_HOSTS: "你的电脑的局域网IP"`（例如 `192.168.1.20`）。
-3. `docker compose up -d`，iPhone 的 Safari 打开 `http://你的电脑IP:8765`。
+1. 在 `docker-compose.yml` 旁边建 `.env` 文件，写两行：`XEXAM_BIND=0.0.0.0:8765` 和 `XEXAM_ALLOWED_HOSTS=你的电脑的局域网IP`（例如 `192.168.1.20`）。
+2. `docker compose up -d`，iPhone 的 Safari 打开 `http://你的电脑IP:8765`。
+
+要在外面（不在家里的 Wi-Fi）用，请看下面的 [通过 Cloudflare Tunnel 从互联网访问](#通过-cloudflare-tunnel-从互联网访问)，不要直接把端口开到互联网上。
+
+## 通过 Cloudflare Tunnel 从互联网访问
+
+适用场景：Xexam 跑在家里的局域网里，`cloudflared`（Cloudflare 的隧道客户端）也在局域网里的某台机器上（不一定是同一台），你想用自己的域名在外面访问，并且在 **Cloudflare Access** 里设置身份验证。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 你（在外面）
+    participant CF as Cloudflare<br/>（域名 + Access）
+    participant T as cloudflared<br/>（局域网）
+    participant X as Xexam 容器<br/>（局域网 主机IP:8765）
+
+    U->>CF: 打开 https://xexam.你的域名.com
+    CF-->>U: 要求登录（Cloudflare Access）
+    U->>CF: 通过验证
+    CF->>T: 经隧道转发请求
+    T->>X: HTTP 请求（Host 是你的域名，或被改写成 主机IP:8765）
+    X->>X: 检查 Host 在白名单里；写请求再检查 Origin
+    X-->>U: 页面 / 数据（原路返回）
+    Note over U,X: 上传 Excel、交卷等 POST 请求，浏览器带的 Origin 是 https://你的域名<br/>程序只比较主机名，所以不会被拦
+```
+
+### 需要做的三件事
+
+**1. 让局域网里的 cloudflared 连得到容器。** 默认容器只绑定本机（`127.0.0.1`）。在 `docker-compose.yml` 旁边建一个 `.env` 文件：
+
+```ini
+# 让局域网里别的机器（cloudflared）能连到这台机器的 8765 端口
+XEXAM_BIND=0.0.0.0:8765
+# 允许用你的域名访问（可以写多个，逗号分隔）
+XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
+```
+
+然后 `docker compose up -d`。
+
+> 如果 cloudflared 和 Xexam 在**同一台机器**上，可以不改 `XEXAM_BIND`（保持默认的只绑定本机），隧道的目标写 `http://localhost:8765` 就行。
+
+**2. 在 Cloudflare 里把域名指到 Xexam。** Zero Trust 控制台 → Networks → Tunnels → 你的隧道 → Public Hostname：
+
+| 项目 | 填什么 |
+|---|---|
+| Subdomain / Domain | `xexam` / `你的域名.com` |
+| Service Type | `HTTP`（不是 HTTPS） |
+| URL | `运行 Xexam 的主机的局域网IP:8765`，例如 `192.168.1.20:8765` |
+
+**3. 在 Cloudflare Access 里加一条应用策略**，只允许你自己的账号（邮箱）访问这个域名。
+
+### 几种常见情况
+
+| 你的情况 | 怎么配 |
+|---|---|
+| 隧道把 **Host 原样转成你的域名** | 只需要 `XEXAM_ALLOWED_HOSTS=xexam.你的域名.com`，上面第 1 步就够了 |
+| 你在 Cloudflare 里设了 **HTTP Host Header**（`httpHostHeader`），把 Host 改成了 `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` 再加 `XEXAM_ALLOWED_ORIGINS=https://xexam.你的域名.com`。浏览器发的 `Origin` 仍是公网域名，要单独放行 |
+| 不确定 Host 到底是什么 | 先照上面第 1 步配好再打开页面。如果被拒绝（403），页面上的提示会写出它看到的 `Host`（或 `Origin`）：把那个值加进 `XEXAM_ALLOWED_HOSTS`（或 `XEXAM_ALLOWED_ORIGINS`），`docker compose up -d` 重新创建容器即可 |
+| 不想列域名，前面已经有 Access 验证 | `XEXAM_ALLOW_ANY_HOST=1`（不再检查 `Host`；写请求的 `Origin` 检查仍然有效） |
+
+我在本机用**真实的 Chrome + 一个 HTTPS 反向代理**模拟过这两种情况（浏览器上传 Excel → 预览 → 确认导入 → 交卷，全程通过）。**没有**用真正的 Cloudflare 测过。
+
+### 不要忘记的事
+
+- ⚠️ **程序自己没有登录。** 一旦把 `XEXAM_BIND` 设成 `0.0.0.0`，或者设了 `XEXAM_ALLOW_ANY_HOST=1`，**能连到这个端口的人就能看到和修改题库**。所以：
+  - 只让 cloudflared 连得到这个端口：路由器上**不要**做端口映射。在 Linux 上，主机防火墙（ufw、firewalld）**拦不住** Docker 发布的端口，要限制来源请在 `DOCKER-USER` 链里加规则，或者把 `XEXAM_BIND` 写成具体的局域网 IP（如 `192.168.1.20:8765`）；最稳的是让 cloudflared 和 Xexam 在同一台机器上，保持默认的 `127.0.0.1`。
+  - Cloudflare Access 的策略一定要设好，并且**只允许你自己**。没设策略的域名等于对全世界公开。
+- 经过 Cloudflare 访问时，登录会过期。过期后上传或交卷会提示「可能是登录已过期，请刷新页面重新登录」，刷新、重新登录就行。**做到一半的考试存在浏览器里，不会丢**。
+- 被拒绝（403）时，页面或 `docker compose logs` 里的提示会写明：看到的 `Host` / `Origin` 是什么，应该把哪个值加进哪个选项。
 
 ## 目录结构
 
@@ -679,6 +818,8 @@ docs/screenshots/          README 里的截图（演示题库）
 Dockerfile                 非 root 用户运行，/data 是卷
 docker-compose.yml         拉取镜像运行（只需要这一个文件）
 docker-compose.build.yml   从源码构建运行
+.env                       （自己建，不提交）本机配置：端口、域名，见「快速开始」里的表
+scripts/smoke-test.sh      冒烟测试：CI 里每种 CPU 架构各跑一次，装了 Docker 的机器上也能直接运行
 .github/workflows/         自动构建、测试、发布
 使用说明.txt                面向使用者的简要说明
 start.bat                  Windows 上不用 Docker 启动
@@ -686,7 +827,8 @@ start.bat                  Windows 上不用 Docker 启动
 
 ## 安全说明
 
-- 服务只接受发给本机的请求（检查 `Host`），写请求还会检查 `Origin`，防止恶意网页通过你的浏览器操作它。
+- 默认只接受发给本机的请求（检查 `Host`）；放在 Cloudflare 等有身份验证的反向代理后面时，把你的域名写进 `XEXAM_ALLOWED_HOSTS`。写请求还会检查 `Origin` 必须和 `Host` 是同一个主机（或在 `XEXAM_ALLOWED_ORIGINS` 里），防止恶意网页通过你的浏览器操作它。
+- **程序自己不做登录。** 从互联网访问时必须在前面加身份验证（Cloudflare Access），不要把端口直接暴露到公网。
 - 上传的文件会检查格式，拒绝空文件、非 `.xlsx`、损坏的压缩包、含 XML 实体声明的文件，最大 20 MB。
 - 上传后的预览在内存里保留 30 分钟，确认时需要一次性的校验码，用过就作废。
 - 数据库写入在一个事务里：中途出错整体回滚，不会留下半截数据。

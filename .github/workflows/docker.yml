@@ -7,22 +7,46 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 默认不给任何权限，下面每个 job 只开自己需要的
-permissions: {}
+# 默认不给任何权限；需要的权限下面在 job 里单独开
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}   # main 上排队不取消，免得发布到一半被打断
+
+env:
+  # 不把构建记录上传成 artifact（每次多两个 .dockerbuild 文件，没用）
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
 
 jobs:
-  # 两种 CPU 架构各自构建、各自跑一遍冒烟测试：x86 服务器/电脑用 amd64，ARM 服务器/树莓派/苹果芯片用 arm64。
-  # arm64 在标准 runner 上用 QEMU 模拟运行（免费，所有套餐都能用；比原生慢，但这个镜像很小）。
+  # ① 检查：VERSION 格式正确，且 README 更新日志最上面一条 = VERSION。几秒钟，不通过就不用往下跑。
+  check:
+    name: check version and changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        name: Check version and changelog
+        run: |
+          set -eu
+          v=$(tr -d '[:space:]' < VERSION)
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION 格式不对：$v（应像 0.1 或 0.1.2）"; exit 1; }
+          top=$(grep -m1 -E '^### v[0-9]' README.md | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
+          [ "$top" = "$v" ] || { echo "README 更新日志最上面一条是 v${top:-（没找到）}，但 VERSION 是 $v。每次更新都要先在 README 里写更新日志，并和 VERSION 保持一致。"; exit 1; }
+          echo "版本 v$v，更新日志已写"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  # ② 两种 CPU 架构各自构建、各自跑一遍冒烟测试（scripts/smoke-test.sh）。
+  #    x86 服务器/电脑用 amd64，ARM 服务器/树莓派/苹果芯片用 arm64。arm64 在标准 runner 上用 QEMU 模拟运行。
   test:
     name: test (${{ matrix.short }})
+    needs: check
     runs-on: ubuntu-latest
-    timeout-minutes: 25
-    permissions:
-      contents: read
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -34,16 +58,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 每次更新都必须先在 README 的「更新日志」里写一条，并且和 VERSION 文件一致，否则不让构建
-      - name: Check version and changelog
-        run: |
-          set -eu
-          v=$(tr -d '[:space:]' < VERSION)
-          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION 格式不对：$v（应像 0.1 或 0.1.2）"; exit 1; }
-          top=$(grep -m1 -E '^### v[0-9]' README.md | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
-          [ "$top" = "$v" ] || { echo "README 更新日志最上面一条是 v${top:-（没找到）}，但 VERSION 是 $v。每次更新都要先在 README 里写更新日志，并和 VERSION 保持一致。"; exit 1; }
-          echo "版本 v$v，更新日志已写"
-
       - uses: docker/setup-qemu-action@v4
         if: matrix.short == 'arm64'
         with:
@@ -51,7 +65,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v4
 
-      # 先构建一份本地镜像做冒烟测试：不通过就不会发布
       - name: Build (local, for smoke test)
         uses: docker/build-push-action@v7
         with:
@@ -64,88 +77,15 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.short }},mode=max
 
       - name: Smoke test
-        env:
-          PLATFORM: ${{ matrix.platform }}
-          SHORT: ${{ matrix.short }}
-        run: |
-          set -eu
+        run: bash scripts/smoke-test.sh xexam:test "${{ matrix.short }}"
 
-          # 镜像真的是这个架构（不是悄悄构建成了另一个架构）
-          img_arch=$(docker image inspect xexam:test --format '{{.Architecture}}')
-          echo "镜像架构：$img_arch（期望 $SHORT）"
-          test "$img_arch" = "$SHORT" || { echo "镜像架构不对"; exit 1; }
-
-          # 和 docker-compose.yml 一样用命名卷（不是宿主机目录）保存数据
-          docker volume create xexam-test-data >/dev/null
-          run_app() {
-            docker run -d --platform "$PLATFORM" --name xexam-test -p 127.0.0.1:18765:8765 -v xexam-test-data:/data xexam:test
-          }
-          wait_up() {
-            for i in $(seq 1 60); do
-              if curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1; then return 0; fi
-              sleep 1
-            done
-            docker logs xexam-test
-            return 1
-          }
-
-          run_app
-          wait_up || { echo "服务没有在 60 秒内启动"; exit 1; }
-
-          echo "容器里运行的用户："; docker exec xexam-test id
-          echo "容器里报告的 CPU：$(docker exec xexam-test uname -m)"
-          test "$(docker exec xexam-test id -u)" != 0 || { echo "容器不应该以 root 运行"; exit 1; }
-
-          curl -fsS http://127.0.0.1:18765/ | grep -q "Xexam" || { echo "首页内容不对"; exit 1; }
-          curl -fsS http://127.0.0.1:18765/api/info | grep -q '"bankCount": 0' || { echo "全新数据目录的题数应为 0"; exit 1; }
-
-          # 镜像里带的版本号 = 仓库里的 VERSION
-          want="$(tr -d '[:space:]' < VERSION)"
-          curl -fsS http://127.0.0.1:18765/api/info | grep -q "\"version\": \"$want\"" || { echo "镜像里的版本号不是 $want"; curl -fsS http://127.0.0.1:18765/api/info; exit 1; }
-
-          # iPhone 要用的图标和页面能取到
-          for f in apple-touch-icon.png icon.svg; do
-            curl -fsS -o /dev/null "http://127.0.0.1:18765/$f" || { echo "取不到 $f"; exit 1; }
-          done
-
-          # 陌生 Host 必须被拒绝（防 DNS 重绑定）
-          code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Host: evil.example.com' http://127.0.0.1:18765/api/bank)
-          test "$code" = 403 || { echo "陌生 Host 应返回 403，实际 $code"; exit 1; }
-
-          # 数据库写到了卷里
-          docker exec xexam-test test -f /data/ccarp.db || { echo "没有在卷里生成 ccarp.db"; docker exec xexam-test ls -la /data; exit 1; }
-
-          # 重启后数据库仍在、服务仍能起来
-          docker restart xexam-test
-          wait_up || exit 1
-
-          # 健康检查状态
-          for i in $(seq 1 50); do
-            s=$(docker inspect -f '{{.State.Health.Status}}' xexam-test)
-            [ "$s" = healthy ] && break
-            sleep 2
-          done
-          echo "健康状态：$s"
-          test "$s" = healthy || { docker logs xexam-test; exit 1; }
-
-          # 持久化：往卷里写一个标记，删除容器，用同一个卷重建，标记必须还在
-          docker exec xexam-test sh -c 'echo persisted > /data/marker.txt'
-          docker rm -f xexam-test >/dev/null
-          run_app
-          wait_up || exit 1
-          test "$(docker exec xexam-test cat /data/marker.txt)" = persisted || { echo "删除容器重建后，卷里的数据丢了"; exit 1; }
-          docker exec xexam-test test -f /data/ccarp.db || { echo "删除容器重建后，数据库丢了"; exit 1; }
-          echo "删除容器后用同一个卷重建，数据仍在"
-          docker rm -f xexam-test >/dev/null
-          docker volume rm xexam-test-data >/dev/null
-
-  # 两种架构的测试都通过，才把「amd64 + arm64」合成一个镜像发布。拉取请求只测试，不发布。
+  # ③ 两种架构的测试都通过，才把「amd64 + arm64」合成一个镜像发布。拉取请求只测试，不发布。
   publish:
     name: publish (amd64 + arm64)
-    needs: test
-    if: github.event_name != 'pull_request'
+    needs: [check, test]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'   # 只从 main 发布
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
       packages: write          # 推送到 ghcr.io 需要
@@ -153,11 +93,13 @@ jobs:
       - uses: actions/checkout@v7
 
       # 镜像名必须全小写，而 GitHub 用户名可能有大写（Yumin-Space），所以先转成小写
-      - name: Version and image name
+      - name: Image name
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
         run: |
           set -eu
-          echo "VERSION=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/xexam" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - uses: docker/setup-qemu-action@v4
         with:
@@ -186,11 +128,12 @@ jobs:
             org.opencontainers.image.version=v${{ env.VERSION }}
 
       - name: Build and push (amd64 + arm64)
+        id: push
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64,linux/arm64
-          provenance: false        # 不额外生成 unknown/unknown 条目，群晖、树莓派、Portainer 等老一点的工具才不会出问题
+          provenance: false        # 不额外生成 unknown/unknown 条目，群晖、树莓派、Portainer 等工具才不会出问题
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -198,12 +141,20 @@ jobs:
             type=gha,scope=amd64
             type=gha,scope=arm64
 
-      # 发布完回头看一眼：镜像清单里必须同时有 amd64 和 arm64
+      # 发布完回头看一眼：按「刚推送的那个摘要」读镜像清单，必须同时有 amd64 和 arm64
       - name: Verify published manifest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -eu
-          out=$(docker buildx imagetools inspect "$IMAGE:latest")
+          [ -n "$DIGEST" ] || { echo "没有拿到推送的摘要"; exit 1; }
+          out=$(docker buildx imagetools inspect "$IMAGE@$DIGEST")
           echo "$out"
-          echo "$out" | grep -q 'Platform: *linux/amd64' || { echo "发布的镜像缺少 amd64"; exit 1; }
-          echo "$out" | grep -q 'Platform: *linux/arm64' || { echo "发布的镜像缺少 arm64"; exit 1; }
-          echo "已发布：$IMAGE:latest 和 $IMAGE:v$VERSION，同时包含 amd64 和 arm64"
+          echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "发布的镜像缺少 amd64"; exit 1; }
+          echo "$out" | grep -Eq 'Platform: +linux/arm64' || { echo "发布的镜像缺少 arm64"; exit 1; }
+          # 默认输出的第一个 Digest: 行就是这个标签（顶层清单）的摘要
+          for t in latest "v$VERSION"; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$t" | awk '/^Digest:/{print $2; exit}')
+            [ "$got" = "$DIGEST" ] || { echo "标签 $t 指向的不是刚推送的镜像（$got 与 $DIGEST）"; exit 1; }
+          done
+          echo "已发布：$IMAGE:latest 和 $IMAGE:v$VERSION，同时包含 amd64 和 arm64（摘要 $DIGEST）"

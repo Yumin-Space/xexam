@@ -7,6 +7,12 @@
 # 更新到最新版本：   docker compose pull && docker compose up -d
 # 停止 / 再启动：    docker compose stop  /  docker compose start
 # 想从源码构建（改代码时用）：docker compose -f docker-compose.build.yml up -d --build
+#
+# 想通过自己的域名访问（Cloudflare Tunnel + Cloudflare Access）：
+#   在这个文件旁边建一个叫 .env 的文件，写：
+#       XEXAM_BIND=0.0.0.0:8765            # 让局域网里的 cloudflared 能连到这台机器；默认是只绑定本机
+#       XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
+#   然后 docker compose up -d。完整说明见 README 的「通过 Cloudflare Tunnel 从互联网访问」。
 
 name: xexam                          # Compose 项目名：固定下来，放在哪个文件夹都一样
 
@@ -15,18 +21,21 @@ services:
     image: ghcr.io/yumin-space/xexam:latest
     container_name: xexam
     restart: unless-stopped
-    pull_policy: always              # 每次 up 都检查有没有新版本
     ports:
-      # 只绑定本机：同一台电脑上的浏览器才能访问。
-      # 想让局域网里的手机/平板也能用，把下面这行改成  "8765:8765"，
-      # 并在 environment 里加  CCARP_ALLOWED_HOSTS: "你的电脑IP"  （注意这个服务没有登录，只在可信的家庭网络里这样做）
-      - "127.0.0.1:8765:8765"
+      # 默认只绑定本机（安全）。在 .env 里设 XEXAM_BIND=0.0.0.0:8765 才会让局域网里别的机器连得到。
+      - "${XEXAM_BIND:-127.0.0.1:8765}:8765"
     volumes:
-      # 题库和学习记录都在这个卷里的 ccarp.db。卷由 Docker 管理，删除或更新容器都不会丢。
+      # 题库和学习记录都在这个卷里的 xexam.db。卷由 Docker 管理，删除或更新容器都不会丢。
       # 真实名字是 xexam_data（项目名_卷名），用 docker volume ls 能看到。
       - data:/data
     environment:
       TZ: Asia/Tokyo
+      # 允许用哪些域名/地址访问。逗号分隔，可以写域名、IP，带不带端口都行。留空 = 只允许本机。
+      XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"
+      # 反向代理把 Host 改写成源站地址（cloudflared 设了 HTTP Host Header）时，才需要填这个：你的公网域名。
+      XEXAM_ALLOWED_ORIGINS: "${XEXAM_ALLOWED_ORIGINS:-}"
+      # 1 = 不再检查 Host。只在前面已经有身份验证（Cloudflare Access）、又懒得列域名时用。默认 0。
+      XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
 
 volumes:
   data:

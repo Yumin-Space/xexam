@@ -8,6 +8,15 @@ progress.json
 *.sqlite
 *.sqlite3
 
+# 备份压缩包（里面是整个数据库）
+*.tgz
+*.zip
+
+# 本机配置（端口、域名等），不要提交
+.env
+.env.*
+!.env.example
+
 # 运行产生的文件
 __pycache__/
 *.pyc

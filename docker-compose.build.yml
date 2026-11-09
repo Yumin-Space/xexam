@@ -4,6 +4,7 @@
 #
 # 项目名和卷名都和 docker-compose.yml 相同（xexam_data），所以两种方式用的是同一份数据。
 # 容器名也相同，所以不能同时运行；切换前先 docker compose stop。
+# 用同一个 .env（XEXAM_BIND / XEXAM_ALLOWED_HOSTS ...），说明见 docker-compose.yml 开头。
 
 name: xexam
 
@@ -14,11 +15,14 @@ services:
     container_name: xexam
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8765:8765"
+      - "${XEXAM_BIND:-127.0.0.1:8765}:8765"
     volumes:
       - data:/data
     environment:
       TZ: Asia/Tokyo
+      XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"
+      XEXAM_ALLOWED_ORIGINS: "${XEXAM_ALLOWED_ORIGINS:-}"
+      XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
 
 volumes:
   data:
