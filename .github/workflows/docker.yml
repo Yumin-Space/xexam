@@ -15,9 +15,6 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  IMAGE: ghcr.io/${{ github.repository_owner }}/ccarp-quiz
-
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -27,6 +24,10 @@ jobs:
       packages: write          # 推送到 ghcr.io 需要
     steps:
       - uses: actions/checkout@v7
+
+      # 镜像名必须全小写，而 GitHub 用户名可能有大写（Yumin-Space），所以先转成小写
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ccarp-quiz" >> "$GITHUB_ENV"
 
       - uses: docker/setup-buildx-action@v4
 
@@ -45,17 +46,17 @@ jobs:
           set -eu
           # 挂载目录给任意用户可写：模拟 Docker Desktop 挂载进来的目录
           mkdir -p "$RUNNER_TEMP/data" && chmod 777 "$RUNNER_TEMP/data"
-          docker run -d --name t -p 127.0.0.1:18765:8765 -v "$RUNNER_TEMP/data:/data" ccarp-quiz:test
+          docker run -d --name ccarp-test -p 127.0.0.1:18765:8765 -v "$RUNNER_TEMP/data:/data" ccarp-quiz:test
 
           ok=0
           for i in $(seq 1 30); do
             if curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1; then ok=1; break; fi
             sleep 1
           done
-          if [ "$ok" != 1 ]; then docker logs t; echo "服务没有在 30 秒内启动"; exit 1; fi
+          if [ "$ok" != 1 ]; then docker logs ccarp-test; echo "服务没有在 30 秒内启动"; exit 1; fi
 
-          echo "容器里运行的用户："; docker exec t id
-          test "$(docker exec t id -u)" != 0 || { echo "容器不应该以 root 运行"; exit 1; }
+          echo "容器里运行的用户："; docker exec ccarp-test id
+          test "$(docker exec ccarp-test id -u)" != 0 || { echo "容器不应该以 root 运行"; exit 1; }
 
           curl -fsS http://127.0.0.1:18765/ | grep -q "CCARP" || { echo "首页内容不对"; exit 1; }
           curl -fsS http://127.0.0.1:18765/api/info | grep -q '"bankCount": 0' || { echo "全新数据目录的题数应为 0"; exit 1; }
@@ -68,19 +69,19 @@ jobs:
           test -f "$RUNNER_TEMP/data/ccarp.db" || { echo "没有在挂载目录里生成 ccarp.db"; ls -la "$RUNNER_TEMP/data"; exit 1; }
 
           # 重启后数据库仍在、服务仍能起来
-          docker restart t
+          docker restart ccarp-test
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:18765/api/info >/dev/null 2>&1 && break; sleep 1; done
-          curl -fsS http://127.0.0.1:18765/api/info >/dev/null || { docker logs t; exit 1; }
+          curl -fsS http://127.0.0.1:18765/api/info >/dev/null || { docker logs ccarp-test; exit 1; }
 
           # 健康检查状态
           for i in $(seq 1 40); do
-            s=$(docker inspect -f '{{.State.Health.Status}}' t)
+            s=$(docker inspect -f '{{.State.Health.Status}}' ccarp-test)
             [ "$s" = healthy ] && break
             sleep 2
           done
           echo "健康状态：$s"
-          test "$s" = healthy || { docker logs t; exit 1; }
-          docker rm -f t >/dev/null
+          test "$s" = healthy || { docker logs ccarp-test; exit 1; }
+          docker rm -f ccarp-test >/dev/null
 
       # 只有 main 分支和 v* 标签才发布；拉取请求只构建和测试
       - name: Log in to ghcr.io
