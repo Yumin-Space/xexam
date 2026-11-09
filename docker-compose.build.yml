@@ -1,0 +1,24 @@
+# 从源码构建并运行（需要有完整的仓库代码，改代码时用）。
+# 平时直接用 docker-compose.yml 拉取现成的镜像就行。
+#     docker compose -f docker-compose.build.yml up -d --build
+#
+# 项目名和卷名都和 docker-compose.yml 相同（xexam_data），所以两种方式用的是同一份数据。
+# 容器名也相同，所以不能同时运行；切换前先 docker compose stop。
+
+name: xexam
+
+services:
+  xexam:
+    build: .
+    image: xexam:local
+    container_name: xexam
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - data:/data
+    environment:
+      TZ: Asia/Tokyo
+
+volumes:
+  data:

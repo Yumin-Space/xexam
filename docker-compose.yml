@@ -1,16 +1,32 @@
+# xexam —— 直接拉取 GitHub 自动构建好的镜像运行。
+# 在任何机器上，只需要这一个文件：
+#     docker login ghcr.io -u Yumin-Space      （第一次；镜像是私有的，密码填有 read:packages 权限的令牌）
+#     docker compose up -d
+# 然后浏览器打开  http://localhost:8765
+#
+# 更新到最新版本：   docker compose pull && docker compose up -d
+# 停止 / 再启动：    docker compose stop  /  docker compose start
+# 想从源码构建（改代码时用）：docker compose -f docker-compose.build.yml up -d --build
+
+name: xexam                          # Compose 项目名：固定下来，放在哪个文件夹都一样
+
 services:
-  ccarp:
-    build: .
-    image: ccarp-quiz:latest
-    container_name: ccarp-quiz
+  xexam:
+    image: ghcr.io/yumin-space/xexam:latest
+    container_name: xexam
     restart: unless-stopped
+    pull_policy: always              # 每次 up 都检查有没有新版本
     ports:
       # 只绑定本机：同一台电脑上的浏览器才能访问。
       # 想让局域网里的手机/平板也能用，把下面这行改成  "8765:8765"，
       # 并在 environment 里加  CCARP_ALLOWED_HOSTS: "你的电脑IP"  （注意这个服务没有登录，只在可信的家庭网络里这样做）
       - "127.0.0.1:8765:8765"
     volumes:
-      # 所有数据（题库 + 学习记录）都在这个文件夹的 ccarp.db 里。备份 = 复制这个文件夹。
-      - ./data:/data
+      # 题库和学习记录都在这个卷里的 ccarp.db。卷由 Docker 管理，删除或更新容器都不会丢。
+      # 真实名字是 xexam_data（项目名_卷名），用 docker volume ls 能看到。
+      - data:/data
     environment:
       TZ: Asia/Tokyo
+
+volumes:
+  data:
