@@ -6,6 +6,10 @@
 **/*.db-journal
 **/*.sqlite*
 **/__pycache__
+**/node_modules
+**/dist
+**/target
+**/.vite
 **/*.pyc
 .claude
 **/.env
