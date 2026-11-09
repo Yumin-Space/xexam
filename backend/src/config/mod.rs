@@ -31,12 +31,21 @@ pub fn valid_version(v: &str) -> bool {
 }
 
 impl Config {
-    /// 从真实进程环境读取。版本号：`XEXAM_VERSION`（合法时），否则编译进来的 crate 版本。
+    /// 从真实进程环境读取。版本号的来源，依次是：
+    /// 1. `XEXAM_VERSION`（合法时）；
+    /// 2. `XEXAM_VERSION_FILE` 指向的文件的内容（镜像里是 `/VERSION`，和旧版读 `VERSION` 文件一致）；
+    /// 3. 编译进来的 crate 版本。
     pub fn from_env() -> Config {
+        let from_file = || {
+            let path = std::env::var("XEXAM_VERSION_FILE").ok()?;
+            let text = std::fs::read_to_string(path).ok()?;
+            Some(text.trim().to_string()).filter(|v| valid_version(v))
+        };
         let version = std::env::var("XEXAM_VERSION")
             .ok()
             .filter(|v| valid_version(v))
             .map(|v| v.trim().to_string())
+            .or_else(from_file)
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
         Config::from_env_with(&|k| std::env::var(k).ok(), version)
     }
