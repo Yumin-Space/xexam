@@ -1,0 +1,12 @@
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\deps\serde-e7e5e23f8a5ada4d.d: C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\build\serde-94d19e0df0307ef8\out/private.rs
+
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\deps\libserde-e7e5e23f8a5ada4d.rmeta: C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\build\serde-94d19e0df0307ef8\out/private.rs
+
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\lib.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\integer128.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\mod.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\de.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\serde-1.0.229\src\private\ser.rs:
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\build\serde-94d19e0df0307ef8\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\Min\\Desktop\\Claude\\xexam\\backend\\target\\debug\\build\\serde-94d19e0df0307ef8\\out

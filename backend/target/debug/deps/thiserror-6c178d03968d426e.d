@@ -1,0 +1,12 @@
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\deps\thiserror-6c178d03968d426e.d: C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\build\thiserror-bb1ca4e77bd6dad7\out/private.rs
+
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\deps\libthiserror-6c178d03968d426e.rmeta: C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\build\thiserror-bb1ca4e77bd6dad7\out/private.rs
+
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\lib.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\aserror.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\display.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\var.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\thiserror-2.0.21\src\private.rs:
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\build\thiserror-bb1ca4e77bd6dad7\out/private.rs:
+
+# env-dep:OUT_DIR=C:\\Users\\Min\\Desktop\\Claude\\xexam\\backend\\target\\debug\\build\\thiserror-bb1ca4e77bd6dad7\\out

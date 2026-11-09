@@ -1,0 +1,9 @@
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\deps\zeroize-ad6e7e3e007ed337.d: C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\lib.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\x86.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\barrier.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\stack.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\../README.md
+
+C:\Users\Min\Desktop\Claude\xexam\backend\target\debug\deps\libzeroize-ad6e7e3e007ed337.rmeta: C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\lib.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\x86.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\barrier.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\stack.rs C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\../README.md
+
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\lib.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\x86.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\barrier.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\stack.rs:
+C:\Users\Min\scoop\persist\rustup-gnu\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\zeroize-1.9.1\src\../README.md:
