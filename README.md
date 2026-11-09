@@ -9,8 +9,8 @@
 
 | | |
 |---|---|
-| 当前版本 | **v0.2**（见 [更新日志](#更新日志)） |
-| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.2` / `sha-<提交>` |
+| 当前版本 | **v0.2.1**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看） |
+| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.2.1` / `sha-<提交>` |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 
@@ -379,47 +379,43 @@ erDiagram
 
 ### 6. 自动构建与发布（CI/CD）
 
-每次你把代码推到 GitHub，GitHub Actions 自动做完**检查版本和更新日志 → 两种 CPU 各自构建并测试 → 都通过才发布**。
+每次你把代码推到 GitHub，GitHub Actions 自动做完**检查版本和更新日志 → 两种 CPU 各自构建并测试 → 都通过才发布镜像 → 在 Releases 页建一个同版本的 Release**。
 
 ```mermaid
 flowchart TB
-    DEV["你：修改代码<br/>· 改 VERSION（如 0.2 → 0.3）<br/>· 在 README 更新日志写一条"] -->|"git push 到 main"| GH["GitHub 仓库 Yumin-Space/xexam"]
-    GH -->|"触发"| WF
+    DEV["你：改 VERSION，在 README 更新日志写一条<br/>然后 git push 到 main"] --> CHK
 
     subgraph WF["GitHub Actions：.github/workflows/docker.yml"]
         direction TB
         CHK["job 1：check<br/>VERSION 格式正确，且 README 更新日志最上面一条 = VERSION"]
-        subgraph TEST["job 2：test（两种 CPU 并行）"]
-            direction LR
-            subgraph T1["amd64（x86）"]
-                direction TB
-                A2["构建镜像"] --> A3["冒烟测试<br/>scripts/smoke-test.sh"]
-            end
-            subgraph T2["arm64（ARM，QEMU 模拟）"]
-                direction TB
-                B2["构建镜像"] --> B3["同一份冒烟测试"]
-            end
+        subgraph TEST["job 2：test（两种 CPU 各跑一遍）"]
+            direction TB
+            T1["amd64（x86）<br/>构建镜像 → scripts/smoke-test.sh"]
+            T2["arm64（ARM，QEMU 模拟）<br/>构建镜像 → 同一份冒烟测试"]
         end
-        PUB["job 3：publish<br/>构建 amd64+arm64 → 合成一个镜像清单 → 推送<br/>→ 回头核对：清单里有两种架构，latest 和 vX.Y 指向刚推送的镜像"]
-        STOP["❌ 不发布<br/>ghcr.io 上的 latest 保持上一个能用的版本"]
-        CHK --> A2
-        CHK --> B2
-        A3 -->|"两种架构都通过"| PUB
-        B3 -->|"两种架构都通过"| PUB
-        CHK -.->|"没写更新日志 / 版本不一致"| STOP
-        A3 -.->|"任何一个失败"| STOP
-        B3 -.->|"任何一个失败"| STOP
+        PUB["job 3：publish<br/>构建 amd64+arm64 → 合成一个镜像清单 → 推送<br/>→ 回头核对：两种架构都在，latest 和版本号指向刚推送的镜像"]
+        REL["job 4：release<br/>在 Releases 页建（或更新）v版本号<br/>说明 = README 更新日志里这个版本的一段"]
+        STOP["❌ 任何一步失败：不发布<br/>latest 保持上一个能用的版本，Releases 页也不出现这个版本"]
+        CHK --> T1
+        CHK --> T2
+        T1 -->|"两种架构都通过"| PUB
+        T2 --> PUB
+        PUB -->|"镜像已发布并核对"| REL
+        TEST -.->|"失败"| STOP
     end
 
-    PUB --> REG[("ghcr.io/yumin-space/xexam<br/>标签：latest · v0.2 · sha-xxxxxxx")]
-    REG -->|"docker compose pull<br/>x86 机器自动拿 amd64<br/>ARM 机器自动拿 arm64"| RUN["你的服务器 / 电脑 / 树莓派"]
+    PUB --> REG[("Packages：ghcr.io/yumin-space/xexam<br/>标签：latest · 版本号 · sha-xxxxxxx")]
+    REL --> RELP[("Releases 页：v版本号 + 同名 git 标签")]
+    REG -->|"docker compose pull<br/>x86 拿 amd64 · ARM 拿 arm64"| RUN["你的服务器 / 电脑 / 树莓派"]
 
     classDef ok fill:#EAF6EF,stroke:#1F7650,color:#1B2A47
     classDef bad fill:#F9E3E0,stroke:#B2312A,color:#1B2A47
     classDef store fill:#FBF3D7,stroke:#B59A1F,color:#1B2A47
-    class CHK,A2,A3,B2,B3,PUB ok
+    classDef user fill:#E7EEF9,stroke:#2D56A6,color:#1B2A47
+    class CHK,T1,T2,PUB,REL ok
     class STOP bad
-    class REG store
+    class REG,RELP store
+    class DEV,RUN user
 ```
 
 **冒烟测试检查什么（每种架构都跑一遍）**
@@ -662,6 +658,12 @@ docker compose start
 
 每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
+### v0.2.1 — 2026-11-10
+
+- **每次构建成功后自动在 GitHub 的 Releases 页建一个 Release**（以前只推了镜像，Releases 页一直是空的）：流水线新增第 4 个 job `release`，在镜像发布并核对成功之后运行，说明取自本更新日志这个版本的那一段，并自动打 git 标签 `v<版本>`。
+- v0.2 的 Release 补建了一次（对应 v0.2 的提交）。
+- 新增 `scripts/release-notes.py`：从 README 抽出某个版本的更新日志；本机也能运行，用来预览 Release 页会显示什么。
+
 ### v0.2 — 2026-11-10
 
 - **可以通过自己的域名从互联网访问**（Cloudflare Tunnel + Cloudflare Access）：
@@ -670,7 +672,7 @@ docker compose start
   - 被拒绝时会说明是哪一条没通过、该怎么放行；登录过期时页面会提示刷新重新登录。
 - 端口绑定改成可配置（`XEXAM_BIND`），默认仍然只绑定本机。
 - 收到 `docker stop` 的停止信号后正常退出（以前要等 10 秒被强杀），数据库干净关闭。
-- CI：拆成「检查版本和更新日志 → 两种架构各自测试 → 发布」三步；冒烟测试挪进 `scripts/smoke-test.sh`，本机装了 Docker 也能直接跑；发布后按摘要核对镜像清单。
+- CI：拆成「检查版本和更新日志 → 两种架构各自测试 → 发布」三步（v0.2.1 起再加第四步：建 Release）；冒烟测试挪进 `scripts/smoke-test.sh`，本机装了 Docker 也能直接跑；发布后按摘要核对镜像清单。
 - `/api/info` 增加 `arch`（当前 CPU 架构）。
 - 审计后的修复（每一条都有对应的实测）：
   - 服务端：提前拒绝的请求（403/415）先把请求体读掉再回复，浏览器看到的是真正的原因而不是「连不上服务」；被拒绝的请求在日志里留一行（`docker compose logs` 能看到）；畸形的 JSON（数字当列表、`Infinity`、过深嵌套、非 ASCII 的确认码）返回 400/409，而不是让连接断掉；POST 的 `Content-Type` 必须真的是 `application/json`；`XEXAM_ALLOWED_HOSTS` 用空格或分号分隔也能识别。
@@ -711,6 +713,8 @@ docker compose start
 - **两种架构各测一遍：** `amd64` 在 GitHub 的 x86 机器上原生跑；`arm64` 用 QEMU 模拟运行（比原生慢，但这个镜像很小）。
 - **都通过才发布：** 发布成一个多架构镜像，并回头检查镜像清单里确实有 `amd64` 和 `arm64`。测试失败时 `latest` 仍是上一个能用的版本。
 - **发布的标签：** `latest`、`v<VERSION>`、`sha-<提交>`。
+- **Releases 页：** 镜像发布并核对成功之后，流水线会自动建（或更新）一个叫 `v<VERSION>` 的 Release，说明文字取自本文件「更新日志」里这个版本的那一段（[`scripts/release-notes.py`](scripts/release-notes.py)），并自动打上同名的 git 标签。镜像没发布成功，就不会有这个 Release。同一个版本重新跑只会更新说明，不会再建一个。
+- **Releases 和镜像是两个地方：** 镜像在仓库的 **Packages** 里（ghcr.io），Release 在 **Releases** 页；两者现在由同一次构建一起产生。
 
 镜像从私有仓库发布，默认也是私有的。想免登录拉取，到 GitHub 的包设置里把它改成公开。
 
@@ -819,6 +823,7 @@ Dockerfile                 非 root 用户运行，/data 是卷
 docker-compose.yml         拉取镜像运行（只需要这一个文件）
 docker-compose.build.yml   从源码构建运行
 .env                       （自己建，不提交）本机配置：端口、域名，见「快速开始」里的表
+scripts/release-notes.py    从更新日志生成 GitHub Release 的说明（CI 用，本机也能跑）
 scripts/smoke-test.sh      冒烟测试：CI 里每种 CPU 架构各跑一次，装了 Docker 的机器上也能直接运行
 .github/workflows/         自动构建、测试、发布
 使用说明.txt                面向使用者的简要说明

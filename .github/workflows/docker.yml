@@ -158,3 +158,37 @@ jobs:
             [ "$got" = "$DIGEST" ] || { echo "标签 $t 指向的不是刚推送的镜像（$got 与 $DIGEST）"; exit 1; }
           done
           echo "已发布：$IMAGE:latest 和 $IMAGE:v$VERSION，同时包含 amd64 和 arm64（摘要 $DIGEST）"
+
+  # ④ 镜像发布并核对成功之后，在 GitHub 的 Releases 页建（或更新）这个版本的 Release。
+  #    说明文字取自 README 的「更新日志」（scripts/release-notes.py），所以 Release 页和 README 永远是同一份内容。
+  #    Release 对应的是 main 上这次提交；版本号 = VERSION。镜像没发布成功就不会走到这里，Release 页上不会出现拉不到镜像的版本。
+  release:
+    name: GitHub release
+    needs: [check, publish]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write          # 创建 Release 和 git 标签需要
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create or update the release
+        run: |
+          set -eu
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/xexam"
+          python3 scripts/release-notes.py "$VERSION" "$image" README.md > notes.md
+          tag="v$VERSION"
+          title="Xexam v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # 同一个版本重新跑（例如只改了说明）：更新说明，不动标签
+            gh release edit "$tag" --title "$title" --notes-file notes.md --latest
+            echo "已更新 Release：$tag"
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md --latest
+            echo "已创建 Release：$tag（对应提交 $GITHUB_SHA）"
+          fi
+          gh release view "$tag" --json url,tagName,targetCommitish --jq '"\(.tagName) -> \(.url)"'
