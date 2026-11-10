@@ -31,6 +31,15 @@ pub fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
     workbook::parse_workbook(data)
 }
 
+/// 同 `parse_workbook`，但解析器会在 `deadline` 到了之后自己停下（返回 `ImportError::Timeout`）。
+/// 上传接口用它实现 `XEXAM_PARSE_TIMEOUT_SECS`，这样超时之后后台线程不会继续占着 CPU 和内存。
+pub fn parse_workbook_until(
+    data: &[u8],
+    deadline: Option<std::time::Instant>,
+) -> Result<ParsedWorkbook, ImportError> {
+    workbook::parse_workbook_until(data, deadline)
+}
+
 /// 题目 id：`sha1(sheet + "\n" + 去空白(stem)[:300] + "|" + 去空白(first)[:200])` 的前 12 位十六进制。
 pub fn make_id(sheet: &str, stem: &str, first: &str) -> String {
     id::make_id(sheet, stem, first)

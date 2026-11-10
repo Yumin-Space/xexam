@@ -37,6 +37,8 @@ pub struct Inner {
     /// 真实数据库句柄。处理器只通过 `engine` 访问数据库；这里留着给 `main.rs`（收尾、子命令）。
     pub store: Arc<crate::database::Store>,
     pub pending: PendingStore,
+    /// 同时解析的上传个数上限（见 `services::PARSE_CONCURRENCY`）
+    pub parse_gate: Arc<tokio::sync::Semaphore>,
     /// 只有 `--allow-shutdown` 时才有
     pub shutdown: Option<tokio::sync::mpsc::Sender<()>>,
     /// 解析器 + 数据库的统一入口。生产用 `RealEngine`，测试用假实现。
@@ -54,6 +56,7 @@ impl AppState {
             cfg,
             store,
             pending: PendingStore::new(),
+            parse_gate: Arc::new(tokio::sync::Semaphore::new(services::PARSE_CONCURRENCY)),
             shutdown,
             engine,
         }))
@@ -291,7 +294,8 @@ async fn post_route(
 
 async fn upload(st: &AppState, filename: String, data: Vec<u8>) -> Result<Response, AppError> {
     let timeout = Duration::from_secs(st.0.cfg.parse_timeout_secs.max(1));
-    let wb: ParsedWorkbook = services::parse_upload(st.0.engine.clone(), data, timeout).await?;
+    let wb: ParsedWorkbook =
+        services::parse_upload(st.0.engine.clone(), st.0.parse_gate.clone(), data, timeout).await?;
     let (plan, wb) = services::plan_import(st.0.engine.clone(), wb).await?;
     let payload = services::create_pending_import(&st.0.pending, filename, wb, plan);
     Ok(json_resp(StatusCode::OK, &payload, false))

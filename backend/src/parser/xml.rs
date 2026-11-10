@@ -14,6 +14,8 @@ use quick_xml::{NsReader, XmlVersion};
 pub(super) const MAX_DEPTH: usize = 64;
 /// 单个 XML 部件的节点数上限（整棵树在内存里，约 150 字节 / 节点）。
 pub(super) const MAX_NODES: usize = 1_000_000;
+/// 一个元素上最多的属性个数（含命名空间声明）。真实的 .xlsx 里一个元素只有几个到十几个；`MAX_NODES` 只数元素，限制不了属性。
+pub(super) const MAX_ATTRS_PER_ELEMENT: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum XmlError {
@@ -23,6 +25,8 @@ pub(super) enum XmlError {
     Doctype,
     /// 超过深度 / 节点数上限
     TooComplex,
+    /// 超过截止时间
+    Timeout,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -175,7 +179,10 @@ fn make_element(reader: &NsReader<&[u8]>, e: &BytesStart<'_>) -> Result<Element,
     let (res, local) = reader.resolver().resolve_element(e.name());
     let ns = resolve_ns(res)?;
     let mut attrs = Vec::new();
-    for a in e.attributes() {
+    for (count, a) in e.attributes().enumerate() {
+        if count >= MAX_ATTRS_PER_ELEMENT {
+            return Err(XmlError::TooComplex);
+        }
         let a = a.map_err(|_| XmlError::Malformed)?;
         if a.key.as_namespace_binding().is_some() {
             continue;
@@ -235,14 +242,28 @@ fn push_text(stack: &mut [Element], s: &str) -> Result<(), XmlError> {
     }
 }
 
-/// 解析一个 XML 部件。
+/// 解析一个 XML 部件（没有截止时间）。
+#[cfg(test)]
 pub(super) fn parse(bytes: &[u8]) -> Result<Element, XmlError> {
+    parse_until(bytes, None)
+}
+
+/// 解析一个 XML 部件；`deadline` 到了就中止（协作式：每处理 1024 个事件检查一次时钟）。
+pub(super) fn parse_until(
+    bytes: &[u8],
+    deadline: Option<std::time::Instant>,
+) -> Result<Element, XmlError> {
     let text = decode(bytes)?;
     let mut reader = NsReader::from_str(&text);
     let mut stack: Vec<Element> = Vec::new();
     let mut root: Option<Element> = None;
     let mut nodes = 0usize;
+    let mut events = 0u32;
     loop {
+        events = events.wrapping_add(1);
+        if events.is_multiple_of(1024) && deadline.is_some_and(|d| std::time::Instant::now() >= d) {
+            return Err(XmlError::Timeout);
+        }
         let ev = reader.read_event().map_err(|_| XmlError::Malformed)?;
         match ev {
             Event::Start(e) => {

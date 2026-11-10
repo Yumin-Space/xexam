@@ -574,3 +574,170 @@ async fn concurrent_confirm_has_exactly_one_winner() {
     assert_eq!((ok, gone), (1, 49));
     assert_eq!(a.engine.with(|f| f.apply_calls), 1);
 }
+
+// ---------------------------------------------------------------- 评审后补的测试：协作式超时与并发上限
+
+mod cooperative {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+    use tokio::sync::Semaphore;
+    use xexam_backend::error::ImportError;
+    use xexam_backend::models::ParsedWorkbook;
+    use xexam_backend::services::{parse_upload, Engine};
+
+    /// 一个尊重截止时间的引擎：每 5 毫秒看一次时钟，到了就返回 `Timeout`；同时记录有几个解析正在占着线程。
+    struct Spinner {
+        running: AtomicUsize,
+        peak: AtomicUsize,
+        finished: AtomicUsize,
+    }
+
+    impl Spinner {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                running: AtomicUsize::new(0),
+                peak: AtomicUsize::new(0),
+                finished: AtomicUsize::new(0),
+            })
+        }
+    }
+
+    macro_rules! unused_engine_methods {
+        () => {
+            fn count_active(&self) -> Result<i64, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn bank(&self) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn progress(&self) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn import_history(
+                &self,
+                _: i64,
+            ) -> Result<Vec<xexam_backend::models::ImportRecord>, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn plan_import(
+                &self,
+                _: &[xexam_backend::models::ParsedSheet],
+                _: &[xexam_backend::models::Question],
+            ) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn apply_import(
+                &self,
+                _: &str,
+                _: &[xexam_backend::models::ParsedSheet],
+                _: &[xexam_backend::models::Question],
+            ) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn record_attempt(
+                &self,
+                _: &xexam_backend::models::Attempt,
+            ) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+            fn reset_progress(&self) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+                unreachable!()
+            }
+        };
+    }
+
+    impl Engine for Spinner {
+        fn check_and_parse(&self, data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
+            self.check_and_parse_until(data, Instant::now() + Duration::from_secs(3600))
+        }
+        fn check_and_parse_until(
+            &self,
+            _data: &[u8],
+            deadline: Instant,
+        ) -> Result<ParsedWorkbook, ImportError> {
+            let now = self.running.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            let r = loop {
+                if Instant::now() >= deadline {
+                    break Err(ImportError::Timeout);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            self.running.fetch_sub(1, Ordering::SeqCst);
+            self.finished.fetch_add(1, Ordering::SeqCst);
+            r
+        }
+        unused_engine_methods!();
+    }
+
+    /// 超时之后，后台线程自己结束了（而不是一直跑下去），客户端拿到的是中文的 400。
+    #[tokio::test]
+    async fn the_parser_thread_really_stops_after_the_deadline() {
+        let eng = Spinner::new();
+        let gate = Arc::new(Semaphore::new(2));
+        let r = parse_upload(
+            eng.clone(),
+            gate.clone(),
+            vec![0; 10],
+            Duration::from_millis(200),
+        )
+        .await;
+        let e = r.expect_err("must time out");
+        assert!(
+            e.to_string().contains("bad request") || format!("{e:?}").contains("时间太长"),
+            "{e:?}"
+        );
+        // 线程在截止时间之后很快自己结束，并把许可证还回来
+        for _ in 0..100 {
+            if eng.finished.load(Ordering::SeqCst) == 1 && gate.available_permits() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(
+            eng.finished.load(Ordering::SeqCst),
+            1,
+            "the parser thread must have finished by itself"
+        );
+        assert_eq!(eng.running.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            gate.available_permits(),
+            2,
+            "the permit must be returned once the thread ends"
+        );
+    }
+
+    /// 同时解析的个数不超过许可证数；多出来的排队，且排队时间也算在时限里。
+    #[tokio::test]
+    async fn at_most_two_parses_run_at_once_and_waiting_counts_against_the_deadline() {
+        let eng = Spinner::new();
+        let gate = Arc::new(Semaphore::new(2));
+        let mut tasks = Vec::new();
+        for _ in 0..5 {
+            let (e, g) = (eng.clone(), gate.clone());
+            tasks.push(tokio::spawn(async move {
+                parse_upload(e, g, vec![0; 10], Duration::from_millis(300))
+                    .await
+                    .is_err()
+            }));
+        }
+        for t in tasks {
+            assert!(t.await.expect("join"), "every call ends as a timeout error");
+        }
+        assert!(
+            eng.peak.load(Ordering::SeqCst) <= 2,
+            "peak concurrency was {}",
+            eng.peak.load(Ordering::SeqCst)
+        );
+        // 排队的那几个在等许可证期间就超时了，根本没有开始解析
+        for _ in 0..100 {
+            if gate.available_permits() == 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert_eq!(gate.available_permits(), 2);
+        assert!(eng.finished.load(Ordering::SeqCst) <= 5);
+    }
+}

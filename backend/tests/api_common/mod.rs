@@ -218,6 +218,9 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
         cfg,
         store,
         pending: ttl.map(PendingStore::with_ttl).unwrap_or_default(),
+        parse_gate: Arc::new(tokio::sync::Semaphore::new(
+            xexam_backend::services::PARSE_CONCURRENCY,
+        )),
         shutdown: if allow { Some(tx) } else { None },
         engine: engine.clone(),
     }));

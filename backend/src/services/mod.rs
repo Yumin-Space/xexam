@@ -11,6 +11,7 @@ use crate::security;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tokio::sync::Semaphore;
 
 pub mod engine;
 pub use engine::{Engine, RealEngine};
@@ -88,32 +89,55 @@ impl Default for PendingStore {
 
 pub const MSG_PARSE_TIMEOUT: &str =
     "解析这个文件用的时间太长，已经停止。请确认选对了文件，或者换一份小一点的再试。";
+/// 同时解析的上传个数。一个解析最多占几百 MB，这里限制总量（真实使用时同时只会有一个）。
+pub const PARSE_CONCURRENCY: usize = 2;
 pub const MSG_NO_QUESTIONS: &str = "这份文件里没有读到任何可用的题，没有导入。";
 pub const MSG_UNEXPECTED: &str = "读取这个 Excel 时出错：文件内容不符合预期";
 pub const MSG_APPLY_FAILED: &str = "写入数据库失败，题库没有任何改动。";
 
 /// 上传内容检查 + 解析（旧版 `check_xlsx` + `parse_workbook`）。同步的解析器放进 `spawn_blocking`，
 /// 并有总时限（`XEXAM_PARSE_TIMEOUT_SECS`）：超时回 400 中文说明。
+///
+/// 超时是**协作式**的：解析器每处理一批行 / 事件就看一眼截止时间，到了自己停下并返回 `ImportError::Timeout`，
+/// 所以超时后后台线程不会继续占着 CPU 和内存。外层的 `tokio::time::timeout` 只是兜底（比截止时间晚半秒），
+/// 用来覆盖解析器没法中途检查的那几步（打开 zip、整包解压校验）。
+/// 同时最多有 `PARSE_CONCURRENCY` 个解析在跑；许可证由后台线程自己持有，直到它真的结束。
 pub async fn parse_upload(
     engine: Arc<dyn Engine>,
+    gate: Arc<Semaphore>,
     data: Vec<u8>,
     timeout: Duration,
 ) -> Result<ParsedWorkbook, AppError> {
-    let task = tokio::task::spawn_blocking(move || engine.check_and_parse(&data));
-    match tokio::time::timeout(timeout, task).await {
+    let deadline = Instant::now() + timeout;
+    let fallback = timeout + Duration::from_millis(500);
+    let work = async {
+        // 排队等许可证也算在总时限里
+        let permit = gate.acquire_owned().await.map_err(|_| AppError::Internal)?;
+        let task = tokio::task::spawn_blocking(move || {
+            let r = engine.check_and_parse_until(&data, deadline);
+            drop(permit); // 线程真的结束了才放回许可证
+            r
+        });
+        Ok::<_, AppError>(task.await)
+    };
+    let joined = match tokio::time::timeout(fallback, work).await {
         Err(_) => {
-            tracing::warn!("upload parse timed out after {:?}", timeout);
-            Err(AppError::BadRequest(MSG_PARSE_TIMEOUT.to_string()))
+            tracing::warn!("upload parse did not finish within {:?}", fallback);
+            return Err(AppError::BadRequest(MSG_PARSE_TIMEOUT.to_string()));
         }
-        Ok(Err(join)) => {
+        Ok(Err(e)) => return Err(e),
+        Ok(Ok(j)) => j,
+    };
+    match joined {
+        Err(join) => {
             tracing::error!("upload parser task failed: {join}");
             Err(AppError::BadRequest(MSG_UNEXPECTED.to_string()))
         }
-        Ok(Ok(Err(e))) => {
+        Ok(Err(e)) => {
             tracing::info!("upload rejected: {e}");
             Err(e.into())
         }
-        Ok(Ok(Ok(wb))) => Ok(wb),
+        Ok(Ok(wb)) => Ok(wb),
     }
 }
 

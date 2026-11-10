@@ -38,7 +38,8 @@ flowchart LR
 2. 按**内容**判断：魔数 `PK`、ZIP 结构、含工作簿。旧版 `.xls`、空文件、改了扩展名的文件各有说明。
 3. ZIP：条目数 ≤ 10,000；**重复的条目名拒绝**（避免「检查的是一个、读的是另一个」）；解压后总大小有上限；用 `take(limit)` 有界读取，声明的大小不可信。
 4. XML：**任何 DOCTYPE / 实体声明一律拒绝**，不管扩展名、不管编码（UTF-16 也拒绝）；深度 ≤ 64、节点 ≤ 100 万。
-5. 解析：有协作式的截止时间（默认 30 秒）。
+5. 解析：有协作式的截止时间（默认 30 秒）——解析器每处理一批行 / XML 事件就看一次时钟，到了**自己停下**，超时后不会继续占着 CPU 和内存；同时最多 2 个解析在跑（`PARSE_CONCURRENCY`），多出来的排队，排队时间也算在时限里。
+   另外还有内存上限：同一个共享字符串被很多单元格引用时只存一份（不深拷贝），所有 A/B/C 单元格引用的字节总数不超过 64 MB；一个 XML 元素最多 256 个属性。
 6. 预览放进内存里**唯一的待确认槽位**，30 分钟过期；确认码 128 位随机，一次性，常量时间比较；错误的确认码不会消耗槽位里的内容。
 7. 确认时在**一个事务**里写入；这份文件里没有可用题时拒绝导入（防止把题库清空）。
 
@@ -62,7 +63,7 @@ flowchart LR
 
 | 项 | 设置 |
 |---|---|
-| 响应头 | 所有响应：`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。静态文件另有 `X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy`（相机 / 麦克风 / 定位全关）、严格 CSP |
+| 响应头 | 后端的所有响应：`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。`index.html`：另有 `X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、`Permissions-Policy`（相机 / 麦克风 / 定位全关）、严格 CSP。`/assets/`（脚本 / 样式）和 Nginx 自己生成的错误 JSON 只带 `X-Content-Type-Options`（及 assets 的缓存头），因为 nginx 的 `add_header` 在 location 里一旦写了就不再继承上层；它们不是可被嵌入或执行的页面 |
 | CSP | `default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'`——没有内联脚本和样式 |
 | HSTS | **不设**：TLS 在 Cloudflare 终止，源站是 HTTP |
 | CORS | 不发 CORS 头（同源） |

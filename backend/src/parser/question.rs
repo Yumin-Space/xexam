@@ -542,7 +542,12 @@ pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> Quest
         }
         let mut extra: Vec<&String> = vals
             .keys()
-            .filter(|key| !(1..=items.len()).any(|k| &k.to_string() == *key))
+            // 键在 1..=N 里，当且仅当它恰好等于某个 k 的十进制写法（不带前导零或加号）；O(1) 判断，不再为每个键扫一遍 N 项
+            .filter(|key| {
+                !key.parse::<usize>()
+                    .ok()
+                    .is_some_and(|k| (1..=items.len()).contains(&k) && k.to_string() == **key)
+            })
             .collect();
         extra.sort_by(|x, y| (x.len(), x.as_str()).cmp(&(y.len(), y.as_str())));
         if !extra.is_empty() {

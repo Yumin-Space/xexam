@@ -24,6 +24,9 @@ pub enum ImportError {
     TooBigUncompressed,
     #[error("文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。")]
     EntityDeclaration,
+    /// 解析超过了时限（`XEXAM_PARSE_TIMEOUT_SECS`）。解析器是协作式的：看到截止时间就自己停下。
+    #[error("解析这个文件用的时间太长，已经停止。请确认选对了文件，或者换一份小一点的再试。")]
+    Timeout,
     /// 解析阶段其它的、有明确中文说明的失败（例如工作簿结构不对）。
     #[error("{0}")]
     Message(String),

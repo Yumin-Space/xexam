@@ -12,6 +12,8 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props?: Props, 
     if (k === 'class') el.className = String(v);
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v as EventListener);
     else if (PROPS.has(k)) (el as unknown as Record<string, unknown>)[k] = v;
+    // style 属性（setAttribute）会被 CSP 的 style-src 'self' 拦掉；通过 CSSOM（cssText）写入则不受限制。
+    else if (k === 'style') el.style.cssText = String(v);
     else el.setAttribute(k, v === true ? '' : String(v));
   }
   appendAll(el, kids);

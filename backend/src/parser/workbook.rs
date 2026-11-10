@@ -1,5 +1,7 @@
 //! 工作簿层：zip -> 共享字符串 / 工作表 -> 行与单元格 -> 题目。逐步对应旧版 `read_workbook` / `_read_sheet` / `parse_workbook`。
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
+use std::time::Instant;
 
 use crate::error::ImportError;
 use crate::models::{ParsedSheet, ParsedWorkbook, Question, SkippedRow};
@@ -17,6 +19,9 @@ const PKG: &str = "http://schemas.openxmlformats.org/package/2006/relationships"
 const MAX_SHARED_STRINGS: usize = 1_000_000;
 const MAX_CELLS: usize = 2_000_000;
 const MAX_SHEETS: usize = 1_000;
+/// 一个工作簿里所有 A/B/C 单元格文字的字节数上限（旧版没有）。共享字符串被很多单元格引用时只存一份（`Rc<str>`），
+/// 所以这个预算按「每个单元格引用的字节数」计，哪怕只存了一份也要计入：它限制的是解析阶段要处理的总量。
+const MAX_CELL_BYTES: usize = 64 * 1024 * 1024;
 
 const HEADER_WORDS: [&str; 5] = ["题目", "題目", "问题", "問題", "Question"];
 
@@ -26,7 +31,7 @@ const MSG_TOO_COMPLEX: &str = "这个文件的内容太多或层级太深，已�
 /// 一个工作表里的一行：行号、A/B/C 三列、这一行是否有过任何非空白单元格（任何列）。
 struct SheetRow {
     number: i64,
-    cols: [Option<String>; 3],
+    cols: [Option<Rc<str>>; 3],
 }
 
 fn xml_err(e: XmlError) -> ImportError {
@@ -34,6 +39,16 @@ fn xml_err(e: XmlError) -> ImportError {
         XmlError::Malformed => ImportError::Message("文件里的 XML 读不了：格式不正确".to_string()),
         XmlError::Doctype => ImportError::EntityDeclaration,
         XmlError::TooComplex => ImportError::Message(MSG_TOO_COMPLEX.to_string()),
+        XmlError::Timeout => ImportError::Timeout,
+    }
+}
+
+/// 协作式截止时间：循环里每隔一批检查一次；到了就返回 `ImportError::Timeout`。
+fn check_deadline(deadline: Option<Instant>) -> Result<(), ImportError> {
+    if deadline.is_some_and(|d| Instant::now() >= d) {
+        Err(ImportError::Timeout)
+    } else {
+        Ok(())
     }
 }
 
@@ -47,9 +62,14 @@ fn read_err(name: &str, e: ReadError) -> ImportError {
     }
 }
 
-fn parse_part(pkg: &mut Package<'_>, name: &str) -> Result<Element, ImportError> {
+fn parse_part(
+    pkg: &mut Package<'_>,
+    name: &str,
+    deadline: Option<Instant>,
+) -> Result<Element, ImportError> {
+    check_deadline(deadline)?;
     let bytes = pkg.read(name).map_err(|e| read_err(name, e))?;
-    xml::parse(&bytes).map_err(xml_err)
+    xml::parse_until(&bytes, deadline).map_err(xml_err)
 }
 
 /// `_si_text`：只收集 `<t>` 和 `<r>` 里的 `<t>`，忽略 `<rPh>`。
@@ -114,13 +134,18 @@ fn part_path(target: &str) -> String {
 fn read_sheet(
     pkg: &mut Package<'_>,
     member: &str,
-    shared: &[String],
+    shared: &[Rc<str>],
     cell_budget: &mut usize,
+    byte_budget: &mut usize,
+    deadline: Option<Instant>,
 ) -> Result<(Vec<SheetRow>, usize), ImportError> {
-    let root = parse_part(pkg, member)?;
+    let root = parse_part(pkg, member, deadline)?;
     let mut rows: Vec<SheetRow> = Vec::new();
     let mut nonempty_rows = 0usize;
-    for row in root.iter_tag(NS, "row") {
+    for (row_no, row) in root.iter_tag(NS, "row").into_iter().enumerate() {
+        if row_no.is_multiple_of(256) {
+            check_deadline(deadline)?;
+        }
         let Some(number) = row
             .attr(None, "r")
             .and_then(py_int)
@@ -128,7 +153,7 @@ fn read_sheet(
         else {
             continue;
         };
-        let mut cols: [Option<String>; 3] = [None, None, None];
+        let mut cols: [Option<Rc<str>>; 3] = [None, None, None];
         let mut any = false;
         for c in row.find_all(NS, "c") {
             *cell_budget = cell_budget
@@ -138,8 +163,8 @@ fn read_sheet(
                 continue;
             };
             let t = c.attr(None, "t");
-            let val: String = if t == Some("inlineStr") {
-                c.find(NS, "is").map(si_text).unwrap_or_default()
+            let val: Rc<str> = if t == Some("inlineStr") {
+                Rc::from(c.find(NS, "is").map(si_text).unwrap_or_default())
             } else {
                 let Some(text) = c.find(NS, "v").and_then(|v| v.text.as_deref()) else {
                     continue;
@@ -151,17 +176,20 @@ fn read_sheet(
                             .filter(|p| !p.negative)
                             .and_then(|p| p.digits.parse::<usize>().ok());
                         match idx.and_then(|i| shared.get(i)) {
-                            Some(s) => s.clone(),
+                            Some(s) => Rc::clone(s),
                             None => continue,
                         }
                     }
-                    Some("b") => (if text == "1" { "TRUE" } else { "FALSE" }).to_string(),
-                    _ => text.to_string(),
+                    Some("b") => Rc::from(if text == "1" { "TRUE" } else { "FALSE" }),
+                    _ => Rc::from(text),
                 }
             };
             if !py_strip(&val).is_empty() {
                 any = true;
                 if let Some(slot) = usize::try_from(col).ok().and_then(|i| cols.get_mut(i)) {
+                    *byte_budget = byte_budget
+                        .checked_sub(val.len())
+                        .ok_or_else(|| ImportError::Message(MSG_TOO_COMPLEX.to_string()))?;
                     *slot = Some(val);
                 }
             }
@@ -180,19 +208,25 @@ struct RawSheet {
     nonempty_rows: usize,
 }
 
-fn read_workbook(pkg: &mut Package<'_>) -> Result<Vec<RawSheet>, ImportError> {
-    let mut shared: Vec<String> = Vec::new();
+fn read_workbook(
+    pkg: &mut Package<'_>,
+    deadline: Option<Instant>,
+) -> Result<Vec<RawSheet>, ImportError> {
+    let mut shared: Vec<Rc<str>> = Vec::new();
     if pkg.contains("xl/sharedStrings.xml") {
-        let sst = parse_part(pkg, "xl/sharedStrings.xml")?;
+        let sst = parse_part(pkg, "xl/sharedStrings.xml", deadline)?;
         for si in sst.find_all(NS, "si") {
             if shared.len() >= MAX_SHARED_STRINGS {
                 return Err(ImportError::Message(MSG_TOO_COMPLEX.to_string()));
             }
-            shared.push(si_text(si));
+            if shared.len().is_multiple_of(1024) {
+                check_deadline(deadline)?;
+            }
+            shared.push(Rc::from(si_text(si)));
         }
     }
-    let wb = parse_part(pkg, "xl/workbook.xml")?;
-    let rels = parse_part(pkg, "xl/_rels/workbook.xml.rels")?;
+    let wb = parse_part(pkg, "xl/workbook.xml", deadline)?;
+    let rels = parse_part(pkg, "xl/_rels/workbook.xml.rels", deadline)?;
     let mut target: HashMap<Option<String>, Option<String>> = HashMap::new();
     for r in rels.find_all(PKG, "Relationship") {
         target.insert(
@@ -202,6 +236,7 @@ fn read_workbook(pkg: &mut Package<'_>) -> Result<Vec<RawSheet>, ImportError> {
     }
     let mut out = Vec::new();
     let mut cell_budget = MAX_CELLS;
+    let mut byte_budget = MAX_CELL_BYTES;
     let Some(sheets) = wb.find(NS, "sheets") else {
         return Ok(out);
     };
@@ -223,7 +258,14 @@ fn read_workbook(pkg: &mut Package<'_>) -> Result<Vec<RawSheet>, ImportError> {
         if !pkg.contains(&member) {
             continue;
         }
-        let (rows, nonempty_rows) = read_sheet(pkg, &member, &shared, &mut cell_budget)?;
+        let (rows, nonempty_rows) = read_sheet(
+            pkg,
+            &member,
+            &shared,
+            &mut cell_budget,
+            &mut byte_budget,
+            deadline,
+        )?;
         out.push(RawSheet {
             name: s.attr(None, "name").unwrap_or("").to_string(),
             rows,
@@ -234,16 +276,26 @@ fn read_workbook(pkg: &mut Package<'_>) -> Result<Vec<RawSheet>, ImportError> {
 }
 
 pub(super) fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
+    parse_workbook_until(data, None)
+}
+
+/// 同 `parse_workbook`，但在 `deadline` 到了之后中止并返回 `ImportError::Timeout`。
+pub(super) fn parse_workbook_until(
+    data: &[u8],
+    deadline: Option<Instant>,
+) -> Result<ParsedWorkbook, ImportError> {
     let mut pkg = Package::open(data).map_err(|e| match e {
         OpenError::NotZip => ImportError::Message(MSG_NOT_XLSX.to_string()),
         OpenError::Duplicate => ImportError::Corrupt,
         OpenError::TooManyEntries => ImportError::TooBigUncompressed,
     })?;
-    let raw = read_workbook(&mut pkg)?;
+    let raw = read_workbook(&mut pkg, deadline)?;
 
     let mut sheets: Vec<ParsedSheet> = Vec::new();
     let mut questions: Vec<Question> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
+    // 每个基础 id 下一个要试的后缀：重复很多次时不必每次从 -2 重新探测（否则是平方级）。生成的 id 与旧版相同。
+    let mut next_suffix: HashMap<String, u64> = HashMap::new();
     for sheet in raw {
         let mut info = ParsedSheet {
             name: sheet.name.clone(),
@@ -251,7 +303,10 @@ pub(super) fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError>
             usable: 0,
             skipped: Vec::new(),
         };
-        for row in &sheet.rows {
+        for (row_no, row) in sheet.rows.iter().enumerate() {
+            if row_no.is_multiple_of(256) {
+                check_deadline(deadline)?;
+            }
             let Some(a) = row.cols.first().and_then(|c| c.as_deref()) else {
                 continue;
             };
@@ -276,11 +331,16 @@ pub(super) fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError>
                     reason,
                 }),
                 QuestionOutcome::Ok(mut q) => {
-                    let base = q.id.clone();
-                    let mut n = 2u64;
-                    while seen.contains(&q.id) {
-                        q.id = format!("{base}-{n}");
-                        n += 1;
+                    if seen.contains(&q.id) {
+                        let base = q.id.clone();
+                        let n = next_suffix.entry(base.clone()).or_insert(2);
+                        loop {
+                            q.id = format!("{base}-{n}");
+                            *n += 1;
+                            if !seen.contains(&q.id) {
+                                break;
+                            }
+                        }
                     }
                     seen.insert(q.id.clone());
                     questions.push(*q);

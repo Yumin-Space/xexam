@@ -26,7 +26,7 @@
 | Q15 | 成绩百分比取整 | **复刻 Python 的半偶数** | 与学习记录一致；前端 v0.2 已用同一规则 |
 | Q16 | 时区 | 时间戳格式不变；镜像带时区库，`TZ=Asia/Tokyo` | 否则静默变 UTC |
 | Q17 | `/api/shutdown` | **保留**（Docker 里恒 403） | 删功能需要批准 |
-| Q18 | `--import` 与 `progress.json` 迁移 | **移植** | 删功能需要批准；迁移改为**只在数据目录里没有任何数据库文件时**才做 |
+| Q18 | `--import` 与 `progress.json` 迁移 | **移植，行为与 Python 版一致** | 删功能需要批准。（最初的计划是「只在没有任何 .db 时才迁」，评审发现这会让文档里「先启动一次、再放 progress.json、重启」的流程悄悄失效，所以改回与 Python 版相同：每次启动都看一眼，靠库里的 `legacy_migrated` 标记和「已有学习记录就不覆盖」保证只迁一次） |
 | Q19 | `start.bat` / 不用 Docker | 随旧实现保留在 `legacy/python/`；新栈以 Docker 为主，另附 Windows 开发脚本 | |
 | Q20 | 端口与访问模型 | `XEXAM_BIND` 默认 `127.0.0.1:8765`，现在指向 **Nginx**；Host/Origin 守卫留在后端；Nginx 透传 `$host`、不转发 `X-Forwarded-*`；无认证 | 访问模型不变 |
 | Q21 | Python 版怎么留存 | **标签 `python-v0.2`（已在 GitHub）+ 分支 `legacy/python`（本地）+ 切换时 `git mv` 到 `legacy/python/`** | 绝不 `rm` |
@@ -128,7 +128,7 @@ docs/       见 §9
 - **schema 不变**；不加表、不加列、不设 `user_version`、不改 `journal_mode`。证明方式：旧代码新建的库 ↔ Rust 打开后 `sqlite_master` 逐字相同；Rust 写后旧代码读；`PRAGMA integrity_check`。
 - **题目 id** 的稳定性是头号风险：85 条向量 + 用两个实现分别解析同一批合成工作簿后 id 逐项相等；**切换前**对业主库的**副本**里全部现有题目重算 id 并比对。
 - **命名卷**：新栈沿用 `xexam_data`（项目名 `xexam`、卷名 `data`）。容器名 `xexam` 与旧栈相同，所以新旧不能同时运行（回滚时先停一个）。
-- `progress.json`：只有在数据目录里**没有任何** `.db` 时才迁移；格式不对时返回说明，不崩溃（v0.2 已修）。
+- `progress.json`：与 Python 版一致，每次启动都检查；库里的 `legacy_migrated` 标记和「已有学习记录就不覆盖」保证只迁一次；格式不对时在日志里写明原因并提示 `xexam-backend migrate-progress`，不崩溃（v0.2 已修）。
 
 > **GitHub 上推镜像的陷阱**：`docker.yml` 在 push 到 `main` 时会发布镜像并移动 `latest`。新镜像用新名字（Q4），并且重构只推到分支、不合并 `main`（Q24），所以业主现有 compose 拉到的东西不会变。
 

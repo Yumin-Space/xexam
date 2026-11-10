@@ -159,7 +159,9 @@ fn healthcheck(port: u16) -> bool {
     matches!((parts.next(), parts.next()), (Some(v), Some("200")) if v.starts_with("HTTP/1."))
 }
 
-/// 打开数据库。旧版 `progress.json` 只有在数据目录里**没有任何** .db 文件时才迁移（迁移计划 Q18）。
+/// 打开数据库。旧版 `progress.json` 的迁移与 Python 版一致：每次启动都看一眼，由数据库里的 `legacy_migrated` 标记
+/// 和「已经有学习记录就不覆盖」两道保护保证只迁一次、不覆盖（见 `Store::migrate_legacy_progress`）。
+/// 这样「先启动一次建好卷 → 把 progress.json 放进卷 → 重启」的文档流程才真的有效。
 fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
     std::fs::create_dir_all(data_dir)
         .map_err(|e| format!("无法创建数据目录 {}：{e}", data_dir.display()))?;
@@ -173,7 +175,6 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
         })
         .unwrap_or_default();
     others.sort();
-    let fresh = others.is_empty();
     if !db_path.exists() && !others.is_empty() {
         say(&format!(
             "注意：数据目录里没有 xexam.db，但有别的数据库文件：{}。如果那是以前版本的题库，请先停止程序，把它改名为 xexam.db 再启动；现在会新建一个空的 xexam.db。",
@@ -182,14 +183,20 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
     }
     let store = Arc::new(Store::open(&db_path).map_err(|e| format!("无法打开数据库：{e}"))?);
     let legacy = data_dir.join("progress.json");
-    if fresh && legacy.is_file() {
+    if legacy.is_file() {
         match store.migrate_legacy_progress(&legacy) {
             Ok((true, msg)) => say(&format!(
                 "已把旧的学习记录迁移进数据库：{msg}（来自 {}）",
                 legacy.display()
             )),
-            Ok((false, msg)) => say(&format!("没有迁移旧的学习记录：{msg}")),
-            Err(e) => say(&format!("迁移旧的学习记录失败（数据库没有改动）：{e}")),
+            // 「之前已经迁移过」是正常情况，不必每次启动都提示
+            Ok((false, msg)) if msg.contains("之前已经迁移过") => {}
+            Ok((false, msg)) => say(&format!(
+                "没有迁移旧的学习记录：{msg}。修好 progress.json 后重启即可再试，也可以手动运行 xexam-backend migrate-progress"
+            )),
+            Err(e) => say(&format!(
+                "迁移旧的学习记录失败（数据库没有改动）：{e}。可以稍后重启再试，或手动运行 xexam-backend migrate-progress"
+            )),
         }
     }
     Ok(store)

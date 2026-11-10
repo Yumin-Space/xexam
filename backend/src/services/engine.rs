@@ -10,6 +10,14 @@ use std::sync::Arc;
 pub trait Engine: Send + Sync + 'static {
     /// 对应旧版 `check_xlsx(data)` + `parse_workbook(data)`。
     fn check_and_parse(&self, data: &[u8]) -> Result<ParsedWorkbook, ImportError>;
+    /// 同上，但解析器看到 `deadline` 就自己停下。默认实现不理会截止时间（测试用的假引擎），真实引擎会覆盖。
+    fn check_and_parse_until(
+        &self,
+        data: &[u8],
+        _deadline: std::time::Instant,
+    ) -> Result<ParsedWorkbook, ImportError> {
+        self.check_and_parse(data)
+    }
     fn count_active(&self) -> Result<i64, DbError>;
     fn bank(&self) -> Result<Value, DbError>;
     fn progress(&self) -> Result<Value, DbError>;
@@ -41,6 +49,14 @@ impl Engine for RealEngine {
     fn check_and_parse(&self, data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
         parser::check_xlsx(data)?;
         parser::parse_workbook(data)
+    }
+    fn check_and_parse_until(
+        &self,
+        data: &[u8],
+        deadline: std::time::Instant,
+    ) -> Result<ParsedWorkbook, ImportError> {
+        parser::check_xlsx(data)?;
+        parser::parse_workbook_until(data, Some(deadline))
     }
     fn count_active(&self) -> Result<i64, DbError> {
         self.store.count_active()

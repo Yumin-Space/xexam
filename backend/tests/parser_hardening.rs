@@ -126,3 +126,184 @@ fn deeply_nested_xml_is_refused() {
         Err(ImportError::Message(_))
     ));
 }
+
+// ---------------------------------------------------------------- 评审后补的回归测试
+
+use std::time::{Duration, Instant};
+use xexam_backend::parser::parse_workbook_until;
+
+/// 很多单元格引用同一个很大的共享字符串：字节预算要拦住（以前每个单元格深拷贝一份，会把内存撑爆）。
+#[test]
+fn shared_string_fanout_is_bounded_by_the_byte_budget() {
+    let big = "あ".repeat(400_000); // 约 1.2 MB
+    let sst = format!(
+        r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>{big}</t></si></sst>"#
+    );
+    // 每行 A、B 两格都引用它：1.2 MB x 2 x 40 行 = 约 96 MB > 64 MB 预算
+    let mut rows = String::new();
+    for r in 1..=40 {
+        rows.push_str(&format!(
+            r#"<row r="{r}"><c r="A{r}" t="s"><v>0</v></c><c r="B{r}" t="s"><v>0</v></c></row>"#
+        ));
+    }
+    let sheet_xml = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#
+    );
+    let data = pkg(&sheet_xml, Some(&sst));
+    assert!(
+        matches!(parse_workbook(&data), Err(ImportError::Message(m)) if m.contains("内容太多")),
+        "must be refused as too complex"
+    );
+}
+
+/// 正常大小的共享字符串被多个单元格引用，仍然可以解析。
+#[test]
+fn shared_strings_used_by_several_cells_still_parse() {
+    let sst = r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>これは十分に長い問題文です。
+A. 甲
+B. 乙</t></si></sst>"#;
+    let rows: String = (1..=3)
+        .map(|r| format!(r#"<row r="{r}"><c r="A{r}" t="s"><v>0</v></c><c r="C{r}" t="inlineStr"><is><t>【答案】B</t></is></c></row>"#))
+        .collect();
+    let sheet_xml = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#
+    );
+    let pw = parse_workbook(&pkg(&sheet_xml, Some(sst))).expect("parse");
+    assert_eq!(pw.questions.len(), 3);
+    // 三道一模一样的题：id 依次是 base、base-2、base-3（与旧版一致）
+    let ids: Vec<&str> = pw.questions.iter().map(|q| q.id.as_str()).collect();
+    assert_eq!(ids[1], format!("{}-2", ids[0]));
+    assert_eq!(ids[2], format!("{}-3", ids[0]));
+}
+
+/// 重复 id 的后缀是线性生成的：几千道一模一样的题也要很快解析完，且后缀依次是 -2、-3 …
+#[test]
+fn thousands_of_duplicate_questions_are_not_quadratic() {
+    let sst = r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>これは十分に長い問題文です。
+A. 甲
+B. 乙</t></si></sst>"#;
+    let n = 6000;
+    let rows: String = (1..=n)
+        .map(|r| format!(r#"<row r="{r}"><c r="A{r}" t="s"><v>0</v></c><c r="C{r}" t="inlineStr"><is><t>【答案】B</t></is></c></row>"#))
+        .collect();
+    let sheet_xml = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#
+    );
+    let data = pkg(&sheet_xml, Some(sst));
+    let t = Instant::now();
+    let pw = parse_workbook(&data).expect("parse");
+    assert!(
+        t.elapsed() < Duration::from_secs(5),
+        "took {:?}",
+        t.elapsed()
+    );
+    assert_eq!(pw.questions.len(), n);
+    let base = pw.questions[0].id.clone();
+    assert_eq!(pw.questions[n - 1].id, format!("{base}-{n}"));
+    let uniq: std::collections::HashSet<&str> =
+        pw.questions.iter().map(|q| q.id.as_str()).collect();
+    assert_eq!(uniq.len(), n, "all ids must be distinct");
+}
+
+/// 一个元素上的属性个数有上限。
+#[test]
+fn too_many_attributes_on_one_element_are_refused() {
+    let attrs: String = (0..300).map(|i| format!(r#" a{i}="x""#)).collect();
+    let sheet_xml = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1"{attrs}/></sheetData></worksheet>"#
+    );
+    assert!(
+        matches!(parse_workbook(&pkg(&sheet_xml, None)), Err(ImportError::Message(m)) if m.contains("内容太多")),
+    );
+}
+
+/// 截止时间已过：解析器自己停下并返回 `Timeout`（而不是跑完）。
+#[test]
+fn an_expired_deadline_stops_the_parser_itself() {
+    let rows: String = (1..=3000)
+        .map(|r| {
+            format!(
+                r#"<row r="{r}"><c r="A{r}" t="inlineStr"><is><t>これは十分に長い問題文です。{r}
+A. 甲
+B. 乙</t></is></c><c r="C{r}" t="inlineStr"><is><t>【答案】B</t></is></c></row>"#
+            )
+        })
+        .collect();
+    let sheet_xml = format!(
+        r#"<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>{rows}</sheetData></worksheet>"#
+    );
+    let data = pkg(&sheet_xml, None);
+    let past = Instant::now() - Duration::from_secs(1);
+    assert_eq!(
+        parse_workbook_until(&data, Some(past)),
+        Err(ImportError::Timeout)
+    );
+    // 没有截止时间 / 截止时间还远：正常解析
+    assert_eq!(
+        parse_workbook_until(&data, None)
+            .expect("no deadline")
+            .questions
+            .len(),
+        3000
+    );
+    let far = Instant::now() + Duration::from_secs(60);
+    assert_eq!(
+        parse_workbook_until(&data, Some(far))
+            .expect("far deadline")
+            .questions
+            .len(),
+        3000
+    );
+}
+
+/// 把 zip 里第一个名字叫 `name` 的成员的数据区翻转一个字节（CRC 就对不上了），其余原样。
+fn corrupt_member(zip_bytes: &[u8], name: &str) -> Vec<u8> {
+    let mut out = zip_bytes.to_vec();
+    let pat = name.as_bytes();
+    // 本地文件头：签名 PK\x03\x04，30 字节固定头，然后是文件名、extra、数据
+    let mut i = 0;
+    while i + 30 < out.len() {
+        if out[i..].starts_with(b"PK\x03\x04") {
+            let name_len = u16::from_le_bytes([out[i + 26], out[i + 27]]) as usize;
+            let extra_len = u16::from_le_bytes([out[i + 28], out[i + 29]]) as usize;
+            let comp_size =
+                u32::from_le_bytes([out[i + 18], out[i + 19], out[i + 20], out[i + 21]]) as usize;
+            let start = i + 30;
+            if out.get(start..start + name_len) == Some(pat) {
+                let data = start + name_len + extra_len;
+                assert!(comp_size > 0, "member {name} is empty");
+                out[data] ^= 0xFF;
+                return out;
+            }
+            i = start + name_len + extra_len + comp_size;
+        } else {
+            i += 1;
+        }
+    }
+    panic!("member {name} not found");
+}
+
+/// 旧版只解压 .xml / .rels 来检查；一个损坏的**非 XML** 成员（缩略图之类，CRC 对不上）旧版接受，新版也要接受。
+/// XML 成员损坏则必须拒绝。
+#[test]
+fn a_corrupt_non_xml_member_is_tolerated_but_a_corrupt_xml_member_is_not() {
+    let mut parts: Vec<(&str, &[u8])> = vec![
+        ("xl/workbook.xml", WB.as_bytes()),
+        ("xl/_rels/workbook.xml.rels", RELS.as_bytes()),
+        ("xl/worksheets/a.xml", sheet(QA).leak().as_bytes()),
+    ];
+    let thumb = vec![7u8; 400];
+    parts.push(("docProps/thumbnail.jpeg", &thumb));
+    let good = zip_of(&parts);
+    check_xlsx(&good).expect("untouched file is fine");
+
+    let bad_thumb = corrupt_member(&good, "docProps/thumbnail.jpeg");
+    check_xlsx(&bad_thumb).expect("a corrupt thumbnail must not make the workbook unusable");
+    assert_eq!(
+        parse_workbook(&bad_thumb).expect("parse").questions.len(),
+        1
+    );
+
+    let bad_xml = corrupt_member(&good, "xl/worksheets/a.xml");
+    assert_eq!(check_xlsx(&bad_xml), Err(ImportError::Corrupt));
+}

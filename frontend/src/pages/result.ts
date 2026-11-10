@@ -2,6 +2,8 @@
 import { inNotebook, masterStreakOf, percentOf, shuffle, stateOf, type Answer } from '../domain/grading.ts';
 import { brand, kindLabel } from '../components/common.ts';
 import { S, type ResultRow } from '../state/store.ts';
+import { loadSaved } from '../state/session-storage.ts';
+import { ask } from '../utils/dialog.ts';
 import { render, startSession } from '../state/actions.ts';
 import { h, paras, svgMark } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
@@ -110,8 +112,16 @@ export function renderResult(): HTMLElement {
     },
   }, h('span', { class: 'n' }, i + 1), svgMark(r.correct))));
 
-  const again = (): void => startSession(shuffle(R.results.map((r) => r.q)), R.mode);
-  const retryWrong = (): void => startSession(shuffle(R.results.filter((r) => !r.correct).map((r) => r.q)), 'retry');
+  // 成绩提交失败时，没交卷的考试还留在浏览器里（提示里让用户回首页「继续作答」再交一次）。
+  // 这时直接开新考试会把它覆盖掉，所以和首页一样先确认。
+  const startNew = (qs: ResultRow['q'][], mode: Parameters<typeof startSession>[1]): void => {
+    void (async () => {
+      if (S.bank && loadSaved(S.bank) && !(await ask({ title: '放弃没交卷的考试？', body: '有一场暂存的考试还没交卷。现在开始新的考试，会把它覆盖掉。', ok: '开始新考试', cancel: '回去继续', danger: true }))) return;
+      startSession(qs, mode);
+    })();
+  };
+  const again = (): void => startNew(shuffle(R.results.map((r) => r.q)), R.mode);
+  const retryWrong = (): void => startNew(shuffle(R.results.filter((r) => !r.correct).map((r) => r.q)), 'retry');
   const home = (): void => {
     S.view = 'home';
     render();
