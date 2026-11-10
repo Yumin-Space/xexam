@@ -6,7 +6,10 @@ use std::path::PathBuf;
 use xexam_backend::parser::{check_xlsx, parse_workbook};
 
 fn baseline() -> PathBuf {
-    PathBuf::from("C:/Users/Min/Desktop/Claude/xexam/tests/baseline")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root")
+        .join("tests/baseline")
 }
 
 /// 与旧版刻意不同（登记在 docs/migration-plan.md Q7 与 docs/audit/xlsx-parser.md §8）的夹具及其新结果前缀。

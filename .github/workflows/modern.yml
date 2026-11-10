@@ -62,7 +62,12 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo test --all-targets
+      - name: Tests (the Python oracle must really run, not be skipped)
+        env:
+          XEXAM_REQUIRE_PYTHON: "1"
+        run: |
+          python3 --version
+          cargo test --all-targets
 
   stack:
     name: stack (images, nginx checks, end to end)

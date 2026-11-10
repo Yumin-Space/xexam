@@ -17,7 +17,15 @@ use xexam_backend::models::{
 };
 use xexam_backend::services::{Engine, PendingStore};
 
-pub const FIXTURES: &str = "C:/Users/Min/Desktop/Claude/xexam/tests/baseline";
+/// tests/baseline 的位置（由 backend/ 的位置推出，不写死机器路径）。
+pub fn fixtures() -> String {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root")
+        .join("tests/baseline")
+        .to_string_lossy()
+        .into_owned()
+}
 
 #[derive(Default)]
 pub struct Fake {

@@ -3,8 +3,11 @@ use serde_json::Value;
 use xexam_backend::parser::make_id;
 
 fn vectors() -> Value {
-    let p = "C:/Users/Min/Desktop/Claude/xexam/tests/baseline/golden/id_vectors.json";
-    serde_json::from_str(&std::fs::read_to_string(p).expect("read vectors")).expect("json")
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root")
+        .join("tests/baseline/golden/id_vectors.json");
+    serde_json::from_str(&std::fs::read_to_string(&p).expect("read vectors")).expect("json")
 }
 
 #[test]

@@ -1,0 +1,428 @@
+openapi: 3.0.3
+info:
+  title: Xexam API
+  version: "0.3"
+  description: |
+    Xexam 的 REST API。这份文档描述的是**旧的 Python 实现的真实行为**，新的 Rust 后端与它保持一致
+    （172 份黄金响应逐项对照，见 tests/baseline/）。有意的差异列在 docs/api.md 的「与旧版的差异」。
+
+    所有响应都带 `Cache-Control: no-store` 和 `X-Content-Type-Options: nosniff`。
+    JSON 用 UTF-8，键的顺序固定（见各 schema 里属性的先后）。
+    错误一律是 `{"error": "<中文原因>"}`。
+
+    **守卫的顺序（POST）**：Host → Origin → Content-Type → 请求体大小 → JSON 解析 → 路由。
+    GET 只检查 Host。
+servers:
+  - url: http://localhost:8765
+    description: 本机（经 Nginx）
+tags:
+  - name: read
+  - name: import
+  - name: progress
+  - name: system
+
+paths:
+  /api/info:
+    get:
+      tags: [system]
+      summary: 版本、架构、能否关闭、题数
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Info" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/bank:
+    get:
+      tags: [read]
+      summary: 题库（只含上架的题）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bank" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/progress:
+    get:
+      tags: [progress]
+      summary: 学习记录（每题统计 + 最近 60 场成绩）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Progress" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/imports:
+    get:
+      tags: [import]
+      summary: 最近 12 次导入记录（新的在前）
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imports]
+                properties:
+                  imports:
+                    type: array
+                    items: { $ref: "#/components/schemas/ImportRecord" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+
+  /api/upload:
+    post:
+      tags: [import]
+      summary: 上传 .xlsx，返回预览（**不写库**）和一次性确认码
+      description: |
+        请求体是 .xlsx 的原始字节，最大 20 MiB（按真实字节数计，不信任 Content-Length）。
+        只按**内容**判断是不是 .xlsx（魔数 + ZIP + 工作簿 + 没有 DOCTYPE / 实体声明），不看文件名。
+        解析结果暂存在内存里的**唯一一个槽位**（再次上传会替换它），30 分钟有效。
+      parameters:
+        - name: X-Filename
+          in: header
+          required: false
+          description: 百分号编码的文件名；缺省为「未命名.xlsx」，最长 120 个字符
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: 预览
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "413":
+          description: 超过 20 MiB
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/import/confirm:
+    post:
+      tags: [import]
+      summary: 确认导入（唯一会写题库的接口）
+      description: |
+        确认码**一次性**：成功后立即作废；错误的确认码不会消耗槽位里的内容；过期（30 分钟）的取不出来。
+        导入在**一个事务**里完成，失败则题库没有任何改动。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: 导入结果和最新的题库
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result, bank]
+                properties:
+                  result: { $ref: "#/components/schemas/ImportPlan" }
+                  bank: { $ref: "#/components/schemas/Bank" }
+        "400":
+          description: 这份文件里没有可用的题（不导入）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "409":
+          description: 预览已过期或已被处理（含错误 / 非 ASCII 的确认码）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+        "500":
+          description: 写入数据库失败，题库没有任何改动
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/import/cancel:
+    post:
+      tags: [import]
+      summary: 取消待确认的导入（不需要确认码）
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+
+  /api/attempt:
+    post:
+      tags: [progress]
+      summary: 记录一场考试的成绩（只收 {题目 id, 对错}，不收答案内容）
+      description: |
+        清洗规则：`results` 必须是列表（否则 400「成绩的格式不对」），最多 2000 项，每项要有字符串 `id`（截取前 64 个字符）和
+        布尔 `correct`（其它的丢掉）；没有有效项 → 400「没有成绩可保存」。`sheets` 只收字符串（最多 50 个，每个截取前 80 个字符）；
+        `mode` 不是 all / weak / retry 时按 all；`seconds` 夹在 0..604800，异常值按 0。
+        服务端**信任** `correct`，也不检查 id 是否在题库里（与旧版一致）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttemptRequest" }
+      responses:
+        "200":
+          description: 最新的学习记录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Progress" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/reset:
+    post:
+      tags: [progress]
+      summary: 清空学习记录（成绩历史和每题统计；题库不动）
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: 清空后的学习记录
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Progress" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/shutdown:
+    post:
+      tags: [system]
+      summary: 关闭程序（只有带 --allow-shutdown 启动时可用；Docker 里恒 403）
+      responses:
+        "200":
+          description: 已安排关闭
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "403":
+          description: 没有开启（Docker 里的情形）或被 Host / Origin 守卫拒绝
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  responses:
+    ForbiddenHost:
+      description: Host 不在白名单里。GET 的响应是 **text/plain**，形如 `Forbidden host: <主机名>。…`
+      content:
+        text/plain:
+          schema: { type: string }
+    Denied:
+      description: POST 被 Host / Origin 守卫拒绝，`error` 里写明了是哪一条没通过、该怎么放行
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: 请求内容有问题，`error` 是可以直接显示给用户的中文原因
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadContentType:
+      description: Content-Type 不对（JSON 接口必须是 application/json；上传必须是 application/octet-stream）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Info:
+      type: object
+      required: [version, arch, canShutdown, bankCount]
+      properties:
+        version: { type: string, example: "0.3" }
+        arch: { type: string, example: x86_64 }
+        canShutdown: { type: boolean }
+        bankCount: { type: integer, description: 上架的题数 }
+    Opt:
+      type: object
+      required: [key, text]
+      properties:
+        key: { type: string, example: A }
+        text: { type: string }
+    Item:
+      type: object
+      required: [text, choices]
+      properties:
+        text: { type: string }
+        choices: { type: array, items: { type: string }, example: [はい, いいえ] }
+    Zh:
+      type: object
+      description: 中文翻译拆出来的结构；结构对不上日语题目时整个 `zh` 是 null（前端把「中文」按钮置灰，不显示错位的内容）
+      required: [stem]
+      properties:
+        stem: { type: string }
+        options: { type: array, items: { type: string }, description: 单选 / 多选才有 }
+        items: { type: array, items: { type: string }, description: 热点题才有 }
+    Question:
+      type: object
+      required: [kind, tag, stem, options, items, answer, translation, zh, explanation, mnemonic, note, id, sheet, row]
+      properties:
+        kind: { type: string, enum: [single, multi, hotspot] }
+        tag: { type: string, description: 热点题是「ホットスポット」，其余为空 }
+        stem: { type: string }
+        options: { type: array, items: { $ref: "#/components/schemas/Opt" } }
+        items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        answer:
+          oneOf:
+            - { type: array, items: { type: string }, description: "单选 / 多选：字母，例如 [\"B\"]" }
+            - { type: array, items: { type: integer }, description: "热点题：每个小项选了第几个，例如 [0, 1, 0]" }
+        translation: { type: string }
+        zh: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }] }
+        explanation: { type: string }
+        mnemonic: { type: string }
+        note: { type: string }
+        id: { type: string, description: 题目身份（工作表 + 题干 + 首个选项的内容指纹，12 位十六进制，重复的加 -2、-3…）, example: 94e4bfe00e8d }
+        sheet: { type: string }
+        row: { type: integer, description: 在 Excel 里的行号（只供显示） }
+    SheetInfo:
+      type: object
+      required: [name, usable, inactive, total, skipped]
+      properties:
+        name: { type: string }
+        usable: { type: integer }
+        inactive: { type: integer, description: 已下架的题数 }
+        total: { type: integer }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SkippedRow" } }
+    SkippedRow:
+      type: object
+      required: [row, reason]
+      properties:
+        row: { type: integer }
+        reason: { type: string }
+    Bank:
+      type: object
+      required: [file, mtime, error, questions, sheets]
+      properties:
+        file: { type: string, description: 最近一次导入的文件名 }
+        mtime: { type: string, description: 最近一次导入的时间 YYYY-MM-DD HH:MM（本地时间，无时区） }
+        error: { type: string }
+        questions: { type: array, items: { $ref: "#/components/schemas/Question" } }
+        sheets: { type: array, items: { $ref: "#/components/schemas/SheetInfo" } }
+    QuestionStat:
+      type: object
+      required: [attempts, correct, wrong, streak]
+      properties:
+        attempts: { type: integer }
+        correct: { type: integer }
+        wrong: { type: integer }
+        streak: { type: integer, description: 当前连续答对次数 }
+        last: { type: boolean, description: 上一次是否答对（从没答过时没有这个键） }
+        at: { type: string, description: 最近一次作答时间 }
+    HistoryEntry:
+      type: object
+      required: [at, sheets, mode, total, correct, percent, seconds]
+      properties:
+        at: { type: string }
+        sheets: { type: array, items: { type: string } }
+        mode: { type: string, enum: [all, weak, retry] }
+        total: { type: integer }
+        correct: { type: integer }
+        percent: { type: integer, description: 四舍六入五成双（Python round）：1/8 → 12 }
+        seconds: { type: integer }
+    Progress:
+      type: object
+      required: [version, questions, history, masterStreak]
+      properties:
+        version: { type: integer, example: 1 }
+        questions: { type: object, additionalProperties: { $ref: "#/components/schemas/QuestionStat" } }
+        history: { type: array, items: { $ref: "#/components/schemas/HistoryEntry" }, description: 最近 60 场，新的在前 }
+        masterStreak: { type: integer, example: 2, description: 错题连续答对几次后移出错题本 }
+    ImportRecord:
+      type: object
+      required: [id, at, filename, added, updated, removed, restored, skipped, total]
+      properties:
+        id: { type: integer }
+        at: { type: string }
+        filename: { type: string }
+        added: { type: integer }
+        updated: { type: integer }
+        removed: { type: integer }
+        restored: { type: integer }
+        skipped: { type: integer }
+        total: { type: integer, description: 导入后上架的题数 }
+    SheetPlan:
+      type: object
+      required: [name, total, usable, skipped, added, updated, removed, restored]
+      properties:
+        name: { type: string }
+        total: { type: integer }
+        usable: { type: integer }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SkippedRow" } }
+        added: { type: integer }
+        updated: { type: integer }
+        removed: { type: integer }
+        restored: { type: integer }
+        skippedMore: { type: integer, description: 仅预览：「读不出来」列表被截断后还有多少条没列出（每个工作表最多列 30 条） }
+        skippedCount: { type: integer, description: 仅预览：这个工作表里读不出来的总数 }
+    ImportPlan:
+      type: object
+      required: [sheets, added, updated, unchanged, restored, removed, skipped, usable, removed_samples, removed_stats]
+      properties:
+        sheets: { type: array, items: { $ref: "#/components/schemas/SheetPlan" } }
+        added: { type: integer }
+        updated: { type: integer }
+        unchanged: { type: integer }
+        restored: { type: integer, description: 以前下架、这次又出现的题（自动恢复，学习记录跟着回来） }
+        removed: { type: integer, description: 库里有、文件里找不到的题（下架，学习记录保留） }
+        skipped: { type: integer }
+        usable: { type: integer }
+        removed_samples: { type: array, items: { type: string }, description: 要下架的题的题干前 40 个字符，最多 5 条 }
+        removed_stats: { type: integer, description: 要下架的题里有几道有答题记录 }
+    ImportPreview:
+      allOf:
+        - { $ref: "#/components/schemas/ImportPlan" }
+        - type: object
+          required: [filename, token]
+          properties:
+            filename: { type: string }
+            token: { type: string, description: 一次性确认码（128 位随机，22 个字符），30 分钟有效 }
+    AttemptRequest:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          maxItems: 2000
+          items:
+            type: object
+            required: [id, correct]
+            properties:
+              id: { type: string }
+              correct: { type: boolean }
+        sheets: { type: array, maxItems: 50, items: { type: string } }
+        mode: { type: string, enum: [all, weak, retry], default: all }
+        seconds: { type: integer, minimum: 0, maximum: 604800, default: 0 }

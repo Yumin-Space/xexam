@@ -12,7 +12,12 @@ use xexam_backend::api::json::py_json;
 use xexam_backend::error::ImportError;
 use xexam_backend::models::ImportRecord;
 
-const GOLDEN: &str = "C:/Users/Min/Desktop/Claude/xexam/tests/baseline/golden";
+fn golden_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root")
+        .join("tests/baseline/golden")
+}
 const VOLATILE_KEYS: [&str; 5] = ["token", "mtime", "at", "version", "arch"];
 
 fn normalize(v: &Value) -> Value {
@@ -79,7 +84,7 @@ fn request_body(name: &str, body: &Option<String>) -> Option<Vec<u8>> {
 }
 
 fn load() -> Vec<(String, Value)> {
-    let mut files: Vec<_> = std::fs::read_dir(GOLDEN)
+    let mut files: Vec<_> = std::fs::read_dir(golden_dir())
         .expect("golden dir")
         .filter_map(|e| e.ok())
         .map(|e| e.path())

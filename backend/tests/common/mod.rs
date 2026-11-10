@@ -8,37 +8,55 @@ use std::sync::Arc;
 use xexam_backend::database::{FixedClock, Store};
 use xexam_backend::models::{Answer, Item, Kind, Opt, ParsedSheet, Question, Zh};
 
-pub const REPO: &str = "C:/Users/Min/Desktop/Claude/xexam";
+/// 仓库根目录 = backend/ 的上一级（不写死任何机器上的路径）。
+pub fn repo() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("repo root")
+        .to_path_buf()
+}
 pub const FIXED_NOW: &str = "2026-03-04 05:06";
 
 pub fn baseline(rel: &str) -> PathBuf {
-    Path::new(REPO).join("tests/baseline").join(rel)
+    repo().join("tests/baseline").join(rel)
 }
 
 pub fn oracle_script() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/common/py_oracle.py")
 }
 
-/// True when `python` is on PATH.
+/// 可用的 Python 命令名：先试 `python3`（Linux / macOS 常见），再试 `python`（Windows 常见）。
+pub fn python_cmd() -> Option<&'static str> {
+    ["python3", "python"].into_iter().find(|name| {
+        Command::new(name)
+            .arg("--version")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// True when a usable Python is on PATH.
 pub fn python_available() -> bool {
-    Command::new("python")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    python_cmd().is_some()
 }
 
 /// Run the Python oracle. `None` (with a message on stderr) when python is missing.
 pub fn py(args: &[&str], stdin: Option<&str>) -> Option<Value> {
-    if !python_available() {
-        eprintln!("SKIPPED: `python` is not on PATH, cannot run the Python oracle");
+    let Some(python) = python_cmd() else {
+        // 在 CI 里（XEXAM_REQUIRE_PYTHON=1）找不到 Python 就是失败，而不是静默跳过——否则对照测试会假绿。
+        assert!(
+            std::env::var_os("XEXAM_REQUIRE_PYTHON").is_none(),
+            "XEXAM_REQUIRE_PYTHON is set but neither python3 nor python is on PATH"
+        );
+        eprintln!("SKIPPED: no python on PATH, cannot run the Python oracle");
         return None;
-    }
+    };
     let script = oracle_script();
-    let mut cmd = Command::new("python");
-    cmd.arg("-I").arg("-B").arg(&script).arg(REPO).args(args);
+    let mut cmd = Command::new(python);
+    cmd.arg("-I").arg("-B").arg(&script).arg(repo()).args(args);
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
