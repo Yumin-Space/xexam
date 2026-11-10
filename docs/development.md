@@ -17,7 +17,7 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 136 个测试
+cargo test --all-targets          # 151 个测试
 cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 ```
 
@@ -32,7 +32,7 @@ cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 cd frontend
 npm ci
 npm run typecheck      # tsc（含测试文件）
-npm test               # 19 个单元测试（判分、错题规则、sessionStorage）
+npm test               # 27 个单元测试（判分、错题规则、sessionStorage、语言规则）
 npm run build          # 类型检查 + vite build → dist/
 npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1:8765
 ```
@@ -83,8 +83,8 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 | 作业 | 内容 |
 |---|---|
 | `check` | `VERSION` 格式、README 更新日志最上面一条 = `VERSION` |
-| `frontend` | 类型检查、19 个单元测试、构建 |
-| `backend` | fmt、clippy、136 个测试，以及 `progress.json` 迁移检查 |
+| `frontend` | 类型检查、27 个单元测试、构建 |
+| `backend` | fmt、clippy、151 个测试，以及 `progress.json` 迁移检查 |
 | `stack` | 构建 `xexam-frontend` 镜像跑 38 项 Nginx 检查；起整个 compose 栈跑 34 项端到端检查 |
 | `arm64` | 两个镜像为 arm64 构建，在 QEMU 下启动，检查 `/api/info` 报 `aarch64` |
 | `publish` | 仅 `main`：两个镜像（amd64 + arm64）推到 ghcr.io，核对清单和标签 |

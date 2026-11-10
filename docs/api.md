@@ -57,12 +57,13 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.3", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.4", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
 `bankCount` 是上架的题数。版本号来自 `VERSION` 文件。
 
 ### `GET /api/bank`
 `file` / `mtime` 是最近一次导入的文件名和时间；`questions` 只含上架的题；`sheets` 里每个工作表有可用数和已下架数。题目的字段见 [openapi.yaml](openapi.yaml) 的 `Question`。
+四列格式的题（A 英语、B 中文、C 日语、D 答案）多两个键 `english`（A 列原文）和 `en`（按日语结构拆开的英语），夹在 `zh` 和 `explanation` 之间；没有英语的题（包括所有三列格式的题）**不出现**这两个键，所以旧文件的输出与以前逐字节相同。`zh` / `en` 的热点题多一个 `choices`：每个小项用本语言写的选项。`stem`、`options`、`items`、`answer` 永远来自 C 列的日语。
 
 ### `GET /api/progress`
 `questions` 是每道题的累计统计（答过几次、对几次、错几次、当前连续答对几次）；`history` 是最近 60 场；`masterStreak` 是错题连续答对几次后移出错题本（2）。

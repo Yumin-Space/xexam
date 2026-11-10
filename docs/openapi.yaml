@@ -281,12 +281,19 @@ components:
         choices: { type: array, items: { type: string }, example: [はい, いいえ] }
     Zh:
       type: object
-      description: 中文翻译拆出来的结构；结构对不上日语题目时整个 `zh` 是 null（前端把「中文」按钮置灰，不显示错位的内容）
+      description: |
+        中文（以及英语，形状相同）拆出来的结构；结构对不上日语题目时整个 `zh` / `en` 是 null（前端把对应的语言按钮置灰，不显示错位的内容）。
       required: [stem]
       properties:
         stem: { type: string }
         options: { type: array, items: { type: string }, description: 单选 / 多选才有 }
         items: { type: array, items: { type: string }, description: 热点题才有 }
+        choices:
+          type: array
+          items: { type: array, items: { type: string } }
+          description: |
+            热点题才有：每个小项末尾用**本语言**写的选项（日语 はい / いいえ，中文 是 / 否，英语 Yes / No）。个数必须和日语的一致才有；
+            选项的位置就是答案的下标，所以三种语言的第 j 个选项是同一个意思。没有时界面显示日语的选项。
     Question:
       type: object
       required: [kind, tag, stem, options, items, answer, translation, zh, explanation, mnemonic, note, id, sheet, row]
@@ -302,6 +309,10 @@ components:
             - { type: array, items: { type: integer }, description: "热点题：每个小项选了第几个，例如 [0, 1, 0]" }
         translation: { type: string }
         zh: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }] }
+        english:
+          type: string
+          description: 四列格式（A 英语、B 中文、C 日语、D 答案）才有：A 列的英语原文。没有英语的题不出现这个键（所以三列格式的输出与以前完全一样）
+        en: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }], description: 按日语结构拆开的英语；四列格式才可能出现 }
         explanation: { type: string }
         mnemonic: { type: string }
         note: { type: string }

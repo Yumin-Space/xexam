@@ -1,11 +1,11 @@
-// 答题页：题干 + 选项 / 热点小项、日语/中文切换、答题卡、计时、键盘。答题时不显示对错。
+// 答题页：题干 + 选项 / 热点小项、日语/中文/英语切换、答题卡、计时、键盘。答题时不显示对错。
 import { stateOf, type Answer } from '../domain/grading.ts';
+import { hasLang, shown, type Lang } from '../domain/language.ts';
 import { kindLabel } from '../components/common.ts';
 import { S } from '../state/store.ts';
 import {
   elapsed, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setLang, submit, toggleFlag,
 } from '../state/actions.ts';
-import type { Lang } from '../state/store.ts';
 import { h, paras } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
 
@@ -27,20 +27,19 @@ export function renderQuiz(): HTMLElement {
     railCount.textContent = `已答 ${a} / ${n} 题`;
   });
 
-  // 这道题没有可用的中文翻译时，一律显示日语
-  const zh = q.zh;
-  const hasZh = !!zh;
-  const lang: Lang = S.lang === 'zh' && zh ? 'zh' : 'ja';
-  const stemText = lang === 'zh' && zh ? zh.stem : q.stem;
+  // 想看的语言这道题没有（对不上日语的结构）时，退回日语，不显示错位的内容
+  const view = shown(q, S.lang);
+  const lang = view.lang;
+  const stemText = view.stem;
 
   let body: HTMLElement;
   if (q.kind === 'hotspot') {
     body = h('div', { class: 'hs' }, q.items.map((it, i) => h('div', { class: 'hs-item' },
       h('span', { class: 'hs-no' }, i + 1),
-      h('p', { lang, class: 'pre' }, lang === 'zh' && zh?.items ? (zh.items[i] ?? it.text) : it.text),
-      h('div', { class: 'chips', role: 'group', 'aria-label': `第 ${i + 1} 小项` }, it.choices.map((ch, j) => {
+      h('p', { lang, class: 'pre' }, view.itemText(i)),
+      h('div', { class: 'chips', role: 'group', 'aria-label': `第 ${i + 1} 小项` }, it.choices.map((_, j) => {
         const btn = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: () => pickItem(q, i, j) },
-          h('span', { class: 'dot' }), h('span', { lang: 'ja' }, ch)); // 选项本身（はい / いいえ 等）是答案原文，不翻译
+          h('span', { class: 'dot' }), h('span', { lang: view.choiceLang(i, j) }, view.choiceText(i, j))); // 选项用当前语言那一列里写的（是 / 否、Yes / No）；没写就用日语的
         onRefresh(() => {
           const a = answerOf(q.id);
           btn.setAttribute('aria-pressed', String(Array.isArray(a) && a[i] === j));
@@ -49,7 +48,7 @@ export function renderQuiz(): HTMLElement {
       })))));
   } else {
     body = h('div', { class: 'opts' + (q.kind === 'multi' ? ' multi' : ''), role: 'group', 'aria-label': '选项' }, q.options.map((o, i) => {
-      const text = lang === 'zh' && zh?.options ? (zh.options[i] ?? o.text) : o.text;
+      const text = view.optionText(i);
       const btn = h('button', { class: 'opt', type: 'button', 'aria-pressed': 'false', onclick: () => pick(q, o.key) },
         h('span', { class: 'bubble' }, o.key), h('span', { class: 't', lang }, text));
       onRefresh(() => {
@@ -62,11 +61,11 @@ export function renderQuiz(): HTMLElement {
 
   const langBtn = (code: Lang, label: string): HTMLElement => h('button', {
     class: 'lang-btn', type: 'button', lang: code, 'aria-pressed': String(lang === code),
-    disabled: code === 'zh' && !hasZh,
-    title: code === 'zh' && !hasZh ? '这道题的 B 列没有中文翻译' : null,
+    disabled: !hasLang(q, code),
+    title: hasLang(q, code) ? null : code === 'zh' ? '这道题没有可用的中文翻译（Excel 里的中文和日语对不上）' : '这道题没有可用的英语（Excel 里没写英语，或和日语对不上）',
     onclick: () => setLang(code),
   }, label);
-  const langSwitch = h('div', { class: 'lang', role: 'group', 'aria-label': '题目语言' }, langBtn('ja', '日语'), langBtn('zh', '中文'));
+  const langSwitch = h('div', { class: 'lang', role: 'group', 'aria-label': '题目语言' }, langBtn('en', '英语'), langBtn('zh', '中文'), langBtn('ja', '日语'));
 
   const flagBtn = h('button', { class: 'btn flagbtn', type: 'button', 'aria-pressed': 'false', onclick: () => toggleFlag(q) }, '标记这题');
   onRefresh(() => flagBtn.setAttribute('aria-pressed', String(se.flags.has(q.id))));

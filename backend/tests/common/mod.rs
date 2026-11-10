@@ -50,10 +50,13 @@ pub fn single(sheet: &str, id: &str, stem: &str, row: i64) -> Question {
         items: vec![],
         answer: Answer::Letters(vec!["B".into()]),
         translation: "中文翻译\nA. 是\nB. 否".into(),
+        english: String::new(),
+        en: None,
         zh: Some(Zh {
             stem: "中文题干".into(),
             options: Some(vec!["是".into(), "否".into()]),
             items: None,
+            choices: None,
         }),
         explanation: "解析 \"quoted\" \\ back".into(),
         mnemonic: "口诀".into(),
@@ -85,6 +88,7 @@ pub fn hotspot(sheet: &str, id: &str, stem: &str, row: i64) -> Question {
         stem: "对每句话选择".into(),
         options: None,
         items: Some(vec!["太阳从东边升起。".into()]),
+        choices: None,
     });
     q
 }

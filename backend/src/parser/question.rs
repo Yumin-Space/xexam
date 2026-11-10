@@ -7,7 +7,7 @@ use super::py_space::{
     char_len, digit_class_inner, digit_value, digits_to_canonical, py_strip, take_chars,
 };
 use crate::error::ImportError;
-use crate::models::{Answer, Item, Kind, Opt, Question, Zh};
+use crate::models::{Answer, En, Item, Kind, Opt, Question, Zh};
 use regex::{NoExpand, Regex};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -353,6 +353,49 @@ pub fn norm_nl(s: &str) -> String {
     py_strip(&s.replace("\r\n", "\n").replace('\r', "\n")).to_string()
 }
 
+/// 热点小项末尾的选项：「……。　是 / 否」。-> (去掉选项后的文字, 选项)。没有选项就原样返回。
+fn split_trailing_choices(text: &str) -> (String, Option<Vec<String>>) {
+    let last = text.rsplit('\n').next().unwrap_or(text);
+    if let Some(caps) = RES.hint.captures(last) {
+        if let (Some(whole), Some(g1)) = (caps.get(0), caps.get(1)) {
+            let choices: Vec<String> = RES
+                .split_slash
+                .split(g1.as_str())
+                .map(|t| py_strip(t).to_string())
+                .filter(|t| !t.is_empty())
+                .collect();
+            if choices.len() >= 2 {
+                let head_last = py_strip(last.get(..whole.start()).unwrap_or(""));
+                let cut = text.len() - last.len();
+                let mut head = text.get(..cut).unwrap_or("").to_string();
+                head.push_str(head_last);
+                return (py_strip(&head).to_string(), Some(choices));
+            }
+        }
+    }
+    (text.to_string(), None)
+}
+
+/// 每个小项的本语言选项。只有**每个小项都写了、且个数和日语的一致**时才采用（一个个对上，不猜）；否则整题不提供，
+/// 界面退回显示日语的选项。选项的位置就是答案下标，所以只要个数一致，「第 j 个」在三种语言里就是同一个意思。
+fn localized_choices(
+    split: &[(String, Option<Vec<String>>)],
+    ja_items: &[Item],
+) -> Option<Vec<Vec<String>>> {
+    if split.len() != ja_items.len() {
+        return None;
+    }
+    let mut out = Vec::with_capacity(split.len());
+    for ((_, ch), ja) in split.iter().zip(ja_items) {
+        let ch = ch.as_ref()?;
+        if ch.len() != ja.choices.len() {
+            return None;
+        }
+        out.push(ch.clone());
+    }
+    Some(out)
+}
+
 /// 把 B 列的翻译拆成和日语题目一样的结构；对不上返回 None（不提供中文切换）。
 pub fn parse_translation(tr: &str, options: &[Opt], items: &[Item]) -> Option<Zh> {
     let normed = norm_nl(tr);
@@ -372,6 +415,7 @@ pub fn parse_translation(tr: &str, options: &[Opt], items: &[Item]) -> Option<Zh
             stem,
             options: Some(opts.into_iter().map(|o| o.text).collect()),
             items: None,
+            choices: None,
         });
     }
     if !items.is_empty() {
@@ -401,15 +445,17 @@ pub fn parse_translation(tr: &str, options: &[Opt], items: &[Item]) -> Option<Zh
         if parts.len() != items.len() {
             return None;
         }
+        // 每个小项末尾如果写了本语言的选项（「……。　是 / 否」），把它拆出来；没写就还是原来的样子（choices = None）
+        let split: Vec<(String, Option<Vec<String>>)> = parts
+            .iter()
+            .map(|p| split_trailing_choices(py_strip(&p.join("\n"))))
+            .collect();
+        let choices = localized_choices(&split, items);
         return Some(Zh {
             stem: py_strip(&stem_lines.join("\n")).to_string(),
             options: None,
-            items: Some(
-                parts
-                    .iter()
-                    .map(|p| py_strip(&p.join("\n")).to_string())
-                    .collect(),
-            ),
+            items: Some(split.into_iter().map(|(t, _)| t).collect()),
+            choices,
         });
     }
     None
@@ -428,8 +474,66 @@ pub enum QuestionOutcome {
     Fatal(ImportError),
 }
 
-#[allow(clippy::needless_late_init)]
+/// 旧的三列格式（A 日语、B 中文、C 答案）。现在只有单元测试直接用它；工作簿解析走 `parse_question_with_english`。
+#[cfg(test)]
 pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> QuestionOutcome {
+    parse_question_with_english(sheet, row, a, b, c, "")
+}
+
+/// 英语版拆成和日语一样的结构：单选 / 多选带 `options`，热点题带 `items` 和每个小项的英文选项。
+/// 选项字母、小项个数和日语对不上就返回 None（页面不提供英语切换，而不是显示错位的内容）。
+pub fn parse_english(en: &str, options: &[Opt], items: &[Item]) -> Option<En> {
+    let normed = norm_nl(en);
+    let stripped = RES.hot_lead.replace(&normed, NoExpand(""));
+    let text = py_strip(&stripped);
+    let text = text.strip_prefix("HOTSPOT").map(py_strip).unwrap_or(text);
+    if text.is_empty() {
+        return None;
+    }
+    if !options.is_empty() {
+        let (stem, opts) = parse_options(text);
+        let same =
+            opts.len() == options.len() && opts.iter().zip(options).all(|(a, b)| a.key == b.key);
+        if !same || stem.is_empty() {
+            return None;
+        }
+        return Some(En {
+            stem,
+            options: Some(opts.into_iter().map(|o| o.text).collect()),
+            items: None,
+            choices: None,
+        });
+    }
+    if !items.is_empty() {
+        let (stem, en_items) = parse_hotspot(text);
+        if en_items.len() != items.len() || stem.is_empty() {
+            return None;
+        }
+        let split: Vec<(String, Option<Vec<String>>)> = en_items
+            .into_iter()
+            .map(|i| (i.text, Some(i.choices)))
+            .collect();
+        let choices = localized_choices(&split, items);
+        return Some(En {
+            stem,
+            options: None,
+            items: Some(split.into_iter().map(|(t, _)| t).collect()),
+            choices,
+        });
+    }
+    None
+}
+
+/// 四列格式里 A 列是英语：`english` 非空时额外拆出 `en`。其余逻辑和三列格式完全一样（题目 id 仍然来自日语）。
+#[allow(clippy::needless_late_init)]
+pub fn parse_question_with_english(
+    sheet: &str,
+    row: i64,
+    a: &str,
+    b: &str,
+    c: &str,
+    english: &str,
+) -> QuestionOutcome {
     let text = norm_nl(a);
     let b = norm_nl(b);
     let c = norm_nl(c);
@@ -489,6 +593,24 @@ pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> Quest
         _ => return QuestionOutcome::Skip(SKIP_NO_ANSWER.to_string()),
     };
 
+    // 中文 / 英语先拆好：热点题的答案可以用这两列里写的选项词来写（见下面）
+    let mut translation = secs.translation.clone();
+    if translation.is_none() && !b.is_empty() && !b.contains('【') && char_len(&b) > 40 {
+        translation = Some(b.clone());
+    }
+    let translation_text = translation.clone().unwrap_or_default();
+    let zh = if translation_text.is_empty() {
+        None
+    } else {
+        parse_translation(&translation_text, &options, &items)
+    };
+    let english_text = py_strip(&norm_nl(english)).to_string();
+    let en = if english_text.is_empty() {
+        None
+    } else {
+        parse_english(&english_text, &options, &items)
+    };
+
     let kind;
     let answer;
     let first_text;
@@ -527,12 +649,24 @@ pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> Quest
             ));
         };
         let mut idx: Vec<i64> = Vec::new();
+        // 中文 / 英语两列里各小项末尾写的选项（个数和日语一致才有；对不上的那一列不参与匹配）
+        let other_langs: Vec<&Vec<Vec<String>>> = [zh.as_ref(), en.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter_map(|z| z.choices.as_ref())
+            .collect();
         for (k0, it) in items.iter().enumerate() {
             let k = k0 + 1;
             let Some(v) = vals.get(&k.to_string()) else {
                 return QuestionOutcome::Skip(format!("第 {k} 小项没有答案"));
             };
-            let Some(j) = find_choice(&it.choices, v) else {
+            // 答案可以用日语、中文或英语任意一种语言的选项词来写：三列的第 j 个选项是一一对应的（同一个下标），
+            // 所以先在日语选项里找，找不到再依次在中文、英语那一列写的选项里找。
+            let Some(j) = find_choice(&it.choices, v).or_else(|| {
+                other_langs
+                    .iter()
+                    .find_map(|c| c.get(k0).and_then(|ch| find_choice(ch, v)))
+            }) else {
                 return QuestionOutcome::Skip(format!(
                     "第 {k} 小项的答案「{v}」不在选项「{}」里",
                     it.choices.join(" / ")
@@ -566,10 +700,6 @@ pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> Quest
         first_text = items.first().map(|i| i.text.clone()).unwrap_or_default();
     }
 
-    let mut translation = secs.translation.clone();
-    if translation.is_none() && !b.is_empty() && !b.contains('【') && char_len(&b) > 40 {
-        translation = Some(b.clone());
-    }
     let note = RES
         .note
         .captures_iter(&ans)
@@ -578,13 +708,6 @@ pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> Quest
         .filter(|x| !x.is_empty())
         .collect::<Vec<_>>()
         .join("；");
-    let translation_text = translation.clone().unwrap_or_default();
-    let zh = if translation_text.is_empty() {
-        None
-    } else {
-        parse_translation(&translation_text, &options, &items)
-    };
-
     QuestionOutcome::Ok(Box::new(Question {
         kind,
         tag: if is_hot {
@@ -599,6 +722,8 @@ pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> Quest
         answer,
         translation: translation_text,
         zh,
+        english: english_text,
+        en,
         explanation: secs.explanation.unwrap_or_default(),
         mnemonic: secs.mnemonic.unwrap_or_default(),
         note,

@@ -1,10 +1,11 @@
 // 应用状态。旧版是一个全局对象 S；这里仍然是一个模块级对象，但有类型，且只能通过这个模块访问。
 import type { Bank, ImportPreview, ImportRecord, ImportPlan, Info, Mode, Progress } from '../types/api.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
+import { isLang, type Lang } from '../domain/language.ts';
 import { paths } from './storage-keys.ts';
 
 export type View = 'loading' | 'fatal' | 'home' | 'admin' | 'quiz' | 'result';
-export type Lang = 'ja' | 'zh';
+export type { Lang };
 
 /** 一场进行中的考试 */
 export interface Session {
@@ -65,7 +66,8 @@ export interface AppState {
 
 function readLang(): Lang {
   try {
-    return localStorage.getItem(paths.lang) === 'zh' ? 'zh' : 'ja';
+    const v = localStorage.getItem(paths.lang);
+    return isLang(v) ? v : 'ja';
   } catch {
     return 'ja';
   }

@@ -17,12 +17,19 @@ export interface Item {
   choices: string[];
 }
 
-/** 中文翻译拆出来的结构；单选 / 多选带 options，热点题带 items。 */
+/**
+ * 中文 / 英语拆出来的结构（形状相同）：单选 / 多选带 options，热点题带 items；
+ * 热点题如果每个小项末尾都用本语言写了选项（是 / 否、Yes / No……），还有 choices（个数和日语一致才有）。
+ */
 export interface Zh {
   stem: string;
   options?: string[];
   items?: string[];
+  choices?: string[][];
 }
+
+/** 英语版拆出来的结构，和中文一样。 */
+export type En = Zh;
 
 export type Kind = 'single' | 'multi' | 'hotspot';
 
@@ -36,6 +43,9 @@ export interface Question {
   answer: string[] | number[];
   translation: string;
   zh: Zh | null;
+  /** 4 列格式才有：A 列的英语原文，以及按日语结构拆开的版本（对不上日语时 en 为空） */
+  english?: string;
+  en?: En | null;
   explanation: string;
   mnemonic: string;
   note: string;

@@ -767,6 +767,8 @@ mod tests {
             answer: Answer::Letters(vec!["A".to_string()]),
             translation: String::new(),
             zh: None,
+            english: String::new(),
+            en: None,
             explanation: String::new(),
             mnemonic: String::new(),
             note: String::new(),

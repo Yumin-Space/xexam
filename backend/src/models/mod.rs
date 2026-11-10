@@ -26,7 +26,15 @@ pub struct Zh {
     pub options: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub items: Option<Vec<String>>,
+    /// 热点题：每个小项末尾用**本语言**写的选项（`是 / 否`、`Yes / No`……），个数必须和日语的一致才有。
+    /// 没有时（旧文件，或这一列没写选项）界面退回显示日语的选项。
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub choices: Option<Vec<Vec<String>>>,
 }
+
+/// 英语版拆出来的结构，和中文完全一样（见 [`Zh`]）。
+/// 只有这道题的英语能和日语一一对上（选项字母、小项个数都相同）时才有；对不上就没有 `en`，页面把「英语」按钮置灰。
+pub type En = Zh;
 
 /// 题型。序列化成 `"single" | "multi" | "hotspot"`。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -47,8 +55,8 @@ pub enum Answer {
 
 /// 解析器产出的一道题（存进 `questions.data` 的是去掉 id / sheet / row 之后的部分）。
 ///
-/// 对外（`/api/bank`）的键顺序：kind, tag, stem, options, items, answer, translation, zh,
-/// explanation, mnemonic, note, id, sheet, row —— 与 `questions.data` 的键顺序加上末尾追加的 id、sheet、row 一致。
+/// 对外（`/api/bank`）的键顺序：kind, tag, stem, options, items, answer, translation, zh, [english, en,]
+/// explanation, mnemonic, note, id, sheet, row（方括号里的两个只在有英语时出现） —— 与 `questions.data` 的键顺序加上末尾追加的 id、sheet、row 一致。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Question {
     pub kind: Kind,
@@ -59,6 +67,11 @@ pub struct Question {
     pub answer: Answer,
     pub translation: String,
     pub zh: Option<Zh>,
+    /// 英语原文（4 列格式的 A 列）。没有英语时为空，且不出现在 JSON 里，所以旧题的输出与以前完全一样。
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub english: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub en: Option<En>,
     pub explanation: String,
     pub mnemonic: String,
     pub note: String,

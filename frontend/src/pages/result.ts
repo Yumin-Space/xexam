@@ -1,7 +1,8 @@
-// 成绩页：先看分数，再看每题对错；错题显示你的答案、正确答案、解析、口诀、中文翻译。
+// 成绩页：先看分数，再看每题对错；错题显示你的答案、正确答案、解析、口诀，并按答题时选的语言（日语 / 中文 / 英语）显示题目。
 import { inNotebook, masterStreakOf, percentOf, shuffle, stateOf, type Answer } from '../domain/grading.ts';
 import { brand, kindLabel } from '../components/common.ts';
 import { S, type ResultRow } from '../state/store.ts';
+import { shown } from '../domain/language.ts';
 import { loadSaved } from '../state/session-storage.ts';
 import { ask } from '../utils/dialog.ts';
 import { render, startSession } from '../state/actions.ts';
@@ -14,6 +15,8 @@ function reviewItem(r: ResultRow, i: number): HTMLElement {
   const q = r.q;
   const st = S.progress?.questions?.[q.id];
   const unanswered = stateOf(q, r.ans) === 0;
+  // 题目用答题时选的语言显示；这道题没有的语言退回日语
+  const view = shown(q, S.lang);
   let body: HTMLElement;
   let verdict: HTMLElement;
 
@@ -24,29 +27,29 @@ function reviewItem(r: ResultRow, i: number): HTMLElement {
       return typeof v === 'number' ? v : null;
     };
     const okN = q.items.filter((_, k) => mineAt(k) === right[k]).length;
-    body = h('div', { class: 'hs' }, q.items.map((it, k) => {
+    body = h('div', { class: 'hs' }, q.items.map((_, k) => {
       const mine = mineAt(k);
       const want = right[k] ?? -1;
       const ok = mine === want;
       return h('div', { class: 'hs-item ' + (ok ? 'rv-ok' : 'rv-ng') },
         h('span', { class: 'hs-no' }, k + 1),
-        h('p', { lang: 'ja', class: 'pre' }, it.text),
+        h('p', { lang: view.lang, class: 'pre' }, view.itemText(k)),
         h('div', { class: 'hsa' },
           h('span', { class: 'tag ' + (ok ? 'g' : 'r') }, ok ? '答对' : '答错'),
-          h('span', null, '你选了 ', h('b', { class: ok ? 'g' : 'r', lang: 'ja' }, mine == null ? '未作答' : (it.choices[mine] ?? '未作答'))),
-          ok ? null : h('span', null, '正确答案 ', h('b', { class: 'g', lang: 'ja' }, it.choices[want] ?? ''))));
+          h('span', null, '你选了 ', h('b', { class: ok ? 'g' : 'r', lang: mine == null ? view.lang : view.choiceLang(k, mine) }, mine == null ? '未作答' : (view.choiceText(k, mine) || '未作答'))),
+          ok ? null : h('span', null, '正确答案 ', h('b', { class: 'g', lang: view.choiceLang(k, want) }, view.choiceText(k, want)))));
     }));
     verdict = h('p', { class: 'verdict' }, `这题共 ${q.items.length} 个小项，答对 `, h('b', { class: r.correct ? 'r' : 'w' }, `${okN} 个`), '；每个小项都对才算这题答对。');
   } else {
     const right = q.answer as string[];
     const mine = asLetters(r.ans);
-    body = h('div', { class: 'opts' + (q.kind === 'multi' ? ' multi' : '') }, q.options.map((o) => {
+    body = h('div', { class: 'opts' + (q.kind === 'multi' ? ' multi' : '') }, q.options.map((o, oi) => {
       const isAns = right.includes(o.key);
       const picked = mine.includes(o.key);
       const tags = [isAns ? h('span', { class: 'tag g' }, '正确答案') : null, picked ? h('span', { class: 'tag ' + (isAns ? 'k' : 'r') }, '你的选择') : null].filter((x): x is HTMLElement => !!x);
       return h('div', { class: 'opt review' + (isAns ? ' is-ans' : '') + (picked && !isAns ? ' is-bad' : '') },
         h('span', { class: 'bubble' }, o.key),
-        h('div', { class: 'body' }, tags.length ? h('div', { class: 'tags' }, tags) : null, h('span', { class: 't', lang: 'ja' }, o.text)));
+        h('div', { class: 'body' }, tags.length ? h('div', { class: 'tags' }, tags) : null, h('span', { class: 't', lang: view.lang }, view.optionText(oi))));
     }));
     verdict = h('p', { class: 'verdict' }, '你的答案 ', h('b', { class: r.correct ? 'r' : 'w' }, unanswered ? '未作答' : mine.join('、')),
       '　正确答案 ', h('b', { class: 'r' }, right.join('、')));
@@ -60,7 +63,7 @@ function reviewItem(r: ResultRow, i: number): HTMLElement {
         h('span', { class: 'badge ' + (r.correct ? 'ok' : 'ng') }, r.correct ? '答对' : unanswered ? '未作答' : '答错'),
         h('span', { class: 'badge' }, kindLabel(q)),
         h('span', null, q.sheet)),
-      h('div', { class: 'stem' }, paras(q.stem)),
+      h('div', { class: 'stem' }, paras(view.stem, undefined, view.lang)),
       body,
       verdict,
       q.explanation ? h('div', { class: 'explain' }, h('h4', null, '解析：怎么选'), h('p', { class: 'pre' }, q.explanation)) : null,

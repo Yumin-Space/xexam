@@ -7,7 +7,7 @@ use crate::error::ImportError;
 use crate::models::{ParsedSheet, ParsedWorkbook, Question, SkippedRow};
 
 use super::py_space::{char_len, py_int, py_strip};
-use super::question::{classify_heading, parse_question, QuestionOutcome};
+use super::question::{classify_heading, parse_question_with_english, QuestionOutcome};
 use super::xml::{self, Element, XmlError};
 use super::zip_guard::{OpenError, Package, ReadError};
 
@@ -28,10 +28,10 @@ const HEADER_WORDS: [&str; 5] = ["题目", "題目", "问题", "問題", "Questi
 const MSG_NOT_XLSX: &str = "这个文件不是有效的 .xlsx（可能是 .xls、.csv，或者文件已损坏）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。";
 const MSG_TOO_COMPLEX: &str = "这个文件的内容太多或层级太深，已拒绝。";
 
-/// 一个工作表里的一行：行号、A/B/C 三列、这一行是否有过任何非空白单元格（任何列）。
+/// 一个工作表里的一行：行号、A/B/C/D 四列（旧的三列格式只用前三列）、这一行是否有过任何非空白单元格（任何列）。
 struct SheetRow {
     number: i64,
-    cols: [Option<Rc<str>>; 3],
+    cols: [Option<Rc<str>>; 4],
 }
 
 fn xml_err(e: XmlError) -> ImportError {
@@ -89,7 +89,7 @@ fn si_text(si: &Element) -> String {
     out
 }
 
-/// `_col_index`：引用开头的字母串 -> 0 基列号。没有字母前缀返回 None。数值饱和（只有 0/1/2 列有意义）。
+/// `_col_index`：引用开头的字母串 -> 0 基列号。没有字母前缀返回 None。数值饱和（只有 0/1/2/3 列有意义）。
 fn col_index(reference: &str) -> Option<u64> {
     let mut n: u64 = 0;
     let mut any = false;
@@ -153,7 +153,7 @@ fn read_sheet(
         else {
             continue;
         };
-        let mut cols: [Option<Rc<str>>; 3] = [None, None, None];
+        let mut cols: [Option<Rc<str>>; 4] = [None, None, None, None];
         let mut any = false;
         for c in row.find_all(NS, "c") {
             *cell_budget = cell_budget
@@ -275,6 +275,36 @@ fn read_workbook(
     Ok(out)
 }
 
+/// 工作表是不是四列格式（A 英语、B 中文、C 日语、D 答案…）？只看内容，不看表头。
+///
+/// 必须同时满足（用来避免把别的版式误判成四列 —— 旧版读不出来的文件不能因此突然读出来）：
+/// 1. D 列里有答案标题（「【答案】」之类）的行，比 C 列里的多；
+/// 2. 至少有一行，C 列**含日语假名**（C 是日语题目）、而 B 列**不含**（B 是中文），A 列（英语）若有内容则不含假名。
+///    A 列可以是空的（这道题没写英语）。反过来，「整张表右移一列」的文件是 A 空、B 日语、C 中文、D 答案：
+///    C 列没有假名，不满足第 2 条，仍按旧规则处理（旧版读不出来，新版也读不出来，行为不变）。
+fn detect_four_columns(rows: &[SheetRow]) -> bool {
+    fn text(row: &SheetRow, i: usize) -> &str {
+        row.cols.get(i).and_then(|c| c.as_deref()).unwrap_or("")
+    }
+    let has_answer =
+        |t: &str| t.contains("【答案】") || t.contains("【正解】") || t.contains("【答え】");
+    let is_kana = |c: char| ('\u{3040}'..='\u{30ff}').contains(&c);
+    let (mut in_c, mut in_d, mut shaped) = (0usize, 0usize, 0usize);
+    for row in rows {
+        if has_answer(text(row, 2)) {
+            in_c += 1;
+        }
+        if has_answer(text(row, 3)) {
+            in_d += 1;
+            let (a, b, c) = (text(row, 0), text(row, 1), text(row, 2));
+            if c.chars().any(is_kana) && !b.chars().any(is_kana) && !a.chars().any(is_kana) {
+                shaped += 1;
+            }
+        }
+    }
+    in_d > 0 && in_d > in_c && shaped > 0
+}
+
 pub(super) fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
     parse_workbook_until(data, None)
 }
@@ -303,19 +333,23 @@ pub(super) fn parse_workbook_until(
             usable: 0,
             skipped: Vec::new(),
         };
+        // 这个工作表是四列（A 英语、B 中文、C 日语、D 答案…）还是旧的三列（A 日语、B 中文、C 答案…）？
+        let four_columns = detect_four_columns(&sheet.rows);
         for (row_no, row) in sheet.rows.iter().enumerate() {
             if row_no.is_multiple_of(256) {
                 check_deadline(deadline)?;
             }
-            let Some(a) = row.cols.first().and_then(|c| c.as_deref()) else {
-                continue;
+            let col = |i: usize| row.cols.get(i).and_then(|c| c.as_deref()).unwrap_or("");
+            // 题目所在的列（日语）：四列格式是 C，三列格式是 A
+            let (english, a, b, c) = if four_columns {
+                (col(0), col(2), col(1), col(3))
+            } else {
+                ("", col(0), col(1), col(2))
             };
             let a_stripped = py_strip(a);
             if a_stripped.is_empty() {
                 continue;
             }
-            let b = row.cols.get(1).and_then(|c| c.as_deref()).unwrap_or("");
-            let c = row.cols.get(2).and_then(|c| c.as_deref()).unwrap_or("");
             let a_len = char_len(a_stripped);
             if a_len < 15 && py_strip(b).is_empty() && py_strip(c).is_empty() {
                 continue; // 备注之类的短文字
@@ -324,7 +358,7 @@ pub(super) fn parse_workbook_until(
                 continue; // 标题行
             }
             info.total += 1;
-            match parse_question(&sheet.name, row.number, a, b, c) {
+            match parse_question_with_english(&sheet.name, row.number, a, b, c, english) {
                 QuestionOutcome::Fatal(e) => return Err(e),
                 QuestionOutcome::Skip(reason) => info.skipped.push(SkippedRow {
                     row: row.number,

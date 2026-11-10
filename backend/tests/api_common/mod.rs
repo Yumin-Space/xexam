@@ -156,6 +156,8 @@ pub fn dummy_question(i: usize) -> Question {
         items: vec![],
         answer: Answer::Letters(vec!["A".into()]),
         translation: String::new(),
+        english: String::new(),
+        en: None,
         zh: None,
         explanation: String::new(),
         mnemonic: String::new(),
