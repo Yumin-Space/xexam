@@ -93,7 +93,7 @@ flowchart LR
 - **单个待确认槽位**：并发上传会互相替换（单人使用，不引入会话概念）。
 - Cloudflare 路径只做了**本机模拟**：浏览器级的模拟（真实 Chrome + HTTPS 反向代理）是对旧 Python 版做的；对新栈只做了请求头级别的检查（经 Nginx 后 Host / Origin 守卫仍生效）。没有用真正的 Cloudflare 测过。
 - iPhone Safari 没有在真机上测过；构建目标是 iOS 15.4+。
-- 新镜像（`xexam-web` / `xexam-backend`）的 arm64 构建在 CI 里尚未验证。
+- 新镜像的 arm64 版本：CI 里在 QEMU 下**构建并启动**过（`/api/info` 报 `aarch64`），但没有在真正的 ARM 硬件上跑过。aarch64 的后端产物不带 Cortex-A53 勘误 #843419 的链接器规避（见 [deployment.md](deployment.md)）。
 
 ## 9. 漏洞报告
 

@@ -4,7 +4,12 @@
 
 ## 1. 前提
 
-- 装了 Docker（含 Compose v2）的机器，x86 或 ARM 都行。
+- 装了 Docker（含 Compose v2）的机器，x86（amd64）或 ARM（arm64）都行。
+  - arm64 镜像在 CI 里用 QEMU **构建并启动**验证过（`/api/info` 报 `aarch64`，Nginx `/healthz` 正常）；**没有在真正的 ARM 硬件上跑过**。
+  - 后端是在 x86 构建机上用 zig 交叉编译出 aarch64 版本的（冷缓存下 CI 约 5 分钟，不需要在 QEMU 里编 Rust）。
+    因为 zig 的链接器不接受 rustc 默认给 aarch64 加的 `--fix-cortex-a53-843419`，aarch64 产物**不带**这个针对 Cortex-A53 核心的勘误规避。
+    Oracle Cloud 的 Ampere A1 用 Ampere Altra（据 Wikipedia 是 Arm Neoverse N1 核心），不是 Cortex-A53，所以不受影响；
+    如果你要在 Cortex-A53 核心的板子上跑（部分老款开发板），请别用这个镜像，先告诉我。
 - v0.3 的镜像**还没有发布**到 GHCR（发布仍由 `main` 上的旧流水线负责，合并后再接）。所以现在**从源码构建**。
 
 ## 2. 启动（从源码构建）
