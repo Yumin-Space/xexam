@@ -27,6 +27,9 @@ progress.json
 __pycache__/
 *.pyc
 .claude/
+backend/target/
+frontend/node_modules/
+frontend/dist/
 
 # 编辑器 / 系统
 .vscode/

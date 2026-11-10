@@ -1,5 +1,7 @@
 # 迁移计划（Phase 0）
 
+> **历史文档。** 重写之前的迁移计划和 29 项决策；其中的“阶段”“分支”“legacy/python”等是当时的计划，**实际做法有变**（见本文第 10 节末尾和 [migration.md](migration.md)）。目前有效的说明在 [architecture.md](architecture.md)、[api.md](api.md)、[database.md](database.md)、[security.md](security.md)、[deployment.md](deployment.md)、[migration.md](migration.md)、[development.md](development.md)。
+
 > 把 Xexam 从"Python 单进程 + 原生 JS"改成"Rust（Axum）后端 + TypeScript（Vite）前端 + Nginx"，数据库仍是 SQLite、`xexam.db` 原样沿用。
 > 配套文档：[architecture-audit.md](architecture-audit.md)（现状）、[risk-assessment.md](risk-assessment.md)（风险）、[test-strategy.md](test-strategy.md)（验证）。详细依据在 [`docs/audit/`](audit/)。
 

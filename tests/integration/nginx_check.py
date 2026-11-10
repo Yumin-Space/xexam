@@ -3,7 +3,7 @@
   Host 原样透传、X-Forwarded-* 被清空、413 返回 JSON、安全头、静态文件、隐藏文件 404、未知方法被拒、
   后端不可达时返回 JSON 502、/healthz。
 
-用法: python -I tests/integration/nginx_check.py <镜像，默认 xexam-web:test> [端口，默认 18080]
+用法: python -I tests/integration/nginx_check.py <镜像，默认 xexam-frontend:test> [端口，默认 18080]
 只用 Docker 和标准库；创建的容器 / 网络都带 xexam-nginxcheck 前缀，结束后清理。"""
 import http.client
 import json
@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-IMAGE = sys.argv[1] if len(sys.argv) > 1 else 'xexam-web:test'
+IMAGE = sys.argv[1] if len(sys.argv) > 1 else 'xexam-frontend:test'
 PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 18080
 NET = 'xexam-nginxcheck-net'
 BACK = 'xexam-nginxcheck-backend'

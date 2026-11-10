@@ -1,7 +1,7 @@
 # 数据库
 
 > 数据库是 SQLite，**只有一个文件 `xexam.db`**。新的 Rust 后端沿用旧 Python 版的库，**schema 一个字都没改**。
-> 证据：[audit/database.md](audit/database.md)；跨实现的往返测试：`tests/integration/rollback_check.py` 与 `backend/tests/db_golden.rs`。
+> 证据：[audit/database.md](audit/database.md)；对照测试：`backend/tests/db_golden.rs`（对着旧 Python 实现建出的 `tests/baseline/fixtures/sample.db` 和已提交的快照）。
 
 ## 1. 文件在哪里
 
@@ -139,7 +139,7 @@ docker compose start
 - 旧 Python 写过的库，Rust 直接用。
 - Rust 写过的库，旧 Python 也能读写（`journal_mode` 仍是 `delete`，没有 `-wal` / `-shm` 文件，`user_version` 仍是 0，没有新表新列）。
 
-`tests/integration/rollback_check.py` 用合成数据把这个往返演练了一遍（19 项，包括「原件的 sha256 在整个过程前后没有变化」）。回滚步骤见 [migration.md](migration.md)。
+当初用合成数据把这个往返演练过一遍（旧 Python 建库 → Rust 读写 → 旧 Python 回读，原件的 sha256 前后不变，`PRAGMA integrity_check` 通过）。旧 Python 代码移除之后，这条保证由两项测试继续守着：`sample.db`（旧实现写出的库）被新后端打开、读取、关闭后文件一个字节都不变；新后端建出的空库，`sqlite_master` 与旧实现建出的逐字相同。要真正回滚，用旧镜像（`ghcr.io/yumin-space/xexam:v0.2.2`）直接打开同一个卷即可。
 
 ## 7. 旧的 `progress.json`
 

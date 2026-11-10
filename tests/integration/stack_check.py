@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18090
 PROJECT = 'xexamcheck' + uuid.uuid4().hex[:6]
 DEMO = os.path.join(ROOT, 'tests', 'baseline', 'fixtures', 'demo.xlsx')
-COMPOSE = os.path.join(ROOT, 'docker-compose.modern.yml')
+COMPOSE = os.path.join(ROOT, 'docker-compose.build.yml')
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST'):
@@ -98,16 +98,16 @@ def upload(path):
 cleanup()
 try:
     dc('up', '-d', '--build')
-    # 这个项目里容器名是固定的 xexam / xexam-backend；换项目名并不改变 container_name，所以先确认没有真实容器在用同名
-    names = ['xexam', 'xexam-backend']
+    # 这个项目里容器名是固定的 xexam-frontend / xexam-backend；换项目名并不改变 container_name，所以先确认没有真实容器在用同名
+    names = ['xexam-frontend', 'xexam-backend']
     ok(wait_healthy(names), '两个容器都变成 healthy')
 
     # —— 1 暴露面 ——
     r = subprocess.run(['docker', 'port', 'xexam-backend'], capture_output=True, text=True, env=env)
     ok(r.stdout.strip() == '', '后端没有发布任何端口（docker port 为空）')
-    r = subprocess.run(['docker', 'port', 'xexam'], capture_output=True, text=True, env=env)
+    r = subprocess.run(['docker', 'port', 'xexam-frontend'], capture_output=True, text=True, env=env)
     ok('127.0.0.1:%d' % PORT in r.stdout, 'Nginx 只绑定 127.0.0.1:%d。实际 %r' % (PORT, r.stdout.strip()))
-    for n, want in (('xexam', True), ('xexam-backend', True)):
+    for n, want in (('xexam-frontend', True), ('xexam-backend', True)):
         r = subprocess.run(['docker', 'exec', n, 'id', '-u'], capture_output=True, text=True, env=env)
         ok(r.stdout.strip() not in ('', '0'), '%s 不是 root 运行（uid %s）' % (n, r.stdout.strip()))
     r = subprocess.run(['docker', 'inspect', '-f', '{{.HostConfig.ReadonlyRootfs}}', 'xexam-backend'], capture_output=True, text=True, env=env)

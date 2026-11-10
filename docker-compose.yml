@@ -1,8 +1,12 @@
-# xexam —— 直接拉取 GitHub 自动构建好的镜像运行。
+# Xexam —— 直接拉取 GitHub 自动构建好的两个镜像运行。
 # 在任何机器上，只需要这一个文件：
 #     docker login ghcr.io -u Yumin-Space      （第一次；镜像是私有的，密码填有 read:packages 权限的令牌）
 #     docker compose up -d
 # 然后浏览器打开  http://localhost:8765
+#
+#   浏览器 ──> xexam-frontend（Nginx，唯一对外的入口）
+#                 ├─ 前端静态文件（构建时放进镜像）
+#                 └─ /api/ ──> xexam-backend（Rust，私有网络，不发布端口）──> SQLite（命名卷 xexam_data → /data/xexam.db）
 #
 # 更新到最新版本：   docker compose pull && docker compose up -d
 # 停止 / 再启动：    docker compose stop  /  docker compose start
@@ -12,30 +16,55 @@
 #   在这个文件旁边建一个叫 .env 的文件，写：
 #       XEXAM_BIND=0.0.0.0:8765            # 让局域网里的 cloudflared 能连到这台机器；默认是只绑定本机
 #       XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
-#   然后 docker compose up -d。完整说明见 README 的「通过 Cloudflare Tunnel 从互联网访问」。
+#   然后 docker compose up -d。完整说明见 README 和 docs/deployment.md。
+#
+# ⚠️ 不要运行 `docker compose down -v`：-v 会把数据卷 xexam_data 一起删掉。
 
 name: xexam                          # Compose 项目名：固定下来，放在哪个文件夹都一样
 
 services:
-  xexam:
-    image: ghcr.io/yumin-space/xexam:latest
-    container_name: xexam
+  backend:
+    image: ghcr.io/yumin-space/xexam-backend:latest
+    container_name: xexam-backend
     restart: unless-stopped
-    ports:
-      # 默认只绑定本机（安全）。在 .env 里设 XEXAM_BIND=0.0.0.0:8765 才会让局域网里别的机器连得到。
-      - "${XEXAM_BIND:-127.0.0.1:8765}:8765"
-    volumes:
-      # 题库和学习记录都在这个卷里的 xexam.db。卷由 Docker 管理，删除或更新容器都不会丢。
-      # 真实名字是 xexam_data（项目名_卷名），用 docker volume ls 能看到。
-      - data:/data
     environment:
-      TZ: Asia/Tokyo
-      # 允许用哪些域名/地址访问。逗号分隔，可以写域名、IP，带不带端口都行。留空 = 只允许本机。
+      TZ: ${TZ:-Asia/Tokyo}
       XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"
-      # 反向代理把 Host 改写成源站地址（cloudflared 设了 HTTP Host Header）时，才需要填这个：你的公网域名。
       XEXAM_ALLOWED_ORIGINS: "${XEXAM_ALLOWED_ORIGINS:-}"
-      # 1 = 不再检查 Host。只在前面已经有身份验证（Cloudflare Access）、又懒得列域名时用。默认 0。
       XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
+      XEXAM_PARSE_TIMEOUT_SECS: "${XEXAM_PARSE_TIMEOUT_SECS:-30}"
+    volumes:
+      # 题库和学习记录都在这个命名卷里的 xexam.db；删除或更新容器都不会丢
+      - data:/data
+    networks: [internal]
+    # 注意：没有 ports。后端只在私有网络里，从宿主机和外部都连不到。
+    stop_grace_period: 15s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+
+  frontend:
+    image: ghcr.io/yumin-space/xexam-frontend:latest
+    container_name: xexam-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      # 默认只绑定本机。在 .env 里设 XEXAM_BIND=0.0.0.0:8765 才会让局域网里别的机器连得到。
+      - "${XEXAM_BIND:-127.0.0.1:8765}:8080"
+    networks: [internal, public]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+
+networks:
+  # 后端所在的私有网络：不能访问外部网络，外部也进不来
+  internal:
+    internal: true
+  public: {}
 
 volumes:
   data:

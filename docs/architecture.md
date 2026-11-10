@@ -9,7 +9,7 @@
 flowchart TB
     U["浏览器<br/>（电脑 / iPhone Safari）"] -->|"HTTP / HTTPS"| N
     subgraph 公开["对外暴露的只有这一个容器"]
-        N["nginx（xexam-web）<br/>· 前端静态文件（构建时放进镜像）<br/>· /api/ 反向代理<br/>· 20 MB 上限、安全头、限流、超时"]
+        N["xexam-frontend（Nginx）<br/>· 前端静态文件（构建时放进镜像）<br/>· /api/ 反向代理<br/>· 20 MB 上限、安全头、限流、超时"]
     end
     subgraph 内网["Docker 私有网络（internal: true，不发布端口，不能出外网）"]
         B["backend（xexam-backend，Rust / Axum）<br/>· REST API<br/>· XLSX 解析<br/>· 导入流程（预览 → 确认）<br/>· Host / Origin 守卫"]
@@ -133,7 +133,7 @@ sequenceDiagram
 
 | 镜像 | 构建 | 运行时内容 |
 |---|---|---|
-| `xexam-web` | `node:24-alpine` 编译前端 → `nginxinc/nginx-unprivileged:1.27-alpine` | nginx.conf + 静态文件；uid 非 root；监听 8080 |
+| `xexam-frontend` | `node:24-alpine` 编译前端 → `nginxinc/nginx-unprivileged:1.27-alpine` | nginx.conf + 静态文件；uid 非 root；监听 8080 |
 | `xexam-backend` | `rust:1-alpine`（musl，静态链接）→ `alpine:3.21` + tzdata | 一个可执行文件 + `/VERSION`；uid 10001；根文件系统只读 |
 
 两个服务都：`cap_drop: ALL`、`no-new-privileges`、`read_only: true`、`tmpfs: /tmp`。
@@ -147,6 +147,6 @@ sequenceDiagram
 | `app/xlsx_parser.py` | `backend/src/parser/` |
 | `web/app.js` / `style.css` / `index.html` | `frontend/src/` |
 | 容器里一个进程 | nginx + backend 两个容器 |
-| `docker-compose.yml`（拉取镜像） | `docker-compose.modern.yml`（构建；发布后可改成拉取） |
+| `docker-compose.yml`（拉取镜像） | `docker-compose.yml`（拉取 `xexam-frontend` 和 `xexam-backend` 两个镜像）；`docker-compose.build.yml`（从源码构建） |
 
-旧实现完整保留（标签 `python-v0.2`，分支 `legacy/python`），回滚见 [migration.md](migration.md)。
+旧的 Python 实现已从仓库移除，但没有丢：Git 标签 `python-v0.2` 指向它的最后一个版本，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍可拉取。回滚见 [migration.md](migration.md)。

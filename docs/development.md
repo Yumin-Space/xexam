@@ -17,11 +17,11 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 约 140 个测试
+cargo test --all-targets          # 136 个测试
 cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 ```
 
-- 测试里有一部分要调用旧的 Python 代码当 oracle（`tests/common/py_oracle.py`）。找不到 Python 时这些测试**会跳过**；设 `XEXAM_REQUIRE_PYTHON=1` 则改成失败（CI 就是这样）。
+- 测试对着 `tests/baseline/` 里已提交的**旧版快照**，不需要 Python（只有 `migrate_check.py` 这类集成脚本用 Python 标准库跑）。
 - 所有测试用临时目录里的全新数据库或 `tests/baseline/fixtures/sample.db` 的副本，**不会碰 `data/`**。
 - 常用环境变量：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（日志级别，如 `debug`）。完整列表见 `xexam-backend --help` 和 [deployment.md](deployment.md)。
 - 命令行导入：`cargo run -- import ../some.xlsx --data ../data`。
@@ -45,31 +45,30 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 ## 4. 整栈
 
 ```bash
-# 构建并启动两个容器（同一个 xexam_data 卷！自己的数据会被用到，要试验请先改 .env 或另用项目名）
-docker compose -f docker-compose.modern.yml up -d --build
+# 构建并启动两个容器（同一个 xexam_data 卷！自己的数据会被用到，要试验请另用项目名：-p 别的名字）
+docker compose -f docker-compose.build.yml up -d --build
 
 # 检查脚本都用临时项目名和临时卷，不碰 xexam_data
-docker build -f nginx/Dockerfile -t xexam-web:test .
-python -I tests/integration/nginx_check.py xexam-web:test       # 38 项，用一个假后端
+docker build -f nginx/Dockerfile -t xexam-frontend:test .
+python -I tests/integration/nginx_check.py xexam-frontend:test   # 38 项，用一个假后端
 python -I tests/integration/stack_check.py                      # 34 项，起整个栈（会构建两个镜像）
-python -I tests/integration/rollback_check.py backend/target/release/xexam-backend   # 19 项
 python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 项：旧 progress.json 的迁移（需要先 cargo build）
 ```
 
 ## 5. 对照旧版（回归）
 
-旧版是标准答案。`tests/baseline/` 里固定了它的行为：
+旧的 Python 实现已经从仓库移除，但它的行为被固定在 `tests/baseline/` 里（都是虚构的合成数据）：
 
-| 目的 | 命令 |
-|---|---|
-| 用新后端抓一遍，和旧版的 172 份黄金响应比较 | `python -I tests/baseline/tools/run_rust_capture.py backend/target/release/xexam-backend` |
-| 安全探针（3 种配置） | 先 `python -I tests/baseline/tools/security_probe.py --spawn-python <旧版代码目录> --no-dos --out python.json` 生成旧版基准，再 `python -I tests/baseline/tools/probe_rust.py backend/target/release/xexam-backend python.json` |
-| 解析器黄金输出（旧解析器） | `python -I tests/baseline/tools/run_all.py` |
-| 旧版 v0.2 的修复检查 | `python -I tests/baseline/tools/v02_fix_checks.py` |
+| 快照 | 内容 | 谁用它 |
+|---|---|---|
+| `golden/NNN_*.json`（172 份） | 旧版每个端点 × 每种状态的真实响应（状态码、稳定的响应头、规范化后的正文） | `backend/tests/api_golden.rs` 按顺序重放到新路由并逐项比较 |
+| `fixtures/*.xlsx` + `parser_golden/*.json`（49 个） | 合成工作簿及旧解析器对每个的输出 | `backend/tests/parser_golden.rs` |
+| `golden/id_vectors.json`（85 条） | 题目 id 的断言，每条带被哈希的字节 | `backend/tests/id_vectors.rs` |
+| `fixtures/sample.db` + `golden/store_sample_outputs.json` | 旧实现写出的示例库及其各接口输出 | `backend/tests/db_golden.rs` |
+| `golden/allowed_differences_rust.json`（23 项）、`allowed_probe_differences_rust.json`（51 项） | 有意与旧版不同的地方，每项一句理由 | `api_golden.rs` 里没登记的差异 = 失败 |
 
-- 有意的差异登记在 `tests/baseline/golden/allowed_differences_rust.json`（23 项）和 `allowed_probe_differences_rust.json`（51 项），每项一句理由。**没登记的差异 = 缺陷。**
-- 旧版代码取自 `tests/baseline/tools/paths.py` 里的 `LEGACY_ROOT`（现在是仓库根目录的 `server.py` / `app/`；切换到 `legacy/python/` 之后这里要同步改）。
-- `tests/baseline/fixtures/` 里的 `.xlsx` 和 `sample.db` 全是**虚构**的，可以入库；真实题库永远不入库。
+- 要**改变**行为（比如新增一条有意的差异）：改代码，再在 `allowed_differences_rust.json` 里登记并写明理由；不要直接改黄金响应。
+- 旧的抓取 / 对照 / 探针脚本依赖旧 Python 代码，已随它移除；需要时从 Git 标签 `python-v0.2` 和提交历史里找回。
 
 ## 6. 数据安全守则
 
@@ -79,10 +78,19 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 ## 7. CI
 
-| 工作流 | 触发 | 内容 |
-|---|---|---|
-| `modern.yml` | 分支 `modernize/**`、对 `main` 的 PR | `frontend`（类型检查、单元测试、构建）、`backend`（fmt、clippy、测试，Python oracle 必须真的运行）、`stack`（构建 nginx 镜像 → `nginx_check.py` → 整栈 `stack_check.py`）。**从不发布** |
-| `docker.yml` | 推到 `main`、标签 | 旧版的检查、测试、发布、自动 Release（推 `main` 会移动 `latest`） |
+只有一个流水线：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)。
+
+| 作业 | 内容 |
+|---|---|
+| `check` | `VERSION` 格式、README 更新日志最上面一条 = `VERSION` |
+| `frontend` | 类型检查、19 个单元测试、构建 |
+| `backend` | fmt、clippy、136 个测试，以及 `progress.json` 迁移检查 |
+| `stack` | 构建 `xexam-frontend` 镜像跑 38 项 Nginx 检查；起整个 compose 栈跑 34 项端到端检查 |
+| `arm64` | 两个镜像为 arm64 构建，在 QEMU 下启动，检查 `/api/info` 报 `aarch64` |
+| `publish` | 仅 `main`：两个镜像（amd64 + arm64）推到 ghcr.io，核对清单和标签 |
+| `release` | 仅 `main`：建（或更新）`v<VERSION>` 的 GitHub Release |
+
+拉取请求和其它分支只跑前五项，**从不发布**。
 
 ## 8. 版本号和更新日志
 

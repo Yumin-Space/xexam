@@ -78,13 +78,6 @@ fn attempt(ids: &[(&str, bool)], mode: &str, seconds: i64) -> Attempt {
     }
 }
 
-fn attempt_json(a: &Attempt) -> Value {
-    json!({
-        "results": a.results.iter().map(|r| json!({"id": r.id, "correct": r.correct})).collect::<Vec<_>>(),
-        "sheets": a.sheets, "mode": a.mode, "seconds": a.seconds,
-    })
-}
-
 fn sample_questions() -> (Vec<ParsedSheet>, Vec<Question>) {
     let qs = vec![
         single("日本語", "id1", "最初の問題？", 1),
@@ -112,20 +105,16 @@ fn sample_db_matches_golden() {
 }
 
 #[test]
-fn sample_db_plan_matches_golden_when_parsed_by_python() {
+fn sample_db_plan_matches_golden_when_parsed_by_the_rust_parser() {
     let dir = tmp();
     let p = dir.path().join("sample.db");
     std::fs::copy(baseline("fixtures/sample.db"), &p).expect("copy");
     let s = Store::open(&p).expect("open");
-    let demo = baseline("fixtures/demo.xlsx");
-    let Some(parsed) = py(&["parse", demo.to_str().expect("path")], None) else {
-        return;
-    };
-    let sheets: Vec<ParsedSheet> =
-        serde_json::from_value(parsed["sheets"].clone()).expect("sheets");
-    let questions: Vec<Question> =
-        serde_json::from_value(parsed["questions"].clone()).expect("questions");
-    let plan = s.plan_import(&sheets, &questions).expect("plan");
+    let demo = std::fs::read(baseline("fixtures/demo.xlsx")).expect("demo.xlsx");
+    let parsed = xexam_backend::parser::parse_workbook(&demo).expect("parse demo.xlsx");
+    let plan = s
+        .plan_import(&parsed.sheets, &parsed.questions)
+        .expect("plan");
     let g = read_json(&baseline("golden/store_sample_outputs.json"));
     assert_same(&plan, &g["plan_demo_v1_again"], "plan_demo_v1_again");
     // preview wrote nothing
@@ -213,23 +202,8 @@ fn failed_attempt_and_migration_roll_back() {
 // ---------------------------------------------------------------- (3) rounding
 
 #[test]
-fn rounding_matches_python_for_every_good_total_pair() {
-    if let Some(table) = py(&["percent", "200"], None) {
-        let table = table.as_array().expect("table").clone();
-        assert_eq!(table.len(), 200);
-        for (i, row) in table.iter().enumerate() {
-            let total = i64::try_from(i + 1).expect("total");
-            for (good, want) in row.as_array().expect("row").iter().enumerate() {
-                let good = i64::try_from(good).expect("good");
-                assert_eq!(
-                    Some(percent_round_half_even(good, total)),
-                    want.as_i64(),
-                    "{good}/{total}"
-                );
-            }
-        }
-    }
-    // float reference, no python needed
+fn rounding_is_half_to_even_for_every_good_total_pair() {
+    // 浮点参考（Python 的 round 同样是半偶数）；当初与 Python 的 round 在 200 万个组合上逐一核对过，没有差异
     for total in 1..=200i64 {
         for good in 0..=total {
             let want = (100.0 * good as f64 / total as f64).round_ties_even() as i64;
@@ -341,29 +315,59 @@ fn history_is_pruned_to_sixty_and_ids_keep_growing() {
 // ---------------------------------------------------------------- (5) schema equality
 
 #[test]
-fn schema_is_identical_to_the_python_one() {
+fn schema_is_identical_to_the_one_python_created() {
+    // tests/baseline/fixtures/sample.db 是用旧的 Python 实现建出来的；新后端建出的空库，sqlite_master 必须逐字相同。
     let dir = tmp();
-    let (py_db, rs_db) = (dir.path().join("py.db"), dir.path().join("rs.db"));
-    let Some(_) = py(
-        &["build", py_db.to_str().expect("p"), FIXED_NOW],
-        Some("{}"),
-    ) else {
-        return;
-    };
+    let rs_db = dir.path().join("rs.db");
     drop(open_fixed(&rs_db));
-    let a = py(&["schema", py_db.to_str().expect("p")], None).expect("schema py");
-    let b = py(&["schema", rs_db.to_str().expect("p")], None).expect("schema rs");
+    let master = |path: &Path| -> Value {
+        let c = Connection::open(path).expect("open");
+        let mut st = c
+            .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY rowid")
+            .expect("prepare");
+        let rows: Vec<Value> = st
+            .query_map([], |r| {
+                Ok(json!([
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, Option<String>>(3)?
+                ]))
+            })
+            .expect("query")
+            .map(|r| r.expect("row"))
+            .collect();
+        Value::Array(rows)
+    };
+    let pragmas = |path: &Path| -> Value {
+        let c = Connection::open(path).expect("open");
+        let jm: String = c
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .expect("jm");
+        let uv: i64 = c
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .expect("uv");
+        json!([jm, uv])
+    };
+    let sample = baseline("fixtures/sample.db");
+    let (a, b) = (master(&sample), master(&rs_db));
+    assert_eq!(a, b, "sqlite_master text must match what Python created");
     assert_eq!(
-        a, b,
-        "sqlite_master text, meta rows and journal_mode must match"
-    );
-    assert_eq!(a["meta"], json!([["schema", "1"]]));
-    assert_eq!(a["pragmas"], json!(["delete", 0]));
-    assert_eq!(
-        a["master"].as_array().map(Vec::len),
+        a.as_array().map(Vec::len),
         Some(10),
-        "10 sqlite_master rows incl. autoindexes and sqlite_sequence"
+        "10 rows incl. autoindexes and sqlite_sequence"
     );
+    assert_eq!(pragmas(&sample), pragmas(&rs_db));
+    assert_eq!(pragmas(&rs_db), json!(["delete", 0]));
+    let c = Connection::open(&rs_db).expect("open");
+    let meta: Vec<(String, String)> = c
+        .prepare("SELECT key, value FROM meta ORDER BY key")
+        .expect("prepare")
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert_eq!(meta, vec![("schema".to_string(), "1".to_string())]);
 }
 
 // ---------------------------------------------------------------- (6) reopen without alteration
@@ -371,45 +375,22 @@ fn schema_is_identical_to_the_python_one() {
 #[test]
 fn reopening_does_not_alter_the_file() {
     let dir = tmp();
-    // a database written by Python
-    let py_db = dir.path().join("py.db");
-    let (sheets, qs) = sample_questions();
-    let scen = scenario(
-        &[("a.xlsx", &sheets, &qs)],
-        json!([attempt_json(&attempt(
-            &[("id1", true), ("id2", false)],
-            "all",
-            9
-        ))]),
-    );
-    if py(
-        &["build", py_db.to_str().expect("p"), FIXED_NOW],
-        Some(&scen),
-    )
-    .is_some()
-    {
-        let before = std::fs::read(&py_db).expect("read");
-        let s = Store::open(&py_db).expect("open python db");
-        s.bank().expect("bank");
-        s.progress().expect("progress");
-        drop(s);
-        assert_eq!(
-            std::fs::read(&py_db).expect("read"),
-            before,
-            "python-written db changed by open+read+close"
-        );
-    }
     // the baseline sample.db
     let sample = dir.path().join("sample.db");
     std::fs::copy(baseline("fixtures/sample.db"), &sample).expect("copy");
     let before = std::fs::read(&sample).expect("read");
-    drop(Store::open(&sample).expect("open sample"));
+    // sample.db 是旧的 Python 实现写出来的库：打开、读题库和学习记录、关闭，文件一个字节都不能变
+    let s = Store::open(&sample).expect("open sample");
+    s.bank().expect("bank");
+    s.progress().expect("progress");
+    drop(s);
     assert_eq!(
         std::fs::read(&sample).expect("read"),
         before,
-        "sample.db changed by open"
+        "a python-written database was changed by open + read + close"
     );
     // a Rust-written db
+    let (sheets, qs) = sample_questions();
     let rs = dir.path().join("rs.db");
     open_fixed(&rs)
         .apply_import("a.xlsx", &sheets, &qs)
@@ -425,47 +406,17 @@ fn reopening_does_not_alter_the_file() {
 
 // ---------------------------------------------------------------- (7) legacy migration
 
-fn migrate_both(
-    body: &[u8],
-    with_python: bool,
-    pre: impl Fn(&Store),
-) -> (Option<Value>, (bool, String), Value) {
+fn migrate(body: &[u8], pre: impl Fn(&Store)) -> ((bool, String), Value) {
     let dir = tmp();
     let pj = dir.path().join("progress.json");
     std::fs::write(&pj, body).expect("write progress.json");
-    let rs_db = dir.path().join("rs.db");
-    let s = open_fixed(&rs_db);
+    let s = open_fixed(&dir.path().join("rs.db"));
     pre(&s);
     let res = s
         .migrate_legacy_progress(&pj)
         .expect("migration must not return an error");
     let rs_dump = dump_rust(&s);
-    let py_dump = {
-        let py_db = dir.path().join("py.db");
-        if with_python && python_available() {
-            drop(open_fixed(&py_db));
-            // identical pre-state through the python store: replay the attempt the closure may have made is not
-            // possible generically, so only compare when no pre-state was requested
-            let probe = open_fixed(&dir.path().join("probe.db"));
-            pre(&probe);
-            if probe.progress().expect("p")["history"] == json!([]) {
-                py(
-                    &[
-                        "migrate",
-                        py_db.to_str().expect("p"),
-                        FIXED_NOW,
-                        pj.to_str().expect("p"),
-                    ],
-                    None,
-                )
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    };
-    (py_dump, res, rs_dump)
+    (res, rs_dump)
 }
 
 const GOOD_LEGACY: &str = r#"{
@@ -485,14 +436,14 @@ const GOOD_LEGACY: &str = r#"{
 }"#;
 
 #[test]
-fn legacy_migration_matches_python_on_valid_files() {
+fn legacy_migration_converts_valid_files() {
     let mut with_bom = vec![0xEF, 0xBB, 0xBF];
     with_bom.extend_from_slice(GOOD_LEGACY.as_bytes());
     for (name, body) in [
         ("plain", GOOD_LEGACY.as_bytes().to_vec()),
         ("bom", with_bom),
     ] {
-        let (py_dump, res, rs_dump) = migrate_both(&body, true, |_| {});
+        let (res, rs_dump) = migrate(&body, |_| {});
         assert!(res.0, "{name}: {}", res.1);
         assert_eq!(res.1, "迁移了 3 场成绩、4 道题的答题记录", "{name}");
         // history: newest first as in the file, ids ascending from oldest
@@ -513,10 +464,6 @@ fn legacy_migration_matches_python_on_valid_files() {
             rs_dump["progress"]["questions"]["d4"].get("at").is_none(),
             "empty at is omitted"
         );
-        if let Some(pd) = py_dump {
-            assert_eq!(pd["result"], json!([true, res.1]), "{name}");
-            assert_same(&pd["dump"]["progress"], &rs_dump["progress"], name);
-        }
     }
 }
 
@@ -606,7 +553,7 @@ fn legacy_migration_malformed_inputs_never_panic_or_error() {
         ("valid first then bad second", br#"{"questions": {"ok": {"attempts": 1}, "bad": {"attempts": "x"}}, "history": []}"#.to_vec()),
     ];
     for (name, body) in cases {
-        let (_py, res, rs_dump) = migrate_both(&body, false, |_| {});
+        let (res, rs_dump) = migrate(&body, |_| {});
         let expect_ok = name.starts_with("history sheets deep");
         assert_eq!(res.0, expect_ok, "{name}: {}", res.1);
         if !expect_ok {
@@ -637,119 +584,6 @@ fn malformed_migration_does_not_set_the_flag_so_a_fixed_file_can_be_retried() {
 }
 
 // ---------------------------------------------------------------- cross-implementation parity
-
-#[test]
-fn python_writes_rust_reads_and_rust_writes_python_reads() {
-    let dir = tmp();
-    let (sheets, qs) = sample_questions();
-    // second import: id1 changed, id2 removed, id5 new, id3 unchanged
-    let mut qs2 = vec![
-        single("日本語", "id1", "改题干", 7),
-        qs[2].clone(),
-        single("日本語", "id5", "new", 4),
-    ];
-    qs2[1].row = 1;
-    let sheets2 = vec![sheet("日本語", 3)];
-    let attempts = vec![
-        attempt(&[("id1", true), ("id3", false), ("id2", true)], "all", 40),
-        attempt(
-            &[("id1", false), ("id3", false), ("zzz", true), ("id1", true)],
-            "weak",
-            2,
-        ),
-    ];
-    let attempts_json = Value::Array(attempts.iter().map(attempt_json).collect());
-    let scen = scenario(
-        &[("a.xlsx", &sheets, &qs), ("b.xlsx", &sheets2, &qs2)],
-        attempts_json,
-    );
-
-    let py_db = dir.path().join("py.db");
-    let Some(built) = py(
-        &["build", py_db.to_str().expect("p"), FIXED_NOW],
-        Some(&scen),
-    ) else {
-        return;
-    };
-
-    // python -> rust
-    let copy = dir.path().join("py_copy.db");
-    std::fs::copy(&py_db, &copy).expect("copy");
-    let rs_reads = dump_rust(&Store::open_with_clock(&copy, fixed(FIXED_NOW)).expect("open"));
-    let py_reads = py(&["dump", py_db.to_str().expect("p")], None).expect("dump");
-    assert_same(&rs_reads, &py_reads, "rust reading a python db");
-
-    // rust -> python, same operations through the Rust API
-    let rs_db = dir.path().join("rs.db");
-    let rs = open_fixed(&rs_db);
-    let p1 = rs.apply_import("a.xlsx", &sheets, &qs).expect("import 1");
-    let p2 = rs.apply_import("b.xlsx", &sheets2, &qs2).expect("import 2");
-    for a in &attempts {
-        rs.record_attempt(a).expect("attempt");
-    }
-    assert_same(
-        &Value::Array(vec![p1, p2]),
-        &built["plans"],
-        "plans returned by apply_import",
-    );
-    let py_reads_rs = py(&["dump", rs_db.to_str().expect("p")], None).expect("dump rs db");
-    assert_same(&dump_rust(&rs), &py_reads_rs, "python reading a rust db");
-    assert_eq!(
-        raw_rows(&rs_db),
-        raw_rows(&py_db),
-        "every row of every table is identical, including questions.data text"
-    );
-}
-
-#[test]
-fn real_parsed_workbooks_import_identically() {
-    let dir = tmp();
-    let py_db = dir.path().join("py.db");
-    let rs_db = dir.path().join("rs.db");
-    let rs = open_fixed(&rs_db);
-    let mut imports = Vec::new();
-    let names = [
-        "demo.xlsx",
-        "demo_v2.xlsx",
-        "f23_unicode_astral_nfd.xlsx",
-        "f18_duplicate_ids.xlsx",
-        "f13_hotspot_variants.xlsx",
-        "demo.xlsx",
-    ];
-    let mut parsed_all: Vec<(String, Vec<ParsedSheet>, Vec<Question>)> = Vec::new();
-    for n in names {
-        let path = baseline(&format!("fixtures/{n}"));
-        let Some(parsed) = py(&["parse", path.to_str().expect("p")], None) else {
-            return;
-        };
-        let sheets: Vec<ParsedSheet> =
-            serde_json::from_value(parsed["sheets"].clone()).expect("sheets");
-        let questions: Vec<Question> =
-            serde_json::from_value(parsed["questions"].clone()).expect("questions");
-        if questions.is_empty() {
-            continue;
-        }
-        parsed_all.push((n.to_string(), sheets, questions));
-    }
-    for (n, sheets, questions) in &parsed_all {
-        imports.push(json!({"filename": n, "sheets": sheets_json(sheets), "questions": questions.iter().map(q_json).collect::<Vec<_>>()}));
-    }
-    let scen = json!({"imports": imports, "attempts": []}).to_string();
-    let Some(built) = py(
-        &["build", py_db.to_str().expect("p"), FIXED_NOW],
-        Some(&scen),
-    ) else {
-        return;
-    };
-    let mut plans = Vec::new();
-    for (n, sheets, questions) in &parsed_all {
-        plans.push(rs.apply_import(n, sheets, questions).expect("import"));
-    }
-    assert_same(&Value::Array(plans), &built["plans"], "plans");
-    assert_eq!(raw_rows(&rs_db), raw_rows(&py_db));
-    let py_reads = py(&["dump", py_db.to_str().expect("p")], None).expect("dump");
-    assert_same(&dump_rust(&rs), &py_reads, "bank/progress/imports");
-}
 
 #[test]
 fn plan_is_read_only_and_apply_with_empty_list_deactivates_all() {

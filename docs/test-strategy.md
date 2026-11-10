@@ -1,5 +1,7 @@
 # 测试策略（Phase 0）
 
+> **历史文档。** 重写之前的测试策略；其中依赖旧 Python 现场运行的脚本（`tests/baseline/tools/`、`rollback_check.py` 等）已随旧代码移除，目前有效的测试说明见 [development.md](development.md)。目前有效的说明在 [architecture.md](architecture.md)、[api.md](api.md)、[database.md](database.md)、[security.md](security.md)、[deployment.md](deployment.md)、[migration.md](migration.md)、[development.md](development.md)。
+
 > 与 [architecture-audit.md](architecture-audit.md)、[migration-plan.md](migration-plan.md)、[risk-assessment.md](risk-assessment.md) 配套。
 > 原则：**旧的 Python 版本就是标准答案**。任何没法解释的新旧差异都按缺陷处理；没执行过的测试不算通过。
 

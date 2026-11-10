@@ -1,7 +1,7 @@
 # 安全
 
 > 范围：一个**个人**使用的自托管程序，没有用户系统、没有登录。安全靠三件事：**后端不对外**、**Host/Origin 守卫**、**前面加 Cloudflare Access 这样的身份验证**。
-> 审计依据：[audit/security.md](audit/security.md)。测试：`backend/tests/`、`tests/baseline/tools/security_probe.py`（把一批恶意请求同时打给旧版和新版，逐项比较）、`tests/integration/nginx_check.py`。
+> 审计依据：[audit/security.md](audit/security.md)。测试：`backend/tests/`（对着已提交的旧版快照：172 份黄金响应、解析夹具、id 向量）、`tests/integration/nginx_check.py`。迁移时还用一批 340 项的恶意请求探针把旧版和新版逐项比较过（0 项未解释的差异，51 项登记为有意加固），这套探针随旧 Python 一起移除了。
 
 ## 1. 威胁模型
 
@@ -26,7 +26,7 @@ flowchart LR
     B -. "internal: true<br/>不能访问外网" .-> X(("✗"))
 ```
 
-- 后端**永远不发布端口**。`docker-compose.modern.yml` 里 `backend` 没有 `ports:`，网络 `internal: true`；`tests/integration/stack_check.py` 断言「从宿主机连不到后端」。
+- 后端**永远不发布端口**。`docker-compose.yml` 里 `backend` 没有 `ports:`，网络 `internal: true`；`tests/integration/stack_check.py` 断言「从宿主机连不到后端」。
 - `XEXAM_BIND` 必须写成 `IP:端口`。只写端口号（如 `8766`）= 绑定所有网卡，是常见的误操作，文档里反复提醒。
 - Linux 上主机防火墙（ufw / firewalld）**拦不住** Docker 发布的端口；限制来源要在 `DOCKER-USER` 链里加规则，或把 `XEXAM_BIND` 写成具体的局域网 IP。
 

@@ -1,5 +1,7 @@
 # 架构审计（Phase 0）：现状
 
+> **历史文档。** 对旧的 Python 实现（v0.2）的审计，写于重写之前。目前有效的说明在 [architecture.md](architecture.md)、[api.md](api.md)、[database.md](database.md)、[security.md](security.md)、[deployment.md](deployment.md)、[migration.md](migration.md)、[development.md](development.md)。
+
 > 范围：**只读**审计 Xexam v0.2 的 Python 实现。本文是现状快照；目标架构和迁移步骤见 [migration-plan.md](migration-plan.md)，风险见 [risk-assessment.md](risk-assessment.md)，测试见 [test-strategy.md](test-strategy.md)。
 > 每个维度的详细证据（带 `文件:行号`）在 [`docs/audit/`](audit/) 下的附录里，本文只给结论和指路。
 > 被审计的代码是 v0.2（提交 `1ee64c8`，标签 `python-v0.2`）。审计之后只做过一件会改变行为的事：修了审计里确认的缺陷（见 §8），旧→新响应的差异记录在 `tests/baseline/golden/allowed_differences_v02.json`。

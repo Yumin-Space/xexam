@@ -1,5 +1,7 @@
 # 风险评估（Phase 0）
 
+> **历史文档。** 重写之前的风险登记表，“检测”一列里提到的 Python 对照脚本已随旧代码移除。目前有效的说明在 [architecture.md](architecture.md)、[api.md](api.md)、[database.md](database.md)、[security.md](security.md)、[deployment.md](deployment.md)、[migration.md](migration.md)、[development.md](development.md)。
+
 > 与 [architecture-audit.md](architecture-audit.md)（现状）、[migration-plan.md](migration-plan.md)（计划）、[test-strategy.md](test-strategy.md)（怎么验证）配套。
 > 证据在 [`docs/audit/`](audit/) 的附录里；"检测"一列指向能发现该风险的具体测试。
 
