@@ -173,7 +173,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 |---|---|---|---|
 | 72 | Phase 0：`docs/architecture-audit.md, migration-plan.md, risk-assessment.md, test-strategy.md`，之后停下等批准 | 闸门已被业主免除 | 见开头 |
 | 73 | Phase 1：对**原版**做基线测试（每个端点 × 方法 × 有效/无效、XLSX 全题型含日 / 中、预览 / 确认 / 取消 / 过期 / 一次性、写库、重置、并发确认、安全校验；夹具；新旧对比） | C；夹具 D8 | 仓库**没有测试**（`git ls-files` 无任何测试文件；唯一带 test 字样的是 `scripts/smoke-test.sh`，CI 用的 Docker 冒烟测试）。业主的临时脚本在仓库外（见 3.10） |
-| 74 | Phase 2：`docs/api.md` + OpenAPI；歧义时提问而不是发明 | C | 默认见 Q25 |
+| 74 | Phase 2：`docs/api.zh-CN.md` + OpenAPI；歧义时提问而不是发明 | C | 默认见 Q25 |
 | 75 | Phase 3：Rust 后端模块 api/services/parser/database/security、类型化结构、参数化 SQL、显式事务、优雅关闭、tracing、绝不记录 token 或文档内容 | C | 优雅关闭现状 A（:456-473）且 CI 断言 `docker stop` < 9 秒（`smoke-test.sh:87-91`）|
 | 76 | Phase 4 前端：保留界面、交互、观感 | C → D9 | |
 | 77 | Phase 5/6/7：Nginx+Docker、集成与回归（`cargo fmt --check/check/clippy/test`、`tsc`、`vite build`、compose 端到端、重启后持久化、并发、超限上传、关闭）、文档 | C | |
@@ -215,7 +215,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 - 服务端只收 `{id:str(≤64), correct:bool}` 最多 2000 条（`server.py:132-145`），**不知道用户选了什么，也无法验证 `correct`**；README:306 把这写成特性："不会上传你选了什么"。
 - `/api/bank` 把正确答案发给浏览器（`q.answer`）——和浏览器判分是同一前提。
 **冲突**：规格"前端无业务逻辑 / 无权威校验" + "API 行为不变" + "业务规则不变" 三句无法同时满足；把判分移到服务端必须改 `/api/attempt` 的请求体（要带所选答案），即**改 API**。
-**选项**：(a) 判分留在前端（TS 里逐字移植 `grade` 等），在 `docs/architecture.md` / `security.md` 明说"这是单用户信任模型下的既有设计"；(b) 保留 `/api/attempt` 不变，**另加**一个可选的服务端判分端点（只增不改）；(c) 修改 `/api/attempt`。
+**选项**：(a) 判分留在前端（TS 里逐字移植 `grade` 等），在 `docs/architecture.zh-CN.md` / `security.zh-CN.md` 明说"这是单用户信任模型下的既有设计"；(b) 保留 `/api/attempt` 不变，**另加**一个可选的服务端判分端点（只增不改）；(c) 修改 `/api/attempt`。
 **建议**：(a)。(b)(c) 都是新功能 / 改契约，且对"自己对自己判分"的单用户场景没有安全收益。
 **问题**：是否同意判分和错题本规则继续留在浏览器里（只在文档中标注为已知的设计取舍）？
 **默认**：(a)。
@@ -250,7 +250,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 **选项**：(a) 逐字保留全部文案与两处异常回显；(b) 保留所有**确定性**的中文文案（ValueError 类、403 的 Host/Origin 提示、413 等），把两处"任意异常回显"改成固定中文文案 + 服务端 `tracing` 记录详情；(c) 全部改英文通用文案。
 **建议**：(b)。(c) 会改变 UI 可见行为；(a) 违反规格"无堆栈或路径"。
 **问题**：把两处"任意异常文本回显"改成固定文案，其余中文错误文案逐字保留，可以吗？
-**默认**：(b)；差异登记在 `docs/migration.md` 的"有意差异"。
+**默认**：(b)；差异登记在 `docs/migration.zh-CN.md` 的"有意差异"。
 
 ### D7 "禁止 XML 实体展开"vs 现有检查可绕过
 **事实**（`ev_checks2.py`、`ev_entity.py`，stdlib，均为实测）
@@ -407,7 +407,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 ### E14 Windows 开发与 `start.bat`（"不用 Docker"的运行方式）
 **事实**：`start.bat` 检查 `python`，运行 `python server.py --allow-shutdown %*`（:8-19）；README:697-707、使用说明.txt:27-28, 83 都把它列为"方式 B"；它自首个提交就存在，`data/` 目录（仓库根）就是它的数据位置。规格没有等价物，目标栈（Nginx + Rust）也没有"双击即用"的形态。
 **选项**：(a) 删除（功能丢失）；(b) `start.bat` 随 Python 实现移入 `legacy/python/`，继续可用（`cd /d "%~dp0"` 决定它与 `server.py` 同目录即可，:4）；两种实现共用同一 schema，数据库互相可读；(c) 为新栈提供 `scripts/dev.bat`（起 Rust 二进制 + Vite dev server）并另提供"仅 Docker"的说明。
-**建议**：(b)+(c)：旧启动器保留在 legacy 里；新栈 Windows 开发脚本在 `docs/development.md` 给出。**不删除任何功能**。
+**建议**：(b)+(c)：旧启动器保留在 legacy 里；新栈 Windows 开发脚本在 `docs/development.zh-CN.md` 给出。**不删除任何功能**。
 默认：(b)+(c)。
 
 ---
@@ -419,7 +419,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 | 停止点 | 会触发它的具体步骤 | 默认做法（使其不触发） |
 |---|---|---|
 | 删除源码前需批准 | ① 把 `server.py app/ web/ Dockerfile compose start.bat` 从根目录移走（第 7 节）；② 删 `web/app.js` 被 TS 取代；③ 删根 `Dockerfile` / `docker-compose*.yml` | **从不删除**：先打 tag + 建分支（见第 7 节），再用 `git mv` 移到 `legacy/python/`，历史保持连续；旧文件不 `rm` |
-| 覆盖数据库前需批准 | Phase 1/2/3/5 的任何测试；把新栈指向业主的真实卷 `xexam_data`；`reset`、`import` 的测试 | 所有测试只用 `Temp` 下**经 `integrity_check` 的副本**或全新空库；测试 compose 不挂载真实 `data/` 或 `xexam_data`；不替业主执行"新栈切到真实卷"这一步，只写入 `docs/migration.md` |
+| 覆盖数据库前需批准 | Phase 1/2/3/5 的任何测试；把新栈指向业主的真实卷 `xexam_data`；`reset`、`import` 的测试 | 所有测试只用 `Temp` 下**经 `integrity_check` 的副本**或全新空库；测试 compose 不挂载真实 `data/` 或 `xexam_data`；不替业主执行"新栈切到真实卷"这一步，只写入 `docs/migration.zh-CN.md` |
 | 改变业务规则前需批准 | 3.1 舍入；D5 单槽位；D6 错误回显；D7 UTF-16 实体；E8 扩展名；E12 新增上限 | 默认**复刻旧行为**（舍入、单槽位、扩展名）；仅 D6 / D7 / 非 ASCII token 三项作为"修缺陷"的**有意差异**，逐项登记 + 配测试 |
 | 删除功能前需批准 | `/api/shutdown`、`--import`、`progress.json` 迁移、`start.bat`、`HEAD` | 全部保留（E2/E3/E7/E14） |
 | 暴露后端端口前需批准 | Phase 4 compose；集成测试要直连后端 | 生产 compose 只 `expose`、不 `ports`；测试用单独的覆盖文件，仅绑定 `127.0.0.1` 且只在测试 / CI 使用，不进生产 compose |
@@ -435,11 +435,11 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 **规格要求（11 个文件）与重叠**
 | 文件 | 来源 | 与谁重叠 / 建议 |
 |---|---|---|
-| `docs/architecture-audit.md` | Phase 0 | 与 `architecture.md` 重叠：前者 = **现状**审计快照（冻结）；后者 = **目标**架构 |
-| `docs/migration-plan.md` | Phase 0 | 与 `migration.md` 重叠：前者 = 迁移**计划**（分阶段）；后者 = 迁移**执行记录 + 回滚 + 有意差异清单** |
-| `docs/risk-assessment.md` | Phase 0 | 与 `security.md` 部分重叠：前者 = 迁移风险；后者 = 安全控制说明 |
-| `docs/test-strategy.md` | Phase 0 | 与 `development.md`（含测试命令）部分重叠 |
-| `docs/architecture.md`、`api.md`、`database.md`、`security.md`、`deployment.md`、`migration.md`、`development.md` | Phase 7 | `deployment.md` 与 README 的"快速开始 / Cloudflare / 备份"重叠；`architecture.md` 与 README 的 Mermaid 图重叠；`api.md` 在 README 里没有对应 |
+| `docs/architecture-audit.md` | Phase 0 | 与 `architecture.zh-CN.md` 重叠：前者 = **现状**审计快照（冻结）；后者 = **目标**架构 |
+| `docs/migration-plan.md` | Phase 0 | 与 `migration.zh-CN.md` 重叠：前者 = 迁移**计划**（分阶段）；后者 = 迁移**执行记录 + 回滚 + 有意差异清单** |
+| `docs/risk-assessment.md` | Phase 0 | 与 `security.zh-CN.md` 部分重叠：前者 = 迁移风险；后者 = 安全控制说明 |
+| `docs/test-strategy.md` | Phase 0 | 与 `development.zh-CN.md`（含测试命令）部分重叠 |
+| `docs/architecture.zh-CN.md`、`api.zh-CN.md`、`database.zh-CN.md`、`security.zh-CN.md`、`deployment.zh-CN.md`、`migration.zh-CN.md`、`development.zh-CN.md` | Phase 7 | `deployment.zh-CN.md` 与 README 的"快速开始 / Cloudflare / 备份"重叠；`architecture.zh-CN.md` 与 README 的 Mermaid 图重叠；`api.zh-CN.md` 在 README 里没有对应 |
 | `docs/openapi.yaml`（规格"API 契约 + OpenAPI"） | Phase 2 | 新 |
 
 建议：README 保持入口（简介、快速开始、更新日志），详细内容迁到 `docs/` 并在 README 链接；`使用说明.txt` 保持面向使用者（不变更名称，`.dockerignore` 里已排除，:9）。`docs/screenshots/` 路径被 README 多处引用，不要移动。
@@ -457,7 +457,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 4. **切换提交**（Phase 5 末，一个单独的提交）：`git mv server.py app web Dockerfile docker-compose.build.yml scripts/smoke-test.sh start.bat VERSION → legacy/python/`（`VERSION` 在根目录保留一份新的，指向 v0.3）。`legacy/python/docker-compose.yml` 的 `image:` 仍是 `ghcr.io/yumin-space/xexam:v0.2`（固定版本，不用 `latest`）；`legacy/python/docker-compose.build.yml` 的 `build:` 改成 `.`（相对该目录）；`start.bat` 无需修改（`cd /d "%~dp0"`，:4）；`使用说明.txt` 保留在根并加一行指向 `legacy/python/`。
 5. **CI**：`.github/workflows/docker.yml` 重写为 web / backend 两个镜像 + 前后端测试 + 扩展后的版本检查；新增 `.github/workflows/legacy-python.yml`，只在 `legacy/python/**` 变动时对 `legacy/python` 做构建 + 冒烟测试，**不发布 `latest`**（只推 `xexam:v0.2.N` 之类，或干脆不发布）。`legacy/python` 分支上保留原 workflow 不变（它只在 `main` 触发，所以不会误发布）。
 6. **回滚**：因为 schema 与 `journal_mode` 一律不变，新后端写过的库旧 Python 仍可读写 → 回滚 = 停新栈，`docker compose -f legacy/python/docker-compose.yml up -d` 指向同一个卷 `xexam_data`（项目名同为 `xexam`，容器名同为 `xexam`，因此新旧不能同时运行）。回滚前提：Rust 后端不得向库里写入任何旧版读不懂的东西（新表、新列、改日志模式、user_version 以外的 PRAGMA 持久变化）。
-7. **备份**：任何接触真实库之前的备份步骤沿用 README:607-627 的 `tar` 命令，并增加 `sqlite3 xexam.db "PRAGMA integrity_check"`（见 `docs/migration.md`）。
+7. **备份**：任何接触真实库之前的备份步骤沿用 README:607-627 的 `tar` 命令，并增加 `sqlite3 xexam.db "PRAGMA integrity_check"`（见 `docs/migration.zh-CN.md`）。
 
 ---
 

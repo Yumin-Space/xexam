@@ -1,98 +1,100 @@
-# 开发
+**English** | [日本語](development.ja.md) | [简体中文](development.zh-CN.md)
 
-> 日常改代码、跑测试用的命令。架构见 [architecture.md](architecture.md)，测试思路见 [test-strategy.md](test-strategy.md)。
+# Development
 
-## 1. 工具
+> Commands for everyday code changes and test runs. For the architecture see [architecture.md](architecture.md); for the testing approach see [test-strategy.md](test-strategy.md).
 
-| 工具 | 版本 | 说明 |
+## 1. Tools
+
+| Tool | Version | Notes |
 |---|---|---|
-| Rust | 1.99.1（`backend/rust-toolchain.toml` 固定） | `rustup` 会自动装。`rusqlite` 的 `bundled` 需要 C 编译器（Linux：`build-essential`；Windows：MinGW gcc 或 MSVC） |
-| Node | 24 | 前端 |
-| Python | 3.8+ | 只用来跑测试：黄金响应对照、解析器对照（「旧版是标准答案」）。**只用标准库** |
-| Docker | Compose v2 | 整栈检查、镜像 |
+| Rust | 1.99.1 (pinned by `backend/rust-toolchain.toml`) | `rustup` installs it automatically. The `bundled` feature of `rusqlite` needs a C compiler (Linux: `build-essential`; Windows: MinGW gcc or MSVC) |
+| Node | 24 | Frontend |
+| Python | 3.8+ | Used only to run tests: the golden-response comparison and the parser comparison ("the legacy version is the source of truth"). **Standard library only** |
+| Docker | Compose v2 | Whole-stack checks, images |
 
-## 2. 后端
+## 2. Backend
 
 ```bash
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 151 个测试
-cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
+cargo test --all-targets          # 151 tests
+cargo run -- serve --data ../data --no-browser     # listens on 127.0.0.1:8765
 ```
 
-- 测试对着 `tests/baseline/` 里已提交的**旧版快照**，不需要 Python（只有 `migrate_check.py` 这类集成脚本用 Python 标准库跑）。
-- 所有测试用临时目录里的全新数据库或 `tests/baseline/fixtures/sample.db` 的副本，**不会碰 `data/`**。
-- 常用环境变量：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（日志级别，如 `debug`）。完整列表见 `xexam-backend --help` 和 [deployment.md](deployment.md)。
-- 命令行导入：`cargo run -- import ../some.xlsx --data ../data`。
+- Tests run against the **legacy snapshot** committed in `tests/baseline/`; Python is not needed (only integration scripts such as `migrate_check.py` run, using the Python standard library).
+- All tests use a fresh database in a temporary directory or a copy of `tests/baseline/fixtures/sample.db`, and **never touch `data/`**.
+- Common environment variables: `XEXAM_DATA`, `XEXAM_PORT`, `XEXAM_ALLOWED_HOSTS`, `XEXAM_LOG` (log level, e.g. `debug`). For the full list see `xexam-backend --help` and [deployment.md](deployment.md).
+- Command-line import: `cargo run -- import ../some.xlsx --data ../data`.
 
-## 3. 前端
+## 3. Frontend
 
 ```bash
 cd frontend
 npm ci
-npm run typecheck      # tsc（含测试文件）
-npm test               # 27 个单元测试（判分、错题规则、sessionStorage、语言规则）
-npm run build          # 类型检查 + vite build → dist/
-npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1:8765
+npm run typecheck      # tsc (including test files)
+npm test               # 27 unit tests (grading, wrong-answer rules, sessionStorage, language rules)
+npm run build          # type check + vite build → dist/
+npm run dev            # http://127.0.0.1:5173, /api is proxied to http://127.0.0.1:8765
 ```
 
-- 开发时请用 `localhost` 或 `127.0.0.1` 打开页面。Vite 代理的 `changeOrigin` 必须是 `false`：后端会比较 `Host` 与 `Origin`，改写 `Host` 会让写请求被 403。
-- 后端不在默认地址时：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`。
-- 导入路径用 `.ts` 扩展名（Node 自带的测试运行器要求）。
-- TypeScript 固定在 `~5.9.3`（`openapi-typescript` 的 peer 依赖）。
+- While developing, open the page via `localhost` or `127.0.0.1`. The Vite proxy's `changeOrigin` must be `false`: the backend compares `Host` with `Origin`, and rewriting `Host` makes write requests fail with 403.
+- When the backend is not at the default address: `XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`.
+- Import paths use the `.ts` extension (required by Node's built-in test runner).
+- TypeScript is pinned to `~5.9.3` (a peer dependency of `openapi-typescript`).
 
-## 4. 整栈
+## 4. Full stack
 
 ```bash
-# 构建并启动两个容器（同一个 xexam_data 卷！自己的数据会被用到，要试验请另用项目名：-p 别的名字）
+# Build and start the two containers (same xexam_data volume! Your own data will be used; to experiment, use another project name: -p some-other-name)
 docker compose -f docker-compose.build.yml up -d --build
 
-# 检查脚本都用临时项目名和临时卷，不碰 xexam_data
+# The check scripts all use temporary project names and temporary volumes, and never touch xexam_data
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test   # 38 项，用一个假后端
-python -I tests/integration/stack_check.py                      # 34 项，起整个栈（会构建两个镜像）
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 项：旧 progress.json 的迁移（需要先 cargo build）
+python -I tests/integration/nginx_check.py xexam-frontend:test   # 38 checks, using a fake backend
+python -I tests/integration/stack_check.py                      # 34 checks, starts the full stack (builds both images)
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 checks: migration of an old progress.json (run cargo build first)
 ```
 
-## 5. 对照旧版（回归）
+## 5. Comparing against the legacy version (regression)
 
-旧的 Python 实现已经从仓库移除，但它的行为被固定在 `tests/baseline/` 里（都是虚构的合成数据）：
+The old Python implementation has been removed from the repository, but its behavior is pinned in `tests/baseline/` (all of it fictional, synthetic data):
 
-| 快照 | 内容 | 谁用它 |
+| Snapshot | Content | Used by |
 |---|---|---|
-| `golden/NNN_*.json`（172 份） | 旧版每个端点 × 每种状态的真实响应（状态码、稳定的响应头、规范化后的正文） | `backend/tests/api_golden.rs` 按顺序重放到新路由并逐项比较 |
-| `fixtures/*.xlsx` + `parser_golden/*.json`（49 个） | 合成工作簿及旧解析器对每个的输出 | `backend/tests/parser_golden.rs` |
-| `golden/id_vectors.json`（85 条） | 题目 id 的断言，每条带被哈希的字节 | `backend/tests/id_vectors.rs` |
-| `fixtures/sample.db` + `golden/store_sample_outputs.json` | 旧实现写出的示例库及其各接口输出 | `backend/tests/db_golden.rs` |
-| `golden/allowed_differences_rust.json`（23 项）、`allowed_probe_differences_rust.json`（51 项） | 有意与旧版不同的地方，每项一句理由 | `api_golden.rs` 里没登记的差异 = 失败 |
+| `golden/NNN_*.json` (172 files) | Real responses of the legacy version for every endpoint × every state (status code, stable response headers, normalized body) | `backend/tests/api_golden.rs` replays them in order against the new routes and compares each item |
+| `fixtures/*.xlsx` + `parser_golden/*.json` (49) | Synthetic workbooks and the legacy parser's output for each | `backend/tests/parser_golden.rs` |
+| `golden/id_vectors.json` (85 entries) | Assertions about question ids; each entry carries the bytes that were hashed | `backend/tests/id_vectors.rs` |
+| `fixtures/sample.db` + `golden/store_sample_outputs.json` | A sample database written by the legacy implementation, and the output of each of its interfaces | `backend/tests/db_golden.rs` |
+| `golden/allowed_differences_rust.json` (23 entries), `allowed_probe_differences_rust.json` (51 entries) | Places where the new implementation intentionally differs from the legacy version, with a one-sentence reason for each | Any difference in `api_golden.rs` that is not registered = failure |
 
-- 要**改变**行为（比如新增一条有意的差异）：改代码，再在 `allowed_differences_rust.json` 里登记并写明理由；不要直接改黄金响应。
-- 旧的抓取 / 对照 / 探针脚本依赖旧 Python 代码，已随它移除；需要时从 Git 标签 `python-v0.2` 和提交历史里找回。
+- To **change** behavior (for example, to add an intentional difference): change the code, then register the difference in `allowed_differences_rust.json` with its reason; do not edit the golden responses directly.
+- The old capture / comparison / probe scripts depended on the old Python code and were removed with it; if you need them, recover them from the Git tag `python-v0.2` and the commit history.
 
-## 6. 数据安全守则
+## 6. Data safety rules
 
-- **不要**读取、打印、提交或修改 `data/`、`progress.json`、你自己的题库 Excel。
-- 试验永远在副本或临时目录上做；不要对真实的 `xexam.db` 跑「看看会怎样」的命令。
-- 不要运行 `docker compose down -v`。
+- **Do not** read, print, commit or modify `data/`, `progress.json`, or your own question-bank Excel files.
+- Always experiment on a copy or in a temporary directory; do not run "let's see what happens" commands against the real `xexam.db`.
+- Do not run `docker compose down -v`.
 
 ## 7. CI
 
-只有一个流水线：[`.github/workflows/ci.yml`](../.github/workflows/ci.yml)。
+There is only one pipeline: [`.github/workflows/ci.yml`](../.github/workflows/ci.yml).
 
-| 作业 | 内容 |
+| Job | What it does |
 |---|---|
-| `check` | `VERSION` 格式、README 更新日志最上面一条 = `VERSION` |
-| `frontend` | 类型检查、27 个单元测试、构建 |
-| `backend` | fmt、clippy、151 个测试，以及 `progress.json` 迁移检查 |
-| `stack` | 构建 `xexam-frontend` 镜像跑 38 项 Nginx 检查；起整个 compose 栈跑 34 项端到端检查 |
-| `arm64` | 两个镜像为 arm64 构建，在 QEMU 下启动，检查 `/api/info` 报 `aarch64` |
-| `publish` | 仅 `main`：两个镜像（amd64 + arm64）推到 ghcr.io，核对清单和标签 |
-| `release` | 仅 `main`：建（或更新）`v<VERSION>` 的 GitHub Release |
+| `check` | `VERSION` format; the top entry of the README changelog = `VERSION` |
+| `frontend` | Type check, 27 unit tests, build |
+| `backend` | fmt, clippy, 151 tests, and the `progress.json` migration check |
+| `stack` | Builds the `xexam-frontend` image and runs 38 Nginx checks; starts the full compose stack and runs 34 end-to-end checks |
+| `arm64` | Builds both images for arm64, starts them under QEMU, and checks that `/api/info` reports `aarch64` |
+| `publish` | `main` only: pushes both images (amd64 + arm64) to ghcr.io and verifies the manifest and tags |
+| `release` | `main` only: creates (or updates) the GitHub Release for `v<VERSION>` |
 
-拉取请求和其它分支只跑前五项，**从不发布**。
+Pull requests and other branches run only the first five jobs and **never publish**.
 
-## 8. 版本号和更新日志
+## 8. Version number and changelog
 
-- 版本号的唯一来源是仓库根目录的 `VERSION`。`Cargo.toml` 和 `package.json` 里各有一份，要保持一致。
-- 每次更新都要在 README 的「更新日志」最上面加一条，版本号与 `VERSION` 一致（CI 会校验）。
+- The single source of truth for the version number is `VERSION` in the repository root. `Cargo.toml` and `package.json` each hold a copy; keep them consistent.
+- Every update must add an entry at the very top of the README's "Changelog" section, with a version number that matches `VERSION` (CI verifies this).

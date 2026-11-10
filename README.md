@@ -42,7 +42,7 @@ Documentation: [Architecture](docs/architecture.md) · [API](docs/api.md) ([Open
 
 ## Screenshots
 
-The screenshots use a **fictional demo question bank** (5 short Japanese questions), not content from any real exam. The desktop is on the left, iPhone width (390 px) on the right.
+The screenshots use a **fictional demo question bank** (5 short questions written in English, Chinese and Japanese), not content from any real exam. The desktop is on the left, iPhone width (390 px) on the right.
 
 ### Home: pick a scope and start the exam
 
@@ -66,12 +66,19 @@ While answering, **correctness and score are not shown**. On the answer sheet: s
 </tr>
 </table>
 
-Click `中文` ("Chinese") or `英语` ("English") to switch to the text from the matching column in the Excel file. Switching only changes the text: the selected answers, the option letters and the timer stay the same, and so does grading. (The screenshots below are from an older UI that had only two buttons, Japanese / Chinese.)
+Click `中文` ("Chinese") or `日语` ("Japanese") to switch to the text from the matching column in the Excel file; `英语` ("English") switches back. Switching only changes the text: the selected answers, the option letters and the timer stay the same, and so does grading. The hotspot option buttons switch too (Yes / No, 是 / 否, はい / いいえ). The pictures below show the same question in Chinese, then in Japanese.
 
 <table>
 <tr>
 <td width="62%"><img src="docs/screenshots/desktop-2b-quiz-zh.png" alt="Switched to Chinese (desktop)"></td>
 <td width="38%"><img src="docs/screenshots/iphone-2b-quiz-zh.png" alt="Switched to Chinese (iPhone)"></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="62%"><img src="docs/screenshots/desktop-2c-quiz-ja.png" alt="Switched to Japanese (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-2c-quiz-ja.png" alt="Switched to Japanese (iPhone)"></td>
 </tr>
 </table>
 
@@ -617,7 +624,7 @@ frontend/                  TypeScript + Vite frontend (plain DOM)
 nginx/                     nginx.conf + Dockerfile (builds the frontend -> ships only the static output)
 tests/baseline/            Behavior snapshot of the legacy Python version (golden responses, parser fixtures, id vectors, sample database)
 tests/integration/         Nginx behavior checks, full-stack end-to-end checks, progress.json migration checks
-docs/                      Architecture, API, database, security, deployment, migration, development, plus the pre-migration audit
+docs/                      Architecture, API, database, security, deployment, migration, development (each in English, Japanese and Chinese: X.md, X.ja.md, X.zh-CN.md), OpenAPI, plus the pre-migration audit (Chinese only)
 scripts/release-notes.py   Generates the GitHub Release notes from the changelog (used by CI, can also be run locally)
 .github/workflows/ci.yml   The only pipeline: check -> test -> publish -> Release
 ```
@@ -636,6 +643,8 @@ Every update must add an entry here, and the **version number must match the `VE
 - **The old three-column format (A Japanese, B Chinese, C answer) needs no changes and can still be uploaded**, just without English. The program detects the format from the content automatically; in the four-column format the question id still comes from the Japanese text in column C, so the same question has the same id in both formats and learning records are not affected.
 - The footer text on the home page now reads: Xexam only provides import, organization and practice of questions and answers; the software itself does not provide or include exam questions, answers or related materials; users must ensure that the sources of the materials they import and use are lawful and that they hold the corresponding usage rights.
 - **The README is split into three languages**: `README.md` (English, the default), `README.ja.md` and `README.zh-CN.md`, linked to each other from a language bar at the top; each keeps its own changelog, and the GitHub Release notes come from the English one.
+- **The documents in `docs/` come in three languages too**: the seven current ones (architecture, API, database, security, deployment, migration, development) are `X.md` (English), `X.ja.md` (Japanese) and `X.zh-CN.md` (Chinese), with a language bar on top; `openapi.yaml` is in English. The Phase 0 audit and planning documents are historical and stay Chinese-only. CI checks that all three versions exist and that every relative link resolves.
+- **New screenshots** taken with the v0.4 interface and a fictional four-column demo bank: the question in English, Chinese and Japanese, with the hotspot option buttons following the language. (The interface itself, buttons and labels, is still in Chinese only.)
 - **Language convention**: code comments and the output of programs, tools and CI are in English; the UI and the READMEs use their own language. No code was changed by this (checked mechanically against the previous commit).
 - Tests: backend 136 → 151 (four-column format, options and answers in three languages, fallback when they do not match), frontend 19 → 27 (language rules).
 

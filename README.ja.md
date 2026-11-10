@@ -16,7 +16,7 @@
 | CPU アーキテクチャ | `linux/amd64`、`linux/arm64`（同じタグの中から自動的に適切なものが選ばれます） |
 | ポート | `8765`（デフォルトではローカルマシンのみにバインド） |
 
-ドキュメント：[アーキテクチャ](docs/architecture.md) · [API](docs/api.md)（[OpenAPI](docs/openapi.yaml)）· [データベース](docs/database.md) · [セキュリティ](docs/security.md) · [デプロイ](docs/deployment.md) · [移行とロールバック](docs/migration.md) · [開発](docs/development.md)
+ドキュメント：[アーキテクチャ](docs/architecture.ja.md) · [API](docs/api.ja.md)（[OpenAPI](docs/openapi.yaml)）· [データベース](docs/database.ja.md) · [セキュリティ](docs/security.ja.md) · [デプロイ](docs/deployment.ja.md) · [移行とロールバック](docs/migration.ja.md) · [開発](docs/development.ja.md)
 
 > `docs/` 配下のドキュメントは現在、中国語で書かれています。
 
@@ -42,7 +42,7 @@
 
 ## スクリーンショット
 
-スクリーンショットには**架空のデモ用問題バンク**（日本語の小問 5 問）を使っており、実際の試験内容ではありません。左がパソコン、右が iPhone の画面幅（390 px）です。
+スクリーンショットには**架空のデモ用問題バンク**（英語・中国語・日本語で書かれた小問 5 問）を使っており、実際の試験内容ではありません。左がパソコン、右が iPhone の画面幅（390 px）です。
 
 ### ホーム画面：範囲を選んで試験を開始
 
@@ -66,12 +66,19 @@
 </tr>
 </table>
 
-`中文`（中国語）や `英语`（英語）のボタンを押すと、Excel の対応する列の文字に切り替わります。切り替わるのは文字だけで、選択済みの答え、選択肢の記号、タイマーは変わらず、採点にも影響しません。（以下のスクリーンショットは旧バージョンの画面で、日本語 / 中国語の 2 つのボタンしかありません。）
+`中文`（中国語）や `日语`（日本語）のボタンを押すと、Excel の対応する列の文字に切り替わります。`英语`（英語）で元に戻ります。切り替わるのは文字だけで、選択済みの答え、選択肢の記号、タイマーは変わらず、採点にも影響しません。ホットスポット問題の選択肢ボタンも一緒に切り替わります（Yes / No、是 / 否、はい / いいえ）。以下の画像は、同じ問題を中国語、続けて日本語で表示したものです。
 
 <table>
 <tr>
 <td width="62%"><img src="docs/screenshots/desktop-2b-quiz-zh.png" alt="中国語に切り替え（パソコン）"></td>
 <td width="38%"><img src="docs/screenshots/iphone-2b-quiz-zh.png" alt="中国語に切り替え（iPhone）"></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="62%"><img src="docs/screenshots/desktop-2c-quiz-ja.png" alt="日本語に切り替え（パソコン）"></td>
+<td width="38%"><img src="docs/screenshots/iphone-2c-quiz-ja.png" alt="日本語に切り替え（iPhone）"></td>
 </tr>
 </table>
 
@@ -108,7 +115,7 @@
 
 ## アーキテクチャ
 
-以下の図はすべて [Mermaid](https://mermaid.js.org/) で書かれており、GitHub 上ではそのまま図として表示されます。詳しい説明は [docs/architecture.md](docs/architecture.md) を参照してください。
+以下の図はすべて [Mermaid](https://mermaid.js.org/) で書かれており、GitHub 上ではそのまま図として表示されます。詳しい説明は [docs/architecture.ja.md](docs/architecture.ja.md) を参照してください。
 
 ### 構成要素のつながりとデータの流れ
 
@@ -132,7 +139,7 @@ flowchart TB
 | `xexam-frontend` | Nginx + フロントエンド静的ファイル（HTML / JS / CSS）。`/api/` をバックエンドに転送します。20 MB 上限、セキュリティヘッダー、レート制限、タイムアウト付き | あり：ホストの `XEXAM_BIND`（デフォルトは `127.0.0.1:8765`）→ コンテナの 8080 |
 | `xexam-backend` | 静的リンクされた Rust 実行ファイル 1 つ：REST API、Excel の解析、SQLite の読み書き | **なし**：`ports` がなく、ネットワークは `internal: true` |
 
-ブラウザは [REST API](docs/api.md) を通じてのみバックエンドとやり取りし、フロントエンドからデータベースに直接アクセスすることはありません。**採点はブラウザ内で行われます**。サーバーが受け取るのは、問題 ID と正誤の組 `{問題 ID, 正誤}` だけです。
+ブラウザは [REST API](docs/api.ja.md) を通じてのみバックエンドとやり取りし、フロントエンドからデータベースに直接アクセスすることはありません。**採点はブラウザ内で行われます**。サーバーが受け取るのは、問題 ID と正誤の組 `{問題 ID, 正誤}` だけです。
 
 ### データフロー A：問題バンクの更新（アップロード → プレビュー → 確認）
 
@@ -174,7 +181,7 @@ sequenceDiagram
 
 ### データベース：5 つのテーブル
 
-テーブル構造とフィールドの意味の詳細は [docs/database.md](docs/database.md) を参照してください。
+テーブル構造とフィールドの意味の詳細は [docs/database.ja.md](docs/database.ja.md) を参照してください。
 
 ```mermaid
 erDiagram
@@ -305,7 +312,7 @@ docker compose -f docker-compose.build.yml up -d --build
 4. 新しい `docker-compose.yml` に差し替えて、`docker compose pull && docker compose up -d` を実行します。
 5. <http://localhost:8765> を開き、問題数、誤答問題数、成績履歴がアップグレード前と同じであることを確認します。
 
-旧バージョンに戻したい場合：旧コードは Git タグ `python-v0.2` にあり、旧イメージ `ghcr.io/yumin-space/xexam:v0.2.2` も引き続き pull できます。旧バージョンは、新バージョンが書き込んだデータベースをそのまま読み書きできます。詳細は [docs/migration.md](docs/migration.md) を参照してください。
+旧バージョンに戻したい場合：旧コードは Git タグ `python-v0.2` にあり、旧イメージ `ghcr.io/yumin-space/xexam:v0.2.2` も引き続き pull できます。旧バージョンは、新バージョンが書き込んだデータベースをそのまま読み書きできます。詳細は [docs/migration.ja.md](docs/migration.ja.md) を参照してください。
 
 ---
 
@@ -428,7 +435,7 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/x
 docker compose start
 ```
 
-PC を替える場合：新しい PC で `ghcr.io` にログインし、`docker-compose.yml` を配置して、まず `docker compose up -d` でボリュームを作成してから、上記の方法でバックアップを復元します。バックアップファイルにはデータベース全体が入っているので、**Git にコミットしないでください**（`.gitignore` で `*.tgz` は無視されます）。詳細（接続設定、バックアップの検証）は [docs/database.md](docs/database.md) を参照してください。
+PC を替える場合：新しい PC で `ghcr.io` にログインし、`docker-compose.yml` を配置して、まず `docker compose up -d` でボリュームを作成してから、上記の方法でバックアップを復元します。バックアップファイルにはデータベース全体が入っているので、**Git にコミットしないでください**（`.gitignore` で `*.tgz` は無視されます）。詳細（接続設定、バックアップの検証）は [docs/database.ja.md](docs/database.ja.md) を参照してください。
 
 ### 以前のバージョンの学習記録を移行する（`progress.json`）
 
@@ -527,7 +534,7 @@ XEXAM_ALLOWED_HOSTS=xexam.お使いのドメイン.com
 
 ## セキュリティについて
 
-詳細な脅威モデルと各防御の説明は [docs/security.md](docs/security.md) を参照してください。要点は次のとおりです。
+詳細な脅威モデルと各防御の説明は [docs/security.ja.md](docs/security.ja.md) を参照してください。要点は次のとおりです。
 
 - **外部に公開されるのは Nginx だけです**。バックエンドはポートを公開しておらず、ネットワークは `internal: true` です（外部インターネットにもアクセスできません）。
 - 既定ではこのマシン宛てのリクエストだけを受け付けます（`Host` を検査）。Cloudflare など認証付きのリバースプロキシの背後に置く場合は、ご自身のドメイン名を `XEXAM_ALLOWED_HOSTS` に書いてください。書き込みリクエストでは、`Origin` が `Host` と同じホストであること（または `XEXAM_ALLOWED_ORIGINS` に含まれていること）も検査され、悪意のある Web ページがブラウザ経由で操作するのを防ぎます。バックエンドが読むのは実際の `Host` ヘッダーだけで、`X-Forwarded-*` は読みません。
@@ -571,7 +578,7 @@ flowchart LR
 
 ## 開発
 
-日常的なコードの変更やテスト実行に使うコマンドは [docs/development.md](docs/development.md) を参照してください。よく使うものは次のとおりです。
+日常的なコードの変更やテスト実行に使うコマンドは [docs/development.ja.md](docs/development.ja.md) を参照してください。よく使うものは次のとおりです。
 
 ```bash
 # バックエンド（Rust 1.99.1。rustup が backend/rust-toolchain.toml に従って自動でインストールします）
@@ -613,7 +620,7 @@ frontend/                  TypeScript + Vite フロントエンド（素の DOM�
 nginx/                     nginx.conf + Dockerfile（フロントエンドをビルド → 静的な成果物だけを同梱）
 tests/baseline/            旧版 Python の挙動スナップショット（ゴールデンレスポンス、パース用フィクスチャ、id ベクタ、サンプル DB）
 tests/integration/         Nginx の挙動チェック、スタック全体の E2E チェック、progress.json の移行チェック
-docs/                      アーキテクチャ、API、データベース、セキュリティ、デプロイ、移行、開発、および移行前の監査
+docs/                      アーキテクチャ、API、データベース、セキュリティ、デプロイ、移行、開発（それぞれ英語・日本語・中国語の 3 つ：X.md、X.ja.md、X.zh-CN.md）、OpenAPI、および移行前の監査（中国語のみ）
 scripts/release-notes.py   更新履歴から GitHub Release の説明文を生成（CI で使用。ローカルでも実行可能）
 .github/workflows/ci.yml   唯一のパイプライン：チェック → テスト → 公開 → Release
 ```
@@ -632,6 +639,8 @@ scripts/release-notes.py   更新履歴から GitHub Release の説明文を生�
 - **旧来の 3 列形式（A が日本語、B が中国語、C が答え）は変更不要で、そのままアップロードできます**。英語がないだけです。プログラムが内容から自動的に形式を判別します。4 列形式でも問題 id は引き続き C 列の日本語から作られるため、同じ問題は 2 つの形式で同じ id になり、学習記録は影響を受けません。
 - ホーム画面のフッターの説明文を次の文に変更しました：`Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料；用户应确保导入和使用的资料来源合法，并拥有相应使用权限。`（「Xexam は問題と答えのインポート・整理・練習の機能のみを提供し、ソフトウェア自体は試験問題・答え・関連資料を提供・収録しません。ユーザーは、インポートして使用する資料の入手元が適法であり、相応の使用権限を持っていることを確認してください」）
 - **README を 3 つの言語に分割しました**：`README.md`（英語、既定）、`README.ja.md`（日本語）、`README.zh-CN.md`（中国語）。ページ先頭の言語バーで相互に移動でき、更新履歴はそれぞれの言語で書きます。GitHub の Release ノートは英語版から作られます。
+- **`docs/` のドキュメントも 3 つの言語になりました**：現行の 7 つ（アーキテクチャ、API、データベース、セキュリティ、デプロイ、移行、開発）は、`X.md`（英語）、`X.ja.md`（日本語）、`X.zh-CN.md`（中国語）があり、先頭に言語バーがあります。`openapi.yaml` は英語です。Phase 0 の監査・計画文書は過去の記録なので、中国語のみのままです。CI は 3 つがそろっていることと、すべての相対リンクが実在するファイルを指していることを確認します。
+- **スクリーンショットを撮り直しました**：v0.4 の画面と、架空の 4 列デモ用問題バンクで撮影しています。同じ問題を英語・中国語・日本語で表示でき、ホットスポット問題の選択肢ボタンも言語に連動します。（画面そのもの、ボタンやラベルは、まだ中国語のみです。）
 - **言語の取り決め**：コードのコメントと、プログラム・ツール・CI の出力は英語、画面と README はそれぞれの言語を使います。この変更でコードは一切変わっていません（直前のコミットとの機械的な比較で確認済み）。
 - テスト：バックエンド 136 → 151（4 列形式、3 言語の選択肢と答え、対応が合わない場合のフォールバック）、フロントエンド 19 → 27（言語ルール）。
 
@@ -642,12 +651,12 @@ scripts/release-notes.py   更新履歴から GitHub Release の説明文を生�
 - **バックエンドを Rust に変更**（Axum 0.8 + Tokio + rusqlite、ツールチェーンは 1.99.1 に固定）：REST インターフェース、XLSX の解析、インポート（プレビューはデータベースに書き込まない → 一回限りの確認コード → 1 つのトランザクションで書き込み）、成績と誤答の統計、Host/Origin ガード、`xexam-backend import / healthcheck / migrate-progress` サブコマンド。挙動は Python 版と 1 対 1 に対応しています。172 件の旧版レスポンスを項目ごとに突き合わせて、説明のつかない差異はありませんでした。49 個の合成ワークブックの解析出力と 85 件の問題 id ベクトルもすべて一致したため、問題 id は旧版とバイト単位で同一で、学習記録が問題から切り離されることはありません。
 - **フロントエンドを TypeScript に変更**（strict）+ **Vite**、素の DOM でフレームワークは使いません。インラインスタイルがないため、CSP を厳しく設定できます。ビルドターゲットは `safari15` で、iPhone は iOS 15.4 以上が必要です。
 - **2 つのイメージ、2 つのコンテナ**：`xexam-frontend`（Nginx + フロントエンドの静的ファイル、唯一外部に公開）と `xexam-backend`（Rust、`internal` のプライベートネットワーク内でポートを公開しない）。非 root、`cap_drop: ALL`、読み取り専用のルートファイルシステム。Host はそのまま透過し、`X-Forwarded-*` は空にします。20 MB の上限、セキュリティヘッダー、レート制限、タイムアウトを備え、バックエンドに到達できないときは JSON の 502 を返します。どちらのイメージにも `amd64` と `arm64` の両方があります。
-- **より厳格なアップロード検査（意図的な差異）**：どの文字コード・拡張子でも DOCTYPE とエンティティ宣言を拒否します。重複した ZIP エントリ名を拒否します。ZIP のエントリ数、XML の深さ・ノード数・要素あたりの属性数、セルの合計バイト数に上限があります。解析には協調的なタイムアウトがあり（時間になるとパーサー自身が停止します）、同時に実行できるのは最大 2 件です。エラーメッセージにライブラリの例外テキストを表示しなくなりました。未対応の HTTP メソッドには 405 を返します（以前は 501）。差異の一覧は [docs/api.md](docs/api.md) を参照してください。
+- **より厳格なアップロード検査（意図的な差異）**：どの文字コード・拡張子でも DOCTYPE とエンティティ宣言を拒否します。重複した ZIP エントリ名を拒否します。ZIP のエントリ数、XML の深さ・ノード数・要素あたりの属性数、セルの合計バイト数に上限があります。解析には協調的なタイムアウトがあり（時間になるとパーサー自身が停止します）、同時に実行できるのは最大 2 件です。エラーメッセージにライブラリの例外テキストを表示しなくなりました。未対応の HTTP メソッドには 405 を返します（以前は 501）。差異の一覧は [docs/api.ja.md](docs/api.ja.md) を参照してください。
 - **1 本のパイプライン**（`.github/workflows/ci.yml`）：バージョンと更新履歴の検査 → フロントエンド / バックエンド / Nginx と全スタック / arm64 の 4 グループの検査 → すべて通ったら 2 つのイメージを公開し、Release を作成。
 - **テスト**：バックエンド 136 件（コミット済みの旧版スナップショットとの突き合わせ：172 件のゴールデンレスポンス、49 個の解析フィクスチャ、85 件の id ベクトル）、フロントエンド 19 件。`tests/integration/` には Nginx 38 項目、全スタック 34 項目、`progress.json` 移行 10 項目があります。
 - **ドキュメント**：`docs/` 以下にアーキテクチャ、API（OpenAPI を含む）、データベース、セキュリティ、デプロイ、移行、開発に加え、移行前の監査、リスク、計画を置きました。
 - 採点は引き続きブラウザ内で行います（サーバーは `{問題 id, 正誤}` だけを受け取ります）。理由は [docs/migration-plan.md](docs/migration-plan.md) を参照してください。
-- ⚠️ **アップグレード時の注意**：新旧のバージョンはコンテナ名とポートが同じなので、**同時に実行できません**。アップグレード前に `docker compose stop` を実行してください。データボリューム `xexam_data` は同じものなので、データの移行は不要です。旧来の単一イメージ `ghcr.io/yumin-space/xexam` は今後更新されません（最後は `v0.2.2`）。`docker-compose.yml` は、`xexam-frontend` と `xexam-backend` の 2 つを一度に pull するようになりました。ロールバック手順は [docs/migration.md](docs/migration.md) を参照してください。
+- ⚠️ **アップグレード時の注意**：新旧のバージョンはコンテナ名とポートが同じなので、**同時に実行できません**。アップグレード前に `docker compose stop` を実行してください。データボリューム `xexam_data` は同じものなので、データの移行は不要です。旧来の単一イメージ `ghcr.io/yumin-space/xexam` は今後更新されません（最後は `v0.2.2`）。`docker-compose.yml` は、`xexam-frontend` と `xexam-backend` の 2 つを一度に pull するようになりました。ロールバック手順は [docs/migration.ja.md](docs/migration.ja.md) を参照してください。
 - **検証していないもの（正直に記載）**：本物の Cloudflare Tunnel、iPhone の実機、本物の ARM ハードウェア上での実行（QEMU 上でビルドして起動を確認しただけです）、ご自身の実データベースのコピーを使った予行演習。
 
 ### v0.2.2 — 2026-11-10

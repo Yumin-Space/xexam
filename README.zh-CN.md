@@ -16,7 +16,7 @@
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 
-文档：[架构](docs/architecture.md) · [API](docs/api.md)（[OpenAPI](docs/openapi.yaml)）· [数据库](docs/database.md) · [安全](docs/security.md) · [部署](docs/deployment.md) · [迁移与回滚](docs/migration.md) · [开发](docs/development.md)
+文档：[架构](docs/architecture.zh-CN.md) · [API](docs/api.zh-CN.md)（[OpenAPI](docs/openapi.yaml)）· [数据库](docs/database.zh-CN.md) · [安全](docs/security.zh-CN.md) · [部署](docs/deployment.zh-CN.md) · [迁移与回滚](docs/migration.zh-CN.md) · [开发](docs/development.zh-CN.md)
 
 ---
 
@@ -40,7 +40,7 @@
 
 ## 截图
 
-截图用的是**虚构的演示题库**（5 道日语小题），不是任何真实考试内容。左边是电脑，右边是 iPhone 宽度（390 px）。
+截图用的是**虚构的演示题库**（5 道小题，英语、中文、日语三种语言都有），不是任何真实考试内容。左边是电脑，右边是 iPhone 宽度（390 px）。
 
 ### 首页：选范围，开始考试
 
@@ -64,12 +64,19 @@
 </tr>
 </table>
 
-点「中文」「英语」切换成 Excel 里对应那一列的文字。切换只换文字，已选的答案、选项字母、计时都不变，判分也不变。（下面的截图是旧版界面，只有日语 / 中文两个按钮。）
+点「中文」「日语」切换成 Excel 里对应那一列的文字，点「英语」切回来。切换只换文字，已选的答案、选项字母、计时都不变，判分也不变。热点题的选项按钮也跟着换（Yes / No、是 / 否、はい / いいえ）。下面两组图是同一道题，先是中文，再是日语。
 
 <table>
 <tr>
 <td width="62%"><img src="docs/screenshots/desktop-2b-quiz-zh.png" alt="切换成中文（电脑）"></td>
 <td width="38%"><img src="docs/screenshots/iphone-2b-quiz-zh.png" alt="切换成中文（iPhone）"></td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="62%"><img src="docs/screenshots/desktop-2c-quiz-ja.png" alt="切换成日语（电脑）"></td>
+<td width="38%"><img src="docs/screenshots/iphone-2c-quiz-ja.png" alt="切换成日语（iPhone）"></td>
 </tr>
 </table>
 
@@ -106,7 +113,7 @@
 
 ## 架构
 
-下面的图都是 [Mermaid](https://mermaid.js.org/) 写的，GitHub 上直接显示成图。完整说明见 [docs/architecture.md](docs/architecture.md)。
+下面的图都是 [Mermaid](https://mermaid.js.org/) 写的，GitHub 上直接显示成图。完整说明见 [docs/architecture.zh-CN.md](docs/architecture.zh-CN.md)。
 
 ### 谁和谁连着，数据怎么走
 
@@ -130,7 +137,7 @@ flowchart TB
 | `xexam-frontend` | Nginx + 前端静态文件（HTML / JS / CSS）。把 `/api/` 转给后端；20 MB 上限、安全头、限流、超时 | 是：宿主机 `XEXAM_BIND`（默认 `127.0.0.1:8765`）→ 容器 8080 |
 | `xexam-backend` | 一个静态链接的 Rust 可执行文件：REST 接口、解析 Excel、读写 SQLite | **否**：没有 `ports`，网络是 `internal: true` |
 
-浏览器只通过 [REST 接口](docs/api.md) 和后端说话；前端里没有数据库访问。**判分在浏览器里**：服务端只收 `{题目 id, 对错}`。
+浏览器只通过 [REST 接口](docs/api.zh-CN.md) 和后端说话；前端里没有数据库访问。**判分在浏览器里**：服务端只收 `{题目 id, 对错}`。
 
 ### 数据流 A：更新题库（上传 → 预览 → 确认）
 
@@ -172,7 +179,7 @@ sequenceDiagram
 
 ### 数据库：5 张表
 
-完整的表结构和字段含义见 [docs/database.md](docs/database.md)。
+完整的表结构和字段含义见 [docs/database.zh-CN.md](docs/database.zh-CN.md)。
 
 ```mermaid
 erDiagram
@@ -303,7 +310,7 @@ docker compose -f docker-compose.build.yml up -d --build
 4. 换上新的 `docker-compose.yml`，`docker compose pull && docker compose up -d`。
 5. 打开 <http://localhost:8765>，核对题数、错题数和成绩历史和升级前一样。
 
-想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以拉取，旧版能直接读写新版写过的库。详见 [docs/migration.md](docs/migration.md)。
+想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以拉取，旧版能直接读写新版写过的库。详见 [docs/migration.zh-CN.md](docs/migration.zh-CN.md)。
 
 ---
 
@@ -426,7 +433,7 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/x
 docker compose start
 ```
 
-换电脑：在新电脑上登录 `ghcr.io`，放好 `docker-compose.yml`，先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/database.md](docs/database.md)。
+换电脑：在新电脑上登录 `ghcr.io`，放好 `docker-compose.yml`，先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/database.zh-CN.md](docs/database.zh-CN.md)。
 
 ### 迁移更早版本的学习记录（`progress.json`）
 
@@ -525,7 +532,7 @@ XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
 
 ## 安全说明
 
-详细的威胁模型和每一条防线见 [docs/security.md](docs/security.md)。要点：
+详细的威胁模型和每一条防线见 [docs/security.zh-CN.md](docs/security.zh-CN.md)。要点：
 
 - **只有 Nginx 对外**。后端没有发布端口，网络是 `internal: true`（也不能访问外网）。
 - 默认只接受发给本机的请求（检查 `Host`）；放在 Cloudflare 等有身份验证的反向代理后面时，把你的域名写进 `XEXAM_ALLOWED_HOSTS`。写请求还会检查 `Origin` 必须和 `Host` 是同一个主机（或在 `XEXAM_ALLOWED_ORIGINS` 里），防止恶意网页通过你的浏览器操作它。后端只读真实的 `Host` 头，不读 `X-Forwarded-*`。
@@ -569,7 +576,7 @@ flowchart LR
 
 ## 开发
 
-日常改代码、跑测试用的命令见 [docs/development.md](docs/development.md)。最常用的：
+日常改代码、跑测试用的命令见 [docs/development.zh-CN.md](docs/development.zh-CN.md)。最常用的：
 
 ```bash
 # 后端（Rust 1.99.1，rustup 会按 backend/rust-toolchain.toml 自动装）
@@ -611,7 +618,7 @@ frontend/                  TypeScript + Vite 前端（原生 DOM）
 nginx/                     nginx.conf + Dockerfile（构建前端 → 只带静态产物）
 tests/baseline/            旧版 Python 的行为快照（黄金响应、解析夹具、id 向量、示例库）
 tests/integration/         Nginx 行为检查、整栈端到端检查、progress.json 迁移检查
-docs/                      架构、API、数据库、安全、部署、迁移、开发，以及迁移前的审计
+docs/                      架构、API、数据库、安全、部署、迁移、开发（各有英语、日语、中文三份：X.md、X.ja.md、X.zh-CN.md），OpenAPI，以及迁移前的审计（只有中文）
 scripts/release-notes.py   从更新日志生成 GitHub Release 的说明（CI 用，本机也能跑）
 .github/workflows/ci.yml   唯一的流水线：检查 → 测试 → 发布 → Release
 ```
@@ -630,6 +637,8 @@ scripts/release-notes.py   从更新日志生成 GitHub Release 的说明（CI �
 - **旧的三列格式（A 日语、B 中文、C 答案）不用改，照样能上传**，只是没有英语。程序看内容自动判断是哪种格式；四列格式里题目 id 仍然来自 C 列的日语，所以同一道题在两种格式里 id 相同，学习记录不受影响。
 - 首页页脚的说明文字改为：Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料；用户应确保导入和使用的资料来源合法，并拥有相应使用权限。
 - **README 拆成三份**：`README.md`（英语，默认）、`README.ja.md`（日语）、`README.zh-CN.md`（中文），页面顶部的语言栏可以互相跳转；各自有自己语言的更新日志，GitHub Release 说明取自英语那份。
+- **`docs/` 里的文档也分成三种语言**：现行的七份（架构、API、数据库、安全、部署、迁移、开发）各有 `X.md`（英语）、`X.ja.md`（日语）、`X.zh-CN.md`（中文），顶部有语言栏；`openapi.yaml` 改为英语。Phase 0 的审计和计划文档是历史资料，仍只有中文。CI 会检查三份是否齐全，以及所有相对链接是否都指向存在的文件。
+- **换了新截图**：用 v0.4 的界面和虚构的四列演示题库重新截的，同一道题有英语、中文、日语三种显示，热点题的选项按钮也跟着语言走。（界面本身，按钮和标签，仍然只有中文。）
 - **语言约定**：代码注释和程序、工具、CI 的输出一律用英语；界面和 README 用各自对应的语言。这次没有改动任何代码（已和上一个提交做过机械比对）。
 - 测试：后端 136 → 151（四列格式、三种语言的选项与答案、对不上时的退回），前端 19 → 27（语言规则）。
 
@@ -640,12 +649,12 @@ scripts/release-notes.py   从更新日志生成 GitHub Release 的说明（CI �
 - **后端改成 Rust**（Axum 0.8 + Tokio + rusqlite，工具链固定 1.99.1）：REST 接口、XLSX 解析、导入（预览不写库 → 一次性确认码 → 一个事务写入）、成绩与错题统计、Host/Origin 守卫、`xexam-backend import / healthcheck / migrate-progress` 子命令。行为与 Python 版一一对应：172 份旧版响应逐项对照没有未解释的差异；49 个合成工作簿的解析输出、85 条题目 id 向量全部一致，所以题目 id 与旧版逐字节相同、学习记录不会脱钩。
 - **前端改成 TypeScript**（strict）+ **Vite**，原生 DOM、没有框架；没有内联样式，所以 CSP 可以很严。构建目标 `safari15`，iPhone 需要 iOS 15.4 以上。
 - **两个镜像、两个容器**：`xexam-frontend`（Nginx + 前端静态文件，唯一对外）和 `xexam-backend`（Rust，在 `internal` 私有网络里不发布端口）。非 root、`cap_drop: ALL`、只读根文件系统；Host 原样透传、`X-Forwarded-*` 清空；20 MB 上限、安全头、限流、超时；后端不可达时返回 JSON 502。两个镜像都同时有 `amd64` 和 `arm64`。
-- **更严的上传检查（有意的差异）**：任何编码 / 扩展名里的 DOCTYPE 和实体声明都拒绝；重复的 ZIP 条目名拒绝；ZIP 条目数、XML 深度 / 节点数 / 每元素属性数、单元格总字节数有上限；解析有协作式的超时（到了解析器自己停下）且同时最多 2 个；错误文案不再回显库的异常文本；不支持的 HTTP 方法回 405（以前是 501）。完整差异表见 [docs/api.md](docs/api.md)。
+- **更严的上传检查（有意的差异）**：任何编码 / 扩展名里的 DOCTYPE 和实体声明都拒绝；重复的 ZIP 条目名拒绝；ZIP 条目数、XML 深度 / 节点数 / 每元素属性数、单元格总字节数有上限；解析有协作式的超时（到了解析器自己停下）且同时最多 2 个；错误文案不再回显库的异常文本；不支持的 HTTP 方法回 405（以前是 501）。完整差异表见 [docs/api.zh-CN.md](docs/api.zh-CN.md)。
 - **一个流水线**（`.github/workflows/ci.yml`）：检查版本和更新日志 → 前端 / 后端 / Nginx 与整栈 / arm64 四组检查 → 都通过才发布两个镜像并建 Release。
 - **测试**：后端 136 个（对着已提交的旧版快照：172 份黄金响应、49 个解析夹具、85 条 id 向量）、前端 19 个；`tests/integration/` 里 Nginx 38 项、整栈 34 项、`progress.json` 迁移 10 项。
 - **文档**：`docs/` 下的架构、API（含 OpenAPI）、数据库、安全、部署、迁移、开发，以及迁移前的审计、风险和计划。
 - 判分仍在浏览器里（服务端只收 `{题目 id, 对错}`），理由见 [docs/migration-plan.md](docs/migration-plan.md)。
-- ⚠️ **升级注意**：新旧版容器名和端口相同，**不能同时运行**，升级前先 `docker compose stop`；数据卷 `xexam_data` 是同一个，数据不用迁移。旧的单镜像 `ghcr.io/yumin-space/xexam` 不再更新（最后是 `v0.2.2`），`docker-compose.yml` 现在一次拉取 `xexam-frontend` 和 `xexam-backend` 两个。回滚步骤见 [docs/migration.md](docs/migration.md)。
+- ⚠️ **升级注意**：新旧版容器名和端口相同，**不能同时运行**，升级前先 `docker compose stop`；数据卷 `xexam_data` 是同一个，数据不用迁移。旧的单镜像 `ghcr.io/yumin-space/xexam` 不再更新（最后是 `v0.2.2`），`docker-compose.yml` 现在一次拉取 `xexam-frontend` 和 `xexam-backend` 两个。回滚步骤见 [docs/migration.zh-CN.md](docs/migration.zh-CN.md)。
 - **没有验证的东西（如实写）**：真正的 Cloudflare 隧道、iPhone 真机、在真正的 ARM 硬件上运行（只在 QEMU 下构建并启动验证过）、用你自己真实数据库的副本演练。
 
 ### v0.2.2 — 2026-11-10

@@ -1,145 +1,147 @@
-# API 说明
+**English** | [日本語](api.ja.md) | [简体中文](api.zh-CN.md)
 
-> 机器可读的版本是 [openapi.yaml](openapi.yaml)。本文是给人读的：每个接口做什么、守卫怎么拦、哪里和旧的 Python 版不一样。
-> 本文描述的是**真实行为**：旧版的每一种情况都抓成了黄金响应（`tests/baseline/golden/`，172 份），新的 Rust 后端对它们逐项比较。
+# API reference
 
-## 1. 总览
+> The machine-readable version is [openapi.yaml](openapi.yaml). This document is for humans: what each endpoint does, how the guards block requests, and where the behavior differs from the old Python version.
+> It describes the **actual behavior**: every case of the old version was captured as golden responses (`tests/baseline/golden/`, 172 of them), and the new Rust backend is compared against them one by one.
 
-浏览器只通过这组 REST 接口和后端说话，前端里没有数据库访问，也没有判断导入能不能做的逻辑。
+## 1. Overview
 
-| 方法 | 路径 | 作用 | 写库？ |
+The browser talks to the backend only through this set of REST endpoints. The frontend has no database access and no logic for deciding whether an import is allowed.
+
+| Method | Path | Purpose | Writes to the database? |
 |---|---|---|---|
-| GET | `/api/info` | 版本、CPU 架构、能否关闭程序、题数 | 否 |
-| GET | `/api/bank` | 题库（只含上架的题） | 否 |
-| GET | `/api/progress` | 学习记录 | 否 |
-| GET | `/api/imports` | 最近 12 次导入记录 | 否 |
-| POST | `/api/upload` | 上传 .xlsx，得到**预览**和一次性确认码 | **否**（只暂存在内存里） |
-| POST | `/api/import/confirm` | 确认导入 | **是**（一个事务） |
-| POST | `/api/import/cancel` | 取消待确认的导入 | 否 |
-| POST | `/api/attempt` | 记录一场考试的成绩 | 是 |
-| POST | `/api/reset` | 清空学习记录 | 是 |
-| POST | `/api/shutdown` | 关闭程序（只有本机运行时可用，Docker 里恒 403） | 否 |
+| GET | `/api/info` | Version, CPU architecture, whether the program can be shut down, question count | No |
+| GET | `/api/bank` | The question bank (active questions only) | No |
+| GET | `/api/progress` | Study records | No |
+| GET | `/api/imports` | The last 12 import records | No |
+| POST | `/api/upload` | Upload an .xlsx file and get a **preview** and a one-time confirmation code | **No** (staged in memory only) |
+| POST | `/api/import/confirm` | Confirm the import | **Yes** (one transaction) |
+| POST | `/api/import/cancel` | Cancel the pending import | No |
+| POST | `/api/attempt` | Record the result of one exam | Yes |
+| POST | `/api/reset` | Clear the study records | Yes |
+| POST | `/api/shutdown` | Shut down the program (available only when running on the local machine; always 403 in Docker) | No |
 
-`HEAD` 与对应的 `GET` 一样，只是没有正文。
+`HEAD` behaves like the corresponding `GET`, just without a body.
 
-## 2. 所有响应共有的
+## 2. What every response has in common
 
-- `Cache-Control: no-store`、`X-Content-Type-Options: nosniff`。
-- JSON 是 UTF-8，日文和中文不转义成 `\uXXXX`；分隔符是 `", "` 和 `": "`（冒号后有空格）；键的顺序固定。**这是约定的一部分**：冒烟测试会 `grep '"bankCount": 0'`。
-- 错误是 `{"error": "<可以直接显示给用户的中文原因>"}`。后端不会把异常名、文件路径、SQLite 报错放进响应；细节只进日志。
+- `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
+- JSON is UTF-8, and Japanese and Chinese characters are not escaped as `\uXXXX`. The separators are `", "` and `": "` (a space after the colon), and the key order is fixed. **This is part of the contract**: the smoke test runs `grep '"bankCount": 0'`.
+- Errors look like `{"error": "<reason in Chinese that can be shown to the user as is>"}`. The backend never puts exception names, file paths or SQLite error messages in a response; the details go to the log only.
 
-## 3. 守卫（每个请求先过）
+## 3. Guards (every request goes through them first)
 
-顺序是固定的，所以同一个坏请求总是得到同一个答案：
+The order is fixed, so the same bad request always gets the same answer:
 
 ```mermaid
 flowchart LR
-    A["Host 在白名单里？"] -->|否| X1["GET：403 text/plain<br/>POST：403 JSON，写明怎么放行"]
-    A -->|是| B["POST？"]
-    B -->|否| R["路由"]
-    B -->|是| C["Origin 的主机名<br/>和 Host 一致，或在白名单里？<br/>（没带 Origin 的放行）"]
-    C -->|否| X2["403 JSON"]
-    C -->|是| D["Content-Type 对吗？<br/>JSON 接口：application/json<br/>上传：application/octet-stream"]
-    D -->|否| X3["415"]
-    D -->|是| E["请求体 ≤ 上限？<br/>JSON 1,000,000 字节<br/>上传 20 MiB"]
-    E -->|否| X4["413"]
-    E -->|是| F["JSON 能解析、是个对象？"]
-    F -->|否| X5["400"]
-    F -->|是| R
+    A["Is Host on the allow-list?"] -->|No| X1["GET: 403 text/plain<br/>POST: 403 JSON, says how to allow it"]
+    A -->|Yes| B["POST?"]
+    B -->|No| R["Route"]
+    B -->|Yes| C["Does the hostname of Origin<br/>match Host, or is it on the allow-list?<br/>(requests without Origin pass)"]
+    C -->|No| X2["403 JSON"]
+    C -->|Yes| D["Is Content-Type correct?<br/>JSON endpoints: application/json<br/>Upload: application/octet-stream"]
+    D -->|No| X3["415"]
+    D -->|Yes| E["Is the body within the limit?<br/>JSON 1,000,000 bytes<br/>Upload 20 MiB"]
+    E -->|No| X4["413"]
+    E -->|Yes| F["Does the JSON parse, and is it an object?"]
+    F -->|No| X5["400"]
+    F -->|Yes| R
 ```
 
-- **Host**：默认只接受 `localhost`、`127.0.0.1`、`::1`。用别的地址或域名访问时，把它写进环境变量 `XEXAM_ALLOWED_HOSTS`（逗号、空格或分号分隔）。`XEXAM_ALLOW_ANY_HOST=1` 表示不检查 Host（只在前面已经有身份验证，比如 Cloudflare Access 时用）。
-- **Origin**（只查写请求）：只比较**主机名**（不比协议和端口），所以经 HTTPS 域名访问也不会被误拦。没带 `Origin` 的请求放行（命令行工具不是浏览器里的跨站请求）。代理把 Host 改写成源站地址时，把公网域名写进 `XEXAM_ALLOWED_ORIGINS`。
-- 后端**只读真实的 `Host` 头**，从不读 `X-Forwarded-*`。Nginx 也不转发它们。
-- 被拒绝的请求会在日志里留一行，并且响应里写明「你的 Host 是什么、该把哪个值加进哪个选项」。
+- **Host**: by default only `localhost`, `127.0.0.1` and `::1` are accepted. To access the app through another address or domain name, put it in the environment variable `XEXAM_ALLOWED_HOSTS` (separated by commas, spaces or semicolons). `XEXAM_ALLOW_ANY_HOST=1` turns off the Host check (use it only when authentication is already in front of the app, for example Cloudflare Access).
+- **Origin** (checked only on write requests): only the **hostname** is compared (not the scheme or the port), so access through an HTTPS domain is not blocked by mistake. Requests without an `Origin` header pass (command-line tools are not cross-site requests from a browser). When a proxy rewrites Host to the origin server's address, put the public domain in `XEXAM_ALLOWED_ORIGINS`.
+- The backend **reads only the real `Host` header** and never reads `X-Forwarded-*`. Nginx does not forward them either.
+- A rejected request leaves one line in the log, and the response states which Host you sent and which value to add to which option.
 
-## 4. 接口细节
+## 4. Endpoint details
 
 ### `GET /api/info`
 ```json
 {"version": "0.4", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
-`bankCount` 是上架的题数。版本号来自 `VERSION` 文件。
+`bankCount` is the number of active questions. The version number comes from the `VERSION` file.
 
 ### `GET /api/bank`
-`file` / `mtime` 是最近一次导入的文件名和时间；`questions` 只含上架的题；`sheets` 里每个工作表有可用数和已下架数。题目的字段见 [openapi.yaml](openapi.yaml) 的 `Question`。
-四列格式的题（A 英语、B 中文、C 日语、D 答案）多两个键 `english`（A 列原文）和 `en`（按日语结构拆开的英语），夹在 `zh` 和 `explanation` 之间；没有英语的题（包括所有三列格式的题）**不出现**这两个键，所以旧文件的输出与以前逐字节相同。`zh` / `en` 的热点题多一个 `choices`：每个小项用本语言写的选项。`stem`、`options`、`items`、`answer` 永远来自 C 列的日语。
+`file` / `mtime` are the file name and time of the most recent import; `questions` contains only active questions; in `sheets`, each sheet has a count of usable questions and a count of deactivated ones. For the fields of a question, see `Question` in [openapi.yaml](openapi.yaml).
+A question in the four-column format (A English, B Chinese, C Japanese, D answer) has two extra keys, `english` (the original text of column A) and `en` (the English split up following the Japanese structure), placed between `zh` and `explanation`. A question without English (including every question in the three-column format) **does not have** these two keys, so the output for old files is byte-for-byte the same as before. A hotspot question in `zh` / `en` has one more key, `choices`: the options for each sub-item, written in that language. `stem`, `options`, `items` and `answer` always come from the Japanese in column C.
 
 ### `GET /api/progress`
-`questions` 是每道题的累计统计（答过几次、对几次、错几次、当前连续答对几次）；`history` 是最近 60 场；`masterStreak` 是错题连续答对几次后移出错题本（2）。
+`questions` holds the cumulative statistics for each question (how many times it was answered, how many correct, how many wrong, and the current streak of correct answers); `history` holds the last 60 exams; `masterStreak` is how many consecutive correct answers move a question out of the wrong-answer notebook (2).
 
 ### `POST /api/upload`
-请求体是 .xlsx 的原始字节。服务端：
+The request body is the raw bytes of the .xlsx file. The server:
 
-1. 只看**内容**判断是不是 .xlsx（魔数 + ZIP 结构 + 有工作簿 + 没有 DOCTYPE / 实体声明 + 解压后大小有上限）。空文件、旧版 `.xls`、损坏的文件、改了扩展名的文件，各有自己的中文说明。
-2. 解析，生成预览，把解析结果放进内存里**唯一的待确认槽位**（再次上传会替换它），30 分钟有效。
-3. **不写数据库。**
+1. Decides whether it is an .xlsx by **content** alone (magic number + ZIP structure + a workbook is present + no DOCTYPE / entity declarations + the uncompressed size has an upper limit). An empty file, an old `.xls`, a corrupted file and a file with a changed extension each get their own explanation in Chinese.
+2. Parses it, builds the preview, and puts the parse result into the **single pending slot** in memory (uploading again replaces it), valid for 30 minutes.
+3. **Does not write to the database.**
 
-返回预览（`added / updated / unchanged / restored / removed / skipped / usable`、每个工作表的明细、读不出来的行和原因）和一次性确认码 `token`。
+It returns the preview (`added / updated / unchanged / restored / removed / skipped / usable`, the details for each sheet, and the rows that could not be read, with the reasons) and a one-time confirmation code, `token`.
 
 ### `POST /api/import/confirm`
-请求体 `{"token": "…"}`。
+The request body is `{"token": "…"}`.
 
-- 确认码是 128 位随机数（22 个字符），**只能用一次**；错的确认码不会消耗待确认的内容；过期的取不出来；非 ASCII 的确认码按「无效」处理（409）。
-- 导入在**一个事务**里完成：要么全部成功，要么题库没有任何改动。
-- 这份文件里一道可用的题都没有 → 400，不导入（防止把题库清空）。
+- The confirmation code is a 128-bit random number (22 characters) and **can be used only once**. A wrong confirmation code does not consume the pending content; an expired one cannot be retrieved; a non-ASCII confirmation code is treated as "invalid" (409).
+- The import completes in **one transaction**: either everything succeeds, or the question bank is left unchanged.
+- If this file contains no usable question at all → 400, and nothing is imported (this prevents wiping out the question bank).
 
-导入规则（文件被当成**完整的题库**）：新出现的题新增；改过的题更新；库里有而文件里找不到的题**下架**（学习记录保留）；下架的题再出现会自动恢复。
+Import rules (the file is treated as the **complete question bank**): questions that appear for the first time are added; questions that were changed are updated; questions that exist in the database but cannot be found in the file are **deactivated** (their study records are kept); a deactivated question that appears again is restored automatically.
 
 ### `POST /api/import/cancel`
-丢弃待确认的内容，不需要确认码。
+Discards the pending content. No confirmation code is needed.
 
 ### `POST /api/attempt`
-请求体 `{"results": [{"id": "…", "correct": true}], "sheets": ["…"], "mode": "all", "seconds": 123}`。
+The request body is `{"results": [{"id": "…", "correct": true}], "sheets": ["…"], "mode": "all", "seconds": 123}`.
 
-服务端只收「题目 id + 对错」，不收也不存你选了什么。清洗规则：`results` 必须是列表，最多 2000 项；`mode` 不是 `all / weak / retry` 时按 `all`；`seconds` 夹在 0 到 604800，异常值按 0。**服务端信任 `correct`，也不检查 id 是否在题库里**——判分发生在浏览器里（见 [security.md](security.md)）。
+The server accepts only "question id + correct or not" and neither receives nor stores what you chose. Sanitizing rules: `results` must be a list with at most 2000 items; if `mode` is not `all / weak / retry` it is treated as `all`; `seconds` is clamped to the range 0 to 604800, and an abnormal value is treated as 0. **The server trusts `correct` and does not check whether the id is in the question bank either**; grading happens in the browser (see [security.md](security.md)).
 
-`percent` 用**四舍六入五成双**（Python 的 `round`）：1/8 答对是 12，不是 13。
+`percent` uses **round-half-to-even** (Python's `round`): 1 correct out of 8 is 12, not 13.
 
 ### `POST /api/reset`
-清空成绩历史和每题统计；题库不动。
+Clears the score history and the per-question statistics; the question bank is untouched.
 
 ### `POST /api/shutdown`
-只有带 `--allow-shutdown` 启动（Windows 上双击 `start.bat`）时可用。Docker 里恒 403，用 `docker compose stop`。
+Available only when started with `--allow-shutdown` (on Windows, by double-clicking `start.bat`). Always 403 in Docker; use `docker compose stop` there.
 
-## 5. 与旧版的差异
+## 5. Differences from the old version
 
-下面是新的 Rust 后端与旧的 Python v0.2 **有意不同**的地方。每一条都登记在 `tests/baseline/golden/allowed_differences_rust.json` 和 `allowed_probe_differences_rust.json` 里，没有登记的差异会让测试失败。
+The table below lists where the new Rust backend **intentionally differs** from the old Python v0.2. Every item is registered in `tests/baseline/golden/allowed_differences_rust.json` and `allowed_probe_differences_rust.json`; a difference that is not registered makes the tests fail.
 
-| 差异 | 旧版 | 新版 | 原因 |
+| Difference | Old version | New version | Reason |
 |---|---|---|---|
-| 不支持的方法（PUT / DELETE / OPTIONS…） | 501 + 标准库的 HTML 页 | 405 + `Allow: GET, HEAD, POST` | 标准行为 |
-| 静态文件 | 后端自己提供 | 后端不提供（404），由 Nginx 提供 | 前后端分离 |
-| 畸形 `Content-Length`（非数字、负数、重复） | 按 0 处理或 413 | 400，关闭连接 | HTTP 层在进处理器前就拒绝；浏览器和 Nginx 不会发出这种请求 |
-| `Content-Type: Application/JSON`（大小写） | 415 | 接受 | MIME 类型不区分大小写 |
-| `Content-Type: text/plain;application/json` | 接受 | 415 | 必须真的是 `application/json`（v0.2 的 Python 也改了） |
-| 分块上传 | 当作空文件（400） | 流式计数，超 20 MiB 回 413 | 不信任 `Content-Length` |
-| DOCTYPE / 实体声明 | 只扫小写 `.xml` / `.rels` 的 ASCII 字节；UTF-16、`.dat`、`.XML` 能绕过并被展开 | 任何扩展名、任何编码都拒绝，XML 解析层也拒绝任何 DOCTYPE | 安全加固 |
-| 重复的 ZIP 条目名 | 用最后一份 | 拒绝（损坏） | 避免检查和读取看到不同内容 |
-| ZIP 条目数 | 不限 | 最多 10,000 | 资源上限 |
-| XML 节点数 / 深度 | 不限 | 100 万 / 64 层 | 资源上限 |
-| 错误文案里的库异常文本 | 带 Python / expat 的原文 | 固定中文，前缀不变 | 不泄露内部细节 |
-| `Server` 响应头 | `Xexam/<版本> Python/<版本>` | 没有 | 不泄露版本 |
-| `//api/info`（双斜杠） | 被标准库折叠成 200 | 404 | 前端不会发出这种路径 |
-| 超大请求头（70,000 字节） | 431 | 由 Nginx 先拒绝 | Nginx 的头缓冲上限 |
-| `seconds` 是字符串时 | `int()` 接受任何 Unicode 数字（全角 `７７`、阿拉伯数字），超长数字串另有 4300 位限制 | 只认 ASCII 数字，其余按 0 | 页面只会发出数字；两者都不影响学习记录的含义 |
-| 不带 `--data` / `XEXAM_DATA` 直接运行 | 数据目录是程序目录下的 `data` | 数据目录是**当前工作目录**下的 `data` | 只影响不用 Docker 的本机运行；请显式指定 `--data` |
-| 子命令写在选项后面（`--data /d import x.xlsx`） | 不适用（旧版是 `--import`） | 子命令必须是第一个参数，否则被当成 `serve`（旧写法 `--import x.xlsx` 仍可用） | 参数解析更简单 |
+| Unsupported methods (PUT / DELETE / OPTIONS…) | 501 + the standard library's HTML page | 405 + `Allow: GET, HEAD, POST` | Standard behavior |
+| Static files | Served by the backend itself | Not served by the backend (404); served by Nginx | Frontend and backend are separated |
+| Malformed `Content-Length` (non-numeric, negative, duplicated) | Treated as 0, or 413 | 400, connection closed | The HTTP layer rejects it before it reaches the handler; browsers and Nginx never send such a request |
+| `Content-Type: Application/JSON` (different case) | 415 | Accepted | MIME types are case-insensitive |
+| `Content-Type: text/plain;application/json` | Accepted | 415 | It must really be `application/json` (the Python v0.2 was changed too) |
+| Chunked upload | Treated as an empty file (400) | Counted as a stream; over 20 MiB returns 413 | `Content-Length` is not trusted |
+| DOCTYPE / entity declarations | Scanned only the ASCII bytes of lowercase `.xml` / `.rels`; UTF-16, `.dat` and `.XML` could get around it and be expanded | Rejected for any extension and any encoding, and the XML parsing layer also rejects any DOCTYPE | Security hardening |
+| Duplicate ZIP entry names | The last one is used | Rejected (corrupted) | So that the check and the read cannot see different content |
+| Number of ZIP entries | Unlimited | At most 10,000 | Resource limit |
+| Number of XML nodes / depth | Unlimited | 1 million (100 × 10,000) / 64 levels | Resource limit |
+| Library exception text in error messages | Contained the original Python / expat text | Fixed Chinese text, the prefix unchanged | Does not leak internal details |
+| `Server` response header | `Xexam/<version> Python/<version>` | None | Does not leak the version |
+| `//api/info` (double slash) | Collapsed by the standard library into a 200 | 404 | The frontend never sends such a path |
+| Oversized request headers (70,000 bytes) | 431 | Rejected by Nginx first | Nginx's header buffer limit |
+| `seconds` is a string | `int()` accepts any Unicode digits (full-width `７７`, Arabic-Indic digits), and an overlong digit string hits a separate 4300-digit limit | Only ASCII digits are recognized; anything else is treated as 0 | The page only ever sends numbers; neither affects the meaning of the study records |
+| Run directly without `--data` / `XEXAM_DATA` | The data directory is `data` under the program directory | The data directory is `data` under the **current working directory** | Affects only local runs without Docker; please specify `--data` explicitly |
+| Subcommand placed after the options (`--data /d import x.xlsx`) | Not applicable (the old version used `--import`) | The subcommand must be the first argument, otherwise it is treated as `serve` (the old form `--import x.xlsx` still works) | Simpler argument parsing |
 
-## 6. 调用示例
+## 6. Examples
 
 ```bash
-# 看版本和题数
+# Check the version and the question count
 curl -s http://localhost:8765/api/info
 
-# 上传（只得到预览，不写库）
+# Upload (you only get a preview; nothing is written to the database)
 curl -s -X POST http://localhost:8765/api/upload \
   -H 'Content-Type: application/octet-stream' -H 'X-Filename: demo.xlsx' \
   --data-binary @tests/baseline/fixtures/demo.xlsx
 
-# 确认导入（把上一步返回的 token 填进来）
+# Confirm the import (fill in the token returned by the previous step)
 curl -s -X POST http://localhost:8765/api/import/confirm \
   -H 'Content-Type: application/json' -d '{"token": "…"}'
 ```
 
-> 经 Nginx 访问时，`curl` 默认带的 `Host: localhost:8765` 在白名单里。用别的域名访问前，先设置 `XEXAM_ALLOWED_HOSTS`。
+> When you go through Nginx, the `Host: localhost:8765` that `curl` sends by default is on the allow-list. Before accessing the app through another domain, set `XEXAM_ALLOWED_HOSTS` first.

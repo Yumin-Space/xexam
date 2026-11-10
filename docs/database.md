@@ -1,130 +1,132 @@
-# 数据库
+**English** | [日本語](database.ja.md) | [简体中文](database.zh-CN.md)
 
-> 数据库是 SQLite，**只有一个文件 `xexam.db`**。新的 Rust 后端沿用旧 Python 版的库，**schema 一个字都没改**。
-> 证据：[audit/database.md](audit/database.md)；对照测试：`backend/tests/db_golden.rs`（对着旧 Python 实现建出的 `tests/baseline/fixtures/sample.db` 和已提交的快照）。
+# Database
 
-## 1. 文件在哪里
+> The database is SQLite, **a single file, `xexam.db`**. The new Rust backend reuses the old Python version's database, and **not a single character of the schema was changed**.
+> Evidence: [audit/database.md](audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots).
 
-| 运行方式 | 位置 |
+## 1. Where the file lives
+
+| How you run it | Location |
 |---|---|
-| Docker（推荐） | 命名卷 `xexam_data`，挂在容器的 `/data`，文件是 `/data/xexam.db`。更新或删除容器都不会丢 |
-| 不用 Docker | 数据目录（默认 `./data`，或 `XEXAM_DATA`）下的 `xexam.db` |
+| Docker (recommended) | Named volume `xexam_data`, mounted at `/data` in the container; the file is `/data/xexam.db`. Updating or deleting the container does not lose it |
+| Without Docker | `xexam.db` in the data directory (default `./data`, or `XEXAM_DATA`) |
 
-卷的真实名字是 `<项目名>_<卷名>` = `xexam_data`，`docker volume ls` 能看到。**不要运行 `docker compose down -v`**，`-v` 会把卷一起删掉。
+The volume's real name is `<project name>_<volume name>` = `xexam_data`, and `docker volume ls` shows it. **Do not run `docker compose down -v`**: `-v` deletes the volume along with the containers.
 
-## 2. 连接设置
+## 2. Connection settings
 
-| 设置 | 值 | 为什么 |
+| Setting | Value | Why |
 |---|---|---|
-| `journal_mode` | `DELETE` | 不用 WAL：WAL 要用共享内存文件，Docker Desktop 把 Windows 文件夹挂进容器时不可靠 |
-| `synchronous` | `FULL` | 单人使用，速度不是问题，数据安全更重要 |
-| `foreign_keys` | `ON` | （schema 里其实没有外键；保持与旧版一致） |
-| `busy_timeout` | 5000 ms | 被别的连接锁住时最多等 5 秒 |
-| 事务 | `BEGIN IMMEDIATE … COMMIT`，失败 `ROLLBACK`（`COMMIT` 失败也回滚） | 要么全成功，要么什么都不变 |
+| `journal_mode` | `DELETE` | No WAL: WAL needs a shared-memory file, which is unreliable when Docker Desktop mounts a Windows folder into a container |
+| `synchronous` | `FULL` | Single-user, so speed is not a concern and data safety matters more |
+| `foreign_keys` | `ON` | (The schema actually has no foreign keys; kept the same as the old version) |
+| `busy_timeout` | 5000 ms | When another connection holds a lock, wait up to 5 seconds |
+| Transactions | `BEGIN IMMEDIATE … COMMIT`, `ROLLBACK` on failure (a failed `COMMIT` is also rolled back) | Either everything succeeds or nothing changes |
 
-后端里只有**一个连接**，放在一把互斥锁后面；数据库调用在专门的线程里跑（`spawn_blocking`），不会阻塞 Tokio 的执行线程，锁也不跨 `.await`。这和旧版的「一个连接 + RLock」一一对应。
+The backend has only **one connection**, kept behind a mutex. Database calls run on a dedicated thread (`spawn_blocking`), so they do not block Tokio's executor threads, and the lock is never held across an `.await`. This corresponds one to one with the old version's "one connection + RLock".
 
-## 3. 表
+## 3. Tables
 
 ```mermaid
 erDiagram
     questions {
-        TEXT id PK "题目身份：工作表+题干+首个选项的内容指纹"
-        TEXT sheet "工作表名（有索引：sheet, active）"
-        INTEGER row_no "在 Excel 里的行号（只供显示）"
-        INTEGER seq "题库里的顺序"
-        TEXT data "整道题的 JSON（不含 id、sheet、row）"
-        INTEGER active "1 上架 · 0 下架"
-        TEXT added_at "第一次进入题库的时间"
-        TEXT updated_at "最近一次导入或下架的时间"
+        TEXT id PK "Question identity: content fingerprint of sheet + question stem + first option"
+        TEXT sheet "Sheet name (indexed: sheet, active)"
+        INTEGER row_no "Row number in the Excel file (display only)"
+        INTEGER seq "Order in the question bank"
+        TEXT data "JSON of the whole question (without id, sheet, row)"
+        INTEGER active "1 active · 0 inactive"
+        TEXT added_at "When it first entered the question bank"
+        TEXT updated_at "Time of the latest import or deactivation"
     }
     stats {
-        TEXT question_id PK "按 id 对应 questions（没有外键约束）"
-        INTEGER attempts "答过几次"
-        INTEGER correct "答对几次"
-        INTEGER wrong "答错几次"
-        INTEGER streak "当前连续答对几次"
-        INTEGER last "上一次对错（可空）"
-        TEXT at "最近一次作答时间（可空）"
+        TEXT question_id PK "Maps to questions by id (no foreign key constraint)"
+        INTEGER attempts "Times answered"
+        INTEGER correct "Times answered correctly"
+        INTEGER wrong "Times answered incorrectly"
+        INTEGER streak "Current number of consecutive correct answers"
+        INTEGER last "Result of the previous answer (nullable)"
+        TEXT at "Time of the latest answer (nullable)"
     }
     attempts {
-        INTEGER id PK "自增"
-        TEXT at "交卷时间"
-        TEXT sheets "考了哪些工作表（JSON 数组）"
+        INTEGER id PK "Auto-increment"
+        TEXT at "Submission time"
+        TEXT sheets "Sheets taken (JSON array)"
         TEXT mode "all · weak · retry"
-        INTEGER total "题数"
-        INTEGER correct "答对数"
-        INTEGER percent "百分比（四舍六入五成双）"
-        INTEGER seconds "用时（秒）"
+        INTEGER total "Number of questions"
+        INTEGER correct "Number of correct answers"
+        INTEGER percent "Percentage (round half to even)"
+        INTEGER seconds "Time taken (seconds)"
     }
     imports {
-        INTEGER id PK "自增"
-        TEXT at "导入时间"
-        TEXT filename "上传的文件名"
-        INTEGER added "新增"
-        INTEGER updated "更新"
-        INTEGER removed "下架"
-        INTEGER restored "恢复"
-        INTEGER skipped "读不出来"
-        INTEGER total "导入后上架的题数"
+        INTEGER id PK "Auto-increment"
+        TEXT at "Import time"
+        TEXT filename "Uploaded file name"
+        INTEGER added "Added"
+        INTEGER updated "Updated"
+        INTEGER removed "Deactivated"
+        INTEGER restored "Restored"
+        INTEGER skipped "Unreadable"
+        INTEGER total "Number of active questions after the import"
     }
     meta {
         TEXT key PK "schema · legacy_migrated"
         TEXT value
     }
-    questions |o--o| stats : "按 id 对应，无外键约束"
+    questions |o--o| stats : "Matched by id, no foreign key constraint"
 ```
 
-建表语句逐字保存在 `backend/src/database/schema.rs`，和旧版 `app/db.py` 的 `SCHEMA` 相同；`CREATE TABLE IF NOT EXISTS`，所以对已有的库**不改动内容**（打开再关闭，文件字节不变，已测试）。
+The table-creation statements are stored verbatim in `backend/src/database/schema.rs` and are identical to `SCHEMA` in the old version's `app/db.py`. They use `CREATE TABLE IF NOT EXISTS`, so an existing database is **left unchanged** (opening and closing it leaves the file bytes unchanged; this is tested).
 
-## 4. 这些细节决定了学习记录的命运
+## 4. Details that decide the fate of your study records
 
-### 4.1 题目 id
-`stats` 和错题本都以题目 id 为键。id 是：
+### 4.1 Question id
+`stats` and the wrong-answer notebook are both keyed by question id. The id is:
 
 ```
-sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(首个选项或首个小项)[:200] )  的前 12 位十六进制
+sha1( sheet_name + "\n" + strip_whitespace(question_stem)[:300] + "|" + strip_whitespace(first_option_or_first_sub_item)[:200] )  first 12 hex digits
 ```
 
-- 「去空白」是 Python 的 `\s`（29 个码点，包括 U+001C–U+001F、U+3000 全角空格），**先去空白再截断**，按**码点**截断。Rust 的 `char::is_whitespace` 只有 25 个，所以后端自己实现了这 29 个码点的判断。
-- **没有任何 Unicode 规范化**（不做 NFKC）。业主的真实题库里大部分题含全角 ASCII，规范化会让所有 id 都变。
-- 同一个工作簿里重复的 id 依次加 `-2`、`-3`……，**取决于行的先后**：调换两道完全相同的题的行，学习记录会换到另一题上。这是旧版的行为，保留，并写在这里。
-- 改了题干的措辞 = 一道新题（旧题下架，旧题的记录不会带到新题上）；只改选项、答案、解析、翻译是「更新」，记录不受影响。
-- 85 条断言（`tests/baseline/golden/id_vectors.json`）保证 Rust 与 Python 的 id 逐字节相同。
+- "Strip whitespace" means Python's `\s` (29 code points, including U+001C–U+001F and the full-width space U+3000). **Whitespace is stripped first, then the text is truncated**, and truncation is by **code point**. Rust's `char::is_whitespace` covers only 25, so the backend implements its own check for these 29 code points.
+- **No Unicode normalization at all** (no NFKC). Most questions in the project owner's real question bank contain full-width ASCII, and normalization would change every id.
+- Duplicate ids within the same workbook get `-2`, `-3`, ... appended in turn, **depending on row order**: if you swap the rows of two identical questions, the study records move to the other question. This is the old version's behavior; it is kept and documented here.
+- Changing the wording of the question stem = a new question (the old one is deactivated, and its records do not carry over to the new one); changing only the options, the answer, the explanation or the translation is an "update", and the records are not affected.
+- 85 assertions (`tests/baseline/golden/id_vectors.json`) guarantee that the ids from Rust and Python are byte-for-byte identical.
 
-### 4.2 下架而不是删除
-导入时，库里有而文件里找不到的题 `active = 0`，`stats` 原样保留。以后再把这道题传回来，会自动恢复上架，错题本也跟着回来。
+### 4.2 Deactivate instead of delete
+During an import, a question that is in the database but cannot be found in the file gets `active = 0`, and its `stats` are kept as they are. If you upload that question again later, it is restored to active automatically, and its wrong-answer notebook entry comes back with it.
 
-### 4.3 错题本
-一道题 `wrong > 0` 且 `streak < 2` 就在错题本里；连续答对 2 次后移出。
+### 4.3 Wrong-answer notebook
+A question is in the wrong-answer notebook when `wrong > 0` and `streak < 2`; it is moved out after 2 consecutive correct answers.
 
-### 4.4 成绩历史
-`attempts` 只留最近 60 场（每次交卷后删掉更早的）。
+### 4.4 Score history
+`attempts` keeps only the latest 60 sessions (older ones are deleted after each submission).
 
-### 4.5 时间戳
-本地时间字符串，格式 `%Y-%m-%d %H:%M`，**没有时区标记**，精确到分钟。容器里靠环境变量 `TZ`（默认 `Asia/Tokyo`）。镜像里带了时区库，否则 `TZ` 会静默失效、时间变成 UTC。
+### 4.5 Timestamps
+Local-time strings in the format `%Y-%m-%d %H:%M`, **with no time zone marker**, accurate to the minute. Inside the container the time zone comes from the `TZ` environment variable (default `Asia/Tokyo`). The image ships a time zone database; without it, `TZ` would silently have no effect and times would become UTC.
 
-## 5. 备份与恢复
+## 5. Backup and restore
 
-先停止程序再操作，数据库更安全。
+Stop the program before you start; it is safer for the database.
 
 ```bash
 docker compose stop
 
-# 备份：把卷打包成当前目录下的 xexam-data.tgz（里面是整个数据库；已被 .gitignore 忽略，不要提交）
+# Back up: pack the volume into xexam-data.tgz in the current directory (it holds the whole database; it is ignored by .gitignore, do not commit it)
 docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
 
 docker compose start
 ```
 
-**验证备份**（在副本上，永远不要对原件做实验）：
+**Verify the backup** (on a copy; never experiment on the original):
 
 ```bash
 mkdir work && tar xzf xexam-data.tgz -C work
-sqlite3 work/xexam.db "PRAGMA integrity_check"      # 必须输出 ok
+sqlite3 work/xexam.db "PRAGMA integrity_check"      # must print ok
 ```
 
-恢复：
+Restore:
 
 ```bash
 docker compose stop
@@ -132,19 +134,19 @@ docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar xzf /backup/xex
 docker compose start
 ```
 
-## 6. 在新旧实现之间来回切换
+## 6. Switching back and forth between the old and new implementations
 
-两个实现用的是**同一个文件、同一份 schema**，所以可以互相读写：
+Both implementations use **the same file and the same schema**, so each can read and write the other's database:
 
-- 旧 Python 写过的库，Rust 直接用。
-- Rust 写过的库，旧 Python 也能读写（`journal_mode` 仍是 `delete`，没有 `-wal` / `-shm` 文件，`user_version` 仍是 0，没有新表新列）。
+- A database written by the old Python version can be used by Rust directly.
+- A database written by Rust can still be read and written by the old Python version (`journal_mode` is still `delete`, there are no `-wal` / `-shm` files, `user_version` is still 0, and there are no new tables or columns).
 
-当初用合成数据把这个往返演练过一遍（旧 Python 建库 → Rust 读写 → 旧 Python 回读，原件的 sha256 前后不变，`PRAGMA integrity_check` 通过）。旧 Python 代码移除之后，这条保证由两项测试继续守着：`sample.db`（旧实现写出的库）被新后端打开、读取、关闭后文件一个字节都不变；新后端建出的空库，`sqlite_master` 与旧实现建出的逐字相同。要真正回滚，用旧镜像（`ghcr.io/yumin-space/xexam:v0.2.2`）直接打开同一个卷即可。
+This round trip was originally rehearsed with synthetic data (old Python creates the database → Rust reads and writes → old Python reads it back; the original's sha256 was unchanged before and after, and `PRAGMA integrity_check` passed). Since the old Python code was removed, two tests keep this guarantee in place: `sample.db` (a database written by the old implementation) is byte-for-byte unchanged after the new backend opens, reads and closes it; and for an empty database created by the new backend, `sqlite_master` is identical, character for character, to the one created by the old implementation. To actually roll back, open the same volume directly with the old image (`ghcr.io/yumin-space/xexam:v0.2.2`).
 
-## 7. 旧的 `progress.json`
+## 7. The old `progress.json`
 
-更早的版本把成绩放在 `progress.json` 里。与旧的 Python 版一样，**每次启动**都会看数据目录里有没有它：有、而且库里还没有学习记录、也没迁移过，就把它迁移进数据库。库里的 `legacy_migrated` 标记保证只迁一次，已经有学习记录时不会覆盖。
-所以「先启动一次建好数据卷 → 把 `progress.json` 放进卷 → 重启」是有效的。格式不对的文件会被忽略，日志里写明原因，并提示可以手动运行 `xexam-backend migrate-progress`，不会让程序起不来。
-（`tests/integration/migrate_check.py` 用合成数据检查了这几种情况。）
+Earlier versions kept scores in `progress.json`. As in the old Python version, **on every startup** the app checks whether the data directory contains it: if it does, and the database has no study records yet and has not been migrated before, it is migrated into the database. The `legacy_migrated` flag in the database guarantees it is migrated only once, and existing study records are never overwritten.
+So "start once to create the data volume → put `progress.json` into the volume → restart" works. A file in the wrong format is ignored; the log states the reason and suggests running `xexam-backend migrate-progress` by hand, and the program still starts.
+(`tests/integration/migrate_check.py` checks these cases with synthetic data.)
 
-> ⚠️ 从 v0.1 升级时：数据库文件的名字变了，新版只读 `xexam.db`。如果数据目录里有别的 `.db` 文件而没有 `xexam.db`，启动日志会提醒你；把那个文件改名成 `xexam.db` 再启动即可（旧文件不会被删，也不会被读取）。
+> ⚠️ When upgrading from v0.1: the database file name changed, and the new version only reads `xexam.db`. If the data directory has another `.db` file but no `xexam.db`, the startup log will warn you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read).

@@ -1,30 +1,32 @@
-# 部署
+**English** | [日本語](deployment.ja.md) | [简体中文](deployment.zh-CN.md)
 
-> 新架构：`nginx`（唯一对外）+ `backend`（Rust，私有网络）+ SQLite（命名卷 `xexam_data`）。结构图见 [architecture.md](architecture.md)，安全边界见 [security.md](security.md)。
+# Deployment
 
-## 1. 前提
+> New architecture: `nginx` (the only service exposed to the outside) + `backend` (Rust, private network) + SQLite (named volume `xexam_data`). For the structure diagrams see [architecture.md](architecture.md); for the security boundaries see [security.md](security.md).
 
-- 装了 Docker（含 Compose v2）的机器，x86（amd64）或 ARM（arm64）都行。
-  - arm64 镜像在 CI 里用 QEMU **构建并启动**验证过（`/api/info` 报 `aarch64`，Nginx `/healthz` 正常）；**没有在真正的 ARM 硬件上跑过**。
-  - 后端是在 x86 构建机上用 zig 交叉编译出 aarch64 版本的（冷缓存下 CI 约 5 分钟，不需要在 QEMU 里编 Rust）。
-    因为 zig 的链接器不接受 rustc 默认给 aarch64 加的 `--fix-cortex-a53-843419`，aarch64 产物**不带**这个针对 Cortex-A53 核心的勘误规避。
-    Oracle Cloud 的 Ampere A1 用 Ampere Altra（据 Wikipedia 是 Arm Neoverse N1 核心），不是 Cortex-A53，所以不受影响；
-    如果你要在 Cortex-A53 核心的板子上跑（部分老款开发板），请别用这个镜像，先告诉我。
+## 1. Prerequisites
 
-## 2. 启动
+- A machine with Docker installed (including Compose v2); either x86 (amd64) or ARM (arm64) works.
+  - The arm64 images were verified in CI under QEMU: **built and started** (`/api/info` reports `aarch64`, and Nginx `/healthz` is healthy). **They have not been run on real ARM hardware.**
+  - The backend is cross-compiled for aarch64 with zig on an x86 build machine (about 5 minutes in CI with a cold cache; Rust does not have to be compiled under QEMU).
+    zig's linker does not accept `--fix-cortex-a53-843419`, which rustc adds for aarch64 by default, so the aarch64 binary **does not include** this workaround for the Cortex-A53 erratum.
+    Oracle Cloud's Ampere A1 uses Ampere Altra (according to Wikipedia, Arm Neoverse N1 cores), not Cortex-A53, so it is not affected.
+    If you want to run on a board with Cortex-A53 cores (some older development boards), please do not use this image, and let me know first.
 
-### 拉取现成的镜像（推荐）
+## 2. Starting
 
-只需要仓库里的 [`docker-compose.yml`](../docker-compose.yml) 这一个文件：
+### Pull the prebuilt images (recommended)
+
+You only need one file from the repository, [`docker-compose.yml`](../docker-compose.yml):
 
 ```bash
-docker login ghcr.io -u Yumin-Space      # 第一次；镜像是私有的，密码填有 read:packages 权限的令牌
+docker login ghcr.io -u Yumin-Space      # first time only; the images are private, and the password is a token with read:packages permission
 docker compose up -d
 ```
 
-浏览器打开 <http://localhost:8765>，「题库管理」里上传 Excel。会拉取并启动**两个容器**：`xexam-frontend`（Nginx，唯一对外）和 `xexam-backend`（Rust，私有网络）。
+Open <http://localhost:8765> in a browser and upload your Excel file under `题库管理` ("Manage question bank"). This pulls and starts **two containers**: `xexam-frontend` (Nginx, the only one exposed to the outside) and `xexam-backend` (Rust, private network).
 
-### 从源码构建（改代码时用）
+### Build from source (when you change the code)
 
 ```bash
 git clone git@github.com:Yumin-Space/xexam.git
@@ -32,96 +34,96 @@ cd xexam
 docker compose -f docker-compose.build.yml up -d --build
 ```
 
-第一次构建要几分钟（编译 Rust 和前端），之后有缓存。
+The first build takes a few minutes (it compiles Rust and the frontend); later builds use the cache.
 
-| 操作 | 命令 |
+| Action | Command |
 |---|---|
-| 看状态 | `docker compose ps`（两个容器都应是 `healthy`） |
-| 看日志 | `docker compose logs -f` |
-| 停止 / 再启动 | `docker compose stop` / `docker compose start` |
-| 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建用：`git pull && docker compose -f docker-compose.build.yml up -d --build`） |
-| 版本和架构 | <http://localhost:8765/api/info> |
+| Check status | `docker compose ps` (both containers should be `healthy`) |
+| View logs | `docker compose logs -f` |
+| Stop / start again | `docker compose stop` / `docker compose start` |
+| Update to the latest version | `docker compose pull && docker compose up -d` (for a source build: `git pull && docker compose -f docker-compose.build.yml up -d --build`) |
+| Version and architecture | <http://localhost:8765/api/info> |
 
-> ⚠️ 不要运行 `docker compose down -v`：`-v` 会删除数据卷 `xexam_data`，题库和学习记录都在里面。
+> ⚠️ Do not run `docker compose down -v`: `-v` deletes the data volume `xexam_data`, which holds the question bank and all study records.
 
-**`docker-compose.yml` 和 `docker-compose.build.yml` 用同一个项目名（`xexam`）、同一个卷（`xexam_data`）和同样的容器名**，所以两者不能同时运行；切换前先 `docker compose stop`。数据互通，见 [migration.md](migration.md)。
+**`docker-compose.yml` and `docker-compose.build.yml` use the same project name (`xexam`), the same volume (`xexam_data`) and the same container names**, so the two cannot run at the same time; run `docker compose stop` before switching. The data is shared between them; see [migration.md](migration.md).
 
-## 3. 配置（`.env`）
+## 3. Configuration (`.env`)
 
-在 `docker-compose.yml` 旁边建 `.env`（不会被提交，也不会进镜像；模板是 [`.env.example`](../.env.example)）：
+Create a `.env` file next to `docker-compose.yml` (it is not committed and does not go into the images; the template is [`.env.example`](../.env.example)):
 
-| 变量 | 默认 | 作用 |
+| Variable | Default | Purpose |
 |---|---|---|
-| `XEXAM_BIND` | `127.0.0.1:8765` | 宿主机上发布的「地址:端口」，对应 Nginx。必须写成 `IP:端口`。`0.0.0.0:8765` = 局域网可连。⚠️ 只写端口号 = 所有网卡 |
-| `XEXAM_ALLOWED_HOSTS` | 空 | 允许用哪些域名 / IP 访问，逗号 / 空格 / 分号分隔 |
-| `XEXAM_ALLOWED_ORIGINS` | 空 | 代理把 Host 改写成源站地址时：填公网域名（含 `https://`） |
-| `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = 不检查 Host（只在前面已有身份验证时） |
-| `XEXAM_PARSE_TIMEOUT_SECS` | `30` | 解析一份 Excel 的最长时间 |
-| `TZ` | `Asia/Tokyo` | 数据库里时间戳用的时区 |
+| `XEXAM_BIND` | `127.0.0.1:8765` | The "address:port" published on the host, for Nginx. It must be written as `IP:port`. `0.0.0.0:8765` = reachable from the LAN. ⚠️ A bare port number = all network interfaces |
+| `XEXAM_ALLOWED_HOSTS` | empty | Which domain names / IPs may be used to access it, separated by commas, spaces or semicolons |
+| `XEXAM_ALLOWED_ORIGINS` | empty | When a proxy rewrites Host to the origin server's address: enter the public domain (including `https://`) |
+| `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = do not check Host (only when authentication is already in front) |
+| `XEXAM_PARSE_TIMEOUT_SECS` | `30` | Maximum time to parse one Excel file |
+| `TZ` | `Asia/Tokyo` | Time zone used for timestamps in the database |
 
-改了 `.env` 之后：`docker compose up -d`（会按需重建容器）。
+After changing `.env`, run `docker compose up -d` (it recreates the containers as needed).
 
-## 4. 让手机 / 外部访问
+## 4. Letting your phone / the outside connect
 
-### 同一个 Wi-Fi 里的 iPhone
+### An iPhone on the same Wi-Fi
 
-只在**信任的网络**里做。`.env`：
+Do this only on a **trusted network**. `.env`:
 
 ```ini
 XEXAM_BIND=0.0.0.0:8765
-XEXAM_ALLOWED_HOSTS=192.168.1.20      # 电脑的局域网 IP
+XEXAM_ALLOWED_HOSTS=192.168.1.20      # the LAN IP of your computer
 ```
 
-iPhone 的 Safari 打开 `http://192.168.1.20:8765`（需要 iOS 15.4 以上）。
+Open `http://192.168.1.20:8765` in Safari on the iPhone (iOS 15.4 or later is required).
 
-### 通过 Cloudflare Tunnel 从互联网访问
+### From the internet through Cloudflare Tunnel
 
-后端本来就不对外，隧道只需要指向 **Nginx**（`XEXAM_BIND` 发布的端口）。三件事：
+The backend is not exposed in the first place, so the tunnel only needs to point at **Nginx** (the port published by `XEXAM_BIND`). Three things to do:
 
-1. cloudflared 连得到 Nginx：同一台机器就保持默认并指向 `http://localhost:8765`；在局域网别的机器上就把 `XEXAM_BIND` 设成 `0.0.0.0:8765`（或具体的局域网 IP）。
-2. Public Hostname：`xexam.你的域名.com` → Service `HTTP`（不是 HTTPS）→ `主机IP:8765`。
-3. Cloudflare Access 加一条策略，**只允许你自己**。没设策略的域名等于对全世界公开。
+1. Make sure cloudflared can reach Nginx: on the same machine, keep the default and point it at `http://localhost:8765`; on another machine on the LAN, set `XEXAM_BIND` to `0.0.0.0:8765` (or to a specific LAN IP).
+2. Public Hostname: `xexam.your-domain.com` → Service `HTTP` (not HTTPS) → `host-IP:8765`.
+3. Add a policy in Cloudflare Access that **allows only you**. A domain with no policy is open to the whole world.
 
-Host 的两种常见情形（`.env`）：
+Two common Host situations (`.env`):
 
-| 隧道的行为 | 设置 |
+| What the tunnel does | Setting |
 |---|---|
-| Host 原样转成你的域名 | `XEXAM_ALLOWED_HOSTS=xexam.你的域名.com` |
-| 设了 `httpHostHeader`，Host 被改成 `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.你的域名.com` |
-| 不确定 | 先配第一种，被拒（403）时页面上会写出它看到的 Host / Origin，加进对应选项再 `up -d` |
+| Host is passed through unchanged as your domain | `XEXAM_ALLOWED_HOSTS=xexam.your-domain.com` |
+| `httpHostHeader` is set, so Host is rewritten to `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.your-domain.com` |
+| Not sure | Start with the first row. When a request is rejected (403), the page states the Host / Origin it saw; add them to the matching option and run `up -d` again |
 
-Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并清空 `X-Forwarded-*`；后端只读真实的 `Host`。
+Nginx passes the `Host` sent by the browser (or the tunnel) to the backend **unchanged** and clears `X-Forwarded-*`; the backend reads only the real `Host`.
 
-⚠️ 程序自己没有登录：只让 cloudflared 连得到这个端口，路由器上不要做端口映射；Linux 上主机防火墙拦不住 Docker 发布的端口，用 `DOCKER-USER` 链或具体的局域网 IP。
+⚠️ The app itself has no login: let only cloudflared reach this port, and do not set up port forwarding on the router. On Linux, the host firewall cannot block ports published by Docker; use the `DOCKER-USER` chain or a specific LAN IP.
 
-验证到什么程度（如实写）：
+How far this has been verified (stated honestly):
 
-- 迁移时用真实 Chrome + HTTPS 反向代理，对**旧的 Python 版**做过两种 Host 情形（保留 Host / 改写 Host）的整套浏览器流程；那套脚本依赖旧 Python 代码，已随它移除。
-- 对**新栈**：`tests/integration/stack_check.py` 用请求头级别的检查验证「经过 Nginx 之后，Host / Origin 守卫仍然生效、`X-Forwarded-*` 不被信任」；`nginx_check.py` 验证 Host 原样透传。
-- **没有**用真正的 Cloudflare 测过。第一次上线时请按上表的「不确定」一行走，看页面给出的 403 提示。
+- During the migration, the complete browser flow for both Host situations (Host preserved / Host rewritten) was run against the **old Python version**, using a real Chrome and an HTTPS reverse proxy. That script depended on the old Python code and was removed along with it.
+- For the **new stack**: `tests/integration/stack_check.py` uses header-level checks to verify that "after passing through Nginx, the Host / Origin guard still works and `X-Forwarded-*` is not trusted"; `nginx_check.py` verifies that Host is passed through unchanged.
+- It has **not** been tested with real Cloudflare. For the first go-live, follow the "Not sure" row in the table above and read the 403 message the page gives.
 
-## 5. 数据
+## 5. Data
 
-- 位置：命名卷 `xexam_data` → 容器内 `/data/xexam.db`。更新、重建、删除容器都不丢。
-- 备份与恢复：见 [database.md](database.md) 的第 5 节。
-- 不用 Docker 直接运行后端（开发）：见 [development.md](development.md)。
+- Location: named volume `xexam_data` → `/data/xexam.db` inside the container. Updating, rebuilding or deleting containers does not lose it.
+- Backup and restore: see section 5 of [database.md](database.md).
+- Running the backend directly without Docker (development): see [development.md](development.md).
 
-## 6. 健康检查与停止
+## 6. Health checks and stopping
 
-- `xexam-frontend`：`GET /healthz`（不经 Host 白名单）。`xexam-backend`：`xexam-backend healthcheck`（容器内自己带 `Host: 127.0.0.1` 访问自己）。后端 healthy 之后 Nginx 才启动（`depends_on`）。
-- 后端挂了或重启时，Nginx 不会退出，只是 `/api/` 暂时回 JSON 的 502（「后端暂时连不上」），后端恢复后自动好。
-- `docker compose stop`：后端在 8 秒内优雅退出；导入的事务要么提交完要么回滚。
+- `xexam-frontend`: `GET /healthz` (it does not go through the Host allow-list). `xexam-backend`: `xexam-backend healthcheck` (inside the container it requests itself with `Host: 127.0.0.1`). Nginx starts only after the backend is healthy (`depends_on`).
+- When the backend is down or restarting, Nginx does not exit; `/api/` just returns a JSON 502 for a while (`后端暂时连不上`, "the backend is temporarily unreachable") and recovers automatically once the backend is back.
+- `docker compose stop`: the backend exits gracefully within 8 seconds; an import transaction either finishes committing or is rolled back.
 
-## 7. 资源和镜像
+## 7. Resources and images
 
 | | |
 |---|---|
-| `xexam-frontend` | nginx-unprivileged + 静态文件；监听 8080；只读根文件系统 |
-| `xexam-backend` | 静态链接的单个可执行文件 + tzdata；uid 10001；只读根文件系统，只有 `/data` 和 `/tmp` 可写 |
-| 网络 | `internal`（后端 + Nginx，不能访问外网）和 `public`（只有 Nginx） |
+| `xexam-frontend` | nginx-unprivileged + static files; listens on 8080; read-only root filesystem |
+| `xexam-backend` | a single statically linked executable + tzdata; uid 10001; read-only root filesystem, only `/data` and `/tmp` are writable |
+| Networks | `internal` (backend + Nginx, no access to the outside network) and `public` (Nginx only) |
 
-## 8. 发布
+## 8. Releasing
 
-推送到 `main` 时，[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 先跑完前端、后端、Nginx 与整栈、arm64 四组检查，都通过才把 `xexam-frontend` 和 `xexam-backend` 两个镜像（amd64 + arm64）发布到 `ghcr.io/yumin-space/`，标签为 `latest`、`v<VERSION>`、`sha-<提交>`，并建对应的 GitHub Release。拉取请求和其它分支只检查、不发布。
+On a push to `main`, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) first runs four check groups (frontend, backend, Nginx and full stack, arm64). Only if all of them pass does it publish the two images `xexam-frontend` and `xexam-backend` (amd64 + arm64) to `ghcr.io/yumin-space/`, tagged `latest`, `v<VERSION>` and `sha-<commit>`, and create the matching GitHub Release. Pull requests and other branches are only checked, never published.
 
-第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
+The first time a new image name is published, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).
