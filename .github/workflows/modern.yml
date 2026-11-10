@@ -68,6 +68,10 @@ jobs:
         run: |
           python3 --version
           cargo test --all-targets
+      - name: progress.json migration (documented restart flow, synthetic data)
+        run: |
+          cargo build
+          python3 -I ../tests/integration/migrate_check.py target/debug/xexam-backend
 
   stack:
     name: stack (images, nginx checks, end to end)

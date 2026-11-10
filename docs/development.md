@@ -17,7 +17,7 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 130 个测试
+cargo test --all-targets          # 约 140 个测试
 cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 ```
 
@@ -53,6 +53,7 @@ docker build -f nginx/Dockerfile -t xexam-web:test .
 python -I tests/integration/nginx_check.py xexam-web:test       # 38 项，用一个假后端
 python -I tests/integration/stack_check.py                      # 34 项，起整个栈（会构建两个镜像）
 python -I tests/integration/rollback_check.py backend/target/release/xexam-backend   # 19 项
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 项：旧 progress.json 的迁移（需要先 cargo build）
 ```
 
 ## 5. 对照旧版（回归）
