@@ -56,6 +56,6 @@ export function svgMark(ok: boolean): SVGSVGElement {
 /** An element that must exist; throws if it is not found, instead of returning null and crashing somewhere else. */
 export function must<T extends Element>(sel: string, root: ParentNode = document): T {
   const el = root.querySelector<T>(sel);
-  if (!el) throw new Error('页面缺少元素：' + sel);
+  if (!el) throw new Error('Missing page element: ' + sel);
   return el;
 }

@@ -4,20 +4,33 @@
 //!   and acquiring the lock also rolls back "the uncommitted transaction left behind after the previous call panicked".
 //! - Every write is `BEGIN IMMEDIATE … COMMIT`; any failure (including a COMMIT failure) triggers `ROLLBACK`.
 //! - The preview plan of `apply_import` is recomputed **inside the same write transaction** (fixes T4 of the old version: another write could slip in between the plan and the actual write).
+//! - Schema v2 (v0.5): question banks, per-question exam detail and settings. Every import is scoped to one bank (see `banks`);
+//!   the legacy `plan_import` / `apply_import` mean "the legacy bank" (uploads without `X-Bank-Target`).
+//!
+//! Submodules (they extend `impl Store`): `migrate` (v1 → v2, backup, NULL `bank_id` fix-up), `banks` (bank list, delete, import
+//! targets, bank-scoped ids), `records` (exam records and their per-question detail), `settings`.
 use super::legacy_progress::{self, AttemptRow, StatRow};
 use super::pyjson;
-use super::schema::{SCHEMA, SCHEMA_VERSION};
+use super::schema::SCHEMA;
 use super::timefmt::{Clock, SystemClock};
-use super::{HISTORY_LIMIT, MASTER_STREAK};
+use super::{HISTORY_LIMIT, MASTER_STREAK, RECORD_RETENTION};
 use crate::error::DbError;
-use crate::models::{Attempt, ImportRecord, ParsedSheet, Question, SkippedRow};
+use crate::models::{Attempt, ImportRecord, ImportTarget, ParsedSheet, Question, SkippedRow};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::de::Error as _;
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+
+mod banks;
+mod migrate;
+mod records;
+mod settings;
+
+pub use banks::scoped_id;
+pub use migrate::BACKUP_DIR;
 
 /// Maximum number of placeholders in one `IN (?,…)` (SQLite's default limit is 32766; this leaves plenty of headroom).
 const IN_CHUNK: usize = 500;
@@ -25,6 +38,8 @@ const IN_CHUNK: usize = 500;
 pub struct Store {
     conn: Mutex<Connection>,
     clock: Arc<dyn Clock>,
+    /// The copy written before migrating this database to schema v2 at open (None: no migration, or nothing to back up).
+    migration_backup: Option<PathBuf>,
 }
 
 fn json_err(msg: &str) -> DbError {
@@ -96,22 +111,42 @@ struct StoredQuestion {
     row_no: i64,
     data: String,
     active: bool,
+    bank_id: Option<i64>,
 }
 
-fn load_questions(conn: &Connection, sql: &str) -> Result<Vec<StoredQuestion>, DbError> {
+/// Column list matching [`stored_question`].
+const QUESTION_COLUMNS: &str = "id, sheet, row_no, data, active, bank_id";
+
+fn stored_question(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredQuestion> {
+    Ok(StoredQuestion {
+        id: r.get(0)?,
+        sheet: r.get(1)?,
+        row_no: r.get(2)?,
+        data: r.get(3)?,
+        active: r.get::<_, i64>(4)? != 0,
+        bank_id: r.get(5)?,
+    })
+}
+
+/// `sql` must select [`QUESTION_COLUMNS`] in that order.
+fn load_questions(
+    conn: &Connection,
+    sql: &str,
+    p: impl rusqlite::Params,
+) -> Result<Vec<StoredQuestion>, DbError> {
     let mut st = conn.prepare(sql)?;
-    let mut rows = st.query([])?;
-    let mut out = Vec::new();
-    while let Some(r) = rows.next()? {
-        out.push(StoredQuestion {
-            id: r.get(0)?,
-            sheet: r.get(1)?,
-            row_no: r.get(2)?,
-            data: r.get(3)?,
-            active: r.get::<_, i64>(4)? != 0,
-        });
-    }
-    Ok(out)
+    let rows = st.query_map(p, stored_question)?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
+}
+
+/// A question as `/api/bank` shows it: the stored data, then `id`, `sheet`, `row`, `bank`.
+fn question_object(r: &StoredQuestion) -> Result<Map<String, Value>, DbError> {
+    let mut q = parse_data(&r.data)?;
+    q.insert("id".to_string(), Value::String(r.id.clone()));
+    q.insert("sheet".to_string(), Value::String(r.sheet.clone()));
+    q.insert("row".to_string(), Value::from(r.row_no));
+    q.insert("bank".to_string(), Value::from(r.bank_id));
+    Ok(q)
 }
 
 fn parse_data(data: &str) -> Result<Map<String, Value>, DbError> {
@@ -259,16 +294,23 @@ fn count_stats_for(conn: &Connection, ids: &[&str]) -> Result<i64, DbError> {
     Ok(total)
 }
 
-/// The old `plan_import`: read-only.
+/// The old `plan_import`: read-only. Compares against the questions of bank `bank_id` only (`None`: a bank that does not exist yet,
+/// so every question is `added`). `questions` must already carry the ids used in that bank (see `banks::scoped_questions`).
+/// Rows are read in rowid order, the same order the old full-table scan produced.
 fn compute_plan(
     conn: &Connection,
+    bank_id: Option<i64>,
     sheets: &[ParsedSheet],
     questions: &[Question],
 ) -> Result<PlanOut, DbError> {
-    let rows = load_questions(
-        conn,
-        "SELECT id, sheet, row_no, data, active FROM questions",
-    )?;
+    let rows = match bank_id {
+        Some(b) => load_questions(
+            conn,
+            &format!("SELECT {QUESTION_COLUMNS} FROM questions WHERE bank_id=?1 ORDER BY rowid"),
+            params![b],
+        )?,
+        None => Vec::new(),
+    };
     let index: HashMap<&str, usize> = rows
         .iter()
         .enumerate()
@@ -360,6 +402,65 @@ fn compute_plan(
     Ok(PlanOut { json, ..out })
 }
 
+/// The write part of an import into bank `bank_id` (inside the caller's transaction). `questions` carry the bank's ids.
+fn write_import(
+    c: &Connection,
+    bank_id: i64,
+    filename: &str,
+    sheets: &[ParsedSheet],
+    questions: &[Question],
+    t: &str,
+) -> Result<Value, DbError> {
+    let plan = compute_plan(c, Some(bank_id), sheets, questions)?;
+    let mut new_ids: HashSet<&str> = HashSet::with_capacity(questions.len());
+    {
+        let mut up = c.prepare(
+            "INSERT INTO questions(id, sheet, row_no, seq, data, active, added_at, updated_at, bank_id) VALUES(?1,?2,?3,?4,?5,1,?6,?7,?8) \
+             ON CONFLICT(id) DO UPDATE SET sheet=excluded.sheet, row_no=excluded.row_no, seq=excluded.seq, \
+             data=excluded.data, active=1, updated_at=excluded.updated_at, bank_id=excluded.bank_id",
+        )?;
+        for (seq, q) in questions.iter().enumerate() {
+            new_ids.insert(q.id.as_str());
+            let data = question_data_json(q)?;
+            up.execute(params![
+                q.id,
+                q.sheet,
+                q.row,
+                len_i64(seq),
+                data,
+                t,
+                t,
+                bank_id
+            ])?;
+        }
+    }
+    // Questions of this bank missing from the uploaded file -> retired (study records are kept); other banks are untouched.
+    // Rowid order = the order of the old full-table scan, which decides the retired questions' `seq`.
+    let base = questions.len();
+    let active_ids: Vec<String> = {
+        let mut st =
+            c.prepare("SELECT id FROM questions WHERE active=1 AND bank_id=?1 ORDER BY rowid")?;
+        let rows = st.query_map(params![bank_id], |r| r.get::<_, String>(0))?;
+        rows.collect::<Result<Vec<_>, _>>()?
+    };
+    let gone: Vec<&String> = active_ids
+        .iter()
+        .filter(|id| !new_ids.contains(id.as_str()))
+        .collect();
+    {
+        let mut down =
+            c.prepare("UPDATE questions SET active=0, seq=?1, updated_at=?2 WHERE id=?3")?;
+        for (i, qid) in gone.iter().enumerate() {
+            down.execute(params![len_i64(base + i), t, qid])?;
+        }
+    }
+    c.execute(
+        "INSERT INTO imports(at, filename, added, updated, removed, restored, skipped, total, bank_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        params![t, filename, plan.added, plan.updated, plan.removed, plan.restored, plan.skipped, len_i64(questions.len()), bank_id],
+    )?;
+    Ok(plan.json)
+}
+
 fn last_import(conn: &Connection) -> Result<Option<ImportRecord>, DbError> {
     Ok(import_rows(conn, 1)?.into_iter().next())
 }
@@ -435,7 +536,11 @@ fn progress_from(conn: &Connection) -> Result<Value, DbError> {
 }
 
 impl Store {
-    /// Opens (creating it if needed) the database and creates the tables. **Does not modify the contents** of an existing database. Timestamps use the system local time (honoring `TZ`).
+    /// Opens (creating it if needed) the database and creates the tables. Timestamps use the system local time (honoring `TZ`).
+    ///
+    /// A schema-v1 database (v0.4 and older) is migrated to schema v2 once: if it holds any data, a consistent copy is first written
+    /// to `<dir of the database>/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db`; if that copy cannot be made, opening fails and nothing
+    /// is migrated. Opening a v2 database whose rows need no fix-up **does not modify the file**.
     pub fn open(path: &Path) -> Result<Store, DbError> {
         Self::open_with_clock(path, Arc::new(SystemClock))
     }
@@ -461,17 +566,18 @@ impl Store {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         conn.execute_batch(SCHEMA)?;
-        // Write only when missing; check first, then write, so the file content of an existing database stays unchanged
-        if get_meta(&conn, "schema")?.is_none() {
-            conn.execute(
-                "INSERT OR IGNORE INTO meta(key,value) VALUES(?1,?2)",
-                params!["schema", SCHEMA_VERSION],
-            )?;
-        }
+        // Check first, then write: the file content of an up-to-date database stays unchanged
+        let migration_backup = migrate::upgrade(&conn, path, clock.as_ref())?;
         Ok(Store {
             conn: Mutex::new(conn),
             clock,
+            migration_backup,
         })
+    }
+
+    /// The backup written before this open migrated the database to schema v2, if any.
+    pub fn migration_backup(&self) -> Option<&Path> {
+        self.migration_backup.as_deref()
     }
 
     fn lock(&self) -> MutexGuard<'_, Connection> {
@@ -497,18 +603,22 @@ impl Store {
         )
     }
 
-    /// `/api/bank`: key order file, mtime, error, questions, sheets (see 123_after_import_bank.json)
+    /// `/api/bank`: key order file, mtime, error, questions, sheets (see 123_after_import_bank.json). Questions carry a trailing
+    /// `bank` (their bank id). All banks are listed: grouped by bank id (ascending), each bank in `seq` order.
     pub fn bank(&self) -> Result<Value, DbError> {
-        let (rows, last) = {
+        let (mut rows, last) = {
             let g = self.lock();
             (
                 load_questions(
                     &g,
-                    "SELECT id, sheet, row_no, data, active FROM questions ORDER BY seq",
+                    &format!("SELECT {QUESTION_COLUMNS} FROM questions ORDER BY seq"),
+                    [],
                 )?,
                 last_import(&g)?,
             )
         };
+        // Stable: with a single bank this is exactly the old `ORDER BY seq` order (ties included)
+        rows.sort_by_key(|r| r.bank_id);
         let mut order: Vec<(String, i64, i64)> = Vec::new();
         let mut pos: HashMap<String, usize> = HashMap::new();
         let mut questions = Vec::new();
@@ -529,11 +639,7 @@ impl Store {
                 }
             }
             if r.active {
-                let mut q = parse_data(&r.data)?;
-                q.insert("id".to_string(), Value::String(r.id.clone()));
-                q.insert("sheet".to_string(), Value::String(r.sheet.clone()));
-                q.insert("row".to_string(), Value::from(r.row_no));
-                questions.push(Value::Object(q));
+                questions.push(Value::Object(question_object(r)?));
             }
         }
         let sheets: Vec<Value> = order
@@ -550,58 +656,81 @@ impl Store {
         }))
     }
 
-    /// Preview: read-only, does not write to the database.
+    /// Preview against the legacy bank (uploads without `X-Bank-Target`): read-only, does not write to the database.
     pub fn plan_import(
         &self,
         sheets: &[ParsedSheet],
         questions: &[Question],
     ) -> Result<Value, DbError> {
-        let g = self.lock();
-        Ok(compute_plan(&g, sheets, questions)?.json)
+        self.plan_import_for(ImportTarget::Legacy, sheets, questions)?
+            .ok_or_else(|| json_err("the legacy target always exists"))
     }
 
-    /// The real write: one transaction (BEGIN IMMEDIATE … COMMIT, ROLLBACK on failure). The plan is recomputed inside the transaction; the return value has the same shape as `plan_import`.
+    /// Preview against `target`: read-only. `Ok(None)` = the target bank does not exist.
+    pub fn plan_import_for(
+        &self,
+        target: ImportTarget,
+        sheets: &[ParsedSheet],
+        questions: &[Question],
+    ) -> Result<Option<Value>, DbError> {
+        let g = self.lock();
+        let bank = match target {
+            ImportTarget::Legacy => banks::legacy_bank(&g)?,
+            ImportTarget::New => None,
+            ImportTarget::Bank(id) => match banks::bank_by_id(&g, id)? {
+                Some(b) => Some(b),
+                None => return Ok(None),
+            },
+        };
+        let qs = banks::scoped_questions(bank.as_ref(), questions);
+        Ok(Some(
+            compute_plan(&g, bank.map(|b| b.id), sheets, &qs)?.json,
+        ))
+    }
+
+    /// The real write against the legacy bank (created if it does not exist). See [`Store::apply_import_for`].
     pub fn apply_import(
         &self,
         filename: &str,
         sheets: &[ParsedSheet],
         questions: &[Question],
     ) -> Result<Value, DbError> {
+        self.apply_import_for(ImportTarget::Legacy, filename, sheets, questions)?
+            .map(|(plan, _)| plan)
+            .ok_or_else(|| json_err("the legacy target always exists"))
+    }
+
+    /// The real write: one transaction (BEGIN IMMEDIATE … COMMIT, ROLLBACK on failure). Creates the bank for `New` (and the legacy
+    /// bank for `Legacy` when it does not exist yet), recomputes the plan inside the transaction, upserts the questions, retires the
+    /// bank's questions missing from the file (only within that bank), records the import and updates the bank's `filename` /
+    /// `updated_at`. Returns `(plan, bank id)`; `Ok(None)` = the target bank no longer exists (nothing written).
+    pub fn apply_import_for(
+        &self,
+        target: ImportTarget,
+        filename: &str,
+        sheets: &[ParsedSheet],
+        questions: &[Question],
+    ) -> Result<Option<(Value, i64)>, DbError> {
         let t = self.clock.now();
         self.tx(|c| {
-            let plan = compute_plan(c, sheets, questions)?;
-            let mut new_ids: HashSet<&str> = HashSet::with_capacity(questions.len());
-            {
-                let mut up = c.prepare(
-                    "INSERT INTO questions(id, sheet, row_no, seq, data, active, added_at, updated_at) VALUES(?1,?2,?3,?4,?5,1,?6,?7) \
-                     ON CONFLICT(id) DO UPDATE SET sheet=excluded.sheet, row_no=excluded.row_no, seq=excluded.seq, \
-                     data=excluded.data, active=1, updated_at=excluded.updated_at",
-                )?;
-                for (seq, q) in questions.iter().enumerate() {
-                    new_ids.insert(q.id.as_str());
-                    let data = question_data_json(q)?;
-                    up.execute(params![q.id, q.sheet, q.row, len_i64(seq), data, t, t])?;
-                }
-            }
-            // Questions missing from the uploaded file -> retired (study records are kept)
-            let base = questions.len();
-            let active_ids: Vec<String> = {
-                let mut st = c.prepare("SELECT id FROM questions WHERE active=1")?;
-                let rows = st.query_map([], |r| r.get::<_, String>(0))?;
-                rows.collect::<Result<Vec<_>, _>>()?
+            let bank = match target {
+                ImportTarget::Legacy => match banks::legacy_bank(c)? {
+                    Some(b) => b,
+                    None => banks::create_bank(c, filename, true, &t)?,
+                },
+                ImportTarget::New => banks::create_bank(c, filename, false, &t)?,
+                ImportTarget::Bank(id) => match banks::bank_by_id(c, id)? {
+                    Some(b) => b,
+                    None => return Ok(None),
+                },
             };
-            let gone: Vec<&String> = active_ids.iter().filter(|id| !new_ids.contains(id.as_str())).collect();
-            {
-                let mut down = c.prepare("UPDATE questions SET active=0, seq=?1, updated_at=?2 WHERE id=?3")?;
-                for (i, qid) in gone.iter().enumerate() {
-                    down.execute(params![len_i64(base + i), t, qid])?;
-                }
-            }
+            let qs = banks::scoped_questions(Some(&bank), questions);
+            let plan = write_import(c, bank.id, filename, sheets, &qs, &t)?;
             c.execute(
-                "INSERT INTO imports(at, filename, added, updated, removed, restored, skipped, total) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![t, filename, plan.added, plan.updated, plan.removed, plan.restored, plan.skipped, len_i64(questions.len())],
+                "UPDATE banks SET filename=?1, updated_at=?2 WHERE id=?3",
+                params![filename, t, bank.id],
             )?;
-            Ok(plan.json)
+            Ok(Some((plan, bank.id)))
         })
     }
 
@@ -616,7 +745,20 @@ impl Store {
         progress_from(&g)
     }
 
+    /// Records an exam without per-question answers (every detail row is stored as unanswered). See [`Store::record_attempt_with_answers`].
     pub fn record_attempt(&self, attempt: &Attempt) -> Result<Value, DbError> {
+        self.record_attempt_with_answers(attempt, &[])
+    }
+
+    /// Records an exam in one transaction: updates `stats`, inserts the `attempts` row (with the `banks` snapshot of the questions'
+    /// banks, in order of first appearance) and one `attempt_items` row per result (`answers[i]` belongs to `results[i]`; missing
+    /// entries are stored as NULL), then keeps only the newest `RECORD_RETENTION` exams (their detail rows go with them).
+    /// Returns `/api/progress`.
+    pub fn record_attempt_with_answers(
+        &self,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+    ) -> Result<Value, DbError> {
         let total = len_i64(attempt.results.len());
         if total == 0 {
             return Err(invalid_input("an attempt needs at least one result"));
@@ -624,6 +766,15 @@ impl Store {
         let good = len_i64(attempt.results.iter().filter(|r| r.correct).count());
         let percent = percent_round_half_even(good, total);
         let sheets_json = pyjson::to_string(&attempt.sheets)?;
+        let answer_texts = (0..attempt.results.len())
+            .map(|i| {
+                answers
+                    .get(i)
+                    .and_then(Option::as_ref)
+                    .map(pyjson::to_string)
+                    .transpose()
+            })
+            .collect::<Result<Vec<Option<String>>, _>>()?;
         let t = self.clock.now();
         let g = self.lock();
         run_tx(&g, |c| {
@@ -643,24 +794,33 @@ impl Store {
                     }
                 }
             }
+            let banks_json = records::bank_snapshot(c, &attempt.results)?;
             c.execute(
-                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds) VALUES(?1,?2,?3,?4,?5,?6,?7)",
-                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds],
+                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
+                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json],
             )?;
-            // Keep only the most recent HISTORY_LIMIT sessions
-            c.execute(
-                "DELETE FROM attempts WHERE id NOT IN (SELECT id FROM attempts ORDER BY id DESC LIMIT ?1)",
-                params![HISTORY_LIMIT],
-            )?;
+            let attempt_id = c.last_insert_rowid();
+            {
+                let mut item = c.prepare(
+                    "INSERT INTO attempt_items(attempt_id, seq, question_id, answer, correct) VALUES(?1,?2,?3,?4,?5)",
+                )?;
+                for (seq, (r, answer)) in attempt.results.iter().zip(&answer_texts).enumerate() {
+                    item.execute(params![attempt_id, len_i64(seq), r.id, answer, r.correct])?;
+                }
+            }
+            // Keep only the most recent RECORD_RETENTION sessions (and their detail); `/api/progress` still shows HISTORY_LIMIT
+            records::prune(c, RECORD_RETENTION)?;
             Ok(())
         })?;
         progress_from(&g)
     }
 
+    /// `/api/reset`: empties the per-question stats and every exam record (with its detail).
     pub fn reset_progress(&self) -> Result<Value, DbError> {
         let g = self.lock();
         run_tx(&g, |c| {
             c.execute("DELETE FROM stats", [])?;
+            c.execute("DELETE FROM attempt_items", [])?;
             c.execute("DELETE FROM attempts", [])?;
             Ok(())
         })?;

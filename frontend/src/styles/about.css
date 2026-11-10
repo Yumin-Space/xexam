@@ -1,0 +1,26 @@
+/* About page: intro + facts, then what is new per version. Colours come only from the tokens in main.css. */
+.page-about .panel { max-width: 860px; }
+.ab-intro p { max-width: 46em; }
+.ab-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 14px 0 0; }
+.ab-facts dt { color: var(--ink3); }
+.ab-facts dd { margin: 0; font-weight: 600; }
+.ab-lead { margin: -8px 0 14px; }
+
+.ab-entry h3, .ab-entry summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 17px; }
+.ab-ver { font-weight: 700; }
+.ab-date { font-weight: 500; font-size: 14px; color: var(--ink3); }
+.ab-tag { font-size: 12.5px; font-weight: 700; padding: 0 8px; border-radius: 999px; border: 1.5px solid var(--print); color: var(--print); }
+.ab-first { padding-bottom: 6px; }
+.ab-older-h { font-size: 15px; color: var(--ink2); margin: 22px 0 8px; }
+details.ab-entry { border-top: 1px solid var(--line); padding: 10px 0; }
+details.ab-entry:last-child { border-bottom: 1px solid var(--line); }
+details.ab-entry summary { cursor: pointer; min-height: 32px; }
+details.ab-entry[open] summary { margin-bottom: 6px; }
+
+.ab-body { margin-top: 8px; line-height: 1.75; max-width: 52em; }
+.ab-body p { margin: 0 0 10px; }
+.ab-body ul { margin: 0 0 10px; padding-left: 20px; }
+.ab-body li + li { margin-top: 4px; }
+.ab-body ul ul { margin: 4px 0 0; }
+.ab-body code { font-size: .9em; padding: 0 4px; border-radius: 3px; background: var(--tint); overflow-wrap: anywhere; }
+@media (pointer: coarse) { details.ab-entry summary { min-height: 44px; align-items: center; } }

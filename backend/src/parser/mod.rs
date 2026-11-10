@@ -5,7 +5,7 @@
 //! - `make_id(sheet, stem, first) -> String`             question id (the key of study records, **must be byte-for-byte identical to the legacy version**)
 //! - `py_space::is_py_space(char) -> bool`               the 29 code points of Python `\s`
 //!
-//! Behavior is based on: `docs/audit/xlsx-parser.md`, `tests/baseline/parser_golden/` (legacy output of 50 fixtures),
+//! Behavior is based on: `docs/zh-CN/history/audit/xlsx-parser.md`, `tests/baseline/parser_golden/` (legacy output of 50 fixtures),
 //! `tests/baseline/golden/id_vectors.json` (85 id assertions).
 //!
 //! Internal layers: `zip_guard` (zip layer and limits) -> `xml` (quick-xml events -> a small tree equivalent to ElementTree) ->

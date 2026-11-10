@@ -4,7 +4,7 @@ import { effectiveLang, hasLang, isLang, shown } from './language.ts';
 import type { Question } from '../types/api.ts';
 
 const base = {
-  tag: '', translation: '', explanation: '', mnemonic: '', note: '', id: 'q', sheet: 'S', row: 1,
+  tag: '', translation: '', explanation: '', mnemonic: '', note: '', id: 'q', sheet: 'S', row: 1, bank: 1,
 };
 
 const choice = (extra: Partial<Question> = {}): Question => ({

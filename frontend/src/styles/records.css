@@ -1,0 +1,154 @@
+/* Area "records": study-record list, exam detail, wrong-answer review, the result page and the shared review cards
+   (components/review.ts). Builds on the shared classes in main.css. Colours: tokens only (light and dark themes). */
+
+/* `hidden` must win over the display of .btn / flex helpers */
+.page-records [hidden], .page-result [hidden] { display: none !important; }
+
+.rec-back { padding-inline: 10px 14px; }
+.rec-back span { font-size: 1.1em; line-height: 1; }
+
+/* ---------- Summary ---------- */
+.rec-scope { margin: -10px 0 16px; font-size: 13.5px; color: var(--ink3); }
+.rec-sum-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, max-content)) minmax(160px, 1fr);
+  gap: 16px 40px; align-items: end;
+}
+.rec-kpi { display: grid; gap: 6px; min-width: 0; }
+.rec-kpi b { font: 700 36px/1 var(--num), var(--en); color: var(--ink); }
+.rec-kpi span { font-size: 13px; color: var(--ink3); }
+.rec-chart { display: grid; gap: 6px; min-width: 0; }
+.rec-chart .bars { height: 56px; margin: 0; }
+.rec-chart span { font-size: 13px; color: var(--ink3); }
+
+/* ---------- Filters ---------- */
+.rec-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px 16px; }
+.rec-field { display: grid; gap: 4px; min-width: 0; }
+.rec-field > label { font-size: 13px; font-weight: 600; color: var(--ink2); }
+.rec-field select, .rec-field input {
+  width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px;
+  border: 1.5px solid var(--line); border-radius: 4px; background: var(--card); color: var(--ink);
+}
+@media (hover: hover) { .rec-field select:hover, .rec-field input:hover { border-color: var(--ink3); } }
+.rec-warn { margin-top: 10px; font-size: 13.5px; color: var(--wrong); font-weight: 600; }
+.rec-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 14px; }
+.rec-count { font-size: 14px; color: var(--ink2); }
+
+/* ---------- Record table (cards on narrow screens) ---------- */
+.rec-scroll { overflow-x: auto; }
+.rec-table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
+.rec-table th {
+  text-align: left; padding: 8px 10px; font-size: 13px; font-weight: 600; color: var(--ink3);
+  border-bottom: 1.5px solid var(--line); white-space: nowrap;
+}
+.rec-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.rec-table tbody tr { cursor: pointer; }
+@media (hover: hover) { .rec-table tbody tr:hover { background: var(--tint); } }
+.rec-table tbody tr:last-child td { border-bottom: 0; }
+.rec-time { white-space: nowrap; }
+.rec-time a { color: var(--print); font-weight: 600; text-decoration: none; }
+.rec-time a:hover { text-decoration: underline; color: var(--print); }
+.rec-banks { overflow-wrap: anywhere; min-width: 8em; }
+.rec-mode { display: block; font-size: 12.5px; color: var(--ink3); }
+.rec-table td.num { white-space: nowrap; }
+.rec-pct { font-weight: 700; font-size: 16px; }
+.rec-pct.hi { color: var(--right); }
+.rec-pct.lo { color: var(--wrong); }
+.rec-act { text-align: right; }
+.btn.rec-del { color: var(--wrong); }
+@media (hover: hover) { .btn.rec-del:hover:not(:disabled) { background: var(--wrong-soft); } }
+.rec-nomatch { display: grid; justify-items: start; gap: 12px; }
+.rec-retention { margin-top: 16px; font-size: 13.5px; }
+/* Retention note and the rarely used "Delete all" at the end of the list page */
+.rec-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; }
+.rec-foot .rec-retention { flex: 1 1 20em; margin-top: 0; }
+
+@media (max-width: 760px) { .rec-listpanel { padding: 18px 12px; } }
+/* Stacked cards whenever the list is narrower than the table needs (about 630px in English, plus room for longer bank
+   names and labels): phones and small tablets up to 760px */
+@media (max-width: 760px) {
+  .rec-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .rec-table, .rec-table tbody { display: block; }
+  /* Row 1: date and accuracy; row 2: banks; row 3: answered, time used, correct and Delete */
+  .rec-table tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px 12px;
+    margin-bottom: 10px; padding: 12px 14px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--card);
+  }
+  .rec-table tbody tr:last-child { margin-bottom: 0; }
+  .rec-table td { display: block; padding: 0; border: 0; min-width: 0; }
+  .rec-table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 600; color: var(--ink3); }
+  .rec-table .rec-time { grid-column: 1 / 4; grid-row: 1; }
+  /* The date needs no label, and the whole card is the tap target (no extra padding on the link) */
+  .rec-table td.rec-time[data-label]::before { display: none; }
+  .rec-table .rec-time a { padding-block: 0; }
+  .rec-table .rec-time a::after { content: "›" / ""; margin-left: 6px; color: var(--ink3); }
+  .rec-table .rec-pct { grid-column: 4; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
+  .rec-table .rec-banks { grid-column: 1 / -1; min-width: 0; }
+  .rec-table .rec-act { grid-column: 4; align-self: end; display: flex; justify-content: flex-end; margin-top: 0; }
+}
+
+/* ---------- Exam detail ---------- */
+.rec-score { align-items: start; }
+.rec-score .big { padding-top: 6px; }
+.rec-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 12px 0 0; font-size: 14.5px; }
+.rec-meta dt { color: var(--ink3); }
+.rec-meta dd { margin: 0; overflow-wrap: anywhere; }
+.rec-hints { margin-top: 10px; }
+.score .says .rec-hints p { font-size: 13.5px; color: var(--ink3); }
+.rec-hints p + p { margin-top: 4px; }
+.rec-note { padding: 14px 16px; border: 1px dashed var(--line); border-radius: 6px; background: var(--tint); color: var(--ink2); }
+.rec-err-acts { margin-top: 12px; }
+/* "Delete this record": a quiet text button at the end of the row, apart from retry / retake */
+.rec-score .acts .rec-del:not(:first-child) { margin-inline-start: auto; }
+/* Label and value stay side by side on phones too (the labels are short in every language) */
+@media (max-width: 480px) { .rec-meta { grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; font-size: 14px; } }
+/* "Retry wrong answers" / "Practise these" again after a long list */
+.wr-foot { margin-top: 20px; }
+
+/* ---------- Empty states ---------- */
+.rec-empty { display: grid; justify-items: start; gap: 10px; }
+.rec-empty h2 { margin-bottom: 0; }
+
+/* ---------- Wrong-answer review ---------- */
+.wr-intro { max-width: 48em; margin-bottom: 16px; color: var(--ink2); }
+.wr-tools { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 20px; margin-bottom: 18px; }
+.wr-tools .rec-field { width: min(320px, 100%); }
+.wr-count { font-weight: 600; color: var(--ink2); }
+.wr-stats p + p { margin-top: 2px; }
+.wr-left { color: var(--print); font-weight: 600; }
+
+/* ---------- Review cards (shared) ---------- */
+.badge.retired { border-color: var(--ink3); color: var(--ink3); background: var(--tint); }
+.rv-src { min-width: 0; overflow-wrap: anywhere; }
+.rv-retired { margin: -8px 0 16px; font-size: 13.5px; color: var(--ink3); }
+.rv:focus { outline: none; }
+.rv:focus-visible .paper { outline: 3px solid var(--print); outline-offset: 2px; }
+.rv-gone .paper { padding-block: 16px; }
+.rv-gone .phead { margin-bottom: 8px; }
+.verdict .vp { display: inline-block; margin-right: 1.5em; }
+.verdict .vp:last-child { margin-right: 0; }
+.page-result .seg, .page-records .seg { max-width: 100%; flex-wrap: wrap; }
+@media (max-width: 900px) {
+  /* The narrow-screen top bar is sticky: keep the card heading below it after a jump */
+  .page-result .rv, .page-records .rv { scroll-margin-top: 72px; }
+}
+
+/* ---------- Narrow screens ---------- */
+@media (max-width: 640px) {
+  .rec-sum-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .rec-chart { grid-column: 1 / -1; }
+  .rec-kpi b { font-size: 26px; }
+  /* Filters in two rows (bank + score, from + to), so the first exam starts on the first screen. The heading is only
+     hidden visually: the panel's aria-labelledby still points to it. */
+  .rec-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+  .rec-filter > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .rec-bar { margin-top: 10px; }
+}
+@media (pointer: coarse), (max-width: 480px) {
+  .rec-field select, .rec-field input { min-height: 44px; }
+  .rec-time a { display: inline-block; padding-block: 8px; }
+}
+/* iOS Safari zooms into any focused form control under 16px */
+@media (pointer: coarse) {
+  .rec-field select, .rec-field input { font-size: 16px; }
+}

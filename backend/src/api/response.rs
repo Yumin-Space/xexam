@@ -16,6 +16,12 @@ pub const MSG_PENDING_GONE: &str = "这次上传的预览已经过期或已被�
 pub const MSG_SHUTDOWN_DISABLED: &str = "在 Docker 里请用 docker compose stop 停止容器。";
 pub const MSG_INTERNAL: &str = "服务器内部出错，请稍后再试。";
 pub const MSG_UPLOAD_INCOMPLETE: &str = "文件是空的，或者没有上传完整。";
+// v0.5
+pub const MSG_BANK_NOT_FOUND: &str = "这个题库不存在（可能已被删除），请刷新页面后再试。";
+pub const MSG_RECORD_NOT_FOUND: &str = "这条考试记录不存在（可能已被删除），请刷新页面后再试。";
+pub const MSG_BAD_TARGET: &str = "上传目标不对，请刷新页面后再试。";
+pub const MSG_BAD_REQUEST: &str = "请求的格式不对。";
+pub const MSG_BAD_SETTINGS: &str = "设置的值不对。";
 
 pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: bool) -> Response {
     let len = body.len();
@@ -78,6 +84,7 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
         AppError::BadJson => error_json(StatusCode::BAD_REQUEST, "bad json", head_only),
         AppError::BadRequest(m) => error_json(StatusCode::BAD_REQUEST, &m, head_only),
         AppError::NotFound => error_json(StatusCode::NOT_FOUND, "not found", head_only),
+        AppError::NotFoundMsg(m) => error_json(StatusCode::NOT_FOUND, m, head_only),
         AppError::PendingGone => error_json(StatusCode::CONFLICT, MSG_PENDING_GONE, head_only),
         AppError::ShutdownDisabled => {
             error_json(StatusCode::FORBIDDEN, MSG_SHUTDOWN_DISABLED, head_only)

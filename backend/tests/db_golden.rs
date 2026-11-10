@@ -26,6 +26,23 @@ fn assert_same(a: &Value, b: &Value, what: &str) {
     assert_eq!(py_dumps(a), py_dumps(b), "{what}");
 }
 
+/// v0.5 intended difference: every question in `/api/bank` carries a trailing `"bank": <bank id>`. Checks that it is the last key
+/// and equals `bank_id`, and returns the bank without it (= the v0.4 shape the goldens were captured in).
+fn without_bank_key(bank: &Value, bank_id: i64) -> Value {
+    let mut out = bank.clone();
+    for q in out["questions"].as_array_mut().expect("questions") {
+        let obj = q.as_object_mut().expect("question object");
+        assert_eq!(
+            obj.keys().next_back().map(String::as_str),
+            Some("bank"),
+            "bank must be the trailing key"
+        );
+        assert_eq!(obj.get("bank"), Some(&json!(bank_id)));
+        obj.shift_remove("bank");
+    }
+    out
+}
+
 fn raw_rows(path: &Path) -> Value {
     let c = Connection::open(path).expect("raw open");
     let mut out = serde_json::Map::new();
@@ -97,7 +114,12 @@ fn sample_db_matches_golden() {
     std::fs::copy(baseline("fixtures/sample.db"), &p).expect("copy sample.db");
     let s = Store::open(&p).expect("open sample");
     let g = read_json(&baseline("golden/store_sample_outputs.json"));
-    assert_same(&s.bank().expect("bank"), &g["bank"], "bank");
+    // intended difference (v0.5): the migrated data lives in the legacy bank (id 1), named in the trailing "bank" key
+    assert_same(
+        &without_bank_key(&s.bank().expect("bank"), 1),
+        &g["bank"],
+        "bank",
+    );
     assert_same(&s.progress().expect("progress"), &g["progress"], "progress");
     let imports = serde_json::to_value(s.import_history(100).expect("imports")).expect("json");
     assert_same(&imports, &g["imports"], "imports");
@@ -290,7 +312,7 @@ fn eight_threads_record_attempts_and_imports() {
 }
 
 #[test]
-fn history_is_pruned_to_sixty_and_ids_keep_growing() {
+fn history_shows_sixty_while_the_database_keeps_more_and_ids_keep_growing() {
     let dir = tmp();
     let p = dir.path().join("x.db");
     let s = open_fixed(&p);
@@ -302,6 +324,14 @@ fn history_is_pruned_to_sixty_and_ids_keep_growing() {
     assert_eq!(prog["history"].as_array().map(Vec::len), Some(60));
     assert_eq!(prog["history"][0]["seconds"], 64);
     assert_eq!(prog["questions"]["q"]["attempts"], 65);
+    // intended difference (v0.5): retention is RECORD_RETENTION (500) sessions, so nothing was pruned at 60
+    // (pruning at 500 is covered in tests/v05_banks_records_settings.rs)
+    let kept: i64 = Connection::open(&p)
+        .expect("raw")
+        .query_row("SELECT COUNT(*) FROM attempts", [], |r| r.get(0))
+        .expect("count");
+    assert_eq!(kept, 65);
+    assert_eq!(xexam_backend::database::RECORD_RETENTION, 500);
     s.reset_progress().expect("reset");
     s.record_attempt(&attempt(&[("q", true)], "all", 0))
         .expect("attempt");
@@ -314,31 +344,36 @@ fn history_is_pruned_to_sixty_and_ids_keep_growing() {
 
 // ---------------------------------------------------------------- (5) schema equality
 
+fn sqlite_master(path: &Path) -> Vec<Value> {
+    let c = Connection::open(path).expect("open");
+    let mut st = c
+        .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY rowid")
+        .expect("prepare");
+    st.query_map([], |r| {
+        Ok(json!([
+            r.get::<_, String>(0)?,
+            r.get::<_, String>(1)?,
+            r.get::<_, String>(2)?,
+            r.get::<_, Option<String>>(3)?
+        ]))
+    })
+    .expect("query")
+    .map(|r| r.expect("row"))
+    .collect()
+}
+
 #[test]
-fn schema_is_identical_to_the_one_python_created() {
-    // tests/baseline/fixtures/sample.db was built by the old Python implementation; the empty database built by the new backend must have a byte-for-byte identical sqlite_master.
+fn schema_is_the_python_v1_text_plus_the_v2_migration() {
+    // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Intended difference (v0.5): the backend
+    // still executes that v1 text byte for byte, then migrates to schema 2 (new tables/indexes; three columns added with
+    // ALTER TABLE, which SQLite records by appending them to the stored CREATE TABLE text). A fresh database and a migrated v1
+    // database must end up with identical schemas.
     let dir = tmp();
     let rs_db = dir.path().join("rs.db");
     drop(open_fixed(&rs_db));
-    let master = |path: &Path| -> Value {
-        let c = Connection::open(path).expect("open");
-        let mut st = c
-            .prepare("SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY rowid")
-            .expect("prepare");
-        let rows: Vec<Value> = st
-            .query_map([], |r| {
-                Ok(json!([
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, Option<String>>(3)?
-                ]))
-            })
-            .expect("query")
-            .map(|r| r.expect("row"))
-            .collect();
-        Value::Array(rows)
-    };
+    let migrated = dir.path().join("migrated.db");
+    std::fs::copy(baseline("fixtures/sample.db"), &migrated).expect("copy");
+    drop(open_fixed(&migrated));
     let pragmas = |path: &Path| -> Value {
         let c = Connection::open(path).expect("open");
         let jm: String = c
@@ -350,12 +385,48 @@ fn schema_is_identical_to_the_one_python_created() {
         json!([jm, uv])
     };
     let sample = baseline("fixtures/sample.db");
-    let (a, b) = (master(&sample), master(&rs_db));
-    assert_eq!(a, b, "sqlite_master text must match what Python created");
+    let (v1, fresh) = (sqlite_master(&sample), sqlite_master(&rs_db));
     assert_eq!(
-        a.as_array().map(Vec::len),
-        Some(10),
+        v1.len(),
+        10,
         "10 rows incl. autoindexes and sqlite_sequence"
+    );
+    assert_eq!(
+        fresh,
+        sqlite_master(&migrated),
+        "fresh and migrated databases must have the same schema"
+    );
+    // The v1 part: same objects in the same order; the text is Python's, except the three tables that gained a column
+    let added = [
+        ("questions", ", bank_id INTEGER"),
+        ("attempts", ", banks TEXT NOT NULL DEFAULT '[]'"),
+        ("imports", ", bank_id INTEGER"),
+    ];
+    for (old, new) in v1.iter().zip(&fresh) {
+        let name = old[1].as_str().expect("name");
+        let mut want = old.clone();
+        if let Some((_, col)) = added.iter().find(|(t, _)| *t == name) {
+            let text = old[3].as_str().expect("sql");
+            let body = text.strip_suffix(')').expect("ends with )");
+            want[3] = json!(format!("{body}{col})"));
+        }
+        assert_eq!(new, &want, "{name}");
+    }
+    let v2_objects: Vec<(&str, &str)> = fresh[10..]
+        .iter()
+        .map(|r| (r[0].as_str().expect("type"), r[1].as_str().expect("name")))
+        .collect();
+    assert_eq!(
+        v2_objects,
+        [
+            ("table", "banks"),
+            ("table", "attempt_items"),
+            ("index", "sqlite_autoindex_attempt_items_1"),
+            ("index", "idx_attempt_items_question"),
+            ("table", "settings"),
+            ("index", "sqlite_autoindex_settings_1"),
+            ("index", "idx_questions_bank"),
+        ]
     );
     assert_eq!(pragmas(&sample), pragmas(&rs_db));
     assert_eq!(pragmas(&rs_db), json!(["delete", 0]));
@@ -367,7 +438,14 @@ fn schema_is_identical_to_the_one_python_created() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(meta, vec![("schema".to_string(), "1".to_string())]);
+    assert_eq!(meta, vec![("schema".to_string(), "2".to_string())]);
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("backups"))
+            .expect("backups dir")
+            .count(),
+        1,
+        "only the copy that had data was backed up; the fresh database was not"
+    );
 }
 
 // ---------------------------------------------------------------- (6) reopen without alteration
@@ -379,7 +457,16 @@ fn reopening_does_not_alter_the_file() {
     let sample = dir.path().join("sample.db");
     std::fs::copy(baseline("fixtures/sample.db"), &sample).expect("copy");
     let before = std::fs::read(&sample).expect("read");
-    // sample.db is a database written by the old Python implementation: open it, read the question bank and study records, close it; the file must not change by a single byte
+    // sample.db is a schema-1 database written by the old Python implementation. Intended difference (v0.5): the first open migrates
+    // it to schema 2 (after writing a backup, see tests/v05_banks_records_settings.rs). From then on: open it, read the question bank
+    // and study records, close it; the file must not change by a single byte.
+    drop(Store::open(&sample).expect("first open migrates"));
+    assert_ne!(
+        std::fs::read(&sample).expect("read"),
+        before,
+        "the first open migrates"
+    );
+    let before = std::fs::read(&sample).expect("read");
     let s = Store::open(&sample).expect("open sample");
     s.bank().expect("bank");
     s.progress().expect("progress");
@@ -387,7 +474,7 @@ fn reopening_does_not_alter_the_file() {
     assert_eq!(
         std::fs::read(&sample).expect("read"),
         before,
-        "a python-written database was changed by open + read + close"
+        "a migrated python-written database was changed by open + read + close"
     );
     // a Rust-written db
     let (sheets, qs) = sample_questions();
@@ -658,7 +745,8 @@ fn removed_samples_cut_by_code_points_and_bank_key_order() {
             "note",
             "id",
             "sheet",
-            "row"
+            "row",
+            "bank" // intended difference (v0.5): trailing bank id
         ]
     );
     let skeys: Vec<&str> = bank["sheets"][0]

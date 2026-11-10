@@ -63,6 +63,24 @@ pub fn local_now() -> String {
     format_minute(&Zoned::now())
 }
 
+/// Formats a zoned instant as `YYYYmmdd-HHMMSS` (file-name safe; used for backup names).
+pub fn format_file_stamp(z: &Zoned) -> String {
+    format!(
+        "{:04}{:02}{:02}-{:02}{:02}{:02}",
+        z.year(),
+        z.month(),
+        z.day(),
+        z.hour(),
+        z.minute(),
+        z.second()
+    )
+}
+
+/// The current local time as `YYYYmmdd-HHMMSS`.
+pub fn local_file_stamp() -> String {
+    format_file_stamp(&Zoned::now())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -80,6 +98,19 @@ mod tests {
     fn minute_is_zero_padded() {
         let ts = Timestamp::from_second(0).expect("ts");
         assert_eq!(format_timestamp_in(ts, &TimeZone::UTC), "1970-01-01 00:00");
+    }
+
+    #[test]
+    fn file_stamp_has_seconds_and_no_separators_that_paths_dislike() {
+        // 2026-01-07 08:00:30 UTC
+        let ts = Timestamp::from_second(1_767_772_830).expect("ts");
+        assert_eq!(
+            format_file_stamp(&ts.to_zoned(TimeZone::UTC)),
+            "20260107-080030"
+        );
+        let s = local_file_stamp();
+        assert_eq!(s.len(), 15, "{s}");
+        assert!(s.chars().all(|c| c.is_ascii_digit() || c == '-'), "{s}");
     }
 
     #[test]

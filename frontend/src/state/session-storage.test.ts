@@ -18,7 +18,7 @@ const mem = new Map<string, string>();
 const KEY = 'xexam.session.v1';
 const q = (id: string, kind: Question['kind'], extra: Partial<Question> = {}): Question => ({
   kind, tag: '', stem: id, options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }],
-  items: [], answer: ['A'], translation: '', zh: null, explanation: '', mnemonic: '', note: '', id, sheet: 'S', row: 1, ...extra,
+  items: [], answer: ['A'], translation: '', zh: null, explanation: '', mnemonic: '', note: '', id, sheet: 'S', row: 1, bank: 1, ...extra,
 });
 const hot = q('h', 'hotspot', { options: [], items: [{ text: 'x', choices: ['はい', 'いいえ'] }, { text: 'y', choices: ['はい', 'いいえ'] }], answer: [0, 1] });
 const bank = { file: '', mtime: '', error: '', sheets: [], questions: [q('s', 'single'), q('m', 'multi'), hot] } as Bank;

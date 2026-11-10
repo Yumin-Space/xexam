@@ -382,9 +382,9 @@ fn the_answer_is_still_read_from_the_japanese_choices_whatever_language_the_othe
 
 // ---------------------------------------------------------------- A hotspot question answer can be written with the option words of any one of the three languages
 
-const JA_LAYER: &str = "ホットスポット\n分類してください。\n\n1. 請求書の種類を分類する。\t前処理 / モデルステージ / 後処理\n\n2. 検証済みレコードを保存する。\t前処理 / モデルステージ / 後処理";
-const ZH_LAYER: &str = "【中文翻译】\n热点题：请分类。\n1. 对发票类型进行分类。\t前处理 / 模型阶段 / 后处理\n2. 保存验证过的记录。\t前处理 / 模型阶段 / 后处理";
-const EN_LAYER: &str = "HOTSPOT\nPlease classify.\n\n1. Classify the invoice type.\tPre-Processing / Model Stage / Post-Processing\n\n2. Save the validated records.\tPre-Processing / Model Stage / Post-Processing";
+const JA_LAYER: &str = "ホットスポット\nどの段階ですか。\n\n1. スープを 20 分間煮込む。\t下ごしらえ / 調理 / 盛り付け\n\n2. スープを器に注ぐ。\t下ごしらえ / 調理 / 盛り付け";
+const ZH_LAYER: &str = "【中文翻译】\n热点题：属于哪个阶段？\n1. 把汤小火炖 20 分钟。\t准备 / 烹饪 / 上菜\n2. 把汤盛进碗里。\t准备 / 烹饪 / 上菜";
+const EN_LAYER: &str = "HOTSPOT\nWhich stage is it?\n\n1. Simmer the soup for 20 minutes.\tPreparation / Cooking / Serving\n\n2. Pour the soup into bowls.\tPreparation / Cooking / Serving";
 
 fn layer_answer(ans: &str) -> Vec<Vec<Option<&str>>> {
     vec![vec![
@@ -399,31 +399,29 @@ fn layer_answer(ans: &str) -> Vec<Vec<Option<&str>>> {
 fn answers_may_be_written_with_the_choice_words_of_any_of_the_three_languages() {
     // The same answer (item 1 picks the 2nd option, item 2 picks the 3rd), written in the three notations, must yield the same indices
     for ans in [
-        "【答案】1 モデルステージ；2 後処理",
-        "【答案】1 模型阶段；2 后处理",
-        "【答案】1 Model Stage；2 Post-Processing",
-        "【答案】1 モデルステージ；2 Post-Processing", // mixing notations is fine too
+        "【答案】1 調理；2 盛り付け",
+        "【答案】1 烹饪；2 上菜",
+        "【答案】1 Cooking；2 Serving",
+        "【答案】1 調理；2 Serving", // mixing notations is fine too
     ] {
         let pw = parse_workbook(&workbook(&layer_answer(ans))).expect("parse");
         let q = only(&pw);
         assert_eq!(q.answer, Answer::Indexes(vec![1, 2]), "answer text: {ans}");
         assert_eq!(
             choices_of(&q.zh),
-            Some(vec!["前处理|模型阶段|后处理".to_string(); 2])
+            Some(vec!["准备|烹饪|上菜".to_string(); 2])
         );
         assert_eq!(
             choices_of(&q.en),
-            Some(vec![
-                "Pre-Processing|Model Stage|Post-Processing".to_string();
-                2
-            ])
+            Some(vec!["Preparation|Cooking|Serving".to_string(); 2])
         );
     }
 }
 
 #[test]
 fn a_word_that_is_in_none_of_the_languages_is_still_rejected_with_the_old_message() {
-    let pw = parse_workbook(&workbook(&layer_answer("【答案】1 Maybe；2 後処理"))).expect("parse");
+    let pw =
+        parse_workbook(&workbook(&layer_answer("【答案】1 Maybe；2 盛り付け"))).expect("parse");
     assert_eq!(pw.questions.len(), 0);
     let skipped = &pw.sheets.first().expect("sheet").skipped;
     assert_eq!(skipped.len(), 1);
@@ -439,12 +437,12 @@ fn a_word_that_is_in_none_of_the_languages_is_still_rejected_with_the_old_messag
 #[test]
 fn other_language_words_only_count_when_their_column_lines_up_one_for_one_with_the_japanese() {
     // The English column has 2 options (Japanese has 3): positions do not match, so English words cannot be used to write the answer (better to fail to read than to select the wrong option)
-    let en = "HOTSPOT\nPlease classify.\n\n1. Classify the invoice type.\tPre-Processing / Post-Processing\n\n2. Save the validated records.\tPre-Processing / Post-Processing";
+    let en = "HOTSPOT\nWhich stage is it?\n\n1. Simmer the soup for 20 minutes.\tPreparation / Serving\n\n2. Pour the soup into bowls.\tPreparation / Serving";
     let rows = vec![vec![
         Some(en),
         Some(ZH_LAYER),
         Some(JA_LAYER),
-        Some("【答案】1 Post-Processing；2 後処理"),
+        Some("【答案】1 Serving；2 盛り付け"),
     ]];
     let pw = parse_workbook(&workbook(&rows)).expect("parse");
     assert_eq!(
@@ -457,7 +455,7 @@ fn other_language_words_only_count_when_their_column_lines_up_one_for_one_with_t
         Some(en),
         Some(ZH_LAYER),
         Some(JA_LAYER),
-        Some("【答案】1 後処理；2 後処理"),
+        Some("【答案】1 盛り付け；2 盛り付け"),
     ]];
     let pw = parse_workbook(&workbook(&rows)).expect("parse");
     assert_eq!(only(&pw).answer, Answer::Indexes(vec![2, 2]));

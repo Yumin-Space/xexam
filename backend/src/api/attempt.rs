@@ -1,14 +1,45 @@
 //! Request sanitization for `/api/attempt` (server.py `clean_attempt`, v0.2 form).
 //! Differences from the legacy version (inputs that used to drop the connection now give a deterministic result): `seconds` of Infinity/NaN/garbage -> 0; `results` not a list -> 400.
+//!
+//! v0.5: each result may carry an optional `answer` (see [`clean_answer`]); a malformed answer only drops the answer, never the result.
 use super::json::PyVal;
-use crate::models::{Attempt, AttemptResult};
+use crate::models::{Attempt, AttemptAnswers, AttemptResult};
 use crate::security::{py_int_str, truncate_chars};
+use serde_json::Value;
 
 pub const MSG_BAD_RESULTS: &str = "成绩的格式不对";
 pub const MSG_NO_RESULTS: &str = "没有成绩可保存";
 const MAX_RESULTS: usize = 2000;
 const MAX_SHEETS: usize = 50;
 const MAX_SECONDS: i128 = 7 * 86400;
+/// Limits of one stored answer: at most this many elements, each a string of at most `MAX_ANSWER_CHARS` characters, an integer
+/// `0..=MAX_ANSWER_INT`, or null.
+const MAX_ANSWER_ITEMS: usize = 64;
+const MAX_ANSWER_CHARS: usize = 8;
+const MAX_ANSWER_INT: i128 = 999;
+
+/// The `answer` of one result as it will be stored: `["C"]`, `["A", "D"]`, `[0, 1, null]`. Anything else (not a list, too long,
+/// an element of another type or out of range) → `None` (stored as unanswered).
+pub fn clean_answer(v: Option<&PyVal>) -> Option<Value> {
+    let PyVal::List(items) = v? else {
+        return None;
+    };
+    if items.len() > MAX_ANSWER_ITEMS {
+        return None;
+    }
+    items
+        .iter()
+        .map(|x| match x {
+            PyVal::Null => Some(Value::Null),
+            PyVal::Str(s) if s.chars().count() <= MAX_ANSWER_CHARS => Some(Value::from(s.as_str())),
+            PyVal::Int(i) if (0..=MAX_ANSWER_INT).contains(i) => {
+                i64::try_from(*i).ok().map(Value::from)
+            }
+            _ => None,
+        })
+        .collect::<Option<Vec<Value>>>()
+        .map(Value::Array)
+}
 
 /// Python `max(0, min(int(x or 0), 7*86400))`; 0 when `int()` raises TypeError/ValueError/OverflowError.
 fn clean_seconds(v: Option<&PyVal>) -> i64 {
@@ -25,6 +56,11 @@ fn clean_seconds(v: Option<&PyVal>) -> i64 {
 }
 
 pub fn clean_attempt(d: &PyVal) -> Result<Attempt, String> {
+    clean_attempt_with_answers(d).map(|(attempt, _)| attempt)
+}
+
+/// [`clean_attempt`] plus the cleaned answers, index-aligned with the kept results.
+pub fn clean_attempt_with_answers(d: &PyVal) -> Result<(Attempt, AttemptAnswers), String> {
     let empty = PyVal::List(Vec::new());
     let raw_results = match d.get("results") {
         Some(v) if v.truthy() => v,
@@ -34,6 +70,7 @@ pub fn clean_attempt(d: &PyVal) -> Result<Attempt, String> {
         return Err(MSG_BAD_RESULTS.to_string());
     };
     let mut results = Vec::new();
+    let mut answers = Vec::new();
     for r in items.iter().take(MAX_RESULTS) {
         if let (Some(PyVal::Str(id)), Some(PyVal::Bool(correct))) = (r.get("id"), r.get("correct"))
         {
@@ -41,6 +78,7 @@ pub fn clean_attempt(d: &PyVal) -> Result<Attempt, String> {
                 id: truncate_chars(id, 64),
                 correct: *correct,
             });
+            answers.push(clean_answer(r.get("answer")));
         }
     }
     if results.is_empty() {
@@ -64,21 +102,29 @@ pub fn clean_attempt(d: &PyVal) -> Result<Attempt, String> {
         Some(PyVal::Str(m)) if matches!(m.as_str(), "all" | "weak" | "retry") => m.clone(),
         _ => "all".to_string(),
     };
-    Ok(Attempt {
-        results,
-        sheets,
-        mode,
-        seconds: clean_seconds(d.get("seconds")),
-    })
+    Ok((
+        Attempt {
+            results,
+            sheets,
+            mode,
+            seconds: clean_seconds(d.get("seconds")),
+        },
+        answers,
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::api::json::parse_py_json;
+    use serde_json::json;
 
     fn clean(s: &str) -> Result<Attempt, String> {
         clean_attempt(&parse_py_json(s.as_bytes()).unwrap())
+    }
+
+    fn clean_with_answers(s: &str) -> (Attempt, AttemptAnswers) {
+        clean_attempt_with_answers(&parse_py_json(s.as_bytes()).unwrap()).unwrap()
     }
 
     #[test]
@@ -176,6 +222,77 @@ mod tests {
             .unwrap();
             assert_eq!(a.mode, want, "{m}");
         }
+    }
+
+    #[test]
+    fn answers_are_cleaned_per_result() {
+        let (a, ans) = clean_with_answers(
+            r#"{"results":[
+                {"id":"s","correct":true,"answer":["C"]},
+                {"id":"m","correct":false,"answer":["A","D"]},
+                {"id":"h","correct":false,"answer":[0,1,null]},
+                {"id":"none","correct":true},
+                {"id":"null","correct":true,"answer":null},
+                {"id":"empty","correct":true,"answer":[]},
+                {"id":"dropped","correct":1,"answer":["A"]},
+                {"id":"bad","correct":true,"answer":"C"}
+            ]}"#,
+        );
+        assert_eq!(
+            a.results.len(),
+            7,
+            "the result with a non-bool correct is dropped with its answer"
+        );
+        assert_eq!(
+            ans,
+            vec![
+                Some(json!(["C"])),
+                Some(json!(["A", "D"])),
+                Some(json!([0, 1, null])),
+                None,
+                None,
+                Some(json!([])),
+                None
+            ]
+        );
+        assert_eq!(
+            a.results[6].id, "bad",
+            "a malformed answer keeps its result"
+        );
+    }
+
+    #[test]
+    fn answer_limits() {
+        let one = |answer: &str| {
+            clean_with_answers(&format!(
+                r#"{{"results":[{{"id":"a","correct":true,"answer":{answer}}}]}}"#
+            ))
+            .1
+            .remove(0)
+        };
+        assert_eq!(one(r#"["12345678"]"#), Some(json!(["12345678"])));
+        assert_eq!(one(r#"["123456789"]"#), None, "9 characters");
+        assert_eq!(
+            one(r#"["日本語の答え八字"]"#),
+            Some(json!(["日本語の答え八字"])),
+            "counted in characters"
+        );
+        assert_eq!(one("[0, 999]"), Some(json!([0, 999])));
+        for bad in [
+            "[1000]", "[-1]", "[1.0]", "[1.5]", "[true]", "[[0]]", "[{}]", "[NaN]", "{}", "5",
+            r#""A""#, "true",
+        ] {
+            assert_eq!(one(bad), None, "{bad}");
+        }
+        let max = vec!["0"; 64].join(",");
+        assert_eq!(
+            one(&format!("[{max}]")).map(|v| v.as_array().map(Vec::len)),
+            Some(Some(64))
+        );
+        let over = vec!["0"; 65].join(",");
+        assert_eq!(one(&format!("[{over}]")), None, "65 elements");
+        // duplicate keys: the later one wins (same as the rest of the request)
+        assert_eq!(one(r#"["A"], "answer": ["B"]"#), Some(json!(["B"])));
     }
 
     #[test]

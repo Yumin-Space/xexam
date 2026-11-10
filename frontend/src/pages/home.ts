@@ -1,173 +1,403 @@
-// Home page: pick the scope, start an exam, view the study history.
-import { inNotebook, masterStreakOf, shuffle } from '../domain/grading.ts';
+// Home page: continue an unfinished exam, choose banks / sheets / range / count and start an exam,
+// plus the latest exam and an overview of the question banks in a side column.
+import '../styles/home.css';
+import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
+import { icon } from '../components/shell.ts';
+import { inNotebook, masterStreakOf, pickQuestions, poolOf } from '../domain/grading.ts';
+import { serverText } from '../i18n/errors.ts';
+import { t, tn } from '../i18n/index.ts';
+import { routeHash, type Route } from '../router.ts';
+import { navigate, render, resumeSession, startExam } from '../state/actions.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
-import { S, pool } from '../state/store.ts';
-import { clearProgress, openAdmin, render, resumeSession, startSession } from '../state/actions.ts';
-import { brand, modeName } from '../components/common.ts';
-import { shutdownApp } from '../api/import.ts';
+import { S, bankIdsOf, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
+import type { BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
-import { h } from '../utils/dom.ts';
+import { h, type Child } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
-import type { Mode } from '../types/api.ts';
 
-function historyPanel(): HTMLElement {
-  const hist = S.progress?.history ?? [];
-  const panel = h('section', { class: 'panel' }, h('h2', null, '学习记录'));
-  const first = hist[0];
-  if (!first) {
-    panel.append(h('p', { class: 'empty' }, '还没有考试记录。考完一场，成绩会出现在这里。'));
+/** Wrong-answer notebook over the active questions: total size and size per sheet key */
+interface Notebook {
+  total: number;
+  byKey: Map<string, number>;
+  /** Correct answers in a row needed to leave the notebook */
+  streak: number;
+}
+
+function notebook(): Notebook {
+  const streak = masterStreakOf(S.progress);
+  const byKey = new Map<string, number>();
+  let total = 0;
+  for (const q of S.bank?.questions ?? []) {
+    if (!inNotebook(S.progress?.questions?.[q.id], streak)) continue;
+    total++;
+    const k = questionSheetKey(q);
+    byKey.set(k, (byKey.get(k) ?? 0) + 1);
+  }
+  return { total, byKey, streak };
+}
+
+/** An in-app link: a real href (open in a new tab works), plain clicks go through navigate() */
+function link(route: Route, label: string, cls = 'btn'): HTMLAnchorElement {
+  return h('a', {
+    class: cls,
+    href: routeHash(route),
+    onclick: (e: MouseEvent) => {
+      if (e.ctrlKey || e.metaKey || e.shiftKey || e.altKey || e.button !== 0) return;
+      e.preventDefault();
+      navigate(route);
+    },
+  }, label);
+}
+
+type Fact = [label: string, value: Child, cls?: string];
+
+/** A small label / value list */
+function facts(rows: Array<Fact | null>): HTMLDListElement {
+  return h('dl', { class: 'home-facts' }, rows.map((r) => (r ? [h('dt', null, r[0]), h('dd', { class: r[2] }, r[1])] : null)));
+}
+
+/** Wrong-notebook count chip (nothing when zero) */
+function notebookChip(n: number): HTMLElement | null {
+  return n ? h('span', { class: 'chipnum', title: t('home.pick.notebookTitle') }, t('home.pick.notebook', { n })) : null;
+}
+
+// ---------------------------------------------------------------- unfinished exam
+
+async function discardSaved(): Promise<void> {
+  const yes = await ask({
+    title: t('home.resume.discardTitle'),
+    body: t('home.resume.discardBody'),
+    ok: t('home.resume.discardOk'),
+    cancel: t('home.resume.discardCancel'),
+    danger: true,
+  });
+  if (!yes) return;
+  clearSaved();
+  render();
+}
+
+function resumeCard(): HTMLElement | null {
+  const sv = loadSaved(S.bank);
+  if (!sv) return null;
+  const names = bankIdsOf(sv.qs).map(bankName).join(t('common.listSep'));
+  // A compact banner: what, where it stands, and the two actions on one line (two lines on a phone)
+  const meta = [
+    names,
+    sv.mode !== 'all' ? modeName(sv.mode) : '',
+    t('home.resume.progress', { answered: sv.answered, total: sv.qs.length, time: fmtTime(sv.elapsed) }),
+  ].filter(Boolean).join(' · ');
+  return h('section', { class: 'resume home-resume', 'aria-labelledby': 'home-resume-h' },
+    h('div', { class: 'rs-text' },
+      h('div', { class: 'rs-head' }, h('h2', { id: 'home-resume-h' }, t('home.resume.title')), h('span', { class: 'rs-where' }, t('home.resume.lead'))),
+      h('p', { class: 'rs-meta num' }, meta),
+      sv.dropped ? h('p', { class: 'rs-meta' }, tn('home.resume.dropped', sv.dropped)) : null),
+    h('div', { class: 'rs-acts' },
+      h('button', { class: 'btn primary', type: 'button', onclick: () => resumeSession() }, t('home.resume.continue')),
+      h('button', { class: 'btn quiet', type: 'button', onclick: () => void discardSaved() }, t('home.resume.discard'))));
+}
+
+// ---------------------------------------------------------------- start an exam
+
+/** "All questions": a stack of sheets. "Wrong-answer notebook": a notebook with a cross. */
+const ICON_ALL = [{ d: 'M12 4 3.5 8.5 12 13l8.5-4.5L12 4Z' }, { d: 'M3.5 12.5 12 17l8.5-4.5' }, { d: 'M3.5 16.5 12 21l8.5-4.5' }];
+const ICON_CHEVRON = [{ d: 'M6.5 9.5 12 15l5.5-5.5' }];
+/** Banks the user unfolded / folded during this visit (otherwise: unfolded when there are at most two banks) */
+const openBanks = new Map<number, boolean>();
+const ICON_WEAK = [{ d: 'M6.5 3.5h9l3 3v14h-12Z' }, { d: 'M9.8 10.3l4.4 4.4' }, { d: 'M14.2 10.3l-4.4 4.4' }];
+
+interface BankPick {
+  /** Keys of the bank's usable sheets */
+  keys: string[];
+  box: HTMLInputElement;
+  row: HTMLElement;
+  /** "1 of 2 sheets selected" while only part of the bank is selected (visible also when the bank is folded) */
+  info: HTMLElement;
+  sheets: Array<{ key: string; box: HTMLInputElement }>;
+}
+
+function emptyState(): HTMLElement {
+  return h('div', { class: 'emptybank' },
+    h('p', null, t(S.banks.length ? 'home.empty.noQuestions' : 'home.empty.noBanks')),
+    link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
+}
+
+function startPanel(nb: Notebook): HTMLElement {
+  const b = S.bank;
+  const cfg = S.cfg;
+  // The header row holds the title and, on its right, the "questions from" choice
+  const head = h('div', { class: 'home-setup-head' }, h('h2', { id: 'home-setup-h' }, t('home.setup.title')));
+  const panel = h('section', { class: 'panel home-setup', 'aria-labelledby': 'home-setup-h' },
+    head,
+    b?.error ? h('div', { class: 'err', role: 'alert' }, h('p', null, serverText(b.error))) : null);
+
+  const listed = S.banks.filter((x) => x.total > 0);
+  if (!b || !b.questions.length || !listed.length) {
+    panel.append(emptyState());
     return panel;
   }
-  const best = Math.max(...hist.map((x) => x.percent));
-  const recent = hist.slice(0, 12).reverse();
+
+  const selected = cfg.selected ?? new Set<string>();
+  cfg.selected = selected;
+  const notebookInSelection = (): number => {
+    let n = 0;
+    for (const k of selected) n += nb.byKey.get(k) ?? 0;
+    return n;
+  };
+  // Only "all questions" and the notebook can be chosen here ("retry" is started from a result or a record)
+  if (cfg.mode !== 'weak' || !notebookInSelection()) cfg.mode = 'all';
+
+  // Banks and sheets
+  const picks: BankPick[] = [];
+  const toggle = (keys: readonly string[], on: boolean): void => {
+    for (const k of keys) {
+      if (on) selected.add(k);
+      else selected.delete(k);
+    }
+    refresh();
+  };
+
+  const bankGroup = (bank: BankSummary): HTMLElement => {
+    const usable = bank.sheets.filter((s) => s.usable > 0);
+    const keys = usable.map((s) => sheetKey(bank.id, s.name));
+    const box = h('input', {
+      type: 'checkbox', 'aria-controls': `home-sheets-${bank.id}`,
+      onchange: () => toggle(keys, box.checked),
+    });
+    // Folded banks keep the list short without a scrolling box inside the page (nested scrolling fights the page on phones)
+    const open = openBanks.get(bank.id) ?? listed.length <= 2;
+    const info = h('span', { class: 'sub home-selinfo' });
+    const label = h('label', { class: 'home-bankrow' }, box,
+      h('span', { class: 'grow' },
+        h('span', { class: 'name' }, bank.name),
+        h('span', { class: 'sub' }, t('home.pick.bankSub', { questions: tn('common.questions', bank.total), sheets: tn('common.sheets', usable.length) })),
+        info),
+      notebookChip(keys.reduce((n, k) => n + (nb.byKey.get(k) ?? 0), 0)));
+    const sheetBox = h('div', { class: 'home-sheets', id: `home-sheets-${bank.id}`, role: 'group', 'aria-label': bank.name, hidden: !open });
+    const expand = h('button', {
+      class: 'home-expand', type: 'button', 'aria-expanded': String(open), 'aria-controls': `home-sheets-${bank.id}`,
+      'aria-label': t(open ? 'home.pick.hideSheets' : 'home.pick.showSheets', { name: bank.name }),
+      title: t(open ? 'home.pick.hideSheets' : 'home.pick.showSheets', { name: bank.name }),
+      onclick: () => {
+        const now = sheetBox.hidden;
+        sheetBox.hidden = !now;
+        openBanks.set(bank.id, now);
+        expand.setAttribute('aria-expanded', String(now));
+        const tip = t(now ? 'home.pick.hideSheets' : 'home.pick.showSheets', { name: bank.name });
+        expand.setAttribute('aria-label', tip);
+        expand.title = tip;
+      },
+    }, icon(ICON_CHEVRON));
+    const row = h('div', { class: 'home-bankhead' }, label, expand);
+    const pick: BankPick = { keys, box, row, info, sheets: [] };
+    picks.push(pick);
+
+    const sheetRows = bank.sheets.map((s) => {
+      if (s.usable <= 0) {
+        return h('label', { class: 'home-sheetrow off' },
+          h('input', { type: 'checkbox', disabled: true }),
+          h('span', { class: 'grow' }, h('span', { class: 'name' }, s.name), h('span', { class: 'sub' }, t('home.pick.sheetRetired'))));
+      }
+      const key = sheetKey(bank.id, s.name);
+      const sbox = h('input', { type: 'checkbox', onchange: () => toggle([key], sbox.checked) });
+      pick.sheets.push({ key, box: sbox });
+      return h('label', { class: 'home-sheetrow' }, sbox,
+        h('span', { class: 'grow' },
+          h('span', { class: 'name' }, s.name),
+          h('span', { class: 'sub' }, s.inactive ? tn('home.pick.sheetSubRetired', s.usable, { retired: s.inactive }) : tn('home.pick.sheetSub', s.usable))),
+        notebookChip(nb.byKey.get(key) ?? 0));
+    });
+
+    // One card per bank: the bank row is the card's header, its sheets are compact rows inside the same card
+    sheetBox.append(...sheetRows);
+    return h('div', { class: 'home-bank' }, row, sheetBox);
+  };
+
+  const groups = listed.map(bankGroup);
+  const allKeys = picks.flatMap((p) => p.keys);
+  const hidden = S.banks.length - listed.length;
+  // The visible heading and "select all / clear" share one row; the legend names the group for screen readers
+  const pickSet = h('fieldset', { class: 'home-pick' },
+    h('legend', { class: 'sr-only' }, t('home.pick.legend')),
+    h('div', { class: 'home-pick-head' },
+      h('span', { class: 'home-pick-title', 'aria-hidden': 'true' }, t('home.pick.legend')),
+      allKeys.length > 1 ? h('div', { class: 'home-pickacts' },
+        h('button', { class: 'btn quiet', type: 'button', onclick: () => toggle(allKeys, true) }, t('home.pick.all')),
+        h('button', { class: 'btn quiet', type: 'button', onclick: () => toggle(allKeys, false) }, t('home.pick.none'))) : null),
+    h('div', { class: 'home-picklist' }, groups),
+    hidden ? h('p', { class: 'dim home-note' }, tn('home.pick.hiddenBanks', hidden)) : null);
+
+  // Range (mode)
+  const modeBox = (val: Mode): HTMLInputElement => h('input', {
+    type: 'radio', name: 'home-mode', value: val,
+    onchange: () => {
+      cfg.mode = val;
+      refresh();
+    },
+  });
+  const allBox = modeBox('all');
+  const weakBox = modeBox('weak');
+  // Two compact choices with an icon and a count; the explanation is one short line under them, only when it matters
+  const allCount = h('span', { class: 'mseg-n num' });
+  const weakCount = h('span', { class: 'mseg-n num' });
+  const modeHint = h('p', { class: 'mseg-hint', id: 'home-mode-hint' });
+  const weakRow = h('label', { class: 'mseg weak', title: t('mode.weak') }, weakBox, icon(ICON_WEAK, 'ico mseg-ico'), h('span', { class: 'mseg-label' }, t('home.mode.weakShort')), weakCount);
+  const modeSet = h('fieldset', { class: 'home-mode', 'aria-describedby': 'home-mode-hint' },
+    h('legend', { class: 'sr-only' }, t('home.mode.legend')),
+    h('div', { class: 'mseg-group' },
+      h('label', { class: 'mseg', title: t('home.mode.allSub') }, allBox, icon(ICON_ALL, 'ico mseg-ico'), h('span', { class: 'mseg-label' }, t('home.mode.allShort')), allCount),
+      weakRow));
+  head.append(modeSet);
+  head.after(modeHint);
+
+  // Count, order, start
+  const countInput = h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', 'aria-label': t('home.count.label') });
+  const shuffleBox = h('input', {
+    type: 'checkbox', checked: cfg.shuffle,
+    onchange: () => {
+      cfg.shuffle = shuffleBox.checked;
+    },
+  });
+  const startBtn = h('button', { class: 'btn primary big', type: 'button', onclick: () => start() }, t('home.start'));
+  const scopeText = h('p', { class: 'home-scope', role: 'status' });
+
+  /** The number typed into the count field (null = empty / not a positive number) */
+  const typedCount = (): number | null => {
+    const v = parseInt(countInput.value, 10);
+    return Number.isFinite(v) && v >= 1 ? v : null;
+  };
+  const effectiveCount = (n: number): number => (cfg.count == null ? n : Math.min(Math.max(1, cfg.count), n));
+  const readCount = (n: number): void => {
+    const v = typedCount();
+    cfg.count = v == null || v >= n ? null : v;
+  };
+
+  const updateScope = (n: number): void => {
+    const k = effectiveCount(n);
+    scopeText.textContent = n === 0
+      ? t(selected.size ? 'home.scopeEmpty' : 'home.scopeNoSheet')
+      : k < n ? t('home.scopePart', { n, count: k }) : tn('home.scope', n);
+  };
+
+  // Updates everything that depends on the selection in place (no re-render: keeps focus and scroll position)
+  function refresh(): void {
+    for (const p of picks) {
+      const on = p.keys.filter((k) => selected.has(k)).length;
+      p.box.checked = on > 0 && on === p.keys.length;
+      p.box.indeterminate = on > 0 && on < p.keys.length;
+      p.row.classList.toggle('part', p.box.indeterminate);
+      p.info.textContent = p.box.indeterminate ? t('home.pick.partial', { on, n: p.keys.length }) : '';
+      for (const s of p.sheets) s.box.checked = selected.has(s.key);
+    }
+    const inSel = notebookInSelection();
+    weakBox.disabled = inSel === 0;
+    weakRow.classList.toggle('off', inSel === 0);
+    if (cfg.mode === 'weak' && !inSel) cfg.mode = 'all';
+    allBox.checked = cfg.mode === 'all';
+    weakBox.checked = cfg.mode === 'weak';
+    allCount.textContent = String(S.bank ? poolOf(S.bank.questions, selected, 'all', S.progress, questionSheetKey).length : 0);
+    weakCount.textContent = String(inSel);
+    // Say why the notebook cannot be chosen, or how a question leaves it while it is chosen; nothing otherwise
+    modeHint.textContent = !nb.total ? t('home.mode.weakEmpty')
+      : !inSel ? tn('home.mode.weakNone', nb.total)
+        : cfg.mode === 'weak' ? tn('home.mode.weakSub', inSel, { k: nb.streak }) : '';
+    modeHint.hidden = !modeHint.textContent;
+
+    const n = pool().length;
+    countInput.max = String(Math.max(1, n));
+    countInput.disabled = n === 0;
+    countInput.value = n ? String(effectiveCount(n)) : '';
+    startBtn.disabled = n === 0;
+    updateScope(n);
+  }
+
+  // While typing only the scope text follows; the field itself is normalised when the edit is committed
+  countInput.addEventListener('input', () => {
+    const n = pool().length;
+    readCount(n);
+    updateScope(n);
+  });
+  countInput.addEventListener('change', () => {
+    readCount(pool().length);
+    refresh();
+  });
+
+  function start(): void {
+    const p = pool();
+    if (!p.length) return;
+    readCount(p.length);
+    cfg.shuffle = shuffleBox.checked;
+    const n = effectiveCount(p.length);
+    void startExam(pickQuestions(p, n, cfg.shuffle), cfg.mode);
+  }
+
+  // The mode comes first: "practise my wrong answers" is a frequent start and should not sit below every sheet row
   panel.append(
-    h('div', { class: 'stat' }, h('b', { class: 'num' }, first.percent + '%'), h('span', { class: 'dim' }, '最近一场')),
-    h('p', { class: 'dim' }, `一共考过 ${hist.length} 场，最高 ${best}%`),
-    h('div', { class: 'bars', role: 'img', 'aria-label': '最近成绩：' + recent.map((x) => x.percent + '%').join('，') },
-      recent.map((x) => h('i', { style: `height:${Math.max(x.percent, 3)}%`, title: `${x.at}  ${x.percent}%` }))),
-    h('ul', { class: 'hist' }, hist.slice(0, 6).map((x) => h('li', null,
-      h('span', { class: 'pct' }, x.percent + '%'),
-      h('span', { class: 'meta' }, `${x.at}，${modeName(x.mode)}，答对 ${x.correct} / ${x.total} 题，用时 ${fmtTime(x.seconds)}`,
-        x.sheets?.length ? h('div', { class: 'dim' }, x.sheets.join('、')) : null)))),
-    h('div', { style: 'margin-top:12px' },
-      h('button', { class: 'btn quiet danger', type: 'button', onclick: () => void clearProgress() }, '清空学习记录')));
+    pickSet,
+    // The bar pinned to the bottom: Start, what will be asked, and the two options right next to it
+    h('div', { class: 'home-go' }, startBtn, scopeText,
+      h('div', { class: 'home-go-opts' },
+        h('label', { class: 'home-count', title: t('home.count.label') }, h('span', null, t('home.count.short')), countInput),
+        h('label', { class: 'home-shuffle', title: t('home.shuffle') }, shuffleBox, h('span', null, t('home.shuffle.short'))))));
+  refresh();
   return panel;
 }
 
-async function quitProgram(): Promise<void> {
-  if (!(await ask({ title: '关闭程序？', body: '关闭后这个页面就用不了了，下次要重新启动。学习记录已经保存好了。', ok: '关闭', cancel: '不关' }))) return;
-  try {
-    await shutdownApp();
-  } catch {
-    /* the connection may drop when the server shuts down quickly */
+// ---------------------------------------------------------------- side column
+
+function latestCard(): HTMLElement {
+  const sec = h('section', { class: 'panel home-latest', 'aria-labelledby': 'home-latest-h' },
+    h('h2', { id: 'home-latest-h' }, t('home.latest.title')));
+  if (S.records == null) {
+    sec.append(h('p', { class: 'dim' }, t('common.loading')));
+    return sec;
   }
-  document.getElementById('app')?.replaceChildren(h('div', { class: 'wrap' }, h('div', { class: 'panel' }, h('h2', null, '程序已关闭'), h('p', null, '可以关掉这个页面了。'))));
+  const r = S.records[0];
+  if (!r) {
+    sec.append(h('p', { class: 'empty' }, t('home.latest.empty')));
+    return sec;
+  }
+  const wrong = Math.max(0, r.total - r.correct);
+  sec.append(
+    h('div', { class: 'stat' },
+      h('b', { class: 'num' }, t('home.latest.percent', { percent: r.percent })),
+      h('span', { class: 'dim' }, t('home.latest.correct', { correct: r.correct, total: r.total }))),
+    facts([
+      [t('home.fact.at'), h('span', { class: 'num' }, r.at)],
+      [t('home.fact.banks'), recordBankNames(r.banks)],
+      modeName(r.mode) ? [t('home.fact.mode'), modeName(r.mode)] : null,
+      [t('home.fact.wrong'), tn('common.questions', wrong), wrong ? 'ng' : undefined],
+      [t('home.fact.time'), h('span', { class: 'num' }, fmtTime(r.seconds))],
+    ]),
+    h('div', { class: 'acts' },
+      link({ name: 'record', id: r.id }, t('home.latest.view')),
+      link({ name: 'records' }, t('home.latest.all'), 'btn quiet')));
+  return sec;
+}
+
+function overviewCard(nb: Notebook): HTMLElement {
+  const questions = S.banks.reduce((n, b) => n + b.total, 0);
+  const retired = S.banks.reduce((n, b) => n + b.inactive, 0);
+  const fig = (value: number, label: string, cls = ''): HTMLElement =>
+    h('div', { class: 'home-fig' + cls }, h('b', { class: 'num' }, value), h('span', null, label));
+  return h('section', { class: 'panel home-overview', 'aria-labelledby': 'home-overview-h' },
+    h('h2', { id: 'home-overview-h' }, t('home.overview.title')),
+    h('div', { class: 'home-figs' },
+      fig(S.banks.length, t('home.overview.banks')),
+      fig(usableSheetKeys().length, t('home.overview.sheets')),
+      fig(questions, t('home.overview.questions')),
+      fig(nb.total, t('home.overview.notebook'), nb.total ? ' ng' : '')),
+    retired ? h('p', { class: 'dim home-note' }, tn('home.overview.retired', retired)) : null,
+    // With wrong answers to review, that is the stronger action; the banks page is also in the menu
+    h('div', { class: 'acts' },
+      nb.total ? link({ name: 'wrong' }, t('home.overview.review')) : null,
+      link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn')));
 }
 
 export function renderHome(): HTMLElement {
-  const b = S.bank;
-  if (!b) return h('div', { class: 'wrap' });
-  const cfg = S.cfg;
-  const selected = cfg.selected ?? new Set<string>();
-  const ms = masterStreakOf(S.progress);
-  const stat = (id: string) => S.progress?.questions?.[id];
-  const saved = loadSaved(b);
-  const nb = b.questions.filter((q) => inNotebook(stat(q.id), ms));
-  if (cfg.mode === 'weak' && !nb.length) cfg.mode = 'all';
-
-  const countInput = h('input', { type: 'number', min: '1', step: '1', inputmode: 'numeric', 'aria-label': '题数' });
-  const shuffleBox = h('input', { type: 'checkbox', checked: cfg.shuffle });
-  const startBtn = h('button', { class: 'btn primary big', type: 'button' }, '开始考试');
-  const poolText = h('span', { class: 'dim' });
-
-  const refreshSetup = (): void => {
-    const n = pool().length;
-    countInput.max = String(n);
-    countInput.disabled = n === 0;
-    countInput.value = n ? String(cfg.count == null ? n : Math.max(1, Math.min(cfg.count, n))) : '';
-    startBtn.disabled = n === 0;
-    poolText.textContent = n ? `当前范围共 ${n} 题` : (cfg.mode === 'weak' ? '所选工作表里没有待巩固的错题' : '先勾选一个工作表');
-  };
-  countInput.addEventListener('change', () => {
-    const n = pool().length;
-    const v = parseInt(countInput.value, 10);
-    cfg.count = !v || v >= n ? null : Math.max(1, v);
-    refreshSetup();
-  });
-  startBtn.addEventListener('click', () => {
-    void (async () => {
-      const p = pool();
-      if (!p.length) return;
-      if (loadSaved(b) && !(await ask({ title: '放弃没交卷的考试？', body: '有一场暂存的考试还没交卷。现在开始新的考试，会把它覆盖掉。', ok: '开始新考试', cancel: '回去继续', danger: true }))) return;
-      let n = parseInt(countInput.value, 10);
-      if (!(n >= 1)) n = p.length;
-      n = Math.min(n, p.length);
-      cfg.shuffle = shuffleBox.checked;
-      startSession((cfg.shuffle ? shuffle(p) : p).slice(0, n), cfg.mode);
-    })();
-  });
-
-  const sheetRows = b.sheets.map((s) => {
-    const usable = s.usable > 0;
-    const wrongN = b.questions.filter((q) => q.sheet === s.name && inNotebook(stat(q.id), ms)).length;
-    const cb = h('input', {
-      type: 'checkbox', checked: usable && selected.has(s.name), disabled: !usable,
-      onchange: () => {
-        if (cb.checked) selected.add(s.name);
-        else selected.delete(s.name);
-        refreshSetup();
-      },
-    });
-    const sub = usable ? `${s.usable} 题可用` + (s.inactive ? `，${s.inactive} 题已下架` : '') : '这个工作表里的题都已下架';
-    return h('label', { class: 'row-opt' + (usable ? '' : ' off') }, cb,
-      h('span', { class: 'grow' }, h('div', { class: 'name' }, s.name), h('div', { class: 'sub' }, sub)),
-      wrongN ? h('span', { class: 'chipnum' }, `错题 ${wrongN}`) : null);
-  });
-
-  const modeRow = (val: Mode, title: string, sub: string, disabled: boolean): HTMLElement => {
-    const r = h('input', {
-      type: 'radio', name: 'mode', checked: cfg.mode === val, disabled,
-      onchange: () => {
-        cfg.mode = val;
-        refreshSetup();
-      },
-    });
-    return h('label', { class: 'row-opt' + (disabled ? ' off' : '') }, r,
-      h('span', { class: 'grow' }, h('div', { class: 'name' }, title), h('div', { class: 'sub' }, sub)));
-  };
-
-  const setup = h('section', { class: 'panel' },
-    h('h2', null, '开始考试'),
-    saved ? h('div', { class: 'resume' },
-      h('p', null, `有一场没交卷的考试：已答 ${saved.answered} / ${saved.qs.length} 题，用时 ${fmtTime(saved.elapsed)}。`),
-      h('div', { class: 'acts' },
-        h('button', { class: 'btn primary', type: 'button', onclick: resumeSession }, '继续作答'),
-        h('button', {
-          class: 'btn', type: 'button',
-          onclick: () => void (async () => {
-            if (await ask({ title: '放弃这场考试？', body: '已经作答的内容不会保留。', ok: '放弃', cancel: '先留着', danger: true })) {
-              clearSaved();
-              render();
-            }
-          })(),
-        }, '放弃这场'))) : null,
-    b.error ? h('div', { class: 'err' }, h('p', null, b.error)) : null,
-    b.questions.length ? [
-      h('fieldset', null, h('legend', null, '考哪些工作表'), sheetRows),
-      h('fieldset', null, h('legend', null, '从哪里出题'),
-        modeRow('all', '全部题目', '按所选工作表出题', false),
-        modeRow('weak', '错题本', nb.length ? `${nb.length} 题待巩固，连续答对 ${ms} 次后移出` : '还没有错题，先考一轮', !nb.length)),
-      h('div', { class: 'inline' },
-        h('label', null, '题数', countInput),
-        h('label', null, shuffleBox, '打乱题目顺序')),
-      h('div', { class: 'inline' }, startBtn, poolText),
-    ] : (b.error ? null : h('div', { class: 'emptybank' },
-      h('p', null, '题库还是空的。先上传你的 Excel 题库，再开始考试。'),
-      h('button', { class: 'btn primary', type: 'button', onclick: () => void openAdmin() }, '去上传题库'))));
-
-  refreshSetup();
-
-  const inactive = b.sheets.reduce((n, s) => n + (s.inactive || 0), 0);
-  const bankInfo = h('div', { class: 'bankinfo' },
-    b.file ? h('span', null, b.file) : null,
-    b.mtime ? h('span', { class: 'num' }, '更新于 ' + b.mtime) : null,
-    h('span', null, `${b.questions.length} 题，${b.sheets.filter((s) => s.usable).length} 个工作表` + (inactive ? `（另有 ${inactive} 题已下架）` : '')),
-    h('button', { class: 'btn', type: 'button', onclick: () => void openAdmin() }, '题库管理 / 上传 Excel'));
-
-  return h('div', { class: 'wrap' },
-    h('header', { class: 'top' }, brand(), bankInfo),
-    h('div', { class: 'home-grid' }, setup, historyPanel()),
-    h('details', { class: 'tr', style: 'margin-top:20px' },
-      h('summary', null, '题库怎么写（往 Excel 加新题时看）'),
-      h('div', { class: 'pre' },
-        '每个工作表就是一组题，可以随时新增工作表。改好 Excel 后，点上面的「题库管理 / 上传 Excel」，把整份文件传上去。\n' +
-        'A 列：题目。选择题把选项写成「A. 内容」，一行一个；热点题第一行写 ホットスポット，小项写成「1. 内容　はい / いいえ」。\n' +
-        'B 列：中文翻译（可以不写）。\n' +
-        'C 列：先写「【答案】C、E」（热点题写「1 是；2 否；…」），再写「【解析·怎么选】」和「【记忆口诀】」。\n' +
-        '想加英语：用四列格式 —— A 列英语、B 列中文、C 列日语题目、D 列答案和解析（上面说的 A、B、C 三列整体右移一格，英语放在新的 A 列；热点题的英语第一行写 HOTSPOT、小项末尾写 Yes / No）。题目、选项和答案以 C 列的日语为准；A 列可以不写。旧的三列格式仍然可以上传，只是没有英语。\n' +
-        '上传后会先显示「新增几题、更新几题、下架几题、哪几题读不出来」，你确认了才会真正导入。')),
-    h('footer', { class: 'foot' },
-      S.info.version ? h('span', { class: 'num' }, 'Xexam v' + S.info.version) : null,
-      h('span', null, 'Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料。用户应确保导入和使用的资料来源合法，并拥有相应使用权限。'),
-      S.info.canShutdown ? h('button', { class: 'btn quiet', type: 'button', onclick: () => void quitProgram() }, '关闭程序') : null));
+  const nb = notebook();
+  return h('div', { class: 'page page-home' },
+    pageHead(t('home.title')),
+    h('div', { class: 'home-grid' },
+      h('div', { class: 'home-main' }, resumeCard(), startPanel(nb)),
+      h('div', { class: 'home-side' }, latestCard(), overviewCard(nb))));
 }

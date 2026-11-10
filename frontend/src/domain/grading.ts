@@ -2,7 +2,7 @@
 //
 // Note: the spec requires "the frontend contains no authoritative business rules", but the old version's grading and wrong-answer notebook rules lived in the browser, and the server only stores {id, correct}.
 // To keep the API backward compatible, the old behavior is kept here, isolated as pure functions + golden tests (grading.test.ts).
-// This is a deliberate deviation from the spec; see Q3 in docs/migration-plan.md.
+// This is a deliberate deviation from the spec; see Q3 in docs/zh-CN/history/migration-plan.md.
 import type { Mode, Progress, Question, QuestionStat } from '../types/api.ts';
 
 /** An answer. Single / multiple choice: the selected letters; hotspot question: the index of the choice picked for each item (null if none). */
@@ -18,6 +18,14 @@ export function stateOf(q: Pick<Question, 'kind' | 'items'>, a: Answer): AnswerS
     return c === 0 ? 0 : c === q.items.length ? 2 : 1;
   }
   return a.length ? 2 : 0;
+}
+
+/**
+ * True when a change of answer completes the question: it was not fully answered before and is afterwards. For a hotspot
+ * question that means the last open item got a choice; changing an item of an already complete question does not count.
+ */
+export function completes(q: Pick<Question, 'kind' | 'items'>, before: Answer, after: Answer): boolean {
+  return stateOf(q, before) < 2 && stateOf(q, after) === 2;
 }
 
 export function grade(q: Pick<Question, 'kind' | 'answer'>, a: Answer): boolean {
@@ -40,16 +48,20 @@ export function masterStreakOf(p: Progress | null | undefined): number {
   return (p && p.masterStreak) || 2;
 }
 
-/** Question scope: the questions in the selected sheets; "wrong-answer notebook" mode keeps only those in the notebook. */
+/**
+ * Question scope: the questions in the selected sheets; "wrong-answer notebook" mode keeps only those in the notebook.
+ * keyOf maps a question to the key used in `selected` (v0.5: bank id + sheet name, since sheet names repeat across banks).
+ */
 export function poolOf(
   questions: Question[],
   selected: ReadonlySet<string>,
   mode: Mode,
   progress: Progress | null | undefined,
+  keyOf: (q: Question) => string = (q) => q.sheet,
 ): Question[] {
   const ms = masterStreakOf(progress);
   return questions.filter(
-    (q) => selected.has(q.sheet) && (mode !== 'weak' || inNotebook(progress?.questions?.[q.id], ms)),
+    (q) => selected.has(keyOf(q)) && (mode !== 'weak' || inNotebook(progress?.questions?.[q.id], ms)),
   );
 }
 
@@ -77,4 +89,21 @@ export function shuffle<T>(arr: readonly T[], random: () => number = Math.random
     a[j] = tmp;
   }
   return a;
+}
+
+/**
+ * The questions of one exam: when fewer than the whole scope are wanted, they are picked at random (every question of the
+ * scope has the same chance); `shuffleOrder` only decides whether they are then asked in random order or in bank order.
+ */
+export function pickQuestions<T>(pool: readonly T[], count: number, shuffleOrder: boolean, random: () => number = Math.random): T[] {
+  const n = Math.max(0, Math.min(Math.floor(count), pool.length));
+  let picked: T[];
+  if (n >= pool.length) {
+    picked = pool.slice();
+  } else {
+    // a random subset, kept in bank order
+    const chosen = new Set(shuffle(pool.map((_, i) => i), random).slice(0, n));
+    picked = pool.filter((_, i) => chosen.has(i));
+  }
+  return shuffleOrder ? shuffle(picked, random) : picked;
 }

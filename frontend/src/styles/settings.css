@@ -1,0 +1,106 @@
+/* Settings page: theme cards with previews, interface language cards, the auto-advance switch, reset.
+   Colour tokens only (see main.css), so the page looks right in the light and the dark theme. */
+
+.page-settings { max-width: 880px; }
+.page-settings .page-acts { min-height: 1.7em; align-items: center; }
+.set-status { font-size: 14px; color: var(--ink3); }
+.set-lead { margin: -8px 0 20px; max-width: 46em; color: var(--ink2); }
+
+.set-sec h2 { margin-bottom: 6px; }
+.set-desc { margin-bottom: 16px; max-width: 46em; font-size: 14.5px; color: var(--ink2); }
+.set-note { margin-top: 12px; font-size: 13.5px; color: var(--ink3); max-width: 46em; }
+
+/* ---------- Selectable cards (theme, language) ---------- */
+.set-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.set-card {
+  display: grid; align-content: start; gap: 8px; width: 100%; min-width: 0; min-height: 44px;
+  padding: 12px; text-align: left;
+  border: 1.5px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);
+}
+@media (hover: hover) { .set-card:hover:not([aria-pressed="true"]) { border-color: var(--print); } }
+.set-card[aria-pressed="true"] { border-color: var(--print); background: var(--print-soft); box-shadow: inset 0 0 0 1px var(--print); }
+.set-card-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-weight: 700; font-size: 15.5px; line-height: 1.4; }
+.set-radio { width: 18px; height: 18px; flex: none; border: 1.5px solid var(--ink3); border-radius: 50%; background: var(--card); }
+.set-card[aria-pressed="true"] .set-radio { border-color: var(--print); background: var(--print); box-shadow: inset 0 0 0 3.5px var(--card); }
+.set-def {
+  padding: 0 8px; border: 1px solid var(--line); border-radius: 999px; background: var(--sheet);
+  font-size: 12px; font-weight: 600; line-height: 1.6; color: var(--ink3);
+}
+.set-card-desc { font-size: 13.5px; line-height: 1.55; color: var(--ink2); overflow-wrap: anywhere; }
+
+/* ---------- Theme previews ----------
+   A preview of the theme the page is drawn in uses the page's own tokens; a preview of the other theme uses the
+   "inverted" tokens (--ink is dark on a light page and light on a dark page), so both always look like what they show. */
+.set-sw-frame { display: grid; height: 64px; overflow: hidden; border: 1px solid var(--line); border-radius: 4px; }
+.set-sw-frame.pair { grid-template-columns: 1fr 1fr; }
+.set-sw { display: grid; grid-template-columns: 26% minmax(0, 1fr); min-width: 0; background: var(--sw-bg); }
+.set-sw-side { background: var(--sw-side); }
+.set-sw-main { display: grid; align-content: start; gap: 6px; padding: 10px 9px; }
+.set-sw-main i { display: block; height: 5px; border-radius: 3px; background: var(--sw-text); }
+.set-sw-main i:nth-child(2) { width: 72%; }
+.set-sw-main i.acc { width: 46%; height: 9px; background: var(--sw-acc); }
+
+/* Light page */
+.set-sw.light { --sw-bg: var(--sheet); --sw-side: var(--page); --sw-text: var(--line); --sw-acc: var(--print); }
+.set-sw.dark { --sw-bg: var(--ink); --sw-side: var(--graphite); --sw-text: var(--line); --sw-acc: var(--print-soft); }
+/* Dark page (chosen, or "System" while the device is dark) */
+:root[data-theme="dark"] .set-sw.light { --sw-bg: var(--ink); --sw-side: var(--graphite); --sw-text: var(--ink3); --sw-acc: var(--print-soft); }
+:root[data-theme="dark"] .set-sw.dark { --sw-bg: var(--sheet); --sw-side: var(--page); --sw-text: var(--ink3); --sw-acc: var(--print); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .set-sw.light { --sw-bg: var(--ink); --sw-side: var(--graphite); --sw-text: var(--ink3); --sw-acc: var(--print-soft); }
+  :root:not([data-theme="light"]) .set-sw.dark { --sw-bg: var(--sheet); --sw-side: var(--page); --sw-text: var(--ink3); --sw-acc: var(--print); }
+}
+
+/* ---------- Auto-advance switch (the whole row is the switch) ---------- */
+.set-switch {
+  display: flex; align-items: center; gap: 16px; width: 100%; min-height: 44px;
+  padding: 14px 16px; text-align: left;
+  border: 1.5px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink);
+}
+@media (hover: hover) { .set-switch:hover { border-color: var(--print); } }
+.set-switch[aria-checked="true"] { border-color: var(--print); }
+.set-switch-text { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.set-switch-l { font-weight: 700; font-size: 15.5px; line-height: 1.45; }
+.set-switch-d { font-size: 13.5px; line-height: 1.6; color: var(--ink2); }
+.set-switch-ctl { flex: none; display: grid; justify-items: center; gap: 4px; min-width: 52px; }
+.set-track {
+  position: relative; display: block; width: 48px; height: 28px;
+  border: 1.5px solid var(--ink3); border-radius: 999px; background: var(--tint);
+  transition: background-color .15s ease, border-color .15s ease;
+}
+.set-knob {
+  position: absolute; top: 3px; left: 3px; width: 19px; height: 19px;
+  border-radius: 50%; background: var(--ink3); transition: transform .15s ease;
+}
+.set-switch[aria-checked="true"] .set-track { border-color: var(--print); background: var(--print); }
+.set-switch[aria-checked="true"] .set-knob { transform: translateX(20px); background: var(--on-ink); }
+.set-switch-state { font-size: 12.5px; font-weight: 700; line-height: 1.2; color: var(--ink3); }
+.set-switch[aria-checked="true"] .set-switch-state { color: var(--print); }
+@media (prefers-reduced-motion: reduce) { .set-track, .set-knob { transition: none; } }
+
+/* ---------- Reset ---------- */
+.set-reset { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.set-reset .set-note { margin-top: 0; flex: 1 1 16em; }
+.set-reset .set-note:focus { outline: none; }
+.set-reset .set-note:focus-visible { outline: 3px solid var(--print); outline-offset: 2px; }
+
+/* ---------- Narrow screens ---------- */
+@media (max-width: 720px) {
+  .set-cards { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+  /* Language cards hold only a short native name: they stay in one row (two classes beat the rule above) */
+  .set-cards.set-langs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  /* Theme cards: preview on the left, text on the right, to keep the list short */
+  .set-card.themed { grid-template-columns: 96px minmax(0, 1fr); column-gap: 14px; align-items: center; }
+  .set-card.themed .set-sw-frame { grid-row: span 2; height: 56px; }
+}
+@media (max-width: 480px) {
+  .set-switch { padding: 12px; gap: 12px; }
+  .set-card.themed { grid-template-columns: 76px minmax(0, 1fr); column-gap: 12px; }
+  /* About 75px inside each language card: radio, name and the "Default" chip stack, the same way in all three cards */
+  .set-langs .set-card { padding-inline: 10px; }
+  .set-langs .set-card-name { flex-direction: column; align-items: flex-start; }
+}
+@media (pointer: coarse) {
+  .set-card { min-height: 52px; }
+}
+

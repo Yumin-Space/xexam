@@ -1,12 +1,16 @@
-//! Business flows. **Interface contract (do not change signatures)**.
+//! Business flows. **Interface contract** (v0.5 extended it: targets, `apply_import` returns [`AppliedImport`]).
 //!
 //! Import flow (conceptual functions from the spec; names copied verbatim for easy cross-reference):
 //! `parse_upload → validate_import → plan_import → create_pending_import → confirm_pending_import | cancel_pending_import → apply_import`
 //!
 //! The preview stage **never writes to the database**; only `apply_import` after `confirm_pending_import` writes, in a single transaction.
+//!
+//! v0.5: every upload has an [`ImportTarget`] (header `X-Bank-Target`; none = the legacy bank). The target travels with the pending
+//! import, so the preview and the write are computed against the same bank. The `*_for` functions take the target; the original
+//! ones keep their v0.4 meaning (legacy target).
 use crate::config::{PENDING_TTL_SECS, SKIP_SHOWN};
 use crate::error::{AppError, DbError};
-use crate::models::{ParsedSheet, ParsedWorkbook, Question};
+use crate::models::{DeletedBank, ImportTarget, ParsedSheet, ParsedWorkbook, Question};
 use crate::security;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -23,6 +27,8 @@ pub struct PendingImport {
     pub sheets: Vec<ParsedSheet>,
     pub questions: Vec<Question>,
     pub expires: Instant,
+    /// The bank the preview was computed against and the confirm writes to.
+    pub target: ImportTarget,
 }
 
 /// Global single slot. `take` empties it as it removes the content; a wrong or expired token returns None and **does not consume** the slot's content (except expired ones: as in the old version, an expired one cannot be taken out, but leaving it there is harmless).
@@ -44,8 +50,19 @@ impl PendingStore {
             ttl,
         }
     }
+    /// Stages an upload for the legacy bank. See [`PendingStore::put_for`].
     pub fn put(
         &self,
+        filename: String,
+        sheets: Vec<ParsedSheet>,
+        questions: Vec<Question>,
+    ) -> String {
+        self.put_for(ImportTarget::Legacy, filename, sheets, questions)
+    }
+    /// Stages an upload for `target` (replacing the previous one) and returns its token.
+    pub fn put_for(
+        &self,
+        target: ImportTarget,
         filename: String,
         sheets: Vec<ParsedSheet>,
         questions: Vec<Question>,
@@ -57,6 +74,7 @@ impl PendingStore {
             sheets,
             questions,
             expires: Instant::now() + self.ttl,
+            target,
         };
         *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(item);
         token
@@ -76,6 +94,21 @@ impl PendingStore {
     }
     pub fn drop_pending(&self) {
         *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+    /// Drops the staged upload if it targets the bank that was just deleted (its preview was computed against that bank):
+    /// an upload for that bank id, or an upload without a target when the deleted bank was the legacy bank.
+    /// Returns whether something was dropped.
+    pub fn drop_for_deleted_bank(&self, deleted: DeletedBank) -> bool {
+        let mut g = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let hit = matches!(g.as_ref(), Some(it) if match it.target {
+            ImportTarget::Bank(id) => id == deleted.id,
+            ImportTarget::Legacy => deleted.legacy,
+            ImportTarget::New => false,
+        });
+        if hit {
+            *g = None;
+        }
+        hit
     }
 }
 
@@ -149,13 +182,23 @@ pub fn validate_import(item: &PendingImport) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Preview: read-only, does not write to the database. Returns `(plan, the parse result handed back as is)`.
+/// Preview against the legacy bank: read-only, does not write to the database. Returns `(plan, the parse result handed back as is)`.
 pub async fn plan_import(
     engine: Arc<dyn Engine>,
     wb: ParsedWorkbook,
 ) -> Result<(Value, ParsedWorkbook), AppError> {
+    let (plan, wb) = plan_import_for(engine, ImportTarget::Legacy, wb).await?;
+    Ok((plan.ok_or(AppError::Internal)?, wb))
+}
+
+/// Preview against `target`: read-only. The plan is `None` when the target bank does not exist.
+pub async fn plan_import_for(
+    engine: Arc<dyn Engine>,
+    target: ImportTarget,
+    wb: ParsedWorkbook,
+) -> Result<(Option<Value>, ParsedWorkbook), AppError> {
     let joined = tokio::task::spawn_blocking(move || {
-        let r = engine.plan_import(&wb.sheets, &wb.questions);
+        let r = engine.plan_import_for(target, &wb.sheets, &wb.questions);
         (r, wb)
     })
     .await
@@ -199,8 +242,19 @@ pub fn create_pending_import(
     wb: ParsedWorkbook,
     plan: Value,
 ) -> Value {
+    create_pending_import_for(pending, ImportTarget::Legacy, filename, wb, plan)
+}
+
+/// [`create_pending_import`] for an upload with an explicit target.
+pub fn create_pending_import_for(
+    pending: &PendingStore,
+    target: ImportTarget,
+    filename: String,
+    wb: ParsedWorkbook,
+    plan: Value,
+) -> Value {
     let ParsedWorkbook { sheets, questions } = wb;
-    let token = pending.put(filename.clone(), sheets, questions);
+    let token = pending.put_for(target, filename.clone(), sheets, questions);
     preview_payload(plan, &filename, &token)
 }
 
@@ -219,15 +273,36 @@ pub fn cancel_pending_import(pending: &PendingStore) {
     pending.drop_pending();
 }
 
-/// Actually writes to the database (one transaction), then reads back the full question bank. Returns `(result, bank)`. The synchronous `Store` goes into `spawn_blocking`.
+/// What a confirmed import wrote.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AppliedImport {
+    /// Same shape as the preview plan
+    pub result: Value,
+    /// `/api/bank` after the write
+    pub bank: Value,
+    /// The bank that was created / updated
+    pub bank_id: i64,
+}
+
+/// Actually writes the confirmed upload into its target bank (one transaction), then reads back the full question bank. The synchronous
+/// `Store` goes into `spawn_blocking`. `Ok(None)` = the target bank was deleted after the preview (nothing written).
+/// (v0.5: returns [`AppliedImport`] instead of `(result, bank)`, to report the bank id and a deleted target.)
 pub async fn apply_import(
     engine: Arc<dyn Engine>,
     item: PendingImport,
-) -> Result<(Value, Value), DbError> {
+) -> Result<Option<AppliedImport>, DbError> {
     tokio::task::spawn_blocking(move || {
-        let result = engine.apply_import(&item.filename, &item.sheets, &item.questions)?;
+        let Some((result, bank_id)) =
+            engine.apply_import_for(item.target, &item.filename, &item.sheets, &item.questions)?
+        else {
+            return Ok(None);
+        };
         let bank = engine.bank()?;
-        Ok((result, bank))
+        Ok(Some(AppliedImport {
+            result,
+            bank,
+            bank_id,
+        }))
     })
     .await
     .map_err(|_| DbError::Join)?
@@ -285,6 +360,37 @@ mod tests {
         let t3 = p.put("c".into(), vec![], vec![q()]);
         p.drop_pending();
         assert!(p.take(&t3).is_none());
+    }
+
+    #[test]
+    fn targets_travel_with_the_pending_import() {
+        let p = PendingStore::new();
+        let t = p.put("a".into(), vec![], vec![q()]);
+        assert_eq!(p.take(&t).map(|it| it.target), Some(ImportTarget::Legacy));
+        let t = p.put_for(ImportTarget::Bank(7), "b".into(), vec![], vec![q()]);
+        assert_eq!(p.take(&t).map(|it| it.target), Some(ImportTarget::Bank(7)));
+    }
+
+    #[test]
+    fn deleting_a_bank_drops_only_the_upload_that_targets_it() {
+        let p = PendingStore::new();
+        let gone = |id, legacy| DeletedBank { id, legacy };
+        // explicit bank id
+        let t = p.put_for(ImportTarget::Bank(7), "b".into(), vec![], vec![q()]);
+        assert!(!p.drop_for_deleted_bank(gone(8, false)));
+        assert!(!p.drop_for_deleted_bank(gone(8, true)));
+        assert!(p.drop_for_deleted_bank(gone(7, false)));
+        assert!(p.take(&t).is_none());
+        // a new bank is never affected
+        let t = p.put_for(ImportTarget::New, "n".into(), vec![], vec![q()]);
+        assert!(!p.drop_for_deleted_bank(gone(1, true)));
+        assert!(p.take(&t).is_some());
+        // no header = the legacy bank
+        let t = p.put("l".into(), vec![], vec![q()]);
+        assert!(!p.drop_for_deleted_bank(gone(1, false)));
+        assert!(p.drop_for_deleted_bank(gone(1, true)));
+        assert!(p.take(&t).is_none());
+        assert!(!p.drop_for_deleted_bank(gone(1, true)), "empty slot");
     }
 
     #[test]

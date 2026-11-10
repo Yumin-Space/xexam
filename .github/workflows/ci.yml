@@ -49,17 +49,20 @@ jobs:
             mv=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[=:]' "$m" | sed -E 's/.*"([0-9][0-9.]*)".*/\1/')
             case "$mv" in "$v"|"$v".0) ;; *) echo "$m has version $mv but VERSION is $v"; exit 1;; esac
           done
-          # The seven current docs exist in three languages (X.md = English, X.ja.md = Japanese, X.zh-CN.md = Chinese)
+          # The seven current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN)
           for d in api architecture database deployment development migration security; do
-            for s in "" ".ja" ".zh-CN"; do
-              [ -f "docs/$d$s.md" ] || { echo "docs/$d$s.md is missing: every current doc is kept in English, Japanese and Chinese"; exit 1; }
+            for l in en ja zh-CN; do
+              [ -f "docs/$l/$d.md" ] || { echo "docs/$l/$d.md is missing: every current doc is kept in English, Japanese and Chinese"; exit 1; }
             done
           done
-          # Every relative link in the READMEs and in those docs points at a file that exists (anchors, URLs and GitHub-site links such as ../../releases are not checked)
+          # Nothing but the language folders directly under docs/ (the languages are not mixed)
+          extra=$(find docs -mindepth 1 -maxdepth 1 ! -name en ! -name ja ! -name zh-CN)
+          [ -z "$extra" ] || { echo "docs/ must only contain the en, ja and zh-CN folders; found: $extra"; exit 1; }
+          # Every relative link in the READMEs and in all docs points at a file that exists (anchors, URLs, GitHub-site links such as ../../releases and regex-like text inside code are not checked)
           bad=0
-          for f in README.md README.ja.md README.zh-CN.md docs/*.md; do
+          for f in README.md README.ja.md README.zh-CN.md $(find docs -name "*.md"); do
             dir=$(dirname "$f")
-            for l in $(grep -o '\]([^)#[:space:]]*' "$f" | sed 's/^](//' | grep -Ev '^(https?:|mailto:|\.\./\.\./|$)' | sort -u); do
+            for l in $(grep -o '\]([^)#[:space:]]*' "$f" | sed 's/^](//' | grep -Ev '^(https?:|mailto:|$)|^(\.\./)+(releases|issues|actions|pulls|packages)(/|$)|[[^]' | sort -u); do
               [ -e "$dir/$l" ] || { echo "$f links to $l, which does not exist"; bad=1; }
             done
           done

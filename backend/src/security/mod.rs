@@ -1,4 +1,4 @@
-//! Small security utilities. **Interface contract (do not change signatures)**; behavior follows `docs/audit/security.md` and `server.py`'s
+//! Small security utilities. **Interface contract (do not change signatures)**; behavior follows `docs/zh-CN/history/audit/security.md` and `server.py`'s
 //! `host_name` / `origin_host` / `parse_allowed_hosts` / `_host_ok` / `_origin_ok` / `clean_filename`.
 //!
 //! Convention: wherever Python slices by character (code point), use `chars()` here, never byte slicing.

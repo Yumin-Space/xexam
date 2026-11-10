@@ -14,7 +14,11 @@
     "src/types/**/*.ts",
     "src/state/session-storage.ts",
     "src/state/session-storage.test.ts",
-    "src/state/storage-keys.ts"
+    "src/state/storage-keys.ts",
+    "src/i18n/define.ts",
+    "src/i18n/server-messages.ts",
+    "src/i18n/server-messages.test.ts",
+    "src/i18n/catalog.test.ts"
   ],
   "exclude": []
 }

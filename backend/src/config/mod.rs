@@ -1,4 +1,4 @@
-//! Configuration: `XEXAM_*` environment variables and command-line arguments. Based on `server.py main()` and `docs/migration-plan.md` §3.
+//! Configuration: `XEXAM_*` environment variables and command-line arguments. Based on `server.py main()` and `docs/zh-CN/history/migration-plan.md` §3.
 use crate::security::parse_allowed_hosts;
 use std::collections::HashSet;
 use std::path::PathBuf;

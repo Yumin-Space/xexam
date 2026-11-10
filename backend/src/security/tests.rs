@@ -17,7 +17,7 @@ fn host_name_cases() {
         (Some("192.168.1.20:8765"), "192.168.1.20"),
         (Some(""), ""),
         (None, ""),
-        // From docs/audit/security.md C2 / api-contract 3.1
+        // From docs/zh-CN/history/audit/security.md C2 / api-contract 3.1
         (Some("localhost:1:2"), "localhost:1"),
         (Some("localhost:80@evil.com"), "localhost"),
         (Some("user@localhost"), "user@localhost"),

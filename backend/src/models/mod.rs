@@ -137,3 +137,70 @@ pub struct Attempt {
 
 /// The "per-sheet" block in preview / confirm results. For the key order see legacy golden responses #114 / #120.
 pub type JsonValue = Value;
+
+/// The cleaned per-question answers of an `/api/attempt` request, index-aligned with `Attempt::results`
+/// (`None` = not answered / not sent / malformed). Each `Some` is a JSON array as submitted (strings, integers, nulls).
+pub type AttemptAnswers = Vec<Option<Value>>;
+
+/// Which question bank an upload goes to (header `X-Bank-Target`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImportTarget {
+    /// No header: the v0.4 behaviour against the legacy bank (created at confirm if it does not exist).
+    Legacy,
+    /// `new`: a new bank is created at confirm.
+    New,
+    /// A bank id: update (replace) that bank.
+    Bank(i64),
+}
+
+impl ImportTarget {
+    /// Whether the upload named its target explicitly (only then does the confirm response carry `bankId`).
+    pub fn is_explicit(&self) -> bool {
+        !matches!(self, ImportTarget::Legacy)
+    }
+}
+
+/// What `delete_bank` removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeletedBank {
+    pub id: i64,
+    /// The deleted bank was the legacy bank (the target of uploads without `X-Bank-Target`).
+    pub legacy: bool,
+}
+
+/// Settings stored in the `settings` table: key, allowed values, default. The JSON key order of `/api/settings` is this order.
+pub const SETTING_THEME: &str = "theme";
+pub const SETTING_UI_LANG: &str = "uiLang";
+pub const SETTING_AUTO_ADVANCE: &str = "autoAdvance";
+pub const SETTING_QUESTION_LANG: &str = "questionLang";
+pub const SETTING_KEYS: [&str; 4] = [
+    SETTING_THEME,
+    SETTING_UI_LANG,
+    SETTING_AUTO_ADVANCE,
+    SETTING_QUESTION_LANG,
+];
+/// Keys removed by `/api/settings/reset` (`questionLang` is kept).
+pub const RESETTABLE_SETTINGS: [&str; 3] = [SETTING_THEME, SETTING_UI_LANG, SETTING_AUTO_ADVANCE];
+
+/// Default value of a known setting key (`None` for unknown keys).
+pub fn setting_default(key: &str) -> Option<Value> {
+    Some(match key {
+        SETTING_THEME => Value::from("system"),
+        SETTING_UI_LANG => Value::from("en"),
+        SETTING_AUTO_ADVANCE => Value::Bool(false),
+        SETTING_QUESTION_LANG => Value::from("ja"),
+        _ => return None,
+    })
+}
+
+/// Whether `value` is allowed for the known setting `key` (unknown keys are never valid).
+pub fn setting_valid(key: &str, value: &Value) -> bool {
+    let one_of = |allowed: &[&str]| value.as_str().is_some_and(|s| allowed.contains(&s));
+    match key {
+        SETTING_THEME => one_of(&["system", "light", "dark"]),
+        SETTING_UI_LANG => one_of(&["en", "zh", "ja"]),
+        SETTING_AUTO_ADVANCE => value.is_boolean(),
+        SETTING_QUESTION_LANG => one_of(&["ja", "zh", "en"]),
+        _ => false,
+    }
+}

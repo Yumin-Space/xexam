@@ -5,7 +5,7 @@
 //! - `models`    data models (field order = key order of the old JSON)
 //! - `security`  Host / Origin guards, tokens, request-body limits, file-name sanitizing
 //! - `parser`    XLSX parsing (zip + quick-xml), question ids, translation splitting
-//! - `database`  SQLite storage (schema is identical to the old version, character for character)
+//! - `database`  SQLite storage (the v1 schema text is identical to the old version, character for character; v0.5 migrates to schema v2)
 //! - `services`  import flow (parse_upload → … → apply_import), pending-confirmation slot, result recording
 //! - `api`       HTTP routes and JSON output
 

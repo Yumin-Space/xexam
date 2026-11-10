@@ -16,7 +16,7 @@
 #   Create a file named .env next to this file and write:
 #       XEXAM_BIND=0.0.0.0:8765            # lets cloudflared on the LAN reach this machine; the default binds to localhost only
 #       XEXAM_ALLOWED_HOSTS=xexam.your-domain.com
-#   Then run docker compose up -d. See the README and docs/deployment.md for full instructions.
+#   Then run docker compose up -d. See the README and docs/en/deployment.md for full instructions.
 #
 # ⚠️ Do not run `docker compose down -v`: -v also deletes the data volume xexam_data.
 

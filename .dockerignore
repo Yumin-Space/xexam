@@ -1,4 +1,5 @@
-# Keep these out of the image build context: personal data, build artifacts, the repository, docs
+# Keep these out of the image build context: personal data, build artifacts, the repository, docs.
+# The three READMEs stay in: the nginx image build reads their changelogs for the About page.
 **/data
 **/progress.json
 **/*.xlsx
@@ -18,7 +19,6 @@ docker-compose.yml
 docker-compose.build.yml
 .dockerignore
 .github
-README.md
 docs
 scripts
 tests

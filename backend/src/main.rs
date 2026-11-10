@@ -10,6 +10,7 @@ use std::time::Duration;
 use xexam_backend::api::{build_router, AppState};
 use xexam_backend::config::Config;
 use xexam_backend::database::Store;
+use xexam_backend::error::DbError;
 use xexam_backend::services::{Engine, RealEngine};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -181,7 +182,20 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
             others.join(", ")
         ));
     }
-    let store = Arc::new(Store::open(&db_path).map_err(|e| format!("cannot open database: {e}"))?);
+    let store = Arc::new(Store::open(&db_path).map_err(|e| match e {
+        DbError::Backup(_) => format!(
+            "cannot open database: {e}. The database was NOT upgraded and is unchanged. Make sure {} can be created and written (disk space, permissions), then start again.",
+            data_dir.join(xexam_backend::database::BACKUP_DIR).display()
+        ),
+        other => format!("cannot open database: {other}"),
+    })?);
+    if let Some(backup) = store.migration_backup() {
+        say(&format!(
+            "Upgraded the database to schema {}. A copy of the previous version was saved first: {} (restore it if you ever go back to v0.4 or older).",
+            xexam_backend::database::schema::SCHEMA_VERSION,
+            backup.display()
+        ));
+    }
     let legacy = data_dir.join("progress.json");
     if legacy.is_file() {
         match store.migrate_legacy_progress(&legacy) {

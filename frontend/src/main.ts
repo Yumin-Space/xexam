@@ -1,44 +1,92 @@
-// App entry: maps the state machine's view to a page, registers the redraw function, and starts.
+// App entry: applies the cached settings (first paint), maps the route to a page inside the shell, registers the redraw function, and starts.
 import './styles/main.css';
 import { brand } from './components/common.ts';
-import { renderAdmin } from './pages/admin.ts';
+import { installShellHandlers, shell } from './components/shell.ts';
+import { t } from './i18n/index.ts';
+import { errorText } from './i18n/errors.ts';
+import { renderAbout } from './pages/about.ts';
+import { renderBanks } from './pages/banks.ts';
 import { renderHome } from './pages/home.ts';
 import { installQuizKeys, renderQuiz } from './pages/quiz.ts';
+import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
+import { renderSettings } from './pages/settings.ts';
 import { boot, setRenderer } from './state/actions.ts';
+import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S } from './state/store.ts';
 import { h, must } from './utils/dom.ts';
 
-function view(): HTMLElement {
-  switch (S.view) {
-    case 'loading':
-      return h('div', { class: 'wrap' }, h('p', { class: 'dim' }, '正在读取题库…'));
-    case 'fatal':
-      return h('div', { class: 'wrap' }, h('header', { class: 'top' }, brand()),
-        h('div', { class: 'err' }, h('p', null, '连不上服务。请确认程序（或 Docker 容器）还在运行，然后刷新这个页面。如果你是通过域名访问的，也可能是登录已过期，刷新后重新登录即可。')));
-    case 'admin':
-      return renderAdmin();
-    case 'quiz':
-      if (S.session) return renderQuiz();
-      break;
+function solo(...kids: Array<HTMLElement | null>): HTMLElement {
+  return h('div', { class: 'solo' }, h('div', { class: 'solo-brand' }, brand()), kids);
+}
+
+/** The page for the current route, and its title */
+function page(): { el: HTMLElement; title: string } {
+  const r = S.route;
+  switch (r.name) {
+    case 'banks':
+      return { el: renderBanks(), title: t('nav.banks') };
+    case 'records':
+    case 'record':
+    case 'wrong':
+      return { el: renderRecords(r), title: t('nav.records') };
     case 'result':
-      if (S.result) return renderResult();
-      break;
+      return { el: renderResult(), title: t('title.result') };
+    case 'settings':
+      return { el: renderSettings(), title: t('nav.settings') };
+    case 'about':
+      return { el: renderAbout(), title: t('about.title') };
     default:
-      break;
+      return { el: renderHome(), title: t('nav.home') };
   }
-  S.view = 'home';
-  return renderHome();
+}
+
+/** Every render rebuilds the page; keep keyboard focus on the element with the same id (when it still exists). */
+function keepFocus(draw: () => void): void {
+  const before = document.activeElement;
+  const id = before instanceof HTMLElement && before !== document.body ? before.id : '';
+  draw();
+  if (!id) return;
+  const again = document.getElementById(id);
+  if (again && again !== document.activeElement) again.focus({ preventScroll: true });
 }
 
 function render(): void {
-  if (S.timer != null) window.clearInterval(S.timer);
-  S.timer = null;
-  const el = view();
-  must<HTMLElement>('#app').replaceChildren(el);
-  document.title = S.view === 'quiz' && S.session ? `第 ${S.session.idx + 1} / ${S.session.qs.length} 题 - Xexam` : 'Xexam';
+  keepFocus(draw);
 }
 
+function draw(): void {
+  if (S.timer != null) window.clearInterval(S.timer);
+  S.timer = null;
+  const app = must<HTMLElement>('#app');
+
+  if (S.phase === 'loading') {
+    app.replaceChildren(solo(h('p', { class: 'dim', role: 'status' }, t('app.loading'))));
+    document.title = t('app.name');
+    return;
+  }
+  if (S.phase === 'fatal') {
+    app.replaceChildren(solo(h('div', { class: 'err', role: 'alert' },
+      h('h2', null, t('app.fatal.title')),
+      h('p', null, S.fatal ? errorText(S.fatal) : t('app.fatal.body')),
+      h('p', { class: 'dim' }, t('app.fatal.body')),
+      h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => window.location.reload() }, t('app.reload'))))));
+    document.title = t('app.name');
+    return;
+  }
+  if (S.route.name === 'quiz' && S.session) {
+    app.replaceChildren(renderQuiz());
+    document.title = `${t('title.quiz', { i: S.session.idx + 1, n: S.session.qs.length })} - ${t('app.name')}`;
+    return;
+  }
+  const p = page();
+  app.replaceChildren(shell(p.el));
+  document.title = `${p.title} - ${t('app.name')}`;
+}
+
+applySettings(S.settings);
+watchSystemTheme();
 setRenderer(render);
+installShellHandlers();
 installQuizKeys();
 void boot();

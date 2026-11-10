@@ -1,7 +1,7 @@
 // Golden unit tests: node --experimental-strip-types --test src/domain/*.test.ts
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { grade, inNotebook, percentOf, poolOf, shuffle, stateOf } from './grading.ts';
+import { completes, grade, inNotebook, percentOf, pickQuestions, poolOf, shuffle, stateOf } from './grading.ts';
 import type { Progress, Question } from '../types/api.ts';
 
 const single = { kind: 'single', answer: ['B'], items: [] } as unknown as Pick<Question, 'kind' | 'answer' | 'items'>;
@@ -25,6 +25,19 @@ test('stateOf: hotspot question (0 unanswered / 1 partial / 2 complete)', () => 
   assert.equal(stateOf(hot, [0, 1, 0]), 2);
   assert.equal(stateOf(hot, [0, 1]), 1, 'shorter than the number of sub-items: not complete');
   assert.equal(stateOf(hot, [0, 1, 0, 1]), 1, 'longer than the number of sub-items: not complete');
+});
+
+test('completes: only the pick that fills the last open hotspot item (auto-advance trigger)', () => {
+  assert.equal(completes(hot, [0, 1, null], [0, 1, 0]), true, 'last open item answered');
+  assert.equal(completes(hot, [0, null, null], [0, 1, null]), false, 'still an open item');
+  assert.equal(completes(hot, [0, 1, 0], [0, 0, 0]), false, 'changing an item of a complete question');
+  assert.equal(completes(hot, [0, 1, 0], [0, null, 0]), false, 'clearing an item');
+  assert.equal(completes(hot, undefined, [0, null, null]), false, 'first item of three');
+  const one = { kind: 'hotspot', answer: [1], items: [{}] } as never;
+  assert.equal(completes(one, undefined, [1]), true, 'single-item hotspot question');
+  assert.equal(completes(one, [0], [1]), false, 'single-item hotspot question changed');
+  assert.equal(completes(single, undefined, ['B']), true);
+  assert.equal(completes(single, ['A'], ['B']), false);
 });
 
 test('grade: single choice', () => {
@@ -111,4 +124,23 @@ test('shuffle: does not mutate the original array; no elements lost or duplicate
   assert.deepEqual([...src], [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual([...out].sort(), [...src].sort());
   assert.deepEqual(shuffle(src, () => 0), [2, 3, 4, 5, 6, 7, 8, 1], 'deterministic result when the random source is fixed');
+});
+
+test('pickQuestions: a smaller count picks a random subset even without shuffling the order', () => {
+  const pool = Array.from({ length: 12 }, (_, i) => i);
+  // deterministic pseudo-random sequence
+  let x = 7;
+  const rnd = (): number => ((x = (x * 9301 + 49297) % 233280) / 233280);
+  const seen = new Set<number>();
+  for (let k = 0; k < 200; k++) {
+    const p = pickQuestions(pool, 11, false, rnd);
+    assert.equal(p.length, 11);
+    assert.deepEqual(p, [...p].sort((a, b) => a - b), 'bank order is kept when the order is not shuffled');
+    for (const q of pool) if (!p.includes(q)) seen.add(q);
+  }
+  assert.ok(seen.size > 6, 'the left-out question changes from exam to exam, not always the last one');
+  assert.deepEqual(pickQuestions(pool, 12, false, rnd), pool);
+  assert.deepEqual(pickQuestions(pool, 99, false, rnd), pool);
+  assert.equal(pickQuestions(pool, 0, true, rnd).length, 0);
+  assert.deepEqual([...pickQuestions(pool, 12, true, rnd)].sort((a, b) => a - b), pool, 'shuffling keeps every question');
 });

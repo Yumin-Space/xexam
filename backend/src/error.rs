@@ -43,6 +43,12 @@ pub enum DbError {
     Json(#[from] serde_json::Error),
     #[error("数据库任务异常结束")]
     Join,
+    /// The consistent copy (`VACUUM INTO`) written before a schema migration could not be made; the database was not migrated.
+    #[error("backup before the schema migration failed: {0}")]
+    Backup(String),
+    /// The engine does not implement this operation (default trait methods of test engines).
+    #[error("not supported by this engine")]
+    Unsupported,
 }
 
 /// Errors at the HTTP layer. `IntoResponse` is implemented in `api::error_response`.
@@ -68,6 +74,9 @@ pub enum AppError {
     BadRequest(String),
     #[error("not found")]
     NotFound,
+    /// 404 + Chinese reason (the bank / exam record does not exist, e.g. deleted in another tab)
+    #[error("{0}")]
+    NotFoundMsg(&'static str),
     /// 409: the preview has expired or was already handled
     #[error("pending gone")]
     PendingGone,

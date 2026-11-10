@@ -1,0 +1,125 @@
+/* Question banks page: import panel, bank list, import history, Excel format guide.
+   Colours come only from the tokens in main.css, so the page follows the light and dark themes. */
+
+/* Layout: one column; two columns once the page is wide enough */
+.bk-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
+.bk-col { display: grid; gap: 20px; align-content: start; min-width: 0; }
+.bk-col > .panel + .panel { margin-top: 0; }
+@media (min-width: 1000px) {
+  .bk-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
+}
+.page-banks .panel, .bk-target { scroll-margin-top: 16px; }
+@media (max-width: 900px) {
+  .page-banks .panel, .bk-target { scroll-margin-top: 16px; }
+}
+.page-banks [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
+
+/* ---------- Import panel ---------- */
+.bk-target { margin-bottom: 16px; }
+.page-banks .row-opt .name, .page-banks .row-opt .sub { display: block; }
+.bk-pick { display: grid; gap: 6px; margin: 2px 0 8px 42px; }
+.bk-pick[hidden] { display: none; }
+.bk-pick label { font-weight: 600; font-size: 14px; color: var(--ink2); }
+.bk-pick select {
+  width: 100%; min-height: 40px; padding: 6px 10px;
+  border: 1.5px solid var(--ink); border-radius: 4px; background: var(--card); color: var(--ink);
+}
+@media (max-width: 480px) { .bk-pick { margin-left: 0; } }
+
+.bk-drop .dim { max-width: 34em; overflow-wrap: anywhere; }
+.bk-drop .drop-t { overflow-wrap: anywhere; }
+/* While a file is checked, the title is the progress message: keep it fully readable (the button shows .btn:disabled) */
+.page-banks .bk-drop.busy { opacity: 1; }
+@media (hover: none) { .bk-or { display: none; } }
+@media (max-width: 480px) {
+  /* Phones: the steps repeat what the form already shows, and nothing can be dropped, so the file button
+     moves into the first screen */
+  .page-banks .steps { display: none; }
+  .page-banks .bk-drop { padding: 16px 12px; gap: 8px; }
+}
+
+.bk-guide-link { margin-top: 12px; }
+.linkbtn {
+  border: 0; background: none; padding: 0; color: var(--print); font-weight: 600;
+  text-decoration: underline; text-underline-offset: 3px; text-align: left;
+}
+@media (hover: hover) { .linkbtn:hover { color: var(--ink); } }
+
+/* Preview */
+.bk-import h2 { overflow-wrap: anywhere; }
+.bk-lead { margin-bottom: 14px; }
+.bk-info { margin-top: 16px; border: 1.5px solid var(--print); background: var(--print-soft); border-radius: 6px; padding: 12px 16px; overflow-wrap: anywhere; }
+.bk-info .acts { margin-top: 10px; }
+.page-banks .warnbox { overflow-wrap: anywhere; }
+.page-banks .warnbox p + p, .page-banks .warnbox ul + p { margin-top: 6px; }
+.page-banks .err p + p { margin-top: 6px; }
+.page-banks .skipbox li { overflow-wrap: anywhere; }
+.bk-same { margin-top: 12px; }
+.bk-acts { margin-top: 20px; }
+.page-banks .okbox p { overflow-wrap: anywhere; }
+
+/* ---------- Bank list ---------- */
+.bk-cards { display: grid; gap: 12px; }
+.bk-card { min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; }
+.bk-card h3 { font-size: 17px; margin-bottom: 8px; overflow-wrap: anywhere; }
+.bk-meta { display: grid; gap: 2px; margin: 0; font-size: 14px; }
+.bk-meta > div { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 12px; }
+.bk-meta dt { color: var(--ink3); }
+.bk-meta dd { margin: 0; overflow-wrap: anywhere; }
+.bk-sheets { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 14px; }
+.bk-sheets summary { cursor: pointer; padding-block: 4px; font-weight: 600; color: var(--ink2); }
+.bk-sheets ul { list-style: none; margin: 6px 0 0; padding: 0; }
+.bk-sheets li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 6px 0; border-top: 1px solid var(--line); }
+.bk-sheets li:first-child { border-top: 0; }
+.bk-sheet-name { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.bk-card .acts { margin-top: 14px; }
+@media (max-width: 480px) {
+  .bk-card { padding: 14px; }
+  .bk-meta > div { grid-template-columns: 6.5em minmax(0, 1fr); gap: 8px; }
+}
+
+/* ---------- Import history ---------- */
+.bk-hist { list-style: none; margin: 0; padding: 0; }
+.bk-hist li { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.bk-hist li:first-child { padding-top: 0; border-top: 0; }
+.bk-hist-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.bk-hist-file { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.bk-note { margin-top: 10px; font-size: 13px; }
+.bk-retry { margin-top: 10px; }
+
+/* ---------- Excel format guide ---------- */
+.bk-guide h3 { font-size: 15.5px; margin: 22px 0 8px; color: var(--ink2); }
+.bk-guide h2 + h3 { margin-top: 0; }
+.bk-guide p { line-height: 1.8; overflow-wrap: anywhere; }
+.bk-guide p + p { margin-top: 8px; }
+.bk-points { margin: 0; padding-left: 20px; line-height: 1.8; overflow-wrap: anywhere; }
+.bk-points li + li { margin-top: 6px; }
+/* inline-block: a marker moves to the next line as a whole instead of splitting into two boxes that look like two markers */
+.bk-code {
+  display: inline-block; max-width: 100%; line-height: 1.45;
+  font-family: inherit; font-size: .95em; padding: 0 4px;
+  background: var(--tint); border: 1px solid var(--line); border-radius: 3px; overflow-wrap: anywhere;
+}
+.bk-cols { width: 100%; margin-bottom: 8px; border-collapse: collapse; font-size: 14px; }
+.bk-cols th, .bk-cols td { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; line-height: 1.7; }
+.bk-cols td { overflow-wrap: anywhere; }
+.bk-cols thead th { padding-top: 0; border-top: 0; font-size: 13px; font-weight: 600; color: var(--ink3); }
+.bk-cols tbody th { width: 4.5em; font: 700 15px var(--num), var(--en); color: var(--print); }
+.bk-ex { margin: 0 0 14px; }
+.bk-ex figcaption { margin-bottom: 6px; font-size: 14px; font-weight: 600; }
+.bk-ex-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 8px; }
+.bk-ex .bk-ex-col { margin-bottom: 2px; font-size: 12.5px; color: var(--ink3); }
+.bk-ex-cell {
+  margin: 0; padding: 10px 12px;
+  background: var(--card); border: 1px solid var(--line); border-radius: 4px;
+  font-family: inherit; font-size: 13.5px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+/* Phones: the single-letter column gives its spare width to the content column */
+@media (max-width: 480px) { .bk-cols tbody th { width: 2.5em; } }
+
+/* ---------- Touch screens: tap targets of at least 44px ---------- */
+@media (pointer: coarse), (max-width: 480px) {
+  .bk-pick select { min-height: 44px; }
+  .linkbtn { min-height: 44px; }
+  .bk-sheets summary { padding-block: 10px; }
+}

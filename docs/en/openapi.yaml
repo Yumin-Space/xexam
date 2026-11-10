@@ -1,0 +1,765 @@
+openapi: 3.0.3
+info:
+  title: Xexam API
+  version: "0.5"
+  description: |
+    The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
+    backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
+    differences are listed under "Differences from the old version" in docs/en/api.md. Endpoints and fields marked *(v0.5)* were
+    added in v0.5 (question banks, exam records with per-question detail, settings); see "Changes in v0.5" in docs/en/api.md.
+
+    All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
+    JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
+    Errors are always `{"error": "<reason, in Chinese>"}`.
+
+    **Guard order (POST)**: Host → Origin → Content-Type → request body size → JSON parsing → routing.
+    GET only checks Host.
+servers:
+  - url: http://localhost:8765
+    description: Local machine (through Nginx)
+tags:
+  - name: read
+  - name: import
+  - name: banks
+  - name: progress
+  - name: records
+  - name: settings
+  - name: system
+
+paths:
+  /api/info:
+    get:
+      tags: [system]
+      summary: Version, architecture, whether shutdown is allowed, question count
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Info" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/bank:
+    get:
+      tags: [read]
+      summary: Questions of every bank (active questions only), grouped by bank id; each question ends with its `bank`
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Bank" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/banks:
+    get:
+      tags: [banks]
+      summary: "(v0.5) The question banks (one per imported workbook), ordered by id"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/BankList" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/progress:
+    get:
+      tags: [progress]
+      summary: Study records (per-question statistics + scores of the 60 most recent exams)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Progress" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/imports:
+    get:
+      tags: [import]
+      summary: The 12 most recent import records (newest first)
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imports]
+                properties:
+                  imports:
+                    type: array
+                    items: { $ref: "#/components/schemas/ImportRecord" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/records:
+    get:
+      tags: [records]
+      summary: "(v0.5) Every kept exam record (at most 500), newest first"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RecordList" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/record:
+    get:
+      tags: [records]
+      summary: "(v0.5) One exam record with its per-question detail"
+      parameters:
+        - name: id
+          in: query
+          required: true
+          description: "Exactly one `id` parameter of 1–18 ASCII digits (percent-encoding is decoded)"
+          schema: { type: string, pattern: "^[0-9]{1,18}$" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [record, items]
+                properties:
+                  record: { $ref: "#/components/schemas/RecordSummary" }
+                  items: { type: array, items: { $ref: "#/components/schemas/RecordItem" } }
+        "400":
+          description: "`id` missing, repeated or not 1–18 digits: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "404": { $ref: "#/components/responses/RecordNotFound" }
+  /api/settings:
+    get:
+      tags: [settings]
+      summary: "(v0.5) Interface settings (defaults merged with the stored values)"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+    post:
+      tags: [settings]
+      summary: "(v0.5) Change any subset of the settings (one transaction); returns the full settings"
+      description: |
+        Unknown keys are ignored. A known key with an invalid value → 400 `设置的值不对。` and nothing is written.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SettingsPatch" }
+      responses:
+        "200":
+          description: The full settings after the update
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/settings/reset:
+    post:
+      tags: [settings]
+      summary: "(v0.5) Restore theme, uiLang and autoAdvance to their defaults (questionLang is kept)"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The full settings after the reset
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+
+  /api/upload:
+    post:
+      tags: [import]
+      summary: "Upload an .xlsx and get a preview (**nothing is written to the database**) and a one-time confirmation code"
+      description: |
+        The request body is the raw bytes of the .xlsx, at most 20 MiB (counted in real bytes; Content-Length is not trusted).
+        Whether it is an .xlsx is judged only by its **content** (magic number + ZIP + workbook + no DOCTYPE / entity declarations),
+        never by the file name. The parsed result is held in memory in **one single slot** (uploading again replaces it) and stays
+        valid for 30 minutes.
+      parameters:
+        - name: X-Filename
+          in: header
+          required: false
+          description: 'Percent-encoded file name; defaults to `未命名.xlsx` ("Untitled.xlsx"), at most 120 characters'
+          schema: { type: string }
+        - name: X-Bank-Target
+          in: header
+          required: false
+          description: |
+            (v0.5) Which bank the file goes to. Absent: the legacy bank (v0.4 behavior; created at confirm if it does not exist).
+            `new` (surrounding spaces ignored, any case): a new bank is created at confirm, and the preview shows every usable
+            question as `added`. A bank id (`^[0-9]{1,18}$`): update that bank (404 if it does not exist). Anything else: 400
+            `上传目标不对，请刷新页面后再试。`. The preview is computed against the target bank only; its keys do not change.
+          schema: { type: string, example: new }
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200":
+          description: Preview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ImportPreview" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "404": { $ref: "#/components/responses/BankNotFound" }
+        "413":
+          description: Larger than 20 MiB
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/import/confirm:
+    post:
+      tags: [import]
+      summary: Confirm the import (the only endpoint that writes the question bank)
+      description: |
+        The confirmation code is **single-use**: it is invalidated immediately after a success; a wrong confirmation code does not
+        consume what is in the slot; an expired one (30 minutes) cannot be retrieved.
+        The import is done in **one transaction**; if it fails, the question bank is left completely unchanged.
+        (v0.5) The file replaces the content of its target bank only (questions of that bank missing from the file are
+        deactivated; other banks are untouched). `bankId` is present only when the upload carried `X-Bank-Target`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token: { type: string }
+      responses:
+        "200":
+          description: The import result and the latest question bank
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [result, bank]
+                properties:
+                  result: { $ref: "#/components/schemas/ImportPlan" }
+                  bank: { $ref: "#/components/schemas/Bank" }
+                  bankId: { type: integer, description: "(v0.5) Only when the upload carried `X-Bank-Target`: the created / updated bank" }
+        "400":
+          description: This file contains no usable questions (nothing is imported)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "409":
+          description: The preview has expired or was already handled (this includes a wrong or non-ASCII confirmation code)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404":
+          description: "(v0.5) The target bank was deleted after the preview: nothing is written, the confirmation code is used up"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+        "500":
+          description: Writing to the database failed; the question bank is left completely unchanged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+  /api/import/cancel:
+    post:
+      tags: [import]
+      summary: Cancel the pending import (no confirmation code needed)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+
+  /api/banks/delete:
+    post:
+      tags: [banks]
+      summary: "(v0.5) Delete a question bank, optionally with its study data"
+      description: |
+        One transaction: the bank's questions (active and deactivated), its import history and the bank itself. With
+        `withRecords: true` also the statistics and per-question exam detail of those questions, and every exam record that
+        drew from this bank and from no bank that still exists (with the rest of its detail). Without it, exam records and
+        statistics stay. A pending upload that targets this bank is discarded.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: integer, description: "Must be an integer (a boolean is not)" }
+                withRecords: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The banks, the questions and the study records after the deletion
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [banks, bank, progress]
+                properties:
+                  banks: { type: array, items: { $ref: "#/components/schemas/BankSummary" } }
+                  bank: { $ref: "#/components/schemas/Bank" }
+                  progress: { $ref: "#/components/schemas/Progress" }
+        "400":
+          description: "`id` missing / not an integer, or `withRecords` not a boolean: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "404": { $ref: "#/components/responses/BankNotFound" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/records/delete:
+    post:
+      tags: [records]
+      summary: "(v0.5) Delete one exam record, or all of them"
+      description: |
+        `{"id": <int>}`: that record and its detail (the per-question statistics are not changed).
+        `{"all": true, "withStats": <bool, default false>}`: every record and its detail; `withStats` also empties the statistics.
+        Any other shape (neither or both of `id` / `all`, `all` not `true`, `withStats` together with `id`, wrong types) → 400.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required: [id]
+                  properties:
+                    id: { type: integer }
+                - type: object
+                  required: [all]
+                  properties:
+                    all: { type: boolean, enum: [true] }
+                    withStats: { type: boolean, default: false }
+      responses:
+        "200":
+          description: The records and the study records after the deletion
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [records, retention, progress]
+                properties:
+                  records: { type: array, items: { $ref: "#/components/schemas/RecordSummary" } }
+                  retention: { type: integer, example: 500 }
+                  progress: { $ref: "#/components/schemas/Progress" }
+        "400":
+          description: "Malformed body: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "404": { $ref: "#/components/responses/RecordNotFound" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+
+  /api/attempt:
+    post:
+      tags: [progress]
+      summary: "Record the result of one exam ({question id, correct or not}, and since v0.5 optionally the answer given)"
+      description: |
+        Sanitizing rules: `results` must be a list (otherwise 400 `成绩的格式不对`, "malformed results"), at most 2000 entries; each
+        entry needs a string `id` (truncated to the first 64 characters) and a boolean `correct` (entries that do not qualify are
+        dropped); no valid entry → 400 `没有成绩可保存` ("no results to save"). `sheets` accepts only strings (at most 50, each
+        truncated to the first 80 characters); a `mode` other than all / weak / retry is treated as all; `seconds` is clamped to
+        0..604800 and abnormal values become 0.
+        The server **trusts** `correct` and does not check whether the id is in the question bank (same as the legacy version).
+        (v0.5) An optional `answer` per result is stored for later review: an array of at most 64 elements, each a string of at
+        most 8 characters, an integer 0..999 or null; anything else is stored as "no answer" (the result is still accepted). The
+        database keeps the 500 newest exams with their per-question detail; the response is unchanged.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AttemptRequest" }
+      responses:
+        "200":
+          description: The latest study records
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Progress" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/reset:
+    post:
+      tags: [progress]
+      summary: Clear the study records (score history with its per-question detail, and per-question statistics; the question bank is untouched)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: The study records after clearing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Progress" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/shutdown:
+    post:
+      tags: [system]
+      summary: "Shut down the program (only available when started with --allow-shutdown; always 403 in Docker)"
+      responses:
+        "200":
+          description: Shutdown scheduled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        "403":
+          description: Not enabled (the case in Docker) or rejected by the Host / Origin guard
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+components:
+  responses:
+    ForbiddenHost:
+      description: 'Host is not on the allow-list. The GET response is **text/plain**, in the form `Forbidden host: <host name>。…`'
+      content:
+        text/plain:
+          schema: { type: string }
+    Denied:
+      description: The POST was rejected by the Host / Origin guard; `error` says which check failed and how to let it through
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadRequest:
+      description: Something is wrong with the request; `error` is a reason in Chinese that can be shown to the user directly
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BadContentType:
+      description: Wrong Content-Type (JSON endpoints must use application/json; the upload must use application/octet-stream)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    BankNotFound:
+      description: "(v0.5) No such bank: `这个题库不存在（可能已被删除），请刷新页面后再试。`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    RecordNotFound:
+      description: "(v0.5) No such exam record: `这条考试记录不存在（可能已被删除），请刷新页面后再试。`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+    Info:
+      type: object
+      required: [version, arch, canShutdown, bankCount]
+      properties:
+        version: { type: string, example: "0.5" }
+        arch: { type: string, example: x86_64 }
+        canShutdown: { type: boolean }
+        bankCount: { type: integer, description: Number of active questions }
+    Opt:
+      type: object
+      required: [key, text]
+      properties:
+        key: { type: string, example: A }
+        text: { type: string }
+    Item:
+      type: object
+      required: [text, choices]
+      properties:
+        text: { type: string }
+        choices: { type: array, items: { type: string }, example: [はい, いいえ] }
+    Zh:
+      type: object
+      description: |
+        The structure split out for Chinese (and for English, which has the same shape); when the structure cannot be matched to the
+        Japanese question, the whole `zh` / `en` is null (the frontend greys out the button of that language instead of showing
+        misaligned content).
+      required: [stem]
+      properties:
+        stem: { type: string }
+        options: { type: array, items: { type: string }, description: Single / multiple choice only }
+        items: { type: array, items: { type: string }, description: Hotspot questions only }
+        choices:
+          type: array
+          items: { type: array, items: { type: string } }
+          description: |
+            Hotspot questions only: the options written in **this language** at the end of each sub-item (Japanese `はい / いいえ`,
+            Chinese `是 / 否`, English `Yes / No`). It is present only when the number of options matches the Japanese one;
+            the position of an option is the answer index, so the j-th option has the same meaning in all three languages.
+            When absent, the UI shows the Japanese options.
+    Question:
+      type: object
+      required: [kind, tag, stem, options, items, answer, translation, zh, explanation, mnemonic, note, id, sheet, row, bank]
+      properties:
+        kind: { type: string, enum: [single, multi, hotspot] }
+        tag: { type: string, description: "`ホットスポット` for hotspot questions, empty for the others" }
+        stem: { type: string }
+        options: { type: array, items: { $ref: "#/components/schemas/Opt" } }
+        items: { type: array, items: { $ref: "#/components/schemas/Item" } }
+        answer:
+          oneOf:
+            - { type: array, items: { type: string }, description: "Single / multiple choice: letters, e.g. [\"B\"]" }
+            - { type: array, items: { type: integer }, description: "Hotspot: the option index chosen for each sub-item, e.g. [0, 1, 0]" }
+        translation: { type: string }
+        zh: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }] }
+        english:
+          type: string
+          description: "Only in the four-column format (A English, B Chinese, C Japanese, D answer): the English original from column A. Questions without English do not have this key (so the output of the three-column format is exactly the same as before)"
+        en: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }], description: "English split along the structure of the Japanese; can only appear in the four-column format" }
+        explanation: { type: string }
+        mnemonic: { type: string }
+        note: { type: string }
+        id: { type: string, description: "Question identity (content fingerprint of sheet + question text + first option, 12 hex digits; duplicates get -2, -3 …). In banks other than the legacy bank it is scoped to the bank (see docs/en/database.md 4.1)", example: 94e4bfe00e8d }
+        sheet: { type: string }
+        row: { type: integer, description: Row number in Excel (for display only) }
+        bank: { type: integer, nullable: true, description: "(v0.5) Id of the question's bank; always the last key" }
+    RecordQuestion:
+      description: "(v0.5) A question as in /api/bank plus a trailing `active` (deactivated questions are included)"
+      allOf:
+        - { $ref: "#/components/schemas/Question" }
+        - type: object
+          required: [active]
+          properties:
+            active: { type: boolean }
+    SheetInfo:
+      type: object
+      required: [name, usable, inactive, total, skipped]
+      properties:
+        name: { type: string }
+        usable: { type: integer }
+        inactive: { type: integer, description: Number of deactivated questions }
+        total: { type: integer }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SkippedRow" } }
+    SkippedRow:
+      type: object
+      required: [row, reason]
+      properties:
+        row: { type: integer }
+        reason: { type: string }
+    Bank:
+      type: object
+      required: [file, mtime, error, questions, sheets]
+      properties:
+        file: { type: string, description: File name of the most recent import }
+        mtime: { type: string, description: "Time of the most recent import, YYYY-MM-DD HH:MM (local time, no time zone)" }
+        error: { type: string }
+        questions: { type: array, items: { $ref: "#/components/schemas/Question" } }
+        sheets: { type: array, items: { $ref: "#/components/schemas/SheetInfo" } }
+    QuestionStat:
+      type: object
+      required: [attempts, correct, wrong, streak]
+      properties:
+        attempts: { type: integer }
+        correct: { type: integer }
+        wrong: { type: integer }
+        streak: { type: integer, description: Current number of consecutive correct answers }
+        last: { type: boolean, description: "Whether the last attempt was correct (this key is absent if the question was never answered)" }
+        at: { type: string, description: Time of the most recent attempt }
+    HistoryEntry:
+      type: object
+      required: [at, sheets, mode, total, correct, percent, seconds]
+      properties:
+        at: { type: string }
+        sheets: { type: array, items: { type: string } }
+        mode: { type: string, enum: [all, weak, retry] }
+        total: { type: integer }
+        correct: { type: integer }
+        percent: { type: integer, description: "Round half to even (Python round): 1/8 → 12" }
+        seconds: { type: integer }
+    Progress:
+      type: object
+      required: [version, questions, history, masterStreak]
+      properties:
+        version: { type: integer, example: 1 }
+        questions: { type: object, additionalProperties: { $ref: "#/components/schemas/QuestionStat" } }
+        history: { type: array, items: { $ref: "#/components/schemas/HistoryEntry" }, description: "The 60 most recent exams, newest first" }
+        masterStreak: { type: integer, example: 2, description: "How many consecutive correct answers move a wrong question out of the wrong-answer notebook" }
+    BankSheet:
+      type: object
+      required: [name, usable, inactive]
+      properties:
+        name: { type: string }
+        usable: { type: integer }
+        inactive: { type: integer }
+    BankSummary:
+      type: object
+      description: "(v0.5) One question bank (= one imported workbook). Key order as listed."
+      required: [id, name, filename, legacy, createdAt, updatedAt, total, inactive, sheets, studied, records]
+      properties:
+        id: { type: integer }
+        name: { type: string, description: "File name without .xlsx when created; ` (2)`, ` (3)` … appended if taken; never changed by updates" }
+        filename: { type: string, description: File name of the latest import into this bank }
+        legacy: { type: boolean, description: "The bank holding the data from before v0.5 (target of uploads without X-Bank-Target)" }
+        createdAt: { type: string }
+        updatedAt: { type: string }
+        total: { type: integer, description: Active questions }
+        inactive: { type: integer, description: Deactivated questions }
+        sheets: { type: array, items: { $ref: "#/components/schemas/BankSheet" }, description: "In the bank's question order, including sheets with only deactivated questions" }
+        studied: { type: integer, description: "Questions of this bank (active or not) that have statistics" }
+        records: { type: integer, description: Exam records whose bank snapshot contains this bank }
+    BankList:
+      type: object
+      required: [banks]
+      properties:
+        banks: { type: array, items: { $ref: "#/components/schemas/BankSummary" } }
+    RecordBank:
+      type: object
+      required: [id, name, deleted]
+      properties:
+        id: { type: integer }
+        name: { type: string, description: "The bank's current name, or the name it had when the exam was saved if it was deleted" }
+        deleted: { type: boolean }
+    RecordSummary:
+      type: object
+      description: "(v0.5) Key order as listed."
+      required: [id, at, banks, sheets, mode, total, correct, percent, seconds, answered, detail]
+      properties:
+        id: { type: integer }
+        at: { type: string }
+        banks: { type: array, items: { $ref: "#/components/schemas/RecordBank" } }
+        sheets: { type: array, items: { type: string } }
+        mode: { type: string, enum: [all, weak, retry] }
+        total: { type: integer }
+        correct: { type: integer }
+        percent: { type: integer }
+        seconds: { type: integer }
+        answered: { type: integer, nullable: true, description: "Detail rows with an answer; null when the record has no detail" }
+        detail: { type: boolean, description: "Whether per-question detail exists (exams saved before v0.5 have none)" }
+    RecordList:
+      type: object
+      required: [records, retention]
+      properties:
+        records: { type: array, items: { $ref: "#/components/schemas/RecordSummary" } }
+        retention: { type: integer, example: 500, description: How many exam records the database keeps }
+    RecordItem:
+      type: object
+      description: "(v0.5) Key order as listed."
+      required: [seq, questionId, answer, correct, question]
+      properties:
+        seq: { type: integer }
+        questionId: { type: string }
+        answer:
+          type: array
+          nullable: true
+          items: { nullable: true, oneOf: [{ type: string }, { type: integer }] }
+          example: [0, 1, null]
+        correct: { type: boolean }
+        question: { nullable: true, allOf: [{ $ref: "#/components/schemas/RecordQuestion" }], description: "null when the question no longer exists" }
+    Settings:
+      type: object
+      description: "(v0.5) Key order as listed."
+      required: [theme, uiLang, autoAdvance, questionLang]
+      properties:
+        theme: { type: string, enum: [system, light, dark], default: system }
+        uiLang: { type: string, enum: [en, zh, ja], default: en }
+        autoAdvance: { type: boolean, default: false, description: "Go to the next question automatically after a single-choice pick (or the last hotspot choice)" }
+        questionLang: { type: string, enum: [ja, zh, en], default: ja }
+    SettingsPatch:
+      type: object
+      description: "(v0.5) Any subset of Settings; unknown keys are ignored"
+      properties:
+        theme: { type: string, enum: [system, light, dark] }
+        uiLang: { type: string, enum: [en, zh, ja] }
+        autoAdvance: { type: boolean }
+        questionLang: { type: string, enum: [ja, zh, en] }
+    ImportRecord:
+      type: object
+      required: [id, at, filename, added, updated, removed, restored, skipped, total]
+      properties:
+        id: { type: integer }
+        at: { type: string }
+        filename: { type: string }
+        added: { type: integer }
+        updated: { type: integer }
+        removed: { type: integer }
+        restored: { type: integer }
+        skipped: { type: integer }
+        total: { type: integer, description: Number of active questions after the import }
+    SheetPlan:
+      type: object
+      required: [name, total, usable, skipped, added, updated, removed, restored]
+      properties:
+        name: { type: string }
+        total: { type: integer }
+        usable: { type: integer }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SkippedRow" } }
+        added: { type: integer }
+        updated: { type: integer }
+        removed: { type: integer }
+        restored: { type: integer }
+        skippedMore: { type: integer, description: "Preview only: how many entries of the 'unreadable' list are not shown after it was truncated (at most 30 are listed per sheet)" }
+        skippedCount: { type: integer, description: "Preview only: the total number of unreadable rows in this sheet" }
+    ImportPlan:
+      type: object
+      required: [sheets, added, updated, unchanged, restored, removed, skipped, usable, removed_samples, removed_stats]
+      properties:
+        sheets: { type: array, items: { $ref: "#/components/schemas/SheetPlan" } }
+        added: { type: integer }
+        updated: { type: integer }
+        unchanged: { type: integer }
+        restored: { type: integer, description: "Questions that were deactivated earlier and appear again this time (restored automatically, their study records come back with them)" }
+        removed: { type: integer, description: "Questions that are in the database but cannot be found in the file (deactivated, their study records are kept)" }
+        skipped: { type: integer }
+        usable: { type: integer }
+        removed_samples: { type: array, items: { type: string }, description: "The first 40 characters of the question text of the questions to be deactivated, at most 5 entries" }
+        removed_stats: { type: integer, description: How many of the questions to be deactivated have answer records }
+    ImportPreview:
+      allOf:
+        - { $ref: "#/components/schemas/ImportPlan" }
+        - type: object
+          required: [filename, token]
+          properties:
+            filename: { type: string }
+            token: { type: string, description: "One-time confirmation code (128 random bits, 22 characters), valid for 30 minutes" }
+    AttemptRequest:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          maxItems: 2000
+          items:
+            type: object
+            required: [id, correct]
+            properties:
+              id: { type: string }
+              correct: { type: boolean }
+              answer:
+                type: array
+                maxItems: 64
+                description: "(v0.5) Optional: the answer given (strings of at most 8 characters, integers 0..999, nulls); anything else is stored as no answer"
+                items: { nullable: true, oneOf: [{ type: string, maxLength: 8 }, { type: integer, minimum: 0, maximum: 999 }] }
+        sheets: { type: array, maxItems: 50, items: { type: string } }
+        mode: { type: string, enum: [all, weak, retry], default: all }
+        seconds: { type: integer, minimum: 0, maximum: 604800, default: 0 }

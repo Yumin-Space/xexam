@@ -1,0 +1,54 @@
+/* Exam page: additions to the quiz styles in main.css (top bar heading, auto-advance indicator, unavailable languages,
+   the pressed mark button, partly answered tiles, the answer sheet on narrow screens).
+   Colour tokens only. */
+
+/* The "Question 3 of 25" text is the page heading (h1); it keeps the look of the old plain text */
+.qbar { flex-wrap: wrap; row-gap: 6px; }
+.qbar h1.l { margin: 0; font-size: 18px; font-weight: 400; line-height: 1.35; }
+.qbar h1.l b { font-weight: 700; }
+.qbar .r { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
+.qtime { display: inline-flex; align-items: baseline; }
+
+/* Auto-advance indicator: small and quiet, only there as a reminder */
+.qauto {
+  display: inline-flex; align-items: center; gap: 6px; padding: 1px 10px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--sheet);
+  font-size: 12.5px; font-weight: 600; line-height: 1.7; color: var(--ink2); white-space: nowrap;
+}
+.qauto-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--print); }
+
+.rail-count { margin-bottom: 12px; }
+
+/* A language the question lacks: still tappable (a tap shows why in a toast), but looks unavailable */
+.lang-btn[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+@media (hover: hover) { .phead .lang .lang-btn[aria-disabled="true"]:hover { background: transparent; } }
+
+/* "Mark to revisit" when on: readable in both themes (the plain --mark fill put light ink on yellow in dark mode).
+   The yellow band matches the yellow marker on the answer-sheet tiles. */
+.pfoot .flagbtn[aria-pressed="true"] {
+  background: var(--mnemo-bg); border-color: var(--ink); color: var(--ink);
+  box-shadow: inset 0 0 0 3px var(--mark);
+}
+
+/* Partly answered hotspot tile (often the current one): the number sits on a card-coloured disc inside the half-filled ring,
+   so it stays readable in both themes instead of straddling the graphite / card boundary */
+.tiles .tile.part {
+  background: radial-gradient(circle, var(--card) 0 40%, transparent 41%), linear-gradient(90deg, var(--graphite) 50%, var(--card) 50%);
+  text-shadow: none;
+}
+
+/* Narrow screens: the answer sheet sits below the question, so "Answered x of n" and Submit come first,
+   right under the heading, instead of below every tile and the legend */
+@media (max-width: 880px) {
+  .rail { display: flex; flex-direction: column; }
+  .rail h2 { order: -2; }
+  .rail-count, .rail > .btn.primary { order: -1; }
+  .rail > .btn.primary { margin-bottom: 14px; }
+}
+
+@media (max-width: 480px) {
+  .qbar .r { gap: 8px 10px; }
+  .qauto { padding-inline: 8px; font-size: 12px; }
+  /* 6-7 tiles per row at a 44px touch size instead of 5 oversized ones */
+  .rail .tiles { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
+}

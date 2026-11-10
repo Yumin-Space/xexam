@@ -12,7 +12,7 @@ fn baseline() -> PathBuf {
         .join("tests/baseline")
 }
 
-/// Fixtures that intentionally differ from the old version (recorded in docs/migration-plan.md Q7 and docs/audit/xlsx-parser.md §8), with the prefix of their new result.
+/// Fixtures that intentionally differ from the old version (recorded in docs/zh-CN/history/migration-plan.md Q7 and docs/zh-CN/history/audit/xlsx-parser.md §8), with the prefix of their new result.
 const INTENTIONAL: &[(&str, &str)] = &[
     // DOCTYPE + entity in UTF-16 / non-.xml suffix / uppercase suffix: the old version let it through and expanded it; the new version always rejects it
     (

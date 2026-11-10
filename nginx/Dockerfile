@@ -5,6 +5,8 @@ WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
+# The About page shows the changelogs of the READMEs; vite.config.ts reads them from the parent folder (/README*.md)
+COPY README.md README.ja.md README.zh-CN.md /
 RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
