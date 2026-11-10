@@ -1,4 +1,4 @@
-// 后端 REST API 的类型。形状来自旧版的真实响应（tests/baseline/golden/），键名与旧版一致，不要改。
+// Types of the backend REST API. Shapes come from real responses of the old version (tests/baseline/golden/); key names match the old version, do not change them.
 
 export interface Info {
   version: string;
@@ -17,12 +17,19 @@ export interface Item {
   choices: string[];
 }
 
-/** 中文翻译拆出来的结构；单选 / 多选带 options，热点题带 items。 */
+/**
+ * Structure split out for Chinese / English (same shape): single / multiple choice carry options, hotspot questions carry items;
+ * if every item of a hotspot question ends with options written in this language (Chinese yes / no, English Yes / No, ...), there are also choices (only when the count matches the Japanese).
+ */
 export interface Zh {
   stem: string;
   options?: string[];
   items?: string[];
+  choices?: string[][];
 }
+
+/** Structure split out for the English version, same as for Chinese. */
+export type En = Zh;
 
 export type Kind = 'single' | 'multi' | 'hotspot';
 
@@ -32,10 +39,13 @@ export interface Question {
   stem: string;
   options: Opt[];
   items: Item[];
-  /** 单选 / 多选：字母；热点题：每个小项选了第几个 */
+  /** Single / multiple choice: letters; hotspot question: which choice was picked for each item */
   answer: string[] | number[];
   translation: string;
   zh: Zh | null;
+  /** Only present in the 4-column format: the original English text of column A, and a version split along the Japanese structure (en is empty when it does not line up with the Japanese) */
+  english?: string;
+  en?: En | null;
   explanation: string;
   mnemonic: string;
   note: string;
@@ -114,7 +124,7 @@ export interface SheetPlan {
   updated: number;
   removed: number;
   restored: number;
-  /** 预览里才有：被截断的"读不出来"列表还有多少条没列出 */
+  /** Preview only: how many entries of the truncated "unreadable" list are not listed */
   skippedMore?: number;
   skippedCount?: number;
 }
@@ -132,13 +142,13 @@ export interface ImportPlan {
   removed_stats: number;
 }
 
-/** POST /api/upload 的返回：预览 + 一次性确认码 */
+/** Response of POST /api/upload: preview + one-time confirmation code */
 export interface ImportPreview extends ImportPlan {
   filename: string;
   token: string;
 }
 
-/** POST /api/import/confirm 的返回 */
+/** Response of POST /api/import/confirm */
 export interface ImportConfirmed {
   result: ImportPlan;
   bank: Bank;

@@ -1,5 +1,5 @@
-//! 统一的响应构造：每个回复都带 Content-Type、Content-Length、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`，
-//! 不带 `Server` 头。HEAD 的回复头与 GET 完全一样（含真实的 Content-Length），只是没有正文。
+//! Unified response construction: every reply carries Content-Type, Content-Length, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`,
+//! and no `Server` header. A HEAD reply has exactly the same headers as GET (including the real Content-Length), just without a body.
 use super::json::py_json;
 use crate::error::AppError;
 use axum::body::Body;
@@ -48,14 +48,14 @@ pub fn error_json(status: StatusCode, msg: &str, head_only: bool) -> Response {
     json_resp(status, &json!({ "error": msg }), head_only)
 }
 
-/// GET 被 Host 守卫拒绝时的纯文本（server.py 原文）。
+/// Plain text returned when a GET is rejected by the Host guard (verbatim from server.py).
 pub fn forbidden_host_text(seen: &str) -> String {
     format!(
         "Forbidden host: {seen}。通过别的地址访问（局域网 IP、你的域名）时，请把它加进环境变量 XEXAM_ALLOWED_HOSTS，或设 XEXAM_ALLOW_ANY_HOST=1（只在前面有身份验证时）。"
     )
 }
 
-/// `AppError` → 响应。内部细节（SQLite 报错、路径）只进日志，不进响应。
+/// `AppError` → response. Internal details (SQLite errors, paths) go only to the log, never into the response.
 pub fn error_response(e: AppError, head_only: bool) -> Response {
     match e {
         AppError::ForbiddenHost { seen } => text_resp(
@@ -88,7 +88,7 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
     }
 }
 
-/// 405：`Allow` 里列出这个路径支持的方法。
+/// 405: `Allow` lists the methods supported by this path.
 pub fn method_not_allowed(allow: &'static str) -> Response {
     let mut r = error_json(StatusCode::METHOD_NOT_ALLOWED, "method not allowed", false);
     r.headers_mut()

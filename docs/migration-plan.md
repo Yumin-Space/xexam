@@ -1,6 +1,6 @@
 # 迁移计划（Phase 0）
 
-> **历史文档。** 重写之前的迁移计划和 29 项决策；其中的“阶段”“分支”“legacy/python”等是当时的计划，**实际做法有变**（见本文第 10 节末尾和 [migration.md](migration.md)）。目前有效的说明在 [architecture.md](architecture.md)、[api.md](api.md)、[database.md](database.md)、[security.md](security.md)、[deployment.md](deployment.md)、[migration.md](migration.md)、[development.md](development.md)。
+> **历史文档。** 重写之前的迁移计划和 29 项决策；其中的“阶段”“分支”“legacy/python”等是当时的计划，**实际做法有变**（见本文第 10 节末尾和 [migration.zh-CN.md](migration.zh-CN.md)）。目前有效的说明在 [architecture.zh-CN.md](architecture.zh-CN.md)、[api.zh-CN.md](api.zh-CN.md)、[database.zh-CN.md](database.zh-CN.md)、[security.zh-CN.md](security.zh-CN.md)、[deployment.zh-CN.md](deployment.zh-CN.md)、[migration.zh-CN.md](migration.zh-CN.md)、[development.zh-CN.md](development.zh-CN.md)。
 
 > 把 Xexam 从"Python 单进程 + 原生 JS"改成"Rust（Axum）后端 + TypeScript（Vite）前端 + Nginx"，数据库仍是 SQLite、`xexam.db` 原样沿用。
 > 配套文档：[architecture-audit.md](architecture-audit.md)（现状）、[risk-assessment.md](risk-assessment.md)（风险）、[test-strategy.md](test-strategy.md)（验证）。详细依据在 [`docs/audit/`](audit/)。
@@ -107,7 +107,7 @@ docs/       见 §9
 | **3 TypeScript 前端** | 脚手架 → 类型与 API 客户端 → 纯函数（判分）→ 状态 → 组件 → 页面 → 接线 | `frontend/` | 页面（首页、管理、答题、成绩）可并行 |
 | **4 Nginx + Docker** | `nginx.conf`、两个镜像、compose、健康检查、`.env.example`；CI 改成两镜像 | `nginx/`、`docker-compose.yml`、`.github/workflows` | Dockerfile 与 nginx.conf 可并行 |
 | **5 回归** | 对黄金响应差分；安全探针；隧道模拟；前端 UI 流程；Docker 集成 | 报告 + 文档 | 各类测试可并行 |
-| **6 文档** | `architecture.md`、`api.md`、`database.md`、`security.md`、`deployment.md`、`migration.md`、`development.md` | `docs/` | 可并行 |
+| **6 文档** | `architecture.zh-CN.md`、`api.zh-CN.md`、`database.zh-CN.md`、`security.zh-CN.md`、`deployment.zh-CN.md`、`migration.zh-CN.md`、`development.zh-CN.md` | `docs/` | 可并行 |
 
 ## 5. 兼容性问题（需要显式决定的旧行为）
 
@@ -160,7 +160,7 @@ docs/       见 §9
 
 ## 10. 迁移检查表
 
-实际进度和结果见 [migration.md](migration.md)（切换 / 回滚步骤、已演练的内容）。当前状态：
+实际进度和结果见 [migration.zh-CN.md](migration.zh-CN.md)（切换 / 回滚步骤、已演练的内容）。当前状态：
 
 | 阶段 | 状态 |
 |---|---|
@@ -172,7 +172,7 @@ docs/       见 §9
 | 5 回归 | ✅ 黄金响应、安全探针、解析差分、回滚演练（19 项）、整栈。⚠️ 未做：真实 Cloudflare、iPhone 真机、新镜像 arm64、业主真实库的副本 |
 | 6 文档 | ✅ `docs/` 下 architecture / api / database / security / deployment / migration / development |
 
-**与原计划不同的一点**：§7 第 4 条的「切换提交」（把 Python 文件 `git mv` 到 `legacy/python/`、`docker-compose.modern.yml` 改名为 `docker-compose.yml`）**没有**在这个分支里做。原因：这个分支一旦合并，`main` 上的 `docker.yml` 就会按旧 Dockerfile / 旧 compose 的位置发布；把文件搬走而不同时改发布流水线，会让 `main` 的构建直接失败，改了又等于替业主决定发布新镜像。所以搬家和发布流水线作为合并时的一个单独步骤，留给业主决定（写在 [migration.md](migration.md) 的「还没做的事」）。
+**与原计划不同的一点**：§7 第 4 条的「切换提交」（把 Python 文件 `git mv` 到 `legacy/python/`、`docker-compose.modern.yml` 改名为 `docker-compose.yml`）**没有**在这个分支里做。原因：这个分支一旦合并，`main` 上的 `docker.yml` 就会按旧 Dockerfile / 旧 compose 的位置发布；把文件搬走而不同时改发布流水线，会让 `main` 的构建直接失败，改了又等于替业主决定发布新镜像。所以搬家和发布流水线作为合并时的一个单独步骤，留给业主决定（写在 [migration.zh-CN.md](migration.zh-CN.md) 的「还没做的事」）。
 
 ## 11. 开放事项
 

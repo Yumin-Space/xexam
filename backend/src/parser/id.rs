@@ -1,5 +1,5 @@
-//! 题目 id：`sha1(sheet + "\n" + stem 去尽空白后取前 300 个码点 + "|" + first 去尽空白后取前 200 个码点)` 的前 12 位十六进制。
-//! 不做任何 Unicode 规范化 / 大小写折叠；空白按 Python `\s`；截断按码点。
+//! Question id: the first 12 hex digits of `sha1(sheet + "\n" + first 300 code points of stem with all whitespace removed + "|" + first 200 code points of first with all whitespace removed)`.
+//! No Unicode normalization / case folding; whitespace follows Python `\s`; truncation is by code point.
 use super::py_space::{remove_py_space, take_chars};
 use sha1::{Digest, Sha1};
 use std::fmt::Write as _;

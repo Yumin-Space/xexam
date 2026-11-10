@@ -1,5 +1,5 @@
-//! 对照旧版（Python）解析器的输出：demo + 49 个夹具。
-//! 夹具与 golden 在仓库的 tests/baseline 下（只读）。
+//! Compares against the output of the old (Python) parser: the demo + 49 fixtures.
+//! Fixtures and golden files are under tests/baseline in the repository (read-only).
 
 use serde_json::Value;
 use std::path::PathBuf;
@@ -12,9 +12,9 @@ fn baseline() -> PathBuf {
         .join("tests/baseline")
 }
 
-/// 与旧版刻意不同（登记在 docs/migration-plan.md Q7 与 docs/audit/xlsx-parser.md §8）的夹具及其新结果前缀。
+/// Fixtures that intentionally differ from the old version (recorded in docs/migration-plan.md Q7 and docs/audit/xlsx-parser.md §8), with the prefix of their new result.
 const INTENTIONAL: &[(&str, &str)] = &[
-    // UTF-16 / 非 .xml 后缀 / 大写后缀里的 DOCTYPE + 实体：旧版放行并展开，新版一律拒绝
+    // DOCTYPE + entity in UTF-16 / non-.xml suffix / uppercase suffix: the old version let it through and expanded it; the new version always rejects it
     (
         "f26a_doctype_in_utf16_sheet",
         "文件里含有不被允许的内容（XML 实体声明）",
@@ -27,14 +27,14 @@ const INTENTIONAL: &[(&str, &str)] = &[
         "f26c_doctype_in_uppercase_ext",
         "文件里含有不被允许的内容（XML 实体声明）",
     ),
-    // zip 里有两个同名条目：旧版取最后一个，新版拒绝（检查与读取可能看到不同条目）
+    // The zip has two entries with the same name: the old version takes the last one, the new version rejects it (the check and the read might see different entries)
     (
         "f20j_duplicate_zip_entries",
         "这个 .xlsx 文件已损坏，打不开。",
     ),
 ];
 
-/// 旧版错误文案里嵌了库的文字：只比较中文前缀。
+/// The old error text embeds library text: compare only the Chinese prefix.
 fn prefix_of(msg: &str) -> &str {
     for p in ["文件里的 XML 读不了：", "这个文件缺少 .xlsx 必需的内容（"] {
         if msg.starts_with(p) {
@@ -151,7 +151,7 @@ fn demo_workbook_has_five_questions() {
 
 #[test]
 fn text_encoding_cases_parse_like_python() {
-    // UTF-8 BOM 与 UTF-16 的工作表在旧版里都能读
+    // Sheets in UTF-8 BOM and UTF-16 files are both readable in the old version
     for n in ["f22a_utf8_bom_sheet", "f22b_utf16_sheet"] {
         let data =
             std::fs::read(baseline().join("fixtures").join(format!("{n}.xlsx"))).expect("fixture");

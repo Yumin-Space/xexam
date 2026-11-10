@@ -91,7 +91,7 @@ async fn upload_preview_shape_and_filename() {
         0,
         "preview must not write"
     );
-    // 缺 X-Filename
+    // missing X-Filename
     prime_ok(&a, 1);
     let r = upload(&a, vec![0; 200], None).await;
     assert_eq!(r.json()["filename"], "未命名.xlsx");
@@ -127,7 +127,7 @@ async fn upload_errors_are_400_with_chinese_text() {
         let r = upload(&a, vec![0; 200], Some("x.xlsx")).await;
         assert_eq!((r.status, r.error().as_str()), (StatusCode::BAD_REQUEST, want));
     }
-    // 出错的上传不会动待确认槽位
+    // a failed upload does not touch the pending-confirmation slot
     let (_, tok) = do_upload(&a, "a.xlsx").await;
     a.engine.with(|f| f.parse = Some(Err(ImportError::Corrupt)));
     assert_eq!(upload(&a, vec![0; 200], None).await.status, 400);
@@ -165,7 +165,7 @@ async fn parse_timeout_answers_400() {
 async fn upload_size_limits_with_content_length() {
     let a = app();
     prime_ok(&a, 1);
-    // 恰好 20 MiB 通过大小检查（之后由内容检查决定）；多 1 字节 -> 413
+    // exactly 20 MiB passes the size check (the content check decides afterwards); one byte more -> 413
     let r = upload(&a, vec![0; MIB20], Some("x.xlsx")).await;
     assert_eq!(
         r.status,
@@ -190,7 +190,7 @@ async fn upload_size_limits_with_content_length() {
 async fn streaming_body_limit_chunked_no_content_length() {
     let a = app();
     prime_ok(&a, 1);
-    // 没有 Content-Length 的分块上传：流式计数。20 MiB 以内正常处理
+    // chunked upload without Content-Length: streaming byte count. Up to 20 MiB is processed normally
     let (mut tx, body) = Channel::<Bytes>::new(4);
     let router = a.router.clone();
     let req = build(
@@ -214,7 +214,7 @@ async fn streaming_body_limit_chunked_no_content_length() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(a.engine.with(|f| f.last_parse_len), Some(30 * 64 * 1024));
 
-    // 超过 20 MiB：在中途就 413，并且排空有上限，不会读完全部
+    // over 20 MiB: 413 midway, and draining is capped, so the whole body is not read
     let (mut tx, body) = Channel::<Bytes>::new(4);
     let router = a.router.clone();
     let req = build(
@@ -230,7 +230,7 @@ async fn streaming_body_limit_chunked_no_content_length() {
     while tx.send_data(chunk.clone()).await.is_ok() {
         sent += 1;
         if sent > 200 {
-            break; // 服务端不应该让我们一直发下去
+            break; // the server should not let us keep sending forever
         }
     }
     let r = h.await.unwrap();
@@ -252,7 +252,7 @@ async fn streaming_body_limit_chunked_no_content_length() {
 async fn lying_content_length_is_not_trusted() {
     let a = app();
     prime_ok(&a, 1);
-    // 声明 100 字节，实际发 21 MiB：按实际字节数拒绝
+    // declares 100 bytes, actually sends 21 MiB: rejected by the actual byte count
     let (mut tx, body) = Channel::<Bytes>::new(4);
     let router = a.router.clone();
     let req = build(
@@ -278,7 +278,7 @@ async fn lying_content_length_is_not_trusted() {
         (r.status, r.error().as_str()),
         (StatusCode::PAYLOAD_TOO_LARGE, TOO_BIG)
     );
-    // JSON 同理：声明 2 字节，实际 1,000,001
+    // JSON likewise: declares 2 bytes, actually 1,000,001
     let (mut tx, body) = Channel::<Bytes>::new(4);
     let router = a.router.clone();
     let req = build(
@@ -305,7 +305,7 @@ async fn lying_content_length_is_not_trusted() {
 
 #[tokio::test]
 async fn declared_longer_than_actual_does_not_hang_or_crash() {
-    // hyper 在真实连接上会报告提前结束；这里用 Channel 的 abort 模拟读取出错
+    // hyper reports an early end on a real connection; here a Channel abort simulates a read error
     let a = app();
     let (mut tx, body) = Channel::<Bytes, std::io::Error>::new(4);
     let router = a.router.clone();
@@ -335,7 +335,7 @@ async fn declared_longer_than_actual_does_not_hang_or_crash() {
 
 #[tokio::test]
 async fn early_rejection_drains_the_body() {
-    // 403 / 415 之前把请求体读掉：Channel 的发送端要能把数据发完，不会因为服务端提前丢弃 body 而失败
+    // drain the request body before the 403 / 415: the Channel sender must be able to finish sending, and must not fail because the server dropped the body early
     let a = app();
     for (host, ct, want) in [
         ("evil.example.com", "application/octet-stream", 403u16),
@@ -371,7 +371,7 @@ async fn early_rejection_drains_the_body() {
 #[tokio::test]
 async fn confirm_lifecycle() {
     let a = app();
-    // 没有待确认项
+    // no pending item
     for body in [
         r#"{"token": "x"}"#,
         "{}",
@@ -388,7 +388,7 @@ async fn confirm_lifecycle() {
         );
     }
     let (_, tok) = do_upload(&a, "d.xlsx").await;
-    // 错的令牌不消耗
+    // a wrong token is not consumed
     for body in [
         r#"{"token": "wrong-token"}"#.to_string(),
         r#"{"token": 123}"#.into(),
@@ -419,7 +419,7 @@ async fn confirm_lifecycle() {
         r.text(),
         r#"{"result": {"added": 5, "sheets": []}, "bank": {"file": "d.xlsx", "questions": [1]}}"#
     );
-    // 一次性
+    // single use
     let r = post_json(
         &a,
         "/api/import/confirm",
@@ -461,7 +461,7 @@ async fn cancel_needs_no_token_and_second_upload_replaces_first() {
         .status,
         409
     );
-    // 没有待确认项时取消也是 200
+    // cancel with no pending item is also 200
     assert_eq!(post_json(&a, "/api/import/cancel", "{}").await.status, 200);
 }
 
@@ -519,7 +519,7 @@ async fn confirm_db_failure_is_500_with_fixed_text() {
             "写入数据库失败，题库没有任何改动。"
         )
     );
-    // 令牌已被消耗（旧版同样）
+    // the token has been consumed (same as the old version)
     assert_eq!(
         post_json(
             &a,
@@ -575,7 +575,7 @@ async fn concurrent_confirm_has_exactly_one_winner() {
     assert_eq!(a.engine.with(|f| f.apply_calls), 1);
 }
 
-// ---------------------------------------------------------------- 评审后补的测试：协作式超时与并发上限
+// ---------------------------------------------------------------- tests added after review: cooperative timeout and concurrency limit
 
 mod cooperative {
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -586,7 +586,7 @@ mod cooperative {
     use xexam_backend::models::ParsedWorkbook;
     use xexam_backend::services::{parse_upload, Engine};
 
-    /// 一个尊重截止时间的引擎：每 5 毫秒看一次时钟，到了就返回 `Timeout`；同时记录有几个解析正在占着线程。
+    /// An engine that respects the deadline: it checks the clock every 5 ms and returns `Timeout` once the deadline passes; it also records how many parses are currently occupying threads.
     struct Spinner {
         running: AtomicUsize,
         peak: AtomicUsize,
@@ -671,7 +671,7 @@ mod cooperative {
         unused_engine_methods!();
     }
 
-    /// 超时之后，后台线程自己结束了（而不是一直跑下去），客户端拿到的是中文的 400。
+    /// After a timeout the background thread ends by itself (instead of running on forever), and the client gets a 400 with the Chinese-language message.
     #[tokio::test]
     async fn the_parser_thread_really_stops_after_the_deadline() {
         let eng = Spinner::new();
@@ -688,7 +688,7 @@ mod cooperative {
             e.to_string().contains("bad request") || format!("{e:?}").contains("时间太长"),
             "{e:?}"
         );
-        // 线程在截止时间之后很快自己结束，并把许可证还回来
+        // the thread ends by itself shortly after the deadline and returns its permit
         for _ in 0..100 {
             if eng.finished.load(Ordering::SeqCst) == 1 && gate.available_permits() == 2 {
                 break;
@@ -708,7 +708,7 @@ mod cooperative {
         );
     }
 
-    /// 同时解析的个数不超过许可证数；多出来的排队，且排队时间也算在时限里。
+    /// The number of concurrent parses never exceeds the number of permits; the extra ones queue, and queueing time also counts toward the time limit.
     #[tokio::test]
     async fn at_most_two_parses_run_at_once_and_waiting_counts_against_the_deadline() {
         let eng = Spinner::new();
@@ -730,7 +730,7 @@ mod cooperative {
             "peak concurrency was {}",
             eng.peak.load(Ordering::SeqCst)
         );
-        // 排队的那几个在等许可证期间就超时了，根本没有开始解析
+        // the queued ones time out while waiting for a permit and never start parsing
         for _ in 0..100 {
             if gate.available_permits() == 2 {
                 break;

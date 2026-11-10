@@ -1,4 +1,4 @@
-// 首页：选范围、开始考试、学习记录。
+// Home page: pick the scope, start an exam, view the study history.
 import { inNotebook, masterStreakOf, shuffle } from '../domain/grading.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
 import { S, pool } from '../state/store.ts';
@@ -39,7 +39,7 @@ async function quitProgram(): Promise<void> {
   try {
     await shutdownApp();
   } catch {
-    /* 服务端关得快时会断开 */
+    /* the connection may drop when the server shuts down quickly */
   }
   document.getElementById('app')?.replaceChildren(h('div', { class: 'wrap' }, h('div', { class: 'panel' }, h('h2', null, '程序已关闭'), h('p', null, '可以关掉这个页面了。'))));
 }
@@ -164,9 +164,10 @@ export function renderHome(): HTMLElement {
         'A 列：题目。选择题把选项写成「A. 内容」，一行一个；热点题第一行写 ホットスポット，小项写成「1. 内容　はい / いいえ」。\n' +
         'B 列：中文翻译（可以不写）。\n' +
         'C 列：先写「【答案】C、E」（热点题写「1 是；2 否；…」），再写「【解析·怎么选】」和「【记忆口诀】」。\n' +
+        '想加英语：用四列格式 —— A 列英语、B 列中文、C 列日语题目、D 列答案和解析（上面说的 A、B、C 三列整体右移一格，英语放在新的 A 列；热点题的英语第一行写 HOTSPOT、小项末尾写 Yes / No）。题目、选项和答案以 C 列的日语为准；A 列可以不写。旧的三列格式仍然可以上传，只是没有英语。\n' +
         '上传后会先显示「新增几题、更新几题、下架几题、哪几题读不出来」，你确认了才会真正导入。')),
     h('footer', { class: 'foot' },
       S.info.version ? h('span', { class: 'num' }, 'Xexam v' + S.info.version) : null,
-      h('span', null, '题库里的答案是根据题意推理的，不是官方标准答案；把握度较低的题，会在答题后的备注里写明。'),
+      h('span', null, 'Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料。用户应确保导入和使用的资料来源合法，并拥有相应使用权限。'),
       S.info.canShutdown ? h('button', { class: 'btn quiet', type: 'button', onclick: () => void quitProgram() }, '关闭程序') : null));
 }

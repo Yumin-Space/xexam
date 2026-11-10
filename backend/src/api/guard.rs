@@ -1,6 +1,6 @@
-//! Host / Origin 守卫（server.py `_host_ok` / `_origin_ok` / `_deny_reason`）。
+//! Host / Origin guard (server.py `_host_ok` / `_origin_ok` / `_deny_reason`).
 //!
-//! 只读真实的 `Host` 头，**绝不**看 `X-Forwarded-*` / `Forwarded`。Origin 只比较主机名（协议、端口不比）。
+//! Only reads the real `Host` header and **never** looks at `X-Forwarded-*` / `Forwarded`. Origin is compared by hostname only (scheme and port are not compared).
 use crate::config::Config;
 use crate::security::{host_name, origin_host, short, strip_ctrl, truncate_chars};
 
@@ -11,7 +11,7 @@ pub fn host_ok(cfg: &Config, host: Option<&str>) -> bool {
     cfg.allowed_hosts.contains(&host_name(host))
 }
 
-/// 没有 Origin 头 -> 放行（命令行工具不是浏览器里的跨站请求）。
+/// No Origin header -> allowed (command-line tools are not cross-site requests from a browser).
 pub fn origin_ok(cfg: &Config, host: Option<&str>, origin: Option<&str>) -> bool {
     let Some(origin) = origin else { return true };
     let Some(oh) = origin_host(Some(origin)) else {
@@ -20,12 +20,12 @@ pub fn origin_ok(cfg: &Config, host: Option<&str>, origin: Option<&str>) -> bool
     oh == host_name(host) || cfg.allowed_origins.contains(&oh)
 }
 
-/// GET 的 403 里回显的主机名：已归一化、去控制字符、最多 80 个字符。
+/// Hostname echoed in the 403 for GET: normalized, control characters removed, at most 80 characters.
 pub fn seen_host(host: Option<&str>) -> String {
     truncate_chars(&strip_ctrl(&host_name(host)), 80)
 }
 
-/// POST 被拒绝时给出能照着做的原因；`None` 表示没问题。
+/// When a POST is rejected, gives an actionable reason; `None` means no problem.
 pub fn deny_reason(cfg: &Config, host: Option<&str>, origin: Option<&str>) -> Option<String> {
     if !host_ok(cfg, host) {
         return Some(format!(

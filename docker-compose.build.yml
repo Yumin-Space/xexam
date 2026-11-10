@@ -1,13 +1,13 @@
-# Xexam —— 从源码构建两个镜像并运行（改代码时用）。
+# Xexam — build the two images from source and run them (use this when changing code).
 #
 #     docker compose -f docker-compose.build.yml up -d --build
 #
-# 和 docker-compose.yml 用同一个项目名（xexam）、同一个卷（xexam_data）、同样的容器名，所以两者不能同时运行；
-# 切换前先 `docker compose stop`。数据是同一份。
+# Uses the same project name (xexam), the same volume (xexam_data) and the same container names as docker-compose.yml, so the two cannot run at the same time;
+# run `docker compose stop` before switching. The data is the same.
 #
-#   浏览器 ──> xexam-frontend（Nginx，唯一对外的入口，:8080 → 宿主机 XEXAM_BIND）
-#                 ├─ 前端静态文件（构建时放进镜像）
-#                 └─ /api/ ──> xexam-backend（私有网络，不发布端口）──> SQLite（命名卷 xexam_data → /data/xexam.db）
+#   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point, :8080 → host XEXAM_BIND)
+#                 ├─ frontend static files (baked into the image at build time)
+#                 └─ /api/ ──> xexam-backend (private network, no published port) ──> SQLite (named volume xexam_data → /data/xexam.db)
 
 name: xexam
 

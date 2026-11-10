@@ -1,4 +1,4 @@
-//! 测试公用：假的 `Engine`（不依赖解析器和数据库是否已经实现）、造请求、发请求。
+//! Shared test helpers: a fake `Engine` (independent of whether the parser and database are implemented), request building, request sending.
 #![allow(dead_code)]
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
@@ -17,7 +17,7 @@ use xexam_backend::models::{
 };
 use xexam_backend::services::{Engine, PendingStore};
 
-/// tests/baseline 的位置（由 backend/ 的位置推出，不写死机器路径）。
+/// Location of tests/baseline (derived from the location of backend/; no machine path is hard-coded).
 pub fn fixtures() -> String {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
@@ -156,6 +156,8 @@ pub fn dummy_question(i: usize) -> Question {
         items: vec![],
         answer: Answer::Letters(vec!["A".into()]),
         translation: String::new(),
+        english: String::new(),
+        en: None,
         zh: None,
         explanation: String::new(),
         mnemonic: String::new(),
@@ -206,7 +208,7 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
     let engine = FakeEngine::new();
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     let allow = cfg.allow_shutdown;
-    // 测试里 API 层只通过 FakeEngine 访问数据，这个 Store 不会被用到；放在临时目录里，不在当前目录留文件
+    // In tests the API layer reaches data only through FakeEngine, so this Store is never used; it lives in a temp directory so no files are left in the current directory
     let dir = std::env::temp_dir().join(format!(
         "xexam_api_test_{}_{}",
         std::process::id(),
@@ -264,7 +266,7 @@ impl Resp {
     }
 }
 
-/// 构造请求。`host`：`None` 不带 Host 头。`headers` 里的值按原样（字节）放进去。
+/// Builds a request. `host`: `None` sends no Host header. Values in `headers` are inserted as is (as bytes).
 pub fn build(
     method: &str,
     path: &str,

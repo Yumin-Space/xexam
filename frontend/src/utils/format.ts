@@ -1,4 +1,4 @@
-/** 秒 → 「m:ss」或「h:mm:ss」 */
+/** Seconds → "m:ss" or "h:mm:ss" */
 export function fmtTime(sec: number): string {
   const s = Math.max(0, Math.floor(sec));
   const hh = Math.floor(s / 3600);

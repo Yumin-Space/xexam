@@ -1,10 +1,10 @@
-//! HTTP 路由。**接口契约（不要改签名）**。
+//! HTTP routes. **Interface contract (do not change signatures).**
 //!
-//! `build_router(state)` 返回完整的 `axum::Router`，供 `main.rs` 和集成测试（`tower::ServiceExt::oneshot`）共用。
-//! 行为依据 `docs/audit/api-contract.md` 与 `tests/baseline/golden/`。
+//! `build_router(state)` returns the complete `axum::Router`, shared by `main.rs` and the integration tests (`tower::ServiceExt::oneshot`).
+//! Behavior follows `docs/audit/api-contract.md` and `tests/baseline/golden/`.
 //!
-//! 守卫顺序（与旧版逐项一致）：Host →（仅 POST）Origin → 路径 / Content-Type → 大小 → JSON 解析 → 路由。
-//! 所以这里不用 axum 的 `route()`，而是一个统一的分发函数：这样 404 / 405 / 415 的先后完全由我们控制。
+//! Guard order (identical to the old version, item by item): Host → (POST only) Origin → path / Content-Type → size → JSON parsing → routing.
+//! That is why this does not use axum's `route()` but a single dispatch function: it gives us full control over the order of 404 / 405 / 415.
 use crate::config::{Config, MAX_JSON, MAX_UPLOAD};
 use crate::error::{AppError, DbError};
 use crate::models::ParsedWorkbook;
@@ -34,14 +34,14 @@ pub struct AppState(pub Arc<Inner>);
 
 pub struct Inner {
     pub cfg: Config,
-    /// 真实数据库句柄。处理器只通过 `engine` 访问数据库；这里留着给 `main.rs`（收尾、子命令）。
+    /// The real database handle. Handlers access the database only through `engine`; it is kept here for `main.rs` (shutdown, subcommands).
     pub store: Arc<crate::database::Store>,
     pub pending: PendingStore,
-    /// 同时解析的上传个数上限（见 `services::PARSE_CONCURRENCY`）
+    /// Maximum number of uploads parsed at the same time (see `services::PARSE_CONCURRENCY`)
     pub parse_gate: Arc<tokio::sync::Semaphore>,
-    /// 只有 `--allow-shutdown` 时才有
+    /// Present only with `--allow-shutdown`
     pub shutdown: Option<tokio::sync::mpsc::Sender<()>>,
-    /// 解析器 + 数据库的统一入口。生产用 `RealEngine`，测试用假实现。
+    /// Single entry point for the parser and the database. Production uses `RealEngine`; tests use a fake implementation.
     pub engine: Arc<dyn Engine>,
 }
 
@@ -82,14 +82,14 @@ fn panic_response(_err: Box<dyn Any + Send>) -> Response {
 }
 
 const GET_PATHS: [&str; 4] = ["/api/info", "/api/bank", "/api/progress", "/api/imports"];
-/// 提前拒绝（403 / 415）时，替客户端读掉并丢弃的请求体上限。
+/// Upper limit on the request body that is read and discarded on the client's behalf when rejecting early (403 / 415).
 const DRAIN_CAP: usize = MAX_UPLOAD + 65536;
 
 fn hdr(headers: &HeaderMap, name: &HeaderName) -> Option<String> {
     headers.get(name).map(|v| latin1(v.as_bytes()))
 }
 
-/// 请求头里的 Content-Length：没有 / 为空 / 不是数字 → None（按实际收到的字节计数）。
+/// Content-Length from the request headers: missing / empty / not a number → None (count the bytes actually received).
 fn declared_length(headers: &HeaderMap) -> Option<i128> {
     let v = headers.get(header::CONTENT_LENGTH)?;
     py_int_str(&latin1(v.as_bytes()))
@@ -147,7 +147,7 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
             Err(e) => error_response(e, false),
         },
         _ => {
-            // 其他方法：Host 守卫照样先查（比旧版的 501 更严），然后 405 + Allow
+            // Other methods: the Host guard still runs first (stricter than the old 501), then 405 + Allow
             if let Some(reason) = guard::deny_reason(cfg, host.as_deref(), None) {
                 tracing::warn!("rejected {} {}: {}", parts.method, safe_path(&path), reason);
                 return error_json(StatusCode::FORBIDDEN, &reason, false);
@@ -161,7 +161,7 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
 
 async fn get_route(st: &AppState, path: &str, head_only: bool) -> Result<Response, AppError> {
     if !GET_PATHS.contains(&path) {
-        // 静态文件由 Nginx 提供；这里保留旧版的 404 纯文本
+        // Static files are served by Nginx; keep the old plain-text 404 here
         return Ok(text_resp(StatusCode::NOT_FOUND, "not found", head_only));
     }
     let eng = st.0.engine.clone();
@@ -186,7 +186,7 @@ async fn get_route(st: &AppState, path: &str, head_only: bool) -> Result<Respons
     Ok(json_resp(StatusCode::OK, &value, head_only))
 }
 
-/// 近似 Python 的 `platform.machine()`（只是展示用，易变字段）。
+/// Approximates Python's `platform.machine()` (display only, a volatile field).
 fn machine_arch() -> &'static str {
     match (cfg!(windows), std::env::consts::ARCH) {
         (true, "x86_64") => "AMD64",
@@ -207,13 +207,13 @@ async fn post_route(
 ) -> Result<Response, AppError> {
     let cfg = &st.0.cfg;
     let origin = hdr(headers, &header::ORIGIN);
-    // 1. Host、Origin
+    // 1. Host, Origin
     if let Some(reason) = guard::deny_reason(cfg, host, origin.as_deref()) {
         body::drain(&mut body, 0, DRAIN_CAP).await;
         tracing::warn!("rejected POST {}: {}", safe_path(path), reason);
         return Err(AppError::Denied(reason));
     }
-    // 2. 路径 / Content-Type
+    // 2. Path / Content-Type
     let ctype = hdr(headers, &header::CONTENT_TYPE).unwrap_or_default();
     let declared = declared_length(headers);
 
@@ -245,13 +245,13 @@ async fn post_route(
         body::drain(&mut body, 0, DRAIN_CAP).await;
         return Err(AppError::UnsupportedMediaType);
     }
-    // 3. 大小
+    // 3. Size
     let raw = match body::read_limited(body, declared, MAX_JSON).await {
         Ok(r) => r,
         Err(BodyError::TooLarge) => return Err(AppError::JsonTooLarge),
         Err(BodyError::Broken) => return Err(AppError::BadJson),
     };
-    // 4. JSON 解析（空正文等于 {}）
+    // 4. JSON parsing (an empty body is treated as {})
     let data: PyVal = if raw.is_empty() {
         PyVal::Dict(Vec::new())
     } else {
@@ -260,7 +260,7 @@ async fn post_route(
     if !data.is_dict() {
         return Err(AppError::BadJson);
     }
-    // 5. 路由
+    // 5. Routing
     match path {
         "/api/import/confirm" => confirm(st, &data).await,
         "/api/import/cancel" => {
@@ -302,13 +302,13 @@ async fn upload(st: &AppState, filename: String, data: Vec<u8>) -> Result<Respon
 }
 
 async fn confirm(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
-    // 非字符串的令牌（整数、null、缺失……）一律当作对不上，409
+    // A non-string token (integer, null, missing, ...) never matches: 409
     let token = match data.get("token") {
         Some(PyVal::Str(s)) => s.as_str(),
         _ => "",
     };
     let item = services::confirm_pending_import(&st.0.pending, token)?;
-    // 取出令牌之后的写库放进独立任务：就算客户端中途断开、请求被丢弃，事务也会提交完
+    // The database write after the token is taken runs in a separate task: even if the client disconnects mid-request and the request is dropped, the transaction still commits
     let eng = st.0.engine.clone();
     let joined = tokio::spawn(async move { services::apply_import(eng, item).await }).await;
     match joined {

@@ -1,31 +1,31 @@
-//! XML 层：把 quick-xml 的事件流变成一棵与 Python `ElementTree` 语义等价的小树。
+//! XML layer: turns quick-xml's event stream into a small tree semantically equivalent to Python `ElementTree`.
 //!
-//! 与 ET 一致的地方：命名空间按 URI 匹配（前缀无关）；`text` 只取第一个子元素之前的文本；注释 / 处理指令丢弃；
-//! CDATA 并入文本；字面 `\r\n` / `\r` 规范化为 `\n`（字符引用 `&#13;` 保留为 CR）；属性值里的空白字符变空格。
-//! 比 ET 严格的地方（有意）：任何 DOCTYPE 都拒绝（不展开实体）；元素深度、节点数有上限。
-//! 编码：UTF-8（含 BOM）、UTF-16LE/BE（含或不含 BOM，先转码）、声明为 ISO-8859-1 的单字节文本。
+//! Same as ET: namespaces match by URI (prefix-independent); `text` is only the text before the first child element; comments / processing instructions are dropped;
+//! CDATA merges into the text; literal `\r\n` / `\r` normalize to `\n` (the character reference `&#13;` stays as CR); whitespace characters in attribute values become spaces.
+//! Stricter than ET (intentionally): any DOCTYPE is rejected (entities are not expanded); element depth and node count are capped.
+//! Encodings: UTF-8 (with BOM), UTF-16LE/BE (with or without BOM, transcoded first), single-byte text declared as ISO-8859-1.
 use std::borrow::Cow;
 
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::ResolveResult;
 use quick_xml::{NsReader, XmlVersion};
 
-/// 元素深度上限（正常 OOXML 不到 16）。
+/// Maximum element depth (normal OOXML stays under 16).
 pub(super) const MAX_DEPTH: usize = 64;
-/// 单个 XML 部件的节点数上限（整棵树在内存里，约 150 字节 / 节点）。
+/// Maximum node count per XML part (the whole tree lives in memory, about 150 bytes per node).
 pub(super) const MAX_NODES: usize = 1_000_000;
-/// 一个元素上最多的属性个数（含命名空间声明）。真实的 .xlsx 里一个元素只有几个到十几个；`MAX_NODES` 只数元素，限制不了属性。
+/// Maximum number of attributes on one element (including namespace declarations). A real .xlsx has a few to a dozen or so per element; `MAX_NODES` counts only elements and cannot bound attributes.
 pub(super) const MAX_ATTRS_PER_ELEMENT: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum XmlError {
-    /// 不是格式良好的 XML（对应 ET 的 `ParseError`）
+    /// Not well-formed XML (corresponds to ET's `ParseError`)
     Malformed,
-    /// 出现 DOCTYPE（含实体声明）：一律拒绝
+    /// A DOCTYPE is present (including entity declarations): always rejected
     Doctype,
-    /// 超过深度 / 节点数上限
+    /// Exceeds the depth / node-count limit
     TooComplex,
-    /// 超过截止时间
+    /// Exceeds the deadline
     Timeout,
 }
 
@@ -41,7 +41,7 @@ pub(super) struct Element {
     pub ns: Option<String>,
     pub local: String,
     pub attrs: Vec<Attr>,
-    /// 第一个子元素之前的文本；`None` = 没有文本（ET 的 `text is None`）
+    /// Text before the first child element; `None` = no text (ET's `text is None`)
     pub text: Option<String>,
     pub children: Vec<Element>,
 }
@@ -51,7 +51,7 @@ impl Element {
         self.ns.as_deref() == Some(ns) && self.local == local
     }
 
-    /// 属性：`ns = None` 取无命名空间的属性（如 `r`、`t`、`name`）。
+    /// Attribute: `ns = None` selects an attribute with no namespace (such as `r`, `t`, `name`).
     pub(super) fn attr(&self, ns: Option<&str>, local: &str) -> Option<&str> {
         self.attrs
             .iter()
@@ -59,12 +59,12 @@ impl Element {
             .map(|a| a.value.as_str())
     }
 
-    /// 直接子元素里第一个匹配的（ET `find`）。
+    /// First matching direct child element (ET `find`).
     pub(super) fn find(&self, ns: &str, local: &str) -> Option<&Element> {
         self.children.iter().find(|c| c.is(ns, local))
     }
 
-    /// 直接子元素里全部匹配的（ET `findall`）。
+    /// All matching direct child elements (ET `findall`).
     pub(super) fn find_all<'a>(
         &'a self,
         ns: &'a str,
@@ -73,7 +73,7 @@ impl Element {
         self.children.iter().filter(move |c| c.is(ns, local))
     }
 
-    /// 前序遍历（含自己），对应 ET `iter(tag)` 的文档顺序。
+    /// Pre-order traversal (including itself), matching the document order of ET `iter(tag)`.
     pub(super) fn iter_tag<'a>(&'a self, ns: &str, local: &str) -> Vec<&'a Element> {
         let mut out = Vec::new();
         let mut stack = vec![self];
@@ -89,7 +89,7 @@ impl Element {
     }
 }
 
-/// XML 1.0 允许的字符。
+/// Characters allowed by XML 1.0.
 pub(super) fn is_xml_char(c: char) -> bool {
     matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}')
 }
@@ -98,7 +98,7 @@ fn is_xml_ws(c: char) -> bool {
     matches!(c, ' ' | '\t' | '\r' | '\n')
 }
 
-/// 读 `<?xml ... encoding="..."?>` 里声明的编码（小写）。
+/// Reads the encoding (lowercased) declared in `<?xml ... encoding="..."?>`.
 fn declared_encoding(bytes: &[u8]) -> Option<String> {
     if !bytes.starts_with(b"<?xml") {
         return None;
@@ -114,7 +114,7 @@ fn declared_encoding(bytes: &[u8]) -> Option<String> {
     Some(value.to_string())
 }
 
-/// 字节 -> 文本。UTF-8（含 BOM）、UTF-16LE/BE（含或不含 BOM）、声明为 ISO-8859-1 的文本。
+/// Bytes -> text. UTF-8 (with BOM), UTF-16LE/BE (with or without BOM), text declared as ISO-8859-1.
 pub(super) fn decode(bytes: &[u8]) -> Result<Cow<'_, str>, XmlError> {
     let utf16 = |body: &[u8], be: bool| -> Result<Cow<'_, str>, XmlError> {
         if !body.len().is_multiple_of(2) {
@@ -242,13 +242,13 @@ fn push_text(stack: &mut [Element], s: &str) -> Result<(), XmlError> {
     }
 }
 
-/// 解析一个 XML 部件（没有截止时间）。
+/// Parses an XML part (no deadline).
 #[cfg(test)]
 pub(super) fn parse(bytes: &[u8]) -> Result<Element, XmlError> {
     parse_until(bytes, None)
 }
 
-/// 解析一个 XML 部件；`deadline` 到了就中止（协作式：每处理 1024 个事件检查一次时钟）。
+/// Parses an XML part; aborts when `deadline` is reached (cooperative: the clock is checked once every 1024 events).
 pub(super) fn parse_until(
     bytes: &[u8],
     deadline: Option<std::time::Instant>,
@@ -337,7 +337,7 @@ fn ascii_ci_contains(hay: &[u8], needle: &[u8]) -> bool {
         .any(|w| w.eq_ignore_ascii_case(needle))
 }
 
-/// 这段字节像不像 XML：解码后（去掉 BOM / UTF-16 转码）第一个非空白字符是 `<`。
+/// Whether this byte slice looks like XML: after decoding (BOM stripped / UTF-16 transcoded), the first non-whitespace character is `<`.
 pub(super) fn looks_like_xml(bytes: &[u8]) -> bool {
     match decode(bytes) {
         Ok(t) => t
@@ -347,7 +347,7 @@ pub(super) fn looks_like_xml(bytes: &[u8]) -> bool {
     }
 }
 
-/// 是否含有 DOCTYPE / ENTITY 声明（大小写不敏感；UTF-8 / UTF-16 都查；解码失败时退回按原始字节查）。
+/// Whether it contains a DOCTYPE / ENTITY declaration (case-insensitive; checks both UTF-8 and UTF-16; falls back to the raw bytes if decoding fails).
 pub(super) fn contains_dtd(bytes: &[u8]) -> bool {
     let check = |b: &[u8]| ascii_ci_contains(b, b"<!doctype") || ascii_ci_contains(b, b"<!entity");
     if check(bytes) {
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(p("<a></a>").unwrap().text, None);
         assert_eq!(p("<a/>").unwrap().text, None);
         assert_eq!(p("<a> </a>").unwrap().text.as_deref(), Some(" "));
-        // 字面 CRLF / CR -> LF；字符引用保留 CR
+        // Literal CRLF / CR -> LF; character references keep CR
         assert_eq!(
             p("<a>1\r\n2\r3&#13;4</a>").unwrap().text.as_deref(),
             Some("1\n2\n3\r4")
@@ -398,7 +398,7 @@ mod tests {
                 .as_deref(),
             Some("<&>\"'AB")
         );
-        // xml:space 被忽略
+        // xml:space is ignored
         assert_eq!(
             p(r#"<a xml:space="preserve"> x </a>"#)
                 .unwrap()

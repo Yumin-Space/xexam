@@ -1,14 +1,14 @@
 #!/bin/sh
-# aarch64 的链接器包装脚本（只在 backend/Dockerfile 的构建阶段用）。
+# Linker wrapper script for aarch64 (used only in the build stage of backend/Dockerfile).
 #
-# rustc 给 aarch64 目标的链接命令里默认带 -Wl,--fix-cortex-a53-843419（链接器侧对 Cortex-A53 CPU 勘误 #843419 的规避）。
-# zig 的链接器不认识这个参数，链接直接失败：error: unsupported linker arg: --fix-cortex-a53-843419
-# （实测 ziglang 0.14.1 / 0.15.2 / 0.16.0 / 0.17.1 都一样；只设 RUSTFLAGS 去关它也没有用）。
-# 所以这里把含这个字样的参数去掉，再交给 zig cc。
+# By default rustc includes -Wl,--fix-cortex-a53-843419 in the link command for aarch64 targets (a linker-side workaround for Cortex-A53 CPU erratum #843419).
+# zig's linker does not recognize this flag and linking fails outright: error: unsupported linker arg: --fix-cortex-a53-843419
+# (Observed to be the same with ziglang 0.14.1 / 0.15.2 / 0.16.0 / 0.17.1; setting only RUSTFLAGS to turn it off does not help either.)
+# So any argument containing this string is stripped here before the rest is passed to zig cc.
 #
-# 取舍：aarch64 的产物里不带这个规避。这是一个针对 Cortex-A53 核心的链接器规避（据我所知，勘误 #843419 只涉及 Cortex-A53；
-# 我没能取回 Arm 勘误文档原文来核实这一点）。已知的目标机器 Oracle Cloud Ampere A1（Ampere Altra Q80-30，据 Wikipedia 用 Arm Neoverse N1 核心）
-# 不是 Cortex-A53。如果以后要在 Cortex-A53 核心的板子上跑（部分老款开发板），请改用别的交叉编译方案。
+# Trade-off: the aarch64 output does not carry this workaround. It is a linker workaround for Cortex-A53 cores (as far as I know, erratum #843419 affects only Cortex-A53;
+# I could not retrieve the original Arm erratum document to verify this). The known target machine, Oracle Cloud Ampere A1 (Ampere Altra Q80-30, which per Wikipedia uses Arm Neoverse N1 cores),
+# is not a Cortex-A53. If you later need to run on a board with Cortex-A53 cores (some older dev boards), use a different cross-compilation approach.
 n=$#
 i=0
 while [ "$i" -lt "$n" ]; do

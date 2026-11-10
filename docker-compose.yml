@@ -1,26 +1,26 @@
-# Xexam —— 直接拉取 GitHub 自动构建好的两个镜像运行。
-# 在任何机器上，只需要这一个文件：
-#     docker login ghcr.io -u Yumin-Space      （第一次；镜像是私有的，密码填有 read:packages 权限的令牌）
+# Xexam — run the two images that GitHub builds automatically, pulled directly.
+# On any machine, you only need this one file:
+#     docker login ghcr.io -u Yumin-Space      (first time only; the images are private, use a token with read:packages permission as the password)
 #     docker compose up -d
-# 然后浏览器打开  http://localhost:8765
+# Then open http://localhost:8765 in a browser
 #
-#   浏览器 ──> xexam-frontend（Nginx，唯一对外的入口）
-#                 ├─ 前端静态文件（构建时放进镜像）
-#                 └─ /api/ ──> xexam-backend（Rust，私有网络，不发布端口）──> SQLite（命名卷 xexam_data → /data/xexam.db）
+#   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point)
+#                 ├─ frontend static files (baked into the image at build time)
+#                 └─ /api/ ──> xexam-backend (Rust, private network, no published port) ──> SQLite (named volume xexam_data → /data/xexam.db)
 #
-# 更新到最新版本：   docker compose pull && docker compose up -d
-# 停止 / 再启动：    docker compose stop  /  docker compose start
-# 想从源码构建（改代码时用）：docker compose -f docker-compose.build.yml up -d --build
+# Update to the latest version:   docker compose pull && docker compose up -d
+# Stop / start again:    docker compose stop  /  docker compose start
+# To build from source (use when changing code): docker compose -f docker-compose.build.yml up -d --build
 #
-# 想通过自己的域名访问（Cloudflare Tunnel + Cloudflare Access）：
-#   在这个文件旁边建一个叫 .env 的文件，写：
-#       XEXAM_BIND=0.0.0.0:8765            # 让局域网里的 cloudflared 能连到这台机器；默认是只绑定本机
-#       XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
-#   然后 docker compose up -d。完整说明见 README 和 docs/deployment.md。
+# To access it through your own domain (Cloudflare Tunnel + Cloudflare Access):
+#   Create a file named .env next to this file and write:
+#       XEXAM_BIND=0.0.0.0:8765            # lets cloudflared on the LAN reach this machine; the default binds to localhost only
+#       XEXAM_ALLOWED_HOSTS=xexam.your-domain.com
+#   Then run docker compose up -d. See the README and docs/deployment.md for full instructions.
 #
-# ⚠️ 不要运行 `docker compose down -v`：-v 会把数据卷 xexam_data 一起删掉。
+# ⚠️ Do not run `docker compose down -v`: -v also deletes the data volume xexam_data.
 
-name: xexam                          # Compose 项目名：固定下来，放在哪个文件夹都一样
+name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in
 
 services:
   backend:
@@ -34,10 +34,10 @@ services:
       XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
       XEXAM_PARSE_TIMEOUT_SECS: "${XEXAM_PARSE_TIMEOUT_SECS:-30}"
     volumes:
-      # 题库和学习记录都在这个命名卷里的 xexam.db；删除或更新容器都不会丢
+      # The question bank and study records all live in xexam.db in this named volume; deleting or updating the container does not lose them
       - data:/data
     networks: [internal]
-    # 注意：没有 ports。后端只在私有网络里，从宿主机和外部都连不到。
+    # Note: there are no ports. The backend is only on the private network and cannot be reached from the host or from outside.
     stop_grace_period: 15s
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
@@ -52,7 +52,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      # 默认只绑定本机。在 .env 里设 XEXAM_BIND=0.0.0.0:8765 才会让局域网里别的机器连得到。
+      # By default it binds to localhost only. Set XEXAM_BIND=0.0.0.0:8765 in .env to let other machines on the LAN connect.
       - "${XEXAM_BIND:-127.0.0.1:8765}:8080"
     networks: [internal, public]
     security_opt: ["no-new-privileges:true"]
@@ -61,7 +61,7 @@ services:
     tmpfs: ["/tmp"]
 
 networks:
-  # 后端所在的私有网络：不能访问外部网络，外部也进不来
+  # Private network for the backend: it cannot reach external networks, and external hosts cannot get in
   internal:
     internal: true
   public: {}

@@ -1,13 +1,13 @@
-//! Xexam 后端（库）。二进制在 `main.rs`。
+//! Xexam backend (library). The binary is in `main.rs`.
 //!
-//! 模块职责：
-//! - `config`    环境变量与启动参数（XEXAM_*）
-//! - `models`    数据模型（字段顺序 = 旧版 JSON 键顺序）
-//! - `security`  Host / Origin 守卫、令牌、请求体限制、文件名清洗
-//! - `parser`    XLSX 解析（zip + quick-xml），题目 id，翻译拆分
-//! - `database`  SQLite 存储（schema 与旧版逐字相同）
-//! - `services`  导入流程（parse_upload → … → apply_import）、待确认槽位、成绩记录
-//! - `api`       HTTP 路由与 JSON 输出
+//! Module responsibilities:
+//! - `config`    environment variables and startup arguments (XEXAM_*)
+//! - `models`    data models (field order = key order of the old JSON)
+//! - `security`  Host / Origin guards, tokens, request-body limits, file-name sanitizing
+//! - `parser`    XLSX parsing (zip + quick-xml), question ids, translation splitting
+//! - `database`  SQLite storage (schema is identical to the old version, character for character)
+//! - `services`  import flow (parse_upload → … → apply_import), pending-confirmation slot, result recording
+//! - `api`       HTTP routes and JSON output
 
 pub mod api;
 pub mod config;

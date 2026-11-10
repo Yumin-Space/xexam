@@ -1,11 +1,11 @@
-//! 旧版 `progress.json` 的读取与转换。语义对齐 Python 的 `int()` / 真值判断 / `json.dumps`，
-//! 但**任何**畸形输入都只返回 `Err(说明)`，绝不 panic。
+//! Reading and converting the legacy `progress.json`. Semantics follow Python's `int()` / truthiness / `json.dumps`,
+//! but **any** malformed input only returns `Err(description)` and never panics.
 use super::pyjson;
 use rusqlite::types::Value as SqlValue;
 use serde_json::{Map, Value};
 use std::path::Path;
 
-/// 旧文件的大小上限（真实文件只有几十 KB）。
+/// Size limit for the old file (real files are only a few tens of KB).
 pub const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,34 +30,34 @@ pub struct AttemptRow {
     pub seconds: i64,
 }
 
-/// 读文件（接受 UTF-8 BOM），要求顶层是含 `questions`（对象）和 `history`（数组）的对象。
+/// Reads the file (accepts a UTF-8 BOM); the top level must be an object containing `questions` (an object) and `history` (an array).
 pub fn load(path: &Path) -> Result<(Map<String, Value>, Vec<Value>), String> {
-    let meta = std::fs::metadata(path).map_err(|e| format!("无法读取文件（{}）", e.kind()))?;
+    let meta = std::fs::metadata(path).map_err(|e| format!("cannot read file ({})", e.kind()))?;
     if meta.len() > MAX_FILE_BYTES {
-        return Err("文件太大".to_string());
+        return Err("file too large".to_string());
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("无法读取文件（{}）", e.kind()))?;
+    let bytes = std::fs::read(path).map_err(|e| format!("cannot read file ({})", e.kind()))?;
     let body = bytes
         .strip_prefix(&[0xEF, 0xBB, 0xBF][..])
         .unwrap_or(&bytes);
-    let text = std::str::from_utf8(body).map_err(|_| "文件不是有效的 UTF-8".to_string())?;
-    let doc: Value = serde_json::from_str(text).map_err(|e| format!("不是有效的 JSON（{e}）"))?;
+    let text = std::str::from_utf8(body).map_err(|_| "file is not valid UTF-8".to_string())?;
+    let doc: Value = serde_json::from_str(text).map_err(|e| format!("not valid JSON ({e})"))?;
     let Value::Object(mut top) = doc else {
-        return Err("最外层不是 JSON 对象".to_string());
+        return Err("top level is not a JSON object".to_string());
     };
     let qs = top
         .remove("questions")
-        .ok_or_else(|| "缺少 questions".to_string())?;
+        .ok_or_else(|| "missing questions".to_string())?;
     let hist = top
         .remove("history")
-        .ok_or_else(|| "缺少 history".to_string())?;
+        .ok_or_else(|| "missing history".to_string())?;
     match (qs, hist) {
         (Value::Object(q), Value::Array(h)) => Ok((q, h)),
-        _ => Err("questions 必须是对象、history 必须是数组".to_string()),
+        _ => Err("questions must be an object and history must be an array".to_string()),
     }
 }
 
-/// Python 的真值判断。
+/// Python truthiness.
 pub fn py_truthy(v: &Value) -> bool {
     match v {
         Value::Null => false,
@@ -96,14 +96,16 @@ fn py_int_from_str(s: &str) -> Result<i64, String> {
         || norm.contains("__")
         || !norm.chars().all(|c| c.is_ascii_digit() || c == '_')
     {
-        return Err(format!("不是整数：{s:?}"));
+        return Err(format!("not an integer: {s:?}"));
     }
     let digits: String = norm.chars().filter(|c| *c != '_').collect();
     let signed = if neg { format!("-{digits}") } else { digits };
-    signed.parse::<i64>().map_err(|_| "整数太大".to_string())
+    signed
+        .parse::<i64>()
+        .map_err(|_| "integer too large".to_string())
 }
 
-/// Python 的 `int(x)`（落在 SQLite 的 64 位整数范围内才算成功）。
+/// Python's `int(x)` (succeeds only if the result fits in SQLite's 64-bit integer range).
 pub fn py_int(v: &Value) -> Result<i64, String> {
     match v {
         Value::Bool(b) => Ok(i64::from(*b)),
@@ -111,21 +113,23 @@ pub fn py_int(v: &Value) -> Result<i64, String> {
             if let Some(i) = n.as_i64() {
                 Ok(i)
             } else if n.as_u64().is_some() {
-                Err("整数太大".to_string())
+                Err("integer too large".to_string())
             } else {
                 match n.as_f64() {
                     Some(f) if f.is_finite() && f.abs() < 9.2e18 => Ok(f.trunc() as i64),
-                    _ => Err("数值超出范围".to_string()),
+                    _ => Err("number out of range".to_string()),
                 }
             }
         }
         Value::String(s) => py_int_from_str(s),
-        Value::Null => Err("int() 的参数不能是 null".to_string()),
-        Value::Array(_) | Value::Object(_) => Err("int() 的参数不能是数组或对象".to_string()),
+        Value::Null => Err("int() argument must not be null".to_string()),
+        Value::Array(_) | Value::Object(_) => {
+            Err("int() argument must not be an array or object".to_string())
+        }
     }
 }
 
-/// 绑定到 SQLite 的值（Python `sqlite3` 能绑定的类型）。
+/// Values that can be bound to SQLite (the types Python `sqlite3` can bind).
 pub fn to_sql(v: &Value) -> Result<SqlValue, String> {
     match v {
         Value::Null => Ok(SqlValue::Null),
@@ -136,19 +140,22 @@ pub fn to_sql(v: &Value) -> Result<SqlValue, String> {
             } else if let Some(f) = n.as_f64().filter(|_| n.as_u64().is_none()) {
                 Ok(SqlValue::Real(f))
             } else {
-                Err("整数太大".to_string())
+                Err("integer too large".to_string())
             }
         }
         Value::String(s) => Ok(SqlValue::Text(s.clone())),
-        Value::Array(_) | Value::Object(_) => Err("数组或对象不能当作文本存入".to_string()),
+        Value::Array(_) | Value::Object(_) => {
+            Err("an array or object cannot be stored as text".to_string())
+        }
     }
 }
 
 fn as_object<'a>(v: &'a Value, what: &str) -> Result<&'a Map<String, Value>, String> {
-    v.as_object().ok_or_else(|| format!("{what} 不是对象"))
+    v.as_object()
+        .ok_or_else(|| format!("{what} is not an object"))
 }
 
-/// 校验并转换。成功后才会写库，所以失败时库里一个字都不会变。
+/// Validates and converts. The database is written only after this succeeds, so a failure leaves the database completely unchanged.
 pub fn convert(
     qs: &Map<String, Value>,
     hist: &[Value],
@@ -159,12 +166,12 @@ pub fn convert(
         let num = |k: &str| -> Result<i64, String> {
             match r.get(k) {
                 None => Ok(0),
-                Some(v) => py_int(v).map_err(|e| format!("questions[{qid:?}].{k}：{e}")),
+                Some(v) => py_int(v).map_err(|e| format!("questions[{qid:?}].{k}: {e}")),
             }
         };
         let at = match r.get("at") {
             None => SqlValue::Null,
-            Some(v) => to_sql(v).map_err(|e| format!("questions[{qid:?}].at：{e}"))?,
+            Some(v) => to_sql(v).map_err(|e| format!("questions[{qid:?}].at: {e}"))?,
         };
         stats.push(StatRow {
             id: qid.clone(),
@@ -176,33 +183,33 @@ pub fn convert(
             at,
         });
     }
-    // 旧文件最新的在前；这里按"从旧到新"的顺序排好，写入时 id 递增就和时间一致
+    // The old file lists the newest first; sort oldest to newest here so that ids increase with time on insert
     let mut attempts = Vec::with_capacity(hist.len());
     for (i, h) in hist.iter().enumerate().rev() {
         let h = as_object(h, &format!("history[{i}]"))?;
         let need = |k: &str| -> Result<i64, String> {
             match h.get(k) {
-                None => Err(format!("history[{i}] 缺少 {k}")),
-                Some(v) => py_int(v).map_err(|e| format!("history[{i}].{k}：{e}")),
+                None => Err(format!("history[{i}] is missing {k}")),
+                Some(v) => py_int(v).map_err(|e| format!("history[{i}].{k}: {e}")),
             }
         };
         let at = match h.get("at") {
             None => SqlValue::Text(String::new()),
-            Some(Value::Null) => return Err(format!("history[{i}].at 不能是 null")),
-            Some(v) => to_sql(v).map_err(|e| format!("history[{i}].at：{e}"))?,
+            Some(Value::Null) => return Err(format!("history[{i}].at must not be null")),
+            Some(v) => to_sql(v).map_err(|e| format!("history[{i}].at: {e}"))?,
         };
         let mode = match h.get("mode") {
             None => SqlValue::Text("all".to_string()),
-            Some(Value::Null) => return Err(format!("history[{i}].mode 不能是 null")),
-            Some(v) => to_sql(v).map_err(|e| format!("history[{i}].mode：{e}"))?,
+            Some(Value::Null) => return Err(format!("history[{i}].mode must not be null")),
+            Some(v) => to_sql(v).map_err(|e| format!("history[{i}].mode: {e}"))?,
         };
         let sheets = match h.get("sheets") {
             None => "[]".to_string(),
-            Some(v) => pyjson::to_string(v).map_err(|e| format!("history[{i}].sheets：{e}"))?,
+            Some(v) => pyjson::to_string(v).map_err(|e| format!("history[{i}].sheets: {e}"))?,
         };
         let seconds = match h.get("seconds") {
             None => 0,
-            Some(v) => py_int(v).map_err(|e| format!("history[{i}].seconds：{e}"))?,
+            Some(v) => py_int(v).map_err(|e| format!("history[{i}].seconds: {e}"))?,
         };
         attempts.push(AttemptRow {
             at,

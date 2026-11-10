@@ -1,6 +1,6 @@
 let timer: number | undefined;
 
-/** 屏幕底部的提示条。ms 默认 3.4 秒。 */
+/** Toast bar at the bottom of the screen. ms defaults to 3.4 seconds. */
 export function toast(msg: string, ms = 3400): void {
   const t = document.getElementById('toast');
   if (!t) return;

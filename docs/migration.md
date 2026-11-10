@@ -1,19 +1,21 @@
-# 迁移与回滚
+**English** | [日本語](migration.ja.md) | [简体中文](migration.zh-CN.md)
 
-> 从 Python 版（v0.2.x）切换到 Rust + TypeScript + Nginx 版（v0.3）。**数据库文件和 schema 一个字都没变**，所以切换是「换程序」，不是「搬数据」。
-> 决策依据：[migration-plan.md](migration-plan.md)。风险：[risk-assessment.md](risk-assessment.md)。
+# Migration and rollback
 
-## 1. 原则
+> Switching from the Python version (v0.2.x) to the Rust + TypeScript + Nginx version (v0.3). **The database file and its schema have not changed at all**, so the switch means "swapping the program", not "moving data".
+> Basis for the decision: [migration-plan.md](migration-plan.md). Risks: [risk-assessment.md](risk-assessment.md).
 
-1. **不碰原件。** 先备份，先在副本上试，确认没问题再切。
-2. **随时能回去。** 两个实现读写同一个文件、同一份 schema（迁移时用合成数据演练过双向往返，见 §5）。
-3. **旧实现没有丢。** 旧代码在 Git 标签 `python-v0.2`；旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2`（以及 `:v0.2`、`:v0.2.1`）仍在 GHCR，不会被新流程覆盖。仓库的主干上已经没有 Python 代码。
+## 1. Principles
 
-## 2. 升级前清单
+1. **Never touch the original.** Back up first, try on a copy first, and switch only after you have confirmed everything is fine.
+2. **You can always go back.** Both implementations read and write the same file with the same schema (a round trip in both directions was rehearsed with synthetic data during the migration, see §5).
+3. **The old implementation is not lost.** The old code is at the Git tag `python-v0.2`; the old image `ghcr.io/yumin-space/xexam:v0.2.2` (along with `:v0.2` and `:v0.2.1`) is still on GHCR and will not be overwritten by the new pipeline. The repository's main branch no longer contains any Python code.
 
-按顺序做，每一步都不改动真实数据库。
+## 2. Pre-upgrade checklist
 
-- [ ] **备份数据卷**（先停旧容器）：
+Do these in order. No step modifies your real database.
+
+- [ ] **Back up the data volume** (stop the old container first):
 
   ```bash
   docker compose stop
@@ -21,66 +23,66 @@
   docker compose start
   ```
 
-  备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。
-- [ ] **验证备份**：解压到一个临时目录，`sqlite3 work/xexam.db "PRAGMA integrity_check"` 必须输出 `ok`（命令见 [database.md](database.md) 第 5 节）。
-- [ ] **在副本上试新版**：把解压出来的 `xexam.db` 放进一个**空的临时目录**，用它启动后端，不用命名卷：
+  The backup file holds your entire database, so **do not commit it to Git** (`.gitignore` already ignores `*.tgz`).
+- [ ] **Verify the backup**: extract it to a temporary directory; `sqlite3 work/xexam.db "PRAGMA integrity_check"` must print `ok` (for the command, see section 5 of [database.md](database.md)).
+- [ ] **Try the new version on a copy**: put the extracted `xexam.db` into an **empty temporary directory** and start the backend with it, without using the named volume:
 
   ```bash
   cd backend && cargo build --release
   XEXAM_DATA=/tmp/xexam-trial ./target/release/xexam-backend serve --no-browser
   ```
 
-  浏览器打开 <http://localhost:8765>，确认题数、错题本、成绩历史和旧版一致。**试完删掉这个临时目录。**
-- [ ] **记下旧版的数字**：`/api/info` 的 `bankCount`、首页上的总题数、错题数——升级后逐个对。
-- [ ] **确认 `.env`**：`XEXAM_ALLOWED_HOSTS` / `XEXAM_BIND` 等沿用旧值即可，变量名没变。
+  Open <http://localhost:8765> in a browser and check that the number of questions, the wrong-answer notebook and the score history match the old version. **Delete this temporary directory when you are done.**
+- [ ] **Write down the old version's numbers**: `bankCount` from `/api/info`, the total number of questions on the home page, and the number of questions in the wrong-answer notebook. Compare them one by one after the upgrade.
+- [ ] **Check `.env`**: you can keep the old values for `XEXAM_ALLOWED_HOSTS`, `XEXAM_BIND` and so on; the variable names have not changed.
 
-## 3. 升级
+## 3. Upgrade
 
 ```bash
-# 1. 停旧版（不要 down -v）
+# 1. Stop the old version (do not use down -v)
 docker compose stop
 
-# 2. 删掉旧的容器（只删容器，不删卷）。旧版的服务和容器都叫 xexam，新版的是 frontend / backend，
-#    如果不删，旧容器会留在项目里当"孤儿"，而且它的端口映射还占着 8765，新的 xexam-frontend 会因端口冲突起不来。
+# 2. Remove the old container (only the container, not the volume). The old version's service and container are both named xexam, while the new ones are frontend / backend.
+#    If you do not remove it, the old container stays in the project as an "orphan", and its port mapping still holds 8765, so the new xexam-frontend cannot start because of the port conflict.
 docker rm xexam
 
-# 3. 换上新的 docker-compose.yml（现在有两个服务），拉取并启动（同一个卷 xexam_data、同一个端口）
+# 3. Put the new docker-compose.yml in place (it now has two services), then pull and start (same volume xexam_data, same port)
 docker compose pull
 docker compose up -d
 
-# 4. 看两个容器是否 healthy
+# 4. Check that both containers are healthy
 docker compose ps
 ```
 
-`docker rm xexam` 只删除**容器**，不会删除数据卷 `xexam_data`（那需要 `docker volume rm` 或 `down -v`，不要做）。
+`docker rm xexam` removes only the **container**. It does not remove the data volume `xexam_data` (that would take `docker volume rm` or `down -v`; do not do either).
 
-升级后核对：
+Checks after the upgrade:
 
-- [ ] `/api/info` 的 `version` 是 `0.3`，`bankCount` 和升级前一样。
-- [ ] 首页的题数、错题本里的题数、成绩历史和升级前一样。
-- [ ] 随便答几道题、交卷，成绩出现在历史里。
-- [ ] （可选）再上传一次同一份 Excel：预览应该显示「新增 0、更新 0、下架 0」——这证明新旧解析器给同一批题算出了**相同的题目 id**。如果这里出现大量「下架 + 新增」，**立刻回滚**（§4）。
+- [ ] `version` in `/api/info` is `0.4`, and `bankCount` is the same as before the upgrade.
+- [ ] The question count on the home page, the question count in the wrong-answer notebook and the score history are the same as before the upgrade.
+- [ ] Answer a few questions and submit; the score appears in the history.
+- [ ] (Optional) Upload the same Excel file again: the preview should show `新增 0、更新 0、下架 0` ("0 added, 0 updated, 0 deactivated"). This proves that the old and new parsers compute the **same question ids** for the same set of questions. If it shows a large number of "deactivated + added" entries instead, **roll back immediately** (§4).
 
-> ⚠️ 新旧版的项目名（`xexam`）、卷（`xexam_data`）和端口都相同，所以**不能同时运行**。旧版的容器名是 `xexam`，新版是 `xexam-frontend` 和 `xexam-backend`，所以升级时要像上面第 2 步那样把旧容器删掉。
+> ⚠️ The old and new versions use the same project name (`xexam`), the same volume (`xexam_data`) and the same port, so they **cannot run at the same time**. The old version's container is named `xexam`, while the new version's are `xexam-frontend` and `xexam-backend`, so during the upgrade you have to remove the old container as in step 2 above.
 
-## 4. 回滚
+## 4. Rollback
 
-任何时候都可以回到 Python 版，**数据不丢**。旧版的 compose 文件已不在主干上，从标签里取：
+You can go back to the Python version at any time, **with no data loss**. The old version's compose file is no longer on the main branch; get it from the tag:
 
 ```bash
-# 1. 停新版（不要 down -v）
+# 1. Stop the new version (do not use down -v)
 docker compose stop
 
-# 2. 取出旧版的 compose 文件，起旧版（它拉取 ghcr.io/yumin-space/xexam:latest，如需固定版本请把 :latest 改成 :v0.2.2）
+# 2. Get the old version's compose file and start the old version (it pulls ghcr.io/yumin-space/xexam:latest; to pin a version, change :latest to :v0.2.2)
 git show python-v0.2:docker-compose.yml > docker-compose.legacy.yml
 docker compose -f docker-compose.legacy.yml up -d
 ```
 
-注意旧 compose 里的镜像标签是 `:latest`，**而 `ghcr.io/yumin-space/xexam:latest` 在本次发布后不再更新**（新镜像用的是 `xexam-frontend` / `xexam-backend` 两个新名字），所以它仍指向最后一个 Python 版本；保险起见请显式写成 `:v0.2.2`。
+Note that the image tag in the old compose file is `:latest`, **and `ghcr.io/yumin-space/xexam:latest` is no longer updated after this release** (the new images use the two new names `xexam-frontend` / `xexam-backend`), so it still points to the last Python version. To be safe, write `:v0.2.2` explicitly.
 
-旧版继续使用同一个 `xexam_data` 卷。新版写进去的数据（新导入的题、新成绩）旧版都读得懂：新后端不改 schema、不改 `journal_mode`、不加表和列、不设 `user_version`，也不留 `-wal` / `-shm` 文件。
+The old version keeps using the same `xexam_data` volume. It can read everything the new version wrote (newly imported questions, new scores), because the new backend does not change the schema, does not change `journal_mode`, does not add tables or columns, does not set `user_version`, and leaves no `-wal` / `-shm` files behind.
 
-如果连数据也要回到升级之前（比如怀疑新版写坏了）：
+If you also want the data to go back to the state before the upgrade (for example, you suspect the new version corrupted it):
 
 ```bash
 docker compose stop
@@ -88,40 +90,40 @@ docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar xzf /backup/xex
 docker compose -f docker-compose.legacy.yml up -d
 ```
 
-> 恢复会用备份覆盖 `/data`——这之后在新版里做过的所有改动都会丢。只有确认需要时才做。
+> The restore overwrites `/data` with the backup, so every change made in the new version after the backup is lost. Do it only when you are sure you need it.
 
-不用 Docker 的回滚：`git checkout python-v0.2`，运行 `python server.py`（需要 Python 3.8+），数据目录指向同一个 `xexam.db`。
+Rolling back without Docker: `git checkout python-v0.2` and run `python server.py` (requires Python 3.8+), with the data directory pointing at the same `xexam.db`.
 
-## 5. 已经演练过什么
+## 5. What has been rehearsed
 
-迁移时（Python 代码还在的时候）做过下面这些，**全部只用虚构数据**，没有读取、打印或修改过任何真实数据库。其中依赖旧 Python 现场运行的脚本，随旧代码一起移除了；结论由已提交的快照测试继续守着。
+The following was done during the migration (while the Python code was still in the repository), **using fictional data only**; no real database was read, printed or modified. The scripts that depended on running the old Python code live were removed along with that code; the conclusions continue to be guarded by the committed snapshot tests.
 
-| 演练 | 怎么做 | 结果 | 现在由什么守着 |
+| Rehearsal | How it was done | Result | What guards it now |
 |---|---|---|---|
-| 新旧双向往返 | 旧 Python 建库 → 备份 + `integrity_check` → Rust 在**副本**上读（与旧版逐字节相同）→ Rust 导入第二份工作簿、记成绩 → 旧 Python 回读（与 Rust 相同）→ 旧 Python 再写 → Rust 再读 | 19 项通过，包括「原件的 sha256 前后不变」 | `db_golden.rs`：`sample.db`（旧实现写出的库）打开、读取、关闭后一个字节不变；新建库的 `sqlite_master` 与旧实现逐字相同 |
-| 黄金响应对照 | 172 份旧版响应与新后端逐项比较 | 0 项未解释的差异，23 项登记在案 | `api_golden.rs` 每次 CI 都重放 |
-| 安全探针 | 340 项恶意请求同时打旧版和新版，3 种配置 | 0 项未解释的差异，51 项登记在案（多数是新版更严） | 探针脚本已移除；守卫和上传检查由 `api_*.rs`、`parser_hardening.rs`、`nginx_check.py` 测试 |
-| 解析器差分 | 49 个合成工作簿，旧解析器和 Rust 解析器的输出逐项比较；85 条题目 id 向量 | 全部一致 | `parser_golden.rs`、`id_vectors.rs` 每次 CI 都跑 |
-| 整栈 | `tests/integration/stack_check.py`：起栈、上传 / 导入 / 交卷、删容器后同一个卷重建数据还在、`docker stop` 用时、非 root | 34 项通过 | 每次 CI 都跑 |
+| Round trip between old and new | Old Python creates the database → backup + `integrity_check` → Rust reads it on a **copy** (byte-for-byte identical to the old version) → Rust imports a second workbook and records scores → old Python reads back (identical to Rust) → old Python writes again → Rust reads again | 19 checks passed, including "the sha256 of the original is unchanged before and after" | `db_golden.rs`: `sample.db` (a database written by the old implementation) is byte-for-byte unchanged after being opened, read and closed; the `sqlite_master` of a newly created database is identical to the old implementation's, character for character |
+| Golden-response comparison | 172 responses from the old version compared item by item with the new backend | 0 unexplained differences, 23 recorded | `api_golden.rs` replays them on every CI run |
+| Security probes | 340 malicious requests sent to both the old and the new version, in 3 configurations | 0 unexplained differences, 51 recorded (most of them are cases where the new version is stricter) | The probe script has been removed; the guards and upload checks are tested by `api_*.rs`, `parser_hardening.rs` and `nginx_check.py` |
+| Parser differential | 49 synthetic workbooks, with the output of the old parser and the Rust parser compared item by item; 85 question-id vectors | All identical | `parser_golden.rs` and `id_vectors.rs` run on every CI run |
+| Full stack | `tests/integration/stack_check.py`: bring up the stack, upload / import / submit, the data is still there after the container is deleted and the stack is recreated on the same volume, `docker stop` timing, non-root | 34 checks passed | Runs on every CI run |
 
-## 6. 与旧版的有意差异
+## 6. Intentional differences from the old version
 
-完整、带理由的表在 [api.md](api.md) 的第 5 节；每一条都登记在 `tests/baseline/golden/allowed_differences_rust.json` 和 `allowed_probe_differences_rust.json`，没登记的差异会让测试失败。对使用者可见的只有：
+The full table, with reasons, is in section 5 of [api.md](api.md). Every entry is recorded in `tests/baseline/golden/allowed_differences_rust.json` and `allowed_probe_differences_rust.json`, and a difference that is not recorded makes the tests fail. The only ones visible to users are:
 
-| 项 | 变化 |
+| Item | Change |
 |---|---|
-| 架构 | 一个容器变成两个（nginx + backend）；镜像名 `xexam-frontend` / `xexam-backend`；`XEXAM_BIND` 现在指向 Nginx |
-| 更严的上传检查 | 任何编码 / 扩展名里的 DOCTYPE 都拒绝；重复的 ZIP 条目名拒绝；条目数、XML 深度、节点数有上限 |
-| 错误文案 | 其余中文逐字保留；两处原来会回显库异常文本的位置改成固定中文 |
-| 判分 | 仍在浏览器里，没有搬到服务端（规格建议搬，这里有意不搬，理由见 [migration-plan.md](migration-plan.md) 的 Q3） |
-| iPhone | 需要 iOS 15.4 以上（构建目标 `safari15`） |
-| 不再提供 | 后端不再提供静态文件（由 Nginx 提供）；`Server` 响应头 |
+| Architecture | One container becomes two (nginx + backend); the images are named `xexam-frontend` / `xexam-backend`; `XEXAM_BIND` now points at Nginx |
+| Stricter upload checks | A DOCTYPE in any encoding / extension is rejected; duplicate ZIP entry names are rejected; the number of entries, the XML depth and the number of nodes are capped |
+| Error messages | All other Chinese messages are kept verbatim; in two places that used to echo the text of a library exception, a fixed Chinese message is used instead |
+| Grading | Still done in the browser, not moved to the server (the spec recommends moving it; here it is intentionally not moved, for the reasons see Q3 in [migration-plan.md](migration-plan.md)) |
+| iPhone | Requires iOS 15.4 or later (build target `safari15`) |
+| No longer provided | The backend no longer serves static files (Nginx does); the `Server` response header |
 
-## 7. 从 v0.1 升级的提醒
+## 7. Upgrading from v0.1
 
-数据库文件名在 v0.2 起是 `xexam.db`。如果数据目录里有别的 `.db` 文件而没有 `xexam.db`，后端启动日志会提醒你；把那个文件改名成 `xexam.db` 再启动即可（旧文件不会被删，也不会被读取）。旧的 `progress.json` 每次启动都会检查一次，库里还没有学习记录、也没迁移过时才迁移，只迁一次、不覆盖已有记录。
+From v0.2 on, the database file is named `xexam.db`. If the data directory contains another `.db` file but no `xexam.db`, the backend's startup log warns you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read). The old `progress.json` is checked once on every startup, and it is migrated only if the database has no study records yet and no migration has happened before; it is migrated only once and never overwrites existing records.
 
-## 8. 没有验证的东西
+## 8. What has not been verified
 
-- 真正的 Cloudflare Tunnel / Access、iPhone 真机、在真正的 ARM 硬件上运行（arm64 只在 QEMU 下构建并启动验证过）。
-- 用**你自己真实数据库**的副本演练：我没有也不该读取它；请按 §2 在自己的机器上做一遍。
+- A real Cloudflare Tunnel / Access, a real iPhone, and running on real ARM hardware (arm64 has only been built and started under QEMU).
+- A rehearsal with a copy of **your own real database**: I do not have it and should not read it; please do it on your own machine following §2.

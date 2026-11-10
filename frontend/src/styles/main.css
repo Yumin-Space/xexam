@@ -1,5 +1,5 @@
-/* Xexam —— 答题卡（マークシート）风格
-   纸：冷灰   印刷色：答题卡蓝   涂卡：石墨   批改：绿 / 红 */
+/* Xexam - answer-sheet (mark-sheet) style
+   Paper: cool gray   Print color: answer-sheet blue   Marking: graphite   Grading: green / red */
 
 :root {
   --page: #E3E8ED;
@@ -46,7 +46,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   padding: max(28px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
 }
 
-/* ---------- 按钮 ---------- */
+/* ---------- Buttons ---------- */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 40px; padding: 8px 18px;
@@ -63,7 +63,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn.big { min-height: 52px; padding-inline: 32px; font-size: 17px; }
 
-/* ---------- 标题 ---------- */
+/* ---------- Headings ---------- */
 .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; margin-bottom: 24px; }
 .brand { display: flex; align-items: center; gap: 14px; }
 .logo { display: inline-flex; gap: 5px; }
@@ -73,7 +73,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .bankinfo .btn { color: var(--ink); font-size: 15px; }
 .bankinfo { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; color: var(--ink3); font-size: 13.5px; }
 
-/* ---------- 面板 ---------- */
+/* ---------- Panels ---------- */
 .panel { background: var(--sheet); border: 1px solid var(--line); border-radius: 6px; padding: 24px; }
 .panel + .panel { margin-top: 20px; }
 .panel h2 { font-size: 18px; margin-bottom: 16px; }
@@ -108,7 +108,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .empty { color: var(--ink2); }
 .err { border: 1.5px solid var(--wrong); background: var(--wrong-soft); border-radius: 6px; padding: 16px 18px; margin-bottom: 20px; }
 
-/* 学习记录 */
+/* Study records */
 .stat { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px; }
 .stat b { font: 700 40px/1 var(--num); }
 .hist { list-style: none; margin: 16px 0 0; padding: 0; }
@@ -119,7 +119,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .bars i { flex: 1; max-width: 22px; background: var(--print); border-radius: 2px 2px 0 0; min-height: 2px; }
 .foot { margin-top: 28px; display: flex; flex-wrap: wrap; gap: 8px 16px; color: var(--ink3); font-size: 13px; }
 
-/* ---------- 考试中 ---------- */
+/* ---------- Taking an exam ---------- */
 .qbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .qbar .l { display: flex; align-items: baseline; gap: 8px; font-size: 18px; }
 .qbar .r { display: flex; align-items: center; gap: 14px; }
@@ -202,7 +202,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .rail .btn { width: 100%; }
 .keys { margin-top: 12px; font-size: 12.5px; color: var(--ink3); line-height: 1.7; }
 
-/* ---------- 成绩 ---------- */
+/* ---------- Results ---------- */
 .score { display: grid; grid-template-columns: auto 1fr; gap: 8px 40px; align-items: end; margin-bottom: 20px; }
 .score .big { font: 700 clamp(84px, 13vw, 140px)/.9 var(--num); letter-spacing: -.02em; }
 .score .big small { font-size: .38em; color: var(--print); margin-left: 4px; letter-spacing: 0; }
@@ -262,7 +262,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .stats { margin-top: 10px; font-size: 13.5px; color: var(--ink3); }
 .allgood { padding: 28px; text-align: center; font-size: 18px; border: 1.5px solid var(--right); background: var(--right-soft); border-radius: 6px; }
 
-/* ---------- 题库管理 ---------- */
+/* ---------- Question bank management ---------- */
 .page-h { font-size: 22px; margin: 4px 0 18px; }
 .sub-h { font-size: 15px; margin: 22px 0 8px; color: var(--ink2); }
 .steps { margin: 0 0 20px; padding-left: 22px; line-height: 1.9; }
@@ -290,7 +290,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 700; }
 .emptybank { display: grid; justify-items: start; gap: 12px; }
 .acts { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* ---------- 对话框 / 提示 ---------- */
+/* ---------- Dialogs / toasts ---------- */
 dialog { border: 1.5px solid var(--ink); border-radius: 6px; padding: 24px; max-width: 440px; width: calc(100% - 32px); color: var(--ink); background: var(--sheet); }
 dialog::backdrop { background: rgba(27, 42, 71, .5); }
 dialog h3 { font-size: 18px; margin-bottom: 10px; }
@@ -304,14 +304,14 @@ dialog .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8
 }
 #toast.show { opacity: 1; }
 
-/* ---------- 小屏 ---------- */
+/* ---------- Small screens ---------- */
 @media (max-width: 880px) {
   .home-grid, .quiz-grid { grid-template-columns: minmax(0, 1fr); }
   .rail { position: static; }
   .tiles { grid-template-columns: repeat(8, 1fr); }
   .score { grid-template-columns: minmax(0, 1fr); }
   .paper { padding: 20px 16px; }
-  /* 答题时「上一题 / 下一题」固定在屏幕底部，长题目不用滑到底才能翻页 */
+  /* While answering, "Previous / Next" are pinned to the bottom of the screen, so long questions do not need scrolling to the end to turn the page */
   .quiz-grid .pfoot {
     position: sticky; bottom: 0; z-index: 5;
     margin: 24px -16px -20px; padding: 12px 16px;
@@ -327,7 +327,7 @@ dialog .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8
   .pfoot .btn { padding-inline: 14px; }
 }
 
-/* ---------- 触屏（iPhone / iPad）：点按区域不小于 44px（Apple 的建议值） ---------- */
+/* ---------- Touch screens (iPhone / iPad): tap targets are at least 44px (Apple's recommended value) ---------- */
 @media (pointer: coarse), (max-width: 480px) {
   .btn { min-height: 44px; }
   .btn.quiet { min-width: 44px; }
@@ -341,5 +341,5 @@ dialog .acts { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8
   .strip button { width: 44px; min-height: 48px; }
   .skipbox summary, .tr summary { padding-block: 10px; }
 }
-/* 键盘快捷键的提示在没有键盘的设备上没有意义 */
+/* Keyboard shortcut hints are meaningless on devices without a keyboard */
 @media (hover: none) { .keys { display: none; } }

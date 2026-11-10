@@ -1,14 +1,14 @@
-// 判分与错题本规则（纯函数，不碰 DOM、不碰网络）。
+// Grading and wrong-answer notebook rules (pure functions, no DOM, no network).
 //
-// 说明：规格要求"前端不含权威业务规则"，但旧版的判分与错题本规则就在浏览器里，服务端只存 {id, correct}。
-// 为了保持 API 向后兼容，这里沿用旧行为，并把它隔离成纯函数 + 金标准测试（grading.test.ts）。
-// 这是对规格的有意偏离，见 docs/migration-plan.md 的 Q3。
+// Note: the spec requires "the frontend contains no authoritative business rules", but the old version's grading and wrong-answer notebook rules lived in the browser, and the server only stores {id, correct}.
+// To keep the API backward compatible, the old behavior is kept here, isolated as pure functions + golden tests (grading.test.ts).
+// This is a deliberate deviation from the spec; see Q3 in docs/migration-plan.md.
 import type { Mode, Progress, Question, QuestionStat } from '../types/api.ts';
 
-/** 作答。单选 / 多选：选中的字母；热点题：每个小项选了第几个（没选是 null）。 */
+/** An answer. Single / multiple choice: the selected letters; hotspot question: the index of the choice picked for each item (null if none). */
 export type Answer = Array<string | number | null> | undefined | null;
 
-/** 0 未答；1 部分（只有热点题会有）；2 已答完 */
+/** 0 unanswered; 1 partial (hotspot questions only); 2 fully answered */
 export type AnswerState = 0 | 1 | 2;
 
 export function stateOf(q: Pick<Question, 'kind' | 'items'>, a: Answer): AnswerState {
@@ -31,7 +31,7 @@ export function grade(q: Pick<Question, 'kind' | 'answer'>, a: Answer): boolean 
   return mine.length === want.length && mine.every((x, i) => x === want[i]);
 }
 
-/** 错题本：答错过，且连续答对的次数还不到 masterStreak。 */
+/** Wrong-answer notebook: answered wrong before, and the consecutive-correct streak is still below masterStreak. */
 export function inNotebook(stat: QuestionStat | undefined | null, masterStreak: number): boolean {
   return !!stat && stat.wrong > 0 && stat.streak < masterStreak;
 }
@@ -40,7 +40,7 @@ export function masterStreakOf(p: Progress | null | undefined): number {
   return (p && p.masterStreak) || 2;
 }
 
-/** 出题范围：选中的工作表里的题；"错题本"模式只留错题本里的。 */
+/** Question scope: the questions in the selected sheets; "wrong-answer notebook" mode keeps only those in the notebook. */
 export function poolOf(
   questions: Question[],
   selected: ReadonlySet<string>,
@@ -54,8 +54,8 @@ export function poolOf(
 }
 
 /**
- * 百分比：四舍六入五成双，和服务端（Python 的 round）一致，
- * 这样成绩页和学习记录里的数字不会差 1。用整数算，避免浮点误差。
+ * Percentage: round half to even (banker's rounding), matching the server (Python's round),
+ * so the numbers on the results page and in the study history never differ by 1. Uses integer math to avoid floating-point error.
  */
 export function percentOf(good: number, total: number): number {
   if (total <= 0) return 0;

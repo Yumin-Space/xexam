@@ -1,4 +1,4 @@
-// 暂存的考试（localStorage）。读取时对内容一概不信任：坏数据只会被丢弃或修正，绝不抛错。
+// The saved (in-progress) exam in localStorage. Nothing read back is trusted: bad data is only dropped or corrected, never throws.
 import type { Bank, Mode, Question } from '../types/api.ts';
 import { stateOf, type Answer } from '../domain/grading.ts';
 import { paths } from './storage-keys.ts';
@@ -12,7 +12,7 @@ export interface SavedSession {
   elapsed: number;
   mode: Mode;
   sheets: string[];
-  /** 暂存的题里有几道已经不在题库了 */
+  /** How many of the saved questions are no longer in the question bank */
   dropped: number;
 }
 
@@ -35,7 +35,7 @@ export function saveSession(se: SessionToSave): void {
       idx: se.idx, elapsed: Math.floor(se.elapsedSeconds), mode: se.mode, sheets: se.sheets,
     }));
   } catch {
-    /* 存不了就算了 */
+    /* If it cannot be saved, so be it */
   }
 }
 
@@ -49,7 +49,7 @@ export function clearSaved(): void {
 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object' && x !== null && !Array.isArray(x);
 
-/** 把暂存的内容和现在的题库对上。对不上的部分丢掉；整场都对不上就返回 null。 */
+/** Match the saved content against the current question bank. Parts that do not match are dropped; if nothing matches at all, return null. */
 export function loadSaved(bank: Bank | null): SavedSession | null {
   if (!bank) return null;
   let d: unknown;
@@ -76,7 +76,7 @@ export function loadSaved(bank: Bank | null): SavedSession | null {
       });
       if (norm.some((x) => x != null)) answers[q.id] = norm;
     } else {
-      // 只留题里确实有的选项；去重；单选最多一个
+      // Keep only options that actually exist in the question; dedupe; at most one for single choice
       const have = new Set(q.options.map((o) => o.key));
       let keys = [...new Set(a.filter((k): k is string => typeof k === 'string' && have.has(k)))];
       if (q.kind === 'single') keys = keys.slice(0, 1);

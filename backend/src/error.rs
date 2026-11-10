@@ -1,13 +1,13 @@
-//! 错误类型。对外（HTTP）的形态与旧版一致：
-//! - GET 被 Host 守卫拒绝：403 `text/plain`（`Forbidden host: …`）
-//! - POST 被拒绝：403 JSON `{"error": "<中文原因>"}`
-//! - 其余错误：JSON `{"error": "<文案>"}`，状态码见 `status()`
+//! Error types. The externally visible (HTTP) shape matches the old version:
+//! - GET rejected by the Host guard: 403 `text/plain` (`Forbidden host: …`)
+//! - POST rejected: 403 JSON `{"error": "<Chinese reason>"}`
+//! - Other errors: JSON `{"error": "<message>"}`, status code see `status()`
 //!
-//! 内部细节（异常文本、路径、SQLite 报错）只进日志，不进响应。
+//! Internal details (exception text, paths, SQLite errors) go only to the log, never into the response.
 
 use thiserror::Error;
 
-/// 解析 XLSX 时的错误。变体的 `Display` 就是旧版 `ValueError` 的中文文案（前端直接显示），**逐字保留**。
+/// Errors while parsing an XLSX. The `Display` of each variant is the Chinese message of the old `ValueError` (shown directly by the frontend), **kept verbatim**.
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ImportError {
     #[error("文件是空的，或者没有上传完整。")]
@@ -24,13 +24,13 @@ pub enum ImportError {
     TooBigUncompressed,
     #[error("文件里含有不被允许的内容（XML 实体声明），已拒绝。正常的 Excel 文件不会有这个。")]
     EntityDeclaration,
-    /// 解析超过了时限（`XEXAM_PARSE_TIMEOUT_SECS`）。解析器是协作式的：看到截止时间就自己停下。
+    /// Parsing exceeded the time limit (`XEXAM_PARSE_TIMEOUT_SECS`). The parser is cooperative: it stops itself when it sees the deadline.
     #[error("解析这个文件用的时间太长，已经停止。请确认选对了文件，或者换一份小一点的再试。")]
     Timeout,
-    /// 解析阶段其它的、有明确中文说明的失败（例如工作簿结构不对）。
+    /// Other parse-stage failures that have an explicit Chinese message (e.g. a malformed workbook structure).
     #[error("{0}")]
     Message(String),
-    /// 解析器没预料到的内容。对外是"读取这个 Excel 时出错：…"，细节只进日志。
+    /// Content the parser did not anticipate. Externally shown as the "error while reading this Excel file: …" message; details go only to the log.
     #[error("读取这个 Excel 时出错")]
     Unexpected,
 }
@@ -45,33 +45,33 @@ pub enum DbError {
     Join,
 }
 
-/// HTTP 层的错误。`IntoResponse` 在 `api::error_response` 里实现。
+/// Errors at the HTTP layer. `IntoResponse` is implemented in `api::error_response`.
 #[derive(Debug, Error)]
 pub enum AppError {
-    /// GET 被 Host 守卫拒绝
+    /// GET rejected by the Host guard
     #[error("forbidden host")]
     ForbiddenHost { seen: String },
-    /// POST 被 Host / Origin 守卫拒绝，带可照着做的中文原因
+    /// POST rejected by the Host / Origin guard, with an actionable Chinese reason
     #[error("denied")]
     Denied(String),
     #[error("bad content type")]
     UnsupportedMediaType,
     #[error("too large")]
     JsonTooLarge,
-    /// 上传超过 20 MB
+    /// Upload exceeds 20 MB
     #[error("upload too large")]
     UploadTooLarge { max_mb: u64 },
     #[error("bad json")]
     BadJson,
-    /// 400 + 中文原因（xlsx 校验、没有成绩可保存、没有可用的题……）
+    /// 400 + Chinese reason (xlsx validation, no results to save, no usable questions, ...)
     #[error("{0}")]
     BadRequest(String),
     #[error("not found")]
     NotFound,
-    /// 409：预览已过期或已被处理
+    /// 409: the preview has expired or was already handled
     #[error("pending gone")]
     PendingGone,
-    /// 403：在 Docker 里不能用页面关闭程序
+    /// 403: the app cannot be shut down from the page when running in Docker
     #[error("shutdown disabled")]
     ShutdownDisabled,
     #[error("db error")]

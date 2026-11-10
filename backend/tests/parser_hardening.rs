@@ -1,4 +1,4 @@
-//! 加固与差异：在内存里造 zip，验证有意与旧版不同的行为。
+//! Hardening and differences: build zips in memory and verify behavior that intentionally differs from the old version.
 use std::io::{Cursor, Write};
 use xexam_backend::error::ImportError;
 use xexam_backend::parser::{check_xlsx, parse_workbook};
@@ -14,7 +14,7 @@ fn zip_of(parts: &[(&str, &[u8])]) -> Vec<u8> {
         w.write_all(b).expect("write");
     }
     let mut out = w.finish().expect("finish").into_inner();
-    // check_xlsx 要求至少 100 字节
+    // check_xlsx requires at least 100 bytes
     if out.len() < 100 {
         out.resize(100, 0);
     }
@@ -59,7 +59,7 @@ A. 甲
 B. 乙</t></si></sst>"#;
     let ok = pkg(&sheet(r#"<c r="A1" t="s"><v>0</v></c>"#), Some(sst));
     assert_eq!(parse_workbook(&ok).expect("ok").questions.len(), 1);
-    // Python 会把 -1 当作最后一个条目；新版视为畸形并丢弃该单元格
+    // Python treats -1 as the last entry; the new version treats it as malformed and drops the cell
     let neg = pkg(&sheet(r#"<c r="A1" t="s"><v>-1</v></c>"#), Some(sst));
     assert_eq!(parse_workbook(&neg).expect("neg").questions.len(), 0);
 }
@@ -127,19 +127,19 @@ fn deeply_nested_xml_is_refused() {
     ));
 }
 
-// ---------------------------------------------------------------- 评审后补的回归测试
+// ---------------------------------------------------------------- Regression tests added after review
 
 use std::time::{Duration, Instant};
 use xexam_backend::parser::parse_workbook_until;
 
-/// 很多单元格引用同一个很大的共享字符串：字节预算要拦住（以前每个单元格深拷贝一份，会把内存撑爆）。
+/// Many cells reference the same very large shared string: the byte budget must stop this (previously each cell deep-copied it, which blew up memory).
 #[test]
 fn shared_string_fanout_is_bounded_by_the_byte_budget() {
-    let big = "あ".repeat(400_000); // 约 1.2 MB
+    let big = "あ".repeat(400_000); // about 1.2 MB
     let sst = format!(
         r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>{big}</t></si></sst>"#
     );
-    // 每行 A、B 两格都引用它：1.2 MB x 2 x 40 行 = 约 96 MB > 64 MB 预算
+    // Cells A and B of every row both reference it: 1.2 MB x 2 x 40 rows = about 96 MB > 64 MB budget
     let mut rows = String::new();
     for r in 1..=40 {
         rows.push_str(&format!(
@@ -156,7 +156,7 @@ fn shared_string_fanout_is_bounded_by_the_byte_budget() {
     );
 }
 
-/// 正常大小的共享字符串被多个单元格引用，仍然可以解析。
+/// A normal-size shared string referenced by many cells still parses.
 #[test]
 fn shared_strings_used_by_several_cells_still_parse() {
     let sst = r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>これは十分に長い問題文です。
@@ -170,13 +170,13 @@ B. 乙</t></si></sst>"#;
     );
     let pw = parse_workbook(&pkg(&sheet_xml, Some(sst))).expect("parse");
     assert_eq!(pw.questions.len(), 3);
-    // 三道一模一样的题：id 依次是 base、base-2、base-3（与旧版一致）
+    // Three identical questions: the ids are base, base-2, base-3 (same as the old version)
     let ids: Vec<&str> = pw.questions.iter().map(|q| q.id.as_str()).collect();
     assert_eq!(ids[1], format!("{}-2", ids[0]));
     assert_eq!(ids[2], format!("{}-3", ids[0]));
 }
 
-/// 重复 id 的后缀是线性生成的：几千道一模一样的题也要很快解析完，且后缀依次是 -2、-3 …
+/// Duplicate-id suffixes are generated linearly: thousands of identical questions must still parse quickly, with suffixes -2, -3 … in order.
 #[test]
 fn thousands_of_duplicate_questions_are_not_quadratic() {
     let sst = r#"<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>これは十分に長い問題文です。
@@ -205,7 +205,7 @@ B. 乙</t></si></sst>"#;
     assert_eq!(uniq.len(), n, "all ids must be distinct");
 }
 
-/// 一个元素上的属性个数有上限。
+/// An element has an upper limit on its number of attributes.
 #[test]
 fn too_many_attributes_on_one_element_are_refused() {
     let attrs: String = (0..300).map(|i| format!(r#" a{i}="x""#)).collect();
@@ -217,7 +217,7 @@ fn too_many_attributes_on_one_element_are_refused() {
     );
 }
 
-/// 截止时间已过：解析器自己停下并返回 `Timeout`（而不是跑完）。
+/// The deadline has passed: the parser stops by itself and returns `Timeout` (instead of running to completion).
 #[test]
 fn an_expired_deadline_stops_the_parser_itself() {
     let rows: String = (1..=3000)
@@ -238,7 +238,7 @@ B. 乙</t></is></c><c r="C{r}" t="inlineStr"><is><t>【答案】B</t></is></c></
         parse_workbook_until(&data, Some(past)),
         Err(ImportError::Timeout)
     );
-    // 没有截止时间 / 截止时间还远：正常解析
+    // No deadline / deadline still far away: parse normally
     assert_eq!(
         parse_workbook_until(&data, None)
             .expect("no deadline")
@@ -256,11 +256,11 @@ B. 乙</t></is></c><c r="C{r}" t="inlineStr"><is><t>【答案】B</t></is></c></
     );
 }
 
-/// 把 zip 里第一个名字叫 `name` 的成员的数据区翻转一个字节（CRC 就对不上了），其余原样。
+/// Flip one byte in the data area of the first zip member named `name` (so the CRC no longer matches); leave everything else as is.
 fn corrupt_member(zip_bytes: &[u8], name: &str) -> Vec<u8> {
     let mut out = zip_bytes.to_vec();
     let pat = name.as_bytes();
-    // 本地文件头：签名 PK\x03\x04，30 字节固定头，然后是文件名、extra、数据
+    // Local file header: signature PK\x03\x04, 30-byte fixed header, then file name, extra, data
     let mut i = 0;
     while i + 30 < out.len() {
         if out[i..].starts_with(b"PK\x03\x04") {
@@ -283,8 +283,8 @@ fn corrupt_member(zip_bytes: &[u8], name: &str) -> Vec<u8> {
     panic!("member {name} not found");
 }
 
-/// 旧版只解压 .xml / .rels 来检查；一个损坏的**非 XML** 成员（缩略图之类，CRC 对不上）旧版接受，新版也要接受。
-/// XML 成员损坏则必须拒绝。
+/// The old version only decompressed .xml / .rels to check them; a corrupted **non-XML** member (a thumbnail or the like, CRC mismatch) was accepted by the old version, and the new version must accept it too.
+/// A corrupted XML member must be rejected.
 #[test]
 fn a_corrupt_non_xml_member_is_tolerated_but_a_corrupt_xml_member_is_not() {
     let mut parts: Vec<(&str, &[u8])> = vec![

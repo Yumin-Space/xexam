@@ -55,7 +55,7 @@ async fn head_mirrors_get_without_body() {
         );
         assert_eq!(h.header("content-type"), g.header("content-type"), "{p}");
     }
-    // HEAD 也过 Host 守卫
+    // HEAD also passes the Host guard
     let h = send(
         &a.router,
         build(
@@ -119,7 +119,7 @@ async fn unknown_paths_and_methods() {
     );
     let r = post_json(&a, "/api/info", "{}").await;
     assert_eq!(r.status, 404);
-    // 未知 POST 路径 + 错的类型：415 先于 404
+    // Unknown POST path + wrong type: 415 comes before 404
     let r = post_raw(
         &a,
         "/api/nope",
@@ -172,7 +172,7 @@ async fn host_guard_get() {
             );
         }
     }
-    // 回显：归一化、去控制字符
+    // Echo: normalized, control characters removed
     let r = send(
         &a.router,
         build("GET", "/api/info", Some("evil\t.com"), &[], Body::empty()),
@@ -183,14 +183,14 @@ async fn host_guard_get() {
         "{}",
         r.text()
     );
-    // 静态路径也过 Host 守卫
+    // Static paths also pass the Host guard
     let r = send(
         &a.router,
         build("GET", "/", Some("evil.example.com"), &[], Body::empty()),
     )
     .await;
     assert_eq!(r.status, 403);
-    // 超长 Host：回显最多 80 个字符
+    // Overlong Host: the echo is at most 80 characters
     let long = format!("{}.com", "a".repeat(200));
     let r = send(
         &a.router,
@@ -227,7 +227,7 @@ async fn forwarded_headers_are_never_trusted() {
     )
     .await;
     assert_eq!(r.status, 403);
-    // 反过来：Host 合法、X-Forwarded-Host 是别的，不影响
+    // Conversely: Host is valid, X-Forwarded-Host is something else, no effect
     let r = send(
         &a.router,
         build(
@@ -276,7 +276,7 @@ async fn allowed_hosts_origins_and_any_host() {
     assert_eq!(ok("xexam.example.com").await, 200);
     assert_eq!(ok("XEXAM.Example.COM:443").await, 200);
     assert_eq!(ok("other.example.com").await, 403);
-    // 允许的 Host 同时是合法 Origin
+    // An allowed Host is also a valid Origin
     let post = |h: &'static str, o: &'static str| async {
         send(
             &a.router,
@@ -317,7 +317,7 @@ async fn allowed_hosts_origins_and_any_host() {
             .status,
         403
     );
-    // 场景 3：Host 被改写成 IP，Origin 仍是公网域名
+    // Scenario 3: Host is rewritten to an IP, Origin is still the public domain
     let a3 = app_with(
         config_with(&[("XEXAM_ALLOWED_HOSTS", "192.168.1.20")]),
         None,
@@ -365,7 +365,7 @@ async fn allowed_hosts_origins_and_any_host() {
     )
     .await;
     assert_eq!(r.status, 200);
-    // XEXAM_ALLOWED_ORIGINS 只放行 Origin，不会变成允许的 Host
+    // XEXAM_ALLOWED_ORIGINS only allows the Origin; it does not become an allowed Host
     let r = send(
         &a3b.router,
         build(
@@ -378,7 +378,7 @@ async fn allowed_hosts_origins_and_any_host() {
     )
     .await;
     assert_eq!(r.status, 403);
-    // 不检查 Host：任意域名 GET 放行，但 Origin 检查照旧
+    // Host is not checked: GET to any domain is allowed, but the Origin check stays as before
     let any = app_with(config_with(&[("XEXAM_ALLOW_ANY_HOST", "1")]), None);
     assert_eq!(
         send(
@@ -457,7 +457,7 @@ async fn post_deny_messages_match_python() {
     assert_eq!(r.status, 403);
     assert_std_headers(&r, "application/json; charset=utf-8");
     assert_eq!(r.error(), "被拒绝：这个请求的 Host 是「evil.example.com」，不在允许的列表里。请把它加进 XEXAM_ALLOWED_HOSTS（或设 XEXAM_ALLOW_ANY_HOST=1，只在前面有身份验证时）。");
-    // Host 和 Origin 都错：报 Host
+    // Host and Origin both wrong: report Host
     let r = send(
         &a.router,
         h("evil.example.com", Some("https://evil.example")),
@@ -488,7 +488,7 @@ async fn post_deny_messages_match_python() {
         r.error(),
         "被拒绝：这个请求来自「evil.example.com」，和服务看到的 Host「127.0.0.1」不是同一个主机。如果你在 Cloudflare Tunnel 等反向代理后面且代理改写了 Host，请把「evil.example.com」加进 XEXAM_ALLOWED_ORIGINS。"
     );
-    // 放行的写法：只比主机名
+    // Accepted form: compare only the hostname
     for o in [
         "http://127.0.0.1/path",
         "https://127.0.0.1:1234",
@@ -502,7 +502,7 @@ async fn post_deny_messages_match_python() {
         );
     }
     assert_eq!(send(&a.router, h("127.0.0.1:8701", None)).await.status, 200);
-    // Origin 先于 Content-Type：upload 用 text/plain + 恶意 Origin 得到 403 而不是 415
+    // Origin comes before Content-Type: upload with text/plain + malicious Origin gets 403, not 415
     let r = post_raw(
         &a,
         "/api/upload",
@@ -533,12 +533,12 @@ async fn content_type_rules() {
     };
     assert_eq!(try_ct(Some("application/json")).await, 200);
     assert_eq!(try_ct(Some("application/json; charset=utf-8")).await, 200);
-    assert_eq!(try_ct(Some("Application/JSON")).await, 200); // v0.2 已按分号前的主类型、不区分大小写比较
+    assert_eq!(try_ct(Some("Application/JSON")).await, 200); // v0.2 compares the main type before the semicolon, case-insensitively
     assert_eq!(try_ct(Some("text/plain")).await, 415);
     assert_eq!(try_ct(None).await, 415);
     assert_eq!(try_ct(Some("text/plain; x=application/json")).await, 415);
     assert_eq!(try_ct(Some("application/jsonp")).await, 415);
-    // 上传：子串匹配（与旧版一致）
+    // Upload: substring match (same as the old version)
     a.engine.with(|f| f.parse = Some(Err(ImportError::Empty)));
     let r = post_raw(
         &a,
@@ -577,7 +577,7 @@ async fn json_body_rules() {
             &[("content-type", b"application/json")],
         )
     };
-    assert_eq!(cancel(b"").await.status, 200); // 空正文 = {}
+    assert_eq!(cancel(b"").await.status, 200); // empty body = {}
     assert_eq!(cancel(b"\xEF\xBB\xBF{}").await.status, 200); // BOM
     assert_eq!(cancel(br#"{"x": NaN}"#).await.status, 200);
     assert_eq!(cancel(br#"{"a":1,"a":2}"#).await.status, 200);
@@ -600,7 +600,7 @@ async fn json_body_rules() {
     }
     let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
     assert_eq!(cancel(deep.as_bytes()).await.status, 400);
-    // 恰好 1,000,000 字节通过，1,000,001 413
+    // Exactly 1,000,000 bytes passes, 1,000,001 gives 413
     let pad = |n: usize| format!("{{\"pad\":\"{}\"}}", "a".repeat(n - 10));
     let exact = pad(1_000_000);
     assert_eq!(exact.len(), 1_000_000);
@@ -611,7 +611,7 @@ async fn json_body_rules() {
         (r.status, r.error().as_str()),
         (StatusCode::PAYLOAD_TOO_LARGE, "too large")
     );
-    // 负的 Content-Length -> 413；非数字 -> 按实际字节数
+    // Negative Content-Length -> 413; non-numeric -> uses the actual byte count
     let r = send(
         &a.router,
         build(

@@ -1,14 +1,14 @@
-//! 安全相关的小工具。**接口契约（不要改签名）**；行为依据 `docs/audit/security.md` 与 `server.py` 的
-//! `host_name` / `origin_host` / `parse_allowed_hosts` / `_host_ok` / `_origin_ok` / `clean_filename`。
+//! Small security utilities. **Interface contract (do not change signatures)**; behavior follows `docs/audit/security.md` and `server.py`'s
+//! `host_name` / `origin_host` / `parse_allowed_hosts` / `_host_ok` / `_origin_ok` / `clean_filename`.
 //!
-//! 约定：凡是 Python 里按字符（码点）切片的地方，这里一律用 `chars()`，不按字节切。
+//! Convention: wherever Python slices by character (code point), use `chars()` here, never byte slicing.
 use percent_encoding::percent_decode_str;
 use std::collections::HashSet;
 use subtle::ConstantTimeEq;
 
 pub mod body;
 
-/// Python `str.isspace()` / 正则 `\s`（Unicode）的码点集合。
+/// The set of code points for Python `str.isspace()` / regex `\s` (Unicode).
 pub fn is_py_space(c: char) -> bool {
     matches!(
         c,
@@ -30,35 +30,35 @@ pub fn is_py_space(c: char) -> bool {
     )
 }
 
-/// Python `str.strip()`。
+/// Python `str.strip()`.
 pub fn py_strip(s: &str) -> &str {
     s.trim_matches(is_py_space)
 }
 
-/// 去掉 `[\x00-\x1f\x7f]`。
+/// Strips `[\x00-\x1f\x7f]`.
 pub fn strip_ctrl(s: &str) -> String {
     s.chars()
         .filter(|c| !matches!(c, '\u{0}'..='\u{1f}' | '\u{7f}'))
         .collect()
 }
 
-/// 按码点取前 n 个字符（Python `s[:n]`）。
+/// Takes the first n characters by code point (Python `s[:n]`).
 pub fn truncate_chars(s: &str, n: usize) -> String {
     s.chars().take(n).collect()
 }
 
-/// 回显到错误信息里的用户输入：去控制字符、最多 80 个字符（server.py `short`）。
+/// User input echoed into error messages: control characters removed, at most 80 characters (server.py `short`).
 pub fn short(s: &str) -> String {
     truncate_chars(&strip_ctrl(s), 80)
 }
 
-/// 请求头的原始字节按 latin-1 解码（与 Python http.client 一致：每个字节一个码点）。
+/// Raw request-header bytes are decoded as latin-1 (same as Python http.client: one code point per byte).
 pub fn latin1(bytes: &[u8]) -> String {
     bytes.iter().map(|&b| b as char).collect()
 }
 
-/// Python `int(str)` 的常见子集：首尾空白、正负号、十进制 ASCII 数字、数字之间的单个下划线。
-/// 结果饱和在 ±10^30，调用方再夹取范围。
+/// A common subset of Python `int(str)`: leading/trailing whitespace, sign, decimal ASCII digits, a single underscore between digits.
+/// The result saturates at ±10^30; the caller clamps it to a range.
 pub fn py_int_str(s: &str) -> Option<i128> {
     let t = py_strip(s);
     let (neg, digits) = match t.strip_prefix('-') {
@@ -84,7 +84,7 @@ pub fn py_int_str(s: &str) -> Option<i128> {
     Some(if neg { -v } else { v })
 }
 
-/// 从 Host 头（或 URL 的 netloc）取主机名：去端口，IPv6 保留方括号内的内容，转小写，去掉末尾的点。
+/// Takes the host name from a Host header (or a URL's netloc): strips the port, keeps the content inside IPv6 brackets, lowercases, strips the trailing dot.
 pub fn host_name(value: Option<&str>) -> String {
     let h = py_strip(value.unwrap_or("")).to_lowercase();
     let name: &str = if h.starts_with('[') {
@@ -101,7 +101,7 @@ pub fn host_name(value: Option<&str>) -> String {
     name.trim_end_matches('.').to_string()
 }
 
-/// Origin 形如 `https://example.com:8443`；返回主机名。不是 http/https（`null`、`file://`）或含 userinfo 时返回 None。
+/// An Origin looks like `https://example.com:8443`; returns the host name. Returns None if it is not http/https (`null`, `file://`) or contains userinfo.
 pub fn origin_host(origin: Option<&str>) -> Option<String> {
     let o = py_strip(origin.unwrap_or(""));
     let low = o.to_lowercase();
@@ -119,7 +119,7 @@ pub fn origin_host(origin: Option<&str>) -> Option<String> {
     None
 }
 
-/// `XEXAM_ALLOWED_HOSTS` / `XEXAM_ALLOWED_ORIGINS`：逗号、空白、分号分隔；每项可带协议、端口、路径，统一成主机名。
+/// `XEXAM_ALLOWED_HOSTS` / `XEXAM_ALLOWED_ORIGINS`: separated by commas, whitespace or semicolons; each item may carry a scheme, port and path, and is normalized to a host name.
 pub fn parse_allowed_hosts(text: Option<&str>) -> HashSet<String> {
     let mut out = HashSet::new();
     for item in text
@@ -140,7 +140,7 @@ pub fn parse_allowed_hosts(text: Option<&str>) -> HashSet<String> {
     out
 }
 
-/// 清洗 `X-Filename`：百分号解码，取最后一段，去控制字符，最长 120 个字符，空则 `未命名.xlsx`。
+/// Sanitizes `X-Filename`: percent-decodes, takes the last segment, strips control characters, at most 120 characters; if empty, uses the default name `未命名.xlsx`.
 pub fn clean_filename(raw: Option<&str>) -> String {
     let decoded = percent_decode_str(raw.unwrap_or(""))
         .decode_utf8_lossy()
@@ -157,7 +157,7 @@ pub fn clean_filename(raw: Option<&str>) -> String {
 
 const B64URL: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-/// base64url，无填充（RFC 4648 第 5 节）。
+/// base64url, unpadded (RFC 4648 section 5).
 pub fn base64url_nopad(data: &[u8]) -> String {
     let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
     for chunk in data.chunks(3) {
@@ -166,7 +166,7 @@ pub fn base64url_nopad(data: &[u8]) -> String {
         let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
         let n = (b0 << 16) | (b1 << 8) | b2;
         let idx = [(n >> 18) & 63, (n >> 12) & 63, (n >> 6) & 63, n & 63];
-        let take = chunk.len() + 1; // 1 字节 -> 2 个字符，2 字节 -> 3 个，3 字节 -> 4 个
+        let take = chunk.len() + 1; // 1 byte -> 2 characters, 2 bytes -> 3, 3 bytes -> 4
         for &i in idx.iter().take(take) {
             out.push(B64URL.get(i as usize).copied().unwrap_or(b'A') as char);
         }
@@ -174,17 +174,17 @@ pub fn base64url_nopad(data: &[u8]) -> String {
     out
 }
 
-/// 16 字节 CSPRNG → base64url（无填充，22 个字符）。
+/// 16 bytes of CSPRNG → base64url (unpadded, 22 characters).
 pub fn new_token() -> String {
     let mut buf = [0u8; 16];
     if getrandom::fill(&mut buf).is_err() {
-        // 系统随机源不可用时绝不退回可预测的令牌。
+        // Never fall back to a predictable token when the system randomness source is unavailable.
         panic!("operating system random source is unavailable");
     }
     base64url_nopad(&buf)
 }
 
-/// 常量时间比较（长度不同时提前返回，与 Python `compare_digest` 一致）。
+/// Constant-time comparison (returns early when the lengths differ, same as Python `compare_digest`).
 pub fn token_eq(a: &str, b: &str) -> bool {
     let (a, b) = (a.as_bytes(), b.as_bytes());
     if a.len() != b.len() {

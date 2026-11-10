@@ -1,5 +1,5 @@
-//! `Engine`：API 层看到的「解析器 + 数据库」。生产环境用 `RealEngine`（直接调用 `parser::` 与 `Store`），
-//! 测试里换成假实现，所以 API 层不依赖它们是否已经写完。
+//! `Engine`: the "parser + database" as seen by the API layer. Production uses `RealEngine` (calls `parser::` and `Store` directly),
+//! tests swap in a fake implementation, so the API layer does not depend on whether those are finished.
 use crate::database::Store;
 use crate::error::{DbError, ImportError};
 use crate::models::{Attempt, ImportRecord, ParsedSheet, ParsedWorkbook, Question};
@@ -8,9 +8,9 @@ use serde_json::Value;
 use std::sync::Arc;
 
 pub trait Engine: Send + Sync + 'static {
-    /// 对应旧版 `check_xlsx(data)` + `parse_workbook(data)`。
+    /// Corresponds to the old `check_xlsx(data)` + `parse_workbook(data)`.
     fn check_and_parse(&self, data: &[u8]) -> Result<ParsedWorkbook, ImportError>;
-    /// 同上，但解析器看到 `deadline` 就自己停下。默认实现不理会截止时间（测试用的假引擎），真实引擎会覆盖。
+    /// Same as above, but the parser stops on its own when it sees `deadline`. The default implementation ignores the deadline (the fake engine used in tests); the real engine overrides it.
     fn check_and_parse_until(
         &self,
         data: &[u8],
@@ -34,7 +34,7 @@ pub trait Engine: Send + Sync + 'static {
     fn reset_progress(&self) -> Result<Value, DbError>;
 }
 
-/// 生产实现：只是转发。
+/// Production implementation: just forwards.
 pub struct RealEngine {
     pub store: Arc<Store>,
 }

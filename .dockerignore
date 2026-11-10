@@ -1,4 +1,4 @@
-# 不要把这些带进镜像构建的上下文：个人数据、构建产物、版本库、文档
+# Keep these out of the image build context: personal data, build artifacts, the repository, docs
 **/data
 **/progress.json
 **/*.xlsx

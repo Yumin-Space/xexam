@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
-"""旧 progress.json 的迁移：文档里写的流程（先启动一次建好数据目录 → 再把 progress.json 放进去 → 重启）必须真的有效，
-并且只迁一次、不覆盖已有的学习记录。只用合成数据，全程在临时目录里。
+"""Migration of the old progress.json: the flow described in the docs (start once to create the data directory → drop progress.json in → restart) must really work,
+migrate only once, and never overwrite existing progress records. Uses synthetic data only, entirely inside a temp directory.
 
-用法: python -I tests/integration/migrate_check.py <Rust 后端可执行文件>
-步骤：
-  A. 全新数据目录启动一次（建出 xexam.db），此时没有 progress.json。学习记录是空的。
-  B. 停掉后端，放进一个合成的 progress.json，重启 → 学习记录里有了迁移来的内容（评审发现的缺陷：以前这一步什么也不做）。
-  C. 再重启一次 → 不会重复迁移（成绩历史条数不变）。
-  D. 在数据库里已经有学习记录的目录里放 progress.json → 不覆盖。
-  E. 格式不对的 progress.json → 程序照样启动，日志里写明原因和 migrate-progress 的提示；修好后重启即可迁移。
+usage: python -I tests/integration/migrate_check.py <Rust backend executable>
+Steps:
+  A. Start once with a fresh data directory (creates xexam.db); there is no progress.json yet. The progress records are empty.
+  B. Stop the backend, drop in a synthetic progress.json, restart → the progress records now contain the migrated data (a defect found in review: this step used to do nothing).
+  C. Restart once more → no repeated migration (the number of score-history entries is unchanged).
+  D. Put a progress.json into a directory whose database already has progress records → it is not overwritten.
+  E. A malformed progress.json → the app still starts, and the log states the reason plus the migrate-progress hint; after fixing the file, a restart migrates it.
 """
 import json
 import os
@@ -47,7 +47,7 @@ SAMPLE = {
 
 
 def run_once(data, log_name, seconds_up=1.0):
-    """启动后端，等它起来，读 /api/progress，再停掉。返回 (progress, 日志文本)。"""
+    """Start the backend, wait until it is up, read /api/progress, then stop it. Returns (progress, log text)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('XEXAM_')}
     env.update(XEXAM_DATA=data, XEXAM_HOST='127.0.0.1', XEXAM_PORT=str(PORT), XEXAM_VERSION='0.3')
     logp = os.path.join(data, '..', log_name)
@@ -80,28 +80,28 @@ try:
     d = os.path.join(root, 'a')
     os.makedirs(d)
     prog, _ = run_once(d, 'a1.log')
-    ok(prog is not None and prog['history'] == [] and prog['questions'] == {}, 'A. 全新目录启动：学习记录是空的')
-    ok(os.path.exists(os.path.join(d, 'xexam.db')), 'A. 已经建出 xexam.db')
+    ok(prog is not None and prog['history'] == [] and prog['questions'] == {}, 'A. start with a fresh directory: the progress records are empty')
+    ok(os.path.exists(os.path.join(d, 'xexam.db')), 'A. xexam.db has been created')
 
     # B
     with open(os.path.join(d, 'progress.json'), 'w', encoding='utf-8') as f:
         json.dump(SAMPLE, f, ensure_ascii=False)
     prog, log = run_once(d, 'a2.log')
-    ok(prog is not None and len(prog['history']) == 1 and QID in prog['questions'], 'B. 数据库已存在、之后才放进 progress.json，重启后被迁移（1 场成绩、1 道题的统计）')
-    ok('已把旧的学习记录迁移进数据库' in log, 'B. 日志里写了「已把旧的学习记录迁移进数据库」')
+    ok(prog is not None and len(prog['history']) == 1 and QID in prog['questions'], 'B. the database already existed and progress.json was dropped in afterwards; after a restart it is migrated (1 score entry, stats for 1 question)')
+    ok('Migrated the old study records into the database' in log, 'B. the log reports that the old progress records were migrated into the database')
 
     # C
     prog, log = run_once(d, 'a3.log')
-    ok(prog is not None and len(prog['history']) == 1, 'C. 再重启一次：不会重复迁移（仍是 1 场成绩）')
-    ok('已把旧的学习记录迁移进数据库' not in log and '没有迁移' not in log, 'C. 日志里没有多余的迁移提示')
+    ok(prog is not None and len(prog['history']) == 1, 'C. restart once more: no repeated migration (still 1 score entry)')
+    ok('Migrated the old study records into the database' not in log and 'Did not migrate' not in log, 'C. the log has no extra migration messages')
 
-    # D：库里已经有学习记录（上面迁移来的），换一份不同的 progress.json —— 不覆盖
+    # D: the database already has progress records (migrated above); swap in a different progress.json — not overwritten
     other = dict(SAMPLE, history=[dict(SAMPLE['history'][0], percent=99)] * 2)
     shutil.copy(os.path.join(d, 'xexam.db'), os.path.join(root, 'keep.db'))
     with open(os.path.join(d, 'progress.json'), 'w', encoding='utf-8') as f:
         json.dump(other, f, ensure_ascii=False)
     prog, _ = run_once(d, 'a4.log')
-    ok(prog is not None and len(prog['history']) == 1 and prog['history'][0]['percent'] == 33, 'D. 已经迁移过的库：不被新的 progress.json 覆盖')
+    ok(prog is not None and len(prog['history']) == 1 and prog['history'][0]['percent'] == 33, 'D. a database that was already migrated: not overwritten by the new progress.json')
 
     # E
     e = os.path.join(root, 'e')
@@ -110,14 +110,14 @@ try:
     with open(os.path.join(e, 'progress.json'), 'w', encoding='utf-8') as f:
         f.write('{ this is not json')
     prog, log = run_once(e, 'e2.log')
-    ok(prog is not None and prog['history'] == [], 'E. 格式不对的 progress.json：程序照样启动，学习记录仍为空')
-    ok('migrate-progress' in log, 'E. 日志里提示了 xexam-backend migrate-progress')
+    ok(prog is not None and prog['history'] == [], 'E. malformed progress.json: the app still starts and the progress records stay empty')
+    ok('migrate-progress' in log, 'E. the log hints at xexam-backend migrate-progress')
     with open(os.path.join(e, 'progress.json'), 'w', encoding='utf-8') as f:
         json.dump(SAMPLE, f, ensure_ascii=False)
     prog, _ = run_once(e, 'e3.log')
-    ok(prog is not None and len(prog['history']) == 1, 'E. 修好 progress.json 后重启即可迁移')
+    ok(prog is not None and len(prog['history']) == 1, 'E. after fixing progress.json, a restart migrates it')
 finally:
     shutil.rmtree(root, ignore_errors=True)
 
 print('\n'.join(results))
-print('\n全部 %d 项通过' % len(results))
+print('\nAll %d checks passed' % len(results))

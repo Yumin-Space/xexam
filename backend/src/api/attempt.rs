@@ -1,5 +1,5 @@
-//! `/api/attempt` 的请求清洗（server.py `clean_attempt`，v0.2 形态）。
-//! 与旧版不同之处（旧版会断连的输入，现在是确定的结果）：`seconds` 为 Infinity/NaN/垃圾 -> 0；`results` 不是列表 -> 400。
+//! Request sanitization for `/api/attempt` (server.py `clean_attempt`, v0.2 form).
+//! Differences from the legacy version (inputs that used to drop the connection now give a deterministic result): `seconds` of Infinity/NaN/garbage -> 0; `results` not a list -> 400.
 use super::json::PyVal;
 use crate::models::{Attempt, AttemptResult};
 use crate::security::{py_int_str, truncate_chars};
@@ -10,7 +10,7 @@ const MAX_RESULTS: usize = 2000;
 const MAX_SHEETS: usize = 50;
 const MAX_SECONDS: i128 = 7 * 86400;
 
-/// Python `max(0, min(int(x or 0), 7*86400))`，`int()` 抛 TypeError/ValueError/OverflowError 时为 0。
+/// Python `max(0, min(int(x or 0), 7*86400))`; 0 when `int()` raises TypeError/ValueError/OverflowError.
 fn clean_seconds(v: Option<&PyVal>) -> i64 {
     let n: Option<i128> = match v {
         None => Some(0),
@@ -103,7 +103,7 @@ mod tests {
                 "{bad}"
             );
         }
-        // correct 必须是真 bool；id 必须是 str
+        // correct must be a real bool; id must be a str
         assert_eq!(clean(r#"{"results":[{"id":"x","correct":1},"x",{"id":5,"correct":true},{"correct":true},null]}"#).unwrap_err(), MSG_NO_RESULTS);
         let a = clean(r#"{"results":[{"id":"x","correct":1},{"id":"ok","correct":true,"zzz":1}]}"#)
             .unwrap();
@@ -121,7 +121,7 @@ mod tests {
         let many = vec![r#"{"id":"a","correct":true}"#; 2500].join(",");
         let a = clean(&format!(r#"{{"results":[{many}]}}"#)).unwrap();
         assert_eq!(a.results.len(), 2000);
-        // 只取前 2000 条：之后的有效项不会补位
+        // Only the first 2000 are taken: valid items after that do not fill in
         let mut parts = vec!["1"; 2000];
         parts.push(r#"{"id":"late","correct":true}"#);
         assert_eq!(

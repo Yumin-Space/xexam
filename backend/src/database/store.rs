@@ -1,9 +1,9 @@
-//! `Store`：与 `app/db.py` 的 `Store` 语义一致。
+//! `Store`: same semantics as `Store` in `app/db.py`.
 //!
-//! - 一个连接放在 `std::sync::Mutex` 里（对应旧版的 `RLock`）；锁中毒时用 `into_inner` 恢复，
-//!   并且在取锁时顺手把"上一个调用 panic 后遗留的未提交事务"回滚掉。
-//! - 写操作一律 `BEGIN IMMEDIATE … COMMIT`，任何失败（包括 COMMIT 失败）都 `ROLLBACK`。
-//! - `apply_import` 的预览计划在**同一个写事务内**重新计算（修复旧版的 T4：计划与实际写入之间可被插队）。
+//! - One connection lives inside a `std::sync::Mutex` (the old `RLock`); a poisoned lock is recovered with `into_inner`,
+//!   and acquiring the lock also rolls back "the uncommitted transaction left behind after the previous call panicked".
+//! - Every write is `BEGIN IMMEDIATE … COMMIT`; any failure (including a COMMIT failure) triggers `ROLLBACK`.
+//! - The preview plan of `apply_import` is recomputed **inside the same write transaction** (fixes T4 of the old version: another write could slip in between the plan and the actual write).
 use super::legacy_progress::{self, AttemptRow, StatRow};
 use super::pyjson;
 use super::schema::{SCHEMA, SCHEMA_VERSION};
@@ -19,7 +19,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-/// `IN (?,…)` 一次最多放多少个占位符（SQLite 的默认上限是 32766，留足余量）。
+/// Maximum number of placeholders in one `IN (?,…)` (SQLite's default limit is 32766; this leaves plenty of headroom).
 const IN_CHUNK: usize = 500;
 
 pub struct Store {
@@ -37,8 +37,8 @@ fn invalid_input(msg: &str) -> DbError {
     ))
 }
 
-/// `round(100 * good / total)`，Python 的"银行家舍入"（四舍六入五成双），全程整数运算。
-/// `total <= 0` 或 `good < 0` 时返回 0（旧版在 `total == 0` 时是 ZeroDivisionError，API 层先拦掉了）。
+/// `round(100 * good / total)` with Python's "banker's rounding" (round half to even), using integer arithmetic only.
+/// Returns 0 when `total <= 0` or `good < 0` (the old version raised ZeroDivisionError when `total == 0`; the API layer rejected that case first).
 pub fn percent_round_half_even(good: i64, total: i64) -> i64 {
     if total <= 0 || good < 0 {
         return 0;
@@ -52,7 +52,7 @@ pub fn percent_round_half_even(good: i64, total: i64) -> i64 {
     i64::try_from(if up { q + 1 } else { q }).unwrap_or(i64::MAX)
 }
 
-/// 失败要回滚的事务。`conn` 的锁由调用者持有。
+/// A transaction that is rolled back on failure. The caller holds the lock on `conn`.
 fn run_tx<T>(
     conn: &Connection,
     f: impl FnOnce(&Connection) -> Result<T, DbError>,
@@ -128,7 +128,7 @@ fn drop_key(v: Value, key: &str) -> Value {
     }
 }
 
-/// 旧版 `_q_hash`：去掉 `row`，键排序，`ensure_ascii=False` 的 JSON 文本。
+/// The old `_q_hash`: JSON text with `row` removed, keys sorted, and `ensure_ascii=False`.
 fn question_hash(q: &Question) -> Result<String, DbError> {
     let v = serde_json::to_value(q)?;
     Ok(pyjson::canonical(&drop_key(v, "row"))?)
@@ -142,7 +142,7 @@ fn stored_hash(r: &StoredQuestion) -> Result<String, DbError> {
     Ok(pyjson::canonical(&drop_key(Value::Object(obj), "row"))?)
 }
 
-/// 存进 `questions.data` 的 JSON：除 id / sheet / row 之外的全部字段，保持 `Question` 的声明顺序。
+/// The JSON stored in `questions.data`: all fields except id / sheet / row, in the declaration order of `Question`.
 fn question_data_json(q: &Question) -> Result<String, DbError> {
     let Value::Object(m) = serde_json::to_value(q)? else {
         return Err(json_err("question did not serialise to an object"));
@@ -219,7 +219,7 @@ impl Aggregator {
         }
         a
     }
-    /// 取（必要时新建）某个工作表的统计，旧版对"只有下架题的工作表"用 `setdefault` 新建。
+    /// Gets (creating it if needed) the stats of a sheet; for "a sheet that has only retired questions" the old version created one with `setdefault`.
     fn entry(&mut self, name: &str) -> Option<&mut SheetAgg> {
         let i = match self.pos.get(name).copied() {
             Some(i) => i,
@@ -259,7 +259,7 @@ fn count_stats_for(conn: &Connection, ids: &[&str]) -> Result<i64, DbError> {
     Ok(total)
 }
 
-/// 旧版 `plan_import`：只读。
+/// The old `plan_import`: read-only.
 fn compute_plan(
     conn: &Connection,
     sheets: &[ParsedSheet],
@@ -435,12 +435,12 @@ fn progress_from(conn: &Connection) -> Result<Value, DbError> {
 }
 
 impl Store {
-    /// 打开（必要时创建）数据库并建表。对已有数据库**不改动内容**。时间用系统本地时间（尊重 `TZ`）。
+    /// Opens (creating it if needed) the database and creates the tables. **Does not modify the contents** of an existing database. Timestamps use the system local time (honoring `TZ`).
     pub fn open(path: &Path) -> Result<Store, DbError> {
         Self::open_with_clock(path, Arc::new(SystemClock))
     }
 
-    /// 同 [`Store::open`]，但时间由调用者提供（测试用）。
+    /// Same as [`Store::open`], but the time is supplied by the caller (for tests).
     pub fn open_with_clock(path: &Path, clock: Arc<dyn Clock>) -> Result<Store, DbError> {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| {
@@ -450,18 +450,18 @@ impl Store {
                 )
             })?;
         }
-        // 不用 URI 解析，路径按字面量处理
+        // Do not parse the path as a URI; treat it literally
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(path, flags)?;
         conn.busy_timeout(Duration::from_millis(5000))?;
-        // 不用 WAL（Docker Desktop 挂载 Windows 目录时共享内存不可靠）；单人使用，数据安全优先
+        // No WAL (shared memory is unreliable when Docker Desktop mounts a Windows directory); single-user, so data safety comes first
         conn.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get::<_, String>(0))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         conn.execute_batch(SCHEMA)?;
-        // 只在缺失时写入；先查再写，已有数据库的文件内容保持不变
+        // Write only when missing; check first, then write, so the file content of an existing database stays unchanged
         if get_meta(&conn, "schema")?.is_none() {
             conn.execute(
                 "INSERT OR IGNORE INTO meta(key,value) VALUES(?1,?2)",
@@ -477,7 +477,7 @@ impl Store {
     fn lock(&self) -> MutexGuard<'_, Connection> {
         let g = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         if !g.is_autocommit() {
-            // 上一个持锁者 panic 了，留下一个没结束的事务
+            // The previous lock holder panicked and left an unfinished transaction
             let _ = g.execute_batch("ROLLBACK");
         }
         g
@@ -497,7 +497,7 @@ impl Store {
         )
     }
 
-    /// `/api/bank`：键顺序 file, mtime, error, questions, sheets（见 123_after_import_bank.json）
+    /// `/api/bank`: key order file, mtime, error, questions, sheets (see 123_after_import_bank.json)
     pub fn bank(&self) -> Result<Value, DbError> {
         let (rows, last) = {
             let g = self.lock();
@@ -550,7 +550,7 @@ impl Store {
         }))
     }
 
-    /// 预览：只读，不写库。
+    /// Preview: read-only, does not write to the database.
     pub fn plan_import(
         &self,
         sheets: &[ParsedSheet],
@@ -560,7 +560,7 @@ impl Store {
         Ok(compute_plan(&g, sheets, questions)?.json)
     }
 
-    /// 真正写入：一个事务（BEGIN IMMEDIATE … COMMIT，失败 ROLLBACK）。计划在事务里重新计算，返回值与 `plan_import` 同形。
+    /// The real write: one transaction (BEGIN IMMEDIATE … COMMIT, ROLLBACK on failure). The plan is recomputed inside the transaction; the return value has the same shape as `plan_import`.
     pub fn apply_import(
         &self,
         filename: &str,
@@ -583,7 +583,7 @@ impl Store {
                     up.execute(params![q.id, q.sheet, q.row, len_i64(seq), data, t, t])?;
                 }
             }
-            // 上传的文件里没有的题 -> 下架（学习记录保留）
+            // Questions missing from the uploaded file -> retired (study records are kept)
             let base = questions.len();
             let active_ids: Vec<String> = {
                 let mut st = c.prepare("SELECT id FROM questions WHERE active=1")?;
@@ -610,7 +610,7 @@ impl Store {
         import_rows(&g, limit)
     }
 
-    /// `/api/progress`：`{"version":1,"questions":{…},"history":[…],"masterStreak":2}`
+    /// `/api/progress`: `{"version":1,"questions":{…},"history":[…],"masterStreak":2}`
     pub fn progress(&self) -> Result<Value, DbError> {
         let g = self.lock();
         progress_from(&g)
@@ -647,7 +647,7 @@ impl Store {
                 "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds) VALUES(?1,?2,?3,?4,?5,?6,?7)",
                 params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds],
             )?;
-            // 只保留最近的 HISTORY_LIMIT 场
+            // Keep only the most recent HISTORY_LIMIT sessions
             c.execute(
                 "DELETE FROM attempts WHERE id NOT IN (SELECT id FROM attempts ORDER BY id DESC LIMIT ?1)",
                 params![HISTORY_LIMIT],
@@ -667,7 +667,7 @@ impl Store {
         progress_from(&g)
     }
 
-    /// 旧版 progress.json 迁移。返回 (是否迁移了, 说明)。格式不对时返回 (false, 说明)，不崩溃。
+    /// Migration of the old progress.json. Returns (whether anything was migrated, message). On a malformed file returns (false, message) without crashing.
     pub fn migrate_legacy_progress(&self, path: &Path) -> Result<(bool, String), DbError> {
         let g = self.lock();
         if get_meta(&g, "legacy_migrated")?.is_some_and(|v| !v.is_empty()) {
@@ -767,6 +767,8 @@ mod tests {
             answer: Answer::Letters(vec!["A".to_string()]),
             translation: String::new(),
             zh: None,
+            english: String::new(),
+            en: None,
             explanation: String::new(),
             mnemonic: String::new(),
             note: String::new(),
@@ -844,7 +846,7 @@ mod tests {
         assert_eq!(r, plan);
         assert_eq!(s.count_active().expect("count"), 3);
 
-        // b 改题干、c 消失、d 新增
+        // b changes its stem, c disappears, d is added
         let qs2 = vec![
             question("S", "a", "A?", 5),
             question("S", "b", "B2?", 2),
@@ -869,7 +871,7 @@ mod tests {
         assert_eq!(bank["sheets"][0]["inactive"], 1);
         assert_eq!(bank["questions"].as_array().map(Vec::len), Some(3));
 
-        // 回到第一版：c 恢复
+        // Back to the first version: c is restored
         let r3 = s.apply_import("three.xlsx", &sh, &qs).expect("apply3");
         assert_eq!(r3["restored"], 1);
         assert_eq!(s.import_history(10).expect("hist").len(), 3);
@@ -948,7 +950,7 @@ mod tests {
             g.execute("INSERT INTO meta(key,value) VALUES('zzz','1')", [])
                 .expect("insert");
         }
-        // 模拟前一个调用在事务中途 panic：下一次取锁必须能恢复
+        // Simulate a previous call panicking mid-transaction: the next lock acquisition must recover
         assert_eq!(get_meta(&s.lock(), "zzz").expect("meta"), None);
         s.reset_progress().expect("reset after recovery");
     }

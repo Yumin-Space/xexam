@@ -1,7 +1,7 @@
-//! 二进制入口：解析参数，启动服务；`healthcheck` 子命令给容器自检用。
+//! Binary entry point: parses arguments and starts the server; the `healthcheck` subcommand is the container self-check.
 //!
-//! 子命令：`serve`（默认）| `healthcheck` | `import <xlsx>` | `migrate-progress [progress.json]`。
-//! 也接受旧版的写法 `--import <xlsx>`。
+//! Subcommands: `serve` (default) | `healthcheck` | `import <xlsx>` | `migrate-progress [progress.json]`.
+//! The legacy form `--import <xlsx>` is also accepted.
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
@@ -30,12 +30,12 @@ struct Args {
     allow_shutdown: bool,
 }
 
-const USAGE: &str = "用法：
+const USAGE: &str = "Usage:
   xexam-backend [serve] [--data DIR] [--host ADDR] [--port N] [--allow-shutdown] [--no-browser]
   xexam-backend healthcheck [--port N]
-  xexam-backend import <题库.xlsx> [--data DIR]       （也接受 --import <题库.xlsx>）
+  xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
-环境变量：XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG";
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG";
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
@@ -48,7 +48,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut positional: Vec<String> = Vec::new();
     let mut import_flag: Option<PathBuf> = None;
     let mut it = argv.iter().peekable();
-    // 第一个不带 `-` 的词是子命令
+    // The first word that does not start with `-` is the subcommand
     let mut sub: Option<String> = None;
     if let Some(first) = it.peek() {
         if !first.starts_with('-') {
@@ -66,7 +66,7 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                 None => it
                     .next()
                     .cloned()
-                    .ok_or_else(|| format!("{what} 需要一个值")),
+                    .ok_or_else(|| format!("{what} requires a value")),
             }
         };
         match name.as_str() {
@@ -77,14 +77,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
                     value("--port")?
                         .trim()
                         .parse()
-                        .map_err(|_| "--port 必须是 0-65535 的整数".to_string())?,
+                        .map_err(|_| "--port must be an integer from 0 to 65535".to_string())?,
                 )
             }
             "--import" => import_flag = Some(PathBuf::from(value("--import")?)),
             "--allow-shutdown" => a.allow_shutdown = true,
             "--no-browser" => {}
             "-h" | "--help" => a.cmd = Cmd::Help,
-            s if s.starts_with('-') => return Err(format!("不认识的参数：{s}")),
+            s if s.starts_with('-') => return Err(format!("unknown option: {s}")),
             _ => positional.push(arg.clone()),
         }
     }
@@ -98,14 +98,14 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         (Some("import"), None) => {
             let p = positional
                 .first()
-                .ok_or_else(|| "import 需要一个 .xlsx 文件路径".to_string())?;
+                .ok_or_else(|| "import requires the path of an .xlsx file".to_string())?;
             a.cmd = Cmd::Import(PathBuf::from(p));
         }
         (Some("migrate-progress"), None) => {
             a.cmd = Cmd::MigrateProgress(positional.first().map(PathBuf::from))
         }
         (Some("help"), None) => a.cmd = Cmd::Help,
-        (Some(other), None) => return Err(format!("不认识的子命令：{other}")),
+        (Some(other), None) => return Err(format!("unknown subcommand: {other}")),
     }
     Ok(a)
 }
@@ -119,7 +119,7 @@ fn say(msg: &str) {
 fn init_tracing() {
     let filter = tracing_subscriber::EnvFilter::try_from_env("XEXAM_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
-    // 不带 ANSI 转义：用户可控的字符串进日志时不能注入终端控制序列
+    // No ANSI escapes: user-controlled strings written to the log must not inject terminal control sequences
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_ansi(false)
@@ -127,7 +127,7 @@ fn init_tracing() {
         .try_init();
 }
 
-/// 容器自检：`GET http://127.0.0.1:<port>/api/info`，Host 为 127.0.0.1（在默认白名单里）；200 才算健康。
+/// Container self-check: `GET http://127.0.0.1:<port>/api/info` with Host 127.0.0.1 (on the default allowlist); only a 200 counts as healthy.
 fn healthcheck(port: u16) -> bool {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(mut s) = TcpStream::connect_timeout(&addr, Duration::from_secs(5)) else {
@@ -159,12 +159,12 @@ fn healthcheck(port: u16) -> bool {
     matches!((parts.next(), parts.next()), (Some(v), Some("200")) if v.starts_with("HTTP/1."))
 }
 
-/// 打开数据库。旧版 `progress.json` 的迁移与 Python 版一致：每次启动都看一眼，由数据库里的 `legacy_migrated` 标记
-/// 和「已经有学习记录就不覆盖」两道保护保证只迁一次、不覆盖（见 `Store::migrate_legacy_progress`）。
-/// 这样「先启动一次建好卷 → 把 progress.json 放进卷 → 重启」的文档流程才真的有效。
+/// Opens the database. Migration of the legacy `progress.json` matches the Python version: it is checked on every start, and the `legacy_migrated` flag in the database
+/// plus the "never overwrite when study records already exist" guard make sure it migrates only once and never overwrites (see `Store::migrate_legacy_progress`).
+/// This is what makes the documented flow actually work: start once to create the volume -> put progress.json into the volume -> restart.
 fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
     std::fs::create_dir_all(data_dir)
-        .map_err(|e| format!("无法创建数据目录 {}：{e}", data_dir.display()))?;
+        .map_err(|e| format!("cannot create data directory {}: {e}", data_dir.display()))?;
     let db_path = data_dir.join("xexam.db");
     let mut others: Vec<String> = std::fs::read_dir(data_dir)
         .map(|rd| {
@@ -177,25 +177,25 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
     others.sort();
     if !db_path.exists() && !others.is_empty() {
         say(&format!(
-            "注意：数据目录里没有 xexam.db，但有别的数据库文件：{}。如果那是以前版本的题库，请先停止程序，把它改名为 xexam.db 再启动；现在会新建一个空的 xexam.db。",
-            others.join("、")
+            "Note: there is no xexam.db in the data directory, but there are other database files: {}. If that is a question bank from an earlier version, stop the program, rename it to xexam.db and start again; a new empty xexam.db will be created now.",
+            others.join(", ")
         ));
     }
-    let store = Arc::new(Store::open(&db_path).map_err(|e| format!("无法打开数据库：{e}"))?);
+    let store = Arc::new(Store::open(&db_path).map_err(|e| format!("cannot open database: {e}"))?);
     let legacy = data_dir.join("progress.json");
     if legacy.is_file() {
         match store.migrate_legacy_progress(&legacy) {
             Ok((true, msg)) => say(&format!(
-                "已把旧的学习记录迁移进数据库：{msg}（来自 {}）",
+                "Migrated the old study records into the database: {msg} (from {})",
                 legacy.display()
             )),
-            // 「之前已经迁移过」是正常情况，不必每次启动都提示
+            // "Already migrated earlier" (the literal Chinese message 「之前已经迁移过」) is the normal case; no need to report it on every start
             Ok((false, msg)) if msg.contains("之前已经迁移过") => {}
             Ok((false, msg)) => say(&format!(
-                "没有迁移旧的学习记录：{msg}。修好 progress.json 后重启即可再试，也可以手动运行 xexam-backend migrate-progress"
+                "Did not migrate the old study records: {msg}. Fix progress.json and restart to try again, or run xexam-backend migrate-progress manually"
             )),
             Err(e) => say(&format!(
-                "迁移旧的学习记录失败（数据库没有改动）：{e}。可以稍后重启再试，或手动运行 xexam-backend migrate-progress"
+                "Failed to migrate the old study records (the database was not changed): {e}. Restart later to try again, or run xexam-backend migrate-progress manually"
             )),
         }
     }
@@ -214,19 +214,22 @@ fn run_import(path: &Path, data_dir: &Path) -> i32 {
     let data = match std::fs::read(path) {
         Ok(d) => d,
         Err(e) => {
-            say(&format!("导入失败：读不了 {}：{e}", path.display()));
+            say(&format!(
+                "Import failed: cannot read {}: {e}",
+                path.display()
+            ));
             return 1;
         }
     };
     let wb = match engine.check_and_parse(&data) {
         Ok(w) => w,
         Err(e) => {
-            say(&format!("导入失败：{e}"));
+            say(&format!("Import failed: {e}"));
             return 1;
         }
     };
     if wb.questions.is_empty() {
-        say("这份文件里没有读到任何可用的题，没有导入。");
+        say("No usable questions were found in this file; nothing was imported.");
         return 1;
     }
     let name = path
@@ -237,14 +240,14 @@ fn run_import(path: &Path, data_dir: &Path) -> i32 {
         Ok(p) => p,
         Err(e) => {
             tracing::error!("apply_import failed: {e}");
-            say("写入数据库失败，题库没有任何改动。");
+            say("Failed to write to the database; the question bank was not changed.");
             return 1;
         }
     };
     let n = |k: &str| plan.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
     let count = store.count_active().unwrap_or(0);
     say(&format!(
-        "已导入 {name}：新增 {}，更新 {}，恢复 {}，下架 {}，读不出来 {}；现在共 {count} 题。",
+        "Imported {name}: {} added, {} updated, {} restored, {} deactivated, {} unreadable; {count} questions in total now.",
         n("added"),
         n("updated"),
         n("restored"),
@@ -266,7 +269,7 @@ fn run_import(path: &Path, data_dir: &Path) -> i32 {
         {
             let row = k.get("row").and_then(|v| v.as_i64()).unwrap_or(0);
             let reason = k.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-            say(&format!("  没读入：{sheet} 第 {row} 行：{reason}"));
+            say(&format!("  Not imported: {sheet} row {row}: {reason}"));
         }
     }
     0
@@ -284,24 +287,24 @@ fn run_migrate(path: Option<PathBuf>, data_dir: &Path) -> i32 {
     match store.migrate_legacy_progress(&path) {
         Ok((true, msg)) => {
             say(&format!(
-                "已把旧的学习记录迁移进数据库：{msg}（来自 {}）",
+                "Migrated the old study records into the database: {msg} (from {})",
                 path.display()
             ));
             0
         }
         Ok((false, msg)) => {
-            say(&format!("没有迁移：{msg}"));
+            say(&format!("Not migrated: {msg}"));
             0
         }
         Err(e) => {
             tracing::error!("migrate_legacy_progress failed: {e}");
-            say("迁移失败，数据库没有改动。");
+            say("Migration failed; the database was not changed.");
             1
         }
     }
 }
 
-/// 等 SIGTERM / SIGINT（unix），其它平台只有 Ctrl-C。
+/// Waits for SIGTERM / SIGINT (unix); on other platforms only Ctrl-C.
 async fn os_signal() {
     #[cfg(unix)]
     {
@@ -336,7 +339,7 @@ async fn serve(cfg: Config) -> i32 {
         Ok(l) => l,
         Err(e) => {
             say(&format!(
-                "无法监听 {}:{}：{e}。请关掉占用这个端口的程序，或用 --port 换一个端口。",
+                "cannot listen on {}:{}: {e}. Close the program using this port, or pick another port with --port.",
                 cfg.host, cfg.port
             ));
             return 1;
@@ -361,26 +364,29 @@ async fn serve(cfg: Config) -> i32 {
         .collect();
     origins.sort();
     say(&format!(
-        "Xexam v{} 已启动：http://localhost:{}/",
+        "Xexam v{} started: http://localhost:{}/",
         cfg.version, cfg.port
     ));
     say(&format!(
-        "数据目录：{}",
+        "Data directory: {}",
         std::path::absolute(&cfg.data_dir)
             .unwrap_or_else(|_| cfg.data_dir.clone())
             .display()
     ));
     if any_host {
-        say("注意：XEXAM_ALLOW_ANY_HOST 已打开，不再检查 Host。这个程序自己没有登录，请确保前面有身份验证（例如 Cloudflare Access）。");
+        say("Note: XEXAM_ALLOW_ANY_HOST is on, so the Host header is no longer checked. This program has no login of its own; make sure authentication (for example Cloudflare Access) sits in front of it.");
         tracing::warn!("XEXAM_ALLOW_ANY_HOST is on: the Host header is not checked");
     } else if !extra.is_empty() {
-        say(&format!("允许的域名/地址：{}", extra.join("、")));
+        say(&format!("Allowed hosts/addresses: {}", extra.join(", ")));
     }
     if !origins.is_empty() {
-        say(&format!("额外允许的 Origin：{}", origins.join("、")));
+        say(&format!(
+            "Additional allowed Origins: {}",
+            origins.join(", ")
+        ));
     }
     if store.count_active().unwrap_or(0) == 0 {
-        say("题库还是空的：打开页面后在「题库管理」里上传 Excel。");
+        say("The question bank is still empty: open the page and upload an Excel file under '题库管理' (Question bank management).");
     }
     let state = AppState::new(cfg, store.clone(), engine, shutdown_tx);
     let app = build_router(state.clone());
@@ -394,8 +400,8 @@ async fn serve(cfg: Config) -> i32 {
     });
     let mut code = 0;
     tokio::select! {
-        _ = os_signal() => say("收到停止信号，正在退出……"),
-        _ = rx.recv() => say("收到页面上的关闭请求，正在退出……"),
+        _ = os_signal() => say("Received a stop signal, exiting..."),
+        _ = rx.recv() => say("Received a shutdown request from the page, exiting..."),
         r = &mut server => {
             tracing::error!("server stopped unexpectedly: {r:?}");
             code = 1;
@@ -413,7 +419,7 @@ async fn serve(cfg: Config) -> i32 {
     }
     drop(state);
     drop(store);
-    say("已退出。");
+    say("Exited.");
     code
 }
 
@@ -452,7 +458,7 @@ fn main() {
         {
             Ok(rt) => rt.block_on(serve(cfg)),
             Err(e) => {
-                eprintln!("无法启动异步运行时：{e}");
+                eprintln!("cannot start the async runtime: {e}");
                 1
             }
         },
@@ -546,7 +552,7 @@ mod tests {
         assert!(healthcheck(port));
         assert!(!healthcheck(port));
         h.join().unwrap();
-        // 没人监听的端口
+        // A port nobody is listening on
         assert!(!healthcheck(port));
     }
 }

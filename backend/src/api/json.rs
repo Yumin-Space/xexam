@@ -1,9 +1,9 @@
-//! JSON 的进与出，都按 Python 的 `json` 模块行为来。
+//! JSON in and out, both following the behavior of Python's `json` module.
 //!
-//! - 出：`py_json` 与 `json.dumps(obj, ensure_ascii=False)` 字节一致（分隔符 `", "` / `": "`，非 ASCII 原样 UTF-8，
-//!   控制字符转义：`\n \r \t \b \f` 短写，其余 `\u00xx` 小写十六进制，`/` 不转义）。
-//! - 进：`parse_py_json` 接受 Python `json.loads` 接受、而 serde_json 拒绝的写法：`NaN` / `Infinity` / `-Infinity`、
-//!   UTF-8 BOM、超大整数、重复键（后者覆盖）；深度超限 / 非法 UTF-8 / 其它语法错误都返回 `Err`（→ 400 bad json）。
+//! - Out: `py_json` is byte-identical to `json.dumps(obj, ensure_ascii=False)` (separators `", "` / `": "`, non-ASCII kept as raw UTF-8,
+//!   control characters escaped: `\n \r \t \b \f` in short form, the rest as `\u00xx` with lowercase hex, `/` not escaped).
+//! - In: `parse_py_json` accepts forms that Python `json.loads` accepts but serde_json rejects: `NaN` / `Infinity` / `-Infinity`,
+//!   UTF-8 BOM, huge integers, duplicate keys (the later one wins); depth overflow / invalid UTF-8 / other syntax errors all return `Err` (→ 400 bad json).
 use serde::Serialize;
 use serde_json::ser::Formatter;
 use serde_json::{Serializer, Value};
@@ -40,7 +40,7 @@ impl Formatter for PyFormatter {
     }
 }
 
-/// 与 Python `json.dumps(v, ensure_ascii=False).encode('utf-8')` 字节一致（不含浮点）。
+/// Byte-identical to Python `json.dumps(v, ensure_ascii=False).encode('utf-8')` (floats excluded).
 pub fn py_json(v: &Value) -> Vec<u8> {
     let mut buf = Vec::with_capacity(256);
     let mut ser = Serializer::with_formatter(&mut buf, PyFormatter);
@@ -50,14 +50,14 @@ pub fn py_json(v: &Value) -> Vec<u8> {
     buf
 }
 
-// ---------------------------------------------------------------- 解析
+// ---------------------------------------------------------------- Parsing
 
-/// Python 值（只保留 `clean_attempt` 等需要区分的类型）。
+/// Python values (only the types that `clean_attempt` etc. need to distinguish are kept).
 #[derive(Debug, Clone, PartialEq)]
 pub enum PyVal {
     Null,
     Bool(bool),
-    /// 饱和在 i128 范围内（Python 是任意精度，这里只用来夹取范围）
+    /// Saturates within the i128 range (Python has arbitrary precision; this is only used to clamp the range)
     Int(i128),
     Float(f64),
     Str(String),
@@ -66,7 +66,7 @@ pub enum PyVal {
 }
 
 impl PyVal {
-    /// Python 的真值判断（`x or default`）。
+    /// Python truthiness test (`x or default`).
     pub fn truthy(&self) -> bool {
         match self {
             PyVal::Null => false,
@@ -78,7 +78,7 @@ impl PyVal {
             PyVal::Dict(d) => !d.is_empty(),
         }
     }
-    /// `dict.get(key)`：重复键取最后一个。不是 dict 返回 None。
+    /// `dict.get(key)`: for duplicate keys the last one wins. Returns None if not a dict.
     pub fn get(&self, key: &str) -> Option<&PyVal> {
         match self {
             PyVal::Dict(d) => d.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v),
@@ -91,9 +91,9 @@ impl PyVal {
 }
 
 const MAX_DEPTH: usize = 512;
-const MAX_INT_DIGITS: usize = 4300; // Python 3.10.7+ 的整数字符串转换上限
+const MAX_INT_DIGITS: usize = 4300; // Python 3.10.7+ limit on integer string conversion
 
-/// 解析请求体。`Err(())` 一律对应旧版的 400 `bad json`。
+/// Parses the request body. Every `Err(())` corresponds to the legacy 400 `bad json`.
 #[allow(clippy::result_unit_err)]
 pub fn parse_py_json(bytes: &[u8]) -> Result<PyVal, ()> {
     let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF][..]).unwrap_or(bytes);
@@ -188,7 +188,7 @@ impl Parser<'_> {
                 self.i += 1;
             }
             if self.digits() == 0 {
-                self.i = save; // 'e' 后面没有数字：数字到此为止，剩下的会在外层报错
+                self.i = save; // no digits after 'e': the number ends here, and the rest is reported as an error by the outer layer
             } else {
                 is_float = true;
             }
@@ -220,7 +220,7 @@ impl Parser<'_> {
         Ok(v)
     }
     fn string(&mut self) -> Result<String, ()> {
-        self.i += 1; // 开头的引号
+        self.i += 1; // the opening quote
         let mut out: Vec<u8> = Vec::new();
         loop {
             let b = self.peek().ok_or(())?;
@@ -253,14 +253,14 @@ impl Parser<'_> {
                                     _ => self.i = save,
                                 }
                             }
-                            let ch = char::from_u32(cp).unwrap_or('\u{FFFD}'); // 孤立代理项：Rust 的 String 装不下，换成 U+FFFD
+                            let ch = char::from_u32(cp).unwrap_or('\u{FFFD}'); // lone surrogate: a Rust String cannot hold it, so replace it with U+FFFD
                             let mut tmp = [0u8; 4];
                             out.extend_from_slice(ch.encode_utf8(&mut tmp).as_bytes());
                         }
                         _ => return Err(()),
                     }
                 }
-                0..=0x1f => return Err(()), // 字符串里不能有原始控制字符
+                0..=0x1f => return Err(()), // raw control characters are not allowed in a string
                 _ => out.push(b),
             }
         }
@@ -368,7 +368,7 @@ mod tests {
         assert!(matches!(v.get("x"), Some(PyVal::Float(f)) if f.is_nan()));
         assert_eq!(v.get("y"), Some(&PyVal::Float(f64::INFINITY)));
         assert!(matches!(v.get("n"), Some(PyVal::Int(_))));
-        // 重复键：后者覆盖
+        // duplicate keys: the later one wins
         let d = parse_py_json(br#"{"a": 1, "a": 2}"#).unwrap();
         assert_eq!(d.get("a"), Some(&PyVal::Int(2)));
     }
@@ -413,7 +413,7 @@ mod tests {
                 PyVal::Str("令牌".to_string())
             ])
         );
-        // 孤立代理项不崩溃
+        // a lone surrogate does not crash
         assert!(parse_py_json(br#""\ud800""#).is_ok());
     }
 

@@ -1,10 +1,10 @@
-// 暂存读取的防御测试：坏数据只会被丢弃或修正，绝不抛错。
+// Defensive tests for reading the saved exam: bad data is only dropped or corrected, never throws.
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { clearSaved, loadSaved, saveSession } from './session-storage.ts';
 import type { Bank, Question } from '../types/api.ts';
 
-// 一个最小的 localStorage 替身
+// A minimal stand-in for localStorage
 const mem = new Map<string, string>();
 (globalThis as unknown as { localStorage: Storage }).localStorage = {
   getItem: (k: string) => (mem.has(k) ? (mem.get(k) as string) : null),
@@ -26,7 +26,7 @@ const bank = { file: '', mtime: '', error: '', sheets: [], questions: [q('s', 's
 beforeEach(() => mem.clear());
 const put = (v: unknown): void => void mem.set(KEY, typeof v === 'string' ? v : JSON.stringify(v));
 
-test('没有 / 不是 JSON / 不是对象 / 没有 ids：返回 null，不抛错', () => {
+test('missing / not JSON / not an object / no ids: returns null, does not throw', () => {
   assert.equal(loadSaved(bank), null);
   for (const raw of ['not json', 'null', '5', '[]', '"x"', '{}', '{"ids": "s"}']) {
     put(raw);
@@ -35,12 +35,12 @@ test('没有 / 不是 JSON / 不是对象 / 没有 ids：返回 null，不抛错
   assert.equal(loadSaved(null), null);
 });
 
-test('ids 全不在题库里：返回 null', () => {
+test('none of the ids are in the question bank: returns null', () => {
   put({ ids: ['gone1', 'gone2'] });
   assert.equal(loadSaved(bank), null);
 });
 
-test('正常往返：保存后能原样读回', () => {
+test('normal round trip: reads back exactly what was saved', () => {
   saveSession({ qs: bank.questions, answers: { s: ['B'], h: [0, null] }, flags: new Set(['m']), idx: 1, elapsedSeconds: 75.9, mode: 'weak', sheets: ['S'] });
   const r = loadSaved(bank);
   assert.ok(r);
@@ -51,11 +51,11 @@ test('正常往返：保存后能原样读回', () => {
   assert.equal(r.idx, 1);
   assert.equal(r.elapsed, 75);
   assert.equal(r.mode, 'weak');
-  assert.equal(r.answered, 1, '热点题只答了一半不算已答完');
+  assert.equal(r.answered, 1, 'a hotspot question answered only halfway does not count as answered');
   assert.equal(r.dropped, 0);
 });
 
-test('部分题已不在题库：跳过并计数', () => {
+test('some questions are no longer in the question bank: skipped and counted', () => {
   put({ ids: ['s', 'gone', 'm'], answers: {}, idx: 0, elapsed: 0, mode: 'all', sheets: [] });
   const r = loadSaved(bank);
   assert.ok(r);
@@ -63,14 +63,14 @@ test('部分题已不在题库：跳过并计数', () => {
   assert.equal(r.dropped, 1);
 });
 
-test('答案引用了已消失的选项：只留还存在的', () => {
+test('answer refers to options that no longer exist: only the existing ones are kept', () => {
   put({ ids: ['m'], answers: { m: ['A', 'Z', 'C', 7, null] } });
   const r = loadSaved(bank);
   assert.ok(r);
   assert.deepEqual(r.answers.m, ['A', 'C']);
 });
 
-test('单选存了多个 / 重复的键：规整成一个', () => {
+test('single choice saved with several / duplicate keys: normalized to one', () => {
   put({ ids: ['s', 'm'], answers: { s: ['A', 'B'], m: ['A', 'A', 'C'] } });
   const r = loadSaved(bank);
   assert.ok(r);
@@ -78,23 +78,23 @@ test('单选存了多个 / 重复的键：规整成一个', () => {
   assert.deepEqual(r.answers.m, ['A', 'C']);
 });
 
-test('热点题的答案过长 / 过短 / 越界 / 非整数：截断、补 null、置 null', () => {
+test('hotspot answer too long / too short / out of range / non-integer: truncated, padded with null, set to null', () => {
   put({ ids: ['h'], answers: { h: [0, 1, 1, 1] } });
   assert.deepEqual(loadSaved(bank)?.answers.h, [0, 1]);
   put({ ids: ['h'], answers: { h: [1] } });
   assert.deepEqual(loadSaved(bank)?.answers.h, [1, null]);
   put({ ids: ['h'], answers: { h: [5, -1] } });
-  assert.equal(loadSaved(bank)?.answers.h, undefined, '全部越界：当作没答');
+  assert.equal(loadSaved(bank)?.answers.h, undefined, 'all out of range: treated as unanswered');
   put({ ids: ['h'], answers: { h: [0.5, '1'] } });
   assert.equal(loadSaved(bank)?.answers.h, undefined);
 });
 
-test('flags / idx / elapsed / mode / sheets 的坏值被修正', () => {
+test('bad values of flags / idx / elapsed / mode / sheets are corrected', () => {
   put({ ids: ['s', 'm'], flags: 'abc', idx: 999, elapsed: 'x', mode: 'hacked', sheets: 5 });
   let r = loadSaved(bank);
   assert.ok(r);
   assert.equal(r.flags.size, 0);
-  assert.equal(r.idx, 1, '越界的 idx 被夹到最后一题');
+  assert.equal(r.idx, 1, 'an out-of-range idx is clamped to the last question');
   assert.equal(r.elapsed, 0);
   assert.equal(r.mode, 'all');
   assert.deepEqual(r.sheets, []);
@@ -106,7 +106,7 @@ test('flags / idx / elapsed / mode / sheets 的坏值被修正', () => {
   assert.deepEqual([...r.flags], ['s']);
 });
 
-test('clearSaved 清掉暂存；旧版的键名不会被读到', () => {
+test('clearSaved clears the saved exam; keys from the old version are not read', () => {
   saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [] });
   assert.ok(loadSaved(bank));
   clearSaved();

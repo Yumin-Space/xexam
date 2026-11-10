@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite';
 
-// 开发时把 /api 转给后端。changeOrigin 必须是 false：后端会比较 Host 与 Origin，
-// 改写 Host 会让写请求被 403（审计里实测过）。请用 localhost 或 127.0.0.1 打开开发页。
+// In development, proxy /api to the backend. changeOrigin must be false: the backend compares Host with Origin,
+// and rewriting Host makes write requests fail with 403 (verified in the audit). Open the dev page via localhost or 127.0.0.1.
 const backend = process.env.XEXAM_BACKEND ?? 'http://127.0.0.1:8765';
 
 export default defineConfig({

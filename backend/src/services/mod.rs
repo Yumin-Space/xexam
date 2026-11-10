@@ -1,9 +1,9 @@
-//! 业务流程。**接口契约（不要改签名）**。
+//! Business flows. **Interface contract (do not change signatures)**.
 //!
-//! 导入流程（对应规格的概念函数，名字照搬便于对照）：
+//! Import flow (conceptual functions from the spec; names copied verbatim for easy cross-reference):
 //! `parse_upload → validate_import → plan_import → create_pending_import → confirm_pending_import | cancel_pending_import → apply_import`
 //!
-//! 预览阶段**绝不写库**；只有 `confirm_pending_import` 之后的 `apply_import` 写，且是一个事务。
+//! The preview stage **never writes to the database**; only `apply_import` after `confirm_pending_import` writes, in a single transaction.
 use crate::config::{PENDING_TTL_SECS, SKIP_SHOWN};
 use crate::error::{AppError, DbError};
 use crate::models::{ParsedSheet, ParsedWorkbook, Question};
@@ -16,7 +16,7 @@ use tokio::sync::Semaphore;
 pub mod engine;
 pub use engine::{Engine, RealEngine};
 
-/// 暂存的一次上传（只保留最近一次）。
+/// The staged upload (only the most recent one is kept).
 pub struct PendingImport {
     pub token: String,
     pub filename: String,
@@ -25,7 +25,7 @@ pub struct PendingImport {
     pub expires: Instant,
 }
 
-/// 全局单槽位。`take` 取出即清空；令牌不对或过期返回 None，且**不消耗**槽位里的内容（过期的除外：与旧版一致，过期的取不出来但留着也无妨）。
+/// Global single slot. `take` empties it as it removes the content; a wrong or expired token returns None and **does not consume** the slot's content (except expired ones: as in the old version, an expired one cannot be taken out, but leaving it there is harmless).
 pub struct PendingStore {
     slot: Mutex<Option<PendingImport>>,
     ttl: Duration,
@@ -64,7 +64,7 @@ impl PendingStore {
     pub fn take(&self, token: &str) -> Option<PendingImport> {
         let mut g = self.slot.lock().unwrap_or_else(|e| e.into_inner());
         if matches!(g.as_ref(), Some(it) if it.expires < Instant::now()) {
-            *g = None; // 过期即清：行为上与旧版（留着但取不出来）看不出差别
+            *g = None; // clear on expiry: behaviorally indistinguishable from the old version (kept but not retrievable)
             return None;
         }
         let ok = matches!(g.as_ref(), Some(it) if security::token_eq(&it.token, token));
@@ -85,23 +85,23 @@ impl Default for PendingStore {
     }
 }
 
-// ---------------------------------------------------------------- 导入流程
+// ---------------------------------------------------------------- import flow
 
 pub const MSG_PARSE_TIMEOUT: &str =
     "解析这个文件用的时间太长，已经停止。请确认选对了文件，或者换一份小一点的再试。";
-/// 同时解析的上传个数。一个解析最多占几百 MB，这里限制总量（真实使用时同时只会有一个）。
+/// Number of uploads parsed at the same time. One parse takes up to several hundred MB, so the total is limited here (in real use only one runs at a time).
 pub const PARSE_CONCURRENCY: usize = 2;
 pub const MSG_NO_QUESTIONS: &str = "这份文件里没有读到任何可用的题，没有导入。";
 pub const MSG_UNEXPECTED: &str = "读取这个 Excel 时出错：文件内容不符合预期";
 pub const MSG_APPLY_FAILED: &str = "写入数据库失败，题库没有任何改动。";
 
-/// 上传内容检查 + 解析（旧版 `check_xlsx` + `parse_workbook`）。同步的解析器放进 `spawn_blocking`，
-/// 并有总时限（`XEXAM_PARSE_TIMEOUT_SECS`）：超时回 400 中文说明。
+/// Upload content check + parse (old `check_xlsx` + `parse_workbook`). The synchronous parser goes into `spawn_blocking`,
+/// with an overall time limit (`XEXAM_PARSE_TIMEOUT_SECS`): on timeout it returns 400 with an explanatory message.
 ///
-/// 超时是**协作式**的：解析器每处理一批行 / 事件就看一眼截止时间，到了自己停下并返回 `ImportError::Timeout`，
-/// 所以超时后后台线程不会继续占着 CPU 和内存。外层的 `tokio::time::timeout` 只是兜底（比截止时间晚半秒），
-/// 用来覆盖解析器没法中途检查的那几步（打开 zip、整包解压校验）。
-/// 同时最多有 `PARSE_CONCURRENCY` 个解析在跑；许可证由后台线程自己持有，直到它真的结束。
+/// The timeout is **cooperative**: the parser checks the deadline after each batch of rows / events, stops on its own when it is reached and returns `ImportError::Timeout`,
+/// so the background thread does not keep occupying CPU and memory after a timeout. The outer `tokio::time::timeout` is only a safety net (half a second later than the deadline),
+/// covering the steps the parser cannot check midway (opening the zip, verifying the whole archive by decompressing it).
+/// At most `PARSE_CONCURRENCY` parses run at the same time; the permit is held by the background thread itself until it really finishes.
 pub async fn parse_upload(
     engine: Arc<dyn Engine>,
     gate: Arc<Semaphore>,
@@ -111,11 +111,11 @@ pub async fn parse_upload(
     let deadline = Instant::now() + timeout;
     let fallback = timeout + Duration::from_millis(500);
     let work = async {
-        // 排队等许可证也算在总时限里
+        // waiting in the queue for a permit also counts toward the overall time limit
         let permit = gate.acquire_owned().await.map_err(|_| AppError::Internal)?;
         let task = tokio::task::spawn_blocking(move || {
             let r = engine.check_and_parse_until(&data, deadline);
-            drop(permit); // 线程真的结束了才放回许可证
+            drop(permit); // the permit is returned only once the thread has really finished
             r
         });
         Ok::<_, AppError>(task.await)
@@ -141,7 +141,7 @@ pub async fn parse_upload(
     }
 }
 
-/// 确认时的校验：没有任何可用的题就不导入（令牌此时已被取走，与旧版一致）。
+/// Validation on confirm: nothing is imported if there are no usable questions (the token has already been taken at this point, as in the old version).
 pub fn validate_import(item: &PendingImport) -> Result<(), AppError> {
     if item.questions.is_empty() {
         return Err(AppError::BadRequest(MSG_NO_QUESTIONS.to_string()));
@@ -149,7 +149,7 @@ pub fn validate_import(item: &PendingImport) -> Result<(), AppError> {
     Ok(())
 }
 
-/// 预览：只读，不写库。返回 `(plan, 原样还回来的解析结果)`。
+/// Preview: read-only, does not write to the database. Returns `(plan, the parse result handed back as is)`.
 pub async fn plan_import(
     engine: Arc<dyn Engine>,
     wb: ParsedWorkbook,
@@ -164,7 +164,7 @@ pub async fn plan_import(
     Ok((r?, wb))
 }
 
-/// 旧版 `preview_payload`：每个工作表最多列 30 条「读不出来」的原因，并追加 `skippedMore`、`skippedCount`；末尾追加 `filename`、`token`。
+/// Old `preview_payload`: lists at most 30 "unreadable" reasons per sheet and appends `skippedMore`, `skippedCount`; appends `filename`, `token` at the end.
 pub fn preview_payload(mut plan: Value, filename: &str, token: &str) -> Value {
     if let Value::Object(map) = &mut plan {
         if let Some(Value::Array(sheets)) = map.get_mut("sheets") {
@@ -192,7 +192,7 @@ pub fn preview_payload(mut plan: Value, filename: &str, token: &str) -> Value {
     plan
 }
 
-/// 把解析结果放进唯一的待确认槽位（顶掉上一份），返回给前端的预览负载。
+/// Puts the parse result into the single pending-confirmation slot (replacing the previous one) and returns the preview payload for the frontend.
 pub fn create_pending_import(
     pending: &PendingStore,
     filename: String,
@@ -204,7 +204,7 @@ pub fn create_pending_import(
     preview_payload(plan, &filename, &token)
 }
 
-/// 取出（一次性）并校验。令牌错 / 过期 / 已被处理 → 409；没有题 → 400。
+/// Takes it out (one time) and validates. Wrong / expired / already-handled token → 409; no questions → 400.
 pub fn confirm_pending_import(
     pending: &PendingStore,
     token: &str,
@@ -214,12 +214,12 @@ pub fn confirm_pending_import(
     Ok(item)
 }
 
-/// 取消不需要令牌（旧版如此）。
+/// Cancel does not need a token (as in the old version).
 pub fn cancel_pending_import(pending: &PendingStore) {
     pending.drop_pending();
 }
 
-/// 真正写库（一个事务），随后读出完整题库。返回 `(result, bank)`。同步的 `Store` 放进 `spawn_blocking`。
+/// Actually writes to the database (one transaction), then reads back the full question bank. Returns `(result, bank)`. The synchronous `Store` goes into `spawn_blocking`.
 pub async fn apply_import(
     engine: Arc<dyn Engine>,
     item: PendingImport,
@@ -249,6 +249,8 @@ mod tests {
             answer: Answer::Letters(vec!["A".into()]),
             translation: String::new(),
             zh: None,
+            english: String::new(),
+            en: None,
             explanation: String::new(),
             mnemonic: String::new(),
             note: String::new(),

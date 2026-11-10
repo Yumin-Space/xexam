@@ -1,15 +1,15 @@
-//! 时间戳：本地时间、无时区标记、精确到分钟，格式 `%Y-%m-%d %H:%M`（旧版 `datetime.now().strftime(...)`）。
+//! Timestamp: local time, no time-zone marker, minute precision, format `%Y-%m-%d %H:%M` (the old `datetime.now().strftime(...)`).
 //!
-//! 用 `jiff` 取系统时区，会读取 `TZ` 环境变量（`TZ=Asia/Tokyo`）。测试用 [`Clock`] 固定时间。
+//! Uses `jiff` to get the system time zone, which honors the `TZ` environment variable (`TZ=Asia/Tokyo`). Tests pin the time with [`Clock`].
 use jiff::tz::TimeZone;
 use jiff::{Timestamp, Zoned};
 
-/// 时间来源。`Store` 每次写库前调用一次 `now()`。
+/// Time source. `Store` calls `now()` once before each database write.
 pub trait Clock: Send + Sync + 'static {
     fn now(&self) -> String;
 }
 
-/// 真实的本地时间。
+/// The real local time.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct SystemClock;
 
@@ -19,7 +19,7 @@ impl Clock for SystemClock {
     }
 }
 
-/// 固定时间（测试用）。
+/// A fixed time (for tests).
 #[derive(Debug, Clone)]
 pub struct FixedClock(pub String);
 
@@ -29,7 +29,7 @@ impl Clock for FixedClock {
     }
 }
 
-/// 用函数 / 闭包做时钟。
+/// A clock backed by a function / closure.
 pub struct FnClock<F>(pub F);
 
 impl<F> Clock for FnClock<F>
@@ -41,7 +41,7 @@ where
     }
 }
 
-/// 把一个带时区的时刻格式化成 `YYYY-MM-DD HH:MM`。不会 panic（不走 `Display`）。
+/// Formats a zoned instant as `YYYY-MM-DD HH:MM`. Never panics (does not go through `Display`).
 pub fn format_minute(z: &Zoned) -> String {
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
@@ -53,12 +53,12 @@ pub fn format_minute(z: &Zoned) -> String {
     )
 }
 
-/// 某个时刻在指定时区的 `YYYY-MM-DD HH:MM`。
+/// An instant as `YYYY-MM-DD HH:MM` in the given time zone.
 pub fn format_timestamp_in(ts: Timestamp, tz: &TimeZone) -> String {
     format_minute(&ts.to_zoned(tz.clone()))
 }
 
-/// 现在的本地时间（系统时区；`TZ` 环境变量优先）。
+/// The current local time (system time zone; the `TZ` environment variable takes precedence).
 pub fn local_now() -> String {
     format_minute(&Zoned::now())
 }

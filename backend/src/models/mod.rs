@@ -1,24 +1,24 @@
-//! 数据模型。**字段声明顺序 = 旧版 JSON 的键顺序**（serde_json 开了 preserve_order，序列化时按此顺序输出），
-//! 不要重排；前端和黄金响应都依赖它。
+//! Data models. **Field declaration order = key order of the legacy JSON** (serde_json has preserve_order on, so serialization emits keys in this order),
+//! do not reorder; the frontend and the golden responses depend on it.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// 选项（单选 / 多选题）：`{"key": "A", "text": "…"}`
+/// Option (single / multi-choice question): `{"key": "A", "text": "…"}`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Opt {
     pub key: String,
     pub text: String,
 }
 
-/// 热点题的一个小项：`{"text": "…", "choices": ["はい", "いいえ"]}`
+/// One sub-item of a hotspot question: `{"text": "…", "choices": ["はい", "いいえ"]}`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
     pub text: String,
     pub choices: Vec<String>,
 }
 
-/// 中文翻译拆出来的结构。单选 / 多选：`{"stem", "options"}`；热点题：`{"stem", "items"}`。
-/// 旧版里两种形状的键不同，所以用两个可选字段、序列化时跳过 None。
+/// Structure split out of the Chinese translation. Single / multi: `{"stem", "options"}`; hotspot: `{"stem", "items"}`.
+/// The two shapes used different keys in the legacy version, so there are two optional fields and None is skipped on serialization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Zh {
     pub stem: String,
@@ -26,9 +26,17 @@ pub struct Zh {
     pub options: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub items: Option<Vec<String>>,
+    /// Hotspot: the options written in **this language** at the end of each sub-item (`是 / 否`, `Yes / No`, ...); present only if the count matches the Japanese one.
+    /// When absent (old file, or this column has no options written) the UI falls back to showing the Japanese options.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub choices: Option<Vec<Vec<String>>>,
 }
 
-/// 题型。序列化成 `"single" | "multi" | "hotspot"`。
+/// Structure split out of the English version, exactly the same as the Chinese one (see [`Zh`]).
+/// Present only when this question's English lines up one-to-one with the Japanese (same option letters, same number of sub-items); otherwise there is no `en` and the page greys out the English button.
+pub type En = Zh;
+
+/// Question kind. Serialized as `"single" | "multi" | "hotspot"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
@@ -37,7 +45,7 @@ pub enum Kind {
     Hotspot,
 }
 
-/// 答案：单选 / 多选是字母（`["B"]`），热点题是每个小项选了第几个（`[0, 1, 0]`）。
+/// Answer: for single / multi it is letters (`["B"]`); for hotspot it is the index chosen for each sub-item (`[0, 1, 0]`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Answer {
@@ -45,10 +53,10 @@ pub enum Answer {
     Indexes(Vec<i64>),
 }
 
-/// 解析器产出的一道题（存进 `questions.data` 的是去掉 id / sheet / row 之后的部分）。
+/// One question produced by the parser (what is stored in `questions.data` is the part left after removing id / sheet / row).
 ///
-/// 对外（`/api/bank`）的键顺序：kind, tag, stem, options, items, answer, translation, zh,
-/// explanation, mnemonic, note, id, sheet, row —— 与 `questions.data` 的键顺序加上末尾追加的 id、sheet、row 一致。
+/// Key order on the outside (`/api/bank`): kind, tag, stem, options, items, answer, translation, zh, [english, en,]
+/// explanation, mnemonic, note, id, sheet, row (the two in brackets appear only when there is English) -- the same as the key order of `questions.data` plus id, sheet, row appended at the end.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Question {
     pub kind: Kind,
@@ -59,10 +67,15 @@ pub struct Question {
     pub answer: Answer,
     pub translation: String,
     pub zh: Option<Zh>,
+    /// Original English text (column A of the 4-column format). Empty when there is no English, and then it does not appear in the JSON, so the output for old questions is exactly the same as before.
+    #[serde(skip_serializing_if = "String::is_empty", default)]
+    pub english: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub en: Option<En>,
     pub explanation: String,
     pub mnemonic: String,
     pub note: String,
-    // —— 以下三个只在内存里 / 对外输出里有；存库时不写进 data ——
+    // -- The following three exist only in memory / in the outgoing output; they are not written into data when stored --
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -71,7 +84,7 @@ pub struct Question {
     pub row: i64,
 }
 
-/// 某个工作表在解析时的统计。
+/// Statistics for one sheet at parse time.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SkippedRow {
     pub row: i64,
@@ -86,14 +99,14 @@ pub struct ParsedSheet {
     pub skipped: Vec<SkippedRow>,
 }
 
-/// 整份工作簿的解析结果。
+/// Parse result for the whole workbook.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParsedWorkbook {
     pub sheets: Vec<ParsedSheet>,
     pub questions: Vec<Question>,
 }
 
-/// 一条导入记录（`imports` 表的一行，也是 `/api/imports` 的元素）。
+/// One import record (a row of the `imports` table, also an element of `/api/imports`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImportRecord {
     pub id: i64,
@@ -107,7 +120,7 @@ pub struct ImportRecord {
     pub total: i64,
 }
 
-/// `/api/attempt` 清洗之后的请求。
+/// The request after `/api/attempt` has been sanitized.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptResult {
     pub id: String,
@@ -122,5 +135,5 @@ pub struct Attempt {
     pub seconds: i64,
 }
 
-/// 预览 / 确认结果里"每个工作表"那一块。键顺序见旧版黄金响应 #114 / #120。
+/// The "per-sheet" block in preview / confirm results. For the key order see legacy golden responses #114 / #120.
 pub type JsonValue = Value;

@@ -1,6 +1,6 @@
 #!/bin/sh
-# 在 backend/Dockerfile 的构建阶段里编译发布版（目标三元组写在 /rust-target 里）。
-#   arm64 → 普通 cargo build，链接器由环境变量指向 zigcc-aarch64.sh（去掉 zig 不认识的参数后交给 zig cc）
+# Compile the release build in the build stage of backend/Dockerfile (the target triple is written to /rust-target).
+#   arm64 → plain cargo build, with the linker pointed at zigcc-aarch64.sh by an environment variable (it strips the arguments zig does not recognize, then hands over to zig cc)
 #   amd64 → cargo zigbuild
 set -e
 target="$(cat /rust-target)"
