@@ -92,7 +92,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 | `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）を ghcr.io にプッシュし、マニフェストとタグを検証 |
 | `release` | `main` のみ：`v<VERSION>` の GitHub Release を作成（または更新） |
 
-プルリクエストとその他のブランチは最初の 5 つだけを実行し、**公開は一切行いません**。
+`dev` へのプッシュ、`main` へのプルリクエスト、その他のブランチは最初の 5 つだけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。
 
 ## 8. バージョン番号と更新履歴
 

@@ -92,7 +92,7 @@ There is only one pipeline: [`.github/workflows/ci.yml`](../.github/workflows/ci
 | `publish` | `main` only: pushes both images (amd64 + arm64) to ghcr.io and verifies the manifest and tags |
 | `release` | `main` only: creates (or updates) the GitHub Release for `v<VERSION>` |
 
-Pull requests and other branches run only the first five jobs and **never publish**.
+Pushes to `dev`, pull requests into `main` and other branches run only the first five jobs and **never publish**; only a push to `main` does.
 
 ## 8. Version number and changelog
 

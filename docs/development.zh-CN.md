@@ -92,7 +92,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 | `publish` | 仅 `main`：两个镜像（amd64 + arm64）推到 ghcr.io，核对清单和标签 |
 | `release` | 仅 `main`：建（或更新）`v<VERSION>` 的 GitHub Release |
 
-拉取请求和其它分支只跑前五项，**从不发布**。
+推送到 `dev`、向 `main` 提拉取请求和其它分支只跑前五项，**从不发布**；只有推送到 `main` 才会发布。
 
 ## 8. 版本号和更新日志
 

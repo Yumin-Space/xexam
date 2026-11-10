@@ -2,10 +2,10 @@ name: Build, test and publish
 
 # Xexam pipeline: check -> test (frontend, backend, Nginx / full-stack checks of the two images) -> build amd64 + arm64 -> publish the two images -> create the Release.
 #   - Push to main: everything runs, the xexam-frontend and xexam-backend images are published, and the GitHub Release is created (or updated).
-#   - Pull requests and other branches: check and test only, **never publish**.
+#   - Push to dev, pull requests and other branches: check and test only, **never publish** (publish and release require refs/heads/main).
 on:
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
     branches: [main]
   workflow_dispatch:

@@ -568,7 +568,7 @@ flowchart LR
     P --> R["④ Create GitHub Release"]
 ```
 
-- **Trigger:** a push to `main`, or a manual run from the Actions page. Pull requests and other branches are only checked and tested, and **never publish**.
+- **Trigger:** a push to `main` (publishes), a push to `dev`, a pull request into `main`, or a manual run from the Actions page. Only `main` publishes; `dev`, pull requests and any other branch are only checked and tested, and **never publish**.
 - **Every update must:** change `VERSION` and add an entry for the same version at the very top of the Changelog section of this file, otherwise step ① fails.
 - **Publish only if everything passes:** the two images (`xexam-frontend`, `xexam-backend`) are each published as a multi-architecture image, and the pipeline then checks that the image manifest really contains `amd64` and `arm64` and that the tag points to the digest that was just pushed. If a test fails, `latest` stays on the previous working version.
 - **Published tags:** `latest`, `v<VERSION>`, `sha-<commit>`.
