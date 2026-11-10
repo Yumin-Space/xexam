@@ -1,18 +1,22 @@
 # Xexam
 
-在浏览器里做题的模拟考程序。题目来自你自己的 Excel，上传一次就存进 SQLite；做完题**交卷后才计分**，并列出每道错题的答案、解析和记忆口诀。手机（iPhone）和电脑都能用，Docker 镜像同时支持 **x86（amd64）** 和 **ARM（arm64）**。
+在浏览器里做题的模拟考程序。题目来自你自己的 Excel，上传一次就存进 SQLite；做完题**交卷后才计分**，并列出每道错题的答案、解析和记忆口诀。手机（iPhone）和电脑都能用。
 
-- 只用 Python 标准库，没有第三方依赖，镜像很小。
-- 题库、成绩、错题记录都在一个 SQLite 文件里，放在 **Docker 命名卷**中，更新或删除容器都不会丢。
+- **v0.3 的新架构**：**Rust**（Axum）后端 + **TypeScript**（Vite，原生 DOM）前端 + **Nginx** 反向代理，Docker Compose 两个容器；只有 Nginx 对外，后端在私有网络里。详见 [docs/architecture.md](docs/architecture.md)。
+- 数据库**没有变**：仍是一个 SQLite 文件 `xexam.db`，放在 **Docker 命名卷** `xexam_data` 里，更新或删除容器都不会丢；新旧版本读写同一个文件，随时能回滚（[docs/migration.md](docs/migration.md)）。
 - 日语 / 中文随时对照切换；错题本；成绩历史。
 - 仓库里**没有题库**：题库是你自己的 Excel，不会被提交（`.gitignore` 已排除）。
+- 旧的 Python 实现（v0.2.x）完整保留：标签 `python-v0.2`，镜像 `ghcr.io/yumin-space/xexam:v0.2.2`。
 
-| | |
-|---|---|
-| 当前版本 | **v0.2.2**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看） |
-| 镜像 | `ghcr.io/yumin-space/xexam`，标签 `latest` / `v0.2.2` / `sha-<提交>` |
-| CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
-| 端口 | `8765`（默认只绑定本机） |
+| | 新架构（v0.3，本分支） | 已发布的旧版（v0.2.x，Python） |
+|---|---|---|
+| 版本 | **v0.3**（见 [更新日志](#更新日志)） | v0.2.2（[Releases](../../releases) 页） |
+| 怎么运行 | `docker compose -f docker-compose.modern.yml up -d --build`（从源码构建，镜像**还没有发布**） | `docker compose up -d`（拉取 `ghcr.io/yumin-space/xexam`，`linux/amd64` + `linux/arm64`） |
+| 端口 | `8765`（Nginx，默认只绑定本机） | `8765`（默认只绑定本机） |
+
+> ⚠️ 这个分支（`modernize/rust-ts`）里新旧两套代码并存：根目录的 `server.py`、`app/`、`web/` 是旧的 Python 实现；新实现在 `backend/`、`frontend/`、`nginx/`。把新实现换成默认、把 Python 移到 `legacy/python/`，以及新镜像的发布流水线，是合并时另做的一步（见 [docs/migration.md](docs/migration.md) 的「还没做的事」）。**在那之前不要把这个分支合并进 `main`**：`main` 上的流水线会按旧方式发布镜像。
+
+文档：[架构](docs/architecture.md) · [API](docs/api.md)（[OpenAPI](docs/openapi.yaml)）· [数据库](docs/database.md) · [安全](docs/security.md) · [部署](docs/deployment.md) · [迁移与回滚](docs/migration.md) · [开发](docs/development.md) · [迁移计划](docs/migration-plan.md)
 
 ---
 
@@ -104,7 +108,27 @@
 
 下面的图都是 [Mermaid](https://mermaid.js.org/) 写的，GitHub 上直接显示成图。图里的名字（文件、接口、数据表）都是代码里真实存在的。
 
-### 1. 总览：谁和谁连着，数据怎么走
+### v0.3：Nginx + Rust 后端 + SQLite
+
+```mermaid
+flowchart TB
+    U["浏览器"] -->|"HTTP / HTTPS"| N
+    subgraph 公开["对外暴露：只有 Nginx"]
+        N["nginx（xexam-web）<br/>前端静态文件 · /api/ 反向代理<br/>20 MB 上限 · 安全头 · 限流"]
+    end
+    subgraph 内网["Docker 私有网络（不发布端口）"]
+        B["backend（xexam-backend，Rust / Axum）<br/>REST API · XLSX 解析 · 导入流程 · Host/Origin 守卫"]
+    end
+    N -->|"/api/*  Host 原样透传"| B
+    B --> D[("SQLite<br/>命名卷 xexam_data → /data/xexam.db")]
+    CF["Cloudflare Tunnel + Access（自己配置）"] -.-> N
+```
+
+浏览器只通过 [REST 接口](docs/api.md) 和后端说话；前端里没有数据库访问。判分仍在浏览器里（服务端只收 `{题目 id, 对错}`）。目录、模块、数据流见 [docs/architecture.md](docs/architecture.md)。
+
+**下面的 1–7 节是 v0.2.x（Python）的详细图。** 数据流 A/B、数据库、页面跳转对 v0.3 同样适用（行为被固定下来，新旧逐项对照过）；「容器里面」和「CI/CD」两节只描述旧版。
+
+### 1. 总览：谁和谁连着，数据怎么走（v0.2.x）
 
 一句话：**浏览器**只和**一个容器**说话；容器里的 Python 服务读写 **SQLite**；SQLite 文件放在 **Docker 卷**里；题库从你本机的 **Excel** 上传进来。在家里可以直接连容器；在外面经过 **Cloudflare**（你的域名 + Access 验证 + 隧道）连进来，路由器不用开任何端口。
 
@@ -657,6 +681,22 @@ docker compose start
 ## 更新日志
 
 每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
+
+### v0.3 — 2026-11-10
+
+> 状态：在分支 `modernize/rust-ts` 上完成，**尚未合并到 `main`，镜像尚未发布**（`main` 上的流水线仍发布 v0.2.x 的 Python 镜像）。
+
+**重写成 Rust + TypeScript + Nginx。数据库文件和 schema 没有变，API 向后兼容。**
+
+- **后端改成 Rust**（Axum 0.8 + Tokio + rusqlite，工具链固定 1.99.1）：REST 接口、XLSX 解析、导入（预览不写库 → 一次性确认码 → 一个事务写入）、成绩与错题统计、Host/Origin 守卫、`xexam-backend import / healthcheck / migrate-progress` 子命令，行为与 Python 版一一对应（172 份旧版响应逐项对照，0 项未解释的差异；85 条题目 id 向量、49 个合成工作簿的解析输出全部一致；题目 id 与旧版逐字节相同，所以学习记录不会脱钩）。
+- **前端改成 TypeScript**（strict）+ **Vite**，原生 DOM、没有框架：API 层、类型、页面、组件、状态、判分规则（纯函数 + 单元测试）分开；没有内联样式，CSP 可以很严。构建目标 `safari15`，iPhone 需要 iOS 15.4 以上。
+- **Nginx 反向代理 + Docker Compose**：两个容器（`xexam-web`、`xexam-backend`），**只有 Nginx 对外**，后端在 `internal` 私有网络里不发布端口；非 root、`cap_drop: ALL`、只读根文件系统；Host 原样透传、`X-Forwarded-*` 清空；20 MB 上限、安全头、限流、超时；后端不可达时返回 JSON 502。新的 compose 文件是 `docker-compose.modern.yml`。
+- **更严的上传检查（有意的差异）**：任何编码 / 扩展名里的 DOCTYPE 和实体声明都拒绝；重复的 ZIP 条目名拒绝；ZIP 条目数、XML 深度和节点数有上限；错误文案不再回显库的异常文本；不支持的 HTTP 方法回 405（以前是 501）。完整差异表见 [docs/api.md](docs/api.md)。
+- **测试**：后端 130 个、前端 19 个；`tests/integration/` 里 Nginx 38 项、整栈 34 项、回滚演练 19 项；CI 新增 `modern.yml`（frontend / backend / stack，**从不发布**）。
+- **回滚**：Python 实现完整保留（标签 `python-v0.2`，镜像 `ghcr.io/yumin-space/xexam:v0.2.2`）；新后端写过的库旧版仍能读写（`tests/integration/rollback_check.py` 用合成数据演练过往返）。步骤见 [docs/migration.md](docs/migration.md)。
+- **新增文档**：`docs/` 下的架构、API（含 OpenAPI）、数据库、安全、部署、迁移、开发，以及 Phase 0 的审计、风险、迁移计划和测试策略。
+- 判分仍在浏览器里（规格建议放服务端，这里有意不搬，理由见 [docs/migration-plan.md](docs/migration-plan.md)）。
+- **没有验证的东西（如实写）**：真正的 Cloudflare 隧道、iPhone 真机、新镜像的 arm64 构建；没有用业主的真实数据库副本演练（请按 [docs/migration.md](docs/migration.md) 在自己的机器上做一遍）。
 
 ### v0.2.2 — 2026-11-10
 

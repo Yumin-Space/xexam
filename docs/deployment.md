@@ -1,0 +1,109 @@
+# 部署
+
+> 新架构：`nginx`（唯一对外）+ `backend`（Rust，私有网络）+ SQLite（命名卷 `xexam_data`）。结构图见 [architecture.md](architecture.md)，安全边界见 [security.md](security.md)。
+
+## 1. 前提
+
+- 装了 Docker（含 Compose v2）的机器，x86 或 ARM 都行。
+- v0.3 的镜像**还没有发布**到 GHCR（发布仍由 `main` 上的旧流水线负责，合并后再接）。所以现在**从源码构建**。
+
+## 2. 启动（从源码构建）
+
+```bash
+git clone git@github.com:Yumin-Space/xexam.git
+cd xexam
+git checkout modernize/rust-ts
+docker compose -f docker-compose.modern.yml up -d --build
+```
+
+浏览器打开 <http://localhost:8765>，「题库管理」里上传 Excel。第一次构建要几分钟（编译 Rust 和前端），之后有缓存。
+
+| 操作 | 命令 |
+|---|---|
+| 看状态 | `docker compose -f docker-compose.modern.yml ps`（两个容器都应是 `healthy`） |
+| 看日志 | `docker compose -f docker-compose.modern.yml logs -f` |
+| 停止 / 再启动 | `... stop` / `... start` |
+| 更新代码后重建 | `git pull && docker compose -f docker-compose.modern.yml up -d --build` |
+| 版本和架构 | <http://localhost:8765/api/info> |
+
+> ⚠️ 不要运行 `docker compose down -v`：`-v` 会删除数据卷 `xexam_data`，题库和学习记录都在里面。
+
+**和旧的 Python 版共用同一个卷（`xexam_data`）和容器名（`xexam`）**，所以两者不能同时运行；切换前先停掉另一个。数据互通，见 [migration.md](migration.md)。
+
+## 3. 配置（`.env`）
+
+在 `docker-compose.modern.yml` 旁边建 `.env`（不会被提交，也不会进镜像；模板是 [`.env.example`](../.env.example)）：
+
+| 变量 | 默认 | 作用 |
+|---|---|---|
+| `XEXAM_BIND` | `127.0.0.1:8765` | 宿主机上发布的「地址:端口」，对应 Nginx。必须写成 `IP:端口`。`0.0.0.0:8765` = 局域网可连。⚠️ 只写端口号 = 所有网卡 |
+| `XEXAM_ALLOWED_HOSTS` | 空 | 允许用哪些域名 / IP 访问，逗号 / 空格 / 分号分隔 |
+| `XEXAM_ALLOWED_ORIGINS` | 空 | 代理把 Host 改写成源站地址时：填公网域名（含 `https://`） |
+| `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = 不检查 Host（只在前面已有身份验证时） |
+| `XEXAM_PARSE_TIMEOUT_SECS` | `30` | 解析一份 Excel 的最长时间 |
+| `TZ` | `Asia/Tokyo` | 数据库里时间戳用的时区 |
+
+改了 `.env` 之后：`docker compose -f docker-compose.modern.yml up -d`（会按需重建容器）。
+
+## 4. 让手机 / 外部访问
+
+### 同一个 Wi-Fi 里的 iPhone
+
+只在**信任的网络**里做。`.env`：
+
+```ini
+XEXAM_BIND=0.0.0.0:8765
+XEXAM_ALLOWED_HOSTS=192.168.1.20      # 电脑的局域网 IP
+```
+
+iPhone 的 Safari 打开 `http://192.168.1.20:8765`（需要 iOS 15.4 以上）。
+
+### 通过 Cloudflare Tunnel 从互联网访问
+
+后端本来就不对外，隧道只需要指向 **Nginx**（`XEXAM_BIND` 发布的端口）。三件事：
+
+1. cloudflared 连得到 Nginx：同一台机器就保持默认并指向 `http://localhost:8765`；在局域网别的机器上就把 `XEXAM_BIND` 设成 `0.0.0.0:8765`（或具体的局域网 IP）。
+2. Public Hostname：`xexam.你的域名.com` → Service `HTTP`（不是 HTTPS）→ `主机IP:8765`。
+3. Cloudflare Access 加一条策略，**只允许你自己**。没设策略的域名等于对全世界公开。
+
+Host 的两种常见情形（`.env`）：
+
+| 隧道的行为 | 设置 |
+|---|---|
+| Host 原样转成你的域名 | `XEXAM_ALLOWED_HOSTS=xexam.你的域名.com` |
+| 设了 `httpHostHeader`，Host 被改成 `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.你的域名.com` |
+| 不确定 | 先配第一种，被拒（403）时页面上会写出它看到的 Host / Origin，加进对应选项再 `up -d` |
+
+Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并清空 `X-Forwarded-*`；后端只读真实的 `Host`。
+
+⚠️ 程序自己没有登录：只让 cloudflared 连得到这个端口，路由器上不要做端口映射；Linux 上主机防火墙拦不住 Docker 发布的端口，用 `DOCKER-USER` 链或具体的局域网 IP。
+
+验证到什么程度（如实写）：
+
+- 真实 Chrome + HTTPS 反向代理、两种 Host 情形的整套浏览器流程（`tests/baseline/tools/tunnel_sim.py`），是对**旧的 Python 版**做的；它依赖本机的 Chrome 和截图工具，没有改写成对新栈运行。
+- 对**新栈**：`tests/integration/stack_check.py` 用请求头级别的检查验证「经过 Nginx 之后，Host / Origin 守卫仍然生效、`X-Forwarded-*` 不被信任」；`nginx_check.py` 验证 Host 原样透传。
+- **没有**用真正的 Cloudflare 测过。第一次上线时请按上表的「不确定」一行走，看页面给出的 403 提示。
+
+## 5. 数据
+
+- 位置：命名卷 `xexam_data` → 容器内 `/data/xexam.db`。更新、重建、删除容器都不丢。
+- 备份与恢复：见 [database.md](database.md) 的第 5 节。
+- 不用 Docker 直接运行后端（开发）：见 [development.md](development.md)。
+
+## 6. 健康检查与停止
+
+- `xexam-web`：`GET /healthz`（不经 Host 白名单）。`xexam-backend`：`xexam-backend healthcheck`（容器内自己带 `Host: 127.0.0.1` 访问自己）。后端 healthy 之后 Nginx 才启动（`depends_on`）。
+- 后端挂了或重启时，Nginx 不会退出，只是 `/api/` 暂时回 JSON 的 502（「后端暂时连不上」），后端恢复后自动好。
+- `docker compose stop`：后端在 8 秒内优雅退出；导入的事务要么提交完要么回滚。
+
+## 7. 资源和镜像
+
+| | |
+|---|---|
+| `xexam-web` | nginx-unprivileged + 静态文件；监听 8080；只读根文件系统 |
+| `xexam-backend` | 静态链接的单个可执行文件 + tzdata；uid 10001；只读根文件系统，只有 `/data` 和 `/tmp` 可写 |
+| 网络 | `internal`（后端 + Nginx，不能访问外网）和 `public`（只有 Nginx） |
+
+## 8. 发布（还没接上）
+
+CI 里新栈的检查（`.github/workflows/modern.yml`）**从不发布镜像**。合并到 `main` 之前，旧的 `docker.yml` 仍按旧方式发布 `ghcr.io/yumin-space/xexam`。新镜像计划使用新名字 `xexam-web` 和 `xexam-backend`（避免业主现有的 `docker compose pull` 拿到完全不同的东西）。发布流水线、arm64 构建、镜像标签约定，等合并时再接，不在本次范围内。

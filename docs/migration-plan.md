@@ -158,17 +158,19 @@ docs/       见 §9
 
 ## 10. 迁移检查表
 
-进度记录在 `docs/migration.md`（Phase 6 创建，随工作更新）。当前状态：
+实际进度和结果见 [migration.md](migration.md)（切换 / 回滚步骤、已演练的内容）。当前状态：
 
 | 阶段 | 状态 |
 |---|---|
 | 0 审计 | ✅ 本文及其余三份文档、`docs/audit/` |
 | 1 基线 | ✅ `tests/baseline/`，对当前旧版重抓 172 项全部相同 |
-| 2 Rust 后端 | ⬜ |
-| 3 TypeScript 前端 | ⬜ |
-| 4 Nginx + Docker | ⬜ |
-| 5 回归 | ⬜ |
-| 6 文档 | ⬜ |
+| 2 Rust 后端 | ✅ `backend/`：130 个测试；172 份黄金响应 0 项未解释的差异；安全探针 0 项未解释；85 条 id 向量与 49 个解析夹具一致 |
+| 3 TypeScript 前端 | ✅ `frontend/`：strict 类型检查、19 个单元测试、构建通过 |
+| 4 Nginx + Docker | ✅ `nginx/`、`backend/Dockerfile`、`docker-compose.modern.yml`；本机整栈 34 项、Nginx 38 项；GitHub Actions（Linux）`modern.yml` 三个 job 通过 |
+| 5 回归 | ✅ 黄金响应、安全探针、解析差分、回滚演练（19 项）、整栈。⚠️ 未做：真实 Cloudflare、iPhone 真机、新镜像 arm64、业主真实库的副本 |
+| 6 文档 | ✅ `docs/` 下 architecture / api / database / security / deployment / migration / development |
+
+**与原计划不同的一点**：§7 第 4 条的「切换提交」（把 Python 文件 `git mv` 到 `legacy/python/`、`docker-compose.modern.yml` 改名为 `docker-compose.yml`）**没有**在这个分支里做。原因：这个分支一旦合并，`main` 上的 `docker.yml` 就会按旧 Dockerfile / 旧 compose 的位置发布；把文件搬走而不同时改发布流水线，会让 `main` 的构建直接失败，改了又等于替业主决定发布新镜像。所以搬家和发布流水线作为合并时的一个单独步骤，留给业主决定（写在 [migration.md](migration.md) 的「还没做的事」）。
 
 ## 11. 开放事项
 
