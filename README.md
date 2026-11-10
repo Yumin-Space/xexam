@@ -1,8 +1,30 @@
 **English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
+<p align="left">
+    <a href="../../releases/latest">
+        <img src="https://img.shields.io/docker/v/yuminspace/xexam-frontend?sort=semver&label=release&style=for-the-badge&color=green" alt="Latest release" height="28">
+    </a>
+</p>
+<p align="center">
+    <a href="https://hub.docker.com/u/yuminspace">
+        <img src="frontend/public/icon.svg" alt="Xexam logo" width="120">
+    </a>
+</p>
+
+<p align="center">
+    <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--frontend-blue?style=for-the-badge" alt="Docker Image yuminspace/xexam-frontend" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img src="https://img.shields.io/docker/stars/yuminspace/xexam-frontend.svg?style=for-the-badge" alt="Docker Stars" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img src="https://img.shields.io/docker/pulls/yuminspace/xexam-frontend.svg?style=for-the-badge" alt="Docker Pulls" height="28"></a>
+</p>
+<p align="center">
+    <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--backend-blue?style=for-the-badge" alt="Docker Image yuminspace/xexam-backend" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img src="https://img.shields.io/docker/stars/yuminspace/xexam-backend.svg?style=for-the-badge" alt="Docker Stars" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img src="https://img.shields.io/docker/pulls/yuminspace/xexam-backend.svg?style=for-the-badge" alt="Docker Pulls" height="28"></a>
+</p>
+
 # Xexam
 
-Xexam is a self-hosted exam-practice app that runs in the browser. You import your own Excel question banks, take practice exams with them, and review the questions you got wrong. **Nothing is scored until you submit**; then every question is shown with your answer, the correct answer, the explanation and the memory aid. It works on computers and on phones (iPhone).
+Xexam is a self-hosted exam-practice app that runs in the browser. You import your own Excel question banks, take practice exams with them, and review the questions you got wrong. **Nothing is scored until you submit**; then you see your score and each wrong question (or all of them) with your answer, the correct answer, the explanation and the memory aid. It works on computers and on phones (iPhone).
 
 ![The exam page: a hotspot question in English, the question-language switch and the answer sheet with Submit](docs/en/screenshots/desktop-2-quiz.png)
 
@@ -10,8 +32,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 
 | | |
 |---|---|
-| Current version | **v0.5** (see the [changelog](#changelog) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v0.5**) |
-| Images | `ghcr.io/yumin-space/xexam-frontend` and `ghcr.io/yumin-space/xexam-backend`, with tags `latest` / `v0.5` / `sha-<commit>` (the `sha-` tags are for troubleshooting) |
+| Current version | **v0.5.1** (see the [changelog](#changelog) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v0.5.1**) |
+| Images | On Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend` and `docker.io/yuminspace/xexam-backend`, with tags `latest` / `v0.5.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend` and `ghcr.io/yumin-space/xexam-backend` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -65,23 +87,25 @@ Documentation: [Architecture](docs/en/architecture.md) · [API](docs/en/api.md) 
 
 You only need **one file** from the repository, [`docker-compose.yml`](docker-compose.yml); no other code is required.
 
+**If you are not the owner:** the two images are public on Docker Hub, so pulling them needs no account and no `docker login`. Only the repository is private: to download `docker-compose.yml` from it with `curl` (or to `git clone` it), ask the owner to add your GitHub account as a collaborator on the repository, then create one token under GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** with the scope `repo`. Use it as `YOUR_TOKEN` for `curl` and as the password for `git clone`. Or simply ask the owner to send you the file.
+
 **1. Download `docker-compose.yml`** into a new folder (for example `xexam`). The easiest way: open the file on GitHub and click **Download raw file**. Or on the command line:
 
 ```bash
 curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker-compose.yml
 ```
 
-While the repository is private, `curl` needs a GitHub token that can read it: add `-H "Authorization: token YOUR_TOKEN"` after `-fLO`. In Windows PowerShell, type `curl.exe` instead of `curl` (there, `curl` is a different command).
+With `curl`, add `-H "Authorization: token YOUR_TOKEN"` after `-fLO`. In Windows PowerShell, type `curl.exe` instead of `curl` (there, `curl` is a different command).
 
-**2. Log in to GitHub's container registry** (only once). The images are private: your GitHub account needs read access to the `xexam-frontend` and `xexam-backend` packages. If the packages are public, skip this step.
+**2. No login needed.** `docker-compose.yml` pulls both images from Docker Hub (`docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-frontend`), where they are public, so go straight to step 3. Only if you have access to the private mirror on GitHub's container registry and want to use it instead (the owner and collaborators): log in once, then change the two `image:` lines in `docker-compose.yml` to `ghcr.io/yumin-space/xexam-backend:latest` and `ghcr.io/yumin-space/xexam-frontend:latest`.
 
 ```bash
 docker login ghcr.io -u YOUR_GITHUB_USERNAME
-# For the password, enter a GitHub token with the read:packages permission
-# (GitHub → Settings → Developer settings → Personal access tokens)
+# Only for the GHCR mirror. For the password, enter a GitHub token with the read:packages scope
+# (GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic))
 ```
 
-Without read access, the next step is refused (`denied` or `unauthorized`).
+For the mirror, without read access or with a fine-grained token instead of a classic one, `docker login` or the next step is refused (`denied` or `unauthorized`). Docker Hub needs none of this.
 
 **3. Start.** In the folder that contains `docker-compose.yml`, run:
 
@@ -89,18 +113,18 @@ Without read access, the next step is refused (`denied` or `unauthorized`).
 docker compose up -d
 ```
 
-This pulls and starts **two containers** (`xexam-frontend`, `xexam-backend`). Then open <http://localhost:8765> in a browser on the same machine.
+This pulls the two images from Docker Hub and starts **two containers** (`xexam-frontend`, `xexam-backend`). Then open <http://localhost:8765> in a browser on the same machine.
 
 Docker runs on another machine (a server, a NAS, a virtual machine)? See [Opening Xexam from your phone or another computer](#opening-xexam-from-your-phone-or-another-computer).
 
-The interface starts in English. To switch it to Chinese or Japanese, open the menu (the three-line button at the top left), choose **Settings** and pick the language under **Language**. Then follow [Your first exam](#your-first-exam) to import your Excel file and take an exam.
+The interface starts in English. To switch it to Chinese or Japanese, open the menu (the three-line button at the top right), choose **Settings** and pick the language under **Language**. Then follow [Your first exam](#your-first-exam) to import your Excel file and take an exam.
 
 > Coming from v0.4? Read [Upgrading from v0.4](#upgrading-from-v04) first: the first start of v0.5 migrates the database (after writing a backup copy).
 
 | Action | Command |
 |---|---|
-| Update to the latest version | `docker compose pull`, then `docker compose up -d` |
-| Pin to a specific version | Change `:latest` to `:v0.5` for both images in `docker-compose.yml`, then run `docker compose up -d` |
+| Update to the latest version | `docker compose pull`, then `docker compose up -d`. If your `docker-compose.yml` still names `ghcr.io` (files from before v0.5.1), replace it with the new one first; the data volume stays |
+| Pin to a specific version | Change `:latest` to `:v0.5.1` for both images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (both containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f` |
@@ -176,42 +200,46 @@ To use it away from home (not on your home Wi-Fi), see [Access from the internet
 
 ### Your first exam
 
-1. Open the menu (the three-line button at the top left) and choose **Question banks**. Under **Import Excel**, leave **Create a new question bank** selected, click **Choose Excel file** and pick your workbook (see [Excel question bank format](#excel-question-bank-format)). Check the preview, then click **Create the question bank**.
-2. Click **Start an exam** in the message that confirms the import (or choose **Home** in the menu). In the **Start an exam** panel every sheet is ticked at first: untick the ones you do not want, then click **Start exam**.
+1. Open the menu (the three-line button at the top right) and choose **Question banks**. Under **Import Excel**, leave **New bank** selected, click **Choose Excel file** and pick your workbook (see [Excel question bank format](#excel-question-bank-format)). Check the preview, then click **Create the question bank**.
+2. Click **Start an exam** in the message that confirms the import (or choose **Home** in the menu). In the **Start an exam** panel every sheet is ticked at first: untick the ones you do not want, then click **Start exam** in the bar at the bottom of the panel (**Count** and **Shuffle** in the same bar set how many questions are asked and in which order).
 3. Answer the questions, then click **Submit**. The result page shows the score and, for each wrong question, the correct answer and the explanation (**All questions (n)** shows every question).
 4. To see the exam again later: open the menu, choose **Study records** and click the time of the exam.
 
 ### The layout
 
-- Every page except the exam has a slim header: the three-line menu button at the top left and the Xexam logo (it takes you to Home).
-- The menu button opens a small menu with **Home**, **Question banks**, **Study records** and **Settings** and, under a divider, **Xexam v0.5**, which opens the [About page](#about-xexam). The menu closes after a choice, a click outside it or the Escape key.
+- Every page except the exam has a slim header: the Xexam logo at the top left (it takes you to Home) and the three-line menu button at the top right.
+- The menu button opens a small menu with **Home**, **Question banks**, **Study records** and **Settings** and, under a divider, **Xexam v0.5.1**, which opens the [About page](#about-xexam). The menu closes after a choice, a click outside it or the Escape key.
 - On wide screens the page content is centered and at most 1120 px wide.
 - The exam itself is a focused full-screen page without the header.
 
 ### Question banks
 
-Here you import Excel workbooks (**Create a new question bank** or **Update / replace an existing bank**), and see **Your question banks** (each bank's file, number of questions and sheets, with **Update / replace** and **Delete**) and the **Import history**. **Excel format and import guide** on the page is the short version of [Excel question bank format](#excel-question-bank-format). The steps and rules of an import are in [Importing question banks](#importing-question-banks).
+Here you import Excel workbooks, on a page as compact as Home. Under **Import Excel** you pick **New bank** or **Update a bank** (two small buttons next to the title; their tooltips explain them, and for an update you choose the bank under **Bank to update**), then click **Choose Excel file** or drop the file anywhere on the panel; the hint line above it ends in a link to the **Excel format guide**. **Your question banks** has one compact row per bank (its file, number of questions and sheets and last update, with **Update** and **Delete**; its sheets are folded under the arrow on the right of the row), and the **Import history** shows one line per import. **Excel format and import guide** on the page, folded until you open it, is the short version of [Excel question bank format](#excel-question-bank-format). The steps and rules of an import are in [Importing question banks](#importing-question-banks).
 
 ![Question banks page: the preview of an update of "Kitchen basics"](docs/en/screenshots/desktop-5-banks.png)
 
-The screenshot shows the preview of an update of "Kitchen basics" with a newer file (1 added, 1 updated, 1 retired) before anything is saved, next to the import history and the format guide. The question that would be retired is listed with the text of the question column (column C, Japanese, in this demo bank).
+The screenshot shows the preview of an update of "Kitchen basics" with a newer file, `Kitchen basics (v2).xlsx`, before anything is saved: the chips (1 added, 1 updated, 1 retired, 3 unchanged), the note that the file name differs from the last import, the warning about the question that would be retired, and the sheets Cooking and Safety. Below it are the two demo banks under **Your question banks**; on the right, the import history and the folded format guide. The question that would be retired is listed with the text of the question column (column C, Japanese, in this demo bank).
 
 ### Home
 
 Before the first import, the **Start an exam** panel shows a short note and **Go to Question banks** instead. After that, Home has:
 
-- **Unfinished exam**: a one-line banner for an exam you left with **Save and exit**, with its question banks, the number of questions answered and the time used. **Continue** picks it up where you stopped; **Discard** throws it away. It is **Saved in this browser only**, not on your other devices.
+- **Unfinished exam**: a compact banner at the top for an exam you left with **Save and exit**: its title with **Saved in this browser only**, then its question banks, the number of questions answered and the time used. **Continue** picks it up where you stopped; **Discard** throws it away. Your other devices do not see it.
 - **Start an exam**:
-  - In the top-right corner of the panel you choose where the questions come from: **All** (every question in the selected sheets) or **Wrong answers** (only the questions you still need to review). Each shows its number of questions. When the notebook has nothing to review in the selected sheets, **Wrong answers** cannot be chosen and one line under the title says why. On a phone the two buttons stay next to the title and show only their icon and number.
-  - **Banks and sheets**: each bank is one card with its sheets as rows inside. The bank's checkbox selects or clears all its sheets; while only some are selected it shows −, and the card says, for example, **1 of 2 sheets selected**. You can also tick single sheets. The arrow button on the right of a bank shows or hides its sheets; with more than two banks they start hidden. **Select all** and **Clear** next to the title help with many sheets. A badge such as **2 to review** shows how many notebook questions a bank or sheet has.
-  - **Number of questions**: when it is smaller than the number of questions you selected, the questions are picked at random from the whole selection. **Shuffle question order** only decides whether they are asked in random order or in bank order.
-  - **Start exam**, next to the number of questions in the current scope. The button stays at the bottom of the screen while the panel is in view.
+  - In the top-right corner of the panel you choose where the questions come from: **All** (every question in the selected sheets) or **Wrong answers** (only the questions you still need to review). Each shows its number of questions. When the notebook has nothing to review in the selected sheets, **Wrong answers** cannot be chosen and one line under the title says why; while **Wrong answers** is chosen, that line says how a question leaves the notebook. On a phone the two buttons stay next to the title; in English and Japanese they show only their icon and number, in Chinese they keep their short words.
+  - **Banks and sheets**: each bank is one card with its sheets as rows inside.
+    - **Select all** and **Clear** are on the right of the heading row.
+    - The bank's checkbox selects or clears all its sheets, and you can also tick single sheets. While only some are selected, the checkbox shows − and the card says, for example, **1 of 2 sheets selected** (also while the bank is folded).
+    - The arrow button on the right of a bank's row folds or unfolds its sheets. With at most two banks they start unfolded, with more they start folded; your choice is kept until you reload the page.
+    - A badge such as **2 to review** shows how many notebook questions a bank or sheet has.
+  - The bar at the bottom of the panel: **Start exam**, the scope (for example **12 questions in scope**, or **11 of 12 in scope, picked at random**) and two options, **Count** (the number of questions) and **Shuffle** (the question order). The bar stays at the bottom of the screen while the panel is in view.
+  - **Count**: when it is smaller than the scope, the questions are picked at random from the whole scope. **Shuffle** only decides whether they are asked in random order or in bank order.
 - **Latest exam**: the score of your last exam, with **View details** and **All study records**.
 - **Overview**: how many question banks, usable sheets, active questions and notebook questions you have, with **Review wrong answers** (when the notebook has questions) and **Question banks**.
 
 ![Home page on a desktop](docs/en/screenshots/desktop-1-home.png)
 
-The unfinished exam as a one-line banner; **All** and **Wrong answers** in the corner of **Start an exam**; the two demo banks as cards with their sheets; on the right, the latest exam and the overview.
+The unfinished exam as a compact banner; **All** and **Wrong answers** in the corner of **Start an exam**; **Select all** and **Clear** on the row of **Banks and sheets**; the two demo banks as unfolded cards with their sheets; the bar with **Start exam**, the scope, **Count** and **Shuffle**; on the right, the latest exam and the overview.
 
 ### The exam page
 
@@ -272,7 +300,7 @@ Settings are saved on the Xexam server, in the database in the data directory, t
 
 ### About Xexam
 
-The last menu entry, **Xexam v0.5**, opens **About Xexam**: the **Version**, the CPU architecture of the **Server**, the **License**, and **What’s new**, which is the [changelog](#changelog) of this README in the interface language. The newest version is open; the earlier ones are folded under **Earlier versions**.
+The last menu entry, **Xexam v0.5.1**, opens **About Xexam**: the **Version**, the CPU architecture of the **Server**, the **License**, and **What’s new**, which is the [changelog](#changelog) of this README in the interface language. The newest version is open; the earlier ones are folded under **Earlier versions**.
 
 ![About Xexam on a desktop](docs/en/screenshots/desktop-8-about.png)
 
@@ -280,7 +308,7 @@ The last menu entry, **Xexam v0.5**, opens **About Xexam**: the **Version**, the
 
 - Open the service address in Safari on your iPhone (first follow [Opening Xexam from your phone or another computer](#opening-xexam-from-your-phone-or-another-computer)). It needs **iOS 15.4 or later**.
 - Tap the Share button → **Add to Home Screen**. After that it opens full-screen like a standalone app, with an Xexam icon in the style of an answer sheet.
-- The three-line button at the top left opens the same small menu as on a computer. On Home, **All** and **Wrong answers** stay next to the **Start an exam** title (with only their icon and number), and **Start exam** stays at the bottom of the screen. On the exam page, **Previous**, **Next** and **Mark to revisit** stay at the bottom, and the answer sheet sits below the question with **Answered x of n** and **Submit** above the tiles. Study records are shown as compact cards.
+- The three-line button at the top right opens the same small menu as on a computer. On Home, **All** and **Wrong answers** stay next to the **Start an exam** title (in English and Japanese with only their icon and number), and the bar at the bottom of the screen has two rows: the scope, **Count** and **Shuffle** on the first, **Start exam** on the second. On the exam page, **Previous**, **Next** and **Mark to revisit** stay at the bottom, and the answer sheet sits below the question with **Answered x of n** and **Submit** above the tiles. Study records are shown as compact cards.
 - Buttons and other touch targets are at least 44 px; the safe areas for the notch and the bottom bar are handled.
 
 Screenshots on an iPhone (390 px wide):
@@ -293,7 +321,7 @@ Screenshots on an iPhone (390 px wide):
 <td width="25%"><img src="docs/en/screenshots/iphone-4-records.png" alt="Study records on an iPhone"></td>
 </tr>
 <tr>
-<td>Home: <b>Start exam</b> stays at the bottom of the screen.</td>
+<td>Home: the scope, <b>Count</b> and <b>Shuffle</b>, with <b>Start exam</b> below them, at the bottom of the screen.</td>
 <td>Exam: <b>Previous</b>, <b>Next</b> and <b>Mark to revisit</b> stay at the bottom.</td>
 <td>The menu, opened from the three-line button (here on Study records).</td>
 <td>Study records: each exam is a compact card.</td>
@@ -380,18 +408,18 @@ Questions that cannot be read are **never guessed**: they are listed in the prev
 
 ### New bank or update
 
-A question bank is one imported Excel workbook. On **Question banks** → **Import Excel** you choose where the file goes:
+A question bank is one imported Excel workbook. On **Question banks** → **Import Excel** you choose where the file goes with two small buttons next to the title (their tooltips explain them):
 
 | Choice | What happens |
 |---|---|
-| **Create a new question bank** | A new bank is created, named after the file (without `.xlsx`; ` (2)`, ` (3)`, … is added if the name is taken). Existing banks are not changed. The same workbook can be imported twice as two separate banks; their study records do not mix |
-| **Update / replace an existing bank** | The file replaces the questions of the bank you pick. Questions missing from the file are retired **in that bank only**. The bank keeps its name |
+| **New bank** | A new bank is created, named after the file (without `.xlsx`; ` (2)`, ` (3)`, … is added if the name is taken). Existing banks are not changed. The same workbook can be imported twice as two separate banks; their study records do not mix |
+| **Update a bank** | The file replaces the questions of the bank you pick under **Bank to update**. Questions missing from the file are retired **in that bank only**. The bank keeps its name |
 
-Use **Create a new question bank** for a different workbook, and **Update / replace an existing bank** for a newer version of a workbook you have already imported. Always upload the **whole** workbook, not only the new questions.
+Use **New bank** for a different workbook, and **Update a bank** for a newer version of a workbook you have already imported. Always upload the **whole** workbook, not only the new questions.
 
 ### Preview, then confirm
 
-After the upload Xexam reads and checks the file and shows a preview: how many questions will be **Added**, **Updated**, **Restored** or **Retired**, how many are **Unchanged** and **Unreadable**, the numbers for each sheet, and for every row that could not be read, the sheet, the row number and the reason. **Nothing is written until you confirm** (**Create the question bank** or **Confirm import**; **Cancel, do not import** drops it). The preview also warns you when:
+After the upload Xexam reads and checks the file and shows a preview: small chips with how many questions will be **Added**, **Updated**, **Restored** or **Retired** and how many are **Unchanged** and **Unreadable** (counts of zero are hidden), one line per sheet with its numbers, and for every row that could not be read, the row number and the reason, folded under the line of its sheet (for example **2 unreadable**). **Nothing is written until you confirm** (**Create the question bank** or **Confirm import**; **Cancel, do not import** drops it). The preview also warns you when:
 
 - you create a new bank from a file with the same name as the file an existing bank was imported from (it offers to update that bank instead);
 - you update a bank with a file whose name differs from the last import;
@@ -414,7 +442,7 @@ A question is recognised by its worksheet name, its question text and its first 
 
 ### Deleting a bank
 
-**Delete** on a bank card asks for confirmation (for example **Delete “Kitchen basics”?**). The bank's questions (active and retired) and its import history are deleted. The checkbox **Also delete this bank’s study records** is off by default:
+**Delete** on a bank’s row asks for confirmation (for example **Delete “Kitchen basics”?**). The bank's questions (active and retired) and its import history are deleted. The checkbox **Also delete this bank’s study records** is off by default:
 
 - **Unchecked**: the answer history and the exam records stay. In those records, the bank's questions show as deleted.
 - **Checked**: the answer history of the bank's questions and the exam records that no other remaining bank is part of are deleted too.
@@ -425,7 +453,7 @@ A delete cannot be undone; your own backup is the only way back (see [Data, back
 
 ## Upgrading from v0.4
 
-v0.5 changes nothing in the deployment: the same two images, the same `docker-compose.yml`, the same port, the same volume and no new environment variables. What changes is the interface and the **database schema** (v1 → v2).
+In the deployment, v0.5 keeps the same two images, the same port, the same volume and adds no environment variables. What changes is the interface, the **database schema** (v1 → v2) and, since v0.5.1, where the images come from: the new `docker-compose.yml` pulls them from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`. Replace your `docker-compose.yml` with the new one, or change its two `image:` lines to `docker.io/yuminspace/xexam-backend:latest` and `docker.io/yuminspace/xexam-frontend:latest`. The project name and the data volume `xexam_data` stay the same, so your data stays where it is.
 
 ### Upgrade
 
@@ -436,7 +464,7 @@ These commands work in a Linux / macOS terminal and in Windows PowerShell.
 docker compose stop
 docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v04.tgz -C /data .
 
-# 2. Pull v0.5 and start (do not use down -v)
+# 2. With the new docker-compose.yml in place (Docker Hub images), pull v0.5 and start (do not use down -v)
 docker compose pull
 docker compose up -d
 
@@ -458,7 +486,7 @@ What else you will notice:
 - The question language used to be remembered by each browser. The first time a browser opens v0.5, its choice moves to the server (if the server still has the default, Japanese).
 - An unfinished exam saved in the browser is kept and can be continued.
 
-Checks after the upgrade: <http://localhost:8765/api/info> shows `"version": "0.5"` and the same `bankCount` as before (despite its name, this field counts the active questions, not the banks); **Question banks** shows one bank with all your sheets; **Study records** lists your earlier exams; **Study records** → **Review wrong answers** has as many questions as your wrong-answer notebook had.
+Checks after the upgrade: <http://localhost:8765/api/info> shows `"version": "0.5.1"` and the same `bankCount` as before (despite its name, this field counts the active questions, not the banks); **Question banks** shows one bank with all your sheets; **Study records** lists your earlier exams; **Study records** → **Review wrong answers** has as many questions as your wrong-answer notebook had.
 
 ### Rolling back to v0.4
 
@@ -474,7 +502,8 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 # 3. Put the copy back as xexam.db (use the file name from step 2)
 docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-20261110-140501.db /data/xexam.db
 
-# 4. In docker-compose.yml, change the two image tags from :latest to :v0.4, then start
+# 4. v0.4 is only on the private GHCR mirror (Docker Hub starts with v0.5.1): run docker login ghcr.io, set the two
+#    images in docker-compose.yml to ghcr.io/yumin-space/xexam-backend:v0.4 and ghcr.io/yumin-space/xexam-frontend:v0.4, then start
 docker compose up -d
 ```
 
@@ -490,7 +519,7 @@ The data volume `xexam_data` is the same one. However, the old version was one c
 4. Swap in the new `docker-compose.yml`, then run `docker compose pull` and `docker compose up -d`. The first start migrates the database to schema v2, exactly as described above (with a backup copy in `backups/`).
 5. Open <http://localhost:8765> and check that the number of questions, the number of wrong questions and the score history are the same as before the upgrade.
 
-To go back to the old version: the old code is at the Git tag `python-v0.2`, and the old image `ghcr.io/yumin-space/xexam:v0.2.2` can still be pulled. Restore the schema-1 copy from `backups/` (or your own backup) before you start it. See [docs/en/migration.md](docs/en/migration.md).
+To go back to the old version: the old code is at the Git tag `python-v0.2`, and the old image `ghcr.io/yumin-space/xexam:v0.2.2` can still be pulled from GHCR (private: `docker login ghcr.io` first; it is not on Docker Hub). Restore the schema-1 copy from `backups/` (or your own backup) before you start it. See [docs/en/migration.md](docs/en/migration.md).
 
 ---
 
@@ -530,7 +559,7 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/x
 docker compose start
 ```
 
-Moving to a new computer: log in to `ghcr.io` on the new machine, put `docker-compose.yml` in place, run `docker compose up -d` first to create the volume, then restore the backup as described above. The backup file contains your entire database, so **do not commit it to Git** (`.gitignore` already ignores `*.tgz`). For more details (connection settings, verifying a backup) see [docs/en/database.md](docs/en/database.md).
+Moving to a new computer: put the new `docker-compose.yml` in place on the new machine (no login needed, the images come from Docker Hub), run `docker compose up -d` first to create the volume, then restore the backup as described above. The backup file contains your entire database, so **do not commit it to Git** (`.gitignore` already ignores `*.tgz`). For more details (connection settings, verifying a backup) see [docs/en/database.md](docs/en/database.md).
 
 ### Migrating progress records from earlier versions (`progress.json`)
 
@@ -827,12 +856,12 @@ flowchart LR
 - **Every update must:** change `VERSION` and add an entry for the same version at the very top of the changelog of **all three READMEs** (`README.md`, `README.ja.md`, `README.zh-CN.md`); `backend/Cargo.toml` and `frontend/package.json` must carry the same version. Otherwise step ① fails.
 - **Docs check (also step ①):** the seven documents exist in `docs/en`, `docs/ja` and `docs/zh-CN`, `docs/` contains nothing but these three folders, and every relative link in the READMEs and the docs points at a file that exists.
 - **Publish only if everything passes:** the two images (`xexam-frontend`, `xexam-backend`) are each published as a multi-architecture image, and the pipeline then checks that the image manifest really contains `amd64` and `arm64` and that the tag points to the digest that was just pushed. If a test fails, `latest` stays on the previous working version.
-- **Published tags:** `latest`, `v<VERSION>`, `sha-<commit>`.
+- **Published tags:** `latest`, `v<VERSION>`, `sha-<commit>`, the same on Docker Hub and on ghcr.io.
 - **How the backend image gets arm64:** it is cross-compiled with zig on the build machine instead of compiling Rust under QEMU (which is an order of magnitude slower); only the final, very small alpine stage uses the target architecture.
 - **Releases page:** once both images are published and verified, the pipeline automatically creates (or updates) a Release named `v<VERSION>`. Its description is taken from this version's section of the Changelog in this file ([`scripts/release-notes.py`](scripts/release-notes.py)), and a git tag with the same name is created automatically. If the images were not published successfully, there is no Release.
-- **Releases and images live in two different places:** the images are under the repository's **Packages** (ghcr.io), the Release is on the **Releases** page; both are produced by the same build.
+- **Releases and images live in different places:** the images are on **Docker Hub** (`docker.io/yuminspace/xexam-frontend` and `docker.io/yuminspace/xexam-backend`, public; this is what `docker-compose.yml` pulls) and, as a private mirror, under the repository's **Packages** (ghcr.io); the Release is on the **Releases** page and lists the Docker Hub pull commands first. All of them are produced by the same build.
 
-The images are published from a private repository and are private by default. The first time a new image name is published, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`). To allow pulling without logging in, change the package to public in its settings.
+Publishing to Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`. Without the secrets, or if `docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io the images are private (the repository is private): the first time a new image name is published there, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).
 
 ---
 
@@ -912,6 +941,21 @@ The license covers the software in this repository. The repository contains no e
 Every update must add an entry here, and the **version number must match the `VERSION` file in the repository root** (the automated build checks this and refuses to build on a mismatch). The latest image carries both the `latest` tag and the matching `vX.Y` tag.
 
 The **About Xexam** page of the app shows these entries (they are built into the frontend), so keep them in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``. Links are shown as plain text there.
+
+### v0.5.1 — 2026-11-11
+
+**A calmer, simpler look with colour-blind friendly colours, the menu button at the top right, and a Question banks page as compact as Home.**
+
+- **A calmer, simpler look**: the colours now follow the colour-blind friendly light and dark palettes of GitHub's Primer design system ("Light colorblind" / "Dark colorblind"). Correct answers are blue and wrong answers orange instead of green and red. The light theme is a soft grey-white page with white blocks and navy main buttons; the dark theme is near-black. The pages sit on one calm sheet with fewer frames and borders, rounded corners, soft hover backgrounds, notes shown as tinted callouts and a lighter menu with a soft shadow. The new look itself moves nothing and changes no behaviour.
+- **Menu on the right**: the three-line menu button is now at the top right of the header; the Xexam logo stays at the top left. The menu opens below the button and works as before.
+- **Compact Question banks page**:
+  - **Import Excel**: **New bank** and **Update a bank** are two small buttons next to the title (their tooltips explain them); for an update, **Bank to update** appears under them. One hint line ends in a link to the **Excel format guide**, and one row takes the file: **Choose Excel file**, or drop the file anywhere on the panel.
+  - **Preview**: the counts are small chips (counts of zero are hidden), each sheet is one line, and a sheet's unreadable rows are folded under it. As before, the confirm and cancel buttons follow right after the counts and the notes, before the sheets.
+  - **Your question banks**: one compact row per bank with its name, small **Update** and **Delete** buttons and one line of facts (file, questions, sheets, last update). The sheets are folded under the arrow on the right of the row.
+  - **Import history** shows one line per import (the latest 8), and **Excel format and import guide** stays folded until you open it.
+  - On touch screens the small buttons keep a tap area of about 44 px; on a phone, a long bank name pushes the buttons onto their own row.
+- **Images on Docker Hub**: every release is now also published to Docker Hub as `yuminspace/xexam-frontend` and `yuminspace/xexam-backend` (public, `amd64` and `arm64` under the same tags). `docker-compose.yml` pulls from there, so `docker login` is no longer needed. The same tags stay on `ghcr.io/yumin-space` as a private mirror. If you run v0.5 with the old `docker-compose.yml`, replace it with the new one (the data volume stays). The READMEs now start with the Docker Hub badges.
+- The READMEs and the docs describe the new layout, and the screenshots were retaken.
 
 ### v0.5 — 2026-11-10
 

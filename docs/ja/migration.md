@@ -35,14 +35,14 @@ v0.5 では、データベースに問題集、試験ごとの各問題の詳細
 
 ### 1.2 アップグレード
 
-`docker-compose.yml`、`.env`、ポート、ボリュームは何も変わりません（[deployment.md](deployment.md) の第 6 節を参照）。
+`.env`、ポート、ボリュームは何も変わりません（[deployment.md](deployment.md) の第 6 節を参照）。v0.5.1 から変わったのは、`docker-compose.yml` のイメージの取得元だけです。`ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から pull します。お使いの `docker-compose.yml` を新しいファイルに差し替えるか、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更してください。プロジェクト名とボリューム `xexam_data` は変わらないので、データはそのまま残ります。
 
 ```bash
 # 1. ボリュームをバックアップ（先に停止する。バックアップファイルにはデータベース全体が入っているので、コミットしない）
 docker compose stop
 docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v04.tgz -C /data .
 
-# 2. v0.5 を pull して起動（down -v は使わない）
+# 2. 新しい docker-compose.yml（Docker Hub のイメージ）を配置したうえで、v0.5 を pull して起動（down -v は使わない）
 docker compose pull
 docker compose up -d
 
@@ -56,10 +56,10 @@ docker compose logs backend
 
 ### 1.3 アップグレード後の確認
 
-- [ ] `/api/info` の `version` が `0.5` で、`bankCount`（有効な問題の数）がアップグレード前と同じ。
+- [ ] `/api/info` の `version` が `0.5.1` で、`bankCount`（有効な問題の数）がアップグレード前と同じ。
 - [ ] **問題集の管理**に問題集が 1 つだけあり、すべてのシートが含まれていて、問題数がアップグレード前と同じ。
 - [ ] **学習記録**に以前の試験が並んでいる。また、**学習記録 → 間違えた問題の復習**の問題数が、以前の間違いノートの問題数と同じ。
-- [ ] （任意）**既存の問題集を更新・置き換える**を選び、その問題集を選んで、前回と同じ Excel ファイルをアップロードします。プレビューには、このファイルの問題がまったく同じで、取り込むものはないと表示されるはずです。確認したらキャンセルします。これで、問題 id が変わっていないことを確認できます。
+- [ ] （任意）**既存を更新**を選び、その問題集を選んで、前回と同じ Excel ファイルをアップロードします。プレビューには、このファイルの問題がまったく同じで、取り込むものはないと表示されるはずです。確認したらキャンセルします。これで、問題 id が変わっていないことを確認できます。
 - [ ] 数問解いて提出する。新しい記録には、各問題と自分の回答が表示される。
 
 ### 1.4 v0.4 へのロールバック
@@ -76,7 +76,7 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 # 3. コピーを xexam.db として戻す（ファイル名は手順 2 で確認したものを使う）
 docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-20261110-140501.db /data/xexam.db
 
-# 4. docker-compose.yml の 2 つのイメージタグを :latest から :v0.4 に変更
+# 4. v0.4 は非公開の GHCR ミラーにしかない（Docker Hub は v0.5.1 から）。docker login ghcr.io を実行してから、docker-compose.yml の 2 つのイメージを次のように変更
 #      image: ghcr.io/yumin-space/xexam-backend:v0.4
 #      image: ghcr.io/yumin-space/xexam-frontend:v0.4
 docker compose up -d
@@ -88,7 +88,7 @@ docker compose up -d
 
 コピーを戻す代わりに、**移行済みのデータベースで v0.4 を実行しないでください**。少なくとも、問題集が 2 つ以上あるときは避けてください。v0.4 はこのファイルを開けますが、すべての問題集を 1 つとして扱います。次にインポートすると、ほかのすべての問題集の問題が出題停止になり、試験記録も 60 回分に切り詰められます。それでも実行してしまった場合は、次に v0.5 を起動したときに、v0.4 が追加した問題がレガシー問題集に組み込まれます（[database.md](database.md) の第 6.2 節）。
 
-あとで再びアップグレードするときは、イメージタグを `:latest` に戻して `docker compose pull && docker compose up -d` を実行します。移行がもう一度行われ、新しいコピーが書き出されます。
+あとで再びアップグレードするときは、新しい `docker-compose.yml`（Docker Hub のイメージ、タグ `:latest`）に戻して `docker compose pull && docker compose up -d` を実行します。移行がもう一度行われ、新しいコピーが書き出されます。
 
 ### 1.5 テスト済みの内容
 
@@ -106,7 +106,7 @@ docker compose up -d
 
 1. **原本には触れません。** まずバックアップを取り、コピーで試し、問題がないことを確認してから切り替えます。
 2. **いつでも戻せました。** v0.4 までは、2 つの実装が同じファイル、同じスキーマを読み書きします（移行時に合成データで双方向の往復を予行演習しました。第 6 節を参照）。v0.5 からはスキーマに新しいテーブルと列が加わったため、v0.5 から戻すには、移行前に書き出されたコピーを元に戻します（第 1.4 節）。
-3. **旧実装は失われていません。** 旧コードは Git タグ `python-v0.2` にあり、旧イメージ `ghcr.io/yumin-space/xexam:v0.2.2`（および `:v0.2`、`:v0.2.1`）も引き続き GHCR にあって、新しいパイプラインで上書きされることはありません。リポジトリのメインブランチに Python コードはもうありません。
+3. **旧実装は失われていません。** 旧コードは Git タグ `python-v0.2` にあり、旧イメージ `ghcr.io/yumin-space/xexam:v0.2.2`（および `:v0.2`、`:v0.2.1`）も引き続き GHCR にあって（非公開なので、pull するには `docker login ghcr.io` が必要です。Docker Hub にはありません）、新しいパイプラインで上書きされることはありません。リポジトリのメインブランチに Python コードはもうありません。
 
 ## 3. Python から Rust へ：アップグレード前チェックリスト
 
@@ -143,7 +143,7 @@ docker compose stop
 #    削除しないと、旧コンテナが「孤児」としてプロジェクトに残り、そのポートマッピングが 8765 を占有したままになるため、新しい xexam-frontend がポートの競合で起動できません。
 docker rm xexam
 
-# 3. 新しい docker-compose.yml（サービスが 2 つになります）に差し替え、pull して起動（同じボリューム xexam_data、同じポート）
+# 3. 新しい docker-compose.yml（サービスが 2 つになり、ログインなしで Docker Hub から pull します）に差し替え、pull して起動（同じボリューム xexam_data、同じポート）
 docker compose pull
 docker compose up -d
 
@@ -157,10 +157,10 @@ Python 版から v0.5 へ直接アップグレードする場合も、第 1 節�
 
 アップグレード後の確認：
 
-- [ ] `/api/info` の `version` がインストールしたバージョン（現在は `0.5`）で、`bankCount` がアップグレード前と同じ。
+- [ ] `/api/info` の `version` がインストールしたバージョン（現在は `0.5.1`）で、`bankCount` がアップグレード前と同じ。
 - [ ] 問題数、間違いノートの問題数、成績履歴がアップグレード前と同じ。
 - [ ] 適当に数問解いて提出し、成績が履歴に表示される。
-- [ ] （任意）同じ Excel ファイルをもう一度アップロードする（v0.5 以降は **既存の問題集を更新・置き換える** を選び、1 つしかない問題集を指定します）：プレビューに「追加 0、更新 0、出題停止 0」と表示されるはずです。これは、新旧のパーサーが同じ問題群に対して**同一の問題 id** を算出することの証明になります。ここで「出題停止 + 追加」が大量に出たら、**キャンセルして直ちにロールバック**してください（第 5 節）。
+- [ ] （任意）同じ Excel ファイルをもう一度アップロードする（v0.5 以降は **既存を更新** を選び、1 つしかない問題集を指定します）：プレビューには追加・更新・出題停止の問題がなく（数が 0 のチップは表示されません）、このファイルの問題は現在の問題とまったく同じで取り込む必要はない、と表示されるはずです。これは、新旧のパーサーが同じ問題群に対して**同一の問題 id** を算出することの証明になります。ここで「出題停止 + 追加」が大量に出たら、**キャンセルして直ちにロールバック**してください（第 5 節）。
 
 > ⚠️ 新旧バージョンのプロジェクト名（`xexam`）、ボリューム（`xexam_data`）、ポートはすべて同じなので、**同時に実行できません**。旧バージョンのコンテナ名は `xexam`、新バージョンは `xexam-frontend` と `xexam-backend` です。そのため、アップグレード時には上の手順 2 のように旧コンテナを削除する必要があります。
 
@@ -172,7 +172,7 @@ Python 版に戻すことができます。旧バージョンの compose ファ�
 # 1. 新バージョンを停止（down -v は実行しない）
 docker compose stop
 
-# 2. 旧バージョンの compose ファイルを取り出して、旧バージョンを起動（ghcr.io/yumin-space/xexam:latest を pull します。バージョンを固定したい場合は :latest を :v0.2.2 に書き換えてください）
+# 2. 旧バージョンの compose ファイルを取り出して、旧バージョンを起動（非公開の GHCR から ghcr.io/yumin-space/xexam:latest を pull するので、先に docker login ghcr.io を実行します。バージョンを固定したい場合は :latest を :v0.2.2 に書き換えてください）
 git show python-v0.2:docker-compose.yml > docker-compose.legacy.yml
 docker compose -f docker-compose.legacy.yml up -d
 ```

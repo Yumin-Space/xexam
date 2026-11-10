@@ -126,7 +126,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 | `backend` | fmt、clippy、181 件のテスト、および `progress.json` の移行チェック |
 | `stack` | `xexam-frontend` イメージをビルドして 38 項目の Nginx チェックを実行。compose スタック全体を起動して 34 項目のエンドツーエンドチェックを実行 |
 | `arm64` | 2 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と正しいバージョンを返すことを確認 |
-| `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）を ghcr.io にプッシュし、マニフェストとタグを検証 |
+| `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）を同じタグで Docker Hub（`docker.io/yuminspace/`、公開。`docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
 | `release` | `main` のみ：`v<VERSION>` の GitHub Release を作成（または更新）。リリースノートは `README.md` の更新履歴から取る |
 
 `dev` へのプッシュと `main` へのプルリクエストでは最初の 5 つのジョブだけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
@@ -142,7 +142,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 ## 9. バージョン、更新履歴、ライセンス
 
-- バージョン番号の唯一の情報源は、リポジトリのルートにある `VERSION`（`0.5`）です。`backend/Cargo.toml` と `frontend/package.json` にもそれぞれコピー（`0.5.0`）があり、CI が一致を確認します。
+- バージョン番号の唯一の情報源は、リポジトリのルートにある `VERSION`（`0.5.1`）です。`backend/Cargo.toml` と `frontend/package.json` にもそれぞれコピー（`0.5.1`）があり、CI が一致を確認します。
 - 更新するたびに、3 つの README（`README.md`、`README.ja.md`、`README.zh-CN.md`）すべての更新履歴の一番上に項目を 1 つ追加し、バージョン番号を `VERSION` と一致させます。CI がこれを確認します（各 README で最初に `### v` と数字で始まる行を読みます）。GitHub Release のノートは英語版から取ります。
 - 同じ更新履歴は、「Xexam について」のページにも表示言語ごとに表示されます（ビルド時に組み込みます。3 節）。そのため、項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、行頭を 2 文字下げた `- ` による入れ子の箇条書き、`**太字**`、インラインコード。リポジトリ内への相対リンクは、このページでは文字として表示されます。見出しは `### vX.Y — 日付` の形にします。
 - 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。

@@ -35,14 +35,14 @@ What else you will notice:
 
 ### 1.2 Upgrade
 
-Nothing changes in `docker-compose.yml`, `.env`, the port or the volume (see section 6 of [deployment.md](deployment.md)).
+Nothing changes in `.env`, the port or the volume (see section 6 of [deployment.md](deployment.md)). Only the image source in `docker-compose.yml` is new since v0.5.1: it pulls from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`. Replace your `docker-compose.yml` with the new one, or change its two `image:` lines to `docker.io/yuminspace/xexam-backend:latest` and `docker.io/yuminspace/xexam-frontend:latest`. The project name and the volume `xexam_data` are unchanged, so your data stays.
 
 ```bash
 # 1. Back up the volume (stop first; the backup file holds your whole database, do not commit it)
 docker compose stop
 docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v04.tgz -C /data .
 
-# 2. Pull v0.5 and start (do not use down -v)
+# 2. With the new docker-compose.yml in place (Docker Hub images), pull v0.5 and start (do not use down -v)
 docker compose pull
 docker compose up -d
 
@@ -56,10 +56,10 @@ For a source build: `git pull && docker compose -f docker-compose.build.yml up -
 
 ### 1.3 Checks after the upgrade
 
-- [ ] `version` in `/api/info` is `0.5`, and `bankCount` (the number of active questions) is the same as before.
+- [ ] `version` in `/api/info` is `0.5.1`, and `bankCount` (the number of active questions) is the same as before.
 - [ ] **Question banks** lists one bank with all your sheets and the same number of questions as before.
 - [ ] **Study records** lists your earlier exams, and **Study records → Wrong-answer review** has the same number of questions as the wrong-answer notebook had before.
-- [ ] (Optional) Choose **Update / replace an existing bank**, pick that bank and upload the same Excel file as last time. The preview should say that the file has exactly the same questions and there is nothing to import. Then cancel. This proves the question ids did not change.
+- [ ] (Optional) Choose **Update a bank**, pick that bank and upload the same Excel file as last time. The preview should say that the file has exactly the same questions and there is nothing to import. Then cancel. This proves the question ids did not change.
 - [ ] Answer a few questions and submit. The new record shows each question with your answer.
 
 ### 1.4 Rollback to v0.4
@@ -76,7 +76,7 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 # 3. Put the copy back as xexam.db (use the file name from step 2)
 docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-20261110-140501.db /data/xexam.db
 
-# 4. In docker-compose.yml, change the two image tags from :latest to :v0.4
+# 4. v0.4 is only on the private GHCR mirror (Docker Hub starts with v0.5.1): run docker login ghcr.io, then set the two images in docker-compose.yml to
 #      image: ghcr.io/yumin-space/xexam-backend:v0.4
 #      image: ghcr.io/yumin-space/xexam-frontend:v0.4
 docker compose up -d
@@ -88,7 +88,7 @@ Instead of step 3 you can also restore your own `.tgz` from section 1.2 (the res
 
 **Do not run v0.4 on the migrated database** instead of restoring the copy, at least not once you have more than one bank. v0.4 can open the file, but it sees all banks as one: its next import would deactivate the questions of every other bank, and it cuts the exam records back to 60. If it happens anyway, v0.5 attaches the questions v0.4 added to the legacy bank at its next start (section 6.2 of [database.md](database.md)).
 
-To upgrade again later, switch the image tags back to `:latest` and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy.
+To upgrade again later, put the new `docker-compose.yml` back (Docker Hub images, tag `:latest`) and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy.
 
 ### 1.5 What has been tested
 
@@ -106,7 +106,7 @@ Not tested: a migration of **your own** database. Do it on a copy first if you w
 
 1. **Never touch the original.** Back up first, try on a copy first, and switch only after you have confirmed everything is fine.
 2. **You could always go back.** Up to v0.4 both implementations read and write the same file with the same schema (a round trip in both directions was rehearsed with synthetic data during the migration, see section 6). Since v0.5 the schema has new tables and columns; going back from v0.5 means restoring the copy written before the migration (section 1.4).
-3. **The old implementation is not lost.** The old code is at the Git tag `python-v0.2`; the old image `ghcr.io/yumin-space/xexam:v0.2.2` (along with `:v0.2` and `:v0.2.1`) is still on GHCR and will not be overwritten by the new pipeline. The repository's main branch no longer contains any Python code.
+3. **The old implementation is not lost.** The old code is at the Git tag `python-v0.2`; the old image `ghcr.io/yumin-space/xexam:v0.2.2` (along with `:v0.2` and `:v0.2.1`) is still on GHCR (private: `docker login ghcr.io` to pull it; it is not on Docker Hub) and will not be overwritten by the new pipeline. The repository's main branch no longer contains any Python code.
 
 ## 3. Python to Rust: pre-upgrade checklist
 
@@ -143,7 +143,7 @@ docker compose stop
 #    If you do not remove it, the old container stays in the project as an "orphan", and its port mapping still holds 8765, so the new xexam-frontend cannot start because of the port conflict.
 docker rm xexam
 
-# 3. Put the new docker-compose.yml in place (it now has two services), then pull and start (same volume xexam_data, same port)
+# 3. Put the new docker-compose.yml in place (it now has two services, pulled from Docker Hub without login), then pull and start (same volume xexam_data, same port)
 docker compose pull
 docker compose up -d
 
@@ -157,10 +157,10 @@ Upgrading from Python straight to v0.5 also runs the schema-v2 migration of sect
 
 Checks after the upgrade:
 
-- [ ] `version` in `/api/info` is the version you installed (`0.5` today), and `bankCount` is the same as before the upgrade.
+- [ ] `version` in `/api/info` is the version you installed (`0.5.1` today), and `bankCount` is the same as before the upgrade.
 - [ ] The question count, the question count in the wrong-answer notebook and the score history are the same as before the upgrade.
 - [ ] Answer a few questions and submit; the score appears in the history.
-- [ ] (Optional) Upload the same Excel file again (since v0.5: **Update / replace an existing bank**, the one bank you have): the preview should show 0 added, 0 updated, 0 retired. This proves that the old and new parsers compute the **same question ids** for the same set of questions. If it shows a large number of "retired + added" entries instead, **cancel and roll back immediately** (section 5).
+- [ ] (Optional) Upload the same Excel file again (since v0.5: **Update a bank**, the one bank you have): the preview should show no added, updated or retired questions (chips with a count of 0 are hidden) and say that the file has exactly the same questions, so there is nothing to import. This proves that the old and new parsers compute the **same question ids** for the same set of questions. If it shows a large number of "retired + added" entries instead, **cancel and roll back immediately** (section 5).
 
 > ⚠️ The old and new versions use the same project name (`xexam`), the same volume (`xexam_data`) and the same port, so they **cannot run at the same time**. The old version's container is named `xexam`, while the new version's are `xexam-frontend` and `xexam-backend`, so during the upgrade you have to remove the old container as in step 2 above.
 
@@ -172,7 +172,7 @@ You can go back to the Python version. The old version's compose file is no long
 # 1. Stop the new version (do not use down -v)
 docker compose stop
 
-# 2. Get the old version's compose file and start the old version (it pulls ghcr.io/yumin-space/xexam:latest; to pin a version, change :latest to :v0.2.2)
+# 2. Get the old version's compose file and start the old version (it pulls ghcr.io/yumin-space/xexam:latest from the private GHCR, so run docker login ghcr.io first; to pin a version, change :latest to :v0.2.2)
 git show python-v0.2:docker-compose.yml > docker-compose.legacy.yml
 docker compose -f docker-compose.legacy.yml up -d
 ```

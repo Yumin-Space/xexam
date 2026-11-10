@@ -399,7 +399,7 @@ function detailView(d: RecordDetail): HTMLElement {
   const hasDetail = rec.detail && items.length > 0;
 
   const pair = (label: string, value: string): HTMLElement[] => [h('dt', null, label), h('dd', null, value)];
-  const meta = h('dl', { class: 'rec-meta' },
+  const meta = h('dl', { class: 'rec-meta props' },
     pair(t('records.detail.time'), rec.at),
     pair(t('records.detail.banks'), recordBankNames(rec.banks)),
     rec.sheets.length ? pair(t('records.detail.sheets'), rec.sheets.join(t('common.listSep'))) : null,

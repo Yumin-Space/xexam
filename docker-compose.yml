@@ -1,7 +1,7 @@
-# Xexam — run the two images that GitHub builds automatically, pulled directly.
+# Xexam — run the two images that GitHub builds automatically, pulled directly from Docker Hub (public, no login needed).
 # On any machine, you only need this one file:
-#     docker login ghcr.io -u Yumin-Space      (first time only; the images are private, use a token with read:packages permission as the password)
 #     docker compose up -d
+# (The same images are also on ghcr.io/yumin-space as a private mirror; that one needs docker login ghcr.io first.)
 # Then open http://localhost:8765 in a browser
 #
 #   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point)
@@ -24,7 +24,7 @@ name: xexam                          # Compose project name: pinned so it is the
 
 services:
   backend:
-    image: ghcr.io/yumin-space/xexam-backend:latest
+    image: docker.io/yuminspace/xexam-backend:latest
     container_name: xexam-backend
     restart: unless-stopped
     environment:
@@ -45,7 +45,7 @@ services:
     tmpfs: ["/tmp"]
 
   frontend:
-    image: ghcr.io/yumin-space/xexam-frontend:latest
+    image: docker.io/yuminspace/xexam-frontend:latest
     container_name: xexam-frontend
     restart: unless-stopped
     depends_on:

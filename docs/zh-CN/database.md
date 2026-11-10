@@ -190,7 +190,7 @@ v0.4 和旧 Python 版仍然能打开 v2 的文件：新列都可以为空或有
 
 ### 6.3 与旧 Python 实现的兼容性
 
-到 v0.4 为止，两个实现用的是**同一个文件、同一份 schema**。当初用合成数据把这个往返演练过一遍（旧 Python 建库 → Rust 读写 → 旧 Python 回读，原件的 sha256 前后不变，`PRAGMA integrity_check` 通过）。旧 Python 代码移除之后，剩下的保证由测试继续守着：`sample.db`（旧实现写出的库）迁移到 schema v2 后，每个题目 id、每项答题统计、每条考试记录和每次导入都保留；它的备份仍然报告 schema 1，行和原来完全一样；迁移后的文件之后再打开、读取、关闭，一个字节都不变；新建库的 `sqlite_master` 是旧实现的文本加上 v2 增加的部分。要真正回退到 Python 版，先恢复备份（6.2），再用旧镜像（`ghcr.io/yumin-space/xexam:v0.2.2`）打开它。
+到 v0.4 为止，两个实现用的是**同一个文件、同一份 schema**。当初用合成数据把这个往返演练过一遍（旧 Python 建库 → Rust 读写 → 旧 Python 回读，原件的 sha256 前后不变，`PRAGMA integrity_check` 通过）。旧 Python 代码移除之后，剩下的保证由测试继续守着：`sample.db`（旧实现写出的库）迁移到 schema v2 后，每个题目 id、每项答题统计、每条考试记录和每次导入都保留；它的备份仍然报告 schema 1，行和原来完全一样；迁移后的文件之后再打开、读取、关闭，一个字节都不变；新建库的 `sqlite_master` 是旧实现的文本加上 v2 增加的部分。要真正回退到 Python 版，先恢复备份（6.2），再用旧镜像（`ghcr.io/yumin-space/xexam:v0.2.2`，只在私有的 GHCR 上，所以要先 `docker login ghcr.io`）打开它。
 
 ## 7. 旧的 `progress.json`
 

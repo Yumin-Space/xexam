@@ -67,7 +67,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.5", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.5.1", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
 `bankCount` is the number of active questions. The version number comes from the `VERSION` file.
 

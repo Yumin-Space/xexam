@@ -53,7 +53,7 @@ type Fact = [label: string, value: Child, cls?: string];
 
 /** A small label / value list */
 function facts(rows: Array<Fact | null>): HTMLDListElement {
-  return h('dl', { class: 'home-facts' }, rows.map((r) => (r ? [h('dt', null, r[0]), h('dd', { class: r[2] }, r[1])] : null)));
+  return h('dl', { class: 'home-facts props' }, rows.map((r) => (r ? [h('dt', null, r[0]), h('dd', { class: r[2] }, r[1])] : null)));
 }
 
 /** Wrong-notebook count chip (nothing when zero) */
@@ -62,6 +62,9 @@ function notebookChip(n: number): HTMLElement | null {
 }
 
 // ---------------------------------------------------------------- unfinished exam
+
+/** The small clock at the left of the unfinished-exam banner */
+const ICON_RESUME = [{ cx: 12, cy: 12, r: 8.5 }, { d: 'M12 7.5V12l3 2' }];
 
 async function discardSaved(): Promise<void> {
   const yes = await ask({
@@ -87,6 +90,7 @@ function resumeCard(): HTMLElement | null {
     t('home.resume.progress', { answered: sv.answered, total: sv.qs.length, time: fmtTime(sv.elapsed) }),
   ].filter(Boolean).join(' · ');
   return h('section', { class: 'resume home-resume', 'aria-labelledby': 'home-resume-h' },
+    icon(ICON_RESUME, 'ico rs-ico'),
     h('div', { class: 'rs-text' },
       h('div', { class: 'rs-head' }, h('h2', { id: 'home-resume-h' }, t('home.resume.title')), h('span', { class: 'rs-where' }, t('home.resume.lead'))),
       h('p', { class: 'rs-meta num' }, meta),

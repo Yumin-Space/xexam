@@ -126,7 +126,7 @@ There is only one pipeline: [`.github/workflows/ci.yml`](../../.github/workflows
 | `backend` | fmt, clippy, 181 tests, and the `progress.json` migration check |
 | `stack` | Builds the `xexam-frontend` image and runs 38 Nginx checks; starts the full compose stack and runs 34 end-to-end checks |
 | `arm64` | Builds both images for arm64, starts them under QEMU, and checks that `/api/info` reports `aarch64` and the right version |
-| `publish` | `main` only: pushes both images (amd64 + arm64) to ghcr.io and verifies the manifest and tags |
+| `publish` | `main` only: pushes both images (amd64 + arm64) with the same tags to Docker Hub (`docker.io/yuminspace/`, public, what `docker-compose.yml` pulls) and to ghcr.io (private mirror), and verifies the manifest and tags on both. Needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (optionally the variable `DOCKERHUB_NAMESPACE`); without them it stops before pushing anything |
 | `release` | `main` only: creates (or updates) the GitHub Release for `v<VERSION>`, with the notes taken from the changelog in `README.md` |
 
 Pushes to `dev` and pull requests into `main` run only the first five jobs and **never publish**; only a push to `main` does. A run started by hand behaves like a push to the branch it runs on.
@@ -142,7 +142,7 @@ Pushes to `dev` and pull requests into `main` run only the first five jobs and *
 
 ## 9. Version, changelog and licence
 
-- The single source of truth for the version number is `VERSION` in the repository root (`0.5`). `backend/Cargo.toml` and `frontend/package.json` each hold a copy (`0.5.0`); CI checks that they match.
+- The single source of truth for the version number is `VERSION` in the repository root (`0.5.1`). `backend/Cargo.toml` and `frontend/package.json` each hold a copy (`0.5.1`); CI checks that they match.
 - Every update adds an entry at the very top of the changelog in all three READMEs (`README.md`, `README.ja.md`, `README.zh-CN.md`), with a version number that matches `VERSION`. CI checks this. The GitHub Release notes are taken from the English one.
 - The About page of the app shows these changelogs, built into the frontend (section 3). Keep the entries in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``; links to files in the repository are shown there as plain text. A changed changelog appears in the app only after the frontend is built again.
 - Work happens on `dev`; `main` receives the merge, and a push to `main` publishes the images and the Release.

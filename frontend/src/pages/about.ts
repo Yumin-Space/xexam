@@ -86,7 +86,7 @@ function news(): HTMLElement {
 }
 
 export function renderAbout(): HTMLElement {
-  const facts = h('dl', { class: 'ab-facts' },
+  const facts = h('dl', { class: 'ab-facts props' },
     h('dt', null, t('about.version')), h('dd', { class: 'num' }, S.info.version ? 'v' + S.info.version : '—'),
     S.info.arch ? [h('dt', null, t('about.server')), h('dd', { class: 'num' }, S.info.arch)] : null,
     h('dt', null, t('about.license')), h('dd', null, t('about.licenseValue')));

@@ -35,14 +35,14 @@ v0.5 在你的数据卷上**第一次启动**时，后端在接受任何请求�
 
 ### 1.2 升级
 
-`docker-compose.yml`、`.env`、端口和卷都不用改（见 [deployment.md](deployment.md) 第 6 节）。
+`.env`、端口和卷都不用改（见 [deployment.md](deployment.md) 第 6 节）。从 v0.5.1 起，只有 `docker-compose.yml` 里的镜像来源是新的：它从 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录）拉取，不再从 `ghcr.io` 拉取。把你的 `docker-compose.yml` 换成新的那份，或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`。项目名和卷 `xexam_data` 都不变，所以数据还在。
 
 ```bash
 # 1. 备份数据卷（先停止；备份文件里是你的整个数据库，不要提交）
 docker compose stop
 docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v04.tgz -C /data .
 
-# 2. 拉取 v0.5 并启动（不要用 down -v）
+# 2. 换上新的 docker-compose.yml（Docker Hub 上的镜像）后，拉取 v0.5 并启动（不要用 down -v）
 docker compose pull
 docker compose up -d
 
@@ -56,10 +56,10 @@ docker compose logs backend
 
 ### 1.3 升级后核对
 
-- [ ] `/api/info` 的 `version` 是 `0.5`，`bankCount`（上架的题数）和升级前一样。
+- [ ] `/api/info` 的 `version` 是 `0.5.1`，`bankCount`（上架的题数）和升级前一样。
 - [ ] **Question banks**（题库管理）里列出一个题库，包含你所有的工作表，题数和升级前一样。
 - [ ] **Study records**（学习记录）里列出你以前的考试，**Study records → Wrong-answer review**（学习记录 → 错题复习）里的题数和以前错题本里的一样。
-- [ ] （可选）选 **Update / replace an existing bank**（更新 / 替换已有题库），选中这个题库，上传和上次相同的 Excel 文件。预览应该提示这份文件的题目和现在完全一样，不需要导入。然后取消。这证明题目 id 没有变。
+- [ ] （可选）选 **Update a bank**（更新已有题库），选中这个题库，上传和上次相同的 Excel 文件。预览应该提示这份文件的题目和现在完全一样，不需要导入。然后取消。这证明题目 id 没有变。
 - [ ] 答几道题并交卷。新的记录里能看到每道题和你的答案。
 
 ### 1.4 回滚到 v0.4
@@ -76,7 +76,7 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 # 3. 把副本放回去，作为 xexam.db（文件名用第 2 步看到的）
 docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-20261110-140501.db /data/xexam.db
 
-# 4. 在 docker-compose.yml 里，把两个镜像标签从 :latest 改成 :v0.4
+# 4. v0.4 只在私有的 GHCR 镜像副本上（Docker Hub 从 v0.5.1 开始才有）：先 docker login ghcr.io，再把 docker-compose.yml 里的两个镜像改成
 #      image: ghcr.io/yumin-space/xexam-backend:v0.4
 #      image: ghcr.io/yumin-space/xexam-frontend:v0.4
 docker compose up -d
@@ -88,7 +88,7 @@ docker compose up -d
 
 **不要跳过恢复副本这一步、直接在迁移后的数据库上运行 v0.4**，至少在你有不止一个题库之后不要这样做。v0.4 能打开这个文件，但会把所有题库当成一个：它的下一次导入会把其他所有题库的题都下架，而且会把考试记录删减回 60 条。如果已经这样做了，v0.5 下次启动时会把 v0.4 新加的题归到 legacy 题库里（[database.md](database.md) 第 6.2 节）。
 
-以后要再升级，把镜像标签改回 `:latest`，然后运行 `docker compose pull && docker compose up -d`。迁移会再执行一次，并写一份新的副本。
+以后要再升级，把新的 `docker-compose.yml` 放回去（Docker Hub 上的镜像，标签 `:latest`），然后运行 `docker compose pull && docker compose up -d`。迁移会再执行一次，并写一份新的副本。
 
 ### 1.5 测试过什么
 
@@ -106,7 +106,7 @@ docker compose up -d
 
 1. **不碰原件。** 先备份，先在副本上试，确认没问题再切。
 2. **随时能回去。** 到 v0.4 为止，两个实现读写同一个文件、同一份 schema（迁移时用合成数据演练过双向往返，见第 6 节）。从 v0.5 起 schema 多了新的表和列；要从 v0.5 回去，就得恢复迁移前写下的副本（第 1.4 节）。
-3. **旧实现没有丢。** 旧代码在 Git 标签 `python-v0.2`；旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2`（以及 `:v0.2`、`:v0.2.1`）仍在 GHCR，不会被新流程覆盖。仓库的主干上已经没有 Python 代码。
+3. **旧实现没有丢。** 旧代码在 Git 标签 `python-v0.2`；旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2`（以及 `:v0.2`、`:v0.2.1`）仍在 GHCR（私有：要先 `docker login ghcr.io` 才能拉取；Docker Hub 上没有它），不会被新流程覆盖。仓库的主干上已经没有 Python 代码。
 
 ## 3. 从 Python 到 Rust：升级前清单
 
@@ -143,7 +143,7 @@ docker compose stop
 #    如果不删，旧容器会留在项目里成为「孤儿」，而且它的端口映射还占着 8765，新的 xexam-frontend 会因端口冲突起不来。
 docker rm xexam
 
-# 3. 换上新的 docker-compose.yml（现在有两个服务），拉取并启动（同一个卷 xexam_data、同一个端口）
+# 3. 换上新的 docker-compose.yml（现在有两个服务，不用登录就能从 Docker Hub 拉取），拉取并启动（同一个卷 xexam_data、同一个端口）
 docker compose pull
 docker compose up -d
 
@@ -157,10 +157,10 @@ docker compose ps
 
 升级后核对：
 
-- [ ] `/api/info` 的 `version` 是你安装的版本（目前是 `0.5`），`bankCount` 和升级前一样。
+- [ ] `/api/info` 的 `version` 是你安装的版本（目前是 `0.5.1`），`bankCount` 和升级前一样。
 - [ ] 题数、错题本里的题数、成绩历史都和升级前一样。
 - [ ] 随便答几道题、交卷，成绩出现在历史里。
-- [ ] （可选）再上传一次同一份 Excel（从 v0.5 起：选 **Update / replace an existing bank**（更新 / 替换已有题库），目标就是你唯一的那个题库）：预览应该显示「新增 0、更新 0、下架 0」——这证明新旧解析器给同一批题算出了**相同的题目 id**。如果这里出现大量「下架 + 新增」，**立刻取消并回滚**（第 5 节）。
+- [ ] （可选）再上传一次同一份 Excel（从 v0.5 起：选 **Update a bank**（更新已有题库），目标就是你唯一的那个题库）：预览里应该没有新增、更新或下架的题（数字为 0 的小标签不显示），而是提示这份文件的题目和现在完全一样、不需要导入——这证明新旧解析器给同一批题算出了**相同的题目 id**。如果这里出现大量「下架 + 新增」，**立刻取消并回滚**（第 5 节）。
 
 > ⚠️ 新旧版的项目名（`xexam`）、卷（`xexam_data`）和端口都相同，所以**不能同时运行**。旧版的容器名是 `xexam`，新版是 `xexam-frontend` 和 `xexam-backend`，所以升级时要像上面第 2 步那样把旧容器删掉。
 
@@ -172,7 +172,7 @@ docker compose ps
 # 1. 停新版（不要 down -v）
 docker compose stop
 
-# 2. 取出旧版的 compose 文件，起旧版（它拉取 ghcr.io/yumin-space/xexam:latest，如需固定版本请把 :latest 改成 :v0.2.2）
+# 2. 取出旧版的 compose 文件，起旧版（它从私有的 GHCR 拉取 ghcr.io/yumin-space/xexam:latest，所以先 docker login ghcr.io；如需固定版本请把 :latest 改成 :v0.2.2）
 git show python-v0.2:docker-compose.yml > docker-compose.legacy.yml
 docker compose -f docker-compose.legacy.yml up -d
 ```

@@ -67,7 +67,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.5", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.5.1", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
 `bankCount` 是上架的题数。版本号来自 `VERSION` 文件。
 

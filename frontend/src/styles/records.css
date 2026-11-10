@@ -1,5 +1,6 @@
 /* Area "records": study-record list, exam detail, wrong-answer review, the result page and the shared review cards
-   (components/review.ts). Builds on the shared classes in main.css. Colours: tokens only (light and dark themes). */
+   (components/review.ts). Builds on the shared layer in main.css (soft blocks, tags, callouts, the property list .props,
+   the segmented control .seg, the form-field base). Colours: tokens only (light and dark themes). */
 
 /* `hidden` must win over the display of .btn / flex helpers */
 .page-records [hidden], .page-result [hidden] { display: none !important; }
@@ -7,101 +8,124 @@
 .rec-back { padding-inline: 10px 14px; }
 .rec-back span { font-size: 1.1em; line-height: 1; }
 
-/* ---------- Summary ---------- */
+/* ---------- Overview: soft tiles (three numbers, then the latest results as small bars) ---------- */
 .rec-scope { margin: -10px 0 16px; font-size: 13.5px; color: var(--ink3); }
-.rec-sum-grid {
-  display: grid; grid-template-columns: repeat(3, minmax(0, max-content)) minmax(160px, 1fr);
-  gap: 16px 40px; align-items: end;
+.rec-sum-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.6fr); gap: 12px; }
+.rec-kpi, .rec-chart {
+  display: grid; align-content: space-between; gap: 6px; min-width: 0;
+  padding: 12px 14px; border-radius: 8px; background: var(--fill);
 }
-.rec-kpi { display: grid; gap: 6px; min-width: 0; }
-.rec-kpi b { font: 700 36px/1 var(--num), var(--en); color: var(--ink); }
-.rec-kpi span { font-size: 13px; color: var(--ink3); }
-.rec-chart { display: grid; gap: 6px; min-width: 0; }
-.rec-chart .bars { height: 56px; margin: 0; }
-.rec-chart span { font-size: 13px; color: var(--ink3); }
+.rec-kpi b { font: 700 26px/1.1 var(--num), var(--en); color: var(--ink); }
+.rec-kpi span, .rec-chart span { font-size: 13px; line-height: 1.45; color: var(--ink2); overflow-wrap: anywhere; }
+/* One series, oldest first: thin bars with a rounded top, standing on the baseline */
+.rec-chart .bars { height: 32px; margin: 0; gap: 4px; }
+.rec-chart .bars i { max-width: 10px; border-radius: 2px 2px 0 0; }
 
-/* ---------- Filters ---------- */
+/* ---------- Filters: calm form fields (border, radius and focus ring come from the form base in main.css) ---------- */
 .rec-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px 16px; }
-.rec-field { display: grid; gap: 4px; min-width: 0; }
-.rec-field > label { font-size: 13px; font-weight: 600; color: var(--ink2); }
-.rec-field select, .rec-field input {
-  width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px;
-  border: 1.5px solid var(--line); border-radius: 4px; background: var(--card); color: var(--ink);
+.rec-field { display: grid; gap: 6px; min-width: 0; }
+.rec-field > label { font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--ink2); }
+/* A fixed height: a date field is taller than a select by nature, and the four sit in one row */
+.rec-field select, .rec-field input { width: 100%; min-width: 0; height: 36px; padding: 4px 10px; font-size: 14.5px; }
+@media (hover: hover) { .rec-field select:hover:not(:focus), .rec-field input:hover:not(:focus) { border-color: var(--ink3); } }
+/* "From" after "To": a small red callout under the fields */
+.rec-warn {
+  max-width: max-content; margin-top: 12px; padding: 6px 12px; border-radius: 8px;
+  background: var(--wrong-soft); color: var(--wrong); font-size: 13.5px; font-weight: 500;
 }
-@media (hover: hover) { .rec-field select:hover, .rec-field input:hover { border-color: var(--ink3); } }
-.rec-warn { margin-top: 10px; font-size: 13.5px; color: var(--wrong); font-weight: 600; }
-.rec-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 14px; }
-.rec-count { font-size: 14px; color: var(--ink2); }
+.rec-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; }
+.rec-count { font-size: 13.5px; color: var(--ink3); }
 
-/* ---------- Record table (cards on narrow screens) ---------- */
-.rec-scroll { overflow-x: auto; }
-.rec-table { width: 100%; border-collapse: collapse; font-size: 14.5px; }
-.rec-table th {
-  text-align: left; padding: 8px 10px; font-size: 13px; font-weight: 600; color: var(--ink3);
-  border-bottom: 1.5px solid var(--line); white-space: nowrap;
+/* ---------- Record list: hairline rows with a soft hover (soft cards on narrow screens) ---------- */
+/* The rows reach 10px into the block's padding, so the text lines up with the heading and the hover fill has room */
+.rec-scroll { overflow-x: auto; margin: 0 -10px; }
+/* Row hover: the sheet grey in the light theme (the usual --hover fill would take the red accuracy to 4.45:1),
+   the usual hover fill in the dark theme */
+.rec-table { width: 100%; border-collapse: collapse; font-size: 14.5px; --rec-row-hover: var(--sheet); }
+:root[data-theme="dark"] .rec-table { --rec-row-hover: var(--hover); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .rec-table { --rec-row-hover: var(--hover); }
 }
-.rec-table td { padding: 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-.rec-table tbody tr { cursor: pointer; }
-@media (hover: hover) { .rec-table tbody tr:hover { background: var(--tint); } }
+.rec-table th {
+  text-align: left; padding: 6px 10px; font-size: 12.5px; font-weight: 600; color: var(--ink3);
+  border-bottom: 1px solid var(--line-soft); white-space: nowrap;
+}
+/* Microsoft YaHei has no semibold: its bold would make the small grey headings heavy */
+html:lang(zh-CN) .rec-table th { font-weight: 400; }
+.rec-table td { padding: 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
+.rec-table tbody tr { cursor: pointer; transition: background-color .12s ease; }
+@media (hover: hover) { .rec-table tbody tr:hover { background: var(--rec-row-hover); } }
 .rec-table tbody tr:last-child td { border-bottom: 0; }
 .rec-time { white-space: nowrap; }
-.rec-time a { color: var(--print); font-weight: 600; text-decoration: none; }
+.rec-time a { color: var(--print); font-weight: 600; text-decoration: none; border-radius: 4px; }
 .rec-time a:hover { text-decoration: underline; color: var(--print); }
 .rec-banks { overflow-wrap: anywhere; min-width: 8em; }
 .rec-mode { display: block; font-size: 12.5px; color: var(--ink3); }
 .rec-table td.num { white-space: nowrap; }
-.rec-pct { font-weight: 700; font-size: 16px; }
+.rec-pct { font-weight: 600; font-size: 16px; }
 .rec-pct.hi { color: var(--right); }
 .rec-pct.lo { color: var(--wrong); }
 .rec-act { text-align: right; }
+/* "Delete": red text with a soft red hover. In the list it stays a quiet grey until its row is hovered or it has the
+   focus, so a column of red words does not shout (the dialog still asks before anything is deleted). */
 .btn.rec-del { color: var(--wrong); }
-@media (hover: hover) { .btn.rec-del:hover:not(:disabled) { background: var(--wrong-soft); } }
+@media (hover: hover) { .btn.rec-del:hover:not(:disabled) { background: var(--wrong-soft); color: var(--wrong); } }
+.rec-table .btn.rec-del { color: var(--ink3); }
+@media (hover: hover) { .rec-table tbody tr:hover .btn.rec-del:not(:disabled) { color: var(--wrong); } }
+.rec-table .btn.rec-del:focus-visible { color: var(--wrong); }
 .rec-nomatch { display: grid; justify-items: start; gap: 12px; }
-.rec-retention { margin-top: 16px; font-size: 13.5px; }
+.rec-retention { margin-top: 16px; font-size: 13px; }
 /* Retention note and the rarely used "Delete all" at the end of the list page */
 .rec-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; }
 .rec-foot .rec-retention { flex: 1 1 20em; margin-top: 0; }
 
-@media (max-width: 760px) { .rec-listpanel { padding: 18px 12px; } }
 /* Stacked cards whenever the list is narrower than the table needs (about 630px in English, plus room for longer bank
    names and labels): phones and small tablets up to 760px */
 @media (max-width: 760px) {
+  /* The list block steps back: its heading sits on the sheet and every exam is a soft card of its own (no box in a box) */
+  .rec-listpanel { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+  .rec-listpanel > h2 { margin: 8px 0 10px; }
+  .rec-scroll { overflow-x: visible; margin: 0; }
   .rec-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .rec-table, .rec-table tbody { display: block; }
   /* Row 1: date and accuracy; row 2: banks; row 3: answered, time used, correct and Delete */
   .rec-table tr {
     display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px 12px;
-    margin-bottom: 10px; padding: 12px 14px;
-    border: 1px solid var(--line); border-radius: 6px; background: var(--card);
+    margin-bottom: 8px; padding: 12px 14px;
+    border: 1px solid var(--line-soft); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-xs);
   }
   .rec-table tbody tr:last-child { margin-bottom: 0; }
   .rec-table td { display: block; padding: 0; border: 0; min-width: 0; }
-  .rec-table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 600; color: var(--ink3); }
+  .rec-table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--ink3); }
   .rec-table .rec-time { grid-column: 1 / 4; grid-row: 1; }
   /* The date needs no label, and the whole card is the tap target (no extra padding on the link) */
   .rec-table td.rec-time[data-label]::before { display: none; }
   .rec-table .rec-time a { padding-block: 0; }
-  .rec-table .rec-time a::after { content: "›" / ""; margin-left: 6px; color: var(--ink3); }
+  .rec-table .rec-time a::after { content: "›"; content: "›" / ""; margin-left: 6px; color: var(--ink3); }
   .rec-table .rec-pct { grid-column: 4; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
   .rec-table .rec-banks { grid-column: 1 / -1; min-width: 0; }
   .rec-table .rec-act { grid-column: 4; align-self: end; display: flex; justify-content: flex-end; margin-top: 0; }
+}
+/* A card keeps its own white under the hover fill */
+@media (max-width: 760px) and (hover: hover) {
+  .rec-table tbody tr:hover { background: var(--card); background-image: linear-gradient(var(--rec-row-hover), var(--rec-row-hover)); }
 }
 
 /* ---------- Exam detail ---------- */
 .rec-score { align-items: start; }
 .rec-score .big { padding-top: 6px; }
-.rec-meta { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 12px 0 0; font-size: 14.5px; }
-.rec-meta dt { color: var(--ink3); }
-.rec-meta dd { margin: 0; overflow-wrap: anywhere; }
+/* The facts of the exam: the shared property list (.props), a little apart from the summary line */
+.rec-meta { margin: 14px 0 0; }
 .rec-hints { margin-top: 10px; }
 .score .says .rec-hints p { font-size: 13.5px; color: var(--ink3); }
 .rec-hints p + p { margin-top: 4px; }
-.rec-note { padding: 14px 16px; border: 1px dashed var(--line); border-radius: 6px; background: var(--tint); color: var(--ink2); }
+/* Exams taken before v0.5: a quiet note instead of the review */
+.rec-note { padding: 12px 16px; border-radius: 8px; background: var(--fill); color: var(--ink2); }
 .rec-err-acts { margin-top: 12px; }
 /* "Delete this record": a quiet text button at the end of the row, apart from retry / retake */
 .rec-score .acts .rec-del:not(:first-child) { margin-inline-start: auto; }
 /* Label and value stay side by side on phones too (the labels are short in every language) */
-@media (max-width: 480px) { .rec-meta { grid-template-columns: max-content minmax(0, 1fr); gap: 2px 12px; font-size: 14px; } }
+@media (max-width: 480px) { .rec-meta { gap: 4px 14px; } }
 /* "Retry wrong answers" / "Practise these" again after a long list */
 .wr-foot { margin-top: 20px; }
 
@@ -111,18 +135,18 @@
 
 /* ---------- Wrong-answer review ---------- */
 .wr-intro { max-width: 48em; margin-bottom: 16px; color: var(--ink2); }
-.wr-tools { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 20px; margin-bottom: 18px; }
+.wr-tools { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 20px; margin-bottom: 16px; }
 .wr-tools .rec-field { width: min(320px, 100%); }
-.wr-count { font-weight: 600; color: var(--ink2); }
+.wr-count { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
 .wr-stats p + p { margin-top: 2px; }
 .wr-left { color: var(--print); font-weight: 600; }
 
 /* ---------- Review cards (shared) ---------- */
-.badge.retired { border-color: var(--ink3); color: var(--ink3); background: var(--tint); }
+.badge.retired { color: var(--ink3); background: var(--fill); }
 .rv-src { min-width: 0; overflow-wrap: anywhere; }
 .rv-retired { margin: -8px 0 16px; font-size: 13.5px; color: var(--ink3); }
 .rv:focus { outline: none; }
-.rv:focus-visible .paper { outline: 3px solid var(--print); outline-offset: 2px; }
+.rv:focus-visible .paper { outline: 2px solid var(--print); outline-offset: 2px; }
 .rv-gone .paper { padding-block: 16px; }
 .rv-gone .phead { margin-bottom: 8px; }
 .verdict .vp { display: inline-block; margin-right: 1.5em; }
@@ -135,9 +159,11 @@
 
 /* ---------- Narrow screens ---------- */
 @media (max-width: 640px) {
-  .rec-sum-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .rec-sum-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
   .rec-chart { grid-column: 1 / -1; }
-  .rec-kpi b { font-size: 26px; }
+  /* The labels may wrap here: each label stays right under its number */
+  .rec-kpi { align-content: start; padding: 10px 12px; }
+  .rec-kpi b { font-size: 22px; }
   /* Filters in two rows (bank + score, from + to), so the first exam starts on the first screen. The heading is only
      hidden visually: the panel's aria-labelledby still points to it. */
   .rec-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
@@ -145,10 +171,13 @@
   .rec-bar { margin-top: 10px; }
 }
 @media (pointer: coarse), (max-width: 480px) {
-  .rec-field select, .rec-field input { min-height: 44px; }
+  .rec-field select, .rec-field input { height: 44px; }
   .rec-time a { display: inline-block; padding-block: 8px; }
 }
 /* iOS Safari zooms into any focused form control under 16px */
 @media (pointer: coarse) {
   .rec-field select, .rec-field input { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rec-table tbody tr { transition: none; }
 }

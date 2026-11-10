@@ -200,7 +200,10 @@ jobs:
           docker rm -f arm64-backend arm64-frontend >/dev/null 2>&1 || true
           docker volume rm arm64data >/dev/null 2>&1 || true
 
-  # (3) Only when every check has passed are the two images (amd64 + arm64) published. Published from main only; pull requests and other branches never publish.
+  # (3) Only when every check has passed are the two images (amd64 + arm64) published, to Docker Hub (public; what
+  #     docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other
+  #     branches never publish. Docker Hub needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access
+  #     token with Read & Write). The namespace is DOCKERHUB_USERNAME, or the repository variable DOCKERHUB_NAMESPACE if set.
   publish:
     name: publish ${{ matrix.image }} (amd64 + arm64)
     needs: [check, frontend, backend, stack, arm64]
@@ -221,14 +224,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Image names must be all lowercase, but the GitHub user name may contain capitals (Yumin-Space), so convert it first
-      - name: Image name
+      # Image names must be all lowercase, but the GitHub user name may contain capitals (Yumin-Space), so convert it first.
+      # Without the Docker Hub secrets the job stops here, before anything is pushed: docker-compose.yml pulls from Docker Hub,
+      # so publishing only to ghcr.io would leave a release that the default setup cannot pull.
+      - name: Image names
         env:
           VERSION: ${{ needs.check.outputs.version }}
           NAME: ${{ matrix.image }}
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          HUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
         run: |
           set -eu
+          if [ -z "$HUB_USER" ] || [ -z "$HUB_TOKEN" ]; then
+            echo "::error::Docker Hub secrets missing: add DOCKERHUB_USERNAME and DOCKERHUB_TOKEN under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          ns="${HUB_NAMESPACE:-$HUB_USER}"
+          # docker-compose.yml and the READMEs name the Docker Hub images; they must match the namespace pushed to
+          grep -q "image: docker.io/${ns,,}/$NAME:latest" docker-compose.yml || {
+            echo "::error::docker-compose.yml does not pull docker.io/${ns,,}/$NAME:latest (wrong DOCKERHUB_USERNAME / DOCKERHUB_NAMESPACE, or the file names another namespace)"
+            exit 1
+          }
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$NAME" >> "$GITHUB_ENV"
+          echo "HUB_IMAGE=docker.io/${ns,,}/$NAME" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - uses: docker/setup-qemu-action@v4
@@ -244,12 +263,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
       # latest = the most recent build; vX.Y = this version; sha-xxxx = this commit (never overwritten)
       - name: Image tags
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.IMAGE }}
+          images: |
+            ${{ env.HUB_IMAGE }}
+            ${{ env.IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=raw,value=v${{ env.VERSION }}
@@ -271,23 +298,25 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image }}-publish
           cache-to: type=gha,scope=${{ matrix.image }}-publish,mode=max
 
-      # After publishing, look back once: read the manifest by "the digest just pushed"; it must contain both amd64 and arm64
+      # After publishing, look back once at both registries: read the manifest by "the digest just pushed"; it must contain both amd64 and arm64
       - name: Verify published manifest
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -eu
           [ -n "$DIGEST" ] || { echo "Could not get the digest of the pushed image"; exit 1; }
-          out=$(docker buildx imagetools inspect "$IMAGE@$DIGEST")
-          echo "$out"
-          echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "The published image is missing amd64"; exit 1; }
-          echo "$out" | grep -Eq 'Platform: +linux/arm64' || { echo "The published image is missing arm64"; exit 1; }
-          # The first "Digest:" line of the default output is the digest of this tag (the top-level manifest)
-          for t in latest "v$VERSION"; do
-            got=$(docker buildx imagetools inspect "$IMAGE:$t" | awk '/^Digest:/{print $2; exit}')
-            [ "$got" = "$DIGEST" ] || { echo "Tag $t does not point to the image just pushed ($got vs $DIGEST)"; exit 1; }
+          for img in "$HUB_IMAGE" "$IMAGE"; do
+            out=$(docker buildx imagetools inspect "$img@$DIGEST")
+            echo "$out"
+            echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "$img is missing amd64"; exit 1; }
+            echo "$out" | grep -Eq 'Platform: +linux/arm64' || { echo "$img is missing arm64"; exit 1; }
+            # The first "Digest:" line of the default output is the digest of this tag (the top-level manifest)
+            for t in latest "v$VERSION"; do
+              got=$(docker buildx imagetools inspect "$img:$t" | awk '/^Digest:/{print $2; exit}')
+              [ "$got" = "$DIGEST" ] || { echo "Tag $t of $img does not point to the image just pushed ($got vs $DIGEST)"; exit 1; }
+            done
+            echo "Published: $img:latest and $img:v$VERSION, both containing amd64 and arm64 (digest $DIGEST)"
           done
-          echo "Published: $IMAGE:latest and $IMAGE:v$VERSION, both containing amd64 and arm64 (digest $DIGEST)"
 
   # (4) After both images are published and verified, create (or update) the Release of this version on GitHub's Releases page.
   #    The notes come from the changelog of the English README (scripts/release-notes.py), so the Release page and the README always agree.
@@ -303,14 +332,17 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.check.outputs.version }}
+      HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+      HUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
     steps:
       - uses: actions/checkout@v7
 
       - name: Create or update the release
         run: |
           set -eu
-          owner="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
-          python3 scripts/release-notes.py "$VERSION" "$owner" README.md > notes.md
+          ns="${HUB_NAMESPACE:-$HUB_USER}"
+          # Docker Hub first (what docker-compose.yml pulls), ghcr.io as the mirror
+          python3 scripts/release-notes.py "$VERSION" "docker.io/${ns,,},ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" README.md > notes.md
           tag="v$VERSION"
           title="Xexam v$VERSION"
           if gh release view "$tag" >/dev/null 2>&1; then

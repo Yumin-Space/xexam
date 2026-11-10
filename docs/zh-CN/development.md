@@ -126,7 +126,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 | `backend` | fmt、clippy、181 个测试，以及 `progress.json` 迁移检查 |
 | `stack` | 构建 `xexam-frontend` 镜像跑 38 项 Nginx 检查；起整个 compose 栈跑 34 项端到端检查 |
 | `arm64` | 为 arm64 构建两个镜像，在 QEMU 下启动，检查 `/api/info` 报的是 `aarch64` 和正确的版本号 |
-| `publish` | 仅 `main`：两个镜像（amd64 + arm64）推到 ghcr.io，核对清单和标签 |
+| `publish` | 仅 `main`：两个镜像（amd64 + arm64）用相同的标签推到 Docker Hub（`docker.io/yuminspace/`，公开，`docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（可选：变量 `DOCKERHUB_NAMESPACE`）；没有它们，会在推送任何东西之前停下 |
 | `release` | 仅 `main`：建（或更新）`v<VERSION>` 的 GitHub Release，说明取自 `README.md` 的更新日志 |
 
 推送到 `dev` 和向 `main` 提拉取请求只跑前五项，**从不发布**；只有推送到 `main` 才会发布。手动启动的运行，效果和推送到它所在的分支一样。
@@ -142,7 +142,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 ## 9. 版本号、更新日志和许可证
 
-- 版本号的唯一来源是仓库根目录的 `VERSION`（`0.5`）。`backend/Cargo.toml` 和 `frontend/package.json` 里各有一份（`0.5.0`）；CI 会检查它们是否一致。
+- 版本号的唯一来源是仓库根目录的 `VERSION`（`0.5.1`）。`backend/Cargo.toml` 和 `frontend/package.json` 里各有一份（`0.5.1`）；CI 会检查它们是否一致。
 - 每次更新都要在三个 README（`README.md`、`README.ja.md`、`README.zh-CN.md`）的更新日志最上面加一条，版本号与 `VERSION` 一致。CI 会检查这一点：它取每份 README 里第一行以 `### v` 加数字开头的标题，所以更新日志前面不能有别的以 `### v` 开头的标题。GitHub Release 的说明取自英文那一份。
 - 「关于」页的「更新内容」也来自这些更新日志（见第 3 节），每种界面语言显示对应语言的 README。页面只认简单的 Markdown：段落、以 `- ` 开头的列表项、多缩进两个空格的子列表项、`**粗体**`，以及用反引号括起来的代码；指向仓库里文件的链接显示成普通文字。所以更新日志里只用这些写法。
 - 在 `dev` 上开发；`main` 接收合并，推送到 `main` 会发布镜像和 Release。

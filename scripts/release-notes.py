@@ -3,7 +3,8 @@
 """Build the GitHub Release notes for one version: take that version's section out of the changelog of the English README and
 append how to pull the two images.
 
-usage:  python3 scripts/release-notes.py <version, e.g. 0.4> <image prefix, e.g. ghcr.io/yumin-space> [README path]  > notes.md
+usage:  python3 scripts/release-notes.py <version, e.g. 0.4> <image prefixes, e.g. docker.io/name,ghcr.io/yumin-space> [README path]  > notes.md
+The first prefix is the main registry (the one docker-compose.yml pulls from); any further ones are listed as mirrors.
 The release job of the pipeline runs this; you can also run it locally to preview what the Releases page will show.
 Exits with status 1 if the version has no changelog entry (instead of publishing an empty release)."""
 import re
@@ -27,8 +28,10 @@ def extract(readme_text, version):
 
 def main():
     if len(sys.argv) < 3:
-        sys.exit('usage: release-notes.py <version> <image prefix, e.g. ghcr.io/yumin-space> [README path]')
-    version, prefix = sys.argv[1].lstrip('v'), sys.argv[2].rstrip('/')
+        sys.exit('usage: release-notes.py <version> <image prefixes, e.g. docker.io/name,ghcr.io/yumin-space> [README path]')
+    version = sys.argv[1].lstrip('v')
+    prefixes = [x.strip().rstrip('/') for x in sys.argv[2].split(',') if x.strip()]
+    prefix, mirrors = prefixes[0], prefixes[1:]
     readme = sys.argv[3] if len(sys.argv) > 3 else 'README.md'
     title, body = extract(open(readme, encoding='utf-8').read(), version)
     if not body:
@@ -46,6 +49,11 @@ def main():
     print('# Or pull them one by one, pinned to this version')
     print('docker pull %s/xexam-frontend:v%s' % (prefix, version))
     print('docker pull %s/xexam-backend:v%s' % (prefix, version))
+    for m in mirrors:
+        print()
+        print('# The same images on %s (private mirror: docker login %s first)' % (m.split('/')[0], m.split('/')[0]))
+        print('docker pull %s/xexam-frontend:v%s' % (m, version))
+        print('docker pull %s/xexam-backend:v%s' % (m, version))
     print('```')
     print()
     print('Full documentation: [English](../../blob/main/README.md) · [日本語](../../blob/main/README.ja.md) · [简体中文](../../blob/main/README.zh-CN.md)')

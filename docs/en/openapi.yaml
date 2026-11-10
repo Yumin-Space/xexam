@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "0.5"
+  version: "0.5.1"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional

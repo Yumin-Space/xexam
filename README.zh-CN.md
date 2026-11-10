@@ -1,8 +1,30 @@
 [English](README.md) | [日本語](README.ja.md) | **简体中文**
 
+<p align="left">
+    <a href="../../releases/latest">
+        <img src="https://img.shields.io/docker/v/yuminspace/xexam-frontend?sort=semver&label=release&style=for-the-badge&color=green" alt="最新版本" height="28">
+    </a>
+</p>
+<p align="center">
+    <a href="https://hub.docker.com/u/yuminspace">
+        <img src="frontend/public/icon.svg" alt="Xexam 标志" width="120">
+    </a>
+</p>
+
+<p align="center">
+    <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--frontend-blue?style=for-the-badge" alt="Docker Image yuminspace/xexam-frontend" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img src="https://img.shields.io/docker/stars/yuminspace/xexam-frontend.svg?style=for-the-badge" alt="Docker Stars" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img src="https://img.shields.io/docker/pulls/yuminspace/xexam-frontend.svg?style=for-the-badge" alt="Docker Pulls" height="28"></a>
+</p>
+<p align="center">
+    <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--backend-blue?style=for-the-badge" alt="Docker Image yuminspace/xexam-backend" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img src="https://img.shields.io/docker/stars/yuminspace/xexam-backend.svg?style=for-the-badge" alt="Docker Stars" height="28"></a>
+    <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img src="https://img.shields.io/docker/pulls/yuminspace/xexam-backend.svg?style=for-the-badge" alt="Docker Pulls" height="28"></a>
+</p>
+
 # Xexam
 
-Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入自己的 Excel 题库，用它们做模拟考，再复习答错的题。**交卷后才计分**，然后每道题都会列出你的答案、正确答案、解析和记忆口诀。电脑和手机（iPhone）都能用。
+Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入自己的 Excel 题库，用它们做模拟考，再复习答错的题。**交卷后才计分**，然后显示分数；每道错题（也可以看全部题目）都列出你的答案、正确答案、解析和记忆口诀。电脑和手机（iPhone）都能用。
 
 ![答题页：一道显示成中文的热点题、题目语言的切换按钮，以及带交卷按钮的答题卡](docs/zh-CN/screenshots/desktop-2-quiz.png)
 
@@ -10,8 +32,8 @@ Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入�
 
 | | |
 |---|---|
-| 当前版本 | **v0.5**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看；在程序里：菜单 → **Xexam v0.5**） |
-| 镜像 | `ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`，标签 `latest` / `v0.5` / `sha-<提交>`（`sha-` 标签用来排查问题） |
+| 当前版本 | **v0.5.1**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看；在程序里：菜单 → **Xexam v0.5.1**） |
+| 镜像 | 在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，标签 `latest` / `v0.5.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](LICENSE) |
@@ -65,23 +87,25 @@ Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入�
 
 只需要仓库里的 [`docker-compose.yml`](docker-compose.yml) 这**一个文件**，不需要其他代码。
 
+**如果你不是仓库的所有者：** 两个镜像在 Docker Hub 上是公开的，拉取它们不需要账号，也不需要 `docker login`。只有仓库是私有的：要用 `curl` 从仓库下载 `docker-compose.yml`（或者 `git clone` 整个仓库），请所有者把你的 GitHub 账号加为这个仓库的协作者（collaborator），然后在 GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** 里创建一个令牌，勾选 `repo` 权限。下面 `curl` 里的 `<你的令牌>` 就填它，`git clone` 要密码时也填它。也可以直接请所有者把这个文件发给你。
+
 **1. 下载 `docker-compose.yml`**，放进一个新文件夹（例如 `xexam`）。最简单的办法：在 GitHub 上打开这个文件，点 **Download raw file**（下载原始文件）按钮。也可以用命令行：
 
 ```bash
 curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker-compose.yml
 ```
 
-仓库是私有的时候，这个 `curl` 要带上一个能读这个仓库的 GitHub 令牌：在 `-fLO` 后面加 `-H "Authorization: token <你的令牌>"`。在 Windows PowerShell 里要写 `curl.exe`（`curl` 在那里是另一个命令的别名）。
+用 `curl` 时，在 `-fLO` 后面加 `-H "Authorization: token <你的令牌>"`。在 Windows PowerShell 里要写 `curl.exe`（`curl` 在那里是另一个命令的别名）。
 
-**2. 登录 GitHub 的容器仓库**（只需要一次）。镜像是私有的：你的 GitHub 账号需要有 `xexam-frontend` 和 `xexam-backend` 这两个包的读取权限。如果这两个包已经公开，跳过这一步。
+**2. 不需要登录。** `docker-compose.yml` 从 Docker Hub 拉取两个镜像（`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-frontend`），它们是公开的，所以直接做第 3 步。只有能访问 GitHub 容器仓库上那份私有镜像副本、又想改用它的人（所有者和协作者）才需要：登录一次，然后把 `docker-compose.yml` 里的两行 `image:` 改成 `ghcr.io/yumin-space/xexam-backend:latest` 和 `ghcr.io/yumin-space/xexam-frontend:latest`。
 
 ```bash
 docker login ghcr.io -u <你的GitHub用户名>
-# 密码处填一个有 read:packages 权限的 GitHub 令牌
-# （GitHub → Settings → Developer settings → Personal access tokens）
+# 只有用 GHCR 镜像副本时才需要。密码处填一个带 read:packages 权限的 GitHub 令牌
+# （GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic)）
 ```
 
-没有读取权限时，下一步会被拒绝（`denied` 或 `unauthorized`）。
+用镜像副本时，账号没有读取权限，或者用的是 fine-grained 令牌而不是 classic 令牌，`docker login` 或下一步会被拒绝（`denied` 或 `unauthorized`）。Docker Hub 不需要这些。
 
 **3. 启动。** 在 `docker-compose.yml` 所在的文件夹里运行：
 
@@ -89,18 +113,18 @@ docker login ghcr.io -u <你的GitHub用户名>
 docker compose up -d
 ```
 
-这会拉取并启动**两个容器**（`xexam-frontend`、`xexam-backend`）。然后在同一台机器上用浏览器打开 <http://localhost:8765>。
+这会从 Docker Hub 拉取两个镜像，并启动**两个容器**（`xexam-frontend`、`xexam-backend`）。然后在同一台机器上用浏览器打开 <http://localhost:8765>。
 
 Docker 装在另一台机器上（服务器、NAS、虚拟机）？见 [从手机或另一台电脑打开 Xexam](#从手机或另一台电脑打开-xexam)。
 
-界面一开始是英语。要换成中文或日语：打开菜单（左上角三条横线的按钮），选 **Settings**，在 **Language** 里选语言（这两处在中文界面里叫 **界面设置** 和 **语言**）。接下来按 [第一场考试](#第一场考试) 导入你的 Excel、开始考试。
+界面一开始是英语。要换成中文或日语：打开菜单（右上角三条横线的按钮），选 **Settings**，在 **Language** 里选语言（这两处在中文界面里叫 **界面设置** 和 **语言**）。接下来按 [第一场考试](#第一场考试) 导入你的 Excel、开始考试。
 
 > 从 v0.4 升级？请先看 [从 v0.4 升级](#从-v04-升级)：v0.5 第一次启动时会迁移数据库（迁移前会先写一份备份副本）。
 
 | 操作 | 命令 |
 |---|---|
-| 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d` |
-| 固定在某个版本 | 把 `docker-compose.yml` 里两个镜像的 `:latest` 都改成 `:v0.5`，再 `docker compose up -d` |
+| 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`。如果你的 `docker-compose.yml` 里还写着 `ghcr.io`（v0.5.1 之前的文件），先换成新的那份；数据卷不变 |
+| 固定在某个版本 | 把 `docker-compose.yml` 里两个镜像的 `:latest` 都改成 `:v0.5.1`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（两个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f` |
@@ -176,42 +200,46 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 ### 第一场考试
 
-1. 打开菜单（左上角三条横线的按钮），选 **题库管理**。在 **导入 Excel** 里保持选中 **新建题库**，点 **选择 Excel 文件**，选好你的工作簿（格式见 [Excel 题库格式](#excel-题库格式)）。看完预览后点 **确认新建题库**。
-2. 在导入成功的提示里点 **去考试**（或者在菜单里选 **主页**）。**开始考试** 面板里一开始所有工作表都是勾选的：取消不想考的，然后点 **开始考试**。
+1. 打开菜单（右上角三条横线的按钮），选 **题库管理**。在 **导入 Excel** 里保持选中 **新建题库**，点 **选择 Excel 文件**，选好你的工作簿（格式见 [Excel 题库格式](#excel-题库格式)）。看完预览后点 **确认新建题库**。
+2. 在导入成功的提示里点 **去考试**（或者在菜单里选 **主页**）。**开始考试** 面板里一开始所有工作表都是勾选的：取消不想考的，然后点面板底部那一栏里的 **开始考试**（同一栏里的 **题数** 和 **打乱顺序** 决定出几道题、按什么顺序出）。
 3. 答题，然后点 **交卷**。成绩页显示分数，以及每道答错的题的正确答案和解析（**全部题目（n）** 显示所有题目）。
 4. 以后想再看这场考试：打开菜单，选 **学习记录**，再点这场考试的时间。
 
 ### 页面布局
 
-- 除了考试页，每个页面都有一个窄窄的页头：左上角是三条横线的菜单按钮，旁边是 Xexam 标志（点它回到主页）。
-- 菜单按钮会打开一个小菜单，里面有 **主页**、**题库管理**、**学习记录** 和 **界面设置**，分隔线下面还有 **Xexam v0.5**，点它打开 [关于页面](#关于-xexam)。选好一项、点菜单外面或按 Esc 键，菜单就会关上。
+- 除了考试页，每个页面都有一个窄窄的页头：左上角是 Xexam 标志（点它回到主页），右上角是三条横线的菜单按钮。
+- 菜单按钮会打开一个小菜单，里面有 **主页**、**题库管理**、**学习记录** 和 **界面设置**，分隔线下面还有 **Xexam v0.5.1**，点它打开 [关于页面](#关于-xexam)。选好一项、点菜单外面或按 Esc 键，菜单就会关上。
 - 在宽屏上，页面内容居中显示，最宽 1120 px。
 - 考试本身是一个专注的全屏页面，没有页头。
 
 ### 题库管理
 
-在这里导入 Excel（**新建题库**，或 **更新 / 替换已有题库**），查看 **已有的题库**（每个题库的文件、题数和工作表，带 **更新 / 替换** 和 **删除**）和 **导入记录**；页面上的 **Excel 题库的写法和导入说明** 是 [Excel 题库格式](#excel-题库格式) 的简短版。导入的步骤和规则见 [导入题库](#导入题库)。
+在这里导入 Excel，页面和主页一样紧凑。在 **导入 Excel** 里选 **新建题库** 或 **更新已有题库**（标题旁边的两个小按钮，悬停提示里有说明；更新时还要在 **要更新的题库** 里选好题库），然后点 **选择 Excel 文件**，或者把文件拖到这个面板的任意位置；选文件那一行上面的提示，末尾是 **查看 Excel 写法** 链接。**已有的题库** 里每个题库占紧凑的一行（文件、题数、工作表数和最近更新时间，带 **更新** 和 **删除**；工作表收在这一行右边的箭头下面），**导入记录** 每次导入只占一行。页面上的 **Excel 题库的写法和导入说明** 在你打开之前是收起的，它是 [Excel 题库格式](#excel-题库格式) 的简短版。导入的步骤和规则见 [导入题库](#导入题库)。
 
 ![题库管理：用新版本的文件更新「Kitchen basics」时的预览](docs/zh-CN/screenshots/desktop-5-banks.png)
 
-截图是用新版本的文件更新「Kitchen basics」时的预览（新增 1、更新 1、下架 1），这时还什么都没保存；旁边是导入记录和写法说明。要下架的题按题目那一列的文字列出（这个演示题库里是 C 列，日语）。
+截图是用新版本的文件 `Kitchen basics (v2).xlsx` 更新「Kitchen basics」时的预览，这时还什么都没保存：几个小标签（新增 1、更新 1、下架 1、没变化 3）、文件名和上次导入时不同的提示、一道题将被下架的警告，以及 Cooking 和 Safety 两个工作表。下面是 **已有的题库** 里的两个演示题库；右边是导入记录和收起的写法说明。要下架的题按题目那一列的文字列出（这个演示题库里是 C 列，日语）。
 
 ### 主页
 
 第一次导入之前，**开始考试** 面板只显示一段简短的说明和 **去题库管理**。导入之后，主页上有：
 
-- **没交卷的考试**：一行横幅，显示你用 **暂存退出** 离开的那场考试的题库、已答题数和用时。**继续作答** 从停下的地方接着考；**放弃这场** 把它丢掉。它 **只保存在这个浏览器里**，其他设备上看不到。
+- **没交卷的考试**：页面最上面的一条紧凑横幅，显示你用 **暂存退出** 离开的那场考试的题库、已答题数和用时。**继续作答** 从停下的地方接着考；**放弃这场** 把它丢掉。它 **只保存在这个浏览器里**，其他设备上看不到。
 - **开始考试**：
-  - 在面板右上角选择从哪里出题：**全部**（所选工作表里的所有题）或 **错题本**（只考还需要巩固的题）。两个按钮都显示题数。所选工作表里没有要复习的错题时，**错题本** 不能选，标题下面有一行字说明原因。手机上这两个按钮也留在标题旁边，图标、文字和题数都显示。
-  - **考哪些题库和工作表**：每个题库是一张卡片，里面一行一个工作表。题库的复选框会勾选或取消它的全部工作表；只勾选了一部分时显示 −，卡片上会写例如 **已选 1/2 个工作表**。也可以只勾选单个工作表。题库右边的箭头按钮展开或收起它的工作表；题库超过两个时，一开始是收起的。工作表多的时候，标题下面的 **全选** 和 **全部取消** 很方便。**错题 2** 这样的小标签表示这个题库或工作表里有几道题在错题本里。
-  - **题数**：比所选的题少时，从整个所选范围里随机抽题。**打乱题目顺序** 只决定这些题按随机顺序出，还是按题库里的顺序出。
-  - **开始考试**，旁边是当前范围的题数。这个面板在屏幕上时，按钮固定在屏幕底部。
+  - 在面板右上角选择从哪里出题：**全部**（所选工作表里的所有题）或 **错题本**（只考还需要巩固的题）。两个按钮都显示题数。所选工作表里没有要复习的错题时，**错题本** 不能选，标题下面有一行字说明原因；选了 **错题本** 时，这一行字说明一道题怎样移出错题本（连续答对 2 次）。手机上这两个按钮也留在标题旁边：中文界面里图标、文字和题数都显示，英语和日语界面只显示图标和题数。
+  - **考哪些题库和工作表**：每个题库是一张卡片，里面一行一个工作表。
+    - **全选** 和 **全部取消** 在这一行标题的右边。
+    - 题库的复选框会勾选或取消它的全部工作表，也可以只勾选单个工作表。只勾选了一部分时，复选框显示 −，题库那一行会写例如 **已选 1/2 个工作表**（收起时也显示）。
+    - 题库那一行右边的箭头展开或收起它的工作表。最多两个题库时一开始是展开的，超过两个时一开始是收起的；你展开或收起的状态会保留到重新加载页面为止。列表没有自己的滚动框，跟着页面一起滚动。
+    - **错题 2** 这样的小标签表示这个题库或工作表里有几道题在错题本里。
+  - 面板最下面的一栏：**开始考试**、当前范围的说明（例如 **当前范围共 12 题**），旁边是两个选项 **题数** 和 **打乱顺序**。这个面板在屏幕上时，这一栏固定在屏幕底部。手机上第一行是范围说明和两个选项，第二行是 **开始考试**。
+  - **题数** 比当前范围里的题少时，从整个范围里随机抽题，范围说明会变成例如 **当前范围共 12 题，本次随机抽 11 题**。**打乱顺序** 只决定这些题按随机顺序出，还是按题库里的顺序出。
 - **最近一场考试**：上一场考试的成绩，带 **查看详情** 和 **全部学习记录**。
 - **概况**：有几个题库、几个可用工作表、几道可用题目、错题本里有几道题，带 **复习错题**（错题本里有题时）和 **题库管理**。
 
 ![电脑上的主页](docs/zh-CN/screenshots/desktop-1-home.png)
 
-没交卷的考试是一行横幅；**全部** 和 **错题本** 在 **开始考试** 的右上角；两个演示题库是两张卡片，里面是各自的工作表；右边是最近一场考试和概况。
+没交卷的考试是最上面的一条横幅；**全部** 和 **错题本** 在 **开始考试** 的右上角；**考哪些题库和工作表** 右边是 **全选** 和 **全部取消**；两个演示题库是两张展开的卡片，里面是各自的工作表；面板最下面一栏是 **开始考试**、**当前范围共 12 题**、**题数** 和 **打乱顺序**；右边是最近一场考试和概况。
 
 ### 答题页
 
@@ -272,7 +300,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 ### 关于 Xexam
 
-菜单的最后一项 **Xexam v0.5** 会打开 **关于 Xexam**：**版本**、**服务器** 的 CPU 架构、**许可证**，以及 **更新内容**。**更新内容** 就是界面语言那一份 README 的 [更新日志](#更新日志)（中文界面显示的是本文件的更新日志）。最新的版本是展开的；更早的版本折叠在 **更早的版本** 下面。
+菜单的最后一项 **Xexam v0.5.1** 会打开 **关于 Xexam**：**版本**、**服务器** 的 CPU 架构、**许可证**，以及 **更新内容**。**更新内容** 就是界面语言那一份 README 的 [更新日志](#更新日志)（中文界面显示的是本文件的更新日志）。最新的版本是展开的；更早的版本折叠在 **更早的版本** 下面。
 
 ![电脑上的关于 Xexam 页面](docs/zh-CN/screenshots/desktop-8-about.png)
 
@@ -280,7 +308,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 - 在 iPhone 的 Safari 里打开服务地址（需要先做 [从手机或另一台电脑打开 Xexam](#从手机或另一台电脑打开-xexam)）。需要 **iOS 15.4 或更新**。
 - 点分享按钮 → **添加到主屏幕**。之后它像独立应用一样全屏打开，图标是答题卡样式的 Xexam。
-- 左上角三条横线的按钮打开和电脑上一样的小菜单。主页上，**全部** 和 **错题本** 留在 **开始考试** 标题旁边，**开始考试** 按钮固定在屏幕底部。答题页上，**上一题**、**下一题** 和 **稍后再看** 固定在底部；答题卡在题目下方，**已答 x / n 题** 和 **交卷** 在小方块上面。学习记录显示成紧凑的卡片。
+- 右上角三条横线的按钮打开和电脑上一样的小菜单。主页上，**全部** 和 **错题本** 留在 **开始考试** 标题旁边（中文界面带文字；英语和日语界面只显示图标和题数），**开始考试** 按钮固定在屏幕底部，它上面一行是当前范围、**题数** 和 **打乱顺序**。答题页上，**上一题**、**下一题** 和 **稍后再看** 固定在底部；答题卡在题目下方，**已答 x / n 题** 和 **交卷** 在小方块上面。学习记录显示成紧凑的卡片。
 - 按钮和其他触控区域都不小于 44 px，适合手指点；刘海和底部横条的安全区已处理。
 
 下面是 390 px 宽的 iPhone 上的截图：
@@ -293,7 +321,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 <td width="25%"><img src="docs/zh-CN/screenshots/iphone-4-records.png" alt="iPhone 上的学习记录"></td>
 </tr>
 <tr>
-<td>主页：<b>开始考试</b> 固定在屏幕底部。</td>
+<td>主页：<b>开始考试</b> 固定在屏幕底部，上面一行是当前范围、<b>题数</b> 和 <b>打乱顺序</b>。</td>
 <td>答题：<b>上一题</b>、<b>下一题</b> 和 <b>稍后再看</b> 固定在底部。</td>
 <td>点三条横线的按钮打开的菜单（这里是在学习记录页上）。</td>
 <td>学习记录：每场考试是一张紧凑的卡片。</td>
@@ -380,18 +408,18 @@ A、B、C 三列是**同一道题的三种语言**，结构要**完全一一对�
 
 ### 新建题库还是更新
 
-一个题库就是一份导入的 Excel 工作簿。在 **题库管理** → **导入 Excel** 里选择文件导入到哪里：
+一个题库就是一份导入的 Excel 工作簿。在 **题库管理** → **导入 Excel** 里用标题旁边的两个小按钮选择文件导入到哪里（悬停提示里有说明）：
 
 | 选择 | 会发生什么 |
 |---|---|
 | **新建题库** | 新建一个题库，以文件名命名（去掉 `.xlsx`；名字已被占用时，加上 ` (2)`、` (3)` ……）。已有的题库不会改动。同一份工作簿可以导入两次，成为两个独立的题库，它们的学习记录不会混在一起 |
-| **更新 / 替换已有题库** | 用这份文件替换你选的那个题库的题目。文件里没有的题**只在这个题库里**下架。题库的名字不变 |
+| **更新已有题库** | 用这份文件替换你在 **要更新的题库** 里选的那个题库的题目。文件里没有的题**只在这个题库里**下架。题库的名字不变 |
 
-导入一份不同的工作簿时选 **新建题库**；上传已经导入过的工作簿的新版本时选 **更新 / 替换已有题库**。每次都要上传**整份**工作簿，不要只传新增的题。
+导入一份不同的工作簿时选 **新建题库**；上传已经导入过的工作簿的新版本时选 **更新已有题库**。每次都要上传**整份**工作簿，不要只传新增的题。
 
 ### 先预览，再确认
 
-上传后，Xexam 会读取并检查文件，然后显示预览：会 **新增**、**更新**、**恢复上架**、**下架** 多少题，**没变化** 和 **读不出来** 的各有多少题，每个工作表的数字，以及每一行读不出来的题所在的工作表、行号和原因。**你确认之前什么都不会写入**（点 **确认新建题库** 或 **确认导入**；点 **取消，不导入** 就放弃这次导入）。在下面这些情况下，预览还会提醒你：
+上传后，Xexam 会读取并检查文件，然后显示预览：用几个小标签显示会 **新增**、**更新**、**恢复上架**、**下架** 多少题，**没变化** 和 **读不出来** 的各有多少题（为 0 的不显示）；每个工作表一行，带它的数字；读不出来的每一行的行号和原因，收在所属工作表那一行的下面（例如 **2 题读不出来**）。**你确认之前什么都不会写入**（点 **确认新建题库** 或 **确认导入**；点 **取消，不导入** 就放弃这次导入）。在下面这些情况下，预览还会提醒你：
 
 - 你用来新建题库的文件，和某个已有题库导入时用的文件同名（它会建议改为更新那个题库）；
 - 你用来更新题库的文件，名字和上次导入的不一样；
@@ -414,7 +442,7 @@ A、B、C 三列是**同一道题的三种语言**，结构要**完全一一对�
 
 ### 删除题库
 
-题库卡片上的 **删除** 会先请你确认（例如 **删除「Kitchen basics」？**）。这个题库的题目（上架的和已下架的）和它的导入记录都会被删除。复选框 **同时删除这个题库的学习记录** 默认不勾选：
+题库那一行的 **删除** 会先请你确认（例如 **删除「Kitchen basics」？**）。这个题库的题目（上架的和已下架的）和它的导入记录都会被删除。复选框 **同时删除这个题库的学习记录** 默认不勾选：
 
 - **不勾选**：答题记录和考试记录都保留。在这些记录里，这个题库的题显示为已删除。
 - **勾选**：这个题库的题的答题记录，以及没有其他现存题库参与的考试记录，也一起删除。
@@ -425,7 +453,7 @@ A、B、C 三列是**同一道题的三种语言**，结构要**完全一一对�
 
 ## 从 v0.4 升级
 
-v0.5 在部署上没有任何变化：同样的两个镜像、同样的 `docker-compose.yml`、同样的端口、同样的卷，也没有新的环境变量。变的是界面和**数据库 schema**（v1 → v2）。
+在部署上，v0.5 还是同样的两个镜像、同样的端口、同样的卷，也没有新的环境变量。变的是界面、**数据库 schema**（v1 → v2），以及从 v0.5.1 起镜像的来源：新的 `docker-compose.yml` 从 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录）拉取，不再从 `ghcr.io` 拉取。把你的 `docker-compose.yml` 换成新的那份，或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`。项目名和数据卷 `xexam_data` 都不变，所以数据原样保留。
 
 ### 升级
 
@@ -436,7 +464,7 @@ v0.5 在部署上没有任何变化：同样的两个镜像、同样的 `docker-
 docker compose stop
 docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v04.tgz -C /data .
 
-# 2. 拉取 v0.5 并启动（不要用 down -v）
+# 2. 换上新的 docker-compose.yml（Docker Hub 上的镜像）后，拉取 v0.5 并启动（不要用 down -v）
 docker compose pull
 docker compose up -d
 
@@ -458,7 +486,7 @@ docker compose logs backend
 - 题目语言以前由每个浏览器各自记住。某个浏览器第一次打开 v0.5 时，它的选择会转存到服务器上（前提是服务器上还是默认值，也就是日语）。
 - 浏览器里暂存的没交卷的考试会保留，可以继续作答。
 
-升级后检查：<http://localhost:8765/api/info> 显示 `"version": "0.5"`，`bankCount` 和升级前一样（虽然叫这个名字，它数的是可用的题目，不是题库）；**题库管理** 里有一个题库，包含你所有的工作表；**学习记录** 里列出你以前的考试；**学习记录** → **复习错题** 里的题数和你原来错题本里的一样。
+升级后检查：<http://localhost:8765/api/info> 显示 `"version": "0.5.1"`，`bankCount` 和升级前一样（虽然叫这个名字，它数的是可用的题目，不是题库）；**题库管理** 里有一个题库，包含你所有的工作表；**学习记录** 里列出你以前的考试；**学习记录** → **复习错题** 里的题数和你原来错题本里的一样。
 
 ### 回退到 v0.4
 
@@ -474,7 +502,8 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 # 3. 把副本放回去，作为 xexam.db（用第 2 步看到的文件名）
 docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-20261110-140501.db /data/xexam.db
 
-# 4. 在 docker-compose.yml 里把两个镜像标签从 :latest 改成 :v0.4，然后启动
+# 4. v0.4 只在私有的 GHCR 镜像副本上（Docker Hub 从 v0.5.1 开始才有）：先 docker login ghcr.io，再把 docker-compose.yml 里
+#    两个镜像改成 ghcr.io/yumin-space/xexam-backend:v0.4 和 ghcr.io/yumin-space/xexam-frontend:v0.4，然后启动
 docker compose up -d
 ```
 
@@ -490,7 +519,7 @@ docker compose up -d
 4. 换上新的 `docker-compose.yml`，再运行 `docker compose pull` 和 `docker compose up -d`。第一次启动时会把数据库迁移到 schema v2，过程和上面写的完全一样（会在 `backups/` 里留一份副本）。
 5. 打开 <http://localhost:8765>，核对题数、错题数和成绩历史和升级前一样。
 
-想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以拉取。启动它之前，先从 `backups/`（或你自己的备份）恢复 schema 1 的副本。详见 [docs/zh-CN/migration.md](docs/zh-CN/migration.md)。
+想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以从 GHCR 拉取（私有：先 `docker login ghcr.io`；Docker Hub 上没有它）。启动它之前，先从 `backups/`（或你自己的备份）恢复 schema 1 的副本。详见 [docs/zh-CN/migration.md](docs/zh-CN/migration.md)。
 
 ---
 
@@ -530,7 +559,7 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/x
 docker compose start
 ```
 
-换电脑：在新电脑上登录 `ghcr.io`，放好 `docker-compose.yml`，先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/zh-CN/database.md](docs/zh-CN/database.md)。
+换电脑：在新电脑上放好新的 `docker-compose.yml`（不用登录，镜像来自 Docker Hub），先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/zh-CN/database.md](docs/zh-CN/database.md)。
 
 ### 迁移更早版本的学习记录（`progress.json`）
 
@@ -827,12 +856,12 @@ flowchart LR
 - **每次更新必须：** 改 `VERSION`，并在**三份 README**（`README.md`、`README.ja.md`、`README.zh-CN.md`）的更新日志最上面各写一条同版本的记录；`backend/Cargo.toml` 和 `frontend/package.json` 也必须是同一个版本号。否则第 ① 步会失败。
 - **文档检查（也在第 ① 步）：** 七份文档在 `docs/en`、`docs/ja` 和 `docs/zh-CN` 里都有；`docs/` 下只有这三个文件夹；README 和文档里的每个相对链接都指向存在的文件。
 - **都通过才发布：** 两个镜像（`xexam-frontend`、`xexam-backend`）各发布成一个多架构镜像，并回头检查镜像清单里确实有 `amd64` 和 `arm64`、标签指向刚推送的那个摘要。测试失败时 `latest` 仍是上一个能用的版本。
-- **发布的标签：** `latest`、`v<VERSION>`、`sha-<提交>`。
+- **发布的标签：** `latest`、`v<VERSION>`、`sha-<提交>`，Docker Hub 和 ghcr.io 上都一样。
 - **后端镜像怎么编 arm64：** 在构建机上用 zig 交叉编译，不在 QEMU 里编 Rust（QEMU 下要慢一个数量级）；只有最后一个很小的 alpine 阶段是目标架构。
 - **Releases 页：** 两个镜像都发布并核对成功之后，自动建（或更新）一个叫 `v<VERSION>` 的 Release，说明文字取自英语 README（`README.md`）更新日志里这个版本的那一段（[`scripts/release-notes.py`](scripts/release-notes.py)），并自动打上同名的 git 标签。镜像没发布成功，就不会有这个 Release。
-- **Releases 和镜像是两个地方：** 镜像在仓库的 **Packages** 里（ghcr.io），Release 在 **Releases** 页；两者由同一次构建一起产生。
+- **Releases 和镜像在不同的地方：** 镜像在 **Docker Hub** 上（`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，公开；`docker-compose.yml` 拉取的就是它们），另有一份私有镜像副本在仓库的 **Packages** 里（ghcr.io）；Release 在 **Releases** 页，里面最先列出从 Docker Hub 拉取的命令。这些都由同一次构建一起产生。
 
-镜像从私有仓库发布，默认也是私有的。第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。想免登录拉取，到包设置里把它改成公开。
+发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的 Docker Hub 访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）。没有这两个机密，或者 `docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。ghcr.io 上的镜像是私有的（仓库是私有的）：第一次在那里发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
 
 ---
 
@@ -912,6 +941,21 @@ Xexam 以 [MIT 许可证](LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
 程序里的 **关于 Xexam** 页面会显示这些记录（它们在构建时打包进前端），所以请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``。链接在那里显示成普通文字。
+
+### v0.5.1 — 2026-11-11
+
+**更柔和、更简洁的外观，改用对色盲友好的配色，菜单按钮移到右上角，题库管理页和主页一样紧凑。**
+
+- **更柔和、更简洁的外观**：配色改为参照 GitHub 的 Primer 设计系统里对色盲友好的浅色和深色配色（Light colorblind / Dark colorblind）：答对用蓝色、答错用橙色，不再是绿色和红色；浅色主题是柔和的灰白底配白色区块和藏蓝色的主要按钮，深色主题接近纯黑。页面铺在一整张平静的底上；外框和边线更少，改用圆角，鼠标移上去时显示柔和的背景色，提示改用带浅色底色的色块显示，菜单更轻，带一层柔和的阴影。变的只是外观，位置和用法并没有因此改变。
+- **菜单移到右边**：三条横线的菜单按钮现在在页头的右上角；Xexam 标志还在左上角。菜单在按钮下方打开，用法和以前一样。
+- **更紧凑的题库管理页**：
+  - **导入 Excel**：**新建题库** 和 **更新已有题库** 是标题旁边的两个小按钮（悬停提示里有说明）；选更新时，下面会出现 **要更新的题库**。只有一行提示，末尾是 **查看 Excel 写法** 链接；选文件也只占一行：点 **选择 Excel 文件**，或者把文件拖到这个面板的任意位置。
+  - **预览**：各项数字是几个小标签（为 0 的不显示），每个工作表一行，工作表里读不出来的行收在它下面。和以前一样，确认和取消按钮紧跟在数字和提示后面，在各个工作表之前。
+  - **已有的题库**：每个题库占紧凑的一行，有名字、**更新** 和 **删除** 两个小按钮，以及一行概况（文件、题数、工作表数、最近更新时间）。工作表收在这一行右边的箭头下面。
+  - **导入记录** 每次导入一行（最近 8 次），**Excel 题库的写法和导入说明** 在你打开之前一直是收起的。
+  - 在触摸屏上，这些小按钮的点按区域仍有约 44 px；在手机上，题库名字很长时，按钮会换到单独的一行。
+- **镜像发布到 Docker Hub**：每个版本现在也发布到 Docker Hub，名字是 `yuminspace/xexam-frontend` 和 `yuminspace/xexam-backend`（公开，同一个标签下有 `amd64` 和 `arm64`）。`docker-compose.yml` 改为从那里拉取，所以不再需要 `docker login`。同样的标签仍保留在 `ghcr.io/yumin-space` 上，作为私有镜像副本。如果你还在用 v0.5 的旧 `docker-compose.yml`，请换成新的（数据卷会保留）。三份 README 现在以 Docker Hub 的徽章开头。
+- README 和文档都按新布局改写了，截图也重新截了。
 
 ### v0.5 — 2026-11-10
 

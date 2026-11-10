@@ -1,4 +1,4 @@
-// App shell: a slim header with the menu button (the navigation opens as a small dropdown) + the centered page + footer.
+// App shell: a slim header (logo left, menu button right; the navigation opens as a small dropdown) + the centered page + footer.
 // The quiz page does not use the shell (focused full-screen view).
 import { shutdownApp } from '../api/import.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
@@ -122,9 +122,10 @@ export function shell(content: HTMLElement): HTMLElement {
     },
   }, icon(open ? ICONS.close : ICONS.menu));
 
+  // The logo on the left, the menu button on the right (its dropdown opens towards the left, aligned to the right edge)
   const header = h('header', { class: 'topbar' },
-    h('div', { class: 'menu-wrap' }, menuBtn, menu),
-    h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()));
+    h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()),
+    h('div', { class: 'menu-wrap' }, menuBtn, menu));
 
   if (open && focusMenuOnOpen) {
     focusMenuOnOpen = false;

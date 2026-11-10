@@ -17,14 +17,14 @@
 
 ### 拉取现成的镜像（推荐）
 
-只需要仓库里的 [`docker-compose.yml`](../../docker-compose.yml) 这一个文件：
+只需要仓库里的 [`docker-compose.yml`](../../docker-compose.yml) 这一个文件。它从 Docker Hub 拉取两个镜像（`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-frontend`），这两个镜像是公开的，所以不需要 `docker login`。同样的标签也在 `ghcr.io/yumin-space/` 上，作为私有镜像副本（用它要先 `docker login ghcr.io`，密码填一个有 `read:packages` 权限的经典令牌，即 Tokens (classic)）。
 
 ```bash
-docker login ghcr.io -u Yumin-Space      # 第一次；镜像是私有的，密码填有 read:packages 权限的令牌
+# 不需要 docker login：镜像在 Docker Hub 上是公开的
 docker compose up -d
 ```
 
-浏览器打开 <http://localhost:8765>，点左上角三条横线的菜单按钮，选 **Question banks**（题库管理），导入你的 Excel 文件。界面默认是英文，可以在 **Settings**（界面设置）里切换成中文或日文。上面的命令会拉取并启动**两个容器**：`xexam-frontend`（Nginx，唯一对外）和 `xexam-backend`（Rust，私有网络）。
+`docker compose up -d` 会拉取并启动**两个容器**：`xexam-frontend`（Nginx，唯一对外）和 `xexam-backend`（Rust，私有网络）。然后在浏览器打开 <http://localhost:8765>，点右上角三条横线的菜单按钮，选 **Question banks**（题库管理），导入你的 Excel 文件。界面默认是英文，可以在 **Settings**（界面设置）里切换成中文或日文。
 
 ### 从源码构建（改代码时用）
 
@@ -36,14 +36,14 @@ docker compose -f docker-compose.build.yml up -d --build
 
 第一次构建要几分钟（编译 Rust 和前端），之后有缓存。
 
-构建 `xexam-frontend` 时，`nginx/Dockerfile` 会把仓库根目录的 `README.md`、`README.ja.md` 和 `README.zh-CN.md` 复制进构建环境（`COPY README.md README.ja.md README.zh-CN.md /`）：「关于 Xexam」页（菜单底部的「Xexam v0.5」）里的「更新内容」，就是在构建时从这三份 README 的更新日志生成的。所以 `.dockerignore` 不再排除 `README.md`。最终镜像里只有生成的静态文件，没有 README 本身。
+构建 `xexam-frontend` 时，`nginx/Dockerfile` 会把仓库根目录的 `README.md`、`README.ja.md` 和 `README.zh-CN.md` 复制进构建环境（`COPY README.md README.ja.md README.zh-CN.md /`）：「关于 Xexam」页（菜单底部的「Xexam v0.5.1」）里的「更新内容」，就是在构建时从这三份 README 的更新日志生成的。所以 `.dockerignore` 不再排除 `README.md`。最终镜像里只有生成的静态文件，没有 README 本身。
 
 | 操作 | 命令 |
 |---|---|
 | 看状态 | `docker compose ps`（两个容器都应是 `healthy`） |
 | 看日志 | `docker compose logs -f` |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
-| 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建用：`git pull && docker compose -f docker-compose.build.yml up -d --build`）。从 v0.4 升级：先看第 6 节 |
+| 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建用：`git pull && docker compose -f docker-compose.build.yml up -d --build`）。如果你的 `docker-compose.yml` 里还写着 `ghcr.io`（v0.5.1 之前的文件），先换成新的那份；数据卷不变。从 v0.4 升级：先看第 6 节 |
 | 版本和架构 | <http://localhost:8765/api/info> |
 
 > ⚠️ 不要运行 `docker compose down -v`：`-v` 会删除数据卷 `xexam_data`，题库和学习记录都在里面。
@@ -113,19 +113,19 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 ## 6. 从 v0.4 升级到 v0.5
 
-对部署来说，v0.5 什么都没变：还是那两个镜像、同一个 `docker-compose.yml`、同一个端口、同一个卷，也没有新的环境变量。变的是界面（菜单按钮和下拉菜单、题库管理、学习记录、界面设置、「关于」页）和数据库 schema。
+对部署来说，v0.5 还是那两个镜像、同一个端口、同一个卷，也没有新的环境变量。变的是界面（菜单按钮和下拉菜单、题库管理、学习记录、界面设置、「关于」页）、数据库 schema，以及从 v0.5.1 起的镜像仓库：新的 `docker-compose.yml` 从 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录）拉取，不再从 `ghcr.io` 拉取。项目名和卷 `xexam_data` 都不变，所以换镜像仓库不会丢任何数据。从源码构建的命令也不变；前端镜像现在还会读取三个 README（见第 2 节）。
 
 1. 先备份卷，做法见 [database.md](database.md) 的第 5 节。程序自己也会写一份副本，但放在卷外面的副本更保险。
-2. 照常更新：`docker compose pull && docker compose up -d`。
+2. 把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`），然后照常更新：`docker compose pull && docker compose up -d`。
 3. 第一次启动时，后端会把数据库升级到 schema v2：
    - 先把旧数据库复制一份到 `/data/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db`。如果这份副本写不出来（磁盘满了、没有权限），后端会报错退出，数据库不会被改动。Docker 会一直重启它，每次启动都会再试一次；Nginx 不会启动，因为它要等后端 healthy。原因可以用 `docker compose logs backend` 查看。
    - 然后在一个事务里完成迁移。你现有的题会变成一个题库，题目 id 不变，所以错题本、统计和考试历史都保持原样。
    - 日志里 `Upgraded the database to schema 2. A copy of the previous version was saved first: …` 这一行会写出副本的文件名。
-4. 检查：`/api/info` 显示 `"version": "0.5"`，`bankCount` 和升级前一样；**Question banks**（题库管理）里只有一个题库，包含你所有的题；**Study records**（学习记录）里列出你以前的考试。
+4. 检查：`/api/info` 显示 `"version": "0.5.1"`，`bankCount` 和升级前一样；**Question banks**（题库管理）里只有一个题库，包含你所有的题；**Study records**（学习记录）里列出你以前的考试。
 
 之后再启动不会再迁移，也不会多写任何东西。
 
-**回退**到 v0.4，就是恢复那份副本，再运行 v0.4 的镜像（标签 `v0.4`）。一旦有了不止一个题库，就不要在迁移过的数据库上运行 v0.4：v0.4 会把所有题库当成一个，下一次导入会把其他题库的题下架。具体命令见 [migration.md](migration.md) 的第 1.4 节，背景见 [database.md](database.md) 的第 6 节。
+**回退**到 v0.4，就是恢复那份副本，再运行 v0.4 的镜像（标签 `v0.4`，只在私有镜像副本 `ghcr.io/yumin-space/` 上，所以要先 `docker login ghcr.io`；Docker Hub 从 v0.5.1 开始才有）。一旦有了不止一个题库，就不要在迁移过的数据库上运行 v0.4：v0.4 会把所有题库当成一个，下一次导入会把其他题库的题下架。具体命令见 [migration.md](migration.md) 的第 1.4 节，背景见 [database.md](database.md) 的第 6 节。
 
 ## 7. 健康检查与停止
 
@@ -143,6 +143,6 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 ## 9. 发布
 
-推送到 `main` 时，[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 先跑版本、更新日志和文档检查，再跑四组检查（前端、后端、Nginx 与整栈、arm64）。全部通过后，才把 `xexam-frontend` 和 `xexam-backend` 两个镜像（amd64 + arm64）发布到 `ghcr.io/yumin-space/`，标签为 `latest`、`v<VERSION>` 和 `sha-<提交>`，并建对应的 GitHub Release。推送到 `dev` 和指向 `main` 的拉取请求会跑同样的检查，但从不发布。详见 [development.md](development.md) 的第 7 节。
+推送到 `main` 时，[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 先跑版本、更新日志和文档检查，再跑四组检查（前端、后端、Nginx 与整栈、arm64）。全部通过后，才把 `xexam-frontend` 和 `xexam-backend` 两个镜像（amd64 + arm64）发布到 Docker Hub（`docker.io/yuminspace/`，公开），同时作为私有镜像副本发布到 `ghcr.io/yumin-space/`，两边的标签都是 `latest`、`v<VERSION>` 和 `sha-<提交>`，并建对应的 GitHub Release（说明里最先列出从 Docker Hub 拉取的命令）。推送到 `dev` 和指向 `main` 的拉取请求会跑同样的检查，但从不发布。详见 [development.md](development.md) 的第 7 节。
 
-第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
+发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）；没有这两个机密，或者 `docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。在 ghcr.io 上，第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。

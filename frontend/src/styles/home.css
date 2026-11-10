@@ -1,69 +1,119 @@
 /* Home page: start panel (left, ~7fr) + side column (right, ~5fr); one column on narrower content areas.
-   Colours come only from the tokens in main.css, so light and dark themes both work. */
+   Colours come only from the tokens in main.css, so light and dark themes both work.
+   Look: soft blocks on the sheet, rows split by hairlines inside a block, soft hover fills, small tags (see main.css). */
 
-.home-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 20px; align-items: start; }
-.home-main, .home-side { display: grid; gap: 20px; align-content: start; min-width: 0; }
-/* The columns space their cards with `gap`; drop the shared stacking margins */
+.home-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 16px; align-items: start; }
+.home-main, .home-side { display: grid; gap: 16px; align-content: start; min-width: 0; }
+/* The columns space their blocks with `gap`; drop the shared stacking margins */
 .home-grid .panel + .panel { margin-top: 0; }
 .home-grid .resume { margin-bottom: 0; }
 
-/* Labels of the selection rows contain spans (a label may only hold phrasing content) */
-.page-home .row-opt .grow > span { display: block; }
-.home-note { font-size: 13px; margin-top: 10px; }
+.home-note { font-size: 13px; margin-top: 12px; }
 
 /* ---------- Unfinished exam ---------- */
-/* A compact banner: title and one line of facts on the left, the two actions on the right (stacked on phones) */
-.resume.home-resume { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 14px; }
+/* A calm callout: a small icon on the left, title and one line of facts, the two actions on the right (under the text on phones) */
+.resume.home-resume { position: relative; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 12px 12px 12px 44px; }
+.home-resume .rs-ico { position: absolute; left: 16px; top: 14px; width: 18px; height: 18px; color: var(--print); }
 .home-resume .rs-text { flex: 1 1 18em; min-width: 0; }
-.home-resume h2 { font-size: 15.5px; margin: 0; }
+.home-resume h2 { font-size: 15px; font-weight: 600; margin: 0; }
 .home-resume .rs-meta { margin: 0; font-size: 13.5px; color: var(--ink2); overflow-wrap: anywhere; }
 .home-resume .rs-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; }
 .home-resume .rs-where { font-size: 12.5px; color: var(--ink3); }
-.home-resume .rs-acts { display: flex; gap: 6px; flex: none; }
-.home-resume .rs-acts .btn { min-height: 38px; padding-block: 6px; }
+.home-resume .rs-acts { display: flex; gap: 4px; flex: none; }
+/* "Continue" is a white key, not a second filled button: "Start exam" stays the one filled action of the column */
+.home-resume .btn.primary { background: var(--card); border-color: var(--line); color: var(--ink); }
+@media (hover: hover) {
+  .home-resume .btn.primary:hover:not(:disabled) {
+    background: var(--card); background-image: linear-gradient(var(--hover), var(--hover)); border-color: var(--line);
+  }
+}
 
-/* Disabled choices (empty notebook, retired sheet): dim the control and the name only, so the explanation stays readable */
-.page-home .row-opt.off { opacity: 1; }
-.page-home .row-opt.off input, .page-home .row-opt.off .name { opacity: .55; }
+/* ---------- Questions from: a segmented control in the top-right corner of the panel ---------- */
+/* Title on the left, the two choices on the right of the same row (they move under the title when there is no room) */
+.home-setup-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 16px; }
+.home-setup-head h2 { margin: 0; }
+.home-mode { margin: 0; }
+.home-setup-head + .mseg-hint { margin: -8px 0 16px; }
+/* The track; the selected option is a raised chip on it (the recipe of the segmented control in main.css) */
+.mseg-group { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border-radius: 8px; background: var(--fill); }
+.mseg {
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 2px 8px 2px 8px;
+  border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+  font-size: 13px; font-weight: 400; line-height: 1.4; color: var(--ink3);
+  transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
+}
+/* the radio stays in the page for keyboard and screen readers; the chip shows its state */
+.mseg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.mseg .mseg-ico { width: 15px; height: 15px; flex: none; }
+/* The count: a small tag (darker than the track while unselected, the usual fill on the raised chip). The red one has
+   an opaque card base under its tint, so the hover fill of the segment does not lower its contrast. */
+.mseg-n { font: 500 11.5px/1.6 var(--num), var(--en); padding: 0 5px; border-radius: 4px; background: var(--hover-strong); color: var(--ink2); }
+.mseg.weak .mseg-n, .mseg.weak:has(input:checked) .mseg-n {
+  background-color: var(--card); background-image: linear-gradient(var(--wrong-soft), var(--wrong-soft)); color: var(--wrong);
+}
+@media (hover: hover) { .mseg:hover:not(.off) { background: var(--hover); color: var(--ink); } }
+.mseg:has(input:checked), .mseg:has(input:checked):hover {
+  background: var(--seg-on); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--seg-on-line), var(--shadow-sm);
+}
+.mseg:has(input:checked) .mseg-n { background: var(--fill); }
+.mseg:has(input:focus-visible) { outline: 2px solid var(--print); outline-offset: 2px; }
+.mseg.off { opacity: .5; cursor: not-allowed; }
+.mseg-hint { margin: 6px 0 0; font-size: 13px; color: var(--ink3); }
 
 /* ---------- Banks and sheets ---------- */
-/* Outlined (not plain text) so they read as buttons; still quieter than Start */
-/* Heading on the left, "select all / clear" on the right of the same row */
-.home-pick-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin-bottom: 10px; }
-.home-pick-title { font-weight: 700; }
+/* Small section label on the left, "select all / clear" as small quiet buttons on the right of the same row */
+.home-pick-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; margin-bottom: 8px; }
+.home-pick-title { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
 .home-pickacts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
-.home-pickacts .btn.quiet { position: relative; border-color: var(--line); border-width: 1px; min-height: 28px; padding: 0 10px; font-size: 13px; font-weight: 600; }
-/* One card per bank. The bank row is the card's header; its sheets are compact rows inside the same card,
-   indented under the bank name, without borders of their own. */
-.home-bank { border: 1px solid var(--line); border-radius: 6px; background: var(--card); overflow: hidden; }
-.home-bank + .home-bank { margin-top: 10px; }
-.home-bank:has(input:checked) { border-color: var(--print); }
-.home-bankrow, .home-sheetrow { display: flex; align-items: center; gap: 12px; cursor: pointer; }
-.home-bankrow input, .home-sheetrow input { width: 18px; height: 18px; accent-color: var(--print); flex: none; margin: 0; }
-.home-bankrow { padding: 10px 12px; }
-.home-bankhead { display: flex; align-items: stretch; }
+/* Regular --ink3 text, so the two actions read lighter than the label beside them (--ink on hover, from .btn.quiet) */
+.home-pickacts .btn.quiet { position: relative; min-height: 28px; padding: 0 8px; font-size: 13px; font-weight: 400; color: var(--ink3); }
+/* One group per bank, outlined once by a hairline: the bank row is its header, the sheets are rows under it,
+   indented under the bank name and split by hairlines. No frames inside. */
+.home-bank { border: 1px solid var(--line-soft); border-radius: 8px; overflow: hidden; }
+.home-bank + .home-bank { margin-top: 8px; }
+.home-bankrow, .home-sheetrow { display: flex; align-items: center; gap: 10px; cursor: pointer; }
+.home-bankrow input, .home-sheetrow input { width: 16px; height: 16px; accent-color: var(--print); flex: none; margin: 0; }
+.home-bankrow { padding: 9px 8px 9px 12px; min-height: 44px; }
+.home-bankhead { display: flex; align-items: center; padding-right: 6px; transition: background-color .12s ease; }
 .home-bankhead .home-bankrow { flex: 1; min-width: 0; }
-.home-bankhead:has(.home-bankrow input:checked) { background: var(--print-soft); }
-.home-bankhead.part { background: var(--tint); }
-.home-selinfo { color: var(--print); font-weight: 600; }
-/* Fold / unfold the sheets of a bank */
-.home-expand { flex: none; width: 44px; display: grid; place-items: center; border: 0; border-left: 1px solid var(--line); background: transparent; color: var(--ink2); cursor: pointer; }
-@media (hover: hover) { .home-expand:hover { background: var(--tint); color: var(--ink); } }
-.home-expand .ico { width: 20px; height: 20px; transition: transform .15s ease; }
+/* The header row has no tint of its own: the checkbox (checked / indeterminate) and the "1 of 2 sheets selected" tag
+   carry the selection, so the default state (every bank selected) stays calm. Only a soft fill on hover. */
+@media (hover: hover) { .home-bankhead:hover { background-image: linear-gradient(var(--hover), var(--hover)); } }
+/* "1 of 2 sheets selected": a small print tag, only while part of the bank is selected. Its tint sits on an opaque card
+   base, so the hover fill of the header under it does not lower its contrast (dark theme). */
+.home-selinfo {
+  font-size: 12.5px; font-weight: 500; line-height: 1.7; padding: 0 6px; border-radius: 4px; color: var(--print); white-space: nowrap;
+  background-color: var(--card); background-image: linear-gradient(var(--print-soft), var(--print-soft));
+}
+.page-home .home-bankrow .home-selinfo:empty { display: none; }
+/* Fold / unfold the sheets of a bank: a ghost icon button */
+.home-expand {
+  position: relative; flex: none; width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+@media (hover: hover) { .home-expand:hover { background-color: var(--hover); color: var(--ink); } }
+.home-expand .ico { width: 18px; height: 18px; transition: transform .15s ease; }
 .home-expand[aria-expanded="true"] .ico { transform: rotate(180deg); }
-@media (prefers-reduced-motion: reduce) { .home-expand .ico { transition: none; } }
 .home-sheets[hidden] { display: none; }
 .home-bankrow .grow, .home-sheetrow .grow { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; }
 .page-home .home-bankrow .grow > span, .page-home .home-sheetrow .grow > span { display: inline; }
-.home-bankrow .name { font-weight: 700; font-size: 16px; overflow-wrap: anywhere; }
-.home-sheetrow .name { font-weight: 600; overflow-wrap: anywhere; }
-.home-bankrow .sub, .home-sheetrow .sub { color: var(--ink3); font-size: 13px; }
-.home-sheets { border-top: 1px solid var(--line); padding: 2px 12px 4px 42px; }
-.home-sheetrow { min-height: 40px; padding: 4px 0; }
-.home-sheetrow + .home-sheetrow { border-top: 1px dashed var(--line); }
+.home-bankrow .name { font-weight: 600; font-size: 15px; overflow-wrap: anywhere; }
+.home-sheetrow .name { overflow-wrap: anywhere; }
+.home-bankrow .sub { color: var(--ink3); font-size: 13px; }
+.home-sheetrow .sub { color: var(--ink3); font-size: 13px; }
+.home-sheets { border-top: 1px solid var(--line-soft); }
+.home-sheetrow { position: relative; min-height: 38px; padding: 6px 14px 6px 38px; transition: background-color .12s ease; }
+/* Hairlines between sheets start at the sheet column, like a nested list */
+.home-sheetrow + .home-sheetrow::before { content: ""; position: absolute; left: 38px; right: 0; top: 0; border-top: 1px solid var(--line-soft); }
+@media (hover: hover) { .home-sheetrow:not(.off):hover { background-color: var(--hover); } }
 .home-sheetrow.off { cursor: not-allowed; }
 .home-sheetrow.off input, .home-sheetrow.off .name { opacity: .55; }
 .home-pick .chipnum { flex: none; }
+
+/* ---------- Empty state (no banks / no questions): a quiet callout with the way to the banks page ---------- */
+.home-setup .emptybank { padding: 16px; border-radius: 8px; background: var(--fill); }
+.home-setup .emptybank p { color: var(--ink2); }
 
 /* ---------- Start ---------- */
 /* Pinned to the bottom of the viewport while the start panel is on screen (same pattern as the quiz's .pfoot).
@@ -71,32 +121,31 @@
 .home-go {
   display: flex; flex-wrap: wrap; align-items: center; gap: 12px 20px;
   position: sticky; bottom: 0; z-index: 5;
-  margin: 0 -24px -24px; padding: 14px 24px calc(14px + env(safe-area-inset-bottom));
-  background: var(--sheet); border-top: 1px solid var(--line); border-radius: 0 0 6px 6px;
-  box-shadow: 0 -8px 12px -10px var(--shadow);
+  margin: 0 -24px -24px; padding: 12px 24px calc(12px + env(safe-area-inset-bottom));
+  background: var(--card); border-top: 1px solid var(--line-soft); border-radius: 0 0 9px 9px;
+  /* only the hairline: a shadow would show as a grey haze above the bar while it is not pinned */
 }
-.home-scope { flex: 1 1 10em; min-width: 0; font-weight: 600; color: var(--ink2); }
+.home-scope { flex: 1 1 10em; min-width: 0; font-size: 14px; font-weight: 400; color: var(--ink2); }
 /* Count and shuffle sit in the bar, next to the scope text */
-.home-go-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; flex: none; font-size: 14px; }
-.home-count, .home-shuffle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; cursor: pointer; }
-.home-count input { width: 64px; min-height: 34px; padding: 2px 8px; border: 1.5px solid var(--ink); border-radius: 4px; background: var(--card); font: 600 15px var(--num); }
-.home-shuffle input { width: 18px; height: 18px; margin: 0; accent-color: var(--print); }
+.home-go-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; flex: none; font-size: 14px; color: var(--ink2); }
+.home-count, .home-shuffle { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; cursor: pointer; }
+.home-count input { width: 64px; min-height: 34px; padding: 2px 8px; font: 500 15px var(--num), var(--en); }
+@media (hover: hover) { .home-count input:hover:not(:focus):not(:disabled) { border-color: var(--ink3); } }
+.home-shuffle input { width: 16px; height: 16px; margin: 0; accent-color: var(--print); }
 
-/* ---------- Fact lists (unfinished / latest exam) ---------- */
-.home-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 14px 0 16px; font-size: 14px; }
-.home-facts dt { color: var(--ink3); }
-.home-facts dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+/* ---------- Fact lists (latest exam): property rows, see .props in main.css ---------- */
+.props.home-facts { margin: 16px 0 20px; }
 .home-facts dd.ng { color: var(--wrong); font-weight: 600; }
 
 /* ---------- Latest exam ---------- */
 .home-latest .stat { flex-wrap: wrap; }
 
-/* ---------- Overview ---------- */
-.home-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-.home-fig { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--card); min-width: 0; }
-.home-fig b { font: 700 26px/1.15 var(--num), var(--en); }
+/* ---------- Overview: soft tiles ---------- */
+.home-figs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.home-fig { display: grid; gap: 2px; padding: 12px 14px; border-radius: 8px; background: var(--fill); min-width: 0; }
+.home-fig b { font: 700 26px/1.2 var(--num), var(--en); }
 .home-fig span { font-size: 13px; color: var(--ink2); overflow-wrap: anywhere; }
-.home-fig.ng { border-color: var(--ng-line); background: var(--ng-bg); }
+.home-fig.ng { background: var(--wrong-soft); }
 .home-fig.ng b { color: var(--wrong); }
 .home-overview .acts { margin-top: 16px; }
 
@@ -107,54 +156,44 @@
   .home-side { grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); align-items: start; }
 }
 @media (max-width: 480px) {
-  .home-sheets { padding-left: 38px; }
+  .resume.home-resume { padding: 12px 12px 12px 40px; }
+  .home-resume .rs-ico { left: 14px; }
   .home-go { margin: 0 -16px -18px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); gap: 8px 10px; }
   /* phones: the scope text and the two options share the first row, Start takes the second */
   .home-go .btn.big { order: 2; width: 100%; }
   .home-scope { font-size: 13px; line-height: 1.35; }
-  .home-go-opts { gap: 6px 10px; font-size: 13px; }
-  .home-count input { width: 52px; min-height: 32px; font-size: 14px; padding-inline: 6px; }
-  .home-facts { line-height: 1.5; }
+  .home-go-opts { gap: 4px 10px; font-size: 13px; }
+  .home-count, .home-shuffle { gap: 6px; }
+  .home-count input { width: 52px; min-height: 34px; font-size: 14px; padding-inline: 6px; }
   .home-figs { gap: 8px; }
   .home-fig b { font-size: 22px; }
 }
-/* Touch screens: the small buttons stay small to look at, but an invisible margin around them makes them ~44px to tap */
+/* Touch screens: small controls stay small to look at, but an invisible margin (or the row) makes them ~44px to tap */
 @media (pointer: coarse), (max-width: 480px) {
   .home-pickacts .btn.quiet { min-height: 28px; }
-  .home-pickacts .btn.quiet::after, .mseg::after { content: ""; position: absolute; inset: -8px -3px; }
-  .home-sheetrow { min-height: 44px; }
-  .home-bankrow input, .home-sheetrow input { width: 22px; height: 22px; }
+  /* -9px: the ::after is placed from the padding box, inside the 1px border (28 - 2 + 18 = 44px) */
+  .home-pickacts .btn.quiet::after { content: ""; position: absolute; inset: -9px -3px; }
+  /* the segments sit 2px apart, so their tap areas only grow up and down */
+  .mseg::after { content: ""; position: absolute; inset: -8px -1px; }
+  .home-expand::after { content: ""; position: absolute; inset: -6px; }
+  .home-sheetrow { min-height: 44px; padding-left: 42px; }
+  .home-sheetrow + .home-sheetrow::before { left: 42px; }
+  .home-bankrow input, .home-sheetrow input, .home-shuffle input { width: 20px; height: 20px; }
+  /* the count / shuffle labels are the tap targets around their small fields */
+  .home-count, .home-shuffle { min-height: 44px; }
 }
-
-/* ---------- Questions from: two compact choices with an icon and a count ---------- */
-/* Title on the left, the two choices on the right of the same row (they move under the title when there is no room) */
-.home-setup-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 16px; }
-.home-setup-head h2 { margin: 0; }
-.home-mode { margin: 0; }
-.home-setup-head + .mseg-hint { margin: -8px 2px 14px; }
-.mseg-group { display: flex; flex-wrap: wrap; gap: 8px; }
-.mseg {
-  position: relative; display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 2px 10px 2px 8px; font-size: 13px;
-  border: 1px solid var(--line); border-radius: 999px; background: var(--card); cursor: pointer; font-weight: 600; color: var(--ink2);
-}
-/* the radio stays in the page for keyboard and screen readers; the pill shows its state */
-.mseg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
-.mseg .mseg-ico { width: 15px; height: 15px; flex: none; }
-.mseg-n { font: 600 11.5px/1.55 var(--num), var(--en); padding: 0 6px; border-radius: 999px; background: var(--tint); color: var(--ink2); }
-.mseg.weak .mseg-n { background: var(--wrong-soft); color: var(--wrong); }
-@media (hover: hover) { .mseg:hover:not(.off) { border-color: var(--print); } }
-.mseg:has(input:checked) { border-color: var(--print); background: var(--print-soft); color: var(--print); }
-.mseg:has(input:checked) .mseg-n { background: var(--card); }
-.mseg:has(input:focus-visible) { outline: 3px solid var(--print); outline-offset: 2px; }
-.mseg.off { opacity: .5; cursor: not-allowed; }
-.mseg-hint { margin: 6px 2px 0; font-size: 13px; color: var(--ink3); }
 
 /* Phones: the "questions from" choice and the "select all / clear" buttons stay on the row of their heading.
-   Tighter pills; English and Japanese show the icon and the count only (their words are longer; the name stays for
+   Tighter chips; English and Japanese show the icon and the count only (their words are longer; the name stays for
    screen readers and in the tooltip), Chinese keeps its two-character words, which fit. */
 @media (max-width: 480px) {
   .home-setup-head { gap: 6px 8px; }
   .mseg { gap: 4px; padding: 2px 8px 2px 7px; }
   html:not(:lang(zh-CN)) .mseg .mseg-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-  .home-pickacts .btn.quiet { padding-inline: 9px; }
+  .home-pickacts .btn.quiet { padding-inline: 8px; }
+}
+
+/* Motion: colour fades only, none when the system asks for less motion */
+@media (prefers-reduced-motion: reduce) {
+  .mseg, .home-bankhead, .home-expand, .home-expand .ico, .home-sheetrow { transition: none; }
 }

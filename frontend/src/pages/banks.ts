@@ -1,11 +1,13 @@
 // Question banks page: import an Excel workbook into a new bank or an existing one (upload -> preview, which never writes ->
 // confirm / cancel), list / inspect / update / delete the banks, the import history, and the Excel format guide.
+// Laid out as compactly as the home page: small pill choices in a heading row, one-line rows, foldable bank cards.
 // Page-local state (import target, pending preview, busy flags, open panels) lives in this module; shared state only through actions.
 import '../styles/banks.css';
 import { deleteBank, fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { pageHead } from '../components/common.ts';
+import { icon } from '../components/shell.ts';
 import { errorText, LocalError, serverText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
 import { applyBankDeleted, navigate, onRouteChange, refreshLibrary, render } from '../state/actions.ts';
@@ -21,6 +23,11 @@ const MAX_BYTES = MAX_MB * 1024 * 1024;
 /** How many imports the history shows */
 const HISTORY_SHOWN = 8;
 const XLSX_ACCEPT = '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+/** Fold / unfold, "new bank" (a plus), "update a bank" (two turning arrows) */
+const ICON_CHEVRON = [{ d: 'M6.5 9.5 12 15l5.5-5.5' }];
+const ICON_NEW = [{ d: 'M12 5.5v13' }, { d: 'M5.5 12h13' }];
+const ICON_UPDATE = [{ d: 'M19.5 11A7.6 7.6 0 0 0 5.6 7.4' }, { d: 'M5 3.8v3.9h3.9' }, { d: 'M4.5 13a7.6 7.6 0 0 0 13.9 3.6' }, { d: 'M19 20.2v-3.9h-3.9' }];
 
 type Busy = 'upload' | 'confirm' | 'cancel' | 'delete' | null;
 
@@ -64,9 +71,11 @@ let importsLoading = false;
 let importsWanted = true;
 let importsSeq = 0;
 
-/** Banks whose worksheet list is expanded, and preview sheets whose unreadable rows are expanded (kept across re-renders) */
+/** Banks whose worksheet list is unfolded, and preview sheets whose unreadable rows are unfolded (kept across re-renders) */
 const openSheets = new Set<number>();
 const openSkips = new Set<string>();
+/** The Excel format guide is folded until the user opens it (kept across re-renders) */
+let guideOpen = false;
 
 /** Scroll / focus to apply once the next render is in the document */
 let after: { scroll?: string; focus?: string } | null = null;
@@ -110,8 +119,25 @@ function sentences(...parts: Array<string | null | false | undefined>): string {
   return kept.reduce((a, b) => t('banks.join2', { a, b }));
 }
 
-const segments = (...parts: Array<string | null | false | undefined>): string =>
-  parts.filter((p): p is string => !!p).join(t('banks.sep'));
+/** Joins the parts that are present with `sep`. Text parts are kept on one line each, so a wrapped line breaks between parts. */
+function joined(sep: string, parts: Array<Child | null | false | undefined>): Child[] {
+  const out: Child[] = [];
+  for (const p of parts) {
+    if (p == null || p === false || p === '') continue;
+    if (out.length) out.push(sep);
+    out.push(typeof p === 'string' ? h('span', { class: 'bk-nw' }, p) : p);
+  }
+  return out;
+}
+
+/** Short facts in a row: "3 usable questions, 1 updated" */
+const facts = (...parts: Array<string | null | false | undefined>): Child[] => joined(t('banks.sep'), parts);
+/** The parts of a one-line summary ("file · 7 questions · 2 sheets"), separated by a middle dot */
+const dotted = (...parts: Array<Child | null | false | undefined>): Child[] => joined(t('banks.dot'), parts);
+
+/** A row's name and its short facts, wrapping as one line of text */
+const line = (name: string, sub: Child): HTMLElement =>
+  h('span', { class: 'bk-line' }, h('span', { class: 'name' }, name), h('span', { class: 'sub' }, sub));
 
 function nameOf(target: ImportTarget): string {
   return target === 'new' ? '' : bankById(target)?.name ?? t('common.unknownBank');
@@ -138,6 +164,14 @@ const smooth = (): ScrollBehavior =>
 function scrollAndFocus(scrollId: string | undefined, focusId: string | undefined): void {
   if (scrollId) document.getElementById(scrollId)?.scrollIntoView({ block: 'start', behavior: smooth() });
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: !!scrollId });
+}
+
+/** "Excel format guide" link of the import panel: unfold the guide, show it and put the focus on its summary */
+function openGuide(): void {
+  guideOpen = true;
+  const d = document.getElementById('bk-guide-d');
+  if (d instanceof HTMLDetailsElement) d.open = true;
+  scrollAndFocus('bk-guide', 'bk-guide-s');
 }
 
 /**
@@ -213,7 +247,7 @@ async function uploadFile(file: File | undefined): Promise<void> {
     return;
   }
 
-  // Picked from the upload form: stay at the drop zone, whose title now reports the progress. Coming from the preview
+  // Picked from the upload form: stay at the file row, whose status line now reports the progress. Coming from the preview
   // ("update that bank instead"), the form replaces the preview, so the panel top is shown as before.
   if (document.getElementById('bk-drop-t')) after = null;
   busy = 'upload';
@@ -365,8 +399,8 @@ function chooseUpdate(b: BankSummary): void {
   updateId = b.id;
   importError = null;
   done = null;
-  // Scroll to the target choice (not the panel top), so the checked option, the picked bank and the file button show together
-  after = { scroll: 'bk-target-fs', focus: 'bk-choose' };
+  // The target choice is in the panel's heading row: the checked pill, the picked bank and the file button show together
+  after = { scroll: 'bk-import', focus: 'bk-choose' };
   render();
 }
 
@@ -463,13 +497,28 @@ async function removeBank(card: BankSummary): Promise<void> {
 
 // ---------------------------------------------------------------- import panel
 
-function pill(n: number, key: MsgKey, cls = ''): HTMLElement {
-  return h('div', { class: 'pill ' + (n ? cls : 'zero') }, h('b', { class: 'num' }, String(n)), h('span', null, t(key)));
+/** The preview's counts as one line of small chips. Zero counts are left out, unless every count is zero. */
+function chips(defs: Array<[n: number, key: MsgKey, cls: string]>): HTMLElement {
+  const shown = defs.some(([n]) => n > 0) ? defs.filter(([n]) => n > 0) : defs;
+  return h('ul', { class: 'bk-chips', 'aria-label': t('banks.preview.summary') },
+    shown.map(([n, key, cls]) => h('li', { class: 'bk-chip ' + (n ? cls : 'zero') }, h('span', null, t(key)), h('b', { class: 'num' }, String(n)))));
 }
 
-function skipDetails(s: SheetPlan, count: number): HTMLElement {
-  const d = h('details', { class: 'skipbox', open: openSkips.has(s.name) },
-    h('summary', null, tn('banks.skip.summary', count)),
+/** One line per sheet; a sheet with unreadable rows is a fold whose summary is that line and whose body lists the reasons */
+function sheetPlanRow(s: SheetPlan): HTMLElement {
+  const skipped = s.skippedCount ?? s.skipped.length;
+  const text = line(s.name, facts(
+    tn('banks.sheet.usable', s.usable),
+    s.added ? tn('banks.sheet.added', s.added) : null,
+    s.updated ? tn('banks.sheet.updated', s.updated) : null,
+    s.restored ? tn('banks.sheet.restored', s.restored) : null,
+    s.removed ? tn('banks.sheet.retired', s.removed) : null));
+  if (!skipped) return h('li', { class: 'bk-row' }, text);
+  const d = h('details', { class: 'bk-skip', open: openSkips.has(s.name) },
+    h('summary', { title: tn('banks.skip.summary', skipped) },
+      text,
+      h('span', { class: 'bk-skipn' }, tn('banks.sheet.unreadable', skipped)),
+      icon(ICON_CHEVRON, 'ico bk-chev')),
     h('ul', null,
       s.skipped.map((k) => h('li', null, t('banks.skip.row', { row: k.row, reason: serverText(k.reason) }))),
       s.skippedMore ? h('li', { class: 'dim' }, tn('banks.skip.more', s.skippedMore)) : null));
@@ -477,21 +526,7 @@ function skipDetails(s: SheetPlan, count: number): HTMLElement {
     if (d.open) openSkips.add(s.name);
     else openSkips.delete(s.name);
   });
-  return d;
-}
-
-function sheetPlanRow(s: SheetPlan): HTMLElement {
-  const skipped = s.skippedCount ?? s.skipped.length;
-  return h('div', { class: 'sheetrow' },
-    h('div', { class: 'name' }, s.name),
-    h('div', { class: 'dim' }, segments(
-      tn('banks.sheet.usable', s.usable),
-      s.added ? tn('banks.sheet.added', s.added) : null,
-      s.updated ? tn('banks.sheet.updated', s.updated) : null,
-      s.restored ? tn('banks.sheet.restored', s.restored) : null,
-      s.removed ? tn('banks.sheet.retired', s.removed) : null,
-      skipped ? tn('banks.sheet.unreadable', skipped) : null)),
-    skipped ? skipDetails(s, skipped) : null);
+  return h('li', { class: 'bk-row' }, d);
 }
 
 function previewView(p: Pending): Child[] {
@@ -511,23 +546,23 @@ function previewView(p: Pending): Child[] {
         : isNew ? t('banks.preview.confirmNew') : t('banks.preview.confirmUpdate');
 
   return [
-    h('h2', { id: 'bk-import-h', tabindex: '-1' },
+    h('h2', { id: 'bk-import-h', tabindex: '-1', class: 'bk-ptitle' },
       isNew ? t('banks.preview.titleNew', { file: pv.filename }) : t('banks.preview.titleUpdate', { name, file: pv.filename })),
     nothing
       ? h('div', { class: 'err', role: 'alert' },
         h('p', null, t('banks.preview.nothing')),
         h('p', null, pv.skipped ? t('banks.preview.nothingSkipped') : t('banks.preview.nothingHint')))
-      : h('p', { class: 'dim bk-lead' }, t('banks.preview.lead')),
-    h('div', { class: 'pills' }, isNew
-      ? [pill(pv.added, 'banks.pill.added', 'g'), pill(pv.skipped, 'banks.pill.unreadable', 'r')]
+      : h('p', { class: 'bk-hint' }, t('banks.preview.lead')),
+    chips(isNew
+      ? [[pv.added, 'banks.pill.added', 'g'], [pv.skipped, 'banks.pill.unreadable', 'r']]
       : [
-        pill(pv.added, 'banks.pill.added', 'g'), pill(pv.updated, 'banks.pill.updated', 'b'), pill(pv.restored, 'banks.pill.restored', 'b'),
-        pill(pv.removed, 'banks.pill.retired', 'r'), pill(pv.unchanged, 'banks.pill.unchanged'), pill(pv.skipped, 'banks.pill.unreadable', 'r'),
+        [pv.added, 'banks.pill.added', 'g'], [pv.updated, 'banks.pill.updated', 'b'], [pv.restored, 'banks.pill.restored', 'b'],
+        [pv.removed, 'banks.pill.retired', 'r'], [pv.unchanged, 'banks.pill.unchanged', ''], [pv.skipped, 'banks.pill.unreadable', 'r'],
       ]),
     twin ? h('div', { class: 'bk-info' },
       h('p', null, t('banks.preview.sameFile', { name: twin.name, update: t('banks.target.update') })),
       h('div', { class: 'acts' },
-        h('button', { class: 'btn', type: 'button', disabled: working, onclick: () => void retargetPending(twin.id) },
+        h('button', { class: 'btn bk-mini', type: 'button', disabled: working, onclick: () => void retargetPending(twin.id) },
           t('banks.preview.switchToUpdate', { name: twin.name })))) : null,
     otherFile ? h('div', { class: 'bk-info' },
       h('p', null, t('banks.preview.otherFile', { name: otherFile.name, old: otherFile.filename, file: pv.filename }))) : null,
@@ -540,14 +575,14 @@ function previewView(p: Pending): Child[] {
         h('ul', null, pv.removed_samples.map((s) => h('li', { lang: 'ja' }, t('banks.retire.sample', { text: s })))),
       ] : null,
       h('p', { class: 'dim' }, t('banks.retire.onlyAdd'))) : null,
-    same ? h('p', { class: 'dim bk-same' }, t('banks.preview.same', { name })) : null,
+    same ? h('p', { class: 'bk-hint bk-same' }, t('banks.preview.same', { name })) : null,
     // The decision comes right after the summary and the warnings; the per-sheet detail follows as optional reading
     h('div', { class: 'acts bk-acts' },
       h('button', { class: 'btn primary', type: 'button', disabled: nothing || same || working, onclick: () => void confirmPending() }, confirmLabel),
       h('button', { class: 'btn', type: 'button', disabled: working, onclick: () => void cancelPending() }, t('banks.preview.cancel'))),
     pv.sheets.length ? [
-      h('h3', { class: 'sub-h' }, t('banks.preview.sheets')),
-      h('div', { class: 'sheetlist' }, pv.sheets.map(sheetPlanRow)),
+      h('h3', { class: 'bk-sub' }, t('banks.preview.sheets')),
+      h('ul', { class: 'bk-rows' }, pv.sheets.map(sheetPlanRow)),
     ] : null,
   ];
 }
@@ -573,17 +608,20 @@ function doneBox(d: Done): HTMLElement {
       }, t('common.close'))));
 }
 
-function uploadForm(): Child[] {
+/** The upload form: the target pills (for the heading row), the bank picker under them, the hint line and the file row */
+function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HTMLElement; row: HTMLElement } {
   const hasBanks = S.banks.length > 0;
   const locked = busy !== null;
-  const dropTitleText = (): string => {
+  const statusText = (): string => {
     if (busy === 'upload') return t('banks.drop.busy');
     if (mode === 'new') return t('banks.drop.titleNew');
     return t('banks.drop.titleUpdate', { name: updateId != null ? nameOf(updateId) : '' });
   };
 
-  // Switching the target only updates these nodes (no re-render, so keyboard focus stays on the radio / select)
-  const dropTitle = h('p', { class: 'drop-t', id: 'bk-drop-t', role: 'status' }, dropTitleText());
+  // Switching the target only updates these nodes (no re-render, so keyboard focus stays on the pill / select).
+  // While idle the status names the target for screen readers (it also describes the file button); while a file is
+  // checked it is shown and reports the progress.
+  const status = h('span', { class: busy === 'upload' ? 'bk-status' : 'sr-only', id: 'bk-drop-t', role: 'status' }, statusText());
   const select = h('select', {
     id: 'bk-target', disabled: locked || !hasBanks,
     onchange: () => {
@@ -592,22 +630,38 @@ function uploadForm(): Child[] {
     },
   }, S.banks.map((b) => h('option', { value: String(b.id) }, t('banks.target.option', { name: b.name, questions: tn('common.questions', b.total) }))));
   if (updateId != null) select.value = String(updateId);
-  const pick = h('div', { class: 'bk-pick', hidden: mode !== 'update' }, h('label', { for: 'bk-target' }, t('banks.target.select')), select);
+  const pick = hasBanks ? h('div', { class: 'bk-pick', hidden: mode !== 'update' }, h('label', { for: 'bk-target' }, t('banks.target.select')), select) : null;
   const refresh = (): void => {
-    pick.hidden = mode !== 'update';
-    dropTitle.textContent = dropTitleText();
+    if (pick) pick.hidden = mode !== 'update';
+    status.textContent = statusText();
   };
 
-  const option = (val: 'new' | 'update', title: string, sub: string, disabled: boolean): HTMLElement =>
-    h('label', { class: 'row-opt' + (disabled ? ' off' : '') },
+  // Two small pills with radio semantics; the full explanation is the tooltip and the radio's description
+  const seg = (val: 'new' | 'update', label: string, about: string, shape: typeof ICON_NEW, disabled: boolean): HTMLElement =>
+    h('label', { class: 'bk-seg' + (disabled ? ' off' : ''), title: about },
       h('input', {
-        type: 'radio', name: 'bk-target-mode', value: val, checked: mode === val, disabled: disabled || locked,
+        type: 'radio', name: 'bk-target-mode', value: val, id: `bk-mode-${val}`, checked: mode === val, disabled: disabled || locked,
+        'aria-describedby': `bk-mode-${val}-d`,
         onchange: () => {
           mode = val;
           refresh();
         },
       }),
-      h('span', { class: 'grow' }, h('span', { class: 'name' }, title), h('span', { class: 'sub' }, sub)));
+      icon(shape, 'ico bk-seg-ico'),
+      h('span', null, label));
+  const updateAbout = hasBanks ? t('banks.target.updateSub') : t('banks.target.noBanks');
+  const choice = h('fieldset', { class: 'bk-target', id: 'bk-target-fs' },
+    h('legend', { class: 'sr-only' }, t('banks.target.legend')),
+    h('div', { class: 'bk-segs' },
+      seg('new', t('banks.target.new'), t('banks.target.newSub'), ICON_NEW, false),
+      seg('update', t('banks.target.update'), updateAbout, ICON_UPDATE, !hasBanks)),
+    h('span', { class: 'sr-only', id: 'bk-mode-new-d' }, t('banks.target.newSub')),
+    h('span', { class: 'sr-only', id: 'bk-mode-update-d' }, updateAbout));
+
+  // A plain space (not a margin) before the link: it disappears when the link wraps to the start of a line
+  // The link follows the hint like a second sentence: a space in English, nothing after a full-width 。 in zh / ja
+  const hint = h('p', { class: 'bk-hint' }, t('banks.import.hint'), t('banks.join2', { a: '', b: '' }),
+    h('button', { class: 'linkbtn', type: 'button', onclick: openGuide }, t('banks.import.formatLink')));
 
   const input = h('input', {
     type: 'file', accept: XLSX_ACCEPT, hidden: true, id: 'bk-file',
@@ -617,99 +671,103 @@ function uploadForm(): Child[] {
       void uploadFile(f);
     },
   });
-  const zone = h('div', { class: 'drop bk-drop' + (busy === 'upload' ? ' busy' : ''), role: 'group', 'aria-label': t('banks.drop.label') },
-    dropTitle,
-    h('p', { class: 'dim' }, t('banks.drop.note', { mb: MAX_MB })),
+  const row = h('div', { class: 'bk-droprow', role: 'group', 'aria-label': t('banks.drop.label') },
     h('button', {
-      class: 'btn primary big', id: 'bk-choose', type: 'button', disabled: locked, 'aria-describedby': 'bk-drop-t',
+      class: 'btn primary', id: 'bk-choose', type: 'button', disabled: locked, 'aria-describedby': 'bk-drop-t bk-drop-note',
       onclick: () => input.click(),
     }, t('banks.drop.choose')),
-    h('p', { class: 'dim bk-or' }, t('banks.drop.or')),
+    busy === 'upload' ? null : h('span', { class: 'bk-or' }, t('banks.drop.or')),
+    status,
+    h('span', { class: 'bk-note', id: 'bk-drop-note' }, t('banks.drop.note', { mb: MAX_MB })),
     input);
-  zone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    if (!busy) zone.classList.add('over');
-  });
-  zone.addEventListener('dragleave', (e) => {
-    if (!(e.relatedTarget instanceof Node && zone.contains(e.relatedTarget))) zone.classList.remove('over');
-  });
-  zone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    zone.classList.remove('over');
-    if (!busy) void uploadFile(e.dataTransfer?.files[0]);
-  });
 
-  return [
-    h('ol', { class: 'steps' },
-      h('li', null, t('banks.import.step1')),
-      h('li', null, t('banks.import.step2')),
-      h('li', null, t('banks.import.step3'))),
-    h('fieldset', { class: 'bk-target', id: 'bk-target-fs' },
-      h('legend', null, t('banks.target.legend')),
-      option('new', t('banks.target.new'), t('banks.target.newSub'), false),
-      option('update', t('banks.target.update'), hasBanks ? t('banks.target.updateSub') : t('banks.target.noBanks'), !hasBanks),
-      hasBanks ? pick : null),
-    zone,
-    h('p', { class: 'bk-guide-link' },
-      h('button', { class: 'linkbtn', type: 'button', onclick: () => scrollAndFocus('bk-guide', 'bk-guide-h') }, t('banks.import.formatLink'))),
-  ];
+  return { choice, pick, hint, row };
 }
 
 function importPanel(): HTMLElement {
   const working = busy === 'upload' || busy === 'confirm';
-  return h('section', { class: 'panel bk-import', id: 'bk-import', 'aria-labelledby': 'bk-import-h', 'aria-busy': working ? 'true' : null },
-    pending
-      ? previewView(pending)
-      : [
-        h('h2', { id: 'bk-import-h', tabindex: '-1' }, t('banks.import.title')),
-        importError ? h('div', { class: 'err', role: 'alert' }, h('p', null, errorText(importError, 'banks.err.uploadFailed'))) : null,
-        done ? doneBox(done) : null,
-        uploadForm(),
-      ]);
+  const attrs = { id: 'bk-import', 'aria-labelledby': 'bk-import-h', 'aria-busy': working ? 'true' : null };
+  if (pending) return h('section', { ...attrs, class: 'panel bk-import' }, previewView(pending));
+
+  const f = uploadForm();
+  // The whole panel accepts a dropped file (.bk-drop also tells the page-wide handler that a drop is welcome here)
+  const sec = h('section', { ...attrs, class: 'panel bk-import bk-drop' + (busy === 'upload' ? ' busy' : '') },
+    h('div', { class: 'bk-head' }, h('h2', { id: 'bk-import-h', tabindex: '-1' }, t('banks.import.title')), f.choice),
+    f.pick,
+    importError ? h('div', { class: 'err', role: 'alert' }, h('p', null, errorText(importError, 'banks.err.uploadFailed'))) : null,
+    done ? doneBox(done) : null,
+    f.hint,
+    f.row);
+  sec.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (!busy) sec.classList.add('over');
+  });
+  sec.addEventListener('dragleave', (e) => {
+    if (!(e.relatedTarget instanceof Node && sec.contains(e.relatedTarget))) sec.classList.remove('over');
+  });
+  sec.addEventListener('drop', (e) => {
+    e.preventDefault();
+    sec.classList.remove('over');
+    if (!busy) void uploadFile(e.dataTransfer?.files[0]);
+  });
+  return sec;
 }
 
 // ---------------------------------------------------------------- bank list
 
-function bankSheets(b: BankSummary): HTMLElement | null {
-  if (!b.sheets.length) return null;
-  const d = h('details', { class: 'bk-sheets', open: openSheets.has(b.id) },
-    h('summary', null, tn('banks.list.sheetsToggle', b.sheets.length)),
-    h('ul', null, b.sheets.map((s) => h('li', null,
-      h('span', { class: 'bk-sheet-name' }, s.name),
-      h('span', { class: 'dim' }, s.usable > 0
-        ? segments(tn('banks.sheet.usable', s.usable), s.inactive ? tn('banks.list.sheetRetired', s.inactive) : null)
-        : t('banks.sheet.allRetired'))))));
-  d.addEventListener('toggle', () => {
-    if (d.open) openSheets.add(b.id);
-    else openSheets.delete(b.id);
-  });
-  return d;
-}
-
+/** One card per bank: name and the two actions, one line of facts, and a chevron that folds / unfolds its sheet rows */
 function bankCard(b: BankSummary): HTMLElement {
   const deleting = deletingId === b.id;
-  const row = (label: string, value: string, cls?: string): HTMLElement =>
-    h('div', null, h('dt', null, label), h('dd', { class: cls }, value));
+  const open = openSheets.has(b.id);
+  const boxId = `bk-sheets-${b.id}`;
   const questions = tn('common.questions', b.total);
-  return h('article', { class: 'bk-card', 'aria-labelledby': `bk-name-${b.id}` },
-    h('h3', { id: `bk-name-${b.id}` }, b.name),
-    h('dl', { class: 'bk-meta' },
-      row(t('banks.list.file'), b.filename || t('common.none')),
-      row(t('banks.list.questions'), b.inactive ? t('banks.list.withRetired', { questions, n: b.inactive }) : questions),
-      // The sheet toggle below already carries the count; the row is only needed when there is no toggle
-      b.sheets.length ? null : row(t('banks.list.sheets'), '0', 'num'),
-      row(t('banks.list.updated'), b.updatedAt, 'num'),
-      row(t('banks.list.created'), b.createdAt, 'num')),
-    bankSheets(b),
-    h('div', { class: 'acts' },
-      h('button', {
-        class: 'btn', type: 'button', disabled: busy === 'delete', 'aria-label': t('banks.list.updateAria', { name: b.name }),
-        onclick: () => chooseUpdate(b),
-      }, t('banks.list.update')),
-      h('button', {
-        class: 'btn danger', type: 'button', disabled: busy !== null, 'aria-label': deleting ? null : t('banks.list.deleteAria', { name: b.name }),
-        onclick: () => void removeBank(b),
-      }, deleting ? t('banks.list.deleting') : t('common.delete'))));
+  const created = t('banks.list.createdAt', { at: b.createdAt });
+
+  const box = b.sheets.length ? h('div', { class: 'bk-sheetbox', id: boxId, hidden: !open },
+    h('ul', { class: 'bk-sheetrows' }, b.sheets.map((s) => h('li', { class: 'bk-row' }, line(s.name, s.usable > 0
+      ? facts(tn('banks.sheet.usable', s.usable), s.inactive ? tn('banks.list.sheetRetired', s.inactive) : null)
+      : t('banks.sheet.allRetired'))))),
+    h('p', { class: 'bk-created num' }, created)) : null;
+
+  const tip = (on: boolean): string => t(on ? 'banks.list.hideSheets' : 'banks.list.showSheets', { name: b.name });
+  const expand = box ? h('button', {
+    class: 'bk-expand', id: `bk-expand-${b.id}`, type: 'button', 'aria-expanded': String(open), 'aria-controls': boxId,
+    'aria-label': tip(open), title: tip(open),
+    onclick: () => {
+      const now = box.hidden;
+      box.hidden = !now;
+      if (now) openSheets.add(b.id);
+      else openSheets.delete(b.id);
+      expand?.setAttribute('aria-expanded', String(now));
+      expand?.setAttribute('aria-label', tip(now));
+      if (expand) expand.title = tip(now);
+    },
+  }, icon(ICON_CHEVRON)) : null;
+
+  return h('article', { class: 'bk-bank', 'aria-labelledby': `bk-name-${b.id}` },
+    h('div', { class: 'bk-bankhead' },
+      h('div', { class: 'bk-bankmain' },
+        h('h3', { class: 'bk-bankname', id: `bk-name-${b.id}` }, b.name),
+        h('div', { class: 'bk-bankacts' },
+          h('button', {
+            class: 'btn bk-mini', id: `bk-update-${b.id}`, type: 'button', disabled: busy === 'delete',
+            'aria-label': t('banks.list.updateAria', { name: b.name }), title: t('banks.list.updateAria', { name: b.name }),
+            onclick: () => chooseUpdate(b),
+          }, t('banks.list.update')),
+          h('button', {
+            class: 'btn bk-mini danger', id: `bk-delete-${b.id}`, type: 'button', disabled: busy !== null,
+            'aria-label': deleting ? null : t('banks.list.deleteAria', { name: b.name }), title: deleting ? null : t('banks.list.deleteAria', { name: b.name }),
+            onclick: () => void removeBank(b),
+          }, deleting ? t('banks.list.deleting') : t('common.delete'))),
+        // Without sheet rows there is nothing to unfold, so the creation date is the tooltip of this line
+        // The file name may be long and wraps anywhere; the other facts each stay on one line
+        h('p', { class: 'bk-bankmeta', title: box ? null : created }, dotted(
+          h('span', null, b.filename || t('common.none')),
+          b.inactive ? t('banks.list.withRetired', { questions, n: b.inactive }) : questions,
+          tn('common.sheets', b.sheets.length),
+          h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt }))))),
+      expand),
+    box);
 }
 
 function banksPanel(): HTMLElement {
@@ -717,7 +775,7 @@ function banksPanel(): HTMLElement {
     h('h2', { id: 'bk-list-h', tabindex: '-1' }, t('banks.list.title')),
     listError ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('banks.delete.failed', { reason: errorText(listError) }))) : null,
     S.banks.length
-      ? h('div', { class: 'bk-cards' }, S.banks.map(bankCard))
+      ? h('div', { class: 'bk-banks' }, S.banks.map(bankCard))
       : h('p', { class: 'empty' }, t('banks.list.empty')));
 }
 
@@ -733,23 +791,27 @@ function historyPanel(): HTMLElement {
     h('h2', { id: 'bk-history-h' }, t('banks.history.title')),
     importsError && !importsLoading ? h('div', { class: 'err', role: 'alert' },
       h('p', null, t('banks.history.failed', { reason: errorText(importsError) })),
-      h('div', { class: 'acts bk-retry' }, h('button', { class: 'btn', type: 'button', onclick: retry }, t('common.retry')))) : null,
+      h('div', { class: 'acts bk-retry' }, h('button', { class: 'btn bk-mini', type: 'button', onclick: retry }, t('common.retry')))) : null,
     !list
       ? (importsError && !importsLoading ? null : h('p', { class: 'dim', role: 'status' }, t('common.loading')))
       : !list.length
         ? h('p', { class: 'empty' }, t('banks.history.empty'))
         : [
-          h('ul', { class: 'bk-hist' }, list.slice(0, HISTORY_SHOWN).map((x) => h('li', null,
-            h('div', { class: 'bk-hist-top' }, h('span', { class: 'bk-hist-file' }, x.filename), h('span', { class: 'num dim' }, x.at)),
-            // Only what changed, like the sheet rows of the preview
-            h('div', { class: 'dim' }, segments(
-              tn('common.questions', x.total),
+          // One line per import: when, which file, and only the counts that are not zero
+          h('ul', { class: 'bk-hist' }, list.slice(0, HISTORY_SHOWN).map((x) => {
+            const counts = facts(
+              x.total ? tn('common.questions', x.total) : null,
               x.added ? tn('banks.sheet.added', x.added) : null,
               x.updated ? tn('banks.sheet.updated', x.updated) : null,
               x.restored ? tn('banks.sheet.restored', x.restored) : null,
               x.removed ? tn('banks.sheet.retired', x.removed) : null,
-              x.skipped ? tn('banks.sheet.unreadable', x.skipped) : null))))),
-          list.length > HISTORY_SHOWN ? h('p', { class: 'dim bk-note' }, t('banks.history.latest', { n: HISTORY_SHOWN })) : null,
+              x.skipped ? tn('banks.sheet.unreadable', x.skipped) : null);
+            return h('li', null, dotted(
+              h('span', { class: 'num bk-nw bk-hist-at' }, x.at),
+              h('span', { class: 'bk-hist-file' }, x.filename),
+              counts.length ? counts : null));
+          })),
+          list.length > HISTORY_SHOWN ? h('p', { class: 'bk-note-l' }, t('banks.history.latest', { n: HISTORY_SHOWN })) : null,
         ]);
 }
 
@@ -770,33 +832,38 @@ function example(title: MsgKey, colA: MsgKey, colC: MsgKey): HTMLElement {
 }
 
 function guidePanel(): HTMLElement {
-  // Column letters are Excel's own (the same in every language)
-  return h('section', { class: 'panel bk-guide', id: 'bk-guide', 'aria-labelledby': 'bk-guide-h' },
-    h('h2', { id: 'bk-guide-h', tabindex: '-1' }, t('banks.guide.title')),
-    h('h3', null, t('banks.guide.basicsTitle')),
-    rich('p', t('banks.guide.bank')),
-    rich('p', t('banks.guide.rows')),
-    h('h3', null, t('banks.guide.cols3Title')),
-    columns([['A', 'banks.guide.c3a'], ['B', 'banks.guide.c3b'], ['C', 'banks.guide.c3c']]),
-    h('h3', null, t('banks.guide.cols4Title')),
-    columns([['A', 'banks.guide.c4a'], ['B', 'banks.guide.c3b'], ['C', 'banks.guide.c4c'], ['D', 'banks.guide.c4d']]),
-    rich('p', t('banks.guide.cols4Note')),
-    h('h3', null, t('banks.guide.typesTitle')),
-    h('ul', { class: 'bk-points' },
-      rich('li', t('banks.guide.choice')),
-      rich('li', t('banks.guide.hotspot')),
-      rich('li', t('banks.guide.headings'))),
-    h('h3', null, t('banks.guide.exTitle')),
-    example('banks.guide.exChoice', 'banks.guide.exChoiceA', 'banks.guide.exChoiceC'),
-    example('banks.guide.exHotspot', 'banks.guide.exHotspotA', 'banks.guide.exHotspotC'),
-    h('h3', null, t('banks.guide.importTitle')),
-    h('ul', { class: 'bk-points' },
-      rich('li', t('banks.guide.whole')),
-      rich('li', t('banks.guide.others')),
-      rich('li', t('banks.guide.identity')),
-      rich('li', t('banks.guide.preview')),
-      rich('li', t('banks.guide.files', { mb: MAX_MB })),
-      rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') }))));
+  // Folded by default: the summary is the panel's heading row. Column letters are Excel's own (the same in every language).
+  const d = h('details', { class: 'bk-guide-d', id: 'bk-guide-d', open: guideOpen },
+    h('summary', { class: 'bk-guide-s', id: 'bk-guide-s' }, h('h2', { id: 'bk-guide-h' }, t('banks.guide.title')), icon(ICON_CHEVRON, 'ico bk-chev')),
+    h('div', { class: 'bk-guide-body' },
+      h('h3', null, t('banks.guide.basicsTitle')),
+      rich('p', t('banks.guide.bank')),
+      rich('p', t('banks.guide.rows')),
+      h('h3', null, t('banks.guide.cols3Title')),
+      columns([['A', 'banks.guide.c3a'], ['B', 'banks.guide.c3b'], ['C', 'banks.guide.c3c']]),
+      h('h3', null, t('banks.guide.cols4Title')),
+      columns([['A', 'banks.guide.c4a'], ['B', 'banks.guide.c3b'], ['C', 'banks.guide.c4c'], ['D', 'banks.guide.c4d']]),
+      rich('p', t('banks.guide.cols4Note')),
+      h('h3', null, t('banks.guide.typesTitle')),
+      h('ul', { class: 'bk-points' },
+        rich('li', t('banks.guide.choice')),
+        rich('li', t('banks.guide.hotspot')),
+        rich('li', t('banks.guide.headings'))),
+      h('h3', null, t('banks.guide.exTitle')),
+      example('banks.guide.exChoice', 'banks.guide.exChoiceA', 'banks.guide.exChoiceC'),
+      example('banks.guide.exHotspot', 'banks.guide.exHotspotA', 'banks.guide.exHotspotC'),
+      h('h3', null, t('banks.guide.importTitle')),
+      h('ul', { class: 'bk-points' },
+        rich('li', t('banks.guide.whole')),
+        rich('li', t('banks.guide.others')),
+        rich('li', t('banks.guide.identity')),
+        rich('li', t('banks.guide.preview')),
+        rich('li', t('banks.guide.files', { mb: MAX_MB })),
+        rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') })))));
+  d.addEventListener('toggle', () => {
+    guideOpen = d.open;
+  });
+  return h('section', { class: 'panel bk-guide', id: 'bk-guide', 'aria-labelledby': 'bk-guide-h' }, d);
 }
 
 // ---------------------------------------------------------------- page

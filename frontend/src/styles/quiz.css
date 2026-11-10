@@ -9,25 +9,26 @@
 .qbar .r { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
 .qtime { display: inline-flex; align-items: baseline; }
 
-/* Auto-advance indicator: small and quiet, only there as a reminder */
+/* Auto-advance indicator: a small quiet tag with a dot, only there as a reminder */
 .qauto {
-  display: inline-flex; align-items: center; gap: 6px; padding: 1px 10px;
-  border: 1px solid var(--line); border-radius: 999px; background: var(--sheet);
-  font-size: 12.5px; font-weight: 600; line-height: 1.7; color: var(--ink2); white-space: nowrap;
+  display: inline-flex; align-items: center; gap: 6px; padding: 0 8px;
+  border: 0; border-radius: 4px; background: var(--fill);
+  font-size: 12.5px; font-weight: 500; line-height: 1.8; color: var(--ink2); white-space: nowrap;
 }
-.qauto-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--print); }
+.qauto-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--print); }
 
-.rail-count { margin-bottom: 12px; }
+.rail-count { margin-bottom: 12px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
 
 /* A language the question lacks: still tappable (a tap shows why in a toast), but looks unavailable */
 .lang-btn[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
-@media (hover: hover) { .phead .lang .lang-btn[aria-disabled="true"]:hover { background: transparent; } }
+@media (hover: hover) { .phead .lang .lang-btn[aria-disabled="true"]:hover { background: transparent; color: var(--ink3); } }
 
-/* "Mark to revisit" when on: readable in both themes (the plain --mark fill put light ink on yellow in dark mode).
-   The yellow band matches the yellow marker on the answer-sheet tiles. */
+/* "Mark to revisit" when on: readable in both themes (ink on a soft yellow, never ink on the plain --mark fill), with a
+   1px --ink2 edge (the yellow alone is under 3:1 on white) and no extra frame.
+   The yellow marker in front of the label matches the yellow marker on the answer-sheet tiles. */
 .pfoot .flagbtn[aria-pressed="true"] {
-  background: var(--mnemo-bg); border-color: var(--ink); color: var(--ink);
-  box-shadow: inset 0 0 0 3px var(--mark);
+  background: var(--mnemo-bg); border-color: var(--ink2); color: var(--ink);
+  box-shadow: none;
 }
 
 /* Partly answered hotspot tile (often the current one): the number sits on a card-coloured disc inside the half-filled ring,
@@ -48,7 +49,7 @@
 
 @media (max-width: 480px) {
   .qbar .r { gap: 8px 10px; }
-  .qauto { padding-inline: 8px; font-size: 12px; }
+  .qauto { padding-inline: 6px; font-size: 12px; }
   /* 6-7 tiles per row at a 44px touch size instead of 5 oversized ones */
   .rail .tiles { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
 }

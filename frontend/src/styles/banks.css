@@ -1,125 +1,279 @@
 /* Question banks page: import panel, bank list, import history, Excel format guide.
-   Colours come only from the tokens in main.css, so the page follows the light and dark themes. */
+   Calm and compact, like the home page: a segmented choice on the heading row, rows separated by hairlines instead of
+   boxes inside the blocks, soft tags and callouts, and small buttons that get an invisible, larger tap area on touch
+   screens. Colours come only from the tokens in main.css, so the page follows the light and dark themes. */
 
 /* Layout: one column; two columns once the page is wide enough */
-.bk-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; align-items: start; }
-.bk-col { display: grid; gap: 20px; align-content: start; min-width: 0; }
+.bk-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+/* minmax(0, 1fr): a block never grows past its column (the bank select is as wide as its longest bank name) */
+.bk-col { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-content: start; min-width: 0; }
 .bk-col > .panel + .panel { margin-top: 0; }
 @media (min-width: 1000px) {
   .bk-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 }
-.page-banks .panel, .bk-target { scroll-margin-top: 16px; }
-@media (max-width: 900px) {
-  .page-banks .panel, .bk-target { scroll-margin-top: 16px; }
-}
+.page-banks .panel { scroll-margin-top: 16px; }
+.page-banks .panel > h2 { margin-bottom: 12px; overflow-wrap: anywhere; }
 .page-banks [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
 
-/* ---------- Import panel ---------- */
-.bk-target { margin-bottom: 16px; }
-.page-banks .row-opt .name, .page-banks .row-opt .sub { display: block; }
-.bk-pick { display: grid; gap: 6px; margin: 2px 0 8px 42px; }
-.bk-pick[hidden] { display: none; }
-.bk-pick label { font-weight: 600; font-size: 14px; color: var(--ink2); }
-.bk-pick select {
-  width: 100%; min-height: 40px; padding: 6px 10px;
-  border: 1.5px solid var(--ink); border-radius: 4px; background: var(--card); color: var(--ink);
-}
-@media (max-width: 480px) { .bk-pick { margin-left: 0; } }
+/* Heading row: the title on the left, small controls on its right (they move under the title when there is no room) */
+.bk-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+.bk-head h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 
-.bk-drop .dim { max-width: 34em; overflow-wrap: anywhere; }
-.bk-drop .drop-t { overflow-wrap: anywhere; }
-/* While a file is checked, the title is the progress message: keep it fully readable (the button shows .btn:disabled) */
-.page-banks .bk-drop.busy { opacity: 1; }
-@media (hover: none) { .bk-or { display: none; } }
-@media (max-width: 480px) {
-  /* Phones: the steps repeat what the form already shows, and nothing can be dropped, so the file button
-     moves into the first screen */
-  .page-banks .steps { display: none; }
-  .page-banks .bk-drop { padding: 16px 12px; gap: 8px; }
-}
+/* Short explanatory lines (under the heading, in the preview) */
+.bk-hint { margin: 0 0 12px; font-size: 13.5px; line-height: 1.6; color: var(--ink3); overflow-wrap: anywhere; }
 
-.bk-guide-link { margin-top: 12px; }
+/* A text link that is a button: print blue with a thin underline (the underline, not only the colour, marks it) */
 .linkbtn {
-  border: 0; background: none; padding: 0; color: var(--print); font-weight: 600;
-  text-decoration: underline; text-underline-offset: 3px; text-align: left;
+  position: relative; border: 0; background: none; padding: 0; color: var(--print); font-weight: 500;
+  text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; text-align: left;
+  transition: color .12s ease;
 }
-@media (hover: hover) { .linkbtn:hover { color: var(--ink); } }
+@media (hover: hover) { .linkbtn:hover { color: var(--print-hover); } }
+.bk-hint .linkbtn { font-size: inherit; }
+/* One fact of a wrapped line ("7 questions"): the line breaks between facts, not inside one */
+.bk-nw { white-space: nowrap; }
 
-/* Preview */
-.bk-import h2 { overflow-wrap: anywhere; }
-.bk-lead { margin-bottom: 14px; }
-.bk-info { margin-top: 16px; border: 1.5px solid var(--print); background: var(--print-soft); border-radius: 6px; padding: 12px 16px; overflow-wrap: anywhere; }
+/* Small buttons (bank actions, "update that bank instead", retry): the shared button, only smaller */
+.page-banks .btn.bk-mini { position: relative; min-height: 28px; padding: 3px 10px; font-size: 13px; font-weight: 400; }
+
+/* ---------- Import panel ---------- */
+/* Import target: a segmented control with radio semantics. The radio stays in the page for keyboard and screen readers;
+   the option shows its state: the chosen one is a raised chip on the soft track. */
+.bk-target { margin: 0; }
+.bk-segs { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border-radius: 8px; background: var(--fill); }
+.bk-seg {
+  position: relative; display: inline-flex; align-items: center; gap: 5px; min-height: 28px; padding: 2px 10px 2px 8px;
+  border: 0; border-radius: 6px; background: transparent;
+  font-size: 13px; font-weight: 400; line-height: 1.4; color: var(--ink3); white-space: nowrap; cursor: pointer;
+  transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
+}
+.bk-seg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.bk-seg .bk-seg-ico { width: 15px; height: 15px; flex: none; color: var(--ink3); }
+@media (hover: hover) {
+  .bk-seg:hover:not(.off):not(:has(input:disabled)):not(:has(input:checked)) { background: var(--hover); color: var(--ink); }
+}
+.bk-seg:has(input:checked) { background: var(--seg-on); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--seg-on-line), var(--shadow-sm); }
+.bk-seg:has(input:checked) .bk-seg-ico { color: var(--ink2); }
+.bk-seg:has(input:focus-visible) { outline: 2px solid var(--print); outline-offset: 2px; }
+.bk-seg.off, .bk-seg:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+
+/* The bank to update: a compact select right under the segmented control (the field look comes from main.css) */
+.bk-pick { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 4px 10px; margin: -4px 0 12px; }
+.bk-pick[hidden] { display: none; }
+.bk-pick label { font-size: 13px; font-weight: 600; color: var(--ink2); }
+.bk-pick select { flex: 0 1 20em; min-width: 0; max-width: 100%; min-height: 32px; padding: 3px 8px; font-size: 14px; }
+@media (hover: hover) { .bk-pick select:hover:not(:disabled):not(:focus) { border-color: var(--ink3); } }
+
+/* The file row: button, "or drop it here" and the limits. A soft dashed outline keeps it recognisable as the place to
+   drop a file; the whole panel accepts a dropped file. */
+.bk-droprow {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 12px;
+  border: 1px dashed var(--line); border-radius: 8px;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.bk-or { font-size: 13.5px; color: var(--ink2); }
+.bk-status { flex: 1 1 12em; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--ink2); overflow-wrap: anywhere; }
+.bk-note { margin-left: auto; font-size: 12.5px; color: var(--ink3); white-space: nowrap; }
+/* Nothing can be dropped on a touch screen */
+@media (hover: none) { .bk-or { display: none; } }
+.bk-import { transition: background-color .12s ease, border-color .12s ease; }
+.bk-import.over { border-color: var(--print); background: var(--print-soft); }
+.bk-import.over .bk-droprow { border-color: var(--print); }
+/* While a file is checked, the status line speaks, led by a small ring that turns (it stands still under reduced motion) */
+.bk-import.busy .bk-status::before {
+  content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 8px; vertical-align: -1px;
+  border: 2px solid var(--hover-strong); border-top-color: var(--print); border-radius: 50%;
+  animation: bk-spin .8s linear infinite;
+}
+@keyframes bk-spin { to { transform: rotate(360deg); } }
+
+/* Preview: the counts are soft tags (label and number in one tag), then callouts, the decision, the sheet rows */
+.bk-chips { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 0; padding: 0; }
+.bk-chip {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 0 6px;
+  border-radius: 4px; background: var(--fill); font-size: 12.5px; font-weight: 500; line-height: 1.7; color: var(--ink2);
+}
+.bk-chip b { font: 600 12.5px/1.7 var(--num), var(--en); }
+/* In this palette --right is the print blue, so "Updated / Restored" take blue text on the neutral fill to stay apart
+   from "Added" (blue on blue) */
+.bk-chip.g { background: var(--right-soft); color: var(--right); }
+.bk-chip.b { background: var(--fill); color: var(--print); }
+.bk-chip.r { background: var(--wrong-soft); color: var(--wrong); }
+.bk-chip.zero { color: var(--ink3); }
+
+/* Messages are the shared callouts (main.css); here only their spacing and text size */
+.bk-info { margin-top: 12px; border-radius: 8px; padding: 12px 16px; background: var(--print-soft); font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
 .bk-info .acts { margin-top: 10px; }
-.page-banks .warnbox { overflow-wrap: anywhere; }
+.page-banks .warnbox { margin-top: 12px; font-size: 14px; line-height: 1.6; }
 .page-banks .warnbox p + p, .page-banks .warnbox ul + p { margin-top: 6px; }
-.page-banks .err p + p { margin-top: 6px; }
-.page-banks .skipbox li { overflow-wrap: anywhere; }
-.bk-same { margin-top: 12px; }
-.bk-acts { margin-top: 20px; }
+.page-banks .warnbox ul { margin: 2px 0; }
+.page-banks .err { margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
+.page-banks .err p + p { margin-top: 4px; }
+.page-banks .okbox { margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
 .page-banks .okbox p { overflow-wrap: anywhere; }
+.page-banks .okbox .ok-t { font-size: 15px; margin-bottom: 2px; }
+.page-banks .okbox .acts { margin-top: 12px; }
+.bk-same { margin: 12px 0 0; }
+.bk-acts { margin-top: 16px; }
+/* Section label inside a block ("Sheets") */
+.bk-sub { margin: 24px 0 4px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+
+/* One-line rows (sheets of the preview and of a bank): no box, a hairline between rows */
+.bk-rows, .bk-sheetrows { list-style: none; margin: 0; padding: 0; }
+.bk-rows > .bk-row { padding: 8px 0; border-top: 1px solid var(--line-soft); }
+.bk-rows > .bk-row:last-child { padding-bottom: 0; }
+.bk-line { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 8px; min-width: 0; }
+.bk-line .name { font-size: 14px; font-weight: 400; color: var(--ink); overflow-wrap: anywhere; }
+.bk-line .sub { font-size: 13px; color: var(--ink3); }
+/* A sheet with unreadable rows: the line is the summary of a fold that lists the reasons. The summary takes a soft
+   hover fill, so it reaches a little past the text on both sides. */
+.bk-skip > summary {
+  display: flex; align-items: center; gap: 8px; margin: -4px -8px; padding: 4px 8px;
+  list-style: none; cursor: pointer; border-radius: 6px;
+  transition: background-color .12s ease;
+}
+.bk-skip > summary::-webkit-details-marker { display: none; }
+@media (hover: hover) { .bk-skip > summary:hover { background: var(--hover); } }
+.bk-skip > summary:focus-visible { outline-offset: 0; }
+.bk-skip > summary .bk-line { flex: 1; }
+.bk-skipn { flex: none; padding: 0 6px; border-radius: 4px; background: var(--wrong-soft); font-size: 12.5px; font-weight: 500; line-height: 1.7; color: var(--wrong); white-space: nowrap; }
+.bk-skip ul { margin: 8px 0 2px; padding-left: 20px; font-size: 13px; color: var(--ink2); }
+.bk-skip li { overflow-wrap: anywhere; }
+.bk-skip li + li { margin-top: 2px; }
+.bk-chev { width: 18px; height: 18px; flex: none; color: var(--ink3); transition: transform .15s ease; }
+details[open] > summary .bk-chev { transform: rotate(180deg); }
 
 /* ---------- Bank list ---------- */
-.bk-cards { display: grid; gap: 12px; }
-.bk-card { min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; }
-.bk-card h3 { font-size: 17px; margin-bottom: 8px; overflow-wrap: anywhere; }
-.bk-meta { display: grid; gap: 2px; margin: 0; font-size: 14px; }
-.bk-meta > div { display: grid; grid-template-columns: 7.5em minmax(0, 1fr); gap: 12px; }
-.bk-meta dt { color: var(--ink3); }
-.bk-meta dd { margin: 0; overflow-wrap: anywhere; }
-.bk-sheets { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line); font-size: 14px; }
-.bk-sheets summary { cursor: pointer; padding-block: 4px; font-weight: 600; color: var(--ink2); }
-.bk-sheets ul { list-style: none; margin: 6px 0 0; padding: 0; }
-.bk-sheets li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; padding: 6px 0; border-top: 1px solid var(--line); }
-.bk-sheets li:first-child { border-top: 0; }
-.bk-sheet-name { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
-.bk-card .acts { margin-top: 14px; }
-@media (max-width: 480px) {
-  .bk-card { padding: 14px; }
-  .bk-meta > div { grid-template-columns: 6.5em minmax(0, 1fr); gap: 8px; }
+/* One row per bank, separated by hairlines: name and the two small actions, one line of facts under them, and a quiet
+   chevron button on the right that unfolds the sheet rows, indented under a soft rule. */
+.bk-banks { display: grid; margin: -6px 0 -8px; }
+.bk-bank { min-width: 0; }
+.bk-bank + .bk-bank { border-top: 1px solid var(--line-soft); }
+.bk-bankhead { display: flex; align-items: center; gap: 8px; padding: 10px 0; }
+/* The actions sit next to the name; on a phone a name that does not fit beside them keeps the full width and pushes
+   them onto their own row */
+.bk-bankmain { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; }
+.bk-bankname { flex: 1 1 10em; min-width: 0; font-size: 15.5px; font-weight: 600; overflow-wrap: anywhere; }
+.bk-bankacts { display: flex; gap: 6px; margin-left: auto; }
+/* "Delete" in the list looks like "Update" (grey text) and turns red on hover or focus, like Delete in the study
+   records, so a column of red frames does not shout; the dialog still asks before anything is deleted */
+.bk-bankacts .btn.danger { color: var(--ink2); border-color: var(--line); }
+@media (hover: hover) {
+  .bk-bankacts .btn.danger:hover:not(:disabled) { color: var(--wrong); background: var(--wrong-soft); border-color: var(--ng-line); }
 }
+.bk-bankacts .btn.danger:focus-visible { color: var(--wrong); }
+.bk-bankmeta { flex-basis: 100%; font-size: 13px; color: var(--ink3); overflow-wrap: anywhere; }
+.bk-expand {
+  position: relative; flex: none; width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer;
+  transition: background-color .12s ease, color .12s ease;
+}
+@media (hover: hover) { .bk-expand:hover { background: var(--hover); color: var(--ink); } }
+.bk-expand[aria-expanded="true"] { color: var(--ink2); }
+.bk-expand .ico { width: 20px; height: 20px; transition: transform .15s ease; }
+.bk-expand[aria-expanded="true"] .ico { transform: rotate(180deg); }
+.bk-sheetbox { margin: -2px 40px 12px 2px; padding: 2px 0 2px 14px; border-left: 2px solid var(--line-soft); }
+.bk-sheetbox[hidden] { display: none; }
+.bk-sheetrows .bk-row { padding: 3px 0; }
+.bk-created { margin-top: 4px; font-size: 12.5px; color: var(--ink3); }
 
 /* ---------- Import history ---------- */
-.bk-hist { list-style: none; margin: 0; padding: 0; }
-.bk-hist li { padding: 10px 0; border-top: 1px solid var(--line); font-size: 14px; }
+.bk-hist { list-style: none; margin: 0; padding: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink3); }
+.bk-hist li { padding: 8px 0; border-top: 1px solid var(--line-soft); overflow-wrap: anywhere; }
 .bk-hist li:first-child { padding-top: 0; border-top: 0; }
-.bk-hist-top { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
-.bk-hist-file { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
-.bk-note { margin-top: 10px; font-size: 13px; }
-.bk-retry { margin-top: 10px; }
+.bk-hist li:last-child { padding-bottom: 0; }
+.bk-hist-at { color: var(--ink3); }
+.bk-hist-file { font-weight: 400; color: var(--ink); }
+.bk-note-l { margin-top: 12px; font-size: 12.5px; color: var(--ink3); }
+.bk-retry { margin-top: 8px; }
 
 /* ---------- Excel format guide ---------- */
-.bk-guide h3 { font-size: 15.5px; margin: 22px 0 8px; color: var(--ink2); }
-.bk-guide h2 + h3 { margin-top: 0; }
-.bk-guide p { line-height: 1.8; overflow-wrap: anywhere; }
+/* Folded by default: the summary is the whole heading row of the block (and its tap area), with a soft hover fill */
+.page-banks .bk-guide { padding: 0; }
+.bk-guide-s {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 16px 24px;
+  list-style: none; cursor: pointer; border-radius: 9px;
+  transition: background-color .12s ease;
+}
+.bk-guide-d[open] > .bk-guide-s { border-radius: 9px 9px 0 0; }
+.bk-guide-s::-webkit-details-marker { display: none; }
+@media (hover: hover) { .bk-guide-s:hover { background: var(--hover); } }
+.bk-guide-s:focus-visible { outline-offset: -2px; }
+.bk-guide-s h2 { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.bk-guide-s .bk-chev { width: 20px; height: 20px; }
+@media (hover: hover) { .bk-guide-s:hover .bk-chev { color: var(--ink2); } }
+.bk-guide-body { padding: 4px 24px 24px; font-size: 14.5px; }
+.bk-guide h3 { margin: 24px 0 8px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+.bk-guide-body > h3:first-child { margin-top: 0; }
+.bk-guide p { line-height: 1.75; overflow-wrap: anywhere; }
 .bk-guide p + p { margin-top: 8px; }
-.bk-points { margin: 0; padding-left: 20px; line-height: 1.8; overflow-wrap: anywhere; }
+.bk-points { margin: 0; padding-left: 20px; line-height: 1.75; overflow-wrap: anywhere; }
 .bk-points li + li { margin-top: 6px; }
-/* inline-block: a marker moves to the next line as a whole instead of splitting into two boxes that look like two markers */
+/* Excel content in the text: a soft inline tag. inline-block: a marker moves to the next line as a whole instead of
+   splitting into two boxes that look like two markers */
 .bk-code {
   display: inline-block; max-width: 100%; line-height: 1.45;
-  font-family: inherit; font-size: .95em; padding: 0 4px;
-  background: var(--tint); border: 1px solid var(--line); border-radius: 3px; overflow-wrap: anywhere;
+  font-family: inherit; font-size: .93em; padding: 0 5px;
+  background: var(--fill); border: 0; border-radius: 4px; overflow-wrap: anywhere;
 }
 .bk-cols { width: 100%; margin-bottom: 8px; border-collapse: collapse; font-size: 14px; }
-.bk-cols th, .bk-cols td { padding: 8px 10px; border-top: 1px solid var(--line); text-align: left; vertical-align: top; line-height: 1.7; }
+.bk-cols th, .bk-cols td { padding: 8px 10px; border-bottom: 1px solid var(--line-soft); text-align: left; vertical-align: top; line-height: 1.65; }
 .bk-cols td { overflow-wrap: anywhere; }
-.bk-cols thead th { padding-top: 0; border-top: 0; font-size: 13px; font-weight: 600; color: var(--ink3); }
-.bk-cols tbody th { width: 4.5em; font: 700 15px var(--num), var(--en); color: var(--print); }
-.bk-ex { margin: 0 0 14px; }
-.bk-ex figcaption { margin-bottom: 6px; font-size: 14px; font-weight: 600; }
-.bk-ex-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 8px; }
-.bk-ex .bk-ex-col { margin-bottom: 2px; font-size: 12.5px; color: var(--ink3); }
+/* The letter column lines up with the text above the table */
+.bk-cols tr > :first-child { padding-left: 0; }
+.bk-cols thead th { padding-top: 0; padding-bottom: 6px; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
+.bk-cols tbody th { width: 4.5em; font: 600 14.5px/1.65 var(--num), var(--en); color: var(--print); }
+.bk-cols tbody tr:last-child > * { border-bottom: 0; }
+.bk-ex { margin: 0 0 16px; }
+.bk-ex figcaption { margin-bottom: 8px; font-size: 14px; font-weight: 600; }
+.bk-ex-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; }
+.bk-ex .bk-ex-col { margin-bottom: 4px; font-size: 12.5px; color: var(--ink3); }
+/* An example cell: a soft block like a code block (no frame) */
 .bk-ex-cell {
   margin: 0; padding: 10px 12px;
-  background: var(--card); border: 1px solid var(--line); border-radius: 4px;
-  font-family: inherit; font-size: 13.5px; line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere;
+  background: var(--fill); border: 0; border-radius: 8px;
+  font-family: inherit; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere;
 }
-/* Phones: the single-letter column gives its spare width to the content column */
-@media (max-width: 480px) { .bk-cols tbody th { width: 2.5em; } }
 
-/* ---------- Touch screens: tap targets of at least 44px ---------- */
+/* Motion: colour fades only (and the small busy ring), none at all when the system asks for less motion */
+@media (prefers-reduced-motion: reduce) {
+  .linkbtn, .bk-seg, .bk-droprow, .bk-import, .bk-skip > summary, .bk-expand, .bk-guide-s,
+  .bk-expand .ico, .bk-chev { transition: none; }
+  .bk-import.busy .bk-status::before { animation: none; }
+}
+
+/* ---------- Phones ---------- */
+@media (max-width: 480px) {
+  .bk-head { gap: 8px; }
+  /* The options keep their words (no counts to show instead); the icons make room for them on the heading row */
+  .bk-seg { padding-inline: 10px; }
+  .bk-seg .bk-seg-ico { display: none; }
+  .bk-pick { gap: 4px 8px; }
+  .bk-pick label { font-size: 12.5px; }
+  .bk-pick select { flex: 1 1 10em; font-size: 13.5px; padding-inline: 6px; }
+  /* Confirm / cancel share the row when they fit; once wrapped, each takes the full width */
+  .bk-acts .btn { flex: 1 1 auto; padding-inline: 12px; }
+  .bk-droprow { padding: 8px; }
+  .bk-bankmain { column-gap: 8px; }
+  /* Every bank the same shape: the name on its own line, the two small buttons under it on the right, then the facts */
+  .bk-bankname { flex-basis: 100%; }
+  .bk-sheetbox { margin-right: 0; padding-left: 12px; }
+  .bk-guide-s { padding: 12px 12px 12px 16px; }
+  .bk-guide-body { padding: 0 16px 18px; }
+  /* The single-letter column gives its spare width to the content column */
+  .bk-cols tbody th { width: 2.5em; }
+}
+
+/* ---------- Touch screens ---------- */
+/* The small buttons and options stay small to look at; an invisible margin around them makes them ~44px to tap */
 @media (pointer: coarse), (max-width: 480px) {
+  .page-banks .btn.bk-mini { min-height: 28px; min-width: 0; }
+  /* the ::after is placed from the padding box: -9px on the bordered button (28 - 2 + 18 = 44px), -8px on the borderless segment */
+  .page-banks .btn.bk-mini::after { content: ""; position: absolute; inset: -9px -3px; }
+  .bk-seg::after { content: ""; position: absolute; inset: -8px -3px; }
+  .linkbtn::after { content: ""; position: absolute; inset: -12px -4px; }
+  .bk-expand { width: 44px; height: 44px; }
+  .bk-droprow .btn, .bk-acts .btn { min-height: 44px; }
   .bk-pick select { min-height: 44px; }
-  .linkbtn { min-height: 44px; }
-  .bk-sheets summary { padding-block: 10px; }
+  .bk-skip > summary { min-height: 44px; }
 }

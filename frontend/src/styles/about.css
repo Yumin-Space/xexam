@@ -1,26 +1,58 @@
-/* About page: intro + facts, then what is new per version. Colours come only from the tokens in main.css. */
+/* About page: intro + facts, then what is new per version (the newest open, the earlier ones as quiet toggle rows).
+   Colours come only from the tokens in main.css. */
 .page-about .panel { max-width: 860px; }
 .ab-intro p { max-width: 46em; }
-.ab-facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 14px 0 0; }
-.ab-facts dt { color: var(--ink3); }
-.ab-facts dd { margin: 0; font-weight: 600; }
-.ab-lead { margin: -8px 0 14px; }
+/* The facts: the shared property list (.props); only the version is set in a heavier weight */
+.ab-facts { margin: 16px 0 0; }
+.ab-facts dd:first-of-type { font-weight: 600; }
+.ab-lead { margin: -10px 0 16px; font-size: 14px; }
 
-.ab-entry h3, .ab-entry summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; font-size: 17px; }
-.ab-ver { font-weight: 700; }
-.ab-date { font-weight: 500; font-size: 14px; color: var(--ink3); }
-.ab-tag { font-size: 12.5px; font-weight: 700; padding: 0 8px; border-radius: 999px; border: 1.5px solid var(--print); color: var(--print); }
-.ab-first { padding-bottom: 6px; }
-.ab-older-h { font-size: 15px; color: var(--ink2); margin: 22px 0 8px; }
-details.ab-entry { border-top: 1px solid var(--line); padding: 10px 0; }
-details.ab-entry:last-child { border-bottom: 1px solid var(--line); }
-details.ab-entry summary { cursor: pointer; min-height: 32px; }
-details.ab-entry[open] summary { margin-bottom: 6px; }
+.ab-entry h3, .ab-entry summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 16px; font-weight: 600; }
+.ab-first h3 { font-size: 17px; }
+.ab-ver { font-weight: 600; }
+.ab-date { font-weight: 400; font-size: 13px; color: var(--ink3); }
+/* "This version": a small print-blue tag */
+.ab-tag { align-self: center; padding: 0 6px; border-radius: 4px; background: var(--print-soft); color: var(--print); font-size: 12.5px; font-weight: 500; line-height: 1.7; white-space: nowrap; }
+.ab-first { padding-bottom: 4px; }
+/* "Earlier versions": a small section label */
+.ab-older-h { margin: 24px 0 6px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
 
-.ab-body { margin-top: 8px; line-height: 1.75; max-width: 52em; }
+/* Earlier versions: rows split by a hairline; each summary is a quiet toggle (chevron, soft hover) */
+details.ab-entry { padding: 3px 0; border-top: 1px solid var(--line-soft); }
+details.ab-entry summary {
+  align-items: center; min-height: 36px; margin: 0 -8px; padding: 4px 8px;
+  list-style: none; cursor: pointer; border-radius: 6px;
+  transition: background-color .12s ease;
+}
+details.ab-entry summary::-webkit-details-marker { display: none; }
+/* The chevron: points right while folded, down when open */
+details.ab-entry summary::before {
+  content: ""; flex: none; width: 6px; height: 6px; margin: 0 2px 0 3px;
+  border-right: 1.5px solid var(--ink3); border-bottom: 1.5px solid var(--ink3);
+  transform: translateX(-1px) rotate(-45deg);
+}
+details.ab-entry[open] summary::before { transform: translateY(-2px) rotate(45deg); }
+@media (hover: hover) { details.ab-entry summary:hover { background: var(--hover); } }
+details.ab-entry summary:focus-visible { outline-offset: 0; }
+details.ab-entry[open] summary { margin-bottom: 2px; }
+/* The text of an opened version lines up with the version number after the chevron */
+details.ab-entry .ab-body { margin-top: 4px; padding: 0 0 6px 21px; }
+
+.ab-body { margin-top: 8px; line-height: 1.7; max-width: 52em; }
 .ab-body p { margin: 0 0 10px; }
+.ab-body strong { font-weight: 600; }
 .ab-body ul { margin: 0 0 10px; padding-left: 20px; }
 .ab-body li + li { margin-top: 4px; }
+.ab-body li::marker { color: var(--ink3); }
 .ab-body ul ul { margin: 4px 0 0; }
-.ab-body code { font-size: .9em; padding: 0 4px; border-radius: 3px; background: var(--tint); overflow-wrap: anywhere; }
-@media (pointer: coarse) { details.ab-entry summary { min-height: 44px; align-items: center; } }
+/* Inline code: a monospace face for Latin text on a soft fill. No generic "monospace" at the end: Chinese and Japanese
+   in a code span fall through to the page's own (proportional) fonts instead of a fixed-width CJK face. */
+.ab-body code {
+  padding: 1px 5px; border-radius: 4px; background: var(--fill);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, var(--en); font-size: .88em;
+  overflow-wrap: anywhere;
+}
+html:lang(zh-CN) .ab-body code { font-family: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, var(--zh); }
+html:lang(ja) .ab-body code { font-family: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, var(--jp); }
+@media (pointer: coarse) { details.ab-entry summary { min-height: 44px; } }
+@media (prefers-reduced-motion: reduce) { details.ab-entry summary { transition: none; } }

@@ -7,8 +7,8 @@ import { cacheSettings, normalizeSettings } from './settings-cache.ts';
 import { paths } from './storage-keys.ts';
 import { S } from './store.ts';
 
-const LIGHT_BAR = '#E3E8ED';
-const DARK_BAR = '#10151D';
+const LIGHT_BAR = '#F6F8FA';
+const DARK_BAR = '#0D1117';
 
 function systemDark(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
