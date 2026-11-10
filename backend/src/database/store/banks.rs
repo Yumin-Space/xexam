@@ -203,8 +203,9 @@ fn banks_json(c: &Connection) -> Result<Value, DbError> {
         }
     }
     let studied: HashMap<i64, i64> = {
+        // Shared numbers: a question counts once if any user has statistics for it
         let mut st = c.prepare(
-            "SELECT q.bank_id, COUNT(*) FROM stats s JOIN questions q ON q.id = s.question_id \
+            "SELECT q.bank_id, COUNT(*) FROM (SELECT DISTINCT question_id FROM user_stats) s JOIN questions q ON q.id = s.question_id \
              WHERE q.bank_id IS NOT NULL GROUP BY q.bank_id",
         )?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -273,9 +274,31 @@ impl Store {
         banks_json(&g)
     }
 
+    /// An opaque stamp of the shared question library (`"library"` of `GET /api/auth/state`): it changes whenever a bank is
+    /// imported, replaced or deleted, also by another process (the `import` command). Cheap: a few aggregates, no question text.
+    pub fn library_stamp(&self) -> Result<String, DbError> {
+        let g = self.lock();
+        let (banks, last_bank, updated): (i64, i64, String) = g.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(id), 0), COALESCE(MAX(updated_at), '') FROM banks",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let last_import: i64 =
+            g.query_row("SELECT COALESCE(MAX(id), 0) FROM imports", [], |r| r.get(0))?;
+        let active: i64 =
+            g.query_row("SELECT COUNT(*) FROM questions WHERE active=1", [], |r| {
+                r.get(0)
+            })?;
+        Ok(format!(
+            "{banks}.{last_bank}.{last_import}.{active}.{}",
+            updated.replace(['-', ':', ' '], "")
+        ))
+    }
+
     /// Deletes bank `id` in one transaction: its questions (active and retired), its import history and the bank row. With
-    /// `with_records` also its study data: the `stats` and `attempt_items` rows of those questions, and every exam record whose
-    /// `banks` snapshot names only this bank (with the rest of its detail). `Ok(None)` = no such bank (nothing written).
+    /// `with_records` also its study data, of every user: the `user_stats` and `attempt_items` rows of those questions, and every
+    /// exam record whose `banks` snapshot names only this bank (with the rest of its detail). `Ok(None)` = no such bank (nothing
+    /// written).
     pub fn delete_bank(&self, id: i64, with_records: bool) -> Result<Option<DeletedBank>, DbError> {
         let g = self.lock();
         run_tx(&g, |c| {
@@ -293,7 +316,7 @@ impl Store {
             if with_records {
                 exec_in_chunks(
                     c,
-                    "DELETE FROM stats WHERE question_id IN ({marks})",
+                    "DELETE FROM user_stats WHERE question_id IN ({marks})",
                     &question_ids,
                 )?;
                 exec_in_chunks(

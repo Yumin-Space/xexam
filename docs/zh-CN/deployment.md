@@ -36,7 +36,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 第一次构建要几分钟（编译 Rust 和前端），之后有缓存。克隆的仓库里，compose 文件和 `.env` 都在 `docker/` 里，`docker/docker-compose.build.yml` 以仓库根目录为构建上下文。下面的命令要在仓库根目录运行，并加上 `-f docker/docker-compose.build.yml`（例如 `docker compose -f docker/docker-compose.build.yml logs -f`）。
 
-构建 `xexam-frontend` 时，`nginx/Dockerfile` 会把仓库里的 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md` 复制进构建环境（`COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`）：「关于 Xexam」页（菜单底部的「Xexam v0.5.1」）里的「更新内容」，就是在构建时从这三份 README 的更新日志生成的。所以 `.dockerignore` 不排除 `README.md` 和 `README/`。最终镜像里只有生成的静态文件，没有 README 本身。
+构建 `xexam-frontend` 时，`nginx/Dockerfile` 会把仓库里的 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md` 复制进构建环境（`COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`）：「关于 Xexam」页（菜单底部的「Xexam v0.6」）里的「更新内容」，就是在构建时从这三份 README 的更新日志生成的。所以 `.dockerignore` 不排除 `README.md` 和 `README/`。最终镜像里只有生成的静态文件，没有 README 本身。
 
 | 操作 | 命令 |
 |---|---|
@@ -121,7 +121,7 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
    - 先把旧数据库复制一份到 `/data/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db`。如果这份副本写不出来（磁盘满了、没有权限），后端会报错退出，数据库不会被改动。Docker 会一直重启它，每次启动都会再试一次；Nginx 不会启动，因为它要等后端 healthy。原因可以用 `docker compose logs backend` 查看。
    - 然后在一个事务里完成迁移。你现有的题会变成一个题库，题目 id 不变，所以错题本、统计和考试历史都保持原样。
    - 日志里 `Upgraded the database to schema 2. A copy of the previous version was saved first: …` 这一行会写出副本的文件名。
-4. 检查：`/api/info` 显示 `"version": "0.5.1"`，`bankCount` 和升级前一样；**Question banks**（题库管理）里只有一个题库，包含你所有的题；**Study records**（学习记录）里列出你以前的考试。
+4. 检查：`/api/info` 显示 `"version": "0.6"`，`bankCount` 和升级前一样；**Question banks**（题库管理）里只有一个题库，包含你所有的题；**Study records**（学习记录）里列出你以前的考试。
 
 之后再启动不会再迁移，也不会多写任何东西。
 
@@ -146,3 +146,10 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 推送到 `main` 时，[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 先跑版本、更新日志和文档检查，再跑四组检查（前端、后端、Nginx 与整栈、arm64）。全部通过后，才把 `xexam-frontend` 和 `xexam-backend` 两个镜像（amd64 + arm64）发布到 Docker Hub（`docker.io/yuminspace/`，公开），同时作为私有镜像副本发布到 `ghcr.io/yumin-space/`，两边的标签都是 `latest`、`v<VERSION>` 和 `sha-<提交>`，并建对应的 GitHub Release（说明里最先列出从 Docker Hub 拉取的命令）。推送到 `dev` 和指向 `main` 的拉取请求会跑同样的检查，但从不发布。详见 [development.md](development.md) 的第 7 节。
 
 发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）；没有这两个机密，或者 `docker/docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。在 ghcr.io 上，第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
+
+## 第一次启动和账户（v0.6）
+
+- 安装或升级后，打开 Xexam，用 `admin` / `admin` 登录，然后马上设置自己的密码；在那之前，能打开这个页面的人都能用默认密码。只要默认密码还没改，后端每次启动都会打印提醒（`docker compose logs xexam-backend`）。
+- 其他人在 **用户管理**（菜单里，只有管理员可用）里添加。
+- 进不去时：`docker compose exec xexam-backend xexam-backend reset-password admin` 会打印一个新的临时密码。输错密码造成的锁定，用 `docker compose restart xexam-backend` 解除（或者让另一位管理员点 **解锁**）。
+- 在 Cloudflare Access 后面要登录两次（先 Access，再 Xexam）。家里局域网的纯 HTTP 也能用；只有浏览器总是通过 HTTPS 访问 Xexam 时才设置 `XEXAM_COOKIE_SECURE=1`。

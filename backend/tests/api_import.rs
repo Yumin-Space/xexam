@@ -611,7 +611,7 @@ mod cooperative {
             fn bank(&self) -> Result<serde_json::Value, xexam_backend::error::DbError> {
                 unreachable!()
             }
-            fn progress(&self) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+            fn progress(&self, _: i64) -> Result<serde_json::Value, xexam_backend::error::DbError> {
                 unreachable!()
             }
             fn import_history(
@@ -637,11 +637,15 @@ mod cooperative {
             }
             fn record_attempt(
                 &self,
+                _: i64,
                 _: &xexam_backend::models::Attempt,
             ) -> Result<serde_json::Value, xexam_backend::error::DbError> {
                 unreachable!()
             }
-            fn reset_progress(&self) -> Result<serde_json::Value, xexam_backend::error::DbError> {
+            fn reset_progress(
+                &self,
+                _: i64,
+            ) -> Result<serde_json::Value, xexam_backend::error::DbError> {
                 unreachable!()
             }
         };

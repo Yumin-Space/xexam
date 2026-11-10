@@ -9,6 +9,8 @@ Steps:
   C. Restart once more → no repeated migration (the number of score-history entries is unchanged).
   D. Put a progress.json into a directory whose database already has progress records → it is not overwritten.
   E. A malformed progress.json → the app still starts, and the log states the reason plus the migrate-progress hint; after fixing the file, a restart migrates it.
+Since v0.6 every route except /api/info needs a session: each run signs in as the default administrator (admin / admin the first
+time, then the password this script sets) and reads the administrator's /api/progress, which is where the old records go.
 """
 import json
 import os
@@ -18,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.error
 import urllib.request
 
 exe = os.path.abspath(sys.argv[1])
@@ -46,8 +49,41 @@ SAMPLE = {
 }
 
 
+NEW_PASSWORD = 'migrate-check-pass'
+
+
+def api(method, path, body=None, cookie=None):
+    """One request; returns (status, headers, JSON body)."""
+    headers = {'Host': 'localhost:%d' % PORT}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode('utf-8')
+        headers.update({'Content-Type': 'application/json', 'Origin': 'http://localhost:%d' % PORT})
+    if cookie:
+        headers['Cookie'] = cookie
+    r = urllib.request.Request('http://127.0.0.1:%d%s' % (PORT, path), data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(r, timeout=5) as resp:
+            return resp.status, resp.headers, json.loads(resp.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        return e.code, e.headers, json.loads(e.read().decode('utf-8') or 'null')
+
+
+def sign_in():
+    """Signs in as the administrator (choosing the new password on the first sign-in). Returns the cookie."""
+    for pw in ('admin', NEW_PASSWORD):
+        st, h, j = api('POST', '/api/auth/login', {'username': 'admin', 'password': pw})
+        if st == 200:
+            cookie = h.get('Set-Cookie', '').split(';')[0]
+            if j['user']['mustChangePassword']:
+                st, _, _ = api('POST', '/api/auth/password', {'password': NEW_PASSWORD}, cookie)
+                ok(st == 200, 'the administrator chose a new password')
+            return cookie
+    ok(False, 'could not sign in as the administrator')
+
+
 def run_once(data, log_name, seconds_up=1.0):
-    """Start the backend, wait until it is up, read /api/progress, then stop it. Returns (progress, log text)."""
+    """Start the backend, wait until it is up, sign in, read /api/progress, then stop it. Returns (progress, log text)."""
     env = {k: v for k, v in os.environ.items() if not k.startswith('XEXAM_')}
     env.update(XEXAM_DATA=data, XEXAM_HOST='127.0.0.1', XEXAM_PORT=str(PORT), XEXAM_VERSION='0.3')
     logp = os.path.join(data, '..', log_name)
@@ -59,11 +95,14 @@ def run_once(data, log_name, seconds_up=1.0):
                 if p.poll() is not None:
                     break
                 try:
-                    with urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/api/progress' % PORT, headers={'Host': 'localhost:%d' % PORT}), timeout=1) as r:
-                        prog = json.loads(r.read().decode('utf-8'))
-                        break
+                    with urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:%d/api/info' % PORT, headers={'Host': 'localhost:%d' % PORT}), timeout=1):
+                        pass
                 except Exception:
                     time.sleep(0.2)
+                    continue
+                st, _, prog = api('GET', '/api/progress', cookie=sign_in())
+                ok(st == 200, 'signed in, /api/progress answers')
+                break
         finally:
             p.terminate()
             try:

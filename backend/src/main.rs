@@ -1,6 +1,7 @@
 //! Binary entry point: parses arguments and starts the server; the `healthcheck` subcommand is the container self-check.
 //!
-//! Subcommands: `serve` (default) | `healthcheck` | `import <xlsx>` | `migrate-progress [progress.json]`.
+//! Subcommands: `serve` (default) | `healthcheck` | `import <xlsx>` | `migrate-progress [progress.json]` |
+//! `reset-password <username>` (v0.6: locked-out recovery).
 //! The legacy form `--import <xlsx>` is also accepted.
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -19,7 +20,9 @@ enum Cmd {
     Healthcheck,
     Import(PathBuf),
     MigrateProgress(Option<PathBuf>),
+    ResetPassword(String),
     Help,
+    ResetPasswordHelp,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -36,7 +39,21 @@ const USAGE: &str = "Usage:
   xexam-backend healthcheck [--port N]
   xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
-Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG";
+  xexam-backend reset-password <username> [--data DIR]      (see: xexam-backend reset-password --help)
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG";
+
+const RESET_PASSWORD_USAGE: &str = "Usage:
+  xexam-backend reset-password <username> [--data DIR]
+
+Sets a new random password (16 characters, printed once) for the account <username>, enables the account, deletes its
+sessions (it is signed out everywhere) and makes it choose a new password at the next sign-in. Use it when nobody can sign
+in any more, e.g. the administrator forgot the password. The data directory is found as for serve: --data, else XEXAM_DATA,
+else ./data. It can run while the server is running.
+
+In Docker:
+  docker compose exec xexam-backend xexam-backend reset-password admin
+
+Exit code: 0 on success; 1 when there is no such user or the database cannot be opened or written.";
 
 fn parse_args(argv: &[String]) -> Result<Args, String> {
     let mut a = Args {
@@ -90,6 +107,9 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
     }
     if a.cmd == Cmd::Help {
+        if sub.as_deref() == Some("reset-password") {
+            a.cmd = Cmd::ResetPasswordHelp;
+        }
         return Ok(a);
     }
     match (sub.as_deref(), import_flag) {
@@ -104,6 +124,16 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
         }
         (Some("migrate-progress"), None) => {
             a.cmd = Cmd::MigrateProgress(positional.first().map(PathBuf::from))
+        }
+        (Some("reset-password"), None) => {
+            let name = positional.first().ok_or_else(|| {
+                "reset-password requires a username (see: xexam-backend reset-password --help)"
+                    .to_string()
+            })?;
+            if positional.len() > 1 {
+                return Err("reset-password takes exactly one username".to_string());
+            }
+            a.cmd = Cmd::ResetPassword(name.clone());
         }
         (Some("help"), None) => a.cmd = Cmd::Help,
         (Some(other), None) => return Err(format!("unknown subcommand: {other}")),
@@ -191,10 +221,13 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
     })?);
     if let Some(backup) = store.migration_backup() {
         say(&format!(
-            "Upgraded the database to schema {}. A copy of the previous version was saved first: {} (restore it if you ever go back to v0.4 or older).",
+            "Upgraded the database to schema {}. A copy of the previous version was saved first: {} (restore it if you ever go back to an older version).",
             xexam_backend::database::schema::SCHEMA_VERSION,
             backup.display()
         ));
+    }
+    if store.created_default_admin() {
+        say("Created the default administrator 'admin' (password 'admin'); sign in and choose a new password.");
     }
     let legacy = data_dir.join("progress.json");
     if legacy.is_file() {
@@ -287,6 +320,57 @@ fn run_import(path: &Path, data_dir: &Path) -> i32 {
         }
     }
     0
+}
+
+/// `reset-password <username>`: a new random password for that account (printed once), which must be changed at the next
+/// sign-in; the account is enabled and signed out everywhere.
+fn run_reset_password(username: &str, data_dir: &Path) -> i32 {
+    // Recovery must change the database that serve uses: never create a new one (a wrong --data or working directory would
+    // otherwise "succeed" on an empty database and leave the real one untouched)
+    let db_path = data_dir.join("xexam.db");
+    if !db_path.is_file() {
+        let shown = std::path::absolute(&db_path).unwrap_or(db_path);
+        say(&format!(
+            "There is no database at {}. Pass --data <dir> or set XEXAM_DATA to the data directory that serve uses. Nothing was changed.",
+            shown.display()
+        ));
+        return 1;
+    }
+    let store = match open_store(data_dir) {
+        Ok(s) => s,
+        Err(e) => {
+            say(&e);
+            return 1;
+        }
+    };
+    let password = xexam_backend::auth::random_password();
+    let hash = match xexam_backend::auth::hash_password(&password) {
+        Ok(h) => h,
+        Err(e) => {
+            say(&format!("Could not set a new password: {e}"));
+            return 1;
+        }
+    };
+    match store.cli_reset_password(username.trim(), &hash) {
+        Ok(Some(name)) => {
+            say(&format!("New password for '{name}': {password}"));
+            say("It is shown only this once. The account is enabled and signed out everywhere; it must choose a new password at the next sign-in.");
+            0
+        }
+        Ok(None) => {
+            say(&format!(
+                "There is no user named '{}' in {}. Nothing was changed.",
+                xexam_backend::security::short(username),
+                data_dir.join("xexam.db").display()
+            ));
+            1
+        }
+        Err(e) => {
+            tracing::error!("reset-password failed: {e}");
+            say("Could not write to the database; nothing was changed.");
+            1
+        }
+    }
 }
 
 fn run_migrate(path: Option<PathBuf>, data_dir: &Path) -> i32 {
@@ -388,7 +472,7 @@ async fn serve(cfg: Config) -> i32 {
             .display()
     ));
     if any_host {
-        say("Note: XEXAM_ALLOW_ANY_HOST is on, so the Host header is no longer checked. This program has no login of its own; make sure authentication (for example Cloudflare Access) sits in front of it.");
+        say("Note: XEXAM_ALLOW_ANY_HOST is on, so the Host header is no longer checked (no protection against DNS rebinding). Sign-in still applies to every request.");
         tracing::warn!("XEXAM_ALLOW_ANY_HOST is on: the Host header is not checked");
     } else if !extra.is_empty() {
         say(&format!("Allowed hosts/addresses: {}", extra.join(", ")));
@@ -402,7 +486,35 @@ async fn serve(cfg: Config) -> i32 {
     if store.count_active().unwrap_or(0) == 0 {
         say("The question bank is still empty: open the page and upload an Excel file under '题库管理' (Question bank management).");
     }
+    // Computed once now, so the first failed sign-in of an unknown user does not take longer than later ones
+    let _ = xexam_backend::auth::dummy_hash();
+    let now = xexam_backend::auth::unix_now();
+    match store.purge_expired_sessions(now) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("purged {n} expired sessions"),
+        Err(e) => tracing::warn!("could not purge expired sessions: {e}"),
+    }
+    // An administrator who still has the default password: remind the owner at every start (the line printed when the account
+    // was created appears only once), and let the sign-in page say how to sign in for the first time
+    let default_admin = match xexam_backend::api::auth::find_default_admin_hashes(&store) {
+        Ok(h) => h,
+        Err(e) => {
+            tracing::warn!("could not check for the default administrator password: {e}");
+            Vec::new()
+        }
+    };
+    if !store.created_default_admin()
+        && store.default_admin_pending(&default_admin).unwrap_or(false)
+    {
+        say("Reminder: an administrator account still has the default password 'admin' (the default account is admin / admin). Sign in now and choose a new password.");
+        tracing::warn!("an administrator still has the default password");
+    }
     let state = AppState::new(cfg, store.clone(), engine, shutdown_tx);
+    let _ = state.0.default_admin_hashes.set(default_admin);
+    state
+        .0
+        .last_session_purge
+        .store(now, std::sync::atomic::Ordering::Relaxed);
     let app = build_router(state.clone());
 
     let notify = Arc::new(tokio::sync::Notify::new());
@@ -463,6 +575,11 @@ fn main() {
             println!("{USAGE}");
             0
         }
+        Cmd::ResetPasswordHelp => {
+            println!("{RESET_PASSWORD_USAGE}");
+            0
+        }
+        Cmd::ResetPassword(name) => run_reset_password(&name, &cfg.data_dir),
         Cmd::Healthcheck => i32::from(!healthcheck(cfg.port)),
         Cmd::Import(path) => run_import(&path, &cfg.data_dir),
         Cmd::MigrateProgress(path) => run_migrate(path, &cfg.data_dir),
@@ -531,11 +648,25 @@ mod tests {
             Cmd::MigrateProgress(Some(PathBuf::from("x.json")))
         );
         assert_eq!(p(&["--help"]).unwrap().cmd, Cmd::Help);
+        assert_eq!(
+            p(&["reset-password", "admin", "--data", "d"]).unwrap().cmd,
+            Cmd::ResetPassword("admin".to_string())
+        );
+        assert_eq!(
+            p(&["reset-password", "--help"]).unwrap().cmd,
+            Cmd::ResetPasswordHelp
+        );
+        assert_eq!(
+            p(&["reset-password", "admin", "-h"]).unwrap().cmd,
+            Cmd::ResetPasswordHelp
+        );
     }
 
     #[test]
     fn errors() {
         assert!(p(&["import"]).is_err());
+        assert!(p(&["reset-password"]).is_err());
+        assert!(p(&["reset-password", "a", "b"]).is_err());
         assert!(p(&["bogus"]).is_err());
         assert!(p(&["--port", "abc"]).is_err());
         assert!(p(&["--port"]).is_err());

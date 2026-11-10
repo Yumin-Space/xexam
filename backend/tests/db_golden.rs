@@ -16,7 +16,7 @@ fn read_json(p: &Path) -> Value {
 fn dump_rust(s: &Store) -> Value {
     json!({
         "bank": s.bank().expect("bank"),
-        "progress": s.progress().expect("progress"),
+        "progress": s.progress(ADMIN).expect("progress"),
         "imports": serde_json::to_value(s.import_history(100).expect("imports")).expect("imports json"),
     })
 }
@@ -120,7 +120,11 @@ fn sample_db_matches_golden() {
         &g["bank"],
         "bank",
     );
-    assert_same(&s.progress().expect("progress"), &g["progress"], "progress");
+    assert_same(
+        &s.progress(ADMIN).expect("progress"),
+        &g["progress"],
+        "progress",
+    );
     let imports = serde_json::to_value(s.import_history(100).expect("imports")).expect("json");
     assert_same(&imports, &g["imports"], "imports");
     assert_eq!(s.count_active().expect("count"), 6);
@@ -183,17 +187,17 @@ fn failed_attempt_and_migration_roll_back() {
     let dir = tmp();
     let p = dir.path().join("x.db");
     let s = open_fixed(&p);
-    s.record_attempt(&attempt(&[("a", true), ("b", false)], "all", 5))
+    s.record_attempt(ADMIN, &attempt(&[("a", true), ("b", false)], "all", 5))
         .expect("seed");
     let before = raw_rows(&p);
     let raw = Connection::open(&p).expect("raw");
     raw.execute_batch("CREATE TRIGGER boom BEFORE INSERT ON attempts BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").expect("trigger");
     assert!(s
-        .record_attempt(&attempt(&[("a", true), ("c", true)], "all", 5))
+        .record_attempt(ADMIN, &attempt(&[("a", true), ("c", true)], "all", 5))
         .is_err());
     assert_eq!(raw_rows(&p), before);
     assert!(
-        s.reset_progress().is_ok(),
+        s.reset_progress(ADMIN).is_ok(),
         "reset deletes only, no attempts insert"
     );
     raw.execute_batch("DROP TRIGGER boom").expect("drop");
@@ -210,7 +214,10 @@ fn failed_attempt_and_migration_roll_back() {
     raw2.execute_batch("CREATE TRIGGER boom BEFORE INSERT ON attempts BEGIN SELECT RAISE(ABORT, 'injected failure'); END;").expect("trigger");
     let res = s2.migrate_legacy_progress(&pj);
     assert!(res.is_err() || matches!(res, Ok((false, _))));
-    assert_eq!(s2.progress().expect("progress")["questions"], json!({}));
+    assert_eq!(
+        s2.progress(ADMIN).expect("progress")["questions"],
+        json!({})
+    );
     let flag: i64 = raw2
         .query_row(
             "SELECT COUNT(*) FROM meta WHERE key='legacy_migrated'",
@@ -252,7 +259,9 @@ fn record_attempt_stores_half_even_percent() {
         let results: Vec<(String, bool)> =
             (0..total).map(|i| (format!("q{i}"), i < good)).collect();
         let refs: Vec<(&str, bool)> = results.iter().map(|(i, c)| (i.as_str(), *c)).collect();
-        let p = s.record_attempt(&attempt(&refs, "all", 1)).expect("record");
+        let p = s
+            .record_attempt(ADMIN, &attempt(&refs, "all", 1))
+            .expect("record");
         assert_eq!(p["history"][0]["percent"], want, "{good}/{total}");
         assert_eq!(p["history"][0]["total"], total);
         assert_eq!(p["history"][0]["correct"], good);
@@ -273,17 +282,20 @@ fn eight_threads_record_attempts_and_imports() {
             let (s, sheets, qs) = (Arc::clone(&s), Arc::clone(&sheets), Arc::clone(&qs));
             std::thread::spawn(move || {
                 for i in 0..4 {
-                    s.record_attempt(&attempt(
-                        &[("shared", i % 2 == 0), (&format!("own{t}"), true)],
-                        "all",
-                        3,
-                    ))
+                    s.record_attempt(
+                        ADMIN,
+                        &attempt(
+                            &[("shared", i % 2 == 0), (&format!("own{t}"), true)],
+                            "all",
+                            3,
+                        ),
+                    )
                     .expect("attempt");
                 }
                 s.apply_import(&format!("t{t}.xlsx"), &sheets, &qs)
                     .expect("import");
                 s.bank().expect("bank");
-                s.progress().expect("progress");
+                s.progress(ADMIN).expect("progress");
                 s.plan_import(&sheets, &qs).expect("plan");
             })
         })
@@ -291,7 +303,7 @@ fn eight_threads_record_attempts_and_imports() {
     for h in handles {
         h.join().expect("thread");
     }
-    let p = s.progress().expect("progress");
+    let p = s.progress(ADMIN).expect("progress");
     assert_eq!(p["questions"]["shared"]["attempts"], 32);
     assert_eq!(p["questions"]["shared"]["correct"], 16);
     assert_eq!(p["questions"]["shared"]["wrong"], 16);
@@ -317,10 +329,10 @@ fn history_shows_sixty_while_the_database_keeps_more_and_ids_keep_growing() {
     let p = dir.path().join("x.db");
     let s = open_fixed(&p);
     for i in 0..65 {
-        s.record_attempt(&attempt(&[("q", true)], "all", i))
+        s.record_attempt(ADMIN, &attempt(&[("q", true)], "all", i))
             .expect("attempt");
     }
-    let prog = s.progress().expect("progress");
+    let prog = s.progress(ADMIN).expect("progress");
     assert_eq!(prog["history"].as_array().map(Vec::len), Some(60));
     assert_eq!(prog["history"][0]["seconds"], 64);
     assert_eq!(prog["questions"]["q"]["attempts"], 65);
@@ -332,8 +344,8 @@ fn history_shows_sixty_while_the_database_keeps_more_and_ids_keep_growing() {
         .expect("count");
     assert_eq!(kept, 65);
     assert_eq!(xexam_backend::database::RECORD_RETENTION, 500);
-    s.reset_progress().expect("reset");
-    s.record_attempt(&attempt(&[("q", true)], "all", 0))
+    s.reset_progress(ADMIN).expect("reset");
+    s.record_attempt(ADMIN, &attempt(&[("q", true)], "all", 0))
         .expect("attempt");
     let c = Connection::open(&p).expect("raw");
     let id: i64 = c
@@ -363,11 +375,12 @@ fn sqlite_master(path: &Path) -> Vec<Value> {
 }
 
 #[test]
-fn schema_is_the_python_v1_text_plus_the_v2_migration() {
+fn schema_is_the_python_v1_text_plus_the_v2_and_v3_migrations() {
     // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Intended difference (v0.5): the backend
     // still executes that v1 text byte for byte, then migrates to schema 2 (new tables/indexes; three columns added with
     // ALTER TABLE, which SQLite records by appending them to the stored CREATE TABLE text). A fresh database and a migrated v1
-    // database must end up with identical schemas.
+    // database must end up with identical schemas. Intended difference (v0.6): schema 3 adds the user tables after the v2 objects
+    // and one more column to attempts (user_id).
     let dir = tmp();
     let rs_db = dir.path().join("rs.db");
     drop(open_fixed(&rs_db));
@@ -399,7 +412,10 @@ fn schema_is_the_python_v1_text_plus_the_v2_migration() {
     // The v1 part: same objects in the same order; the text is Python's, except the three tables that gained a column
     let added = [
         ("questions", ", bank_id INTEGER"),
-        ("attempts", ", banks TEXT NOT NULL DEFAULT '[]'"),
+        (
+            "attempts",
+            ", banks TEXT NOT NULL DEFAULT '[]', user_id INTEGER",
+        ),
         ("imports", ", bank_id INTEGER"),
     ];
     for (old, new) in v1.iter().zip(&fresh) {
@@ -426,6 +442,16 @@ fn schema_is_the_python_v1_text_plus_the_v2_migration() {
             ("table", "settings"),
             ("index", "sqlite_autoindex_settings_1"),
             ("index", "idx_questions_bank"),
+            ("table", "users"),
+            ("index", "sqlite_autoindex_users_1"),
+            ("table", "sessions"),
+            ("index", "sqlite_autoindex_sessions_1"),
+            ("index", "idx_sessions_user"),
+            ("table", "user_stats"),
+            ("index", "sqlite_autoindex_user_stats_1"),
+            ("table", "user_settings"),
+            ("index", "sqlite_autoindex_user_settings_1"),
+            ("index", "idx_attempts_user"),
         ]
     );
     assert_eq!(pragmas(&sample), pragmas(&rs_db));
@@ -438,7 +464,7 @@ fn schema_is_the_python_v1_text_plus_the_v2_migration() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(meta, vec![("schema".to_string(), "2".to_string())]);
+    assert_eq!(meta, vec![("schema".to_string(), "3".to_string())]);
     assert_eq!(
         std::fs::read_dir(dir.path().join("backups"))
             .expect("backups dir")
@@ -469,7 +495,7 @@ fn reopening_does_not_alter_the_file() {
     let before = std::fs::read(&sample).expect("read");
     let s = Store::open(&sample).expect("open sample");
     s.bank().expect("bank");
-    s.progress().expect("progress");
+    s.progress(ADMIN).expect("progress");
     drop(s);
     assert_eq!(
         std::fs::read(&sample).expect("read"),
@@ -576,30 +602,30 @@ fn legacy_migration_is_idempotent_and_guarded() {
         s.migrate_legacy_progress(&pj).expect("m"),
         (false, "之前已经迁移过".to_string())
     );
-    s.reset_progress().expect("reset");
+    s.reset_progress(ADMIN).expect("reset");
     assert_eq!(
         s.migrate_legacy_progress(&pj).expect("m"),
         (false, "之前已经迁移过".to_string()),
         "flag survives reset"
     );
-    assert_eq!(s.progress().expect("p")["history"], json!([]));
+    assert_eq!(s.progress(ADMIN).expect("p")["history"], json!([]));
     assert_ne!(after_first["progress"]["history"], json!([]));
 
     // existing progress is never overwritten, and the flag is NOT set in that case (same as Python)
     let s2 = open_fixed(&dir.path().join("y.db"));
-    s2.record_attempt(&attempt(&[("only", true)], "all", 1))
+    s2.record_attempt(ADMIN, &attempt(&[("only", true)], "all", 1))
         .expect("attempt");
     assert_eq!(
         s2.migrate_legacy_progress(&pj).expect("m"),
         (false, "数据库里已经有学习记录，没有覆盖".to_string())
     );
     assert_eq!(
-        s2.progress().expect("p")["questions"]
+        s2.progress(ADMIN).expect("p")["questions"]
             .as_object()
             .map(|m| m.len()),
         Some(1)
     );
-    s2.reset_progress().expect("reset");
+    s2.reset_progress(ADMIN).expect("reset");
     assert!(
         s2.migrate_legacy_progress(&pj).expect("m").0,
         "after a reset the old file can still be imported once"
@@ -683,7 +709,7 @@ fn plan_is_read_only_and_apply_with_empty_list_deactivates_all() {
     let plan = s.plan_import(&[], &[]).expect("plan");
     assert_eq!(plan["removed"], 4);
     assert_eq!(raw_rows(&p), before);
-    s.record_attempt(&attempt(&[("id1", true)], "all", 1))
+    s.record_attempt(ADMIN, &attempt(&[("id1", true)], "all", 1))
         .expect("attempt");
     let plan = s.plan_import(&[], &[]).expect("plan");
     assert_eq!(
@@ -700,7 +726,7 @@ fn plan_is_read_only_and_apply_with_empty_list_deactivates_all() {
         "sheets with only inactive questions are still listed"
     );
     assert_eq!(
-        s.progress().expect("p")["questions"]["id1"]["attempts"],
+        s.progress(ADMIN).expect("p")["questions"]["id1"]["attempts"],
         1,
         "stats survive deactivation"
     );
@@ -778,7 +804,7 @@ fn removed_samples_cut_by_code_points_and_bank_key_order() {
         ]
     );
     let p = s
-        .record_attempt(&attempt(&[("k", true)], "all", 1))
+        .record_attempt(ADMIN, &attempt(&[("k", true)], "all", 1))
         .expect("attempt");
     let hk: Vec<&str> = p["history"][0]
         .as_object()

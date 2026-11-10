@@ -44,7 +44,7 @@ The frontend image needs the three READMEs: the **About Xexam** page shows their
 | View logs | `docker compose logs -f` |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | Update to the latest version | `docker compose pull && docker compose up -d` (for a source build: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`). If your `docker-compose.yml` still names `ghcr.io` (files from before v0.5.1), replace it with the new one first; the data volume stays. Coming from v0.4: read section 6 first |
-| Version and architecture | <http://localhost:8765/api/info>, or in the app: menu → **Xexam v0.5.1** (the About page) |
+| Version and architecture | <http://localhost:8765/api/info>, or in the app: menu → **Xexam v0.6** (the About page) |
 
 > ⚠️ Do not run `docker compose down -v`: `-v` deletes the data volume `xexam_data`, which holds the question bank and all study records.
 
@@ -121,7 +121,7 @@ For deployment, v0.5 keeps the same two images, the same port, the same volume, 
    - It first writes a copy of the old database to `/data/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db`. If that copy cannot be written (disk full, no permission), the backend exits with an error and the database is not changed. Docker keeps restarting it, and each start tries again; Nginx does not start, because it waits for a healthy backend. `docker compose logs backend` says why.
    - Then it migrates in one transaction. Your existing questions become one question bank, with the same question ids, so the wrong-answer notebook, the statistics and the exam history stay as they were.
    - The log line `Upgraded the database to schema 2. A copy of the previous version was saved first: …` names the copy.
-4. Check: `/api/info` shows `"version": "0.5.1"` and the same `bankCount` as before; **Question banks** shows one bank with all your questions; **Study records** lists your earlier exams.
+4. Check: `/api/info` shows `"version": "0.6"` and the same `bankCount` as before; **Question banks** shows one bank with all your questions; **Study records** lists your earlier exams.
 
 Later starts do not migrate again and write nothing extra.
 
@@ -146,3 +146,10 @@ Later starts do not migrate again and write nothing extra.
 On a push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) first runs the version, changelog and docs check, then four check groups (frontend, backend, Nginx and full stack, arm64). Only if all of them pass does it publish the two images `xexam-frontend` and `xexam-backend` (amd64 + arm64) to Docker Hub (`docker.io/yuminspace/`, public) and, as a private mirror, to `ghcr.io/yumin-space/`, both tagged `latest`, `v<VERSION>` and `sha-<commit>`, and create the matching GitHub Release (its notes list the Docker Hub pull commands first). Pushes to `dev` and pull requests into `main` run the same checks and never publish. Details: section 7 of [development.md](development.md).
 
 Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (an access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`; without the secrets, or if `docker/docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io, the first time a new image name is published, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).
+
+## First start and accounts (v0.6)
+
+- After installing or upgrading, open Xexam and sign in with `admin` / `admin`, then choose your own password right away; until then anyone who can open the page can use the default password. Each start of the backend prints a reminder while the default password is still set (`docker compose logs xexam-backend`).
+- Add the other people under **User management** (menu, administrators only).
+- Locked out: `docker compose exec xexam-backend xexam-backend reset-password admin` prints a new temporary password. A sign-in lock after wrong passwords clears with `docker compose restart xexam-backend` (or **Unlock** by another administrator).
+- Behind Cloudflare Access you sign in twice (Access, then Xexam). Plain HTTP on your own network works; set `XEXAM_COOKIE_SECURE=1` only if the browser always reaches Xexam over HTTPS.

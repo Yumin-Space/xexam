@@ -9,7 +9,7 @@ import { inNotebook, masterStreakOf, percentOf, shuffle } from '../domain/gradin
 import { errorText } from '../i18n/errors.ts';
 import { t, tn } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
-import { applyRecordsDeleted, loadRecord, navigate, onRouteChange, refreshRecords, render, startExam } from '../state/actions.ts';
+import { applyRecordsDeleted, loadRecord, navigate, onRouteChange, onSignedIn, refreshRecords, render, startExam } from '../state/actions.ts';
 import { S, bankIdsOf } from '../state/store.ts';
 import type { Mode, Question, RecordBank, RecordDetail, RecordItem, RecordSummary } from '../types/api.ts';
 import { ask, askCheck } from '../utils/dialog.ts';
@@ -51,6 +51,12 @@ onRouteChange((from, to) => {
     listY = 0;
     if (to.name === 'records' && y > 0) requestAnimationFrame(() => window.scrollTo(0, y));
   }
+});
+
+// Signed in again (the session had ended): try what failed while it was gone
+onSignedIn(() => {
+  failures.clear();
+  listError = null;
 });
 
 const isMode = (m: string): m is Mode => m === 'all' || m === 'weak' || m === 'retry';

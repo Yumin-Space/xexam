@@ -7,7 +7,8 @@ Prerequisite: this machine can run docker compose build (builds both the backend
 
 What is checked:
   1. The stack comes up and both containers are healthy; the backend publishes no ports, so the host cannot reach it
-  2. /api/info /api/bank /api/progress /api/imports through Nginx
+  2. Sign-in over plain HTTP (v0.6: default administrator, forced password change, no Secure cookie), then
+     /api/info /api/bank /api/progress /api/imports through Nginx
   3. Upload the demo workbook → preview (bank unchanged) → confirm → question bank has 5 questions; cancel / repeated confirm / wrong confirmation token
   4. Submit results → study history; reset
   5. Over 20 MB: 413 at the Nginx layer (JSON); the Host / Origin guards still take effect after passing through Nginx
@@ -33,6 +34,9 @@ env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PR
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST'):
     env.pop(k, None)
 results = []
+# The session cookie (v0.6), sent with every request once signed in
+COOKIE = None
+NEW_PASSWORD = 'stack-check-pass'
 
 
 def dc(*a, check=True):
@@ -58,6 +62,8 @@ def req(method, path, headers=None, body=None, host=None, timeout=20):
     c = http.client.HTTPConnection('127.0.0.1', PORT, timeout=timeout)
     c.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
     c.putheader('Host', host or 'localhost:%d' % PORT)
+    if COOKIE and not any(k.lower() == 'cookie' for k in (headers or {})):
+        c.putheader('Cookie', COOKIE)
     for k, v in (headers or {}).items():
         c.putheader(k, v)
     if body is not None:
@@ -112,6 +118,19 @@ try:
         ok(r.stdout.strip() not in ('', '0'), '%s does not run as root (uid %s)' % (n, r.stdout.strip()))
     r = subprocess.run(['docker', 'inspect', '-f', '{{.HostConfig.ReadonlyRootfs}}', 'xexam-backend'], capture_output=True, text=True, env=env)
     ok(r.stdout.strip() == 'true', 'Backend root filesystem is read-only')
+
+    # -- 2 Sign-in (plain HTTP) --
+    st, _, e = jreq('GET', '/api/bank')
+    ok(st == 401, 'Without a session /api/bank is 401. Actual %d' % st)
+    st, h, j = jreq('POST', '/api/auth/login', {'username': 'admin', 'password': 'admin'}, headers={'Origin': 'http://localhost:%d' % PORT})
+    ok(st == 200 and j['user']['mustChangePassword'] is True, 'The default administrator admin / admin signs in and must change the password. Actual %d %r' % (st, j))
+    sc = h.get('set-cookie', '')
+    ok(sc.startswith('xexam_session=') and 'HttpOnly' in sc and 'SameSite=Strict' in sc and 'Secure' not in sc, 'Session cookie over plain HTTP: HttpOnly, SameSite=Strict, no Secure. Actual %r' % sc)
+    COOKIE = sc.split(';')[0]
+    st, _, e = jreq('GET', '/api/bank')
+    ok(st == 403, 'Before the new password every other route is 403. Actual %d' % st)
+    st, _, j = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD}, headers={'Origin': 'http://localhost:%d' % PORT})
+    ok(st == 200 and j['user']['mustChangePassword'] is False, 'New password saved. Actual %d %r' % (st, j))
 
     # -- 2 Read endpoints --
     st, h, info = jreq('GET', '/api/info')
@@ -178,7 +197,7 @@ try:
     st, _, info = jreq('GET', '/api/info')
     ok(info['bankCount'] == 5, 'Question bank still has 5 questions after recreation (data is in the volume)')
     st, _, p = jreq('GET', '/api/progress')
-    ok(len(p['history']) == 2, 'Result history still has 2 rounds after recreation')
+    ok(len(p['history']) == 2, 'Result history still has 2 rounds after recreation (the session is in the volume too)')
     t0 = time.time()
     subprocess.run(['docker', 'stop', 'xexam-backend'], capture_output=True, env=env)
     dt = time.time() - t0

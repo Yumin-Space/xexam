@@ -9,7 +9,7 @@ import { t, tn } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
 import { navigate, render, resumeSession, startExam } from '../state/actions.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
-import { S, bankIdsOf, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
+import { S, bankIdsOf, isAdmin, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
 import type { BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
@@ -119,7 +119,9 @@ interface BankPick {
   sheets: Array<{ key: string; box: HTMLInputElement }>;
 }
 
+/** No questions to practise: an administrator imports a workbook; everyone else is asked to tell an administrator */
 function emptyState(): HTMLElement {
+  if (!isAdmin()) return h('div', { class: 'emptybank' }, h('p', null, t(S.banks.length ? 'home.empty.noQuestionsUser' : 'home.empty.noBanksUser')));
   return h('div', { class: 'emptybank' },
     h('p', null, t(S.banks.length ? 'home.empty.noQuestions' : 'home.empty.noBanks')),
     link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
@@ -391,10 +393,10 @@ function overviewCard(nb: Notebook): HTMLElement {
       fig(questions, t('home.overview.questions')),
       fig(nb.total, t('home.overview.notebook'), nb.total ? ' ng' : '')),
     retired ? h('p', { class: 'dim home-note' }, tn('home.overview.retired', retired)) : null,
-    // With wrong answers to review, that is the stronger action; the banks page is also in the menu
-    h('div', { class: 'acts' },
+    // With wrong answers to review, that is the stronger action; the banks page (administrators only) is also in the menu
+    nb.total || isAdmin() ? h('div', { class: 'acts' },
       nb.total ? link({ name: 'wrong' }, t('home.overview.review')) : null,
-      link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn')));
+      isAdmin() ? link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn') : null) : null);
 }
 
 export function renderHome(): HTMLElement {

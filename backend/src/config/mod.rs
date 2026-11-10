@@ -12,6 +12,8 @@ pub struct Config {
     pub allowed_origins: HashSet<String>, // already includes allowed_hosts
     pub allow_any_host: bool,
     pub allow_shutdown: bool,
+    /// `XEXAM_COOKIE_SECURE=1`: the session cookie always gets `Secure` (otherwise only for an `https://` Origin)
+    pub cookie_secure: bool,
     pub parse_timeout_secs: u64,
     pub version: String,
 }
@@ -54,14 +56,17 @@ impl Config {
     pub fn from_env_with(get: &dyn Fn(&str) -> Option<String>, version: String) -> Config {
         let extra = parse_allowed_hosts(get("XEXAM_ALLOWED_HOSTS").as_deref());
         let origins = parse_allowed_hosts(get("XEXAM_ALLOWED_ORIGINS").as_deref());
-        let any = get("XEXAM_ALLOW_ANY_HOST")
-            .map(|v| {
-                matches!(
-                    v.trim().to_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )
-            })
-            .unwrap_or(false);
+        let flag = |name: &str| {
+            get(name)
+                .map(|v| {
+                    matches!(
+                        v.trim().to_lowercase().as_str(),
+                        "1" | "true" | "yes" | "on"
+                    )
+                })
+                .unwrap_or(false)
+        };
+        let any = flag("XEXAM_ALLOW_ANY_HOST");
         let mut hosts: HashSet<String> = ["localhost", "127.0.0.1", "::1"]
             .iter()
             .map(|s| s.to_string())
@@ -83,6 +88,7 @@ impl Config {
             allowed_origins,
             allow_any_host: any,
             allow_shutdown: false,
+            cookie_secure: flag("XEXAM_COOKIE_SECURE"),
             parse_timeout_secs: get("XEXAM_PARSE_TIMEOUT_SECS")
                 .and_then(|s| s.trim().parse().ok())
                 .unwrap_or(30),

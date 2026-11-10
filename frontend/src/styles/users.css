@@ -1,0 +1,101 @@
+/* User management: compact like the home and banks pages. One block with one row per user (an icon, the name with small
+   tags, one line of facts, the small actions), rows split by hairlines; the "Add user" form opens as a soft tinted block at
+   the top of the list. Colours come only from the tokens in main.css, so the page follows the light and dark themes. */
+
+.page-users { max-width: 880px; }
+.us-lead { margin: -8px 0 20px; max-width: 46em; font-size: 14.5px; line-height: 1.6; color: var(--ink2); }
+.page-users [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
+
+/* Heading row: title with the count, "Add user" on the right */
+.us-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
+.page-users .panel .us-head h2 { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.us-count { font-size: 13px; font-weight: 400; color: var(--ink3); }
+
+/* Small buttons: the shared button, only smaller (like the bank actions) */
+.page-users .btn.us-mini { position: relative; min-height: 28px; padding: 3px 10px; font-size: 13px; font-weight: 400; }
+.us-plus { width: 15px; height: 15px; margin-left: -2px; }
+
+/* ---------- Rows ---------- */
+.us-rows { list-style: none; margin: 0; padding: 0; }
+.us-row {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: start;
+  padding: 12px 0; border-top: 1px solid var(--line-soft);
+}
+.us-row:first-child { border-top: 0; }
+.us-row:last-child { padding-bottom: 0; }
+.us-ico { width: 20px; height: 20px; margin-top: 2px; color: var(--ink3); }
+.us-main { min-width: 0; }
+.us-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.us-name { min-width: 0; font-size: 15.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
+.us-row.off .us-name { color: var(--ink3); }
+.us-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+/* The lock countdown changes every minute: digits of one width keep the tag from jumping */
+.us-lock { font-variant-numeric: tabular-nums; }
+.us-meta { margin-top: 2px; font-size: 13px; line-height: 1.6; color: var(--ink3); }
+/* Each fact stays on one line; the line breaks between facts (after the dot), never inside one */
+.us-dot { margin-left: 6px; }
+.us-nw { white-space: nowrap; }
+/* Why some actions of the row are not available */
+.us-why { margin-top: 4px; max-width: 40em; font-size: 12.5px; line-height: 1.55; color: var(--ink3); }
+.us-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 380px; }
+.us-busy { font-size: 12.5px; color: var(--ink3); }
+/* "Delete" looks like the other actions and turns red on hover or focus (as on the banks page); the dialog asks first */
+.us-acts .btn.danger { color: var(--ink2); border-color: var(--line); }
+@media (hover: hover) {
+  .us-acts .btn.danger:hover:not(:disabled) { color: var(--wrong); background: var(--wrong-soft); border-color: var(--ng-line); }
+}
+.us-acts .btn.danger:focus-visible { color: var(--wrong); }
+
+/* ---------- Add a user: a soft tinted block ---------- */
+.us-add { margin: 4px 0 12px; padding: 16px; border-radius: 8px; background: var(--fill); }
+.us-add h3 { margin-bottom: 12px; font-size: 14.5px; font-weight: 600; }
+.us-add-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 16px; align-items: start; }
+.us-add-note { margin: 12px 0 0; max-width: 46em; font-size: 13px; line-height: 1.6; color: var(--ink2); }
+.us-add .err { margin: 12px 0 0; font-size: 14px; }
+.us-add .acts { margin-top: 12px; }
+
+/* Role: a segmented choice with radio semantics (the recipe of the segmented control in main.css) */
+.us-rolefld legend { margin-bottom: 4px; }
+.us-seg { display: inline-flex; flex-wrap: wrap; gap: 2px; justify-self: start; padding: 2px; border-radius: 8px; background: var(--fill); }
+.us-add .us-seg { background: var(--hover-strong); }
+.us-seg-o {
+  position: relative; display: inline-flex; align-items: center; min-height: 32px; padding: 2px 12px;
+  border-radius: 6px; font-size: 13.5px; color: var(--ink3); cursor: pointer; white-space: nowrap;
+  transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
+}
+.us-seg-o input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+@media (hover: hover) { .us-seg-o:hover:not(:has(input:checked)):not(:has(input:disabled)) { background: var(--hover); color: var(--ink); } }
+.us-seg-o:has(input:checked) { background: var(--seg-on); color: var(--ink); font-weight: 600; box-shadow: 0 0 0 1px var(--seg-on-line), var(--shadow-sm); }
+.us-seg-o:has(input:focus-visible) { outline: 2px solid var(--print); outline-offset: 2px; }
+.us-rolefld:disabled .us-seg-o { cursor: not-allowed; opacity: .6; }
+
+/* Edit dialog */
+.us-enabled { margin-top: 14px; }
+.us-enabled input { accent-color: var(--print); }
+.us-enabled:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+.us-dlg-note, dialog .us-why { margin: 12px 0 0; font-size: 13px; color: var(--ink3); }
+.dlg-form > .us-rolefld { margin-top: 14px; }
+
+@media (prefers-reduced-motion: reduce) { .us-seg-o { transition: none; } }
+
+@media (max-width: 720px) {
+  .us-add-grid { grid-template-columns: minmax(0, 1fr); }
+  /* The actions move under the facts */
+  .us-row { grid-template-columns: auto minmax(0, 1fr); }
+  .us-acts { grid-column: 2; justify-content: flex-start; max-width: none; margin-top: 8px; }
+}
+
+@media (max-width: 480px) {
+  /* Phones: the icon makes room, so the four actions fit on one line */
+  .us-row { grid-template-columns: minmax(0, 1fr); }
+  .us-ico { display: none; }
+  .us-acts { grid-column: 1; }
+}
+
+/* Touch screens: the small buttons stay small to look at; an invisible margin makes them ~44px to tap */
+@media (pointer: coarse), (max-width: 480px) {
+  .page-users .btn.us-mini { min-height: 28px; min-width: 0; }
+  .page-users .btn.us-mini::after { content: ""; position: absolute; inset: -9px -3px; }
+  .us-acts { gap: 18px 8px; }
+  .us-seg-o { min-height: 40px; }
+}

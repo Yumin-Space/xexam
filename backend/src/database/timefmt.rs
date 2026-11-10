@@ -63,6 +63,21 @@ pub fn local_now() -> String {
     format_minute(&Zoned::now())
 }
 
+/// Formats a zoned instant as `YYYY-MM-DD HH:MM:SS`.
+pub fn format_second(z: &Zoned) -> String {
+    format!("{}:{:02}", format_minute(z), z.second())
+}
+
+/// The local time `secs` seconds from now as `YYYY-MM-DD HH:MM:SS` (when a login lock ends; seconds matter for short locks).
+pub fn local_in_secs(secs: u64) -> String {
+    let now = Zoned::now();
+    let later = i64::try_from(secs)
+        .ok()
+        .and_then(|s| now.checked_add(jiff::SignedDuration::from_secs(s)).ok())
+        .unwrap_or(now);
+    format_second(&later)
+}
+
 /// Formats a zoned instant as `YYYYmmdd-HHMMSS` (file-name safe; used for backup names).
 pub fn format_file_stamp(z: &Zoned) -> String {
     format!(
@@ -92,6 +107,19 @@ mod tests {
         assert_eq!(format_timestamp_in(ts, &TimeZone::UTC), "2026-01-07 08:00");
         let tokyo = TimeZone::get("Asia/Tokyo").expect("tokyo zone");
         assert_eq!(format_timestamp_in(ts, &tokyo), "2026-01-07 17:00");
+    }
+
+    #[test]
+    fn seconds_and_offsets() {
+        // 2026-01-07 08:00:05 UTC
+        let ts = Timestamp::from_second(1_767_772_805).expect("ts");
+        assert_eq!(
+            format_second(&ts.to_zoned(TimeZone::UTC)),
+            "2026-01-07 08:00:05"
+        );
+        let s = local_in_secs(90);
+        assert_eq!(s.len(), 19, "{s}");
+        assert!(s > format_second(&Zoned::now()), "{s}");
     }
 
     #[test]

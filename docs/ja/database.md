@@ -199,3 +199,7 @@ v0.4 までは、2 つの実装が**同じファイル、同じスキーマ**を
 （`tests/integration/migrate_check.py` が、合成データでこれらのケースを検証しています。）
 
 > ⚠️ v0.1 からアップグレードする場合：データベースファイルの名前が変わり、新しいバージョンは `xexam.db` だけを読み込みます。データディレクトリに別の `.db` ファイルがあって `xexam.db` がない場合は、起動ログでお知らせします。そのファイルを `xexam.db` に名前変更してから起動してください（古いファイルは削除も読み取りもされません）。
+
+## スキーマ v3（v0.6）
+
+新しいテーブル：`users`（大文字小文字を区別せず一意のユーザー名、Argon2id の `password_hash`、`role` admin / user、`disabled`、`created_at`、`last_login_at`、`password_changed_at`、`must_change_password`）、`sessions`（SHA-256 の `token_hash`、`user_id`、`created_at`、`last_seen_at`、`expires_at`）、`user_stats`（ユーザーごとの間違いノート：`user_id`、`question_id`、各カウンター）、`user_settings`（`user_id`、`key`、`value`）。新しい列は `attempts.user_id` です。移行は、コピー `backups/xexam-schema2-<日時>.db` を書き出したあと 1 つのトランザクションで行い、`admin` / `admin`（パスワードの変更が必要）を作成して、既存の試験、`stats`、`settings` をこの管理者のものにします。古い `stats` と `settings` テーブルは残りますが、もう使われません。500 回分の保存上限はユーザーごとに適用されます。

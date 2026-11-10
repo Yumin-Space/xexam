@@ -199,3 +199,7 @@ v0.4 和旧 Python 版仍然能打开 v2 的文件：新列都可以为空或有
 （`tests/integration/migrate_check.py` 用合成数据检查了这几种情况。）
 
 > ⚠️ 从 v0.1 升级时：数据库文件的名字变了，新版只读 `xexam.db`。如果数据目录里有别的 `.db` 文件而没有 `xexam.db`，启动日志会提醒你；把那个文件改名成 `xexam.db` 再启动即可（旧文件不会被删，也不会被读取）。
+
+## Schema v3（v0.6）
+
+新表：`users`（用户名不区分大小写唯一、Argon2id 的 `password_hash`、`role` admin / user、`disabled`、`created_at`、`last_login_at`、`password_changed_at`、`must_change_password`）、`sessions`（SHA-256 的 `token_hash`、`user_id`、`created_at`、`last_seen_at`、`expires_at`）、`user_stats`（每个用户自己的错题本：`user_id`、`question_id` 和计数）和 `user_settings`（`user_id`、`key`、`value`）；新列 `attempts.user_id`。迁移先写一份副本 `backups/xexam-schema2-<日期时间>.db`，再在一个事务里完成：建立 `admin` / `admin`（必须改密码），并把已有的考试、`stats` 和 `settings` 归给它。原来的 `stats` 和 `settings` 表保留，但不再使用。最多保留 500 场考试的上限按用户分别计算。

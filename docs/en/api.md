@@ -67,7 +67,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.5.1", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.6", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
 `bankCount` is the number of active questions. The version number comes from the `VERSION` file.
 
@@ -255,3 +255,22 @@ curl -s -X POST http://localhost:8765/api/settings \
 ```
 
 > When you go through Nginx, the `Host: localhost:8765` that `curl` sends by default is on the allow-list. Before accessing the app through another domain, set `XEXAM_ALLOWED_HOSTS` first.
+
+## Sign-in and users (v0.6)
+
+Every route needs a signed-in account (cookie `xexam_session`) except `GET /api/info`, `GET /api/auth/state` and `POST /api/auth/login`. Without a valid session the answer is **401** `请先登录。`; while the account must choose a new password, every route except `GET /api/auth/state`, `POST /api/auth/password` and `POST /api/auth/logout` answers **403** `请先设置新密码。`; admin routes answer **403** `只有管理员可以进行这个操作。` to other users. Error bodies keep the shape `{"error": "<message>"}`.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET /api/auth/state` | | `{"user": {"id", "username", "role", "mustChangePassword"} \| null}`; signed out it adds `"defaultAdmin": true` while an enabled administrator still has the default password; signed in it adds `"library"` (changes when a bank is imported or deleted) |
+| `POST /api/auth/login` | `{"username", "password"}` | `{"user": {...}}` and the session cookie (`HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`, `Secure` only for an `https://` Origin or `XEXAM_COOKIE_SECURE=1`) plus a known-browser cookie `xexam_device` (`Path=/api/auth`). Wrong or disabled: 401 `用户名或密码不对。`. Locked: **429** `登录失败次数太多，请稍后再试。` with `"retryAfter": <seconds>` and a `Retry-After` header |
+| `POST /api/auth/logout` | `{}` | `{"ok": true}` and an expired cookie |
+| `POST /api/auth/password` | `{"current"?, "password"}` | `{"user": {...}}`; `current` is required unless the account must choose a new password; signs out the account's other sessions |
+| `GET /api/users` (admin) | | `{"users": [{"id", "username", "role", "disabled", "createdAt", "lastLoginAt", "mustChangePassword", "records", "lock"}]}`; `lock` is `null` or `{"until", "retryAfter", "round", "triesLeft"}` |
+| `POST /api/users/create` (admin) | `{"username", "password", "role"}` | `{"users": [...]}`; the new user must choose a new password at the first sign-in |
+| `POST /api/users/update` (admin) | `{"id", "username"?, "role"?, "disabled"?}` | `{"users": [...]}` |
+| `POST /api/users/password` (admin) | `{"id", "password"}` | `{"users": [...]}`; signs the user out, sets the forced change and clears their sign-in lock |
+| `POST /api/users/delete` (admin) | `{"id"}` | `{"users": [...]}`; also deletes their sessions, exams, wrong-answer notebook and settings |
+| `POST /api/users/unlock` (admin) | `{"id"}` | `{"users": [...]}`; clears the sign-in lock of that user (back to 5 tries) |
+
+Rules: usernames 1–40 characters (letters, digits, `. _ - @`, unique ignoring case), passwords 8–128 characters. You cannot disable, demote or delete yourself (409 `不能对自己的账户做这个操作。`), and the last enabled administrator stays (409 `至少要保留一个启用的管理员。`). Records, progress, the wrong-answer notebook and settings routes work on the signed-in user's own rows only.

@@ -1,6 +1,6 @@
 [package]
 name = "xexam-backend"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.89"
@@ -37,10 +37,19 @@ getrandom = "0.4.3"
 subtle = "2.6.1"
 percent-encoding = "2.3"
 jiff = "0.2.41"
+argon2 = "0.6.0"
+sha2 = "0.11.1"
 
 [dev-dependencies]
 tempfile = "3"
 http-body-util = { version = "0.1.5", features = ["channel"] }
+
+# Argon2 is slow without optimisation; tests (debug builds) hash passwords too
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 opt-level = 3

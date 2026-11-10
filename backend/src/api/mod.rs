@@ -9,6 +9,12 @@
 //! v0.5 routes (same guards): `GET /api/banks`, `GET /api/records`, `GET /api/record?id=`, `GET /api/settings`,
 //! `POST /api/banks/delete`, `POST /api/records/delete`, `POST /api/settings`, `POST /api/settings/reset`; `POST /api/upload`
 //! takes the optional header `X-Bank-Target`. Contract: `docs/en/api.md`.
+//!
+//! v0.6: sign-in. The guard order becomes Host → (POST only) Origin → **session** → path / Content-Type → size → JSON → routing.
+//! The session check is [`auth::authorize`], called right here in the dispatch function for every GET / HEAD / POST before any
+//! body is read, against the route table [`auth::ROUTES`]; a path that is not in the table needs a session too. Study records,
+//! statistics and settings are read and written for the signed-in user only (their id comes from the session, never from the
+//! request).
 use crate::config::{Config, MAX_JSON, MAX_UPLOAD};
 use crate::error::{AppError, DbError};
 use crate::models::{setting_valid, ImportTarget, ParsedWorkbook, SETTING_KEYS};
@@ -27,10 +33,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub mod attempt;
+pub mod auth;
 pub mod guard;
 pub mod json;
 pub mod response;
 
+use auth::Authed;
 use json::{parse_py_json, PyVal};
 use response::{
     error_json, error_response, json_resp, method_not_allowed, text_resp, MSG_BAD_REQUEST,
@@ -50,7 +58,17 @@ pub struct Inner {
     /// Present only with `--allow-shutdown`
     pub shutdown: Option<tokio::sync::mpsc::Sender<()>>,
     /// Single entry point for the parser and the database. Production uses `RealEngine`; tests use a fake implementation.
+    /// (Accounts and sessions always use `store` directly.)
     pub engine: Arc<dyn Engine>,
+    /// At most `auth::HASH_CONCURRENCY` Argon2 operations at a time
+    pub hash_gate: Arc<tokio::sync::Semaphore>,
+    /// Failed sign-ins (in memory)
+    pub throttle: crate::auth::LoginThrottle,
+    /// Unix time of the last purge of expired sessions (0 = not yet in this process)
+    pub last_session_purge: std::sync::atomic::AtomicI64,
+    /// Password hashes that still verify against the default password `admin`, found once at startup
+    /// ([`auth::find_default_admin_hashes`]); unset = none known (tests that do not set it)
+    pub default_admin_hashes: std::sync::OnceLock<Vec<String>>,
 }
 
 impl AppState {
@@ -67,6 +85,10 @@ impl AppState {
             parse_gate: Arc::new(tokio::sync::Semaphore::new(services::PARSE_CONCURRENCY)),
             shutdown,
             engine,
+            hash_gate: Arc::new(tokio::sync::Semaphore::new(crate::auth::HASH_CONCURRENCY)),
+            throttle: crate::auth::LoginThrottle::default(),
+            last_session_purge: std::sync::atomic::AtomicI64::new(0),
+            default_admin_hashes: std::sync::OnceLock::new(),
         }))
     }
 }
@@ -89,16 +111,6 @@ fn panic_response(_err: Box<dyn Any + Send>) -> Response {
     )
 }
 
-const GET_PATHS: [&str; 8] = [
-    "/api/info",
-    "/api/bank",
-    "/api/progress",
-    "/api/imports",
-    "/api/banks",
-    "/api/records",
-    "/api/record",
-    "/api/settings",
-];
 /// Upper limit on the request body that is read and discarded on the client's behalf when rejecting early (403 / 415).
 const DRAIN_CAP: usize = MAX_UPLOAD + 65536;
 
@@ -186,6 +198,11 @@ where
 {
     match tokio::task::spawn_blocking(f).await {
         Ok(Ok(v)) => Ok(v),
+        Ok(Err(DbError::NoUser)) => {
+            // Deleted or disabled while this request was running: answered like a missing session
+            tracing::info!("write refused: the user no longer exists or is disabled");
+            Err(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED))
+        }
         Ok(Err(e)) => {
             tracing::error!("database error: {e}");
             Err(AppError::Db(e))
@@ -218,15 +235,27 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
                 );
                 return error_response(AppError::ForbiddenHost { seen }, head_only);
             }
-            match get_route(&st, &path, query.as_deref(), head_only).await {
-                Ok(r) => r,
-                Err(e) => error_response(e, head_only),
-            }
+            // 2. Session (the origin is passed for the cookie refresh rule; GETs from a browser normally have none)
+            let origin = hdr(&parts.headers, &header::ORIGIN);
+            let authed =
+                match auth::authorize(&st, "GET", &path, &parts.headers, origin.as_deref()).await {
+                    Ok(a) => a,
+                    Err(e) => return error_response(e, head_only),
+                };
+            let mut resp =
+                match get_route(&st, &path, query.as_deref(), head_only, authed.as_ref()).await {
+                    Ok(r) => r,
+                    Err(e) => error_response(e, head_only),
+                };
+            auth::finish(&mut resp, authed.as_ref());
+            resp
         }
-        Method::POST => match post_route(&st, &parts.headers, host.as_deref(), &path, body).await {
-            Ok(r) => r,
-            Err(e) => error_response(e, false),
-        },
+        Method::POST => {
+            let (mut resp, authed) =
+                post_route(&st, &parts.headers, host.as_deref(), &path, body).await;
+            auth::finish(&mut resp, authed.as_ref());
+            resp
+        }
         _ => {
             // Other methods: the Host guard still runs first (stricter than the old 501), then 405 + Allow
             if let Some(reason) = guard::deny_reason(cfg, host.as_deref(), None) {
@@ -240,16 +269,40 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
 
 // ---------------------------------------------------------------- GET / HEAD
 
+/// The signed-in user's id. `authorize` guarantees a session for every non-public route, so `None` here is a bug: refuse.
+fn user_of(authed: Option<&Authed>) -> Result<i64, AppError> {
+    authed
+        .map(|a| a.user.id)
+        .ok_or(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED))
+}
+
 async fn get_route(
     st: &AppState,
     path: &str,
     query: Option<&str>,
     head_only: bool,
+    authed: Option<&Authed>,
 ) -> Result<Response, AppError> {
-    if !GET_PATHS.contains(&path) {
+    if auth::find_route("GET", path).is_none() {
         // Static files are served by Nginx; keep the old plain-text 404 here
         return Ok(text_resp(StatusCode::NOT_FOUND, "not found", head_only));
     }
+    if path == "/api/auth/state" {
+        return Ok(json_resp(
+            StatusCode::OK,
+            &auth::state(st, authed).await?,
+            head_only,
+        ));
+    }
+    if path == "/api/users" {
+        let users = auth::list(st).await?;
+        return Ok(json_resp(StatusCode::OK, &users, head_only));
+    }
+    let user = if path == "/api/info" {
+        0
+    } else {
+        user_of(authed)?
+    };
     let eng = st.0.engine.clone();
     let value: Value = match path {
         "/api/info" => {
@@ -262,20 +315,27 @@ async fn get_route(
             })
         }
         "/api/bank" => blocking(move || eng.bank()).await?,
-        "/api/progress" => blocking(move || eng.progress()).await?,
+        "/api/progress" => blocking(move || eng.progress(user)).await?,
         "/api/banks" => blocking(move || eng.banks()).await?,
-        "/api/records" => blocking(move || eng.records()).await?,
+        "/api/records" => blocking(move || eng.records(user)).await?,
         "/api/record" => {
             let id = query_id(query).ok_or_else(bad_request)?;
-            blocking(move || eng.record(id))
+            // Another user's record answers exactly like a record that does not exist
+            blocking(move || eng.record(user, id))
                 .await?
                 .ok_or(AppError::NotFoundMsg(MSG_RECORD_NOT_FOUND))?
         }
-        "/api/settings" => blocking(move || eng.settings()).await?,
-        _ => {
+        "/api/settings" => blocking(move || eng.settings(user)).await?,
+        "/api/imports" => {
             let list = blocking(move || eng.import_history(12)).await?;
             let items = serde_json::to_value(&list).map_err(|_| AppError::Internal)?;
             json!({ "imports": items })
+        }
+        _ => {
+            // A GET route in auth::ROUTES without a handler here: a bug, never fall through to another route's data
+            debug_assert!(false, "GET route without a handler: {path}");
+            tracing::error!("GET route without a handler: {}", safe_path(path));
+            return Err(AppError::Internal);
         }
     };
     Ok(json_resp(StatusCode::OK, &value, head_only))
@@ -293,22 +353,48 @@ fn machine_arch() -> &'static str {
 
 // ---------------------------------------------------------------- POST
 
+/// A POST: the response, and the session it was made with (for the cookie refresh).
 async fn post_route(
     st: &AppState,
     headers: &HeaderMap,
     host: Option<&str>,
     path: &str,
     mut body: Body,
-) -> Result<Response, AppError> {
+) -> (Response, Option<Authed>) {
     let cfg = &st.0.cfg;
     let origin = hdr(headers, &header::ORIGIN);
     // 1. Host, Origin
     if let Some(reason) = guard::deny_reason(cfg, host, origin.as_deref()) {
         body::drain(&mut body, 0, DRAIN_CAP).await;
         tracing::warn!("rejected POST {}: {}", safe_path(path), reason);
-        return Err(AppError::Denied(reason));
+        return (error_response(AppError::Denied(reason), false), None);
     }
-    // 2. Path / Content-Type
+    // 2. Session, before anything of the body is read
+    let authed = match auth::authorize(st, "POST", path, headers, origin.as_deref()).await {
+        Ok(a) => a,
+        Err(e) => {
+            body::drain(&mut body, 0, DRAIN_CAP).await;
+            return (error_response(e, false), None);
+        }
+    };
+    let resp = match post_body(st, headers, path, origin.as_deref(), authed.as_ref(), body).await {
+        Ok(r) => r,
+        Err(e) => error_response(e, false),
+    };
+    (resp, authed)
+}
+
+/// The rest of a POST after the guards and the session check: Content-Type → size → JSON → routing.
+async fn post_body(
+    st: &AppState,
+    headers: &HeaderMap,
+    path: &str,
+    origin: Option<&str>,
+    authed: Option<&Authed>,
+    mut body: Body,
+) -> Result<Response, AppError> {
+    let cfg = &st.0.cfg;
+    // 3. Path / Content-Type
     let ctype = hdr(headers, &header::CONTENT_TYPE).unwrap_or_default();
     let declared = declared_length(headers);
 
@@ -342,13 +428,13 @@ async fn post_route(
         body::drain(&mut body, 0, DRAIN_CAP).await;
         return Err(AppError::UnsupportedMediaType);
     }
-    // 3. Size
+    // 4. Size
     let raw = match body::read_limited(body, declared, MAX_JSON).await {
         Ok(r) => r,
         Err(BodyError::TooLarge) => return Err(AppError::JsonTooLarge),
         Err(BodyError::Broken) => return Err(AppError::BadJson),
     };
-    // 4. JSON parsing (an empty body is treated as {})
+    // 5. JSON parsing (an empty body is treated as {})
     let data: PyVal = if raw.is_empty() {
         PyVal::Dict(Vec::new())
     } else {
@@ -357,8 +443,23 @@ async fn post_route(
     if !data.is_dict() {
         return Err(AppError::BadJson);
     }
-    // 5. Routing
+    // 6. Routing
+    if path == "/api/auth/login" {
+        return auth::login(st, &data, headers, origin).await;
+    }
+    let Some(a) = authed else {
+        // `authorize` lets only the public routes through without a session, and login was handled above
+        return Err(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED));
+    };
+    let user = a.user.id;
     match path {
+        "/api/auth/logout" => auth::logout(st, a, origin).await,
+        "/api/auth/password" => auth::change_password(st, a, &data, headers, origin).await,
+        "/api/users/create" => auth::create(st, a, &data).await,
+        "/api/users/update" => auth::update(st, a, &data).await,
+        "/api/users/password" => auth::reset_password(st, a, &data).await,
+        "/api/users/delete" => auth::delete(st, a, &data).await,
+        "/api/users/unlock" => auth::unlock(st, a, &data).await,
         "/api/import/confirm" => confirm(st, &data).await,
         "/api/import/cancel" => {
             services::cancel_pending_import(&st.0.pending);
@@ -369,20 +470,20 @@ async fn post_route(
                 attempt::clean_attempt_with_answers(&data).map_err(AppError::BadRequest)?;
             let eng = st.0.engine.clone();
             let progress =
-                blocking(move || eng.record_attempt_with_answers(&attempt, &answers)).await?;
+                blocking(move || eng.record_attempt_with_answers(user, &attempt, &answers)).await?;
             Ok(json_resp(StatusCode::OK, &progress, false))
         }
-        "/api/banks/delete" => delete_bank(st, &data).await,
-        "/api/records/delete" => delete_records(st, &data).await,
-        "/api/settings" => update_settings(st, &data).await,
+        "/api/banks/delete" => delete_bank(st, user, &data).await,
+        "/api/records/delete" => delete_records(st, user, &data).await,
+        "/api/settings" => update_settings(st, user, &data).await,
         "/api/settings/reset" => {
             let eng = st.0.engine.clone();
-            let settings = blocking(move || eng.reset_settings()).await?;
+            let settings = blocking(move || eng.reset_settings(user)).await?;
             Ok(json_resp(StatusCode::OK, &settings, false))
         }
         "/api/reset" => {
             let eng = st.0.engine.clone();
-            let progress = blocking(move || eng.reset_progress()).await?;
+            let progress = blocking(move || eng.reset_progress(user)).await?;
             Ok(json_resp(StatusCode::OK, &progress, false))
         }
         "/api/shutdown" => {
@@ -465,7 +566,8 @@ async fn confirm(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
 
 /// `POST /api/banks/delete` `{"id": <int>, "withRecords": <bool, default false>}` →
 /// `{"banks": [...], "bank": <GET /api/bank>, "progress": <GET /api/progress>}`.
-async fn delete_bank(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
+/// Study data of every user goes with `withRecords`; the response's `progress` is the signed-in user's.
+async fn delete_bank(st: &AppState, user: i64, data: &PyVal) -> Result<Response, AppError> {
     let id = body_id(data.get("id"))?;
     let with_records = body_flag(data.get("withRecords"))?;
     let id = id.ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
@@ -482,7 +584,7 @@ async fn delete_bank(st: &AppState, data: &PyVal) -> Result<Response, AppError> 
         Ok(json!({
             "banks": take_key(&mut eng.banks()?, "banks"),
             "bank": eng.bank()?,
-            "progress": eng.progress()?,
+            "progress": eng.progress(user)?,
         }))
     })
     .await?;
@@ -491,7 +593,7 @@ async fn delete_bank(st: &AppState, data: &PyVal) -> Result<Response, AppError> 
 
 /// `POST /api/records/delete`: `{"id": <int>}` (that record and its detail; stats unchanged) or
 /// `{"all": true, "withStats": <bool, default false>}` → `{"records": [...], "retention": 500, "progress": {...}}`.
-async fn delete_records(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
+async fn delete_records(st: &AppState, user: i64, data: &PyVal) -> Result<Response, AppError> {
     let eng = st.0.engine.clone();
     match (data.get("id"), data.get("all")) {
         (Some(id), None) => {
@@ -499,23 +601,23 @@ async fn delete_records(st: &AppState, data: &PyVal) -> Result<Response, AppErro
                 return Err(bad_request());
             }
             let id = body_id(Some(id))?.ok_or(AppError::NotFoundMsg(MSG_RECORD_NOT_FOUND))?;
-            if !blocking(move || eng.delete_record(id)).await? {
+            if !blocking(move || eng.delete_record(user, id)).await? {
                 return Err(AppError::NotFoundMsg(MSG_RECORD_NOT_FOUND));
             }
         }
         (None, Some(PyVal::Bool(true))) => {
             let with_stats = body_flag(data.get("withStats"))?;
-            blocking(move || eng.delete_all_records(with_stats)).await?;
+            blocking(move || eng.delete_all_records(user, with_stats)).await?;
         }
         _ => return Err(bad_request()),
     }
     let eng = st.0.engine.clone();
     let body = blocking(move || {
-        let mut records = eng.records()?;
+        let mut records = eng.records(user)?;
         Ok(json!({
             "records": take_key(&mut records, "records"),
             "retention": take_key(&mut records, "retention"),
-            "progress": eng.progress()?,
+            "progress": eng.progress(user)?,
         }))
     })
     .await?;
@@ -523,7 +625,7 @@ async fn delete_records(st: &AppState, data: &PyVal) -> Result<Response, AppErro
 }
 
 /// `POST /api/settings`: any subset of the known keys; unknown keys are ignored. One invalid value → 400, nothing written.
-async fn update_settings(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
+async fn update_settings(st: &AppState, user: i64, data: &PyVal) -> Result<Response, AppError> {
     let mut changes: Vec<(String, Value)> = Vec::new();
     for key in SETTING_KEYS {
         let Some(v) = data.get(key) else { continue };
@@ -538,6 +640,6 @@ async fn update_settings(st: &AppState, data: &PyVal) -> Result<Response, AppErr
         changes.push((key.to_string(), value));
     }
     let eng = st.0.engine.clone();
-    let settings = blocking(move || eng.update_settings(&changes)).await?;
+    let settings = blocking(move || eng.update_settings(user, &changes)).await?;
     Ok(json_resp(StatusCode::OK, &settings, false))
 }

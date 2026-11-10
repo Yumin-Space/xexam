@@ -106,6 +106,59 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'A setting has an invalid value.',
     ja: '設定の値が正しくありません。',
   }],
+  // v0.6, users and sign-in (MSG_SIGN_IN_REQUIRED … MSG_WRONG_PASSWORD)
+  ['请先登录。', {
+    en: 'Please sign in first.',
+    ja: '先にログインしてください。',
+  }],
+  ['只有管理员可以进行这个操作。', {
+    en: 'Only an administrator can do this.',
+    ja: 'この操作は管理者だけが行えます。',
+  }],
+  ['用户名或密码不对。', {
+    en: 'The username or password is not correct.',
+    ja: 'ユーザー名またはパスワードが正しくありません。',
+  }],
+  ['登录失败次数太多，请稍后再试。', {
+    en: 'Too many failed attempts. Please try again later.',
+    ja: '失敗が多すぎます。しばらくしてから、もう一度お試しください。',
+  }],
+  ['请先设置新密码。', {
+    en: 'Please choose a new password first.',
+    ja: '先に新しいパスワードを設定してください。',
+  }],
+  ['新密码不能和原来的一样。', {
+    en: 'The new password must be different from the old one.',
+    ja: '新しいパスワードは以前のものと別にしてください。',
+  }],
+  ['用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。', {
+    en: 'The username is not valid: it needs 1–40 characters, using only letters, digits and . _ - @.',
+    ja: 'ユーザー名が正しくありません。1〜40 文字で、英字・数字と . _ - @ だけが使えます。',
+  }],
+  ['密码需要 8–128 个字符。', {
+    en: 'The password needs 8 to 128 characters.',
+    ja: 'パスワードは 8〜128 文字にしてください。',
+  }],
+  ['这个用户名已经有人用了。', {
+    en: 'This username is already taken.',
+    ja: 'このユーザー名はすでに使われています。',
+  }],
+  ['这个用户不存在（可能已被删除），请刷新页面后再试。', {
+    en: 'This user does not exist (it may have been deleted). Reload the page and try again.',
+    ja: 'このユーザーは存在しません（削除された可能性があります）。ページを再読み込みしてから再試行してください。',
+  }],
+  ['至少要保留一个启用的管理员。', {
+    en: 'At least one enabled administrator must remain.',
+    ja: '有効な管理者を少なくとも 1 人残す必要があります。',
+  }],
+  ['不能对自己的账户做这个操作。', {
+    en: 'You cannot do this to your own account.',
+    ja: '自分のアカウントにはこの操作を行えません。',
+  }],
+  ['当前密码不对。', {
+    en: 'The current password is not correct.',
+    ja: '現在のパスワードが正しくありません。',
+  }],
 
   // ---- services/mod.rs
   ['这份文件里没有读到任何可用的题，没有导入。', {

@@ -56,7 +56,7 @@ For a source build: `git pull && docker compose -f docker/docker-compose.build.y
 
 ### 1.3 Checks after the upgrade
 
-- [ ] `version` in `/api/info` is `0.5.1`, and `bankCount` (the number of active questions) is the same as before.
+- [ ] `version` in `/api/info` is `0.6`, and `bankCount` (the number of active questions) is the same as before.
 - [ ] **Question banks** lists one bank with all your sheets and the same number of questions as before.
 - [ ] **Study records** lists your earlier exams, and **Study records → Wrong-answer review** has the same number of questions as the wrong-answer notebook had before.
 - [ ] (Optional) Choose **Update a bank**, pick that bank and upload the same Excel file as last time. The preview should say that the file has exactly the same questions and there is nothing to import. Then cancel. This proves the question ids did not change.
@@ -157,7 +157,7 @@ Upgrading from Python straight to v0.5 also runs the schema-v2 migration of sect
 
 Checks after the upgrade:
 
-- [ ] `version` in `/api/info` is the version you installed (`0.5.1` today), and `bankCount` is the same as before the upgrade.
+- [ ] `version` in `/api/info` is the version you installed (`0.6` today), and `bankCount` is the same as before the upgrade.
 - [ ] The question count, the question count in the wrong-answer notebook and the score history are the same as before the upgrade.
 - [ ] Answer a few questions and submit; the score appears in the history.
 - [ ] (Optional) Upload the same Excel file again (since v0.5: **Update a bank**, the one bank you have): the preview should show no added, updated or retired questions (chips with a count of 0 are hidden) and say that the file has exactly the same questions, so there is nothing to import. This proves that the old and new parsers compute the **same question ids** for the same set of questions. If it shows a large number of "retired + added" entries instead, **cancel and roll back immediately** (section 5).

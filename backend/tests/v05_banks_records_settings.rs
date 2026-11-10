@@ -8,14 +8,14 @@ mod dbc;
 use apic::{build, get, post_json, post_raw, send, FakeEngine, Resp, TestApp};
 use axum::body::Body;
 use axum::http::StatusCode;
-use dbc::{baseline, hotspot, multi, open_fixed, sheet, single, tmp, FIXED_NOW};
+use dbc::{baseline, hotspot, multi, open_fixed, sheet, single, tmp, ADMIN, FIXED_NOW};
 use rusqlite::types::Value as Sql;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use xexam_backend::api::{build_router, AppState};
+use xexam_backend::api::AppState;
 use xexam_backend::database::{scoped_id, FnClock, Store, RECORD_RETENTION};
 use xexam_backend::error::DbError;
 use xexam_backend::models::{
@@ -135,7 +135,8 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     assert_eq!(s.bank().expect("bank")["questions"], json!([]));
     drop(s);
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "2");
+    // intended difference (v0.6): a new database goes straight to schema 3 (tests/v06_users_and_sign_in.rs)
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "3");
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 0);
     for t in ["banks", "attempt_items", "settings"] {
         assert_eq!(
@@ -270,7 +271,8 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
         ),
         0
     );
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "2");
+    // intended difference (v0.6): v1 → v2 → v3 in one go (one schema-1 backup); v3 is covered in tests/v06_users_and_sign_in.rs
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "3");
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempt_items"),
         0,
@@ -313,11 +315,11 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
         b["studied"],
         count(
             &c,
-            "SELECT COUNT(*) FROM stats s JOIN questions q ON q.id = s.question_id"
+            "SELECT COUNT(*) FROM user_stats s JOIN questions q ON q.id = s.question_id"
         )
     );
     assert_eq!(b["records"], count(&c, "SELECT COUNT(*) FROM attempts"));
-    let recs = s.records().expect("records");
+    let recs = s.records(ADMIN).expect("records");
     assert_eq!(
         recs["records"][0]["banks"],
         json!([{"id": 1, "name": "demo_v2", "deleted": false}])
@@ -370,19 +372,19 @@ fn reopening_a_v2_database_with_data_never_writes() {
     s.apply_import("legacy.xlsx", &sh, &qs).expect("legacy");
     s.apply_import_for(ImportTarget::New, "other.xlsx", &sh, &qs)
         .expect("new");
-    s.record_attempt_with_answers(&attempt(&[("a1", true)]), &[Some(json!(["A"]))])
+    s.record_attempt_with_answers(ADMIN, &attempt(&[("a1", true)]), &[Some(json!(["A"]))])
         .expect("attempt");
-    s.update_settings(&[("theme".into(), json!("dark"))])
+    s.update_settings(ADMIN, &[("theme".into(), json!("dark"))])
         .expect("settings");
     drop(s);
     let before = std::fs::read(&db).expect("read");
     let s = open_fixed(&db);
     s.bank().expect("bank");
     s.banks().expect("banks");
-    s.records().expect("records");
-    s.record(1).expect("record");
-    s.settings().expect("settings");
-    s.progress().expect("progress");
+    s.records(ADMIN).expect("records");
+    s.record(ADMIN, 1).expect("record");
+    s.settings(ADMIN).expect("settings");
+    s.progress(ADMIN).expect("progress");
     s.plan_import_for(ImportTarget::Bank(2), &sh, &qs)
         .expect("plan");
     drop(s);
@@ -739,11 +741,11 @@ fn two_banks_with_records(db: &Path) -> (Store, Vec<String>, Vec<String>) {
         attempt(&ids.iter().map(|i| (i.as_str(), false)).collect::<Vec<_>>())
     };
     let ans = |k: usize| vec![Some(json!(["A"])); k];
-    s.record_attempt_with_answers(&res(&[&l[0], &l[1]]), &ans(2))
+    s.record_attempt_with_answers(ADMIN, &res(&[&l[0], &l[1]]), &ans(2))
         .expect("only L");
-    s.record_attempt_with_answers(&res(&[&n[0], &n[1], &n[2]]), &ans(3))
+    s.record_attempt_with_answers(ADMIN, &res(&[&n[0], &n[1], &n[2]]), &ans(3))
         .expect("only N");
-    s.record_attempt_with_answers(&res(&[&l[2], &n[3]]), &ans(2))
+    s.record_attempt_with_answers(ADMIN, &res(&[&l[2], &n[3]]), &ans(2))
         .expect("mixed");
     (s, l, n)
 }
@@ -768,10 +770,15 @@ fn deleting_a_bank_without_records_keeps_the_study_data() {
     assert_eq!(count(&c, "SELECT COUNT(*) FROM questions"), 4);
     assert_eq!(count(&c, "SELECT COUNT(*) FROM imports"), 1);
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 1);
-    assert_eq!(count(&c, "SELECT COUNT(*) FROM stats"), 7, "stats stay");
+    // (v0.6: statistics are per user, in user_stats)
+    assert_eq!(
+        count(&c, "SELECT COUNT(*) FROM user_stats"),
+        7,
+        "stats stay"
+    );
     assert_eq!(count(&c, "SELECT COUNT(*) FROM attempts"), 3);
     assert_eq!(count(&c, "SELECT COUNT(*) FROM attempt_items"), 7);
-    let recs = s.records().expect("records");
+    let recs = s.records(ADMIN).expect("records");
     // newest first: mixed, only N, only L
     assert_eq!(
         recs["records"][0]["banks"],
@@ -781,14 +788,14 @@ fn deleting_a_bank_without_records_keeps_the_study_data() {
         recs["records"][1]["banks"],
         json!([{"id": 2, "name": "new", "deleted": true}])
     );
-    let detail = s.record(2).expect("record").expect("exists");
+    let detail = s.record(ADMIN, 2).expect("record").expect("exists");
     assert!(detail["items"]
         .as_array()
         .expect("items")
         .iter()
         .all(|i| i["question"].is_null()));
     assert_eq!(detail["items"][0]["questionId"], n[0].as_str());
-    let progress = s.progress().expect("progress");
+    let progress = s.progress(ADMIN).expect("progress");
     assert_eq!(progress["questions"][&n[0]]["attempts"], 1);
     assert_eq!(progress["questions"][&l[0]]["attempts"], 1);
     assert_eq!(s.delete_bank(2, false).expect("again"), None);
@@ -810,7 +817,10 @@ fn deleting_a_bank_with_records_removes_its_study_data() {
     assert_eq!(count(&c, "SELECT COUNT(*) FROM questions"), 4);
     assert_eq!(count(&c, "SELECT COUNT(*) FROM imports"), 1);
     assert_eq!(
-        rows(&c, "SELECT question_id FROM stats ORDER BY question_id"),
+        rows(
+            &c,
+            "SELECT question_id FROM user_stats ORDER BY question_id"
+        ),
         vec![
             vec![Sql::Text(l[0].clone())],
             vec![Sql::Text(l[1].clone())],
@@ -836,7 +846,7 @@ fn deleting_a_bank_with_records_removes_its_study_data() {
     );
     assert!(n
         .iter()
-        .all(|i| s.progress().expect("p")["questions"].get(i).is_none()));
+        .all(|i| s.progress(ADMIN).expect("p")["questions"].get(i).is_none()));
     // deleting the legacy bank reports it as such
     assert_eq!(
         s.delete_bank(1, true).expect("delete"),
@@ -849,7 +859,7 @@ fn deleting_a_bank_with_records_removes_its_study_data() {
     // instead of staying behind as an empty record
     assert_eq!(count(&c, "SELECT COUNT(*) FROM attempts"), 0);
     assert_eq!(count(&c, "SELECT COUNT(*) FROM attempt_items"), 0);
-    assert_eq!(count(&c, "SELECT COUNT(*) FROM stats"), 0);
+    assert_eq!(count(&c, "SELECT COUNT(*) FROM user_stats"), 0);
     // a later upload without target creates a fresh legacy bank
     let (sh, qs) = workbook("l");
     s.apply_import("again.xlsx", &sh, &qs).expect("again");
@@ -868,14 +878,15 @@ fn records_list_detail_and_deletes() {
     let s = open_fixed(&db);
     let (sh, qs) = workbook("a");
     s.apply_import("bank.xlsx", &sh, &qs).expect("import");
-    // a record from before v0.5 (no detail)
+    // a record from before v0.5 (no detail), claimed by the administrator (v0.6)
     raw(&db)
         .execute(
-            "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds) VALUES('2026-01-01 00:00', '[\"S1\"]', 'weak', 2, 1, 50, 9)",
+            "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, user_id) VALUES('2026-01-01 00:00', '[\"S1\"]', 'weak', 2, 1, 50, 9, 1)",
             [],
         )
         .expect("old record");
     s.record_attempt_with_answers(
+        ADMIN,
         &attempt(&[("a1", true), ("a3", false), ("a4", false), ("ghost", true)]),
         &[
             Some(json!(["B"])),
@@ -885,7 +896,7 @@ fn records_list_detail_and_deletes() {
         ],
     )
     .expect("attempt");
-    let recs = s.records().expect("records");
+    let recs = s.records(ADMIN).expect("records");
     assert_eq!(keys(&recs), ["records", "retention"]);
     assert_eq!(recs["retention"], 500);
     let r = &recs["records"][0];
@@ -913,7 +924,7 @@ fn records_list_detail_and_deletes() {
         &[qs[0].clone(), qs[1].clone(), qs[3].clone()],
     )
     .expect("retire a3");
-    let d = s.record(2).expect("record").expect("exists");
+    let d = s.record(ADMIN, 2).expect("record").expect("exists");
     assert_eq!(keys(&d), ["record", "items"]);
     assert_eq!(d["record"], recs["records"][0]);
     let items = d["items"].as_array().expect("items");
@@ -944,33 +955,35 @@ fn records_list_detail_and_deletes() {
     );
     assert_eq!(items[1]["question"]["bank"], 1);
     assert_eq!(items[3]["question"], Value::Null);
-    let old = s.record(1).expect("record").expect("exists");
+    let old = s.record(ADMIN, 1).expect("record").expect("exists");
     assert_eq!(old["items"], json!([]));
-    assert_eq!(s.record(99).expect("record"), None);
+    assert_eq!(s.record(ADMIN, 99).expect("record"), None);
 
     // delete one: record and detail go, stats stay
-    let stats_before = s.progress().expect("p")["questions"].clone();
-    assert!(s.delete_record(2).expect("delete"));
-    assert!(!s.delete_record(2).expect("again"));
+    let stats_before = s.progress(ADMIN).expect("p")["questions"].clone();
+    assert!(s.delete_record(ADMIN, 2).expect("delete"));
+    assert!(!s.delete_record(ADMIN, 2).expect("again"));
     assert_eq!(count(&raw(&db), "SELECT COUNT(*) FROM attempt_items"), 0);
-    assert_eq!(s.progress().expect("p")["questions"], stats_before);
+    assert_eq!(s.progress(ADMIN).expect("p")["questions"], stats_before);
     assert_eq!(
-        s.records().expect("r")["records"].as_array().map(Vec::len),
+        s.records(ADMIN).expect("r")["records"]
+            .as_array()
+            .map(Vec::len),
         Some(1)
     );
     // delete all, keeping the stats; then with the stats
-    s.record_attempt(&attempt(&[("a1", true)]))
+    s.record_attempt(ADMIN, &attempt(&[("a1", true)]))
         .expect("attempt");
-    s.delete_all_records(false).expect("all");
-    assert_eq!(s.records().expect("r")["records"], json!([]));
+    s.delete_all_records(ADMIN, false).expect("all");
+    assert_eq!(s.records(ADMIN).expect("r")["records"], json!([]));
     assert_eq!(count(&raw(&db), "SELECT COUNT(*) FROM attempt_items"), 0);
-    assert_ne!(s.progress().expect("p")["questions"], json!({}));
-    s.delete_all_records(true).expect("all");
-    assert_eq!(s.progress().expect("p")["questions"], json!({}));
+    assert_ne!(s.progress(ADMIN).expect("p")["questions"], json!({}));
+    s.delete_all_records(ADMIN, true).expect("all");
+    assert_eq!(s.progress(ADMIN).expect("p")["questions"], json!({}));
     // /api/reset also clears the detail
-    s.record_attempt(&attempt(&[("a1", true)]))
+    s.record_attempt(ADMIN, &attempt(&[("a1", true)]))
         .expect("attempt");
-    s.reset_progress().expect("reset");
+    s.reset_progress(ADMIN).expect("reset");
     assert_eq!(count(&raw(&db), "SELECT COUNT(*) FROM attempt_items"), 0);
 }
 
@@ -980,12 +993,12 @@ fn retention_prunes_records_together_with_their_detail() {
     let db = dir.path().join("x.db");
     let s = open_fixed(&db);
     {
-        // RECORD_RETENTION exams with two detail rows each, written directly (one transaction instead of 500)
+        // RECORD_RETENTION exams of the administrator with two detail rows each, written directly (one transaction instead of 500)
         let mut c = raw(&db);
         let tx = c.transaction().expect("tx");
         for i in 1..=RECORD_RETENTION {
             tx.execute(
-                "INSERT INTO attempts(id, at, sheets, mode, total, correct, percent, seconds) VALUES(?1, 't', '[]', 'all', 2, 1, 50, 1)",
+                "INSERT INTO attempts(id, at, sheets, mode, total, correct, percent, seconds, user_id) VALUES(?1, 't', '[]', 'all', 2, 1, 50, 1, 1)",
                 [i],
             )
             .expect("attempt");
@@ -1000,7 +1013,7 @@ fn retention_prunes_records_together_with_their_detail() {
         tx.commit().expect("commit");
     }
     let p = s
-        .record_attempt_with_answers(&attempt(&[("q", true)]), &[Some(json!(["A"]))])
+        .record_attempt_with_answers(ADMIN, &attempt(&[("q", true)]), &[Some(json!(["A"]))])
         .expect("one more");
     assert_eq!(
         p["history"].as_array().map(Vec::len),
@@ -1024,7 +1037,7 @@ fn retention_prunes_records_together_with_their_detail() {
         (RECORD_RETENTION - 1) * 2 + 1
     );
     assert_eq!(
-        s.records().expect("records")["records"]
+        s.records(ADMIN).expect("records")["records"]
             .as_array()
             .map(Vec::len),
         Some(RECORD_RETENTION as usize)
@@ -1041,18 +1054,21 @@ fn attempt_snapshot_names_the_banks_in_order_of_first_appearance() {
     s.apply_import_for(ImportTarget::New, "Second.xlsx", &sh, &qs)
         .expect("new");
     let n = bank_ids(&db, 2);
-    s.record_attempt(&attempt(&[
-        (&n[0], true),
-        ("unknown", true),
-        ("a1", false),
-        (&n[1], true),
-    ]))
+    s.record_attempt(
+        ADMIN,
+        &attempt(&[
+            (&n[0], true),
+            ("unknown", true),
+            ("a1", false),
+            (&n[1], true),
+        ]),
+    )
     .expect("attempt");
     assert_eq!(
         text(&raw(&db), "SELECT banks FROM attempts"),
         r#"[{"id": 2, "name": "Second"}, {"id": 1, "name": "Legacy"}]"#
     );
-    s.record_attempt(&attempt(&[("unknown", true)]))
+    s.record_attempt(ADMIN, &attempt(&[("unknown", true)]))
         .expect("attempt");
     assert_eq!(
         text(
@@ -1087,19 +1103,22 @@ fn settings_defaults_update_invalid_and_reset() {
     let s = open_fixed(&db);
     let defaults =
         json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "ja"});
-    let got = s.settings().expect("settings");
+    let got = s.settings(ADMIN).expect("settings");
     assert_eq!(got, defaults);
     assert_eq!(
         keys(&got),
         ["theme", "uiLang", "autoAdvance", "questionLang"]
     );
     let got = s
-        .update_settings(&[
-            ("uiLang".into(), json!("ja")),
-            ("theme".into(), json!("dark")),
-            ("autoAdvance".into(), json!(true)),
-            ("questionLang".into(), json!("zh")),
-        ])
+        .update_settings(
+            ADMIN,
+            &[
+                ("uiLang".into(), json!("ja")),
+                ("theme".into(), json!("dark")),
+                ("autoAdvance".into(), json!(true)),
+                ("questionLang".into(), json!("zh")),
+            ],
+        )
         .expect("update");
     assert_eq!(
         keys(&got),
@@ -1109,36 +1128,41 @@ fn settings_defaults_update_invalid_and_reset() {
         got,
         json!({"theme": "dark", "uiLang": "ja", "autoAdvance": true, "questionLang": "zh"})
     );
-    // one invalid pair: nothing written
-    let before = rows(&raw(&db), "SELECT * FROM settings ORDER BY key");
+    // one invalid pair: nothing written (v0.6: settings are per user, in user_settings)
+    let before = rows(&raw(&db), "SELECT * FROM user_settings ORDER BY key");
     assert!(s
-        .update_settings(&[
-            ("theme".into(), json!("light")),
-            ("uiLang".into(), json!("fr"))
-        ])
+        .update_settings(
+            ADMIN,
+            &[
+                ("theme".into(), json!("light")),
+                ("uiLang".into(), json!("fr"))
+            ]
+        )
         .is_err());
-    assert!(s.update_settings(&[("other".into(), json!("x"))]).is_err());
+    assert!(s
+        .update_settings(ADMIN, &[("other".into(), json!("x"))])
+        .is_err());
     assert_eq!(
-        rows(&raw(&db), "SELECT * FROM settings ORDER BY key"),
+        rows(&raw(&db), "SELECT * FROM user_settings ORDER BY key"),
         before
     );
     // invalid stored values are ignored
     raw(&db)
-        .execute_batch("UPDATE settings SET value='\"purple\"' WHERE key='theme'; UPDATE settings SET value='not json' WHERE key='uiLang';")
+        .execute_batch("UPDATE user_settings SET value='\"purple\"' WHERE key='theme'; UPDATE user_settings SET value='not json' WHERE key='uiLang';")
         .expect("corrupt");
-    assert_eq!(s.settings().expect("s")["theme"], "system");
-    assert_eq!(s.settings().expect("s")["uiLang"], "en");
+    assert_eq!(s.settings(ADMIN).expect("s")["theme"], "system");
+    assert_eq!(s.settings(ADMIN).expect("s")["uiLang"], "en");
     // survives a restart
     drop(s);
     let s = open_fixed(&db);
-    assert_eq!(s.settings().expect("s")["autoAdvance"], true);
+    assert_eq!(s.settings(ADMIN).expect("s")["autoAdvance"], true);
     // reset keeps questionLang
     assert_eq!(
-        s.reset_settings().expect("reset"),
+        s.reset_settings(ADMIN).expect("reset"),
         json!({"theme": "system", "uiLang": "en", "autoAdvance": false, "questionLang": "zh"})
     );
     assert_eq!(
-        rows(&raw(&db), "SELECT key, value FROM settings"),
+        rows(&raw(&db), "SELECT key, value FROM user_settings"),
         vec![vec![
             Sql::Text("questionLang".into()),
             Sql::Text("\"zh\"".into())
@@ -1161,7 +1185,7 @@ fn real_app_at(db: &Path) -> RealApp {
     let state = AppState::new(apic::default_config(), store.clone(), engine, None);
     RealApp {
         app: TestApp {
-            router: build_router(state.clone()),
+            router: apic::signed_in_router(&state),
             state,
             engine: FakeEngine::new(),
             shutdown_rx: None,

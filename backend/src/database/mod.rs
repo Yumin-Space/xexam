@@ -18,7 +18,10 @@ pub mod schema;
 pub mod store;
 pub mod timefmt;
 
-pub use store::{percent_round_half_even, scoped_id, Store, BACKUP_DIR};
+pub use store::{
+    percent_round_half_even, scoped_id, SessionUser, Store, UserChange, UserRow, UserUpdate,
+    BACKUP_DIR,
+};
 pub use timefmt::{Clock, FixedClock, FnClock, SystemClock};
 
 pub const MASTER_STREAK: i64 = 2;

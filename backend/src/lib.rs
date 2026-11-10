@@ -7,9 +7,11 @@
 //! - `parser`    XLSX parsing (zip + quick-xml), question ids, translation splitting
 //! - `database`  SQLite storage (the v1 schema text is identical to the old version, character for character; v0.5 migrates to schema v2)
 //! - `services`  import flow (parse_upload → … → apply_import), pending-confirmation slot, result recording
-//! - `api`       HTTP routes and JSON output
+//! - `api`       HTTP routes and JSON output; sign-in is enforced in its single dispatch function
+//! - `auth`      accounts (v0.6): password hashing, session tokens and cookie, login throttle, input rules
 
 pub mod api;
+pub mod auth;
 pub mod config;
 pub mod database;
 pub mod error;

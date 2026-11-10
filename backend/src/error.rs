@@ -46,9 +46,16 @@ pub enum DbError {
     /// The consistent copy (`VACUUM INTO`) written before a schema migration could not be made; the database was not migrated.
     #[error("backup before the schema migration failed: {0}")]
     Backup(String),
+    /// Argon2 hashing failed (only for the default administrator created by the schema-v3 migration).
+    #[error("{0}")]
+    Password(String),
     /// The engine does not implement this operation (default trait methods of test engines).
     #[error("not supported by this engine")]
     Unsupported,
+    /// A per-user write for a user who was deleted or disabled after the request's session was checked; nothing was written.
+    /// The API answers 401 `MSG_SIGN_IN_REQUIRED`.
+    #[error("the user no longer exists or is disabled")]
+    NoUser,
 }
 
 /// Errors at the HTTP layer. `IntoResponse` is implemented in `api::error_response`.
@@ -83,6 +90,14 @@ pub enum AppError {
     /// 403: the app cannot be shut down from the page when running in Docker
     #[error("shutdown disabled")]
     ShutdownDisabled,
+    /// v0.6 accounts and sign-in: a status code with a fixed Chinese message (401 sign in, 403 admin only / password change
+    /// required / wrong current password, 404 unknown user, 409 username taken / last admin / not yourself, 429 throttled)
+    #[error("{1}")]
+    Status(u16, &'static str),
+    /// 429 `MSG_TOO_MANY_LOGINS` with the seconds to wait (`"retryAfter"` in the body and the `Retry-After` header): a sign-in or
+    /// a current-password check refused by the login throttle
+    #[error("too many sign-in attempts")]
+    TooManyLogins { retry_after: u64 },
     #[error("db error")]
     Db(#[from] DbError),
     #[error("internal")]

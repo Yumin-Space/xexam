@@ -6,8 +6,11 @@
 //!   transaction (a brand-new database goes through the same migration, so fresh and migrated databases have the same structure).
 //!   Older binaries can still open a v2 file (the new columns are nullable or have defaults), but must not be used once there is
 //!   more than one question bank; rolling back = restoring the backup written before the migration (see docs/en/database.md).
+//! - Schema v3 (v0.6) is purely additive too: users, sessions, per-user stats and settings (`MIGRATE_V3_TABLES`) and
+//!   `attempts.user_id` (`V3_COLUMNS`). The old `stats` and `settings` tables are kept, unused after the first administrator has
+//!   claimed their rows, so a rollback is still "restore the backup".
 
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "3";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -91,3 +94,44 @@ pub const V2_COLUMNS: [(&str, &str, &str); 3] = [
 /// Index that needs `questions.bank_id`, created after the columns.
 pub const MIGRATE_V2_INDEXES: &str =
     "CREATE INDEX IF NOT EXISTS idx_questions_bank ON questions(bank_id, active);";
+
+/// Tables and indexes added by schema v3 (all `IF NOT EXISTS`).
+pub const MIGRATE_V3_TABLES: &str = r#"
+CREATE TABLE IF NOT EXISTS users (
+  id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+  username            TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  password_hash       TEXT NOT NULL,
+  role                TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+  disabled            INTEGER NOT NULL DEFAULT 0,
+  created_at          TEXT NOT NULL,
+  last_login_at       TEXT,
+  password_changed_at TEXT NOT NULL,
+  must_change_password INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  token_hash   TEXT PRIMARY KEY NOT NULL,
+  user_id      INTEGER NOT NULL,
+  created_at   TEXT NOT NULL,
+  last_seen_at INTEGER NOT NULL,   -- unix seconds
+  expires_at   INTEGER NOT NULL    -- unix seconds
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE TABLE IF NOT EXISTS user_stats (
+  user_id     INTEGER NOT NULL,
+  question_id TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0, correct INTEGER NOT NULL DEFAULT 0, wrong INTEGER NOT NULL DEFAULT 0,
+  streak INTEGER NOT NULL DEFAULT 0, last INTEGER, at TEXT,
+  PRIMARY KEY (user_id, question_id)
+);
+CREATE TABLE IF NOT EXISTS user_settings (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key));
+"#;
+
+/// Columns added by schema v3 (same rules as [`V2_COLUMNS`]).
+pub const V3_COLUMNS: [(&str, &str, &str); 1] = [
+    // NULL until the first administrator claims the old data (and for rows written by an older binary after a rollback)
+    ("attempts", "user_id", "user_id INTEGER"),
+];
+
+/// Index that needs `attempts.user_id`, created after the column.
+pub const MIGRATE_V3_INDEXES: &str =
+    "CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(user_id);";

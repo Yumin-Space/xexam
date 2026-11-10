@@ -10,7 +10,7 @@ import { pageHead } from '../components/common.ts';
 import { icon } from '../components/shell.ts';
 import { errorText, LocalError, serverText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
-import { applyBankDeleted, navigate, onRouteChange, refreshLibrary, render } from '../state/actions.ts';
+import { applyBankDeleted, navigate, onRouteChange, onSignedIn, refreshLibrary, render } from '../state/actions.ts';
 import { bankById, S } from '../state/store.ts';
 import type { BankSummary, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
 import { ask, askCheck } from '../utils/dialog.ts';
@@ -93,6 +93,14 @@ onRouteChange((from, to) => {
     done = null;
     openSkips.clear();
   }
+});
+
+// Signed in again (the session had ended): read the import history afresh, forget errors of the lost session
+onSignedIn(() => {
+  importsWanted = true;
+  importsError = null;
+  importError = null;
+  listError = null;
 });
 
 // A file dropped next to the drop zone would make the browser open (download) it and leave the app: swallow it on this page.

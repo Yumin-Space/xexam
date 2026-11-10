@@ -46,6 +46,12 @@ function adopt(s: Settings): void {
   applySettings(S.settings);
 }
 
+/** Paints with settings from the browser cache (a user's own cache once they signed in); nothing is saved. */
+export function showCachedSettings(s: Settings): void {
+  S.settings = normalizeSettings(s);
+  applySettings(S.settings);
+}
+
 export async function loadSettings(): Promise<void> {
   adopt(await fetchSettings());
 }

@@ -280,3 +280,68 @@ export interface Settings {
   /** Language the question text is shown in (Japanese is the original) */
   questionLang: QuestionLang;
 }
+
+// ---------------------------------------------------------------- v0.6: users and sign-in
+
+export type Role = 'admin' | 'user';
+
+/** The signed-in user (`GET /api/auth/state`, `POST /api/auth/login`, `POST /api/auth/password`) */
+export interface AuthUser {
+  id: number;
+  username: string;
+  role: Role;
+  /** The default or initial password must be replaced before anything else works */
+  mustChangePassword: boolean;
+}
+
+export interface AuthState {
+  user: AuthUser | null;
+  /** Signed in: an opaque stamp of the shared question banks; it changes when a bank is imported, replaced or deleted */
+  library?: string;
+  /** Not signed in: an enabled administrator still has the default password (the sign-in page says how to sign in first) */
+  defaultAdmin?: boolean;
+}
+
+export interface AuthUserResponse {
+  user: AuthUser;
+}
+
+/** One row of `GET /api/users` (administrators only) */
+export interface UserRow {
+  id: number;
+  username: string;
+  role: Role;
+  disabled: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+  mustChangePassword: boolean;
+  /** Number of exam records of this user */
+  records: number;
+  /** The login throttle of this username (in the backend's memory): null at round 1 and not locked */
+  lock: UserLock | null;
+}
+
+/**
+ * `"lock"` of a user in `GET /api/users`. Locked: `until` (local time `YYYY-MM-DD HH:MM:SS`) and `retryAfter` > 0, `round`
+ * = the round that ended in this lock (1 = the first lock). Not locked but past round 1: `until` null, `retryAfter` 0, `round`
+ * = the round in progress, `triesLeft` = failures left before the next lock.
+ */
+export interface UserLock {
+  until: string | null;
+  retryAfter: number;
+  round: number;
+  triesLeft: number;
+}
+
+/** `GET /api/users` and every `POST /api/users/*` answer with the whole list */
+export interface UsersResponse {
+  users: UserRow[];
+}
+
+/** `POST /api/users/update`: only the fields that change */
+export interface UserUpdate {
+  id: number;
+  username?: string;
+  role?: Role;
+  disabled?: boolean;
+}

@@ -11,6 +11,8 @@ import settings from './catalog/settings.ts';
 import quiz from './catalog/quiz.ts';
 import result from './catalog/result.ts';
 import about from './catalog/about.ts';
+import auth from './catalog/auth.ts';
+import users from './catalog/users.ts';
 
 export type MsgKey =
   | keyof typeof common.en
@@ -20,11 +22,13 @@ export type MsgKey =
   | keyof typeof settings.en
   | keyof typeof quiz.en
   | keyof typeof result.en
-  | keyof typeof about.en;
+  | keyof typeof about.en
+  | keyof typeof auth.en
+  | keyof typeof users.en;
 
 export type Params = Record<string, string | number>;
 
-const ALL = [common, home, banks, records, settings, quiz, result, about];
+const ALL = [common, home, banks, records, settings, quiz, result, about, auth, users];
 
 const tables: Record<UiLang, Dict> = {
   en: Object.assign({}, ...ALL.map((c) => c.en)) as Dict,

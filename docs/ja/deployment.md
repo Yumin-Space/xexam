@@ -24,7 +24,7 @@
 docker compose up -d
 ```
 
-`docker compose up -d` で **2 つのコンテナ**が pull されて起動します：`xexam-frontend`（Nginx、外部に公開されるのはこれだけ）と `xexam-backend`（Rust、プライベートネットワーク内）です。次に、ブラウザで <http://localhost:8765> を開き、右上の三本線のボタンでメニューを開いて **Question banks** を選び、Excel ファイルをインポートします。画面は最初は英語で表示されます。同じメニューの **Settings** で日本語または中国語に切り替えられます（日本語表示では、この 2 つはそれぞれ「問題集の管理」「画面設定」です）。メニューの一番下の「Xexam v0.5.1」を選ぶと、バージョン、サーバーのアーキテクチャ、更新履歴を表示する「Xexam について」のページ（`#/about`）が開きます。
+`docker compose up -d` で **2 つのコンテナ**が pull されて起動します：`xexam-frontend`（Nginx、外部に公開されるのはこれだけ）と `xexam-backend`（Rust、プライベートネットワーク内）です。次に、ブラウザで <http://localhost:8765> を開き、右上の三本線のボタンでメニューを開いて **Question banks** を選び、Excel ファイルをインポートします。画面は最初は英語で表示されます。同じメニューの **Settings** で日本語または中国語に切り替えられます（日本語表示では、この 2 つはそれぞれ「問題集の管理」「画面設定」です）。メニューの一番下の「Xexam v0.6」を選ぶと、バージョン、サーバーのアーキテクチャ、更新履歴を表示する「Xexam について」のページ（`#/about`）が開きます。
 
 ### ソースからビルドする（コードを変更するとき）
 
@@ -121,7 +121,7 @@ Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**�
    - まず、古いデータベースのコピーを `/data/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db` に書き出します。このコピーを書き出せない場合（ディスクがいっぱい、権限がないなど）、バックエンドはエラーで終了し、データベースは変更されません。Docker が再起動を繰り返し、起動のたびにもう一度試みます。Nginx は healthy なバックエンドを待つため、起動しません。理由は `docker compose logs backend` で確認できます。
    - 次に、1 つのトランザクションで移行します。既存の問題は 1 つの問題集になり、問題 id もそのままなので、間違いノート、統計、成績履歴は以前のまま残ります。
    - ログの `Upgraded the database to schema 2. A copy of the previous version was saved first: …` という行に、コピーのファイル名が出ます。
-4. 確認：`/api/info` に `"version": "0.5.1"` と以前と同じ `bankCount` が表示されること。**Question banks**（日本語表示では「問題集の管理」）に、すべての問題を含む問題集が 1 つあること。**Study records**（日本語表示では「学習記録」）に、以前の試験が並んでいること。
+4. 確認：`/api/info` に `"version": "0.6"` と以前と同じ `bankCount` が表示されること。**Question banks**（日本語表示では「問題集の管理」）に、すべての問題を含む問題集が 1 つあること。**Study records**（日本語表示では「学習記録」）に、以前の試験が並んでいること。
 
 2 回目以降の起動では、移行は行われず、余分なものも書き出しません。
 
@@ -146,3 +146,10 @@ v0.4 への**ロールバック**は、そのコピーを復元して、v0.4 の
 `main` にプッシュすると、[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) がまずバージョン、変更履歴、ドキュメントの検査を行い、続いて 4 グループの検査（フロントエンド、バックエンド、Nginx と全スタック、arm64）を実行します。すべて通過した場合にだけ、`xexam-frontend` と `xexam-backend` の 2 つのイメージ（amd64 + arm64）を Docker Hub（`docker.io/yuminspace/`、公開）と、非公開のミラーとして `ghcr.io/yumin-space/` に公開します。タグはどちらも `latest`、`v<VERSION>`、`sha-<コミット>` で、対応する GitHub Release も作成します（そのリリースノートには、Docker Hub からの pull コマンドが最初に載ります）。`dev` へのプッシュと `main` へのプルリクエストでは、同じ検査を行うだけで、公開はしません。詳しくは [development.md](development.md) の第 7 節を参照してください。
 
 Docker Hub には、リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（**Read & Write** の権限を持つアクセストークン）の 2 つが必要で、必要に応じてリポジトリ変数 `DOCKERHUB_NAMESPACE` も設定できます。シークレットがない場合や、`docker/docker-compose.yml` がその名前空間の Docker Hub のイメージを指していない場合、公開ジョブは何もプッシュせずに止まります。ghcr.io では、新しいイメージ名を初めて公開するときに、GitHub のパッケージ設定で、このリポジトリを **Manage Actions access** に追加し、ロールとして **Admin** を選んでください。そうしないとプッシュが拒否されます（`permission_denied: write_package`）。
+
+## 初回起動とアカウント（v0.6）
+
+- インストールまたはアップグレードの後、Xexam を開いて `admin` / `admin` でログインし、すぐに自分のパスワードを設定してください。それまでは、このページを開ける人なら誰でも既定のパスワードを使えます。既定のパスワードのままの間は、バックエンドの起動のたびにリマインダーが出力されます（`docker compose logs xexam-backend`）。
+- ほかの人は **ユーザー管理**（メニュー、管理者のみ）で追加します。
+- ログインできなくなったとき：`docker compose exec xexam-backend xexam-backend reset-password admin` で新しい仮パスワードが表示されます。パスワードの間違いによるロックは `docker compose restart xexam-backend`（またはほかの管理者の **ロック解除**）で解除されます。
+- Cloudflare Access の背後では 2 回ログインします（Access、次に Xexam）。家庭内ネットワークの HTTP でも使えます。`XEXAM_COOKIE_SECURE=1` は、ブラウザが常に HTTPS で Xexam に接続する場合にだけ設定してください。

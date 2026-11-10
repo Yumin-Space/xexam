@@ -1,7 +1,15 @@
 // The saved (in-progress) exam in localStorage. Nothing read back is trusted: bad data is only dropped or corrected, never throws.
+// Each user has their own saved exam (the key carries the user id, see storage-keys.ts); with nobody signed in nothing is
+// read or written.
 import type { Bank, Mode, Question } from '../types/api.ts';
 import { stateOf, type Answer } from '../domain/grading.ts';
-import { paths } from './storage-keys.ts';
+import { paths, sessionKey, storageOwner } from './storage-keys.ts';
+
+/** The key of the signed-in user's saved exam (null when nobody is signed in) */
+function key(): string | null {
+  const id = storageOwner();
+  return id == null ? null : sessionKey(id);
+}
 
 export interface SavedSession {
   qs: Question[];
@@ -29,8 +37,10 @@ export interface SessionToSave {
 const MODES: readonly string[] = ['all', 'weak', 'retry'];
 
 export function saveSession(se: SessionToSave): void {
+  const k = key();
+  if (!k) return;
   try {
-    localStorage.setItem(paths.session, JSON.stringify({
+    localStorage.setItem(k, JSON.stringify({
       v: 1, ids: se.qs.map((q) => q.id), answers: se.answers, flags: [...se.flags],
       idx: se.idx, elapsed: Math.floor(se.elapsedSeconds), mode: se.mode, sheets: se.sheets,
     }));
@@ -40,8 +50,26 @@ export function saveSession(se: SessionToSave): void {
 }
 
 export function clearSaved(): void {
+  const k = key();
+  if (!k) return;
   try {
-    localStorage.removeItem(paths.session);
+    localStorage.removeItem(k);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Before v0.6 there was one user and one saved exam (`xexam.session.v1`). The upgrade gives the old data to the default
+ * administrator, so the old saved exam goes to the first administrator who signs in on this browser (unless they already
+ * have one); it is never shown to a plain user.
+ */
+export function adoptLegacySession(userId: number, isAdmin: boolean): void {
+  try {
+    const old = localStorage.getItem(paths.legacySession);
+    if (old == null || !isAdmin) return;
+    if (localStorage.getItem(sessionKey(userId)) == null) localStorage.setItem(sessionKey(userId), old);
+    localStorage.removeItem(paths.legacySession);
   } catch {
     /* ignore */
   }
@@ -51,10 +79,11 @@ const isObj = (x: unknown): x is Record<string, unknown> => typeof x === 'object
 
 /** Match the saved content against the current question bank. Parts that do not match are dropped; if nothing matches at all, return null. */
 export function loadSaved(bank: Bank | null): SavedSession | null {
-  if (!bank) return null;
+  const k = key();
+  if (!bank || !k) return null;
   let d: unknown;
   try {
-    d = JSON.parse(localStorage.getItem(paths.session) ?? 'null');
+    d = JSON.parse(localStorage.getItem(k) ?? 'null');
   } catch {
     return null;
   }

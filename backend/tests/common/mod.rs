@@ -14,6 +14,9 @@ pub fn repo() -> PathBuf {
         .to_path_buf()
 }
 pub const FIXED_NOW: &str = "2026-03-04 05:06";
+/// Id of the default administrator `admin`: the first user of every new or migrated database, who owns the data of earlier
+/// versions (v0.6). Store calls on study records, statistics and settings take a user id.
+pub const ADMIN: i64 = 1;
 
 pub fn baseline(rel: &str) -> PathBuf {
     repo().join("tests/baseline").join(rel)

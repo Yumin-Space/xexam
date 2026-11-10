@@ -2,7 +2,7 @@
 
 <!-- The release badge is static: CI checks that its version equals VERSION. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
 <p>
-  <a href="../../../releases/latest"><img width="145" height="28" alt="发布版本 v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
+  <a href="../../../releases/latest"><img width="132" height="28" alt="发布版本 v0.6" src="https://img.shields.io/badge/release-v0.6-green?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -30,8 +30,8 @@ Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入�
 
 | | |
 |---|---|
-| 当前版本 | **v0.5.1**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.5.1**） |
-| 镜像 | 在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，标签 `latest` / `v0.5.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`（私有，标签相同） |
+| 当前版本 | **v0.6**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.6**） |
+| 镜像 | 在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，标签 `latest` / `v0.6` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -111,7 +111,7 @@ docker login ghcr.io -u <你的GitHub用户名>
 docker compose up -d
 ```
 
-这会从 Docker Hub 拉取两个镜像，并启动**两个容器**（`xexam-frontend`、`xexam-backend`）。然后在同一台机器上用浏览器打开 <http://localhost:8765>。
+这会从 Docker Hub 拉取两个镜像，并启动**两个容器**（`xexam-frontend`、`xexam-backend`）。然后在同一台机器上用浏览器打开 <http://localhost:8765>。用用户名 `admin`、密码 `admin` 登录，Xexam 会接着要求你设置自己的密码。请马上设置：在那之前，能打开这个页面的人都能用默认密码登录。
 
 Docker 装在另一台机器上（服务器、NAS、虚拟机）？见 [从手机或另一台电脑打开 Xexam](#从手机或另一台电脑打开-xexam)。
 
@@ -122,7 +122,7 @@ Docker 装在另一台机器上（服务器、NAS、虚拟机）？见 [从手�
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`。如果你的 `docker-compose.yml` 里还写着 `ghcr.io`（v0.5.1 之前的文件），先换成新的那份；数据卷不变 |
-| 固定在某个版本 | 把 `docker-compose.yml` 里两个镜像的 `:latest` 都改成 `:v0.5.1`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里两个镜像的 `:latest` 都改成 `:v0.6`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（两个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f` |
@@ -167,7 +167,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 ## 从手机或另一台电脑打开 Xexam
 
-**这个程序没有登录**，默认只绑定本机（`127.0.0.1`）：只有运行 Docker 的那台机器自己能打开 <http://localhost:8765>。想从别的设备打开，有两种办法。
+**从 v0.6 起这个程序有了自己的登录**（见 [用户和登录](#用户和登录)），默认只绑定本机（`127.0.0.1`）：只有运行 Docker 的那台机器自己能打开 <http://localhost:8765>。想从别的设备打开，有两种办法。
 
 ### 从另一台电脑经 SSH 打开（不用改配置）
 
@@ -206,7 +206,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 ### 页面布局
 
 - 除了考试页，每个页面都有一个窄窄的页头：左上角是 Xexam 标志（点它回到主页），右上角是三条横线的菜单按钮。
-- 菜单按钮会打开一个小菜单，里面有 **主页**、**题库管理**、**学习记录** 和 **界面设置**，分隔线下面还有 **Xexam v0.5.1**，点它打开 [关于页面](#关于-xexam)。选好一项、点菜单外面或按 Esc 键，菜单就会关上。
+- 菜单按钮会打开一个小菜单，里面有 **主页**、**题库管理**、**学习记录** 和 **界面设置**，分隔线下面还有 **Xexam v0.6**，点它打开 [关于页面](#关于-xexam)。选好一项、点菜单外面或按 Esc 键，菜单就会关上。
 - 在宽屏上，页面内容居中显示，最宽 1120 px。
 - 考试本身是一个专注的全屏页面，没有页头。
 
@@ -298,9 +298,22 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 ### 关于 Xexam
 
-菜单的最后一项 **Xexam v0.5.1** 会打开 **关于 Xexam**：**版本**、**服务器** 的 CPU 架构、**许可证**，以及 **更新内容**。**更新内容** 就是界面语言那一份 README 的 [更新日志](#更新日志)（中文界面显示的是本文件的更新日志）。最新的版本是展开的；更早的版本折叠在 **更早的版本** 下面。
+菜单的最后一项 **Xexam v0.6** 会打开 **关于 Xexam**：**版本**、**服务器** 的 CPU 架构、**许可证**，以及 **更新内容**。**更新内容** 就是界面语言那一份 README 的 [更新日志](#更新日志)（中文界面显示的是本文件的更新日志）。最新的版本是展开的；更早的版本折叠在 **更早的版本** 下面。
 
 ![电脑上的关于 Xexam 页面](../docs/zh-CN/screenshots/desktop-8-about.png)
+
+### 用户和登录
+
+从 v0.6 起，所有人都要登录才能使用。管理员管理题库和用户；每个用户有自己的学习记录、错题本、没交卷的考试和设置，题库则由大家共用。
+
+![用户管理：管理员、还没设置自己密码的用户和已停用的用户](../docs/zh-CN/screenshots/desktop-10-users.png)
+
+- **第一次启动**（新装，或升级后第一次启动）：用 `admin` / `admin` 登录（登录页上也有提示），接着设置一个新密码（8–128 个字符）。v0.6 之前的学习记录、错题本和设置都归这个管理员。
+- **页头和菜单**：菜单按钮左边显示你的用户名（管理员带 **管理员** 标签），菜单最后是你的用户名和 **退出登录**。不是管理员的用户只看到 **主页**、**学习记录**、**界面设置** 和版本那一项。
+- **用户管理**（菜单里，只有管理员可用）：每个用户一行，显示角色、状态（**正常**、**已停用** 或 **已锁定 · 还剩 …**）、创建时间、最近登录时间和考试场数；可以 **添加用户**、**编辑**、**重置密码**、**停用** / **启用**、**删除**（会同时删除这个用户的学习记录）和 **解锁**。管理员新建或重置过密码的用户，下次登录时要设置自己的密码。不能停用、降级或删除自己，最后一个启用的管理员也不能被移除。
+- **密码输错**：同一个用户名在 15 分钟内输错 5 次，就锁 1 分钟；之后每再错 3 次又锁一次，时间依次是 5 分钟、15 分钟、30 分钟、1 小时和 1 天。登录成功、**解锁**、管理员重置密码、重启后端，或者 24 小时内没有再输错，都会重新回到 5 次机会。登录页会显示还要等多久。以前用这个账户登录过的浏览器单独计数，别处的乱猜锁不住它们。
+- **修改密码**：**界面设置** → **账户** → **修改密码**；你在其他浏览器上的登录会被退出。
+- **忘了管理员密码**：`docker compose exec xexam-backend xexam-backend reset-password admin` 会打印一个新的临时密码（下次登录时必须改掉）。想马上解除锁定，就重启后端：`docker compose restart xexam-backend`。
 
 ### 在 iPhone 上使用
 
@@ -484,7 +497,7 @@ docker compose logs backend
 - 题目语言以前由每个浏览器各自记住。某个浏览器第一次打开 v0.5 时，它的选择会转存到服务器上（前提是服务器上还是默认值，也就是日语）。
 - 浏览器里暂存的没交卷的考试会保留，可以继续作答。
 
-升级后检查：<http://localhost:8765/api/info> 显示 `"version": "0.5.1"`，`bankCount` 和升级前一样（虽然叫这个名字，它数的是可用的题目，不是题库）；**题库管理** 里有一个题库，包含你所有的工作表；**学习记录** 里列出你以前的考试；**学习记录** → **复习错题** 里的题数和你原来错题本里的一样。
+升级后检查：<http://localhost:8765/api/info> 显示 `"version": "0.6"`，`bankCount` 和升级前一样（虽然叫这个名字，它数的是可用的题目，不是题库）；**题库管理** 里有一个题库，包含你所有的工作表；**学习记录** 里列出你以前的考试；**学习记录** → **复习错题** 里的题数和你原来错题本里的一样。
 
 ### 回退到 v0.4
 
@@ -716,7 +729,9 @@ sequenceDiagram
     B-->>F: 更新后的学习进度
 ```
 
-### 数据库：8 张表（schema v2）
+### 数据库：12 张表（schema v3）
+
+v0.6（schema v3）新增了表 `users`、`sessions`、`user_stats`、`user_settings` 和列 `attempts.user_id`；原来的 `stats` 和 `settings` 表保留，但不再使用。下面的图仍是 v0.5 的 8 张表。
 
 `questions`、`stats`、`attempts`、`imports` 和 `meta` 来自 schema v1，它们的建表语句没有变；v0.5 新增了 `banks`、`attempt_items` 和 `settings` 三张表，以及三个列（`questions.bank_id`、`attempts.banks`、`imports.bank_id`）。每个字段的说明见 [docs/zh-CN/database.md](../docs/zh-CN/database.md)。
 
@@ -816,7 +831,7 @@ flowchart LR
 
 - **只有 Nginx 对外**。后端没有发布端口，网络是 `internal: true`（也不能访问外网）。
 - 默认只接受发给本机的请求（检查 `Host`）；放在 Cloudflare 等有身份验证的反向代理后面时，把你的域名写进 `XEXAM_ALLOWED_HOSTS`。写请求还会检查 `Origin` 必须和 `Host` 是同一个主机（或在 `XEXAM_ALLOWED_ORIGINS` 里），防止恶意网页通过你的浏览器操作它。后端只读真实的 `Host` 头，不读 `X-Forwarded-*`。
-- **程序自己不做登录。** 从互联网访问时必须在前面加身份验证（Cloudflare Access），不要把端口直接暴露到公网。没有账号：设置对使用这个实例的所有人都生效。
+- **从 v0.6 起需要登录。** 除了 `/api/info` 和登录本身，所有页面和 API 都要先登录。密码用 Argon2id 哈希保存，会话 Cookie 是 `HttpOnly`、`SameSite=Strict`（只有 HTTPS 或设了 `XEXAM_COOKIE_SECURE=1` 时才加 `Secure`，所以家里局域网的纯 HTTP 也能用）。密码输错会锁定这个用户名的登录，而且一次比一次久（见 [用户和登录](#用户和登录)）。第一次登录时就把默认的 `admin` 密码改掉。要从外网访问，仍然要在前面加身份验证（Cloudflare Access），不要直接把端口暴露到公网。
 - v0.5 的新接口（题库、记录、设置）和其他接口一样，按同样的顺序经过同样的守卫。删除题库或记录一律是带 JSON 请求体的 POST，在一个事务里完成，页面上一定会先请你确认；随题库一起删除学习数据、随全部记录一起清空错题本，都是单独的复选框，默认不勾选。设置只接受已知的值。
 - 上传的文件按**内容**检查：拒绝空文件、非 `.xlsx`、损坏的压缩包、重复的压缩包条目、含 XML 实体声明（DOCTYPE）的文件，最大 20 MB；解析有总时限和内存上限。
 - 上传后的预览在内存里保留 30 分钟，确认时需要一次性的校验码（128 位随机），用过就作废。
@@ -941,6 +956,23 @@ Xexam 以 [MIT 许可证](../LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
 程序里的 **关于 Xexam** 页面会显示这些记录（它们在构建时打包进前端），所以请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``。链接在那里显示成普通文字。
+
+### v0.6 — 2026-11-11
+
+**账户和登录：每个用户有自己的学习记录，用户和题库由管理员管理。数据库会先写一份副本，再自动升级到 schema v3。**
+
+- **登录**：一个标准的登录页，和 v0.5.1 一样简洁柔和。第一次启动（新装或升级后）用 `admin` / `admin` 登录，接着会要求你设置自己的密码；在改掉之前，登录页和启动日志都会提醒你。
+- **用户和角色**：管理员管理题库和用户；普通用户参加考试，只能看到自己的学习记录、错题本、没交卷的考试和设置。题库由所有用户共用。v0.6 之前的数据归第一个管理员所有。
+- **用户管理**（菜单里，只有管理员可用）：添加、编辑、重置密码、停用 / 启用、删除和解锁用户，并显示每个用户的角色、状态（正常、已停用、已锁定）、创建时间、最近登录时间和考试场数。管理员新建或重置过密码的用户，下次登录时要设置自己的密码。
+- **页头**：菜单按钮左边显示你的用户名（管理员带 **管理员** 标签）；菜单只列出你的角色能用的页面，最后是 **退出登录**。
+- **界面设置**：新增 **账户** 部分，可以 **修改密码**。
+- **密码输错**：先有 5 次机会，用完锁 1 分钟；之后每轮 3 次机会，锁定时间依次是 5 分钟、15 分钟、30 分钟、1 小时和 1 天。登录页会显示还要等多久，管理员可以解锁。
+- **安全**：密码用 Argon2id 哈希保存；会话 Cookie 是 `HttpOnly`、`SameSite=Strict`（数据库只存它的 SHA-256），有效期 30 天，密码、角色或状态变化时会被登出。纯 HTTP 照样能用（只有 HTTPS 或设了 `XEXAM_COOKIE_SECURE=1` 时才加 `Secure`）。
+- **进不了管理员账户时**：`docker compose exec xexam-backend xexam-backend reset-password admin` 会打印一个新的临时密码。
+- **数据库 schema v3**：新增表 `users`、`sessions`、`user_stats`、`user_settings` 和列 `attempts.user_id`；迁移前会把副本写到 `<数据目录>/backups/xexam-schema2-<日期时间>.db`。
+- **新 API**：`/api/auth/state`、`/api/auth/login`、`/api/auth/logout`、`/api/auth/password`、`/api/users`、`/api/users/create`、`/api/users/update`、`/api/users/password`、`/api/users/delete` 和 `/api/users/unlock`；其他路由都要求已登录（`/api/info` 仍然公开）。
+- **仓库结构**：日语和中文的 README 移到 `README/`，compose 文件和 `.env.example` 移到 `docker/`（克隆的仓库里 `.env` 现在放在 `docker/.env`）。README 的徽章改成圆角，版本徽章会显示版本号。
+- 测试：后端 181 → 232，前端 44 → 59。
 
 ### v0.5.1 — 2026-11-11
 

@@ -1,13 +1,22 @@
 // Application state: one typed module-level object. Page-local UI state (filters, open panels, a pending upload preview)
 // lives in module-level variables of the page file itself; only state shared between pages lives here.
 import type {
-  Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
+  AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
 } from '../types/api.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
 import { type Route } from '../router.ts';
-import { cachedSettings } from './settings-cache.ts';
+import { firstPaintSettings } from './settings-cache.ts';
 
 export type Phase = 'loading' | 'fatal' | 'ready';
+
+/**
+ * A page shown instead of the app: the sign-in page, or "choose a new password" (the default or initial password must be
+ * replaced before anything else works). null = the app itself.
+ */
+export type AuthView = 'signin' | 'password' | null;
+
+/** Why the sign-in page is shown, when there is something to say about it */
+export type AuthNote = 'signedOut' | 'expired' | null;
 
 /** An exam in progress */
 export interface Session {
@@ -50,6 +59,12 @@ export interface SetupConfig {
 
 export interface AppState {
   phase: Phase;
+  /** The signed-in user (null before the sign-in is known and after signing out) */
+  user: AuthUser | null;
+  authView: AuthView;
+  authNote: AuthNote;
+  /** The sign-in page: an enabled administrator still has the default password (GET /api/auth/state, nobody signed in) */
+  defaultAdmin: boolean;
   /** Why loading failed (an ApiError or anything else; shown with errorText) */
   fatal: unknown;
   route: Route;
@@ -75,10 +90,14 @@ export interface AppState {
 
 export const S: AppState = {
   phase: 'loading',
+  user: null,
+  authView: null,
+  authNote: null,
+  defaultAdmin: false,
   fatal: null,
   route: { name: 'home' },
   navOpen: false,
-  settings: cachedSettings(),
+  settings: firstPaintSettings(),
   info: { version: '', arch: '', canShutdown: false, bankCount: 0 },
   bank: null,
   banks: [],
@@ -137,4 +156,24 @@ export function bankById(id: number): BankSummary | undefined {
 /** Bank ids of a list of questions, in order of first appearance */
 export function bankIdsOf(qs: readonly Pick<Question, 'bank'>[]): number[] {
   return [...new Set(qs.map((q) => q.bank))];
+}
+
+/** Whether the signed-in user is an administrator (manages question banks and users) */
+export function isAdmin(): boolean {
+  return S.user?.role === 'admin';
+}
+
+/** Forgets everything loaded for the signed-in user (signing out). Shared data (version) is kept. */
+export function clearUserData(): void {
+  S.user = null;
+  S.bank = null;
+  S.banks = [];
+  S.progress = null;
+  S.records = null;
+  S.recordCache.clear();
+  S.cfg = { mode: 'all', selected: null, known: [], count: null, shuffle: true };
+  S.session = null;
+  S.result = null;
+  S.rvFilter = 'wrong';
+  S.navOpen = false;
 }

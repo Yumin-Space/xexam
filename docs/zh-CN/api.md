@@ -67,7 +67,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.5.1", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.6", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
 `bankCount` 是上架的题数。版本号来自 `VERSION` 文件。
 
@@ -255,3 +255,22 @@ curl -s -X POST http://localhost:8765/api/settings \
 ```
 
 > 经 Nginx 访问时，`curl` 默认带的 `Host: localhost:8765` 在白名单里。用别的域名访问前，先设置 `XEXAM_ALLOWED_HOSTS`。
+
+## 登录和用户（v0.6）
+
+除了 `GET /api/info`、`GET /api/auth/state` 和 `POST /api/auth/login`，所有路由都要先登录（Cookie `xexam_session`）。没有有效会话时回答 **401** `请先登录。`；账户还需要设置新密码时，除了 `GET /api/auth/state`、`POST /api/auth/password` 和 `POST /api/auth/logout`，其他路由都回答 **403** `请先设置新密码。`；管理员路由对其他用户回答 **403** `只有管理员可以进行这个操作。`。错误的格式仍是 `{"error": "<信息>"}`。
+
+| 路由 | 请求体 | 回答 |
+|---|---|---|
+| `GET /api/auth/state` | | `{"user": {"id", "username", "role", "mustChangePassword"} \| null}`；未登录时，如果还有启用的管理员在用默认密码，会多一个 `"defaultAdmin": true`；登录后多一个 `"library"`（导入或删除题库时会变） |
+| `POST /api/auth/login` | `{"username", "password"}` | `{"user": {...}}`，加上会话 Cookie（`HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`，只有 Origin 是 `https://` 或设了 `XEXAM_COOKIE_SECURE=1` 时才加 `Secure`）和表示"登录过的浏览器"的 Cookie `xexam_device`（`Path=/api/auth`）。密码错或账户已停用：401 `用户名或密码不对。`。被锁定：**429** `登录失败次数太多，请稍后再试。`，带 `"retryAfter": <秒数>` 和 `Retry-After` 头 |
+| `POST /api/auth/logout` | `{}` | `{"ok": true}` 和一个过期的 Cookie |
+| `POST /api/auth/password` | `{"current"?, "password"}` | `{"user": {...}}`；除非账户需要设置新密码，否则必须带 `current`；这个账户的其他会话会被登出 |
+| `GET /api/users`（管理员） | | `{"users": [{"id", "username", "role", "disabled", "createdAt", "lastLoginAt", "mustChangePassword", "records", "lock"}]}`；`lock` 是 `null` 或 `{"until", "retryAfter", "round", "triesLeft"}` |
+| `POST /api/users/create`（管理员） | `{"username", "password", "role"}` | `{"users": [...]}`；新用户第一次登录时要设置自己的密码 |
+| `POST /api/users/update`（管理员） | `{"id", "username"?, "role"?, "disabled"?}` | `{"users": [...]}` |
+| `POST /api/users/password`（管理员） | `{"id", "password"}` | `{"users": [...]}`；登出这个用户、要求他设置新密码，并解除他的登录锁定 |
+| `POST /api/users/delete`（管理员） | `{"id"}` | `{"users": [...]}`；同时删除他的会话、考试、错题本和设置 |
+| `POST /api/users/unlock`（管理员） | `{"id"}` | `{"users": [...]}`；解除这个用户的登录锁定（回到 5 次机会） |
+
+规则：用户名 1–40 个字符（字母、数字和 `. _ - @`，不区分大小写、不能重复），密码 8–128 个字符。不能停用、降级或删除自己（409 `不能对自己的账户做这个操作。`），最后一个启用的管理员也不能被移除（409 `至少要保留一个启用的管理员。`）。学习记录、进度、错题本和设置相关的路由只处理当前登录用户自己的数据。

@@ -68,6 +68,8 @@ export default defineCatalog({
     'home.empty.noBanks': 'There are no question banks yet. Import an Excel workbook on the Question banks page, then come back here to start an exam.',
     'home.empty.noQuestions': 'Your question banks have no active questions right now (every question has been retired). Import a complete workbook on the Question banks page.',
     'home.empty.go': 'Go to Question banks',
+    'home.empty.noBanksUser': 'There are no question banks yet. Ask an administrator to import one; it appears here as soon as it is ready.',
+    'home.empty.noQuestionsUser': 'The question banks have no active questions right now (every question has been retired). Ask an administrator to import a complete workbook.',
 
     // Latest exam
     'home.latest.title': 'Latest exam',
@@ -143,6 +145,8 @@ export default defineCatalog({
     'home.empty.noBanks': '还没有题库。先到「题库管理」导入 Excel 题库，再回来开始考试。',
     'home.empty.noQuestions': '题库里现在没有可用的题（所有题都已下架）。请到「题库管理」重新导入完整的 Excel 题库。',
     'home.empty.go': '去题库管理',
+    'home.empty.noBanksUser': '还没有题库。请让管理员导入题库，导入后就会出现在这里。',
+    'home.empty.noQuestionsUser': '题库里现在没有可用的题（所有题都已下架）。请让管理员重新导入完整的 Excel 题库。',
 
     'home.latest.title': '最近一场考试',
     'home.latest.percent': '{percent}%',
@@ -215,6 +219,8 @@ export default defineCatalog({
     'home.empty.noBanks': 'まだ問題集がありません。「問題集の管理」で Excel ファイルをインポートしてから、ここで試験を始めてください。',
     'home.empty.noQuestions': '問題集に現在有効な問題がありません（すべて出題停止中です）。「問題集の管理」で完全な Excel ファイルをインポートし直してください。',
     'home.empty.go': '問題集の管理へ',
+    'home.empty.noBanksUser': 'まだ問題集がありません。管理者に問題集のインポートを依頼してください。インポートされると、ここに表示されます。',
+    'home.empty.noQuestionsUser': '問題集に現在有効な問題がありません（すべて出題停止中です）。管理者に完全な Excel ファイルのインポートを依頼してください。',
 
     'home.latest.title': '直近の試験',
     'home.latest.percent': '{percent}%',

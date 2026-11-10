@@ -1,12 +1,15 @@
-// Settings page: theme, interface language, auto-advance, reset to defaults.
+// Settings page: the account (username, role, change password), theme, interface language, auto-advance, reset to defaults.
 // Every change goes through updateSettings(): applied at once (optimistic), saved on the server (Xexam's data directory),
 // and rolled back with a toast when saving fails. The page is redrawn by render(); the focused control keeps the focus.
 import '../styles/settings.css';
+import { ApiError } from '../api/client.ts';
 import { pageHead } from '../components/common.ts';
+import { field, passwordLengthOk } from '../components/fields.ts';
+import { roleName } from '../components/shell.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
-import { render } from '../state/actions.ts';
+import { changeOwnPassword, onRouteChange, onSignedIn, render } from '../state/actions.ts';
 import { resetSettings, updateSettings } from '../state/preferences.ts';
 import { DEFAULT_SETTINGS } from '../state/settings-cache.ts';
 import { S } from '../state/store.ts';
@@ -68,6 +71,21 @@ function restoreFocus(root: HTMLElement, key: string | null): void {
   });
 }
 
+/** Settings > Account > Change password (what was typed survives a redraw; it is forgotten when the page is left) */
+const pw = { current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null as string | null, done: false };
+/** The password field to focus after the next render */
+let pwFocus: string | null = null;
+
+function forgetPasswords(): void {
+  Object.assign(pw, { current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null, done: false });
+}
+
+onRouteChange((from, to) => {
+  if (from.name === 'settings' && to.name !== 'settings') forgetPasswords();
+});
+// Signed in again after the session ended: nothing typed before (nor its error) is kept
+onSignedIn(forgetPasswords);
+
 const atDefaults = (s: Settings): boolean =>
   s.theme === DEFAULT_SETTINGS.theme && s.uiLang === DEFAULT_SETTINGS.uiLang && s.autoAdvance === DEFAULT_SETTINGS.autoAdvance;
 
@@ -126,6 +144,89 @@ async function reset(): Promise<void> {
   if (ok) toast(t('settings.reset.done'));
 }
 
+async function submitPassword(): Promise<void> {
+  if (pw.busy) return;
+  const fail = (key: 'settings.password.missing' | 'auth.check.length' | 'auth.check.mismatch' | 'auth.check.same', focus: string): void => {
+    pw.error = t(key);
+    pw.done = false;
+    pwFocus = focus;
+    render();
+  };
+  if (!pw.current) return fail('settings.password.missing', 'set-pw-current');
+  if (!passwordLengthOk(pw.next)) return fail('auth.check.length', 'set-pw-new');
+  if (pw.next !== pw.repeat) return fail('auth.check.mismatch', 'set-pw-repeat');
+  if (pw.next === pw.current) return fail('auth.check.same', 'set-pw-new');
+  pw.busy = true;
+  pw.error = null;
+  pw.done = false;
+  render();
+  try {
+    await changeOwnPassword(pw.current, pw.next);
+    forgetPasswords();
+    pw.done = true;
+    pwFocus = 'set-pw-done';
+  } catch (e) {
+    pw.busy = false;
+    pw.error = errorText(e);
+    // A wrong current password: type it again
+    if (e instanceof ApiError && e.status === 403) {
+      pw.current = '';
+      pwFocus = 'set-pw-current';
+    }
+  }
+  if (S.route.name === 'settings') render();
+}
+
+function accountSection(): HTMLElement | null {
+  const u = S.user;
+  if (!u) return null;
+  const input = (id: string, label: MsgKey, value: string, autocomplete: string, set: (v: string) => void, hint?: MsgKey): HTMLElement => field({
+    id, label: t(label), type: 'password', value, autocomplete, shown: pw.shown.has(id), disabled: pw.busy, hint: hint ? t(hint) : undefined,
+    onInput: (v) => {
+      set(v);
+      if (pw.done) {
+        pw.done = false;
+        document.getElementById('set-pw-done')?.remove();
+      }
+    },
+    onShow: (v) => {
+      if (v) pw.shown.add(id);
+      else pw.shown.delete(id);
+    },
+  }).el;
+  return h('section', { class: 'panel set-sec set-account', 'aria-labelledby': 'set-account-h' },
+    h('h2', { id: 'set-account-h' }, t('settings.account')),
+    h('p', { class: 'set-desc' }, t('settings.account.desc')),
+    h('dl', { class: 'props set-props' },
+      h('dt', null, t('settings.account.username')), h('dd', { class: 'set-username' }, u.username),
+      h('dt', null, t('settings.account.role')), h('dd', null, h('span', { class: 'tag ' + (u.role === 'admin' ? 'b' : 'k') }, roleName(u.role)))),
+    h('form', {
+      class: 'set-pw', novalidate: true, 'aria-labelledby': 'set-pw-h', 'aria-busy': pw.busy ? 'true' : null,
+      onsubmit: (e: SubmitEvent) => {
+        e.preventDefault();
+        void submitPassword();
+      },
+    },
+    h('h3', { id: 'set-pw-h' }, t('settings.password')),
+    h('p', { class: 'set-desc' }, t('settings.password.desc')),
+    // For password managers: the account the new password belongs to
+    h('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: u.username, readonly: true, tabindex: '-1', 'aria-hidden': 'true' }),
+    h('div', { class: 'set-pw-grid' },
+      input('set-pw-current', 'settings.password.current', pw.current, 'current-password', (v) => {
+        pw.current = v;
+      }),
+      input('set-pw-new', 'settings.password.new', pw.next, 'new-password', (v) => {
+        pw.next = v;
+      }, 'settings.password.rule'),
+      input('set-pw-repeat', 'settings.password.repeat', pw.repeat, 'new-password', (v) => {
+        pw.repeat = v;
+      })),
+    pw.error ? h('div', { class: 'err', role: 'alert' }, h('p', null, pw.error)) : null,
+    pw.done ? h('div', { class: 'callout ok set-pw-done', id: 'set-pw-done', role: 'status', tabindex: '-1' }, h('p', null, t('settings.password.done'))) : null,
+    h('div', { class: 'acts' },
+      h('button', { class: 'btn', type: 'submit', disabled: pw.busy }, t(pw.busy ? 'settings.password.busy' : 'settings.password.submit')))));
+}
+
 // ---------------------------------------------------------------- building blocks
 
 function section(id: string, title: string, desc: string, ...body: Child[]): HTMLElement {
@@ -177,6 +278,8 @@ function preview(theme: Theme): HTMLElement {
 export function renderSettings(): HTMLElement {
   const want = forceFocus ?? focusedKey();
   forceFocus = null;
+  const pwWant = pwFocus;
+  pwFocus = null;
   const s = S.settings;
 
   statusEl = h('span', { class: 'set-status', role: 'status' }, statusText());
@@ -236,10 +339,16 @@ export function renderSettings(): HTMLElement {
   const root = h('div', { class: 'page page-settings' },
     pageHead(t('settings.title'), statusEl),
     h('p', { class: 'set-lead' }, t('settings.lead')),
+    accountSection(),
     appearance,
     language,
     answering,
     resetSec);
   restoreFocus(root, want);
+  if (pwWant) {
+    queueMicrotask(() => {
+      if (root.isConnected) document.getElementById(pwWant)?.focus({ preventScroll: true });
+    });
+  }
   return root;
 }

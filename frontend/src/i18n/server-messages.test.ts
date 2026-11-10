@@ -68,6 +68,7 @@ const NOT_MESSAGES: ReadonlyArray<{ reason: string; values: readonly string[] }>
       '旧的 progress.json 里有格式不对的内容，没有迁移：{e}',
       '旧的 progress.json 里有格式不对的内容，没有迁移：数据不满足表的约束',
       '迁移了 {} 场成绩、{} 道题的答题记录',
+      '数据库里没有管理员账户，没有迁移',
     ],
   },
 ];

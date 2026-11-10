@@ -199,3 +199,7 @@ So "start once to create the data volume → put `progress.json` into the volume
 (`tests/integration/migrate_check.py` checks these cases with synthetic data.)
 
 > ⚠️ When upgrading from v0.1: the database file name changed, and the new version only reads `xexam.db`. If the data directory has another `.db` file but no `xexam.db`, the startup log will warn you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read).
+
+## Schema v3 (v0.6)
+
+New tables: `users` (username unique ignoring case, Argon2id `password_hash`, `role` admin / user, `disabled`, `created_at`, `last_login_at`, `password_changed_at`, `must_change_password`), `sessions` (SHA-256 `token_hash`, `user_id`, `created_at`, `last_seen_at`, `expires_at`), `user_stats` (the wrong-answer notebook per user: `user_id`, `question_id`, counters) and `user_settings` (`user_id`, `key`, `value`); new column `attempts.user_id`. The migration runs in one transaction after a copy `backups/xexam-schema2-<date-time>.db` is written; it creates `admin` / `admin` (must change the password) and gives it the existing attempts, `stats` and `settings`. The old `stats` and `settings` tables stay but are no longer used. The 500-exam retention applies per user.

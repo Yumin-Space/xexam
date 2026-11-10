@@ -2,6 +2,8 @@
 //!
 //! `GET /api/records` ([`Store::records`]), `GET /api/record` ([`Store::record`]), `POST /api/records/delete`
 //! ([`Store::delete_record`], [`Store::delete_all_records`]); the `banks` snapshot and the retention prune used by `record_attempt`.
+//! Since v0.6 every exam record belongs to one user (`attempts.user_id`); every function here works on one user's records only,
+//! and a record of another user behaves exactly like a record that does not exist.
 use super::super::{pyjson, RECORD_RETENTION};
 use super::{load_questions, question_object, run_tx, Store, QUESTION_COLUMNS};
 use crate::error::DbError;
@@ -57,27 +59,47 @@ pub(super) fn bank_snapshot(c: &Connection, results: &[AttemptResult]) -> Result
     Ok(pyjson::to_string(&Value::Array(out))?)
 }
 
-/// Keeps only the newest `keep` exams; the detail rows of the pruned ones go with them.
-pub(super) fn prune(c: &Connection, keep: i64) -> Result<(), DbError> {
+/// Keeps only the newest `keep` exams of `user`; the detail rows of the pruned ones go with them. Other users are not touched.
+pub(super) fn prune(c: &Connection, user: i64, keep: i64) -> Result<(), DbError> {
     let cutoff: Option<i64> = c
         .query_row(
-            "SELECT id FROM attempts ORDER BY id DESC LIMIT 1 OFFSET ?1",
-            params![keep - 1],
+            "SELECT id FROM attempts WHERE user_id=?1 ORDER BY id DESC LIMIT 1 OFFSET ?2",
+            params![user, keep - 1],
             |r| r.get(0),
         )
         .optional()?;
     if let Some(cutoff) = cutoff {
         c.execute(
-            "DELETE FROM attempt_items WHERE attempt_id < ?1",
-            params![cutoff],
+            "DELETE FROM attempt_items WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?1 AND id < ?2)",
+            params![user, cutoff],
         )?;
-        c.execute("DELETE FROM attempts WHERE id < ?1", params![cutoff])?;
+        c.execute(
+            "DELETE FROM attempts WHERE user_id=?1 AND id < ?2",
+            params![user, cutoff],
+        )?;
     }
     Ok(())
 }
 
-/// Record summaries, newest first (`only`: just that record).
-fn summaries(c: &Connection, only: Option<i64>) -> Result<Vec<Value>, DbError> {
+/// Deletes every exam record of `user` with its detail; `with_stats` also empties their per-question stats.
+pub(super) fn delete_user_records(
+    c: &Connection,
+    user: i64,
+    with_stats: bool,
+) -> Result<(), DbError> {
+    c.execute(
+        "DELETE FROM attempt_items WHERE attempt_id IN (SELECT id FROM attempts WHERE user_id=?1)",
+        params![user],
+    )?;
+    c.execute("DELETE FROM attempts WHERE user_id=?1", params![user])?;
+    if with_stats {
+        c.execute("DELETE FROM user_stats WHERE user_id=?1", params![user])?;
+    }
+    Ok(())
+}
+
+/// Record summaries of `user`, newest first (`only`: just that record, if it is theirs).
+fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>, DbError> {
     let names: HashMap<i64, String> = {
         let mut st = c.prepare("SELECT id, name FROM banks")?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -88,12 +110,13 @@ fn summaries(c: &Connection, only: Option<i64>) -> Result<Vec<Value>, DbError> {
     {
         let sql = match only {
             Some(_) => "SELECT attempt_id, COUNT(*), COUNT(answer) FROM attempt_items WHERE attempt_id=?1 GROUP BY attempt_id",
-            None => "SELECT attempt_id, COUNT(*), COUNT(answer) FROM attempt_items GROUP BY attempt_id",
+            None => "SELECT i.attempt_id, COUNT(*), COUNT(i.answer) FROM attempt_items i JOIN attempts a ON a.id = i.attempt_id \
+                     WHERE a.user_id=?1 GROUP BY i.attempt_id",
         };
         let mut st = c.prepare(sql)?;
         let mut rows = match only {
             Some(id) => st.query(params![id])?,
-            None => st.query([])?,
+            None => st.query(params![user])?,
         };
         while let Some(r) = rows.next()? {
             counts.insert(r.get(0)?, (r.get(1)?, r.get(2)?));
@@ -101,12 +124,12 @@ fn summaries(c: &Connection, only: Option<i64>) -> Result<Vec<Value>, DbError> {
     }
     let base = "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks FROM attempts";
     let mut st = match only {
-        Some(_) => c.prepare(&format!("{base} WHERE id=?1"))?,
-        None => c.prepare(&format!("{base} ORDER BY id DESC"))?,
+        Some(_) => c.prepare(&format!("{base} WHERE id=?1 AND user_id=?2"))?,
+        None => c.prepare(&format!("{base} WHERE user_id=?1 ORDER BY id DESC"))?,
     };
     let mut rows = match only {
-        Some(id) => st.query(params![id])?,
-        None => st.query([])?,
+        Some(id) => st.query(params![id, user])?,
+        None => st.query(params![user])?,
     };
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
@@ -144,18 +167,18 @@ fn summaries(c: &Connection, only: Option<i64>) -> Result<Vec<Value>, DbError> {
     Ok(out)
 }
 
-/// `{"records": [...], "retention": 500}`
-fn records_json(c: &Connection) -> Result<Value, DbError> {
+/// `{"records": [...], "retention": 500}` of `user`
+fn records_json(c: &Connection, user: i64) -> Result<Value, DbError> {
     Ok(json!({
-        "records": summaries(c, None)?,
+        "records": summaries(c, user, None)?,
         "retention": RECORD_RETENTION,
     }))
 }
 
-fn record_exists(c: &Connection, id: i64) -> Result<bool, DbError> {
+fn record_exists(c: &Connection, user: i64, id: i64) -> Result<bool, DbError> {
     Ok(c.query_row(
-        "SELECT 1 FROM attempts WHERE id=?1",
-        params![id],
+        "SELECT 1 FROM attempts WHERE id=?1 AND user_id=?2",
+        params![id, user],
         |_| Ok(()),
     )
     .optional()?
@@ -163,18 +186,18 @@ fn record_exists(c: &Connection, id: i64) -> Result<bool, DbError> {
 }
 
 impl Store {
-    /// `GET /api/records`: every kept exam record, newest first, and the retention limit.
-    pub fn records(&self) -> Result<Value, DbError> {
+    /// `GET /api/records`: every kept exam record of `user`, newest first, and the retention limit (per user).
+    pub fn records(&self, user: i64) -> Result<Value, DbError> {
         let g = self.lock();
-        records_json(&g)
+        records_json(&g, user)
     }
 
     /// `GET /api/record?id=`: `{"record": summary, "items": [{"seq", "questionId", "answer", "correct", "question"}]}`, where
     /// `question` is the question as `/api/bank` shows it plus a trailing `active` (retired questions included), or null when the
-    /// question no longer exists. `Ok(None)` = no such record.
-    pub fn record(&self, id: i64) -> Result<Option<Value>, DbError> {
+    /// question no longer exists. `Ok(None)` = no such record of `user`.
+    pub fn record(&self, user: i64, id: i64) -> Result<Option<Value>, DbError> {
         let g = self.lock();
-        let Some(record) = summaries(&g, Some(id))?.into_iter().next() else {
+        let Some(record) = summaries(&g, user, Some(id))?.into_iter().next() else {
             return Ok(None);
         };
         let rows: Vec<(i64, String, Option<String>, bool)> = {
@@ -212,11 +235,12 @@ impl Store {
         Ok(Some(json!({ "record": record, "items": items })))
     }
 
-    /// Deletes one exam record and its detail (the per-question stats are not changed). `false` = no such record (nothing written).
-    pub fn delete_record(&self, id: i64) -> Result<bool, DbError> {
+    /// Deletes one exam record of `user` and its detail (the per-question stats are not changed). `false` = no such record of
+    /// theirs (nothing written).
+    pub fn delete_record(&self, user: i64, id: i64) -> Result<bool, DbError> {
         let g = self.lock();
         run_tx(&g, |c| {
-            if !record_exists(c, id)? {
+            if !record_exists(c, user, id)? {
                 return Ok(false);
             }
             c.execute("DELETE FROM attempt_items WHERE attempt_id=?1", params![id])?;
@@ -225,17 +249,11 @@ impl Store {
         })
     }
 
-    /// Deletes every exam record and its detail; `with_stats` also empties the per-question stats (the wrong notebook).
-    pub fn delete_all_records(&self, with_stats: bool) -> Result<(), DbError> {
+    /// Deletes every exam record of `user` and its detail; `with_stats` also empties their per-question stats (the wrong
+    /// notebook).
+    pub fn delete_all_records(&self, user: i64, with_stats: bool) -> Result<(), DbError> {
         let g = self.lock();
-        run_tx(&g, |c| {
-            c.execute("DELETE FROM attempt_items", [])?;
-            c.execute("DELETE FROM attempts", [])?;
-            if with_stats {
-                c.execute("DELETE FROM stats", [])?;
-            }
-            Ok(())
-        })
+        run_tx(&g, |c| delete_user_records(c, user, with_stats))
     }
 }
 

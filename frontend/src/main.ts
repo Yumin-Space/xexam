@@ -1,16 +1,19 @@
 // App entry: applies the cached settings (first paint), maps the route to a page inside the shell, registers the redraw function, and starts.
+// Before anything else, the sign-in pages: while S.authView is set, only the sign-in page or "choose a new password" is drawn.
 import './styles/main.css';
 import { brand } from './components/common.ts';
 import { installShellHandlers, shell } from './components/shell.ts';
 import { t } from './i18n/index.ts';
 import { errorText } from './i18n/errors.ts';
 import { renderAbout } from './pages/about.ts';
+import { renderNewPassword, renderSignIn } from './pages/auth.ts';
 import { renderBanks } from './pages/banks.ts';
 import { renderHome } from './pages/home.ts';
 import { installQuizKeys, renderQuiz } from './pages/quiz.ts';
 import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
 import { renderSettings } from './pages/settings.ts';
+import { renderUsers } from './pages/users.ts';
 import { boot, setRenderer } from './state/actions.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S } from './state/store.ts';
@@ -26,6 +29,8 @@ function page(): { el: HTMLElement; title: string } {
   switch (r.name) {
     case 'banks':
       return { el: renderBanks(), title: t('nav.banks') };
+    case 'users':
+      return { el: renderUsers(), title: t('users.title') };
     case 'records':
     case 'record':
     case 'wrong':
@@ -60,6 +65,15 @@ function draw(): void {
   S.timer = null;
   const app = must<HTMLElement>('#app');
 
+  // The sign-in pages set their own document title
+  if (S.authView === 'signin') {
+    app.replaceChildren(renderSignIn());
+    return;
+  }
+  if (S.authView === 'password') {
+    app.replaceChildren(renderNewPassword());
+    return;
+  }
   if (S.phase === 'loading') {
     app.replaceChildren(solo(h('p', { class: 'dim', role: 'status' }, t('app.loading'))));
     document.title = t('app.name');

@@ -1,9 +1,10 @@
-// Hash routing: #/ (home), #/banks, #/records, #/records/<id>, #/records/wrong, #/settings, #/about, #/quiz, #/result.
+// Hash routing: #/ (home), #/banks, #/users, #/records, #/records/<id>, #/records/wrong, #/settings, #/about, #/quiz, #/result.
 // Hash routes need no server-side fallback and survive a page reload.
 
 export type Route =
   | { name: 'home' }
   | { name: 'banks' }
+  | { name: 'users' }
   | { name: 'records' }
   | { name: 'record'; id: number }
   | { name: 'wrong' }
@@ -13,7 +14,7 @@ export type Route =
   | { name: 'result' };
 
 /** The menu entry a route belongs to */
-export type NavSection = 'home' | 'banks' | 'records' | 'settings' | 'about';
+export type NavSection = 'home' | 'banks' | 'records' | 'users' | 'settings' | 'about';
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#\/?/, '').replace(/\/+$/, '').split('?')[0] ?? '';
@@ -25,6 +26,8 @@ export function parseHash(hash: string): Route {
       return { name: 'home' };
     case 'banks':
       return { name: 'banks' };
+    case 'users':
+      return { name: 'users' };
     case 'records':
       if (b === 'wrong') return { name: 'wrong' };
       if (b && /^[0-9]{1,15}$/.test(b)) return { name: 'record', id: Number(b) };
@@ -61,6 +64,8 @@ export function sectionOf(r: Route): NavSection | null {
       return 'home';
     case 'banks':
       return 'banks';
+    case 'users':
+      return 'users';
     case 'records':
     case 'record':
     case 'wrong':
@@ -77,4 +82,9 @@ export function sectionOf(r: Route): NavSection | null {
 
 export function sameRoute(a: Route, b: Route): boolean {
   return routeHash(a) === routeHash(b);
+}
+
+/** Pages only administrators may open (the backend refuses their requests to everyone else) */
+export function adminOnly(r: Route): boolean {
+  return r.name === 'banks' || r.name === 'users';
 }

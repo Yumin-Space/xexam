@@ -1,4 +1,10 @@
 //! Shared test helpers: a fake `Engine` (independent of whether the parser and database are implemented), request building, request sending.
+//!
+//! Sign-in (v0.6): there is no switch that turns authentication off. The routers the helpers build are **signed in as the
+//! default administrator**: [`test_session`] uses the same `Store` calls as `POST /api/auth/login` and `POST /api/auth/password`
+//! (it clears the "must change the password" flag and starts a session), and [`with_cookie`] wraps the router so every request
+//! without a `Cookie` header carries that session cookie. That is how the golden tests and every older API test keep running
+//! unchanged. Tests of sign-in itself use `build_router(state)` directly (no cookie) and sign in through the API.
 #![allow(dead_code)]
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode};
@@ -9,6 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tower::ServiceExt;
 use xexam_backend::api::{build_router, AppState, Inner};
+use xexam_backend::auth;
 use xexam_backend::config::Config;
 use xexam_backend::database::Store;
 use xexam_backend::error::{DbError, ImportError};
@@ -91,7 +98,7 @@ impl Engine for FakeEngine {
             }
         })
     }
-    fn progress(&self) -> Result<Value, DbError> {
+    fn progress(&self, _user: i64) -> Result<Value, DbError> {
         self.with(|f| {
             if f.fail_all_db {
                 Err(DbError::Join)
@@ -129,7 +136,7 @@ impl Engine for FakeEngine {
             f.apply.take().unwrap_or(Ok(json!({"added": 0})))
         })
     }
-    fn record_attempt(&self, a: &Attempt) -> Result<Value, DbError> {
+    fn record_attempt(&self, _user: i64, a: &Attempt) -> Result<Value, DbError> {
         self.with(|f| {
             f.last_attempt = Some(a.clone());
             if f.fail_all_db {
@@ -139,7 +146,7 @@ impl Engine for FakeEngine {
             }
         })
     }
-    fn reset_progress(&self) -> Result<Value, DbError> {
+    fn reset_progress(&self, _user: i64) -> Result<Value, DbError> {
         self.with(|f| {
             f.reset_calls += 1;
             Ok(f.progress.clone())
@@ -225,9 +232,13 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
         )),
         shutdown: if allow { Some(tx) } else { None },
         engine: engine.clone(),
+        hash_gate: Arc::new(tokio::sync::Semaphore::new(auth::HASH_CONCURRENCY)),
+        throttle: auth::LoginThrottle::default(),
+        last_session_purge: std::sync::atomic::AtomicI64::new(0),
+        default_admin_hashes: Default::default(),
     }));
     TestApp {
-        router: build_router(state.clone()),
+        router: signed_in_router(&state),
         state,
         engine,
         shutdown_rx: Some(rx),
@@ -236,6 +247,52 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
 
 pub fn app() -> TestApp {
     app_with(default_config(), None)
+}
+
+/// Signs `username` in without going through HTTP: clears its "must change the password" flag (keeping its password) and
+/// starts a new session with the same `Store` calls the sign-in routes use. Returns the `Cookie` header value.
+pub fn test_session(store: &Store, username: &str) -> String {
+    let u = store
+        .user_by_name(username)
+        .expect("user lookup")
+        .expect("user exists");
+    if u.must_change_password {
+        store
+            .change_own_password(u.id, &u.password_hash, &u.password_hash, "")
+            .expect("clear the flag");
+    }
+    let token = auth::new_session_token();
+    store
+        .start_session(
+            u.id,
+            &auth::token_hash(&token),
+            &u.password_hash,
+            auth::unix_now(),
+        )
+        .expect("start session")
+        .expect("user enabled");
+    format!("{}={token}", auth::SESSION_COOKIE)
+}
+
+/// `router`, with `cookie` added to every request that has no `Cookie` header of its own.
+pub fn with_cookie(router: Router, cookie: String) -> Router {
+    router.layer(tower::util::MapRequestLayer::new(
+        move |mut req: Request<Body>| {
+            if !req.headers().contains_key("cookie") {
+                req.headers_mut().insert(
+                    "cookie",
+                    HeaderValue::from_str(&cookie).expect("cookie header"),
+                );
+            }
+            req
+        },
+    ))
+}
+
+/// The app's router, signed in as the default administrator `admin` (see the module comment).
+pub fn signed_in_router(state: &AppState) -> Router {
+    let cookie = test_session(&state.0.store, auth::DEFAULT_ADMIN_USERNAME);
+    with_cookie(build_router(state.clone()), cookie)
 }
 
 pub struct Resp {

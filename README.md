@@ -2,7 +2,7 @@
 
 <!-- The release badge is static: CI checks that its version equals VERSION. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
 <p>
-  <a href="../../releases/latest"><img width="145" height="28" alt="Release v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
+  <a href="../../releases/latest"><img width="132" height="28" alt="Release v0.6" src="https://img.shields.io/badge/release-v0.6-green?style=for-the-badge"></a>
 </p>
 
 <p align="center">
@@ -30,8 +30,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 
 | | |
 |---|---|
-| Current version | **v0.5.1** (see the [changelog](#changelog) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v0.5.1**) |
-| Images | On Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend` and `docker.io/yuminspace/xexam-backend`, with tags `latest` / `v0.5.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend` and `ghcr.io/yumin-space/xexam-backend` (private, same tags) |
+| Current version | **v0.6** (see the [changelog](#changelog) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v0.6**) |
+| Images | On Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend` and `docker.io/yuminspace/xexam-backend`, with tags `latest` / `v0.6` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend` and `ghcr.io/yumin-space/xexam-backend` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -111,7 +111,7 @@ For the mirror, without read access or with a fine-grained token instead of a cl
 docker compose up -d
 ```
 
-This pulls the two images from Docker Hub and starts **two containers** (`xexam-frontend`, `xexam-backend`). Then open <http://localhost:8765> in a browser on the same machine.
+This pulls the two images from Docker Hub and starts **two containers** (`xexam-frontend`, `xexam-backend`). Then open <http://localhost:8765> in a browser on the same machine. Sign in with the username `admin` and the password `admin`; Xexam then asks you to choose your own password. Do this right away: until then, anyone who can open the page can use the default password.
 
 Docker runs on another machine (a server, a NAS, a virtual machine)? See [Opening Xexam from your phone or another computer](#opening-xexam-from-your-phone-or-another-computer).
 
@@ -122,7 +122,7 @@ The interface starts in English. To switch it to Chinese or Japanese, open the m
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d`. If your `docker-compose.yml` still names `ghcr.io` (files from before v0.5.1), replace it with the new one first; the data volume stays |
-| Pin to a specific version | Change `:latest` to `:v0.5.1` for both images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v0.6` for both images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (both containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f` |
@@ -167,7 +167,7 @@ More details: section 3 of [docs/en/deployment.md](docs/en/deployment.md).
 
 ## Opening Xexam from your phone or another computer
 
-**Xexam has no login**, and by default it binds only to the local machine (`127.0.0.1`): only the machine that runs Docker can open <http://localhost:8765>. There are two ways to open it from another device.
+**Xexam has its own sign-in since v0.6** (see [Users and sign-in](#users-and-sign-in)), and by default it binds only to the local machine (`127.0.0.1`): only the machine that runs Docker can open <http://localhost:8765>. There are two ways to open it from another device.
 
 ### From another computer through SSH (no configuration)
 
@@ -206,7 +206,7 @@ To use it away from home (not on your home Wi-Fi), see [Access from the internet
 ### The layout
 
 - Every page except the exam has a slim header: the Xexam logo at the top left (it takes you to Home) and the three-line menu button at the top right.
-- The menu button opens a small menu with **Home**, **Question banks**, **Study records** and **Settings** and, under a divider, **Xexam v0.5.1**, which opens the [About page](#about-xexam). The menu closes after a choice, a click outside it or the Escape key.
+- The menu button opens a small menu with **Home**, **Question banks**, **Study records** and **Settings** and, under a divider, **Xexam v0.6**, which opens the [About page](#about-xexam). The menu closes after a choice, a click outside it or the Escape key.
 - On wide screens the page content is centered and at most 1120 px wide.
 - The exam itself is a focused full-screen page without the header.
 
@@ -298,9 +298,22 @@ Settings are saved on the Xexam server, in the database in the data directory, t
 
 ### About Xexam
 
-The last menu entry, **Xexam v0.5.1**, opens **About Xexam**: the **Version**, the CPU architecture of the **Server**, the **License**, and **What’s new**, which is the [changelog](#changelog) of this README in the interface language. The newest version is open; the earlier ones are folded under **Earlier versions**.
+The last menu entry, **Xexam v0.6**, opens **About Xexam**: the **Version**, the CPU architecture of the **Server**, the **License**, and **What’s new**, which is the [changelog](#changelog) of this README in the interface language. The newest version is open; the earlier ones are folded under **Earlier versions**.
 
 ![About Xexam on a desktop](docs/en/screenshots/desktop-8-about.png)
+
+### Users and sign-in
+
+Since v0.6 everyone signs in. Administrators manage question banks and users; each user has their own study records, wrong-answer notebook, unfinished exam and settings, and the question banks are shared.
+
+![User management: an administrator, users who still have to choose a password and a disabled user](docs/en/screenshots/desktop-10-users.png)
+
+- **First start** (a new install, or the first start after upgrading): sign in with `admin` / `admin` (the sign-in page reminds you of it). Xexam then asks for a new password (8–128 characters). The study records, notebook and settings from before v0.6 belong to this administrator.
+- **Header and menu**: your username (with **Admin** for administrators) sits left of the menu button, and the menu ends with your name and **Sign out**. Users who are not administrators see **Home**, **Study records**, **Settings** and the version entry.
+- **User management** (menu, administrators only): one row per user with role, status (**Normal**, **Disabled** or **Locked · … left**), created, last sign-in and number of exams; **Add user**, **Edit**, **Reset password**, **Disable** / **Enable**, **Delete** (also deletes that user’s study records) and **Unlock**. A user created or reset by an administrator chooses their own password at the next sign-in. You cannot disable, demote or delete yourself, and the last enabled administrator cannot be removed.
+- **Wrong passwords**: 5 wrong passwords for a username within 15 minutes lock signing in for 1 minute; after that, every 3 more lock it again, for 5 minutes, 15 minutes, 30 minutes, 1 hour and then 1 day. A successful sign-in, **Unlock**, a password reset by an administrator, a restart of the backend, or 24 hours without a new mistake start over with 5 tries. The sign-in page says how long to wait. Browsers that signed in to that account before are counted separately, so guesses from elsewhere do not lock them out.
+- **Change your password**: **Settings** → **Account** → **Change password**; your other signed-in browsers are signed out.
+- **Forgot the administrator password**: `docker compose exec xexam-backend xexam-backend reset-password admin` prints a new temporary password, which must be replaced at the next sign-in. To clear a lock at once, restart the backend: `docker compose restart xexam-backend`.
 
 ### On an iPhone
 
@@ -484,7 +497,7 @@ What else you will notice:
 - The question language used to be remembered by each browser. The first time a browser opens v0.5, its choice moves to the server (if the server still has the default, Japanese).
 - An unfinished exam saved in the browser is kept and can be continued.
 
-Checks after the upgrade: <http://localhost:8765/api/info> shows `"version": "0.5.1"` and the same `bankCount` as before (despite its name, this field counts the active questions, not the banks); **Question banks** shows one bank with all your sheets; **Study records** lists your earlier exams; **Study records** → **Review wrong answers** has as many questions as your wrong-answer notebook had.
+Checks after the upgrade: <http://localhost:8765/api/info> shows `"version": "0.6"` and the same `bankCount` as before (despite its name, this field counts the active questions, not the banks); **Question banks** shows one bank with all your sheets; **Study records** lists your earlier exams; **Study records** → **Review wrong answers** has as many questions as your wrong-answer notebook had.
 
 ### Rolling back to v0.4
 
@@ -716,7 +729,9 @@ sequenceDiagram
     B-->>F: Updated study progress
 ```
 
-### Database: 8 tables (schema v2)
+### Database: 12 tables (schema v3)
+
+Since v0.6 (schema v3) the tables `users`, `sessions`, `user_stats` and `user_settings` and the column `attempts.user_id` were added; the older `stats` and `settings` tables are kept but no longer used. The diagram below still shows the eight tables of v0.5.
 
 `questions`, `stats`, `attempts`, `imports` and `meta` come from schema v1, whose statements are unchanged; v0.5 adds `banks`, `attempt_items` and `settings` and three columns (`questions.bank_id`, `attempts.banks`, `imports.bank_id`). See [docs/en/database.md](docs/en/database.md) for every field.
 
@@ -816,7 +831,7 @@ For the detailed threat model and every line of defense, see [docs/en/security.m
 
 - **Only Nginx is exposed.** The backend publishes no port, and its network is `internal: true` (so it cannot reach the internet either).
 - By default only requests addressed to the local machine are accepted (the `Host` is checked); when running behind an authenticating reverse proxy such as Cloudflare, put your domain in `XEXAM_ALLOWED_HOSTS`. Write requests also have their `Origin` checked: it must be the same host as `Host` (or be listed in `XEXAM_ALLOWED_ORIGINS`), which prevents a malicious web page from operating the app through your browser. The backend reads only the real `Host` header, never `X-Forwarded-*`.
-- **The app does no login itself.** For internet access you must put authentication in front of it (Cloudflare Access); never expose the port directly to the public internet. There are no accounts: the settings apply to everyone who uses this instance.
+- **Sign-in since v0.6.** Every page and API needs a signed-in account, except `/api/info` and signing in itself. Passwords are stored as Argon2id hashes; the session cookie is `HttpOnly` and `SameSite=Strict` (`Secure` only over HTTPS or with `XEXAM_COOKIE_SECURE=1`, so plain HTTP on your own network works). Wrong passwords lock signing in for that username, longer each time (see [Users and sign-in](#users-and-sign-in)). Change the default `admin` password at the first sign-in. For access from the internet, keep authentication in front of it (Cloudflare Access) and never expose the port directly.
 - The v0.5 routes (banks, records, settings) go through the same guards in the same order as the others. Deleting a bank or records is always a POST with a JSON body, runs in one transaction, and in the page always asks for confirmation; deleting study data along with a bank, or the wrong-answer notebook along with all records, is a separate checkbox that is off by default. Settings accept only known values.
 - Uploaded files are checked by **content**: empty files, non-`.xlsx` files, corrupt archives, duplicate archive entries, and files containing an XML entity declaration (DOCTYPE) are rejected, with a maximum of 20 MB; parsing has an overall time limit and a memory cap.
 - After an upload, the preview is kept in memory for 30 minutes, and confirming requires a one-time verification code (128-bit random) that is invalidated once used.
@@ -941,6 +956,23 @@ The license covers the software in this repository. The repository contains no e
 Every update must add an entry here, and the **version number must match the `VERSION` file in the repository root** (the automated build checks this and refuses to build on a mismatch). The latest image carries both the `latest` tag and the matching `vX.Y` tag.
 
 The **About Xexam** page of the app shows these entries (they are built into the frontend), so keep them in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``. Links are shown as plain text there.
+
+### v0.6 — 2026-11-11
+
+**Accounts and sign-in: every user has their own records, and administrators manage users and question banks. The database moves to schema v3 automatically, after a backup copy is written.**
+
+- **Sign-in**: a standard sign-in page in the calm style of v0.5.1. On the first start (a new install or an upgrade) sign in with `admin` / `admin`; Xexam then asks for your own password, and the sign-in page and the startup log remind you until it is changed.
+- **Users and roles**: administrators manage question banks and users; users take exams and see only their own study records, wrong-answer notebook, unfinished exam and settings. The question banks are shared. The data from before v0.6 belongs to the first administrator.
+- **User management** (menu, administrators only): add, edit, reset the password of, disable / enable, delete and unlock users, with each user’s role, status (Normal, Disabled, Locked), created, last sign-in and number of exams. Users created or reset by an administrator choose their own password at the next sign-in.
+- **Header**: your username (with **Admin** for administrators) left of the menu button; the menu shows only the pages of your role and ends with **Sign out**.
+- **Settings**: a new **Account** section with **Change password**.
+- **Wrong passwords**: 5 tries, then a lock of 1 minute; then 3 tries per round with locks of 5 minutes, 15 minutes, 30 minutes, 1 hour and 1 day. The sign-in page says how long to wait, and an administrator can unlock a user.
+- **Security**: passwords as Argon2id hashes; `HttpOnly`, `SameSite=Strict` session cookies (the database keeps only their SHA-256), valid 30 days, signed out when the password, the role or the status changes. Plain HTTP keeps working (`Secure` only over HTTPS or with `XEXAM_COOKIE_SECURE=1`).
+- **Locked out of the administrator account**: `docker compose exec xexam-backend xexam-backend reset-password admin` prints a new temporary password.
+- **Database schema v3**: new tables `users`, `sessions`, `user_stats` and `user_settings` and the column `attempts.user_id`; before the migration a copy is written to `<data dir>/backups/xexam-schema2-<date-time>.db`.
+- **New API**: `/api/auth/state`, `/api/auth/login`, `/api/auth/logout`, `/api/auth/password`, `/api/users`, `/api/users/create`, `/api/users/update`, `/api/users/password`, `/api/users/delete` and `/api/users/unlock`; every other route needs a signed-in account (`/api/info` stays public).
+- **Repository layout**: the Japanese and Chinese READMEs moved to `README/`, the compose files and `.env.example` to `docker/` (in a clone, `.env` now goes to `docker/.env`). The README badges are rounded, and the release badge shows the version.
+- Tests: backend 181 → 232, frontend 44 → 59.
 
 ### v0.5.1 — 2026-11-11
 

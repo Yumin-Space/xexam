@@ -142,7 +142,7 @@ Pushes to `dev` and pull requests into `main` run only the first five jobs and *
 
 ## 9. Version, changelog and licence
 
-- The single source of truth for the version number is `VERSION` in the repository root (`0.5.1`). `backend/Cargo.toml` and `frontend/package.json` each hold a copy (`0.5.1`); CI checks that they match.
+- The single source of truth for the version number is `VERSION` in the repository root (`0.6`). `backend/Cargo.toml` and `frontend/package.json` each hold a copy (`0.6`); CI checks that they match.
 - Every update adds an entry at the very top of the changelog in all three READMEs (`README.md`, `README/README.ja.md`, `README/README.zh-CN.md`), with a version number that matches `VERSION`. CI checks this. The GitHub Release notes are taken from the English one.
 - The About page of the app shows these changelogs, built into the frontend (section 3). Keep the entries in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``; links to files in the repository are shown there as plain text. A changed changelog appears in the app only after the frontend is built again.
 - Work happens on `dev`; `main` receives the merge, and a push to `main` publishes the images and the Release.

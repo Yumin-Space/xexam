@@ -22,6 +22,20 @@ pub const MSG_RECORD_NOT_FOUND: &str = "这条考试记录不存在（可能已�
 pub const MSG_BAD_TARGET: &str = "上传目标不对，请刷新页面后再试。";
 pub const MSG_BAD_REQUEST: &str = "请求的格式不对。";
 pub const MSG_BAD_SETTINGS: &str = "设置的值不对。";
+// v0.6
+pub const MSG_SIGN_IN_REQUIRED: &str = "请先登录。";
+pub const MSG_ADMIN_ONLY: &str = "只有管理员可以进行这个操作。";
+pub const MSG_BAD_LOGIN: &str = "用户名或密码不对。";
+pub const MSG_TOO_MANY_LOGINS: &str = "登录失败次数太多，请稍后再试。";
+pub const MSG_PASSWORD_CHANGE_REQUIRED: &str = "请先设置新密码。";
+pub const MSG_SAME_PASSWORD: &str = "新密码不能和原来的一样。";
+pub const MSG_BAD_USERNAME: &str = "用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。";
+pub const MSG_BAD_PASSWORD: &str = "密码需要 8–128 个字符。";
+pub const MSG_USERNAME_TAKEN: &str = "这个用户名已经有人用了。";
+pub const MSG_USER_NOT_FOUND: &str = "这个用户不存在（可能已被删除），请刷新页面后再试。";
+pub const MSG_LAST_ADMIN: &str = "至少要保留一个启用的管理员。";
+pub const MSG_NOT_YOURSELF: &str = "不能对自己的账户做这个操作。";
+pub const MSG_WRONG_PASSWORD: &str = "当前密码不对。";
 
 pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: bool) -> Response {
     let len = body.len();
@@ -88,6 +102,24 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
         AppError::PendingGone => error_json(StatusCode::CONFLICT, MSG_PENDING_GONE, head_only),
         AppError::ShutdownDisabled => {
             error_json(StatusCode::FORBIDDEN, MSG_SHUTDOWN_DISABLED, head_only)
+        }
+        AppError::Status(code, m) => error_json(
+            StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            m,
+            head_only,
+        ),
+        AppError::TooManyLogins { retry_after } => {
+            let mut r = json_resp(
+                StatusCode::TOO_MANY_REQUESTS,
+                &json!({ "error": MSG_TOO_MANY_LOGINS, "retryAfter": retry_after }),
+                head_only,
+            );
+            r.headers_mut()
+                .insert(header::RETRY_AFTER, HeaderValue::from(retry_after));
+            r
+        }
+        AppError::Db(crate::error::DbError::NoUser) => {
+            error_json(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED, head_only)
         }
         AppError::Db(_) | AppError::Internal => {
             error_json(StatusCode::INTERNAL_SERVER_ERROR, MSG_INTERNAL, head_only)

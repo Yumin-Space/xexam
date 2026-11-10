@@ -1,7 +1,8 @@
 // Defensive tests for reading the saved exam: bad data is only dropped or corrected, never throws.
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { clearSaved, loadSaved, saveSession } from './session-storage.ts';
+import { adoptLegacySession, clearSaved, loadSaved, saveSession } from './session-storage.ts';
+import { setStorageOwner } from './storage-keys.ts';
 import type { Bank, Question } from '../types/api.ts';
 
 // A minimal stand-in for localStorage
@@ -15,7 +16,9 @@ const mem = new Map<string, string>();
   length: 0,
 } as Storage;
 
-const KEY = 'xexam.session.v1';
+/** The saved exam of user 7, the user signed in for most tests */
+const KEY = 'xexam.u7.session.v1';
+const LEGACY = 'xexam.session.v1';
 const q = (id: string, kind: Question['kind'], extra: Partial<Question> = {}): Question => ({
   kind, tag: '', stem: id, options: [{ key: 'A', text: 'a' }, { key: 'B', text: 'b' }, { key: 'C', text: 'c' }],
   items: [], answer: ['A'], translation: '', zh: null, explanation: '', mnemonic: '', note: '', id, sheet: 'S', row: 1, bank: 1, ...extra,
@@ -23,7 +26,10 @@ const q = (id: string, kind: Question['kind'], extra: Partial<Question> = {}): Q
 const hot = q('h', 'hotspot', { options: [], items: [{ text: 'x', choices: ['はい', 'いいえ'] }, { text: 'y', choices: ['はい', 'いいえ'] }], answer: [0, 1] });
 const bank = { file: '', mtime: '', error: '', sheets: [], questions: [q('s', 'single'), q('m', 'multi'), hot] } as Bank;
 
-beforeEach(() => mem.clear());
+beforeEach(() => {
+  mem.clear();
+  setStorageOwner(7);
+});
 const put = (v: unknown): void => void mem.set(KEY, typeof v === 'string' ? v : JSON.stringify(v));
 
 test('missing / not JSON / not an object / no ids: returns null, does not throw', () => {
@@ -113,4 +119,36 @@ test('clearSaved clears the saved exam; keys from the old version are not read',
   assert.equal(loadSaved(bank), null);
   mem.set('someother.session.v1', JSON.stringify({ ids: ['s'] }));
   assert.equal(loadSaved(bank), null);
+});
+
+test('each user has their own saved exam; nobody signed in reads and writes nothing', () => {
+  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 5, mode: 'all', sheets: [] });
+  assert.ok(mem.has(KEY));
+  setStorageOwner(8);
+  assert.equal(loadSaved(bank), null, 'another user does not see it');
+  clearSaved();
+  assert.ok(mem.has(KEY), "another user's clearSaved leaves it alone");
+  setStorageOwner(null);
+  assert.equal(loadSaved(bank), null);
+  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [] });
+  assert.deepEqual([...mem.keys()], [KEY], 'nothing is written without a user');
+  setStorageOwner(7);
+  assert.deepEqual(loadSaved(bank)?.answers.s, ['B']);
+});
+
+test('the saved exam of the version before users goes to the first administrator only', () => {
+  const old = JSON.stringify({ ids: ['s'], answers: { s: ['C'] } });
+  mem.set(LEGACY, old);
+  assert.equal(loadSaved(bank), null, 'the old key is not read directly');
+  adoptLegacySession(7, false);
+  assert.equal(mem.get(LEGACY), old, 'a plain user does not take it');
+  assert.equal(loadSaved(bank), null);
+  adoptLegacySession(7, true);
+  assert.equal(mem.has(LEGACY), false);
+  assert.deepEqual(loadSaved(bank)?.answers.s, ['C']);
+  // An administrator who already has a saved exam keeps theirs
+  mem.set(LEGACY, JSON.stringify({ ids: ['m'] }));
+  adoptLegacySession(7, true);
+  assert.equal(mem.has(LEGACY), false);
+  assert.deepEqual(loadSaved(bank)?.qs.map((x) => x.id), ['s']);
 });

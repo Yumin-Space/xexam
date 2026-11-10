@@ -174,7 +174,7 @@ export function renderQuiz(): HTMLElement {
 export function installQuizKeys(): void {
   document.addEventListener('keydown', (e) => {
     const se = S.session;
-    if (S.route.name !== 'quiz' || !se || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+    if (S.route.name !== 'quiz' || !se || S.authView || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
     if (document.querySelector('dialog[open]')) return;
     const target = e.target;
     if (target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;

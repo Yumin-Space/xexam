@@ -7,8 +7,12 @@
 //! - Schema v2 (v0.5): question banks, per-question exam detail and settings. Every import is scoped to one bank (see `banks`);
 //!   the legacy `plan_import` / `apply_import` mean "the legacy bank" (uploads without `X-Bank-Target`).
 //!
-//! Submodules (they extend `impl Store`): `migrate` (v1 → v2, backup, NULL `bank_id` fix-up), `banks` (bank list, delete, import
-//! targets, bank-scoped ids), `records` (exam records and their per-question detail), `settings`.
+//! - Schema v3 (v0.6): users and sessions; exam records, per-question stats (`user_stats`) and settings (`user_settings`) belong
+//!   to one user, so every method that reads or writes them takes the signed-in user's id. Banks, questions and the import
+//!   history stay shared.
+//!
+//! Submodules (they extend `impl Store`): `migrate` (v1 → v2 → v3, backups, fix-ups), `banks` (bank list, delete, import
+//! targets, bank-scoped ids), `records` (exam records and their per-question detail), `settings`, `users` (accounts, sessions).
 use super::legacy_progress::{self, AttemptRow, StatRow};
 use super::pyjson;
 use super::schema::SCHEMA;
@@ -28,9 +32,11 @@ mod banks;
 mod migrate;
 mod records;
 mod settings;
+mod users;
 
 pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
+pub use users::{SessionUser, UserChange, UserRow, UserUpdate};
 
 /// Maximum number of placeholders in one `IN (?,…)` (SQLite's default limit is 32766; this leaves plenty of headroom).
 const IN_CHUNK: usize = 500;
@@ -38,8 +44,10 @@ const IN_CHUNK: usize = 500;
 pub struct Store {
     conn: Mutex<Connection>,
     clock: Arc<dyn Clock>,
-    /// The copy written before migrating this database to schema v2 at open (None: no migration, or nothing to back up).
+    /// The copy written before migrating this database at open (None: no migration, or nothing to back up).
     migration_backup: Option<PathBuf>,
+    /// This open created the default administrator `admin` / `admin`.
+    created_default_admin: bool,
 }
 
 fn json_err(msg: &str) -> DbError {
@@ -96,9 +104,10 @@ fn get_meta(conn: &Connection, key: &str) -> Result<Option<String>, DbError> {
         .optional()?)
 }
 
+/// Any study record of any user (the old `stats` table is no longer read: its rows were claimed into `user_stats`).
 fn has_progress(conn: &Connection) -> Result<bool, DbError> {
     let n: i64 = conn.query_row(
-        "SELECT (SELECT COUNT(*) FROM stats) + (SELECT COUNT(*) FROM attempts) n",
+        "SELECT (SELECT COUNT(*) FROM user_stats) + (SELECT COUNT(*) FROM attempts) n",
         [],
         |r| r.get(0),
     )?;
@@ -282,11 +291,14 @@ fn len_i64(n: usize) -> i64 {
     i64::try_from(n).unwrap_or(i64::MAX)
 }
 
+/// How many of `ids` have study statistics (of any user: an import affects every user's notebook).
 fn count_stats_for(conn: &Connection, ids: &[&str]) -> Result<i64, DbError> {
     let mut total = 0i64;
     for chunk in ids.chunks(IN_CHUNK) {
         let marks = vec!["?"; chunk.len()].join(",");
-        let sql = format!("SELECT COUNT(*) c FROM stats WHERE question_id IN ({marks})");
+        let sql = format!(
+            "SELECT COUNT(DISTINCT question_id) c FROM user_stats WHERE question_id IN ({marks})"
+        );
         let n: i64 =
             conn.query_row(&sql, rusqlite::params_from_iter(chunk.iter()), |r| r.get(0))?;
         total += n;
@@ -487,12 +499,14 @@ fn import_rows(conn: &Connection, limit: i64) -> Result<Vec<ImportRecord>, DbErr
     Ok(out)
 }
 
-fn progress_from(conn: &Connection) -> Result<Value, DbError> {
+/// `/api/progress` of `user`. Statistics are read in the order they were first written (rowid), like the old `stats` scan.
+fn progress_from(conn: &Connection, user: i64) -> Result<Value, DbError> {
     let mut questions = Map::new();
     {
-        let mut st = conn
-            .prepare("SELECT question_id, attempts, correct, wrong, streak, last, at FROM stats")?;
-        let mut rows = st.query([])?;
+        let mut st = conn.prepare(
+            "SELECT question_id, attempts, correct, wrong, streak, last, at FROM user_stats WHERE user_id=?1 ORDER BY rowid",
+        )?;
+        let mut rows = st.query(params![user])?;
         while let Some(r) = rows.next()? {
             let id: String = r.get(0)?;
             let mut rec = Map::new();
@@ -512,8 +526,8 @@ fn progress_from(conn: &Connection) -> Result<Value, DbError> {
     let mut history = Vec::new();
     {
         let mut st =
-            conn.prepare("SELECT at, sheets, mode, total, correct, percent, seconds FROM attempts ORDER BY id DESC LIMIT ?1")?;
-        let mut rows = st.query(params![HISTORY_LIMIT])?;
+            conn.prepare("SELECT at, sheets, mode, total, correct, percent, seconds FROM attempts WHERE user_id=?1 ORDER BY id DESC LIMIT ?2")?;
+        let mut rows = st.query(params![user, HISTORY_LIMIT])?;
         while let Some(r) = rows.next()? {
             let sheets: Value = serde_json::from_str(&r.get::<_, String>(1)?)?;
             history.push(json!({
@@ -567,15 +581,16 @@ impl Store {
         conn.pragma_update(None, "synchronous", "FULL")?;
         conn.execute_batch(SCHEMA)?;
         // Check first, then write: the file content of an up-to-date database stays unchanged
-        let migration_backup = migrate::upgrade(&conn, path, clock.as_ref())?;
+        let upgrade = migrate::upgrade(&conn, path, clock.as_ref())?;
         Ok(Store {
             conn: Mutex::new(conn),
             clock,
-            migration_backup,
+            migration_backup: upgrade.backup,
+            created_default_admin: upgrade.created_admin,
         })
     }
 
-    /// The backup written before this open migrated the database to schema v2, if any.
+    /// The backup written before this open migrated the database to the current schema, if any.
     pub fn migration_backup(&self) -> Option<&Path> {
         self.migration_backup.as_deref()
     }
@@ -739,23 +754,24 @@ impl Store {
         import_rows(&g, limit)
     }
 
-    /// `/api/progress`: `{"version":1,"questions":{…},"history":[…],"masterStreak":2}`
-    pub fn progress(&self) -> Result<Value, DbError> {
+    /// `/api/progress` of `user`: `{"version":1,"questions":{…},"history":[…],"masterStreak":2}`
+    pub fn progress(&self, user: i64) -> Result<Value, DbError> {
         let g = self.lock();
-        progress_from(&g)
+        progress_from(&g, user)
     }
 
     /// Records an exam without per-question answers (every detail row is stored as unanswered). See [`Store::record_attempt_with_answers`].
-    pub fn record_attempt(&self, attempt: &Attempt) -> Result<Value, DbError> {
-        self.record_attempt_with_answers(attempt, &[])
+    pub fn record_attempt(&self, user: i64, attempt: &Attempt) -> Result<Value, DbError> {
+        self.record_attempt_with_answers(user, attempt, &[])
     }
 
     /// Records an exam in one transaction: updates `stats`, inserts the `attempts` row (with the `banks` snapshot of the questions'
     /// banks, in order of first appearance) and one `attempt_items` row per result (`answers[i]` belongs to `results[i]`; missing
-    /// entries are stored as NULL), then keeps only the newest `RECORD_RETENTION` exams (their detail rows go with them).
-    /// Returns `/api/progress`.
+    /// entries are stored as NULL), then keeps only the newest `RECORD_RETENTION` exams of `user` (their detail rows go with
+    /// them). Everything belongs to `user`. Returns their `/api/progress`.
     pub fn record_attempt_with_answers(
         &self,
+        user: i64,
         attempt: &Attempt,
         answers: &[Option<Value>],
     ) -> Result<Value, DbError> {
@@ -778,26 +794,30 @@ impl Store {
         let t = self.clock.now();
         let g = self.lock();
         run_tx(&g, |c| {
+            users::ensure_active(c, user)?;
             {
-                let mut ins = c.prepare("INSERT OR IGNORE INTO stats(question_id) VALUES(?1)")?;
-                let mut ok = c.prepare(
-                    "UPDATE stats SET attempts=attempts+1, correct=correct+1, streak=streak+1, last=1, at=?1 WHERE question_id=?2",
+                let mut ins = c.prepare(
+                    "INSERT OR IGNORE INTO user_stats(user_id, question_id) VALUES(?1, ?2)",
                 )?;
-                let mut bad = c
-                    .prepare("UPDATE stats SET attempts=attempts+1, wrong=wrong+1, streak=0, last=0, at=?1 WHERE question_id=?2")?;
+                let mut ok = c.prepare(
+                    "UPDATE user_stats SET attempts=attempts+1, correct=correct+1, streak=streak+1, last=1, at=?1 WHERE user_id=?2 AND question_id=?3",
+                )?;
+                let mut bad = c.prepare(
+                    "UPDATE user_stats SET attempts=attempts+1, wrong=wrong+1, streak=0, last=0, at=?1 WHERE user_id=?2 AND question_id=?3",
+                )?;
                 for r in &attempt.results {
-                    ins.execute(params![r.id])?;
+                    ins.execute(params![user, r.id])?;
                     if r.correct {
-                        ok.execute(params![t, r.id])?;
+                        ok.execute(params![t, user, r.id])?;
                     } else {
-                        bad.execute(params![t, r.id])?;
+                        bad.execute(params![t, user, r.id])?;
                     }
                 }
             }
             let banks_json = records::bank_snapshot(c, &attempt.results)?;
             c.execute(
-                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
-                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json],
+                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user],
             )?;
             let attempt_id = c.last_insert_rowid();
             {
@@ -809,25 +829,22 @@ impl Store {
                 }
             }
             // Keep only the most recent RECORD_RETENTION sessions (and their detail); `/api/progress` still shows HISTORY_LIMIT
-            records::prune(c, RECORD_RETENTION)?;
+            records::prune(c, user, RECORD_RETENTION)?;
             Ok(())
         })?;
-        progress_from(&g)
+        progress_from(&g, user)
     }
 
-    /// `/api/reset`: empties the per-question stats and every exam record (with its detail).
-    pub fn reset_progress(&self) -> Result<Value, DbError> {
+    /// `/api/reset`: empties `user`'s per-question stats and every exam record of theirs (with its detail).
+    pub fn reset_progress(&self, user: i64) -> Result<Value, DbError> {
         let g = self.lock();
-        run_tx(&g, |c| {
-            c.execute("DELETE FROM stats", [])?;
-            c.execute("DELETE FROM attempt_items", [])?;
-            c.execute("DELETE FROM attempts", [])?;
-            Ok(())
-        })?;
-        progress_from(&g)
+        run_tx(&g, |c| records::delete_user_records(c, user, true))?;
+        progress_from(&g, user)
     }
 
-    /// Migration of the old progress.json. Returns (whether anything was migrated, message). On a malformed file returns (false, message) without crashing.
+    /// Migration of the old progress.json into the study records of the first administrator (the account that claimed the data
+    /// of earlier versions). Returns (whether anything was migrated, message). On a malformed file returns (false, message)
+    /// without crashing.
     pub fn migrate_legacy_progress(&self, path: &Path) -> Result<(bool, String), DbError> {
         let g = self.lock();
         if get_meta(&g, "legacy_migrated")?.is_some_and(|v| !v.is_empty()) {
@@ -852,12 +869,15 @@ impl Store {
                 ))
             }
         };
+        let Some(owner) = users::owner_admin(&g)? else {
+            return Ok((false, "数据库里没有管理员账户，没有迁移".to_string()));
+        };
         let t = self.clock.now();
         let res = run_tx(&g, |c| {
             if has_progress(c)? {
                 return Ok(false);
             }
-            write_legacy_rows(c, &stats, &attempts, &t)?;
+            write_legacy_rows(c, owner, &stats, &attempts, &t)?;
             Ok(true)
         });
         match res {
@@ -882,25 +902,26 @@ impl Store {
 
 fn write_legacy_rows(
     c: &Connection,
+    user: i64,
     stats: &[StatRow],
     attempts: &[AttemptRow],
     t: &str,
 ) -> Result<(), DbError> {
     {
         let mut st = c.prepare(
-            "INSERT OR REPLACE INTO stats(question_id, attempts, correct, wrong, streak, last, at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+            "INSERT OR REPLACE INTO user_stats(user_id, question_id, attempts, correct, wrong, streak, last, at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)",
         )?;
         for s in stats {
             st.execute(params![
-                s.id, s.attempts, s.correct, s.wrong, s.streak, s.last, s.at
+                user, s.id, s.attempts, s.correct, s.wrong, s.streak, s.last, s.at
             ])?;
         }
     }
     {
-        let mut at = c.prepare("INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds) VALUES(?1,?2,?3,?4,?5,?6,?7)")?;
+        let mut at = c.prepare("INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, user_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8)")?;
         for a in attempts {
             at.execute(params![
-                a.at, a.sheets, a.mode, a.total, a.correct, a.percent, a.seconds
+                a.at, a.sheets, a.mode, a.total, a.correct, a.percent, a.seconds, user
             ])?;
         }
     }
@@ -1078,26 +1099,29 @@ mod tests {
             mode: "all".to_string(),
             seconds: 7,
         };
-        let p = s.record_attempt(&mk(false)).expect("rec");
+        let p = s.record_attempt(1, &mk(false)).expect("rec");
         assert_eq!(p["questions"]["q1"]["wrong"], 1);
         assert_eq!(p["questions"]["q1"]["last"], false);
         assert_eq!(p["history"][0]["percent"], 50);
         for _ in 0..70 {
-            s.record_attempt(&mk(true)).expect("rec");
+            s.record_attempt(1, &mk(true)).expect("rec");
         }
-        let p = s.progress().expect("progress");
+        let p = s.progress(1).expect("progress");
         assert_eq!(p["history"].as_array().map(Vec::len), Some(60));
         assert_eq!(p["questions"]["q1"]["attempts"], 71);
-        let p = s.reset_progress().expect("reset");
+        let p = s.reset_progress(1).expect("reset");
         assert_eq!(p["questions"], json!({}));
         assert_eq!(p["history"], json!([]));
         assert!(s
-            .record_attempt(&Attempt {
-                results: vec![],
-                sheets: vec![],
-                mode: "all".into(),
-                seconds: 0
-            })
+            .record_attempt(
+                1,
+                &Attempt {
+                    results: vec![],
+                    sheets: vec![],
+                    mode: "all".into(),
+                    seconds: 0
+                }
+            )
             .is_err());
     }
 
@@ -1112,6 +1136,6 @@ mod tests {
         }
         // Simulate a previous call panicking mid-transaction: the next lock acquisition must recover
         assert_eq!(get_meta(&s.lock(), "zzz").expect("meta"), None);
-        s.reset_progress().expect("reset after recovery");
+        s.reset_progress(1).expect("reset after recovery");
     }
 }

@@ -67,7 +67,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.5.1", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.6", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
 ```
 `bankCount` は有効な問題の数です。バージョン番号は `VERSION` ファイルに由来します。
 
@@ -255,3 +255,22 @@ curl -s -X POST http://localhost:8765/api/settings \
 ```
 
 > Nginx 経由でアクセスする場合、`curl` が既定で付ける `Host: localhost:8765` は許可リストに入っています。別のドメイン名でアクセスする前に、まず `XEXAM_ALLOWED_HOSTS` を設定してください。
+
+## ログインとユーザー（v0.6）
+
+`GET /api/info`、`GET /api/auth/state`、`POST /api/auth/login` を除くすべてのルートでログイン（Cookie `xexam_session`）が必要です。有効なセッションがないと **401** `请先登录。`、新しいパスワードの設定が必要なアカウントは `GET /api/auth/state`、`POST /api/auth/password`、`POST /api/auth/logout` 以外で **403** `请先设置新密码。`、管理者用のルートはほかのユーザーに **403** `只有管理员可以进行这个操作。` を返します。エラーの形は `{"error": "<メッセージ>"}` のままです。
+
+| ルート | 本文 | 応答 |
+|---|---|---|
+| `GET /api/auth/state` | | `{"user": {"id", "username", "role", "mustChangePassword"} \| null}`。未ログイン時、有効な管理者が既定のパスワードのままなら `"defaultAdmin": true`。ログイン時は `"library"`（問題集の取り込み・削除で変わる値）が付きます |
+| `POST /api/auth/login` | `{"username", "password"}` | `{"user": {...}}` とセッションの Cookie（`HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000`。`Secure` は Origin が `https://` のとき、または `XEXAM_COOKIE_SECURE=1` のときだけ）、既知のブラウザを表す Cookie `xexam_device`（`Path=/api/auth`）。間違い・無効なアカウント：401 `用户名或密码不对。`。ロック中：**429** `登录失败次数太多，请稍后再试。`、`"retryAfter": <秒>` と `Retry-After` ヘッダー付き |
+| `POST /api/auth/logout` | `{}` | `{"ok": true}` と期限切れの Cookie |
+| `POST /api/auth/password` | `{"current"?, "password"}` | `{"user": {...}}`。新しいパスワードの設定が必要なとき以外は `current` が必要です。そのアカウントのほかのセッションはログアウトされます |
+| `GET /api/users`（管理者） | | `{"users": [{"id", "username", "role", "disabled", "createdAt", "lastLoginAt", "mustChangePassword", "records", "lock"}]}`。`lock` は `null` または `{"until", "retryAfter", "round", "triesLeft"}` |
+| `POST /api/users/create`（管理者） | `{"username", "password", "role"}` | `{"users": [...]}`。新しいユーザーは最初のログインでパスワードを設定します |
+| `POST /api/users/update`（管理者） | `{"id", "username"?, "role"?, "disabled"?}` | `{"users": [...]}` |
+| `POST /api/users/password`（管理者） | `{"id", "password"}` | `{"users": [...]}`。そのユーザーをログアウトさせ、パスワードの設定を求め、ログインのロックも解除します |
+| `POST /api/users/delete`（管理者） | `{"id"}` | `{"users": [...]}`。セッション、試験、間違いノート、設定も削除します |
+| `POST /api/users/unlock`（管理者） | `{"id"}` | `{"users": [...]}`。そのユーザーのログインのロックを解除します（5 回試せる状態に戻ります） |
+
+規則：ユーザー名は 1〜40 文字（英数字と `. _ - @`、大文字小文字を区別せず一意）、パスワードは 8〜128 文字。自分自身の無効化・降格・削除はできず（409 `不能对自己的账户做这个操作。`）、有効な管理者が最後の 1 人のときはその管理者を外せません（409 `至少要保留一个启用的管理员。`）。学習記録・進捗・間違いノート・設定のルートは、ログイン中のユーザー自身のデータだけを扱います。

@@ -114,3 +114,13 @@ v0.5 adds four GET routes (`/api/banks`, `/api/records`, `/api/record`, `/api/se
 ## 10. Reporting vulnerabilities
 
 This is a private repository for a personal project; if you find a problem, please contact the owner directly.
+
+## Sign-in (v0.6)
+
+- Passwords: Argon2id (default parameters, a random salt per hash), hashed in a blocking task behind a limit of 2 at a time. Unknown usernames are checked against a dummy hash, so the answer time and the message (`用户名或密码不对。`) do not reveal whether a username exists.
+- Sessions: 32 random bytes in the cookie `xexam_session`; the database stores only their SHA-256. 30 days, extended at most once an hour while used; at most 20 per user. A new session at every sign-in. Changing or resetting a password, disabling, deleting or changing the role of a user signs out their sessions.
+- Cookies: `HttpOnly`, `SameSite=Strict`, `Secure` only for an `https://` Origin or with `XEXAM_COOKIE_SECURE=1`, so plain HTTP on your network keeps working. Write requests still pass the Origin check.
+- Wrong passwords (per username, in memory): 5 failures within 15 minutes lock signing in for 1 minute; then every 3 more failures lock again for 5 minutes, 15 minutes, 30 minutes, 1 hour and 1 day (the maximum). During a lock even the right password gets 429 with `retryAfter`. A successful sign-in, an administrator's Unlock or password reset, a backend restart, or 24 hours after the last lock without a new failure start over. A browser that signed in to the account before (cookie `xexam_device`, signed with a server key) is counted separately, so guesses from elsewhere cannot lock it. The same rule covers wrong current passwords in Settings.
+- Default administrator: a new or upgraded database gets `admin` / `admin`, which must be changed at the first sign-in. Until then the sign-in page shows a hint and every start of the backend prints a reminder. Change it right after installing or upgrading.
+- Locked out: `docker compose exec xexam-backend xexam-backend reset-password <username>` sets a new random password (printed once), requires a new one at the next sign-in, enables the account and signs it out. It refuses a data directory without a database. Restart the backend to clear in-memory sign-in locks.
+- There is no switch that turns sign-in off.
