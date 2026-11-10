@@ -1,4 +1,4 @@
-// 成绩页：先看分数，再看每题对错；错题显示你的答案、正确答案、解析、口诀，并按答题时选的语言（日语 / 中文 / 英语）显示题目。
+// Result page: score first, then per-question correctness; wrong questions show your answer, the correct answer, the explanation and the mnemonic, with the question displayed in the language chosen during the quiz (Japanese / Chinese / English).
 import { inNotebook, masterStreakOf, percentOf, shuffle, stateOf, type Answer } from '../domain/grading.ts';
 import { brand, kindLabel } from '../components/common.ts';
 import { S, type ResultRow } from '../state/store.ts';
@@ -15,7 +15,7 @@ function reviewItem(r: ResultRow, i: number): HTMLElement {
   const q = r.q;
   const st = S.progress?.questions?.[q.id];
   const unanswered = stateOf(q, r.ans) === 0;
-  // 题目用答题时选的语言显示；这道题没有的语言退回日语
+  // The question is shown in the language chosen during the quiz; if this question lacks that language, fall back to Japanese
   const view = shown(q, S.lang);
   let body: HTMLElement;
   let verdict: HTMLElement;
@@ -115,8 +115,8 @@ export function renderResult(): HTMLElement {
     },
   }, h('span', { class: 'n' }, i + 1), svgMark(r.correct))));
 
-  // 成绩提交失败时，没交卷的考试还留在浏览器里（提示里让用户回首页「继续作答」再交一次）。
-  // 这时直接开新考试会把它覆盖掉，所以和首页一样先确认。
+  // If submitting the result fails, the unfinished exam stays in the browser (the message tells the user to go back to the home page, click the button labelled "继续作答" and submit again).
+  // Starting a new exam right then would overwrite it, so confirm first, like the home page does.
   const startNew = (qs: ResultRow['q'][], mode: Parameters<typeof startSession>[1]): void => {
     void (async () => {
       if (S.bank && loadSaved(S.bank) && !(await ask({ title: '放弃没交卷的考试？', body: '有一场暂存的考试还没交卷。现在开始新的考试，会把它覆盖掉。', ok: '开始新考试', cancel: '回去继续', danger: true }))) return;

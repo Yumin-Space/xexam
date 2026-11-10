@@ -1,4 +1,4 @@
-// 应用入口：把状态机的 view 映射到页面，注册重绘函数，启动。
+// App entry: maps the state machine's view to a page, registers the redraw function, and starts.
 import './styles/main.css';
 import { brand } from './components/common.ts';
 import { renderAdmin } from './pages/admin.ts';

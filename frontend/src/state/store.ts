@@ -1,4 +1,4 @@
-// 应用状态。旧版是一个全局对象 S；这里仍然是一个模块级对象，但有类型，且只能通过这个模块访问。
+// Application state. The old version used one global object S; this is still one module-level object, but it is typed and can only be accessed through this module.
 import type { Bank, ImportPreview, ImportRecord, ImportPlan, Info, Mode, Progress } from '../types/api.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
 import { isLang, type Lang } from '../domain/language.ts';
@@ -7,15 +7,15 @@ import { paths } from './storage-keys.ts';
 export type View = 'loading' | 'fatal' | 'home' | 'admin' | 'quiz' | 'result';
 export type { Lang };
 
-/** 一场进行中的考试 */
+/** An exam in progress */
 export interface Session {
   qs: Bank['questions'];
   answers: Record<string, Answer>;
   flags: Set<string>;
   idx: number;
-  /** 暂存之前已经用掉的秒数 */
+  /** Seconds already used before the last save */
   base: number;
-  /** 本次打开页面的开始时刻（毫秒） */
+  /** Start time (milliseconds) of this page load */
   t0: number;
   mode: Mode;
   sheets: string[];
@@ -89,13 +89,13 @@ export const S: AppState = {
   timer: null,
 };
 
-/** 当前出题范围 */
+/** The current scope the questions are drawn from */
 export function pool(): Bank['questions'] {
   if (!S.bank || !S.cfg.selected) return [];
   return poolOf(S.bank.questions, S.cfg.selected, S.cfg.mode, S.progress);
 }
 
-/** 题库变了（刷新或导入后）：让"勾选的工作表"跟上——新出现的默认勾上，消失的去掉。 */
+/** The question bank changed (after refresh or import): keep the "checked sheets" in sync - newly appeared sheets are checked by default, vanished ones are removed. */
 export function syncSelection(): void {
   if (!S.bank) return;
   const names = S.bank.sheets.filter((s) => s.usable > 0).map((s) => s.name);

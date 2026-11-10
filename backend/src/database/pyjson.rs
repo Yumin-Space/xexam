@@ -1,5 +1,5 @@
-//! 与 Python `json.dumps(obj, ensure_ascii=False)` 一致的 JSON 写法：分隔符 `", "` / `": "`，非 ASCII 原样输出。
-//! 用来写 `questions.data`、`attempts.sheets`，让 Rust 写出的库与 Python 写出的库字节一致。
+//! JSON output identical to Python `json.dumps(obj, ensure_ascii=False)`: separators `", "` / `": "`, non-ASCII emitted as is.
+//! Used to write `questions.data` and `attempts.sheets`, so a database written by Rust is byte-identical to one written by Python.
 use serde::Serialize;
 use serde_json::ser::{Formatter, Serializer};
 use serde_json::{Map, Value};
@@ -48,7 +48,7 @@ pub fn to_string<T: Serialize + ?Sized>(v: &T) -> Result<String, serde_json::Err
     })
 }
 
-/// 递归地把对象的键排序（按码点，与 Python `sort_keys=True` 一致）。
+/// Recursively sorts object keys (by code point, same as Python `sort_keys=True`).
 pub fn sort_keys(v: &Value) -> Value {
     match v {
         Value::Object(m) => {
@@ -67,7 +67,7 @@ pub fn sort_keys(v: &Value) -> Value {
     }
 }
 
-/// `json.dumps(v, sort_keys=True, ensure_ascii=False)`，即旧版 `_q_hash` 的规范形式。
+/// `json.dumps(v, sort_keys=True, ensure_ascii=False)`, i.e. the canonical form of the old `_q_hash`.
 pub fn canonical(v: &Value) -> Result<String, serde_json::Error> {
     to_string(&sort_keys(v))
 }

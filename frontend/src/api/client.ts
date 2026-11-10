@@ -1,10 +1,10 @@
-// 集中的 API 客户端：所有网络请求都从这里出去，错误统一成 ApiError，页面只处理 ApiError。
-// 用相对地址（同源）。登录过期（Cloudflare Access 的登录页）会表现为"不是 JSON"，这里统一识别并给出提示。
+// Centralized API client: all network requests go out from here, errors are normalized to ApiError, and pages only handle ApiError.
+// Uses relative URLs (same origin). An expired login (the Cloudflare Access login page) shows up as "not JSON"; it is recognized here and a hint is given.
 
 export type ApiErrorKind =
-  | 'http' // 服务返回了错误状态码（带后端给的中文原因）
-  | 'network' // 连不上
-  | 'unexpected'; // 返回的不是预期内容（常见原因：登录已过期，被重定向到登录页）
+  | 'http' // the service returned an error status code (with the Chinese-language reason supplied by the backend)
+  | 'network' // cannot connect
+  | 'unexpected'; // the response is not what was expected (common cause: login expired, redirected to the login page)
 
 export class ApiError extends Error {
   readonly kind: ApiErrorKind;
@@ -27,7 +27,7 @@ function isJson(r: Response): boolean {
 
 async function parse<T>(r: Response): Promise<T> {
   if (!isJson(r)) {
-    // 非 JSON：HTML 登录页、代理的错误页……
+    // Not JSON: an HTML login page, a proxy error page...
     if (!r.ok) throw new ApiError('http', `请求失败（HTTP ${r.status}）。如果你是通过域名访问的，可能是登录已过期，请刷新页面重新登录。`, r.status);
     throw new ApiError('unexpected', MSG_UNEXPECTED, r.status);
   }

@@ -1,8 +1,8 @@
 name: Build, test and publish
 
-# Xexam 的流水线：检查 → 测试（前端、后端、两个镜像的 Nginx / 整栈检查）→ 构建 amd64 + arm64 → 发布两个镜像 → 建 Release。
-#   · 推送到 main：全部跑完，发布 xexam-frontend 和 xexam-backend 两个镜像，并建（或更新）GitHub Release。
-#   · 拉取请求和其它分支：只检查和测试，**从不发布**。
+# Xexam pipeline: check -> test (frontend, backend, Nginx / full-stack checks of the two images) -> build amd64 + arm64 -> publish the two images -> create the Release.
+#   - Push to main: everything runs, the xexam-frontend and xexam-backend images are published, and the GitHub Release is created (or updated).
+#   - Pull requests and other branches: check and test only, **never publish**.
 on:
   push:
     branches: [main]
@@ -10,16 +10,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# 默认不给任何权限；需要的权限下面在 job 里单独开
+# No permissions by default; the ones a job needs are enabled in that job below
 permissions:
   contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}   # main 上排队不取消，免得发布到一半被打断
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}   # on main, runs queue instead of being cancelled, so a publish is not interrupted halfway
 
 env:
-  # 不把构建记录上传成 artifact（每次多两个 .dockerbuild 文件，没用）
+  # Do not upload build records as artifacts (two extra .dockerbuild files per run, useless)
   DOCKER_BUILD_RECORD_UPLOAD: "false"
   CARGO_TERM_COLOR: never
 
@@ -52,7 +52,7 @@ jobs:
           echo "version v$v, changelog entries present in all three READMEs, manifests match"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-  # ② 前端：类型检查、单元测试、构建
+  # (2) Frontend: type check, unit tests, build
   frontend:
     name: frontend (tsc, unit tests, build)
     needs: check
@@ -73,7 +73,7 @@ jobs:
       - run: npm test
       - run: npm run build
 
-  # ② 后端：格式、clippy、全部测试（对着已提交的旧版快照：172 份黄金响应、49 个解析夹具、85 条 id 向量），以及 progress.json 迁移检查
+  # (2) Backend: format, clippy, all tests (against the committed legacy snapshots: 172 golden responses, 49 parser fixtures, 85 id vectors), and the progress.json migration check
   backend:
     name: backend (fmt, clippy, test)
     needs: check
@@ -103,7 +103,7 @@ jobs:
           cargo build
           python3 -I ../tests/integration/migrate_check.py target/debug/xexam-backend
 
-  # ② 两个镜像在 amd64 上构建，跑 Nginx 行为检查和整栈端到端检查（起 compose、导入、交卷、删容器后数据还在、docker stop）
+  # (2) Build both images on amd64, run the Nginx behaviour checks and the full-stack end-to-end check (compose up, import, submit, data survives removing the containers, docker stop)
   stack:
     name: stack (images, nginx checks, end to end)
     needs: [frontend, backend]
@@ -118,8 +118,8 @@ jobs:
       - name: End to end (compose up, import, attempts, persistence, docker stop)
         run: python3 -I tests/integration/stack_check.py 18090
 
-  # ② arm64：两个镜像真的构建、真的在 QEMU 下启动（后端是在构建机上用 zig 交叉编出来的，不是在 QEMU 里编 Rust）。
-  #    私有仓库用不了 GitHub 的原生 arm64 runner，所以运行用 QEMU 模拟。只构建、不推送；用完即弃。
+  # (2) arm64: both images are really built and really started under QEMU (the backend is cross-compiled with zig on the build machine, not compiled as Rust inside QEMU).
+  #    Private repositories cannot use GitHub's native arm64 runners, so running is emulated with QEMU. Build only, no push; discarded afterwards.
   arm64:
     name: arm64 (images build and start under QEMU)
     needs: [frontend, backend]
@@ -182,7 +182,7 @@ jobs:
           docker rm -f arm64-backend arm64-frontend >/dev/null 2>&1 || true
           docker volume rm arm64data >/dev/null 2>&1 || true
 
-  # ③ 所有检查都通过，才把两个镜像（amd64 + arm64）发布出去。只从 main 发布；拉取请求和其它分支不发布。
+  # (3) Only when every check has passed are the two images (amd64 + arm64) published. Published from main only; pull requests and other branches never publish.
   publish:
     name: publish ${{ matrix.image }} (amd64 + arm64)
     needs: [check, frontend, backend, stack, arm64]
@@ -191,7 +191,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-      packages: write          # 推送到 ghcr.io 需要
+      packages: write          # needed to push to ghcr.io
     strategy:
       fail-fast: false
       matrix:
@@ -203,7 +203,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # 镜像名必须全小写，而 GitHub 用户名可能有大写（Yumin-Space），所以先转成小写
+      # Image names must be all lowercase, but the GitHub user name may contain capitals (Yumin-Space), so convert it first
       - name: Image name
         env:
           VERSION: ${{ needs.check.outputs.version }}
@@ -226,7 +226,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # latest = 最新一次构建；vX.Y = 这个版本；sha-xxxx = 这次提交（不会被覆盖）
+      # latest = the most recent build; vX.Y = this version; sha-xxxx = this commit (never overwritten)
       - name: Image tags
         id: meta
         uses: docker/metadata-action@v6
@@ -246,34 +246,34 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64,linux/arm64
-          provenance: false        # 不额外生成 unknown/unknown 条目，群晖、树莓派、Portainer 等工具才不会出问题
+          provenance: false        # no extra unknown/unknown entry, so tools such as Synology, Raspberry Pi and Portainer do not break
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=${{ matrix.image }}-publish
           cache-to: type=gha,scope=${{ matrix.image }}-publish,mode=max
 
-      # 发布完回头看一眼：按「刚推送的那个摘要」读镜像清单，必须同时有 amd64 和 arm64
+      # After publishing, look back once: read the manifest by "the digest just pushed"; it must contain both amd64 and arm64
       - name: Verify published manifest
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: |
           set -eu
-          [ -n "$DIGEST" ] || { echo "没有拿到推送的摘要"; exit 1; }
+          [ -n "$DIGEST" ] || { echo "Could not get the digest of the pushed image"; exit 1; }
           out=$(docker buildx imagetools inspect "$IMAGE@$DIGEST")
           echo "$out"
-          echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "发布的镜像缺少 amd64"; exit 1; }
-          echo "$out" | grep -Eq 'Platform: +linux/arm64' || { echo "发布的镜像缺少 arm64"; exit 1; }
-          # 默认输出的第一个 Digest: 行就是这个标签（顶层清单）的摘要
+          echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "The published image is missing amd64"; exit 1; }
+          echo "$out" | grep -Eq 'Platform: +linux/arm64' || { echo "The published image is missing arm64"; exit 1; }
+          # The first "Digest:" line of the default output is the digest of this tag (the top-level manifest)
           for t in latest "v$VERSION"; do
             got=$(docker buildx imagetools inspect "$IMAGE:$t" | awk '/^Digest:/{print $2; exit}')
-            [ "$got" = "$DIGEST" ] || { echo "标签 $t 指向的不是刚推送的镜像（$got 与 $DIGEST）"; exit 1; }
+            [ "$got" = "$DIGEST" ] || { echo "Tag $t does not point to the image just pushed ($got vs $DIGEST)"; exit 1; }
           done
-          echo "已发布：$IMAGE:latest 和 $IMAGE:v$VERSION，同时包含 amd64 和 arm64（摘要 $DIGEST）"
+          echo "Published: $IMAGE:latest and $IMAGE:v$VERSION, both containing amd64 and arm64 (digest $DIGEST)"
 
-  # ④ 两个镜像都发布并核对成功之后，在 GitHub 的 Releases 页建（或更新）这个版本的 Release。
-  #    说明文字取自 README 的「更新日志」（scripts/release-notes.py），所以 Release 页和 README 永远是同一份内容。
-  #    镜像没发布成功就不会走到这里，Release 页上不会出现拉不到镜像的版本。
+  # (4) After both images are published and verified, create (or update) the Release of this version on GitHub's Releases page.
+  #    The notes come from the changelog of the English README (scripts/release-notes.py), so the Release page and the README always agree.
+  #    If the images were not published this job is never reached, so the Release page never shows a version whose images cannot be pulled.
   release:
     name: GitHub release
     needs: [check, publish]
@@ -281,7 +281,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
-      contents: write          # 创建 Release 和 git 标签需要
+      contents: write          # needed to create the Release and the git tag
     env:
       GH_TOKEN: ${{ github.token }}
       VERSION: ${{ needs.check.outputs.version }}
@@ -296,11 +296,11 @@ jobs:
           tag="v$VERSION"
           title="Xexam v$VERSION"
           if gh release view "$tag" >/dev/null 2>&1; then
-            # 同一个版本重新跑（例如只改了说明）：更新说明，不动标签
+            # Re-run of the same version (e.g. only the notes changed): update the notes, leave the tag alone
             gh release edit "$tag" --title "$title" --notes-file notes.md --latest
-            echo "已更新 Release：$tag"
+            echo "Updated Release: $tag"
           else
             gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md --latest
-            echo "已创建 Release：$tag（对应提交 $GITHUB_SHA）"
+            echo "Created Release: $tag (for commit $GITHUB_SHA)"
           fi
           gh release view "$tag" --json url,tagName,targetCommitish --jq '"\(.tagName) -> \(.url)"'

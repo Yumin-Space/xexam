@@ -1,7 +1,7 @@
-//! 黄金响应比对：把 `tests/baseline/golden/*.json`（172 项，旧版 server.py 的真实响应）逐项按顺序重放到新路由上。
-//! 解析器和数据库用假实现，由每一项黄金响应里的内容喂给假实现（所以这里验证的是 API 层：守卫、状态码、头、
-//! 字节级 JSON 格式、键顺序、预览/确认的状态机、attempt 清洗的错误路径），不是解析器或数据库本身。
-//! 运行 `cargo test --test api_golden -- --nocapture` 可看到汇总表。
+//! Golden-response comparison: replays `tests/baseline/golden/*.json` (172 entries, real responses of the old server.py) item by item, in order, against the new routes.
+//! The parser and database are fakes, fed from the content of each golden response (so what is verified here is the API layer: guards, status codes, headers,
+//! byte-level JSON format, key order, the preview/confirm state machine, the error path of attempt sanitizing), not the parser or database themselves.
+//! Run `cargo test --test api_golden -- --nocapture` to see the summary table.
 #[path = "api_common/mod.rs"]
 mod common;
 use axum::body::Body;
@@ -57,7 +57,7 @@ struct Row {
     note: String,
 }
 
-/// 把黄金文件里的请求还原成字节。大请求体（`<N bytes>`）按 capture.py 的构造方式重建。
+/// Reconstructs the requests in the golden file as bytes. Large request bodies (`<N bytes>`) are rebuilt the way capture.py builds them.
 fn request_body(name: &str, body: &Option<String>) -> Option<Vec<u8>> {
     let b = body.as_ref()?;
     if name == "json_invalid_utf8" {
@@ -107,7 +107,7 @@ fn load() -> Vec<(String, Value)> {
         .collect()
 }
 
-/// 按黄金响应里的内容配置假引擎。返回 true 表示这一项的引擎行为是被喂进去的。
+/// Configures the fake engine from the content of a golden response. Returns true if the engine behavior of this entry was fed in.
 fn prime(engine: &FakeEngine, g: &Value) -> bool {
     let method = g["request"]["method"].as_str().unwrap_or("");
     let path = g["request"]["path"].as_str().unwrap_or("");
@@ -219,7 +219,7 @@ async fn replay_all_golden_captures() {
             })
         };
 
-        // 不属于 API 层的项
+        // Entries that do not belong to the API layer
         if g.get("no_response").is_some() || g["status"].is_null() {
             push(
                 Outcome::Skipped,
@@ -237,7 +237,7 @@ async fn replay_all_golden_captures() {
             continue;
         }
         if status == 501 {
-            // 旧版 501 是标准库的偶然产物；迁移计划 Q13：改为 405 + Allow
+            // The old 501 was an accidental product of the standard library; migration plan Q13: changed to 405 + Allow
             let app = &normal;
             let r = send(
                 &app.router,
@@ -266,7 +266,7 @@ async fn replay_all_golden_captures() {
         };
         let faked = prime(&a.engine, g);
 
-        // 重建请求
+        // Rebuild the request
         let mut hs: Vec<(String, Vec<u8>)> = vec![];
         let mut has_cl = false;
         if let Some(m) = req["headers"].as_object() {
@@ -315,7 +315,7 @@ async fn replay_all_golden_captures() {
         )
         .await;
 
-        // 比对
+        // Compare
         let mut diffs: Vec<String> = vec![];
         if r.status.as_u16() != status {
             diffs.push(format!("status {} != {}", r.status, status));
@@ -331,13 +331,13 @@ async fn replay_all_golden_captures() {
         if r.headers.get("server").is_some() {
             diffs.push("unexpected Server header".into());
         }
-        // 我们自己的 Content-Length 必须等于真实长度（HEAD 例外：长度是 GET 的长度）
+        // Our own Content-Length must equal the real length (except HEAD: the length is that of GET)
         if method != "HEAD" && r.header("content-length") != Some(r.body.len().to_string()) {
             diffs.push("Content-Length != body length".into());
         }
         let golden_norm = &g["normalized"];
         if g["json"].is_null() {
-            // 纯文本（或 HEAD 的空正文）
+            // Plain text (or HEAD's empty body)
             if method == "HEAD" {
                 if !r.body.is_empty() {
                     diffs.push("HEAD with a body".into());
@@ -347,7 +347,7 @@ async fn replay_all_golden_captures() {
                     diffs.push(format!("text body {:?} != {:?}", r.text(), raw));
                 }
             } else if g["body_len"].as_u64() != Some(r.body.len() as u64) {
-                // 静态文件类的 404：黄金只记了长度和 md5（"not found" = 9 字节）
+                // 404 for static-file-like paths: the golden only records the length and md5 ("not found" = 9 bytes)
                 diffs.push(format!(
                     "body length {} != {:?}",
                     r.body.len(),
@@ -357,7 +357,7 @@ async fn replay_all_golden_captures() {
         } else {
             let ours = r.json();
             let ours_norm = normalize(&ours);
-            // 键顺序：用同一个格式化器重新序列化后逐字节比较
+            // Key order: re-serialize with the same formatter and compare byte by byte
             if py_json(&ours_norm) != py_json(golden_norm) {
                 diffs.push(format!(
                     "normalized body differs:\n    ours  : {}\n    golden: {}",
@@ -371,7 +371,7 @@ async fn replay_all_golden_captures() {
                         .collect::<String>()
                 ));
             }
-            // 没有易变值的响应：原始字节必须完全一致（含 Content-Length）
+            // Responses without volatile values: the raw bytes must match exactly (including Content-Length)
             let has_volatile = py_json(&ours_norm) != py_json(&ours);
             if !has_volatile {
                 if r.body != g["raw_body"].as_str().unwrap_or("").as_bytes() {
@@ -387,7 +387,7 @@ async fn replay_all_golden_captures() {
                 }
             }
         }
-        // 记住令牌：黄金里的令牌 -> 这次真实发出的令牌
+        // Remember the token: the token in the golden -> the token actually issued this time
         if path == "/api/upload" && status == 200 {
             if let (Some(gt), Some(lt)) = (g["json"]["token"].as_str(), r.json()["token"].as_str())
             {
@@ -395,7 +395,7 @@ async fn replay_all_golden_captures() {
             }
         }
         if num == "171" {
-            // shutdown 开启：应当触发了停机信号
+            // shutdown enabled: the shutdown signal should have been triggered
             let got = shutdown_rx.try_recv().is_ok();
             if !got {
                 diffs.push("shutdown signal was not sent".into());
@@ -415,7 +415,7 @@ async fn replay_all_golden_captures() {
         }
     }
 
-    // ---- 汇总表 ----
+    // ---- Summary table ----
     let count = |o: Outcome| rows.iter().filter(|r| r.outcome == o).count();
     println!("\n=== golden replay: API layer vs 172 captures of server.py v0.2 ===");
     println!("captured                      : {}", rows.len());
@@ -457,7 +457,7 @@ async fn replay_all_golden_captures() {
     let _ = json!(null);
 }
 
-/// `Option<Receiver>` 里取出接收端（测试里只关心有没有收到信号）。
+/// Takes the receiver out of `Option<Receiver>` (tests only care whether a signal was received).
 trait TakeForTest {
     fn take_for_test(&mut self) -> tokio::sync::mpsc::Receiver<()>;
 }

@@ -1,4 +1,4 @@
-// 首页：选范围、开始考试、学习记录。
+// Home page: pick the scope, start an exam, view the study history.
 import { inNotebook, masterStreakOf, shuffle } from '../domain/grading.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
 import { S, pool } from '../state/store.ts';
@@ -39,7 +39,7 @@ async function quitProgram(): Promise<void> {
   try {
     await shutdownApp();
   } catch {
-    /* 服务端关得快时会断开 */
+    /* the connection may drop when the server shuts down quickly */
   }
   document.getElementById('app')?.replaceChildren(h('div', { class: 'wrap' }, h('div', { class: 'panel' }, h('h2', null, '程序已关闭'), h('p', null, '可以关掉这个页面了。'))));
 }

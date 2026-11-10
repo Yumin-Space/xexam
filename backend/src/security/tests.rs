@@ -6,7 +6,7 @@ fn set(items: &[&str]) -> HashSet<String> {
 
 #[test]
 fn host_name_cases() {
-    // 来自 tests/baseline/tools/host_origin_test.py
+    // From tests/baseline/tools/host_origin_test.py
     for (h, want) in [
         (Some("localhost:8765"), "localhost"),
         (Some("LOCALHOST"), "localhost"),
@@ -17,7 +17,7 @@ fn host_name_cases() {
         (Some("192.168.1.20:8765"), "192.168.1.20"),
         (Some(""), ""),
         (None, ""),
-        // 来自 docs/audit/security.md C2 / api-contract 3.1
+        // From docs/audit/security.md C2 / api-contract 3.1
         (Some("localhost:1:2"), "localhost:1"),
         (Some("localhost:80@evil.com"), "localhost"),
         (Some("user@localhost"), "user@localhost"),
@@ -30,7 +30,7 @@ fn host_name_cases() {
         (Some("[::1"), "[::1"),
         (Some("LOCALHOST.:8765"), "localhost"),
         (Some("\u{3000}localhost\u{3000}"), "localhost"),
-        (Some("İstanbul"), "i̇stanbul"), // 多字节字符不会在切片处 panic
+        (Some("İstanbul"), "i̇stanbul"), // multibyte characters do not panic at the slice boundary
     ] {
         assert_eq!(host_name(h), want, "host_name({h:?})");
     }
@@ -92,7 +92,7 @@ fn parse_allowed_hosts_cases() {
         set(&["xexam.example.com"])
     );
     assert_eq!(parse_allowed_hosts(Some("http://")), HashSet::new());
-    // 只剥第一个 "://"
+    // Only the first "://" is stripped
     assert_eq!(parse_allowed_hosts(Some("a://b://c")), set(&["b"]));
 }
 
@@ -102,7 +102,7 @@ fn clean_filename_cases() {
     assert_eq!(clean_filename(None), "未命名.xlsx");
     assert_eq!(clean_filename(Some("")), "未命名.xlsx");
     assert_eq!(clean_filename(Some("   ")), "未命名.xlsx");
-    // 捕获 126：テスト/dir\evil
+    // Captured case 126: the Japanese word "テスト" followed by /dir\evil
     assert_eq!(
         clean_filename(Some("%E3%83%86%E3%82%B9%E3%83%88%2Fdir%5Cevil")),
         "evil"
@@ -110,23 +110,23 @@ fn clean_filename_cases() {
     assert_eq!(clean_filename(Some("..\\..\\x.xlsx")), "x.xlsx");
     assert_eq!(clean_filename(Some("a/b/c.xlsx")), "c.xlsx");
     assert_eq!(clean_filename(Some("dir/")), "未命名.xlsx");
-    // 控制字符
+    // Control characters
     assert_eq!(clean_filename(Some("a%00b%0d%0a.xlsx")), "ab.xlsx");
     assert_eq!(clean_filename(Some("a\u{7f}b")), "ab");
-    // 120 个字符（不是字节）
+    // 120 characters (not bytes)
     let long = "题".repeat(200);
     let got = clean_filename(Some(&long));
     assert_eq!(got.chars().count(), 120);
     assert_eq!(clean_filename(Some(&"a".repeat(300))).len(), 120);
-    // 无效 UTF-8 的百分号序列不 panic
+    // Percent sequences that decode to invalid UTF-8 do not panic
     assert!(!clean_filename(Some("%ff%fe.xlsx")).is_empty());
-    // 前后空白被去掉
+    // Leading and trailing whitespace is removed
     assert_eq!(clean_filename(Some("%20%20x.xlsx%20")), "x.xlsx");
 }
 
 #[test]
 fn base64url_known_vectors() {
-    // RFC 4648 测试向量（去掉填充）
+    // RFC 4648 test vectors (padding removed)
     for (input, want) in [
         (&b""[..], ""),
         (b"f", "Zg"),
@@ -190,8 +190,8 @@ fn py_helpers() {
     assert_eq!(latin1(&[0x41, 0xe9, 0xff]), "Aéÿ");
 }
 
-/// 用真实的 Python 生成期望值，保证 `py_json` 与 `json.dumps(ensure_ascii=False)` 字节一致。
-/// 没有 python 时跳过（CI 里 python3 一般存在）。
+/// Uses real Python to generate the expected values, guaranteeing that `py_json` is byte-identical to `json.dumps(ensure_ascii=False)`.
+/// Skipped when python is not available (python3 normally exists in CI).
 #[test]
 fn py_json_matches_python_for_tricky_strings() {
     use crate::api::json::py_json;
@@ -217,7 +217,7 @@ fn py_json_matches_python_for_tricky_strings() {
                 let value =
                     json!({ "k": case, "list": [case, 1, true, null], "nested": { "é": case } });
                 let ours = py_json(&value);
-                // 把我们的输出再交给 Python 重新序列化：必须逐字节相同（证明 Python 也会这样写）
+                // Feed our output back to Python to re-serialize: the result must be byte-identical (proves Python would write it the same way)
                 use std::io::Write;
                 let mut child = std::process::Command::new(py)
                     .arg("-I")

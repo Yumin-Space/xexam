@@ -1,7 +1,7 @@
-//! 题目层：纯字符串函数，不依赖 XML。逐条对应 `app/xlsx_parser.py` 第 111-358 行。
+//! Question layer: pure string functions, no XML dependency. Maps one-to-one to lines 111-358 of `app/xlsx_parser.py`.
 //!
-//! 约定：所有 `strip()` 用 Python 的空白集（`py_strip`）；所有长度按码点；正则里的 `\s` 一律写成
-//! `[\s\x1c-\x1f]`（Python 的 `\s` 比 Rust 多 U+001C..U+001F），`\d` 一律用 Python 的 Nd 表。
+//! Conventions: every `strip()` uses Python's whitespace set (`py_strip`); all lengths count code points; every `\s` in a regex is written as
+//! `[\s\x1c-\x1f]` (Python's `\s` also matches U+001C..U+001F, which Rust's does not), and every `\d` uses Python's Nd table.
 use super::id::make_id;
 use super::py_space::{
     char_len, digit_class_inner, digit_value, digits_to_canonical, py_strip, take_chars,
@@ -12,7 +12,7 @@ use regex::{NoExpand, Regex};
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-/// 片段：Python `\s` 的字符类内部写法。
+/// Fragment: the inside of a character class for Python's `\s`.
 const S: &str = r"\s\x1c-\x1f";
 
 #[allow(clippy::expect_used)]
@@ -65,7 +65,7 @@ static RES: LazyLock<Res> = LazyLock::new(|| {
     }
 });
 
-// ------------------------------------------------------------------ 标题 / 分段
+// ------------------------------------------------------------------ Headings / sections
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Heading {
@@ -75,7 +75,7 @@ pub enum Heading {
     Translation,
 }
 
-/// `classify_heading`：子串匹配，优先级 答案 > 解析 > 口诀 > 翻译。
+/// `classify_heading`: substring match, priority answer > explanation > mnemonic > translation.
 pub fn classify_heading(name: &str) -> Option<Heading> {
     if name.contains("答案") || name.contains("正解") {
         Some(Heading::Answer)
@@ -102,7 +102,7 @@ pub struct Sections {
     pub translation: Option<String>,
 }
 
-/// `split_sections`：每类只取第一次出现；段文本到下一个已识别标题或末尾，再 strip。
+/// `split_sections`: only the first occurrence of each kind is kept; a section's text runs to the next recognized heading or the end, then is stripped.
 pub fn split_sections(text: &str) -> Sections {
     let mut marks: Vec<(usize, usize, Heading)> = Vec::new();
     for m in RES.heading.captures_iter(text) {
@@ -130,9 +130,9 @@ pub fn split_sections(text: &str) -> Sections {
     secs
 }
 
-// ------------------------------------------------------------------ 选项 / 热点
+// ------------------------------------------------------------------ Options / hotspot
 
-/// `OPT_LINE.match(ln)`：返回（大写字母，第 2 组文本；无则空串）。
+/// `OPT_LINE.match(ln)`: returns (uppercase letter, text of group 2; empty string if absent).
 fn opt_line(ln: &str) -> Option<(u8, String)> {
     let caps = RES.opt_line.captures(ln)?;
     let letter = caps.get(1)?.as_str().bytes().next()?.to_ascii_uppercase();
@@ -140,7 +140,7 @@ fn opt_line(ln: &str) -> Option<(u8, String)> {
     Some((letter, rest))
 }
 
-/// 选择题：支持「A. 内容」和「A 换行 内容」。-> (题干, [选项])
+/// Multiple-choice question: supports "A. text" and a letter alone on its own line followed by the text on the next line. -> (stem, [options])
 pub fn parse_options(body: &str) -> (String, Vec<Opt>) {
     let lines: Vec<&str> = body.split('\n').collect();
     let start = lines
@@ -187,7 +187,7 @@ pub fn parse_options(body: &str) -> (String, Vec<Opt>) {
     (py_strip(&stem).to_string(), options)
 }
 
-/// `NUM_PREFIX.sub('', ln, count=1)`：返回去掉序号前缀后的文本。
+/// `NUM_PREFIX.sub('', ln, count=1)`: returns the text with the number prefix removed.
 fn strip_num_prefix(ln: &str) -> &str {
     match RES.num_prefix.find(ln) {
         Some(m) => ln.get(m.end()..).unwrap_or(ln),
@@ -195,7 +195,7 @@ fn strip_num_prefix(ln: &str) -> &str {
     }
 }
 
-/// 热点题：每个小项末尾带「はい / いいえ」之类的选项。-> (题干, [小项])
+/// Hotspot question: each sub-item ends with a choice such as "はい / いいえ". -> (stem, [sub-items])
 pub fn parse_hotspot(body: &str) -> (String, Vec<Item>) {
     let mut stem_lines: Vec<&str> = Vec::new();
     let mut items: Vec<Item> = Vec::new();
@@ -249,9 +249,9 @@ pub fn parse_hotspot(body: &str) -> (String, Vec<Item>) {
     (py_strip(&stem_lines.join("\n")).to_string(), items)
 }
 
-// ------------------------------------------------------------------ 答案
+// ------------------------------------------------------------------ Answers
 
-/// `parse_letters`：括号内容整段替换成空格；只看第一个非空行；找两侧不是 ASCII 字母数字的 A-H/a-h。
+/// `parse_letters`: each bracketed span is replaced wholesale with a space; only the first non-empty line is examined; finds A-H/a-h with no ASCII letter or digit on either side.
 pub fn parse_letters(ans: &str) -> Vec<String> {
     let s = RES.paren.replace_all(ans, NoExpand(" "));
     let first = s
@@ -289,7 +289,7 @@ pub fn parse_letters(ans: &str) -> Vec<String> {
     letters
 }
 
-/// 小项答案：序号（规范化十进制串）-> 答案文本。数字超过 4300 位（Python 在这里抛 ValueError）返回 Err。
+/// Sub-item answers: number (canonical decimal string) -> answer text. Returns Err if a number exceeds 4300 digits (Python raises ValueError there).
 pub fn parse_item_answers(ans: &str) -> Result<HashMap<String, String>, ()> {
     let s = RES.paren.replace_all(ans, NoExpand(""));
     let mut out: HashMap<String, String> = HashMap::new();
@@ -328,7 +328,7 @@ fn is_no(t: &str) -> bool {
     )
 }
 
-/// `canon`：去首尾空白、小写、删分隔符；是 / 否的各种写法归一。
+/// `canon`: strip surrounding whitespace, lowercase, delete separators; the various spellings of yes / no are normalized.
 pub fn canon(s: &str) -> String {
     let lowered = py_strip(s).to_lowercase();
     let t = RES.canon.replace_all(&lowered, NoExpand("")).into_owned();
@@ -346,14 +346,14 @@ fn find_choice(choices: &[String], val: &str) -> Option<usize> {
     choices.iter().position(|ch| canon(ch) == cv)
 }
 
-// ------------------------------------------------------------------ 翻译
+// ------------------------------------------------------------------ Translation
 
 /// `_norm_nl`
 pub fn norm_nl(s: &str) -> String {
     py_strip(&s.replace("\r\n", "\n").replace('\r', "\n")).to_string()
 }
 
-/// 热点小项末尾的选项：「……。　是 / 否」。-> (去掉选项后的文字, 选项)。没有选项就原样返回。
+/// Choices at the end of a hotspot sub-item: "…。　是 / 否". -> (text without the choices, choices). Returns the text unchanged if there are no choices.
 fn split_trailing_choices(text: &str) -> (String, Option<Vec<String>>) {
     let last = text.rsplit('\n').next().unwrap_or(text);
     if let Some(caps) = RES.hint.captures(last) {
@@ -376,8 +376,8 @@ fn split_trailing_choices(text: &str) -> (String, Option<Vec<String>>) {
     (text.to_string(), None)
 }
 
-/// 每个小项的本语言选项。只有**每个小项都写了、且个数和日语的一致**时才采用（一个个对上，不猜）；否则整题不提供，
-/// 界面退回显示日语的选项。选项的位置就是答案下标，所以只要个数一致，「第 j 个」在三种语言里就是同一个意思。
+/// The language's own choices for each sub-item. Used only if **every sub-item has them and the count matches the Japanese** (matched one by one, no guessing); otherwise the whole question gets none,
+/// and the UI falls back to showing the Japanese choices. A choice's position is the answer index, so as long as the counts match, "the j-th" means the same thing in all three languages.
 fn localized_choices(
     split: &[(String, Option<Vec<String>>)],
     ja_items: &[Item],
@@ -396,7 +396,7 @@ fn localized_choices(
     Some(out)
 }
 
-/// 把 B 列的翻译拆成和日语题目一样的结构；对不上返回 None（不提供中文切换）。
+/// Split the column B translation into the same structure as the Japanese question; returns None if they do not line up (no Chinese toggle is offered).
 pub fn parse_translation(tr: &str, options: &[Opt], items: &[Item]) -> Option<Zh> {
     let normed = norm_nl(tr);
     let stripped = RES.hot_lead.replace(&normed, NoExpand(""));
@@ -445,7 +445,7 @@ pub fn parse_translation(tr: &str, options: &[Opt], items: &[Item]) -> Option<Zh
         if parts.len() != items.len() {
             return None;
         }
-        // 每个小项末尾如果写了本语言的选项（「……。　是 / 否」），把它拆出来；没写就还是原来的样子（choices = None）
+        // If a sub-item ends with its own language's choices ("…。　是 / 否"), split them off; otherwise leave it as it was (choices = None)
         let split: Vec<(String, Option<Vec<String>>)> = parts
             .iter()
             .map(|p| split_trailing_choices(py_strip(&p.join("\n"))))
@@ -461,12 +461,12 @@ pub fn parse_translation(tr: &str, options: &[Opt], items: &[Item]) -> Option<Zh
     None
 }
 
-// ------------------------------------------------------------------ 整题
+// ------------------------------------------------------------------ Whole question
 
 pub const SKIP_NO_STRUCTURE: &str = "没有找到选项（A、B、C…）或带「はい / いいえ」的小项";
 pub const SKIP_NO_ANSWER: &str = "没有找到答案（C 列要写「【答案】…」）";
 
-/// `parse_question` 的结果：成功、读不出来（带原因）、或整个文件都要拒绝。
+/// Result of `parse_question`: success, unreadable (with a reason), or the whole file must be rejected.
 #[derive(Debug)]
 pub enum QuestionOutcome {
     Ok(Box<Question>),
@@ -474,14 +474,14 @@ pub enum QuestionOutcome {
     Fatal(ImportError),
 }
 
-/// 旧的三列格式（A 日语、B 中文、C 答案）。现在只有单元测试直接用它；工作簿解析走 `parse_question_with_english`。
+/// Legacy three-column format (A Japanese, B Chinese, C answer). Now only unit tests use it directly; workbook parsing goes through `parse_question_with_english`.
 #[cfg(test)]
 pub fn parse_question(sheet: &str, row: i64, a: &str, b: &str, c: &str) -> QuestionOutcome {
     parse_question_with_english(sheet, row, a, b, c, "")
 }
 
-/// 英语版拆成和日语一样的结构：单选 / 多选带 `options`，热点题带 `items` 和每个小项的英文选项。
-/// 选项字母、小项个数和日语对不上就返回 None（页面不提供英语切换，而不是显示错位的内容）。
+/// Splits the English version into the same structure as the Japanese: single / multiple choice carries `options`, a hotspot question carries `items` and the English choices of each sub-item.
+/// Returns None if the option letters or sub-item count do not match the Japanese (the page then offers no English toggle, rather than showing misaligned content).
 pub fn parse_english(en: &str, options: &[Opt], items: &[Item]) -> Option<En> {
     let normed = norm_nl(en);
     let stripped = RES.hot_lead.replace(&normed, NoExpand(""));
@@ -524,7 +524,7 @@ pub fn parse_english(en: &str, options: &[Opt], items: &[Item]) -> Option<En> {
     None
 }
 
-/// 四列格式里 A 列是英语：`english` 非空时额外拆出 `en`。其余逻辑和三列格式完全一样（题目 id 仍然来自日语）。
+/// In the four-column format column A is English: when `english` is non-empty, `en` is also split out. The rest of the logic is identical to the three-column format (the question id still comes from the Japanese).
 #[allow(clippy::needless_late_init)]
 pub fn parse_question_with_english(
     sheet: &str,
@@ -593,7 +593,7 @@ pub fn parse_question_with_english(
         _ => return QuestionOutcome::Skip(SKIP_NO_ANSWER.to_string()),
     };
 
-    // 中文 / 英语先拆好：热点题的答案可以用这两列里写的选项词来写（见下面）
+    // Split the Chinese / English text first: a hotspot answer may be written with the choice words used in these two columns (see below)
     let mut translation = secs.translation.clone();
     if translation.is_none() && !b.is_empty() && !b.contains('【') && char_len(&b) > 40 {
         translation = Some(b.clone());
@@ -649,7 +649,7 @@ pub fn parse_question_with_english(
             ));
         };
         let mut idx: Vec<i64> = Vec::new();
-        // 中文 / 英语两列里各小项末尾写的选项（个数和日语一致才有；对不上的那一列不参与匹配）
+        // The choices written at the end of each sub-item in the Chinese / English columns (present only if the count matches the Japanese; a column that does not line up takes no part in matching)
         let other_langs: Vec<&Vec<Vec<String>>> = [zh.as_ref(), en.as_ref()]
             .into_iter()
             .flatten()
@@ -660,8 +660,8 @@ pub fn parse_question_with_english(
             let Some(v) = vals.get(&k.to_string()) else {
                 return QuestionOutcome::Skip(format!("第 {k} 小项没有答案"));
             };
-            // 答案可以用日语、中文或英语任意一种语言的选项词来写：三列的第 j 个选项是一一对应的（同一个下标），
-            // 所以先在日语选项里找，找不到再依次在中文、英语那一列写的选项里找。
+            // The answer may be written with the choice words of any one of Japanese, Chinese or English: the j-th choice is the same one in all three columns (same index),
+            // so look in the Japanese choices first, then in the choices written in the Chinese and English columns in turn.
             let Some(j) = find_choice(&it.choices, v).or_else(|| {
                 other_langs
                     .iter()
@@ -676,7 +676,7 @@ pub fn parse_question_with_english(
         }
         let mut extra: Vec<&String> = vals
             .keys()
-            // 键在 1..=N 里，当且仅当它恰好等于某个 k 的十进制写法（不带前导零或加号）；O(1) 判断，不再为每个键扫一遍 N 项
+            // A key is within 1..=N iff it is exactly the decimal form of some k (no leading zeros or plus sign); an O(1) check, instead of scanning all N items for every key
             .filter(|key| {
                 !key.parse::<usize>()
                     .ok()
@@ -778,13 +778,13 @@ mod tests {
         let m = parse_item_answers("1 はい；2 いいえ").unwrap();
         assert_eq!(m.get("1").map(String::as_str), Some("はい"));
         assert_eq!(m.get("2").map(String::as_str), Some("いいえ"));
-        // 单项多词回退只取到空白为止（旧版缺陷，需保持）
+        // A single item with several words falls back to taking only up to the first whitespace (legacy defect, must be preserved)
         let m = parse_item_answers("1 Model Stage").unwrap();
         assert_eq!(m.get("1").map(String::as_str), Some("Model"));
-        // 全角数字
+        // Full-width digits
         let m = parse_item_answers("１ 是；２ 否").unwrap();
         assert_eq!(m.get("1").map(String::as_str), Some("是"));
-        // 超长数字
+        // Over-long number
         let long = format!("{} はい", "9".repeat(4301));
         assert!(parse_item_answers(&long).is_err());
     }
@@ -808,12 +808,12 @@ mod tests {
         assert!(o.is_empty());
         let (_, o) = parse_options("題\nB. 乙\nC. 丙");
         assert!(o.is_empty());
-        // 字母只到 H
+        // Letters only go up to H
         let body = "題\nA. a\nB. b\nC. c\nD. d\nE. e\nF. f\nG. g\nH. h\nI. i";
         let (_, o) = parse_options(body);
         assert_eq!(o.len(), 8);
         assert_eq!(o.last().map(|x| x.text.as_str()), Some("h\nI. i"));
-        // 字母单独成行
+        // Letter alone on its own line
         let (_, o) = parse_options("題\nA\n甲\nB\n乙");
         assert_eq!(o.len(), 2);
         assert_eq!(o.first().map(|x| x.text.as_str()), Some("甲"));
@@ -880,7 +880,7 @@ mod tests {
             zh.items,
             Some(vec!["第一项。".to_string(), "第二项。".to_string()])
         );
-        // 小项数对不上 -> 没有 zh
+        // Sub-item count does not match -> no zh
         let q = ok(parse_question(
             "S",
             1,

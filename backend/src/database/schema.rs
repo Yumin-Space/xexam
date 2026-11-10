@@ -1,5 +1,5 @@
-//! 表结构：与 `app/db.py` 里的 `SCHEMA` **逐字相同**（含中文注释；`sqlite_master.sql` 保存的就是这段原文）。
-//! 不要改动，也不要再加表 / 列 / 索引：Python 版和 Rust 版要能互相打开同一个库。
+//! Table schema: **verbatim identical** to `SCHEMA` in `app/db.py` (including the Chinese comments; `sqlite_master.sql` stores this exact text).
+//! Do not change it, and do not add tables / columns / indexes: the Python and Rust versions must be able to open the same database.
 
 pub const SCHEMA_VERSION: &str = "1";
 

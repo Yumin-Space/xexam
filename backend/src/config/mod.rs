@@ -1,4 +1,4 @@
-//! 配置：环境变量 `XEXAM_*` 与命令行参数。依据 `server.py main()` 与 `docs/migration-plan.md` §3。
+//! Configuration: `XEXAM_*` environment variables and command-line arguments. Based on `server.py main()` and `docs/migration-plan.md` §3.
 use crate::security::parse_allowed_hosts;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -8,8 +8,8 @@ pub struct Config {
     pub data_dir: PathBuf,
     pub host: String,
     pub port: u16,
-    pub allowed_hosts: HashSet<String>, // 已含 localhost / 127.0.0.1 / ::1
-    pub allowed_origins: HashSet<String>, // 已含 allowed_hosts
+    pub allowed_hosts: HashSet<String>, // already includes localhost / 127.0.0.1 / ::1
+    pub allowed_origins: HashSet<String>, // already includes allowed_hosts
     pub allow_any_host: bool,
     pub allow_shutdown: bool,
     pub parse_timeout_secs: u64,
@@ -21,7 +21,7 @@ pub const MAX_JSON: usize = 1_000_000;
 pub const PENDING_TTL_SECS: u64 = 30 * 60;
 pub const SKIP_SHOWN: usize = 30;
 
-/// `/api/info` 里的版本号只接受 `[0-9A-Za-z.+-]{1,20}`（旧版 `read_version` 的规则），否则 `dev`。
+/// The version in `/api/info` accepts only `[0-9A-Za-z.+-]{1,20}` (the rule of the old `read_version`), otherwise `dev`.
 pub fn valid_version(v: &str) -> bool {
     let v = v.trim();
     !v.is_empty()
@@ -31,10 +31,10 @@ pub fn valid_version(v: &str) -> bool {
 }
 
 impl Config {
-    /// 从真实进程环境读取。版本号的来源，依次是：
-    /// 1. `XEXAM_VERSION`（合法时）；
-    /// 2. `XEXAM_VERSION_FILE` 指向的文件的内容（镜像里是 `/VERSION`，和旧版读 `VERSION` 文件一致）；
-    /// 3. 编译进来的 crate 版本。
+    /// Reads from the real process environment. The version comes from, in order:
+    /// 1. `XEXAM_VERSION` (when valid);
+    /// 2. the contents of the file pointed to by `XEXAM_VERSION_FILE` (`/VERSION` in the image, same as the old version reading the `VERSION` file);
+    /// 3. the crate version compiled in.
     pub fn from_env() -> Config {
         let from_file = || {
             let path = std::env::var("XEXAM_VERSION_FILE").ok()?;
@@ -50,7 +50,7 @@ impl Config {
         Config::from_env_with(&|k| std::env::var(k).ok(), version)
     }
 
-    /// 从环境变量读取。`get` 注入环境（测试时不用改进程环境）。
+    /// Reads from environment variables. `get` injects the environment (tests need not change the process environment).
     pub fn from_env_with(get: &dyn Fn(&str) -> Option<String>, version: String) -> Config {
         let extra = parse_allowed_hosts(get("XEXAM_ALLOWED_HOSTS").as_deref());
         let origins = parse_allowed_hosts(get("XEXAM_ALLOWED_ORIGINS").as_deref());

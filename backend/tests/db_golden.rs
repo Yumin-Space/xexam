@@ -203,7 +203,7 @@ fn failed_attempt_and_migration_roll_back() {
 
 #[test]
 fn rounding_is_half_to_even_for_every_good_total_pair() {
-    // 浮点参考（Python 的 round 同样是半偶数）；当初与 Python 的 round 在 200 万个组合上逐一核对过，没有差异
+    // floating-point reference (Python's round is also round-half-even); it was once checked against Python's round on 2 million combinations one by one, with no differences
     for total in 1..=200i64 {
         for good in 0..=total {
             let want = (100.0 * good as f64 / total as f64).round_ties_even() as i64;
@@ -316,7 +316,7 @@ fn history_is_pruned_to_sixty_and_ids_keep_growing() {
 
 #[test]
 fn schema_is_identical_to_the_one_python_created() {
-    // tests/baseline/fixtures/sample.db 是用旧的 Python 实现建出来的；新后端建出的空库，sqlite_master 必须逐字相同。
+    // tests/baseline/fixtures/sample.db was built by the old Python implementation; the empty database built by the new backend must have a byte-for-byte identical sqlite_master.
     let dir = tmp();
     let rs_db = dir.path().join("rs.db");
     drop(open_fixed(&rs_db));
@@ -379,7 +379,7 @@ fn reopening_does_not_alter_the_file() {
     let sample = dir.path().join("sample.db");
     std::fs::copy(baseline("fixtures/sample.db"), &sample).expect("copy");
     let before = std::fs::read(&sample).expect("read");
-    // sample.db 是旧的 Python 实现写出来的库：打开、读题库和学习记录、关闭，文件一个字节都不能变
+    // sample.db is a database written by the old Python implementation: open it, read the question bank and study records, close it; the file must not change by a single byte
     let s = Store::open(&sample).expect("open sample");
     s.bank().expect("bank");
     s.progress().expect("progress");

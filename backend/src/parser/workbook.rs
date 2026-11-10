@@ -1,4 +1,4 @@
-//! 工作簿层：zip -> 共享字符串 / 工作表 -> 行与单元格 -> 题目。逐步对应旧版 `read_workbook` / `_read_sheet` / `parse_workbook`。
+//! Workbook layer: zip -> shared strings / worksheets -> rows and cells -> questions. Maps step by step to the legacy `read_workbook` / `_read_sheet` / `parse_workbook`.
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Instant;
@@ -15,12 +15,12 @@ const NS: &str = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
 const RNS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PKG: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
 
-/// 共享字符串条目上限、单元格总数上限（旧版没有，规格要求）。
+/// Upper limits on shared-string entries and total cell count (not in the legacy version; required by the spec).
 const MAX_SHARED_STRINGS: usize = 1_000_000;
 const MAX_CELLS: usize = 2_000_000;
 const MAX_SHEETS: usize = 1_000;
-/// 一个工作簿里所有 A/B/C 单元格文字的字节数上限（旧版没有）。共享字符串被很多单元格引用时只存一份（`Rc<str>`），
-/// 所以这个预算按「每个单元格引用的字节数」计，哪怕只存了一份也要计入：它限制的是解析阶段要处理的总量。
+/// Upper limit on the byte count of all A/B/C cell text in one workbook (not in the legacy version). A shared string referenced by many cells is stored only once (`Rc<str>`),
+/// so this budget counts "bytes referenced by each cell" even when only one copy is stored: it bounds the total amount the parse stage has to process.
 const MAX_CELL_BYTES: usize = 64 * 1024 * 1024;
 
 const HEADER_WORDS: [&str; 5] = ["题目", "題目", "问题", "問題", "Question"];
@@ -28,7 +28,7 @@ const HEADER_WORDS: [&str; 5] = ["题目", "題目", "问题", "問題", "Questi
 const MSG_NOT_XLSX: &str = "这个文件不是有效的 .xlsx（可能是 .xls、.csv，或者文件已损坏）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。";
 const MSG_TOO_COMPLEX: &str = "这个文件的内容太多或层级太深，已拒绝。";
 
-/// 一个工作表里的一行：行号、A/B/C/D 四列（旧的三列格式只用前三列）、这一行是否有过任何非空白单元格（任何列）。
+/// One row in a worksheet: row number, the four columns A/B/C/D (the old three-column format uses only the first three), and whether the row ever had a non-blank cell (in any column).
 struct SheetRow {
     number: i64,
     cols: [Option<Rc<str>>; 4],
@@ -43,7 +43,7 @@ fn xml_err(e: XmlError) -> ImportError {
     }
 }
 
-/// 协作式截止时间：循环里每隔一批检查一次；到了就返回 `ImportError::Timeout`。
+/// Cooperative deadline: checked once per batch inside loops; returns `ImportError::Timeout` when it is reached.
 fn check_deadline(deadline: Option<Instant>) -> Result<(), ImportError> {
     if deadline.is_some_and(|d| Instant::now() >= d) {
         Err(ImportError::Timeout)
@@ -72,7 +72,7 @@ fn parse_part(
     xml::parse_until(&bytes, deadline).map_err(xml_err)
 }
 
-/// `_si_text`：只收集 `<t>` 和 `<r>` 里的 `<t>`，忽略 `<rPh>`。
+/// `_si_text`: collects only `<t>` and the `<t>` inside `<r>`; ignores `<rPh>`.
 fn si_text(si: &Element) -> String {
     let mut out = String::new();
     for child in &si.children {
@@ -89,7 +89,7 @@ fn si_text(si: &Element) -> String {
     out
 }
 
-/// `_col_index`：引用开头的字母串 -> 0 基列号。没有字母前缀返回 None。数值饱和（只有 0/1/2/3 列有意义）。
+/// `_col_index`: the leading letter string of a reference -> 0-based column index. Returns None if there is no letter prefix. Values saturate (only columns 0/1/2/3 are meaningful).
 fn col_index(reference: &str) -> Option<u64> {
     let mut n: u64 = 0;
     let mut any = false;
@@ -105,7 +105,7 @@ fn col_index(reference: &str) -> Option<u64> {
     any.then(|| n.saturating_sub(1))
 }
 
-/// `_part_path`：以 `/` 开头去掉所有前导斜杠；否则 `posixpath.normpath('xl/' + target)`。
+/// `_part_path`: if the target starts with `/`, strip all leading slashes; otherwise `posixpath.normpath('xl/' + target)`.
 fn part_path(target: &str) -> String {
     if target.starts_with('/') {
         return target.trim_start_matches('/').to_string();
@@ -171,7 +171,7 @@ fn read_sheet(
                 };
                 match t {
                     Some("s") => {
-                        // 负索引在旧版会按 Python 下标回绕；这里视为畸形并丢弃该单元格（已登记的差异）
+                        // In the legacy version a negative index wrapped around like a Python subscript; here it is treated as malformed and the cell is dropped (a registered difference)
                         let idx = py_int(text)
                             .filter(|p| !p.negative)
                             .and_then(|p| p.digits.parse::<usize>().ok());
@@ -275,13 +275,13 @@ fn read_workbook(
     Ok(out)
 }
 
-/// 工作表是不是四列格式（A 英语、B 中文、C 日语、D 答案…）？只看内容，不看表头。
+/// Is the worksheet in the four-column format (A English, B Chinese, C Japanese, D answer...)? Looks at content only, not the header.
 ///
-/// 必须同时满足（用来避免把别的版式误判成四列 —— 旧版读不出来的文件不能因此突然读出来）：
-/// 1. D 列里有答案标题（「【答案】」之类）的行，比 C 列里的多；
-/// 2. 至少有一行，C 列**含日语假名**（C 是日语题目）、而 B 列**不含**（B 是中文），A 列（英语）若有内容则不含假名。
-///    A 列可以是空的（这道题没写英语）。反过来，「整张表右移一列」的文件是 A 空、B 日语、C 中文、D 答案：
-///    C 列没有假名，不满足第 2 条，仍按旧规则处理（旧版读不出来，新版也读不出来，行为不变）。
+/// All of the following must hold (to avoid misdetecting other layouts as four-column -- files the legacy version could not read must not suddenly become readable):
+/// 1. More rows have an answer title (such as "【答案】") in column D than in column C;
+/// 2. At least one row has Japanese kana in column C (C is the Japanese question) and none in column B (B is Chinese), and column A (English), if non-empty, has no kana.
+///    Column A may be empty (this question has no English). Conversely, a file "shifted one column right" has A empty, B Japanese, C Chinese, D answer:
+///    C has no kana, so condition 2 fails and the old rules still apply (the legacy version could not read it, and neither can the new one; behavior unchanged).
 fn detect_four_columns(rows: &[SheetRow]) -> bool {
     fn text(row: &SheetRow, i: usize) -> &str {
         row.cols.get(i).and_then(|c| c.as_deref()).unwrap_or("")
@@ -309,7 +309,7 @@ pub(super) fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError>
     parse_workbook_until(data, None)
 }
 
-/// 同 `parse_workbook`，但在 `deadline` 到了之后中止并返回 `ImportError::Timeout`。
+/// Same as `parse_workbook`, but aborts and returns `ImportError::Timeout` once `deadline` is reached.
 pub(super) fn parse_workbook_until(
     data: &[u8],
     deadline: Option<Instant>,
@@ -324,7 +324,7 @@ pub(super) fn parse_workbook_until(
     let mut sheets: Vec<ParsedSheet> = Vec::new();
     let mut questions: Vec<Question> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
-    // 每个基础 id 下一个要试的后缀：重复很多次时不必每次从 -2 重新探测（否则是平方级）。生成的 id 与旧版相同。
+    // Next suffix to try for each base id: when an id repeats many times, do not re-probe from -2 each time (otherwise it is quadratic). Generated ids are the same as in the legacy version.
     let mut next_suffix: HashMap<String, u64> = HashMap::new();
     for sheet in raw {
         let mut info = ParsedSheet {
@@ -333,14 +333,14 @@ pub(super) fn parse_workbook_until(
             usable: 0,
             skipped: Vec::new(),
         };
-        // 这个工作表是四列（A 英语、B 中文、C 日语、D 答案…）还是旧的三列（A 日语、B 中文、C 答案…）？
+        // Is this worksheet four-column (A English, B Chinese, C Japanese, D answer...) or the old three-column (A Japanese, B Chinese, C answer...)?
         let four_columns = detect_four_columns(&sheet.rows);
         for (row_no, row) in sheet.rows.iter().enumerate() {
             if row_no.is_multiple_of(256) {
                 check_deadline(deadline)?;
             }
             let col = |i: usize| row.cols.get(i).and_then(|c| c.as_deref()).unwrap_or("");
-            // 题目所在的列（日语）：四列格式是 C，三列格式是 A
+            // Column holding the question (Japanese): C in the four-column format, A in the three-column format
             let (english, a, b, c) = if four_columns {
                 (col(0), col(2), col(1), col(3))
             } else {
@@ -352,10 +352,10 @@ pub(super) fn parse_workbook_until(
             }
             let a_len = char_len(a_stripped);
             if a_len < 15 && py_strip(b).is_empty() && py_strip(c).is_empty() {
-                continue; // 备注之类的短文字
+                continue; // short text such as notes
             }
             if a_len <= 8 && (classify_heading(a).is_some() || HEADER_WORDS.contains(&a_stripped)) {
-                continue; // 标题行
+                continue; // header row
             }
             info.total += 1;
             match parse_question_with_english(&sheet.name, row.number, a, b, c, english) {

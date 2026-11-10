@@ -8,7 +8,7 @@ export interface AskOptions {
   danger?: boolean;
 }
 
-/** 确认弹窗。没有 <dialog>（iOS 15.4 之前的 Safari）时退回系统的 confirm()。 */
+/** Confirmation dialog. Falls back to the system confirm() when <dialog> is unavailable (Safari before iOS 15.4). */
 export function ask({ title, body, ok = '确定', cancel = '取消', danger = false }: AskOptions): Promise<boolean> {
   return new Promise((resolve) => {
     const d = h('dialog', null,

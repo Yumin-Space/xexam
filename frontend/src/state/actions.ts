@@ -1,6 +1,6 @@
-// 会改变应用状态、并触发重绘的动作。页面文件只调用这里，不互相 import，避免循环依赖。
+// Actions that change application state and trigger a re-render. Page files only call these and never import each other, which avoids circular dependencies.
 //
-// 重绘通过 setRenderer() 注册（main.ts 里做），所以这里不依赖任何页面。
+// The renderer is registered via setRenderer() (done in main.ts), so nothing here depends on any page.
 import { submitAttempt, resetProgress } from '../api/progress.ts';
 import { fetchBank, fetchInfo } from '../api/bank.ts';
 import { fetchProgress } from '../api/progress.ts';
@@ -22,7 +22,7 @@ export const setRenderer = (fn: () => void): void => {
 };
 export const render = (): void => renderer();
 
-/** 答题页上"只刷新状态、不重绘 DOM"的回调（选项高亮、答题卡、进度条）。每次重绘前清空。 */
+/** Callbacks on the answer page that "only refresh state, not redraw the DOM" (option highlight, answer sheet, progress bar). Cleared before every re-render. */
 export const resetRefreshers = (): void => {
   refreshers = [];
 };
@@ -44,7 +44,7 @@ export function persistSession(): void {
   persist({ qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets });
 }
 
-/** 页面首次加载 / 刷新：取回版本、题库、学习记录。任何一个失败都进入 fatal 页。 */
+/** First page load / refresh: fetch the version, question bank and study records. Any single failure goes to the fatal page. */
 export async function loadAll(): Promise<void> {
   const [info, bank, progress] = await Promise.all([fetchInfo(), fetchBank(), fetchProgress()]);
   S.info = info;
@@ -112,10 +112,10 @@ export function setLang(code: Lang): void {
   try {
     localStorage.setItem(paths.lang, code);
   } catch {
-    /* 存不了就只在这次有效 */
+    /* If it cannot be saved, it only applies for this session */
   }
   const y = window.scrollY;
-  render(); // 只换文字；已选的答案、标记、计时都在 S.session 里，不受影响
+  render(); // Only swaps the text; selected answers, flags and the timer all live in S.session and are unaffected
   window.scrollTo(0, y);
 }
 
@@ -156,7 +156,7 @@ export function toggleFlag(q: Question): void {
 
 let submitting = false;
 
-/** 交卷：先确认，再提交成绩；成绩提交成功之后才清掉暂存（失败时答案还在，可以再交一次）。 */
+/** Submit the exam: confirm first, then submit the score; the saved exam is cleared only after the score is submitted successfully (on failure the answers are still there, so it can be submitted again). */
 export async function submit(): Promise<void> {
   const se = S.session;
   if (!se || submitting) return;
@@ -207,7 +207,7 @@ export async function openAdmin(): Promise<void> {
   try {
     S.admin.imports = await fetchImports();
   } catch {
-    /* 没有也行 */
+    /* Fine if there is none */
   }
   if (S.view === 'admin') render();
 }

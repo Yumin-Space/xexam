@@ -1,4 +1,4 @@
-# 个人数据：题库（考试题）和学习记录，不要提交
+# Personal data: the question bank (exam questions) and study records; do not commit
 data/
 progress.json
 *.xlsx
@@ -8,22 +8,22 @@ progress.json
 *.sqlite
 *.sqlite3
 
-# 例外：测试夹具是**虚构**的合成数据（5 道演示题、边界用例、示例库），要入库，CI 才能跑对照测试。
-# 业主自己的题库 / 数据库仍然被上面的规则忽略。tests/baseline/fixtures 里不放任何真实内容。
+# Exception: the test fixtures are **fictional** synthetic data (5 demo questions, edge cases, a sample library); they are committed so CI can run the comparison tests.
+# The owner's own question bank / database is still ignored by the rules above. tests/baseline/fixtures contains no real content.
 !tests/baseline/fixtures/
 !tests/baseline/fixtures/*.xlsx
 !tests/baseline/fixtures/sample.db
 
-# 备份压缩包（里面是整个数据库）
+# Backup archives (they contain the whole database)
 *.tgz
 *.zip
 
-# 本机配置（端口、域名等），不要提交
+# Local configuration (port, domain, etc.); do not commit
 .env
 .env.*
 !.env.example
 
-# 运行产生的文件
+# Files produced at runtime
 __pycache__/
 *.pyc
 .claude/
@@ -31,7 +31,7 @@ backend/target/
 frontend/node_modules/
 frontend/dist/
 
-# 编辑器 / 系统
+# Editor / system
 .vscode/
 .idea/
 .DS_Store

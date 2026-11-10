@@ -1,5 +1,5 @@
-# Nginx 镜像：构建时用 Node 编译前端，只把静态产物和 nginx.conf 放进最终镜像。
-# 最终镜像里没有 Node、没有源码、没有数据库。
+# Nginx image: Node builds the frontend at build time, and only the static output and nginx.conf go into the final image.
+# The final image has no Node, no source code, no database.
 FROM node:24-alpine AS frontend
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./

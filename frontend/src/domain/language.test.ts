@@ -32,14 +32,14 @@ const hotspot = (extra: Partial<Question> = {}): Question => ({
   ...extra,
 });
 
-test('isLang 只认 ja / zh / en（存储里的脏值一律不要）', () => {
+test('isLang only accepts ja / zh / en (any dirty value from storage is rejected)', () => {
   assert.equal(isLang('ja'), true);
   assert.equal(isLang('zh'), true);
   assert.equal(isLang('en'), true);
   for (const bad of ['', 'EN', 'fr', null, undefined, 1, {}]) assert.equal(isLang(bad), false);
 });
 
-test('日语永远可用；中文 / 英语要有对应结构才可用', () => {
+test('Japanese is always available; Chinese / English need a matching structure to be available', () => {
   const q = choice();
   assert.deepEqual(['ja', 'zh', 'en'].map((l) => hasLang(q, l as 'ja')), [true, true, true]);
   const noEn = choice({ en: null });
@@ -49,7 +49,7 @@ test('日语永远可用；中文 / 英语要有对应结构才可用', () => {
   assert.equal(hasLang(noZh, 'en'), true);
 });
 
-test('旧题库的题（根本没有 en / english 字段）：英语不可用，选了英语就退回日语，不报错', () => {
+test('question from an old bank (no en / english field at all): English is unavailable, and choosing English falls back to Japanese without error', () => {
   const old = choice();
   delete (old as { en?: unknown }).en;
   delete (old as { english?: unknown }).english;
@@ -61,7 +61,7 @@ test('旧题库的题（根本没有 en / english 字段）：英语不可用，
   assert.equal(v.optionText(1), '乙');
 });
 
-test('单选题：三种语言各取各的题干和选项', () => {
+test('single-choice question: each of the three languages uses its own stem and options', () => {
   const q = choice();
   const en = shown(q, 'en');
   assert.deepEqual([en.lang, en.stem, en.optionText(0), en.optionText(1)], ['en', 'English stem', 'Alpha', 'Beta']);
@@ -71,7 +71,7 @@ test('单选题：三种语言各取各的题干和选项', () => {
   assert.deepEqual([ja.lang, ja.stem, ja.optionText(0)], ['ja', '日本語の題干', '甲']);
 });
 
-test('选项文字缺一项时退回日语那一项，而不是显示 undefined', () => {
+test('when one option text is missing, fall back to the Japanese one instead of showing undefined', () => {
   const q = choice({ en: { stem: 'English stem', options: ['Alpha'] } });
   const v = shown(q, 'en');
   assert.equal(v.optionText(0), 'Alpha');
@@ -79,7 +79,7 @@ test('选项文字缺一项时退回日语那一项，而不是显示 undefined'
   assert.equal(v.optionText(9), '');
 });
 
-test('热点题：每种语言用自己那一列里写的选项 —— 日语はい / いいえ，中文 是 / 否，英语 Yes / No', () => {
+test('hotspot question: each language uses the choices written in its own column - Japanese はい / いいえ, Chinese 是 / 否, English Yes / No', () => {
   const q = hotspot();
   const en = shown(q, 'en');
   assert.equal(en.itemText(0), 'The sun rises in the east.');
@@ -92,7 +92,7 @@ test('热点题：每种语言用自己那一列里写的选项 —— 日语は
   assert.deepEqual([ja.itemText(0), ja.choiceText(0, 0)], ['太陽は東から昇る。', 'はい']);
 });
 
-test('这门语言没写热点选项时，选项退回日语原文，lang 标成 ja（文字是日语）', () => {
+test('when this language has no hotspot choices written, choices fall back to the Japanese original and lang is set to ja (the text is Japanese)', () => {
   const q = hotspot({ en: { stem: 'English stem', items: ['a', 'b'] }, zh: { stem: '中文题干', items: ['a', 'b'] } });
   for (const code of ['en', 'zh'] as const) {
     const v = shown(q, code);
@@ -102,7 +102,7 @@ test('这门语言没写热点选项时，选项退回日语原文，lang 标成
   }
 });
 
-test('选的是英语、这道题没有英语：退回日语，整道题都是日语（不混语言）', () => {
+test('English is chosen but this question has no English: fall back to Japanese, the whole question is Japanese (no mixed languages)', () => {
   const q = choice({ en: null });
   const v = shown(q, 'en');
   assert.equal(v.lang, 'ja');

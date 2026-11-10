@@ -1,5 +1,5 @@
-//! 请求体的流式读取：不信任 `Content-Length`，真实字节计数；超限时先读掉（有上限）再返回，
-//! 否则服务端提前回应后连接被重置，浏览器看到的是网络错误而不是「文件太大」。
+//! Streaming read of the request body: does not trust `Content-Length`, counts real bytes; when over the limit, it drains the rest (bounded) before returning,
+//! otherwise the server responds early, the connection is reset, and the browser sees a network error instead of "file too large".
 use axum::body::Body;
 use bytes::Bytes;
 use http_body_util::BodyExt;
@@ -7,16 +7,16 @@ use std::time::Duration;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum BodyError {
-    /// 超过上限（或 Content-Length 为负）
+    /// Over the limit (or Content-Length is negative)
     TooLarge,
-    /// 连接中途断开 / 声明的长度比实际的长
+    /// Connection dropped midway / the declared length is longer than the actual body
     Broken,
 }
 
-/// 排空多余数据的总时限。
+/// Total time limit for draining excess data.
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// 读掉并丢弃最多 `cap` 字节（已经读到的 `already` 也算在内）。出错、结束或超时就停。
+/// Reads and discards up to `cap` bytes (the `already` bytes read so far count too). Stops on error, end of stream or timeout.
 pub async fn drain(body: &mut Body, already: usize, cap: usize) {
     let _ = tokio::time::timeout(DRAIN_TIMEOUT, async {
         let mut seen = already;
@@ -34,8 +34,8 @@ pub async fn drain(body: &mut Body, already: usize, cap: usize) {
     .await;
 }
 
-/// 读取请求体。`declared` 是请求头里的 Content-Length（已解析，可能为负）；
-/// 声明值超限 / 为负 -> 先排空再 `TooLarge`；否则按实际收到的字节计数，超过 `limit`（`>`，不是 `>=`）就停。
+/// Reads the request body. `declared` is the Content-Length from the request headers (already parsed, may be negative);
+/// a declared value over the limit / negative -> drain first, then `TooLarge`; otherwise count the bytes actually received and stop once over `limit` (`>`, not `>=`).
 pub async fn read_limited(
     mut body: Body,
     declared: Option<i128>,

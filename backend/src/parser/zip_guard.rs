@@ -1,7 +1,7 @@
-//! zip 层：`check_xlsx` 与带上限的成员读取。
+//! zip layer: `check_xlsx` and bounded member reads.
 //!
-//! 与旧版 `server.check_xlsx` 的顺序和文案一致；加固：拒绝重复条目名、限制条目数、读取一律 `take`
-//! （绝不按声明大小预分配）、任何像 XML 的部件含 DOCTYPE / ENTITY 都拒绝（不看扩展名大小写，也不看编码）。
+//! Order and wording match the legacy `server.check_xlsx`; hardening: reject duplicate entry names, cap the entry count, always read through `take`
+//! (never preallocate from the declared size), and reject any XML-like part containing DOCTYPE / ENTITY (regardless of extension case or encoding).
 use std::collections::HashSet;
 use std::io::{Cursor, Read};
 
@@ -59,7 +59,7 @@ impl<'a> Package<'a> {
         self.archive.len()
     }
 
-    /// 第 `idx` 个条目的名字（原始字节，宽松转成字符串）。
+    /// Name of entry `idx` (raw bytes, leniently converted to a string).
     pub(super) fn name_at(&mut self, idx: usize) -> Result<String, ReadError> {
         let f = self
             .archive
@@ -68,7 +68,7 @@ impl<'a> Package<'a> {
         Ok(String::from_utf8_lossy(f.name_raw()).into_owned())
     }
 
-    /// 第 `idx` 个条目的声明大小。
+    /// Declared size of entry `idx`.
     pub(super) fn declared_size(&mut self, idx: usize) -> Result<u64, ReadError> {
         let f = self
             .archive
@@ -92,7 +92,7 @@ impl<'a> Package<'a> {
         Ok(buf)
     }
 
-    /// 按名字读整个成员（有界）。
+    /// Reads a whole member by name (bounded).
     pub(super) fn read(&mut self, name: &str) -> Result<Vec<u8>, ReadError> {
         if !self.contains(name) {
             return Err(ReadError::Missing);
@@ -105,7 +105,7 @@ impl<'a> Package<'a> {
     }
 }
 
-/// 上传内容检查（文案与顺序见旧版 `server.py:check_xlsx`）。
+/// Upload content check (wording and order follow the legacy `server.py:check_xlsx`).
 pub(super) fn check_xlsx(data: &[u8]) -> Result<(), ImportError> {
     if data.len() < 100 {
         return Err(ImportError::Empty);
@@ -131,9 +131,9 @@ pub(super) fn check_xlsx(data: &[u8]) -> Result<(), ImportError> {
         if size > MAX_MEMBER_BYTES || declared_total > MAX_TOTAL_BYTES {
             return Err(ImportError::TooBigUncompressed);
         }
-        // 旧版只解压 .xml / .rels 来检查；其它成员（缩略图、打印设置……）只看声明大小。
-        // 这里仍然读取每个成员来数真实字节数（声明大小不可信），但**非 XML 成员**读失败（例如 CRC 不对）时不算文件损坏——
-        // Excel 自己也能打开这种文件，旧版也接受。XML 成员一律严格。
+        // The legacy version only decompressed .xml / .rels members to check them; other members (thumbnails, print settings, ...) were checked by declared size only.
+        // We still read every member here to count the real bytes (the declared size is untrusted), but a read failure (e.g. a bad CRC) in a **non-XML member** does not count as a corrupt file --
+        // Excel can open such files too, and the legacy version accepted them. XML members are always strict.
         let name = pkg.name_at(idx).map_err(|_| ImportError::Corrupt)?;
         let lower = name.to_ascii_lowercase();
         let is_xml_part = lower.ends_with(".xml") || lower.ends_with(".rels");

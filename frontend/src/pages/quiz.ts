@@ -1,4 +1,4 @@
-// 答题页：题干 + 选项 / 热点小项、日语/中文/英语切换、答题卡、计时、键盘。答题时不显示对错。
+// Quiz page: question stem + options / hotspot sub-items, Japanese/Chinese/English switch, answer sheet, timer, keyboard. Correctness is not shown while answering.
 import { stateOf, type Answer } from '../domain/grading.ts';
 import { hasLang, shown, type Lang } from '../domain/language.ts';
 import { kindLabel } from '../components/common.ts';
@@ -27,7 +27,7 @@ export function renderQuiz(): HTMLElement {
     railCount.textContent = `已答 ${a} / ${n} 题`;
   });
 
-  // 想看的语言这道题没有（对不上日语的结构）时，退回日语，不显示错位的内容
+  // If the requested language is unavailable for this question (it does not match the Japanese structure), fall back to Japanese instead of showing misaligned content
   const view = shown(q, S.lang);
   const lang = view.lang;
   const stemText = view.stem;
@@ -39,7 +39,7 @@ export function renderQuiz(): HTMLElement {
       h('p', { lang, class: 'pre' }, view.itemText(i)),
       h('div', { class: 'chips', role: 'group', 'aria-label': `第 ${i + 1} 小项` }, it.choices.map((_, j) => {
         const btn = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: () => pickItem(q, i, j) },
-          h('span', { class: 'dot' }), h('span', { lang: view.choiceLang(i, j) }, view.choiceText(i, j))); // 选项用当前语言那一列里写的（是 / 否、Yes / No）；没写就用日语的
+          h('span', { class: 'dot' }), h('span', { lang: view.choiceLang(i, j) }, view.choiceText(i, j))); // choices use what the current-language column wrote (是 / 否, Yes / No); if nothing is written, use the Japanese one
         onRefresh(() => {
           const a = answerOf(q.id);
           btn.setAttribute('aria-pressed', String(Array.isArray(a) && a[i] === j));
@@ -125,7 +125,7 @@ export function renderQuiz(): HTMLElement {
     h('div', { class: 'quiz-grid' }, paper, rail));
 }
 
-/** 键盘：← → 切题，A–H 选答案，M 标记。长按不重复触发，弹窗打开或在输入框里时不响应。 */
+/** Keyboard: ← → switch questions, A–H pick an answer, M flags. Holding a key does not repeat; ignored while a dialog is open or an input is focused. */
 export function installQuizKeys(): void {
   document.addEventListener('keydown', (e) => {
     const se = S.session;

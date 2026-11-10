@@ -1,4 +1,4 @@
-// 金标准单元测试：node --experimental-strip-types --test src/domain/*.test.ts
+// Golden unit tests: node --experimental-strip-types --test src/domain/*.test.ts
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { grade, inNotebook, percentOf, poolOf, shuffle, stateOf } from './grading.ts';
@@ -8,7 +8,7 @@ const single = { kind: 'single', answer: ['B'], items: [] } as unknown as Pick<Q
 const multi = { kind: 'multi', answer: ['A', 'C'], items: [] } as unknown as Pick<Question, 'kind' | 'answer' | 'items'>;
 const hot = { kind: 'hotspot', answer: [0, 1, 0], items: [{}, {}, {}] } as never;
 
-test('stateOf: 单选 / 多选', () => {
+test('stateOf: single choice / multiple choice', () => {
   assert.equal(stateOf(single, undefined), 0);
   assert.equal(stateOf(single, null), 0);
   assert.equal(stateOf(single, []), 0);
@@ -16,18 +16,18 @@ test('stateOf: 单选 / 多选', () => {
   assert.equal(stateOf(multi, ['A']), 2);
 });
 
-test('stateOf: 热点题（0 未答 / 1 部分 / 2 完成）', () => {
+test('stateOf: hotspot question (0 unanswered / 1 partial / 2 complete)', () => {
   assert.equal(stateOf(hot, undefined), 0);
   assert.equal(stateOf(hot, []), 0);
   assert.equal(stateOf(hot, [null, null, null]), 0);
   assert.equal(stateOf(hot, [0, null, null]), 1);
   assert.equal(stateOf(hot, [0, 1, null]), 1);
   assert.equal(stateOf(hot, [0, 1, 0]), 2);
-  assert.equal(stateOf(hot, [0, 1]), 1, '比小项数短：不算完成');
-  assert.equal(stateOf(hot, [0, 1, 0, 1]), 1, '比小项数长：不算完成');
+  assert.equal(stateOf(hot, [0, 1]), 1, 'shorter than the number of sub-items: not complete');
+  assert.equal(stateOf(hot, [0, 1, 0, 1]), 1, 'longer than the number of sub-items: not complete');
 });
 
-test('grade: 单选', () => {
+test('grade: single choice', () => {
   assert.equal(grade(single, ['B']), true);
   assert.equal(grade(single, ['A']), false);
   assert.equal(grade(single, []), false);
@@ -36,7 +36,7 @@ test('grade: 单选', () => {
   assert.equal(grade(single, ['B', 'C']), false);
 });
 
-test('grade: 多选要选对全部，和顺序无关', () => {
+test('grade: multiple choice must select all correct options, order does not matter', () => {
   assert.equal(grade(multi, ['A', 'C']), true);
   assert.equal(grade(multi, ['C', 'A']), true);
   assert.equal(grade(multi, ['A']), false);
@@ -44,7 +44,7 @@ test('grade: 多选要选对全部，和顺序无关', () => {
   assert.equal(grade(multi, ['A', 'B']), false);
 });
 
-test('grade: 热点题每个小项都对才算对', () => {
+test('grade: hotspot question is correct only if every sub-item is correct', () => {
   assert.equal(grade(hot, [0, 1, 0]), true);
   assert.equal(grade(hot, [0, 1, 1]), false);
   assert.equal(grade(hot, [0, 1, null]), false);
@@ -54,17 +54,17 @@ test('grade: 热点题每个小项都对才算对', () => {
   assert.equal(grade(hot, undefined), false);
 });
 
-test('inNotebook: 答错过且连续答对不到 2 次', () => {
+test('inNotebook: answered wrong before and fewer than 2 consecutive correct answers', () => {
   const s = (wrong: number, streak: number) => ({ attempts: wrong + streak, correct: streak, wrong, streak });
   assert.equal(inNotebook(undefined, 2), false);
-  assert.equal(inNotebook(s(0, 5), 2), false, '从没答错');
+  assert.equal(inNotebook(s(0, 5), 2), false, 'never answered wrong');
   assert.equal(inNotebook(s(1, 0), 2), true);
   assert.equal(inNotebook(s(1, 1), 2), true);
-  assert.equal(inNotebook(s(1, 2), 2), false, '连续答对 2 次后移出');
+  assert.equal(inNotebook(s(1, 2), 2), false, 'removed after 2 consecutive correct answers');
   assert.equal(inNotebook(s(3, 7), 2), false);
 });
 
-test('percentOf: 与 Python round() 一致（四舍六入五成双）', () => {
+test('percentOf: matches Python round() (round half to even)', () => {
   assert.equal(percentOf(1, 8), 12, '12.5 -> 12');
   assert.equal(percentOf(3, 8), 38, '37.5 -> 38');
   assert.equal(percentOf(5, 8), 62, '62.5 -> 62');
@@ -77,7 +77,7 @@ test('percentOf: 与 Python round() 一致（四舍六入五成双）', () => {
   assert.equal(percentOf(0, 0), 0);
 });
 
-test('percentOf: 在 1..200 题的所有组合上与"精确半偶数"定义一致', () => {
+test('percentOf: matches the "exact half-even" definition across all combinations of 1..200 questions', () => {
   for (let total = 1; total <= 200; total++) {
     for (let good = 0; good <= total; good++) {
       const exact = (100 * good) / total;
@@ -91,7 +91,7 @@ test('percentOf: 在 1..200 题的所有组合上与"精确半偶数"定义一�
   }
 });
 
-test('poolOf: 按工作表和模式筛选', () => {
+test('poolOf: filter by sheet and mode', () => {
   const qs = [
     { id: 'a', sheet: 'S1' }, { id: 'b', sheet: 'S1' }, { id: 'c', sheet: 'S2' },
   ] as unknown as Question[];
@@ -105,10 +105,10 @@ test('poolOf: 按工作表和模式筛选', () => {
   assert.deepEqual(poolOf(qs, new Set(['S1', 'S2']), 'weak', null).map((q) => q.id), []);
 });
 
-test('shuffle: 不改原数组，元素不丢不多', () => {
+test('shuffle: does not mutate the original array; no elements lost or duplicated', () => {
   const src = [1, 2, 3, 4, 5, 6, 7, 8];
   const out = shuffle(src);
   assert.deepEqual([...src], [1, 2, 3, 4, 5, 6, 7, 8]);
   assert.deepEqual([...out].sort(), [...src].sort());
-  assert.deepEqual(shuffle(src, () => 0), [2, 3, 4, 5, 6, 7, 8, 1], '随机数固定时结果固定');
+  assert.deepEqual(shuffle(src, () => 0), [2, 3, 4, 5, 6, 7, 8, 1], 'deterministic result when the random source is fixed');
 });

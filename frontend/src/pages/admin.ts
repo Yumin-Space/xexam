@@ -1,4 +1,4 @@
-// 题库管理：上传 Excel → 预览（不写库）→ 确认 / 取消。
+// Question bank admin: upload Excel → preview (no database write) → confirm / cancel.
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport as apiConfirm, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { brand } from '../components/common.ts';
@@ -61,7 +61,7 @@ async function confirmImport(): Promise<void> {
     try {
       A.imports = await fetchImports();
     } catch {
-      /* 保留旧的 */
+      /* keep the old one */
     }
   } catch (e) {
     A.error = e instanceof ApiError && e.kind === 'http'
@@ -117,7 +117,7 @@ function previewView(pv: ImportPreview): HTMLElement {
           try {
             await cancelImport();
           } catch {
-            /* 过期了也没关系 */
+            /* fine if it already expired */
           }
           A.preview = null;
           render();

@@ -1,4 +1,4 @@
-// 一个很小的 DOM 构造函数：所有文字都用 createTextNode 写入页面，永远不拼 HTML（Excel 里的内容不可信）。
+// A tiny DOM builder: all text is written into the page with createTextNode and HTML is never concatenated (content from Excel is untrusted).
 
 export type Child = Node | string | number | false | null | undefined | Child[];
 export type Props = Record<string, unknown> | null | undefined;
@@ -12,7 +12,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, props?: Props, 
     if (k === 'class') el.className = String(v);
     else if (k.startsWith('on') && typeof v === 'function') el.addEventListener(k.slice(2), v as EventListener);
     else if (PROPS.has(k)) (el as unknown as Record<string, unknown>)[k] = v;
-    // style 属性（setAttribute）会被 CSP 的 style-src 'self' 拦掉；通过 CSSOM（cssText）写入则不受限制。
+    // The style attribute (setAttribute) is blocked by the CSP style-src 'self'; writing through the CSSOM (cssText) is not restricted.
     else if (k === 'style') el.style.cssText = String(v);
     else el.setAttribute(k, v === true ? '' : String(v));
   }
@@ -28,7 +28,7 @@ function appendAll(el: HTMLElement, kids: readonly Child[]): void {
   }
 }
 
-/** 按行拆成多个 <p>（空行丢掉）。 */
+/** Split by line into multiple <p> elements (empty lines are dropped). */
 export function paras(text: string | null | undefined, extra?: string, lang?: string): HTMLParagraphElement[] {
   return String(text ?? '')
     .split('\n')
@@ -38,7 +38,7 @@ export function paras(text: string | null | undefined, extra?: string, lang?: st
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
-/** 对 / 错的小图标 */
+/** Small correct / incorrect icons */
 export function svgMark(ok: boolean): SVGSVGElement {
   const s = document.createElementNS(SVGNS, 'svg');
   s.setAttribute('viewBox', '0 0 20 20');
@@ -53,7 +53,7 @@ export function svgMark(ok: boolean): SVGSVGElement {
   return s;
 }
 
-/** 必须存在的元素；找不到就抛错，而不是返回 null 后在别处崩。 */
+/** An element that must exist; throws if it is not found, instead of returning null and crashing somewhere else. */
 export function must<T extends Element>(sel: string, root: ParentNode = document): T {
   const el = root.querySelector<T>(sel);
   if (!el) throw new Error('页面缺少元素：' + sel);

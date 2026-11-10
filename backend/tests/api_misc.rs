@@ -51,7 +51,7 @@ async fn attempt_passes_cleaned_request_to_the_store_and_returns_progress() {
         ),
         (1, vec!["s".to_string()], "weak", 77)
     );
-    // 错误路径：不会碰到存储
+    // error paths: storage is never touched
     a.engine.with(|f| f.last_attempt = None);
     for (body, msg) in [
         ("{}", "没有成绩可保存"),
@@ -67,7 +67,7 @@ async fn attempt_passes_cleaned_request_to_the_store_and_returns_progress() {
         );
     }
     assert!(a.engine.with(|f| f.last_attempt.is_none()));
-    // Infinity / NaN 的 seconds 不再断连，而是 0
+    // Infinity / NaN `seconds` no longer drop the connection; they become 0
     let r = post_json(
         &a,
         "/api/attempt",

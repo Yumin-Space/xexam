@@ -6,7 +6,7 @@ use std::sync::Arc;
 use xexam_backend::database::{FixedClock, Store};
 use xexam_backend::models::{Answer, Item, Kind, Opt, ParsedSheet, Question, Zh};
 
-/// 仓库根目录 = backend/ 的上一级（不写死任何机器上的路径）。
+/// Repository root = the parent of backend/ (no machine-specific path is hardcoded).
 pub fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
