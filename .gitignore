@@ -18,7 +18,7 @@ progress.json
 *.tgz
 *.zip
 
-# Local configuration (port, domain, etc.); do not commit
+# Local configuration (port, domain, etc.; docker/.env next to the compose files); do not commit. The patterns match in every folder.
 .env
 .env.*
 !.env.example

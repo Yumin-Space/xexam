@@ -1,12 +1,12 @@
-[English](README.md) | [日本語](README.ja.md) | **简体中文**
+[English](../README.md) | [日本語](README.ja.md) | **简体中文**
 
 <!-- The release badge is static: CI checks that its version equals VERSION. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
 <p>
-  <a href="../../releases/latest"><img width="145" height="28" alt="发布版本 v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
+  <a href="../../../releases/latest"><img width="145" height="28" alt="发布版本 v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
 </p>
 
 <p align="center">
-  <img width="120" height="120" alt="Xexam 标志" src="frontend/public/icon.svg">
+  <img width="120" height="120" alt="Xexam 标志" src="../frontend/public/icon.svg">
 </p>
 
 <p align="center">
@@ -24,19 +24,19 @@
 
 Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入自己的 Excel 题库，用它们做模拟考，再复习答错的题。**交卷后才计分**，然后显示分数；每道错题（也可以看全部题目）都列出你的答案、正确答案、解析和记忆口诀。电脑和手机（iPhone）都能用。
 
-![答题页：一道显示成中文的热点题、题目语言的切换按钮，以及带交卷按钮的答题卡](docs/zh-CN/screenshots/desktop-2-quiz.png)
+![答题页：一道显示成中文的热点题、题目语言的切换按钮，以及带交卷按钮的答题卡](../docs/zh-CN/screenshots/desktop-2-quiz.png)
 
 仓库里**没有题目**。Xexam 只提供导入、整理和练习题目的工具；题库是你自己的 Excel，不会被提交（`.gitignore` 已排除）。本页截图里的「General knowledge」和「Kitchen basics」是两个**虚构的演示题库**，不是任何真实考试的内容。截图里是中文界面；英语界面和日语界面的截图在 `docs/en/screenshots/` 和 `docs/ja/screenshots/`。
 
 | | |
 |---|---|
-| 当前版本 | **v0.5.1**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看；在程序里：菜单 → **Xexam v0.5.1**） |
+| 当前版本 | **v0.5.1**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.5.1**） |
 | 镜像 | 在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，标签 `latest` / `v0.5.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
-| 许可证 | [MIT](LICENSE) |
+| 许可证 | [MIT](../LICENSE) |
 
-文档：[架构](docs/zh-CN/architecture.md) · [API](docs/zh-CN/api.md)（[OpenAPI](docs/en/openapi.yaml)，英文）· [数据库](docs/zh-CN/database.md) · [安全](docs/zh-CN/security.md) · [部署](docs/zh-CN/deployment.md) · [迁移与回滚](docs/zh-CN/migration.md) · [开发](docs/zh-CN/development.md)
+文档：[架构](../docs/zh-CN/architecture.md) · [API](../docs/zh-CN/api.md)（[OpenAPI](../docs/en/openapi.yaml)，英文）· [数据库](../docs/zh-CN/database.md) · [安全](../docs/zh-CN/security.md) · [部署](../docs/zh-CN/deployment.md) · [迁移与回滚](../docs/zh-CN/migration.md) · [开发](../docs/zh-CN/development.md)
 
 ---
 
@@ -83,14 +83,14 @@ Xexam 是一个自己部署、在浏览器里用的模拟考程序。你导入�
 
 ### 方式 A：直接拉取现成的镜像（推荐）
 
-只需要仓库里的 [`docker-compose.yml`](docker-compose.yml) 这**一个文件**，不需要其他代码。
+只需要仓库 `docker/` 文件夹里的 [`docker-compose.yml`](../docker/docker-compose.yml) 这**一个文件**，不需要其他代码。
 
 **如果你不是仓库的所有者：** 两个镜像在 Docker Hub 上是公开的，拉取它们不需要账号，也不需要 `docker login`。只有仓库是私有的：要用 `curl` 从仓库下载 `docker-compose.yml`（或者 `git clone` 整个仓库），请所有者把你的 GitHub 账号加为这个仓库的协作者（collaborator），然后在 GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** 里创建一个令牌，勾选 `repo` 权限。下面 `curl` 里的 `<你的令牌>` 就填它，`git clone` 要密码时也填它。也可以直接请所有者把这个文件发给你。
 
 **1. 下载 `docker-compose.yml`**，放进一个新文件夹（例如 `xexam`）。最简单的办法：在 GitHub 上打开这个文件，点 **Download raw file**（下载原始文件）按钮。也可以用命令行：
 
 ```bash
-curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker-compose.yml
+curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
 ```
 
 用 `curl` 时，在 `-fLO` 后面加 `-H "Authorization: token <你的令牌>"`。在 Windows PowerShell 里要写 `curl.exe`（`curl` 在那里是另一个命令的别名）。
@@ -139,18 +139,18 @@ Docker 装在另一台机器上（服务器、NAS、虚拟机）？见 [从手�
 ```bash
 git clone https://github.com/Yumin-Space/xexam.git
 cd xexam
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
 仓库是私有的时候，`git clone` 会要求你登录 GitHub（命令行提示输入密码时，填一个能读这个仓库的 GitHub 令牌）。
 
-第一次构建要几分钟（编译 Rust 和前端）。它和方式 A 用**同一个卷**（`xexam_data`）和同样的容器名，所以数据是同一份、两者**不能同时运行**，切换前先 `docker compose stop`。
+第一次构建要几分钟（编译 Rust 和前端）。它和方式 A 用**同一个卷**（`xexam_data`）和同样的容器名，所以数据是同一份、两者**不能同时运行**，切换前先 `docker compose stop`。克隆下来的仓库里，compose 文件和 `.env` 都在 `docker/` 里：本说明里的 `docker compose` 命令要在仓库根目录运行，并加上 `-f docker/docker-compose.build.yml`（例如 `docker compose -f docker/docker-compose.build.yml logs -f`）。要更新源码构建的版本，先 `git pull`，再运行一次上面的构建命令。以前克隆的仓库如果在根目录有 `.env`，请把它移到 `docker/.env`，因为 Compose 不会再读根目录的 `.env`。
 
 ---
 
 ## 配置
 
-默认设置在一台电脑上直接能用，不需要配置。要改的时候，在 `docker-compose.yml` 旁边建一个 `.env` 文件（模板见 [`.env.example`](.env.example)，不需要改 compose 文件本身）。改了 `.env` 之后，再运行一次 `docker compose up -d`。
+默认设置在一台电脑上直接能用，不需要配置。要改的时候，在 `docker-compose.yml` 旁边建一个 `.env` 文件（克隆的仓库里是 `docker/.env`；模板见 [`.env.example`](../docker/.env.example)，不需要改 compose 文件本身）。改了 `.env` 之后，再运行一次 `docker compose up -d`。
 
 | `.env` 里的名字 | 默认 | 作用 |
 |---|---|---|
@@ -161,7 +161,7 @@ docker compose -f docker-compose.build.yml up -d --build
 | `XEXAM_PARSE_TIMEOUT_SECS` | `30` | 解析一份 Excel 的最长时间（秒） |
 | `TZ` | `Asia/Tokyo` | 数据库里时间戳用的时区 |
 
-更多说明见 [docs/zh-CN/deployment.md](docs/zh-CN/deployment.md) 第 3 节。
+更多说明见 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 3 节。
 
 ---
 
@@ -214,7 +214,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 在这里导入 Excel，页面和主页一样紧凑。在 **导入 Excel** 里选 **新建题库** 或 **更新已有题库**（标题旁边的两个小按钮，悬停提示里有说明；更新时还要在 **要更新的题库** 里选好题库），然后点 **选择 Excel 文件**，或者把文件拖到这个面板的任意位置；选文件那一行上面的提示，末尾是 **查看 Excel 写法** 链接。**已有的题库** 里每个题库占紧凑的一行（文件、题数、工作表数和最近更新时间，带 **更新** 和 **删除**；工作表收在这一行右边的箭头下面），**导入记录** 每次导入只占一行。页面上的 **Excel 题库的写法和导入说明** 在你打开之前是收起的，它是 [Excel 题库格式](#excel-题库格式) 的简短版。导入的步骤和规则见 [导入题库](#导入题库)。
 
-![题库管理：用新版本的文件更新「Kitchen basics」时的预览](docs/zh-CN/screenshots/desktop-5-banks.png)
+![题库管理：用新版本的文件更新「Kitchen basics」时的预览](../docs/zh-CN/screenshots/desktop-5-banks.png)
 
 截图是用新版本的文件 `Kitchen basics (v2).xlsx` 更新「Kitchen basics」时的预览，这时还什么都没保存：几个小标签（新增 1、更新 1、下架 1、没变化 3）、文件名和上次导入时不同的提示、一道题将被下架的警告，以及 Cooking 和 Safety 两个工作表。下面是 **已有的题库** 里的两个演示题库；右边是导入记录和收起的写法说明。要下架的题按题目那一列的文字列出（这个演示题库里是 C 列，日语）。
 
@@ -235,7 +235,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 - **最近一场考试**：上一场考试的成绩，带 **查看详情** 和 **全部学习记录**。
 - **概况**：有几个题库、几个可用工作表、几道可用题目、错题本里有几道题，带 **复习错题**（错题本里有题时）和 **题库管理**。
 
-![电脑上的主页](docs/zh-CN/screenshots/desktop-1-home.png)
+![电脑上的主页](../docs/zh-CN/screenshots/desktop-1-home.png)
 
 没交卷的考试是最上面的一条横幅；**全部** 和 **错题本** 在 **开始考试** 的右上角；**考哪些题库和工作表** 右边是 **全选** 和 **全部取消**；两个演示题库是两张展开的卡片，里面是各自的工作表；面板最下面一栏是 **开始考试**、**当前范围共 12 题**、**题数** 和 **打乱顺序**；右边是最近一场考试和概况。
 
@@ -256,7 +256,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 分数、答对和答错的题数，以及一排小方块，每道题一个。**答案与解析** 可以显示 **只看错题（n）** 或 **全部题目（n）**：你的选择、正确答案、解析、记忆口诀、中文翻译（如果有）以及这道题到现在答过几次。按钮：**只重做错题**、**再考一次**、**在学习记录里查看** 和 **回首页**。
 
-![成绩页：分数、每道题一个小方块，下面是答错的那道题的答案与解析](docs/zh-CN/screenshots/desktop-3-result.png)
+![成绩页：分数、每道题一个小方块，下面是答错的那道题的答案与解析](../docs/zh-CN/screenshots/desktop-3-result.png)
 
 解析和记忆口诀按工作簿里写的原样显示；这个演示题库里它们是中文。
 
@@ -270,7 +270,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 - 删除：删除一条记录时，每道题的答题统计会保留，所以错题本不会变。**全部删除** 删掉所有考试记录；勾选 **同时清空错题本和每道题的答题统计**，会把这些也一起清空。每次删除都会先确认，删除后无法恢复。
 - Xexam 只保留最近 500 场考试，更早的记录会自动删除。
 
-![电脑上的学习记录：概况、筛选和考试列表](docs/zh-CN/screenshots/desktop-4-records.png)
+![电脑上的学习记录：概况、筛选和考试列表](../docs/zh-CN/screenshots/desktop-4-records.png)
 
 ### 错题本
 
@@ -287,8 +287,8 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 <table>
 <tr>
-<td width="50%"><img src="docs/zh-CN/screenshots/desktop-6-settings.png" alt="电脑上的界面设置页"></td>
-<td width="50%"><img src="docs/zh-CN/screenshots/desktop-7-dark.png" alt="深色主题的答题页"></td>
+<td width="50%"><img src="../docs/zh-CN/screenshots/desktop-6-settings.png" alt="电脑上的界面设置页"></td>
+<td width="50%"><img src="../docs/zh-CN/screenshots/desktop-7-dark.png" alt="深色主题的答题页"></td>
 </tr>
 <tr>
 <td>界面设置：<b>外观</b>、<b>语言</b>、<b>答题</b> 和 <b>恢复默认设置</b>。</td>
@@ -300,7 +300,7 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 菜单的最后一项 **Xexam v0.5.1** 会打开 **关于 Xexam**：**版本**、**服务器** 的 CPU 架构、**许可证**，以及 **更新内容**。**更新内容** 就是界面语言那一份 README 的 [更新日志](#更新日志)（中文界面显示的是本文件的更新日志）。最新的版本是展开的；更早的版本折叠在 **更早的版本** 下面。
 
-![电脑上的关于 Xexam 页面](docs/zh-CN/screenshots/desktop-8-about.png)
+![电脑上的关于 Xexam 页面](../docs/zh-CN/screenshots/desktop-8-about.png)
 
 ### 在 iPhone 上使用
 
@@ -313,10 +313,10 @@ ssh -L 8765:127.0.0.1:8765 用户名@服务器地址
 
 <table>
 <tr>
-<td width="25%"><img src="docs/zh-CN/screenshots/iphone-1-home.png" alt="iPhone 上的主页"></td>
-<td width="25%"><img src="docs/zh-CN/screenshots/iphone-2-quiz.png" alt="iPhone 上的答题页"></td>
-<td width="25%"><img src="docs/zh-CN/screenshots/iphone-3-menu.png" alt="iPhone 上打开的菜单"></td>
-<td width="25%"><img src="docs/zh-CN/screenshots/iphone-4-records.png" alt="iPhone 上的学习记录"></td>
+<td width="25%"><img src="../docs/zh-CN/screenshots/iphone-1-home.png" alt="iPhone 上的主页"></td>
+<td width="25%"><img src="../docs/zh-CN/screenshots/iphone-2-quiz.png" alt="iPhone 上的答题页"></td>
+<td width="25%"><img src="../docs/zh-CN/screenshots/iphone-3-menu.png" alt="iPhone 上打开的菜单"></td>
+<td width="25%"><img src="../docs/zh-CN/screenshots/iphone-4-records.png" alt="iPhone 上的学习记录"></td>
 </tr>
 <tr>
 <td>主页：<b>开始考试</b> 固定在屏幕底部，上面一行是当前范围、<b>题数</b> 和 <b>打乱顺序</b>。</td>
@@ -505,7 +505,7 @@ docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-202611
 docker compose up -d
 ```
 
-第 3 步也可以换成恢复你升级时自己做的 `.tgz`（见 [备份和恢复](#备份和恢复)）。⚠️ **不要跳过恢复副本、直接在有多个题库的数据库上运行 v0.4**：v0.4 会把所有题库当成一个，它的下一次导入会把其他所有题库的题都下架，而且它会把考试记录删减到 60 条。详见 [docs/zh-CN/migration.md](docs/zh-CN/migration.md) 和 [docs/zh-CN/database.md](docs/zh-CN/database.md) 第 6 节。
+第 3 步也可以换成恢复你升级时自己做的 `.tgz`（见 [备份和恢复](#备份和恢复)）。⚠️ **不要跳过恢复副本、直接在有多个题库的数据库上运行 v0.4**：v0.4 会把所有题库当成一个，它的下一次导入会把其他所有题库的题都下架，而且它会把考试记录删减到 60 条。详见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 和 [docs/zh-CN/database.md](../docs/zh-CN/database.md) 第 6 节。
 
 ### 从更早的版本（v0.2.x，Python 单镜像）升级
 
@@ -517,7 +517,7 @@ docker compose up -d
 4. 换上新的 `docker-compose.yml`，再运行 `docker compose pull` 和 `docker compose up -d`。第一次启动时会把数据库迁移到 schema v2，过程和上面写的完全一样（会在 `backups/` 里留一份副本）。
 5. 打开 <http://localhost:8765>，核对题数、错题数和成绩历史和升级前一样。
 
-想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以从 GHCR 拉取（私有：先 `docker login ghcr.io`；Docker Hub 上没有它）。启动它之前，先从 `backups/`（或你自己的备份）恢复 schema 1 的副本。详见 [docs/zh-CN/migration.md](docs/zh-CN/migration.md)。
+想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以从 GHCR 拉取（私有：先 `docker login ghcr.io`；Docker Hub 上没有它）。启动它之前，先从 `backups/`（或你自己的备份）恢复 schema 1 的副本。详见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
 
 ---
 
@@ -557,7 +557,7 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/x
 docker compose start
 ```
 
-换电脑：在新电脑上放好新的 `docker-compose.yml`（不用登录，镜像来自 Docker Hub），先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/zh-CN/database.md](docs/zh-CN/database.md)。
+换电脑：在新电脑上放好新的 `docker-compose.yml`（不用登录，镜像来自 Docker Hub），先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/zh-CN/database.md](../docs/zh-CN/database.md)。
 
 ### 迁移更早版本的学习记录（`progress.json`）
 
@@ -645,7 +645,7 @@ XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
 
 ## 架构
 
-下面的图都是 [Mermaid](https://mermaid.js.org/) 写的，GitHub 上直接显示成图。完整说明见 [docs/zh-CN/architecture.md](docs/zh-CN/architecture.md)。
+下面的图都是 [Mermaid](https://mermaid.js.org/) 写的，GitHub 上直接显示成图。完整说明见 [docs/zh-CN/architecture.md](../docs/zh-CN/architecture.md)。
 
 ### 谁和谁连着
 
@@ -669,7 +669,7 @@ flowchart TB
 | `xexam-frontend` | Nginx + 前端静态文件（HTML / JS / CSS）。把 `/api/` 转给后端；20 MB 上限、安全头、限流、超时 | 是：宿主机 `XEXAM_BIND`（默认 `127.0.0.1:8765`）→ 容器 8080 |
 | `xexam-backend` | 一个静态链接的 Rust 可执行文件：REST 接口、解析 Excel、读写 SQLite | **否**：没有 `ports`，网络是 `internal: true` |
 
-浏览器只通过 [REST 接口](docs/zh-CN/api.md) 和后端说话；前端里没有数据库访问。**判分在浏览器里**：对每道题，服务端只收到题目 id、对错，以及（从 v0.5 起）你给出的答案；答案只存下来供回顾用。
+浏览器只通过 [REST 接口](../docs/zh-CN/api.md) 和后端说话；前端里没有数据库访问。**判分在浏览器里**：对每道题，服务端只收到题目 id、对错，以及（从 v0.5 起）你给出的答案；答案只存下来供回顾用。
 
 ### 数据流 A：导入题库（上传 → 预览 → 确认）
 
@@ -718,7 +718,7 @@ sequenceDiagram
 
 ### 数据库：8 张表（schema v2）
 
-`questions`、`stats`、`attempts`、`imports` 和 `meta` 来自 schema v1，它们的建表语句没有变；v0.5 新增了 `banks`、`attempt_items` 和 `settings` 三张表，以及三个列（`questions.bank_id`、`attempts.banks`、`imports.bank_id`）。每个字段的说明见 [docs/zh-CN/database.md](docs/zh-CN/database.md)。
+`questions`、`stats`、`attempts`、`imports` 和 `meta` 来自 schema v1，它们的建表语句没有变；v0.5 新增了 `banks`、`attempt_items` 和 `settings` 三张表，以及三个列（`questions.bank_id`、`attempts.banks`、`imports.bank_id`）。每个字段的说明见 [docs/zh-CN/database.md](../docs/zh-CN/database.md)。
 
 ```mermaid
 erDiagram
@@ -812,7 +812,7 @@ flowchart LR
 
 ## 安全说明
 
-详细的威胁模型和每一条防线见 [docs/zh-CN/security.md](docs/zh-CN/security.md)。要点：
+详细的威胁模型和每一条防线见 [docs/zh-CN/security.md](../docs/zh-CN/security.md)。要点：
 
 - **只有 Nginx 对外**。后端没有发布端口，网络是 `internal: true`（也不能访问外网）。
 - 默认只接受发给本机的请求（检查 `Host`）；放在 Cloudflare 等有身份验证的反向代理后面时，把你的域名写进 `XEXAM_ALLOWED_HOSTS`。写请求还会检查 `Origin` 必须和 `Host` 是同一个主机（或在 `XEXAM_ALLOWED_ORIGINS` 里），防止恶意网页通过你的浏览器操作它。后端只读真实的 `Host` 头，不读 `X-Forwarded-*`。
@@ -828,7 +828,7 @@ flowchart LR
 
 ## 自动构建与发布
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 是**唯一**的流水线。每次推送到 `main` 或 `dev`、每个向 `main` 提的拉取请求（PR），以及在 Actions 页手动运行时，自动做：
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) 是**唯一**的流水线。每次推送到 `main` 或 `dev`、每个向 `main` 提的拉取请求（PR），以及在 Actions 页手动运行时，自动做：
 
 ```mermaid
 flowchart LR
@@ -851,21 +851,21 @@ flowchart LR
 ```
 
 - **触发：** 推送到 `main`（会发布）、推送到 `dev`、向 `main` 提拉取请求，或在 Actions 页面手动运行。只有 `main` 会发布；`dev`、拉取请求和在其他分支上手动运行只检查和测试，**从不发布**。推送到其他分支不会触发流水线。
-- **每次更新必须：** 改 `VERSION`，并在**三份 README**（`README.md`、`README.ja.md`、`README.zh-CN.md`）的更新日志最上面各写一条同版本的记录；`backend/Cargo.toml` 和 `frontend/package.json` 也必须是同一个版本号。否则第 ① 步会失败。
-- **文档检查（也在第 ① 步）：** 七份文档在 `docs/en`、`docs/ja` 和 `docs/zh-CN` 里都有；`docs/` 下只有这三个文件夹；README 和文档里的每个相对链接都指向存在的文件。
+- **每次更新必须：** 改 `VERSION`，并在**三份 README**（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）的更新日志最上面各写一条同版本的记录；`backend/Cargo.toml` 和 `frontend/package.json` 也必须是同一个版本号。否则第 ① 步会失败。
+- **文档检查（也在第 ① 步）：** 七份文档在 `docs/en`、`docs/ja` 和 `docs/zh-CN` 里都有；`docs/` 下只有这三个文件夹；根目录只有 `README.md`，另外两份 README 在 `README/` 里；compose 文件和 `.env.example` 在 `docker/` 里；README 和文档里的每个相对链接和图片路径都指向存在的文件（指向 Releases 等 GitHub 页面的链接必须正好回到仓库页面）。
 - **都通过才发布：** 两个镜像（`xexam-frontend`、`xexam-backend`）各发布成一个多架构镜像，并回头检查镜像清单里确实有 `amd64` 和 `arm64`、标签指向刚推送的那个摘要。测试失败时 `latest` 仍是上一个能用的版本。
 - **发布的标签：** `latest`、`v<VERSION>`、`sha-<提交>`，Docker Hub 和 ghcr.io 上都一样。
 - **后端镜像怎么编 arm64：** 在构建机上用 zig 交叉编译，不在 QEMU 里编 Rust（QEMU 下要慢一个数量级）；只有最后一个很小的 alpine 阶段是目标架构。
-- **Releases 页：** 两个镜像都发布并核对成功之后，自动建（或更新）一个叫 `v<VERSION>` 的 Release，说明文字取自英语 README（`README.md`）更新日志里这个版本的那一段（[`scripts/release-notes.py`](scripts/release-notes.py)），并自动打上同名的 git 标签。镜像没发布成功，就不会有这个 Release。
+- **Releases 页：** 两个镜像都发布并核对成功之后，自动建（或更新）一个叫 `v<VERSION>` 的 Release，说明文字取自英语 README（`README.md`）更新日志里这个版本的那一段（[`scripts/release-notes.py`](../scripts/release-notes.py)），并自动打上同名的 git 标签。镜像没发布成功，就不会有这个 Release。
 - **Releases 和镜像在不同的地方：** 镜像在 **Docker Hub** 上（`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，公开；`docker-compose.yml` 拉取的就是它们），另有一份私有镜像副本在仓库的 **Packages** 里（ghcr.io）；Release 在 **Releases** 页，里面最先列出从 Docker Hub 拉取的命令。这些都由同一次构建一起产生。
 
-发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的 Docker Hub 访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）。没有这两个机密，或者 `docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。ghcr.io 上的镜像是私有的（仓库是私有的）：第一次在那里发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
+发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的 Docker Hub 访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）。没有这两个机密，或者 `docker/docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。ghcr.io 上的镜像是私有的（仓库是私有的）：第一次在那里发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
 
 ---
 
 ## 开发
 
-日常改代码、跑测试用的命令见 [docs/zh-CN/development.md](docs/zh-CN/development.md)。最常用的：
+日常改代码、跑测试用的命令见 [docs/zh-CN/development.md](../docs/zh-CN/development.md)。最常用的：
 
 ```bash
 # 后端（Rust 1.99.1，rustup 会按 backend/rust-toolchain.toml 自动装）
@@ -885,7 +885,7 @@ python -I tests/integration/stack_check.py
 - 后端有 181 个测试，前端有 44 个单元测试。后端的测试对着 `tests/baseline/` 里已提交的**旧版快照**：172 份黄金响应、49 个解析夹具及输出、85 条题目 id 向量。这些夹具全是虚构的，真实题库永远不入库。
 - v0.5 的行为（schema 迁移和备份、题库、记录、设置、新接口上的守卫）在 `backend/tests/v05_banks_records_settings.rs` 里测试。
 - 界面上的所有文字都来自 `frontend/src/i18n/catalog/*.ts`，有英语、中文、日语三种；某种语言缺了一个键，测试会失败；某条后端错误提示没有翻译，另一个测试会失败。
-- **关于 Xexam** 页面显示三份 README 的更新日志。它们在构建前端时读取（`frontend/vite.config.ts` 里的 `xexam-changelog` 插件），所以构建前端时，`frontend/` 的上一级文件夹里要有 `README.md`、`README.ja.md` 和 `README.zh-CN.md`。
+- **关于 Xexam** 页面显示三份 README 的更新日志。它们在构建前端时读取（`frontend/vite.config.ts` 里的 `xexam-changelog` 插件），所以构建前端时，`frontend/` 的上一级文件夹（仓库根目录）里要有 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md`。
 - 用 v0.5 打开 v0.4 或更早版本的数据库，会迁移它，并在旁边写一个 `backups/`。请在副本上做实验。
 
 ---
@@ -893,12 +893,14 @@ python -I tests/integration/stack_check.py
 ## 目录结构
 
 ```
-README.md                  英语版说明（默认）；README.ja.md 是日语版，README.zh-CN.md 是中文版（本文件）
+README.md                  英语版说明（默认）；日语版和中文版在 README/ 里
+README/                    README.ja.md（日语）和 README.zh-CN.md（中文，本文件）
 LICENSE                    MIT 许可证
 VERSION                    版本号（和更新日志最上面一条保持一致）
-docker-compose.yml         拉取两个镜像运行（只需要这一个文件）
-docker-compose.build.yml   从源码构建两个镜像并运行
-.env.example               本机配置模板（复制成 .env；.env 不提交）
+docker/                    Docker Compose 文件（Dockerfile 仍在 backend/ 和 nginx/ 里）
+  docker-compose.yml         拉取两个镜像运行（只需要这一个文件）
+  docker-compose.build.yml   从源码构建两个镜像并运行（构建上下文是仓库根目录）
+  .env.example               本机配置模板（复制成 docker/.env；.env 不提交）
 backend/                   Rust 后端（Axum + rusqlite）
   src/api/                   路由、守卫（Host / Origin / Content-Type / 体积）、JSON 格式、成绩清洗
   src/services/              待确认导入的槽位、解析引擎接口、导入流程
@@ -928,7 +930,7 @@ scripts/release-notes.py   从更新日志生成 GitHub Release 的说明（CI �
 
 ## 许可证
 
-Xexam 以 [MIT 许可证](LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
+Xexam 以 [MIT 许可证](../LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 
 许可证适用于本仓库里的软件。仓库里没有任何考试题目：你导入的题库是你自己的文件，你要自己确认有权使用它们。
 
@@ -968,8 +970,8 @@ Xexam 以 [MIT 许可证](LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 - **界面设置页**：主题（跟随系统 / 浅色 / 深色）、界面语言（默认 English，另有中文、日本語）、答完自动跳到下一题（单选题，以及每个小项都答完的热点题；多选题永远不会自动跳转）、恢复默认设置。设置和题目语言保存在服务器的数据目录里，所以重启、更新镜像、清除浏览器缓存、换别的浏览器或设备之后都还在。没交卷的考试仍然只保存在当前浏览器里。
 - **整个界面都有英语、中文、日语三种**，包括答题页和服务器返回的错误提示（后端仍然用中文发送，由页面翻译）。
 - **更适合手机**：主页上的开始考试按钮固定在屏幕底部，列表更紧凑，答题卡把已答题数和交卷按钮放在题目小方块上面，触控区域至少 44 px。
-- **数据库 schema v2**：新增 `banks`、`attempt_items`、`settings` 三张表，以及 `questions.bank_id`、`attempts.banks`、`imports.bank_id` 三个列。v0.5 第一次启动时会自动迁移现有的数据库；迁移之前，先把一份副本写到 `<数据目录>/backups/xexam-schema1-<日期时间>.db`（副本写不出来时，后端不会启动，也不会改动任何东西）。现有的数据变成一个题库；题目 id、错题本和成绩历史都保留。回退 = 停止、恢复那份副本、运行 v0.4。不要在有多个题库的数据库上运行 v0.4。步骤见 [docs/zh-CN/migration.md](docs/zh-CN/migration.md)。
-- **新接口**：`GET /api/banks`、`POST /api/banks/delete`、`GET /api/records`、`GET /api/record?id=`、`POST /api/records/delete`、`GET` / `POST /api/settings`、`POST /api/settings/reset`，以及 `POST /api/upload` 上可选的请求头 `X-Bank-Target`（不带它时，上传的行为和 v0.4 完全一样）。`GET /api/bank` 里的每道题多了一个键 `bank`。见 [docs/zh-CN/api.md](docs/zh-CN/api.md)。
+- **数据库 schema v2**：新增 `banks`、`attempt_items`、`settings` 三张表，以及 `questions.bank_id`、`attempts.banks`、`imports.bank_id` 三个列。v0.5 第一次启动时会自动迁移现有的数据库；迁移之前，先把一份副本写到 `<数据目录>/backups/xexam-schema1-<日期时间>.db`（副本写不出来时，后端不会启动，也不会改动任何东西）。现有的数据变成一个题库；题目 id、错题本和成绩历史都保留。回退 = 停止、恢复那份副本、运行 v0.4。不要在有多个题库的数据库上运行 v0.4。步骤见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
+- **新接口**：`GET /api/banks`、`POST /api/banks/delete`、`GET /api/records`、`GET /api/record?id=`、`POST /api/records/delete`、`GET` / `POST /api/settings`、`POST /api/settings/reset`，以及 `POST /api/upload` 上可选的请求头 `X-Bank-Target`（不带它时，上传的行为和 v0.4 完全一样）。`GET /api/bank` 里的每道题多了一个键 `bank`。见 [docs/zh-CN/api.md](../docs/zh-CN/api.md)。
 - **文档按语言分开**：`docs/en`、`docs/ja` 和 `docs/zh-CN`；只有中文的历史文档移到了 `docs/zh-CN/history`。每个语言文件夹都有自己的截图，截图里的界面就是那种语言。CI 会检查这个结构和每一个相对链接。
 - **推送到 `dev` 分支时也会跑 CI**（只检查和测试，从不发布）。
 - README、文档和四列格式解析测试里的 Excel 示例都换成了虚构的示例；`tests/baseline/` 里的旧版测试快照没有改动。较早的更新日志条目里，只改了链接（指向新的文档文件夹）和一组示例词。
@@ -996,12 +998,12 @@ Xexam 以 [MIT 许可证](LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 - **后端改成 Rust**（Axum 0.8 + Tokio + rusqlite，工具链固定 1.99.1）：REST 接口、XLSX 解析、导入（预览不写库 → 一次性确认码 → 一个事务写入）、成绩与错题统计、Host/Origin 守卫、`xexam-backend import / healthcheck / migrate-progress` 子命令。行为与 Python 版一一对应：172 份旧版响应逐项对照没有未解释的差异；49 个合成工作簿的解析输出、85 条题目 id 向量全部一致，所以题目 id 与旧版逐字节相同、学习记录不会脱钩。
 - **前端改成 TypeScript**（strict）+ **Vite**，原生 DOM、没有框架；没有内联样式，所以 CSP 可以很严。构建目标 `safari15`，iPhone 需要 iOS 15.4 以上。
 - **两个镜像、两个容器**：`xexam-frontend`（Nginx + 前端静态文件，唯一对外）和 `xexam-backend`（Rust，在 `internal` 私有网络里不发布端口）。非 root、`cap_drop: ALL`、只读根文件系统；Host 原样透传、`X-Forwarded-*` 清空；20 MB 上限、安全头、限流、超时；后端不可达时返回 JSON 502。两个镜像都同时有 `amd64` 和 `arm64`。
-- **更严的上传检查（有意的差异）**：任何编码 / 扩展名里的 DOCTYPE 和实体声明都拒绝；重复的 ZIP 条目名拒绝；ZIP 条目数、XML 深度 / 节点数 / 每元素属性数、单元格总字节数有上限；解析有协作式的超时（到了解析器自己停下）且同时最多 2 个；错误文案不再回显库的异常文本；不支持的 HTTP 方法回 405（以前是 501）。完整差异表见 [docs/zh-CN/api.md](docs/zh-CN/api.md)。
+- **更严的上传检查（有意的差异）**：任何编码 / 扩展名里的 DOCTYPE 和实体声明都拒绝；重复的 ZIP 条目名拒绝；ZIP 条目数、XML 深度 / 节点数 / 每元素属性数、单元格总字节数有上限；解析有协作式的超时（到了解析器自己停下）且同时最多 2 个；错误文案不再回显库的异常文本；不支持的 HTTP 方法回 405（以前是 501）。完整差异表见 [docs/zh-CN/api.md](../docs/zh-CN/api.md)。
 - **一个流水线**（`.github/workflows/ci.yml`）：检查版本和更新日志 → 前端 / 后端 / Nginx 与整栈 / arm64 四组检查 → 都通过才发布两个镜像并建 Release。
 - **测试**：后端 136 个（对着已提交的旧版快照：172 份黄金响应、49 个解析夹具、85 条 id 向量）、前端 19 个；`tests/integration/` 里 Nginx 38 项、整栈 34 项、`progress.json` 迁移 10 项。
 - **文档**：`docs/` 下的架构、API（含 OpenAPI）、数据库、安全、部署、迁移、开发，以及迁移前的审计、风险和计划。
-- 判分仍在浏览器里（服务端只收 `{题目 id, 对错}`），理由见 [docs/zh-CN/history/migration-plan.md](docs/zh-CN/history/migration-plan.md)。
-- ⚠️ **升级注意**：新旧版容器名和端口相同，**不能同时运行**，升级前先 `docker compose stop`；数据卷 `xexam_data` 是同一个，数据不用迁移。旧的单镜像 `ghcr.io/yumin-space/xexam` 不再更新（最后是 `v0.2.2`），`docker-compose.yml` 现在一次拉取 `xexam-frontend` 和 `xexam-backend` 两个。回滚步骤见 [docs/zh-CN/migration.md](docs/zh-CN/migration.md)。
+- 判分仍在浏览器里（服务端只收 `{题目 id, 对错}`），理由见 [docs/zh-CN/history/migration-plan.md](../docs/zh-CN/history/migration-plan.md)。
+- ⚠️ **升级注意**：新旧版容器名和端口相同，**不能同时运行**，升级前先 `docker compose stop`；数据卷 `xexam_data` 是同一个，数据不用迁移。旧的单镜像 `ghcr.io/yumin-space/xexam` 不再更新（最后是 `v0.2.2`），`docker-compose.yml` 现在一次拉取 `xexam-frontend` 和 `xexam-backend` 两个。回滚步骤见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
 - **没有验证的东西（如实写）**：真正的 Cloudflare 隧道、iPhone 真机、在真正的 ARM 硬件上运行（只在 QEMU 下构建并启动验证过）、用你自己真实数据库的副本演练。
 
 ### v0.2.2 — 2026-11-10

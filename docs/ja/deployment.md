@@ -17,7 +17,7 @@
 
 ### 公開済みのイメージを pull する（推奨）
 
-必要なのは、リポジトリにある [`docker-compose.yml`](../../docker-compose.yml) というこの 1 つのファイルだけです。このファイルは 2 つのイメージを Docker Hub（`docker.io/yuminspace/xexam-backend` と `docker.io/yuminspace/xexam-frontend`）から pull します。そこでは公開されているので、`docker login` は必要ありません。同じタグは、非公開のミラーとして `ghcr.io/yumin-space/` にもあります（こちらは、`read:packages` を付けた classic の GitHub トークンで `docker login ghcr.io` する必要があります）。
+必要なのは、リポジトリの `docker/` フォルダにある [`docker-compose.yml`](../../docker/docker-compose.yml) というこの 1 つのファイルだけです。専用のフォルダにダウンロードして（例：`curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml`）、そのフォルダでコマンドを実行します。このファイルは 2 つのイメージを Docker Hub（`docker.io/yuminspace/xexam-backend` と `docker.io/yuminspace/xexam-frontend`）から pull します。そこでは公開されているので、`docker login` は必要ありません。同じタグは、非公開のミラーとして `ghcr.io/yumin-space/` にもあります（こちらは、`read:packages` を付けた classic の GitHub トークンで `docker login ghcr.io` する必要があります）。
 
 ```bash
 # docker login は不要です：イメージは Docker Hub で公開されています
@@ -31,28 +31,28 @@ docker compose up -d
 ```bash
 git clone git@github.com:Yumin-Space/xexam.git
 cd xexam
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
-初回のビルドには数分かかります（Rust とフロントエンドをコンパイルするため）。2 回目以降はキャッシュが効きます。
+初回のビルドには数分かかります（Rust とフロントエンドをコンパイルするため）。2 回目以降はキャッシュが効きます。クローンしたリポジトリでは、compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルートをビルドコンテキストにします。以下のコマンドは、リポジトリのルートで `-f docker/docker-compose.build.yml` を付けて実行してください（例：`docker compose -f docker/docker-compose.build.yml logs -f`）。
 
-フロントエンドのイメージのビルドでは、3 つの README（`README.md`、`README.ja.md`、`README.zh-CN.md`）も使います。`nginx/Dockerfile` がビルド段階でこれらをコピーし（`COPY README.md README.ja.md README.zh-CN.md /`）、その更新履歴を「Xexam について」のページに組み込みます。そのため `.dockerignore` はこの 3 つを除外していません。完成したイメージに入るのはビルドした静的ファイルだけです。
+フロントエンドのイメージのビルドでは、3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）も使います。`nginx/Dockerfile` がビルド段階でこれらをコピーし（`COPY README.md /` と `COPY README/README.ja.md README/README.zh-CN.md /README/`）、その更新履歴を「Xexam について」のページに組み込みます。そのため `.dockerignore` は `README.md` と `README/` を除外していません。完成したイメージに入るのはビルドした静的ファイルだけです。
 
 | 操作 | コマンド |
 |---|---|
 | 状態を見る | `docker compose ps`（2 つのコンテナとも `healthy` になっているはずです） |
 | ログを見る | `docker compose logs -f` |
 | 停止 / 再起動 | `docker compose stop` / `docker compose start` |
-| 最新バージョンに更新 | `docker compose pull && docker compose up -d`（ソースからビルドした場合：`git pull && docker compose -f docker-compose.build.yml up -d --build`）。お使いの `docker-compose.yml` にまだ `ghcr.io` と書かれている場合（v0.5.1 より前のファイル）は、先に新しいファイルに差し替えてください。データボリュームはそのまま残ります。v0.4 から更新する場合は、先に第 6 節を読んでください |
+| 最新バージョンに更新 | `docker compose pull && docker compose up -d`（ソースからビルドした場合：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。お使いの `docker-compose.yml` にまだ `ghcr.io` と書かれている場合（v0.5.1 より前のファイル）は、先に新しいファイルに差し替えてください。データボリュームはそのまま残ります。v0.4 から更新する場合は、先に第 6 節を読んでください |
 | バージョンとアーキテクチャ | <http://localhost:8765/api/info> |
 
 > ⚠️ `docker compose down -v` は実行しないでください。`-v` を付けるとデータボリューム `xexam_data` が削除されます。問題集とすべての学習記録は、このボリュームに入っています。
 
-**`docker-compose.yml` と `docker-compose.build.yml` は、同じプロジェクト名（`xexam`）、同じボリューム（`xexam_data`）、同じコンテナ名を使います**。そのため、両者を同時に実行することはできません。切り替える前に `docker compose stop` を実行してください。データは共通です。詳しくは [migration.md](migration.md) を参照してください。
+**`docker/docker-compose.yml` と `docker/docker-compose.build.yml` は、同じプロジェクト名（`xexam`）、同じボリューム（`xexam_data`）、同じコンテナ名を使います**。そのため、両者を同時に実行することはできません。切り替える前に `docker compose stop` を実行してください。データは共通です。詳しくは [migration.md](migration.md) を参照してください。
 
 ## 3. 設定（`.env`）
 
-`docker-compose.yml` と同じ場所に `.env` を作成します（コミットされず、イメージにも含まれません。テンプレートは [`.env.example`](../../.env.example) です）：
+`docker-compose.yml` と同じ場所に `.env` を作成します。クローンしたリポジトリでは `docker/.env` です。リポジトリのルートから `-f docker/...` を付けて実行しても、Compose はこのファイルを読みます（以前にクローンしたリポジトリでルートに `.env` がある場合は、`docker/` に移動してください）。コミットされず、イメージにも含まれません。テンプレートは [`.env.example`](../../docker/.env.example) です：
 
 | 変数 | 既定 | 役割 |
 |---|---|---|
@@ -113,7 +113,7 @@ Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**�
 
 ## 6. v0.4 から v0.5 へのアップグレード
 
-デプロイの面では、v0.5 でもイメージは同じ 2 つで、ポートとボリュームも同じです。新しい環境変数もありません。変わるのは画面（三本線のボタンで開くメニュー、問題集、学習記録、設定、「Xexam について」のページ）、データベースのスキーマ、そして v0.5.1 からはレジストリです。新しい `docker-compose.yml` は、`ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から pull します。プロジェクト名とボリューム `xexam_data` は変わらないので、レジストリを切り替えてもデータはすべて残ります。ソースからビルドする場合もコマンドは同じです。フロントエンドのイメージは、3 つの README も読み込むようになりました（第 2 節）。
+デプロイの面では、v0.5 でもイメージは同じ 2 つで、ポートとボリュームも同じです。新しい環境変数もありません。変わるのは画面（三本線のボタンで開くメニュー、問題集、学習記録、設定、「Xexam について」のページ）、データベースのスキーマ、そして v0.5.1 からはレジストリです。新しい `docker-compose.yml` は、`ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から pull します。プロジェクト名とボリューム `xexam_data` は変わらないので、レジストリを切り替えてもデータはすべて残ります。ソースからビルドする場合は第 2 節のコマンドを使います。compose ファイルは `docker/` に移ったので、リポジトリのルートにある `.env` は `docker/.env` に移動してください（Compose はルートの `.env` を読まなくなりました）。フロントエンドのイメージは、3 つの README も読み込むようになりました（第 2 節）。
 
 1. まずボリュームをバックアップします。手順は [database.md](database.md) の第 5 節のとおりです。プログラム自身もコピーを書き出しますが、ボリュームの外にもコピーがあるほうが安全です。
 2. お使いの `docker-compose.yml` を新しいファイルに差し替えてから（または、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更してから）、いつもどおりに更新します：`docker compose pull && docker compose up -d`。
@@ -145,4 +145,4 @@ v0.4 への**ロールバック**は、そのコピーを復元して、v0.4 の
 
 `main` にプッシュすると、[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) がまずバージョン、変更履歴、ドキュメントの検査を行い、続いて 4 グループの検査（フロントエンド、バックエンド、Nginx と全スタック、arm64）を実行します。すべて通過した場合にだけ、`xexam-frontend` と `xexam-backend` の 2 つのイメージ（amd64 + arm64）を Docker Hub（`docker.io/yuminspace/`、公開）と、非公開のミラーとして `ghcr.io/yumin-space/` に公開します。タグはどちらも `latest`、`v<VERSION>`、`sha-<コミット>` で、対応する GitHub Release も作成します（そのリリースノートには、Docker Hub からの pull コマンドが最初に載ります）。`dev` へのプッシュと `main` へのプルリクエストでは、同じ検査を行うだけで、公開はしません。詳しくは [development.md](development.md) の第 7 節を参照してください。
 
-Docker Hub には、リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（**Read & Write** の権限を持つアクセストークン）の 2 つが必要で、必要に応じてリポジトリ変数 `DOCKERHUB_NAMESPACE` も設定できます。シークレットがない場合や、`docker-compose.yml` がその名前空間の Docker Hub のイメージを指していない場合、公開ジョブは何もプッシュせずに止まります。ghcr.io では、新しいイメージ名を初めて公開するときに、GitHub のパッケージ設定で、このリポジトリを **Manage Actions access** に追加し、ロールとして **Admin** を選んでください。そうしないとプッシュが拒否されます（`permission_denied: write_package`）。
+Docker Hub には、リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（**Read & Write** の権限を持つアクセストークン）の 2 つが必要で、必要に応じてリポジトリ変数 `DOCKERHUB_NAMESPACE` も設定できます。シークレットがない場合や、`docker/docker-compose.yml` がその名前空間の Docker Hub のイメージを指していない場合、公開ジョブは何もプッシュせずに止まります。ghcr.io では、新しいイメージ名を初めて公開するときに、GitHub のパッケージ設定で、このリポジトリを **Manage Actions access** に追加し、ロールとして **Admin** を選んでください。そうしないとプッシュが拒否されます（`permission_denied: write_package`）。

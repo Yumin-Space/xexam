@@ -34,7 +34,7 @@ test('inlineTokens splits bold, code and links and keeps the rest as text', () =
 test('the three READMEs have a changelog whose newest entry equals VERSION', () => {
   const root = new URL('../../../', import.meta.url);
   const version = readFileSync(new URL('VERSION', root), 'utf8').trim();
-  for (const f of ['README.md', 'README.ja.md', 'README.zh-CN.md']) {
+  for (const f of ['README.md', 'README/README.ja.md', 'README/README.zh-CN.md']) {
     const e = parseChangelog(readFileSync(new URL(f, root), 'utf8'));
     assert.ok(e.length > 3, `${f}: changelog entries found`);
     assert.equal(e[0]?.version, version, `${f}: newest entry`);

@@ -52,7 +52,7 @@ docker compose logs backend
 
 The log should contain a line like `Upgraded the database to schema 2. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`. The program writes that copy itself; the `.tgz` from step 1 is your own second copy, outside the volume.
 
-For a source build: `git pull && docker compose -f docker-compose.build.yml up -d --build`. Without Docker, the copy goes to `backups/` inside the data directory (`--data` or `XEXAM_DATA`).
+For a source build: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`, from the repository root. The compose files are now in `docker/`: before that command, move a `.env` at the repository root to `docker/.env` (Compose no longer reads it at the root), and add `-f docker/docker-compose.build.yml` to the later commands, such as `logs backend`. Without Docker, the copy goes to `backups/` inside the data directory (`--data` or `XEXAM_DATA`).
 
 ### 1.3 Checks after the upgrade
 
@@ -82,7 +82,7 @@ docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-202611
 docker compose up -d
 ```
 
-For a source build, check out the tag instead: `git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build`.
+For a source build, check out the tag instead: `git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build` (at that tag the compose files are still at the repository root, and Compose reads `.env` from there: if you have a `docker/.env`, copy it to the repository root first).
 
 Instead of step 3 you can also restore your own `.tgz` from section 1.2 (the restore command is in section 5 of [database.md](database.md)); it holds the same data. Step 4 is needed either way.
 

@@ -42,7 +42,7 @@ npm run dev            # http://127.0.0.1:5173, /api is proxied to http://127.0.
 
 - While developing, open the page via `localhost` or `127.0.0.1`. The Vite proxy's `changeOrigin` must be `false`: the backend compares `Host` with `Origin`, and rewriting `Host` makes write requests fail with 403.
 - When the backend is not at the default address: `XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`.
-- The About page shows the changelogs of `README.md`, `README.ja.md` and `README.zh-CN.md`. The `xexam-changelog` plugin in `vite.config.ts` reads them from the folder above `frontend/` when the frontend is built (and in `npm run dev` when the About page is first opened), so they must be there. The build stops with an error when one of them has no changelog entry (`### vX.Y — date`).
+- The About page shows the changelogs of `README.md`, `README/README.ja.md` and `README/README.zh-CN.md`. The `xexam-changelog` plugin in `vite.config.ts` reads them from the folder above `frontend/` (the repository root) when the frontend is built (and in `npm run dev` when the About page is first opened), so they must be there. The build stops with an error when one of them has no changelog entry (`### vX.Y — date`).
 - To run one test file: `node --experimental-strip-types --test src/i18n/server-messages.test.ts`.
 - Import paths use the `.ts` extension (required by Node's built-in test runner).
 - TypeScript is pinned to `~5.9.3`.
@@ -82,7 +82,7 @@ Backend error messages are Chinese and stable (they are part of the tested API).
 
 ```bash
 # Build and start the two containers (same xexam_data volume! Your own data will be used; to experiment, use another project name: -p some-other-name)
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 
 # The check scripts all use temporary project names and temporary volumes, and never touch xexam_data
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
@@ -91,7 +91,7 @@ python -I tests/integration/stack_check.py                      # 34 checks, sta
 python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 checks: migration of an old progress.json (run cargo build first)
 ```
 
-The frontend image is built from the repository root. `nginx/Dockerfile` copies the three READMEs into its Node build stage (`COPY README.md README.ja.md README.zh-CN.md /`), because the About page's changelog is built from them; for the same reason `.dockerignore` no longer excludes `README.md`. Only the built static files go into the final image.
+The compose files and `.env` are in `docker/`; `docker/docker-compose.build.yml` uses the repository root (`..`) as its build context. The frontend image is built from the repository root. `nginx/Dockerfile` copies the three READMEs into its Node build stage (`COPY README.md /` and `COPY README/README.ja.md README/README.zh-CN.md /README/`), because the About page's changelog is built from them; for the same reason `.dockerignore` keeps `README.md` and `README/` in the build context. Only the built static files go into the final image.
 
 ## 5. Comparing against the legacy version (regression)
 
@@ -121,12 +121,12 @@ There is only one pipeline: [`.github/workflows/ci.yml`](../../.github/workflows
 
 | Job | What it does |
 |---|---|
-| `check` | `VERSION` format; the newest changelog entry of each of the three READMEs = `VERSION`; `backend/Cargo.toml` and `frontend/package.json` carry the same version; the docs check (section 8) |
+| `check` | `VERSION` format; the newest changelog entry of each of the three READMEs = `VERSION`; `backend/Cargo.toml` and `frontend/package.json` carry the same version; the layout (only `README.md` at the root, the other two READMEs in `README/`, the compose files and `.env.example` in `docker/`) and the docs check (section 8) |
 | `frontend` | Type check, 44 unit tests, build |
 | `backend` | fmt, clippy, 181 tests, and the `progress.json` migration check |
 | `stack` | Builds the `xexam-frontend` image and runs 38 Nginx checks; starts the full compose stack and runs 34 end-to-end checks |
 | `arm64` | Builds both images for arm64, starts them under QEMU, and checks that `/api/info` reports `aarch64` and the right version |
-| `publish` | `main` only: pushes both images (amd64 + arm64) with the same tags to Docker Hub (`docker.io/yuminspace/`, public, what `docker-compose.yml` pulls) and to ghcr.io (private mirror), and verifies the manifest and tags on both. Needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (optionally the variable `DOCKERHUB_NAMESPACE`); without them it stops before pushing anything |
+| `publish` | `main` only: pushes both images (amd64 + arm64) with the same tags to Docker Hub (`docker.io/yuminspace/`, public, what `docker/docker-compose.yml` pulls) and to ghcr.io (private mirror), and verifies the manifest and tags on both. Needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (optionally the variable `DOCKERHUB_NAMESPACE`); without them it stops before pushing anything |
 | `release` | `main` only: creates (or updates) the GitHub Release for `v<VERSION>`, with the notes taken from the changelog in `README.md` |
 
 Pushes to `dev` and pull requests into `main` run only the first five jobs and **never publish**; only a push to `main` does. A run started by hand behaves like a push to the branch it runs on.
@@ -138,12 +138,12 @@ Pushes to `dev` and pull requests into `main` run only the first five jobs and *
 - `docs/en/openapi.yaml` is shared by all languages; the Japanese and Chinese docs link to `../en/openapi.yaml`.
 - Every document starts with a language bar that links the same document in the other two folders. Links are relative to the file's own folder: the repository root is `../../`.
 - Change the English document first, then the Japanese and Chinese ones in the same change.
-- The CI `check` job fails when one of the seven documents is missing in a language folder, when `docs/` contains anything other than the `en`, `ja` and `zh-CN` folders, or when a relative link in a README or a doc points at a file that does not exist.
+- The CI `check` job fails when one of the seven documents is missing in a language folder, when `docs/` contains anything other than the `en`, `ja` and `zh-CN` folders, or when a relative link or image path in a README or a doc points at a file that does not exist. Links to GitHub pages (`../../releases` and the like) are checked too: they must climb exactly to the repository page, so inside `README/` they start with `../../../`.
 
 ## 9. Version, changelog and licence
 
 - The single source of truth for the version number is `VERSION` in the repository root (`0.5.1`). `backend/Cargo.toml` and `frontend/package.json` each hold a copy (`0.5.1`); CI checks that they match.
-- Every update adds an entry at the very top of the changelog in all three READMEs (`README.md`, `README.ja.md`, `README.zh-CN.md`), with a version number that matches `VERSION`. CI checks this. The GitHub Release notes are taken from the English one.
+- Every update adds an entry at the very top of the changelog in all three READMEs (`README.md`, `README/README.ja.md`, `README/README.zh-CN.md`), with a version number that matches `VERSION`. CI checks this. The GitHub Release notes are taken from the English one.
 - The About page of the app shows these changelogs, built into the frontend (section 3). Keep the entries in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``; links to files in the repository are shown there as plain text. A changed changelog appears in the app only after the frontend is built again.
 - Work happens on `dev`; `main` receives the merge, and a push to `main` publishes the images and the Release.
 - The project is under the MIT licence (`LICENSE` in the repository root).

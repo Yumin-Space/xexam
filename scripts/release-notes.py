@@ -4,7 +4,7 @@
 append how to pull the two images.
 
 usage:  python3 scripts/release-notes.py <version, e.g. 0.4> <image prefixes, e.g. docker.io/name,ghcr.io/yumin-space> [README path]  > notes.md
-The first prefix is the main registry (the one docker-compose.yml pulls from); any further ones are listed as mirrors.
+The first prefix is the main registry (the one docker/docker-compose.yml pulls from); any further ones are listed as mirrors.
 The release job of the pipeline runs this; you can also run it locally to preview what the Releases page will show.
 Exits with status 1 if the version has no changelog entry (instead of publishing an empty release)."""
 import re
@@ -43,7 +43,7 @@ def main():
     print('**Images** (two: the Nginx frontend and the Rust backend; `amd64` and `arm64` are in the same tag, the right one is picked on pull)')
     print()
     print('```bash')
-    print('# Recommended: pull and start both with the docker-compose.yml in the repository')
+    print('# Recommended: in the folder that holds docker-compose.yml, pull and start both (from the root of a clone, add -f docker/docker-compose.yml)')
     print('docker compose pull && docker compose up -d')
     print()
     print('# Or pull them one by one, pinned to this version')
@@ -56,7 +56,7 @@ def main():
         print('docker pull %s/xexam-backend:v%s' % (m, version))
     print('```')
     print()
-    print('Full documentation: [English](../../blob/main/README.md) · [日本語](../../blob/main/README.ja.md) · [简体中文](../../blob/main/README.zh-CN.md)')
+    print('Full documentation: [English](../../blob/main/README.md) · [日本語](../../blob/main/README/README.ja.md) · [简体中文](../../blob/main/README/README.zh-CN.md)')
 
 
 main()

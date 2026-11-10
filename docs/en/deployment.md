@@ -17,7 +17,7 @@
 
 ### Pull the prebuilt images (recommended)
 
-You only need one file from the repository, [`docker-compose.yml`](../../docker-compose.yml). It pulls the two images from Docker Hub (`docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-frontend`), where they are public, so no `docker login` is needed. The same tags are also on `ghcr.io/yumin-space/` as a private mirror (that one needs `docker login ghcr.io` with a classic GitHub token that has `read:packages`).
+You only need one file from the repository, [`docker-compose.yml`](../../docker/docker-compose.yml) in the `docker/` folder (download it into a folder of its own, for example with `curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml`, and run the commands in that folder). It pulls the two images from Docker Hub (`docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-frontend`), where they are public, so no `docker login` is needed. The same tags are also on `ghcr.io/yumin-space/` as a private mirror (that one needs `docker login ghcr.io` with a classic GitHub token that has `read:packages`).
 
 ```bash
 # no docker login needed: the images are public on Docker Hub
@@ -31,28 +31,28 @@ docker compose up -d
 ```bash
 git clone git@github.com:Yumin-Space/xexam.git
 cd xexam
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
-The first build takes a few minutes (it compiles Rust and the frontend); later builds use the cache.
+The first build takes a few minutes (it compiles Rust and the frontend); later builds use the cache. In a clone, the compose files and `.env` are in `docker/`; `docker/docker-compose.build.yml` builds with the repository root as its context. Run the commands below from the repository root with `-f docker/docker-compose.build.yml` added (for example `docker compose -f docker/docker-compose.build.yml logs -f`).
 
-The frontend image needs the three READMEs: the **About Xexam** page shows their changelogs, and they are built into the frontend. `nginx/Dockerfile` therefore copies `README.md`, `README.ja.md` and `README.zh-CN.md` into its build stage, and `.dockerignore` no longer excludes `README.md`. Only the built static files go into the final image.
+The frontend image needs the three READMEs: the **About Xexam** page shows their changelogs, and they are built into the frontend. `nginx/Dockerfile` therefore copies `README.md`, `README/README.ja.md` and `README/README.zh-CN.md` into its build stage, and `.dockerignore` keeps `README.md` and `README/` in the build context. Only the built static files go into the final image.
 
 | Action | Command |
 |---|---|
 | Check status | `docker compose ps` (both containers should be `healthy`) |
 | View logs | `docker compose logs -f` |
 | Stop / start again | `docker compose stop` / `docker compose start` |
-| Update to the latest version | `docker compose pull && docker compose up -d` (for a source build: `git pull && docker compose -f docker-compose.build.yml up -d --build`). If your `docker-compose.yml` still names `ghcr.io` (files from before v0.5.1), replace it with the new one first; the data volume stays. Coming from v0.4: read section 6 first |
+| Update to the latest version | `docker compose pull && docker compose up -d` (for a source build: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`). If your `docker-compose.yml` still names `ghcr.io` (files from before v0.5.1), replace it with the new one first; the data volume stays. Coming from v0.4: read section 6 first |
 | Version and architecture | <http://localhost:8765/api/info>, or in the app: menu → **Xexam v0.5.1** (the About page) |
 
 > ⚠️ Do not run `docker compose down -v`: `-v` deletes the data volume `xexam_data`, which holds the question bank and all study records.
 
-**`docker-compose.yml` and `docker-compose.build.yml` use the same project name (`xexam`), the same volume (`xexam_data`) and the same container names**, so the two cannot run at the same time; run `docker compose stop` before switching. The data is shared between them; see [migration.md](migration.md).
+**`docker/docker-compose.yml` and `docker/docker-compose.build.yml` use the same project name (`xexam`), the same volume (`xexam_data`) and the same container names**, so the two cannot run at the same time; run `docker compose stop` before switching. The data is shared between them; see [migration.md](migration.md).
 
 ## 3. Configuration (`.env`)
 
-Create a `.env` file next to `docker-compose.yml` (it is not committed and does not go into the images; the template is [`.env.example`](../../.env.example)):
+Create a `.env` file next to `docker-compose.yml`; in a clone that is `docker/.env`, which Compose also reads when you run it from the repository root with `-f docker/...` (an older clone with `.env` at the repository root: move it to `docker/`). It is not committed and does not go into the images; the template is [`.env.example`](../../docker/.env.example):
 
 | Variable | Default | Purpose |
 |---|---|---|
@@ -113,7 +113,7 @@ How far this has been verified (stated honestly):
 
 ## 6. Upgrading from v0.4 to v0.5
 
-For deployment, v0.5 keeps the same two images, the same port, the same volume, and adds no environment variables. What changes is the interface (the menu, question banks, study records, settings, the About page), the database schema and, since v0.5.1, the registry: the new `docker-compose.yml` pulls from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`. The project name and the volume `xexam_data` are unchanged, so switching registries keeps all data. A source build keeps the same commands; the frontend image now also reads the three READMEs (section 2).
+For deployment, v0.5 keeps the same two images, the same port, the same volume, and adds no environment variables. What changes is the interface (the menu, question banks, study records, settings, the About page), the database schema and, since v0.5.1, the registry: the new `docker-compose.yml` pulls from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`. The project name and the volume `xexam_data` are unchanged, so switching registries keeps all data. A source build uses the commands of section 2: the compose files are now in `docker/`, so move a `.env` at the repository root to `docker/.env` (Compose no longer reads it at the root). The frontend image now also reads the three READMEs (section 2).
 
 1. Back up the volume first, as in section 5 of [database.md](database.md). The program writes its own copy too, but a copy outside the volume is safer.
 2. Replace your `docker-compose.yml` with the new one (or change its two `image:` lines to `docker.io/yuminspace/xexam-backend:latest` and `docker.io/yuminspace/xexam-frontend:latest`), then update as usual: `docker compose pull && docker compose up -d`.
@@ -145,4 +145,4 @@ Later starts do not migrate again and write nothing extra.
 
 On a push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) first runs the version, changelog and docs check, then four check groups (frontend, backend, Nginx and full stack, arm64). Only if all of them pass does it publish the two images `xexam-frontend` and `xexam-backend` (amd64 + arm64) to Docker Hub (`docker.io/yuminspace/`, public) and, as a private mirror, to `ghcr.io/yumin-space/`, both tagged `latest`, `v<VERSION>` and `sha-<commit>`, and create the matching GitHub Release (its notes list the Docker Hub pull commands first). Pushes to `dev` and pull requests into `main` run the same checks and never publish. Details: section 7 of [development.md](development.md).
 
-Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (an access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`; without the secrets, or if `docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io, the first time a new image name is published, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).
+Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (an access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`; without the secrets, or if `docker/docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io, the first time a new image name is published, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).

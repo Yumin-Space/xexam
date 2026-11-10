@@ -24,8 +24,9 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
-  # (1) Check: VERSION is well formed, the newest changelog entry of EVERY README (English, Japanese, Chinese) equals VERSION,
-  #     and the backend / frontend manifests carry the same version. Takes seconds; if it fails nothing else runs.
+  # (1) Check: VERSION is well formed, the newest changelog entry of EVERY README (English README.md at the root, Japanese and
+  #     Chinese in README/) equals VERSION, the backend / frontend manifests carry the same version, the README, docker and docs
+  #     layout is as documented and every relative link resolves. Takes seconds; if it fails nothing else runs.
   check:
     name: check version and changelog
     runs-on: ubuntu-latest
@@ -40,8 +41,10 @@ jobs:
           set -eu
           v=$(tr -d '[:space:]' < VERSION)
           echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION is malformed: $v (expected something like 0.1 or 0.1.2)"; exit 1; }
-          for f in README.md README.ja.md README.zh-CN.md; do
-            [ -f "$f" ] || { echo "$f is missing: the project keeps three READMEs (English, Japanese, Chinese)"; exit 1; }
+          # The English README stays at the root (GitHub shows it on the repository page); the Japanese and Chinese ones live in README/
+          readmes="README.md README/README.ja.md README/README.zh-CN.md"
+          for f in $readmes; do
+            [ -f "$f" ] || { echo "$f is missing: the project keeps three READMEs (README.md in English at the root, README/README.ja.md, README/README.zh-CN.md)"; exit 1; }
             top=$(grep -m1 -E '^### v[0-9]' "$f" | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
             [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but VERSION is $v. Write the changelog entry in all three READMEs and keep them equal to VERSION."; exit 1; }
             # The release badge at the top is static text; it must name this version too (its width is set next to it)
@@ -50,6 +53,13 @@ jobs:
           for m in backend/Cargo.toml frontend/package.json; do
             mv=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[=:]' "$m" | sed -E 's/.*"([0-9][0-9.]*)".*/\1/')
             case "$mv" in "$v"|"$v".0) ;; *) echo "$m has version $mv but VERSION is $v"; exit 1;; esac
+          done
+          extra=$(find . -maxdepth 1 -name 'README*' ! -name README.md ! -name README; find README -mindepth 1 ! -name README.ja.md ! -name README.zh-CN.md)
+          [ -z "$extra" ] || { echo "Only README.md stays at the root and README/ holds only README.ja.md and README.zh-CN.md; found: $extra"; exit 1; }
+          # The compose files and the configuration template live in docker/ (the Dockerfiles stay in backend/ and nginx/)
+          for c in docker-compose.yml docker-compose.build.yml .env.example; do
+            [ -f "docker/$c" ] || { echo "docker/$c is missing"; exit 1; }
+            [ ! -e "$c" ] || { echo "$c belongs in docker/, not at the repository root"; exit 1; }
           done
           # The seven current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN)
           for d in api architecture database deployment development migration security; do
@@ -60,16 +70,27 @@ jobs:
           # Nothing but the language folders directly under docs/ (the languages are not mixed)
           extra=$(find docs -mindepth 1 -maxdepth 1 ! -name en ! -name ja ! -name zh-CN)
           [ -z "$extra" ] || { echo "docs/ must only contain the en, ja and zh-CN folders; found: $extra"; exit 1; }
-          # Every relative link in the READMEs and in all docs points at a file that exists (anchors, URLs, GitHub-site links such as ../../releases and regex-like text inside code are not checked)
+          # Every relative link in the READMEs and in all docs points at a file that exists; in the READMEs this includes the src / href
+          # of HTML tags (images). Anchors, URLs and regex-like text inside code are not checked. GitHub-site links (../../releases,
+          # ../../blob/..., and so on) are not files: they must climb exactly to the repository page, which is two levels above a file
+          # at the root and one more level per folder (../../../releases inside README/).
           bad=0
-          for f in README.md README.ja.md README.zh-CN.md $(find docs -name "*.md"); do
+          for f in $readmes $(find docs -name "*.md"); do
             dir=$(dirname "$f")
-            for l in $(grep -o '\]([^)#[:space:]]*' "$f" | sed 's/^](//' | grep -Ev '^(https?:|mailto:|$)|^(\.\./)+(releases|issues|actions|pulls|packages)(/|$)|[[^]' | sort -u); do
-              [ -e "$dir/$l" ] || { echo "$f links to $l, which does not exist"; bad=1; }
+            site=$(printf '../%.0s' $(seq 1 $(( $(printf '%s' "$dir" | awk -F/ '{print ($0 == "." ? 0 : NF)}') + 2 ))))
+            links=$(grep -o '\]([^)#[:space:]]*' "$f" | sed 's/^](//')
+            case "$f" in README*) links="$links $(grep -oE '(src|href)="[^"#[:space:]]*' "$f" | sed -E 's/^(src|href)="//')";; esac
+            for l in $(printf '%s\n' $links | grep -Ev '^(https?:|mailto:|$)|[[^]' | sort -u); do
+              if printf '%s' "$l" | grep -Eq '^(\.\./)+(releases|issues|actions|pulls|packages|blob|tree)(/|$)'; then
+                rest=${l#"$site"}
+                case "$rest" in "$l"|../*) echo "$f links to $l: a GitHub-site link from $dir must start with exactly $site"; bad=1;; esac
+              else
+                [ -e "$dir/$l" ] || { echo "$f links to $l, which does not exist"; bad=1; }
+              fi
             done
           done
           [ "$bad" = 0 ] || exit 1
-          echo "version v$v, changelog entries present in all three READMEs, docs present in three languages, links resolve, manifests match"
+          echo "version v$v, changelog entries present in all three READMEs, README / docker / docs layout as documented, links resolve, manifests match"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   # (2) Frontend: type check, unit tests, build
@@ -203,7 +224,7 @@ jobs:
           docker volume rm arm64data >/dev/null 2>&1 || true
 
   # (3) Only when every check has passed are the two images (amd64 + arm64) published, to Docker Hub (public; what
-  #     docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other
+  #     docker/docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other
   #     branches never publish. Docker Hub needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access
   #     token with Read & Write). The namespace is DOCKERHUB_USERNAME, or the repository variable DOCKERHUB_NAMESPACE if set.
   publish:
@@ -227,7 +248,7 @@ jobs:
       - uses: actions/checkout@v7
 
       # Image names must be all lowercase, but the GitHub user name may contain capitals (Yumin-Space), so convert it first.
-      # Without the Docker Hub secrets the job stops here, before anything is pushed: docker-compose.yml pulls from Docker Hub,
+      # Without the Docker Hub secrets the job stops here, before anything is pushed: docker/docker-compose.yml pulls from Docker Hub,
       # so publishing only to ghcr.io would leave a release that the default setup cannot pull.
       - name: Image names
         env:
@@ -243,9 +264,9 @@ jobs:
             exit 1
           fi
           ns="${HUB_NAMESPACE:-$HUB_USER}"
-          # docker-compose.yml and the READMEs name the Docker Hub images; they must match the namespace pushed to
-          grep -q "image: docker.io/${ns,,}/$NAME:latest" docker-compose.yml || {
-            echo "::error::docker-compose.yml does not pull docker.io/${ns,,}/$NAME:latest (wrong DOCKERHUB_USERNAME / DOCKERHUB_NAMESPACE, or the file names another namespace)"
+          # docker/docker-compose.yml and the READMEs name the Docker Hub images; they must match the namespace pushed to
+          grep -q "image: docker.io/${ns,,}/$NAME:latest" docker/docker-compose.yml || {
+            echo "::error::docker/docker-compose.yml does not pull docker.io/${ns,,}/$NAME:latest (wrong DOCKERHUB_USERNAME / DOCKERHUB_NAMESPACE, or the file names another namespace)"
             exit 1
           }
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$NAME" >> "$GITHUB_ENV"
@@ -343,7 +364,7 @@ jobs:
         run: |
           set -eu
           ns="${HUB_NAMESPACE:-$HUB_USER}"
-          # Docker Hub first (what docker-compose.yml pulls), ghcr.io as the mirror
+          # Docker Hub first (what docker/docker-compose.yml pulls), ghcr.io as the mirror
           python3 scripts/release-notes.py "$VERSION" "docker.io/${ns,,},ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" README.md > notes.md
           tag="v$VERSION"
           title="Xexam v$VERSION"

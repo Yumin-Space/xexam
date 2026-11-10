@@ -1,6 +1,9 @@
 # Xexam — run the two images that GitHub builds automatically, pulled directly from Docker Hub (public, no login needed).
-# On any machine, you only need this one file:
+# On a server you only need this one file: put it in a folder of its own and, in that folder, run
 #     docker compose up -d
+# In a clone of the repository this file is docker/docker-compose.yml; run it from the repository root with
+#     docker compose -f docker/docker-compose.yml up -d
+# and add the same -f docker/docker-compose.yml to the other docker compose commands below.
 # (The same images are also on ghcr.io/yumin-space as a private mirror; that one needs docker login ghcr.io first.)
 # Then open http://localhost:8765 in a browser
 #
@@ -10,17 +13,17 @@
 #
 # Update to the latest version:   docker compose pull && docker compose up -d
 # Stop / start again:    docker compose stop  /  docker compose start
-# To build from source (use when changing code): docker compose -f docker-compose.build.yml up -d --build
+# To build from source (use when changing code), from the repository root: docker compose -f docker/docker-compose.build.yml up -d --build
 #
 # To access it through your own domain (Cloudflare Tunnel + Cloudflare Access):
-#   Create a file named .env next to this file and write:
+#   Create a file named .env next to this file (in a clone: docker/.env, a .env at the repository root is not read; the template is .env.example in the same folder) and write:
 #       XEXAM_BIND=0.0.0.0:8765            # lets cloudflared on the LAN reach this machine; the default binds to localhost only
 #       XEXAM_ALLOWED_HOSTS=xexam.your-domain.com
 #   Then run docker compose up -d. See the README and docs/en/deployment.md for full instructions.
 #
 # ⚠️ Do not run `docker compose down -v`: -v also deletes the data volume xexam_data.
 
-name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in
+name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in (volume xexam_data, containers xexam-*)
 
 services:
   backend:

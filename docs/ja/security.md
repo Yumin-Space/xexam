@@ -28,7 +28,7 @@ flowchart LR
     B -. "internal: true<br/>外部ネットワークにアクセス不可" .-> X(("✗"))
 ```
 
-- バックエンドは**決してポートを公開しません**。`docker-compose.yml` の `backend` には `ports:` がなく、ネットワークは `internal: true` です。`tests/integration/stack_check.py` が「ホストからバックエンドに接続できないこと」を検査します。
+- バックエンドは**決してポートを公開しません**。`docker/docker-compose.yml` の `backend` には `ports:` がなく、ネットワークは `internal: true` です。`tests/integration/stack_check.py` が「ホストからバックエンドに接続できないこと」を検査します。
 - `XEXAM_BIND` は `IP:port` の形式で書く必要があります。ポート番号だけ（例：`8766`）を書くとすべてのネットワークインターフェースにバインドされます。これはよくある操作ミスなので、ドキュメントで繰り返し注意を促しています。
 - Linux では、ホストのファイアウォール（ufw / firewalld）は Docker が公開したポートを**制限できません**。接続元を制限するには、`DOCKER-USER` チェーンにルールを追加するか、`XEXAM_BIND` を具体的な LAN の IP にしてください。
 

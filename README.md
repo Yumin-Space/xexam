@@ -1,4 +1,4 @@
-**English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+**English** | [日本語](README/README.ja.md) | [简体中文](README/README.zh-CN.md)
 
 <!-- The release badge is static: CI checks that its version equals VERSION. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
 <p>
@@ -83,14 +83,14 @@ Documentation: [Architecture](docs/en/architecture.md) · [API](docs/en/api.md) 
 
 ### Option A: pull the prebuilt images (recommended)
 
-You only need **one file** from the repository, [`docker-compose.yml`](docker-compose.yml); no other code is required.
+You only need **one file** from the repository, [`docker-compose.yml`](docker/docker-compose.yml) in the `docker/` folder; no other code is required.
 
 **If you are not the owner:** the two images are public on Docker Hub, so pulling them needs no account and no `docker login`. Only the repository is private: to download `docker-compose.yml` from it with `curl` (or to `git clone` it), ask the owner to add your GitHub account as a collaborator on the repository, then create one token under GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** with the scope `repo`. Use it as `YOUR_TOKEN` for `curl` and as the password for `git clone`. Or simply ask the owner to send you the file.
 
 **1. Download `docker-compose.yml`** into a new folder (for example `xexam`). The easiest way: open the file on GitHub and click **Download raw file**. Or on the command line:
 
 ```bash
-curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker-compose.yml
+curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
 ```
 
 With `curl`, add `-H "Authorization: token YOUR_TOKEN"` after `-fLO`. In Windows PowerShell, type `curl.exe` instead of `curl` (there, `curl` is a different command).
@@ -139,18 +139,18 @@ You need the full repository code:
 ```bash
 git clone https://github.com/Yumin-Space/xexam.git
 cd xexam
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
 While the repository is private, `git clone` asks you to sign in to GitHub (when the command line asks for a password, enter a GitHub token that can read the repository).
 
-The first build takes a few minutes (it compiles Rust and the frontend). It uses the **same volume** (`xexam_data`) and the same container names as Option A, so the data is shared and the two **cannot run at the same time**; run `docker compose stop` before switching.
+The first build takes a few minutes (it compiles Rust and the frontend). It uses the **same volume** (`xexam_data`) and the same container names as Option A, so the data is shared and the two **cannot run at the same time**; run `docker compose stop` before switching. In a clone, the compose files are in `docker/` and so is `.env` (`docker/.env`): run the other `docker compose` commands of this README from the repository root with `-f docker/docker-compose.build.yml` added (for example `docker compose -f docker/docker-compose.build.yml logs -f`). To update a source build, run `git pull` and then the build command above again. An older clone with `.env` at the repository root: move it to `docker/.env`, because Compose no longer reads it there.
 
 ---
 
 ## Configuration
 
-The defaults work on one computer without any configuration. To change something, create a `.env` file next to `docker-compose.yml` (see [`.env.example`](.env.example) for a template; you do not need to edit the compose file itself). After changing `.env`, run `docker compose up -d` again.
+The defaults work on one computer without any configuration. To change something, create a `.env` file next to `docker-compose.yml` (in a clone: `docker/.env`; see [`.env.example`](docker/.env.example) for a template; you do not need to edit the compose file itself). After changing `.env`, run `docker compose up -d` again.
 
 | Name in `.env` | Default | Purpose |
 |---|---|---|
@@ -851,15 +851,15 @@ flowchart LR
 ```
 
 - **Trigger:** a push to `main` (publishes), a push to `dev`, a pull request into `main`, or a manual run from the Actions page. Only `main` publishes; pushes to `dev`, pull requests and manual runs on other branches are only checked and tested, and **never publish**. A push to any other branch does not start the pipeline.
-- **Every update must:** change `VERSION` and add an entry for the same version at the very top of the changelog of **all three READMEs** (`README.md`, `README.ja.md`, `README.zh-CN.md`); `backend/Cargo.toml` and `frontend/package.json` must carry the same version. Otherwise step ① fails.
-- **Docs check (also step ①):** the seven documents exist in `docs/en`, `docs/ja` and `docs/zh-CN`, `docs/` contains nothing but these three folders, and every relative link in the READMEs and the docs points at a file that exists.
+- **Every update must:** change `VERSION` and add an entry for the same version at the very top of the changelog of **all three READMEs** (`README.md`, `README/README.ja.md`, `README/README.zh-CN.md`); `backend/Cargo.toml` and `frontend/package.json` must carry the same version. Otherwise step ① fails.
+- **Docs check (also step ①):** the seven documents exist in `docs/en`, `docs/ja` and `docs/zh-CN`, `docs/` contains nothing but these three folders, only `README.md` stays at the root (the other two READMEs are in `README/`), the compose files and `.env.example` are in `docker/`, and every relative link and image path in the READMEs and the docs points at a file that exists (links to GitHub pages such as Releases must climb exactly to the repository page).
 - **Publish only if everything passes:** the two images (`xexam-frontend`, `xexam-backend`) are each published as a multi-architecture image, and the pipeline then checks that the image manifest really contains `amd64` and `arm64` and that the tag points to the digest that was just pushed. If a test fails, `latest` stays on the previous working version.
 - **Published tags:** `latest`, `v<VERSION>`, `sha-<commit>`, the same on Docker Hub and on ghcr.io.
 - **How the backend image gets arm64:** it is cross-compiled with zig on the build machine instead of compiling Rust under QEMU (which is an order of magnitude slower); only the final, very small alpine stage uses the target architecture.
 - **Releases page:** once both images are published and verified, the pipeline automatically creates (or updates) a Release named `v<VERSION>`. Its description is taken from this version's section of the Changelog in this file ([`scripts/release-notes.py`](scripts/release-notes.py)), and a git tag with the same name is created automatically. If the images were not published successfully, there is no Release.
 - **Releases and images live in different places:** the images are on **Docker Hub** (`docker.io/yuminspace/xexam-frontend` and `docker.io/yuminspace/xexam-backend`, public; this is what `docker-compose.yml` pulls) and, as a private mirror, under the repository's **Packages** (ghcr.io); the Release is on the **Releases** page and lists the Docker Hub pull commands first. All of them are produced by the same build.
 
-Publishing to Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`. Without the secrets, or if `docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io the images are private (the repository is private): the first time a new image name is published there, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).
+Publishing to Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (a Docker Hub access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`. Without the secrets, or if `docker/docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io the images are private (the repository is private): the first time a new image name is published there, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`).
 
 ---
 
@@ -885,7 +885,7 @@ python -I tests/integration/stack_check.py
 - The backend has 181 tests and the frontend 44 unit tests. The backend tests run against the committed **legacy snapshot** in `tests/baseline/`: 172 golden responses, 49 parser fixtures and their outputs, and 85 question-id vectors. All of these fixtures are made up; a real question bank is never committed.
 - The v0.5 behaviour (schema migration and backup, banks, records, settings, the guards on the new routes) is tested in `backend/tests/v05_banks_records_settings.rs`.
 - Every text in the interface comes from `frontend/src/i18n/catalog/*.ts`, in English, Chinese and Japanese; a test fails if a language misses a key, and another one if a backend error message has no translation.
-- The **About Xexam** page shows the changelogs of the three READMEs. They are read when the frontend is built (the `xexam-changelog` plugin in `frontend/vite.config.ts`), so a frontend build needs `README.md`, `README.ja.md` and `README.zh-CN.md` in the folder above `frontend/`.
+- The **About Xexam** page shows the changelogs of the three READMEs. They are read when the frontend is built (the `xexam-changelog` plugin in `frontend/vite.config.ts`), so a frontend build needs `README.md`, `README/README.ja.md` and `README/README.zh-CN.md` in the folder above `frontend/` (the repository root).
 - Opening a database from v0.4 or older with v0.5 migrates it and writes `backups/` next to it. Experiment on a copy.
 
 ---
@@ -893,12 +893,14 @@ python -I tests/integration/stack_check.py
 ## Directory structure
 
 ```
-README.md                  This file (English); README.ja.md and README.zh-CN.md are the Japanese and Chinese versions
+README.md                  This file (English); the Japanese and Chinese versions are in README/
+README/                    README.ja.md (Japanese) and README.zh-CN.md (Chinese)
 LICENSE                    MIT license
 VERSION                    Version number (kept in sync with the top changelog entry)
-docker-compose.yml         Pulls and runs the two images (this is the only file you need)
-docker-compose.build.yml   Builds the two images from source and runs them
-.env.example               Local configuration template (copy to .env; .env is not committed)
+docker/                    Docker Compose files (the Dockerfiles stay in backend/ and nginx/)
+  docker-compose.yml         Pulls and runs the two images (this is the only file you need)
+  docker-compose.build.yml   Builds the two images from source and runs them (build context: the repository root)
+  .env.example               Local configuration template (copy to docker/.env; .env is not committed)
 backend/                   Rust backend (Axum + rusqlite)
   src/api/                   Routes, guards (Host / Origin / Content-Type / size), JSON format, score sanitizing
   src/services/              Pending-import slot, parser engine interface, import flow

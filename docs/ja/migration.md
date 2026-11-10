@@ -52,7 +52,7 @@ docker compose logs backend
 
 ログには `Upgraded the database to schema 2. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)` のような行が出るはずです。このコピーはプログラム自身が書き出します。手順 1 の `.tgz` は、ボリュームの外に置く自分用の 2 つ目のコピーです。
 
-ソースからビルドしている場合：`git pull && docker compose -f docker-compose.build.yml up -d --build`。Docker を使わない場合、コピーはデータディレクトリ（`--data` または `XEXAM_DATA`）の中の `backups/` に書き出されます。
+ソースからビルドしている場合：リポジトリのルートで `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`。compose ファイルは `docker/` に移りました。このコマンドの前に、リポジトリのルートにある `.env` を `docker/.env` に移動し（Compose はルートの `.env` を読まなくなりました）、その後のコマンド（`logs backend` など）にも `-f docker/docker-compose.build.yml` を付けてください。Docker を使わない場合、コピーはデータディレクトリ（`--data` または `XEXAM_DATA`）の中の `backups/` に書き出されます。
 
 ### 1.3 アップグレード後の確認
 
@@ -82,7 +82,7 @@ docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-202611
 docker compose up -d
 ```
 
-ソースからビルドしている場合は、代わりにタグをチェックアウトします：`git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build`。
+ソースからビルドしている場合は、代わりにタグをチェックアウトします：`git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build`（このタグでは compose ファイルはまだリポジトリのルートにあり、Compose は `.env` もルートから読みます。`docker/.env` がある場合は、先にリポジトリのルートへコピーしてください）。
 
 手順 3 の代わりに、第 1.2 節で作った自分用の `.tgz` を復元してもかまいません（復元コマンドは [database.md](database.md) の第 5 節にあります）。中身は同じデータです。手順 4 はどちらの場合も必要です。
 

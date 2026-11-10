@@ -28,7 +28,7 @@ flowchart LR
     B -. "internal: true<br/>不能访问外网" .-> X(("✗"))
 ```
 
-- 后端**永远不发布端口**。`docker-compose.yml` 里 `backend` 没有 `ports:`，网络 `internal: true`；`tests/integration/stack_check.py` 断言「从宿主机连不到后端」。
+- 后端**永远不发布端口**。`docker/docker-compose.yml` 里 `backend` 没有 `ports:`，网络 `internal: true`；`tests/integration/stack_check.py` 断言「从宿主机连不到后端」。
 - `XEXAM_BIND` 必须写成 `IP:端口`。只写端口号（如 `8766`）= 绑定所有网卡，是常见的误操作，文档里反复提醒。
 - Linux 上主机防火墙（ufw / firewalld）**拦不住** Docker 发布的端口；限制来源要在 `DOCKER-USER` 链里加规则，或把 `XEXAM_BIND` 写成具体的局域网 IP。
 

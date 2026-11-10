@@ -52,7 +52,7 @@ docker compose logs backend
 
 日志里应该有一行类似 `Upgraded the database to schema 2. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)` 的内容。这份副本是程序自己写的；第 1 步的 `.tgz` 是你自己另存的第二份副本，放在卷外面。
 
-从源码构建：`git pull && docker compose -f docker-compose.build.yml up -d --build`。不用 Docker 时，副本写到数据目录（`--data` 或 `XEXAM_DATA`）里的 `backups/`。
+从源码构建：在仓库根目录运行 `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`。compose 文件现在在 `docker/` 里：运行这条命令之前，先把仓库根目录的 `.env` 移到 `docker/.env`（Compose 不会再读根目录的 `.env`），之后的命令（例如 `logs backend`）也要加上 `-f docker/docker-compose.build.yml`。不用 Docker 时，副本写到数据目录（`--data` 或 `XEXAM_DATA`）里的 `backups/`。
 
 ### 1.3 升级后核对
 
@@ -82,7 +82,7 @@ docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-202611
 docker compose up -d
 ```
 
-从源码构建时，改为检出标签：`git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build`。
+从源码构建时，改为检出标签：`git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build`（那个标签里 compose 文件还在仓库根目录，Compose 也从根目录读 `.env`：如果你有 `docker/.env`，先把它复制到仓库根目录）。
 
 第 3 步也可以换成恢复你在第 1.2 节自己做的 `.tgz`（恢复命令见 [database.md](database.md) 第 5 节），里面是同样的数据。第 4 步无论如何都要做。
 

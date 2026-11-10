@@ -40,7 +40,7 @@ npm run build          # 型チェック + vite build → dist/
 npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 へプロキシ
 ```
 
-- `npm run build` と `npm run dev` は、リポジトリのルートにある 3 つの README（`README.md`、`README.ja.md`、`README.zh-CN.md`）を読みます。`vite.config.ts` のプラグイン `xexam-changelog` が、その更新履歴を「Xexam について」のページ（`#/about`）に組み込むためです。README のどれかに `### vX.Y — 日付` の項目が 1 つもないと、ビルドは失敗します。`npm run dev` の実行中は、README の変更も監視します。
+- `npm run build` と `npm run dev` は、リポジトリのルートから 3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）を読みます。`vite.config.ts` のプラグイン `xexam-changelog` が、その更新履歴を「Xexam について」のページ（`#/about`）に組み込むためです。README のどれかに `### vX.Y — 日付` の項目が 1 つもないと、ビルドは失敗します。`npm run dev` の実行中は、README の変更も監視します。
 - 開発時は `localhost` か `127.0.0.1` でページを開いてください。Vite プロキシの `changeOrigin` は `false` にする必要があります：バックエンドは `Host` と `Origin` を比較するため、`Host` が書き換えられると書き込みリクエストが 403 になります。
 - バックエンドが既定のアドレスにない場合：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`。
 - テストファイルを 1 つだけ実行するには：`node --experimental-strip-types --test src/i18n/server-messages.test.ts`。
@@ -82,7 +82,7 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 
 ```bash
 # 2 つのコンテナをビルドして起動（同じ xexam_data ボリュームを使います！自分のデータが使われるので、試す場合は別のプロジェクト名を使ってください：-p some-other-name）
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 
 # チェック用スクリプトはすべて一時的なプロジェクト名と一時ボリュームを使い、xexam_data には触れません
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
@@ -91,7 +91,7 @@ python -I tests/integration/stack_check.py                      # 34 項目、�
 python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 項目：旧 progress.json の移行（先に cargo build が必要）
 ```
 
-- フロントエンドのイメージは、リポジトリのルートをビルドコンテキストにしてビルドします。`nginx/Dockerfile` は、ビルド段階で `COPY README.md README.ja.md README.zh-CN.md /` を実行します。`vite.config.ts` が、「Xexam について」のページの更新履歴をそこから読むためです。`.dockerignore` は `docs/` などを除外しますが、この 3 つの README は除外しません。README を除外に戻すと、イメージのビルドが失敗します。
+- compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルート（`..`）をビルドコンテキストにします。フロントエンドのイメージは、リポジトリのルートをビルドコンテキストにしてビルドします。`nginx/Dockerfile` は、ビルド段階で `COPY README.md /` と `COPY README/README.ja.md README/README.zh-CN.md /README/` を実行します。`vite.config.ts` が、「Xexam について」のページの更新履歴をそこから読むためです。`.dockerignore` は `docs/` などを除外しますが、この 3 つの README（`README.md` と `README/`）は除外しません。README を除外に戻すと、イメージのビルドが失敗します。
 
 ## 5. 旧版との照合（回帰）
 
@@ -121,12 +121,12 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 | ジョブ | 内容 |
 |---|---|
-| `check` | `VERSION` の形式。3 つの README それぞれの更新履歴の最新の項目 = `VERSION`。`backend/Cargo.toml` と `frontend/package.json` のバージョンが同じであること。ドキュメントのチェック（8 節） |
+| `check` | `VERSION` の形式。3 つの README それぞれの更新履歴の最新の項目 = `VERSION`。`backend/Cargo.toml` と `frontend/package.json` のバージョンが同じであること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）とドキュメントのチェック（8 節） |
 | `frontend` | 型チェック、44 件の単体テスト、ビルド |
 | `backend` | fmt、clippy、181 件のテスト、および `progress.json` の移行チェック |
 | `stack` | `xexam-frontend` イメージをビルドして 38 項目の Nginx チェックを実行。compose スタック全体を起動して 34 項目のエンドツーエンドチェックを実行 |
 | `arm64` | 2 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と正しいバージョンを返すことを確認 |
-| `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）を同じタグで Docker Hub（`docker.io/yuminspace/`、公開。`docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
+| `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）を同じタグで Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
 | `release` | `main` のみ：`v<VERSION>` の GitHub Release を作成（または更新）。リリースノートは `README.md` の更新履歴から取る |
 
 `dev` へのプッシュと `main` へのプルリクエストでは最初の 5 つのジョブだけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
@@ -138,12 +138,12 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 - `docs/en/openapi.yaml` はすべての言語で共有します。日本語と中国語のドキュメントは `../en/openapi.yaml` にリンクします。
 - どのドキュメントも、ほかの 2 つのフォルダにある同じドキュメントへのリンクを並べた言語バーで始まります。リンクはファイル自身のフォルダからの相対パスで、リポジトリのルートは `../../` です。
 - 先に英語のドキュメントを変更し、同じ変更の中で日本語と中国語のドキュメントも更新します。
-- CI の `check` ジョブは、次のどれかに当てはまると失敗します：7 つのドキュメントのどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクが存在しないファイルを指している。
+- CI の `check` ジョブは、次のどれかに当てはまると失敗します：7 つのドキュメントのどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
 
 ## 9. バージョン、更新履歴、ライセンス
 
 - バージョン番号の唯一の情報源は、リポジトリのルートにある `VERSION`（`0.5.1`）です。`backend/Cargo.toml` と `frontend/package.json` にもそれぞれコピー（`0.5.1`）があり、CI が一致を確認します。
-- 更新するたびに、3 つの README（`README.md`、`README.ja.md`、`README.zh-CN.md`）すべての更新履歴の一番上に項目を 1 つ追加し、バージョン番号を `VERSION` と一致させます。CI がこれを確認します（各 README で最初に `### v` と数字で始まる行を読みます）。GitHub Release のノートは英語版から取ります。
+- 更新するたびに、3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）すべての更新履歴の一番上に項目を 1 つ追加し、バージョン番号を `VERSION` と一致させます。CI がこれを確認します（各 README で最初に `### v` と数字で始まる行を読みます）。GitHub Release のノートは英語版から取ります。
 - 同じ更新履歴は、「Xexam について」のページにも表示言語ごとに表示されます（ビルド時に組み込みます。3 節）。そのため、項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、行頭を 2 文字下げた `- ` による入れ子の箇条書き、`**太字**`、インラインコード。リポジトリ内への相対リンクは、このページでは文字として表示されます。見出しは `### vX.Y — 日付` の形にします。
 - 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。
 - このプロジェクトは MIT ライセンスです（リポジトリのルートの `LICENSE`）。

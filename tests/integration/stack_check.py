@@ -27,7 +27,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18090
 PROJECT = 'xexamcheck' + uuid.uuid4().hex[:6]
 DEMO = os.path.join(ROOT, 'tests', 'baseline', 'fixtures', 'demo.xlsx')
-COMPOSE = os.path.join(ROOT, 'docker-compose.build.yml')
+COMPOSE = os.path.join(ROOT, 'docker', 'docker-compose.build.yml')
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST'):

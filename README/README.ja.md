@@ -1,12 +1,12 @@
-[English](README.md) | **日本語** | [简体中文](README.zh-CN.md)
+[English](../README.md) | **日本語** | [简体中文](README.zh-CN.md)
 
 <!-- The release badge is static: CI checks that its version equals VERSION. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
 <p>
-  <a href="../../releases/latest"><img width="145" height="28" alt="リリース v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
+  <a href="../../../releases/latest"><img width="145" height="28" alt="リリース v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
 </p>
 
 <p align="center">
-  <img width="120" height="120" alt="Xexam のロゴ" src="frontend/public/icon.svg">
+  <img width="120" height="120" alt="Xexam のロゴ" src="../frontend/public/icon.svg">
 </p>
 
 <p align="center">
@@ -24,19 +24,19 @@
 
 Xexam は、ブラウザで使うセルフホスト型の模擬試験アプリです。ご自身の Excel 問題集を取り込んで模擬試験を受け、間違えた問題を復習できます。**提出するまでは採点されません**。提出すると、得点と、間違えた問題（またはすべての問題）ごとに、あなたの回答、正解、解説、覚え方が表示されます。パソコンでもスマートフォン（iPhone）でも使えます。
 
-![試験ページ：日本語で表示したホットスポット問題、問題の言語の切り替え、提出する ボタンのある解答用紙](docs/ja/screenshots/desktop-2-quiz.png)
+![試験ページ：日本語で表示したホットスポット問題、問題の言語の切り替え、提出する ボタンのある解答用紙](../docs/ja/screenshots/desktop-2-quiz.png)
 
 リポジトリには**問題は含まれていません**。Xexam が提供するのは、問題を取り込み、整理し、練習するための機能だけです。問題集はご自身の Excel ファイルであり、コミットされません（`.gitignore` で除外済み）。スクリーンショットには 2 つの**架空のデモ用問題集**「General knowledge」と「Kitchen basics」を使っており、実際の試験の内容ではありません。この README のスクリーンショットは日本語の画面です。英語と中国語の画面のスクリーンショットは `docs/en/screenshots/` と `docs/zh-CN/screenshots/` にあります。
 
 | | |
 |---|---|
-| 現在のバージョン | **v0.5.1**（[更新履歴](#更新履歴)、またはリポジトリの [Releases](../../releases) ページを参照。アプリでは：メニュー → **Xexam v0.5.1**） |
+| 現在のバージョン | **v0.5.1**（[更新履歴](#更新履歴)、またはリポジトリの [Releases](../../../releases) ページを参照。アプリでは：メニュー → **Xexam v0.5.1**） |
 | イメージ | Docker Hub（公開、ログイン不要）：`docker.io/yuminspace/xexam-frontend` と `docker.io/yuminspace/xexam-backend`。タグは `latest` / `v0.5.1` / `sha-<コミット>`（`sha-` のタグは問題の調査用）。ミラー：`ghcr.io/yumin-space/xexam-frontend` と `ghcr.io/yumin-space/xexam-backend`（非公開、タグは同じ） |
 | CPU アーキテクチャ | `linux/amd64`、`linux/arm64`（同じタグの中から自動的に適切なものが選ばれます） |
 | ポート | `8765`（既定ではローカルマシンのみにバインド） |
-| ライセンス | [MIT](LICENSE) |
+| ライセンス | [MIT](../LICENSE) |
 
-ドキュメント：[アーキテクチャ](docs/ja/architecture.md) · [API](docs/ja/api.md)（[OpenAPI](docs/en/openapi.yaml)、英語のみ）· [データベース](docs/ja/database.md) · [セキュリティ](docs/ja/security.md) · [デプロイ](docs/ja/deployment.md) · [移行とロールバック](docs/ja/migration.md) · [開発](docs/ja/development.md)
+ドキュメント：[アーキテクチャ](../docs/ja/architecture.md) · [API](../docs/ja/api.md)（[OpenAPI](../docs/en/openapi.yaml)、英語のみ）· [データベース](../docs/ja/database.md) · [セキュリティ](../docs/ja/security.md) · [デプロイ](../docs/ja/deployment.md) · [移行とロールバック](../docs/ja/migration.md) · [開発](../docs/ja/development.md)
 
 ---
 
@@ -83,14 +83,14 @@ Xexam は、ブラウザで使うセルフホスト型の模擬試験アプリ�
 
 ### 方法 A：公開済みのイメージを pull する（推奨）
 
-必要なのは、リポジトリにある [`docker-compose.yml`](docker-compose.yml) **1 ファイルだけ**です。ほかのコードは必要ありません。
+必要なのは、リポジトリの `docker/` フォルダにある [`docker-compose.yml`](../docker/docker-compose.yml) **1 ファイルだけ**です。ほかのコードは必要ありません。
 
 **リポジトリのオーナーでない場合**：2 つのイメージは Docker Hub で公開されているので、pull するのにアカウントも `docker login` も必要ありません。非公開なのはリポジトリだけです。そこから `docker-compose.yml` を `curl` でダウンロードする（または `git clone` する）には、オーナーに頼んで、あなたの GitHub アカウントをリポジトリのコラボレーター（collaborator）に追加してもらってください。そのうえで、GitHub → **Settings** → **Developer settings** → **Personal access tokens** → **Tokens (classic)** で、スコープ `repo` を付けたトークンを 1 つ作成します。このトークンを、`curl` の `YOUR_TOKEN` と `git clone` のパスワードとして使います。オーナーにファイルを送ってもらうだけでも構いません。
 
 **1. `docker-compose.yml` をダウンロードします**。新しいフォルダ（例：`xexam`）に保存してください。いちばん簡単なのは、GitHub でこのファイルを開いて **Download raw file** をクリックする方法です。コマンドラインなら次のとおりです。
 
 ```bash
-curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker-compose.yml
+curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
 ```
 
 `curl` では、`-fLO` の後に `-H "Authorization: token YOUR_TOKEN"` を加えてください（`YOUR_TOKEN` は上で作成したトークンです）。Windows PowerShell では、`curl` の代わりに `curl.exe` と入力します（PowerShell の `curl` は別のコマンドです）。
@@ -139,18 +139,18 @@ Docker を別のマシン（サーバー、NAS、仮想マシン）で動かし�
 ```bash
 git clone https://github.com/Yumin-Space/xexam.git
 cd xexam
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
 リポジトリが非公開の間は、`git clone` で GitHub へのサインインを求められます（コマンドラインでパスワードを求められたら、リポジトリを読める GitHub のトークンを入力します）。
 
-初回のビルドには数分かかります（Rust とフロントエンドをコンパイルするため）。方法 A と**同じボリューム**（`xexam_data`）と同じコンテナ名を使うため、データは同一のものになり、両者は**同時に実行できません**。切り替える前に `docker compose stop` を実行してください。
+初回のビルドには数分かかります（Rust とフロントエンドをコンパイルするため）。方法 A と**同じボリューム**（`xexam_data`）と同じコンテナ名を使うため、データは同一のものになり、両者は**同時に実行できません**。切り替える前に `docker compose stop` を実行してください。クローンしたリポジトリでは、compose ファイルと `.env` は `docker/` にあります。この README の `docker compose` コマンドは、リポジトリのルートで `-f docker/docker-compose.build.yml` を付けて実行してください（例：`docker compose -f docker/docker-compose.build.yml logs -f`）。ソースからビルドしたものを更新するには、`git pull` を実行してから、上のビルドコマンドをもう一度実行します。以前にクローンしたリポジトリで、ルートに `.env` がある場合は、`docker/.env` に移動してください。Compose はルートの `.env` を読まなくなりました。
 
 ---
 
 ## 設定
 
-既定のままなら、何も設定せずに 1 台のパソコンで使えます。変更したいときは、`docker-compose.yml` と同じ場所に `.env` ファイルを作成します（テンプレートは [`.env.example`](.env.example) を参照。compose ファイル自体の編集は不要です）。`.env` を変更したら、もう一度 `docker compose up -d` を実行してください。
+既定のままなら、何も設定せずに 1 台のパソコンで使えます。変更したいときは、`docker-compose.yml` と同じ場所に `.env` ファイルを作成します（クローンしたリポジトリでは `docker/.env`。テンプレートは [`.env.example`](../docker/.env.example) を参照。compose ファイル自体の編集は不要です）。`.env` を変更したら、もう一度 `docker compose up -d` を実行してください。
 
 | `.env` の変数名 | 既定 | 役割 |
 |---|---|---|
@@ -161,7 +161,7 @@ docker compose -f docker-compose.build.yml up -d --build
 | `XEXAM_PARSE_TIMEOUT_SECS` | `30` | Excel 1 ファイルの解析にかける最大時間（秒） |
 | `TZ` | `Asia/Tokyo` | データベース内のタイムスタンプに使うタイムゾーン |
 
-詳細：[docs/ja/deployment.md](docs/ja/deployment.md) の第 3 節。
+詳細：[docs/ja/deployment.md](../docs/ja/deployment.md) の第 3 節。
 
 ---
 
@@ -214,7 +214,7 @@ ssh -L 8765:127.0.0.1:8765 user@server
 
 ここでは Excel ブックを取り込みます。ページはホームと同じくらいコンパクトです。**Excel の取り込み** では **新しい問題集** か **既存を更新** を選び（タイトルの横にある 2 つの小さなボタンで、マウスを重ねると説明が表示されます。更新する場合は、**更新する問題集** でその問題集を選びます）、**Excel ファイルを選ぶ** を押すか、パネルのどこかにファイルをドロップします。**Excel ファイルを選ぶ** の上にあるヒントの 1 行は、**Excel の書き方** へのリンクで終わります。**登録済みの問題集** には問題集ごとにコンパクトな 1 行があり（ファイル、問題数、シート数、最終更新日と、**更新** と **削除**。シートは行の右側の矢印の下に折りたたまれています）、**取り込み履歴** には 1 回の取り込みが 1 行で表示されます。ページにある **Excel の書き方と取り込みの説明** は、開くまで折りたたまれており、[Excel 問題集の形式](#excel-問題集の形式) の要約です。取り込みの手順とルールは [問題集の取り込み](#問題集の取り込み) にあります。
 
-![問題集の管理ページ：「Kitchen basics」の更新のプレビュー](docs/ja/screenshots/desktop-5-banks.png)
+![問題集の管理ページ：「Kitchen basics」の更新のプレビュー](../docs/ja/screenshots/desktop-5-banks.png)
 
 スクリーンショットは、「Kitchen basics」を新しいファイル `Kitchen basics (v2).xlsx` で更新するときの、保存する前のプレビューです。数のチップ（追加 1、更新 1、出題停止 1、変更なし 3）、ファイル名が前回の取り込みと違うという案内、出題停止になる問題についての注意、そしてシート「Cooking」と「Safety」が表示されています。その下の **登録済みの問題集** には 2 つのデモ用問題集、右側には取り込み履歴と、折りたたまれた書き方の説明があります。出題停止になる問題は、問題の列（このデモ用問題集では日本語の C 列）の文で一覧表示されます。
 
@@ -235,7 +235,7 @@ ssh -L 8765:127.0.0.1:8765 user@server
 - **直近の試験**：前回の試験の得点と、**詳細を見る**、**すべての学習記録**。
 - **概要**：問題集、使えるシート、有効な問題、間違いノートの問題がそれぞれいくつあるかと、**間違えた問題を復習**（間違いノートに問題があるとき）と **問題集の管理**。
 
-![ホーム画面（パソコン）](docs/ja/screenshots/desktop-1-home.png)
+![ホーム画面（パソコン）](../docs/ja/screenshots/desktop-1-home.png)
 
 ページの一番上の小さなバナーになった未提出の試験、**試験を始める** の右上にある **すべて** と **間違いノート**、右側に **すべて選択** と **解除** がある **問題集とシート** の見出し、シートを含むカードになった 2 つのデモ用問題集（どちらもシートを表示した状態）、そして **試験を開始**、範囲、**問題数**、**シャッフル** のある下部のバー。右側には直近の試験と概要があります。
 
@@ -256,7 +256,7 @@ ssh -L 8765:127.0.0.1:8765 user@server
 
 得点、正解数と不正解数、そして問題ごとに 1 つの枠が並んだ帯が表示されます。**正解と解説** では **間違えた問題のみ（n）** または **すべての問題（n）** を表示し、あなたの選択、正解、解説、覚え方、中国語訳（あれば）、その問題をこれまでに何回回答したかが分かります。ボタン：**間違えた問題だけやり直す**、**もう一度受ける**、**学習記録で見る**、**ホームに戻る**。
 
-![結果ページ（パソコン）](docs/ja/screenshots/desktop-3-result.png)
+![結果ページ（パソコン）](../docs/ja/screenshots/desktop-3-result.png)
 
 解説と覚え方は、ブックに書かれているとおりに表示されます。このデモ用問題集では中国語で書かれています。
 
@@ -270,7 +270,7 @@ ssh -L 8765:127.0.0.1:8765 user@server
 - 削除について：記録を 1 件削除しても、各問題の統計は残るので、間違いノートは変わりません。**すべて削除** は、すべての試験記録を削除します。**間違いノートと各問題の回答統計も消去する** にチェックを入れると、それらも消去されます。削除のたびに確認があり、元に戻すことはできません。
 - Xexam は直近 500 回分の試験を保存します。それより古い記録は自動的に削除されます。
 
-![学習記録（パソコン）：概要、絞り込み、試験の一覧](docs/ja/screenshots/desktop-4-records.png)
+![学習記録（パソコン）：概要、絞り込み、試験の一覧](../docs/ja/screenshots/desktop-4-records.png)
 
 ### 間違いノート
 
@@ -287,8 +287,8 @@ ssh -L 8765:127.0.0.1:8765 user@server
 
 <table>
 <tr>
-<td width="50%"><img src="docs/ja/screenshots/desktop-6-settings.png" alt="画面設定ページ（パソコン）"></td>
-<td width="50%"><img src="docs/ja/screenshots/desktop-7-dark.png" alt="ダークテーマの試験ページ"></td>
+<td width="50%"><img src="../docs/ja/screenshots/desktop-6-settings.png" alt="画面設定ページ（パソコン）"></td>
+<td width="50%"><img src="../docs/ja/screenshots/desktop-7-dark.png" alt="ダークテーマの試験ページ"></td>
 </tr>
 <tr>
 <td>画面設定：<b>外観</b>、<b>言語</b>、<b>回答</b>、<b>既定の設定に戻す</b>。</td>
@@ -300,7 +300,7 @@ ssh -L 8765:127.0.0.1:8765 user@server
 
 メニューの最後の項目 **Xexam v0.5.1** を選ぶと、**Xexam について** が開きます。**バージョン**、**サーバー** の CPU アーキテクチャ、**ライセンス**、そして **更新内容** が表示されます。**更新内容** は、表示言語の README の [更新履歴](#更新履歴) です（日本語表示では、この README のもの）。最新のバージョンは開いた状態で、それより前のバージョンは **以前のバージョン** の下に折りたたまれています。
 
-![Xexam について（パソコン）](docs/ja/screenshots/desktop-8-about.png)
+![Xexam について（パソコン）](../docs/ja/screenshots/desktop-8-about.png)
 
 ### iPhone で使う
 
@@ -313,10 +313,10 @@ iPhone でのスクリーンショット（幅 390 px）：
 
 <table>
 <tr>
-<td width="25%"><img src="docs/ja/screenshots/iphone-1-home.png" alt="ホーム画面（iPhone）"></td>
-<td width="25%"><img src="docs/ja/screenshots/iphone-2-quiz.png" alt="試験ページ（iPhone）"></td>
-<td width="25%"><img src="docs/ja/screenshots/iphone-3-menu.png" alt="メニューを開いたところ（iPhone）"></td>
-<td width="25%"><img src="docs/ja/screenshots/iphone-4-records.png" alt="学習記録（iPhone）"></td>
+<td width="25%"><img src="../docs/ja/screenshots/iphone-1-home.png" alt="ホーム画面（iPhone）"></td>
+<td width="25%"><img src="../docs/ja/screenshots/iphone-2-quiz.png" alt="試験ページ（iPhone）"></td>
+<td width="25%"><img src="../docs/ja/screenshots/iphone-3-menu.png" alt="メニューを開いたところ（iPhone）"></td>
+<td width="25%"><img src="../docs/ja/screenshots/iphone-4-records.png" alt="学習記録（iPhone）"></td>
 </tr>
 <tr>
 <td>ホーム：画面下部に固定されたバー。1 行目に範囲、<b>問題数</b>、<b>シャッフル</b>、2 行目に <b>試験を開始</b>。</td>
@@ -505,7 +505,7 @@ docker run --rm -v xexam_data:/data alpine cp /data/backups/xexam-schema1-202611
 docker compose up -d
 ```
 
-手順 3 の代わりに、アップグレード時に作ったご自身の `.tgz` を復元しても構いません（[バックアップと復元](#バックアップと復元) を参照）。⚠️ コピーを復元する代わりに、**問題集が複数あるデータベースで v0.4 を動かすことは絶対にしないでください**。v0.4 はすべての問題集を 1 つとして扱うため、次の取り込みでほかのすべての問題集の問題が出題停止になり、試験記録も 60 件に切り詰められます。詳細：[docs/ja/migration.md](docs/ja/migration.md) と、[docs/ja/database.md](docs/ja/database.md) の第 6 節。
+手順 3 の代わりに、アップグレード時に作ったご自身の `.tgz` を復元しても構いません（[バックアップと復元](#バックアップと復元) を参照）。⚠️ コピーを復元する代わりに、**問題集が複数あるデータベースで v0.4 を動かすことは絶対にしないでください**。v0.4 はすべての問題集を 1 つとして扱うため、次の取り込みでほかのすべての問題集の問題が出題停止になり、試験記録も 60 件に切り詰められます。詳細：[docs/ja/migration.md](../docs/ja/migration.md) と、[docs/ja/database.md](../docs/ja/database.md) の第 6 節。
 
 ### 旧バージョン（v0.2.x、Python 単一イメージ）からのアップグレード
 
@@ -517,7 +517,7 @@ docker compose up -d
 4. 新しい `docker-compose.yml` に差し替えて、`docker compose pull` と `docker compose up -d` を実行します。初回起動時には、上で説明したとおり、データベースがスキーマ v2 に移行されます（`backups/` にコピーが書き出されます）。
 5. <http://localhost:8765> を開き、問題数、間違えた問題の数、成績履歴がアップグレード前と同じであることを確認します。
 
-旧バージョンに戻したい場合：旧コードは Git タグ `python-v0.2` にあり、旧イメージ `ghcr.io/yumin-space/xexam:v0.2.2` も引き続き GHCR から pull できます（非公開なので、先に `docker login ghcr.io` を実行します。Docker Hub にはありません）。起動する前に、`backups/` にあるスキーマ 1 のコピー（またはご自身のバックアップ）を復元してください。詳細は [docs/ja/migration.md](docs/ja/migration.md) を参照してください。
+旧バージョンに戻したい場合：旧コードは Git タグ `python-v0.2` にあり、旧イメージ `ghcr.io/yumin-space/xexam:v0.2.2` も引き続き GHCR から pull できます（非公開なので、先に `docker login ghcr.io` を実行します。Docker Hub にはありません）。起動する前に、`backups/` にあるスキーマ 1 のコピー（またはご自身のバックアップ）を復元してください。詳細は [docs/ja/migration.md](../docs/ja/migration.md) を参照してください。
 
 ---
 
@@ -557,7 +557,7 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/x
 docker compose start
 ```
 
-PC を替える場合：新しい PC に新しい `docker-compose.yml` を配置し（イメージは Docker Hub から取得するので、ログインは不要です）、まず `docker compose up -d` でボリュームを作成してから、上記の方法でバックアップを復元します。バックアップファイルにはデータベース全体が入っているので、**Git にコミットしないでください**（`.gitignore` で `*.tgz` は無視されます）。詳細（接続設定、バックアップの検証）は [docs/ja/database.md](docs/ja/database.md) を参照してください。
+PC を替える場合：新しい PC に新しい `docker-compose.yml` を配置し（イメージは Docker Hub から取得するので、ログインは不要です）、まず `docker compose up -d` でボリュームを作成してから、上記の方法でバックアップを復元します。バックアップファイルにはデータベース全体が入っているので、**Git にコミットしないでください**（`.gitignore` で `*.tgz` は無視されます）。詳細（接続設定、バックアップの検証）は [docs/ja/database.md](../docs/ja/database.md) を参照してください。
 
 ### 以前のバージョンの学習記録を移行する（`progress.json`）
 
@@ -645,7 +645,7 @@ XEXAM_ALLOWED_HOSTS=xexam.お使いのドメイン.com
 
 ## アーキテクチャ
 
-以下の図はすべて [Mermaid](https://mermaid.js.org/) で書かれており、GitHub 上ではそのまま図として表示されます。詳しい説明は [docs/ja/architecture.md](docs/ja/architecture.md) を参照してください。
+以下の図はすべて [Mermaid](https://mermaid.js.org/) で書かれており、GitHub 上ではそのまま図として表示されます。詳しい説明は [docs/ja/architecture.md](../docs/ja/architecture.md) を参照してください。
 
 ### 構成要素のつながり
 
@@ -669,7 +669,7 @@ flowchart TB
 | `xexam-frontend` | Nginx + フロントエンド静的ファイル（HTML / JS / CSS）。`/api/` をバックエンドに転送します。20 MB 上限、セキュリティヘッダー、レート制限、タイムアウト付き | あり：ホストの `XEXAM_BIND`（既定は `127.0.0.1:8765`）→ コンテナの 8080 |
 | `xexam-backend` | 静的リンクされた Rust 実行ファイル 1 つ：REST API、Excel の解析、SQLite の読み書き | **なし**：`ports` がなく、ネットワークは `internal: true` |
 
-ブラウザは [REST API](docs/ja/api.md) を通じてのみバックエンドとやり取りし、フロントエンドからデータベースに直接アクセスすることはありません。**採点はブラウザ内で行われます**。サーバーが受け取るのは、各問題の問題 id、正誤、そして（v0.5 からは）選んだ答えです。答えは見直しのために保存するだけです。
+ブラウザは [REST API](../docs/ja/api.md) を通じてのみバックエンドとやり取りし、フロントエンドからデータベースに直接アクセスすることはありません。**採点はブラウザ内で行われます**。サーバーが受け取るのは、各問題の問題 id、正誤、そして（v0.5 からは）選んだ答えです。答えは見直しのために保存するだけです。
 
 ### データフロー A：問題集への取り込み（アップロード → プレビュー → 確定）
 
@@ -718,7 +718,7 @@ sequenceDiagram
 
 ### データベース：8 つのテーブル（スキーマ v2）
 
-`questions`、`stats`、`attempts`、`imports`、`meta` はスキーマ v1 からあるテーブルで、その定義文は変わっていません。v0.5 で `banks`、`attempt_items`、`settings` の 3 つのテーブルと、3 つの列（`questions.bank_id`、`attempts.banks`、`imports.bank_id`）が加わりました。すべてのフィールドの説明は [docs/ja/database.md](docs/ja/database.md) を参照してください。
+`questions`、`stats`、`attempts`、`imports`、`meta` はスキーマ v1 からあるテーブルで、その定義文は変わっていません。v0.5 で `banks`、`attempt_items`、`settings` の 3 つのテーブルと、3 つの列（`questions.bank_id`、`attempts.banks`、`imports.bank_id`）が加わりました。すべてのフィールドの説明は [docs/ja/database.md](../docs/ja/database.md) を参照してください。
 
 ```mermaid
 erDiagram
@@ -812,7 +812,7 @@ flowchart LR
 
 ## セキュリティについて
 
-詳細な脅威モデルと各防御の説明は [docs/ja/security.md](docs/ja/security.md) を参照してください。要点は次のとおりです。
+詳細な脅威モデルと各防御の説明は [docs/ja/security.md](../docs/ja/security.md) を参照してください。要点は次のとおりです。
 
 - **外部に公開されるのは Nginx だけです**。バックエンドはポートを公開しておらず、ネットワークは `internal: true` です（外部インターネットにもアクセスできません）。
 - 既定ではこのマシン宛てのリクエストだけを受け付けます（`Host` を検査）。Cloudflare など認証付きのリバースプロキシの背後に置く場合は、ご自身のドメイン名を `XEXAM_ALLOWED_HOSTS` に書いてください。書き込みリクエストでは、`Origin` が `Host` と同じホストであること（または `XEXAM_ALLOWED_ORIGINS` に含まれていること）も検査され、悪意のある Web ページがブラウザ経由で操作するのを防ぎます。バックエンドが読むのは実際の `Host` ヘッダーだけで、`X-Forwarded-*` は読みません。
@@ -828,7 +828,7 @@ flowchart LR
 
 ## 自動ビルドとリリース
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) が**唯一の**パイプラインです。`main` または `dev` へのプッシュ、`main` へのプルリクエスト、Actions ページからの手動実行のたびに、次の処理が自動で実行されます。
+[`.github/workflows/ci.yml`](../.github/workflows/ci.yml) が**唯一の**パイプラインです。`main` または `dev` へのプッシュ、`main` へのプルリクエスト、Actions ページからの手動実行のたびに、次の処理が自動で実行されます。
 
 ```mermaid
 flowchart LR
@@ -851,21 +851,21 @@ flowchart LR
 ```
 
 - **トリガー：** `main` へのプッシュ（公開します）、`dev` へのプッシュ、`main` へのプルリクエスト、または Actions ページからの手動実行。公開するのは `main` だけで、`dev`、プルリクエスト、ほかのブランチでの手動実行ではチェックとテストだけを行い、**公開は一切しません**。それ以外のブランチへのプッシュではパイプラインは動きません。
-- **更新のたびに必要なこと：** `VERSION` を変更し、**3 つの README すべて**（`README.md`、`README.ja.md`、`README.zh-CN.md`）の更新履歴の先頭に、同じバージョンのエントリを書きます。`backend/Cargo.toml` と `frontend/package.json` も同じバージョンにします。そうしないとステップ ① が失敗します。
-- **ドキュメントのチェック（これもステップ ①）：** 7 つのドキュメントが `docs/en`、`docs/ja`、`docs/zh-CN` のそれぞれにあること、`docs/` にはこの 3 つのフォルダ以外に何もないこと、README とドキュメント内のすべての相対リンクが実在するファイルを指していることを確認します。
+- **更新のたびに必要なこと：** `VERSION` を変更し、**3 つの README すべて**（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）の更新履歴の先頭に、同じバージョンのエントリを書きます。`backend/Cargo.toml` と `frontend/package.json` も同じバージョンにします。そうしないとステップ ① が失敗します。
+- **ドキュメントのチェック（これもステップ ①）：** 7 つのドキュメントが `docs/en`、`docs/ja`、`docs/zh-CN` のそれぞれにあること、`docs/` にはこの 3 つのフォルダ以外に何もないこと、ルートに置く README は `README.md` だけで、残り 2 つの README は `README/` にあること、compose ファイルと `.env.example` が `docker/` にあること、README とドキュメント内のすべての相対リンクと画像のパスが実在するファイルを指していること（Releases など GitHub のページへのリンクは、`../` でちょうどリポジトリのページまで戻ること）を確認します。
 - **すべて通過して初めて公開：** 2 つのイメージ（`xexam-frontend`、`xexam-backend`）をそれぞれマルチアーキテクチャのイメージとして公開し、そのうえでマニフェストに `amd64` と `arm64` の両方が含まれていること、タグがプッシュしたばかりのダイジェストを指していることを確認します。テストが失敗した場合、`latest` は直前の動作するバージョンのままです。
 - **公開されるタグ：** `latest`、`v<VERSION>`、`sha-<コミット>`。Docker Hub と ghcr.io で同じです。
 - **バックエンドイメージの arm64 ビルド方法：** ビルドマシン上で zig を使ってクロスコンパイルし、QEMU 上で Rust をコンパイルすることはしません（QEMU では 1 桁遅くなります）。ターゲットアーキテクチャになるのは、最後の非常に小さな alpine ステージだけです。
-- **Releases ページ：** 2 つのイメージの公開と検証がどちらも成功したあとで、`v<VERSION>` という名前の Release を自動で作成（または更新）します。説明文は英語版 README の「Changelog」にある当該バージョンの部分から取得し（[`scripts/release-notes.py`](scripts/release-notes.py)）、同名の git タグも自動で付けます。イメージの公開に失敗した場合、この Release は作られません。
+- **Releases ページ：** 2 つのイメージの公開と検証がどちらも成功したあとで、`v<VERSION>` という名前の Release を自動で作成（または更新）します。説明文は英語版 README の「Changelog」にある当該バージョンの部分から取得し（[`scripts/release-notes.py`](../scripts/release-notes.py)）、同名の git タグも自動で付けます。イメージの公開に失敗した場合、この Release は作られません。
 - **Releases とイメージは別々の場所にあります：** イメージは **Docker Hub**（`docker.io/yuminspace/xexam-frontend` と `docker.io/yuminspace/xexam-backend`、公開。`docker-compose.yml` が pull するのはこちら）と、非公開のミラーとしてリポジトリの **Packages**（ghcr.io）にあります。Release は **Releases** ページにあり、Docker Hub からの pull コマンドを最初に載せています。いずれも同じビルドから一緒に生成されます。
 
-Docker Hub への公開には、リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（**Read & Write** の権限を持つ Docker Hub のアクセストークン）の 2 つが必要です。必要に応じて、リポジトリ変数 `DOCKERHUB_NAMESPACE` も設定できます。シークレットがない場合や、`docker-compose.yml` がその名前空間の Docker Hub のイメージを指していない場合、公開ジョブは何もプッシュせずに止まります。ghcr.io ではイメージは非公開です（リポジトリが非公開のため）。そこで新しいイメージ名を初めて公開するときは、GitHub のパッケージ設定で、このリポジトリを **Manage Actions access** に追加し、ロールとして **Admin** を選んでください。そうしないとプッシュが拒否されます（`permission_denied: write_package`）。
+Docker Hub への公開には、リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（**Read & Write** の権限を持つ Docker Hub のアクセストークン）の 2 つが必要です。必要に応じて、リポジトリ変数 `DOCKERHUB_NAMESPACE` も設定できます。シークレットがない場合や、`docker/docker-compose.yml` がその名前空間の Docker Hub のイメージを指していない場合、公開ジョブは何もプッシュせずに止まります。ghcr.io ではイメージは非公開です（リポジトリが非公開のため）。そこで新しいイメージ名を初めて公開するときは、GitHub のパッケージ設定で、このリポジトリを **Manage Actions access** に追加し、ロールとして **Admin** を選んでください。そうしないとプッシュが拒否されます（`permission_denied: write_package`）。
 
 ---
 
 ## 開発
 
-日常的なコードの変更やテスト実行に使うコマンドは [docs/ja/development.md](docs/ja/development.md) を参照してください。よく使うものは次のとおりです。
+日常的なコードの変更やテスト実行に使うコマンドは [docs/ja/development.md](../docs/ja/development.md) を参照してください。よく使うものは次のとおりです。
 
 ```bash
 # バックエンド（Rust 1.99.1。rustup が backend/rust-toolchain.toml に従って自動でインストールします）
@@ -885,7 +885,7 @@ python -I tests/integration/stack_check.py
 - バックエンドのテストは 181 件、フロントエンドの単体テストは 44 件です。バックエンドのテストは、`tests/baseline/` にコミット済みの**旧版のスナップショット**と突き合わせて行います。内訳は、ゴールデンレスポンス 172 件、パース用フィクスチャ 49 件とその出力、問題 id ベクタ 85 件です。これらのフィクスチャはすべて架空のもので、実際の問題集がリポジトリに入ることはありません。
 - v0.5 の動作（スキーマの移行とバックアップ、問題集、記録、設定、新しいルートのガード）は `backend/tests/v05_banks_records_settings.rs` でテストしています。
 - 画面のテキストはすべて `frontend/src/i18n/catalog/*.ts` にあり、英語・中国語・日本語で書かれています。ある言語にキーが欠けているとテストが失敗し、バックエンドのエラーメッセージに翻訳がない場合も別のテストが失敗します。
-- **Xexam について** のページには、3 つの README の更新履歴が表示されます。更新履歴はフロントエンドのビルド時に読み込まれる（`frontend/vite.config.ts` の `xexam-changelog` プラグイン）ため、フロントエンドをビルドするには、`frontend/` の 1 つ上のフォルダに `README.md`、`README.ja.md`、`README.zh-CN.md` が必要です。
+- **Xexam について** のページには、3 つの README の更新履歴が表示されます。更新履歴はフロントエンドのビルド時に読み込まれる（`frontend/vite.config.ts` の `xexam-changelog` プラグイン）ため、フロントエンドをビルドするには、`frontend/` の 1 つ上のフォルダ（リポジトリのルート）に `README.md`、`README/README.ja.md`、`README/README.zh-CN.md` が必要です。
 - v0.4 以前のデータベースを v0.5 で開くと移行が行われ、その隣に `backups/` が書き出されます。試すときはコピーを使ってください。
 
 ---
@@ -893,12 +893,14 @@ python -I tests/integration/stack_check.py
 ## ディレクトリ構成
 
 ```
-README.md                  英語版の README。README.ja.md（このファイル）と README.zh-CN.md が日本語版と中国語版
+README.md                  英語版の README。日本語版と中国語版は README/ にある
+README/                    README.ja.md（このファイル、日本語）と README.zh-CN.md（中国語）
 LICENSE                    MIT ライセンス
 VERSION                    バージョン番号（更新履歴の先頭のエントリと一致させる）
-docker-compose.yml         2 つのイメージを pull して実行（必要なのはこのファイルだけ）
-docker-compose.build.yml   ソースから 2 つのイメージをビルドして実行
-.env.example               ローカル設定のテンプレート（.env にコピーして使う。.env はコミットしない）
+docker/                    Docker Compose のファイル（Dockerfile は backend/ と nginx/ にある）
+  docker-compose.yml         2 つのイメージを pull して実行（必要なのはこのファイルだけ）
+  docker-compose.build.yml   ソースから 2 つのイメージをビルドして実行（ビルドコンテキストはリポジトリのルート）
+  .env.example               ローカル設定のテンプレート（docker/.env にコピーして使う。.env はコミットしない）
 backend/                   Rust バックエンド（Axum + rusqlite）
   src/api/                   ルーティング、ガード（Host / Origin / Content-Type / サイズ）、JSON 形式、成績データのサニタイズ
   src/services/              確認待ちインポートのスロット、パースエンジンのインターフェース、取り込みフロー
@@ -928,7 +930,7 @@ scripts/release-notes.py   更新履歴から GitHub Release の説明文を生�
 
 ## ライセンス
 
-Xexam は [MIT ライセンス](LICENSE) で公開されています。Copyright (c) 2026 Yumin-Space.
+Xexam は [MIT ライセンス](../LICENSE) で公開されています。Copyright (c) 2026 Yumin-Space.
 
 このライセンスの対象は、このリポジトリ内のソフトウェアです。リポジトリに試験問題は含まれていません。取り込む問題集はご自身のファイルであり、それを使用してよいかどうかの確認はご自身の責任で行ってください。
 
@@ -968,8 +970,8 @@ Xexam は [MIT ライセンス](LICENSE) で公開されています。Copyright
 - **画面設定ページ**：テーマ（システムに合わせる / ライト / ダーク）、表示言語（既定は English、ほかに 中文、日本語）、回答後に自動で次の問題へ進む設定（単一選択と、すべての小問に答えたホットスポット問題が対象。複数選択では進みません）、既定の設定に戻す機能。設定と問題の言語はサーバーのデータディレクトリに保存されるため、再起動、イメージの更新、ブラウザのキャッシュの削除、別のブラウザや端末への切り替えでも消えません。未提出の試験は、これまでどおり現在のブラウザにだけ保存されます。
 - **画面全体を英語・中国語・日本語で表示**：試験ページや、サーバーからのエラーメッセージも含みます（バックエンドは引き続き中国語で送り、画面側で翻訳します）。
 - **スマートフォン向けの改善**：ホームでは「試験を開始」ボタンが画面下部に固定され、一覧はよりコンパクトになり、解答用紙では回答済みの数と「提出する」が問題のタイルの上に表示され、タッチ領域は 44 px 以上になりました。
-- **データベーススキーマ v2**：新しいテーブル `banks`、`attempt_items`、`settings`、新しい列 `questions.bank_id`、`attempts.banks`、`imports.bank_id`。v0.5 の初回起動時に、既存のデータベースを自動で移行します。その前に、コピーを `<データディレクトリ>/backups/xexam-schema1-<日時>.db` に書き出します（コピーを書き出せない場合、バックエンドは起動せず、何も変更しません）。既存のデータは 1 つの問題集になり、問題 id、間違いノート、成績履歴はそのまま残ります。ロールバック = 停止し、そのコピーを復元して、v0.4 を動かす。問題集が複数あるデータベースで v0.4 を動かすことは絶対にしないでください。手順：[docs/ja/migration.md](docs/ja/migration.md)。
-- **新しい API**：`GET /api/banks`、`POST /api/banks/delete`、`GET /api/records`、`GET /api/record?id=`、`POST /api/records/delete`、`GET` / `POST /api/settings`、`POST /api/settings/reset`、そして `POST /api/upload` の省略可能なヘッダー `X-Bank-Target`（付けない場合、アップロードは v0.4 とまったく同じように動作します）。`GET /api/bank` の各問題には、キー `bank` が 1 つ増えます。[docs/ja/api.md](docs/ja/api.md) を参照してください。
+- **データベーススキーマ v2**：新しいテーブル `banks`、`attempt_items`、`settings`、新しい列 `questions.bank_id`、`attempts.banks`、`imports.bank_id`。v0.5 の初回起動時に、既存のデータベースを自動で移行します。その前に、コピーを `<データディレクトリ>/backups/xexam-schema1-<日時>.db` に書き出します（コピーを書き出せない場合、バックエンドは起動せず、何も変更しません）。既存のデータは 1 つの問題集になり、問題 id、間違いノート、成績履歴はそのまま残ります。ロールバック = 停止し、そのコピーを復元して、v0.4 を動かす。問題集が複数あるデータベースで v0.4 を動かすことは絶対にしないでください。手順：[docs/ja/migration.md](../docs/ja/migration.md)。
+- **新しい API**：`GET /api/banks`、`POST /api/banks/delete`、`GET /api/records`、`GET /api/record?id=`、`POST /api/records/delete`、`GET` / `POST /api/settings`、`POST /api/settings/reset`、そして `POST /api/upload` の省略可能なヘッダー `X-Bank-Target`（付けない場合、アップロードは v0.4 とまったく同じように動作します）。`GET /api/bank` の各問題には、キー `bank` が 1 つ増えます。[docs/ja/api.md](../docs/ja/api.md) を参照してください。
 - **ドキュメントを言語ごとに分割**：`docs/en`、`docs/ja`、`docs/zh-CN`。中国語のみの過去の文書は `docs/zh-CN/history` に移しました。言語フォルダごとに、その言語の画面で撮ったスクリーンショットがあります。CI はこの構成と、すべての相対リンクを確認します。
 - **`dev` ブランチへのプッシュでも CI が動くようになりました**（チェックとテストのみで、公開はしません）。
 - README、ドキュメント、4 列形式のパーサーテストにある Excel の例を、架空の例に置き換えました。`tests/baseline/` にある旧版のテストスナップショットは変わっていません。それより前の更新履歴で変えたのは、リンク（新しいドキュメントのフォルダへ）と、例として挙げた語の一覧 1 か所だけです。
@@ -996,12 +998,12 @@ Xexam は [MIT ライセンス](LICENSE) で公開されています。Copyright
 - **バックエンドを Rust に変更**（Axum 0.8 + Tokio + rusqlite、ツールチェーンは 1.99.1 に固定）：REST インターフェース、XLSX の解析、インポート（プレビューはデータベースに書き込まない → 一回限りの確認コード → 1 つのトランザクションで書き込み）、成績と誤答の統計、Host/Origin ガード、`xexam-backend import / healthcheck / migrate-progress` サブコマンド。挙動は Python 版と 1 対 1 に対応しています。172 件の旧版レスポンスを項目ごとに突き合わせて、説明のつかない差異はありませんでした。49 個の合成ワークブックの解析出力と 85 件の問題 id ベクトルもすべて一致したため、問題 id は旧版とバイト単位で同一で、学習記録が問題から切り離されることはありません。
 - **フロントエンドを TypeScript に変更**（strict）+ **Vite**、素の DOM でフレームワークは使いません。インラインスタイルがないため、CSP を厳しく設定できます。ビルドターゲットは `safari15` で、iPhone は iOS 15.4 以上が必要です。
 - **2 つのイメージ、2 つのコンテナ**：`xexam-frontend`（Nginx + フロントエンドの静的ファイル、唯一外部に公開）と `xexam-backend`（Rust、`internal` のプライベートネットワーク内でポートを公開しない）。非 root、`cap_drop: ALL`、読み取り専用のルートファイルシステム。Host はそのまま透過し、`X-Forwarded-*` は空にします。20 MB の上限、セキュリティヘッダー、レート制限、タイムアウトを備え、バックエンドに到達できないときは JSON の 502 を返します。どちらのイメージにも `amd64` と `arm64` の両方があります。
-- **より厳格なアップロード検査（意図的な差異）**：どの文字コード・拡張子でも DOCTYPE とエンティティ宣言を拒否します。重複した ZIP エントリ名を拒否します。ZIP のエントリ数、XML の深さ・ノード数・要素あたりの属性数、セルの合計バイト数に上限があります。解析には協調的なタイムアウトがあり（時間になるとパーサー自身が停止します）、同時に実行できるのは最大 2 件です。エラーメッセージにライブラリの例外テキストを表示しなくなりました。未対応の HTTP メソッドには 405 を返します（以前は 501）。差異の一覧は [docs/ja/api.md](docs/ja/api.md) を参照してください。
+- **より厳格なアップロード検査（意図的な差異）**：どの文字コード・拡張子でも DOCTYPE とエンティティ宣言を拒否します。重複した ZIP エントリ名を拒否します。ZIP のエントリ数、XML の深さ・ノード数・要素あたりの属性数、セルの合計バイト数に上限があります。解析には協調的なタイムアウトがあり（時間になるとパーサー自身が停止します）、同時に実行できるのは最大 2 件です。エラーメッセージにライブラリの例外テキストを表示しなくなりました。未対応の HTTP メソッドには 405 を返します（以前は 501）。差異の一覧は [docs/ja/api.md](../docs/ja/api.md) を参照してください。
 - **1 本のパイプライン**（`.github/workflows/ci.yml`）：バージョンと更新履歴の検査 → フロントエンド / バックエンド / Nginx と全スタック / arm64 の 4 グループの検査 → すべて通ったら 2 つのイメージを公開し、Release を作成。
 - **テスト**：バックエンド 136 件（コミット済みの旧版スナップショットとの突き合わせ：172 件のゴールデンレスポンス、49 個の解析フィクスチャ、85 件の id ベクトル）、フロントエンド 19 件。`tests/integration/` には Nginx 38 項目、全スタック 34 項目、`progress.json` 移行 10 項目があります。
 - **ドキュメント**：`docs/` 以下にアーキテクチャ、API（OpenAPI を含む）、データベース、セキュリティ、デプロイ、移行、開発に加え、移行前の監査、リスク、計画を置きました。
-- 採点は引き続きブラウザ内で行います（サーバーは `{問題 id, 正誤}` だけを受け取ります）。理由は [docs/zh-CN/history/migration-plan.md](docs/zh-CN/history/migration-plan.md) を参照してください。
-- ⚠️ **アップグレード時の注意**：新旧のバージョンはコンテナ名とポートが同じなので、**同時に実行できません**。アップグレード前に `docker compose stop` を実行してください。データボリューム `xexam_data` は同じものなので、データの移行は不要です。旧来の単一イメージ `ghcr.io/yumin-space/xexam` は今後更新されません（最後は `v0.2.2`）。`docker-compose.yml` は、`xexam-frontend` と `xexam-backend` の 2 つを一度に pull するようになりました。ロールバック手順は [docs/ja/migration.md](docs/ja/migration.md) を参照してください。
+- 採点は引き続きブラウザ内で行います（サーバーは `{問題 id, 正誤}` だけを受け取ります）。理由は [docs/zh-CN/history/migration-plan.md](../docs/zh-CN/history/migration-plan.md) を参照してください。
+- ⚠️ **アップグレード時の注意**：新旧のバージョンはコンテナ名とポートが同じなので、**同時に実行できません**。アップグレード前に `docker compose stop` を実行してください。データボリューム `xexam_data` は同じものなので、データの移行は不要です。旧来の単一イメージ `ghcr.io/yumin-space/xexam` は今後更新されません（最後は `v0.2.2`）。`docker-compose.yml` は、`xexam-frontend` と `xexam-backend` の 2 つを一度に pull するようになりました。ロールバック手順は [docs/ja/migration.md](../docs/ja/migration.md) を参照してください。
 - **検証していないもの（正直に記載）**：本物の Cloudflare Tunnel、iPhone の実機、本物の ARM ハードウェア上での実行（QEMU 上でビルドして起動を確認しただけです）、ご自身の実データベースのコピーを使った予行演習。
 
 ### v0.2.2 — 2026-11-10

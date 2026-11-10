@@ -42,7 +42,7 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 
 - 开发时请用 `localhost` 或 `127.0.0.1` 打开页面。Vite 代理的 `changeOrigin` 必须是 `false`：后端会比较 `Host` 与 `Origin`，改写 `Host` 会让写请求被 403。
 - 后端不在默认地址时：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`。
-- `npm run build` 和 `npm run dev` 会读取仓库根目录的 `README.md`、`README.zh-CN.md` 和 `README.ja.md`：`vite.config.ts` 里的插件 `xexam-changelog` 把它们的更新日志变成模块 `virtual:changelog`，给「关于」页（`#/about`）的「更新内容」用。哪一份 README 里没有 `### vX.Y` 条目，构建就失败。开发服务器会监视这三个文件的改动。
+- `npm run build` 和 `npm run dev` 会读取仓库根目录的 `README.md` 以及 `README/README.zh-CN.md` 和 `README/README.ja.md`：`vite.config.ts` 里的插件 `xexam-changelog` 把它们的更新日志变成模块 `virtual:changelog`，给「关于」页（`#/about`）的「更新内容」用。哪一份 README 里没有 `### vX.Y` 条目，构建就失败。开发服务器会监视这三个文件的改动。
 - 只跑一个测试文件：`node --experimental-strip-types --test src/i18n/server-messages.test.ts`。
 - 导入路径用 `.ts` 扩展名（Node 自带的测试运行器要求）。
 - TypeScript 固定在 `~5.9.3`。
@@ -82,7 +82,7 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 
 ```bash
 # 构建并启动两个容器（同一个 xexam_data 卷！自己的数据会被用到；要试验请换一个项目名，例如 -p some-other-name）
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 
 # 检查脚本都用临时项目名和临时卷，不碰 xexam_data
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
@@ -91,7 +91,7 @@ python -I tests/integration/stack_check.py                      # 34 项，起�
 python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend         # 10 项：旧 progress.json 的迁移（需要先 cargo build）
 ```
 
-- 镜像的构建上下文是仓库根目录。`nginx/Dockerfile` 先复制 `frontend/`，再执行 `COPY README.md README.ja.md README.zh-CN.md /`，因为 `vite.config.ts` 从前端目录的上一级读取这三份 README（给「关于」页的更新日志）。所以 `.dockerignore` 排除数据、构建产物、`docs`、`tests` 等，但不再排除 `README.md`。最终镜像里只有 `nginx.conf` 和 `dist/` 里的静态文件。
+- compose 文件和 `.env` 在 `docker/` 里。镜像的构建上下文是仓库根目录（`docker/docker-compose.build.yml` 里写作 `..`）。`nginx/Dockerfile` 先复制 `frontend/`，再执行 `COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`，因为 `vite.config.ts` 从前端目录的上一级读取这三份 README（给「关于」页的更新日志）。所以 `.dockerignore` 排除数据、构建产物、`docs`、`tests` 等，但不排除 `README.md` 和 `README/`。最终镜像里只有 `nginx.conf` 和 `dist/` 里的静态文件。
 
 ## 5. 对照旧版（回归）
 
@@ -121,12 +121,12 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 | 作业 | 内容 |
 |---|---|
-| `check` | `VERSION` 格式；三个 README 各自最新的一条更新日志 = `VERSION`；`backend/Cargo.toml` 和 `frontend/package.json` 的版本号相同；文档检查（第 8 节） |
+| `check` | `VERSION` 格式；三个 README 各自最新的一条更新日志 = `VERSION`；`backend/Cargo.toml` 和 `frontend/package.json` 的版本号相同；目录布局（根目录只有 `README.md`，另外两份 README 在 `README/`，compose 文件和 `.env.example` 在 `docker/`）和文档检查（第 8 节） |
 | `frontend` | 类型检查、44 个单元测试、构建 |
 | `backend` | fmt、clippy、181 个测试，以及 `progress.json` 迁移检查 |
 | `stack` | 构建 `xexam-frontend` 镜像跑 38 项 Nginx 检查；起整个 compose 栈跑 34 项端到端检查 |
 | `arm64` | 为 arm64 构建两个镜像，在 QEMU 下启动，检查 `/api/info` 报的是 `aarch64` 和正确的版本号 |
-| `publish` | 仅 `main`：两个镜像（amd64 + arm64）用相同的标签推到 Docker Hub（`docker.io/yuminspace/`，公开，`docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（可选：变量 `DOCKERHUB_NAMESPACE`）；没有它们，会在推送任何东西之前停下 |
+| `publish` | 仅 `main`：两个镜像（amd64 + arm64）用相同的标签推到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（可选：变量 `DOCKERHUB_NAMESPACE`）；没有它们，会在推送任何东西之前停下 |
 | `release` | 仅 `main`：建（或更新）`v<VERSION>` 的 GitHub Release，说明取自 `README.md` 的更新日志 |
 
 推送到 `dev` 和向 `main` 提拉取请求只跑前五项，**从不发布**；只有推送到 `main` 才会发布。手动启动的运行，效果和推送到它所在的分支一样。
@@ -138,12 +138,12 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 - `docs/en/openapi.yaml` 由所有语言共用；日文和中文文档链接到 `../en/openapi.yaml`。
 - 每份文档开头都有一个语言栏，链接到另外两个文件夹里的同一份文档。链接都相对于文件自己所在的文件夹：仓库根目录是 `../../`。
 - 先改英文文档，再在同一次改动里改日文和中文文档。
-- 以下情况 CI 的 `check` 作业会失败：某个语言文件夹里缺了七份文档中的一份；`docs/` 里除了 `en`、`ja`、`zh-CN` 三个文件夹还有别的东西；README 或文档里的相对链接指向不存在的文件。
+- 以下情况 CI 的 `check` 作业会失败：某个语言文件夹里缺了七份文档中的一份；`docs/` 里除了 `en`、`ja`、`zh-CN` 三个文件夹还有别的东西；README 或文档里的相对链接或图片路径指向不存在的文件。指向 GitHub 页面的链接（`../../releases` 等）也会检查：必须正好回到仓库页面，所以在 `README/` 里要以 `../../../` 开头。
 
 ## 9. 版本号、更新日志和许可证
 
 - 版本号的唯一来源是仓库根目录的 `VERSION`（`0.5.1`）。`backend/Cargo.toml` 和 `frontend/package.json` 里各有一份（`0.5.1`）；CI 会检查它们是否一致。
-- 每次更新都要在三个 README（`README.md`、`README.ja.md`、`README.zh-CN.md`）的更新日志最上面加一条，版本号与 `VERSION` 一致。CI 会检查这一点：它取每份 README 里第一行以 `### v` 加数字开头的标题，所以更新日志前面不能有别的以 `### v` 开头的标题。GitHub Release 的说明取自英文那一份。
+- 每次更新都要在三个 README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）的更新日志最上面加一条，版本号与 `VERSION` 一致。CI 会检查这一点：它取每份 README 里第一行以 `### v` 加数字开头的标题，所以更新日志前面不能有别的以 `### v` 开头的标题。GitHub Release 的说明取自英文那一份。
 - 「关于」页的「更新内容」也来自这些更新日志（见第 3 节），每种界面语言显示对应语言的 README。页面只认简单的 Markdown：段落、以 `- ` 开头的列表项、多缩进两个空格的子列表项、`**粗体**`，以及用反引号括起来的代码；指向仓库里文件的链接显示成普通文字。所以更新日志里只用这些写法。
 - 在 `dev` 上开发；`main` 接收合并，推送到 `main` 会发布镜像和 Release。
 - 本项目使用 MIT 许可证（仓库根目录的 `LICENSE`）。

@@ -17,7 +17,7 @@
 
 ### 拉取现成的镜像（推荐）
 
-只需要仓库里的 [`docker-compose.yml`](../../docker-compose.yml) 这一个文件。它从 Docker Hub 拉取两个镜像（`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-frontend`），这两个镜像是公开的，所以不需要 `docker login`。同样的标签也在 `ghcr.io/yumin-space/` 上，作为私有镜像副本（用它要先 `docker login ghcr.io`，密码填一个有 `read:packages` 权限的经典令牌，即 Tokens (classic)）。
+只需要仓库 `docker/` 文件夹里的 [`docker-compose.yml`](../../docker/docker-compose.yml) 这一个文件（下载到单独的文件夹里，例如 `curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml`，然后在那个文件夹里运行命令）。它从 Docker Hub 拉取两个镜像（`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-frontend`），这两个镜像是公开的，所以不需要 `docker login`。同样的标签也在 `ghcr.io/yumin-space/` 上，作为私有镜像副本（用它要先 `docker login ghcr.io`，密码填一个有 `read:packages` 权限的经典令牌，即 Tokens (classic)）。
 
 ```bash
 # 不需要 docker login：镜像在 Docker Hub 上是公开的
@@ -31,28 +31,28 @@ docker compose up -d
 ```bash
 git clone git@github.com:Yumin-Space/xexam.git
 cd xexam
-docker compose -f docker-compose.build.yml up -d --build
+docker compose -f docker/docker-compose.build.yml up -d --build
 ```
 
-第一次构建要几分钟（编译 Rust 和前端），之后有缓存。
+第一次构建要几分钟（编译 Rust 和前端），之后有缓存。克隆的仓库里，compose 文件和 `.env` 都在 `docker/` 里，`docker/docker-compose.build.yml` 以仓库根目录为构建上下文。下面的命令要在仓库根目录运行，并加上 `-f docker/docker-compose.build.yml`（例如 `docker compose -f docker/docker-compose.build.yml logs -f`）。
 
-构建 `xexam-frontend` 时，`nginx/Dockerfile` 会把仓库根目录的 `README.md`、`README.ja.md` 和 `README.zh-CN.md` 复制进构建环境（`COPY README.md README.ja.md README.zh-CN.md /`）：「关于 Xexam」页（菜单底部的「Xexam v0.5.1」）里的「更新内容」，就是在构建时从这三份 README 的更新日志生成的。所以 `.dockerignore` 不再排除 `README.md`。最终镜像里只有生成的静态文件，没有 README 本身。
+构建 `xexam-frontend` 时，`nginx/Dockerfile` 会把仓库里的 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md` 复制进构建环境（`COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`）：「关于 Xexam」页（菜单底部的「Xexam v0.5.1」）里的「更新内容」，就是在构建时从这三份 README 的更新日志生成的。所以 `.dockerignore` 不排除 `README.md` 和 `README/`。最终镜像里只有生成的静态文件，没有 README 本身。
 
 | 操作 | 命令 |
 |---|---|
 | 看状态 | `docker compose ps`（两个容器都应是 `healthy`） |
 | 看日志 | `docker compose logs -f` |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
-| 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建用：`git pull && docker compose -f docker-compose.build.yml up -d --build`）。如果你的 `docker-compose.yml` 里还写着 `ghcr.io`（v0.5.1 之前的文件），先换成新的那份；数据卷不变。从 v0.4 升级：先看第 6 节 |
+| 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建用：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。如果你的 `docker-compose.yml` 里还写着 `ghcr.io`（v0.5.1 之前的文件），先换成新的那份；数据卷不变。从 v0.4 升级：先看第 6 节 |
 | 版本和架构 | <http://localhost:8765/api/info> |
 
 > ⚠️ 不要运行 `docker compose down -v`：`-v` 会删除数据卷 `xexam_data`，题库和学习记录都在里面。
 
-**`docker-compose.yml` 和 `docker-compose.build.yml` 用同一个项目名（`xexam`）、同一个卷（`xexam_data`）和同样的容器名**，所以两者不能同时运行；切换前先 `docker compose stop`。数据互通，见 [migration.md](migration.md)。
+**`docker/docker-compose.yml` 和 `docker/docker-compose.build.yml` 用同一个项目名（`xexam`）、同一个卷（`xexam_data`）和同样的容器名**，所以两者不能同时运行；切换前先 `docker compose stop`。数据互通，见 [migration.md](migration.md)。
 
 ## 3. 配置（`.env`）
 
-在 `docker-compose.yml` 旁边建 `.env`（不会被提交，也不会进镜像；模板是 [`.env.example`](../../.env.example)）：
+在 `docker-compose.yml` 旁边建 `.env`；克隆的仓库里就是 `docker/.env`，在仓库根目录用 `-f docker/...` 运行时，Compose 读的也是这个文件（以前克隆的仓库如果在根目录有 `.env`，把它移到 `docker/`）。它不会被提交，也不会进镜像；模板是 [`.env.example`](../../docker/.env.example)：
 
 | 变量 | 默认 | 作用 |
 |---|---|---|
@@ -113,7 +113,7 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 ## 6. 从 v0.4 升级到 v0.5
 
-对部署来说，v0.5 还是那两个镜像、同一个端口、同一个卷，也没有新的环境变量。变的是界面（菜单按钮和下拉菜单、题库管理、学习记录、界面设置、「关于」页）、数据库 schema，以及从 v0.5.1 起的镜像仓库：新的 `docker-compose.yml` 从 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录）拉取，不再从 `ghcr.io` 拉取。项目名和卷 `xexam_data` 都不变，所以换镜像仓库不会丢任何数据。从源码构建的命令也不变；前端镜像现在还会读取三个 README（见第 2 节）。
+对部署来说，v0.5 还是那两个镜像、同一个端口、同一个卷，也没有新的环境变量。变的是界面（菜单按钮和下拉菜单、题库管理、学习记录、界面设置、「关于」页）、数据库 schema，以及从 v0.5.1 起的镜像仓库：新的 `docker-compose.yml` 从 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录）拉取，不再从 `ghcr.io` 拉取。项目名和卷 `xexam_data` 都不变，所以换镜像仓库不会丢任何数据。从源码构建时用第 2 节的命令：compose 文件现在在 `docker/` 里，所以要把仓库根目录的 `.env` 移到 `docker/.env`（Compose 不会再读根目录的 `.env`）。前端镜像现在还会读取三个 README（见第 2 节）。
 
 1. 先备份卷，做法见 [database.md](database.md) 的第 5 节。程序自己也会写一份副本，但放在卷外面的副本更保险。
 2. 把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`），然后照常更新：`docker compose pull && docker compose up -d`。
@@ -145,4 +145,4 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 推送到 `main` 时，[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 先跑版本、更新日志和文档检查，再跑四组检查（前端、后端、Nginx 与整栈、arm64）。全部通过后，才把 `xexam-frontend` 和 `xexam-backend` 两个镜像（amd64 + arm64）发布到 Docker Hub（`docker.io/yuminspace/`，公开），同时作为私有镜像副本发布到 `ghcr.io/yumin-space/`，两边的标签都是 `latest`、`v<VERSION>` 和 `sha-<提交>`，并建对应的 GitHub Release（说明里最先列出从 Docker Hub 拉取的命令）。推送到 `dev` 和指向 `main` 的拉取请求会跑同样的检查，但从不发布。详见 [development.md](development.md) 的第 7 节。
 
-发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）；没有这两个机密，或者 `docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。在 ghcr.io 上，第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。
+发布到 Docker Hub 需要两个仓库机密（secret）：`DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）；没有这两个机密，或者 `docker/docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。在 ghcr.io 上，第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。

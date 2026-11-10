@@ -53,6 +53,8 @@ backend/        Rust（Axum 0.8 + Tokio + rusqlite），工具链固定 1.99.1
   src/config/     环境变量
   tests/          单元、黄金响应、解析差分、id 向量、v0.5（题库、记录、设置、迁移）
 nginx/          nginx.conf + Dockerfile（构建前端，构建时带上三个 README → 只带静态产物）
+docker/         docker-compose.yml（拉取两个镜像）、docker-compose.build.yml（从源码构建，上下文是仓库根目录）、.env.example
+README.md       英语版说明（含更新日志）；README/ 里是 README.ja.md 和 README.zh-CN.md
 tests/          baseline/（旧版的黄金响应和测试数据）· integration/（nginx、整栈、progress.json 迁移）
 docs/           en/（英文，原文）· ja/ · zh-CN/（含 history/：较早的文档，只有中文）
 ```
@@ -237,7 +239,7 @@ sequenceDiagram
 | `xexam-frontend` | `node:24-alpine` 编译前端（连同三个 README 里的更新日志）→ `nginxinc/nginx-unprivileged:1.27-alpine` | nginx.conf + 静态文件；uid 非 root；监听 8080 |
 | `xexam-backend` | `rust:1.99.1-slim-bookworm` 在构建机自己的架构上运行，用 zig 交叉编译成静态 musl 二进制 → `alpine:3.21` + tzdata | 一个可执行文件 + `/VERSION`；uid 10001；根文件系统只读 |
 
-「关于」页的更新日志：`frontend/vite.config.ts` 里的插件 `xexam-changelog` 在构建时读取仓库根目录的 `README.md`、`README.zh-CN.md` 和 `README.ja.md`，用 `src/domain/changelog.ts` 解析其中以 `### vX.Y` 开头的条目，生成模块 `virtual:changelog`。哪一份 README 里一条都没有，构建就失败。镜像构建也要用到这三个文件：`nginx/Dockerfile` 在 `npm run build` 之前执行 `COPY README.md README.ja.md README.zh-CN.md /`（`vite.config.ts` 从前端目录的上一级读取它们），所以 `.dockerignore` 把这三个 README 留在构建上下文里（`docs/` 等仍然排除）。最终镜像里只有 nginx.conf 和生成的静态文件，没有 README 本身。README 仍是更新日志的唯一来源，CI 检查的也是它们。
+「关于」页的更新日志：`frontend/vite.config.ts` 里的插件 `xexam-changelog` 在构建时读取仓库根目录的 `README.md` 和 `README/` 里的 `README.zh-CN.md`、`README.ja.md`，用 `src/domain/changelog.ts` 解析其中以 `### vX.Y` 开头的条目，生成模块 `virtual:changelog`。哪一份 README 里一条都没有，构建就失败。镜像构建也要用到这三个文件：`nginx/Dockerfile` 在 `npm run build` 之前执行 `COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`（`vite.config.ts` 从前端目录的上一级读取它们，路径和仓库里一样），所以 `.dockerignore` 把这三个 README（`README.md` 和 `README/`）留在构建上下文里（`docs/` 等仍然排除）。最终镜像里只有 nginx.conf 和生成的静态文件，没有 README 本身。README 仍是更新日志的唯一来源，CI 检查的也是它们。
 
 两个服务都用 `cap_drop: ALL`、`no-new-privileges`、`read_only: true` 和 `tmpfs: /tmp`。后端只能写 `/data`（数据卷）和 `/tmp`。
 
@@ -250,6 +252,6 @@ sequenceDiagram
 | `app/xlsx_parser.py` | `backend/src/parser/` |
 | `web/app.js` / `style.css` / `index.html` | `frontend/src/` |
 | 容器里一个进程 | nginx + backend 两个容器 |
-| `docker-compose.yml`（拉取镜像） | `docker-compose.yml`（拉取 `xexam-frontend` 和 `xexam-backend` 两个镜像）；`docker-compose.build.yml`（从源码构建） |
+| `docker-compose.yml`（拉取镜像） | `docker/docker-compose.yml`（拉取 `xexam-frontend` 和 `xexam-backend` 两个镜像）；`docker/docker-compose.build.yml`（从源码构建） |
 
 旧的 Python 实现已从仓库移除，但没有丢：Git 标签 `python-v0.2` 指向它的最后一个版本，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍可从 GHCR 拉取（私有：先 `docker login ghcr.io`；Docker Hub 上没有它）。回滚见 [migration.md](migration.md)。

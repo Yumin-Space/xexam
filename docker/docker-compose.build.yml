@@ -1,9 +1,12 @@
-# Xexam — build the two images from source and run them (use this when changing code).
+# Xexam — build the two images from source and run them (use this when changing code). From the repository root:
 #
-#     docker compose -f docker-compose.build.yml up -d --build
+#     docker compose -f docker/docker-compose.build.yml up -d --build
 #
+# The build context is the repository root (.. from this folder); the Dockerfiles stay in backend/ and nginx/.
+# .env is read from this folder (docker/.env, next to this file; the template is docker/.env.example). A .env at the repository
+# root is not read: move an old one to docker/.env.
 # Uses the same project name (xexam), the same volume (xexam_data) and the same container names as docker-compose.yml, so the two cannot run at the same time;
-# run `docker compose stop` before switching. The data is the same.
+# stop the running one before switching (for example docker compose -f docker/docker-compose.build.yml stop). The data is the same.
 #
 #   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point, :8080 → host XEXAM_BIND)
 #                 ├─ frontend static files (baked into the image at build time)
@@ -14,7 +17,7 @@ name: xexam
 services:
   backend:
     build:
-      context: .
+      context: ..                      # the repository root (paths are relative to this file)
       dockerfile: backend/Dockerfile
     image: xexam-backend:local
     container_name: xexam-backend
@@ -36,7 +39,7 @@ services:
 
   frontend:
     build:
-      context: .
+      context: ..                      # the repository root (paths are relative to this file)
       dockerfile: nginx/Dockerfile
     image: xexam-frontend:local
     container_name: xexam-frontend
