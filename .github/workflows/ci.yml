@@ -1,0 +1,298 @@
+name: Build, test and publish
+
+# Xexam 的流水线：检查 → 测试（前端、后端、两个镜像的 Nginx / 整栈检查）→ 构建 amd64 + arm64 → 发布两个镜像 → 建 Release。
+#   · 推送到 main：全部跑完，发布 xexam-frontend 和 xexam-backend 两个镜像，并建（或更新）GitHub Release。
+#   · 拉取请求和其它分支：只检查和测试，**从不发布**。
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# 默认不给任何权限；需要的权限下面在 job 里单独开
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}   # main 上排队不取消，免得发布到一半被打断
+
+env:
+  # 不把构建记录上传成 artifact（每次多两个 .dockerbuild 文件，没用）
+  DOCKER_BUILD_RECORD_UPLOAD: "false"
+  CARGO_TERM_COLOR: never
+
+jobs:
+  # ① 检查：VERSION 格式正确，且 README 更新日志最上面一条 = VERSION；两个清单的版本也要和它一致。几秒钟，不通过就不用往下跑。
+  check:
+    name: check version and changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: v
+        name: Check version and changelog
+        run: |
+          set -eu
+          v=$(tr -d '[:space:]' < VERSION)
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION 格式不对：$v（应像 0.1 或 0.1.2）"; exit 1; }
+          top=$(grep -m1 -E '^### v[0-9]' README.md | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
+          [ "$top" = "$v" ] || { echo "README 更新日志最上面一条是 v${top:-（没找到）}，但 VERSION 是 $v。每次更新都要先在 README 里写更新日志，并和 VERSION 保持一致。"; exit 1; }
+          echo "版本 v$v，更新日志已写"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+  # ② 前端：类型检查、单元测试、构建
+  frontend:
+    name: frontend (tsc, unit tests, build)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # ② 后端：格式、clippy、全部测试（对着已提交的旧版快照：172 份黄金响应、49 个解析夹具、85 条 id 向量），以及 progress.json 迁移检查
+  backend:
+    name: backend (fmt, clippy, test)
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.99.1
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            backend/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+      - name: progress.json migration (documented restart flow, synthetic data)
+        run: |
+          cargo build
+          python3 -I ../tests/integration/migrate_check.py target/debug/xexam-backend
+
+  # ② 两个镜像在 amd64 上构建，跑 Nginx 行为检查和整栈端到端检查（起 compose、导入、交卷、删容器后数据还在、docker stop）
+  stack:
+    name: stack (images, nginx checks, end to end)
+    needs: [frontend, backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the frontend image and run the proxy checks
+        run: |
+          docker build -f nginx/Dockerfile -t xexam-frontend:test .
+          python3 -I tests/integration/nginx_check.py xexam-frontend:test 18080
+      - name: End to end (compose up, import, attempts, persistence, docker stop)
+        run: python3 -I tests/integration/stack_check.py 18090
+
+  # ② arm64：两个镜像真的构建、真的在 QEMU 下启动（后端是在构建机上用 zig 交叉编出来的，不是在 QEMU 里编 Rust）。
+  #    私有仓库用不了 GitHub 的原生 arm64 runner，所以运行用 QEMU 模拟。只构建、不推送；用完即弃。
+  arm64:
+    name: arm64 (images build and start under QEMU)
+    needs: [frontend, backend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+      - uses: docker/setup-buildx-action@v4
+      - name: Build xexam-backend (arm64, not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: backend/Dockerfile
+          platforms: linux/arm64
+          load: true
+          provenance: false
+          tags: xexam-backend:arm64
+          cache-from: type=gha,scope=backend-arm64-check
+          cache-to: type=gha,scope=backend-arm64-check,mode=max
+      - name: Build xexam-frontend (arm64, not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: nginx/Dockerfile
+          platforms: linux/arm64
+          load: true
+          provenance: false
+          tags: xexam-frontend:arm64
+          cache-from: type=gha,scope=frontend-arm64-check
+          cache-to: type=gha,scope=frontend-arm64-check,mode=max
+      - name: Start both images and check them
+        run: |
+          set -eu
+          docker volume create arm64data >/dev/null
+          docker run -d --name arm64-backend --platform linux/arm64 -v arm64data:/data xexam-backend:arm64 >/dev/null
+          for i in $(seq 1 60); do
+            docker exec arm64-backend /usr/local/bin/xexam-backend healthcheck >/dev/null 2>&1 && break
+            [ "$i" = 60 ] && { docker logs arm64-backend; echo "backend did not become healthy"; exit 1; }
+            sleep 2
+          done
+          info=$(docker exec arm64-backend wget -qO- --header 'Host: localhost' http://127.0.0.1:8765/api/info)
+          echo "backend /api/info: $info"
+          echo "$info" | grep -q '"arch": "aarch64"' || { echo "backend is not running as aarch64"; exit 1; }
+          echo "$info" | grep -q '"version": "'"$(tr -d '[:space:]' < VERSION)"'"' || { echo "version mismatch"; exit 1; }
+          docker run -d --name arm64-frontend --platform linux/arm64 xexam-frontend:arm64 >/dev/null
+          for i in $(seq 1 30); do
+            docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
+            [ "$i" = 30 ] && { docker logs arm64-frontend; echo "frontend did not answer /healthz"; exit 1; }
+            sleep 1
+          done
+          [ "$(docker exec arm64-frontend uname -m)" = "aarch64" ] || { echo "frontend is not aarch64"; exit 1; }
+          docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
+          echo "arm64: both images build and start"
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f arm64-backend arm64-frontend >/dev/null 2>&1 || true
+          docker volume rm arm64data >/dev/null 2>&1 || true
+
+  # ③ 所有检查都通过，才把两个镜像（amd64 + arm64）发布出去。只从 main 发布；拉取请求和其它分支不发布。
+  publish:
+    name: publish ${{ matrix.image }} (amd64 + arm64)
+    needs: [check, frontend, backend, stack, arm64]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write          # 推送到 ghcr.io 需要
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: xexam-backend
+            dockerfile: backend/Dockerfile
+          - image: xexam-frontend
+            dockerfile: nginx/Dockerfile
+    steps:
+      - uses: actions/checkout@v7
+
+      # 镜像名必须全小写，而 GitHub 用户名可能有大写（Yumin-Space），所以先转成小写
+      - name: Image name
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          NAME: ${{ matrix.image }}
+        run: |
+          set -eu
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$NAME" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # latest = 最新一次构建；vX.Y = 这个版本；sha-xxxx = 这次提交（不会被覆盖）
+      - name: Image tags
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=v${{ env.VERSION }}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.version=v${{ env.VERSION }}
+
+      - name: Build and push (amd64 + arm64)
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          provenance: false        # 不额外生成 unknown/unknown 条目，群晖、树莓派、Portainer 等工具才不会出问题
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}-publish
+          cache-to: type=gha,scope=${{ matrix.image }}-publish,mode=max
+
+      # 发布完回头看一眼：按「刚推送的那个摘要」读镜像清单，必须同时有 amd64 和 arm64
+      - name: Verify published manifest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -eu
+          [ -n "$DIGEST" ] || { echo "没有拿到推送的摘要"; exit 1; }
+          out=$(docker buildx imagetools inspect "$IMAGE@$DIGEST")
+          echo "$out"
+          echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "发布的镜像缺少 amd64"; exit 1; }
+          echo "$out" | grep -Eq 'Platform: +linux/arm64' || { echo "发布的镜像缺少 arm64"; exit 1; }
+          # 默认输出的第一个 Digest: 行就是这个标签（顶层清单）的摘要
+          for t in latest "v$VERSION"; do
+            got=$(docker buildx imagetools inspect "$IMAGE:$t" | awk '/^Digest:/{print $2; exit}')
+            [ "$got" = "$DIGEST" ] || { echo "标签 $t 指向的不是刚推送的镜像（$got 与 $DIGEST）"; exit 1; }
+          done
+          echo "已发布：$IMAGE:latest 和 $IMAGE:v$VERSION，同时包含 amd64 和 arm64（摘要 $DIGEST）"
+
+  # ④ 两个镜像都发布并核对成功之后，在 GitHub 的 Releases 页建（或更新）这个版本的 Release。
+  #    说明文字取自 README 的「更新日志」（scripts/release-notes.py），所以 Release 页和 README 永远是同一份内容。
+  #    镜像没发布成功就不会走到这里，Release 页上不会出现拉不到镜像的版本。
+  release:
+    name: GitHub release
+    needs: [check, publish]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write          # 创建 Release 和 git 标签需要
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Create or update the release
+        run: |
+          set -eu
+          owner="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          python3 scripts/release-notes.py "$VERSION" "$owner" README.md > notes.md
+          tag="v$VERSION"
+          title="Xexam v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # 同一个版本重新跑（例如只改了说明）：更新说明，不动标签
+            gh release edit "$tag" --title "$title" --notes-file notes.md --latest
+            echo "已更新 Release：$tag"
+          else
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md --latest
+            echo "已创建 Release：$tag（对应提交 $GITHUB_SHA）"
+          fi
+          gh release view "$tag" --json url,tagName,targetCommitish --jq '"\(.tagName) -> \(.url)"'

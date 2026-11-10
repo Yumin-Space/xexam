@@ -1,0 +1,20 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2022"
+    ],
+    "noEmit": true
+  },
+  "include": [
+    "src/domain/**/*.ts",
+    "src/types/**/*.ts",
+    "src/state/session-storage.ts",
+    "src/state/session-storage.test.ts",
+    "src/state/storage-keys.ts"
+  ],
+  "exclude": []
+}
