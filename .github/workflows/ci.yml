@@ -24,7 +24,8 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
-  # ① 检查：VERSION 格式正确，且 README 更新日志最上面一条 = VERSION；两个清单的版本也要和它一致。几秒钟，不通过就不用往下跑。
+  # (1) Check: VERSION is well formed, the newest changelog entry of EVERY README (English, Japanese, Chinese) equals VERSION,
+  #     and the backend / frontend manifests carry the same version. Takes seconds; if it fails nothing else runs.
   check:
     name: check version and changelog
     runs-on: ubuntu-latest
@@ -38,10 +39,17 @@ jobs:
         run: |
           set -eu
           v=$(tr -d '[:space:]' < VERSION)
-          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION 格式不对：$v（应像 0.1 或 0.1.2）"; exit 1; }
-          top=$(grep -m1 -E '^### v[0-9]' README.md | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
-          [ "$top" = "$v" ] || { echo "README 更新日志最上面一条是 v${top:-（没找到）}，但 VERSION 是 $v。每次更新都要先在 README 里写更新日志，并和 VERSION 保持一致。"; exit 1; }
-          echo "版本 v$v，更新日志已写"
+          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION is malformed: $v (expected something like 0.1 or 0.1.2)"; exit 1; }
+          for f in README.md README.ja.md README.zh-CN.md; do
+            [ -f "$f" ] || { echo "$f is missing: the project keeps three READMEs (English, Japanese, Chinese)"; exit 1; }
+            top=$(grep -m1 -E '^### v[0-9]' "$f" | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
+            [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but VERSION is $v. Write the changelog entry in all three READMEs and keep them equal to VERSION."; exit 1; }
+          done
+          for m in backend/Cargo.toml frontend/package.json; do
+            mv=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[=:]' "$m" | sed -E 's/.*"([0-9][0-9.]*)".*/\1/')
+            case "$mv" in "$v"|"$v".0) ;; *) echo "$m has version $mv but VERSION is $v"; exit 1;; esac
+          done
+          echo "version v$v, changelog entries present in all three READMEs, manifests match"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   # ② 前端：类型检查、单元测试、构建

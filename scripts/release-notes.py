@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""生成某个版本的 GitHub Release 说明：从 README 的「更新日志」里抽出这个版本的那一段，再加上镜像的拉取方法。
+"""Build the GitHub Release notes for one version: take that version's section out of the changelog of the English README and
+append how to pull the two images.
 
-用法:  python3 scripts/release-notes.py <版本，如 0.3> <镜像前缀，如 ghcr.io/yumin-space> [README 路径]  > notes.md
-CI 的 release job 用它；本机也能直接跑，用来预览 Release 页面会显示什么。
-找不到这个版本的更新日志就退出码 1（而不是发一个空的 Release）。"""
+usage:  python3 scripts/release-notes.py <version, e.g. 0.4> <image prefix, e.g. ghcr.io/yumin-space> [README path]  > notes.md
+The release job of the pipeline runs this; you can also run it locally to preview what the Releases page will show.
+Exits with status 1 if the version has no changelog entry (instead of publishing an empty release)."""
 import re
 import sys
 
 
 def extract(readme_text, version):
-    """返回 (标题行, 正文)。标题形如「### v0.2 — 2026-11-10」，正文到下一个「### v」、「<!--」或「---」之前。"""
+    """Return (heading line, body). The heading looks like "### v0.2 — 2026-11-10"; the body ends before the next "### v", "<!--" or "---"."""
     lines = readme_text.replace('\r\n', '\n').split('\n')
     head = re.compile(r'^### v%s(\s|$|[—-])' % re.escape(version))
     start = next((i for i, l in enumerate(lines) if head.match(l)), None)
@@ -26,28 +27,28 @@ def extract(readme_text, version):
 
 def main():
     if len(sys.argv) < 3:
-        sys.exit('用法: release-notes.py <版本> <镜像前缀，如 ghcr.io/yumin-space> [README 路径]')
+        sys.exit('usage: release-notes.py <version> <image prefix, e.g. ghcr.io/yumin-space> [README path]')
     version, prefix = sys.argv[1].lstrip('v'), sys.argv[2].rstrip('/')
     readme = sys.argv[3] if len(sys.argv) > 3 else 'README.md'
     title, body = extract(open(readme, encoding='utf-8').read(), version)
     if not body:
-        sys.exit('README 的更新日志里找不到 v%s 这一段（或这一段是空的）' % version)
+        sys.exit('the changelog in %s has no entry for v%s (or the entry is empty)' % (readme, version))
     print(body)
     print()
     print('---')
     print()
-    print('**镜像**（两个：前端 Nginx 和 Rust 后端；x86 的 `amd64` 和 ARM 的 `arm64` 都在同一个标签里，拉取时自动选对）')
+    print('**Images** (two: the Nginx frontend and the Rust backend; `amd64` and `arm64` are in the same tag, the right one is picked on pull)')
     print()
     print('```bash')
-    print('# 推荐：用仓库里的 docker-compose.yml 一次拉取并启动两个')
+    print('# Recommended: pull and start both with the docker-compose.yml in the repository')
     print('docker compose pull && docker compose up -d')
     print()
-    print('# 或者单独拉取，固定在这个版本')
+    print('# Or pull them one by one, pinned to this version')
     print('docker pull %s/xexam-frontend:v%s' % (prefix, version))
     print('docker pull %s/xexam-backend:v%s' % (prefix, version))
     print('```')
     print()
-    print('更新方法和完整说明见 [README](../../blob/main/README.md)。')
+    print('Full documentation: [English](../../blob/main/README.md) · [日本語](../../blob/main/README.ja.md) · [简体中文](../../blob/main/README.zh-CN.md)')
 
 
 main()

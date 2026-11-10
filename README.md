@@ -1,279 +1,287 @@
+**English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
+
 # Xexam
 
-在浏览器里做题的模拟考程序。题目来自你自己的 Excel，上传一次就存进 SQLite；做完题**交卷后才计分**，并列出每道错题的答案、解析和记忆口诀。手机（iPhone）和电脑都能用。
+A mock-exam app that runs in the browser. The questions come from your own Excel file: upload it once and it is stored in SQLite. **Scoring happens only after you submit**, and then every wrong question is listed with its answer, explanation and mnemonic. It works on phones (iPhone) and computers.
 
-- **Rust 后端 + TypeScript 前端 + Nginx**，用 Docker Compose 跑两个容器；只有 Nginx 对外，后端在私有网络里。
-- 题库、成绩、错题记录都在一个 SQLite 文件里，放在 **Docker 命名卷**中，更新或删除容器都不会丢。
-- 英语 / 中文 / 日语随时对照切换（题干、选项、热点题的选项按钮都跟着换）；错题本；成绩历史。
-- 仓库里**没有题库**：题库是你自己的 Excel，不会被提交（`.gitignore` 已排除）。
+- **Rust backend + TypeScript frontend + Nginx**, running as two containers with Docker Compose; only Nginx is exposed, and the backend stays on a private network.
+- The question bank, scores and wrong-answer records all live in one SQLite file, stored in a **Docker named volume**, so updating or deleting containers loses nothing.
+- Switch between English / Chinese / Japanese at any time for side-by-side comparison (the question text, the options and the hotspot option buttons all change with it); wrong-answer notebook; score history.
+- The repository contains **no question bank**: the bank is your own Excel file and is never committed (`.gitignore` excludes it).
 
 | | |
 |---|---|
-| 当前版本 | **v0.3**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../releases) 页看） |
-| 镜像 | `ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`，标签 `latest` / `v0.3` / `sha-<提交>` |
-| CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
-| 端口 | `8765`（默认只绑定本机） |
+| Current version | **v0.4** (see the [changelog](#changelog), or the repository's [Releases](../../releases) page) |
+| Images | `ghcr.io/yumin-space/xexam-frontend` and `ghcr.io/yumin-space/xexam-backend`, with tags `latest` / `v0.3` / `sha-<commit>` |
+| CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
+| Port | `8765` (bound to the local machine only by default) |
 
-文档：[架构](docs/architecture.md) · [API](docs/api.md)（[OpenAPI](docs/openapi.yaml)）· [数据库](docs/database.md) · [安全](docs/security.md) · [部署](docs/deployment.md) · [迁移与回滚](docs/migration.md) · [开发](docs/development.md)
+Documentation: [Architecture](docs/architecture.md) · [API](docs/api.md) ([OpenAPI](docs/openapi.yaml)) · [Database](docs/database.md) · [Security](docs/security.md) · [Deployment](docs/deployment.md) · [Migration and rollback](docs/migration.md) · [Development](docs/development.md)
 
----
-
-## 目录
-
-- [截图](#截图)
-- [架构](#架构)
-- [快速开始（安装部署）](#快速开始安装部署)
-- [使用方法](#使用方法)
-- [Excel 题库格式](#excel-题库格式)
-- [数据、备份和恢复](#数据备份和恢复)
-- [让手机访问](#让手机访问)
-- [通过 Cloudflare Tunnel 从互联网访问](#通过-cloudflare-tunnel-从互联网访问)
-- [安全说明](#安全说明)
-- [自动构建与发布](#自动构建与发布)
-- [开发](#开发)
-- [目录结构](#目录结构)
-- [更新日志](#更新日志)
+> The documents under `docs/` are currently written in Chinese.
 
 ---
 
-## 截图
+## Contents
 
-截图用的是**虚构的演示题库**（5 道日语小题），不是任何真实考试内容。左边是电脑，右边是 iPhone 宽度（390 px）。
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Quick start (installation and deployment)](#quick-start-installation-and-deployment)
+- [How to use](#how-to-use)
+- [Excel question bank format](#excel-question-bank-format)
+- [Data, backup and restore](#data-backup-and-restore)
+- [Letting your phone connect](#letting-your-phone-connect)
+- [Access from the internet via Cloudflare Tunnel](#access-from-the-internet-via-cloudflare-tunnel)
+- [Security notes](#security-notes)
+- [Automated build and release](#automated-build-and-release)
+- [Development](#development)
+- [Directory structure](#directory-structure)
+- [Changelog](#changelog)
 
-### 首页：选范围，开始考试
+---
 
-首页能看到题库有几个工作表、错题本里有几道待巩固的题，以及最近的成绩。
+## Screenshots
+
+The screenshots use a **fictional demo question bank** (5 short Japanese questions), not content from any real exam. The desktop is on the left, iPhone width (390 px) on the right.
+
+### Home: pick a scope and start the exam
+
+The home page shows how many sheets the question bank has, how many questions in the wrong-answer notebook still need review, and the most recent scores.
 
 <table>
 <tr>
-<td width="62%"><img src="docs/screenshots/desktop-1-home.png" alt="首页（电脑）"></td>
-<td width="38%"><img src="docs/screenshots/iphone-1-home.png" alt="首页（iPhone）"></td>
+<td width="62%"><img src="docs/screenshots/desktop-1-home.png" alt="Home (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-1-home.png" alt="Home (iPhone)"></td>
 </tr>
 </table>
 
-### 答题：右上角切换英语 / 中文 / 日语，右侧是答题卡
+### Answering: switch English / Chinese / Japanese at the top right, answer sheet on the right
 
-答题时**不显示对错、不显示分数**。答题卡上：实心 = 已答，半实心 = 热点题只答了一部分，空心 = 未答，黄色小方块 = 已标记。iPhone 上「上一题 / 下一题」固定在屏幕底部，长题目不用滑到底才能翻页。
+While answering, **correctness and score are not shown**. On the answer sheet: solid = answered, half-filled = a hotspot question only partly answered, hollow = unanswered, small yellow square = flagged. On iPhone the `上一题 / 下一题` ("Previous / Next") buttons are pinned to the bottom of the screen, so with a long question you don't have to scroll to the end to turn the page.
 
 <table>
 <tr>
-<td width="62%"><img src="docs/screenshots/desktop-2-quiz.png" alt="答题（电脑）"></td>
-<td width="38%"><img src="docs/screenshots/iphone-2-quiz.png" alt="答题（iPhone）"></td>
+<td width="62%"><img src="docs/screenshots/desktop-2-quiz.png" alt="Answering (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-2-quiz.png" alt="Answering (iPhone)"></td>
 </tr>
 </table>
 
-点「中文」「英语」切换成 Excel 里对应那一列的文字。切换只换文字，已选的答案、选项字母、计时都不变，判分也不变。（下面的截图是旧版界面，只有日语 / 中文两个按钮。）
+Click `中文` ("Chinese") or `英语` ("English") to switch to the text from the matching column in the Excel file. Switching only changes the text: the selected answers, the option letters and the timer stay the same, and so does grading. (The screenshots below are from an older UI that had only two buttons, Japanese / Chinese.)
 
 <table>
 <tr>
-<td width="62%"><img src="docs/screenshots/desktop-2b-quiz-zh.png" alt="切换成中文（电脑）"></td>
-<td width="38%"><img src="docs/screenshots/iphone-2b-quiz-zh.png" alt="切换成中文（iPhone）"></td>
+<td width="62%"><img src="docs/screenshots/desktop-2b-quiz-zh.png" alt="Switched to Chinese (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-2b-quiz-zh.png" alt="Switched to Chinese (iPhone)"></td>
 </tr>
 </table>
 
-### 交卷：先看分数，再看每题对错
+### Submit: the score first, then right or wrong for each question
 
 <table>
 <tr>
-<td width="62%"><img src="docs/screenshots/desktop-3-result.png" alt="成绩（电脑）"></td>
-<td width="38%"><img src="docs/screenshots/iphone-3-result.png" alt="成绩（iPhone）"></td>
+<td width="62%"><img src="docs/screenshots/desktop-3-result.png" alt="Score (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-3-result.png" alt="Score (iPhone)"></td>
 </tr>
 </table>
 
-### 错题解析：你的答案、正确答案、解析、记忆口诀
+### Review of wrong answers: your answer, the correct answer, the explanation, the mnemonic
 
 <table>
 <tr>
-<td width="62%"><img src="docs/screenshots/desktop-4-review.png" alt="错题解析（电脑）"></td>
-<td width="38%"><img src="docs/screenshots/iphone-4-review.png" alt="错题解析（iPhone）"></td>
+<td width="62%"><img src="docs/screenshots/desktop-4-review.png" alt="Review of wrong answers (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-4-review.png" alt="Review of wrong answers (iPhone)"></td>
 </tr>
 </table>
 
-### 题库管理：上传 Excel，先预览再导入
+### Question bank management: upload Excel, preview first, then import
 
-上传后会先显示「新增几题、更新几题、恢复几题、下架几题、没变化几题、读不出来几题」。确认前不会写入任何东西。
+After an upload it first shows `新增几题、更新几题、恢复几题、下架几题、没变化几题、读不出来几题` ("N added, N updated, N restored, N deactivated, N unchanged, N unreadable"). Nothing is written until you confirm.
 
 <table>
 <tr>
-<td width="62%"><img src="docs/screenshots/desktop-5-admin.png" alt="题库管理（电脑）"></td>
-<td width="38%"><img src="docs/screenshots/iphone-5-admin.png" alt="题库管理（iPhone）"></td>
+<td width="62%"><img src="docs/screenshots/desktop-5-admin.png" alt="Question bank management (desktop)"></td>
+<td width="38%"><img src="docs/screenshots/iphone-5-admin.png" alt="Question bank management (iPhone)"></td>
 </tr>
 </table>
 
 ---
 
-## 架构
+## Architecture
 
-下面的图都是 [Mermaid](https://mermaid.js.org/) 写的，GitHub 上直接显示成图。完整说明见 [docs/architecture.md](docs/architecture.md)。
+All the diagrams below are written in [Mermaid](https://mermaid.js.org/), which GitHub renders directly as images. See [docs/architecture.md](docs/architecture.md) for the full description.
 
-### 谁和谁连着，数据怎么走
+### What connects to what, and how data flows
 
 ```mermaid
 flowchart TB
-    U["浏览器<br/>（电脑 / iPhone）"] -->|"HTTP / HTTPS"| N
-    subgraph 公开["对外暴露：只有 xexam-frontend"]
-        N["xexam-frontend（Nginx）<br/>前端静态文件 · /api/ 反向代理<br/>20 MB 上限 · 安全头 · 限流"]
+    U["Browser<br/>(desktop / iPhone)"] -->|"HTTP / HTTPS"| N
+    subgraph 公开["Exposed to the outside: only xexam-frontend"]
+        N["xexam-frontend (Nginx)<br/>Static frontend files · /api/ reverse proxy<br/>20 MB limit · security headers · rate limiting"]
     end
-    subgraph 内网["Docker 私有网络（不发布端口，不能访问外网）"]
-        B["xexam-backend（Rust / Axum）<br/>REST API · XLSX 解析 · 导入流程 · Host/Origin 守卫"]
+    subgraph 内网["Docker private network (no published ports, no outbound internet access)"]
+        B["xexam-backend (Rust / Axum)<br/>REST API · XLSX parsing · import flow · Host/Origin guard"]
     end
-    N -->|"/api/*  Host 原样透传"| B
-    B --> D[("SQLite<br/>命名卷 xexam_data → /data/xexam.db")]
-    CF["Cloudflare Tunnel + Access<br/>（自己配置，在外面访问时用）"] -.-> N
-    X["你的 Excel 题库"] -.->|"上传"| U
+    N -->|"/api/*  Host passed through unchanged"| B
+    B --> D[("SQLite<br/>named volume xexam_data → /data/xexam.db")]
+    CF["Cloudflare Tunnel + Access<br/>(set up by you, for access from outside)"] -.-> N
+    X["Your Excel question bank"] -.->|"upload"| U
 ```
 
-| 容器 / 镜像 | 里面是什么 | 对外？ |
+| Container / image | What is inside | Exposed? |
 |---|---|---|
-| `xexam-frontend` | Nginx + 前端静态文件（HTML / JS / CSS）。把 `/api/` 转给后端；20 MB 上限、安全头、限流、超时 | 是：宿主机 `XEXAM_BIND`（默认 `127.0.0.1:8765`）→ 容器 8080 |
-| `xexam-backend` | 一个静态链接的 Rust 可执行文件：REST 接口、解析 Excel、读写 SQLite | **否**：没有 `ports`，网络是 `internal: true` |
+| `xexam-frontend` | Nginx + static frontend files (HTML / JS / CSS). Forwards `/api/` to the backend; 20 MB limit, security headers, rate limiting, timeouts | Yes: host `XEXAM_BIND` (default `127.0.0.1:8765`) → container port 8080 |
+| `xexam-backend` | A single statically linked Rust executable: REST API, Excel parsing, SQLite reads and writes | **No**: no `ports`, and the network is `internal: true` |
 
-浏览器只通过 [REST 接口](docs/api.md) 和后端说话；前端里没有数据库访问。**判分在浏览器里**：服务端只收 `{题目 id, 对错}`。
+The browser talks to the backend only through the [REST API](docs/api.md); the frontend has no database access. **Grading happens in the browser**: the server only receives `{question id, correct}`.
 
-### 数据流 A：更新题库（上传 → 预览 → 确认）
+### Data flow A: updating the question bank (upload → preview → confirm)
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor 你
-    participant 前端
+    actor 你 as You
+    participant 前端 as Frontend
     participant N as Nginx
-    participant 后端
+    participant 后端 as Backend
     participant 库 as SQLite
-    你->>前端: 选择 .xlsx
-    前端->>N: POST /api/upload（原始字节）
-    N->>后端: 转发（Host 原样；超过 20 MB 在这里 413）
-    后端->>后端: 守卫 · 检查内容 · 解析 · 比对现有题库
-    后端-->>前端: 预览 + 一次性确认码（不写库）
-    前端-->>你: 新增 / 更新 / 下架 / 恢复 / 读不出来的行
-    你->>前端: 确认
+    你->>前端: Choose .xlsx
+    前端->>N: POST /api/upload (raw bytes)
+    N->>后端: Forward (Host unchanged, files over 20 MB get a 413 here)
+    后端->>后端: Guards · content checks · parse · compare with the current question bank
+    后端-->>前端: Preview + one-time confirmation token (nothing written to the database)
+    前端-->>你: Added / updated / deactivated / restored / unreadable rows
+    你->>前端: Confirm
     前端->>N: POST /api/import/confirm {token}
-    N->>后端: 转发
-    后端->>库: BEGIN IMMEDIATE … COMMIT（一个事务）
-    后端-->>前端: 结果 + 最新题库
+    N->>后端: Forward
+    后端->>库: BEGIN IMMEDIATE … COMMIT (a single transaction)
+    后端-->>前端: Result + latest question bank
 ```
 
-导入规则（这份文件被当成**完整的题库**）：
+Import rules (the uploaded file is treated as the **complete question bank**):
 
-| 情况 | 结果 |
+| Case | Result |
 |---|---|
-| 文件里有、库里没有的题 | **新增** |
-| 题干相同、其它内容（选项、答案、解析、翻译）改了 | **更新**（答题记录不受影响） |
-| 库里有、文件里找不到的题 | **下架**（`active = 0`，答题记录保留，不删除） |
-| 以前下架、这次又出现的题 | **恢复上架**，错题本跟着回来 |
-| 改了题干的措辞 | 算**一道新题**（旧题下架，记录不会带到新题上） |
-| 这份文件里一道可用的题都没有 | 拒绝导入（防止把题库清空） |
+| A question is in the file but not in the database | **Added** |
+| Same question text, but other content (options, answer, explanation, translation) changed | **Updated** (answer history is not affected) |
+| A question is in the database but cannot be found in the file | **Deactivated** (`active = 0`; answer history is kept, not deleted) |
+| A question that was deactivated earlier appears again | **Restored** to active, and the wrong-answer notebook comes back with it |
+| The wording of the question text changed | Counts as **a new question** (the old one is deactivated, and its history is not carried over to the new one) |
+| The file contains not a single usable question | Import rejected (prevents wiping the question bank) |
 
-### 数据流 B：做一场考试
+### Data flow B: taking an exam
 
-题库一次取到浏览器 → 在浏览器里答题、交卷时判分 → `POST /api/attempt` 只发 `{id, correct}` 列表 → 后端更新每题统计和成绩历史 → 返回最新学习记录。做到一半的考试存在浏览器里，刷新页面不丢。
+The question bank is fetched into the browser in one go → questions are answered in the browser and graded when you submit → `POST /api/attempt` sends only a list of `{id, correct}` → the backend updates the per-question statistics and the score history → it returns the latest study record. An exam in progress is stored in the browser, so refreshing the page does not lose it.
 
-### 数据库：5 张表
+### Database: 5 tables
 
-完整的表结构和字段含义见 [docs/database.md](docs/database.md)。
+See [docs/database.md](docs/database.md) for the full table schema and the meaning of each field.
 
 ```mermaid
 erDiagram
     questions {
-        TEXT id PK "题目身份：工作表+题干+首个选项的内容指纹"
-        TEXT sheet "工作表名"
-        INTEGER active "1 上架 · 0 下架"
-        TEXT data "整道题的 JSON"
+        TEXT id PK "Question identity: content fingerprint of sheet + question text + first option"
+        TEXT sheet "Sheet name"
+        INTEGER active "1 active · 0 deactivated"
+        TEXT data "JSON of the whole question"
     }
     stats {
-        TEXT question_id PK "按 id 对应 questions"
-        INTEGER attempts "答过几次"
-        INTEGER wrong "答错几次"
-        INTEGER streak "当前连续答对几次"
+        TEXT question_id PK "Maps to questions by id"
+        INTEGER attempts "Times answered"
+        INTEGER wrong "Times answered incorrectly"
+        INTEGER streak "Current number of consecutive correct answers"
     }
     attempts {
         INTEGER id PK
-        TEXT at "交卷时间"
-        INTEGER percent "百分比（四舍六入五成双）"
+        TEXT at "Submission time"
+        INTEGER percent "Percentage (round half to even)"
     }
     imports {
         INTEGER id PK
-        TEXT filename "上传的文件名"
-        INTEGER added "新增"
+        TEXT filename "Uploaded file name"
+        INTEGER added "Added"
     }
     meta {
         TEXT key PK
         TEXT value
     }
-    questions |o--o| stats : "按 id 对应，无外键约束"
+    questions |o--o| stats : "Matched by id, no foreign key constraint"
 ```
 
-**为什么 `stats` 不随题目一起删：** 题目下架只是把 `active` 改成 0，答题记录原样保留；以后这道题重新出现在 Excel 里，会自动恢复上架。
+**Why `stats` is not deleted along with the question:** deactivating a question only sets `active` to 0, and the answer history is kept as it is; if the question appears in the Excel file again later, it is restored to active automatically.
 
-**错题本怎么算：** 一道题只要 `wrong > 0` 且 `streak < 2`（连续答对不到 2 次）就在错题本里；连续答对 2 次后自动移出。
+**How the wrong-answer notebook works:** a question is in the notebook as long as `wrong > 0` and `streak < 2` (fewer than 2 consecutive correct answers); after 2 consecutive correct answers it is moved out automatically.
 
-### 页面之间怎么走
+### How the pages connect
 
 ```mermaid
 stateDiagram-v2
+    state "Home" as 首页
+    state "Question bank management" as 题库管理
+    state "Answer" as 答题
+    state "Result" as 成绩页
     [*] --> 首页
-    首页 --> 题库管理: 点「题库管理 / 上传 Excel」
-    题库管理 --> 首页: 返回首页 / 去考试
-    首页 --> 答题: 开始考试 / 继续作答
-    答题 --> 首页: 暂存退出（进度存在浏览器）
-    答题 --> 成绩页: 交卷（弹窗确认）
-    成绩页 --> 答题: 只重做错题 / 再考一次
-    成绩页 --> 首页: 回首页
-    首页 --> 首页: 清空学习记录（弹窗确认）
-    答题 --> 答题: 上一题 / 下一题 / 点日语中文切换（已选答案不变）
+    首页 --> 题库管理: Click `题库管理 / 上传 Excel` (Manage question bank / upload Excel)
+    题库管理 --> 首页: Back to home / go to the exam
+    首页 --> 答题: Start exam / resume
+    答题 --> 首页: Save and exit (progress is kept in the browser)
+    答题 --> 成绩页: Submit (confirmation dialog)
+    成绩页 --> 答题: Redo wrong questions only / take it again
+    成绩页 --> 首页: Back to home
+    首页 --> 首页: Clear study records (confirmation dialog)
+    答题 --> 答题: Previous / next question / language toggle (selected answers unchanged)
 ```
 
-答题页里单选、多选、热点题三种题型的界面略有不同，但都在同一个「答题」页面里切换。
+Single-choice, multiple-choice and hotspot questions look slightly different on the answering page, but they all switch within the same `答题` ("Answer") page.
 
 ---
 
-## 快速开始（安装部署）
+## Quick start (installation and deployment)
 
-### 需要什么
+### What you need
 
-- 一台装了 **Docker**（含 Compose v2）的机器：Windows / macOS / Linux 都行，**x86 或 ARM 都行**。
-- 一个浏览器。
+- A machine with **Docker** (including Compose v2) installed: Windows / macOS / Linux all work, **x86 or ARM**.
+- A web browser.
 
-### 方式 A：直接拉取现成的镜像（推荐）
+### Option A: pull the prebuilt images (recommended)
 
-只需要仓库里的 [`docker-compose.yml`](docker-compose.yml) 这**一个文件**，复制到任意机器的任意文件夹即可，不需要其他代码。
+You only need **one file** from the repository, [`docker-compose.yml`](docker-compose.yml). Copy it into any folder on any machine; no other code is required.
 
 ```bash
-# 第一次：登录 GitHub 的容器仓库（镜像是私有的，所以要登录一次）
+# First time: log in to GitHub's container registry (the images are private, so you log in once)
 docker login ghcr.io -u Yumin-Space
-# 密码处填一个有 read:packages 权限的 GitHub 令牌
-# （GitHub → Settings → Developer settings → Personal access tokens）
+# For the password, enter a GitHub token with the read:packages permission
+# (GitHub → Settings → Developer settings → Personal access tokens)
 
-# 在 docker-compose.yml 所在的文件夹里：
+# In the folder that contains docker-compose.yml:
 docker compose up -d
 ```
 
-然后浏览器打开 <http://localhost:8765>，点「题库管理 / 上传 Excel」导入你的 Excel。会一次拉取并启动**两个容器**（`xexam-frontend`、`xexam-backend`）。
+Then open <http://localhost:8765> in a browser and click the `题库管理 / 上传 Excel` ("Manage question bank / upload Excel") button to import your Excel file. This pulls and starts **two containers** (`xexam-frontend`, `xexam-backend`) at once.
 
-| 操作 | 命令 |
+| Action | Command |
 |---|---|
-| 更新到最新版本 | `docker compose pull && docker compose up -d` |
-| 固定在某个版本 | 把 `docker-compose.yml` 里两个镜像的 `:latest` 都改成 `:v0.3`，再 `docker compose up -d` |
-| 停止 / 再启动 | `docker compose stop` / `docker compose start` |
-| 看日志 | `docker compose logs -f` |
-| 看现在是哪个版本、什么架构 | 浏览器打开 <http://localhost:8765/api/info> |
+| Update to the latest version | `docker compose pull && docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v0.3` for both images in `docker-compose.yml`, then run `docker compose up -d` |
+| Stop / start again | `docker compose stop` / `docker compose start` |
+| View logs | `docker compose logs -f` |
+| See which version and architecture are running | Open <http://localhost:8765/api/info> in a browser |
 
-> ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把数据卷 `xexam_data` 一起删掉，题库和学习记录都在里面。
+> ⚠️ **Do not run `docker compose down -v`**: `-v` also deletes the data volume `xexam_data`, which holds your question bank and study records.
 
-可调的选项都通过 `docker-compose.yml` 旁边的 `.env` 文件设置（模板见 [`.env.example`](.env.example)，不需要改 compose 文件本身）：
+All adjustable options are set through a `.env` file next to `docker-compose.yml` (see [`.env.example`](.env.example) for a template; you do not need to edit the compose file itself):
 
-| `.env` 里的名字 | 默认 | 作用 |
+| Name in `.env` | Default | Purpose |
 |---|---|---|
-| `XEXAM_BIND` | `127.0.0.1:8765` | 对外监听的地址和端口（Nginx），必须写成 `IP:端口`。默认只有本机能连；`0.0.0.0:8765` = 局域网里别的机器也能连。⚠️ 只写端口号（如 `8766`）= 所有网卡都能连 |
-| `XEXAM_ALLOWED_HOSTS` | 空 | 允许用哪些域名 / IP 访问，逗号分隔，例如 `xexam.example.com,192.168.1.20` |
-| `XEXAM_ALLOWED_ORIGINS` | 空 | 反向代理把 Host 改写成源站地址时才需要：填你的公网域名 |
-| `XEXAM_ALLOW_ANY_HOST` | `0` | 设 `1` = 不再检查 Host（只在前面已经有身份验证时用） |
-| `XEXAM_PARSE_TIMEOUT_SECS` | `30` | 解析一份 Excel 的最长时间（秒） |
-| `TZ` | `Asia/Tokyo` | 数据库里时间戳用的时区 |
+| `XEXAM_BIND` | `127.0.0.1:8765` | The address and port to listen on (Nginx); it must be written in the form `IP:port`. By default only this machine can connect; `0.0.0.0:8765` = other machines on the LAN can connect too. ⚠️ Writing only a port number (such as `8766`) = reachable on all network interfaces |
+| `XEXAM_ALLOWED_HOSTS` | empty | Which domain names / IPs may be used to access it, comma-separated, for example `xexam.example.com,192.168.1.20` |
+| `XEXAM_ALLOWED_ORIGINS` | empty | Needed only when a reverse proxy rewrites the Host to the origin server's address: enter your public domain |
+| `XEXAM_ALLOW_ANY_HOST` | `0` | Set to `1` = stop checking the Host (use it only when authentication is already in front) |
+| `XEXAM_PARSE_TIMEOUT_SECS` | `30` | Maximum time to parse one Excel file (seconds) |
+| `TZ` | `Asia/Tokyo` | Time zone used for timestamps in the database |
 
-### 方式 B：从源码构建（改代码时用）
+### Option B: build from source (for when you change the code)
 
-需要完整的仓库代码：
+You need the full repository code:
 
 ```bash
 git clone git@github.com:Yumin-Space/xexam.git
@@ -281,108 +289,108 @@ cd xexam
 docker compose -f docker-compose.build.yml up -d --build
 ```
 
-第一次构建要几分钟（编译 Rust 和前端）。它和方式 A 用**同一个卷**（`xexam_data`）和同样的容器名，所以数据是同一份、两者**不能同时运行**，切换前先 `docker compose stop`。
+The first build takes a few minutes (it compiles Rust and the frontend). It uses the **same volume** (`xexam_data`) and the same container names as Option A, so the data is shared and the two **cannot run at the same time**; run `docker compose stop` before switching.
 
-### 镜像的版本标签
+### Image version tags
 
-| 标签 | 含义 | 什么时候用 |
+| Tag | Meaning | When to use it |
 |---|---|---|
-| `latest` | 最近一次成功发布的版本 | 想一直用最新版 |
-| `v0.3` 等 | 固定的某个版本 | 想锁定版本、需要回退 |
-| `sha-xxxxxxx` | 某一次提交 | 排查问题 |
+| `latest` | The most recent successfully published version | You always want the newest version |
+| `v0.3` etc. | One fixed, specific version | You want to lock the version or need to roll back |
+| `sha-xxxxxxx` | One specific commit | Troubleshooting |
 
-### 从旧版（v0.2.x，Python 单镜像）升级
+### Upgrading from the old version (v0.2.x, single Python image)
 
-数据卷 `xexam_data` 是同一个，**数据不用迁移**。但旧版是一个容器、新版是两个，且容器名 / 端口相同，所以：
+The data volume `xexam_data` is the same one, so **no data migration is needed**. However, the old version was one container and the new version is two, and the container name / port are the same, so:
 
-1. `docker compose stop`（旧版）。
-2. 备份数据卷（见下面的「数据、备份和恢复」）——这是习惯，不是因为数据会变。
-3. `docker rm xexam`：删掉旧版的容器（**只删容器，不删数据卷**）。旧版的容器叫 `xexam`，新版是 `xexam-frontend` 和 `xexam-backend`；不删的话旧容器还占着 8765 端口，新的会起不来。
-4. 换上新的 `docker-compose.yml`，`docker compose pull && docker compose up -d`。
-5. 打开 <http://localhost:8765>，核对题数、错题数和成绩历史和升级前一样。
+1. Run `docker compose stop` (for the old version).
+2. Back up the data volume (see "Data, backup and restore" below). This is just a good habit, not because the data will change.
+3. Run `docker rm xexam` to remove the old version's container (**only the container, not the data volume**). The old container is called `xexam`; the new ones are `xexam-frontend` and `xexam-backend`. If you do not remove it, the old container still occupies port 8765 and the new ones will fail to start.
+4. Swap in the new `docker-compose.yml`, then run `docker compose pull && docker compose up -d`.
+5. Open <http://localhost:8765> and check that the number of questions, the number of wrong questions and the score history are the same as before the upgrade.
 
-想回到旧版：旧代码在 Git 标签 `python-v0.2`，旧镜像 `ghcr.io/yumin-space/xexam:v0.2.2` 仍然可以拉取，旧版能直接读写新版写过的库。详见 [docs/migration.md](docs/migration.md)。
-
----
-
-## 使用方法
-
-### 第一次：导入题库
-
-1. 打开页面，题库是空的，点「去上传题库」（或右上角「题库管理 / 上传 Excel」）。
-2. 选择你的 Excel（也可以拖进虚线框）。
-3. 看**检查结果**：新增几题、哪几题读不出来（会写明工作表、行号和原因）。
-4. 没问题就点「确认导入」。
-
-### 以后更新题库
-
-1. 在自己电脑上改 Excel：新增工作表、新增或修改题目都可以。
-2. 保存后，把**整份** Excel 再上传一次。
-3. 看检查结果，确认导入。规则见上面 [数据流 A](#3-数据流-a更新题库上传--预览--确认)。
-
-### 考试
-
-1. 首页勾选要考的工作表，选「全部题目」或「错题本」，设置题数，点「开始考试」。
-2. 答题过程中**不显示对错、不显示分数**。可以随时跳题、用答题卡看进度、标记不确定的题。
-3. 点「交卷」后才计分（答对的百分比），并列出每道错题的：你的答案、正确答案、解析（怎么选）、记忆口诀、中文翻译。
-4. 单选、多选要**选对全部**才算对；热点题**每个小项都对**才算这题对。
-5. 没做完可以「暂存退出」，下次回到首页「继续作答」（暂存放在浏览器里，换浏览器就没有了）。
-
-### 英语 / 中文 / 日语对照
-
-题目右上角有「英语 / 中文 / 日语」三个按钮，顺序和 Excel 的 A、B、C 三列一样。英语用 **A 列**，中文用 **B 列**，日语用 **C 列**（日语是题目本身，永远可用）。
-
-- 如果某道题的某一列没写，或者它的选项 / 小项数量和日语对不上，这道题的那个按钮会**置灰**（不会显示错位的内容）。
-- 热点题的选项按钮也跟着语言走：日语显示 `はい / いいえ`，中文显示 `是 / 否`，英语显示 `Yes / No`（前提是那一列的每个小项末尾写了选项，见下面的「Excel 题库格式」）。没写时，选项按钮显示日语的。
-- 你选的语言会记在浏览器里；成绩页的错题解析也用同一种语言显示题目。
-
-### 错题本
-
-答错的题进入错题本，之后**连续 2 次答对**自动移出。首页选「错题本」只练这些题；交卷后也可以点「只重做错题」。
-
-### 键盘（电脑）
-
-`←` `→` 切换题目，`A`–`E` 选答案，`M` 标记。
-
-### 在 iPhone 上使用
-
-- 在 iPhone 的 Safari 里打开服务地址（需要先做 [让手机访问](#让手机访问)）。需要 **iOS 15.4 或更新**（更早的版本没有 `<dialog>`，页面会改用系统自带的确认框，样式略有不同）。
-- 点分享按钮 →「添加到主屏幕」，之后像独立应用一样全屏打开，图标是答题卡样式的 Xexam。
-- 所有按钮都不小于 44 px，适合手指点；刘海和底部横条的安全区已处理；「上一题 / 下一题」固定在屏幕底部。
+To go back to the old version: the old code is at the Git tag `python-v0.2`, the old image `ghcr.io/yumin-space/xexam:v0.2.2` can still be pulled, and the old version can directly read and write a database that the new version has written to. See [docs/migration.md](docs/migration.md) for details.
 
 ---
 
-## Excel 题库格式
+## How to use
 
-每个工作表是一组题，一行一道题。
+### First time: import the question bank
 
-| 列 | 内容 |
+1. Open the page. The question bank is empty; click `去上传题库` ("Go upload the question bank"), or `题库管理 / 上传 Excel` ("Manage question bank / upload Excel") at the top right.
+2. Choose your Excel file (you can also drag it into the dashed box).
+3. Read the **check result**: how many questions are new, and which ones could not be read (it states the sheet, row number and reason).
+4. If everything looks fine, click `确认导入` ("Confirm import").
+
+### Updating the question bank later
+
+1. Edit the Excel file on your own computer: adding sheets and adding or changing questions are all fine.
+2. After saving, upload the **whole** Excel file again.
+3. Read the check result and confirm the import. See the rules in [Data flow A](#data-flow-a-updating-the-question-bank-upload--preview--confirm) above.
+
+### Taking an exam
+
+1. On the home page, tick the sheets you want to take, choose `全部题目` ("All questions") or `错题本` ("Mistake notebook"), set the number of questions, and click `开始考试` ("Start exam").
+2. While answering, **no right/wrong feedback and no score is shown**. You can jump between questions at any time, use the answer sheet to see your progress, and mark questions you are unsure about.
+3. Scoring (the percentage answered correctly) happens only after you click `交卷` ("Submit"), and the app lists, for each wrong question: your answer, the correct answer, the explanation (how to choose), the mnemonic, and the Chinese translation.
+4. Single-choice and multiple-choice questions count as correct only if you **select all the correct options**; a hotspot question counts as correct only if **every sub-item is correct**.
+5. If you have not finished, you can use `暂存退出` ("Save and exit"), and next time go back to the home page and use `继续作答` ("Resume") (the saved progress is stored in the browser and is gone if you switch browsers).
+
+### English / Chinese / Japanese side by side
+
+At the top right of each question there are three buttons, `英语 / 中文 / 日语` ("English / Chinese / Japanese"), in the same order as Excel columns A, B and C. English uses **column A**, Chinese uses **column B**, and Japanese uses **column C** (Japanese is the question itself and is always available).
+
+- If a column is blank for a question, or its number of options / sub-items does not match the Japanese, that language's button is **greyed out** for that question (misaligned content is never shown).
+- The option buttons of hotspot questions also follow the language: Japanese shows `はい / いいえ` ("yes / no"), Chinese shows `是 / 否` ("yes / no"), and English shows `Yes / No` (this requires every sub-item in that column to end with its options; see "Excel question bank format" below). If they are not written, the option buttons show the Japanese ones.
+- The language you choose is remembered in the browser; the explanations of wrong questions on the result page also show the question in the same language.
+
+### Mistake notebook
+
+Questions you answer wrongly go into the mistake notebook, and are removed automatically after you answer them correctly **2 times in a row**. Choosing `错题本` on the home page practices only these questions; after submitting you can also click `只重做错题` ("Redo wrong questions only").
+
+### Keyboard (desktop)
+
+`←` `→` switch between questions, `A`–`E` select an answer, `M` marks a question.
+
+### Using it on an iPhone
+
+- Open the service address in Safari on your iPhone (first follow [Letting your phone connect](#letting-your-phone-connect)). It requires **iOS 15.4 or later** (earlier versions have no `<dialog>`, and the page falls back to the system's built-in confirmation box, which looks slightly different).
+- Tap the Share button → `添加到主屏幕` ("Add to Home Screen"). After that it opens full-screen like a standalone app, with an Xexam icon in the style of an answer sheet.
+- All buttons are at least 44 px, which suits fingertips; the safe areas for the notch and the bottom bar are handled; `上一题 / 下一题` ("Previous / Next") are pinned to the bottom of the screen.
+
+---
+
+## Excel question bank format
+
+Each sheet is a set of questions, one question per row.
+
+| Column | Contents |
 |---|---|
-| **A** | **英语**题目（可以不写）。结构和 C 列的日语**完全一一对应**：同一道题、同样的选项字母、同样的小项个数和顺序。热点题第一行写 `HOTSPOT` |
-| **B** | **中文**翻译（可以不写）。【中文翻译】标题可有可无；结构同样和 C 列一一对应 |
-| **C** | **日语**题目 —— 题目本身。选择题：题干后空一行，选项写成 `A. 内容`，一行一个。热点题：第一行写 `ホットスポット`，小项写成 `1. 内容　はい / いいえ`。题目 id、选项字母、热点题的答案都以这一列为准 |
-| **D** | 以 `【答案】` 开头，后面可以接 `【解析·怎么选】` 和 `【记忆口诀】` |
+| **A** | The **English** question (may be left blank). Its structure **corresponds exactly, one to one,** to the Japanese in column C: the same question, the same option letters, and the same number and order of sub-items. For a hotspot question, write `HOTSPOT` on the first line |
+| **B** | The **Chinese** translation (may be left blank). The `【中文翻译】` ("Chinese translation") heading is optional; the structure likewise corresponds one to one to column C |
+| **C** | The **Japanese** question, which is the question itself. Multiple choice: leave a blank line after the stem, and write each option as `A. content`, one per line. Hotspot: write `ホットスポット` ("hotspot") on the first line, and write each sub-item as `1. content　はい / いいえ` (the content, followed by its options, here yes / no). The question id, the option letters and the hotspot answers are all taken from this column |
+| **D** | Starts with `【答案】` ("Answer"), and can be followed by `【解析·怎么选】` ("Explanation · how to choose") and `【记忆口诀】` ("Mnemonic") |
 
-A、B、C 三列是**同一道题的三种语言**：A 列的第 1 项 = B 列的第 1 项 = C 列的第 1 项，选项 A = 选项 A = 选项 A。答案只写一份（D 列），三种语言共用。
+Columns A, B and C are **the same question in three languages**: item 1 of column A = item 1 of column B = item 1 of column C, and option A = option A = option A. The answer is written only once (column D) and is shared by all three languages.
 
-**热点题的选项按语言写在各自那一列里**：每个小项末尾用本语言写出选项，三种语言的第 j 个选项是同一个意思。例如同一个小项：
+**The options of hotspot questions are written in each language's own column**: at the end of each sub-item, write the options in that column's language; the j-th option in each of the three languages has the same meaning. For example, for the same sub-item:
 
-| 列 | 小项的写法 |
+| Column | How the sub-item is written |
 |---|---|
-| A 英语 | `1. Classify the invoice type using Claude.　Pre-Processing / Model Stage / Post-Processing` |
-| B 中文 | `1. 用Claude对发票类型进行分类。　前处理 / 模型阶段 / 后处理` |
-| C 日语 | `1. Claudeを用いて請求書の種類を分類する。　前処理 / モデルステージ / 後処理` |
+| A English | `1. Classify the invoice type using Claude.　Pre-Processing / Model Stage / Post-Processing` |
+| B Chinese | `1. 用Claude对发票类型进行分类。　前处理 / 模型阶段 / 后处理` ("1. Classify the invoice type using Claude. Pre-processing / Model stage / Post-processing") |
+| C Japanese | `1. Claudeを用いて請求書の種類を分類する。　前処理 / モデルステージ / 後処理` (same meaning as above) |
 
-切换语言时，题干、选项和热点题的选项按钮都会换成对应那一列的文字。某一列没有写选项（或个数和日语对不上）时，这道题的这个语言仍然可用，只是选项按钮显示日语的选项。
+When you switch language, the stem, the options and the option buttons of hotspot questions all change to the text of the corresponding column. If a column has no options written (or their number does not match the Japanese), the question is still available in that language; only the option buttons show the Japanese options.
 
-**旧的三列格式**（A 日语、B 中文、C 答案）仍然可以上传，只是没有英语：程序看内容判断是哪种格式（四列格式的答案在 D 列、C 列是日语），不用改任何设置。
+**The old three-column format** (A Japanese, B Chinese, C answer) can still be uploaded, just without English: the program works out which format it is by looking at the content (in the four-column format the answer is in column D and column C is Japanese), so you do not need to change any setting.
 
-D 列的答案写法：
+How to write the answer in column D:
 
-- 单选 / 多选：`【答案】C` 或 `【答案】C、E`
-- 热点题：`【答案】1 是；2 否；3 是`。小项的答案可以写 `是/否`、`はい/いいえ`、`Yes/No`，或者任何一种语言的选项词（比如 `Model Stage`、`モデルステージ`、`模型阶段`、`Apple`），三种语言的选项按位置一一对应，写哪种都认；写了不属于任何一种语言的词，会在检查结果里列出来
+- Single choice / multiple choice: `【答案】C` or `【答案】C、E`
+- Hotspot: `【答案】1 是；2 否；3 是` ("Answer: 1 yes; 2 no; 3 yes"). The answer for a sub-item can be written as `是/否` ("yes/no"), `はい/いいえ` (Japanese "yes/no"), `Yes/No`, or the option word in any language (for example `Model Stage`, `モデルステージ`, `模型阶段` (Chinese for "Model Stage"), `Apple`). The options in the three languages correspond one to one by position, so whichever language you write is accepted; a word that belongs to none of the three languages is listed in the check result
 
-一个例子（D 列）：
+An example (column D):
 
 ```
 【答案】C、E
@@ -392,43 +400,43 @@ D 列的答案写法：
 【记忆口诀】……
 ```
 
-读不出来的题**不会被猜**：它们会在检查结果里列出原因（多半是答案列没写 `【答案】…`，或答案字母不在选项里），不会悄悄判错。
+Questions that cannot be read are **never guessed**: they are listed in the check result with the reason (usually the answer column does not contain `【答案】…`, or the answer letter is not among the options), and they are never silently marked wrong.
 
 ---
 
-## 数据、备份和恢复
+## Data, backup and restore
 
-数据保存在一个 **Docker 命名卷**里，不是你电脑上看得见的文件夹。
+Data is stored in a **Docker named volume**, not in a folder you can see on your computer.
 
-- 卷名是 `xexam_data`（项目名 `xexam` + 卷名 `data`），里面只有 `xexam.db`：题库、成绩、错题记录都在这一个文件里。
-- 更新镜像、`docker compose down`、删除并重建容器，**数据都还在**。
-- ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把卷一起删掉，数据就没了。
+- The volume is named `xexam_data` (project name `xexam` + volume name `data`) and contains only `xexam.db`: the question bank, scores and wrong-answer records are all in this one file.
+- Updating the image, running `docker compose down`, or deleting and recreating the container leaves **the data intact**.
+- ⚠️ **Do not run `docker compose down -v`**: `-v` also deletes the volume, and the data is gone.
 
-### 备份和恢复
+### Backup and restore
 
-先停止程序再操作，数据库更安全。
+Stop the app before you start; the database is safer that way.
 
 ```powershell
 docker compose stop
 
-# 备份：把卷打包成当前文件夹里的 xexam-data.tgz
+# Backup: pack the volume into xexam-data.tgz in the current folder
 docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
 
 docker compose start
 ```
 
 ```powershell
-# 恢复（会覆盖卷里的同名文件）
+# Restore (overwrites files with the same name in the volume)
 docker compose stop
 docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar xzf /backup/xexam-data.tgz -C /data
 docker compose start
 ```
 
-换电脑：在新电脑上登录 `ghcr.io`，放好 `docker-compose.yml`，先 `docker compose up -d` 建好卷，再按上面的方法恢复备份。备份文件里有你的整个数据库，**不要提交到 Git**（`.gitignore` 已忽略 `*.tgz`）。更多细节（连接设置、验证备份）见 [docs/database.md](docs/database.md)。
+Moving to a new computer: log in to `ghcr.io` on the new machine, put `docker-compose.yml` in place, run `docker compose up -d` first to create the volume, then restore the backup as described above. The backup file contains your entire database, so **do not commit it to Git** (`.gitignore` already ignores `*.tgz`). For more details (connection settings, verifying a backup) see [docs/database.md](docs/database.md).
 
-### 迁移更早版本的学习记录（`progress.json`）
+### Migrating progress records from earlier versions (`progress.json`)
 
-如果你有更早的版本留下的 `progress.json`，用一个临时容器把它放进卷里，再重启：
+If you have a `progress.json` left over from an earlier version, use a temporary container to put it into the volume, then restart:
 
 ```powershell
 docker compose stop
@@ -436,257 +444,259 @@ docker run --rm -v xexam_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/pr
 docker compose start
 ```
 
-重启时会自动把里面的成绩和错题记录迁移进数据库，**只迁移一次**，日志里会写「已把旧的学习记录迁移进数据库」（`docker compose logs` 能看到）。数据库里已经有学习记录时不会覆盖；文件格式不对时日志里会写明原因，修好文件后重启即可再试。
+On restart, the scores and wrong-answer records in it are migrated into the database automatically, **only once**, and the log will say `已把旧的学习记录迁移进数据库` ("Old progress records have been migrated into the database") (visible with `docker compose logs`). Existing progress records in the database are never overwritten; if the file format is wrong, the log states the reason, and you can fix the file and restart to try again.
 
-> 这里没有用 `docker cp`：它默认以 root 身份写入，文件属于 root，而容器里的程序是非 root 用户（uid 10001），可能读不了。
+> `docker cp` is not used here: by default it writes as root, so the file would belong to root, while the program in the container runs as a non-root user (uid 10001) and may not be able to read it.
 
 ---
 
-## 让手机访问
+## Letting your phone connect
 
-**这个程序没有登录**，默认只绑定本机（`127.0.0.1`）。想让同一个家庭 Wi-Fi 里的 iPhone 访问，**只在你信任的网络里**这样做，不要在咖啡厅或公司网络里开：
+**This app has no login** and by default binds only to the local machine (`127.0.0.1`). To let an iPhone on the same home Wi-Fi connect, do this **only on a network you trust**, and do not do it in a café or on an office network:
 
-1. 在 `docker-compose.yml` 旁边建 `.env` 文件，写两行：`XEXAM_BIND=0.0.0.0:8765` 和 `XEXAM_ALLOWED_HOSTS=你的电脑的局域网IP`（例如 `192.168.1.20`）。
-2. `docker compose up -d`，iPhone 的 Safari 打开 `http://你的电脑IP:8765`。
+1. Create a `.env` file next to `docker-compose.yml` with two lines: `XEXAM_BIND=0.0.0.0:8765` and `XEXAM_ALLOWED_HOSTS=your-computer-LAN-IP` (for example `192.168.1.20`).
+2. Run `docker compose up -d`, then open `http://your-computer-IP:8765` in Safari on the iPhone.
 
-要在外面（不在家里的 Wi-Fi）用，请看下面的 [通过 Cloudflare Tunnel 从互联网访问](#通过-cloudflare-tunnel-从互联网访问)，不要直接把端口开到互联网上。
+To use it away from home (not on your home Wi-Fi), see [Access from the internet via Cloudflare Tunnel](#access-from-the-internet-via-cloudflare-tunnel) below; do not open the port directly to the internet.
 
-## 通过 Cloudflare Tunnel 从互联网访问
+---
 
-适用场景：Xexam 跑在家里的局域网里，`cloudflared`（Cloudflare 的隧道客户端）也在局域网里的某台机器上（不一定是同一台），你想用自己的域名在外面访问，并且在 **Cloudflare Access** 里设置身份验证。
+## Access from the internet via Cloudflare Tunnel
+
+Use case: Xexam runs on your home LAN, `cloudflared` (Cloudflare's tunnel client) runs on a machine on the same LAN (not necessarily the same one), and you want to reach it from outside with your own domain, protected by authentication in **Cloudflare Access**.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor U as 你（在外面）
-    participant CF as Cloudflare<br/>（域名 + Access）
-    participant T as cloudflared<br/>（局域网）
-    participant X as Xexam 容器<br/>（局域网 主机IP:8765）
+    actor U as You (outside)
+    participant CF as Cloudflare<br/>(domain + Access)
+    participant T as cloudflared<br/>(LAN)
+    participant X as Xexam container<br/>(LAN, host IP:8765)
 
-    U->>CF: 打开 https://xexam.你的域名.com
-    CF-->>U: 要求登录（Cloudflare Access）
-    U->>CF: 通过验证
-    CF->>T: 经隧道转发请求
-    T->>X: HTTP 请求（Host 是你的域名，或被改写成 主机IP:8765）
-    X->>X: 检查 Host 在白名单里；写请求再检查 Origin
-    X-->>U: 页面 / 数据（原路返回）
-    Note over U,X: 上传 Excel、交卷等 POST 请求，浏览器带的 Origin 是 https://你的域名<br/>程序只比较主机名，所以不会被拦
+    U->>CF: Open https://xexam.your-domain.com
+    CF-->>U: Require login (Cloudflare Access)
+    U->>CF: Pass authentication
+    CF->>T: Forward the request through the tunnel
+    T->>X: HTTP request (Host is your domain, or rewritten to host IP:8765)
+    X->>X: Check that Host is in the allow-list, and check Origin as well for write requests
+    X-->>U: Page / data (returned along the same path)
+    Note over U,X: POST requests such as uploading Excel or submitting a quiz carry Origin https://xexam.your-domain.com from the browser<br/>The app compares hostnames only, so they are not blocked
 ```
 
-### 需要做的三件事
+### The three things to do
 
-**1. 让局域网里的 cloudflared 连得到容器。** 默认容器只绑定本机（`127.0.0.1`）。在 `docker-compose.yml` 旁边建一个 `.env` 文件：
+**1. Make sure cloudflared on the LAN can reach the container.** By default the container binds only to the local machine (`127.0.0.1`). Create a `.env` file next to `docker-compose.yml`:
 
 ```ini
-# 让局域网里别的机器（cloudflared）能连到这台机器的 8765 端口
+# Let other machines on the LAN (cloudflared) reach port 8765 on this machine
 XEXAM_BIND=0.0.0.0:8765
-# 允许用你的域名访问（可以写多个，逗号分隔）
-XEXAM_ALLOWED_HOSTS=xexam.你的域名.com
+# Allow access through your domain (you can list several, comma-separated)
+XEXAM_ALLOWED_HOSTS=xexam.your-domain.com
 ```
 
-然后 `docker compose up -d`。
+Then run `docker compose up -d`.
 
-> 如果 cloudflared 和 Xexam 在**同一台机器**上，可以不改 `XEXAM_BIND`（保持默认的只绑定本机），隧道的目标写 `http://localhost:8765` 就行。
+> If cloudflared and Xexam are on the **same machine**, you can leave `XEXAM_BIND` alone (keep the default local-only binding) and simply set the tunnel's target to `http://localhost:8765`.
 
-**2. 在 Cloudflare 里把域名指到 Xexam。** Zero Trust 控制台 → Networks → Tunnels → 你的隧道 → Public Hostname：
+**2. In Cloudflare, point the domain at Xexam.** Zero Trust dashboard → Networks → Tunnels → your tunnel → Public Hostname:
 
-| 项目 | 填什么 |
+| Field | What to enter |
 |---|---|
-| Subdomain / Domain | `xexam` / `你的域名.com` |
-| Service Type | `HTTP`（不是 HTTPS） |
-| URL | `运行 Xexam 的主机的局域网IP:8765`，例如 `192.168.1.20:8765` |
+| Subdomain / Domain | `xexam` / `your-domain.com` |
+| Service Type | `HTTP` (not HTTPS) |
+| URL | `LAN-IP-of-the-Xexam-host:8765`, for example `192.168.1.20:8765` |
 
-**3. 在 Cloudflare Access 里加一条应用策略**，只允许你自己的账号（邮箱）访问这个域名。
+**3. Add an application policy in Cloudflare Access** that allows only your own account (email) to reach this domain.
 
-### 几种常见情况
+### Common situations
 
-| 你的情况 | 怎么配 |
+| Your situation | How to configure it |
 |---|---|
-| 隧道把 **Host 原样转成你的域名** | 只需要 `XEXAM_ALLOWED_HOSTS=xexam.你的域名.com`，上面第 1 步就够了 |
-| 你在 Cloudflare 里设了 **HTTP Host Header**（`httpHostHeader`），把 Host 改成了 `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` 再加 `XEXAM_ALLOWED_ORIGINS=https://xexam.你的域名.com`。浏览器发的 `Origin` 仍是公网域名，要单独放行 |
-| 不确定 Host 到底是什么 | 先照上面第 1 步配好再打开页面。如果被拒绝（403），页面上的提示会写出它看到的 `Host`（或 `Origin`）：把那个值加进 `XEXAM_ALLOWED_HOSTS`（或 `XEXAM_ALLOWED_ORIGINS`），`docker compose up -d` 重新创建容器即可 |
-| 不想列域名，前面已经有 Access 验证 | `XEXAM_ALLOW_ANY_HOST=1`（不再检查 `Host`；写请求的 `Origin` 检查仍然有效） |
+| The tunnel **passes Host through as your domain** | Just set `XEXAM_ALLOWED_HOSTS=xexam.your-domain.com`; step 1 above is enough |
+| You set an **HTTP Host Header** (`httpHostHeader`) in Cloudflare that rewrites Host to `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` plus `XEXAM_ALLOWED_ORIGINS=https://xexam.your-domain.com`. The `Origin` the browser sends is still the public domain, so it must be allowed separately |
+| You are not sure what Host actually is | Configure step 1 above first, then open the page. If it is rejected (403), the message on the page states the `Host` (or `Origin`) it saw: add that value to `XEXAM_ALLOWED_HOSTS` (or `XEXAM_ALLOWED_ORIGINS`) and recreate the container with `docker compose up -d` |
+| You do not want to list domains, and Access authentication is already in front | `XEXAM_ALLOW_ANY_HOST=1` (`Host` is no longer checked; the `Origin` check on write requests still applies) |
 
-我在本机用**真实的 Chrome + 一个 HTTPS 反向代理**模拟过这两种情况（浏览器上传 Excel → 预览 → 确认导入 → 交卷，全程通过）。**没有**用真正的 Cloudflare 测过。
+I simulated both cases locally with **a real Chrome and an HTTPS reverse proxy** (the browser uploads Excel → preview → confirm import → submit the quiz, all passing). I have **not** tested with real Cloudflare.
 
-### 不要忘记的事
+### Things not to forget
 
-- ⚠️ **程序自己没有登录。** 一旦把 `XEXAM_BIND` 设成 `0.0.0.0`，或者设了 `XEXAM_ALLOW_ANY_HOST=1`，**能连到这个端口的人就能看到和修改题库**。所以：
-  - 只让 cloudflared 连得到这个端口：路由器上**不要**做端口映射。在 Linux 上，主机防火墙（ufw、firewalld）**拦不住** Docker 发布的端口，要限制来源请在 `DOCKER-USER` 链里加规则，或者把 `XEXAM_BIND` 写成具体的局域网 IP（如 `192.168.1.20:8765`）；最稳的是让 cloudflared 和 Xexam 在同一台机器上，保持默认的 `127.0.0.1`。
-  - Cloudflare Access 的策略一定要设好，并且**只允许你自己**。没设策略的域名等于对全世界公开。
-- 经过 Cloudflare 访问时，登录会过期。过期后上传或交卷会提示「可能是登录已过期，请刷新页面重新登录」，刷新、重新登录就行。**做到一半的考试存在浏览器里，不会丢**。
-- 被拒绝（403）时，页面或 `docker compose logs` 里的提示会写明：看到的 `Host` / `Origin` 是什么，应该把哪个值加进哪个选项。
-
-## 安全说明
-
-详细的威胁模型和每一条防线见 [docs/security.md](docs/security.md)。要点：
-
-- **只有 Nginx 对外**。后端没有发布端口，网络是 `internal: true`（也不能访问外网）。
-- 默认只接受发给本机的请求（检查 `Host`）；放在 Cloudflare 等有身份验证的反向代理后面时，把你的域名写进 `XEXAM_ALLOWED_HOSTS`。写请求还会检查 `Origin` 必须和 `Host` 是同一个主机（或在 `XEXAM_ALLOWED_ORIGINS` 里），防止恶意网页通过你的浏览器操作它。后端只读真实的 `Host` 头，不读 `X-Forwarded-*`。
-- **程序自己不做登录。** 从互联网访问时必须在前面加身份验证（Cloudflare Access），不要把端口直接暴露到公网。
-- 上传的文件按**内容**检查：拒绝空文件、非 `.xlsx`、损坏的压缩包、重复的压缩包条目、含 XML 实体声明（DOCTYPE）的文件，最大 20 MB；解析有总时限和内存上限。
-- 上传后的预览在内存里保留 30 分钟，确认时需要一次性的校验码（128 位随机），用过就作废。
-- 数据库写入在一个事务里：中途出错整体回滚，不会留下半截数据。
-- 两个容器都以非 root 运行，`cap_drop: ALL`、`no-new-privileges`、根文件系统只读。
-- 镜像里没有机密、没有数据库、没有真实题库。
+- ⚠️ **The app itself has no login.** Once you set `XEXAM_BIND` to `0.0.0.0`, or set `XEXAM_ALLOW_ANY_HOST=1`, **anyone who can reach this port can see and modify the question bank**. So:
+  - Let only cloudflared reach this port: **do not** set up port forwarding on the router. On Linux, the host firewall (ufw, firewalld) **cannot stop** ports published by Docker; to restrict sources, add rules in the `DOCKER-USER` chain, or set `XEXAM_BIND` to a specific LAN IP (such as `192.168.1.20:8765`). The safest setup is to run cloudflared and Xexam on the same machine and keep the default `127.0.0.1`.
+  - Make sure the Cloudflare Access policy is in place and allows **only you**. A domain without a policy is open to the whole world.
+- When you access the app through Cloudflare, your login expires after a while. After it expires, uploading or submitting a quiz shows `可能是登录已过期，请刷新页面重新登录` ("The login may have expired, please refresh the page and log in again"); just refresh and log in again. **A quiz in progress is stored in the browser and is not lost**.
+- When a request is rejected (403), the message on the page or in `docker compose logs` states what `Host` / `Origin` it saw and which value should be added to which option.
 
 ---
 
-## 自动构建与发布
+## Security notes
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 是**唯一**的流水线。每次你把代码推到 GitHub，自动做：
+For the detailed threat model and every line of defense, see [docs/security.md](docs/security.md). Key points:
+
+- **Only Nginx is exposed.** The backend publishes no port, and its network is `internal: true` (so it cannot reach the internet either).
+- By default only requests addressed to the local machine are accepted (the `Host` is checked); when running behind an authenticating reverse proxy such as Cloudflare, put your domain in `XEXAM_ALLOWED_HOSTS`. Write requests also have their `Origin` checked: it must be the same host as `Host` (or be listed in `XEXAM_ALLOWED_ORIGINS`), which prevents a malicious web page from operating the app through your browser. The backend reads only the real `Host` header, never `X-Forwarded-*`.
+- **The app does no login itself.** For internet access you must put authentication in front of it (Cloudflare Access); never expose the port directly to the public internet.
+- Uploaded files are checked by **content**: empty files, non-`.xlsx` files, corrupt archives, duplicate archive entries, and files containing an XML entity declaration (DOCTYPE) are rejected, with a maximum of 20 MB; parsing has an overall time limit and a memory cap.
+- After an upload, the preview is kept in memory for 30 minutes, and confirming requires a one-time verification code (128-bit random) that is invalidated once used.
+- Database writes happen in a single transaction: if anything fails midway, the whole thing is rolled back and no half-written data is left.
+- Both containers run as non-root, with `cap_drop: ALL`, `no-new-privileges`, and a read-only root filesystem.
+- The images contain no secrets, no database, and no real question bank.
+
+---
+
+## Automated build and release
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the **only** pipeline. Every time you push code to GitHub, it automatically does the following:
 
 ```mermaid
 flowchart LR
-    C["① 检查版本和更新日志"] --> T
-    subgraph T["② 四组检查（并行）"]
-        F["frontend<br/>类型检查 · 单元测试 · 构建"]
-        B["backend<br/>fmt · clippy · 测试 · 迁移检查"]
-        S["stack<br/>Nginx 检查 · 整栈端到端"]
-        A["arm64<br/>构建并在 QEMU 下启动"]
+    C["① Check version and changelog"] --> T
+    subgraph T["② Four check groups (in parallel)"]
+        F["frontend<br/>type check · unit tests · build"]
+        B["backend<br/>fmt · clippy · tests · migration check"]
+        S["stack<br/>Nginx check · full-stack end-to-end"]
+        A["arm64<br/>build and boot under QEMU"]
     end
-    T --> P["③ 发布两个镜像<br/>amd64 + arm64"]
-    P --> R["④ 建 GitHub Release"]
+    T --> P["③ Publish two images<br/>amd64 + arm64"]
+    P --> R["④ Create GitHub Release"]
 ```
 
-- **触发：** 推送到 `main`，或在 Actions 页面手动运行；拉取请求和其它分支只检查和测试，**从不发布**。
-- **每次更新必须：** 改 `VERSION`，并在本文件「更新日志」最上面写一条同版本的记录，否则第 ① 步会失败。
-- **都通过才发布：** 两个镜像（`xexam-frontend`、`xexam-backend`）各发布成一个多架构镜像，并回头检查镜像清单里确实有 `amd64` 和 `arm64`、标签指向刚推送的那个摘要。测试失败时 `latest` 仍是上一个能用的版本。
-- **发布的标签：** `latest`、`v<VERSION>`、`sha-<提交>`。
-- **后端镜像怎么编 arm64：** 在构建机上用 zig 交叉编译，不在 QEMU 里编 Rust（QEMU 下要慢一个数量级）；只有最后一个很小的 alpine 阶段是目标架构。
-- **Releases 页：** 两个镜像都发布并核对成功之后，自动建（或更新）一个叫 `v<VERSION>` 的 Release，说明文字取自本文件「更新日志」里这个版本的那一段（[`scripts/release-notes.py`](scripts/release-notes.py)），并自动打上同名的 git 标签。镜像没发布成功，就不会有这个 Release。
-- **Releases 和镜像是两个地方：** 镜像在仓库的 **Packages** 里（ghcr.io），Release 在 **Releases** 页；两者由同一次构建一起产生。
+- **Trigger:** a push to `main`, or a manual run from the Actions page. Pull requests and other branches are only checked and tested, and **never publish**.
+- **Every update must:** change `VERSION` and add an entry for the same version at the very top of the Changelog section of this file, otherwise step ① fails.
+- **Publish only if everything passes:** the two images (`xexam-frontend`, `xexam-backend`) are each published as a multi-architecture image, and the pipeline then checks that the image manifest really contains `amd64` and `arm64` and that the tag points to the digest that was just pushed. If a test fails, `latest` stays on the previous working version.
+- **Published tags:** `latest`, `v<VERSION>`, `sha-<commit>`.
+- **How the backend image gets arm64:** it is cross-compiled with zig on the build machine instead of compiling Rust under QEMU (which is an order of magnitude slower); only the final, very small alpine stage uses the target architecture.
+- **Releases page:** once both images are published and verified, the pipeline automatically creates (or updates) a Release named `v<VERSION>`. Its description is taken from this version's section of the Changelog in this file ([`scripts/release-notes.py`](scripts/release-notes.py)), and a git tag with the same name is created automatically. If the images were not published successfully, there is no Release.
+- **Releases and images live in two different places:** the images are under the repository's **Packages** (ghcr.io), the Release is on the **Releases** page; both are produced by the same build.
 
-镜像从私有仓库发布，默认也是私有的。第一次发布一个新镜像名时，要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。想免登录拉取，到包设置里把它改成公开。
+The images are published from a private repository and are private by default. The first time a new image name is published, add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`). To allow pulling without logging in, change the package to public in its settings.
 
 ---
 
-## 开发
+## Development
 
-日常改代码、跑测试用的命令见 [docs/development.md](docs/development.md)。最常用的：
+For the everyday commands for changing code and running tests, see [docs/development.md](docs/development.md). The most common ones:
 
 ```bash
-# 后端（Rust 1.99.1，rustup 会按 backend/rust-toolchain.toml 自动装）
+# Backend (Rust 1.99.1; rustup installs it automatically from backend/rust-toolchain.toml)
 cd backend && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test --all-targets
 
-# 前端（Node 24）
+# Frontend (Node 24)
 cd frontend && npm ci && npm run typecheck && npm test && npm run build
 
-# 开发时：后端 127.0.0.1:8765，前端 http://127.0.0.1:5173（/api 代理到后端）
+# During development: backend at 127.0.0.1:8765, frontend at http://127.0.0.1:5173 (/api is proxied to the backend)
 cd backend && cargo run -- serve --data ../data --no-browser
 cd frontend && npm run dev
 
-# 整栈检查（用 Docker，临时项目名和临时卷，不碰 xexam_data）
+# Full-stack check (uses Docker, a temporary project name and a temporary volume, does not touch xexam_data)
 python -I tests/integration/stack_check.py
 ```
 
-后端的测试对着 `tests/baseline/` 里已提交的**旧版快照**：172 份黄金响应、49 个解析夹具及输出、85 条题目 id 向量。这些夹具全是虚构的，真实题库永远不入库。
+The backend tests run against the committed **legacy snapshot** in `tests/baseline/`: 172 golden responses, 49 parser fixtures and their outputs, and 85 question-id vectors. All of these fixtures are fictional; a real question bank is never committed.
 
 ---
 
-## 目录结构
+## Directory structure
 
 ```
-README.md                  本文件（架构、部署、使用、更新日志）
-VERSION                    版本号（和更新日志最上面一条保持一致）
-docker-compose.yml         拉取两个镜像运行（只需要这一个文件）
-docker-compose.build.yml   从源码构建两个镜像并运行
-.env.example               本机配置模板（复制成 .env；.env 不提交）
-backend/                   Rust 后端（Axum + rusqlite）
-  src/api/                   路由、守卫（Host / Origin / Content-Type / 体积）、JSON 格式、成绩清洗
-  src/services/              待确认导入的槽位、解析引擎接口
-  src/parser/                .xlsx 解析：ZIP 防护、XML、题目识别、题目 id
-  src/database/              SQLite 存储、schema、旧 progress.json 迁移、时间戳
-  src/security/ src/config/  Host / Origin 判断、限长读取请求体；环境变量
-  tests/                     单元、黄金响应、解析对照、id 向量、并发
-  Dockerfile                 在构建机上交叉编译（zig），运行镜像是静态链接的单个可执行文件
-frontend/                  TypeScript + Vite 前端（原生 DOM）
+README.md                  This file (architecture, deployment, usage, changelog)
+VERSION                    Version number (kept in sync with the top changelog entry)
+docker-compose.yml         Pulls and runs the two images (this is the only file you need)
+docker-compose.build.yml   Builds the two images from source and runs them
+.env.example               Local configuration template (copy to .env; .env is not committed)
+backend/                   Rust backend (Axum + rusqlite)
+  src/api/                   Routes, guards (Host / Origin / Content-Type / size), JSON format, score sanitizing
+  src/services/              Pending-import slot, parser engine interface
+  src/parser/                .xlsx parsing: ZIP protection, XML, question detection, question id
+  src/database/              SQLite storage, schema, legacy progress.json migration, timestamps
+  src/security/ src/config/  Host / Origin checks, size-limited request body reading; environment variables
+  tests/                     Unit, golden-response, parser comparison, id-vector, concurrency
+  Dockerfile                 Cross-compiles on the build machine (zig); the runtime image is a single statically linked executable
+frontend/                  TypeScript + Vite frontend (plain DOM)
   src/api/ types/ domain/ state/ pages/ components/ utils/ styles/
-nginx/                     nginx.conf + Dockerfile（构建前端 → 只带静态产物）
-tests/baseline/            旧版 Python 的行为快照（黄金响应、解析夹具、id 向量、示例库）
-tests/integration/         Nginx 行为检查、整栈端到端检查、progress.json 迁移检查
-docs/                      架构、API、数据库、安全、部署、迁移、开发，以及迁移前的审计
-scripts/release-notes.py   从更新日志生成 GitHub Release 的说明（CI 用，本机也能跑）
-.github/workflows/ci.yml   唯一的流水线：检查 → 测试 → 发布 → Release
+nginx/                     nginx.conf + Dockerfile (builds the frontend -> ships only the static output)
+tests/baseline/            Behavior snapshot of the legacy Python version (golden responses, parser fixtures, id vectors, sample database)
+tests/integration/         Nginx behavior checks, full-stack end-to-end checks, progress.json migration checks
+docs/                      Architecture, API, database, security, deployment, migration, development, plus the pre-migration audit
+scripts/release-notes.py   Generates the GitHub Release notes from the changelog (used by CI, can also be run locally)
+.github/workflows/ci.yml   The only pipeline: check -> test -> publish -> Release
 ```
 
 ---
 
-## 更新日志
+## Changelog
 
-每次更新都要在这里写一条，**版本号和仓库根目录的 `VERSION` 文件一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
+Every update must add an entry here, and the **version number must match the `VERSION` file in the repository root** (the automated build checks this and refuses to build on a mismatch). The latest image carries both the `latest` tag and the matching `vX.Y` tag.
 
 ### v0.4 — 2026-11-10
 
-- **三种语言对照：英语 / 中文 / 日语。** Excel 新增一个格式：A 列英语、B 列中文、C 列日语（题目本身）、D 列答案·解析·口诀；A、B、C 三列是同一道题的三种语言，一一对应，答案只写一份。答题页的语言按钮变成「英语 / 中文 / 日语」，成绩页的错题解析也用你选的语言显示。
-- **热点题的选项也跟着语言走**：每个小项末尾用本语言写选项（日语 `はい / いいえ`，中文 `是 / 否`，英语 `Yes / No`；执行层之类的三选一同理），切换语言时选项按钮一起换。某一列没写选项时，这个语言仍可用，选项按钮显示日语的。
-- **热点题的答案用任何一种语言的选项词来写都认**（`モデルステージ`、`模型阶段`、`Model Stage`，也可以混着写）；三种语言的选项按位置一一对应，个数对不上的那一列不参与，不会猜。
-- **旧的三列格式（A 日语、B 中文、C 答案）不用改，照样能上传**，只是没有英语。程序看内容自动判断是哪种格式；四列格式里题目 id 仍然来自 C 列的日语，所以同一道题在两种格式里 id 相同，学习记录不受影响。
-- 首页页脚的说明文字改为：Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料；用户应确保导入和使用的资料来源合法，并拥有相应使用权限。
-- 测试：后端 136 → 151（四列格式、三种语言的选项与答案、对不上时的退回），前端 19 → 27（语言规则）。
+- **Three-language side-by-side: English / Chinese / Japanese.** Excel gains a new format: column A is English, column B is Chinese, column C is Japanese (the question itself), and column D holds the answer, explanation and mnemonic. Columns A, B and C are the same question in three languages and correspond one to one; the answer is written only once. The language buttons on the quiz page become `英语 / 中文 / 日语` ("English / Chinese / Japanese"), and the wrong-answer review on the result page is also shown in the language you choose.
+- **Hotspot options follow the language too**: write the options at the end of each sub-item in that language (Japanese `はい / いいえ`, Chinese `是 / 否` ("yes / no"), English `Yes / No`; the same applies to three-way choices such as the execution layer), and the option buttons switch together with the language. If a column has no options written, that language is still available and the option buttons show the Japanese ones.
+- **Hotspot answers are accepted when written with option words from any language** (`モデルステージ`, `模型阶段`, `Model Stage`, and they can be mixed). The options of the three languages correspond one to one by position; a column whose option count does not match does not take part, and nothing is guessed.
+- **The old three-column format (A Japanese, B Chinese, C answer) needs no changes and can still be uploaded**, just without English. The program detects the format from the content automatically; in the four-column format the question id still comes from the Japanese text in column C, so the same question has the same id in both formats and learning records are not affected.
+- The footer text on the home page now reads: Xexam only provides import, organization and practice of questions and answers; the software itself does not provide or include exam questions, answers or related materials; users must ensure that the sources of the materials they import and use are lawful and that they hold the corresponding usage rights.
+- Tests: backend 136 → 151 (four-column format, options and answers in three languages, fallback when they do not match), frontend 19 → 27 (language rules).
 
 ### v0.3 — 2026-11-10
 
-**整个程序重写成 Rust + TypeScript + Nginx。数据库文件和 schema 没有变，API 向后兼容；旧的 Python 实现已从仓库里移除。**
+**The whole program was rewritten in Rust + TypeScript + Nginx. The database file and schema are unchanged, the API is backward compatible, and the old Python implementation has been removed from the repository.**
 
-- **后端改成 Rust**（Axum 0.8 + Tokio + rusqlite，工具链固定 1.99.1）：REST 接口、XLSX 解析、导入（预览不写库 → 一次性确认码 → 一个事务写入）、成绩与错题统计、Host/Origin 守卫、`xexam-backend import / healthcheck / migrate-progress` 子命令。行为与 Python 版一一对应：172 份旧版响应逐项对照没有未解释的差异；49 个合成工作簿的解析输出、85 条题目 id 向量全部一致，所以题目 id 与旧版逐字节相同、学习记录不会脱钩。
-- **前端改成 TypeScript**（strict）+ **Vite**，原生 DOM、没有框架；没有内联样式，所以 CSP 可以很严。构建目标 `safari15`，iPhone 需要 iOS 15.4 以上。
-- **两个镜像、两个容器**：`xexam-frontend`（Nginx + 前端静态文件，唯一对外）和 `xexam-backend`（Rust，在 `internal` 私有网络里不发布端口）。非 root、`cap_drop: ALL`、只读根文件系统；Host 原样透传、`X-Forwarded-*` 清空；20 MB 上限、安全头、限流、超时；后端不可达时返回 JSON 502。两个镜像都同时有 `amd64` 和 `arm64`。
-- **更严的上传检查（有意的差异）**：任何编码 / 扩展名里的 DOCTYPE 和实体声明都拒绝；重复的 ZIP 条目名拒绝；ZIP 条目数、XML 深度 / 节点数 / 每元素属性数、单元格总字节数有上限；解析有协作式的超时（到了解析器自己停下）且同时最多 2 个；错误文案不再回显库的异常文本；不支持的 HTTP 方法回 405（以前是 501）。完整差异表见 [docs/api.md](docs/api.md)。
-- **一个流水线**（`.github/workflows/ci.yml`）：检查版本和更新日志 → 前端 / 后端 / Nginx 与整栈 / arm64 四组检查 → 都通过才发布两个镜像并建 Release。
-- **测试**：后端 136 个（对着已提交的旧版快照：172 份黄金响应、49 个解析夹具、85 条 id 向量）、前端 19 个；`tests/integration/` 里 Nginx 38 项、整栈 34 项、`progress.json` 迁移 10 项。
-- **文档**：`docs/` 下的架构、API（含 OpenAPI）、数据库、安全、部署、迁移、开发，以及迁移前的审计、风险和计划。
-- 判分仍在浏览器里（服务端只收 `{题目 id, 对错}`），理由见 [docs/migration-plan.md](docs/migration-plan.md)。
-- ⚠️ **升级注意**：新旧版容器名和端口相同，**不能同时运行**，升级前先 `docker compose stop`；数据卷 `xexam_data` 是同一个，数据不用迁移。旧的单镜像 `ghcr.io/yumin-space/xexam` 不再更新（最后是 `v0.2.2`），`docker-compose.yml` 现在一次拉取 `xexam-frontend` 和 `xexam-backend` 两个。回滚步骤见 [docs/migration.md](docs/migration.md)。
-- **没有验证的东西（如实写）**：真正的 Cloudflare 隧道、iPhone 真机、在真正的 ARM 硬件上运行（只在 QEMU 下构建并启动验证过）、用你自己真实数据库的副本演练。
+- **Backend rewritten in Rust** (Axum 0.8 + Tokio + rusqlite, toolchain pinned to 1.99.1): REST API, XLSX parsing, import (preview without writing to the database → one-time confirmation token → one-transaction write), score and wrong-answer statistics, Host/Origin guard, and the `xexam-backend import / healthcheck / migrate-progress` subcommands. Behavior matches the Python version one to one: all 172 legacy responses were compared item by item with no unexplained differences; the parse output of 49 synthetic workbooks and all 85 question id vectors are identical, so question ids are byte-for-byte the same as in the old version and learning records do not become detached.
+- **Frontend rewritten in TypeScript** (strict) + **Vite**, plain DOM, no framework; there are no inline styles, so the CSP can be very strict. The build target is `safari15`, so iPhone needs iOS 15.4 or later.
+- **Two images, two containers**: `xexam-frontend` (Nginx + static frontend files, the only one exposed) and `xexam-backend` (Rust, on the `internal` private network with no published port). Non-root, `cap_drop: ALL`, read-only root filesystem; Host passed through unchanged, `X-Forwarded-*` cleared; 20 MB limit, security headers, rate limiting, timeouts; a JSON 502 is returned when the backend is unreachable. Both images ship for `amd64` and `arm64`.
+- **Stricter upload checks (intentional differences)**: DOCTYPE and entity declarations are rejected in any encoding / extension; duplicate ZIP entry names are rejected; there are limits on the number of ZIP entries, XML depth / node count / attributes per element, and total cell bytes; parsing has a cooperative timeout (the parser stops by itself when time is up) and at most 2 parses run at the same time; error messages no longer echo the library's exception text; unsupported HTTP methods return 405 (previously 501). See [docs/api.md](docs/api.md) for the full table of differences.
+- **One pipeline** (`.github/workflows/ci.yml`): check version and changelog → four check groups (frontend / backend / Nginx and full stack / arm64) → only if all pass, publish the two images and create the Release.
+- **Tests**: 136 backend tests (against the committed legacy snapshot: 172 golden responses, 49 parse fixtures, 85 id vectors), 19 frontend tests; in `tests/integration/`, 38 Nginx checks, 34 full-stack checks and 10 `progress.json` migration checks.
+- **Documentation**: architecture, API (including OpenAPI), database, security, deployment, migration and development under `docs/`, plus the pre-migration audit, risks and plan.
+- Grading is still done in the browser (the server only receives `{id, correct}`, i.e. the question id and whether it was answered correctly); the reasoning is in [docs/migration-plan.md](docs/migration-plan.md).
+- ⚠️ **Upgrade note**: the old and new containers have the same names and ports and **cannot run at the same time**, so run `docker compose stop` before upgrading; the data volume `xexam_data` is the same one, so no data migration is needed. The old single image `ghcr.io/yumin-space/xexam` is no longer updated (the last version was `v0.2.2`), and `docker-compose.yml` now pulls both `xexam-frontend` and `xexam-backend` at once. For rollback steps see [docs/migration.md](docs/migration.md).
+- **What has not been verified (stated honestly)**: a real Cloudflare Tunnel, a real iPhone, running on real ARM hardware (it was only built and started under QEMU), and a dry run with a copy of your own real database.
 
 ### v0.2.2 — 2026-11-10
 
-- 新增 `tests/baseline/`：旧版 Python 的行为基线（172 份真实响应、50 个 XLSX 夹具及解析输出、85 条题目 id 向量、示例数据库、安全探针、Host/Origin 检查和隧道模拟脚本），后面的 Rust 重写要和它逐项对照。工具里不再写死任何本机路径，可用 `XEXAM_LEGACY_ROOT` 指定被测代码。
-- 修正上一版更新日志里关于 v0.2 Release 的说法。
+- Added `tests/baseline/`: the behavior baseline of the old Python version (172 real responses, 50 XLSX fixtures with their parse output, 85 question id vectors, a sample database, security probes, and Host/Origin check and tunnel simulation scripts), against which the later Rust rewrite is compared item by item. The tools no longer hardcode any local path; use `XEXAM_LEGACY_ROOT` to point at the code under test.
+- Corrected the statement about the v0.2 Release in the previous changelog.
 
 ### v0.2.1 — 2026-11-10
 
-- **每次构建成功后自动在 GitHub 的 Releases 页建一个 Release**（以前只推了镜像，Releases 页一直是空的）：流水线新增第 4 个 job `release`，在镜像发布并核对成功之后运行，说明取自本更新日志这个版本的那一段，并自动打 git 标签 `v<版本>`。
-- v0.2 的 Release 手动补建了一次（对应 v0.2 的提交 `1ee64c8`，没有标成 Latest）；从 v0.2.1 起由流水线自动建。
-- 新增 `scripts/release-notes.py`：从 README 抽出某个版本的更新日志；本机也能运行，用来预览 Release 页会显示什么。
+- **A Release is now created automatically on GitHub's Releases page after every successful build** (previously only images were pushed and the Releases page stayed empty): the pipeline gains a 4th job, `release`, which runs after the images have been published and verified; its notes are taken from this version's section of this changelog, and it automatically creates the git tag `v<version>`.
+- The v0.2 Release was created manually once (it corresponds to the v0.2 commit `1ee64c8` and is not marked Latest); from v0.2.1 on, the pipeline creates it automatically.
+- Added `scripts/release-notes.py`: extracts the changelog of a given version from the README; it can also run locally to preview what the Release page will show.
 
 ### v0.2 — 2026-11-10
 
-- **可以通过自己的域名从互联网访问**（Cloudflare Tunnel + Cloudflare Access）：
-  - 允许的域名放进 `XEXAM_ALLOWED_HOSTS`；写请求的 `Origin` 改成只比较主机名，所以经 **HTTPS** 域名访问时上传、交卷不再被 403 拦下。
-  - 代理改写了 `Host` 时，可以用 `XEXAM_ALLOWED_ORIGINS` 单独放行公网域名；前面已有身份验证时可设 `XEXAM_ALLOW_ANY_HOST=1`。
-  - 被拒绝时会说明是哪一条没通过、该怎么放行；登录过期时页面会提示刷新重新登录。
-- 端口绑定改成可配置（`XEXAM_BIND`），默认仍然只绑定本机。
-- 收到 `docker stop` 的停止信号后正常退出（以前要等 10 秒被强杀），数据库干净关闭。
-- CI：拆成「检查版本和更新日志 → 两种架构各自测试 → 发布」三步（v0.2.1 起再加第四步：建 Release）；冒烟测试挪进 `scripts/smoke-test.sh`，本机装了 Docker 也能直接跑；发布后按摘要核对镜像清单。
-- `/api/info` 增加 `arch`（当前 CPU 架构）。
-- 审计后的修复（每一条都有对应的实测）：
-  - 服务端：提前拒绝的请求（403/415）先把请求体读掉再回复，浏览器看到的是真正的原因而不是「连不上服务」；被拒绝的请求在日志里留一行（`docker compose logs` 能看到）；畸形的 JSON（数字当列表、`Infinity`、过深嵌套、非 ASCII 的确认码）返回 400/409，而不是让连接断掉；POST 的 `Content-Type` 必须真的是 `application/json`；`XEXAM_ALLOWED_HOSTS` 用空格或分号分隔也能识别。
-  - 数据库：`COMMIT` 失败时会回滚，不会让连接一直卡在事务里；格式不对的旧 `progress.json` 不再让程序起不来；数据目录里只有别的 `.db` 文件时，启动日志会提醒（不会改动那个文件）。
-  - 页面：交卷时成绩提交成功才清掉暂存，失败会保留并提示「刷新页面重新登录后再交卷」；开始新考试前，如果有没交卷的考试会先确认；成绩页百分比与学习记录用同一种取整，不再差 1；提示条不再被底部翻页栏挡住；长英文串不再撑出横向滚动条；没有 `<dialog>` 的旧 Safari 改用系统确认框；长按字母键不会反复切换答案。
-  - 镜像和 CI：健康检查不走代理并跟随 `XEXAM_PORT`；`.dockerignore` 改成任意层级生效；`.gitignore` 加了备份压缩包和 `.env.*`；只从 `main` 发布，`main` 上排队不取消；冒烟测试里容器内路径在 Windows 的 Git Bash 里也能跑。
-  - 这版在本机用 Docker 真的构建了镜像（amd64），并用 CI 同一份冒烟测试跑通：非 root、Host/Origin 拦截、删除容器后数据还在、`docker stop` 1 秒。arm64 和发布仍要看 GitHub Actions 的结果。
-- 名称统一成 **xexam**：环境变量 `XEXAM_DATA` / `XEXAM_HOST` / `XEXAM_PORT` / `XEXAM_ALLOWED_HOSTS` / `XEXAM_ALLOWED_ORIGINS` / `XEXAM_ALLOW_ANY_HOST`，数据库文件 `xexam.db`，浏览器里保存的键名 `xexam.*`；文档里也不再写死你自己的 Excel 文件名。
-- ⚠️ **从 v0.1 升级时注意：** 数据库文件的名字变了，新版只读 `xexam.db`。如果你在更早的版本里已经导入过题库，请先停止程序，把数据目录里那个 `.db` 文件改名为 `xexam.db` 再启动，否则会看到空题库（旧文件不会被删，只是不会被读取）。浏览器里暂存的考试和语言选择用的键名也变了，升级前请先交卷，语言会恢复成日语。在自己改过的 compose 里设置过旧环境变量名的，要改成上面的 `XEXAM_*`，否则会被忽略。
-- `docker-compose.yml` 去掉了 `pull_policy: always`：`docker compose up -d` 不再每次联网检查，更新请用 `docker compose pull && docker compose up -d`。
-- `.env`（本机配置）加进 `.gitignore` 和 `.dockerignore`，不会被提交，也不会进镜像。
+- **Can be reached from the internet through your own domain** (Cloudflare Tunnel + Cloudflare Access):
+  - Allowed domains go into `XEXAM_ALLOWED_HOSTS`; the `Origin` of write requests is now compared by hostname only, so uploads and submitting a quiz are no longer blocked with 403 when accessed through an **HTTPS** domain.
+  - When a proxy rewrites `Host`, `XEXAM_ALLOWED_ORIGINS` can be used to allow the public domain separately; when authentication is already in front, `XEXAM_ALLOW_ANY_HOST=1` can be set.
+  - When a request is rejected, the message explains which check failed and how to allow it; when the login expires, the page prompts you to refresh and log in again.
+- Port binding is now configurable (`XEXAM_BIND`); the default is still localhost only.
+- After receiving the stop signal from `docker stop`, the program exits cleanly (previously it waited 10 seconds and was killed), and the database is closed cleanly.
+- CI: split into three steps, "check version and changelog → test each of the two architectures → publish" (from v0.2.1 a fourth step is added: create the Release); the smoke test moved into `scripts/smoke-test.sh`, which can also be run directly on a machine with Docker installed; after publishing, the image manifest is verified by digest.
+- `/api/info` gains `arch` (the current CPU architecture).
+- Fixes after the audit (each one has a corresponding real test):
+  - Server: requests rejected early (403/415) have their body read before the reply, so the browser sees the real reason instead of `连不上服务` ("cannot connect to the service"); a rejected request leaves one line in the log (visible with `docker compose logs`); malformed JSON (a number where a list is expected, `Infinity`, over-deep nesting, a non-ASCII confirmation token) returns 400/409 instead of dropping the connection; the `Content-Type` of a POST must really be `application/json`; `XEXAM_ALLOWED_HOSTS` separated by spaces or semicolons is also recognized.
+  - Database: if `COMMIT` fails it rolls back instead of leaving the connection stuck in a transaction; a malformed old `progress.json` no longer keeps the program from starting; when the data directory contains only some other `.db` file, the startup log gives a warning (that file is not modified).
+  - Pages: when submitting a quiz, the saved progress is cleared only after the score has been submitted successfully; on failure it is kept and a prompt `刷新页面重新登录后再交卷` ("Refresh the page, log in again, then submit") is shown; before starting a new exam, if there is an unsubmitted exam, it asks for confirmation first; the percentage on the result page uses the same rounding as the learning record and no longer differs by 1; the notification bar is no longer covered by the bottom paging bar; long English strings no longer cause a horizontal scrollbar; old Safari without `<dialog>` uses the system confirmation box; holding down a letter key no longer toggles the answer repeatedly.
+  - Images and CI: the health check bypasses the proxy and follows `XEXAM_PORT`; `.dockerignore` now applies at any directory level; `.gitignore` gains backup archives and `.env.*`; publishing happens only from `main`, and queued runs on `main` are not cancelled; the in-container paths in the smoke test also work in Git Bash on Windows.
+  - This version was really built locally with Docker (amd64) and passed the same smoke test that CI uses: non-root, Host/Origin blocking, data still there after deleting the container, `docker stop` in 1 second. arm64 and publishing still depend on the GitHub Actions results.
+- Names unified to **xexam**: environment variables `XEXAM_DATA` / `XEXAM_HOST` / `XEXAM_PORT` / `XEXAM_ALLOWED_HOSTS` / `XEXAM_ALLOWED_ORIGINS` / `XEXAM_ALLOW_ANY_HOST`, database file `xexam.db`, key names saved in the browser `xexam.*`; the docs also no longer hardcode your own Excel file name.
+- ⚠️ **When upgrading from v0.1:** the database file name changed, and the new version only reads `xexam.db`. If you already imported a question bank with an earlier version, stop the program first and rename that `.db` file in the data directory to `xexam.db` before starting, otherwise you will see an empty question bank (the old file is not deleted, it is just not read). The key names used for the saved exam and the language choice in the browser also changed, so submit your quiz before upgrading; the language will revert to Japanese. If you set the old environment variable names in a compose file you modified yourself, change them to the `XEXAM_*` names above, otherwise they will be ignored.
+- `docker-compose.yml` no longer has `pull_policy: always`: `docker compose up -d` no longer checks online every time; to update, use `docker compose pull && docker compose up -d`.
+- `.env` (local configuration) was added to `.gitignore` and `.dockerignore`, so it is not committed and does not end up in the image.
 
 ### v0.1 — 2026-11-10
 
-第一个版本。
+First version.
 
-- 浏览器答题：单选、多选、热点题；**交卷后才计分**，错题显示答案、解析、记忆口诀。
-- 日语 / 中文对照切换；答题卡；标记；暂存退出再继续。
-- 错题本：答错的题连续答对 2 次后移出；成绩历史。
-- 题库和学习记录改存 **SQLite**（Docker 命名卷 `xexam_data`），不再依赖 Excel。
-- 管理页**上传 Excel 更新题库**：先预览（新增 / 更新 / 恢复 / 下架 / 读不出来），确认后才写入；下架的题保留答题记录，传回来自动恢复。
-- 旧版的 `progress.json` 第一次启动时自动迁移。
-- 支持 **iPhone**：触控区域不小于 44 px、安全区、底部固定翻页栏、可添加到主屏幕。
-- Docker 镜像同时支持 **x86（amd64）和 ARM（arm64）**，由 GitHub Actions 构建并测试。
-- ⚠️ v0.1 的「发布」步骤没有跑成，所以 `ghcr.io/yumin-space/xexam` 上**没有** `v0.1` 标签；镜像从 v0.2 起发布（`latest` / `v0.2`）。
-- 应用名改为 **Xexam**。
+- Quiz in the browser: single choice, multiple choice and hotspot questions; **scored only after submitting**, and wrong answers show the answer, explanation and mnemonic.
+- Japanese / Chinese side-by-side switching; answer sheet; flagging; save and exit, then resume.
+- Wrong-answer notebook: a wrongly answered question is removed after 2 consecutive correct answers; score history.
+- The question bank and learning records are now stored in **SQLite** (Docker named volume `xexam_data`) and no longer depend on Excel.
+- The admin page **uploads Excel to update the question bank**: preview first (added / updated / restored / retired / unreadable), and nothing is written until you confirm; retired questions keep their answer records and are restored automatically when they are uploaded again.
+- The old version's `progress.json` is migrated automatically on first start.
+- **iPhone** support: touch targets of at least 44 px, safe areas, a fixed bottom paging bar, and it can be added to the home screen.
+- The Docker images support both **x86 (amd64) and ARM (arm64)**, built and tested by GitHub Actions.
+- ⚠️ The "publish" step of v0.1 did not succeed, so there is **no** `v0.1` tag on `ghcr.io/yumin-space/xexam`; images are published from v0.2 on (`latest` / `v0.2`).
+- The app was renamed to **Xexam**.
 
-<!-- 新版本写在这一行的上面，格式：### vX.Y — 日期 -->
-
-
+<!-- Write new versions above this line, format: ### vX.Y — date -->
