@@ -44,6 +44,8 @@ jobs:
             [ -f "$f" ] || { echo "$f is missing: the project keeps three READMEs (English, Japanese, Chinese)"; exit 1; }
             top=$(grep -m1 -E '^### v[0-9]' "$f" | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
             [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but VERSION is $v. Write the changelog entry in all three READMEs and keep them equal to VERSION."; exit 1; }
+            # The release badge at the top is static text; it must name this version too (its width is set next to it)
+            grep -q "img.shields.io/badge/release-v$v-green" "$f" || { echo "The release badge at the top of $f does not say v$v: update it (and its width) together with VERSION."; exit 1; }
           done
           for m in backend/Cargo.toml frontend/package.json; do
             mv=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[=:]' "$m" | sed -E 's/.*"([0-9][0-9.]*)".*/\1/')

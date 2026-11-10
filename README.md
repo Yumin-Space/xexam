@@ -1,27 +1,24 @@
 **English** | [日本語](README.ja.md) | [简体中文](README.zh-CN.md)
 
-[![Latest release][badge-release]][link-release]
+<!-- The release badge is static: CI checks that its version equals VERSION. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
+<p>
+  <a href="../../releases/latest"><img width="145" height="28" alt="Release v0.5.1" src="https://img.shields.io/badge/release-v0.5.1-green?style=for-the-badge"></a>
+</p>
 
-<div align="center">
+<p align="center">
+  <img width="120" height="120" alt="Xexam logo" src="frontend/public/icon.svg">
+</p>
 
-<img src="frontend/public/icon.svg" alt="Xexam logo" width="120">
-
-[![Docker image][badge-fe]][link-fe] [![Docker stars][badge-fe-stars]][link-fe] [![Docker pulls][badge-fe-pulls]][link-fe]
-
-[![Docker image][badge-be]][link-be] [![Docker stars][badge-be-stars]][link-be] [![Docker pulls][badge-be-pulls]][link-be]
-
-</div>
-
-[badge-release]: https://img.shields.io/docker/v/yuminspace/xexam-frontend?sort=semver&label=release&style=for-the-badge&color=green
-[badge-fe]: https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--frontend-blue?style=for-the-badge
-[badge-fe-stars]: https://img.shields.io/docker/stars/yuminspace/xexam-frontend?style=for-the-badge
-[badge-fe-pulls]: https://img.shields.io/docker/pulls/yuminspace/xexam-frontend?style=for-the-badge
-[badge-be]: https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--backend-blue?style=for-the-badge
-[badge-be-stars]: https://img.shields.io/docker/stars/yuminspace/xexam-backend?style=for-the-badge
-[badge-be-pulls]: https://img.shields.io/docker/pulls/yuminspace/xexam-backend?style=for-the-badge
-[link-release]: ../../releases/latest
-[link-fe]: https://hub.docker.com/r/yuminspace/xexam-frontend
-[link-be]: https://hub.docker.com/r/yuminspace/xexam-backend
+<p align="center">
+  <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img width="360" height="28" alt="Docker image yuminspace/xexam-frontend" src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--frontend-blue?style=for-the-badge"></a>
+  <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img width="150" height="28" alt="Docker stars" src="https://img.shields.io/docker/stars/yuminspace/xexam-frontend?style=for-the-badge"></a>
+  <a href="https://hub.docker.com/r/yuminspace/xexam-frontend"><img width="148" height="28" alt="Docker pulls" src="https://img.shields.io/docker/pulls/yuminspace/xexam-frontend?style=for-the-badge"></a>
+</p>
+<p align="center">
+  <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img width="352" height="28" alt="Docker image yuminspace/xexam-backend" src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--backend-blue?style=for-the-badge"></a>
+  <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img width="150" height="28" alt="Docker stars" src="https://img.shields.io/docker/stars/yuminspace/xexam-backend?style=for-the-badge"></a>
+  <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img width="148" height="28" alt="Docker pulls" src="https://img.shields.io/docker/pulls/yuminspace/xexam-backend?style=for-the-badge"></a>
+</p>
 
 # Xexam
 
