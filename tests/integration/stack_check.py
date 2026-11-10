@@ -71,7 +71,10 @@ def req(method, path, headers=None, body=None, host=None, timeout=20):
     c.endheaders(body)
     r = c.getresponse()
     data = r.read()
-    out = (r.status, {k.lower(): v for k, v in r.getheaders()}, data)
+    hdrs = {k.lower(): v for k, v in r.getheaders()}
+    # Several Set-Cookie headers may come back (v0.6 sign-in sends xexam_session and xexam_device): keep them all
+    hdrs['set-cookie'] = [v for k, v in r.getheaders() if k.lower() == 'set-cookie']
+    out = (r.status, hdrs, data)
     c.close()
     return out
 
@@ -124,8 +127,11 @@ try:
     ok(st == 401, 'Without a session /api/bank is 401. Actual %d' % st)
     st, h, j = jreq('POST', '/api/auth/login', {'username': 'admin', 'password': 'admin'}, headers={'Origin': 'http://localhost:%d' % PORT})
     ok(st == 200 and j['user']['mustChangePassword'] is True, 'The default administrator admin / admin signs in and must change the password. Actual %d %r' % (st, j))
-    sc = h.get('set-cookie', '')
-    ok(sc.startswith('xexam_session=') and 'HttpOnly' in sc and 'SameSite=Strict' in sc and 'Secure' not in sc, 'Session cookie over plain HTTP: HttpOnly, SameSite=Strict, no Secure. Actual %r' % sc)
+    cookies = h.get('set-cookie', [])
+    sc = next((c for c in cookies if c.startswith('xexam_session=')), '')
+    ok(sc and 'HttpOnly' in sc and 'SameSite=Strict' in sc and 'Secure' not in sc, 'Session cookie over plain HTTP: HttpOnly, SameSite=Strict, no Secure. Actual %r' % cookies)
+    dev = next((c for c in cookies if c.startswith('xexam_device=')), '')
+    ok(dev and 'HttpOnly' in dev and 'Secure' not in dev, 'Known-browser cookie over plain HTTP: HttpOnly, no Secure. Actual %r' % cookies)
     COOKIE = sc.split(';')[0]
     st, _, e = jreq('GET', '/api/bank')
     ok(st == 403, 'Before the new password every other route is 403. Actual %d' % st)
