@@ -1364,7 +1364,7 @@ fn a_burst_sweep_lets_other_writers_in_between_batches() {
         })
         .expect("seed");
     let done = AtomicBool::new(false);
-    let (deleted, got, longest) = std::thread::scope(|sc| {
+    let (deleted, got, longest, total) = std::thread::scope(|sc| {
         let other = sc.spawn(|| {
             let mut got = 0usize;
             let mut longest = Duration::ZERO;
@@ -1379,16 +1379,20 @@ fn a_burst_sweep_lets_other_writers_in_between_batches() {
             }
             (got, longest)
         });
+        let started = Instant::now();
         let n = sweep_batches(&store, NOW - 100, &[], SWEEP_PAUSE);
+        let total = started.elapsed();
         done.store(true, Ordering::SeqCst);
         let (got, longest) = other.join().expect("join");
-        (n, got, longest)
+        (n, got, longest, total)
     });
     assert_eq!(deleted, 250);
-    // 13 batches with 12 pauses of 20 ms: the other writer gets in again and again, and never waits for the sweep
+    // 13 batches with 12 pauses of 20 ms: the other writer gets in again and again, and never waits for the sweep. The
+    // bound is relative to the sweep's own time, not a fixed number of milliseconds: a slow CI runner (shared disk) makes
+    // every batch slower, but a writer that waits less than half of the whole sweep was let in between batches.
     assert!(got >= 6, "the other writer got the lock only {got} times");
     assert!(
-        longest < Duration::from_millis(250),
-        "longest wait {longest:?}"
+        longest * 2 < total,
+        "longest wait {longest:?} of a sweep that took {total:?}"
     );
 }
