@@ -40,7 +40,7 @@ const USAGE: &str = "Usage:
   xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
   xexam-backend reset-password <username> [--data DIR]      (see: xexam-backend reset-password --help)
-Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL";
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN";
 
 const RESET_PASSWORD_USAGE: &str = "Usage:
   xexam-backend reset-password <username> [--data DIR]
@@ -256,7 +256,8 @@ fn open_store(data_dir: &Path, journal: JournalMode) -> Result<Arc<Store>, Strin
     let store = Arc::new(opened);
     match (store.migration_backup(), store.converted_prerelease()) {
         (Some(backup), true) => say(&format!(
-            "Converted the question bank access of a database written by a v0.7 pre-release to the released format. A copy of the previous version was saved first: {}.",
+            "Converted the question bank access of a database written by a v0.7 pre-release to the released format and upgraded the database to schema {}. A copy of the previous version was saved first: {}.",
+            xexam_backend::database::schema::SCHEMA_VERSION,
             backup.display()
         )),
         (Some(backup), false) => say(&format!(
@@ -264,6 +265,7 @@ fn open_store(data_dir: &Path, journal: JournalMode) -> Result<Arc<Store>, Strin
             xexam_backend::database::schema::SCHEMA_VERSION,
             backup.display()
         )),
+        // Only for a database without any data (no backup was needed)
         (None, true) => say(
             "Converted the question bank access of a database written by a v0.7 pre-release to the released format.",
         ),
@@ -559,6 +561,18 @@ async fn serve(cfg: Config) -> i32 {
             .unwrap_or_else(|_| cfg.data_dir.clone())
             .display()
     ));
+    // v0.8: the internal token shared with the AI service (`XEXAM_INTERNAL_TOKEN`, else `<link dir>/internal.token`,
+    // created when missing). Only `serve` does this; the command-line subcommands never touch the link directory
+    let link = xexam_backend::api::internal::load_link(
+        std::env::var(xexam_backend::api::internal::TOKEN_ENV)
+            .ok()
+            .as_deref(),
+        &cfg.link_dir_or_default(),
+    );
+    match &link {
+        xexam_backend::api::internal::LinkLoad::Off(_) => tracing::warn!("{}", link.log_line()),
+        _ => tracing::info!("{}", link.log_line()),
+    }
     if any_host {
         say("Note: XEXAM_ALLOW_ANY_HOST is on, so the Host header is no longer checked (no protection against DNS rebinding). Sign-in still applies to every request.");
         tracing::warn!("XEXAM_ALLOW_ANY_HOST is on: the Host header is not checked");
@@ -605,6 +619,9 @@ async fn serve(cfg: Config) -> i32 {
     }
     let state = AppState::new(cfg, store.clone(), engine, shutdown_tx);
     let _ = state.0.default_admin_hashes.set(default_admin);
+    if let Some(token) = link.into_token() {
+        state.0.ai_link.set_token(token);
+    }
     state
         .0
         .last_session_purge

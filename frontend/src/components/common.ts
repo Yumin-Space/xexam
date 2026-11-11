@@ -23,9 +23,10 @@ export function recordBankNames(banks: readonly RecordBank[]): string {
   return banks.map((b) => (b.deleted ? t('common.deletedBank', { name: b.name }) : b.name)).join(t('common.listSep'));
 }
 
+/** The logo (v0.8: the app icon, /icon.svg) and the name; used by the top bar, the loading page and the sign-in page */
 export function brand(): HTMLElement {
   return h('div', { class: 'brand' },
-    h('span', { class: 'logo', 'aria-hidden': 'true' }, h('i', { class: 'on' }), h('i'), h('i', { class: 'on' }), h('i')),
+    h('img', { class: 'logo', src: '/icon.svg', alt: '', width: '28', height: '28', 'aria-hidden': 'true' }),
     h('span', { class: 'brand-name' }, t('app.name')));
 }
 

@@ -15,6 +15,13 @@
 //!   (every browser POST does). That way a refresh never drops `Secure` from a cookie issued over HTTPS.
 //! - v0.7: the System log names users by their username, never by id (`user "admin" updated user "alex"`); the names come
 //!   from the request's session (the actor) and from the same transaction as the change (the user changed).
+//! - v0.8: [`introspect`] is the auth step of the AI routes (`GET /internal/ai/auth`, see `api::internal`): the same guard and
+//!   session checks for a request that Nginx is about to pass to the AI service. `/internal/*` is not in [`ROUTES`] and
+//!   never reaches [`authorize`]. Users carry the AI+ switch (`"ai"` in `/api/users*`, `"aiAllowed"` in the signed-in user).
+//!   Whether AI+ is available comes from ai-service's last heartbeat (`api::internal::AiLink`, in memory):
+//!   `"aiAvailable"` in `GET /api/auth/state` (signed in; administrators also get `"aiService"`) and in every `/api/users*`
+//!   list answer (rows also carry `"aiSuspended"`); while AI+ is not available, a user's AI+ service cannot be switched
+//!   (409 [`MSG_AI_SERVICE_OFF`](super::response::MSG_AI_SERVICE_OFF), nothing written).
 use super::response::{
     json_resp, MSG_ADMIN_ONLY, MSG_BAD_LOGIN, MSG_BAD_PASSWORD, MSG_BAD_REQUEST, MSG_BAD_USERNAME,
     MSG_LAST_ADMIN, MSG_NOT_YOURSELF, MSG_NO_BANK_PERMISSION, MSG_PASSWORD_CHANGE_REQUIRED,
@@ -131,6 +138,34 @@ fn bad_request() -> AppError {
     AppError::BadRequest(MSG_BAD_REQUEST.to_string())
 }
 
+/// The session `token_hash` at `now` ([`crate::database::Store::session_user`], refreshed only with `may_refresh`). Also
+/// purges expired sessions, at most once an hour (whichever request comes first claims the purge).
+async fn session_lookup(
+    st: &AppState,
+    token_hash: String,
+    now: i64,
+    may_refresh: bool,
+) -> Result<Option<(SessionUser, bool)>, AppError> {
+    let last = st.0.last_session_purge.load(Ordering::Relaxed);
+    let purge = now.saturating_sub(last) >= SESSION_PURGE_SECS
+        && st
+            .0
+            .last_session_purge
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok();
+    let store = st.0.store.clone();
+    blocking(move || {
+        if purge {
+            let n = store.purge_expired_sessions(now)?;
+            if n > 0 {
+                tracing::info!("purged {n} expired sessions");
+            }
+        }
+        store.session_user(&token_hash, now, may_refresh)
+    })
+    .await
+}
+
 /// Looks up the session of the request (if it carries a token-shaped cookie). Also purges expired sessions, at most once an hour.
 async fn session(
     st: &AppState,
@@ -144,26 +179,8 @@ async fn session(
     let may_refresh = force_secure || origin.is_some();
     let secure = auth::cookie_secure(force_secure, origin);
     let now = auth::unix_now();
-    let last = st.0.last_session_purge.load(Ordering::Relaxed);
-    let purge = now.saturating_sub(last) >= SESSION_PURGE_SECS
-        && st
-            .0
-            .last_session_purge
-            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_ok();
-    let store = st.0.store.clone();
     let token_hash = auth::token_hash(&token);
-    let hash = token_hash.clone();
-    let found = blocking(move || {
-        if purge {
-            let n = store.purge_expired_sessions(now)?;
-            if n > 0 {
-                tracing::info!("purged {n} expired sessions");
-            }
-        }
-        store.session_user(&hash, now, may_refresh)
-    })
-    .await?;
+    let found = session_lookup(st, token_hash.clone(), now, may_refresh).await?;
     Ok(found.map(|(user, refreshed)| Authed {
         user,
         token_hash,
@@ -206,6 +223,73 @@ pub async fn authorize(
         return Err(status(StatusCode::FORBIDDEN, MSG_NO_BANK_PERMISSION));
     }
     Ok(Some(a))
+}
+
+/// What the auth step of an AI request found ([`introspect`], `GET /internal/ai/auth`, v0.8).
+#[derive(Debug)]
+pub enum IntrospectOutcome {
+    /// No internal token is loaded (the AI link is off): 503 without a body
+    LinkOff,
+    /// The Host / Origin guard refused the request: 403, `X-Xexam-Deny: guard`
+    Guard(super::guard::Denial),
+    /// No valid session (none, expired, unknown, or the user is disabled): 401, `X-Xexam-Deny: signin`
+    SignIn,
+    /// The user must choose a new password first: 403, `X-Xexam-Deny: password`
+    Password,
+    /// The database could not be read: 500 (Nginx answers that like an unreachable backend)
+    Failed,
+    /// Signed in: 204 with this identity statement in `X-Xexam-Identity`
+    Allowed(String),
+}
+
+/// The auth step of every `/api/ai/*` request (Nginx `auth_request`, the vite plugin), in the same order as [`authorize`]:
+/// the AI link must be on; the Host / Origin guard runs on the `X-Original-Host` / `X-Original-Origin` headers (the
+/// Origin only for a method other than GET / HEAD, `X-Original-Method`), never on this request's own `Host`; then the
+/// session from the `Cookie` header, with the same hourly purge of expired sessions as every other request but **never a
+/// refresh** (a refreshed cookie could not reach the browser through this path); then the pending password change. A
+/// signed-in user gets a fresh identity statement for the AI service (see `api::internal`). Stricter than the other
+/// routes about the cookie: a request with more than one `xexam_session` cookie (in any letter case, an empty one
+/// included) or a padded or quoted value has no session here ([`auth::single_session_token`]).
+pub async fn introspect(st: &AppState, headers: &HeaderMap) -> IntrospectOutcome {
+    let Some(link_token) = st.0.ai_link.token().cloned() else {
+        return IntrospectOutcome::LinkOff;
+    };
+    let (host, origin, method) = super::internal::original_request(headers);
+    let checked_origin = if matches!(method.as_str(), "GET" | "HEAD") {
+        None
+    } else {
+        origin.as_deref()
+    };
+    if let Some(denial) = super::guard::deny(&st.0.cfg, host.as_deref(), checked_origin) {
+        let shown = crate::security::short(&method);
+        super::note_rejection(
+            st,
+            format!(
+                "{} AI request: {}",
+                if shown.is_empty() { "an" } else { &shown },
+                denial.log
+            ),
+        );
+        return IntrospectOutcome::Guard(denial);
+    }
+    // Exactly one `xexam_session` cookie, written plainly: Nginx keys the per-session limit on starting answers by that
+    // cookie, so its key is then always the session signed in here (see `auth::single_session_token`)
+    let Some(token) = auth::single_session_token(headers) else {
+        return IntrospectOutcome::SignIn;
+    };
+    let now = auth::unix_now();
+    let sid = auth::token_hash(&token);
+    match session_lookup(st, sid.clone(), now, false).await {
+        Err(_) => IntrospectOutcome::Failed,
+        Ok(None) => IntrospectOutcome::SignIn,
+        Ok(Some((user, _))) if user.must_change_password => IntrospectOutcome::Password,
+        Ok(Some((user, _))) => IntrospectOutcome::Allowed(super::internal::identity_statement(
+            &link_token,
+            &user,
+            &sid,
+            now,
+        )),
+    }
 }
 
 /// The [`Viewer`] of a signed-in request: an administrator directly (no database read), anyone else as the database says now.
@@ -288,6 +372,9 @@ fn ok_json(v: &Value) -> Response {
 /// `GET /api/auth/state` → `{"user": {...} | null, ...}`. Signed in: also `"library"`, an opaque stamp of the question banks
 /// the user may see that changes whenever a bank is imported, replaced or deleted, and (v0.6.5) whenever the banks they may see
 /// or manage change (an open page re-reads the banks when it changes).
+/// v0.8, signed in: also `"aiAvailable"` (ai-service connected and its AI+ service on, from its last heartbeat), and for
+/// administrators `"aiService"` (`{"connected", "stopped", "lastSeen", "version", "enabled", "link"}`, see
+/// [`super::internal::AiLink::service_json`]), which the AI settings page shows when ai-service is not connected.
 /// Not signed in: also `"defaultAdmin"`, the username of an enabled administrator that still has the default password `admin`,
 /// or `null` (the sign-in page then tells the owner how to sign in for the first time, with that account's real name: it may
 /// have been renamed; the default credentials are documented anyway).
@@ -297,7 +384,19 @@ pub async fn state(st: &AppState, authed: Option<&Authed>) -> Result<Value, AppE
         Some(a) => {
             let v = viewer(st, a).await?;
             let library = blocking(move || store.library_stamp_as(&v)).await?;
-            Ok(json!({ "user": a.user.to_json(), "library": library }))
+            let link = &st.0.ai_link;
+            let service = link.state();
+            let mut out = json!({
+                "user": a.user.to_json(),
+                "library": library,
+                "aiAvailable": service.ai_available(),
+            });
+            if a.user.is_admin() {
+                if let Some(o) = out.as_object_mut() {
+                    o.insert("aiService".to_string(), link.service_json(&service));
+                }
+            }
+            Ok(out)
         }
         None => {
             let hashes = st.0.default_admin_hashes.get().cloned().unwrap_or_default();
@@ -343,8 +442,9 @@ fn log_refusals(n: u64) {
 }
 
 /// Reports, once a minute, the refusals that came after the last report line (the tail of a burst that no later attempt would
-/// report), and in the same way the requests rejected by the Host / Origin guard, the failed sign-ins and the locks of usernames
-/// without an account. Runs until the server stops (the caller aborts it).
+/// report), and in the same way the requests rejected by the Host / Origin guard, the failed sign-ins, the locks of usernames
+/// without an account and (v0.8) the internal requests refused for a missing or wrong token. Runs until the server stops (the
+/// caller aborts it).
 pub fn spawn_refusal_reports(st: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut every = tokio::time::interval(crate::auth::REFUSAL_REPORT_EVERY);
@@ -364,6 +464,9 @@ pub fn spawn_refusal_reports(st: AppState) -> tokio::task::JoinHandle<()> {
             }
             if let Some(report) = st.0.name_locks.flush(now) {
                 log_name_locks(&report);
+            }
+            if let Some(report) = st.0.ai_link.flush_refusals(now) {
+                super::internal::log_refused(&report);
             }
         }
     })
@@ -628,25 +731,43 @@ fn lock_json(s: Option<LockStatus>) -> Value {
     }
 }
 
-/// `{"users": [...]}` from the database, each with its current login-throttle state (`"lock"`, in memory only).
+/// `{"users": [...], "aiAvailable": bool}` from the database, each user with its current login-throttle state (`"lock"`, in
+/// memory only) and (v0.8) `"aiSuspended"`: whether ai-service's last heartbeat names the user's AI+ function as suspended
+/// (always false for administrators, who cannot be suspended). `"aiAvailable"`: see [`state`].
 async fn users_json(st: &AppState) -> Result<Value, AppError> {
     let store = st.0.store.clone();
     let mut users = blocking(move || store.users()).await?;
     let t = &st.0.throttle;
     let now = t.now();
+    let service = st.0.ai_link.state();
     if let Some(list) = users.get_mut("users").and_then(Value::as_array_mut) {
         for u in list.iter_mut() {
-            let lock = lock_json(
-                u.get("id")
-                    .and_then(Value::as_i64)
-                    .and_then(|id| t.status(id, now)),
-            );
+            let id = u.get("id").and_then(Value::as_i64);
+            let lock = lock_json(id.and_then(|id| t.status(id, now)));
+            let admin = u.get("role").and_then(Value::as_str) == Some(Role::Admin.as_str());
+            let suspended = !admin && id.is_some_and(|id| service.suspended.contains(&id));
             if let Some(obj) = u.as_object_mut() {
                 obj.insert("lock".to_string(), lock);
+                obj.insert("aiSuspended".to_string(), Value::Bool(suspended));
             }
         }
     }
+    if let Some(obj) = users.as_object_mut() {
+        obj.insert(
+            "aiAvailable".to_string(),
+            Value::Bool(service.ai_available()),
+        );
+    }
     Ok(users)
+}
+
+/// v0.8: a user's AI+ service may be switched (either way) only while AI+ is available; else 409 `MSG_AI_SERVICE_OFF`.
+fn require_ai_available(st: &AppState) -> Result<(), AppError> {
+    if st.0.ai_link.ai_available() {
+        Ok(())
+    } else {
+        Err(AppError::AiServiceOff)
+    }
 }
 
 async fn users_body(st: &AppState) -> Result<Response, AppError> {
@@ -714,6 +835,22 @@ fn can_manage_field(data: &PyVal) -> Result<Option<bool>, AppError> {
     }
 }
 
+/// `"ai"` (v0.8, the AI+ switch): absent → `None`; a bool → that; anything else → 400.
+fn ai_field(data: &PyVal) -> Result<Option<bool>, AppError> {
+    match data.get("ai") {
+        None => Ok(None),
+        some => body_flag(some).map(Some),
+    }
+}
+
+/// The System log line of an AI+ switch (v0.8): `user "admin" turned AI+ on for user "sam"`.
+fn log_ai_switch(admin: &str, on: bool, user: &str) {
+    tracing::info!(
+        "user {admin:?} turned AI+ {} for user {user:?}",
+        if on { "on" } else { "off" }
+    );
+}
+
 fn username_field(data: &PyVal) -> Result<Option<String>, AppError> {
     match data.get("username") {
         None => Ok(None),
@@ -745,10 +882,12 @@ fn user_id(data: &PyVal) -> Result<i64, AppError> {
     body_id(data.get("id"))?.ok_or(status(StatusCode::NOT_FOUND, MSG_USER_NOT_FOUND))
 }
 
-/// `POST /api/users/create` `{"username", "password", "role", "banks"?, "newBanks"?, "canManageBanks"?}` →
+/// `POST /api/users/create` `{"username", "password", "role", "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}` →
 /// `{"users": [...]}`. The new user must change the password at the first sign-in. `banks` (the existing banks they see)
 /// defaults to `[]` (no bank until an administrator chooses some), `newBanks` ("include banks imported later") to false
-/// (true with the shorthand `"banks": "all"`), `canManageBanks` to false.
+/// (true with the shorthand `"banks": "all"`), `canManageBanks` to false, `ai` (v0.8, AI+; stored for administrators too,
+/// who always have it) to false. `"ai": true` while AI+ is not available is refused (409 `MSG_AI_SERVICE_OFF`) after the
+/// body is checked and before anything else (the password is not hashed, the user not created, nothing logged).
 pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let username =
         username_field(data)?.ok_or_else(|| AppError::BadRequest(MSG_BAD_USERNAME.to_string()))?;
@@ -758,20 +897,32 @@ pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     let new_banks = new_banks_of(data, banks.as_ref())?.unwrap_or(false);
     let banks = banks.unwrap_or(BankAccess::Only(Vec::new()));
     let can_manage = can_manage_field(data)?.unwrap_or(false);
+    let ai = ai_field(data)?.unwrap_or(false);
+    if ai {
+        require_ai_available(st)?;
+    }
     let phc = hash(st, password).await?;
     let store = st.0.store.clone();
     let name = username.clone();
     refused(
-        blocking(move || store.create_user_with(&name, &phc, role, &banks, new_banks, can_manage))
-            .await?,
+        blocking(move || {
+            store.create_user_opts(&name, &phc, role, &banks, new_banks, can_manage, ai)
+        })
+        .await?,
     )?;
     tracing::info!("user {:?} created user {:?}", a.user.username, username);
+    if ai {
+        log_ai_switch(&a.user.username, true, &username);
+    }
     users_body(st).await
 }
 
-/// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}` →
-/// `{"users": [...]}`; only the fields that are given change (`"banks": "all"` also sets `newBanks` unless it is given).
-/// A role change keeps `banks`, `newBanks` and `canManageBanks` (they matter only while the user is a plain user).
+/// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`
+/// → `{"users": [...]}`; only the fields that are given change (`"banks": "all"` also sets `newBanks` unless it is given).
+/// A role change keeps `banks`, `newBanks`, `canManageBanks` and `ai` (they matter only while the user is a plain user).
+/// Switching AI+ on or off is logged on its own line (`user "admin" turned AI+ off for user "sam"`); a request that only
+/// switches AI+ logs just that line. A request with `"ai"` (true or false, changed or not, alone or with other fields)
+/// while AI+ is not available is refused as a whole (409 `MSG_AI_SERVICE_OFF`, nothing written, nothing logged).
 pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let id = user_id(data)?;
     let banks = banks_field(data)?;
@@ -786,22 +937,36 @@ pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
         new_banks: new_banks_of(data, banks.as_ref())?,
         banks,
         can_manage_banks: can_manage_field(data)?,
+        ai: ai_field(data)?,
     };
+    if change.ai.is_some() {
+        require_ai_available(st)?;
+    }
+    let only_ai = change.ai.is_some()
+        && UserUpdate {
+            ai: None,
+            ..change.clone()
+        } == UserUpdate::default();
     let store = st.0.store.clone();
     let actor = a.user.id;
     let done = refused(blocking(move || store.update_user(actor, id, &change)).await?)?;
-    match &done.renamed_from {
-        Some(old) => tracing::info!(
-            "user {:?} updated user {:?} (renamed from {:?})",
-            a.user.username,
-            done.username,
-            old
-        ),
-        None => tracing::info!(
-            "user {:?} updated user {:?}",
-            a.user.username,
-            done.username
-        ),
+    if !(only_ai && done.ai_changed.is_some()) {
+        match &done.renamed_from {
+            Some(old) => tracing::info!(
+                "user {:?} updated user {:?} (renamed from {:?})",
+                a.user.username,
+                done.username,
+                old
+            ),
+            None => tracing::info!(
+                "user {:?} updated user {:?}",
+                a.user.username,
+                done.username
+            ),
+        }
+    }
+    if let Some(on) = done.ai_changed {
+        log_ai_switch(&a.user.username, on, &done.username);
     }
     users_body(st).await
 }

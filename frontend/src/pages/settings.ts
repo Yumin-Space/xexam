@@ -5,14 +5,18 @@ import '../styles/settings.css';
 import { ApiError } from '../api/client.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk } from '../components/fields.ts';
+import { aiBadge, badgeReasonText } from '../components/ai-badge.ts';
 import { isBankManager, roleTags } from '../components/shell.ts';
+import { ownBadgeState } from '../domain/badge-state.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
 import { changeOwnPassword, onRouteChange, onSignedIn, render } from '../state/actions.ts';
+import { setFreeMode } from '../api/ai.ts';
+import { aiFreeMode, aiModeShown, aiStatus, setAiFreeMode } from '../state/ai.ts';
 import { resetSettings, updateSettings } from '../state/preferences.ts';
 import { DEFAULT_SETTINGS } from '../state/settings-cache.ts';
-import { S } from '../state/store.ts';
+import { S, isAdmin } from '../state/store.ts';
 import type { Settings, Theme, UiLang } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
@@ -45,6 +49,8 @@ let pending = 0;
 let savedShown = false;
 let savedTimer: number | undefined;
 let resetting = false;
+/** The request that switches the AI chat mode runs */
+let modeBusy = false;
 /** The status text of the current render (updated in place, without a redraw) */
 let statusEl: HTMLElement | null = null;
 /** A control to focus after the next render instead of the one that had the focus */
@@ -112,6 +118,23 @@ async function save(patch: Partial<Settings>): Promise<void> {
     }, 2500);
   }
   showStatus();
+}
+
+/** Settings > AI chat mode: sets the administrator's free mode on the server; an error shows as a toast */
+async function pickMode(free: boolean): Promise<void> {
+  if (modeBusy || aiFreeMode() === free) return;
+  modeBusy = true;
+  forceFocus = free ? 'set-mode-free' : 'set-mode-normal';
+  render();
+  try {
+    const r = await setFreeMode(free);
+    setAiFreeMode(r.free === true);
+  } catch (e) {
+    toast(errorText(e), 6000);
+  } finally {
+    modeBusy = false;
+  }
+  if (S.route.name === 'settings') render();
 }
 
 async function reset(): Promise<void> {
@@ -198,12 +221,15 @@ function accountSection(): HTMLElement | null {
       else pw.shown.delete(id);
     },
   }).el;
+  const ownBadge = ownBadgeState(u, aiStatus());
   return h('section', { class: 'panel set-sec set-account', 'aria-labelledby': 'set-account-h' },
     h('h2', { id: 'set-account-h' }, t('settings.account')),
     h('p', { class: 'set-desc' }, t('settings.account.desc')),
     h('dl', { class: 'props set-props' },
       h('dt', null, t('settings.account.username')), h('dd', { class: 'set-username' }, u.username),
-      h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u))),
+      h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u), aiBadge(ownBadge))),
+    // The dark AI+ badge's reason in words too: a tap shows it as a tip on a phone, and this line needs no tap at all
+    ownBadge.kind === 'off' ? h('p', { class: 'set-desc set-ai-reason', id: 'set-ai-reason' }, badgeReasonText(ownBadge.reason)) : null,
     // A bank manager: what the extra permission allows (v0.7)
     isBankManager(u) ? h('p', { class: 'set-desc set-manager' }, t('settings.account.managerNote')) : null,
     h('form', {
@@ -330,6 +356,20 @@ export function renderSettings(): HTMLElement {
       h('span', { class: 'set-switch-state', 'aria-hidden': 'true' }, t(on ? 'settings.on' : 'settings.off')))),
     h('p', { class: 'set-note' }, t('settings.auto.note', { label: t('quiz.auto.on') })));
 
+  // Administrators only: the AI chat mode (the server's state, not a setting saved with the others)
+  const free = aiFreeMode();
+  const modeSec = aiModeShown(isAdmin())
+    ? h('section', { class: 'panel set-sec', 'aria-labelledby': 'set-mode-h' },
+      h('h2', { id: 'set-mode-h' }, t('settings.aiMode')),
+      h('div', { class: 'set-cards set-langs', role: 'group', 'aria-label': t('settings.aiMode'), 'aria-busy': modeBusy ? 'true' : null },
+        ([false, true] as const).map((isFree) => h('button', {
+          class: 'set-card', type: 'button', 'aria-pressed': String(free === isFree), 'aria-disabled': modeBusy ? 'true' : null,
+          'data-focus': isFree ? 'set-mode-free' : 'set-mode-normal', onclick: () => void pickMode(isFree),
+        }, h('span', { class: 'set-card-name' }, h('span', { class: 'set-radio', 'aria-hidden': 'true' }),
+          h('span', null, t(isFree ? 'settings.aiMode.free' : 'settings.aiMode.normal')))))),
+      h('p', { class: 'set-note' }, t('settings.aiMode.hint')))
+    : null;
+
   const defaults = atDefaults(s);
   const resetSec = section('set-reset-h', t('settings.reset'), t('settings.reset.desc'),
     h('div', { class: 'set-reset' },
@@ -349,6 +389,7 @@ export function renderSettings(): HTMLElement {
     appearance,
     language,
     answering,
+    modeSec,
     resetSec);
   restoreFocus(root, want);
   if (pwWant) {

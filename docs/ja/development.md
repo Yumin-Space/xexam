@@ -8,11 +8,11 @@
 
 | ツール | バージョン | 説明 |
 |---|---|---|
-| Rust | 1.99.1（`backend/rust-toolchain.toml` で固定） | `rustup` が自動でインストールします。`rusqlite` の `bundled` 機能には C コンパイラが必要です（Linux：`build-essential`、Windows：MinGW gcc または MSVC） |
+| Rust | 1.99.1（`backend/rust-toolchain.toml` と `ai-service/rust-toolchain.toml` で固定） | `rustup` が自動でインストールします。`rusqlite` の `bundled` 機能（と ai-service の `ring`）には C コンパイラが必要です（Linux：`build-essential`、Windows：MinGW gcc または MSVC） |
 | Node | 24 | フロントエンド。単体テストは Node 標準のテストランナーを `--experimental-strip-types` 付きで使います |
-| Python | 3.8+ | `tests/integration/` の統合スクリプト、`scripts/` の 2 つのスクリプト（**標準ライブラリのみ**）、`tools/screenshots/` のスクリーンショットのツール（標準ライブラリと `openpyxl`）にのみ使います |
+| Python | 3.8+ | `tests/integration/` の統合スクリプト（架空の AI プロバイダー `ai_stub.py` を含む）、`scripts/` の 2 つのスクリプト、`tools/icons/` のアイコンのツール（**標準ライブラリのみ**）、`tools/screenshots/` のスクリーンショットのツール（標準ライブラリと `openpyxl`）にのみ使います |
 | Docker | Compose v2 | スタック全体のチェック、イメージ、スクリーンショットのツール |
-| Chrome または Chromium | 最近のもの | スクリーンショットのツールにのみ使います（8.1 節） |
+| Chrome または Chromium | 最近のもの | スクリーンショットのツールとアイコンのツールにのみ使います（9.1 節と 9.2 節） |
 
 ## 2. バックエンド
 
@@ -20,46 +20,80 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 316 件のテスト
+cargo test --all-targets          # 342 件のテスト
 cargo run -- serve --data ../data --no-browser     # 127.0.0.1:8765 で待ち受け
 ```
 
 - テストは `tests/baseline/` にコミット済みの**旧版スナップショット**と照合するため、Python は不要です。
-- すべてのテストは、一時ディレクトリ内の新規データベースか `tests/baseline/fixtures/sample.db` のコピーを使い、`data/` には**触れません**。`src/` の中の単体テストのほかに、次のテストファイルがあります：`api_basic.rs`、`api_import.rs`、`api_misc.rs`、`api_golden.rs`（ルート、ガード、旧版のレスポンス）、`db_golden.rs`（データベースを旧版のスナップショットと照合）、`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs`、`id_vectors.rs`（パーサー）、そしてバージョンごとのファイル：`v05_banks_records_settings.rs`（スキーマ v2、問題集、記録、設定）、`v06_users_and_sign_in.rs`（スキーマ v3、アカウント、セッション、ログインの制限）、`v065_bank_access_and_practice.rs`（スキーマ v4、問題集へのアクセス、問題集の管理権限、所有者、練習）、`v07_bank_access_and_layouts.rs`（選ばれた問題集と **今後インポートする問題集も含める**、リリース前の v4 データベースの変換、古い形式の拒否とその問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード、チェックポイント、サーバーの動作中の `reset-password`、システムログ）、`v07_log_floods.rs`（大量の拒否されたリクエストやログインの失敗をまとめること）。
+- すべてのテストは、一時ディレクトリ内の新規データベースか `tests/baseline/fixtures/sample.db` のコピーを使い、`data/` には**触れません**。`src/` の中の単体テストのほかに、次のテストファイルがあります：`api_basic.rs`、`api_import.rs`、`api_misc.rs`、`api_golden.rs`（ルート、ガード、旧版のレスポンス）、`db_golden.rs`（データベースを旧版のスナップショットと照合）、`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs`、`id_vectors.rs`（パーサー）、そしてバージョンごとのファイル：`v05_banks_records_settings.rs`（スキーマ v2、問題集、記録、設定）、`v06_users_and_sign_in.rs`（スキーマ v3、アカウント、セッション、ログインの制限）、`v065_bank_access_and_practice.rs`（スキーマ v4、問題集へのアクセス、問題集の管理権限、所有者、練習）、`v07_bank_access_and_layouts.rs`（選ばれた問題集と **今後インポートする問題集も含める**、リリース前の v4 データベースの変換、古い形式の拒否とその問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード、チェックポイント、サーバーの動作中の `reset-password`、システムログ）、`v07_log_floods.rs`（大量の拒否されたリクエストやログインの失敗をまとめること）、`v08_ai_link.rs`（スキーマ v5、AI+ 機能の付与、内部トークン、認証ステップ、内部ルート。1 つのテストは本物のバイナリを動かします）。
 - テストはヘルパーを通してログインします。ログインを無効にするスイッチはなく、テストのためのものもありません。
 - **テストでの古い形式。** 本番では 3 列と 4 列のワークブックを拒否します（`services::check_layout`）。ゴールデンテストは旧版のインポート（3 列のファイル）を再現するので、それらが作る API の状態には `old_layouts: OldLayouts::AllowForTests` を設定します（`backend/tests/api_common/mod.rs` と、コミット済みの 3 列のフィクスチャ `tests/baseline/fixtures/demo.xlsx` を API 経由でインポートする `v05_banks_records_settings.rs` と `v065_bank_access_and_practice.rs`）。これはテストコードだけが設定する API の状態のフィールドです。`AppState::new` と `import` コマンドは常に `OldLayouts::Refuse` を使い、環境変数、フラグ、設定のどれでも変えられません。本番の規則は `v07_bank_access_and_layouts.rs` がテストします。ストアのメソッドそのものはどんな問題も受け付けるので、データベースのゴールデンテストは変わらず動きます。
-- よく使う環境変数：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（ログレベル、例：`debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` で WAL ではなくロールバックジャーナルのまま）、`XEXAM_COOKIE_SECURE`。全一覧は `xexam-backend --help` と [deployment.md](deployment.md) を参照してください。
+- よく使う環境変数：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（ログレベル、例：`debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` で WAL ではなくロールバックジャーナルのまま）、`XEXAM_COOKIE_SECURE`、`XEXAM_LINK_DIR` と `XEXAM_INTERNAL_TOKEN`（ai-service との接続。第 3 節）。全一覧は `xexam-backend --help` と [deployment.md](deployment.md) を参照してください。
+- `serve` は、`<データディレクトリ>/link/internal.token`（または `XEXAM_LINK_DIR/internal.token`）がなければ作ります。ほかのコマンドは決してこれに触れません。
 - 空のデータディレクトリで最初に起動すると、管理者 `admin` / `admin` が作られます。最初のログインで、ページが新しいパスワードを求めます。忘れたときは：`cargo run -- reset-password admin --data ../data`（サーバーの動作中でも使えます）。
 - コマンドラインからの 6 列形式のワークブックのインポート（取り込み先はレガシー問題集）：`cargo run -- import ../some.xlsx --data ../data`。3 列や 4 列のワークブックは拒否されます。
 - 古いスキーマのデータベースをバックエンドで開くと移行が行われ、その隣に `backups/` が書き出されます。コピーを使ってください。
 - データベースは WAL モードで動きます。バックエンドの動作中は、`xexam.db` の隣に `xexam.db-wal` と `xexam.db-shm` があります。3 つともコピーするか、先にバックエンドを停止してください（停止すると、すべてが `xexam.db` に入り、隣に `-wal` ファイルが残っていても空です）。`sqlite3` は、バックエンドの動作中でもデータベースを読めます。
 
-## 3. フロントエンド
+## 3. AI サービス（v0.8）
+
+AI サービスは `ai-service/` にある独立したクレート（パッケージとバイナリは `xexam-ai-service`、ライブラリは `xexam_ai_service`、ワークスペースなし、`unsafe` は禁止）で、専用の `Cargo.lock` と `rust-toolchain.toml`（バックエンドと同じ Rust 1.99.1）を持ちます。
+
+```bash
+cd ai-service
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test --all-targets          # 160 件のテスト
+cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 何も出力しないこと（CI の TLS ガード）
+```
+
+- **構成**（全一覧は [architecture.md](architecture.md) の第 2 節）：`src/api/`（ディスパッチ、ユーザーと管理者のルート）、`src/chat.rs`（回答を書くタスク、ユーザーごとと全体の枠、取り消し）、`src/app.rs`（共有の状態とバックエンドへのハートビート）、`src/provider/`（OpenAI 互換と Anthropic のアダプター、イベントストリームのパーサー、エラーの対応付け）、`src/store/`（AI のデータベース）、`src/identity.rs` と `src/link.rs`（本人確認の文とバックエンドの呼び出し）、`src/secret.rs` と `src/settings.rs`（キーの暗号化。プロバイダー、URL の方針、フィンガープリント）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（サービスのすべての中国語のテキスト）、`src/config.rs`。
+- **テスト**（`ai-service/tests/`。ライブラリに対して、プロセス内の偽のプロバイダーと、ハートビートも記録する偽のバックエンドを使い、どれもネットワークに触れません）：`streaming.rs`（イベント、停止、再試行、制限時間、切り離し、呼び出しの実行中のゲートと上限）、`settings_and_keys.rs`（検証、キーの再入力、ヘッダーの衝突、暗号化、キーファイルと `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（文、アクセスレベル、範囲、トークンの規則）、`admin_data.rs`（管理者の表示と消去、監査の行と送信待ち、使用量、照合）、`logs_no_secrets.rs`（どのログの行にもキー、トークン、プロンプト、回答がないこと）、`proxy_env.rs`（環境の `HTTP_PROXY` を無視すること）。v0.8 の第 2 ラウンドでは、`r2_core_heartbeat.rs`（報告、そのタイミング、60 秒の規則）、`r2_core_schema.rs`（スキーマ 2、スキーマ 1 のバックアップとアップグレード、一部の列がないスキーマ 2 のファイルに足される列）、`r2_core_suspend.rs`（一時停止 / 再開、監査の行、回答の停止）、`r2_chat_lang.rs`（返答言語）、`r2_chat_free.rs`（管理者の状態としてのフリーモード：`POST /api/ai/free`、`freeMode`、チャットごとのフラグはなし）、`r2_free_history.rs`（どちらのモードでも履歴全体、モードごとのシステムプロンプト、切り替えの後のモードの行、どのメッセージにも付く `free`）、`r2_cache.rs`（プロンプトキャッシュ、使用量の行のキャッシュされたトークン、古い履歴のメッセージの短縮）、`r2_chat_thinking.rs`（`thinking` イベント。推論のテキストがストリーム、データベース、ログに現れてはならない）、`r2_chat_suspend.rs`（状態と再確認）。それに `src/` の単体テスト。`TestApp` ヘルパーは、破棄されるときにサービスを停止してデータベースのファイルを解放するので、テストは一時フォルダに何も残しません（Windows では、開いたままのファイルがそのディレクトリを残してしまいます）。
+- **ローカルで動かす**（バックエンドと並べて）。2 つは内部トークンを共有しなければなりません：バックエンドがリンクディレクトリ（既定ではデータディレクトリの中の `link`）に書くトークンのファイルか、両方のシェルで同じ `XEXAM_INTERNAL_TOKEN` です。
+
+  ```bash
+  # 1. バックエンド（../data/link/internal.token を書く）
+  cd backend && cargo run -- serve --data ../data --no-browser
+  # 2. ai-service：データは ai-service/data-ai（Git では無視）、トークンはバックエンドのリンクディレクトリから
+  cd ai-service && XEXAM_LINK_DIR=../data/link cargo run
+  # 3. 任意、架空のプロバイダー：AI 設定でアドレス http://127.0.0.1:9000/v1、sk-demo-1234 のようなキー、モデル demo-chat-small を使う
+  python -I tests/integration/ai_stub.py --port 9000
+  # 4. フロントエンド：/api/ai/ は、vite のプラグインがバックエンドに問い合わせた後（Nginx と同じ）、ai-service へ
+  cd frontend && npm run dev
+  ```
+
+  ai-service は `127.0.0.1:8766`（`XEXAM_AI_HOST`、`XEXAM_AI_PORT`）で待ち受け、`http://127.0.0.1:8765`（`XEXAM_AI_BACKEND_URL`、素の http だけ）でバックエンドを呼び出します。`xexam-ai-service --help` ですべての変数が表示されます。トークンを得るとすぐに、バックエンドへ報告します（ハートビート。25 秒ごと。[architecture.md](architecture.md) の第 5 節）。バックエンドが報告を見るまでは、ユーザー管理に AI+ 機能のスイッチは出ず、AI 設定は ai-service が最初の報告を待っていると表示するので、両方を起動した数秒後はそれで正常です。トークンがない間は、すべての AI のルートに 503 `ai.backendDown` を返し、ファイルが現れるまで `AI link: waiting for the internal token at …` とログに出します。`ai_stub.py`（標準ライブラリのみ）には、Anthropic のルート（`/anthropic`）、ゲートウェイのルート（`/gw/openai`、`/gw/anthropic`。`gw-demo-…` のようなゲートウェイのキーを使う）、エラーの経路のための特別なモデル、考え中の状態（`demo-reasoning`。最初に架空の推論を送ります）、チャット用でないモデルの表示（`demo-embedding`。一覧には出ますが、チャットは拒否します）もあります。システムプロンプトの「Always reply in …」の行の言語で答えます。その docstring に一覧があります。
+- **規則**：サービスのすべての中国語のテキストは `src/codes.rs` にあります（フロントエンドはコードで翻訳するので、新しいコードには `frontend/src/i18n/catalog/ai.ts` に `ai.err.*` のキーを加えます）。ログの行は英語で、ユーザーはユーザー名の `{:?}` で示し、キー、内部トークン、本人確認の文、ヘッダーの値、ベース URL、プロンプト、回答、チャットのタイトル、メモの内容は決して含めません。`logs_no_secrets.rs` がこれを確認します。キーやトークンを持つ型には、派生した `Debug` がありません。リクエストのボディは自前で検証します（知らないキーは拒否）。JSON のキーは記載した順に保ってください（`preserve_order` 付きの `serde_json`）。
+- 接続の **バックエンド側** は `backend/src/api/internal.rs`（トークン、本人確認の文、ハートビートのルートと最後の報告のメモリ上の記録を含む `/internal/ai/*`）と `api::auth::introspect`（認証ステップ）で、そのテストは `backend/tests/v08_ai_link.rs` にあります。
+
+## 4. フロントエンド
 
 ```bash
 cd frontend
 npm ci
 npm run typecheck      # アプリを tsc でチェックし、続いてテストファイルをチェック（tsconfig.test.json）
-npm test               # 139 件の単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間）、採点とランダムな出題、
-                       # 練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、ロックの説明と待ち時間、取り込みの
-                       # 警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、設定のキャッシュ、UI カタログ、
-                       # サーバーメッセージの翻訳、更新履歴の解析
+npm test               # 246 件の単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
+                       # コード）、採点とランダムな出題、練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、
+                       # ロックの説明と待ち時間、取り込みの警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、
+                       # 設定のキャッシュ、イベントストリームのパーサー、AI チャットの状態、回答の Markdown、メモの要求、
+                       # AI 設定の規則（接続の原因とモデルの種類を含む）、AI の状態、バッジの状態、ユーザー管理の AI+ 機能の規則、ルーター（`#/ai/<id>`、`#/ai/new`）、UI カタログ（オーナーの文言の決定そのままの言葉）、サーバーメッセージの翻訳、更新履歴の解析
 npm run build          # 型チェック + vite build → dist/
-npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 へプロキシ
+npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 へ、/api/ai/ は http://127.0.0.1:8766 へプロキシ
 ```
 
 - 開発時は `localhost` か `127.0.0.1` でページを開いてください。Vite プロキシの `changeOrigin` は `false` にする必要があります：バックエンドは `Host` と `Origin` を比較するため、`Host` が書き換えられると書き込みリクエストが 403 になります。
-- バックエンドが既定のアドレスにない場合：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`。
+- バックエンドが既定のアドレスにない場合：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`。ai-service では `XEXAM_AI_BACKEND=http://127.0.0.1:9001`。
+- **開発時の AI のリクエスト**（v0.8）：`vite.config.ts` のプラグイン `xexamAiAuth()` が、`npm run dev` と `npm run preview` で、本番の Nginx と同じことをします。パスが `/api/ai/` で始まるリクエストごとに、まずバックエンドに問い合わせ（Cookie と `X-Original-Host`、`X-Original-Origin`、`X-Original-Method` を付けた `GET /internal/ai/auth`）、その後 `Cookie`、`Authorization`、`Cf-Access-Jwt-Assertion` を取り除き、バックエンドが返した本人確認の文を設定します（ブラウザが送ったヘッダーは常に置き換えます）。バックエンドの 401 / 403 はそのまま渡し、それ以外（バックエンドの停止）は 503 `ai.backendDown` になります。スラッシュのない `/api/ai` は、Nginx と同じくバックエンドへ行きます。
 - 「Xexam について」のページには、`README.md`、`README/README.ja.md`、`README/README.zh-CN.md` の更新履歴が表示されます。`vite.config.ts` のプラグイン `xexam-changelog` が、フロントエンドのビルド時に（`npm run dev` では「Xexam について」のページを初めて開いたときに）`frontend/` の 1 つ上のフォルダ（リポジトリのルート）からこれらを読むので、そこになければなりません。どれかに更新履歴の項目（`### vX.Y — 日付`）が 1 つもないと、ビルドはエラーで止まります。
 - テストファイルを 1 つだけ実行するには：`node --experimental-strip-types --test src/i18n/server-messages.test.ts`。
 - インポートパスには `.ts` 拡張子を使います（Node 標準のテストランナーの要件です）。
 - TypeScript は `~5.9.3` に固定しています。
 
-### 3.1 画面の文言
+### 4.1 画面の文言
 
 ユーザーに見える文言は、すべてカタログから取り出します。ページに直接書き込む文言はありません。
 
-- **場所**：`src/i18n/catalog/<area>.ts`。領域ごとに 1 ファイルで、`common`、`home`、`banks`、`records`、`settings`、`quiz`、`result`、`about`、`auth`、`users`、`logs` があります。各ファイルの中身は `export default defineCatalog({ en: {…}, zh: {…}, ja: {…} })` です。
+- **場所**：`src/i18n/catalog/<area>.ts`。領域ごとに 1 ファイルで、`common`、`home`、`banks`、`records`、`settings`、`quiz`、`result`、`about`、`auth`、`users`、`logs`、`ai` があります。各ファイルの中身は `export default defineCatalog({ en: {…}, zh: {…}, ja: {…} })` です。
 - **キー**は領域名で始まります：`banks.delete.title`、`records.deleteAll.ok`。共通の接頭辞（`app.`、`nav.`、`common.`、`err.`、`kind.`、`mode.`、`act.`、`role.`、`forbidden.` など）は `common.ts` にあります。
 - **必ず 3 言語。** `zh` や `ja` のブロックに英語のキーが欠けていると、TypeScript がエラーにします。`_one` で終わるキーは英語の単数形で、`tn()` は件数が 1 のときにこれを使います。中国語と日本語では省略できます。
 - **プレースホルダー**は `{name}` の形です：`t('records.deleteOne.body', { at, pct })`。件数には `tn(key, n)` を使います。これが `{n}` を埋めます。
@@ -68,7 +102,7 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 - 英語を先に書き、そのあと中国語と日本語を書きます。用語は UI ですでに使っているものに合わせてください（例：「問題集」「出題停止」「間違いノート」「問題集を管理」）。
 - 問題と答えの言語の切り替えは例外です。その 3 つのボタンは、表示言語に関係なく常に **English**、**中文**、**日本語** と表示します（`src/components/lang-switch.ts`）。カタログから取るのは、スクリーンリーダー向けの名前とツールチップだけです。
 
-### 3.2 バックエンドのメッセージを UI に表示する
+### 4.2 バックエンドのメッセージを UI に表示する
 
 バックエンドのエラーメッセージは中国語で、内容は変わりません（テスト済みの API の一部だからです）。フロントエンドがそれを翻訳します：
 
@@ -77,36 +111,43 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 - **ずれの検出テスト**：`src/i18n/server-messages.test.ts` は、小さな字句解析器で `backend/src` の Rust ソースを読みます。中国語または日本語の文字を含む文字列リテラル（コメント、テストコード、アサーション、ログやコンソール出力を除く）には、英語と日本語の訳が必要です。訳にはプレースホルダーに入る値がそのまま残っていなければならず、中国語が含まれていてはいけません。対応するバックエンドの文言がもう存在しない訳があっても、テストは失敗します。
 - **バックエンドのメッセージを追加・変更するとき**：同じ変更の中で `server-messages.ts` に訳を追加してください。ユーザーに表示されない文字列（たとえばパーサーが探す語）であれば、テストの `NOT_MESSAGES` に理由と一緒に追加します。
 - **ログの行は英語のまま**にし、パスワード、セッションのトークン、Cookie の値、問題文を決して含めてはいけません（`backend/tests/v07_wal_and_logs.rs` が、一連の操作の後でログを確認します）。ログインせずに誰でも起こせる行は、`tracing` に直接ではなく `BurstLog`（`backend/src/logs.rs`）を通します。
+- **AI のエラー** はテキストでは翻訳しません：AI サービスは各エラーに固定の `code` を付け、`errorText()` は `src/i18n/catalog/ai.ts` のキー `ai.err.<"ai." を除いたコード>` を使い、エラーの `limit` で `{n}` を埋めます。AI サービスに新しいコードを加えたら、3 言語すべてでそのキーが必要です。
 
-### 3.3 ページやルートを追加する
+### 4.3 ページやルートを追加する
 
 1. **ルート**：`src/router.ts` で、`Route` に分岐を 1 つ追加し、`parseHash` に case を追加します。ハッシュが `#/<name>` の形でない場合は、`routeHash` にも追加します。メニューのどの項目を強調表示するかを `sectionOf` に書きます（`null` = なし）。管理者だけが開けるページは `adminOnly` に入れるか（ほかのユーザーはホームへ移ります）、`main.ts` から **権限がありません** のページを表示します。
 2. **ページ**：`src/pages/<name>.ts` を作り、`HTMLElement` を返す `render<Name>()` 関数を書きます。DOM は `src/utils/dom.ts` の `h()` で組み立てます。スタイルは `src/styles/<name>.css` に書いてページの先頭でインポートし、色には `main.css` のカラートークンを使います。そうすればダークテーマでも正しく表示されます。
 3. **つなぎ込み**：`src/main.ts` の `page()` に case を追加し、ブラウザのタブに出すタイトルを指定します。
 4. **メニュー項目**（主要なセクションの場合のみ）：`src/router.ts` の `NavSection` に追加し、`src/components/shell.ts` の `NAV`（一部のユーザーにだけ見せるときは `need` 付きで）、`HREF`、アイコン用の `ICONS` にも追加します。`NAV` の項目は、メニューの区切り線より上に並びます。その下の「Xexam について」の項目は別に作ります。
-5. **文言**：新しいカタログ `src/i18n/catalog/<name>.ts` を、3 言語すべてで作ります（3.1 節）。
+5. **文言**：新しいカタログ `src/i18n/catalog/<name>.ts` を、3 言語すべてで作ります（4.1 節）。
 6. **状態**：ページ同士は互いにインポートしません。共有する状態は `src/state/store.ts` に置き、変更は `src/state/actions.ts` の関数（`navigate(route)`、`render()` など）を通して行います。そのページだけが使う状態は、ページモジュールの変数に置きます。ユーザーがページを離れるときや開いたときに処理を実行するには、`onRouteChange()` を使います。
-7. **API**：新しいエンドポイントには、`backend/src/api/auth.rs` のルート表 `ROUTES` に 1 行（誰が使えるか）、`src/api/` に型付きのラッパー、`src/types/api.ts` にその型を追加し、[api.md](api.md) と [openapi.yaml](../en/openapi.yaml) に記載します。
+7. **API**：新しいエンドポイントには、`backend/src/api/auth.rs` のルート表 `ROUTES` に 1 行（誰が使えるか）、`src/api/` に型付きのラッパー、`src/types/api.ts` にその型を追加し、[api.md](api.md) と [openapi.yaml](../en/openapi.yaml) に記載します。AI のルートは、代わりに `ai-service/src/api/mod.rs` の `ROUTES` に、そのアクセスレベルと一緒に加えます。
 
-## 4. スタック全体
+## 5. スタック全体
 
 ```bash
-# 2 つのコンテナをビルドして起動（同じ xexam_data ボリュームを使います！自分のデータが使われるので、試す場合は別のプロジェクト名を使ってください：-p some-other-name）
+# 3 つのコンテナをビルドして起動（同じ xexam_* ボリュームを使います！自分のデータが使われるので、試す場合は別のプロジェクト名を使ってください：-p some-other-name）
 docker compose -f docker/docker-compose.build.yml up -d --build
 
-# チェック用スクリプトはすべて一時的なプロジェクト名と一時ボリュームを使い、xexam_data には触れません
+# チェック用スクリプトはすべて一時的なプロジェクト名と一時ボリュームを使い、xexam_* ボリュームには触れません
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 41 項目、ダミーのバックエンドを使用（レート制限を含む）
-python -I tests/integration/stack_check.py 18090                      # スタック全体を起動（2 つのイメージをビルドします）：ログイン、インポート、
-                                                                      # 成績の記録、永続化、WAL、システムログ、reset-password、docker stop
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 45 項目：progress.json の移行、WAL と DELETE への切り替え（先に cargo build が必要）
+python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 131 項目、ダミーのバックエンドとダミーの ai-service を使用
+                                                                      # （レート制限、認証ステップ、ヘッダーの除去、ストリーミング）
+python -I tests/integration/stack_check.py 18090                      # 217 項目：架空の AI プロバイダーと一緒にスタック全体を起動
+                                                                      # （3 つのイメージをビルドします）：ログイン、インポート、成績の記録、AI 設定、
+                                                                      # ストリーミングの回答、AI+ 機能とその一時停止、
+                                                                      # ハートビートと docker stop、返答言語、フリーモード（ユーザーごと）、
+                                                                      # 永続化、WAL、システムログ、
+                                                                      # reset-password、docker stop、各ボリュームの中身
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 68 項目（Linux では 70）：progress.json の移行、WAL と DELETE への
+                                                                      # 切り替え、スキーマ 3 → 5 と 4 → 5、内部トークン（先に cargo build が必要）
 ```
 
-どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。
+どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。`stack_check.py` は任意の `XEXAM_STACK_COMPOSE` を読みます：同じ形の別の compose ファイル（たとえば、イメージのタグとコンテナ名を変えた `docker/docker-compose.build.yml` のコピー）を使えるので、いつものものを使うインストールと並べて実行できます。コンテナは、その compose のサービスから見つけます。`nginx_check.py` には約 2 分半かかります。1 つの項目が、AI 設定の遅い **テスト** のために 95 秒待つからです。
 
 compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルート（`..`）をビルドコンテキストにします。フロントエンドのイメージは、リポジトリのルートからビルドします。`nginx/Dockerfile` は、Node のビルド段階に 3 つの README をコピーします（`COPY README.md /` と `COPY README/README.ja.md README/README.zh-CN.md /README/`）。「Xexam について」のページの更新履歴が、これらから作られるためです。同じ理由で、`.dockerignore` は `README.md` と `README/` をビルドコンテキストに残します。完成したイメージに入るのはビルドした静的ファイルだけです。
 
-## 5. 旧版との照合（回帰）
+## 6. 旧版との照合（回帰）
 
 旧版の Python 実装はリポジトリから削除されましたが、その挙動は `tests/baseline/` に固定されています（すべて架空の合成データです）：
 
@@ -116,36 +157,38 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 | `fixtures/*.xlsx` + `parser_golden/*.json`（49 件） | 合成ワークブック（旧版の形式である 3 列と 4 列）と、それぞれに対する旧パーサーの出力 | `backend/tests/parser_golden.rs`（パーサーは今もそれらをバイト単位で同じに読まなければならない。インポートはそれで形式を見分けて拒否する） |
 | `golden/id_vectors.json`（85 件のアサーション） | 問題 id のアサーション。各件にハッシュ対象のバイト列が付く | `backend/tests/id_vectors.rs` |
 | `fixtures/sample.db` + `golden/store_sample_outputs.json` | 旧実装が書き出したサンプルデータベースと、その各インターフェースの出力 | `backend/tests/db_golden.rs`（現在のスキーマへの移行も確認する） |
-| `golden/allowed_differences_rust.json`（23 項目）、`allowed_probe_differences_rust.json`（51 項目） | Rust 実装が旧版を置き換えたときに、意図的に旧版と異なっていた箇所。各項目に理由が 1 文付く（中国語）。記録であり、テストは読まない | [api.md](api.md) の第 5 節 |
+| `golden/allowed_differences_rust.json`（23 項目）、`allowed_probe_differences_rust.json`（51 項目） | Rust 実装が旧版を置き換えたときに、意図的に旧版と異なっていた箇所。各項目に理由が 1 文付く（中国語）。記録であり、テストは読まない | [api.md](api.md) の第 7 節 |
 
 - `api_golden.rs` は、すべてのキャプチャを 5 つの結果のどれかに分類し、`cargo test --test api_golden -- --nocapture` でその表を表示します。現在：一致 84、キャプチャからエンジンに入力して一致 58、意図した差異 16（405 を返すようになった未対応のメソッド 7 つと、v0.7.5 から `bankCount` 抜きで比較する `GET /api/info` のキャプチャ 9 つ）、スキップ 14（Nginx が配信する静的ファイルと、レスポンスのないキャプチャ 1 つ）、差異 0。差異のあるキャプチャが 1 つでもあれば、テストは失敗します。
 - キャプチャが対象とする挙動を**変更**したい場合：コードを変更し、意図した差異を理由とともに `api_golden.rs` に教えます（`bankCount` と同じように）。ゴールデンレスポンスを直接変更しないでください。
 - 旧版のキャプチャ / 照合 / プローブ用スクリプトは旧 Python コードに依存していたため、コードと共に削除されました。必要な場合は、Git タグ `python-v0.2` とコミット履歴から取り戻してください。
 
-## 6. データ保護のルール
+## 7. データ保護のルール
 
-- `data/`、`progress.json`、ご自身の問題集の Excel ファイルを、読み取る・出力する・コミットする・変更する、のいずれも**しないでください**。
+- `data/`、`data-ai/`、`progress.json`、ご自身の問題集の Excel ファイルを、読み取る・出力する・コミットする・変更する、のいずれも**しないでください**。
+- 本物の AI のキーを、コード、テスト、ドキュメント、スクリーンショットに決して入れないでください：テストは明らかに偽物のキー（`sk-demo-…`、`gw-demo-…`）を使い、例には `example.com` のアドレス、たとえばゲートウェイなら `https://ai-gateway.example.com/<route>` を使います。
 - 試す操作は必ずコピーか一時ディレクトリで行ってください。本物の `xexam.db` に対して「どうなるか見てみる」ようなコマンドを実行しないでください。古いデータベースを新しいバージョンで開くと移行される（そして WAL に切り替わる）点にも注意してください。
 - `docker compose down -v` を実行しないでください。
 - コード、テスト、ドキュメントの例には架空の内容だけを使い、本物の試験問題は使わないでください（`tools/screenshots/demo_banks.py` のデモ用問題集「General knowledge」と「Kitchen basics」、または `frontend/src/pages/banks.ts` にある架空の 6 列形式の例）。
 
-## 7. CI
+## 8. CI
 
 パイプラインは 1 つだけです：[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml)。`main` と `dev` へのプッシュ、`main` へのプルリクエスト、手動での起動のときに実行されます。
 
 | ジョブ | 内容 |
 |---|---|
-| `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの README それぞれの更新履歴の最新の項目 = `CODE_VERSION`。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml` と `frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）とドキュメントのチェック（8 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
-| `frontend` | 型チェック、139 件の単体テスト、ビルド |
-| `backend` | fmt、clippy、316 件のテスト、および `progress.json` の移行チェック |
-| `stack` | `xexam-frontend` イメージをビルドして 41 項目の Nginx チェックを実行。compose スタック全体を起動してエンドツーエンドのチェックを実行 |
-| `arm64` | 2 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すことを確認 |
-| `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）をタグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
-| `release` | `main` のみ：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `README.md` の更新履歴から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（7.1 節） |
+| `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの README それぞれの更新履歴の最新の項目 = `CODE_VERSION`。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
+| `frontend` | 型チェック、246 件の単体テスト、ビルド |
+| `backend` | fmt、clippy、342 件のテスト、および `progress.json` の移行チェック |
+| `ai-service` | fmt、clippy、ai-service の 160 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと |
+| `stack` | `frontend`、`backend`、`ai-service` の後：`xexam-frontend` イメージをビルドして 131 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 217 項目のエンドツーエンドのチェックを実行（最大 45 分） |
+| `arm64` | 3 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すこと、ai-service が単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返すことを確認（最大 60 分） |
+| `publish` | `main` のみ：3 つのイメージ（amd64 + arm64）をタグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
+| `release` | `main` のみ：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `README.md` の更新履歴から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
 
-`dev` へのプッシュと `main` へのプルリクエストでは最初の 5 つのジョブだけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
+`dev` へのプッシュと `main` へのプルリクエストでは、検査のジョブ（`check` から `arm64` まで）だけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
 
-### 7.1 リリースの後：ボットのコミット
+### 8.1 リリースの後：ボットのコミット
 
 `RELEASE_VERSION` を動かすのは、イメージが公開され、GitHub Release ができたときの `release` ジョブの最後のステップだけです。
 
@@ -160,28 +203,32 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 - **次にプッシュする前に**、両方のブランチを更新してください：`git checkout main && git pull`、続いて `git checkout dev && git pull`。
 - **実行に注意が出ていたときは**、次に `main` へマージする前に、`main` を `dev` にマージしてください：`dev` で `git pull origin main` を実行し、`dev` をプッシュします。そうしないと、次の `main` へのマージでボットのコミットが抜けたり、`VERSION` やバッジで衝突したりします。
 
-## 8. ドキュメント
+## 9. ドキュメント
 
-- 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じドキュメントがあります：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`、そして v0.7.5 からは `usage`（アプリの使い方。README から移しました）。それぞれのフォルダに専用の `screenshots/` があります。
+- 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じ 8 つのドキュメントがあります：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`、そして v0.7.5 からは `usage`（アプリの使い方。README から移しました）。それぞれのフォルダに専用の `screenshots/` があります。
 - `docs/zh-CN/history/` には、Rust へ切り替えたときの古いドキュメント（監査、計画、リスク評価）があります。中国語のみで、今後は更新しません。
 - `docs/en/openapi.yaml` はすべての言語で共有します。日本語と中国語のドキュメントは `../en/openapi.yaml` にリンクします。
 - README は短くしてあります：Xexam でできること、クイックスタート、設定、アップグレード、ドキュメントへのリンク、更新履歴です。アプリの使い方、Excel の形式、インポートの規則は `usage.md` に、デプロイの詳細、バックアップ、セキュリティ、アーキテクチャ、開発はそれぞれのドキュメントにあります。詳細は 1 か所に書き、そこへリンクしてください。
 - どのドキュメントも、ほかの 2 つのフォルダにある同じドキュメントへのリンクを並べた言語バーで始まります。リンクはファイル自身のフォルダからの相対パスで、リポジトリのルートは `../../` です。
 - 先に英語のドキュメントを変更し、同じ変更の中で日本語と中国語のドキュメントも更新します。UI の項目名は、その言語のカタログのとおりに太字で書きます。問題の言語の切り替えは、常に **English** / **中文** / **日本語** です。
-- CI の `check` ジョブは、次のどれかに当てはまると失敗します：7 つのドキュメント `api` … `security` のどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
+- CI の `check` ジョブは、次のどれかに当てはまると失敗します：8 つのドキュメント `api` … `usage` のどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
 
-### 8.1 スクリーンショット
+### 9.1 スクリーンショット
 
-README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 13 枚と iPhone 4 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` からバックエンドのイメージを一意のタグでビルドし、`/data` に新しいボリュームを付け、`TZ=UTC` で動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
+README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 16 枚と iPhone 4 枚、合わせて 20 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` と `ai-service/Dockerfile` からバックエンドと ai-service のイメージを一意のタグ（`xexam-shots-backend:<hex>`、`xexam-shots-ai-service:<hex>`）でビルドし、新しい Docker ネットワーク上で、新しいボリューム（それぞれに `/data`、共有のリンクボリューム。ai-service には読み取り専用）と `TZ=UTC` で、架空の AI プロバイダー `tests/integration/ai_stub.py`（ネットワーク上の名前は `ai-stub`）と並べて動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから（認証のプラグインが、Nginx と同じく AI のリクエストをすべてバックエンドに確認します）、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れ、架空のプロバイダーと架空のキーで AI を設定します。そのあとで初めて sam と alex に AI+ 機能を与え（AI+ が利用可能でない間は、バックエンドが拒否します）、alex の AI+ 機能を一時停止するので、画像には明るいバッジ、暗いバッジ、バッジなしと、**利用中** の行と **一時停止中** の行が写ります。再起動の後は、`GET /api/users` が `aiAvailable: true` を返すまで待ちます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します：AI チャットの場面は管理者のフリーモードをオンにして（緑の **フリーモード** タグが出ます）チャットを始め、ページから 2 つ目の質問を送り（その実行の言語で送るので、回答もその言語になります）、終わったらチャットを削除してフリーモードをオフに戻します。AI 設定の場面は **テスト** を押し、ページを 2 枚の画像で見せます（設定と、AI+ 機能の列付きの AI+ ユーザー、そして使用量、保存期間、安全上限）。そのため、使用量の数字は言語ごとに少し違います。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、ネットワーク、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
 
-オプション：`--lang en|ja|zh-CN|all`、`--out DIR`（`DIR/<lang>/` に書き込むので、`docs/` に触れる前に比べられます）、`--only desktop-13-logs.png,...`、`--chrome PATH`（または `XEXAM_CHROME` / `CHROME_PATH`）、Docker が使えないときの `--backend cargo`（この場合、システムログの画像は撮りません）。Python 3.8+ と `openpyxl`、Node.js、Docker、Chrome または Chromium が必要です。`tools/screenshots/README.md` を参照してください。2 つのページは、カードが画像の中で終わるように、ページそのものの中で短くしてあります：問題集の管理では形式のガイドを最初の 2 つの部分だけ開いた状態にし、「Xexam について」では最新のバージョンの最初の項目だけを表示します。UI やバージョンを変えたら画像を撮り直し、目で確かめてから `docs/` に書き込んでください。
+オプション：`--lang en|ja|zh-CN|all`、`--out DIR`（`DIR/<lang>/` に書き込むので、`docs/` に触れる前に比べられます）、`--only desktop-13-logs.png,...`、`--chrome PATH`（または `XEXAM_CHROME` / `CHROME_PATH`）、Docker が使えないときの `--backend cargo`（この場合、システムログの画像は撮りません）。Python 3.8+ と `openpyxl`、Node.js、Docker、Chrome または Chromium が必要です。`tools/screenshots/README.md` を参照してください。`--backend cargo` では、`backend/` と `ai-service/` を cargo でビルドし、架空のプロバイダーをローカルの Python のプロセスとして動かします。2 つのページは、カードが画像の中で終わるように、ページそのものの中で短くしてあります：問題集の管理では形式のガイドを最初の 2 つの部分だけ開いた状態にし、「Xexam について」では最新のバージョンの最初の項目だけを表示します。2 回か 3 回の実行を同時に行えます（ほかの実行に先にポートを取られたときは新しいポートでやり直し、`npm ci` はロックファイルの後ろで実行されます）。`python -I` ではなく `python tools/screenshots/retake.py` として起動してください：`-I` は、`openpyxl` がたいていインストールされているユーザーの site-packages を隠します。UI やバージョンを変えたら画像を撮り直し、目で確かめてから `docs/` に書き込んでください。
 
-## 9. バージョン、更新履歴、ライセンス
+### 9.2 アイコン
+
+アプリのアイコン（ヘッダーのロゴ、ブラウザのタブ、スマートフォンのホーム画面、README）は `frontend/public/` にあります：`icon.svg`、`icon-32.png`、`icon-192.png`、`icon-512.png`、`apple-touch-icon.png`（180 × 180。iOS が自分で角を丸めるので、角を透明にしません）。`python3 -I tools/icons/make_icons.py <source.svg>` は、1 つの元の SVG から 5 つすべてを書き出します：ヘッドレス Chrome（`tools/screenshots/browser.py` の DevTools のクライアント）で PNG を描き、IHDR、IDAT、IEND のチャンクだけで純粋な Python で符号化し直すので、メタデータを持たず、出力はピクセルだけで決まります。すべてのファイルの SHA-256 を出力し、何度実行しても同じ結果になります。
+
+## 10. バージョン、更新履歴、ライセンス
 
 - リポジトリのルートの **`VERSION`** には、`KEY=VALUE` の行が 2 つ、それぞれちょうど 1 回ずつあります（`#` で始まる行はコメントです）：
-  - `CODE_VERSION`（現在は `0.7.5`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml` と `frontend/package.json`（`0.7.5`。`0.7` のような 2 つの部分からなるバージョンは、そこでは `0.7.0` と書きます。それぞれのロックファイルも）と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
-  - `RELEASE_VERSION`（v0.7.5 のリリースジョブが動くまでは `0.7`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（7.1 節）。プッシュやマージだけで変わることはありません。
+  - `CODE_VERSION`（現在は `0.8`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.8` のような 2 つの部分からなるバージョンは、そこでは `0.8.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
+  - `RELEASE_VERSION`（v0.8 のリリースジョブが動くまでは `0.7.5`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
 - 更新するたびに、3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）すべての更新履歴の一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。CI がこれを確認します。GitHub Release のノートは英語版から取ります。
-- 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（3 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
-- 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（7.1 節）。
+- 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（4 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
+- 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（8.1 節）。
 - このプロジェクトは MIT ライセンスです（リポジトリのルートの `LICENSE`）。

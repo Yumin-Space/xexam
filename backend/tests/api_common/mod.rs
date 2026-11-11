@@ -247,6 +247,7 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
         // TEST-ONLY: these fake-engine tests (the golden replay among them) stage the reference implementation's 3-column
         // imports; production code always refuses the old layouts
         old_layouts: xexam_backend::services::OldLayouts::AllowForTests,
+        ai_link: Default::default(),
     }));
     TestApp {
         router: signed_in_router(&state),

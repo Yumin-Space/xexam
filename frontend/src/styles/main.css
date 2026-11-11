@@ -103,6 +103,18 @@
   --go-practice: var(--answer-wrong-solid);
   --go-practice-hover: var(--answer-wrong-solid-hover);
   --go-practice-active: var(--answer-wrong-solid-active);
+  /* The AI+ badge (v0.8): an orange gradient with a soft glow and white letters (owner's choice); a dark-orange text
+     outline in .ai-badge keeps the white readable on the light end. --ai-3 is also the memory icon colour in ai.css. */
+  --ai-1: #FFB21E;
+  --ai-2: #F7741A;
+  --ai-3: #DD4A10;
+  --ai-ink: #FFFFFF;
+  --ai-glow: rgba(255, 150, 30, .45);
+  /* The dark AI+ badge (v0.8 round 2, .ai-badge.off): the user has the AI+ service but cannot use AI now. A neutral dark
+     tag, no gradient or glow; white on #4B5563 is 7.6:1. */
+  --ai-off-bg: #4B5563;
+  --ai-off-ink: #FFFFFF;
+  --ai-off-ring: transparent;
 
   --en: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, "Microsoft YaHei UI", "Yu Gothic UI", sans-serif;
   --jp: "Yu Gothic UI", "Yu Gothic", "Meiryo UI", "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
@@ -168,6 +180,15 @@
     --danger-line: rgba(248, 81, 73, .4);
     --danger-solid: #DA3633;
     --danger-solid-hover: #B62324;
+    --ai-1: #FFB21E;
+    --ai-2: #F7741A;
+    --ai-3: #E2531A;
+    --ai-ink: #FFFFFF;
+    --ai-glow: rgba(255, 170, 60, .55);
+    /* #E6EAF0 on #3A4250 is 8.4:1; the hairline ring sets it off from the dark sheet */
+    --ai-off-bg: #3A4250;
+    --ai-off-ink: #E6EAF0;
+    --ai-off-ring: var(--line);
   }
 }
 :root[data-theme="dark"] {
@@ -224,6 +245,14 @@
   --danger-line: rgba(248, 81, 73, .4);
   --danger-solid: #DA3633;
   --danger-solid-hover: #B62324;
+  --ai-1: #FFB21E;
+  --ai-2: #F7741A;
+  --ai-3: #E2531A;
+  --ai-ink: #FFFFFF;
+  --ai-glow: rgba(255, 170, 60, .55);
+  --ai-off-bg: #3A4250;
+  --ai-off-ink: #E6EAF0;
+  --ai-off-ring: var(--line);
 }
 
 * { box-sizing: border-box; }
@@ -401,10 +430,93 @@ input, select, textarea { font: inherit; color: var(--ink); }
 /* ---------- Brand ---------- */
 .top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 24px; margin-bottom: 24px; }
 .brand { display: flex; align-items: center; gap: 10px; }
-.logo { display: inline-flex; gap: 3px; }
-.logo i { width: 11px; height: 11px; border: 1.5px solid var(--print); border-radius: 50%; background: var(--card); }
-.logo i.on { background: var(--graphite); border-color: var(--graphite); }
+/* The app icon (v0.8, /icon.svg): a navy rounded square; in the dark themes a thin ring keeps it apart from the dark sheet */
+.logo { display: block; flex: none; width: 28px; height: 28px; border-radius: 8px; }
+:root[data-theme="dark"] .logo { box-shadow: 0 0 0 1px var(--line); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .logo { box-shadow: 0 0 0 1px var(--line); } }
 .brand-name { font: 700 20px/1.2 var(--num), var(--en); letter-spacing: .01em; color: var(--ink); }
+
+/* ---------- The AI+ badge (v0.8) ----------
+   An original slanted tag: an orange-yellow gradient that shines slowly, a soft glow, a heavy family of its own (see
+   below). .off (round 2, owner: "dark"): the user has the AI+ service but cannot use AI now (AI+ function suspended, or
+   AI+ not available; the tooltip says which): the same text, font and layout on a neutral dark fill (--ai-off-* tokens),
+   with no gradient, glow, animation or text outline. */
+.ai-badge {
+  display: inline-flex; align-items: center; vertical-align: middle; flex: none; padding: 2px 15px 2px 11px;
+  border-radius: 4px; transform: skewX(-12deg); color: var(--ai-ink);
+  background: linear-gradient(100deg, var(--ai-1) 0%, var(--ai-2) 48%, var(--ai-3) 100%);
+  background-size: 200% 100%; box-shadow: 0 0 0 1px var(--ai-glow), 0 0 10px var(--ai-glow);
+  /* Its own Latin family (the inherited Chinese / Japanese UI fonts draw Latin letters narrower). Bold, not Black: at this
+     size the Black weight and a blurred outline fill the counter of the "A". */
+  font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  font-style: italic; font-weight: 700; font-size: 14px; line-height: 1.15;
+  letter-spacing: .03em; white-space: nowrap;
+  /* White letters on orange: a crisp dark-orange shadow (no blur, so the letter holes stay open) keeps them readable. */
+  text-shadow: 0 1px 0 rgba(110, 32, 0, .7), 1px 0 0 rgba(110, 32, 0, .35);
+  animation: ai-shine 3.2s ease-in-out infinite;
+}
+.ai-badge-t { display: inline-block; }
+/* "AI" sits near the middle of the badge (a little left of centre, owner's request); the "+" is a symbol hung just right
+   of it, in the right padding. */
+.ai-badge-t { position: relative; }
+.ai-badge-plus { position: absolute; left: 100%; top: -.04em; margin-left: .12em; font-size: .9em; }
+.ai-badge.off {
+  background: var(--ai-off-bg); color: var(--ai-off-ink); box-shadow: 0 0 0 1px var(--ai-off-ring);
+  text-shadow: none; animation: none;
+}
+.ai-badge:focus-visible { outline: 2px solid var(--print); outline-offset: 3px; }
+@keyframes ai-shine { 0%, 100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
+@media (prefers-reduced-motion: reduce) { .ai-badge { animation: none; } }
+@media (forced-colors: active) { .ai-badge { forced-color-adjust: auto; border: 1px solid CanvasText; } }
+.acct-btn .ai-badge { margin-left: -1px; }
+.nav-who-tags .ai-badge { margin-left: 2px; }
+
+/* ---------- A small on / off switch (v0.8: AI+, Enable AI) ----------
+   button[role=switch]: a 44×26 track (--field-line grey when off, at least 3:1; print blue when on) with a raised knob;
+   no row of its own (unlike Settings' .set-switch). aria-disabled: dimmed, still focusable. */
+.mini-switch {
+  position: relative; display: inline-flex; align-items: center; flex: none; padding: 0; margin: 0;
+  border: 0; border-radius: 999px; background: transparent; vertical-align: middle; cursor: pointer;
+}
+.mini-track { position: relative; display: block; width: 44px; height: 26px; border-radius: 999px; background: var(--field-line); transition: background-color .12s ease; }
+.mini-knob {
+  position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--card); box-shadow: var(--shadow-sm); transition: transform .12s ease;
+}
+.mini-switch[aria-checked="true"] .mini-track { background: var(--print); }
+.mini-switch[aria-checked="true"] .mini-knob { transform: translateX(18px); }
+.mini-switch:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.mini-switch[aria-disabled="true"], .mini-switch:disabled { cursor: not-allowed; }
+.mini-switch[aria-disabled="true"] .mini-track, .mini-switch:disabled .mini-track { opacity: .45; }
+@media (prefers-reduced-motion: reduce) { .mini-track, .mini-knob { transition: none; } }
+
+/* ---------- Small 16px icons (v0.8: bank controls, AI+) ---------- */
+.us-mi { width: 16px; height: 16px; flex: none; color: var(--ink3); }
+
+/* ---------- Tooltips (v0.8) ----------
+   .has-tip holds a control and, beside it, its span.tip[role=tooltip]. Shown on hover (mouse) and on keyboard focus
+   (:focus-visible, never on a click or a dialog's own focus); placed by components/tooltip.ts (fixed, above the control,
+   inside the window); .tip-hidden after Escape, a click or a scroll until the next hover or focus. */
+.has-tip { position: relative; display: inline-flex; align-items: center; min-width: 0; max-width: 100%; }
+.has-tip[hidden] { display: none; }
+.tip {
+  position: fixed; left: 0; top: 0; z-index: 60; display: none; width: max-content; max-width: min(320px, 90vw);
+  padding: 6px 10px; border-radius: 6px; background: var(--ink); color: var(--on-ink); box-shadow: var(--shadow-pop);
+  font-size: 12.5px; font-weight: 400; font-style: normal; line-height: 1.5; letter-spacing: 0; text-align: left;
+  white-space: normal; overflow-wrap: anywhere; pointer-events: none;
+}
+@media (hover: hover) { .has-tip:hover > .tip { display: block; } }
+/* (two rules: a browser without :has() drops only the first) */
+.has-tip:has(:focus-visible) > .tip { display: block; }
+.has-tip.tip-open > .tip { display: block; }
+.has-tip.tip-hidden > .tip { display: none; }
+.tip.tip-measure { display: block !important; visibility: hidden !important; }
+.tip-btn {
+  position: relative; display: inline-grid; place-items: center; width: 24px; height: 24px; flex: none; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: help;
+}
+.tip-btn .us-mi { color: inherit; }
+@media (hover: hover) { .tip-btn:hover { background: var(--hover); color: var(--ink); } }
 
 /* ---------- Blocks ----------
    A block (.panel) is a soft white surface on the sheet: one hairline, radius 10px, no frame inside it. */
@@ -778,6 +890,8 @@ dialog.dlg-wide { max-width: 460px; }
 @media (max-width: 480px) {
   /* The bar stays one row: the badge takes its short form and the username keeps a few letters before the ellipsis */
   .acct-name { min-width: 3.5em; max-width: 8em; }
+  /* v0.8: with the AI+ badge the name gives it some room */
+  .acct-btn.has-ai .acct-name { max-width: 6.5em; }
   .acct-role-l { display: none; }
   .acct-role-s { display: inline; }
   .tiles { grid-template-columns: repeat(5, 1fr); }
@@ -812,6 +926,9 @@ dialog.dlg-wide { max-width: 460px; }
   .chip { min-height: 44px; }
   .strip button { width: 44px; min-height: 48px; }
   .foot .btn.quiet { min-height: 44px; }
+  /* v0.8: the small switch and the info buttons keep their look; an invisible margin makes them 44px to tap */
+  .mini-switch::after { content: ""; position: absolute; inset: -9px -2px; }
+  .tip-btn::after { content: ""; position: absolute; inset: -10px; }
 }
 /* Keyboard shortcut hints are meaningless on devices without a keyboard */
 @media (hover: none) { .keys { display: none; } }

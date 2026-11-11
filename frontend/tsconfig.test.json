@@ -12,6 +12,13 @@
   "include": [
     "src/api/client.ts",
     "src/api/client.test.ts",
+    "src/api/users.ts",
+    "src/api/users.test.ts",
+    "src/api/ai.ts",
+    "src/state/ai.ts",
+    "src/state/ai.test.ts",
+    "src/router.ts",
+    "src/state/router.test.ts",
     "src/domain/**/*.ts",
     "src/types/**/*.ts",
     "src/state/session-storage.ts",
@@ -22,7 +29,8 @@
     "src/i18n/define.ts",
     "src/i18n/server-messages.ts",
     "src/i18n/server-messages.test.ts",
-    "src/i18n/catalog.test.ts"
+    "src/i18n/catalog.test.ts",
+    "src/i18n/ai-texts.test.ts"
   ],
   "exclude": []
 }

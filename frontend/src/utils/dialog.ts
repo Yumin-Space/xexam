@@ -19,10 +19,22 @@ export interface AskCheckResult {
   checked: boolean;
 }
 
+let titleSeq = 0;
+
+/**
+ * A new id for a dialog's title (v0.8): every dialog gets its own, so a confirmation opened on top of another dialog (AI
+ * settings' viewer) is named by its own title, not by the first element with a shared id.
+ */
+export function dialogTitleId(): string {
+  titleSeq += 1;
+  return `dlg-title-${titleSeq}`;
+}
+
 function open(opts: AskOptions, extra: HTMLElement | null, onClose: (ok: boolean) => void): void {
   const { title, body, ok = t('common.ok'), cancel = t('common.cancel'), danger = false } = opts;
-  const d = h('dialog', { 'aria-labelledby': 'dlg-title' },
-    h('h3', { id: 'dlg-title' }, title),
+  const titleId = dialogTitleId();
+  const d = h('dialog', { 'aria-labelledby': titleId },
+    h('h3', { id: titleId }, title),
     h('p', null, body),
     extra,
     h('div', { class: 'acts' },
@@ -91,6 +103,7 @@ export interface FormDialogOptions {
 export function formDialog(o: FormDialogOptions): Promise<boolean> {
   return new Promise((resolve) => {
     let busy = false;
+    const titleId = dialogTitleId();
     const err = h('div', { class: 'err dlg-err', role: 'alert', hidden: true });
     const okBtn = h('button', { class: 'btn ' + (o.danger ? 'danger solid' : 'primary'), type: 'submit' }, o.ok);
     const cancelBtn = h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, o.cancel ?? t('common.cancel'));
@@ -101,12 +114,12 @@ export function formDialog(o: FormDialogOptions): Promise<boolean> {
         void run();
       },
     },
-    h('h3', { id: 'dlg-title' }, o.title),
+    h('h3', { id: titleId }, o.title),
     o.body ? h('p', null, o.body) : null,
     o.content,
     err,
     h('div', { class: 'acts' }, cancelBtn, okBtn));
-    const d = h('dialog', { class: 'dlg-wide', 'aria-labelledby': 'dlg-title' }, form);
+    const d = h('dialog', { class: 'dlg-wide', 'aria-labelledby': titleId }, form);
 
     async function run(): Promise<void> {
       if (busy) return;

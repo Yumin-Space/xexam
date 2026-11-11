@@ -1,7 +1,7 @@
 name: Build, test and publish
 
-# Xexam pipeline: check -> test (frontend, backend, Nginx / full-stack checks of the two images) -> build amd64 + arm64 -> publish the two images -> create the Release.
-#   - Push to main: everything runs, the xexam-frontend and xexam-backend images are published, and the GitHub Release is created (or updated).
+# Xexam pipeline: check -> test (frontend, backend, AI service, Nginx / full-stack checks of the three images) -> build amd64 + arm64 -> publish the three images -> create the Release.
+#   - Push to main: everything runs, the xexam-frontend, xexam-backend and xexam-ai-service images are published, and the GitHub Release is created (or updated).
 #   - Push to dev, pull requests and other branches: check and test only, **never publish** (publish and release require refs/heads/main).
 on:
   push:
@@ -26,9 +26,10 @@ env:
 jobs:
   # (1) Check: VERSION holds CODE_VERSION (the code on this branch) and RELEASE_VERSION (the last published release, written
   #     by the release job below, never by hand). The newest changelog entry of EVERY README (English README.md at the root,
-  #     Japanese and Chinese in README/) and the backend / frontend manifests equal CODE_VERSION; the release badge at the top
-  #     of every README equals RELEASE_VERSION; the README, docker and docs layout is as documented and every relative link
-  #     resolves. Takes seconds; if it fails nothing else runs. Its output "version" is CODE_VERSION.
+  #     Japanese and Chinese in README/) and the backend / AI service / frontend manifests equal CODE_VERSION; the release badge
+  #     at the top of every README equals RELEASE_VERSION; docker/docker-compose.yml pulls the three images; the README, docker
+  #     and docs layout is as documented and every relative link resolves. Takes seconds; if it fails nothing else runs. Its
+  #     output "version" is CODE_VERSION.
   check:
     name: check version and changelog
     runs-on: ubuntu-latest
@@ -62,7 +63,8 @@ jobs:
             # The release badge at the top shows the last published release; the release job updates it (scripts/set-release-version.py)
             grep -q "img.shields.io/badge/release-v$rv-green" "$f" || { echo "The release badge at the top of $f does not say v$rv (RELEASE_VERSION). Do not edit it by hand: the release job sets it after a release."; exit 1; }
           done
-          for m in backend/Cargo.toml frontend/package.json; do
+          for m in backend/Cargo.toml ai-service/Cargo.toml frontend/package.json; do
+            [ -f "$m" ] || { echo "$m is missing"; exit 1; }
             mv=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[=:]' "$m" | sed -E 's/.*"([0-9][0-9.]*)".*/\1/')
             case "$mv" in "$v"|"$v".0) ;; *) echo "$m has version $mv but CODE_VERSION is $v"; exit 1;; esac
           done
@@ -72,6 +74,11 @@ jobs:
           for c in docker-compose.yml docker-compose.build.yml .env.example; do
             [ -f "docker/$c" ] || { echo "docker/$c is missing"; exit 1; }
             [ ! -e "$c" ] || { echo "$c belongs in docker/, not at the repository root"; exit 1; }
+          done
+          # docker-compose.yml pulls the three images from Docker Hub (the publish job checks that the namespace is the one it pushes to)
+          for img in xexam-backend xexam-ai-service xexam-frontend; do
+            grep -Eq "^[[:space:]]*image: docker\.io/[a-z0-9._-]+/$img:latest[[:space:]]*$" docker/docker-compose.yml || {
+              echo "docker/docker-compose.yml must pull the image with image: docker.io/<namespace>/$img:latest"; exit 1; }
           done
           # The eight current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN)
           for d in api architecture database deployment development migration security usage; do
@@ -102,7 +109,7 @@ jobs:
             done
           done
           [ "$bad" = 0 ] || exit 1
-          echo "version v$v, changelog entries present in all three READMEs, README / docker / docs layout as documented, links resolve, manifests match"
+          echo "version v$v, changelog entries present in all three READMEs, README / docker / docs layout as documented, links resolve, manifests match, compose pulls the three images"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   # (2) Frontend: type check, unit tests, build
@@ -156,28 +163,66 @@ jobs:
           cargo build
           python3 -I ../tests/integration/migrate_check.py target/debug/xexam-backend
 
-  # (2) Build both images on amd64, run the Nginx behaviour checks and the full-stack end-to-end check (compose up, import, submit, data survives removing the containers, docker stop)
-  stack:
-    name: stack (images, nginx checks, end to end)
-    needs: [frontend, backend]
+  # (2) AI service: format, clippy, all tests, and the TLS guard: its dependency tree has no OpenSSL, aws-lc or native-tls
+  #     (outbound TLS is rustls + ring with the Mozilla roots compiled in, so the runtime image needs no CA bundle)
+  ai-service:
+    name: ai-service (fmt, clippy, test, TLS guard)
+    needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ai-service
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+          rustup default 1.99.1
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ai-service/target
+          key: cargo-ai-service-${{ runner.os }}-${{ hashFiles('ai-service/Cargo.lock') }}
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --all-targets
+      - name: TLS guard (no aws-lc, openssl-sys or native-tls)
+        run: |
+          set -eu
+          tree=$(cargo tree -e normal --target all)
+          if printf '%s\n' "$tree" | grep -Eq '(aws-lc|openssl-sys|native-tls)'; then
+            printf '%s\n' "$tree" | grep -E '(aws-lc|openssl-sys|native-tls)'
+            echo "The AI service must not depend on aws-lc, openssl-sys or native-tls (TLS is rustls + ring)"
+            exit 1
+          fi
+          echo "TLS guard: no aws-lc, openssl-sys or native-tls in the dependency tree"
+
+  # (2) Build the three images on amd64, run the Nginx behaviour checks (two fake upstreams: the backend and the AI service) and the
+  #     full-stack end-to-end check (compose up, import, submit, AI with a made-up provider, data survives removing the containers, docker stop)
+  stack:
+    name: stack (images, nginx checks, end to end)
+    needs: [frontend, backend, ai-service]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - name: Build the frontend image and run the proxy checks
         run: |
           docker build -f nginx/Dockerfile -t xexam-frontend:test .
           python3 -I tests/integration/nginx_check.py xexam-frontend:test 18080
-      - name: End to end (compose up, import, attempts, persistence, docker stop)
+      - name: End to end (compose up, import, attempts, AI, persistence, docker stop)
         run: python3 -I tests/integration/stack_check.py 18090
 
-  # (2) arm64: both images are really built and really started under QEMU (the backend is cross-compiled with zig on the build machine, not compiled as Rust inside QEMU).
+  # (2) arm64: the three images are really built and really started under QEMU (the backend and the AI service are cross-compiled with zig on the build machine, not compiled as Rust inside QEMU).
   #    Private repositories cannot use GitHub's native arm64 runners, so running is emulated with QEMU. Build only, no push; discarded afterwards.
   arm64:
     name: arm64 (images build and start under QEMU)
-    needs: [check, frontend, backend]
+    needs: [check, frontend, backend, ai-service]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-qemu-action@v4
@@ -206,7 +251,18 @@ jobs:
           tags: xexam-frontend:arm64
           cache-from: type=gha,scope=frontend-arm64-check
           cache-to: type=gha,scope=frontend-arm64-check,mode=max
-      - name: Start both images and check them
+      - name: Build xexam-ai-service (arm64, not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ai-service/Dockerfile
+          platforms: linux/arm64
+          load: true
+          provenance: false
+          tags: xexam-ai-service:arm64
+          cache-from: type=gha,scope=ai-service-arm64-check
+          cache-to: type=gha,scope=ai-service-arm64-check,mode=max
+      - name: Start the three images and check them
         env:
           VERSION: ${{ needs.check.outputs.version }}     # CODE_VERSION, which /api/info reports
         run: |
@@ -230,20 +286,35 @@ jobs:
           done
           [ "$(docker exec arm64-frontend uname -m)" = "aarch64" ] || { echo "frontend is not aarch64"; exit 1; }
           docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
-          echo "arm64: both images build and start"
+          # The AI service alone (no backend): its own healthcheck and /healthz do not depend on the backend or a provider.
+          # The token only lets it start without the link volume; the value is a throw-away one for this check.
+          docker volume create arm64aidata >/dev/null
+          docker run -d --name xexam-ai-service-arm64 --platform linux/arm64 -e XEXAM_INTERNAL_TOKEN=arm64-check-0123456789abcdefghijklmnopqrstuvwxyz \
+            -v arm64aidata:/data xexam-ai-service:arm64 >/dev/null
+          for i in $(seq 1 60); do
+            docker exec xexam-ai-service-arm64 xexam-ai-service healthcheck >/dev/null 2>&1 && break
+            [ "$i" = 60 ] && { docker logs xexam-ai-service-arm64; echo "ai-service did not become healthy"; exit 1; }
+            sleep 2
+          done
+          health=$(docker exec xexam-ai-service-arm64 wget -qO- http://127.0.0.1:8766/healthz)
+          echo "ai-service /healthz: $health"
+          # The AI service answers compact JSON: parse it, never grep it
+          printf '%s' "$health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["arch"]=="aarch64" and d["version"]==sys.argv[1], d' "$VERSION" \
+            || { echo "ai-service is not running as aarch64 with version $VERSION"; exit 1; }
+          echo "arm64: the three images build and start"
       - name: Clean up
         if: always()
         run: |
-          docker rm -f arm64-backend arm64-frontend >/dev/null 2>&1 || true
-          docker volume rm arm64data >/dev/null 2>&1 || true
+          docker rm -f arm64-backend arm64-frontend xexam-ai-service-arm64 >/dev/null 2>&1 || true
+          docker volume rm arm64data arm64aidata >/dev/null 2>&1 || true
 
-  # (3) Only when every check has passed are the two images (amd64 + arm64) published, to Docker Hub (public; what
+  # (3) Only when every check has passed are the three images (amd64 + arm64) published, to Docker Hub (public; what
   #     docker/docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other
   #     branches never publish. Docker Hub needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access
   #     token with Read & Write). The namespace is DOCKERHUB_USERNAME, or the repository variable DOCKERHUB_NAMESPACE if set.
   publish:
     name: publish ${{ matrix.image }} (amd64 + arm64)
-    needs: [check, frontend, backend, stack, arm64]
+    needs: [check, frontend, backend, ai-service, stack, arm64]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -258,6 +329,8 @@ jobs:
             dockerfile: backend/Dockerfile
           - image: xexam-frontend
             dockerfile: nginx/Dockerfile
+          - image: xexam-ai-service
+            dockerfile: ai-service/Dockerfile
     steps:
       - uses: actions/checkout@v7
 
@@ -355,7 +428,7 @@ jobs:
             echo "Published: $img:latest and $img:v$VERSION, both containing amd64 and arm64 (digest $DIGEST)"
           done
 
-  # (4) After both images are published and verified, create (or update) the Release of this version on GitHub's Releases page.
+  # (4) After the three images are published and verified, create (or update) the Release of this version on GitHub's Releases page.
   #    The notes come from the changelog of the English README (scripts/release-notes.py), so the Release page and the README always agree.
   #    If the images were not published this job is never reached, so the Release page never shows a version whose images cannot be pulled.
   release:

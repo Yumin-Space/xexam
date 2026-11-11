@@ -66,6 +66,10 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-pct.hi { color: var(--answer-right); }
 .rec-pct.lo { color: var(--answer-wrong); }
 .rec-act { text-align: right; }
+/* The row's Delete never wraps (it broke into "删 / 除" at about 800px, v0.8): the button keeps one line and its cell takes
+   only the button's width, so the other columns give way instead */
+.rec-table td.rec-act { width: 1%; white-space: nowrap; }
+.rec-table .btn.rec-del { white-space: nowrap; }
 /* "Delete": red text with a soft red hover. In the list it stays a quiet grey until its row is hovered or it has the
    focus, so a column of red words does not shout (the dialog still asks before anything is deleted). */
 .btn.rec-del { color: var(--danger); }
@@ -106,6 +110,8 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
   .rec-table .rec-pct { grid-column: 4; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
   .rec-table .rec-banks { grid-column: 1 / -1; min-width: 0; }
   .rec-table .rec-act { grid-column: 4; align-self: end; display: flex; justify-content: flex-end; margin-top: 0; }
+  /* (a card's grid gives the Delete column its own width: no table-cell sizing here) */
+  .rec-table td.rec-act { width: auto; }
 }
 /* A card keeps its own white under the hover fill */
 @media (max-width: 760px) and (hover: hover) {

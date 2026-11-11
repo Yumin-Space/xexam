@@ -4,10 +4,46 @@
 //   · the proxy's rate limit ('tooMany', v0.7.5): "too many requests, wait a few seconds", without the sign-in hint;
 //   · network / unexpected / bare status errors: generic texts from the catalog;
 //   · LocalError: an error raised by the page itself (catalog key + params), translated lazily so a language switch also switches it.
+//   · v0.8: an error of the AI routes carries a stable code: `ai.<x>` is the catalog text `ai.err.<x>` (provider problems
+//     `ai.up.*` are `ai.err.up.*`), with the number of a reached limit as {n}; `auth.guard` (Nginx) is `ai.err.guard`;
+//     `auth.signin` / `auth.password` carry the backend's own texts and are translated like any backend message.
 import { ApiError } from '../api/client.ts';
-import { t, uiLang, type MsgKey, type Params } from './index.ts';
+import { DEFAULT_LIMITS } from '../domain/ai-settings.ts';
+import { hasKey, localeTag, t, uiLang, type MsgKey, type Params } from './index.ts';
 import { localizeServerMessage } from './server-messages.ts';
 import { waitText } from './wait.ts';
+
+/** The number an AI limit text states when the answer did not give it: the defaults of the safety limits */
+const LIMIT_OF: Record<string, number> = {
+  'ai.tooLong': DEFAULT_LIMITS.messageChars,
+  'ai.chatFull': DEFAULT_LIMITS.messagesPerChat,
+  'ai.messageLimit': DEFAULT_LIMITS.messagesPerChat,
+  'ai.chatLimit': DEFAULT_LIMITS.chatsPerUser,
+  'ai.memoryFull': DEFAULT_LIMITS.memoriesPerUser,
+  'ai.memoryLimit': DEFAULT_LIMITS.memoriesPerUser,
+  'ai.memoryTooLong': DEFAULT_LIMITS.memoryChars,
+};
+
+/** The catalog key of an AI error code, or null when the catalog has no text for it */
+function aiKey(code: string): MsgKey | null {
+  if (code === 'auth.guard') return 'ai.err.guard';
+  if (!code.startsWith('ai.')) return null;
+  const key = `ai.err.${code.slice(3)}`;
+  return hasKey('en', key) ? (key as MsgKey) : null;
+}
+
+/** Whether an AI error code has a text of its own */
+export const knownAiCode = (code: string): boolean => aiKey(code) != null;
+
+/**
+ * The text of an AI error code (a stream's error event, a failed answer, a test result). `limit`: the number the answer
+ * gave for a limit that was reached. An unknown code falls back to the generic internal error of AI.
+ */
+export function aiCodeText(code: string, limit?: number): string {
+  const key = aiKey(code) ?? 'ai.err.internal';
+  const n = limit ?? LIMIT_OF[code];
+  return t(key, n == null ? undefined : { n: n.toLocaleString(localeTag()) });
+}
 
 export class LocalError extends Error {
   readonly key: MsgKey;
@@ -24,6 +60,7 @@ export class LocalError extends Error {
 export function errorText(e: unknown, fallback: MsgKey = 'err.generic'): string {
   if (e instanceof LocalError) return t(e.key, e.params);
   if (e instanceof ApiError) {
+    if (e.code && aiKey(e.code)) return aiCodeText(e.code, e.limit);
     switch (e.kind) {
       case 'http':
         // Too many failed sign-ins / password checks: say how long the lock still runs

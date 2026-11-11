@@ -14,23 +14,38 @@
 // The list is also read again quietly when the window comes back into view or gets the focus, and every 30 seconds while the
 // page is visible, so a lock that starts while the page is open shows up (never while a form or dialog is open, or a change
 // runs, so nothing typed or focused is redrawn away).
+// v0.8: each plain user's row has an "AI+ service" switch (no confirmation; switching off keeps their AI data) and the AI+
+// badge; the New user form has an AI+ box under the role. Round 2 (owner): the switches and the box exist only while AI+
+// is available (ai-service connected and the AI+ service on in AI settings; `aiAvailable` of every list answer,
+// domain/user-admin.ts); a switch shows its new position only after the server said yes, and a refusal of a page drawn
+// before AI+ went away ("Turn on the AI+ service in AI settings first.") is shown as it is, never as a success. The badge
+// follows domain/badge-state.ts: bright, dark with the reason in a tooltip, or none. The question-bank choice (New user form and the "Change" dialog) is the
+// compact block the owner drew: one row "Manage banks · Select all · Deselect all" directly on top of the list, "Include
+// banks imported later" as the first entry of the list, the explanations as tooltips (hover and keyboard focus).
 import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
-import { createUser, deleteUser, fetchUsers, resetUserPassword, unlockUser, updateUser } from '../api/users.ts';
+import { createUser, deleteUser, fetchUsers, resetUserPassword, unlockUser, updateUser, type UsersList } from '../api/users.ts';
+import { aiBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
+import { miniIcon } from '../components/mini-icons.ts';
+import { miniSwitch } from '../components/mini-switch.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
+import { tipEl, withTip } from '../components/tooltip.ts';
+import { badgeState } from '../domain/badge-state.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
+import { aiLineKind, createAi, isServiceOff } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
 import { t, tn, uiLang } from '../i18n/index.ts';
 import { waitShort } from '../i18n/wait.ts';
-import { onRouteChange, onSignedIn, refreshLibrary, render } from '../state/actions.ts';
+import { onRouteChange, onSignedIn, refreshAi, refreshLibrary, render } from '../state/actions.ts';
 import {
-  accessOf, accessView, draftOf, editChange, isTicked, ownedBankNames, ownerView, sameAccess, selectAllState, toggleAll, toggleBank,
-  type AccessDraft,
+  accessChange, accessOf, accessView, deselectAllBanks, draftOf, editChange, isTicked, ownedBankNames, ownerView, toggleAll,
+  toggleBank, toolState, type AccessDraft,
 } from '../state/bank-access.ts';
+import { aiStatus } from '../state/ai.ts';
 import { S } from '../state/store.ts';
 import type { BankSummary, Role, UserRow } from '../types/api.ts';
 import { ask, formDialog } from '../utils/dialog.ts';
@@ -43,6 +58,8 @@ const ROLE_DESC: Record<Role, 'users.role.userDesc' | 'users.role.adminDesc'> = 
 // ---------------------------------------------------------------- page-local state
 
 let users: UserRow[] | null = null;
+/** v0.8 round 2: AI+ is available, from the newest list answer (false until the first one) */
+let aiAvailable = false;
 let loading = false;
 let loadError: unknown = null;
 /** Read the list again on the next render (set whenever the page is opened) */
@@ -59,11 +76,11 @@ const add = {
   open: false, username: '', password: '', role: 'user' as Role, shown: false, busy: false, error: null as string | null,
   /**
    * The question banks the new user sees: nothing ticked and "Include banks imported later" off by default (owner, v0.6.5),
-   * so they see none until chosen
+   * so they see none until chosen; with (v0.8) "Manage banks", the bank-manager permission (off by default)
    */
   banks: draftOf([], false),
-  /** The bank-manager permission (off by default) */
-  manager: false,
+  /** v0.8: the AI+ service (off by default; sent only while the box is drawn, i.e. while AI+ is available) */
+  ai: false,
 };
 /** The element to focus after the next render */
 let focusNext: string | null = null;
@@ -79,7 +96,7 @@ const POLL_MS = 30_000;
 
 function resetAdd(): void {
   Object.assign(add, {
-    open: false, username: '', password: '', role: 'user', shown: false, busy: false, error: null, banks: draftOf([], false), manager: false,
+    open: false, username: '', password: '', role: 'user', shown: false, busy: false, error: null, banks: draftOf([], false), ai: false,
   });
 }
 
@@ -189,10 +206,9 @@ async function load(): Promise<void> {
   loading = true;
   const mine = ++seq;
   try {
-    const list = await fetchUsers();
+    const answer = await fetchUsers();
     if (mine !== seq) return;
-    users = list;
-    noteLocks(list);
+    take(answer);
     loadError = null;
   } catch (e) {
     if (mine !== seq) return;
@@ -203,12 +219,19 @@ async function load(): Promise<void> {
   if (onUsersPage()) render();
 }
 
+/** The list and the AI+ availability of an answer (every answer has both) */
+function take(answer: UsersList): void {
+  users = answer.users;
+  aiAvailable = answer.aiAvailable;
+  noteLocks(answer.users);
+}
+
 /** The list from a change's answer (newer than any list still being read) */
-function adopt(list: UserRow[]): void {
+function adopt(answer: UsersList): void {
   seq += 1;
   loading = false;
-  users = list;
-  noteLocks(list);
+  take(answer);
+  const list = answer.users;
   loadError = null;
   // The signed-in administrator may have renamed themselves
   const me = S.user && list.find((u) => u.id === S.user?.id);
@@ -276,82 +299,144 @@ interface ChecklistOptions {
   banks: readonly BankSummary[];
   get: () => AccessDraft;
   set: (d: AccessDraft) => void;
+  /** A request runs: every control off */
   disabled: boolean;
-  /** A short line under the legend */
-  hint?: string;
+  /** The role the choice is for: an administrator always sees and manages every bank (Manage banks hidden, the list off) */
+  role: Role;
   /** A short line under a bank's name (who uploaded it), or null */
   noteOf?: (b: BankSummary) => string | null;
 }
 
+interface Checklist {
+  el: HTMLFieldSetElement;
+  setDisabled: (off: boolean) => void;
+  setRole: (r: Role) => void;
+  /** Where a dialog puts the focus: the first bank's box, or "Include banks imported later" when there are no banks */
+  first: HTMLInputElement;
+}
+
 /**
- * The question-bank choice of a plain user (v0.7, as the owner drew it): one line above the list holds "Include banks
- * imported later" and, at its right end, "Select all", which ticks or unticks every listed bank and shows checked, unchecked
- * or indeterminate from the list; then one box per bank. On a phone the two do not fit on one line in English and Japanese:
- * the line wraps and "Select all" sits alone at the right of the next line (accepted; nothing overflows). The two settings are independent: "Include banks imported later"
- * adds only the banks imported from now on, and unticking a bank removes only that bank. Clicks change the boxes in place
- * (no redraw), so the keyboard focus stays where it is.
+ * The question-bank choice (v0.8, as the owner drew it), in the New user form and the "Change" dialog:
+ *   ┌ ☐ Manage banks   ☐ Select all   ☐ Deselect all ┐   one row directly on top of the list, sharing its border
+ *   │ ☐ Include banks imported later                  │   the first entry of the list, with an icon and a thin divider
+ *   │ ☐ General knowledge   uploaded by …             │
+ *   └ …                                               ┘
+ * The explanations are tooltips (hover and keyboard focus), no paragraphs. "Select all" / "Deselect all" change only the
+ * listed banks; "Include banks imported later" and "Manage banks" stay as they are. "Deselect all" with nothing ticked shows
+ * ticked and refuses the click (still focusable, so its tip can be read). For an administrator Manage banks is hidden and
+ * the rest is off (administrators always see and manage every bank; the legend's tip then says so). Clicks change the boxes
+ * in place (no redraw), so the keyboard focus stays where it is.
  */
-function bankChecklist(o: ChecklistOptions): { el: HTMLFieldSetElement; setDisabled: (off: boolean) => void } {
-  let off = o.disabled;
+function bankChecklist(o: ChecklistOptions): Checklist {
+  let busy = o.disabled;
+  let role = o.role;
+  const id = o.id;
+  const listId = `${id}-list`;
   const boxes: Array<[number, HTMLInputElement]> = [];
-  const listId = `${o.id}-list`;
+
+  // The legend's explanation: a small info button next to the legend (not inside it)
+  const legendTip = tipEl(`${id}-tip-banks`, '');
+  const legendBtn = h('button', {
+    type: 'button', class: 'tip-btn', 'aria-label': t('users.tip.banksBtn'), 'aria-describedby': legendTip.id,
+  }, miniIcon('info'));
+
+  const manage = h('input', {
+    type: 'checkbox', id: `${id}-manage`, 'aria-describedby': `${id}-tip-manage`,
+    onchange: () => o.set({ ...o.get(), manage: manage.checked }),
+  });
+  const manageWrap = withTip(
+    h('label', { class: 'us-tool', for: manage.id }, manage, miniIcon('key'), h('span', null, t('users.banks.manage'))),
+    tipEl(`${id}-tip-manage`, t('users.tip.manage')));
+  manageWrap.id = `${id}-manage-wrap`;
+
+  const all = h('input', {
+    type: 'checkbox', id: `${id}-all`, 'aria-controls': listId, 'aria-describedby': `${id}-tip-all`,
+    onchange: () => {
+      o.set(toggleAll(o.get(), o.banks));
+      sync();
+    },
+  });
+  const none = h('input', {
+    type: 'checkbox', id: `${id}-none`, 'aria-controls': listId, 'aria-describedby': `${id}-tip-none`,
+    // Nothing is ticked: the box shows ticked and does nothing (aria-disabled, still focusable)
+    onclick: (e: MouseEvent) => {
+      if (none.getAttribute('aria-disabled') === 'true') e.preventDefault();
+    },
+    onchange: () => {
+      o.set(deselectAllBanks(o.get()));
+      sync();
+    },
+  });
   const later = h('input', {
-    type: 'checkbox', id: `${o.id}-later`,
+    type: 'checkbox', id: `${id}-later`, 'aria-describedby': `${id}-tip-later`,
     onchange: () => o.set({ ...o.get(), later: later.checked }),
   });
-  // "Select all" only when there is something to select
-  const all = o.banks.length
-    ? h('input', {
-      type: 'checkbox', id: `${o.id}-all`, 'aria-controls': listId,
+
+  const rows = o.banks.map((b) => {
+    const box = h('input', {
+      type: 'checkbox', id: `${id}-b${b.id}`, value: String(b.id),
       onchange: () => {
-        o.set(toggleAll(o.get(), o.banks));
+        o.set(toggleBank(o.get(), b.id, box.checked));
         sync();
       },
-    })
-    : null;
+    });
+    boxes.push([b.id, box]);
+    const note = o.noteOf?.(b) ?? null;
+    return h('li', null, h('label', { class: 'us-bank', for: box.id }, box,
+      h('span', { class: 'us-bank-t' }, h('span', { class: 'us-bank-n' }, b.name), note ? h('span', { class: 'us-bank-h' }, note) : null)));
+  });
+
   const sync = (): void => {
     const d = o.get();
+    const admin = role === 'admin';
+    const off = busy || admin;
+    const noBanks = o.banks.length === 0;
+    legendTip.textContent = t(admin ? 'users.tip.adminBanks' : 'users.tip.banks');
+    manageWrap.hidden = admin;
+    manage.checked = d.manage;
+    manage.disabled = busy;
     later.checked = d.later;
     later.disabled = off;
-    for (const [id, box] of boxes) {
-      box.checked = isTicked(d, id);
+    for (const [bankId, box] of boxes) {
+      box.checked = isTicked(d, bankId);
       box.disabled = off;
     }
-    if (all) {
-      const state = selectAllState(d, o.banks);
-      all.checked = state === 'all';
-      all.indeterminate = state === 'some';
-      all.disabled = off;
-    }
+    const state = toolState(d, o.banks);
+    all.checked = !noBanks && state === 'all';
+    all.indeterminate = state === 'some';
+    all.disabled = off || noBanks;
+    none.checked = state === 'none';
+    none.disabled = off || noBanks;
+    if (state === 'none' && !none.disabled) none.setAttribute('aria-disabled', 'true');
+    else none.removeAttribute('aria-disabled');
   };
-  const list = o.banks.length
-    ? h('ul', { class: 'us-banklist', id: listId }, o.banks.map((b) => {
-      const box = h('input', {
-        type: 'checkbox', id: `${o.id}-b${b.id}`, value: String(b.id),
-        onchange: () => {
-          o.set(toggleBank(o.get(), b.id, box.checked));
-          sync();
-        },
-      });
-      boxes.push([b.id, box]);
-      const note = o.noteOf?.(b) ?? null;
-      return h('li', null, h('label', { class: 'us-bank', for: box.id }, box,
-        h('span', { class: 'us-bank-t' }, h('span', { class: 'us-bank-n' }, b.name), note ? h('span', { class: 'us-bank-h' }, note) : null)));
-    }))
-    : h('p', { class: 'us-banks-empty' }, t('users.banks.noneYet'));
-  const hintId = o.hint ? `${o.id}-hint` : null;
-  const el = h('fieldset', { class: 'fld us-banksfld', 'aria-describedby': hintId },
+
+  const el = h('fieldset', { class: 'fld us-banksfld' },
     h('legend', { class: 'fld-l' }, t('users.field.banks')),
-    o.hint ? h('p', { class: 'fld-hint', id: hintId }, o.hint) : null,
-    h('div', { class: 'us-bankhead' },
-      h('label', { class: 'us-bankopt us-later', for: later.id }, later, h('span', null, t('users.banks.later'))),
-      all ? h('label', { class: 'us-bankopt us-selall', for: all.id }, all, h('span', null, t('users.banks.selectAll'))) : null),
-    list);
+    withTip(legendBtn, legendTip, 'us-legend-tip'),
+    h('div', { class: 'us-banktools' },
+      manageWrap,
+      withTip(h('label', { class: 'us-tool', for: all.id }, all, miniIcon('checkAll'), h('span', null, t('users.banks.selectAll'))),
+        tipEl(`${id}-tip-all`, t('users.tip.selectAll'))),
+      withTip(h('label', { class: 'us-tool', for: none.id }, none, miniIcon('squareMinus'), h('span', null, t('users.banks.deselectAll'))),
+        tipEl(`${id}-tip-none`, t('users.tip.deselectAll')))),
+    h('ul', { class: 'us-banklist', id: listId },
+      // Always the first entry, also when there are no banks yet
+      h('li', { class: 'us-later-row' }, withTip(
+        h('label', { class: 'us-bank us-later', for: later.id }, later, miniIcon('clockPlus'), h('span', { class: 'us-bank-n' }, t('users.banks.later'))),
+        tipEl(`${id}-tip-later`, t('users.tip.later')))),
+      rows,
+      o.banks.length ? null : h('li', { class: 'us-banks-empty' }, t('users.banks.noneYet'))));
   sync();
   return {
     el,
+    first: boxes[0]?.[1] ?? later,
     setDisabled: (v: boolean) => {
-      off = v;
+      busy = v;
+      sync();
+    },
+    setRole: (r: Role) => {
+      role = r;
       sync();
     },
   };
@@ -366,28 +451,27 @@ function bankNoteFor(u: Pick<UserRow, 'id' | 'canManageBanks' | 'role'> | null):
   };
 }
 
-/** The bank manager checkbox; administrators always manage every bank, so for them it shows ticked and cannot be changed */
-function managerBox(id: string, value: boolean, role: Role, disabled: boolean, onChange: (v: boolean) => void): {
-  el: HTMLElement; setRole: (r: Role) => void;
-} {
-  const box = h('input', { type: 'checkbox', id, onchange: () => onChange(box.checked) });
-  const hint = h('span', { class: 'dlg-check-h', id: `${id}-hint` });
-  box.setAttribute('aria-describedby', hint.id);
-  const setRole = (r: Role): void => {
-    // The stored flag stays as it was chosen; it matters again only if the administrator is made a plain user later
-    box.checked = r === 'admin' ? true : value;
-    box.disabled = disabled || r === 'admin';
-    hint.textContent = t(r === 'admin' ? 'users.field.managerAdmin' : 'users.field.managerHint');
-  };
-  box.addEventListener('change', () => {
-    value = box.checked;
+/**
+ * v0.8: the New user form's AI+ service box, on its own line under the role (never inside the bank choice); its
+ * explanation is a tooltip. Hidden for an administrator (administrators always have AI while AI+ is available). Round 2:
+ * drawn only while AI+ is available (null otherwise; the form then creates the user without the service).
+ */
+function aiBox(): { el: HTMLElement; setRole: (r: Role) => void } | null {
+  if (!aiAvailable) return null;
+  const box = h('input', {
+    type: 'checkbox', id: 'us-add-ai', checked: add.ai, disabled: add.busy, 'aria-describedby': 'us-add-ai-tip',
+    onchange: () => {
+      add.ai = box.checked;
+    },
   });
-  setRole(role);
-  return {
-    el: h('label', { class: 'dlg-check us-check us-manager', for: id }, box,
-      h('span', null, h('span', { class: 'dlg-check-l' }, t('users.field.manager')), hint)),
-    setRole,
+  const el = withTip(
+    h('label', { class: 'dlg-check us-check us-aibox', for: box.id }, box, miniIcon('sparkle'), h('span', { class: 'dlg-check-l' }, t('users.field.ai'))),
+    tipEl('us-add-ai-tip', t('users.tip.ai')), 'us-aiwrap');
+  const setRole = (r: Role): void => {
+    el.hidden = r === 'admin';
   };
+  setRole(add.role);
+  return { el, setRole };
 }
 
 // ---------------------------------------------------------------- add a user
@@ -412,14 +496,26 @@ async function submitAdd(): Promise<void> {
   render();
   try {
     const access = accessOf(add.banks, S.banks);
-    adopt(await createUser(name, add.password, add.role, access.banks, access.newBanks, add.manager));
+    const admin = add.role === 'admin';
+    // v0.8 round 2: the AI+ service only when its box is drawn (AI+ available, a plain user) and ticked
+    const ai = createAi(aiAvailable, add.role, add.ai);
+    // An administrator always sees and manages every bank and has AI while AI+ is available: nothing of that is stored
+    adopt(await createUser({
+      username: name, password: add.password, role: add.role, banks: access.banks, newBanks: access.newBanks,
+      canManageBanks: admin ? false : access.canManageBanks, ai,
+    }));
+    if (ai) void refreshAi(true);
     toast(t('users.created', { name }));
     resetAdd();
     focusNext = 'us-add-btn';
   } catch (e) {
     add.error = errorText(e);
     add.busy = false;
-    focusNext = e instanceof ApiError && e.status === 409 ? 'us-add-name' : null;
+    // AI+ went away while the form was open (409 ai.serviceOff, nothing created): the list is read again, so the AI+ box
+    // disappears and the form can be sent again without it. Any other 409 is a username that is taken.
+    const serviceOff = isServiceOff(e);
+    if (serviceOff) void load();
+    focusNext = e instanceof ApiError && e.status === 409 && !serviceOff ? 'us-add-name' : null;
     // A chosen bank was deleted meanwhile: show the banks as they are now (the boxes of the others stay ticked)
     if (e instanceof ApiError && e.status === 400) refreshLibrary().then(() => onUsersPage() && render(), () => {});
   }
@@ -444,19 +540,16 @@ function addForm(): HTMLElement {
       add.shown = v;
     },
   });
-  // The bank choice and the permission only matter for plain users: for an administrator they are shown as "always"
+  // The bank choice, Manage banks and AI+ only matter for plain users (administrators always have all of it)
   const banks = bankChecklist({
-    id: 'us-add-banks', banks: S.banks, disabled: add.busy || add.role === 'admin', hint: t('users.field.banksHint'),
+    id: 'us-add-banks', banks: S.banks, disabled: add.busy, role: add.role,
     get: () => add.banks,
     set: (d) => {
       add.banks = d;
     },
     noteOf: bankNoteFor(null),
   });
-  const adminNote = h('p', { class: 'us-why us-adminnote', hidden: add.role !== 'admin' }, t('users.banks.admin'));
-  const manager = managerBox('us-add-manager', add.manager, add.role, add.busy, (v) => {
-    add.manager = v;
-  });
+  const ai = aiBox();
   return h('form', {
     class: 'us-add', id: 'us-add', novalidate: true, 'aria-labelledby': 'us-add-h', 'aria-busy': add.busy ? 'true' : null,
     onsubmit: (e: SubmitEvent) => {
@@ -465,13 +558,12 @@ function addForm(): HTMLElement {
     },
   },
   h('h3', { id: 'us-add-h' }, t('users.add.title')),
-  h('div', { class: 'us-add-grid' }, name.el, pass.el, roleChoice('us-add-role', add.role, add.busy, (r) => {
+  h('div', { class: 'us-add-grid' }, name.el, pass.el, h('div', { class: 'us-rolecol' }, roleChoice('us-add-role', add.role, add.busy, (r) => {
     add.role = r;
-    banks.setDisabled(add.busy || r === 'admin');
-    adminNote.hidden = r !== 'admin';
-    manager.setRole(r);
-  })),
-  h('div', { class: 'us-add-access' }, banks.el, h('div', { class: 'us-add-side' }, manager.el, adminNote)),
+    banks.setRole(r);
+    ai?.setRole(r);
+  }), ai?.el ?? null)),
+  h('div', { class: 'us-add-access' }, banks.el),
   h('p', { class: 'us-add-note' }, t('users.add.note')),
   add.error ? h('div', { class: 'err', role: 'alert' }, h('p', null, add.error)) : null,
   h('div', { class: 'acts' },
@@ -507,26 +599,38 @@ function focusAfterChange(id: number, before: readonly UserRow[] | null, control
   return near ? `us-name-${near.id}` : 'us-list-h';
 }
 
-/** Runs one change of a user's row: the row shows it is busy, the answer replaces the list, a failure is shown above it. */
-async function change(u: UserRow, run: () => Promise<UserRow[]>, done: string, control: string): Promise<void> {
+/**
+ * Runs one change of a user's row: the row shows it is busy, the answer replaces the list, a failure is shown above it.
+ * The success toast comes only with the server's yes. v0.8 round 2: an AI+ switch of a page drawn before AI+ went away is
+ * refused (409 ai.serviceOff): that refusal is the toast, and the list is read again (its answer has no AI+ switches).
+ */
+async function change(u: UserRow, run: () => Promise<UsersList>, done: string, control: string): Promise<void> {
   if (busyId != null) return;
   const before = users;
   busyId = u.id;
   actionError = null;
   render();
+  let serviceOff = false;
   try {
     adopt(await run());
     toast(done);
   } catch (e) {
-    actionError = e;
-    refreshAfter(e);
+    serviceOff = isServiceOff(e);
+    if (serviceOff) {
+      toast(errorText(e));
+      void load();
+    } else {
+      actionError = e;
+      refreshAfter(e);
+    }
   }
   busyId = null;
   // Decided after the redraw, when the buttons show their new state
   focusNext = null;
   if (!onUsersPage()) return;
   render();
-  const target = focusAfterChange(u.id, before, control);
+  // (the AI+ switch disappears with the list that is being read again: the row's name keeps the focus)
+  const target = serviceOff ? `us-name-${u.id}` : focusAfterChange(u.id, before, control);
   document.getElementById(target)?.focus({ preventScroll: true });
 }
 
@@ -542,12 +646,9 @@ async function guarded(fn: () => Promise<void>): Promise<void> {
 
 function editUser(u: UserRow, lim: Limits): Promise<void> {
   return guarded(async () => {
+    // (v0.8: "Manage banks" moved into the bank choice of the "Change" dialog; the stored flag is kept as it is here)
     const draft = { username: u.username, role: u.role, enabled: !u.disabled, canManageBanks: u.canManageBanks };
     const locked = lim.self || lim.lastAdmin;
-    // The bank-manager permission (v0.6.5): changing it does not sign the user out; it applies at their next request
-    const manager = managerBox('us-edit-manager', u.canManageBanks, u.role, false, (v) => {
-      draft.canManageBanks = v;
-    });
     const name = field({
       id: 'us-edit-name', label: t('users.field.username'), value: u.username, hint: t('users.field.usernameHint'), maxlength: 40,
       onInput: (v) => {
@@ -564,11 +665,9 @@ function editUser(u: UserRow, lim: Limits): Promise<void> {
       name.el,
       roleChoice('us-edit-role', u.role, locked, (r) => {
         draft.role = r;
-        manager.setRole(r);
       }, locked ? 'us-edit-why' : undefined),
       h('label', { class: 'dlg-check us-check us-enabled' }, enabled,
         h('span', null, h('span', { class: 'dlg-check-l' }, t('users.field.enabled')), h('span', { class: 'dlg-check-h' }, t('users.field.enabledHint')))),
-      manager.el,
       locked ? h('p', { class: 'us-why', id: 'us-edit-why' }, lim.why) : h('p', { class: 'us-dlg-note' }, t('users.edit.signOutNote')),
     ];
     let saved: string | null = null;
@@ -645,14 +744,17 @@ async function currentBanks(): Promise<BankSummary[]> {
   }
 }
 
-/** "Question banks" of a plain user's row: the checklist dialog (the chosen banks, and whether later ones are included) */
+/**
+ * "Change" in a plain user's bank line: the bank choice in a dialog (the chosen banks, whether later ones are included and,
+ * v0.8, Manage banks). It opens with the focus on the first bank (never on Manage banks).
+ */
 function chooseBanks(u: UserRow): Promise<void> {
   return guarded(async () => {
     const banks = await currentBanks();
     if (!onUsersPage()) return;
-    let draft = draftOf(u.banks, u.newBanks);
+    let draft = draftOf(u.banks, u.newBanks, u.canManageBanks);
     const list = bankChecklist({
-      id: 'us-bdlg', banks, disabled: false,
+      id: 'us-bdlg', banks, disabled: false, role: u.role,
       get: () => draft,
       set: (d) => {
         draft = d;
@@ -662,19 +764,21 @@ function chooseBanks(u: UserRow): Promise<void> {
     let saved: string | null = null;
     const ok = await formDialog({
       title: t('users.banks.title', { name: u.username }),
-      body: t('users.banks.body', { name: u.username }),
       content: list.el,
+      focus: list.first,
       ok: t('users.edit.save'),
       busy: t('users.edit.saving'),
       submit: async () => {
-        const next = accessOf(draft, banks);
-        if (sameAccess(next, { banks: u.banks, newBanks: u.newBanks })) {
+        const ch = accessChange(u, draft, banks);
+        if (!ch.body) {
           saved = t('users.edit.nothing');
           return null;
         }
         try {
-          adopt(await updateUser({ id: u.id, banks: next.banks, newBanks: next.newBanks }));
-          saved = t('users.banks.done', { name: u.username });
+          adopt(await updateUser(ch.body));
+          saved = ch.banks
+            ? t('users.banks.done', { name: u.username })
+            : t(draft.manage ? 'users.banks.manageOn' : 'users.banks.manageOff', { name: u.username });
           return null;
         } catch (e) {
           refreshAfter(e);
@@ -699,6 +803,19 @@ function toggleDisabled(u: UserRow): Promise<void> {
     await change(u, () => updateUser({ id: u.id, disabled: !u.disabled }), t(u.disabled ? 'users.enabled' : 'users.disabled', { name: u.username }),
       `us-toggle-${u.id}`);
   });
+}
+
+/**
+ * v0.8: the AI+ service switch of a plain user's row. No confirmation either way: switching it off keeps the user's chats
+ * and memories (they can still read and delete them), and stops an answer being written for them. Round 2: the switch
+ * keeps its old position until the server answered; "on" / "off" is said only after a 200 (change()).
+ */
+function setAi(u: UserRow, on: boolean): Promise<void> {
+  return change(u, async () => {
+    const answer = await updateUser({ id: u.id, ai: on });
+    void refreshAi(true);
+    return answer;
+  }, t(on ? 'users.ai.done.on' : 'users.ai.done.off', { name: u.username }), `us-ai-${u.id}`);
 }
 
 function unlock(u: UserRow, locked: boolean): Promise<void> {
@@ -780,6 +897,35 @@ function bankLine(u: UserRow, blocked: boolean): HTMLElement {
     v.own.length ? h('span', { class: 'us-banks-own' }, t('users.banks.own', { names: v.own.join(sep) })) : null);
 }
 
+/**
+ * v0.8: the row's AI+ line, under the bank line: the "AI+ service" switch for a plain user; administrators always have AI
+ * while AI+ is available (no switch). Round 2: no line at all while AI+ is not available (the stored switch is kept).
+ */
+function aiLine(u: UserRow, blocked: boolean): HTMLElement | null {
+  const kind = aiLineKind(aiAvailable, u.role);
+  if (kind === 'none') return null;
+  if (kind === 'admin') {
+    return h('p', { class: 'us-ailine' }, h('span', { class: 'us-ai-l' }, t('users.field.ai')), h('span', { class: 'us-ai-admin' }, t('users.ai.admin')));
+  }
+  // A paused AI+ function (AI settings) is said in words here, next to the switch (the dark badge's tooltip is not enough on a phone)
+  return h('div', { class: 'us-ailine' },
+    h('span', { class: 'us-ai-l', 'aria-hidden': 'true' }, t('users.field.ai')),
+    miniSwitch({
+      id: `us-ai-${u.id}`, checked: u.ai, label: t('users.ai.aria', { name: u.username }), disabled: blocked,
+      onToggle: (on) => void setAi(u, on),
+    }),
+    u.ai && u.aiSuspended ? h('span', { class: 'tag k us-ai-paused', id: `us-ai-paused-${u.id}` }, t('users.ai.paused')) : null);
+}
+
+/**
+ * v0.8: the badge in a row (round 2, domain/badge-state.ts): bright while the user can use AI now; dark, with the reason
+ * in a tooltip, for a plain user with the AI+ service whose AI+ function is suspended or while AI+ is not available; none
+ * without the service (and for an administrator while AI+ is not available). Shown whether or not the switch is.
+ */
+function rowBadge(u: UserRow): HTMLElement | null {
+  return aiBadge(badgeState({ role: u.role, service: u.ai, suspended: u.aiSuspended, available: aiAvailable }), { admin: true });
+}
+
 function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
   const lim = limitsOf(u, list);
   const busy = busyId === u.id;
@@ -802,6 +948,7 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
     !u.disabled && u.mustChangePassword ? h('span', { class: 'tag k' }, t('users.status.mustChange')) : null,
     // v0.6.5: a plain user who may import and manage their own question banks (administrators always may)
     u.role === 'user' && u.canManageBanks ? h('span', { class: 'tag b' }, t('users.tag.manager')) : null,
+    rowBadge(u),
   ];
   const access = bankLine(u, blocked);
   const note = lockNote(u.lock, lock, {
@@ -824,6 +971,7 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
         h('span', { class: 'us-nw' }, m, i < meta.length - 1 ? h('span', { class: 'us-dot', 'aria-hidden': 'true' }, '·') : null),
       ])),
       access,
+      aiLine(u, blocked),
       // v0.7: Unlock sits at the end of the lock note (like "Change" in the bank line), so the row keeps its four actions on
       // one line on phones
       note || lock.unlock
@@ -875,6 +1023,16 @@ function listPanel(): HTMLElement {
     body);
 }
 
+/**
+ * One short line while the AI+ switches are hidden (AI+ not available): it says why. Only administrators reach this page,
+ * so it may name ai-service. Nothing before the first list answer (aiAvailable is not known yet) or while the list failed.
+ */
+function aiHiddenNote(): HTMLElement | null {
+  if (aiAvailable || !users || loadError) return null;
+  const disconnected = aiStatus().state === 'unavailable';
+  return h('p', { class: 'us-ainote', id: 'us-ainote', role: 'note' }, t(disconnected ? 'users.ai.hiddenDisconnected' : 'users.ai.hidden'));
+}
+
 export function renderUsers(): HTMLElement {
   if (wanted && !loading) void load();
   startTicker();
@@ -882,6 +1040,7 @@ export function renderUsers(): HTMLElement {
   const root = h('div', { class: 'page page-users' },
     pageHead(t('users.title')),
     h('p', { class: 'us-lead' }, t('users.lead')),
+    aiHiddenNote(),
     listPanel());
   focusAfter(root);
   return root;

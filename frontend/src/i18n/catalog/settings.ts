@@ -48,6 +48,11 @@ export default defineCatalog({
     'settings.auto.desc': 'After you answer a single-choice question, or every item of a hotspot question, the next question opens. Multiple-choice questions never move on by themselves.',
     'settings.auto.note': 'Off by default. While it is on, the exam page shows “{label}” at the top.',
 
+    'settings.aiMode': 'AI chat mode',
+    'settings.aiMode.normal': 'Normal',
+    'settings.aiMode.free': 'Free',
+    'settings.aiMode.hint': 'Normal: the AI answers as the study assistant and uses AI memories. Free: you talk to the model directly, without the study-assistant instructions and AI memories. It applies to all your AI chats.',
+
     'settings.reset': 'Reset to defaults',
     'settings.reset.desc': 'Theme, interface language and auto-advance go back to their defaults.',
     'settings.reset.button': 'Reset to defaults',
@@ -104,6 +109,11 @@ export default defineCatalog({
     'settings.auto.desc': '单选题选好、或热点题每项都选好后，自动跳到下一题。多选题不会自动跳转。',
     'settings.auto.note': '默认关闭。开启后，答题页顶部会显示「{label}」。',
 
+    'settings.aiMode': 'AI 对话模式',
+    'settings.aiMode.normal': '普通模式',
+    'settings.aiMode.free': '自由模式',
+    'settings.aiMode.hint': '普通模式：AI 按学习助手的设定回答，并使用 AI 记忆。自由模式：直接和模型对话，不使用学习助手的设定和 AI 记忆。对你所有的 AI 对话生效。',
+
     'settings.reset': '恢复默认设置',
     'settings.reset.desc': '把主题、界面语言和「答完自动跳到下一题」恢复成默认值。',
     'settings.reset.button': '恢复默认设置',
@@ -159,6 +169,11 @@ export default defineCatalog({
     'settings.auto.label': '回答したら自動で次の問題へ進む',
     'settings.auto.desc': '単一選択問題、またはホットスポット問題の全小問に答えると次の問題へ進みます。複数選択問題では進みません。',
     'settings.auto.note': '既定ではオフです。オンの間は、試験ページの上部に「{label}」と表示されます。',
+
+    'settings.aiMode': 'AI 対話モード',
+    'settings.aiMode.normal': '通常モード',
+    'settings.aiMode.free': 'フリーモード',
+    'settings.aiMode.hint': '通常モード：AI は学習アシスタントの設定に従って回答し、AI メモリーを使います。フリーモード：学習アシスタントの設定と AI メモリーを使わず、モデルと直接やり取りします。あなたのすべての AI チャットに適用されます。',
 
     'settings.reset': '既定の設定に戻す',
     'settings.reset.desc': 'テーマ、表示言語、「回答したら自動で次の問題へ進む」を既定値に戻します。',

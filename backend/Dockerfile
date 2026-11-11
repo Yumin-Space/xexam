@@ -49,11 +49,13 @@ FROM alpine:3.21
 RUN apk add --no-cache tzdata \
  && cp /usr/share/zoneinfo/UTC /etc/localtime \
  && addgroup -g 10001 app && adduser -D -u 10001 -G app app \
- && mkdir /data && chown app:app /data
+ && mkdir /data /link && chown app:app /data /link
 COPY --from=build /xexam-backend /usr/local/bin/xexam-backend
 COPY VERSION /VERSION
 USER app
-ENV XEXAM_DATA=/data XEXAM_HOST=0.0.0.0 XEXAM_PORT=8765 XEXAM_VERSION_FILE=/VERSION
+# /link (the volume xexam_link in docker-compose.yml): serve creates internal.token there, the secret it shares with the AI
+# service (ai-service mounts the same volume read-only). It never holds a database.
+ENV XEXAM_DATA=/data XEXAM_HOST=0.0.0.0 XEXAM_PORT=8765 XEXAM_VERSION_FILE=/VERSION XEXAM_LINK_DIR=/link
 VOLUME ["/data"]
 EXPOSE 8765
 # The backend's own healthcheck subcommand (it reaches itself via 127.0.0.1, unaffected by the Host allowlist)

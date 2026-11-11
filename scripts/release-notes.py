@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Build the GitHub Release notes for one version: take that version's section out of the changelog of the English README and
-append how to pull the two images.
+append how to pull the three images (the Nginx frontend, the Rust backend and the AI service ai-service).
 
 usage:  python3 scripts/release-notes.py <version, e.g. 0.4> <image prefixes, e.g. docker.io/name,ghcr.io/yumin-space> [README path]  > notes.md
 The first prefix is the main registry (the one docker/docker-compose.yml pulls from); any further ones are listed as mirrors.
@@ -40,20 +40,22 @@ def main():
     print()
     print('---')
     print()
-    print('**Images** (two: the Nginx frontend and the Rust backend; `amd64` and `arm64` are in the same tag, the right one is picked on pull)')
+    print('**Images** (three: the Nginx frontend, the Rust backend and the AI service; `amd64` and `arm64` are in the same tag, the right one is picked on pull)')
     print()
     print('```bash')
-    print('# Recommended: in the folder that holds docker-compose.yml, pull and start both (from the root of a clone, add -f docker/docker-compose.yml)')
+    print('# Recommended: in the folder that holds docker-compose.yml, pull and start all three (from the root of a clone, add -f docker/docker-compose.yml)')
     print('docker compose pull && docker compose up -d')
     print()
     print('# Or pull them one by one, pinned to this version')
     print('docker pull %s/xexam-frontend:v%s' % (prefix, version))
     print('docker pull %s/xexam-backend:v%s' % (prefix, version))
+    print('docker pull %s/xexam-ai-service:v%s' % (prefix, version))
     for m in mirrors:
         print()
         print('# The same images on %s (private mirror: docker login %s first)' % (m.split('/')[0], m.split('/')[0]))
         print('docker pull %s/xexam-frontend:v%s' % (m, version))
         print('docker pull %s/xexam-backend:v%s' % (m, version))
+        print('docker pull %s/xexam-ai-service:v%s' % (m, version))
     print('```')
     print()
     print('Full documentation: [English](../../blob/main/README.md) · [日本語](../../blob/main/README/README.ja.md) · [简体中文](../../blob/main/README/README.zh-CN.md)')

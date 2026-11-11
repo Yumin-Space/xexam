@@ -16,8 +16,11 @@
 //!   (`questions.data`, with `"lang": "en"`) like every other question field.
 //!   Before v0.7 was released, its pre-release builds stored `users.all_banks` instead of `users.new_banks` ("every bank,
 //!   including later ones"); `store::migrate` converts such a database on open (see there).
+//! - Schema v5 (v0.8) adds two columns to `users` and nothing else (`V5_COLUMNS`): the per-user AI+ switch and a random
+//!   identity stamp that the AI service keeps next to the user id. AI settings, chats and memories live in the AI
+//!   service's own database, never in this one.
 
-pub const SCHEMA_VERSION: &str = "4";
+pub const SCHEMA_VERSION: &str = "5";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -180,3 +183,17 @@ pub const V4_COLUMNS: [(&str, &str, &str); 4] = [
 /// Index that needs `banks.owner_id`, created after the columns.
 pub const MIGRATE_V4_INDEXES: &str =
     "CREATE INDEX IF NOT EXISTS idx_banks_owner ON banks(owner_id);";
+
+/// Columns added by schema v5 (same rules as [`V2_COLUMNS`]).
+pub const V5_COLUMNS: [(&str, &str, &str); 2] = [
+    // 1 = AI+ is on for this user: they may use AI Chat while AI is enabled in AI settings (the AI service decides that).
+    // Stored for administrators too but ignored for them (administrators always may), like can_manage_banks.
+    (
+        "users",
+        "ai_enabled",
+        "ai_enabled INTEGER NOT NULL DEFAULT 0",
+    ),
+    // Random identity stamp (32 lower-case hex digits), set once when the account is created and never changed. The AI
+    // service stores it next to the user id and drops AI data whose stamp differs (an id reused after a restore).
+    ("users", "uid", "uid TEXT NOT NULL DEFAULT ''"),
+];

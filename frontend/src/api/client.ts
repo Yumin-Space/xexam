@@ -11,6 +11,10 @@
 // requests, wait a few seconds" instead of "cannot reach the service". The sign-in lock keeps its own handling ('http').
 // Time limit (v0.7.5): a GET may give a time limit per try (the System log's poll reads do); a try that has not finished by
 // then (no answer, or a body that stalls) is aborted and fails with kind 'network', like a lost connection.
+// AI (v0.8): the AI service's error JSON carries a stable `code` (and `field` for a key error, `limit` for a limit that was
+// reached) besides the Chinese text; the pages translate by code. A 5xx without JSON on /api/ai/* means the AI service is
+// not there (code 'ai.unavailable'). postStream() reads the streamed answer (server-sent events over a POST) with no retry.
+import { createSseParser, SseTooLarge } from '../domain/sse.ts';
 
 export type ApiErrorKind =
   | 'http' // the service returned an error status code with a JSON body; `serverMessage` holds the backend's (Chinese) reason
@@ -26,16 +30,45 @@ export class ApiError extends Error {
   readonly serverMessage: string;
   /** Seconds to wait before trying again (a 429 of the login throttle: `"retryAfter"` in the body, else `Retry-After`) */
   readonly retryAfter: number | null;
+  /** v0.8: the stable error code of the AI routes (`ai.busy`, `auth.signin`, …), when the answer has one */
+  readonly code: string | undefined;
+  /** v0.8: the form field an error is about (`apiKey`, `gatewayKey`, a safety-limit key), when the answer names one */
+  readonly field: string | undefined;
+  /** v0.8: the number of a limit that was reached (`ai.tooLong`, `ai.chatLimit`, …), when the answer gives it */
+  readonly limit: number | undefined;
 
-  constructor(kind: ApiErrorKind, status = 0, serverMessage = '', retryAfter: number | null = null) {
-    super(serverMessage || `${kind} ${status}`);
+  constructor(kind: ApiErrorKind, status = 0, serverMessage = '', retryAfter: number | null = null, extra: ApiErrorExtra = {}) {
+    super(serverMessage || extra.code || `${kind} ${status}`);
     this.name = 'ApiError';
     this.kind = kind;
     this.status = status;
     this.serverMessage = serverMessage;
     this.retryAfter = retryAfter;
+    this.code = extra.code;
+    this.field = extra.field;
+    this.limit = extra.limit;
   }
 }
+
+export interface ApiErrorExtra {
+  code?: string | undefined;
+  field?: string | undefined;
+  limit?: number | undefined;
+}
+
+/** `code`, `field` and `limit` of an error body (each only when it has the right type) */
+function extraOf(body: unknown): ApiErrorExtra {
+  if (typeof body !== 'object' || body === null) return {};
+  const b = body as { code?: unknown; field?: unknown; limit?: unknown };
+  return {
+    code: typeof b.code === 'string' && b.code ? b.code : undefined,
+    field: typeof b.field === 'string' && b.field ? b.field : undefined,
+    limit: typeof b.limit === 'number' && Number.isFinite(b.limit) ? b.limit : undefined,
+  };
+}
+
+/** The AI routes (v0.8): answered by the AI service through Nginx (or the vite server) */
+const AI_PREFIX = '/api/ai/';
 
 /** Whole seconds from the body's `retryAfter` or the `Retry-After` header (seconds form only); null when neither is usable */
 function retryAfterOf(r: Response, body: unknown): number | null {
@@ -49,23 +82,26 @@ function isJson(r: Response): boolean {
   return /json/i.test(r.headers.get('Content-Type') ?? '');
 }
 
-async function parse<T>(r: Response): Promise<T> {
+async function parse<T>(r: Response, path = ''): Promise<T> {
   if (!isJson(r)) {
-    // Not JSON: an HTML login page, a proxy error page...
-    if (!r.ok) throw new ApiError('status', r.status);
+    // Not JSON: an HTML login page, a proxy error page... On the AI routes a 5xx without JSON means the AI service is not
+    // there (Nginx and the vite server answer every other AI problem with JSON)
+    if (!r.ok) throw new ApiError('status', r.status, '', null, r.status >= 500 && path.startsWith(AI_PREFIX) ? { code: 'ai.unavailable' } : {});
     throw new ApiError('unexpected', r.status);
   }
   let body: unknown;
   try {
     body = await r.json();
   } catch {
+    if (!r.ok && r.status >= 500 && path.startsWith(AI_PREFIX)) throw new ApiError('status', r.status, '', null, { code: 'ai.unavailable' });
     throw new ApiError('unexpected', r.status);
   }
   if (!r.ok) {
     const msg = typeof body === 'object' && body !== null && 'error' in body && typeof (body as { error: unknown }).error === 'string'
       ? (body as { error: string }).error
       : '';
-    throw msg ? new ApiError('http', r.status, msg, retryAfterOf(r, body)) : new ApiError('status', r.status);
+    const extra = extraOf(body);
+    throw msg || extra.code ? new ApiError('http', r.status, msg, retryAfterOf(r, body), extra) : new ApiError('status', r.status);
   }
   return body as T;
 }
@@ -92,7 +128,7 @@ export function isSignInError(e: unknown): boolean {
 
 function authProblem(path: string, e: ApiError): AuthProblem | null {
   if (e.status === 401 && path !== LOGIN_PATH) return 'signin';
-  if (e.status === 403 && e.kind === 'http' && e.serverMessage === MSG_PASSWORD_CHANGE_REQUIRED) return 'password';
+  if (e.status === 403 && e.kind === 'http' && (e.serverMessage === MSG_PASSWORD_CHANGE_REQUIRED || e.code === 'auth.password')) return 'password';
   return null;
 }
 
@@ -142,24 +178,97 @@ export interface GetOptions {
 /** What one try gave: the parsed answer, or the wait in seconds before the next try (Nginx's 429 on a GET / HEAD) */
 type Try<T> = { done: true; value: T } | { done: false; wait: number };
 
-async function attemptOnce<T>(input: string, init: RequestInit | undefined, retry: number | null, signal: AbortSignal | undefined): Promise<Try<T>> {
+/** One event of a streamed answer: its name and its data (parsed JSON) */
+export interface StreamEvent {
+  event: string;
+  data: unknown;
+}
+
+export interface StreamOptions {
+  /** Aborting it ends the request; postStream then rejects with an AbortError (see isAbortError) */
+  signal?: AbortSignal;
+  /** Called for every event, in order */
+  onEvent: (ev: StreamEvent) => void;
+}
+
+/** The error postStream rejects with when its signal aborted the request: the caller ignores it */
+function abortError(): Error {
+  return Object.assign(new Error('The request was aborted.'), { name: 'AbortError' });
+}
+
+/** Whether `e` is the rejection of an aborted request (not a failure to show) */
+export function isAbortError(e: unknown): boolean {
+  return typeof e === 'object' && e !== null && (e as { name?: unknown }).name === 'AbortError';
+}
+
+const isEventStream = (r: Response): boolean => /^text\/event-stream/i.test(r.headers.get('Content-Type') ?? '');
+
+/**
+ * Reads a 200 `text/event-stream` body to its end, event by event. A read error that is not an abort is a lost connection
+ * (kind 'network'); data that is not JSON, or an event over 1 MiB, is 'unexpected'.
+ */
+async function readEvents(r: Response, opts: StreamOptions): Promise<void> {
+  const reader = r.body?.getReader();
+  if (!reader) throw new ApiError('unexpected', r.status);
+  const decoder = new TextDecoder('utf-8');
+  const parser = createSseParser((ev) => {
+    let data: unknown;
+    try {
+      data = JSON.parse(ev.data);
+    } catch {
+      throw new ApiError('unexpected', r.status);
+    }
+    opts.onEvent({ event: ev.event, data });
+  });
+  try {
+    for (;;) {
+      let chunk: Awaited<ReturnType<typeof reader.read>>;
+      try {
+        chunk = await reader.read();
+      } catch (e) {
+        if (opts.signal?.aborted || isAbortError(e)) throw abortError();
+        throw new ApiError('network');
+      }
+      if (chunk.done) break;
+      parser.push(decoder.decode(chunk.value, { stream: true }));
+    }
+    parser.push(decoder.decode());
+    parser.end();
+  } catch (e) {
+    reader.cancel().catch(() => {});
+    if (e instanceof SseTooLarge) throw new ApiError('unexpected', r.status);
+    throw e;
+  }
+}
+
+async function attemptOnce<T>(
+  input: string, init: RequestInit | undefined, retry: number | null, signal: AbortSignal | undefined, stream?: StreamOptions,
+): Promise<Try<T>> {
   let r: Response;
   try {
     // same-origin: the session cookie (HttpOnly, SameSite=Strict) goes along; never to another origin
     r = await fetch(input, { credentials: 'same-origin', ...init, ...(signal ? { signal } : {}) });
-  } catch {
+  } catch (e) {
+    if (stream && (signal?.aborted || isAbortError(e))) throw abortError();
     throw new ApiError('network');
   }
   if (await isProxyLimit(r)) {
     if (retry != null) return { done: false, wait: retryWait(r, retry) };
     throw new ApiError('tooMany', 429);
   }
+  const path = input.split('?')[0] ?? input;
   try {
-    return { done: true, value: await parse<T>(r) };
+    if (stream && r.ok) {
+      if (!isEventStream(r)) throw new ApiError('unexpected', r.status);
+      await readEvents(r, stream);
+      return { done: true, value: undefined as T };
+    }
+    return { done: true, value: await parse<T>(r, path) };
   } catch (e) {
+    if (stream && isAbortError(e)) throw e;
     // A body cut off by the time limit is a lost connection, not "unexpected" (which hints at an expired login)
-    if (signal?.aborted) throw new ApiError('network');
-    const problem = e instanceof ApiError ? authProblem(input.split('?')[0] ?? input, e) : null;
+    if (signal?.aborted) throw stream ? abortError() : new ApiError('network');
+    const problem = e instanceof ApiError ? authProblem(path, e) : null;
     if (problem) authHandler(problem);
     throw e;
   }
@@ -193,6 +302,20 @@ export function postJson<T>(path: string, body?: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
+}
+
+/**
+ * v0.8: a POST whose answer is streamed as server-sent events (AI Chat's send and retry). Like postJson (credentials, JSON
+ * body) but never retried: Nginx's own 429 fails at once with kind 'tooMany'; any other refusal (401, the password change,
+ * an error JSON with code and field) fails like postJson; a 200 event stream calls `onEvent` for every event and resolves
+ * at its end. Aborting the signal rejects with an AbortError (isAbortError); a read error is kind 'network'.
+ */
+export async function postStream(path: string, body: unknown, opts: StreamOptions): Promise<void> {
+  await attemptOnce<void>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify(body ?? {}),
+  }, null, opts.signal, opts);
 }
 
 export function postFile<T>(path: string, file: File, extraHeaders: Record<string, string> = {}): Promise<T> {

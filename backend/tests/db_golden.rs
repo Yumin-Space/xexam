@@ -508,7 +508,7 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         meta,
         vec![
             ("banks_known".to_string(), "0".to_string()),
-            ("schema".to_string(), "4".to_string()),
+            ("schema".to_string(), "5".to_string()),
             ("users_known".to_string(), "1".to_string())
         ]
     );

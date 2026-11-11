@@ -97,6 +97,7 @@ fn app_with_throttle(
         failed_sign_ins: Default::default(),
         name_locks: Default::default(),
         old_layouts: Default::default(),
+        ai_link: Default::default(),
     }));
     App {
         router: build_router(state.clone()),
@@ -403,8 +404,8 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
         c.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r
             .get::<_, String>(0))
             .expect("schema"),
-        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs)
-        "4"
+        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well
+        "5"
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");
@@ -525,7 +526,7 @@ async fn login_ok_wrong_password_unknown_and_disabled_users() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(
         r.json(),
-        json!({"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true}})
+        json!({"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true, "aiAllowed": true}})
     );
     assert!(a
         .store
@@ -1004,8 +1005,11 @@ async fn users_crud_and_validation() {
             "banks",
             "newBanks",
             "canManageBanks",
+            // v0.8 (tests/v08_ai_link.rs)
+            "ai",
             "ownedBanks",
-            "lock"
+            "lock",
+            "aiSuspended"
         ]
     );
     assert_eq!(u["lock"], Value::Null);
@@ -1372,6 +1376,7 @@ async fn nobody_can_lock_themselves_out_and_the_last_admin_stays() {
         UserChange::Done(xexam_backend::database::UpdatedUser {
             username: "chef2".into(),
             renamed_from: Some("chef".into()),
+            ai_changed: None,
         })
     );
     // with a disabled second admin the first is still the last enabled one
@@ -1399,6 +1404,7 @@ async fn nobody_can_lock_themselves_out_and_the_last_admin_stays() {
         UserChange::Done(xexam_backend::database::UpdatedUser {
             username: "spare".into(),
             renamed_from: None,
+            ai_changed: None,
         })
     );
     assert_eq!(

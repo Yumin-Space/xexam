@@ -44,6 +44,12 @@ pub const MSG_NO_BANK_PERMISSION: &str = "你没有管理题库的权限，请�
 pub const MSG_NOT_BANK_OWNER: &str = "这个题库不是你上传的，只能更新或删除你自己上传的题库。";
 /// 400: `"banks"` of POST /api/users/create or /api/users/update names a bank that does not exist
 pub const MSG_UNKNOWN_BANKS: &str = "选择的题库中有不存在的（可能已被删除），请刷新页面后再试。";
+// v0.8
+/// 409: an AI+ feature switch of a user (POST /api/users/update with "ai", POST /api/users/create with "ai": true) while
+/// AI+ is not available (ai-service not connected, or the AI+ feature off in AI settings)
+pub const MSG_AI_SERVICE_OFF: &str = "请先在 AI 设置里开启 AI+ 功能。";
+/// `"code"` of the [`MSG_AI_SERVICE_OFF`] answer (the frontend translates by it)
+pub const CODE_AI_SERVICE_OFF: &str = "ai.serviceOff";
 
 pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: bool) -> Response {
     let len = body.len();
@@ -114,6 +120,11 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
         AppError::Status(code, m) => error_json(
             StatusCode::from_u16(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             m,
+            head_only,
+        ),
+        AppError::AiServiceOff => json_resp(
+            StatusCode::CONFLICT,
+            &json!({ "error": MSG_AI_SERVICE_OFF, "code": CODE_AI_SERVICE_OFF }),
             head_only,
         ),
         AppError::TooManyLogins { retry_after } => {

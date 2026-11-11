@@ -1,4 +1,4 @@
-# Xexam — run the two images that GitHub builds automatically, pulled directly from Docker Hub (public, no login needed).
+# Xexam — run the three images that GitHub builds automatically, pulled directly from Docker Hub (public, no login needed).
 # On a server you only need this one file: put it in a folder of its own and, in that folder, run
 #     docker compose up -d
 # In a clone of the repository this file is docker/docker-compose.yml; run it from the repository root with
@@ -9,7 +9,17 @@
 #
 #   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point)
 #                 ├─ frontend static files (baked into the image at build time)
-#                 └─ /api/ ──> xexam-backend (Rust, private network, no published port) ──> SQLite (named volume xexam_data → /data/xexam.db)
+#                 ├─ /api/    ──> xexam-backend (Rust, private network, no published port, no internet)
+#                 │                 ├─ SQLite (named volume xexam_data → /data/xexam.db)
+#                 │                 └─ writes the internal token (named volume xexam_link → /link/internal.token)
+#                 └─ /api/ai/ ──> checked by xexam-backend first, then ──> ai-service (Rust, no published port)
+#                                   ├─ SQLite + its key file (named volume xexam_ai_data → /data)
+#                                   ├─ reads the internal token (xexam_link, read only)
+#                                   ├─ reports its state to the backend (at start, on changes, every 25 s)
+#                                   └─ the only container with internet access (network egress): the AI provider
+# The two databases are never shared: xexam_data is mounted only by the backend and xexam_ai_data only by ai-service.
+# The app works without ai-service (AI Chat is then hidden and AI settings says that ai-service is not running); AI is
+# off until an administrator sets it up in AI settings.
 #
 # Update to the latest version:   docker compose pull && docker compose up -d
 # Stop / start again:    docker compose stop  /  docker compose start
@@ -21,9 +31,10 @@
 #       XEXAM_ALLOWED_HOSTS=xexam.your-domain.com
 #   Then run docker compose up -d. See the README and docs/en/deployment.md for full instructions.
 #
-# ⚠️ Do not run `docker compose down -v`: -v also deletes the data volume xexam_data.
+# ⚠️ Do not run `docker compose down -v`: -v also deletes the two data volumes xexam_data (question banks, users, records)
+#    and xexam_ai_data (AI settings, encrypted keys, chats, memories).
 
-name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in (volume xexam_data, containers xexam-*)
+name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in (volumes xexam_*; containers xexam-backend, ai-service, xexam-frontend)
 
 services:
   backend:
@@ -46,13 +57,19 @@ services:
       XEXAM_COOKIE_SECURE:
       # The backend's log filter (default info, also when empty; for example XEXAM_LOG=debug). Only a value set in .env is passed in.
       XEXAM_LOG:
+      # The token the backend and ai-service use between them. Leave it unset: the backend creates a random one in the link
+      # volume. Only a value set in .env (at least 32 printable ASCII characters without spaces, e.g. the output of
+      # openssl rand -hex 32; the same for both services) is passed in.
+      XEXAM_INTERNAL_TOKEN:
     volumes:
       # The question bank and study records all live in xexam.db in this named volume; deleting or updating the container does not lose them
       - data:/data
+      # Holds only internal.token (never a database), which ai-service reads
+      - link:/link
       # Follow the host's time zone (read only). Docker shares the host's clock anyway; this only gives the same zone.
       # create_host_path: false = on a host without /etc/localtime, Compose stops with "bind source path does not exist"
       # instead of creating an empty folder there (which cannot be mounted over the image's file). On such a host, remove
-      # these six lines and set TZ in .env instead.
+      # these six lines (here and under ai-service) and set TZ in .env instead.
       - type: bind
         source: /etc/localtime
         target: /etc/localtime
@@ -71,10 +88,55 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  ai-service:
+    image: docker.io/yuminspace/xexam-ai-service:latest
+    container_name: ai-service
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      # Same rule as for the backend: the host's time zone unless TZ is set in .env
+      TZ:
+      # The key that encrypts the saved AI provider keys. Leave it unset: a random key file is created in the AI data volume.
+      # Only a value set in .env (32 bytes as 64 hex digits or base64, for example from openssl rand -base64 32) is passed in.
+      XEXAM_AI_SECRET_KEY:
+      # Must be the same value as for the backend (or unset in both): at least 32 printable ASCII characters, no spaces
+      XEXAM_INTERNAL_TOKEN:
+      # The AI service's log filter (default info). Only a value set in .env is passed in.
+      XEXAM_AI_LOG:
+      # SQLite journal of the AI database: WAL by default; XEXAM_AI_SQLITE_JOURNAL=delete set in .env keeps the DELETE mode.
+      XEXAM_AI_SQLITE_JOURNAL:
+    volumes:
+      # AI settings, encrypted keys, the key file secret.key, chats and memories: xexam-ai.db in this named volume
+      - ai_data:/data
+      # internal.token written by the backend (read only here)
+      - link:/link:ro
+      # Follow the host's time zone (read only), the same as the backend
+      - type: bind
+        source: /etc/localtime
+        target: /etc/localtime
+        read_only: true
+        bind:
+          create_host_path: false
+    # internal: Nginx and the backend; egress: outbound internet, for the AI provider only (the backend has none)
+    networks: [internal, egress]
+    # Note: there are no ports. Nginx reaches it on the private network.
+    stop_grace_period: 15s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    # Docker keeps container logs without any limit by default; keep at most 3 files of 10 MB per container
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
   frontend:
     image: docker.io/yuminspace/xexam-frontend:latest
     container_name: xexam-frontend
     restart: unless-stopped
+    # Only the backend: the app starts and works without ai-service
     depends_on:
       backend:
         condition: service_healthy
@@ -96,6 +158,10 @@ networks:
   internal:
     internal: true
   public: {}
+  # Outbound internet for ai-service only (to reach the AI provider)
+  egress: {}
 
 volumes:
   data:
+  ai_data:
+  link:

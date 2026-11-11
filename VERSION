@@ -1,9 +1,9 @@
 # Xexam version file. Two KEY=VALUE lines; lines starting with # are comments.
 #
 # CODE_VERSION: the version of the code on this branch. Bump it by hand together with the changelog entry in all
-# three READMEs, backend/Cargo.toml and frontend/package.json (CI checks that they match). The images are built and
-# tagged with this version, and /api/info reports it.
-CODE_VERSION=0.7.5
+# three READMEs, backend/Cargo.toml, ai-service/Cargo.toml and frontend/package.json (CI checks that they match). The
+# three images are built and tagged with this version, and /api/info and the AI service's /healthz report it.
+CODE_VERSION=0.8
 #
 # RELEASE_VERSION: the last version that was actually published (images on Docker Hub and GHCR, GitHub Release).
 # Do not edit it by hand: the release job of .github/workflows/ci.yml writes it, together with the release badge at

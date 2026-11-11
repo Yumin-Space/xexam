@@ -1,14 +1,17 @@
 // App shell: a slim header (logo left; the account label and the menu button right, the navigation opens as a small
 // dropdown) + the centered page + footer. The quiz page and the sign-in pages do not use the shell.
 import { shutdownApp } from '../api/import.ts';
+import { ownBadgeState } from '../domain/badge-state.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { sectionOf, type NavSection, type Route } from '../router.ts';
 import { navigate, setNavOpen, signOut } from '../state/actions.ts';
+import { aiStatus } from '../state/ai.ts';
 import { navAllowed, type NavNeed } from '../state/bank-access.ts';
 import { S, isAdmin } from '../state/store.ts';
 import type { AuthUser, Role } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h } from '../utils/dom.ts';
+import { aiBadge, badgeReasonText } from './ai-badge.ts';
 import { brand } from './common.ts';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -54,21 +57,36 @@ export const ICONS = {
   users: [{ cx: 9.5, cy: 8.5, r: 3.3 }, { d: 'M3.5 19.5c.7-3.2 3-5 6-5s5.3 1.8 6 5' }, { d: 'M15.3 5.6a3.2 3.2 0 0 1 0 6' }, { d: 'M17.4 14.8c1.7.6 2.8 2.2 3.2 4.7' }],
   signOut: [{ d: 'M14 4.5H6.5v15H14' }, { d: 'M10.5 12h10' }, { d: 'M17 8.5l3.5 3.5-3.5 3.5' }],
   logs: [{ d: 'M5.5 4.5h13v15h-13z' }, { d: 'M8.5 8.5h7' }, { d: 'M8.5 12h7' }, { d: 'M8.5 15.5h4' }],
+  /** v0.8, AI Chat: a four-point star and a small one */
+  sparkle: [
+    { d: 'M10 3.5c.7 4.2 2.6 6.1 6.8 6.8-4.2.7-6.1 2.6-6.8 6.8-.7-4.2-2.6-6.1-6.8-6.8 4.2-.7 6.1-2.6 6.8-6.8Z' },
+    { d: 'M18 14.5c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z' },
+  ],
+  /** v0.8, AI settings: three lines with knobs */
+  sliders: [
+    { d: 'M4 6h3' }, { d: 'M11 6h9' }, { cx: 9, cy: 6, r: 2 },
+    { d: 'M4 12h9' }, { d: 'M17 12h3' }, { cx: 15, cy: 12, r: 2 },
+    { d: 'M4 18h2' }, { d: 'M10 18h10' }, { cx: 8, cy: 18, r: 2 },
+  ],
 } satisfies Record<string, Shape[]>;
 
 // `need`: who sees the entry (v0.6.5): Question banks needs the bank-manager permission (administrators always have it), User
-// management and the System log (v0.7) an administrator; the rest is for everyone.
+// management and the System log (v0.7) an administrator; the rest is for everyone. v0.8: AI Chat when the user can use AI
+// now or has AI chats or memories to read (hidden, not "unavailable", otherwise); AI settings for administrators, always.
 const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape[]; need?: NavNeed }> = [
   { section: 'home', route: { name: 'home' }, label: 'nav.home', icon: ICONS.home },
   { section: 'banks', route: { name: 'banks' }, label: 'nav.banks', icon: ICONS.banks, need: 'banks' },
   { section: 'records', route: { name: 'records' }, label: 'nav.records', icon: ICONS.records },
+  { section: 'ai', route: { name: 'ai' }, label: 'nav.aiChat', icon: ICONS.sparkle, need: 'ai' },
   { section: 'users', route: { name: 'users' }, label: 'nav.users', icon: ICONS.users, need: 'admin' },
+  { section: 'aiSettings', route: { name: 'aiSettings' }, label: 'nav.aiSettings', icon: ICONS.sliders, need: 'admin' },
   { section: 'logs', route: { name: 'logs' }, label: 'nav.logs', icon: ICONS.logs, need: 'admin' },
   { section: 'settings', route: { name: 'settings' }, label: 'nav.settings', icon: ICONS.settings },
 ];
 
 const HREF: Record<NavSection, string> = {
-  home: '#/', banks: '#/banks', records: '#/records', users: '#/users', logs: '#/logs', settings: '#/settings', about: '#/about',
+  home: '#/', banks: '#/banks', records: '#/records', ai: '#/ai', users: '#/users', aiSettings: '#/ai-settings', logs: '#/logs',
+  settings: '#/settings', about: '#/about',
 };
 
 const ROLE_NAME: Record<Role, MsgKey> = { admin: 'role.admin', user: 'role.user' };
@@ -127,18 +145,22 @@ export function shell(content: HTMLElement): HTMLElement {
   const open = S.navOpen;
   const user = S.user;
   const admin = isAdmin();
+  const ai = aiStatus();
+  // v0.8: the AI+ badge (round 2: bright while the user can use AI now, dark while they have the AI+ service but cannot use
+  // it now, none without the service; domain/badge-state.ts)
+  const badge = ownBadgeState(user, ai);
 
   // Who is signed in, and Sign out: the bottom of the menu, under a hairline
   const account = user ? h('div', { class: 'nav-account' },
     h('div', { class: 'nav-who' },
       icon(ICONS.user),
       h('span', { class: 'nav-who-name', title: user.username }, user.username),
-      h('span', { class: 'nav-who-tags' }, roleTags(user))),
+      h('span', { class: 'nav-who-tags' }, roleTags(user), aiBadge(badge))),
     h('button', { class: 'nav-link nav-signout', type: 'button', onclick: () => void signOut() },
       icon(ICONS.signOut), h('span', { class: 'nav-label' }, t('nav.signOut')))) : null;
 
   const menu = open ? h('nav', { class: 'nav-pop', id: 'nav-menu', 'aria-label': t('nav.label') },
-    h('ul', { class: 'nav-list' }, NAV.filter((n) => navAllowed(n.need, user)).map((n) => h('li', null,
+    h('ul', { class: 'nav-list' }, NAV.filter((n) => navAllowed(n.need, user, ai)).map((n) => h('li', null,
       h('a', {
         class: 'nav-link' + (n.section === active ? ' on' : ''),
         href: HREF[n.section],
@@ -173,9 +195,15 @@ export function shell(content: HTMLElement): HTMLElement {
   }, icon(open ? ICONS.close : ICONS.menu));
 
   // The account label left of the menu button: who is signed in (and "Administrator"); a click opens the same menu
+  // (v0.8: with the badge the label says "AI+ on" too, because the aria-label replaces what the button shows; round 2: with
+  // the dark badge it says why AI+ cannot be used now, since nothing inside a button can be focused to read its tooltip)
+  const accountLabel = !user ? ''
+    : badge.kind === 'on' ? t('nav.accountLabelAi', { name: user.username, role: roleText(user) })
+      : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: user.username, role: roleText(user), reason: badgeReasonText(badge.reason) })
+        : t('nav.accountLabel', { name: user.username, role: roleText(user) });
   const accountBtn = user ? h('button', {
-    class: 'acct-btn' + (open ? ' on' : ''), id: 'acct-btn', type: 'button', title: user.username,
-    'aria-label': t('nav.accountLabel', { name: user.username, role: roleText(user) }),
+    class: 'acct-btn' + (open ? ' on' : '') + (badge.kind !== 'none' ? ' has-ai' : ''), id: 'acct-btn', type: 'button', title: user.username,
+    'aria-label': accountLabel,
     'aria-haspopup': 'true', 'aria-expanded': String(open), 'aria-controls': 'nav-menu',
     onclick: (e: MouseEvent) => {
       focusMenuOnOpen = !open && e.detail === 0;
@@ -185,6 +213,7 @@ export function shell(content: HTMLElement): HTMLElement {
   },
   icon(ICONS.user, 'ico acct-ico'),
   h('span', { class: 'acct-name' }, user.username),
+  aiBadge(badge, { inButton: true }),
   // Phones show the short form ("Admin"), so the username keeps its room; the full role is in the label and in the menu
   admin ? h('span', { class: 'tag b acct-role' },
     h('span', { class: 'acct-role-l' }, roleName('admin')),

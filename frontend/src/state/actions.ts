@@ -20,6 +20,7 @@ import { adminOnly, parseHash, routeHash, sameRoute, type Route } from '../route
 import type { AttemptKind, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
+import { refreshAiStatus } from './ai.ts';
 import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSettings } from './preferences.ts';
 import { adoptLegacySession, clearSaved, loadSaved, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
@@ -156,6 +157,17 @@ export function setNavOpen(open: boolean): void {
 
 // ---------------------------------------------------------------- loading
 
+/**
+ * v0.8: reads what the signed-in user may do with AI (state/ai.ts) and draws the page again when that changed (the menu
+ * entry, the badge, AI Chat). `force`: now (after sign-in, or after an administrator changed AI settings or someone's AI+);
+ * otherwise at most every 60 s. Never fails: an AI service that cannot be reached only hides AI Chat.
+ */
+export function refreshAi(force = false): Promise<void> {
+  return refreshAiStatus({ force, mustChangePassword: S.user?.mustChangePassword ?? true }).then((changed) => {
+    if (changed && S.user && !S.authView) render();
+  });
+}
+
 /** Loads everything the pages need. Any single failure goes to the fatal page. */
 export async function loadAll(): Promise<void> {
   const [info, bank, banks, progress, records] = await Promise.all([
@@ -253,6 +265,8 @@ async function enterApp(): Promise<void> {
   S.defaultAdmin = null;
   S.phase = 'loading';
   render();
+  // v0.8: what the user may do with AI, read alongside the rest (it never fails the loading; AI Chat waits for it)
+  void refreshAi(true);
   try {
     // The stamp first: a bank imported while the rest loads makes the next check read the banks once more, never less
     const st = await fetchAuthState();
@@ -301,11 +315,14 @@ function checkSession(): void {
     else if (st.user.mustChangePassword) onAuthProblem('password');
     else {
       // A new name, or (v0.6.5) the bank-manager permission given or taken away: it applies without signing out, so the
-      // menu and the Question banks page follow at the next check
-      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks) {
+      // menu and the Question banks page follow at the next check. v0.8: the same for AI+ (the AI status is read again
+      // at once then; otherwise at most every 60 s)
+      const aiChanged = st.user.aiAllowed !== me.aiAllowed;
+      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks || aiChanged) {
         S.user = st.user;
         render();
       }
+      void refreshAi(aiChanged);
       if (st.library && st.library !== libraryStamp) {
         refreshLibrary().then(render, () => {
           /* the next check tries again */

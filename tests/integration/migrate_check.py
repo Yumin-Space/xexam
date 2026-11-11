@@ -12,19 +12,27 @@ Steps:
   F. SQLite journal mode (v0.7): the database runs in WAL mode and the log says so once; XEXAM_SQLITE_JOURNAL=delete switches it back to
      DELETE (what an older version does on a rollback) with every record kept, and the next start without it is in WAL mode again.
   G. Only the six-column layout (v0.7): a schema-3 database (as v0.6 wrote it) whose bank holds questions of the old 3-column
-     layout is upgraded to schema 4 with a backup, and its old-layout questions are retired (records, statistics and the bank
-     stay; the log names the bank); the next start retires nothing more. The `import` command refuses a 3-column workbook
-     (English message, exit code 1, nothing written) and imports a six-column one into that bank. The workbooks are made-up
-     and written by this script (a minimal .xlsx built with zipfile).
+     layout is upgraded (now straight to schema 5) with one backup, and its old-layout questions are retired (records,
+     statistics and the bank stay; the log names the bank); the next start retires nothing more. The `import` command refuses
+     a 3-column workbook (English message, exit code 1, nothing written) and imports a six-column one into that bank. The
+     workbooks are made-up and written by this script (a minimal .xlsx built with zipfile).
+  H. Schema 5 (v0.8): a schema-4 database (as v0.7.5 wrote it: the G database with a second user, the two v0.8 columns
+     dropped again and meta.schema set back to 4) is upgraded to schema 5 with a backup named xexam-schema4-*; every user
+     then has ai_enabled = 0 and its own 32-hex uid; the next start writes nothing (no second backup, the same uids).
+  I. The AI link (v0.8): `serve` creates <data>/link/internal.token (43 base64url characters; mode 600 and a folder of
+     mode 700 on POSIX systems) and reads the same token again on the next start; with XEXAM_INTERNAL_TOKEN set no file
+     is created; a token shorter than 32 characters turns the link off with a log line and the app still runs.
 Since v0.6 every route except /api/info needs a session: each run signs in as the default administrator (admin / admin the first
 time, then the password this script sets) and reads the administrator's /api/progress, which is where the old records go.
 """
 import contextlib
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
+import stat
 import subprocess
 import sys
 import tempfile
@@ -271,6 +279,15 @@ try:
     ok(os.path.exists(os.path.join(d, 'xexam.db')), 'A. xexam.db has been created')
     ok(log.count('SQLite journal mode: wal') == 1, 'A. the log states the journal mode once: wal')
     ok(journal_mode(d) == 'wal', 'A. xexam.db is in WAL mode')
+    token_file = os.path.join(d, 'link', 'internal.token')
+    ok(os.path.isfile(token_file), 'I. serve created link/internal.token in the data directory')
+    ok('AI link: ' in log and 'internal.token' in log, 'I. the log names the token file (AI link: <path>)')
+    with open(token_file, encoding='ascii') as fh:
+        first_token = fh.read()
+    ok(re.fullmatch(r'[A-Za-z0-9_-]{43}\n?', first_token) is not None, 'I. the token is 43 base64url characters')
+    if os.name == 'posix':
+        ok(stat.S_IMODE(os.stat(token_file).st_mode) == 0o600, 'I. internal.token has mode 600')
+        ok(stat.S_IMODE(os.stat(os.path.dirname(token_file)).st_mode) == 0o700, 'I. the link folder has mode 700')
 
     # B
     with open(os.path.join(d, 'progress.json'), 'w', encoding='utf-8') as f:
@@ -282,6 +299,8 @@ try:
     # C
     prog, log = run_once(d, 'a3.log')
     ok(prog is not None and len(prog['history']) == 1, 'C. restart once more: no repeated migration (still 1 score entry)')
+    with open(token_file, encoding='ascii') as fh:
+        ok(fh.read() == first_token, 'I. later starts read the same token again (it is created only once)')
     ok('Migrated the old study records into the database' not in log and 'Did not migrate' not in log, 'C. the log has no extra migration messages')
 
     # D: the database already has progress records (migrated above); swap in a different progress.json — not overwritten
@@ -323,8 +342,10 @@ try:
     os.makedirs(g)
     write_v3_database(os.path.join(g, 'xexam.db'), admin_hash)
     prog, log = run_once(g, 'g1.log')
-    ok('Upgraded the database to schema 4' in log, 'G. the schema-3 database is upgraded to schema 4')
-    ok(any(n.startswith('xexam-schema3-') for n in os.listdir(os.path.join(g, 'backups'))), 'G. a backup of the schema-3 database was written first')
+    ok('Upgraded the database to schema 5' in log, 'G. the schema-3 database is upgraded to schema 5')
+    names = [n for n in os.listdir(os.path.join(g, 'backups')) if n.startswith('xexam-schema')]
+    ok(len(names) == 1 and names[0].startswith('xexam-schema3-'),
+       'G. one backup of the schema-3 database was written first (xexam-schema3-*). Actual %r' % names)
     ok('retired 2 questions of bank "Herbs": they use the old 3- / 4-column layout; import the six-column version of the workbook' in log,
        'G. the log names the bank whose old-layout questions were retired')
     ok(prog is not None and 'h1' in prog['questions'] and len(prog['history']) == 1, 'G. the statistics and the exam record are kept')
@@ -355,6 +376,50 @@ try:
     b = seen.get('herbs')
     ok(b is not None and b['total'] == 3 and b['inactive'] == 2, 'G. the bank now has the 3 six-column questions in use and the 2 retired ones. Actual %r' % b)
     ok('retired' not in log, 'G. six-column questions are never retired')
+
+    # H: schema 4 -> 5. A second user first, then the database is turned back into what v0.7.5 wrote
+    def add_user(cookie):
+        st, _, j = api('POST', '/api/users/create', {'username': 'robin', 'password': 'robin-initial-2026', 'role': 'user',
+                                                     'banks': 'all'}, cookie)
+        ok(st == 200, 'H. a second user was created. Actual %d %r' % (st, j))
+    run_once(g, 'h1.log', check=add_user)
+    gdb, backups = os.path.join(g, 'xexam.db'), os.path.join(g, 'backups')
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        cols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
+        ok('ai_enabled' in cols and 'uid' in cols, 'H. a v0.8 database has users.ai_enabled and users.uid. Actual %r' % cols)
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '5', 'H. a v0.8 database is schema 5')
+        c.execute('ALTER TABLE users DROP COLUMN ai_enabled')
+        c.execute('ALTER TABLE users DROP COLUMN uid')
+        c.execute("UPDATE meta SET value = '4' WHERE key = 'schema'")
+        c.commit()
+    before = set(os.listdir(backups))
+    prog, log = run_once(g, 'h2.log')
+    ok('Upgraded the database to schema 5' in log, 'H. the schema-4 database is upgraded to schema 5')
+    added = set(os.listdir(backups)) - before
+    ok(len(added) == 1 and next(iter(added)).startswith('xexam-schema4-'), 'H. one backup named xexam-schema4-* was written first. Actual %r' % sorted(added))
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        users = c.execute('SELECT username, ai_enabled, uid FROM users ORDER BY id').fetchall()
+        schema = c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0]
+    ok(schema == '5' and len(users) == 2, 'H. schema 5 with both users. Actual %r, %d users' % (schema, len(users)))
+    ok(all(u[1] == 0 for u in users), 'H. every user starts with AI+ off (ai_enabled = 0)')
+    ok(all(re.fullmatch(r'[0-9a-f]{32}', u[2] or '') for u in users) and len({u[2] for u in users}) == len(users),
+       'H. every user has its own 32-hex uid')
+    ok(prog is not None and len(prog['history']) == 1, 'H. the records are kept')
+    prog, log = run_once(g, 'h3.log')
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        again = c.execute('SELECT username, ai_enabled, uid FROM users ORDER BY id').fetchall()
+    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before | added and again == users,
+       'H. the next start writes nothing: no new backup, the same uids')
+
+    # I: XEXAM_INTERNAL_TOKEN instead of the file; a token that is too short
+    i = os.path.join(root, 'i')
+    os.makedirs(i)
+    prog, log = run_once(i, 'i1.log', extra_env={'XEXAM_INTERNAL_TOKEN': 'migrate-check-token-0123456789abcdefghij'})
+    ok(prog is not None and 'AI link: using XEXAM_INTERNAL_TOKEN' in log, 'I. with XEXAM_INTERNAL_TOKEN set the log says so')
+    ok(not os.path.exists(os.path.join(i, 'link', 'internal.token')), 'I. with XEXAM_INTERNAL_TOKEN set no token file is created')
+    prog, log = run_once(i, 'i2.log', extra_env={'XEXAM_INTERNAL_TOKEN': 'too-short'})
+    ok(prog is not None and 'XEXAM_INTERNAL_TOKEN is too short (at least 32 characters); AI link off' in log,
+       'I. a token shorter than 32 characters turns the link off with a log line; the app still runs')
 finally:
     shutil.rmtree(root, ignore_errors=True)
 

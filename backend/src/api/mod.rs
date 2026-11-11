@@ -25,6 +25,10 @@
 //! Only the six-column layout may be imported: `POST /api/upload` (a new bank or an update) and `POST /api/import/confirm`
 //! refuse a 3- or 4-column workbook with 400 `MSG_OLD_LAYOUT` before anything is staged or written
 //! ([`services::check_layout`]; [`Inner::old_layouts`] is the test-only way around it).
+//!
+//! v0.8: every path that starts with `/internal/` goes to [`internal::dispatch`] first, before the Host guard and without the
+//! session layer: the auth step of the AI routes and the token routes the AI service calls (see `api::internal`). The
+//! `/api/*` routing above is unchanged.
 use crate::config::{Config, MAX_JSON, MAX_UPLOAD};
 use crate::error::{AppError, DbError};
 use crate::models::{setting_valid, ImportTarget, ParsedWorkbook, Viewer, SETTING_KEYS};
@@ -45,6 +49,7 @@ use std::time::Duration;
 pub mod attempt;
 pub mod auth;
 pub mod guard;
+pub mod internal;
 pub mod json;
 pub mod response;
 
@@ -92,6 +97,9 @@ pub struct Inner {
     /// production ([`AppState::new`]); only test code builds a state with `AllowForTests` (the golden suites replay the
     /// reference implementation's 3-column imports).
     pub old_layouts: services::OldLayouts,
+    /// v0.8: the link with the AI service: the internal token once `serve` loaded it (none by default: the link is off) and
+    /// the rate limit of the log line about refused internal requests (see [`internal::AiLink`])
+    pub ai_link: internal::AiLink,
 }
 
 impl AppState {
@@ -128,6 +136,7 @@ impl AppState {
             failed_sign_ins: Default::default(),
             name_locks: Default::default(),
             old_layouts: services::OldLayouts::Refuse,
+            ai_link: Default::default(),
         }))
     }
 }
@@ -317,6 +326,11 @@ fn note_rejection(st: &AppState, what: String) {
 
 async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
+    // v0.8: the internal routes of the AI link, before the Host guard (see `internal`)
+    if parts.uri.path().starts_with("/internal/") {
+        return internal::dispatch(&st, &parts.method, parts.uri.path(), &parts.headers, body)
+            .await;
+    }
     let host = hdr(&parts.headers, &header::HOST);
     let cfg = &st.0.cfg;
     let path = parts.uri.path().to_string();

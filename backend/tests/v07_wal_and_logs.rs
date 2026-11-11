@@ -332,6 +332,7 @@ fn app() -> App {
         failed_sign_ins: Default::default(),
         name_locks: Default::default(),
         old_layouts: Default::default(),
+        ai_link: Default::default(),
     }));
     App {
         router: build_router(state),

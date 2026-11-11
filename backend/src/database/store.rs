@@ -23,9 +23,12 @@
 //!   server and the command-line program on every start, after the migrations). The store methods themselves accept any
 //!   question, so the golden suites can replay the reference implementation's 3-column imports.
 //!
-//! Submodules (they extend `impl Store`): `migrate` (v1 → v2 → v3 → v4, backups, fix-ups), `banks` (bank list, delete, import
-//! targets, bank-scoped ids, viewers), `records` (exam records and their per-question detail), `settings`, `users` (accounts,
-//! sessions).
+//! - Schema v5 (v0.8): two columns on `users`, the AI+ switch and the identity stamp the AI service keeps next to the user
+//!   id (see `users`); AI chats, memories and settings live in the AI service's own database, never in this one.
+//!
+//! Submodules (they extend `impl Store`): `migrate` (v1 → v2 → v3 → v4 → v5, backups, fix-ups), `banks` (bank list, delete,
+//! import targets, bank-scoped ids, viewers), `records` (exam records and their per-question detail), `settings`, `users`
+//! (accounts, sessions, the users the AI service asks about).
 use super::journal::{self, Checkpoint, JournalMode};
 use super::legacy_progress::{self, AttemptRow, StatRow};
 use super::pyjson;
@@ -53,7 +56,7 @@ mod users;
 
 pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
-pub use users::{SessionUser, UpdatedUser, UserChange, UserRow, UserUpdate};
+pub use users::{AiUserRow, SessionUser, UpdatedUser, UserChange, UserRow, UserUpdate};
 
 /// One bank whose old-layout questions [`Store::retire_old_layout_questions`] retired.
 #[derive(Debug, Clone, PartialEq, Eq)]

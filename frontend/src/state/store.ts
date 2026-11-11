@@ -6,6 +6,7 @@ import type {
 import { poolOf, type Answer } from '../domain/grading.ts';
 import { type Route } from '../router.ts';
 import { firstPaintSettings } from './settings-cache.ts';
+import { resetAiStatus } from './ai.ts';
 import { mayManageBanks } from './bank-access.ts';
 
 export type Phase = 'loading' | 'fatal' | 'ready';
@@ -183,8 +184,21 @@ export function canManageBanks(): boolean {
   return mayManageBanks(S.user);
 }
 
+const clearHooks: Array<() => void> = [];
+
+/**
+ * v0.8: pages that keep a user's data in their own module state (AI Chat: the chats and a running stream; AI settings: typed
+ * keys) register here, so signing out forgets it too.
+ */
+export function onClearUserData(fn: () => void): void {
+  clearHooks.push(fn);
+}
+
 /** Forgets everything loaded for the signed-in user (signing out). Shared data (version) is kept. */
 export function clearUserData(): void {
+  // v0.8: the AI status goes back to "loading" for the next user; AI Chat stops its stream, AI settings forget typed keys
+  resetAiStatus();
+  for (const fn of clearHooks) fn();
   S.user = null;
   S.bank = null;
   S.banks = [];

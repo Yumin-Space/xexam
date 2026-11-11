@@ -353,6 +353,11 @@ export interface AuthUser {
   mustChangePassword: boolean;
   /** v0.6.5: may open Question banks (import new banks, update and delete their own); always true for administrators */
   canManageBanks: boolean;
+  /**
+   * v0.8: may use AI Chat while AI is enabled in AI settings (administrators always, plain users with AI+). Whether AI is
+   * enabled at all comes from the AI service (GET /api/ai/status), not from here.
+   */
+  aiAllowed: boolean;
 }
 
 export interface AuthState {
@@ -364,6 +369,13 @@ export interface AuthState {
    * says how to sign in for the first time, with that name), else null
    */
   defaultAdmin?: string | null;
+  /**
+   * v0.8 round 2, signed in: AI+ is available (ai-service reported to the main service less than 60 s ago and the AI+
+   * service is on in AI settings)
+   */
+  aiAvailable?: boolean;
+  /** v0.8 round 2, administrators only: the state of ai-service from its reports (AI settings shows it) */
+  aiService?: AiService;
 }
 
 export interface AuthUserResponse {
@@ -390,10 +402,20 @@ export interface UserRow {
   newBanks: boolean;
   /** v0.6.5: the stored "can manage question banks" permission (administrators always have it, whatever is stored) */
   canManageBanks: boolean;
+  /**
+   * v0.8: the stored AI+ service switch of User management (administrators always have AI while AI+ is available, whatever
+   * is stored). Kept while AI+ is not available; the page then shows no switch.
+   */
+  ai: boolean;
   /** v0.6.5: ids of the banks this user owns, ascending (they move to the deleting administrator when the user is deleted) */
   ownedBanks: number[];
   /** The login throttle of this account (in the backend's memory): null at round 1 and not locked */
   lock: UserLock | null;
+  /**
+   * v0.8 round 2: an administrator suspended this user's AI+ function in AI settings (from ai-service's last report to the
+   * main service; always false for administrators). The row then shows the dark badge.
+   */
+  aiSuspended: boolean;
 }
 
 /**
@@ -417,6 +439,11 @@ export interface UserLock {
 /** `GET /api/users` and every `POST /api/users/*` answer with the whole list */
 export interface UsersResponse {
   users: UserRow[];
+  /**
+   * v0.8 round 2: AI+ is available (ai-service reported to the main service less than 60 s ago and the AI+ service is on in
+   * AI settings). Only then can a user's AI+ service be switched on or off (else 409 `ai.serviceOff`).
+   */
+  aiAvailable: boolean;
 }
 
 /** `POST /api/users/update`: only the fields that change */
@@ -428,6 +455,19 @@ export interface UserUpdate {
   banks?: BankAccess;
   newBanks?: boolean;
   canManageBanks?: boolean;
+  /** v0.8: the AI+ switch */
+  ai?: boolean;
+}
+
+/** `POST /api/users/create` (v0.8: `ai` added) */
+export interface UserCreate {
+  username: string;
+  password: string;
+  role: Role;
+  banks: BankAccess;
+  newBanks: boolean;
+  canManageBanks: boolean;
+  ai: boolean;
 }
 
 /**
@@ -436,3 +476,244 @@ export interface UserUpdate {
  * the banks they own.
  */
 export type BankAccess = 'all' | number[];
+
+// ---------------------------------------------------------------- v0.8: the AI service (ai-service, /api/ai/*)
+
+/**
+ * v0.8 round 2: the state of ai-service as the main service knows it from its reports (`aiService` of `GET /api/auth/state`,
+ * administrators only). ai-service reports every 25 s (and at once after a change); after 60 s without one it counts as not
+ * connected.
+ */
+export interface AiService {
+  /** A report younger than 60 s that was not a "stopping" report */
+  connected: boolean;
+  /** The last report said ai-service is shutting down */
+  stopped: boolean;
+  /** Unix seconds of the last accepted report since the main service started; null = none */
+  lastSeen: number | null;
+  /** The version of the last report; null = none */
+  version: string | null;
+  /** The AI+ service is on (only while connected; false otherwise) */
+  enabled: boolean;
+  /** The main service has an internal token loaded (the AI link is on) */
+  link: boolean;
+}
+
+/** `GET /api/ai/status`: what the signed-in user may do with AI right now */
+export interface AiStatusJson {
+  /** The AI+ service is on (and its settings passed a test) and ai-service reached the main service less than 60 s ago */
+  enabled: boolean;
+  /** This user may chat now: enabled, AI+ service (administrators always) and the AI+ function not suspended */
+  allowed: boolean;
+  /** v0.8 round 2: an administrator suspended this user's AI+ function in AI settings (always false for administrators) */
+  suspended: boolean;
+  /** This user has at least one chat or memory (reading and deleting them stays possible when AI is off) */
+  hasData: boolean;
+  /** The user's answer that is being written right now, if any */
+  running: { chatId: number; messageId: number } | null;
+  retentionDays: number;
+  memoryLimit: number;
+  memoryMaxChars: number;
+  maxMessageChars: number;
+  /** Section 14.1 of the v0.8 spec names these two as well; the page reads either spelling */
+  messageChars?: number;
+  memoryChars?: number;
+  /** Administrators only (false for others): the saved keys cannot be decrypted */
+  keyProblem: boolean;
+  /** Administrators only (false for others): a model and the required keys are saved */
+  configured: boolean;
+  /** Administrators only (false for others): the free mode is on (every AI answer, in any chat, is a free-mode answer) */
+  freeMode: boolean;
+}
+
+export interface AiChatSummary {
+  id: number;
+  title: string;
+  /** Unix seconds */
+  createdAt: number;
+  updatedAt: number;
+  messageCount: number;
+  running: boolean;
+}
+
+export type AiMessageStatus = 'streaming' | 'done' | 'stopped' | 'error';
+
+export interface AiMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  status: AiMessageStatus;
+  /** An error code (`ai.…`) when the status is `error` */
+  error: string | null;
+  /** The answer reached the model's length limit */
+  truncated: boolean;
+  model: string | null;
+  createdAt: number;
+  /** Written in the administrator's free mode (the chat draws a divider where it changes) */
+  free: boolean;
+}
+
+/** `GET /api/ai/chat?id=N` (and the administrators' `GET /api/ai/admin/chat`) */
+export interface AiChatDetail {
+  chat: AiChatSummary;
+  messages: AiMessage[];
+}
+
+export interface AiMemory {
+  id: number;
+  content: string;
+  source: 'manual' | 'chat';
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** `GET /api/ai/memories` */
+export interface AiMemoriesAnswer {
+  memories: AiMemory[];
+  limit: number;
+  maxChars: number;
+}
+
+export type AiProvider = 'openai' | 'anthropic' | 'gateway';
+export type AiFormat = 'openai' | 'anthropic';
+export type AiGatewayAuth = 'bearer' | 'x-api-key' | 'cf-aig-authorization';
+/** The two key slots of the AI settings */
+export type AiKeySlot = 'apiKey' | 'gatewayKey';
+
+/** A saved key as the settings show it: never the key itself */
+export interface AiKeyInfo {
+  set: boolean;
+  /** "…1234" for keys of 12 characters or more, else "" */
+  hint: string;
+  /** Saved, but it cannot be decrypted with the current encryption key */
+  unreadable: boolean;
+}
+
+export type AiKeyProblem = null | 'mismatch' | 'invalidEnv' | 'invalidFile';
+
+/** `GET /api/ai/admin/settings` (administrators) */
+export interface AiSettings {
+  provider: AiProvider;
+  baseUrl: string;
+  format: AiFormat;
+  gatewayAuth: AiGatewayAuth;
+  model: string;
+  manualModel: boolean;
+  enabled: boolean;
+  verified: boolean;
+  verifiedAt: number | null;
+  retentionDays: number;
+  keys: Record<AiKeySlot, AiKeyInfo>;
+  keyProblem: AiKeyProblem;
+  updatedAt: number;
+  updatedBy: string;
+  defaults: { openai: string; anthropic: string };
+  /** The answer of a save only: the change switched AI off until the new settings pass a test */
+  switchedOff?: boolean;
+}
+
+/** `POST /api/ai/admin/settings`: every field optional (absent = keep); a key: string = replace, null = remove */
+export interface AiSettingsUpdate {
+  provider?: AiProvider;
+  baseUrl?: string;
+  format?: AiFormat;
+  gatewayAuth?: AiGatewayAuth;
+  apiKey?: string | null;
+  gatewayKey?: string | null;
+  model?: string;
+  manualModel?: boolean;
+  retentionDays?: number;
+}
+
+/** `POST /api/ai/admin/models` */
+export interface AiModels {
+  models: string[];
+  /** false: the service does not list its models (the model id is entered by hand) */
+  listed: boolean;
+}
+
+/** `POST /api/ai/admin/verify` */
+export interface AiVerify {
+  ok: boolean;
+  code: string | null;
+  httpStatus: number | null;
+  latencyMs: number;
+  model: string;
+  verifiedAt: number | null;
+  enabled: boolean;
+  switchedOff: boolean;
+}
+
+export interface AiUsageCounts {
+  calls: number;
+  tokensIn: number;
+  tokensOut: number;
+  errors: number;
+  /** Input tokens the provider served from its prompt cache */
+  tokensCached: number;
+}
+
+/** `GET /api/ai/admin/usage?days=N` */
+export interface AiUsage {
+  days: number;
+  from: string;
+  to: string;
+  unit: 'day' | 'month';
+  totals: AiUsageCounts;
+  /** `userId: null` is the one row of deleted users */
+  byUser: Array<AiUsageCounts & { userId: number | null; username: string | null; lastAt: number | null }>;
+  byModel: Array<AiUsageCounts & { model: string }>;
+  byPeriod: Array<AiUsageCounts & { period: string }>;
+}
+
+/**
+ * One row of `GET /api/ai/admin/users`: every administrator and every user with the AI+ service (round 2: users without it
+ * are not listed, even with AI data)
+ */
+export interface AiAdminUserRow {
+  id: number;
+  username: string;
+  role: Role;
+  /** The stored AI+ service switch of User management */
+  ai: boolean;
+  aiAllowed: boolean;
+  disabled: boolean;
+  /** false: deleted in the main app, its AI data not removed yet (always true in the list of round 2) */
+  exists: boolean;
+  /** v0.8 round 2: the AI+ function is suspended in AI settings (always false for administrators) */
+  suspended: boolean;
+  chats: number;
+  messages: number;
+  memories: number;
+  lastUsedAt: number | null;
+  tokensIn: number;
+  tokensOut: number;
+}
+
+/** `GET /api/ai/admin/user?id=N` */
+export interface AiAdminUserDetail {
+  user: AiAdminUserRow;
+  chats: AiChatSummary[];
+  memories: AiMemory[];
+}
+
+/** `POST /api/ai/admin/clear` */
+export type AiClear = { userId: number; what: 'chat'; chatId: number } | { userId: number; what: 'chats' | 'memories' };
+
+/** The safety limits of the AI service (v0.8 spec 14.1): they protect the server; they are not usage limits */
+export interface AiLimits {
+  perUserRunning: number;
+  globalRunning: number;
+  chatsPerUser: number;
+  messagesPerChat: number;
+  memoriesPerUser: number;
+  memoryChars: number;
+  messageChars: number;
+}
+
+/** `GET` / `POST /api/ai/admin/limits` */
+export interface AiLimitsAnswer {
+  limits: AiLimits;
+  defaults: AiLimits;
+  ranges: Record<keyof AiLimits, [number, number]>;
+}

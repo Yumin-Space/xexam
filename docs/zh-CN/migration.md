@@ -4,41 +4,136 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
-> - **v0.7 → v0.7.5**（第 1 节）：什么都不用做。
-> - **v0.6 → v0.7.5**（第 2 节）：先写一份备份副本，然后数据库自动升级到 schema v4，并改用 WAL 模式；然后旧的三列和四列 Excel 格式的题被下架，你再用六列格式的工作簿更新题库。
-> - **v0.5 或 v0.5.1 → v0.7.5**（第 3 节）：登录和 schema v4 一步到位。
+> - **v0.7.5 或 v0.7 → v0.8**（第 1 节）：带 AI 服务 `ai-service` 的新 `docker-compose.yml`（第三个镜像 `xexam-ai-service` 和两个卷）；先写一份备份副本，然后数据库自动升级到 schema v5；管理员设置之前 AI 保持关闭。
+> - **v0.6 → v0.8**（第 2 节）：先写一份备份副本，然后数据库自动升级到 schema v5，并改用 WAL 模式；然后旧的三列和四列 Excel 格式的题被下架，你再用六列格式的工作簿更新题库。
+> - **v0.5 或 v0.5.1 → v0.8**（第 3 节）：登录和之后的各个 schema 一步到位。
 > - **v0.4 → v0.5 及以后**（第 4 节）：题库、考试详情和设置（schema v2），现在和之后的所有变化一起完成。
 > - **Python v0.2.x → Rust + TypeScript + Nginx（v0.3）**（第 5–11 节）：当时数据库文件和 schema 都没变；那次切换是「换程序」，不是「搬数据」。决定的依据：[migration-plan.md](history/migration-plan.md)。风险：[risk-assessment.md](history/risk-assessment.md)。
 > - **v0.1 → 以后的版本**（第 12 节）：数据库的文件名。
 >
-> 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_data` 里的 `/data/backups/`）。回退永远是**恢复那份副本**，然后运行较早的镜像。背景见 [database.md](database.md) 第 6 节。
+> 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_data` 里的 `/data/backups/`）。回退永远是**恢复那份副本**，然后运行较早的镜像。背景见 [database.md](database.md) 第 6 节。v0.8 的 AI 数据库在它自己的卷里，回退主数据库时从不会碰到它。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
 
-## 1. 从 v0.7 升级到 v0.7.5
+## 1. 从 v0.7.5（或 v0.7）升级到 v0.8
 
-除了平常的拉取，什么都不用做：
+### 1.1 会有什么变化
+
+v0.8 新增了 AI 对话，它在**第三个容器** `ai-service`（镜像 `xexam-ai-service`）里运行，有自己的数据库。这需要**新的 `docker-compose.yml`**：
+
+| | v0.7.5 | v0.8 |
+|---|---|---|
+| 镜像 | `xexam-frontend`、`xexam-backend` | 同样的两个，再加上 **`xexam-ai-service`** |
+| 容器（Compose 服务） | `xexam-frontend`、`xexam-backend`（`frontend`、`backend`） | 同样的两个，再加上 **`ai-service`**（`ai-service`） |
+| 卷 | `xexam_data` | `xexam_data`（不变）、**`xexam_ai_data`**（AI 数据库和它的密钥文件）、**`xexam_link`**（只有 `internal.token`，后端和 AI 服务共用的令牌） |
+| 网络 | `internal`（不能上网）、`public` | 同样的两个，再加上 **`egress`**，只给 `ai-service` 向外访问互联网；后端仍然不能上网 |
+
+用旧的 compose 文件，v0.8 也能启动，除了 AI 以外一切照常：菜单里没有 AI 对话，**AI 设置** 提示 ai-service 没有运行（还带一条下载新 compose 文件的提示），后端记录 `AI link off: cannot create /link/internal.token (…)`。
+
+后端**第一次启动**时，在接受任何请求之前做这些事：
+
+1. **备份**：把数据库复制到 `/data/backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`，这是一个普通的 schema 4 数据库，v0.7.5 能打开它。副本写不出来时，什么都不改变，后端也不启动。
+2. **迁移到 schema v5**，在一个事务里完成：`users` 表新增两列，`ai_enabled`（**AI+**，所有人都是关闭的）和 `uid`（每个用户一个随机的身份标记）。其他都不变：题库、记录、设置、账户和会话都保留，没有人会被退出登录。日志里会写 `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema4-….db (…)`。
+3. **内部令牌**：后端把一个随机令牌写到 `/link/internal.token`（在 `xexam_link` 里），并记录 `AI link: /link/internal.token`。设置了 `XEXAM_INTERNAL_TOKEN` 时，它不写文件，并记录 `AI link: using XEXAM_INTERNAL_TOKEN`。
+
+ai-service 第一次启动时，用默认设置创建它的数据库 `xexam-ai.db`（schema 2），没有设置 `XEXAM_AI_SECRET_KEY` 时还会创建密钥文件 `secret.key`（`Created a new AI key file /data/secret.key`）。然后它马上向后端报告，之后每 25 秒报告一次，所以主服务知道它已连接（超过 60 秒的报告算作没有连接）；后端从不调用它。**AI 是关闭的**，直到管理员在 **AI 设置** 里把它设置好（见 [usage.md](usage.md) 第 17 节）；AI 没有需要迁移的东西。（由 v0.8 的预发布版写入的 AI 数据库，即 schema 1，会在 ai-service 第一次启动时升级，先在 AI 卷里它旁边写一份副本 `backups/xexam-ai-schema1-<YYYYMMDD-HHMMSS>.db`；副本写不出来时，ai-service 不启动，也什么都不改变。来自更晚的预发布版、但缺少 schema 2 的某些列（`users.function_enabled`、`users.free_mode`、`messages.free`、`usage.tokens_cached`）的 schema 2 数据库，每次启动时都会把它们补上，不写副本：这一步只添加缺少的列，从不删除任何一列，所以那种版本留下的旧的 `chats.free` 列只是闲置在那里。）
+
+你还会注意到：
+
+- 菜单里有 **AI 对话** 和 **AI 设置**（AI 对话只在 AI 开启后出现，对管理员和有 **AI+ 功能** 的用户）。**AI 设置** 总是能打开，并显示 ai-service 有没有连接。AI 开启后，管理员能在 **设置** 里找到 **AI 对话模式**（**普通模式** / **自由模式**）。
+- **用户管理**：每个用户一个 **AI+ 功能** 开关（只在 ai-service 已连接、而且 AI 设置里的 **AI+ 功能** 已开启时显示；某个用户的 **暂停** 和 **恢复** 在 AI 设置的 **AI+ 用户** 下面）；**更改** 和 **添加用户** 里选择题库的部分更紧凑了（**管理题库**、**全选** 和 **全部不选** 排成一行放在列表上方，**包括以后导入的题库** 是列表的第一项，说明都改成了提示框），**管理题库** 从 **编辑** 移到了这里。
+- 页头、浏览器标签页和手机主屏幕上的新图标（以前添加到主屏幕的图标可能还是旧的样子，重新添加一次就好）。
+
+从 v0.7（而不是 v0.7.5）升级时，v0.7.5 的变化也会一起带来（见 README 里的更新日志）；数据库的步骤相同。
+
+由 **v0.7 的预发布版** 写入的数据库（仍然有 `users.all_banks` 这一列），会在同一次启动时、在同一个事务里、在写完同一份副本（`xexam-schema4-…`）之后被转换：能看到所有题库的用户得到每个已有题库和 **包括以后导入的题库**，其他用户保留他们的题库，在这期间由更早的版本（v0.6 或之前）加进来的用户也会得到所有题库和 **包括以后导入的题库**。这时日志里会写 `Converted the question bank access of a database written by a v0.7 pre-release to the released format and upgraded the database to schema 5. A copy of the previous version was saved first: <path>.`（见 [database.md](database.md) 第 6.5 节）。
+
+### 1.2 升级
 
 ```bash
+# 1. 备份卷（先停止；备份文件里是你的整个数据库，不要提交它）
+docker compose stop
+docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v075.tgz -C /data .
+
+# 2. 换上新的 docker-compose.yml（你的 .env 保持不变；如果你自己改过 docker-compose.yml，请把那些改动搬过去）
+curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
+
+# 3. 拉取三个镜像并启动（不要用 down -v）
 docker compose pull
 docker compose up -d
+
+# 4. 查看升级信息和 AI 服务的启动
+docker compose ps
+docker compose logs backend
+docker compose logs ai-service
 ```
 
-v0.7.5 不改变数据库的 schema，不新增设置，也不需要新的 `docker-compose.yml`（新的那份只是注释不同）。你的 `.env` 保持原样。回退到 v0.7 就是把两个镜像固定为 `:v0.7`，再运行 `docker compose up -d`；数据库保持原样。
+- **可选，在第 3 步之前**：要让 AI 加密密钥和 AI 卷分开存放，现在就把 `XEXAM_AI_SECRET_KEY=<openssl rand -base64 32 的输出>` 写进 `docker/.env`。以后再设置也可以，但那样的话，在那之前保存的 AI 密钥就无法再解密，必须重新输入。`XEXAM_INTERNAL_TOKEN` 也是可选的；不设置时，后端会创建令牌（见 [deployment.md](deployment.md) 第 3 节）。
+- **没有 `/etc/localtime` 的宿主机**：新的 compose 文件也把它挂载进 AI 服务；请在两个服务里都删掉那六行，并在 `docker/.env` 里设置 `TZ`。
+- **AI 服务不能上网**（宿主机在严格的防火墙后面）：Xexam 照常可用；只是 AI 设置里的测试会以「连不上 AI 服务商」失败，直到 AI 服务能连到服务商为止（或者把它指向你网络里的服务商）。
+- **源码构建**：在仓库根目录运行 `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`；它把 `ai-service/Dockerfile` 构建成第三个镜像 `xexam-ai-service:local`。
+- **从 v0.8 的预发布版升级**（compose 文件里 AI 服务还叫 `ai`）：用新文件运行 `docker compose up -d --remove-orphans`，会删掉旧的容器；卷 `xexam_ai_data` 和 `xexam_link` 会继续使用。没有哪个正式发布的版本用过那个名字，所以从 v0.7.5 正常升级时没有什么要删的。
 
-由 **v0.7 的预发布版** 写入的数据库（仍然有 `users.all_banks` 这一列），会在 v0.7 或更新的版本第一次启动时被转换，转换前先写一份副本 `backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`：能看到所有题库的用户得到每个已有题库和 **包括以后导入的题库**，其他用户保留他们的题库。从 v0.7.5 起，在这期间由更早的版本（v0.6 或之前）加进这样一个数据库的用户，也会得到所有题库和 **包括以后导入的题库**，和第 2 节升级时的用户一样。日志里会写 `Converted the question bank access of a database written by a v0.7 pre-release to the released format.`（见 [database.md](database.md) 第 6.5 节）。
+### 1.3 升级后的检查
 
-## 2. 从 v0.6 升级到 v0.7.5
+- [ ] `docker compose ps` 列出 `xexam-frontend`、`xexam-backend` 和 `ai-service`，都是 `healthy`。
+- [ ] `/api/info` 里的 `version` 是 `0.8`。
+- [ ] 你可以像以前一样登录；没有人需要重新登录。**用户管理** 显示同样的用户，每个普通用户的 **AI+ 功能** 都是关闭的（等 ai-service 已连接、AI 设置里的 **AI+ 功能** 已开启之后，才会出现这些开关）。
+- [ ] **系统日志** 里有一条 `AI: AI link: connected to the main service`（AI 服务的日志行以 `AI: ` 开头；每次重新连接后会再出现一条，连接断开时会有 `AI: AI link: lost the main service`）。
+- [ ] **AI 设置** 能打开，显示 **ai-service 已连接（版本 0.8；…）** 和 **AI+ 功能已关闭**；在你保存连接之前，第一个标记是 **连接未设置**。想试试 AI：设置一个服务商，**测试**，开启 **AI+ 功能**，然后在 **AI 对话** 里问点什么。如果它显示的是 **ai-service 连接状态**，请看它写明的原因（见 [usage.md](usage.md) 第 17 节）。
+- [ ] 从现在起备份两个数据卷（见 [database.md](database.md) 第 5 节和第 8.4 节）。
+
+### 1.4 回退到 v0.7.5
+
+回退就是**恢复迁移前写的那份副本**，换回旧的 `docker-compose.yml`，然后运行 v0.7.5 的镜像。迁移之后在主程序里做的一切都会丢失（记录、账户、设置、导入）；AI 数据留在它自己的卷里，v0.7.5 不使用这个卷。
+
+```bash
+# 1. 停止新版本（不要用 down -v）
+docker compose stop
+
+# 2. 找到那份副本。正常停止之后，/data 里即使留着 xexam.db-wal，也是空的。
+docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
+
+# 3. 把副本放回去，作为 xexam.db（用第 2 步看到的文件名）；先删掉残留的 -wal / -shm 文件
+docker run --rm -v xexam_data:/data alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && cp /data/backups/xexam-schema4-20261111-140501.db /data/xexam.db'
+
+# 4. 换回 v0.7.5 的 docker-compose.yml，并固定它的两个镜像（在 Docker Hub 上，不用登录），然后启动：
+#      image: docker.io/yuminspace/xexam-backend:v0.7.5
+#      image: docker.io/yuminspace/xexam-frontend:v0.7.5
+#    并删掉旧文件已经不认识的、已停止的 `ai-service` 容器（它的卷保留）：
+docker compose up -d --remove-orphans
+```
+
+源码构建时，请检出那个版本：`git fetch --tags && git checkout v0.7.5 && docker compose -f docker/docker-compose.build.yml up -d --build --remove-orphans`。
+
+v0.7.5 也能直接打开迁移过的数据库（它忽略那两个新列），但这只留作应急用：它创建的用户没有身份标记，AI+ 是关闭的，v0.8 下次启动时会给他们一个标记（[database.md](database.md) 第 6.6 节）。卷 `xexam_ai_data` 和 `xexam_link` 可以留着以后升级时用；`docker volume rm xexam_ai_data xexam_link` 会删掉它们（这会永久删除 AI 对话、记忆和设置）。
+
+以后要再升级，就换回新的 `docker-compose.yml`，运行 `docker compose pull && docker compose up -d`。迁移会再执行一次，并写一份新的副本；`xexam_ai_data` 里的 AI 设置和对话都还在，已经不存在的用户的 AI 数据会被 AI 服务删除。
+
+### 1.5 测试过什么
+
+只用合成数据（`backend/tests/v08_ai_link.rs`、`db_golden.rs`、`ai-service/tests/` 和 `tests/integration/`）：
+
+- v0.7.5 写的 schema 4 数据库迁移到 schema v5，正好写一份 `xexam-schema4-…` 备份；每个用户的 AI+ 都是关闭的，并得到一个唯一的 32 位十六进制标记；结果的 `sqlite_master` 和新建的数据库一样，再次打开时什么都不写。
+- schema 3 的数据库一步迁移到 schema v5，写一份 `xexam-schema3-…` 备份；预发布版 v4 数据库在一个事务里被转换并迁移。
+- 回退后由 v0.7.5 创建的用户在下次启动时得到一个标记，不写备份。
+- 后端在第一次 `serve` 时创建 `internal.token`（权限 0600），重启时继续使用它，设置了 `XEXAM_INTERNAL_TOKEN` 时不写文件，对不符合规则的值用一行日志关闭连接。
+- 用三个镜像和一个虚构的服务商跑整个栈（`stack_check.py`）：登录、AI 设置、测试、开启、带 keep-alive 注释的流式回答、回答过程中关闭 **AI+ 功能**（它在几秒内结束）和暂停某个用户（它立即结束）、ai-service 没有连接或功能关闭时用户管理里的 AI+ 开关被拒绝、对 ai-service 执行 `docker stop` 和 `docker start` 之后的连接状态、回复语言、管理员的自由模式（在设置里选择、按用户保存、发送时带 `free` 会被忽略、旧的按对话设置的路由返回 404）、重新创建容器后 AI 设置和数据仍在、`ai-service` 停止时主程序照常回答、每个卷里有哪些文件，以及任何日志或回应里都没有密钥、题目或回答。停止、重试、上限、向后端的报告、AI 数据库升级到 schema 2 和管理员的访问在 `ai-service/tests/` 里测试。
+
+没有测试过：迁移**你自己的**数据库，以及真正的 AI 服务商（CI 用的是虚构的）。想要确定的话，先在一份副本上试一下升级。
+
+## 2. 从 v0.6 升级到 v0.8
 
 ### 2.1 会有什么变化
 
 新版本在你的数据卷上**第一次启动**时，在接受任何请求之前做这些事：
 
 1. **备份。** 把当前的数据库复制到 `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`。这份副本是一个普通的 schema 3 数据库，v0.6 能打开它。**副本写不出来时**（磁盘满、没有权限），后端拒绝启动，数据库保持原样；日志里写明原因。
-2. **迁移到 schema v4**，在一个事务里完成：
+2. **迁移到 schema v5**（经过 v4），在一个事务里完成：
    - **已有的每个用户仍然能看到所有题库**：每个人都得到每个已有题库和 **包括以后导入的题库**，在用户管理里显示为 **题库：全部，包括以后导入的**。之后添加的用户，在你选好之前一个题库都没有。
    - **已有的每个题库都归第一个管理员**（id 最小的已启用管理员）。还没有人 **可管理题库**。
    - **已有的每条学习记录都是考试。** 练习记录从现在起才会出现。
+   - **AI+** 对所有人都是关闭的，每个用户都得到一个身份标记（v5 这一步，第 1.1 节）。
    - 题目 id、统计、记录、设置、账户和会话都不变：没有人会被退出登录。
 3. **WAL 模式。** 只有迁移成功之后，后端才把数据库切换到 WAL。后端运行时，`xexam.db` 旁边有 `xexam.db-wal` 和 `xexam.db-shm`；正常停止时它们会被并回 `xexam.db`，`xexam.db-wal` 被清空（这两个文件可能空着留下，没有害处）。
 4. **下架旧格式的题**，在另一个事务里完成：从三列或四列格式导入的每一道上架的题（v0.6 的话就是每一道题）都被下架，和导入时下架一道从工作簿里消失的题完全一样。题库、它们的导入记录、学习记录、统计和错题本都保留；这些题不再出题，题库列表里会写明这个题库的题来自旧的 Excel 格式。日志里每个题库有一条警告，例如 `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`。这项检查在每次启动时运行（命令行命令也是），没有要下架的题时什么都不写。
@@ -46,12 +141,12 @@ v0.7.5 不改变数据库的 schema，不新增设置，也不需要新的 `dock
 你还会注意到：
 
 - **只能导入六列格式的工作簿。** 三列或四列格式的文件会被拒绝，并有一句提示说明原因（见 [usage.md](usage.md) 第 12 节）。
-- **用户管理** 里每一行都显示这个用户的题库，带 **更改** 用来选择；**添加用户** 的表单和编辑对话框里有 **可以管理题库** 权限。收回某个题库后，这个用户在其中的记录仍作为历史保留。
+- **用户管理** 里每一行都显示这个用户的题库，带 **更改** 用来选择（里面有 **管理题库**，即可管理题库的权限），还有 **AI+** 开关。收回某个题库后，这个用户在其中的记录仍作为历史保留。
 - 主页上 **开始考试** 旁边有 **开始练习**；**学习记录** 里练习记录带 **练习** 标签。
-- 管理员的菜单里多了 **系统日志**。
+- 管理员的菜单里多了 **系统日志** 和 **AI 设置**，AI 设置好之后还有 **AI 对话**（第 1.1 节）。
 - 答案与解析的每张卡片都有自己的 **English** / **中文** / **日本語** 切换按钮。
 
-新的 `docker-compose.yml` 和 v0.6 的不同：它跟随宿主机的时区，而不是固定的默认时区（它挂载 `/etc/localtime`；`docker/.env` 里的 `TZ` 优先于它）；它把每个容器的日志限制在 3 个 10 MB 的文件；`docker/.env` 里设置了 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG` 时，它会把它们传进去。v0.6 的文件仍然能启动新版本，只是没有这些改动。`.env` 里不需要新增任何变量。
+新的 `docker-compose.yml` 和 v0.6 的不同：它有 AI 服务和它的两个卷以及网络 `egress`（第 1.1 节）；它跟随宿主机的时区，而不是固定的默认时区（它挂载 `/etc/localtime`；`docker/.env` 里的 `TZ` 优先于它）；它把每个容器的日志限制在 3 个 10 MB 的文件；`docker/.env` 里设置了 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 AI 的变量时，它会把它们传进去。v0.6 的文件仍然能启动新版本，只是没有这些改动，也没有 AI。`.env` 里不需要新增任何变量。
 
 ### 2.2 升级之前
 
@@ -77,10 +172,10 @@ docker compose up -d
 docker compose logs backend
 ```
 
-日志里应该有 `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema3-20261111-140501.db (…)`、`SQLite journal mode: wal`，以及每个题库一条 `retired … of bank "…"` 警告。
+日志里应该有 `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema3-20261111-140501.db (…)`、`SQLite journal mode: wal`，以及每个题库一条 `retired … of bank "…"` 警告。
 
 - **时区。** v0.6 的 compose 文件在 `.env` 没有写别的时区时，会设置一个固定的时区。如果宿主机的时区和你以前的时间写入时用的时区不同，请在 `docker/.env` 里把那个时区设成 `TZ`（例如 `TZ=UTC`），这样新的记录会接着用它。已经保存的时间永远不会被改写。
-- **没有 `/etc/localtime` 的宿主机**：Compose 会报「bind source path does not exist」并停下。从 `docker-compose.yml` 里删掉这个挂载的六行，并在 `docker/.env` 里设置 `TZ`（[deployment.md](deployment.md) 第 3.1 节）。
+- **没有 `/etc/localtime` 的宿主机**：Compose 会报「bind source path does not exist」并停下。从 `docker-compose.yml` 里删掉这个挂载的六行（后端和 AI 服务里各有一处），并在 `docker/.env` 里设置 `TZ`（[deployment.md](deployment.md) 第 3.1 节）。
 - **特殊的存储**：如果卷放在网络文件系统上，或者是绑定挂载进 Docker Desktop 的 Windows 文件夹，请在第 3 步之前把 `XEXAM_SQLITE_JOURNAL=delete` 写进 `docker/.env`。
 - **源码构建**：在仓库根目录运行 `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`，然后 `docker compose -f docker/docker-compose.build.yml logs backend`。不用 Docker 时，副本写到数据目录（`--data` 或 `XEXAM_DATA`）里的 `backups/`。
 
@@ -96,18 +191,18 @@ docker compose logs backend
 
 ### 2.5 升级后的检查
 
-- [ ] `/api/info` 里的 `version` 是 `0.7.5`。
+- [ ] `/api/info` 里的 `version` 是 `0.8`，并且 `docker compose ps` 列出三个 healthy 的容器。
 - [ ] 你可以像以前一样登录；没有人需要重新登录。
 - [ ] **用户管理**：以前的每个用户都显示 **题库：全部，包括以后导入的**。
 - [ ] **题库管理** 列出同样的题库，每个都是第一个管理员**上传**的。在第 2.4 节的更新之前，每个题库都显示它的题已下架（例如 **0 题（另有 25 题已下架）**，就是你记下的那个数）；更新之后，显示六列格式文件里的题数。
 - [ ] **学习记录** 列出以前的记录，每条都带 **考试** 标签。
 - [ ] **系统日志** 显示启动时的几行，其中有 `SQLite journal mode: wal` 和被下架的题。
 - [ ] 做一次简短的练习，把它在 **学习记录** 里的时间和时钟对一下。如果差了整数个小时，请设置 `TZ`（第 2.3 节）。
-- [ ] 然后为每个用户决定他能看到哪些题库，以及谁可以管理题库。
+- [ ] 然后为每个用户决定他能看到哪些题库，以及谁可以管理题库；在你设置之前 AI 是关闭的（第 1.1 节）。
 
 ### 2.6 回退到 v0.6
 
-回退就是**恢复迁移前写的那份副本**，然后运行 v0.6 的镜像。迁移之后做的一切都会丢失：六列格式的导入、新题库、记录（包括练习记录）、账户、题库权限和设置。
+回退就是**恢复迁移前写的那份副本**，然后运行 v0.6 的镜像。迁移之后做的一切都会丢失：六列格式的导入、新题库、记录（包括练习记录）、账户、题库权限和设置。AI 数据留在它自己的卷里，v0.6 不使用这个卷。
 
 ```bash
 # 1. 停止新版本（不要用 down -v）
@@ -120,25 +215,26 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 #    数据库，不能套用到副本上，所以先删掉它们。
 docker run --rm -v xexam_data:/data alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && cp /data/backups/xexam-schema3-20261111-140501.db /data/xexam.db'
 
-# 4. 在 docker-compose.yml 里固定 v0.6 的镜像（在 Docker Hub 上，不用登录），然后启动：
+# 4. 在 docker-compose.yml 里固定 v0.6 的镜像（在 Docker Hub 上，不用登录），从文件里删掉 ai 服务（和它的卷），
+#    或者换回 v0.6 的 docker-compose.yml，然后启动：
 #      image: docker.io/yuminspace/xexam-backend:v0.6
 #      image: docker.io/yuminspace/xexam-frontend:v0.6
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
 
-新的 `docker-compose.yml` 也能和 v0.6 的镜像一起用。源码构建时，请检出那个版本：`git fetch --tags && git checkout v0.6 && docker compose -f docker/docker-compose.build.yml up -d --build`。
+源码构建时，请检出那个版本：`git fetch --tags && git checkout v0.6 && docker compose -f docker/docker-compose.build.yml up -d --build --remove-orphans`。
 
 第 3 步也可以换成恢复你在第 2.3 节自己做的 `.tgz`（恢复命令见 [database.md](database.md) 第 5 节）；里面是同样的数据。不管哪种方式，第 4 步都需要。
 
-v0.6 能直接打开迁移过的数据库，也会自己把文件从 WAL 切回去，但这只留作应急用：v0.6 不懂 v0.7 的规则，所以每个用户又能看到所有题库，只有管理员能管理题库，练习记录看起来和考试一样，它也完全不知道六列格式的题。之后再启动新版本时，它会修好 v0.6 留下的东西（[database.md](database.md) 第 6.6 节）：v0.6 导入的题库会得到所有者，并给到设置了 **包括以后导入的题库** 的用户；v0.6 创建的用户会得到所有题库和 **包括以后导入的题库**；v0.6 导入的题会再次被下架。
+v0.6 能直接打开迁移过的数据库，也会自己把文件从 WAL 切回去，但这只留作应急用：v0.6 不懂 v0.7 及以后版本的规则，所以每个用户又能看到所有题库，只有管理员能管理题库，练习记录看起来和考试一样，它也完全不知道六列格式的题。之后再启动新版本时，它会修好 v0.6 留下的东西（[database.md](database.md) 第 6.6 节）：v0.6 导入的题库会得到所有者，并给到设置了 **包括以后导入的题库** 的用户；v0.6 创建的用户会得到所有题库和 **包括以后导入的题库**；v0.6 导入的题会再次被下架。
 
 以后要再升级，就把新版本的镜像放回去（标签 `:latest`），运行 `docker compose pull && docker compose up -d`。迁移会再执行一次，并写一份新的副本。
 
 ### 2.7 测试过什么
 
-只用合成数据（`backend/tests/v065_bank_access_and_practice.rs`、`v07_bank_access_and_layouts.rs`、`v07_wal_and_logs.rs`、`db_golden.rs` 和 `tests/integration/`）：
+只用合成数据（`backend/tests/v065_bank_access_and_practice.rs`、`v07_bank_access_and_layouts.rs`、`v07_wal_and_logs.rs`、`v08_ai_link.rs`、`db_golden.rs` 和 `tests/integration/`）：
 
-- schema 3 的数据库带着备份迁移到 schema v4；每个用户都保留所有题库，包括以后导入的，题库都归第一个管理员。
+- schema 3 的数据库带着一份备份迁移到 schema v5；每个用户都保留所有题库，包括以后导入的，题库都归第一个管理员。
 - 备份写不出来时，数据库不迁移，也不改变。
 - 旧格式的题只下架一次，题库、记录和错题本都保留；第二次启动什么都不写。命令行程序也一样，每个题库记一行英语日志。题已被下架的题库用六列格式的文件更新：新题被加入，旧题仍保持下架。
 - 上传、导入确认和命令行的 `import` 会在暂存或写入任何东西之前拒绝三列和四列格式的工作簿。
@@ -152,15 +248,15 @@ v0.6 能直接打开迁移过的数据库，也会自己把文件从 WAL 切回�
 
 没有测试过：迁移**你自己的**数据库。想放心的话，请先在副本上做（像第 6 节的「在副本上试新版本」那样）。
 
-## 3. 从 v0.5 或 v0.5.1 升级到 v0.7.5
+## 3. 从 v0.5 或 v0.5.1 升级到 v0.8
 
 ### 3.1 会有什么变化
 
-v0.6 引入了账户和登录（schema v3）；v0.7 又加上了按用户设置题库（schema v4）。从 v0.5 升级时，这两步都在**第一次启动**时、在写完一份副本之后，在一个事务里完成：
+v0.6 引入了账户和登录（schema v3）；v0.7 又加上了按用户设置题库（schema v4），v0.8 加上了 AI+ 开关和身份标记（schema v5）。从 v0.5 升级时，这些步骤都在**第一次启动**时、在写完一份副本之后，在一个事务里完成：
 
 1. **备份**到 `/data/backups/xexam-schema2-<YYYYmmdd-HHMMSS>.db`，一个普通的 schema 2 数据库，v0.5 能打开它。写不出来时什么都不变，后端也不启动。
 2. **账户。** 创建默认管理员 `admin`，密码 `admin`，它**得到你原有的一切**：每条学习记录、错题本和设置。
-3. **schema v4**，和第 2.1 节一样：`admin` 能看到并拥有所有题库。
+3. **schema v4 和 v5**，和第 2.1 节一样：`admin` 能看到并拥有所有题库；AI 是关闭的（第 1.1 节）。
 4. **WAL 模式**，然后**下架旧格式的题**，和第 2.1 节一样：请先准备好六列格式的工作簿（第 2.2 节），之后用它们更新题库（第 2.4 节）。
 
 从现在起，每个页面都需要登录的账户。每个人都有自己的记录、错题本和设置，所以请在 **用户管理** 里添加其他人，而不是大家共用 `admin`。
@@ -174,7 +270,7 @@ v0.6 引入了账户和登录（schema v3）；v0.7 又加上了按用户设置�
 ### 3.3 升级后的检查
 
 - [ ] 打开 Xexam：出现登录页，上面写着账户 `admin`。用 `admin` / `admin` 登录，并马上设置自己的密码；在那之前，能打开这个页面的人都能用默认密码。
-- [ ] `/api/info` 里的 `version` 是 `0.7.5`。
+- [ ] `/api/info` 里的 `version` 是 `0.8`。
 - [ ] **题库管理** 列出同样的题库，在你更新它们之前（第 2.4 节）它们的题都是已下架的；**学习记录** 列出你以前的考试；**设置** 里是你的主题和语言。
 - [ ] 添加其他用户，并选择他们的题库。
 
@@ -186,7 +282,7 @@ v0.6 引入了账户和登录（schema v3）；v0.7 又加上了按用户设置�
 
 ## 4. 从 v0.4 升级到 v0.5 及以后
 
-现在这种升级会直接到 v0.7.5：下面的步骤，再加上第 3.1 节和第 2.1 节的步骤，在写完**一份**副本 `xexam-schema1-<YYYYmmdd-HHMMSS>.db` 之后，在**一个**事务里完成，然后旧格式的题被下架（第 2.1 节第 4 步）。然后你用 `admin` / `admin` 登录（第 3.3 节），你的所有数据都归 `admin`。请先准备好六列格式的工作簿（第 2.2 节）。
+现在这种升级会直接到 v0.8：下面的步骤，再加上第 3.1 节和第 2.1 节的步骤，在写完**一份**副本 `xexam-schema1-<YYYYmmdd-HHMMSS>.db` 之后，在**一个**事务里完成，然后旧格式的题被下架（第 2.1 节第 4 步）。然后你用 `admin` / `admin` 登录（第 3.3 节），你的所有数据都归 `admin`。请先准备好六列格式的工作簿（第 2.2 节）。
 
 ### 4.1 你的数据会怎样
 
@@ -228,14 +324,14 @@ docker compose up -d
 docker compose logs backend
 ```
 
-日志里应该有这样一行：`Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`，然后是这个题库被下架的题。那份副本是程序自己写的；第 1 步的 `.tgz` 是你自己在卷以外的第二份副本。
+日志里应该有这样一行：`Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`，然后是这个题库被下架的题。那份副本是程序自己写的；第 1 步的 `.tgz` 是你自己在卷以外的第二份副本。
 
 源码构建：在仓库根目录运行 `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`。compose 文件现在在 `docker/` 里：运行那个命令之前，先把仓库根目录的 `.env` 移到 `docker/.env`（Compose 不会再读根目录的 `.env`），之后的命令（例如 `logs backend`）也都要加上 `-f docker/docker-compose.build.yml`。不用 Docker 时，副本写到数据目录（`--data` 或 `XEXAM_DATA`）里的 `backups/`。
 
 ### 4.3 升级后的检查
 
 - [ ] 用 `admin` / `admin` 登录，并设置自己的密码（第 3.3 节）。
-- [ ] `/api/info` 里的 `version` 是你安装的版本（现在是 `0.7.5`）。
+- [ ] `/api/info` 里的 `version` 是你安装的版本（现在是 `0.8`）。
 - [ ] **题库管理** 列出一个题库，包含你所有的工作表；它的题都算作已下架，数量和旧版的一样。
 - [ ] **学习记录** 列出你以前的考试。
 - [ ] 用你的工作簿的六列格式版本更新这个题库（第 2.4 节），答几道题并交卷。新的记录里每道题都显示你的答案。
@@ -323,11 +419,11 @@ docker compose stop
 #    不删的话，旧容器会作为「孤儿」留在项目里，它的端口映射还占着 8765，新的 xexam-frontend 会因为端口冲突起不来。
 docker rm xexam
 
-# 3. 换上新的 docker-compose.yml（现在有两个服务，从 Docker Hub 拉取，不用登录），然后拉取并启动（同一个卷 xexam_data，同一个端口）
+# 3. 换上新的 docker-compose.yml（现在有三个服务，从 Docker Hub 拉取，不用登录），然后拉取并启动（同一个卷 xexam_data，同一个端口）
 docker compose pull
 docker compose up -d
 
-# 4. 检查两个容器都是 healthy
+# 4. 检查容器都是 healthy（从 v0.8 起有三个）
 docker compose ps
 ```
 
@@ -337,7 +433,7 @@ docker compose ps
 
 升级后的检查：
 
-- [ ] `/api/info` 里的 `version` 是你安装的版本（现在是 `0.7.5`）。
+- [ ] `/api/info` 里的 `version` 是你安装的版本（现在是 `0.8`）。
 - [ ] 登录之后，**题库管理** 显示那一个题库，它已下架的题和旧版的题一样多（旧的 `bankCount`），**学习记录** 里的成绩历史和升级前一样。
 - [ ] 用你的六列格式工作簿更新这个题库（第 2.4 节），答几道题并交卷；分数出现在历史里。
 
@@ -388,7 +484,7 @@ docker compose -f docker-compose.legacy.yml up -d
 
 ## 10. Python 到 Rust：和旧版有意不同的地方
 
-带理由的完整表格见 [api.md](api.md) 第 5 节。每一条都登记在 `tests/baseline/golden/allowed_differences_rust.json` 和 `allowed_probe_differences_rust.json` 里，没有登记的差异会让测试失败。用户能看到的只有这些：
+带理由的完整表格见 [api.md](api.md) 第 7 节。每一条都登记在 `tests/baseline/golden/allowed_differences_rust.json` 和 `allowed_probe_differences_rust.json` 里，没有登记的差异会让测试失败。用户能看到的只有这些：
 
 | 项目 | 变化 |
 |---|---|

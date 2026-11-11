@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """The screenshot scenes: headless Chrome drives the real UI through DOM clicks, one browser per language.
 
-shoot_language() writes, into one folder, the 17 images the READMEs and docs use (desktop 1280 px wide and iPhone
-390 x 844, both at device scale 2):
+shoot_language() writes, into one folder, the 20 images the READMEs and docs use (16 desktop images 1280 px wide and 4
+iPhone images 390 x 844, both at device scale 2):
 
   desktop-1-home        Home with the saved exam to continue (green Start exam, orange Start practice)
   desktop-2-quiz        an exam in progress, on a hotspot question with its first item answered
@@ -10,16 +10,35 @@ shoot_language() writes, into one folder, the 17 images the READMEs and docs use
   desktop-4-records     Study records
   desktop-5-banks       Question banks: the preview of an update ("Kitchen basics (v2)") and the guide unfolded, shortened
                         to its first two sections (basics and the six columns) so the whole guide card ends inside the image
-  desktop-6-settings    Settings
+  desktop-6-settings    Settings, as the administrator: with the AI chat mode section (Normal selected; administrators only)
   desktop-7-dark        the exam page in the dark theme
   desktop-8-about       About: the newest changelog entry shortened to the bullets that fit, so the whole What's new card
                         (with the folded earlier versions) ends inside the image
   desktop-9-signin      the sign-in page
-  desktop-10-users      Users
+  desktop-10-users      Users: the AI+ feature line of each user (shown while AI+ is available), the bright AI+ badge
+                        of the administrators and sam, the dark one of alex (AI+ feature paused), none for kim
   desktop-11-practice   practice: one question checked right, the next one checked wrong (orange) with the right ones green
   desktop-12-user-banks the "Question banks" dialog of a user
   desktop-13-logs       System log, the whole card (lead, filters, lines, note) in view
+  desktop-14-ai-chat    AI Chat as the administrator: a chat started through the API opened, a second question typed
+                        into its composer and sent through the UI, its answer finished; the administrator notice, the
+                        green "Free mode" tag right of the title (the scene turns the administrator's free mode on through
+                        POST /api/ai/free first and off again afterwards; AI Chat itself has no mode switch, the choice
+                        is in Settings), the who line (You / AI, model, time) above and
+                        Copy (with Remember this / Retry) under every message are visible. The window is made just tall
+                        enough for the whole conversation box and the image ends below it. The chat is deleted again
+                        through the API, so every language starts without chats
+  desktop-15-ai-settings AI settings after a click on Refresh list and on Test: the four status chips and the note that
+                        ai-service is connected, the connection with the made-up address and the masked made-up key, the
+                        model with the number of demo models found, the test result and the users with the AI+ feature
+                        (badge, AI+ feature: alex Paused with Resume, sam Active with Pause; administrators always)
+  desktop-16-ai-usage   the rest of that page, scrolled into view: the usage statistics with the cached-tokens column (they grow
+                        by a few calls per language), the chat retention and the safety limits
   iphone-1-home, iphone-2-quiz, iphone-3-menu, iphone-4-records
+
+The made-up AI provider (tests/integration/ai_stub.py) answers in the reply language the page sends (the Settings
+language), so each language's AI Chat image shows questions and answers in that language. Every value on the AI images
+is made up (the stub's address, the key hint ...9c21, the demo-* models); real addresses, keys or models never appear.
 
 Every desktop image is cut where no text line, control or card is split (see FIT_JS) or measured to its card.
 The page clock runs in UTC and the browser's language follows the UI language.
@@ -34,7 +53,8 @@ from browser import Chrome, strip_png
 
 SCENES = ['desktop-%d-%s.png' % kv for kv in enumerate(
     ['home', 'quiz', 'result', 'records', 'banks', 'settings', 'dark', 'about', 'signin', 'users', 'practice',
-     'user-banks', 'logs'], start=1)] + ['iphone-1-home.png', 'iphone-2-quiz.png', 'iphone-3-menu.png', 'iphone-4-records.png']
+     'user-banks', 'logs', 'ai-chat', 'ai-settings', 'ai-usage'], start=1)] + ['iphone-1-home.png', 'iphone-2-quiz.png',
+                                                                               'iphone-3-menu.png', 'iphone-4-records.png']
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
 UI_LANG = {'en': 'en', 'zh-CN': 'zh', 'ja': 'ja'}          # the uiLang / questionLang setting
@@ -42,6 +62,12 @@ DESKTOP_UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Ge
 IPHONE_UA = ('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) '
              'Version/17.5 Mobile/15E148 Safari/604.1')
 WIDTH, PHONE_W, PHONE_H = 1280, 390, 844
+# Self-made study questions of the AI Chat scene, per UI language: the earlier chat, then the one typed into the composer
+AI_QUESTIONS = {
+    'en': ('How can I remember new vocabulary for my exam?', 'Can you give me a short plan for one week?'),
+    'zh': ('怎样才能更好地记住考试要用的新词汇？', '能给我一个一周的简短复习计划吗？'),
+    'ja': ('試験のために新しい単語をうまく覚えるにはどうすればいいですか？', '一週間の短い復習プランを作ってもらえますか？'),
+}
 
 # Installed in every page before its own scripts
 PRELUDE = r"""
@@ -250,6 +276,96 @@ JS_ABOUT = r"""((cap) => {
 })"""
 
 
+# Users: what the AI+ parts of the page show (for the log of the run)
+JS_USERS_STATE = r"""(() => {
+  const n = s => document.querySelectorAll(s).length;
+  return n('.ai-badge:not(.off)') + ' bright badge(s), ' + n('.ai-badge.off') + ' dark, ' + n('.us-ailine') + ' AI+ line(s)';
+})()"""
+
+# AI settings: the AI+ feature cells of the users with the AI+ feature (for the log of the run)
+JS_AI_FUNCTIONS = r"""(() => [...document.querySelectorAll('[id^="ais-fn-"]')].map(b => b.closest('tr')?.innerText
+  .replace(/\s+/g, ' ').trim().slice(0, 60)).join(' | ') || 'no Pause / Resume button')()"""
+
+# AI Chat: open the chat whose title starts like `title` in the chat list
+JS_AI_OPEN = r"""(async (title) => {
+  const list = document.querySelector('.ai-list');
+  if (!list) return 'no chat list';
+  const key = title.replace(/\s+/g, ' ').slice(0, 16);
+  const item = [...list.querySelectorAll('button, a, [role="button"]')].find(el => (el.innerText || '').includes(key));
+  if (!item) return 'chat not found';
+  item.click(); await window.__wait(900);
+  return document.querySelectorAll('.ai-msg').length + ' messages shown';
+})"""
+
+# AI Chat: focus the composer (the text itself is typed through the DevTools protocol)
+JS_AI_FOCUS = r"""(() => { const t = document.querySelector('#ai-input'); if (!t) return 'no composer'; t.focus(); return 'focused'; })()"""
+
+# AI Chat: press Send and wait until the answer has finished (no streaming message left, two answers shown)
+JS_AI_SEND = r"""(async () => {
+  document.querySelector('#ai-send').click();
+  let n = 0;
+  for (let i = 0; i < 150; i++) {
+    await window.__wait(200);
+    n = document.querySelectorAll('.ai-msg.assistant').length;
+    if (i > 3 && n >= 2 && !document.querySelector('.ai-msgs [aria-busy="true"]')) break;
+  }
+  await window.__wait(600);
+  document.activeElement?.blur?.();
+  window.scrollTo(0, 0);
+  return n + ' answers; notice ' + (document.querySelector('.ai-notice') ? 'shown' : 'MISSING') +
+    '; free-mode tag ' + (document.querySelector('.ai-mode-tag') ? 'shown' : 'MISSING') +
+    '; mode switch ' + (document.querySelector('#ai-free') ? 'STILL THERE' : 'none');
+})()"""
+
+# AI Chat: scroll the conversation box to its end; returns how many px of the conversation do not fit in the box
+JS_AI_OVER = r"""(() => {
+  const sc = document.getElementById('ai-scroll');
+  if (!sc) return 0;
+  sc.scrollTop = sc.scrollHeight;
+  return Math.ceil(sc.scrollHeight - sc.clientHeight);
+})()"""
+
+# AI Chat: the bottom (page coordinates) of the chat list and the conversation
+JS_AI_PANES_BOTTOM = r"""(() => {
+  window.scrollTo(0, 0);
+  const p = document.getElementById('ai-panes');
+  return p ? Math.ceil(p.getBoundingClientRect().bottom + window.scrollY) : null;
+})()"""
+
+# AI settings: press Refresh list (the line "N models found" appears under the model), then Test, and wait for each
+# result (the page reads the usage again after both, so the Usage card counts these calls too)
+JS_AI_TEST = r"""(async () => {
+  const wait = window.__wait, q = s => document.querySelector(s);
+  const inCard = (heading, s) => document.getElementById(heading)?.closest('section')?.querySelector(s);
+  const until = async (ok, ms) => {
+    for (let t = 0; t < ms; t += 100) { await wait(100); if (ok()) return true; }
+    return false;
+  };
+  if (!q('#ai-models-btn') || !q('#ai-test-btn')) return 'no Refresh list / Test button';
+  q('#ai-models-btn').click();
+  const listed = await until(() => !q('#ai-models-btn')?.disabled && inCard('ais-model-h', '.ais-note[role="status"]'), 8000);
+  const note = inCard('ais-model-h', '.ais-note[role="status"]')?.innerText || '';
+  q('#ai-test-btn').click();
+  const tested = await until(() => !q('#ai-test-btn')?.disabled && inCard('ais-test-h', '.ais-ok, .ais-fail, .ais-ferr'), 15000);
+  const result = inCard('ais-test-h', '.ais-ok')?.innerText || 'TEST FAILED';
+  await wait(1200);                                    // the usage tables are read again after the test
+  document.activeElement?.blur?.();
+  window.scrollTo(0, 0);
+  return (listed ? note : 'NO MODEL LIST') + '; ' + (tested ? result : 'NO TEST RESULT');
+})()"""
+
+# AI settings: [top, bottom] (page coordinates) of the card whose heading has the id `first`, through the card whose
+# heading has the id `last`
+JS_AI_CARDS = r"""((first, last) => {
+  window.scrollTo(0, 0);
+  const card = id => document.getElementById(id)?.closest('section');
+  const a = card(first), b = card(last);
+  if (!a || !b) return null;
+  const y = window.scrollY;
+  return [Math.floor(a.getBoundingClientRect().top + y), Math.ceil(b.getBoundingClientRect().bottom + y)];
+})"""
+
+
 class Shooter:
     def __init__(self, cdp, base, out, only):
         self.cdp, self.base, self.out, self.only = cdp, base, out, only
@@ -272,10 +388,19 @@ class Shooter:
     def js(self, code):
         return self.cdp.evaluate(code)
 
-    def png(self, name, w, h, mobile):
+    def png(self, name, w, h, mobile, clip=None, scroll_y=None):
+        """The w x h window as `name`; with `clip`, only its top `clip` px (for a page whose layout follows the window
+        height, so the window cannot simply be made as tall as the image); with `scroll_y`, scrolled down that far."""
         self.metrics(w, h, mobile)
         time.sleep(0.5)
-        data = strip_png(base64.b64decode(self.cdp.call('Page.captureScreenshot', format='png')['data']))
+        if scroll_y is not None:
+            self.js('window.scrollTo(0, %d); window.scrollY' % scroll_y)
+            time.sleep(0.3)
+        shot = {'format': 'png'}
+        if clip:
+            shot['clip'] = {'x': 0, 'y': 0, 'width': w, 'height': int(clip), 'scale': 1}
+            h = int(clip)
+        data = strip_png(base64.b64decode(self.cdp.call('Page.captureScreenshot', **shot)['data']))
         path = os.path.join(self.out, name)
         for attempt in range(8):                     # a viewer or a virus scanner may hold the file for a moment
             try:
@@ -334,6 +459,7 @@ def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_lo
         cdp.call('Emulation.setEmulatedMedia', features=[{'name': 'prefers-color-scheme', 'value': 'light'}])
         s = Shooter(cdp, base, out, set(only))
         _desktop_scenes(s, base, cookie, code, upload, with_log)
+        _ai_scenes(s, base, cookie, code)
         _phone_scenes(s)
         # leave nothing behind for the next language: the saved exam and the exam record of this run
         s.nav()
@@ -390,6 +516,7 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     s.nav('#/settings')
     s.page('desktop-6-settings.png', cap=1800)
     s.nav('#/users', settle=2.2)
+    print('  users:', s.js(JS_USERS_STATE))
     s.page('desktop-10-users.png', cap=1100)
     if s.wanted('desktop-12-user-banks.png'):
         admin = seed.Session(base)
@@ -424,6 +551,58 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     bottom, kept, hidden = s.js('(%s)(%d)' % (JS_ABOUT, 1500))
     print('  about: %d bullet(s) shown, %d hidden, card ends at %d px' % (kept, hidden, bottom))
     s.page('desktop-8-about.png', fixed=bottom + 24)
+
+
+def _ai_scenes(s, base, cookie, code):
+    """desktop-14-ai-chat, desktop-15-ai-settings and desktop-16-ai-usage (after the System log scene, so the AI calls of
+    one language do not change the log image of the next one more than necessary)."""
+    if s.wanted('desktop-14-ai-chat.png'):
+        first, second = AI_QUESTIONS[code]
+        seed.ai_chat(base, cookie, first, code)
+        print('  free mode on:', seed.set_free(base, cookie, True))   # the green tag shows while it is on
+        s.nav('#/ai', settle=2.4)
+        print('  ai chat:', s.js('(%s)(%s)' % (JS_AI_OPEN, json.dumps(first))))
+        print('  composer:', s.js(JS_AI_FOCUS))
+        s.cdp.call('Input.insertText', text=second)
+        print('  ai answer:', s.js(JS_AI_SEND))
+        # The conversation is a box as tall as the window allows (like a chat app; at most 900 px), with the page footer
+        # always just below the window's bottom edge: make the window just tall enough for the whole conversation, then
+        # keep only the part down to 24 px below the panes (the footer stays out; nothing in the box is cut)
+        h = 900
+        for _ in range(8):
+            s.metrics(WIDTH, h, False)
+            time.sleep(0.4)
+            over = s.js(JS_AI_OVER)
+            if over <= 0 or h >= 1400:
+                break
+            h = min(1400, h + over)
+        bottom = s.js(JS_AI_PANES_BOTTOM)
+        if over > 0:
+            print('  warning: the conversation is %d px taller than its box; it is shown scrolled to its end' % over)
+        s.png('desktop-14-ai-chat.png', WIDTH, h, False, clip=min(h, bottom + 24) if bottom else None)
+        print('  free mode off:', seed.set_free(base, cookie, False))
+        print('  ai chats deleted:', seed.delete_ai_chats(base, cookie))
+    if s.wanted('desktop-15-ai-settings.png') or s.wanted('desktop-16-ai-usage.png'):
+        s.desktop()
+        s.nav('#/ai-settings', settle=2.6)
+        print('  ai settings:', s.js(JS_AI_TEST))
+        print('  AI+ feature:', s.js(JS_AI_FUNCTIONS))
+        # desktop-15: the page from the top through the users with AI+, 12 px below that card (the Usage card starts 16 px
+        # below it and stays out of the image)
+        span = s.js('(%s)("ais-conn-h", "ais-users-h")' % JS_AI_CARDS)
+        if span:
+            s.page('desktop-15-ai-settings.png', fixed=span[1] + 12)
+        else:
+            print('  warning: the AI settings cards were not found; the image is cut by the usual rule')
+            s.page('desktop-15-ai-settings.png', cap=1800)
+        # desktop-16: the rest of the page scrolled into view, Usage through Safety limits (12 px above Usage, so the
+        # users card above it stays out, and 24 px below Safety limits)
+        span = s.js('(%s)("ais-usage-h", "ais-lim-h")' % JS_AI_CARDS)
+        if s.wanted('desktop-16-ai-usage.png'):
+            if span:
+                s.png('desktop-16-ai-usage.png', WIDTH, span[1] - span[0] + 36, False, scroll_y=span[0] - 12)
+            else:
+                print('  warning: the Usage and Safety limits cards were not found; desktop-16-ai-usage.png is skipped')
 
 
 def _phone_scenes(s):

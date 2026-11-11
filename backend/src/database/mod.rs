@@ -23,8 +23,8 @@ pub mod timefmt;
 
 pub use journal::{Checkpoint, JournalMode};
 pub use store::{
-    percent_round_half_even, scoped_id, LegacyMigration, RetiredBank, SessionUser, Store,
-    UpdatedUser, UserChange, UserRow, UserUpdate, BACKUP_DIR,
+    percent_round_half_even, scoped_id, AiUserRow, LegacyMigration, RetiredBank, SessionUser,
+    Store, UpdatedUser, UserChange, UserRow, UserUpdate, BACKUP_DIR,
 };
 pub use timefmt::{Clock, FixedClock, FnClock, SystemClock};
 

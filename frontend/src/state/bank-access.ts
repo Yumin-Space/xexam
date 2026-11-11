@@ -4,7 +4,10 @@
 // - what a row of User management says about a user's banks (v0.7: the chosen existing banks by name and whether the banks
 //   imported later are included; administrators always see every bank), and the checklist draft behind the "Question
 //   banks" dialog and the Add user form;
-// - the change an Edit dialog sends (only the fields that changed).
+// - the change an Edit dialog sends (only the fields that changed);
+// - v0.8: the compact bank controls ("Manage banks", "Select all", "Deselect all" on top of the list, "Include banks
+//   imported later" as its first entry) and the change the "Change" dialog sends (banks, later and Manage banks); the menu
+//   entry of AI Chat (from the AI status).
 // The backend enforces every rule; these functions only decide what the pages show and send. No DOM, no i18n: the pages turn
 // the results into text, so this file runs under `node --test` as it is.
 import type { AuthUser, BankSummary, Role, UserRow, UserUpdate } from '../types/api.ts';
@@ -29,12 +32,24 @@ export function bankPageView(u: Holder | null | undefined): BankPageView {
   return u.canManageBanks ? 'manager' : 'forbidden';
 }
 
-/** What a menu entry needs: an administrator, or the permission to manage question banks */
-export type NavNeed = 'admin' | 'banks';
+/** What a menu entry needs: an administrator, the permission to manage question banks, or (v0.8) AI Chat */
+export type NavNeed = 'admin' | 'banks' | 'ai';
 
-export function navAllowed(need: NavNeed | undefined, u: Holder | null | undefined): boolean {
+/** The part of the AI status (state/ai.ts) the menu looks at */
+export interface AiNavStatus {
+  state: 'loading' | 'unavailable' | 'ready';
+  allowed?: boolean;
+  hasData?: boolean;
+}
+
+/**
+ * Whether the menu shows an entry. AI Chat (v0.8): when the user can use AI now, or has chats or memories to read and
+ * delete (hidden while the status is loading or the AI service cannot be reached).
+ */
+export function navAllowed(need: NavNeed | undefined, u: Holder | null | undefined, ai?: AiNavStatus | null): boolean {
   if (!need) return true;
   if (need === 'admin') return u?.role === 'admin';
+  if (need === 'ai') return !!u && ai?.state === 'ready' && (ai.allowed === true || ai.hasData === true);
   return mayManageBanks(u);
 }
 
@@ -99,17 +114,19 @@ export function ownedBankNames(u: Pick<UserRow, 'ownedBanks'>, banks: readonly N
 // ---------------------------------------------------------------- the checklist ("Question banks" dialog, Add user form)
 
 /**
- * The checklist while it is being edited: `ids` are the ticked existing banks, `later` is "Include banks imported later".
- * The two are independent: "Select all" only ticks every listed bank, and unticking a bank never touches `later`.
+ * The checklist while it is being edited: `ids` are the ticked existing banks, `later` is "Include banks imported later",
+ * `manage` (v0.8) is "Manage banks" (the bank-manager permission). They are independent: "Select all" and "Deselect all"
+ * change only the listed banks, and unticking a bank never touches `later` or `manage`.
  */
 export interface AccessDraft {
   ids: number[];
   later: boolean;
+  manage: boolean;
 }
 
-/** The draft of a stored setting (a new user starts with nothing ticked and `later` off: `draftOf([], false)`) */
-export function draftOf(banks: readonly number[], later: boolean): AccessDraft {
-  return { ids: [...new Set(banks)].sort((a, b) => a - b), later };
+/** The draft of a stored setting (a new user starts with nothing ticked, `later` and `manage` off: `draftOf([], false)`) */
+export function draftOf(banks: readonly number[], later: boolean, manage = false): AccessDraft {
+  return { ids: [...new Set(banks)].sort((a, b) => a - b), later, manage };
 }
 
 /** Ticks or unticks one bank */
@@ -117,7 +134,7 @@ export function toggleBank(d: AccessDraft, id: number, on: boolean): AccessDraft
   const ids = new Set(d.ids);
   if (on) ids.add(id);
   else ids.delete(id);
-  return { ids: [...ids].sort((a, b) => a - b), later: d.later };
+  return { ...d, ids: [...ids].sort((a, b) => a - b) };
 }
 
 /** Whether a bank's box shows ticked */
@@ -132,32 +149,76 @@ export function selectAllState(d: AccessDraft, banks: readonly Pick<BankSummary,
   return n === banks.length ? 'all' : 'some';
 }
 
-/** "Select all" clicked: ticks every listed bank, or unticks them all when every one is ticked already; `later` stays */
+/** v0.8 "Select all": ticks every listed bank; `later` and `manage` stay */
+export function selectAllBanks(d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[]): AccessDraft {
+  return { ...d, ids: [...new Set(banks.map((b) => b.id))].sort((a, b) => a - b) };
+}
+
+/** v0.8 "Deselect all": unticks every bank; `later` and `manage` stay */
+export function deselectAllBanks(d: AccessDraft): AccessDraft {
+  return { ...d, ids: [] };
+}
+
+/** What "Select all" / "Deselect all" show: every listed bank ticked, none, or some */
+export const toolState = (d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[]): SelectAllState => selectAllState(d, banks);
+
+/** "Select all" changed: from all ticked it unticks every bank, otherwise it ticks every listed bank; `later` stays */
 export function toggleAll(d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[]): AccessDraft {
-  const on = selectAllState(d, banks) !== 'all';
-  return { ids: on ? [...new Set(banks.map((b) => b.id))].sort((a, b) => a - b) : [], later: d.later };
+  return selectAllState(d, banks) === 'all' ? deselectAllBanks(d) : selectAllBanks(d, banks);
 }
 
 /** The setting to send */
 export interface AccessChoice {
   banks: number[];
   newBanks: boolean;
+  /** v0.8: "Manage banks" (the stored bank-manager permission) */
+  canManageBanks: boolean;
 }
 
 /**
  * The setting to send: the ticked banks that are still in `banks` (a bank deleted while the dialog was open is dropped
- * instead of making the server refuse the whole change), ascending, and "Include banks imported later".
+ * instead of making the server refuse the whole change), ascending, "Include banks imported later" and "Manage banks".
  */
 export function accessOf(d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[]): AccessChoice {
   const known = new Set(banks.map((b) => b.id));
-  return { banks: d.ids.filter((id) => known.has(id)), newBanks: d.later };
+  return { banks: d.ids.filter((id) => known.has(id)), newBanks: d.later, canManageBanks: d.manage };
 }
 
-/** Whether two settings are the same (the order of the ids does not matter) */
+/** Whether two settings are the same: the banks (in any order), "later" and "Manage banks" */
 export function sameAccess(a: AccessChoice, b: AccessChoice): boolean {
   const x = [...new Set(a.banks)].sort((p, q) => p - q);
   const y = [...new Set(b.banks)].sort((p, q) => p - q);
-  return a.newBanks === b.newBanks && x.length === y.length && x.every((v, i) => v === y[i]);
+  return a.newBanks === b.newBanks && a.canManageBanks === b.canManageBanks && x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/** What the "Change" dialog sends, and what changed (for the toast) */
+export interface AccessChange {
+  /** null: nothing changed */
+  body: UserUpdate | null;
+  /** The banks or "Include banks imported later" changed */
+  banks: boolean;
+  /** "Manage banks" changed */
+  manage: boolean;
+}
+
+/**
+ * The body of POST /api/users/update for the "Change" dialog (v0.8): `{id}`, plus `banks` and `newBanks` when either
+ * changed, plus `canManageBanks` when it changed; null when nothing did.
+ */
+export function accessChange(
+  u: Pick<UserRow, 'id' | 'banks' | 'newBanks' | 'canManageBanks'>, d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[],
+): AccessChange {
+  const next = accessOf(d, banks);
+  const banksChanged = !sameAccess({ ...next, canManageBanks: false }, { banks: u.banks, newBanks: u.newBanks, canManageBanks: false });
+  const manageChanged = next.canManageBanks !== u.canManageBanks;
+  if (!banksChanged && !manageChanged) return { body: null, banks: false, manage: false };
+  const body: UserUpdate = { id: u.id };
+  if (banksChanged) {
+    body.banks = next.banks;
+    body.newBanks = next.newBanks;
+  }
+  if (manageChanged) body.canManageBanks = next.canManageBanks;
+  return { body, banks: banksChanged, manage: manageChanged };
 }
 
 // ---------------------------------------------------------------- the Edit dialog

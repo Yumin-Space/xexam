@@ -77,6 +77,7 @@ fn app() -> App {
         // TEST-ONLY: these tests import the committed 3-column demo fixture (tests/baseline/fixtures/demo.xlsx) through the
         // API; production code always refuses the old layouts (tests/v07_bank_access_and_layouts.rs checks that)
         old_layouts: xexam_backend::services::OldLayouts::AllowForTests,
+        ai_link: Default::default(),
     }));
     App {
         router: build_router(state),
@@ -359,7 +360,7 @@ fn v3_database_migrates_to_v4_with_a_backup_everyone_keeping_every_bank() {
         assert_eq!(count(&b, "SELECT COUNT(*) FROM attempts"), 2);
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "4");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "5");
     // every user that existed keeps seeing every bank (a row for each, 3 users x 2 banks) and gets the banks imported later
     // (v0.7: the two settings are independent); nobody gets the bank permission
     assert_eq!(count(&c, "SELECT COUNT(*) FROM users WHERE new_banks=1"), 3);
@@ -435,7 +436,7 @@ fn a_fresh_database_is_schema_4_and_its_default_administrator_sees_everything() 
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none(), "nothing to back up");
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "4");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "5");
     // the default administrator exists at the v4 step of a new database: it gets "banks imported later" like every user
     assert_eq!(count(&c, "SELECT new_banks FROM users WHERE id=1"), 1);
     assert_eq!(s.viewer(1).expect("viewer"), Viewer::admin(1));

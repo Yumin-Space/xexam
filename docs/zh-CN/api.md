@@ -2,7 +2,7 @@
 
 # API 说明
 
-> 机器可读的版本是 [openapi.yaml](../en/openapi.yaml)（英文）。本文是给人读的：每个接口做什么、谁能调用、守卫怎么拦请求、哪里和旧的 Python 版不一样。
+> 机器可读的版本是 [openapi.yaml](../en/openapi.yaml)（英文）。本文是给人读的：每个接口做什么、谁能调用、守卫怎么拦请求、哪里和旧的 Python 版不一样。从 v0.8 起，本文也包括由单独的 ai-service 容器响应的 AI 路由 `/api/ai/*`（第 5 节），以及后端和 ai-service 之间的内部路由（第 6 节）。
 > 本文描述的是**真实行为**：旧版的每一种情况都抓成了黄金响应（`tests/baseline/golden/`，172 份），新的 Rust 后端对它们逐项比较。
 
 ## 1. 总览
@@ -51,6 +51,8 @@
 | POST | `/api/shutdown` | 管理员 | 关闭程序（只在本机运行时可用；Docker 里一律 403） | 否 |
 
 `HEAD` 的行为和对应的 `GET` 一样，只是没有正文。所有接口都经过完全相同的守卫（第 3 节）。
+
+*(v0.8)* `/api/ai/` 下面的一切（AI 对话、记忆、AI 设置）都由 ai-service 响应，在那之前 Nginx 先让后端检查这个请求：见第 5 节。它的回答是带固定 `code` 的 JSON，`send` 和 `retry` 的回答是 server-sent events 流。`/internal/*` 经过 Nginx 访问不到（第 6 节）。
 
 ## 2. 所有响应的共同点
 
@@ -129,7 +131,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.7.5", "arch": "x86_64", "canShutdown": false}
+{"version": "0.8", "arch": "x86_64", "canShutdown": false}
 ```
 公开。版本号是 `VERSION` 文件里的 `CODE_VERSION`（或 `XEXAM_VERSION`）；`arch` 是服务器的 CPU 架构；只有程序带着 `--allow-shutdown` 启动时，`canShutdown` 才是 `true`。*(v0.7.5)* 键 `bankCount`（整个题库里上架的题数）去掉了：这个路由是公开的，登录后的页面根据 `GET /api/bank` 和 `GET /api/banks` 自己数它们能看到的题。这个路由仍然会读取数据库，所以数据库读不出来时它回答 500，容器的健康检查（问的就是这个路由）会报告后端不健康。
 
@@ -145,11 +147,23 @@ flowchart LR
 已经登录时（账户需要设置新密码时也一样）：
 
 ```json
-{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453"}
+{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.8", "enabled": true, "link": true}}
 ```
 
-- `role` 是 `admin` 或 `user`。`canManageBanks` *(v0.7)* 对所有管理员都是 `true`，对有 **可管理题库** 权限的普通用户也是 `true`。
+- `role` 是 `admin` 或 `user`。`canManageBanks` *(v0.7)* 对所有管理员都是 `true`，对有 **可管理题库** 权限的普通用户也是 `true`。`aiAllowed` *(v0.8)* 对所有管理员都是 `true`，对开通了 **AI+** 的普通用户也是 `true`；AI 到底开没开，看 `GET /api/ai/status`。登录和修改密码的回答里也是同样的 `user` 对象。
 - `library` 是用户能看到的题库的一个不透明印记：32 位十六进制数字，是一个摘要，不公开构成它的任何数字。只要其中某个题库被导入、替换或删除（也包括别的进程里的 `import` 命令），它就会变；*(v0.7)* 用户能看到或管理的题库变了（管理员分配了题库或改了权限，某个题库换了所有者），它也会变。打开着的页面会比较它，变了就重新读取题库。对于只能看到部分题库的用户，印记只由这些题库构成：它既不透露、也不跟随他看不到的题库的大小、题数或更新时间。
+
+- `aiAvailable` *(v0.8，第二轮)* 在 AI+ 可用时是 `true`：ai-service 不到 60 秒前向后端报告过（并且没有说它正在停止），**并且** AI 设置里它的 **AI+ 功能** 开关是开着的。对所有登录的用户都一样。用户管理页面用它决定要不要显示 AI+ 开关，后端用它拒绝这些开关（下面的 `POST /api/users/update` 和 `create`）。
+- `aiService` *(v0.8，第二轮)* 只出现在**管理员**的回答里（普通用户的回答里没有这个键）。它是后端从 ai-service 最近一次报告里知道的情况（后端从不调用 ai-service；ai-service 每 25 秒报告一次，变化后立刻报告，停止时再报告一次：第 6 节，`POST /internal/ai/heartbeat`）。报告只保存在内存里，所以后端重启后，在下一次报告到达之前（25 秒之内）`lastSeen` 是 `null`。
+
+| 键 | 含义 |
+|---|---|
+| `connected` | `true`：有一份不到 60 秒的报告，并且它不是停止报告 |
+| `stopped` | `true`：最近一次报告说 ai-service 正在关闭（不管它有多旧） |
+| `lastSeen` | 后端启动以来最近一次被接受的报告的 Unix 秒数；没有就是 `null` |
+| `version` | 最近一次报告里的版本，或者 `null` |
+| `enabled` | 最近一次报告里的 AI+ 功能开关，仅在 `connected` 时；没有连接时是 `false` |
+| `link` | `true`：后端加载了内部令牌（AI 链接是开着的） |
 
 ### `POST /api/auth/login` *(v0.6)*
 公开。请求体：`{"username": "…", "password": "…"}`（都必须是字符串，否则 **400** `请求的格式不对。`）。用户名去掉首尾空格，比较时不区分大小写。
@@ -178,7 +192,7 @@ flowchart LR
 管理员。所有账户，按 id 排序：
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
+{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
 ```
 
 - `createdAt` / `lastLoginAt` 是本地时间 `YYYY-MM-DD HH:MM`；第一次登录之前 `lastLoginAt` 是 `null`。
@@ -186,6 +200,9 @@ flowchart LR
 - `banks` *(v0.7)*：这个用户能看到的题库的 id，升序（只含还存在的题库；`[]` = 一个都没有）。它总是一个列表：`"all"` 只是写入时的简写（见下文）。
 - `newBanks` *(v0.7)*：**包括以后导入的题库**。`true`：从现在起新建的每个题库（任何人作为新题库导入，或者命令行 `import`）都会在同一个事务里加进 `banks`。它从不添加已有的题库。
 - `canManageBanks` *(v0.7)* 是保存着的 **可管理题库** 权限。`banks`、`newBanks` 和 `canManageBanks` 在改角色时都会保留，但只在账户是普通用户时才起作用：管理员能看到并管理所有题库。
+- `ai` *(v0.8)*：保存着的用户的 **AI+ 功能** 开关。它只对普通用户有意义（AI+ 功能开启时管理员始终可以使用），而且只在 AI 设置里开着 AI+ 功能时才有意义。AI+ 不可用时它也保留。
+- `aiSuspended` *(v0.8，第二轮)*，在 `lock` 之后：`true` 表示管理员在 AI 设置里暂停了这个用户的 **AI+ 功能**（第 5 节，`suspend`；界面上写作 暂停 / 已暂停，JSON 里仍沿用 `suspended` 这个名字）。它来自 ai-service 最近一次报告，所以后端没有报告时（例如刚重启之后）对所有人都是 `false`，对管理员也始终是 `false`，因为管理员不能被暂停。它和 `ai` 是分开的：暂停不会改变保存着的开关。
+- `aiAvailable` *(v0.8，第二轮)*，和 `users` 并列的顶层键：值和 `GET /api/auth/state` 里的一样。**每个返回用户列表的回答**都有它（`create`、`update`、`password`、`delete`、`unlock` 也一样）。
 - `ownedBanks` *(v0.7)*：这个用户作为新题库导入的题库（他是所有者）的 id，升序。
 - `lock`：账户在内存里的登录状态。还在第一轮、没有被锁定时是 `null`；否则：
 
@@ -203,7 +220,7 @@ flowchart LR
 | `otherUntil` / `otherRetryAfter` | 只有另一类浏览器同时也被锁定、账户在所有浏览器上都被锁定时才有值：那第二个锁定的结束时间和秒数（否则是 `null` / `0`） |
 
 ### `POST /api/users/create` *(v0.6)*
-管理员。请求体：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<题库 id>, …], "newBanks": <bool>, "canManageBanks": <bool>}`。*(v0.7)* `banks` 默认是 `[]`（管理员选好之前，新用户看不到任何题库），`newBanks` 默认是 `false`，`canManageBanks` 默认是 `false`。`"banks": "all"` 是一种简写：现在存在的所有题库，并且在没有给出 `newBanks` 时同时设置 `newBanks: true`。重复的 id 会被忽略。新账户是启用的，第一次登录时必须设置新密码。回答：和 `GET /api/users` 一样的 `{"users": [...]}`。
+管理员。请求体：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<题库 id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "ai": <bool>}`。*(v0.7)* `banks` 默认是 `[]`（管理员选好之前，新用户看不到任何题库），`newBanks` 默认是 `false`，`canManageBanks` 默认是 `false`；*(v0.8)* `ai`（**AI+**）默认是 `false`。用 `ai: true` 创建用户时，也会记录 `user "<admin>" turned AI+ on for user "<name>"`；*(v0.8，第二轮)* AI+ 不可用时（见上面的 `aiAvailable`）它会被拒绝，回答 **409** `ai.serviceOff`，并且不创建用户。`ai: false` 或者不带 `ai` 照常工作。`"banks": "all"` 是一种简写：现在存在的所有题库，并且在没有给出 `newBanks` 时同时设置 `newBanks: true`。重复的 id 会被忽略。新账户是启用的，第一次登录时必须设置新密码。回答：和 `GET /api/users` 一样的 `{"users": [...]}`。
 
 用户名 1–40 个字符（ASCII 字母、数字和 `. _ - @`，去掉首尾空格），不区分大小写地唯一；密码 8–128 个字符。
 
@@ -211,16 +228,19 @@ flowchart LR
 |---|---|
 | **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` | 缺少 `username`、不是字符串，或不符合规则 |
 | **400** `密码需要 8–128 个字符。` | `password` 太短或太长 |
-| **400** `请求的格式不对。` | 缺少 `password` 或不是字符串；缺少 `role` 或不是 `admin` / `user`；`banks` 既不是 `"all"` 也不是整数列表；`newBanks` 或 `canManageBanks` 不是布尔值 |
+| **400** `请求的格式不对。` | 缺少 `password` 或不是字符串；缺少 `role` 或不是 `admin` / `user`；`banks` 既不是 `"all"` 也不是整数列表；`newBanks`、`canManageBanks` 或 `ai` 不是布尔值 |
 | **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` *(v0.7)* | `banks` 里有一个 id 不是现存的题库（或者不是正整数）；什么都不创建 |
 | **409** `这个用户名已经有人用了。` | 另一个账户用了这个名字（不区分大小写） |
+| **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}` *(v0.8，第二轮)* | AI+ 不可用时给了 `ai: true`。它在请求体通过验证之后（格式不对的 `ai` 仍然是 400）、写入任何东西或给密码做哈希之前检查 |
 
 ### `POST /api/users/update` *(v0.6)*
-管理员。请求体：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}`；没写的键保持不变。回答：`{"users": [...]}`。
+管理员。请求体：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`；没写的键保持不变。回答：`{"users": [...]}`。
 
-- 停用账户或改角色会结束它的会话。改名、改 `banks`、`newBanks` 或 `canManageBanks` 不会结束会话；修改从这个用户的下一个请求开始生效。
+- 停用账户或改角色会结束它的会话。改名、改 `banks`、`newBanks`、`canManageBanks` 或 `ai` 不会结束会话；修改从这个用户的下一个请求开始生效。
+- `ai` *(v0.8)* 开通或关闭用户的 **AI+ 功能**。它马上对下一个 AI 请求生效（后端检查每个 AI 请求），关闭时，正在为这个用户生成的回答会在大约 2 秒内停止；这个用户的 AI 对话和记忆保留。修改会记录为 `user "<admin>" turned AI+ on for user "<name>"`（或 `off`）。
+- *(v0.8，第二轮)* AI+ 不可用时（ai-service 没有连接，或者 AI 设置里 AI+ 功能是关的），**任何带 `ai` 键的请求整个被拒绝**，回答 **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}`：不管是 `true` 还是 `false`，不管和保存的值相不相同，也不管是单独的还是和其他字段一起的。什么都不写入，也不记录日志。不带 `ai` 的请求不受影响。这是后端自己的路由里唯一带 `code` 的错误。所有用户保存着的开关在 AI+ 不可用期间都保留，AI+ 恢复后重新生效。
 - `banks` 替换所选的题库（一个 id 列表，`[]` = 一个都没有；或者 `"all"`，现在存在的所有题库，在没有给出 `newBanks` 时还会设置 `newBanks: true`）。只给 `newBanks` 时只改这个标记：取消它不会拿走这个用户已有的题库。
-- **400**：和创建时一样（`username`、`role`、`banks`、`newBanks`、`canManageBanks`；`disabled` 不是布尔值 → `请求的格式不对。`；缺少 `id` 或不是整数（布尔值不算） → `请求的格式不对。`）。
+- **400**：和创建时一样（`username`、`role`、`banks`、`newBanks`、`canManageBanks`、`ai`；`disabled` 不是布尔值 → `请求的格式不对。`；缺少 `id` 或不是整数（布尔值不算） → `请求的格式不对。`）。
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`。
 - **409** `不能对自己的账户做这个操作。`：停用自己或改自己的角色时；`至少要保留一个启用的管理员。`：修改后就没有启用的管理员时；`这个用户名已经有人用了。`。
 
@@ -230,7 +250,7 @@ flowchart LR
 管理员。请求体：`{"id": <int>, "password": "…"}`。给另一个用户一个新的初始密码：他下次登录时必须设置新密码，他的会话都结束，他的 `xexam_device` Cookie 不再匹配，他的登录锁定也被清除。自己的密码要用 `POST /api/auth/password` 修改（在这里会得到 **409** `不能对自己的账户做这个操作。`）。其他错误：400（密码规则、请求体格式不对）、404（用户不存在）。
 
 ### `POST /api/users/delete` *(v0.6)*
-管理员。请求体：`{"id": <int>}`。删除账户及其会话、学习记录（含详情）、答错统计、设置和所选的题库。*(v0.7)* 这个用户拥有的题库不会被删除：它们转到删除这个用户的管理员名下。删除自己或最后一个启用的管理员得到 **409**；id 不存在得到 **404**。
+管理员。请求体：`{"id": <int>}`。删除账户及其会话、学习记录（含详情）、答错统计、设置和所选的题库。*(v0.7)* 这个用户拥有的题库不会被删除：它们转到删除这个用户的管理员名下。*(v0.8)* 这个用户马上就不能再访问 AI 路由；ai-service 会在下一次对账时（10 分钟之内，或者管理员打开 AI 用户列表时）删除他的 AI 对话和记忆。删除自己或最后一个启用的管理员得到 **409**；id 不存在得到 **404**。
 
 ### `POST /api/users/unlock` *(v0.6)*
 管理员。请求体：`{"id": <int>}`。把账户在所有浏览器上的登录状态全部清除（回到第 1 轮，5 次机会），不管是正在锁定，还是只是已经过了第 1 轮。它按用户 id 处理，所以改名后也有效，对自己的账户也有效。id 不存在得到 **404**。回答：`{"users": [...]}`。
@@ -384,7 +404,7 @@ flowchart LR
 `GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang` 和 `autoAdvance` 恢复成默认值，保留 `questionLang`，返回完整的设置。
 
 ### `GET /api/logs` *(v0.7)*
-管理员。**系统日志** 页面显示的日志：后端启动以来记录的最近 2000 行，只保存在内存里（重启后又是空的；什么都不写进数据库）。它们就是 `docker compose logs backend` 显示的那些行（经过同样的 `XEXAM_LOG` 过滤），再加上启动和关闭时的状态行。日志行用用户名指代用户（`user "admin" updated user "alex"`），从不用 id，也从不写没有账户的、输入的名字；日志行从不包含密码、令牌、Cookie 的值或题目文字。
+管理员。**系统日志** 页面显示的日志：后端启动以来记录的最近 2000 行，只保存在内存里（重启后又是空的；什么都不写进数据库）。它们就是 `docker compose logs backend` 显示的那些行（经过同样的 `XEXAM_LOG` 过滤），再加上启动和关闭时的状态行，*(v0.8)* 再加上 ai-service 发来的行（`target` 是 `xexam_ai_service`，消息以 `AI: ` 开头；它们不在 `docker compose logs backend` 里）。日志行用用户名指代用户（`user "admin" updated user "alex"`），从不用 id，也从不写没有账户的、输入的名字；日志行从不包含密码、令牌、Cookie 的值或题目文字。
 
 查询参数，两个都可选：
 
@@ -438,11 +458,259 @@ flowchart LR
 | 409 | `这个用户名已经有人用了。` | This username is already taken. | 用户：创建、修改 |
 | 409 | `不能对自己的账户做这个操作。` | You cannot do this to your own account. | 用户：修改、密码、删除 |
 | 409 | `至少要保留一个启用的管理员。` | At least one enabled administrator must remain. | 用户：修改、删除 |
+| 409 | `请先在 AI 设置里开启 AI+ 功能。`（带 `"code": "ai.serviceOff"`） | Turn on the AI+ feature in AI settings first. | 用户：带 `ai` 的修改、`ai: true` 的创建，在 AI+ 不可用时 *(v0.8)* |
 | 429 | `登录失败次数太多，请稍后再试。` | Too many failed attempts. Please try again later. | 登录、修改密码（带 `retryAfter`） |
 | 500 | `写入数据库失败，题库没有任何改动。` | Writing to the database failed. The question bank was not changed. | 确认导入 |
 | 500 | `服务器内部出错，请稍后再试。` | An internal server error occurred. Please try again later. | 任何路由 |
 
-## 5. 与旧版的差异
+## 5. AI 路由（`/api/ai/*`，v0.8）
+
+`/api/ai/` 下面的路由由 ai-service（`ai-service` 容器，镜像 `xexam-ai-service`）响应，而不是后端。Nginx 先把每个这样的请求交给后端的认证步骤（第 6 节），只有后端允许时才转发，而且去掉浏览器的 Cookie，换上后端签名的身份声明（`X-Xexam-Identity`）。所以客户端调用它们的方式和其他路由完全一样：同源，带会话 Cookie；客户端不能自己设置身份（Nginx 总会覆盖这个请求头）。
+
+### 5.1 共同规则
+
+- **方法**：只有 GET 和 POST。其他方法 Nginx 回答 403；ai-service自己回答 405 和 `Allow: GET, POST`。`/api/ai/` 下未知的路径是 404 `ai.notFound`。不支持 `HEAD`。
+- **被认证步骤拒绝**（由 Nginx 回答，ai-service根本看不到这个请求）：
+
+  | 状态 | `code` | 什么时候 |
+  |---|---|---|
+  | 401 | `auth.signin` | 没有有效的会话。`error` 文字是后端的 `请先登录。`。认证步骤只接受正好一个、原样写出的 `xexam_session` Cookie：第二个（不论大小写）、空的、带引号的或带空白的，都和没有会话一样被拒绝 |
+  | 403 | `auth.password` | 账户必须先设置新密码（`请先设置新密码。`） |
+  | 403 | `auth.guard` | Host 不被允许，或者（GET 以外的方法）Origin 不被允许（和第 3 节同样的守卫） |
+  | 503 | `ai.backendDown` | 后端无法回答，或者 AI 连接已关闭（没有内部令牌） |
+  | 502 | `ai.unavailable` | ai-service不存在、已停止或没有回应 |
+  | 413 | `ai.badRequest` | 请求体超过 256 KiB |
+  | 429 | （不是 JSON） | Nginx 的限流：每个地址每秒 30 个请求（突发 120）；`send` 和 `retry` 还按会话每分钟 20 个（突发 10） |
+
+  前端把 `/api/ai/*` 上任何不带 JSON 的 5xx 都当作 `ai.unavailable`。
+- **POST** 需要 `Content-Type: application/json`（可以带 `; charset=utf-8`；否则是 415 `ai.badRequest`）；请求体必须是 JSON 对象（空的请求体算作 `{}`），最多 128 KiB（413 `ai.badRequest`）。**路由没有列出的键会被拒绝**（400 `ai.badRequest`），类型不对的值也一样。请求体和查询字符串里的 id 都是正整数。
+- **回答**：JSON（`Content-Type: application/json; charset=utf-8`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`），**紧凑格式**（`:` 和 `,` 后面没有空格，和后端的回答不同），键的顺序就是这里写的顺序。请解析它，不要逐字节比较。
+- **错误**：`{"error": "<中文文字>", "code": "<错误码>"}`；密钥相关的错误还有 `"field": "apiKey" | "gatewayKey"`，说出某个数字的错误（`ai.tooLong`、`ai.messageLimit`、`ai.chatLimit`、`ai.memoryLimit`、`ai.memoryTooLong`）还有 `"limit": <n>`，`ai.limitRange` 还有 `"field": "<键>"`。错误码是固定的；前端按错误码翻译，从不按文字。服务商自己的错误文字从不转发。
+- **访问级别**，来自身份声明：
+
+  | 级别 | 谁 | 否则 |
+  |---|---|---|
+  | **已签名** | 任何已登录的用户 | （被认证步骤拒绝） |
+  | **AI 用户** | **AI+ 功能**已开启（开关已打开、当前设置的测试已通过、密钥可读）**并且** ai-service 已连上后端 **并且**这个用户可以使用 AI（管理员，或开通了 AI+）**并且**这个用户没有被暂停（管理员永远不会） | 按这个顺序检查：AI+ 功能关闭时 403 `ai.disabled`；后端已经 60 秒没有接受 ai-service 的报告时 503 `ai.backendDown`（见下）；没有 AI+ 时 403 `ai.notAllowed`；管理员暂停了这个用户时 403 `ai.suspended` |
+  | **管理员** | `role = admin`，AI 关闭时也可以 | 403 `ai.adminOnly` |
+
+  读取和删除自己的对话和记忆只需要 **已签名**，所以 AI+ 关闭、被暂停或不可用时仍然可以。写入需要 **AI 用户**。
+- **两个状态** *(v0.8，第二轮)*：用户的 **AI+ 功能** 是用户管理里保存着的开关（`ai`）；AI 设置里的 **暂停 / 恢复**（`suspend`、`resume`，见下；JSON 和错误码仍沿用 *suspended* 这个词）是第二个、独立的状态。用户只有在开关开着、没有被暂停、并且 AI+ 可用时才能使用 AI。暂停保存在 ai-service 自己的数据库里；关闭再重新开启这个用户的 AI+ 功能，它仍然在，只有 **恢复** 才会清除它。
+- **ai-service 对自己应用 60 秒规则**：它必须向后端报告（第 6 节，`heartbeat`），在它最近一次报告已经 60 秒没有被接受时，`GET /api/ai/status` 回答 `enabled: false`，**AI 用户** 路由回答 503 `ai.backendDown`。**已签名** 和 **管理员** 路由继续工作。
+- **范围**：每个用户路由都从身份声明里取用户 id，从不从请求里取，对对话、消息和记忆的每次查询都按它筛选。别的用户的对话或记忆，和不存在的完全一样回答（404 `ai.notFound`）。只有 `/api/ai/admin/*` 读取或删除别的用户的数据，每次这样的查看和清除都会写进系统日志。
+
+### 5.2 路由
+
+| 方法 | 路径 | 访问级别 | 请求体 / 查询 | 200 回答 |
+|---|---|---|---|---|
+| GET | `/api/ai/status` | 已签名 | | `Status` |
+| GET | `/api/ai/chats` | 已签名 | | `{"chats": [ChatSummary]}`，`updatedAt` 最新的在前 |
+| GET | `/api/ai/chat` | 已签名 | `?id=<对话 id>` | `{"chat": ChatSummary, "messages": [Message]}` |
+| POST | `/api/ai/send` | AI 用户 | `{"chatId": <id> \| null, "text": "…", "lang"?: "en" \| "zh" \| "ja", "free"?: <ignored>}` | **事件流**（5.3） |
+| POST | `/api/ai/retry` | AI 用户 | `{"chatId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **事件流**（5.3） |
+| POST | `/api/ai/free` | 管理员 | `{"free": <bool>}` | `{"free": <bool>}`（管理员的自由模式，见下） |
+| POST | `/api/ai/stop` | 已签名 | `{}` 或 `{"chatId": <id>}` | `{"ok": true, "stopped": <bool>}` |
+| POST | `/api/ai/chats/delete` | 已签名 | `{"id": <id>}` 或 `{"all": true}` | `{"deleted": <n>}` |
+| GET | `/api/ai/memories` | 已签名 | | `{"memories": [Memory], "limit": 50, "maxChars": 300}`（当前的上限） |
+| POST | `/api/ai/memories/add` | AI 用户 | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
+| POST | `/api/ai/memories/update` | AI 用户 | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
+| POST | `/api/ai/memories/delete` | 已签名 | `{"id": <id>}` 或 `{"all": true}` | `{"deleted": <n>}` |
+| POST | `/api/ai/memories/suggest` | AI 用户 | `{"messageId": <你的某条用户消息的 id>, "lang"?: "en" \| "zh" \| "ja"}` | `{"suggestion": "…"}`（什么都不保存） |
+| GET | `/api/ai/admin/settings` | 管理员 | | `Settings` |
+| POST | `/api/ai/admin/settings` | 管理员 | `SettingsUpdate` | `Settings` + `"switchedOff": <bool>` |
+| POST | `/api/ai/admin/models` | 管理员 | `{}` | `{"models": ["…"], "listed": <bool>}` |
+| POST | `/api/ai/admin/verify` | 管理员 | `{}` | `Verify` |
+| POST | `/api/ai/admin/enable` | 管理员 | `{"enabled": <bool>}` | `Settings` |
+| POST | `/api/ai/admin/suspend` | 管理员 | `{"userId": <id>}` | `{"user": AdminUserRow}`，**记入审计** |
+| POST | `/api/ai/admin/resume` | 管理员 | `{"userId": <id>}` | `{"user": AdminUserRow}`，**记入审计** |
+| GET | `/api/ai/admin/usage` | 管理员 | `?days=7`（默认）、`30`、`90` 或 `365` | `Usage` |
+| GET | `/api/ai/admin/users` | 管理员 | | `{"users": [AdminUserRow]}` |
+| GET | `/api/ai/admin/user` | 管理员 | `?id=<用户 id>` | `{"user": AdminUserRow, "chats": [ChatSummary], "memories": [Memory]}`，**记入审计** |
+| GET | `/api/ai/admin/chat` | 管理员 | `?user=<用户 id>&id=<对话 id>` | `{"chat": ChatSummary, "messages": [Message]}`，**记入审计**；对话必须属于那个用户（否则 404，不写审计日志） |
+| POST | `/api/ai/admin/clear` | 管理员 | `{"userId": <id>, "what": "chat", "chatId": <id>}`，或 `{"userId": <id>, "what": "chats" \| "memories"}` | `{"deleted": <n>}`，**记入审计** |
+| GET | `/api/ai/admin/limits` | 管理员 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<键>": [min, max], …}}` |
+| POST | `/api/ai/admin/limits` | 管理员 | 七个上限键中的任意几个，整数 | 和 GET 一样 |
+
+ai-service的 `GET /healthz`（`{"ok":true,"version":"0.8","arch":"x86_64"}`，不需要身份）用于它的容器健康检查；Nginx 没有为它设置 location，所以从外面访问不到。
+
+**结构**（键按这个顺序）：
+
+```text
+Status        {"enabled": bool,          // AI+ 可用：AI+ 功能已开启（开关已打开、当前设置的测试已通过、
+                                         // 密钥可读），并且后端 60 秒内接受过 ai-service 的报告
+               "allowed": bool,          // 你现在可以对话：enabled，并且（是管理员或开通了 AI+），并且没有被暂停
+               "suspended": bool,        // 管理员暂停了你（对管理员始终是 false）
+               "hasData": bool,          // 你至少有一个对话或一条记忆
+               "running": {"chatId": n, "messageId": n} | null,   // 你正在生成的回答（最新的那个）
+               "retentionDays": n, "memoryLimit": n, "memoryMaxChars": n, "maxMessageChars": n,
+               "messageChars": n, "memoryChars": n,               // 当前的安全上限（见下面的 limits）
+               "keyProblem": bool,       // 只对管理员：已保存的密钥无法使用（对其他人是 false）
+               "configured": bool,       // 只对管理员：已保存模型和需要的密钥（对其他人是 false）
+               "freeMode": bool}         // 只对管理员：你的自由模式开着（对其他人是 false），见 POST /api/ai/free
+ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool}   // 对话没有模式
+Message       {"id": n, "role": "user"|"assistant", "content": str, "status": "streaming"|"done"|"stopped"|"error",
+               "error": code|null, "truncated": bool, "model": str|null, "createdAt": n,
+               "free": bool}             // 这条消息是在哪种模式下写的（或回答的）：true = 自由模式
+Memory        {"id": n, "content": str, "source": "manual"|"chat", "createdAt": n, "updatedAt": n}
+Settings      {"provider": "openai"|"anthropic"|"gateway", "baseUrl": str, "format": "openai"|"anthropic",
+               "gatewayAuth": "bearer"|"x-api-key"|"cf-aig-authorization", "model": str, "manualModel": bool,
+               "enabled": bool, "verified": bool, "verifiedAt": n|null, "retentionDays": n,
+               "keys": {"apiKey": KeyInfo, "gatewayKey": KeyInfo},
+               "keyProblem": null|"mismatch"|"invalidEnv"|"invalidFile", "updatedAt": n, "updatedBy": str,   // updatedBy：第一次保存之前是 ""
+               "defaults": {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com"}}
+KeyInfo       {"set": bool, "hint": str, "unreadable": bool}        // hint = "…" + 最后 4 个字符，短于 12 个字符的密钥为 ""
+SettingsUpdate{"provider"?, "baseUrl"?, "format"?, "gatewayAuth"?,  // 每个键都可选：不写 = 保持不变
+               "apiKey"?: str|null, "gatewayKey"?: str|null,        // 字符串替换密钥，null 删除它
+               "model"?: str, "manualModel"?: bool, "retentionDays"?: n}
+Verify        {"ok": bool, "code": str|null, "httpStatus": n|null, "latencyMs": n, "model": str,
+               "verifiedAt": n|null, "enabled": bool, "switchedOff": bool}
+Usage         {"days": n, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "unit": "day"|"month",
+               "totals": {"calls", "tokensIn", "tokensOut", "errors", "tokensCached"},
+               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "tokensCached"}],
+               "byModel": [{"model": str, "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
+               "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}
+AdminUserRow  {"id": n, "username": str, "role": "admin"|"user", "ai": bool, "aiAllowed": bool, "disabled": bool,
+               "exists": bool, "suspended": bool,   // suspended：用户被暂停了（对管理员永远不是 true）
+               "chats": n, "messages": n, "memories": n, "lastUsedAt": n|null,
+               "tokensIn": n, "tokensOut": n}
+```
+
+时间都是 Unix 秒。各路由的说明：
+
+- **`lang`** *(v0.8，第二轮)* 在 `send`、`retry` 和 `memories/suggest` 里是设置页面的语言：`"en"`、`"zh"` 或 `"ja"`（`"zh-CN"` 按 `zh` 接受）。学习助手被告知始终用这种语言回答，除非用户在那条消息里要求用另一种；记忆建议也用这种语言写。没有 `lang` 表示英语（ai-service 不知道用户的设置，所以前端总是发送它）。给了这个键但值是别的任何东西（别的字符串、数字、`null`、`""`）是 400 `ai.badRequest`，什么都不保存，也不发给服务商。每个请求使用它自己的 `lang`，所以同一个对话可以在两条消息之间换语言；重试使用重试请求的 `lang`。
+- **`send`**：`text` 去掉首尾空白后需要 1 到 `messageChars` 个字符（默认 16 000；为空时 400 `ai.badRequest`，太长时 400 `ai.tooLong`，带 `limit`）。`chatId: null`（或不写这个键）开始一个新对话，标题取文字的开头（最多 60 个字符）；超过 `chatsPerUser` 的新对话是 409 `ai.chatLimit`，会超过 `messagesPerChat` 的对话是 409 `ai.messageLimit`。回答的**模式**不是请求的一部分：它是管理员当时的自由模式（见下一条）。请求体里的 `free` 键仍然接受，但不论值是什么都会被**忽略**（不报错，也没有效果）；对话没有模式，`ChatSummary` 也没有 `free`。发给服务商的历史是这个对话里以前已完成或已停止、带文字的消息，从最新的开始，最多 `max(24000, messageChars + 8000)` 个字符，然后按时间顺序排列，不论每条消息是在哪种模式下写的（见 **提示词和历史**）。
+- **自由模式**是**管理员**的状态，不是对话的状态。`POST /api/ai/free` 带 `{"free": true}` 或 `{"free": false}` 把它打开或关闭，回答 `{"free": <bool>}`。请求体必须正好只有布尔值的键 `free`（别的任何情况都是 400 `ai.badRequest`）；这个路由只有管理员可用（其他人 403 `ai.adminOnly`），AI 关闭时也可用；重复调用没有害处。这个状态按用户保存在 ai-service 自己的数据库里（`users.free_mode`），所以重新加载页面、换浏览器和重启之后都还在，`GET /api/ai/status` 用 `freeMode` 报告它（对普通用户始终是 `false`，不管保存的是什么：被降级的管理员照常得到普通回答，再次成为管理员时保存的标记又会生效）。它**开着**时，这位管理员在任何对话（旧的或新的）里的每个 `send` 和 `retry` 都用自由模式回答：系统提示词只有回复语言那一行（没有学习助手的指示、没有日期、没有记忆；记忆甚至不会被读取）。它**关着**时，每条消息都按普通模式回答。改动从**下一条**消息起生效；已经在生成的回答保持它开始时的模式。**每条消息都记录自己的模式**（`Message.free`，以及事件流里的 `start.free`）：一个问题和它的回答用发送这个问题时有效的模式，重试用重试时的模式（并且也记在那个问题上）。自由模式只解除 Xexam 自己的学习助手角色，从不解除服务商自己的安全规则。AI 对话里没有它的开关和分隔线：选择在**设置**里的「AI 对话模式」一节（普通模式 / 自由模式；只有能使用 AI 的管理员看得到它），模式开着时，AI 对话在标题旁边显示一个绿色的「自由模式」标签。
+- **提示词和历史。** 普通回答的系统提示词是带今天日期的学习助手文字，然后是用户的记忆（最近更新的在前，只放完整的笔记，最多 4000 个字符），最后是回复语言那一行。固定的部分在前，每个请求不同的部分在后，所以每个请求的开头在请求之间是相同的。当发送的历史里有和当前模式**不同**模式下写的消息时（刚切换之后），语言那一行之后会多**一行简短的模式说明**：`Current mode: normal (Xexam study assistant); earlier turns may be free mode.` 或 `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` 没有这样的消息时就没有模式说明，自由模式的提示词只有语言那一行。**旧消息在发送前会被缩短**：历史里最新的 4 条消息完整发送，更早的回答截成前 800 个字符再加 `…(shortened)`，更早的问题截成前 2000 个字符再加 `…`。截断只取决于消息本身和它的新旧，所以同一条消息总是得到同样的文字；历史额度按缩短后的长度计算。保存的消息从不改变。
+- **提示词缓存。** 在 **Anthropic** 格式里，系统提示词作为一个文本块发送，带一个 `cache_control`（`ephemeral`）断点，历史的最后一条消息（新问题之前的那条）得到第二个，所以对话能重用它缓存的开头。在 **OpenAI** 格式里什么都不加：自动缓存的服务商自己会缓存。服务商报告的、由它的缓存提供的部分（`cache_read_input_tokens`，或 `prompt_tokens_details.cached_tokens`）随这次调用一起保存，并在 `admin/usage` 里显示为 `tokensCached`；它是 `tokensIn` 的一部分，不是额外加上去的，什么都没报告的服务商计为 0。缓存改变的是服务商收的费用，从不改变回答。
+- **`retry`**：对话的最后一条消息必须是一个失败了或被停止的回答，并且在一条用户消息之后；它会在原位置重新生成（同一个消息 id，没有新的用户消息）。否则是 409 `ai.notRetryable`。
+- **每个用户默认同时只有一个正在生成的回答**（`perUserRunning`，最多 4，同一个对话里永远不会有两个）：再来一个 `send`、`retry` 或 `memories/suggest` 得到 409 `ai.busy`。整个服务器同时进行的模型调用超过 `globalRunning` 时：503 `ai.serverBusy`。两者都在保存任何东西之前拒绝。
+- **`stop`**：用 `{}` 停止你所有正在生成的回答，用 `{"chatId": …}` 只停止那个对话的；它最多等 5 秒，直到它们保存好。没有正在生成的回答时 `stopped: false`。回答以事件 `stopped` 结束，保留它的文字。
+- **`chats/delete`** 先停止对话里正在生成的回答，然后马上把对话连同消息一起删除。不是你的对话的 `{"id": …}`：404。
+- **`memories/add`、`memories/update`**：文字里的空白合并成单个空格；1 到 `memoryChars` 个字符（默认 300；400 `ai.memoryTooLong`，带 `limit`）；超过 `memoriesPerUser` 条：409 `ai.memoryLimit`，带 `limit`。`source` 默认是 `manual`。
+- **`memories/suggest`** 请模型把你的某条消息（它的前 2000 个字符）整理成一条简短的笔记并返回；它什么都不保存（用 `memories/add` 加 `source: "chat"` 保存）。回答消息，或者别人的消息：404。建议为空：502 `ai.up.protocol`。
+- **`admin/settings` POST** 按这个顺序验证：服务商、`baseUrl`（最多 300 个字符的绝对 `http://` 或 `https://` 地址，不带用户名、查询参数或 `#`；400 `ai.badUrl`；Anthropic 格式时去掉末尾的 `/v1`）、格式和认证方式、密钥（1–400 个可打印的 ASCII 字符，不能有空格；400 `ai.badKey`，带 `field`）、**重新输入密钥**（服务商或地址的源改变时，每个已保存的密钥都必须以字符串或 `null` 重新发送；400 `ai.keyReenter`，带 `field`，什么都不保存）、请求头冲突（设置了服务商密钥时，网关认证方式 `bearer` 配 OpenAI 格式，或 `x-api-key` 配 Anthropic 格式；400 `ai.headerClash`）、模型（最多 200 个字符，只能是 `A–Z a–z 0–9 . _ : / @ + -`）、`retentionDays` 1–3650（400 `ai.badRetention`）。需要的密钥由 `models` 和 `verify` 检查，不在这里检查。修改服务商、地址、格式、认证方式、模型或某个密钥，会清除已通过的测试并关闭 AI（原来是开着的时 `switchedOff: true`；每个正在生成的回答以 `ai.disabled` 停止）。只保存 `retentionDays` 不会改变这些，也不会关闭任何东西。全新安装时，`updatedBy` 在第一次保存之前是 `""`，不管那次保存改了什么；AI 设置页面不会把全新安装的出厂值（OpenAI 兼容、默认地址、没有密钥）当作已保存的连接，所以只保存保留期限之后，它的连接标签仍然是「连接未设置」。服务商改成 `gateway` 而没有给出 `format` 时，格式取自地址的最后一段（`…/anthropic` → `anthropic`，否则是 `openai`）。
+- **`admin/models`** 用**已保存的**设置列出模型（缺少需要的密钥时 400 `ai.keyMissing`，带 `field`）。OpenAI 格式：`data[].id` 排序后返回；Anthropic 格式：按服务商给的顺序。不提供模型列表的服务商（404、405、501、空的或读不懂的列表）得到 `{"models": [], "listed": false}`：请手动输入模型。密钥、连接、额度或超时的问题得到 502 / 504 和它们的 `ai.up.*` 错误码。结果保留 10 分钟。
+- **`admin/verify`** 用已保存的设置和模型发送一个流式请求（先检查 400 `ai.modelMissing` / `ai.keyMissing`、409 `ai.keyProblem`），方式和对话一样，提示词是「Reply with the single word OK.」，消息是「Test」。成功需要一个带文字的回答，或者一个带 Token 数的正常结束。服务商拒绝这个请求（`ai.up.badRequest`）时，它会不带 `stream_options`（OpenAI 格式）或用 `max_tokens` 4096 代替 8192（Anthropic 格式）再试一次，行得通就保留这个设置。失败时回答 200，带 `ok: false`、`ai.up.*` 错误码和服务商的 HTTP 状态：指向设置的错误码（`auth`、`quota`、`notFound`、`badRequest`、`protocol`、`refused`）会清除已通过的测试并关闭 AI；临时的错误码（`rateLimit`、`overloaded`、`server`、`timeout`、`connect`）什么都不改变。每次尝试最多 2 分钟；对这个路由，Nginx 最多等 300 秒。
+- **`admin/enable`** `{"enabled": true}` 需要当前设置的测试已通过（409 `ai.notVerified`）并且密钥可读（409 `ai.keyProblem`）；`false` 停止每个正在生成的回答（`ai.disabled`）。这是整个安装的 **AI+ 功能** 开关（AI 设置里用「AI+ 功能已开启」/「AI+ 功能已关闭」标签显示它）。回答之前，ai-service 会把新状态报告给后端，所以 `aiAvailable` 马上跟着变。`settings`（它关闭 AI 时）、`verify`（它关闭 AI 时）、`suspend` 和 `resume` 也一样。
+- **`admin/suspend`** 和 **`admin/resume`** *(v0.8，第二轮)* **暂停**和**恢复**一个普通用户的 **AI+ 功能**（AI 设置里显示为按钮 **暂停** / **恢复** 和状态 **已暂停**；路由名、`suspended` 键和错误码 `ai.suspended` 仍沿用旧的词）。请求体：`{"userId": <id>}`，不能有别的键（400 `ai.badRequest`）。回答是 `{"user": AdminUserRow}`，带新的 `suspended`。用户通过后端查找（后端无法回答时 503 `ai.backendDown`；用户不存在时 404 `ai.notFound`）；管理员不能被暂停：409 `ai.adminAlways`。AI+ 功能已关闭的用户也可以通过 API 被暂停（AI 设置页面只列出有这个功能的用户）。**暂停**会马上停止这个用户正在生成的回答或记忆建议（已有的文字保留；流以 `error` 事件 `ai.suspended` 结束），从那以后这个用户的 AI 用户路由回答 403 `ai.suspended`；查看和删除他的对话和记忆仍然可以，用户也仍然保留在列表里，带着他的数据。页面不要求确认。两个路由都可以安全地重复调用：标记和它的审计行在同一个事务里写入，没有任何改变的重复调用回答 200，不产生新的行。**记入审计**：系统日志里的行是 `AI function turned off for user "<name>" by admin "<admin>"`（暂停）和 `AI function turned on for user "<name>" by admin "<admin>"`（恢复），带前缀 `AI: `；这些英文日志行的措辞没有改。这个标记保存在 ai-service 自己的数据库里（schema 2，[database.md](database.md)）；schema 2 文件里缺少的列（来自这个版本更早的构建）会在下次启动时自动添加。
+- **`admin/usage`**：7 天和 30 天按天，90 天和 365 天按月；`byPeriod` 列出范围内的每个时段，包括为零的，最早的在前；服务商没有报告的 Token 计为 0。`tokensCached` 是 `tokensIn` 中服务商从它的提示缓存里提供的那一部分（见 **提示词缓存**）；AI 设置的用量标签页把它显示为 **缓存命中** 列。在它出现之前记录的调用计为 0。`byUser` 按调用次数排序；已删除的用户合成一行，`userId: null`。在 `byModel` 里，获取模型列表的调用 `model: ""`。
+- **`admin/users`** 先和后端对账（删除已删除用户的 AI 数据），然后列出**有 AI+ 功能的用户**：每个管理员和每个开通了 AI+ 的用户（被暂停的也在，带 `suspended: true`），按用户名排序；Token 是全部时间的合计。*(第二轮)* AI+ 功能被关闭的用户不再列出，即使他还有 AI 数据；这些数据保留（他可以查看和删除，保留期限照常适用，`admin/user` 仍然显示它，并记入审计）。所以这里的 `exists` 始终是 `true`（保留这个键是为了让结构不变）。
+- **`admin/user`** 也会对账，只有在这个用户在主程序里已经不存在时才回答 404（没有 AI 数据的用户得到空列表）。**查看会记入审计**：`user "<admin>" viewed the AI chats and memories of user "<name>"` 这一行（对 `admin/chat` 是 `… viewed an AI chat of user "<name>" (<n> messages)`）在返回数据之前送到系统日志；后端取不了它时，回答是 503 `ai.backendDown`，不给数据。
+- **`admin/clear`**：`what: "chat"` 需要 `chatId`；`chats` 和 `memories` 不能带它（400）。被清除的对话里正在生成的回答会先被停止。审计日志（`cleared one AI chat of user …`、`cleared all <n> AI chats of user …`、`cleared all <n> AI memories of user …`）在删除的同一个事务里写入，并一直投递，直到后端取走。
+- **`admin/limits`**：键 `perUserRunning`（1–4，默认 1）、`globalRunning`（1–64，16）、`chatsPerUser`（10–100000，1000）、`messagesPerChat`（20–5000，400）、`memoriesPerUser`（1–1000，50）、`memoryChars`（50–2000，300）、`messageChars`（1000–32000，16000）。POST 接受其中任意几个；超出范围或不是整数的值是 400 `ai.limitRange`，带 `field`，未知的键是 400 `ai.badRequest`，这时什么都不保存。修改马上生效（正在进行的调用从不取消），从不关闭 AI，也从不删除或缩短已有的数据。它会记入日志：`AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`。
+
+### 5.3 `send` 和 `retry` 的事件流
+
+回答**开始之前**的失败是普通的 JSON 错误（403 `ai.disabled` / `ai.notAllowed` / `ai.suspended` / `ai.adminOnly`、400 `ai.tooLong` / `ai.badRequest`、404 `ai.notFound`、409 `ai.busy` / `ai.messageLimit` / `ai.chatLimit` / `ai.keyProblem` / `ai.notRetryable`、503 `ai.backendDown` / `ai.serverBusy`）。否则回答是 `200`，带 `Content-Type: text/event-stream; charset=utf-8`、`Cache-Control: no-store`、`X-Accel-Buffering: no`，没有 `Content-Length`。你的消息（重试时是重置后的回答）一保存好，流就开始，所以服务商的失败以 `error` 事件送来，而不是 HTTP 错误。
+
+每个事件是 `event: <名字>`、`data: <一行 JSON>` 和一个空行：
+
+| 事件 | `data` | 什么时候 |
+|---|---|---|
+| `start` | `{"chatId": n, "chatTitle": str, "userMessageId": n, "assistantMessageId": n, "model": str, "newChat": bool, "retry": bool, "free": bool}` | 第一个，总是有；`free` 是这条回答所用的模式（管理员当时的自由模式） |
+| `thinking` | `{}` | *(第二轮)* 最多一次，而且只在第一个 `delta` 之前：模型开始发送它的推理（OpenAI 的 `reasoning_content` / `reasoning`，Anthropic 的 thinking 块）。推理本身从不保存、从不发给浏览器、也从不记入日志 |
+| `delta` | `{"text": str}` | 回答的下一段，按顺序 |
+| `done` | `{"status": "done", "tokensIn": n\|null, "tokensOut": n\|null, "truncated": bool}` | 回答完成（`truncated`：模型在它的长度上限处停下了） |
+| `stopped` | `{"status": "stopped"}` | **停止**，或者 ai-service 正在关闭 |
+| `error` | `{"status": "error", "code": str, "error": "<中文文字>"}` | 服务商失败、失去访问权限（`ai.notAllowed`、`ai.backendDown`）、用户被暂停（`ai.suspended`，文字 `管理员已暂停你的 AI+ 功能。`）、AI+ 功能被关闭（`ai.disabled`，文字 `AI+ 功能暂时不可用。`）、对话被删除（`ai.notFound`）；已经生成的文字保留 |
+
+```text
+event: start
+data: {"chatId":12,"chatTitle":"怎样安排一周的复习？","userMessageId":41,"assistantMessageId":42,"model":"demo-chat-small","newChat":true,"retry":false,"free":false}
+
+event: thinking
+data: {}
+
+event: delta
+data: {"text":"先从"}
+
+: keep-alive
+
+event: done
+data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
+```
+
+- 其间没有发送别的内容时，每 15 秒会有一行注释 `: keep-alive`。`done`、`stopped` 或 `error` 中正好一个结束这个流；然后服务器关闭它。
+- **回答不依赖于连接。** 客户端离开后，ai-service会继续生成回答，最多每 2 秒、并在结束时保存它的文字。`GET /api/ai/status`（`running`）和 `GET /api/ai/chat`（`status: "streaming"` 的消息和已经生成的文字，对话里 `running: true`）会显示它；请每 2 秒读取一次对话，直到它结束。因为崩溃而停在 `streaming` 的消息会在下次启动时被标记为 `error`，错误码 `ai.interrupted`。
+- 生成期间，ai-service每 2 秒检查一次你的会话；会话结束了，或者 AI+ 被关闭了，流就以 `error` `ai.notAllowed` 结束；管理员暂停了你时，以 `error` `ai.suspended` 结束（马上，不用等到下一次检查）。
+- 推理不计入下面 100 000 个字符的上限，但它会重置 120 秒的空闲计时器。`thinking` 只是一个信号，表示模型正在工作；从没见过它的客户端不会损失什么。重新接上的回答（通过 `GET /api/ai/chat` 读取）没有思考状态。
+- 对服务商的时间限制：连接 10 秒，第一个字节 120 秒，120 秒没有数据，总共 10 分钟（`ai.up.timeout`）；超过 100 000 个字符的回答会被截断（`ai.up.tooLong`）。
+
+### 5.4 错误码
+
+`error` 文字是 ai-service 的（中文；`ai.serviceOff` 是后端的）；下表的含义是页面上显示的意思。
+
+| 错误码 | HTTP | 含义 |
+|---|---|---|
+| `ai.unavailable` | 502（Nginx） | ai-service 暂时连不上（没有运行）。界面对普通用户显示「AI 暂时无法使用，请稍后再试或联系管理员。」，只对管理员写出 `ai-service`。 |
+| `ai.backendDown` | 503 | AI 暂时无法使用（主服务连不上；也包括：身份无效、AI 连接已关闭；文字 `AI 暂时无法使用，请稍后再试或联系管理员。`，和界面里的 `ai.unavailable` 一样，所以用户从不会知道有这个容器）。*(第二轮)* 后端已经 60 秒没有接受 ai-service 的报告时，ai-service 的 AI 用户路由也回答它。 |
+| `ai.serverBusy` | 503 | AI 现在太忙（`globalRunning` 的名额都占满了；文字 `AI 现在太忙，请稍后再试。`）。 |
+| `ai.internal` | 500 | AI 内部出错了（文字 `AI 内部出错了，请稍后再试。`）。 |
+| `ai.disabled` | 403 | AI+ 功能暂时不可用（已关闭；文字 `AI+ 功能暂时不可用。`）。 |
+| `ai.notAllowed` | 403 | 你的账号没有开通 AI+ 功能（文字 `你的账号没有开通 AI+ 功能。`）。 |
+| `ai.suspended` | 403 | *(第二轮)* 管理员暂停了你的 AI+ 功能（文字 `管理员已暂停你的 AI+ 功能。`）。也是被暂停中断的、正在生成的回答的错误码。 |
+| `ai.adminAlways` | 409 | *(第二轮)* 管理员始终可以使用 AI，不能被暂停（文字 `管理员始终可以使用 AI，不能暂停。`）。 |
+| `ai.serviceOff` | 409 | *(第二轮)* 由**后端**产生，不是 ai-service：请先在 AI 设置里开启 AI+ 功能（文字 `请先在 AI 设置里开启 AI+ 功能。`）。见 `POST /api/users/update`。 |
+| `ai.adminOnly` | 403 | 只有管理员可以这样做（也包括：非管理员调用 `POST /api/ai/free`）。 |
+| `ai.notFound` | 404 | 找不到了（或者不是你的）。 |
+| `ai.busy` | 409 | 上一个回答还在生成。 |
+| `ai.tooLong` | 400 | 消息太长了（`limit`）。 |
+| `ai.messageLimit` | 409 | 这个对话已经达到 `messagesPerChat`（`limit`）：请开始一个新对话。 |
+| `ai.chatLimit` | 409 | 你已经有 `chatsPerUser` 个对话（`limit`）：请删除一些。 |
+| `ai.notRetryable` | 409 | 这个回答不能重试。 |
+| `ai.badRequest` | 400 / 405 / 413 / 415 | 请求无效。 |
+| `ai.memoryLimit` | 409 | 记忆已满（`limit`）。 |
+| `ai.memoryTooLong` | 400 | 一条记忆的字符太多（`limit`）。 |
+| `ai.notVerified` | 409 | 请先保存设置并测试成功，再开启 AI。 |
+| `ai.keyProblem` | 409 | 已保存的密钥无法解密，请重新输入。 |
+| `ai.badUrl` | 400 | 不是完整的 `http://` 或 `https://` 地址（或者带了用户名、查询参数或 `#`）。 |
+| `ai.badKey` | 400 | 密钥必须是 1–400 个可见字符，不能有空格（`field`）。 |
+| `ai.headerClash` | 400 | 网关密钥和服务商密钥会用到同一个请求头（`field: apiKey`）。 |
+| `ai.keyMissing` | 400 | 请先填写这个密钥（`field`）。 |
+| `ai.keyReenter` | 400 | 地址或服务商变了：请重新输入这个密钥（`field`）。 |
+| `ai.modelMissing` | 400 | 请先选择模型。 |
+| `ai.badRetention` | 400 | 保留天数必须在 1 到 3650 之间。 |
+| `ai.limitRange` | 400 | 某个上限不是它范围内的整数（`field`）。 |
+| `ai.interrupted` | （保存在数据库里） | 服务重启，回答被中断了。 |
+| `ai.up.auth` | 502 | AI 服务商拒绝了这个密钥。 |
+| `ai.up.quota` | 502 | AI 服务商账号的额度或余额不足。 |
+| `ai.up.notFound` | 502 | AI 服务商找不到这个模型或地址。 |
+| `ai.up.rateLimit` | 502 | AI 服务商太忙（触发限流）。 |
+| `ai.up.overloaded` | 502 | AI 服务商过载。 |
+| `ai.up.server` | 502 | AI 服务商内部出错了。 |
+| `ai.up.badRequest` | 502 | AI 服务商拒绝了这个请求。 |
+| `ai.up.timeout` | 504 | AI 服务商没有及时回应。 |
+| `ai.up.connect` | 502 | 连不上 AI 服务商。 |
+| `ai.up.protocol` | 502 | 服务商的回应无法读取（也包括重定向，或者没有 `message_stop` 就结束的 Anthropic 流）。 |
+| `ai.up.refused` | 502 | AI 拒绝回答。 |
+| `ai.up.tooLong` | （流里） | 回答太长，已被截断。 |
+
+服务商的回应怎样映射到 `ai.up.*` 错误码：先看它正文里的错误类型或错误码（也包括在 200 之后、在流里送来的错误，有些网关会这样发；那里的数字错误码按 HTTP 状态读取），否则看 HTTP 状态：401 / 403 是 `auth`；402 是 `quota`；404 是 `notFound`；429 是 `rateLimit`；503 / 529 是 `overloaded`；其他 5xx 是 `server`；其他 4xx 是 `badRequest`；3xx 和读不懂的回应是 `protocol`；没有任何文字的拒绝或内容过滤是 `refused`。在用量统计里，错误码保存时不带 `ai.up.`。
+
+## 6. 内部路由（`/internal/*`，v0.8）
+
+这些路由是后端和 ai-service 之间的连接。它们**经过 Nginx 访问不到**（`/internal/` 没有 location，所以从外面来的请求得到 404），这里写出来只是为了说明设计。后端在 Host 守卫之前、不经过会话层就回答它们。
+
+| 方法 | 路径 | 调用者 | 认证 |
+|---|---|---|---|
+| GET | `/internal/ai/auth` | Nginx 的 `auth_request`（以及 vite 的开发 / 预览服务器） | 浏览器的会话 Cookie |
+| POST | `/internal/ai/introspect` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/users` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/log` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/heartbeat` | ai-service *(第二轮)* | `X-Xexam-Internal-Token` |
+
+`/internal/` 下的其他任何路径、错误的方法，或者令牌缺失或错误（或者还没有加载令牌）时带令牌的路由，都回答 404 `text/plain` `not found`，和未知路径完全一样，所以不会暴露这些路由；被拒绝的令牌最多大约每分钟记一次日志。带令牌的路由需要 `Content-Type: application/json` 和一个 JSON 对象；它们的回答是后端通常的 JSON。
+
+- **`GET /internal/ai/auth`** 只从 `X-Original-Host`、`X-Original-Origin` 和 `X-Original-Method`（由 Nginx 设置）读取 Host、Origin 和方法，只从正好一个原样的 `xexam_session` Cookie 读取会话。它从不刷新会话。回答：204，带 `X-Xexam-Identity` 和 `Cache-Control: no-store`（允许）；401 `{"error": "请先登录。", "code": "auth.signin"}`，带 `X-Xexam-Deny: signin`；403，带 `X-Xexam-Deny: password`（`auth.password`）或 `guard`（`auth.guard`，守卫自己的提示）；AI 连接已关闭时 503，没有正文；数据库出错时 500。
+- `X-Xexam-Identity` 里的**身份声明**：`base64url(payload) + "." + base64url(HMAC-SHA-256(内部令牌, "xexam-identity-v1." + base64url(payload)))`，不带填充。payload 是按这个顺序的紧凑 JSON：`{"v":1,"id":<users.id>,"stamp":"<users.uid>","username":"…","role":"admin"|"user","aiAllowed":<bool>,"sid":"<会话的令牌哈希，64 位十六进制>","exp":<now + 60>}`。ai-service检查签名、`now ≤ exp ≤ now + 120` 和每个字段（未知的字段会被拒绝）；它从不记录这个声明。
+- **`POST /internal/ai/introspect`** `{"sid": "<64 位十六进制>", "id": <用户 id>}` → `{"ok": true, "user": {"id", "stamp", "username", "role", "aiAllowed"}}`；会话已经不在、属于另一个用户或者必须修改密码时是 `{"ok": false}`。生成回答期间每 2 秒用一次。不是 64 位小写十六进制数字的 `sid`：400。
+- **`POST /internal/ai/users`** `{"ids": [<id>, …], "holders": <bool>}`（两者都可选；最多 10 000 个 id；ai-service每次最多发 3000 个）→ `{"users": [{"id", "stamp", "username", "role", "disabled", "ai", "aiAllowed"}]}`：请求的每个存在的用户，`holders: true` 时再加上每个管理员和每个开通了 AI+ 的用户；不重复，按 id 排序。缺少的 id 表示这个用户已被删除。
+- **`POST /internal/ai/log`** `{"lines": [{"level": "INFO" | "WARN" | "ERROR", "message": "…"}]}` → `{"ok": true}`：最多 50 行；超过 2000 个字符的消息会被截断（以 `…` 结尾），去掉控制字符；每一行以目标 `xexam_ai_service` 和前缀 `AI: ` 进入系统日志。有一行无效（别的级别、缺少消息、多于 50 行）就以 400 拒绝整批。请求体最多大约 590 KiB（即使带转义字符，也放得下满满一批）；另外几个带令牌的路由接受 64 KiB。
+- **`POST /internal/ai/heartbeat`** *(v0.8，第二轮)* `{"version": "0.8", "enabled": <bool>, "suspended": [<id>, …], "stopping": <bool>}` → `{"ok": true}`。ai-service 对自己状态的报告；后端靠它知道 AI+ 是否可用，也只有靠它才知道 ai-service 的存在（后端从不调用 ai-service）。四个键都是必需的，不允许有别的键。`version` 是版本字符串（`0-9 A-Z a-z . + -`，最多 20 个字符），`enabled` 是 ai-service 使用的 AI+ 功能开关（已开启、当前设置的测试已通过、密钥可读），`suspended` 列出被暂停的用户的 id，最多 3000 个（正整数，重复的忽略），`stopping` 只在 ai-service 关闭时发送的最后一份报告里是 `true`。别的任何情况都是 400，已保存的报告保持原样。一份有效的报告替换上一份。它遵循其他带令牌路由的规则（令牌、`Content-Type: application/json`、最多 64 KiB，令牌、方法或路径错误时 404），无论报告被接受还是无效，都不写日志行。
+  - **ai-service 什么时候报告**：启动时（令牌可读之后）、管理员开启或关闭 AI+ 功能、修改会把它关闭的设置、运行会把它关闭的测试、暂停或恢复某个用户之后马上（那个请求的回答会等这份报告）、每 25 秒一次、报告失败后 5 秒，以及关闭时带 `stopping: true` 的最后一次（限时 2 秒）。报告一次只发一份，所以旧状态不可能赶在新状态前面。ai-service 自己的日志会显示这条连接：`AI link: connected to the main service` 每次连接**只写一次**（第一份被接受的报告时，之后只在断开后重新连上时再写），`AI link: lost the main service` 在一个原本连着的连接失败时写一次；中间的其他失败和成功都不写。这两行都在系统日志里，带前缀 `AI: `。
+  - **后端怎么处理它**：只在内存里保存最后一份报告。这份报告不到 60 秒、并且不是停止报告时，ai-service 算作**已连接**；已连接并且 `enabled` 时，**AI+ 可用**。后端在 `aiAvailable` 和 `aiService`（`GET /api/auth/state`）里显示这个状态，用 `suspended` 生成 `aiSuspended`（`GET /api/users`），并在 AI+ 不可用时拒绝用户的 AI+ 开关（`ai.serviceOff`）。后端重启后，在下一份报告到达之前（最多 25 秒）没有报告。从外面看，`/internal/ai/heartbeat` 是 404（已登录的用户访问 `/api/internal/ai/heartbeat` 是 404，登录之前是 401）。
+
+## 7. 与旧版的差异
 
 下面是新的 Rust 后端与旧的 Python v0.2 **有意不同**的地方。每一条都登记在 `tests/baseline/golden/allowed_differences_rust.json` 和 `allowed_probe_differences_rust.json` 里，没有登记的差异会让测试失败。
 
@@ -513,7 +781,25 @@ flowchart LR
 | `GET /api/info` | `{"version", "arch", "canShutdown", "bankCount"}` | `{"version", "arch", "canShutdown"}`：`bankCount` 去掉了 |
 | `/api/` 的 Nginx 限流 | 每秒 10 个请求，突发 30 | 每秒 30 个请求，突发 120（按客户端地址；上传不变） |
 
-## 6. 调用示例
+### v0.8 的变化（相对 v0.7.5）
+
+其他一切的回答都和 v0.7.5 一样。
+
+| 变化 | v0.7.5 | v0.8 |
+|---|---|---|
+| `GET /api/auth/state`、`POST /api/auth/login`、`POST /api/auth/password` | `user` 以 `canManageBanks` 结尾 | `canManageBanks` 后面是 `user.aiAllowed` |
+| `GET /api/users`（以及各个用户路由的回答） | | `canManageBanks` 之后、`ownedBanks` 之前是 `ai`（AI+ 开关） |
+| `POST /api/users/create`、`POST /api/users/update` | | 可选的 `ai`（布尔值） |
+| 新路由 | | `/api/ai/*`（第 5 节），由 ai-service 响应；`send` 和 `retry` 以事件流回答。第二轮增加了 `suspend` 和 `resume`（界面上是 暂停 / 恢复）、`send` / `retry` / `suggest` 上的 `lang`、`POST /api/ai/free` 和 `Status` 里的 `freeMode`（管理员的自由模式；`start` 和每条 `Message` 里的 `free`；`ChatSummary` 上没有 `free`，`send` 忽略它）、`thinking` 事件、`Status` 和 `AdminUserRow` 里的 `suspended`，以及 `Usage` 里的 `tokensCached`（提示词缓存） |
+| `GET /api/auth/state`（已登录） | | `library` 之后是 `aiAvailable`；管理员还有 `aiService`（`connected`、`stopped`、`lastSeen`、`version`、`enabled`、`link`） |
+| `GET /api/users`（以及每个返回列表的回答） | | `users` 之后是顶层的 `aiAvailable`；每一行的 `lock` 之后是 `aiSuspended` |
+| `POST /api/users/update`、`POST /api/users/create` | | AI+ 不可用时，带 `ai` 键（创建时是 `ai: true`）得到 409 `ai.serviceOff` |
+| 新的内部路由 | | `POST /internal/ai/heartbeat`（第 6 节） |
+| `GET /api/logs` | | 也包括 ai-service 的日志行（`target` `xexam_ai_service`，前缀 `AI: `） |
+| 数据库结构 | v4 | v5（`users.ai_enabled`、`users.uid`），见 [database.md](database.md) |
+| Nginx | 只有 `/api/` | 还有 `/api/ai/`（先做认证步骤；请求体 256 KiB；`send` / `retry` 不缓冲地流式输出）；从外面访问 `/internal/` 是 404 |
+
+## 8. 调用示例
 
 ```bash
 # 看版本和架构（公开）
@@ -557,6 +843,31 @@ curl -s -b cookies.txt -X POST http://localhost:8765/api/settings \
 # 读系统日志，然后只读你看到的最后一行之后的内容
 curl -s -b cookies.txt http://localhost:8765/api/logs
 curl -s -b cookies.txt 'http://localhost:8765/api/logs?after=41&boot=Xq3v9T0bLm2k'
+
+# AI（v0.8）：它开着吗？我能用吗？（管理员：ai-service 连上了吗？）
+curl -s -b cookies.txt http://localhost:8765/api/ai/status
+curl -s -b cookies.txt http://localhost:8765/api/auth/state
+
+# 在一个新对话里提问，看着回答一段段送来（-N：每个事件一到就打印）
+curl -s -N -b cookies.txt -X POST http://localhost:8765/api/ai/send -H 'Content-Type: application/json' -d '{"chatId": null, "text": "怎样安排一周的复习？", "lang": "zh"}'
+
+# 以管理员身份：接入一个 OpenAI 兼容的服务商（这里是编造的密钥），列出模型，保存一个，测试，开启
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/settings -H 'Content-Type: application/json' -d '{"provider": "openai", "baseUrl": "https://api.openai.com/v1", "apiKey": "sk-demo-not-a-real-key"}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/models -H 'Content-Type: application/json' -d '{}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/settings -H 'Content-Type: application/json' -d '{"model": "demo-chat-small"}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/verify -H 'Content-Type: application/json' -d '{}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/enable -H 'Content-Type: application/json' -d '{"enabled": true}'
+
+# 为 2 号用户开通 AI+ 功能（AI+ 不可用时得到 409 ai.serviceOff）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/users/update -H 'Content-Type: application/json' -d '{"id": 2, "ai": true}'
+
+# 暂停和恢复 2 号用户（AI 设置里的 暂停 / 恢复 按钮做的是同一件事）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/suspend -H 'Content-Type: application/json' -d '{"userId": 2}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/resume -H 'Content-Type: application/json' -d '{"userId": 2}'
+
+# 打开你自己的自由模式，再关掉（只有管理员；从下一条消息起对任何对话生效）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": true}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": false}'
 ```
 
-> 经 Nginx 访问时，`curl` 默认带的 `Host: localhost:8765` 在白名单里。用别的域名访问前，先设置 `XEXAM_ALLOWED_HOSTS`。`curl` 不发送 `Origin`，所以 Origin 检查会放行；`cookies.txt` 里是一个有效的会话，请妥善保管，用完删掉。
+> 经 Nginx 访问时，`curl` 默认带的 `Host: localhost:8765` 在白名单里。用别的域名访问前，先设置 `XEXAM_ALLOWED_HOSTS`。`curl` 不发送 `Origin`，所以 Origin 检查会放行（AI 路由的认证步骤也一样）；`cookies.txt` 里是一个有效的会话，请妥善保管，用完删掉。

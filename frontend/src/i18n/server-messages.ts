@@ -138,6 +138,12 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'This username is already taken.',
     ja: 'このユーザー名はすでに使われています。',
   }],
+  // v0.8 round 2 (MSG_AI_SERVICE_OFF, 409 with code ai.serviceOff): a user's AI+ feature switched while AI+ is not available;
+  // the same words as the catalog's ai.err.serviceOff
+  ['请先在 AI 设置里开启 AI+ 功能。', {
+    en: 'Turn on the AI+ feature in AI settings first.',
+    ja: '先に AI 設定で AI+ 機能をオンにしてください。',
+  }],
   ['这个用户不存在（可能已被删除），请刷新页面后再试。', {
     en: 'This user does not exist (it may have been deleted). Reload the page and try again.',
     ja: 'このユーザーは存在しません（削除された可能性があります）。ページを再読み込みしてから再試行してください。',

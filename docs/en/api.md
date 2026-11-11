@@ -2,7 +2,7 @@
 
 # API reference
 
-> The machine-readable version is [openapi.yaml](openapi.yaml). This document is for humans: what each endpoint does, who may call it, how the guards block requests, and where the behavior differs from the old Python version.
+> The machine-readable version is [openapi.yaml](openapi.yaml). This document is for humans: what each endpoint does, who may call it, how the guards block requests, and where the behavior differs from the old Python version. Since v0.8 it also covers the AI routes `/api/ai/*`, answered by the separate ai-service container (section 5), and the internal routes between the backend and ai-service (section 6).
 > It describes the **actual behavior**: every case of the old version was captured as golden responses (`tests/baseline/golden/`, 172 of them), and the new Rust backend is compared against them one by one.
 
 ## 1. Overview
@@ -51,6 +51,8 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | POST | `/api/shutdown` | Admin | Shut down the program (available only when running on the local machine; always 403 in Docker) | No |
 
 `HEAD` behaves like the corresponding `GET`, just without a body. Every endpoint goes through exactly the same guards (section 3).
+
+*(v0.8)* Everything under `/api/ai/` (AI Chat, Memory, AI settings) is answered by ai-service, after Nginx had the backend check the request: section 5. Its answers are JSON with a stable `code` and, for `send` and `retry`, a stream of server-sent events. `/internal/*` is not reachable through Nginx (section 6).
 
 ## 2. What every response has in common
 
@@ -129,7 +131,7 @@ For a user who does not see every bank, every route follows the same rule:
 
 ### `GET /api/info`
 ```json
-{"version": "0.7.5", "arch": "x86_64", "canShutdown": false}
+{"version": "0.8", "arch": "x86_64", "canShutdown": false}
 ```
 Public. The version number is `CODE_VERSION` from the `VERSION` file (or `XEXAM_VERSION`); `arch` is the CPU architecture of the server; `canShutdown` is `true` only when the program was started with `--allow-shutdown`. *(v0.7.5)* The key `bankCount` (the number of active questions in the whole library) is gone: the route is public, and signed-in pages count the questions they may see from `GET /api/bank` and `GET /api/banks`. The route still reads the database, so it answers 500 when the database cannot be read, and the container health check (which asks this route) reports the backend as unhealthy.
 
@@ -145,11 +147,23 @@ Public. Signed out (no cookie, or a session that is not valid any more):
 Signed in (also while the account must choose a new password):
 
 ```json
-{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453"}
+{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.8", "enabled": true, "link": true}}
 ```
 
-- `role` is `admin` or `user`. `canManageBanks` *(v0.7)* is `true` for every administrator, and for a plain user with the **Bank manager** permission.
+- `role` is `admin` or `user`. `canManageBanks` *(v0.7)* is `true` for every administrator, and for a plain user with the **Bank manager** permission. `aiAllowed` *(v0.8)* is `true` for every administrator, and for a plain user with **AI+**; whether the user can use AI right now is in `GET /api/ai/status`. The same `user` object is in the answers of sign-in and of the password change.
 - `library` is an opaque stamp of the question banks the user may see: 32 hexadecimal digits, a digest that publishes none of the numbers it is made of. It changes whenever one of those banks is imported, replaced or deleted (also by the `import` command, from another process), and *(v0.7)* whenever the banks the user may see or manage change (an administrator assigned banks or changed the permission, a bank changed owner). Open pages compare it and re-read the banks when it changes. For a user limited to some banks, the stamp is made only of those banks: it neither reveals nor follows the size, the question count or the update times of the banks they cannot see.
+
+- `aiAvailable` *(v0.8, round 2)* is `true` while AI+ is available: ai-service has reported to the backend less than 60 seconds ago (and did not say it was stopping) **and** its **AI+ feature** switch in AI settings is on. It is the same for every signed-in user. The User management page uses it to decide whether to show the AI+ switches, and the backend uses it to refuse them (`POST /api/users/update` and `create`, below).
+- `aiService` *(v0.8, round 2)* is in the answer for **administrators only** (a plain user's answer has no such key). It is what the backend knows about ai-service, from its last report (the backend never calls ai-service; ai-service reports every 25 seconds, at once after a change, and once when it stops: section 6, `POST /internal/ai/heartbeat`). The report is kept in memory, so after a backend restart `lastSeen` is `null` until the next report arrives (within 25 seconds).
+
+| Key | Meaning |
+|---|---|
+| `connected` | `true`: a report is less than 60 seconds old and it is not a stopping report |
+| `stopped` | `true`: the last report said ai-service is shutting down (whatever its age) |
+| `lastSeen` | Unix seconds of the last accepted report since the backend started; `null` when there is none |
+| `version` | The version in the last report, or `null` |
+| `enabled` | The AI+ feature switch as the last report says, while `connected`; `false` when not connected |
+| `link` | `true` when the backend has an internal token loaded (the AI link is on) |
 
 ### `POST /api/auth/login` *(v0.6)*
 Public. Body: `{"username": "…", "password": "…"}` (both strings, otherwise **400** `请求的格式不对。`). The username is trimmed and compared ignoring case.
@@ -178,7 +192,7 @@ Signed in (also while a new password is required). Body: `{"current": "…", "pa
 Admin. Every account, ordered by id:
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
+{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
 ```
 
 - `createdAt` / `lastLoginAt` are local times `YYYY-MM-DD HH:MM`; `lastLoginAt` is `null` before the first sign-in.
@@ -186,6 +200,9 @@ Admin. Every account, ordered by id:
 - `banks` *(v0.7)*: the ids of the banks the user sees, ascending (only banks that still exist; `[]` = none). It is always a list: `"all"` is only a shorthand for writing (below).
 - `newBanks` *(v0.7)*: **Include banks imported later**. `true`: every bank created from now on (an import as a new bank by anyone, or the command-line `import`) is added to `banks` in the same transaction. It never adds an existing bank.
 - `canManageBanks` *(v0.7)* is the stored **Bank manager** permission. `banks`, `newBanks` and `canManageBanks` are kept across role changes but matter only while the account is a plain user: administrators see and manage every bank.
+- `ai` *(v0.8)*: the stored **AI+ feature** switch of the user. It matters only for plain users (administrators may always use AI while it is on) and only while the AI+ feature is on in AI settings. It is kept when AI+ is not available.
+- `aiSuspended` *(v0.8, round 2)*, after `lock`: `true` when an administrator paused the user's **AI+ feature** in AI settings (section 5, `suspend`; the screens say Pause / Paused, the JSON keeps the name `suspended`). It comes from ai-service's last report, so it is `false` for everybody while the backend has no report (for example right after a restart) and always `false` for administrators, who cannot be suspended. It is separate from `ai`: a pause does not change the stored switch.
+- `aiAvailable` *(v0.8, round 2)*, a top-level key next to `users`: the same value as in `GET /api/auth/state`. **Every answer that returns the user list** has it (`create`, `update`, `password`, `delete`, `unlock` too).
 - `ownedBanks` *(v0.7)*: the ids of the banks the user imported as new banks (they own them), ascending.
 - `lock`: the in-memory sign-in state of the account. `null` while it is in the first round and not locked; otherwise:
 
@@ -203,7 +220,7 @@ Admin. Every account, ordered by id:
 | `otherUntil` / `otherRetryAfter` | Set only when the other browsers are locked at the same time, so the account is locked in every browser: the end of that second lock and its seconds (`null` / `0` otherwise) |
 
 ### `POST /api/users/create` *(v0.6)*
-Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "newBanks": <bool>, "canManageBanks": <bool>}`. *(v0.7)* `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some), `newBanks` to `false` and `canManageBanks` to `false`. `"banks": "all"` is a shorthand: every bank that exists now and, unless `newBanks` is given, `newBanks: true`. Duplicate ids are ignored. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
+Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "ai": <bool>}`. *(v0.7)* `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some), `newBanks` to `false` and `canManageBanks` to `false`; *(v0.8)* `ai` (**AI+**) to `false`. Creating a user with `ai: true` also logs `user "<admin>" turned AI+ on for user "<name>"`; *(v0.8, round 2)* while AI+ is not available (see `aiAvailable` above) it is refused with **409** `ai.serviceOff` and the user is not created. `ai: false` or no `ai` works as always. `"banks": "all"` is a shorthand: every bank that exists now and, unless `newBanks` is given, `newBanks: true`. Duplicate ids are ignored. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
 
 Usernames have 1–40 characters (ASCII letters, digits and `. _ - @`, surrounding spaces removed) and are unique ignoring case; passwords have 8–128 characters.
 
@@ -211,16 +228,19 @@ Usernames have 1–40 characters (ASCII letters, digits and `. _ - @`, surroundi
 |---|---|
 | **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` ("The username is not valid …") | `username` missing, not a string, or breaking the rule |
 | **400** `密码需要 8–128 个字符。` | `password` too short or too long |
-| **400** `请求的格式不对。` | `password` missing or not a string; `role` missing or not `admin` / `user`; `banks` neither `"all"` nor a list of integers; `newBanks` or `canManageBanks` not a boolean |
+| **400** `请求的格式不对。` | `password` missing or not a string; `role` missing or not `admin` / `user`; `banks` neither `"all"` nor a list of integers; `newBanks`, `canManageBanks` or `ai` not a boolean |
 | **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` ("One of the chosen question banks does not exist …") *(v0.7)* | An id in `banks` is not an existing bank (or not a positive integer); nothing is created |
 | **409** `这个用户名已经有人用了。` ("This username is already taken.") | Another account has that name (ignoring case) |
+| **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}` ("Turn on the AI+ feature in AI settings first.") *(v0.8, round 2)* | `ai: true` while AI+ is not available. It is checked after the body was validated (a malformed `ai` is still 400) and before anything is written or the password is hashed |
 
 ### `POST /api/users/update` *(v0.6)*
-Admin. Body: `{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}`; a key that is left out stays unchanged. Answer: `{"users": [...]}`.
+Admin. Body: `{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`; a key that is left out stays unchanged. Answer: `{"users": [...]}`.
 
-- Disabling an account or changing its role ends its sessions. A rename, a change of `banks`, `newBanks` or `canManageBanks` keeps them; the change applies at the user's next request.
+- Disabling an account or changing its role ends its sessions. A rename, a change of `banks`, `newBanks`, `canManageBanks` or `ai` keeps them; the change applies at the user's next request.
+- `ai` *(v0.8)* switches the **AI+ feature** of the user on or off. It applies to the next AI request at once (the backend checks every AI request), and an answer being written for the user stops within about 2 seconds when it is switched off; the user's AI chats and memories are kept. A change is logged as `user "<admin>" turned AI+ on for user "<name>"` (or `off`).
+- *(v0.8, round 2)* While AI+ is not available (ai-service not connected, or the AI+ feature off in AI settings), **any request with an `ai` key is refused as a whole** with **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}`: `true` or `false`, equal to the stored value or not, alone or together with other fields. Nothing is written and nothing is logged. A request without `ai` is not affected. This is the only error of the backend's own routes that carries a `code`. The stored switches of all users are kept while AI+ is unavailable and are in force again once it is.
 - `banks` replaces the chosen banks (a list of ids, `[]` = no bank; or `"all"`, every bank that exists now, which also sets `newBanks: true` unless `newBanks` is given). `newBanks` alone changes only the flag: unticking it keeps the banks the user has.
-- **400**: as for create (`username`, `role`, `banks`, `newBanks`, `canManageBanks`; `disabled` not a boolean → `请求的格式不对。`; `id` missing or not an integer (a boolean is not) → `请求的格式不对。`).
+- **400**: as for create (`username`, `role`, `banks`, `newBanks`, `canManageBanks`, `ai`; `disabled` not a boolean → `请求的格式不对。`; `id` missing or not an integer (a boolean is not) → `请求的格式不对。`).
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。` ("This user does not exist …").
 - **409** `不能对自己的账户做这个操作。` ("You cannot do this to your own account.") when you disable yourself or change your own role; `至少要保留一个启用的管理员。` ("At least one enabled administrator must remain.") when the change would leave no enabled administrator; `这个用户名已经有人用了。`.
 
@@ -230,7 +250,7 @@ Every check runs in the same transaction as the write, so two requests can never
 Admin. Body: `{"id": <int>, "password": "…"}`. Gives another user a new initial password: they must choose a new one at their next sign-in, their sessions end, their `xexam_device` cookies stop matching, and their sign-in lock is cleared. Your own password goes through `POST /api/auth/password` (here: **409** `不能对自己的账户做这个操作。`). Other errors: 400 (password rule, malformed body), 404 (unknown user).
 
 ### `POST /api/users/delete` *(v0.6)*
-Admin. Body: `{"id": <int>}`. Deletes the account with its sessions, study records (with their detail), wrong-answer statistics, settings and chosen banks. *(v0.7)* The question banks the user owned are not deleted: they now belong to the administrator who deleted the user. **409** for yourself and for the last enabled administrator; **404** for an unknown id.
+Admin. Body: `{"id": <int>}`. Deletes the account with its sessions, study records (with their detail), wrong-answer statistics, settings and chosen banks. *(v0.7)* The question banks the user owned are not deleted: they now belong to the administrator who deleted the user. *(v0.8)* The user can no longer reach the AI routes at once; ai-service removes their AI chats and memories at its next reconcile (within 10 minutes, or when an administrator opens the AI users list). **409** for yourself and for the last enabled administrator; **404** for an unknown id.
 
 ### `POST /api/users/unlock` *(v0.6)*
 Admin. Body: `{"id": <int>}`. Clears the account's sign-in state completely, for every browser (back to round 1, 5 tries), whether a lock is running or the account is only past round 1. It works by user id, so it works after a rename, and also for your own account. **404** for an unknown id. Answer: `{"users": [...]}`.
@@ -384,7 +404,7 @@ Signed in. Settings are stored in the database per user (they survive container 
 `GET` returns the defaults merged with the stored values (a stored value that is not valid is ignored). `POST /api/settings` takes any subset of these keys and returns the full settings; unknown keys are ignored; a known key with an invalid value → **400** `设置的值不对。` ("A setting has an invalid value.") and nothing is written. `POST /api/settings/reset` (body `{}` or empty) restores `theme`, `uiLang` and `autoAdvance` to their defaults, keeps `questionLang`, and returns the full settings.
 
 ### `GET /api/logs` *(v0.7)*
-Admin. The system log the **System log** page shows: the most recent 2000 lines the backend logged since it started, kept in memory only (empty again after a restart; nothing is written to the database). They are the lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter), plus the startup and shutdown status lines. Log lines name users by their username (`user "admin" updated user "alex"`), never by id and never a typed name that has no account, and they never contain a password, a token, a cookie value or question text.
+Admin. The system log the **System log** page shows: the most recent 2000 lines the backend logged since it started, kept in memory only (empty again after a restart; nothing is written to the database). They are the lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter), plus the startup and shutdown status lines, *(v0.8)* plus the lines ai-service sends (`target` `xexam_ai_service`, the message starting with `AI: `; they are not in `docker compose logs backend`). Log lines name users by their username (`user "admin" updated user "alex"`), never by id and never a typed name that has no account, and they never contain a password, a token, a cookie value or question text.
 
 Query parameters, both optional:
 
@@ -438,11 +458,259 @@ Like every backend message they are Chinese and stable (the frontend translates 
 | 409 | `这个用户名已经有人用了。` | This username is already taken. | Users: create, update |
 | 409 | `不能对自己的账户做这个操作。` | You cannot do this to your own account. | Users: update, password, delete |
 | 409 | `至少要保留一个启用的管理员。` | At least one enabled administrator must remain. | Users: update, delete |
+| 409 | `请先在 AI 设置里开启 AI+ 功能。` (with `"code": "ai.serviceOff"`) | Turn on the AI+ feature in AI settings first. | Users: update with `ai`, create with `ai: true`, while AI+ is not available *(v0.8)* |
 | 429 | `登录失败次数太多，请稍后再试。` | Too many failed attempts. Please try again later. | Sign-in, password change (with `retryAfter`) |
 | 500 | `写入数据库失败，题库没有任何改动。` | Writing to the database failed. The question bank was not changed. | Confirm |
 | 500 | `服务器内部出错，请稍后再试。` | An internal server error occurred. Please try again later. | Any route |
 
-## 5. Differences from the old version
+## 5. AI routes (`/api/ai/*`, v0.8)
+
+The routes under `/api/ai/` are answered by ai-service (the `ai-service` container, image `xexam-ai-service`), not by the backend. Nginx sends every such request first to the backend's auth step (section 6) and passes it on only when the backend allows it, without the browser's cookies and with the backend's signed identity statement (`X-Xexam-Identity`) instead. A client therefore calls them exactly like the other routes: same origin, with the session cookie; it cannot set the identity itself (Nginx always overwrites the header).
+
+### 5.1 Common rules
+
+- **Methods**: GET and POST only. Nginx answers any other method with 403; ai-service itself with 405 and `Allow: GET, POST`. An unknown path under `/api/ai/` is 404 `ai.notFound`. `HEAD` is not supported.
+- **Refused by the auth step** (answered by Nginx, ai-service never sees the request):
+
+  | Status | `code` | When |
+  |---|---|---|
+  | 401 | `auth.signin` | No valid session. The `error` text is the backend's `请先登录。`. The auth step takes exactly one `xexam_session` cookie, written plainly: a second one (in any letter case), an empty, quoted or padded one is refused like no session |
+  | 403 | `auth.password` | The account must choose a new password first (`请先设置新密码。`) |
+  | 403 | `auth.guard` | The Host, or for a method other than GET, the Origin is not allowed (the same guard as section 3) |
+  | 503 | `ai.backendDown` | The backend could not answer, or the AI link is off (no internal token) |
+  | 502 | `ai.unavailable` | ai-service is absent, stopped or does not answer |
+  | 413 | `ai.badRequest` | The body is over 256 KiB |
+  | 429 | (not JSON) | Nginx's rate limit: 30 requests a second per address (burst 120); `send` and `retry` also 20 a minute per session (burst 10) |
+
+  The frontend treats any 5xx without JSON on `/api/ai/*` as `ai.unavailable`.
+- **POST** needs `Content-Type: application/json` (optionally `; charset=utf-8`; otherwise 415 `ai.badRequest`); the body must be a JSON object (an empty body counts as `{}`), at most 128 KiB (413 `ai.badRequest`). **Keys that a route does not list are refused** (400 `ai.badRequest`), and so is a value of the wrong type. Ids, in bodies and query strings, are positive integers.
+- **Answers**: JSON (`Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`), **compact** (no spaces after `:` and `,`, unlike the backend's answers) with the keys in the order shown here. Parse it; do not compare bytes.
+- **Errors**: `{"error": "<Chinese text>", "code": "<code>"}`, plus `"field": "apiKey" | "gatewayKey"` for the key errors and `"limit": <n>` for the errors that name a number (`ai.tooLong`, `ai.messageLimit`, `ai.chatLimit`, `ai.memoryLimit`, `ai.memoryTooLong`), and `"field": "<key>"` for `ai.limitRange`. The codes are stable; the frontend translates by code, never by the text. A provider's own error text is never passed on.
+- **Access levels**, from the identity statement:
+
+  | Level | Who | Otherwise |
+  |---|---|---|
+  | **Signed** | Any signed-in user | (refused by the auth step) |
+  | **AI user** | The **AI+ feature** is on (enabled, tested with the current settings, keys readable) **and** ai-service is connected to the backend **and** the user may use AI (an administrator, or AI+ on) **and** the user is not paused (never the case for an administrator) | Checked in this order: 403 `ai.disabled` when the AI+ feature is off; 503 `ai.backendDown` while the backend has not accepted a report of ai-service for 60 seconds (below); 403 `ai.notAllowed` without AI+; 403 `ai.suspended` when an administrator paused the user |
+  | **Admin** | `role = admin`, also while AI is off | 403 `ai.adminOnly` |
+
+  Reading and deleting your own chats and memories needs only **Signed**, so it keeps working when AI+ is switched off, paused or not available. Writing needs **AI user**.
+- **Two states** *(v0.8, round 2)*: the **AI+ feature** of a user is the stored switch in User management (`ai`); **Pause / Resume** in AI settings (`suspend`, `resume`, below; the JSON and the codes keep the word *suspended*) is a second, separate state. A user can use AI only while the switch is on, the user is not paused and AI+ is available. A pause is kept in ai-service's own database; it survives switching the user's AI+ feature off and on, and only **Resume** clears it.
+- **ai-service applies the 60-second rule to itself**: it must report to the backend (section 6, `heartbeat`), and while its last report was not accepted within the last 60 seconds, `GET /api/ai/status` says `enabled: false` and the **AI user** routes answer 503 `ai.backendDown`. The **Signed** and **Admin** routes keep working.
+- **Scope**: every user route takes the user id from the identity statement, never from the request, and every query of chats, messages and memories filters by it. A chat or memory of another user answers exactly like one that does not exist (404 `ai.notFound`). Only `/api/ai/admin/*` reads or deletes other users' data, and every such view and clear is written to the System log.
+
+### 5.2 Routes
+
+| Method | Path | Access | Body / query | 200 answer |
+|---|---|---|---|---|
+| GET | `/api/ai/status` | Signed | | `Status` |
+| GET | `/api/ai/chats` | Signed | | `{"chats": [ChatSummary]}`, newest `updatedAt` first |
+| GET | `/api/ai/chat` | Signed | `?id=<chat id>` | `{"chat": ChatSummary, "messages": [Message]}` |
+| POST | `/api/ai/send` | AI user | `{"chatId": <id> \| null, "text": "…", "lang"?: "en" \| "zh" \| "ja", "free"?: <ignored>}` | **event stream** (5.3) |
+| POST | `/api/ai/retry` | AI user | `{"chatId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **event stream** (5.3) |
+| POST | `/api/ai/free` | Admin | `{"free": <bool>}` | `{"free": <bool>}` (the administrator's free mode, below) |
+| POST | `/api/ai/stop` | Signed | `{}` or `{"chatId": <id>}` | `{"ok": true, "stopped": <bool>}` |
+| POST | `/api/ai/chats/delete` | Signed | `{"id": <id>}` or `{"all": true}` | `{"deleted": <n>}` |
+| GET | `/api/ai/memories` | Signed | | `{"memories": [Memory], "limit": 50, "maxChars": 300}` (the current limits) |
+| POST | `/api/ai/memories/add` | AI user | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
+| POST | `/api/ai/memories/update` | AI user | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
+| POST | `/api/ai/memories/delete` | Signed | `{"id": <id>}` or `{"all": true}` | `{"deleted": <n>}` |
+| POST | `/api/ai/memories/suggest` | AI user | `{"messageId": <id of one of your user messages>, "lang"?: "en" \| "zh" \| "ja"}` | `{"suggestion": "…"}` (nothing is saved) |
+| GET | `/api/ai/admin/settings` | Admin | | `Settings` |
+| POST | `/api/ai/admin/settings` | Admin | `SettingsUpdate` | `Settings` + `"switchedOff": <bool>` |
+| POST | `/api/ai/admin/models` | Admin | `{}` | `{"models": ["…"], "listed": <bool>}` |
+| POST | `/api/ai/admin/verify` | Admin | `{}` | `Verify` |
+| POST | `/api/ai/admin/enable` | Admin | `{"enabled": <bool>}` | `Settings` |
+| POST | `/api/ai/admin/suspend` | Admin | `{"userId": <id>}` | `{"user": AdminUserRow}`, **audited** |
+| POST | `/api/ai/admin/resume` | Admin | `{"userId": <id>}` | `{"user": AdminUserRow}`, **audited** |
+| GET | `/api/ai/admin/usage` | Admin | `?days=7` (default), `30`, `90` or `365` | `Usage` |
+| GET | `/api/ai/admin/users` | Admin | | `{"users": [AdminUserRow]}` |
+| GET | `/api/ai/admin/user` | Admin | `?id=<user id>` | `{"user": AdminUserRow, "chats": [ChatSummary], "memories": [Memory]}`, **audited** |
+| GET | `/api/ai/admin/chat` | Admin | `?user=<user id>&id=<chat id>` | `{"chat": ChatSummary, "messages": [Message]}`, **audited**; the chat must belong to that user (else 404 and no audit line) |
+| POST | `/api/ai/admin/clear` | Admin | `{"userId": <id>, "what": "chat", "chatId": <id>}`, or `{"userId": <id>, "what": "chats" \| "memories"}` | `{"deleted": <n>}`, **audited** |
+| GET | `/api/ai/admin/limits` | Admin | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
+| POST | `/api/ai/admin/limits` | Admin | any of the seven limit keys, integers | the same as GET |
+
+`GET /healthz` of ai-service (`{"ok":true,"version":"0.8","arch":"x86_64"}`, no identity needed) is used by its container health check; Nginx has no location for it, so it is not reachable from outside.
+
+**Shapes** (keys in this order):
+
+```text
+Status        {"enabled": bool,          // AI+ is available: the AI+ feature is on (enabled, tested with the current settings,
+                                         // keys readable) AND ai-service's report was accepted by the backend < 60 s ago
+               "allowed": bool,          // you may chat now: enabled and (administrator or AI+) and not paused
+               "suspended": bool,        // an administrator paused you (always false for administrators)
+               "hasData": bool,          // you have at least one chat or memory
+               "running": {"chatId": n, "messageId": n} | null,   // your answer being written (the latest one)
+               "retentionDays": n, "memoryLimit": n, "memoryMaxChars": n, "maxMessageChars": n,
+               "messageChars": n, "memoryChars": n,               // the current safety limits (see limits below)
+               "keyProblem": bool,       // administrators only: the saved keys cannot be used (false for others)
+               "configured": bool,       // administrators only: a model and the needed keys are saved (false for others)
+               "freeMode": bool}         // administrators only: your free mode is on (false for others), see POST /api/ai/free
+ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool}   // a chat has no mode
+Message       {"id": n, "role": "user"|"assistant", "content": str, "status": "streaming"|"done"|"stopped"|"error",
+               "error": code|null, "truncated": bool, "model": str|null, "createdAt": n,
+               "free": bool}             // the mode this message was written (or answered) in: true = free mode
+Memory        {"id": n, "content": str, "source": "manual"|"chat", "createdAt": n, "updatedAt": n}
+Settings      {"provider": "openai"|"anthropic"|"gateway", "baseUrl": str, "format": "openai"|"anthropic",
+               "gatewayAuth": "bearer"|"x-api-key"|"cf-aig-authorization", "model": str, "manualModel": bool,
+               "enabled": bool, "verified": bool, "verifiedAt": n|null, "retentionDays": n,
+               "keys": {"apiKey": KeyInfo, "gatewayKey": KeyInfo},
+               "keyProblem": null|"mismatch"|"invalidEnv"|"invalidFile", "updatedAt": n, "updatedBy": str,   // updatedBy: "" until the first save
+               "defaults": {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com"}}
+KeyInfo       {"set": bool, "hint": str, "unreadable": bool}        // hint = "…" + the last 4 characters, "" for keys under 12
+SettingsUpdate{"provider"?, "baseUrl"?, "format"?, "gatewayAuth"?,  // every key optional: absent = keep
+               "apiKey"?: str|null, "gatewayKey"?: str|null,        // a string replaces the key, null removes it
+               "model"?: str, "manualModel"?: bool, "retentionDays"?: n}
+Verify        {"ok": bool, "code": str|null, "httpStatus": n|null, "latencyMs": n, "model": str,
+               "verifiedAt": n|null, "enabled": bool, "switchedOff": bool}
+Usage         {"days": n, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "unit": "day"|"month",
+               "totals": {"calls", "tokensIn", "tokensOut", "errors", "tokensCached"},
+               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "tokensCached"}],
+               "byModel": [{"model": str, "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
+               "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}
+AdminUserRow  {"id": n, "username": str, "role": "admin"|"user", "ai": bool, "aiAllowed": bool, "disabled": bool,
+               "exists": bool, "suspended": bool,   // suspended: the user is paused (never true for administrators)
+               "chats": n, "messages": n, "memories": n, "lastUsedAt": n|null,
+               "tokensIn": n, "tokensOut": n}
+```
+
+Times are unix seconds. Notes per route:
+
+- **`lang`** *(v0.8, round 2)* on `send`, `retry` and `memories/suggest` is the language of the Settings page: `"en"`, `"zh"` or `"ja"` (`"zh-CN"` is accepted as `zh`). The study assistant is told to always answer in that language, unless the user asks for another one in that message; a memory suggestion is written in it. A missing `lang` means English (ai-service does not know the user's settings, so the frontend always sends it). A value that is present but anything else (another string, a number, `null`, `""`) is 400 `ai.badRequest` and nothing is saved or sent to the provider. Every request uses its own `lang`, so one chat can change language between messages; a retry uses the `lang` of the retry request.
+- **`send`**: `text` is trimmed and needs 1 to `messageChars` characters (16 000 by default; 400 `ai.badRequest` when empty, 400 `ai.tooLong` with `limit` when longer). `chatId: null` (or no key) starts a new chat, titled with the start of the text (at most 60 characters); a new chat beyond `chatsPerUser` is 409 `ai.chatLimit`, a chat that would pass `messagesPerChat` 409 `ai.messageLimit`. The **mode** of the answer is not part of the request: it is the administrator's free mode at that moment (next note). A `free` key in the body is still accepted, but **ignored** whatever its value (no error, no effect); a chat has no mode, and `ChatSummary` has no `free`. The history sent to the provider is the chat's earlier finished or stopped messages with text, newest first, up to `max(24000, messageChars + 8000)` characters, then in chronological order, whatever mode each message was written in (see **Prompt and history**).
+- **Free mode** is a state of the **administrator**, not of a chat. `POST /api/ai/free` with `{"free": true}` or `{"free": false}` turns it on or off and answers `{"free": <bool>}`. The body must hold exactly the key `free` as a boolean (anything else is 400 `ai.badRequest`); the route is Admin-only (403 `ai.adminOnly` for others) and works while AI is off; repeating it is harmless. The state is stored per user in ai-service's own database (`users.free_mode`), so it survives reloads, other browsers and restarts, and `GET /api/ai/status` reports it as `freeMode` (always `false` for a plain user, whatever is stored: a demoted administrator is answered normally, and the stored flag applies again if the user becomes an administrator again). While it is **on**, every `send` and `retry` of that administrator, in any chat, old or new, is answered in free mode: the system prompt is only the reply-language line (no study-assistant instructions, no date, no memories; the memories are not even read). While it is **off**, every message is answered normally. A change applies from the **next** message; an answer that is already being written keeps the mode it started in. **Every message records its mode** (`Message.free`, and `start.free` in the event stream): a question and its answer have the mode that was in force when the question was sent, and a retry uses the mode at the time of the retry (and records it on the question too). Free mode lifts only Xexam's own study-assistant role, never the provider's own safety rules. AI Chat has no switch and no divider for it: the choice is made in **Settings**, in the section 「AI 对话模式」 (Normal / Free; only administrators who can use AI see it), and AI Chat shows a green 「自由模式」 tag beside its title while the mode is on.
+- **Prompt and history.** A normal answer's system prompt is the study-assistant text with today's date, then the user's memories (newest-updated first, whole notes only, at most 4000 characters), then the reply-language line last. The static part comes first and the per-request parts last, so the start of every request is identical between requests. When the history sent contains messages written in the **other** mode than the current one (right after a switch), **one short mode line** follows the language line: `Current mode: normal (Xexam study assistant); earlier turns may be free mode.` or `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` Without such messages there is no mode line, and a free-mode prompt is the language line alone. **Old messages are shortened** before they are sent: the newest 4 messages of the history are sent in full, older answers are cut to their first 800 characters followed by `…(shortened)`, older questions to their first 2000 characters followed by `…`. The cut depends only on the message and its age, so a message always gives the same text; the history budget counts the shortened length. Stored messages are never changed.
+- **Prompt caching.** In the **Anthropic** format the system prompt is sent as one text block with a `cache_control` (`ephemeral`) breakpoint, and the last message of the history (the one before the new question) gets a second one, so a conversation re-uses its cached start. In the **OpenAI** format nothing is added: providers that cache automatically do so by themselves. What the provider reports as served from its cache (`cache_read_input_tokens`, or `prompt_tokens_details.cached_tokens`) is stored with the call and shown as `tokensCached` in `admin/usage`; it is a part of `tokensIn`, not an addition to it, and a provider that reports nothing counts 0. Caching changes what the provider charges, never an answer.
+- **`retry`**: the chat's last message must be an answer that failed or was stopped, after a user message; it is written again in place (the same message id, no new user message). Otherwise 409 `ai.notRetryable`.
+- **One running answer per user** by default (`perUserRunning`, up to 4, never two in one chat): another `send`, `retry` or `memories/suggest` gives 409 `ai.busy`. Beyond `globalRunning` model calls at once on the whole server: 503 `ai.serverBusy`. Both are refused before anything is saved.
+- **`stop`**: with `{}` it stops every answer of yours being written, with `{"chatId": …}` only the one of that chat; it waits up to 5 seconds until they are saved. `stopped: false` when nothing was running. The answer ends with the event `stopped` and keeps its text.
+- **`chats/delete`** stops an answer being written in the chat(s) first, then deletes them at once with their messages. `{"id": …}` of a chat that is not yours: 404.
+- **`memories/add`, `memories/update`**: the text's whitespace is collapsed to single spaces; 1 to `memoryChars` characters (300 by default; 400 `ai.memoryTooLong` with `limit`); more than `memoriesPerUser` notes: 409 `ai.memoryLimit` with `limit`. `source` defaults to `manual`.
+- **`memories/suggest`** asks the model to turn one of your messages (its first 2000 characters) into a short note and returns it; it saves nothing (save it with `memories/add`, `source: "chat"`). An answer message, or a message of someone else: 404. An empty suggestion: 502 `ai.up.protocol`.
+- **`admin/settings` POST** validates in this order: provider, `baseUrl` (an absolute `http://` or `https://` address of at most 300 characters, without user, query or `#`; 400 `ai.badUrl`; for the Anthropic format a trailing `/v1` is removed), format and auth scheme, the keys (1–400 printable ASCII characters without spaces; 400 `ai.badKey` with `field`), **key re-entry** (when the provider or the origin of the address changes, every saved key must be sent again as a string or `null`; 400 `ai.keyReenter` with `field`, nothing saved), the header clash (gateway scheme `bearer` with the OpenAI format, or `x-api-key` with the Anthropic format, while a provider key is set; 400 `ai.headerClash`), the model (at most 200 characters of `A–Z a–z 0–9 . _ : / @ + -`), `retentionDays` 1–3650 (400 `ai.badRetention`). The needed keys are checked by `models` and `verify`, not here. A change of the provider, address, format, auth scheme, model or a key clears the passed test and switches AI off (`switchedOff: true` when it was on; every answer being written stops with `ai.disabled`). Saving only `retentionDays` changes none of those and switches nothing off. `updatedBy` is `""` on a fresh install until the first save, whatever that save changed; the AI settings page does not treat a fresh install's factory values (OpenAI-compatible, its default address, no key) as a saved connection, so its connection chip stays *Connection not set* after a retention-only save. When the provider changes to `gateway` without a `format`, the format is taken from the last part of the address (`…/anthropic` → `anthropic`, else `openai`).
+- **`admin/models`** lists the models with the **saved** settings (400 `ai.keyMissing` with `field` when a needed key is missing). OpenAI format: `data[].id` sorted; Anthropic format: in the provider's order. A provider that does not list models (404, 405, 501, an empty or unreadable list) gives `{"models": [], "listed": false}`: enter the model by hand. Key, connection, quota or time-out problems give 502 / 504 with their `ai.up.*` code. The result is kept for 10 minutes.
+- **`admin/verify`** sends one streaming request with the saved settings and model (400 `ai.modelMissing` / `ai.keyMissing`, 409 `ai.keyProblem` first), the same way a chat does, with the prompt "Reply with the single word OK." and the message "Test". Success needs an answer with text, or a normal end with token counts. If the provider refuses the request (`ai.up.badRequest`), it tries once more without `stream_options` (OpenAI format) or with `max_tokens` 4096 instead of 8192 (Anthropic format) and keeps that setting when it works. A failure answers 200 with `ok: false`, the `ai.up.*` code and the provider's HTTP status: a code that points at the settings (`auth`, `quota`, `notFound`, `badRequest`, `protocol`, `refused`) clears the passed test and switches AI off; a temporary one (`rateLimit`, `overloaded`, `server`, `timeout`, `connect`) changes nothing. Each try may take up to 2 minutes; Nginx waits up to 300 seconds for this route.
+- **`admin/enable`** `{"enabled": true}` needs a passed test of the current settings (409 `ai.notVerified`) and readable keys (409 `ai.keyProblem`); `false` stops every answer being written (`ai.disabled`). This is the **AI+ feature** switch of the whole installation (AI settings shows it with the chips *AI+ feature on* / *off*). Before it answers, ai-service reports the new state to the backend, so `aiAvailable` follows at once. `settings` (when it switches AI off), `verify` (when it switches AI off), `suspend` and `resume` do the same.
+- **`admin/suspend`** and **`admin/resume`** *(v0.8, round 2)* **pause** and **resume** the AI+ feature of one plain user (AI settings shows them as the buttons **Pause** / **Resume** and the status **Paused**; the route names, the `suspended` key and the code `ai.suspended` keep the older word). Body: `{"userId": <id>}` and nothing else (400 `ai.badRequest`). The answer is `{"user": AdminUserRow}` with the new `suspended`. The user is looked up through the backend (503 `ai.backendDown` when it cannot answer; 404 `ai.notFound` when the user does not exist); an administrator cannot be paused: 409 `ai.adminAlways`. A user whose AI+ feature is off can also be paused through the API (the AI settings page lists only users who have the feature). A **pause** stops a running answer or memory suggestion of the user at once (the text so far is kept; the stream ends with the `error` event `ai.suspended`), and from then on the user's AI user routes answer 403 `ai.suspended`; reading and deleting their chats and memories stay possible, and the user stays listed with their data. The page asks for no confirmation. Both routes are safe to repeat: the flag and its audit line are written in one transaction, and a repeat that changes nothing answers 200 without a new line. **Audited**: the System log lines are `AI function turned off for user "<name>" by admin "<admin>"` (pause) and `AI function turned on for user "<name>" by admin "<admin>"` (resume), with the prefix `AI: `; these English log lines kept their wording. The flag is kept in ai-service's own database (schema 2, [database.md](database.md)); columns that a schema 2 file lacks (from an earlier build of this version) are added automatically at the next start.
+- **`admin/usage`**: per day for 7 and 30 days, per month for 90 and 365; `byPeriod` lists every period of the range, zeros included, oldest first; tokens a provider did not report count 0. `tokensCached` is the part of `tokensIn` that the provider served from its prompt cache (see **Prompt caching**); the Usage tab of AI settings shows it as the **Cached** column (缓存命中 / キャッシュ). Calls recorded before it existed count 0. `byUser` is sorted by calls; deleted users are one row with `userId: null`. In `byModel`, the calls that listed models have `model: ""`.
+- **`admin/users`** first reconciles with the backend (the AI data of deleted users is removed), then lists **the users who have the AI+ feature**: every administrator and every user with AI+ on (paused ones included, with `suspended: true`), sorted by username; tokens are all-time sums. *(Round 2)* A user whose AI+ feature was switched off is no longer listed, even when they still have AI data; that data is kept (they can read and delete it, retention applies, and `admin/user` still shows it, audited). `exists` is therefore always `true` here (the key is kept so the shape stays the same).
+- **`admin/user`** reconciles too, and answers 404 only when the user no longer exists in the main app (a user without AI data gets empty lists). **The view is audited**: the line `user "<admin>" viewed the AI chats and memories of user "<name>"` (and for `admin/chat` `… viewed an AI chat of user "<name>" (<n> messages)`) is delivered to the System log before the data is returned; if the backend cannot take it, the answer is 503 `ai.backendDown` and no data.
+- **`admin/clear`**: `what: "chat"` needs `chatId`; `chats` and `memories` must not have one (400). A running answer in the cleared chat(s) is stopped first. The audit line (`cleared one AI chat of user …`, `cleared all <n> AI chats of user …`, `cleared all <n> AI memories of user …`) is written in the same transaction as the delete and delivered until the backend takes it.
+- **`admin/limits`**: the keys `perUserRunning` (1–4, default 1), `globalRunning` (1–64, 16), `chatsPerUser` (10–100000, 1000), `messagesPerChat` (20–5000, 400), `memoriesPerUser` (1–1000, 50), `memoryChars` (50–2000, 300), `messageChars` (1000–32000, 16000). POST takes any subset; a value out of range or not an integer is 400 `ai.limitRange` with `field`, an unknown key 400 `ai.badRequest`, and then nothing is saved. A change applies at once (running calls are never cancelled), never switches AI off, and never deletes or shortens existing data. It is logged: `AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`.
+
+### 5.3 The event stream of `send` and `retry`
+
+A failure **before** the answer starts is an ordinary JSON error (403 `ai.disabled` / `ai.notAllowed` / `ai.suspended` / `ai.adminOnly`, 400 `ai.tooLong` / `ai.badRequest`, 404 `ai.notFound`, 409 `ai.busy` / `ai.messageLimit` / `ai.chatLimit` / `ai.keyProblem` / `ai.notRetryable`, 503 `ai.backendDown` / `ai.serverBusy`). Otherwise the answer is `200` with `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-store`, `X-Accel-Buffering: no` and no `Content-Length`. The stream starts as soon as your message (or, for a retry, the reset answer) is saved, so a provider failure arrives as an `error` event, not as an HTTP error.
+
+Each event is `event: <name>`, `data: <one line of JSON>` and a blank line:
+
+| Event | `data` | When |
+|---|---|---|
+| `start` | `{"chatId": n, "chatTitle": str, "userMessageId": n, "assistantMessageId": n, "model": str, "newChat": bool, "retry": bool, "free": bool}` | first, always; `free` is the mode this answer is written in (the administrator's free mode at that moment) |
+| `thinking` | `{}` | *(round 2)* at most once, and only before the first `delta`: the model started to send its reasoning (OpenAI `reasoning_content` / `reasoning`, Anthropic thinking blocks). The reasoning itself is never stored, sent to the browser or logged |
+| `delta` | `{"text": str}` | the next piece of the answer, in order |
+| `done` | `{"status": "done", "tokensIn": n\|null, "tokensOut": n\|null, "truncated": bool}` | the answer is complete (`truncated`: the model stopped at its length limit) |
+| `stopped` | `{"status": "stopped"}` | **Stop**, or ai-service is shutting down |
+| `error` | `{"status": "error", "code": str, "error": "<Chinese text>"}` | a provider failure, access lost (`ai.notAllowed`, `ai.backendDown`), the user paused (`ai.suspended`, text `管理员已暂停你的 AI+ 功能。`), the AI+ feature switched off (`ai.disabled`, text `AI+ 功能暂时不可用。`), the chat deleted (`ai.notFound`); the text so far is kept |
+
+```text
+event: start
+data: {"chatId":12,"chatTitle":"How do I plan a week of revision?","userMessageId":41,"assistantMessageId":42,"model":"demo-chat-small","newChat":true,"retry":false,"free":false}
+
+event: thinking
+data: {}
+
+event: delta
+data: {"text":"Start with "}
+
+: keep-alive
+
+event: done
+data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
+```
+
+- A comment line `: keep-alive` comes every 15 seconds while nothing else was sent. Exactly one of `done`, `stopped` or `error` ends the stream; then the server closes it.
+- **The answer does not depend on the connection.** If the client goes away, ai-service keeps writing the answer and saves its text at most every 2 seconds and at the end. `GET /api/ai/status` (`running`) and `GET /api/ai/chat` (the message with `status: "streaming"` and the text so far, `running: true` in the chat) show it; read the chat every 2 seconds until it has finished. A message left `streaming` by a crash is marked `error` with `ai.interrupted` at the next start.
+- While it writes, ai-service checks your session every 2 seconds; when it ended, or AI+ was switched off, the stream ends with `error` `ai.notAllowed`; when an administrator paused you, with `error` `ai.suspended` (at once, not only at the next check).
+- Reasoning does not count towards the 100 000-character limit below, but it resets the 120-second idle timer. `thinking` is only a signal that the model is working; a client that never saw it loses nothing. A re-attached answer (read through `GET /api/ai/chat`) has no thinking state.
+- Time limits towards the provider: connect 10 s, the first byte 120 s, 120 s without data, 10 minutes in all (`ai.up.timeout`); an answer over 100 000 characters is cut (`ai.up.tooLong`).
+
+### 5.4 Error codes
+
+The `error` texts are ai-service's (Chinese; `ai.serviceOff` is the backend's); the English meanings are those of the page.
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `ai.unavailable` | 502 (Nginx) | ai-service is not reachable right now (not running). The screens show plain users "AI is not available right now…" and name `ai-service` only to administrators. |
+| `ai.backendDown` | 503 | AI is not available right now (the main service cannot be reached; also: an invalid identity, the AI link off; text `AI 暂时无法使用，请稍后再试或联系管理员。`, the same as for `ai.unavailable` in the screens, so a user never learns of the container). *(Round 2)* Also from the AI user routes of ai-service while the backend has not accepted its report for 60 seconds. |
+| `ai.serverBusy` | 503 | AI is busy right now (all `globalRunning` places taken; text `AI 现在太忙，请稍后再试。`). |
+| `ai.internal` | 500 | AI had an internal error (text `AI 内部出错了，请稍后再试。`). |
+| `ai.disabled` | 403 | The AI+ feature is not available right now (switched off; text `AI+ 功能暂时不可用。`). |
+| `ai.notAllowed` | 403 | Your account does not have the AI+ feature (text `你的账号没有开通 AI+ 功能。`). |
+| `ai.suspended` | 403 | *(Round 2)* An administrator paused your AI+ feature (text `管理员已暂停你的 AI+ 功能。`). Also the code of a running answer that the pause stopped. |
+| `ai.adminAlways` | 409 | *(Round 2)* Administrators always have AI and cannot be paused (text `管理员始终可以使用 AI，不能暂停。`). |
+| `ai.serviceOff` | 409 | *(Round 2)* Produced by the **backend**, not ai-service: turn on the AI+ feature in AI settings first (text `请先在 AI 设置里开启 AI+ 功能。`). See `POST /api/users/update`. |
+| `ai.adminOnly` | 403 | Only administrators can do this (also: `POST /api/ai/free` from a non-administrator). |
+| `ai.notFound` | 404 | It no longer exists (or it is not yours). |
+| `ai.busy` | 409 | An answer is still being written. |
+| `ai.tooLong` | 400 | The message is too long (`limit`). |
+| `ai.messageLimit` | 409 | The chat has reached `messagesPerChat` (`limit`): start a new chat. |
+| `ai.chatLimit` | 409 | You have `chatsPerUser` chats (`limit`): delete some. |
+| `ai.notRetryable` | 409 | This answer cannot be retried. |
+| `ai.badRequest` | 400 / 405 / 413 / 415 | The request was not valid. |
+| `ai.memoryLimit` | 409 | The memory is full (`limit`). |
+| `ai.memoryTooLong` | 400 | A memory has too many characters (`limit`). |
+| `ai.notVerified` | 409 | Save the settings and pass a test before enabling AI. |
+| `ai.keyProblem` | 409 | The saved keys cannot be decrypted; enter them again. |
+| `ai.badUrl` | 400 | Not a full `http://` or `https://` address (or with a user, query or `#`). |
+| `ai.badKey` | 400 | A key must be 1–400 visible characters without spaces (`field`). |
+| `ai.headerClash` | 400 | The gateway key and the provider key would use the same header (`field: apiKey`). |
+| `ai.keyMissing` | 400 | Enter this key first (`field`). |
+| `ai.keyReenter` | 400 | The address or provider changed: enter this key again (`field`). |
+| `ai.modelMissing` | 400 | Choose a model first. |
+| `ai.badRetention` | 400 | Retention must be 1 to 3650 days. |
+| `ai.limitRange` | 400 | A limit is not an integer in its range (`field`). |
+| `ai.interrupted` | (stored) | The service restarted while the answer was being written. |
+| `ai.up.auth` | 502 | The AI provider rejected the key. |
+| `ai.up.quota` | 502 | The AI account has no credit or quota left. |
+| `ai.up.notFound` | 502 | The AI provider does not know this model or address. |
+| `ai.up.rateLimit` | 502 | The AI provider is busy (rate limit). |
+| `ai.up.overloaded` | 502 | The AI provider is overloaded. |
+| `ai.up.server` | 502 | The AI provider had an internal error. |
+| `ai.up.badRequest` | 502 | The AI provider refused the request. |
+| `ai.up.timeout` | 504 | The AI provider did not answer in time. |
+| `ai.up.connect` | 502 | Could not connect to the AI provider. |
+| `ai.up.protocol` | 502 | The provider's answer could not be read (also a redirect, or an Anthropic stream that ends without `message_stop`). |
+| `ai.up.refused` | 502 | The AI declined to answer. |
+| `ai.up.tooLong` | (stream) | The answer became too long and was cut off. |
+
+How a provider's answer maps to the `ai.up.*` codes: the error type or code in its body first (also an error that arrives inside a stream after a 200, as some gateways send it; a numeric code there is read like an HTTP status), else the HTTP status: 401 / 403 `auth`; 402 `quota`; 404 `notFound`; 429 `rateLimit`; 503 / 529 `overloaded`; other 5xx `server`; other 4xx `badRequest`; 3xx and unreadable answers `protocol`; a refusal or content filter without any text `refused`. In the usage statistics the code is stored without `ai.up.`.
+
+## 6. Internal routes (`/internal/*`, v0.8)
+
+These routes are the link between the backend and ai-service. They are **not reachable through Nginx** (there is no location for `/internal/`, so a request from outside gets 404) and are documented here only to explain the design. The backend answers them before the Host guard and without the session layer.
+
+| Method | Path | Caller | Authentication |
+|---|---|---|---|
+| GET | `/internal/ai/auth` | Nginx `auth_request` (and the vite dev / preview server) | the browser's session cookie |
+| POST | `/internal/ai/introspect` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/users` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/log` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/heartbeat` | ai-service *(round 2)* | `X-Xexam-Internal-Token` |
+
+Anything else under `/internal/`, a wrong method, or a token route with a missing or wrong token (or while no token is loaded) answers 404 `text/plain` `not found`, exactly like an unknown path, so the routes are not revealed; refused tokens are logged at most about once a minute. The token routes need `Content-Type: application/json` and a JSON object; their answers are the backend's usual JSON.
+
+- **`GET /internal/ai/auth`** reads Host, Origin and method only from `X-Original-Host`, `X-Original-Origin` and `X-Original-Method` (set by Nginx), and the session from exactly one plain `xexam_session` cookie. It never refreshes the session. Answers: 204 with `X-Xexam-Identity` and `Cache-Control: no-store` (allowed); 401 `{"error": "请先登录。", "code": "auth.signin"}` with `X-Xexam-Deny: signin`; 403 with `X-Xexam-Deny: password` (`auth.password`) or `guard` (`auth.guard`, the guard's own message); 503 without a body when the AI link is off; 500 when the database fails.
+- **The identity statement** in `X-Xexam-Identity`: `base64url(payload) + "." + base64url(HMAC-SHA-256(internal token, "xexam-identity-v1." + base64url(payload)))`, without padding. The payload is compact JSON in this order: `{"v":1,"id":<users.id>,"stamp":"<users.uid>","username":"…","role":"admin"|"user","aiAllowed":<bool>,"sid":"<the session's token hash, 64 hex>","exp":<now + 60>}`. ai-service checks the signature, `now ≤ exp ≤ now + 120` and every field (unknown fields refused); it never logs the statement.
+- **`POST /internal/ai/introspect`** `{"sid": "<64 hex>", "id": <user id>}` → `{"ok": true, "user": {"id", "stamp", "username", "role", "aiAllowed"}}`, or `{"ok": false}` when the session is gone, belongs to another user or must change its password. Used every 2 seconds while an answer is written. A `sid` that is not 64 lower-case hex digits: 400.
+- **`POST /internal/ai/users`** `{"ids": [<id>, …], "holders": <bool>}` (both optional; at most 10 000 ids; ai-service sends at most 3000 per call) → `{"users": [{"id", "stamp", "username", "role", "disabled", "ai", "aiAllowed"}]}`: every requested user that exists, plus, with `holders: true`, every administrator and every user with AI+; unique, ordered by id. A missing id means the user was deleted.
+- **`POST /internal/ai/log`** `{"lines": [{"level": "INFO" | "WARN" | "ERROR", "message": "…"}]}` → `{"ok": true}`: at most 50 lines; a message over 2000 characters is cut (ending with `…`), control characters are removed; each line goes into the System log with the target `xexam_ai_service` and the prefix `AI: `. One invalid line (another level, a missing message, more than 50 lines) refuses the whole batch with 400. The body may be up to about 590 KiB (a full batch even with escaped characters); the other token routes accept 64 KiB.
+- **`POST /internal/ai/heartbeat`** *(v0.8, round 2)* `{"version": "0.8", "enabled": <bool>, "suspended": [<id>, …], "stopping": <bool>}` → `{"ok": true}`. ai-service's report of its own state; it is how the backend knows whether AI+ is available, and the only way it learns of ai-service at all (the backend never calls ai-service). All four keys are required and no other key is allowed. `version` is a version string (`0-9 A-Z a-z . + -`, at most 20 characters), `enabled` is the AI+ feature switch as ai-service uses it (on, tested with the current settings, keys readable), `suspended` lists at most 3000 ids of users who are paused (positive integers, duplicates ignored), `stopping` is `true` only in the last report ai-service sends while it shuts down. Anything else is 400 and the stored report stays as it was. A good report replaces the last one. It follows the rules of the other token routes (token, `Content-Type: application/json`, at most 64 KiB, 404 for a wrong token, method or path), and neither accepted nor invalid reports write a log line.
+  - **When ai-service reports**: when it starts (once the token is readable), at once after an administrator enables or disables the AI+ feature, changes settings that switch it off, runs a test that switches it off, pauses or resumes a user (the answer of that request waits for the report), every 25 seconds, 5 seconds after a failed report, and once with `stopping: true` when it shuts down (limited to 2 seconds). Reports are sent one at a time, so an old state can never overtake a new one. ai-service's own log shows the link: `AI link: connected to the main service` is written **once** per connection (at the first accepted report, and again only after a loss), and `AI link: lost the main service` once when a connection that was up fails; further failures and successes in between write nothing. Both lines are in the System log with the prefix `AI: `.
+  - **What the backend does with it**: it keeps only the last report, in memory. ai-service counts as **connected** while that report is younger than 60 seconds and is not a stopping report; **AI+ is available** while it is connected and `enabled`. The backend shows this in `aiAvailable` and `aiService` (`GET /api/auth/state`), uses `suspended` for `aiSuspended` (`GET /api/users`) and refuses the AI+ switches of users while AI+ is not available (`ai.serviceOff`). After a backend restart there is no report until the next one arrives (at most 25 seconds). Seen from outside, `/internal/ai/heartbeat` is 404 (and `/api/internal/ai/heartbeat` is 404 for a signed-in user, 401 before signing in).
+
+## 7. Differences from the old version
 
 The table below lists where the new Rust backend **intentionally differs** from the old Python v0.2. Every item is registered in `tests/baseline/golden/allowed_differences_rust.json` and `allowed_probe_differences_rust.json`; a difference that is not registered makes the tests fail.
 
@@ -513,7 +781,25 @@ Everything an older client sends keeps working, with the same answers, except:
 | `GET /api/info` | `{"version", "arch", "canShutdown", "bankCount"}` | `{"version", "arch", "canShutdown"}`: `bankCount` is gone |
 | Nginx rate limit of `/api/` | 10 requests per second, burst 30 | 30 requests per second, burst 120 (per client address; uploads unchanged) |
 
-## 6. Examples
+### Changes in v0.8 (relative to v0.7.5)
+
+Everything else answers as in v0.7.5.
+
+| Change | v0.7.5 | v0.8 |
+|---|---|---|
+| `GET /api/auth/state`, `POST /api/auth/login`, `POST /api/auth/password` | `user` ends with `canManageBanks` | `user.aiAllowed` after `canManageBanks` |
+| `GET /api/users` (and the answers of the users routes) | | `ai` (the AI+ switch) after `canManageBanks`, before `ownedBanks` |
+| `POST /api/users/create`, `POST /api/users/update` | | optional `ai` (boolean) |
+| New routes | | `/api/ai/*` (section 5), answered by ai-service; `send` and `retry` answer with an event stream. Round 2 adds `suspend` and `resume` (Pause / Resume on the screens), `lang` on `send` / `retry` / `suggest`, `POST /api/ai/free` and `freeMode` in `Status` (the administrator's free mode; `free` in `start` and in every `Message`; no `free` on `ChatSummary` or `send`, which ignores it), the `thinking` event, `suspended` in `Status` and `AdminUserRow`, and `tokensCached` in `Usage` (prompt caching) |
+| `GET /api/auth/state` (signed in) | | `aiAvailable` after `library`; administrators also `aiService` (`connected`, `stopped`, `lastSeen`, `version`, `enabled`, `link`) |
+| `GET /api/users` (and every answer that returns the list) | | top-level `aiAvailable` after `users`; every row `aiSuspended` after `lock` |
+| `POST /api/users/update`, `POST /api/users/create` | | 409 `ai.serviceOff` for an `ai` key (`ai: true` for create) while AI+ is not available |
+| New internal route | | `POST /internal/ai/heartbeat` (section 6) |
+| `GET /api/logs` | | also ai-service's lines (`target` `xexam_ai_service`, prefix `AI: `) |
+| Database schema | v4 | v5 (`users.ai_enabled`, `users.uid`), see [database.md](database.md) |
+| Nginx | `/api/` only | also `/api/ai/` (the auth step first; 256 KiB bodies; streaming without buffering for `send` / `retry`); `/internal/` is 404 from outside |
+
+## 8. Examples
 
 ```bash
 # Check the version and the architecture (public)
@@ -557,6 +843,31 @@ curl -s -b cookies.txt -X POST http://localhost:8765/api/settings \
 # Read the system log, then only the lines after the last one you saw
 curl -s -b cookies.txt http://localhost:8765/api/logs
 curl -s -b cookies.txt 'http://localhost:8765/api/logs?after=41&boot=Xq3v9T0bLm2k'
+
+# AI (v0.8): is it on, and may I use it? (administrators: is ai-service connected?)
+curl -s -b cookies.txt http://localhost:8765/api/ai/status
+curl -s -b cookies.txt http://localhost:8765/api/auth/state
+
+# Ask in a new chat and watch the answer arrive (-N: print each event as it comes)
+curl -s -N -b cookies.txt -X POST http://localhost:8765/api/ai/send -H 'Content-Type: application/json' -d '{"chatId": null, "text": "How do I plan a week of revision?", "lang": "en"}'
+
+# As an administrator: connect an OpenAI-compatible provider (a made-up key here), list the models, save one, test, enable
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/settings -H 'Content-Type: application/json' -d '{"provider": "openai", "baseUrl": "https://api.openai.com/v1", "apiKey": "sk-demo-not-a-real-key"}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/models -H 'Content-Type: application/json' -d '{}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/settings -H 'Content-Type: application/json' -d '{"model": "demo-chat-small"}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/verify -H 'Content-Type: application/json' -d '{}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/enable -H 'Content-Type: application/json' -d '{"enabled": true}'
+
+# Turn the AI+ feature on for user 2 (409 ai.serviceOff while AI+ is not available)
+curl -s -b cookies.txt -X POST http://localhost:8765/api/users/update -H 'Content-Type: application/json' -d '{"id": 2, "ai": true}'
+
+# Pause and resume user 2 (the Pause / Resume buttons in AI settings do the same)
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/suspend -H 'Content-Type: application/json' -d '{"userId": 2}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/resume -H 'Content-Type: application/json' -d '{"userId": 2}'
+
+# Turn your own free mode on, then off again (administrators only; applies from the next message in any chat)
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": true}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": false}'
 ```
 
-> When you go through Nginx, the `Host: localhost:8765` that `curl` sends by default is on the allow-list. Before accessing the app through another domain, set `XEXAM_ALLOWED_HOSTS` first. `curl` sends no `Origin`, so the Origin check lets it through; `cookies.txt` holds a valid session, so keep it private and delete it when you are done.
+> When you go through Nginx, the `Host: localhost:8765` that `curl` sends by default is on the allow-list. Before accessing the app through another domain, set `XEXAM_ALLOWED_HOSTS` first. `curl` sends no `Origin`, so the Origin check lets it through (also in the auth step of the AI routes); `cookies.txt` holds a valid session, so keep it private and delete it when you are done.

@@ -390,6 +390,20 @@ fn a_prerelease_v4_database_is_converted_on_open_after_a_backup() {
         0,
         "all_banks is kept nowhere"
     );
+    // v0.8: the conversion and the v5 step run in the same transaction after that one backup
+    let schema: String = c
+        .query_row("SELECT value FROM meta WHERE key='schema'", [], |r| {
+            r.get(0)
+        })
+        .expect("schema");
+    assert_eq!(schema, "5");
+    assert_eq!(
+        count(
+            &c,
+            "SELECT COUNT(*) FROM users WHERE ai_enabled = 0 AND length(uid) = 32"
+        ),
+        3
+    );
     // all_banks = 1: every existing bank and the banks imported later; all_banks = 0: the flag off, the rows kept
     let flags: Vec<(i64, i64)> = c
         .prepare("SELECT id, new_banks FROM users ORDER BY id")

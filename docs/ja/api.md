@@ -2,7 +2,7 @@
 
 # API の説明
 
-> 機械可読版は [openapi.yaml](../en/openapi.yaml) です。本書は人が読むためのもので、各エンドポイントの役割、誰が呼び出せるか、ガードがどのようにリクエストを弾くか、旧 Python 版とどこが違うかを説明します。
+> 機械可読版は [openapi.yaml](../en/openapi.yaml) です。本書は人が読むためのもので、各エンドポイントの役割、誰が呼び出せるか、ガードがどのようにリクエストを弾くか、旧 Python 版とどこが違うかを説明します。v0.8 からは、別の ai-service コンテナが応える AI のルート `/api/ai/*`（第 5 節）と、バックエンドと ai-serviceの間の内部ルート（第 6 節）も扱います。
 > 本書が記述するのは**実際の挙動**です。旧版のあらゆるケースをゴールデンレスポンス（`tests/baseline/golden/`、172 件）として記録し、新しい Rust バックエンドはそれらと一件ずつ比較されます。
 
 ## 1. 概要
@@ -51,6 +51,8 @@
 | POST | `/api/shutdown` | 管理者 | プログラムを終了する（ローカルマシンで実行しているときのみ使用可能。Docker では常に 403） | いいえ |
 
 `HEAD` は対応する `GET` と同じですが、本文（ボディ）がありません。どのエンドポイントも、まったく同じガード（第 3 節）を通ります。
+
+*(v0.8)* `/api/ai/` の下のすべて（AI チャット、メモリー、AI 設定）には、Nginx がバックエンドにリクエストを確認させた後で、ai-serviceが応えます：第 5 節。その応答は、固定の `code` を持つ JSON と、`send` と `retry` では server-sent events のストリームです。`/internal/*` には Nginx 経由では届きません（第 6 節）。
 
 ## 2. すべてのレスポンスに共通する事項
 
@@ -129,7 +131,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.7.5", "arch": "x86_64", "canShutdown": false}
+{"version": "0.8", "arch": "x86_64", "canShutdown": false}
 ```
 公開。バージョン番号は `VERSION` ファイルの `CODE_VERSION`（または `XEXAM_VERSION`）です。`arch` はサーバーの CPU アーキテクチャ、`canShutdown` はプログラムが `--allow-shutdown` 付きで起動されたときだけ `true` です。*(v0.7.5)* キー `bankCount`（ライブラリ全体の有効な問題の数）はなくなりました。このルートは公開で、ログインしたページは見られる問題の数を `GET /api/bank` と `GET /api/banks` から数えるためです。このルートは今もデータベースを読むので、データベースを読めないときは 500 を返し、（このルートに問い合わせる）コンテナのヘルスチェックはバックエンドを unhealthy と報告します。
 
@@ -145,11 +147,23 @@ flowchart LR
 ログインしているとき（新しいパスワードの設定が必要な間も含む）：
 
 ```json
-{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453"}
+{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.8", "enabled": true, "link": true}}
 ```
 
-- `role` は `admin` または `user` です。`canManageBanks` *(v0.7)* は、すべての管理者と、**問題集を管理できる** 権限を持つ一般ユーザーで `true` です。
+- `role` は `admin` または `user` です。`canManageBanks` *(v0.7)* は、すべての管理者と、**問題集を管理できる** 権限を持つ一般ユーザーで `true` です。`aiAllowed` *(v0.8)* は、すべての管理者と、**AI+** を持つ一般ユーザーで `true` です。そもそも AI がオンかどうかは `GET /api/ai/status` にあります。同じ `user` オブジェクトが、ログインとパスワードの変更の応答にも入ります。
 - `library` は、ユーザーが見られる問題集を表す中身の見えないスタンプです。16 進数 32 桁のダイジェストで、もとになった数値は何も分かりません。それらの問題集のどれかがインポート・置き換え・削除されると変わり（別のプロセスの `import` コマンドによるものも含みます）、*(v0.7)* ユーザーが見られる問題集や管理できる問題集が変わったときにも変わります（管理者が問題集を割り当てた、権限を変えた、問題集の所有者が変わった）。開いているページはこれを比べ、変わったら問題集を読み直します。一部の問題集だけを見られるユーザーでは、スタンプはその問題集だけから作られます。見られない問題集のサイズ、問題数、更新日時は明かさず、それに合わせて変わることもありません。
+
+- `aiAvailable` *(v0.8、ラウンド 2)* は、AI+ が利用できる間 `true` です。ai-service がバックエンドに報告してから 60 秒以内で（かつ停止すると伝えていない）、**かつ** AI 設定の **AI+ 機能** のスイッチがオンのときです。ログインしているすべてのユーザーで同じ値です。ユーザー管理ページは、これを使って AI+ のスイッチを表示するかどうかを決め、バックエンドは、これを使ってそれを拒否します（下の `POST /api/users/update` と `create`）。
+- `aiService` *(v0.8、ラウンド 2)* が応答に入るのは**管理者だけ**です（一般ユーザーの応答にはこのキーがありません）。ai-service についてバックエンドが知っていることで、最後の報告から得ています（バックエンドが ai-service を呼び出すことはありません。ai-service が、25 秒ごと、変更の直後、停止するときに 1 回報告します：第 6 節の `POST /internal/ai/heartbeat`）。報告はメモリに保持されるので、バックエンドを再起動した後は、次の報告が届くまで（25 秒以内）`lastSeen` は `null` です。
+
+| キー | 意味 |
+|---|---|
+| `connected` | `true`：報告が 60 秒より新しく、停止の報告ではない |
+| `stopped` | `true`：最後の報告が、ai-service が終了中だと伝えていた（報告の古さに関係なく） |
+| `lastSeen` | バックエンドの起動後に受理された最後の報告の Unix 秒。報告がなければ `null` |
+| `version` | 最後の報告に含まれていたバージョン、または `null` |
+| `enabled` | 最後の報告にある AI+ 機能のスイッチ（`connected` の間）。接続されていないときは `false` |
+| `link` | バックエンドが内部トークンを読み込んでいる（AI との接続がオン）とき `true` |
 
 ### `POST /api/auth/login` *(v0.6)*
 公開。ボディ：`{"username": "…", "password": "…"}`（どちらも文字列。そうでなければ **400** `请求的格式不对。`）。ユーザー名は前後の空白を除き、大文字小文字を区別せずに比べます。
@@ -178,7 +192,7 @@ flowchart LR
 管理者。すべてのアカウントを id の順に返します。
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
+{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
 ```
 
 - `createdAt` / `lastLoginAt` はローカル時刻 `YYYY-MM-DD HH:MM` です。`lastLoginAt` は最初のログインまで `null` です。
@@ -186,6 +200,9 @@ flowchart LR
 - `banks` *(v0.7)*：そのユーザーが見られる問題集の id の昇順のリスト（まだ存在する問題集だけ。`[]` = なし）。常にリストです。`"all"` は書き込むときの省略形にすぎません（下記）。
 - `newBanks` *(v0.7)*：**今後インポートする問題集も含める**。`true` なら、これから作られる問題集（誰かが新しい問題集としてインポートしたもの、またはコマンドラインの `import`）は、同じトランザクションで `banks` に加わります。既存の問題集を加えることはありません。
 - `canManageBanks` *(v0.7)* は、保存されている **問題集を管理できる** 権限です。`banks`、`newBanks`、`canManageBanks` は権限が変わっても保持されますが、意味を持つのはアカウントが一般ユーザーの間だけです。管理者はすべての問題集を利用・管理できます。
+- `ai` *(v0.8)*：保存されている、ユーザーの **AI+ 機能** のスイッチ。意味があるのは一般ユーザーだけで（管理者は AI がオンの間は常に使えます）、AI 設定で AI+ 機能がオンの間だけです。AI+ が利用できないときも保持されます。
+- `aiSuspended` *(v0.8、ラウンド 2)*、`lock` の後：管理者が AI 設定でそのユーザーの **AI+ 機能** を一時停止したとき `true`（第 5 節の `suspend`。画面では「一時停止」「一時停止中」と表示され、JSON では名前 `suspended` のままです）。ai-service の最後の報告から来るので、バックエンドに報告がない間（たとえば再起動の直後）は全員 `false` で、一時停止できない管理者は常に `false` です。`ai` とは別で、一時停止しても保存されているスイッチは変わりません。
+- `aiAvailable` *(v0.8、ラウンド 2)*、`users` の隣のトップレベルのキー：`GET /api/auth/state` と同じ値。**ユーザーの一覧を返すすべての応答**にあります（`create`、`update`、`password`、`delete`、`unlock` も）。
 - `ownedBanks` *(v0.7)*：ユーザーが新しい問題集としてインポートした（所有している）問題集の id の昇順のリスト。
 - `lock`：アカウントのログインの状態（メモリ上）。最初の段階でロックもされていなければ `null`、それ以外は次のとおりです。
 
@@ -203,7 +220,7 @@ flowchart LR
 | `otherUntil` / `otherRetryAfter` | ほかのブラウザも同時にロックされていて、アカウントがすべてのブラウザでロックされているときだけ設定されます：その 2 つ目のロックの終わりとその秒数（それ以外は `null` / `0`） |
 
 ### `POST /api/users/create` *(v0.6)*
-管理者。ボディ：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<問題集の id>, …], "newBanks": <bool>, "canManageBanks": <bool>}`。*(v0.7)* `banks` の既定は `[]`（管理者が選ぶまで、新しいユーザーには問題集が表示されません）、`newBanks` と `canManageBanks` の既定は `false` です。`"banks": "all"` は省略形で、今あるすべての問題集を意味し、`newBanks` を指定しなければ `newBanks: true` にもなります。重複した id は無視されます。新しいアカウントは有効で、最初のログインで新しいパスワードを設定しなければなりません。応答：`GET /api/users` と同じ `{"users": [...]}`。
+管理者。ボディ：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<問題集の id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "ai": <bool>}`。*(v0.7)* `banks` の既定は `[]`（管理者が選ぶまで、新しいユーザーには問題集が表示されません）、`newBanks` と `canManageBanks` の既定は `false` です。*(v0.8)* `ai`（**AI+**）の既定も `false` です。`ai: true` でユーザーを作成すると、`user "<admin>" turned AI+ on for user "<name>"` もログに出ます。*(v0.8、ラウンド 2)* AI+ が利用できない間（上の `aiAvailable` を参照）は **409** `ai.serviceOff` で拒否され、ユーザーは作成されません。`ai: false` や `ai` なしは、これまでどおり使えます。`"banks": "all"` は省略形で、今あるすべての問題集を意味し、`newBanks` を指定しなければ `newBanks: true` にもなります。重複した id は無視されます。新しいアカウントは有効で、最初のログインで新しいパスワードを設定しなければなりません。応答：`GET /api/users` と同じ `{"users": [...]}`。
 
 ユーザー名は 1〜40 文字（ASCII の英字、数字と `. _ - @`。前後の空白は除きます）で、大文字小文字を区別せずに一意です。パスワードは 8〜128 文字です。
 
@@ -211,16 +228,19 @@ flowchart LR
 |---|---|
 | **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。`（「ユーザー名が正しくありません……」） | `username` がない、文字列でない、または規則に合わない |
 | **400** `密码需要 8–128 个字符。` | `password` が短すぎる、または長すぎる |
-| **400** `请求的格式不对。` | `password` がない、または文字列でない。`role` がない、または `admin` / `user` でない。`banks` が `"all"` でも整数のリストでもない。`newBanks` か `canManageBanks` が真偽値でない |
+| **400** `请求的格式不对。` | `password` がない、または文字列でない。`role` がない、または `admin` / `user` でない。`banks` が `"all"` でも整数のリストでもない。`newBanks`、`canManageBanks`、`ai` のどれかが真偽値でない |
 | **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。`（「選んだ問題集の中に存在しないものがあります……」） *(v0.7)* | `banks` の中の id が既存の問題集でない（または正の整数でない）。何も作成されません |
 | **409** `这个用户名已经有人用了。`（「このユーザー名はすでに使われています。」） | ほかのアカウントが（大文字小文字を区別せずに）その名前を持っている |
+| **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}`（「先に AI 設定で AI+ 機能をオンにしてください。」） *(v0.8、ラウンド 2)* | `ai: true` なのに AI+ が利用できない。ボディの検証の後（形式の正しくない `ai` は今でも 400）、何かを書き込む前、パスワードをハッシュする前に確認します |
 
 ### `POST /api/users/update` *(v0.6)*
-管理者。ボディ：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}`。省略したキーは変わりません。応答：`{"users": [...]}`。
+管理者。ボディ：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`。省略したキーは変わりません。応答：`{"users": [...]}`。
 
-- アカウントを無効にするか権限を変えると、そのセッションは終了します。名前の変更、`banks`、`newBanks`、`canManageBanks` の変更ではセッションは残り、変更はユーザーの次のリクエストから反映されます。
+- アカウントを無効にするか権限を変えると、そのセッションは終了します。名前の変更、`banks`、`newBanks`、`canManageBanks`、`ai` の変更ではセッションは残り、変更はユーザーの次のリクエストから反映されます。
+- `ai` *(v0.8)* は、ユーザーの **AI+ 機能** をオンまたはオフにします。次の AI のリクエストからすぐに反映され（バックエンドは AI のリクエストをすべて確認します）、オフにすると、そのユーザーのために作成中の回答は約 2 秒以内に止まります。そのユーザーの AI チャットとメモは残ります。変更は `user "<admin>" turned AI+ on for user "<name>"`（または `off`）としてログに出ます。
+- *(v0.8、ラウンド 2)* AI+ が利用できない間（ai-service が接続されていない、または AI 設定で AI+ 機能がオフ）は、**`ai` キーを含むリクエストは全体が拒否されます**。**409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}`：`true` でも `false` でも、保存されている値と同じでも違っても、単独でもほかのフィールドと一緒でも同じです。何も書き込まれず、何もログに出ません。`ai` のないリクエストには影響しません。これは、バックエンド自身のルートのエラーで `code` を持つ唯一のものです。すべてのユーザーの保存されているスイッチは AI+ が利用できない間も保持され、利用できるようになるとまた有効になります。
 - `banks` は選ばれた問題集を置き換えます（id のリスト、`[]` = 問題集なし。または `"all"` で、今あるすべての問題集。`newBanks` を指定しなければ `newBanks: true` にもなります）。`newBanks` だけを送ると、フラグだけが変わります。オフにしても、ユーザーが今見られる問題集はそのままです。
-- **400**：作成と同じです（`username`、`role`、`banks`、`newBanks`、`canManageBanks`。`disabled` が真偽値でない → `请求的格式不对。`。`id` がない、または整数でない（真偽値は整数とみなしません）→ `请求的格式不对。`）。
+- **400**：作成と同じです（`username`、`role`、`banks`、`newBanks`、`canManageBanks`、`ai`。`disabled` が真偽値でない → `请求的格式不对。`。`id` がない、または整数でない（真偽値は整数とみなしません）→ `请求的格式不对。`）。
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`（「このユーザーは存在しません……」）。
 - **409** `不能对自己的账户做这个操作。`（「自分のアカウントにはこの操作はできません。」）：自分を無効にしたり、自分の権限を変えたりしたとき。`至少要保留一个启用的管理员。`（「有効な管理者を少なくとも 1 人残す必要があります。」）：変更すると有効な管理者がいなくなるとき。`这个用户名已经有人用了。`。
 
@@ -230,7 +250,7 @@ flowchart LR
 管理者。ボディ：`{"id": <int>, "password": "…"}`。ほかのユーザーに新しい初期パスワードを設定します。そのユーザーは次のログインで新しいパスワードを設定しなければならず、セッションは終了し、`xexam_device` Cookie は一致しなくなり、ログインのロックも解除されます。自分のパスワードは `POST /api/auth/password` で変更します（ここでは **409** `不能对自己的账户做这个操作。`）。ほかのエラー：400（パスワードの規則、形式の正しくないボディ）、404（存在しないユーザー）。
 
 ### `POST /api/users/delete` *(v0.6)*
-管理者。ボディ：`{"id": <int>}`。アカウントを、そのセッション、学習記録（明細を含む）、間違いの統計、設定、選ばれた問題集と一緒に削除します。*(v0.7)* そのユーザーが所有していた問題集は削除されず、ユーザーを削除した管理者のものになります。自分自身と最後の有効な管理者には **409**、存在しない id には **404** を返します。
+管理者。ボディ：`{"id": <int>}`。アカウントを、そのセッション、学習記録（明細を含む）、間違いの統計、設定、選ばれた問題集と一緒に削除します。*(v0.7)* そのユーザーが所有していた問題集は削除されず、ユーザーを削除した管理者のものになります。*(v0.8)* そのユーザーはすぐに AI のルートに届かなくなります。その AI チャットとメモは、ai-serviceが次の照合のとき（10 分以内、または管理者が AI のユーザーの一覧を開いたとき）に削除します。自分自身と最後の有効な管理者には **409**、存在しない id には **404** を返します。
 
 ### `POST /api/users/unlock` *(v0.6)*
 管理者。ボディ：`{"id": <int>}`。アカウントのログインの状態を、すべてのブラウザについて完全に消去します（最初の段階、5 回試せる状態に戻ります）。ロック中でも、ロックはされていないが最初の段階を過ぎているだけでも使えます。ユーザー id で動くので、名前を変えた後でも、自分のアカウントにも使えます。存在しない id には **404**。応答：`{"users": [...]}`。
@@ -384,7 +404,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 `GET` は、既定値に保存済みの値を重ねたものを返します（保存済みの値が正しくない場合は無視します）。`POST /api/settings` はこれらのキーの任意の組み合わせを受け取り、設定全体を返します。未知のキーは無視します。既知のキーの値が正しくない場合 → **400** `设置的值不对。`（「設定の値が正しくありません。」）となり、何も書き込みません。`POST /api/settings/reset`（ボディは `{}` または空）は `theme`、`uiLang`、`autoAdvance` を既定に戻し、`questionLang` はそのまま残して、設定全体を返します。
 
 ### `GET /api/logs` *(v0.7)*
-管理者。**システムログ** のページが表示するシステムログです。バックエンドが起動してから記録した最新の 2000 行で、メモリ上にだけ保持されます（再起動すると空に戻ります。データベースには何も書き込みません）。`docker compose logs backend` で見える行（同じ `XEXAM_LOG` のフィルターを通ったもの）に、起動と終了の状態を示す行を加えたものです。ログの行ではユーザーをユーザー名で示し（`user "admin" updated user "alex"`）、id や、アカウントのない入力された名前は決して出しません。パスワード、トークン、Cookie の値、問題文が含まれることもありません。
+管理者。**システムログ** のページが表示するシステムログです。バックエンドが起動してから記録した最新の 2000 行で、メモリ上にだけ保持されます（再起動すると空に戻ります。データベースには何も書き込みません）。`docker compose logs backend` で見える行（同じ `XEXAM_LOG` のフィルターを通ったもの）に、起動と終了の状態を示す行と、*(v0.8)* ai-serviceが送る行（`target` が `xexam_ai_service` で、メッセージが `AI: ` で始まる。これらは `docker compose logs backend` には出ません）を加えたものです。ログの行ではユーザーをユーザー名で示し（`user "admin" updated user "alex"`）、id や、アカウントのない入力された名前は決して出しません。パスワード、トークン、Cookie の値、問題文が含まれることもありません。
 
 クエリパラメーター（どちらも省略可）：
 
@@ -438,11 +458,259 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | 409 | `这个用户名已经有人用了。` | このユーザー名はすでに使われています。 | ユーザー：作成、更新 |
 | 409 | `不能对自己的账户做这个操作。` | 自分のアカウントにはこの操作はできません。 | ユーザー：更新、パスワード、削除 |
 | 409 | `至少要保留一个启用的管理员。` | 有効な管理者を少なくとも 1 人残す必要があります。 | ユーザー：更新、削除 |
+| 409 | `请先在 AI 设置里开启 AI+ 功能。`（`"code": "ai.serviceOff"` 付き） | 先に AI 設定で AI+ 機能をオンにしてください。 | ユーザー：`ai` 付きの更新、`ai: true` での作成。AI+ が利用できない間 *(v0.8)* |
 | 429 | `登录失败次数太多，请稍后再试。` | 失敗が多すぎます。しばらくしてからもう一度お試しください。 | ログイン、パスワードの変更（`retryAfter` 付き） |
 | 500 | `写入数据库失败，题库没有任何改动。` | データベースへの書き込みに失敗しました。問題集は変更されていません。 | 確定 |
 | 500 | `服务器内部出错，请稍后再试。` | サーバー内部でエラーが発生しました。しばらくしてからもう一度お試しください。 | すべてのルート |
 
-## 5. 旧版との違い
+## 5. AI のルート（`/api/ai/*`、v0.8）
+
+`/api/ai/` の下のルートには、バックエンドではなく ai-service（`ai-service` コンテナ、イメージ `xexam-ai-service`）が応えます。Nginx はこうしたリクエストをすべて、まずバックエンドの認証ステップ（第 6 節）に送り、バックエンドが許可したときだけ、ブラウザの Cookie を除き、代わりにバックエンドの署名付きの本人確認の文（`X-Xexam-Identity`）を付けて渡します。そのため、クライアントはほかのルートとまったく同じように呼び出します：同じオリジンで、セッションの Cookie を付けて。本人確認を自分で設定することはできません（Nginx がこのヘッダーを常に上書きします）。
+
+### 5.1 共通の規則
+
+- **メソッド**：GET と POST だけです。ほかのメソッドには Nginx が 403 を返し、ai-service自身は 405 と `Allow: GET, POST` を返します。`/api/ai/` の下の知らないパスは 404 `ai.notFound` です。`HEAD` には対応していません。
+- **認証ステップによる拒否**（Nginx が応え、ai-serviceにはリクエストが届きません）：
+
+  | ステータス | `code` | 場面 |
+  |---|---|---|
+  | 401 | `auth.signin` | 有効なセッションがない。`error` のテキストはバックエンドの `请先登录。`（「先にログインしてください。」）です。認証ステップは、そのままの形で書かれた `xexam_session` の Cookie をちょうど 1 つだけ受け付けます：2 つ目（大文字・小文字を問わず）、空、引用符付き、空白を詰めたものは、セッションがない場合と同じく拒否します |
+  | 403 | `auth.password` | アカウントが先に新しいパスワードを設定しなければならない（`请先设置新密码。`） |
+  | 403 | `auth.guard` | Host、または GET 以外のメソッドで Origin が許可されていない（第 3 節と同じガード） |
+  | 503 | `ai.backendDown` | バックエンドが応答できなかった、または AI との接続がオフ（内部トークンがない） |
+  | 502 | `ai.unavailable` | ai-serviceがない、停止している、または応答しない |
+  | 413 | `ai.badRequest` | ボディが 256 KiB を超えている |
+  | 429 | （JSON ではない） | Nginx のレート制限：アドレスごとに 1 秒あたり 30 リクエスト（バースト 120）。`send` と `retry` はさらにセッションごとに 1 分あたり 20 回（バースト 10） |
+
+  フロントエンドは、`/api/ai/*` での JSON のない 5xx をすべて `ai.unavailable` として扱います。
+- **POST** には `Content-Type: application/json` が必要です（`; charset=utf-8` は付けても構いません。そうでなければ 415 `ai.badRequest`）。ボディは JSON のオブジェクトで（空のボディは `{}` とみなします）、最大 128 KiB です（413 `ai.badRequest`）。**ルートが挙げていないキーは拒否します**（400 `ai.badRequest`）。型の違う値も同じです。id は、ボディでもクエリ文字列でも正の整数です。
+- **応答**：JSON（`Content-Type: application/json; charset=utf-8`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`）で、バックエンドの応答と違って **コンパクト**（`:` と `,` の後に空白なし）、キーはここに示す順です。パースして使い、バイト単位で比べないでください。
+- **エラー**：`{"error": "<中国語のテキスト>", "code": "<コード>"}`。キーのエラーには `"field": "apiKey" | "gatewayKey"`、数を示すエラー（`ai.tooLong`、`ai.messageLimit`、`ai.chatLimit`、`ai.memoryLimit`、`ai.memoryTooLong`）には `"limit": <n>`、`ai.limitRange` には `"field": "<キー>"` が加わります。コードは固定で、フロントエンドはテキストではなく、常にコードで翻訳します。プロバイダー自身のエラーテキストが渡されることはありません。
+- **アクセスレベル**（本人確認の文から決まります）：
+
+  | レベル | 対象 | それ以外 |
+  |---|---|---|
+  | **署名あり** | ログインしている任意のユーザー | （認証ステップが拒否） |
+  | **AI ユーザー** | **AI+ 機能** がオン（有効で、今の設定でテスト済みで、キーが読める）**かつ** ai-service がバックエンドに接続していて、**かつ** そのユーザーが AI を使える（管理者か、AI+ がオン）**かつ** そのユーザーが一時停止されていない（管理者では起こりません） | 次の順に確認します：AI+ 機能がオフなら 403 `ai.disabled`。バックエンドが ai-service の報告を 60 秒間受理していなければ 503 `ai.backendDown`（下記）。AI+ がなければ 403 `ai.notAllowed`。管理者がそのユーザーを一時停止していれば 403 `ai.suspended` |
+  | **管理者** | `role = admin`。AI がオフの間も | 403 `ai.adminOnly` |
+
+  自分のチャットとメモの閲覧と削除に必要なのは **署名あり** だけなので、AI+ がオフでも、一時停止されていても、利用できなくても使えます。書き込みには **AI ユーザー** が必要です。
+- **2 つの状態** *(v0.8、ラウンド 2)*：ユーザーの **AI+ 機能** は、ユーザー管理にある保存されたスイッチ（`ai`）です。AI 設定の **一時停止 / 再開**（`suspend`、`resume`、下記。JSON とコードは *suspended* という語のままです）は、それとは別の、2 つ目の状態です。ユーザーが AI を使えるのは、スイッチがオンで、一時停止されておらず、AI+ が利用できる間だけです。一時停止は ai-service 自身のデータベースに保存され、そのユーザーの AI+ 機能をオフにしてオンに戻しても残り、**再開** だけが解除します。
+- **ai-service は 60 秒の規則を自分自身に適用します**：バックエンドに報告しなければならず（第 6 節の `heartbeat`）、最後の報告が過去 60 秒以内に受理されていない間は、`GET /api/ai/status` は `enabled: false` を返し、**AI ユーザー** のルートは 503 `ai.backendDown` を返します。**署名あり** と **管理者** のルートは使えます。
+- **範囲**：ユーザーのルートはどれもユーザー id を本人確認の文から取り、リクエストからは決して取りません。チャット、メッセージ、メモの問い合わせはどれもそれで絞り込みます。ほかのユーザーのチャットやメモには、存在しないものとまったく同じ応答を返します（404 `ai.notFound`）。ほかのユーザーのデータを読んだり削除したりするのは `/api/ai/admin/*` だけで、そのような表示と消去はすべてシステムログに書き込まれます。
+
+### 5.2 ルート
+
+| メソッド | パス | アクセス | ボディ / クエリ | 200 の応答 |
+|---|---|---|---|---|
+| GET | `/api/ai/status` | 署名あり | | `Status` |
+| GET | `/api/ai/chats` | 署名あり | | `{"chats": [ChatSummary]}`、`updatedAt` の新しい順 |
+| GET | `/api/ai/chat` | 署名あり | `?id=<チャットの id>` | `{"chat": ChatSummary, "messages": [Message]}` |
+| POST | `/api/ai/send` | AI ユーザー | `{"chatId": <id> \| null, "text": "…", "lang"?: "en" \| "zh" \| "ja", "free"?: <無視される>}` | **イベントストリーム**（5.3） |
+| POST | `/api/ai/retry` | AI ユーザー | `{"chatId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **イベントストリーム**（5.3） |
+| POST | `/api/ai/free` | 管理者 | `{"free": <bool>}` | `{"free": <bool>}`（管理者のフリーモード、下記） |
+| POST | `/api/ai/stop` | 署名あり | `{}` または `{"chatId": <id>}` | `{"ok": true, "stopped": <bool>}` |
+| POST | `/api/ai/chats/delete` | 署名あり | `{"id": <id>}` または `{"all": true}` | `{"deleted": <n>}` |
+| GET | `/api/ai/memories` | 署名あり | | `{"memories": [Memory], "limit": 50, "maxChars": 300}`（現在の上限） |
+| POST | `/api/ai/memories/add` | AI ユーザー | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
+| POST | `/api/ai/memories/update` | AI ユーザー | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
+| POST | `/api/ai/memories/delete` | 署名あり | `{"id": <id>}` または `{"all": true}` | `{"deleted": <n>}` |
+| POST | `/api/ai/memories/suggest` | AI ユーザー | `{"messageId": <自分のユーザーメッセージの id>, "lang"?: "en" \| "zh" \| "ja"}` | `{"suggestion": "…"}`（何も保存しない） |
+| GET | `/api/ai/admin/settings` | 管理者 | | `Settings` |
+| POST | `/api/ai/admin/settings` | 管理者 | `SettingsUpdate` | `Settings` + `"switchedOff": <bool>` |
+| POST | `/api/ai/admin/models` | 管理者 | `{}` | `{"models": ["…"], "listed": <bool>}` |
+| POST | `/api/ai/admin/verify` | 管理者 | `{}` | `Verify` |
+| POST | `/api/ai/admin/enable` | 管理者 | `{"enabled": <bool>}` | `Settings` |
+| POST | `/api/ai/admin/suspend` | 管理者 | `{"userId": <id>}` | `{"user": AdminUserRow}`、**監査あり** |
+| POST | `/api/ai/admin/resume` | 管理者 | `{"userId": <id>}` | `{"user": AdminUserRow}`、**監査あり** |
+| GET | `/api/ai/admin/usage` | 管理者 | `?days=7`（既定）、`30`、`90`、`365` | `Usage` |
+| GET | `/api/ai/admin/users` | 管理者 | | `{"users": [AdminUserRow]}` |
+| GET | `/api/ai/admin/user` | 管理者 | `?id=<ユーザーの id>` | `{"user": AdminUserRow, "chats": [ChatSummary], "memories": [Memory]}`、**監査あり** |
+| GET | `/api/ai/admin/chat` | 管理者 | `?user=<ユーザーの id>&id=<チャットの id>` | `{"chat": ChatSummary, "messages": [Message]}`、**監査あり**。チャットはそのユーザーのものでなければならない（そうでなければ 404 で、監査の行なし） |
+| POST | `/api/ai/admin/clear` | 管理者 | `{"userId": <id>, "what": "chat", "chatId": <id>}`、または `{"userId": <id>, "what": "chats" \| "memories"}` | `{"deleted": <n>}`、**監査あり** |
+| GET | `/api/ai/admin/limits` | 管理者 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
+| POST | `/api/ai/admin/limits` | 管理者 | 7 つの上限のキーのどれか、整数 | GET と同じ |
+
+ai-serviceの `GET /healthz`（`{"ok":true,"version":"0.8","arch":"x86_64"}`、本人確認は不要）は、そのコンテナのヘルスチェックが使います。Nginx にはこのための location がないので、外からは届きません。
+
+**形**（キーはこの順）：
+
+```text
+Status        {"enabled": bool,          // AI+ が利用できる：AI+ 機能がオン（有効で、今の設定でテスト済みで、
+                                         // キーが読める）かつ、ai-service の報告をバックエンドが 60 秒以内に受理している
+               "allowed": bool,          // 今チャットできる：有効で、かつ（管理者または AI+）で、一時停止されていない
+               "suspended": bool,        // 管理者があなたの AI+ 機能を一時停止している（管理者では常に false）
+               "hasData": bool,          // チャットかメモが少なくとも 1 つある
+               "running": {"chatId": n, "messageId": n} | null,   // 作成中の自分の回答（最新のもの）
+               "retentionDays": n, "memoryLimit": n, "memoryMaxChars": n, "maxMessageChars": n,
+               "messageChars": n, "memoryChars": n,               // 現在の安全上限（下の limits を参照）
+               "keyProblem": bool,       // 管理者だけ：保存したキーを使えない（ほかの人には false）
+               "configured": bool,       // 管理者だけ：モデルと必要なキーが保存されている（ほかの人には false）
+               "freeMode": bool}         // 管理者だけ：あなたのフリーモードがオン（ほかの人には false）。POST /api/ai/free を参照
+ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool}   // チャットにモードはない
+Message       {"id": n, "role": "user"|"assistant", "content": str, "status": "streaming"|"done"|"stopped"|"error",
+               "error": code|null, "truncated": bool, "model": str|null, "createdAt": n,
+               "free": bool}             // このメッセージが書かれた（答えられた）モード：true = フリーモード
+Memory        {"id": n, "content": str, "source": "manual"|"chat", "createdAt": n, "updatedAt": n}
+Settings      {"provider": "openai"|"anthropic"|"gateway", "baseUrl": str, "format": "openai"|"anthropic",
+               "gatewayAuth": "bearer"|"x-api-key"|"cf-aig-authorization", "model": str, "manualModel": bool,
+               "enabled": bool, "verified": bool, "verifiedAt": n|null, "retentionDays": n,
+               "keys": {"apiKey": KeyInfo, "gatewayKey": KeyInfo},
+               "keyProblem": null|"mismatch"|"invalidEnv"|"invalidFile", "updatedAt": n, "updatedBy": str,   // updatedBy：最初の保存まで ""
+               "defaults": {"openai": "https://api.openai.com/v1", "anthropic": "https://api.anthropic.com"}}
+KeyInfo       {"set": bool, "hint": str, "unreadable": bool}        // hint = "…" + 最後の 4 文字、12 文字未満のキーでは ""
+SettingsUpdate{"provider"?, "baseUrl"?, "format"?, "gatewayAuth"?,  // どのキーも省略可：省略 = そのまま
+               "apiKey"?: str|null, "gatewayKey"?: str|null,        // 文字列はキーを置き換え、null は削除する
+               "model"?: str, "manualModel"?: bool, "retentionDays"?: n}
+Verify        {"ok": bool, "code": str|null, "httpStatus": n|null, "latencyMs": n, "model": str,
+               "verifiedAt": n|null, "enabled": bool, "switchedOff": bool}
+Usage         {"days": n, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "unit": "day"|"month",
+               "totals": {"calls", "tokensIn", "tokensOut", "errors", "tokensCached"},
+               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "tokensCached"}],
+               "byModel": [{"model": str, "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
+               "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}
+AdminUserRow  {"id": n, "username": str, "role": "admin"|"user", "ai": bool, "aiAllowed": bool, "disabled": bool,
+               "exists": bool, "suspended": bool,   // suspended：一時停止中（管理者では決して true にならない）
+               "chats": n, "messages": n, "memories": n, "lastUsedAt": n|null,
+               "tokensIn": n, "tokensOut": n}
+```
+
+時刻は unix 秒です。ルートごとの注記：
+
+- **`lang`** *(v0.8、ラウンド 2)*：`send`、`retry`、`memories/suggest` で、設定ページの言語です：`"en"`、`"zh"`、`"ja"`（`"zh-CN"` は `zh` として受け付けます）。学習アシスタントは、そのメッセージでユーザーが別の言語を求めない限り、常にその言語で答えるよう指示されます。メモの提案もその言語で書かれます。`lang` がなければ英語になります（ai-service はユーザーの設定を知らないので、フロントエンドは常に送ります）。値があるのにそれ以外（別の文字列、数、`null`、`""`）なら 400 `ai.badRequest` で、何も保存せず、プロバイダーにも何も送りません。リクエストごとにそれぞれの `lang` を使うので、1 つのチャットの中でメッセージごとに言語が変わることがあります。再試行は、再試行のリクエストの `lang` を使います。
+- **`send`**：`text` は前後の空白を除き、1〜`messageChars` 文字が必要です（既定 16 000。空なら 400 `ai.badRequest`、長すぎれば `limit` 付きの 400 `ai.tooLong`）。`chatId: null`（またはキーなし）は新しいチャットを始め、そのタイトルは文の冒頭（最大 60 文字）になります。`chatsPerUser` を超える新しいチャットは 409 `ai.chatLimit`、`messagesPerChat` を超えることになるチャットは 409 `ai.messageLimit` です。回答の**モード**はリクエストに含まれません。その時点での管理者のフリーモードで決まります（次の項目）。ボディの `free` キーは今も受け付けますが、値にかかわらず**無視されます**（エラーも効果もありません）。チャットにモードはなく、`ChatSummary` に `free` はありません。プロバイダーに送る履歴は、そのチャットのそれまでの完了または停止した文章のあるメッセージで、新しいものから、最大 `max(24000, messageChars + 8000)` 文字を取り、その後時系列に並べたものです。各メッセージがどのモードで書かれたかは問いません（**プロンプトと履歴** を参照）。
+- **フリーモード** はチャットではなく**管理者**の状態です。`POST /api/ai/free` に `{"free": true}` または `{"free": false}` を送るとオン・オフが切り替わり、`{"free": <bool>}` が返ります。ボディはブール値のキー `free` だけを持たなければならず（それ以外は 400 `ai.badRequest`）、ルートは管理者専用で（管理者以外は 403 `ai.adminOnly`）、AI がオフの間も使え、繰り返しても害はありません。状態は ai-service 自身のデータベース（`users.free_mode`）にユーザーごとに保存されるので、再読み込み、別のブラウザ、再起動の後も残り、`GET /api/ai/status` は `freeMode` として報告します（一般ユーザーでは、何が保存されていても常に `false`：降格された管理者には通常どおり応答し、再び管理者になれば保存されたフラグがまた効きます）。**オン**の間は、その管理者のすべての `send` と `retry` が、古いチャットでも新しいチャットでも、フリーモードで答えられます：システムプロンプトは返答言語の 1 行だけです（学習アシスタントの指示も、日付も、メモリーもなし。メモリーは読みもしません）。**オフ**の間は、すべてのメッセージが通常どおりに答えられます。変更が効くのは**次の**メッセージからで、すでに作成中の回答は、始まったときのモードのままです。**どのメッセージもモードを記録します**（`Message.free` と、イベントストリームの `start.free`）：質問とその回答は、質問を送ったときに有効だったモードを持ち、再試行は再試行のときのモードを使います（質問にもそれを記録します）。フリーモードが外すのは Xexam 自身の学習アシスタントの役割だけで、プロバイダー自身の安全規則は外しません。AI チャットにはそのためのスイッチも区切り線もありません：選ぶのは**設定**の「AI 対話モード」の項目です（通常モード / フリーモード。AI を使える管理者にだけ表示されます）。AI チャットは、モードがオンの間、タイトルの横に緑色の「フリーモード」のタグを表示します。
+- **プロンプトと履歴**。通常の回答のシステムプロンプトは、今日の日付を添えた学習アシスタントの文、次にユーザーのメモリー（更新が新しいものから、メモ全体だけ、最大 4000 文字）、最後に返答言語の 1 行の順です。固定の部分が先、リクエストごとに変わる部分が後なので、リクエストの先頭はリクエスト間で同一です。送る履歴に、現在とは**別の**モードで書かれたメッセージが含まれるとき（切り替えの直後）は、言語の行の後に**短いモードの行が 1 つ**付きます：`Current mode: normal (Xexam study assistant); earlier turns may be free mode.` または `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` そのようなメッセージがなければモードの行はなく、フリーモードのプロンプトは言語の行だけです。**古いメッセージは短くしてから**送ります：履歴の最新の 4 件は全文で送り、それより古い回答は先頭 800 文字で切って `…(shortened)` を付け、それより古い質問は先頭 2000 文字で切って `…` を付けます。切り方はメッセージとその古さだけで決まるので、同じメッセージは常に同じ文章になります。履歴の文字数の枠は短くした後の長さで数えます。保存されたメッセージは変更されません。
+- **プロンプトキャッシュ**。**Anthropic** 形式では、システムプロンプトは `cache_control`（`ephemeral`）の区切りを持つ 1 つのテキストブロックとして送られ、履歴の最後のメッセージ（新しい質問の直前のもの）にも 2 つ目が付くので、会話は、キャッシュされた先頭部分を再利用します。**OpenAI** 形式では何も加えません：自動でキャッシュするプロバイダーは、自分でそうします。プロバイダーが自分のキャッシュから提供したと報告したもの（`cache_read_input_tokens`、または `prompt_tokens_details.cached_tokens`）は呼び出しとともに保存され、`admin/usage` に `tokensCached` として表示されます。これは `tokensIn` の一部であり、それに加えるものではありません。何も報告しないプロバイダーは 0 と数えます。キャッシュが変えるのはプロバイダーの課金であり、回答は変わりません。
+- **`retry`**：チャットの最後のメッセージが、ユーザーのメッセージの後の、失敗したか停止した回答でなければなりません。それをその場で書き直します（同じメッセージ id、新しいユーザーメッセージはなし）。そうでなければ 409 `ai.notRetryable` です。
+- 既定では **作成中の回答は 1 ユーザーにつき 1 つ** です（`perUserRunning`、最大 4。同じチャットで 2 つになることはない）：ほかの `send`、`retry`、`memories/suggest` は 409 `ai.busy` になります。サーバー全体で `globalRunning` を超えるモデルの呼び出しは 503 `ai.serverBusy` です。どちらも、何かを保存する前に拒否します。
+- **`stop`**：`{}` なら作成中の自分の回答をすべて、`{"chatId": …}` ならそのチャットの回答だけを止めます。それらが保存されるまで最大 5 秒待ちます。何も作成中でなければ `stopped: false` です。回答はイベント `stopped` で終わり、その文章は残ります。
+- **`chats/delete`** は、そのチャットで作成中の回答を先に止め、その後チャットをそのメッセージと一緒にすぐ削除します。自分のものでないチャットの `{"id": …}`：404。
+- **`memories/add`、`memories/update`**：文の空白は 1 つの空白にまとめます。1〜`memoryChars` 文字（既定 300。`limit` 付きの 400 `ai.memoryTooLong`）。`memoriesPerUser` を超えるメモ：`limit` 付きの 409 `ai.memoryLimit`。`source` の既定は `manual` です。
+- **`memories/suggest`** は、自分のメッセージの 1 つ（その最初の 2000 文字）を短いメモにするようモデルに頼み、それを返します。何も保存しません（`memories/add` に `source: "chat"` を付けて保存します）。回答のメッセージやほかの人のメッセージ：404。空の提案：502 `ai.up.protocol`。
+- **`admin/settings` の POST** は次の順に検証します：プロバイダー、`baseUrl`（最大 300 文字の絶対の `http://` または `https://` のアドレスで、ユーザー名、クエリ、`#` なし。400 `ai.badUrl`。Anthropic 形式では末尾の `/v1` を取り除きます）、形式と認証方式、キー（空白なしの表示可能な ASCII 文字 1〜400 文字。`field` 付きの 400 `ai.badKey`）、**キーの再入力**（プロバイダーやアドレスのオリジンが変わるとき、保存したすべてのキーを文字列か `null` でもう一度送らなければなりません。`field` 付きの 400 `ai.keyReenter` で、何も保存しません）、ヘッダーの衝突（プロバイダーのキーがあるときに、ゲートウェイの方式 `bearer` と OpenAI 形式、または `x-api-key` と Anthropic 形式。400 `ai.headerClash`）、モデル（`A–Z a–z 0–9 . _ : / @ + -` で最大 200 文字）、`retentionDays` 1〜3650（400 `ai.badRetention`）。必要なキーがそろっているかは、ここではなく `models` と `verify` が確認します。プロバイダー、アドレス、形式、認証方式、モデル、キーのどれかを変えると、通っていたテストが消え、AI がオフになります（オンだったときは `switchedOff: true`。作成中の回答はすべて `ai.disabled` で止まります）。`retentionDays` だけを保存しても、これらは何も変わらず、何もオフになりません。`updatedBy` は、新規インストールでは最初の保存まで `""` で、その保存が何を変えたかにかかわらず同じです。AI 設定のページは、新規インストールの初期値（OpenAI 互換、その既定のアドレス、キーなし）を保存された接続とはみなさないので、保持期間だけを保存しても、接続のチップは「接続が未設定」のままです。`format` なしでプロバイダーを `gateway` に変えると、形式はアドレスの最後の部分から決まります（`…/anthropic` → `anthropic`、それ以外は `openai`）。
+- **`admin/models`** は **保存した** 設定でモデルを一覧にします（必要なキーがないときは `field` 付きの 400 `ai.keyMissing`）。OpenAI 形式：`data[].id` を並べ替えたもの。Anthropic 形式：プロバイダーの順。モデルを一覧にしないプロバイダー（404、405、501、空または読めない一覧）では `{"models": [], "listed": false}` になります：モデルを手入力してください。キー、接続、利用枠、タイムアウトの問題は、その `ai.up.*` のコード付きの 502 / 504 になります。結果は 10 分間保持します。
+- **`admin/verify`** は、保存した設定とモデルでストリーミングのリクエストを 1 つ、チャットと同じ方法で、プロンプト "Reply with the single word OK." とメッセージ "Test" で送ります（先に 400 `ai.modelMissing` / `ai.keyMissing`、409 `ai.keyProblem` を確認します）。成功には、文章のある回答か、トークン数付きの正常な終了が必要です。プロバイダーがリクエストを拒否した（`ai.up.badRequest`）ときは、`stream_options` なしで（OpenAI 形式）、または `max_tokens` を 8192 ではなく 4096 にして（Anthropic 形式）もう一度試し、うまくいけばその設定を残します。失敗は 200 で `ok: false`、`ai.up.*` のコード、プロバイダーの HTTP ステータスを返します：設定を指すコード（`auth`、`quota`、`notFound`、`badRequest`、`protocol`、`refused`）は通っていたテストを消して AI をオフにし、一時的なもの（`rateLimit`、`overloaded`、`server`、`timeout`、`connect`）は何も変えません。1 回の試行に最大 2 分かかることがあり、Nginx はこのルートで最大 300 秒待ちます。
+- **`admin/enable`** の `{"enabled": true}` には、今の設定のテストに通っていること（409 `ai.notVerified`）と、キーが読めること（409 `ai.keyProblem`）が必要です。`false` は作成中の回答をすべて止めます（`ai.disabled`）。これはインストール全体の **AI+ 機能** のスイッチです（AI 設定ではチップ「AI+ 機能はオン」/「AI+ 機能はオフ」で表示されます）。応答する前に、ai-service が新しい状態をバックエンドに報告するので、`aiAvailable` はすぐに追随します。`settings`（AI をオフにするとき）、`verify`（AI をオフにするとき）、`suspend`、`resume` も同じです。
+- **`admin/suspend`** と **`admin/resume`** *(v0.8、ラウンド 2)* は、1 人の一般ユーザーの AI+ 機能を**一時停止**・**再開**します（AI 設定ではボタン **一時停止** / **再開** と状態 **一時停止中** として表示されます。ルート名、`suspended` キー、コード `ai.suspended` は、以前の語のままです）。ボディは `{"userId": <id>}` だけです（ほかは 400 `ai.badRequest`）。応答は、新しい `suspended` を持つ `{"user": AdminUserRow}` です。ユーザーはバックエンドを通じて調べます（バックエンドが応えられないときは 503 `ai.backendDown`、ユーザーが存在しなければ 404 `ai.notFound`）。管理者は一時停止できません：409 `ai.adminAlways`。AI+ 機能がオフのユーザーも API からは一時停止できます（AI 設定のページに並ぶのは、その機能を持つユーザーだけです）。**一時停止** は、そのユーザーの作成中の回答やメモの提案をすぐに止め（そこまでの文章は残り、ストリームは `error` イベント `ai.suspended` で終わります）、それ以後、そのユーザーの AI ユーザーのルートは 403 `ai.suspended` を返します。チャットとメモリーの閲覧と削除はできて、ユーザーはデータとともに一覧に残ります。ページは確認を求めません。どちらのルートも繰り返して安全です：フラグと監査の行は 1 つのトランザクションで書き、何も変えない繰り返しは、新しい行なしで 200 を返します。**監査あり**：システムログの行は、`AI function turned off for user "<name>" by admin "<admin>"`（一時停止）と `AI function turned on for user "<name>" by admin "<admin>"`（再開）で、接頭辞 `AI: ` が付きます。この英語のログの行は、文面を変えていません。フラグは ai-service 自身のデータベースに保存されます（スキーマ 2、[database.md](database.md)）。スキーマ 2 のファイルにない列（この版の以前のビルドのもの）は、次の起動時に自動で追加されます。
+- **`admin/usage`**：7 日と 30 日は日ごと、90 日と 365 日は月ごと。`byPeriod` は範囲のすべての期間を 0 も含めて古い順に並べます。プロバイダーが報告しなかったトークンは 0 と数えます。`tokensCached` は、プロバイダーが自分のプロンプトキャッシュから提供した `tokensIn` の一部です（**プロンプトキャッシュ** を参照）。AI 設定の使用量タブでは **キャッシュ** 列として表示されます。それが追加される前に記録された呼び出しは 0 と数えます。`byUser` は呼び出しの数で並べ、削除されたユーザーは `userId: null` の 1 行です。`byModel` では、モデルを一覧にした呼び出しは `model: ""` です。
+- **`admin/users`** は、まずバックエンドと照合し（削除されたユーザーの AI データを削除）、その後、**AI+ 機能を持つユーザー**を一覧にします：すべての管理者と、AI+ がオンのすべてのユーザー（一時停止中のユーザーも `suspended: true` で含む）をユーザー名の順に並べます。トークンは全期間の合計です。*(ラウンド 2)* AI+ 機能をオフにされたユーザーは、まだ AI データがあっても一覧に載りません。そのデータは残ります（本人は閲覧と削除ができ、保存期間が適用され、`admin/user` は今も監査付きでそれを表示します）。そのためここでは `exists` は常に `true` です（形が変わらないよう、キーは残してあります）。
+- **`admin/user`** も照合を行い、ユーザーがメインのアプリにもう存在しないときだけ 404 を返します（AI データのないユーザーには空の一覧）。**表示は監査されます**：行 `user "<admin>" viewed the AI chats and memories of user "<name>"`（`admin/chat` では `… viewed an AI chat of user "<name>" (<n> messages)`）を、データを返す前にシステムログに届けます。バックエンドがそれを受け取れないときの応答は 503 `ai.backendDown` で、データはありません。
+- **`admin/clear`**：`what: "chat"` には `chatId` が必要で、`chats` と `memories` には付けてはいけません（400）。消去するチャットで作成中の回答は先に止めます。監査の行（`cleared one AI chat of user …`、`cleared all <n> AI chats of user …`、`cleared all <n> AI memories of user …`）は、削除と同じトランザクションで書き、バックエンドが受け取るまで届け続けます。
+- **`admin/limits`**：キーは `perUserRunning`（1〜4、既定 1）、`globalRunning`（1〜64、16）、`chatsPerUser`（10〜100000、1000）、`messagesPerChat`（20〜5000、400）、`memoriesPerUser`（1〜1000、50）、`memoryChars`（50〜2000、300）、`messageChars`（1000〜32000、16000）です。POST は任意の一部を受け付けます。範囲外または整数でない値は `field` 付きの 400 `ai.limitRange`、知らないキーは 400 `ai.badRequest` で、そのときは何も保存しません。変更はすぐに反映され（実行中の呼び出しは取り消しません）、AI をオフにすることも、既存のデータを削除・短縮することもありません。ログに出ます：`AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`。
+
+### 5.3 `send` と `retry` のイベントストリーム
+
+回答が始まる **前** の失敗は普通の JSON のエラーです（403 `ai.disabled` / `ai.notAllowed` / `ai.suspended` / `ai.adminOnly`、400 `ai.tooLong` / `ai.badRequest`、404 `ai.notFound`、409 `ai.busy` / `ai.messageLimit` / `ai.chatLimit` / `ai.keyProblem` / `ai.notRetryable`、503 `ai.backendDown` / `ai.serverBusy`）。それ以外では、応答は `200` で、`Content-Type: text/event-stream; charset=utf-8`、`Cache-Control: no-store`、`X-Accel-Buffering: no` が付き、`Content-Length` はありません。ストリームは、自分のメッセージ（再試行ではリセットした回答）が保存されるとすぐに始まるので、プロバイダーの失敗は HTTP のエラーではなく `error` のイベントとして届きます。
+
+各イベントは、`event: <名前>`、`data: <1 行の JSON>`、空行です：
+
+| イベント | `data` | いつ |
+|---|---|---|
+| `start` | `{"chatId": n, "chatTitle": str, "userMessageId": n, "assistantMessageId": n, "model": str, "newChat": bool, "retry": bool, "free": bool}` | 最初に、必ず。`free` は、この回答が書かれるモード（その時点での管理者のフリーモード） |
+| `thinking` | `{}` | *(ラウンド 2)* 多くても 1 回で、最初の `delta` の前だけ：モデルが推論を送り始めた（OpenAI の `reasoning_content` / `reasoning`、Anthropic の thinking ブロック）。推論そのものは、保存も、ブラウザへの送信も、ログへの記録もしません |
+| `delta` | `{"text": str}` | 回答の次の断片、順番どおり |
+| `done` | `{"status": "done", "tokensIn": n\|null, "tokensOut": n\|null, "truncated": bool}` | 回答が完了した（`truncated`：モデルが長さの上限で止まった） |
+| `stopped` | `{"status": "stopped"}` | **停止**、または ai-serviceの終了 |
+| `error` | `{"status": "error", "code": str, "error": "<中国語のテキスト>"}` | プロバイダーの失敗、アクセスの喪失（`ai.notAllowed`、`ai.backendDown`）、ユーザーの一時停止（`ai.suspended`、テキスト `管理员已暂停你的 AI+ 功能。`）、AI+ 機能のオフ（`ai.disabled`、テキスト `AI+ 功能暂时不可用。`）、チャットの削除（`ai.notFound`）。そこまでの文章は残る |
+
+```text
+event: start
+data: {"chatId":12,"chatTitle":"How do I plan a week of revision?","userMessageId":41,"assistantMessageId":42,"model":"demo-chat-small","newChat":true,"retry":false,"free":false}
+
+event: thinking
+data: {}
+
+event: delta
+data: {"text":"Start with "}
+
+: keep-alive
+
+event: done
+data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
+```
+
+- ほかに何も送らなかった間は、15 秒ごとにコメントの行 `: keep-alive` が来ます。`done`、`stopped`、`error` のちょうど 1 つでストリームが終わり、その後サーバーが閉じます。
+- **回答は接続に左右されません。** クライアントがいなくなっても、ai-serviceは回答を書き続け、その文章を多くても 2 秒ごとと最後に保存します。`GET /api/ai/status`（`running`）と `GET /api/ai/chat`（`status: "streaming"` とそこまでの文章を持つメッセージ、チャットの `running: true`）がそれを示します。終わるまで 2 秒ごとにチャットを読んでください。クラッシュで `streaming` のまま残ったメッセージは、次の起動時に `ai.interrupted` 付きの `error` になります。
+- 書いている間、ai-serviceは 2 秒ごとにセッションを確認します。セッションが終わったか、AI+ がオフになったときは、ストリームは `error` `ai.notAllowed` で終わります。管理者があなたを一時停止したときは、`error` `ai.suspended` で終わります（次の確認を待たず、すぐに）。
+- 推論は次の項目の 100 000 文字の上限には数えませんが、120 秒のアイドルタイマーはリセットします。`thinking` は、モデルが作業していることを示す合図にすぎません。一度も受け取らなかったクライアントも何も失いません。再接続した回答（`GET /api/ai/chat` で読むもの）には、thinking の状態はありません。
+- プロバイダーに対する制限時間：接続 10 秒、最初のバイトまで 120 秒、データなしで 120 秒、全体で 10 分（`ai.up.timeout`）。100 000 文字を超える回答は切ります（`ai.up.tooLong`）。
+
+### 5.4 エラーコード
+
+`error` のテキストは ai-service のもの（中国語。`ai.serviceOff` はバックエンドのもの）です。ここの意味は、ページが表示する日本語の文に沿っています。
+
+| コード | HTTP | 意味 |
+|---|---|---|
+| `ai.unavailable` | 502（Nginx） | ai-service に今は接続できません（動いていません）。画面では一般ユーザーに「AI は今使えません……」と表示し、`ai-service` の名前を出すのは管理者だけです。 |
+| `ai.backendDown` | 503 | AI は今使えません（メインサービスに接続できません。本人確認が無効なとき、AI との接続がオフのときも。テキスト `AI 暂时无法使用，请稍后再试或联系管理员。`。画面では `ai.unavailable` と同じ文面なので、ユーザーがコンテナの存在を知ることはありません）。*(ラウンド 2)* バックエンドが ai-service の報告を 60 秒間受理していない間の、ai-service の AI ユーザーのルートからも返ります。 |
+| `ai.serverBusy` | 503 | AI は今混雑しています（`globalRunning` の枠がすべて使用中。テキスト `AI 现在太忙，请稍后再试。`）。 |
+| `ai.internal` | 500 | AI で内部エラーが起きました（テキスト `AI 内部出错了，请稍后再试。`）。 |
+| `ai.disabled` | 403 | AI+ 機能は今は利用できません（オフになっています。テキスト `AI+ 功能暂时不可用。`）。 |
+| `ai.notAllowed` | 403 | このアカウントには AI+ 機能がありません（テキスト `你的账号没有开通 AI+ 功能。`）。 |
+| `ai.suspended` | 403 | *(ラウンド 2)* 管理者があなたの AI+ 機能を一時停止しました（テキスト `管理员已暂停你的 AI+ 功能。`）。一時停止によって止められた作成中の回答のコードでもあります。 |
+| `ai.adminAlways` | 409 | *(ラウンド 2)* 管理者は常に AI を使えるため、一時停止できません（テキスト `管理员始终可以使用 AI，不能暂停。`）。 |
+| `ai.serviceOff` | 409 | *(ラウンド 2)* ai-service ではなく**バックエンド**が返します：先に AI 設定で AI+ 機能をオンにしてください（テキスト `请先在 AI 设置里开启 AI+ 功能。`）。`POST /api/users/update` を参照。 |
+| `ai.adminOnly` | 403 | 管理者だけが操作できます（管理者以外による `POST /api/ai/free` も）。 |
+| `ai.notFound` | 404 | 見つかりません（またはあなたのものではありません）。 |
+| `ai.busy` | 409 | まだ回答を作成中です。 |
+| `ai.tooLong` | 400 | メッセージが長すぎます（`limit`）。 |
+| `ai.messageLimit` | 409 | チャットが `messagesPerChat` に達しました（`limit`）：新しいチャットを始めてください。 |
+| `ai.chatLimit` | 409 | チャットが `chatsPerUser` 件あります（`limit`）：いくつか削除してください。 |
+| `ai.notRetryable` | 409 | この回答は再試行できません。 |
+| `ai.badRequest` | 400 / 405 / 413 / 415 | リクエストが無効です。 |
+| `ai.memoryLimit` | 409 | メモリーがいっぱいです（`limit`）。 |
+| `ai.memoryTooLong` | 400 | メモの文字数が多すぎます（`limit`）。 |
+| `ai.notVerified` | 409 | AI を有効にする前に、設定を保存してテストに通してください。 |
+| `ai.keyProblem` | 409 | 保存したキーを復号できません。入力し直してください。 |
+| `ai.badUrl` | 400 | 完全な `http://` または `https://` のアドレスではありません（またはユーザー名、クエリ、`#` 付き）。 |
+| `ai.badKey` | 400 | キーは空白なしの表示可能な文字 1〜400 文字です（`field`）。 |
+| `ai.headerClash` | 400 | ゲートウェイのキーとプロバイダーのキーが同じヘッダーを使うことになります（`field: apiKey`）。 |
+| `ai.keyMissing` | 400 | 先にこのキーを入力してください（`field`）。 |
+| `ai.keyReenter` | 400 | アドレスまたはプロバイダーが変わりました。このキーを入力し直してください（`field`）。 |
+| `ai.modelMissing` | 400 | 先にモデルを選んでください。 |
+| `ai.badRetention` | 400 | 保存期間は 1〜3650 日です。 |
+| `ai.limitRange` | 400 | 上限が、その範囲の整数ではありません（`field`）。 |
+| `ai.interrupted` | （保存される） | 回答の作成中にサービスが再起動しました。 |
+| `ai.up.auth` | 502 | AI プロバイダーがキーを拒否しました。 |
+| `ai.up.quota` | 502 | AI アカウントのクレジットまたは利用枠が残っていません。 |
+| `ai.up.notFound` | 502 | AI プロバイダーにこのモデルまたはアドレスがありません。 |
+| `ai.up.rateLimit` | 502 | AI プロバイダーが混雑しています（レート制限）。 |
+| `ai.up.overloaded` | 502 | AI プロバイダーが過負荷です。 |
+| `ai.up.server` | 502 | AI プロバイダーで内部エラーが起きました。 |
+| `ai.up.badRequest` | 502 | AI プロバイダーがリクエストを拒否しました。 |
+| `ai.up.timeout` | 504 | AI プロバイダーが時間内に応答しませんでした。 |
+| `ai.up.connect` | 502 | AI プロバイダーに接続できませんでした。 |
+| `ai.up.protocol` | 502 | プロバイダーの応答を読み取れませんでした（リダイレクトや、`message_stop` なしで終わる Anthropic のストリームも）。 |
+| `ai.up.refused` | 502 | AI は回答を断りました。 |
+| `ai.up.tooLong` | （ストリーム） | 回答が長すぎたため途中で切れました。 |
+
+プロバイダーの応答を `ai.up.*` のコードに対応付ける方法：まずボディの中のエラーの種類やコード（200 の後にストリームの中で届くエラーも。一部のゲートウェイはそう送ります。そこにある数値のコードは HTTP ステータスと同じように読みます）、それがなければ HTTP ステータス：401 / 403 は `auth`、402 は `quota`、404 は `notFound`、429 は `rateLimit`、503 / 529 は `overloaded`、そのほかの 5xx は `server`、そのほかの 4xx は `badRequest`、3xx と読めない応答は `protocol`、文章のない拒否やコンテンツフィルターは `refused`。使用量の統計では、コードは `ai.up.` を除いて保存します。
+
+## 6. 内部ルート（`/internal/*`、v0.8）
+
+これらのルートは、バックエンドと ai-serviceの間の接続です。**Nginx 経由では届きません**（`/internal/` のための location がないので、外からのリクエストは 404 になります）。ここでは設計を説明するためだけに記載します。バックエンドは、Host ガードの前に、セッションのレイヤーを通さずにこれらに応えます。
+
+| メソッド | パス | 呼び出し元 | 認証 |
+|---|---|---|---|
+| GET | `/internal/ai/auth` | Nginx の `auth_request`（と vite の開発 / プレビューサーバー） | ブラウザのセッションの Cookie |
+| POST | `/internal/ai/introspect` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/users` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/log` | ai-service | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/heartbeat` | ai-service *(ラウンド 2)* | `X-Xexam-Internal-Token` |
+
+`/internal/` の下のほかのパス、間違ったメソッド、トークンがないか間違っているトークンのルート（またはトークンが読み込まれていない間）は、知らないパスとまったく同じく 404 `text/plain` の `not found` を返すので、ルートの存在は明かされません。拒否したトークンは、多くても約 1 分に 1 回ログに出します。トークンのルートには `Content-Type: application/json` と JSON のオブジェクトが必要で、その応答はバックエンドのいつもの JSON です。
+
+- **`GET /internal/ai/auth`** は、Host、Origin、メソッドを `X-Original-Host`、`X-Original-Origin`、`X-Original-Method`（Nginx が設定）からだけ読み、セッションをそのままの形のちょうど 1 つの `xexam_session` の Cookie から読みます。セッションは決して延長しません。応答：204 で `X-Xexam-Identity` と `Cache-Control: no-store`（許可）。401 `{"error": "请先登录。", "code": "auth.signin"}` で `X-Xexam-Deny: signin`。403 で `X-Xexam-Deny: password`（`auth.password`）または `guard`（`auth.guard`、ガード自身のメッセージ）。AI との接続がオフのときはボディなしの 503。データベースが失敗したときは 500。
+- `X-Xexam-Identity` の **本人確認の文**：`base64url(payload) + "." + base64url(HMAC-SHA-256(internal token, "xexam-identity-v1." + base64url(payload)))`（パディングなし）。payload はこの順のコンパクトな JSON です：`{"v":1,"id":<users.id>,"stamp":"<users.uid>","username":"…","role":"admin"|"user","aiAllowed":<bool>,"sid":"<the session's token hash, 64 hex>","exp":<now + 60>}`。ai-serviceは署名、`now ≤ exp ≤ now + 120`、すべてのフィールドを確認し（知らないフィールドは拒否）、この文を決してログに出しません。
+- **`POST /internal/ai/introspect`** `{"sid": "<64 hex>", "id": <user id>}` → `{"ok": true, "user": {"id", "stamp", "username", "role", "aiAllowed"}}`。セッションがなくなったか、ほかのユーザーのものか、パスワードを変えなければならないときは `{"ok": false}`。回答を書いている間、2 秒ごとに使います。小文字の 16 進数 64 桁でない `sid`：400。
+- **`POST /internal/ai/users`** `{"ids": [<id>, …], "holders": <bool>}`（どちらも省略可。id は最大 10 000 個で、ai-serviceは 1 回に最大 3000 個送ります）→ `{"users": [{"id", "stamp", "username", "role", "disabled", "ai", "aiAllowed"}]}`：求められたユーザーのうち存在するものすべてと、`holders: true` ならすべての管理者と AI+ を持つすべてのユーザー。重複なしで、id の順です。ない id は、そのユーザーが削除されたことを意味します。
+- **`POST /internal/ai/log`** `{"lines": [{"level": "INFO" | "WARN" | "ERROR", "message": "…"}]}` → `{"ok": true}`：最大 50 行。2000 文字を超えるメッセージは切り（`…` で終わる）、制御文字は取り除きます。各行はターゲット `xexam_ai_service` と接頭辞 `AI: ` を付けてシステムログに入ります。無効な行が 1 つでもあると（ほかのレベル、メッセージがない、50 行を超える）、まとめて 400 で拒否します。ボディは約 590 KiB まで（文字をエスケープしても満杯のまとまりが入る大きさ）で、ほかのトークンのルートは 64 KiB まで受け付けます。
+- **`POST /internal/ai/heartbeat`** *(v0.8、ラウンド 2)* `{"version": "0.8", "enabled": <bool>, "suspended": [<id>, …], "stopping": <bool>}` → `{"ok": true}`。ai-service が自分の状態を報告するもので、バックエンドは、これで AI+ が利用できるかどうかを知り、これだけで ai-service のことを知ります（バックエンドが ai-service を呼び出すことはありません）。4 つのキーはすべて必須で、ほかのキーは許可されません。`version` はバージョンの文字列（`0-9 A-Z a-z . + -`、最大 20 文字）、`enabled` は ai-service が使っている AI+ 機能のスイッチ（オンで、今の設定でテスト済みで、キーが読める）、`suspended` は 一時停止されているユーザーの id（正の整数、重複は無視）を最大 3000 個並べたもの、`stopping` は ai-service が終了するときに送る最後の報告でだけ `true` です。それ以外は 400 で、保存されている報告は変わりません。正しい報告は、最後の報告を置き換えます。ほかのトークンのルートの規則（トークン、`Content-Type: application/json`、64 KiB まで、トークン・メソッド・パスが違えば 404）に従い、受理された報告も無効な報告も、ログの行は書きません。
+  - **ai-service が報告するとき**：起動したとき（トークンが読めるようになった後に 1 回）、管理者が AI+ 機能をオン・オフにした直後、AI をオフにする設定の変更、AI をオフにするテスト、ユーザーの一時停止・再開の直後（そのリクエストの応答は報告を待ちます）、25 秒ごと、報告に失敗した 5 秒後、そして終了するときに `stopping: true` で 1 回（2 秒まで）。報告は 1 つずつ送るので、古い状態が新しい状態を追い越すことはありません。ai-service 自身のログには接続の様子が出ます：`AI link: connected to the main service` は接続ごとに**1 回**（最初に受理された報告のとき、その後は接続が失われた後にだけ）、`AI link: lost the main service` は、つながっていた接続が失敗したときに 1 回書かれ、その間の失敗や成功は何も書きません。どちらの行も、接頭辞 `AI: ` を付けてシステムログに入ります。
+  - **バックエンドが報告をどうするか**：最後の報告だけをメモリに保持します。その報告が 60 秒より新しく、停止の報告でない間、ai-service は **接続されている** と数え、接続されていて `enabled` の間、**AI+ は利用できます**。バックエンドはこれを `aiAvailable` と `aiService`（`GET /api/auth/state`）で見せ、`suspended` を `aiSuspended`（`GET /api/users`）に使い、AI+ が利用できない間はユーザーの AI+ のスイッチを拒否します（`ai.serviceOff`）。バックエンドを再起動した後は、次の報告が届くまで（最大 25 秒）報告がありません。外から見ると `/internal/ai/heartbeat` は 404 です（`/api/internal/ai/heartbeat` は、ログインしたユーザーには 404、ログイン前は 401）。
+
+## 7. 旧版との違い
 
 以下は、新しい Rust バックエンドと旧 Python v0.2 とで**意図的に異なる**点です。どの項目も `tests/baseline/golden/allowed_differences_rust.json` と `allowed_probe_differences_rust.json` に登録されており、登録されていない差異があるとテストが失敗します。
 
@@ -513,7 +781,25 @@ v0.6 からは、ゴールデンテストは既定の管理者としてログイ
 | `GET /api/info` | `{"version", "arch", "canShutdown", "bankCount"}` | `{"version", "arch", "canShutdown"}`：`bankCount` はなくなった |
 | `/api/` に対する Nginx のレート制限 | 1 秒あたり 10 リクエスト、バースト 30 | 1 秒あたり 30 リクエスト、バースト 120（クライアントのアドレスごと。アップロードは変わらず） |
 
-## 6. 呼び出し例
+### v0.8 での変更（v0.7.5 との比較）
+
+ほかはすべて v0.7.5 と同じ応答です。
+
+| 変更点 | v0.7.5 | v0.8 |
+|---|---|---|
+| `GET /api/auth/state`、`POST /api/auth/login`、`POST /api/auth/password` | `user` は `canManageBanks` で終わる | `canManageBanks` の後に `user.aiAllowed` |
+| `GET /api/users`（とユーザーのルートの応答） | | `canManageBanks` の後、`ownedBanks` の前に `ai`（AI+ のスイッチ） |
+| `POST /api/users/create`、`POST /api/users/update` | | 省略可能な `ai`（真偽値） |
+| 新しいルート | | `/api/ai/*`（第 5 節）。ai-service が応え、`send` と `retry` はイベントストリームで応答する。ラウンド 2 で、`suspend` と `resume`（画面では一時停止 / 再開）、`send` / `retry` / `suggest` の `lang`、`POST /api/ai/free` と `Status` の `freeMode`（管理者のフリーモード。`start` とすべての `Message` に `free`。`ChatSummary` には `free` がなく、`send` はそれを無視する）、`thinking` イベント、`Status` と `AdminUserRow` の `suspended`、`Usage` の `tokensCached`（プロンプトキャッシュ）が加わる |
+| `GET /api/auth/state`（ログイン時） | | `library` の後に `aiAvailable`。管理者にはさらに `aiService`（`connected`、`stopped`、`lastSeen`、`version`、`enabled`、`link`） |
+| `GET /api/users`（と一覧を返すすべての応答） | | `users` の後にトップレベルの `aiAvailable`。すべての行の `lock` の後に `aiSuspended` |
+| `POST /api/users/update`、`POST /api/users/create` | | AI+ が利用できない間、`ai` キーに対して 409 `ai.serviceOff`（create では `ai: true`） |
+| 新しい内部ルート | | `POST /internal/ai/heartbeat`（第 6 節） |
+| `GET /api/logs` | | ai-serviceの行も（`target` `xexam_ai_service`、接頭辞 `AI: `） |
+| データベーススキーマ | v4 | v5（`users.ai_enabled`、`users.uid`）。[database.md](database.md) を参照 |
+| Nginx | `/api/` だけ | `/api/ai/` も（先に認証ステップ。ボディは 256 KiB まで。`send` / `retry` はバッファせずにストリーミング）。`/internal/` は外からは 404 |
+
+## 8. 呼び出し例
 
 ```bash
 # バージョンとアーキテクチャを確認する（公開）
@@ -557,6 +843,31 @@ curl -s -b cookies.txt -X POST http://localhost:8765/api/settings \
 # システムログを読み、次からは最後に見た行より後の行だけを読む
 curl -s -b cookies.txt http://localhost:8765/api/logs
 curl -s -b cookies.txt 'http://localhost:8765/api/logs?after=41&boot=Xq3v9T0bLm2k'
+
+# AI（v0.8）：オンになっていて、自分は使えるか？（管理者：ai-service は接続されているか？）
+curl -s -b cookies.txt http://localhost:8765/api/ai/status
+curl -s -b cookies.txt http://localhost:8765/api/auth/state
+
+# 新しいチャットで質問し、回答が届くのを見る（-N：各イベントを届いたそばから表示）
+curl -s -N -b cookies.txt -X POST http://localhost:8765/api/ai/send -H 'Content-Type: application/json' -d '{"chatId": null, "text": "How do I plan a week of revision?", "lang": "en"}'
+
+# 管理者として：OpenAI 互換のプロバイダーを接続し（ここでは架空のキー）、モデルを一覧にし、1 つ保存し、テストして、有効にする
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/settings -H 'Content-Type: application/json' -d '{"provider": "openai", "baseUrl": "https://api.openai.com/v1", "apiKey": "sk-demo-not-a-real-key"}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/models -H 'Content-Type: application/json' -d '{}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/settings -H 'Content-Type: application/json' -d '{"model": "demo-chat-small"}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/verify -H 'Content-Type: application/json' -d '{}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/enable -H 'Content-Type: application/json' -d '{"enabled": true}'
+
+# ユーザー 2 の AI+ 機能をオンにする（AI+ が利用できない間は 409 ai.serviceOff）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/users/update -H 'Content-Type: application/json' -d '{"id": 2, "ai": true}'
+
+# ユーザー 2 の AI+ 機能を一時停止し、再開する（AI 設定の「一時停止」/「再開」ボタンでも同じことができる）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/suspend -H 'Content-Type: application/json' -d '{"userId": 2}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/resume -H 'Content-Type: application/json' -d '{"userId": 2}'
+
+# 自分のフリーモードをオンにし、またオフに戻す（管理者だけ。どのチャットでも次のメッセージから効く）
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": true}'
+curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": false}'
 ```
 
-> Nginx 経由でアクセスする場合、`curl` が既定で付ける `Host: localhost:8765` は許可リストに入っています。別のドメイン名でアクセスする前に、まず `XEXAM_ALLOWED_HOSTS` を設定してください。`curl` は `Origin` を送らないので、Origin の検査は通ります。`cookies.txt` には有効なセッションが入っているので、ほかの人に見せず、使い終わったら削除してください。
+> Nginx 経由でアクセスする場合、`curl` が既定で付ける `Host: localhost:8765` は許可リストに入っています。別のドメイン名でアクセスする前に、まず `XEXAM_ALLOWED_HOSTS` を設定してください。`curl` は `Origin` を送らないので、Origin の検査は通ります（AI のルートの認証ステップでも同じです）。`cookies.txt` には有効なセッションが入っているので、ほかの人に見せず、使い終わったら削除してください。

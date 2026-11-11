@@ -212,8 +212,54 @@ pub fn session_token(headers: &axum::http::HeaderMap) -> Option<String> {
     token_cookie(headers, SESSION_COOKIE)
 }
 
-/// HMAC-SHA-256 (RFC 2104).
-fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
+/// The session token of an AI request (v0.8, the auth step `GET /internal/ai/auth`), read so that it is always the key
+/// Nginx gives the per-session limit on starting AI answers (`limit_req_zone $cookie_xexam_session`). Nginx takes the
+/// first cookie whose name matches in any letter case (a new pair starts after a `;` or a `,`, then spaces; the value
+/// runs to the next `;`), with its value as written, and does not count an empty value; so an empty `xexam_session=` in
+/// front, a second cookie of that name in another case or behind a comma or a tab, or a padded or quoted value would put
+/// a signed-in request under another key, or under none. Therefore:
+/// - exactly one cookie may be named `xexam_session` in any letter case, counted over every `Cookie` header, with pairs
+///   split at `;` and also at `,`, names trimmed of whitespace and headers read as bytes (a header that is not ASCII is
+///   counted too);
+/// - that cookie must be written `xexam_session=<token>` exactly: lower-case name, `=` right after it, a value with the
+///   shape of a token and nothing else up to the next `;` (only spaces may come before the name).
+///
+/// Anything else is no session. Browsers send one `xexam_session=<token>` pair, so only hand-made requests are refused.
+/// The other routes keep reading the cookie with [`session_token`] (no limit is keyed on it there).
+pub fn single_session_token(headers: &axum::http::HeaderMap) -> Option<String> {
+    let name = SESSION_COOKIE.as_bytes();
+    let mut named = 0usize;
+    let mut found = None;
+    for value in headers.get_all(axum::http::header::COOKIE) {
+        for pair in value.as_bytes().split(|&b| b == b';') {
+            named += pair
+                .split(|&b| b == b',')
+                .filter(|part| {
+                    part.iter()
+                        .position(|&b| b == b'=')
+                        .is_some_and(|i| part[..i].trim_ascii().eq_ignore_ascii_case(name))
+                })
+                .count();
+            let start = pair.iter().position(|&b| b != b' ').unwrap_or(pair.len());
+            let token = pair[start..]
+                .strip_prefix(name)
+                .and_then(|rest| rest.strip_prefix(b"="))
+                .and_then(|v| std::str::from_utf8(v).ok())
+                .filter(|v| token_shaped(v));
+            if let Some(t) = token {
+                found = Some(t.to_string());
+            }
+        }
+    }
+    if named == 1 {
+        found
+    } else {
+        None
+    }
+}
+
+/// HMAC-SHA-256 (RFC 2104). Also signs the identity statement for the AI service (`api::internal`, v0.8).
+pub(crate) fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     let mut block = [0u8; 64];
     if key.len() > block.len() {
         let digest = Sha256::digest(key);
@@ -375,6 +421,97 @@ mod tests {
             expired_cookie(false),
             "xexam_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0"
         );
+    }
+
+    #[test]
+    fn the_ai_auth_step_reads_exactly_one_session_cookie() {
+        let t = new_session_token();
+        let u = new_session_token();
+        let of = |cookies: &[&[u8]]| {
+            let mut headers = HeaderMap::new();
+            for c in cookies {
+                headers.append("cookie", HeaderValue::from_bytes(c).expect("v"));
+            }
+            single_session_token(&headers)
+        };
+        let s = |v: String| v.into_bytes();
+        // one pair, also among other cookies and after extra spaces
+        for ok in [
+            s(format!("xexam_session={t}")),
+            s(format!("theme=dark; xexam_session={t}; other=a,b")),
+            s(format!("a=1;  xexam_session={t};b=2")),
+            s(format!(
+                "xexam_session_x=1; x_xexam_session=2; xexam_session={t}"
+            )),
+        ] {
+            assert_eq!(
+                of(&[&ok]),
+                Some(t.clone()),
+                "{}",
+                String::from_utf8_lossy(&ok)
+            );
+        }
+        assert_eq!(
+            of(&[b"theme=dark", t.as_bytes()]),
+            None,
+            "no pair, no token"
+        );
+        assert_eq!(
+            of(&[b"theme=dark", format!("xexam_session={t}").as_bytes()]),
+            Some(t.clone())
+        );
+        // anything Nginx would key differently, or not at all
+        for bad in [
+            s(format!("xexam_session=; xexam_session={t}")),
+            s(format!("xexam_session={t}; xexam_session=")),
+            s(format!("XEXAM_SESSION=junk; xexam_session={t}")),
+            s(format!("xexam_session={t}; Xexam_Session={u}")),
+            s(format!("xexam_session={t}; xexam_session={t}")),
+            s(format!("xexam_session={t},xexam_session=x")),
+            s(format!("a=b, XEXAM_session=x; xexam_session={t}")),
+            s(format!("xexam_session ={t}")),
+            s(format!("xexam_session= {t}")),
+            s(format!("xexam_session={t} ; a=1")),
+            s(format!("xexam_session=\"{t}\"")),
+            s(format!("\txexam_session={t}")),
+            s(format!("XEXAM_SESSION={t}")),
+            s(format!("xexam_session={t}x")),
+            s("xexam_session=short".to_string()),
+        ] {
+            assert_eq!(of(&[&bad]), None, "{}", String::from_utf8_lossy(&bad));
+        }
+        // one pair per header, two headers: two cookies of that name
+        assert_eq!(
+            of(&[
+                format!("xexam_session={t}").as_bytes(),
+                format!("xexam_session={u}").as_bytes()
+            ]),
+            None
+        );
+        assert_eq!(
+            of(&[
+                b"xexam_session=\xff",
+                format!("xexam_session={t}").as_bytes()
+            ]),
+            None,
+            "a header that is not ASCII is counted too"
+        );
+        // bytes outside ASCII in another cookie do not matter
+        assert_eq!(
+            of(&[&[
+                b"a=\xff; ".as_slice(),
+                format!("xexam_session={t}").as_bytes()
+            ]
+            .concat()]),
+            Some(t.clone())
+        );
+        // the other routes stay as lenient as before
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "cookie",
+            HeaderValue::from_str(&format!("xexam_session=; xexam_session={t}")).expect("v"),
+        );
+        assert_eq!(session_token(&headers), Some(t));
     }
 
     #[test]

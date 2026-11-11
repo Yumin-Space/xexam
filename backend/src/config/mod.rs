@@ -19,6 +19,10 @@ pub struct Config {
     pub version: String,
     /// `XEXAM_SQLITE_JOURNAL`: WAL unless it says `delete` (v0.7; see `database::journal`)
     pub sqlite_journal: JournalMode,
+    /// `XEXAM_LINK_DIR` (v0.8): the directory of `internal.token`, the secret shared with the AI service (see
+    /// `api::internal`). `None` = `<data dir>/link`, resolved by [`Config::link_dir_or_default`] when `serve` starts, after
+    /// the command-line options (so `serve --data X` uses `X/link`). The token itself is never part of the config.
+    pub link_dir: Option<PathBuf>,
 }
 
 pub const MAX_UPLOAD: usize = 20 * 1024 * 1024;
@@ -129,7 +133,50 @@ impl Config {
                 .unwrap_or(30),
             version,
             sqlite_journal: JournalMode::from_env_value(get(JOURNAL_ENV).as_deref()),
+            link_dir: get("XEXAM_LINK_DIR")
+                .filter(|s| !s.trim().is_empty())
+                .map(PathBuf::from),
         }
+    }
+
+    /// The directory of the AI link token: `XEXAM_LINK_DIR` when set, else `link` inside the data directory as it is now
+    /// (call it after the command-line options were applied).
+    pub fn link_dir_or_default(&self) -> PathBuf {
+        self.link_dir
+            .clone()
+            .unwrap_or_else(|| self.data_dir.join("link"))
+    }
+}
+
+#[cfg(test)]
+mod link_dir_tests {
+    use super::*;
+    use std::path::Path;
+
+    fn cfg(env: &[(&str, &str)]) -> Config {
+        Config::from_env_with(
+            &|k| {
+                env.iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| v.to_string())
+            },
+            "0.0.0".to_string(),
+        )
+    }
+
+    #[test]
+    fn the_link_dir_follows_the_data_dir_unless_it_is_set() {
+        let mut c = cfg(&[("XEXAM_DATA", "d1")]);
+        assert_eq!(c.link_dir, None);
+        assert_eq!(c.link_dir_or_default(), Path::new("d1").join("link"));
+        // `serve --data X` changes the data directory after the environment was read: the link directory follows it
+        c.data_dir = PathBuf::from("x");
+        assert_eq!(c.link_dir_or_default(), Path::new("x").join("link"));
+        // An empty value (Compose passes one for `XEXAM_LINK_DIR=` in .env) means unset
+        assert_eq!(cfg(&[("XEXAM_LINK_DIR", " ")]).link_dir, None);
+        let mut c = cfg(&[("XEXAM_LINK_DIR", "/link")]);
+        c.data_dir = PathBuf::from("x");
+        assert_eq!(c.link_dir_or_default(), PathBuf::from("/link"));
     }
 }
 

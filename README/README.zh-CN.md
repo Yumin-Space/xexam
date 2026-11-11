@@ -19,10 +19,15 @@
   <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img width="150" height="28" alt="Docker stars" src="https://img.shields.io/docker/stars/yuminspace/xexam-backend?style=for-the-badge"></a>
   <a href="https://hub.docker.com/r/yuminspace/xexam-backend"><img width="148" height="28" alt="Docker pulls" src="https://img.shields.io/docker/pulls/yuminspace/xexam-backend?style=for-the-badge"></a>
 </p>
+<p align="center">
+  <a href="https://hub.docker.com/r/yuminspace/xexam-ai-service"><img width="369" height="28" alt="Docker image yuminspace/xexam-ai-service" src="https://img.shields.io/badge/Docker%20Image-yuminspace%2Fxexam--ai--service-blue?style=for-the-badge"></a>
+  <a href="https://hub.docker.com/r/yuminspace/xexam-ai-service"><img width="150" height="28" alt="Docker stars" src="https://img.shields.io/docker/stars/yuminspace/xexam-ai-service?style=for-the-badge"></a>
+  <a href="https://hub.docker.com/r/yuminspace/xexam-ai-service"><img width="148" height="28" alt="Docker pulls" src="https://img.shields.io/docker/pulls/yuminspace/xexam-ai-service?style=for-the-badge"></a>
+</p>
 
 # Xexam
 
-Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。电脑和手机（iPhone）都能用。
+Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问。电脑和手机（iPhone）都能用。
 
 ![答题页：一道显示成中文的热点题、English / 中文 / 日本語 切换按钮，以及带交卷按钮的答题卡](../docs/zh-CN/screenshots/desktop-2-quiz.png)
 
@@ -30,8 +35,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v0.7.5**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.7.5**） |
-| 镜像 | 在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend` 和 `docker.io/yuminspace/xexam-backend`，标签 `latest` / `v0.7.5` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend` 和 `ghcr.io/yumin-space/xexam-backend`（私有，标签相同） |
+| 当前版本 | **v0.8**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.8**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v0.8` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -57,10 +62,11 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 - **你自己的题库**：导入的每一份 Excel 工作簿都是一个独立的题库，里面的每个工作表是一组可以挑着做的题。工作簿用六列格式：题目和答案用英语写，愿意的话再加上中文和日语。保存之前会先显示预览，告诉你导入会带来哪些变化。
 - **三种语言**：界面有英语、中文、日语三种，每道题、每个答案和每段解析都可以在 **English**、**中文** 和 **日本語** 之间切换。
 - **学习记录和错题本**：每场考试和每次练习都连同作答保存下来；答错的题留在错题本里，直到连续答对两次。
-- **多人共用一个 Xexam**：每个人都登录使用，有自己的学习记录和设置。管理员决定谁能看到哪些题库、谁可以导入题库（可管理题库的用户），还可以查看后端的 **系统日志**。
+- **多人共用一个 Xexam**：每个人都登录使用，有自己的学习记录和设置。管理员决定谁能看到哪些题库、谁可以导入题库（可管理题库的用户），还可以查看 **系统日志**。
+- **AI 对话**（可选，管理员设置好之前是关闭的）：管理员在 **AI 设置** 里接入 OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway，测试后开启 **AI+ 功能**，再在 **用户管理** 里为每个可以使用的用户开通 **AI+ 功能**。在 **AI 设置** 里，他们可以 **暂停** 和 **恢复** 某个用户的 **AI+ 功能**，而不用收回它。回答边生成边显示（推理模型工作时显示 **正在思考…**），关掉页面也会继续生成；AI 用 **设置** 里选的语言回答；对话会保存下来（默认在 90 天后自动删除）；**记忆** 保存一些简短的笔记，AI 会在以后的对话里参考；管理员可以在 **设置** 的 **AI 对话模式** 里选 **自由模式**，不带学习助手的指示、直接和模型对话。管理员能看到用量统计，也能查看和删除拥有 AI+ 功能的用户的对话和记忆，AI 对话页面会把这一点告诉每个用户。AI 在自己的容器 `ai-service` 里运行，有自己的数据库；服务商的密钥加密保存。
 - **电脑和手机**：窄窄的页头上有一个菜单，宽屏上页面居中显示，手机上的触控区域至少 44 px。
 
-每个页面怎么用、Excel 格式和导入规则：见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md)。
+每个页面怎么用、AI 对话和 AI 设置、Excel 格式和导入规则：见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md)。
 
 ---
 
@@ -82,26 +88,28 @@ curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker
 docker compose up -d
 ```
 
-这会拉取两个镜像，并启动**两个容器**：`xexam-frontend`（Nginx，唯一能从外面连到的）和 `xexam-backend`（Rust，在私有网络里）。
+这会拉取三个镜像，并启动**三个容器**：`xexam-frontend`（Nginx，唯一能从外面连到的）、`xexam-backend`（Rust，在不能上网的私有网络里）和 `ai-service`（Rust，AI 服务；唯一能连到互联网的容器，而且只用来调用管理员设置的 AI 服务商）。它每 25 秒向后端报告一次，所以 Xexam 知道 AI 能不能用。没有 `ai-service`，Xexam 也照样能用，只是没有 AI 对话，**AI 设置** 里会写明 ai-service 没有运行。
 
 **3. 登录。** 在同一台机器上用浏览器打开 <http://localhost:8765>，用用户名 `admin`、密码 `admin` 登录。Xexam 会接着要求你设置自己的密码：请马上设置，因为在那之前，能打开这个页面的人都能用默认密码登录。
 
 **4. 导入题库，开始考试。** 打开菜单（右上角三条横线的按钮），选 **Question banks**（中文界面里叫 **题库管理**），导入你的 Excel 工作簿，然后在 **Home**（**主页**）上开始考试：见 [第一场考试](../docs/zh-CN/usage.md#1-第一场考试)。界面一开始是英语；在 **Settings** → **Language**（中文界面里是 **设置** → **语言**）里换成中文或日语。
 
+**5. AI 对话（可选）。** 在你设置之前 AI 是关闭的：菜单 → **AI 设置**（它会显示 ai-service 有没有连接），选择服务商，填好它的地址和密钥，从列表里选一个模型，点 **测试**，再开启 **AI+ 功能**。管理员马上就能使用 AI 对话；其他用户要等你在 **用户管理** 里为他们开启 **AI+ 功能**（只有 ai-service 已连接、而且 AI+ 功能已开启时，那里才会出现这个开关）。具体步骤见 [docs/zh-CN/usage.md 第 17 节](../docs/zh-CN/usage.md#17-ai-设置)。
+
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里两个镜像的 `:latest` 都改成 `:v0.7.5`，再 `docker compose up -d` |
-| 查看状态 | `docker compose ps`（两个容器都应该是 `healthy`） |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v0.8`，再 `docker compose up -d` |
+| 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
-| 看日志 | `docker compose logs -f backend`（管理员也可以在菜单里打开 **系统日志**） |
+| 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |
 | 看现在是哪个版本、什么架构 | 浏览器打开 <http://localhost:8765/api/info> |
 
-> ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把数据卷 `xexam_data` 一起删掉，题库、用户、学习记录和设置都在里面。
+> ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把两个数据卷一起删掉：`xexam_data`（题库、用户、学习记录和设置）和 `xexam_ai_data`（AI 设置、加密的密钥和解密用的密钥文件、对话和记忆）。
 
 - **从手机或另一台电脑访问**，或者**通过 Cloudflare Tunnel 从互联网访问**：见 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 4 节。
 - **从源码构建镜像**（改代码时用）：在克隆的仓库里运行 `docker compose -f docker/docker-compose.build.yml up -d --build`，见 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 2 节。
-- **备份**：停止 Xexam，把卷打包；命令见 [docs/zh-CN/database.md](../docs/zh-CN/database.md) 第 5 节。
+- **备份**：停止 Xexam，把两个数据卷打包；命令见 [docs/zh-CN/database.md](../docs/zh-CN/database.md) 第 5 节。AI 卷里还有用来解密已保存的 AI 密钥的密钥文件，所以它的备份要像密钥本身一样妥善保管。
 
 ---
 
@@ -119,21 +127,46 @@ docker compose up -d
 | `XEXAM_SQLITE_JOURNAL` | 不设（WAL） | `delete` 让 SQLite 继续用以前的 DELETE 日志，只在数据卷放在特殊的存储上时用（网络文件系统，或者绑定挂载进 Docker 的 Windows 文件夹） |
 | `XEXAM_COOKIE_SECURE` | 不设 | `1` = 会话 Cookie 总是带 `Secure`；只在总是通过 HTTPS 访问 Xexam 时用 |
 | `XEXAM_LOG` | 不设（`info`） | 后端的日志过滤，例如 `debug`；为空 = `info` |
-| `TZ` | 不设（宿主机的时区） | Xexam 显示的时间所用的时区，例如 `TZ=UTC` |
+| `TZ` | 不设（宿主机的时区） | Xexam 显示的时间、以及 AI 用量统计里的日期所用的时区，例如 `TZ=UTC` |
+| `XEXAM_AI_SECRET_KEY` | 不设（AI 卷里的一个密钥文件） | 加密已保存的 AI 服务商密钥所用的密钥：32 字节，写成 64 个十六进制数字或 base64，例如用 `openssl rand -base64 32` 生成。设置它可以让这个密钥和 AI 卷分开存放，这样只拿到那个卷的副本也解不开密钥。它改了或丢了，就要在 **AI 设置** 里重新输入 AI 密钥 |
+| `XEXAM_INTERNAL_TOKEN` | 不设（链接卷里的一个随机令牌） | 后端和 AI 服务共用的令牌；compose 文件把同一个值传给两者。至少 32 个可打印的 ASCII 字符，不能有空格，例如用 `openssl rand -hex 32` 生成。AI 服务自己对后端的调用（例如它的状态报告）也用它来认证。不符合这个规则的值会让 AI 对话无法使用：**AI 设置** 里会写明 ai-service 无法连接，原因写在一行日志里 |
+| `XEXAM_AI_LOG` | 不设（`info`） | AI 服务的日志过滤，和 `XEXAM_LOG` 一样 |
+| `XEXAM_AI_SQLITE_JOURNAL` | 不设（WAL） | `delete` 用于 AI 数据库，和 `XEXAM_SQLITE_JOURNAL` 一样 |
 
-时间跟随宿主机的时区，因为 compose 文件挂载了宿主机的 `/etc/localtime`。宿主机上没有这个文件时，以及在 Docker Desktop（Windows、macOS）上（它的虚拟机通常用的是 UTC），请看 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 3.1 节。每个选项的说明都在那份文档的第 3 节。
+时间跟随宿主机的时区，因为 compose 文件把宿主机的 `/etc/localtime` 挂载进了后端和 AI 服务。宿主机上没有这个文件时，以及在 Docker Desktop（Windows、macOS）上（它的虚拟机通常用的是 UTC），请看 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 3.1 节。每个选项的说明都在那份文档的第 3 节。AI 服务商、它的地址、密钥和模型不在这里设置，而是在程序的 **AI 设置** 里设置。
 
 ---
 
 ## 升级
 
-每次升级都还是同样的两个镜像、同样的端口、同样的卷 `xexam_data`，所以数据原样保留：先 `docker compose pull`，再 `docker compose up -d`。数据库 schema 有变化时，新版本第一次启动会先把数据库的一份备份副本写到卷里的 `/data/backups/`，再在一个事务里迁移数据库。副本写不出来（磁盘满、没有权限）时，后端会拒绝启动，数据库保持原样；`docker compose logs backend` 里会写明原因。
+每次升级都还是同样的端口、同样的卷 `xexam_data`，所以数据原样保留：先 `docker compose pull`，再 `docker compose up -d`。v0.8 新增了第三个镜像和两个卷，所以还需要新的 `docker-compose.yml`（见下一节）。数据库 schema 有变化时，新版本第一次启动会先把数据库的一份备份副本写到卷里的 `/data/backups/`，再在一个事务里迁移数据库。副本写不出来（磁盘满、没有权限）时，后端会拒绝启动，数据库保持原样；`docker compose logs backend` 里会写明原因。
 
-### 从 v0.7 升级到 v0.7.5
+### 从 v0.7.5（或 v0.7）升级到 v0.8
 
-什么都不用做：先 `docker compose pull`，再 `docker compose up -d`。数据库、`docker-compose.yml` 和 `.env` 都保持原样。
+v0.8 新增了 AI 服务：第三个镜像 `xexam-ai-service`（容器和 Compose 服务都叫 `ai-service`）；两个新卷，`xexam_ai_data`（AI 数据库和它的密钥文件）和 `xexam_link`（只放后端和 AI 服务共用的令牌）；以及网络 `egress`（只有 AI 服务能通过它上网）。**请下载新的 `docker-compose.yml`**。用旧的文件，除了 AI 以外一切照常，**AI 设置** 里会提示 ai-service 没有运行。
 
-### 从 v0.6 升级到 v0.7（以及 v0.7.5）
+```bash
+# 1. 备份卷（先停止；备份文件里是你的整个数据库，不要提交它）
+docker compose stop
+docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v075.tgz -C /data .
+
+# 2. 换上新的 docker-compose.yml（你的 .env 保持不变；你对旧文件做过的修改要自己搬过去）
+curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
+
+# 3. 拉取三个镜像并启动（不要用 down -v），然后查看升级信息
+docker compose pull
+docker compose up -d
+docker compose logs backend
+```
+
+- **第一次启动** 会写一份副本 `/data/backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`，并把数据库升级到 schema v5：`users` 表新增两列，即 **AI+** 开关（所有人都是关闭的）和一个身份标记。其他都不变，题库、记录、用户和设置都保留。日志里会写 `Upgraded the database to schema 5`。
+- **AI 是关闭的**，直到管理员在 **AI 设置** 里把它设置好（见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md) 第 17 节）；AI 没有需要迁移的东西。AI+ 功能一开启，管理员就能使用 AI 对话；其他每个用户都需要在 **用户管理** 里开通 **AI+ 功能**，这个开关只有在 ai-service 已连接、而且 AI+ 功能已开启时才能打开。AI 数据库 `xexam-ai.db` 由 ai-service 在第一次启动时创建；如果它来自 v0.8 的某个预发布版本，缺少的列会自动补上。
+- **从现在起要备份什么**：两个数据卷，`xexam_data` 和 `xexam_ai_data`。AI 卷里在 AI 数据库旁边放着密钥文件 `secret.key`，所以它的备份能解密已保存的密钥；设置 `XEXAM_AI_SECRET_KEY` 可以把密钥分开存放。`xexam_link` 不用备份：它为空时后端会生成一个新令牌。
+- 检查 <http://localhost:8765/api/info> 显示 `"version": "0.8"`，并且 `docker compose ps` 列出三个 healthy 的容器（`xexam-frontend`、`xexam-backend` 和 `ai-service`）。
+
+回退到 v0.7.5 就是恢复 `backups/` 里的那份副本，并换回旧的 `docker-compose.yml`；见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 第 1 节。
+
+### 从 v0.6 升级到 v0.7 及以后的版本
 
 > ⚠️ 从 v0.7 起**只能导入六列 Excel 格式**，以前版本的三列或四列格式导入的每道题，**在每次启动时都会被下架**。v0.6 的题库全都是这些格式，所以升级之后，要等你用六列格式的工作簿更新过题库，才有题可做。题库、学习记录和统计都保留。
 
@@ -154,10 +187,10 @@ docker compose up -d
    docker compose logs backend
    ```
 
-   新的 `docker-compose.yml` 跟随宿主机的时区，限制容器日志的大小，并把 `.env` 里的 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG` 传进去。
-3. **第一次启动做什么**（在响应任何请求之前）：写一份副本 `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`，把数据库迁移到 schema v4，并改用 WAL 模式。已有的每个用户都保留已有的每个题库，并设置 **包括以后导入的题库**；每个题库都归第一个管理员；以前的每条记录都是 **考试**；还没有人是可管理题库的用户。然后它下架旧格式的题，日志里每个题库一条警告，例如 `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`。
+   新的 `docker-compose.yml` 跟随宿主机的时区，限制容器日志的大小，把 `.env` 里的 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG` 传进去，还加入了 v0.8 的 AI 服务和它的卷。
+3. **第一次启动做什么**（在响应任何请求之前）：写一份副本 `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`，把数据库迁移到 schema v5（v0.7 和 v0.7.5 停在 v4），并改用 WAL 模式。已有的每个用户都保留已有的每个题库，并设置 **包括以后导入的题库**；每个题库都归第一个管理员；以前的每条记录都是 **考试**；还没有人是可管理题库的用户。然后它下架旧格式的题，日志里每个题库一条警告，例如 `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`。
 4. **用六列格式的文件更新每个旧题库**：**题库管理** → **导入 Excel** → **更新已有题库**，选好题库，上传文件并确认。题库的名字、所有者和能看到它的用户都不变。它的题现在按英语文字识别，所以从没有答题记录开始；旧题仍保持下架，以前的记录里仍然显示它们。也可以把六列格式的文件作为 **新建题库** 导入。
-5. **之后**：决定谁是 **可管理题库** 的用户、每个用户能看到哪些题库（从现在起新添加的用户，在你选好之前看不到任何题库），并检查 <http://localhost:8765/api/info> 显示 `"version": "0.7.5"`。
+5. **之后**：决定谁是 **可管理题库** 的用户、每个用户能看到哪些题库（从现在起新添加的用户，在你选好之前看不到任何题库），并检查 <http://localhost:8765/api/info> 显示 `"version": "0.8"`。在你设置之前 AI 是关闭的（见上一节）。
 
 回退到 v0.6 就是恢复 `backups/` 里的那份副本；命令见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 第 2.6 节。
 
@@ -171,14 +204,14 @@ docker compose up -d
 
 | 文档 | 内容 |
 |---|---|
-| [使用说明](../docs/zh-CN/usage.md) | 每个页面、考试和练习、学习记录、设置、Excel 格式、导入、用户和登录、系统日志、iPhone |
-| [部署](../docs/zh-CN/deployment.md) | 启动、配置、时区、从手机和局域网访问、Cloudflare Tunnel、健康检查、日志、恢复 |
+| [使用说明](../docs/zh-CN/usage.md) | 每个页面、考试和练习、学习记录、设置、Excel 格式、导入、用户和登录、系统日志、AI 对话和 AI 设置、iPhone |
+| [部署](../docs/zh-CN/deployment.md) | 启动、配置、时区、从手机和局域网访问、Cloudflare Tunnel、AI 服务商、备份、健康检查、日志、恢复 |
 | [迁移与回滚](../docs/zh-CN/migration.md) | 每一条升级路径，以及它的检查和回退 |
-| [数据库](../docs/zh-CN/database.md) | 表、题目 id、备份和恢复、schema 迁移 |
-| [安全](../docs/zh-CN/security.md) | 威胁模型、Host / Origin 守卫、登录和锁定、权限、上传检查、Nginx 的限制 |
-| [架构](../docs/zh-CN/architecture.md) | 前端、Nginx 和后端怎样配合、目录结构、请求的流程 |
-| [API](../docs/zh-CN/api.md)（[OpenAPI](../docs/en/openapi.yaml)，英文） | 每个接口、谁可以调用、它的错误 |
-| [开发](../docs/zh-CN/development.md) | 构建和测试、截图工具、CI 和发布 |
+| [数据库](../docs/zh-CN/database.md) | 主数据库和 AI 数据库的表、题目 id、备份和恢复、schema 迁移 |
+| [安全](../docs/zh-CN/security.md) | 威胁模型、Host / Origin 守卫、登录和锁定、权限、上传检查、Nginx 的限制；AI 服务：身份、加密的密钥、管理员能看到什么 |
+| [架构](../docs/zh-CN/architecture.md) | 前端、Nginx、后端和 AI 服务怎样配合、数据边界、目录结构、请求的流程 |
+| [API](../docs/zh-CN/api.md)（[OpenAPI](../docs/en/openapi.yaml)，英文） | 每个接口、AI 路由和它们的事件流、谁可以调用、错误 |
+| [开发](../docs/zh-CN/development.md) | 构建和测试（后端、AI 服务、前端）、截图和图标工具、CI 和发布 |
 
 ---
 
@@ -195,6 +228,39 @@ Xexam 以 [MIT 许可证](../LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 每次更新都要在这里写一条，**版本号和仓库根目录 `VERSION` 文件里的 `CODE_VERSION` 一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
 程序里的 **关于 Xexam** 页面会显示这些记录（它们在构建时打包进前端），所以请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``。链接在那里显示成普通文字。
+
+### v0.8 — 2026-11-11
+
+**AI 对话放在一个单独的容器里，叫 ai-service，还有新图标和更紧凑的题库权限控件。管理员设置好之前 AI 是关闭的。请下载新的 docker-compose.yml：它新增了第三个镜像 xexam-ai-service 和两个卷。数据库会先写一份备份副本，再自动升级到 schema v5。**
+
+- **AI 对话**（菜单里）：和 AI 模型对话。
+  - 回答边生成边显示（推理模型还在思考时显示 **正在思考…**），关掉页面也会继续生成并保存；有 **停止** 和 **重试**。对话会保存下来，并在最后一条消息 90 天后自动删除（可以调整）。
+  - AI 用 **设置** 里选的语言回答（除非你在那条消息里要求用另一种语言）；记忆笔记也用这种语言写。新建的空对话会写明 AI 将用哪种语言回答。
+  - 像聊天程序那样的固定高度窗口：消息在窗口里滚动（用键盘也能到达并滚动这个区域），输入框始终在底部。每条消息都显示时间，并带 **复制**；**记住这个** 和 **重试** 在它下面排成一行。
+  - 地址会记住打开的对话：对话是 `#/ai/<id>`，新对话是 `#/ai/new`，所以刷新后会重新打开同一个对话。
+  - **记忆** 保存一些简短的笔记，AI 会在以后的对话里参考，可以手动添加，也可以用 **记住这个** 添加。页面顶部有一行说明：管理员可以查看和删除你的 AI 对话和记忆，也能看到你的 AI 用量。你随时都能查看和删除自己的对话和记忆，AI+ 功能对你关闭或被暂停时也一样。
+  - 当你不能使用 AI、又没有对话或记忆时，**AI 对话** 仍然能打开，并说明原因（已暂停、AI+ 功能暂时不可用，或你的账号没有开通）以及该怎么做。只读的 AI 对话顶部那一行，和深色 **AI+** 徽章的提示框是同一句话。
+  - **自由模式** 是管理员自己的一种模式，在 **设置** 的 **AI 对话模式** 里选择（**普通模式** / **自由模式**；只有管理员在 AI+ 功能开启时才看得到）。开启后，任何对话（新的或旧的）里的每条消息，都会不带学习助手的指示、今天的日期和记忆发给模型（只保留回复语言规则；服务商自己的安全规则始终有效），**AI 对话** 标题旁边会有绿色的 **自由模式** 标记。AI 对话页面本身没有开关，也没有分隔线。服务器记住这个选择，所以刷新和换设备后都还在；它从下一条消息起生效，默认是关闭的。每条消息都记录它是在哪种模式下写的，切换之后，模型会用一句简短的话得知当前的模式。限制、用量统计和管理员的查看照常。
+  - **更省的请求**：服务商可能缓存每个请求的开头部分（Anthropic：在指示和新问题之前的历史上设缓存点；OpenAI 格式的服务商在支持时自己缓存）。为了让这个开头保持稳定，历史总是用同样的方式缩短：最新的 4 条消息完整保留，更早的回答截到 800 个字符，更早的提问截到 2000 个字符。
+- **AI 设置**（管理员）：
+  - 页面总是能打开。顶部四个标记显示设置进行到哪一步（**连接已保存**、**模型已保存**、**测试成功**、**AI+ 功能已开启**），一行文字说明 ai-service 有没有连接（版本、最后一次报告）。全新安装时第一个标记是 **连接未设置**，在你保存连接之前不会请求模型列表（只保存对话保留天数不算连接）。没有连接时，**ai-service 连接状态** 面板会写明原因（没有运行、已停止、没有连接、在等它的第一次报告，或者主服务本身），并且每 10 秒重新检查一次；
+  - OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway（带它的认证方式和密钥）；保存后自动列出模型，放在一个可搜索的列表里。大概不是对话模型的模型（向量嵌入、重排序、安全分类、图像生成、语音、文档解析、仅图像）排在最后，带标签和提示；没有任何模型被隐藏。密钥输入框有 **显示密钥** / **隐藏密钥** 按钮；
+  - 只有 **测试** 成功后才能开启 **AI+ 功能**。它开着时，保存改过的连接或模型会先询问，然后对所有人关闭它，并一直保持关闭，直到新的测试通过、你再把它开启（测试通过本身绝不会自动开启它；**测试** 下面那一行跟着开关变化）。密钥加密保存，以后不再显示，已保存的密钥不重新输入就绝不会发到新的地址；
+  - 按用户、模型和时间统计的用量（默认 7 天；调用次数、输入和输出 Token、服务商从缓存里提供的 **缓存命中** Token，以及错误，从不包括内容）；
+  - **AI+ 用户**（每个有 AI+ 功能的人）：**AI+ 功能** 一列显示 **使用中** 或 **已暂停**，带 **暂停** 和 **恢复** 按钮（它们从不改变用户管理里的开关），以及他们的对话和记忆的只读视图，可以用 **删除** 删掉；每次查看、删除、暂停和恢复都会写进系统日志。窗口窄于 900 px 时两列 Token 会省掉（它们在 **用量** 里）；窄于 560 px 时每个用户变成一张小卡片；
+  - 对话保留（1 到 3650 天）和 **安全上限**（同时生成的回答数、对话数、消息数、记忆数、消息长度），它们用来保护服务器，不是用量限制。
+- **每个用户两处设置，一个名字**：**AI+ 功能** 是各处统一的名字。管理员在 **AI 设置** 里为所有人开启它，并用 **用户管理** 里的开关把它开通给每个用户（每个用户那一行的开关，**添加用户** 里的勾选框）。只有 ai-service 已连接、功能已开启、用户有这个功能、而且没有被暂停时，用户才能使用 AI。**暂停** 会让正在生成的回答立即停止，用户仍然列在那里，数据也都保留。
+  - 用户管理里的开关只在 ai-service 已连接、而且 AI+ 功能已开启时才出现。否则这些行里没有 AI+ 这一行，页面开头下面有一句说明原因，服务器也会拒绝开启或关闭它，提示 **请先在 AI 设置里开启 AI+ 功能。**（没有发生的修改绝不会提示成功）。已保存的开关保持不变。被暂停的用户，开关旁边会显示 **已暂停** 标记。
+  - 每个现在能使用 AI 的人，名字旁边都有橙色的 **AI+** 徽章。深色的 **AI+** 徽章表示用户有这个功能，但现在不能使用 AI（被暂停、功能已关闭或 ai-service 没有连接；提示框里写着是哪一种，触屏上点一下就会显示；**设置** → **账户** 里会把原因写出来）；没有徽章表示没有这个功能。
+  - 用户永远看不到容器的名字：对他们来说，所有故障都显示 **AI 暂时无法使用，请稍后再试或联系管理员。** 管理员看到的是 **ai-service 未连接。**
+- **ai-service**：AI 作为第三个容器单独运行（文件夹 `ai-service/`，镜像 `xexam-ai-service`），有自己的数据库，放在自己的卷 `xexam_ai_data` 里。它从不接收登录 Cookie：Nginx 先问后端，然后只把一份简短的、签过名的「是谁在请求」的声明传给它。它是唯一能上网的容器；后端仍然不能上网，也从不调用它。ai-service 把自己的状态报告给后端（启动时、有变化时马上、每 25 秒，以及停止时）；超过 60 秒没有报告，后端就认为它没有连接。它停止时 Xexam 照常可用。系统日志在每次重新连接时写一条 `AI: AI link: connected to the main service`，连接断开时写 `AI: AI link: lost the main service`。
+- **用户管理**：在 **添加用户** 和 **更改** 里，**管理题库**、**全选** 和 **全部不选** 排成一行，放在题库列表上方，**包括以后导入的题库** 是列表的第一项，说明都改成了提示框。**管理题库** 从 **编辑** 移到了这里。
+- **学习记录**：每一行的 **删除** 按钮在窄窗口里不再折成两行。
+- **新图标**：用于程序、浏览器标签页和手机主屏幕。
+- **配置**：可选的 `XEXAM_AI_SECRET_KEY`（加密已保存的 AI 密钥所用的密钥；默认是 AI 卷里的一个密钥文件）、`XEXAM_INTERNAL_TOKEN`（后端和 ai-service 之间的令牌；默认是卷 `xexam_link` 里的一个随机令牌）、`XEXAM_AI_LOG` 和 `XEXAM_AI_SQLITE_JOURNAL`。从现在起请备份两个数据卷。
+- **数据库 schema v5**：新增列 `users.ai_enabled` 和 `users.uid`；迁移前会把副本写到 `<数据目录>/backups/xexam-schema4-<日期时间>.db`。ai-service 有自己的数据库 `xexam-ai.db`（schema 2，带 `users.function_enabled`、`users.free_mode`、`messages.free` 和 `usage.tokens_cached`）；早期预发布版本的数据库里缺少的 schema 2 的列，会在启动时自动补上。两个服务都不会打开对方的数据库。
+- **新 API**：`/api/ai/*`，由 ai-service 响应（`send` 和 `retry` 以 server-sent events 流式返回回答，并接受回复语言 `lang`；请求体里的 `free` 会被忽略）；`POST /api/ai/free`（管理员）和 `GET /api/ai/status` 里的 `freeMode`；`POST /api/ai/admin/suspend` 和 `resume`；已登录用户里新增 `aiAllowed`，`/api/auth/state` 里新增 `aiAvailable`（管理员还有 `aiService`），`/api/users`、`/api/users/create` 和 `/api/users/update` 里新增 `ai`、`aiSuspended` 和 `aiAvailable`；用量里新增 `tokensCached`；内部的 `POST /internal/ai/heartbeat`。
+- 测试：后端 316 → 342，前端 139 → 246，AI 服务 160。
 
 ### v0.7.5 — 2026-11-11
 

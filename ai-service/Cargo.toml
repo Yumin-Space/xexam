@@ -1,0 +1,55 @@
+[package]
+name = "xexam-ai-service"
+version = "0.8.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.89"
+publish = false
+description = "Xexam AI service (Axum + SQLite): AI Chat, AI Memory and the administrators' AI settings"
+
+[[bin]]
+name = "xexam-ai-service"
+path = "src/main.rs"
+
+[lib]
+name = "xexam_ai_service"
+path = "src/lib.rs"
+
+[dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net", "time", "sync"] }
+tower-http = { version = "0.7.1", default-features = false, features = ["catch-panic"] }
+bytes = "1.11.1"
+futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["preserve_order"] }
+rusqlite = { version = "0.41.1", default-features = false, features = ["bundled"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["rustls-no-provider", "stream"] }
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+ring = "0.17.14"
+webpki-roots = "1.0.11"
+chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] }
+zeroize = "1.9.1"
+sha2 = "0.11.1"
+subtle = "2.6.1"
+getrandom = "0.4.3"
+base64 = "0.22.1"
+jiff = "=0.2.38"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "std"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5.3", default-features = false, features = ["util"] }
+http-body-util = "0.1.5"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "unwind"
+overflow-checks = true
+
+[lints.rust]
+unsafe_code = "forbid"

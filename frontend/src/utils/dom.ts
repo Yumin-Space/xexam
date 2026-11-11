@@ -59,3 +59,44 @@ export function must<T extends Element>(sel: string, root: ParentNode = document
   if (!el) throw new Error('Missing page element: ' + sel);
   return el;
 }
+
+interface Caret {
+  value: string;
+  start: number;
+  end: number;
+  dir: 'forward' | 'backward' | 'none' | undefined;
+}
+
+/** The caret (or selection) of a text field, or null for any other element and for input types without one (number, …) */
+function caretOf(el: Element | null): Caret | null {
+  if (!(el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) return null;
+  try {
+    const { selectionStart: start, selectionEnd: end } = el;
+    if (start == null || end == null) return null;
+    return { value: el.value, start, end, dir: el.selectionDirection ?? undefined };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Runs a redraw and keeps the keyboard focus on the element with the same id (when it still exists). A text field drawn
+ * anew with the same text also gets its caret or selection back, so typing goes on where it was (without this the caret
+ * jumps to the end when a background load redraws the page).
+ */
+export function keepFocus(draw: () => void): void {
+  const before = document.activeElement;
+  const id = before instanceof HTMLElement && before !== document.body ? before.id : '';
+  const caret = caretOf(before);
+  draw();
+  if (!id) return;
+  const again = document.getElementById(id);
+  if (!again) return;
+  if (again !== document.activeElement) again.focus({ preventScroll: true });
+  if (!caret || !(again instanceof HTMLInputElement || again instanceof HTMLTextAreaElement) || again.value !== caret.value) return;
+  try {
+    if (again.selectionStart !== caret.start || again.selectionEnd !== caret.end) again.setSelectionRange(caret.start, caret.end, caret.dir);
+  } catch {
+    // an input type without a caret
+  }
+}

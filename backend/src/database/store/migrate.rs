@@ -43,10 +43,19 @@
 //!
 //! Without a mark (a database first opened by a build that did not write it) such rows cannot be told apart, so only the
 //! mark is written.
+//!
+//! Schema v4 → v5 (v0.8), in the same way once more: `meta.schema` `"4"` (or older) gets ONE backup named after the schema
+//! the file had (`backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db` for a v4 database), then every pending step runs in ONE
+//! transaction, the pre-release v4 conversion included (so a pre-release v4 database also gets exactly one backup). The v5
+//! step adds `users.ai_enabled` (every user starts with AI+ off) and `users.uid` (a random identity stamp of 32 lower-case
+//! hex digits for every user), then stamps the schema `"5"`. Every later open checks (read-only) for users with an empty
+//! stamp (created by an older binary after a rollback: it does not know the column, so the default `''` stays) and gives
+//! them one.
 use super::super::pyjson;
 use super::super::schema::{
     MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
     MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS,
+    V5_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -69,7 +78,7 @@ pub(super) struct Upgrade {
     pub converted_prerelease: bool,
 }
 
-/// Brings the database opened at `db_path` up to schema v4.
+/// Brings the database opened at `db_path` up to schema v5.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -80,10 +89,14 @@ pub(super) fn upgrade(
         None | Some("1") => 1,
         Some("2") => 2,
         Some("3") => 3,
-        // "4", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 4,
+        Some("4") => 4,
+        // "5", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 5,
     };
-    if from < 4 {
+    // Read-only check, before anything is written
+    let pre = from == 4 && is_prerelease_v4(conn)?;
+    if from < 5 || pre {
+        // ONE backup of the state before this open, named after the schema the file had
         if has_any_data(conn)? {
             out.backup = Some(write_backup(conn, db_path, from)?);
         }
@@ -97,15 +110,16 @@ pub(super) fn upgrade(
             } else {
                 false
             };
-            migrate_v4(c)?;
+            if from < 4 {
+                migrate_v4(c)?;
+            }
+            if pre {
+                convert_prerelease_v4(c)?;
+            }
+            migrate_v5(c)?;
             Ok(created)
         })?;
-    } else if is_prerelease_v4(conn)? {
-        if has_any_data(conn)? {
-            out.backup = Some(write_backup(conn, db_path, 4)?);
-        }
-        run_tx(conn, convert_prerelease_v4)?;
-        out.converted_prerelease = true;
+        out.converted_prerelease = pre;
     }
     // Before anything that may create a bank (the attach below): banks an older binary created are found by their id
     if needs_unknown_bank_grants(conn)? {
@@ -121,6 +135,10 @@ pub(super) fn upgrade(
     }
     if needs_bank_access_fixup(conn)? {
         run_tx(conn, bank_access_fixup)?;
+    }
+    // Last: users an older binary created after a rollback have no identity stamp yet
+    if needs_uid_fixup(conn)? {
+        run_tx(conn, fill_missing_uids)?;
     }
     Ok(out)
 }
@@ -200,7 +218,7 @@ pub fn free_backup_path_for(dir: &Path, schema: u32, stamp: &str) -> PathBuf {
     }
 }
 
-fn has_column(c: &Connection, table: &str, column: &str) -> Result<bool, DbError> {
+pub(super) fn has_column(c: &Connection, table: &str, column: &str) -> Result<bool, DbError> {
     Ok(c.query_row(
         "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name=?2",
         params![table, column],
@@ -275,7 +293,8 @@ fn every_bank_for_users(c: &Connection, only_above: Option<i64>) -> Result<(), D
 
 /// The v4 DDL and its backfill (inside the caller's transaction): every user that exists keeps seeing every bank (a row for
 /// each, and `new_banks = 1` for the banks created later), every bank is owned by the first administrator. `attempts.kind`
-/// needs no backfill: its default `'exam'` is what every older record is.
+/// needs no backfill: its default `'exam'` is what every older record is. The schema is stamped by [`migrate_v5`], which
+/// always runs after it in the same transaction.
 fn migrate_v4(c: &Connection) -> Result<(), DbError> {
     c.execute_batch(MIGRATE_V4_TABLES)?;
     for (table, column, definition) in V4_COLUMNS {
@@ -288,8 +307,42 @@ fn migrate_v4(c: &Connection) -> Result<(), DbError> {
     c.execute("UPDATE users SET new_banks=1", [])?;
     users::note_known_users(c)?;
     banks::note_known_banks(c)?;
-    give_ownerless_banks(c)?;
+    give_ownerless_banks(c)
+}
+
+/// The v5 DDL and its backfill (inside the caller's transaction): `users.ai_enabled` (0 for everyone: AI+ starts off) and
+/// `users.uid` (a random stamp for every user), then the schema version.
+fn migrate_v5(c: &Connection) -> Result<(), DbError> {
+    for (table, column, definition) in V5_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    fill_missing_uids(c)?;
     set_schema(c, SCHEMA_VERSION)
+}
+
+/// Gives every user without an identity stamp a random one (32 lower-case hex digits; inside the caller's transaction).
+fn fill_missing_uids(c: &Connection) -> Result<(), DbError> {
+    c.execute(
+        "UPDATE users SET uid = lower(hex(randomblob(16))) WHERE uid = ''",
+        [],
+    )?;
+    Ok(())
+}
+
+/// Read-only check run on every open of a v5 database: users with an empty identity stamp (created by an older binary
+/// after a rollback, which does not know `users.uid`).
+fn needs_uid_fixup(c: &Connection) -> Result<bool, DbError> {
+    if !table_exists(c, "users")? || !has_column(c, "users", "uid")? {
+        // A database of a newer, unknown schema without our column: leave it alone
+        return Ok(false);
+    }
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE uid = '')",
+        [],
+        |r| r.get(0),
+    )?)
 }
 
 /// A v4 database written by a pre-release build of v0.7: it still has `users.all_banks` (read-only check).

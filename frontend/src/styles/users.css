@@ -64,51 +64,75 @@
 .us-add-note { margin: 12px 0 0; max-width: 46em; font-size: 13px; line-height: 1.6; color: var(--ink2); }
 .us-add .err { margin: 12px 0 0; font-size: 14px; }
 .us-add .acts { margin-top: 12px; }
-/* The question banks of the new user (left) and the bank-manager permission (right) */
-.us-add-access { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px 16px; align-items: start; margin-top: 14px; }
-.us-add-side { min-width: 0; }
+/* The question banks of the new user (v0.8: one column; Manage banks lives in the bank controls) */
+.us-add-access { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px 16px; align-items: start; margin-top: 14px; }
 .us-add .us-check { margin-top: 0; background: var(--card); }
-.us-adminnote { margin-top: 8px; }
+/* The role, and under it the AI+ box on its own line (v0.8; hidden for an administrator) */
+.us-rolecol { display: grid; gap: 8px; align-content: start; min-width: 0; }
+.us-aiwrap { justify-self: start; }
+.us-aiwrap[hidden] { display: none; }
+.us-aibox { align-items: center; gap: 8px; padding: 6px 12px 6px 10px; }
+.us-aibox input { margin: 0; }
+.us-aibox .dlg-check-l { font-size: 14px; }
 
-/* ---------- Question banks checklist (Add user form, "Question banks" dialog) ---------- */
-.us-banksfld { min-width: 0; }
-.us-banksfld legend { margin-bottom: 2px; }
-.us-banksfld > .fld-hint { margin-bottom: 6px; }
+/* ---------- Question banks (Add user form, the "Change" dialog), v0.8 as the owner drew it ----------
+   The legend with its info button on one line; then one row of tools (Manage banks, Select all, Deselect all) that sits
+   directly on top of the list and shares its border; "Include banks imported later" is the first entry of the list, set
+   apart by its icon, a soft fill and a thin divider. No helper paragraphs: the explanations are tooltips. */
+.us-banksfld { display: block; gap: 0; min-width: 0; }
+.us-banksfld > legend { float: left; margin: 0; line-height: 24px; }
+.us-legend-tip { float: left; margin-left: 6px; }
+.us-banktools {
+  clear: both; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 6px 10px; margin-top: 4px;
+  border: 1px solid var(--line-soft); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--card);
+}
+.us-banktools > .has-tip[hidden] { display: none; }
+.us-tool {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 13.5px; line-height: 1.4; color: var(--ink2);
+  cursor: pointer; white-space: nowrap;
+}
+.us-tool input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--print); }
+.us-tool:has(input:disabled) { cursor: default; opacity: .55; }
+/* "Deselect all" with nothing ticked: shown ticked, dimmed, the click does nothing (still focusable) */
+.us-tool:has(input[aria-disabled="true"]) { cursor: default; color: var(--ink3); }
+.us-tool:has(input[aria-disabled="true"]) input { opacity: .55; }
 .us-bank {
   display: flex; align-items: flex-start; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1.45;
 }
 @media (hover: hover) { .us-bank:hover:not(:has(input:disabled)) { background: var(--hover); } }
 .us-bank input { width: 17px; height: 17px; margin: 1px 0 0; flex: none; accent-color: var(--print); }
 .us-bank:has(input:disabled) { cursor: default; }
+.us-bank .us-mi { margin-top: 2px; }
 /* The name, and who uploaded the bank in small grey text after it (under it when the line is full) */
 .us-bank-t { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
 .us-bank-n { color: var(--ink); overflow-wrap: anywhere; }
 .us-bank:has(input:disabled) .us-bank-n { color: var(--ink2); }
 .us-bank-h { font-size: 12.5px; color: var(--ink3); }
-/* The line above the list (v0.7): "Include banks imported later" on the left, "Select all" at its right end (above the boxes
-   of the list); on a narrow screen the two wrap onto two lines, "Select all" still at the right */
-.us-bankhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 12px; margin: 2px 0 6px; }
-.us-bankopt {
-  display: inline-flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer;
-  font-size: 14px; line-height: 1.45; color: var(--ink);
-}
-@media (hover: hover) { .us-bankopt:hover:not(:has(input:disabled)) { background: var(--hover); } }
-.us-bankopt input { width: 17px; height: 17px; margin: 1px 0 0; flex: none; accent-color: var(--print); }
-.us-bankopt:has(input:disabled) { cursor: default; color: var(--ink2); }
-.us-selall { margin-left: auto; color: var(--ink2); }
-/* A long list scrolls inside its own frame, so the buttons of the form stay in reach */
+/* A long list scrolls inside its own frame, so the buttons of the form stay in reach; it touches the tools row */
 .us-banklist {
   list-style: none; margin: 0; padding: 2px; max-height: 248px; overflow-y: auto; overscroll-behavior: contain;
-  border: 1px solid var(--line-soft); border-radius: 8px; background: var(--card);
+  border: 1px solid var(--line-soft); border-radius: 0 0 8px 8px; background: var(--card);
 }
-.us-banks-empty { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--ink3); }
+.us-later-row { margin: -2px -2px 2px; padding: 2px; background: var(--fill); border-bottom: 1px solid var(--line-soft); }
+.us-later-row > .has-tip { display: flex; }
+.us-later-row .us-bank { flex: 1; }
+@media (hover: hover) { .us-later-row .us-bank:hover:not(:has(input:disabled)) { background: var(--hover-strong); } }
+.us-banks-empty { padding: 8px 10px; font-size: 13px; line-height: 1.6; color: var(--ink3); }
 .dlg-form > .us-banksfld { margin-top: 14px; }
 dialog .us-banklist { max-height: min(248px, 40vh); }
 
-/* The page's own checkboxes (account enabled, bank manager) are blue, not the red of the delete confirmations */
+/* The page's own checkboxes (account enabled, AI+) are blue, not the red of the delete confirmations */
 .us-check input { accent-color: var(--print); }
 .us-check:has(input:disabled) { cursor: default; }
-.dlg-form > .us-manager { margin-top: 10px; }
+
+/* AI+ of a row (v0.8): a small switch for a plain user; administrators always have AI while it is enabled */
+.us-ailine { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
+.us-ai-l { font-size: 12.5px; font-weight: 700; letter-spacing: .02em; color: var(--ink2); }
+.us-ai-admin { color: var(--ink3); }
+.us-ai-paused { font-size: 12px; }
+/* Why the AI+ switches are hidden (one short line under the page lead) */
+.us-ainote { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--hover); color: var(--ink2); font-size: 13px; line-height: 1.6; }
+.us-tags .ai-badge { margin-left: 2px; }
 
 /* Role: a segmented choice with radio semantics (the recipe of the segmented control in main.css) */
 .us-rolefld legend { margin-bottom: 4px; }
@@ -154,5 +178,11 @@ dialog .us-banklist { max-height: min(248px, 40vh); }
   .page-users .btn.us-mini::after { content: ""; position: absolute; inset: -9px -3px; }
   .us-acts { gap: 18px 8px; }
   .us-seg-o { min-height: 40px; }
-  .us-bank, .us-bankopt { padding-block: 10px; }
+  .us-bank { padding-block: 10px; }
+  .us-tool { min-height: 40px; }
+}
+
+/* Phones: the tools row wraps; the labels stay */
+@media (max-width: 560px) {
+  .us-banktools { gap: 0 12px; }
 }

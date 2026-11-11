@@ -1,16 +1,28 @@
 # -*- coding: utf-8 -*-
 """Fills a fresh, throw-away Xexam instance with the demo data of the screenshots, through the public API only.
 
-prepare(base, banks)   before the backend restart: the default administrator chooses a demo password and imports
-                       "General knowledge"; sam (user and bank manager) imports "Kitchen basics" as its owner; alex and kim
-                       (users who see only "General knowledge") are added; the administrator gets two practice records.
+prepare(base, banks, stub_base)
+                       before the backend restart: the default administrator chooses a demo password and imports
+                       "General knowledge"; sam (user, bank manager) imports "Kitchen basics" as its owner; alex and kim
+                       (users who see only "General knowledge") are added; the administrator gets two practice records;
+                       AI is set up with the made-up provider at `stub_base` (key, model, test, the AI+ feature on) and
+                       the administrator saves two memories. Only then (the AI+ feature of a user can be switched only
+                       while AI+ is available) sam and alex get the AI+ feature and alex's AI+ feature is paused, so
+                       Users and AI settings show a bright and a dark badge, an Active and a Paused row. No AI chat is
+                       seeded (the AI Chat scene makes its own).
 activity(base)         after the restart, so the System log page shows everyday lines with usernames: sign-ins (alex's
                        first one, with the password change), an administrator who creates lee (administrator) and updates
-                       kim (disabled), and a made-up username without an account that is guessed until it locks.
+                       kim (disabled), and a made-up username without an account that is guessed until it locks. Then it
+                       waits until ai-service has reported to the restarted backend (AI+ available again, at most 40 s).
                        Returns the administrator's session cookie for the browser.
 seed_exams(base, cookie)  three earlier exams of the administrator, so the records pages look used.
 
-Every password here is a made-up demo value for a container that is deleted at the end of the run.
+ai_chat(base, cookie, text, lang)  one AI chat through the API, answered in `lang` (en, zh or ja: the Settings language
+                       the AI Chat page would send); the answer is read to its end; returns the chat id.
+delete_ai_chats(base, cookie) deletes every AI chat of the administrator again.
+
+Every password, key, address and model here is a made-up demo value for an instance that is deleted at the end of the
+run; the screenshots show only these.
 """
 import json
 import os
@@ -26,6 +38,10 @@ DEFAULT_PASSWORD = 'admin'                  # what a fresh data directory starts
 DEMO_PASSWORD = 'demo-password-2026'
 INITIAL = 'demo-initial-2026'               # the initial password an administrator gives a new user
 COOKIE = 'xexam_session'
+# A made-up key that only the stub provider (tests/integration/ai_stub.py) accepts; AI settings shows it as "...9c21"
+AI_KEY = 'sk-demo-shots-7f3a9c21'
+AI_MODEL = 'demo-chat-small'
+MEMORIES = ['I am preparing for a kitchen safety course.', 'Prefers short answers with one example.']
 
 
 class Session:
@@ -84,8 +100,9 @@ def _results(questions, wrong):
     return out
 
 
-def prepare(base, banks):
-    """`banks`: {file name: path} from demo_banks.build()."""
+def prepare(base, banks, stub_base):
+    """`banks`: {file name: path} from demo_banks.build(); `stub_base`: the base URL of the made-up AI provider as the AI
+    service reaches it."""
     admin = Session(base).sign_in(ADMIN, DEFAULT_PASSWORD)
     admin.import_new(banks[demo_banks.GENERAL])
     general = next(b['id'] for b in admin.call('/api/banks')['banks'] if b['name'].startswith('General'))
@@ -101,6 +118,67 @@ def prepare(base, banks):
     for wrong, seconds in (({0, 2}, 240), ({2}, 205)):
         admin.call('/api/attempt', {'results': _results(bank, wrong), 'sheets': sorted({q['sheet'] for q in bank}),
                                     'mode': 'all', 'seconds': seconds, 'kind': 'practice'})
+    setup_ai(admin, stub_base)
+    # The AI+ feature of a user can be switched only while AI+ is available (ai-service connected, the AI+ feature on;
+    # the enable call above answers after ai-service has reported that): sam and alex get it, then alex's AI+ feature
+    # is paused in AI settings
+    for name in ('sam', 'alex'):
+        admin.call('/api/users/update', {'id': admin.user_id(name), 'ai': True})
+    row = admin.call('/api/ai/admin/suspend', {'userId': admin.user_id('alex')})['user']
+    print('  AI+ feature: sam, alex (AI+ feature of %s: %s)'
+          % (row['username'], 'paused' if row['suspended'] else 'NOT PAUSED'))
+
+
+def setup_ai(admin, stub_base):
+    """AI settings as an administrator would fill them in: provider and key, the models listed, the model saved, the test,
+    the AI+ feature switched on; then two memories of the administrator."""
+    admin.call('/api/ai/admin/settings', {'provider': 'openai', 'baseUrl': stub_base, 'apiKey': AI_KEY})
+    models = admin.call('/api/ai/admin/models', {})
+    if AI_MODEL not in models.get('models', []):
+        raise RuntimeError('the made-up AI provider did not list %s: %r' % (AI_MODEL, models))
+    admin.call('/api/ai/admin/settings', {'model': AI_MODEL})
+    test = admin.call('/api/ai/admin/verify', {})
+    if not test.get('ok'):
+        raise RuntimeError('the AI test call failed: %r' % test)
+    admin.call('/api/ai/admin/enable', {'enabled': True})
+    for text in MEMORIES:
+        admin.call('/api/ai/memories/add', {'content': text, 'source': 'manual'})
+    print('  AI: enabled with %s (test %s ms), %d memories' % (AI_MODEL, test.get('latencyMs'), len(MEMORIES)))
+
+
+def ai_chat(base, cookie, text, lang):
+    """Starts a new AI chat with `text` through the API, answered in `lang` (en, zh or ja), and reads the streamed
+    answer to its end; returns the chat id."""
+    s = Session(base)
+    s.cookie[COOKIE] = cookie
+    payload = {'chatId': None, 'text': text, 'lang': lang}
+    req = urllib.request.Request(s.base + '/api/ai/send', data=json.dumps(payload).encode(),
+                                 method='POST', headers={'Origin': s.base, 'Content-Type': 'application/json',
+                                                         'Cookie': '%s=%s' % (COOKIE, cookie)})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        body = r.read().decode('utf-8')
+    events = []
+    for block in body.replace('\r\n', '\n').split('\n\n'):
+        name = next((l[6:].strip() for l in block.split('\n') if l.startswith('event:')), 'message')
+        data = '\n'.join(l[5:].lstrip() for l in block.split('\n') if l.startswith('data:'))
+        if data:
+            events.append((name, json.loads(data)))
+    if not events or events[0][0] != 'start' or events[-1][0] != 'done':
+        raise RuntimeError('the AI answer did not finish: %r' % [n for n, _ in events])
+    return events[0][1]['chatId']
+
+
+def set_free(base, cookie, free):
+    """Turns the signed-in administrator's AI free mode on or off (POST /api/ai/free); returns the mode now stored."""
+    s = Session(base)
+    s.cookie[COOKIE] = cookie
+    return s.call('/api/ai/free', {'free': bool(free)}).get('free')
+
+
+def delete_ai_chats(base, cookie):
+    s = Session(base)
+    s.cookie[COOKIE] = cookie
+    return s.call('/api/ai/chats/delete', {'all': True}).get('deleted', 0)
 
 
 def activity(base, pause=1.0):
@@ -124,7 +202,22 @@ def activity(base, pause=1.0):
             codes.append(e.code)
         time.sleep(0.4)
     print('  made-up username "guest": answers %s' % ' '.join(map(str, codes)))
+    waited = wait_ai_available(admin)
+    print('  AI+ available again %.0f s after the activity' % waited)
     return admin.cookie[COOKIE]
+
+
+def wait_ai_available(admin, seconds=40):
+    """Waits until GET /api/users says aiAvailable: after a restart the backend knows nothing about ai-service until its
+    next report (every 25 s; 5 s after a failed one). Returns the seconds waited."""
+    started = time.time()
+    while True:
+        if admin.call('/api/users').get('aiAvailable') is True:
+            return time.time() - started
+        if time.time() - started >= seconds:
+            raise RuntimeError('AI+ was not available again %d s after the activity that follows the backend restart '
+                               '(GET /api/users aiAvailable stayed false)' % seconds)
+        time.sleep(0.5)
 
 
 def seed_exams(base, cookie):

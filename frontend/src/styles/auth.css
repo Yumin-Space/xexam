@@ -12,6 +12,8 @@
   background: var(--card); border: 1px solid var(--line-soft); border-radius: 12px; box-shadow: var(--shadow-xs);
 }
 .auth-brand { margin-bottom: 24px; }
+/* v0.8: the app icon is a little bigger on the sign-in page */
+.auth-brand .logo { width: 40px; height: 40px; border-radius: 11px; }
 .auth-card h1 { margin-bottom: 4px; font-size: 22px; font-weight: 700; line-height: 1.3; }
 .auth-card h1:lang(en) { letter-spacing: -.01em; }
 .auth-lead { margin-bottom: 20px; font-size: 14.5px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }

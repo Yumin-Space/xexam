@@ -1,7 +1,10 @@
 # Screenshot tool
 
-Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 13 desktop and 4 iPhone images per
-language) from a throw-away Xexam instance that holds only made-up demo data. Run it from the repository root:
+Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 16 desktop and 4 iPhone images per
+language, 20 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
+made up, also on the AI pages: the stub's address `http://ai-stub:9000/v1`, the fake key (shown as `…9c21`), the
+`demo-*` models, the demo users and banks. The tool never connects to any other instance, so real addresses, keys or
+model choices cannot appear. Run it from the repository root:
 
 ```sh
 python tools/screenshots/retake.py                      # all three languages, into docs/<lang>/screenshots/
@@ -14,45 +17,79 @@ python tools/screenshots/retake.py --chrome /usr/bin/chromium
 ## What it needs
 
 - Python 3.8 or newer with `openpyxl` (`pip install openpyxl`); nothing else outside the standard library.
-- Docker (the backend is built from `backend/Dockerfile`). Without Docker, `--backend cargo` builds `backend/` with
-  cargo instead; that run skips `desktop-13-logs.png`, because the System log would show the host path of the data
-  folder (the container shows `/data`).
+- Docker (the backend is built from `backend/Dockerfile`, ai-service from `ai-service/Dockerfile`; the made-up AI
+  provider runs in the `python:3.12-slim` image). Without Docker, `--backend cargo` builds `backend/` and `ai-service/`
+  with cargo instead and runs the made-up provider as a local Python process; that run skips `desktop-13-logs.png`,
+  because the System log would show the host path of the data folder (the container shows `/data`).
 - Node.js; `frontend/node_modules` is installed with `npm ci` when it is missing.
 - Chrome or Chromium (Edge works too): `--chrome PATH`, or the `XEXAM_CHROME` or `CHROME_PATH` environment variable,
   otherwise the usual install locations of each operating system.
 
-A full run of the three languages takes a few minutes, plus the image build when Docker has nothing cached.
+A full run of the three languages takes a few minutes, plus the image builds when Docker has nothing cached.
 
 ## What it does
 
 1. `demo_banks.py` writes the demo banks (General knowledge, Kitchen basics, Kitchen basics (v2)) to a temporary folder.
    They are six-column workbooks with invented questions; no `.xlsx` file is ever written into the repository.
-2. The backend image is built under a unique tag and started with a new volume on `/data`, `TZ=UTC` and `XEXAM_VERSION`
-   set to `CODE_VERSION` from `VERSION`, published on a free port of 127.0.0.1.
+2. The backend and ai-service images are built under unique tags (`xexam-shots-backend:<hex>`,
+   `xexam-shots-ai-service:<hex>`) and started on a new Docker network: the backend with a new volume on `/data` and a
+   new link volume on `/link` (network alias `backend`), ai-service with its own new volume on `/data` and the link
+   volume read-only. Both get `TZ=UTC` and `XEXAM_VERSION` set to `CODE_VERSION` from `VERSION` and are published on
+   free ports of 127.0.0.1. `tests/integration/ai_stub.py`, a made-up AI provider that answers with self-made text in
+   the reply language the page sends (the Settings language), runs on the same network under the single-label name
+   `ai-stub` (so AI settings shows the address `http://ai-stub:9000/v1` without an http:// warning and without a real
+   domain).
 3. The frontend is built with Vite into the temporary folder and served by `vite preview` on a free port, with `/api`
-   proxied to that backend.
+   proxied to the backend and `/api/ai` to the AI service; the auth step of `vite.config.ts` checks every AI request with
+   the backend first, as Nginx does. The tool waits until ai-service's `/healthz` answers and `/api/ai/status`
+   answers 401 without a session (the whole chain works).
 4. `seed.py` signs in as the default administrator (who chooses a demo password), imports the banks, adds the users
-   alex, sam, kim and lee and some study records. The backend is then restarted, so the System log shows only a short
-   stretch of everyday activity: sign-ins, a user created and a user updated by the administrator, and a made-up
-   username that is guessed until it locks.
+   alex, sam, kim and lee and some study records, sets up AI with the made-up provider and a made-up key (provider,
+   key, model, test, the AI+ feature on) and saves two memories of the administrator. Because a user's AI+ feature can
+   be switched only while AI+ is available, sam and alex get it only after that, and alex's AI+ feature is then
+   paused: Users shows a bright (sam) and a dark (alex) badge, AI settings an Active and a Paused row. No AI chat
+   is seeded. The backend is then restarted, so the System log shows only a short stretch of everyday activity:
+   sign-ins, a user created and a user updated by the administrator, and a made-up username that is guessed until it
+   locks. Lines of ai-service (with the prefix `AI: `) may appear there too; they are real lines. After a restart the
+   backend knows nothing about ai-service until its next report (every 25 s), so the tool then waits until
+   `GET /api/users` says `aiAvailable: true` (at most 40 s) before the scenes.
 5. `scenes.py` opens one headless Chrome per language (temporary profile, UTC clock, light theme unless the scene is the
    dark one) and drives the real UI through DOM clicks. Tall pages are cut where no text line, control or card is
    split; the System log image is sized so its whole card (lead, filters, lines, note) is in view. Two pages are
    shortened in the page itself so their card ends inside the image: Question banks shows the guide unfolded with
    only its first two sections (basics and the six columns), and About shows only the first bullets of the newest
-   version. PNG text, time and EXIF chunks are removed (`browser.strip_png`).
-6. The container, the volume, the image tag, the temporary folders and every process the tool started are removed at
-   the end, also after an error or Ctrl+C. Nothing is pushed anywhere.
+   version. The AI Chat scene (as the administrator) turns the administrator's free mode on through `POST /api/ai/free`, so the green
+   "Free mode" tag shows right of the title (AI Chat has no mode switch; the choice is in Settings, in the
+   administrator-only AI chat mode section that the Settings image shows, with Normal selected), starts a chat through the
+   API in the language of the run, opens it, sends a second question through its composer and deletes the chat again
+   and turns free mode off afterwards; its conversation box follows the window height, so the window is made just tall enough for the whole
+   conversation and the image ends below it. The AI settings page is shot in two parts (the four status chips and the
+   ai-service connection note, connection, model, test and the users with the AI+ feature with their Pause / Resume buttons;
+   then usage (with the cached-tokens column), chat retention and safety limits) after the scene presses Refresh list and Test. Each language
+   therefore adds a few calls to the AI usage numbers, so they differ slightly between the languages. PNG text, time
+   and EXIF chunks are removed (`browser.strip_png`).
+6. The containers, the volumes, the network, the image tags, the temporary folders and every process the tool started
+   are removed at the end, also after an error or Ctrl+C. Nothing is pushed anywhere.
+
+Several runs can go at the same time, for example one per language (`--lang en`, `--lang ja` and `--lang zh-CN` in
+three terminals): every image tag, container, volume and network name carries a random suffix of its run, each run has
+its own temporary folder and Chrome profile, the ports are free ports of 127.0.0.1 (a port that a parallel run took
+first is retried with another one), and `npm ci` (only when `frontend/node_modules` is missing) runs once at a time.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `retake.py` | Entry point: options, backend, frontend, seeding, the languages, clean-up |
+| `retake.py` | Entry point: options, backend and ai-service, frontend, seeding, the languages, clean-up |
 | `demo_banks.py` | The made-up demo question banks |
-| `seed.py` | Users, banks, records and the System log activity, through the API |
-| `scenes.py` | The 17 scenes and how each image is sized |
+| `seed.py` | Users, banks, records, the AI setup (with the AI+ feature of sam and alex, alex paused) and the System log activity, through the API |
+| `scenes.py` | The 20 scenes and how each image is sized |
 | `browser.py` | Finding and starting Chrome, a small DevTools (CDP) client, PNG metadata removal |
+| `../../tests/integration/ai_stub.py` | The made-up AI provider (shared with the stack check of CI) |
 
 When the UI changes, adjust the scene in `scenes.py` (the selectors are those of `frontend/src/pages/`), run the
-tool with `--out` and look at the images before writing them into `docs/`.
+tool with `--out` and look at the images before writing them into `docs/`. Check every AI image (and every image
+with an AI+ badge) by eye before it is committed: only the made-up values above may appear.
+
+The app icons in `frontend/public/` are made by a separate script, `tools/icons/make_icons.py`, which uses
+`browser.py` from this folder.

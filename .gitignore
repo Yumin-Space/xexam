@@ -1,5 +1,7 @@
 # Personal data: the question bank (exam questions) and study records; do not commit
 data/
+# The AI service's data folder when run from source (chats, memories, encrypted keys and its key file)
+data-ai/
 progress.json
 *.xlsx
 *.xls
@@ -28,6 +30,7 @@ __pycache__/
 *.pyc
 .claude/
 backend/target/
+ai-service/target/
 frontend/node_modules/
 frontend/dist/
 
@@ -37,3 +40,6 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 ~$*
+
+# The AI encryption key file, wherever it is (never commit it)
+**/secret.key

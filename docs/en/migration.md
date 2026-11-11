@@ -4,41 +4,136 @@
 
 > This document covers every upgrade path, newest first:
 >
-> - **v0.7 → v0.7.5** (section 1): nothing to do.
-> - **v0.6 → v0.7.5** (section 2): the database moves to schema v4 and to WAL mode, automatically, after a backup copy is written; then the questions of the old three- and four-column Excel layouts are retired, and you update the banks with six-column workbooks.
-> - **v0.5 or v0.5.1 → v0.7.5** (section 3): sign-in arrives together with schema v4, in one step.
+> - **v0.7.5 or v0.7 → v0.8** (section 1): a new `docker-compose.yml` with the AI service, `ai-service` (a third image, `xexam-ai-service`, and two volumes); the database moves to schema v5 automatically, after a backup copy is written; AI stays off until an administrator sets it up.
+> - **v0.6 → v0.8** (section 2): the database moves to schema v5 and to WAL mode, automatically, after a backup copy is written; then the questions of the old three- and four-column Excel layouts are retired, and you update the banks with six-column workbooks.
+> - **v0.5 or v0.5.1 → v0.8** (section 3): sign-in arrives together with the later schemas, in one step.
 > - **v0.4 → v0.5 and later** (section 4): question banks, exam detail and settings (schema v2), today together with everything after it.
 > - **Python v0.2.x → Rust + TypeScript + Nginx (v0.3)** (sections 5–11): the database file and its schema did not change then; the switch meant "swapping the program", not "moving data". Basis for that decision: [migration-plan.md](../zh-CN/history/migration-plan.md). Risks: [risk-assessment.md](../zh-CN/history/risk-assessment.md).
 > - **v0.1 → later** (section 12): the database file name.
 >
-> Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back always means **restoring that copy** and running the older images. The background is in section 6 of [database.md](database.md).
+> Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back always means **restoring that copy** and running the older images. The background is in section 6 of [database.md](database.md). The AI database of v0.8 lives in its own volume and is never touched by a rollback of the main database.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
 
-## 1. Upgrading from v0.7 to v0.7.5
+## 1. Upgrading from v0.7.5 (or v0.7) to v0.8
 
-Nothing to do besides the usual pull:
+### 1.1 What changes
+
+v0.8 adds AI Chat, which runs in a **third container**, `ai-service` (image `xexam-ai-service`), with its own database. That needs the **new `docker-compose.yml`**:
+
+| | v0.7.5 | v0.8 |
+|---|---|---|
+| Images | `xexam-frontend`, `xexam-backend` | the same two plus **`xexam-ai-service`** |
+| Containers (Compose services) | `xexam-frontend`, `xexam-backend` (`frontend`, `backend`) | the same two plus **`ai-service`** (`ai-service`) |
+| Volumes | `xexam_data` | `xexam_data` (unchanged), **`xexam_ai_data`** (the AI database and its key file), **`xexam_link`** (only `internal.token`, the token the backend and the AI service share) |
+| Networks | `internal` (no internet), `public` | the same plus **`egress`**, outbound internet for `ai-service` only; the backend still has none |
+
+With the old compose file v0.8 starts too, and everything works except AI: AI Chat is not in the menu, **AI settings** says that ai-service is not running (with a hint to download the new compose file), and the backend logs `AI link off: cannot create /link/internal.token (…)`.
+
+On its **first start** the backend does this before it accepts any request:
+
+1. **Backup**: a copy of the database to `/data/backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`, an ordinary schema-4 database that v0.7.5 can open. If the copy cannot be written, nothing changes and the backend does not start.
+2. **Migration to schema v5**, in one transaction: two new columns on `users`, `ai_enabled` (**AI+**, off for everyone) and `uid` (a random identity stamp per user). Nothing else changes: question banks, records, settings, accounts and sessions stay, and nobody is signed out. The log says `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema4-….db (…)`.
+3. **The internal token**: the backend writes a random token to `/link/internal.token` (in `xexam_link`) and logs `AI link: /link/internal.token`. With `XEXAM_INTERNAL_TOKEN` set it writes no file and logs `AI link: using XEXAM_INTERNAL_TOKEN`.
+
+ai-service, on its first start, creates its database `xexam-ai.db` (schema 2) with the default settings and, unless `XEXAM_AI_SECRET_KEY` is set, the key file `secret.key` (`Created a new AI key file /data/secret.key`). Then it reports to the backend at once and every 25 seconds, so the main service knows that it is connected (a report older than 60 seconds counts as not connected); the backend never calls it. **AI is off** until an administrator sets it up in **AI settings** (section 17 of [usage.md](usage.md)); there is nothing to migrate for AI. (An AI database written by a pre-release build of v0.8, schema 1, is upgraded at ai-service's first start, after a copy `backups/xexam-ai-schema1-<YYYYMMDD-HHMMSS>.db` next to it in the AI volume; if that copy cannot be written, ai-service does not start and changes nothing. A schema-2 database from a later pre-release that lacks some of the schema-2 columns (`users.function_enabled`, `users.free_mode`, `messages.free`, `usage.tokens_cached`) gets them added at every start, with no copy: the step only adds columns that are missing and never removes one, so an old `chats.free` column of such a build is simply left unused.)
+
+What else you will notice:
+
+- **AI Chat** and **AI settings** in the menu (AI Chat only once AI is on, for administrators and for users who have the **AI+ feature**). **AI settings** always opens and shows whether ai-service is connected. Administrators find **AI chat mode** (**Normal** / **Free**) in **Settings** once AI is on.
+- **User management**: an **AI+ feature** switch per user (shown only while ai-service is connected and the **AI+ feature** is on in AI settings; **Pause** and **Resume** for a user are in AI settings under **Users with AI+**); the bank choice of **Change** and **Add user** is more compact (**Manage banks**, **Select all** and **Deselect all** in one row on top of the list, **Include banks imported later** as the first entry of the list, the explanations as tooltips), and **Manage banks** moved there from **Edit**.
+- A new icon in the header, the browser tab and on the phone's home screen (a home-screen icon added before may keep the old picture until you add it again).
+
+Coming from v0.7 (not v0.7.5), the changes of v0.7.5 come along (see the changelog in the README); the database steps are the same.
+
+A database written by a **pre-release build of v0.7** (one that still has the column `users.all_banks`) is converted at the same start, in the same transaction and after the same one copy (`xexam-schema4-…`): a user who saw every bank gets every existing bank and **Include banks imported later**, any other user keeps their banks, and a user that an older version (v0.6 or before) added in between also gets every bank and **Include banks imported later**. The log then says `Converted the question bank access of a database written by a v0.7 pre-release to the released format and upgraded the database to schema 5. A copy of the previous version was saved first: <path>.` (section 6.5 of [database.md](database.md)).
+
+### 1.2 Upgrade
 
 ```bash
+# 1. Back up the volume (stop first; the backup file holds your whole database, do not commit it)
+docker compose stop
+docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v075.tgz -C /data .
+
+# 2. Replace docker-compose.yml with the new one (your .env stays; if you changed docker-compose.yml yourself, carry those changes over)
+curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
+
+# 3. Pull the three images and start (do not use down -v)
 docker compose pull
 docker compose up -d
+
+# 4. Look for the upgrade message and the AI service's start
+docker compose ps
+docker compose logs backend
+docker compose logs ai-service
 ```
 
-v0.7.5 does not change the database schema, adds no setting and needs no new `docker-compose.yml` (the new one differs only in its comments). Your `.env` stays as it is. Rolling back to v0.7 is pinning the two images to `:v0.7` and running `docker compose up -d`; the database stays as it is.
+- **Optional, before step 3**: to keep the AI encryption key apart from the AI volume, put `XEXAM_AI_SECRET_KEY=<the output of openssl rand -base64 32>` in `docker/.env` now. Setting it later works too, but then the AI keys saved until then can no longer be decrypted and must be entered again. `XEXAM_INTERNAL_TOKEN` is optional as well; without it the backend creates the token (section 3 of [deployment.md](deployment.md)).
+- **A host without `/etc/localtime`**: the new compose file mounts it into the AI service too; remove those six lines in both services and set `TZ` in `docker/.env`.
+- **No internet for the AI service** (a host behind a strict firewall): Xexam works; only the test in AI settings fails with "Could not connect to the AI provider" until the AI service can reach the provider (or point it at a provider on your network).
+- **Source build**: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build` from the repository root; it builds `ai-service/Dockerfile` as the third image `xexam-ai-service:local`.
+- **Coming from a pre-release build of v0.8** (a compose file in which the AI service is still called `ai`): `docker compose up -d --remove-orphans` with the new file removes the old container; the volumes `xexam_ai_data` and `xexam_link` are reused. No released version had that name, so a normal upgrade from v0.7.5 has nothing to remove.
 
-A database written by a **pre-release build of v0.7** (one that still has the column `users.all_banks`) is converted at the first start of v0.7 or later, after a copy `backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`: a user who saw every bank gets every existing bank and **Include banks imported later**, any other user keeps their banks. Since v0.7.5 a user that an older version (v0.6 or before) added to such a database in between also gets every bank and **Include banks imported later**, like the users of the upgrade in section 2. The log says `Converted the question bank access of a database written by a v0.7 pre-release to the released format.` (section 6.5 of [database.md](database.md)).
+### 1.3 Checks after the upgrade
 
-## 2. Upgrading from v0.6 to v0.7.5
+- [ ] `docker compose ps` lists `xexam-frontend`, `xexam-backend` and `ai-service`, all `healthy`.
+- [ ] `version` in `/api/info` is `0.8`.
+- [ ] You can sign in as before; nobody had to sign in again. **User management** shows the same users, each plain user with the **AI+ feature** off (the switches appear once ai-service is connected and the **AI+ feature** is on in AI settings).
+- [ ] **System log** has `AI: AI link: connected to the main service` once (the AI service's lines start with `AI: `; the line comes again after every reconnect, and `AI: AI link: lost the main service` when the link breaks).
+- [ ] **AI settings** opens, says **ai-service is connected (version 0.8; …)** and **AI+ feature off**; the first chip reads **Connection not set** until you save a connection. To try AI: set up a provider, **Test**, switch on the **AI+ feature**, then ask something in **AI Chat**. When it says **Connection to ai-service** instead, read the cause it names (section 17 of [usage.md](usage.md)).
+- [ ] Back up both data volumes from now on (section 5 and 8.4 of [database.md](database.md)).
+
+### 1.4 Rollback to v0.7.5
+
+Rolling back means **restoring the copy written before the migration**, putting the old `docker-compose.yml` back and running the v0.7.5 images. Everything done in the main app after the migration is lost (records, accounts, settings, imports); the AI data stays in its own volume, which v0.7.5 does not use.
+
+```bash
+# 1. Stop the new version (do not use down -v)
+docker compose stop
+
+# 2. Find the copy. After a normal stop any xexam.db-wal left in /data is empty.
+docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
+
+# 3. Put the copy back as xexam.db (use the file name from step 2); leftover -wal / -shm files are removed first
+docker run --rm -v xexam_data:/data alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && cp /data/backups/xexam-schema4-20261111-140501.db /data/xexam.db'
+
+# 4. Put the docker-compose.yml of v0.7.5 back with its two images pinned (on Docker Hub, no login), then start:
+#      image: docker.io/yuminspace/xexam-backend:v0.7.5
+#      image: docker.io/yuminspace/xexam-frontend:v0.7.5
+#    and remove the stopped `ai-service` container, which the old file no longer knows (its volume stays):
+docker compose up -d --remove-orphans
+```
+
+For a source build, check out the release instead: `git fetch --tags && git checkout v0.7.5 && docker compose -f docker/docker-compose.build.yml up -d --build --remove-orphans`.
+
+v0.7.5 can also open the migrated database itself (it ignores the two new columns), but keep that for emergencies: users it creates have no identity stamp and AI+ off, and v0.8 gives them a stamp at its next start (section 6.6 of [database.md](database.md)). The volumes `xexam_ai_data` and `xexam_link` can stay for a later upgrade; `docker volume rm xexam_ai_data xexam_link` removes them (this deletes the AI chats, memories and settings for good).
+
+To upgrade again later, put the new `docker-compose.yml` back and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy; the AI settings and chats in `xexam_ai_data` are still there, and the AI data of users that no longer exist is removed by the AI service.
+
+### 1.5 What has been tested
+
+With synthetic data only (`backend/tests/v08_ai_link.rs`, `db_golden.rs`, `ai-service/tests/` and `tests/integration/`):
+
+- A schema-4 database written by v0.7.5 migrates to schema v5 with exactly one `xexam-schema4-…` backup; every user gets AI+ off and a unique 32-hex stamp; the result has the same `sqlite_master` as a new database, and opening it again writes nothing.
+- A schema-3 database migrates to schema v5 in one step with one `xexam-schema3-…` backup; a pre-release v4 database is converted and migrated in one transaction.
+- A user created by v0.7.5 after a rollback gets a stamp at the next start, without a backup.
+- The backend creates `internal.token` (mode 0600) at the first `serve`, reuses it on restart, writes none with `XEXAM_INTERNAL_TOKEN`, and turns the link off with one log line for a value that breaks the rules.
+- The full stack with the three images and a made-up provider (`stack_check.py`): sign-in, AI settings, test, enable, a streamed answer with keep-alive comments, the **AI+ feature** switched off during an answer (it ends within seconds) and a user paused during one (it ends at once), the AI+ switches of User management refused while ai-service is not connected or the feature is off, the connection state after `docker stop` and `docker start` of ai-service, the reply language, the administrator's free mode (set in Settings, kept per user, ignored when a send carries a `free`, the old per-chat route answering 404), the AI settings and data surviving a recreation of the containers, the main app answering while `ai-service` is stopped, which files each volume holds, and no key, question or answer in any log or response. Stop, Retry, the limits, the reports to the backend, the schema-2 upgrade of the AI database and the administrators' access are tested in `ai-service/tests/`.
+
+Not tested: a migration of **your own** database, and real AI providers (CI uses a made-up one). Try the upgrade on a copy first if you want to be sure.
+
+## 2. Upgrading from v0.6 to v0.8
 
 ### 2.1 What changes
 
 On its **first start** on your data volume, the new version does this before it accepts any request:
 
 1. **Backup.** It writes a copy of the current database to `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`. The copy is an ordinary schema-3 database that v0.6 can open. **If the copy cannot be written** (disk full, no permission), the backend refuses to start and leaves the database unchanged; the log says why.
-2. **Migration to schema v4**, in one transaction:
+2. **Migration to schema v5** (through v4), in one transaction:
    - **Every existing user keeps seeing every question bank**: each gets every existing bank and **Include banks imported later**, shown in User management as **Question banks: all, including ones imported later**. Users you add later start with no bank until you choose some.
    - **Every existing bank belongs to the first administrator** (the enabled administrator with the lowest id). Nobody is a **Bank manager** yet.
    - **Every existing study record is an exam.** Practice records appear only from now on.
+   - **AI+** is off for everyone, and every user gets an identity stamp (the v5 step, section 1.1).
    - Question ids, statistics, records, settings, accounts and sessions do not change: nobody is signed out.
 3. **WAL mode.** Only after a successful migration does the backend switch the database to WAL. While it runs, `xexam.db-wal` and `xexam.db-shm` sit next to `xexam.db`; a normal stop folds them back into `xexam.db` and empties `xexam.db-wal` (the two files may stay, empty and harmless).
 4. **Old-layout questions are retired**, in one more transaction: every active question imported from the three- or four-column layout (with v0.6 that is every question) is retired, exactly as an import retires a question that left its workbook. The banks, their import history, the study records, the statistics and the wrong-answer notebook stay; the questions are no longer asked, and the bank list says that the bank's questions came from an older Excel layout. The log has one warning per bank, for example `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`. This check runs at every start (also of the command-line commands), and writes nothing when there is nothing to retire.
@@ -46,12 +141,12 @@ On its **first start** on your data volume, the new version does this before it 
 What else you will notice:
 
 - **Only six-column workbooks can be imported.** A three- or four-column file is refused with a message that says so (section 12 of [usage.md](usage.md)).
-- In **User management** each row shows the user's question banks, with **Change** to choose them, and the **Bank manager** permission in the Add user form and the Edit dialog. Taking a bank away keeps the user's records of it as history.
+- In **User management** each row shows the user's question banks, with **Change** to choose them (with **Manage banks**, the bank-manager permission), and the **AI+** switch. Taking a bank away keeps the user's records of it as history.
 - **Start practice** next to **Start exam** on Home; practice records are tagged **Practice** in **Study records**.
-- A **System log** entry in the menu of administrators.
+- **System log** and **AI settings** in the menu of administrators, and **AI Chat** once AI is set up (section 1.1).
 - The answers and explanations have their own **English** / **中文** / **日本語** switch on each card.
 
-The new `docker-compose.yml` differs from the one of v0.6: it follows the host's time zone instead of a fixed default (it mounts `/etc/localtime`; a `TZ` in `docker/.env` overrides it), it limits each container's log to 3 files of 10 MB, and it passes `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE` and `XEXAM_LOG` when `docker/.env` sets them. The v0.6 file still starts the new version, but without these changes. No variable has to be added to `.env`.
+The new `docker-compose.yml` differs from the one of v0.6: it has the AI service with its two volumes and the network `egress` (section 1.1), it follows the host's time zone instead of a fixed default (it mounts `/etc/localtime`; a `TZ` in `docker/.env` overrides it), it limits each container's log to 3 files of 10 MB, and it passes `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE`, `XEXAM_LOG` and the AI variables when `docker/.env` sets them. The v0.6 file still starts the new version, but without these changes and without AI. No variable has to be added to `.env`.
 
 ### 2.2 Before the upgrade
 
@@ -77,10 +172,10 @@ docker compose up -d
 docker compose logs backend
 ```
 
-The log should contain `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema3-20261111-140501.db (…)`, `SQLite journal mode: wal` and one `retired … of bank "…"` warning per bank.
+The log should contain `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema3-20261111-140501.db (…)`, `SQLite journal mode: wal` and one `retired … of bank "…"` warning per bank.
 
 - **Time zone.** v0.6's compose file set a fixed time zone unless `.env` named another one. If the host's zone differs from the one your timestamps so far were written in, set that zone as `TZ` in `docker/.env` (for example `TZ=UTC`), so new records continue in it. Stored times are never rewritten.
-- **A host without `/etc/localtime`**: Compose stops with "bind source path does not exist". Remove the six lines of that mount from `docker-compose.yml` and set `TZ` in `docker/.env` (section 3.1 of [deployment.md](deployment.md)).
+- **A host without `/etc/localtime`**: Compose stops with "bind source path does not exist". Remove the six lines of that mount from `docker-compose.yml` (in the backend and in the AI service) and set `TZ` in `docker/.env` (section 3.1 of [deployment.md](deployment.md)).
 - **Unusual storage**: if the volume is on a network filesystem or on a Windows folder bind-mounted into Docker Desktop, put `XEXAM_SQLITE_JOURNAL=delete` in `docker/.env` before step 3.
 - **Source build**: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`, from the repository root, then `docker compose -f docker/docker-compose.build.yml logs backend`. Without Docker, the copy goes to `backups/` inside the data directory (`--data` or `XEXAM_DATA`).
 
@@ -96,18 +191,18 @@ A user who opens Home before this sees a note that the banks have no active ques
 
 ### 2.5 Checks after the upgrade
 
-- [ ] `version` in `/api/info` is `0.7.5`.
+- [ ] `version` in `/api/info` is `0.8`, and `docker compose ps` lists three healthy containers.
 - [ ] You can sign in as before; nobody had to sign in again.
 - [ ] **User management**: every user from before shows **Question banks: all, including ones imported later**.
 - [ ] **Question banks** lists the same banks, each **uploaded by** the first administrator. Before the update of section 2.4 each one shows its questions as retired (for example **0 questions (+25 retired)**, the number you noted); after it, the number of questions of the six-column file.
 - [ ] **Study records** lists the earlier records, each tagged **Exam**.
 - [ ] **System log** shows the start-up lines, among them `SQLite journal mode: wal` and the retired questions.
 - [ ] Take a short practice and check its time in **Study records** against the clock. If it is off by whole hours, set `TZ` (section 2.3).
-- [ ] Then decide, per user, which banks they see and who may manage banks.
+- [ ] Then decide, per user, which banks they see and who may manage banks; AI is off until you set it up (section 1.1).
 
 ### 2.6 Rollback to v0.6
 
-Rolling back means **restoring the copy written before the migration** and running the v0.6 images. Everything done after the migration is lost: the six-column imports, new banks, records (also practice records), accounts, bank permissions and settings.
+Rolling back means **restoring the copy written before the migration** and running the v0.6 images. Everything done after the migration is lost: the six-column imports, new banks, records (also practice records), accounts, bank permissions and settings. The AI data stays in its own volume, which v0.6 does not use.
 
 ```bash
 # 1. Stop the new version (do not use down -v)
@@ -120,25 +215,26 @@ docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups
 #    database being replaced and must not be applied to the copy, so they are removed first.
 docker run --rm -v xexam_data:/data alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && cp /data/backups/xexam-schema3-20261111-140501.db /data/xexam.db'
 
-# 4. Pin the v0.6 images in docker-compose.yml (on Docker Hub, no login), then start:
+# 4. Pin the v0.6 images in docker-compose.yml (on Docker Hub, no login), remove the ai service (and its volumes)
+#    from the file, or put the docker-compose.yml of v0.6 back, then start:
 #      image: docker.io/yuminspace/xexam-backend:v0.6
 #      image: docker.io/yuminspace/xexam-frontend:v0.6
-docker compose up -d
+docker compose up -d --remove-orphans
 ```
 
-The new `docker-compose.yml` works with the v0.6 images too. For a source build, check out the release instead: `git fetch --tags && git checkout v0.6 && docker compose -f docker/docker-compose.build.yml up -d --build`.
+For a source build, check out the release instead: `git fetch --tags && git checkout v0.6 && docker compose -f docker/docker-compose.build.yml up -d --build --remove-orphans`.
 
 Instead of step 3 you can also restore your own `.tgz` from section 2.3 (the restore command is in section 5 of [database.md](database.md)); it holds the same data. Step 4 is needed either way.
 
-v0.6 can open the migrated database itself, and it switches the file back from WAL by itself, but keep that for emergencies: v0.6 does not know the rules of v0.7, so every user sees every bank again, only administrators can manage banks, practice records look like exams, and it knows nothing of six-column questions. When the new version starts again afterwards, it repairs what v0.6 left behind (section 6.6 of [database.md](database.md)): banks v0.6 imported get an owner and reach the users with **Include banks imported later**, users v0.6 created get every bank and **Include banks imported later**, and questions v0.6 imported are retired again.
+v0.6 can open the migrated database itself, and it switches the file back from WAL by itself, but keep that for emergencies: v0.6 does not know the rules of v0.7 and later, so every user sees every bank again, only administrators can manage banks, practice records look like exams, and it knows nothing of six-column questions. When the new version starts again afterwards, it repairs what v0.6 left behind (section 6.6 of [database.md](database.md)): banks v0.6 imported get an owner and reach the users with **Include banks imported later**, users v0.6 created get every bank and **Include banks imported later**, and questions v0.6 imported are retired again.
 
 To upgrade again later, put the new images back (tag `:latest`) and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy.
 
 ### 2.7 What has been tested
 
-With synthetic data only (`backend/tests/v065_bank_access_and_practice.rs`, `v07_bank_access_and_layouts.rs`, `v07_wal_and_logs.rs`, `db_golden.rs` and `tests/integration/`):
+With synthetic data only (`backend/tests/v065_bank_access_and_practice.rs`, `v07_bank_access_and_layouts.rs`, `v07_wal_and_logs.rs`, `v08_ai_link.rs`, `db_golden.rs` and `tests/integration/`):
 
-- A schema-3 database migrates to schema v4 with a backup; every user keeps every bank, with banks imported later included, and the banks belong to the first administrator.
+- A schema-3 database migrates to schema v5 with one backup; every user keeps every bank, with banks imported later included, and the banks belong to the first administrator.
 - If the backup cannot be written, the database is not migrated and not changed.
 - Old-layout questions are retired once, keeping the banks, the records and the notebook; a second start writes nothing. The command-line program does the same and logs one English line per bank. A bank whose questions were retired is updated with a six-column file: the new questions are added, the old ones stay retired.
 - Uploads, the import confirm and the command-line `import` refuse three- and four-column workbooks before anything is staged or written.
@@ -152,15 +248,15 @@ With synthetic data only (`backend/tests/v065_bank_access_and_practice.rs`, `v07
 
 Not tested: a migration of **your own** database. Do it on a copy first if you want to be sure (as in section 6, "Try the new version on a copy").
 
-## 3. Upgrading from v0.5 or v0.5.1 to v0.7.5
+## 3. Upgrading from v0.5 or v0.5.1 to v0.8
 
 ### 3.1 What changes
 
-v0.6 introduced accounts and sign-in (schema v3); v0.7 added question banks per user (schema v4). Coming from v0.5, both run on the **first start**, in one transaction, after one copy:
+v0.6 introduced accounts and sign-in (schema v3); v0.7 added question banks per user (schema v4), v0.8 the AI+ switch and the identity stamp (schema v5). Coming from v0.5, all of them run on the **first start**, in one transaction, after one copy:
 
 1. **Backup** to `/data/backups/xexam-schema2-<YYYYmmdd-HHMMSS>.db`, an ordinary schema-2 database that v0.5 can open. If it cannot be written, nothing changes and the backend does not start.
 2. **Accounts.** The default administrator `admin` with the password `admin` is created, and it **receives everything you had**: every study record, the wrong-answer notebook and the settings.
-3. **Schema v4** as in section 2.1: `admin` sees and owns every bank.
+3. **Schemas v4 and v5** as in section 2.1: `admin` sees and owns every bank; AI is off (section 1.1).
 4. **WAL mode**, then the **retirement of the old-layout questions**, as in section 2.1: prepare six-column workbooks first (section 2.2) and update the banks with them afterwards (section 2.4).
 
 From now on, every page needs a signed-in account. Each person gets their own records, notebook and settings, so add the other people under **User management** instead of sharing `admin`.
@@ -174,7 +270,7 @@ The log names the copy (`…/backups/xexam-schema2-….db`), says `Created the d
 ### 3.3 Checks after the upgrade
 
 - [ ] Open Xexam: the sign-in page appears and names the account `admin`. Sign in with `admin` / `admin` and choose your own password right away; until then anyone who can open the page can use the default password.
-- [ ] `version` in `/api/info` is `0.7.5`.
+- [ ] `version` in `/api/info` is `0.8`.
 - [ ] **Question banks** lists the same banks, with their questions retired until you update them (section 2.4); **Study records** lists your earlier exams; **Settings** has your theme and languages.
 - [ ] Add the other users and choose their question banks.
 
@@ -186,7 +282,7 @@ Do not run v0.5 on the migrated database: it knows no accounts, so its records w
 
 ## 4. Upgrading from v0.4 to v0.5 and later
 
-Today this upgrade goes straight to v0.7.5: the steps below, then those of sections 3.1 and 2.1, run in **one** transaction after **one** copy, `xexam-schema1-<YYYYmmdd-HHMMSS>.db`, and then the old-layout questions are retired (section 2.1, step 4). You then sign in with `admin` / `admin` (section 3.3), and `admin` receives all your data. Prepare six-column workbooks first (section 2.2).
+Today this upgrade goes straight to v0.8: the steps below, then those of sections 3.1 and 2.1, run in **one** transaction after **one** copy, `xexam-schema1-<YYYYmmdd-HHMMSS>.db`, and then the old-layout questions are retired (section 2.1, step 4). You then sign in with `admin` / `admin` (section 3.3), and `admin` receives all your data. Prepare six-column workbooks first (section 2.2).
 
 ### 4.1 What happens to your data
 
@@ -228,14 +324,14 @@ docker compose up -d
 docker compose logs backend
 ```
 
-The log should contain a line like `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`, then the retired questions of the bank. The program writes that copy itself; the `.tgz` from step 1 is your own second copy, outside the volume.
+The log should contain a line like `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`, then the retired questions of the bank. The program writes that copy itself; the `.tgz` from step 1 is your own second copy, outside the volume.
 
 For a source build: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`, from the repository root. The compose files are now in `docker/`: before that command, move a `.env` at the repository root to `docker/.env` (Compose no longer reads it at the root), and add `-f docker/docker-compose.build.yml` to the later commands, such as `logs backend`. Without Docker, the copy goes to `backups/` inside the data directory (`--data` or `XEXAM_DATA`).
 
 ### 4.3 Checks after the upgrade
 
 - [ ] Sign in with `admin` / `admin` and choose your own password (section 3.3).
-- [ ] `version` in `/api/info` is the version you installed (`0.7.5` today).
+- [ ] `version` in `/api/info` is the version you installed (`0.8` today).
 - [ ] **Question banks** lists one bank with all your sheets; its questions are counted as retired, as many as the old version had.
 - [ ] **Study records** lists your earlier exams.
 - [ ] Update the bank with the six-column version of your workbook (section 2.4), answer a few questions and submit. The new record shows each question with your answer.
@@ -323,11 +419,11 @@ docker compose stop
 #    If you do not remove it, the old container stays in the project as an "orphan", and its port mapping still holds 8765, so the new xexam-frontend cannot start because of the port conflict.
 docker rm xexam
 
-# 3. Put the new docker-compose.yml in place (it now has two services, pulled from Docker Hub without login), then pull and start (same volume xexam_data, same port)
+# 3. Put the new docker-compose.yml in place (it now has three services, pulled from Docker Hub without login), then pull and start (same volume xexam_data, same port)
 docker compose pull
 docker compose up -d
 
-# 4. Check that both containers are healthy
+# 4. Check that the containers are healthy (three since v0.8)
 docker compose ps
 ```
 
@@ -337,7 +433,7 @@ Upgrading from Python straight to the current version also runs the schema migra
 
 Checks after the upgrade:
 
-- [ ] `version` in `/api/info` is the version you installed (`0.7.5` today).
+- [ ] `version` in `/api/info` is the version you installed (`0.8` today).
 - [ ] After signing in, **Question banks** shows the one bank with as many retired questions as the old version had questions (the old `bankCount`), and **Study records** has the same score history as before the upgrade.
 - [ ] Update the bank with your six-column workbook (section 2.4), answer a few questions and submit; the score appears in the history.
 
@@ -388,7 +484,7 @@ The following was done during the migration (while the Python code was still in 
 
 ## 10. Python to Rust: intentional differences from the old version
 
-The full table, with reasons, is in section 5 of [api.md](api.md). Every entry is recorded in `tests/baseline/golden/allowed_differences_rust.json` and `allowed_probe_differences_rust.json`, and a difference that is not recorded makes the tests fail. The only ones visible to users are:
+The full table, with reasons, is in section 7 of [api.md](api.md). Every entry is recorded in `tests/baseline/golden/allowed_differences_rust.json` and `allowed_probe_differences_rust.json`, and a difference that is not recorded makes the tests fail. The only ones visible to users are:
 
 | Item | Change |
 |---|---|

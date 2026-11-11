@@ -132,6 +132,10 @@ pub enum AppError {
     /// a current-password check refused by the login throttle
     #[error("too many sign-in attempts")]
     TooManyLogins { retry_after: u64 },
+    /// v0.8: 409 `{"error": MSG_AI_SERVICE_OFF, "code": "ai.serviceOff"}`: a user's AI+ service switch was sent while AI+
+    /// is not available (ai-service not connected, or its AI+ service off); nothing was written
+    #[error("AI+ is not available")]
+    AiServiceOff,
     #[error("db error")]
     Db(#[from] DbError),
     #[error("internal")]

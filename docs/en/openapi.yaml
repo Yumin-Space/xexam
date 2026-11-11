@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "0.7.5"
+  version: "0.8"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
     differences are listed under "Differences from the old version" in docs/en/api.md, and the changes of each version under
-    "Changes in v0.5", "Changes in v0.6", "Changes in v0.7" and "Changes in v0.7.5". Endpoints and fields marked (v0.5), (v0.6)
-    or (v0.7) were added in that version.
+    "Changes in v0.5", "Changes in v0.6", "Changes in v0.7", "Changes in v0.7.5" and "Changes in v0.8". Endpoints and fields
+    marked (v0.5), (v0.6), (v0.7) or (v0.8) were added in that version.
 
     All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
     JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
@@ -25,6 +25,25 @@ info:
     `POST /api/auth/password` and `POST /api/auth/logout`
     answers 403 `请先设置新密码。`. Admin routes answer 403 `只有管理员可以进行这个操作。` and bank manager routes 403
     `你没有管理题库的权限，请联系管理员。` to users without the access.
+
+    **(v0.8) AI routes** (`/api/ai/*`, tags `ai` and `ai-admin`) are answered by ai-service (the `ai-service` container), not the backend. Nginx first
+    has the backend check each request (`auth_request` to `/internal/ai/auth`: Host / Origin guard, session, password change)
+    and passes it on without the browser's cookies, with the backend's signed identity statement instead. They differ from the
+    routes above: GET and POST only; POST needs `application/json` and a JSON object of at most 128 KiB (256 KiB at Nginx)
+    without unknown keys; the JSON is compact (no spaces); every error is `{"error": "<Chinese>", "code": "<stable code>"}`,
+    plus `field` or `limit` where they apply (schema `AiError`). Access levels: `AiSigned` (any signed-in user), `AiUser` (the
+    AI+ feature is on, ai-service is connected to the backend, the user is an administrator or has AI+ and is not paused; else 403
+    `ai.disabled` / `ai.notAllowed` / `ai.suspended`, or 503 `ai.backendDown`), `AiAdmin` (administrators,
+    also while AI is off; else 403 `ai.adminOnly`). `/api/ai/send` and `/api/ai/retry` answer with a stream of server-sent
+    events. The **internal routes** (`/internal/*`, tag `internal`, `x-internal: true`) are the link between the backend and
+    ai-service; Nginx has no location for them, so they are not reachable from outside (404). docs/en/api.md, sections 5
+    and 6, describes both in full.
+
+    **(v0.8, round 2) AI+ availability**: ai-service reports its state to the backend (`POST /internal/ai/heartbeat`: at start,
+    after every change, every 25 s, and when it stops). The backend treats AI+ as available while the last report is younger
+    than 60 s, is not a stopping report and says `enabled`. `GET /api/auth/state` and the user list answers carry
+    `aiAvailable`; while it is false, `POST /api/users/update` with an `ai` key and `POST /api/users/create` with `ai: true`
+    answer 409 `ai.serviceOff` (the only error of the backend's own routes with a `code`).
 
     **What a plain user sees** (v0.7): the banks an administrator chose for them (`banks`; with `newBanks`, every bank created
     later is added to them when it is created), plus, while they are a bank manager, the banks they own. `/api/bank`, `/api/banks`, the statistics of `/api/progress`, the questions
@@ -45,6 +64,12 @@ tags:
   - name: records
   - name: settings
   - name: logs
+  - name: ai
+    description: "(v0.8) AI Chat and Memory, answered by ai-service"
+  - name: ai-admin
+    description: "(v0.8) AI settings, usage, users with AI+ and safety limits (administrators), answered by ai-service"
+  - name: internal
+    description: "(v0.8) The link between the backend and ai-service; not reachable through Nginx"
 
 paths:
   /api/info:
@@ -73,7 +98,8 @@ paths:
       security: []
       description: |
         Signed out (no cookie, or a session that is no longer valid): `{"user": null, "defaultAdmin": <string | null>}`.
-        Signed in (also while the account must choose a new password): `{"user": {...}, "library": "<32 hex digits>"}`.
+        Signed in (also while the account must choose a new password): `{"user": {...}, "library": "<32 hex digits>",
+        "aiAvailable": <bool>}`; (v0.8, round 2) for administrators also `"aiService": {...}`.
       responses:
         "200":
           description: OK
@@ -199,10 +225,12 @@ paths:
         Usernames: 1–40 characters of ASCII letters, digits and `. _ - @` (surrounding spaces removed), unique ignoring case.
         Passwords: 8–128 characters. 400 `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` for a missing or invalid username;
         400 `密码需要 8–128 个字符。`; 400 `请求的格式不对。` for a missing password, a missing or unknown role, a malformed
-        `banks` or a non-boolean `newBanks` / `canManageBanks`; (v0.7) 400 `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。`
+        `banks` or a non-boolean `newBanks` / `canManageBanks` / `ai`; (v0.7) 400 `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。`
         when an id in `banks` is not an existing bank (nothing is created).
-        (v0.7) `banks` defaults to `[]`, `newBanks` and `canManageBanks` to false. `"banks": "all"` is a shorthand for every bank
-        that exists now, and also sets `newBanks: true` unless `newBanks` is given.
+        (v0.7) `banks` defaults to `[]`, `newBanks` and `canManageBanks` to false; (v0.8) `ai` (AI+) to false. `"banks": "all"`
+        is a shorthand for every bank that exists now, and also sets `newBanks: true` unless `newBanks` is given.
+        (v0.8, round 2) `ai: true` while AI+ is not available (ai-service not connected, or the AI+ feature off in AI settings):
+        409 `ai.serviceOff`; checked after the body validation and before anything is written.
       requestBody:
         required: true
         content:
@@ -218,24 +246,33 @@ paths:
         "401": { $ref: "#/components/responses/Unauthorized" }
         "403": { $ref: "#/components/responses/Forbidden" }
         "409":
-          description: "`这个用户名已经有人用了。` (This username is already taken.)"
+          description: |
+            `这个用户名已经有人用了。` (This username is already taken.), or (v0.8, round 2) `ai.serviceOff` for `ai: true` while
+            AI+ is not available
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/Error" }
+                  - { $ref: "#/components/schemas/ServiceOffError" }
         "415": { $ref: "#/components/responses/BadContentType" }
   /api/users/update:
     post:
       tags: [users]
-      summary: "(v0.6) Rename, change the role, disable or enable a user; (v0.7) set their banks and bank manager permission"
+      summary: "(v0.6) Rename, change the role, disable or enable a user; (v0.7) set their banks and bank manager permission; (v0.8) AI+"
       x-access: Admin
       description: |
         Keys left out stay unchanged. Disabling an account or changing its role ends its sessions; a rename or a change of
-        `banks` / `newBanks` / `canManageBanks` keeps them and applies at the user's next request. `banks` replaces the chosen
+        `banks` / `newBanks` / `canManageBanks` / `ai` keeps them and applies at the user's next request (switching `ai` off also
+        stops an answer being written for the user within about 2 s; their AI data is kept). `banks` replaces the chosen
         banks; `"banks": "all"` (every bank that exists now) also sets `newBanks: true` unless `newBanks` is given. `banks`,
         `newBanks` and `canManageBanks` are kept across role changes (they matter only for plain users). Every check runs in the same transaction as the write.
         400 as for create (`disabled` not a boolean, `id` missing or not an integer → `请求的格式不对。`).
         409: `不能对自己的账户做这个操作。` (disabling yourself or changing your own role), `至少要保留一个启用的管理员。` (no
         enabled administrator would remain), `这个用户名已经有人用了。`.
+        (v0.8, round 2) While AI+ is not available, a request with an `ai` key (true or false, equal to the stored value or not,
+        alone or with other fields) is refused as a whole with 409 `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code":
+        "ai.serviceOff"}`; nothing is written or logged.
       requestBody:
         required: true
         content:
@@ -787,7 +824,8 @@ paths:
       x-access: Admin
       description: |
         The lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter) plus the startup and shutdown
-        status lines; never a password, a token, a cookie value or question text. Without `after`, every kept line. The sequence
+        status lines, and (v0.8) the lines of ai-service (target `xexam_ai_service`, message starting with `AI: `); never a password,
+        a token, a cookie value or question text. Without `after`, every kept line. The sequence
         numbers start at 1 again after a restart, so an `after` larger than `last`, or a `boot` that is not this process's id,
         is answered like no `after`: every kept line. Other query parameters are ignored.
       parameters:
@@ -838,6 +876,877 @@ paths:
               schema: { $ref: "#/components/schemas/Error" }
         "415": { $ref: "#/components/responses/BadContentType" }
 
+  # ---------------------------------------------------------------- (v0.8) AI routes, answered by ai-service
+  /api/ai/status:
+    get:
+      tags: [ai]
+      summary: "(v0.8) Whether AI+ is available, whether you may chat, whether you are paused, your free mode, your running answer and the current limits"
+      x-access: AiSigned
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiStatus" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/chats:
+    get:
+      tags: [ai]
+      summary: "(v0.8) Your chats, newest updatedAt first"
+      x-access: AiSigned
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [chats]
+                properties:
+                  chats: { type: array, items: { $ref: "#/components/schemas/AiChatSummary" } }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/chat:
+    get:
+      tags: [ai]
+      summary: "(v0.8) One of your chats with its messages (a running answer has status streaming and the text so far)"
+      x-access: AiSigned
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiChat" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+  /api/ai/send:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Send a message (a new chat with chatId null) and receive the answer as an event stream"
+      x-access: AiUser
+      description: |
+        Failures before the answer starts are JSON errors: 403 `ai.disabled` / `ai.notAllowed` / `ai.suspended` / `ai.adminOnly`; 400 `ai.tooLong` (with `limit`)
+        / `ai.badRequest`; 404 `ai.notFound` (not your chat); 409 `ai.busy`, `ai.messageLimit`, `ai.chatLimit` (with `limit`),
+        `ai.keyProblem`; 503 `ai.backendDown` / `ai.serverBusy`. Otherwise 200 with `text/event-stream`: the event `start`,
+        then (round 2) at most one `thinking` event (only before the first `delta`), then `delta` events, then exactly one of `done`, `stopped` or `error`; a comment `: keep-alive` every 15 s while nothing
+        else was sent. The answer goes on, and is saved, when the client disconnects. Nginx: 20 starts a minute per session
+        (burst 10), read timeout 600 s, no buffering.
+
+        (Round 2) The mode of the answer is not in the request: it is the administrator's free mode (`POST /api/ai/free`) at the
+        moment of the request, and it applies to every chat, old or new. The system prompt is the study-assistant text with the
+        date, the user's memories and the reply-language line (last); in free mode it is the language line alone and no memory is
+        read. After a switch (the history sent holds messages of the other mode) one short mode line follows the language line.
+        The history is sent in full, whatever mode each message was written in, but old messages are shortened: the newest 4 in
+        full, older answers to 800 characters (then `…(shortened)`), older questions to 2000 characters (then `…`); stored
+        messages never change. Prompt caching: in the Anthropic format the system block and the last history message carry a
+        `cache_control` breakpoint (`ephemeral`); in the OpenAI format the provider's own automatic caching applies. What the
+        provider served from its cache is stored and reported as `tokensCached` in /api/ai/admin/usage.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              additionalProperties: false
+              properties:
+                chatId: { type: integer, minimum: 1, nullable: true, description: "null or absent = a new chat" }
+                text: { type: string, description: "Trimmed; 1 to messageChars characters (16000 by default)" }
+                lang:
+                  type: string
+                  enum: [en, zh, ja, zh-CN]
+                  description: "(v0.8, round 2) The Settings language; the answer is written in it. `zh-CN` = `zh`. Missing = English. Any other value: 400 `ai.badRequest`"
+                free:
+                  description: |
+                    Accepted for old clients and **ignored** whatever its value (no error, no effect): a chat has no mode, and the
+                    mode of an answer is the administrator's free mode (`POST /api/ai/free`, `freeMode` in the status).
+                  deprecated: true
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "413": { $ref: "#/components/responses/AiError" }
+        "415": { $ref: "#/components/responses/AiError" }
+        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/retry:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Write the last answer of a chat again (it failed or was stopped), as an event stream"
+      x-access: AiUser
+      description: |
+        The chat's last message must be an assistant message with status `error` or `stopped` after a user message (else 409
+        `ai.notRetryable`). It is reset and written again in place; `start.retry` is true. Errors and events as for /api/ai/send.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId]
+              additionalProperties: false
+              properties:
+                chatId: { type: integer, minimum: 1 }
+                lang:
+                  type: string
+                  enum: [en, zh, ja, zh-CN]
+                  description: "(v0.8, round 2) The Settings language of this request; missing = English; any other value: 400 `ai.badRequest`"
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/free:
+    post:
+      tags: [ai]
+      summary: "(v0.8, round 2) Turn your own free mode on or off (administrators only; applies from the next message in any chat)"
+      x-access: AiAdmin
+      description: |
+        Free mode is a state of the administrator, not of a chat. It is stored per user in ai-service's database
+        (`users.free_mode`), so it survives reloads, other browsers and restarts, and `freeMode` in /api/ai/status reports it
+        (always false for a plain user, whatever is stored). While it is on, every send / retry of that administrator, in any
+        chat, is answered in free mode: the system prompt is the reply-language line alone, with no study-assistant instructions,
+        no date and no memories. While it is off, every message is answered normally. An answer already being written keeps the
+        mode it started in. Every message records its mode (`AiMessage.free`, `start.free`). Free mode lifts only Xexam's own
+        study-assistant role, never the provider's safety rules. Works while AI is off. Safe to repeat. AI Chat has no switch for
+        it; the choice is in Settings (「AI 对话模式」, administrators who can use AI), and AI Chat shows a green tag
+        「自由模式」 beside its title while it is on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [free]
+              additionalProperties: false
+              properties:
+                free: { type: boolean }
+      responses:
+        "200":
+          description: The state after the change
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [free]
+                properties:
+                  free: { type: boolean }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "413": { $ref: "#/components/responses/AiError" }
+        "415": { $ref: "#/components/responses/AiError" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/stop:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Stop your answers being written ({} = all of them, {chatId} = the one of that chat)"
+      x-access: AiSigned
+      description: Waits up to 5 s until the stopped answers are saved. The stream ends with the event `stopped`; the text so far is kept.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                chatId: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, stopped]
+                properties:
+                  ok: { type: boolean, example: true }
+                  stopped: { type: boolean, description: "false when nothing was running" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+  /api/ai/chats/delete:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Delete one of your chats, or all of them (a running answer in them is stopped first)"
+      x-access: AiSigned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiIdOrAll" }
+      responses:
+        "200": { $ref: "#/components/responses/AiDeleted" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+  /api/ai/memories:
+    get:
+      tags: [ai]
+      summary: "(v0.8) Your memory notes with the current limits"
+      x-access: AiSigned
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [memories, limit, maxChars]
+                properties:
+                  memories: { type: array, items: { $ref: "#/components/schemas/AiMemory" } }
+                  limit: { type: integer, example: 50, description: "memoriesPerUser" }
+                  maxChars: { type: integer, example: 300, description: "memoryChars" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+  /api/ai/memories/add:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Add a memory note"
+      x-access: AiUser
+      description: |
+        Whitespace is collapsed to single spaces; 1 to memoryChars characters (400 `ai.memoryTooLong` with `limit`); beyond
+        memoriesPerUser notes 409 `ai.memoryLimit` with `limit`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              additionalProperties: false
+              properties:
+                content: { type: string }
+                source: { type: string, enum: [manual, chat], default: manual }
+      responses:
+        "200": { $ref: "#/components/responses/AiMemoryAnswer" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/memories/update:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Change the text of one of your memory notes"
+      x-access: AiUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, content]
+              additionalProperties: false
+              properties:
+                id: { type: integer, minimum: 1 }
+                content: { type: string }
+      responses:
+        "200": { $ref: "#/components/responses/AiMemoryAnswer" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+  /api/ai/memories/delete:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Delete one of your memory notes, or all of them"
+      x-access: AiSigned
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiIdOrAll" }
+      responses:
+        "200": { $ref: "#/components/responses/AiDeleted" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+  /api/ai/memories/suggest:
+    post:
+      tags: [ai]
+      summary: "(v0.8) Ask the model for a memory note made from one of your messages (nothing is saved)"
+      x-access: AiUser
+      description: |
+        The message must be a user message in one of your chats (else 404); its first 2000 characters are sent. Takes your
+        answer place (409 `ai.busy`) and a global place (503 `ai.serverBusy`). An empty suggestion: 502 `ai.up.protocol`.
+        Save the note with /api/ai/memories/add and `source: chat`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [messageId]
+              additionalProperties: false
+              properties:
+                messageId: { type: integer, minimum: 1 }
+                lang:
+                  type: string
+                  enum: [en, zh, ja, zh-CN]
+                  description: "(v0.8, round 2) The language the note is written in; missing = English; any other value: 400 `ai.badRequest`"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [suggestion]
+                properties:
+                  suggestion: { type: string, description: "One line, at most memoryChars characters" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "502": { $ref: "#/components/responses/AiUpstream" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+        "504": { $ref: "#/components/responses/AiUpstream" }
+  /api/ai/admin/settings:
+    get:
+      tags: [ai-admin]
+      summary: "(v0.8) The AI settings (never a key: only whether it is set, its last 4 characters and whether it is readable)"
+      x-access: AiAdmin
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiSettings" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8) Change the AI settings (every key optional; a change of the connection or the model switches AI off)"
+      x-access: AiAdmin
+      description: |
+        Validation order: provider, baseUrl (400 `ai.badUrl`), format and gatewayAuth, the key format (400 `ai.badKey` with
+        `field`), key re-entry (the provider or the origin of baseUrl changes and a saved key is not sent again as a string or
+        null: 400 `ai.keyReenter` with `field`, nothing saved), the header clash (400 `ai.headerClash`, `field: apiKey`), the
+        model charset, retentionDays (400 `ai.badRetention`). A change of provider, baseUrl, format, gatewayAuth, model or a key
+        clears the passed test and switches AI off (`switchedOff`); a save of only `retentionDays` changes none of these. Logged without any key or
+        address. `updatedBy` is "" on a fresh install until the first save; the AI settings page does not count a fresh install's factory
+        connection (OpenAI-compatible, its default address, no key) as saved, so a retention-only save leaves its chip at *Connection not set*.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiSettingsUpdate" }
+      responses:
+        "200":
+          description: The settings after the change, plus `switchedOff`
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - { $ref: "#/components/schemas/AiSettings" }
+                  - type: object
+                    required: [switchedOff]
+                    properties:
+                      switchedOff: { type: boolean, description: "AI was on and this change switched it off" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/models:
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8) List the provider's models with the saved settings"
+      x-access: AiAdmin
+      description: |
+        400 `ai.keyMissing` (with `field`) when a needed key is not saved. A provider that does not list models answers
+        `{"models": [], "listed": false}`. Key, connection, quota and time-out problems: 502 / 504 with their `ai.up.*` code.
+        Kept 10 minutes per settings fingerprint.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models, listed]
+                properties:
+                  models: { type: array, items: { type: string } }
+                  listed: { type: boolean }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "502": { $ref: "#/components/responses/AiUpstream" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+        "504": { $ref: "#/components/responses/AiUpstream" }
+  /api/ai/admin/verify:
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8) Test the saved settings with one real request to the model"
+      x-access: AiAdmin
+      description: |
+        400 `ai.modelMissing` / `ai.keyMissing`, 409 `ai.keyProblem`, 503 `ai.serverBusy` before anything is sent. One
+        streaming request like a chat ("Reply with the single word OK." / "Test"), up to 2 min; on `ai.up.badRequest` a second
+        try without stream_options (OpenAI format) or with max_tokens 4096 (Anthropic format). A failure is a 200 with
+        `ok: false`: a settings-class code (auth, quota, notFound, badRequest, protocol, refused) clears the passed test and
+        switches AI off; a temporary one (rateLimit, overloaded, server, timeout, connect) changes nothing. Nginx waits up to
+        300 s for this route.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: false }
+      responses:
+        "200":
+          description: The result of the test
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiVerify" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/admin/enable:
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8) Switch the AI+ feature on (after a passed test of the current settings) or off (stops every running answer)"
+      x-access: AiAdmin
+      description: |
+        (Round 2) The AI+ feature switch of the whole installation. ai-service reports the new state to the backend before it
+        answers, so `aiAvailable` follows at once.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              additionalProperties: false
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The settings after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiSettings" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409":
+          description: "`ai.notVerified` (no passed test of the current settings) or `ai.keyProblem`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiError" }
+  /api/ai/admin/suspend:
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8, round 2) Pause the AI+ feature of a plain user (audited; the screens say Pause)"
+      x-access: AiAdmin
+      description: |
+        The route names, the `suspended` key and the code `ai.suspended` keep the older word; the screens say Pause / Resume /
+        Paused. The user keeps their AI+ feature switch but cannot use AI: their AI user routes answer 403 `ai.suspended`; a
+        running answer or memory suggestion is stopped at once (the stream ends with the `error` event `ai.suspended`). Reading and
+        deleting their chats and memories stays possible, and the user stays listed. The pause survives switching the user's AI+
+        feature off and on; only /api/ai/admin/resume clears it. No confirmation is asked. Safe to repeat (no second audit line).
+        Audit line, delivered to the System log with the prefix `AI: `: `AI function turned off for user "<name>" by admin
+        "<admin>"` (the wording of this English log line did not change). An administrator cannot be paused:
+        409 `ai.adminAlways`. The user is looked up through the backend (503 `ai.backendDown` when it cannot answer; 404
+        `ai.notFound` for an unknown user). ai-service reports the change to the backend before it answers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiUserId" }
+      responses:
+        "200": { $ref: "#/components/responses/AiUserRowAnswer" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/admin/resume:
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8, round 2) Resume the AI+ feature of a paused user (audited)"
+      x-access: AiAdmin
+      description: |
+        The reverse of /api/ai/admin/suspend, with the same errors (409 `ai.adminAlways` for an administrator). Audit line:
+        `AI function turned on for user "<name>" by admin "<admin>"`. Safe to repeat.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiUserId" }
+      responses:
+        "200": { $ref: "#/components/responses/AiUserRowAnswer" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/admin/usage:
+    get:
+      tags: [ai-admin]
+      summary: "(v0.8) Usage statistics: calls, tokens, cached tokens and errors by user, model and period (never content)"
+      x-access: AiAdmin
+      parameters:
+        - name: days
+          in: query
+          required: false
+          schema: { type: string, enum: ["7", "30", "90", "365"], default: "7" }
+          description: Per day for 7 and 30, per month for 90 and 365
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiUsage" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+  /api/ai/admin/users:
+    get:
+      tags: [ai-admin]
+      summary: "(v0.8) Administrators and users with the AI+ feature (paused ones included), sorted by username (reconciles first)"
+      x-access: AiAdmin
+      description: |
+        (Round 2) Only users who have the AI+ feature: every administrator and every user with AI+ on. A user whose AI+ feature was
+        switched off is not listed even when they still have AI data (kept; `GET /api/ai/admin/user` still shows it, audited).
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users: { type: array, items: { $ref: "#/components/schemas/AiAdminUserRow" } }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/admin/user:
+    get:
+      tags: [ai-admin]
+      summary: "(v0.8) One user's chats and memories, read only (audited)"
+      x-access: AiAdmin
+      description: |
+        Reconciles first; 404 only when the user no longer exists in the main app. Before the data is returned, the line
+        `user "<admin>" viewed the AI chats and memories of user "<name>"` is delivered to the System log; if that fails, 503
+        `ai.backendDown` and no data.
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user, chats, memories]
+                properties:
+                  user: { $ref: "#/components/schemas/AiAdminUserRow" }
+                  chats: { type: array, items: { $ref: "#/components/schemas/AiChatSummary" } }
+                  memories: { type: array, items: { $ref: "#/components/schemas/AiMemory" } }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/admin/chat:
+    get:
+      tags: [ai-admin]
+      summary: "(v0.8) One chat of a user with its messages, read only (audited)"
+      x-access: AiAdmin
+      description: |
+        The chat must belong to that user (else 404 and no audit line). The line `user "<admin>" viewed an AI chat of user
+        "<name>" (<n> messages)` is delivered to the System log first; if that fails, 503 `ai.backendDown`.
+      parameters:
+        - { name: user, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: id, in: query, required: true, schema: { type: integer, minimum: 1 } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiChat" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/admin/clear:
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8) Delete one chat, all chats or all memories of a user (audited)"
+      x-access: AiAdmin
+      description: |
+        `what: chat` needs `chatId`; `chats` and `memories` must not have one (400). A running answer in the cleared chat(s) is
+        stopped first. The audit line is written in the same transaction as the delete and delivered to the System log until the
+        backend takes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [userId, what]
+              additionalProperties: false
+              properties:
+                userId: { type: integer, minimum: 1 }
+                what: { type: string, enum: [chat, chats, memories] }
+                chatId: { type: integer, minimum: 1 }
+      responses:
+        "200": { $ref: "#/components/responses/AiDeleted" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+  /api/ai/admin/limits:
+    get:
+      tags: [ai-admin]
+      summary: "(v0.8) The safety limits, their defaults and ranges"
+      x-access: AiAdmin
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiLimitsAnswer" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+    post:
+      tags: [ai-admin]
+      summary: "(v0.8) Change any of the safety limits (all or nothing; applies at once, never switches AI off)"
+      x-access: AiAdmin
+      description: |
+        A value out of range or not an integer: 400 `ai.limitRange` with `field`; an unknown key: 400 `ai.badRequest`; nothing
+        is saved then. Lowering a limit never deletes or shortens existing data. Logged as
+        `AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AiLimits" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiLimitsAnswer" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+
+  # ---------------------------------------------------------------- (v0.8) internal routes, NOT reachable through Nginx
+  /internal/ai/auth:
+    get:
+      tags: [internal]
+      summary: "(v0.8, internal) The auth step of every /api/ai/* request (Nginx auth_request); not reachable from outside"
+      x-access: Internal
+      x-internal: true
+      security: []
+      description: |
+        Called by Nginx (and the vite dev / preview server) with the browser's Cookie and `X-Original-Host`,
+        `X-Original-Origin`, `X-Original-Method`; Host, Origin and method are read only from these. The session must be
+        exactly one plain `xexam_session` cookie; it is never refreshed. 204 with the identity statement in
+        `X-Xexam-Identity`: `base64url(payload) + "." + base64url(HMAC-SHA-256(internal token, "xexam-identity-v1." +
+        base64url(payload)))`, payload `{"v":1,"id","stamp","username","role","aiAllowed","sid","exp"}` (compact JSON, this
+        order; `exp` = now + 60). Nginx has no location for /internal/: from outside this path is 404.
+      parameters:
+        - { name: X-Original-Host, in: header, required: false, schema: { type: string } }
+        - { name: X-Original-Origin, in: header, required: false, schema: { type: string } }
+        - { name: X-Original-Method, in: header, required: false, schema: { type: string } }
+      responses:
+        "204":
+          description: Allowed
+          headers:
+            X-Xexam-Identity:
+              description: The signed identity statement (never logged)
+              schema: { type: string }
+        "401":
+          description: "No valid session; header `X-Xexam-Deny: signin`; `{\"error\": \"请先登录。\", \"code\": \"auth.signin\"}`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiError" }
+        "403":
+          description: "`X-Xexam-Deny: password` (`auth.password`) or `guard` (`auth.guard`, the guard's own message)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiError" }
+        "500":
+          description: The database could not be read
+        "503":
+          description: The AI link is off (no internal token); no body
+  /internal/ai/introspect:
+    post:
+      tags: [internal]
+      summary: "(v0.8, internal) Is this session still valid for this user? (ai-service, every 2 s during an answer)"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, id]
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                id: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: "`{\"ok\": true, \"user\": {...}}`, or `{\"ok\": false}` (no valid session, another user, or a password change pending)"
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok]
+                properties:
+                  ok: { type: boolean }
+                  user: { $ref: "#/components/schemas/InternalUser" }
+        "400": { description: Malformed body }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+  /internal/ai/users:
+    post:
+      tags: [internal]
+      summary: "(v0.8, internal) Which of these users exist, and (holders) every administrator and user with AI+"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                ids: { type: array, maxItems: 10000, items: { type: integer, minimum: 1 }, default: [] }
+                holders: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Unique, ordered by id; a requested id that is missing was deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users]
+                properties:
+                  users:
+                    type: array
+                    items:
+                      allOf:
+                        - { $ref: "#/components/schemas/InternalUser" }
+                        - type: object
+                          required: [disabled, ai]
+                          properties:
+                            disabled: { type: boolean }
+                            ai: { type: boolean }
+        "400": { description: Malformed body, or more than 10000 ids }
+        "404": { description: Missing or wrong token }
+  /internal/ai/log:
+    post:
+      tags: [internal]
+      summary: "(v0.8, internal) Lines of ai-service for the System log (target xexam_ai_service, prefix AI: )"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        At most 50 lines; a message over 2000 characters is cut (ending with …); control characters are removed. One invalid
+        line refuses the whole batch (400). Body up to about 590 KiB (the other token routes: 64 KiB).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [lines]
+              properties:
+                lines:
+                  type: array
+                  maxItems: 50
+                  items:
+                    type: object
+                    required: [level, message]
+                    properties:
+                      level: { type: string, enum: [INFO, WARN, ERROR] }
+                      message: { type: string }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "400": { description: Malformed batch; nothing is logged }
+        "404": { description: Missing or wrong token }
+        "413": { description: Body too large }
+
+  /internal/ai/heartbeat:
+    post:
+      tags: [internal]
+      summary: "(v0.8, round 2, internal) ai-service reports its state to the backend (start, every change, every 25 s, at stop)"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        How the backend knows whether AI+ is available; the backend never calls ai-service. ai-service reports when it starts,
+        at once after an administrator enables / disables the AI+ feature or pauses / resumes a user, every 25 s, 5 s after a
+        failed report, and once with `stopping: true` when it shuts down. The backend keeps only the last report, in memory:
+        ai-service is **connected** while that report is younger than 60 s and is not a stopping report, and AI+ is **available**
+        while it is connected and `enabled`. All four keys are required, no others are allowed. A good report writes no log line.
+        ai-service's own log shows the link: `AI link: connected to the main service` once per connection (at the first accepted
+        report, and again only after a loss) and `AI link: lost the main service` once when a connection that was up fails.
+        Nginx has no location for /internal/: from outside this path is 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version, enabled, suspended, stopping]
+              additionalProperties: false
+              properties:
+                version: { type: string, pattern: "^[0-9A-Za-z.+-]{1,20}$", example: "0.8" }
+                enabled: { type: boolean, description: "The AI+ feature switch as ai-service uses it (on, tested, keys readable)" }
+                suspended:
+                  type: array
+                  maxItems: 3000
+                  items: { type: integer, minimum: 1 }
+                  description: "Ids of the users who are paused (duplicates ignored)"
+                stopping: { type: boolean, description: "true only in the last report while ai-service shuts down" }
+      responses:
+        "200":
+          description: OK; the report replaced the last one
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "400": { description: "Malformed report (wrong keys or types, more than 3000 ids, an id below 1); the stored report is unchanged" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+
 components:
   securitySchemes:
     session:
@@ -847,7 +1756,15 @@ components:
       description: |
         (v0.6) The session cookie set by `POST /api/auth/login` (43 base64url characters; the database stores only its SHA-256).
         Sessions last 30 days and slide: at most once an hour a request refreshes the session and re-sends the cookie, but only
-        when the request carries an `Origin` header or `XEXAM_COOKIE_SECURE=1`.
+        when the request carries an `Origin` header or `XEXAM_COOKIE_SECURE=1`. (v0.8) The auth step of the AI routes accepts
+        exactly one plain `xexam_session` cookie and never refreshes the session.
+    internalToken:
+      type: apiKey
+      in: header
+      name: X-Xexam-Internal-Token
+      description: |
+        (v0.8, internal) The token the backend and ai-service share (`XEXAM_INTERNAL_TOKEN`, else `<link dir>/internal.token`,
+        at least 32 printable ASCII characters); compared in constant time; a missing or wrong token is answered with 404.
 
   responses:
     ForbiddenHost:
@@ -934,12 +1851,109 @@ components:
     UserConflict:
       description: |
         (v0.6) `不能对自己的账户做这个操作。` (not on your own account), `至少要保留一个启用的管理员。` (the last enabled
-        administrator stays) or `这个用户名已经有人用了。` (username taken)
+        administrator stays), `这个用户名已经有人用了。` (username taken), or (v0.8, round 2, update only) `ai.serviceOff`
+        (an `ai` key while AI+ is not available)
       content:
         application/json:
-          schema: { $ref: "#/components/schemas/Error" }
+          schema:
+            oneOf:
+              - { $ref: "#/components/schemas/Error" }
+              - { $ref: "#/components/schemas/ServiceOffError" }
+
+    # ---------------------------------------------------------------- (v0.8) AI routes
+    AiSignIn:
+      description: "(v0.8) Refused by the auth step (answered by Nginx): no valid session, `auth.signin`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiForbidden:
+      description: |
+        (v0.8) From the auth step (Nginx): `auth.password` (a new password is required) or `auth.guard` (Host / Origin not
+        allowed); `ai.badRequest` for a method other than GET / POST. From ai-service: `ai.disabled` (the AI+ feature is not available right now),
+        `ai.notAllowed` (no AI+), `ai.suspended` (an administrator paused the user, round 2), `ai.adminOnly` (an administrator route, including
+        `POST /api/ai/free`).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiUnavailable:
+      description: "(v0.8) ai-service is absent, stopped or does not answer (Nginx): `ai.unavailable`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiBackendDown:
+      description: |
+        (v0.8) `ai.backendDown`: the backend could not check the request or answer ai-service (also: the AI link is off,
+        an invalid identity statement, an audit line that could not be delivered, or (round 2) the backend has not accepted a
+        report of ai-service for 60 s: AI user routes); `ai.serverBusy`: every global model-call
+        place is taken.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiError:
+      description: "(v0.8) An error of ai-service with its stable `code` (and `field` / `limit` where they apply)"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiNotFound:
+      description: "(v0.8) `ai.notFound`: it does not exist, or it is not yours"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiUpstream:
+      description: "(v0.8) The AI provider failed: an `ai.up.*` code (504 for `ai.up.timeout`); the provider's own text is never passed on"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+    AiDeleted:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [deleted]
+            properties:
+              deleted: { type: integer }
+    AiUserRowAnswer:
+      description: "(v0.8, round 2) The user's row after the change"
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [user]
+            properties:
+              user: { $ref: "#/components/schemas/AiAdminUserRow" }
+    AiMemoryAnswer:
+      description: OK
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [memory]
+            properties:
+              memory: { $ref: "#/components/schemas/AiMemory" }
+    AiStream:
+      description: |
+        (v0.8) A stream of server-sent events (`Cache-Control: no-store`, `X-Accel-Buffering: no`, no Content-Length). Each event
+        is `event: <name>` + `data: <one line of compact JSON>` + a blank line: `start` (AiStreamStart) first, then (round 2) at
+        most one `thinking` (AiStreamThinking, only before the first delta), then `delta` (AiStreamDelta) pieces, then exactly one of `done` (AiStreamDone), `stopped` (AiStreamStopped) or `error`
+        (AiStreamError). A comment line `: keep-alive` every 15 s while nothing else was sent.
+      content:
+        text/event-stream:
+          schema: { type: string }
+    ProxyLimit:
+      description: "Nginx's own rate limit (not JSON): 30 requests/s per address (burst 120); send and retry also 20/min per session (burst 10)"
+      content:
+        text/html:
+          schema: { type: string }
 
   schemas:
+    ServiceOffError:
+      type: object
+      description: "(v0.8, round 2) The only error of the backend's own routes that carries a `code`: an AI+ switch while AI+ is not available"
+      required: [error, code]
+      properties:
+        error: { type: string, example: "请先在 AI 设置里开启 AI+ 功能。" }
+        code: { type: string, enum: [ai.serviceOff] }
     Error:
       type: object
       required: [error]
@@ -961,20 +1975,21 @@ components:
       description: "Key order as listed. (v0.7.5) `bankCount` is gone."
       required: [version, arch, canShutdown]
       properties:
-        version: { type: string, example: "0.7.5", description: "`CODE_VERSION` of the VERSION file (or `XEXAM_VERSION`)" }
+        version: { type: string, example: "0.8", description: "`CODE_VERSION` of the VERSION file (or `XEXAM_VERSION`)" }
         arch: { type: string, example: x86_64 }
         canShutdown: { type: boolean, description: "True only when the program was started with `--allow-shutdown` (never in Docker)" }
 
     SessionUser:
       type: object
       description: "(v0.6) The signed-in user. Key order as listed."
-      required: [id, username, role, mustChangePassword, canManageBanks]
+      required: [id, username, role, mustChangePassword, canManageBanks, aiAllowed]
       properties:
         id: { type: integer }
         username: { type: string }
         role: { type: string, enum: [admin, user] }
         mustChangePassword: { type: boolean }
         canManageBanks: { type: boolean, description: "(v0.7) True for every administrator, and for a plain user with the bank manager permission" }
+        aiAllowed: { type: boolean, description: "(v0.8) True for every administrator, and for a plain user with AI+ (whether AI is on: GET /api/ai/status)" }
     UserEnvelope:
       type: object
       required: [user]
@@ -982,7 +1997,7 @@ components:
         user: { $ref: "#/components/schemas/SessionUser" }
     AuthState:
       type: object
-      description: "(v0.6) Signed out: `user` and `defaultAdmin`. Signed in: `user` and `library`."
+      description: "(v0.6) Signed out: `user` and `defaultAdmin`. Signed in: `user`, `library` and (v0.8, round 2) `aiAvailable`; administrators also `aiService`."
       required: [user]
       properties:
         user: { nullable: true, allOf: [{ $ref: "#/components/schemas/SessionUser" }] }
@@ -999,6 +2014,23 @@ components:
             Signed in only: an opaque stamp of the question banks the user may see. It changes whenever one of them is
             imported, replaced or deleted (also by the `import` command), and (v0.7) whenever the banks the user may see or
             manage change. For a user limited to some banks it is made only of those banks.
+        aiAvailable:
+          type: boolean
+          description: |
+            (v0.8, round 2) Signed in only. True while AI+ is available: ai-service's last report is younger than 60 s, is not a
+            stopping report, and says the AI+ feature is on. The same for every signed-in user.
+        aiService: { $ref: "#/components/schemas/AiServiceState" }
+    AiServiceState:
+      type: object
+      description: "(v0.8, round 2) What the backend knows about ai-service, from its last report. In `GET /api/auth/state` for administrators only. Key order as listed."
+      required: [connected, stopped, lastSeen, version, enabled, link]
+      properties:
+        connected: { type: boolean, description: "A report is younger than 60 s and is not a stopping report" }
+        stopped: { type: boolean, description: "The last report was a stopping report (whatever its age)" }
+        lastSeen: { type: integer, nullable: true, description: "Unix seconds of the last accepted report since the backend started; null = none yet" }
+        version: { type: string, nullable: true, description: "The version in the last report; null = none" }
+        enabled: { type: boolean, description: "The AI+ feature switch as the last report says, while connected; false when not connected" }
+        link: { type: boolean, description: "The backend has an internal token loaded (the AI link is on)" }
     LoginRequest:
       type: object
       required: [username, password]
@@ -1032,7 +2064,7 @@ components:
     User:
       type: object
       description: "(v0.6) One account in GET /api/users. Key order as listed."
-      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, ownedBanks, lock]
+      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, ai, ownedBanks, lock, aiSuspended]
       properties:
         id: { type: integer }
         username: { type: string }
@@ -1045,13 +2077,16 @@ components:
         banks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks the user sees, ascending (only banks that still exist; `[]` = none)" }
         newBanks: { type: boolean, description: "(v0.7) Include banks imported later: every bank created from now on is added to `banks` when it is created; existing banks are never added by it" }
         canManageBanks: { type: boolean, description: "(v0.7) The stored bank manager permission (administrators manage every bank anyway)" }
+        ai: { type: boolean, description: "(v0.8) The stored AI+ feature switch of the user (administrators may always use AI while it is on); kept while AI+ is not available" }
         ownedBanks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks this user owns (imported as new banks), ascending" }
         lock: { nullable: true, allOf: [{ $ref: "#/components/schemas/UserLock" }], description: "null while the account is in the first round and not locked" }
+        aiSuspended: { type: boolean, description: "(v0.8, round 2) An administrator paused the user's AI+ feature in AI settings (from ai-service's last report: false while the backend has none; always false for administrators; the JSON keeps the older word)" }
     UserList:
       type: object
-      required: [users]
+      required: [users, aiAvailable]
       properties:
         users: { type: array, items: { $ref: "#/components/schemas/User" } }
+        aiAvailable: { type: boolean, description: "(v0.8, round 2) The same value as in GET /api/auth/state; every answer that returns the list has it" }
     UserCreate:
       type: object
       required: [username, password, role]
@@ -1062,6 +2097,7 @@ components:
         banks: { allOf: [{ $ref: "#/components/schemas/BankAccess" }], description: "(v0.7) Default `[]`: no bank until an administrator chooses some" }
         newBanks: { type: boolean, default: false, description: "(v0.7) Include banks imported later (true with `\"banks\": \"all\"` unless given)" }
         canManageBanks: { type: boolean, default: false, description: "(v0.7) The bank manager permission" }
+        ai: { type: boolean, default: false, description: "(v0.8) The AI+ feature of the user. `true` while AI+ is not available: 409 `ai.serviceOff`" }
     UserUpdate:
       type: object
       required: [id]
@@ -1073,6 +2109,7 @@ components:
         banks: { $ref: "#/components/schemas/BankAccess" }
         newBanks: { type: boolean, description: "(v0.7) Include banks imported later" }
         canManageBanks: { type: boolean, description: "(v0.7)" }
+        ai: { type: boolean, description: "(v0.8) The AI+ feature of the user, on or off. Any `ai` key while AI+ is not available: 409 `ai.serviceOff`, the whole request is refused" }
     UserId:
       type: object
       required: [id]
@@ -1424,3 +2461,318 @@ components:
         last: { type: integer, description: "Sequence number of the newest line (0 before anything was logged): the `after` of the next poll" }
         dropped: { type: boolean, description: "Lines newer than `after` (without `after`: from line 1) were already dropped from the buffer" }
         boot: { type: string, example: Xq3v9T0bLm2k, description: "Random id of this backend process: the `boot` of the next poll" }
+
+    # ---------------------------------------------------------------- (v0.8) ai-service (compact JSON, keys in this order)
+    AiError:
+      type: object
+      description: "(v0.8) Error of the AI routes. `field` for the key errors and ai.limitRange, `limit` for the errors that name a number."
+      required: [error, code]
+      properties:
+        error: { type: string, description: "Chinese text (the frontend translates by `code`)" }
+        code:
+          type: string
+          example: ai.notAllowed
+          description: |
+            auth.signin, auth.password, auth.guard (the auth step); ai.unavailable, ai.backendDown, ai.serverBusy, ai.internal,
+            ai.disabled, ai.suspended, ai.notAllowed, ai.adminOnly, ai.adminAlways, ai.serviceOff (the backend's), ai.notFound, ai.busy, ai.tooLong, ai.messageLimit, ai.chatLimit,
+            ai.notRetryable, ai.badRequest, ai.memoryLimit, ai.memoryTooLong, ai.notVerified, ai.keyProblem, ai.badUrl, ai.badKey,
+            ai.headerClash, ai.keyMissing, ai.keyReenter, ai.modelMissing, ai.badRetention, ai.limitRange, ai.interrupted (stored
+            only), ai.up.auth, ai.up.quota, ai.up.notFound, ai.up.rateLimit, ai.up.overloaded, ai.up.server, ai.up.badRequest,
+            ai.up.timeout, ai.up.connect, ai.up.protocol, ai.up.refused, ai.up.tooLong (stream only)
+        field: { type: string, description: "apiKey or gatewayKey; for ai.limitRange the limit's key" }
+        limit: { type: integer, description: "The limit in effect (ai.tooLong, ai.messageLimit, ai.chatLimit, ai.memoryLimit, ai.memoryTooLong)" }
+    AiStatus:
+      type: object
+      required: [enabled, allowed, suspended, hasData, running, retentionDays, memoryLimit, memoryMaxChars, maxMessageChars, messageChars, memoryChars, keyProblem, configured, freeMode]
+      properties:
+        enabled: { type: boolean, description: "AI+ is available: the AI+ feature is on (enabled, tested with the current settings, keys readable) and the backend accepted ai-service's report less than 60 s ago" }
+        allowed: { type: boolean, description: "You may chat now: enabled and (administrator or AI+) and not paused" }
+        suspended: { type: boolean, description: "(v0.8, round 2) An administrator paused you (always false for administrators; the JSON keeps the older word)" }
+        hasData: { type: boolean, description: "You have at least one chat or memory" }
+        running:
+          type: object
+          nullable: true
+          description: "Your latest answer being written, or null"
+          required: [chatId, messageId]
+          properties:
+            chatId: { type: integer }
+            messageId: { type: integer }
+        retentionDays: { type: integer, example: 90 }
+        memoryLimit: { type: integer, example: 50, description: "memoriesPerUser" }
+        memoryMaxChars: { type: integer, example: 300, description: "memoryChars (same value as memoryChars)" }
+        maxMessageChars: { type: integer, example: 16000, description: "messageChars (same value as messageChars)" }
+        messageChars: { type: integer, example: 16000 }
+        memoryChars: { type: integer, example: 300 }
+        keyProblem: { type: boolean, description: "Administrators only: the saved keys cannot be used (false for others)" }
+        configured: { type: boolean, description: "Administrators only: a model and the needed keys are saved (false for others)" }
+        freeMode: { type: boolean, description: "(v0.8, round 2) Administrators only: your free mode is on (always false for a plain user, whatever is stored). Set with POST /api/ai/free; it applies to every message in any chat from the next one" }
+    AiChatSummary:
+      type: object
+      required: [id, title, createdAt, updatedAt, messageCount, running]
+      properties:
+        id: { type: integer }
+        title: { type: string, description: "The start of the first message, at most 60 characters" }
+        createdAt: { type: integer, description: Unix seconds }
+        updatedAt: { type: integer, description: "Unix seconds of the last message; retention counts from here" }
+        messageCount: { type: integer }
+        running: { type: boolean, description: "An answer is being written in this chat" }
+    AiMessage:
+      type: object
+      required: [id, role, content, status, error, truncated, model, createdAt, free]
+      properties:
+        id: { type: integer }
+        role: { type: string, enum: [user, assistant] }
+        content: { type: string }
+        status: { type: string, enum: [streaming, done, stopped, error] }
+        error: { type: string, nullable: true, description: "An ai.* code when status is error" }
+        truncated: { type: boolean, description: "The model stopped at its length limit" }
+        model: { type: string, nullable: true }
+        createdAt: { type: integer, description: Unix seconds }
+        free: { type: boolean, description: "(v0.8, round 2) The mode this message was written (or, for an answer, generated) in: true = the administrator's free mode. Every message records its mode; the chat itself has none" }
+    AiChat:
+      type: object
+      required: [chat, messages]
+      properties:
+        chat: { $ref: "#/components/schemas/AiChatSummary" }
+        messages: { type: array, items: { $ref: "#/components/schemas/AiMessage" } }
+    AiMemory:
+      type: object
+      required: [id, content, source, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        content: { type: string }
+        source: { type: string, enum: [manual, chat] }
+        createdAt: { type: integer }
+        updatedAt: { type: integer }
+    AiIdOrAll:
+      description: "Exactly one of `id` and `all: true`"
+      oneOf:
+        - type: object
+          required: [id]
+          additionalProperties: false
+          properties:
+            id: { type: integer, minimum: 1 }
+        - type: object
+          required: [all]
+          additionalProperties: false
+          properties:
+            all: { type: boolean, enum: [true] }
+    AiKeyInfo:
+      type: object
+      required: [set, hint, unreadable]
+      properties:
+        set: { type: boolean }
+        hint: { type: string, description: "\"…\" + the last 4 characters; \"\" when not set or shorter than 12 characters" }
+        unreadable: { type: boolean, description: "Saved but cannot be decrypted (another encryption key)" }
+    AiSettings:
+      type: object
+      required: [provider, baseUrl, format, gatewayAuth, model, manualModel, enabled, verified, verifiedAt, retentionDays, keys, keyProblem, updatedAt, updatedBy, defaults]
+      properties:
+        provider: { type: string, enum: [openai, anthropic, gateway] }
+        baseUrl: { type: string, example: "https://api.openai.com/v1" }
+        format: { type: string, enum: [openai, anthropic], description: "The wire format in effect (the provider's own, or the gateway's choice)" }
+        gatewayAuth: { type: string, enum: [bearer, x-api-key, cf-aig-authorization] }
+        model: { type: string, description: "\"\" = none" }
+        manualModel: { type: boolean, description: "Typed by hand (not from the list)" }
+        enabled: { type: boolean, description: "AI is on (effective)" }
+        verified: { type: boolean, description: "A test passed with the current settings" }
+        verifiedAt: { type: integer, nullable: true }
+        retentionDays: { type: integer, minimum: 1, maximum: 3650 }
+        keys:
+          type: object
+          required: [apiKey, gatewayKey]
+          properties:
+            apiKey: { $ref: "#/components/schemas/AiKeyInfo" }
+            gatewayKey: { $ref: "#/components/schemas/AiKeyInfo" }
+        keyProblem: { type: string, nullable: true, enum: [mismatch, invalidEnv, invalidFile] }
+        updatedAt: { type: integer }
+        updatedBy: { type: string, description: "Username of the administrator who saved last" }
+        defaults:
+          type: object
+          properties:
+            openai: { type: string, example: "https://api.openai.com/v1" }
+            anthropic: { type: string, example: "https://api.anthropic.com" }
+    AiSettingsUpdate:
+      type: object
+      additionalProperties: false
+      description: "Every key optional (absent = keep). Unknown keys: 400 ai.badRequest."
+      properties:
+        provider: { type: string, enum: [openai, anthropic, gateway] }
+        baseUrl: { type: string, maxLength: 300, description: "Absolute http(s) URL without user, query or #; a trailing / is removed; for the Anthropic format also one trailing /v1" }
+        format: { type: string, enum: [openai, anthropic] }
+        gatewayAuth: { type: string, enum: [bearer, x-api-key, cf-aig-authorization] }
+        apiKey: { type: string, nullable: true, description: "A string replaces the key (1–400 printable ASCII, no spaces); null removes it" }
+        gatewayKey: { type: string, nullable: true, description: As apiKey }
+        model: { type: string, maxLength: 200, pattern: "^[A-Za-z0-9._:/@+-]*$", description: "\"\" clears the model" }
+        manualModel: { type: boolean }
+        retentionDays: { type: integer, minimum: 1, maximum: 3650 }
+    AiVerify:
+      type: object
+      required: [ok, code, httpStatus, latencyMs, model, verifiedAt, enabled, switchedOff]
+      properties:
+        ok: { type: boolean }
+        code: { type: string, nullable: true, description: "An ai.up.* code when ok is false" }
+        httpStatus: { type: integer, nullable: true, description: "The provider's HTTP status, when there was one" }
+        latencyMs: { type: integer }
+        model: { type: string }
+        verifiedAt: { type: integer, nullable: true }
+        enabled: { type: boolean, description: "AI is on after the test" }
+        switchedOff: { type: boolean, description: "The test failed for a settings reason and switched AI off" }
+    AiUsageSums:
+      type: object
+      required: [calls, tokensIn, tokensOut, errors, tokensCached]
+      properties:
+        calls: { type: integer }
+        tokensIn: { type: integer, description: "Tokens a provider did not report count 0" }
+        tokensOut: { type: integer }
+        errors: { type: integer }
+        tokensCached: { type: integer, description: "(v0.8, round 2) The part of tokensIn the provider served from its prompt cache (prompt caching; Anthropic `cache_read_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`). A provider that reports nothing counts 0. Shown as the Cached column (缓存命中) of the Usage tab" }
+    AiUsage:
+      type: object
+      required: [days, from, to, unit, totals, byUser, byModel, byPeriod]
+      properties:
+        days: { type: integer, enum: [7, 30, 90, 365] }
+        from: { type: string, example: "2026-11-05" }
+        to: { type: string, example: "2026-11-11" }
+        unit: { type: string, enum: [day, month] }
+        totals: { $ref: "#/components/schemas/AiUsageSums" }
+        byUser:
+          type: array
+          description: "Sorted by calls; deleted users are one row with userId null"
+          items:
+            allOf:
+              - type: object
+                required: [userId, username]
+                properties:
+                  userId: { type: integer, nullable: true }
+                  username: { type: string, nullable: true }
+              - { $ref: "#/components/schemas/AiUsageSums" }
+              - type: object
+                required: [lastAt]
+                properties:
+                  lastAt: { type: integer }
+        byModel:
+          type: array
+          description: "model \"\" = the calls that listed the models"
+          items:
+            allOf:
+              - type: object
+                required: [model]
+                properties:
+                  model: { type: string }
+              - { $ref: "#/components/schemas/AiUsageSums" }
+        byPeriod:
+          type: array
+          description: "Every day (unit day) or month (unit month) of the range, zeros included, oldest first"
+          items:
+            allOf:
+              - type: object
+                required: [period]
+                properties:
+                  period: { type: string, example: "2026-11-11" }
+              - { $ref: "#/components/schemas/AiUsageSums" }
+    AiAdminUserRow:
+      type: object
+      required: [id, username, role, ai, aiAllowed, disabled, exists, suspended, chats, messages, memories, lastUsedAt, tokensIn, tokensOut]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { type: string, enum: [admin, user] }
+        ai: { type: boolean, description: "The stored AI+ switch" }
+        aiAllowed: { type: boolean, description: "Administrator, or AI+ on" }
+        disabled: { type: boolean }
+        exists: { type: boolean, description: "false = no longer in the main app (its AI data is removed by the reconcile); always true in GET /api/ai/admin/users since round 2" }
+        suspended: { type: boolean, description: "(v0.8, round 2) The user is paused (never true for administrators; the JSON keeps the older word)" }
+        chats: { type: integer }
+        messages: { type: integer }
+        memories: { type: integer }
+        lastUsedAt: { type: integer, nullable: true }
+        tokensIn: { type: integer, description: All time }
+        tokensOut: { type: integer, description: All time }
+    AiUserId:
+      type: object
+      required: [userId]
+      additionalProperties: false
+      properties:
+        userId: { type: integer, minimum: 1 }
+    AiLimits:
+      type: object
+      additionalProperties: false
+      description: "The safety limits (all integers). POST: any subset; GET: all seven."
+      properties:
+        perUserRunning: { type: integer, minimum: 1, maximum: 4, default: 1 }
+        globalRunning: { type: integer, minimum: 1, maximum: 64, default: 16 }
+        chatsPerUser: { type: integer, minimum: 10, maximum: 100000, default: 1000 }
+        messagesPerChat: { type: integer, minimum: 20, maximum: 5000, default: 400 }
+        memoriesPerUser: { type: integer, minimum: 1, maximum: 1000, default: 50 }
+        memoryChars: { type: integer, minimum: 50, maximum: 2000, default: 300 }
+        messageChars: { type: integer, minimum: 1000, maximum: 32000, default: 16000 }
+    AiLimitsAnswer:
+      type: object
+      required: [limits, defaults, ranges]
+      properties:
+        limits: { $ref: "#/components/schemas/AiLimits" }
+        defaults: { $ref: "#/components/schemas/AiLimits" }
+        ranges:
+          type: object
+          description: "\"<key>\": [min, max] for each of the seven keys"
+          additionalProperties:
+            type: array
+            items: { type: integer }
+            minItems: 2
+            maxItems: 2
+    AiStreamStart:
+      type: object
+      description: "data of the event start"
+      required: [chatId, chatTitle, userMessageId, assistantMessageId, model, newChat, retry, free]
+      properties:
+        chatId: { type: integer }
+        chatTitle: { type: string }
+        userMessageId: { type: integer }
+        assistantMessageId: { type: integer }
+        model: { type: string }
+        newChat: { type: boolean }
+        retry: { type: boolean }
+        free: { type: boolean, description: "(v0.8, round 2) The mode this answer is written in: the administrator's free mode when the question was sent (a retry: when it was retried). A chat has no mode" }
+    AiStreamThinking:
+      type: object
+      description: "(v0.8, round 2) data of the event thinking: always `{}`. Sent at most once, only before the first delta, when the model starts to send its reasoning (which is never stored, sent on or logged)"
+    AiStreamDelta:
+      type: object
+      description: "data of the event delta"
+      required: [text]
+      properties:
+        text: { type: string }
+    AiStreamDone:
+      type: object
+      description: "data of the event done"
+      required: [status, tokensIn, tokensOut, truncated]
+      properties:
+        status: { type: string, enum: [done] }
+        tokensIn: { type: integer, nullable: true }
+        tokensOut: { type: integer, nullable: true }
+        truncated: { type: boolean }
+    AiStreamStopped:
+      type: object
+      description: "data of the event stopped (Stop, or ai-service shutting down)"
+      required: [status]
+      properties:
+        status: { type: string, enum: [stopped] }
+    AiStreamError:
+      type: object
+      description: "data of the event error; the text so far is kept"
+      required: [status, code, error]
+      properties:
+        status: { type: string, enum: [error] }
+        code: { type: string, example: ai.up.rateLimit }
+        error: { type: string }
+    InternalUser:
+      type: object
+      description: "(v0.8, internal) A user as the backend describes it to ai-service"
+      required: [id, stamp, username, role, aiAllowed]
+      properties:
+        id: { type: integer }
+        stamp: { type: string, pattern: "^[0-9a-f]{32}$", description: users.uid }
+        username: { type: string }
+        role: { type: string, enum: [admin, user] }
+        aiAllowed: { type: boolean }
