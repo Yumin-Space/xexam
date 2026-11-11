@@ -9,4 +9,4 @@ CODE_VERSION=0.8
 # Do not edit it by hand: the release job of .github/workflows/ci.yml writes it, together with the release badge at
 # the top of the READMEs, only after the GitHub Release was created successfully. Until then it keeps the previous
 # release, so a push or merge alone never changes it.
-RELEASE_VERSION=0.7.5
+RELEASE_VERSION=0.8
