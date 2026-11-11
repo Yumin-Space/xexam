@@ -105,8 +105,9 @@ mod tests {
         // 2026-01-07 08:00:30 UTC
         let ts = Timestamp::from_second(1_767_772_830).expect("ts");
         assert_eq!(format_timestamp_in(ts, &TimeZone::UTC), "2026-01-07 08:00");
-        let est5edt = TimeZone::get("EST5EDT").expect("named zone");
-        assert_eq!(format_timestamp_in(ts, &est5edt), "2026-01-07 03:00");
+        // A named zone that every tz database has (the "etcetera" file): Etc/GMT+5 is UTC-5 (POSIX inverts the sign)
+        let minus_five = TimeZone::get("Etc/GMT+5").expect("named zone");
+        assert_eq!(format_timestamp_in(ts, &minus_five), "2026-01-07 03:00");
     }
 
     #[test]
