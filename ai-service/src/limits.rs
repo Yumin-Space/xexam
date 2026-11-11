@@ -86,6 +86,10 @@ pub const HISTORY_FLOOR: usize = 24_000;
 pub const MAX_ANSWER_CHARS: usize = 100_000;
 /// Request bodies read by hand, at most this many bytes.
 pub const MAX_BODY: usize = 128 * 1024;
+/// A hint is cut after this many characters (the guard enforces it; the run ends as `done`, truncated).
+pub const HINT_MAX_CHARS: usize = 6_000;
+/// A summary prompt never carries more than this many characters of items (not adjustable).
+pub const SUMMARY_PROMPT_CHARS: usize = 60_000;
 
 impl Default for Limits {
     fn default() -> Self {

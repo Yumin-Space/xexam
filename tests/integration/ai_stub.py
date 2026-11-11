@@ -32,6 +32,13 @@ message "Test" is answered "OK". A last user message containing [slow] waits 20 
 one piece every 0.5 s for 10 s (keep-alive and revocation checks). The usage chunk comes when
 stream_options.include_usage is set (OpenAI) and always in message_start / message_delta (Anthropic).
 
+Study answers (v0.9; the system text decides): "asked for a HINT" answers a short self-made hint without option letters
+and a knowledge-points list; when the user turn contains [leak] the hint ends with a leak ("The answer is B." in English,
+"答案是 B。", "正解は B です。"; with the word "statements" in the user turn: "Statement 2 is true.", "第2项选是。",
+"2番目は「はい」です。") so the guard test can see it withheld. "asked for an EXPLANATION" answers "**Answer: <the text inside
+<answer_key>>**" and three short paragraphs. "answered wrong" (the summary) answers four Markdown headings and one line
+"Items: <n>" (n = the number of <item tags). [slow] in the last user turn keeps working for all of them.
+
 One line per request is printed to stdout: method, path (without the query) and status. Never headers or bodies.
 """
 import argparse
@@ -95,6 +102,41 @@ NOTES = {
 LANGUAGE_LINES = (re.compile(r'Always reply in (English|Simplified Chinese|Japanese) \('),
                   re.compile(r'Write the note in (English|Simplified Chinese|Japanese)'))
 LANGUAGE_NAMES = {'English': 'en', 'Simplified Chinese': 'zh', 'Japanese': 'ja'}
+NL = '\n'
+# Study answers (v0.9): made-up texts, in the reply language; the hints name no option letter
+HINTS = {
+    'en': ('First work out what the question is really asking, then compare it with what you know about the topic, one step at a time.' + NL + NL +
+           '## Knowledge points' + NL + NL +
+           '- Recall the basic definition behind the question.' + NL +
+           '- Think about the usual exceptions to the rule.' + NL +
+           '- Check the units and the wording before you decide.'),
+    'zh': ('先弄清题目到底在问什么，再一步一步对照你对这个主题的了解。' + NL + NL +
+           '## 知识点' + NL + NL +
+           '- 回忆题目背后的基本定义。' + NL +
+           '- 想一想这条规则常见的例外。' + NL +
+           '- 做决定之前先核对单位和措辞。'),
+    'ja': ('まず問題が本当に何を尋ねているのかを整理し、このテーマについて知っていることと一つずつ照らし合わせましょう。' + NL + NL +
+           '## 知識ポイント' + NL + NL +
+           '- 問題の背景にある基本的な定義を思い出します。' + NL +
+           '- そのルールのよくある例外を考えます。' + NL +
+           '- 決める前に単位と言い回しを確認します。'),
+}
+LEAKS = {
+    'en': ('The answer is B.', 'Statement 2 is true.'),
+    'zh': ('答案是 B。', '第2项选是。'),
+    'ja': ('正解は B です。', '2番目は「はい」です。'),
+}
+EXPLAIN_TAIL = {
+    'en': ('This is the reasoning behind the answer.', 'The other choices fail for a simple reason.', 'Remember the rule in one short sentence.'),
+    'zh': ('这是得出答案的思路。', '其他选择不成立，原因很简单。', '用一句话记住这条规则。'),
+    'ja': ('これが答えに至る考え方です。', '他の選択肢が成り立たない理由は単純です。', 'ルールを一文で覚えましょう。'),
+}
+SUMMARY_HEADS = {
+    'en': ('## Weak knowledge points', '## What to watch out for', '## How to approach such questions', '## Summary of the knowledge points'),
+    'zh': ('## 薄弱知识点', '## 需要注意的地方', '## 今后如何做这类题', '## 知识点小结'),
+    'ja': ('## 弱い知識ポイント', '## 注意すること', '## これからの取り組み方', '## 知識ポイントのまとめ'),
+}
+ANSWER_KEY = re.compile(r'<answer_key>(.*?)</answer_key>', re.S)
 # What demo-reasoning "thinks" before it answers: made-up words, never shown to anyone
 REASONING = ['Thinking about', ' the question:', ' review timing,', ' short notes,', ' one example.', ' Writing now.']
 
@@ -397,8 +439,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return 'OK', False
         if 'remember for later chats' in system:     # the memory suggestion (one short note)
             return NOTES[lang], False
+        study = Handler._study(system, last, lang)
+        if study is not None:
+            return study, '[slow]' in last
         text = PLANS[lang] if any(w in last.lower() for w in PLAN_WORDS) else ANSWERS[lang]
         return text, '[slow]' in last
+
+    @staticmethod
+    def _study(system, last, lang):
+        """The answer of a study request (hint / explanation / summary), or None for any other request."""
+        if 'asked for a HINT' in system:
+            text = HINTS[lang]
+            if '[leak]' in last:
+                text += NL + NL + LEAKS[lang][1 if 'statements' in last else 0]
+            return text
+        if 'asked for an EXPLANATION' in system:
+            m = ANSWER_KEY.search(last)
+            key = m.group(1).strip() if m else '-'
+            return ('**Answer: %s**' % key) + NL + NL + (NL + NL).join(EXPLAIN_TAIL[lang])
+        if 'answered wrong' in system:
+            h = SUMMARY_HEADS[lang]
+            return (NL + NL).join('%s%s- point %d' % (h[i], NL + NL, i + 1) for i in range(4)) + NL + NL + 'Items: %d' % last.count('<item')
+        return None
 
     @staticmethod
     def _timing(answer, slow):

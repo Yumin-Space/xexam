@@ -32,6 +32,17 @@ pub fn local_date(ts: i64) -> String {
     }
 }
 
+/// The local date and time to the minute (`YYYY-MM-DD HH:MM`) of a unix time, in the container's time zone.
+pub fn local_minute(ts: i64) -> String {
+    match jiff::Timestamp::from_second(ts) {
+        Ok(t) => t
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y-%m-%d %H:%M")
+            .to_string(),
+        Err(_) => "1970-01-01 00:00".to_string(),
+    }
+}
+
 /// Today's local date.
 pub fn local_today() -> jiff::civil::Date {
     jiff::Zoned::now().date()
@@ -92,6 +103,15 @@ mod tests {
         assert_eq!(char_len(&t), 60);
         assert!(t.ends_with('…'));
         assert_eq!(chat_title(&"y".repeat(60)), "y".repeat(60));
+    }
+
+    #[test]
+    fn local_minute_has_the_minute_shape() {
+        let d = local_minute(1_700_000_000);
+        assert_eq!(d.len(), 16);
+        assert_eq!(d.as_bytes()[10], b' ');
+        assert_eq!(d.as_bytes()[13], b':');
+        assert_eq!(local_minute(i64::MAX), "1970-01-01 00:00");
     }
 
     #[test]

@@ -9,6 +9,41 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+/// Chats deleted per write transaction by the retention sweep. Study chats can hold hundreds of messages each, so a
+/// batch of 20 stays near 0.2 s in the worst case (measured).
+pub const SWEEP_BATCH: i64 = 20;
+/// Pause between two full batches: the store mutex is not fair, so without it a burst sweep would keep every other
+/// writer (answer flushes, asks, finishes) waiting for the whole sweep.
+pub const SWEEP_PAUSE: Duration = Duration::from_millis(20);
+
+/// Deletes the chats last updated before `cutoff` (except the running ones) in batches of [`SWEEP_BATCH`], releasing the
+/// store and sleeping `pause` after each full batch; returns the number deleted. Blocking: call it off the async
+/// workers.
+pub fn sweep_batches(
+    store: &crate::store::Store,
+    cutoff: i64,
+    running: &[i64],
+    pause: Duration,
+) -> usize {
+    let mut chats = 0usize;
+    loop {
+        match store.write(|tx| stats::sweep_chats(tx, cutoff, running, SWEEP_BATCH)) {
+            Ok(n) => {
+                chats += n;
+                if n < SWEEP_BATCH as usize {
+                    break;
+                }
+                std::thread::sleep(pause);
+            }
+            Err(e) => {
+                tracing::warn!("AI retention failed: {e}");
+                break;
+            }
+        }
+    }
+    chats
+}
+
 /// Deletes chats older than the retention period (except running ones) and old finished tasks; returns the number of
 /// chats deleted.
 pub fn sweep_once(app: &AppState) -> usize {
@@ -22,26 +57,26 @@ pub fn sweep_once(app: &AppState) -> usize {
     };
     let running = app.0.registry.running_chats();
     let cutoff = now - days * 86_400;
-    let r = app.0.store.write(|tx| {
-        let chats = stats::sweep_chats(tx, cutoff, &running)?;
-        let tasks = stats::sweep_tasks(tx, now - 30 * 86_400)?;
-        Ok::<(usize, usize), rusqlite::Error>((chats, tasks))
-    });
-    match r {
-        Ok((chats, tasks)) => {
-            if chats > 0 {
-                tracing::info!("AI retention: deleted {chats} chats older than {days} days");
-            }
-            if chats > 0 || tasks > 0 {
-                app.0.store.schedule_checkpoint();
-            }
-            chats
-        }
+    // Batches with a pause between them, so one sweep never keeps the write lock for long
+    let chats = sweep_batches(&app.0.store, cutoff, &running, SWEEP_PAUSE);
+    let tasks = match app
+        .0
+        .store
+        .write(|tx| stats::sweep_tasks(tx, now - 30 * 86_400))
+    {
+        Ok(n) => n,
         Err(e) => {
             tracing::warn!("AI retention failed: {e}");
             0
         }
+    };
+    if chats > 0 {
+        tracing::info!("AI retention: deleted {chats} chats older than {days} days");
     }
+    if chats > 0 || tasks > 0 {
+        app.0.store.schedule_checkpoint();
+    }
+    chats
 }
 
 /// Compares the AI users with the main database: users that no longer exist or whose stamp differs lose their AI data
@@ -146,7 +181,8 @@ pub fn spawn_all(app: &AppState) -> Vec<JoinHandle<()>> {
         every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             every.tick().await;
-            sweep_once(&a);
+            let b = a.clone();
+            let _ = tokio::task::spawn_blocking(move || sweep_once(&b)).await;
         }
     }));
 

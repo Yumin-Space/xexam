@@ -12,6 +12,7 @@ use crate::link::{LinkError, SessionUser};
 use crate::provider::{self, ms, Up, UpCode, UpError};
 use crate::settings::{Format, Provider};
 use crate::store::{data, stats};
+use crate::study::guard::{HintGuard, Verdict};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -249,6 +250,45 @@ impl Registry {
         })
     }
 
+    /// Names the chat of a reserved place before anything is written (the study asks bind it inside their write
+    /// transaction): under the registry lock, `false` when another entry of the same user already has that chat, else
+    /// the place's entry gets the chat and `true` is returned. A first ask of a session and a second one of the same
+    /// session therefore never run in one chat.
+    pub fn bind(&self, slot: &Slot, chat: i64) -> bool {
+        let mut inner = self.lock();
+        let Some(user) = inner.entries.get(&slot.id).map(|e| e.user) else {
+            return false;
+        };
+        if inner
+            .entries
+            .iter()
+            .any(|(id, e)| *id != slot.id && e.user == user && e.chat == Some(chat))
+        {
+            return false;
+        }
+        if let Some(e) = inner.entries.get_mut(&slot.id) {
+            e.chat = Some(chat);
+        }
+        true
+    }
+
+    /// The user's running answer in `chat` (when given and it has one), else the user's most recent running chat
+    /// answer: (chat id, message id).
+    pub fn running_in(&self, user: i64, chat: Option<i64>) -> Option<(i64, i64)> {
+        if let Some(c) = chat {
+            let found = self
+                .lock()
+                .entries
+                .values()
+                .find(|e| e.user == user && e.chat == Some(c) && e.message > 0)
+                .map(|e| (c, e.message));
+            if found.is_some() {
+                return found;
+            }
+        }
+        self.running_of(user)
+    }
+
     /// The user's most recent running chat answer: (chat id, message id).
     pub fn running_of(&self, user: i64) -> Option<(i64, i64)> {
         self.lock()
@@ -342,9 +382,15 @@ pub struct Generation {
     pub format: Format,
     pub request: reqwest::Request,
     pub frames: UnboundedSender<Frame>,
+    /// Hints only: the guard that decides what part of the text may be shown and stored
+    pub guard: Option<HintGuard>,
+    /// `Some("hint" | "explain" | "summary")` for the study answers, `None` for AI Chat
+    pub purpose: Option<&'static str>,
 }
 
 enum Outcome {
+    /// A hint gave the answer away: nothing of it is kept
+    Leaked,
     Done,
     Failed(UpError),
     Cancelled(StopReason),
@@ -384,6 +430,8 @@ pub async fn run(g: Generation) {
         format,
         request,
         frames,
+        mut guard,
+        purpose,
     } = g;
     let t = app.0.timeouts;
     let started = Instant::now();
@@ -437,8 +485,26 @@ pub async fn run(g: Generation) {
                     if first_byte_ms.is_none() {
                         first_byte_ms = Some(ms(started.elapsed()));
                     }
-                    text.push_str(&s);
-                    let _ = frames.send(Frame { event: "delta", data: json!({ "text": s }) });
+                    match guard.as_mut() {
+                        None => {
+                            text.push_str(&s);
+                            let _ = frames.send(Frame { event: "delta", data: json!({ "text": s }) });
+                        }
+                        // A guarded hint: `text` (the flush, the stored answer) only ever holds released text
+                        Some(gd) => match gd.push(&s) {
+                            Verdict::Leak => break Outcome::Leaked,
+                            Verdict::Release(r) => {
+                                if !r.is_empty() {
+                                    text.push_str(&r);
+                                    let _ = frames.send(Frame { event: "delta", data: json!({ "text": r }) });
+                                }
+                                if gd.is_truncated() {
+                                    truncated = true;
+                                    break Outcome::Done;
+                                }
+                            }
+                        },
+                    }
                 }
                 // Reasoning before the first text: one `thinking` frame, so the page can say "Thinking…"
                 Some(Up::Thinking) => {
@@ -501,9 +567,37 @@ pub async fn run(g: Generation) {
     if let Some(h) = check.take() {
         h.abort();
     }
+    let mut outcome = outcome;
+    // The final check of a guarded hint runs on every outcome, before anything is stored
+    if let Some(gd) = guard.as_mut() {
+        if !matches!(outcome, Outcome::Leaked) {
+            match gd.finish() {
+                Verdict::Release(tail) => {
+                    if !tail.is_empty() {
+                        text.push_str(&tail);
+                        let _ = frames.send(Frame {
+                            event: "delta",
+                            data: json!({ "text": tail }),
+                        });
+                    }
+                }
+                Verdict::Leak => outcome = Outcome::Leaked,
+            }
+        }
+    }
+    if matches!(outcome, Outcome::Leaked) {
+        text.clear();
+        truncated = false;
+    }
 
     let (status, code, usage_status, usage_code): (&str, Option<&str>, &str, Option<String>) =
         match &outcome {
+            Outcome::Leaked => (
+                "error",
+                Some("ai.hintLeak"),
+                "error",
+                Some("hintLeak".to_string()),
+            ),
             Outcome::Done => ("done", None, "ok", None),
             Outcome::Failed(e) => (
                 "error",
@@ -534,15 +628,21 @@ pub async fn run(g: Generation) {
     let saved = app.0.store.write(|tx| {
         data::finish_answer(tx, message, &text, status, code, truncated, now)?;
         data::touch_chat(tx, chat, now)?;
-        stats::insert_usage(tx, &usage)
+        stats::insert_usage_purpose(tx, &usage, purpose)
     });
     if let Err(e) = saved {
         tracing::error!("could not save the end of an AI answer: {e}");
     }
-    if let Outcome::Failed(e) = &outcome {
-        app.0.failures.note(&who.username, e.code.code(), e.http);
+    match &outcome {
+        Outcome::Failed(e) => app.0.failures.note(&who.username, e.code.code(), e.http),
+        Outcome::Leaked => app.0.failures.note_leak(&who.username),
+        _ => {}
     }
     let frame = match (&outcome, code) {
+        (Outcome::Leaked, _) => Frame {
+            event: "error",
+            data: json!({"status": "error", "code": "ai.hintLeak", "error": text_of("ai.hintLeak"), "withdraw": true}),
+        },
         (Outcome::Done, _) => Frame {
             event: "done",
             data: json!({"status": "done", "tokensIn": tokens_in, "tokensOut": tokens_out, "truncated": truncated}),

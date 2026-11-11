@@ -854,7 +854,7 @@ dialog.dlg-wide { max-width: 460px; }
 .dlg-err { margin: 14px 0 0; font-size: 14px; }
 .dlg-err p { margin: 0; color: var(--ink); }
 #toast {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 20;
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50;
   background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; font-size: 14px; line-height: 1.5;
   box-shadow: var(--shadow-pop);
   width: max-content; max-width: calc(100% - 32px); opacity: 0; pointer-events: none;

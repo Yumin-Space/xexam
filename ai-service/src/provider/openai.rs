@@ -26,12 +26,34 @@ pub struct State {
     text: bool,
     refusal: bool,
     filtered: bool,
+    /// Inline `<think>` span handling for the content stream
+    think: Think,
+    /// Undecided start of the content, or the tail of an open `<think>` span
+    pending: String,
 }
+
+/// Where the content stream is relative to an inline `<think>...</think>` span at its start.
+#[derive(Default, PartialEq, Clone, Copy)]
+enum Think {
+    /// Nothing decided yet: the text so far could still become `<think>`
+    #[default]
+    Start,
+    /// Inside the span: everything is dropped (it is reasoning, reported as `Thinking`)
+    Inside,
+    /// Just after the span: leading whitespace is skipped
+    After,
+    /// Ordinary answer text
+    Text,
+}
+
+const THINK_OPEN: &str = "<think>";
+const THINK_CLOSE: &str = "</think>";
 
 impl State {
     /// Handles the `data` of one event.
     pub fn on_data(&mut self, data: &str, out: &mut Vec<Item>) {
         if data.trim() == "[DONE]" {
+            self.flush(out);
             out.push(self.finish());
             return;
         }
@@ -63,8 +85,7 @@ impl State {
             }
             if let Some(t) = delta.and_then(|d| d.get("content")).and_then(Value::as_str) {
                 if !t.is_empty() {
-                    self.text = true;
-                    out.push(Item::Text(t.to_string()));
+                    self.content(t, out);
                 }
             }
             if delta
@@ -96,6 +117,80 @@ impl State {
         }
     }
 
+    /// Routes one content piece: a `<think>...</think>` span at the start of the content (servers without a
+    /// reasoning parser put the model's reasoning there) is dropped and reported as `Thinking`; it often names the
+    /// answer, so it must never reach the guard, the popover or the stored chat.
+    fn content(&mut self, t: &str, out: &mut Vec<Item>) {
+        match self.think {
+            Think::Text => self.emit(t.to_string(), out),
+            Think::After => {
+                let t = t.trim_start();
+                if !t.is_empty() {
+                    self.think = Think::Text;
+                    self.emit(t.to_string(), out);
+                }
+            }
+            Think::Start => {
+                self.pending.push_str(t);
+                let head = self.pending.trim_start();
+                if let Some(after) = head.strip_prefix(THINK_OPEN) {
+                    let rest = after.to_string();
+                    self.pending.clear();
+                    self.think = Think::Inside;
+                    self.inside(&rest, out);
+                } else if head.is_empty()
+                    || (head.len() < THINK_OPEN.len() && THINK_OPEN.starts_with(head))
+                {
+                    // could still become the opening tag
+                } else {
+                    self.think = Think::Text;
+                    let all = std::mem::take(&mut self.pending);
+                    self.emit(all, out);
+                }
+            }
+            Think::Inside => self.inside(t, out),
+        }
+    }
+
+    /// Inside the span: look for the closing tag; keep only a possible partial tag at the end.
+    fn inside(&mut self, t: &str, out: &mut Vec<Item>) {
+        out.push(Item::Thinking);
+        self.pending.push_str(t);
+        if let Some(i) = self.pending.find(THINK_CLOSE) {
+            let rest = self.pending[i + THINK_CLOSE.len()..]
+                .trim_start()
+                .to_string();
+            self.pending.clear();
+            self.think = Think::After;
+            if !rest.is_empty() {
+                self.think = Think::Text;
+                self.emit(rest, out);
+            }
+        } else {
+            let mut cut = self.pending.len().saturating_sub(THINK_CLOSE.len() - 1);
+            while !self.pending.is_char_boundary(cut) {
+                cut += 1;
+            }
+            self.pending.drain(..cut);
+        }
+    }
+
+    fn emit(&mut self, t: String, out: &mut Vec<Item>) {
+        self.text = true;
+        out.push(Item::Text(t));
+    }
+
+    /// Before the end: releases an undecided start that never became `<think>`; an unterminated span is dropped.
+    pub fn flush(&mut self, out: &mut Vec<Item>) {
+        if self.think == Think::Start && !self.pending.is_empty() {
+            self.think = Think::Text;
+            let all = std::mem::take(&mut self.pending);
+            self.emit(all, out);
+        } else if self.think == Think::Inside {
+            self.pending.clear();
+        }
+    }
+
     /// The end: `[DONE]` or the end of the body.
     pub fn finish(&mut self) -> Item {
         if self.chunks == 0 {
@@ -122,6 +217,7 @@ mod tests {
                 return out;
             }
         }
+        s.flush(&mut out);
         out.push(s.finish());
         out
     }
@@ -214,5 +310,58 @@ mod tests {
         assert_eq!(run(&["not json"]), vec![Item::Fail(UpCode::Protocol)]);
         assert_eq!(run(&[]), vec![Item::Fail(UpCode::Protocol)]);
         assert_eq!(run(&["[DONE]"]), vec![Item::Fail(UpCode::Protocol)]);
+    }
+
+    fn delta(c: &str) -> String {
+        json!({"choices":[{"delta":{"content":c}}]}).to_string()
+    }
+
+    fn texts(out: &[Item]) -> String {
+        out.iter()
+            .filter_map(|i| {
+                if let Item::Text(t) = i {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn inline_think_span_is_dropped_for_every_chunking() {
+        let full = "<think>The user wants a hint. The first option is the right one.</think>
+
+Think about how often the data is read.";
+        for n in [1usize, 2, 3, 5, 7, 16, 400] {
+            let chars: Vec<char> = full.chars().collect();
+            let events: Vec<String> = chars
+                .chunks(n)
+                .map(|c| delta(&c.iter().collect::<String>()))
+                .collect();
+            let refs: Vec<&str> = events.iter().map(String::as_str).collect();
+            let out = run(&refs);
+            assert_eq!(
+                texts(&out),
+                "Think about how often the data is read.",
+                "chunk {n}"
+            );
+            assert!(out.contains(&Item::Thinking));
+            assert_eq!(out.last(), Some(&Item::Done));
+        }
+    }
+
+    #[test]
+    fn unterminated_think_drops_everything_and_plain_text_passes() {
+        let out = run(&[&delta("<think>the answer is A"), &delta(" and more")]);
+        assert_eq!(texts(&out), "");
+        // a start that only looks like the tag is released unchanged
+        let out = run(&[&delta("<thi"), &delta("s is not a tag")]);
+        assert_eq!(texts(&out), "<this is not a tag");
+        let out = run(&[&delta("<th")]);
+        assert_eq!(texts(&out), "<th");
+        // a <think> later in the text is not a leading span and stays text
+        let out = run(&[&delta("Hello <think>x</think>")]);
+        assert_eq!(texts(&out), "Hello <think>x</think>");
     }
 }

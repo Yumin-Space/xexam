@@ -40,7 +40,10 @@ export function renderResult(): HTMLElement {
 
   const rows = R.results.map((r, i) => ({
     correct: r.correct,
-    render: () => reviewItem({ q: r.q, ans: r.ans, correct: r.correct }, { no: i + 1 }),
+    render: () => reviewItem({ q: r.q, ans: r.ans, correct: r.correct }, {
+      no: i + 1,
+      ai: { page: 'result', mode: R.kind, key: R.key, startedAt: R.startedAt, recordId: R.recordId },
+    }),
   }));
 
   return h('div', { class: 'page page-result' },

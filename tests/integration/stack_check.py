@@ -45,6 +45,15 @@ What is checked:
   7. Non-root, read-only root filesystem
   8. SQLite in WAL mode (v0.7): the startup log says so, GET /api/logs shows it through Nginx, reset-password works while the
      server runs, and after docker stop the -wal file in the volume is empty (checkpoint at shutdown)
+  A5. Study answers (v0.9), with made-up banks that sam imports (written by this script): a hint and an explanation in a
+      practice land in one chat of kind practice (title = the start minute); a hint that gives the answer away (a question
+      with [leak]: single choice and hotspot) is withheld (ai.hintLeak, empty saved content); a hint with mode exam is
+      refused; a running answer makes the next ask 409 ai.busy with running, Stop frees it; a saved practice record (key and
+      start time) and its summary (sample counts, the cap of 70 of 75 wrong answers, noWrong, the chat staying after the
+      record is deleted); result-page and record-detail asks land in the chat of their session (practice, exam, a record
+      without a key gets its own chat titled with the record time); a foreign key, a record of the other kind, a user
+      without the bank (lee) and a user without the AI+ feature (kim) are refused; the System log holds no question,
+      hint or summary text and no session key
   9. Volumes (v0.8): the AI volume holds secret.key (mode 600, uid 10001) and xexam-ai.db; the main volume holds no AI
      secret and no AI table, and users has ai_enabled and uid; the link volume holds internal.token (mode 600)
 """
@@ -68,6 +77,9 @@ PROJECT = 'xexamcheck' + uuid.uuid4().hex[:6]
 STUB = PROJECT + '-stubai'
 WORK = tempfile.mkdtemp(prefix='xexam_stack_')
 DEMO = os.path.join(WORK, 'garden.xlsx')
+NL = '\n'
+LEAKS_XLSX = os.path.join(WORK, 'leaks.xlsx')
+CAP_XLSX = os.path.join(WORK, 'cap.xlsx')
 THREE = os.path.join(WORK, 'three.xlsx')
 MSG_OLD_LAYOUT = '只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。'
 COMPOSE = os.environ.get('XEXAM_STACK_COMPOSE') or os.path.join(ROOT, 'docker', 'docker-compose.build.yml')
@@ -85,8 +97,8 @@ USER_ROW_KEYS = ['id', 'username', 'role', 'disabled', 'createdAt', 'lastLoginAt
 AI_SERVICE_KEYS = ['connected', 'stopped', 'lastSeen', 'version', 'enabled', 'link']
 STATUS_KEYS = ['enabled', 'allowed', 'suspended', 'hasData', 'running', 'retentionDays', 'memoryLimit', 'memoryMaxChars',
                'maxMessageChars', 'messageChars', 'memoryChars', 'keyProblem', 'configured', 'freeMode']
-START_KEYS = ['chatId', 'chatTitle', 'userMessageId', 'assistantMessageId', 'model', 'newChat', 'retry', 'free']
-CHAT_KEYS = ['id', 'title', 'createdAt', 'updatedAt', 'messageCount', 'running']
+START_KEYS = ['chatId', 'chatTitle', 'userMessageId', 'assistantMessageId', 'model', 'newChat', 'retry', 'free', 'chatKind']
+CHAT_KEYS = ['id', 'title', 'createdAt', 'updatedAt', 'messageCount', 'running', 'kind', 'recordId']
 ADMIN_ROW_KEYS = ['id', 'username', 'role', 'ai', 'aiAllowed', 'disabled', 'exists', 'suspended', 'chats', 'messages',
                   'memories', 'lastUsedAt', 'tokensIn', 'tokensOut']
 
@@ -152,9 +164,43 @@ def xlsx(path, rows):
         z.writestr('xl/worksheets/sheet1.xml', '<worksheet xmlns="%s"><sheetData>%s</sheetData></worksheet>' % (ns, ''.join(cells)))
 
 
+def study_workbooks():
+    """The made-up banks of the study checks (v0.9): three questions for the hint guard and the busy check, and 80 questions
+    that all have the answer A (the cap of the summary)."""
+    sp = '\u3000'   # ideographic space between a hotspot statement and its choices
+
+    def single(tag, en, zh, ja, key, why):
+        return [en, '【中文翻译】' + NL + zh, ja, '【Answer】' + key + NL + NL + '【Explanation】' + NL + why,
+                '【答案】' + key + NL + NL + '【解析·怎么选】' + NL + '因为这样。', '【正解】' + key + NL + NL + '【解説】' + NL + 'そうだからです。']
+
+    hot_en = ('HOTSPOT' + NL + 'LEAKCHECK two [leak] For each statement, select Yes if it is correct and No if it is not.' + NL + NL +
+              '1. Bread is cut with a spoon.' + sp + 'Yes / No' + NL + NL + '2. Bread is cut with a bread knife.' + sp + 'Yes / No')
+    hot_zh = ('热点题' + NL + '对下面每句话，正确选“是”，错误选“否”。' + NL + NL + '1. 用勺子切面包。' + sp + '是 / 否' + NL + NL +
+              '2. 用面包刀切面包。' + sp + '是 / 否')
+    hot_ja = ('ホットスポット' + NL + '次の文について、正しければ「はい」、間違っていれば「いいえ」を選択してください。' + NL + NL +
+              '1. パンをスプーンで切る。' + sp + 'はい / いいえ' + NL + NL + '2. パンをパン切りナイフで切る。' + sp + 'はい / いいえ')
+    xlsx(LEAKS_XLSX, [
+        single('one', 'LEAKCHECK one [leak] Which tool is best for cutting bread?' + NL + NL + 'A. A spoon' + NL + NL + 'B. A bread knife' + NL + NL + 'C. A whisk',
+               '哪种工具最适合切面包？' + NL + 'A. 勺子' + NL + 'B. 面包刀' + NL + 'C. 打蛋器',
+               'パンを切るのに最も適した道具はどれですか。' + NL + NL + 'A. スプーン' + NL + NL + 'B. パン切りナイフ' + NL + NL + 'C. 泡立て器',
+               'B', 'A bread knife has a serrated edge.'),
+        [hot_en, '【中文翻译】' + NL + hot_zh, hot_ja, '【Answer】1 No; 2 Yes' + NL + NL + '【Explanation】' + NL + 'A spoon does not cut bread.',
+         '【答案】1 否；2 是' + NL + NL + '【解析·怎么选】' + NL + '勺子切不了面包。', '【正解】1 いいえ；2 はい' + NL + NL + '【解説】' + NL + 'スプーンではパンは切れません。'],
+        single('slow', 'LEAKCHECK slow [slow] Which season comes after spring?' + NL + NL + 'A. Winter' + NL + NL + 'B. Summer' + NL + NL + 'C. Spring',
+               '春天之后是哪个季节？' + NL + 'A. 冬' + NL + 'B. 夏' + NL + 'C. 春',
+               '春の次に来る季節はどれですか。' + NL + NL + 'A. 冬' + NL + NL + 'B. 夏' + NL + NL + 'C. 春',
+               'B', 'Summer follows spring.'),
+    ])
+    xlsx(CAP_XLSX, [single(str(i), 'Capcheck question %d. Which letter comes first in the alphabet?' % i + NL + NL + 'A. A' + NL + NL + 'B. B' + NL + NL + 'C. C',
+                           '第 %d 题。哪个字母在字母表里排第一？' % i + NL + 'A. A' + NL + 'B. B' + NL + 'C. C',
+                           '問題 %d。アルファベットで最初に来る文字はどれですか。' % i + NL + NL + 'A. A' + NL + NL + 'B. B' + NL + NL + 'C. C',
+                           'A', 'A comes first.') for i in range(1, 81)])
+
+
 def write_workbooks():
     """The two made-up workbooks of this check, in WORK (removed again by cleanup())."""
     os.makedirs(WORK, exist_ok=True)
+    study_workbooks()
     # Five made-up questions of the six-column layout (A-C the question in English, Chinese, Japanese; D-F the answer)
     xlsx(DEMO, [[
         'A gardener waters the herbs every morning (question %d). Which can is used?\n\nA. The small can\n\nB. The big can\n\nC. The hose' % i,
@@ -461,6 +507,7 @@ try:
     ids = [q['id'] for q in bank_q] if (bank_q := jreq('GET', '/api/bank')[2]['questions']) else []
     st, _, p = jreq('POST', '/api/attempt', {'results': [{'id': ids[0], 'correct': True}, {'id': ids[1], 'correct': False}], 'sheets': ['demo'], 'mode': 'all', 'seconds': 12})
     ok(st == 200 and p['history'][0]['percent'] == 50 and p['history'][0]['total'] == 2, 'Submit 1/2 → 50%')
+    ok(isinstance(p.get('recordId'), int) and list(p.keys())[-1] == 'recordId', 'POST /api/attempt answers with the new recordId as its last key (v0.9). Actual %r' % list(p.keys()))
     st, _, p = jreq('POST', '/api/attempt', {'results': [{'id': ids[0], 'correct': True}] + [{'id': i, 'correct': False} for i in ids[1:8]], 'sheets': [], 'mode': 'all', 'seconds': 1})
     ok(st == 200, 'Submit another round')
     st, _, e = jreq('POST', '/api/attempt', {'results': {'a': 1}})
@@ -603,7 +650,7 @@ try:
     ok(isinstance(term[2].get('tokensIn'), int) and isinstance(term[2].get('tokensOut'), int), 'done carries the token counts. Actual %r' % term[2])
     start = s.events[0][2]
     ok(list(start.keys()) == START_KEYS and start['free'] is False and start['newChat'] is True,
-       'start carries free (false for a normal chat) as its last key. Actual %r' % start)
+       'start carries free (false for a normal chat) and then chatKind (v0.9) as its last keys. Actual %r' % start)
     ok(ANSWER_WORDS in answer_of(s), "Without lang the answer is in English (the stub's made-up English answer)")
     chat_id = start['chatId']
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
@@ -710,6 +757,280 @@ try:
     ok(st == 200 and ss.get('freeMode') is False, 'sam: GET /api/ai/status says freeMode false. Actual %r' % ss)
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
     ok(st == 200 and [c['id'] for c in chats['chats']] == [chat_id], 'sam still has the one chat. Actual %r' % chats)
+
+    # -- A5 Study answers (v0.9): hints, explanations and summaries of sam's own made-up banks --
+    # sam may import banks (canManageBanks); lee has the AI+ feature but sees no bank at all
+    st, _, _ = jreq('POST', '/api/users/update', {'id': SAM_ID, 'canManageBanks': True})
+    ok(st == 200, 'admin lets sam manage banks (needed to import the made-up study banks). Actual %d' % st)
+    st, _, _ = jreq('POST', '/api/users/create', {'username': 'lee', 'password': 'lee-initial-2026', 'role': 'user', 'banks': [], 'ai': True})
+    ok(st == 200, 'admin creates lee with the AI+ feature and no bank. Actual %d' % st)
+    LEE = sign_in_new_user('lee', 'lee-initial-2026', 'lee-stack-2026')
+
+    def sam_import(path, name):
+        data = open(path, 'rb').read()
+        st, _, b = req('POST', '/api/upload', {'Cookie': SAM, 'Content-Type': 'application/octet-stream', 'X-Filename': name,
+                                               'X-Bank-Target': 'new'}, data)
+        pv = json.loads(b) if st == 200 else {}
+        ok(st == 200 and pv.get('token'), 'sam uploads %s. Actual %d %r' % (name, st, b[:120]))
+        st, _, c = jreq('POST', '/api/import/confirm', {'token': pv['token']}, headers={'Cookie': SAM})
+        ok(st == 200, 'sam confirms the import of %s. Actual %d' % (name, st))
+
+    sam_import(LEAKS_XLSX, 'leaks.xlsx')
+    sam_import(CAP_XLSX, 'cap.xlsx')
+    ADMIN_Q = bank_size()          # the administrator sees every bank: the 5 garden questions and sam's 83
+    st, _, bank = jreq('GET', '/api/bank', headers={'Cookie': SAM})
+    sam_q = bank['questions'] if st == 200 else []
+    by_stem = lambda mark: [q for q in sam_q if mark in q['stem']]
+    caps = sorted(by_stem('Capcheck question'), key=lambda q: int(re.search(r'question (\d+)', q['stem']).group(1)))
+    leak_single, leak_hot, slow_q = by_stem('LEAKCHECK one')[0], by_stem('LEAKCHECK two')[0], by_stem('LEAKCHECK slow')[0]
+    ok(len(caps) == 80 and leak_single['kind'] == 'single' and leak_hot['kind'] == 'hotspot',
+       'sam sees the 80 + 3 made-up study questions (a single choice and a hotspot among them). Actual %d, %r' % (len(caps), leak_hot['kind']))
+    ok(all(q['answer'] == ['A'] for q in caps), 'The made-up cap questions all have the answer A')
+
+    # Nginx allows one start per 3 s and session cookie (burst 10, zone aisend): every ask of this section keeps that pace
+    paced = {}
+
+    def pace(cookie):
+        wait = paced.get(cookie, 0) + 3.2 - time.time()
+        if wait > 0:
+            time.sleep(wait)
+        paced[cookie] = time.time()
+
+    T = lambda s: json.loads(s.raw) if s.status != 200 else None          # the JSON body of a refused ask
+    DONE_TAIL = ['kind', 'questionId', 'questionNo', 'source', 'recordId', 'sample', 'lang']
+    SESSION_K, STARTED = uuid.uuid4().hex, int(time.time())
+
+    def study(body, cookie=None):
+        pace(cookie or SAM)
+        s = Stream('/api/ai/study/ask', body, cookie or SAM)
+        s.run()
+        return s
+
+    def hint_body(q, no, **extra):
+        return dict({'kind': 'hint', 'mode': 'practice', 'key': SESSION_K, 'startedAt': STARTED, 'questionId': q['id'], 'no': no,
+                     'qlang': 'en', 'lang': 'en', 'source': 'practice'}, **extra)
+
+    def saved(query, cookie=None):
+        return jreq('GET', '/api/ai/study/saved?' + query, headers={'Cookie': cookie or SAM})
+
+    chats_before = len(jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})[2]['chats'])
+    # 1. A hint and an explanation in the practice of session K
+    h1 = study(hint_body(caps[0], 1))
+    ok(h1.status == 200 and h1.names()[:1] == ['start'] and h1.names().count('delta') >= 1 and h1.terminal() is not None and h1.terminal()[1] == 'done',
+       'sam: a hint streams start, delta…, done. Actual %r %r %r' % (h1.status, h1.names(), h1.raw[:200]))
+    st1 = h1.events[0][2]
+    ok(list(st1.keys()) == START_KEYS + DONE_TAIL and st1['chatKind'] == 'practice' and st1['kind'] == 'hint' and st1['newChat'] is True
+       and st1['source'] == 'practice' and st1['questionId'] == caps[0]['id'] and st1['questionNo'] == 1 and st1['recordId'] is None
+       and st1['sample'] is None and st1['lang'] == 'en' and st1['free'] is False and st1['retry'] is False,
+       'The hint start frame: the v0.8 keys, chatKind practice, then kind, questionId, questionNo, source, recordId, sample, lang. Actual %r' % st1)
+    ok(re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d', st1['chatTitle']) is not None,
+       'The practice chat is titled with the start minute (no suffix stored). Actual %r' % st1['chatTitle'])
+    hint_text = answer_of(h1)
+    ok('Knowledge points' in hint_text and not re.search(r'\b[A-D]\.', hint_text), 'The hint is the stub hint (a knowledge-points list, no option letter)')
+    STUDY_CHAT = st1['chatId']
+    st, _, sv = saved('mode=practice&key=%s&source=practice&question=%s&kind=hint' % (SESSION_K, caps[0]['id']))
+    ok(st == 200 and sv['chatId'] == STUDY_CHAT and sv['latest']['status'] == 'done' and sv['latest']['content'] == hint_text
+       and sv['latest']['kind'] == 'hint' and sv['latest']['questionNo'] == 1 and sv['lastGood'] is None,
+       'GET /api/ai/study/saved finds the hint (done, lastGood null). Actual %d %r' % (st, sv))
+    ok(list(sv['latest'].keys()) == ['messageId', 'kind', 'questionId', 'questionNo', 'source', 'status', 'error', 'truncated', 'content',
+                                     'lang', 'model', 'createdAt', 'finishedAt'], 'The saved answer has the StudyAnswer keys in order. Actual %r' % list(sv['latest'].keys()))
+    e1 = study(dict(hint_body(caps[0], 1), kind='explain'))
+    ok(e1.status == 200 and e1.terminal()[1] == 'done' and e1.events[0][2]['chatId'] == STUDY_CHAT and e1.events[0][2]['newChat'] is False
+       and e1.events[0][2]['kind'] == 'explain' and answer_of(e1).startswith('**Answer: A**'),
+       'sam: the explanation lands in the same chat and starts with the answer key. Actual %r %r' % (e1.names(), answer_of(e1)[:40]))
+    st, _, sv = saved('mode=practice&key=%s&source=practice&question=%s&kind=explain' % (SESSION_K, caps[0]['id']))
+    ok(st == 200 and sv['latest']['content'] == answer_of(e1) and sv['latest']['kind'] == 'explain', 'The saved lookup finds the explanation. Actual %d' % st)
+    h1b = study(hint_body(caps[0], 1))
+    st, _, sv = saved('mode=practice&key=%s&source=practice&question=%s&kind=hint' % (SESSION_K, caps[0]['id']))
+    ok(h1b.terminal()[1] == 'done' and sv['latest']['messageId'] == h1b.events[0][2]['assistantMessageId'] and sv['lastGood'] is None,
+       'Regenerating a hint: the newest answer is the latest, lastGood stays null while it is done')
+    st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
+    study_chats = [c for c in chats['chats'] if c['kind'] != 'chat']
+    ok(st == 200 and len(chats['chats']) == chats_before + 1 and [c['id'] for c in study_chats] == [STUDY_CHAT]
+       and list(chats['chats'][0].keys()) == CHAT_KEYS and study_chats[0]['kind'] == 'practice' and study_chats[0]['messageCount'] == 6
+       and study_chats[0]['recordId'] is None,
+       'GET /api/ai/chats: one chat of kind practice for the whole session (3 pairs), recordId null. Actual %r' % study_chats)
+
+    # 2. A hint that gives the answer away is withheld (the stub leaks for [leak]); the hint of a hotspot too
+    for q, what in ((leak_single, 'single choice'), (leak_hot, 'hotspot')):
+        lk = study(hint_body(q, 3))
+        term = lk.terminal()
+        ok(lk.status == 200 and term is not None and term[1] == 'error' and term[2].get('code') == 'ai.hintLeak' and term[2].get('withdraw') is True,
+           'A leaking %s hint ends with error ai.hintLeak, withdraw true. Actual %r %r' % (what, lk.names(), term))
+        st, _, sv = saved('mode=practice&key=%s&source=practice&question=%s&kind=hint' % (SESSION_K, q['id']))
+        ok(st == 200 and sv['latest']['status'] == 'error' and sv['latest']['content'] == '' and sv['latest']['error'] == 'ai.hintLeak' and sv['lastGood'] is None,
+           'The saved latest of the withheld %s hint has an empty content and the error. Actual %r' % (what, sv))
+        ok(not any(b'answer is B' in b or b'Statement 2' in b for b in (lk.raw,)), 'No byte of the withheld %s hint reached sam' % what)
+
+    # 3. Hints are for the practice only
+    pace(SAM)
+    st, _, e = jreq('POST', '/api/ai/study/ask', dict(hint_body(caps[0], 1), mode='exam', source='result', recordId=1), headers={'Cookie': SAM})
+    ok(st == 400 and e.get('code') == 'ai.badRequest', 'A hint with mode exam → 400 ai.badRequest. Actual %d %r' % (st, e))
+
+    # 4. One answer at a time: a running hint, then an explanation of another question of the session
+    pace(SAM)
+    slow_h = Stream('/api/ai/study/ask', hint_body(slow_q, 4), SAM)
+    slow_h.start()
+    ok(slow_h.started.wait(30) and slow_h.names()[:1] == ['start'], 'sam: a slow hint has started. Actual %r %r' % (slow_h.names(), slow_h.raw[:200]))
+    pace(SAM)
+    st, _, e = jreq('POST', '/api/ai/study/ask', dict(hint_body(caps[1], 2), kind='explain'), headers={'Cookie': SAM})
+    run = e.get('running') if isinstance(e, dict) else None
+    ok(st == 409 and e.get('code') == 'ai.busy' and isinstance(run, dict) and run.get('kind') == 'hint' and run.get('chatId') == STUDY_CHAT
+       and run.get('questionId') == slow_q['id'] and run.get('chatKind') == 'practice',
+       'While a hint runs, an explanation → 409 ai.busy with running (kind hint, this chat). Actual %d %r' % (st, e))
+    st, _, e = jreq('POST', '/api/ai/stop', {'chatId': run['chatId']}, headers={'Cookie': SAM})
+    ok(st == 200 and e.get('stopped') is True, 'sam stops the running answer (POST /api/ai/stop {chatId}). Actual %d %r' % (st, e))
+    slow_h.join(30)
+    ok(slow_h.terminal() is not None and slow_h.terminal()[1] == 'stopped', 'The stopped hint ends with a stopped event. Actual %r' % slow_h.names())
+    e2 = study(dict(hint_body(caps[1], 2), kind='explain'))
+    ok(e2.status == 200 and e2.terminal()[1] == 'done', 'After Stop the explanation starts and finishes. Actual %r %r' % (e2.status, e2.names()))
+
+    # 5. A practice record saved from the same session (key and start time), 12 questions: 4 wrong, 2 unanswered, 6 right
+    def mk_results(qs, wrong, blank=()):
+        out = []
+        for i, q in enumerate(qs):
+            if i in blank:
+                out.append({'id': q['id'], 'correct': False})
+            elif i in wrong:
+                out.append({'id': q['id'], 'correct': False, 'answer': ['B']})
+            else:
+                out.append({'id': q['id'], 'correct': True, 'answer': list(q['answer'])})
+        return out
+
+    def save(kind, qs, wrong, blank=(), **tag):
+        body = dict({'results': mk_results(qs, wrong, blank), 'sheets': ['Garden'], 'mode': 'all', 'seconds': 30, 'kind': kind}, **tag)
+        st, _, a = jreq('POST', '/api/attempt', body, headers={'Cookie': SAM})
+        ok(st == 200 and isinstance(a.get('recordId'), int) and list(a.keys())[-1] == 'recordId',
+           'sam saves a %s record: the answer ends with recordId. Actual %d %r' % (kind, st, list(a.keys()) if isinstance(a, dict) else a))
+        return a['recordId']
+
+    R_PRACTICE = save('practice', caps[:12], {0, 1, 2, 3}, {4, 5}, key=SESSION_K, startedAt=STARTED)
+    st, _, recs = jreq('GET', '/api/records', headers={'Cookie': SAM})
+    rec = next((r for r in recs['records'] if r['id'] == R_PRACTICE), {})
+    ok(st == 200 and rec.get('answered') == 10 and rec.get('detail') is True and re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d', rec.get('at', '')),
+       'The record has its detail and 10 answered questions. Actual %r' % rec)
+    st, _, one = jreq('GET', '/api/record?id=%d' % R_PRACTICE, headers={'Cookie': SAM})
+    ok(st == 200 and one['record']['sessionKey'] == SESSION_K and one['record']['startedAt'] == STARTED,
+       'GET /api/record carries sessionKey and startedAt. Actual %r' % (one.get('record') if isinstance(one, dict) else one))
+    pace(SAM)
+    summ = Stream('/api/ai/summary/ask', {'recordId': R_PRACTICE, 'lang': 'en'}, SAM)
+    summ.run()
+    term = summ.terminal()
+    ok(summ.status == 200 and summ.names()[:1] == ['start'] and term is not None and term[1] == 'done',
+       'sam: the summary of the record streams and finishes. Actual %r %r %r' % (summ.status, summ.names(), summ.raw[:200]))
+    ss = summ.events[0][2]
+    ok(list(ss.keys()) == START_KEYS + DONE_TAIL and ss['kind'] == 'summary' and ss['chatKind'] == 'summary' and ss['recordId'] == R_PRACTICE
+       and ss['sample'] == {'used': 4, 'usable': 4, 'wrong': 4} and ss['questionId'] is None and ss['source'] is None and ss['questionNo'] is None,
+       'The summary start frame: sample {used 4, usable 4, wrong 4} (unanswered questions are not counted). Actual %r' % ss)
+    ok(ss['chatTitle'] == rec['at'], 'The summary chat is titled with the record time. Actual %r' % ss['chatTitle'])
+    summary_text = answer_of(summ)
+    ok('Items: 4' in summary_text and summary_text.count('## ') == 4, 'The stub summary has four headings and echoes 4 items. Actual %r' % summary_text[-60:])
+    at_digits = re.sub(r'\D', '', rec['at'])
+    st, _, sv = jreq('GET', '/api/ai/summary/saved?record=%d&at=%s' % (R_PRACTICE, at_digits), headers={'Cookie': SAM})
+    ok(st == 200 and sv['chatId'] == ss['chatId'] and sv['latest']['status'] == 'done' and sv['latest']['content'] == summary_text
+       and sv['latest']['recordId'] == R_PRACTICE and sv['latest']['sample'] == {'used': 4, 'usable': 4, 'wrong': 4} and sv['lastGood'] is None
+       and list(sv['latest'].keys()) == ['messageId', 'recordId', 'status', 'error', 'truncated', 'content', 'lang', 'model', 'createdAt',
+                                         'finishedAt', 'sample'],
+       'GET /api/ai/summary/saved?record=&at= finds the summary. Actual %d %r' % (st, sv))
+
+    # 6. A record without a wrong answer has nothing to summarise
+    R_PERFECT = save('practice', caps[:3], set(), key=uuid.uuid4().hex, startedAt=STARTED)
+    pace(SAM)
+    st, _, e = jreq('POST', '/api/ai/summary/ask', {'recordId': R_PERFECT, 'lang': 'en'}, headers={'Cookie': SAM})
+    ok(st == 409 and e.get('code') == 'ai.noWrong', 'A perfect record → 409 ai.noWrong. Actual %d %r' % (st, e))
+
+    # 7. The 70-question cap end to end: 80 questions, 75 answered wrong
+    R_CAP = save('practice', caps, set(range(75)), key=uuid.uuid4().hex, startedAt=STARTED)
+    pace(SAM)
+    cs = Stream('/api/ai/summary/ask', {'recordId': R_CAP, 'lang': 'en'}, SAM)
+    cs.run()
+    ok(cs.status == 200 and cs.terminal() is not None and cs.terminal()[1] == 'done'
+       and cs.events[0][2]['sample'] == {'used': 70, 'usable': 75, 'wrong': 75} and 'Items: 70' in answer_of(cs),
+       'The summary of 75 wrong answers uses 70: sample {70, 75, 75}, the stub saw 70 items. Actual %r %r' % (cs.events[0][2].get('sample') if cs.events else None, answer_of(cs)[-20:]))
+
+    # 8. The record is deleted: its summary chat stays in AI Chat
+    st, _, _ = jreq('POST', '/api/records/delete', {'id': R_CAP}, headers={'Cookie': SAM})
+    ok(st == 200, 'sam deletes the 80-question record. Actual %d' % st)
+    st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
+    ok(st == 200 and cs.events[0][2]['chatId'] in [c['id'] for c in chats['chats']], 'The summary chat of the deleted record is still listed')
+    pace(SAM)
+    st, _, e = jreq('POST', '/api/ai/summary/ask', {'recordId': R_CAP, 'lang': 'en'}, headers={'Cookie': SAM})
+    ok(st == 404 and e.get('code') == 'ai.notFound', 'The summary of a deleted record → 404 ai.notFound. Actual %d %r' % (st, e))
+
+    # 9. Results and the record detail: asks with a record id land in the chat of their session
+    def ask_record(q, no, rid, mode, key=None, cookie=None, kind='explain'):
+        body = {'kind': kind, 'mode': mode, 'questionId': q['id'], 'no': no, 'qlang': 'en', 'lang': 'en', 'source': 'result', 'recordId': rid}
+        if key:
+            body.update(key=key, startedAt=STARTED)
+        return study(body, cookie)
+
+    r1 = ask_record(caps[1], 2, R_PRACTICE, 'practice', key=SESSION_K)
+    ok(r1.status == 200 and r1.terminal()[1] == 'done' and r1.events[0][2]['chatId'] == STUDY_CHAT and r1.events[0][2]['source'] == 'result'
+       and r1.events[0][2]['recordId'] == R_PRACTICE and r1.events[0][2]['chatKind'] == 'practice',
+       'A result-page explanation (key and record id) lands in the practice chat of the session. Actual %r' % (r1.events[0][2] if r1.events else r1.raw[:200]))
+    st, _, sv = saved('mode=practice&record=%d&source=result&question=%s&kind=explain' % (R_PRACTICE, caps[1]['id']))
+    ok(st == 200 and sv['chatId'] == STUDY_CHAT and sv['latest']['content'] == answer_of(r1),
+       'GET /api/ai/study/saved?record= finds the result-page answer. Actual %d %r' % (st, sv))
+    r2 = ask_record(caps[0], 1, R_PRACTICE, 'practice')
+    ok(r2.status == 200 and r2.terminal()[1] == 'done' and r2.events[0][2]['chatId'] == STUDY_CHAT and r2.events[0][2]['newChat'] is False,
+       'The record detail page (record id only) asks into the same practice chat. Actual %r' % (r2.events[0][2] if r2.events else r2.raw[:200]))
+    ok('Answer: A' in answer_of(r2), 'The detail explanation starts with the answer key. Actual %r' % answer_of(r2)[:30])
+    # An exam record with a key: its asks go to the exam chat
+    EXAM_KEY = uuid.uuid4().hex
+    R_EXAM = save('exam', caps[:6], {0, 1}, key=EXAM_KEY, startedAt=STARTED)
+    x1 = ask_record(caps[0], 1, R_EXAM, 'exam', key=EXAM_KEY)
+    ok(x1.status == 200 and x1.terminal()[1] == 'done' and x1.events[0][2]['chatKind'] == 'exam' and x1.events[0][2]['chatId'] != STUDY_CHAT
+       and x1.events[0][2]['newChat'] is True and x1.events[0][2]['recordId'] == R_EXAM,
+       'An exam result explanation lands in the exam chat (kind exam). Actual %r' % (x1.events[0][2] if x1.events else x1.raw[:200]))
+    x2 = ask_record(caps[1], 2, R_EXAM, 'exam')
+    ok(x2.status == 200 and x2.events[0][2]['chatId'] == x1.events[0][2]['chatId'] and x2.events[0][2]['newChat'] is False,
+       'The detail page of the exam record uses the same exam chat. Actual %r' % x2.names())
+    # Refusals
+    x3 = ask_record(caps[0], 1, R_EXAM, 'exam', key=SESSION_K)
+    ok(x3.status == 404 and T(x3).get('code') == 'ai.notFound', 'A key that is not the record\'s key → 404 ai.notFound. Actual %r %r' % (x3.status, x3.raw[:120]))
+    x4 = ask_record(caps[0], 1, R_PRACTICE, 'exam')
+    ok(x4.status == 404 and T(x4).get('code') == 'ai.notFound', 'An exam explanation with sam\'s practice record id → 404 ai.notFound. Actual %r %r' % (x4.status, x4.raw[:120]))
+    # A record saved without a session key (before v0.9): its own chat, titled with the record time
+    R_OLD = save('practice', caps[:4], {0, 1})
+    st, _, recs = jreq('GET', '/api/records', headers={'Cookie': SAM})
+    old_at = next(r['at'] for r in recs['records'] if r['id'] == R_OLD)
+    o1 = ask_record(caps[0], 1, R_OLD, 'practice')
+    ok(o1.status == 200 and o1.terminal()[1] == 'done' and o1.events[0][2]['chatKind'] == 'practice' and o1.events[0][2]['chatId'] not in (STUDY_CHAT, x1.events[0][2]['chatId'])
+       and o1.events[0][2]['chatTitle'] == old_at and o1.events[0][2]['newChat'] is True,
+       'A record without a key gets its own practice chat titled with the record time. Actual %r' % (o1.events[0][2] if o1.events else o1.raw[:200]))
+    st, _, sv = saved('mode=practice&record=%d&source=result&question=%s&kind=explain' % (R_OLD, caps[0]['id']))
+    ok(st == 200 and sv['chatId'] == o1.events[0][2]['chatId'] and sv['latest']['content'] == answer_of(o1), 'The saved lookup finds the legacy chat answer. Actual %d %r' % (st, sv))
+
+    # 10. Other users
+    la = study(hint_body(caps[0], 1), LEE)
+    ok(la.status == 404 and T(la).get('code') == 'ai.notFound', 'lee (no bank): a hint about sam\'s question → 404 ai.notFound. Actual %r %r' % (la.status, la.raw[:120]))
+    pace(LEE)
+    st, _, e = jreq('POST', '/api/ai/summary/ask', {'recordId': R_PRACTICE, 'lang': 'en'}, headers={'Cookie': LEE})
+    ok(st == 404 and e.get('code') == 'ai.notFound', 'lee: the summary of sam\'s record id → 404 ai.notFound. Actual %d %r' % (st, e))
+    ka = study(hint_body(caps[0], 1), KIM)
+    ok(ka.status == 403 and T(ka).get('code') == 'ai.notAllowed', 'kim (no AI+ feature): a study ask → 403 ai.notAllowed. Actual %r %r' % (ka.status, ka.raw[:120]))
+    pace(KIM)
+    st, _, e = jreq('POST', '/api/ai/summary/ask', {'recordId': R_PRACTICE, 'lang': 'en'}, headers={'Cookie': KIM})
+    ok(st == 403 and e.get('code') == 'ai.notAllowed', 'kim: a summary ask → 403 ai.notAllowed. Actual %d %r' % (st, e))
+
+    # 11. The System log holds no question text, no hint text, no session key
+    lines = log_messages()
+    for what, text in (('a question text', 'Capcheck question'), ('a leak question', 'LEAKCHECK'), ('a hint text', 'Knowledge points'),
+                       ('a summary text', 'Weak knowledge points'), ('the session key', SESSION_K), ('the exam session key', EXAM_KEY)):
+        ok(not any(text in l for l in lines), 'The System log does not contain %s' % what)
+        for svc_name in ('ai-service', 'backend', 'frontend'):
+            ok(text not in logs_of(svc_name), 'The %s container log does not contain %s' % (svc_name, what))
+    # The record time (the 12 digits of "at") must not reach any container log either (the Nginx access log holds paths only)
+    for svc_name in ('ai-service', 'backend', 'frontend'):
+        ok(at_digits not in logs_of(svc_name), 'The %s container log does not contain the record time' % svc_name)
+
+    # The study chats go again, so the checks of the next sections see the chats they know
+    st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
+    for c in [c for c in chats['chats'] if c['kind'] != 'chat']:
+        st, _, e = jreq('POST', '/api/ai/chats/delete', {'id': c['id']}, headers={'Cookie': SAM})
+        ok(st == 200 and e.get('deleted') == 1, 'sam deletes the %s chat %d. Actual %d %r' % (c['kind'], c['id'], st, e))
+    st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
+    ok(st == 200 and [c['id'] for c in chats['chats']] == [chat_id], 'sam is back to the one AI Chat chat. Actual %r' % chats)
 
     # -- A3 Suspend / Resume of sam's AI+ function (AI settings), and the AI+ service switched off --
     OFF_LINE = 'AI function turned off for user "sam" by admin "admin"'
@@ -836,7 +1157,7 @@ try:
     dc('up', '-d')
     ok(wait_healthy(services), 'The three containers are healthy again after recreating with the same volumes')
     BACKEND, AI, FRONTEND = cid('backend'), cid('ai-service'), cid('frontend')
-    ok(bank_size() == 5, 'Question bank still has 5 questions after recreation (data is in the volume)')
+    ok(bank_size() == ADMIN_Q, 'Question bank still has its %d questions after recreation (data is in the volume)' % ADMIN_Q)
     st, _, p = jreq('GET', '/api/progress')
     ok(len(p['history']) == 2, 'Result history still has 2 rounds after recreation (the session is in the volume too)')
     st, _, cfg = jreq('GET', '/api/ai/admin/settings')

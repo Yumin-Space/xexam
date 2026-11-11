@@ -20,22 +20,22 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 342 件のテスト
+cargo test --all-targets          # 382 件のテスト
 cargo run -- serve --data ../data --no-browser     # 127.0.0.1:8765 で待ち受け
 ```
 
 - テストは `tests/baseline/` にコミット済みの**旧版スナップショット**と照合するため、Python は不要です。
-- すべてのテストは、一時ディレクトリ内の新規データベースか `tests/baseline/fixtures/sample.db` のコピーを使い、`data/` には**触れません**。`src/` の中の単体テストのほかに、次のテストファイルがあります：`api_basic.rs`、`api_import.rs`、`api_misc.rs`、`api_golden.rs`（ルート、ガード、旧版のレスポンス）、`db_golden.rs`（データベースを旧版のスナップショットと照合）、`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs`、`id_vectors.rs`（パーサー）、そしてバージョンごとのファイル：`v05_banks_records_settings.rs`（スキーマ v2、問題集、記録、設定）、`v06_users_and_sign_in.rs`（スキーマ v3、アカウント、セッション、ログインの制限）、`v065_bank_access_and_practice.rs`（スキーマ v4、問題集へのアクセス、問題集の管理権限、所有者、練習）、`v07_bank_access_and_layouts.rs`（選ばれた問題集と **今後インポートする問題集も含める**、リリース前の v4 データベースの変換、古い形式の拒否とその問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード、チェックポイント、サーバーの動作中の `reset-password`、システムログ）、`v07_log_floods.rs`（大量の拒否されたリクエストやログインの失敗をまとめること）、`v08_ai_link.rs`（スキーマ v5、AI+ 機能の付与、内部トークン、認証ステップ、内部ルート。1 つのテストは本物のバイナリを動かします）。
+- すべてのテストは、一時ディレクトリ内の新規データベースか `tests/baseline/fixtures/sample.db` のコピーを使い、`data/` には**触れません**。`src/` の中の単体テストのほかに、次のテストファイルがあります：`api_basic.rs`、`api_import.rs`、`api_misc.rs`、`api_golden.rs`（ルート、ガード、旧版のレスポンス）、`db_golden.rs`（データベースを旧版のスナップショットと照合）、`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs`、`id_vectors.rs`（パーサー）、そしてバージョンごとのファイル：`v05_banks_records_settings.rs`（スキーマ v2、問題集、記録、設定）、`v06_users_and_sign_in.rs`（スキーマ v3、アカウント、セッション、ログインの制限）、`v065_bank_access_and_practice.rs`（スキーマ v4、問題集へのアクセス、問題集の管理権限、所有者、練習）、`v07_bank_access_and_layouts.rs`（選ばれた問題集と **今後インポートする問題集も含める**、リリース前の v4 データベースの変換、古い形式の拒否とその問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード、チェックポイント、サーバーの動作中の `reset-password`、システムログ）、`v07_log_floods.rs`（大量の拒否されたリクエストやログインの失敗をまとめること）、`v08_ai_link.rs`（スキーマ v5、AI+ 機能の付与、内部トークン、認証ステップ、内部ルート。1 つのテストは本物のバイナリを動かします）、`v09_ai_study.rs`（スキーマ v6とそのバックアップ、保存した記録のセッションの `key` と `startedAt` とその `recordId`、そして内部リンクの 3 つの学習用ルート：セッションとの結び付け、AI+ の確認、範囲、上限、間違いのランダムな抽出、まったく同じ「見つからない」応答）。
 - テストはヘルパーを通してログインします。ログインを無効にするスイッチはなく、テストのためのものもありません。
 - **テストでの古い形式。** 本番では 3 列と 4 列のワークブックを拒否します（`services::check_layout`）。ゴールデンテストは旧版のインポート（3 列のファイル）を再現するので、それらが作る API の状態には `old_layouts: OldLayouts::AllowForTests` を設定します（`backend/tests/api_common/mod.rs` と、コミット済みの 3 列のフィクスチャ `tests/baseline/fixtures/demo.xlsx` を API 経由でインポートする `v05_banks_records_settings.rs` と `v065_bank_access_and_practice.rs`）。これはテストコードだけが設定する API の状態のフィールドです。`AppState::new` と `import` コマンドは常に `OldLayouts::Refuse` を使い、環境変数、フラグ、設定のどれでも変えられません。本番の規則は `v07_bank_access_and_layouts.rs` がテストします。ストアのメソッドそのものはどんな問題も受け付けるので、データベースのゴールデンテストは変わらず動きます。
 - よく使う環境変数：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（ログレベル、例：`debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` で WAL ではなくロールバックジャーナルのまま）、`XEXAM_COOKIE_SECURE`、`XEXAM_LINK_DIR` と `XEXAM_INTERNAL_TOKEN`（ai-service との接続。第 3 節）。全一覧は `xexam-backend --help` と [deployment.md](deployment.md) を参照してください。
 - `serve` は、`<データディレクトリ>/link/internal.token`（または `XEXAM_LINK_DIR/internal.token`）がなければ作ります。ほかのコマンドは決してこれに触れません。
 - 空のデータディレクトリで最初に起動すると、管理者 `admin` / `admin` が作られます。最初のログインで、ページが新しいパスワードを求めます。忘れたときは：`cargo run -- reset-password admin --data ../data`（サーバーの動作中でも使えます）。
 - コマンドラインからの 6 列形式のワークブックのインポート（取り込み先はレガシー問題集）：`cargo run -- import ../some.xlsx --data ../data`。3 列や 4 列のワークブックは拒否されます。
-- 古いスキーマのデータベースをバックエンドで開くと移行が行われ、その隣に `backups/` が書き出されます。コピーを使ってください。
+- 古いスキーマのデータベースをバックエンドで開くと移行が行われ、その隣に `backups/` が書き出されます。コピーを使ってください。v0.9 の学習用ルート（`api/internal_study.rs`、`database/store/study.rs` の射影）はトークンのルートです：バックエンドはこれに AI サービスにだけ応え、何も書き込まず、何も記録しません。バックエンドは、これらのために中国語のリテラルをテストコードの外に書くこともありません（`server-messages.test.ts` が `backend/src` を走査します）。
 - データベースは WAL モードで動きます。バックエンドの動作中は、`xexam.db` の隣に `xexam.db-wal` と `xexam.db-shm` があります。3 つともコピーするか、先にバックエンドを停止してください（停止すると、すべてが `xexam.db` に入り、隣に `-wal` ファイルが残っていても空です）。`sqlite3` は、バックエンドの動作中でもデータベースを読めます。
 
-## 3. AI サービス（v0.8）
+## 3. AI サービス（v0.8。学習機能は v0.9）
 
 AI サービスは `ai-service/` にある独立したクレート（パッケージとバイナリは `xexam-ai-service`、ライブラリは `xexam_ai_service`、ワークスペースなし、`unsafe` は禁止）で、専用の `Cargo.lock` と `rust-toolchain.toml`（バックエンドと同じ Rust 1.99.1）を持ちます。
 
@@ -43,12 +43,12 @@ AI サービスは `ai-service/` にある独立したクレート（パッケ�
 cd ai-service
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 160 件のテスト
+cargo test --all-targets          # 369 件のテスト（と、ドキュメントテスト 1 件、`cargo test --doc`：ヒントのプロンプトは解答を受け取ってはならない）
 cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 何も出力しないこと（CI の TLS ガード）
 ```
 
-- **構成**（全一覧は [architecture.md](architecture.md) の第 2 節）：`src/api/`（ディスパッチ、ユーザーと管理者のルート）、`src/chat.rs`（回答を書くタスク、ユーザーごとと全体の枠、取り消し）、`src/app.rs`（共有の状態とバックエンドへのハートビート）、`src/provider/`（OpenAI 互換と Anthropic のアダプター、イベントストリームのパーサー、エラーの対応付け）、`src/store/`（AI のデータベース）、`src/identity.rs` と `src/link.rs`（本人確認の文とバックエンドの呼び出し）、`src/secret.rs` と `src/settings.rs`（キーの暗号化。プロバイダー、URL の方針、フィンガープリント）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（サービスのすべての中国語のテキスト）、`src/config.rs`。
-- **テスト**（`ai-service/tests/`。ライブラリに対して、プロセス内の偽のプロバイダーと、ハートビートも記録する偽のバックエンドを使い、どれもネットワークに触れません）：`streaming.rs`（イベント、停止、再試行、制限時間、切り離し、呼び出しの実行中のゲートと上限）、`settings_and_keys.rs`（検証、キーの再入力、ヘッダーの衝突、暗号化、キーファイルと `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（文、アクセスレベル、範囲、トークンの規則）、`admin_data.rs`（管理者の表示と消去、監査の行と送信待ち、使用量、照合）、`logs_no_secrets.rs`（どのログの行にもキー、トークン、プロンプト、回答がないこと）、`proxy_env.rs`（環境の `HTTP_PROXY` を無視すること）。v0.8 の第 2 ラウンドでは、`r2_core_heartbeat.rs`（報告、そのタイミング、60 秒の規則）、`r2_core_schema.rs`（スキーマ 2、スキーマ 1 のバックアップとアップグレード、一部の列がないスキーマ 2 のファイルに足される列）、`r2_core_suspend.rs`（一時停止 / 再開、監査の行、回答の停止）、`r2_chat_lang.rs`（返答言語）、`r2_chat_free.rs`（管理者の状態としてのフリーモード：`POST /api/ai/free`、`freeMode`、チャットごとのフラグはなし）、`r2_free_history.rs`（どちらのモードでも履歴全体、モードごとのシステムプロンプト、切り替えの後のモードの行、どのメッセージにも付く `free`）、`r2_cache.rs`（プロンプトキャッシュ、使用量の行のキャッシュされたトークン、古い履歴のメッセージの短縮）、`r2_chat_thinking.rs`（`thinking` イベント。推論のテキストがストリーム、データベース、ログに現れてはならない）、`r2_chat_suspend.rs`（状態と再確認）。それに `src/` の単体テスト。`TestApp` ヘルパーは、破棄されるときにサービスを停止してデータベースのファイルを解放するので、テストは一時フォルダに何も残しません（Windows では、開いたままのファイルがそのディレクトリを残してしまいます）。
+- **構成**（全一覧は [architecture.md](architecture.md) の第 2 節）：`src/api/`（ディスパッチ、ユーザーと管理者のルート）、`src/chat.rs`（回答を書くタスク、ユーザーごとと全体の枠、取り消し）、`src/app.rs`（共有の状態とバックエンドへのハートビート）、`src/provider/`（OpenAI 互換と Anthropic のアダプター、イベントストリームのパーサー、エラーの対応付け）、`src/store/`（AI のデータベース）、`src/identity.rs` と `src/link.rs`（本人確認の文とバックエンドの呼び出し）、`src/secret.rs` と `src/settings.rs`（キーの暗号化。プロバイダー、URL の方針、フィンガープリント）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（サービスのすべての中国語のテキスト）、`src/config.rs`。v0.9 からは、`src/api/study.rs`（4 つの学習用ルート）、`src/study/`（プロンプトの `hint.rs`、`explain.rs`、`summary.rs` とその組み立て、`guard.rs` と `guard/{lists,norm,rules}.rs` のヒントのガード、`title.rs`、`wire.rs` のバックエンドのデータルートの厳密な通信用の型、`cache.rs` の記録の識別情報のキャッシュ）、そして `src/store/` の `data.rs` の学習用チャットの関数と `stats.rs` の目的別の使用量もあります。
+- **テスト**（`ai-service/tests/`。ライブラリに対して、プロセス内の偽のプロバイダーと、ハートビートも記録する偽のバックエンドを使い、どれもネットワークに触れません）：`streaming.rs`（イベント、停止、再試行、制限時間、切り離し、呼び出しの実行中のゲートと上限）、`settings_and_keys.rs`（検証、キーの再入力、ヘッダーの衝突、暗号化、キーファイルと `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（文、アクセスレベル、範囲、トークンの規則）、`admin_data.rs`（管理者の表示と消去、監査の行と送信待ち、使用量、照合）、`logs_no_secrets.rs`（どのログの行にもキー、トークン、プロンプト、回答がないこと）、`proxy_env.rs`（環境の `HTTP_PROXY` を無視すること）。v0.8 の第 2 ラウンドでは、`r2_core_heartbeat.rs`（報告、そのタイミング、60 秒の規則）、`r2_core_schema.rs`（スキーマ 2、スキーマ 1 のバックアップとアップグレード、一部の列がないスキーマ 2 のファイルに足される列）、`r2_core_suspend.rs`（一時停止 / 再開、監査の行、回答の停止）、`r2_chat_lang.rs`（返答言語）、`r2_chat_free.rs`（管理者の状態としてのフリーモード：`POST /api/ai/free`、`freeMode`、チャットごとのフラグはなし）、`r2_free_history.rs`（どちらのモードでも履歴全体、モードごとのシステムプロンプト、切り替えの後のモードの行、どのメッセージにも付く `free`）、`r2_cache.rs`（プロンプトキャッシュ、使用量の行のキャッシュされたトークン、古い履歴のメッセージの短縮）、`r2_chat_thinking.rs`（`thinking` イベント。推論のテキストがストリーム、データベース、ログに現れてはならない）、`r2_chat_suspend.rs`（状態と再確認）。v0.9 では、`v09_store.rs`（スキーマ 3：新しいファイル、スキーマ 1 と 2 からのアップグレードとそのバックアップ、書き出せないバックアップ、どちらの経路でも同じ `sqlite_master`、開き直しても何も書き込まないこと、保存済みの回答の検索、学習用のチャット、尋ねるトランザクションの `EXPLAIN QUERY PLAN`、目的別の使用量、保存期間のバッチ）、`study_guard.rs`（ヒントのガード：記号、序数、ホットスポットの記述、キーの文、リスト、ストリームをどう区切っても同じ判定になること、上限、保持の規則。モジュールは `tests/study_guard/`）、`study_prompts.rs`（プロンプト、`compile_fail` のドキュメントテスト）、`study_api.rs`（偽のバックエンドを相手にした学習用ルートの端から端まで：ストリーミング、チャットの識別、保存済みの回答の取得、範囲、要約の拒否、アクセス、管理者の表示、内容のないログ。モジュールは `tests/study_api/`）。それに `src/` の単体テスト。`study_api` の一部のテストは短いスリープ（200 ms と 120 ms）に頼っており、安定していますがタイミングに依存します。`TestApp` ヘルパーは、破棄されるときにサービスを停止してデータベースのファイルを解放するので、テストは一時フォルダに何も残しません（Windows では、開いたままのファイルがそのディレクトリを残してしまいます）。
 - **ローカルで動かす**（バックエンドと並べて）。2 つは内部トークンを共有しなければなりません：バックエンドがリンクディレクトリ（既定ではデータディレクトリの中の `link`）に書くトークンのファイルか、両方のシェルで同じ `XEXAM_INTERNAL_TOKEN` です。
 
   ```bash
@@ -63,8 +63,9 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
   ```
 
   ai-service は `127.0.0.1:8766`（`XEXAM_AI_HOST`、`XEXAM_AI_PORT`）で待ち受け、`http://127.0.0.1:8765`（`XEXAM_AI_BACKEND_URL`、素の http だけ）でバックエンドを呼び出します。`xexam-ai-service --help` ですべての変数が表示されます。トークンを得るとすぐに、バックエンドへ報告します（ハートビート。25 秒ごと。[architecture.md](architecture.md) の第 5 節）。バックエンドが報告を見るまでは、ユーザー管理に AI+ 機能のスイッチは出ず、AI 設定は ai-service が最初の報告を待っていると表示するので、両方を起動した数秒後はそれで正常です。トークンがない間は、すべての AI のルートに 503 `ai.backendDown` を返し、ファイルが現れるまで `AI link: waiting for the internal token at …` とログに出します。`ai_stub.py`（標準ライブラリのみ）には、Anthropic のルート（`/anthropic`）、ゲートウェイのルート（`/gw/openai`、`/gw/anthropic`。`gw-demo-…` のようなゲートウェイのキーを使う）、エラーの経路のための特別なモデル、考え中の状態（`demo-reasoning`。最初に架空の推論を送ります）、チャット用でないモデルの表示（`demo-embedding`。一覧には出ますが、チャットは拒否します）もあります。システムプロンプトの「Always reply in …」の行の言語で答えます。その docstring に一覧があります。
+- **学習機能**（v0.9）：テストと `tests/integration/ai_stub.py` の代用プロバイダーは、システムプロンプトで答えを変えます：`asked for a HINT` なら自作のきれいなヒントを返し（`[leak]` を含むユーザーのターンには、ガードのテスト用に、答えを挙げた文で終わるものを返します）、`asked for an EXPLANATION` なら `**Answer: <letters>**` と文を返し、`answered wrong` なら 4 つの見出しと `Items: <n>` を返します。ガードが差し止めるものを変えるには、`guard/lists.rs` のリストを編集し、その文を `tests/study_guard/` に加えます。ヒントのプロンプトは `Solution` を受け取らず、これを守り続けなければなりません（ドキュメントテストがこれを固定しています）。バックエンドの学習用ルートに新しいデータの項目を加えるには、`backend/src/api/internal_study.rs`、`src/study/wire.rs`（知らないキーは拒否します）、そして両側のコントラクトのテストに、同じ変更が必要です。
 - **規則**：サービスのすべての中国語のテキストは `src/codes.rs` にあります（フロントエンドはコードで翻訳するので、新しいコードには `frontend/src/i18n/catalog/ai.ts` に `ai.err.*` のキーを加えます）。ログの行は英語で、ユーザーはユーザー名の `{:?}` で示し、キー、内部トークン、本人確認の文、ヘッダーの値、ベース URL、プロンプト、回答、チャットのタイトル、メモの内容は決して含めません。`logs_no_secrets.rs` がこれを確認します。キーやトークンを持つ型には、派生した `Debug` がありません。リクエストのボディは自前で検証します（知らないキーは拒否）。JSON のキーは記載した順に保ってください（`preserve_order` 付きの `serde_json`）。
-- 接続の **バックエンド側** は `backend/src/api/internal.rs`（トークン、本人確認の文、ハートビートのルートと最後の報告のメモリ上の記録を含む `/internal/ai/*`）と `api::auth::introspect`（認証ステップ）で、そのテストは `backend/tests/v08_ai_link.rs` にあります。
+- 接続の **バックエンド側** は `backend/src/api/internal.rs`（トークン、本人確認の文、ハートビートのルートと最後の報告のメモリ上の記録を含む `/internal/ai/*`）、`backend/src/api/internal_study.rs`（v0.9：`question`、`record`、`record-info`）、`api::auth::introspect`（認証ステップ）で、そのテストは `backend/tests/v08_ai_link.rs` と `v09_ai_study.rs` にあります。
 
 ## 4. フロントエンド
 
@@ -72,11 +73,11 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # アプリを tsc でチェックし、続いてテストファイルをチェック（tsconfig.test.json）
-npm test               # 246 件の単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
+npm test               # 391 件の単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
                        # コード）、採点とランダムな出題、練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、
                        # ロックの説明と待ち時間、取り込みの警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、
                        # 設定のキャッシュ、イベントストリームのパーサー、AI チャットの状態、回答の Markdown、メモの要求、
-                       # AI 設定の規則（接続の原因とモデルの種類を含む）、AI の状態、バッジの状態、ユーザー管理の AI+ 機能の規則、ルーター（`#/ai/<id>`、`#/ai/new`）、UI カタログ（オーナーの文言の決定そのままの言葉）、サーバーメッセージの翻訳、更新履歴の解析
+                       # AI 設定の規則（接続の原因とモデルの種類を含む）、AI の状態、バッジの状態、ユーザー管理の AI+ 機能の規則、ルーター（`#/ai/<id>`、`#/ai/new`）、UI カタログ（オーナーの文言の決定そのままの言葉）、サーバーメッセージの翻訳、更新履歴の解析、そして v0.9 の AI+ の学習機能（どのコントロールを誰に見せるか、回答の状態、偽のタイマーと通信を使うエンジン、ポップオーバーの規則、リクエストの組み立て、フォーカスの行き先、セッションのキー）
 npm run build          # 型チェック + vite build → dist/
 npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 へ、/api/ai/ は http://127.0.0.1:8766 へプロキシ
 ```
@@ -93,7 +94,7 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 
 ユーザーに見える文言は、すべてカタログから取り出します。ページに直接書き込む文言はありません。
 
-- **場所**：`src/i18n/catalog/<area>.ts`。領域ごとに 1 ファイルで、`common`、`home`、`banks`、`records`、`settings`、`quiz`、`result`、`about`、`auth`、`users`、`logs`、`ai` があります。各ファイルの中身は `export default defineCatalog({ en: {…}, zh: {…}, ja: {…} })` です。
+- **場所**：`src/i18n/catalog/<area>.ts`。領域ごとに 1 ファイルで、`common`、`home`、`banks`、`records`、`settings`、`quiz`、`result`、`about`、`auth`、`users`、`logs`、`ai`、`aiplus`（v0.9。学習機能）があります。各ファイルの中身は `export default defineCatalog({ en: {…}, zh: {…}, ja: {…} })` です。
 - **キー**は領域名で始まります：`banks.delete.title`、`records.deleteAll.ok`。共通の接頭辞（`app.`、`nav.`、`common.`、`err.`、`kind.`、`mode.`、`act.`、`role.`、`forbidden.` など）は `common.ts` にあります。
 - **必ず 3 言語。** `zh` や `ja` のブロックに英語のキーが欠けていると、TypeScript がエラーにします。`_one` で終わるキーは英語の単数形で、`tn()` は件数が 1 のときにこれを使います。中国語と日本語では省略できます。
 - **プレースホルダー**は `{name}` の形です：`t('records.deleteOne.body', { at, pct })`。件数には `tn(key, n)` を使います。これが `{n}` を埋めます。
@@ -112,6 +113,7 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 - **バックエンドのメッセージを追加・変更するとき**：同じ変更の中で `server-messages.ts` に訳を追加してください。ユーザーに表示されない文字列（たとえばパーサーが探す語）であれば、テストの `NOT_MESSAGES` に理由と一緒に追加します。
 - **ログの行は英語のまま**にし、パスワード、セッションのトークン、Cookie の値、問題文を決して含めてはいけません（`backend/tests/v07_wal_and_logs.rs` が、一連の操作の後でログを確認します）。ログインせずに誰でも起こせる行は、`tracing` に直接ではなく `BurstLog`（`backend/src/logs.rs`）を通します。
 - **AI のエラー** はテキストでは翻訳しません：AI サービスは各エラーに固定の `code` を付け、`errorText()` は `src/i18n/catalog/ai.ts` のキー `ai.err.<"ai." を除いたコード>` を使い、エラーの `limit` で `{n}` を埋めます。AI サービスに新しいコードを加えたら、3 言語すべてでそのキーが必要です。
+- **AI+ の学習用コントロール**（v0.9）は 1 つのコンポーネント `src/components/ai-plus-controls.ts` が作ります。ページはそれにコントロールを頼むだけで、AI の要素を自分では決して作りません。そのため、規則（AI+ 機能がなければ何も出さない、AI が使えないときはタグと理由付きでグレー表示、試験のページにはコントロールを置かない）は 1 か所と `src/domain/ai-plus.ts` にとどまります。ポップオーバー（`ai-pop.ts`）と要約のウィンドウ（`ai-summary.ts`）は `main.ts` から一度だけ組み込まれ、ページを描き直すたびの `reanchorAiPop()` と、それらの記憶を忘れるサインアウトのフックも一緒に組み込まれます。判断は純粋な関数で、単体テストがあります。1 つの回答のロジックは `ai-study.ts` のリデューサーで、`ai-run.ts` は通信とタイマーを差し込めるエンジンです。回答は、AI チャットと同じ安全なレンダラー（`ai-render.ts`。テキストノードだけ）を通した Markdown で、学習機能のリクエストのエラーのテキストは `src/i18n/errors.ts` の `studyErrorText` です。
 
 ### 4.3 ページやルートを追加する
 
@@ -131,19 +133,21 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 # チェック用スクリプトはすべて一時的なプロジェクト名と一時ボリュームを使い、xexam_* ボリュームには触れません
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 131 項目、ダミーのバックエンドとダミーの ai-service を使用
+python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 141 項目、ダミーのバックエンドとダミーの ai-service を使用
                                                                       # （レート制限、認証ステップ、ヘッダーの除去、ストリーミング）
-python -I tests/integration/stack_check.py 18090                      # 217 項目：架空の AI プロバイダーと一緒にスタック全体を起動
+python -I tests/integration/stack_check.py 18090                      # 314 項目：架空の AI プロバイダーと一緒にスタック全体を起動
                                                                       # （3 つのイメージをビルドします）：ログイン、インポート、成績の記録、AI 設定、
                                                                       # ストリーミングの回答、AI+ 機能とその一時停止、
                                                                       # ハートビートと docker stop、返答言語、フリーモード（ユーザーごと）、
+                                                                      # AI+ の学習機能（ヒント、解説、要約、チャットとそのタイトル、
+                                                                      # 保存済みの回答、使用中の流れ、何も記録しないこと）、
                                                                       # 永続化、WAL、システムログ、
                                                                       # reset-password、docker stop、各ボリュームの中身
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 68 項目（Linux では 70）：progress.json の移行、WAL と DELETE への
-                                                                      # 切り替え、スキーマ 3 → 5 と 4 → 5、内部トークン（先に cargo build が必要）
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 78 項目（Linux では 80）：progress.json の移行、WAL と DELETE への
+                                                                      # 切り替え、スキーマ 3 → 6、4 → 6、5 → 6、内部トークン（先に cargo build が必要）
 ```
 
-どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。`stack_check.py` は任意の `XEXAM_STACK_COMPOSE` を読みます：同じ形の別の compose ファイル（たとえば、イメージのタグとコンテナ名を変えた `docker/docker-compose.build.yml` のコピー）を使えるので、いつものものを使うインストールと並べて実行できます。コンテナは、その compose のサービスから見つけます。`nginx_check.py` には約 2 分半かかります。1 つの項目が、AI 設定の遅い **テスト** のために 95 秒待つからです。
+どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。`stack_check.py` は任意の `XEXAM_STACK_COMPOSE` を読みます：同じ形の別の compose ファイル（たとえば、イメージのタグとコンテナ名を変えた `docker/docker-compose.build.yml` のコピー）を使えるので、いつものものを使うインストールと並べて実行できます。コンテナは、その compose のサービスから見つけます。`nginx_check.py` には約 2 分半かかります。1 つの項目が、AI 設定の遅い **テスト** のために 95 秒待つからです。`stack_check.py` は学習用の質問の間隔を空けます（セッションの Cookie あたり約 3.2 秒）。Nginx は、バースト 10 の後は 1 つのセッションが 3 秒に 1 回しか AI の回答を始められないようにしている（ゾーン `aisend`、1 分に 20 回）ためで、これで約 1 分半増えます。スクリプトは自分で書く架空の問題集を使い、あなたのデータには触れません。
 
 compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルート（`..`）をビルドコンテキストにします。フロントエンドのイメージは、リポジトリのルートからビルドします。`nginx/Dockerfile` は、Node のビルド段階に 3 つの README をコピーします（`COPY README.md /` と `COPY README/README.ja.md README/README.zh-CN.md /README/`）。「Xexam について」のページの更新履歴が、これらから作られるためです。同じ理由で、`.dockerignore` は `README.md` と `README/` をビルドコンテキストに残します。完成したイメージに入るのはビルドした静的ファイルだけです。
 
@@ -178,10 +182,10 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 | ジョブ | 内容 |
 |---|---|
 | `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの README それぞれの更新履歴の最新の項目 = `CODE_VERSION`。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
-| `frontend` | 型チェック、246 件の単体テスト、ビルド |
-| `backend` | fmt、clippy、342 件のテスト、および `progress.json` の移行チェック |
-| `ai-service` | fmt、clippy、ai-service の 160 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと |
-| `stack` | `frontend`、`backend`、`ai-service` の後：`xexam-frontend` イメージをビルドして 131 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 217 項目のエンドツーエンドのチェックを実行（最大 45 分） |
+| `frontend` | 型チェック、391 件の単体テスト、ビルド |
+| `backend` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック |
+| `ai-service` | fmt、clippy、ai-service の 369 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと |
+| `stack` | `frontend`、`backend`、`ai-service` の後：`xexam-frontend` イメージをビルドして 141 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
 | `arm64` | 3 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すこと、ai-service が単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返すことを確認（最大 60 分） |
 | `publish` | `main` のみ：3 つのイメージ（amd64 + arm64）をタグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
 | `release` | `main` のみ：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `README.md` の更新履歴から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
@@ -193,7 +197,7 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 `RELEASE_VERSION` を動かすのは、イメージが公開され、GitHub Release ができたときの `release` ジョブの最後のステップだけです。
 
 1. 最新の `origin/main` の上で `scripts/set-release-version.py <バージョン>` を実行し、`VERSION` の `RELEASE_VERSION` と、3 つの README の冒頭のリリースバッジ（代替テキスト、URL、幅）を書き換えます。
-2. それを **`Record release v<バージョン>: RELEASE_VERSION and the README badge [skip ci]`** としてコミットし、`main` にプッシュします。ワークフロー自身のトークンによるプッシュは新しい実行を起こさず、メッセージにも `[skip ci]` が入っています。何も変わらないとき（やり直しの実行）は、何もコミットしません。
+2. それを **`Record release v<バージョン>: RELEASE_VERSION and the README badge [skip ci]`** として、`git push` ではなく GitHub API（GraphQL の `createCommitOnBranch`）で `main` にコミットします。GitHub がこのコミットに署名するので、**Verified** と表示されます。リクエストには出発点の `main` のコミットを指定するので、その間に `main` が進んでいれば API が拒否します。ワークフロー自身のトークンで作ったコミットは新しい実行を起こさず、メッセージにも `[skip ci]` が入っています。何も変わらないとき（やり直しの実行）は、何もコミットしません。
 3. `dev` に独自のコミットがなければ、`dev` を同じコミットまで早送り（fast-forward）します。`dev` が先に進んでいる場合（またはリリース中に進んだ場合）は `dev` に触れず、実行の中に **注意（notice）** を出します：`merge main into dev (git pull origin main on dev) before the next merge to main`。どちらの場合も、リリースは完了しています。
 
 `set-release-version.py` は `RELEASE_VERSION` を戻すことはありません。古い実行の release ジョブをやり直しても何も変えず、0 で終了します。`CODE_VERSION` より新しいバージョンは拒否します。
@@ -215,7 +219,7 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 
 ### 9.1 スクリーンショット
 
-README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 16 枚と iPhone 4 枚、合わせて 20 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` と `ai-service/Dockerfile` からバックエンドと ai-service のイメージを一意のタグ（`xexam-shots-backend:<hex>`、`xexam-shots-ai-service:<hex>`）でビルドし、新しい Docker ネットワーク上で、新しいボリューム（それぞれに `/data`、共有のリンクボリューム。ai-service には読み取り専用）と `TZ=UTC` で、架空の AI プロバイダー `tests/integration/ai_stub.py`（ネットワーク上の名前は `ai-stub`）と並べて動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから（認証のプラグインが、Nginx と同じく AI のリクエストをすべてバックエンドに確認します）、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れ、架空のプロバイダーと架空のキーで AI を設定します。そのあとで初めて sam と alex に AI+ 機能を与え（AI+ が利用可能でない間は、バックエンドが拒否します）、alex の AI+ 機能を一時停止するので、画像には明るいバッジ、暗いバッジ、バッジなしと、**利用中** の行と **一時停止中** の行が写ります。再起動の後は、`GET /api/users` が `aiAvailable: true` を返すまで待ちます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します：AI チャットの場面は管理者のフリーモードをオンにして（緑の **フリーモード** タグが出ます）チャットを始め、ページから 2 つ目の質問を送り（その実行の言語で送るので、回答もその言語になります）、終わったらチャットを削除してフリーモードをオフに戻します。AI 設定の場面は **テスト** を押し、ページを 2 枚の画像で見せます（設定と、AI+ 機能の列付きの AI+ ユーザー、そして使用量、保存期間、安全上限）。そのため、使用量の数字は言語ごとに少し違います。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、ネットワーク、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
+README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 19 枚と iPhone 5 枚、合わせて 24 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` と `ai-service/Dockerfile` からバックエンドと ai-service のイメージを一意のタグ（`xexam-shots-backend:<hex>`、`xexam-shots-ai-service:<hex>`）でビルドし、新しい Docker ネットワーク上で、新しいボリューム（それぞれに `/data`、共有のリンクボリューム。ai-service には読み取り専用）と `TZ=UTC` で、架空の AI プロバイダー `tests/integration/ai_stub.py`（ネットワーク上の名前は `ai-stub`）と並べて動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから（認証のプラグインが、Nginx と同じく AI のリクエストをすべてバックエンドに確認します）、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れ、架空のプロバイダーと架空のキーで AI を設定します。そのあとで初めて sam と alex に AI+ 機能を与え（AI+ が利用可能でない間は、バックエンドが拒否します）、alex の AI+ 機能を一時停止するので、画像には明るいバッジ、暗いバッジ、バッジなしと、**利用中** の行と **一時停止中** の行が写ります。再起動の後は、`GET /api/users` が `aiAvailable: true` を返すまで待ちます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します：AI チャットの場面は管理者のフリーモードをオンにして（緑の **フリーモード** タグが出ます）チャットを始め、ページから 2 つ目の質問を送り（その実行の言語で送るので、回答もその言語になります）、終わったらチャットを削除してフリーモードをオフに戻します。v0.9 の学習用の場面は、練習の問題の AI ヒントのウィンドウ、試験の結果のカードの AI 解析のウィンドウ、学習記録の AI まとめのウィンドウを開き（`desktop-17-ai-hint`、`desktop-18-ai-result`、`desktop-19-ai-summary`、`iphone-5-ai-hint`）、架空のプロバイダーの文を表示します。同じ実行でレイアウトも確認します（確認に失敗すると止まります）：練習のアクションバーは 390 px で最大 2 行、学習記録は 800 px（英語と日本語）でカードのレイアウトになり、横スクロールがないことです。AI 設定の場面は **テスト** を押し、ページを 2 枚の画像で見せます（設定と、AI+ 機能の列付きの AI+ ユーザー、そして使用量、保存期間、安全上限）。そのため、使用量の数字は言語ごとに少し違います。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、ネットワーク、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
 
 オプション：`--lang en|ja|zh-CN|all`、`--out DIR`（`DIR/<lang>/` に書き込むので、`docs/` に触れる前に比べられます）、`--only desktop-13-logs.png,...`、`--chrome PATH`（または `XEXAM_CHROME` / `CHROME_PATH`）、Docker が使えないときの `--backend cargo`（この場合、システムログの画像は撮りません）。Python 3.8+ と `openpyxl`、Node.js、Docker、Chrome または Chromium が必要です。`tools/screenshots/README.md` を参照してください。`--backend cargo` では、`backend/` と `ai-service/` を cargo でビルドし、架空のプロバイダーをローカルの Python のプロセスとして動かします。2 つのページは、カードが画像の中で終わるように、ページそのものの中で短くしてあります：問題集の管理では形式のガイドを最初の 2 つの部分だけ開いた状態にし、「Xexam について」では最新のバージョンの最初の項目だけを表示します。2 回か 3 回の実行を同時に行えます（ほかの実行に先にポートを取られたときは新しいポートでやり直し、`npm ci` はロックファイルの後ろで実行されます）。`python -I` ではなく `python tools/screenshots/retake.py` として起動してください：`-I` は、`openpyxl` がたいていインストールされているユーザーの site-packages を隠します。UI やバージョンを変えたら画像を撮り直し、目で確かめてから `docs/` に書き込んでください。
 
@@ -226,8 +230,8 @@ README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごと
 ## 10. バージョン、更新履歴、ライセンス
 
 - リポジトリのルートの **`VERSION`** には、`KEY=VALUE` の行が 2 つ、それぞれちょうど 1 回ずつあります（`#` で始まる行はコメントです）：
-  - `CODE_VERSION`（現在は `0.8`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.8` のような 2 つの部分からなるバージョンは、そこでは `0.8.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
-  - `RELEASE_VERSION`（v0.8 のリリースジョブが動くまでは `0.7.5`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
+  - `CODE_VERSION`（現在は `0.9`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.9` のような 2 つの部分からなるバージョンは、そこでは `0.9.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
+  - `RELEASE_VERSION`（v0.9 のリリースジョブが動くまでは `0.8`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
 - 更新するたびに、3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）すべての更新履歴の一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。CI がこれを確認します。GitHub Release のノートは英語版から取ります。
 - 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（4 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
 - 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（8.1 節）。

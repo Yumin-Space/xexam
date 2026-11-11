@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v0.8 → v0.9**（第 0 节）：不需要新的 `docker-compose.yml`；主数据库升级到 schema v6，AI 数据库升级到 schema 3，各自都在自己的备份副本写好之后自动进行。主数据库回退不需要恢复；AI 数据库需要把它的副本放回去。（这一节编号为 0，这样其他各节的编号，也就是别的文档链接到的那些，保持不变。）
 > - **v0.7.5 或 v0.7 → v0.8**（第 1 节）：带 AI 服务 `ai-service` 的新 `docker-compose.yml`（第三个镜像 `xexam-ai-service` 和两个卷）；先写一份备份副本，然后数据库自动升级到 schema v5；管理员设置之前 AI 保持关闭。
 > - **v0.6 → v0.8**（第 2 节）：先写一份备份副本，然后数据库自动升级到 schema v5，并改用 WAL 模式；然后旧的三列和四列 Excel 格式的题被下架，你再用六列格式的工作簿更新题库。
 > - **v0.5 或 v0.5.1 → v0.8**（第 3 节）：登录和之后的各个 schema 一步到位。
@@ -11,9 +12,115 @@
 > - **Python v0.2.x → Rust + TypeScript + Nginx（v0.3）**（第 5–11 节）：当时数据库文件和 schema 都没变；那次切换是「换程序」，不是「搬数据」。决定的依据：[migration-plan.md](history/migration-plan.md)。风险：[risk-assessment.md](history/risk-assessment.md)。
 > - **v0.1 → 以后的版本**（第 12 节）：数据库的文件名。
 >
-> 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_data` 里的 `/data/backups/`）。回退永远是**恢复那份副本**，然后运行较早的镜像。背景见 [database.md](database.md) 第 6 节。v0.8 的 AI 数据库在它自己的卷里，回退主数据库时从不会碰到它。
+> 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_data` 里的 `/data/backups/`）。回退就是**恢复那份副本**，然后运行较早的镜像，只有一个例外：v0.8 能原样打开 v0.9 的 schema 6 主数据库（第 0.4 节）。AI 数据库有它自己的副本，在卷 `xexam_ai_data` 的 `/data/backups/` 里，名字是 `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`；v0.8 的 AI 服务打不开 v0.9 的 schema 3 数据库，所以回退到 v0.8 就要在那里恢复 schema 2 的副本。背景见 [database.md](database.md) 第 6 节。回退主数据库从不会碰到 AI 数据库，反过来也一样。
+>
+> **从更早的版本直接升级到 v0.9**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 3）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v0.9 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `0.9`，ai-service 创建的数据库是 schema 3。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
+
+## 0. 从 v0.8 升级到 v0.9
+
+这一节编号为 0，这样第 1 到 12 节的编号（别的文档链接到它们）保持不变。
+
+### 0.1 会有什么变化
+
+v0.9 新增了学习时的 AI 帮助（练习里的 AI 提示和 AI 解释、成绩页上的 AI 解析、一条记录的 AI 总结；见 [usage.md](usage.md) 第 5.1、6.1 和 7.1 节）。它**不需要新的 `docker-compose.yml`**：还是同样的三个镜像，只是标签换成新的，卷和网络都一样，也没有新的设置。
+
+| | v0.8 | v0.9 |
+|---|---|---|
+| 镜像、容器、卷、网络 | `xexam-frontend`、`xexam-backend`、`xexam-ai-service`；`xexam_data`、`xexam_ai_data`、`xexam_link` | 相同 |
+| 主数据库（`xexam.db`） | schema 5 | **schema 6** |
+| AI 数据库（`xexam-ai.db`） | schema 2 | **schema 3** |
+| Nginx（在前端镜像里） | 流式转发 `send` 和 `retry` | 也流式转发新的 `study/ask` 和 `summary/ask`，并且记录请求的路径时不带查询字符串 |
+
+有两个数据库要迁移，各由自己的服务在自己的第一次启动时迁移，各在自己的备份副本之后：
+
+1. **后端** 把数据库复制到 `/data/backups/xexam-schema5-<YYYYmmdd-HHMMSS>.db`，这是一个普通的 schema 5 数据库，v0.8 能打开它，然后在一个事务里把数据库迁移到 schema v6：`attempts` 表新增两列，`session_key`（练习或考试那一次的 32 位 key）和 `started_at`（它开始的时间，Unix 秒），你已有的每条记录里这两列都是空的（`NULL`）。没有索引，也没有约束，其他都不变：题库、记录、账户、设置和会话都保留，没有人会被退出登录。日志里会写 `Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-….db (…)`。副本写不出来时，什么都不改变，后端也不启动。从现在起，保存下来的练习或考试会带着它的 key 和开始时间（不发这两样、或发了无效值的浏览器，保存下来的就是空的）。
+2. **ai-service** 把它的数据库复制到卷 `xexam_ai_data` 里的 `/data/backups/xexam-ai-schema2-<YYYYMMDD-HHMMSS>.db`，然后在一个事务里通过添加列和索引把它迁移到 schema 3，从不删除任何东西：`chats` 上新增 `kind`（`chat`、`practice`、`exam` 或 `summary`；已有的每个对话都成为 `chat`）、`ref`（这个对话所属的会话 key 或记录）和 `record_id`（记录，只用于显示）；`messages` 上新增 `kind`（`chat`、`hint`、`explain` 或 `summary`；已有的每条消息都成为 `chat`）、`question_id`、`question_no`、`source`、`lang`，以及总结的三个计数 `sample_used`、`sample_usable` 和 `sample_wrong`；`usage` 上新增 `purpose`（`hint`、`explain` 或 `summary`；你已有的每一行里它是空的，统计时把它们当作 AI 对话）；还有三个索引，用来找一个会话的对话、一道题已保存的回答，以及被重启截断的回答。设置、加密的密钥、上限、用户、对话、消息和记忆都保持原样。日志里会写 `Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`。副本写不出来时，ai-service 不启动，也什么都不改变；主程序照常工作，**AI 设置** 会写明 ai-service 没有运行。
+
+关于这些副本要知道的：
+
+- **空闲磁盘空间**：每份副本都是它的数据库的完整副本（SQLite `VACUUM INTO`），所以每个服务在它的卷里需要的空闲空间，约等于它的数据库现在的大小。磁盘满了会让那个服务无法启动，数据库保持不变。
+- **它们从不会自动删除**，而且它们保存着写下它们时存在的一切，包括你或管理员之后删除的对话和学习记录。不再需要时请自己删除旧副本（`docker run --rm -v xexam_data:/data alpine rm /data/backups/<文件名>`），并且要像数据库一样妥善保管它们（[database.md](database.md)）。
+- 已经迁移过的数据库再次打开时，不会写新的副本，也不会写入任何东西。
+
+你还会注意到：
+
+- 有 **AI+ 功能** 的账号：练习里的 AI 按钮和图标、成绩页和记录详情页上的 **AI 解析**、学习记录和主页上的 **AI 总结**，以及 AI 对话里新增的练习、考试和总结的对话。没有这个功能的用户什么新东西都看不到。AI 被暂停或暂时不能用的用户会看到这些控件变灰。什么都不用设置：AI+ 功能、服务商的设置和用户的开关都和以前一样。
+- **v0.9 之前生成的记录** 没有会话 key。它们在详情页上第一次做 AI 解析时，会为这条记录开一个自己的对话（usage.md，第 16.1 节）；AI 总结对它们和对任何记录一样可用，除非记录太旧、没有保存逐题详情。
+- AI 用量统计新增了 **按功能** 表（AI 对话、AI 提示、AI 解释·解析、AI 总结）。
+- **对话上限会把新的对话计算在内**：每次练习、每场考试和每条总结过的记录都是一个对话，一次请求是两条消息，所以一次很长的练习在大约 200 次请求之后就会用完默认的每个对话 400 条消息（usage.md，第 17 节）。
+
+### 0.2 升级
+
+```bash
+# 1. 备份两个卷（先停止；备份文件里是你的整个数据库，不要提交它们）
+docker compose stop
+docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v08.tgz -C /data .
+docker run --rm -v xexam_ai_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-ai-data-v08.tgz -C /data .
+
+# 2. 拉取三个镜像并启动（不要用 down -v）
+docker compose pull
+docker compose up -d
+
+# 3. 查看两条升级信息
+docker compose ps
+docker compose logs backend
+docker compose logs ai-service
+```
+
+你的 `docker-compose.yml` 和 `.env` 保持不变。**源码构建**：在仓库根目录运行 `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`。想有意留在 v0.8，就让三个镜像都保持 `:v0.8` 标签。
+
+### 0.3 升级后的检查
+
+- [ ] `docker compose ps` 列出 `xexam-frontend`、`xexam-backend` 和 `ai-service`，都是 `healthy`。
+- [ ] `/api/info` 里的 `version` 是 `0.9`。
+- [ ] 后端日志里有 `Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-…`，并且 `docker run --rm -v xexam_data:/data alpine ls -l /data/backups` 列出了那份副本。
+- [ ] ai-service 日志里有 `Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`，并且 `docker run --rm -v xexam_ai_data:/data alpine ls -l /data/backups` 列出了 `xexam-ai-schema2-…`。
+- [ ] 你可以像以前一样登录，学习记录能打开，**AI 对话** 仍然列着你的对话。**AI 设置** 写着 **ai-service 已连接（版本 0.9；…）**，AI+ 功能和你离开时一样。
+- [ ] 想试试新功能：用有 **AI+ 功能** 的账号登录，开始一次练习，按 **AI 提示**（usage.md，第 5.1 节）。
+- [ ] 把容器再重启一次，不会写新的副本，也没有升级的日志行。
+
+### 0.4 回退到 v0.8
+
+两个数据库的回退方式不同。
+
+- **主数据库不需要恢复。** v0.8 原样打开 schema 6 的数据库：它忽略那两个新列，v0.8 保存的记录只是 key 和开始时间为空。这一点测试过：v0.8 的后端打开了迁移过的数据库，保存了一条记录，并让 `meta.schema` 仍是 6；v0.9 之后在它上面再次启动，没有写新的副本。
+- **AI 数据库确实需要它的副本。** v0.8 的 ai-service 不接受 schema 3 的数据库，并以 `The AI database … has schema 3, written by a newer ai-service; this version (schema 2) cannot open it. Run the newer version, or restore a backup.` 退出，文件保持不变。在恢复它之前，v0.8 没有 AI 运行。恢复副本会**丢失升级之后对 AI 数据库做的每一项改变**：那段时间所有的对话（包括所有练习、考试和总结的对话）、记忆、设置的修改、用量数字和用户的暂停。密钥文件 `secret.key` 不在数据库里，会保留下来，所以恢复后的数据库里的密钥仍然能解开。
+
+```bash
+# 1. 停止新版本（不要用 down -v）
+docker compose stop
+
+# 2. 找到 AI 的副本（名字里有它原来的 schema：xexam-ai-schema2-…）
+docker run --rm -v xexam_ai_data:/data alpine ls -l /data /data/backups
+
+# 3. 把它放回去，作为 xexam-ai.db（用第 2 步看到的文件名）；先删掉残留的 -wal / -shm 文件
+docker run --rm -v xexam_ai_data:/data alpine sh -c 'rm -f /data/xexam-ai.db-wal /data/xexam-ai.db-shm && cp /data/backups/xexam-ai-schema2-20261112-140501.db /data/xexam-ai.db'
+
+# 4. 在 docker-compose.yml 里把三个镜像固定在 v0.8（在 Docker Hub 上，不用登录），然后启动：
+#      image: docker.io/yuminspace/xexam-frontend:v0.8
+#      image: docker.io/yuminspace/xexam-backend:v0.8
+#      image: docker.io/yuminspace/xexam-ai-service:v0.8
+docker compose up -d
+```
+
+源码构建时，请检出那个版本：`git fetch --tags && git checkout v0.8 && docker compose -f docker/docker-compose.build.yml up -d --build`。
+
+如果你宁愿暂时不用 AI，就跳过第 2 和第 3 步：v0.8 的主程序可以单独运行，你把 ai-service 停掉（`docker compose stop ai-service`），免得它不断重启；不要动它的卷。想让主数据库回到升级之前的样子（不是必需的），就像第 1.4 节那样恢复 `/data/backups/xexam-schema5-….db`，这会丢失在主程序里做过的一切。要回退到比 v0.8 更早，就用更早那一节的回退（1.4、2.6……），用当时写的副本；那些副本仍然在 `backups/` 里。
+
+以后要再升级，就把 v0.9 的镜像换回来。仍然是 schema 6 的主数据库不会再次迁移，也不会写新的副本；你恢复成 schema 2 的 AI 数据库会再次迁移，先写一份新的副本。
+
+### 0.5 测试过什么
+
+只用合成数据（`backend/tests/v09_ai_study.rs`、`db_golden.rs`、`ai-service/tests/` 和 `tests/integration/`）：
+
+- v0.8 写的 schema 5 数据库迁移到 schema 6，正好写一份 `xexam-schema5-…` 备份（`migrate_check.py`，情形 J）；旧记录的 key 和开始时间是空的；结果的 `sqlite_master` 和新建的数据库一样；再次打开时什么都不写。更早的数据库（schema 3 和 4）一步迁移到 schema 6，写一份以它们原来的 schema 命名的备份。
+- schema 1 或 2 的 AI 数据库迁移到 schema 3，写一份 `xexam-ai-schema<N>-…` 副本，最后的 `sqlite_master` 和新建的一样；查找已保存的回答用到了它们的索引（没有临时排序）；旧的用量行按 AI 对话读取；保留期的清理分小批删除，让其他写入者能在批与批之间插进来。
+- v0.8 的后端能打开并写入 schema 6 的数据库，v0.8 的 ai-service 拒绝 schema 3 并保持文件不变（上面的回退）。
+- 用三个镜像和一个虚构的服务商跑整个栈（`stack_check.py`）：提示、解释和解析及它们保存的回答和 `Regenerate`，泄露答案的提示被隐藏，最多 70 道答错的题的总结，一次一个回答的拒绝和它正在进行的回答，没有 AI+ 功能的用户和被暂停的用户的访问规则，会话和记录的对话，以及任何容器的日志里（包括 Nginx 的访问日志）都没有题目、答案、会话 key 或记录时间。无头浏览器的走查检查了控件、窗口和手机布局。
+
+没有测试过：迁移**你自己的**数据库，以及真正的 AI 服务商（CI 用的是虚构的）。想要确定的话，先在一份副本上试一下升级。
 
 ## 1. 从 v0.7.5（或 v0.7）升级到 v0.8
 
@@ -36,7 +143,7 @@ v0.8 新增了 AI 对话，它在**第三个容器** `ai-service`（镜像 `xexa
 2. **迁移到 schema v5**，在一个事务里完成：`users` 表新增两列，`ai_enabled`（**AI+**，所有人都是关闭的）和 `uid`（每个用户一个随机的身份标记）。其他都不变：题库、记录、设置、账户和会话都保留，没有人会被退出登录。日志里会写 `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema4-….db (…)`。
 3. **内部令牌**：后端把一个随机令牌写到 `/link/internal.token`（在 `xexam_link` 里），并记录 `AI link: /link/internal.token`。设置了 `XEXAM_INTERNAL_TOKEN` 时，它不写文件，并记录 `AI link: using XEXAM_INTERNAL_TOKEN`。
 
-ai-service 第一次启动时，用默认设置创建它的数据库 `xexam-ai.db`（schema 2），没有设置 `XEXAM_AI_SECRET_KEY` 时还会创建密钥文件 `secret.key`（`Created a new AI key file /data/secret.key`）。然后它马上向后端报告，之后每 25 秒报告一次，所以主服务知道它已连接（超过 60 秒的报告算作没有连接）；后端从不调用它。**AI 是关闭的**，直到管理员在 **AI 设置** 里把它设置好（见 [usage.md](usage.md) 第 17 节）；AI 没有需要迁移的东西。（由 v0.8 的预发布版写入的 AI 数据库，即 schema 1，会在 ai-service 第一次启动时升级，先在 AI 卷里它旁边写一份副本 `backups/xexam-ai-schema1-<YYYYMMDD-HHMMSS>.db`；副本写不出来时，ai-service 不启动，也什么都不改变。来自更晚的预发布版、但缺少 schema 2 的某些列（`users.function_enabled`、`users.free_mode`、`messages.free`、`usage.tokens_cached`）的 schema 2 数据库，每次启动时都会把它们补上，不写副本：这一步只添加缺少的列，从不删除任何一列，所以那种版本留下的旧的 `chats.free` 列只是闲置在那里。）
+ai-service 第一次启动时，用默认设置创建它的数据库 `xexam-ai.db`（v0.8 里是 schema 2，v0.9 里是 schema 3），没有设置 `XEXAM_AI_SECRET_KEY` 时还会创建密钥文件 `secret.key`（`Created a new AI key file /data/secret.key`）。然后它马上向后端报告，之后每 25 秒报告一次，所以主服务知道它已连接（超过 60 秒的报告算作没有连接）；后端从不调用它。**AI 是关闭的**，直到管理员在 **AI 设置** 里把它设置好（见 [usage.md](usage.md) 第 17 节）；AI 没有需要迁移的东西。（由 v0.8 的预发布版写入的 AI 数据库，即 schema 1，会在 ai-service 第一次启动时升级，先在 AI 卷里它旁边写一份副本 `backups/xexam-ai-schema1-<YYYYMMDD-HHMMSS>.db`；副本写不出来时，ai-service 不启动，也什么都不改变。来自更晚的预发布版、但缺少 schema 2 的某些列（`users.function_enabled`、`users.free_mode`、`messages.free`、`usage.tokens_cached`）的 schema 2 数据库，每次启动时都会把它们补上，不写副本：这一步只添加缺少的列，从不删除任何一列，所以那种版本留下的旧的 `chats.free` 列只是闲置在那里。）
 
 你还会注意到：
 

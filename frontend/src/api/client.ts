@@ -36,6 +36,8 @@ export class ApiError extends Error {
   readonly field: string | undefined;
   /** v0.8: the number of a limit that was reached (`ai.tooLong`, `ai.chatLimit`, …), when the answer gives it */
   readonly limit: number | undefined;
+  /** v0.9: what is running now, on a 409 `ai.busy` (an object, or null when the server names nothing) */
+  readonly running: unknown;
 
   constructor(kind: ApiErrorKind, status = 0, serverMessage = '', retryAfter: number | null = null, extra: ApiErrorExtra = {}) {
     super(serverMessage || extra.code || `${kind} ${status}`);
@@ -47,6 +49,7 @@ export class ApiError extends Error {
     this.code = extra.code;
     this.field = extra.field;
     this.limit = extra.limit;
+    this.running = extra.running;
   }
 }
 
@@ -54,13 +57,16 @@ export interface ApiErrorExtra {
   code?: string | undefined;
   field?: string | undefined;
   limit?: number | undefined;
+  running?: unknown;
 }
 
-/** `code`, `field` and `limit` of an error body (each only when it has the right type) */
+/** `code`, `field`, `limit` and `running` of an error body (each only when it has the right type) */
 function extraOf(body: unknown): ApiErrorExtra {
   if (typeof body !== 'object' || body === null) return {};
-  const b = body as { code?: unknown; field?: unknown; limit?: unknown };
+  const b = body as { code?: unknown; field?: unknown; limit?: unknown; running?: unknown };
+  const running = typeof b.running === 'object' ? b.running : undefined;
   return {
+    ...(running !== undefined ? { running } : {}),
     code: typeof b.code === 'string' && b.code ? b.code : undefined,
     field: typeof b.field === 'string' && b.field ? b.field : undefined,
     limit: typeof b.limit === 'number' && Number.isFinite(b.limit) ? b.limit : undefined,

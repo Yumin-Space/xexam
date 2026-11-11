@@ -11,6 +11,7 @@ use crate::secret::{self, KeySource, LoadError, MasterKey, SecretName};
 use crate::settings::{fingerprint, KeyRevs, Provider, Settings};
 use crate::store::tables::{self, SecretRow};
 use crate::store::{data, stats, Store};
+use crate::study::cache::RecordCache;
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, RwLock};
@@ -104,12 +105,28 @@ pub struct App {
     shutdown_tx: watch::Sender<bool>,
     pub identity_log: Throttle,
     pub failures: FailureLog,
+    /// Which chat a saved record belongs to (the study routes; never holds text)
+    pub records: RecordCache,
+    /// At most one line a minute: a data answer of the backend that could not be read
+    pub unreadable_log: Throttle,
+    /// Test hook of the study asks (see [`StudyHold`]); `None` in production
+    study_hold: Mutex<Option<StudyHold>>,
     /// Held for a whole outbox delivery, so two never overlap (each would send the same audit lines)
     outbox: tokio::sync::Mutex<()>,
     /// Held while one state report is read and sent, so an older state never arrives after a newer one
     heartbeat: tokio::sync::Mutex<()>,
     /// Wakes the heartbeat task for a report at once
     heartbeat_signal: Arc<Notify>,
+}
+
+/// Test hook: while set, every study ask waits after it took its places and before its write transaction, until the
+/// test adds a permit to `release` (each permit lets one ask go on). Each waiting ask first adds a permit to `arrived`.
+/// Used to hold the second of two concurrent first asks of one session.
+#[doc(hidden)]
+#[derive(Clone)]
+pub struct StudyHold {
+    pub arrived: Arc<tokio::sync::Semaphore>,
+    pub release: Arc<tokio::sync::Semaphore>,
 }
 
 /// Cheap handle to the service.
@@ -176,6 +193,9 @@ impl App {
             shutdown_tx,
             identity_log: Throttle::new(Duration::from_secs(60)),
             failures: FailureLog::default(),
+            records: RecordCache::default(),
+            unreadable_log: Throttle::new(Duration::from_secs(60)),
+            study_hold: Mutex::new(None),
             outbox: tokio::sync::Mutex::new(()),
             heartbeat: tokio::sync::Mutex::new(()),
             heartbeat_signal: Arc::new(Notify::new()),
@@ -520,6 +540,38 @@ impl App {
                 return sent;
             }
             sent += ids.len();
+        }
+    }
+
+    /// Tests: holds the study asks at the point described at [`StudyHold`] and returns the two semaphores.
+    #[doc(hidden)]
+    pub fn hold_study_asks(&self) -> StudyHold {
+        let hold = StudyHold {
+            arrived: Arc::new(tokio::sync::Semaphore::new(0)),
+            release: Arc::new(tokio::sync::Semaphore::new(0)),
+        };
+        *self.study_hold.lock().unwrap_or_else(|e| e.into_inner()) = Some(hold.clone());
+        hold
+    }
+
+    /// Tests: stops holding the study asks.
+    #[doc(hidden)]
+    pub fn release_study_asks(&self) {
+        *self.study_hold.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// The point where a study ask waits when a test holds the asks (no effect otherwise).
+    pub async fn study_hold_point(&self) {
+        let hold = self
+            .study_hold
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(h) = hold {
+            h.arrived.add_permits(1);
+            if let Ok(p) = h.release.acquire().await {
+                p.forget();
+            }
         }
     }
 

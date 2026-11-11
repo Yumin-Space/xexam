@@ -445,7 +445,8 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         (
             "attempts",
             ", banks TEXT NOT NULL DEFAULT '[]', user_id INTEGER, \
-             kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))",
+             kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice')), \
+             session_key TEXT, started_at INTEGER",
         ),
         ("imports", ", bank_id INTEGER"),
     ];
@@ -508,7 +509,7 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         meta,
         vec![
             ("banks_known".to_string(), "0".to_string()),
-            ("schema".to_string(), "5".to_string()),
+            ("schema".to_string(), "6".to_string()),
             ("users_known".to_string(), "1".to_string())
         ]
     );
@@ -880,5 +881,15 @@ fn removed_samples_cut_by_code_points_and_bank_key_order() {
         .keys()
         .map(String::as_str)
         .collect();
-    assert_eq!(top, ["version", "questions", "history", "masterStreak"]);
+    // v0.9: the new record's id comes last
+    assert_eq!(
+        top,
+        [
+            "version",
+            "questions",
+            "history",
+            "masterStreak",
+            "recordId"
+        ]
+    );
 }

@@ -4,9 +4,10 @@
 //! request to `/api/ai/*` may go through: `GET /internal/ai/auth` runs the same Host / Origin guard and session checks as
 //! `/api/*` and answers with a short-lived **identity statement** (header `X-Xexam-Identity`), signed with the internal
 //! token, which is the only thing the AI service gets about the caller. The AI service calls back with the same token for
-//! the four token routes: `POST /internal/ai/introspect` (re-checks a session during a running answer),
-//! `POST /internal/ai/users` (which users exist and who has AI+), `POST /internal/ai/log` (its lines for the System log)
-//! and `POST /internal/ai/heartbeat` (its state, [`ServiceReport`]).
+//! the token routes: `POST /internal/ai/introspect` (re-checks a session during a running answer),
+//! `POST /internal/ai/users` (which users exist and who has AI+), `POST /internal/ai/log` (its lines for the System log),
+//! `POST /internal/ai/heartbeat` (its state, [`ServiceReport`]) and, since v0.9, the three study-data routes
+//! `POST /internal/ai/question`, `POST /internal/ai/record` and `POST /internal/ai/record-info` (see `internal_study`).
 //!
 //! - The backend never calls the AI service. ai-service reports its state with the heartbeat (at its start, at once after a
 //!   change, every 25 s, and a last "stopping" report when it shuts down); the last report is kept in memory only
@@ -548,7 +549,10 @@ pub(super) async fn dispatch(
             "/internal/ai/introspect"
             | "/internal/ai/users"
             | "/internal/ai/log"
-            | "/internal/ai/heartbeat",
+            | "/internal/ai/heartbeat"
+            | "/internal/ai/question"
+            | "/internal/ai/record"
+            | "/internal/ai/record-info",
         ) => {
             if !st.0.ai_link.accepts(headers) {
                 body::drain(&mut body, 0, MAX_BODY.saturating_mul(4)).await;
@@ -575,6 +579,9 @@ pub(super) async fn dispatch(
                 "/internal/ai/introspect" => introspect_session(st, &data).await,
                 "/internal/ai/users" => users(st, &data).await,
                 "/internal/ai/heartbeat" => heartbeat(st, &data),
+                "/internal/ai/question" => super::internal_study::question(st, &data).await,
+                "/internal/ai/record" => super::internal_study::record(st, &data).await,
+                "/internal/ai/record-info" => super::internal_study::record_info(st, &data).await,
                 _ => log_lines(st, &data),
             };
             match answer {

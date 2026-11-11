@@ -3,6 +3,23 @@ use crate::identity::Identity;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 
+/// The three counts of a summary (`messages.sample_*`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StudySample {
+    /// Wrong answers sent to the model
+    pub used: i64,
+    /// Wrong answers whose question was still available
+    pub usable: i64,
+    /// Wrong answers in the record
+    pub wrong: i64,
+}
+
+impl StudySample {
+    pub fn to_json(&self) -> Value {
+        json!({"used": self.used, "usable": self.usable, "wrong": self.wrong})
+    }
+}
+
 /// A chat as listed (`ChatSummary` without `running`, which comes from the registry).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChatRow {
@@ -11,6 +28,9 @@ pub struct ChatRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub message_count: i64,
+    /// 'chat' | 'practice' | 'exam' | 'summary'
+    pub kind: String,
+    pub record_id: Option<i64>,
 }
 
 impl ChatRow {
@@ -22,6 +42,8 @@ impl ChatRow {
             "updatedAt": self.updated_at,
             "messageCount": self.message_count,
             "running": running,
+            "kind": self.kind,
+            "recordId": self.record_id,
         })
     }
 }
@@ -38,6 +60,18 @@ pub struct MessageRow {
     pub created_at: i64,
     /// Written in the administrator's free mode
     pub free: bool,
+    /// 'chat' | 'hint' | 'explain' | 'summary'
+    pub kind: String,
+    pub question_id: Option<String>,
+    pub question_no: Option<i64>,
+    /// 'practice' | 'result'
+    pub source: Option<String>,
+    /// 'en' | 'zh-CN' | 'ja'
+    pub lang: Option<String>,
+    /// `chats.record_id` when `source = 'result'` or `kind = 'summary'`, else None
+    pub record_id: Option<i64>,
+    /// Some only when all three `sample_*` columns are set
+    pub sample: Option<StudySample>,
 }
 
 impl MessageRow {
@@ -52,6 +86,13 @@ impl MessageRow {
             "model": self.model,
             "createdAt": self.created_at,
             "free": self.free,
+            "kind": self.kind,
+            "questionId": self.question_id,
+            "questionNo": self.question_no,
+            "source": self.source,
+            "lang": self.lang,
+            "recordId": self.record_id,
+            "sample": self.sample.map(|s| s.to_json()),
         })
     }
 }
@@ -161,7 +202,7 @@ pub fn suspended_ids(c: &Connection, limit: usize) -> rusqlite::Result<Vec<i64>>
 }
 
 const CHAT_COLS: &str = "c.id, c.title, c.created_at, c.updated_at,
-     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id)";
+     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id), c.kind, c.record_id";
 
 fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
     Ok(ChatRow {
@@ -170,6 +211,8 @@ fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
         created_at: r.get(2)?,
         updated_at: r.get(3)?,
         message_count: r.get(4)?,
+        kind: r.get(5)?,
+        record_id: r.get(6)?,
     })
 }
 
@@ -189,11 +232,27 @@ pub fn chat(c: &Connection, user: i64, id: i64) -> rusqlite::Result<Option<ChatR
     c.query_row(&sql, [id, user], chat_from).optional()
 }
 
-/// The messages of a chat, oldest first. The caller has checked that the chat is the user's.
+/// The sample of a row: Some only when all three counts are set.
+fn sample_of(used: Option<i64>, usable: Option<i64>, wrong: Option<i64>) -> Option<StudySample> {
+    match (used, usable, wrong) {
+        (Some(used), Some(usable), Some(wrong)) => Some(StudySample {
+            used,
+            usable,
+            wrong,
+        }),
+        _ => None,
+    }
+}
+
+/// The messages of a chat, oldest first. The caller has checked that the chat is the user's. `record_id` is the
+/// chat's, shown only for result-page answers and summaries.
 pub fn messages(c: &Connection, chat: i64) -> rusqlite::Result<Vec<MessageRow>> {
     let mut st = c.prepare(
-        "SELECT id, role, content, status, error_code, truncated, model, created_at, free
-         FROM messages WHERE chat_id = ?1 ORDER BY id",
+        "SELECT m.id, m.role, m.content, m.status, m.error_code, m.truncated, m.model, m.created_at, m.free,
+                m.kind, m.question_id, m.question_no, m.source, m.lang,
+                CASE WHEN m.source = 'result' OR m.kind = 'summary' THEN c.record_id END,
+                m.sample_used, m.sample_usable, m.sample_wrong
+         FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.chat_id = ?1 ORDER BY m.id",
     )?;
     let rows = st.query_map([chat], |r| {
         Ok(MessageRow {
@@ -206,6 +265,13 @@ pub fn messages(c: &Connection, chat: i64) -> rusqlite::Result<Vec<MessageRow>> 
             model: r.get(6)?,
             created_at: r.get(7)?,
             free: r.get::<_, i64>(8)? != 0,
+            kind: r.get(9)?,
+            question_id: r.get(10)?,
+            question_no: r.get(11)?,
+            source: r.get(12)?,
+            lang: r.get(13)?,
+            record_id: r.get(14)?,
+            sample: sample_of(r.get(15)?, r.get(16)?, r.get(17)?),
         })
     })?;
     rows.collect()
@@ -453,7 +519,8 @@ pub fn delete_all_memories(c: &Connection, user: i64) -> rusqlite::Result<usize>
     c.execute("DELETE FROM memories WHERE user_id = ?1", [user])
 }
 
-/// A user message of one of the user's chats: (chat id, text).
+/// A user message of one of the user's chats (AI Chat messages only; the user messages of hints, explanations
+/// and summaries are refused): (chat id, text).
 pub fn user_message(
     c: &Connection,
     user: i64,
@@ -461,9 +528,402 @@ pub fn user_message(
 ) -> rusqlite::Result<Option<(i64, String)>> {
     c.query_row(
         "SELECT m.chat_id, m.content FROM messages m JOIN chats c ON c.id = m.chat_id
-         WHERE m.id = ?1 AND c.user_id = ?2 AND m.role = 'user'",
+         WHERE m.id = ?1 AND c.user_id = ?2 AND m.role = 'user' AND m.kind = 'chat'",
         [msg, user],
         |r| Ok((r.get(0)?, r.get(1)?)),
+    )
+    .optional()
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Study chats (v0.9): one chat per practice session, exam and record summary; hints, explanations and summaries are
+// messages of those chats.
+
+/// Chat id of a user's chat with this kind and ref (`idx_chats_ref`, covering).
+pub const SQL_CHAT_BY_REF: &str =
+    "SELECT id FROM chats WHERE user_id = ?1 AND kind = ?2 AND ref = ?3";
+/// Newest assistant message of a hint / explanation key, whatever its status (`idx_messages_study`, no sort).
+pub const SQL_STUDY_LATEST: &str =
+    "SELECT id FROM messages WHERE chat_id = ?1 AND question_id = ?2 \
+     AND kind = ?3 AND source = ?4 AND role = 'assistant' ORDER BY id DESC LIMIT 1";
+/// Newest finished, non-empty assistant message of a hint / explanation key.
+pub const SQL_STUDY_LAST_GOOD: &str =
+    "SELECT id FROM messages WHERE chat_id = ?1 AND question_id = ?2 \
+     AND kind = ?3 AND source = ?4 AND role = 'assistant' AND status = 'done' AND content <> '' \
+     ORDER BY id DESC LIMIT 1";
+/// Newest assistant summary of a chat (`idx_messages_chat`, backwards).
+pub const SQL_SUMMARY_LATEST: &str = "SELECT id FROM messages WHERE chat_id = ?1 \
+     AND role = 'assistant' AND kind = 'summary' ORDER BY id DESC LIMIT 1";
+/// Newest finished, non-empty assistant summary of a chat.
+pub const SQL_SUMMARY_LAST_GOOD: &str = "SELECT id FROM messages WHERE chat_id = ?1 \
+     AND role = 'assistant' AND kind = 'summary' AND status = 'done' AND content <> '' \
+     ORDER BY id DESC LIMIT 1";
+
+/// The id of the user's chat with this kind and ref, or None.
+pub fn chat_by_ref(
+    c: &Connection,
+    user: i64,
+    kind: &str,
+    chat_ref: &str,
+) -> rusqlite::Result<Option<i64>> {
+    c.query_row(SQL_CHAT_BY_REF, params![user, kind, chat_ref], |r| r.get(0))
+        .optional()
+}
+
+/// Everything the write transaction of a hint / explanation / summary ask needs.
+pub struct StudyInsert<'a> {
+    /// "practice" | "exam" | "summary"
+    pub chat_kind: &'a str,
+    /// Session key, or "r<recordId>@<at>"
+    pub chat_ref: &'a str,
+    /// Stored only when the chat is created
+    pub title: &'a str,
+    /// Written to `chats.record_id` when it is NULL
+    pub record_id: Option<i64>,
+    /// Message kind: "hint" | "explain" | "summary"
+    pub kind: &'a str,
+    pub question_id: Option<&'a str>,
+    pub question_no: Option<i64>,
+    /// "practice" | "result" | None (summary)
+    pub source: Option<&'a str>,
+    /// "en" | "zh-CN" | "ja"
+    pub lang: &'a str,
+    /// Summary only
+    pub sample: Option<StudySample>,
+    /// The stored user message
+    pub user_content: &'a str,
+    pub model: &'a str,
+    pub now: i64,
+    pub chats_per_user: i64,
+    pub messages_per_chat: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StudyIds {
+    pub chat: i64,
+    pub title: String,
+    pub new_chat: bool,
+    /// `chats.record_id` after the update
+    pub record_id: Option<i64>,
+    pub user_msg: i64,
+    pub answer: i64,
+}
+
+#[derive(Debug)]
+pub enum StudyError {
+    /// The user already has this many chats (and the chat would be new)
+    ChatLimit(i64),
+    /// The chat already holds this many messages
+    MessageLimit(i64),
+    /// Another answer of the user already runs in this chat
+    Busy,
+    Db(rusqlite::Error),
+}
+
+impl From<rusqlite::Error> for StudyError {
+    fn from(e: rusqlite::Error) -> Self {
+        StudyError::Db(e)
+    }
+}
+
+fn insert_study_message(
+    c: &Connection,
+    chat: i64,
+    role: &str,
+    content: &str,
+    status: &str,
+    model: Option<&str>,
+    s: &StudyInsert<'_>,
+) -> rusqlite::Result<i64> {
+    c.execute(
+        "INSERT INTO messages (chat_id, role, content, status, model, created_at, finished_at, free, kind,
+                               question_id, question_no, source, lang, sample_used, sample_usable, sample_wrong)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?4 = 'streaming' THEN NULL ELSE ?6 END, 0, ?7,
+                 ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+        params![
+            chat,
+            role,
+            content,
+            status,
+            model,
+            s.now,
+            s.kind,
+            s.question_id,
+            s.question_no,
+            s.source,
+            s.lang,
+            s.sample.map(|x| x.used),
+            s.sample.map(|x| x.usable),
+            s.sample.map(|x| x.wrong),
+        ],
+    )?;
+    Ok(c.last_insert_rowid())
+}
+
+/// The write transaction of a hint / explanation / summary ask (run it inside `Store::write`; an `Err` rolls
+/// everything back): finds or creates the chat, binds it to the running answer through `bind` (in both branches, before
+/// any message is written), checks the message limit, sets `chats.record_id` once, writes the question / answer pair.
+pub fn prepare_study(
+    c: &Connection,
+    who: &Identity,
+    s: &StudyInsert<'_>,
+    bind: &mut dyn FnMut(i64) -> bool,
+) -> Result<StudyIds, StudyError> {
+    ensure_user(c, who, s.now)?;
+    let (chat, new_chat) = match chat_by_ref(c, who.id, s.chat_kind, s.chat_ref)? {
+        Some(id) => (id, false),
+        None => {
+            if count_chats(c, who.id)? >= s.chats_per_user {
+                return Err(StudyError::ChatLimit(s.chats_per_user));
+            }
+            c.execute(
+                "INSERT INTO chats (user_id, title, created_at, updated_at, kind, ref, record_id)
+                 VALUES (?1, ?2, ?3, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(user_id, kind, ref) WHERE ref IS NOT NULL DO NOTHING",
+                params![who.id, s.title, s.now, s.chat_kind, s.chat_ref, s.record_id],
+            )?;
+            match chat_by_ref(c, who.id, s.chat_kind, s.chat_ref)? {
+                Some(id) => (id, true),
+                None => return Err(StudyError::Db(rusqlite::Error::QueryReturnedNoRows)),
+            }
+        }
+    };
+    if !bind(chat) {
+        return Err(StudyError::Busy);
+    }
+    if count_messages(c, chat)? + 2 > s.messages_per_chat {
+        return Err(StudyError::MessageLimit(s.messages_per_chat));
+    }
+    if let Some(record) = s.record_id {
+        c.execute(
+            "UPDATE chats SET record_id = ?2 WHERE id = ?1 AND record_id IS NULL",
+            params![chat, record],
+        )?;
+    }
+    let user_msg = insert_study_message(c, chat, "user", s.user_content, "done", None, s)?;
+    let answer = insert_study_message(c, chat, "assistant", "", "streaming", Some(s.model), s)?;
+    touch_chat(c, chat, s.now)?;
+    let (title, record_id): (String, Option<i64>) = c.query_row(
+        "SELECT title, record_id FROM chats WHERE id = ?1",
+        [chat],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(StudyIds {
+        chat,
+        title,
+        new_chat,
+        record_id,
+        user_msg,
+        answer,
+    })
+}
+
+/// A saved hint / explanation / summary as the saved routes return it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnswerRow {
+    pub message_id: i64,
+    pub kind: String,
+    pub question_id: Option<String>,
+    pub question_no: Option<i64>,
+    pub source: Option<String>,
+    pub status: String,
+    pub error_code: Option<String>,
+    pub truncated: bool,
+    pub content: String,
+    pub lang: Option<String>,
+    pub model: Option<String>,
+    pub created_at: i64,
+    pub finished_at: Option<i64>,
+    pub sample: Option<StudySample>,
+    /// The chat's `record_id`
+    pub record_id: Option<i64>,
+}
+
+impl AnswerRow {
+    /// `StudyAnswer`
+    pub fn study_json(&self) -> Value {
+        json!({
+            "messageId": self.message_id,
+            "kind": self.kind,
+            "questionId": self.question_id,
+            "questionNo": self.question_no,
+            "source": self.source,
+            "status": self.status,
+            "error": self.error_code,
+            "truncated": self.truncated,
+            "content": self.content,
+            "lang": self.lang,
+            "model": self.model,
+            "createdAt": self.created_at,
+            "finishedAt": self.finished_at,
+        })
+    }
+
+    /// `SummaryAnswer`
+    pub fn summary_json(&self) -> Value {
+        json!({
+            "messageId": self.message_id,
+            "recordId": self.record_id,
+            "status": self.status,
+            "error": self.error_code,
+            "truncated": self.truncated,
+            "content": self.content,
+            "lang": self.lang,
+            "model": self.model,
+            "createdAt": self.created_at,
+            "finishedAt": self.finished_at,
+            "sample": self.sample.map(|s| s.to_json()),
+        })
+    }
+}
+
+/// The result of a lookup: the chat (if any), the newest answer and, when that one is not finished, the newest good one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Saved {
+    pub chat_id: Option<i64>,
+    pub latest: Option<AnswerRow>,
+    pub last_good: Option<AnswerRow>,
+}
+
+impl Saved {
+    /// `{"chatId", "latest", "lastGood"}`; `summary` picks the `SummaryAnswer` shape.
+    pub fn to_json(&self, summary: bool) -> Value {
+        let one = |a: &Option<AnswerRow>| match a {
+            None => Value::Null,
+            Some(a) if summary => a.summary_json(),
+            Some(a) => a.study_json(),
+        };
+        json!({
+            "chatId": self.chat_id,
+            "latest": one(&self.latest),
+            "lastGood": one(&self.last_good),
+        })
+    }
+}
+
+fn answer_by_id(c: &Connection, id: i64) -> rusqlite::Result<AnswerRow> {
+    c.query_row(
+        "SELECT m.id, m.kind, m.question_id, m.question_no, m.source, m.status, m.error_code, m.truncated, m.content,
+                m.lang, m.model, m.created_at, m.finished_at, m.sample_used, m.sample_usable, m.sample_wrong,
+                c.record_id
+         FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.id = ?1",
+        [id],
+        |r| {
+            Ok(AnswerRow {
+                message_id: r.get(0)?,
+                kind: r.get(1)?,
+                question_id: r.get(2)?,
+                question_no: r.get(3)?,
+                source: r.get(4)?,
+                status: r.get(5)?,
+                error_code: r.get(6)?,
+                truncated: r.get::<_, i64>(7)? != 0,
+                content: r.get(8)?,
+                lang: r.get(9)?,
+                model: r.get(10)?,
+                created_at: r.get(11)?,
+                finished_at: r.get(12)?,
+                sample: sample_of(r.get(13)?, r.get(14)?, r.get(15)?),
+                record_id: r.get(16)?,
+            })
+        },
+    )
+}
+
+/// Latest answer and, only when it is not `done`, the newest good one. `extra` are the parameters after the chat id.
+fn saved_with(
+    c: &Connection,
+    chat: i64,
+    latest_sql: &str,
+    good_sql: &str,
+    extra: &[&str],
+) -> rusqlite::Result<Saved> {
+    let run = |sql: &str| -> rusqlite::Result<Option<i64>> {
+        let mut args: Vec<&dyn rusqlite::ToSql> = vec![&chat];
+        for e in extra {
+            args.push(e);
+        }
+        c.query_row(sql, args.as_slice(), |r| r.get(0)).optional()
+    };
+    let latest = match run(latest_sql)? {
+        Some(id) => Some(answer_by_id(c, id)?),
+        None => None,
+    };
+    let last_good = match &latest {
+        Some(l) if l.status != "done" => match run(good_sql)? {
+            Some(id) => Some(answer_by_id(c, id)?),
+            None => None,
+        },
+        _ => None,
+    };
+    Ok(Saved {
+        chat_id: Some(chat),
+        latest,
+        last_good,
+    })
+}
+
+const NO_SAVED: Saved = Saved {
+    chat_id: None,
+    latest: None,
+    last_good: None,
+};
+
+/// Hint / explanation of one question and place in a study chat (the chat is looked up by `user_id`).
+pub fn study_saved(
+    c: &Connection,
+    user: i64,
+    chat_kind: &str,
+    chat_ref: &str,
+    kind: &str,
+    question_id: &str,
+    source: &str,
+) -> rusqlite::Result<Saved> {
+    let Some(chat) = chat_by_ref(c, user, chat_kind, chat_ref)? else {
+        return Ok(NO_SAVED);
+    };
+    saved_with(
+        c,
+        chat,
+        SQL_STUDY_LATEST,
+        SQL_STUDY_LAST_GOOD,
+        &[question_id, kind, source],
+    )
+}
+
+/// The summary of a record (chat kind 'summary').
+pub fn summary_saved(c: &Connection, user: i64, chat_ref: &str) -> rusqlite::Result<Saved> {
+    let Some(chat) = chat_by_ref(c, user, "summary", chat_ref)? else {
+        return Ok(NO_SAVED);
+    };
+    saved_with(c, chat, SQL_SUMMARY_LATEST, SQL_SUMMARY_LAST_GOOD, &[])
+}
+
+/// `RunningInfo` of an answer of the user, or None.
+pub fn running_info(
+    c: &Connection,
+    user: i64,
+    chat: i64,
+    message: i64,
+) -> rusqlite::Result<Option<Value>> {
+    c.query_row(
+        "SELECT c.id, m.id, c.kind, m.kind, m.question_id, m.question_no, m.source,
+                CASE WHEN m.source = 'result' OR m.kind = 'summary' THEN c.record_id END
+         FROM messages m JOIN chats c ON c.id = m.chat_id
+         WHERE m.id = ?1 AND c.id = ?2 AND c.user_id = ?3",
+        params![message, chat, user],
+        |r| {
+            Ok(json!({
+                "chatId": r.get::<_, i64>(0)?,
+                "messageId": r.get::<_, i64>(1)?,
+                "chatKind": r.get::<_, String>(2)?,
+                "kind": r.get::<_, String>(3)?,
+                "questionId": r.get::<_, Option<String>>(4)?,
+                "questionNo": r.get::<_, Option<i64>>(5)?,
+                "source": r.get::<_, Option<String>>(6)?,
+                "recordId": r.get::<_, Option<i64>>(7)?,
+            }))
+        },
     )
     .optional()
 }

@@ -294,6 +294,29 @@ impl Link {
     }
 
     async fn call(&self, path: &str, body: serde_json::Value) -> Result<Vec<u8>, LinkError> {
+        self.send(path, body, false).await
+    }
+
+    /// A call of the study data routes (`/internal/ai/question`, `record`, `record-info`). The same request as
+    /// [`Link::call`], but a 404 only fails this call (`LinkError::Rejected`): it does not re-read the token and does not
+    /// mark the link as lost, because an ai-service newer than the backend (a data route the backend does not have yet)
+    /// must not switch AI off for everyone. Transport errors, other statuses and oversize answers still count as a
+    /// failed link; a good answer calls neither `note_ok` nor anything else (no "connected" line). The caller parses the
+    /// answer and never touches the link state for a parse failure.
+    pub async fn data_call(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+    ) -> Result<Vec<u8>, LinkError> {
+        self.send(path, body, true).await
+    }
+
+    async fn send(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+        data: bool,
+    ) -> Result<Vec<u8>, LinkError> {
         let Some(token) = self.token() else {
             return Err(LinkError::NoToken);
         };
@@ -320,7 +343,9 @@ impl Link {
         match resp.status().as_u16() {
             200 => {}
             404 => {
-                self.note_rejected();
+                if !data {
+                    self.note_rejected();
+                }
                 return Err(LinkError::Rejected);
             }
             _ => {

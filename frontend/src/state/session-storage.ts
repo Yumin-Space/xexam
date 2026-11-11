@@ -27,6 +27,9 @@ export interface SavedSession {
   kind: AttemptKind;
   /** Practice: the questions already checked (only those that still have an answer); always empty for an exam */
   checked: Set<string>;
+  /** v0.9: the session key (32 lower-case hex) and start time (unix seconds); a save without valid ones gets new values */
+  key: string;
+  startedAt: number;
 }
 
 export interface SessionToSave {
@@ -39,9 +42,19 @@ export interface SessionToSave {
   sheets: string[];
   kind: AttemptKind;
   checked: Set<string>;
+  key: string;
+  startedAt: number;
 }
 
 const MODES: readonly string[] = ['all', 'weak', 'retry'];
+const KEY_RE = /^[0-9a-f]{32}$/;
+
+/** A new session key: 16 random bytes as 32 lower-case hex characters (v0.9: ties a session to its AI chat and its record) */
+export function newSessionKey(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 export function saveSession(se: SessionToSave): void {
   const k = key();
@@ -52,6 +65,8 @@ export function saveSession(se: SessionToSave): void {
       idx: se.idx, elapsed: Math.floor(se.elapsedSeconds), mode: se.mode, sheets: se.sheets,
       // v0.6.5 (still format v1: older versions ignore the two keys, a missing kind reads back as an exam)
       kind: se.kind, checked: se.kind === 'practice' ? [...se.checked] : [],
+      // v0.9 (still format v1: older versions ignore the two keys)
+      key: se.key, startedAt: se.startedAt,
     }));
   } catch {
     /* If it cannot be saved, so be it */
@@ -134,7 +149,14 @@ export function loadSaved(bank: Bank | null): SavedSession | null {
     return !!cq && stateOf(cq, answers[cq.id]) > 0;
   }));
 
+  // v0.9: a saved key and start time are kept when valid; a save from v0.8 (or a damaged one) gets a new key and the time now
+  const nowS = Math.floor(Date.now() / 1000);
+  const keyOk = typeof d.key === 'string' && KEY_RE.test(d.key) && typeof d.startedAt === 'number' && Number.isInteger(d.startedAt)
+    && d.startedAt >= 1 && d.startedAt <= nowS + 300;
+
   return {
+    key: keyOk ? (d.key as string) : newSessionKey(),
+    startedAt: keyOk ? (d.startedAt as number) : nowS,
     qs, answers, answered,
     flags: new Set(flagsRaw.filter((id): id is string => typeof id === 'string' && keep.has(id))),
     idx: Math.min(Math.max(0, num(d.idx)), qs.length - 1),

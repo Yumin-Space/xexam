@@ -1,7 +1,7 @@
 // Defensive tests for reading the saved exam: bad data is only dropped or corrected, never throws.
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { adoptLegacySession, clearSaved, loadSaved, saveSession } from './session-storage.ts';
+import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession } from './session-storage.ts';
 import { setStorageOwner } from './storage-keys.ts';
 import type { Bank, Question } from '../types/api.ts';
 
@@ -16,6 +16,9 @@ const mem = new Map<string, string>();
   length: 0,
 } as Storage;
 
+/** A session key and start time for the saves of these tests (v0.9) */
+const K1 = '0123456789abcdef0123456789abcdef';
+const T1 = 1_700_000_000;
 /** The saved exam of user 7, the user signed in for most tests */
 const KEY = 'xexam.u7.session.v1';
 const LEGACY = 'xexam.session.v1';
@@ -47,7 +50,7 @@ test('none of the ids are in the question bank: returns null', () => {
 });
 
 test('normal round trip: reads back exactly what was saved', () => {
-  saveSession({ qs: bank.questions, answers: { s: ['B'], h: [0, null] }, flags: new Set(['m']), idx: 1, elapsedSeconds: 75.9, mode: 'weak', sheets: ['S'], kind: 'exam', checked: new Set() });
+  saveSession({ qs: bank.questions, answers: { s: ['B'], h: [0, null] }, flags: new Set(['m']), idx: 1, elapsedSeconds: 75.9, mode: 'weak', sheets: ['S'], kind: 'exam', checked: new Set(), key: K1, startedAt: T1 });
   const r = loadSaved(bank);
   assert.ok(r);
   assert.equal(r.qs.length, 3);
@@ -113,7 +116,7 @@ test('bad values of flags / idx / elapsed / mode / sheets are corrected', () => 
 });
 
 test('clearSaved clears the saved exam; keys from the old version are not read', () => {
-  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set() });
+  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set(), key: K1, startedAt: T1 });
   assert.ok(loadSaved(bank));
   clearSaved();
   assert.equal(loadSaved(bank), null);
@@ -122,7 +125,7 @@ test('clearSaved clears the saved exam; keys from the old version are not read',
 });
 
 test('each user has their own saved exam; nobody signed in reads and writes nothing', () => {
-  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 5, mode: 'all', sheets: [], kind: 'exam', checked: new Set() });
+  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 5, mode: 'all', sheets: [], kind: 'exam', checked: new Set(), key: K1, startedAt: T1 });
   assert.ok(mem.has(KEY));
   setStorageOwner(8);
   assert.equal(loadSaved(bank), null, 'another user does not see it');
@@ -130,7 +133,7 @@ test('each user has their own saved exam; nobody signed in reads and writes noth
   assert.ok(mem.has(KEY), "another user's clearSaved leaves it alone");
   setStorageOwner(null);
   assert.equal(loadSaved(bank), null);
-  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set() });
+  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set(), key: K1, startedAt: T1 });
   assert.deepEqual([...mem.keys()], [KEY], 'nothing is written without a user');
   setStorageOwner(7);
   assert.deepEqual(loadSaved(bank)?.answers.s, ['B']);
@@ -158,7 +161,7 @@ test('the saved exam of the version before users goes to the first administrator
 test('a practice keeps its kind and its checked questions; a checked question without an answer is open again', () => {
   saveSession({
     qs: bank.questions, answers: { s: ['B'], m: ['A'] }, flags: new Set(), idx: 2, elapsedSeconds: 30, mode: 'all', sheets: ['S'],
-    kind: 'practice', checked: new Set(['s', 'm']),
+    kind: 'practice', checked: new Set(['s', 'm']), key: K1, startedAt: T1,
   });
   let sv = loadSaved(bank);
   assert.equal(sv?.kind, 'practice');
@@ -171,7 +174,7 @@ test('a practice keeps its kind and its checked questions; a checked question wi
 });
 
 test('an exam saves no checked questions, and a save without kind (before v0.6.5) is an exam', () => {
-  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set(['s']) });
+  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set(['s']), key: K1, startedAt: T1 });
   let sv = loadSaved(bank);
   assert.equal(sv?.kind, 'exam');
   assert.equal(sv?.checked.size, 0);
@@ -181,4 +184,52 @@ test('an exam saves no checked questions, and a save without kind (before v0.6.5
   assert.equal(sv?.checked.size, 0);
   put({ v: 1, ids: ['s'], answers: {}, kind: 'weird' });
   assert.equal(loadSaved(bank)?.kind, 'exam');
+});
+
+// ---------------------------------------------------------------- v0.9: session key and start time
+
+const base = { qs: bank.questions, answers: {}, flags: new Set<string>(), idx: 0, elapsedSeconds: 0, mode: 'all' as const, sheets: [] as string[], kind: 'practice' as const, checked: new Set<string>() };
+
+test('newSessionKey: 32 lower-case hex characters, different every time', () => {
+  const a = newSessionKey();
+  assert.match(a, /^[0-9a-f]{32}$/);
+  assert.notEqual(a, newSessionKey());
+});
+
+test('the session key and start time survive a save and a load (resume keeps the same AI chat)', () => {
+  saveSession({ ...base, key: K1, startedAt: T1 });
+  const sv = loadSaved(bank);
+  assert.equal(sv?.key, K1);
+  assert.equal(sv?.startedAt, T1);
+  const raw = JSON.parse(mem.get(KEY) as string) as Record<string, unknown>;
+  assert.equal(raw.v, 1, 'the format stays v1');
+  assert.equal(raw.key, K1);
+  assert.equal(raw.startedAt, T1);
+});
+
+test('a v0.8 save (no key) gets a new valid key and the time now', () => {
+  const before = Math.floor(Date.now() / 1000);
+  put({ ids: ['s'], answers: {}, idx: 0, elapsed: 0, mode: 'all', sheets: [] });
+  const sv = loadSaved(bank);
+  assert.ok(sv);
+  assert.match(sv.key, /^[0-9a-f]{32}$/);
+  assert.ok(sv.startedAt >= before && sv.startedAt <= Math.floor(Date.now() / 1000) + 1);
+});
+
+test('an invalid key or start time (wrong shape, upper case, 0, a float, far in the future) is replaced as a pair', () => {
+  const future = Math.floor(Date.now() / 1000) + 10_000;
+  const cases: Array<[unknown, unknown]> = [
+    ['xyz', T1], [K1.toUpperCase(), T1], [K1.slice(1), T1], [5, T1], [K1, 0], [K1, 1.5], [K1, '1700000000'], [K1, future], [K1, null], [null, null],
+  ];
+  for (const [key, startedAt] of cases) {
+    put({ ids: ['s'], key, startedAt });
+    const sv = loadSaved(bank);
+    assert.ok(sv, JSON.stringify([key, startedAt]));
+    assert.notEqual(sv.key, key, JSON.stringify([key, startedAt]));
+    assert.match(sv.key, /^[0-9a-f]{32}$/);
+    assert.ok(sv.startedAt >= 1 && sv.startedAt <= Math.floor(Date.now() / 1000) + 1);
+  }
+  // a start time a little ahead of the clock (a few minutes) is still accepted
+  put({ ids: ['s'], key: K1, startedAt: Math.floor(Date.now() / 1000) + 200 });
+  assert.equal(loadSaved(bank)?.key, K1);
 });

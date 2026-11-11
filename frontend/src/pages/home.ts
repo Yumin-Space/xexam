@@ -2,8 +2,10 @@
 // a practice, plus the latest result (exam or practice) and an overview of the question banks in a side column.
 import '../styles/home.css';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
+import { aiPlusNow, summaryButton } from '../components/ai-plus-controls.ts';
 import { kindTag } from '../components/kind-tag.ts';
 import { icon } from '../components/shell.ts';
+import { controlState, recordSummaryExtra } from '../domain/ai-plus.ts';
 import { kindOf } from '../domain/attempt.ts';
 import { inNotebook, masterStreakOf, pickQuestions, poolOf } from '../domain/grading.ts';
 import { serverText } from '../i18n/errors.ts';
@@ -388,6 +390,11 @@ function latestCard(): HTMLElement {
     return sec;
   }
   const wrong = Math.max(0, r.total - r.correct);
+  // v0.9: the AI summary of the latest record (only for users with the AI+ feature; greyed with its own tag when unusable)
+  const view = aiPlusNow();
+  const summary = view.show
+    ? summaryButton({ id: r.id, at: r.at, kind: kindOf(r) }, controlState(view, recordSummaryExtra(r)), { anchorKey: 'home-ai', quiet: false, tag: true })
+    : null;
   // The latest record of either kind, with its Exam / Practice tag
   sec.append(
     h('div', { class: 'stat' },
@@ -403,6 +410,7 @@ function latestCard(): HTMLElement {
     ]),
     h('div', { class: 'acts' },
       link({ name: 'record', id: r.id }, t('home.latest.view')),
+      summary,
       link({ name: 'records' }, t('home.latest.all'), 'btn quiet')));
   return sec;
 }

@@ -5,7 +5,9 @@ import '../styles/records.css';
 import { ApiError } from '../api/client.ts';
 import { deleteAllRecords, deleteRecord } from '../api/progress.ts';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
+import { aiPlusNow, aiTableNote, summaryButton } from '../components/ai-plus-controls.ts';
 import { kindTag } from '../components/kind-tag.ts';
+import { controlState, recordSummaryExtra, type AiPlusView } from '../domain/ai-plus.ts';
 import { kindOf } from '../domain/attempt.ts';
 import { NO_FILTERS, isFiltered, isKindFilter, matchesRecord, type RecordFilters } from '../domain/records-filter.ts';
 import { reviewBlock, reviewItem, type ReviewFilter, type ReviewRow } from '../components/review.ts';
@@ -162,7 +164,14 @@ function summaryContent(rows: readonly RecordSummary[], total: number): HTMLElem
   ];
 }
 
-function recordRow(r: RecordSummary): HTMLElement {
+/** The AI summary cell of a row (v0.9): only for users with the AI+ feature; the one note above the table carries the tag */
+function aiCell(r: RecordSummary, view: AiPlusView): HTMLElement {
+  const btn = summaryButton({ id: r.id, at: r.at, kind: kindOf(r) }, controlState(view, recordSummaryExtra(r)),
+    { anchorKey: `rec-ai-${r.id}`, quiet: true, tag: false });
+  return h('td', { role: 'cell', class: 'rec-ai' }, btn);
+}
+
+function recordRow(r: RecordSummary, view: AiPlusView): HTMLElement {
   const cell = (label: string, cls: string, ...kids: Array<Node | string | null>): HTMLElement =>
     h('td', { role: 'cell', class: cls, 'data-label': label }, kids);
   const mode = modeName(r.mode);
@@ -175,6 +184,7 @@ function recordRow(r: RecordSummary): HTMLElement {
       navigate({ name: 'record', id: r.id });
     },
   },
+  view.show ? aiCell(r, view) : null,
   cell(t('records.col.time'), 'rec-time num', h('a', { href: `#/records/${r.id}` }, r.at)),
   // The kind tag leads the cell, so exams and practice tell apart in the list and in the phone cards alike
   cell(t('records.col.banks'), 'rec-banks', kindTag(kindOf(r)), ' ', recordBankNames(r.banks), mode ? h('span', { class: 'rec-mode' }, mode) : null),
@@ -190,16 +200,17 @@ function recordRow(r: RecordSummary): HTMLElement {
     }, t('common.delete'))));
 }
 
-function recordTable(rows: readonly RecordSummary[]): HTMLElement {
+function recordTable(rows: readonly RecordSummary[], view: AiPlusView): HTMLElement {
   const th = (label: string, hidden = false): HTMLElement =>
     h('th', { role: 'columnheader', scope: 'col' }, hidden ? h('span', { class: 'sr-only' }, label) : label);
   return h('div', { class: 'rec-scroll' },
-    h('table', { class: 'rec-table', role: 'table' },
+    h('table', { class: 'rec-table' + (view.show ? ' has-ai' : ''), role: 'table' },
       h('caption', { class: 'sr-only' }, t('records.table.caption')),
       h('thead', { role: 'rowgroup' }, h('tr', { role: 'row' },
+        view.show ? th(t('aiplus.summary'), true) : null,
         th(t('records.col.time')), th(t('records.col.banks')), th(t('records.col.answered')), th(t('records.col.duration')),
         th(t('records.col.score')), th(t('records.col.accuracy')), th(t('records.col.actions'), true))),
-      h('tbody', { role: 'rowgroup' }, rows.map(recordRow))));
+      h('tbody', { role: 'rowgroup' }, rows.map((r) => recordRow(r, view)))));
 }
 
 /** A labelled filter control (explicit for/id, so the accessible name is just the label) */
@@ -284,6 +295,7 @@ function renderList(): HTMLElement {
   const badRange = h('p', { class: 'rec-warn' }, t('records.filter.badRange'));
   const resetBtn = h('button', { class: 'btn quiet', type: 'button', onclick: clearFilters }, t('records.filter.reset'));
   const listBox = h('div', { class: 'rec-list' });
+  const view = aiPlusNow();
 
   const update = (): void => {
     const rows = all.filter((r) => matchesRecord(r, filters));
@@ -292,7 +304,7 @@ function renderList(): HTMLElement {
     badRange.hidden = !(filters.from && filters.to && filters.from > filters.to);
     resetBtn.hidden = !isFiltered(filters);
     listBox.replaceChildren(rows.length
-      ? recordTable(rows)
+      ? recordTable(rows, view)
       : h('div', { class: 'rec-nomatch' },
         h('p', { class: 'empty' }, t('records.noMatch')),
         h('button', { class: 'btn', type: 'button', onclick: clearFilters }, t('records.filter.reset'))));
@@ -331,8 +343,10 @@ function renderList(): HTMLElement {
     badRange,
     h('div', { class: 'rec-bar' }, count, resetBtn));
 
-  const listPanel = h('section', { class: 'panel rec-listpanel', 'aria-labelledby': 'rec-list-h' },
+  const listPanel = h('section', { class: 'panel rec-listpanel' + (view.show ? ' has-ai' : ''), 'aria-labelledby': 'rec-list-h' },
     h('h2', { id: 'rec-list-h' }, t('records.list.heading')),
+    // v0.9: when the AI summary is greyed for everyone, one note says why (instead of a tag on every row)
+    view.show ? aiTableNote(controlState(view)) : null,
     listBox);
 
   update();
@@ -454,7 +468,12 @@ function detailView(d: RecordDetail): HTMLElement {
   const rows: ReviewRow[] = items.map((it, i) => ({
     correct: it.correct,
     render: () => (it.question
-      ? reviewItem({ q: it.question, ans: it.answer, correct: it.correct }, { no: i + 1, retired: !it.question.active })
+      ? reviewItem({ q: it.question, ans: it.answer, correct: it.correct }, {
+        no: i + 1,
+        retired: !it.question.active,
+        // v0.9: AI analysis of this record's questions (the controls build themselves only for users with the AI+ feature)
+        ai: { page: 'detail', mode: kind, key: rec.sessionKey ?? null, startedAt: rec.startedAt ?? null, recordId: rec.id },
+      })
       : goneCard(it, i + 1)),
   }));
   page.append(...reviewBlock(rows, { get: () => detailFilter, set: (f) => { detailFilter = f; } }));

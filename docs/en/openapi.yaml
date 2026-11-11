@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "0.8"
+  version: "0.9"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
     differences are listed under "Differences from the old version" in docs/en/api.md, and the changes of each version under
-    "Changes in v0.5", "Changes in v0.6", "Changes in v0.7", "Changes in v0.7.5" and "Changes in v0.8". Endpoints and fields
-    marked (v0.5), (v0.6), (v0.7) or (v0.8) were added in that version.
+    "Changes in v0.5", "Changes in v0.6", "Changes in v0.7", "Changes in v0.7.5", "Changes in v0.8" and "Changes in v0.9". Endpoints
+    and fields marked (v0.5), (v0.6), (v0.7), (v0.8) or (v0.9) were added in that version.
 
     All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
     JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
@@ -44,6 +44,15 @@ info:
     than 60 s, is not a stopping report and says `enabled`. `GET /api/auth/state` and the user list answers carry
     `aiAvailable`; while it is false, `POST /api/users/update` with an `ai` key and `POST /api/users/create` with `ai: true`
     answer 409 `ai.serviceOff` (the only error of the backend's own routes with a `code`).
+
+    **(v0.9) The AI+ feature in practice** (`/api/ai/study/*` and `/api/ai/summary/*`, tag `ai`): AI hints and explanations of one
+    question, and the AI summary of a study record. The two `ask` routes are `AiUser` routes that answer with the event stream
+    of `send`; the two `saved` routes need only `AiSigned`. Every answer is saved in a study chat (`AiChatSummary.kind`
+    `practice`, `exam` or `summary`). The question and the record are read by ai-service from the backend with the caller's own
+    session (three more internal routes, `/internal/ai/question`, `/internal/ai/record` and `/internal/ai/record-info`), never
+    from the browser. `POST /api/attempt` takes the optional `key` and `startedAt` of the session and answers with `recordId`;
+    `GET /api/record` returns `sessionKey` and `startedAt`. Main database schema 6 and AI database schema 3, each upgrade after
+    a backup. docs/en/api.md, section 5.5, describes the study routes in full.
 
     **What a plain user sees** (v0.7): the banks an administrator chose for them (`banks`; with `newBanks`, every bank created
     later is added to them when it is created), plus, while they are a bank manager, the banks they own. `/api/bank`, `/api/banks`, the statistics of `/api/progress`, the questions
@@ -446,6 +455,7 @@ paths:
       tags: [records]
       summary: "(v0.5) One study record of the user with its per-question detail"
       x-access: SignedIn
+      description: "(v0.9) `record` ends with `sessionKey` and `startedAt` (null for records saved before v0.9, or without a valid key). Only this route has them: `GET /api/records` is unchanged."
       parameters:
         - name: id
           in: query
@@ -461,7 +471,7 @@ paths:
                 type: object
                 required: [record, items]
                 properties:
-                  record: { $ref: "#/components/schemas/RecordSummary" }
+                  record: { $ref: "#/components/schemas/RecordDetailHead" }
                   items: { type: array, items: { $ref: "#/components/schemas/RecordItem" } }
         "400":
           description: "`id` missing, repeated or not 1–18 digits: `请求的格式不对。`"
@@ -777,6 +787,11 @@ paths:
         and the bank snapshot, and their ids come back in `notCounted`; the record's `sheets` then lists only the sheets (in the
         order sent) that a counted question belongs to. Deactivated questions still exist and are counted. When nothing is left,
         nothing is saved: 409 `这场考试的题目已经被删除，成绩没有保存。`.
+        (v0.9) Optional `key` (32 lower-case hexadecimal digits, one per practice or exam session) and `startedAt` (integer
+        1..4102444800, unix seconds) say which session the record was saved from, so that the AI+ feature can keep that session's
+        answers in one chat. Each is judged on its own: a missing or invalid one is stored as NULL and the request is never refused
+        because of it. The key is not unique and nothing is looked up by it in the main database. The answer ends with `recordId`,
+        the id of the record that was just saved, always last.
       requestBody:
         required: true
         content:
@@ -784,7 +799,7 @@ paths:
             schema: { $ref: "#/components/schemas/AttemptRequest" }
       responses:
         "200":
-          description: The user's latest study records (plus `notCounted` when some results were left out)
+          description: The user's latest study records (plus `notCounted` when some results were left out, and (v0.9) `recordId` last)
           content:
             application/json:
               schema: { $ref: "#/components/schemas/AttemptResponse" }
@@ -943,6 +958,8 @@ paths:
         moment of the request, and it applies to every chat, old or new. The system prompt is the study-assistant text with the
         date, the user's memories and the reply-language line (last); in free mode it is the language line alone and no memory is
         read. After a switch (the history sent holds messages of the other mode) one short mode line follows the language line.
+        (v0.9) The `start` event also has `chatKind`. A message may be sent into a study chat (a follow-up question); it is a plain
+        `chat` message, answered like any other, and `chatKind` is then `practice`, `exam` or `summary`.
         The history is sent in full, whatever mode each message was written in, but old messages are shortened: the newest 4 in
         full, older answers to 800 characters (then `…(shortened)`), older questions to 2000 characters (then `…`); stored
         messages never change. Prompt caching: in the Anthropic format the system block and the last history message carry a
@@ -988,6 +1005,8 @@ paths:
       description: |
         The chat's last message must be an assistant message with status `error` or `stopped` after a user message (else 409
         `ai.notRetryable`). It is reset and written again in place; `start.retry` is true. Errors and events as for /api/ai/send.
+        (v0.9) A study answer (a hint, an explanation or a summary) is never retried this way: 409 `ai.notRetryable`, text unchanged.
+        It is asked again through /api/ai/study/ask or /api/ai/summary/ask.
       requestBody:
         required: true
         content:
@@ -1059,7 +1078,7 @@ paths:
       tags: [ai]
       summary: "(v0.8) Stop your answers being written ({} = all of them, {chatId} = the one of that chat)"
       x-access: AiSigned
-      description: Waits up to 5 s until the stopped answers are saved. The stream ends with the event `stopped`; the text so far is kept.
+      description: Waits up to 5 s until the stopped answers are saved. The stream ends with the event `stopped`; the text so far is kept. (v0.9) Also stops hints, explanations and summaries (the `chatId` of their study chat, or {}).
       requestBody:
         required: false
         content:
@@ -1097,6 +1116,154 @@ paths:
         "400": { $ref: "#/components/responses/AiError" }
         "401": { $ref: "#/components/responses/AiSignIn" }
         "404": { $ref: "#/components/responses/AiNotFound" }
+  /api/ai/study/ask:
+    post:
+      tags: [ai]
+      summary: "(v0.9) Ask for an AI hint or explanation of one question; the answer arrives as an event stream and is saved in the study chat"
+      x-access: AiUser
+      description: |
+        Body keys other than the ones listed, a value of the wrong type or an impossible combination are 400 `ai.badRequest`,
+        checked before the access level. Allowed combinations: a hint (`kind` hint) only with `mode` practice and `source`
+        practice; `source` practice needs `mode` practice and no `recordId`; `mode` exam needs `source` result and a `recordId`;
+        without a `recordId` both `key` and `startedAt` are needed. Then 403 `ai.disabled` / `ai.notAllowed` / `ai.suspended`, 503
+        `ai.backendDown` (also when the backend cannot be reached or its answer cannot be read), 409 `ai.keyProblem`; the question
+        is read from the backend (403 `ai.notAllowed` when it says the session is gone or the user has no AI+ feature; 404
+        `ai.notFound` for a question that does not exist, is in a bank the user may not see, or is not in the named record); an
+        ask with a `recordId` and a `key` that is not the key of that record is 404 `ai.notFound`. 409 `ai.busy` carries `running`
+        (a RunningInfo or null); 409 `ai.chatLimit` / `ai.messageLimit` carry `limit`. Nothing is saved before the stream starts.
+
+        The chat is the practice or exam session's study chat (`kind` practice or exam, found by the session key; a record saved
+        before v0.9 has no key and gets a chat of its own, of the record's kind, titled with the record's time). It is created by
+        the first ask; its stored title is `YYYY-MM-DD HH:MM`, the start of the session. A hint is given the question without its
+        answer key; an explanation is given the question, the answer key and the stored explanation, and on a result page also
+        what the user answered. No memories, no earlier messages, no free mode. The reply language is `lang`, else the user's
+        Settings language.
+
+        The stream is that of /api/ai/send; its `start` event carries `chatKind`, `kind`, `questionId`, `questionNo`, `source`,
+        `recordId` (the record only when `source` is result), `sample` (null) and `lang` (AiStreamStart). A hint is checked while
+        it is written: if it gives the answer away it ends with the event `error` `ai.hintLeak` and `withdraw: true` (the client
+        removes the shown text; nothing of it is saved). A hint that reaches 6000 characters is cut and ends with `done` and
+        `truncated: true`. Nginx: the same 20 starts a minute per session as send.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, mode, source, questionId, no, qlang]
+              additionalProperties: false
+              properties:
+                kind: { type: string, enum: [hint, explain] }
+                mode: { type: string, enum: [practice, exam], description: "The kind of the session" }
+                source: { type: string, enum: [practice, result], description: "Where it is asked: the practice page, or a result page / record detail" }
+                questionId: { type: string, pattern: "^[0-9A-Za-z_-]{1,64}$" }
+                no: { type: integer, minimum: 1, maximum: 100000, description: "The question number the user sees" }
+                qlang: { type: string, enum: [en, zh, ja], description: "The language the question is shown in" }
+                key: { type: string, nullable: true, pattern: "^[0-9a-f]{32}$", description: "The session key (the `key` of POST /api/attempt)" }
+                startedAt: { type: integer, nullable: true, minimum: 1, description: "Unix seconds, when the session started; a time more than 5 minutes ahead or more than 400 days back counts as now" }
+                recordId: { type: integer, nullable: true, minimum: 1, description: "The saved record, for a result page" }
+                lang: { type: string, enum: [en, zh, ja, zh-CN], description: "The reply language; missing = the user's Settings language as the backend knows it. Any other value: 400 `ai.badRequest`" }
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "413": { $ref: "#/components/responses/AiError" }
+        "415": { $ref: "#/components/responses/AiError" }
+        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/study/saved:
+    get:
+      tags: [ai]
+      summary: "(v0.9) The saved AI hint or explanation of one question in one place"
+      x-access: AiSigned
+      description: |
+        Needs no AI+ feature, so saved answers stay readable while AI is off or the user is paused. The query is read as it is (no
+        percent-encoding is needed); each name may appear once. `latest` is the newest answer of that question in that place,
+        whatever its status (`streaming` while it is being written: read again every 2 seconds); `lastGood` is the newest answer
+        with status done and some text, filled only when `latest` is not done. A practice answer and a result-page answer to the
+        same question are kept apart. With `record`, the chat is found through the record's identity, which ai-service asks the
+        backend for and keeps in memory for at most 10 minutes (503 `ai.backendDown` when the backend cannot answer; a record that
+        is not the user's, or whose kind is not `mode`, gives the empty answer). Nothing found: `latest` and `lastGood` are null.
+      parameters:
+        - { name: mode, in: query, required: true, schema: { type: string, enum: [practice, exam] } }
+        - { name: key, in: query, required: false, description: "Exactly one of `key` and `record`", schema: { type: string, pattern: "^[0-9a-f]{32}$" } }
+        - { name: record, in: query, required: false, description: "Exactly one of `key` and `record`; needs source result", schema: { type: integer, minimum: 1 } }
+        - { name: source, in: query, required: true, schema: { type: string, enum: [practice, result] } }
+        - { name: question, in: query, required: true, schema: { type: string, pattern: "^[0-9A-Za-z_-]{1,64}$" } }
+        - { name: kind, in: query, required: true, description: "A hint only with mode practice and source practice", schema: { type: string, enum: [hint, explain] } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiStudySaved" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/summary/ask:
+    post:
+      tags: [ai]
+      summary: "(v0.9) Ask for the AI summary of the wrong answers of one study record; the answer arrives as an event stream"
+      x-access: AiUser
+      description: |
+        ai-service asks the backend for at most 70 of the questions the user answered wrong in that record, chosen at random
+        (without repeats, in record order), with their question and answer side, together at most 120000 characters. Questions left
+        unanswered are not counted. Errors: as /api/ai/study/ask, plus 404 `ai.notFound` (not the user's record), 409 `ai.noDetail`
+        (no per-question detail), 409 `ai.noWrong` (no answered-wrong question), 409 `ai.noUsable` (every wrong answer's question
+        is deleted or no longer visible to the user). The chat is the record's `summary` chat (one per record, titled with the
+        record's `at`); asking again adds another summary to it. The `start` event has `chatKind` and `kind` summary, `questionId`,
+        `questionNo` and `source` null, `recordId`, `sample` ({used, usable, wrong}) and `lang`. The stored user message is the
+        machine line `[AI summary] <at> <kind> <used>/<usable>/<wrong>`. Nginx: the same 20 starts a minute per session as send.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [recordId]
+              additionalProperties: false
+              properties:
+                recordId: { type: integer, minimum: 1 }
+                lang: { type: string, enum: [en, zh, ja, zh-CN], description: "The reply language; missing = the user's Settings language as the backend knows it" }
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiNotFound" }
+        "409": { $ref: "#/components/responses/AiError" }
+        "413": { $ref: "#/components/responses/AiError" }
+        "415": { $ref: "#/components/responses/AiError" }
+        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
+  /api/ai/summary/saved:
+    get:
+      tags: [ai]
+      summary: "(v0.9) The saved AI summary of one study record"
+      x-access: AiSigned
+      description: |
+        Needs no AI+ feature and does not call the backend. The chat is found by the record id and the record's time, so a
+        record deleted and replaced by one with the same id is not mistaken for it. `latest` / `lastGood` as for
+        /api/ai/study/saved. Nothing found: `latest` and `lastGood` are null.
+      parameters:
+        - { name: record, in: query, required: true, schema: { type: integer, minimum: 1 } }
+        - { name: at, in: query, required: true, description: "The record's `at` without punctuation: 2026-11-10 15:10 is 202611101510", schema: { type: string, pattern: "^[0-9]{12}$" } }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiSummarySaved" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "502": { $ref: "#/components/responses/AiUnavailable" }
+        "503": { $ref: "#/components/responses/AiBackendDown" }
   /api/ai/memories:
     get:
       tags: [ai]
@@ -1183,7 +1350,8 @@ paths:
       summary: "(v0.8) Ask the model for a memory note made from one of your messages (nothing is saved)"
       x-access: AiUser
       description: |
-        The message must be a user message in one of your chats (else 404); its first 2000 characters are sent. Takes your
+        The message must be a user message of kind `chat` in one of your chats (else 404; (v0.9) the message of a study chat is
+        refused the same way); its first 2000 characters are sent. Takes your
         answer place (409 `ai.busy`) and a global place (503 `ai.serverBusy`). An empty suggestion: 502 `ai.up.protocol`.
         Save the note with /api/ai/memories/add and `source: chat`.
       requestBody:
@@ -1410,6 +1578,7 @@ paths:
       tags: [ai-admin]
       summary: "(v0.8) Usage statistics: calls, tokens, cached tokens and errors by user, model and period (never content)"
       x-access: AiAdmin
+      description: "(v0.9) `byPurpose` splits the chat calls of the range into four rows, always in the order chat, hint, explain, summary (zeros kept). `chat` is AI Chat and every call recorded before v0.9; the calls that listed models are in no row."
       parameters:
         - name: days
           in: query
@@ -1728,7 +1897,7 @@ paths:
               required: [version, enabled, suspended, stopping]
               additionalProperties: false
               properties:
-                version: { type: string, pattern: "^[0-9A-Za-z.+-]{1,20}$", example: "0.8" }
+                version: { type: string, pattern: "^[0-9A-Za-z.+-]{1,20}$", example: "0.9" }
                 enabled: { type: boolean, description: "The AI+ feature switch as ai-service uses it (on, tested, keys readable)" }
                 suspended:
                   type: array
@@ -1743,6 +1912,136 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Ok" }
         "400": { description: "Malformed report (wrong keys or types, more than 3000 ids, an id below 1); the stored report is unchanged" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+
+  # ---------------------------------------------------------------- (v0.9) internal data routes for the study features
+  /internal/ai/question:
+    post:
+      tags: [internal]
+      summary: "(v0.9, internal) One question the caller may see, with its answer side, and what they answered in a record"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        Called by ai-service for /api/ai/study/ask. Read only: nothing is written and nothing is logged. The body is checked key by
+        key (unknown or missing key, wrong type, out-of-range value: 400). Every logical refusal is **HTTP 200** `{"ok": false,
+        "reason": ...}`, because ai-service reads a 404 from /internal/ as "token refused": `session` (not a live session of that
+        user, or a password change pending; the session is not refreshed), `notAllowed` (the user has no AI+ feature; administrators
+        always have it) and `notFound` (one answer for a question that does not exist, is in a bank the user may not see, or - with
+        `record` - a record that is not the user's, of another kind, or without that question). Nginx has no location for
+        /internal/: from outside this path is 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, id, questionId, qlang, elang]
+              additionalProperties: false
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                id: { type: integer, minimum: 1, description: "The user id; must be the user of the session" }
+                questionId: { type: string, pattern: "^[0-9A-Za-z_-]{1,64}$" }
+                qlang: { type: string, enum: [en, zh, ja], description: "The language of the question text wanted" }
+                elang: { type: string, enum: [en, zh, ja], description: "The preferred language of the stored explanation" }
+                record:
+                  type: object
+                  nullable: true
+                  description: "A record of the user that must contain the question; null counts as absent"
+                  required: [id, kind]
+                  additionalProperties: false
+                  properties:
+                    id: { type: integer, minimum: 1 }
+                    kind: { type: string, enum: [practice, exam] }
+      responses:
+        "200":
+          description: "`ok: true` with the question, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/InternalStudyQuestionAnswer" }
+                  - { $ref: "#/components/schemas/InternalStudyRefusal" }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/record:
+    post:
+      tags: [internal]
+      summary: "(v0.9, internal) One record of the caller with a random sample of the questions they answered wrong"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        Called by ai-service for /api/ai/summary/ask. Read only. `wrong` counts the items answered wrong (unanswered items are
+        not counted); `usable` those of them whose question still exists and is visible to the user; `items` holds at most `max`
+        of the usable ones, chosen uniformly at random without repeats and returned in `seq` order, with the compact caps (shorter
+        texts, no memory aid or note, no keyTexts), together at most 120000 characters of text (`budgetCut` says whether that cut
+        anything). A record without per-question detail gives `detail` false, `wrong` 0, `usable` 0 and no items. Refusals as for
+        /internal/ai/question (HTTP 200 `ok: false`, reason `session`, `notAllowed` or `notFound`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, id, recordId, max, elang]
+              additionalProperties: false
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                id: { type: integer, minimum: 1 }
+                recordId: { type: integer, minimum: 1 }
+                max: { type: integer, minimum: 1, maximum: 70 }
+                elang: { type: string, enum: [en, zh, ja] }
+      responses:
+        "200":
+          description: "`ok: true` with the record and its sample, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/InternalStudyRecordAnswer" }
+                  - { $ref: "#/components/schemas/InternalStudyRefusal" }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
+        "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
+        "413": { description: Body too large }
+        "415": { description: Content-Type is not application/json }
+  /internal/ai/record-info:
+    post:
+      tags: [internal]
+      summary: "(v0.9, internal) The identity of one record of the caller (time, kind, session key and start time)"
+      x-access: Internal
+      x-internal: true
+      security: [{ internalToken: [] }]
+      description: |
+        Called by ai-service for /api/ai/study/saved with `record`. Cheap (one row) and read only. It never answers `notAllowed`
+        (it only names the caller's own record), so saved answers stay readable while AI is off. Refusals: HTTP 200 `ok: false`,
+        reason `session` or `notFound`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, id, recordId]
+              additionalProperties: false
+              properties:
+                sid: { type: string, pattern: "^[0-9a-f]{64}$" }
+                id: { type: integer, minimum: 1 }
+                recordId: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: "`ok: true` with the record's identity, or `ok: false` with a `reason`"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - { $ref: "#/components/schemas/InternalStudyInfoAnswer" }
+                  - { $ref: "#/components/schemas/InternalStudyRefusal" }
+        "400": { description: "Malformed body: `请求的格式不对。`" }
         "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
         "413": { description: Body too large }
         "415": { description: Content-Type is not application/json }
@@ -1936,12 +2235,13 @@ components:
         (v0.8) A stream of server-sent events (`Cache-Control: no-store`, `X-Accel-Buffering: no`, no Content-Length). Each event
         is `event: <name>` + `data: <one line of compact JSON>` + a blank line: `start` (AiStreamStart) first, then (round 2) at
         most one `thinking` (AiStreamThinking, only before the first delta), then `delta` (AiStreamDelta) pieces, then exactly one of `done` (AiStreamDone), `stopped` (AiStreamStopped) or `error`
-        (AiStreamError). A comment line `: keep-alive` every 15 s while nothing else was sent.
+        (AiStreamError). A comment line `: keep-alive` every 15 s while nothing else was sent. (v0.9) The study routes
+        (`/api/ai/study/ask`, `/api/ai/summary/ask`) stream the same way.
       content:
         text/event-stream:
           schema: { type: string }
     ProxyLimit:
-      description: "Nginx's own rate limit (not JSON): 30 requests/s per address (burst 120); send and retry also 20/min per session (burst 10)"
+      description: "Nginx's own rate limit (not JSON): 30 requests/s per address (burst 120); send, retry, study/ask and summary/ask also 20/min per session (burst 10)"
       content:
         text/html:
           schema: { type: string }
@@ -2259,12 +2559,14 @@ components:
         history: { type: array, items: { $ref: "#/components/schemas/HistoryEntry" }, description: "The user's 60 most recent records, newest first" }
         masterStreak: { type: integer, example: 2, description: "How many consecutive correct answers move a wrong question out of the wrong-answer notebook" }
     AttemptResponse:
-      description: "The user's Progress, plus (v0.7) `notCounted` at the end when some results were left out"
+      description: "The user's Progress, plus (v0.7) `notCounted` when some results were left out, and (v0.9) `recordId`, always last"
       allOf:
         - { $ref: "#/components/schemas/Progress" }
         - type: object
+          required: [recordId]
           properties:
             notCounted: { type: array, items: { type: string }, description: "Ids of the results that were not counted (the question is gone or not visible to the user); present only when there are any" }
+            recordId: { type: integer, description: "(v0.9) The id of the record that was just saved (the `id` in GET /api/records)" }
     BankSheet:
       type: object
       required: [name, usable, inactive]
@@ -2320,6 +2622,15 @@ components:
         answered: { type: integer, nullable: true, description: "Detail rows with an answer; null when the record has no detail" }
         detail: { type: boolean, description: "Whether per-question detail exists (exams saved before v0.5 have none)" }
         kind: { type: string, enum: [exam, practice], description: "(v0.7) Records from before v0.7 are exams" }
+    RecordDetailHead:
+      description: "(v0.9) The `record` of GET /api/record: a RecordSummary followed by the session it was saved from"
+      allOf:
+        - { $ref: "#/components/schemas/RecordSummary" }
+        - type: object
+          required: [sessionKey, startedAt]
+          properties:
+            sessionKey: { type: string, nullable: true, pattern: "^[0-9a-f]{32}$", description: "The `key` the record was saved with; null for older records or without a valid key" }
+            startedAt: { type: integer, nullable: true, description: "Unix seconds, when the session started; null likewise" }
     RecordList:
       type: object
       required: [records, retention]
@@ -2441,6 +2752,8 @@ components:
         mode: { type: string, enum: [all, weak, retry], default: all }
         seconds: { type: integer, minimum: 0, maximum: 604800, default: 0 }
         kind: { type: string, enum: [exam, practice], default: exam, description: "(v0.7) An exam or a practice session; missing or null means exam" }
+        key: { type: string, pattern: "^[0-9a-f]{32}$", description: "(v0.9) The session key; anything else (also null, a wrong length, upper case, a non-string) is stored as NULL and does not refuse the request" }
+        startedAt: { type: integer, minimum: 1, maximum: 4102444800, description: "(v0.9) When the session started, unix seconds; anything else (also null, a fraction, a string) is stored as NULL and does not refuse the request" }
 
     LogLine:
       type: object
@@ -2475,12 +2788,17 @@ components:
           description: |
             auth.signin, auth.password, auth.guard (the auth step); ai.unavailable, ai.backendDown, ai.serverBusy, ai.internal,
             ai.disabled, ai.suspended, ai.notAllowed, ai.adminOnly, ai.adminAlways, ai.serviceOff (the backend's), ai.notFound, ai.busy, ai.tooLong, ai.messageLimit, ai.chatLimit,
-            ai.notRetryable, ai.badRequest, ai.memoryLimit, ai.memoryTooLong, ai.notVerified, ai.keyProblem, ai.badUrl, ai.badKey,
+            ai.notRetryable, ai.hintLeak (stream only), ai.noWrong, ai.noUsable, ai.noDetail, ai.badRequest, ai.memoryLimit, ai.memoryTooLong, ai.notVerified, ai.keyProblem, ai.badUrl, ai.badKey,
             ai.headerClash, ai.keyMissing, ai.keyReenter, ai.modelMissing, ai.badRetention, ai.limitRange, ai.interrupted (stored
             only), ai.up.auth, ai.up.quota, ai.up.notFound, ai.up.rateLimit, ai.up.overloaded, ai.up.server, ai.up.badRequest,
             ai.up.timeout, ai.up.connect, ai.up.protocol, ai.up.refused, ai.up.tooLong (stream only)
         field: { type: string, description: "apiKey or gatewayKey; for ai.limitRange the limit's key" }
         limit: { type: integer, description: "The limit in effect (ai.tooLong, ai.messageLimit, ai.chatLimit, ai.memoryLimit, ai.memoryTooLong)" }
+        running:
+          description: "(v0.9) Only on 409 ai.busy of the study routes, always last: the answer being written, or null when it cannot be found"
+          nullable: true
+          allOf:
+            - { $ref: "#/components/schemas/AiRunningInfo" }
     AiStatus:
       type: object
       required: [enabled, allowed, suspended, hasData, running, retentionDays, memoryLimit, memoryMaxChars, maxMessageChars, messageChars, memoryChars, keyProblem, configured, freeMode]
@@ -2516,9 +2834,11 @@ components:
         updatedAt: { type: integer, description: "Unix seconds of the last message; retention counts from here" }
         messageCount: { type: integer }
         running: { type: boolean, description: "An answer is being written in this chat" }
+        kind: { type: string, enum: [chat, practice, exam, summary], description: "(v0.9) AI Chat, or the study chat of a practice session, an exam session or a record summary. A study chat's title is only the time (YYYY-MM-DD HH:MM, or the record's `at` for a summary); the screens add a suffix by kind" }
+        recordId: { type: integer, nullable: true, description: "(v0.9) The main-app record a study chat belongs to (display only, never used to look a chat up); null for AI Chat" }
     AiMessage:
       type: object
-      required: [id, role, content, status, error, truncated, model, createdAt, free]
+      required: [id, role, content, status, error, truncated, model, createdAt, free, kind, questionId, questionNo, source, lang, recordId, sample]
       properties:
         id: { type: integer }
         role: { type: string, enum: [user, assistant] }
@@ -2529,6 +2849,13 @@ components:
         model: { type: string, nullable: true }
         createdAt: { type: integer, description: Unix seconds }
         free: { type: boolean, description: "(v0.8, round 2) The mode this message was written (or, for an answer, generated) in: true = the administrator's free mode. Every message records its mode; the chat itself has none" }
+        kind: { type: string, enum: [chat, hint, explain, summary], description: "(v0.9) 'chat' for AI Chat; both messages of a study pair carry the kind of the pair" }
+        questionId: { type: string, nullable: true, description: "(v0.9) Hints and explanations; null otherwise" }
+        questionNo: { type: integer, nullable: true, description: "(v0.9) The question number the user saw" }
+        source: { type: string, enum: [practice, result], nullable: true, description: "(v0.9) Where a hint or explanation was asked" }
+        lang: { type: string, enum: [en, zh-CN, ja], nullable: true, description: "(v0.9) The reply language of a study answer" }
+        recordId: { type: integer, nullable: true, description: "(v0.9) The chat's record, only for source result and kind summary" }
+        sample: { allOf: [{ $ref: "#/components/schemas/AiStudySample" }], nullable: true, description: "(v0.9) Summaries only; null otherwise" }
     AiChat:
       type: object
       required: [chat, messages]
@@ -2629,7 +2956,7 @@ components:
         tokensCached: { type: integer, description: "(v0.8, round 2) The part of tokensIn the provider served from its prompt cache (prompt caching; Anthropic `cache_read_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`). A provider that reports nothing counts 0. Shown as the Cached column (缓存命中) of the Usage tab" }
     AiUsage:
       type: object
-      required: [days, from, to, unit, totals, byUser, byModel, byPeriod]
+      required: [days, from, to, unit, totals, byUser, byModel, byPeriod, byPurpose]
       properties:
         days: { type: integer, enum: [7, 30, 90, 365] }
         from: { type: string, example: "2026-11-05" }
@@ -2670,6 +2997,18 @@ components:
                 required: [period]
                 properties:
                   period: { type: string, example: "2026-11-11" }
+              - { $ref: "#/components/schemas/AiUsageSums" }
+        byPurpose:
+          type: array
+          minItems: 4
+          maxItems: 4
+          description: "(v0.9) The chat calls of the range by feature: exactly four rows in the order chat, hint, explain, summary, zeros kept. `chat` = AI Chat and every call recorded before v0.9; the calls that listed models are in no row"
+          items:
+            allOf:
+              - type: object
+                required: [purpose]
+                properties:
+                  purpose: { type: string, enum: [chat, hint, explain, summary] }
               - { $ref: "#/components/schemas/AiUsageSums" }
     AiAdminUserRow:
       type: object
@@ -2724,7 +3063,7 @@ components:
     AiStreamStart:
       type: object
       description: "data of the event start"
-      required: [chatId, chatTitle, userMessageId, assistantMessageId, model, newChat, retry, free]
+      required: [chatId, chatTitle, userMessageId, assistantMessageId, model, newChat, retry, free, chatKind]
       properties:
         chatId: { type: integer }
         chatTitle: { type: string }
@@ -2733,7 +3072,15 @@ components:
         model: { type: string }
         newChat: { type: boolean }
         retry: { type: boolean }
-        free: { type: boolean, description: "(v0.8, round 2) The mode this answer is written in: the administrator's free mode when the question was sent (a retry: when it was retried). A chat has no mode" }
+        free: { type: boolean, description: "(v0.8, round 2) The mode this answer is written in: the administrator's free mode when the question was sent (a retry: when it was retried). A chat has no mode. Always false on the study routes" }
+        chatKind: { type: string, enum: [chat, practice, exam, summary], description: "(v0.9) The kind of the chat; 'chat' for a new AI Chat chat" }
+        kind: { type: string, enum: [hint, explain, summary], description: "(v0.9) Study routes only: the kind of the answer. The keys from here on are only on the study routes (/api/ai/study/ask, /api/ai/summary/ask)" }
+        questionId: { type: string, nullable: true, description: "(v0.9) Study routes only; null for a summary" }
+        questionNo: { type: integer, nullable: true, description: "(v0.9) Study routes only; null for a summary" }
+        source: { type: string, enum: [practice, result], nullable: true, description: "(v0.9) Study routes only; null for a summary" }
+        recordId: { type: integer, nullable: true, description: "(v0.9) Study routes only: the record when source is result, and for a summary; null for a practice answer" }
+        sample: { allOf: [{ $ref: "#/components/schemas/AiStudySample" }], nullable: true, description: "(v0.9) Study routes only: set for a summary, null otherwise" }
+        lang: { type: string, enum: [en, zh-CN, ja], description: "(v0.9) Study routes only: the reply language" }
     AiStreamThinking:
       type: object
       description: "(v0.8, round 2) data of the event thinking: always `{}`. Sent at most once, only before the first delta, when the model starts to send its reasoning (which is never stored, sent on or logged)"
@@ -2766,6 +3113,208 @@ components:
         status: { type: string, enum: [error] }
         code: { type: string, example: ai.up.rateLimit }
         error: { type: string }
+        withdraw: { type: boolean, enum: [true], description: "(v0.9) Only with code ai.hintLeak: the hint would have given the answer away; the client removes the hint text it showed, and nothing of it is saved" }
+    AiStudySample:
+      type: object
+      description: "(v0.9) The three counts of a summary"
+      required: [used, usable, wrong]
+      properties:
+        used: { type: integer, description: "Wrong answers sent to the model (at most 70)" }
+        usable: { type: integer, description: "Wrong answers whose question still exists and is visible to the user" }
+        wrong: { type: integer, description: "Wrong answers in the record" }
+    AiRunningInfo:
+      type: object
+      description: "(v0.9) The answer being written, in a 409 ai.busy of the study routes"
+      required: [chatId, messageId, chatKind, kind, questionId, questionNo, source, recordId]
+      properties:
+        chatId: { type: integer }
+        messageId: { type: integer }
+        chatKind: { type: string, enum: [chat, practice, exam, summary] }
+        kind: { type: string, enum: [chat, hint, explain, summary] }
+        questionId: { type: string, nullable: true }
+        questionNo: { type: integer, nullable: true }
+        source: { type: string, enum: [practice, result], nullable: true }
+        recordId: { type: integer, nullable: true, description: "The chat's record, only for source result and kind summary" }
+    AiStudyAnswer:
+      type: object
+      description: "(v0.9) A saved hint or explanation"
+      required: [messageId, kind, questionId, questionNo, source, status, error, truncated, content, lang, model, createdAt, finishedAt]
+      properties:
+        messageId: { type: integer }
+        kind: { type: string, enum: [hint, explain] }
+        questionId: { type: string }
+        questionNo: { type: integer }
+        source: { type: string, enum: [practice, result] }
+        status: { type: string, enum: [streaming, done, stopped, error] }
+        error: { type: string, nullable: true, description: "An ai.* code when status is error (ai.hintLeak for a withheld hint, whose content is empty)" }
+        truncated: { type: boolean }
+        content: { type: string }
+        lang: { type: string, enum: [en, zh-CN, ja], nullable: true }
+        model: { type: string, nullable: true }
+        createdAt: { type: integer, description: Unix seconds }
+        finishedAt: { type: integer, nullable: true, description: "Unix seconds; null while it is being written" }
+    AiSummaryAnswer:
+      type: object
+      description: "(v0.9) A saved summary"
+      required: [messageId, recordId, status, error, truncated, content, lang, model, createdAt, finishedAt, sample]
+      properties:
+        messageId: { type: integer }
+        recordId: { type: integer, nullable: true }
+        status: { type: string, enum: [streaming, done, stopped, error] }
+        error: { type: string, nullable: true }
+        truncated: { type: boolean }
+        content: { type: string }
+        lang: { type: string, enum: [en, zh-CN, ja], nullable: true }
+        model: { type: string, nullable: true }
+        createdAt: { type: integer }
+        finishedAt: { type: integer, nullable: true }
+        sample: { allOf: [{ $ref: "#/components/schemas/AiStudySample" }], nullable: true }
+    AiStudySaved:
+      type: object
+      description: "(v0.9) What GET /api/ai/study/saved finds"
+      required: [chatId, latest, lastGood]
+      properties:
+        chatId: { type: integer, nullable: true, description: "The study chat, or null when there is none yet" }
+        latest: { allOf: [{ $ref: "#/components/schemas/AiStudyAnswer" }], nullable: true, description: "The newest answer of that question in that place, whatever its status" }
+        lastGood: { allOf: [{ $ref: "#/components/schemas/AiStudyAnswer" }], nullable: true, description: "The newest answer with status done and some text; filled only when `latest` is not done" }
+    AiSummarySaved:
+      type: object
+      description: "(v0.9) What GET /api/ai/summary/saved finds"
+      required: [chatId, latest, lastGood]
+      properties:
+        chatId: { type: integer, nullable: true }
+        latest: { allOf: [{ $ref: "#/components/schemas/AiSummaryAnswer" }], nullable: true }
+        lastGood: { allOf: [{ $ref: "#/components/schemas/AiSummaryAnswer" }], nullable: true, description: "Filled only when `latest` is not done" }
+    InternalStudyRefusal:
+      type: object
+      description: "(v0.9, internal) A refusal of a study data route (HTTP 200)"
+      required: [ok, reason]
+      properties:
+        ok: { type: boolean, enum: [false] }
+        reason: { type: string, enum: [session, notAllowed, notFound], description: "notAllowed only on question and record; notFound is one answer for missing, foreign and out-of-scope" }
+    InternalStudyQuestion:
+      type: object
+      description: "(v0.9, internal) A question without its answer key or explanation"
+      required: [id, kind, lang, stem, options, items, active, cut]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [single, multi, hotspot] }
+        lang: { type: string, enum: [en, zh, ja], description: "The language the text is really in: the base language when the question has no translation into the one asked" }
+        stem: { type: string }
+        options:
+          type: array
+          description: "Single and multiple choice (at most 8)"
+          items:
+            type: object
+            required: [key, text]
+            properties:
+              key: { type: string, example: A }
+              text: { type: string }
+        items:
+          type: array
+          description: "Hotspot questions"
+          items:
+            type: object
+            required: [text, choices]
+            properties:
+              text: { type: string }
+              choices: { type: array, items: { type: string } }
+        active: { type: boolean, description: "false for a question left out of a later import" }
+        cut: { type: boolean, description: "A text or a count was cut to the caps" }
+    InternalStudySolution:
+      type: object
+      description: "(v0.9, internal) The answer side of a question"
+      required: [answer, explanation, mnemonic, note, explainLang, keyTexts]
+      properties:
+        answer:
+          description: "The answer key: letters, or one chosen index per hotspot item"
+          oneOf:
+            - { type: array, items: { type: string } }
+            - { type: array, items: { type: integer } }
+        explanation: { type: string }
+        mnemonic: { type: string, description: "Empty on /internal/ai/record" }
+        note: { type: string, description: "Empty on /internal/ai/record" }
+        explainLang: { type: string, enum: [en, zh, ja, ""], description: "The language the explanation is written in; empty for a question without per-language explanations" }
+        keyTexts: { type: array, items: { type: string }, description: "The text of the correct option(s) in every language the question has; empty on /internal/ai/record" }
+    InternalStudyRecordIdent:
+      type: object
+      description: "(v0.9, internal) The identity of a record"
+      required: [id, at, kind, key, startedAt]
+      properties:
+        id: { type: integer }
+        at: { type: string, example: "2026-11-10 15:10" }
+        kind: { type: string, enum: [practice, exam] }
+        key: { type: string, nullable: true, pattern: "^[0-9a-f]{32}$" }
+        startedAt: { type: integer, nullable: true }
+    InternalStudyQuestionAnswer:
+      type: object
+      required: [ok, uiLang, question, solution, item, record]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        uiLang: { type: string, enum: [en, zh, ja], description: "The user's Settings language" }
+        question: { $ref: "#/components/schemas/InternalStudyQuestion" }
+        solution: { $ref: "#/components/schemas/InternalStudySolution" }
+        item:
+          type: object
+          nullable: true
+          description: "Null unless `record` was sent"
+          required: [seq, answer, correct]
+          properties:
+            seq: { type: integer }
+            answer:
+              type: array
+              nullable: true
+              description: "What the user answered (null: left unanswered); an entry that does not fit the question as it is now is null"
+              items: { nullable: true, oneOf: [{ type: string }, { type: integer }] }
+            correct: { type: boolean }
+        record:
+          nullable: true
+          description: "Null unless `record` was sent"
+          allOf:
+            - { $ref: "#/components/schemas/InternalStudyRecordIdent" }
+    InternalStudyRecordAnswer:
+      type: object
+      required: [ok, uiLang, record, wrong, usable, items, budgetCut]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        uiLang: { type: string, enum: [en, zh, ja] }
+        record:
+          type: object
+          required: [id, at, kind, mode, total, correct, answered, detail, key, startedAt]
+          properties:
+            id: { type: integer }
+            at: { type: string }
+            kind: { type: string, enum: [practice, exam] }
+            mode: { type: string, description: "The record's mode (all, weak or retry)" }
+            total: { type: integer }
+            correct: { type: integer }
+            answered: { type: integer, nullable: true, description: "Detail rows with an answer; null without detail" }
+            detail: { type: boolean }
+            key: { type: string, nullable: true }
+            startedAt: { type: integer, nullable: true }
+        wrong: { type: integer, description: "Items answered wrong" }
+        usable: { type: integer, description: "Of those, the ones whose question still exists and is visible" }
+        items:
+          type: array
+          maxItems: 70
+          items:
+            type: object
+            required: [seq, answer, question, solution]
+            properties:
+              seq: { type: integer }
+              answer:
+                type: array
+                items: { nullable: true, oneOf: [{ type: string }, { type: integer }] }
+              question: { $ref: "#/components/schemas/InternalStudyQuestion" }
+              solution: { $ref: "#/components/schemas/InternalStudySolution" }
+        budgetCut: { type: boolean, description: "The 120000-character text budget cut something" }
+    InternalStudyInfoAnswer:
+      type: object
+      required: [ok, uiLang, record]
+      properties:
+        ok: { type: boolean, enum: [true] }
+        uiLang: { type: string, enum: [en, zh, ja] }
+        record: { $ref: "#/components/schemas/InternalStudyRecordIdent" }
     InternalUser:
       type: object
       description: "(v0.8, internal) A user as the backend describes it to ai-service"

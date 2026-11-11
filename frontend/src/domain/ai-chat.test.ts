@@ -306,3 +306,40 @@ test('the read-only banner reason: paused, account without the function, or the 
   assert.equal(readOnlyReason({ enabled: false, allowed: false, suspended: false }), 'unavailable');
   assert.equal(readOnlyReason({ enabled: false, allowed: true, suspended: false }), 'unavailable');
 });
+
+// ---------------------------------------------------------------- v0.9: study chats keep their kind
+
+test('v0.9: an AI Chat conversation is kind "chat"; a chat read from the server keeps its kind', () => {
+  assert.equal(emptyChat().kind, 'chat');
+  const plain = chatOf(detail(false, []));
+  assert.equal(plain.kind, 'chat');
+  const study: AiChatDetail = { ...detail(false, []), chat: { ...detail(false, []).chat, kind: 'practice', recordId: null } };
+  assert.equal(chatOf(study).kind, 'practice');
+  assert.equal(pollResult(emptyChat(), study).kind, 'practice');
+});
+
+test('v0.9: a follow-up in a study chat keeps the kind (the start event names it or says nothing); an unknown kind is ignored', () => {
+  const open = chatOf({ ...detail(false, [msg({ id: 21, role: 'user' }), msg({ id: 22, role: 'assistant', content: 'A' })]),
+    chat: { id: 11, title: '2026-11-12 21:58', createdAt: NOW, updatedAt: NOW, messageCount: 2, running: false, kind: 'exam' } });
+  assert.equal(open.kind, 'exam');
+  const quiet = run(localSend(open, 'and why?'), start({ chatId: 11, userMessageId: 23, assistantMessageId: 24, newChat: false }));
+  assert.equal(quiet.kind, 'exam');
+  const named = run(localSend(open, 'and why?'), { event: 'start', data: { ...start({ chatId: 11, userMessageId: 23, assistantMessageId: 24, newChat: false }).data, chatKind: 'exam' } });
+  assert.equal(named.kind, 'exam');
+  const odd = run(localSend(open, 'and why?'), { event: 'start', data: { ...start({ chatId: 11, userMessageId: 23, assistantMessageId: 24, newChat: false }).data, chatKind: 'nonsense' } });
+  assert.equal(odd.kind, 'exam');
+  // a new AI Chat conversation that the server calls "chat"
+  const fresh = run(localSend(emptyChat(), 'hi'), { event: 'start', data: { ...start().data, chatKind: 'chat' } });
+  assert.equal(fresh.kind, 'chat');
+  assert.equal(startOf({ ...start().data, chatKind: 'summary' })?.chatKind, 'summary');
+  assert.equal(startOf(start().data)?.chatKind, null);
+});
+
+test('v0.9: Retry is offered only under an AI Chat answer, never under a hint, explanation or summary', () => {
+  const failed = (kind: 'chat' | 'hint' | 'explain' | 'summary') => chatOf(detail(false, [
+    msg({ id: 31, role: 'user', content: 'q', kind }),
+    msg({ id: 32, role: 'assistant', status: 'error', error: 'ai.up.timeout', kind }),
+  ]));
+  assert.equal(retryTarget(failed('chat')), 32);
+  for (const k of ['hint', 'explain', 'summary'] as const) assert.equal(retryTarget(failed(k)), null);
+});

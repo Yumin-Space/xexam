@@ -21,10 +21,20 @@ pub struct UsageRow {
 
 /// Inserts a usage row. A user id that no longer exists (deleted meanwhile) is stored as NULL.
 pub fn insert_usage(c: &Connection, u: &UsageRow) -> rusqlite::Result<()> {
+    insert_usage_purpose(c, u, None)
+}
+
+/// `insert_usage` with the feature of a study generation (`hint` | `explain` | `summary`); None for AI Chat and every
+/// non-chat call.
+pub fn insert_usage_purpose(
+    c: &Connection,
+    u: &UsageRow,
+    purpose: Option<&str>,
+) -> rusqlite::Result<()> {
     c.execute(
         "INSERT INTO usage (user_id, at, day, kind, provider, model, tokens_in, tokens_out, latency_ms, first_byte_ms,
-                            status, error_code, tokens_cached)
-         VALUES ((SELECT id FROM users WHERE id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                            status, error_code, tokens_cached, purpose)
+         VALUES ((SELECT id FROM users WHERE id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         params![
             u.user_id,
             u.at,
@@ -39,6 +49,7 @@ pub fn insert_usage(c: &Connection, u: &UsageRow) -> rusqlite::Result<()> {
             u.status,
             u.error_code,
             u.tokens_cached,
+            purpose,
         ],
     )?;
     Ok(())
@@ -97,6 +108,35 @@ pub fn by_model(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(S
     ))?;
     let rows = st.query_map([from, to], |r| Ok((r.get(0)?, sums_at(r, 1)?)))?;
     rows.collect()
+}
+
+/// The four features, in the order `by_purpose` returns them.
+pub const PURPOSES: [&str; 4] = ["chat", "hint", "explain", "summary"];
+
+/// Chat calls (`kind = 'chat'`) of the period per feature (`COALESCE(purpose, 'chat')`); always the four rows in the
+/// order chat, hint, explain, summary, zeros kept.
+pub fn by_purpose(
+    c: &Connection,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<Vec<(&'static str, Sums)>> {
+    let mut st = c.prepare(&format!(
+        "SELECT COALESCE(purpose, 'chat') AS p, {SUMS} FROM usage
+         WHERE kind = 'chat' AND day BETWEEN ?1 AND ?2 GROUP BY p"
+    ))?;
+    let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
+    let found: Vec<(String, Sums)> = rows.collect::<rusqlite::Result<_>>()?;
+    Ok(PURPOSES
+        .iter()
+        .map(|p| {
+            let s = found
+                .iter()
+                .find(|(k, _)| k == p)
+                .map(|(_, s)| s.clone())
+                .unwrap_or_default();
+            (*p, s)
+        })
+        .collect())
 }
 
 /// Per period key: the first `len` characters of `day` (10 = day, 7 = month).
@@ -169,18 +209,27 @@ pub fn outbox_remove(c: &Connection, ids: &[i64]) -> rusqlite::Result<()> {
     Ok(())
 }
 
-/// Retention: deletes chats last updated before `cutoff`, except the running ones; returns how many.
-pub fn sweep_chats(c: &Connection, cutoff: i64, running: &[i64]) -> rusqlite::Result<usize> {
+/// Retention: deletes up to `limit` chats last updated before `cutoff` (oldest first), except the running ones; returns
+/// how many.
+pub fn sweep_chats(
+    c: &Connection,
+    cutoff: i64,
+    running: &[i64],
+    limit: i64,
+) -> rusqlite::Result<usize> {
     let keep: Vec<String> = running.iter().map(i64::to_string).collect();
     let sql = if keep.is_empty() {
-        "DELETE FROM chats WHERE updated_at < ?1".to_string()
+        "DELETE FROM chats WHERE id IN
+           (SELECT id FROM chats WHERE updated_at < ?1 ORDER BY updated_at LIMIT ?2)"
+            .to_string()
     } else {
         format!(
-            "DELETE FROM chats WHERE updated_at < ?1 AND id NOT IN ({})",
+            "DELETE FROM chats WHERE id IN
+               (SELECT id FROM chats WHERE updated_at < ?1 AND id NOT IN ({}) ORDER BY updated_at LIMIT ?2)",
             keep.join(",")
         )
     };
-    c.execute(&sql, [cutoff])
+    c.execute(&sql, params![cutoff, limit])
 }
 
 /// Finished tasks older than `cutoff`.

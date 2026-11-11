@@ -1,5 +1,5 @@
-//! AI database schema 2 (round-2 contracts 3.1): the upgrade of a schema-1 database (backup copy first, rows and keys
-//! kept, new columns with their defaults), reopening writes nothing, new and upgraded databases have the same
+//! AI database schemas 2 and 3 (round-2 contracts 3.1, v0.9 contracts 4): the upgrade of a schema-1 database (backup
+//! copy first, rows and keys kept, new columns with their defaults), reopening writes nothing, new and upgraded databases have the same
 //! `sqlite_master`, a newer schema and a failed backup are refused. All content is made up.
 mod common;
 
@@ -163,7 +163,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
     assert_eq!(n, 2);
     drop(copy);
     assert!(captured_contains(&format!(
-        "Upgraded the AI database to schema 2. A copy of the previous version was saved first: {}.",
+        "Upgraded the AI database to schema 3. A copy of the previous version was saved first: {}.",
         copies[0].display()
     )));
 
@@ -174,7 +174,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "2");
+    assert_eq!(v, "3");
     let (fe, free): (i64, i64) = c
         .query_row(
             "SELECT (SELECT function_enabled FROM users WHERE id = 5), (SELECT free_mode FROM users WHERE id = 5)",
@@ -297,18 +297,18 @@ async fn a_newer_schema_is_refused() {
     t.app.0.store.release_file();
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '3' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '4' WHERE key = 'schema'", [])
             .expect("set");
     }
     let cfg = test_config(t.dir.path(), &t.backend.url, &Opts::default());
     let err = match xexam_ai_service::app::App::open(cfg) {
-        Ok(_) => panic!("a schema-3 database must be refused"),
+        Ok(_) => panic!("a schema-4 database must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 3, written by a newer ai-service; this version (schema 2) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 4, written by a newer ai-service; this version (schema 3) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

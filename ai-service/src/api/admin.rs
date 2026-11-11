@@ -523,12 +523,13 @@ pub async fn usage(ctx: Ctx) -> Answer {
     let monthly = days >= 90;
     let (from_s, to_s) = (from.to_string(), to.to_string());
     let app = &ctx.app.0;
-    let (totals, users, models, periods) = app.store.read(|c| {
+    let (totals, users, models, periods, purposes) = app.store.read(|c| {
         Ok((
             stats::totals(c, &from_s, &to_s)?,
             stats::by_user(c, &from_s, &to_s)?,
             stats::by_model(c, &from_s, &to_s)?,
             stats::by_period(c, &from_s, &to_s, if monthly { 7 } else { 10 })?,
+            stats::by_purpose(c, &from_s, &to_s)?,
         ))
     })?;
     let by_user: Vec<Value> = users
@@ -596,6 +597,16 @@ pub async fn usage(ctx: Ctx) -> Answer {
             Value::Object(m)
         })
         .collect();
+    let by_purpose: Vec<Value> = purposes
+        .iter()
+        .map(|(purpose, s)| {
+            let mut m = Map::new();
+            m.insert("purpose".into(), Value::from(*purpose));
+            m.extend(sums_json(s));
+            m.insert("tokensCached".into(), Value::from(s.tokens_cached));
+            Value::Object(m)
+        })
+        .collect();
     let mut totals_json = sums_json(&totals);
     totals_json.insert("tokensCached".into(), Value::from(totals.tokens_cached));
     ok(json!({
@@ -607,6 +618,7 @@ pub async fn usage(ctx: Ctx) -> Answer {
         "byUser": by_user,
         "byModel": by_model,
         "byPeriod": by_period,
+        "byPurpose": by_purpose,
     }))
 }
 

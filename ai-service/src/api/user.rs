@@ -79,7 +79,7 @@ pub async fn chat(ctx: Ctx) -> Answer {
 }
 
 /// The SSE body: frames from the generation, a `: keep-alive` comment when nothing was sent for a while.
-fn sse_response(rx: UnboundedReceiver<Frame>, keep_alive: Duration) -> Response {
+pub(super) fn sse_response(rx: UnboundedReceiver<Frame>, keep_alive: Duration) -> Response {
     let stream = futures_util::stream::unfold(rx, move |mut rx| async move {
         tokio::select! {
             f = rx.recv() => f.map(|f| {
@@ -110,6 +110,8 @@ struct Prepared {
     chat: i64,
     title: String,
     new_chat: bool,
+    /// The chat's kind (`chat` for a new one), sent in the `start` frame
+    chat_kind: String,
     /// The administrator's free mode was on when the message was sent (no study-assistant prompt, no memories)
     free: bool,
     user_msg: i64,
@@ -179,7 +181,74 @@ struct Stream {
     retry: bool,
 }
 
+/// What a generation needs besides its places: the whole `start` frame, the system prompt, the turns sent, and the
+/// study extras.
+pub(super) struct Launch {
+    pub chat: i64,
+    pub answer: i64,
+    pub start: Value,
+    pub system: String,
+    pub history: Vec<provider::Turn>,
+    pub guard: Option<crate::study::guard::HintGuard>,
+    pub purpose: Option<&'static str>,
+}
+
 /// Starts the generation of a prepared answer and returns the SSE response.
+pub(super) fn launch(
+    ctx: &Ctx,
+    snap: &crate::app::Snapshot,
+    target: crate::provider::Target,
+    slot: chat::Slot,
+    permit: chat::GatePermit,
+    l: Launch,
+) -> Answer {
+    let app = &ctx.app;
+    let s = &snap.settings;
+    let body = provider::chat_body(
+        s.wire_format(),
+        &s.model,
+        &l.system,
+        &l.history,
+        s.usage_option,
+        s.max_tokens,
+    );
+    let request = match target.chat_request(&app.0.client, &body) {
+        Ok(r) => r,
+        Err(e) => {
+            let now = unix_now();
+            app.0.store.write(|tx| {
+                data::finish_answer(tx, l.answer, "", "error", Some(e.code.code()), false, now)
+            })?;
+            return Err(ApiError::upstream(e.code));
+        }
+    };
+    drop(target);
+    slot.set_target(l.chat, l.answer);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let _ = tx.send(Frame {
+        event: "start",
+        data: l.start,
+    });
+    let g = Generation {
+        app: app.clone(),
+        slot,
+        permit,
+        who: ctx.who.clone(),
+        chat: l.chat,
+        message: l.answer,
+        model: s.model.clone(),
+        provider: s.provider,
+        format: s.wire_format(),
+        request,
+        frames: tx,
+        guard: l.guard,
+        purpose: l.purpose,
+    };
+    tokio::spawn(chat::run(g));
+    Ok(sse_response(rx, app.0.timeouts.keep_alive))
+}
+
+/// Starts the generation of a prepared send / retry answer.
 fn start_stream(
     ctx: &Ctx,
     snap: &crate::app::Snapshot,
@@ -189,7 +258,6 @@ fn start_stream(
     stream: Stream,
 ) -> Answer {
     let Stream { p, lang, retry } = stream;
-    let app = &ctx.app;
     let s = &snap.settings;
     let system = if p.free {
         prompt::free_prompt(lang, p.switched)
@@ -197,61 +265,33 @@ fn start_stream(
         let today = crate::util::local_today().to_string();
         prompt::system_prompt(lang, &today, &p.memories, p.switched)
     };
-    let body = provider::chat_body(
-        s.wire_format(),
-        &s.model,
-        &system,
-        &p.history,
-        s.usage_option,
-        s.max_tokens,
-    );
-    let request = match target.chat_request(&app.0.client, &body) {
-        Ok(r) => r,
-        Err(e) => {
-            let now = unix_now();
-            app.0.store.write(|tx| {
-                data::finish_answer(tx, p.answer, "", "error", Some(e.code.code()), false, now)
-            })?;
-            return Err(ApiError::upstream(e.code));
-        }
-    };
-    drop(target);
-    slot.set_target(p.chat, p.answer);
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let _ = tx.send(Frame {
-        event: "start",
-        data: json!({
-            "chatId": p.chat,
-            "chatTitle": p.title,
-            "userMessageId": p.user_msg,
-            "assistantMessageId": p.answer,
-            "model": s.model,
-            "newChat": p.new_chat,
-            "retry": retry,
-            "free": p.free,
-        }),
+    let start = json!({
+        "chatId": p.chat,
+        "chatTitle": p.title,
+        "userMessageId": p.user_msg,
+        "assistantMessageId": p.answer,
+        "model": s.model,
+        "newChat": p.new_chat,
+        "retry": retry,
+        "free": p.free,
+        "chatKind": p.chat_kind,
     });
-    let g = Generation {
-        app: app.clone(),
-        slot,
-        permit,
-        who: ctx.who.clone(),
+    let l = Launch {
         chat: p.chat,
-        message: p.answer,
-        model: s.model.clone(),
-        provider: s.provider,
-        format: s.wire_format(),
-        request,
-        frames: tx,
+        answer: p.answer,
+        start,
+        system,
+        history: p.history,
+        guard: None,
+        purpose: None,
     };
-    tokio::spawn(chat::run(g));
-    Ok(sse_response(rx, app.0.timeouts.keep_alive))
+    launch(ctx, snap, target, slot, permit, l)
 }
 
 /// Takes the caller's place and a global place, then checks again that AI is still on and the caller's AI+ function is
 /// not suspended (a switch-off or a suspension in between would otherwise miss this call: both stop only the calls that
 /// already hold a place).
-fn take_places(
+pub(super) fn take_places(
     ctx: &Ctx,
     kind: Kind,
     chat: Option<i64>,
@@ -306,13 +346,13 @@ pub async fn send(ctx: Ctx) -> Answer {
     let p = ctx.app.0.store.write(|tx| -> Result<Prepared, ApiError> {
         data::ensure_user(tx, who, now)?;
         let free = who.is_admin() && data::free_mode(tx, who.id)?;
-        let (chat, title, new_chat) = match chat_id {
+        let (chat, title, new_chat, chat_kind) = match chat_id {
             Some(id) => {
                 let c = data::chat(tx, who.id, id)?.ok_or_else(ApiError::not_found)?;
                 if c.message_count + 2 > limits.messages_per_chat {
                     return Err(ApiError::message_limit(limits.messages_per_chat));
                 }
-                (id, c.title, false)
+                (id, c.title, false, c.kind)
             }
             None => {
                 if data::count_chats(tx, who.id)? >= limits.chats_per_user {
@@ -320,7 +360,7 @@ pub async fn send(ctx: Ctx) -> Answer {
                 }
                 let title = chat_title(&text);
                 let id = data::create_chat(tx, who.id, &title, now)?;
-                (id, title, true)
+                (id, title, true, "chat".to_string())
             }
         };
         let prev = data::messages(tx, chat)?;
@@ -354,6 +394,7 @@ pub async fn send(ctx: Ctx) -> Answer {
             chat,
             title,
             new_chat,
+            chat_kind,
             free,
             user_msg,
             answer,
@@ -395,7 +436,8 @@ pub async fn retry(ctx: Ctx) -> Answer {
         let retryable = last.role == "assistant"
             && (last.status == "error" || last.status == "stopped")
             && question.role == "user";
-        if !retryable {
+        // A study answer is regenerated by its own ask route (with its own prompt and guard), never by the chat prompt
+        if !retryable || last.kind != "chat" || question.kind != "chat" {
             return Err(ApiError::not_retryable());
         }
         data::reset_answer(tx, last.id, &model, free)?;
@@ -411,6 +453,7 @@ pub async fn retry(ctx: Ctx) -> Answer {
             chat: chat_id,
             title: c.title,
             new_chat: false,
+            chat_kind: c.kind,
             free,
             user_msg: question.id,
             answer: last.id,

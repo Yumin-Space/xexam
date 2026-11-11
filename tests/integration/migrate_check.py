@@ -12,16 +12,21 @@ Steps:
   F. SQLite journal mode (v0.7): the database runs in WAL mode and the log says so once; XEXAM_SQLITE_JOURNAL=delete switches it back to
      DELETE (what an older version does on a rollback) with every record kept, and the next start without it is in WAL mode again.
   G. Only the six-column layout (v0.7): a schema-3 database (as v0.6 wrote it) whose bank holds questions of the old 3-column
-     layout is upgraded (now straight to schema 5) with one backup, and its old-layout questions are retired (records,
+     layout is upgraded (now straight to schema 6) with one backup, and its old-layout questions are retired (records,
      statistics and the bank stay; the log names the bank); the next start retires nothing more. The `import` command refuses
      a 3-column workbook (English message, exit code 1, nothing written) and imports a six-column one into that bank. The
      workbooks are made-up and written by this script (a minimal .xlsx built with zipfile).
-  H. Schema 5 (v0.8): a schema-4 database (as v0.7.5 wrote it: the G database with a second user, the two v0.8 columns
-     dropped again and meta.schema set back to 4) is upgraded to schema 5 with a backup named xexam-schema4-*; every user
-     then has ai_enabled = 0 and its own 32-hex uid; the next start writes nothing (no second backup, the same uids).
+  H. Schema 4 to 6 in one step (v0.8 + v0.9): a schema-4 database (as v0.7.5 wrote it: the G database with a second user,
+     the two v0.8 columns and the two v0.9 columns dropped again and meta.schema set back to 4) is upgraded to schema 6
+     with a backup named xexam-schema4-*; every user then has ai_enabled = 0 and its own 32-hex uid; the next start
+     writes nothing (no second backup, the same uids).
   I. The AI link (v0.8): `serve` creates <data>/link/internal.token (43 base64url characters; mode 600 and a folder of
      mode 700 on POSIX systems) and reads the same token again on the next start; with XEXAM_INTERNAL_TOKEN set no file
      is created; a token shorter than 32 characters turns the link off with a log line and the app still runs.
+  J. Schema 5 to 6 (v0.9): a v0.8 database with study records (the H database with the two v0.9 attempts columns dropped
+     again and meta.schema set back to 5) is upgraded to schema 6 with exactly one backup named xexam-schema5-*;
+     attempts.session_key and attempts.started_at exist and are NULL for the old records, every record is unchanged, and
+     the next start writes nothing (no new backup, no upgrade line, the same rows).
 Since v0.6 every route except /api/info needs a session: each run signs in as the default administrator (admin / admin the first
 time, then the password this script sets) and reads the administrator's /api/progress, which is where the old records go.
 """
@@ -342,7 +347,7 @@ try:
     os.makedirs(g)
     write_v3_database(os.path.join(g, 'xexam.db'), admin_hash)
     prog, log = run_once(g, 'g1.log')
-    ok('Upgraded the database to schema 5' in log, 'G. the schema-3 database is upgraded to schema 5')
+    ok('Upgraded the database to schema 6' in log, 'G. the schema-3 database is upgraded to schema 6')
     names = [n for n in os.listdir(os.path.join(g, 'backups')) if n.startswith('xexam-schema')]
     ok(len(names) == 1 and names[0].startswith('xexam-schema3-'),
        'G. one backup of the schema-3 database was written first (xexam-schema3-*). Actual %r' % names)
@@ -377,7 +382,7 @@ try:
     ok(b is not None and b['total'] == 3 and b['inactive'] == 2, 'G. the bank now has the 3 six-column questions in use and the 2 retired ones. Actual %r' % b)
     ok('retired' not in log, 'G. six-column questions are never retired')
 
-    # H: schema 4 -> 5. A second user first, then the database is turned back into what v0.7.5 wrote
+    # H: schema 4 -> 6. A second user first, then the database is turned back into what v0.7.5 wrote
     def add_user(cookie):
         st, _, j = api('POST', '/api/users/create', {'username': 'robin', 'password': 'robin-initial-2026', 'role': 'user',
                                                      'banks': 'all'}, cookie)
@@ -387,20 +392,22 @@ try:
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         cols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
         ok('ai_enabled' in cols and 'uid' in cols, 'H. a v0.8 database has users.ai_enabled and users.uid. Actual %r' % cols)
-        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '5', 'H. a v0.8 database is schema 5')
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '6', 'H. a v0.9 database is schema 6')
         c.execute('ALTER TABLE users DROP COLUMN ai_enabled')
         c.execute('ALTER TABLE users DROP COLUMN uid')
+        c.execute('ALTER TABLE attempts DROP COLUMN session_key')
+        c.execute('ALTER TABLE attempts DROP COLUMN started_at')
         c.execute("UPDATE meta SET value = '4' WHERE key = 'schema'")
         c.commit()
     before = set(os.listdir(backups))
     prog, log = run_once(g, 'h2.log')
-    ok('Upgraded the database to schema 5' in log, 'H. the schema-4 database is upgraded to schema 5')
+    ok('Upgraded the database to schema 6' in log, 'H. the schema-4 database is upgraded to schema 6')
     added = set(os.listdir(backups)) - before
     ok(len(added) == 1 and next(iter(added)).startswith('xexam-schema4-'), 'H. one backup named xexam-schema4-* was written first. Actual %r' % sorted(added))
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         users = c.execute('SELECT username, ai_enabled, uid FROM users ORDER BY id').fetchall()
         schema = c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0]
-    ok(schema == '5' and len(users) == 2, 'H. schema 5 with both users. Actual %r, %d users' % (schema, len(users)))
+    ok(schema == '6' and len(users) == 2, 'H. schema 6 with both users. Actual %r, %d users' % (schema, len(users)))
     ok(all(u[1] == 0 for u in users), 'H. every user starts with AI+ off (ai_enabled = 0)')
     ok(all(re.fullmatch(r'[0-9a-f]{32}', u[2] or '') for u in users) and len({u[2] for u in users}) == len(users),
        'H. every user has its own 32-hex uid')
@@ -410,6 +417,37 @@ try:
         again = c.execute('SELECT username, ai_enabled, uid FROM users ORDER BY id').fetchall()
     ok('Upgraded the database' not in log and set(os.listdir(backups)) == before | added and again == users,
        'H. the next start writes nothing: no new backup, the same uids')
+
+    # J: schema 5 -> 6. The H database is turned back into what v0.8 wrote (no session columns), then upgraded
+    def attempts_state():
+        with contextlib.closing(sqlite3.connect(gdb)) as c:
+            return (c.execute('SELECT id, user_id, at, kind, total, correct FROM attempts ORDER BY id').fetchall(),
+                    c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0],
+                    [r[1] for r in c.execute('PRAGMA table_info(attempts)')])
+
+    rows_before, schema, cols = attempts_state()
+    ok(schema == '6' and 'session_key' in cols and 'started_at' in cols and len(rows_before) >= 1,
+       'J. the upgraded database is schema 6 with attempts.session_key and attempts.started_at and holds records. Actual %r %r' % (schema, cols))
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        c.execute('ALTER TABLE attempts DROP COLUMN session_key')
+        c.execute('ALTER TABLE attempts DROP COLUMN started_at')
+        c.execute("UPDATE meta SET value = '5' WHERE key = 'schema'")
+        c.commit()
+    before5 = set(os.listdir(backups))
+    prog, log = run_once(g, 'j1.log')
+    ok('Upgraded the database to schema 6' in log, 'J. the schema-5 database is upgraded to schema 6')
+    added5 = set(os.listdir(backups)) - before5
+    ok(len(added5) == 1 and next(iter(added5)).startswith('xexam-schema5-'), 'J. exactly one backup named xexam-schema5-* was written first. Actual %r' % sorted(added5))
+    rows_after, schema, cols = attempts_state()
+    ok(schema == '6' and 'session_key' in cols and 'started_at' in cols, 'J. meta.schema is 6 and both attempts columns exist. Actual %r %r' % (schema, cols))
+    ok(rows_after == rows_before, 'J. every record is unchanged by the upgrade')
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        tags = c.execute('SELECT COUNT(*), COUNT(session_key), COUNT(started_at) FROM attempts').fetchone()
+    ok(tags[0] >= 1 and tags[1] == 0 and tags[2] == 0, 'J. session_key and started_at are NULL for the old records. Actual %r' % (tags,))
+    ok(prog is not None and len(prog['history']) == 1, 'J. the records are still served')
+    prog, log = run_once(g, 'j2.log')
+    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before5 | added5 and attempts_state() == (rows_after, '6', cols),
+       'J. the next start writes nothing: no upgrade line, no new backup, the same rows')
 
     # I: XEXAM_INTERNAL_TOKEN instead of the file; a token that is too short
     i = os.path.join(root, 'i')

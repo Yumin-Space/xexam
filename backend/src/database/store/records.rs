@@ -126,8 +126,7 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             counts.insert(r.get(0)?, (r.get(1)?, r.get(2)?));
         }
     }
-    let base =
-        "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks, kind FROM attempts";
+    let base = "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks, kind, session_key, started_at FROM attempts";
     let mut st = match only {
         Some(_) => c.prepare(&format!("{base} WHERE id=?1 AND user_id=?2"))?,
         None => c.prepare(&format!("{base} WHERE user_id=?1 ORDER BY id DESC"))?,
@@ -155,7 +154,7 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             Some(&(n, a)) if n > 0 => (n, Value::from(a)),
             _ => (0, Value::Null),
         };
-        out.push(json!({
+        let mut summary = json!({
             "id": id,
             "at": r.get::<_, String>(1)?,
             "banks": banks,
@@ -168,7 +167,18 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             "answered": answered,
             "detail": items > 0,
             "kind": r.get::<_, String>(9)?,
-        }));
+        });
+        // v0.9: the detail of one record also says which session it was saved from (null for older records)
+        if only.is_some() {
+            if let Some(obj) = summary.as_object_mut() {
+                obj.insert(
+                    "sessionKey".to_string(),
+                    json!(r.get::<_, Option<String>>(10)?),
+                );
+                obj.insert("startedAt".to_string(), json!(r.get::<_, Option<i64>>(11)?));
+            }
+        }
+        out.push(summary);
     }
     Ok(out)
 }

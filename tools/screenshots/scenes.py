@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The screenshot scenes: headless Chrome drives the real UI through DOM clicks, one browser per language.
 
-shoot_language() writes, into one folder, the 20 images the READMEs and docs use (16 desktop images 1280 px wide and 4
+shoot_language() writes, into one folder, the 24 images the READMEs and docs use (19 desktop images 1280 px wide and 5
 iPhone images 390 x 844, both at device scale 2):
 
   desktop-1-home        Home with the saved exam to continue (green Start exam, orange Start practice)
@@ -34,7 +34,17 @@ iPhone images 390 x 844, both at device scale 2):
                         (badge, AI+ feature: alex Paused with Resume, sam Active with Pause; administrators always)
   desktop-16-ai-usage   the rest of that page, scrolled into view: the usage statistics with the cached-tokens column (they grow
                         by a few calls per language), the chat retention and the safety limits
+  desktop-17-ai-hint    a practice question of the made-up demo bank with the AI hint window open (the screenshot user has the
+                        AI+ feature, so the AI hint / AI explanation controls are bright); the stub's hint, in the UI language
+  desktop-18-ai-result  the result of the exam: the first answer card with the AI analysis (AI 解析) window open
+  desktop-19-ai-summary Study records with the AI summary window open: the "based on" line and the stub's four headings
   iphone-1-home, iphone-2-quiz, iphone-3-menu, iphone-4-records
+  iphone-5-ai-hint      the practice page at 390 x 844 with the AI hint window open
+
+Layout checks (assertions, not images) run in the same pass: at 390 px the practice action bar has at most two rows of
+buttons (en / zh-CN / ja), and at 800 px the Study records list (en and ja) is in the card layout with no horizontal
+scroll and its Delete buttons on one line. The AI asks of the new scenes are saved in AI Chat like any other; the run
+deletes the administrator's AI chats before the AI Chat scenes and at the end.
 
 The made-up AI provider (tests/integration/ai_stub.py) answers in the reply language the page sends (the Settings
 language), so each language's AI Chat image shows questions and answers in that language. Every value on the AI images
@@ -53,8 +63,8 @@ from browser import Chrome, strip_png
 
 SCENES = ['desktop-%d-%s.png' % kv for kv in enumerate(
     ['home', 'quiz', 'result', 'records', 'banks', 'settings', 'dark', 'about', 'signin', 'users', 'practice',
-     'user-banks', 'logs', 'ai-chat', 'ai-settings', 'ai-usage'], start=1)] + ['iphone-1-home.png', 'iphone-2-quiz.png',
-                                                                               'iphone-3-menu.png', 'iphone-4-records.png']
+     'user-banks', 'logs', 'ai-chat', 'ai-settings', 'ai-usage', 'ai-hint', 'ai-result', 'ai-summary'], start=1)] + [
+    'iphone-1-home.png', 'iphone-2-quiz.png', 'iphone-3-menu.png', 'iphone-4-records.png', 'iphone-5-ai-hint.png']
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
 UI_LANG = {'en': 'en', 'zh-CN': 'zh', 'ja': 'ja'}          # the uiLang / questionLang setting
@@ -99,6 +109,18 @@ PRELUDE = r"""
       keys.forEach(k => window.__qa('.opt').find(b => b.querySelector('.bubble').textContent === k).click());
     }
     return q.kind;
+  };
+  // wait until the text of `sel` (a hint, an explanation, a summary) has appeared and stopped growing; returns its length
+  window.__settle = async (sel) => {
+    let last = -1, still = 0;
+    for (let i = 0; i < 120; i++) {
+      await window.__wait(150);
+      const n = (document.querySelector(sel)?.innerText || '').length;
+      still = n > 30 && n === last ? still + 1 : 0;
+      last = n;
+      if (still >= 6) return n;
+    }
+    return -1;
   };
   // Start exam / Start practice from Home in bank order (shuffle off), so every language shows the same questions
   window.__start = async (kind) => {
@@ -366,6 +388,82 @@ JS_AI_CARDS = r"""((first, last) => {
 })"""
 
 
+# AI scenes (v0.9). Practice: start a practice from Home, open the AI hint window with the button of the action bar and
+# wait until the stub's hint is complete; returns what happened (for the log of the run)
+JS_AI_HINT = r"""(async (phone) => {
+  window.__skew = 0;
+  await window.__start('practice');
+  const b = document.querySelector('[data-focus="q-aihint"]');
+  if (!b) return 'NO AI HINT BUTTON';
+  if (b.getAttribute('aria-disabled') === 'true') return 'AI HINT BUTTON GREYED OUT';
+  if (phone) b.scrollIntoView({block: 'center'});
+  b.click();
+  const n = await window.__settle('#aip-pop-body');
+  document.activeElement?.blur?.();
+  return n < 0 ? 'HINT DID NOT FINISH' : 'hint of ' + n + ' characters; window ' + (document.querySelector('#aip-pop') ? 'open' : 'MISSING');
+})"""
+
+# The number of rows of buttons in the action bar of the practice page (buttons whose tops are within 6 px share a row)
+JS_BAR_ROWS = r"""(() => {
+  const tops = [];
+  for (const el of document.querySelectorAll('.pfoot button')) {
+    if (!el.offsetParent) continue;
+    const t = Math.round(el.getBoundingClientRect().top);
+    if (!tops.some(x => Math.abs(x - t) < 6)) tops.push(t);
+  }
+  return tops.length;
+})()"""
+
+# Result page of the exam: open the AI analysis window of the first answer card; returns [text length or a message, the
+# lowest bottom (page coordinates) of the card and the window]
+JS_AI_RESULT = r"""(async () => {
+  const b = document.querySelector('[data-focus^="rv-ai-"]:not(.aip-ico)');
+  if (!b) return ['NO AI ANALYSIS BUTTON (data-focus on the page: ' + window.__qa('[data-focus]').map(x => x.dataset.focus).slice(0, 25).join(' ') + ')', 0];
+  if (b.getAttribute('aria-disabled') === 'true') return ['AI ANALYSIS BUTTON GREYED OUT', 0];
+  b.click();
+  const n = await window.__settle('#aip-pop-body');
+  document.activeElement?.blur?.();
+  const card = document.querySelector('.page-result .stem').closest('article, li, section, .panel');
+  const pop = document.querySelector('#aip-pop');
+  const bottom = Math.max(card.getBoundingClientRect().bottom, pop ? pop.getBoundingClientRect().bottom : 0) + window.scrollY;
+  return [n, Math.ceil(bottom)];
+})()"""
+
+# Study records: open the AI summary window of the first record that has a usable summary button; returns the text length
+# and the "based on" line
+JS_AI_SUMMARY = r"""(async () => {
+  const b = window.__qa('.rec-table .rec-ai button').find(x => x.getAttribute('aria-disabled') !== 'true');
+  if (!b) return 'NO AI SUMMARY BUTTON';
+  b.click();
+  const n = await window.__settle('#aip-sum-body');
+  const meta = document.querySelector('#aip-sum-meta')?.innerText.replace(/\s+/g, ' ') || '';
+  return (n < 0 ? 'SUMMARY DID NOT FINISH' : 'summary of ' + n + ' characters') + '; ' + (meta || 'NO "based on" LINE');
+})()"""
+
+# Study records at 800 px: the card layout (rows are grids), no horizontal scroll, every Delete button on one line;
+# returns a list of the problems found (empty = fine)
+JS_RECORDS_LAYOUT = r"""(() => {
+  const bad = [];
+  const table = document.querySelector('.rec-table');
+  if (!table) return ['no records table'];
+  if (!table.classList.contains('has-ai')) bad.push('the table has no has-ai class');
+  const row = table.querySelector('tbody tr');
+  if (!row || getComputedStyle(row).display !== 'grid') bad.push('the rows are not in the card layout');
+  const de = document.documentElement;
+  if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally');
+  const sc = document.querySelector('.rec-scroll');
+  if (sc && sc.scrollWidth > sc.clientWidth + 1) bad.push('the list scrolls horizontally');
+  for (const el of document.querySelectorAll('.rec-del')) {
+    if (!el.offsetParent) continue;
+    const r = document.createRange();
+    r.selectNodeContents(el);
+    const tops = new Set([...r.getClientRects()].map(x => Math.round(x.top / 4)));
+    if (tops.size > 1) { bad.push('a Delete button wraps onto two lines'); break; }
+  }
+  return bad;
+})()"""
+
+
 class Shooter:
     def __init__(self, cdp, base, out, only):
         self.cdp, self.base, self.out, self.only = cdp, base, out, only
@@ -461,6 +559,8 @@ def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_lo
         _desktop_scenes(s, base, cookie, code, upload, with_log)
         _ai_scenes(s, base, cookie, code)
         _phone_scenes(s)
+        _check_paused_phone(s, base, cookie, code)
+        seed.delete_ai_chats(base, cookie)
         # leave nothing behind for the next language: the saved exam and the exam record of this run
         s.nav()
         s.js(JS_CLEAR_SAVED)
@@ -481,15 +581,38 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     print('  ' + s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code)))
     s.js(JS_CLEAR_SAVED)
     s.nav()
-    if s.wanted('desktop-3-result.png'):
+    if s.wanted('desktop-3-result.png') or s.wanted('desktop-18-ai-result.png'):
         print('  exam:', s.js(JS_EXAM))
         # the score and the first answer card, cut just below that card
         bottom = s.js("(() => { const c = document.querySelector('.page-result .stem').closest('article, li, section, .panel'); "
                       "return Math.ceil(c.getBoundingClientRect().bottom + window.scrollY) })()")
         s.page('desktop-3-result.png', fixed=bottom + 9)
-    if s.wanted('desktop-4-records.png'):
+        if s.wanted('desktop-18-ai-result.png'):
+            # the AI analysis window of that first card (the exam is saved, so the button is bright)
+            s.metrics(WIDTH, 900, False)
+            time.sleep(0.4)
+            text, low = s.js(JS_AI_RESULT)
+            print('  ai result:', text if isinstance(text, str) else ('analysis of %d characters' % text if text > 0 else 'ANALYSIS DID NOT FINISH'))
+            s.page('desktop-18-ai-result.png', fixed=min(1100, max(560, low + 24)))
+    if s.wanted('desktop-4-records.png') or s.wanted('desktop-19-ai-summary.png'):
         s.nav('#/records')
         s.page('desktop-4-records.png', cap=1320)
+        if s.wanted('desktop-4-records.png') and code in ('en', 'ja'):
+            _check_records_layout(s, code)
+        if s.wanted('desktop-19-ai-summary.png'):
+            s.desktop()
+            s.nav('#/records')
+            print('  ai summary:', s.js(JS_AI_SUMMARY))
+            s.png('desktop-19-ai-summary.png', WIDTH, 900, False)
+    if s.wanted('desktop-17-ai-hint.png'):
+        s.desktop()
+        s.js(JS_CLEAR_SAVED)
+        s.nav()
+        print('  ai hint:', s.js('(%s)(false)' % JS_AI_HINT))
+        low = s.js("Math.ceil(Math.max(document.querySelector('.pfoot').getBoundingClientRect().bottom, "
+                   "document.querySelector('#aip-pop')?.getBoundingClientRect().bottom || 0) + window.scrollY)")
+        s.page('desktop-17-ai-hint.png', fixed=min(1100, max(560, low + 40)))
+        s.js(JS_CLEAR_SAVED)
     if s.wanted('desktop-11-practice.png'):
         s.nav()
         print('  practice:', s.js(JS_PRACTICE))
@@ -553,9 +676,22 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     s.page('desktop-8-about.png', fixed=bottom + 24)
 
 
+def _check_records_layout(s, code):
+    """At 800 px the Study records list is in the card layout with no horizontal scroll and Delete on one line (en, ja)."""
+    s.metrics(800, 900, False)
+    time.sleep(0.6)
+    bad = s.js(JS_RECORDS_LAYOUT)
+    s.metrics(WIDTH, 900, False)
+    if bad:
+        raise AssertionError('Study records at 800 px (%s): %s' % (code, '; '.join(bad)))
+    print('  records at 800 px: card layout, no horizontal scroll, Delete on one line')
+
+
 def _ai_scenes(s, base, cookie, code):
     """desktop-14-ai-chat, desktop-15-ai-settings and desktop-16-ai-usage (after the System log scene, so the AI calls of
     one language do not change the log image of the next one more than necessary)."""
+    # the AI asks of the scenes before are saved as chats of the administrator: start the AI Chat scenes without them
+    seed.delete_ai_chats(base, cookie)
     if s.wanted('desktop-14-ai-chat.png'):
         first, second = AI_QUESTIONS[code]
         seed.ai_chat(base, cookie, first, code)
@@ -605,6 +741,55 @@ def _ai_scenes(s, base, cookie, code):
                 print('  warning: the Usage and Safety limits cards were not found; desktop-16-ai-usage.png is skipped')
 
 
+# The practice page as a user whose AI+ feature is paused (greyed controls with the "unavailable" tag): the action bar rows,
+# the horizontal overflow, the AI controls greyed; returns a list of the problems found (empty = fine)
+JS_PAUSED_PRACTICE = r"""(async () => {
+  await window.__start('practice');
+  await window.__wait(300);
+  const bad = [];
+  const tops = [];
+  for (const el of document.querySelectorAll('.pfoot button')) {
+    if (!el.offsetParent) continue;
+    const t = Math.round(el.getBoundingClientRect().top);
+    if (!tops.some(x => Math.abs(x - t) < 6)) tops.push(t);
+  }
+  if (tops.length > 2) bad.push('the action bar has ' + tops.length + ' rows');
+  const de = document.documentElement;
+  if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally by ' + (de.scrollWidth - de.clientWidth) + ' px');
+  const b = document.querySelector('[data-focus="q-aihint"]');
+  if (!b) bad.push('no AI hint button');
+  else if (b.getAttribute('aria-disabled') !== 'true') bad.push('the AI hint button is not greyed out');
+  return bad;
+})()"""
+
+
+def _check_paused_phone(s, base, cookie, code):
+    """A user whose AI+ feature is paused (alex) on the practice page at 390 and 360 px: at most two rows of buttons in the
+    action bar, no horizontal scroll, the AI controls greyed. Signs the page back in as the administrator afterwards."""
+    if not s.wanted('iphone-5-ai-hint.png'):
+        return
+    alex = seed.Session(base).sign_in('alex', seed.DEMO_PASSWORD).cookie[seed.COOKIE]
+    cdp = s.cdp
+    try:
+        cdp.call('Network.setCookie', name=seed.COOKIE, value=alex, url=base + '/', httpOnly=True, sameSite='Strict')
+        s.iphone()
+        s.nav()
+        s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code))
+        for width in (390, 360):
+            s.metrics(width, PHONE_H, True)
+            s.nav()
+            s.js(JS_CLEAR_SAVED)
+            s.nav()
+            problems = s.js(JS_PAUSED_PRACTICE)
+            if problems:
+                raise AssertionError('practice page at %d px, AI+ feature paused: %s' % (width, '; '.join(problems)))
+            print('  practice page at %d px, AI+ feature paused: two rows at most, no horizontal scroll, controls greyed' % width)
+            s.js(JS_CLEAR_SAVED)
+    finally:
+        cdp.call('Network.setCookie', name=seed.COOKIE, value=cookie, url=base + '/', httpOnly=True, sameSite='Strict')
+        s.nav()
+
+
 def _phone_scenes(s):
     s.iphone()
     s.nav()
@@ -616,3 +801,12 @@ def _phone_scenes(s):
     s.phone('iphone-3-menu.png')
     s.nav('#/records')
     s.phone('iphone-4-records.png', scroll_to='#rec-list-h')
+    if s.wanted('iphone-5-ai-hint.png'):
+        s.js(JS_CLEAR_SAVED)
+        s.nav()
+        print('  ai hint (phone):', s.js('(%s)(true)' % JS_AI_HINT))
+        rows = s.js(JS_BAR_ROWS)
+        if rows > 2:
+            raise AssertionError('the practice action bar at 390 px has %d rows of buttons (at most 2)' % rows)
+        print('  practice action bar at 390 px: %d row(s)' % rows)
+        s.png('iphone-5-ai-hint.png', PHONE_W, PHONE_H, True)

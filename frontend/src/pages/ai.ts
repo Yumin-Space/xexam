@@ -27,6 +27,7 @@ import {
   applyEvent, chatOf, clearsComposer, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isTerminal, localFail,
   isThinking, localSend, localStop, noAccessKey, pollResult, readOnlyReason, questionOf, retryTarget, sendBody, shouldSend, showsEmptyHint, type ChatView, type ViewMessage,
 } from '../domain/ai-chat.ts';
+import { chatDisplayTitle, popTitleKey } from '../domain/ai-plus.ts';
 import { memoryLength, wantsMemory } from '../domain/ai-memory.ts';
 import { shownCode } from '../domain/ai-settings.ts';
 import { aiCodeText, errorText } from '../i18n/errors.ts';
@@ -35,7 +36,10 @@ import { parseHash } from '../router.ts';
 import { onRouteChange, onSignedIn, refreshAi, render } from '../state/actions.ts';
 import { aiFreeMode, aiStatus } from '../state/ai.ts';
 import { S, isAdmin, onClearUserData } from '../state/store.ts';
-import type { AiChatSummary, AiMemory, AiMessage } from '../types/api.ts';
+import type { AiChatKind, AiChatSummary, AiMemory, AiMessage } from '../types/api.ts';
+import { forgetStudyChats as forgetPopChats } from '../components/ai-pop.ts';
+import { forgetStudyChats as forgetSummaryChats } from '../components/ai-summary.ts';
+import { copyText } from '../utils/clipboard.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, keepFocus, type Child } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
@@ -339,7 +343,7 @@ async function openChat(id: number): Promise<void> {
   sendError = null;
   openError = null;
   const summary = chats?.find((c) => c.id === id);
-  view = { ...emptyChat(), chatId: id, title: summary?.title ?? '' };
+  view = { ...emptyChat(), chatId: id, title: summary?.title ?? '', kind: summary?.kind ?? 'chat' };
   setChatInUrl(id);
   opening = true;
   pane = 'conv';
@@ -580,11 +584,18 @@ async function saveSuggestion(): Promise<void> {
   if (onPage()) paintMsgs();
 }
 
-async function removeChat(c: Pick<AiChatSummary, 'id' | 'title'>): Promise<void> {
-  const title = c.title || t('ai.new');
+/** The deleted chats' saved hints / explanations / summaries must not be offered as saved any more (null = every chat) */
+function forgetStudyChats(chatId: number | null): void {
+  forgetPopChats(chatId);
+  forgetSummaryChats(chatId);
+}
+
+async function removeChat(c: Pick<AiChatSummary, 'id' | 'title' | 'kind'>): Promise<void> {
+  const title = chatTitleText(c);
   if (!(await ask({ title: t('ai.delete'), body: t('ai.delete.ask', { title }), ok: t('common.delete'), danger: true }))) return;
   try {
     await deleteChat(c.id);
+    forgetStudyChats(c.id);
     toast(t('ai.delete.done'));
     if (view.chatId === c.id) {
       detachStream();
@@ -606,6 +617,7 @@ async function removeAllChats(): Promise<void> {
   if (!(await ask({ title: t('ai.deleteAll'), body: tn('ai.deleteAll.ask', n), ok: t('common.delete'), danger: true }))) return;
   try {
     await deleteAllChats();
+    forgetStudyChats(null);
     detachStream();
     stopPolling();
     view = emptyChat();
@@ -688,9 +700,36 @@ function paint(): void {
   syncComposer();
 }
 
+/**
+ * The title of a chat as shown (v0.9): the stored title, plus the translated suffix of a study chat ("<time>-练习"); an
+ * AI Chat conversation without a title is "New chat".
+ */
+export function chatTitleText(c: { title: string; kind?: AiChatKind | null }): string {
+  const { text, suffixKey } = chatDisplayTitle(c);
+  return suffixKey ? `${text}-${t(suffixKey)}` : text || t('ai.new');
+}
+
 /** The title of a chat in a list */
-export function chatTitleEl(title: string): HTMLElement {
-  return h('span', { class: 'ai-chat-t' }, title);
+export function chatTitleEl(c: { title: string; kind?: AiChatKind | null }): HTMLElement {
+  return h('span', { class: 'ai-chat-t' }, chatTitleText(c));
+}
+
+/**
+ * What a user message shows (v0.9): an AI Chat message is its own bubble; a study question (hint / explanation) is a label
+ * line ("AI hint · question 3") above the bubble; a summary request is only its label ("AI summary · 8 of 9 wrong answers"),
+ * never the machine text the model was given.
+ */
+export function userBody(m: AiMessage): Child[] {
+  if (m.kind === 'summary') {
+    const sm = m.sample;
+    return [sm ? h('p', { class: 'ai-study-label' }, t('aiplus.chat.label.summary', { used: sm.used, wrong: sm.wrong })) : null];
+  }
+  const bubble = h('div', { class: 'ai-bubble' }, h('div', { class: 'ai-text' }, m.content));
+  if (m.kind === 'hint' || m.kind === 'explain') {
+    const label = t(popTitleKey(m.kind, m.source ?? 'practice'), { n: m.questionNo ?? '' });
+    return [h('p', { class: 'ai-study-label' }, label), bubble];
+  }
+  return [bubble];
 }
 
 function paintMsgs(): void {
@@ -777,14 +816,14 @@ function listBody(): Child[] {
     out.push(h('p', { class: 'ai-list-note' }, t('ai.empty')));
   } else {
     out.push(h('ul', { class: 'ai-chats', 'aria-label': t('ai.tab.chats') }, chats.map((c) => {
-      const title = c.title || t('ai.new');
+      const title = chatTitleText(c);
       const on = c.id === view.chatId;
       return h('li', { class: 'ai-chat' + (on ? ' on' : '') },
         h('button', {
           class: 'ai-chat-open', id: `ai-c-${c.id}`, type: 'button', 'aria-current': on ? 'true' : null,
           onclick: () => void openChat(c.id),
         },
-        chatTitleEl(title),
+        chatTitleEl(c),
         h('span', { class: 'ai-chat-at' }, c.running ? t(listThinking(c) ? 'ai.thinking' : 'ai.writing') : fmtAiTime(c.updatedAt, localeTag()))),
         h('button', {
           class: 'icon-btn ai-chat-del', id: `ai-cdel-${c.id}`, type: 'button', 'aria-label': t('ai.deleteOne.aria', { title }),
@@ -801,7 +840,7 @@ function listBody(): Child[] {
 // ---------------------------------------------------------------- the conversation pane
 
 function convHead(): Child[] {
-  const title = view.chatId == null ? t('ai.new') : view.title || t('ai.new');
+  const title = view.chatId == null ? t('ai.new') : chatTitleText(view);
   return [
     h('button', {
       class: 'btn quiet ai-back', id: 'ai-back', type: 'button',
@@ -816,7 +855,7 @@ function convHead(): Child[] {
     view.chatId != null
       ? h('button', {
         class: 'btn ai-mini danger ai-del', id: 'ai-del', type: 'button',
-        onclick: () => void removeChat({ id: view.chatId as number, title: view.title }),
+        onclick: () => void removeChat({ id: view.chatId as number, title: view.title, kind: view.kind }),
       }, t('ai.delete'))
       : null,
   ];
@@ -876,36 +915,19 @@ function suggestionBar(): HTMLElement | null {
       }, t('ai.mem.dismiss'))));
 }
 
-/** Copies a message's text: the async clipboard where allowed, else a hidden textarea and execCommand (older browsers,
- *  plain-http hosts) */
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard && window.isSecureContext) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch {
-    // fall through to the old way
-  }
-  const area = h('textarea', { class: 'sr-only', readonly: true, 'aria-hidden': 'true', tabindex: '-1' });
-  area.value = text;
-  document.body.append(area);
-  area.select();
-  let ok = false;
-  try {
-    ok = document.execCommand('copy');
-  } catch {
-    ok = false;
-  }
-  area.remove();
-  return ok;
-}
-
-function copyButton(m: AiMessage): HTMLElement {
+function copyButton(m: AiMessage, text: string): HTMLElement {
   return h('button', {
     class: 'btn quiet ai-mini ai-copy', id: `ai-copy-${m.id}`, type: 'button', 'aria-label': t('ai.copyLabel'),
-    onclick: async () => toast(t((await copyText(m.content)) ? 'ai.copied' : 'ai.copyFailed'), 2500),
+    onclick: async () => toast(t((await copyText(text)) ? 'ai.copied' : 'ai.copyFailed'), 2500),
   }, miniIcon('copy', 'ai-mi'), t('ai.copy'));
+}
+
+/** What Copy copies: the text shown. A summary request shows only its label, so Copy copies that label, not the
+ *  machine line the model received (v0.9). */
+function copySource(m: AiMessage): string {
+  if (m.role !== 'user' || m.kind !== 'summary') return m.content;
+  const sm = m.sample;
+  return sm ? t('aiplus.chat.label.summary', { used: sm.used, wrong: sm.wrong }) : '';
 }
 
 /** The line right above a message (owner's request): "You" or "AI" (with the model) and the time; right-aligned over a sent
@@ -931,20 +953,20 @@ function messageEl(m: ViewMessage, retryId: number | null): HTMLElement {
     (!user && questionOf(view, m.id)?.id === suggestion.messageId) || (user && m.id === suggestion.messageId && (!next || next.role !== 'assistant')));
   // Every message, sent or answered, has a Copy button (owner's request); not while the answer is still being written
   const buttons: Child[] = [
-    busy || m.content.trim() === '' ? null : copyButton(m),
-    user && full()
+    busy || copySource(m).trim() === '' ? null : copyButton(m, copySource(m)),
+    user && full() && (m.kind ?? 'chat') === 'chat'
       ? h('button', {
         class: 'btn quiet ai-mini ai-remember', id: `ai-rem-${m.id}`, type: 'button', disabled: sending() || suggestion?.busy === true,
         onclick: () => void suggest(m.id),
       }, miniIcon('sparkle', 'ai-mi'), t('ai.mem.remember'))
       : null,
-    !user && retryId === m.id && full()
+    !user && retryId === m.id && full() && (m.kind ?? 'chat') === 'chat'
       ? h('button', { class: 'btn ai-mini', id: 'ai-retry', type: 'button', onclick: retry }, t('ai.retry'))
       : null,
   ];
   return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant'), id: `ai-m-${m.id}`, 'aria-busy': busy ? 'true' : null },
     whoLine(m),
-    user ? h('div', { class: 'ai-bubble' }, h('div', { class: 'ai-text' }, m.content)) : markdownEl(m.content, `ai-md-${m.id}`),
+    ...(user ? userBody(m) : [markdownEl(m.content, `ai-md-${m.id}`)]),
     foot ? h('p', { class: 'ai-foot' + (bad ? ' bad' : ''), id: `ai-foot-${m.id}` }, foot) : null,
     actsRow(buttons),
     showSuggest ? suggestionBar() : null);

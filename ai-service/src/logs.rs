@@ -286,12 +286,15 @@ impl Throttle {
 /// Chat failure lines: at most one per code per minute; the others are counted and summed up later.
 pub struct FailureLog {
     state: Mutex<(HashMap<&'static str, Instant>, u64)>,
+    /// Withheld hints: when the last line was written, and how many were withheld since
+    leaks: Mutex<(Option<Instant>, u64)>,
 }
 
 impl Default for FailureLog {
     fn default() -> Self {
         FailureLog {
             state: Mutex::new((HashMap::new(), 0)),
+            leaks: Mutex::new((None, 0)),
         }
     }
 }
@@ -313,8 +316,30 @@ impl FailureLog {
         }
     }
 
+    /// A hint was withheld because it gave the answer away: one line a minute, the others are counted. Never any text.
+    pub fn note_leak(&self, username: &str) {
+        let mut st = self.leaks.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        if st
+            .0
+            .is_none_or(|t| now.saturating_duration_since(t) >= Duration::from_secs(60))
+        {
+            st.0 = Some(now);
+            tracing::warn!("AI hint withheld because it gave the answer away (user {username:?})");
+        } else {
+            st.1 += 1;
+        }
+    }
+
     /// Writes the summary line for the failures counted since the last report (called once a minute).
     pub fn flush(&self) {
+        {
+            let mut st = self.leaks.lock().unwrap_or_else(|e| e.into_inner());
+            let n = std::mem::take(&mut st.1);
+            if n > 0 {
+                tracing::warn!("{n} more AI hints were withheld since the last report");
+            }
+        }
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let n = std::mem::take(&mut st.1);
         if n > 0 {

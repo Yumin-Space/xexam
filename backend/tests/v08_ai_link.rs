@@ -399,7 +399,7 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none());
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "5");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
     // the v5 columns come after the v4 ones
     let columns: Vec<String> = c
         .prepare("SELECT name FROM pragma_table_info('users') ORDER BY cid")
@@ -514,7 +514,7 @@ fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
         );
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "5");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
     // every user: AI+ off (also ben, whose earlier switch went with the dropped column), a unique 32-hex stamp
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM users WHERE ai_enabled = 0"),

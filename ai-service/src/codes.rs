@@ -13,6 +13,8 @@ pub struct ApiError {
     pub text: String,
     pub field: Option<&'static str>,
     pub limit: Option<i64>,
+    /// `ai.busy` of the study routes: what is running (`null` when nothing could be found); serialised last
+    pub running: Option<Box<Value>>,
 }
 
 impl ApiError {
@@ -23,6 +25,7 @@ impl ApiError {
             text: text.to_string(),
             field: None,
             limit: None,
+            running: None,
         }
     }
 
@@ -46,6 +49,9 @@ impl ApiError {
         }
         if let Some(n) = self.limit {
             m.insert("limit".into(), Value::from(n));
+        }
+        if let Some(r) = &self.running {
+            m.insert("running".into(), (**r).clone());
         }
         Value::Object(m)
     }
@@ -85,6 +91,24 @@ impl ApiError {
     }
     pub fn busy() -> ApiError {
         ApiError::new(409, "ai.busy", "上一个回答还在生成，请等它结束或按停止。")
+    }
+    /// `ai.busy` with the answer that is running (`RunningInfo`, or `Value::Null`)
+    pub fn busy_with(running: Value) -> ApiError {
+        let mut e = ApiError::busy();
+        e.running = Some(Box::new(running));
+        e
+    }
+    /// A summary of a record without any wrong answer
+    pub fn no_wrong() -> ApiError {
+        ApiError::new(409, "ai.noWrong", text_of("ai.noWrong"))
+    }
+    /// A summary of a record whose wrong answers can no longer be used
+    pub fn no_usable() -> ApiError {
+        ApiError::new(409, "ai.noUsable", text_of("ai.noUsable"))
+    }
+    /// A summary of a record without per-question records
+    pub fn no_detail() -> ApiError {
+        ApiError::new(409, "ai.noDetail", text_of("ai.noDetail"))
     }
     pub fn too_long(n: i64) -> ApiError {
         ApiError::new(
@@ -234,6 +258,10 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.up.protocol" => "AI 服务商的回应无法读取。",
         "ai.up.refused" => "AI 拒绝回答这个问题。",
         "ai.up.tooLong" => "回答太长，已被截断。",
+        "ai.hintLeak" => "这个提示透露了答案，已被隐藏。请重新生成。",
+        "ai.noWrong" => "这次没有答错的题（未作答的题不计入 AI 总结）。",
+        "ai.noUsable" => "这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。",
+        "ai.noDetail" => "这条记录没有逐题记录，无法总结。",
         _ => "AI 内部出错了，请稍后再试。",
     }
 }
@@ -262,6 +290,26 @@ mod tests {
         ] {
             assert_eq!(text_of(e.code), e.text, "{}", e.code);
         }
+        for e in [
+            ApiError::no_wrong(),
+            ApiError::no_usable(),
+            ApiError::no_detail(),
+        ] {
+            assert_eq!(text_of(e.code), e.text, "{}", e.code);
+            assert_eq!(e.status.as_u16(), 409);
+        }
+        assert_eq!(
+            text_of("ai.hintLeak"),
+            "这个提示透露了答案，已被隐藏。请重新生成。"
+        );
+        // `running` comes last and only when set (`null` included)
+        let b = ApiError::busy_with(serde_json::Value::Null);
+        assert!(serde_json::to_string(&b.to_json())
+            .expect("json")
+            .ends_with(r#""code":"ai.busy","running":null}"#));
+        let b = ApiError::busy_with(serde_json::json!({"chatId": 3}));
+        assert_eq!(b.to_json()["running"]["chatId"], 3);
+        assert!(ApiError::busy().to_json().get("running").is_none());
         assert_eq!(ApiError::suspended().status.as_u16(), 403);
         assert_eq!(ApiError::admin_always().status.as_u16(), 409);
     }

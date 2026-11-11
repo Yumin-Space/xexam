@@ -19,4 +19,5 @@ pub mod retention;
 pub mod secret;
 pub mod settings;
 pub mod store;
+pub mod study;
 pub mod util;

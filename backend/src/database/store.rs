@@ -38,7 +38,7 @@ use super::{HISTORY_LIMIT, MASTER_STREAK, RECORD_RETENTION};
 use crate::error::DbError;
 use crate::models::{
     Attempt, AttemptResult, BankScope, ImportRecord, ImportTarget, ParsedSheet, Question,
-    SkippedRow, Viewer,
+    SessionTag, SkippedRow, Viewer,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::de::Error as _;
@@ -52,10 +52,12 @@ mod banks;
 mod migrate;
 mod records;
 mod settings;
+mod study;
 mod users;
 
 pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
+pub use study::{QuestionAsk, StudyLang, MAX_SAMPLE, TEXT_BUDGET};
 pub use users::{AiUserRow, SessionUser, UpdatedUser, UserChange, UserRow, UserUpdate};
 
 /// One bank whose old-layout questions [`Store::retire_old_layout_questions`] retired.
@@ -1069,6 +1071,20 @@ impl Store {
         attempt: &Attempt,
         answers: &[Option<Value>],
     ) -> Result<Value, DbError> {
+        self.record_attempt_tagged(user, scope, attempt, answers, &SessionTag::default())
+    }
+
+    /// [`Store::record_attempt_as`] that also stores the session key and start time of `tag` in the record (v0.9; NULL for
+    /// what is `None`). The answer is `/api/progress` plus, when there are any, `"notCounted"`, plus the new record's
+    /// `"recordId"` (the `attempts.id`), always last.
+    pub fn record_attempt_tagged(
+        &self,
+        user: i64,
+        scope: &BankScope,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+        tag: &SessionTag,
+    ) -> Result<Value, DbError> {
         if attempt.results.is_empty() {
             return Err(invalid_input("an attempt needs at least one result"));
         }
@@ -1083,7 +1099,7 @@ impl Store {
             .collect::<Result<Vec<Option<String>>, _>>()?;
         let t = self.clock.now();
         let g = self.lock();
-        let not_counted = run_tx(&g, |c| {
+        let (not_counted, record_id) = run_tx(&g, |c| {
             users::ensure_active(c, user)?;
             // Split the results into the questions that still exist and those that are gone (checked inside the transaction,
             // so a bank deleted at the same moment is either fully counted before or fully left out after)
@@ -1138,8 +1154,8 @@ impl Store {
                 pyjson::to_string(&counted_sheets(c, &attempt.sheets, &counted)?)?
             };
             c.execute(
-                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user, attempt.kind.as_str()],
+                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind, session_key, started_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
+                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user, attempt.kind.as_str(), tag.key, tag.started_at],
             )?;
             let attempt_id = c.last_insert_rowid();
             {
@@ -1152,13 +1168,16 @@ impl Store {
             }
             // Keep only the most recent RECORD_RETENTION sessions (and their detail); `/api/progress` still shows HISTORY_LIMIT
             records::prune(c, user, RECORD_RETENTION)?;
-            Ok(gone)
+            Ok((gone, attempt_id))
         })?;
         let mut progress = progress_from(&g, user, scope)?;
         if !not_counted.is_empty() {
             if let Some(obj) = progress.as_object_mut() {
                 obj.insert("notCounted".to_string(), json!(not_counted));
             }
+        }
+        if let Some(obj) = progress.as_object_mut() {
+            obj.insert("recordId".to_string(), json!(record_id));
         }
         Ok(progress)
     }

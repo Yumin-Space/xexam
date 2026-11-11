@@ -4,7 +4,7 @@
 // (which answer can be retried, the status line under an answer, the time of a chat). No DOM, no i18n.
 // Round 2: the request bodies (the reply language of Settings with send / retry / suggest, free mode is the server's state),
 // the free-mode switch, and the "thinking" event of reasoning models (shown as "Thinking…" until the first text).
-import type { AiChatDetail, AiMessage, UiLang } from '../types/api.ts';
+import type { AiChatDetail, AiChatKind, AiMessage, UiLang } from '../types/api.ts';
 
 /** A message as the page shows it: `thinking` (view only, never from the server) = a reasoning model thinks, no text yet */
 export type ViewMessage = AiMessage & { thinking?: boolean };
@@ -13,6 +13,8 @@ export interface ChatView {
   /** null: a new chat, created by its first message (the start event gives its id) */
   chatId: number | null;
   title: string;
+  /** v0.9: 'chat' (AI Chat) or the kind of a study chat; decides the title suffix */
+  kind: AiChatKind;
   messages: ViewMessage[];
   /** The assistant message being written (by this page's stream, or seen running by a poll); null = none */
   streamingId: number | null;
@@ -22,7 +24,7 @@ export interface ChatView {
   running: boolean;
 }
 
-export const emptyChat = (): ChatView => ({ chatId: null, title: '', messages: [], streamingId: null, pending: null, running: false });
+export const emptyChat = (): ChatView => ({ chatId: null, title: '', kind: 'chat', messages: [], streamingId: null, pending: null, running: false });
 
 function lastWhere<T>(list: readonly T[], test: (v: T) => boolean): T | undefined {
   for (let i = list.length - 1; i >= 0; i--) {
@@ -37,8 +39,8 @@ export function chatOf(d: AiChatDetail): ChatView {
   const messages = d.messages.map((m) => ({ ...m }));
   const writing = d.chat.running ? lastWhere(messages, (m) => m.status === 'streaming') : undefined;
   return {
-    chatId: d.chat.id, title: d.chat.title, messages, streamingId: writing?.id ?? null, pending: null,
-    running: d.chat.running,
+    chatId: d.chat.id, title: d.chat.title, kind: d.chat.kind ?? 'chat', messages, streamingId: writing?.id ?? null,
+    pending: null, running: d.chat.running,
   };
 }
 
@@ -64,11 +66,16 @@ export interface StartData {
   retry: boolean;
   /** The mode of this turn (free mode of the administrator) */
   free: boolean;
+  /** v0.9: the kind of the chat the answer belongs to (null when the server sent none or an unknown one) */
+  chatKind: AiChatKind | null;
 }
 
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {});
 const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+
+const KINDS: readonly string[] = ['chat', 'practice', 'exam', 'summary'];
+const chatKindOf = (v: unknown): AiChatKind | null => (typeof v === 'string' && KINDS.includes(v) ? (v as AiChatKind) : null);
 
 /** The start event's data, or null when it is not one */
 export function startOf(data: unknown): StartData | null {
@@ -79,7 +86,7 @@ export function startOf(data: unknown): StartData | null {
   if (chatId == null || assistantMessageId == null) return null;
   return {
     chatId, chatTitle: str(d.chatTitle), userMessageId: userMessageId ?? 0, assistantMessageId, model: str(d.model),
-    newChat: d.newChat === true, retry: d.retry === true, free: d.free === true,
+    newChat: d.newChat === true, retry: d.retry === true, free: d.free === true, chatKind: chatKindOf(d.chatKind),
   };
 }
 
@@ -120,7 +127,7 @@ export function applyEvent(s: ChatView, ev: { event: string; data: unknown }, no
         messages = [...s.messages.filter((m) => m.id !== d.userMessageId && m.id !== d.assistantMessageId), user, assistant];
       }
       return {
-        chatId: d.chatId, title: d.chatTitle || s.title, messages, streamingId: d.assistantMessageId, pending: null,
+        chatId: d.chatId, title: d.chatTitle || s.title, kind: d.chatKind ?? s.kind, messages, streamingId: d.assistantMessageId, pending: null,
         running: true,
       };
     }
@@ -194,8 +201,8 @@ export function pollResult(s: ChatView, d: AiChatDetail): ChatView {
   const messages = d.messages.map((m) => (m.status === 'streaming' && stoppedHere.has(m.id) ? { ...m, status: 'stopped' as const } : { ...m }));
   const writing = d.chat.running ? lastWhere(messages, (m) => m.status === 'streaming') : undefined;
   return {
-    chatId: d.chat.id, title: d.chat.title, messages, streamingId: writing?.id ?? null, pending: s.pending,
-    running: d.chat.running,
+    chatId: d.chat.id, title: d.chat.title, kind: d.chat.kind ?? 'chat', messages, streamingId: writing?.id ?? null,
+    pending: s.pending, running: d.chat.running,
   };
 }
 
@@ -206,6 +213,8 @@ export function retryTarget(s: ChatView): number | null {
   const last = s.messages[n - 1];
   const before = s.messages[n - 2];
   if (!last || !before || last.role !== 'assistant' || before.role !== 'user') return null;
+  // v0.9: only an AI Chat answer is retried; the answers of hints, explanations and summaries are asked again from their windows
+  if ((last.kind ?? 'chat') !== 'chat' || (before.kind ?? 'chat') !== 'chat') return null;
   return last.status === 'error' || last.status === 'stopped' ? last.id : null;
 }
 

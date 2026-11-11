@@ -140,7 +140,7 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     let c = raw(&db);
     // intended difference (v0.6, v0.6.5, v0.8): a new database goes straight to the current schema (tests/v06_users_and_sign_in.rs,
     // tests/v065_bank_access_and_practice.rs, tests/v08_ai_link.rs)
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "5");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 0);
     for t in ["banks", "attempt_items", "settings"] {
         assert_eq!(
@@ -277,7 +277,7 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
     );
     // intended difference (v0.6, v0.6.5, v0.8): v1 → v2 → v3 → v4 → v5 in one go (one schema-1 backup); v3 / v4 / v5 are
     // covered in tests/v06_users_and_sign_in.rs, tests/v065_bank_access_and_practice.rs and tests/v08_ai_link.rs
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "5");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempt_items"),
         0,
@@ -950,7 +950,11 @@ fn records_list_detail_and_deletes() {
     .expect("retire a3");
     let d = s.record(ADMIN, 2).expect("record").expect("exists");
     assert_eq!(keys(&d), ["record", "items"]);
-    assert_eq!(d["record"], recs["records"][0]);
+    // v0.9: the detail of one record also names its session (null for a record saved without one)
+    let mut want = recs["records"][0].clone();
+    want["sessionKey"] = json!(null);
+    want["startedAt"] = json!(null);
+    assert_eq!(d["record"], want);
     let items = d["items"].as_array().expect("items");
     assert_eq!(items.len(), 3);
     assert_eq!(
@@ -1577,7 +1581,14 @@ async fn api_records_attempt_answers_and_query_parsing() {
     assert_eq!(r.status, 200);
     assert_eq!(
         keys(&r.json()),
-        ["version", "questions", "history", "masterStreak"],
+        // v0.9: the new record's id comes last
+        [
+            "version",
+            "questions",
+            "history",
+            "masterStreak",
+            "recordId"
+        ],
         "response unchanged"
     );
 
@@ -1596,7 +1607,11 @@ async fn api_records_attempt_answers_and_query_parsing() {
     assert_eq!(r.status, 200, "{}", r.text());
     let d = r.json();
     assert_eq!(keys(&d), ["record", "items"]);
-    assert_eq!(d["record"], j["records"][0]);
+    // v0.9: the detail also names the session the record was saved from (null here: the request sent none)
+    let mut want = j["records"][0].clone();
+    want["sessionKey"] = json!(null);
+    want["startedAt"] = json!(null);
+    assert_eq!(d["record"], want);
     let answers: Vec<Value> = d["items"]
         .as_array()
         .expect("items")

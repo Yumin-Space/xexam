@@ -4,7 +4,7 @@ use crate::provider::{Role, Turn};
 use crate::util::char_len;
 
 /// The reply language: the language chosen in the user's Xexam settings, sent by the frontend as `lang`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lang {
     En,
     Zh,
@@ -27,6 +27,15 @@ impl Lang {
         match self {
             Lang::En => "English",
             Lang::Zh => "Simplified Chinese",
+            Lang::Ja => "Japanese",
+        }
+    }
+
+    /// The name of the language of a question text, as written into the `language` attribute of a `<question>` tag.
+    pub fn question_name(self) -> &'static str {
+        match self {
+            Lang::En => "English",
+            Lang::Zh => "Chinese",
             Lang::Ja => "Japanese",
         }
     }

@@ -1,7 +1,7 @@
 # Screenshot tool
 
-Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 16 desktop and 4 iPhone images per
-language, 20 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
+Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 19 desktop and 5 iPhone images per
+language, 24 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
 made up, also on the AI pages: the stub's address `http://ai-stub:9000/v1`, the fake key (shown as `…9c21`), the
 `demo-*` models, the demo users and banks. The tool never connects to any other instance, so real addresses, keys or
 model choices cannot appear. Run it from the repository root:
@@ -68,6 +68,15 @@ A full run of the three languages takes a few minutes, plus the image builds whe
    then usage (with the cached-tokens column), chat retention and safety limits) after the scene presses Refresh list and Test. Each language
    therefore adds a few calls to the AI usage numbers, so they differ slightly between the languages. PNG text, time
    and EXIF chunks are removed (`browser.strip_png`).
+   The study scenes of v0.9 (`desktop-17-ai-hint`, `desktop-18-ai-result`, `desktop-19-ai-summary`, `iphone-5-ai-hint`)
+   open the AI hint window of a practice question, the AI analysis window of the first card of the exam result and the AI
+   summary window of a study record, each with the made-up stub's text in the language of the run (the screenshot user is
+   the administrator, who always has the AI+ feature). Their asks are saved in AI Chat; the run deletes the
+   administrator's AI chats before the AI Chat scenes and at the end. The same pass checks the layout (a failed check stops
+   the run with a message): at 390 px the practice action bar has at most two rows of buttons (every language), at 800 px
+   the Study records list (English and Japanese) is in the card layout with no horizontal scroll and Delete on one line;
+   for alex (AI+ feature paused) the practice page at 390 and 360 px has at most two rows in the bar, no horizontal scroll
+   and greyed AI controls.
 6. The containers, the volumes, the network, the image tags, the temporary folders and every process the tool started
    are removed at the end, also after an error or Ctrl+C. Nothing is pushed anywhere.
 
@@ -83,7 +92,7 @@ first is retried with another one), and `npm ci` (only when `frontend/node_modul
 | `retake.py` | Entry point: options, backend and ai-service, frontend, seeding, the languages, clean-up |
 | `demo_banks.py` | The made-up demo question banks |
 | `seed.py` | Users, banks, records, the AI setup (with the AI+ feature of sam and alex, alex paused) and the System log activity, through the API |
-| `scenes.py` | The 20 scenes and how each image is sized |
+| `scenes.py` | The 24 scenes (AI hint, AI result and AI summary included), the layout checks, and how each image is sized |
 | `browser.py` | Finding and starting Chrome, a small DevTools (CDP) client, PNG metadata removal |
 | `../../tests/integration/ai_stub.py` | The made-up AI provider (shared with the stack check of CI) |
 

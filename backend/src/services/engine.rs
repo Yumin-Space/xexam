@@ -16,7 +16,8 @@
 use crate::database::Store;
 use crate::error::{DbError, ImportError};
 use crate::models::{
-    Attempt, DeletedBank, ImportRecord, ImportTarget, ParsedSheet, ParsedWorkbook, Question, Viewer,
+    Attempt, DeletedBank, ImportRecord, ImportTarget, ParsedSheet, ParsedWorkbook, Question,
+    SessionTag, Viewer,
 };
 use crate::parser;
 use serde_json::Value;
@@ -173,6 +174,18 @@ pub trait Engine: Send + Sync + 'static {
         } else {
             Err(DbError::Unsupported)
         }
+    }
+    /// [`Engine::record_attempt_as`] that also stores the session key and start time of `tag` in the record (v0.9). The
+    /// default ignores the tag.
+    fn record_attempt_tagged(
+        &self,
+        v: &Viewer,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+        tag: &SessionTag,
+    ) -> Result<Value, DbError> {
+        let _ = tag;
+        self.record_attempt_as(v, attempt, answers)
     }
     /// `GET /api/imports` as `v` sees it (a bank manager: the history of their own banks).
     fn import_history_as(&self, v: &Viewer, limit: i64) -> Result<Vec<ImportRecord>, DbError> {
@@ -357,6 +370,16 @@ impl Engine for RealEngine {
     ) -> Result<Value, DbError> {
         self.store
             .record_attempt_as(v.user, &v.scope, attempt, answers)
+    }
+    fn record_attempt_tagged(
+        &self,
+        v: &Viewer,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+        tag: &SessionTag,
+    ) -> Result<Value, DbError> {
+        self.store
+            .record_attempt_tagged(v.user, &v.scope, attempt, answers, tag)
     }
     fn import_history_as(&self, v: &Viewer, limit: i64) -> Result<Vec<ImportRecord>, DbError> {
         self.store.import_history_as(v, limit)

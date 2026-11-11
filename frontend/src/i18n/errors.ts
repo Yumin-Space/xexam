@@ -80,6 +80,17 @@ export function errorText(e: unknown, fallback: MsgKey = 'err.generic'): string 
   return t(fallback);
 }
 
+/**
+ * The text of a failed study ask (the AI popover / summary window): the code's own text (with the limit it came with); Nginx's
+ * own 429 has no code and means "too many requests", not a lost sign-in; no HTTP answer = the network; else the status.
+ */
+export function studyErrorText(e: { status: number; code: string | null; limit?: number }): string {
+  if (e.code && knownAiCode(e.code)) return aiCodeText(e.code, e.limit);
+  if (e.status === 429) return t('err.tooMany');
+  if (e.status === 0) return t('err.network');
+  return e.status > 0 ? t('err.status', { status: e.status }) : t('err.generic');
+}
+
 /** A backend text that is not an error (for example the reason a row of an uploaded workbook was skipped) */
 export function serverText(msg: string): string {
   return localizeServerMessage(msg, uiLang());

@@ -36,6 +36,9 @@ export interface Session {
   kind: AttemptKind;
   /** Practice: ids of the questions already checked (locked, feedback shown). Always empty in an exam. */
   checked: Set<string>;
+  /** v0.9: the session key (32 lower-case hex) and the start time (unix seconds) that tie the session to its AI chat and record */
+  key: string;
+  startedAt: number;
 }
 
 export interface ResultRow {
@@ -55,6 +58,9 @@ export interface ResultState {
   notCounted: number;
   /** Exam or practice: the result page names it, and "take it again" starts the same kind */
   kind: AttemptKind;
+  /** v0.9: the session this result came from (AI hints and explanations of the result page belong to its chat) */
+  key: string;
+  startedAt: number;
 }
 
 export interface SetupConfig {

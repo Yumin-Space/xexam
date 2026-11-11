@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v0.8 → v0.9** (section 0): no new `docker-compose.yml`; the main database moves to schema v6 and the AI database to schema 3, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back. (This section is numbered 0 so that the numbers of the others, which other documents link to, stay as they are.)
 > - **v0.7.5 or v0.7 → v0.8** (section 1): a new `docker-compose.yml` with the AI service, `ai-service` (a third image, `xexam-ai-service`, and two volumes); the database moves to schema v5 automatically, after a backup copy is written; AI stays off until an administrator sets it up.
 > - **v0.6 → v0.8** (section 2): the database moves to schema v5 and to WAL mode, automatically, after a backup copy is written; then the questions of the old three- and four-column Excel layouts are retired, and you update the banks with six-column workbooks.
 > - **v0.5 or v0.5.1 → v0.8** (section 3): sign-in arrives together with the later schemas, in one step.
@@ -11,9 +12,115 @@
 > - **Python v0.2.x → Rust + TypeScript + Nginx (v0.3)** (sections 5–11): the database file and its schema did not change then; the switch meant "swapping the program", not "moving data". Basis for that decision: [migration-plan.md](../zh-CN/history/migration-plan.md). Risks: [risk-assessment.md](../zh-CN/history/risk-assessment.md).
 > - **v0.1 → later** (section 12): the database file name.
 >
-> Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back always means **restoring that copy** and running the older images. The background is in section 6 of [database.md](database.md). The AI database of v0.8 lives in its own volume and is never touched by a rollback of the main database.
+> Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back means **restoring that copy** and running the older images, with one exception: v0.8 opens the schema-6 main database of v0.9 as it is (section 0.4). The AI database has its own copies, `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` in `/data/backups/` of the volume `xexam_ai_data`; the AI service of v0.8 cannot open the schema-3 database of v0.9, so rolling back to v0.8 means restoring the schema-2 copy there. The background is in section 6 of [database.md](database.md). A rollback of the main database never touches the AI database, and the other way round.
+>
+> **Going straight to v0.9 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 3 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v0.9 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `0.9` and ai-service creates its database at schema 3.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 0. Upgrading from v0.8 to v0.9
+
+This section is numbered 0 so that the numbers of sections 1 to 12, which other documents link to, stay as they are.
+
+### 0.1 What changes
+
+v0.9 adds the AI help for studying (AI hint and AI explanation in practice, AI analysis on result pages, AI summary of a record; section 5.1, 6.1 and 7.1 of [usage.md](usage.md)). It needs **no new `docker-compose.yml`**: the same three images with the new tag, the same volumes and networks, no new setting.
+
+| | v0.8 | v0.9 |
+|---|---|---|
+| Images, containers, volumes, networks | `xexam-frontend`, `xexam-backend`, `xexam-ai-service`; `xexam_data`, `xexam_ai_data`, `xexam_link` | the same |
+| Main database (`xexam.db`) | schema 5 | **schema 6** |
+| AI database (`xexam-ai.db`) | schema 2 | **schema 3** |
+| Nginx (inside the frontend image) | streams `send` and `retry` | also streams the new `study/ask` and `summary/ask`, and logs a request's path without its query string |
+
+Two databases migrate, each by its own service, each on its first start and each after its own backup copy:
+
+1. **The backend** writes a copy of the database to `/data/backups/xexam-schema5-<YYYYmmdd-HHMMSS>.db`, an ordinary schema-5 database that v0.8 can open, then moves the database to schema v6 in one transaction: two new columns on `attempts`, `session_key` (the 32-character key of the practice or exam session) and `started_at` (when it started, Unix seconds), both empty (`NULL`) for every record you already have. There is no index and no constraint, and nothing else changes: banks, records, accounts, settings and sessions stay, and nobody is signed out. The log says `Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-….db (…)`. If the copy cannot be written, nothing changes and the backend does not start. From now on a saved practice or exam gets its key and start time (a browser that sends none, or an invalid one, saves them empty).
+2. **ai-service** writes a copy of its database to `/data/backups/xexam-ai-schema2-<YYYYMMDD-HHMMSS>.db` in the volume `xexam_ai_data`, then moves it to schema 3 in one transaction by adding columns and indexes, never removing anything: on `chats` the `kind` (`chat`, `practice`, `exam` or `summary`; every existing chat becomes `chat`), `ref` (the session key or record this chat belongs to) and `record_id` (the record, for display only); on `messages` the `kind` (`chat`, `hint`, `explain` or `summary`; every existing message becomes `chat`), `question_id`, `question_no`, `source`, `lang` and the three summary counts `sample_used`, `sample_usable` and `sample_wrong`; on `usage` the `purpose` (`hint`, `explain` or `summary`; empty for every row you already have, which the statistics read as AI Chat); and three indexes that find a session's chat, the saved answers of a question and answers cut off by a restart. Settings, encrypted keys, limits, users, chats, messages and memories stay as they are. The log says `Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`. If the copy cannot be written, ai-service does not start and changes nothing; the main app keeps working and **AI settings** says that ai-service is not running.
+
+What to know about these copies:
+
+- **Free disk space**: each copy is a full copy of its database (SQLite `VACUUM INTO`), so each service needs about as much free space in its volume as its database takes now. A full disk stops that service's start with the database unchanged.
+- **They are never deleted automatically**, and they hold everything that existed when they were written, including chats and study records that you or an administrator delete later. Delete old copies yourself (`docker run --rm -v xexam_data:/data alpine rm /data/backups/<name>`) when you no longer need them, and keep them as private as the databases ([database.md](database.md)).
+- A database that has been migrated opens again without a new copy and without writing anything.
+
+What else you will notice:
+
+- With the **AI+ feature**: the AI buttons and icons in practice, **AI analysis** on result pages and on a record's detail page, **AI summary** on Study records and Home, and the new chats of practices, exams and summaries in AI Chat. Users without the feature see nothing new. Users whose AI is paused or unavailable see the controls greyed out. Nothing has to be set up: the AI+ feature, the provider settings and the users' switches are as they were.
+- **Records made before v0.9** have no session key. Their first AI analysis on the detail page starts a chat of its own for the record (usage.md, section 16.1); AI summaries work for them like for any record, except for records so old that they kept no per-question details.
+- AI usage statistics get a **By feature** table (AI Chat, AI hint, AI explanation, AI summary).
+- **The chat limits count the new chats**: every practice, exam and summarised record is a chat, and a request is two messages, so a very long practice uses up the default 400 messages per chat after about 200 requests (usage.md, section 17).
+
+### 0.2 Upgrade
+
+```bash
+# 1. Back up both volumes (stop first; the backup files hold your whole databases, do not commit them)
+docker compose stop
+docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data-v08.tgz -C /data .
+docker run --rm -v xexam_ai_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-ai-data-v08.tgz -C /data .
+
+# 2. Pull the three images and start (do not use down -v)
+docker compose pull
+docker compose up -d
+
+# 3. Look for the two upgrade messages
+docker compose ps
+docker compose logs backend
+docker compose logs ai-service
+```
+
+Your `docker-compose.yml` and `.env` stay as they are. **Source build**: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build` from the repository root. To stay on v0.8 on purpose, keep the `:v0.8` tag on all three images.
+
+### 0.3 Checks after the upgrade
+
+- [ ] `docker compose ps` lists `xexam-frontend`, `xexam-backend` and `ai-service`, all `healthy`.
+- [ ] `version` in `/api/info` is `0.9`.
+- [ ] The backend log has `Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-…`, and `docker run --rm -v xexam_data:/data alpine ls -l /data/backups` lists that copy.
+- [ ] The ai-service log has `Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`, and `docker run --rm -v xexam_ai_data:/data alpine ls -l /data/backups` lists `xexam-ai-schema2-…`.
+- [ ] You can sign in as before, the study records open, and **AI Chat** still lists your chats. **AI settings** says **ai-service is connected (version 0.9; …)** and the AI+ feature is as you left it.
+- [ ] To try the new features, sign in with an account that has the **AI+ feature**, start a practice and press **AI hint** (usage.md, section 5.1).
+- [ ] A second restart of the containers writes no new copy and no upgrade line.
+
+### 0.4 Rollback to v0.8
+
+The two databases roll back differently.
+
+- **The main database needs no restore.** v0.8 opens the schema-6 database as it is: it ignores the two new columns, and a record saved by v0.8 simply has an empty key and start time. This was tested: a v0.8 backend opened the migrated database, saved a record and left `meta.schema` at 6; v0.9 then started on it again without a new copy.
+- **The AI database does need its copy.** The v0.8 ai-service refuses a database of schema 3 and exits with `The AI database … has schema 3, written by a newer ai-service; this version (schema 2) cannot open it. Run the newer version, or restore a backup.`, leaving the file unchanged. Until it is restored, v0.8 runs without AI. Restoring the copy **loses every change to the AI database since the upgrade**: all chats of that time (including all the chats of practices, exams and summaries), memories, setting changes, usage numbers and users' pauses. The key file `secret.key` is not in the database and stays, so the keys in the restored database still open.
+
+```bash
+# 1. Stop the new version (do not use down -v)
+docker compose stop
+
+# 2. Find the AI copy (the name has the schema it had: xexam-ai-schema2-…)
+docker run --rm -v xexam_ai_data:/data alpine ls -l /data /data/backups
+
+# 3. Put it back as xexam-ai.db (use the file name from step 2); leftover -wal / -shm files are removed first
+docker run --rm -v xexam_ai_data:/data alpine sh -c 'rm -f /data/xexam-ai.db-wal /data/xexam-ai.db-shm && cp /data/backups/xexam-ai-schema2-20261112-140501.db /data/xexam-ai.db'
+
+# 4. Pin the three images of docker-compose.yml to v0.8 (on Docker Hub, no login), then start:
+#      image: docker.io/yuminspace/xexam-frontend:v0.8
+#      image: docker.io/yuminspace/xexam-backend:v0.8
+#      image: docker.io/yuminspace/xexam-ai-service:v0.8
+docker compose up -d
+```
+
+For a source build, check out the release instead: `git fetch --tags && git checkout v0.8 && docker compose -f docker/docker-compose.build.yml up -d --build`.
+
+If you would rather go without AI for a while, skip steps 2 and 3: the main app of v0.8 runs by itself, and you stop ai-service (`docker compose stop ai-service`) so that it does not keep restarting; leave its volume alone. To bring the main database back to exactly its state before the upgrade (not needed), restore `/data/backups/xexam-schema5-….db` as in section 1.4, which loses everything done in the main app since. To go back further than v0.8, use the rollback of the older section (1.4, 2.6, …) with the copy written then; those copies are still in `backups/`.
+
+To upgrade again later, put the v0.9 images back. A main database that is still at schema 6 is not migrated again and gets no new copy; an AI database that you restored to schema 2 is migrated again, after a new copy.
+
+### 0.5 What has been tested
+
+With synthetic data only (`backend/tests/v09_ai_study.rs`, `db_golden.rs`, `ai-service/tests/` and `tests/integration/`):
+
+- A schema-5 database written by v0.8 migrates to schema 6 with exactly one `xexam-schema5-…` backup (`migrate_check.py`, case J); the old records have an empty key and start time; the result has the same `sqlite_master` as a new database; opening it again writes nothing. Older databases (schema 3 and 4) go to schema 6 in one step with one backup named after the schema they had.
+- An AI database of schema 1 or 2 migrates to schema 3 with one `xexam-ai-schema<N>-…` copy and ends with the same `sqlite_master` as a new one; the saved-answer lookups use their indexes (no temporary sort); old usage rows read as AI Chat; the retention sweep deletes in small batches so that other writers are let in between them.
+- The v0.8 backend opens and writes the schema-6 database, and the v0.8 ai-service refuses schema 3 and leaves the file unchanged (the rollback above).
+- The full stack with the three images and a made-up provider (`stack_check.py`): hints, explanations and analyses with their saved answers and `Regenerate`, a hint that gives the answer away being withheld, a summary of at most 70 wrong answers, the one-answer-at-a-time refusal with its running answer, the access rules for users without the AI+ feature and for paused users, the chats of sessions and records, and no question, answer, session key or record time in any container's log (Nginx's access log included). Headless browser walks check the controls, the windows and the phone layout.
+
+Not tested: a migration of **your own** databases, and real AI providers (CI uses a made-up one). Try the upgrade on a copy first if you want to be sure.
 
 ## 1. Upgrading from v0.7.5 (or v0.7) to v0.8
 
@@ -36,7 +143,7 @@ On its **first start** the backend does this before it accepts any request:
 2. **Migration to schema v5**, in one transaction: two new columns on `users`, `ai_enabled` (**AI+**, off for everyone) and `uid` (a random identity stamp per user). Nothing else changes: question banks, records, settings, accounts and sessions stay, and nobody is signed out. The log says `Upgraded the database to schema 5. A copy of the previous version was saved first: /data/backups/xexam-schema4-….db (…)`.
 3. **The internal token**: the backend writes a random token to `/link/internal.token` (in `xexam_link`) and logs `AI link: /link/internal.token`. With `XEXAM_INTERNAL_TOKEN` set it writes no file and logs `AI link: using XEXAM_INTERNAL_TOKEN`.
 
-ai-service, on its first start, creates its database `xexam-ai.db` (schema 2) with the default settings and, unless `XEXAM_AI_SECRET_KEY` is set, the key file `secret.key` (`Created a new AI key file /data/secret.key`). Then it reports to the backend at once and every 25 seconds, so the main service knows that it is connected (a report older than 60 seconds counts as not connected); the backend never calls it. **AI is off** until an administrator sets it up in **AI settings** (section 17 of [usage.md](usage.md)); there is nothing to migrate for AI. (An AI database written by a pre-release build of v0.8, schema 1, is upgraded at ai-service's first start, after a copy `backups/xexam-ai-schema1-<YYYYMMDD-HHMMSS>.db` next to it in the AI volume; if that copy cannot be written, ai-service does not start and changes nothing. A schema-2 database from a later pre-release that lacks some of the schema-2 columns (`users.function_enabled`, `users.free_mode`, `messages.free`, `usage.tokens_cached`) gets them added at every start, with no copy: the step only adds columns that are missing and never removes one, so an old `chats.free` column of such a build is simply left unused.)
+ai-service, on its first start, creates its database `xexam-ai.db` (schema 2 in v0.8, schema 3 in v0.9) with the default settings and, unless `XEXAM_AI_SECRET_KEY` is set, the key file `secret.key` (`Created a new AI key file /data/secret.key`). Then it reports to the backend at once and every 25 seconds, so the main service knows that it is connected (a report older than 60 seconds counts as not connected); the backend never calls it. **AI is off** until an administrator sets it up in **AI settings** (section 17 of [usage.md](usage.md)); there is nothing to migrate for AI. (An AI database written by a pre-release build of v0.8, schema 1, is upgraded at ai-service's first start, after a copy `backups/xexam-ai-schema1-<YYYYMMDD-HHMMSS>.db` next to it in the AI volume; if that copy cannot be written, ai-service does not start and changes nothing. A schema-2 database from a later pre-release that lacks some of the schema-2 columns (`users.function_enabled`, `users.free_mode`, `messages.free`, `usage.tokens_cached`) gets them added at every start, with no copy: the step only adds columns that are missing and never removes one, so an old `chats.free` column of such a build is simply left unused.)
 
 What else you will notice:
 

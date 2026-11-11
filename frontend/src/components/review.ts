@@ -9,6 +9,7 @@
 //   · answerReview() / explainBlocks(): the answer part and the explanation part of a card, for the practice page.
 // Question content is shown with the lang attribute of the language it is in; every label goes through the "result.*" catalog.
 import '../styles/records.css';
+import { aiControls } from '../domain/ai-plus.ts';
 import { inNotebook, masterStreakOf, stateOf, type Answer } from '../domain/grading.ts';
 import { explainOf, htmlLang, shown, type Lang, type LangText, type Shown } from '../domain/language.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
@@ -16,6 +17,8 @@ import { onRouteChange } from '../state/actions.ts';
 import { S } from '../state/store.ts';
 import type { Question } from '../types/api.ts';
 import { h, paras, svgMark, type Child } from '../utils/dom.ts';
+import { reanchorAiPop } from './ai-pop.ts';
+import { aiPlusNow, naTag, pheadRight, studyButton, studyIcon, studyState, type StudyTarget } from './ai-plus-controls.ts';
 import { bankName, kindLabel } from './common.ts';
 import { langSwitch } from './lang-switch.ts';
 
@@ -35,6 +38,17 @@ export interface ReviewOptions {
   retired?: boolean;
   /** Replaces the default per-question stats line (null = no stats line) */
   stats?: HTMLElement | null;
+  /**
+   * v0.9, AI+ only: where the AI analysis of each card belongs (result page or record detail). Without it, or when the
+   * account has no AI+ feature, a card shows no AI control at all.
+   */
+  ai?: {
+    page: 'result' | 'detail';
+    mode: 'practice' | 'exam';
+    key: string | null;
+    startedAt: number | null;
+    recordId: number | null;
+  };
 }
 
 export type ReviewFilter = 'wrong' | 'all';
@@ -190,6 +204,22 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
       cardLang.set(q.id, l);
       draw(l, true);
     });
+    // v0.9: the AI analysis control of the card (AI+ accounts only): the book icon in the header, the AI 解析 button at the
+    // right of the answer line. Its question language is the one the card shows now.
+    let head: HTMLElement = sw;
+    let answerLine: HTMLElement = verdict;
+    if (opts.ai && aiPlusNow().show) {
+      const target: StudyTarget = {
+        page: opts.ai.page, mode: opts.ai.mode, key: opts.ai.key, startedAt: opts.ai.startedAt, recordId: opts.ai.recordId,
+        questionId: q.id, no: opts.no, qlang: () => shown(q, cardLang.get(q.id) ?? S.settings.questionLang).lang,
+      };
+      const spec = aiControls(opts.ai.page)[0];
+      if (spec) {
+        const state = studyState(target);
+        head = pheadRight([studyIcon(target, spec, state)], naTag(state), sw);
+        answerLine = h('div', { class: 'verdict-row' }, verdict, studyButton(target, spec, state, { bar: false }));
+      }
+    }
     paper.replaceChildren(
       h('div', { class: 'phead' },
         h('b', { class: 'num' }, t('result.q.no', { n: opts.no })),
@@ -197,17 +227,19 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
         h('span', { class: 'badge' }, kindLabel(q)),
         opts.retired ? h('span', { class: 'badge retired' }, t('result.q.retired')) : null,
         h('span', { class: 'rv-src' }, source),
-        sw),
+        head),
       ...[
         opts.retired ? h('p', { class: 'rv-retired' }, t('result.q.retiredHint')) : null,
         h('div', { class: 'stem' }, paras(view.stem, undefined, htmlLang(view.lang))),
         body,
-        verdict,
+        answerLine,
         ...explainBlocks(q, view.lang),
         stats,
       ].filter((x): x is HTMLElement => !!x));
     // Switching redraws the card: the focus goes back to the pressed button instead of being lost
     if (focusSwitch) sw.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus({ preventScroll: true });
+    // The redraw replaced the opener of an open popover: it follows the new one
+    if (opts.ai) reanchorAiPop();
   };
   draw(cardLang.get(q.id) ?? S.settings.questionLang, false);
 

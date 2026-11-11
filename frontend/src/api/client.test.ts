@@ -7,6 +7,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import { errorText } from '../i18n/errors.ts';
 import { setUiLang, t } from '../i18n/index.ts';
 import { waitText } from '../i18n/wait.ts';
+import { askStudyStream, fetchStudySaved, fetchSummarySaved, studyTransport } from './ai.ts';
 import {
   ApiError, getJson, isAbortError, isTooManyRequests, postJson, postStream, RATE_LIMIT_TRIES, setAuthHandler, setRetryPause, type AuthProblem,
   type StreamEvent,
@@ -411,4 +412,61 @@ test('postStream sends JSON and asks for an event stream', async () => {
   const headers = seen?.headers as Record<string, string>;
   assert.equal(headers['Content-Type'], 'application/json');
   assert.equal(headers.Accept, 'text/event-stream');
+});
+
+// ---------------------------------------------------------------- v0.9: study answers
+
+const KEY32 = '0123456789abcdef0123456789abcdef';
+const savedJson = { chatId: 3, latest: null, lastGood: null };
+
+test('the saved study lookups ask the exact URL (this order, nothing percent-encoded)', async () => {
+  reply(json(200, savedJson), json(200, savedJson), json(200, savedJson), json(200, savedJson));
+  await fetchStudySaved({ mode: 'practice', key: KEY32, source: 'result', question: 'q_1-A', kind: 'explain' });
+  await fetchStudySaved({ mode: 'exam', record: 7, source: 'result', question: 'q_1-A', kind: 'explain' });
+  await fetchStudySaved({ mode: 'practice', key: KEY32, source: 'practice', question: 'q9', kind: 'hint' });
+  const parsed = await fetchSummarySaved({ record: 42, at: '202611112158' });
+  assert.deepEqual(calls.map((c) => c.url), [
+    `/api/ai/study/saved?mode=practice&key=${KEY32}&source=result&question=q_1-A&kind=explain`,
+    '/api/ai/study/saved?mode=exam&record=7&source=result&question=q_1-A&kind=explain',
+    `/api/ai/study/saved?mode=practice&key=${KEY32}&source=practice&question=q9&kind=hint`,
+    '/api/ai/summary/saved?record=42&at=202611112158',
+  ]);
+  for (const c of calls) assert.ok(!c.url.includes('%'), c.url);
+  assert.deepEqual(parsed, { chatId: 3, latest: null, lastGood: null });
+});
+
+test('the study and summary asks are POSTs of JSON streamed as events; stopChat always names the chat', async () => {
+  const seen: Array<{ url: string; body: unknown }> = [];
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    seen.push({ url: String(input), body: init?.body ? JSON.parse(String(init.body)) : null });
+    return String(input).endsWith('/stop')
+      ? json(200, { ok: true, stopped: true })()
+      : sse('event: done\ndata: {"status":"done"}\n\n')();
+  }) as typeof fetch;
+  const body = { kind: 'hint', mode: 'practice', questionId: 'q1', no: 2, qlang: 'en', lang: 'en', source: 'practice', key: KEY32, startedAt: 1700000000 } as const;
+  await askStudyStream(body, { onEvent: () => {} });
+  const events: StreamEvent[] = [];
+  await studyTransport.askSummary({ recordId: 5, lang: 'zh-CN' }, new AbortController().signal, (ev) => events.push(ev));
+  await studyTransport.stopChat(12);
+  assert.deepEqual(seen.map((x) => x.url), ['/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/stop']);
+  assert.deepEqual(seen[1]?.body, { recordId: 5, lang: 'zh-CN' });
+  assert.deepEqual(seen[2]?.body, { chatId: 12 });
+  assert.equal(events.length, 1);
+});
+
+test('a 409 ai.busy keeps the running answer (an object, or null) on the ApiError', async () => {
+  const running = { chatId: 3, messageId: 9, chatKind: 'practice', kind: 'hint', questionId: 'q1', questionNo: 2, source: 'practice', recordId: null };
+  reply(json(409, { error: 'busy', code: 'ai.busy', running }), json(409, { error: 'busy', code: 'ai.busy', running: null }), json(409, { error: 'busy', code: 'ai.busy' }), json(409, { error: 'busy', code: 'ai.busy', running: 'x' }));
+  const errs: ApiError[] = [];
+  for (let i = 0; i < 4; i += 1) {
+    try {
+      await postJson('/api/ai/study/ask', {});
+    } catch (e) {
+      errs.push(e as ApiError);
+    }
+  }
+  assert.deepEqual(errs[0]?.running, running);
+  assert.equal(errs[1]?.running, null);
+  assert.equal(errs[2]?.running, undefined);
+  assert.equal(errs[3]?.running, undefined);
 });

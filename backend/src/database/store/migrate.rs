@@ -51,11 +51,16 @@
 //! hex digits for every user), then stamps the schema `"5"`. Every later open checks (read-only) for users with an empty
 //! stamp (created by an older binary after a rollback: it does not know the column, so the default `''` stays) and gives
 //! them one.
+//!
+//! Schema v5 → v6 (v0.9), in the same way again (`backups/xexam-schema5-<YYYYmmdd-HHMMSS>.db` for a v5 database; every
+//! older database still gets its single backup named after the schema it had): the v6 step adds `attempts.session_key` and
+//! `attempts.started_at` (both NULL for every existing record) and stamps the schema `"6"`. A v0.8 binary opens a v6 file
+//! unchanged (it treats a newer schema as current and never reads the two columns), so a rollback needs no restore.
 use super::super::pyjson;
 use super::super::schema::{
     MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
     MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS,
-    V5_COLUMNS,
+    V5_COLUMNS, V6_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -78,7 +83,7 @@ pub(super) struct Upgrade {
     pub converted_prerelease: bool,
 }
 
-/// Brings the database opened at `db_path` up to schema v5.
+/// Brings the database opened at `db_path` up to schema v6.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -90,12 +95,13 @@ pub(super) fn upgrade(
         Some("2") => 2,
         Some("3") => 3,
         Some("4") => 4,
-        // "5", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 5,
+        Some("5") => 5,
+        // "6", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 6,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 5 || pre {
+    if from < 6 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         if has_any_data(conn)? {
             out.backup = Some(write_backup(conn, db_path, from)?);
@@ -116,7 +122,10 @@ pub(super) fn upgrade(
             if pre {
                 convert_prerelease_v4(c)?;
             }
-            migrate_v5(c)?;
+            if from < 5 {
+                migrate_v5(c)?;
+            }
+            migrate_v6(c)?;
             Ok(created)
         })?;
         out.converted_prerelease = pre;
@@ -319,6 +328,17 @@ fn migrate_v5(c: &Connection) -> Result<(), DbError> {
         }
     }
     fill_missing_uids(c)?;
+    set_schema(c, "5")
+}
+
+/// The v6 DDL (inside the caller's transaction): `attempts.session_key` and `attempts.started_at`, then the schema version.
+/// Nothing to backfill: an older record has no session key.
+fn migrate_v6(c: &Connection) -> Result<(), DbError> {
+    for (table, column, definition) in V6_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
     set_schema(c, SCHEMA_VERSION)
 }
 

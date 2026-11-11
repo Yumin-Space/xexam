@@ -404,8 +404,8 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
         c.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r
             .get::<_, String>(0))
             .expect("schema"),
-        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well
-        "5"
+        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well; v0.9: → v6
+        "6"
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");

@@ -19,8 +19,11 @@
 //! - Schema v5 (v0.8) adds two columns to `users` and nothing else (`V5_COLUMNS`): the per-user AI+ switch and a random
 //!   identity stamp that the AI service keeps next to the user id. AI settings, chats and memories live in the AI
 //!   service's own database, never in this one.
+//! - Schema v6 (v0.9) adds two nullable columns to `attempts` and nothing else (`V6_COLUMNS`): the key and the start time of
+//!   the practice / exam session a record was saved from, so the AI service can find the one chat of a session again from
+//!   its record. Older records keep NULL.
 
-pub const SCHEMA_VERSION: &str = "5";
+pub const SCHEMA_VERSION: &str = "6";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -196,4 +199,13 @@ pub const V5_COLUMNS: [(&str, &str, &str); 2] = [
     // Random identity stamp (32 lower-case hex digits), set once when the account is created and never changed. The AI
     // service stores it next to the user id and drops AI data whose stamp differs (an id reused after a restore).
     ("users", "uid", "uid TEXT NOT NULL DEFAULT ''"),
+];
+
+/// Columns added by schema v6 (same rules as [`V2_COLUMNS`]).
+pub const V6_COLUMNS: [(&str, &str, &str); 2] = [
+    // The random key (32 lower-case hex digits) of the practice / exam session the record was saved from; the AI service names
+    // the session's chat by it. NULL for records saved before v0.9 and when the browser sent none (or an invalid one).
+    ("attempts", "session_key", "session_key TEXT"),
+    // When that session started (unix seconds, the browser's clock); NULL like `session_key`.
+    ("attempts", "started_at", "started_at INTEGER"),
 ];

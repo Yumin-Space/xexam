@@ -2,7 +2,7 @@
 
 # API reference
 
-> The machine-readable version is [openapi.yaml](openapi.yaml). This document is for humans: what each endpoint does, who may call it, how the guards block requests, and where the behavior differs from the old Python version. Since v0.8 it also covers the AI routes `/api/ai/*`, answered by the separate ai-service container (section 5), and the internal routes between the backend and ai-service (section 6).
+> The machine-readable version is [openapi.yaml](openapi.yaml). This document is for humans: what each endpoint does, who may call it, how the guards block requests, and where the behavior differs from the old Python version. Since v0.8 it also covers the AI routes `/api/ai/*`, answered by the separate ai-service container (section 5), and the internal routes between the backend and ai-service (section 6). Since v0.9 it also covers the study routes of the AI+ feature (`/api/ai/study/*` and `/api/ai/summary/*`: hints, explanations and summaries in practice, on the result pages and in Study records, section 5.5), the two attempt fields that tie a record to its session, and three more internal routes that let ai-service read one question or one record.
 > It describes the **actual behavior**: every case of the old version was captured as golden responses (`tests/baseline/golden/`, 172 of them), and the new Rust backend is compared against them one by one.
 
 ## 1. Overview
@@ -53,6 +53,8 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 `HEAD` behaves like the corresponding `GET`, just without a body. Every endpoint goes through exactly the same guards (section 3).
 
 *(v0.8)* Everything under `/api/ai/` (AI Chat, Memory, AI settings) is answered by ai-service, after Nginx had the backend check the request: section 5. Its answers are JSON with a stable `code` and, for `send` and `retry`, a stream of server-sent events. `/internal/*` is not reachable through Nginx (section 6).
+
+*(v0.9)* Four more routes under `/api/ai/` serve the AI+ feature in practice, on result pages and in Study records (section 5.5). `POST /api/attempt` takes two optional keys that say which session a record belongs to, and answers with the new record's id; `GET /api/record` returns them again. The main database is now **schema 6** and the AI database **schema 3**; the upgrade of each writes a backup first (section 7, "Changes in v0.9").
 
 ## 2. What every response has in common
 
@@ -131,7 +133,7 @@ For a user who does not see every bank, every route follows the same rule:
 
 ### `GET /api/info`
 ```json
-{"version": "0.8", "arch": "x86_64", "canShutdown": false}
+{"version": "0.9", "arch": "x86_64", "canShutdown": false}
 ```
 Public. The version number is `CODE_VERSION` from the `VERSION` file (or `XEXAM_VERSION`); `arch` is the CPU architecture of the server; `canShutdown` is `true` only when the program was started with `--allow-shutdown`. *(v0.7.5)* The key `bankCount` (the number of active questions in the whole library) is gone: the route is public, and signed-in pages count the questions they may see from `GET /api/bank` and `GET /api/banks`. The route still reads the database, so it answers 500 when the database cannot be read, and the container health check (which asks this route) reports the backend as unhealthy.
 
@@ -147,7 +149,7 @@ Public. Signed out (no cookie, or a session that is not valid any more):
 Signed in (also while the account must choose a new password):
 
 ```json
-{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.8", "enabled": true, "link": true}}
+{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
 - `role` is `admin` or `user`. `canManageBanks` *(v0.7)* is `true` for every administrator, and for a plain user with the **Bank manager** permission. `aiAllowed` *(v0.8)* is `true` for every administrator, and for a plain user with **AI+**; whether the user can use AI right now is in `GET /api/ai/status`. The same `user` object is in the answers of sign-in and of the password change.
@@ -358,12 +360,14 @@ Sanitizing rules: `results` must be a list (otherwise **400** `成绩的格式�
 
 *(v0.5)* Each result may carry an optional `answer`, stored only so the record can be reviewed later: a JSON array of at most 64 elements, each a string of at most 8 characters, an integer 0–999, or `null` (`["C"]`, `["A", "D"]`, `[0, 1, null]`). Anything else is stored as "no answer"; the result itself is still accepted. The server stores one detail row per counted result, plus a snapshot of the banks the questions came from, and keeps the user's newest **500** records (older ones are deleted together with their detail).
 
+*(v0.9)* The body may also carry `"key"` and `"startedAt"`, which say which practice or exam session the record was saved from, so that the AI+ feature can keep that session's answers in one chat (section 5.5). `key` is a string of exactly 32 lower-case hexadecimal digits (the browser makes a new one for every session); `startedAt` is an integer from 1 to 4102444800 (unix seconds, when the session started). **Each is judged on its own**: a missing or invalid one (wrong length, upper-case or non-hex characters, a number sent as a string, a fraction, `null`, a value out of range) is stored as `NULL`, and the request is never refused because of it, so older clients keep working. The key is not unique and the main database never looks a record up by it; records saved before v0.9, or without a valid `key`, have none.
+
 **Only questions that exist are counted** *(v0.7)*. A result whose question is gone (its bank was deleted during the exam, or the id is made up), or belongs to a bank the user may not see, is left out of the statistics, the detail, `total` / `correct` / `percent` and the bank snapshot. Deactivated questions (left out of a later import) still exist and are counted. Then:
 
 - Some results were left out: the record is saved with the rest, its `sheets` lists only the sheets (in the order sent) that a counted question belongs to, and the answer ends with `"notCounted": [<the ids left out>]`.
 - None is left: nothing is saved, **409** `这场考试的题目已经被删除，成绩没有保存。` ("The questions of this exam have been deleted, so the result was not saved.").
 
-The answer is the user's `GET /api/progress` (plus `notCounted` when some results were left out; `GET /api/progress` itself never has it).
+The answer is the user's `GET /api/progress` (plus `notCounted` when some results were left out; `GET /api/progress` itself never has it). *(v0.9)* It ends with `"recordId"`, always last: the id of the record that was just saved (the `id` that `GET /api/records` lists), so the browser no longer has to guess it.
 
 `percent` uses **round-half-to-even** (Python's `round`): 1 correct out of 8 is 12, not 13.
 
@@ -378,6 +382,7 @@ Signed in. `{"records": [RecordSummary, …], "retention": 500}`, the user's rec
 
 ### `GET /api/record?id=<int>` *(v0.5)*
 Signed in. `{"record": RecordSummary, "items": [{"seq": 0, "questionId": "…", "answer": ["C"], "correct": true, "question": {…}}]}`. `answer` is the stored array or `null`; `question` is the question exactly as in `GET /api/bank` plus a trailing `"active": <bool>` (deactivated questions are included), or `null` when the question no longer exists or *(v0.7)* belongs to a bank the user may not see (its text is not sent).
+*(v0.9)* The `record` of this route, and only of this route (`GET /api/records` and the other answers that list records are unchanged), ends with `"sessionKey"` (the stored session key, or `null`) and `"startedAt"` (unix seconds, or `null`): the Study records page uses them to find the AI chat of the record.
 `id` must be exactly one query parameter of 1–18 ASCII digits (percent-encoding is decoded) → otherwise **400** `请求的格式不对。`; unknown id, or another user's record → **404** `这条考试记录不存在（可能已被删除），请刷新页面后再试。` ("This exam record does not exist …").
 
 ### `POST /api/records/delete` *(v0.5)*
@@ -480,12 +485,12 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
   | 503 | `ai.backendDown` | The backend could not answer, or the AI link is off (no internal token) |
   | 502 | `ai.unavailable` | ai-service is absent, stopped or does not answer |
   | 413 | `ai.badRequest` | The body is over 256 KiB |
-  | 429 | (not JSON) | Nginx's rate limit: 30 requests a second per address (burst 120); `send` and `retry` also 20 a minute per session (burst 10) |
+  | 429 | (not JSON) | Nginx's rate limit: 30 requests a second per address (burst 120); `send`, `retry`, `study/ask` and `summary/ask` also 20 starts a minute per session (burst 10) |
 
   The frontend treats any 5xx without JSON on `/api/ai/*` as `ai.unavailable`.
 - **POST** needs `Content-Type: application/json` (optionally `; charset=utf-8`; otherwise 415 `ai.badRequest`); the body must be a JSON object (an empty body counts as `{}`), at most 128 KiB (413 `ai.badRequest`). **Keys that a route does not list are refused** (400 `ai.badRequest`), and so is a value of the wrong type. Ids, in bodies and query strings, are positive integers.
 - **Answers**: JSON (`Content-Type: application/json; charset=utf-8`, `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`), **compact** (no spaces after `:` and `,`, unlike the backend's answers) with the keys in the order shown here. Parse it; do not compare bytes.
-- **Errors**: `{"error": "<Chinese text>", "code": "<code>"}`, plus `"field": "apiKey" | "gatewayKey"` for the key errors and `"limit": <n>` for the errors that name a number (`ai.tooLong`, `ai.messageLimit`, `ai.chatLimit`, `ai.memoryLimit`, `ai.memoryTooLong`), and `"field": "<key>"` for `ai.limitRange`. The codes are stable; the frontend translates by code, never by the text. A provider's own error text is never passed on.
+- **Errors**: `{"error": "<Chinese text>", "code": "<code>"}`, plus `"field": "apiKey" | "gatewayKey"` for the key errors and `"limit": <n>` for the errors that name a number (`ai.tooLong`, `ai.messageLimit`, `ai.chatLimit`, `ai.memoryLimit`, `ai.memoryTooLong`), and `"field": "<key>"` for `ai.limitRange`. *(v0.9)* A 409 `ai.busy` of the study routes (5.5) ends with `"running"`. The codes are stable; the frontend translates by code, never by the text. A provider's own error text is never passed on.
 - **Access levels**, from the identity statement:
 
   | Level | Who | Otherwise |
@@ -511,6 +516,10 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
 | POST | `/api/ai/free` | Admin | `{"free": <bool>}` | `{"free": <bool>}` (the administrator's free mode, below) |
 | POST | `/api/ai/stop` | Signed | `{}` or `{"chatId": <id>}` | `{"ok": true, "stopped": <bool>}` |
 | POST | `/api/ai/chats/delete` | Signed | `{"id": <id>}` or `{"all": true}` | `{"deleted": <n>}` |
+| POST | `/api/ai/study/ask` | AI user | `StudyAsk` (5.5): `kind` `hint` or `explain`, the session and the question | **event stream** (5.3, 5.5) *(v0.9)* |
+| GET | `/api/ai/study/saved` | Signed | `?mode=&key=` or `&record=&source=&question=&kind=` (5.5) | `Saved` of `StudyAnswer` *(v0.9)* |
+| POST | `/api/ai/summary/ask` | AI user | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **event stream** (5.3, 5.5) *(v0.9)* |
+| GET | `/api/ai/summary/saved` | Signed | `?record=<id>&at=<12 digits>` (5.5) | `Saved` of `SummaryAnswer` *(v0.9)* |
 | GET | `/api/ai/memories` | Signed | | `{"memories": [Memory], "limit": 50, "maxChars": 300}` (the current limits) |
 | POST | `/api/ai/memories/add` | AI user | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI user | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
@@ -531,7 +540,7 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
 | GET | `/api/ai/admin/limits` | Admin | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
 | POST | `/api/ai/admin/limits` | Admin | any of the seven limit keys, integers | the same as GET |
 
-`GET /healthz` of ai-service (`{"ok":true,"version":"0.8","arch":"x86_64"}`, no identity needed) is used by its container health check; Nginx has no location for it, so it is not reachable from outside.
+`GET /healthz` of ai-service (`{"ok":true,"version":"0.9","arch":"x86_64"}`, no identity needed) is used by its container health check; Nginx has no location for it, so it is not reachable from outside.
 
 **Shapes** (keys in this order):
 
@@ -547,10 +556,17 @@ Status        {"enabled": bool,          // AI+ is available: the AI+ feature is
                "keyProblem": bool,       // administrators only: the saved keys cannot be used (false for others)
                "configured": bool,       // administrators only: a model and the needed keys are saved (false for others)
                "freeMode": bool}         // administrators only: your free mode is on (false for others), see POST /api/ai/free
-ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool}   // a chat has no mode
+ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool,   // a chat has no mode
+               "kind": "chat"|"practice"|"exam"|"summary",   // v0.9: AI Chat, or the study chat of a practice, an exam, a record summary
+               "recordId": n|null}                          // v0.9: the main-app record of a study chat (display only), else null
 Message       {"id": n, "role": "user"|"assistant", "content": str, "status": "streaming"|"done"|"stopped"|"error",
                "error": code|null, "truncated": bool, "model": str|null, "createdAt": n,
-               "free": bool}             // the mode this message was written (or answered) in: true = free mode
+               "free": bool,            // the mode this message was written (or answered) in: true = free mode
+               // v0.9 (an AI Chat message has kind "chat" and null in the other six)
+               "kind": "chat"|"hint"|"explain"|"summary", "questionId": str|null, "questionNo": n|null,
+               "source": "practice"|"result"|null, "lang": "en"|"zh-CN"|"ja"|null,
+               "recordId": n|null,     // the chat's record, only for source "result" and kind "summary"
+               "sample": StudySample|null}   // summaries only
 Memory        {"id": n, "content": str, "source": "manual"|"chat", "createdAt": n, "updatedAt": n}
 Settings      {"provider": "openai"|"anthropic"|"gateway", "baseUrl": str, "format": "openai"|"anthropic",
                "gatewayAuth": "bearer"|"x-api-key"|"cf-aig-authorization", "model": str, "manualModel": bool,
@@ -568,11 +584,21 @@ Usage         {"days": n, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "unit": "day
                "totals": {"calls", "tokensIn", "tokensOut", "errors", "tokensCached"},
                "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "tokensCached"}],
                "byModel": [{"model": str, "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
-               "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}
+               "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
+               "byPurpose": [{"purpose": "chat"|"hint"|"explain"|"summary", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}   // v0.9
 AdminUserRow  {"id": n, "username": str, "role": "admin"|"user", "ai": bool, "aiAllowed": bool, "disabled": bool,
                "exists": bool, "suspended": bool,   // suspended: the user is paused (never true for administrators)
                "chats": n, "messages": n, "memories": n, "lastUsedAt": n|null,
                "tokensIn": n, "tokensOut": n}
+StudySample   {"used": n, "usable": n, "wrong": n}   // v0.9, a summary: wrong answers sent / wrong answers whose question is still there / wrong answers in the record
+StudyAnswer   {"messageId": n, "kind": "hint"|"explain", "questionId": str, "questionNo": n, "source": "practice"|"result",
+               "status": "streaming"|"done"|"stopped"|"error", "error": code|null, "truncated": bool, "content": str,
+               "lang": "en"|"zh-CN"|"ja", "model": str|null, "createdAt": n, "finishedAt": n|null}   // v0.9
+SummaryAnswer {"messageId": n, "recordId": n|null, "status", "error", "truncated", "content", "lang", "model", "createdAt", "finishedAt",
+               "sample": StudySample|null}   // v0.9; after recordId the same keys as StudyAnswer, without kind, question and source
+Saved         {"chatId": n|null, "latest": StudyAnswer|SummaryAnswer|null, "lastGood": StudyAnswer|SummaryAnswer|null}   // v0.9
+RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "questionId": str|null, "questionNo": n|null,
+               "source": str|null, "recordId": n|null}   // v0.9: the answer being written, in a 409 ai.busy of the study routes
 ```
 
 Times are unix seconds. Notes per route:
@@ -582,9 +608,10 @@ Times are unix seconds. Notes per route:
 - **Free mode** is a state of the **administrator**, not of a chat. `POST /api/ai/free` with `{"free": true}` or `{"free": false}` turns it on or off and answers `{"free": <bool>}`. The body must hold exactly the key `free` as a boolean (anything else is 400 `ai.badRequest`); the route is Admin-only (403 `ai.adminOnly` for others) and works while AI is off; repeating it is harmless. The state is stored per user in ai-service's own database (`users.free_mode`), so it survives reloads, other browsers and restarts, and `GET /api/ai/status` reports it as `freeMode` (always `false` for a plain user, whatever is stored: a demoted administrator is answered normally, and the stored flag applies again if the user becomes an administrator again). While it is **on**, every `send` and `retry` of that administrator, in any chat, old or new, is answered in free mode: the system prompt is only the reply-language line (no study-assistant instructions, no date, no memories; the memories are not even read). While it is **off**, every message is answered normally. A change applies from the **next** message; an answer that is already being written keeps the mode it started in. **Every message records its mode** (`Message.free`, and `start.free` in the event stream): a question and its answer have the mode that was in force when the question was sent, and a retry uses the mode at the time of the retry (and records it on the question too). Free mode lifts only Xexam's own study-assistant role, never the provider's own safety rules. AI Chat has no switch and no divider for it: the choice is made in **Settings**, in the section 「AI 对话模式」 (Normal / Free; only administrators who can use AI see it), and AI Chat shows a green 「自由模式」 tag beside its title while the mode is on.
 - **Prompt and history.** A normal answer's system prompt is the study-assistant text with today's date, then the user's memories (newest-updated first, whole notes only, at most 4000 characters), then the reply-language line last. The static part comes first and the per-request parts last, so the start of every request is identical between requests. When the history sent contains messages written in the **other** mode than the current one (right after a switch), **one short mode line** follows the language line: `Current mode: normal (Xexam study assistant); earlier turns may be free mode.` or `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` Without such messages there is no mode line, and a free-mode prompt is the language line alone. **Old messages are shortened** before they are sent: the newest 4 messages of the history are sent in full, older answers are cut to their first 800 characters followed by `…(shortened)`, older questions to their first 2000 characters followed by `…`. The cut depends only on the message and its age, so a message always gives the same text; the history budget counts the shortened length. Stored messages are never changed.
 - **Prompt caching.** In the **Anthropic** format the system prompt is sent as one text block with a `cache_control` (`ephemeral`) breakpoint, and the last message of the history (the one before the new question) gets a second one, so a conversation re-uses its cached start. In the **OpenAI** format nothing is added: providers that cache automatically do so by themselves. What the provider reports as served from its cache (`cache_read_input_tokens`, or `prompt_tokens_details.cached_tokens`) is stored with the call and shown as `tokensCached` in `admin/usage`; it is a part of `tokensIn`, not an addition to it, and a provider that reports nothing counts 0. Caching changes what the provider charges, never an answer.
-- **`retry`**: the chat's last message must be an answer that failed or was stopped, after a user message; it is written again in place (the same message id, no new user message). Otherwise 409 `ai.notRetryable`.
+- **`retry`**: the chat's last message must be an answer that failed or was stopped, after a user message; it is written again in place (the same message id, no new user message). Otherwise 409 `ai.notRetryable`. *(v0.9)* A study answer (a hint, an explanation or a summary: a message whose `kind` is not `chat`) is never retried this way, even when it failed or was stopped: 409 `ai.notRetryable`. It is asked again through its own route (5.5), which keeps its own prompt and its answer check.
+- **Study chats in AI Chat** *(v0.9)*: the chats of 5.5 are ordinary chats for `chats`, `chat`, `chats/delete` and the administrator's views. A user who may use AI can also `send` into one (a follow-up question): that message is a plain `chat` message, so it is answered like any AI Chat message (with the history of the chat, the memories and the free mode), and its `start` event has `chatKind` `practice`, `exam` or `summary`. `memories/suggest` takes only messages of kind `chat`: a message of a study chat gives 404.
 - **One running answer per user** by default (`perUserRunning`, up to 4, never two in one chat): another `send`, `retry` or `memories/suggest` gives 409 `ai.busy`. Beyond `globalRunning` model calls at once on the whole server: 503 `ai.serverBusy`. Both are refused before anything is saved.
-- **`stop`**: with `{}` it stops every answer of yours being written, with `{"chatId": …}` only the one of that chat; it waits up to 5 seconds until they are saved. `stopped: false` when nothing was running. The answer ends with the event `stopped` and keeps its text.
+- **`stop`**: with `{}` it stops every answer of yours being written, with `{"chatId": …}` only the one of that chat; it waits up to 5 seconds until they are saved. `stopped: false` when nothing was running. The answer ends with the event `stopped` and keeps its text. *(v0.9)* Hints, explanations and summaries are stopped the same way (`{"chatId"}` of their study chat, or `{}`).
 - **`chats/delete`** stops an answer being written in the chat(s) first, then deletes them at once with their messages. `{"id": …}` of a chat that is not yours: 404.
 - **`memories/add`, `memories/update`**: the text's whitespace is collapsed to single spaces; 1 to `memoryChars` characters (300 by default; 400 `ai.memoryTooLong` with `limit`); more than `memoriesPerUser` notes: 409 `ai.memoryLimit` with `limit`. `source` defaults to `manual`.
 - **`memories/suggest`** asks the model to turn one of your messages (its first 2000 characters) into a short note and returns it; it saves nothing (save it with `memories/add`, `source: "chat"`). An answer message, or a message of someone else: 404. An empty suggestion: 502 `ai.up.protocol`.
@@ -593,11 +620,11 @@ Times are unix seconds. Notes per route:
 - **`admin/verify`** sends one streaming request with the saved settings and model (400 `ai.modelMissing` / `ai.keyMissing`, 409 `ai.keyProblem` first), the same way a chat does, with the prompt "Reply with the single word OK." and the message "Test". Success needs an answer with text, or a normal end with token counts. If the provider refuses the request (`ai.up.badRequest`), it tries once more without `stream_options` (OpenAI format) or with `max_tokens` 4096 instead of 8192 (Anthropic format) and keeps that setting when it works. A failure answers 200 with `ok: false`, the `ai.up.*` code and the provider's HTTP status: a code that points at the settings (`auth`, `quota`, `notFound`, `badRequest`, `protocol`, `refused`) clears the passed test and switches AI off; a temporary one (`rateLimit`, `overloaded`, `server`, `timeout`, `connect`) changes nothing. Each try may take up to 2 minutes; Nginx waits up to 300 seconds for this route.
 - **`admin/enable`** `{"enabled": true}` needs a passed test of the current settings (409 `ai.notVerified`) and readable keys (409 `ai.keyProblem`); `false` stops every answer being written (`ai.disabled`). This is the **AI+ feature** switch of the whole installation (AI settings shows it with the chips *AI+ feature on* / *off*). Before it answers, ai-service reports the new state to the backend, so `aiAvailable` follows at once. `settings` (when it switches AI off), `verify` (when it switches AI off), `suspend` and `resume` do the same.
 - **`admin/suspend`** and **`admin/resume`** *(v0.8, round 2)* **pause** and **resume** the AI+ feature of one plain user (AI settings shows them as the buttons **Pause** / **Resume** and the status **Paused**; the route names, the `suspended` key and the code `ai.suspended` keep the older word). Body: `{"userId": <id>}` and nothing else (400 `ai.badRequest`). The answer is `{"user": AdminUserRow}` with the new `suspended`. The user is looked up through the backend (503 `ai.backendDown` when it cannot answer; 404 `ai.notFound` when the user does not exist); an administrator cannot be paused: 409 `ai.adminAlways`. A user whose AI+ feature is off can also be paused through the API (the AI settings page lists only users who have the feature). A **pause** stops a running answer or memory suggestion of the user at once (the text so far is kept; the stream ends with the `error` event `ai.suspended`), and from then on the user's AI user routes answer 403 `ai.suspended`; reading and deleting their chats and memories stay possible, and the user stays listed with their data. The page asks for no confirmation. Both routes are safe to repeat: the flag and its audit line are written in one transaction, and a repeat that changes nothing answers 200 without a new line. **Audited**: the System log lines are `AI function turned off for user "<name>" by admin "<admin>"` (pause) and `AI function turned on for user "<name>" by admin "<admin>"` (resume), with the prefix `AI: `; these English log lines kept their wording. The flag is kept in ai-service's own database (schema 2, [database.md](database.md)); columns that a schema 2 file lacks (from an earlier build of this version) are added automatically at the next start.
-- **`admin/usage`**: per day for 7 and 30 days, per month for 90 and 365; `byPeriod` lists every period of the range, zeros included, oldest first; tokens a provider did not report count 0. `tokensCached` is the part of `tokensIn` that the provider served from its prompt cache (see **Prompt caching**); the Usage tab of AI settings shows it as the **Cached** column (缓存命中 / キャッシュ). Calls recorded before it existed count 0. `byUser` is sorted by calls; deleted users are one row with `userId: null`. In `byModel`, the calls that listed models have `model: ""`.
+- **`admin/usage`**: per day for 7 and 30 days, per month for 90 and 365; `byPeriod` lists every period of the range, zeros included, oldest first; tokens a provider did not report count 0. `tokensCached` is the part of `tokensIn` that the provider served from its prompt cache (see **Prompt caching**); the Usage tab of AI settings shows it as the **Cached** column (缓存命中 / キャッシュ). Calls recorded before it existed count 0. `byUser` is sorted by calls; deleted users are one row with `userId: null`. In `byModel`, the calls that listed models have `model: ""`. *(v0.9)* `byPurpose` follows `byPeriod` and splits the **chat calls** (not the model-listing calls) of the same range into exactly four rows, always in this order and with zeros kept: `chat` (AI Chat, and every call recorded before v0.9), `hint`, `explain`, `summary`; the Usage tab of AI settings shows it as the table "By feature".
 - **`admin/users`** first reconciles with the backend (the AI data of deleted users is removed), then lists **the users who have the AI+ feature**: every administrator and every user with AI+ on (paused ones included, with `suspended: true`), sorted by username; tokens are all-time sums. *(Round 2)* A user whose AI+ feature was switched off is no longer listed, even when they still have AI data; that data is kept (they can read and delete it, retention applies, and `admin/user` still shows it, audited). `exists` is therefore always `true` here (the key is kept so the shape stays the same).
 - **`admin/user`** reconciles too, and answers 404 only when the user no longer exists in the main app (a user without AI data gets empty lists). **The view is audited**: the line `user "<admin>" viewed the AI chats and memories of user "<name>"` (and for `admin/chat` `… viewed an AI chat of user "<name>" (<n> messages)`) is delivered to the System log before the data is returned; if the backend cannot take it, the answer is 503 `ai.backendDown` and no data.
 - **`admin/clear`**: `what: "chat"` needs `chatId`; `chats` and `memories` must not have one (400). A running answer in the cleared chat(s) is stopped first. The audit line (`cleared one AI chat of user …`, `cleared all <n> AI chats of user …`, `cleared all <n> AI memories of user …`) is written in the same transaction as the delete and delivered until the backend takes it.
-- **`admin/limits`**: the keys `perUserRunning` (1–4, default 1), `globalRunning` (1–64, 16), `chatsPerUser` (10–100000, 1000), `messagesPerChat` (20–5000, 400), `memoriesPerUser` (1–1000, 50), `memoryChars` (50–2000, 300), `messageChars` (1000–32000, 16000). POST takes any subset; a value out of range or not an integer is 400 `ai.limitRange` with `field`, an unknown key 400 `ai.badRequest`, and then nothing is saved. A change applies at once (running calls are never cancelled), never switches AI off, and never deletes or shortens existing data. It is logged: `AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`.
+- **`admin/limits`**: the keys `perUserRunning` (1–4, default 1), `globalRunning` (1–64, 16), `chatsPerUser` (10–100000, 1000), `messagesPerChat` (20–5000, 400), `memoriesPerUser` (1–1000, 50), `memoryChars` (50–2000, 300), `messageChars` (1000–32000, 16000). POST takes any subset; a value out of range or not an integer is 400 `ai.limitRange` with `field`, an unknown key 400 `ai.badRequest`, and then nothing is saved. A change applies at once (running calls are never cancelled), never switches AI off, and never deletes or shortens existing data. It is logged: `AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`. *(v0.9)* Study chats count like every other chat: each one is one of the `chatsPerUser`, and every hint, explanation or summary adds two messages to its chat, so the default `messagesPerChat` of 400 allows 200 asks per practice session or exam.
 
 ### 5.3 The event stream of `send` and `retry`
 
@@ -607,16 +634,16 @@ Each event is `event: <name>`, `data: <one line of JSON>` and a blank line:
 
 | Event | `data` | When |
 |---|---|---|
-| `start` | `{"chatId": n, "chatTitle": str, "userMessageId": n, "assistantMessageId": n, "model": str, "newChat": bool, "retry": bool, "free": bool}` | first, always; `free` is the mode this answer is written in (the administrator's free mode at that moment) |
-| `thinking` | `{}` | *(round 2)* at most once, and only before the first `delta`: the model started to send its reasoning (OpenAI `reasoning_content` / `reasoning`, Anthropic thinking blocks). The reasoning itself is never stored, sent to the browser or logged |
+| `start` | `{"chatId": n, "chatTitle": str, "userMessageId": n, "assistantMessageId": n, "model": str, "newChat": bool, "retry": bool, "free": bool, "chatKind": str}` | first, always; `free` is the mode this answer is written in (the administrator's free mode at that moment); *(v0.9)* `chatKind` is the kind of the chat (`chat` for a new one). The study routes send more keys (5.5) |
+| `thinking` | `{}` | *(round 2)* at most once, and only before the first `delta`: the model started to send its reasoning (OpenAI `reasoning_content` / `reasoning`, Anthropic thinking blocks; *(v0.9)* also a `<think>…</think>` block at the very start of an OpenAI-format answer, which some servers send as text). The reasoning itself is never stored, sent to the browser or logged |
 | `delta` | `{"text": str}` | the next piece of the answer, in order |
 | `done` | `{"status": "done", "tokensIn": n\|null, "tokensOut": n\|null, "truncated": bool}` | the answer is complete (`truncated`: the model stopped at its length limit) |
 | `stopped` | `{"status": "stopped"}` | **Stop**, or ai-service is shutting down |
-| `error` | `{"status": "error", "code": str, "error": "<Chinese text>"}` | a provider failure, access lost (`ai.notAllowed`, `ai.backendDown`), the user paused (`ai.suspended`, text `管理员已暂停你的 AI+ 功能。`), the AI+ feature switched off (`ai.disabled`, text `AI+ 功能暂时不可用。`), the chat deleted (`ai.notFound`); the text so far is kept |
+| `error` | `{"status": "error", "code": str, "error": "<Chinese text>"}`; *(v0.9)* with `"withdraw": true` added when a hint is withheld (`ai.hintLeak`, 5.5) | a provider failure, access lost (`ai.notAllowed`, `ai.backendDown`), the user paused (`ai.suspended`, text `管理员已暂停你的 AI+ 功能。`), the AI+ feature switched off (`ai.disabled`, text `AI+ 功能暂时不可用。`), the chat deleted (`ai.notFound`); the text so far is kept |
 
 ```text
 event: start
-data: {"chatId":12,"chatTitle":"How do I plan a week of revision?","userMessageId":41,"assistantMessageId":42,"model":"demo-chat-small","newChat":true,"retry":false,"free":false}
+data: {"chatId":12,"chatTitle":"How do I plan a week of revision?","userMessageId":41,"assistantMessageId":42,"model":"demo-chat-small","newChat":true,"retry":false,"free":false,"chatKind":"chat"}
 
 event: thinking
 data: {}
@@ -653,11 +680,15 @@ The `error` texts are ai-service's (Chinese; `ai.serviceOff` is the backend's); 
 | `ai.serviceOff` | 409 | *(Round 2)* Produced by the **backend**, not ai-service: turn on the AI+ feature in AI settings first (text `请先在 AI 设置里开启 AI+ 功能。`). See `POST /api/users/update`. |
 | `ai.adminOnly` | 403 | Only administrators can do this (also: `POST /api/ai/free` from a non-administrator). |
 | `ai.notFound` | 404 | It no longer exists (or it is not yours). |
-| `ai.busy` | 409 | An answer is still being written. |
+| `ai.busy` | 409 | An answer is still being written. *(v0.9)* On the study routes the answer also ends with `"running"`: a `RunningInfo` of the answer being written (`null` when it cannot be found), so the page can say which one it is. |
 | `ai.tooLong` | 400 | The message is too long (`limit`). |
 | `ai.messageLimit` | 409 | The chat has reached `messagesPerChat` (`limit`): start a new chat. |
 | `ai.chatLimit` | 409 | You have `chatsPerUser` chats (`limit`): delete some. |
-| `ai.notRetryable` | 409 | This answer cannot be retried. |
+| `ai.notRetryable` | 409 | This answer cannot be retried. *(v0.9)* Also every hint, explanation and summary; the text is unchanged. |
+| `ai.hintLeak` | (stream) | *(v0.9)* The hint would have given the answer away and was withheld (text `这个提示透露了答案，已被隐藏。请重新生成。`; with `withdraw: true`). |
+| `ai.noWrong` | 409 | *(v0.9)* The record has no wrong answer to summarise (text `这次没有答错的题（未作答的题不计入 AI 总结）。`). |
+| `ai.noUsable` | 409 | *(v0.9)* Every wrong answer of the record belongs to a question that is deleted or no longer visible to the user (text `这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。`). |
+| `ai.noDetail` | 409 | *(v0.9)* The record has no per-question detail (saved before v0.5; text `这条记录没有逐题记录，无法总结。`). |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | The request was not valid. |
 | `ai.memoryLimit` | 409 | The memory is full (`limit`). |
 | `ai.memoryTooLong` | 400 | A memory has too many characters (`limit`). |
@@ -687,6 +718,83 @@ The `error` texts are ai-service's (Chinese; `ai.serviceOff` is the backend's); 
 
 How a provider's answer maps to the `ai.up.*` codes: the error type or code in its body first (also an error that arrives inside a stream after a 200, as some gateways send it; a numeric code there is read like an HTTP status), else the HTTP status: 401 / 403 `auth`; 402 `quota`; 404 `notFound`; 429 `rateLimit`; 503 / 529 `overloaded`; other 5xx `server`; other 4xx `badRequest`; 3xx and unreadable answers `protocol`; a refusal or content filter without any text `refused`. In the usage statistics the code is stored without `ai.up.`.
 
+### 5.5 Study routes (v0.9)
+
+These four routes serve the AI+ feature in practice, on the result pages and in Study records. `study/ask` and `summary/ask` are **AI user** routes and answer like `send` (5.3: the same event stream, the same Nginx start limit, stopped with `POST /api/ai/stop`). `study/saved` and `summary/saved` need only **Signed**, so a user whose AI+ feature is off, paused or not available can still read what was saved earlier. The question and the record never come from the browser: ai-service reads them from the backend with the caller's own session (section 6), so a user can only ask about questions of banks they may see and about their own records. An invalid body is refused (400 `ai.badRequest`) before the access check.
+
+**Study chats.** Every answer is saved in a chat of its own kind. These chats are listed with the others (`ChatSummary.kind`, `ChatSummary.recordId`):
+
+| `kind` | One chat for | Stored `title` | `recordId` |
+|---|---|---|---|
+| `chat` | AI Chat (`send`) | the start of the first message | `null` |
+| `practice` | each practice session (its `key`) | `YYYY-MM-DD HH:MM`, the start of the session | the record, once an answer was asked from its result page |
+| `exam` | each exam session (its `key`) | `YYYY-MM-DD HH:MM`, the start of the session | the record |
+| `summary` | each record | the record's `at` | the record |
+
+The stored title is only the time; the screens add a localised suffix by kind (`-练习` / `-考试` / `-AI总结` in Chinese, `-Practice` / `-Exam` / `-AI summary` in English, `-練習` / `-試験` / `-AIまとめ` in Japanese). The time is the start of the session in the time zone of the ai-service container, taken from the record's `startedAt`, else the request's `startedAt`, else the record's `at` as it is; a start time more than 5 minutes in the future or more than 400 days in the past counts as now. `recordId` is for display only (ids can be reused after a restore): it is set once, when an answer is asked for a saved record, and never used to look a chat up. Chats are found by their kind and session key; an ask that names a record **and** a `key` must match the key the record was saved with, else 404 `ai.notFound`. A record saved without a session key (every record from before v0.9) gets one chat of its own, of the record's kind, titled with the record's time, the first time AI is used on it.
+
+Study chats follow the normal rules of every chat: the user can read and delete them while AI+ is off, they count toward `chatsPerUser` and `messagesPerChat` (and `chats/delete`, retention, `admin/user`, `admin/chat` and `admin/clear` treat them like any chat), and the administrator's views are audited in the same way. A study answer uses no memories, no earlier messages of the chat and never the free mode: the prompt is the instructions of that feature plus exactly one user turn, and `Message.free` is `false`.
+
+#### `POST /api/ai/study/ask`
+
+Body (keys other than these are 400 `ai.badRequest`; `null` counts as absent for the optional ones):
+
+| Key | Value | |
+|---|---|---|
+| `kind` | `"hint"` or `"explain"` | required |
+| `mode` | `"practice"` or `"exam"` | required: the kind of the session |
+| `source` | `"practice"` or `"result"` | required: where it is asked (the practice page, or a result page / record detail) |
+| `questionId` | string, `^[0-9A-Za-z_-]{1,64}$` | required |
+| `no` | integer 1 to 100000 | required: the question number the user sees |
+| `qlang` | `"en"`, `"zh"` or `"ja"` | required: the language the question is shown in |
+| `key` | 32 lower-case hexadecimal digits | the session key (the `key` of `POST /api/attempt`) |
+| `startedAt` | integer, at least 1 | unix seconds, when the session started |
+| `recordId` | positive integer | the saved record, for a result page |
+| `lang` | `"en"`, `"zh"` (`"zh-CN"` too) or `"ja"` | the reply language; missing = the user's Settings language as the backend knows it |
+
+Allowed combinations: a hint is only for `mode` `practice` with `source` `practice`; `source` `practice` needs `mode` `practice` and no `recordId`; `mode` `exam` needs `source` `result` and a `recordId`; without a `recordId` both `key` and `startedAt` are needed.
+
+In this order: validation, then the access checks of `send` (403 `ai.disabled` / `ai.notAllowed` / `ai.suspended`, 503 `ai.backendDown`, 409 `ai.keyProblem`); then the question from the backend (503 `ai.backendDown` when the backend cannot be reached or its answer cannot be read; 403 `ai.notAllowed` when the backend says the session is gone or the user has no AI+ feature; 404 `ai.notFound` for a question that does not exist, belongs to a bank the user may not see, or is not in the named record); then the chat; then the places: 409 `ai.busy` with `running`, 409 `ai.chatLimit` / `ai.messageLimit` (`limit`) before anything is saved. After that the answer streams.
+
+What the model gets: a **hint** gets the question without its answer key (never the right answer, its explanation or its notes); an **explanation** gets the question, the answer key and the stored explanation, and on a result page (`source` `result`) also what the user answered, or that the question was left unanswered. The question is shown in `qlang` where it has that translation. The stored user message is the question text without any answer part, cut to 4000 characters.
+
+The stream is that of 5.3. The `start` event carries more keys:
+
+```text
+event: start
+data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantMessageId":42,"model":"demo-chat-small","newChat":true,"retry":false,"free":false,"chatKind":"practice","kind":"hint","questionId":"a1b2c3d4e5f6","questionNo":3,"source":"practice","recordId":null,"sample":null,"lang":"en"}
+```
+
+`recordId` is the record only when `source` is `result` (otherwise `null`); `sample` is always `null`; `lang` is the language of the reply (`en`, `zh-CN` or `ja`). A hint that reaches 6000 characters is cut there and ends with `done` and `truncated: true`.
+
+**A hint never gives the answer away.** ai-service checks the text of a hint while it is written against the answer key and releases text only when it is known not to name it. If the check finds that the hint does, the answer ends with the event `error` `ai.hintLeak` and `"withdraw": true`: a client must remove the hint text it has already shown. Nothing of that hint is saved (the message has status `error`, error `ai.hintLeak` and empty `content`), the call is counted as an error in the usage, and ai-service writes at most one line a minute to the System log (`AI hint withheld because it gave the answer away (user "<name>")`, then `<n> more AI hints were withheld since the last report`) that never contains any text. Asking again (a new request, not `retry`) gives a new hint. The check is a safety net of word lists and rules, not a guarantee. Explanations and summaries are not checked: they are meant to name the answer.
+
+#### `GET /api/ai/study/saved`
+
+Query, raw values (no percent-encoding is needed for any of them), each name at most once, unknown names ignored: `mode` (`practice` or `exam`), exactly one of `key` (32 lower-case hexadecimal digits) or `record` (a positive id), `source` (`practice` or `result`), `question` (a question id as above) and `kind` (`hint` or `explain`). The same combinations as for `ask` apply (a hint only with `practice` and `practice`; `source` `practice` needs `mode` `practice` and a `key`; `mode` `exam` needs `source` `result`; `record` needs `source` `result`); anything else is 400 `ai.badRequest`.
+
+Answer: `Saved` of `StudyAnswer`. `latest` is the newest answer of that question in that place, whatever its status (`streaming` while it is being written, with the text so far; read again every 2 seconds until it ends); `lastGood` is the newest answer with `status` `done` and some text, and is filled **only when `latest` is not `done`** (otherwise `null`), so a failed or withheld retry still shows the last good answer. A practice answer and a result-page answer to the same question are kept apart (`source`). Nothing found: `{"chatId": null or the chat's id, "latest": null, "lastGood": null}`.
+
+With `record`, ai-service finds the chat through the record's identity, which it asks the backend for (`record-info`, section 6) and keeps in memory for at most 10 minutes (up to 1000 records); a record that is not the user's, or whose kind is not `mode`, gives the empty answer above, and 503 `ai.backendDown` when the backend cannot answer. Reading needs no AI+ feature, so the answer comes also while AI is off.
+
+#### `POST /api/ai/summary/ask`
+
+Body `{"recordId": <positive id>, "lang"?: "en" | "zh" | "ja"}` and nothing else. The summary looks at the questions the user answered wrong in that record: ai-service asks the backend for **at most 70** of them, chosen at random (without repeats) and kept in record order, with their question and answer side; together at most 120 000 characters of question and answer text (longer texts are cut to a fair share). Questions left unanswered are not counted. Refusals: 403 `ai.notAllowed` (session gone, or no AI+), 404 `ai.notFound` (not the user's record), 409 `ai.noDetail` (the record has no per-question detail), 409 `ai.noWrong` (no answered-wrong question), 409 `ai.noUsable` (every wrong answer's question is deleted or no longer visible), plus the errors of `send`. The chat is the record's `summary` chat (one per record, titled with the record's `at`); asking again adds a new summary to it. The `start` event has `chatKind` `summary`, `kind` `summary`, `questionId`, `questionNo` and `source` `null`, `recordId` the record, `sample` a `StudySample`, and `lang`. The stored user message is the machine line `[AI summary] <at> <kind> <used>/<usable>/<wrong>`; the screens show a label instead of it.
+
+`sample`: `used` is the number of wrong answers sent to the model (at most 70), `usable` the wrong answers whose question still exists and is visible, `wrong` the wrong answers in the record. The screens tell the user "based on `used` of `wrong` wrong answers" when not all were used.
+
+#### `GET /api/ai/summary/saved`
+
+Query `record=<positive id>&at=<12 digits>`: `at` is the record's `at` without punctuation (`2026-11-10 15:10` is `202611101510`); anything else is 400 `ai.badRequest`. Answer: `Saved` of `SummaryAnswer`, with the same `latest` / `lastGood` rule. It does not call the backend and needs no AI+ feature. The chat is found by the record id **and** its time, so a record deleted and replaced by one with the same id is not mistaken for it.
+
+#### Busy answers
+
+An answer is being written for the user (one at a time by default, `perUserRunning`), or the chat already has one: 409 `ai.busy` as for `send`, now with `"running"` last: a `RunningInfo` (which chat, which message, which kind of answer and for which question or record), or `null` when it cannot be found. The page uses it to name the running answer and to offer to stop it (`POST /api/ai/stop` with its `chatId`) and ask again. ai-service never stops it by itself.
+
+#### Logs and privacy
+
+Question text, hints, explanations, summaries, answers, chat titles, session keys and record times are never written to the backend's or ai-service's log, and Nginx's access log records the path without the query string, so the `key` and `at` of the saved routes do not reach it. If an answer of the backend cannot be read, ai-service logs at most one line a minute (`AI link: an answer of <path> could not be read`) and fails only that request with 503 `ai.backendDown`; a 404 from a data route does not change the AI link's state.
+
 ## 6. Internal routes (`/internal/*`, v0.8)
 
 These routes are the link between the backend and ai-service. They are **not reachable through Nginx** (there is no location for `/internal/`, so a request from outside gets 404) and are documented here only to explain the design. The backend answers them before the Host guard and without the session layer.
@@ -698,6 +806,9 @@ These routes are the link between the backend and ai-service. They are **not rea
 | POST | `/internal/ai/users` | ai-service | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/log` | ai-service | `X-Xexam-Internal-Token` |
 | POST | `/internal/ai/heartbeat` | ai-service *(round 2)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/question` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/record` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
+| POST | `/internal/ai/record-info` | ai-service *(v0.9)* | `X-Xexam-Internal-Token` |
 
 Anything else under `/internal/`, a wrong method, or a token route with a missing or wrong token (or while no token is loaded) answers 404 `text/plain` `not found`, exactly like an unknown path, so the routes are not revealed; refused tokens are logged at most about once a minute. The token routes need `Content-Type: application/json` and a JSON object; their answers are the backend's usual JSON.
 
@@ -706,9 +817,15 @@ Anything else under `/internal/`, a wrong method, or a token route with a missin
 - **`POST /internal/ai/introspect`** `{"sid": "<64 hex>", "id": <user id>}` → `{"ok": true, "user": {"id", "stamp", "username", "role", "aiAllowed"}}`, or `{"ok": false}` when the session is gone, belongs to another user or must change its password. Used every 2 seconds while an answer is written. A `sid` that is not 64 lower-case hex digits: 400.
 - **`POST /internal/ai/users`** `{"ids": [<id>, …], "holders": <bool>}` (both optional; at most 10 000 ids; ai-service sends at most 3000 per call) → `{"users": [{"id", "stamp", "username", "role", "disabled", "ai", "aiAllowed"}]}`: every requested user that exists, plus, with `holders: true`, every administrator and every user with AI+; unique, ordered by id. A missing id means the user was deleted.
 - **`POST /internal/ai/log`** `{"lines": [{"level": "INFO" | "WARN" | "ERROR", "message": "…"}]}` → `{"ok": true}`: at most 50 lines; a message over 2000 characters is cut (ending with `…`), control characters are removed; each line goes into the System log with the target `xexam_ai_service` and the prefix `AI: `. One invalid line (another level, a missing message, more than 50 lines) refuses the whole batch with 400. The body may be up to about 590 KiB (a full batch even with escaped characters); the other token routes accept 64 KiB.
-- **`POST /internal/ai/heartbeat`** *(v0.8, round 2)* `{"version": "0.8", "enabled": <bool>, "suspended": [<id>, …], "stopping": <bool>}` → `{"ok": true}`. ai-service's report of its own state; it is how the backend knows whether AI+ is available, and the only way it learns of ai-service at all (the backend never calls ai-service). All four keys are required and no other key is allowed. `version` is a version string (`0-9 A-Z a-z . + -`, at most 20 characters), `enabled` is the AI+ feature switch as ai-service uses it (on, tested with the current settings, keys readable), `suspended` lists at most 3000 ids of users who are paused (positive integers, duplicates ignored), `stopping` is `true` only in the last report ai-service sends while it shuts down. Anything else is 400 and the stored report stays as it was. A good report replaces the last one. It follows the rules of the other token routes (token, `Content-Type: application/json`, at most 64 KiB, 404 for a wrong token, method or path), and neither accepted nor invalid reports write a log line.
+- **`POST /internal/ai/heartbeat`** *(v0.8, round 2)* `{"version": "0.9", "enabled": <bool>, "suspended": [<id>, …], "stopping": <bool>}` → `{"ok": true}`. ai-service's report of its own state; it is how the backend knows whether AI+ is available, and the only way it learns of ai-service at all (the backend never calls ai-service). All four keys are required and no other key is allowed. `version` is a version string (`0-9 A-Z a-z . + -`, at most 20 characters), `enabled` is the AI+ feature switch as ai-service uses it (on, tested with the current settings, keys readable), `suspended` lists at most 3000 ids of users who are paused (positive integers, duplicates ignored), `stopping` is `true` only in the last report ai-service sends while it shuts down. Anything else is 400 and the stored report stays as it was. A good report replaces the last one. It follows the rules of the other token routes (token, `Content-Type: application/json`, at most 64 KiB, 404 for a wrong token, method or path), and neither accepted nor invalid reports write a log line.
   - **When ai-service reports**: when it starts (once the token is readable), at once after an administrator enables or disables the AI+ feature, changes settings that switch it off, runs a test that switches it off, pauses or resumes a user (the answer of that request waits for the report), every 25 seconds, 5 seconds after a failed report, and once with `stopping: true` when it shuts down (limited to 2 seconds). Reports are sent one at a time, so an old state can never overtake a new one. ai-service's own log shows the link: `AI link: connected to the main service` is written **once** per connection (at the first accepted report, and again only after a loss), and `AI link: lost the main service` once when a connection that was up fails; further failures and successes in between write nothing. Both lines are in the System log with the prefix `AI: `.
   - **What the backend does with it**: it keeps only the last report, in memory. ai-service counts as **connected** while that report is younger than 60 seconds and is not a stopping report; **AI+ is available** while it is connected and `enabled`. The backend shows this in `aiAvailable` and `aiService` (`GET /api/auth/state`), uses `suspended` for `aiSuspended` (`GET /api/users`) and refuses the AI+ switches of users while AI+ is not available (`ai.serviceOff`). After a backend restart there is no report until the next one arrives (at most 25 seconds). Seen from outside, `/internal/ai/heartbeat` is 404 (and `/api/internal/ai/heartbeat` is 404 for a signed-in user, 401 before signing in).
+- **The three data routes** *(v0.9)* `question`, `record` and `record-info` let ai-service read one question or one record for the study routes (5.5). It never opens the main database and never sees a question the user could not see. They follow the rules of the other token routes (token, `Content-Type: application/json`, a JSON object of at most 64 KiB, 404 `not found` for a wrong token, method or path) and read only: nothing is written and nothing is logged. A body is checked key by key: an unknown or missing key, a wrong type or an out-of-range value is 400 `请求的格式不对。`. Every other answer is **HTTP 200**, also a refusal, because ai-service reads a 404 from `/internal/` as "the token was refused". Keys are camelCase.
+  - **Session binding**: `sid` (64 lower-case hex digits) must be a live session of the user `id` that is not waiting for a password change, else `{"ok": false, "reason": "session"}`. The session is not refreshed. A user without the AI+ feature (administrators always have it) gets `{"ok": false, "reason": "notAllowed"}` from `question` and `record`; `record-info` only names the caller's own record and never answers `notAllowed`, so the saved answers stay readable when AI is off. A question that does not exist, a question of a bank the user may not see, a record that is not the user's, a record of another kind or without that question: one answer for all of them, `{"ok": false, "reason": "notFound"}`.
+  - **`POST /internal/ai/question`** `{"sid", "id", "questionId": "<^[0-9A-Za-z_-]{1,64}$>", "qlang": "en"|"zh"|"ja", "elang": "en"|"zh"|"ja", "record"?: {"id": <n>, "kind": "practice"|"exam"} | null}` → `{"ok": true, "uiLang": "en"|"zh"|"ja", "question": StudyQuestion, "solution": Solution, "item": {"seq": n, "answer": [str|n|null] | null, "correct": bool} | null, "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null} | null}`. `item` and `record` are filled only when `record` was sent (the lowest `seq` when the question is in the record twice; `answer` is `null` when it was left unanswered; an entry that does not fit the question as it is now is `null`). `uiLang` is the user's Settings language. A deactivated question is found too (`active: false`).
+  - **`POST /internal/ai/record`** `{"sid", "id", "recordId", "max": 1..70, "elang"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "mode", "total", "correct", "answered": n|null, "detail": bool, "key": str|null, "startedAt": n|null}, "wrong": n, "usable": n, "items": [{"seq": n, "answer": [str|n|null], "question": StudyQuestion, "solution": Solution}], "budgetCut": bool}`. `wrong` counts the items answered wrong; `usable` those of them whose question still exists and is visible; `items` holds at most `max` of the usable ones, chosen at random without repeats and returned in `seq` order, with shorter caps than the single-question route and together at most 120 000 characters of text (`budgetCut` says whether that cut anything). A record without detail gives `detail: false`, `wrong: 0`, `usable: 0` and no items.
+  - **`POST /internal/ai/record-info`** `{"sid", "id", "recordId"}` → `{"ok": true, "uiLang", "record": {"id", "at", "kind", "key": str|null, "startedAt": n|null}}`, or `reason` `session` / `notFound`.
+  - `StudyQuestion` is `{"id": str, "kind": "single"|"multi"|"hotspot", "lang": "en"|"zh"|"ja", "stem": str, "options": [{"key": "A".."H", "text": str}], "items": [{"text": str, "choices": [str]}], "active": bool, "cut": bool}` (`options` for single and multiple choice, `items` for hotspot questions; `lang` is the language the text is really in, which is the base language when the question has no translation into `qlang`; `cut` says a text or a count was cut to the caps). It never holds the answer key or the explanation. `Solution` is `{"answer": [str] | [n], "explanation": str, "mnemonic": str, "note": str, "explainLang": "en"|"zh"|"ja"|"", "keyTexts": [str]}`: the answer key (letters, or one chosen index per hotspot item), the explanation in the preferred language when it has text, else in another language it has (`explainLang` names it, `""` for a question without per-language explanations), and `keyTexts` the text of the correct option(s) in every language the question has. On the record route `mnemonic` and `note` are `""` and `keyTexts` is `[]`. Every text is cut to a cap that includes the final `…`.
 
 ## 7. Differences from the old version
 
@@ -799,6 +916,30 @@ Everything else answers as in v0.7.5.
 | Database schema | v4 | v5 (`users.ai_enabled`, `users.uid`), see [database.md](database.md) |
 | Nginx | `/api/` only | also `/api/ai/` (the auth step first; 256 KiB bodies; streaming without buffering for `send` / `retry`); `/internal/` is 404 from outside |
 
+### Changes in v0.9 (relative to v0.8)
+
+Everything else answers as in v0.8. Older clients keep working: every new key is added at the end of an object or is optional.
+
+| Change | v0.8 | v0.9 |
+|---|---|---|
+| `POST /api/attempt` | no session fields; the answer ends with the progress keys (and `notCounted`) | optional `key` and `startedAt` (each judged on its own, invalid = stored as `NULL`); the answer ends with `recordId` |
+| `GET /api/record?id=` | `record` has the list keys | `record` also ends with `sessionKey` and `startedAt` (`GET /api/records` is unchanged) |
+| New routes | | `POST /api/ai/study/ask`, `GET /api/ai/study/saved`, `POST /api/ai/summary/ask`, `GET /api/ai/summary/saved` (5.5) |
+| `ChatSummary` | `running` is the last key | `kind` and `recordId` after `running` |
+| `Message` | `free` is the last key | seven more keys after `free`: `kind`, `questionId`, `questionNo`, `source`, `lang`, `recordId`, `sample` |
+| `start` event of `send` and `retry` | ends with `free` | `chatKind` after `free`; the study routes add `kind`, `questionId`, `questionNo`, `source`, `recordId`, `sample`, `lang` |
+| `error` event | `status`, `code`, `error` | a withheld hint adds `withdraw: true` |
+| `POST /api/ai/retry` | refuses a chat whose last answer is not a failed or stopped one | also refuses every study answer (409 `ai.notRetryable`, text unchanged) |
+| 409 `ai.busy` | no extra key | on the study routes `running` is added last |
+| `GET /api/ai/admin/usage` | ends with `byPeriod` | `byPurpose` after `byPeriod` (four rows: `chat`, `hint`, `explain`, `summary`) |
+| New codes | | `ai.hintLeak`, `ai.noWrong`, `ai.noUsable`, `ai.noDetail` |
+| New internal routes | | `POST /internal/ai/question`, `POST /internal/ai/record`, `POST /internal/ai/record-info` (section 6) |
+| Nginx | `send` and `retry` stream without buffering, 20 starts a minute per session | `study/ask` and `summary/ask` do the same; the access log records the path without the query string |
+| ai-service `heartbeat` and `/healthz` | version `0.8` | version `0.9` |
+| Retention of AI chats | the old chats were deleted in one transaction | in batches of 20 chats with a short pause between them, so that one sweep cannot hold up other writes for long |
+| Main database schema | v5 | **v6**: `attempts.session_key` (text) and `attempts.started_at` (integer), both `NULL` for every older record, no index, no constraint. The upgrade (from v5, or from an older schema in one go) first writes a backup `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` (`<N>` is the schema the file had, so `xexam-schema5-…` for a v0.8 database) next to the database file and logs `Upgraded the database to schema 6. A copy of the previous version was saved first: …`. If the backup fails nothing is changed. A schema 6 file is not changed again when it is opened. See [database.md](database.md) |
+| AI database schema | v2 | **v3**: `chats.kind`, `chats.ref`, `chats.record_id`; `messages.kind`, `question_id`, `question_no`, `source`, `lang`, `sample_used`, `sample_usable`, `sample_wrong`; `usage.purpose` (12 columns) and the indexes `idx_chats_ref` (unique per user, kind and ref), `idx_messages_study` and `idx_messages_streaming`. Existing chats and messages become kind `chat`, existing usage rows have no purpose (they count as `chat`). The upgrade (from schema 1 or 2) first writes a backup `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` next to the AI database and logs `Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`; if the backup fails the file is left as it was and ai-service does not start. A v0.8 ai-service refuses a schema 3 file and asks for a backup to be restored; see [migration.md](migration.md) |
+
 ## 8. Examples
 
 ```bash
@@ -864,6 +1005,18 @@ curl -s -b cookies.txt -X POST http://localhost:8765/api/users/update -H 'Conten
 # Pause and resume user 2 (the Pause / Resume buttons in AI settings do the same)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/suspend -H 'Content-Type: application/json' -d '{"userId": 2}'
 curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/admin/resume -H 'Content-Type: application/json' -d '{"userId": 2}'
+
+# Save a practice result tied to its session (v0.9; key = 32 lower-case hex digits made up by the client, startedAt = unix seconds; the answer ends with "recordId")
+curl -s -b cookies.txt -X POST http://localhost:8765/api/attempt -H 'Content-Type: application/json' -d '{"kind": "practice", "key": "0123456789abcdef0123456789abcdef", "startedAt": 1789900000, "results": [{"id": "a1b2c3d4e5f6", "correct": false, "answer": ["B"]}]}'
+
+# AI hint for a question of that practice (v0.9), then read what was saved
+curl -s -N -b cookies.txt -X POST http://localhost:8765/api/ai/study/ask -H 'Content-Type: application/json' -d '{"kind": "hint", "mode": "practice", "source": "practice", "key": "0123456789abcdef0123456789abcdef", "startedAt": 1789900000, "questionId": "a1b2c3d4e5f6", "no": 3, "qlang": "en", "lang": "en"}'
+curl -s -b cookies.txt 'http://localhost:8765/api/ai/study/saved?mode=practice&key=0123456789abcdef0123456789abcdef&source=practice&question=a1b2c3d4e5f6&kind=hint'
+
+# AI explanation of a question on the result page of record 7, and the AI summary of that record (v0.9)
+curl -s -N -b cookies.txt -X POST http://localhost:8765/api/ai/study/ask -H 'Content-Type: application/json' -d '{"kind": "explain", "mode": "practice", "source": "result", "recordId": 7, "questionId": "a1b2c3d4e5f6", "no": 3, "qlang": "en"}'
+curl -s -N -b cookies.txt -X POST http://localhost:8765/api/ai/summary/ask -H 'Content-Type: application/json' -d '{"recordId": 7, "lang": "en"}'
+curl -s -b cookies.txt 'http://localhost:8765/api/ai/summary/saved?record=7&at=202611101510'
 
 # Turn your own free mode on, then off again (administrators only; applies from the next message in any chat)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/ai/free -H 'Content-Type: application/json' -d '{"free": true}'

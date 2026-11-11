@@ -171,6 +171,83 @@ pub struct BackendState {
     /// Heartbeats being answered right now, and the most seen at once
     pub heartbeat_in_flight: usize,
     pub heartbeat_max_in_flight: usize,
+    /// Made-up questions of `/internal/ai/question` (by id)
+    pub questions: HashMap<String, FakeQuestion>,
+    /// Made-up saved records of `/internal/ai/record` and `record-info` (by id)
+    pub records: BTreeMap<i64, FakeRecord>,
+    /// How the three study data routes answer
+    pub study_switch: StudySwitch,
+    /// The `uiLang` of every study answer
+    pub ui_lang: String,
+}
+
+/// A made-up question and its solution, as JSON of the wire (backend contracts section 3).
+#[derive(Debug, Clone)]
+pub struct FakeQuestion {
+    pub question: Value,
+    pub solution: Value,
+}
+
+/// One saved item of a made-up record.
+#[derive(Debug, Clone)]
+pub struct FakeItem {
+    pub qid: String,
+    /// `null` = not answered
+    pub answer: Value,
+    pub correct: bool,
+}
+
+/// A made-up saved record owned by a user.
+#[derive(Debug, Clone)]
+pub struct FakeRecord {
+    pub user: i64,
+    pub id: i64,
+    pub at: String,
+    pub kind: String,
+    pub key: Option<String>,
+    pub started_at: Option<i64>,
+    pub detail: bool,
+    pub items: Vec<FakeItem>,
+}
+
+/// How the study data routes of the fake backend answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StudySwitch {
+    Normal,
+    /// 404 plain text (a backend without the route)
+    Http404,
+    /// 200 with a body that is not JSON
+    Unreadable,
+    /// a good answer with one extra field
+    ExtraField,
+    NotFound,
+    Session,
+}
+
+/// A single-choice question with four made-up options; the correct one is B ("Bravo tool").
+pub fn single_question(id: &str, stem: &str) -> FakeQuestion {
+    FakeQuestion {
+        question: json!({"id": id, "kind": "single", "lang": "en", "stem": stem,
+            "options": [{"key": "A", "text": "Alpha tool"}, {"key": "B", "text": "Bravo tool"},
+                        {"key": "C", "text": "Charlie tool"}, {"key": "D", "text": "Delta tool"}],
+            "items": [], "active": true, "cut": false}),
+        solution: json!({"answer": ["B"], "explanation": "Bravo is the made-up tool for this job.",
+            "mnemonic": "", "note": "", "explainLang": "en", "keyTexts": ["Bravo tool"]}),
+    }
+}
+
+/// A statements question: three statements with Yes / No (the key is Yes, No, Yes).
+pub fn hotspot_question(id: &str) -> FakeQuestion {
+    FakeQuestion {
+        question: json!({"id": id, "kind": "hotspot", "lang": "en", "stem": "Review the made-up statements.",
+            "options": [],
+            "items": [{"text": "The made-up gadget is red", "choices": ["Yes", "No"]},
+                      {"text": "The made-up gadget is loud", "choices": ["Yes", "No"]},
+                      {"text": "The made-up gadget is small", "choices": ["Yes", "No"]}],
+            "active": true, "cut": false}),
+        solution: json!({"answer": [0, 1, 0], "explanation": "", "mnemonic": "", "note": "",
+            "explainLang": "", "keyTexts": ["Yes", "No", "Yes"]}),
+    }
 }
 
 pub struct FakeBackend {
@@ -319,6 +396,20 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
             }
             json!({"ok": true})
         }
+        "/internal/ai/question" | "/internal/ai/record" | "/internal/ai/record-info" => {
+            match s.study_switch {
+                StudySwitch::Http404 => return text_answer(404, "not found"),
+                StudySwitch::Unreadable => return text_answer(200, "<html>nope</html>"),
+                _ => {}
+            }
+            let mut a = study_answer(&s, &path, &body);
+            if s.study_switch == StudySwitch::ExtraField {
+                if let Some(o) = a.as_object_mut() {
+                    o.insert("extra".into(), json!(1));
+                }
+            }
+            a
+        }
         _ => return text_answer(404, "not found"),
     };
     match mode {
@@ -340,6 +431,124 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
         _ => {}
     }
     json_answer(200, &answer)
+}
+
+fn refusal(reason: &str) -> Value {
+    json!({"ok": false, "reason": reason})
+}
+
+fn ident_json(r: &FakeRecord) -> Value {
+    json!({"id": r.id, "at": r.at, "kind": r.kind, "key": r.key, "startedAt": r.started_at})
+}
+
+/// The three study data routes of the fake backend (the contracts' section 3), from the made-up data.
+fn study_answer(s: &BackendState, path: &str, body: &Value) -> Value {
+    let sid = body.get("sid").and_then(Value::as_str).unwrap_or("");
+    let id = body.get("id").and_then(Value::as_i64).unwrap_or(0);
+    let user = s
+        .sessions
+        .get(sid)
+        .and_then(|uid| s.users.get(uid))
+        .filter(|u| u.id == id && !u.disabled);
+    let Some(u) = user else {
+        return refusal("session");
+    };
+    match s.study_switch {
+        StudySwitch::NotFound => return refusal("notFound"),
+        StudySwitch::Session => return refusal("session"),
+        _ => {}
+    }
+    let owned = |rid: i64| s.records.get(&rid).filter(|r| r.user == u.id);
+    match path {
+        "/internal/ai/record-info" => {
+            let rid = body.get("recordId").and_then(Value::as_i64).unwrap_or(0);
+            match owned(rid) {
+                Some(r) => json!({"ok": true, "uiLang": s.ui_lang, "record": ident_json(r)}),
+                None => refusal("notFound"),
+            }
+        }
+        "/internal/ai/question" => {
+            if !u.ai_allowed() {
+                return refusal("notAllowed");
+            }
+            let qid = body.get("questionId").and_then(Value::as_str).unwrap_or("");
+            let Some(q) = s.questions.get(qid) else {
+                return refusal("notFound");
+            };
+            let mut question = q.question.clone();
+            if let Some(l) = body.get("qlang").and_then(Value::as_str) {
+                question["lang"] = json!(l);
+            }
+            let (item, record) = match body.get("record") {
+                Some(Value::Object(r)) => {
+                    let rid = r.get("id").and_then(Value::as_i64).unwrap_or(0);
+                    let kind = r.get("kind").and_then(Value::as_str).unwrap_or("");
+                    let Some(rec) = owned(rid).filter(|x| x.kind == kind) else {
+                        return refusal("notFound");
+                    };
+                    let Some((seq, it)) = rec.items.iter().enumerate().find(|(_, i)| i.qid == qid)
+                    else {
+                        return refusal("notFound");
+                    };
+                    (
+                        json!({"seq": seq, "answer": it.answer, "correct": it.correct}),
+                        ident_json(rec),
+                    )
+                }
+                _ => (Value::Null, Value::Null),
+            };
+            json!({"ok": true, "uiLang": s.ui_lang, "question": question, "solution": q.solution,
+                   "item": item, "record": record})
+        }
+        _ => {
+            if !u.ai_allowed() {
+                return refusal("notAllowed");
+            }
+            let rid = body.get("recordId").and_then(Value::as_i64).unwrap_or(0);
+            let max = body.get("max").and_then(Value::as_u64).unwrap_or(70) as usize;
+            let Some(rec) = owned(rid) else {
+                return refusal("notFound");
+            };
+            let wrong_items: Vec<(usize, &FakeItem)> = rec
+                .items
+                .iter()
+                .enumerate()
+                .filter(|(_, i)| !i.answer.is_null() && !i.correct)
+                .collect();
+            let usable: Vec<&(usize, &FakeItem)> = wrong_items
+                .iter()
+                .filter(|(_, i)| s.questions.contains_key(&i.qid))
+                .collect();
+            let (wrong, usable_n) = if rec.detail {
+                (wrong_items.len(), usable.len())
+            } else {
+                (0, 0)
+            };
+            let items: Vec<Value> = if rec.detail {
+                usable
+                    .iter()
+                    .take(max)
+                    .filter_map(|(seq, i)| {
+                        s.questions.get(&i.qid).map(|q| {
+                            json!({"seq": seq, "answer": i.answer, "question": q.question,
+                                   "solution": {"answer": q.solution["answer"], "explanation": q.solution["explanation"],
+                                                "mnemonic": "", "note": "", "explainLang": q.solution["explainLang"],
+                                                "keyTexts": []}})
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let answered = rec.items.iter().filter(|i| !i.answer.is_null()).count();
+            let correct = rec.items.iter().filter(|i| i.correct).count();
+            json!({"ok": true, "uiLang": s.ui_lang,
+                   "record": {"id": rec.id, "at": rec.at, "kind": rec.kind, "mode": "all", "total": rec.items.len(),
+                              "correct": correct, "answered": answered, "detail": rec.detail,
+                              "key": rec.key, "startedAt": rec.started_at},
+                   "wrong": wrong, "usable": usable_n, "items": items, "budgetCut": false})
+        }
+    }
 }
 
 /// `POST /internal/ai/heartbeat` of the fake backend: records the body, answers `{"ok": true}` (or fails as told).
@@ -404,6 +613,10 @@ pub async fn fake_backend() -> FakeBackend {
         heartbeat_delay_ms: 0,
         heartbeat_in_flight: 0,
         heartbeat_max_in_flight: 0,
+        questions: HashMap::new(),
+        records: BTreeMap::new(),
+        study_switch: StudySwitch::Normal,
+        ui_lang: "en".to_string(),
     }));
     let router = Router::new()
         .fallback(backend_handler)
@@ -635,6 +848,151 @@ fn is_verify(body: &Value) -> bool {
     sys == "Reply with the single word OK."
 }
 
+/// The text of the system prompt (a string for OpenAI-compatible bodies, text blocks for Anthropic bodies).
+fn system_text(body: &Value) -> String {
+    let sys = if body["messages"][0]["role"] == "system" {
+        &body["messages"][0]["content"]
+    } else {
+        &body["system"]
+    };
+    match sys {
+        Value::String(s) => s.clone(),
+        Value::Array(a) => a
+            .iter()
+            .filter_map(|b| b["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+/// The last user turn of an OpenAI-compatible body.
+fn user_turn(body: &Value) -> String {
+    body["messages"]
+        .as_array()
+        .and_then(|m| m.iter().rev().find(|x| x["role"] == "user"))
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Study {
+    Hint,
+    Explain,
+    Summary,
+}
+
+/// A clean made-up hint: no option letter, no option text, no verdict.
+pub const CLEAN_HINT: &str = "First work out what the question is really asking for, then compare the ideas it mentions one by one.\n\nKnowledge points\n- recall the definitions that the topic relies on\n- note which rules apply in which situation\n";
+/// The sentence a leaking stub hint ends with (a single-choice question / a statements question).
+pub const LEAK_SINGLE: &str = " The answer is B.";
+pub const LEAK_STATEMENT: &str = " Statement 2 is true.";
+/// A clean hint longer than the hint limit (`[long]`).
+pub fn long_hint() -> String {
+    "Consider the context. ".repeat(400)
+}
+
+/// What the stub answers to a study prompt (by its system prompt): the text of the answer.
+fn study_kind(body: &Value) -> Option<Study> {
+    let sys = system_text(body);
+    if sys.contains("asked for a HINT") {
+        Some(Study::Hint)
+    } else if sys.contains("asked for an EXPLANATION") {
+        Some(Study::Explain)
+    } else if sys.contains("answered wrong") {
+        Some(Study::Summary)
+    } else {
+        None
+    }
+}
+
+fn study_text(kind: Study, user: &str) -> String {
+    match kind {
+        Study::Hint => {
+            let mut t = if user.contains("[long]") {
+                long_hint()
+            } else {
+                CLEAN_HINT.to_string()
+            };
+            if user.contains("[think]") {
+                // inline reasoning of a server without a reasoning parser: it names the answer
+                t = format!(
+                    "<think>The first option is the right one, but I must not say so.</think>
+
+{t}"
+                );
+            }
+            if user.contains("[leak]") {
+                t.push_str(if user.contains("statements, each") {
+                    LEAK_STATEMENT
+                } else {
+                    LEAK_SINGLE
+                });
+            }
+            t
+        }
+        Study::Explain => {
+            let letters = user
+                .split("<answer_key>")
+                .nth(1)
+                .and_then(|r| r.split("</answer_key>").next())
+                .unwrap_or("?");
+            format!("**Answer: {letters}**\n\nThis question tests a made-up fact.\n\nThe other choices fail for made-up reasons.")
+        }
+        Study::Summary => {
+            let n = user.matches("<item").count();
+            format!("## Weak knowledge points\nMade-up topics.\n\n## What to watch out for\nMade-up traps.\n\n## How to approach such questions\nMade-up steps.\n\n## Summary of the knowledge points\nMade-up notes.\n\nItems: {n}")
+        }
+    }
+}
+
+/// The answer to a study prompt. Markers in the user turn: `[leak]` (the hint ends with a verdict), `[err]` (an
+/// upstream error after the text), `[slow]` (waits for `release()` after the text), `[long]` (a hint over the limit), `[think]` (an inline <think> span first).
+fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Response {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    tokio::spawn(async move {
+        let text = study_text(kind, &user);
+        let n = sh.hold.notified();
+        tokio::pin!(n);
+        n.as_mut().enable();
+        let _ = tx.send(Bytes::from(format!(
+            "data: {}\n\n",
+            json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]})
+        )));
+        let chars: Vec<char> = text.chars().collect();
+        let size = if chars.len() > 1000 { 200 } else { 8 };
+        for c in chars.chunks(size) {
+            let piece: String = c.iter().collect();
+            if tx.send(openai_chunk(&piece)).is_err() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+        if user.contains("[err]") {
+            let _ = tx.send(Bytes::from(
+                "data: {\"error\":{\"message\":\"boom\",\"type\":\"server_error\"}}\n\n",
+            ));
+            return;
+        }
+        if user.contains("[slow]") && !hold_with_pings(n, &tx).await {
+            return;
+        }
+        let _ = tx.send(Bytes::from(format!(
+            "data: {}\n\n",
+            json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]})
+        )));
+        if usage {
+            let _ = tx.send(Bytes::from(format!(
+                "data: {}\n\n",
+                json!({"choices": [], "usage": {"prompt_tokens": 21, "completion_tokens": 13}})
+            )));
+        }
+        let _ = tx.send(Bytes::from("data: [DONE]\n\n"));
+    });
+    sse_body(rx)
+}
+
 fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
     let usage = body
         .get("stream_options")
@@ -646,6 +1004,9 @@ fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
             400,
             &json!({"error": {"type": "invalid_request_error", "message": "unsupported"}}),
         );
+    }
+    if let Some(kind) = study_kind(body) {
+        return study_openai(sh, kind, user_turn(body), usage);
     }
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
     // The test call of verify is answered normally, whatever the model (except the two models above)
@@ -1161,6 +1522,27 @@ impl TestApp {
             .await;
         assert_eq!(s, 200, "{v}");
         self.verify_and_enable(admin).await;
+    }
+
+    /// Adds a made-up question to the fake backend.
+    pub fn add_question(&self, q: FakeQuestion) {
+        let id = q.question["id"].as_str().unwrap_or("").to_string();
+        self.backend.st().questions.insert(id, q);
+    }
+
+    /// Adds a made-up saved record to the fake backend.
+    pub fn add_record(&self, r: FakeRecord) {
+        self.backend.st().records.insert(r.id, r);
+    }
+
+    /// How many times the fake backend was called on `path`.
+    pub fn backend_calls(&self, path: &str) -> usize {
+        self.backend
+            .st()
+            .calls
+            .iter()
+            .filter(|p| *p == path)
+            .count()
     }
 
     pub fn usage_rows(&self) -> i64 {

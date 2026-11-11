@@ -65,7 +65,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-pct { font-weight: 600; font-size: 16px; }
 .rec-pct.hi { color: var(--answer-right); }
 .rec-pct.lo { color: var(--answer-wrong); }
-.rec-act { text-align: right; }
+.rec-act { text-align: right; white-space: nowrap; }
 /* The row's Delete never wraps (it broke into "删 / 除" at about 800px, v0.8): the button keeps one line and its cell takes
    only the button's width, so the other columns give way instead */
 .rec-table td.rec-act { width: 1%; white-space: nowrap; }
@@ -195,3 +195,39 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 /* ---------- Exam / Practice tag (v0.6.5): in front of the bank names of a row, and in the detail's facts ---------- */
 .rec-banks .kind-tag { margin-right: 4px; vertical-align: 1px; }
 .rec-meta .kind-tag { vertical-align: 1px; }
+
+/* ---------- AI summary column (v0.9; only with the AI+ feature, class has-ai) ---------- */
+/* The first column holds one compact button; its cell takes only the button's width */
+.rec-table td.rec-ai { width: 1%; white-space: nowrap; padding-right: 0; }
+.rec-table.has-ai th:first-child { padding-right: 0; }
+
+/* The extra column needs the stacked cards earlier: with it, the table breaks at about 900px (the 760px rules above,
+   repeated for has-ai only; without has-ai nothing changes) */
+@media (max-width: 900px) {
+  .rec-listpanel.has-ai { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
+  .rec-listpanel.has-ai > h2 { margin: 8px 0 10px; }
+  .rec-listpanel.has-ai .rec-scroll { overflow-x: visible; margin: 0; }
+  .rec-table.has-ai thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .rec-table.has-ai, .rec-table.has-ai tbody { display: block; }
+  .rec-table.has-ai tr {
+    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px 12px;
+    margin-bottom: 8px; padding: 12px 14px;
+    border: 1px solid var(--line-soft); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-xs);
+  }
+  .rec-table.has-ai tbody tr:last-child { margin-bottom: 0; }
+  .rec-table.has-ai td { display: block; padding: 0; border: 0; min-width: 0; }
+  .rec-table.has-ai td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--ink3); }
+  .rec-table.has-ai .rec-time { grid-column: 1 / 4; grid-row: 1; }
+  .rec-table.has-ai td.rec-time[data-label]::before { display: none; }
+  .rec-table.has-ai .rec-time a { padding-block: 0; }
+  .rec-table.has-ai .rec-time a::after { content: "\203A"; content: "\203A" / ""; margin-left: 6px; color: var(--ink3); }
+  .rec-table.has-ai .rec-pct { grid-column: 4; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
+  .rec-table.has-ai .rec-banks { grid-column: 1 / -1; min-width: 0; }
+  .rec-table.has-ai .rec-act { grid-column: 4; align-self: end; display: flex; justify-content: flex-end; margin-top: 0; }
+  .rec-table.has-ai td.rec-act { width: auto; }
+  /* The AI summary button: its own line at the end of the card */
+  .rec-table.has-ai td.rec-ai { grid-column: 1 / -1; grid-row: 4; justify-self: start; width: auto; padding: 0; }
+}
+@media (max-width: 900px) and (hover: hover) {
+  .rec-table.has-ai tbody tr:hover { background: var(--card); background-image: linear-gradient(var(--rec-row-hover), var(--rec-row-hover)); }
+}

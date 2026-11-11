@@ -1,12 +1,13 @@
-//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 2: the tables of
-//! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS`, added by one additive step that is used for new
-//! and for upgraded databases alike, so `sqlite_master` is the same either way.
+//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 3: the tables of
+//! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` and `V3_COLUMNS` and the indexes of `V3_INDEXES`,
+//! added by the same additive steps on every path (new file, upgrade from 1, upgrade from 2), so `sqlite_master` is the
+//! same either way.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "2";
+pub const SCHEMA_VERSION: &str = "3";
 
-/// The schema version upgraded by this version (after a backup copy).
-pub const PREVIOUS_VERSION: &str = "1";
+/// The schema versions upgraded by this version (after a backup copy).
+pub const UPGRADABLE: [&str; 2] = ["1", "2"];
 
 /// Columns added by schema v2 (each only when `pragma_table_info` lacks it): (table, column, column definition).
 pub const V2_COLUMNS: [(&str, &str, &str); 4] = [
@@ -27,6 +28,60 @@ pub const V2_COLUMNS: [(&str, &str, &str); 4] = [
     // Input tokens the provider served from its prompt cache (NULL = not reported)
     ("usage", "tokens_cached", "tokens_cached INTEGER"),
 ];
+
+/// Columns added by AI schema 3 (each only when `pragma_table_info` lacks it).
+pub const V3_COLUMNS: [(&str, &str, &str); 12] = [
+    // chat kind: 'chat' (AI Chat), 'practice' / 'exam' (one per session), 'summary' (one per record)
+    (
+        "chats",
+        "kind",
+        "kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'practice', 'exam', 'summary'))",
+    ),
+    // practice / exam: the session key (32 lower-case hex) or, for a record saved without one, 'r<recordId>@<at>';
+    // summary: 'r<recordId>@<at>'; NULL for 'chat'
+    ("chats", "ref", "ref TEXT"),
+    // the main-app record this chat belongs to (display only; never a lookup key: ids can be reused after a restore)
+    ("chats", "record_id", "record_id INTEGER"),
+    // message kind: 'chat', 'hint', 'explain', 'summary' (both messages of a pair carry it)
+    (
+        "messages",
+        "kind",
+        "kind TEXT NOT NULL DEFAULT 'chat' CHECK (kind IN ('chat', 'hint', 'explain', 'summary'))",
+    ),
+    // hint / explain; NULL otherwise
+    ("messages", "question_id", "question_id TEXT"),
+    // the number shown to the user (1-based)
+    ("messages", "question_no", "question_no INTEGER"),
+    (
+        "messages",
+        "source",
+        "source TEXT CHECK (source IS NULL OR source IN ('practice', 'result'))",
+    ),
+    // reply language
+    (
+        "messages",
+        "lang",
+        "lang TEXT CHECK (lang IS NULL OR lang IN ('en', 'zh-CN', 'ja'))",
+    ),
+    // summary: wrong answers sent
+    ("messages", "sample_used", "sample_used INTEGER"),
+    // summary: wrong answers whose question was available
+    ("messages", "sample_usable", "sample_usable INTEGER"),
+    // summary: wrong answers in the record
+    ("messages", "sample_wrong", "sample_wrong INTEGER"),
+    // NULL = an AI Chat call or a non-chat kind; set only by the study generations
+    (
+        "usage",
+        "purpose",
+        "purpose TEXT CHECK (purpose IS NULL OR purpose IN ('hint', 'explain', 'summary'))",
+    ),
+];
+
+/// Indexes added by AI schema 3 (all `IF NOT EXISTS`; they need the columns of `V3_COLUMNS`).
+pub const V3_INDEXES: &str = "
+CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_ref ON chats(user_id, kind, ref) WHERE ref IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_study ON messages(chat_id, question_id, kind, source, role, id) WHERE question_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_messages_streaming ON messages(status) WHERE status = 'streaming';";
 
 /// Every table and index of schema version 1 (all `IF NOT EXISTS`).
 pub const SCHEMA: &str = "

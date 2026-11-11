@@ -1,12 +1,16 @@
 // App entry: applies the cached settings (first paint), maps the route to a page inside the shell, registers the redraw function, and starts.
 // Before anything else, the sign-in pages: while S.authView is set, only the sign-in page or "choose a new password" is drawn.
 import './styles/main.css';
+import { studyTransport } from './api/ai.ts';
 import { isTooManyRequests } from './api/client.ts';
+import { installAiPop, reanchorAiPop } from './components/ai-pop.ts';
+import { installAiSummary } from './components/ai-summary.ts';
+import type { StudyUiDeps } from './components/ai-study-ui.ts';
 import { brand } from './components/common.ts';
 import { installShellHandlers, shell } from './components/shell.ts';
 import { installTooltips } from './components/tooltip.ts';
-import { t } from './i18n/index.ts';
-import { errorText } from './i18n/errors.ts';
+import { t, uiLang } from './i18n/index.ts';
+import { errorText, studyErrorText } from './i18n/errors.ts';
 import { renderAbout } from './pages/about.ts';
 import { renderAiChat, renderAiNoAccess, renderAiUnavailable } from './pages/ai.ts';
 import { renderAiSettings } from './pages/ai-settings.ts';
@@ -20,7 +24,7 @@ import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
 import { renderSettings } from './pages/settings.ts';
 import { renderUsers } from './pages/users.ts';
-import { boot, setRenderer } from './state/actions.ts';
+import { boot, navigate, refreshAi, setRenderer } from './state/actions.ts';
 import { aiStatus } from './state/ai.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S, canManageBanks, isAdmin } from './state/store.ts';
@@ -147,11 +151,13 @@ function draw(): void {
   }
   if (S.route.name === 'quiz' && S.session) {
     app.replaceChildren(renderQuiz());
+    reanchorAiPop();
     document.title = `${t('title.quiz', { i: S.session.idx + 1, n: S.session.qs.length })} - ${t('app.name')}`;
     return;
   }
   const p = page();
   app.replaceChildren(shell(p.el));
+  reanchorAiPop();
   document.title = `${p.title} - ${t('app.name')}`;
 }
 
@@ -159,6 +165,19 @@ applySettings(S.settings);
 watchSystemTheme();
 setRenderer(render);
 installShellHandlers();
+// v0.9: the AI hint / explanation popover and the AI summary window (both live in document.body, outside the page)
+const studyDeps: StudyUiDeps = {
+  transport: studyTransport,
+  uiLang,
+  // a known AI code has its own text; anything else is the generic network / status text
+  errorText: studyErrorText,
+  langName: (l) => t(l === 'en' ? 'ai.langName.en' : l === 'ja' ? 'ai.langName.ja' : 'ai.langName.zh'),
+  // actions.ts draws the page again when the status changed
+  refreshAi: (force) => void refreshAi(force),
+  openChat: (chatId) => navigate({ name: 'ai', chatId }),
+};
+installAiPop(studyDeps);
+installAiSummary(studyDeps);
 installTooltips();
 installQuizKeys();
 void boot();

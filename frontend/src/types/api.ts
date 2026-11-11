@@ -140,6 +140,8 @@ export interface Progress {
  */
 export interface AttemptResponse extends Progress {
   notCounted?: string[];
+  /** v0.9: the id of the record this save created (always last in the answer) */
+  recordId?: number;
 }
 
 export interface ImportRecord {
@@ -213,6 +215,9 @@ export interface AttemptRequest {
   seconds: number;
   /** v0.6.5: missing = "exam" */
   kind?: AttemptKind;
+  /** v0.9: the session key (32 lower-case hex) and start time (unix seconds) that tie a record to its AI chat */
+  key?: string;
+  startedAt?: number;
 }
 
 export interface ApiErrorBody {
@@ -294,6 +299,9 @@ export interface RecordSummary {
   detail: boolean;
   /** Exam or practice (v0.6.5; read it through kindOfRecord(), which treats anything unknown as an exam) */
   kind?: AttemptKind;
+  /** v0.9, `GET /api/record` only: the session key and start time of the record (null for records saved before v0.9) */
+  sessionKey?: string | null;
+  startedAt?: number | null;
 }
 
 export interface RecordsResponse {
@@ -534,7 +542,14 @@ export interface AiChatSummary {
   updatedAt: number;
   messageCount: number;
   running: boolean;
+  /** v0.9: 'chat' (AI Chat) or the kind of study chat */
+  kind?: AiChatKind;
+  /** v0.9: the record a study chat belongs to, when known */
+  recordId?: number | null;
 }
+
+export type AiChatKind = 'chat' | 'practice' | 'exam' | 'summary';
+export type AiMessageKind = 'chat' | 'hint' | 'explain' | 'summary';
 
 export type AiMessageStatus = 'streaming' | 'done' | 'stopped' | 'error';
 
@@ -551,6 +566,14 @@ export interface AiMessage {
   createdAt: number;
   /** Written in the administrator's free mode (the chat draws a divider where it changes) */
   free: boolean;
+  /** v0.9 */
+  kind?: AiMessageKind;
+  questionId?: string | null;
+  questionNo?: number | null;
+  source?: 'practice' | 'result' | null;
+  lang?: 'en' | 'zh-CN' | 'ja' | null;
+  recordId?: number | null;
+  sample?: { used: number; usable: number; wrong: number } | null;
 }
 
 /** `GET /api/ai/chat?id=N` (and the administrators' `GET /api/ai/admin/chat`) */
@@ -664,6 +687,8 @@ export interface AiUsage {
   byUser: Array<AiUsageCounts & { userId: number | null; username: string | null; lastAt: number | null }>;
   byModel: Array<AiUsageCounts & { model: string }>;
   byPeriod: Array<AiUsageCounts & { period: string }>;
+  /** v0.9: chat, hint, explain, summary in server order */
+  byPurpose?: Array<AiUsageCounts & { purpose: 'chat' | 'hint' | 'explain' | 'summary' }>;
 }
 
 /**

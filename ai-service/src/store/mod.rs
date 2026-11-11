@@ -70,9 +70,9 @@ fn apply_journal(conn: &Connection, want: JournalMode) -> String {
     }
 }
 
-/// Adds the columns of schema v2 that the tables lack (the same step for new and upgraded databases).
-fn add_v2_columns(c: &Connection) -> rusqlite::Result<()> {
-    for (table, column, def) in schema::V2_COLUMNS {
+/// Adds the listed columns that the tables lack (the same step for new and upgraded databases).
+fn add_columns(c: &Connection, cols: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
+    for (table, column, def) in cols {
         let present: bool = c.query_row(
             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
             [table, column],
@@ -152,7 +152,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1 or schema-2 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -170,7 +170,9 @@ impl Store {
                     .map_err(|e| format!("cannot open the AI database {{path}}: {e}"))?;
                 let run = |tx: &Transaction| -> rusqlite::Result<()> {
                     tx.execute_batch(schema::SCHEMA)?;
-                    add_v2_columns(tx)?;
+                    add_columns(tx, &schema::V2_COLUMNS)?;
+                    add_columns(tx, &schema::V3_COLUMNS)?;
+                    tx.execute_batch(schema::V3_INDEXES)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
                         [now],
@@ -189,18 +191,9 @@ impl Store {
                 tx.commit()
                     .map_err(|e| format!("cannot create the AI database {{path}}: {e}"))?;
             }
-            Some(v) if v == schema::SCHEMA_VERSION => {
-                // A schema-2 file from an earlier round-2 build may lack later columns: add them (idempotent, writes
-                // nothing when all are present)
-                let tx = conn
-                    .transaction_with_behavior(TransactionBehavior::Immediate)
-                    .map_err(|e| format!("cannot open the AI database {{path}}: {e}"))?;
-                add_v2_columns(&tx)
-                    .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
-                tx.commit()
-                    .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
-            }
-            Some(v) if v == schema::PREVIOUS_VERSION => {
+            // The current schema: nothing to do, nothing written
+            Some(v) if v == schema::SCHEMA_VERSION => {}
+            Some(v) if schema::UPGRADABLE.contains(&v) => {
                 let copy = backup_copy(&conn, backups, v).map_err(|e| {
                     format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
                 })?;
@@ -208,7 +201,10 @@ impl Store {
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 let run = |tx: &Transaction| -> rusqlite::Result<()> {
-                    add_v2_columns(tx)?;
+                    // adds what a '1' or an early '2' file lacks; a no-op for the rest
+                    add_columns(tx, &schema::V2_COLUMNS)?;
+                    add_columns(tx, &schema::V3_COLUMNS)?;
+                    tx.execute_batch(schema::V3_INDEXES)?;
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
@@ -341,7 +337,7 @@ mod tests {
     }
 
     #[test]
-    fn a_schema_2_file_from_an_earlier_round_2_build_gets_the_missing_columns() {
+    fn a_schema_2_file_from_an_earlier_round_2_build_is_backed_up_and_upgraded_to_3() {
         let dir = tempfile::tempdir().expect("dir");
         let path = dir.path().join(DB_FILE);
         {
@@ -358,7 +354,7 @@ mod tests {
         let store = Store::open(dir.path(), JournalMode::Delete).expect("open store");
         {
             let c = store.lock();
-            for (table, column, _) in schema::V2_COLUMNS {
+            for (table, column, _) in schema::V2_COLUMNS.iter().chain(schema::V3_COLUMNS.iter()) {
                 assert!(has_column(&c, table, column), "{table}.{column}");
             }
             let v: String = c
@@ -366,8 +362,13 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "2");
+            assert_eq!(v, "3");
         }
+        let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
+            .expect("backups")
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(copies.len(), 1);
         drop(store);
         // reopening the repaired file works too
         Store::open(dir.path(), JournalMode::Delete).expect("reopen");

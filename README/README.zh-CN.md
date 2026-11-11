@@ -27,7 +27,7 @@
 
 # Xexam
 
-Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问。电脑和手机（iPhone）都能用。
+Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问，并在学习时得到 AI 帮助：练习中的提示和解释、成绩页上对每道题的 AI 解析，以及对答错题目的 AI 总结。电脑和手机（iPhone）都能用。
 
 ![答题页：一道显示成中文的热点题、English / 中文 / 日本語 切换按钮，以及带交卷按钮的答题卡](../docs/zh-CN/screenshots/desktop-2-quiz.png)
 
@@ -35,8 +35,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v0.8**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.8**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v0.8` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v0.9**（见 [更新日志](#更新日志)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v0.9**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v0.9` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -64,9 +64,10 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 - **学习记录和错题本**：每场考试和每次练习都连同作答保存下来；答错的题留在错题本里，直到连续答对两次。
 - **多人共用一个 Xexam**：每个人都登录使用，有自己的学习记录和设置。管理员决定谁能看到哪些题库、谁可以导入题库（可管理题库的用户），还可以查看 **系统日志**。
 - **AI 对话**（可选，管理员设置好之前是关闭的）：管理员在 **AI 设置** 里接入 OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway，测试后开启 **AI+ 功能**，再在 **用户管理** 里为每个可以使用的用户开通 **AI+ 功能**。在 **AI 设置** 里，他们可以 **暂停** 和 **恢复** 某个用户的 **AI+ 功能**，而不用收回它。回答边生成边显示（推理模型工作时显示 **正在思考…**），关掉页面也会继续生成；AI 用 **设置** 里选的语言回答；对话会保存下来（默认在 90 天后自动删除）；**记忆** 保存一些简短的笔记，AI 会在以后的对话里参考；管理员可以在 **设置** 的 **AI 对话模式** 里选 **自由模式**，不带学习助手的指示、直接和模型对话。管理员能看到用量统计，也能查看和删除拥有 AI+ 功能的用户的对话和记忆，AI 对话页面会把这一点告诉每个用户。AI 在自己的容器 `ai-service` 里运行，有自己的数据库；服务商的密钥加密保存。
+- **学习时的 AI 帮助**（给有 **AI+ 功能** 的用户；考试进行中没有）：练习时，**AI 提示**（讲解怎样着手做这道题，不给出答案）和 **AI 解释**（答案和原因），可从操作栏或题目上方的灯泡和书本图标打开，回答在一个小窗口里逐步显示；每个练习和考试的成绩页以及学习记录的详情页上，每道题都有 **AI 解析**；在 **学习记录** 和 **主页** 上，可以对一条记录里答错的题生成 **AI 总结**（薄弱的知识点、需要注意什么、以后怎样做这类题）。每个回答都保存在 AI 对话里：它所属练习的对话（`<开始时间>-练习`）、考试的对话（`<开始时间>-考试`）或总结的对话（`<记录时间>-AI总结`）。AI 被暂停或暂时不能用的用户会看到这些控件变灰，标着 **无法使用** 并写明原因；没有 **AI+ 功能** 的用户完全看不到它们。它们会把题目（解释和总结还有题库里的答案和解析，以及你自己的答案）发给你设置的 AI 服务商；提示的请求里从不包含答案，泄露了答案的提示会被隐藏。
 - **电脑和手机**：窄窄的页头上有一个菜单，宽屏上页面居中显示，手机上的触控区域至少 44 px。
 
-每个页面怎么用、AI 对话和 AI 设置、Excel 格式和导入规则：见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md)。
+每个页面怎么用、练习和成绩里的 AI 帮助、AI 对话和 AI 设置、Excel 格式和导入规则：见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md)。
 
 ---
 
@@ -99,7 +100,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v0.8`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v0.9`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |
@@ -139,7 +140,33 @@ docker compose up -d
 
 ## 升级
 
-每次升级都还是同样的端口、同样的卷 `xexam_data`，所以数据原样保留：先 `docker compose pull`，再 `docker compose up -d`。v0.8 新增了第三个镜像和两个卷，所以还需要新的 `docker-compose.yml`（见下一节）。数据库 schema 有变化时，新版本第一次启动会先把数据库的一份备份副本写到卷里的 `/data/backups/`，再在一个事务里迁移数据库。副本写不出来（磁盘满、没有权限）时，后端会拒绝启动，数据库保持原样；`docker compose logs backend` 里会写明原因。
+每次升级都还是同样的端口、同样的卷 `xexam_data`，所以数据原样保留：先 `docker compose pull`，再 `docker compose up -d`。v0.8 新增了第三个镜像和两个卷，所以从 v0.7.5 或更早的版本升级时，还需要新的 `docker-compose.yml`；v0.9 不需要新的 compose 文件。数据库 schema 有变化时，新版本第一次启动会先把数据库的一份备份副本写到卷里的 `/data/backups/`（AI 服务对自己的数据库也这样做，写在它自己的卷里），再在一个事务里迁移数据库。副本写不出来（磁盘满、没有权限）时，服务会拒绝启动，数据库保持原样；`docker compose logs backend` 和 `docker compose logs ai-service` 里会写明原因。备份副本和数据库差不多大，所以升级之前请留出这么多空闲空间；备份副本从不会自动删除。
+
+下面各节是为它们升级到的那个版本写的。直接用当前的镜像（v0.9）从更早的版本升级，会一次做完每一步：写一份以文件原来的 schema 命名的备份，数据库最后停在 schema 6（这时日志里会写 `schema 6`，而某一节写的是 `schema 5`；`/api/info` 显示 `"version": "0.9"`）。
+
+### 从 v0.8 升级到 v0.9
+
+v0.9 新增了学习时的 AI 帮助（见更新日志）。三个镜像、卷和 `docker-compose.yml` 都不变：**不需要新的 compose 文件**。先备份两个数据卷，然后拉取并启动。
+
+```bash
+# 1. 备份两个卷（先停止；备份文件里是你的整个数据库，不要提交它们）
+docker compose stop
+docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v08.tgz -C /data .
+docker run --rm -v xexam_ai_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-ai-data-v08.tgz -C /data .
+
+# 2. 拉取三个镜像并启动（不要用 down -v），然后查看升级信息
+docker compose pull
+docker compose up -d
+docker compose logs backend
+docker compose logs ai-service
+```
+
+- **后端的第一次启动** 会写一份副本 `/data/backups/xexam-schema5-<YYYYmmdd-HHMMSS>.db`，并把数据库升级到 schema v6：`attempts` 表新增两列，`session_key` 和 `started_at`，你已有的每条记录里它们都是空的。其他都不变。日志里会写 `Upgraded the database to schema 6`。
+- **AI 服务的第一次启动** 会在 AI 卷里写一份副本 `/data/backups/xexam-ai-schema2-<YYYYMMDD-HHMMSS>.db`，并把它的数据库升级到 schema 3（学习对话和它们的消息，以及用量记录上的 `purpose`）。你的对话、记忆、设置和密钥都保留。日志里会写 `Upgraded the AI database to schema 3`。
+- **不需要设置什么**：**AI+ 功能** 照旧。现在每个能使用 AI 的人都会看到新的控件；没有 **AI+ 功能** 的用户什么新东西都看不到。v0.9 之前生成的记录没有会话 key，所以它们第一次做 AI 解析时，会开一个自己的对话（[docs/zh-CN/usage.md](../docs/zh-CN/usage.md) 第 16 节）。
+- 检查 <http://localhost:8765/api/info> 显示 `"version": "0.9"`，并且 `docker compose ps` 列出三个 healthy 的容器。
+
+回退到 v0.8：主数据库不需要恢复（v0.8 原样打开 schema 6 的数据库，之后保存的记录只是没有 key），但 v0.8 的 AI 服务不接受 schema 3 的 AI 数据库，所以必须恢复它的副本 `xexam-ai-schema2-….db`，这会丢失升级之后产生的所有 AI 对话、设置和用量记录。见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 第 0 节。
 
 ### 从 v0.7.5（或 v0.7）升级到 v0.8
 
@@ -162,7 +189,7 @@ docker compose logs backend
 - **第一次启动** 会写一份副本 `/data/backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`，并把数据库升级到 schema v5：`users` 表新增两列，即 **AI+** 开关（所有人都是关闭的）和一个身份标记。其他都不变，题库、记录、用户和设置都保留。日志里会写 `Upgraded the database to schema 5`。
 - **AI 是关闭的**，直到管理员在 **AI 设置** 里把它设置好（见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md) 第 17 节）；AI 没有需要迁移的东西。AI+ 功能一开启，管理员就能使用 AI 对话；其他每个用户都需要在 **用户管理** 里开通 **AI+ 功能**，这个开关只有在 ai-service 已连接、而且 AI+ 功能已开启时才能打开。AI 数据库 `xexam-ai.db` 由 ai-service 在第一次启动时创建；如果它来自 v0.8 的某个预发布版本，缺少的列会自动补上。
 - **从现在起要备份什么**：两个数据卷，`xexam_data` 和 `xexam_ai_data`。AI 卷里在 AI 数据库旁边放着密钥文件 `secret.key`，所以它的备份能解密已保存的密钥；设置 `XEXAM_AI_SECRET_KEY` 可以把密钥分开存放。`xexam_link` 不用备份：它为空时后端会生成一个新令牌。
-- 检查 <http://localhost:8765/api/info> 显示 `"version": "0.8"`，并且 `docker compose ps` 列出三个 healthy 的容器（`xexam-frontend`、`xexam-backend` 和 `ai-service`）。
+- 检查 <http://localhost:8765/api/info> 显示版本（`"0.8"`，用当前的镜像则是 `"0.9"`），并且 `docker compose ps` 列出三个 healthy 的容器（`xexam-frontend`、`xexam-backend` 和 `ai-service`）。
 
 回退到 v0.7.5 就是恢复 `backups/` 里的那份副本，并换回旧的 `docker-compose.yml`；见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 第 1 节。
 
@@ -190,7 +217,7 @@ docker compose logs backend
    新的 `docker-compose.yml` 跟随宿主机的时区，限制容器日志的大小，把 `.env` 里的 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG` 传进去，还加入了 v0.8 的 AI 服务和它的卷。
 3. **第一次启动做什么**（在响应任何请求之前）：写一份副本 `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`，把数据库迁移到 schema v5（v0.7 和 v0.7.5 停在 v4），并改用 WAL 模式。已有的每个用户都保留已有的每个题库，并设置 **包括以后导入的题库**；每个题库都归第一个管理员；以前的每条记录都是 **考试**；还没有人是可管理题库的用户。然后它下架旧格式的题，日志里每个题库一条警告，例如 `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`。
 4. **用六列格式的文件更新每个旧题库**：**题库管理** → **导入 Excel** → **更新已有题库**，选好题库，上传文件并确认。题库的名字、所有者和能看到它的用户都不变。它的题现在按英语文字识别，所以从没有答题记录开始；旧题仍保持下架，以前的记录里仍然显示它们。也可以把六列格式的文件作为 **新建题库** 导入。
-5. **之后**：决定谁是 **可管理题库** 的用户、每个用户能看到哪些题库（从现在起新添加的用户，在你选好之前看不到任何题库），并检查 <http://localhost:8765/api/info> 显示 `"version": "0.8"`。在你设置之前 AI 是关闭的（见上一节）。
+5. **之后**：决定谁是 **可管理题库** 的用户、每个用户能看到哪些题库（从现在起新添加的用户，在你选好之前看不到任何题库），并检查 <http://localhost:8765/api/info> 显示 `"version": "0.9"`。在你设置之前 AI 是关闭的（见上一节）。
 
 回退到 v0.6 就是恢复 `backups/` 里的那份副本；命令见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 第 2.6 节。
 
@@ -228,6 +255,28 @@ Xexam 以 [MIT 许可证](../LICENSE) 发布。Copyright (c) 2026 Yumin-Space.
 每次更新都要在这里写一条，**版本号和仓库根目录 `VERSION` 文件里的 `CODE_VERSION` 一致**（自动构建会检查，不一致就不让构建）。最新的镜像同时有 `latest` 和对应的 `vX.Y` 标签。
 
 程序里的 **关于 Xexam** 页面会显示这些记录（它们在构建时打包进前端），所以请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``。链接在那里显示成普通文字。
+
+### v0.9 — 2026-11-11
+
+**为拥有 AI+ 功能的账号提供学习时的 AI 帮助：练习中的提示和解释、成绩的 AI 解析，以及对答错题目的 AI 总结。三个镜像、数据卷和 docker-compose.yml 都保持不变。数据库会自动升级（主数据库升到 schema 6，AI 数据库升到 schema 3），每个都在写好备份副本之后进行。**
+
+- **谁能看到**：只有拥有 **AI+ 功能** 的账号（AI+ 功能开启时的管理员；橙色的 **AI+** 徽章）。没有它的用户看不到下面任何控件。有这个功能、但现在不能使用 AI 的用户（管理员暂停了它、AI+ 功能已关闭或 ai-service 没有连接）会看到变灰的控件，带 **无法使用** 标记，提示框里写明原因（触屏上点一下就会显示），在学习记录里表格上方还有一句说明。服务器也会拒绝这些请求。考试进行中没有这些；考试只在它的成绩页和它的学习记录里有 AI。
+- **练习**：每道题的操作栏里有两个按钮，**AI 提示** 和 **AI 解释**，卡片页头里、语言切换按钮旁边还有同样的两个，分别是灯泡和书本图标。按钮和图标作用相同。
+  - **AI 提示**：讲解怎样着手做这道题，以及背后的知识点，但不说哪个选项是对的。发给模型的请求里从不包含答案，如果提示还是把答案泄露了，它会被隐藏（**这个提示透露了答案，已被隐藏。请重新生成。**）；这个检查是一道保险，能拦住大多数、但不是所有的说法。
+  - **AI 解释**：先给出正确答案，然后是这道题考查的知识、它为什么对、其他每个选项为什么错。
+  - 回答在按钮旁边一个可以关闭的小窗口里逐步显示（Esc、点窗口外面、**关闭** 或换到另一道题都会关掉它），带 **复制**、**重新生成** 和 **在 AI 对话中打开**。再次打开同一个，会马上显示已保存的回答；**重新生成** 写一个新的，新的失败或被隐藏时，上一个回答仍然留着。回答用 **设置** 里的语言（保存的回答是另一种语言时会说明）。
+- **成绩**：练习成绩、考试成绩和学习记录详情页上的每张题目卡片都有 **AI 解析**（判定那一行上的一个按钮，卡片页头里的一个书本图标）。它讲解这道题，答错时还会讨论你自己的答案。它的题目文字跟随卡片自己的语言切换按钮。
+- 一条记录的 **AI 总结**，在 **学习记录**（新的第一列，每行一个按钮）和 **主页**（在最近一次成绩里，**查看详情** 和 **全部学习记录** 之间）：一个大窗口，里面是薄弱的知识点、需要注意什么、以后怎样做这类题，以及对这些内容的简单总结。只计入答错的题（未作答的不算），最多 70 道，更多时随机抽取；窗口里会写例如 **基于 80 道答错的题中随机抽取的 70 道。** **重新生成** 写一个新的总结，再按一次按钮则显示已保存的那个。没有答错的题的记录，或者由没有保存逐题详情的版本保存的记录，按钮是灰的并写明原因。
+- **一次一个回答**：一个回答正在生成时，另一个请求会说明是哪一个（**第 3 题的 AI 提示 还在生成。**），并提供 **查看**（在同一页面上时）和 **停止它，生成这一个**；什么都不会自己停下。学习的回答和 AI 对话共用这一处。
+- **在 AI 对话里**：每个练习、考试和总结都有一个对话，标题是 `<开始时间>-练习`、`<开始时间>-考试` 或 `<记录时间>-AI总结`（标题里的文字跟随界面语言，时间用 ai-service 的时区）。每个回答都按顺序写进去，每道题标明是第 n 题的提示、解释还是解析；练习页上的提示和解释，与它的成绩页上的解析，共用这个练习的对话。学习的回答没有 **重试** 和 **记住这个**。删除学习记录会保留它的总结对话。和所有对话一样，学习对话遵循保留期，用户可以删除，管理员可以查看；已删除的对话里的回答不再作为已保存的回答提供。
+- **v0.9 之前生成的记录** 没有会话 key，所以在这样的记录的详情页上第一次做 AI 解析时，会开一个自己的对话，标题是记录的时间加上它的类型后缀。
+- **发给 AI 服务商的数据**：提示发的是题目和页面上所显示语言的选项；解释或解析还包括题库里的答案和解析，在成绩页上还有你自己的答案；总结对每道答错的题发同样的内容。记忆笔记、以前的对话和自由模式都不参与这些请求。用量按功能统计（AI 设置里 **用量** 下的 **按功能**：AI 对话、AI 提示、AI 解释·解析、AI 总结），从不带内容。
+- **限制**：开始一个学习回答，和 AI 对话计入同一个 Nginx 限制（每个登录的浏览器，突发 10 次之后每分钟 20 次；到限制时窗口会说等几秒再试）。每个学习对话算一个对话，每次提问算两条消息，所以默认的每个对话 400 条消息，足够在一次很长的练习里提问约 200 次（管理员可以修改）。
+- **布局**：手机上操作栏保持两行（两个 AI 按钮用简短的标签，屏幕很窄时只显示图标），变灰的控件和语言切换按钮一起折行，而不是把页面撑宽，学习记录在窄窗口里保持卡片布局，每张卡片里有 AI 总结按钮。
+- **数据库 schema 6**（主数据库）：`attempts.session_key` 和 `attempts.started_at`，可以为空；迁移之前会把一份副本写到 `<数据目录>/backups/xexam-schema5-<日期时间>.db`。**AI 数据库 schema 3**：`chats.kind`、`ref` 和 `record_id`；`messages.kind`、`question_id`、`question_no`、`source`、`lang`、`sample_used`、`sample_usable` 和 `sample_wrong`；`usage.purpose`（AI 对话时为空）；三个索引；先把一份副本写到 AI 卷里的 `backups/xexam-ai-schema2-<日期时间>.db`。备份从不会自动删除，每次升级需要的空闲磁盘空间约等于它的数据库的大小。v0.8 能原样打开 schema 6 的主数据库，但它的 AI 服务不接受 schema 3：回退 AI 数据库就是恢复它的副本。AI 服务现在会分小批删除超过保留期的对话。
+- **新 API**：`POST /api/ai/study/ask` 和 `POST /api/ai/summary/ask`（server-sent events，和 `send` 一样），`GET /api/ai/study/saved` 和 `GET /api/ai/summary/saved`；对话路由里，对话新增 `kind` 和 `recordId`，消息新增 `kind`、`questionId`、`questionNo`、`source`、`lang` 和 `sample`，`start` 事件里新增 `chatKind`，`ai.busy` 拒绝里新增 `running`，AI 用量里新增 `byPurpose`；`POST /api/attempt` 接受 `key` 和 `startedAt`，并返回新记录的 `recordId`，`GET /api/record` 返回 `sessionKey` 和 `startedAt`；内部的 `POST /internal/ai/question`、`/record` 和 `/record-info`（只用令牌）。Nginx 现在记录请求的路径，但不再记录它的查询字符串。
+- **发布带签名**：发布任务记录已发布版本（`RELEASE_VERSION` 和 README 徽章）时，改用 GitHub API 生成提交，不再用 `git push`，所以 GitHub 会为它签名，显示为 **Verified**。
+- 测试：后端 342 → 382，前端 246 → 391，AI 服务 160 → 369
 
 ### v0.8 — 2026-11-11
 

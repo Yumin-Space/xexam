@@ -18,11 +18,13 @@ import { t, tn } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
 import { adminOnly, parseHash, routeHash, sameRoute, type Route } from '../router.ts';
 import type { AttemptKind, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
+import { closeAiPop } from '../components/ai-pop.ts';
+import { dropAiSummary } from '../components/ai-summary.ts';
 import { ask } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
 import { refreshAiStatus } from './ai.ts';
 import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSettings } from './preferences.ts';
-import { adoptLegacySession, clearSaved, loadSaved, saveSession as persist, type SavedSession } from './session-storage.ts';
+import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
 import { paths, setStorageOwner } from './storage-keys.ts';
 import { S, clearUserData, isAdmin, setBankData, type Session } from './store.ts';
@@ -78,7 +80,7 @@ export function persistSession(): void {
   if (!se) return;
   persist({
     qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets,
-    kind: se.kind, checked: se.checked,
+    kind: se.kind, checked: se.checked, key: se.key, startedAt: se.startedAt,
   });
 }
 
@@ -86,7 +88,7 @@ export function persistSession(): void {
 function sessionOf(sv: SavedSession): Session {
   return {
     qs: sv.qs, answers: sv.answers, flags: sv.flags, idx: sv.idx, base: sv.elapsed, t0: Date.now(), mode: sv.mode, sheets: sv.sheets,
-    kind: sv.kind, checked: sv.checked,
+    kind: sv.kind, checked: sv.checked, key: sv.key, startedAt: sv.startedAt,
   };
 }
 
@@ -549,6 +551,9 @@ export function applyBankDeleted(d: BankDeleted): void {
 
 /** After POST /api/records/delete */
 export function applyRecordsDeleted(d: RecordsDeleted): void {
+  // v0.9: the saved AI summaries of the records that are gone are forgotten (an open window stays open)
+  const left = new Set(d.records.map((r) => r.id));
+  for (const r of S.records ?? []) if (!left.has(r.id)) dropAiSummary(r.id, r.at);
   S.records = d.records;
   S.recordsRetention = d.retention;
   S.progress = d.progress;
@@ -562,7 +567,7 @@ export function startSession(qs: Question[], mode: Mode, kind: AttemptKind = 'ex
   S.session = {
     qs, answers: {}, flags: new Set(), idx: 0, base: 0, t0: Date.now(), mode,
     sheets: [...new Set(qs.map((q) => q.sheet))],
-    kind, checked: new Set(),
+    kind, checked: new Set(), key: newSessionKey(), startedAt: Math.floor(Date.now() / 1000),
   };
   persistSession();
   navigate({ name: 'quiz' });
@@ -609,6 +614,8 @@ export function go(i: number): void {
   const se = S.session;
   if (!se || i < 0 || i >= se.qs.length) return;
   cancelAdvance();
+  // v0.9: the AI popover belongs to one question; another question closes it
+  if (i !== se.idx) closeAiPop(false);
   se.idx = i;
   persistSession();
   render();
@@ -741,11 +748,13 @@ export async function submit(): Promise<void> {
     // The results that count: all of them, unless the server left out questions that no longer exist (v0.6.5)
     let counted = results;
     let notCounted = 0;
+    let recordId: number | null = null;
     try {
-      const { notCounted: gone, ...progress } = await submitAttempt({
+      const { notCounted: gone, recordId: savedId, ...progress } = await submitAttempt({
         results: results.map((r) => ({ id: r.q.id, correct: r.correct, answer: Array.isArray(r.ans) ? r.ans : null })),
-        sheets: se.sheets, mode: se.mode, seconds, kind: se.kind,
+        sheets: se.sheets, mode: se.mode, seconds, kind: se.kind, key: se.key, startedAt: se.startedAt,
       });
+      recordId = savedId ?? null;
       S.progress = progress;
       saved = true;
       clearSaved();
@@ -769,21 +778,13 @@ export async function submit(): Promise<void> {
       toast(`${t('act.submit.saveFailed')} (${errorText(e)})`, 9000);
     }
     S.session = null;
-    S.result = { results: counted, seconds, mode: se.mode, prev, recordId: null, notCounted, kind: se.kind };
+    S.result = { results: counted, seconds, mode: se.mode, prev, recordId, notCounted, kind: se.kind, key: se.key, startedAt: se.startedAt };
     S.rvFilter = 'wrong';
     navigate({ name: 'result' });
     // Some questions were deleted meanwhile: the banks in memory are out of date too
     if (notCounted) refreshLibrary().then(render, () => {});
-    if (saved) {
-      // The newest record of this user is this exam; remember its id so the result page can link to it
-      const good = counted.filter((r) => r.correct).length;
-      const mine = S.result;
-      refreshRecords().then(() => {
-        const top = S.records?.[0];
-        if (mine && S.result === mine && top && top.total === counted.length && top.correct === good && kindOf(top) === mine.kind) mine.recordId = top.id;
-        render();
-      }, () => {});
-    }
+    // The save answered with the record's id (v0.9); the list of records is refreshed for the pages that show it
+    if (saved) refreshRecords().then(render, () => {});
   } finally {
     submitting = false;
   }

@@ -590,7 +590,17 @@ async fn usage_statistics() {
         .collect();
     assert_eq!(
         keys,
-        vec!["days", "from", "to", "unit", "totals", "byUser", "byModel", "byPeriod"]
+        vec![
+            "days",
+            "from",
+            "to",
+            "unit",
+            "totals",
+            "byUser",
+            "byModel",
+            "byPeriod",
+            "byPurpose"
+        ]
     );
     assert_eq!(
         (v["days"].clone(), v["unit"].clone()),

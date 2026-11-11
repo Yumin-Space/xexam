@@ -37,7 +37,7 @@ import { miniSwitch } from '../components/mini-switch.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
 import { infoTip } from '../components/tooltip.ts';
 import { fmtAiTime, footerOf } from '../domain/ai-chat.ts';
-import { chatTitleEl, whoLine } from './ai.ts';
+import { chatTitleEl, chatTitleText, userBody, whoLine } from './ai.ts';
 import { renderForbidden } from './forbidden.ts';
 import {
   aiServiceOf, barPercent, canEnable, changesFingerprint, connUpdate, DEFAULT_LIMITS, defaultUrl, fieldOfError, fieldsOf, filterModels,
@@ -1034,7 +1034,7 @@ function viewerMessage(m: AiMessage): HTMLElement {
             : t('ai.status.truncated');
   return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant') },
     whoLine(m),
-    user ? h('div', { class: 'ai-bubble' }, h('div', { class: 'ai-text' }, m.content)) : markdownEl(m.content),
+    ...(user ? userBody(m) : [markdownEl(m.content)]),
     foot ? h('p', { class: 'ai-foot' + (m.status === 'error' ? ' bad' : '') }, foot) : null);
 }
 
@@ -1087,7 +1087,8 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
   const clear = async (what: 'chat' | 'chats' | 'memories'): Promise<void> => {
     const dt = detail;
     if (!dt || busy) return;
-    const title = what === 'chat' ? (dt.chats.find((c) => c.id === chatId)?.title || t('ai.new')) : '';
+    const picked = what === 'chat' ? dt.chats.find((c) => c.id === chatId) : undefined;
+    const title = picked ? chatTitleText(picked) : what === 'chat' ? t('ai.new') : '';
     const body = what === 'chat'
       ? t('ai.set.user.clearChat.ask', { title, name: u.username })
       : what === 'chats'
@@ -1153,7 +1154,7 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
       const list = h('ul', { class: 'vw-chats' }, dt.chats.map((c) => h('li', null, h('button', {
         type: 'button', class: 'ai-chat-open' + (c.id === chatId ? ' on' : ''), id: `vw-c-${c.id}`, 'aria-current': c.id === chatId ? 'true' : null,
         onclick: () => void openChat(c.id),
-      }, chatTitleEl(c.title || t('ai.new')), h('span', { class: 'ai-chat-at' }, when(c.updatedAt))))));
+      }, chatTitleEl(c), h('span', { class: 'ai-chat-at' }, when(c.updatedAt))))));
       const pane = chatId == null
         ? h('p', { class: 'ais-note vw-pick' }, t('ai.set.user.pick'))
         : chatErr
@@ -1253,6 +1254,16 @@ function usageSection(): HTMLElement {
           h('tbody', null, u.byModel.map((r) => h('tr', null,
             r.model ? h('th', { scope: 'row', class: 'ais-mono' }, r.model) : h('th', { scope: 'row' }, t('ai.set.modelListCalls')),
             countsCells(r)))))),
+        // v0.9: what the calls were for (AI Chat, hint, explanation, summary), in the server's order
+        u.byPurpose
+          ? h('h3', { class: 'ais-h3' }, t('ai.set.usage.byPurpose'))
+          : null,
+        u.byPurpose
+          ? h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table' },
+            h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.usage.byPurpose')), countsHead())),
+            h('tbody', null, u.byPurpose.map((r) => h('tr', null,
+              h('th', { scope: 'row' }, t(`ai.set.usage.purpose.${r.purpose}` as MsgKey)), countsCells(r))))))
+          : null,
         h('h3', { class: 'ais-h3' }, t('ai.set.byPeriod')),
         h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-period' },
           h('thead', null, h('tr', null,

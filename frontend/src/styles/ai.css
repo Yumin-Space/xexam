@@ -74,19 +74,10 @@
 /* The time of every message, sent or answered */
 .ai-time { font-size: 11.5px; font-weight: 400; color: var(--ink3); font-variant-numeric: tabular-nums; }
 .ai-text { white-space: pre-wrap; font-size: 15px; line-height: 1.6; }
-.ai-md { font-size: 15px; line-height: 1.65; color: var(--ink); }
-.ai-md > * { margin: 0; }
-.ai-md > * + * { margin-top: .65em; }
-.ai-md p { white-space: pre-line; }
-.ai-md ul, .ai-md ol { padding-left: 1.4em; }
-.ai-md li + li { margin-top: .2em; }
-.ai-md li { white-space: pre-line; }
-.ai-md code { padding: 0 4px; border-radius: 4px; background: var(--fill); font-family: var(--mono); font-size: .88em; }
+/* v0.9: the label above a study question (hint / explanation / summary) instead of its machine text */
+.ai-study-label { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--ink2); }
+.ai-msg.user .ai-study-label { text-align: right; }
 .ai-msg pre { overflow-x: auto; max-width: 100%; }
-.ai-md pre { padding: 10px 12px; border-radius: 8px; background: var(--fill); font-size: 13px; line-height: 1.55; }
-.ai-md pre code { padding: 0; background: none; font-size: inherit; white-space: pre; }
-.ai-md hr { border: 0; border-top: 1px solid var(--line-soft); }
-.ai-md .ai-h strong { font-size: 15.5px; }
 .ai-foot { margin-top: 6px; font-size: 12.5px; line-height: 1.5; color: var(--ink3); }
 .ai-foot.bad { color: var(--danger); }
 .btn.ai-mini { min-height: 28px; padding: 3px 10px; gap: 4px; font-size: 13px; font-weight: 400; }

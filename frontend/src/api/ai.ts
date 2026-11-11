@@ -5,6 +5,9 @@
 // bodies), free mode is a state of the administrator (setFreeMode), and administrators suspend / resume a user's AI+
 // function.
 import { retryBody, suggestBody, type AiLang, type SendBody } from '../domain/ai-chat.ts';
+import type { StudyAskBody, ReplyLang } from '../domain/ai-plus.ts';
+import { parseSaved, type SavedPayload } from '../domain/ai-study.ts';
+import type { StudySavedQuery, StudyTransport } from '../domain/ai-spec.ts';
 import type {
   AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiChatSummary, AiClear, AiLimits, AiLimitsAnswer, AiMemoriesAnswer,
   AiMemory, AiModels, AiSettings, AiSettingsUpdate, AiStatusJson, AiUsage, AiVerify,
@@ -66,6 +69,41 @@ export const deleteAllMemories = (): Promise<{ deleted: number }> => postJson('/
 export const suggestMemory = async (messageId: number, lang: AiLang): Promise<string> => {
   const r = await postJson<{ suggestion?: unknown }>('/api/ai/memories/suggest', suggestBody(messageId, lang));
   return typeof r.suggestion === 'string' ? r.suggestion : '';
+};
+
+// ---------------------------------------------------------------- v0.9: study answers (hint, explanation, summary)
+
+/**
+ * The saved hint / explanation of one question and place (exactly one of `key` / `record` in the query). Every value is a
+ * character a browser never percent-encodes, so the query is built by hand.
+ */
+export const fetchStudySaved = async (q: StudySavedQuery): Promise<SavedPayload> => {
+  const who = q.key !== undefined ? `key=${q.key}` : `record=${q.record}`;
+  const json = await getJson<unknown>(`/api/ai/study/saved?mode=${q.mode}&${who}&source=${q.source}&question=${q.question}&kind=${q.kind}`);
+  return parseSaved(json);
+};
+
+/** Asks for a hint / explanation; the answer streams in as events (start, delta…, done / stopped / error) */
+export const askStudyStream = (body: StudyAskBody, opts: StreamOptions): Promise<void> => postStream('/api/ai/study/ask', body, opts);
+
+/** The saved summary of a record (`at` = its time as 12 digits, YYYYMMDDHHMM) */
+export const fetchSummarySaved = async (q: { record: number; at: string }): Promise<SavedPayload> =>
+  parseSaved(await getJson<unknown>(`/api/ai/summary/saved?record=${q.record}&at=${q.at}`));
+
+/** Asks for the summary of a record's wrong answers (streamed like a study answer) */
+export const askSummaryStream = (body: { recordId: number; lang: ReplyLang }, opts: StreamOptions): Promise<void> =>
+  postStream('/api/ai/summary/ask', body, opts);
+
+/** What the study popover and the summary window use to talk to the AI service (domain/ai-spec.ts) */
+export const studyTransport: StudyTransport = {
+  savedStudy: fetchStudySaved,
+  askStudy: (body, signal, on) => askStudyStream(body, { signal, onEvent: on }),
+  savedSummary: fetchSummarySaved,
+  askSummary: (body, signal, on) => askSummaryStream(body, { signal, onEvent: on }),
+  // always with a chat id, never `{}`; the answer does not matter
+  stopChat: async (chatId) => {
+    await stopAnswer(chatId);
+  },
 };
 
 // ---------------------------------------------------------------- administrators

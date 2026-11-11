@@ -235,6 +235,16 @@ impl AttemptKind {
     }
 }
 
+/// The practice / exam session a study record is saved from (v0.9): the random key (32 lower-case hex digits) the browser made
+/// when the session started and the start time (unix seconds, the browser's clock). `POST /api/attempt` carries both as the
+/// optional `"key"` / `"startedAt"`; an invalid one is stored as NULL, never refused. The AI service names the one chat of a
+/// session by the key.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionTag {
+    pub key: Option<String>,
+    pub started_at: Option<i64>,
+}
+
 /// The existing question banks a plain user is given (schema v4: their `user_banks` rows), as `"banks"` of
 /// `POST /api/users/create` / `update` asks for them. Independent of the user's "include banks imported later" flag
 /// (`users.new_banks`), which only adds a row for each bank created later. Administrators always see every bank, whatever is

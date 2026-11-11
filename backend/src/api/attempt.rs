@@ -6,7 +6,7 @@
 //! v0.6.5: an optional `"kind"`: `"exam"` (the default when it is missing or null) or `"practice"`. Anything else is refused
 //! (400) rather than silently saved as an exam: a client that sends a kind means it.
 use super::json::PyVal;
-use crate::models::{Attempt, AttemptAnswers, AttemptKind, AttemptResult};
+use crate::models::{Attempt, AttemptAnswers, AttemptKind, AttemptResult, SessionTag};
 use crate::security::{py_int_str, truncate_chars};
 use serde_json::Value;
 
@@ -56,6 +56,28 @@ fn clean_seconds(v: Option<&PyVal>) -> i64 {
         _ => None,
     };
     n.map(|n| n.clamp(0, MAX_SECONDS) as i64).unwrap_or(0)
+}
+
+/// The latest start time `"startedAt"` may name (unix seconds, the year 2100); anything else is stored as NULL.
+const MAX_STARTED_AT: i128 = 4_102_444_800;
+
+/// v0.9: the optional `"key"` (32 lower-case hex digits) and `"startedAt"` (an integer of unix seconds, 1 to the year 2100)
+/// of a request: the session the record is saved from. Each is looked at on its own and an invalid or missing one is `None`
+/// (stored as NULL): a request is never refused because of them, so older clients keep working.
+pub fn clean_session_tag(d: &PyVal) -> SessionTag {
+    let key = match d.get("key") {
+        Some(PyVal::Str(s))
+            if s.len() == 32 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) =>
+        {
+            Some(s.clone())
+        }
+        _ => None,
+    };
+    let started_at = match d.get("startedAt") {
+        Some(PyVal::Int(i)) if (1..=MAX_STARTED_AT).contains(i) => i64::try_from(*i).ok(),
+        _ => None,
+    };
+    SessionTag { key, started_at }
 }
 
 pub fn clean_attempt(d: &PyVal) -> Result<Attempt, String> {
@@ -130,6 +152,52 @@ mod tests {
 
     fn clean(s: &str) -> Result<Attempt, String> {
         clean_attempt(&parse_py_json(s.as_bytes()).unwrap())
+    }
+
+    #[test]
+    fn session_tags_are_optional_and_never_refuse_a_request() {
+        let tag = |s: &str| clean_session_tag(&parse_py_json(s.as_bytes()).unwrap());
+        let key = "0123456789abcdef0123456789abcdef";
+        assert_eq!(tag("{}"), SessionTag::default());
+        assert_eq!(
+            tag(&format!(r#"{{"key":"{key}","startedAt":1780000000}}"#)),
+            SessionTag {
+                key: Some(key.to_string()),
+                started_at: Some(1_780_000_000)
+            }
+        );
+        // Each one on its own; anything invalid is dropped
+        for bad in [
+            r#"{"key":"0123456789ABCDEF0123456789abcdef"}"#,
+            r#"{"key":"short"}"#,
+            r#"{"key":5}"#,
+            r#"{"key":null}"#,
+            r#"{"key":"0123456789abcdef0123456789abcdef0"}"#,
+        ] {
+            assert_eq!(tag(bad).key, None, "{bad}");
+        }
+        for bad in [
+            r#"{"startedAt":0}"#,
+            r#"{"startedAt":-5}"#,
+            r#"{"startedAt":4102444801}"#,
+            r#"{"startedAt":1.5}"#,
+            r#"{"startedAt":"1780000000"}"#,
+            r#"{"startedAt":null}"#,
+            r#"{"startedAt":true}"#,
+        ] {
+            assert_eq!(tag(bad).started_at, None, "{bad}");
+        }
+        assert_eq!(tag(r#"{"startedAt":1}"#).started_at, Some(1));
+        assert_eq!(
+            tag(r#"{"startedAt":4102444800}"#).started_at,
+            Some(4_102_444_800)
+        );
+        assert_eq!(
+            tag(&format!(r#"{{"key":"{key}","startedAt":"x"}}"#))
+                .key
+                .as_deref(),
+            Some(key)
+        );
     }
 
     fn clean_with_answers(s: &str) -> (Attempt, AttemptAnswers) {

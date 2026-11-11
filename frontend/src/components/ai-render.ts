@@ -1,5 +1,6 @@
 // Draws an AI answer (v0.8) from the block tree of domain/ai-markdown.ts with elements and text nodes only, never innerHTML:
 // nothing in an answer is ever interpreted as HTML. Shared by AI Chat and the administrators' viewer in AI settings.
+import '../styles/ai-md.css';
 import { parseMarkdown, type Block, type Inline } from '../domain/ai-markdown.ts';
 import { h } from '../utils/dom.ts';
 

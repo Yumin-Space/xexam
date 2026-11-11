@@ -47,7 +47,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | 看日志 | `docker compose logs -f`（只看后端：`docker compose logs -f backend`；只看 ai-service：`docker compose logs -f ai-service`；见第 9 节） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。从较早的版本升级时先看第 6 节 |
-| 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单里的版本那一项，例如 **Xexam v0.8**（关于页面） |
+| 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单里的版本那一项，例如 **Xexam v0.9**（关于页面） |
 
 > ⚠️ 不要运行 `docker compose down -v`：`-v` 会删掉两个数据卷：`xexam_data`（题库、账户和所有学习记录）和 `xexam_ai_data`（AI 设置和密钥、对话和记忆）。
 
@@ -73,7 +73,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_AI_LOG` | （不设：`info`） | ai-service 的日志过滤，`docker compose logs ai-service` 和它发到系统日志的行都用它；规则和 `XEXAM_LOG` 一样（为空 = `info`，无效的值退回 `info` 并记一条警告） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （不设：WAL） | `delete` = AI 数据库用回滚日志，用于和 `XEXAM_SQLITE_JOURNAL` 一样的特殊存储 |
 
-改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG` 和 `XEXAM_AI_SQLITE_JOURNAL` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
+v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG` 和 `XEXAM_AI_SQLITE_JOURNAL` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
 
 其余的变量由镜像自己设置，compose 文件不改动它们：
 
@@ -98,6 +98,8 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 所以时间跟随宿主机的时区；`.env` 里的 `TZ` 优先于它。`create_host_path: false` 让 Compose 在没有 `/etc/localtime` 的宿主机上报错停下（「bind source path does not exist」），而不是在那里建一个空文件夹（它挂载不到镜像里的文件上）。**在这样的宿主机上，请从 `docker-compose.yml` 里删掉这六行（后端和 ai-service 里各有一处），并在 `.env` 里设置 `TZ`**（例如 `TZ=UTC`），否则容器起不来。既没有这个挂载、也没有 `TZ` 时，镜像用 UTC。
 
 在 Docker Desktop（Windows、macOS）上，宿主机的 `/etc/localtime` 是 Docker 自己的虚拟机里的文件，不是你电脑上的，而那台虚拟机通常用的是 UTC。挂载本身没问题，但不管你的电脑用什么时区，时间都会是 UTC：请在 `.env` 的 `TZ` 里设置你想用的时区。
+
+AI 对话里 AI+ 学习对话的标题（一次练习或考试的开始时间、一条记录的时间）是 ai-service 按它自己容器的时区写的，所以它们遵循同一个设置。
 
 以后再改时区不会改写已经保存的时间；它们保留写入时的时区。
 
@@ -213,9 +215,9 @@ sequenceDiagram
 
 Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并清掉 `X-Forwarded-*`；后端只读真实的 `Host`。
 
-**隧道后面的所有人共用一个限流额度。** Nginx 按客户端地址限制请求数：`/api/` 每秒 30 个请求，突发 120；`/api/upload` 每秒 1 个，突发 5；`/api/ai/` 每秒 30 个，突发 120（见 [security.md](security.md) 第 9 节）。通过隧道时，所有用户都来自 cloudflared 的地址，所以都算在同一个额度里。打开一个页面大约发十个请求，开着的系统日志页每秒两个，远低于这个额度；万一还是达到了，页面会重试它的读取，然后显示 **请求太频繁**（见 [usage.md](usage.md) 第 19 节）。开始生成 AI 回答则改为按会话限制（每分钟 20 个，突发 10），所以同一个隧道后面的用户不共用这个额度。
+**隧道后面的所有人共用一个限流额度。** Nginx 按客户端地址限制请求数：`/api/` 每秒 30 个请求，突发 120；`/api/upload` 每秒 1 个，突发 5；`/api/ai/` 每秒 30 个，突发 120（见 [security.md](security.md) 第 9 节）。通过隧道时，所有用户都来自 cloudflared 的地址，所以都算在同一个额度里。打开一个页面大约发十个请求，开着的系统日志页每秒两个，远低于这个额度；万一还是达到了，页面会重试它的读取，然后显示 **请求太频繁**（见 [usage.md](usage.md) 第 19 节）。开始生成 AI 回答则改为按会话限制（每分钟 20 个，突发 10，AI 对话的发送和重试，以及从 v0.9 起的 AI 提示、解释和总结一起计数），所以同一个隧道后面的用户不共用这个额度。连续快速地点许多题的 **AI 解析** 可能会达到它；弹出框这时会说请等几秒。
 
-**通过隧道使用 AI 对话。** AI 对话的回答以 server-sent events 流（`text/event-stream`）送来。Nginx 不缓冲地转发它们，cloudflared 对这种内容类型也不缓冲，服务商没有动静时，ai-service 每 15 秒发一条 keep-alive 注释，远低于 Cloudflare 大约 100 秒的空闲上限；所以在你的网络之外，文字也会一段一段地出现。万一连接还是断了（手机休眠、隧道重新连接），回答仍然会生成并保存，页面能再连到 Xexam 时就会接上它。AI 设置里有一个请求可能很久：**测试** 要等模型的一个回答（每次最多 2 分钟，Nginx 最多等 5 分钟）；Cloudflare 可能在大约 100 秒后用它自己的错误页结束这样的请求。测试在 ai-service 里仍然会完成；刷新 AI 设置就能看到结果。
+**通过隧道使用 AI 对话和学习帮助。** AI 对话和 AI+ 学习帮助（提示、解释、总结）的回答以 server-sent events 流（`text/event-stream`）送来。Nginx 不缓冲地转发它们，cloudflared 对这种内容类型也不缓冲，服务商没有动静时，ai-service 每 15 秒发一条 keep-alive 注释，远低于 Cloudflare 大约 100 秒的空闲上限；所以在你的网络之外，文字也会一段一段地出现。万一连接还是断了（手机休眠、隧道重新连接），回答仍然会生成并保存，页面能再连到 Xexam 时就会接上它。AI 设置里有一个请求可能很久：**测试** 要等模型的一个回答（每次最多 2 分钟，Nginx 最多等 5 分钟）；Cloudflare 可能在大约 100 秒后用它自己的错误页结束这样的请求。测试在 ai-service 里仍然会完成；刷新 AI 设置就能看到结果。
 
 不要忘记的事：
 
@@ -234,7 +236,7 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 - 位置：命名卷 `xexam_data` → 容器里的 `/data/xexam.db`。更新、重建或删除容器都不会丢。数据库里有题库、账户、学习记录和设置。
 - 后端运行时，数据库旁边有 SQLite 的 `xexam.db-wal` 和 `xexam.db-shm`（WAL 模式，从 v0.7 起）。正常停止时，后端把所有内容复制进 `xexam.db`，并清空 `xexam.db-wal`；这两个文件可能空着留在旁边，没有害处。
 - 卷里还可能有一个 `/data/backups/` 文件夹，里面是 schema 迁移前写的副本（第 6 节）。程序永远不会删除这些文件。查看它们：`docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups`。
-- **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_data`。
+- **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）；从 v0.9 起，它的对话里还包括 AI+ 学习功能的练习、考试和记录总结对话，其中有题目文字和 AI 的回答，卷里还会有一个文件夹 `/data/backups/`，放着 AI schema 升级前写的副本（第 6 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_data`。
 - **链接卷** `xexam_link` → `/link` 里只有 `internal.token`（第 3.3 节）；后端以读写方式挂载它，ai-service 以只读方式挂载。
 - **备份**：先停止 Xexam（`docker compose stop`），打包**两个数据卷**，再启动：命令见 [database.md](database.md) 第 5 节和第 8.4 节。后端运行时只复制 `xexam.db`，可能会漏掉还在 `xexam.db-wal` 里的最新修改；不能停止时，请把 `xexam.db`、`xexam.db-wal` 和 `xexam.db-shm` 一起复制（`xexam-ai.db` 也一样）。备份卷时也会备份 `backups/`。`xexam_ai_data` 的备份里有密钥文件，它能解密已保存的 AI 密钥：请像对待密钥一样妥善保管，或者设置 `XEXAM_AI_SECRET_KEY`，让密钥不在卷里。删除了的对话仍然留在你以前做的备份里。`xexam_link` 不用备份：它为空时后端会写一个新令牌。
 - 不用 Docker、直接运行后端（开发时）：见 [development.md](development.md)。
@@ -243,16 +245,19 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 每次升级都是 `docker compose pull && docker compose up -d`（注明需要时，先换上新的 `docker-compose.yml`）。新的后端第一次启动时，会先往 `/data/backups/` 写一份副本，再把数据库迁移到它的 schema；副本写不出来（磁盘满、没有权限）时，它报错退出，数据库不变。Docker 会不断重启它，每次启动都再试一次；Nginx 不会启动，因为它要等后端健康。`docker compose logs backend` 里写着原因。也请先自己备份一次卷（第 5 节）：卷以外的副本更保险。
 
+ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启动时，会先往**AI 卷里**的 `/data/backups/` 写一份副本（`xexam-ai-schema<N>-<日期时间>.db`），再把 `xexam-ai.db` 升级到 schema 3；副本写不出来时它不启动（Xexam 的其余部分照常工作；`docker compose logs ai-service` 里写着原因）。**请为每个数据库留出大约和它一样大的可用磁盘空间**（副本是一个完整的文件），并且要知道这些副本从不清理，会保留你以后删除的东西（记录、题库、对话）：在这有关系时请自己删掉旧的。
+
 **从 v0.6 或更早的版本升级，请先准备好六列格式的工作簿。** 从 v0.7 起只能导入六列格式，后端每次启动时都会下架所有从以前版本的三列或四列格式导入的题（题库、学习记录和统计保留）。v0.6 及更早版本的题库全都是这些格式，所以升级之后，要等每个题库都用六列格式的文件更新过，才有题可做（见 [usage.md](usage.md) 第 13.5 节）。
 
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
-- **从 v0.7.5 或 v0.7**（migration.md 第 1 节）：**换上新的 `docker-compose.yml`**（服务 `ai-service` 和第三个镜像 `xexam-ai-service`、卷 `xexam_ai_data` 和 `xexam_link`、网络 `egress`）；schema v4 → v5，备份 `xexam-schema4-<日期时间>.db`。管理员设置之前 AI 保持关闭。用旧的 compose 文件，除了 AI 以外一切照常：**AI 设置** 这时仍然能打开，并说明 ai-service 没有运行（提示要换上新的 compose 文件），用户管理里的 AI+ 功能开关则被隐藏。
-- **从 v0.6**（migration.md 第 2 节）：schema v3 → v5，备份 `xexam-schema3-<日期时间>.db`，WAL 模式，然后下架旧格式的题。也请换上新的 `docker-compose.yml`：它加入了 ai-service，不再设置固定的默认时区（而是跟随宿主机，第 3.1 节），限制容器日志的大小（第 8 节），并在 `.env` 里设置了时传递 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 AI 的变量。如果你以前的时间是用和宿主机不同的时区写入的，请在 `.env` 里把那个时区设成 `TZ`，这样新的记录会接着用它。不需要新增任何变量。
-- **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v5 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
-- **从 v0.4**（migration.md 第 4 节）：schema v1 → v5 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
+- **从 v0.8**（migration.md 第 1 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库从 schema 5 升到 6（备份 `xexam-schema5-<日期时间>.db`，在 `xexam_data` 里），AI 数据库从 schema 2 升到 3（备份 `xexam-ai-schema2-<日期时间>.db`，在 `xexam_ai_data` 里）。别的都保持原样；AI+ 学习功能对有 AI+ 功能的账户马上出现，没有什么要设置的。回退：主数据库不需要恢复，AI 数据库需要（见下）。
+- **从 v0.7.5 或 v0.7**（migration.md 第 1 节）：**换上新的 `docker-compose.yml`**（服务 `ai-service` 和第三个镜像 `xexam-ai-service`、卷 `xexam_ai_data` 和 `xexam_link`、网络 `egress`）；schema v4 → v6，备份 `xexam-schema4-<日期时间>.db`；AI 数据库是新建的（schema 3）。管理员设置之前 AI 保持关闭。用旧的 compose 文件，除了 AI 以外一切照常：**AI 设置** 这时仍然能打开，并说明 ai-service 没有运行（提示要换上新的 compose 文件），用户管理里的 AI+ 功能开关则被隐藏。
+- **从 v0.6**（migration.md 第 2 节）：schema v3 → v6，备份 `xexam-schema3-<日期时间>.db`，WAL 模式，然后下架旧格式的题。也请换上新的 `docker-compose.yml`：它加入了 ai-service，不再设置固定的默认时区（而是跟随宿主机，第 3.1 节），限制容器日志的大小（第 8 节），并在 `.env` 里设置了时传递 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 AI 的变量。如果你以前的时间是用和宿主机不同的时区写入的，请在 `.env` 里把那个时区设成 `TZ`，这样新的记录会接着用它。不需要新增任何变量。
+- **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v6 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
+- **从 v0.4**（migration.md 第 4 节）：schema v1 → v6 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
 
-升级后，`/api/info` 显示 `"version": "0.8"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
+升级后，`/api/info` 显示 `"version": "0.9"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
 
 ## 7. 健康检查和停止
 
@@ -281,13 +286,13 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 | 在哪里 | 程序里的 `#/logs` 页面，打开时每 0.5 秒读取一次（读取失败后间隔更长，最长每 10 秒一次） | 在服务器上 |
 | 有多少 | 后端上次启动以来的最后 **2000** 行 | Docker 还保留着的全部：最多 3 个 10 MB 的文件，跨重启保留 |
 | 重启之后 | 又是空的（只在内存里，从不写进数据库） | 保留 |
-| 另外 | 级别筛选、搜索、**暂停** / **继续**、**跳到最新** | Nginx 的访问日志和错误日志：`docker compose logs frontend` |
+| 另外 | 级别筛选、搜索、**暂停** / **继续**、**跳到最新** | Nginx 的访问日志和错误日志：`docker compose logs frontend`（从 v0.9 起，访问日志里每个请求只显示不含查询字符串的路径） |
 
 Compose 服务叫 `backend`（容器叫 `xexam-backend`），所以页面上的说明写的是：在服务器上、compose 文件所在的文件夹里运行 `docker compose logs backend`，不用 Compose 时运行 `docker logs xexam-backend`。在克隆的仓库里从根目录运行时，加上 `-f docker/docker-compose.yml`（或 `-f docker/docker-compose.build.yml`）。
 
 日志里有什么：启动时的几行（版本、数据目录、日志模式、允许的主机、AI 连接、默认密码的提醒、升级信息，以及因为旧的 Excel 格式而被下架的题）、按用户名记录的登录和账户变更（`user "admin" signed in`、`user "admin" updated user "alex"`；登录时输入的、没有账户的名字从不记录）、被拒绝的上传和写入、警告和错误。它从不包含密码、会话令牌、Cookie 的值、确认码或题目文字。被 Host / Origin 检查拒绝的请求、失败的登录，以及没有账户的用户名被锁定，都先记一次，之后最多每分钟汇总一次，所以没人能不登录就把其他日志挤出这 2000 行。详见 [security.md](security.md) 第 8 节。
 
-ai-service 的日志行：它的启动（`Xexam AI service 0.8 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、加密密钥的来源）、连接（`AI link: connected to the main service`，每个连接只写一次；断开时写 `AI link: lost the main service`，所以长时间的中断是一对日志行，而不是每次重试一行）、管理员对 AI 设置和安全上限的每次修改、测试、**AI+ 功能** 开关、管理员的 暂停 和 恢复（日志行仍然写 `AI function turned off for user "sam" by admin "admin"`，以及 `… turned on …`）、AI 数据库的 schema 升级（带它备份副本的名字；较早的预发布构建写的 schema 2 文件里缺的列，会在启动时补上，不写日志行）、失败的 AI 调用（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`，同一个原因每分钟最多一行）、对话保留、删除已删除用户的数据，以及管理员查看或清除用户 AI 数据的审计日志。它们从不包含密钥、内部令牌、提示词、回答、对话标题或记忆笔记。心跳不写任何日志行。连不上后端期间，ai-service 最多保留 500 行，之后再发送；不得不丢掉一些时，开头会有一行 `<n> AI log lines were dropped while the main service was unreachable`；审计日志从不丢弃。
+ai-service 的日志行：它的启动（`Xexam AI service 0.9 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、加密密钥的来源）、连接（`AI link: connected to the main service`，每个连接只写一次；断开时写 `AI link: lost the main service`，所以长时间的中断是一对日志行，而不是每次重试一行）、管理员对 AI 设置和安全上限的每次修改、测试、**AI+ 功能** 开关、管理员的 暂停 和 恢复（日志行仍然写 `AI function turned off for user "sam" by admin "admin"`，以及 `… turned on …`）、AI 数据库的 schema 升级（带它备份副本的名字，`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`，对每个 schema 1 或 schema 2 的数据库都写；重新打开不写任何东西）、对话保留的总数（`AI retention: deleted N chats older than D days`）、因为泄露了答案而被扣下的提示（`AI hint withheld because it gave the answer away (user "sam")`，每分钟最多一行，之后是 `N more AI hints were withheld since the last report`，从不含任何文字）、后端学习路由的一个读不懂的回答（`AI link: an answer of /internal/ai/question could not be read`，每分钟最多一行）、失败的 AI 调用（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`，同一个原因每分钟最多一行）、对话保留、删除已删除用户的数据，以及管理员查看或清除用户 AI 数据的审计日志。它们从不包含密钥、内部令牌、提示词、回答、对话标题、记忆笔记、题目文字、会话 key 或记录时间。心跳不写任何日志行。连不上后端期间，ai-service 最多保留 500 行，之后再发送；不得不丢掉一些时，开头会有一行 `<n> AI log lines were dropped while the main service was unreachable`；审计日志从不丢弃。
 
 ## 10. 第一次启动、账户和找回
 

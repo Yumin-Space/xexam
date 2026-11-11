@@ -5,9 +5,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import ai from './catalog/ai.ts';
+import aiplus from './catalog/aiplus.ts';
 import users from './catalog/users.ts';
 import { ApiError } from '../api/client.ts';
-import { aiCodeText, errorText, knownAiCode } from './errors.ts';
+import { aiCodeText, errorText, knownAiCode, studyErrorText } from './errors.ts';
 import { setUiLang } from './index.ts';
 import { localizeServerMessage } from './server-messages.ts';
 
@@ -172,4 +173,39 @@ test('UX findings: saving turns the AI+ feature off and says what to do; test li
   for (const lang of ['en', 'zh', 'ja'] as const) {
     assert.ok(!/enable AI|开启 AI。|AI を有効/.test(ai[lang]['ai.set.testOk'] + ai[lang]['ai.err.notVerified'] + ai[lang]['ai.set.keyProblem']), lang);
   }
+});
+
+test('v0.9: the owner\'s exact Chinese words of the AI+ study features, and the unchanged AI+ feature wording', () => {
+  const zh = aiplus.zh;
+  assert.equal(zh['aiplus.hint'], 'AI 提示');
+  assert.equal(zh['aiplus.explain'], 'AI 解释');
+  assert.equal(zh['aiplus.analyze'], 'AI 解析');
+  assert.equal(zh['aiplus.summary'], 'AI 总结');
+  assert.equal(zh['aiplus.regenerate'], '重新生成');
+  assert.equal(zh['aiplus.na'], '无法使用');
+  assert.equal(zh['aiplus.busy.stopAndAsk'], '停止它，生成这一个');
+  assert.equal(ai.zh['ai.err.noWrong'], '这次没有答错的题（未作答的题不计入 AI 总结）。');
+  assert.equal(zh['aiplus.chat.suffix.practice'], '练习');
+  assert.equal(zh['aiplus.chat.suffix.exam'], '考试');
+  assert.equal(zh['aiplus.chat.suffix.summary'], 'AI总结');
+  // D6: the v0.8 text of the retry refusal is kept
+  assert.equal(ai.en['ai.err.notRetryable'], 'This answer cannot be retried.');
+  assert.equal(ai.zh['ai.err.notRetryable'], '这个回答不能重试。');
+  // the AI+ feature wording is untouched
+  assert.equal(ai.en['ai.set.state.on'], 'AI+ feature on');
+  assert.equal(ai.ja['ai.set.state.on'], 'AI+ 機能はオン');
+  // every "By feature" label exists in all three languages
+  for (const lang of ['en', 'zh', 'ja'] as const) {
+    for (const p of ['chat', 'hint', 'explain', 'summary']) assert.ok(ai[lang][`ai.set.usage.purpose.${p}` as keyof typeof ai.en], `${lang} ${p}`);
+  }
+});
+
+test('the study popover text: Nginx 429 is "too many requests", a limit keeps its number, a plain status keeps the status', () => {
+  setUiLang('en');
+  const tooMany = studyErrorText({ status: 429, code: null });
+  assert.ok(!tooMany.includes('HTTP 429'));
+  assert.equal(tooMany, errorText(new ApiError('tooMany', 429)));
+  assert.ok(studyErrorText({ status: 409, code: 'ai.messageLimit', limit: 100 }).includes('100'));
+  assert.ok(studyErrorText({ status: 502, code: null }).includes('502'));
+  assert.equal(studyErrorText({ status: 0, code: null }), errorText(new ApiError('network', 0)));
 });

@@ -43,7 +43,7 @@ WEB = 'xexam-nginxcheck-web-' + RUN
 # printed (method and path) to stdout.
 #  backend: GET /internal/ai/auth answers by the session cookie (good... -> 204 + an identity built from the X-Original-*
 #           headers; pw / guard -> 403 + X-Xexam-Deny; down -> 502; anything else -> 401 + X-Xexam-Deny: signin)
-#  ai-service: POST /api/ai/send and /api/ai/retry stream text/event-stream (an "echo" event with what arrived, then one
+#  ai-service: POST /api/ai/send, /api/ai/retry, /api/ai/study/ask and /api/ai/summary/ask stream text/event-stream (an "echo" event with what arrived, then one
 #           "delta" event per second for 4 s); POST /api/ai/admin/verify?delay=N waits N seconds before its
 #           answer; everything else answers a JSON echo of the request
 ECHO = r'''
@@ -81,7 +81,7 @@ class H(http.server.BaseHTTPRequestHandler):
             if s == "down":
                 return self._send(502, b"down", [("Content-Type", "text/plain")])
             return self._send(401, b'{"error": "x"}', [("X-Xexam-Deny", "signin"), ("Content-Type", "application/json")])
-        if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry"):
+        if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry", "/api/ai/study/ask", "/api/ai/summary/ask"):
             self.send_response(200)
             self.send_header("X-Echo-Name", NAME)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -231,10 +231,10 @@ try:
     # -- The three AI proxy locations: the same auth step, header rules and error pages (from the image's nginx -T) --
     r = sh('docker', 'run', '--rm', '--entrypoint', 'nginx', IMAGE, '-T', check=False)
     ai_prefix = location_block(r.stdout, '/api/ai/')
-    ai_stream = location_block(r.stdout, '~ ^/api/ai/(send|retry)$')
+    ai_stream = location_block(r.stdout, '~ ^/api/ai/(send|retry|study/ask|summary/ask)$')
     ai_verify = location_block(r.stdout, '= /api/ai/admin/verify')
     ok(None not in (ai_prefix, ai_stream, ai_verify),
-       'nginx -T shows the locations /api/ai/, ~ ^/api/ai/(send|retry)$ and = /api/ai/admin/verify')
+       'nginx -T shows the locations /api/ai/, ~ ^/api/ai/(send|retry|study/ask|summary/ask)$ and = /api/ai/admin/verify')
     shared = ('auth_request', 'set $ai_upstream', 'proxy_pass', 'proxy_http_version', 'proxy_set_header', 'client_max_body_size',
               'limit_req zone=ai ', 'proxy_connect_timeout', 'proxy_request_buffering', 'proxy_buffering', 'proxy_intercept_errors',
               'error_page')
@@ -247,7 +247,7 @@ try:
     ok(no_read(ai_verify) == no_read(ai_prefix), 'The admin Test location equals /api/ai/ except for the read timeout')
     timeouts = [[line for line in b if line.startswith('proxy_read_timeout ')] for b in (ai_prefix, ai_stream, ai_verify)]
     ok(timeouts == [['proxy_read_timeout 90s;'], ['proxy_read_timeout 600s;'], ['proxy_read_timeout 300s;']],
-       'Read timeouts: /api/ai/ 90 s, send / retry 600 s, the admin Test 300 s. Actual %r' % timeouts)
+       'Read timeouts: /api/ai/ 90 s, the streaming answers 600 s, the admin Test 300 s. Actual %r' % timeouts)
 
     st, h, b = req('GET', '/healthz', host='localhost:%d' % PORT)
     ok(st == 200 and b.strip() == b'ok', '/healthz returns 200 ok')
@@ -428,6 +428,41 @@ try:
     st, hh, b = req('POST', '/api/ai/send', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
                     body=b'x' * (300 * 1024))
     ok(st == 413 and (jbody(b) or {}).get('code') == 'ai.badRequest', '300 KiB to /api/ai/send -> 413 JSON ai.badRequest. Actual %d %r' % (st, b[:120].decode('utf-8', 'replace')))
+    # The study streams (hints / explanations, record summaries) use the streaming location too: no buffering, POST only
+    for path in ('/api/ai/study/ask', '/api/ai/summary/ask'):
+        t0 = time.time()
+        c = http.client.HTTPConnection('127.0.0.1', PORT, timeout=15)
+        c.putrequest('POST', path, skip_host=True, skip_accept_encoding=True)
+        payload = b'{"kind": "hint"}'
+        for k, v in (('Host', host), ('Cookie', 'xexam_session=good'), ('Origin', 'https://app.example.com'),
+                     ('Content-Type', 'application/json'), ('Content-Length', str(len(payload)))):
+            c.putheader(k, v)
+        c.endheaders(payload)
+        r = c.getresponse()
+        first, text = None, b''
+        while True:
+            part = r.read1(65536)
+            if not part:
+                break
+            text += part
+            if first is None and b'event: delta' in text:
+                first = time.time() - t0
+        total = time.time() - t0
+        c.close()
+        ok(r.status == 200 and 'text/event-stream' in (r.getheader('Content-Type') or ''), 'POST %s streams text/event-stream. Actual %d %r' % (path, r.status, r.getheader('Content-Type')))
+        ok(first is not None and first < 1.5 and total >= 3.5,
+           'POST %s is not buffered: first event after %.2f s (< 1.5), whole body after %.2f s (>= 3.5)' % (path, first or -1, total))
+        echo = json.loads(text.split(b'event: echo\ndata: ', 1)[1].split(b'\n', 1)[0])
+        ok(echo['headers'].get('x-xexam-identity') == 'id|POST|%s|https://app.example.com' % host and 'cookie' not in echo['headers'],
+           'POST %s: the identity carries the method and the Origin, no cookie' % path)
+        st, hh, b = req('GET', path, host=host, headers={'Cookie': 'xexam_session=good'})
+        ok(st == 403, 'GET %s -> 403 (POST only). Actual %d' % (path, st))
+    st, hh, b = req('GET', '/api/ai/study/saved?mode=practice&key=00000000000000000000000000000000&source=practice&question=q1&kind=hint',
+                    host=host, headers={'Cookie': 'xexam_session=good'})
+    seen = json.loads(b) if st == 200 else {}
+    ok(st == 200 and hh.get('x-echo-name') == 'ai-service' and seen.get('path', '').startswith('/api/ai/study/saved?mode=practice')
+       and 'cookie' not in seen.get('headers', {}) and seen.get('headers', {}).get('x-xexam-identity') == 'id|GET|%s|-' % host,
+       'GET /api/ai/study/saved reaches the AI service with the identity header and no cookie. Actual %d' % st)
     st, hh, b = req('POST', '/api/ai/memories/add', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
                     body=b'{"content": "' + b'x' * (200 * 1024) + b'"}')
     ok(st == 200 and json.loads(b)['body_len'] > 200 * 1024, 'A 200 KiB body to another AI route passes. Actual %d' % st)
@@ -537,6 +572,11 @@ try:
     ok(r.stdout.strip() in ('healthy', 'starting'), 'Container health check status: %s' % r.stdout.strip())
     r = sh('docker', 'logs', WEB, check=False)
     ok('[emerg]' not in r.stderr and 'uninitialized variable' not in r.stderr, 'The Nginx error log has no [emerg] and no uninitialized-variable warning')
+    # The access log holds the path only: a query string (session keys, record times) never reaches the access log (stdout)
+    req('GET', '/api/ai/study/saved?key=QUERYLOGPROBE&mode=practice', host=host, headers={'Cookie': 'xexam_session=good'})
+    r = sh('docker', 'logs', WEB, check=False)
+    ok('QUERYLOGPROBE' not in r.stdout and '/api/ai/study/saved HTTP' in r.stdout,
+       'The Nginx access log records the path of a request but not its query string')
 finally:
     cleanup()
 

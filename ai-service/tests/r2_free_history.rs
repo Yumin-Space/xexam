@@ -131,7 +131,24 @@ async fn the_full_history_is_sent_and_the_prompt_names_the_mode() {
         [false, false, false, false, true, true, false, false]
     );
     let keys: Vec<&String> = v["messages"][0].as_object().expect("obj").keys().collect();
-    assert_eq!(keys.last().map(|k| k.as_str()), Some("free"));
+    // `free` is followed by the seven keys of v0.9 (study messages)
+    let pos = keys
+        .iter()
+        .position(|k| k.as_str() == "free")
+        .expect("free");
+    let tail: Vec<&str> = keys[pos + 1..].iter().map(|k| k.as_str()).collect();
+    assert_eq!(
+        tail,
+        [
+            "kind",
+            "questionId",
+            "questionNo",
+            "source",
+            "lang",
+            "recordId",
+            "sample"
+        ]
+    );
 }
 
 #[tokio::test]

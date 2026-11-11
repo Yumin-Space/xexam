@@ -268,6 +268,12 @@ impl Handler {
         }
     }
 
+    fn flush(&mut self, out: &mut Vec<Item>) {
+        if let Handler::OpenAi(s) = self {
+            s.flush(out);
+        }
+    }
+
     fn finish(&mut self) -> Item {
         match self {
             Handler::OpenAi(s) => s.finish(),
@@ -346,6 +352,7 @@ pub async fn stream_chat(
             }
         }
         if chunk.is_none() && !matches!(items.last(), Some(Item::Done | Item::Fail(_))) {
+            handler.flush(&mut items);
             items.push(handler.finish());
         }
         for item in items {

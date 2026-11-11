@@ -7,8 +7,10 @@
 //     wrong. "Finish practice" saves it like an exam (kind "practice"). Auto-advance does not apply.
 import '../styles/quiz.css';
 import { canCheck, checksOnPick, practiceCounts, practiceMark, type PracticeMark } from '../domain/practice.ts';
+import { aiControls } from '../domain/ai-plus.ts';
 import { grade, stateOf, type Answer } from '../domain/grading.ts';
 import { htmlLang, shown } from '../domain/language.ts';
+import { aiPlusNow, naTag, pheadRight, studyButton, studyIcon, studyState, type StudyTarget } from '../components/ai-plus-controls.ts';
 import { kindLabel } from '../components/common.ts';
 import { langSwitch } from '../components/lang-switch.ts';
 import { answerReview, explainBlocks } from '../components/review.ts';
@@ -17,6 +19,7 @@ import { S, type Session } from '../state/store.ts';
 import {
   checkAnswer, elapsed, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setQuestionLang, submit, toggleFlag,
 } from '../state/actions.ts';
+import type { Question } from '../types/api.ts';
 import { h, paras, svgMark } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
 
@@ -57,6 +60,18 @@ function freshlyChecked(se: Session, id: string): boolean {
   if (!se.checked.has(id) || announced.has(id)) return false;
   announced.add(id);
   return true;
+}
+
+/** Where the AI hint / explanation of a practice question belongs: this session's chat (v0.9) */
+function practiceTarget(se: Session, q: Question): StudyTarget {
+  const target: StudyTarget = {
+    page: 'practice', mode: 'practice', key: se.key, startedAt: se.startedAt, recordId: null, questionId: q.id, no: se.idx + 1,
+    // read when the ask starts: the card's language switch may have changed it since the popover opened
+    qlang: () => shown(q, S.settings.questionLang).lang,
+    // [查看] on a busy note: only the answer of the question on the page can be shown here
+    resolve: (r) => (r.questionId === q.id && r.chatKind === 'practice' ? target : null),
+  };
+  return target;
 }
 
 export function renderQuiz(): HTMLElement {
@@ -143,6 +158,17 @@ export function renderQuiz(): HTMLElement {
     });
     checkBtn = btn;
   }
+  // v0.9: the AI hint / explanation controls of a practice (the exam has none), for users with the AI+ feature only
+  let headRight: HTMLElement = langSwitch(q, view.lang, (l) => setQuestionLang(l), { focusKey: 'lang' });
+  let aiBar: HTMLElement | null = null;
+  const [hintSpec, explainSpec] = aiControls('practice');
+  if (practice && hintSpec && explainSpec && aiPlusNow().show) {
+    const target = practiceTarget(se, q);
+    const state = studyState(target);
+    headRight = pheadRight([studyIcon(target, hintSpec, state), studyIcon(target, explainSpec, state)], naTag(state), headRight);
+    aiBar = h('div', { class: 'grp aip-grp' },
+      studyButton(target, hintSpec, state, { bar: true }), studyButton(target, explainSpec, state, { bar: true }), naTag(state));
+  }
   const last = se.idx === n - 1;
   const finishLabel = practice ? t('quiz.practice.finish') : t('quiz.submit');
   const nextCls = checkBtn ? 'btn' : 'btn primary';
@@ -150,7 +176,7 @@ export function renderQuiz(): HTMLElement {
     h('div', { class: 'phead' },
       h('span', { class: 'badge' }, kindLabel(q)),
       h('span', null, q.sheet),
-      langSwitch(q, view.lang, (l) => setQuestionLang(l), { focusKey: 'lang' })),
+      headRight),
     h('div', { class: 'stem' }, paras(view.stem, undefined, lang)),
     body,
     feedback,
@@ -161,6 +187,7 @@ export function renderQuiz(): HTMLElement {
         last
           ? h('button', { class: nextCls, type: 'button', 'data-focus': 'q-next', onclick: () => void submit() }, finishLabel)
           : h('button', { class: nextCls, type: 'button', 'data-focus': 'q-next', onclick: () => go(se.idx + 1) }, t('quiz.next'))),
+      aiBar,
       flagBtn));
 
   const tiles = h('div', { class: 'tiles' }, se.qs.map((x, i) => {
@@ -253,6 +280,8 @@ export function installQuizKeys(): void {
     if (document.querySelector('dialog[open]')) return;
     const target = e.target;
     if (target instanceof HTMLElement && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+    // v0.9: keys typed inside the AI popover (its buttons, the answer text) are not quiz shortcuts
+    if (target instanceof Element && target.closest('.aip-pop')) return;
     const q = se.qs[se.idx];
     if (!q) return;
     if (e.key === 'ArrowRight' && se.idx < se.qs.length - 1) {

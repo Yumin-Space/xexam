@@ -20,22 +20,22 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 342 个测试
+cargo test --all-targets          # 382 个测试
 cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 ```
 
 - 测试对着 `tests/baseline/` 里已提交的**旧版快照**运行；不需要 Python。
-- 所有测试都用临时目录里的新数据库，或 `tests/baseline/fixtures/sample.db` 的副本，**永远不碰 `data/`**。除了 `src/` 里的单元测试，测试文件有：`api_basic.rs`、`api_import.rs`、`api_misc.rs` 和 `api_golden.rs`（路由、守卫、旧版的响应），`db_golden.rs`（数据库对照旧版快照），`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs` 和 `id_vectors.rs`（解析器），以及每个版本一个文件：`v05_banks_records_settings.rs`（schema v2、题库、记录、设置）、`v06_users_and_sign_in.rs`（schema v3、账户、会话、登录限制）、`v065_bank_access_and_practice.rs`（schema v4、题库权限、可管理题库的用户、所有权、练习）、`v07_bank_access_and_layouts.rs`（勾选的题库和 **包括以后导入的题库**、预发布版 v4 数据库的转换、拒绝旧格式和下架它们的题）、`v07_wal_and_logs.rs`（WAL 模式、检查点、服务器运行时的 `reset-password`、系统日志）、`v07_log_floods.rs`（大量被拒绝的请求和失败的登录被汇总）和 `v08_ai_link.rs`（schema v5、AI+ 功能授权、内部令牌、认证步骤和内部路由；其中一个测试运行真正的程序）。
+- 所有测试都用临时目录里的新数据库，或 `tests/baseline/fixtures/sample.db` 的副本，**永远不碰 `data/`**。除了 `src/` 里的单元测试，测试文件有：`api_basic.rs`、`api_import.rs`、`api_misc.rs` 和 `api_golden.rs`（路由、守卫、旧版的响应），`db_golden.rs`（数据库对照旧版快照），`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs` 和 `id_vectors.rs`（解析器），以及每个版本一个文件：`v05_banks_records_settings.rs`（schema v2、题库、记录、设置）、`v06_users_and_sign_in.rs`（schema v3、账户、会话、登录限制）、`v065_bank_access_and_practice.rs`（schema v4、题库权限、可管理题库的用户、所有权、练习）、`v07_bank_access_and_layouts.rs`（勾选的题库和 **包括以后导入的题库**、预发布版 v4 数据库的转换、拒绝旧格式和下架它们的题）、`v07_wal_and_logs.rs`（WAL 模式、检查点、服务器运行时的 `reset-password`、系统日志）、`v07_log_floods.rs`（大量被拒绝的请求和失败的登录被汇总）`v08_ai_link.rs`（schema v5、AI+ 功能授权、内部令牌、认证步骤和内部路由；其中一个测试运行真正的程序）和 `v09_ai_study.rs`（schema v6 及其备份、保存的记录的会话 `key` 和 `startedAt` 以及它的 `recordId`，以及内部链接的三个学习路由：会话绑定、AI+ 检查、范围、上限、答错的题的随机抽样、同一个「未找到」）。
 - 测试通过辅助代码登录；没有任何开关能关掉登录，测试也不例外。
 - **测试里的旧格式。** 正式运行时会拒绝三列和四列格式的工作簿（`services::check_layout`）。黄金测试套件重放旧版的导入，那些都是三列格式的文件，所以它们建立的 API 状态设置了 `old_layouts: OldLayouts::AllowForTests`（在 `backend/tests/api_common/mod.rs` 里，以及 `v05_banks_records_settings.rs` 和 `v065_bank_access_and_practice.rs` 里，这两个文件通过 API 导入已提交的三列格式夹具 `tests/baseline/fixtures/demo.xlsx`）。它是 API 状态的一个字段，只有测试代码会设置：`AppState::new` 和 `import` 命令始终用 `OldLayouts::Refuse`，没有任何环境变量、参数或设置能改变它。`v07_bank_access_and_layouts.rs` 测试正式运行时的规则。存储层的方法本身接受任何题目，所以数据库的黄金测试原样运行。
 - 常用的环境变量：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（日志级别，例如 `debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` 保留回滚日志，不用 WAL）、`XEXAM_COOKIE_SECURE`、`XEXAM_LINK_DIR` 和 `XEXAM_INTERNAL_TOKEN`（和 ai-service 的连接，第 3 节）。完整的列表见 `xexam-backend --help` 和 [deployment.md](deployment.md)。
 - `serve` 在 `<数据目录>/link/internal.token`（或 `XEXAM_LINK_DIR/internal.token`）不存在时创建它；其他命令从不碰它。
 - 在空的数据目录上第一次启动时，会创建管理员 `admin` / `admin`；第一次登录时页面会要求设置新密码。忘了的话：`cargo run -- reset-password admin --data ../data`（服务器运行时也能用）。
 - 命令行导入六列格式的工作簿（导入到旧题库）：`cargo run -- import ../some.xlsx --data ../data`。三列或四列格式的工作簿会被拒绝。
-- 让后端打开一个旧 schema 的数据库，会迁移它，并在旁边写一个 `backups/`。请用副本。
+- 让后端打开一个旧 schema 的数据库，会迁移它，并在旁边写一个 `backups/`。请用副本。v0.9 的学习路由（`api/internal_study.rs`，以及 `database/store/study.rs` 里的投影）是带令牌的路由：后端只对 AI 服务回答它们，什么都不写，也什么都不记录。后端也不为它们在测试代码之外写任何中文字面量（`server-messages.test.ts` 会扫描 `backend/src`）。
 - 数据库以 WAL 模式运行：后端运行时，`xexam.db` 旁边有 `xexam.db-wal` 和 `xexam.db-shm`。要么三个一起复制，要么先停止后端（之后所有内容都在 `xexam.db` 里，旁边即使留着 `-wal` 文件，也是空的）。后端运行时 `sqlite3` 也能读这个数据库。
 
-## 3. AI 服务（v0.8）
+## 3. AI 服务（v0.8；学习功能 v0.9）
 
 AI 服务是 `ai-service/` 里一个单独的 crate（包和可执行程序叫 `xexam-ai-service`，库叫 `xexam_ai_service`，没有 workspace，禁止 `unsafe`），有自己的 `Cargo.lock` 和 `rust-toolchain.toml`（Rust 1.99.1，和后端一样）。
 
@@ -43,12 +43,12 @@ AI 服务是 `ai-service/` 里一个单独的 crate（包和可执行程序叫 `
 cd ai-service
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 160 个测试
+cargo test --all-targets          # 369 个测试（以及 1 个文档测试，`cargo test --doc`：提示的提示词不能接受解答）
 cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 必须什么都不打印（CI 的 TLS 检查）
 ```
 
-- **结构**（完整的列表见 [architecture.md](architecture.md) 第 2 节）：`src/api/`（分发、用户路由和管理员路由）、`src/chat.rs`（生成回答的任务、每个用户和全局的名额、取消）、`src/app.rs`（共享状态和发给后端的心跳）、`src/provider/`（OpenAI 兼容和 Anthropic 适配器、事件流解析器、错误映射）、`src/store/`（AI 数据库）、`src/identity.rs` 和 `src/link.rs`（身份声明和对后端的调用）、`src/secret.rs` 和 `src/settings.rs`（密钥加密；服务商、URL 规则、指纹）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（服务的每一段中文文字）、`src/config.rs`。
-- **测试**（`ai-service/tests/`，针对库运行，带进程内的假服务商和假后端（它还会记录心跳）；没有一个访问网络）：`streaming.rs`（事件、停止、重试、时间限制、脱离、调用进行中的闸门和上限）、`settings_and_keys.rs`（验证、重新输入密钥、请求头冲突、加密、密钥文件和 `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（声明、访问级别、范围、令牌规则）、`admin_data.rs`（管理员的查看和清除、审计日志和发件箱、用量、对账）、`logs_no_secrets.rs`（任何日志行里都没有密钥、令牌、提示词或回答）和 `proxy_env.rs`（忽略环境里的 `HTTP_PROXY`）；v0.8 第二轮的有 `r2_core_heartbeat.rs`（报告、它的时间和 60 秒规则）、`r2_core_schema.rs`（schema 2、schema 1 的备份和升级、给缺了几列的 schema 2 文件补上的列）、`r2_core_suspend.rs`（暂停 / 恢复、审计日志、停止正在生成的回答）、`r2_chat_lang.rs`（回复语言）、`r2_chat_free.rs`（自由模式是管理员的状态：`POST /api/ai/free`、`freeMode`、没有按对话的标志）、`r2_free_history.rs`（两种模式下都发送整个历史、每种模式的系统提示词、切换之后的模式说明、每条消息上的 `free`）、`r2_cache.rs`（提示词缓存、用量行里缓存命中的 token、更早的历史消息被缩短）、`r2_chat_thinking.rs`（`thinking` 事件；推理文字不能出现在流、数据库或日志里）和 `r2_chat_suspend.rs`（状态和重新检查）；再加上 `src/` 里的单元测试。`TestApp` 辅助程序在被丢弃时会关闭服务并释放数据库文件，所以测试不会在临时文件夹里留下任何东西（在 Windows 上，打开着的文件会让它的目录留下来）。
+- **结构**（完整的列表见 [architecture.md](architecture.md) 第 2 节）：`src/api/`（分发、用户路由和管理员路由）、`src/chat.rs`（生成回答的任务、每个用户和全局的名额、取消）、`src/app.rs`（共享状态和发给后端的心跳）、`src/provider/`（OpenAI 兼容和 Anthropic 适配器、事件流解析器、错误映射）、`src/store/`（AI 数据库）、`src/identity.rs` 和 `src/link.rs`（身份声明和对后端的调用）、`src/secret.rs` 和 `src/settings.rs`（密钥加密；服务商、URL 规则、指纹）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（服务的每一段中文文字）、`src/config.rs`。从 v0.9 起还有 `src/api/study.rs`（四个学习路由）、`src/study/`（提示词 `hint.rs`、`explain.rs`、`summary.rs` 及其渲染，`guard.rs` 和 `guard/{lists,norm,rules}.rs` 里的提示守卫，`title.rs`，`wire.rs` 里后端数据路由的严格类型，`cache.rs` 里的记录身份缓存），以及 `src/store/` 里 `data.rs` 的学习对话函数和 `stats.rs` 的按用途统计的用量。
+- **测试**（`ai-service/tests/`，针对库运行，带进程内的假服务商和假后端（它还会记录心跳）；没有一个访问网络）：`streaming.rs`（事件、停止、重试、时间限制、脱离、调用进行中的闸门和上限）、`settings_and_keys.rs`（验证、重新输入密钥、请求头冲突、加密、密钥文件和 `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（声明、访问级别、范围、令牌规则）、`admin_data.rs`（管理员的查看和清除、审计日志和发件箱、用量、对账）、`logs_no_secrets.rs`（任何日志行里都没有密钥、令牌、提示词或回答）和 `proxy_env.rs`（忽略环境里的 `HTTP_PROXY`）；v0.8 第二轮的有 `r2_core_heartbeat.rs`（报告、它的时间和 60 秒规则）、`r2_core_schema.rs`（schema 2、schema 1 的备份和升级、给缺了几列的 schema 2 文件补上的列）、`r2_core_suspend.rs`（暂停 / 恢复、审计日志、停止正在生成的回答）、`r2_chat_lang.rs`（回复语言）、`r2_chat_free.rs`（自由模式是管理员的状态：`POST /api/ai/free`、`freeMode`、没有按对话的标志）、`r2_free_history.rs`（两种模式下都发送整个历史、每种模式的系统提示词、切换之后的模式说明、每条消息上的 `free`）、`r2_cache.rs`（提示词缓存、用量行里缓存命中的 token、更早的历史消息被缩短）、`r2_chat_thinking.rs`（`thinking` 事件；推理文字不能出现在流、数据库或日志里）和 `r2_chat_suspend.rs`（状态和重新检查）；v0.9 的有 `v09_store.rs`（schema 3：新文件、从 schema 1 和 2 升级及其备份、写不出来的备份、两条路径得到相同的 `sqlite_master`、重新打开什么都不写、已保存回答的查询的 `EXPLAIN QUERY PLAN`、学习对话和提问事务、按用途的用量、分批保留）、`study_guard.rs`（提示守卫：字母、序数、热点题的陈述、答案文字、词表、对流的任何分块都得到同样的结论、上限、持久化规则；模块在 `tests/study_guard/` 里）、`study_prompts.rs`（提示词、`compile_fail` 文档测试）和 `study_api.rs`（对着假后端端到端测试学习路由：流式输出、对话的身份、已保存回答的查询、边界、总结的拒绝、访问、管理员的查看、不含内容的日志；模块在 `tests/study_api/` 里）；再加上 `src/` 里的单元测试。`study_api` 的一些测试依赖短暂的等待（200 毫秒和 120 毫秒），它们是稳定的，但取决于时间。`TestApp` 辅助程序在被丢弃时会关闭服务并释放数据库文件，所以测试不会在临时文件夹里留下任何东西（在 Windows 上，打开着的文件会让它的目录留下来）。
 - **在本地和后端一起运行**。两者必须共用内部令牌：要么用后端写进它的链接目录的令牌文件（默认是它的数据目录里的 `link`），要么在两个 shell 里设置同一个 `XEXAM_INTERNAL_TOKEN`。
 
   ```bash
@@ -63,8 +63,9 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
   ```
 
   ai-service 监听 `127.0.0.1:8766`（`XEXAM_AI_HOST`、`XEXAM_AI_PORT`），在 `http://127.0.0.1:8765`（`XEXAM_AI_BACKEND_URL`，只能是普通的 http）调用后端。`xexam-ai-service --help` 列出所有变量。它一拿到令牌就会向后端报告（心跳，每 25 秒一次；[architecture.md](architecture.md) 第 5 节）；后端还没有看到报告时，用户管理里没有 AI+ 功能开关，AI 设置会说 ai-service 在等它的第一次报告，所以刚启动的几秒钟里两者都属于正常现象。没有令牌时，它对每个 AI 路由回答 503 `ai.backendDown`，并记录 `AI link: waiting for the internal token at …`，直到文件出现。`ai_stub.py`（只用标准库）还提供一个 Anthropic 路由（`/anthropic`）、网关路由（`/gw/openai`、`/gw/anthropic`，用类似 `gw-demo-…` 的网关密钥）和用于错误路径的特殊模型、思考状态（`demo-reasoning`，它会先发一段虚构的推理）以及非对话的标记（`demo-embedding`，它会列出来但拒绝对话）；它会用系统提示词里「Always reply in …」那一行指定的语言回答。它的文档字符串列出了它们。
+- **学习功能**（v0.9）：测试和 `tests/integration/ai_stub.py` 的虚构服务商按系统提示词回答：`asked for a HINT` 给出一个干净的自编提示（用户回合里带 `[leak]` 时，以一句点明答案的话结尾，供守卫测试用），`asked for an EXPLANATION` 给出 `**Answer: <字母>**` 和文字，`answered wrong` 给出四个标题和 `Items: <n>`。要改变守卫扣下什么，请改 `guard/lists.rs` 里的词表，并把那句话加到 `tests/study_guard/` 里；提示的提示词不接收 `Solution`，必须保持这样（文档测试固定了这一点）。后端学习路由的新数据字段，需要在 `backend/src/api/internal_study.rs`、`src/study/wire.rs`（它拒绝未知的键）和两边的契约测试里做同样的修改。
 - **规则**：服务的每一段中文文字都在 `src/codes.rs` 里（前端按错误码翻译，所以新的错误码要在 `frontend/src/i18n/catalog/ai.ts` 里加一个 `ai.err.*` 键）。日志行用英语，用用户名的 `{:?}` 指代用户，从不包含密钥、内部令牌、身份声明、请求头的值、API 地址、提示词、回答、对话标题或记忆笔记；`logs_no_secrets.rs` 检查这一点。保存密钥或令牌的类型没有派生的 `Debug`。请求体手动验证（未知的键会被拒绝）；JSON 的键请保持文档里写的顺序（`serde_json` 带 `preserve_order`）。
-- 连接的**后端一侧** 是 `backend/src/api/internal.rs`（令牌、身份声明、`/internal/ai/*`，包括心跳路由和最后一次报告的内存记录）和 `api::auth::introspect`（认证步骤）；它的测试在 `backend/tests/v08_ai_link.rs` 里。
+- 连接的**后端一侧** 是 `backend/src/api/internal.rs`（令牌、身份声明、`/internal/ai/*`，包括心跳路由和最后一次报告的内存记录）、`backend/src/api/internal_study.rs`（v0.9：`question`、`record` 和 `record-info`）和 `api::auth::introspect`（认证步骤）；它的测试在 `backend/tests/v08_ai_link.rs` 和 `v09_ai_study.rs` 里。
 
 ## 4. 前端
 
@@ -72,11 +73,11 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # 先对程序跑 tsc，再对测试文件跑（tsconfig.test.json）
-npm test               # 246 个单元测试：API 客户端（Nginx 的 429 和重试、时间限制、AI 的流和错误码）、
+npm test               # 391 个单元测试：API 客户端（Nginx 的 429 和重试、时间限制、AI 的流和错误码）、
                        # 判分和随机抽题、练习的核对、保存的成绩、语言规则、记录筛选、
                        # 锁定说明和等待时间、导入提醒、系统日志缓冲、题库状态、题库权限、暂存的考试、
                        # 设置缓存、事件流解析、AI 对话的状态、回答的 Markdown、记忆的请求、
-                       # AI 设置的规则（包括连接原因和模型种类）、AI 状态、徽章状态、用户管理的 AI+ 功能规则、路由（`#/ai/<id>`、`#/ai/new`）、界面文字目录（所有者的措辞决定里的确切用词）、服务器提示的翻译、更新日志解析
+                       # AI 设置的规则（包括连接原因和模型种类）、AI 状态、徽章状态、用户管理的 AI+ 功能规则、路由（`#/ai/<id>`、`#/ai/new`）、界面文字目录（所有者的措辞决定里的确切用词）、服务器提示的翻译、更新日志解析，以及 v0.9 的 AI+ 学习功能（谁看到哪个控件、一个回答的状态、带假定时器和假传输层的引擎、弹出框的规则、请求的构造、焦点目标、会话 key）
 npm run build          # 类型检查 + vite build → dist/
 npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1:8765，/api/ai/ 代理到 http://127.0.0.1:8766
 ```
@@ -93,7 +94,7 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 
 用户看到的每一段文字都来自文字目录（catalog）。页面里不直接写任何文字。
 
-- **在哪里**：`src/i18n/catalog/<区域>.ts`，每个区域一个文件：`common`、`home`、`banks`、`records`、`settings`、`quiz`、`result`、`about`、`auth`、`users`、`logs`、`ai`。每个文件都是 `export default defineCatalog({ en: {…}, zh: {…}, ja: {…} })`。
+- **在哪里**：`src/i18n/catalog/<区域>.ts`，每个区域一个文件：`common`、`home`、`banks`、`records`、`settings`、`quiz`、`result`、`about`、`auth`、`users`、`logs`、`ai`、`aiplus`（v0.9，学习功能）。每个文件都是 `export default defineCatalog({ en: {…}, zh: {…}, ja: {…} })`。
 - **键**以区域开头：`banks.delete.title`、`records.deleteAll.ok`。`common.ts` 放共用的前缀（`app.`、`nav.`、`common.`、`err.`、`kind.`、`mode.`、`act.`、`role.`、`forbidden.` 等）。
 - **永远是三种语言。** `zh` 或 `ja` 块缺了一个英语的键，TypeScript 就会拒绝。以 `_one` 结尾的键是英语的单数形式；数量为 1 时 `tn()` 用它，中文和日语里可以不写。
 - **占位符**写成 `{name}`：`t('records.deleteOne.body', { at, pct })`。计数用 `tn(key, n)`，它会填进 `{n}`。
@@ -112,6 +113,7 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 - **新增或修改后端提示时**：在同一次修改里把翻译加进 `server-messages.ts`。如果这个字符串不会显示给用户（例如解析器要找的一个词），就把它加进测试里的 `NOT_MESSAGES`，并写明原因。
 - **日志行保持英语**，绝不能包含密码、会话令牌、Cookie 的值或题目文字（`backend/tests/v07_wal_and_logs.rs` 在一整个会话之后检查日志）。任何人不用登录就能引起的日志行要经过 `BurstLog`（`backend/src/logs.rs`），而不是直接交给 `tracing`。
 - **AI 的错误** 不按文字翻译：AI 服务给每个错误一个固定的 `code`，`errorText()` 使用 `src/i18n/catalog/ai.ts` 里的键 `ai.err.<去掉 "ai." 的错误码>`，并用错误里的 `limit` 填入 `{n}`。AI 服务新增的错误码需要在三种语言里都加上这个键。
+- **AI+ 学习控件**（v0.9）由一个组件 `src/components/ai-plus-controls.ts` 构建；页面向它要一个控件，自己从不构建 AI 元素，所以规则（没有 AI+ 功能时什么都没有，AI 用不了时变灰并带标签和原因，考试页上没有控件）都集中在一处和 `src/domain/ai-plus.ts` 里。弹出框（`ai-pop.ts`）和总结窗口（`ai-summary.ts`）由 `main.ts` 安装一次，同时安装每次页面重绘之后的 `reanchorAiPop()`，以及让它们忘掉自己记忆的退出登录钩子。判断都是纯函数，有单元测试；一个回答的逻辑是 `ai-study.ts` 里的 reducer，`ai-run.ts` 是注入了传输层和定时器的引擎。回答是 Markdown，用和 AI 对话相同的安全渲染器（`ai-render.ts`，只用文本节点）；学习功能的请求错误文字是 `src/i18n/errors.ts` 里的 `studyErrorText`。
 
 ### 4.3 新增页面或路由
 
@@ -131,19 +133,21 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 # 检查脚本都用临时的项目名和临时卷，从不碰 xexam_* 卷
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 131 项检查，用一个假的后端和一个假的 ai-service
+python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 141 项检查，用一个假的后端和一个假的 ai-service
                                                                       # （限流、认证步骤、去掉请求头、流式输出）
-python -I tests/integration/stack_check.py 18090                      # 217 项检查：整栈（会构建三个镜像），带虚构的
+python -I tests/integration/stack_check.py 18090                      # 314 项检查：整栈（会构建三个镜像），带虚构的
                                                                       # AI 服务商：登录、导入、交卷、AI 设置、
                                                                       # 流式回答、AI+ 功能及其暂停、
                                                                       # 心跳和 docker stop、回复语言、自由模式（按用户）、
+                                                                      # AI+ 学习功能（提示、解释、总结、对话
+                                                                      # 和它们的标题、已保存的回答、应用忙时的流程、什么都不记录）、
                                                                       # 持久化、WAL、系统日志、
                                                                       # reset-password、docker stop、每个卷里有什么
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 68 项检查（Linux 上 70 项）：progress.json 迁移、WAL 和 DELETE
-                                                                      # 选项、schema 3 → 5 和 4 → 5、内部令牌（先 cargo build）
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 78 项检查（Linux 上 80 项）：progress.json 迁移、WAL 和 DELETE
+                                                                      # 选项、schema 3 → 6、4 → 6 和 5 → 6、内部令牌（先 cargo build）
 ```
 
-每个脚本都会打印它的检查项，最后输出 `All N checks passed`。`nginx_check.py` 和 `stack_check.py` 的最后一个参数是它们用的宿主机端口；请选一个你机器上空闲的端口。`stack_check.py` 读取一个可选的 `XEXAM_STACK_COMPOSE`：另一个结构相同的 compose 文件（例如 `docker/docker-compose.build.yml` 的一份副本，换了别的镜像标签和容器名），这样它就能在一个用着通常名字的安装旁边运行；它通过 compose 服务找到容器。`nginx_check.py` 大约要两分半钟，因为有一项检查要为 AI 设置里一次很慢的 **测试** 等 95 秒。
+每个脚本都会打印它的检查项，最后输出 `All N checks passed`。`nginx_check.py` 和 `stack_check.py` 的最后一个参数是它们用的宿主机端口；请选一个你机器上空闲的端口。`stack_check.py` 读取一个可选的 `XEXAM_STACK_COMPOSE`：另一个结构相同的 compose 文件（例如 `docker/docker-compose.build.yml` 的一份副本，换了别的镜像标签和容器名），这样它就能在一个用着通常名字的安装旁边运行；它通过 compose 服务找到容器。`nginx_check.py` 大约要两分半钟，因为有一项检查要为 AI 设置里一次很慢的 **测试** 等 95 秒。`stack_check.py` 会给它的学习提问限速（每个会话 Cookie 大约 3.2 秒一次），因为 Nginx 在突发 10 个之后，每 3 秒才让一个会话开始一个 AI 回答（区域 `aisend`，每分钟 20 个）；这大约多花一分半钟。这些脚本用它们自己写出来的虚构题库；没有一个会碰你的数据。
 
 compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` 以仓库根目录（`..`）为构建上下文。前端镜像从仓库根目录构建。`nginx/Dockerfile` 把三份 README 复制进它的 Node 构建阶段（`COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`），因为关于页面的更新日志是从它们构建出来的；出于同样的原因，`.dockerignore` 把 `README.md` 和 `README/` 留在构建上下文里。最终镜像里只有构建出的静态文件。
 
@@ -178,10 +182,10 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 | 任务 | 做什么 |
 |---|---|
 | `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份 README 各自最新的更新日志条目 = `CODE_VERSION`；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）、`docker/docker-compose.yml` 从 Docker Hub 拉取三个镜像，以及文档检查（第 9 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
-| `frontend` | 类型检查、246 个单元测试、构建 |
-| `backend` | fmt、clippy、342 个测试，以及 `progress.json` 迁移检查 |
-| `ai-service` | fmt、clippy、ai-service 的 160 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls` |
-| `stack` | 在 `frontend`、`backend` 和 `ai-service` 之后：构建 `xexam-frontend` 镜像，跑 131 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
+| `frontend` | 类型检查、391 个单元测试、构建 |
+| `backend` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查 |
+| `ai-service` | fmt、clippy、ai-service 的 369 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls` |
+| `stack` | 在 `frontend`、`backend` 和 `ai-service` 之后：构建 `xexam-frontend` 镜像，跑 141 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
 | `arm64` | 为 arm64 构建三个镜像，在 QEMU 下启动它们，检查 `/api/info` 报告的是 `aarch64` 和 `CODE_VERSION`，并检查单独运行的 ai-service 通过它的健康检查（`xexam-ai-service healthcheck`）、在 `/healthz` 里报告同样的内容（最多 60 分钟） |
 | `publish` | 只有 `main`：把三个镜像（amd64 + arm64）以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签推送到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
 | `release` | 只有 `main`：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `README.md` 里的更新日志（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |
@@ -193,7 +197,7 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 只有镜像已经发布、GitHub Release 也已经存在时，`release` 任务的最后一步才会改动 `RELEASE_VERSION`：
 
 1. 它在最新的 `origin/main` 上运行 `scripts/set-release-version.py <版本>`，设置 `VERSION` 里的 `RELEASE_VERSION`，以及三份 README 顶部的发布徽章（它的替代文字、URL 和宽度）。
-2. 它把这些提交为 **`Record release v<版本>: RELEASE_VERSION and the README badge [skip ci]`**，并推送到 `main`。用工作流自己的令牌推送不会启动新的运行，提交信息里也写着 `[skip ci]`。没有任何变化时（重新运行），它什么都不提交。
+2. 它把这些作为 **`Record release v<版本>: RELEASE_VERSION and the README badge [skip ci]`** 提交到 `main`，用的是 GitHub API（GraphQL 的 `createCommitOnBranch`），而不是 `git push`，所以 GitHub 会为这个提交签名，显示为 **Verified**。请求里写明了出发时的 `main` 提交，如果这期间 `main` 前进了，API 会拒绝。用工作流自己的令牌生成的提交不会启动新的运行，提交信息里也写着 `[skip ci]`。没有任何变化时（重新运行），它什么都不提交。
 3. 如果 `dev` 没有自己的提交，就把 `dev` 快进到同一个提交。如果 `dev` 已经往前走了（或者在发布期间往前走了），它就不动 `dev`，并在运行里显示一条**提示**：`merge main into dev (git pull origin main on dev) before the next merge to main`（意思是：下一次合并到 main 之前，先把 main 合并进 dev）。不管哪种情况，发布都已经完成。
 
 `set-release-version.py` 从不把 `RELEASE_VERSION` 往回调：重新运行一次较早的运行的发布任务，什么都不改，以 0 退出。它拒绝比 `CODE_VERSION` 更新的版本。
@@ -215,7 +219,7 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 
 ### 9.1 截图
 
-README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 16 张电脑截图和 4 张 iPhone 截图，一共 20 张）由在仓库根目录运行的 `python tools/screenshots/retake.py` 生成。它用 `backend/Dockerfile` 和 `ai-service/Dockerfile` 以唯一的标签（`xexam-shots-backend:<十六进制>`、`xexam-shots-ai-service:<十六进制>`）构建后端和 ai-service 的镜像，在一个新的 Docker 网络上用新卷（各自的 `/data`，以及一个共用的链接卷，对 ai-service 是只读的）和 `TZ=UTC` 运行它们，旁边运行虚构的 AI 服务商 `tests/integration/ai_stub.py`（网络名 `ai-stub`）。它用 Vite 构建前端，在一个空闲端口上用 `vite preview` 提供它（认证插件和 Nginx 一样，用后端检查每个 AI 请求），然后通过 API 往这个实例里填入虚构的演示题库、用户和记录，并用虚构的服务商和虚构的密钥设置好 AI，这都是通过 API 完成的；之后才给 sam 和 alex 开启 AI+ 功能（AI+ 功能不可用时后端会拒绝这一步），并暂停 alex 的 AI+ 功能，所以图片里有亮色、暗色和没有徽章的三种，也有一行 **使用中** 和一行 **已暂停**。重启之后，它会等到 `GET /api/users` 回答 `aiAvailable: true`。它会重启后端，让系统日志里只有短短一段登录和用户修改，然后为每种语言在无头 Chrome 里操作真正的界面：AI 对话的场景先打开管理员的自由模式（这样会显示绿色的 **自由模式** 标签），开始一个对话，通过页面发送第二个问题（用这次运行的语言，所以回答也是这种语言），之后删除这个对话并关闭自由模式；AI 设置的场景按下 **测试**，并用两张图片显示这个页面（设置部分和带 AI+ 功能一列的 AI+ 用户；然后是用量、对话保留和安全上限），所以各种语言的用量数字会略有不同。图片在不会切断文字或卡片的地方裁开，并去掉 PNG 元数据。容器、卷、网络、镜像标签、临时文件夹和进程在最后都会删掉，出错时也一样。
+README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 19 张电脑截图和 5 张 iPhone 截图，一共 24 张）由在仓库根目录运行的 `python tools/screenshots/retake.py` 生成。它用 `backend/Dockerfile` 和 `ai-service/Dockerfile` 以唯一的标签（`xexam-shots-backend:<十六进制>`、`xexam-shots-ai-service:<十六进制>`）构建后端和 ai-service 的镜像，在一个新的 Docker 网络上用新卷（各自的 `/data`，以及一个共用的链接卷，对 ai-service 是只读的）和 `TZ=UTC` 运行它们，旁边运行虚构的 AI 服务商 `tests/integration/ai_stub.py`（网络名 `ai-stub`）。它用 Vite 构建前端，在一个空闲端口上用 `vite preview` 提供它（认证插件和 Nginx 一样，用后端检查每个 AI 请求），然后通过 API 往这个实例里填入虚构的演示题库、用户和记录，并用虚构的服务商和虚构的密钥设置好 AI，这都是通过 API 完成的；之后才给 sam 和 alex 开启 AI+ 功能（AI+ 功能不可用时后端会拒绝这一步），并暂停 alex 的 AI+ 功能，所以图片里有亮色、暗色和没有徽章的三种，也有一行 **使用中** 和一行 **已暂停**。重启之后，它会等到 `GET /api/users` 回答 `aiAvailable: true`。它会重启后端，让系统日志里只有短短一段登录和用户修改，然后为每种语言在无头 Chrome 里操作真正的界面：AI 对话的场景先打开管理员的自由模式（这样会显示绿色的 **自由模式** 标签），开始一个对话，通过页面发送第二个问题（用这次运行的语言，所以回答也是这种语言），之后删除这个对话并关闭自由模式，v0.9 的学习场景则打开一道练习题的 AI 提示窗口、一张考试成绩卡片的 AI 解析窗口和一条学习记录的 AI 总结窗口（`desktop-17-ai-hint`、`desktop-18-ai-result`、`desktop-19-ai-summary`、`iphone-5-ai-hint`），里面是虚构服务商的文字；同一次运行还会检查布局（检查失败就会停下）：练习的操作栏在 390 px 宽时最多两行，学习记录在 800 px 宽时（英语和日语）用卡片布局，没有横向滚动；AI 设置的场景按下 **测试**，并用两张图片显示这个页面（设置部分和带 AI+ 功能一列的 AI+ 用户；然后是用量、对话保留和安全上限），所以各种语言的用量数字会略有不同。图片在不会切断文字或卡片的地方裁开，并去掉 PNG 元数据。容器、卷、网络、镜像标签、临时文件夹和进程在最后都会删掉，出错时也一样。
 
 选项：`--lang en|ja|zh-CN|all`、`--out DIR`（写到 `DIR/<lang>/`，这样可以在动 `docs/` 之前先比较）、`--only desktop-13-logs.png,...`、`--chrome PATH`（或 `XEXAM_CHROME` / `CHROME_PATH`），以及没有 Docker 时用的 `--backend cargo`（这样运行会跳过系统日志的图片）。它需要带 `openpyxl` 的 Python 3.8+、Node.js、Docker 以及 Chrome 或 Chromium；见 `tools/screenshots/README.md`。用 `--backend cargo` 时，它用 cargo 构建 `backend/` 和 `ai-service/`，并把虚构的服务商作为本地的 Python 进程运行。有两个页面在页面本身里被缩短，好让卡片在图片里结束：题库管理显示的格式说明打开后只有前两部分，关于页面只显示最新版本的前几点。可以同时运行两三次（被别的运行先占用的端口会换一个新的重试，`npm ci` 在一个锁文件后面运行）。请用 `python tools/screenshots/retake.py` 启动它，不要用 `python -I`：`-I` 会隐藏通常装着 `openpyxl` 的用户 site-packages。改了界面或版本之后重新截图，先看一遍，然后才写进 `docs/`。
 
@@ -226,8 +230,8 @@ README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 16 张�
 ## 10. 版本、更新日志和许可证
 
 - 仓库根目录的 **`VERSION`** 里有两行 `KEY=VALUE`（以 `#` 开头的行是注释），每行正好出现一次：
-  - `CODE_VERSION`（现在是 `0.8`）：这个分支上代码的版本。手动调高它，同时在三份 README 里写更新日志条目，并改 `backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json`（像 `0.8` 这样两段的版本号在那里写成 `0.8.0`；还有它们的锁文件）以及 `docs/en/openapi.yaml` 里的 `info.version`。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
-  - `RELEASE_VERSION`（v0.8 的发布任务运行之前是 `0.7.5`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 8.1 节）。单纯的推送或合并从不改变它。
+  - `CODE_VERSION`（现在是 `0.9`）：这个分支上代码的版本。手动调高它，同时在三份 README 里写更新日志条目，并改 `backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json`（像 `0.9` 这样两段的版本号在那里写成 `0.9.0`；还有它们的锁文件）以及 `docs/en/openapi.yaml` 里的 `info.version`。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
+  - `RELEASE_VERSION`（v0.9 的发布任务运行之前是 `0.8`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 8.1 节）。单纯的推送或合并从不改变它。
 - 每次更新都要在三份 README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）的更新日志最上面加一条，版本号等于 `CODE_VERSION`。CI 会检查这一点。GitHub Release 的说明取自英语的那一份。
 - 程序的关于页面显示这些更新日志，它们是构建进前端的（第 4 节）。条目请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接在那里显示成普通文字。修改了的更新日志，要重新构建前端之后才会出现在程序里。
 - 在 `dev` 上开发；`main` 接收合并，推送到 `main` 会发布镜像和 Release。每次发布之后都要拉取 `main` 和 `dev`（第 8.1 节）。

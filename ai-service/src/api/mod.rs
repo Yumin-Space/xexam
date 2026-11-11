@@ -21,6 +21,7 @@ use serde_json::{json, Map, Value};
 use std::any::Any;
 
 pub mod admin;
+pub mod study;
 pub mod user;
 
 /// The access level a route needs.
@@ -59,6 +60,10 @@ enum Route {
     LimitsPost,
     Suspend,
     Resume,
+    StudyAsk,
+    StudySaved,
+    SummaryAsk,
+    SummarySaved,
 }
 
 /// (path, GET route, POST route)
@@ -100,6 +105,10 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
     ),
     ("/api/ai/admin/suspend", None, Some(Route::Suspend)),
     ("/api/ai/admin/resume", None, Some(Route::Resume)),
+    ("/api/ai/study/ask", None, Some(Route::StudyAsk)),
+    ("/api/ai/study/saved", Some(Route::StudySaved), None),
+    ("/api/ai/summary/ask", None, Some(Route::SummaryAsk)),
+    ("/api/ai/summary/saved", Some(Route::SummarySaved), None),
 ];
 
 impl Route {
@@ -332,6 +341,10 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::LimitsPost => admin::limits_post(ctx).await,
         Route::Suspend => admin::set_function(ctx, false).await,
         Route::Resume => admin::set_function(ctx, true).await,
+        Route::StudyAsk => study::ask(ctx).await,
+        Route::StudySaved => study::saved(ctx).await,
+        Route::SummaryAsk => study::summary_ask(ctx).await,
+        Route::SummarySaved => study::summary_saved(ctx).await,
     }
 }
 

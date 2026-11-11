@@ -1,0 +1,15 @@
+/* The Markdown look of AI answers (`.ai-md`), moved out of ai.css in v0.9 so the AI popover and the AI summary overlay can
+   use it on pages that do not load ai.css. The rules are copied byte for byte from ai.css (the `.ai-md` block and
+   `.ai-md .ai-h strong`); delete them there when this file is installed. pages/ai.ts keeps importing ai.css. */
+.ai-md { font-size: 15px; line-height: 1.65; color: var(--ink); }
+.ai-md > * { margin: 0; }
+.ai-md > * + * { margin-top: .65em; }
+.ai-md p { white-space: pre-line; }
+.ai-md ul, .ai-md ol { padding-left: 1.4em; }
+.ai-md li + li { margin-top: .2em; }
+.ai-md li { white-space: pre-line; }
+.ai-md code { padding: 0 4px; border-radius: 4px; background: var(--fill); font-family: var(--mono); font-size: .88em; }
+.ai-md pre { padding: 10px 12px; border-radius: 8px; background: var(--fill); font-size: 13px; line-height: 1.55; }
+.ai-md pre code { padding: 0; background: none; font-size: inherit; white-space: pre; }
+.ai-md hr { border: 0; border-top: 1px solid var(--line-soft); }
+.ai-md .ai-h strong { font-size: 15.5px; }

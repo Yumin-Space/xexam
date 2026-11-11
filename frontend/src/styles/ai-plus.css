@@ -1,0 +1,73 @@
+/* AI+ study controls (v0.9): the bulb / book icons, the AI 提示 / AI 解释 / AI 解析 / AI 总结 buttons, the 无法使用 tag and the
+   note above the records table (components/ai-plus-controls.ts). The popover and the overlay are in ai-pop.ts's stylesheet.
+   Colour tokens only. Usable controls use the orange of the AI+ badge (--ai-3); greyed ones the dark badge's look. */
+
+/* ---------- Header and verdict rows ---------- */
+.verdict-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.phead-r { margin-left: auto; display: inline-flex; align-items: center; justify-content: flex-end; flex: 0 1 auto; flex-wrap: wrap; gap: 6px 8px; min-width: 0; max-width: 100%; }
+.phead .phead-r .lang, .phead-r .lang { margin-left: 0; }
+.aip-icons { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ---------- Icons ---------- */
+.aip-ico {
+  display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ai-3); cursor: pointer;
+}
+@media (hover: hover) { .aip-ico:hover:not(.aip-off) { background: var(--hover); } }
+.aip-ico[aria-expanded="true"] { background: var(--fill); }
+.aip-ico:focus-visible, .aip-btn:focus-visible, .aip-sum-btn:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+@media (pointer: coarse) { .aip-ico { width: 44px; height: 44px; } .aip-icons { gap: 0; } }
+.aip-mi { flex: none; color: var(--ai-3); }
+
+/* ---------- Text buttons ---------- */
+.aip-btn, .aip-sum-btn { display: inline-flex; align-items: center; gap: 6px; }
+.aip-sum-btn { white-space: nowrap; }
+.aip-btn .aip-short { display: none; }
+.aip-grp { align-items: center; }
+.aip-grp-inline { display: inline-flex; align-items: center; gap: 0; flex-wrap: wrap; }
+.aip-tipwrap { flex: none; }
+
+/* ---------- Greyed (the dark badge's look: solid tokens, no opacity) ---------- */
+.aip-off, .aip-off .aip-mi {
+  color: var(--ink2);
+}
+.aip-btn.aip-off, .aip-sum-btn.aip-off {
+  background: var(--fill); background-image: none; box-shadow: 0 0 0 1px var(--line); border-color: transparent; cursor: not-allowed;
+}
+.aip-ico.aip-off { color: var(--ink3); cursor: not-allowed; }
+.aip-ico.aip-off .aip-mi { color: var(--ink3); }
+@media (hover: hover) {
+  .btn.aip-off:hover { background: var(--fill); background-image: none; color: var(--ink2); }
+  .btn.quiet.aip-sum-btn.aip-off:hover { background: var(--fill); }
+}
+
+/* ---------- The 无法使用 tag and the table note ---------- */
+.aip-na {
+  display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; background: var(--line-soft); color: var(--ink2);
+  font-size: 11.5px; font-weight: 600; line-height: 1.6; white-space: nowrap;
+}
+.phead-r .aip-na { margin-left: 0; }
+.aip-tablenote { margin: 0 0 10px; font-size: 13.5px; line-height: 1.6; color: var(--ink2); }
+.aip-tablenote .aip-na { margin-left: 0; margin-right: 4px; }
+
+/* The AI 总结 button inside a records row stays compact */
+.aip-sum-btn.quiet { min-height: 30px; padding-inline: 8px; font-size: 13px; }
+
+/* ---------- Phones: icon and a short label ---------- */
+@media (max-width: 480px) {
+  .aip-btn .aip-full { display: none; }
+  .aip-btn .aip-short { display: inline; }
+  .aip-btn { padding-inline: 10px; }
+  .pfoot .aip-grp { gap: 6px; }
+  /* The tag shows once (in the card header); every greyed button keeps its reason (tooltip, tap toast) so the bar stays 2 rows */
+  .pfoot .aip-grp .aip-na { display: none; }
+}
+/* Narrow phones: the two bar buttons are icon-only (the aria-label keeps the full name) */
+@media (max-width: 380px) {
+  .pfoot .aip-btn .aip-short { display: none; }
+  .pfoot .aip-btn { padding-inline: 12px; }
+}
+
+@media (forced-colors: active) {
+  .aip-off { forced-color-adjust: auto; border: 1px dashed GrayText; }
+}

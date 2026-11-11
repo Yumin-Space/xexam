@@ -50,6 +50,7 @@ pub mod attempt;
 pub mod auth;
 pub mod guard;
 pub mod internal;
+mod internal_study;
 pub mod json;
 pub mod response;
 
@@ -622,9 +623,11 @@ async fn post_body(
         "/api/attempt" => {
             let (attempt, answers) =
                 attempt::clean_attempt_with_answers(&data).map_err(AppError::BadRequest)?;
+            let tag = attempt::clean_session_tag(&data);
             let v = auth::viewer(st, a).await?;
             let eng = st.0.engine.clone();
-            let progress = blocking(move || eng.record_attempt_as(&v, &attempt, &answers)).await?;
+            let progress =
+                blocking(move || eng.record_attempt_tagged(&v, &attempt, &answers, &tag)).await?;
             Ok(json_resp(StatusCode::OK, &progress, false))
         }
         "/api/banks/delete" => delete_bank(st, a, &data).await,

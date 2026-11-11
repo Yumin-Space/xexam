@@ -47,7 +47,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | ログを見る | `docker compose logs -f`（バックエンドだけなら `docker compose logs -f backend`、ai-service だけなら `docker compose logs -f ai-service`。第 9 節を参照） |
 | 停止 / 再起動 | `docker compose stop` / `docker compose start` |
 | 最新バージョンに更新 | `docker compose pull && docker compose up -d`（ソースからビルドした場合：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。古いバージョンから更新する場合は、先に第 6 節を読んでください |
-| バージョンとアーキテクチャ | <http://localhost:8765/api/info>、またはアプリで：メニューのバージョンの項目、たとえば **Xexam v0.8**（「Xexam について」のページ） |
+| バージョンとアーキテクチャ | <http://localhost:8765/api/info>、またはアプリで：メニューのバージョンの項目、たとえば **Xexam v0.9**（「Xexam について」のページ） |
 
 > ⚠️ `docker compose down -v` は実行しないでください。`-v` を付けると 2 つのデータボリュームが削除されます：`xexam_data`（問題集、アカウント、すべての学習記録）と `xexam_ai_data`（AI 設定とキー、チャットとメモ）です。
 
@@ -73,7 +73,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_AI_LOG` | （未設定：`info`） | ai-service のログのフィルターで、`docker compose logs ai-service` とシステムログに送る行に効きます。規則は `XEXAM_LOG` と同じです（空なら `info`、正しくない値なら警告を 1 回出して `info`） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （未設定：WAL） | `delete` = AI のデータベースでロールバックジャーナルを使います。`XEXAM_SQLITE_JOURNAL` と同じく特殊なストレージのためです |
 
-`.env` を変更したら、`docker compose up -d` を実行します（必要に応じてコンテナが再作成されます）。compose ファイルは、`XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST`、`XEXAM_PARSE_TIMEOUT_SECS` を常に渡します（`.env` で設定していなければ上の既定値で）。バックエンドには `TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、`XEXAM_INTERNAL_TOKEN` を、AI サービスには `TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG`、`XEXAM_AI_SQLITE_JOURNAL` を、`.env` で設定したときだけ渡します（`XEXAM_LOG=` のように後ろに何もない行は、空の値として渡されます）。Host / Origin の設定は AI のルートにも適用されます：Nginx が AI のリクエストを渡す前に、バックエンドがそれをすべて確認します。`XEXAM_BIND` は Compose 自身が、公開するポートに使います。`xexam-backend --help` と `xexam-ai-service --help` で、それぞれのプログラムが読むすべての変数が表示されます。
+v0.9 では変数も compose の変更も加わりません。`.env` を変更したら、`docker compose up -d` を実行します（必要に応じてコンテナが再作成されます）。compose ファイルは、`XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST`、`XEXAM_PARSE_TIMEOUT_SECS` を常に渡します（`.env` で設定していなければ上の既定値で）。バックエンドには `TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、`XEXAM_INTERNAL_TOKEN` を、AI サービスには `TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG`、`XEXAM_AI_SQLITE_JOURNAL` を、`.env` で設定したときだけ渡します（`XEXAM_LOG=` のように後ろに何もない行は、空の値として渡されます）。Host / Origin の設定は AI のルートにも適用されます：Nginx が AI のリクエストを渡す前に、バックエンドがそれをすべて確認します。`XEXAM_BIND` は Compose 自身が、公開するポートに使います。`xexam-backend --help` と `xexam-ai-service --help` で、それぞれのプログラムが読むすべての変数が表示されます。
 
 残りはイメージ自身が設定し、compose ファイルはそれを変えません：
 
@@ -100,6 +100,8 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 Docker Desktop（Windows、macOS）では、ホストの `/etc/localtime` はお使いのパソコンのファイルではなく Docker 自身の仮想マシンのファイルで、その仮想マシンはたいてい UTC で動いています。マウントは機能しますが、パソコンのタイムゾーンにかかわらず日時は UTC になります。使いたいタイムゾーンを `.env` の `TZ` に設定してください。
 
 後からタイムゾーンを変えても、保存済みの日時は書き換えません。書き込まれたときのタイムゾーンのままです。
+
+AI チャットにある AI+ の学習用チャットのタイトル（練習や試験の開始時刻、記録の時刻）は、ai-service が自分のコンテナのタイムゾーンで書くので、同じ設定に従います。
 
 ### 3.2 AI の暗号化キー（`XEXAM_AI_SECRET_KEY`）
 
@@ -213,9 +215,9 @@ sequenceDiagram
 
 Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**そのまま**バックエンドに渡し、`X-Forwarded-*` を空にします。バックエンドが読むのは実際の `Host` だけです。
 
-**トンネルの向こうの全員が、1 つのレート制限を共有します。** Nginx はクライアントのアドレスごとにリクエスト数を制限します：`/api/` は 1 秒あたり 30 リクエストでバースト 120、`/api/upload` は 1 秒あたり 1 リクエストでバースト 5、`/api/ai/` は 1 秒あたり 30 でバースト 120 です（[security.md](security.md) の第 9 節）。トンネル経由では、全ユーザーが cloudflared のアドレスから届くので、全員が同じ制限に数えられます。ページを 1 回開くと約 10 リクエスト、システムログのページを開いていると 1 秒に 2 リクエストなので、制限には十分に余裕があります。それでも制限に達した場合、ページは読み込みをやり直し、その後 **リクエストが多すぎます** と表示します（[usage.md](usage.md) の第 19 節）。AI の回答の開始は、代わりにセッションごとに制限される（1 分に 20 回、バースト 10）ので、1 つのトンネルの向こうのユーザーがこの制限を共有することはありません。
+**トンネルの向こうの全員が、1 つのレート制限を共有します。** Nginx はクライアントのアドレスごとにリクエスト数を制限します：`/api/` は 1 秒あたり 30 リクエストでバースト 120、`/api/upload` は 1 秒あたり 1 リクエストでバースト 5、`/api/ai/` は 1 秒あたり 30 でバースト 120 です（[security.md](security.md) の第 9 節）。トンネル経由では、全ユーザーが cloudflared のアドレスから届くので、全員が同じ制限に数えられます。ページを 1 回開くと約 10 リクエスト、システムログのページを開いていると 1 秒に 2 リクエストなので、制限には十分に余裕があります。それでも制限に達した場合、ページは読み込みをやり直し、その後 **リクエストが多すぎます** と表示します（[usage.md](usage.md) の第 19 節）。AI の回答の開始は、代わりにセッションごとに制限される（1 分に 20 回、バースト 10。AI チャットの送信と再試行に加え、v0.9 からは AI のヒント、解説、要約も合わせて数えます）ので、1 つのトンネルの向こうのユーザーがこの制限を共有することはありません。多くの問題で続けざまに **AI 解析** をクリックすると、これに達することがあります。そのときはポップオーバーが数秒待つように伝えます。
 
-**トンネルを通した AI チャット。** AI チャットの回答は、server-sent events のストリーム（`text/event-stream`）として届きます。Nginx はこれをバッファせずに渡し、cloudflared もこの種類の内容をバッファしません。また ai-service は、プロバイダーが黙っている間 15 秒ごとに keep-alive のコメントを送り、Cloudflare の約 100 秒の無通信の上限を十分に下回ります。そのため、ネットワークの外からでも文章は少しずつ表示されます。それでも接続が切れた場合（スリープしたスマートフォン、トンネルの再接続）も、回答は書かれて保存され続け、ページは再び Xexam に届いたときにそれを読み込みます。AI 設定のリクエストには時間がかかるものが 1 つあります：**テスト** はモデルの回答を 1 つ待ちます（1 回の試行につき最大 2 分、Nginx は最大 5 分待ちます）。Cloudflare は、そのようなリクエストを約 100 秒で、独自のエラーページとともに終わらせることがあります。それでもテストは AI サービスの中で最後まで行われるので、AI 設定を再読み込みして結果を確認してください。
+**トンネルを通した AI チャットと学習支援。** AI チャットと AI+ の学習支援（ヒント、解説、要約）の回答は、server-sent events のストリーム（`text/event-stream`）として届きます。Nginx はこれをバッファせずに渡し、cloudflared もこの種類の内容をバッファしません。また ai-service は、プロバイダーが黙っている間 15 秒ごとに keep-alive のコメントを送り、Cloudflare の約 100 秒の無通信の上限を十分に下回ります。そのため、ネットワークの外からでも文章は少しずつ表示されます。それでも接続が切れた場合（スリープしたスマートフォン、トンネルの再接続）も、回答は書かれて保存され続け、ページは再び Xexam に届いたときにそれを読み込みます。AI 設定のリクエストには時間がかかるものが 1 つあります：**テスト** はモデルの回答を 1 つ待ちます（1 回の試行につき最大 2 分、Nginx は最大 5 分待ちます）。Cloudflare は、そのようなリクエストを約 100 秒で、独自のエラーページとともに終わらせることがあります。それでもテストは AI サービスの中で最後まで行われるので、AI 設定を再読み込みして結果を確認してください。
 
 忘れてはいけないこと：
 
@@ -234,7 +236,7 @@ Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**�
 - 場所：名前付きボリューム `xexam_data` → コンテナ内の `/data/xexam.db`。更新、再作成、コンテナの削除をしても失われません。データベースには、問題集、アカウント、学習記録、設定が保存されます。
 - バックエンドの動作中は、データベースの隣に SQLite の `xexam.db-wal` と `xexam.db-shm` があります（WAL モード、v0.7 から）。正常に停止すると、バックエンドがすべてを `xexam.db` に書き写し、`xexam.db-wal` を空にします。この 2 つのファイルは空のまま残ることがありますが、害はありません。
 - ボリュームには、スキーマ移行の前に書き出したコピーを入れた `/data/backups/` フォルダもできることがあります（第 6 節）。プログラムがこれらのファイルを削除することはありません。中身を見るには：`docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups`。
-- **AI サービスのデータ**（v0.8）は、専用の名前付きボリューム `xexam_ai_data` → `ai-service` コンテナ内の `/data` にあります：`xexam-ai.db`（AI 設定、暗号化したプロバイダーのキー、安全上限、チャット、メモ、使用量の統計。WAL モードで、その `-wal` / `-shm` のファイルを伴う）とキーファイル `secret.key`（3.2 節）。バックエンドはこれを決してマウントせず、ai-service も `xexam_data` を決してマウントしません。
+- **AI サービスのデータ**（v0.8）は、専用の名前付きボリューム `xexam_ai_data` → `ai-service` コンテナ内の `/data` にあります：`xexam-ai.db`（AI 設定、暗号化したプロバイダーのキー、安全上限、チャット、メモ、使用量の統計。WAL モードで、その `-wal` / `-shm` のファイルを伴う）とキーファイル `secret.key`（3.2 節）。v0.9 からは、そのチャットに AI+ の学習機能の練習、試験、記録の要約のチャットも加わり、問題文と AI の回答を含みます。また、ボリュームには、AI のスキーマをアップグレードする前に書き出したコピーのフォルダー `/data/backups/` ができます（第 6 節）。バックエンドはこれを決してマウントせず、ai-service も `xexam_data` を決してマウントしません。
 - **リンクボリューム** `xexam_link` → `/link` には `internal.token` だけが入ります（3.3 節）。バックエンドは読み書きできる形で、ai-service は読み取り専用でマウントします。
 - **バックアップ**：まず Xexam を停止し（`docker compose stop`）、**2 つのデータボリュームの両方** をまとめてから、もう一度起動します。コマンドは [database.md](database.md) の第 5 節と 8.4 節にあります。バックエンドの動作中に取った `xexam.db` だけのコピーでは、まだ `xexam.db-wal` にある最新の変更が抜けることがあります。停止できない場合は、`xexam.db`、`xexam.db-wal`、`xexam.db-shm` を一緒にコピーしてください（`xexam-ai.db` も同じです）。ボリュームのバックアップには `backups/` も含まれます。`xexam_ai_data` のバックアップには、保存した AI のキーを復号するキーファイルが入っています：キーと同じように人に渡さないか、キーがボリュームに入らないよう `XEXAM_AI_SECRET_KEY` を設定してください。削除したチャットは、それより前に作ったバックアップに残ります。`xexam_link` はバックアップ不要です：空ならバックエンドが新しいトークンを書き込みます。
 - Docker を使わずにバックエンドを直接実行する（開発）：[development.md](development.md) を参照してください。
@@ -243,16 +245,19 @@ Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**�
 
 どのアップグレードも `docker compose pull && docker compose up -d` です（指示がある場合は新しい `docker-compose.yml` を使います）。新しいバックエンドは、初回の起動時に `/data/backups/` にコピーを書き出してから、データベースをそのスキーマに移行します。このコピーを書き出せない場合（ディスクがいっぱい、権限がないなど）、エラーで終了し、データベースは変更されません。Docker が再起動を繰り返し、起動のたびにもう一度試みます。Nginx は healthy なバックエンドを待つため、起動しません。理由は `docker compose logs backend` で確認できます。先にご自身でもボリュームをバックアップしてください（第 5 節）。ボリュームの外にもコピーがあるほうが安全です。
 
+ai-service も自分のデータベースに同じことをします：v0.9 の ai-service は、最初の起動で、**AI のボリュームの** `/data/backups/`（`xexam-ai-schema<N>-<日時>.db`）にコピーを書き出してから `xexam-ai.db` をアップグレードし（スキーマ 3）、コピーを書き出せないときは起動しません（Xexam のほかの部分は動き続けます。理由は `docker compose logs ai-service` に出ます）。**それぞれのデータベースと同じくらいの空きディスク容量を確保してください**（コピーは完全なファイルです）。また、これらのコピーは自動では削除されず、後で削除したもの（記録、問題集、チャット）も残ることを知っておいてください。それが問題になるときは、古いコピーを自分で削除してください。
+
 **v0.6 以前からの場合は、先に 6 列形式のワークブックを用意してください。** v0.7 からは 6 列形式しかインポートできず、バックエンドは起動のたびに、以前の版の 3 列・4 列形式から取り込んだ問題をすべて出題停止にします（問題集、学習記録、統計は残ります）。v0.6 以前の問題集はどれもこれらの形式なので、アップグレードの後は、各問題集を 6 列形式のファイルで更新するまで何も練習できません（[usage.md](usage.md) の 13.5 節）。
 
 手順のチェックリスト、その後の確認、ロールバックは [migration.md](migration.md) にあります。
 
-- **v0.7.5 または v0.7 から**（migration.md の第 1 節）：**新しい `docker-compose.yml` を取得してください**（サービス `ai-service`、3 つ目のイメージ `xexam-ai-service`、ボリューム `xexam_ai_data` と `xexam_link`、ネットワーク `egress`）。スキーマ v4 → v5、バックアップ `xexam-schema4-<日時>.db`。AI は管理者が設定するまでオフのままです。古い compose ファイルのままでも、AI 以外はすべて動きます：**AI 設定** は開き、ai-service が動いていないと表示し（新しい compose ファイルを使うようにという案内付き）、ユーザー管理の AI+ 機能のスイッチは隠れます。
-- **v0.6 から**（migration.md の第 2 節）：スキーマ v3 → v5、バックアップ `xexam-schema3-<日時>.db`、WAL モード、その後に古い形式の問題の出題停止。新しい `docker-compose.yml` も取得してください。新しいファイルでは ai-service が加わり、決まった既定のタイムゾーンを設定しなくなり（ホストに従います。3.1 節）、コンテナのログを制限し（第 8 節）、`.env` で設定されていれば `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、AI の変数を渡します。これまでのタイムスタンプがホストとは別のタイムゾーンで書かれていた場合は、新しい記録も同じタイムゾーンで続くように、そのタイムゾーンを `.env` の `TZ` に設定してください。追加しなければならない変数はありません。
-- **v0.5 または v0.5.1 から**（migration.md の第 3 節）：スキーマ v2 → v5 を一度に、バックアップ `xexam-schema2-<日時>.db`。ログインが新しく加わります：`admin` / `admin` でログインしてください。これまでのデータはすべてこのアカウントのものになります。
-- **v0.4 から**（migration.md の第 4 節）：スキーマ v1 → v5 を一度に、バックアップ `xexam-schema1-<日時>.db`。v0.5.1 から、イメージは `ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から取得します。お使いの `docker-compose.yml` を新しいファイルに差し替えてください（または、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更します）。ソースからビルドする場合、compose ファイルは `docker/` に移ったので、リポジトリのルートにある `.env` は `docker/.env` に移動してください。
+- **v0.8 から**（migration.md の第 1 節）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースはスキーマ 5 から 6 に（バックアップは `xexam_data` の `xexam-schema5-<日時>.db`）、AI のデータベースはスキーマ 2 から 3 に（バックアップは `xexam_ai_data` の `xexam-ai-schema2-<日時>.db`）移ります。ほかはそのままです。AI+ の学習機能は、AI+ 機能を持つアカウントにすぐ表示され、設定するものはありません。戻すとき：メインのデータベースは復元が不要で、AI のデータベースは必要です（下記）。
+- **v0.7.5 または v0.7 から**（migration.md の第 1 節）：**新しい `docker-compose.yml` を取得してください**（サービス `ai-service`、3 つ目のイメージ `xexam-ai-service`、ボリューム `xexam_ai_data` と `xexam_link`、ネットワーク `egress`）。スキーマ v4 → v6、バックアップ `xexam-schema4-<日時>.db`。AI のデータベースは新しく作られます（スキーマ 3）。AI は管理者が設定するまでオフのままです。古い compose ファイルのままでも、AI 以外はすべて動きます：**AI 設定** は開き、ai-service が動いていないと表示し（新しい compose ファイルを使うようにという案内付き）、ユーザー管理の AI+ 機能のスイッチは隠れます。
+- **v0.6 から**（migration.md の第 2 節）：スキーマ v3 → v6、バックアップ `xexam-schema3-<日時>.db`、WAL モード、その後に古い形式の問題の出題停止。新しい `docker-compose.yml` も取得してください。新しいファイルでは ai-service が加わり、決まった既定のタイムゾーンを設定しなくなり（ホストに従います。3.1 節）、コンテナのログを制限し（第 8 節）、`.env` で設定されていれば `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、AI の変数を渡します。これまでのタイムスタンプがホストとは別のタイムゾーンで書かれていた場合は、新しい記録も同じタイムゾーンで続くように、そのタイムゾーンを `.env` の `TZ` に設定してください。追加しなければならない変数はありません。
+- **v0.5 または v0.5.1 から**（migration.md の第 3 節）：スキーマ v2 → v6 を一度に、バックアップ `xexam-schema2-<日時>.db`。ログインが新しく加わります：`admin` / `admin` でログインしてください。これまでのデータはすべてこのアカウントのものになります。
+- **v0.4 から**（migration.md の第 4 節）：スキーマ v1 → v6 を一度に、バックアップ `xexam-schema1-<日時>.db`。v0.5.1 から、イメージは `ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から取得します。お使いの `docker-compose.yml` を新しいファイルに差し替えてください（または、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更します）。ソースからビルドする場合、compose ファイルは `docker/` に移ったので、リポジトリのルートにある `.env` は `docker/.env` に移動してください。
 
-アップグレードの後、`/api/info` には `"version": "0.8"` と表示されます。2 回目以降の起動では移行は行われません。古い形式の問題の出題停止も、出題停止にするものが残っていなければ何も書き込みません。**ロールバック**とは、`backups/` のコピーを復元して古いイメージを動かすことです。移行済みのデータベースで古いバージョンを動かすのは、緊急のときだけにしてください。具体的なコマンドは [migration.md](migration.md)、背景は [database.md](database.md) の第 6 節にあります。
+アップグレードの後、`/api/info` には `"version": "0.9"` と表示されます。2 回目以降の起動では移行は行われません。古い形式の問題の出題停止も、出題停止にするものが残っていなければ何も書き込みません。**ロールバック**とは、`backups/` のコピーを復元して古いイメージを動かすことです（v0.9 から v0.8 へは、コピーが必要なのは AI のデータベースだけです：v0.8 のバックエンドはスキーマ 6 のメインのデータベースをそのまま開きますが、v0.8 の ai-service はスキーマ 3 の AI のデータベースを拒否し、復元するとアップグレード以降に AI が書いたものはすべて失われます）。移行済みのデータベースで古いバージョンを動かすのは、緊急のときだけにしてください。具体的なコマンドは [migration.md](migration.md)、背景は [database.md](database.md) の第 6 節にあります。
 
 ## 7. ヘルスチェックと停止
 
@@ -281,13 +286,13 @@ Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**�
 | 場所 | アプリの中、ページ `#/logs`。開いている間は 0.5 秒ごとに読む（読み込みに失敗すると間隔が延び、最長 10 秒ごと） | サーバー上 |
 | 量 | バックエンドが前回起動してからの最新 **2000** 行 | Docker がまだ残しているものすべて：10 MB のファイル最大 3 つ、再起動をまたいで |
 | 再起動の後 | 空に戻る（メモリ上にだけあり、データベースには残しません） | 残る |
-| ほかに | レベルの絞り込み、検索、**一時停止** / **再開**、**最新へ移動** | Nginx のアクセスログとエラーログ：`docker compose logs frontend` |
+| ほかに | レベルの絞り込み、検索、**一時停止** / **再開**、**最新へ移動** | Nginx のアクセスログとエラーログ：`docker compose logs frontend`（v0.9 から、アクセスログは各リクエストのパスをクエリ文字列なしで表示します） |
 
 Compose のサービスの名前は `backend`（コンテナは `xexam-backend`）なので、ページの説明のとおり、サーバー上の compose ファイルのあるフォルダで `docker compose logs backend` を実行します。Compose を使わない場合は `docker logs xexam-backend` です。クローンしたリポジトリのルートから実行するときは、`-f docker/docker-compose.yml`（または `-f docker/docker-compose.build.yml`）を付けてください。
 
 ログに含まれるもの：起動時の行（バージョン、データディレクトリ、ジャーナルモード、許可したホスト、AI との接続、既定のパスワードについての注意、アップグレードの行、古い Excel 形式のために出題停止にした問題）、ユーザー名によるログインとアカウントの変更（`user "admin" signed in`、`user "admin" updated user "alex"`。ログインで入力された、アカウントのない名前は決して記録しません）、拒否したアップロードと書き込み、警告とエラーです。パスワード、セッションのトークン、Cookie の値、確認コード、問題文は決して含みません。Host / Origin の確認で拒否したリクエスト、ログインの失敗、アカウントのないユーザー名のロックは、1 回記録したあとは多くても 1 分に 1 回まとめて記録するので、ログインせずに 2000 行からほかの行を押し出すことは誰にもできません。詳細：[security.md](security.md) の第 8 節。
 
-ai-service の行：その起動（`Xexam AI service 0.8 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、暗号化キーの出どころ）、接続（`AI link: connected to the main service` は接続ごとに 1 回書かれ、切れたときは `AI link: lost the main service`。そのため長い障害でも、再試行のたびに 1 行ではなく、1 組の行で済みます）、管理者による AI 設定と安全上限のすべての変更、テスト、**AI+ 機能** のスイッチ、管理者による一時停止と再開（行は今も `AI function turned off for user "sam" by admin "admin"`、と `… turned on …` と書かれます）、AI のデータベースのスキーマのアップグレード（バックアップのコピーの名前付き。それより前のリリース前のビルドが書いたスキーマ 2 のファイルに足りない列は、起動時に行を書かずに追加されます）、失敗した AI の呼び出し（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`。理由ごとに 1 分に最大 1 行）、保存期間、削除されたユーザーのデータの削除、そして管理者がユーザーの AI データを表示または消去したときの監査の行です。キー、内部トークン、プロンプト、回答、チャットのタイトル、メモの内容は決して含みません。ハートビートは行を書きません。バックエンドに届かない間、ai-service は最大 500 行を保持して後から送ります。捨てなければならない行があったときは、`<n> AI log lines were dropped while the main service was unreachable` から始めます。監査の行は決して捨てません。
+ai-service の行：その起動（`Xexam AI service 0.9 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、暗号化キーの出どころ）、接続（`AI link: connected to the main service` は接続ごとに 1 回書かれ、切れたときは `AI link: lost the main service`。そのため長い障害でも、再試行のたびに 1 行ではなく、1 組の行で済みます）、管理者による AI 設定と安全上限のすべての変更、テスト、**AI+ 機能** のスイッチ、管理者による一時停止と再開（行は今も `AI function turned off for user "sam" by admin "admin"`、と `… turned on …` と書かれます）、AI のデータベースのスキーマのアップグレード（バックアップのコピーの名前付き：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`。スキーマ 1 または 2 のデータベースのすべてで出ます。開き直しても何も書き込みません）、保存期間の合計（`AI retention: deleted N chats older than D days`）、答えを挙げてしまったために差し止めたヒント（`AI hint withheld because it gave the answer away (user "sam")`。1 分に最大 1 行で、その後 `N more AI hints were withheld since the last report`。文は決して含みません）、バックエンドの学習用ルートの読み取れなかった応答（`AI link: an answer of /internal/ai/question could not be read`。1 分に最大 1 行）、失敗した AI の呼び出し（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`。理由ごとに 1 分に最大 1 行）、保存期間、削除されたユーザーのデータの削除、そして管理者がユーザーの AI データを表示または消去したときの監査の行です。キー、内部トークン、プロンプト、回答、チャットのタイトル、メモの内容、問題文、セッションのキー、記録の時刻は決して含みません。ハートビートは行を書きません。バックエンドに届かない間、ai-service は最大 500 行を保持して後から送ります。捨てなければならない行があったときは、`<n> AI log lines were dropped while the main service was unreachable` から始めます。監査の行は決して捨てません。
 
 ## 10. 初回起動、アカウント、復旧
 

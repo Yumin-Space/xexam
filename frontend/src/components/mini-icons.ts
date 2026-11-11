@@ -31,6 +31,10 @@ const MINI = {
   down: [{ d: 'M8 3v9.5' }, { d: 'M4 8.8l4 3.9 4-3.9' }],
   /** Two overlapping sheets: Copy */
   copy: [{ x: 5.5, y: 5.5, w: 8, h: 8, rx: 1.6 }, { d: 'M10.5 3.2V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.2' }],
+  /** A light bulb: AI hint */
+  bulb: [{ d: 'M8 1.8a4.3 4.3 0 0 0-2.6 7.7c.5.4.8.9.8 1.5v.5h3.6V11c0-.6.3-1.1.8-1.5A4.3 4.3 0 0 0 8 1.8Z' }, { d: 'M6.3 13.1h3.4' }, { d: 'M6.9 14.6h2.2' }],
+  /** An open book: AI explanation */
+  book: [{ d: 'M8 4.3C6.6 3.2 4.6 2.8 2 2.9v9.5c2.6-.1 4.6.3 6 1.3 1.4-1 3.4-1.4 6-1.3V2.9c-2.6-.1-4.6.3-6 1.3Z' }, { d: 'M8 4.3v9.4' }],
 } satisfies Record<string, Shape[]>;
 
 export type MiniIcon = keyof typeof MINI;

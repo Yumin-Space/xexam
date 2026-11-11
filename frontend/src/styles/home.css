@@ -219,3 +219,6 @@
 
 /* ---------- Latest result: the Exam / Practice tag at the end of the score line (v0.6.5) ---------- */
 .home-latest .stat .kind-tag { align-self: center; }
+
+/* ---------- Latest result: the AI summary button sits between the two links (v0.9); its tag stays on the same line ---------- */
+.home-latest .acts { align-items: center; }

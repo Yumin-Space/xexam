@@ -477,16 +477,17 @@ jobs:
           gh release view "$tag" --json url,tagName,targetCommitish --jq '"\(.tagName) -> \(.url)"'
 
       # Only now, with the images published and the Release created, does RELEASE_VERSION move to this version. The step
-      # writes VERSION and the release badge of the three READMEs (scripts/set-release-version.py), commits that on main
-      # with the GITHUB_TOKEN (such pushes start no new workflow run, and the message says [skip ci] as well) and, when dev
-      # has no commits of its own yet, fast-forwards dev to the same commit so the two branches stay in line. When dev has
-      # moved on, it leaves dev alone and asks for a merge of main into dev before the next merge to main. A run older than
-      # the release already recorded on main changes nothing (set-release-version.py never moves RELEASE_VERSION back).
+      # writes VERSION and the release badge of the three READMEs (scripts/set-release-version.py) and commits that on main
+      # through the GitHub API (GraphQL createCommitOnBranch) rather than with git push: GitHub signs the commits it creates
+      # for the GITHUB_TOKEN, so the commit shows as Verified. Commits made with the GITHUB_TOKEN start no new workflow run,
+      # and the message says [skip ci] as well. expectedHeadOid makes the API refuse when main moved since the fetch, as a
+      # non-fast-forward push would. Then, when dev has no commits of its own yet, it fast-forwards dev to the same commit so
+      # the two branches stay in line. When dev has moved on, it leaves dev alone and asks for a merge of main into dev before
+      # the next merge to main. A run older than the release already recorded on main changes nothing (set-release-version.py
+      # never moves RELEASE_VERSION back).
       - name: Record the released version (RELEASE_VERSION and the README badge)
         run: |
           set -eu
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git fetch --quiet origin main dev
           # Work on the newest main (another merge may have landed while this run was publishing)
           git checkout --quiet -B main origin/main
@@ -494,9 +495,31 @@ jobs:
           if git diff --quiet; then
             echo "RELEASE_VERSION and the badges already say v$VERSION; nothing to commit"
           else
-            git commit --quiet -am "Record release v$VERSION: RELEASE_VERSION and the README badge [skip ci]"
-            git push --quiet origin HEAD:main
-            echo "main: RELEASE_VERSION=$VERSION committed as $(git rev-parse --short HEAD)"
+            base=$(git rev-parse HEAD)
+            # The request: every changed file with its full new content (base64), on top of the main just fetched
+            python3 - "$GITHUB_REPOSITORY" main "$base" "Record release v$VERSION: RELEASE_VERSION and the README badge [skip ci]" > commit.json <<'PY'
+          import base64, json, subprocess, sys
+          repo, branch, base, headline = sys.argv[1:5]
+          names = subprocess.run(['git', 'diff', '--name-only', '-z'], check=True, capture_output=True).stdout.decode().split('\0')
+          adds = [{'path': n, 'contents': base64.b64encode(open(n, 'rb').read()).decode()} for n in names if n]
+          q = 'mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } } }'
+          inp = {'branch': {'repositoryNameWithOwner': repo, 'branchName': branch}, 'expectedHeadOid': base,
+                 'message': {'headline': headline}, 'fileChanges': {'additions': adds}}
+          json.dump({'query': q, 'variables': {'input': inp}}, sys.stdout)
+          PY
+            oid=$(gh api graphql --input commit.json --jq '.data.createCommitOnBranch.commit.oid')
+            rm -f commit.json
+            case "$oid" in
+              [0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]*) ;;
+              *) echo "The GitHub API did not create the release commit (answer: '$oid')"; exit 1 ;;
+            esac
+            git fetch --quiet origin main
+            # The commit GitHub made must hold exactly the files written above, and main must point to it
+            git diff --quiet "$oid" || { echo "The API commit $oid differs from the files set-release-version.py wrote"; exit 1; }
+            [ "$(git rev-parse origin/main)" = "$oid" ] || { echo "main does not point to the API commit $oid"; exit 1; }
+            git reset --quiet --hard "$oid"
+            verified=$(gh api "repos/$GITHUB_REPOSITORY/commits/$oid" --jq '.commit.verification.verified')
+            echo "main: RELEASE_VERSION=$VERSION committed as ${oid:0:7} through the GitHub API (signature verified: $verified)"
           fi
           if git merge-base --is-ancestor origin/dev HEAD; then
             # Keeping dev in line is optional: when dev moved in the seconds since the fetch the push is refused, yet the
