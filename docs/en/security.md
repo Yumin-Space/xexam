@@ -2,21 +2,24 @@
 
 # Security
 
-> Scope: a self-hosted program for **personal** use, with no user system and no login. Security rests on three things: the **backend is not exposed**, the **Host/Origin guard**, and **authentication in front of it, such as Cloudflare Access**.
-> Audit basis: [audit/security.md](../zh-CN/history/audit/security.md). Tests: `backend/tests/` (run against the committed legacy snapshot: 172 golden responses, parser fixtures, id vectors; the v0.5 routes in `v05_banks_records_settings.rs`) and `tests/integration/nginx_check.py`. During the migration, a batch of 340 malicious-request probes was also used to compare the legacy and new versions item by item (0 unexplained differences; 51 recorded as intentional hardening). That probe set was removed together with the old Python code.
+> Scope: a self-hosted program for a small group of people who know each other, with **accounts and sign-in** since v0.6, administrators, plain users and, since v0.7, **bank managers**. Security rests on five things: the **backend is not exposed**, the **Host/Origin guard**, **sign-in on every route** with sessions and an escalating lock after wrong passwords, **permissions checked by the backend** (who sees and manages which question bank, whose records are whose), and **authentication in front of it, such as Cloudflare Access**, when it is reachable from the internet.
+> Audit basis: [audit/security.md](../zh-CN/history/audit/security.md). Tests: `backend/tests/` (run against the committed legacy snapshot: 172 golden responses, parser fixtures, id vectors; sign-in and users in `v06_users_and_sign_in.rs`, bank access, ownership and practice in `v065_bank_access_and_practice.rs`, the System log and floods of rejected requests in `v07_wal_and_logs.rs` and `v07_log_floods.rs`) and `tests/integration/nginx_check.py`. During the migration, a batch of 340 malicious-request probes was also used to compare the legacy and new versions item by item (0 unexplained differences; 51 recorded as intentional hardening). That probe set was removed together with the old Python code.
 
 ## 1. Threat model
 
 | Who | What they can do | Our defense |
 |---|---|---|
-| Another machine on the same network | Connect straight to the port | Binds to `127.0.0.1` only by default; to open it up you must set `XEXAM_BIND` yourself; **the program itself has no login**, so once it is opened up, anyone who can connect can read the question banks and records, import, delete and change settings |
-| A malicious web page (in your browser) | Make the browser send a write or delete request to `localhost:8765` (CSRF) | Write requests check that the `Origin` hostname matches `Host` or is on the allow-list; JSON endpoints require `Content-Type: application/json` (a cross-site form cannot send it). Deleting is only possible through these POST endpoints, never through a GET |
+| Another machine on the same network | Connect straight to the port | Binds to `127.0.0.1` only by default; to open it up you must set `XEXAM_BIND` yourself. Every route except `/api/info`, `/api/auth/state` and signing in needs a session (§5); wrong passwords lock signing in, longer each time (§6) |
+| Someone guessing passwords | Try many passwords for one account, or many made-up usernames | Escalating lock per account, kept apart from made-up names, and apart for browsers the owner signed in with before; Argon2id behind a limit of 2 at a time (§6) |
+| A signed-in user | Read or change another user's records, see banks not given to them, change banks they do not own, use admin routes | The user id always comes from the session; every bank read is limited to the user's scope; ownership is checked inside the write transaction; admin routes check the role (§7) |
+| A malicious web page (in your browser) | Make the browser send a write or delete request to `localhost:8765` (CSRF) | Session cookies are `SameSite=Strict`; write requests check that the `Origin` hostname matches `Host` or is on the allow-list; JSON endpoints require `Content-Type: application/json` (a cross-site form cannot send it). Deleting is only possible through these POST endpoints, never through a GET |
 | DNS rebinding | Make a malicious domain resolve to 127.0.0.1 in order to read your data | The `Host` allow-list is checked; GET requests are checked too |
 | A malicious / corrupt .xlsx | Zip bombs, XML entity expansion, malformed structures that bring the service down | See §3 |
 | Forged headers along the proxy chain | `X-Forwarded-Host` and the like | The backend **reads only the real `Host` header**; Nginx clears all forwarding headers |
-| Supply chain | Vulnerabilities in dependencies | Dependencies are locked (`Cargo.lock`, `package-lock.json`); the images contain no extraneous content beyond the package manager; see §7 |
+| A flood of requests anyone can send | Fill the System log so that the real lines are pushed out | Rejected requests, failed sign-ins and locks of made-up names are summed up at most once a minute (§8) |
+| Supply chain | Vulnerabilities in dependencies | Dependencies are locked (`Cargo.lock`, `package-lock.json`); the images contain no extraneous content beyond the package manager; see §10 |
 
-**Out of scope**: multi-user isolation, login, audit logs, encrypted storage. To reach the app from the internet, put Cloudflare Access (or something similar) in front of it.
+**Out of scope**: encrypted storage, an audit trail beyond the System log, two-factor sign-in, and protection against an administrator (administrators see and manage everything). To reach the app from the internet, keep Cloudflare Access (or something similar) in front of it.
 
 ## 2. Network
 
@@ -34,16 +37,17 @@ flowchart LR
 
 ## 3. Upload (.xlsx)
 
-The steps run in order. A failure at any step returns 400/413 with a fixed message (in Chinese), and **nothing is written to the database**:
+Only administrators and bank managers may upload (403 for everyone else, before the body is read). The steps run in order. A failure at any step returns 400/413 with a fixed message (in Chinese), and **nothing is written to the database**:
 
 1. Request body size: counted as a stream, **20 MiB**, in real bytes, without trusting `Content-Length`; Nginx adds a further `client_max_body_size 20m` in front (it returns JSON with the same message text).
-2. Judged by **content**: the `PK` magic number, ZIP structure, and the presence of a workbook. Legacy `.xls` files, empty files and files with a renamed extension each get their own message.
-3. ZIP: entries ≤ 10,000; **duplicate entry names are rejected** (to avoid "what is checked is one thing, what is read is another"); the total decompressed size has a cap; reads are bounded with `take(limit)`, because the declared size cannot be trusted.
-4. XML: **any DOCTYPE / entity declaration is rejected outright**, whatever the extension and whatever the encoding (UTF-16 is rejected too); depth ≤ 64, nodes ≤ 1 million (100 × 10,000).
-5. Parsing: there is a cooperative deadline (30 seconds by default). The parser looks at the clock after every batch of rows / XML events and **stops by itself** when time is up, so after a timeout it does not keep holding on to CPU and memory. At most 2 parses run at the same time (`PARSE_CONCURRENCY`); the rest queue, and the time spent queueing counts toward the time limit.
-   There is also a memory cap: when many cells reference the same shared string it is stored only once (no deep copy), and the total bytes referenced by all A/B/C cells do not exceed 64 MB; an XML element may have at most 256 attributes.
-6. The preview goes into the **single pending-confirmation slot** in memory and expires after 30 minutes; the confirmation code is 128 bits of randomness, single-use, and compared in constant time; a wrong confirmation code does not consume what is in the slot.
-7. Confirmation writes everything in **one transaction**; if the file contains no usable questions, the import is rejected (to prevent emptying the question bank).
+2. The target (`X-Bank-Target`): read after the Host, Origin, session and size checks and before the file is parsed. A bank that does not exist is 404, a bank the uploader may not update is 403; both cost no parse time.
+3. Judged by **content**: the `PK` magic number, ZIP structure, and the presence of a workbook. Legacy `.xls` files, empty files and files with a renamed extension each get their own message.
+4. ZIP: entries ≤ 10,000; **duplicate entry names are rejected** (to avoid "what is checked is one thing, what is read is another"); the total decompressed size has a cap; reads are bounded with `take(limit)`, because the declared size cannot be trusted.
+5. XML: **any DOCTYPE / entity declaration is rejected outright**, whatever the extension and whatever the encoding (UTF-16 is rejected too); depth ≤ 64, nodes ≤ 1 million (100 × 10,000).
+6. Parsing: there is a cooperative deadline (30 seconds by default). The parser looks at the clock after every batch of rows / XML events and **stops by itself** when time is up, so after a timeout it does not keep holding on to CPU and memory. At most 2 parses run at the same time (`PARSE_CONCURRENCY`); the rest queue, and the time spent queueing counts toward the time limit.
+   There is also a memory cap: when many cells reference the same shared string it is stored only once (no deep copy), and the total bytes referenced by the cells of columns A–D do not exceed 64 MiB, with a second budget of 64 MiB for columns E and F (six-column layout); an XML element may have at most 256 attributes.
+7. The preview goes into the uploader's **own pending slot** in memory and expires after 30 minutes. Nobody else can confirm or cancel it. All slots together share a memory budget of 128 MiB: staging an upload drops the oldest previews of other users above it, so many bank managers cannot fill the memory with previews. The confirmation code is 128 bits of randomness, single-use, and compared in constant time; a wrong confirmation code does not consume what is in the slot.
+8. Confirmation writes everything in **one transaction**, which checks again that the uploader may update the target bank; if the file contains no usable questions, the import is rejected (to prevent emptying the question bank).
 
 The legacy version scanned only the ASCII bytes of lowercase `.xml` / `.rels`, so UTF-16 or a different extension could get around it. This is what the new version hardens (recorded in the table of differences in [api.md](api.md)).
 
@@ -58,21 +62,114 @@ Key points:
 
 - **Only the hostname is compared**, not the scheme or the port: when the app is reached through an HTTPS domain, the Origin is `https://example.com` and the Host is `example.com`, so nothing is blocked by mistake.
 - The guard reads the real `Host` header. It does **not** read `X-Forwarded-Host` / `Forwarded`, since that would hand the guard over to the client. Nginx forwards with `proxy_set_header Host $http_host` unchanged and clears the other forwarding headers.
-- When a request is rejected, the response states what your Host / Origin was and which value to add to which option; there is also a line in the log.
-- Use `XEXAM_ALLOW_ANY_HOST=1` only when **authentication is already in place in front of the app**; it does not turn off the Origin check.
+- These checks run **before** the session check, so a rejected request never reaches sign-in or any data.
+- When a request is rejected, the response states what your Host / Origin was and which value to add to which option (in Chinese, translated by the page). The log gets an English line: the first rejection after a quiet minute on its own (`rejected GET /api/bank: Host "evil.example" is not in the allowed list`), the ones after it summed up at most once a minute (`rejected 250 request(s) by the Host / Origin check since the last report; the last one: …`).
+- Use `XEXAM_ALLOW_ANY_HOST=1` only when **authentication is already in place in front of the app**; it does not turn off the Origin check or sign-in.
 
-## 5. Banks, records and settings (v0.5)
+## 5. Sign-in and sessions
 
-v0.5 adds four GET routes (`/api/banks`, `/api/records`, `/api/record`, `/api/settings`), four POST routes (`/api/banks/delete`, `/api/records/delete`, `/api/settings`, `/api/settings/reset`) and the upload header `X-Bank-Target`. None of this needed a new kind of protection; the rules are:
+- **Passwords**: 8–128 characters. Stored as Argon2id (the `argon2` crate's default parameters, a random salt per hash), hashed and verified in a blocking task behind a limit of 2 at a time; extra requests wait. Unknown usernames are checked against a dummy hash, so the answer time and the message (`用户名或密码不对。`) do not reveal whether a username exists; a disabled account gets the same answer.
+- **Usernames**: 1–40 ASCII letters, digits and `. _ - @`, unique ignoring case. ASCII only on purpose: it rules out look-alike names.
+- **Sessions**: 32 random bytes from the operating system in the cookie `xexam_session`; the database stores only their SHA-256, so a copy of the database holds no usable token. 30 days, extended at most once an hour while used; at most 20 per user (a new sign-in beyond that ends the sessions that would expire first). **Every sign-in creates a new token**; a token sent by the client is never reused. Expired sessions are purged at start-up and then at most once an hour.
+- **Session rotation on a password change**: changing your own password (in **Settings**, or the forced first change) ends **every** session of the account, the current one included, and this browser gets a new `xexam_session` cookie in the same answer. So a copied or stolen cookie stops working, while you stay signed in here. The change is refused if the password was changed or reset elsewhere while the request ran.
+- **Other changes that sign a user out**: an administrator's password reset, disabling the account, changing its role, deleting it, and the command-line `reset-password`. Changing a user's question banks or the bank-manager permission does **not** sign them out: the backend reads the permissions with every request.
+- **Cookies**: `HttpOnly`, `SameSite=Strict`, `Path=/`; `Secure` only for an `https://` Origin or with `XEXAM_COOKIE_SECURE=1`, so plain HTTP on your network keeps working. Write requests still pass the Origin check.
+- **Known browsers**: a sign-in and a password change also set `xexam_device` (`HttpOnly`, `SameSite=Strict`, `Path=/api/auth`, 400 days): an HMAC-SHA256 of the user id, keyed with the user's current password hash. Nothing is stored for it, and a new password invalidates every such cookie. It only decides which throttle bucket an attempt counts in (§6).
+- **Default administrator**: a new or upgraded database without users gets `admin` / `admin`, which must be changed at the first sign-in; until then every other route answers 403. While an enabled administrator still has the default password, the sign-in page names that account and every start of the backend prints a reminder. Change it right after installing or upgrading.
+- **Administrator safeguards**: at least one enabled administrator must remain (`至少要保留一个启用的管理员。`), and administrators cannot change their own role, disable their own account, reset its password or delete it through User management (`不能对自己的账户做这个操作。`); their own password is changed in **Settings**.
+- **Locked out**: `docker compose exec backend xexam-backend reset-password <username>` sets a new random password (16 characters, printed once to the terminal, never logged), requires a new one at the next sign-in, enables the account and signs it out. It refuses a data directory without a database. It cannot lift an in-memory sign-in lock (it is another process): use **Unlock** or restart the backend.
+- **There is no switch that turns sign-in off**: no environment variable, flag or configuration file.
 
-- **Same guards.** The new routes go through the same dispatch function as the old ones, in the same order: Host for every request; for POST also Origin, `Content-Type: application/json`, the 1,000,000-byte body limit, and "the body must be a JSON object". Nginx treats them like every other `/api/` path (methods, rate limit, timeouts). `new_routes_go_through_the_same_guards` in `backend/tests/v05_banks_records_settings.rs` checks this for every new route.
-- **Strict request shapes.** `id` must be an integer (a boolean is not), flags such as `withRecords` and `withStats` must be booleans, and `all` must be exactly `true`. `GET /api/record` takes exactly one `id` of 1–18 ASCII digits. Anything else is a 400 and changes nothing. Ids are only ever passed to SQLite as parameters.
+## 6. Login throttle
+
+Wrong passwords lock signing in, in rounds that get longer. The state lives **in memory only**.
+
+| Round | Failures allowed | Then locked for |
+|---|---|---|
+| 1 | 5 within 15 minutes | 1 minute |
+| 2 | 3, counted from the end of the previous lock | 5 minutes |
+| 3 | 3 | 15 minutes |
+| 4 | 3 | 30 minutes |
+| 5 | 3 | 1 hour |
+| 6 and later | 3 | 1 day (the maximum) |
+
+- Every attempt counts as a failure the moment it starts, before any hashing, so parallel guesses are counted too; a success takes it back. During a lock every attempt answers **429** with `retryAfter` (seconds) and a `Retry-After` header, even with the right password; these refusals do not count and do not extend the lock.
+- **Back to round 1**: a successful sign-in, an administrator's **Unlock** or password reset, a backend restart, or 24 hours without a lock or a failure.
+- **Wrong current passwords** in **Settings → Change password** count in the same buckets as sign-ins, so a stolen session cannot be used to guess the password.
+
+**Keyed by account.** The sign-in first looks the typed name up (a cheap query, no hashing):
+
+- **A name with an account** (enabled or not) is counted in buckets keyed by the **user id**. A rename keeps a running lock (and **Unlock** still finds it), a deleted account's state is forgotten, and a new account that later takes an old name starts fresh. These buckets live in their own map, which is bounded by the number of accounts and is **never** emptied to make room: a flood of made-up names cannot push a guessed account back to round 1.
+- **A name without an account** gets its own bucket with exactly the same rounds, so the answers never tell whether a username exists. Names that break the username rule share one bucket. This map of **unknown names** holds at most **10,000** names: buckets back at round 1 with nothing recent are swept out regularly, and when it is still full the least advanced name that is not locked is forgotten first (a locked one only when every name is locked). Forgetting such a bucket protects nothing, because no account is behind it.
+- **The trade-off**: under such a flood (about ten thousand requests per probe) an attacker can tell whether a name has an account, because only the state of names without one can be forgotten. We accept this: the alternative, evicting real accounts' state, would let anyone reset the lock of the account they are guessing.
+
+**Known browsers.** An attempt from a browser that carries the account's valid `xexam_device` cookie is counted in a second bucket of that account, with the same rounds. Guesses from elsewhere therefore lock only the bucket of other browsers, and the owner keeps signing in from the browsers they used before; wrong passwords typed in such a browser lock its own bucket. A success through a known browser starts only that bucket over; a success without the cookie starts both over. **Unlock** clears both. When both buckets are locked, the account is locked in every browser, and User management says so.
+
+**Global pressure.** When all buckets together have at least 100 failures within 15 minutes, every bucket whose own latest failure is less than a minute old is also refused (one guess per bucket and minute). A bucket without a recent failure of its own is never refused, so a flood of made-up names slows guessing down but cannot lock out an account that is not itself being guessed. Pressure refusals are 429 like a lock but do not advance any round.
+
+**What the log says** (no names of accounts, only ids):
+
+- A lock of a real account is logged **once, when it starts**, one line per lock: `sign-in of user 3 from other browsers locked for 300 s (lock 2 in a row) after repeated failed attempts` (or `from the browsers where it signed in before`).
+- Locks of **usernames without an account** are summed up, because anyone can start one per made-up name: the first after a quiet minute on its own, then `N sign-in lock(s) of usernames without an account started since the last report; the last one: …`.
+- **Failed sign-ins**: the first after a quiet minute as `failed sign-in`, then `N failed sign-in(s) since the last report`, at most once a minute.
+- **Refused (429) attempts**: never one by one; the first after a quiet minute is reported at once, the rest by a once-a-minute timer: `refused N password check(s) of locked or throttled sign-ins since the last report`. The last line of a burst appears within about a minute, even when no further attempt comes.
+
+## 7. Roles, question banks and other people's data
+
+### Roles and route access
+
+The backend has one route table; every route names who may use it, and the check runs once, in the dispatch function, before the request body is read:
+
+| Access | Routes |
+|---|---|
+| Public | `GET /api/info`, `GET /api/auth/state`, `POST /api/auth/login` |
+| Signed in | everything about your own study: the banks you may see, your progress, records and settings, submitting, your own password, signing out |
+| Bank manager (administrators and users with the permission) | `POST /api/upload`, `/api/import/confirm`, `/api/import/cancel`, `/api/banks/delete`, `GET /api/imports`. Others: 403 `你没有管理题库的权限，请联系管理员。` |
+| Administrator | `GET /api/users`, `GET /api/logs`, `POST /api/users/*`, `POST /api/shutdown`. Others: 403 `只有管理员可以进行这个操作。` |
+
+A path that is not in the table needs a session too. While an account must choose a new password, it can only change the password and sign out (the public routes stay open); everything else answers 403. The role and the bank-manager permission are read from the database with the session, so a change by an administrator applies to the user's next request.
+
+### Question banks per user
+
+- Administrators see and manage every bank. A plain user sees **All question banks, including ones imported later**, or only the banks an administrator chose for them; a new user sees none until some are chosen. A bank manager also sees the banks they imported, while they hold the permission.
+- The backend builds a `Viewer` for each request from the session (never from the request body) and limits every read to its scope: `/api/bank` and `/api/banks` list only the visible banks, `/api/progress` counts only their questions, a record's detail leaves out the text of questions of other banks (shown like deleted questions), and `POST /api/attempt` treats a question of another bank exactly like a question that does not exist (not counted, nothing written for it). A made-up or stale request therefore cannot write statistics for a bank the user cannot see.
+- `/api/banks` shows the **owner's name to administrators only**. Other users get `ownerId` only for banks they own themselves, and their own study numbers per bank rather than everyone's.
+
+### Ownership (IDOR protection for banks)
+
+- A bank belongs to the user who imported it as a new bank. A bank manager may update and delete **only their own** banks; for any other bank the answer is 403 `这个题库不是你上传的，只能更新或删除你自己上传的题库。`.
+- The check is made **inside the write transaction** of the import confirm and of the bank delete, not only before it. So nothing can change the owner between the check and the write (for example an administrator deleting the manager's account, which moves the banks to that administrator); a refused write writes nothing.
+- A bank manager deleting their own bank with **Also delete your study records of this bank** deletes only their own records; other users' records stay.
+- Bank ids, record ids and user ids are only ever passed to SQLite as parameters.
+
+### Other users' records
+
+- Study records, the wrong-answer notebook and settings are read and written for the signed-in user only. A record id of another user behaves exactly like an id that does not exist (`GET /api/record`, `POST /api/records/delete`: 404), so ids cannot be probed.
+- The pending import of an upload belongs to its uploader (§3).
+
+### The library stamp
+
+`GET /api/auth/state` gives each signed-in user a `library` stamp so that open pages notice when banks change. It is an opaque 32-hex digest (the first 16 bytes of a SHA-1), not the counters it is made of. For a user limited to some banks it is computed from those banks and their access only, so it neither reveals nor follows the size, the question count or the update times of banks they cannot see.
+
+### Strict request shapes and explicit deletes
+
+- **Same guards for every route**: Host for every request; for POST also Origin, the session, `Content-Type: application/json`, the 1,000,000-byte body limit, and "the body must be a JSON object". Nginx treats every `/api/` path the same way (methods, rate limit, timeouts).
+- **Strict shapes.** `id` must be an integer (a boolean is not), flags such as `withRecords` and `withStats` must be booleans, `all` must be exactly `true`, `banks` must be `"all"` or a list of existing bank ids, `kind` must be `exam` or `practice`. `GET /api/record` takes exactly one `id` of 1–18 ASCII digits. Anything else is a 400 and changes nothing.
 - **Settings validation.** Only the four known keys are read. `theme` must be `system`, `light` or `dark`; `uiLang` `en`, `zh` or `ja`; `questionLang` `ja`, `zh` or `en`; `autoAdvance` a boolean. One invalid value → 400 and nothing is written; unknown keys are ignored. When settings are read back, a stored value that is not valid is ignored and the default is used. The frontend checks the values again before it applies them, and they only ever end up in the `data-theme` and `lang` attributes, never in HTML.
-- **`X-Bank-Target`.** Read only after the Host, Origin and Content-Type checks and the size limit, and before the file is parsed. Accepted: `new` or a bank id of 1–18 ASCII digits (surrounding spaces ignored). Anything else → 400. An unknown bank id → 404 before parsing, so it costs no parse time. A rejected upload does not touch the pending slot.
-- **Deleting data is explicit.** Nothing is deleted by a GET or as a side effect. The two delete routes are POST with a JSON body, so a cross-site form cannot send them (Content-Type) and a script on another site is stopped by the Origin check. Each delete is one transaction. In the UI every delete opens a confirm dialog that names what goes and says it cannot be undone. Removing a bank's study data together with the bank, or the wrong-answer notebook together with all records, is a separate checkbox that is off by default. An import that would deactivate questions asks once more before it is confirmed. There is no undo and no recycle bin: your own backup is the way back (section 5 of [database.md](database.md)).
-- **The migration backup.** Before the schema-v2 migration the backend copies the database into `backups/` in the data directory. It never overwrites an existing file, and if the copy fails it refuses to start instead of migrating without a backup.
+- **Deleting data is explicit.** Nothing is deleted by a GET or as a side effect. Every delete route is POST with a JSON body, so a cross-site form cannot send it (Content-Type) and a script on another site is stopped by the Origin check. Each delete is one transaction. In the UI every delete opens a confirm dialog that names what goes and says it cannot be undone. Removing study data together with a bank, or the wrong-answer notebook together with all records, is a separate checkbox that is off by default. An import that would retire questions asks once more before it is confirmed. There is no undo and no recycle bin: your own backup is the way back (section 5 of [database.md](database.md)).
+- **The migration backup.** Before every schema migration the backend copies the database into `backups/` in the data directory. It never overwrites an existing file, and if the copy fails it refuses to start instead of migrating without a backup.
 
-## 6. HTTP layer
+## 8. Logs and privacy
+
+- **What is never logged**: passwords (also not the one `reset-password` prints), session tokens, cookie values, confirmation codes, the contents of uploaded files and question text. Log lines name users by id (`user 3 signed in`), not by name. `the_log_never_holds_passwords_tokens_cookies_or_question_text` in `backend/tests/v07_wal_and_logs.rs` checks this.
+- **The System log** (menu, administrators only) shows the last 2000 log lines since the backend started, from memory; nothing is written to the database, and a restart empties it. `GET /api/logs` is an administrator route. Older lines: `docker compose logs backend` (see section 9 of [deployment.md](deployment.md)).
+- **Floods are summed up.** Three kinds of line can be caused by anyone who reaches the server, without signing in: requests rejected by the Host / Origin check, failed sign-ins, and locks of usernames without an account. Each kind is logged once after a quiet minute and then summed up in one line at most once a minute (a server timer writes the last line of a burst within about a minute); refused 429 attempts are summed up the same way. **Locks of real accounts are logged one by one**, since one account can lock at most once per lock length. So nobody can push the 2000 lines out of the System log without signing in.
+- Lines about rejected requests are always English and give the method, the path (shortened) and why; the 403 body keeps its Chinese text.
+- The question banks are the users' own Excel files and are **not in the repository** (`.gitignore` excludes `*.xlsx` and similar files; the only exception is the fictional test fixtures in `tests/baseline/fixtures/`).
+- The files in `backups/` are full copies of the database, password hashes included. They sit in the same data volume and are included in a volume backup; treat them like the database itself. The program never deletes them.
+- The browser keeps only small things in `localStorage`, per user: the exam or practice in progress (question ids, answers, flags, time; no question text), a copy of the settings for the first paint, and the id of the last user who signed in. On a shared computer, sign out and clear the site data when you are done.
+
+## 9. HTTP layer
 
 | Item | Setting |
 |---|---|
@@ -86,41 +183,25 @@ v0.5 adds four GET routes (`/api/banks`, `/api/records`, `/api/record`, `/api/se
 | Hidden files | `/.xxx` is always 404; no directory listing |
 | `Server` header | The backend does not send it; Nginx has `server_tokens off` |
 
-## 7. Containers
+## 10. Containers
 
-- Both containers run as **non-root** (backend uid 10001), with `cap_drop: ALL`, `no-new-privileges` and a `read_only` root filesystem; only `/tmp` (tmpfs) and the backend's `/data` (named volume, which also holds `backups/`) are writable.
+- Both containers run as **non-root** (backend uid 10001), with `cap_drop: ALL`, `no-new-privileges` and a `read_only` root filesystem; only `/tmp` (tmpfs) and the backend's `/data` (named volume, which also holds `backups/`) are writable. The host's `/etc/localtime` is mounted read only.
 - **No secrets in the images**: no `.env`, no database, no real question bank (excluded by `.dockerignore`).
 - The backend image is a single statically linked (musl) executable plus tzdata, with no toolchain other than a shell.
+- Container logs are limited to 3 files of 10 MB each.
 - `docker compose down -v` deletes the data volume. The documentation explicitly warns against adding `-v`.
 
-## 8. Logs and privacy
+## 11. Known limitations (stated honestly)
 
-- Logs do not record confirmation codes, the contents of uploaded files, or question contents.
-- Rejected requests are logged with the Host / Origin and the reason, for troubleshooting.
-- The question bank is the user's own Excel file and is **not in the repository** (`.gitignore` excludes `*.xlsx` and similar files; the only exception is the fictional test fixtures in `tests/baseline/fixtures/`).
-- The files in `backups/` are full copies of the database. They sit in the same data volume and are included in a volume backup; treat them like the database itself. The program never deletes them.
-- The browser keeps only small things in `localStorage`: the exam in progress (question ids, answers, flags, time; no question text) and a copy of the settings for the first paint. On a shared computer, clear the site data when you are done.
-
-## 9. Known limitations (stated honestly)
-
-- **No login, on any route.** An open port means anyone who can connect can read the question banks and the exam records, import files, delete banks and records, and change the settings. The v0.5 routes have no authentication of their own either. To reach the app from outside, put authentication in front of it (Cloudflare Access or similar).
-- **No accounts.** The settings in the database apply to everyone who uses this instance.
-- **The server trusts `correct`** and the stored `answer`, and does not check whether an id is in the question bank either (same as the legacy version): scoring happens in the browser, so cheating on your own score only fools yourself. The `answer` is only stored for review; it is never used for scoring or statistics.
-- **A single pending-confirmation slot**: concurrent uploads replace each other (single-user use; no session concept is introduced).
+- **Sign-in locks live in memory.** A restart clears them (that is also the documented way out for a locked administrator), and they are not shared between processes.
+- **The default password.** Until `admin` / `admin` is changed, anyone who can open the page can sign in as administrator. The sign-in page and the start-up log remind you; change it right away.
+- **Administrators can do everything**: see every bank, every user's sign-in state and the System log, delete any bank with everyone's records. They cannot read other users' study records through the app, but they have the database.
+- **Account existence under a flood**: see the trade-off in §6.
+- **The server trusts `correct`** and the stored `answer` (same as the legacy version): scoring happens in the browser, so cheating on your own score only fools yourself. Since v0.7 the server does check that each question exists and that the user may see it. The `answer` is only stored for review; it is never used for scoring or statistics.
 - The Cloudflare path has only been **simulated locally**: the browser-level simulation (a real Chrome plus an HTTPS reverse proxy) was done for the legacy Python version; for the new stack only header-level checks were done (the Host / Origin guard still applies after passing through Nginx). It has not been tested with real Cloudflare.
 - iPhone Safari has not been tested on a real device; the build target is iOS 15.4+.
 - The arm64 build of the new images: CI has **built and started** it under QEMU (`/api/info` reports `aarch64`), but it has not been run on real ARM hardware. The aarch64 backend binary does not include the linker workaround for Cortex-A53 erratum #843419 (see [deployment.md](deployment.md)).
 
-## 10. Reporting vulnerabilities
+## 12. Reporting vulnerabilities
 
 This is a private repository for a personal project; if you find a problem, please contact the owner directly.
-
-## Sign-in (v0.6)
-
-- Passwords: Argon2id (default parameters, a random salt per hash), hashed in a blocking task behind a limit of 2 at a time. Unknown usernames are checked against a dummy hash, so the answer time and the message (`用户名或密码不对。`) do not reveal whether a username exists.
-- Sessions: 32 random bytes in the cookie `xexam_session`; the database stores only their SHA-256. 30 days, extended at most once an hour while used; at most 20 per user. A new session at every sign-in. Changing or resetting a password, disabling, deleting or changing the role of a user signs out their sessions.
-- Cookies: `HttpOnly`, `SameSite=Strict`, `Secure` only for an `https://` Origin or with `XEXAM_COOKIE_SECURE=1`, so plain HTTP on your network keeps working. Write requests still pass the Origin check.
-- Wrong passwords (per username, in memory): 5 failures within 15 minutes lock signing in for 1 minute; then every 3 more failures lock again for 5 minutes, 15 minutes, 30 minutes, 1 hour and 1 day (the maximum). During a lock even the right password gets 429 with `retryAfter`. A successful sign-in, an administrator's Unlock or password reset, a backend restart, or 24 hours after the last lock without a new failure start over. A browser that signed in to the account before (cookie `xexam_device`, signed with a server key) is counted separately, so guesses from elsewhere cannot lock it. The same rule covers wrong current passwords in Settings.
-- Default administrator: a new or upgraded database gets `admin` / `admin`, which must be changed at the first sign-in. Until then the sign-in page shows a hint and every start of the backend prints a reminder. Change it right after installing or upgrading.
-- Locked out: `docker compose exec xexam-backend xexam-backend reset-password <username>` sets a new random password (printed once), requires a new one at the next sign-in, enables the account and signs it out. It refuses a data directory without a database. Restart the backend to clear in-memory sign-in locks.
-- There is no switch that turns sign-in off.

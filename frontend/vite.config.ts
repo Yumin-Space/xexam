@@ -9,9 +9,9 @@ const backend = process.env.XEXAM_BACKEND ?? 'http://127.0.0.1:8765';
 
 /**
  * `virtual:changelog`: the changelog entries of the three READMEs (English, Chinese, Japanese), parsed at build time for the
- * About page. The READMEs stay the single source of truth (CI checks their newest entry against VERSION). Paths are relative to
- * the repository root: README.md, README/README.ja.md, README/README.zh-CN.md. The nginx image build copies them to the same
- * places above the frontend sources (see nginx/Dockerfile).
+ * About page. The READMEs stay the single source of truth (CI checks their newest entry against CODE_VERSION in VERSION).
+ * Paths are relative to the repository root: README.md, README/README.ja.md, README/README.zh-CN.md. The nginx image build
+ * copies them to the same places above the frontend sources (see nginx/Dockerfile).
  */
 function changelog(): Plugin {
   const id = 'virtual:changelog';

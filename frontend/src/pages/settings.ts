@@ -5,7 +5,7 @@ import '../styles/settings.css';
 import { ApiError } from '../api/client.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk } from '../components/fields.ts';
-import { roleName } from '../components/shell.ts';
+import { isBankManager, roleTags } from '../components/shell.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
@@ -172,6 +172,10 @@ async function submitPassword(): Promise<void> {
     if (e instanceof ApiError && e.status === 403) {
       pw.current = '';
       pwFocus = 'set-pw-current';
+    } else {
+      // Anything else (too many attempts, a network error): the submit button was redrawn, so keep keyboard and screen
+      // reader users in the form, on the message that says why
+      pwFocus = 'set-pw-err';
     }
   }
   if (S.route.name === 'settings') render();
@@ -199,7 +203,9 @@ function accountSection(): HTMLElement | null {
     h('p', { class: 'set-desc' }, t('settings.account.desc')),
     h('dl', { class: 'props set-props' },
       h('dt', null, t('settings.account.username')), h('dd', { class: 'set-username' }, u.username),
-      h('dt', null, t('settings.account.role')), h('dd', null, h('span', { class: 'tag ' + (u.role === 'admin' ? 'b' : 'k') }, roleName(u.role)))),
+      h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u))),
+    // A bank manager: what the extra permission allows (v0.7)
+    isBankManager(u) ? h('p', { class: 'set-desc set-manager' }, t('settings.account.managerNote')) : null,
     h('form', {
       class: 'set-pw', novalidate: true, 'aria-labelledby': 'set-pw-h', 'aria-busy': pw.busy ? 'true' : null,
       onsubmit: (e: SubmitEvent) => {
@@ -221,7 +227,7 @@ function accountSection(): HTMLElement | null {
       input('set-pw-repeat', 'settings.password.repeat', pw.repeat, 'new-password', (v) => {
         pw.repeat = v;
       })),
-    pw.error ? h('div', { class: 'err', role: 'alert' }, h('p', null, pw.error)) : null,
+    pw.error ? h('div', { class: 'err', id: 'set-pw-err', role: 'alert', tabindex: '-1' }, h('p', null, pw.error)) : null,
     pw.done ? h('div', { class: 'callout ok set-pw-done', id: 'set-pw-done', role: 'status', tabindex: '-1' }, h('p', null, t('settings.password.done'))) : null,
     h('div', { class: 'acts' },
       h('button', { class: 'btn', type: 'submit', disabled: pw.busy }, t(pw.busy ? 'settings.password.busy' : 'settings.password.submit')))));

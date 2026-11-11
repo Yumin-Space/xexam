@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use xexam_backend::api::{build_router, AppState};
 use xexam_backend::config::Config;
-use xexam_backend::database::Store;
+use xexam_backend::database::{JournalMode, LegacyMigration, Store, SystemClock};
 use xexam_backend::error::DbError;
 use xexam_backend::services::{Engine, RealEngine};
 
@@ -40,7 +40,7 @@ const USAGE: &str = "Usage:
   xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
   xexam-backend reset-password <username> [--data DIR]      (see: xexam-backend reset-password --help)
-Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG";
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL";
 
 const RESET_PASSWORD_USAGE: &str = "Usage:
   xexam-backend reset-password <username> [--data DIR]
@@ -50,8 +50,8 @@ sessions (it is signed out everywhere) and makes it choose a new password at the
 in any more, e.g. the administrator forgot the password. The data directory is found as for serve: --data, else XEXAM_DATA,
 else ./data. It can run while the server is running.
 
-In Docker:
-  docker compose exec xexam-backend xexam-backend reset-password admin
+In Docker (the Compose service is called backend; its container is xexam-backend):
+  docker compose exec backend xexam-backend reset-password admin
 
 Exit code: 0 on success; 1 when there is no such user or the database cannot be opened or written.";
 
@@ -141,20 +141,35 @@ fn parse_args(argv: &[String]) -> Result<Args, String> {
     Ok(a)
 }
 
+/// Prints a status line to stdout and keeps it in the System log buffer too (v0.7), so the administrators' log page shows
+/// the startup and shutdown lines. Never pass a secret: use [`say_private`] for that.
 fn say(msg: &str) {
+    say_private(msg);
+    xexam_backend::logs::record(tracing::Level::INFO, "xexam_backend", msg);
+}
+
+/// Prints a status line to stdout only (for example the new password printed by `reset-password`).
+fn say_private(msg: &str) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{msg}");
     let _ = out.flush();
 }
 
 fn init_tracing() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
     let filter = tracing_subscriber::EnvFilter::try_from_env("XEXAM_LOG")
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    // One filter for both outputs: stderr (what `docker compose logs` shows) and the in-memory buffer of the System log page.
     // No ANSI escapes: user-controlled strings written to the log must not inject terminal control sequences
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_ansi(false)
-        .with_writer(std::io::stderr)
+    let _ = tracing_subscriber::registry()
+        .with(filter)
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(std::io::stderr),
+        )
+        .with(xexam_backend::logs::BufferLayer::global())
         .try_init();
 }
 
@@ -193,7 +208,9 @@ fn healthcheck(port: u16) -> bool {
 /// Opens the database. Migration of the legacy `progress.json` matches the Python version: it is checked on every start, and the `legacy_migrated` flag in the database
 /// plus the "never overwrite when study records already exist" guard make sure it migrates only once and never overwrites (see `Store::migrate_legacy_progress`).
 /// This is what makes the documented flow actually work: start once to create the volume -> put progress.json into the volume -> restart.
-fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
+///
+/// `journal` is the journal mode asked for (`XEXAM_SQLITE_JOURNAL`); a mode SQLite refuses is logged as a warning by the store.
+fn open_store(data_dir: &Path, journal: JournalMode) -> Result<Arc<Store>, String> {
     std::fs::create_dir_all(data_dir)
         .map_err(|e| format!("cannot create data directory {}: {e}", data_dir.display()))?;
     let db_path = data_dir.join("xexam.db");
@@ -212,34 +229,46 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
             others.join(", ")
         ));
     }
-    let store = Arc::new(Store::open(&db_path).map_err(|e| match e {
+    let opened = Store::open_with(&db_path, Arc::new(SystemClock), journal).map_err(|e| match e {
         DbError::Backup(_) => format!(
             "cannot open database: {e}. The database was NOT upgraded and is unchanged. Make sure {} can be created and written (disk space, permissions), then start again.",
             data_dir.join(xexam_backend::database::BACKUP_DIR).display()
         ),
         other => format!("cannot open database: {other}"),
-    })?);
-    if let Some(backup) = store.migration_backup() {
-        say(&format!(
+    })?;
+    let store = Arc::new(opened);
+    match (store.migration_backup(), store.converted_prerelease()) {
+        (Some(backup), true) => say(&format!(
+            "Converted the question bank access of a database written by a v0.7 pre-release to the released format. A copy of the previous version was saved first: {}.",
+            backup.display()
+        )),
+        (Some(backup), false) => say(&format!(
             "Upgraded the database to schema {}. A copy of the previous version was saved first: {} (restore it if you ever go back to an older version).",
             xexam_backend::database::schema::SCHEMA_VERSION,
             backup.display()
-        ));
+        )),
+        (None, true) => say(
+            "Converted the question bank access of a database written by a v0.7 pre-release to the released format.",
+        ),
+        (None, false) => {}
     }
     if store.created_default_admin() {
         say("Created the default administrator 'admin' (password 'admin'); sign in and choose a new password.");
     }
+    retire_old_layouts(&store)?;
     let legacy = data_dir.join("progress.json");
     if legacy.is_file() {
-        match store.migrate_legacy_progress(&legacy) {
-            Ok((true, msg)) => say(&format!(
-                "Migrated the old study records into the database: {msg} (from {})",
+        match store.migrate_legacy_progress_outcome(&legacy) {
+            Ok(done) if done.migrated() => say(&format!(
+                "Migrated the old study records into the database: {} (from {})",
+                done.english(),
                 legacy.display()
             )),
-            // "Already migrated earlier" (the literal Chinese message 「之前已经迁移过」) is the normal case; no need to report it on every start
-            Ok((false, msg)) if msg.contains("之前已经迁移过") => {}
-            Ok((false, msg)) => say(&format!(
-                "Did not migrate the old study records: {msg}. Fix progress.json and restart to try again, or run xexam-backend migrate-progress manually"
+            // "Already migrated earlier" is the normal case; no need to report it on every start
+            Ok(LegacyMigration::AlreadyMigrated) => {}
+            Ok(other) => say(&format!(
+                "Did not migrate the old study records: {}. Fix progress.json and restart to try again, or run xexam-backend migrate-progress manually",
+                other.english()
             )),
             Err(e) => say(&format!(
                 "Failed to migrate the old study records (the database was not changed): {e}. Restart later to try again, or run xexam-backend migrate-progress manually"
@@ -249,8 +278,29 @@ fn open_store(data_dir: &Path) -> Result<Arc<Store>, String> {
     Ok(store)
 }
 
-fn run_import(path: &Path, data_dir: &Path) -> i32 {
-    let store = match open_store(data_dir) {
+/// v0.7: retires the questions of the old 3- / 4-column layouts (see `Store::retire_old_layout_questions`), on every start of
+/// the server and of the commands that open the database, after the migrations. One log line per bank when something was
+/// retired; nothing is written otherwise. A failure stops the start (nothing was changed: it is one transaction).
+fn retire_old_layouts(store: &Store) -> Result<(), String> {
+    let retired = store.retire_old_layout_questions().map_err(|e| {
+        format!("cannot retire the questions of the old 3- / 4-column layouts: {e}")
+    })?;
+    for b in retired {
+        let (n, they) = if b.retired == 1 {
+            ("1 question".to_string(), "it uses")
+        } else {
+            (format!("{} questions", b.retired), "they use")
+        };
+        tracing::warn!(
+            "retired {n} of bank {:?}: {they} the old 3- / 4-column layout; import the six-column version of the workbook",
+            b.name
+        );
+    }
+    Ok(())
+}
+
+fn run_import(path: &Path, data_dir: &Path, journal: JournalMode) -> i32 {
+    let store = match open_store(data_dir, journal) {
         Ok(s) => s,
         Err(e) => {
             say(&e);
@@ -271,10 +321,18 @@ fn run_import(path: &Path, data_dir: &Path) -> i32 {
     let wb = match engine.check_and_parse(&data) {
         Ok(w) => w,
         Err(e) => {
-            say(&format!("Import failed: {e}"));
+            say(&format!("Import failed: {}.", e.log_reason()));
             return 1;
         }
     };
+    // v0.7: only the six-column layout can be imported (the parser still recognises the old layouts, to say so)
+    if wb.has_old_layout() {
+        say(&format!(
+            "Import failed: {}. Rewrite it in the six-column layout (A-C: the question in English, Chinese, Japanese; D-F: the answer in English, Chinese, Japanese) and import it again. Nothing was imported.",
+            xexam_backend::services::LOG_OLD_LAYOUT
+        ));
+        return 1;
+    }
     if wb.questions.is_empty() {
         say("No usable questions were found in this file; nothing was imported.");
         return 1;
@@ -324,7 +382,7 @@ fn run_import(path: &Path, data_dir: &Path) -> i32 {
 
 /// `reset-password <username>`: a new random password for that account (printed once), which must be changed at the next
 /// sign-in; the account is enabled and signed out everywhere.
-fn run_reset_password(username: &str, data_dir: &Path) -> i32 {
+fn run_reset_password(username: &str, data_dir: &Path, journal: JournalMode) -> i32 {
     // Recovery must change the database that serve uses: never create a new one (a wrong --data or working directory would
     // otherwise "succeed" on an empty database and leave the real one untouched)
     let db_path = data_dir.join("xexam.db");
@@ -336,7 +394,9 @@ fn run_reset_password(username: &str, data_dir: &Path) -> i32 {
         ));
         return 1;
     }
-    let store = match open_store(data_dir) {
+    // With the server running in WAL mode this is a second connection to the same database (same container, same
+    // filesystem): SQLite coordinates the two through the -wal and -shm files, and busy_timeout waits for a running write
+    let store = match open_store(data_dir, journal) {
         Ok(s) => s,
         Err(e) => {
             say(&e);
@@ -353,7 +413,8 @@ fn run_reset_password(username: &str, data_dir: &Path) -> i32 {
     };
     match store.cli_reset_password(username.trim(), &hash) {
         Ok(Some(name)) => {
-            say(&format!("New password for '{name}': {password}"));
+            // The password goes to stdout only, never into a log
+            say_private(&format!("New password for '{name}': {password}"));
             say("It is shown only this once. The account is enabled and signed out everywhere; it must choose a new password at the next sign-in.");
             0
         }
@@ -373,8 +434,8 @@ fn run_reset_password(username: &str, data_dir: &Path) -> i32 {
     }
 }
 
-fn run_migrate(path: Option<PathBuf>, data_dir: &Path) -> i32 {
-    let store = match open_store(data_dir) {
+fn run_migrate(path: Option<PathBuf>, data_dir: &Path, journal: JournalMode) -> i32 {
+    let store = match open_store(data_dir, journal) {
         Ok(s) => s,
         Err(e) => {
             say(&e);
@@ -382,16 +443,17 @@ fn run_migrate(path: Option<PathBuf>, data_dir: &Path) -> i32 {
         }
     };
     let path = path.unwrap_or_else(|| data_dir.join("progress.json"));
-    match store.migrate_legacy_progress(&path) {
-        Ok((true, msg)) => {
+    match store.migrate_legacy_progress_outcome(&path) {
+        Ok(done) if done.migrated() => {
             say(&format!(
-                "Migrated the old study records into the database: {msg} (from {})",
+                "Migrated the old study records into the database: {} (from {})",
+                done.english(),
                 path.display()
             ));
             0
         }
-        Ok((false, msg)) => {
-            say(&format!("Not migrated: {msg}"));
+        Ok(other) => {
+            say(&format!("Not migrated: {}", other.english()));
             0
         }
         Err(e) => {
@@ -426,13 +488,22 @@ async fn os_signal() {
 }
 
 async fn serve(cfg: Config) -> i32 {
-    let store = match open_store(&cfg.data_dir) {
+    let store = match open_store(&cfg.data_dir, cfg.sqlite_journal) {
         Ok(s) => s,
         Err(e) => {
             say(&e);
             return 1;
         }
     };
+    // Once per start: the journal mode in effect (a refused switch was already logged as a warning)
+    if cfg.sqlite_journal == JournalMode::Delete {
+        tracing::info!(
+            "SQLite journal mode: {} (XEXAM_SQLITE_JOURNAL=delete)",
+            store.journal_mode()
+        );
+    } else {
+        tracing::info!("SQLite journal mode: {}", store.journal_mode());
+    }
     let listener = match tokio::net::TcpListener::bind((cfg.host.as_str(), cfg.port)).await {
         Ok(l) => l,
         Err(e) => {
@@ -484,7 +555,11 @@ async fn serve(cfg: Config) -> i32 {
         ));
     }
     if store.count_active().unwrap_or(0) == 0 {
-        say("The question bank is still empty: open the page and upload an Excel file under '题库管理' (Question bank management).");
+        if store.bank_count().unwrap_or(0) == 0 {
+            say("The question bank is still empty: open the page and upload an Excel file under 'Question banks'.");
+        } else {
+            say("No question bank has a question in use: open the page and, under 'Question banks', update the banks with six-column Excel files (or import new ones).");
+        }
     }
     // Computed once now, so the first failed sign-in of an unknown user does not take longer than later ones
     let _ = xexam_backend::auth::dummy_hash();
@@ -503,10 +578,12 @@ async fn serve(cfg: Config) -> i32 {
             Vec::new()
         }
     };
-    if !store.created_default_admin()
-        && store.default_admin_pending(&default_admin).unwrap_or(false)
-    {
-        say("Reminder: an administrator account still has the default password 'admin' (the default account is admin / admin). Sign in now and choose a new password.");
+    // The account is named as it is called now (it may have been renamed in the database since it was created)
+    if let (false, Ok(Some(name))) = (
+        store.created_default_admin(),
+        store.default_admin_pending(&default_admin),
+    ) {
+        say(&format!("Reminder: the administrator account '{name}' still has the default password 'admin' (sign in as {name} / admin). Sign in now and choose a new password."));
         tracing::warn!("an administrator still has the default password");
     }
     let state = AppState::new(cfg, store.clone(), engine, shutdown_tx);
@@ -516,6 +593,8 @@ async fn serve(cfg: Config) -> i32 {
         .last_session_purge
         .store(now, std::sync::atomic::Ordering::Relaxed);
     let app = build_router(state.clone());
+    // The tail of a burst of refused sign-ins is logged by this timer (the throttle never logs per attempt)
+    let refusal_reports = xexam_backend::api::auth::spawn_refusal_reports(state.clone());
 
     let notify = Arc::new(tokio::sync::Notify::new());
     let n2 = notify.clone();
@@ -543,7 +622,20 @@ async fn serve(cfg: Config) -> i32 {
             }
         }
     }
+    refusal_reports.abort();
     drop(state);
+    // WAL: copy everything into xexam.db and empty xexam.db-wal, so the volume holds just the database file at rest
+    // (closing the last connection below also removes the -wal and -shm files when no other process has the database open)
+    match store.checkpoint() {
+        Ok(None) => {}
+        Ok(Some(c)) if c.busy => tracing::warn!(
+            "WAL checkpoint at shutdown could not finish (another process is using the database); SQLite completes it later"
+        ),
+        Ok(Some(_)) => {
+            tracing::info!("WAL checkpoint at shutdown: everything is in xexam.db, the -wal file is empty")
+        }
+        Err(e) => tracing::warn!("WAL checkpoint at shutdown failed: {e}"),
+    }
     drop(store);
     say("Exited.");
     code
@@ -579,10 +671,10 @@ fn main() {
             println!("{RESET_PASSWORD_USAGE}");
             0
         }
-        Cmd::ResetPassword(name) => run_reset_password(&name, &cfg.data_dir),
+        Cmd::ResetPassword(name) => run_reset_password(&name, &cfg.data_dir, cfg.sqlite_journal),
         Cmd::Healthcheck => i32::from(!healthcheck(cfg.port)),
-        Cmd::Import(path) => run_import(&path, &cfg.data_dir),
-        Cmd::MigrateProgress(path) => run_migrate(path, &cfg.data_dir),
+        Cmd::Import(path) => run_import(&path, &cfg.data_dir, cfg.sqlite_journal),
+        Cmd::MigrateProgress(path) => run_migrate(path, &cfg.data_dir, cfg.sqlite_journal),
         Cmd::Serve => match tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()

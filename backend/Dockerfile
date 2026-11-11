@@ -23,7 +23,7 @@ RUN apt-get update \
 RUN case "$TARGETARCH" in \
       amd64) echo x86_64-unknown-linux-musl  > /rust-target ;; \
       arm64) echo aarch64-unknown-linux-musl > /rust-target ;; \
-      *) echo "不支持的架构：$TARGETARCH" >&2; exit 1 ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
     esac \
  && rustup target add "$(cat /rust-target)"
 # aarch64: rustc by default adds -Wl,--fix-cortex-a53-843419 to the linker, which zig's linker does not recognize, so linking fails (see backend/zigcc-aarch64.sh).
@@ -44,8 +44,10 @@ COPY backend/src ./src
 RUN touch src/main.rs src/lib.rs  && build-release  && cp "target/$(cat /rust-target)/release/xexam-backend" /xexam-backend
 
 FROM alpine:3.21
-# Time zone library: timestamps in the database are local time (TZ=Asia/Tokyo); without it they would silently become UTC
+# Time zones: timestamps in the database are local time. tzdata lets TZ name any zone; /etc/localtime defaults to UTC
+# and docker-compose.yml mounts the host's /etc/localtime over it, so the container follows the host's time zone.
 RUN apk add --no-cache tzdata \
+ && cp /usr/share/zoneinfo/UTC /etc/localtime \
  && addgroup -g 10001 app && adduser -D -u 10001 -G app app \
  && mkdir /data && chown app:app /data
 COPY --from=build /xexam-backend /usr/local/bin/xexam-backend

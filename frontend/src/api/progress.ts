@@ -1,8 +1,9 @@
-import type { AttemptRequest, Progress, RecordDetail, RecordsDeleted, RecordsResponse } from '../types/api.ts';
+import type { AttemptRequest, AttemptResponse, Progress, RecordDetail, RecordsDeleted, RecordsResponse } from '../types/api.ts';
 import { getJson, postJson } from './client.ts';
 
 export const fetchProgress = (): Promise<Progress> => getJson<Progress>('/api/progress');
-export const submitAttempt = (a: AttemptRequest): Promise<Progress> => postJson<Progress>('/api/attempt', a);
+/** Saves an exam; the answer is the new progress plus the ids of the results that were not counted (see AttemptResponse) */
+export const submitAttempt = (a: AttemptRequest): Promise<AttemptResponse> => postJson<AttemptResponse>('/api/attempt', a);
 /** Clears everything: all exam records and the per-question stats (wrong-answer notebook) */
 export const resetProgress = (): Promise<Progress> => postJson<Progress>('/api/reset');
 

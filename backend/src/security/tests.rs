@@ -30,7 +30,7 @@ fn host_name_cases() {
         (Some("[::1"), "[::1"),
         (Some("LOCALHOST.:8765"), "localhost"),
         (Some("\u{3000}localhost\u{3000}"), "localhost"),
-        (Some("İstanbul"), "i̇stanbul"), // multibyte characters do not panic at the slice boundary
+        (Some("İnternet"), "i̇nternet"), // multibyte characters do not panic at the slice boundary
     ] {
         assert_eq!(host_name(h), want, "host_name({h:?})");
     }

@@ -31,9 +31,10 @@ test('inlineTokens splits bold, code and links and keeps the rest as text', () =
   assert.deepEqual(inlineTokens('plain'), [{ kind: 'text', text: 'plain' }]);
 });
 
-test('the three READMEs have a changelog whose newest entry equals VERSION', () => {
+test('the three READMEs have a changelog whose newest entry equals CODE_VERSION in VERSION', () => {
   const root = new URL('../../../', import.meta.url);
-  const version = readFileSync(new URL('VERSION', root), 'utf8').trim();
+  // VERSION has KEY=VALUE lines (CODE_VERSION, RELEASE_VERSION) and # comments; the changelog follows CODE_VERSION
+  const version = /^CODE_VERSION=\s*(\S+)\s*$/m.exec(readFileSync(new URL('VERSION', root), 'utf8'))?.[1] ?? '';
   for (const f of ['README.md', 'README/README.ja.md', 'README/README.zh-CN.md']) {
     const e = parseChangelog(readFileSync(new URL(f, root), 'utf8'));
     assert.ok(e.length > 3, `${f}: changelog entries found`);

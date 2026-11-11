@@ -26,7 +26,7 @@
 | Q13 | 不支持的方法 | **405 + `Allow`** | 旧版的 501 是标准库的偶然产物 |
 | Q14 | 安全头 | `nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、严格 CSP（样式不用内联）；**不设 HSTS** | TLS 在 Cloudflare 终止 |
 | Q15 | 成绩百分比取整 | **复刻 Python 的半偶数** | 与学习记录一致；前端 v0.2 已用同一规则 |
-| Q16 | 时区 | 时间戳格式不变；镜像带时区库，`TZ=Asia/Tokyo` | 否则静默变 UTC |
+| Q16 | 时区 | 时间戳格式不变；镜像带时区库，`TZ=<所在时区>` | 否则静默变 UTC |
 | Q17 | `/api/shutdown` | **保留**（Docker 里恒 403） | 删功能需要批准 |
 | Q18 | `--import` 与 `progress.json` 迁移 | **移植，行为与 Python 版一致** | 删功能需要批准。（最初的计划是「只在没有任何 .db 时才迁」，评审发现这会让文档里「先启动一次、再放 progress.json、重启」的流程悄悄失效，所以改回与 Python 版相同：每次启动都看一眼，靠库里的 `legacy_migrated` 标记和「已有学习记录就不覆盖」保证只迁一次） |
 | Q19 | `start.bat` / 不用 Docker | 随旧实现保留在 `legacy/python/`；新栈以 Docker 为主，另附 Windows 开发脚本 | |

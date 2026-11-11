@@ -1,36 +1,58 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "0.5.1"
+  version: "0.7"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
-    differences are listed under "Differences from the old version" in docs/en/api.md. Endpoints and fields marked *(v0.5)* were
-    added in v0.5 (question banks, exam records with per-question detail, settings); see "Changes in v0.5" in docs/en/api.md.
+    differences are listed under "Differences from the old version" in docs/en/api.md, and the changes of each version under
+    "Changes in v0.5", "Changes in v0.6" and "Changes in v0.7". Endpoints and fields marked (v0.5), (v0.6) or (v0.7) were added
+    in that version.
 
-    All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`.
+    All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
     JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
-    Errors are always `{"error": "<reason, in Chinese>"}`.
+    Errors are always `{"error": "<reason, in Chinese>"}` (a 429 adds `retryAfter`); docs/en/api.md lists every message with
+    its English meaning. Only the low-level answers of the request layer keep the old short English text (`bad content type`,
+    `too large`, `bad json`, `not found`, `method not allowed`).
 
-    **Guard order (POST)**: Host → Origin → Content-Type → request body size → JSON parsing → routing.
-    GET only checks Host.
+    **Guard order**: GET / HEAD: Host → session and access level → routing. POST: Host → Origin → session and access level →
+    Content-Type → request body size → JSON parsing → routing. The session check runs before any of the body is read.
+
+    **Access levels** (`x-access` on each operation): `Public` (no session), `SignedIn` (any signed-in user), `BankManager`
+    (administrators, and plain users with the "can manage question banks" permission, v0.7), `Admin` (administrators only).
+    Without a valid session every non-public route, known or not, answers 401 `请先登录。`. While the account must choose a new
+    password, every route except the public ones (`GET /api/info`, `GET /api/auth/state`, `POST /api/auth/login`) and
+    `POST /api/auth/password` and `POST /api/auth/logout`
+    answers 403 `请先设置新密码。`. Admin routes answer 403 `只有管理员可以进行这个操作。` and bank manager routes 403
+    `你没有管理题库的权限，请联系管理员。` to users without the access.
+
+    **What a plain user sees** (v0.7): every bank (`"banks": "all"`) or the banks an administrator chose, plus, while they are a
+    bank manager, the banks they own. `/api/bank`, `/api/banks`, the statistics of `/api/progress`, the questions
+    `/api/attempt` counts and the question text of `/api/record` all follow it. Administrators see and manage every bank.
 servers:
   - url: http://localhost:8765
     description: Local machine (through Nginx)
+security:
+  - session: []
 tags:
+  - name: system
+  - name: auth
+  - name: users
   - name: read
-  - name: import
   - name: banks
+  - name: import
   - name: progress
   - name: records
   - name: settings
-  - name: system
+  - name: logs
 
 paths:
   /api/info:
     get:
       tags: [system]
       summary: Version, architecture, whether shutdown is allowed, question count
+      x-access: Public
+      security: []
       responses:
         "200":
           description: OK
@@ -38,43 +60,316 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Info" }
         "403": { $ref: "#/components/responses/ForbiddenHost" }
+
+  /api/auth/state:
+    get:
+      tags: [auth]
+      summary: "(v0.6) Who is signed in; the library stamp, or the default administrator's name"
+      x-access: Public
+      security: []
+      description: |
+        Signed out (no cookie, or a session that is no longer valid): `{"user": null, "defaultAdmin": <string | null>}`.
+        Signed in (also while the account must choose a new password): `{"user": {...}, "library": "<32 hex digits>"}`.
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthState" }
+        "403": { $ref: "#/components/responses/ForbiddenHost" }
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: "(v0.6) Sign in"
+      x-access: Public
+      security: []
+      description: |
+        Sets two cookies: `xexam_session=<token>; HttpOnly; SameSite=Strict; Path=/; Max-Age=2592000` (30 days, sliding; a new
+        random token on every sign-in; at most 20 sessions per user) and the known-browser cookie
+        `xexam_device=<tag>; HttpOnly; SameSite=Strict; Path=/api/auth; Max-Age=34560000` (400 days). Both get `Secure` only when
+        the request's `Origin` is `https://…` or `XEXAM_COOKIE_SECURE=1`. The username is trimmed and compared ignoring case.
+
+        A wrong password, an unknown username and a disabled account all get the same 401 after the same amount of work.
+        Failed sign-ins escalate a lock in rounds (5 failures within 15 minutes → 1 minute; then 3 failures per round → 5 min,
+        15 min, 30 min, 1 h, then 1 day), per account and separately for browsers that carry the account's `xexam_device`
+        cookie. During a lock every attempt gets 429, even with the right password; 429 answers are not counted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: Signed in; the session and known-browser cookies are set
+          headers:
+            Set-Cookie:
+              description: "`xexam_session=…` and `xexam_device=…` (two headers)"
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401":
+          description: "`用户名或密码不对。` (The username or password is not correct.)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "403": { $ref: "#/components/responses/Denied" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+        "429": { $ref: "#/components/responses/TooManyLogins" }
+  /api/auth/logout:
+    post:
+      tags: [auth]
+      summary: "(v0.6) Sign out: deletes this session and expires the cookie"
+      x-access: SignedIn
+      description: Reachable while the account must choose a new password.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: "Signed out; `Set-Cookie: xexam_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/auth/password:
+    post:
+      tags: [auth]
+      summary: "(v0.6) Change your own password"
+      x-access: SignedIn
+      description: |
+        Reachable while the account must choose a new password; then `current` is not needed. Otherwise a wrong `current` is
+        403 `当前密码不对。` and counts in the same sign-in buckets as a failed sign-in (so 429 applies too).
+
+        On success every session of the account ends, this one included: this browser gets a new `xexam_session` cookie and the
+        `xexam_device` cookie of the new password. 400: `password` (or a required `current`) missing or not a string →
+        `请求的格式不对。`; a password outside 8–128 characters → `密码需要 8–128 个字符。`; the same password as before →
+        `新密码不能和原来的一样。`. 401 `请先登录。` when the account was disabled or deleted, or its password changed elsewhere
+        while the request ran (nothing is written).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PasswordChange" }
+      responses:
+        "200":
+          description: The password was changed; new cookies are set
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserEnvelope" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "`当前密码不对。` (The current password is not correct.), or rejected by the Host / Origin guard"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+        "429": { $ref: "#/components/responses/TooManyLogins" }
+
+  /api/users:
+    get:
+      tags: [users]
+      summary: "(v0.6) Every account, ordered by id, with its permissions and sign-in lock"
+      x-access: Admin
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
+  /api/users/create:
+    post:
+      tags: [users]
+      summary: "(v0.6) Add a user (they must choose a new password at the first sign-in)"
+      x-access: Admin
+      description: |
+        Usernames: 1–40 characters of ASCII letters, digits and `. _ - @` (surrounding spaces removed), unique ignoring case.
+        Passwords: 8–128 characters. 400 `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` for a missing or invalid username;
+        400 `密码需要 8–128 个字符。`; 400 `请求的格式不对。` for a missing password, a missing or unknown role, a malformed
+        `banks` or a non-boolean `canManageBanks`; (v0.7) 400 `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` when
+        an id in `banks` is not an existing bank (nothing is created).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserCreate" }
+      responses:
+        "200":
+          description: Every account after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "`这个用户名已经有人用了。` (This username is already taken.)"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/users/update:
+    post:
+      tags: [users]
+      summary: "(v0.6) Rename, change the role, disable or enable a user; (v0.7) set their banks and bank manager permission"
+      x-access: Admin
+      description: |
+        Keys left out stay unchanged. Disabling an account or changing its role ends its sessions; a rename or a change of
+        `banks` / `canManageBanks` keeps them and applies at the user's next request. `banks` and `canManageBanks` are kept
+        across role changes (they matter only for plain users). Every check runs in the same transaction as the write.
+        400 as for create (`disabled` not a boolean, `id` missing or not an integer → `请求的格式不对。`).
+        409: `不能对自己的账户做这个操作。` (disabling yourself or changing your own role), `至少要保留一个启用的管理员。` (no
+        enabled administrator would remain), `这个用户名已经有人用了。`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdate" }
+      responses:
+        "200":
+          description: Every account after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/UserNotFound" }
+        "409": { $ref: "#/components/responses/UserConflict" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/users/password:
+    post:
+      tags: [users]
+      summary: "(v0.6) Give another user a new initial password"
+      x-access: Admin
+      description: |
+        The user must choose a new password at the next sign-in; their sessions end, their known-browser cookies stop matching
+        and their sign-in lock is cleared. Your own id → 409 `不能对自己的账户做这个操作。` (use `POST /api/auth/password`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, password]
+              properties:
+                id: { type: integer }
+                password: { type: string, minLength: 8, maxLength: 128 }
+      responses:
+        "200":
+          description: Every account after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/UserNotFound" }
+        "409": { $ref: "#/components/responses/UserConflict" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/users/delete:
+    post:
+      tags: [users]
+      summary: "(v0.6) Delete a user with their sessions, study records, statistics, settings and chosen banks"
+      x-access: Admin
+      description: |
+        (v0.7) The banks the user owned are not deleted: they now belong to the administrator who deleted the user.
+        409 for your own account (`不能对自己的账户做这个操作。`) and for the last enabled administrator (`至少要保留一个启用的管理员。`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserId" }
+      responses:
+        "200":
+          description: Every account after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/UserNotFound" }
+        "409": { $ref: "#/components/responses/UserConflict" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+  /api/users/unlock:
+    post:
+      tags: [users]
+      summary: "(v0.6) Clear a user's sign-in state for every browser (back to round 1, 5 tries)"
+      x-access: Admin
+      description: |
+        Works whether a lock is running or the account is only past round 1, by user id (so also after a rename), and for your
+        own account too. Nothing is written to the database (the sign-in state lives in memory).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserId" }
+      responses:
+        "200":
+          description: Every account after the change
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/UserNotFound" }
+        "415": { $ref: "#/components/responses/BadContentType" }
+
   /api/bank:
     get:
       tags: [read]
-      summary: Questions of every bank (active questions only), grouped by bank id; each question ends with its `bank`
+      summary: Questions (active only) of every bank the user may see, grouped by bank id; each question ends with its `bank`
+      x-access: SignedIn
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Bank" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/banks:
     get:
       tags: [banks]
-      summary: "(v0.5) The question banks (one per imported workbook), ordered by id"
+      summary: "(v0.5) The question banks the user may see (one per imported workbook), ordered by id"
+      x-access: SignedIn
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/BankList" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/progress:
     get:
       tags: [progress]
-      summary: Study records (per-question statistics + scores of the 60 most recent exams)
+      summary: The user's study records (per-question statistics of the banks they may see + their 60 most recent records)
+      x-access: SignedIn
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Progress" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/imports:
     get:
       tags: [import]
-      summary: The 12 most recent import records (newest first)
+      summary: The 12 most recent import records, newest first (a bank manager gets only the imports into their own banks)
+      x-access: BankManager
       responses:
         "200":
           description: OK
@@ -87,22 +382,26 @@ paths:
                   imports:
                     type: array
                     items: { $ref: "#/components/schemas/ImportRecord" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/records:
     get:
       tags: [records]
-      summary: "(v0.5) Every kept exam record (at most 500), newest first"
+      summary: "(v0.5) Every kept study record of the user (at most 500), newest first"
+      x-access: SignedIn
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/RecordList" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/record:
     get:
       tags: [records]
-      summary: "(v0.5) One exam record with its per-question detail"
+      summary: "(v0.5) One study record of the user with its per-question detail"
+      x-access: SignedIn
       parameters:
         - name: id
           in: query
@@ -125,22 +424,26 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
         "404": { $ref: "#/components/responses/RecordNotFound" }
   /api/settings:
     get:
       tags: [settings]
-      summary: "(v0.5) Interface settings (defaults merged with the stored values)"
+      summary: "(v0.5) The user's interface settings (defaults merged with the stored values)"
+      x-access: SignedIn
       responses:
         "200":
           description: OK
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
-        "403": { $ref: "#/components/responses/ForbiddenHost" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
     post:
       tags: [settings]
-      summary: "(v0.5) Change any subset of the settings (one transaction); returns the full settings"
+      summary: "(v0.5) Change any subset of the user's settings (one transaction); returns the full settings"
+      x-access: SignedIn
       description: |
         Unknown keys are ignored. A known key with an invalid value → 400 `设置的值不对。` and nothing is written.
       requestBody:
@@ -155,12 +458,14 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "415": { $ref: "#/components/responses/BadContentType" }
   /api/settings/reset:
     post:
       tags: [settings]
       summary: "(v0.5) Restore theme, uiLang and autoAdvance to their defaults (questionLang is kept)"
+      x-access: SignedIn
       requestBody:
         required: false
         content:
@@ -172,18 +477,28 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Settings" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "415": { $ref: "#/components/responses/BadContentType" }
 
   /api/upload:
     post:
       tags: [import]
       summary: "Upload an .xlsx and get a preview (**nothing is written to the database**) and a one-time confirmation code"
+      x-access: BankManager
       description: |
         The request body is the raw bytes of the .xlsx, at most 20 MiB (counted in real bytes; Content-Length is not trusted).
         Whether it is an .xlsx is judged only by its **content** (magic number + ZIP + workbook + no DOCTYPE / entity declarations),
-        never by the file name. The parsed result is held in memory in **one single slot** (uploading again replaces it) and stays
-        valid for 30 minutes.
+        never by the file name. The parsed result is held in memory in **the uploader's own slot** (uploading again replaces it;
+        other users' slots are untouched) and stays valid for 30 minutes.
+
+        (v0.7) All staged previews together share a memory budget of 128 MiB (estimated from their content). Staging a new
+        upload drops expired previews, then the oldest previews of other users while the total is above the budget; the newest
+        upload is always kept. A dropped preview answers 409 at confirm, as after the time limit.
+
+        (v0.7) A bank manager may update only a bank they own: an existing bank of somebody else as the target (also the legacy
+        bank, for an upload without `X-Bank-Target`) → 403 `这个题库不是你上传的，只能更新或删除你自己上传的题库。`, before the
+        file is parsed.
       parameters:
         - name: X-Filename
           in: header
@@ -195,9 +510,10 @@ paths:
           required: false
           description: |
             (v0.5) Which bank the file goes to. Absent: the legacy bank (v0.4 behavior; created at confirm if it does not exist).
-            `new` (surrounding spaces ignored, any case): a new bank is created at confirm, and the preview shows every usable
-            question as `added`. A bank id (`^[0-9]{1,18}$`): update that bank (404 if it does not exist). Anything else: 400
-            `上传目标不对，请刷新页面后再试。`. The preview is computed against the target bank only; its keys do not change.
+            `new` (surrounding spaces ignored, any case): a new bank, owned by the uploader, is created at confirm, and the preview
+            shows every usable question as `added`. A bank id (`^[0-9]{1,18}$`): update that bank (404 if it does not exist).
+            Anything else: 400 `上传目标不对，请刷新页面后再试。`. The preview is computed against the target bank only; its keys
+            do not change.
           schema: { type: string, example: new }
       requestBody:
         required: true
@@ -211,10 +527,11 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/ImportPreview" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenBank" }
         "404": { $ref: "#/components/responses/BankNotFound" }
         "413":
-          description: Larger than 20 MiB
+          description: "Larger than 20 MiB: `文件太大了（最大 20 MB）。题库通常只有 1–2 MB，请确认选对了文件。`"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -222,13 +539,17 @@ paths:
   /api/import/confirm:
     post:
       tags: [import]
-      summary: Confirm the import (the only endpoint that writes the question bank)
+      summary: Confirm the import (the only endpoint that writes the question banks)
+      x-access: BankManager
       description: |
-        The confirmation code is **single-use**: it is invalidated immediately after a success; a wrong confirmation code does not
-        consume what is in the slot; an expired one (30 minutes) cannot be retrieved.
+        The confirmation code is **single-use**: it is invalidated immediately after a success. It confirms only the caller's own
+        staged upload: a wrong code, another user's code or a non-ASCII code does not consume what is in the slot; an expired or
+        dropped preview cannot be retrieved (all: 409).
         The import is done in **one transaction**; if it fails, the question bank is left completely unchanged.
         (v0.5) The file replaces the content of its target bank only (questions of that bank missing from the file are
         deactivated; other banks are untouched). `bankId` is present only when the upload carried `X-Bank-Target`.
+        (v0.7) `bank` is as the caller sees it. A target bank that now belongs to somebody else → 403
+        `这个题库不是你上传的，只能更新或删除你自己上传的题库。`; nothing is written and the code is used up.
       requestBody:
         required: true
         content:
@@ -251,31 +572,33 @@ paths:
                   bank: { $ref: "#/components/schemas/Bank" }
                   bankId: { type: integer, description: "(v0.5) Only when the upload carried `X-Bank-Target`: the created / updated bank" }
         "400":
-          description: This file contains no usable questions (nothing is imported)
+          description: "This file contains no usable questions (nothing is imported): `这份文件里没有读到任何可用的题，没有导入。`"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "403": { $ref: "#/components/responses/Denied" }
-        "409":
-          description: The preview has expired or was already handled (this includes a wrong or non-ASCII confirmation code)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenBank" }
         "404":
           description: "(v0.5) The target bank was deleted after the preview: nothing is written, the confirmation code is used up"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "409":
+          description: "The preview has expired, was dropped or was already handled (this includes a wrong, foreign or non-ASCII confirmation code): `这次上传的预览已经过期或已被处理，请重新上传。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "415": { $ref: "#/components/responses/BadContentType" }
         "500":
-          description: Writing to the database failed; the question bank is left completely unchanged
+          description: "Writing to the database failed; the question bank is left completely unchanged: `写入数据库失败，题库没有任何改动。`"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
   /api/import/cancel:
     post:
       tags: [import]
-      summary: Cancel the pending import (no confirmation code needed)
+      summary: Cancel the caller's own pending import (no confirmation code needed)
+      x-access: BankManager
       requestBody:
         required: false
         content:
@@ -286,22 +609,25 @@ paths:
           description: OK
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
-        "403": { $ref: "#/components/responses/Denied" }
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "415": { $ref: "#/components/responses/BadContentType" }
 
   /api/banks/delete:
     post:
       tags: [banks]
       summary: "(v0.5) Delete a question bank, optionally with its study data"
+      x-access: BankManager
       description: |
-        One transaction: the bank's questions (active and deactivated), its import history and the bank itself. With
-        `withRecords: true` also the statistics and per-question exam detail of those questions, and every exam record that
-        drew from this bank and from no bank that still exists (with the rest of its detail). Without it, exam records and
-        statistics stay. A pending upload that targets this bank is discarded.
+        One transaction: the bank's questions (active and deactivated), its import history, the users' access to it and the bank
+        itself. With `withRecords: true` also the statistics and per-question detail of those questions, and every study record
+        that drew from this bank and from no bank that still exists (with the rest of its detail). Without it, study records and
+        statistics stay. Every pending upload that targets this bank, of any user, is discarded.
+
+        An administrator deletes any bank, and `withRecords` removes the study data of every user. (v0.7) A bank manager deletes
+        only the banks they own (403 `这个题库不是你上传的，只能更新或删除你自己上传的题库。` otherwise, nothing written), and
+        `withRecords` removes only their own study data.
       requestBody:
         required: true
         content:
@@ -314,7 +640,7 @@ paths:
                 withRecords: { type: boolean, default: false }
       responses:
         "200":
-          description: The banks, the questions and the study records after the deletion
+          description: The banks, the questions and the study records after the deletion, as the caller sees them
           content:
             application/json:
               schema:
@@ -329,17 +655,20 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenBank" }
         "404": { $ref: "#/components/responses/BankNotFound" }
         "415": { $ref: "#/components/responses/BadContentType" }
   /api/records/delete:
     post:
       tags: [records]
-      summary: "(v0.5) Delete one exam record, or all of them"
+      summary: "(v0.5) Delete one of the user's study records, or all of them"
+      x-access: SignedIn
       description: |
         `{"id": <int>}`: that record and its detail (the per-question statistics are not changed).
-        `{"all": true, "withStats": <bool, default false>}`: every record and its detail; `withStats` also empties the statistics.
-        Any other shape (neither or both of `id` / `all`, `all` not `true`, `withStats` together with `id`, wrong types) → 400.
+        `{"all": true, "withStats": <bool, default false>}`: every record of the user and its detail; `withStats` also empties
+        their statistics. Any other shape (neither or both of `id` / `all`, `all` not `true`, `withStats` together with `id`,
+        wrong types) → 400. Only the caller's own records are ever deleted.
       requestBody:
         required: true
         content:
@@ -372,24 +701,32 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "404": { $ref: "#/components/responses/RecordNotFound" }
         "415": { $ref: "#/components/responses/BadContentType" }
 
   /api/attempt:
     post:
       tags: [progress]
-      summary: "Record the result of one exam ({question id, correct or not}, and since v0.5 optionally the answer given)"
+      summary: "Record the result of one exam or (v0.7) practice: {question id, correct or not}, optionally the answer given"
+      x-access: SignedIn
       description: |
-        Sanitizing rules: `results` must be a list (otherwise 400 `成绩的格式不对`, "malformed results"), at most 2000 entries; each
-        entry needs a string `id` (truncated to the first 64 characters) and a boolean `correct` (entries that do not qualify are
-        dropped); no valid entry → 400 `没有成绩可保存` ("no results to save"). `sheets` accepts only strings (at most 50, each
-        truncated to the first 80 characters); a `mode` other than all / weak / retry is treated as all; `seconds` is clamped to
-        0..604800 and abnormal values become 0.
-        The server **trusts** `correct` and does not check whether the id is in the question bank (same as the legacy version).
+        Sanitizing rules: `results` must be a list (otherwise 400 `成绩的格式不对`, "malformed results"), and only its first
+        2000 entries are read; each entry needs a string `id` (cut to 64 characters) and a boolean `correct` (other entries are
+        dropped); no valid entry → 400 `没有成绩可保存` ("no results to save"). `sheets` keeps at most 50 strings (each cut to
+        80 characters); a `mode` other than all / weak / retry is treated as all; `seconds` is clamped to 0..604800 and abnormal
+        values become 0. The server **trusts** `correct`; grading happens in the browser.
         (v0.5) An optional `answer` per result is stored for later review: an array of at most 64 elements, each a string of at
         most 8 characters, an integer 0..999 or null; anything else is stored as "no answer" (the result is still accepted). The
-        database keeps the 500 newest exams with their per-question detail; the response is unchanged.
+        database keeps the user's 500 newest records with their per-question detail.
+        (v0.7) `kind`: `exam` (default, also when missing or null) or `practice`; anything else → 400 `成绩的格式不对`. Both kinds
+        update the statistics the same way.
+        (v0.7) Only questions that exist and belong to a bank the user may see are counted. Other results (a bank deleted during
+        the exam, a made-up id, a bank the user cannot see) are left out of the statistics, the detail, total / correct / percent
+        and the bank snapshot, and their ids come back in `notCounted`; the record's `sheets` then lists only the sheets (in the
+        order sent) that a counted question belongs to. Deactivated questions still exist and are counted. When nothing is left,
+        nothing is saved: 409 `这场考试的题目已经被删除，成绩没有保存。`.
       requestBody:
         required: true
         content:
@@ -397,17 +734,24 @@ paths:
             schema: { $ref: "#/components/schemas/AttemptRequest" }
       responses:
         "200":
-          description: The latest study records
+          description: The user's latest study records (plus `notCounted` when some results were left out)
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Progress" }
+              schema: { $ref: "#/components/schemas/AttemptResponse" }
         "400": { $ref: "#/components/responses/BadRequest" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "409":
+          description: "(v0.7) None of the questions exists (or is visible to the user) any more; nothing was saved: `这场考试的题目已经被删除，成绩没有保存。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
         "415": { $ref: "#/components/responses/BadContentType" }
   /api/reset:
     post:
       tags: [progress]
-      summary: Clear the study records (score history with its per-question detail, and per-question statistics; the question bank is untouched)
+      summary: Clear the user's study records (records with their per-question detail, and per-question statistics)
+      x-access: SignedIn
       requestBody:
         required: false
         content:
@@ -419,46 +763,143 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Progress" }
-        "403": { $ref: "#/components/responses/Denied" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
         "415": { $ref: "#/components/responses/BadContentType" }
+
+  /api/logs:
+    get:
+      tags: [logs]
+      summary: "(v0.7) The recent lines of the system log (in memory, at most 2000, since the backend started)"
+      x-access: Admin
+      description: |
+        The lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter) plus the startup and shutdown
+        status lines; never a password, a token, a cookie value or question text. Without `after`, every kept line. The sequence
+        numbers start at 1 again after a restart, so an `after` larger than `last`, or a `boot` that is not this process's id,
+        is answered like no `after`: every kept line. Other query parameters are ignored.
+      parameters:
+        - name: after
+          in: query
+          required: false
+          description: Return only the lines after this sequence number (the `last` of the previous answer). 1–19 ASCII digits.
+          schema: { type: string, pattern: "^[0-9]{1,19}$" }
+        - name: boot
+          in: query
+          required: false
+          description: The `boot` of the answer the client last read.
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,64}$" }
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogPage" }
+        "400":
+          description: "`after` or `boot` malformed, empty or given twice: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/ForbiddenGet" }
   /api/shutdown:
     post:
       tags: [system]
       summary: "Shut down the program (only available when started with --allow-shutdown; always 403 in Docker)"
+      x-access: Admin
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { type: object }
       responses:
         "200":
           description: Shutdown scheduled
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  ok: { type: boolean }
+              schema: { $ref: "#/components/schemas/Ok" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
         "403":
-          description: Not enabled (the case in Docker) or rejected by the Host / Origin guard
+          description: "Not enabled (the case in Docker): `在 Docker 里请用 docker compose stop 停止容器。`; not an administrator; or rejected by the Host / Origin guard"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
+        "415": { $ref: "#/components/responses/BadContentType" }
 
 components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: xexam_session
+      description: |
+        (v0.6) The session cookie set by `POST /api/auth/login` (43 base64url characters; the database stores only its SHA-256).
+        Sessions last 30 days and slide: at most once an hour a request refreshes the session and re-sends the cookie, but only
+        when the request carries an `Origin` header or `XEXAM_COOKIE_SECURE=1`.
+
   responses:
     ForbiddenHost:
       description: 'Host is not on the allow-list. The GET response is **text/plain**, in the form `Forbidden host: <host name>。…`'
       content:
         text/plain:
           schema: { type: string }
+    ForbiddenGet:
+      description: |
+        Host not on the allow-list (**text/plain**, `Forbidden host: <host name>。…`); or (JSON) the account must choose a new
+        password (`请先设置新密码。`), an Admin route for a plain user (`只有管理员可以进行这个操作。`), a BankManager route for a
+        user without the permission (`你没有管理题库的权限，请联系管理员。`).
+      content:
+        text/plain:
+          schema: { type: string }
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
     Denied:
       description: The POST was rejected by the Host / Origin guard; `error` says which check failed and how to let it through
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
+    Forbidden:
+      description: |
+        Rejected by the Host / Origin guard; or the account must choose a new password (`请先设置新密码。`); or the access level
+        of the route is not met (`只有管理员可以进行这个操作。` for Admin routes, `你没有管理题库的权限，请联系管理员。` for
+        BankManager routes).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ForbiddenBank:
+      description: |
+        As `Forbidden`, plus (v0.7) a bank manager aiming at a bank they do not own:
+        `这个题库不是你上传的，只能更新或删除你自己上传的题库。` (nothing is written).
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Unauthorized:
+      description: "(v0.6) No valid session (no cookie, an unknown or expired session, or a disabled account): `请先登录。`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooManyLogins:
+      description: |
+        (v0.6) The sign-in is locked after repeated failures: `登录失败次数太多，请稍后再试。`, with the seconds to wait in
+        `retryAfter` and in the `Retry-After` header.
+      headers:
+        Retry-After:
+          description: Seconds until the lock ends (rounded up, at least 1)
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/TooManyLogins" }
     BadRequest:
       description: Something is wrong with the request; `error` is a reason in Chinese that can be shown to the user directly
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     BadContentType:
-      description: Wrong Content-Type (JSON endpoints must use application/json; the upload must use application/octet-stream)
+      description: "Wrong Content-Type (JSON endpoints must use application/json; the upload must use application/octet-stream): `bad content type`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    TooLarge:
+      description: "The JSON body is larger than 1,000,000 bytes: `too large`"
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -468,7 +909,19 @@ components:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
     RecordNotFound:
-      description: "(v0.5) No such exam record: `这条考试记录不存在（可能已被删除），请刷新页面后再试。`"
+      description: "(v0.5) No such record of this user: `这条考试记录不存在（可能已被删除），请刷新页面后再试。`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UserNotFound:
+      description: "(v0.6) No such user: `这个用户不存在（可能已被删除），请刷新页面后再试。`"
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    UserConflict:
+      description: |
+        (v0.6) `不能对自己的账户做这个操作。` (not on your own account), `至少要保留一个启用的管理员。` (the last enabled
+        administrator stays) or `这个用户名已经有人用了。` (username taken)
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -479,14 +932,137 @@ components:
       required: [error]
       properties:
         error: { type: string }
+    TooManyLogins:
+      type: object
+      required: [error, retryAfter]
+      properties:
+        error: { type: string, example: "登录失败次数太多，请稍后再试。" }
+        retryAfter: { type: integer, description: Seconds until the lock ends }
+    Ok:
+      type: object
+      required: [ok]
+      properties:
+        ok: { type: boolean, example: true }
     Info:
       type: object
       required: [version, arch, canShutdown, bankCount]
       properties:
-        version: { type: string, example: "0.5" }
+        version: { type: string, example: "0.7", description: "`CODE_VERSION` of the VERSION file (or `XEXAM_VERSION`)" }
         arch: { type: string, example: x86_64 }
         canShutdown: { type: boolean }
-        bankCount: { type: integer, description: Number of active questions }
+        bankCount: { type: integer, description: Number of active questions in the whole library (not limited to what any user may see) }
+
+    SessionUser:
+      type: object
+      description: "(v0.6) The signed-in user. Key order as listed."
+      required: [id, username, role, mustChangePassword, canManageBanks]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { type: string, enum: [admin, user] }
+        mustChangePassword: { type: boolean }
+        canManageBanks: { type: boolean, description: "(v0.7) True for every administrator, and for a plain user with the bank manager permission" }
+    UserEnvelope:
+      type: object
+      required: [user]
+      properties:
+        user: { $ref: "#/components/schemas/SessionUser" }
+    AuthState:
+      type: object
+      description: "(v0.6) Signed out: `user` and `defaultAdmin`. Signed in: `user` and `library`."
+      required: [user]
+      properties:
+        user: { nullable: true, allOf: [{ $ref: "#/components/schemas/SessionUser" }] }
+        defaultAdmin:
+          type: string
+          nullable: true
+          description: |
+            Signed out only: the username of an enabled administrator that still has the default password `admin` (the lowest
+            id first), or null. (A boolean before v0.7.)
+        library:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+          description: |
+            Signed in only: an opaque stamp of the question banks the user may see. It changes whenever one of them is
+            imported, replaced or deleted (also by the `import` command), and (v0.7) whenever the banks the user may see or
+            manage change. For a user limited to some banks it is made only of those banks.
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: { type: string }
+        password: { type: string }
+    PasswordChange:
+      type: object
+      required: [password]
+      properties:
+        current: { type: string, description: "Required unless the account must choose a new password" }
+        password: { type: string, minLength: 8, maxLength: 128 }
+
+    BankAccess:
+      description: '(v0.7) The banks a plain user sees: `"all"` (every bank, including banks imported later) or a list of bank ids (`[]` = none)'
+      oneOf:
+        - { type: string, enum: [all] }
+        - { type: array, items: { type: integer } }
+    UserLock:
+      type: object
+      description: "(v0.6) The in-memory sign-in state of an account. Key order as listed."
+      required: [until, retryAfter, round, triesLeft, knownBrowser, otherUntil, otherRetryAfter]
+      properties:
+        until: { type: string, nullable: true, description: "Local time YYYY-MM-DD HH:MM:SS when the running lock ends; null when not locked" }
+        retryAfter: { type: integer, description: "Seconds until then; 0 when not locked" }
+        round: { type: integer, description: "While locked: the round that ended in this lock (1 = the first, one-minute lock). Otherwise the round in progress (2 or more)" }
+        triesLeft: { type: integer, description: "Failures left in the round in progress before the next lock (0 while locked)" }
+        knownBrowser: { type: boolean, description: "(v0.7) True: the state counts sign-ins from browsers where the user signed in before; false: from every other browser (the state that holds the user back more is shown)" }
+        otherUntil: { type: string, nullable: true, description: "(v0.7) When the other browsers are locked at the same time (the account is locked in every browser): the end of that lock; null otherwise" }
+        otherRetryAfter: { type: integer, description: "(v0.7) Seconds until otherUntil; 0 when it is null" }
+    User:
+      type: object
+      description: "(v0.6) One account in GET /api/users. Key order as listed."
+      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, canManageBanks, ownedBanks, lock]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+        role: { type: string, enum: [admin, user] }
+        disabled: { type: boolean }
+        createdAt: { type: string, description: "Local time YYYY-MM-DD HH:MM" }
+        lastLoginAt: { type: string, nullable: true, description: "Local time YYYY-MM-DD HH:MM; null before the first sign-in" }
+        mustChangePassword: { type: boolean }
+        records: { type: integer, description: "Number of the user's study records (exams and practice)" }
+        banks: { $ref: "#/components/schemas/BankAccess" }
+        canManageBanks: { type: boolean, description: "(v0.7) The stored bank manager permission (administrators manage every bank anyway)" }
+        ownedBanks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks this user owns (imported as new banks), ascending" }
+        lock: { nullable: true, allOf: [{ $ref: "#/components/schemas/UserLock" }], description: "null while the account is in the first round and not locked" }
+    UserList:
+      type: object
+      required: [users]
+      properties:
+        users: { type: array, items: { $ref: "#/components/schemas/User" } }
+    UserCreate:
+      type: object
+      required: [username, password, role]
+      properties:
+        username: { type: string, pattern: "^[A-Za-z0-9._@-]{1,40}$" }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        role: { type: string, enum: [admin, user] }
+        banks: { allOf: [{ $ref: "#/components/schemas/BankAccess" }], description: "(v0.7) Default `[]`: no bank until an administrator chooses some" }
+        canManageBanks: { type: boolean, default: false, description: "(v0.7) The bank manager permission" }
+    UserUpdate:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+        username: { type: string, pattern: "^[A-Za-z0-9._@-]{1,40}$" }
+        role: { type: string, enum: [admin, user] }
+        disabled: { type: boolean }
+        banks: { $ref: "#/components/schemas/BankAccess" }
+        canManageBanks: { type: boolean, description: "(v0.7)" }
+    UserId:
+      type: object
+      required: [id]
+      properties:
+        id: { type: integer }
+
     Opt:
       type: object
       required: [key, text]
@@ -498,13 +1074,13 @@ components:
       required: [text, choices]
       properties:
         text: { type: string }
-        choices: { type: array, items: { type: string }, example: [はい, いいえ] }
+        choices: { type: array, items: { type: string }, example: ["Yes", "No"] }
     Zh:
       type: object
       description: |
-        The structure split out for Chinese (and for English, which has the same shape); when the structure cannot be matched to the
-        Japanese question, the whole `zh` / `en` is null (the frontend greys out the button of that language instead of showing
-        misaligned content).
+        The structure of a question in one more language (`zh`, `en` and, v0.7, `ja`), split along the base question's structure;
+        when it cannot be matched to the base question, the whole object is null or missing (the frontend greys out the button of
+        that language instead of showing misaligned content).
       required: [stem]
       properties:
         stem: { type: string }
@@ -515,16 +1091,36 @@ components:
           items: { type: array, items: { type: string } }
           description: |
             Hotspot questions only: the options written in **this language** at the end of each sub-item (Japanese `はい / いいえ`,
-            Chinese `是 / 否`, English `Yes / No`). It is present only when the number of options matches the Japanese one;
-            the position of an option is the answer index, so the j-th option has the same meaning in all three languages.
-            When absent, the UI shows the Japanese options.
+            Chinese `是 / 否`, English `Yes / No`). It is present only when the number of options matches the base question's;
+            the position of an option is the answer index, so the j-th option has the same meaning in every language.
+            When absent, the UI shows the base question's options.
+    ExplainText:
+      type: object
+      description: "(v0.7) The explanation, memory aid and answer note of one language's answer column (six-column layout); empty strings when missing"
+      required: [explanation, mnemonic, note]
+      properties:
+        explanation: { type: string }
+        mnemonic: { type: string }
+        note: { type: string, description: "The note in parentheses after the answer, e.g. `confidence: high`" }
+    Explain:
+      type: object
+      description: "(v0.7) Per-language explanations of a six-column question; a language whose column has none of the three is left out"
+      properties:
+        en: { $ref: "#/components/schemas/ExplainText" }
+        zh: { $ref: "#/components/schemas/ExplainText" }
+        ja: { $ref: "#/components/schemas/ExplainText" }
     Question:
       type: object
+      description: |
+        Key order: kind, tag, stem, options, items, answer, translation, zh, [english, en,] [lang, ja,] explanation, mnemonic,
+        note, [explain,] id, sheet, row, bank. The keys in brackets appear only for the layout that has them: `english` / `en`
+        for the four-column layout, `lang` / `ja` / `explain` for the six-column layout (v0.7); a three-column question has none
+        of them, so its output is byte-for-byte the same as before.
       required: [kind, tag, stem, options, items, answer, translation, zh, explanation, mnemonic, note, id, sheet, row, bank]
       properties:
         kind: { type: string, enum: [single, multi, hotspot] }
-        tag: { type: string, description: "`ホットスポット` for hotspot questions, empty for the others" }
-        stem: { type: string }
+        tag: { type: string, description: "`ホットスポット` for hotspot questions of the 3 / 4-column layouts, `HOTSPOT` in the six-column layout, empty for the others" }
+        stem: { type: string, description: "In the base language: Japanese (column C) for the 3 / 4-column layouts, English (column A) for the six-column layout" }
         options: { type: array, items: { $ref: "#/components/schemas/Opt" } }
         items: { type: array, items: { $ref: "#/components/schemas/Item" } }
         answer:
@@ -535,11 +1131,14 @@ components:
         zh: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }] }
         english:
           type: string
-          description: "Only in the four-column format (A English, B Chinese, C Japanese, D answer): the English original from column A. Questions without English do not have this key (so the output of the three-column format is exactly the same as before)"
-        en: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }], description: "English split along the structure of the Japanese; can only appear in the four-column format" }
-        explanation: { type: string }
-        mnemonic: { type: string }
-        note: { type: string }
+          description: "Only in the four-column layout (A English, B Chinese, C Japanese, D answer): the English original from column A"
+        en: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }], description: "Four-column layout only: the English split along the structure of the Japanese" }
+        lang: { type: string, enum: [en], description: "(v0.7) Six-column layout only: the language of the base text (`stem`, `options`, `items`, `choices`)" }
+        ja: { nullable: true, allOf: [{ $ref: "#/components/schemas/Zh" }], description: "(v0.7) Six-column layout only: the Japanese question (column C) split along the English structure" }
+        explanation: { type: string, description: "Six-column layout: the Chinese text when column E has one, else the Japanese (F), else the English (D)" }
+        mnemonic: { type: string, description: Same rule as explanation }
+        note: { type: string, description: Same rule as explanation }
+        explain: { $ref: "#/components/schemas/Explain" }
         id: { type: string, description: "Question identity (content fingerprint of sheet + question text + first option, 12 hex digits; duplicates get -2, -3 …). In banks other than the legacy bank it is scoped to the bank (see docs/en/database.md 4.1)", example: 94e4bfe00e8d }
         sheet: { type: string }
         row: { type: integer, description: Row number in Excel (for display only) }
@@ -571,8 +1170,8 @@ components:
       type: object
       required: [file, mtime, error, questions, sheets]
       properties:
-        file: { type: string, description: File name of the most recent import }
-        mtime: { type: string, description: "Time of the most recent import, YYYY-MM-DD HH:MM (local time, no time zone)" }
+        file: { type: string, description: File name of the most recent import (into a bank the user may see) }
+        mtime: { type: string, description: "Time of that import, YYYY-MM-DD HH:MM (local time, no time zone)" }
         error: { type: string }
         questions: { type: array, items: { $ref: "#/components/schemas/Question" } }
         sheets: { type: array, items: { $ref: "#/components/schemas/SheetInfo" } }
@@ -588,7 +1187,7 @@ components:
         at: { type: string, description: Time of the most recent attempt }
     HistoryEntry:
       type: object
-      required: [at, sheets, mode, total, correct, percent, seconds]
+      required: [at, sheets, mode, total, correct, percent, seconds, kind]
       properties:
         at: { type: string }
         sheets: { type: array, items: { type: string } }
@@ -597,14 +1196,22 @@ components:
         correct: { type: integer }
         percent: { type: integer, description: "Round half to even (Python round): 1/8 → 12" }
         seconds: { type: integer }
+        kind: { type: string, enum: [exam, practice], description: "(v0.7) Always the last key" }
     Progress:
       type: object
       required: [version, questions, history, masterStreak]
       properties:
         version: { type: integer, example: 1 }
-        questions: { type: object, additionalProperties: { $ref: "#/components/schemas/QuestionStat" } }
-        history: { type: array, items: { $ref: "#/components/schemas/HistoryEntry" }, description: "The 60 most recent exams, newest first" }
+        questions: { type: object, additionalProperties: { $ref: "#/components/schemas/QuestionStat" }, description: "The user's statistics, keyed by question id; (v0.7) only questions of the banks the user may see" }
+        history: { type: array, items: { $ref: "#/components/schemas/HistoryEntry" }, description: "The user's 60 most recent records, newest first" }
         masterStreak: { type: integer, example: 2, description: "How many consecutive correct answers move a wrong question out of the wrong-answer notebook" }
+    AttemptResponse:
+      description: "The user's Progress, plus (v0.7) `notCounted` at the end when some results were left out"
+      allOf:
+        - { $ref: "#/components/schemas/Progress" }
+        - type: object
+          properties:
+            notCounted: { type: array, items: { type: string }, description: "Ids of the results that were not counted (the question is gone or not visible to the user); present only when there are any" }
     BankSheet:
       type: object
       required: [name, usable, inactive]
@@ -615,7 +1222,7 @@ components:
     BankSummary:
       type: object
       description: "(v0.5) One question bank (= one imported workbook). Key order as listed."
-      required: [id, name, filename, legacy, createdAt, updatedAt, total, inactive, sheets, studied, records]
+      required: [id, name, filename, legacy, createdAt, updatedAt, total, inactive, sheets, studied, records, ownerId, owner, manageable]
       properties:
         id: { type: integer }
         name: { type: string, description: "File name without .xlsx when created; ` (2)`, ` (3)` … appended if taken; never changed by updates" }
@@ -626,8 +1233,11 @@ components:
         total: { type: integer, description: Active questions }
         inactive: { type: integer, description: Deactivated questions }
         sheets: { type: array, items: { $ref: "#/components/schemas/BankSheet" }, description: "In the bank's question order, including sheets with only deactivated questions" }
-        studied: { type: integer, description: "Questions of this bank (active or not) that have statistics" }
-        records: { type: integer, description: Exam records whose bank snapshot contains this bank }
+        studied: { type: integer, description: "Questions of this bank (active or not) that have statistics: of every user for an administrator, (v0.7) of the caller for everyone else" }
+        records: { type: integer, description: "Study records whose bank snapshot contains this bank: of every user for an administrator, (v0.7) of the caller for everyone else" }
+        ownerId: { type: integer, nullable: true, description: "(v0.7) The user who imported the bank as a new bank. Administrators get it for every bank; anyone else only for their own banks (null otherwise)" }
+        owner: { type: string, nullable: true, description: "(v0.7) The owner's username; administrators only (always null for anyone else)" }
+        manageable: { type: boolean, description: "(v0.7) Whether the caller may update and delete this bank" }
     BankList:
       type: object
       required: [banks]
@@ -638,12 +1248,12 @@ components:
       required: [id, name, deleted]
       properties:
         id: { type: integer }
-        name: { type: string, description: "The bank's current name, or the name it had when the exam was saved if it was deleted" }
+        name: { type: string, description: "The bank's current name, or the name it had when the record was saved if it was deleted" }
         deleted: { type: boolean }
     RecordSummary:
       type: object
       description: "(v0.5) Key order as listed."
-      required: [id, at, banks, sheets, mode, total, correct, percent, seconds, answered, detail]
+      required: [id, at, banks, sheets, mode, total, correct, percent, seconds, answered, detail, kind]
       properties:
         id: { type: integer }
         at: { type: string }
@@ -656,12 +1266,13 @@ components:
         seconds: { type: integer }
         answered: { type: integer, nullable: true, description: "Detail rows with an answer; null when the record has no detail" }
         detail: { type: boolean, description: "Whether per-question detail exists (exams saved before v0.5 have none)" }
+        kind: { type: string, enum: [exam, practice], description: "(v0.7) Records from before v0.7 are exams" }
     RecordList:
       type: object
       required: [records, retention]
       properties:
         records: { type: array, items: { $ref: "#/components/schemas/RecordSummary" } }
-        retention: { type: integer, example: 500, description: How many exam records the database keeps }
+        retention: { type: integer, example: 500, description: How many records the database keeps per user }
     RecordItem:
       type: object
       description: "(v0.5) Key order as listed."
@@ -675,7 +1286,7 @@ components:
           items: { nullable: true, oneOf: [{ type: string }, { type: integer }] }
           example: [0, 1, null]
         correct: { type: boolean }
-        question: { nullable: true, allOf: [{ $ref: "#/components/schemas/RecordQuestion" }], description: "null when the question no longer exists" }
+        question: { nullable: true, allOf: [{ $ref: "#/components/schemas/RecordQuestion" }], description: "null when the question no longer exists or (v0.7) belongs to a bank the user may not see" }
     Settings:
       type: object
       description: "(v0.5) Key order as listed."
@@ -683,7 +1294,7 @@ components:
       properties:
         theme: { type: string, enum: [system, light, dark], default: system }
         uiLang: { type: string, enum: [en, zh, ja], default: en }
-        autoAdvance: { type: boolean, default: false, description: "Go to the next question automatically after a single-choice pick (or the last hotspot choice)" }
+        autoAdvance: { type: boolean, default: false, description: "Go to the next question automatically after a single-choice pick (or the last hotspot choice); never in practice" }
         questionLang: { type: string, enum: [ja, zh, en], default: ja }
     SettingsPatch:
       type: object
@@ -708,18 +1319,30 @@ components:
         total: { type: integer, description: Number of active questions after the import }
     SheetPlan:
       type: object
+      description: |
+        Key order: name, total, usable, skipped, added, updated, removed, restored, [warnings,] then in the preview only
+        skippedMore, skippedCount, [warningsMore, warningsCount]. The keys in brackets appear only on sheets with warnings (v0.7).
       required: [name, total, usable, skipped, added, updated, removed, restored]
       properties:
         name: { type: string }
         total: { type: integer }
         usable: { type: integer }
-        skipped: { type: array, items: { $ref: "#/components/schemas/SkippedRow" } }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SkippedRow" }, description: "Unreadable rows (in the preview at most 30)" }
         added: { type: integer }
         updated: { type: integer }
         removed: { type: integer }
         restored: { type: integer }
+        warnings:
+          type: array
+          items: { $ref: "#/components/schemas/SkippedRow" }
+          description: |
+            (v0.7) Six-column layout: rows imported with the English answer although the Chinese (E) or Japanese (F) answer
+            differs from it (in the preview at most 30). Reasons: `E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）`,
+            `F 列的日文答案和 D 列的英文答案不一致（已按英文答案导入）`.
         skippedMore: { type: integer, description: "Preview only: how many entries of the 'unreadable' list are not shown after it was truncated (at most 30 are listed per sheet)" }
         skippedCount: { type: integer, description: "Preview only: the total number of unreadable rows in this sheet" }
+        warningsMore: { type: integer, description: "(v0.7) Preview only, sheets with warnings only: how many warnings are not shown" }
+        warningsCount: { type: integer, description: "(v0.7) Preview only, sheets with warnings only: the total number of warnings in this sheet" }
     ImportPlan:
       type: object
       required: [sheets, added, updated, unchanged, restored, removed, skipped, usable, removed_samples, removed_stats]
@@ -734,6 +1357,7 @@ components:
         usable: { type: integer }
         removed_samples: { type: array, items: { type: string }, description: "The first 40 characters of the question text of the questions to be deactivated, at most 5 entries" }
         removed_stats: { type: integer, description: How many of the questions to be deactivated have answer records }
+        warnings: { type: integer, description: "(v0.7) The total number of rows with a warning; present only when there are any" }
     ImportPreview:
       allOf:
         - { $ref: "#/components/schemas/ImportPlan" }
@@ -763,3 +1387,24 @@ components:
         sheets: { type: array, maxItems: 50, items: { type: string } }
         mode: { type: string, enum: [all, weak, retry], default: all }
         seconds: { type: integer, minimum: 0, maximum: 604800, default: 0 }
+        kind: { type: string, enum: [exam, practice], default: exam, description: "(v0.7) An exam or a practice session; missing or null means exam" }
+
+    LogLine:
+      type: object
+      description: "(v0.7) One log line. Key order as listed."
+      required: [seq, time, level, target, message]
+      properties:
+        seq: { type: integer, description: "1 for the first line of this backend process, then one more per line" }
+        time: { type: string, description: "Local time YYYY-MM-DD HH:MM:SS" }
+        level: { type: string, enum: [error, warn, info, debug, trace] }
+        target: { type: string, example: "xexam_backend::api::auth", description: The module that logged it }
+        message: { type: string, description: "The message followed by its fields as ` key=value` (cut after 4000 characters)" }
+    LogPage:
+      type: object
+      description: "(v0.7) Key order as listed."
+      required: [lines, last, dropped, boot]
+      properties:
+        lines: { type: array, items: { $ref: "#/components/schemas/LogLine" }, description: Oldest first }
+        last: { type: integer, description: "Sequence number of the newest line (0 before anything was logged): the `after` of the next poll" }
+        dropped: { type: boolean, description: "Lines newer than `after` (without `after`: from line 1) were already dropped from the buffer" }
+        boot: { type: string, example: Xq3v9T0bLm2k, description: "Random id of this backend process: the `boot` of the next poll" }

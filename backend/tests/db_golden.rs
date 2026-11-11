@@ -43,6 +43,24 @@ fn without_bank_key(bank: &Value, bank_id: i64) -> Value {
     out
 }
 
+/// v0.6.5 intended difference: every `/api/progress` history entry ends with `"kind"` (`"exam"` for every record the goldens
+/// know). Checks that it is the trailing key and says `"exam"`, and returns the progress without it (= the shape the goldens
+/// were captured in).
+fn without_kind_key(progress: &Value) -> Value {
+    let mut out = progress.clone();
+    for h in out["history"].as_array_mut().expect("history") {
+        let obj = h.as_object_mut().expect("history entry");
+        assert_eq!(
+            obj.keys().next_back().map(String::as_str),
+            Some("kind"),
+            "kind must be the trailing key"
+        );
+        assert_eq!(obj.get("kind"), Some(&json!("exam")));
+        obj.shift_remove("kind");
+    }
+    out
+}
+
 fn raw_rows(path: &Path) -> Value {
     let c = Connection::open(path).expect("raw open");
     let mut out = serde_json::Map::new();
@@ -92,6 +110,7 @@ fn attempt(ids: &[(&str, bool)], mode: &str, seconds: i64) -> Attempt {
         sheets: vec!["日本語".to_string(), "b\"c".to_string()],
         mode: mode.to_string(),
         seconds,
+        kind: Default::default(),
     }
 }
 
@@ -121,7 +140,7 @@ fn sample_db_matches_golden() {
         "bank",
     );
     assert_same(
-        &s.progress(ADMIN).expect("progress"),
+        &without_kind_key(&s.progress(ADMIN).expect("progress")),
         &g["progress"],
         "progress",
     );
@@ -187,6 +206,7 @@ fn failed_attempt_and_migration_roll_back() {
     let dir = tmp();
     let p = dir.path().join("x.db");
     let s = open_fixed(&p);
+    seed_questions(&p, &["a", "b", "c"]);
     s.record_attempt(ADMIN, &attempt(&[("a", true), ("b", false)], "all", 5))
         .expect("seed");
     let before = raw_rows(&p);
@@ -245,6 +265,9 @@ fn rounding_is_half_to_even_for_every_good_total_pair() {
 fn record_attempt_stores_half_even_percent() {
     let dir = tmp();
     let s = open_fixed(&dir.path().join("x.db"));
+    let ids: Vec<String> = (0..200).map(|i| format!("q{i}")).collect();
+    let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+    seed_questions(&dir.path().join("x.db"), &refs);
     // (good, total, expected percent): ties 1/8 -> 12, 3/8 -> 38, 1/40 -> 2, 1/200 -> 0, 3/200 -> 2, 5/200 -> 2
     for (good, total, want) in [
         (1usize, 8usize, 12),
@@ -274,6 +297,12 @@ fn record_attempt_stores_half_even_percent() {
 fn eight_threads_record_attempts_and_imports() {
     let dir = tmp();
     let s = Arc::new(open_fixed(&dir.path().join("x.db")));
+    seed_questions(
+        &dir.path().join("x.db"),
+        &[
+            "shared", "own0", "own1", "own2", "own3", "own4", "own5", "own6", "own7",
+        ],
+    );
     let (sheets, qs) = sample_questions();
     let sheets = Arc::new(sheets);
     let qs = Arc::new(qs);
@@ -328,6 +357,7 @@ fn history_shows_sixty_while_the_database_keeps_more_and_ids_keep_growing() {
     let dir = tmp();
     let p = dir.path().join("x.db");
     let s = open_fixed(&p);
+    seed_questions(&p, &["q"]);
     for i in 0..65 {
         s.record_attempt(ADMIN, &attempt(&[("q", true)], "all", i))
             .expect("attempt");
@@ -375,7 +405,7 @@ fn sqlite_master(path: &Path) -> Vec<Value> {
 }
 
 #[test]
-fn schema_is_the_python_v1_text_plus_the_v2_and_v3_migrations() {
+fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
     // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Intended difference (v0.5): the backend
     // still executes that v1 text byte for byte, then migrates to schema 2 (new tables/indexes; three columns added with
     // ALTER TABLE, which SQLite records by appending them to the stored CREATE TABLE text). A fresh database and a migrated v1
@@ -414,7 +444,8 @@ fn schema_is_the_python_v1_text_plus_the_v2_and_v3_migrations() {
         ("questions", ", bank_id INTEGER"),
         (
             "attempts",
-            ", banks TEXT NOT NULL DEFAULT '[]', user_id INTEGER",
+            ", banks TEXT NOT NULL DEFAULT '[]', user_id INTEGER, \
+             kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))",
         ),
         ("imports", ", bank_id INTEGER"),
     ];
@@ -452,10 +483,17 @@ fn schema_is_the_python_v1_text_plus_the_v2_and_v3_migrations() {
             ("table", "user_settings"),
             ("index", "sqlite_autoindex_user_settings_1"),
             ("index", "idx_attempts_user"),
+            ("table", "user_banks"),
+            ("index", "sqlite_autoindex_user_banks_1"),
+            ("index", "idx_user_banks_bank"),
+            ("index", "idx_banks_owner"),
         ]
     );
-    assert_eq!(pragmas(&sample), pragmas(&rs_db));
-    assert_eq!(pragmas(&rs_db), json!(["delete", 0]));
+    // Intended difference (v0.7): the backend switches the database to WAL, which is stored in the file (the Python-written
+    // sample is in DELETE mode); user_version is untouched
+    assert_eq!(pragmas(&sample), json!(["delete", 0]));
+    assert_eq!(pragmas(&rs_db), json!(["wal", 0]));
+    assert_eq!(pragmas(&migrated), json!(["wal", 0]));
     let c = Connection::open(&rs_db).expect("open");
     let meta: Vec<(String, String)> = c
         .prepare("SELECT key, value FROM meta ORDER BY key")
@@ -464,7 +502,16 @@ fn schema_is_the_python_v1_text_plus_the_v2_and_v3_migrations() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(meta, vec![("schema".to_string(), "3".to_string())]);
+    // v0.7: besides the schema, the highest bank id (none yet) and user id (the default administrator) this version knows,
+    // which tell banks and users an older binary creates after a rollback apart
+    assert_eq!(
+        meta,
+        vec![
+            ("banks_known".to_string(), "0".to_string()),
+            ("schema".to_string(), "4".to_string()),
+            ("users_known".to_string(), "1".to_string())
+        ]
+    );
     assert_eq!(
         std::fs::read_dir(dir.path().join("backups"))
             .expect("backups dir")
@@ -482,23 +529,20 @@ fn reopening_does_not_alter_the_file() {
     // the baseline sample.db
     let sample = dir.path().join("sample.db");
     std::fs::copy(baseline("fixtures/sample.db"), &sample).expect("copy");
-    let before = std::fs::read(&sample).expect("read");
+    let before = db_bytes(&sample);
     // sample.db is a schema-1 database written by the old Python implementation. Intended difference (v0.5): the first open migrates
     // it to schema 2 (after writing a backup, see tests/v05_banks_records_settings.rs). From then on: open it, read the question bank
-    // and study records, close it; the file must not change by a single byte.
+    // and study records, close it; the file must not change by a single byte. (v0.7: the database runs in WAL mode, so
+    // `db_bytes` compares the database file together with its -wal file.)
     drop(Store::open(&sample).expect("first open migrates"));
-    assert_ne!(
-        std::fs::read(&sample).expect("read"),
-        before,
-        "the first open migrates"
-    );
-    let before = std::fs::read(&sample).expect("read");
+    assert_ne!(db_bytes(&sample), before, "the first open migrates");
+    let before = db_bytes(&sample);
     let s = Store::open(&sample).expect("open sample");
     s.bank().expect("bank");
     s.progress(ADMIN).expect("progress");
     drop(s);
     assert_eq!(
-        std::fs::read(&sample).expect("read"),
+        db_bytes(&sample),
         before,
         "a migrated python-written database was changed by open + read + close"
     );
@@ -508,12 +552,17 @@ fn reopening_does_not_alter_the_file() {
     open_fixed(&rs)
         .apply_import("a.xlsx", &sheets, &qs)
         .expect("import");
-    let before = std::fs::read(&rs).expect("read");
+    let before = db_bytes(&rs);
     drop(open_fixed(&rs));
-    assert_eq!(std::fs::read(&rs).expect("read"), before);
+    assert_eq!(db_bytes(&rs), before);
     assert!(
         !dir.path().join("rs.db-journal").exists(),
         "no leftover journal"
+    );
+    // v0.7 (WAL): closing the last connection checkpoints and removes the -wal file, so the comparisons above see every write
+    assert!(
+        !dir.path().join("rs.db-wal").exists(),
+        "no leftover -wal file"
     );
 }
 
@@ -613,6 +662,7 @@ fn legacy_migration_is_idempotent_and_guarded() {
 
     // existing progress is never overwritten, and the flag is NOT set in that case (same as Python)
     let s2 = open_fixed(&dir.path().join("y.db"));
+    seed_questions(&dir.path().join("y.db"), &["only"]);
     s2.record_attempt(ADMIN, &attempt(&[("only", true)], "all", 1))
         .expect("attempt");
     assert_eq!(
@@ -812,9 +862,10 @@ fn removed_samples_cut_by_code_points_and_bank_key_order() {
         .keys()
         .map(String::as_str)
         .collect();
+    // v0.6.5: `kind` is appended (the older keys keep their order)
     assert_eq!(
         hk,
-        ["at", "sheets", "mode", "total", "correct", "percent", "seconds"]
+        ["at", "sheets", "mode", "total", "correct", "percent", "seconds", "kind"]
     );
     let rk: Vec<&str> = p["questions"]["k"]
         .as_object()

@@ -33,6 +33,23 @@ export type En = Zh;
 
 export type Kind = 'single' | 'multi' | 'hotspot';
 
+/** One language's explanation of a six-column question (every key is present, maybe "") */
+export interface ExplainText {
+  explanation: string;
+  mnemonic: string;
+  note: string;
+}
+
+/** `Question.explain`: a language whose answer column has nothing is left out (the object can be empty) */
+export interface Explain {
+  en?: ExplainText;
+  zh?: ExplainText;
+  ja?: ExplainText;
+}
+
+/** What a study record is (v0.6.5): an exam, or a practice with immediate feedback */
+export type AttemptKind = 'exam' | 'practice';
+
 export interface Question {
   kind: Kind;
   tag: string;
@@ -46,9 +63,19 @@ export interface Question {
   /** Only present in the 4-column format: the original English text of column A, and a version split along the Japanese structure (en is empty when it does not line up with the Japanese) */
   english?: string;
   en?: En | null;
+  /**
+   * Only present in the six-column format (v0.6.5): "en" = the base text (stem / options / items) is the English of column A,
+   * and the Japanese is in `ja`. Missing = the base text is Japanese (3 / 4-column formats).
+   */
+  lang?: 'en';
+  /** Six-column format only: the Japanese of column C, split along the English structure (null / missing when it does not line up) */
+  ja?: Zh | null;
+  /** Compatibility text (six-column: the Chinese one when present, else the Japanese, else the English) */
   explanation: string;
   mnemonic: string;
   note: string;
+  /** Six-column format only: the explanation, memory aid and answer note of each language that has them */
+  explain?: Explain;
   id: string;
   sheet: string;
   row: number;
@@ -96,6 +123,8 @@ export interface HistoryEntry {
   correct: number;
   percent: number;
   seconds: number;
+  /** v0.6.5; always sent by the backend from then on */
+  kind?: AttemptKind;
 }
 
 export interface Progress {
@@ -103,6 +132,14 @@ export interface Progress {
   questions: Record<string, QuestionStat>;
   history: HistoryEntry[];
   masterStreak: number;
+}
+
+/**
+ * The answer of `POST /api/attempt`: the user's progress, plus (v0.6.5) the ids of the results that were not counted because
+ * their question no longer exists (its bank was deleted after the exam started). Missing when every result was counted.
+ */
+export interface AttemptResponse extends Progress {
+  notCounted?: string[];
 }
 
 export interface ImportRecord {
@@ -129,6 +166,13 @@ export interface SheetPlan {
   /** Preview only: how many entries of the truncated "unreadable" list are not listed */
   skippedMore?: number;
   skippedCount?: number;
+  /**
+   * v0.7, six-column files only (left out when a sheet has none): rows imported with the English answer although the
+   * Chinese (E) or Japanese (F) answer differs, one entry per differing column; capped in the preview like `skipped`
+   */
+  warnings?: SkippedRow[];
+  warningsMore?: number;
+  warningsCount?: number;
 }
 
 export interface ImportPlan {
@@ -142,6 +186,8 @@ export interface ImportPlan {
   usable: number;
   removed_samples: string[];
   removed_stats: number;
+  /** v0.7: the number of preview warnings of a six-column file (left out when there is none) */
+  warnings?: number;
 }
 
 /** Response of POST /api/upload: preview + one-time confirmation code */
@@ -165,6 +211,8 @@ export interface AttemptRequest {
   sheets: string[];
   mode: Mode;
   seconds: number;
+  /** v0.6.5: missing = "exam" */
+  kind?: AttemptKind;
 }
 
 export interface ApiErrorBody {
@@ -199,6 +247,15 @@ export interface BankSummary {
   studied: number;
   /** How many exam records include this bank */
   records: number;
+  /**
+   * v0.6.5: the user who owns the bank (imported it as a new bank; banks from before v0.6.5 belong to the first
+   * administrator) and their username; null when unknown. Only administrators get both; anyone else gets `ownerId` only for
+   * their own banks and `owner` never (v0.7: the bank list does not name other accounts)
+   */
+  ownerId: number | null;
+  owner: string | null;
+  /** Whether the signed-in user may update / replace and delete this bank (an administrator, or a bank manager who owns it) */
+  manageable: boolean;
 }
 
 export interface BanksResponse {
@@ -235,6 +292,8 @@ export interface RecordSummary {
   answered: number | null;
   /** Whether per-question detail exists */
   detail: boolean;
+  /** Exam or practice (v0.6.5; read it through kindOfRecord(), which treats anything unknown as an exam) */
+  kind?: AttemptKind;
 }
 
 export interface RecordsResponse {
@@ -292,14 +351,19 @@ export interface AuthUser {
   role: Role;
   /** The default or initial password must be replaced before anything else works */
   mustChangePassword: boolean;
+  /** v0.6.5: may open Question banks (import new banks, update and delete their own); always true for administrators */
+  canManageBanks: boolean;
 }
 
 export interface AuthState {
   user: AuthUser | null;
   /** Signed in: an opaque stamp of the shared question banks; it changes when a bank is imported, replaced or deleted */
   library?: string;
-  /** Not signed in: an enabled administrator still has the default password (the sign-in page says how to sign in first) */
-  defaultAdmin?: boolean;
+  /**
+   * Not signed in: the username of an enabled administrator that still has the default password `admin` (the sign-in page
+   * says how to sign in for the first time, with that name), else null
+   */
+  defaultAdmin?: string | null;
 }
 
 export interface AuthUserResponse {
@@ -317,20 +381,37 @@ export interface UserRow {
   mustChangePassword: boolean;
   /** Number of exam records of this user */
   records: number;
-  /** The login throttle of this username (in the backend's memory): null at round 1 and not locked */
+  /**
+   * The existing question banks the user may see, ascending ids (the stored setting; administrators always see every bank).
+   * v0.7: always a list (before: "all" or a list)
+   */
+  banks: number[];
+  /** v0.7: "Include banks imported later": every bank imported from now on is added to `banks` */
+  newBanks: boolean;
+  /** v0.6.5: the stored "can manage question banks" permission (administrators always have it, whatever is stored) */
+  canManageBanks: boolean;
+  /** v0.6.5: ids of the banks this user owns, ascending (they move to the deleting administrator when the user is deleted) */
+  ownedBanks: number[];
+  /** The login throttle of this account (in the backend's memory): null at round 1 and not locked */
   lock: UserLock | null;
 }
 
 /**
  * `"lock"` of a user in `GET /api/users`. Locked: `until` (local time `YYYY-MM-DD HH:MM:SS`) and `retryAfter` > 0, `round`
  * = the round that ended in this lock (1 = the first lock). Not locked but past round 1: `until` null, `retryAfter` 0, `round`
- * = the round in progress, `triesLeft` = failures left before the next lock.
+ * = the round in progress, `triesLeft` = failures left before the next lock. `knownBrowser`: the state counts the sign-ins
+ * from browsers where the user signed in before (else from every other browser; the two are counted separately).
+ * `otherUntil` / `otherRetryAfter`: a lock that runs at the same time for the other browsers (the account is then locked in
+ * every browser); null / 0 otherwise (always so when not locked).
  */
 export interface UserLock {
   until: string | null;
   retryAfter: number;
   round: number;
   triesLeft: number;
+  knownBrowser: boolean;
+  otherUntil?: string | null;
+  otherRetryAfter?: number;
 }
 
 /** `GET /api/users` and every `POST /api/users/*` answer with the whole list */
@@ -344,4 +425,14 @@ export interface UserUpdate {
   username?: string;
   role?: Role;
   disabled?: boolean;
+  banks?: BankAccess;
+  newBanks?: boolean;
+  canManageBanks?: boolean;
 }
+
+/**
+ * `"banks"` of `POST /api/users/create` / `update`: the existing banks a plain user sees, as ids. The server also takes "all"
+ * (every existing bank, plus `newBanks: true` unless it is given); the page always sends the list. A bank manager also sees
+ * the banks they own.
+ */
+export type BankAccess = 'all' | number[];

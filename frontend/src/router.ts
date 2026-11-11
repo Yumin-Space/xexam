@@ -1,10 +1,11 @@
-// Hash routing: #/ (home), #/banks, #/users, #/records, #/records/<id>, #/records/wrong, #/settings, #/about, #/quiz, #/result.
+// Hash routing: #/ (home), #/banks, #/users, #/logs, #/records, #/records/<id>, #/records/wrong, #/settings, #/about, #/quiz, #/result.
 // Hash routes need no server-side fallback and survive a page reload.
 
 export type Route =
   | { name: 'home' }
   | { name: 'banks' }
   | { name: 'users' }
+  | { name: 'logs' }
   | { name: 'records' }
   | { name: 'record'; id: number }
   | { name: 'wrong' }
@@ -14,7 +15,7 @@ export type Route =
   | { name: 'result' };
 
 /** The menu entry a route belongs to */
-export type NavSection = 'home' | 'banks' | 'records' | 'users' | 'settings' | 'about';
+export type NavSection = 'home' | 'banks' | 'records' | 'users' | 'logs' | 'settings' | 'about';
 
 export function parseHash(hash: string): Route {
   const path = hash.replace(/^#\/?/, '').replace(/\/+$/, '').split('?')[0] ?? '';
@@ -28,6 +29,8 @@ export function parseHash(hash: string): Route {
       return { name: 'banks' };
     case 'users':
       return { name: 'users' };
+    case 'logs':
+      return { name: 'logs' };
     case 'records':
       if (b === 'wrong') return { name: 'wrong' };
       if (b && /^[0-9]{1,15}$/.test(b)) return { name: 'record', id: Number(b) };
@@ -66,6 +69,8 @@ export function sectionOf(r: Route): NavSection | null {
       return 'banks';
     case 'users':
       return 'users';
+    case 'logs':
+      return 'logs';
     case 'records':
     case 'record':
     case 'wrong':
@@ -84,7 +89,12 @@ export function sameRoute(a: Route, b: Route): boolean {
   return routeHash(a) === routeHash(b);
 }
 
-/** Pages only administrators may open (the backend refuses their requests to everyone else) */
+/**
+ * Pages only administrators may open; everyone else is sent home (the backend refuses their requests anyway). Question banks
+ * is not one of them since v0.6.5: bank managers use it too, and anyone else who opens #/banks sees the "Not allowed" page
+ * instead of being redirected silently (main.ts). The system log (#/logs, v0.7) is not one either: it is for administrators
+ * only, but others who open it see the "Not allowed" page too.
+ */
 export function adminOnly(r: Route): boolean {
-  return r.name === 'banks' || r.name === 'users';
+  return r.name === 'users';
 }

@@ -30,8 +30,39 @@ pub fn open_fixed(path: &Path) -> Store {
     Store::open_with_clock(path, fixed(FIXED_NOW)).expect("open store")
 }
 
+/// The bytes of the database at `path` as they are on disk: the database file followed by its `-wal` file, if any (v0.7).
+///
+/// In WAL mode a commit lands in `<db>-wal` first and reaches the database file only at a checkpoint (or when the last
+/// connection closes), so "nothing was written" means that neither file changed. The `-shm` file is left out: it is an index
+/// that readers update too.
+pub fn db_bytes(path: &Path) -> Vec<u8> {
+    let mut bytes = std::fs::read(path).expect("read the database file");
+    let mut wal = path.as_os_str().to_os_string();
+    wal.push("-wal");
+    if let Ok(more) = std::fs::read(PathBuf::from(wal)) {
+        bytes.extend(more);
+    }
+    bytes
+}
+
 pub fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().expect("tempdir")
+}
+
+/// Adds made-up questions with these ids (sheet "Cooking", no bank) straight into the database at `db`. Since v0.6.5 an exam
+/// counts only questions that exist, so tests that record exams with made-up ids create them first. They are stored as
+/// retired (`active = 0`, like questions left out of a re-import): they still count in exams, but no bank lists them and
+/// `count_active` does not count them, so the rest of a test sees the database as before.
+#[allow(dead_code)]
+pub fn seed_questions(db: &Path, ids: &[&str]) {
+    let c = rusqlite::Connection::open(db).expect("open for seeding");
+    for (i, id) in ids.iter().enumerate() {
+        c.execute(
+            "INSERT INTO questions(id, sheet, row_no, seq, data, active, added_at, updated_at)              VALUES(?1, 'Cooking', ?2, ?2, '{\"kind\": \"single\", \"stem\": \"Made up?\"}', 0, '2026-01-01 10:00', '2026-01-01 10:00')",
+            rusqlite::params![id, i64::try_from(i).unwrap_or(0) + 1],
+        )
+        .expect("seed question");
+    }
 }
 
 /// Build a parsed single-choice question by hand.
@@ -55,6 +86,8 @@ pub fn single(sheet: &str, id: &str, stem: &str, row: i64) -> Question {
         translation: "中文翻译\nA. 是\nB. 否".into(),
         english: String::new(),
         en: None,
+        lang: String::new(),
+        ja: None,
         zh: Some(Zh {
             stem: "中文题干".into(),
             options: Some(vec!["是".into(), "否".into()]),
@@ -64,6 +97,7 @@ pub fn single(sheet: &str, id: &str, stem: &str, row: i64) -> Question {
         explanation: "解析 \"quoted\" \\ back".into(),
         mnemonic: "口诀".into(),
         note: String::new(),
+        explain: None,
         id: id.to_string(),
         sheet: sheet.to_string(),
         row,
@@ -102,6 +136,7 @@ pub fn sheet(name: &str, usable: i64) -> ParsedSheet {
         total: usable,
         usable,
         skipped: vec![],
+        warnings: vec![],
     }
 }
 

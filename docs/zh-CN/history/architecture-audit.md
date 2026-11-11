@@ -81,7 +81,7 @@ flowchart LR
 - 5 张表：`questions`、`stats`、`attempts`、`imports`、`meta`，外加 `sqlite_sequence`；一个索引；**没有外键、CHECK、触发器**，虽然连接上设了 `foreign_keys=ON`。
 - `journal_mode=DELETE`、`synchronous=FULL`、`busy_timeout=5000`。**不是 WAL**（Docker Desktop 挂载 Windows 目录时 WAL 不可靠）。
 - 事务：`BEGIN IMMEDIATE`，一个进程级 `RLock` + 一个共享连接。
-- 时间戳：本地时间字符串 `%Y-%m-%d %H:%M`，无时区。容器里靠 `TZ=Asia/Tokyo`。
+- 时间戳：本地时间字符串 `%Y-%m-%d %H:%M`，无时区。容器里靠 `TZ=<所在时区>`。
 - `questions.data` 是一整道题的 JSON；`stats`/`attempts` 的键是题目 id。
 
 **题目 id**：`sha1(工作表 + "\n" + 去空白题干[:300] + "|" + 去空白首选项[:200])` 的前 12 个十六进制字符；重复的加 `-2`、`-3`。这里的"去空白"是 Python 的 `\s`（29 个码点，含 U+001C–U+001F），比 Rust 的 `char::is_whitespace`（25 个）多。**没有任何 Unicode 规范化**——业主两份真实工作簿里大部分题含全角 ASCII，所以不能为了"更干净"加规范化。

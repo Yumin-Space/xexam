@@ -1,13 +1,19 @@
 // User management (administrators only). Every change answers with the whole, current list.
-import type { Role, UserRow, UsersResponse, UserUpdate } from '../types/api.ts';
+import type { BankAccess, Role, UserRow, UsersResponse, UserUpdate } from '../types/api.ts';
 import { getJson, postJson } from './client.ts';
 
 const list = async (p: Promise<UsersResponse>): Promise<UserRow[]> => (await p).users;
 
 export const fetchUsers = (): Promise<UserRow[]> => list(getJson<UsersResponse>('/api/users'));
-/** The new user must choose their own password at the first sign-in */
-export const createUser = (username: string, password: string, role: Role): Promise<UserRow[]> =>
-  list(postJson<UsersResponse>('/api/users/create', { username, password, role }));
+/**
+ * The new user must choose their own password at the first sign-in. `banks`: the existing question banks they see (the
+ * server's default is none); `newBanks`: "Include banks imported later" (default off); `canManageBanks`: may import banks
+ * and manage their own (default false).
+ */
+export const createUser = (
+  username: string, password: string, role: Role, banks: BankAccess, newBanks: boolean, canManageBanks: boolean,
+): Promise<UserRow[]> =>
+  list(postJson<UsersResponse>('/api/users/create', { username, password, role, banks, newBanks, canManageBanks }));
 export const updateUser = (change: UserUpdate): Promise<UserRow[]> => list(postJson<UsersResponse>('/api/users/update', change));
 /** Sets a new initial password; the user is signed out and must choose a new password at the next sign-in */
 export const resetUserPassword = (id: number, password: string): Promise<UserRow[]> =>

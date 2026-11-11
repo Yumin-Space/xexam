@@ -9,12 +9,14 @@
 //! - `services`  import flow (parse_upload → … → apply_import), pending-confirmation slot, result recording
 //! - `api`       HTTP routes and JSON output; sign-in is enforced in its single dispatch function
 //! - `auth`      accounts (v0.6): password hashing, session tokens and cookie, login throttle, input rules
+//! - `logs`      system log (v0.7): a `tracing` layer keeping the most recent log lines in memory for `GET /api/logs`
 
 pub mod api;
 pub mod auth;
 pub mod config;
 pub mod database;
 pub mod error;
+pub mod logs;
 pub mod models;
 pub mod parser;
 pub mod security;

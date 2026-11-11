@@ -7,7 +7,7 @@ use super::py_space::{
     char_len, digit_class_inner, digit_value, digits_to_canonical, py_strip, take_chars,
 };
 use crate::error::ImportError;
-use crate::models::{Answer, En, Item, Kind, Opt, Question, Zh};
+use crate::models::{Answer, En, Explain, ExplainText, Item, Kind, Opt, Question, Zh};
 use regex::{NoExpand, Regex};
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -25,6 +25,7 @@ struct Res {
     opt_line: Regex,
     num_prefix: Regex,
     hint: Regex,
+    hint_words: Regex,
     split_slash: Regex,
     paren: Regex,
     item_split: Regex,
@@ -46,6 +47,8 @@ static RES: LazyLock<Res> = LazyLock::new(|| {
         )),
         num_prefix: re(&format!(r"^[{S}]*([{d}]{{1,2}})[{S}]*[.．、)）][{S}]*")),
         hint: re(r"[\t\x{3000} ]+([^\t\x{3000}/]+?(?: +/ +[^\t\x{3000}/]+?)+)[ \t\x{3000}]*$"),
+        // English items separated from their choices by plain spaces only: single-word choices ("… is wet. Yes / No")
+        hint_words: re(r" +([^\s/]+(?: +/ +[^\s/]+)+) *$"),
         split_slash: re(&format!(r"[{S}]+/[{S}]+")),
         paren: re(r"[（(][^）)]*[）)]"),
         item_split: re(r"[；;\n，,]+"),
@@ -104,12 +107,17 @@ pub struct Sections {
 
 /// `split_sections`: only the first occurrence of each kind is kept; a section's text runs to the next recognized heading or the end, then is stripped.
 pub fn split_sections(text: &str) -> Sections {
+    split_sections_with(text, classify_heading)
+}
+
+/// [`split_sections`] with another heading classifier (the six-column layout also accepts English headings).
+fn split_sections_with(text: &str, classify: fn(&str) -> Option<Heading>) -> Sections {
     let mut marks: Vec<(usize, usize, Heading)> = Vec::new();
     for m in RES.heading.captures_iter(text) {
         let (Some(whole), Some(name)) = (m.get(0), m.get(1)) else {
             continue;
         };
-        if let Some(kind) = classify_heading(name.as_str()) {
+        if let Some(kind) = classify(name.as_str()) {
             marks.push((whole.start(), whole.end(), kind));
         }
     }
@@ -197,6 +205,19 @@ fn strip_num_prefix(ln: &str) -> &str {
 
 /// Hotspot question: each sub-item ends with a choice such as "はい / いいえ". -> (stem, [sub-items])
 pub fn parse_hotspot(body: &str) -> (String, Vec<Item>) {
+    hotspot_items(body, false)
+}
+
+/// [`parse_hotspot`] for the English base text of the six-column layout. English sentences contain spaces, so an item whose
+/// choices follow it after a plain space ("1. Water is wet. Yes / No") would be split at its first space by the rule of the
+/// older layouts (made for Japanese, which has no spaces inside a sentence). Here a line with a tab or an ideographic space
+/// is split as before (at the last one); a line with plain spaces only takes the single-word choices at its end. Choices of
+/// several words ("Model Stage / Post-Processing") therefore need a tab or an ideographic space before them.
+fn parse_hotspot_en(body: &str) -> (String, Vec<Item>) {
+    hotspot_items(body, true)
+}
+
+fn hotspot_items(body: &str, english: bool) -> (String, Vec<Item>) {
     let mut stem_lines: Vec<&str> = Vec::new();
     let mut items: Vec<Item> = Vec::new();
     let mut pending: Vec<String> = Vec::new();
@@ -210,7 +231,12 @@ pub fn parse_hotspot(body: &str) -> (String, Vec<Item>) {
         }
         let text = strip_num_prefix(ln);
         let had_num = text != ln;
-        if let Some(caps) = RES.hint.captures(text) {
+        let hint = if english && !text.contains(['\t', '\u{3000}']) {
+            &RES.hint_words
+        } else {
+            &RES.hint
+        };
+        if let Some(caps) = hint.captures(text) {
             if let (Some(whole), Some(g1)) = (caps.get(0), caps.get(1)) {
                 let choices: Vec<String> = RES
                     .split_slash
@@ -524,8 +550,114 @@ pub fn parse_english(en: &str, options: &[Opt], items: &[Item]) -> Option<En> {
     None
 }
 
+/// The text that goes into the question id next to the stem: the first option, or the first hotspot item.
+fn first_text_of(options: &[Opt], items: &[Item]) -> String {
+    match options.first() {
+        Some(o) => o.text.clone(),
+        None => items.first().map(|i| i.text.clone()).unwrap_or_default(),
+    }
+}
+
+/// The notes written in parentheses inside an answer ("B (confidence: high)", "B（把握度：高）"), joined with "；".
+/// The notes are never part of the answer itself: `parse_letters` and `parse_item_answers` drop every bracketed span.
+fn answer_note(ans: &str) -> String {
+    RES.note
+        .captures_iter(ans)
+        .filter_map(|caps| caps.get(1))
+        .map(|m| py_strip(m.as_str()))
+        .filter(|x| !x.is_empty())
+        .collect::<Vec<_>>()
+        .join("；")
+}
+
+/// Turns the answer text into the answer of a question whose structure is `options` (single / multiple choice) or
+/// `items` (hotspot). `other_langs` are the choices written in the other language columns, item by item (only columns
+/// that line up with the base question): a hotspot answer may be written with the choice words of any of them, because
+/// the j-th choice is the same choice in every language. `Err` carries the outcome to return for this row as is
+/// (unreadable with a reason, or a fatal error for the whole file).
+fn resolve_answer(
+    ans: &str,
+    options: &[Opt],
+    items: &[Item],
+    other_langs: &[&Vec<Vec<String>>],
+) -> Result<(Kind, Answer), QuestionOutcome> {
+    if !options.is_empty() {
+        let letters = parse_letters(ans);
+        let keys: Vec<&str> = options.iter().map(|o| o.key.as_str()).collect();
+        if letters.is_empty() {
+            return Err(QuestionOutcome::Skip(format!(
+                "答案「{}」里没有找到选项字母",
+                take_chars(ans, 20)
+            )));
+        }
+        let bad: Vec<&str> = letters
+            .iter()
+            .map(String::as_str)
+            .filter(|x| !keys.contains(x))
+            .collect();
+        if !bad.is_empty() {
+            return Err(QuestionOutcome::Skip(format!(
+                "答案 {} 不在选项 {} 里",
+                bad.join("、"),
+                keys.join("、")
+            )));
+        }
+        let kind = if letters.len() > 1 {
+            Kind::Multi
+        } else {
+            Kind::Single
+        };
+        return Ok((kind, Answer::Letters(letters)));
+    }
+    let Ok(vals) = parse_item_answers(ans) else {
+        return Err(QuestionOutcome::Fatal(ImportError::Message(
+            "答案里有超长的数字（超过 4300 位），已拒绝。".to_string(),
+        )));
+    };
+    let mut idx: Vec<i64> = Vec::new();
+    for (k0, it) in items.iter().enumerate() {
+        let k = k0 + 1;
+        let Some(v) = vals.get(&k.to_string()) else {
+            return Err(QuestionOutcome::Skip(format!("第 {k} 小项没有答案")));
+        };
+        // Look in the base question's own choices first, then in the choices written in the other columns in turn
+        let Some(j) = find_choice(&it.choices, v).or_else(|| {
+            other_langs
+                .iter()
+                .find_map(|c| c.get(k0).and_then(|ch| find_choice(ch, v)))
+        }) else {
+            return Err(QuestionOutcome::Skip(format!(
+                "第 {k} 小项的答案「{v}」不在选项「{}」里",
+                it.choices.join(" / ")
+            )));
+        };
+        idx.push(i64::try_from(j).unwrap_or(0));
+    }
+    let mut extra: Vec<&String> = vals
+        .keys()
+        // A key is within 1..=N iff it is exactly the decimal form of some k (no leading zeros or plus sign); an O(1) check, instead of scanning all N items for every key
+        .filter(|key| {
+            !key.parse::<usize>()
+                .ok()
+                .is_some_and(|k| (1..=items.len()).contains(&k) && k.to_string() == **key)
+        })
+        .collect();
+    extra.sort_by(|x, y| (x.len(), x.as_str()).cmp(&(y.len(), y.as_str())));
+    if !extra.is_empty() {
+        let joined = extra
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join("、");
+        return Err(QuestionOutcome::Skip(format!(
+            "答案里有第 {joined} 项，但题目只有 {} 个小项",
+            items.len()
+        )));
+    }
+    Ok((Kind::Hotspot, Answer::Indexes(idx)))
+}
+
 /// In the four-column format column A is English: when `english` is non-empty, `en` is also split out. The rest of the logic is identical to the three-column format (the question id still comes from the Japanese).
-#[allow(clippy::needless_late_init)]
 pub fn parse_question_with_english(
     sheet: &str,
     row: i64,
@@ -611,103 +743,17 @@ pub fn parse_question_with_english(
         parse_english(&english_text, &options, &items)
     };
 
-    let kind;
-    let answer;
-    let first_text;
-    if !options.is_empty() {
-        let letters = parse_letters(&ans);
-        let keys: Vec<&str> = options.iter().map(|o| o.key.as_str()).collect();
-        if letters.is_empty() {
-            return QuestionOutcome::Skip(format!(
-                "答案「{}」里没有找到选项字母",
-                take_chars(&ans, 20)
-            ));
-        }
-        let bad: Vec<&str> = letters
-            .iter()
-            .map(String::as_str)
-            .filter(|x| !keys.contains(x))
-            .collect();
-        if !bad.is_empty() {
-            return QuestionOutcome::Skip(format!(
-                "答案 {} 不在选项 {} 里",
-                bad.join("、"),
-                keys.join("、")
-            ));
-        }
-        kind = if letters.len() > 1 {
-            Kind::Multi
-        } else {
-            Kind::Single
-        };
-        answer = Answer::Letters(letters);
-        first_text = options.first().map(|o| o.text.clone()).unwrap_or_default();
-    } else {
-        let Ok(vals) = parse_item_answers(&ans) else {
-            return QuestionOutcome::Fatal(ImportError::Message(
-                "答案里有超长的数字（超过 4300 位），已拒绝。".to_string(),
-            ));
-        };
-        let mut idx: Vec<i64> = Vec::new();
-        // The choices written at the end of each sub-item in the Chinese / English columns (present only if the count matches the Japanese; a column that does not line up takes no part in matching)
-        let other_langs: Vec<&Vec<Vec<String>>> = [zh.as_ref(), en.as_ref()]
-            .into_iter()
-            .flatten()
-            .filter_map(|z| z.choices.as_ref())
-            .collect();
-        for (k0, it) in items.iter().enumerate() {
-            let k = k0 + 1;
-            let Some(v) = vals.get(&k.to_string()) else {
-                return QuestionOutcome::Skip(format!("第 {k} 小项没有答案"));
-            };
-            // The answer may be written with the choice words of any one of Japanese, Chinese or English: the j-th choice is the same one in all three columns (same index),
-            // so look in the Japanese choices first, then in the choices written in the Chinese and English columns in turn.
-            let Some(j) = find_choice(&it.choices, v).or_else(|| {
-                other_langs
-                    .iter()
-                    .find_map(|c| c.get(k0).and_then(|ch| find_choice(ch, v)))
-            }) else {
-                return QuestionOutcome::Skip(format!(
-                    "第 {k} 小项的答案「{v}」不在选项「{}」里",
-                    it.choices.join(" / ")
-                ));
-            };
-            idx.push(i64::try_from(j).unwrap_or(0));
-        }
-        let mut extra: Vec<&String> = vals
-            .keys()
-            // A key is within 1..=N iff it is exactly the decimal form of some k (no leading zeros or plus sign); an O(1) check, instead of scanning all N items for every key
-            .filter(|key| {
-                !key.parse::<usize>()
-                    .ok()
-                    .is_some_and(|k| (1..=items.len()).contains(&k) && k.to_string() == **key)
-            })
-            .collect();
-        extra.sort_by(|x, y| (x.len(), x.as_str()).cmp(&(y.len(), y.as_str())));
-        if !extra.is_empty() {
-            let joined = extra
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join("、");
-            return QuestionOutcome::Skip(format!(
-                "答案里有第 {joined} 项，但题目只有 {} 个小项",
-                items.len()
-            ));
-        }
-        kind = Kind::Hotspot;
-        answer = Answer::Indexes(idx);
-        first_text = items.first().map(|i| i.text.clone()).unwrap_or_default();
-    }
-
-    let note = RES
-        .note
-        .captures_iter(&ans)
-        .filter_map(|caps| caps.get(1))
-        .map(|m| py_strip(m.as_str()))
-        .filter(|x| !x.is_empty())
-        .collect::<Vec<_>>()
-        .join("；");
+    let other_langs: Vec<&Vec<Vec<String>>> = [zh.as_ref(), en.as_ref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|z| z.choices.as_ref())
+        .collect();
+    let (kind, answer) = match resolve_answer(&ans, &options, &items, &other_langs) {
+        Ok(found) => found,
+        Err(outcome) => return outcome,
+    };
+    let first_text = first_text_of(&options, &items);
+    let note = answer_note(&ans);
     QuestionOutcome::Ok(Box::new(Question {
         kind,
         tag: if is_hot {
@@ -724,12 +770,369 @@ pub fn parse_question_with_english(
         zh,
         english: english_text,
         en,
+        // Japanese is the base language of the 3 / 4-column layouts: no `lang`, `ja` or `explain` (byte-identical JSON)
+        lang: String::new(),
+        ja: None,
         explanation: secs.explanation.unwrap_or_default(),
         mnemonic: secs.mnemonic.unwrap_or_default(),
         note,
+        explain: None,
         sheet: sheet.to_string(),
         row,
     }))
+}
+
+// ------------------------------------------------------------------ Six-column layout (v0.7)
+//
+// A English question, B Chinese question, C Japanese question, D English answer + explanation + memory aid,
+// E the same in Chinese, F the same in Japanese. English is authoritative (owner decision): the question type,
+// the options / hotspot items, the question id and the answer key all come from A and D. B and C are aligned item
+// by item against the English question; E and F give their language's explanation, and their answers are compared
+// with D by meaning, which can produce a preview warning but never makes a row unreadable.
+
+/// A six-column row whose column A is empty.
+pub const SKIP6_NO_ENGLISH: &str = "这一行没有英文题目（六列格式以 A 列的英文题目为准）";
+/// A six-column row whose English question has neither options nor hotspot items.
+pub const SKIP6_NO_STRUCTURE: &str =
+    "A 列的英文题目里没有找到选项（A、B、C…）或带「Yes / No」等选项的小项";
+/// A six-column row with no answer in column D.
+pub const SKIP6_NO_ANSWER: &str = "D 列没有找到英文答案（D 列要写「【Answer】…」）";
+/// Preview warning: the answer in column E means something else than the answer in column D.
+pub const WARN6_ZH_DIFFERS: &str = "E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）";
+/// Preview warning: the answer in column F means something else than the answer in column D.
+pub const WARN6_JA_DIFFERS: &str = "F 列的日文答案和 D 列的英文答案不一致（已按英文答案导入）";
+
+/// Section headings of the six-column layout: every heading of [`classify_heading`] plus the English headings
+/// 【Answer】 【Explanation】 【Memory aid】 / 【Mnemonic】 【Translation】 and the Japanese 【答え】 【覚え方】.
+/// English names match case-insensitively as substrings, like the legacy words; "explanation" is checked before
+/// "answer", so a heading such as 【Answer explanation】 counts as the explanation.
+pub fn classify_heading_any(name: &str) -> Option<Heading> {
+    if let Some(kind) = classify_heading(name) {
+        return Some(kind);
+    }
+    let lower = name.to_lowercase();
+    if lower.contains("explanation") {
+        Some(Heading::Explanation)
+    } else if lower.contains("memory aid") || lower.contains("mnemonic") || name.contains("覚え方")
+    {
+        Some(Heading::Mnemonic)
+    } else if lower.contains("answer") || name.contains("答え") {
+        Some(Heading::Answer)
+    } else if lower.contains("translation") {
+        Some(Heading::Translation)
+    } else {
+        None
+    }
+}
+
+/// Does this cell carry an answer heading in any language (【Answer】, 【答案】, 【正解】, 【答え】, ...)?
+/// Used to detect the six-column layout and to tell question rows from header / note rows.
+pub fn has_answer_heading(text: &str) -> bool {
+    RES.heading.captures_iter(text).any(|m| {
+        m.get(1)
+            .is_some_and(|name| classify_heading_any(name.as_str()) == Some(Heading::Answer))
+    })
+}
+
+/// Is this line the marker that opens a hotspot question ("HOTSPOT", "ホットスポット", "热点题", any case)?
+fn is_hotspot_marker(line: &str) -> bool {
+    let lower = py_strip(line).to_lowercase();
+    matches!(
+        lower.as_str(),
+        "hotspot" | "ホットスポット" | "热点题" | "熱點題" | "热点" | "熱點"
+    )
+}
+
+/// The answer written in one answer column: the 【Answer】 section, else an "Answer: …" line, else the whole cell when
+/// it is a single short line that is not a heading (the same fallbacks as the older layouts).
+fn column_answer(text: &str, secs: &Sections) -> Option<String> {
+    if let Some(a) = secs.answer.as_deref().filter(|a| !a.is_empty()) {
+        return Some(a.to_string());
+    }
+    if let Some(m) = RES.ans_line.captures(text).and_then(|caps| caps.get(1)) {
+        let a = py_strip(m.as_str());
+        if !a.is_empty() {
+            return Some(a.to_string());
+        }
+    }
+    if !text.is_empty() && !text.contains('\n') && char_len(text) <= 40 && !text.starts_with('【')
+    {
+        return Some(text.to_string());
+    }
+    None
+}
+
+/// The question text of a Chinese (B) or Japanese (C) column: the text under a 【中文翻译】 / 【翻訳】-like heading when
+/// there is one, else the whole cell.
+fn question_text_of(cell: &str) -> String {
+    let secs = split_sections_with(cell, classify_heading_any);
+    match secs.translation {
+        Some(t) if !t.is_empty() => t,
+        _ => cell.to_string(),
+    }
+}
+
+/// Splits a Chinese or Japanese question into the structure of the English base question (same option letters, or the
+/// same number of hotspot items). Returns None when it does not line up: that language is then greyed out on the page.
+/// Hotspot items are read with their trailing choices first ("…　はい / いいえ"); when that does not give the right
+/// number of items, items are read by their numbers ("1. …", "2. …") like the Chinese translation of the older layouts.
+fn parse_aligned(text: &str, options: &[Opt], items: &[Item]) -> Option<Zh> {
+    let normed = norm_nl(text);
+    let stripped = RES.hot_lead.replace(&normed, NoExpand(""));
+    let mut body = py_strip(&stripped);
+    if let Some((first, rest)) = body.split_once('\n') {
+        if is_hotspot_marker(first) {
+            body = py_strip(rest);
+        }
+    }
+    if body.is_empty() || is_hotspot_marker(body) {
+        return None;
+    }
+    if !options.is_empty() {
+        let (stem, opts) = parse_options(body);
+        let same =
+            opts.len() == options.len() && opts.iter().zip(options).all(|(a, b)| a.key == b.key);
+        if !same {
+            return None;
+        }
+        return Some(Zh {
+            stem,
+            options: Some(opts.into_iter().map(|o| o.text).collect()),
+            items: None,
+            choices: None,
+        });
+    }
+    if items.is_empty() {
+        return None;
+    }
+    let (stem, own) = parse_hotspot(body);
+    if own.len() == items.len() {
+        let split: Vec<(String, Option<Vec<String>>)> =
+            own.into_iter().map(|i| (i.text, Some(i.choices))).collect();
+        let choices = localized_choices(&split, items);
+        return Some(Zh {
+            stem,
+            options: None,
+            items: Some(split.into_iter().map(|(t, _)| t).collect()),
+            choices,
+        });
+    }
+    parse_translation(body, options, items)
+}
+
+/// Does the answer written in another language's column mean the same as the English answer?
+///
+/// Choice questions compare the option letters. Hotspot questions compare, item by item, the index of the chosen
+/// choice: the value is looked up in that language's own choices of the item (`own`, from column B or C when it lines
+/// up), then in the English choices; yes / no words of any language are equal to each other (see [`canon`]), so
+/// "是", "はい" and "Yes" all pick the same choice. An answer that cannot be mapped at all counts as different.
+fn same_answer(
+    ans: &str,
+    english: &Answer,
+    items: &[Item],
+    own: Option<&Vec<Vec<String>>>,
+) -> bool {
+    match english {
+        Answer::Letters(letters) => {
+            let theirs = parse_letters(ans);
+            !theirs.is_empty() && &theirs == letters
+        }
+        Answer::Indexes(idx) => {
+            let mapped = |s: &str| -> Option<bool> {
+                let vals = parse_item_answers(s).ok()?;
+                if vals.len() != items.len() {
+                    return None;
+                }
+                let mut same = true;
+                for (k0, it) in items.iter().enumerate() {
+                    let v = vals.get(&(k0 + 1).to_string())?;
+                    let j = own
+                        .and_then(|c| c.get(k0))
+                        .and_then(|ch| find_choice(ch, v))
+                        .or_else(|| find_choice(&it.choices, v))?;
+                    same &= idx.get(k0).copied() == i64::try_from(j).ok();
+                }
+                Some(same)
+            };
+            match mapped(ans) {
+                Some(same) => same,
+                // Japanese and Chinese answers are sometimes separated by "、" instead of "；": try once more that way
+                None if ans.contains('、') => mapped(&ans.replace('、', "；")) == Some(true),
+                None => false,
+            }
+        }
+    }
+}
+
+/// The six cells of a six-column row, in column order (A..F).
+pub struct SixCells<'a> {
+    pub en_question: &'a str,
+    pub zh_question: &'a str,
+    pub ja_question: &'a str,
+    pub en_answer: &'a str,
+    pub zh_answer: &'a str,
+    pub ja_answer: &'a str,
+}
+
+/// Parses one row of the six-column layout. Returns the outcome (as for the older layouts) and the preview warnings of
+/// the row (only for a readable row: the Chinese / Japanese answer differs from the English one).
+///
+/// The question is English-based end to end: `stem` / `options` / `items` / hotspot `choices` and the id come from
+/// column A, `lang` is "en", `zh` comes from B and `ja` from C (each only when it lines up with the English), the answer
+/// key comes from D. `explain` holds every language's explanation / memory aid / note, and `explanation` / `mnemonic`
+/// / `note` keep one text for older clients (Chinese, else Japanese, else English).
+pub fn parse_six_columns(
+    sheet: &str,
+    row: i64,
+    cells: &SixCells<'_>,
+) -> (QuestionOutcome, Vec<String>) {
+    let text = norm_nl(cells.en_question);
+    if text.is_empty() {
+        return (
+            QuestionOutcome::Skip(SKIP6_NO_ENGLISH.to_string()),
+            Vec::new(),
+        );
+    }
+    // Type detection on column A: a first line "HOTSPOT" (or ホットスポット / 热点题), or a first line that starts with
+    // "HOTSPOT:" (the marker is then removed, as in the older layouts), marks a hotspot question; otherwise "A. …" option
+    // lines make a choice question, and items ending in "Yes / No"-like choices a hotspot one
+    let lead_hot = RES.hot_lead.is_match(&text);
+    let text = if lead_hot {
+        RES.hot_lead.replace(&text, NoExpand("")).into_owned()
+    } else {
+        text
+    };
+    let first_line = text
+        .split('\n')
+        .map(py_strip)
+        .find(|ln| !ln.is_empty())
+        .unwrap_or("");
+    let marker = !lead_hot && is_hotspot_marker(first_line);
+    let is_hot = lead_hot || marker;
+    let body: &str = if marker {
+        text.split_once('\n').map_or("", |(_, rest)| rest)
+    } else {
+        &text
+    };
+    let (mut stem, mut options, mut items) = (String::new(), Vec::new(), Vec::new());
+    if !is_hot {
+        (stem, options) = parse_options(body);
+    }
+    if options.is_empty() {
+        (stem, items) = parse_hotspot_en(body);
+    }
+    if options.is_empty() && items.is_empty() {
+        return (
+            QuestionOutcome::Skip(SKIP6_NO_STRUCTURE.to_string()),
+            Vec::new(),
+        );
+    }
+
+    // The other two languages of the question, aligned against the English structure
+    let translation = py_strip(&question_text_of(&norm_nl(cells.zh_question))).to_string();
+    let zh = if translation.is_empty() {
+        None
+    } else {
+        parse_aligned(&translation, &options, &items)
+    };
+    let ja_question = question_text_of(&norm_nl(cells.ja_question));
+    let ja = if py_strip(&ja_question).is_empty() {
+        None
+    } else {
+        parse_aligned(&ja_question, &options, &items)
+    };
+
+    // The answer key: column D only
+    let d = norm_nl(cells.en_answer);
+    let d_secs = split_sections_with(&d, classify_heading_any);
+    let Some(ans) = column_answer(&d, &d_secs) else {
+        return (
+            QuestionOutcome::Skip(SKIP6_NO_ANSWER.to_string()),
+            Vec::new(),
+        );
+    };
+    let other_langs: Vec<&Vec<Vec<String>>> = [zh.as_ref(), ja.as_ref()]
+        .into_iter()
+        .flatten()
+        .filter_map(|z| z.choices.as_ref())
+        .collect();
+    let (kind, answer) = match resolve_answer(&ans, &options, &items, &other_langs) {
+        Ok(found) => found,
+        Err(outcome) => return (outcome, Vec::new()),
+    };
+
+    // Explanations of every language, and the comparison of the E / F answers with D
+    let en_text = ExplainText {
+        explanation: d_secs.explanation.unwrap_or_default(),
+        mnemonic: d_secs.mnemonic.unwrap_or_default(),
+        note: answer_note(&ans),
+    };
+    let mut warnings = Vec::new();
+    let mut other_text = |cell: &str, own: Option<&Zh>, warning: &str| -> ExplainText {
+        let t = norm_nl(cell);
+        let secs = split_sections_with(&t, classify_heading_any);
+        let theirs = column_answer(&t, &secs);
+        if let Some(a) = theirs.as_deref() {
+            if !same_answer(a, &answer, &items, own.and_then(|z| z.choices.as_ref())) {
+                warnings.push(warning.to_string());
+            }
+        }
+        ExplainText {
+            explanation: secs.explanation.unwrap_or_default(),
+            mnemonic: secs.mnemonic.unwrap_or_default(),
+            note: theirs.as_deref().map(answer_note).unwrap_or_default(),
+        }
+    };
+    let zh_text = other_text(cells.zh_answer, zh.as_ref(), WARN6_ZH_DIFFERS);
+    let ja_text = other_text(cells.ja_answer, ja.as_ref(), WARN6_JA_DIFFERS);
+
+    // One text per field for older clients: Chinese, else Japanese, else English
+    let pick = |field: fn(&ExplainText) -> &String| -> String {
+        [&zh_text, &ja_text, &en_text]
+            .into_iter()
+            .map(field)
+            .find(|s| !s.is_empty())
+            .cloned()
+            .unwrap_or_default()
+    };
+    let explanation = pick(|t| &t.explanation);
+    let mnemonic = pick(|t| &t.mnemonic);
+    let note = pick(|t| &t.note);
+    let keep = |t: ExplainText| (!t.is_empty()).then_some(t);
+    let explain = Explain {
+        en: keep(en_text),
+        zh: keep(zh_text),
+        ja: keep(ja_text),
+    };
+
+    let first_text = first_text_of(&options, &items);
+    let question = Question {
+        kind,
+        tag: if kind == Kind::Hotspot {
+            "HOTSPOT".to_string()
+        } else {
+            String::new()
+        },
+        id: make_id(sheet, &stem, &first_text),
+        stem,
+        options,
+        items,
+        answer,
+        translation,
+        zh,
+        // The base text is English already: no separate `english` / `en`
+        english: String::new(),
+        en: None,
+        lang: "en".to_string(),
+        ja,
+        explanation,
+        mnemonic,
+        note,
+        explain: Some(explain),
+        sheet: sheet.to_string(),
+        row,
+    };
+    (QuestionOutcome::Ok(Box::new(question)), warnings)
 }
 
 #[cfg(test)]

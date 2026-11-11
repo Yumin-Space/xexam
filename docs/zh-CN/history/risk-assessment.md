@@ -36,7 +36,7 @@
 | R19 | 构建 | 私有仓库 + 免费套餐能否用 GitHub 托管的 arm64 runner 没有确认 | 中 | 中 | 中 | 查官方文档；不行就用交叉编译 | 文档核实 | 4 |
 | R20 | 构建 | **GHCR 写权限**：包存在之后 `GITHUB_TOKEN` 被拒（v0.2.2 的 `publish` 实测失败，v0.2、v0.2.1 成功） | 已发生 | 中 | **中** | 在包设置里给仓库 Actions **Write**（业主操作）；新镜像用新名字也会遇到同样的第一次创建流程 | 流水线 | 4、5 |
 | R21 | 工具 | 本机没有 Rust、Nginx；Docker 守护进程曾经未运行 | — | — | 已缓解 | 已用 scoop 装好 Rust 1.99.1 + gcc 16.2；Docker Desktop 已启动；Nginx 用官方镜像跑 | 工具链冒烟（已做） | 0 |
-| R22 | 时间 | 镜像里没有 tzdata 时，`TZ=Asia/Tokyo` 静默失效，时间戳变 UTC | 中 | 低 | 低 | 用 `jiff`（内置时区库）或带 tzdata 的基础镜像；三种基础镜像各输出一次比对 | S8 | 2、4 |
+| R22 | 时间 | 镜像里没有 tzdata 时，`TZ=<所在时区>` 静默失效，时间戳变 UTC | 中 | 低 | 低 | 用 `jiff`（内置时区库）或带 tzdata 的基础镜像；三种基础镜像各输出一次比对 | S8 | 2、4 |
 | R23 | 流程 | 推到 `main` 会触发 `publish`，移动 `latest` | 高 | 中 | **中** | 重构在分支 `modernize/rust-ts` 上做；新镜像用新名字（见 [migration-plan.md](migration-plan.md)） | 流水线条件 `ref == main` | 全程 |
 | R24 | 流程 | `VERSION` 是 CI 的唯一版本来源；`Cargo.toml`、`package.json` 又各有版本 | 中 | 低 | 低 | `VERSION` 仍是唯一来源，CI 额外校验两个清单与它一致 | `check` 作业 | 5 |
 | R25 | 安全/易用 | 旧版数据库文件名变更（v0.1 → v0.2）：旧文件被忽略，看起来像数据丢了 | 中 | 中 | 中 | v0.2 已加启动提醒与升级说明；Rust 版沿用同样的提醒 | `v02_fix_checks.py` | 已做 |

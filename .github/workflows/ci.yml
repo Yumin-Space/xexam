@@ -24,9 +24,11 @@ env:
   CARGO_TERM_COLOR: never
 
 jobs:
-  # (1) Check: VERSION is well formed, the newest changelog entry of EVERY README (English README.md at the root, Japanese and
-  #     Chinese in README/) equals VERSION, the backend / frontend manifests carry the same version, the README, docker and docs
-  #     layout is as documented and every relative link resolves. Takes seconds; if it fails nothing else runs.
+  # (1) Check: VERSION holds CODE_VERSION (the code on this branch) and RELEASE_VERSION (the last published release, written
+  #     by the release job below, never by hand). The newest changelog entry of EVERY README (English README.md at the root,
+  #     Japanese and Chinese in README/) and the backend / frontend manifests equal CODE_VERSION; the release badge at the top
+  #     of every README equals RELEASE_VERSION; the README, docker and docs layout is as documented and every relative link
+  #     resolves. Takes seconds; if it fails nothing else runs. Its output "version" is CODE_VERSION.
   check:
     name: check version and changelog
     runs-on: ubuntu-latest
@@ -39,20 +41,30 @@ jobs:
         name: Check version and changelog
         run: |
           set -eu
-          v=$(tr -d '[:space:]' < VERSION)
-          echo "$v" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION is malformed: $v (expected something like 0.1 or 0.1.2)"; exit 1; }
+          # VERSION has KEY=VALUE lines and # comments; each key must appear exactly once, then read the two values
+          for key in CODE_VERSION RELEASE_VERSION; do
+            n=$(grep -c "^$key=" VERSION || true)
+            [ "$n" = 1 ] || { echo "VERSION must have exactly one $key= line (found $n); it needs one CODE_VERSION= and one RELEASE_VERSION= line"; exit 1; }
+          done
+          v=$(sed -n -E 's/^CODE_VERSION=[[:space:]]*([^[:space:]]*)[[:space:]]*$/\1/p' VERSION)
+          rv=$(sed -n -E 's/^RELEASE_VERSION=[[:space:]]*([^[:space:]]*)[[:space:]]*$/\1/p' VERSION)
+          for pair in "CODE_VERSION:$v" "RELEASE_VERSION:$rv"; do
+            echo "${pair#*:}" | grep -Eq '^[0-9]+\.[0-9]+(\.[0-9]+)?$' || { echo "VERSION: ${pair%%:*} is missing or malformed: '${pair#*:}' (expected something like 0.6 or 0.6.5)"; exit 1; }
+          done
+          # A release can only be a version the code already reached
+          [ "$(printf '%s\n%s\n' "$rv" "$v" | sort -V | tail -n1)" = "$v" ] || { echo "VERSION: RELEASE_VERSION $rv is newer than CODE_VERSION $v"; exit 1; }
           # The English README stays at the root (GitHub shows it on the repository page); the Japanese and Chinese ones live in README/
           readmes="README.md README/README.ja.md README/README.zh-CN.md"
           for f in $readmes; do
             [ -f "$f" ] || { echo "$f is missing: the project keeps three READMEs (README.md in English at the root, README/README.ja.md, README/README.zh-CN.md)"; exit 1; }
             top=$(grep -m1 -E '^### v[0-9]' "$f" | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
-            [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but VERSION is $v. Write the changelog entry in all three READMEs and keep them equal to VERSION."; exit 1; }
-            # The release badge at the top is static text; it must name this version too (its width is set next to it)
-            grep -q "img.shields.io/badge/release-v$v-green" "$f" || { echo "The release badge at the top of $f does not say v$v: update it (and its width) together with VERSION."; exit 1; }
+            [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but CODE_VERSION is $v. Write the changelog entry in all three READMEs and keep them equal to CODE_VERSION."; exit 1; }
+            # The release badge at the top shows the last published release; the release job updates it (scripts/set-release-version.py)
+            grep -q "img.shields.io/badge/release-v$rv-green" "$f" || { echo "The release badge at the top of $f does not say v$rv (RELEASE_VERSION). Do not edit it by hand: the release job sets it after a release."; exit 1; }
           done
           for m in backend/Cargo.toml frontend/package.json; do
             mv=$(grep -m1 -E '^[[:space:]]*"?version"?[[:space:]]*[=:]' "$m" | sed -E 's/.*"([0-9][0-9.]*)".*/\1/')
-            case "$mv" in "$v"|"$v".0) ;; *) echo "$m has version $mv but VERSION is $v"; exit 1;; esac
+            case "$mv" in "$v"|"$v".0) ;; *) echo "$m has version $mv but CODE_VERSION is $v"; exit 1;; esac
           done
           extra=$(find . -maxdepth 1 -name 'README*' ! -name README.md ! -name README; find README -mindepth 1 ! -name README.ja.md ! -name README.zh-CN.md)
           [ -z "$extra" ] || { echo "Only README.md stays at the root and README/ holds only README.ja.md and README.zh-CN.md; found: $extra"; exit 1; }
@@ -163,7 +175,7 @@ jobs:
   #    Private repositories cannot use GitHub's native arm64 runners, so running is emulated with QEMU. Build only, no push; discarded afterwards.
   arm64:
     name: arm64 (images build and start under QEMU)
-    needs: [frontend, backend]
+    needs: [check, frontend, backend]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -195,6 +207,8 @@ jobs:
           cache-from: type=gha,scope=frontend-arm64-check
           cache-to: type=gha,scope=frontend-arm64-check,mode=max
       - name: Start both images and check them
+        env:
+          VERSION: ${{ needs.check.outputs.version }}     # CODE_VERSION, which /api/info reports
         run: |
           set -eu
           docker volume create arm64data >/dev/null
@@ -207,7 +221,7 @@ jobs:
           info=$(docker exec arm64-backend wget -qO- --header 'Host: localhost' http://127.0.0.1:8765/api/info)
           echo "backend /api/info: $info"
           echo "$info" | grep -q '"arch": "aarch64"' || { echo "backend is not running as aarch64"; exit 1; }
-          echo "$info" | grep -q '"version": "'"$(tr -d '[:space:]' < VERSION)"'"' || { echo "version mismatch"; exit 1; }
+          echo "$info" | grep -q '"version": "'"$VERSION"'"' || { echo "version mismatch: /api/info should report CODE_VERSION $VERSION"; exit 1; }
           docker run -d --name arm64-frontend --platform linux/arm64 xexam-frontend:arm64 >/dev/null
           for i in $(seq 1 30); do
             docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
@@ -359,6 +373,8 @@ jobs:
       HUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0       # the last step needs the history of main and dev to commit and fast-forward
 
       - name: Create or update the release
         run: |
@@ -368,12 +384,55 @@ jobs:
           python3 scripts/release-notes.py "$VERSION" "docker.io/${ns,,},ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" README.md > notes.md
           tag="v$VERSION"
           title="Xexam v$VERSION"
+          # The newest release recorded on main (RELEASE_VERSION). A re-run of an older run must not mark its Release as the
+          # latest one again
+          git fetch --quiet origin main
+          recorded=$(git show origin/main:VERSION | sed -n -E 's/^RELEASE_VERSION=[[:space:]]*([^[:space:]]*)[[:space:]]*$/\1/p')
+          latest=true
+          if [ -n "$recorded" ] && [ "$recorded" != "$VERSION" ] && [ "$(printf '%s\n%s\n' "$recorded" "$VERSION" | sort -V | tail -n1)" = "$recorded" ]; then
+            latest=false
+            echo "::notice::v$VERSION is older than the newest release v$recorded: its Release is not marked as the latest"
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             # Re-run of the same version (e.g. only the notes changed): update the notes, leave the tag alone
-            gh release edit "$tag" --title "$title" --notes-file notes.md --latest
+            gh release edit "$tag" --title "$title" --notes-file notes.md --latest="$latest"
             echo "Updated Release: $tag"
           else
-            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md --latest
+            gh release create "$tag" --target "$GITHUB_SHA" --title "$title" --notes-file notes.md --latest="$latest"
             echo "Created Release: $tag (for commit $GITHUB_SHA)"
           fi
           gh release view "$tag" --json url,tagName,targetCommitish --jq '"\(.tagName) -> \(.url)"'
+
+      # Only now, with the images published and the Release created, does RELEASE_VERSION move to this version. The step
+      # writes VERSION and the release badge of the three READMEs (scripts/set-release-version.py), commits that on main
+      # with the GITHUB_TOKEN (such pushes start no new workflow run, and the message says [skip ci] as well) and, when dev
+      # has no commits of its own yet, fast-forwards dev to the same commit so the two branches stay in line. When dev has
+      # moved on, it leaves dev alone and asks for a merge of main into dev before the next merge to main. A run older than
+      # the release already recorded on main changes nothing (set-release-version.py never moves RELEASE_VERSION back).
+      - name: Record the released version (RELEASE_VERSION and the README badge)
+        run: |
+          set -eu
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --quiet origin main dev
+          # Work on the newest main (another merge may have landed while this run was publishing)
+          git checkout --quiet -B main origin/main
+          python3 scripts/set-release-version.py "$VERSION"
+          if git diff --quiet; then
+            echo "RELEASE_VERSION and the badges already say v$VERSION; nothing to commit"
+          else
+            git commit --quiet -am "Record release v$VERSION: RELEASE_VERSION and the README badge [skip ci]"
+            git push --quiet origin HEAD:main
+            echo "main: RELEASE_VERSION=$VERSION committed as $(git rev-parse --short HEAD)"
+          fi
+          if git merge-base --is-ancestor origin/dev HEAD; then
+            # Keeping dev in line is optional: when dev moved in the seconds since the fetch the push is refused, yet the
+            # release itself is complete, so that is a notice and not a failure
+            if git push --quiet origin HEAD:dev; then
+              echo "dev fast-forwarded to $(git rev-parse --short HEAD)"
+            else
+              echo "::notice::dev moved during the release: merge main into dev (git pull origin main on dev) before the next merge to main"
+            fi
+          else
+            echo "::notice::dev has commits that main does not have: merge main into dev (git pull origin main on dev) before the next merge to main"
+          fi

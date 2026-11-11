@@ -55,6 +55,10 @@ const NOT_MESSAGES: ReadonlyArray<{ reason: string; values: readonly string[] }>
     values: ['ホットスポット'],
   },
   {
+    reason: 'six-column layout: extra section heading words (parser/question.rs classify_heading_any) and hotspot first-line markers (is_hotspot_marker); workbook data',
+    values: ['覚え方', '答え', '热点题', '熱點題', '热点', '熱點'],
+  },
+  {
     reason: 'default file name of an upload without one (security/mod.rs clean_filename); shown as a file name, not a message',
     values: ['未命名.xlsx'],
   },
@@ -517,6 +521,16 @@ test('no stale translations: every known text still exists in the backend (or in
     ...known.templates.filter((s) => !templates.has(normalizeTemplate(s))),
   ];
   assert.deepEqual(stale, [], 'these texts are no longer sent by the backend: update or remove them in server-messages.ts');
+});
+
+test('v0.7: the refusal of the old 3- / 4-column layouts is translated', () => {
+  const msg = '只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。';
+  assert.equal(localizeServerMessage(msg, 'zh'), msg);
+  assert.equal(
+    localizeServerMessage(msg, 'en'),
+    'Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again.',
+  );
+  assert.match(localizeServerMessage(msg, 'ja'), /^取り込めるのは 6 列形式だけです/);
 });
 
 test('concrete translations', () => {

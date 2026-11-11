@@ -9,25 +9,34 @@ What is checked:
   1. The stack comes up and both containers are healthy; the backend publishes no ports, so the host cannot reach it
   2. Sign-in over plain HTTP (v0.6: default administrator, forced password change, no Secure cookie), then
      /api/info /api/bank /api/progress /api/imports through Nginx
-  3. Upload the demo workbook → preview (bank unchanged) → confirm → question bank has 5 questions; cancel / repeated confirm / wrong confirmation token
+  3. Upload a made-up six-column workbook (written by this script) → preview (bank unchanged) → confirm → question bank has 5
+     questions; cancel / repeated confirm / wrong confirmation token; a workbook of the old 3-column layout is refused (v0.7)
   4. Submit results → study history; reset
   5. Over 20 MB: 413 at the Nginx layer (JSON); the Host / Origin guards still take effect after passing through Nginx
   6. Recreate from the same volume after deleting the containers, data is still there; docker stop duration
   7. Non-root, read-only root filesystem
+  8. SQLite in WAL mode (v0.7): the startup log says so, GET /api/logs shows it through Nginx, reset-password works while the
+     server runs, and after docker stop the -wal file in the volume is empty (checkpoint at shutdown)
 """
 import http.client
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import time
 import uuid
+import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 18090
 PROJECT = 'xexamcheck' + uuid.uuid4().hex[:6]
-DEMO = os.path.join(ROOT, 'tests', 'baseline', 'fixtures', 'demo.xlsx')
+WORK = tempfile.mkdtemp(prefix='xexam_stack_')
+DEMO = os.path.join(WORK, 'garden.xlsx')
+THREE = os.path.join(WORK, 'three.xlsx')
+MSG_OLD_LAYOUT = '只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。'
 COMPOSE = os.path.join(ROOT, 'docker', 'docker-compose.build.yml')
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
@@ -48,6 +57,53 @@ def dc(*a, check=True):
 
 def cleanup():
     dc('down', '-v', '--remove-orphans', check=False)
+    shutil.rmtree(WORK, ignore_errors=True)
+
+
+def xlsx(path, rows):
+    """Writes a minimal one-sheet .xlsx: `rows` are lists of cell texts from column A on (inline strings)."""
+    def esc(t):
+        return t.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+    cells = []
+    for r, row in enumerate(rows, 1):
+        cs = ''.join('<c r="%s%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>' % (chr(65 + k), r, esc(t))
+                     for k, t in enumerate(row))
+        cells.append('<row r="%d">%s</row>' % (r, cs))
+    ns = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    rel = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    pkg = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml',
+                   '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                   '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                   '<Default Extension="xml" ContentType="application/xml"/>'
+                   '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+                   '<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+                   '</Types>')
+        z.writestr('_rels/.rels', '<Relationships xmlns="%s"><Relationship Id="rId1" Type="%s/officeDocument" Target="xl/workbook.xml"/></Relationships>' % (pkg, rel))
+        z.writestr('xl/workbook.xml', '<workbook xmlns="%s" xmlns:r="%s"><sheets><sheet name="Garden" sheetId="1" r:id="rId1"/></sheets></workbook>' % (ns, rel))
+        z.writestr('xl/_rels/workbook.xml.rels', '<Relationships xmlns="%s"><Relationship Id="rId1" Type="%s/worksheet" Target="worksheets/sheet1.xml"/></Relationships>' % (pkg, rel))
+        z.writestr('xl/worksheets/sheet1.xml', '<worksheet xmlns="%s"><sheetData>%s</sheetData></worksheet>' % (ns, ''.join(cells)))
+
+
+def write_workbooks():
+    """The two made-up workbooks of this check, in WORK (removed again by cleanup())."""
+    os.makedirs(WORK, exist_ok=True)
+    # Five made-up questions of the six-column layout (A-C the question in English, Chinese, Japanese; D-F the answer)
+    xlsx(DEMO, [[
+        'A gardener waters the herbs every morning (question %d). Which can is used?\n\nA. The small can\n\nB. The big can\n\nC. The hose' % i,
+        '【中文翻译】\n园丁每天早上给香草浇水（第 %d 题）。用哪个水壶？\nA. 小水壶\nB. 大水壶\nC. 水管' % i,
+        '庭師が毎朝ハーブに水をやります（問題 %d）。どのじょうろを使いますか。\n\nA. 小さいじょうろ\n\nB. 大きいじょうろ\n\nC. ホース' % i,
+        '【Answer】A\n\n【Explanation】\nA small can is enough for herbs.',
+        '【答案】A\n\n【解析·怎么选】\n浇香草用小水壶就够了。',
+        '【正解】A\n\n【解説】\nハーブには小さいじょうろで十分です。',
+    ] for i in range(1, 6)])
+    # The old three-column layout (A the Japanese question, B the Chinese translation, C the answer): refused since v0.7
+    xlsx(THREE, [[
+        'これは庭についての十分に長い日本語の問題文です。どれが正しいですか。\n\nA. 甲です\n\nB. 乙です\n\nC. 丙です',
+        '【中文翻译】\n这是一个关于花园的足够长的中文题目。哪个正确？\nA. 甲\nB. 乙\nC. 丙',
+        '【答案】B\n\n【解析·怎么选】因为乙。',
+    ]])
 
 
 def ok(cond, msg):
@@ -99,12 +155,13 @@ def wait_healthy(names, secs=120):
     return False
 
 
-def upload(path):
+def upload(path, name='garden.xlsx'):
     data = open(path, 'rb').read()
-    return req('POST', '/api/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'demo.xlsx'}, data)
+    return req('POST', '/api/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': name}, data)
 
 
 cleanup()
+write_workbooks()
 try:
     dc('up', '-d', '--build')
     # In this project the container names are fixed as xexam-frontend / xexam-backend; changing the project name does not change container_name, so first confirm no real container is using the same names
@@ -135,13 +192,23 @@ try:
     COOKIE = sc.split(';')[0]
     st, _, e = jreq('GET', '/api/bank')
     ok(st == 403, 'Before the new password every other route is 403. Actual %d' % st)
-    st, _, j = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD}, headers={'Origin': 'http://localhost:%d' % PORT})
+    st, h, j = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD}, headers={'Origin': 'http://localhost:%d' % PORT})
     ok(st == 200 and j['user']['mustChangePassword'] is False, 'New password saved. Actual %d %r' % (st, j))
+    # v0.6.5: the password change rotates the session; this client continues with the new cookie, the old one has ended
+    old_cookie = COOKIE
+    sc = next((c for c in h.get('set-cookie', []) if c.startswith('xexam_session=')), '')
+    ok(sc and 'HttpOnly' in sc and 'Secure' not in sc, 'The password change sends a new session cookie. Actual %r' % h.get('set-cookie'))
+    COOKIE = sc.split(';')[0]
+    ok(COOKIE != old_cookie, 'The new session cookie differs from the old one')
+    st, _, _ = jreq('GET', '/api/progress', headers={'Cookie': old_cookie})
+    ok(st == 401, 'The session from before the password change has ended. Actual %d' % st)
 
     # -- 2 Read endpoints --
     st, h, info = jreq('GET', '/api/info')
     ok(st == 200 and info['bankCount'] == 0 and info['canShutdown'] is False, '/api/info: empty question bank, shutdown not allowed. Actual %r' % info)
-    ok(open(os.path.join(ROOT, 'VERSION')).read().strip().startswith(info['version'].split('.')[0]), 'Version comes from VERSION: %s' % info['version'])
+    # VERSION has KEY=VALUE lines; the backend reports CODE_VERSION (the version of the code in the image)
+    code_version = re.search(r'(?m)^CODE_VERSION=\s*(\S+)', open(os.path.join(ROOT, 'VERSION'), encoding='utf-8').read())
+    ok(code_version is not None and info['version'] == code_version.group(1), 'Version comes from CODE_VERSION in VERSION: %s' % info['version'])
     st, h, bank = jreq('GET', '/api/bank')
     ok(st == 200 and bank['questions'] == [] and list(bank.keys()) == ['file', 'mtime', 'error', 'questions', 'sheets'], '/api/bank with an empty question bank; key order matches the old version')
     st, h, prog = jreq('GET', '/api/progress')
@@ -150,7 +217,7 @@ try:
     # -- 3 Import flow --
     st, h, b = upload(DEMO)
     pv = json.loads(b)
-    ok(st == 200 and pv['added'] == 5 and pv['usable'] == 5 and pv['token'], 'Upload demo.xlsx: preview adds 5 questions. Actual %d' % st)
+    ok(st == 200 and pv['added'] == 5 and pv['usable'] == 5 and pv['token'], 'Upload garden.xlsx (six columns): preview adds 5 questions. Actual %d' % st)
     st, _, info = jreq('GET', '/api/info')
     ok(info['bankCount'] == 0, 'Question bank still has 0 questions during preview (preview does not write to the bank)')
     st, _, e = jreq('POST', '/api/import/confirm', {'token': 'wrong-token'})
@@ -170,7 +237,11 @@ try:
     st, _, e = jreq('POST', '/api/import/confirm', {'token': pv2['token']})
     ok(st == 409, 'Cannot confirm after cancel')
     st, _, imps = jreq('GET', '/api/imports')
-    ok(len(imps['imports']) == 1 and imps['imports'][0]['filename'] == 'demo.xlsx', 'Import history has only 1 entry (preview and cancel leave no record)')
+    ok(len(imps['imports']) == 1 and imps['imports'][0]['filename'] == 'garden.xlsx', 'Import history has only 1 entry (preview and cancel leave no record)')
+    st, _, b = upload(THREE, 'three.xlsx')
+    ok(st == 400 and json.loads(b).get('error') == MSG_OLD_LAYOUT, 'A workbook of the old 3-column layout is refused (400, six-column message). Actual %d' % st)
+    st, _, info = jreq('GET', '/api/info')
+    ok(info['bankCount'] == 5, 'The refused workbook changed nothing (still 5 questions)')
 
     # -- 4 Results --
     ids = [q['id'] for q in bank_q] if (bank_q := jreq('GET', '/api/bank')[2]['questions']) else []
@@ -196,7 +267,7 @@ try:
     ok(st == 200 and b'<div id="app">' in b and 'nosniff' == h.get('x-content-type-options'), 'Home page is served by Nginx')
 
     # -- 6 Persistence --
-    dc('rm', '-sf', 'nginx', 'backend')
+    dc('rm', '-sf', 'frontend', 'backend')
     ok(subprocess.run(['docker', 'volume', 'inspect', PROJECT + '_data'], capture_output=True, env=env).returncode == 0, 'Volume still exists after deleting the containers')
     dc('up', '-d')
     ok(wait_healthy(names), 'Both containers are healthy again after recreating with the same volume')
@@ -204,10 +275,41 @@ try:
     ok(info['bankCount'] == 5, 'Question bank still has 5 questions after recreation (data is in the volume)')
     st, _, p = jreq('GET', '/api/progress')
     ok(len(p['history']) == 2, 'Result history still has 2 rounds after recreation (the session is in the volume too)')
+
+    # -- 8 SQLite WAL and the system log (v0.7) --
+    def backend_log():
+        r = subprocess.run(['docker', 'logs', 'xexam-backend'], capture_output=True, text=True, encoding='utf-8', errors='replace', env=env)
+        return r.stdout + r.stderr
+    ok('SQLite journal mode: wal' in backend_log(), 'The backend runs SQLite in WAL mode (startup log)')
+    st, _, lg = jreq('GET', '/api/logs')
+    ok(st == 200 and list(lg.keys()) == ['lines', 'last', 'dropped', 'boot'] and any('SQLite journal mode: wal' in l['message'] for l in lg['lines']),
+       'GET /api/logs through Nginx: the administrator sees the startup lines. Actual %d' % st)
+    st, _, lg2 = jreq('GET', '/api/logs?after=%d' % lg['last'])
+    ok(st == 200 and all(l['seq'] > lg['last'] for l in lg2['lines']), 'GET /api/logs?after=<last> returns only newer lines')
+    r = subprocess.run(['docker', 'exec', 'xexam-backend', 'xexam-backend', 'reset-password', 'admin'], capture_output=True, text=True, encoding='utf-8', errors='replace', env=env)
+    m = re.search(r"New password for 'admin': (\S+)", r.stdout)
+    ok(r.returncode == 0 and m is not None, 'reset-password runs in the container while the server is up (exit %d)' % r.returncode)
+    st, _, _ = jreq('GET', '/api/progress')
+    ok(st == 401, 'reset-password signed the administrator out everywhere. Actual %d' % st)
+    COOKIE = None
+    st, h, j = jreq('POST', '/api/auth/login', {'username': 'admin', 'password': m.group(1)}, headers={'Origin': 'http://localhost:%d' % PORT})
+    ok(st == 200 and j['user']['mustChangePassword'] is True, 'The new password from reset-password signs in and must be changed. Actual %d' % st)
+    COOKIE = next((c for c in h.get('set-cookie', []) if c.startswith('xexam_session=')), '').split(';')[0]
+    st, h, j = jreq('POST', '/api/auth/password', {'password': NEW_PASSWORD + '-2'}, headers={'Origin': 'http://localhost:%d' % PORT})
+    ok(st == 200, 'New password saved after the reset. Actual %d' % st)
+    COOKIE = next((c for c in h.get('set-cookie', []) if c.startswith('xexam_session=')), '').split(';')[0]
+    st, _, p = jreq('GET', '/api/progress')
+    ok(st == 200 and len(p['history']) == 2, 'The study records are unchanged after reset-password')
+
     t0 = time.time()
     subprocess.run(['docker', 'stop', 'xexam-backend'], capture_output=True, env=env)
     dt = time.time() - t0
     ok(dt < 9, 'docker stop backend took %.1f s (<9)' % dt)
+    ok('WAL checkpoint at shutdown' in backend_log(), 'docker stop runs the WAL checkpoint (shutdown log)')
+    r = subprocess.run(['docker', 'run', '--rm', '--network', 'none', '-v', PROJECT + '_data:/data', '--entrypoint', 'sh', 'xexam-backend:local', '-c',
+                        'test -s /data/xexam.db && { test -s /data/xexam.db-wal && echo WAL_HAS_CONTENT || echo WAL_EMPTY; }'],
+                       capture_output=True, text=True, env=env)
+    ok(r.stdout.strip() == 'WAL_EMPTY', 'After docker stop the volume holds xexam.db and no -wal content. Actual %r' % (r.stdout.strip() or r.stderr.strip()[-200:]))
     st, _, p = jreq('POST', '/api/reset', {}) if False else (0, 0, 0)
 
 finally:

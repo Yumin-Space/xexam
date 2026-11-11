@@ -12,7 +12,7 @@
 
 ### 0.1 仓库状态（`git` 只读命令）
 - 分支只有 `main`（跟踪 `origin/main`），**没有任何 tag**（`git tag` 为空）。`git rev-parse HEAD origin/main` 都是 `8cec408be81c…`（= v0.1）。远端 `git@github.com:Yumin-Space/xexam.git`。
-- 历史共 5 个提交（01:23 → 03:18，2026-11-10，+0900）：`1cb7512` 首次提交 → `f5c592d` 加 CI → `98a6512` 修 CI → `892a47b` 改名 + 命名卷 + README + 只拉取 compose → `8cec408` v0.1。
+- 历史共 5 个提交（01:23 → 03:18，2026-11-10）：`1cb7512` 首次提交 → `f5c592d` 加 CI → `98a6512` 修 CI → `892a47b` 改名 + 命名卷 + README + 只拉取 compose → `8cec408` v0.1。
 - 工作区 = 已完成但**未提交**的 v0.2：11 个已修改文件（`.dockerignore`、`.github/workflows/docker.yml`、`.gitignore`、`Dockerfile`、`README.md`、`VERSION`、`docker-compose.build.yml`、`docker-compose.yml`、`server.py`、`web/app.js`、`使用说明.txt`）+ 未跟踪的 `scripts/`。
 - 工作区 16 个文本文件是 CRLF，而仓库内是 LF（`git ls-files --eol`；`.gitattributes` 规定 `* text=auto eol=lf`、`*.bat eol=crlf`）。
 
@@ -312,7 +312,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 - cloudflared 现在连的是宿主机 `IP:8765`（README:761）。默认保持"宿主机发布 `127.0.0.1:8765` → nginx 容器"，业主的隧道配置、手机书签和 **localStorage（按 origin 隔离，`xexam.session.v1`、`xexam.lang.v1`，`app.js:4-5`）**都不用动。
 
 ### 3.5 时区
-`now()` 用本地时间 `'%Y-%m-%d %H:%M'`（`db.py:74-75`，无时区）；compose 设 `TZ: Asia/Tokyo`（`docker-compose.yml:32`）。精简 Rust 运行镜像若没有 tzdata，会**静默变成 UTC**，历史记录时间差 9 小时。→ 运行镜像带 tzdata 或自行换算，并加测试。
+`now()` 用本地时间 `'%Y-%m-%d %H:%M'`（`db.py:74-75`，无时区）；compose 设 `TZ: <所在时区>`（`docker-compose.yml:32`）。精简 Rust 运行镜像若没有 tzdata，会**静默变成 UTC**，历史记录时间和本地时间错位。→ 运行镜像带 tzdata 或自行换算，并加测试。
 
 ### 3.6 token 比较的边角
 见 D5/D6：`secrets.compare_digest` 对非 ASCII 抛 `TypeError`；无待确认项时 `not it` 先短路返回 409（实测）；错误 token 不会作废槽位（实测：`take(错误)` → `None`，槽位仍在）。Rust 用常量时间字节比较，并保持"错 token 不消耗槽位"。
@@ -488,7 +488,7 @@ percent 四舍五入（Python 银行家舍入 vs JS / Rust）、`/api/*` JSON �
 | Q13 | 不支持的方法 | 405 / 保持 501 | 405 | **405 + Allow** |
 | Q14 | 安全头 | 仅 nosniff / 完整集合 | 完整集合 | **nosniff、X-Frame-Options DENY、Referrer-Policy no-referrer、严格 CSP（`default-src 'self'`，样式不用内联）；不设 HSTS**（TLS 在 Cloudflare 终止）。CSP 对 `setAttribute('style')` 的影响需在 Phase 5 用真实 Chrome 验证 |
 | Q15 | 成绩百分比舍入 | 复刻银行家舍入 / 改半入 | 复刻，记录既有不一致 | **复刻 Python 舍入**，不修前端显示 |
-| Q16 | 时区 | 镜像带 tzdata，`TZ=Asia/Tokyo` / UTC | 带 tzdata | **带 tzdata**，时间格式不变 |
+| Q16 | 时区 | 镜像带 tzdata，`TZ=<所在时区>` / UTC | 带 tzdata | **带 tzdata**，时间格式不变 |
 | Q17 | `/api/shutdown` | 保留(Docker 恒 403) / 删 | 保留 | **保留** |
 | Q18 | `--import` 与 `progress.json` 迁移 | 移植 / 删 | 移植 | **移植** |
 | Q19 | `start.bat` / 无 Docker 运行 | 随 legacy 保留 + 新开发脚本 / 删 | 保留 | **保留于 `legacy/python/`**；新栈 Docker-only，另附 Windows 开发脚本 |

@@ -8,7 +8,9 @@ mod dbc;
 use apic::{build, get, post_json, post_raw, send, FakeEngine, Resp, TestApp};
 use axum::body::Body;
 use axum::http::StatusCode;
-use dbc::{baseline, hotspot, multi, open_fixed, sheet, single, tmp, ADMIN, FIXED_NOW};
+use dbc::{
+    baseline, hotspot, multi, open_fixed, seed_questions, sheet, single, tmp, ADMIN, FIXED_NOW,
+};
 use rusqlite::types::Value as Sql;
 use rusqlite::Connection;
 use serde_json::{json, Value};
@@ -82,6 +84,7 @@ fn attempt(results: &[(&str, bool)]) -> Attempt {
         sheets: vec!["S1".to_string()],
         mode: "all".to_string(),
         seconds: 42,
+        kind: Default::default(),
     }
 }
 
@@ -135,8 +138,9 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     assert_eq!(s.bank().expect("bank")["questions"], json!([]));
     drop(s);
     let c = raw(&db);
-    // intended difference (v0.6): a new database goes straight to schema 3 (tests/v06_users_and_sign_in.rs)
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "3");
+    // intended difference (v0.6, v0.6.5): a new database goes straight to the current schema (tests/v06_users_and_sign_in.rs,
+    // tests/v065_bank_access_and_practice.rs)
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "4");
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 0);
     for t in ["banks", "attempt_items", "settings"] {
         assert_eq!(
@@ -153,9 +157,9 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
         "an empty database is not backed up"
     );
     // reopening an empty v2 database writes nothing
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     drop(open_fixed(&db));
-    assert_eq!(std::fs::read(&db).expect("read"), before);
+    assert_eq!(dbc::db_bytes(&db), before);
 }
 
 const Q_COLS: &str =
@@ -271,8 +275,9 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
         ),
         0
     );
-    // intended difference (v0.6): v1 → v2 → v3 in one go (one schema-1 backup); v3 is covered in tests/v06_users_and_sign_in.rs
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "3");
+    // intended difference (v0.6, v0.6.5): v1 → v2 → v3 → v4 in one go (one schema-1 backup); v3 / v4 are covered in
+    // tests/v06_users_and_sign_in.rs and tests/v065_bank_access_and_practice.rs
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "4");
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempt_items"),
         0,
@@ -295,8 +300,20 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
             "inactive",
             "sheets",
             "studied",
-            "records"
+            "records",
+            // v0.6.5: the owner (the default administrator created by the migration) and whether the viewer may manage it
+            "ownerId",
+            "owner",
+            "manageable"
         ]
+    );
+    assert_eq!(
+        (
+            b["ownerId"].clone(),
+            b["owner"].clone(),
+            b["manageable"].clone()
+        ),
+        (json!(1), json!("admin"), json!(true))
     );
     assert_eq!(
         (
@@ -329,13 +346,13 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
     drop(c);
     drop(s);
     // re-opening the migrated database: not a single byte changes, no second backup
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     let s = open_fixed(&db);
     assert!(s.migration_backup().is_none());
     s.bank().expect("bank");
     s.banks().expect("banks");
     drop(s);
-    assert_eq!(std::fs::read(&db).expect("read"), before);
+    assert_eq!(dbc::db_bytes(&db), before);
     assert_eq!(backups(dir.path()).len(), 1);
 }
 
@@ -346,17 +363,13 @@ fn a_failed_backup_refuses_to_migrate() {
     std::fs::copy(baseline("fixtures/sample.db"), &db).expect("copy");
     // `backups` exists as a file, so the backup directory cannot be created
     std::fs::write(dir.path().join("backups"), b"not a directory").expect("write");
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     match Store::open(&db) {
         Err(DbError::Backup(_)) => {}
         Err(other) => panic!("expected a backup error, got {other}"),
         Ok(_) => panic!("must not open (and migrate) without a backup"),
     }
-    assert_eq!(
-        std::fs::read(&db).expect("read"),
-        before,
-        "nothing migrated"
-    );
+    assert_eq!(dbc::db_bytes(&db), before, "nothing migrated");
     assert_eq!(
         text(&raw(&db), "SELECT value FROM meta WHERE key='schema'"),
         "1"
@@ -377,7 +390,7 @@ fn reopening_a_v2_database_with_data_never_writes() {
     s.update_settings(ADMIN, &[("theme".into(), json!("dark"))])
         .expect("settings");
     drop(s);
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     let s = open_fixed(&db);
     s.bank().expect("bank");
     s.banks().expect("banks");
@@ -388,7 +401,7 @@ fn reopening_a_v2_database_with_data_never_writes() {
     s.plan_import_for(ImportTarget::Bank(2), &sh, &qs)
         .expect("plan");
     drop(s);
-    assert_eq!(std::fs::read(&db).expect("read"), before);
+    assert_eq!(dbc::db_bytes(&db), before);
     assert!(!dir.path().join("x.db-journal").exists());
     assert!(backups(dir.path()).is_empty());
 }
@@ -501,9 +514,9 @@ fn rows_written_by_an_older_binary_are_attached_to_the_legacy_bank() {
     assert_eq!(active_in(&db, 1), 4, "the other bank is untouched");
     drop(c);
     // and that is a one-time write: the next open changes nothing
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     drop(open_fixed(&db));
-    assert_eq!(std::fs::read(&db).expect("read"), before);
+    assert_eq!(dbc::db_bytes(&db), before);
 }
 
 // ---------------------------------------------------------------- banks and import targets
@@ -654,7 +667,7 @@ fn updating_a_bank_retires_only_within_it_and_keeps_its_name() {
         ]
     );
     // an unknown bank: no plan, nothing written
-    let snapshot = std::fs::read(&db).expect("read");
+    let snapshot = dbc::db_bytes(&db);
     assert_eq!(
         s.plan_import_for(ImportTarget::Bank(99), &sh, &qs)
             .expect("plan"),
@@ -665,7 +678,7 @@ fn updating_a_bank_retires_only_within_it_and_keeps_its_name() {
             .expect("apply"),
         None
     );
-    assert_eq!(std::fs::read(&db).expect("read"), snapshot);
+    assert_eq!(dbc::db_bytes(&db), snapshot);
 }
 
 #[test]
@@ -759,7 +772,8 @@ fn deleting_a_bank_without_records_keeps_the_study_data() {
         s.delete_bank(2, false).expect("delete"),
         Some(DeletedBank {
             id: 2,
-            legacy: false
+            legacy: false,
+            name: "new".to_string(),
         })
     );
     let c = raw(&db);
@@ -810,7 +824,8 @@ fn deleting_a_bank_with_records_removes_its_study_data() {
         s.delete_bank(2, true).expect("delete"),
         Some(DeletedBank {
             id: 2,
-            legacy: false
+            legacy: false,
+            name: "new".to_string(),
         })
     );
     let c = raw(&db);
@@ -852,7 +867,8 @@ fn deleting_a_bank_with_records_removes_its_study_data() {
         s.delete_bank(1, true).expect("delete"),
         Some(DeletedBank {
             id: 1,
-            legacy: true
+            legacy: true,
+            name: "legacy".to_string(),
         })
     );
     // exam 1 named only the legacy bank: gone; exam 3 named the legacy bank and bank 2, which no longer exists: gone too,
@@ -885,17 +901,24 @@ fn records_list_detail_and_deletes() {
             [],
         )
         .expect("old record");
-    s.record_attempt_with_answers(
-        ADMIN,
-        &attempt(&[("a1", true), ("a3", false), ("a4", false), ("ghost", true)]),
-        &[
-            Some(json!(["B"])),
-            Some(json!(["A", "C"])),
-            Some(json!([0, null])),
-            None,
-        ],
-    )
-    .expect("attempt");
+    // "ghost" never existed: since v0.6.5 it is left out of the record and named in "notCounted"
+    let p = s
+        .record_attempt_with_answers(
+            ADMIN,
+            &attempt(&[("a1", true), ("a3", false), ("a4", false), ("ghost", true)]),
+            &[
+                Some(json!(["B"])),
+                Some(json!(["A", "C"])),
+                Some(json!([0, null])),
+                None,
+            ],
+        )
+        .expect("attempt");
+    assert_eq!(p["notCounted"], json!(["ghost"]));
+    assert!(
+        p["questions"].get("ghost").is_none(),
+        "no statistics for it"
+    );
     let recs = s.records(ADMIN).expect("records");
     assert_eq!(keys(&recs), ["records", "retention"]);
     assert_eq!(recs["retention"], 500);
@@ -904,20 +927,21 @@ fn records_list_detail_and_deletes() {
         keys(r),
         [
             "id", "at", "banks", "sheets", "mode", "total", "correct", "percent", "seconds",
-            "answered", "detail"
+            "answered", "detail", "kind"
         ]
     );
     assert_eq!(
         r,
         &json!({"id": 2, "at": FIXED_NOW, "banks": [{"id": 1, "name": "bank", "deleted": false}], "sheets": ["S1"],
-                "mode": "all", "total": 4, "correct": 2, "percent": 50, "seconds": 42, "answered": 3, "detail": true})
+                "mode": "all", "total": 3, "correct": 1, "percent": 33, "seconds": 42, "answered": 3, "detail": true,
+                "kind": "exam"})
     );
     assert_eq!(
         recs["records"][1],
         json!({"id": 1, "at": "2026-01-01 00:00", "banks": [], "sheets": ["S1"], "mode": "weak", "total": 2,
-               "correct": 1, "percent": 50, "seconds": 9, "answered": null, "detail": false})
+               "correct": 1, "percent": 50, "seconds": 9, "answered": null, "detail": false, "kind": "exam"})
     );
-    // retire a3 (it still shows, with active false); "ghost" never existed
+    // retire a3 (it still shows, with active false)
     s.apply_import(
         "bank.xlsx",
         &sh,
@@ -928,7 +952,7 @@ fn records_list_detail_and_deletes() {
     assert_eq!(keys(&d), ["record", "items"]);
     assert_eq!(d["record"], recs["records"][0]);
     let items = d["items"].as_array().expect("items");
-    assert_eq!(items.len(), 4);
+    assert_eq!(items.len(), 3);
     assert_eq!(
         keys(&items[0]),
         ["seq", "questionId", "answer", "correct", "question"]
@@ -944,7 +968,6 @@ fn records_list_detail_and_deletes() {
     );
     assert_eq!(items[1]["answer"], json!(["A", "C"]));
     assert_eq!(items[2]["answer"], json!([0, null]));
-    assert_eq!(items[3]["answer"], Value::Null);
     let qk = keys(&items[0]["question"]);
     assert_eq!(qk[qk.len() - 5..], ["id", "sheet", "row", "bank", "active"]);
     assert_eq!(items[0]["question"]["active"], true);
@@ -954,7 +977,6 @@ fn records_list_detail_and_deletes() {
         "retired questions are shown"
     );
     assert_eq!(items[1]["question"]["bank"], 1);
-    assert_eq!(items[3]["question"], Value::Null);
     let old = s.record(ADMIN, 1).expect("record").expect("exists");
     assert_eq!(old["items"], json!([]));
     assert_eq!(s.record(ADMIN, 99).expect("record"), None);
@@ -992,6 +1014,7 @@ fn retention_prunes_records_together_with_their_detail() {
     let dir = tmp();
     let db = dir.path().join("x.db");
     let s = open_fixed(&db);
+    seed_questions(&db, &["q"]);
     {
         // RECORD_RETENTION exams of the administrator with two detail rows each, written directly (one transaction instead of 500)
         let mut c = raw(&db);
@@ -1068,15 +1091,12 @@ fn attempt_snapshot_names_the_banks_in_order_of_first_appearance() {
         text(&raw(&db), "SELECT banks FROM attempts"),
         r#"[{"id": 2, "name": "Second"}, {"id": 1, "name": "Legacy"}]"#
     );
-    s.record_attempt(ADMIN, &attempt(&[("unknown", true)]))
-        .expect("attempt");
-    assert_eq!(
-        text(
-            &raw(&db),
-            "SELECT banks FROM attempts ORDER BY id DESC LIMIT 1"
-        ),
-        "[]"
-    );
+    // an exam of questions that do not exist (any more) is not saved at all (v0.6.5)
+    assert!(matches!(
+        s.record_attempt(ADMIN, &attempt(&[("unknown", true)])),
+        Err(DbError::QuestionsGone)
+    ));
+    assert_eq!(count(&raw(&db), "SELECT COUNT(*) FROM attempts"), 1);
     let banks = s.banks().expect("banks");
     assert_eq!(
         (
@@ -1182,13 +1202,19 @@ struct RealApp {
 fn real_app_at(db: &Path) -> RealApp {
     let store = Arc::new(Store::open_with_clock(db, dbc::fixed(FIXED_NOW)).expect("store"));
     let engine = Arc::new(RealEngine::new(store.clone()));
-    let state = AppState::new(apic::default_config(), store.clone(), engine, None);
+    let mut state = AppState::new(apic::default_config(), store.clone(), engine, None);
+    // TEST-ONLY: these tests import the committed 3-column demo fixture through the API (production code always refuses
+    // the old layouts; tests/v07_bank_access_and_layouts.rs checks that)
+    Arc::get_mut(&mut state.0)
+        .expect("a new state is not shared yet")
+        .old_layouts = xexam_backend::services::OldLayouts::AllowForTests;
     RealApp {
         app: TestApp {
             router: apic::signed_in_router(&state),
             state,
             engine: FakeEngine::new(),
             shutdown_rx: None,
+            tmp: None,
         },
         store,
         db: db.to_path_buf(),
@@ -1371,17 +1397,13 @@ async fn a_deleted_target_bank_is_404_at_confirm_and_deleting_drops_its_upload()
     let p = upload_to(&a, Some(b"1"), "demo.xlsx").await;
     assert_eq!(p.status, 200);
     assert!(a.store.delete_bank(1, false).expect("delete").is_some());
-    let before = std::fs::read(&a.db).expect("read");
+    let before = dbc::db_bytes(&a.db);
     let c = confirm(&a, &p).await;
     assert_eq!(
         (c.status, c.error().as_str()),
         (StatusCode::NOT_FOUND, MSG_BANK_NOT_FOUND)
     );
-    assert_eq!(
-        std::fs::read(&a.db).expect("read"),
-        before,
-        "nothing written"
-    );
+    assert_eq!(dbc::db_bytes(&a.db), before, "nothing written");
     let again = confirm(&a, &p).await;
     assert_eq!(
         (again.status, again.error().as_str()),
@@ -1460,7 +1482,7 @@ async fn api_banks_delete_validates_and_answers_banks_bank_progress() {
     )
     .await;
     assert_eq!(r.status, 200);
-    let before = std::fs::read(&a.db).expect("read");
+    let before = dbc::db_bytes(&a.db);
     for body in [
         "{}",
         r#"{"id": "2"}"#,
@@ -1492,11 +1514,7 @@ async fn api_banks_delete_validates_and_answers_banks_bank_progress() {
             "{body}"
         );
     }
-    assert_eq!(
-        std::fs::read(&a.db).expect("read"),
-        before,
-        "nothing written"
-    );
+    assert_eq!(dbc::db_bytes(&a.db), before, "nothing written");
     let r = post_json(
         &a.app,
         "/api/banks/delete",
@@ -1571,7 +1589,8 @@ async fn api_records_attempt_answers_and_query_parsing() {
     assert_eq!(
         j["records"][0],
         json!({"id": 1, "at": FIXED_NOW, "banks": [{"id": 1, "name": "demo", "deleted": false}], "sheets": ["demo"],
-               "mode": "weak", "total": 5, "correct": 3, "percent": 60, "seconds": 61, "answered": 2, "detail": true})
+               "mode": "weak", "total": 5, "correct": 3, "percent": 60, "seconds": 61, "answered": 2, "detail": true,
+               "kind": "exam"})
     );
     let r = get(&a.app, "/api/record?id=1").await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -1674,7 +1693,7 @@ async fn api_records_attempt_answers_and_query_parsing() {
     )
     .await;
     assert_eq!(r.status, 200);
-    let before = std::fs::read(&a.db).expect("read");
+    let before = dbc::db_bytes(&a.db);
     for body in [
         "{}",
         r#"{"id": "1"}"#,
@@ -1709,11 +1728,7 @@ async fn api_records_attempt_answers_and_query_parsing() {
             "{body}"
         );
     }
-    assert_eq!(
-        std::fs::read(&a.db).expect("read"),
-        before,
-        "nothing written"
-    );
+    assert_eq!(dbc::db_bytes(&a.db), before, "nothing written");
     let stats = get(&a.app, "/api/progress").await.json()["questions"].clone();
     let r = post_json(&a.app, "/api/records/delete", r#"{"id": 1}"#).await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -1767,7 +1782,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
     );
     let r = post_json(&a.app, "/api/settings", "{}").await;
     assert_eq!(r.status, 200, "an empty update just answers the settings");
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     for body in [
         r#"{"theme": "blue"}"#,
         r#"{"theme": "Dark"}"#,
@@ -1786,7 +1801,7 @@ async fn api_settings_roundtrip_validation_reset_and_restart() {
             "{body}"
         );
     }
-    assert_eq!(std::fs::read(&db).expect("read"), before, "nothing written");
+    assert_eq!(dbc::db_bytes(&db), before, "nothing written");
     // restart: the settings live in the database
     drop(a);
     let a = real_app_at(&db);
@@ -1837,7 +1852,7 @@ async fn new_routes_go_through_the_same_guards() {
     assert_eq!(confirm(&a, &p).await.status, 200);
     let r = post_json(&a.app, "/api/settings", r#"{"theme": "light"}"#).await;
     assert_eq!(r.status, 200);
-    let before = std::fs::read(&a.db).expect("read");
+    let before = dbc::db_bytes(&a.db);
     let bodies = [
         r#"{"id": 1, "withRecords": true}"#,
         r#"{"all": true, "withStats": true}"#,
@@ -1922,7 +1937,7 @@ async fn new_routes_go_through_the_same_guards() {
         }
     }
     assert_eq!(
-        std::fs::read(&a.db).expect("read"),
+        dbc::db_bytes(&a.db),
         before,
         "no rejected request wrote anything"
     );

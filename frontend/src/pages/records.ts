@@ -1,9 +1,13 @@
-// Study records: the exam list with filters (#/records), one exam in detail (#/records/<id>) and the wrong-answer review
-// (#/records/wrong). Page-local UI state (filters, detail loading, the review filter) lives in this module.
+// Study records: the list of exams and (v0.6.5) practice sessions with filters (#/records), one record in detail
+// (#/records/<id>) and the wrong-answer review (#/records/wrong). Page-local UI state (filters, detail loading, the review
+// filter) lives in this module; the filter rules are in domain/records-filter.ts.
 import '../styles/records.css';
 import { ApiError } from '../api/client.ts';
 import { deleteAllRecords, deleteRecord } from '../api/progress.ts';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
+import { kindTag } from '../components/kind-tag.ts';
+import { kindOf } from '../domain/attempt.ts';
+import { NO_FILTERS, isFiltered, isKindFilter, matchesRecord, type RecordFilters } from '../domain/records-filter.ts';
 import { reviewBlock, reviewItem, type ReviewFilter, type ReviewRow } from '../components/review.ts';
 import { inNotebook, masterStreakOf, percentOf, shuffle } from '../domain/grading.ts';
 import { errorText } from '../i18n/errors.ts';
@@ -19,10 +23,8 @@ import { toast } from '../utils/toast.ts';
 
 // ---------------------------------------------------------------- page-local state
 
-type ScoreBand = 'any' | 'low' | 'mid' | 'high';
-
-/** List filters (kept while the app is open). bank = 'all' or a bank id as a string. Dates are "YYYY-MM-DD" or ''. */
-const filters: { bank: string; from: string; to: string; score: ScoreBand } = { bank: 'all', from: '', to: '', score: 'any' };
+/** List filters (kept while the app is open) */
+const filters: RecordFilters = { ...NO_FILTERS };
 /** A delete request is running */
 let busy = false;
 /** Loading the record list when it is not in the store yet */
@@ -79,7 +81,7 @@ async function removeOne(r: RecordSummary, after?: () => void): Promise<void> {
   if (busy) return;
   const ok = await ask({
     title: t('records.deleteOne.title'),
-    body: t('records.deleteOne.body', { at: r.at, pct: r.percent }),
+    body: t(kindOf(r) === 'practice' ? 'records.deleteOne.bodyPractice' : 'records.deleteOne.body', { at: r.at, pct: r.percent }),
     ok: t('records.deleteOne.ok'),
     cancel: t('common.cancel'),
     danger: true,
@@ -135,37 +137,20 @@ function banksInRecords(records: readonly RecordSummary[]): RecordBank[] {
   return [...seen.values()].sort((a, b) => Number(a.deleted) - Number(b.deleted) || a.id - b.id);
 }
 
-const filtered = (): boolean => filters.bank !== 'all' || !!filters.from || !!filters.to || filters.score !== 'any';
-
-function matches(r: RecordSummary): boolean {
-  if (filters.bank !== 'all' && !r.banks.some((b) => String(b.id) === filters.bank)) return false;
-  const day = r.at.slice(0, 10);
-  if (filters.from && day < filters.from) return false;
-  if (filters.to && day > filters.to) return false;
-  switch (filters.score) {
-    case 'low':
-      return r.percent < 60;
-    case 'mid':
-      return r.percent >= 60 && r.percent < 80;
-    case 'high':
-      return r.percent >= 80;
-    default:
-      return true;
-  }
-}
-
+/** The overview follows every filter, the type included: its first number counts exams, practice sessions or both */
 function summaryContent(rows: readonly RecordSummary[], total: number): HTMLElement[] {
   const none = t('common.none');
   const kpi = (value: string, label: string): HTMLElement => h('div', { class: 'rec-kpi' }, h('b', { class: 'num' }, value), h('span', null, label));
   const avg = rows.length ? percentOf(rows.reduce((s, r) => s + r.percent, 0), rows.length * 100) : null;
   const best = rows.length ? Math.max(...rows.map((r) => r.percent)) : null;
   const recent = rows.slice(0, 12).reverse();
-  const scope = filtered() ? tn('records.summary.scopeFiltered', rows.length) : tn('records.summary.scopeAll', total);
+  const scope = isFiltered(filters) ? tn('records.summary.scopeFiltered', rows.length) : tn('records.summary.scopeAll', total);
+  const countLabel = filters.kind === 'exam' ? 'records.summary.exams' : filters.kind === 'practice' ? 'records.summary.practices' : 'records.summary.records';
   return [
     h('h2', { id: 'rec-sum-h' }, t('records.summary.heading')),
     h('p', { class: 'rec-scope' }, scope),
     h('div', { class: 'rec-sum-grid' },
-      kpi(String(rows.length), t('records.summary.exams')),
+      kpi(String(rows.length), t(countLabel)),
       kpi(avg == null ? none : `${avg}%`, t('records.summary.average')),
       kpi(best == null ? none : `${best}%`, t('records.summary.best')),
       recent.length ? h('div', { class: 'rec-chart' },
@@ -191,7 +176,8 @@ function recordRow(r: RecordSummary): HTMLElement {
     },
   },
   cell(t('records.col.time'), 'rec-time num', h('a', { href: `#/records/${r.id}` }, r.at)),
-  cell(t('records.col.banks'), 'rec-banks', recordBankNames(r.banks), mode ? h('span', { class: 'rec-mode' }, mode) : null),
+  // The kind tag leads the cell, so exams and practice tell apart in the list and in the phone cards alike
+  cell(t('records.col.banks'), 'rec-banks', kindTag(kindOf(r)), ' ', recordBankNames(r.banks), mode ? h('span', { class: 'rec-mode' }, mode) : null),
   cell(t('records.col.answered'), 'num', `${r.answered ?? t('common.none')} / ${r.total}`),
   cell(t('records.col.duration'), 'num', fmtTime(r.seconds)),
   cell(t('records.col.score'), 'num', `${r.correct} / ${r.total}`),
@@ -223,10 +209,7 @@ function field(id: string, label: string, control: HTMLElement): HTMLElement {
 }
 
 function clearFilters(): void {
-  filters.bank = 'all';
-  filters.from = '';
-  filters.to = '';
-  filters.score = 'any';
+  Object.assign(filters, NO_FILTERS);
   render();
 }
 
@@ -282,6 +265,11 @@ function renderList(): HTMLElement {
     h('option', { value: 'all' }, t('records.filter.allBanks')),
     banks.map((b) => h('option', { value: String(b.id) }, b.deleted ? t('common.deletedBank', { name: b.name }) : b.name)));
   bankSel.value = filters.bank;
+  const kindSel = h('select', null,
+    h('option', { value: 'all' }, t('records.filter.allKinds')),
+    h('option', { value: 'exam' }, t('records.filter.exams')),
+    h('option', { value: 'practice' }, t('records.filter.practice')));
+  kindSel.value = filters.kind;
   const fromIn = h('input', { type: 'date', value: filters.from });
   const toIn = h('input', { type: 'date', value: filters.to });
   const scoreSel = h('select', null,
@@ -298,11 +286,11 @@ function renderList(): HTMLElement {
   const listBox = h('div', { class: 'rec-list' });
 
   const update = (): void => {
-    const rows = all.filter(matches);
+    const rows = all.filter((r) => matchesRecord(r, filters));
     summary.replaceChildren(...summaryContent(rows, all.length));
     count.textContent = tn('records.count', all.length, { shown: rows.length });
     badRange.hidden = !(filters.from && filters.to && filters.from > filters.to);
-    resetBtn.hidden = !filtered();
+    resetBtn.hidden = !isFiltered(filters);
     listBox.replaceChildren(rows.length
       ? recordTable(rows)
       : h('div', { class: 'rec-nomatch' },
@@ -311,6 +299,10 @@ function renderList(): HTMLElement {
   };
   bankSel.addEventListener('change', () => {
     filters.bank = bankSel.value;
+    update();
+  });
+  kindSel.addEventListener('change', () => {
+    filters.kind = isKindFilter(kindSel.value) ? kindSel.value : 'all';
     update();
   });
   fromIn.addEventListener('change', () => {
@@ -329,12 +321,13 @@ function renderList(): HTMLElement {
 
   const filterPanel = h('section', { class: 'panel rec-filter', 'aria-labelledby': 'rec-filter-h' },
     h('h2', { id: 'rec-filter-h' }, t('records.filter.heading')),
-    // Bank and score first, so that From and To share a row in the two-column phone layout
+    // Type and bank first, so that From and To share a row in the two-column phone layout (accuracy comes last)
     h('div', { class: 'rec-filters' },
+      field('rec-f-kind', t('records.filter.kind'), kindSel),
       field('rec-f-bank', t('records.filter.bank'), bankSel),
-      field('rec-f-score', t('records.filter.score'), scoreSel),
       field('rec-f-from', t('records.filter.from'), fromIn),
-      field('rec-f-to', t('records.filter.to'), toIn)),
+      field('rec-f-to', t('records.filter.to'), toIn),
+      field('rec-f-score', t('records.filter.score'), scoreSel)),
     badRange,
     h('div', { class: 'rec-bar' }, count, resetBtn));
 
@@ -402,11 +395,14 @@ function detailView(d: RecordDetail): HTMLElement {
   const retryQs = wrongIds.map((id) => active.get(id)).filter(isQuestion);
   const retakeQs = allIds.map((id) => active.get(id)).filter(isQuestion);
   const mode: Mode = isMode(rec.mode) ? rec.mode : 'all';
+  // Retry and retake start the same kind as the record: a practice is practised again
+  const kind = kindOf(rec);
   const hasDetail = rec.detail && items.length > 0;
 
   const pair = (label: string, value: string): HTMLElement[] => [h('dt', null, label), h('dd', null, value)];
   const meta = h('dl', { class: 'rec-meta props' },
     pair(t('records.detail.time'), rec.at),
+    [h('dt', null, t('records.detail.kind')), h('dd', null, kindTag(kind))],
     pair(t('records.detail.banks'), recordBankNames(rec.banks)),
     rec.sheets.length ? pair(t('records.detail.sheets'), rec.sheets.join(t('common.listSep'))) : null,
     modeName(rec.mode) ? pair(t('records.detail.mode'), modeName(rec.mode)) : null,
@@ -419,7 +415,7 @@ function detailView(d: RecordDetail): HTMLElement {
   /** "Retry wrong answers" (built twice: in the score block and after the review list) */
   const retryButton = (): HTMLElement => h('button', {
     class: 'btn primary', type: 'button', disabled: !retryQs.length,
-    onclick: () => void startExam(shuffle(retryQs), 'retry'),
+    onclick: () => void startExam(shuffle(retryQs), 'retry', kind),
   }, t('records.detail.retryWrong'));
   if (hasDetail) {
     if (wrongIds.length) {
@@ -429,8 +425,8 @@ function detailView(d: RecordDetail): HTMLElement {
     }
     retakeBtn = h('button', {
       class: wrongIds.length && retryQs.length ? 'btn' : 'btn primary', type: 'button', disabled: !retakeQs.length,
-      onclick: () => void startExam(shuffle(retakeQs), mode),
-    }, t('records.detail.retake'));
+      onclick: () => void startExam(shuffle(retakeQs), mode, kind),
+    }, t(kind === 'practice' ? 'records.detail.retakePractice' : 'records.detail.retake'));
     if (!retakeQs.length) hints.push(t('records.detail.retakeNone'));
     else if (retakeQs.length < allIds.length) hints.push(tn('records.detail.retakeSkip', allIds.length - retakeQs.length));
   }
@@ -441,7 +437,7 @@ function detailView(d: RecordDetail): HTMLElement {
   }, t('records.detail.delete'));
 
   const page = h('div', { class: 'page page-records page-record' },
-    pageHead(t('records.detail.title'), backButton(t('records.detail.back'), { name: 'records' })),
+    pageHead(t(kind === 'practice' ? 'records.detail.titlePractice' : 'records.detail.title'), backButton(t('records.detail.back'), { name: 'records' })),
     h('section', { class: 'score rec-score' },
       h('div', { class: 'big num', role: 'img', 'aria-label': t('records.detail.scoreLabel', { pct: rec.percent }) }, String(rec.percent), h('small', null, '%')),
       h('div', { class: 'says' },
@@ -495,12 +491,13 @@ function renderWrong(): HTMLElement {
   if (wrongBank !== 'all' && !bankIds.includes(wrongBank)) wrongBank = 'all';
   const current = (): Question[] => (wrongBank === 'all' ? all : all.filter((q) => q.bank === wrongBank));
 
-  /** "Practise these" (built twice on a long list: in the page head and after the list) */
+  /** "Practise these" (built twice on a long list: in the page head and after the list): starts a practice (immediate
+   *  feedback, v0.7), not an exam, of the notebook questions in the current bank filter */
   const practise = (): HTMLElement => h('button', {
     class: 'btn primary', type: 'button',
     onclick: () => {
       const qs = current();
-      if (qs.length) void startExam(shuffle(qs), 'weak');
+      if (qs.length) void startExam(shuffle(qs), 'weak', 'practice');
     },
   }, t('records.wrong.practise'));
   const page = h('div', { class: 'page page-records page-wrong' },

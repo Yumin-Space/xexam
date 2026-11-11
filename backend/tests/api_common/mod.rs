@@ -165,10 +165,13 @@ pub fn dummy_question(i: usize) -> Question {
         translation: String::new(),
         english: String::new(),
         en: None,
+        lang: String::new(),
+        ja: None,
         zh: None,
         explanation: String::new(),
         mnemonic: String::new(),
         note: String::new(),
+        explain: None,
         id: format!("id{i}"),
         sheet: "s".into(),
         row: i as i64,
@@ -182,6 +185,7 @@ pub fn workbook(n: usize) -> ParsedWorkbook {
             total: n as i64,
             usable: n as i64,
             skipped: vec![],
+            warnings: vec![],
         }],
         questions: (0..n).map(dummy_question).collect(),
     }
@@ -207,22 +211,22 @@ pub struct TestApp {
     pub state: AppState,
     pub engine: Arc<FakeEngine>,
     pub shutdown_rx: Option<tokio::sync::mpsc::Receiver<()>>,
+    /// The temporary directory of the app's (unused) store, removed when the app is dropped. Declared last, so the router
+    /// and the state (which hold the store open) are dropped first; keep the app alive while a clone of its state is used.
+    pub tmp: Option<tempfile::TempDir>,
 }
-
-static NEXT_DB: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
     let engine = FakeEngine::new();
     let (tx, rx) = tokio::sync::mpsc::channel(1);
     let allow = cfg.allow_shutdown;
-    // In tests the API layer reaches data only through FakeEngine, so this Store is never used; it lives in a temp directory so no files are left in the current directory
-    let dir = std::env::temp_dir().join(format!(
-        "xexam_api_test_{}_{}",
-        std::process::id(),
-        NEXT_DB.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    let store = Arc::new(Store::open(&dir.join("unused.db")).expect("store"));
+    // In tests the API layer reaches data only through FakeEngine, so this Store is never used; it lives in a temp directory
+    // that is removed again with the app, so no files are left behind
+    let tmp = tempfile::Builder::new()
+        .prefix("xexam_api_test_")
+        .tempdir()
+        .expect("temp dir");
+    let store = Arc::new(Store::open(&tmp.path().join("unused.db")).expect("store"));
     let state = AppState(Arc::new(Inner {
         cfg,
         store,
@@ -236,12 +240,20 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
         throttle: auth::LoginThrottle::default(),
         last_session_purge: std::sync::atomic::AtomicI64::new(0),
         default_admin_hashes: Default::default(),
+        logs: Default::default(),
+        rejections: Default::default(),
+        failed_sign_ins: Default::default(),
+        name_locks: Default::default(),
+        // TEST-ONLY: these fake-engine tests (the golden replay among them) stage the reference implementation's 3-column
+        // imports; production code always refuses the old layouts
+        old_layouts: xexam_backend::services::OldLayouts::AllowForTests,
     }));
     TestApp {
         router: signed_in_router(&state),
         state,
         engine,
         shutdown_rx: Some(rx),
+        tmp: Some(tmp),
     }
 }
 
@@ -258,7 +270,13 @@ pub fn test_session(store: &Store, username: &str) -> String {
         .expect("user exists");
     if u.must_change_password {
         store
-            .change_own_password(u.id, &u.password_hash, &u.password_hash, "")
+            .change_own_password(
+                u.id,
+                &u.password_hash,
+                &u.password_hash,
+                &auth::token_hash(&auth::new_session_token()),
+                auth::unix_now(),
+            )
             .expect("clear the flag");
     }
     let token = auth::new_session_token();

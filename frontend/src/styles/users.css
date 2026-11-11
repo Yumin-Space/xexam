@@ -35,9 +35,20 @@
 /* Each fact stays on one line; the line breaks between facts (after the dot), never inside one */
 .us-dot { margin-left: 6px; }
 .us-nw { white-space: nowrap; }
+/* What a lock or the tries left mean (visible text, so it can be read on a phone and with the keyboard) */
+.us-locknote { margin-top: 4px; max-width: 46em; font-size: 12.5px; line-height: 1.55; color: var(--ink2); }
+/* Which question banks the user sees (v0.6.5): the names are written out, so they can be read on a phone too */
+.us-banks { margin-top: 2px; max-width: 46em; font-size: 13px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.us-banks.none { color: var(--ink3); }
+.us-banks-own { display: block; color: var(--ink3); }
+/* "Change" at the end of a plain user's bank line (v0.7): a small button in the run of the text, so the row's actions stay on
+   one line on phones. Its tap area grows invisibly on touch screens (see the end of this file). */
+.page-users .btn.us-mini.us-change { min-height: 22px; margin-left: 2px; padding: 0 8px; font-size: 12.5px; line-height: 20px; vertical-align: baseline; }
 /* Why some actions of the row are not available */
 .us-why { margin-top: 4px; max-width: 40em; font-size: 12.5px; line-height: 1.55; color: var(--ink3); }
-.us-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 380px; }
+/* Wide enough for all five actions of a row with Unlock on one line in every language (ja is the widest, about 385px at
+   13px), so Delete never sits alone on a second line at desktop widths; narrower windows move the actions under the facts */
+.us-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 420px; }
 .us-busy { font-size: 12.5px; color: var(--ink3); }
 /* "Delete" looks like the other actions and turns red on hover or focus (as on the banks page); the dialog asks first */
 .us-acts .btn.danger { color: var(--ink2); border-color: var(--line); }
@@ -53,6 +64,51 @@
 .us-add-note { margin: 12px 0 0; max-width: 46em; font-size: 13px; line-height: 1.6; color: var(--ink2); }
 .us-add .err { margin: 12px 0 0; font-size: 14px; }
 .us-add .acts { margin-top: 12px; }
+/* The question banks of the new user (left) and the bank-manager permission (right) */
+.us-add-access { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px 16px; align-items: start; margin-top: 14px; }
+.us-add-side { min-width: 0; }
+.us-add .us-check { margin-top: 0; background: var(--card); }
+.us-adminnote { margin-top: 8px; }
+
+/* ---------- Question banks checklist (Add user form, "Question banks" dialog) ---------- */
+.us-banksfld { min-width: 0; }
+.us-banksfld legend { margin-bottom: 2px; }
+.us-banksfld > .fld-hint { margin-bottom: 6px; }
+.us-bank {
+  display: flex; align-items: flex-start; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1.45;
+}
+@media (hover: hover) { .us-bank:hover:not(:has(input:disabled)) { background: var(--hover); } }
+.us-bank input { width: 17px; height: 17px; margin: 1px 0 0; flex: none; accent-color: var(--print); }
+.us-bank:has(input:disabled) { cursor: default; }
+/* The name, and who uploaded the bank in small grey text after it (under it when the line is full) */
+.us-bank-t { min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+.us-bank-n { color: var(--ink); overflow-wrap: anywhere; }
+.us-bank:has(input:disabled) .us-bank-n { color: var(--ink2); }
+.us-bank-h { font-size: 12.5px; color: var(--ink3); }
+/* The line above the list (v0.7): "Include banks imported later" on the left, "Select all" at its right end (above the boxes
+   of the list); on a narrow screen the two wrap onto two lines, "Select all" still at the right */
+.us-bankhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 12px; margin: 2px 0 6px; }
+.us-bankopt {
+  display: inline-flex; align-items: flex-start; gap: 8px; min-width: 0; padding: 6px 10px; border-radius: 6px; cursor: pointer;
+  font-size: 14px; line-height: 1.45; color: var(--ink);
+}
+@media (hover: hover) { .us-bankopt:hover:not(:has(input:disabled)) { background: var(--hover); } }
+.us-bankopt input { width: 17px; height: 17px; margin: 1px 0 0; flex: none; accent-color: var(--print); }
+.us-bankopt:has(input:disabled) { cursor: default; color: var(--ink2); }
+.us-selall { margin-left: auto; color: var(--ink2); }
+/* A long list scrolls inside its own frame, so the buttons of the form stay in reach */
+.us-banklist {
+  list-style: none; margin: 0; padding: 2px; max-height: 248px; overflow-y: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line-soft); border-radius: 8px; background: var(--card);
+}
+.us-banks-empty { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--ink3); }
+.dlg-form > .us-banksfld { margin-top: 14px; }
+dialog .us-banklist { max-height: min(248px, 40vh); }
+
+/* The page's own checkboxes (account enabled, bank manager) are blue, not the red of the delete confirmations */
+.us-check input { accent-color: var(--print); }
+.us-check:has(input:disabled) { cursor: default; }
+.dlg-form > .us-manager { margin-top: 10px; }
 
 /* Role: a segmented choice with radio semantics (the recipe of the segmented control in main.css) */
 .us-rolefld legend { margin-bottom: 4px; }
@@ -71,7 +127,6 @@
 
 /* Edit dialog */
 .us-enabled { margin-top: 14px; }
-.us-enabled input { accent-color: var(--print); }
 .us-enabled:has(input:disabled) { cursor: not-allowed; opacity: .6; }
 .us-dlg-note, dialog .us-why { margin: 12px 0 0; font-size: 13px; color: var(--ink3); }
 .dlg-form > .us-rolefld { margin-top: 14px; }
@@ -79,7 +134,7 @@
 @media (prefers-reduced-motion: reduce) { .us-seg-o { transition: none; } }
 
 @media (max-width: 720px) {
-  .us-add-grid { grid-template-columns: minmax(0, 1fr); }
+  .us-add-grid, .us-add-access { grid-template-columns: minmax(0, 1fr); }
   /* The actions move under the facts */
   .us-row { grid-template-columns: auto minmax(0, 1fr); }
   .us-acts { grid-column: 2; justify-content: flex-start; max-width: none; margin-top: 8px; }
@@ -95,7 +150,9 @@
 /* Touch screens: the small buttons stay small to look at; an invisible margin makes them ~44px to tap */
 @media (pointer: coarse), (max-width: 480px) {
   .page-users .btn.us-mini { min-height: 28px; min-width: 0; }
+  .page-users .btn.us-mini.us-change { min-height: 22px; }
   .page-users .btn.us-mini::after { content: ""; position: absolute; inset: -9px -3px; }
   .us-acts { gap: 18px 8px; }
   .us-seg-o { min-height: 40px; }
+  .us-bank, .us-bankopt { padding-block: 10px; }
 }

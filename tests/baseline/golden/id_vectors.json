@@ -43,50 +43,50 @@
    "kind": "make_id",
    "name": "basic_ja",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "plain Japanese"
   },
   {
    "kind": "make_id",
    "name": "sheet_changes_id",
    "sheet": "demo2",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f320ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "0c6638602581",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f320ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "17db2a8a3307",
    "note": "same stem, other sheet name -> other id"
   },
   {
    "kind": "make_id",
    "name": "sheet_case_matters",
    "sheet": "Demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "44656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "1fe12b08c7e4",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "44656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "902efb4259d5",
    "note": "sheet name is case-sensitive"
   },
   {
    "kind": "make_id",
    "name": "sheet_trailing_space_kept",
    "sheet": "demo ",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f200ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "b29caa0fc3fa",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f200ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "1d6242404964",
    "note": "sheet name is NOT stripped"
   },
   {
    "kind": "make_id",
    "name": "sheet_empty",
    "sheet": "",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "0c6712181af1",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "ff5bd6238718",
    "note": "empty sheet name"
   },
   {
@@ -113,10 +113,10 @@
    "kind": "make_id",
    "name": "sheet_jp",
    "sheet": "スコープ１",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "e382b9e382b3e383bce38397efbc910ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "f28e46e0e999",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "e382b9e382b3e383bce38397efbc910ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "895310006e95",
    "note": "Japanese sheet name with full-width digit"
   },
   {
@@ -133,140 +133,140 @@
    "kind": "make_id",
    "name": "stem_trailing_space",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？   ",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？   ",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "trailing ASCII spaces ignored (== basic_ja)"
   },
   {
    "kind": "make_id",
    "name": "stem_trailing_newline",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？\n\n",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？\n\n",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "trailing newlines ignored (== basic_ja)"
   },
   {
    "kind": "make_id",
    "name": "stem_crlf_inside",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。\r\n日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は一年の部分です。\r\n一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "CRLF removed as whitespace"
   },
   {
    "kind": "make_id",
    "name": "stem_lf_inside",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。\n日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は一年の部分です。\n一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "LF removed (== crlf case)"
   },
   {
    "kind": "make_id",
    "name": "stem_tab_inside",
    "sheet": "demo",
-   "stem": "東京は\t日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は\t一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "tab removed"
   },
   {
    "kind": "make_id",
    "name": "stem_ideographic_space",
    "sheet": "demo",
-   "stem": "東京は　日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は　一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "U+3000 removed (== tab case)"
   },
   {
    "kind": "make_id",
    "name": "stem_nbsp",
    "sheet": "demo",
-   "stem": "東京は 日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は 一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "U+00A0 NBSP removed by \\s"
   },
   {
    "kind": "make_id",
    "name": "stem_u2003_emspace",
    "sheet": "demo",
-   "stem": "東京は 日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は 一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "U+2003 removed"
   },
   {
    "kind": "make_id",
    "name": "stem_u0085_nel",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "U+0085 NEL removed by Python \\s (XML parser accepts it raw)"
   },
   {
    "kind": "make_id",
    "name": "stem_u001c",
    "sheet": "demo",
-   "stem": "東京は\u001c日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は\u001c一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "U+001C removed by Python \\s but NOT by Rust regex \\s / char::is_whitespace; unreachable through XLSX (XML forbids it)"
   },
   {
    "kind": "make_id",
    "name": "stem_u2028",
    "sheet": "demo",
-   "stem": "東京は 日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "94e4bfe00e8d",
+   "stem": "一週は 一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "f3886e9f5948",
    "note": "U+2028 LINE SEPARATOR removed"
   },
   {
    "kind": "make_id",
    "name": "stem_zwsp_kept",
    "sheet": "demo",
-   "stem": "東京は​日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe2808be697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "bfbfbb198618",
+   "stem": "一週は​一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe2808be4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "2688bf84c00e",
    "note": "U+200B ZERO WIDTH SPACE is NOT whitespace for Python: kept -> different id"
   },
   {
    "kind": "make_id",
    "name": "stem_bom_kept",
    "sheet": "demo",
-   "stem": "﻿東京は日本の首都です。日本の首都はどこですか？",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0aefbbbfe69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce5a4a7e998aa",
-   "id": "c288db2e4260",
+   "stem": "﻿一週は一年の部分です。一年の部分はどれですか？",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0aefbbbfe4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce4b889e5b9b4",
+   "id": "5ba623cd98b3",
    "note": "U+FEFF kept -> different id"
   },
   {
    "kind": "make_id",
    "name": "stem_fullwidth_qmark_vs_ascii",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか?",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818b3f7ce5a4a7e998aa",
-   "id": "66bb00ea3705",
+   "stem": "一週は一年の部分です。一年の部分はどれですか?",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818b3f7ce4b889e5b9b4",
+   "id": "941931fe9de8",
    "note": "ASCII ? instead of U+FF1F: different id (no NFKC)"
   },
   {
@@ -293,20 +293,20 @@
    "kind": "make_id",
    "name": "stem_halfwidth_kana",
    "sheet": "demo",
-   "stem": "ﾄｳｷｮｳは日本の首都です",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0aefbe84efbdb3efbdb7efbdaeefbdb3e381afe697a5e69cace381aee9a696e983bde381a7e381997ce5a4a7e998aa",
-   "id": "87667cf586c9",
+   "stem": "ｲｯｼｭｳは一年の部分です",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0aefbdb2efbdafefbdbcefbdadefbdb3e381afe4b880e5b9b4e381aee983a8e58886e381a7e381997ce4b889e5b9b4",
+   "id": "ba347c4af40f",
    "note": "half-width katakana kept (no NFKC)"
   },
   {
    "kind": "make_id",
    "name": "stem_fullwidth_kana",
    "sheet": "demo",
-   "stem": "トウキョウは日本の首都です",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0ae38388e382a6e382ade383a7e382a6e381afe697a5e69cace381aee9a696e983bde381a7e381997ce5a4a7e998aa",
-   "id": "c57c8e37bf12",
+   "stem": "イッシュウは一年の部分です",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0ae382a4e38383e382b7e383a5e382a6e381afe4b880e5b9b4e381aee983a8e58886e381a7e381997ce4b889e5b9b4",
+   "id": "b5ca69caf773",
    "note": "full-width counterpart: different id"
   },
   {
@@ -333,20 +333,20 @@
    "kind": "make_id",
    "name": "stem_latin_case",
    "sheet": "demo",
-   "stem": "What is AWS?",
-   "first": "Amazon",
-   "hash_input_utf8_hex": "64656d6f0a5768617469734157533f7c416d617a6f6e",
-   "id": "ff45b59864df",
+   "stem": "What is RAM?",
+   "first": "Memory",
+   "hash_input_utf8_hex": "64656d6f0a57686174697352414d3f7c4d656d6f7279",
+   "id": "4c6ea2d168a1",
    "note": "case is preserved (no lower/casefold)"
   },
   {
    "kind": "make_id",
    "name": "stem_latin_case_lower",
    "sheet": "demo",
-   "stem": "what is aws?",
-   "first": "amazon",
-   "hash_input_utf8_hex": "64656d6f0a7768617469736177733f7c616d617a6f6e",
-   "id": "0a9a1b3b931c",
+   "stem": "what is ram?",
+   "first": "memory",
+   "hash_input_utf8_hex": "64656d6f0a77686174697372616d3f7c6d656d6f7279",
+   "id": "ce96e5eb897d",
    "note": "lowercase: different id"
   },
   {
@@ -363,20 +363,20 @@
    "kind": "make_id",
    "name": "stem_turkish_dotted_i",
    "sheet": "demo",
-   "stem": "İstanbul",
+   "stem": "İnternet",
    "first": "x",
-   "hash_input_utf8_hex": "64656d6f0ac4b07374616e62756c7c78",
-   "id": "391990dfb4da",
+   "hash_input_utf8_hex": "64656d6f0ac4b06e7465726e65747c78",
+   "id": "e16042a418db",
    "note": "U+0130 untouched"
   },
   {
    "kind": "make_id",
    "name": "stem_nonbmp_cjk",
    "sheet": "demo",
-   "stem": "𠮷野家で食べる",
-   "first": "牛丼",
-   "hash_input_utf8_hex": "64656d6f0af0a0aeb7e9878ee5aeb6e381a7e9a39fe381b9e3828b7ce7899be4b8bc",
-   "id": "0cd2c97cb777",
+   "stem": "𠮟らずに褒める",
+   "first": "笑顔",
+   "hash_input_utf8_hex": "64656d6f0af0a0ae9fe38289e3819ae381abe8a492e38281e3828b7ce7ac91e9a194",
+   "id": "66eddf2eab7f",
    "note": "non-BMP CJK (surrogate pair in UTF-16, 4 bytes in UTF-8)"
   },
   {
@@ -393,30 +393,30 @@
    "kind": "make_id",
    "name": "first_empty",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
    "first": "",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7c",
-   "id": "ac7f8259f8f4",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7c",
+   "id": "748300756e04",
    "note": "empty first option text"
   },
   {
    "kind": "make_id",
    "name": "first_whitespace_only",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
    "first": " \t　\n",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7c",
-   "id": "ac7f8259f8f4",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7c",
+   "id": "748300756e04",
    "note": "whitespace-only first -> same as empty"
   },
   {
    "kind": "make_id",
    "name": "first_inner_whitespace",
    "sheet": "demo",
-   "stem": "東京は日本の首都です。日本の首都はどこですか？",
+   "stem": "一週は一年の部分です。一年の部分はどれですか？",
    "first": "り ん\tご",
-   "hash_input_utf8_hex": "64656d6f0ae69db1e4baace381afe697a5e69cace381aee9a696e983bde381a7e38199e38082e697a5e69cace381aee9a696e983bde381afe381a9e38193e381a7e38199e3818befbc9f7ce3828ae38293e38194",
-   "id": "b834ee698671",
+   "hash_input_utf8_hex": "64656d6f0ae4b880e980b1e381afe4b880e5b9b4e381aee983a8e58886e381a7e38199e38082e4b880e5b9b4e381aee983a8e58886e381afe381a9e3828ce381a7e38199e3818befbc9f7ce3828ae38293e38194",
+   "id": "68e3e77cec09",
    "note": "inner whitespace removed"
   },
   {
@@ -424,9 +424,9 @@
    "name": "stem_empty",
    "sheet": "demo",
    "stem": "",
-   "first": "大阪",
-   "hash_input_utf8_hex": "64656d6f0a7ce5a4a7e998aa",
-   "id": "6b4a0237d772",
+   "first": "三年",
+   "hash_input_utf8_hex": "64656d6f0a7ce4b889e5b9b4",
+   "id": "e562d0d6c01d",
    "note": "empty stem"
   },
   {
@@ -588,7 +588,7 @@
      "name": "S",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ],
@@ -618,9 +618,9 @@
      "sheet": "S",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6"
     },
     {
      "sheet": "S",
@@ -659,7 +659,7 @@
        "【答案】B\n\n【解析·怎么选】x"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ]
@@ -695,9 +695,9 @@
      "sheet": "S",
      "row": 3,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6"
     }
    ]
   },
@@ -710,7 +710,7 @@
      "name": "S1",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ]
@@ -720,7 +720,7 @@
      "name": "S2",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ]
@@ -746,17 +746,17 @@
      "sheet": "S1",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "08fe1a42c5ea"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a21793447d8f"
     },
     {
      "sheet": "S2",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "4e9e1724fad4"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "0d25c469533a"
     }
    ]
   },
@@ -769,17 +769,17 @@
      "name": "S",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】C\n\n【解析·怎么选】second copy"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 千年",
        "",
        "【答案】A\n\n【解析·怎么选】third copy"
       ],
@@ -804,25 +804,25 @@
      "sheet": "S",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6"
     },
     {
      "sheet": "S",
      "row": 2,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c-2"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6-2"
     },
     {
      "sheet": "S",
      "row": 3,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c-3"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6-3"
     },
     {
      "sheet": "S",
@@ -843,17 +843,17 @@
      "name": "S",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 千年",
        "",
        "【答案】A\n\n【解析·怎么选】third copy"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】C\n\n【解析·怎么选】second copy"
       ],
@@ -878,25 +878,25 @@
      "sheet": "S",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6"
     },
     {
      "sheet": "S",
      "row": 2,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c-2"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6-2"
     },
     {
      "sheet": "S",
      "row": 3,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c-3"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6-3"
     },
     {
      "sheet": "S",
@@ -917,12 +917,12 @@
      "name": "S1",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】C\n\n【解析·怎么选】second copy"
       ]
@@ -932,12 +932,12 @@
      "name": "S2",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ],
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】C\n\n【解析·怎么选】second copy"
       ]
@@ -963,33 +963,33 @@
      "sheet": "S1",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "08fe1a42c5ea"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a21793447d8f"
     },
     {
      "sheet": "S1",
      "row": 2,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "08fe1a42c5ea-2"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a21793447d8f-2"
     },
     {
      "sheet": "S2",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "4e9e1724fad4"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "0d25c469533a"
     },
     {
      "sheet": "S2",
      "row": 2,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "4e9e1724fad4-2"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "0d25c469533a-2"
     }
    ]
   },
@@ -1002,7 +1002,7 @@
      "name": "S",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】C\n\n【解析·怎么选】second copy"
       ],
@@ -1027,9 +1027,9 @@
      "sheet": "S",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "228692b5276c"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "a448a368a5b6"
     },
     {
      "sheet": "S",
@@ -1098,7 +1098,7 @@
      "name": "S",
      "rows": [
       [
-       "東京は　日本の\t首都\r\nです。\n\nA. 大阪\nB. 東京",
+       "一週は　一年の\t部分\r\nです。\n\nA. 三年\nB. 一週",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ]
@@ -1118,9 +1118,9 @@
      "sheet": "S",
      "row": 1,
      "kind": "single",
-     "stem": "東京は　日本の\t首都\nです。",
-     "first": "大阪",
-     "id": "82ed8980d4cc"
+     "stem": "一週は　一年の\t部分\nです。",
+     "first": "三年",
+     "id": "d255e0d2985e"
     }
    ]
   },
@@ -1133,7 +1133,7 @@
      "name": "S",
      "rows": [
       [
-       "末尾の空白\n\nA. 大阪   \nB. 東京",
+       "末尾の空白\n\nA. 三年   \nB. 一週",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ]
@@ -1154,8 +1154,8 @@
      "row": 1,
      "kind": "single",
      "stem": "末尾の空白",
-     "first": "大阪",
-     "id": "8574b6d2192a"
+     "first": "三年",
+     "id": "e8752b3560ea"
     }
    ]
   },
@@ -1203,7 +1203,7 @@
      "name": "スコープ１",
      "rows": [
       [
-       "次のうち、首都はどれですか？\n\nA. 大阪\nB. 東京\nC. 京都",
+       "次のうち、部分はどれですか？\n\nA. 三年\nB. 一週\nC. 千年",
        "",
        "【答案】B\n\n【解析·怎么选】x"
       ],
@@ -1218,7 +1218,7 @@
      "name": "スコープ２",
      "rows": [
       [
-       "日本の四季は？\n\nA. 春夏秋冬\nB. 雨季乾季",
+       "一年の四季は？\n\nA. 春夏秋冬\nB. 雨季乾季",
        "",
        "【答案】A\n\n【解析·怎么选】x"
       ],
@@ -1249,9 +1249,9 @@
      "sheet": "スコープ１",
      "row": 1,
      "kind": "single",
-     "stem": "次のうち、首都はどれですか？",
-     "first": "大阪",
-     "id": "7ea0ac756021"
+     "stem": "次のうち、部分はどれですか？",
+     "first": "三年",
+     "id": "cfb3f6e4a747"
     },
     {
      "sheet": "スコープ１",
@@ -1265,9 +1265,9 @@
      "sheet": "スコープ２",
      "row": 1,
      "kind": "single",
-     "stem": "日本の四季は？",
+     "stem": "一年の四季は？",
      "first": "春夏秋冬",
-     "id": "2b1ff92b1178"
+     "id": "37668cb7efd7"
     },
     {
      "sheet": "スコープ２",

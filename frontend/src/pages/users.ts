@@ -3,23 +3,36 @@
 // and deleting. The backend enforces every rule; this page shows the blocked actions disabled with the reason (your own
 // account, the last enabled administrator) and always redraws the list from the server's answer.
 // Every row shows the account status as tags: Normal (enabled, not locked), Disabled, and "Locked · N min left" while the
-// login throttle locks the name (both when both apply), plus "Must choose a new password". A locked row has an Unlock action.
+// login throttle locks the account (both when both apply), "N tries left" when it is past round 1 without a lock, plus "Must
+// choose a new password". Both throttle states offer Unlock (back to round 1 with five tries; owner, v0.6.5), and a small
+// visible note under the row says which browsers the state counts (those where the user signed in before are counted apart
+// from all others), until when, and what gives the tries back (domain/lock.ts lockNote; visible text rather than a tooltip, so
+// it can be read on a phone and with the keyboard).
 // The time left is counted down here: each lock's end is fixed on the browser's monotonic clock when the list arrives
 // (performance.now() + retryAfter, so the computer clocks of server and browser need not agree), a one-second timer rewrites the
 // tags while the page is open and a lock runs, and when a lock ends the list is read again (the next round, tries left).
+// The list is also read again quietly when the window comes back into view or gets the focus, and every 30 seconds while the
+// page is visible, so a lock that starts while the page is open shows up (never while a form or dialog is open, or a change
+// runs, so nothing typed or focused is redrawn away).
 import '../styles/users.css';
+import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { createUser, deleteUser, fetchUsers, resetUserPassword, unlockUser, updateUser } from '../api/users.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
+import { lockNote, lockView } from '../domain/lock.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
-import { t, tn } from '../i18n/index.ts';
+import { t, tn, uiLang } from '../i18n/index.ts';
 import { waitShort } from '../i18n/wait.ts';
-import { onRouteChange, onSignedIn, render } from '../state/actions.ts';
+import { onRouteChange, onSignedIn, refreshLibrary, render } from '../state/actions.ts';
+import {
+  accessOf, accessView, draftOf, editChange, isTicked, ownedBankNames, ownerView, sameAccess, selectAllState, toggleAll, toggleBank,
+  type AccessDraft,
+} from '../state/bank-access.ts';
 import { S } from '../state/store.ts';
-import type { Role, UserRow, UserUpdate } from '../types/api.ts';
+import type { BankSummary, Role, UserRow } from '../types/api.ts';
 import { ask, formDialog } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
@@ -42,16 +55,32 @@ let busyId: number | null = null;
 /** A dialog or confirmation is open */
 let asking = false;
 /** The inline "Add user" form */
-const add = { open: false, username: '', password: '', role: 'user' as Role, shown: false, busy: false, error: null as string | null };
+const add = {
+  open: false, username: '', password: '', role: 'user' as Role, shown: false, busy: false, error: null as string | null,
+  /**
+   * The question banks the new user sees: nothing ticked and "Include banks imported later" off by default (owner, v0.6.5),
+   * so they see none until chosen
+   */
+  banks: draftOf([], false),
+  /** The bank-manager permission (off by default) */
+  manager: false,
+};
 /** The element to focus after the next render */
 let focusNext: string | null = null;
 /** User id → when their sign-in lock ends (performance.now() milliseconds), for the users whose lock runs */
 const lockEnds = new Map<number, number>();
+/** User id → when the shorter lock of their other browsers ends, while both are locked (the note then changes) */
+const otherEnds = new Map<number, number>();
 /** The one-second timer that counts the locks down while the page is open */
 let ticker: ReturnType<typeof setInterval> | null = null;
+/** The quiet re-read of the list while the page is open and visible */
+let poller: ReturnType<typeof setInterval> | null = null;
+const POLL_MS = 30_000;
 
 function resetAdd(): void {
-  Object.assign(add, { open: false, username: '', password: '', role: 'user', shown: false, busy: false, error: null });
+  Object.assign(add, {
+    open: false, username: '', password: '', role: 'user', shown: false, busy: false, error: null, banks: draftOf([], false), manager: false,
+  });
 }
 
 onRouteChange((from, to) => {
@@ -60,6 +89,7 @@ onRouteChange((from, to) => {
     resetAdd();
     actionError = null;
     stopTicker();
+    stopPoller();
   }
 });
 // Signed in again (the session had ended): read the list afresh instead of showing the failure of the lost session
@@ -75,8 +105,10 @@ const onUsersPage = (): boolean => S.route.name === 'users';
 function noteLocks(list: readonly UserRow[]): void {
   const now = performance.now();
   lockEnds.clear();
+  otherEnds.clear();
   for (const u of list) {
     if (u.lock && u.lock.retryAfter > 0) lockEnds.set(u.id, now + u.lock.retryAfter * 1000);
+    if (u.lock?.otherRetryAfter) otherEnds.set(u.id, now + u.lock.otherRetryAfter * 1000);
   }
 }
 
@@ -110,6 +142,13 @@ function tick(): void {
     const text = t('users.status.locked', { wait: waitShort(left) });
     if (tag && tag.textContent !== text) tag.textContent = text;
   }
+  // The other browsers' shorter lock ended: the note no longer says every browser is locked (read the list again)
+  for (const [id, end] of otherEnds) {
+    if (secondsLeft(end, now) <= 0) {
+      otherEnds.delete(id);
+      ended = true;
+    }
+  }
   if (ended) {
     if (lockEnds.size === 0) stopTicker();
     // The next round (tries left) comes from the server; until it arrives the row shows the lock has ended
@@ -121,6 +160,29 @@ function tick(): void {
 function startTicker(): void {
   if (ticker == null && lockEnds.size > 0) ticker = setInterval(tick, 1000);
 }
+
+/**
+ * Reads the list again without disturbing the administrator: only on this page, with the window visible, the list loaded,
+ * and no form, dialog or change open (a redraw would lose what is being typed or where the focus is in it).
+ */
+function quietRefresh(): void {
+  if (!onUsersPage() || S.authView || document.visibilityState !== 'visible') return;
+  if (!users || loading || busyId != null || asking || add.open) return;
+  void load();
+}
+
+function stopPoller(): void {
+  if (poller != null) clearInterval(poller);
+  poller = null;
+}
+
+function startPoller(): void {
+  if (poller == null) poller = setInterval(quietRefresh, POLL_MS);
+}
+
+// Back from another window or tab: someone may have been locked out meanwhile (the admin is often told on the phone)
+document.addEventListener('visibilitychange', quietRefresh);
+window.addEventListener('focus', quietRefresh);
 
 async function load(): Promise<void> {
   wanted = false;
@@ -206,6 +268,127 @@ function roleChoice(name: string, value: Role, disabled: boolean, onPick: (r: Ro
     hint);
 }
 
+// ---------------------------------------------------------------- question banks and the bank-manager permission (v0.6.5)
+
+interface ChecklistOptions {
+  /** Prefix of the element ids */
+  id: string;
+  banks: readonly BankSummary[];
+  get: () => AccessDraft;
+  set: (d: AccessDraft) => void;
+  disabled: boolean;
+  /** A short line under the legend */
+  hint?: string;
+  /** A short line under a bank's name (who uploaded it), or null */
+  noteOf?: (b: BankSummary) => string | null;
+}
+
+/**
+ * The question-bank choice of a plain user (v0.7, as the owner drew it): one line above the list holds "Include banks
+ * imported later" and, at its right end, "Select all", which ticks or unticks every listed bank and shows checked, unchecked
+ * or indeterminate from the list; then one box per bank. The two settings are independent: "Include banks imported later"
+ * adds only the banks imported from now on, and unticking a bank removes only that bank. Clicks change the boxes in place
+ * (no redraw), so the keyboard focus stays where it is.
+ */
+function bankChecklist(o: ChecklistOptions): { el: HTMLFieldSetElement; setDisabled: (off: boolean) => void } {
+  let off = o.disabled;
+  const boxes: Array<[number, HTMLInputElement]> = [];
+  const listId = `${o.id}-list`;
+  const later = h('input', {
+    type: 'checkbox', id: `${o.id}-later`,
+    onchange: () => o.set({ ...o.get(), later: later.checked }),
+  });
+  // "Select all" only when there is something to select
+  const all = o.banks.length
+    ? h('input', {
+      type: 'checkbox', id: `${o.id}-all`, 'aria-controls': listId,
+      onchange: () => {
+        o.set(toggleAll(o.get(), o.banks));
+        sync();
+      },
+    })
+    : null;
+  const sync = (): void => {
+    const d = o.get();
+    later.checked = d.later;
+    later.disabled = off;
+    for (const [id, box] of boxes) {
+      box.checked = isTicked(d, id);
+      box.disabled = off;
+    }
+    if (all) {
+      const state = selectAllState(d, o.banks);
+      all.checked = state === 'all';
+      all.indeterminate = state === 'some';
+      all.disabled = off;
+    }
+  };
+  const list = o.banks.length
+    ? h('ul', { class: 'us-banklist', id: listId }, o.banks.map((b) => {
+      const box = h('input', {
+        type: 'checkbox', id: `${o.id}-b${b.id}`, value: String(b.id),
+        onchange: () => {
+          o.set(toggleBank(o.get(), b.id, box.checked));
+          sync();
+        },
+      });
+      boxes.push([b.id, box]);
+      const note = o.noteOf?.(b) ?? null;
+      return h('li', null, h('label', { class: 'us-bank', for: box.id }, box,
+        h('span', { class: 'us-bank-t' }, h('span', { class: 'us-bank-n' }, b.name), note ? h('span', { class: 'us-bank-h' }, note) : null)));
+    }))
+    : h('p', { class: 'us-banks-empty' }, t('users.banks.noneYet'));
+  const hintId = o.hint ? `${o.id}-hint` : null;
+  const el = h('fieldset', { class: 'fld us-banksfld', 'aria-describedby': hintId },
+    h('legend', { class: 'fld-l' }, t('users.field.banks')),
+    o.hint ? h('p', { class: 'fld-hint', id: hintId }, o.hint) : null,
+    h('div', { class: 'us-bankhead' },
+      h('label', { class: 'us-bankopt us-later', for: later.id }, later, h('span', null, t('users.banks.later'))),
+      all ? h('label', { class: 'us-bankopt us-selall', for: all.id }, all, h('span', null, t('users.banks.selectAll'))) : null),
+    list);
+  sync();
+  return {
+    el,
+    setDisabled: (v: boolean) => {
+      off = v;
+      sync();
+    },
+  };
+}
+
+/** Who uploaded a bank, as the checklist of `u` says it: their own upload (a bank manager sees it anyway), or the owner's name */
+function bankNoteFor(u: Pick<UserRow, 'id' | 'canManageBanks' | 'role'> | null): (b: BankSummary) => string | null {
+  return (b) => {
+    if (u && b.ownerId === u.id && u.role === 'user' && u.canManageBanks) return t('users.banks.theirOwn');
+    const o = ownerView(b, S.user?.id);
+    return o.kind === 'you' ? t('users.banks.uploadedByYou') : o.kind === 'other' ? t('users.banks.uploadedBy', { name: o.name }) : null;
+  };
+}
+
+/** The bank manager checkbox; administrators always manage every bank, so for them it shows ticked and cannot be changed */
+function managerBox(id: string, value: boolean, role: Role, disabled: boolean, onChange: (v: boolean) => void): {
+  el: HTMLElement; setRole: (r: Role) => void;
+} {
+  const box = h('input', { type: 'checkbox', id, onchange: () => onChange(box.checked) });
+  const hint = h('span', { class: 'dlg-check-h', id: `${id}-hint` });
+  box.setAttribute('aria-describedby', hint.id);
+  const setRole = (r: Role): void => {
+    // The stored flag stays as it was chosen; it matters again only if the administrator is made a plain user later
+    box.checked = r === 'admin' ? true : value;
+    box.disabled = disabled || r === 'admin';
+    hint.textContent = t(r === 'admin' ? 'users.field.managerAdmin' : 'users.field.managerHint');
+  };
+  box.addEventListener('change', () => {
+    value = box.checked;
+  });
+  setRole(role);
+  return {
+    el: h('label', { class: 'dlg-check us-check us-manager', for: id }, box,
+      h('span', null, h('span', { class: 'dlg-check-l' }, t('users.field.manager')), hint)),
+    setRole,
+  };
+}
+
 // ---------------------------------------------------------------- add a user
 
 async function submitAdd(): Promise<void> {
@@ -227,7 +410,8 @@ async function submitAdd(): Promise<void> {
   add.error = null;
   render();
   try {
-    adopt(await createUser(name, add.password, add.role));
+    const access = accessOf(add.banks, S.banks);
+    adopt(await createUser(name, add.password, add.role, access.banks, access.newBanks, add.manager));
     toast(t('users.created', { name }));
     resetAdd();
     focusNext = 'us-add-btn';
@@ -235,6 +419,8 @@ async function submitAdd(): Promise<void> {
     add.error = errorText(e);
     add.busy = false;
     focusNext = e instanceof ApiError && e.status === 409 ? 'us-add-name' : null;
+    // A chosen bank was deleted meanwhile: show the banks as they are now (the boxes of the others stay ticked)
+    if (e instanceof ApiError && e.status === 400) refreshLibrary().then(() => onUsersPage() && render(), () => {});
   }
   if (onUsersPage()) render();
 }
@@ -257,6 +443,19 @@ function addForm(): HTMLElement {
       add.shown = v;
     },
   });
+  // The bank choice and the permission only matter for plain users: for an administrator they are shown as "always"
+  const banks = bankChecklist({
+    id: 'us-add-banks', banks: S.banks, disabled: add.busy || add.role === 'admin', hint: t('users.field.banksHint'),
+    get: () => add.banks,
+    set: (d) => {
+      add.banks = d;
+    },
+    noteOf: bankNoteFor(null),
+  });
+  const adminNote = h('p', { class: 'us-why us-adminnote', hidden: add.role !== 'admin' }, t('users.banks.admin'));
+  const manager = managerBox('us-add-manager', add.manager, add.role, add.busy, (v) => {
+    add.manager = v;
+  });
   return h('form', {
     class: 'us-add', id: 'us-add', novalidate: true, 'aria-labelledby': 'us-add-h', 'aria-busy': add.busy ? 'true' : null,
     onsubmit: (e: SubmitEvent) => {
@@ -267,7 +466,11 @@ function addForm(): HTMLElement {
   h('h3', { id: 'us-add-h' }, t('users.add.title')),
   h('div', { class: 'us-add-grid' }, name.el, pass.el, roleChoice('us-add-role', add.role, add.busy, (r) => {
     add.role = r;
+    banks.setDisabled(add.busy || r === 'admin');
+    adminNote.hidden = r !== 'admin';
+    manager.setRole(r);
   })),
+  h('div', { class: 'us-add-access' }, banks.el, h('div', { class: 'us-add-side' }, manager.el, adminNote)),
   h('p', { class: 'us-add-note' }, t('users.add.note')),
   add.error ? h('div', { class: 'err', role: 'alert' }, h('p', null, add.error)) : null,
   h('div', { class: 'acts' },
@@ -338,8 +541,12 @@ async function guarded(fn: () => Promise<void>): Promise<void> {
 
 function editUser(u: UserRow, lim: Limits): Promise<void> {
   return guarded(async () => {
-    const draft = { username: u.username, role: u.role, enabled: !u.disabled };
+    const draft = { username: u.username, role: u.role, enabled: !u.disabled, canManageBanks: u.canManageBanks };
     const locked = lim.self || lim.lastAdmin;
+    // The bank-manager permission (v0.6.5): changing it does not sign the user out; it applies at their next request
+    const manager = managerBox('us-edit-manager', u.canManageBanks, u.role, false, (v) => {
+      draft.canManageBanks = v;
+    });
     const name = field({
       id: 'us-edit-name', label: t('users.field.username'), value: u.username, hint: t('users.field.usernameHint'), maxlength: 40,
       onInput: (v) => {
@@ -356,9 +563,11 @@ function editUser(u: UserRow, lim: Limits): Promise<void> {
       name.el,
       roleChoice('us-edit-role', u.role, locked, (r) => {
         draft.role = r;
+        manager.setRole(r);
       }, locked ? 'us-edit-why' : undefined),
-      h('label', { class: 'dlg-check us-enabled' }, enabled,
+      h('label', { class: 'dlg-check us-check us-enabled' }, enabled,
         h('span', null, h('span', { class: 'dlg-check-l' }, t('users.field.enabled')), h('span', { class: 'dlg-check-h' }, t('users.field.enabledHint')))),
+      manager.el,
       locked ? h('p', { class: 'us-why', id: 'us-edit-why' }, lim.why) : h('p', { class: 'us-dlg-note' }, t('users.edit.signOutNote')),
     ];
     let saved: string | null = null;
@@ -370,11 +579,8 @@ function editUser(u: UserRow, lim: Limits): Promise<void> {
       submit: async () => {
         const next = draft.username.trim();
         if (!usernameOk(next)) return t('users.check.username');
-        const body: UserUpdate = { id: u.id };
-        if (next !== u.username) body.username = next;
-        if (draft.role !== u.role) body.role = draft.role;
-        if (draft.enabled === u.disabled) body.disabled = !draft.enabled;
-        if (Object.keys(body).length === 1) {
+        const body = editChange(u, { ...draft, username: next });
+        if (!body) {
           saved = t('users.edit.nothing');
           return null;
         }
@@ -426,6 +632,63 @@ function resetPassword(u: UserRow): Promise<void> {
   });
 }
 
+/**
+ * The current bank list for a dialog: read afresh (an administrator may have imported or deleted a bank in another tab), or
+ * the list in memory when that fails. Only the summaries are read, not the questions.
+ */
+async function currentBanks(): Promise<BankSummary[]> {
+  try {
+    return await fetchBanks();
+  } catch {
+    return S.banks;
+  }
+}
+
+/** "Question banks" of a plain user's row: the checklist dialog (the chosen banks, and whether later ones are included) */
+function chooseBanks(u: UserRow): Promise<void> {
+  return guarded(async () => {
+    const banks = await currentBanks();
+    if (!onUsersPage()) return;
+    let draft = draftOf(u.banks, u.newBanks);
+    const list = bankChecklist({
+      id: 'us-bdlg', banks, disabled: false,
+      get: () => draft,
+      set: (d) => {
+        draft = d;
+      },
+      noteOf: bankNoteFor(u),
+    });
+    let saved: string | null = null;
+    const ok = await formDialog({
+      title: t('users.banks.title', { name: u.username }),
+      body: t('users.banks.body', { name: u.username }),
+      content: list.el,
+      ok: t('users.edit.save'),
+      busy: t('users.edit.saving'),
+      submit: async () => {
+        const next = accessOf(draft, banks);
+        if (sameAccess(next, { banks: u.banks, newBanks: u.newBanks })) {
+          saved = t('users.edit.nothing');
+          return null;
+        }
+        try {
+          adopt(await updateUser({ id: u.id, banks: next.banks, newBanks: next.newBanks }));
+          saved = t('users.banks.done', { name: u.username });
+          return null;
+        } catch (e) {
+          refreshAfter(e);
+          // A ticked bank was deleted meanwhile (400): the page's bank names follow the server again
+          if (e instanceof ApiError && e.status === 400) void refreshLibrary().catch(() => {});
+          return errorText(e);
+        }
+      },
+    });
+    if (ok && saved) toast(saved);
+    focusNext = `us-banks-${u.id}`;
+    if (onUsersPage()) render();
+  });
+}
+
 function toggleDisabled(u: UserRow): Promise<void> {
   return guarded(async () => {
     if (!u.disabled && !(await ask({
@@ -437,16 +700,27 @@ function toggleDisabled(u: UserRow): Promise<void> {
   });
 }
 
-function unlock(u: UserRow): Promise<void> {
-  // No confirmation: unlocking only gives the user their five tries back
-  return change(u, () => unlockUser(u.id), t('users.unlocked', { name: u.username }), `us-unlock-${u.id}`);
+function unlock(u: UserRow, locked: boolean): Promise<void> {
+  // No confirmation: unlocking only gives the user their five tries back (a running lock ends, or the next one moves away)
+  return change(u, () => unlockUser(u.id), t(locked ? 'users.unlocked' : 'users.triesReset', { name: u.username }), `us-unlock-${u.id}`);
 }
 
 function removeUser(u: UserRow): Promise<void> {
   return guarded(async () => {
+    // The banks the user imported are not deleted: the server gives them to the administrator who deletes the user
+    const owned = ownedBankNames(u, S.banks);
+    // (v0.7) Either "the question banks are not affected" in the same paragraph, or, for a user who imported banks, a second
+    // paragraph saying they move to you: never both, they would contradict each other
+    // (v0.7) Exams and practice sessions are both study records: the count covers both
+    const body = t('users.delete.body', { n: u.records });
+    const text = u.ownedBanks.length
+      ? [body, tn('users.delete.banks', u.ownedBanks.length, {
+        name: u.username, names: (owned.length ? owned : [t('common.unknownBank')]).join(t('common.listSep')),
+      })].join('\n')
+      : body + (uiLang() === 'en' ? ' ' : '') + t('users.delete.noBanks');
     if (!(await ask({
       title: t('users.delete.title', { name: u.username }),
-      body: t('users.delete.body', { records: tn('users.meta.records', u.records) }),
+      body: text,
       ok: t('users.delete.ok'), danger: true,
     }))) return;
     await change(u, () => deleteUser(u.id), t('users.deleted', { name: u.username }), `us-delete-${u.id}`);
@@ -462,28 +736,77 @@ function mini(id: string, label: string, aria: string, disabled: boolean, why: s
   }, label);
 }
 
+/** `text` with every `YYYY-MM-DD HH:MM` kept on one line (a line break after a hyphen of the date reads badly) */
+function withUnbrokenTimes(text: string): Child[] {
+  return text.split(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/).map((part, i) => (i % 2 ? h('span', { class: 'us-nw' }, part) : part));
+}
+
+/** Unlock at the end of the row's lock note, described by it (what it ends and for which browsers) */
+function unlockButton(u: UserRow, locked: boolean, blocked: boolean, noteId: string | null): HTMLElement {
+  const b = mini(`us-unlock-${u.id}`, t('users.act.unlock'), t(locked ? 'users.act.unlockAria' : 'users.act.unlockTriesAria', { name: u.username }),
+    blocked, null, () => void unlock(u, locked));
+  if (noteId) b.setAttribute('aria-describedby', noteId);
+  // A small button in the run of the lock note (v0.7)
+  b.classList.add('us-change');
+  return b;
+}
+
+/**
+ * The row's line about question banks (v0.6.5): administrators see every bank; a plain user sees the chosen banks (counted
+ * and named, so the names can be read on a phone too) or none yet, and (v0.7) whether the banks imported later are added
+ * (every bank there is now plus the later ones reads "all"), plus a bank manager's own uploads.
+ * v0.7: a plain user's line ends in a small "Change" button that opens the bank dialog (it used to be a "Question banks"
+ * action beside Edit, which pushed Delete onto a second line on phones). Its accessible name says what it changes.
+ */
+function bankLine(u: UserRow, blocked: boolean): HTMLElement {
+  const v = accessView(u, S.banks);
+  const sep = t('common.listSep');
+  const main = v.kind === 'admin' ? t('users.banks.admin')
+    : v.kind === 'all' ? t('users.banks.all')
+      : v.kind === 'some' ? t(v.later ? 'users.banks.someLater' : 'users.banks.some', { n: v.names.length, names: v.names.join(sep) })
+        : t(v.later ? 'users.banks.noneLater' : 'users.banks.none');
+  // Administrators see every bank: their rows have no bank choice
+  const change = u.role === 'user'
+    ? h('button', {
+      class: 'btn us-mini us-change', id: `us-banks-${u.id}`, type: 'button', disabled: blocked,
+      'aria-label': t('users.act.banksAria', { name: u.username }), title: t('users.act.banksAria', { name: u.username }),
+      onclick: () => void chooseBanks(u),
+    }, t('users.banks.change'))
+    : null;
+  return h('p', { class: 'us-banks' + (v.kind === 'none' && !v.later && !v.own.length ? ' none' : ''), id: `us-access-${u.id}` },
+    h('span', null, main),
+    change ? [' ', change] : null,
+    v.own.length ? h('span', { class: 'us-banks-own' }, t('users.banks.own', { names: v.own.join(sep) })) : null);
+}
+
 function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
   const lim = limitsOf(u, list);
   const busy = busyId === u.id;
   const blocked = busyId != null;
   const left = lockLeft(u);
-  const locked = left > 0;
-  // Past round 1 without a running lock: how many tries are left before the next (longer) lock
-  const tries = !locked && u.lock && u.lock.retryAfter === 0 && u.lock.round > 1 ? u.lock.triesLeft : null;
+  const lock = lockView(u.lock, left);
+  const locked = lock.state === 'locked';
   const tags = [
     h('span', { class: 'tag ' + (u.role === 'admin' ? 'b' : 'k') }, roleName(u.role)),
     lim.self ? h('span', { class: 'tag k' }, t('users.you')) : null,
     u.disabled ? h('span', { class: 'tag r' }, t('users.status.disabled')) : null,
+    // The explanation of both throttle tags is the visible note under the row (a title tooltip cannot be reached on a phone
+    // or with the keyboard)
     locked
-      ? h('span', {
-        class: 'tag r us-lock', id: `us-lock-${u.id}`,
-        title: t('users.status.lockedTitle', { at: u.lock?.until ?? '', round: u.lock?.round ?? 1, name: u.username }),
-      }, t('users.status.locked', { wait: waitShort(left) }))
+      ? h('span', { class: 'tag r us-lock', id: `us-lock-${u.id}` }, t('users.status.locked', { wait: waitShort(left) }))
       : null,
     !u.disabled && !locked ? h('span', { class: 'tag k' }, t('users.status.normal')) : null,
-    tries != null ? h('span', { class: 'tag k', title: tn('users.status.triesTitle', tries) }, tn('users.status.tries', tries)) : null,
+    // Past round 1 without a running lock: how many tries are left before the next (longer) lock
+    lock.state === 'tries' ? h('span', { class: 'tag k' }, tn('users.status.tries', lock.triesLeft)) : null,
     !u.disabled && u.mustChangePassword ? h('span', { class: 'tag k' }, t('users.status.mustChange')) : null,
+    // v0.6.5: a plain user who may import and manage their own question banks (administrators always may)
+    u.role === 'user' && u.canManageBanks ? h('span', { class: 'tag b' }, t('users.tag.manager')) : null,
   ];
+  const access = bankLine(u, blocked);
+  const note = lockNote(u.lock, lock, {
+    name: u.username, enabled: !u.disabled, mayHaveKnownBrowsers: u.lastLoginAt != null && !u.mustChangePassword,
+  }).map((p) => (p.n == null ? t(p.key, p.params) : tn(p.key, p.n, p.params))).join(uiLang() === 'en' ? ' ' : '');
+  const noteId = `us-locknote-${u.id}`;
   const meta = [
     t('users.meta.created', { at: fmtAt(u.createdAt) }),
     u.lastLoginAt ? t('users.meta.lastLogin', { at: fmtAt(u.lastLoginAt) }) : t('users.meta.never'),
@@ -499,10 +822,17 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
         i ? ' ' : null,
         h('span', { class: 'us-nw' }, m, i < meta.length - 1 ? h('span', { class: 'us-dot', 'aria-hidden': 'true' }, '·') : null),
       ])),
+      access,
+      // v0.7: Unlock sits at the end of the lock note (like "Change" in the bank line), so the row keeps its four actions on
+      // one line on phones
+      note || lock.unlock
+        ? h('p', { class: 'us-locknote' },
+          note ? h('span', { id: noteId }, withUnbrokenTimes(note)) : null,
+          lock.unlock ? [note ? ' ' : null, unlockButton(u, locked, blocked, note ? noteId : null)] : null)
+        : null,
       lim.why ? h('p', { class: 'us-why', id: `us-why-${u.id}` }, lim.why) : null),
     h('div', { class: 'us-acts' },
       busy ? h('span', { class: 'us-busy', role: 'status' }, t('users.act.busy')) : null,
-      locked ? mini(`us-unlock-${u.id}`, t('users.act.unlock'), t('users.act.unlockAria', { name: u.username }), blocked, null, () => void unlock(u)) : null,
       mini(`us-edit-${u.id}`, t('users.act.edit'), t('users.act.editAria', { name: u.username }), blocked, null, () => void editUser(u, lim)),
       mini(`us-reset-${u.id}`, t('users.act.reset'), t('users.act.resetAria', { name: u.username }), blocked || lim.self, lim.why,
         () => void resetPassword(u)),
@@ -547,6 +877,7 @@ function listPanel(): HTMLElement {
 export function renderUsers(): HTMLElement {
   if (wanted && !loading) void load();
   startTicker();
+  startPoller();
   const root = h('div', { class: 'page page-users' },
     pageHead(t('users.title')),
     h('p', { class: 'us-lead' }, t('users.lead')),

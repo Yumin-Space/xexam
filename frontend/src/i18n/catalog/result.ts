@@ -6,6 +6,7 @@ import { defineCatalog } from '../define.ts';
 export default defineCatalog({
   en: {
     'result.title': 'Result',
+    'result.titlePractice': 'Practice result',
     'result.none': 'There is no exam result to show. Your finished exams are kept in Study records.',
     'result.toRecords': 'Open study records',
     'result.scoreLabel': 'Score: {pct}%',
@@ -13,10 +14,13 @@ export default defineCatalog({
     'result.summary': '{good} correct, {wrong} wrong.',
     'result.meta': '{mode} · {n} questions · time used {time}',
     'result.meta_one': '{mode} · {n} question · time used {time}',
+    'result.notCounted': '{n} questions were not counted: they were deleted (with their question bank) while you took the exam. The score and the saved record cover only the other questions.',
+    'result.notCounted_one': '{n} question was not counted: it was deleted (with its question bank) while you took the exam. The score and the saved record cover only the other questions.',
     'result.metaPrev': '{mode} · {n} questions · time used {time} · last time {prev}%',
     'result.metaPrev_one': '{mode} · {n} question · time used {time} · last time {prev}%',
     'result.retryWrong': 'Retry wrong answers only',
     'result.again': 'Take it again',
+    'result.againPractice': 'Retake practice',
     'result.viewRecord': 'View in study records',
     'result.home': 'Back to home',
 
@@ -24,7 +28,7 @@ export default defineCatalog({
     'result.review.filter': 'Questions to show',
     'result.review.onlyWrong': 'Wrong only ({n})',
     'result.review.all': 'All questions ({n})',
-    'result.review.allGood': 'Every answer in this exam is correct, so there are no wrong questions. To go over them anyway, switch to “All questions”.',
+    'result.review.allGood': 'Every answer is correct, so there are no wrong questions. To go over them anyway, switch to “All questions”.',
     'result.strip.label': 'Jump to a question',
     'result.strip.item': 'Question {n}: {verdict}. Show its explanation',
 
@@ -47,7 +51,6 @@ export default defineCatalog({
     'result.q.explain': 'Explanation: how to choose',
     'result.q.mnemonic': 'Memory aid',
     'result.q.note': 'Note: {note}',
-    'result.q.translation': 'Chinese translation',
 
     'result.stats': 'Answered {n} times so far ({wrong} wrong).',
     'result.stats_one': 'Answered {n} time so far ({wrong} wrong).',
@@ -58,15 +61,18 @@ export default defineCatalog({
   },
   zh: {
     'result.title': '成绩',
+    'result.titlePractice': '练习成绩',
     'result.none': '没有可以显示的成绩。考完的考试都保存在「学习记录」里。',
     'result.toRecords': '打开学习记录',
     'result.scoreLabel': '得分 {pct}%',
     'result.allCorrect': '全部答对。',
     'result.summary': '答对 {good} 题，答错 {wrong} 题。',
     'result.meta': '{mode}，共 {n} 题，用时 {time}',
+    'result.notCounted': '有 {n} 道题没有计入：你答题期间，它们所在的题库被删除了。分数和保存的记录只包含其余的题。',
     'result.metaPrev': '{mode}，共 {n} 题，用时 {time}。上一次 {prev}%',
     'result.retryWrong': '只重做错题',
     'result.again': '再考一次',
+    'result.againPractice': '再练一次',
     'result.viewRecord': '在学习记录里查看',
     'result.home': '回首页',
 
@@ -74,7 +80,7 @@ export default defineCatalog({
     'result.review.filter': '显示哪些题',
     'result.review.onlyWrong': '只看错题（{n}）',
     'result.review.all': '全部题目（{n}）',
-    'result.review.allGood': '这一场全部答对，没有错题。想复习的话，切到「全部题目」。',
+    'result.review.allGood': '全部答对，没有错题。想复习的话，切到「全部题目」。',
     'result.strip.label': '跳到某一题',
     'result.strip.item': '第 {n} 题，{verdict}，查看解析',
 
@@ -95,7 +101,6 @@ export default defineCatalog({
     'result.q.explain': '解析：怎么选',
     'result.q.mnemonic': '记忆口诀',
     'result.q.note': '备注：{note}',
-    'result.q.translation': '中文翻译',
 
     'result.stats': '这道题累计答过 {n} 次，答错 {wrong} 次。',
     'result.stats.inNotebook': '这道题累计答过 {n} 次，答错 {wrong} 次，还在错题本里。',
@@ -103,15 +108,18 @@ export default defineCatalog({
   },
   ja: {
     'result.title': '結果',
+    'result.titlePractice': '練習の結果',
     'result.none': '表示できる結果がありません。終わった試験は「学習記録」に保存されています。',
     'result.toRecords': '学習記録を開く',
     'result.scoreLabel': '得点 {pct}%',
     'result.allCorrect': '全問正解です。',
     'result.summary': '{good} 問正解、{wrong} 問不正解でした。',
     'result.meta': '{mode}・全 {n} 問・所要時間 {time}',
+    'result.notCounted': '{n} 問は採点に含まれていません。解答中に、その問題集ごと削除されました。スコアと保存された記録には、残りの問題だけが含まれます。',
     'result.metaPrev': '{mode}・全 {n} 問・所要時間 {time}・前回は {prev}%',
     'result.retryWrong': '間違えた問題だけやり直す',
     'result.again': 'もう一度受ける',
+    'result.againPractice': 'もう一度練習する',
     'result.viewRecord': '学習記録で見る',
     'result.home': 'ホームに戻る',
 
@@ -119,7 +127,7 @@ export default defineCatalog({
     'result.review.filter': '表示する問題',
     'result.review.onlyWrong': '間違えた問題のみ（{n}）',
     'result.review.all': 'すべての問題（{n}）',
-    'result.review.allGood': 'この試験は全問正解で、間違えた問題はありません。復習したい場合は「すべての問題」に切り替えてください。',
+    'result.review.allGood': '全問正解で、間違えた問題はありません。復習したい場合は「すべての問題」に切り替えてください。',
     'result.strip.label': '問題へ移動',
     'result.strip.item': '第 {n} 問、{verdict}。解説を見る',
 
@@ -140,7 +148,6 @@ export default defineCatalog({
     'result.q.explain': '解説：どう選ぶか',
     'result.q.mnemonic': '覚え方',
     'result.q.note': '備考：{note}',
-    'result.q.translation': '中国語訳',
 
     'result.stats': 'この問題はこれまでに {n} 回回答し、{wrong} 回間違えています。',
     'result.stats.inNotebook': 'この問題はこれまでに {n} 回回答し、{wrong} 回間違えています。まだ間違いノートに入っています。',

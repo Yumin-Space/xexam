@@ -4,8 +4,9 @@ import { shutdownApp } from '../api/import.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { sectionOf, type NavSection, type Route } from '../router.ts';
 import { navigate, setNavOpen, signOut } from '../state/actions.ts';
+import { navAllowed, type NavNeed } from '../state/bank-access.ts';
 import { S, isAdmin } from '../state/store.ts';
-import type { Role } from '../types/api.ts';
+import type { AuthUser, Role } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h } from '../utils/dom.ts';
 import { brand } from './common.ts';
@@ -52,24 +53,46 @@ export const ICONS = {
   user: [{ cx: 12, cy: 8.5, r: 3.8 }, { d: 'M4.8 20c.9-3.6 3.8-5.6 7.2-5.6s6.3 2 7.2 5.6' }],
   users: [{ cx: 9.5, cy: 8.5, r: 3.3 }, { d: 'M3.5 19.5c.7-3.2 3-5 6-5s5.3 1.8 6 5' }, { d: 'M15.3 5.6a3.2 3.2 0 0 1 0 6' }, { d: 'M17.4 14.8c1.7.6 2.8 2.2 3.2 4.7' }],
   signOut: [{ d: 'M14 4.5H6.5v15H14' }, { d: 'M10.5 12h10' }, { d: 'M17 8.5l3.5 3.5-3.5 3.5' }],
+  logs: [{ d: 'M5.5 4.5h13v15h-13z' }, { d: 'M8.5 8.5h7' }, { d: 'M8.5 12h7' }, { d: 'M8.5 15.5h4' }],
 } satisfies Record<string, Shape[]>;
 
-const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape[]; admin?: true }> = [
+// `need`: who sees the entry (v0.6.5): Question banks needs the bank-manager permission (administrators always have it), User
+// management and the System log (v0.7) an administrator; the rest is for everyone.
+const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape[]; need?: NavNeed }> = [
   { section: 'home', route: { name: 'home' }, label: 'nav.home', icon: ICONS.home },
-  { section: 'banks', route: { name: 'banks' }, label: 'nav.banks', icon: ICONS.banks, admin: true },
+  { section: 'banks', route: { name: 'banks' }, label: 'nav.banks', icon: ICONS.banks, need: 'banks' },
   { section: 'records', route: { name: 'records' }, label: 'nav.records', icon: ICONS.records },
-  { section: 'users', route: { name: 'users' }, label: 'nav.users', icon: ICONS.users, admin: true },
+  { section: 'users', route: { name: 'users' }, label: 'nav.users', icon: ICONS.users, need: 'admin' },
+  { section: 'logs', route: { name: 'logs' }, label: 'nav.logs', icon: ICONS.logs, need: 'admin' },
   { section: 'settings', route: { name: 'settings' }, label: 'nav.settings', icon: ICONS.settings },
 ];
 
 const HREF: Record<NavSection, string> = {
-  home: '#/', banks: '#/banks', records: '#/records', users: '#/users', settings: '#/settings', about: '#/about',
+  home: '#/', banks: '#/banks', records: '#/records', users: '#/users', logs: '#/logs', settings: '#/settings', about: '#/about',
 };
 
 const ROLE_NAME: Record<Role, MsgKey> = { admin: 'role.admin', user: 'role.user' };
 
 /** The name of a role in the interface language */
 export const roleName = (role: Role): string => t(ROLE_NAME[role]);
+
+/** A plain user with the "can manage question banks" permission (v0.7: shown as "Bank manager" next to the role) */
+export const isBankManager = (u: Pick<AuthUser, 'role' | 'canManageBanks'>): boolean => u.role === 'user' && u.canManageBanks === true;
+
+/**
+ * The small tags of an account (the menu's account area, Settings > Account): the role, plus "Bank manager" for a plain user
+ * who may manage question banks (administrators always may, so they get no extra tag).
+ */
+export function roleTags(u: Pick<AuthUser, 'role' | 'canManageBanks'>): HTMLElement[] {
+  return [
+    h('span', { class: 'tag ' + (u.role === 'admin' ? 'b' : 'k') }, roleName(u.role)),
+    ...(isBankManager(u) ? [h('span', { class: 'tag b' }, t('role.manager'))] : []),
+  ];
+}
+
+/** The role in words, for an accessible name: "User, Bank manager" */
+export const roleText = (u: Pick<AuthUser, 'role' | 'canManageBanks'>): string =>
+  [roleName(u.role), isBankManager(u) ? t('role.manager') : null].filter(Boolean).join(t('common.listSep'));
 
 async function quitProgram(): Promise<void> {
   if (!(await ask({ title: t('shutdown.title'), body: t('shutdown.body'), ok: t('shutdown.ok'), cancel: t('shutdown.cancel') }))) return;
@@ -110,12 +133,12 @@ export function shell(content: HTMLElement): HTMLElement {
     h('div', { class: 'nav-who' },
       icon(ICONS.user),
       h('span', { class: 'nav-who-name', title: user.username }, user.username),
-      h('span', { class: 'tag ' + (admin ? 'b' : 'k') }, roleName(user.role))),
+      h('span', { class: 'nav-who-tags' }, roleTags(user))),
     h('button', { class: 'nav-link nav-signout', type: 'button', onclick: () => void signOut() },
       icon(ICONS.signOut), h('span', { class: 'nav-label' }, t('nav.signOut')))) : null;
 
   const menu = open ? h('nav', { class: 'nav-pop', id: 'nav-menu', 'aria-label': t('nav.label') },
-    h('ul', { class: 'nav-list' }, NAV.filter((n) => admin || !n.admin).map((n) => h('li', null,
+    h('ul', { class: 'nav-list' }, NAV.filter((n) => navAllowed(n.need, user)).map((n) => h('li', null,
       h('a', {
         class: 'nav-link' + (n.section === active ? ' on' : ''),
         href: HREF[n.section],
@@ -152,7 +175,7 @@ export function shell(content: HTMLElement): HTMLElement {
   // The account label left of the menu button: who is signed in (and "Administrator"); a click opens the same menu
   const accountBtn = user ? h('button', {
     class: 'acct-btn' + (open ? ' on' : ''), id: 'acct-btn', type: 'button', title: user.username,
-    'aria-label': t('nav.accountLabel', { name: user.username, role: roleName(user.role) }),
+    'aria-label': t('nav.accountLabel', { name: user.username, role: roleText(user) }),
     'aria-haspopup': 'true', 'aria-expanded': String(open), 'aria-controls': 'nav-menu',
     onclick: (e: MouseEvent) => {
       focusMenuOnOpen = !open && e.detail === 0;

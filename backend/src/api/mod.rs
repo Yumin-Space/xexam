@@ -15,9 +15,19 @@
 //! body is read, against the route table [`auth::ROUTES`]; a path that is not in the table needs a session too. Study records,
 //! statistics and settings are read and written for the signed-in user only (their id comes from the session, never from the
 //! request).
+//!
+//! v0.6.5: every route that reads shared bank data or writes into a bank builds the request's [`Viewer`] ([`auth::viewer`])
+//! and calls the engine's `*_as` methods: a plain user reads only the banks they may see (`/api/bank`, `/api/banks`, the
+//! statistics of `/api/progress`, the questions `/api/attempt` may count, the question text of `/api/record`), and a bank
+//! manager imports, updates and deletes only the banks they own. Each uploader has their own pending import.
+//!
+//! v0.7: `GET /api/logs?after=<seq>&boot=<id>` (administrators only) returns the recent log lines kept in memory (see `crate::logs`).
+//! Only the six-column layout may be imported: `POST /api/upload` (a new bank or an update) and `POST /api/import/confirm`
+//! refuse a 3- or 4-column workbook with 400 `MSG_OLD_LAYOUT` before anything is staged or written
+//! ([`services::check_layout`]; [`Inner::old_layouts`] is the test-only way around it).
 use crate::config::{Config, MAX_JSON, MAX_UPLOAD};
 use crate::error::{AppError, DbError};
-use crate::models::{setting_valid, ImportTarget, ParsedWorkbook, SETTING_KEYS};
+use crate::models::{setting_valid, ImportTarget, ParsedWorkbook, Viewer, SETTING_KEYS};
 use crate::security::body::{self, BodyError};
 use crate::security::{clean_filename, latin1, py_int_str, py_strip, strip_ctrl, truncate_chars};
 use crate::services::{self, Engine, PendingStore};
@@ -69,6 +79,19 @@ pub struct Inner {
     /// Password hashes that still verify against the default password `admin`, found once at startup
     /// ([`auth::find_default_admin_hashes`]); unset = none known (tests that do not set it)
     pub default_admin_hashes: std::sync::OnceLock<Vec<String>>,
+    /// The recent log lines served by `GET /api/logs` (the process-wide buffer fed by the tracing layer, or a test's own)
+    pub logs: Arc<crate::logs::LogBuffer>,
+    /// Requests rejected by the Host / Origin guard, logged at most about one line a minute (see [`crate::logs::BurstLog`])
+    pub rejections: crate::logs::BurstLog,
+    /// Failed sign-ins (wrong password, unknown or disabled user), logged in the same way
+    pub failed_sign_ins: crate::logs::BurstLog,
+    /// Locks of usernames without an account (anyone can start one per made-up name), logged in the same way; locks of
+    /// accounts are logged one by one (their number is bounded by the accounts)
+    pub name_locks: crate::logs::BurstLog,
+    /// v0.7: whether uploads of the old 3- / 4-column layouts are refused. Always [`services::OldLayouts::Refuse`] in
+    /// production ([`AppState::new`]); only test code builds a state with `AllowForTests` (the golden suites replay the
+    /// reference implementation's 3-column imports).
+    pub old_layouts: services::OldLayouts,
 }
 
 impl AppState {
@@ -77,6 +100,17 @@ impl AppState {
         store: Arc<crate::database::Store>,
         engine: Arc<dyn Engine>,
         shutdown: Option<tokio::sync::mpsc::Sender<()>>,
+    ) -> AppState {
+        Self::new_with_logs(cfg, store, engine, shutdown, crate::logs::global())
+    }
+
+    /// Same as [`AppState::new`], with the log buffer that `GET /api/logs` reads (tests pass their own).
+    pub fn new_with_logs(
+        cfg: Config,
+        store: Arc<crate::database::Store>,
+        engine: Arc<dyn Engine>,
+        shutdown: Option<tokio::sync::mpsc::Sender<()>>,
+        logs: Arc<crate::logs::LogBuffer>,
     ) -> AppState {
         AppState(Arc::new(Inner {
             cfg,
@@ -89,6 +123,11 @@ impl AppState {
             throttle: crate::auth::LoginThrottle::default(),
             last_session_purge: std::sync::atomic::AtomicI64::new(0),
             default_admin_hashes: std::sync::OnceLock::new(),
+            logs,
+            rejections: Default::default(),
+            failed_sign_ins: Default::default(),
+            name_locks: Default::default(),
+            old_layouts: services::OldLayouts::Refuse,
         }))
     }
 }
@@ -165,6 +204,49 @@ fn query_id(query: Option<&str>) -> Option<i64> {
     id_from_text(&found?)
 }
 
+/// The `after` of `/api/logs?after=<seq>`: absent → `None`; present exactly once with 1 to 19 ASCII digits (a `u64`) →
+/// that number; anything else (empty, not a number, repeated) → 400.
+fn query_after(query: Option<&str>) -> Result<Option<u64>, AppError> {
+    match query_once(query, "after")? {
+        None => Ok(None),
+        Some(s) if (1..=19).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit()) => {
+            s.parse().map(Some).map_err(|_| bad_request())
+        }
+        Some(_) => Err(bad_request()),
+    }
+}
+
+/// The value of `key` in `query` (percent-decoded): `Ok(None)` when absent, 400 when it appears more than once.
+fn query_once(query: Option<&str>, key: &str) -> Result<Option<String>, AppError> {
+    let mut found: Option<String> = None;
+    for pair in query.unwrap_or("").split('&').filter(|p| !p.is_empty()) {
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        if percent_decode_str(k).decode_utf8_lossy() == key {
+            if found.is_some() {
+                return Err(bad_request());
+            }
+            found = Some(percent_decode_str(v).decode_utf8_lossy().into_owned());
+        }
+    }
+    Ok(found)
+}
+
+/// The `boot` of `/api/logs?after=<seq>&boot=<id>` (the log buffer id the client last saw): absent → `None`; present once
+/// with 1 to 64 characters of `A-Z a-z 0-9 _ -` → that id; anything else → 400.
+fn query_boot(query: Option<&str>) -> Result<Option<String>, AppError> {
+    match query_once(query, "boot")? {
+        None => Ok(None),
+        Some(s)
+            if (1..=64).contains(&s.len())
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') =>
+        {
+            Ok(Some(s))
+        }
+        Some(_) => Err(bad_request()),
+    }
+}
+
 fn bad_request() -> AppError {
     AppError::BadRequest(MSG_BAD_REQUEST.to_string())
 }
@@ -203,6 +285,16 @@ where
             tracing::info!("write refused: the user no longer exists or is disabled");
             Err(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED))
         }
+        Ok(Err(DbError::QuestionsGone)) => {
+            // An exam started before its question bank was deleted: nothing was saved
+            tracing::info!("exam not saved: none of its questions exist any more");
+            Err(AppError::Status(409, response::MSG_EXAM_QUESTIONS_GONE))
+        }
+        Ok(Err(DbError::NotBankOwner)) => {
+            // A bank manager aimed at a bank they do not own: nothing was written
+            tracing::info!("refused: the user may not manage that question bank");
+            Err(AppError::Status(403, response::MSG_NOT_BANK_OWNER))
+        }
         Ok(Err(e)) => {
             tracing::error!("database error: {e}");
             Err(AppError::Db(e))
@@ -211,6 +303,15 @@ where
             tracing::error!("database task failed: {e}");
             Err(AppError::Internal)
         }
+    }
+}
+
+/// Logs a request rejected by the Host / Origin guard: the first one after a quiet minute at once, the rest summed up (see
+/// [`crate::logs::BurstLog`]), so a flood of rejected requests cannot push the other lines out of the System log. `what` is
+/// English (method, path and [`guard::Denial::log`]), never the Chinese text of the response.
+fn note_rejection(st: &AppState, what: String) {
+    if let Some(report) = st.0.rejections.note(std::time::Instant::now(), what) {
+        guard::log_rejections(&report);
     }
 }
 
@@ -227,11 +328,14 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
             // 1. Host
             if !guard::host_ok(cfg, host.as_deref()) {
                 let seen = guard::seen_host(host.as_deref());
-                tracing::warn!(
-                    "rejected {} {}: Host {:?} is not in the allowed list",
-                    parts.method,
-                    safe_path(&path),
-                    seen
+                note_rejection(
+                    &st,
+                    format!(
+                        "{} {}: Host {:?} is not in the allowed list",
+                        parts.method,
+                        safe_path(&path),
+                        seen
+                    ),
                 );
                 return error_response(AppError::ForbiddenHost { seen }, head_only);
             }
@@ -258,9 +362,12 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
         }
         _ => {
             // Other methods: the Host guard still runs first (stricter than the old 501), then 405 + Allow
-            if let Some(reason) = guard::deny_reason(cfg, host.as_deref(), None) {
-                tracing::warn!("rejected {} {}: {}", parts.method, safe_path(&path), reason);
-                return error_json(StatusCode::FORBIDDEN, &reason, false);
+            if let Some(denial) = guard::deny(cfg, host.as_deref(), None) {
+                note_rejection(
+                    &st,
+                    format!("{} {}: {}", parts.method, safe_path(&path), denial.log),
+                );
+                return error_json(StatusCode::FORBIDDEN, &denial.message, false);
             }
             method_not_allowed("GET, HEAD, POST")
         }
@@ -274,6 +381,14 @@ fn user_of(authed: Option<&Authed>) -> Result<i64, AppError> {
     authed
         .map(|a| a.user.id)
         .ok_or(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED))
+}
+
+/// The signed-in request's [`Viewer`] (same rule as [`user_of`] for a missing session).
+async fn viewer_of(st: &AppState, authed: Option<&Authed>) -> Result<Viewer, AppError> {
+    match authed {
+        Some(a) => auth::viewer(st, a).await,
+        None => Err(AppError::Status(401, response::MSG_SIGN_IN_REQUIRED)),
+    }
 }
 
 async fn get_route(
@@ -298,6 +413,14 @@ async fn get_route(
         let users = auth::list(st).await?;
         return Ok(json_resp(StatusCode::OK, &users, head_only));
     }
+    if path == "/api/logs" {
+        // Administrators only (`auth::ROUTES`); the buffer is in memory, so no blocking task is needed
+        let after = query_after(query)?;
+        let boot = query_boot(query)?;
+        let page = st.0.logs.since_boot(after, boot.as_deref());
+        let value = serde_json::to_value(&page).map_err(|_| AppError::Internal)?;
+        return Ok(json_resp(StatusCode::OK, &value, head_only));
+    }
     let user = if path == "/api/info" {
         0
     } else {
@@ -314,20 +437,31 @@ async fn get_route(
                 "bankCount": count,
             })
         }
-        "/api/bank" => blocking(move || eng.bank()).await?,
-        "/api/progress" => blocking(move || eng.progress(user)).await?,
-        "/api/banks" => blocking(move || eng.banks()).await?,
+        "/api/bank" => {
+            let v = viewer_of(st, authed).await?;
+            blocking(move || eng.bank_as(&v)).await?
+        }
+        "/api/progress" => {
+            let v = viewer_of(st, authed).await?;
+            blocking(move || eng.progress_as(&v)).await?
+        }
+        "/api/banks" => {
+            let v = viewer_of(st, authed).await?;
+            blocking(move || eng.banks_as(&v)).await?
+        }
         "/api/records" => blocking(move || eng.records(user)).await?,
         "/api/record" => {
             let id = query_id(query).ok_or_else(bad_request)?;
+            let v = viewer_of(st, authed).await?;
             // Another user's record answers exactly like a record that does not exist
-            blocking(move || eng.record(user, id))
+            blocking(move || eng.record_as(&v, id))
                 .await?
                 .ok_or(AppError::NotFoundMsg(MSG_RECORD_NOT_FOUND))?
         }
         "/api/settings" => blocking(move || eng.settings(user)).await?,
         "/api/imports" => {
-            let list = blocking(move || eng.import_history(12)).await?;
+            let v = viewer_of(st, authed).await?;
+            let list = blocking(move || eng.import_history_as(&v, 12)).await?;
             let items = serde_json::to_value(&list).map_err(|_| AppError::Internal)?;
             json!({ "imports": items })
         }
@@ -364,10 +498,13 @@ async fn post_route(
     let cfg = &st.0.cfg;
     let origin = hdr(headers, &header::ORIGIN);
     // 1. Host, Origin
-    if let Some(reason) = guard::deny_reason(cfg, host, origin.as_deref()) {
+    if let Some(denial) = guard::deny(cfg, host, origin.as_deref()) {
         body::drain(&mut body, 0, DRAIN_CAP).await;
-        tracing::warn!("rejected POST {}: {}", safe_path(path), reason);
-        return (error_response(AppError::Denied(reason), false), None);
+        note_rejection(st, format!("POST {}: {}", safe_path(path), denial.log));
+        return (
+            error_response(AppError::Denied(denial.message), false),
+            None,
+        );
     }
     // 2. Session, before anything of the body is read
     let authed = match auth::authorize(st, "POST", path, headers, origin.as_deref()).await {
@@ -421,7 +558,9 @@ async fn post_body(
             bank_target(headers).ok_or_else(|| AppError::BadRequest(MSG_BAD_TARGET.to_string()))?;
         let filename =
             clean_filename(hdr(headers, &HeaderName::from_static("x-filename")).as_deref());
-        return upload(st, target, filename, data.to_vec()).await;
+        let v = viewer_of(st, authed).await?;
+        let username = authed.map(|a| a.user.username.as_str()).unwrap_or("");
+        return upload(st, &v, username, target, filename, data.to_vec()).await;
     }
 
     if py_strip(ctype.split(';').next().unwrap_or("")).to_lowercase() != "application/json" {
@@ -460,21 +599,22 @@ async fn post_body(
         "/api/users/password" => auth::reset_password(st, a, &data).await,
         "/api/users/delete" => auth::delete(st, a, &data).await,
         "/api/users/unlock" => auth::unlock(st, a, &data).await,
-        "/api/import/confirm" => confirm(st, &data).await,
+        "/api/import/confirm" => confirm(st, a, &data).await,
         "/api/import/cancel" => {
-            services::cancel_pending_import(&st.0.pending);
+            // Only the caller's own staged upload: another user's preview is never touched
+            services::cancel_pending_import_as(&st.0.pending, user);
             Ok(json_resp(StatusCode::OK, &json!({ "ok": true }), false))
         }
         "/api/attempt" => {
             let (attempt, answers) =
                 attempt::clean_attempt_with_answers(&data).map_err(AppError::BadRequest)?;
+            let v = auth::viewer(st, a).await?;
             let eng = st.0.engine.clone();
-            let progress =
-                blocking(move || eng.record_attempt_with_answers(user, &attempt, &answers)).await?;
+            let progress = blocking(move || eng.record_attempt_as(&v, &attempt, &answers)).await?;
             Ok(json_resp(StatusCode::OK, &progress, false))
         }
-        "/api/banks/delete" => delete_bank(st, user, &data).await,
-        "/api/records/delete" => delete_records(st, user, &data).await,
+        "/api/banks/delete" => delete_bank(st, a, &data).await,
+        "/api/records/delete" => delete_records(st, a, &data).await,
         "/api/settings" => update_settings(st, user, &data).await,
         "/api/settings/reset" => {
             let eng = st.0.engine.clone();
@@ -502,38 +642,56 @@ async fn post_body(
 
 async fn upload(
     st: &AppState,
+    v: &Viewer,
+    username: &str,
     target: ImportTarget,
     filename: String,
     data: Vec<u8>,
 ) -> Result<Response, AppError> {
-    // An unknown bank id is rejected before spending a parse on it (and checked again by the plan)
-    if let ImportTarget::Bank(id) = target {
-        let eng = st.0.engine.clone();
-        if !blocking(move || eng.bank_exists(id)).await? {
-            return Err(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND));
-        }
+    // An unknown bank id, or a bank this user may not update, is rejected before spending a parse on it (the write checks
+    // again, inside its transaction)
+    let eng = st.0.engine.clone();
+    let check = v.clone();
+    if !blocking(move || eng.check_import_target(&check, target)).await? {
+        return Err(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND));
     }
     let timeout = Duration::from_secs(st.0.cfg.parse_timeout_secs.max(1));
     let wb: ParsedWorkbook =
         services::parse_upload(st.0.engine.clone(), st.0.parse_gate.clone(), data, timeout).await?;
+    // v0.7: a 3- or 4-column workbook is refused here, before anything is planned or staged (a new bank or an update alike)
+    services::check_layout(&wb.questions, st.0.old_layouts, &filename)?;
     let (plan, wb) = services::plan_import_for(st.0.engine.clone(), target, wb).await?;
     let plan = plan.ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
-    let payload = services::create_pending_import_for(&st.0.pending, target, filename, wb, plan);
+    let payload = services::create_pending_import_named(
+        &st.0.pending,
+        v.user,
+        username,
+        target,
+        filename,
+        wb,
+        plan,
+    );
     Ok(json_resp(StatusCode::OK, &payload, false))
 }
 
-async fn confirm(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
+async fn confirm(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     // A non-string token (integer, null, missing, ...) never matches: 409
     let token = match data.get("token") {
         Some(PyVal::Str(s)) => s.as_str(),
         _ => "",
     };
-    let item = services::confirm_pending_import(&st.0.pending, token)?;
+    // Read before the token is taken: a failure here leaves the staged upload in place
+    let viewer = auth::viewer(st, a).await?;
+    let item = services::confirm_pending_import_as(&st.0.pending, a.user.id, token)?;
+    // The upload route already refused an old layout; checked again so nothing of that layout can ever be written (the
+    // token is consumed, nothing is written)
+    services::check_layout(&item.questions, st.0.old_layouts, &item.filename)?;
     // Only an upload that named its target gets `bankId` (the v0.4 response stays byte-identical)
     let explicit = item.target.is_explicit();
     // The database write after the token is taken runs in a separate task: even if the client disconnects mid-request and the request is dropped, the transaction still commits
     let eng = st.0.engine.clone();
-    let joined = tokio::spawn(async move { services::apply_import(eng, item).await }).await;
+    let joined =
+        tokio::spawn(async move { services::apply_import_as(eng, viewer, item).await }).await;
     match joined {
         Ok(Ok(Some(done))) => {
             let body = if explicit {
@@ -545,6 +703,8 @@ async fn confirm(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
         }
         // The target bank was deleted after the preview: nothing was written (the token is consumed)
         Ok(Ok(None)) => Err(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND)),
+        // The bank changed owner after the preview (or the permission is gone): nothing was written
+        Ok(Err(DbError::NotBankOwner)) => Err(AppError::Status(403, response::MSG_NOT_BANK_OWNER)),
         Ok(Err(e)) => {
             tracing::error!("apply_import failed: {e}");
             Ok(error_json(
@@ -565,26 +725,32 @@ async fn confirm(st: &AppState, data: &PyVal) -> Result<Response, AppError> {
 }
 
 /// `POST /api/banks/delete` `{"id": <int>, "withRecords": <bool, default false>}` →
-/// `{"banks": [...], "bank": <GET /api/bank>, "progress": <GET /api/progress>}`.
-/// Study data of every user goes with `withRecords`; the response's `progress` is the signed-in user's.
-async fn delete_bank(st: &AppState, user: i64, data: &PyVal) -> Result<Response, AppError> {
+/// `{"banks": [...], "bank": <GET /api/bank>, "progress": <GET /api/progress>}`, all three as the signed-in user sees them.
+/// An administrator deletes any bank, and `withRecords` removes the study data of every user; a bank manager deletes only the
+/// banks they own (403 `MSG_NOT_BANK_OWNER` otherwise), and `withRecords` removes only their own study data.
+async fn delete_bank(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let id = body_id(data.get("id"))?;
     let with_records = body_flag(data.get("withRecords"))?;
     let id = id.ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
+    let v = auth::viewer(st, a).await?;
     let eng = st.0.engine.clone();
-    let deleted = blocking(move || eng.delete_bank(id, with_records))
+    let actor = v.clone();
+    let deleted = blocking(move || eng.delete_bank_as(&actor, id, with_records))
         .await?
         .ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
     // The staged upload for that bank was previewed against data that no longer exists
-    if st.0.pending.drop_for_deleted_bank(deleted) {
-        tracing::info!("dropped the pending import of deleted bank {}", deleted.id);
+    if st.0.pending.drop_for_deleted_bank(&deleted) {
+        tracing::info!(
+            "dropped the pending import of deleted bank {:?}",
+            deleted.name
+        );
     }
     let eng = st.0.engine.clone();
     let body = blocking(move || {
         Ok(json!({
-            "banks": take_key(&mut eng.banks()?, "banks"),
-            "bank": eng.bank()?,
-            "progress": eng.progress(user)?,
+            "banks": take_key(&mut eng.banks_as(&v)?, "banks"),
+            "bank": eng.bank_as(&v)?,
+            "progress": eng.progress_as(&v)?,
         }))
     })
     .await?;
@@ -593,7 +759,9 @@ async fn delete_bank(st: &AppState, user: i64, data: &PyVal) -> Result<Response,
 
 /// `POST /api/records/delete`: `{"id": <int>}` (that record and its detail; stats unchanged) or
 /// `{"all": true, "withStats": <bool, default false>}` → `{"records": [...], "retention": 500, "progress": {...}}`.
-async fn delete_records(st: &AppState, user: i64, data: &PyVal) -> Result<Response, AppError> {
+/// Only the signed-in user's own records are ever deleted; `progress` is as they see it.
+async fn delete_records(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
+    let user = a.user.id;
     let eng = st.0.engine.clone();
     match (data.get("id"), data.get("all")) {
         (Some(id), None) => {
@@ -611,13 +779,14 @@ async fn delete_records(st: &AppState, user: i64, data: &PyVal) -> Result<Respon
         }
         _ => return Err(bad_request()),
     }
+    let v = auth::viewer(st, a).await?;
     let eng = st.0.engine.clone();
     let body = blocking(move || {
         let mut records = eng.records(user)?;
         Ok(json!({
             "records": take_key(&mut records, "records"),
             "retention": take_key(&mut records, "retention"),
-            "progress": eng.progress(user)?,
+            "progress": eng.progress_as(&v)?,
         }))
     })
     .await?;

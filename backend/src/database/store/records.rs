@@ -4,10 +4,14 @@
 //! ([`Store::delete_record`], [`Store::delete_all_records`]); the `banks` snapshot and the retention prune used by `record_attempt`.
 //! Since v0.6 every exam record belongs to one user (`attempts.user_id`); every function here works on one user's records only,
 //! and a record of another user behaves exactly like a record that does not exist.
+//!
+//! v0.6.5 (schema v4): every record has a `kind` (`"exam"` or `"practice"`, `attempts.kind`), the trailing key of a summary.
+//! Records stay visible as history when the user can no longer see a bank: in the detail, the questions of a bank outside
+//! their [`BankScope`] are left out exactly like deleted questions (`"question": null`, no text).
 use super::super::{pyjson, RECORD_RETENTION};
 use super::{load_questions, question_object, run_tx, Store, QUESTION_COLUMNS};
 use crate::error::DbError;
-use crate::models::AttemptResult;
+use crate::models::{AttemptResult, BankScope};
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -122,7 +126,8 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             counts.insert(r.get(0)?, (r.get(1)?, r.get(2)?));
         }
     }
-    let base = "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks FROM attempts";
+    let base =
+        "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks, kind FROM attempts";
     let mut st = match only {
         Some(_) => c.prepare(&format!("{base} WHERE id=?1 AND user_id=?2"))?,
         None => c.prepare(&format!("{base} WHERE user_id=?1 ORDER BY id DESC"))?,
@@ -162,6 +167,7 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             "seconds": r.get::<_, i64>(7)?,
             "answered": answered,
             "detail": items > 0,
+            "kind": r.get::<_, String>(9)?,
         }));
     }
     Ok(out)
@@ -192,10 +198,20 @@ impl Store {
         records_json(&g, user)
     }
 
+    /// `GET /api/record?id=` of a user who sees every bank (see [`Store::record_as`]).
+    pub fn record(&self, user: i64, id: i64) -> Result<Option<Value>, DbError> {
+        self.record_as(user, &BankScope::All, id)
+    }
+
     /// `GET /api/record?id=`: `{"record": summary, "items": [{"seq", "questionId", "answer", "correct", "question"}]}`, where
     /// `question` is the question as `/api/bank` shows it plus a trailing `active` (retired questions included), or null when the
-    /// question no longer exists. `Ok(None)` = no such record of `user`.
-    pub fn record(&self, user: i64, id: i64) -> Result<Option<Value>, DbError> {
+    /// question no longer exists or belongs to a bank outside `scope`. `Ok(None)` = no such record of `user`.
+    pub fn record_as(
+        &self,
+        user: i64,
+        scope: &BankScope,
+        id: i64,
+    ) -> Result<Option<Value>, DbError> {
         let g = self.lock();
         let Some(record) = summaries(&g, user, Some(id))?.into_iter().next() else {
             return Ok(None);
@@ -216,7 +232,10 @@ impl Store {
                 Some(text) => serde_json::from_str(&text)?,
                 None => Value::Null,
             };
-            let question = match load_questions(&g, &question_sql, params![question_id])?.first() {
+            let question = match load_questions(&g, &question_sql, params![question_id])?
+                .first()
+                .filter(|q| scope.allows(q.bank_id))
+            {
                 Some(q) => {
                     let mut obj = question_object(q)?;
                     obj.insert("active".to_string(), Value::Bool(q.active));

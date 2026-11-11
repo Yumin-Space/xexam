@@ -8,7 +8,9 @@ import { errorText } from './i18n/errors.ts';
 import { renderAbout } from './pages/about.ts';
 import { renderNewPassword, renderSignIn } from './pages/auth.ts';
 import { renderBanks } from './pages/banks.ts';
+import { renderForbidden } from './pages/forbidden.ts';
 import { renderHome } from './pages/home.ts';
+import { renderLogs } from './pages/logs.ts';
 import { installQuizKeys, renderQuiz } from './pages/quiz.ts';
 import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
@@ -16,7 +18,7 @@ import { renderSettings } from './pages/settings.ts';
 import { renderUsers } from './pages/users.ts';
 import { boot, setRenderer } from './state/actions.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
-import { S } from './state/store.ts';
+import { S, canManageBanks, isAdmin } from './state/store.ts';
 import { h, must } from './utils/dom.ts';
 
 function solo(...kids: Array<HTMLElement | null>): HTMLElement {
@@ -28,9 +30,17 @@ function page(): { el: HTMLElement; title: string } {
   const r = S.route;
   switch (r.name) {
     case 'banks':
-      return { el: renderBanks(), title: t('nav.banks') };
+      // Bank managers and administrators; anyone else sees why they cannot use it (owner, v0.6.5)
+      return canManageBanks()
+        ? { el: renderBanks(), title: t('nav.banks') }
+        : { el: renderForbidden('forbidden.banks'), title: t('forbidden.title') };
     case 'users':
       return { el: renderUsers(), title: t('users.title') };
+    case 'logs':
+      // Administrators only (v0.7); bank managers and users see why they cannot open it
+      return isAdmin()
+        ? { el: renderLogs(), title: t('logs.title') }
+        : { el: renderForbidden('forbidden.logs'), title: t('forbidden.title') };
     case 'records':
     case 'record':
     case 'wrong':

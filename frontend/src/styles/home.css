@@ -45,11 +45,11 @@
 /* the radio stays in the page for keyboard and screen readers; the chip shows its state */
 .mseg input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
 .mseg .mseg-ico { width: 15px; height: 15px; flex: none; }
-/* The count: a small tag (darker than the track while unselected, the usual fill on the raised chip). The red one has
-   an opaque card base under its tint, so the hover fill of the segment does not lower its contrast. */
+/* The count: a small tag (darker than the track while unselected, the usual fill on the raised chip). The orange one
+   (wrong answers) has an opaque card base under its tint, so the hover fill of the segment does not lower its contrast. */
 .mseg-n { font: 500 11.5px/1.6 var(--num), var(--en); padding: 0 5px; border-radius: 4px; background: var(--hover-strong); color: var(--ink2); }
 .mseg.weak .mseg-n, .mseg.weak:has(input:checked) .mseg-n {
-  background-color: var(--card); background-image: linear-gradient(var(--wrong-soft), var(--wrong-soft)); color: var(--wrong);
+  background-color: var(--card); background-image: linear-gradient(var(--answer-wrong-soft), var(--answer-wrong-soft)); color: var(--answer-wrong);
 }
 @media (hover: hover) { .mseg:hover:not(.off) { background: var(--hover); color: var(--ink); } }
 .mseg:has(input:checked), .mseg:has(input:checked):hover {
@@ -125,6 +125,22 @@
   background: var(--card); border-top: 1px solid var(--line-soft); border-radius: 0 0 9px 9px;
   /* only the hairline: a shadow would show as a grey haze above the bar while it is not pinned */
 }
+/* Start exam (primary) and Start practice (secondary) side by side */
+.home-go-btns { display: flex; flex-wrap: wrap; gap: 8px; flex: none; }
+/* (v0.7, owner) Start exam: a solid green button; Start practice: a solid orange one. White text in both themes (4.52:1 on
+   the green; 5.03:1 / 4.65:1 on the light / dark orange); hover and pressed are one and two steps darker on the same Primer
+   scale (more contrast, not less); the focus ring is the usual blue one; disabled fades like every other button. Only these
+   two buttons: everything else keeps its look. */
+.home-go-btns .btn.home-go-exam, .home-go-btns .btn.home-go-practice { color: var(--on-answer-solid); font-weight: 600; }
+.home-go-btns .btn.home-go-exam { background: var(--go-exam); border-color: var(--go-exam); }
+.home-go-btns .btn.home-go-practice { background: var(--go-practice); border-color: var(--go-practice); }
+@media (hover: hover) {
+  .home-go-btns .btn.home-go-exam:hover:not(:disabled) { background: var(--go-exam-hover); border-color: var(--go-exam-hover); }
+  .home-go-btns .btn.home-go-practice:hover:not(:disabled) { background: var(--go-practice-hover); border-color: var(--go-practice-hover); }
+}
+.home-go-btns .btn.home-go-exam:active:not(:disabled) { background: var(--go-exam-active); border-color: var(--go-exam-active); }
+.home-go-btns .btn.home-go-practice:active:not(:disabled) { background: var(--go-practice-active); border-color: var(--go-practice-active); }
+.home-go-btns .btn.home-go-exam:focus-visible, .home-go-btns .btn.home-go-practice:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .home-scope { flex: 1 1 10em; min-width: 0; font-size: 14px; font-weight: 400; color: var(--ink2); }
 /* Count and shuffle sit in the bar, next to the scope text */
 .home-go-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; flex: none; font-size: 14px; color: var(--ink2); }
@@ -135,7 +151,7 @@
 
 /* ---------- Fact lists (latest exam): property rows, see .props in main.css ---------- */
 .props.home-facts { margin: 16px 0 20px; }
-.home-facts dd.ng { color: var(--wrong); font-weight: 600; }
+.home-facts dd.ng { color: var(--answer-wrong); font-weight: 600; }
 
 /* ---------- Latest exam ---------- */
 .home-latest .stat { flex-wrap: wrap; }
@@ -145,8 +161,8 @@
 .home-fig { display: grid; gap: 2px; padding: 12px 14px; border-radius: 8px; background: var(--fill); min-width: 0; }
 .home-fig b { font: 700 26px/1.2 var(--num), var(--en); }
 .home-fig span { font-size: 13px; color: var(--ink2); overflow-wrap: anywhere; }
-.home-fig.ng { background: var(--wrong-soft); }
-.home-fig.ng b { color: var(--wrong); }
+.home-fig.ng { background: var(--answer-wrong-soft); }
+.home-fig.ng b { color: var(--answer-wrong); }
 .home-overview .acts { margin-top: 16px; }
 
 /* ---------- Narrower content areas ---------- */
@@ -159,8 +175,11 @@
   .resume.home-resume { padding: 12px 12px 12px 40px; }
   .home-resume .rs-ico { left: 14px; }
   .home-go { margin: 0 -16px -18px; padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); gap: 8px 10px; }
-  /* phones: the scope text and the two options share the first row, Start takes the second */
-  .home-go .btn.big { order: 2; width: 100%; }
+  /* phones: the scope text and the two options share the first row, the two Start buttons the second (Start exam the
+     wider, primary one) */
+  .home-go-btns { order: 2; width: 100%; }
+  .home-go-btns .btn.big { flex: 1 1 0; min-width: 0; padding-inline: 12px; }
+  .home-go-btns .btn.big.primary { flex-grow: 1.35; }
   .home-scope { font-size: 13px; line-height: 1.35; }
   .home-go-opts { gap: 4px 10px; font-size: 13px; }
   .home-count, .home-shuffle { gap: 6px; }
@@ -197,3 +216,6 @@
 @media (prefers-reduced-motion: reduce) {
   .mseg, .home-bankhead, .home-expand, .home-expand .ico, .home-sheetrow { transition: none; }
 }
+
+/* ---------- Latest result: the Exam / Practice tag at the end of the score line (v0.6.5) ---------- */
+.home-latest .stat .kind-tag { align-self: center; }

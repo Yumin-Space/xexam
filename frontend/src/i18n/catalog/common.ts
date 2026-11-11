@@ -25,6 +25,9 @@ export default defineCatalog({
     'role.admin': 'Administrator',
     'role.admin.short': 'Admin',
     'role.user': 'User',
+    'forbidden.title': 'Not allowed',
+    'forbidden.banks': 'You do not have permission to manage question banks. Ask an administrator.',
+    'forbidden.home': 'Back to Home',
 
     'footer.version': 'Xexam v{version}',
     'footer.disclaimer': 'Xexam only provides tools to import, organize and practise questions and answers. The software itself does not provide or include any exam questions, answers or related materials. Users must make sure that the materials they import and use come from lawful sources and that they have the right to use them.',
@@ -85,6 +88,9 @@ export default defineCatalog({
     'act.overwrite.ok': 'Start new exam',
     'act.overwrite.cancel': 'Go back',
     'act.settings.saveFailed': 'The setting could not be saved: {reason}',
+    'role.manager': 'Bank manager',
+    'nav.logs': 'System log',
+    'forbidden.logs': 'Only administrators can see the system log.',
   },
   zh: {
     'app.name': 'Xexam',
@@ -108,6 +114,9 @@ export default defineCatalog({
     'role.admin': '管理员',
     'role.admin.short': '管理员',
     'role.user': '普通用户',
+    'forbidden.title': '没有权限',
+    'forbidden.banks': '你没有管理题库的权限。如有需要，请联系管理员。',
+    'forbidden.home': '返回主页',
 
     'footer.version': 'Xexam v{version}',
     'footer.disclaimer': 'Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料。用户应确保导入和使用的资料来源合法，并拥有相应使用权限。',
@@ -163,6 +172,9 @@ export default defineCatalog({
     'act.overwrite.ok': '开始新考试',
     'act.overwrite.cancel': '回去继续',
     'act.settings.saveFailed': '设置没能保存：{reason}',
+    'role.manager': '可管理题库',
+    'nav.logs': '系统日志',
+    'forbidden.logs': '只有管理员可以查看系统日志。',
   },
   ja: {
     'app.name': 'Xexam',
@@ -186,6 +198,9 @@ export default defineCatalog({
     'role.admin': '管理者',
     'role.admin.short': '管理者',
     'role.user': '一般ユーザー',
+    'forbidden.title': '権限がありません',
+    'forbidden.banks': '問題集を管理する権限がありません。管理者に問い合わせてください。',
+    'forbidden.home': 'ホームに戻る',
 
     'footer.version': 'Xexam v{version}',
     'footer.disclaimer': 'Xexam は問題と解答のインポート・整理・練習の機能のみを提供するもので、ソフトウェア自体は試験問題・解答および関連資料を提供・収録していません。インポートして利用する資料は、入手元が適法であり、必要な使用権限を有していることをユーザー自身で確認してください。',
@@ -241,5 +256,8 @@ export default defineCatalog({
     'act.overwrite.ok': '新しい試験を始める',
     'act.overwrite.cancel': '戻る',
     'act.settings.saveFailed': '設定を保存できませんでした：{reason}',
+    'role.manager': '問題集を管理',
+    'nav.logs': 'システムログ',
+    'forbidden.logs': 'システムログを見られるのは管理者だけです。',
   },
 });

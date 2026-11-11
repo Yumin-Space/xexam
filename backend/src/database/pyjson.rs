@@ -79,10 +79,10 @@ mod tests {
 
     #[test]
     fn python_separators_and_unicode() {
-        let v = json!({"b": [1, 2, {"x": "日本"}], "a": "é\n\"q\"", "e": [], "o": {}});
+        let v = json!({"b": [1, 2, {"x": "一年"}], "a": "é\n\"q\"", "e": [], "o": {}});
         assert_eq!(
             to_string(&v).unwrap(),
-            r#"{"b": [1, 2, {"x": "日本"}], "a": "é\n\"q\"", "e": [], "o": {}}"#
+            r#"{"b": [1, 2, {"x": "一年"}], "a": "é\n\"q\"", "e": [], "o": {}}"#
         );
     }
 

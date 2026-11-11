@@ -7,19 +7,27 @@
 //! - A user who must change their password reaches only `GET /api/auth/state`, `POST /api/auth/password`,
 //!   `POST /api/auth/logout` and `GET /api/info`; everything else is 403 `MSG_PASSWORD_CHANGE_REQUIRED`.
 //! - Admin routes answer 403 `MSG_ADMIN_ONLY` to other users.
+//! - Bank management routes (v0.6.5: upload, import confirm / cancel, import history, bank delete) answer 403
+//!   `MSG_NO_BANK_PERMISSION` to plain users without the "can manage question banks" permission. Which banks a bank manager may
+//!   update or delete (only their own) is checked by the handlers, against the database, inside the write.
 //! - The session is read from the `xexam_session` cookie only. Its sliding refresh (at most once per hour) re-sends the cookie,
 //!   so it happens only on requests whose scheme is known: with `XEXAM_COOKIE_SECURE=1`, or when the request has an `Origin`
 //!   (every browser POST does). That way a refresh never drops `Secure` from a cookie issued over HTTPS.
+//! - v0.7: the System log names users by their username, never by id (`user "admin" updated user "alex"`); the names come
+//!   from the request's session (the actor) and from the same transaction as the change (the user changed).
 use super::response::{
     json_resp, MSG_ADMIN_ONLY, MSG_BAD_LOGIN, MSG_BAD_PASSWORD, MSG_BAD_REQUEST, MSG_BAD_USERNAME,
-    MSG_LAST_ADMIN, MSG_NOT_YOURSELF, MSG_PASSWORD_CHANGE_REQUIRED, MSG_SAME_PASSWORD,
-    MSG_SIGN_IN_REQUIRED, MSG_USERNAME_TAKEN, MSG_USER_NOT_FOUND, MSG_WRONG_PASSWORD,
+    MSG_LAST_ADMIN, MSG_NOT_YOURSELF, MSG_NO_BANK_PERMISSION, MSG_PASSWORD_CHANGE_REQUIRED,
+    MSG_SAME_PASSWORD, MSG_SIGN_IN_REQUIRED, MSG_UNKNOWN_BANKS, MSG_USERNAME_TAKEN,
+    MSG_USER_NOT_FOUND, MSG_WRONG_PASSWORD,
 };
-use super::{blocking, body_id, AppState, PyVal};
-use crate::auth::throttle::retry_after_secs;
-use crate::auth::{self, LockStatus, Role, SESSION_PURGE_SECS};
+use super::{blocking, body_flag, body_id, AppState, PyVal};
+use crate::auth::throttle::{retry_after_secs, Begun, StartedLock};
+use crate::auth::{self, LockStatus, Role, Target, SESSION_PURGE_SECS};
 use crate::database::{SessionUser, UserChange, UserUpdate};
 use crate::error::{AppError, DbError};
+use crate::logs::BurstReport;
+use crate::models::{BankAccess, Viewer};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use serde_json::{json, Value};
@@ -34,6 +42,8 @@ pub enum Access {
     SignedIn,
     /// Signed-in administrators only
     Admin,
+    /// Administrators and plain users with the "can manage question banks" permission (v0.6.5)
+    BankManager,
 }
 
 /// One route of the API.
@@ -63,11 +73,12 @@ pub const ROUTES: &[Route] = &[
     route("GET", "/api/bank", Access::SignedIn),
     route("GET", "/api/banks", Access::SignedIn),
     route("GET", "/api/progress", Access::SignedIn),
-    route("GET", "/api/imports", Access::Admin),
+    route("GET", "/api/imports", Access::BankManager),
     route("GET", "/api/records", Access::SignedIn),
     route("GET", "/api/record", Access::SignedIn),
     route("GET", "/api/settings", Access::SignedIn),
     route("GET", "/api/users", Access::Admin),
+    route("GET", "/api/logs", Access::Admin),
     route("POST", "/api/auth/login", Access::Public),
     Route {
         during_password_change: true,
@@ -77,10 +88,10 @@ pub const ROUTES: &[Route] = &[
         during_password_change: true,
         ..route("POST", "/api/auth/password", Access::SignedIn)
     },
-    route("POST", "/api/upload", Access::Admin),
-    route("POST", "/api/import/confirm", Access::Admin),
-    route("POST", "/api/import/cancel", Access::Admin),
-    route("POST", "/api/banks/delete", Access::Admin),
+    route("POST", "/api/upload", Access::BankManager),
+    route("POST", "/api/import/confirm", Access::BankManager),
+    route("POST", "/api/import/cancel", Access::BankManager),
+    route("POST", "/api/banks/delete", Access::BankManager),
     route("POST", "/api/attempt", Access::SignedIn),
     route("POST", "/api/records/delete", Access::SignedIn),
     route("POST", "/api/reset", Access::SignedIn),
@@ -190,7 +201,21 @@ pub async fn authorize(
     if access == Access::Admin && !a.user.is_admin() {
         return Err(status(StatusCode::FORBIDDEN, MSG_ADMIN_ONLY));
     }
+    // `can_manage_banks` is true for every administrator (see `SessionUser`) and read from the database with the session
+    if access == Access::BankManager && !a.user.can_manage_banks {
+        return Err(status(StatusCode::FORBIDDEN, MSG_NO_BANK_PERMISSION));
+    }
     Ok(Some(a))
+}
+
+/// The [`Viewer`] of a signed-in request: an administrator directly (no database read), anyone else as the database says now.
+pub async fn viewer(st: &AppState, a: &Authed) -> Result<Viewer, AppError> {
+    if a.user.is_admin() {
+        return Ok(Viewer::admin(a.user.id));
+    }
+    let store = st.0.store.clone();
+    let id = a.user.id;
+    blocking(move || store.viewer(id)).await
 }
 
 fn set_cookie(resp: &mut Response, value: &str) {
@@ -260,21 +285,24 @@ fn ok_json(v: &Value) -> Response {
 
 // ---------------------------------------------------------------- /api/auth/*
 
-/// `GET /api/auth/state` → `{"user": {...} | null, ...}`. Signed in: also `"library"`, an opaque stamp of the shared question
-/// banks that changes whenever a bank is imported, replaced or deleted (an open page re-reads the banks when it changes).
-/// Not signed in: also `"defaultAdmin"`, whether an enabled administrator still has the default password `admin` (the sign-in
-/// page then tells the owner how to sign in for the first time; the default credentials are documented anyway).
+/// `GET /api/auth/state` → `{"user": {...} | null, ...}`. Signed in: also `"library"`, an opaque stamp of the question banks
+/// the user may see that changes whenever a bank is imported, replaced or deleted, and (v0.6.5) whenever the banks they may see
+/// or manage change (an open page re-reads the banks when it changes).
+/// Not signed in: also `"defaultAdmin"`, the username of an enabled administrator that still has the default password `admin`,
+/// or `null` (the sign-in page then tells the owner how to sign in for the first time, with that account's real name: it may
+/// have been renamed; the default credentials are documented anyway).
 pub async fn state(st: &AppState, authed: Option<&Authed>) -> Result<Value, AppError> {
     let store = st.0.store.clone();
     match authed {
         Some(a) => {
-            let library = blocking(move || store.library_stamp()).await?;
+            let v = viewer(st, a).await?;
+            let library = blocking(move || store.library_stamp_as(&v)).await?;
             Ok(json!({ "user": a.user.to_json(), "library": library }))
         }
         None => {
             let hashes = st.0.default_admin_hashes.get().cloned().unwrap_or_default();
             let pending = if hashes.is_empty() {
-                false
+                None
             } else {
                 blocking(move || store.default_admin_pending(&hashes)).await?
             };
@@ -294,15 +322,114 @@ pub fn find_default_admin_hashes(store: &crate::database::Store) -> Result<Vec<S
         .collect())
 }
 
-/// Starts a password check for `username` in the login throttle: a lock (or the pressure rule) answers 429 with the wait.
-fn throttle_begin(st: &AppState, username: &str, known: bool) -> Result<(), AppError> {
+/// Starts a password check for `target` in the login throttle: a lock (or the pressure rule) answers 429 with the wait.
+/// Refusals cost almost nothing, so they are not logged one by one: at most one summary line per minute.
+fn throttle_begin(st: &AppState, target: Target<'_>, known: bool) -> Result<Begun, AppError> {
     let t = &st.0.throttle;
-    t.begin(username, known, t.now()).map_err(|wait| {
-        tracing::warn!("password check throttled");
+    t.begin(target, known, t.now()).map_err(|refused| {
+        if let Some(n) = refused.report {
+            log_refusals(n);
+        }
         AppError::TooManyLogins {
-            retry_after: retry_after_secs(wait),
+            retry_after: retry_after_secs(refused.wait),
         }
     })
+}
+
+fn log_refusals(n: u64) {
+    tracing::warn!(
+        "refused {n} password check(s) of locked or throttled sign-ins since the last report"
+    );
+}
+
+/// Reports, once a minute, the refusals that came after the last report line (the tail of a burst that no later attempt would
+/// report), and in the same way the requests rejected by the Host / Origin guard, the failed sign-ins and the locks of usernames
+/// without an account. Runs until the server stops (the caller aborts it).
+pub fn spawn_refusal_reports(st: AppState) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let mut every = tokio::time::interval(crate::auth::REFUSAL_REPORT_EVERY);
+        every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            every.tick().await;
+            let t = &st.0.throttle;
+            if let Some(n) = t.flush_refusals(t.now()) {
+                log_refusals(n);
+            }
+            let now = std::time::Instant::now();
+            if let Some(report) = st.0.rejections.flush(now) {
+                super::guard::log_rejections(&report);
+            }
+            if let Some(report) = st.0.failed_sign_ins.flush(now) {
+                log_failed_sign_ins(&report);
+            }
+            if let Some(report) = st.0.name_locks.flush(now) {
+                log_name_locks(&report);
+            }
+        }
+    })
+}
+
+/// Counts a failed sign-in. Every attempt with an acceptable Host and Origin reaches the password check unless the throttle
+/// refuses it, and a flood of made-up names is never refused (each name has its own bucket), so one line each would let anyone
+/// push the other lines out of the System log: the first one after a quiet minute is logged at once, the rest summed up.
+fn note_failed_sign_in(st: &AppState, what: &str) {
+    let now = std::time::Instant::now();
+    if let Some(report) = st.0.failed_sign_ins.note(now, what.to_string()) {
+        log_failed_sign_ins(&report);
+    }
+}
+
+fn log_failed_sign_ins(report: &BurstReport) {
+    match report {
+        BurstReport::One(what) => tracing::info!("{what}"),
+        BurstReport::Many { count, .. } => {
+            tracing::info!("{count} failed sign-in(s) since the last report")
+        }
+    }
+}
+
+fn log_name_locks(report: &BurstReport) {
+    match report {
+        BurstReport::One(what) => tracing::warn!("{what}"),
+        BurstReport::Many { count, last } => tracing::warn!(
+            "{count} sign-in lock(s) of usernames without an account started since the last report; the last one: {last}"
+        ),
+    }
+}
+
+/// Logs a lock once, when it starts: the attempt that used up the round's last chance turned out wrong. Locks of accounts are
+/// logged one by one (one account locks at most once per lock length), with the account's username (`username`, the name
+/// of the account the target belongs to); locks of usernames without an account go through the state's `name_locks`,
+/// because anyone can start one per made-up name (see [`note_failed_sign_in`]), and never repeat the typed name.
+fn log_lock(
+    st: &AppState,
+    lock: Option<StartedLock>,
+    target: Target<'_>,
+    known: bool,
+    username: &str,
+) {
+    let Some(l) = lock else { return };
+    let from = if known {
+        "the browsers where it signed in before"
+    } else {
+        "other browsers"
+    };
+    let line = |whom: &str| {
+        format!(
+            "sign-in of {whom} from {from} locked for {} s (lock {} in a row) after repeated failed attempts",
+            l.length.as_secs(),
+            l.round
+        )
+    };
+    match target {
+        Target::Account(_) => tracing::warn!("{}", line(&format!("user {username:?}"))),
+        Target::Name(_) => {
+            let what = line("a username without an account");
+            if let Some(report) = st.0.name_locks.note(std::time::Instant::now(), what) {
+                log_name_locks(&report);
+            }
+        }
+    }
 }
 
 fn set_device_cookie(resp: &mut Response, user_id: i64, password_hash: &str, secure: bool) {
@@ -337,8 +464,12 @@ pub async fn login(
     let known = user
         .as_ref()
         .is_some_and(|u| auth::device_known(headers, u.id, &u.password_hash));
-    // The throttle keys only names that pass the username rule; every other name shares one key (bounded memory)
-    throttle_begin(st, &name, known)?;
+    // An existing account is throttled by its id (its state follows the account, and a flood of made-up names can never evict
+    // it); any other name by the name itself, with the same rounds, so the answers do not tell whether the account exists
+    let target = user
+        .as_ref()
+        .map_or(Target::Name(&name), |u| Target::Account(u.id));
+    let begun = throttle_begin(st, target, known)?;
     let phc = user
         .as_ref()
         .map(|u| u.password_hash.clone())
@@ -346,8 +477,25 @@ pub async fn login(
     let matches = verify(st, password.to_string(), phc.clone()).await?;
     let user = match user {
         Some(u) if matches && !u.disabled => u,
-        _ => {
-            tracing::info!("failed sign-in");
+        Some(u) => {
+            // The account exists: its name is safe to log. A disabled account is named as the reason only when the
+            // password was right (otherwise the wrong password is why)
+            let what = if matches {
+                format!(
+                    "failed sign-in of user {:?} (the account is disabled)",
+                    u.username
+                )
+            } else {
+                format!("failed sign-in of user {:?}", u.username)
+            };
+            note_failed_sign_in(st, &what);
+            log_lock(st, begun.lock, target, known, &u.username);
+            return Err(status(StatusCode::UNAUTHORIZED, MSG_BAD_LOGIN));
+        }
+        None => {
+            // Never the typed name: it may be a password typed into the wrong field
+            note_failed_sign_in(st, "failed sign-in with a username that has no account");
+            log_lock(st, begun.lock, target, known, "");
             return Err(status(StatusCode::UNAUTHORIZED, MSG_BAD_LOGIN));
         }
     };
@@ -362,11 +510,17 @@ pub async fn login(
         blocking(move || store.start_session(id, &token_hash, &verified, now)).await?
     else {
         // Disabled, deleted or given a new password while the password was being verified
-        tracing::info!("failed sign-in: the account changed during the sign-in");
+        note_failed_sign_in(
+            st,
+            &format!(
+                "failed sign-in of user {:?}: the account changed during the sign-in",
+                user.username
+            ),
+        );
         return Err(status(StatusCode::UNAUTHORIZED, MSG_BAD_LOGIN));
     };
-    st.0.throttle.succeeded(&name, known);
-    tracing::info!("user {} signed in", signed_in.id);
+    st.0.throttle.succeeded(id, known);
+    tracing::info!("user {:?} signed in", signed_in.username);
     let secure = auth::cookie_secure(st.0.cfg.cookie_secure, origin);
     let mut resp = ok_json(&json!({ "user": signed_in.to_json() }));
     set_cookie(&mut resp, &auth::session_cookie(&token, secure));
@@ -389,7 +543,8 @@ pub async fn logout(st: &AppState, a: &Authed, origin: Option<&str>) -> Result<R
 
 /// `POST /api/auth/password` `{"current"?, "password"}` → `{"user": {...}}`. `current` is required unless the user must change
 /// the password (then the session proves who they are). The new password must differ from the old one. Clears the flag and
-/// deletes the user's other sessions; this browser gets the known-browser cookie of the new password.
+/// ends every session of the user, this one included: this browser gets a **new** session cookie (and the known-browser cookie
+/// of the new password), so a copy of the old cookie (read off a plain-HTTP network, say) stops working too.
 pub async fn change_password(
     st: &AppState,
     a: &Authed,
@@ -414,49 +569,60 @@ pub async fn change_password(
         };
         // Guessing the current password through a stolen session is throttled like a sign-in (same buckets)
         let known = auth::device_known(headers, user.id, &user.password_hash);
-        throttle_begin(st, &user.username, known)?;
+        let target = Target::Account(user.id);
+        let begun = throttle_begin(st, target, known)?;
         if !verify(st, current.to_string(), user.password_hash.clone()).await? {
+            log_lock(st, begun.lock, target, known, &user.username);
             return Err(status(StatusCode::FORBIDDEN, MSG_WRONG_PASSWORD));
         }
-        st.0.throttle.succeeded(&user.username, known);
+        st.0.throttle.succeeded(user.id, known);
     }
     if verify(st, password.to_string(), user.password_hash.clone()).await? {
         return Err(AppError::BadRequest(MSG_SAME_PASSWORD.to_string()));
     }
     let new_hash = hash(st, password.to_string()).await?;
     let store = st.0.store.clone();
-    let keep = a.token_hash.clone();
     let expected = user.password_hash;
     let stored = new_hash.clone();
+    // The session is rotated: one new token replaces every session of the user, the one of this request included
+    let token = auth::new_session_token();
+    let token_hash = auth::token_hash(&token);
+    let now = auth::unix_now();
     // Refused (401) when the password was reset or changed elsewhere while this request ran: never overwrite that silently
-    let updated = blocking(move || store.change_own_password(id, &expected, &stored, &keep))
-        .await?
-        .ok_or(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED))?;
-    tracing::info!("user {id} changed their password");
+    let updated =
+        blocking(move || store.change_own_password(id, &expected, &stored, &token_hash, now))
+            .await?
+            .ok_or(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED))?;
+    tracing::info!("user {:?} changed their password", updated.username);
+    let secure = auth::cookie_secure(st.0.cfg.cookie_secure, origin);
     let mut resp = ok_json(&json!({ "user": updated.to_json() }));
-    set_device_cookie(
-        &mut resp,
-        id,
-        &new_hash,
-        auth::cookie_secure(st.0.cfg.cookie_secure, origin),
-    );
+    set_cookie(&mut resp, &auth::session_cookie(&token, secure));
+    set_device_cookie(&mut resp, id, &new_hash, secure);
     Ok(resp)
 }
 
 // ---------------------------------------------------------------- /api/users*
 
 /// `"lock"` of a user in `GET /api/users`: `null` at round 1 and not locked; else `{"until": "<local time>" | null,
-/// "retryAfter": <seconds, 0 when not locked>, "round": <n>, "triesLeft": <n>}` (see [`LockStatus`]).
+/// "retryAfter": <seconds, 0 when not locked>, "round": <n>, "triesLeft": <n>, "knownBrowser": <bool>,
+/// "otherUntil": "<local time>" | null, "otherRetryAfter": <seconds, 0 when null>}` (see [`LockStatus`]; `knownBrowser`: the
+/// state belongs to the browsers where the user signed in before, else to every other browser; `otherUntil` /
+/// `otherRetryAfter`: a lock that runs at the same time for the other browsers, so the account is locked in every browser).
 fn lock_json(s: Option<LockStatus>) -> Value {
+    use crate::database::timefmt::local_in_secs;
     match s {
         None => Value::Null,
         Some(s) => {
             let wait = s.wait.map(retry_after_secs);
+            let other = s.other_wait.map(retry_after_secs);
             json!({
-                "until": wait.map(crate::database::timefmt::local_in_secs),
+                "until": wait.map(local_in_secs),
                 "retryAfter": wait.unwrap_or(0),
                 "round": s.round,
                 "triesLeft": s.tries_left,
+                "knownBrowser": s.known_browser,
+                "otherUntil": other.map(local_in_secs),
+                "otherRetryAfter": other.unwrap_or(0),
             })
         }
     }
@@ -471,9 +637,9 @@ async fn users_json(st: &AppState) -> Result<Value, AppError> {
     if let Some(list) = users.get_mut("users").and_then(Value::as_array_mut) {
         for u in list.iter_mut() {
             let lock = lock_json(
-                u.get("username")
-                    .and_then(Value::as_str)
-                    .and_then(|name| t.status(name, now)),
+                u.get("id")
+                    .and_then(Value::as_i64)
+                    .and_then(|id| t.status(id, now)),
             );
             if let Some(obj) = u.as_object_mut() {
                 obj.insert("lock".to_string(), lock);
@@ -499,6 +665,52 @@ fn refused<T>(change: UserChange<T>) -> Result<T, AppError> {
         UserChange::Taken => Err(status(StatusCode::CONFLICT, MSG_USERNAME_TAKEN)),
         UserChange::NotYourself => Err(status(StatusCode::CONFLICT, MSG_NOT_YOURSELF)),
         UserChange::LastAdmin => Err(status(StatusCode::CONFLICT, MSG_LAST_ADMIN)),
+        UserChange::UnknownBanks => Err(AppError::BadRequest(MSG_UNKNOWN_BANKS.to_string())),
+    }
+}
+
+/// `"banks"` of `/api/users/create` and `/api/users/update`: the existing banks the user sees, as a list of bank ids
+/// (integers; duplicates are ignored), or `"all"` (every bank that exists now; a shorthand that also turns "include banks
+/// imported later" on, see [`new_banks_of`]). Anything else is 400 `MSG_BAD_REQUEST`; an integer that cannot be a bank id
+/// is an unknown bank (400 `MSG_UNKNOWN_BANKS`); whether the ids exist is checked by the store, inside the write.
+fn banks_field(data: &PyVal) -> Result<Option<BankAccess>, AppError> {
+    match data.get("banks") {
+        None => Ok(None),
+        Some(PyVal::Str(s)) if s == "all" => Ok(Some(BankAccess::All)),
+        Some(PyVal::List(items)) => {
+            let mut ids = Vec::with_capacity(items.len());
+            for item in items {
+                let PyVal::Int(i) = item else {
+                    return Err(bad_request());
+                };
+                let id = i64::try_from(*i)
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| AppError::BadRequest(MSG_UNKNOWN_BANKS.to_string()))?;
+                ids.push(id);
+            }
+            ids.sort_unstable();
+            ids.dedup();
+            Ok(Some(BankAccess::Only(ids)))
+        }
+        Some(_) => Err(bad_request()),
+    }
+}
+
+/// `"newBanks"` ("include banks imported later"): absent → `None`, a bool → that, anything else → 400. When it is absent
+/// and `"banks"` is the shorthand `"all"`, it is `Some(true)` (every bank now and every bank later).
+fn new_banks_of(data: &PyVal, banks: Option<&BankAccess>) -> Result<Option<bool>, AppError> {
+    match data.get("newBanks") {
+        None => Ok(matches!(banks, Some(BankAccess::All)).then_some(true)),
+        some => body_flag(some).map(Some),
+    }
+}
+
+/// `"canManageBanks"`: absent → `None`; a bool → that; anything else → 400.
+fn can_manage_field(data: &PyVal) -> Result<Option<bool>, AppError> {
+    match data.get("canManageBanks") {
+        None => Ok(None),
+        some => body_flag(some).map(Some),
     }
 }
 
@@ -533,23 +745,36 @@ fn user_id(data: &PyVal) -> Result<i64, AppError> {
     body_id(data.get("id"))?.ok_or(status(StatusCode::NOT_FOUND, MSG_USER_NOT_FOUND))
 }
 
-/// `POST /api/users/create` `{"username", "password", "role"}` → `{"users": [...]}`. The new user must change the password at
-/// the first sign-in.
+/// `POST /api/users/create` `{"username", "password", "role", "banks"?, "newBanks"?, "canManageBanks"?}` →
+/// `{"users": [...]}`. The new user must change the password at the first sign-in. `banks` (the existing banks they see)
+/// defaults to `[]` (no bank until an administrator chooses some), `newBanks` ("include banks imported later") to false
+/// (true with the shorthand `"banks": "all"`), `canManageBanks` to false.
 pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let username =
         username_field(data)?.ok_or_else(|| AppError::BadRequest(MSG_BAD_USERNAME.to_string()))?;
     let password = new_password_field(data)?;
     let role = role_field(data)?.ok_or_else(bad_request)?;
+    let banks = banks_field(data)?;
+    let new_banks = new_banks_of(data, banks.as_ref())?.unwrap_or(false);
+    let banks = banks.unwrap_or(BankAccess::Only(Vec::new()));
+    let can_manage = can_manage_field(data)?.unwrap_or(false);
     let phc = hash(st, password).await?;
     let store = st.0.store.clone();
-    let id = refused(blocking(move || store.create_user(&username, &phc, role)).await?)?;
-    tracing::info!("user {} created user {id}", a.user.id);
+    let name = username.clone();
+    refused(
+        blocking(move || store.create_user_with(&name, &phc, role, &banks, new_banks, can_manage))
+            .await?,
+    )?;
+    tracing::info!("user {:?} created user {:?}", a.user.username, username);
     users_body(st).await
 }
 
-/// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?}` → `{"users": [...]}`.
+/// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}` →
+/// `{"users": [...]}`; only the fields that are given change (`"banks": "all"` also sets `newBanks` unless it is given).
+/// A role change keeps `banks`, `newBanks` and `canManageBanks` (they matter only while the user is a plain user).
 pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let id = user_id(data)?;
+    let banks = banks_field(data)?;
     let change = UserUpdate {
         username: username_field(data)?,
         role: role_field(data)?,
@@ -558,11 +783,26 @@ pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
             Some(PyVal::Bool(b)) => Some(*b),
             Some(_) => return Err(bad_request()),
         },
+        new_banks: new_banks_of(data, banks.as_ref())?,
+        banks,
+        can_manage_banks: can_manage_field(data)?,
     };
     let store = st.0.store.clone();
     let actor = a.user.id;
-    refused(blocking(move || store.update_user(actor, id, &change)).await?)?;
-    tracing::info!("user {actor} updated user {id}");
+    let done = refused(blocking(move || store.update_user(actor, id, &change)).await?)?;
+    match &done.renamed_from {
+        Some(old) => tracing::info!(
+            "user {:?} updated user {:?} (renamed from {:?})",
+            a.user.username,
+            done.username,
+            old
+        ),
+        None => tracing::info!(
+            "user {:?} updated user {:?}",
+            a.user.username,
+            done.username
+        ),
+    }
     users_body(st).await
 }
 
@@ -578,31 +818,43 @@ pub async fn reset_password(st: &AppState, a: &Authed, data: &PyVal) -> Result<R
     let store = st.0.store.clone();
     let actor = a.user.id;
     let name = refused(blocking(move || store.reset_user_password(actor, id, &phc)).await?)?;
-    // The new password lifts the login lock of that name (the reset-password command, another process, cannot do this)
-    st.0.throttle.forget(&name);
-    tracing::info!("user {actor} reset the password of user {id}");
+    // The new password lifts the login lock of that account (the reset-password command, another process, cannot do this)
+    st.0.throttle.forget(id);
+    tracing::info!(
+        "user {:?} reset the password of user {:?}",
+        a.user.username,
+        name
+    );
     users_body(st).await
 }
 
-/// `POST /api/users/unlock` `{"id"}` → `{"users": [...]}`: clears the login throttle of that user's name completely (every
-/// bucket: back to round 1, five chances). Allowed for the administrator's own account too.
+/// `POST /api/users/unlock` `{"id"}` → `{"users": [...]}`: clears the login throttle of that account completely (every bucket:
+/// back to round 1, five chances), whether a lock runs or the account is only past round 1. Allowed for the administrator's own
+/// account too.
 pub async fn unlock(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let id = user_id(data)?;
     let store = st.0.store.clone();
     let user = blocking(move || store.user_by_id(id))
         .await?
         .ok_or(status(StatusCode::NOT_FOUND, MSG_USER_NOT_FOUND))?;
-    st.0.throttle.forget(&user.username);
-    tracing::info!("user {} unlocked the sign-in of user {id}", a.user.id);
+    st.0.throttle.forget(id);
+    tracing::info!(
+        "user {:?} unlocked the sign-in of user {:?}",
+        a.user.username,
+        user.username
+    );
     users_body(st).await
 }
 
-/// `POST /api/users/delete` `{"id"}` → `{"users": [...]}`.
+/// `POST /api/users/delete` `{"id"}` → `{"users": [...]}`. The banks the deleted user owned now belong to the administrator
+/// who deleted them.
 pub async fn delete(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let id = user_id(data)?;
     let store = st.0.store.clone();
     let actor = a.user.id;
-    refused(blocking(move || store.delete_user(actor, id)).await?)?;
-    tracing::info!("user {actor} deleted user {id}");
+    let name = refused(blocking(move || store.delete_user(actor, id)).await?)?;
+    // Ids are never reused (AUTOINCREMENT); this frees the memory of the deleted account's buckets
+    st.0.throttle.forget(id);
+    tracing::info!("user {:?} deleted user {:?}", a.user.username, name);
     users_body(st).await
 }

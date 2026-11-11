@@ -1,7 +1,7 @@
 {
  "input": {
   "name": "f25_wide_row.xlsx",
-  "size": 1733
+  "size": 1723
  },
  "meta": {
   "expat": "expat_2.5.0",
@@ -17,33 +17,33 @@
     "answer": [
      "B"
     ],
-    "explanation": "东京是首都。",
-    "id": "fa2cb987ef8e",
+    "explanation": "一周是部分。",
+    "id": "5a9aa4ef1ff0",
     "items": [],
     "kind": "single",
-    "mnemonic": "首都看题干。",
+    "mnemonic": "部分看题干。",
     "note": "",
     "options": [
      {
       "key": "A",
-      "text": "大阪"
+      "text": "三年"
      },
      {
       "key": "B",
-      "text": "東京"
+      "text": "一週"
      },
      {
       "key": "C",
-      "text": "京都"
+      "text": "千年"
      },
      {
       "key": "D",
-      "text": "名古屋"
+      "text": "五十年"
      }
     ],
     "row": 1,
     "sheet": "wide",
-    "stem": "次のうち、首都はどれですか。",
+    "stem": "次のうち、部分はどれですか。",
     "tag": "",
     "translation": "",
     "zh": null
@@ -65,8 +65,8 @@
     [
      1,
      {
-      "0": "次のうち、首都はどれですか。\n\nA. 大阪\nB. 東京\nC. 京都\nD. 名古屋",
-      "2": "【答案】B\n\n【解析·怎么选】东京是首都。\n\n【记忆口诀】首都看题干。",
+      "0": "次のうち、部分はどれですか。\n\nA. 三年\nB. 一週\nC. 千年\nD. 五十年",
+      "2": "【答案】B\n\n【解析·怎么选】一周是部分。\n\n【记忆口诀】部分看题干。",
       "3": "x",
       "4": "x",
       "5": "x",
@@ -82,33 +82,33 @@
     "answer": [
      "B"
     ],
-    "explanation": "东京是首都。",
-    "id": "fa2cb987ef8e",
+    "explanation": "一周是部分。",
+    "id": "5a9aa4ef1ff0",
     "items": [],
     "kind": "single",
-    "mnemonic": "首都看题干。",
+    "mnemonic": "部分看题干。",
     "note": "",
     "options": [
      {
       "key": "A",
-      "text": "大阪"
+      "text": "三年"
      },
      {
       "key": "B",
-      "text": "東京"
+      "text": "一週"
      },
      {
       "key": "C",
-      "text": "京都"
+      "text": "千年"
      },
      {
       "key": "D",
-      "text": "名古屋"
+      "text": "五十年"
      }
     ],
     "row": 1,
     "sheet": "wide",
-    "stem": "次のうち、首都はどれですか。",
+    "stem": "次のうち、部分はどれですか。",
     "tag": "",
     "translation": "",
     "zh": null

@@ -1,0 +1,14 @@
+/* The "Not allowed" page: one calm centred block (a padlock, the title, why, and the way back to Home). Colours come only
+   from the tokens in main.css, so it follows the light and dark themes. */
+
+.page-forbidden { display: flex; justify-content: center; padding-top: 8vh; }
+.forbidden { width: 100%; max-width: 480px; text-align: center; }
+.forbidden-ico { width: 36px; height: 36px; margin: 0 auto 12px; color: var(--ink3); }
+.forbidden h1 { margin-bottom: 8px; font-size: 22px; line-height: 1.3; font-weight: 700; }
+.forbidden p { margin: 0 auto; max-width: 30em; font-size: 15px; line-height: 1.6; color: var(--ink2); }
+.forbidden .acts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 20px; }
+
+@media (max-width: 480px) {
+  .page-forbidden { padding-top: 4vh; }
+  .forbidden { padding: 24px 20px; }
+}

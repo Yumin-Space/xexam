@@ -36,6 +36,14 @@ pub const MSG_USER_NOT_FOUND: &str = "这个用户不存在（可能已被删除
 pub const MSG_LAST_ADMIN: &str = "至少要保留一个启用的管理员。";
 pub const MSG_NOT_YOURSELF: &str = "不能对自己的账户做这个操作。";
 pub const MSG_WRONG_PASSWORD: &str = "当前密码不对。";
+// v0.6.5
+pub const MSG_EXAM_QUESTIONS_GONE: &str = "这场考试的题目已经被删除，成绩没有保存。";
+/// 403: a plain user without the "can manage question banks" permission on a bank management route
+pub const MSG_NO_BANK_PERMISSION: &str = "你没有管理题库的权限，请联系管理员。";
+/// 403: a bank manager updating or deleting a bank that an administrator or another user uploaded
+pub const MSG_NOT_BANK_OWNER: &str = "这个题库不是你上传的，只能更新或删除你自己上传的题库。";
+/// 400: `"banks"` of POST /api/users/create or /api/users/update names a bank that does not exist
+pub const MSG_UNKNOWN_BANKS: &str = "选择的题库中有不存在的（可能已被删除），请刷新页面后再试。";
 
 pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: bool) -> Response {
     let len = body.len();
@@ -120,6 +128,12 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
         }
         AppError::Db(crate::error::DbError::NoUser) => {
             error_json(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED, head_only)
+        }
+        AppError::Db(crate::error::DbError::QuestionsGone) => {
+            error_json(StatusCode::CONFLICT, MSG_EXAM_QUESTIONS_GONE, head_only)
+        }
+        AppError::Db(crate::error::DbError::NotBankOwner) => {
+            error_json(StatusCode::FORBIDDEN, MSG_NOT_BANK_OWNER, head_only)
         }
         AppError::Db(_) | AppError::Internal => {
             error_json(StatusCode::INTERNAL_SERVER_ERROR, MSG_INTERNAL, head_only)

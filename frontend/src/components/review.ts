@@ -1,17 +1,23 @@
-// Shared review rendering, used by the result page, the exam-record detail and the wrong-answer review:
-//   · reviewItem(): one question with your answer and the correct answer (or only the correct answer), hotspot per-item verdicts,
-//     explanation, mnemonic, note, the collapsible Chinese translation (unless the question is already shown in Chinese) and the per-question stats line;
+// Shared review rendering, used by the result page, the exam-record detail, the wrong-answer review and (its parts) the
+// feedback of the practice page:
+//   · reviewItem(): one question with your answer and the correct answer (or only the correct answer), hotspot per-item
+//     verdicts, explanation, memory aid, note and the per-question stats line, plus (v0.6.5) its own English / 中文 / 日本語
+//     switch. The switch starts at the question language from the settings and changes only that card: its question text,
+//     options, explanation and memory aid. Languages the question lacks are greyed out. (It replaces the old separate
+//     "Chinese translation" fold.)
 //   · reviewBlock(): the correct / wrong strip, the "wrong only / all" switch and the list of review items.
-// Question content (stems, options, items) is shown in the question language from the settings, with the lang attribute it returns;
-// explanations, mnemonics and notes are shown as they are. Every label goes through the "result.*" catalog.
+//   · answerReview() / explainBlocks(): the answer part and the explanation part of a card, for the practice page.
+// Question content is shown with the lang attribute of the language it is in; every label goes through the "result.*" catalog.
 import '../styles/records.css';
 import { inNotebook, masterStreakOf, stateOf, type Answer } from '../domain/grading.ts';
-import { shown, type Shown } from '../domain/language.ts';
+import { explainOf, htmlLang, shown, type Lang, type LangText, type Shown } from '../domain/language.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
+import { onRouteChange } from '../state/actions.ts';
 import { S } from '../state/store.ts';
 import type { Question } from '../types/api.ts';
 import { h, paras, svgMark, type Child } from '../utils/dom.ts';
 import { bankName, kindLabel } from './common.ts';
+import { langSwitch } from './lang-switch.ts';
 
 export interface ReviewEntry {
   q: Question;
@@ -39,7 +45,16 @@ export interface ReviewRow {
   render: () => HTMLElement;
 }
 
+/**
+ * The language a card was switched to, by question id. Kept while the page stays (a redraw of the page, for example when the
+ * record id of a fresh result arrives, keeps every card's choice) and forgotten when another page opens: cards then start
+ * again at the question language from the settings.
+ */
+const cardLang = new Map<string, Lang>();
+onRouteChange(() => cardLang.clear());
+
 const letters = (a: Answer): string[] => (Array.isArray(a) ? a.filter((x): x is string => typeof x === 'string') : []);
+const langAttr = (l: Lang | null): string | null => (l ? htmlLang(l) : null);
 
 /** Puts an element where `{name}` stands in an already translated text (keeps word order right in every language). */
 function withEl(text: string, name: string, el: HTMLElement): Child[] {
@@ -64,24 +79,24 @@ function choiceBody(q: Question, view: Shown, mine: string[] | null): HTMLElemen
     const picked = !!mine && mine.includes(o.key);
     const tags = [
       isAns ? h('span', { class: 'tag g' }, t('result.q.correctTag')) : null,
-      picked ? h('span', { class: 'tag ' + (isAns ? 'k' : 'r') }, t('result.q.mineTag')) : null,
+      picked ? h('span', { class: 'tag ' + (isAns ? 'k' : 'ng') }, t('result.q.mineTag')) : null,
     ].filter((x): x is HTMLSpanElement => !!x);
     return h('div', { class: 'opt review' + (isAns ? ' is-ans' : '') + (picked && !isAns ? ' is-bad' : '') },
       h('span', { class: 'bubble' }, o.key),
       h('div', { class: 'body' },
         tags.length ? h('div', { class: 'tags' }, tags) : null,
-        h('span', { class: 't', lang: view.lang }, view.optionText(oi))));
+        h('span', { class: 't', lang: htmlLang(view.lang) }, view.optionText(oi))));
   }));
 }
 
-function choiceVerdict(q: Question, mine: string[] | null, e: ReviewEntry): HTMLElement {
+function choiceVerdict(q: Question, mine: string[] | null, correct: boolean): HTMLElement {
   const sep = t('common.listSep');
   const right = (q.answer as string[]).join(sep);
   const key = h('span', { class: 'vp' }, withEl(t('result.q.key'), 'a', h('b', { class: 'r' }, right)));
   if (!mine) return h('p', { class: 'verdict' }, key);
   const mineText = mine.length ? mine.join(sep) : t('result.q.unanswered');
   return h('p', { class: 'verdict' },
-    h('span', { class: 'vp' }, withEl(t('result.q.mine'), 'a', h('b', { class: e.correct ? 'r' : 'w' }, mineText))),
+    h('span', { class: 'vp' }, withEl(t('result.q.mine'), 'a', h('b', { class: correct ? 'r' : 'w' }, mineText))),
     key);
 }
 
@@ -91,14 +106,15 @@ function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean): 
     const v = Array.isArray(ans) ? ans[k] : null;
     return typeof v === 'number' ? v : null;
   };
+  const itemLang = htmlLang(view.lang);
   let okN = 0;
   const body = h('div', { class: 'hs' }, q.items.map((_, k) => {
     const want = right[k] ?? -1;
-    const keyText = h('b', { class: 'g', lang: view.choiceLang(k, want) }, view.choiceText(k, want));
+    const keyText = h('b', { class: 'g', lang: htmlLang(view.choiceLang(k, want)) }, view.choiceText(k, want));
     if (!showMine) {
       return h('div', { class: 'hs-item' },
         h('span', { class: 'hs-no' }, k + 1),
-        h('p', { lang: view.lang, class: 'pre' }, view.itemText(k)),
+        h('p', { lang: itemLang, class: 'pre' }, view.itemText(k)),
         h('div', { class: 'hsa' }, h('span', null, withEl(t('result.q.key'), 'a', keyText))));
     }
     const mine = mineAt(k);
@@ -107,65 +123,90 @@ function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean): 
     const mineText = mine == null ? t('result.q.unanswered') : view.choiceText(k, mine) || t('result.q.unanswered');
     return h('div', { class: 'hs-item ' + (ok ? 'rv-ok' : 'rv-ng') },
       h('span', { class: 'hs-no' }, k + 1),
-      h('p', { lang: view.lang, class: 'pre' }, view.itemText(k)),
+      h('p', { lang: itemLang, class: 'pre' }, view.itemText(k)),
       h('div', { class: 'hsa' },
-        h('span', { class: 'tag ' + (ok ? 'g' : 'r') }, ok ? t('result.q.correct') : t('result.q.wrong')),
+        h('span', { class: 'tag ' + (ok ? 'g' : 'ng') }, ok ? t('result.q.correct') : t('result.q.wrong')),
         h('span', null, withEl(t('result.q.youChose'), 'a',
-          h('b', { class: ok ? 'g' : 'r', lang: mine == null ? null : view.choiceLang(k, mine) }, mineText))),
+          // the chosen choice as a solid green (right) or orange (wrong) key; "not answered" is plain text (nothing was chosen)
+          h('b', { class: mine == null ? 'none' : ok ? 'g' : 'r', lang: mine == null ? null : htmlLang(view.choiceLang(k, mine)) }, mineText))),
         ok ? null : h('span', null, withEl(t('result.q.key'), 'a', keyText))));
   }));
   return { body, okN };
 }
 
-/** One question in review form. */
+/**
+ * The answer part of a card in the language of `view`: the options (or hotspot items) marked right / wrong / chosen, and
+ * the verdict line. showMine false: only the correct answer (wrong-answer review).
+ */
+export function answerReview(q: Question, view: Shown, ans: Answer, correct: boolean, showMine = true): { body: HTMLElement; verdict: HTMLElement } {
+  if (q.kind === 'hotspot') {
+    const hs = hotspotBody(q, view, ans, showMine);
+    const n = q.items.length;
+    const verdict = showMine
+      ? h('p', { class: 'verdict' }, withEl(tn('result.q.hsVerdict', n), 'ok', h('b', { class: correct ? 'r' : 'w' }, hs.okN)))
+      : h('p', { class: 'verdict' }, tn('result.q.hsRule', n));
+    return { body: hs.body, verdict };
+  }
+  const mine = showMine ? letters(ans) : null;
+  return { body: choiceBody(q, view, mine), verdict: choiceVerdict(q, mine, correct) };
+}
+
+/**
+ * The explanation, memory aid and answer note of a question in a language (six-column questions have their own per
+ * language; older ones show their single explanation in every language). Empty parts are left out.
+ */
+export function explainBlocks(q: Question, lang: Lang): Array<HTMLElement | null> {
+  const ex = explainOf(q, lang);
+  const text = (x: LangText, tag: 'p' | 'span', cls?: string): HTMLElement => h(tag, { class: cls, lang: langAttr(x.lang) }, x.text);
+  return [
+    ex.explanation.text ? h('div', { class: 'explain' }, h('h4', null, t('result.q.explain')), text(ex.explanation, 'p', 'pre')) : null,
+    ex.mnemonic.text ? h('div', { class: 'mnemo' }, h('h4', null, t('result.q.mnemonic')), text(ex.mnemonic, 'p')) : null,
+    ex.note.text ? h('p', { class: 'note' }, withEl(t('result.q.note'), 'note', text(ex.note, 'span'))) : null,
+  ];
+}
+
+/** One question in review form, with its own language switch. */
 export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
   const { q } = e;
   const showMine = opts.showMine !== false;
   const unanswered = stateOf(q, e.ans) === 0;
-  // Shown in the question language from the settings; a question without that language falls back to Japanese
-  const view = shown(q, S.settings.questionLang);
-  let body: HTMLElement;
-  let verdict: HTMLElement;
-
-  if (q.kind === 'hotspot') {
-    const hs = hotspotBody(q, view, e.ans, showMine);
-    body = hs.body;
-    const n = q.items.length;
-    verdict = showMine
-      ? h('p', { class: 'verdict' }, withEl(tn('result.q.hsVerdict', n), 'ok', h('b', { class: e.correct ? 'r' : 'w' }, hs.okN)))
-      : h('p', { class: 'verdict' }, tn('result.q.hsRule', n));
-  } else {
-    const mine = showMine ? letters(e.ans) : null;
-    body = choiceBody(q, view, mine);
-    verdict = choiceVerdict(q, mine, e);
-  }
-
   const status = !showMine ? null : e.correct
     ? h('span', { class: 'badge ok' }, t('result.q.correct'))
     : h('span', { class: 'badge ng' }, unanswered ? t('result.q.unanswered') : t('result.q.wrong'));
   const source = S.banks.length > 1 ? t('result.q.source', { bank: bankName(q.bank), sheet: q.sheet }) : q.sheet;
   const stats = opts.stats === undefined ? statsLine(q) : opts.stats;
+  const paper = h('div', { class: 'paper' });
 
-  return h('article', { class: 'rv' + (showMine && e.correct ? ' good' : ''), tabindex: '-1', 'aria-label': t('result.q.no', { n: opts.no }) },
-    h('div', { class: 'paper' },
+  // Draws the card's content in a language (the effective one: a language the question lacks falls back to its base)
+  const draw = (want: Lang, focusSwitch: boolean): void => {
+    const view = shown(q, want);
+    const { body, verdict } = answerReview(q, view, e.ans, e.correct, showMine);
+    const sw = langSwitch(q, view.lang, (l) => {
+      cardLang.set(q.id, l);
+      draw(l, true);
+    });
+    paper.replaceChildren(
       h('div', { class: 'phead' },
         h('b', { class: 'num' }, t('result.q.no', { n: opts.no })),
         status,
         h('span', { class: 'badge' }, kindLabel(q)),
         opts.retired ? h('span', { class: 'badge retired' }, t('result.q.retired')) : null,
-        h('span', { class: 'rv-src' }, source)),
-      opts.retired ? h('p', { class: 'rv-retired' }, t('result.q.retiredHint')) : null,
-      h('div', { class: 'stem' }, paras(view.stem, undefined, view.lang)),
-      body,
-      verdict,
-      q.explanation ? h('div', { class: 'explain' }, h('h4', null, t('result.q.explain')), h('p', { class: 'pre' }, q.explanation)) : null,
-      q.mnemonic ? h('div', { class: 'mnemo' }, h('h4', null, t('result.q.mnemonic')), h('p', null, q.mnemonic)) : null,
-      q.note ? h('p', { class: 'note' }, t('result.q.note', { note: q.note })) : null,
-      // Shown only when it adds something: in Chinese the stem and options above already are this translation
-      q.translation && view.lang !== 'zh'
-        ? h('details', { class: 'tr' }, h('summary', null, t('result.q.translation')), h('p', { class: 'pre', lang: 'zh' }, q.translation))
-        : null,
-      stats));
+        h('span', { class: 'rv-src' }, source),
+        sw),
+      ...[
+        opts.retired ? h('p', { class: 'rv-retired' }, t('result.q.retiredHint')) : null,
+        h('div', { class: 'stem' }, paras(view.stem, undefined, htmlLang(view.lang))),
+        body,
+        verdict,
+        ...explainBlocks(q, view.lang),
+        stats,
+      ].filter((x): x is HTMLElement => !!x));
+    // Switching redraws the card: the focus goes back to the pressed button instead of being lost
+    if (focusSwitch) sw.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus({ preventScroll: true });
+  };
+  draw(cardLang.get(q.id) ?? S.settings.questionLang, false);
+
+  return h('article', { class: 'rv' + (showMine && e.correct ? ' good' : ''), tabindex: '-1', 'aria-label': t('result.q.no', { n: opts.no }) }, paper);
 }
 
 /**

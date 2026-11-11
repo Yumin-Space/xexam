@@ -114,6 +114,21 @@
 .page-banks .okbox .ok-t { font-size: 15px; margin-bottom: 2px; }
 .page-banks .okbox .acts { margin-top: 12px; }
 .bk-same { margin: 12px 0 0; }
+/* Six-column answers that differ from the English one (v0.7): a calm note with the rows, folded when the list is long */
+.bk-warn6 { margin-top: 12px; font-size: 14px; line-height: 1.6; }
+.bk-warn6 p + p { margin-top: 4px; }
+.bk-warn6-t { font-weight: 600; }
+.bk-warn-rows { margin: 6px 0 0; padding-left: 20px; font-size: 13.5px; color: var(--ink2); }
+.bk-warn-rows li { overflow-wrap: anywhere; }
+.bk-warn-fold { margin-top: 6px; }
+.bk-warn-fold > summary {
+  display: inline-flex; align-items: center; gap: 6px; margin: 0 -6px; padding: 2px 6px; border-radius: 6px;
+  list-style: none; cursor: pointer; font-size: 13.5px; font-weight: 500; color: var(--ink2);
+}
+.bk-warn-fold > summary::-webkit-details-marker { display: none; }
+@media (hover: hover) { .bk-warn-fold > summary:hover { background: var(--hover); color: var(--ink); } }
+.bk-warn-fold > summary:focus-visible { outline-offset: 0; }
+.bk-warn-fold .bk-warn-rows { margin-top: 4px; }
 .bk-acts { margin-top: 16px; }
 /* Section label inside a block ("Sheets") */
 .bk-sub { margin: 24px 0 4px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
@@ -163,6 +178,13 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
 }
 .bk-bankacts .btn.danger:focus-visible { color: var(--wrong); }
 .bk-bankmeta { flex-basis: 100%; font-size: 13px; color: var(--ink3); overflow-wrap: anywhere; }
+/* (v0.7) A bank whose questions are all retired (they came from an older Excel layout): a quiet note under its facts */
+.bk-old { flex-basis: 100%; margin: 2px 0 0; padding: 6px 10px; border-radius: 6px; background: var(--fill); font-size: 13px; line-height: 1.55; color: var(--ink2); overflow-wrap: anywhere; }
+/* Whose upload a bank is (administrators only, v0.6.5): someone else's name reads a little darker than "uploaded by you" */
+.bk-owner { overflow-wrap: anywhere; }
+.bk-owner.other { color: var(--ink2); }
+/* A bank manager's list: why only their own banks are shown */
+.bk-mgr-note { margin: -4px 0 8px; }
 .bk-expand {
   position: relative; flex: none; width: 32px; height: 32px; display: grid; place-items: center; padding: 0;
   border: 0; border-radius: 6px; background: transparent; color: var(--ink3); cursor: pointer;
@@ -209,6 +231,8 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
 .bk-guide p + p { margin-top: 8px; }
 .bk-points { margin: 0; padding-left: 20px; line-height: 1.75; overflow-wrap: anywhere; }
 .bk-points li + li { margin-top: 6px; }
+/* (v0.7) a paragraph right after a list of points (the answer headings of the guide) keeps the paragraph gap */
+.bk-guide .bk-points + p { margin-top: 8px; }
 /* Excel content in the text: a soft inline tag. inline-block: a marker moves to the next line as a whole instead of
    splitting into two boxes that look like two markers */
 .bk-code {
@@ -228,6 +252,9 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
 .bk-ex figcaption { margin-bottom: 8px; font-size: 14px; font-weight: 600; }
 .bk-ex-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 12px; }
 .bk-ex .bk-ex-col { margin-bottom: 4px; font-size: 12.5px; color: var(--ink3); }
+/* The six-column example (v0.7): one row of two cells per language (question | answer) */
+.bk-ex6 .bk-ex-cols + .bk-ex-cols { margin-top: 12px; }
+
 /* An example cell: a soft block like a code block (no frame) */
 .bk-ex-cell {
   margin: 0; padding: 10px 12px;

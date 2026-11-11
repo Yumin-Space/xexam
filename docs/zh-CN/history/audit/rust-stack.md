@@ -179,12 +179,12 @@
 
 ### 2.8 时间戳（无 chrono 还是用 chrono）
 
-- 旧版：`datetime.now().strftime('%Y-%m-%d %H:%M')`（db.py:74-75），**本地时间、无时区、精确到分钟**；compose 里设了 `TZ: Asia/Tokyo`（docker-compose.yml），所以库里存的是东京时间字符串。这些字符串直接显示在界面上（`更新于 {mtime}`、`${x.at}`，app.js:356, 396-399, 569），只用于展示和 `ORDER BY id`，不做时间比较。
+- 旧版：`datetime.now().strftime('%Y-%m-%d %H:%M')`（db.py:74-75），**本地时间、无时区、精确到分钟**；compose 里设了 `TZ: <所在时区>`（docker-compose.yml），所以库里存的是本地时间字符串。这些字符串直接显示在界面上（`更新于 {mtime}`、`${x.at}`，app.js:356, 396-399, 569），只用于展示和 `ORDER BY id`，不做时间比较。
 - 标准库只有 UTC（`SystemTime`）。要得到本地时间必须有时区库：
   - `chrono` 0.4.45（`clock` 特性）：成熟；读 `TZ`/`/etc/localtime`；
   - `jiff` 0.2.41（2026-11-08）：时区一等公民，可内置 tzdb；
   - `time` 0.3.55 的 `local-offset`：在多线程 Unix 进程里有已知限制（拿不到偏移），**不建议**。
-- **陷阱**：`FROM scratch` 或没有 `/usr/share/zoneinfo` 的镜像会让 `TZ=Asia/Tokyo` 失效，时间悄悄变成 UTC，历史记录里的时间就会出现 9 小时错位。→ **[建议]** 用 `jiff` 并启用内置 tzdb（特性名我凭记忆写作 `tzdb-bundle-always`/`tz-system`，**未核对**），或在镜像里带 tzdata；并在 spike S8 里在最终镜像中验证"设置 `TZ=Asia/Tokyo` 后输出 JST"。
+- **陷阱**：`FROM scratch` 或没有 `/usr/share/zoneinfo` 的镜像会让 `TZ=<所在时区>` 失效，时间悄悄变成 UTC，历史记录里的时间就会和本地时间错位。→ **[建议]** 用 `jiff` 并启用内置 tzdb（特性名我凭记忆写作 `tzdb-bundle-always`/`tz-system`，**未核对**），或在镜像里带 tzdata；并在 spike S8 里在最终镜像中验证"设置 `TZ=<所在时区>` 后输出的是该时区的本地时间"。
 - 过期计时用 `std::time::Instant`（单调时钟），比旧版的 `time.time()` 更稳，无需 chrono。
 
 ### 2.9 SQLite bundled 编译对 C 编译器的要求
@@ -265,7 +265,7 @@ impl PendingStore {
 | `XEXAM_ALLOWED_ORIGINS` | 同一解析函数；最终 `allowed_origins = origins ∪ ALLOWED_HOSTS 的项`（436, 440）；只放行 Origin，不放行 Host | 同上 |
 | `XEXAM_ALLOW_ANY_HOST` | `strip().lower()` 在 `1/true/yes/on` 才为真（435）；只跳过 **Host** 检查，Origin 检查照常 | 同上 |
 | `XEXAM_BIND` | **不是服务端变量**，只在 compose 里决定宿主机端口映射 | 新架构里端口由 compose/Nginx 决定 |
-| `TZ` | compose 设 `Asia/Tokyo`，影响时间戳 | 见 §2.8 |
+| `TZ` | compose 设 `<所在时区>`，影响时间戳 | 见 §2.8 |
 | CLI | `--data --host --port --no-browser --allow-shutdown --import <xlsx>` | `--import`（离线导入）、`--allow-shutdown`、自动开浏览器（`webbrowser.open`）、`progress.json` 一次性迁移（server.py:378-388、db.py:281-308）——**哪些保留是业主决定**，见 openQuestions |
 
 `host_name` 的怪癖（必须按字符串逻辑复刻，不能换成 URL 解析库）：小写 → 以 `[` 开头取括号内；否则 `rsplit(':',1)[0]`；去掉末尾 `.`。例如无括号的 `::1` 会变成 `:`，`a:b:c` 变成 `a:b`（读代码得出，db 之外的 `host_test.py` 覆盖了主要用例）。`origin_host` 只认 `http://`/`https://` 前缀、含 `@` 返回 None、不比较协议和端口。Origin 缺失视为放行（server.py:228-230）；与 Host 同主机名或在白名单即放行。这些规则要用业主的 `host_test.py`（55 项）改写成 Rust 集成测试，并对旧服务器和新服务器各跑一遍。
@@ -367,7 +367,7 @@ getrandom = "0.4.3"                                           # 令牌：getrand
 subtle = "2.6.1"                                              # 或 constant_time_eq 0.6.1
 base64 = "0.23.1"                                             # 也可手写 16 字节的 base64url，省一个依赖
 percent-encoding = "2.3"
-jiff = "0.2.41"                                               # 本地时间（TZ=Asia/Tokyo）；特性名待 S8 确认
+jiff = "0.2.41"                                               # 本地时间（TZ=<所在时区>）；特性名待 S8 确认
 # 不引入：rand、sha2、md5、unicode-normalization、fancy-regex、chrono、time、utoipa-swagger-ui
 
 [dev-dependencies]
@@ -472,7 +472,7 @@ pub enum AppError {
 | S5 | 全部文本语义（§3）：`is_py_space`、`nd_value`、`canon`、`make_id`、`round_ties_even`；对旧库里**所有现有题目**重算 id 是否一致 | 自写函数 | 差分测试 + 用旧解析器与 Rust 解析器分别解析同一批合成工作簿，id 与 JSON 逐项比较 |
 | S6 | `PyCompactFormatter` 字节兼容；HEAD 的 `Content-Length`；404/405/501 形态；Host 缺失时 hyper 的行为；`//path` 行为 | 保持旧形态 vs 改标准形态 | 对旧服务器（进程内探针）与新 Router 发同一批请求，逐字节/逐头比较 |
 | S7 | `docker stop` 在有 Nginx 上游 keep-alive 连接时是否 <9 s；进行中的导入是否完成；超时包装是否生效 | `with_graceful_shutdown` + `timeout` | 容器里启动 → 制造一个慢请求和一个长连接 → `docker stop` 计时 |
-| S8 | 本地时间：jiff 还是 chrono；scratch/distroless/debian-slim 中 `TZ=Asia/Tokyo` 是否生效 | jiff（内置 tzdb） vs chrono + tzdata | 三种基础镜像各输出 `%Y-%m-%d %H:%M` |
+| S8 | 本地时间：jiff 还是 chrono；scratch/distroless/debian-slim 中 `TZ=<所在时区>` 是否生效 | jiff（内置 tzdb） vs chrono + tzdata | 三种基础镜像各输出 `%Y-%m-%d %H:%M` |
 | S9 | 镜像大小、构建时间、arm64 交叉编译（CI 目前是 QEMU）；musl 还是 glibc | rust:alpine 原生 musl、`cargo-zigbuild`、原生 arm64 runner | 实测 amd64 与 arm64 的构建耗时和最终镜像大小 |
 | S10 | OpenAPI：utoipa 6 派生 vs 手写 `openapi.yaml`；openapi-typescript 的 peer `typescript ^5.x` 与前端 TS 版本 | 手写 + 契约测试 vs 派生 | 12 个端点里挑 3 个，两种方式各出一份并与黄金响应对比；`npm i --dry-run` 看 peer 冲突 |
 | S11 | Slowloris：直连后端（无 Nginx）是否需要自建 hyper-util accept 循环 + `TokioTimer` | `axum::serve` + Nginx vs 自建循环 | 用一个慢速客户端脚本逐字节发请求头，观察后端是否在 30 s 内断开 |

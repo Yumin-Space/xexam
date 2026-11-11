@@ -1,6 +1,7 @@
 // The changelog shown on the About page comes from the "### vX.Y — date" entries of the three READMEs (one source of truth:
-// the READMEs are what CI checks against VERSION). The Vite plugin in vite.config.ts parses them at build time with
-// parseChangelog(); the page renders the lines with a tiny Markdown subset (lists, bold, inline code, links), text only.
+// the READMEs are what CI checks against CODE_VERSION in VERSION). The Vite plugin in vite.config.ts parses them at build
+// time with parseChangelog(); the page renders the lines with a tiny Markdown subset (lists, bold, inline code, links), text
+// only.
 
 export interface ChangelogEntry {
   /** "0.5" */

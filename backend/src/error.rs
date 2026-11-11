@@ -35,13 +35,35 @@ pub enum ImportError {
     Unexpected,
 }
 
+impl ImportError {
+    /// An English reason for the log (the `Display` text is the Chinese message the page shows; the log is English).
+    pub fn log_reason(&self) -> &'static str {
+        match self {
+            ImportError::Empty => "the file is empty or was not uploaded completely",
+            ImportError::LegacyXls => "an old .xls file or a password-protected Excel file",
+            ImportError::NotXlsx => "not an .xlsx file",
+            ImportError::Corrupt => "the .xlsx file is damaged",
+            ImportError::NoWorkbook => "the file holds no Excel workbook",
+            ImportError::TooBigUncompressed => "too large once decompressed",
+            ImportError::EntityDeclaration => "the file contains an XML entity declaration",
+            ImportError::Timeout => "reading the file took longer than the time limit",
+            ImportError::Message(_) => {
+                "the workbook could not be read (not a valid .xlsx, a missing part, malformed or too complex XML, or an overlong answer)"
+            }
+            ImportError::Unexpected => "content the parser did not expect",
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum DbError {
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("json: {0}")]
     Json(#[from] serde_json::Error),
-    #[error("数据库任务异常结束")]
+    /// A blocking database task ended abnormally (panicked or was cancelled). Only ever logged: the response is
+    /// `MSG_INTERNAL` or `MSG_APPLY_FAILED`.
+    #[error("the database task ended abnormally")]
     Join,
     /// The consistent copy (`VACUUM INTO`) written before a schema migration could not be made; the database was not migrated.
     #[error("backup before the schema migration failed: {0}")]
@@ -56,6 +78,18 @@ pub enum DbError {
     /// The API answers 401 `MSG_SIGN_IN_REQUIRED`.
     #[error("the user no longer exists or is disabled")]
     NoUser,
+    /// An exam whose questions no longer exist (their bank was deleted after the exam started, or the ids were made up);
+    /// nothing was written. The API answers 409 `MSG_EXAM_QUESTIONS_GONE`.
+    #[error("none of the exam's questions exist any more")]
+    QuestionsGone,
+    /// A bank manager tried to update or delete a bank they do not own (checked inside the write transaction); nothing was
+    /// written. The API answers 403 `MSG_NOT_BANK_OWNER`.
+    #[error("the user may not manage this question bank")]
+    NotBankOwner,
+    /// A user's bank list names a bank that does not exist; nothing was written. Turned into `UserChange::UnknownBanks`
+    /// (400 `MSG_UNKNOWN_BANKS`) by the users store; never leaves it.
+    #[error("unknown question bank id")]
+    UnknownBanks,
 }
 
 /// Errors at the HTTP layer. `IntoResponse` is implemented in `api::error_response`.

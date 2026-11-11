@@ -11,18 +11,20 @@ import { ApiError, isSignInError, setAuthHandler, type AuthProblem } from '../ap
 import { submitAttempt } from '../api/progress.ts';
 import { fetchBank, fetchBanks, fetchInfo } from '../api/bank.ts';
 import { fetchProgress, fetchRecord, fetchRecords } from '../api/progress.ts';
-import { completes, grade, percentOf, stateOf, type Answer } from '../domain/grading.ts';
+import { countedResults, kindOf } from '../domain/attempt.ts';
+import { completes, percentOf } from '../domain/grading.ts';
+import { checksOnPick, finalResults, isLocked, openCount } from '../domain/practice.ts';
 import { t, tn } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
 import { adminOnly, parseHash, routeHash, sameRoute, type Route } from '../router.ts';
-import type { AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
+import type { AttemptKind, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
 import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSettings } from './preferences.ts';
-import { adoptLegacySession, clearSaved, loadSaved, saveSession as persist } from './session-storage.ts';
+import { adoptLegacySession, clearSaved, loadSaved, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
 import { paths, setStorageOwner } from './storage-keys.ts';
-import { S, clearUserData, isAdmin, setBankData } from './store.ts';
+import { S, clearUserData, isAdmin, setBankData, type Session } from './store.ts';
 
 let renderer: () => void = () => {};
 let refreshers: Array<() => void> = [];
@@ -73,7 +75,18 @@ const scrollTop = (): void => window.scrollTo(0, 0);
 export function persistSession(): void {
   const se = S.session;
   if (!se) return;
-  persist({ qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets });
+  persist({
+    qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets,
+    kind: se.kind, checked: se.checked,
+  });
+}
+
+/** The session to continue from what was saved in this browser (the timer goes on from the saved time) */
+function sessionOf(sv: SavedSession): Session {
+  return {
+    qs: sv.qs, answers: sv.answers, flags: sv.flags, idx: sv.idx, base: sv.elapsed, t0: Date.now(), mode: sv.mode, sheets: sv.sheets,
+    kind: sv.kind, checked: sv.checked,
+  };
 }
 
 // ---------------------------------------------------------------- routing
@@ -85,7 +98,7 @@ function settle(r: Route): Route {
     // A reload on the quiz page: continue the saved exam if there is one
     const sv = S.phase === 'ready' ? loadSaved(S.bank) : null;
     if (sv) {
-      S.session = { qs: sv.qs, answers: sv.answers, flags: sv.flags, idx: sv.idx, base: sv.elapsed, t0: Date.now(), mode: sv.mode, sheets: sv.sheets };
+      S.session = sessionOf(sv);
       return r;
     }
     return { name: 'home' };
@@ -201,7 +214,7 @@ function closeDialogs(): void {
 /** The sign-in page's first-start hint: asks the server again (an administrator may have replaced the default password). */
 function refreshSignInHint(): void {
   fetchAuthState().then((st) => {
-    const next = !st.user && !!st.defaultAdmin;
+    const next = st.user ? null : st.defaultAdmin ?? null;
     if (next !== S.defaultAdmin) {
       S.defaultAdmin = next;
       if (S.authView === 'signin') render();
@@ -237,7 +250,7 @@ let libraryStamp: string | null = null;
 async function enterApp(): Promise<void> {
   S.authView = null;
   S.authNote = null;
-  S.defaultAdmin = false;
+  S.defaultAdmin = null;
   S.phase = 'loading';
   render();
   try {
@@ -287,7 +300,9 @@ function checkSession(): void {
     else if (st.user.id !== me.id) window.location.reload();
     else if (st.user.mustChangePassword) onAuthProblem('password');
     else {
-      if (st.user.username !== me.username) {
+      // A new name, or (v0.6.5) the bank-manager permission given or taken away: it applies without signing out, so the
+      // menu and the Question banks page follow at the next check
+      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks) {
         S.user = st.user;
         render();
       }
@@ -315,7 +330,7 @@ async function recheckAuthPage(): Promise<void> {
     if (!S.authView || authBusy) return;
     const u = st.user;
     if (!u) {
-      S.defaultAdmin = !!st.defaultAdmin;
+      S.defaultAdmin = st.defaultAdmin ?? null;
       if (S.authView === 'password') onAuthProblem('signin');
       else render();
       return;
@@ -363,7 +378,7 @@ export async function boot(): Promise<void> {
   }
   if (!user) {
     S.authView = 'signin';
-    S.defaultAdmin = !!state.defaultAdmin;
+    S.defaultAdmin = state.defaultAdmin ?? null;
     render();
     return;
   }
@@ -483,6 +498,8 @@ export async function refreshLibrary(): Promise<void> {
   // The stamp first (see enterApp)
   const st = await fetchAuthState().catch(() => null);
   if (st?.library) libraryStamp = st.library;
+  // The bank-manager permission may have changed with the banks (a refused bank change is often the first sign of it)
+  if (st?.user && S.user && st.user.id === S.user.id && st.user.canManageBanks !== S.user.canManageBanks) S.user = st.user;
   const [bank, banks] = await Promise.all([fetchBank(), fetchBanks()]);
   setBankData(bank, banks);
   // Exam detail shows the questions as stored now; an import may have changed them
@@ -524,22 +541,35 @@ export function applyRecordsDeleted(d: RecordsDeleted): void {
 
 // ---------------------------------------------------------------- exams
 
-export function startSession(qs: Question[], mode: Mode): void {
+export function startSession(qs: Question[], mode: Mode, kind: AttemptKind = 'exam'): void {
   S.session = {
     qs, answers: {}, flags: new Set(), idx: 0, base: 0, t0: Date.now(), mode,
     sheets: [...new Set(qs.map((q) => q.sheet))],
+    kind, checked: new Set(),
   };
   persistSession();
   navigate({ name: 'quiz' });
 }
 
-/** Starts an exam; if an unsubmitted exam is saved, asks before replacing it. Used by home, result and records pages. */
-export async function startExam(qs: Question[], mode: Mode): Promise<void> {
+/**
+ * Starts an exam or (v0.6.5) a practice; if an unfinished exam or practice is saved, asks before replacing it (the texts
+ * name what is saved and what starts). Used by the home, result and records pages.
+ */
+export async function startExam(qs: Question[], mode: Mode, kind: AttemptKind = 'exam'): Promise<void> {
   if (!qs.length) return;
-  if (loadSaved(S.bank) && !(await ask({
-    title: t('act.overwrite.title'), body: t('act.overwrite.body'), ok: t('act.overwrite.ok'), cancel: t('act.overwrite.cancel'), danger: true,
-  }))) return;
-  startSession(qs, mode);
+  const saved = loadSaved(S.bank);
+  if (saved) {
+    const savedPractice = saved.kind === 'practice';
+    const ok = await ask({
+      title: savedPractice ? t('quiz.overwrite.practiceTitle') : t('act.overwrite.title'),
+      body: savedPractice ? t('quiz.overwrite.practiceBody') : kind === 'practice' ? t('quiz.overwrite.examBody') : t('act.overwrite.body'),
+      ok: kind === 'practice' ? t('quiz.overwrite.practiceOk') : t('act.overwrite.ok'),
+      cancel: t('act.overwrite.cancel'),
+      danger: true,
+    });
+    if (!ok) return;
+  }
+  startSession(qs, mode, kind);
 }
 
 export function resumeSession(): void {
@@ -548,7 +578,7 @@ export function resumeSession(): void {
     render();
     return;
   }
-  S.session = { qs: sv.qs, answers: sv.answers, flags: sv.flags, idx: sv.idx, base: sv.elapsed, t0: Date.now(), mode: sv.mode, sheets: sv.sheets };
+  S.session = sessionOf(sv);
   if (sv.dropped) toast(tn('act.resume.dropped', sv.dropped));
   navigate({ name: 'quiz' });
 }
@@ -595,7 +625,8 @@ function cancelAdvance(): void {
 
 function scheduleAdvance(): void {
   const se = S.session;
-  if (!se || !S.settings.autoAdvance || se.idx >= se.qs.length - 1) return;
+  // Practice: the feedback on the answer is the point, so the page never moves on by itself
+  if (!se || se.kind === 'practice' || !S.settings.autoAdvance || se.idx >= se.qs.length - 1) return;
   const idx = se.idx;
   cancelAdvance();
   advanceTimer = window.setTimeout(() => {
@@ -606,13 +637,18 @@ function scheduleAdvance(): void {
 
 export function pick(q: Question, key: string): void {
   const se = S.session;
-  if (!se) return;
+  if (!se || isLocked(se.kind, se.checked, q.id)) return;
   let a = (se.answers[q.id] as string[] | undefined) ?? [];
   const adding = !a.includes(key);
   if (q.kind === 'single') a = adding ? [key] : [];
   else a = adding ? [...a, key].sort() : a.filter((k) => k !== key);
   if (a.length) se.answers[q.id] = a;
   else delete se.answers[q.id];
+  // Practice: a single-choice question is checked by the pick itself
+  if (se.kind === 'practice' && adding && checksOnPick(q)) {
+    checkAnswer(q);
+    return;
+  }
   syncQuiz();
   if (q.kind === 'single' && adding) scheduleAdvance();
   else cancelAdvance();
@@ -620,7 +656,7 @@ export function pick(q: Question, key: string): void {
 
 export function pickItem(q: Question, i: number, j: number): void {
   const se = S.session;
-  if (!se) return;
+  if (!se || isLocked(se.kind, se.checked, q.id)) return;
   const cur = se.answers[q.id];
   const a: Array<number | null> = Array.isArray(cur) ? (cur.slice() as Array<number | null>) : Array<number | null>(q.items.length).fill(null);
   const adding = a[i] !== j;
@@ -633,6 +669,22 @@ export function pickItem(q: Question, i: number, j: number): void {
   else cancelAdvance();
 }
 
+/**
+ * Practice: checks the answer of a question (something must be chosen). The question is locked from then on, and the page is
+ * drawn again to show right / wrong, the correct answer and the explanation.
+ */
+export function checkAnswer(q: Question): void {
+  const se = S.session;
+  if (!se || se.kind !== 'practice' || se.checked.has(q.id) || !Array.isArray(se.answers[q.id])) return;
+  se.checked.add(q.id);
+  cancelAdvance();
+  persistSession();
+  // Keep the page where it is: the feedback opens under the options, where the eyes already are
+  const y = window.scrollY;
+  render();
+  window.scrollTo(0, y);
+}
+
 export function toggleFlag(q: Question): void {
   const se = S.session;
   if (!se) return;
@@ -643,51 +695,75 @@ export function toggleFlag(q: Question): void {
 
 let submitting = false;
 
-/** Submit the exam: confirm first, then save the result; the saved exam is cleared only after saving succeeded (on failure the answers are still there, so it can be submitted again). */
+/**
+ * Submits the exam / finishes the practice: confirm first, then save the result; the saved session is cleared only after
+ * saving succeeded (on failure the answers are still there, so it can be submitted again). An exam always asks; a practice
+ * asks only when some questions were not checked (they count as not answered).
+ */
 export async function submit(): Promise<void> {
   const se = S.session;
   if (!se || submitting) return;
   cancelAdvance();
-  const open = se.qs.filter((q) => stateOf(q, se.answers[q.id] as Answer) < 2).length;
-  const go_ = await ask(open
-    ? { title: tn('act.submit.openTitle', open), body: t('act.submit.openBody'), ok: t('act.submit.ok'), cancel: t('act.submit.back') }
-    : { title: t('act.submit.confirmTitle'), body: t('act.submit.confirmBody'), ok: t('act.submit.ok'), cancel: t('act.submit.check') });
+  const open = openCount(se.kind, se.qs, se.answers, se.checked);
+  const go_ = se.kind === 'practice'
+    ? !open || await ask({
+      title: tn('quiz.practice.finish.openTitle', open), body: t('quiz.practice.finish.openBody'), ok: t('quiz.practice.finish'), cancel: t('act.submit.back'),
+    })
+    : await ask(open
+      ? { title: tn('act.submit.openTitle', open), body: t('act.submit.openBody'), ok: t('act.submit.ok'), cancel: t('act.submit.back') }
+      : { title: t('act.submit.confirmTitle'), body: t('act.submit.confirmBody'), ok: t('act.submit.ok'), cancel: t('act.submit.check') });
   if (!go_ || S.session !== se) return;
 
   submitting = true;
   try {
-    const results = se.qs.map((q) => {
-      const ans = (Array.isArray(se.answers[q.id]) ? se.answers[q.id] : null) as Answer;
-      return { q, ans, correct: grade(q, ans) };
-    });
+    // A practice counts its unchecked questions as not answered (see domain/practice.ts)
+    const results = finalResults(se.kind, se.qs, se.answers, se.checked);
     const seconds = Math.floor(elapsed());
     let prev = null;
     let saved = false;
+    // The results that count: all of them, unless the server left out questions that no longer exist (v0.6.5)
+    let counted = results;
+    let notCounted = 0;
     try {
-      S.progress = await submitAttempt({
+      const { notCounted: gone, ...progress } = await submitAttempt({
         results: results.map((r) => ({ id: r.q.id, correct: r.correct, answer: Array.isArray(r.ans) ? r.ans : null })),
-        sheets: se.sheets, mode: se.mode, seconds,
+        sheets: se.sheets, mode: se.mode, seconds, kind: se.kind,
       });
+      S.progress = progress;
       saved = true;
       clearSaved();
+      ({ counted, left: notCounted } = countedResults(results, gone));
       const second = S.progress.history[1];
-      if (second && second.mode === se.mode) prev = second;
+      // "Last time": the previous result of the same kind and mode
+      if (second && second.mode === se.mode && kindOf(second) === se.kind) prev = second;
     } catch (e) {
       // Signed out meanwhile (the sign-in page is showing now): stay on the exam, so it can be submitted after signing in
       if (S.authView) return;
+      if (e instanceof ApiError && e.status === 409) {
+        // Every question of this exam was deleted while it was open (its bank is gone): it can never be saved, so drop it
+        // instead of keeping it for another try, say why, and show the banks as they are now
+        clearSaved();
+        S.session = null;
+        toast(errorText(e), 9000);
+        navigate({ name: 'home' });
+        refreshLibrary().then(render, () => {});
+        return;
+      }
       toast(`${t('act.submit.saveFailed')} (${errorText(e)})`, 9000);
     }
     S.session = null;
-    S.result = { results, seconds, mode: se.mode, prev, recordId: null };
+    S.result = { results: counted, seconds, mode: se.mode, prev, recordId: null, notCounted, kind: se.kind };
     S.rvFilter = 'wrong';
     navigate({ name: 'result' });
+    // Some questions were deleted meanwhile: the banks in memory are out of date too
+    if (notCounted) refreshLibrary().then(render, () => {});
     if (saved) {
       // The newest record of this user is this exam; remember its id so the result page can link to it
-      const good = results.filter((r) => r.correct).length;
+      const good = counted.filter((r) => r.correct).length;
       const mine = S.result;
       refreshRecords().then(() => {
         const top = S.records?.[0];
-        if (mine && S.result === mine && top && top.total === results.length && top.correct === good) mine.recordId = top.id;
+        if (mine && S.result === mine && top && top.total === counted.length && top.correct === good && kindOf(top) === mine.kind) mine.recordId = top.id;
         render();
       }, () => {});
     }

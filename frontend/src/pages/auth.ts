@@ -146,9 +146,11 @@ export function renderSignIn(): HTMLElement {
     },
   });
   const note = S.authNote === 'signedOut' ? 'auth.note.signedOut' : S.authNote === 'expired' ? 'auth.note.expired' : null;
-  // First start (an administrator still has the default password): say how to sign in instead of "ask an administrator"
-  const firstRun = S.defaultAdmin && !signin.error && !note
-    ? h('div', { class: 'callout info auth-msg', role: 'note' }, h('p', null, t('auth.firstRun')))
+  // First start (an administrator still has the default password): say how to sign in instead of "ask an administrator",
+  // with the account's real name (it may have been renamed). It always shows, also under an error (a mistyped password, a
+  // lock): whoever got it wrong needs the instruction most. Only the "signed out" / "session ended" note gives way to an error.
+  const firstRun = S.defaultAdmin
+    ? h('div', { class: 'callout info auth-msg', role: 'note' }, h('p', null, t('auth.firstRun', { name: S.defaultAdmin })))
     : null;
   const form = h('form', {
     class: 'auth-form', method: 'post', action: '', novalidate: true, 'aria-busy': signin.busy ? 'true' : null,
@@ -162,8 +164,8 @@ export function renderSignIn(): HTMLElement {
 
   const root = card(t('auth.signin.title'), t('auth.signin.lead'),
     note && !signin.error ? h('div', { class: 'callout ' + (S.authNote === 'expired' ? 'warn' : 'info') + ' auth-msg', role: 'status' }, h('p', null, t(note))) : null,
-    firstRun,
     errorBox(signin.error),
+    firstRun,
     form,
     S.defaultAdmin ? null : h('p', { class: 'auth-hint' }, t('auth.signin.hint')));
   document.title = `${t('auth.signin.title')} - ${t('app.name')}`;

@@ -18,7 +18,9 @@ use std::sync::OnceLock;
 
 pub mod throttle;
 
-pub use throttle::{LockStatus, LoginThrottle, ThrottleClock, ThrottleLimits};
+pub use throttle::{
+    LockStatus, LoginThrottle, Target, ThrottleClock, ThrottleLimits, REFUSAL_REPORT_EVERY,
+};
 
 /// Name of the session cookie.
 pub const SESSION_COOKIE: &str = "xexam_session";
@@ -322,7 +324,7 @@ mod tests {
             "   ",
             "a b",
             "ann!",
-            "日本",
+            "一年",
             "é",
             &"a".repeat(41),
             "a\tb",

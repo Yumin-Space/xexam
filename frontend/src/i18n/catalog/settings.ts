@@ -58,6 +58,7 @@ export default defineCatalog({
     'settings.reset.ok': 'Reset',
     'settings.reset.done': 'The settings are back to their defaults.',
     'settings.reset.failed': 'The settings could not be reset: {reason}',
+    'settings.account.managerNote': 'As a bank manager you may import new question banks, and update or delete the ones you imported.',
   },
   zh: {
     'settings.title': '设置',
@@ -113,6 +114,7 @@ export default defineCatalog({
     'settings.reset.ok': '恢复默认',
     'settings.reset.done': '已恢复默认设置。',
     'settings.reset.failed': '没能恢复默认设置：{reason}',
+    'settings.account.managerNote': '你可以管理题库：导入新的题库，并更新或删除自己导入的题库。',
   },
   ja: {
     'settings.title': '設定',
@@ -168,5 +170,6 @@ export default defineCatalog({
     'settings.reset.ok': '戻す',
     'settings.reset.done': '既定の設定に戻しました。',
     'settings.reset.failed': '既定の設定に戻せませんでした：{reason}',
+    'settings.account.managerNote': '問題集の管理を許可されています。新しい問題集をインポートし、自分でインポートした問題集を更新・削除できます。',
   },
 });

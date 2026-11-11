@@ -92,6 +92,11 @@ fn app_with_throttle(
         throttle,
         last_session_purge: AtomicI64::new(0),
         default_admin_hashes: Default::default(),
+        logs: Default::default(),
+        rejections: Default::default(),
+        failed_sign_ins: Default::default(),
+        name_locks: Default::default(),
+        old_layouts: Default::default(),
     }));
     App {
         router: build_router(state.clone()),
@@ -166,7 +171,8 @@ async fn login(a: &App, name: &str, password: &str) -> Resp {
     .await
 }
 
-/// Signs in as the default administrator and replaces the default password. Returns the cookie.
+/// Signs in as the default administrator and replaces the default password. Returns the cookie (of the session that the
+/// password change started).
 async fn admin(a: &App) -> String {
     let r = login(a, "admin", "admin").await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -180,16 +186,34 @@ async fn admin(a: &App) -> String {
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
-    c
+    // The new password comes with a new session (the old cookie is no longer valid)
+    cookie_of(&r)
 }
 
 /// Creates `name` (role `role`) as the administrator, signs in as them and sets their own password. Returns (id, cookie).
+/// Questions made up with `dbc::seed_questions`, in a made-up bank of their own (v0.7: a plain user sees only the banks they
+/// have a row for, so questions without a bank are left to administrators). Call it before the users are created: their
+/// `"banks": "all"` then includes the bank.
+fn seed_banked(db: &Path, ids: &[&str]) {
+    dbc::seed_questions(db, ids);
+    raw(db)
+        .execute_batch(
+            "INSERT INTO banks(name, filename, legacy_ids, created_at, updated_at, owner_id) \
+             VALUES ('Made-up bank', 'made-up.xlsx', 0, '2026-01-01 10:00', '2026-01-01 10:00', 1); \
+             UPDATE questions SET bank_id = last_insert_rowid() WHERE bank_id IS NULL;",
+        )
+        .expect("bank of the seeded questions");
+}
+
+/// The user sees every question bank (`"banks": "all"`): in v0.6 every user saw every bank, which is what these tests are
+/// about; v0.6.5's per-user banks (a new user sees none by default) are tested in tests/v065_bank_access_and_practice.rs.
 async fn user(a: &App, admin_cookie: &str, name: &str, role: &str) -> (i64, String) {
     let r = post(
         a,
         "/api/users/create",
         Some(admin_cookie),
-        &json!({"username": name, "password": "initial-pass", "role": role}).to_string(),
+        &json!({"username": name, "password": "initial-pass", "role": role, "banks": "all"})
+            .to_string(),
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -211,7 +235,7 @@ async fn user(a: &App, admin_cookie: &str, name: &str, role: &str) -> (i64, Stri
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
-    (id, c)
+    (id, cookie_of(&r))
 }
 
 fn attempt(ids: &[(&str, bool)]) -> Attempt {
@@ -226,15 +250,20 @@ fn attempt(ids: &[(&str, bool)]) -> Attempt {
         sheets: vec!["Cooking".to_string()],
         mode: "all".to_string(),
         seconds: 12,
+        kind: Default::default(),
     }
 }
 
 fn attempt_body(ids: &[(&str, bool)]) -> String {
+    attempt_body_with_sheets(ids, &["Cooking"])
+}
+
+fn attempt_body_with_sheets(ids: &[(&str, bool)], sheets: &[&str]) -> String {
     let results: Vec<Value> = ids
         .iter()
         .map(|(id, c)| json!({"id": id, "correct": c, "answer": ["A"]}))
         .collect();
-    json!({"results": results, "sheets": ["Cooking"], "mode": "all", "seconds": 12}).to_string()
+    json!({"results": results, "sheets": sheets, "mode": "all", "seconds": 12}).to_string()
 }
 
 fn backups(dir: &Path) -> Vec<PathBuf> {
@@ -374,7 +403,8 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
         c.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r
             .get::<_, String>(0))
             .expect("schema"),
-        "3"
+        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs)
+        "4"
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");
@@ -395,13 +425,13 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
     drop(c);
     drop(s);
     // reopening: nothing written, no second admin or backup
-    let bytes = std::fs::read(&db).expect("read");
+    let bytes = dbc::db_bytes(&db);
     let s = Store::open(&db).expect("reopen");
     assert!(!s.created_default_admin());
     assert!(s.migration_backup().is_none());
     s.progress(1).expect("progress");
     drop(s);
-    assert_eq!(std::fs::read(&db).expect("read"), bytes);
+    assert_eq!(dbc::db_bytes(&db), bytes);
     assert_eq!(backups(dir.path()).len(), 1);
 }
 
@@ -454,15 +484,11 @@ fn a_fresh_database_starts_at_v3_with_the_default_admin_and_no_backup() {
     let u = s.user_by_name("admin").expect("lookup").expect("admin");
     assert!(u.must_change_password);
     drop(s);
-    let bytes = std::fs::read(&db).expect("read");
+    let bytes = dbc::db_bytes(&db);
     let s = Store::open(&db).expect("reopen");
     assert!(!s.created_default_admin());
     drop(s);
-    assert_eq!(
-        std::fs::read(&db).expect("read"),
-        bytes,
-        "reopen writes nothing"
-    );
+    assert_eq!(dbc::db_bytes(&db), bytes, "reopen writes nothing");
 }
 
 #[test]
@@ -499,7 +525,7 @@ async fn login_ok_wrong_password_unknown_and_disabled_users() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(
         r.json(),
-        json!({"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true}})
+        json!({"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true}})
     );
     assert!(a
         .store
@@ -566,7 +592,7 @@ async fn login_ok_wrong_password_unknown_and_disabled_users() {
     }
     // the state route
     let r = get(&a, "/api/auth/state", None).await;
-    assert_eq!(r.json(), json!({"user": null, "defaultAdmin": false}));
+    assert_eq!(r.json(), json!({"user": null, "defaultAdmin": null}));
     let r = get(&a, "/api/auth/state", Some(&c)).await;
     assert_eq!(r.json()["user"]["mustChangePassword"], false);
 }
@@ -782,13 +808,16 @@ async fn every_non_public_route_needs_a_session() {
 #[tokio::test]
 async fn a_plain_user_gets_403_on_every_admin_route() {
     let a = app();
+    seed_banked(&a.db, &["q1", "q2"]);
     let c = admin(&a).await;
     let (_, uc) = user(&a, &c, "cook", "user").await;
     let admin_routes: Vec<_> = ROUTES
         .iter()
         .filter(|r| r.access == Access::Admin)
         .collect();
-    assert_eq!(admin_routes.len(), 12);
+    // v0.6.5: the five bank management routes moved to `Access::BankManager` (403 `MSG_NO_BANK_PERMISSION` for this user,
+    // see tests/v065_bank_access_and_practice.rs); v0.7 adds `GET /api/logs`
+    assert_eq!(admin_routes.len(), 8);
     for r in admin_routes {
         let resp = if r.method == "GET" {
             get(&a, r.path, Some(&uc)).await
@@ -907,7 +936,12 @@ async fn forced_password_change() {
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(r.json()["user"]["mustChangePassword"], false);
+    // the session is rotated: this browser gets a new cookie, its old one ends like every other session of the user
+    let old_b1 = b1;
+    let b1 = cookie_of(&r);
+    assert_ne!(b1, old_b1);
     assert_eq!(get(&a, "/api/bank", Some(&b1)).await.status, 200);
+    assert_eq!(get(&a, "/api/bank", Some(&old_b1)).await.status, 401);
     assert_eq!(get(&a, "/api/bank", Some(&b2)).await.status, 401);
     assert_eq!(login(&a, "baker", "initial-pass").await.status, 401);
     // in normal mode the current password is required and checked
@@ -949,6 +983,7 @@ async fn forced_password_change() {
 #[tokio::test]
 async fn users_crud_and_validation() {
     let a = app();
+    seed_banked(&a.db, &["q1"]);
     let c = admin(&a).await;
     let r = get(&a, "/api/users", Some(&c)).await;
     let list = r.json();
@@ -965,6 +1000,11 @@ async fn users_crud_and_validation() {
             "lastLoginAt",
             "mustChangePassword",
             "records",
+            // v0.6.5 (tests/v065_bank_access_and_practice.rs); "newBanks" v0.7
+            "banks",
+            "newBanks",
+            "canManageBanks",
+            "ownedBanks",
             "lock"
         ]
     );
@@ -1057,7 +1097,8 @@ async fn users_crud_and_validation() {
         &a,
         "/api/users/create",
         Some(&c),
-        r#"{"username": "  cook.1@home ", "password": "initial-pass", "role": "user"}"#,
+        // v0.6.5: "banks": "all" keeps the v0.6 situation this test is about (every user sees every bank)
+        r#"{"username": "  cook.1@home ", "password": "initial-pass", "role": "user", "banks": "all"}"#,
     )
     .await;
     assert_eq!(r.status, 200);
@@ -1179,13 +1220,16 @@ async fn users_crud_and_validation() {
     );
     assert_eq!(login(&a, "cook", "initial-pass").await.status, 401);
     let uc = cookie_of(&login(&a, "cook", "another-pass").await);
-    post(
-        &a,
-        "/api/auth/password",
-        Some(&uc),
-        r#"{"password": "cook-own-pass"}"#,
-    )
-    .await;
+    // the new password comes with a new session cookie
+    let uc = cookie_of(
+        &post(
+            &a,
+            "/api/auth/password",
+            Some(&uc),
+            r#"{"password": "cook-own-pass"}"#,
+        )
+        .await,
+    );
     assert_eq!(
         post(
             &a,
@@ -1325,7 +1369,10 @@ async fn nobody_can_lock_themselves_out_and_the_last_admin_stays() {
             }
         )
         .expect("rename"),
-        UserChange::Done(())
+        UserChange::Done(xexam_backend::database::UpdatedUser {
+            username: "chef2".into(),
+            renamed_from: Some("chef".into()),
+        })
     );
     // with a disabled second admin the first is still the last enabled one
     let id = match s
@@ -1349,7 +1396,10 @@ async fn nobody_can_lock_themselves_out_and_the_last_admin_stays() {
             }
         )
         .expect("u"),
-        UserChange::Done(())
+        UserChange::Done(xexam_backend::database::UpdatedUser {
+            username: "spare".into(),
+            renamed_from: None,
+        })
     );
     assert_eq!(
         s.delete_user(999, 1).expect("delete"),
@@ -1357,7 +1407,7 @@ async fn nobody_can_lock_themselves_out_and_the_last_admin_stays() {
     );
     assert_eq!(
         s.delete_user(1, id).expect("delete"),
-        UserChange::Done(()),
+        UserChange::Done("spare".to_string()),
         "a disabled admin is not the last one"
     );
     let r = post(
@@ -1375,6 +1425,7 @@ async fn nobody_can_lock_themselves_out_and_the_last_admin_stays() {
 #[tokio::test]
 async fn study_data_is_per_user() {
     let a = app();
+    seed_banked(&a.db, &["q1", "q2", "q3"]);
     let c = admin(&a).await;
     let (uid, uc) = user(&a, &c, "cook", "user").await;
     // each submits an exam
@@ -1572,12 +1623,16 @@ async fn deleting_a_bank_with_records_removes_the_study_data_of_every_user() {
         )
         .await;
     }
-    let banks = get(&a, "/api/banks", Some(&uc)).await.json();
+    // v0.6.5: the shared numbers are the administrator's (what their deletion removes); a plain user sees their own
+    let banks = get(&a, "/api/banks", Some(&c)).await.json();
     assert_eq!(
         banks["banks"][1]["records"], 2,
         "shared numbers count every user"
     );
     assert_eq!(banks["banks"][1]["studied"], 2);
+    let own = get(&a, "/api/banks", Some(&uc)).await.json();
+    assert_eq!(own["banks"][1]["records"], 1, "the user's own records");
+    assert_eq!(own["banks"][1]["studied"], 2, "the user's own statistics");
     let r = post(
         &a,
         "/api/banks/delete",
@@ -1723,7 +1778,7 @@ async fn logout_ends_only_that_session() {
     assert_eq!(get(&a, "/api/bank", Some(&c)).await.status, 401);
     assert_eq!(
         get(&a, "/api/auth/state", Some(&c)).await.json(),
-        json!({"user": null, "defaultAdmin": false})
+        json!({"user": null, "defaultAdmin": null})
     );
     assert_eq!(get(&a, "/api/bank", Some(&other)).await.status, 200);
     let r = post(&a, "/api/auth/logout", Some(&c), "{}").await;
@@ -1755,9 +1810,15 @@ fn reset_password_command() {
         let s = Store::open(&db).expect("open");
         let u = s.user_by_name("admin").expect("l").expect("admin");
         let forgotten = auth::hash_password("forgotten-pass").expect("h");
-        s.change_own_password(u.id, &u.password_hash, &forgotten, "")
-            .expect("change")
-            .expect("changed");
+        s.change_own_password(
+            u.id,
+            &u.password_hash,
+            &forgotten,
+            &auth::token_hash(&auth::new_session_token()),
+            auth::unix_now(),
+        )
+        .expect("change")
+        .expect("changed");
         s.start_session(u.id, "somehash", &forgotten, auth::unix_now())
             .expect("session")
             .expect("started");
@@ -1785,17 +1846,17 @@ fn reset_password_command() {
     assert_eq!(count(&raw(&db), "SELECT COUNT(*) FROM sessions"), 0);
     drop(s);
     // an unknown user: clear message, non-zero exit, nothing changed
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     let out = cli(&["reset-password", "nobody", "--data", &data]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stdout).contains("There is no user named 'nobody'"));
-    assert_eq!(std::fs::read(&db).expect("read"), before);
+    assert_eq!(dbc::db_bytes(&db), before);
     // help and usage errors
     let out = cli(&["reset-password", "--help"]);
     assert!(out.status.success());
     let help = String::from_utf8_lossy(&out.stdout).to_string();
     assert!(
-        help.contains("docker compose exec xexam-backend xexam-backend reset-password admin"),
+        help.contains("docker compose exec backend xexam-backend reset-password admin"),
         "{help}"
     );
     let out = cli(&["reset-password"]);
@@ -1923,8 +1984,14 @@ fn the_store_refuses_a_session_or_a_password_change_for_a_stale_hash() {
     assert_eq!(count(&raw(&db), "SELECT COUNT(*) FROM sessions"), 0);
     let new_hash = auth::hash_password("brand-new-pass").expect("hash");
     assert_eq!(
-        s.change_own_password(u.id, "$argon2id$an-older-hash", &new_hash, "")
-            .expect("change"),
+        s.change_own_password(
+            u.id,
+            "$argon2id$an-older-hash",
+            &new_hash,
+            &auth::token_hash(&auth::new_session_token()),
+            auth::unix_now()
+        )
+        .expect("change"),
         None
     );
     let after = s.user_by_id(u.id).expect("l").expect("admin");
@@ -1935,8 +2002,14 @@ fn the_store_refuses_a_session_or_a_password_change_for_a_stale_hash() {
         .execute("UPDATE users SET disabled=1", [])
         .expect("disable");
     assert_eq!(
-        s.change_own_password(u.id, &u.password_hash, &new_hash, "")
-            .expect("change"),
+        s.change_own_password(
+            u.id,
+            &u.password_hash,
+            &new_hash,
+            &auth::token_hash(&auth::new_session_token()),
+            auth::unix_now()
+        )
+        .expect("change"),
         None
     );
 }
@@ -2080,19 +2153,19 @@ impl DeletesFirst {
         let victim = self.victim.lock().expect("lock").take();
         if let Some((id, delete)) = victim {
             if delete {
-                assert_eq!(
+                assert!(matches!(
                     self.store.delete_user(1, id).expect("delete"),
-                    UserChange::Done(())
-                );
+                    UserChange::Done(_)
+                ));
             } else {
                 let change = UserUpdate {
                     disabled: Some(true),
                     ..UserUpdate::default()
                 };
-                assert_eq!(
+                assert!(matches!(
                     self.store.update_user(1, id, &change).expect("disable"),
-                    UserChange::Done(())
-                );
+                    UserChange::Done(_)
+                ));
             }
         }
     }
@@ -2152,6 +2225,16 @@ impl Engine for DeletesFirst {
         self.inner
             .record_attempt_with_answers(user, attempt, answers)
     }
+    // v0.7: a plain user's scope is always their own list of banks, so the route calls this one
+    fn record_attempt_as(
+        &self,
+        v: &xexam_backend::models::Viewer,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+    ) -> Result<Value, DbError> {
+        self.strike();
+        self.inner.record_attempt_as(v, attempt, answers)
+    }
     fn update_settings(&self, user: i64, changes: &[(String, Value)]) -> Result<Value, DbError> {
         self.strike();
         self.inner.update_settings(user, changes)
@@ -2164,8 +2247,8 @@ impl Engine for DeletesFirst {
 
 #[tokio::test]
 async fn writes_of_a_user_deleted_or_disabled_mid_request_are_refused() {
-    let engine: Arc<std::sync::OnceLock<Arc<DeletesFirst>>> = Arc::new(std::sync::OnceLock::new());
-    let slot = engine.clone();
+    let holder: Arc<std::sync::OnceLock<Arc<DeletesFirst>>> = Arc::new(std::sync::OnceLock::new());
+    let slot = holder.clone();
     let a = app_with_engine(
         apic::default_config(),
         ThrottleLimits::default(),
@@ -2179,7 +2262,7 @@ async fn writes_of_a_user_deleted_or_disabled_mid_request_are_refused() {
             e
         },
     );
-    let engine = engine.get().expect("engine").clone();
+    let engine = holder.get().expect("engine").clone();
     let c = admin(&a).await;
     let owned = |id: i64| {
         let db = raw(&a.db);
@@ -2230,6 +2313,9 @@ async fn writes_of_a_user_deleted_or_disabled_mid_request_are_refused() {
     *engine.victim.lock().expect("lock") = Some((id, true));
     let r = post(&a, "/api/settings/reset", Some(&uc), "{}").await;
     assert_eq!(r.status, 401);
+    // The engine holds the store: let go of it before the app, so the app's temporary directory can be removed
+    drop(engine);
+    drop(holder);
 }
 
 #[test]
@@ -2237,6 +2323,7 @@ fn per_user_writes_for_a_deleted_or_disabled_user_write_nothing() {
     let dir = dbc::tmp();
     let db = dir.path().join("xexam.db");
     let s = Store::open(&db).expect("open");
+    dbc::seed_questions(&db, &["q1"]);
     let hash = auth::hash_password("initial-pass").expect("hash");
     let UserChange::Done(gone) = s
         .create_user("gone", &hash, auth::Role::User)
@@ -2252,7 +2339,7 @@ fn per_user_writes_for_a_deleted_or_disabled_user_write_nothing() {
     };
     assert_eq!(
         s.delete_user(1, gone).expect("delete"),
-        UserChange::Done(())
+        UserChange::Done("gone".to_string())
     );
     raw(&db)
         .execute("UPDATE users SET disabled=1 WHERE id=?1", [off])
@@ -2332,10 +2419,10 @@ fn a_v2_database_whose_backup_cannot_be_written_is_left_unchanged() {
     let db = dir.path().join("xexam.db");
     write_v2_database(&db);
     std::fs::write(dir.path().join("backups"), b"not a directory").expect("write");
-    let before = std::fs::read(&db).expect("read");
+    let before = dbc::db_bytes(&db);
     let err = Store::open(&db).err().expect("the open fails");
     assert!(matches!(err, DbError::Backup(_)), "{err}");
-    assert_eq!(std::fs::read(&db).expect("read"), before, "byte-identical");
+    assert_eq!(dbc::db_bytes(&db), before, "byte-identical");
     let c = raw(&db);
     assert_eq!(
         c.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r
@@ -2436,7 +2523,7 @@ async fn a_session_of_a_user_disabled_in_the_database_is_refused() {
     );
     assert_eq!(
         get(&a, "/api/auth/state", Some(&uc)).await.json(),
-        json!({"user": null, "defaultAdmin": false})
+        json!({"user": null, "defaultAdmin": null})
     );
     assert_eq!(
         sessions_of(&a.db, id),
@@ -2564,14 +2651,31 @@ async fn the_sign_in_page_learns_whether_the_default_admin_password_is_still_set
         .set(hashes)
         .expect("set once");
     let state = get(&a, "/api/auth/state", None).await.json();
-    assert_eq!(state, json!({"user": null, "defaultAdmin": true}));
+    assert_eq!(state, json!({"user": null, "defaultAdmin": "admin"}));
     // Signing in alone does not change it (the password is still admin) …
     let r = login(&a, "admin", "admin").await;
     assert_eq!(r.status, 200);
     assert_eq!(
         get(&a, "/api/auth/state", None).await.json()["defaultAdmin"],
-        true
+        "admin"
     );
+    // … a rename in the database (the API refuses it before the new password) names the account as it is called now
+    raw(&a.db)
+        .execute(
+            "UPDATE users SET username='owner' WHERE username='admin'",
+            [],
+        )
+        .expect("rename");
+    assert_eq!(
+        get(&a, "/api/auth/state", None).await.json()["defaultAdmin"],
+        "owner"
+    );
+    raw(&a.db)
+        .execute(
+            "UPDATE users SET username='admin' WHERE username='owner'",
+            [],
+        )
+        .expect("rename back");
     // … choosing a new password does
     let r = post(
         &a,
@@ -2583,13 +2687,13 @@ async fn the_sign_in_page_learns_whether_the_default_admin_password_is_still_set
     assert_eq!(r.status, 200);
     assert_eq!(
         get(&a, "/api/auth/state", None).await.json(),
-        json!({"user": null, "defaultAdmin": false})
+        json!({"user": null, "defaultAdmin": null})
     );
-    // Without the startup check (unset) it is always false
+    // Without the startup check (unset) it is always null
     let b = app();
     assert_eq!(
         get(&b, "/api/auth/state", None).await.json()["defaultAdmin"],
-        false
+        Value::Null
     );
 }
 
@@ -2600,11 +2704,9 @@ async fn the_library_stamp_changes_when_a_bank_is_imported_or_deleted() {
     let (_, uc) = user(&a, &c, "reader", "user").await;
     let stamp = |r: Resp| r.json()["library"].as_str().expect("library").to_string();
     let s0 = stamp(get(&a, "/api/auth/state", Some(&uc)).await);
-    assert_eq!(
-        stamp(get(&a, "/api/auth/state", Some(&c)).await),
-        s0,
-        "the same for every user"
-    );
+    let admin0 = stamp(get(&a, "/api/auth/state", Some(&c)).await);
+    // v0.7: a plain user's stamp is made of their own banks only (they have a list of banks, never "every bank")
+    assert_ne!(admin0, s0);
     let sh = vec![dbc::sheet("Pantry", 2)];
     let qs = vec![
         dbc::single("Pantry", "p1", "Where does flour go?", 1),
@@ -2616,7 +2718,11 @@ async fn the_library_stamp_changes_when_a_bank_is_imported_or_deleted() {
         .expect("import")
         .expect("created");
     let s1 = stamp(get(&a, "/api/auth/state", Some(&uc)).await);
-    assert_ne!(s1, s0, "a new bank");
+    assert_ne!(
+        s1, s0,
+        "a new bank (it reaches the reader: banks imported later)"
+    );
+    assert_ne!(stamp(get(&a, "/api/auth/state", Some(&c)).await), admin0);
     // the same file again into the same bank (nothing else changes but the import history)
     a.store
         .apply_import_for(ImportTarget::Bank(bank), "pantry.xlsx", &sh, &qs)
@@ -2728,7 +2834,7 @@ async fn the_lock_escalates_by_rounds_and_tells_how_long_to_wait() {
         advance(&clock, previous);
         assert_eq!(
             lock_of(&a, &c, "bea").await,
-            json!({"until": null, "retryAfter": 0, "round": round, "triesLeft": 3}),
+            json!({"until": null, "retryAfter": 0, "round": round, "triesLeft": 3, "knownBrowser": false, "otherUntil": null, "otherRetryAfter": 0}),
             "round {round}"
         );
         for _ in 0..3 {
@@ -2920,9 +3026,270 @@ async fn guesses_from_elsewhere_escalate_without_locking_the_known_browser() {
         (&lock["round"], &lock["retryAfter"]),
         (&json!(3), &json!(900))
     );
+    // ... and says that the known browsers are locked at the same time (v0.6.5 re-review: the page used to say they still worked)
+    assert_eq!(
+        (
+            &lock["knownBrowser"],
+            &lock["otherRetryAfter"],
+            lock["otherUntil"].as_str().map(str::len)
+        ),
+        (&json!(false), &json!(60), Some("2026-11-11 14:32:05".len()))
+    );
     // Unlock clears both buckets
     let r = post(&a, "/api/users/unlock", Some(&c), r#"{"id": 1}"#).await;
     assert_eq!(r.status, 200);
     assert_eq!(known_login(ADMIN_PW).await.status, 200);
     assert_eq!(login(&a, "admin", ADMIN_PW).await.status, 200);
+}
+
+// ---------------------------------------------------------------- v0.6.5 fixes
+
+const MSG_EXAM_QUESTIONS_GONE: &str = "这场考试的题目已经被删除，成绩没有保存。";
+
+/// v0.6.5 review: the lock belongs to the account (its id), not to the typed name. A rename keeps a running lock where the
+/// administrator can see and lift it; a new account that takes a deleted or renamed account's old name starts fresh.
+#[tokio::test]
+async fn the_lock_follows_the_account_through_a_rename_and_ends_with_its_deletion() {
+    let (a, clock) = app_with_moving_clock();
+    let c = admin(&a).await;
+    let (carol, _) = user(&a, &c, "carol", "user").await;
+    for _ in 0..5 {
+        assert_eq!(login(&a, "carol", "wrong-pass!").await.status, 401);
+    }
+    let r = post(
+        &a,
+        "/api/users/update",
+        Some(&c),
+        &json!({"id": carol, "username": "carol2"}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    // the renamed row shows the running lock, and the account stays locked under its new name
+    let lock = lock_of(&a, &c, "carol2").await;
+    assert_eq!(
+        (&lock["retryAfter"], &lock["round"], &lock["knownBrowser"]),
+        (&json!(60), &json!(1), &json!(false))
+    );
+    assert_wait(&login(&a, "carol2", "carol-own-pass").await, 60);
+    // the old name has no account any more: it is a fresh name of its own
+    assert_eq!(login(&a, "carol", "carol-own-pass").await.status, 401);
+    // after the lock: round 2 with three tries; Unlock (by id) also clears a state that is only past round 1
+    advance(&clock, 60);
+    let lock = lock_of(&a, &c, "carol2").await;
+    assert_eq!(
+        (&lock["retryAfter"], &lock["round"], &lock["triesLeft"]),
+        (&json!(0), &json!(2), &json!(3))
+    );
+    let r = post(
+        &a,
+        "/api/users/unlock",
+        Some(&c),
+        &json!({"id": carol}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(lock_of(&a, &c, "carol2").await, Value::Null);
+    // a new account under the name of a deleted, locked one starts at round 1 without a failure of its own
+    let (alice, _) = user(&a, &c, "alice", "user").await;
+    for _ in 0..5 {
+        assert_eq!(login(&a, "alice", "wrong-pass!").await.status, 401);
+    }
+    let r = post(
+        &a,
+        "/api/users/delete",
+        Some(&c),
+        &json!({"id": alice}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let (alice2, _) = user(&a, &c, "alice", "user").await;
+    assert_ne!(alice2, alice, "ids are never reused");
+    assert_eq!(lock_of(&a, &c, "alice").await, Value::Null);
+    // the same for a name that was guessed before any account had it
+    for _ in 0..5 {
+        assert_eq!(login(&a, "dora", "wrong-pass!").await.status, 401);
+    }
+    assert_eq!(login(&a, "dora", "wrong-pass!").await.status, 429);
+    let (_, _) = user(&a, &c, "dora", "user").await;
+    assert_eq!(lock_of(&a, &c, "dora").await, Value::Null);
+}
+
+/// v0.6.5 review: changing your own password ends every session of the account, the current one included; this browser
+/// continues with a new session cookie, so a copied cookie stops working.
+#[tokio::test]
+async fn changing_your_own_password_rotates_the_session() {
+    let a = app();
+    let c = admin(&a).await;
+    let (eve, uc) = user(&a, &c, "eve", "user").await;
+    let copy = uc.clone();
+    let r = post(
+        &a,
+        "/api/auth/password",
+        Some(&uc),
+        &json!({"current": "eve-own-pass", "password": "eve-new-pass"}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let fresh = cookie_of(&r);
+    assert!(fresh.starts_with("xexam_session="), "{fresh}");
+    assert_ne!(fresh, uc);
+    assert_eq!(get(&a, "/api/records", Some(&copy)).await.status, 401);
+    assert_eq!(get(&a, "/api/records", Some(&fresh)).await.status, 200);
+    assert_eq!(
+        count(
+            &raw(&a.db),
+            &format!("SELECT COUNT(*) FROM sessions WHERE user_id={eve}")
+        ),
+        1
+    );
+}
+
+/// Known gap (a) of v0.6: an exam started before its bank was deleted used to be graded and stored with questions that no
+/// longer exist. Now only the questions that still exist count; when none is left nothing is saved (409).
+#[tokio::test]
+async fn an_exam_counts_only_questions_that_still_exist() {
+    let a = app();
+    let c = admin(&a).await;
+    let (uid, uc) = user(&a, &c, "eve", "user").await;
+    let s = &a.store;
+    let (sh, qs) = (
+        vec![dbc::sheet("Cooking", 2)],
+        vec![
+            dbc::single("Cooking", "k1", "Water boils at?", 1),
+            dbc::single("Cooking", "k2", "Salt or sugar?", 2),
+        ],
+    );
+    s.apply_import("legacy.xlsx", &sh, &qs)
+        .expect("legacy bank");
+    let (_, bank2) = s
+        .apply_import_for(ImportTarget::New, "second.xlsx", &sh, &qs)
+        .expect("bank 2")
+        .expect("created");
+    let ids2: Vec<String> = s.bank().expect("bank")["questions"]
+        .as_array()
+        .expect("q")
+        .iter()
+        .filter(|q| q["bank"] == bank2)
+        .map(|q| q["id"].as_str().expect("id").to_string())
+        .collect();
+    // the exam was started (the page holds these questions), then the bank is deleted
+    let r = post(
+        &a,
+        "/api/banks/delete",
+        Some(&c),
+        &json!({"id": bank2, "withRecords": true}).to_string(),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let r = post(
+        &a,
+        "/api/attempt",
+        Some(&uc),
+        &attempt_body(&[(ids2[0].as_str(), false), (ids2[1].as_str(), true)]),
+    )
+    .await;
+    assert_eq!(
+        (r.status.as_u16(), r.error()),
+        (409, MSG_EXAM_QUESTIONS_GONE.to_string())
+    );
+    let db = raw(&a.db);
+    for table in ["attempts", "user_stats"] {
+        assert_eq!(
+            count(
+                &db,
+                &format!("SELECT COUNT(*) FROM {table} WHERE user_id={uid}")
+            ),
+            0,
+            "{table}"
+        );
+    }
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM attempt_items"), 0);
+    // made-up ids are refused the same way
+    let r = post(
+        &a,
+        "/api/attempt",
+        Some(&uc),
+        &attempt_body(&[("made-up-id", false)]),
+    )
+    .await;
+    assert_eq!(r.status, 409);
+    // a mixed exam: only the question that still exists counts, and the answer names the others
+    let r = post(
+        &a,
+        "/api/attempt",
+        Some(&uc),
+        &attempt_body_with_sheets(
+            &[
+                (ids2[0].as_str(), false),
+                ("k1", true),
+                ("made-up-id", false),
+            ],
+            &["Deleted sheet", "Cooking", "Cooking"],
+        ),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let p = r.json();
+    assert_eq!(p["notCounted"], json!([ids2[0], "made-up-id"]));
+    assert_eq!(
+        p["questions"]
+            .as_object()
+            .expect("q")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["k1"]
+    );
+    let rec = &get(&a, "/api/records", Some(&uc)).await.json()["records"][0];
+    assert_eq!(
+        (
+            &rec["total"],
+            &rec["correct"],
+            &rec["percent"],
+            &rec["banks"][0]["id"]
+        ),
+        (&json!(1), &json!(1), &json!(100), &json!(1))
+    );
+    // the record keeps only the sheets of the counted questions (v0.6.5 re-review: the deleted bank's sheet used to stay)
+    assert_eq!(rec["sheets"], json!(["Cooking"]));
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM attempt_items"), 1);
+    // a client that sent no matching sheet name: the record names the sheets of the counted questions
+    let r = post(
+        &a,
+        "/api/attempt",
+        Some(&uc),
+        &attempt_body_with_sheets(&[("k2", true), ("made-up-id", false)], &["Elsewhere"]),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let rec = &get(&a, "/api/records", Some(&uc)).await.json()["records"][0];
+    assert_eq!(rec["sheets"], json!(["Cooking"]));
+    // the progress of /api/progress never carries "notCounted"
+    assert!(get(&a, "/api/progress", Some(&uc))
+        .await
+        .json()
+        .get("notCounted")
+        .is_none());
+    // a retired question (left out of a re-import) still exists and is counted
+    s.apply_import("legacy.xlsx", &sh, &qs[1..])
+        .expect("retire k1");
+    let r = post(
+        &a,
+        "/api/attempt",
+        Some(&uc),
+        &attempt_body(&[("k1", false)]),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert!(r.json().get("notCounted").is_none());
+    // nothing left out: the sheets are stored as sent
+    let r = post(
+        &a,
+        "/api/attempt",
+        Some(&uc),
+        &attempt_body_with_sheets(&[("k2", true)], &["Cooking", "Elsewhere"]),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let rec = &get(&a, "/api/records", Some(&uc)).await.json()["records"][0];
+    assert_eq!(rec["sheets"], json!(["Cooking", "Elsewhere"]));
 }

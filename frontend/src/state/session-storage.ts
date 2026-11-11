@@ -1,7 +1,8 @@
-// The saved (in-progress) exam in localStorage. Nothing read back is trusted: bad data is only dropped or corrected, never throws.
+// The saved (in-progress) exam or practice in localStorage. Nothing read back is trusted: bad data is only dropped or corrected, never throws.
 // Each user has their own saved exam (the key carries the user id, see storage-keys.ts); with nobody signed in nothing is
 // read or written.
-import type { Bank, Mode, Question } from '../types/api.ts';
+import type { AttemptKind, Bank, Mode, Question } from '../types/api.ts';
+import { kindOf } from '../domain/attempt.ts';
 import { stateOf, type Answer } from '../domain/grading.ts';
 import { paths, sessionKey, storageOwner } from './storage-keys.ts';
 
@@ -22,6 +23,10 @@ export interface SavedSession {
   sheets: string[];
   /** How many of the saved questions are no longer in the question bank */
   dropped: number;
+  /** v0.6.5: exam or practice (a save from before v0.6.5 is an exam) */
+  kind: AttemptKind;
+  /** Practice: the questions already checked (only those that still have an answer); always empty for an exam */
+  checked: Set<string>;
 }
 
 export interface SessionToSave {
@@ -32,6 +37,8 @@ export interface SessionToSave {
   elapsedSeconds: number;
   mode: Mode;
   sheets: string[];
+  kind: AttemptKind;
+  checked: Set<string>;
 }
 
 const MODES: readonly string[] = ['all', 'weak', 'retry'];
@@ -43,6 +50,8 @@ export function saveSession(se: SessionToSave): void {
     localStorage.setItem(k, JSON.stringify({
       v: 1, ids: se.qs.map((q) => q.id), answers: se.answers, flags: [...se.flags],
       idx: se.idx, elapsed: Math.floor(se.elapsedSeconds), mode: se.mode, sheets: se.sheets,
+      // v0.6.5 (still format v1: older versions ignore the two keys, a missing kind reads back as an exam)
+      kind: se.kind, checked: se.kind === 'practice' ? [...se.checked] : [],
     }));
   } catch {
     /* If it cannot be saved, so be it */
@@ -117,6 +126,13 @@ export function loadSaved(bank: Bank | null): SavedSession | null {
   const answered = qs.filter((q) => stateOf(q, answers[q.id]) === 2).length;
   const flagsRaw = Array.isArray(d.flags) ? d.flags : [];
   const num = (x: unknown): number => (typeof x === 'number' && Number.isFinite(x) ? Math.trunc(x) : 0);
+  const kind = kindOf(d);
+  // A checked question must still be there and still have an answer (its feedback is drawn from it); otherwise it is open again
+  const checkedRaw = kind === 'practice' && Array.isArray(d.checked) ? d.checked : [];
+  const checked = new Set(checkedRaw.filter((id): id is string => {
+    const cq = typeof id === 'string' && keep.has(id) ? byId.get(id) : undefined;
+    return !!cq && stateOf(cq, answers[cq.id]) > 0;
+  }));
 
   return {
     qs, answers, answered,
@@ -126,5 +142,7 @@ export function loadSaved(bank: Bank | null): SavedSession | null {
     mode: typeof d.mode === 'string' && MODES.includes(d.mode) ? (d.mode as Mode) : 'all',
     sheets: Array.isArray(d.sheets) ? d.sheets.filter((s): s is string => typeof s === 'string') : [],
     dropped: (d.ids as unknown[]).length - qs.length,
+    kind,
+    checked,
   };
 }

@@ -1,23 +1,29 @@
-// Quiz page: question stem + options / hotspot sub-items, Japanese/Chinese/English switch, answer sheet, timer, keyboard. Correctness is not shown while answering.
+// Quiz page: question stem + options / hotspot sub-items, the English / 中文 / 日本語 switch, answer sheet, timer, keyboard.
+// Two kinds (v0.6.5):
+//   · exam: correctness is not shown while answering; Submit grades everything at the end;
+//   · practice: immediate feedback. A single-choice question is checked as soon as an option is chosen, multiple-choice and
+//     hotspot questions have a "Check answer" button. A checked question is locked and shows right / wrong, the correct
+//     answer, the explanation and the memory aid (in the language of the page's switch); the answer sheet marks it right or
+//     wrong. "Finish practice" saves it like an exam (kind "practice"). Auto-advance does not apply.
 import '../styles/quiz.css';
-import { stateOf, type Answer } from '../domain/grading.ts';
-import { hasLang, shown, type Lang } from '../domain/language.ts';
+import { canCheck, checksOnPick, practiceCounts, practiceMark, type PracticeMark } from '../domain/practice.ts';
+import { grade, stateOf, type Answer } from '../domain/grading.ts';
+import { htmlLang, shown } from '../domain/language.ts';
 import { kindLabel } from '../components/common.ts';
+import { langSwitch } from '../components/lang-switch.ts';
+import { answerReview, explainBlocks } from '../components/review.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
-import { S } from '../state/store.ts';
+import { S, type Session } from '../state/store.ts';
 import {
-  elapsed, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setQuestionLang, submit, toggleFlag,
+  checkAnswer, elapsed, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setQuestionLang, submit, toggleFlag,
 } from '../state/actions.ts';
-import { h, paras } from '../utils/dom.ts';
+import { h, paras, svgMark } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
-import { toast } from '../utils/toast.ts';
 
-/** Names of the question languages, in the current UI language */
-const LANG_NAME: Record<Lang, MsgKey> = { en: 'quiz.lang.en', zh: 'quiz.lang.zh', ja: 'quiz.lang.ja' };
-/** Why a language button is unavailable (the question lacks that language): its tooltip, and the toast shown when it is tapped */
-const LANG_MISSING: Record<Exclude<Lang, 'ja'>, MsgKey> = { zh: 'quiz.lang.noZh', en: 'quiz.lang.noEn' };
-/** Answer state of a question (stateOf: 0 = open, 1 = hotspot partly answered, 2 = answered) */
+/** Answer state of a question in an exam (stateOf: 0 = open, 1 = hotspot partly answered, 2 = answered) */
 const TILE_STATE: readonly MsgKey[] = ['quiz.tile.open', 'quiz.tile.part', 'quiz.tile.done'];
+/** State of a question in a practice */
+const PRACTICE_TILE: Record<PracticeMark, MsgKey> = { open: 'quiz.tile.unchecked', right: 'quiz.tile.right', wrong: 'quiz.tile.wrong' };
 
 /** The data-focus key of the focused control: after a redraw (next question, language switch) the same control gets the focus back */
 function focusedKey(): string | null {
@@ -34,38 +40,76 @@ function restoreFocus(root: HTMLElement, key: string | null): void {
   });
 }
 
+/**
+ * Practice: the checked questions whose feedback was already shown. A question checked since the last drawing gets the focus
+ * on its verdict, so a screen reader reads "Correct" / "Wrong" at once (the redraw would otherwise drop the focus). A
+ * continued practice starts with every checked question as already shown.
+ */
+let announcedFor: Session | null = null;
+const announced = new Set<string>();
+
+function freshlyChecked(se: Session, id: string): boolean {
+  if (announcedFor !== se) {
+    announcedFor = se;
+    announced.clear();
+    for (const x of se.checked) announced.add(x);
+  }
+  if (!se.checked.has(id) || announced.has(id)) return false;
+  announced.add(id);
+  return true;
+}
+
 export function renderQuiz(): HTMLElement {
   const se = S.session;
   if (!se) return h('div', { class: 'wrap' });
   const q = se.qs[se.idx];
   if (!q) return h('div', { class: 'wrap' });
   const n = se.qs.length;
+  const practice = se.kind === 'practice';
+  const checked = practice && se.checked.has(q.id);
+  const fresh = practice && freshlyChecked(se, q.id);
   const keep = focusedKey();
   resetRefreshers();
 
   const answerOf = (id: string): Answer => se.answers[id];
-  const answeredNow = (): number => se.qs.filter((x) => stateOf(x, answerOf(x.id)) === 2).length;
   const meterFill = h('i');
   const railCount = h('span', { class: 'num' });
   onRefresh(() => {
-    const a = answeredNow();
-    meterFill.style.width = (100 * a) / n + '%';
-    railCount.textContent = t('quiz.answered', { a, n });
+    if (practice) {
+      const c = practiceCounts(se.qs, se.answers, se.checked);
+      meterFill.style.width = (100 * c.checked) / n + '%';
+      railCount.textContent = t('quiz.practice.count', { c: c.checked, n, r: c.right });
+    } else {
+      const a = se.qs.filter((x) => stateOf(x, answerOf(x.id)) === 2).length;
+      meterFill.style.width = (100 * a) / n + '%';
+      railCount.textContent = t('quiz.answered', { a, n });
+    }
   });
 
-  // If the requested language is unavailable for this question (it does not match the Japanese structure), fall back to Japanese instead of showing misaligned content
+  // If the requested language is unavailable for this question (it does not line up with the base text), fall back to the
+  // question's base language instead of showing misaligned content
   const view = shown(q, S.settings.questionLang);
-  const lang = view.lang;
-  const stemText = view.stem;
+  const lang = htmlLang(view.lang);
 
   let body: HTMLElement;
-  if (q.kind === 'hotspot') {
+  let feedback: HTMLElement | null = null;
+  let verdictEl: HTMLElement | null = null;
+  if (checked) {
+    // Practice, checked: the options marked right / wrong (like the review cards), then the verdict and the explanation
+    const ans = answerOf(q.id);
+    const ok = grade(q, ans);
+    const parts = answerReview(q, view, ans, ok);
+    body = parts.body;
+    verdictEl = h('p', { class: 'pverdict ' + (ok ? 'ok' : 'ng'), tabindex: '-1' }, svgMark(ok), ok ? t('quiz.practice.right') : t('quiz.practice.wrong'));
+    feedback = h('div', { class: 'pfeed' }, verdictEl, parts.verdict, explainBlocks(q, view.lang));
+  } else if (q.kind === 'hotspot') {
     body = h('div', { class: 'hs' }, q.items.map((it, i) => h('div', { class: 'hs-item' },
       h('span', { class: 'hs-no' }, i + 1),
       h('p', { lang, class: 'pre' }, view.itemText(i)),
       h('div', { class: 'chips', role: 'group', 'aria-label': t('quiz.item', { i: i + 1 }) }, it.choices.map((_, j) => {
         const btn = h('button', { class: 'chip', type: 'button', 'aria-pressed': 'false', onclick: () => pickItem(q, i, j) },
-          h('span', { class: 'dot' }), h('span', { lang: view.choiceLang(i, j) }, view.choiceText(i, j))); // choices use what the current-language column wrote (是 / 否, Yes / No); if nothing is written, use the Japanese one
+          // choices use what the current-language column wrote (是 / 否, Yes / No); if nothing is written, the base language's
+          h('span', { class: 'dot' }), h('span', { lang: htmlLang(view.choiceLang(i, j)) }, view.choiceText(i, j)));
         onRefresh(() => {
           const a = answerOf(q.id);
           btn.setAttribute('aria-pressed', String(Array.isArray(a) && a[i] === j));
@@ -74,9 +118,8 @@ export function renderQuiz(): HTMLElement {
       })))));
   } else {
     body = h('div', { class: 'opts' + (q.kind === 'multi' ? ' multi' : ''), role: 'group', 'aria-label': t('quiz.options') }, q.options.map((o, i) => {
-      const text = view.optionText(i);
       const btn = h('button', { class: 'opt', type: 'button', 'aria-pressed': 'false', onclick: () => pick(q, o.key) },
-        h('span', { class: 'bubble' }, o.key), h('span', { class: 't', lang }, text));
+        h('span', { class: 'bubble' }, o.key), h('span', { class: 't', lang }, view.optionText(i)));
       onRefresh(() => {
         const a = answerOf(q.id);
         btn.setAttribute('aria-pressed', String(Array.isArray(a) && a.includes(o.key)));
@@ -85,45 +128,60 @@ export function renderQuiz(): HTMLElement {
     }));
   }
 
-  // A language the question lacks stays focusable and tappable (aria-disabled, not disabled): a tap says why in a toast,
-  // because phones never show the title tooltip and a disabled button would silently ignore the tap
-  const langBtn = (code: Lang): HTMLElement => {
-    const missing = code === 'ja' || hasLang(q, code) ? null : t(LANG_MISSING[code]);
-    return h('button', {
-      class: 'lang-btn', type: 'button', 'aria-pressed': String(lang === code), 'data-focus': `lang-${code}`,
-      'aria-disabled': missing ? 'true' : null,
-      title: missing,
-      onclick: () => (missing ? toast(missing) : setQuestionLang(code)),
-    }, t(LANG_NAME[code]));
-  };
-  const langSwitch = h('div', { class: 'lang', role: 'group', 'aria-label': t('quiz.lang.label') }, langBtn('en'), langBtn('zh'), langBtn('ja'));
-
   const flagBtn = h('button', {
     class: 'btn flagbtn', type: 'button', 'aria-pressed': 'false', 'data-focus': 'q-flag', title: t('quiz.flag.hint'), onclick: () => toggleFlag(q),
   }, t('quiz.flag'));
   onRefresh(() => flagBtn.setAttribute('aria-pressed', String(se.flags.has(q.id))));
 
+  // Practice, multiple choice / hotspot, not checked yet: "Check answer", usable once something is chosen. It is the main
+  // action of the question until it is used; Next / Finish then take over.
+  let checkBtn: HTMLButtonElement | null = null;
+  if (practice && !checked && !checksOnPick(q)) {
+    const btn = h('button', { class: 'btn primary', type: 'button', 'data-focus': 'q-check', onclick: () => checkAnswer(q) }, t('quiz.practice.check'));
+    onRefresh(() => {
+      btn.disabled = !canCheck(q, answerOf(q.id), se.checked.has(q.id));
+    });
+    checkBtn = btn;
+  }
   const last = se.idx === n - 1;
+  const finishLabel = practice ? t('quiz.practice.finish') : t('quiz.submit');
+  const nextCls = checkBtn ? 'btn' : 'btn primary';
   const paper = h('article', { class: 'paper' },
-    h('div', { class: 'phead' }, h('span', { class: 'badge' }, kindLabel(q)), h('span', null, q.sheet), langSwitch),
-    h('div', { class: 'stem' }, paras(stemText, undefined, lang)),
+    h('div', { class: 'phead' },
+      h('span', { class: 'badge' }, kindLabel(q)),
+      h('span', null, q.sheet),
+      langSwitch(q, view.lang, (l) => setQuestionLang(l), { focusKey: 'lang' })),
+    h('div', { class: 'stem' }, paras(view.stem, undefined, lang)),
     body,
+    feedback,
     h('div', { class: 'pfoot' },
       h('div', { class: 'grp' },
         h('button', { class: 'btn', type: 'button', disabled: se.idx === 0, 'data-focus': 'q-prev', onclick: () => go(se.idx - 1) }, t('quiz.prev')),
+        checkBtn,
         last
-          ? h('button', { class: 'btn primary', type: 'button', 'data-focus': 'q-next', onclick: () => void submit() }, t('quiz.submit'))
-          : h('button', { class: 'btn primary', type: 'button', 'data-focus': 'q-next', onclick: () => go(se.idx + 1) }, t('quiz.next'))),
+          ? h('button', { class: nextCls, type: 'button', 'data-focus': 'q-next', onclick: () => void submit() }, finishLabel)
+          : h('button', { class: nextCls, type: 'button', 'data-focus': 'q-next', onclick: () => go(se.idx + 1) }, t('quiz.next'))),
       flagBtn));
 
   const tiles = h('div', { class: 'tiles' }, se.qs.map((x, i) => {
     const tile = h('button', { class: 'tile num', type: 'button', 'data-focus': `tile-${i}`, onclick: () => go(i) }, String(i + 1));
     onRefresh(() => {
-      const st = stateOf(x, answerOf(x.id));
+      const a = answerOf(x.id);
       const fl = se.flags.has(x.id);
       const cur = i === se.idx;
-      tile.className = 'tile num' + (st === 2 ? ' done' : st === 1 ? ' part' : '') + (cur ? ' cur' : '') + (fl ? ' flag' : '');
-      const parts = [t('quiz.tile.q', { i: i + 1 }), t(TILE_STATE[st] ?? 'quiz.tile.open')];
+      let cls: string;
+      let state: MsgKey;
+      if (practice) {
+        const mark = practiceMark(x, a, se.checked.has(x.id));
+        cls = mark === 'right' ? ' ok' : mark === 'wrong' ? ' ng' : '';
+        state = PRACTICE_TILE[mark];
+      } else {
+        const st = stateOf(x, a);
+        cls = st === 2 ? ' done' : st === 1 ? ' part' : '';
+        state = TILE_STATE[st] ?? 'quiz.tile.open';
+      }
+      tile.className = 'tile num' + cls + (cur ? ' cur' : '') + (fl ? ' flag' : '');
+      const parts = [t('quiz.tile.q', { i: i + 1 }), t(state)];
       if (fl) parts.push(t('quiz.tile.flagged'));
       if (cur) parts.push(t('quiz.tile.current'));
       tile.setAttribute('aria-label', parts.join(t('quiz.tile.sep')));
@@ -133,16 +191,24 @@ export function renderQuiz(): HTMLElement {
     return tile;
   }));
 
-  const rail = h('aside', { class: 'rail', 'aria-labelledby': 'rail-h' },
-    h('h2', { id: 'rail-h' }, t('quiz.sheet')),
-    tiles,
-    h('div', { class: 'legend' },
+  const legend = practice
+    ? h('div', { class: 'legend' },
+      h('span', null, h('i', { class: 'ok' }), t('quiz.legend.right')),
+      h('span', null, h('i', { class: 'ng' }), t('quiz.legend.wrong')),
+      h('span', null, h('i'), t('quiz.legend.unchecked')),
+      h('span', null, h('i', { class: 'flag' }), t('quiz.legend.flag')))
+    : h('div', { class: 'legend' },
       h('span', null, h('i', { class: 'done' }), t('quiz.legend.done')),
       h('span', null, h('i', { class: 'part' }), t('quiz.legend.part')),
       h('span', null, h('i'), t('quiz.legend.open')),
-      h('span', null, h('i', { class: 'flag' }), t('quiz.legend.flag'))),
+      h('span', null, h('i', { class: 'flag' }), t('quiz.legend.flag')));
+
+  const rail = h('aside', { class: 'rail', 'aria-labelledby': 'rail-h' },
+    h('h2', { id: 'rail-h' }, t('quiz.sheet')),
+    tiles,
+    legend,
     h('p', { class: 'rail-count' }, railCount),
-    h('button', { class: 'btn primary', type: 'button', 'data-focus': 'rail-submit', onclick: () => void submit() }, t('quiz.submit')),
+    h('button', { class: 'btn primary', type: 'button', 'data-focus': 'rail-submit', onclick: () => void submit() }, finishLabel),
     h('p', { class: 'keys' }, t('quiz.keys.nav'), h('br'), t('quiz.keys.pick')));
 
   const timerEl = h('span', { class: 'timer num', id: 'timer' }, fmtTime(elapsed()));
@@ -150,23 +216,32 @@ export function renderQuiz(): HTMLElement {
     timerEl.textContent = fmtTime(elapsed());
   }, 1000);
 
-  // Auto-advance (a setting): a small reminder in the top bar, so a jump to the next question does not come as a surprise
-  const autoTag = S.settings.autoAdvance
+  // Auto-advance (a setting, exams only): a small reminder in the top bar, so a jump to the next question does not come as a surprise
+  const autoTag = !practice && S.settings.autoAdvance
     ? h('span', { class: 'qauto', title: t('quiz.auto.hint') }, h('span', { class: 'qauto-dot', 'aria-hidden': 'true' }), t('quiz.auto.on'))
     : null;
+  // Practice: a tag next to the position, so it is clear that answers are checked one by one
+  const kindTag = practice ? h('span', { class: 'tag b qkind', title: t('quiz.practice.hint') }, t('quiz.practice.tag')) : null;
 
   runRefreshers();
 
-  const root = h('div', { class: 'wrap' },
+  const root = h('div', { class: 'wrap' + (practice ? ' practice' : '') },
     h('div', { class: 'qbar' },
-      h('h1', { class: 'l' }, h('b', { class: 'num' }, t('quiz.position', { i: se.idx + 1 })), h('span', { class: 'dim num' }, t('quiz.of', { n }))),
+      h('h1', { class: 'l' }, h('b', { class: 'num' }, t('quiz.position', { i: se.idx + 1 })), h('span', { class: 'dim num' }, t('quiz.of', { n })), kindTag),
       h('div', { class: 'r' },
         autoTag,
         h('span', { class: 'qtime', title: t('quiz.time') }, h('span', { class: 'sr-only' }, t('quiz.time')), timerEl),
-        h('button', { class: 'btn quiet', type: 'button', title: t('quiz.saveExit.hint'), onclick: leaveQuiz }, t('quiz.saveExit')))),
+        h('button', { class: 'btn quiet', type: 'button', title: t(practice ? 'quiz.saveExit.hintPractice' : 'quiz.saveExit.hint'), onclick: leaveQuiz }, t('quiz.saveExit')))),
     h('div', { class: 'meter', 'aria-hidden': 'true' }, meterFill),
     h('div', { class: 'quiz-grid' }, paper, rail));
-  restoreFocus(root, keep);
+  if (fresh && verdictEl) {
+    const v = verdictEl;
+    queueMicrotask(() => {
+      if (v.isConnected) v.focus({ preventScroll: true });
+    });
+  } else {
+    restoreFocus(root, keep);
+  }
   return root;
 }
 
@@ -189,6 +264,7 @@ export function installQuizKeys(): void {
     } else if (e.key === 'm' || e.key === 'M') {
       toggleFlag(q);
     } else if (/^[a-hA-H]$/.test(e.key) && q.kind !== 'hotspot') {
+      // pick() ignores a checked (locked) practice question; in a practice it checks a single-choice question at once
       const k = e.key.toUpperCase();
       if (q.options.some((o) => o.key === k)) pick(q, k);
     }

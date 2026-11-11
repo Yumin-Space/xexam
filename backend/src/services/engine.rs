@@ -8,10 +8,15 @@
 //! v0.6: study records, statistics and settings belong to a user, so those methods take `user`, the id of the signed-in user
 //! (the API layer passes it from the session; it is never taken from the request body). Accounts and sessions are not part of
 //! this trait: the API layer handles them with the real `Store` directly, so no test engine can stand in for them.
+//!
+//! v0.6.5: question banks per user and bank owners. The `*_as` methods take the request's [`Viewer`] (built by the API layer
+//! from the session, never from the request body) and are the ones the API layer calls. Their defaults serve a viewer who
+//! sees and manages everything (an administrator) through the older methods, so fake engines written for v0.6 keep working
+//! for administrators; anything narrower returns `DbError::Unsupported` there (never silently "everything").
 use crate::database::Store;
 use crate::error::{DbError, ImportError};
 use crate::models::{
-    Attempt, DeletedBank, ImportRecord, ImportTarget, ParsedSheet, ParsedWorkbook, Question,
+    Attempt, DeletedBank, ImportRecord, ImportTarget, ParsedSheet, ParsedWorkbook, Question, Viewer,
 };
 use crate::parser;
 use serde_json::Value;
@@ -120,6 +125,101 @@ pub trait Engine: Send + Sync + 'static {
         _answers: &[Option<Value>],
     ) -> Result<Value, DbError> {
         self.record_attempt(user, attempt)
+    }
+
+    // ---- v0.6.5 ----
+
+    /// `GET /api/bank` limited to the banks `v` may see.
+    fn bank_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        if v.scope.is_all() {
+            self.bank()
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// `GET /api/banks` as `v` sees it (visible banks only, with owners and `manageable`).
+    fn banks_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        if v.admin {
+            self.banks()
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// `GET /api/progress` of `v.user`, with the statistics of visible banks only.
+    fn progress_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        if v.scope.is_all() {
+            self.progress(v.user)
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// `GET /api/record?id=` of `v.user` (questions of banks they cannot see show as deleted).
+    fn record_as(&self, v: &Viewer, id: i64) -> Result<Option<Value>, DbError> {
+        if v.scope.is_all() {
+            self.record(v.user, id)
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// `POST /api/attempt` of `v.user` (questions of banks they cannot see are not counted; `attempt.kind` is stored).
+    fn record_attempt_as(
+        &self,
+        v: &Viewer,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+    ) -> Result<Value, DbError> {
+        if v.scope.is_all() {
+            self.record_attempt_with_answers(v.user, attempt, answers)
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// `GET /api/imports` as `v` sees it (a bank manager: the history of their own banks).
+    fn import_history_as(&self, v: &Viewer, limit: i64) -> Result<Vec<ImportRecord>, DbError> {
+        if v.admin {
+            self.import_history(limit)
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// Before parsing an upload: `Ok(true)` = `v` may import into `target`, `Ok(false)` = the bank does not exist,
+    /// `Err(DbError::NotBankOwner)` = they may not update it.
+    fn check_import_target(&self, v: &Viewer, target: ImportTarget) -> Result<bool, DbError> {
+        if !v.admin {
+            return Err(DbError::Unsupported);
+        }
+        match target {
+            ImportTarget::Bank(id) => self.bank_exists(id),
+            ImportTarget::Legacy | ImportTarget::New => Ok(true),
+        }
+    }
+    /// The confirmed import, written as `v` (owner of a new bank; the owner check of an update runs inside the write).
+    fn apply_import_as(
+        &self,
+        v: &Viewer,
+        target: ImportTarget,
+        filename: &str,
+        sheets: &[ParsedSheet],
+        questions: &[Question],
+    ) -> Result<Option<(Value, i64)>, DbError> {
+        if v.admin {
+            self.apply_import_for(target, filename, sheets, questions)
+        } else {
+            Err(DbError::Unsupported)
+        }
+    }
+    /// `POST /api/banks/delete` as `v` (a bank manager: only their own banks, and only their own records go with it).
+    fn delete_bank_as(
+        &self,
+        v: &Viewer,
+        id: i64,
+        with_records: bool,
+    ) -> Result<Option<DeletedBank>, DbError> {
+        if v.admin {
+            self.delete_bank(id, with_records)
+        } else {
+            Err(DbError::Unsupported)
+        }
     }
 }
 
@@ -236,5 +336,51 @@ impl Engine for RealEngine {
     ) -> Result<Value, DbError> {
         self.store
             .record_attempt_with_answers(user, attempt, answers)
+    }
+    fn bank_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        self.store.bank_as(&v.scope)
+    }
+    fn banks_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        self.store.banks_as(v)
+    }
+    fn progress_as(&self, v: &Viewer) -> Result<Value, DbError> {
+        self.store.progress_as(v.user, &v.scope)
+    }
+    fn record_as(&self, v: &Viewer, id: i64) -> Result<Option<Value>, DbError> {
+        self.store.record_as(v.user, &v.scope, id)
+    }
+    fn record_attempt_as(
+        &self,
+        v: &Viewer,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+    ) -> Result<Value, DbError> {
+        self.store
+            .record_attempt_as(v.user, &v.scope, attempt, answers)
+    }
+    fn import_history_as(&self, v: &Viewer, limit: i64) -> Result<Vec<ImportRecord>, DbError> {
+        self.store.import_history_as(v, limit)
+    }
+    fn check_import_target(&self, v: &Viewer, target: ImportTarget) -> Result<bool, DbError> {
+        self.store.check_import_target(v, target)
+    }
+    fn apply_import_as(
+        &self,
+        v: &Viewer,
+        target: ImportTarget,
+        filename: &str,
+        sheets: &[ParsedSheet],
+        questions: &[Question],
+    ) -> Result<Option<(Value, i64)>, DbError> {
+        self.store
+            .apply_import_as(v, target, filename, sheets, questions)
+    }
+    fn delete_bank_as(
+        &self,
+        v: &Viewer,
+        id: i64,
+        with_records: bool,
+    ) -> Result<Option<DeletedBank>, DbError> {
+        self.store.delete_bank_as(v, id, with_records)
     }
 }

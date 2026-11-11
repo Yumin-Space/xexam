@@ -1,6 +1,7 @@
 /* Xexam - colours from GitHub's colour-blind friendly palettes (Primer "Light colorblind" / "Dark colorblind"),
    calm document-style layout.
-   Grading uses blue for correct and orange for wrong (as those themes do), so it does not depend on telling red from green.
+   Grading (v0.7, owner): green for correct and orange for wrong (Primer's green and "severe" orange, the --answer-* tokens),
+   always with a word, a mark or a tag as well, so it does not depend on telling the colours apart.
    Themes: light (default), dark (data-theme="dark", or "follow system" when the system is dark). Every colour below is a token.
    Layout language: one calm sheet as the page, soft blocks with a hairline instead of boxed frames, rows separated by
    hairlines inside a block, soft hover fills, small tinted tags and callouts. Radii 6 / 8 / 10 / 12, spacing 4 / 8 / 12 / 16 / 24.
@@ -55,11 +56,41 @@
   /* Edges that must stay visible (at least 3:1): the palette's grey of --hover / --ink3, at full strength */
   --field-line: #818B98;                      /* border of a text / number / date field or a select; the switch track when off */
   --seg-on-line: #818B98;                     /* edge of the selected chip of a segmented control */
+  /* Graded answers (owner, v0.7): a correct answer is GREEN (GitHub Primer's green, the colour of its "Code" button) and a
+     wrong one ORANGE (Primer's "severe" orange scale), never red. These tokens are for answers only: the danger colour of
+     delete buttons, error messages and form checks (--wrong / --wrong-soft / --ng-line above) is separate and unchanged.
+       · solid keys (a graded option, the practice verdict, a practice answer-sheet cell, a hotspot choice in a review):
+         --answer-right-solid / --answer-wrong-solid with white text (--on-answer-solid). White on the green 4.52:1 (one
+         value in both themes); white on the orange 5.03:1 (light) and 4.65:1 (dark, #BD561D);
+       · letters and tags on a block: --answer-right (green, 5.08:1 on a light block, 6.82:1 on a dark one) and
+         --answer-wrong (orange, 5.03:1 / 6.84:1), the tags on --answer-wrong-soft;
+       · -hover / -active: one and two steps darker on the same Primer scale (the Start buttons of Home use them). */
+  --answer-right: #1A7F37;
+  --answer-right-solid: #1F883D;
+  --answer-right-solid-hover: #1A7F37;
+  --answer-right-solid-active: #116329;
+  --answer-wrong: #BC4C00;
+  --answer-wrong-soft: #FFF1E5;
+  --answer-wrong-solid: #BC4C00;
+  --answer-wrong-solid-hover: #953800;
+  --answer-wrong-solid-active: #762C00;
+  --on-answer-solid: #FFFFFF;
+  /* Home (owner, v0.7): Start exam is a solid green button and Start practice a solid orange one (the answer colours, also
+     in the dark theme, where the orange tokens above are redefined) */
+  --go-exam: var(--answer-right-solid);
+  --go-exam-hover: var(--answer-right-solid-hover);
+  --go-exam-active: var(--answer-right-solid-active);
+  --go-practice: var(--answer-wrong-solid);
+  --go-practice-hover: var(--answer-wrong-solid-hover);
+  --go-practice-active: var(--answer-wrong-solid-active);
 
   --en: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, "Microsoft YaHei UI", "Yu Gothic UI", sans-serif;
   --jp: "Yu Gothic UI", "Yu Gothic", "Meiryo UI", "Meiryo", "Hiragino Sans", "Noto Sans JP", sans-serif;
   --zh: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans SC", sans-serif;
   --num: "Bahnschrift", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
+  /* Log lines and commands (v0.7): a monospace face for Latin text, the CJK text faces after it (no generic "monospace":
+     it would pick a poor CJK fallback) */
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, "Microsoft YaHei UI", "Yu Gothic UI", sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -108,6 +139,12 @@
     --shadow-pop: 0 0 0 1px #3D444D, 0 6px 12px -3px rgba(1, 4, 9, .4), 0 6px 18px rgba(1, 4, 9, .4);
     --field-line: #656C76;
     --seg-on-line: #9198A1;
+    --answer-right: #3FB950;
+    --answer-wrong: #F0883E;
+    --answer-wrong-soft: rgba(219, 109, 40, .15);
+    --answer-wrong-solid: #BD561D;
+    --answer-wrong-solid-hover: #9B4215;
+    --answer-wrong-solid-active: #762D0A;
   }
 }
 :root[data-theme="dark"] {
@@ -155,6 +192,12 @@
   --shadow-pop: 0 0 0 1px #3D444D, 0 6px 12px -3px rgba(1, 4, 9, .4), 0 6px 18px rgba(1, 4, 9, .4);
   --field-line: #656C76;
   --seg-on-line: #9198A1;
+  --answer-right: #3FB950;
+  --answer-wrong: #F0883E;
+  --answer-wrong-soft: rgba(219, 109, 40, .15);
+  --answer-wrong-solid: #BD561D;
+  --answer-wrong-solid-hover: #9B4215;
+  --answer-wrong-solid-active: #762D0A;
 }
 
 * { box-sizing: border-box; }
@@ -278,7 +321,9 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .nav-who { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 6px 10px 4px; font-size: 13px; color: var(--ink2); }
 .nav-who .ico { width: 18px; height: 18px; flex: none; color: var(--ink3); }
 .nav-who-name { min-width: 0; max-width: 14em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }
-.nav-who .tag { flex: none; margin-left: auto; font-size: 11.5px; line-height: 1.6; }
+/* The role tag (and "Bank manager", v0.7) on the right; the name gives way with an ellipsis */
+.nav-who-tags { flex: none; display: inline-flex; gap: 4px; margin-left: auto; }
+.nav-who .tag { font-size: 11.5px; line-height: 1.6; }
 .nav-signout { width: 100%; border: 0; background: transparent; text-align: left; cursor: pointer; }
 
 /* Page heading */
@@ -338,11 +383,11 @@ input, select, textarea { font: inherit; color: var(--ink); }
 
 fieldset { border: 0; padding: 0; margin: 0 0 20px; min-width: 0; }
 legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
-/* A count tag (red: wrong answers to review). Its tint sits on an opaque card base, so a hover fill or a tinted row
-   under it never adds up and lowers the contrast of the red number. */
+/* A count tag (orange: wrong answers to review). Its tint sits on an opaque card base, so a hover fill or a tinted row
+   under it never adds up and lowers the contrast of the orange number. */
 .chipnum {
-  font: 500 12.5px/1.7 var(--num), var(--en); color: var(--wrong); padding: 0 6px; border-radius: 4px; white-space: nowrap;
-  background-color: var(--card); background-image: linear-gradient(var(--wrong-soft), var(--wrong-soft));
+  font: 500 12.5px/1.7 var(--num), var(--en); color: var(--answer-wrong); padding: 0 6px; border-radius: 4px; white-space: nowrap;
+  background-color: var(--card); background-image: linear-gradient(var(--answer-wrong-soft), var(--answer-wrong-soft));
 }
 .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-bottom: 20px; }
 .inline label { display: inline-flex; align-items: center; gap: 8px; }
@@ -350,11 +395,13 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .inline input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--print); }
 
 /* ---------- Tags ----------
-   Small, square-ish (radius 4px), soft background, no border. .g green, .r red, .b print blue, .k neutral. */
+   Small, square-ish (radius 4px), soft background, no border. .g right (blue), .r the danger colour (for example a
+   disabled account), .ng a wrong answer (orange), .b print blue, .k neutral. */
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { display: inline-block; font-size: 12.5px; font-weight: 500; line-height: 1.7; padding: 0 6px; border-radius: 4px; background: var(--fill); color: var(--ink2); white-space: nowrap; }
 .tag.g { color: var(--right); background: var(--right-soft); }
 .tag.r { color: var(--wrong); background: var(--wrong-soft); }
+.tag.ng { color: var(--answer-wrong); background: var(--answer-wrong-soft); }
 .tag.b { color: var(--print); background: var(--print-soft); }
 .tag.k { color: var(--ink2); background: var(--fill); }
 
@@ -443,7 +490,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 /* A tag (question kind, verdict) */
 .badge { display: inline-block; padding: 0 6px; border: 0; border-radius: 4px; background: var(--print-soft); color: var(--print); font-weight: 500; font-size: 12.5px; line-height: 1.7; white-space: nowrap; }
 .badge.ok { color: var(--right); background: var(--right-soft); }
-.badge.ng { color: var(--wrong); background: var(--wrong-soft); }
+.badge.ng { color: var(--answer-wrong); background: var(--answer-wrong-soft); }
 
 /* ---------- Segmented control ----------
    A soft track (radius 8px, 2px padding); the selected option is a raised chip with a visible edge (--seg-on-line, at
@@ -516,15 +563,9 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .flagbtn[aria-pressed="true"] { background: var(--mnemo-bg); border-color: var(--ink2); }
 .flagbtn[aria-pressed="true"]::before { background: var(--mark); border-color: var(--ink2); }
 
-/* The translation fold: a quiet toggle line; its text opens under a hairline on the left */
-.tr { margin-top: 14px; border: 0; padding: 0; background: none; }
-.tr summary {
-  display: list-item; max-width: max-content; margin-left: -8px; padding: 4px 8px; border-radius: 6px;
-  cursor: pointer; font-size: 14px; font-weight: 400; color: var(--ink2);
-  transition: background-color .12s ease;
-}
-@media (hover: hover) { .tr summary:hover { background: var(--hover); color: var(--ink); } }
-.tr .pre { margin: 6px 0 0 4px; padding-left: 14px; border-left: 2px solid var(--line-soft); line-height: 1.85; }
+/* (v0.6.5: the "Chinese translation" fold of the review cards is gone; every card has the English / 中文 / 日本語 switch) */
+/* A review card's language switch keeps its three buttons together: when the heading row is full it wraps as a whole */
+.rv .phead .lang { flex: none; }
 
 /* The answer sheet: a soft block beside the question */
 .rail { position: sticky; top: 16px; background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px 18px; box-shadow: var(--shadow-xs); }
@@ -568,15 +609,15 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 }
 @media (hover: hover) {
   .strip button:hover { border-color: var(--line); background-image: linear-gradient(var(--hover), var(--hover)); }
-  /* a wrong key keeps its plain tint (the hover fill on it would take the red number under 4.5:1); the border shows the hover */
+  /* a wrong key keeps its plain tint (the hover fill on it would take the orange number under 4.5:1); the border shows the hover */
   .strip .ng:hover { background-image: none; }
 }
 .strip .n { font: 600 11.5px var(--num); color: var(--ink3); }
 .strip svg { width: 20px; height: 20px; }
 .strip .ok svg { stroke: var(--right); }
-.strip .ng svg { stroke: var(--wrong); }
-.strip .ng { background: var(--wrong-soft); border-color: transparent; }
-.strip .ng .n { color: var(--wrong); }
+.strip .ng svg { stroke: var(--answer-wrong); }
+.strip .ng { background: var(--answer-wrong-soft); border-color: transparent; }
+.strip .ng .n { color: var(--answer-wrong); }
 
 .rvhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .rvhead h2 { font-size: 18px; font-weight: 600; }
@@ -585,35 +626,49 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
    (orange wrong, blue right). Its top follows the block's top padding (28px; 20px on narrow screens; 16px on a gone card). */
 .rv { margin-bottom: 16px; scroll-margin-top: 16px; }
 .rv .paper { position: relative; }
-.rv .paper::before { content: ""; position: absolute; left: -1px; top: 28px; width: 3px; height: 22px; border-radius: 0 3px 3px 0; background: var(--wrong); }
+.rv .paper::before { content: ""; position: absolute; left: -1px; top: 28px; width: 3px; height: 22px; border-radius: 0 3px 3px 0; background: var(--answer-wrong); }
 .rv.rv-gone .paper::before { top: 16px; }
 .rv.good .paper::before { background: var(--right); }
-/* "Your answer / Correct answer": a plain line under the options (the callouts below carry the tint) */
+/* "Your answer / Correct answer": a plain line under the options (the callouts below carry the tint). Its letters follow
+   the options (v0.7, owner): the correct answer green (.r), your answer green when it was right (.r) and orange when it
+   was wrong (.w); the hotspot line ("1 of 2 items correct") colours its number the same way */
 .verdict { margin: 14px 0 0; padding: 0 2px; font-size: 15px; line-height: 1.7; }
 .verdict b { font-family: var(--num), var(--en); }
-.verdict .w { color: var(--wrong); font-weight: 700; }
-.verdict .r { color: var(--right); font-weight: 700; }
+.verdict .w { color: var(--answer-wrong); font-weight: 700; }
+.verdict .r { color: var(--answer-right); font-weight: 700; }
 
 .opt.review { cursor: default; }
 @media (hover: hover) { .opt.review:not(.is-ans):not(.is-bad):hover { background-color: var(--card); border-color: var(--line-soft); } }
-/* A graded option is a plain tint (no coloured frame): the solid bubble and the "Correct answer / Your choice" tag carry it */
-.opt.is-ans { border-color: transparent; background: var(--right-soft); }
-.opt.is-ans .bubble { background: var(--right); border-color: var(--right); color: var(--on-solid); }
-.opt.is-bad { border-color: transparent; background: var(--wrong-soft); }
-.opt.is-bad .bubble { background: var(--wrong); border-color: var(--wrong); color: var(--on-solid); }
+/* A graded option is a solid key (v0.7): green when it is a correct answer, orange when it was chosen but is wrong. White
+   text, and the letter bubble white-on-colour with a white ring, so it still reads as the answer-sheet bubble. The tags
+   ("Correct answer", "Your answer") stay as white chips, so colour is never the only cue. */
+.opt.is-ans, .opt.is-bad { color: var(--on-answer-solid); }
+.opt.is-ans { border-color: var(--answer-right-solid); background: var(--answer-right-solid); }
+.opt.is-bad { border-color: var(--answer-wrong-solid); background: var(--answer-wrong-solid); }
+.opt.is-ans .bubble, .opt.is-bad .bubble { background: transparent; border-color: var(--on-answer-solid); color: var(--on-answer-solid); }
+/* (keep the solid fill under the pointer: these are not buttons, the plain option hover must not paint over them) */
+@media (hover: hover) {
+  .opt.is-ans:hover { background-color: var(--answer-right-solid); border-color: var(--answer-right-solid); }
+  .opt.is-bad:hover { background-color: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); }
+}
 .opt.review .body { display: grid; gap: 4px; min-width: 0; }
-/* Tags on a tinted option sit on a white chip, so they keep their shape */
-.opt.is-ans .tag, .opt.is-bad .tag { background: var(--card); }
+/* Tags on a solid option: a white chip with the key's own colour as text (green 4.52:1; orange 5.03:1 light, 4.65:1 dark) */
+.opt.is-ans .tag, .opt.is-bad .tag { background: var(--on-answer-solid); }
+.opt.is-ans .tag.g, .opt.is-ans .tag.k { color: var(--answer-right-solid); }
+.opt.is-bad .tag.ng { color: var(--answer-wrong-solid); }
 
-/* Hotspot statements in a review: tinted blocks (green right, red wrong) instead of hairline rows */
-.hs-item.rv-ok, .hs-item.rv-ng { padding: 12px 14px 12px 10px; border-top: 0; border-radius: 8px; }
+/* Hotspot statements in a review: neutral blocks instead of hairline rows (v0.7). The result is carried by the solid green /
+   orange keys of the choices and by the tag, so a right and a wrong statement get the same plain fill */
+.hs-item.rv-ok, .hs-item.rv-ng { padding: 12px 14px 12px 10px; border-top: 0; border-radius: 8px; background: var(--fill); }
 .hs-item.rv-ok + .hs-item, .hs-item.rv-ng + .hs-item { margin-top: 8px; }
-.hs-item.rv-ok { background: var(--ok-bg); }
-.hs-item.rv-ng { background: var(--ng-bg); }
 .hsa { grid-column: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin-top: 4px; font-size: 14.5px; }
-.hsa .g { color: var(--right); font-weight: 700; }
-.hsa .r { color: var(--wrong); font-weight: 700; }
-/* Tags on a tinted statement sit on a white chip (as on a tinted option), so they keep their shape and contrast */
+/* The choices of a hotspot statement in a review (v0.7): the correct choice is a small solid green key, a wrong choice the
+   user made a solid orange one (white text, both themes); "You chose" / "Correct answer" in front of them stay as the labels */
+.hsa b.g, .hsa b.r { display: inline-block; padding: 0 8px; border-radius: 6px; font-weight: 600; line-height: 1.75; color: var(--on-answer-solid); }
+.hsa b.g { background: var(--answer-right-solid); }
+.hsa b.r { background: var(--answer-wrong-solid); }
+.hsa b.none { font-weight: 600; color: var(--ink2); }
+/* Tags on a statement block sit on a card-coloured chip, so they keep their shape and contrast on the fill */
 .hs-item.rv-ok .hsa .tag, .hs-item.rv-ng .hsa .tag { background: var(--card); }
 
 /* Explanation and memory aid: tinted callouts */
@@ -663,7 +718,7 @@ dialog.dlg-wide { max-width: 460px; }
 
 /* Motion: only colour fades, and none at all when the system asks for less motion */
 @media (prefers-reduced-motion: reduce) {
-  .icon-btn, .acct-btn, .fld-eye, .nav-link, .btn, .lang-btn, .seg button, .opt, .chip, .tile, .strip button, .tr summary, #toast,
+  .icon-btn, .acct-btn, .fld-eye, .nav-link, .btn, .lang-btn, .seg button, .opt, .chip, .tile, .strip button, #toast,
   :where(input, select, textarea) { transition: none; }
 }
 
@@ -720,7 +775,6 @@ dialog.dlg-wide { max-width: 460px; }
   .inline label { min-height: 44px; }
   .inline input[type="number"] { min-height: 44px; }
   .chip { min-height: 44px; }
-  .tr summary { padding-block: 11px; }
   .strip button { width: 44px; min-height: 48px; }
   .foot .btn.quiet { min-height: 44px; }
 }

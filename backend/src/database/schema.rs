@@ -9,8 +9,15 @@
 //! - Schema v3 (v0.6) is purely additive too: users, sessions, per-user stats and settings (`MIGRATE_V3_TABLES`) and
 //!   `attempts.user_id` (`V3_COLUMNS`). The old `stats` and `settings` tables are kept, unused after the first administrator has
 //!   claimed their rows, so a rollback is still "restore the backup".
+//! - Schema v4 (v0.6.5 / v0.7) is purely additive as well: which banks each plain user may see (the table `user_banks`, one
+//!   row per bank) and whether banks created later are added for them (`users.new_banks`), the bank management permission
+//!   (`users.can_manage_banks`), bank owners (`banks.owner_id`) and the kind of a study record (`attempts.kind`: exam or
+//!   practice). The six-column workbook layout needs no column: its per-language texts live in the question's JSON
+//!   (`questions.data`, with `"lang": "en"`) like every other question field.
+//!   Before v0.7 was released, its pre-release builds stored `users.all_banks` instead of `users.new_banks` ("every bank,
+//!   including later ones"); `store::migrate` converts such a database on open (see there).
 
-pub const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "4";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -135,3 +142,41 @@ pub const V3_COLUMNS: [(&str, &str, &str); 1] = [
 /// Index that needs `attempts.user_id`, created after the column.
 pub const MIGRATE_V3_INDEXES: &str =
     "CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(user_id);";
+
+/// Tables and indexes added by schema v4 (all `IF NOT EXISTS`). A row of `user_banks` lets a plain user see one bank in exams,
+/// practice, records and the wrong-answer notebook; it is the only thing that does (besides owning the bank as a bank
+/// manager). Deleting a bank or a user deletes its rows.
+pub const MIGRATE_V4_TABLES: &str = r#"
+CREATE TABLE IF NOT EXISTS user_banks (
+  user_id INTEGER NOT NULL,
+  bank_id INTEGER NOT NULL,
+  PRIMARY KEY (user_id, bank_id)
+);
+CREATE INDEX IF NOT EXISTS idx_user_banks_bank ON user_banks(bank_id);
+"#;
+
+/// Columns added by schema v4 (same rules as [`V2_COLUMNS`]).
+pub const V4_COLUMNS: [(&str, &str, &str); 4] = [
+    // 1 = "include banks imported later": every bank created later (any import as a new bank, the import command) gets a
+    // `user_banks` row for this user in the same transaction. Existing banks are never added by it. Set, with a row for every
+    // existing bank, for every user that exists at the migration (they saw every bank and would have seen new ones).
+    ("users", "new_banks", "new_banks INTEGER NOT NULL DEFAULT 0"),
+    // 1 = a plain user may import new banks and update / delete the banks they own (administrators always may)
+    (
+        "users",
+        "can_manage_banks",
+        "can_manage_banks INTEGER NOT NULL DEFAULT 0",
+    ),
+    // The user who created the bank (NULL only for rows written by an older binary; given to the first administrator on open)
+    ("banks", "owner_id", "owner_id INTEGER"),
+    // An exam or a practice session; every record from before v0.6.5 is an exam
+    (
+        "attempts",
+        "kind",
+        "kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))",
+    ),
+];
+
+/// Index that needs `banks.owner_id`, created after the columns.
+pub const MIGRATE_V4_INDEXES: &str =
+    "CREATE INDEX IF NOT EXISTS idx_banks_owner ON banks(owner_id);";

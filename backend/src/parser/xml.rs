@@ -447,15 +447,15 @@ mod tests {
 
     #[test]
     fn utf16_and_bom() {
-        let src = "<a>日本</a>";
+        let src = "<a>一年</a>";
         let mut le = vec![0xFF, 0xFE];
         le.extend(src.encode_utf16().flat_map(|u| u.to_le_bytes()));
-        assert_eq!(parse(&le).unwrap().text.as_deref(), Some("日本"));
+        assert_eq!(parse(&le).unwrap().text.as_deref(), Some("一年"));
         let be: Vec<u8> = src.encode_utf16().flat_map(|u| u.to_be_bytes()).collect();
-        assert_eq!(parse(&be).unwrap().text.as_deref(), Some("日本"));
+        assert_eq!(parse(&be).unwrap().text.as_deref(), Some("一年"));
         let mut u8bom = vec![0xEF, 0xBB, 0xBF];
         u8bom.extend(src.as_bytes());
-        assert_eq!(parse(&u8bom).unwrap().text.as_deref(), Some("日本"));
+        assert_eq!(parse(&u8bom).unwrap().text.as_deref(), Some("一年"));
         let dt: Vec<u8> = "<!DOCTYPE a><a/>"
             .encode_utf16()
             .flat_map(|u| u.to_le_bytes())

@@ -23,19 +23,43 @@ services:
     container_name: xexam-backend
     restart: unless-stopped
     environment:
-      TZ: ${TZ:-Asia/Tokyo}
+      # Time zone of the timestamps: by default the host's (its /etc/localtime is mounted below). Only a TZ set in .env
+      # (for example TZ=UTC) overrides it; with no value here, Compose does not set TZ at all inside the container.
+      TZ:
       XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"
       XEXAM_ALLOWED_ORIGINS: "${XEXAM_ALLOWED_ORIGINS:-}"
       XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
       XEXAM_PARSE_TIMEOUT_SECS: "${XEXAM_PARSE_TIMEOUT_SECS:-30}"
+      # SQLite journal: WAL by default. Only XEXAM_SQLITE_JOURNAL=delete set in .env (for unusual storage such as a network
+      # filesystem) keeps the old DELETE mode; with no value here, Compose does not set it at all inside the container.
+      XEXAM_SQLITE_JOURNAL:
+      # 1 = the session cookies always get Secure (behind an HTTPS proxy such as Cloudflare Tunnel). Only a value set in .env
+      # is passed in; with no value here, Compose does not set it inside the container (Secure then follows the request).
+      XEXAM_COOKIE_SECURE:
+      # The backend's log filter (default info, for example XEXAM_LOG=debug). Only a value set in .env is passed in.
+      XEXAM_LOG:
     volumes:
       - data:/data
+      # Follow the host's time zone (read only). Docker shares the host's clock anyway; this only gives the same zone.
+      # create_host_path: false = on a host without /etc/localtime, Compose stops with "bind source path does not exist"
+      # instead of creating an empty folder there (which cannot be mounted over the image's file). On such a host, remove
+      # these six lines and set TZ in .env instead.
+      - type: bind
+        source: /etc/localtime
+        target: /etc/localtime
+        read_only: true
+        bind:
+          create_host_path: false
     networks: [internal]
     stop_grace_period: 15s
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     read_only: true
     tmpfs: ["/tmp"]
+    # Docker keeps container logs without any limit by default; keep at most 3 files of 10 MB per container
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
   frontend:
     build:
@@ -54,6 +78,10 @@ services:
     cap_drop: [ALL]
     read_only: true
     tmpfs: ["/tmp"]
+    # Docker keeps container logs without any limit by default; keep at most 3 files of 10 MB per container
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
 networks:
   internal:

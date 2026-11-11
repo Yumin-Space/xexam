@@ -1,7 +1,7 @@
 {
  "input": {
   "name": "f02_sharedstrings_rich_phonetic.xlsx",
-  "size": 2113
+  "size": 2115
  },
  "meta": {
   "expat": "expat_2.5.0",
@@ -18,7 +18,7 @@
      "A"
     ],
     "explanation": "",
-    "id": "b2aa4b31199f",
+    "id": "df392caae9c2",
     "items": [],
     "kind": "single",
     "mnemonic": "",
@@ -26,20 +26,20 @@
     "options": [
      {
       "key": "A",
-      "text": "とうきょう"
+      "text": "いっしゅう"
      },
      {
       "key": "B",
-      "text": "おおさか"
+      "text": "さんねん"
      },
      {
       "key": "C",
-      "text": "きょうと"
+      "text": "せんねん"
      }
     ],
     "row": 1,
     "sheet": "sst",
-    "stem": "次のうち、東京の読みはどれですか。",
+    "stem": "次のうち、一週の読みはどれですか。",
     "tag": "",
     "translation": "",
     "zh": null
@@ -88,7 +88,7 @@
     [
      1,
      {
-      "0": "次のうち、東京の読みはどれですか。\n\nA. とうきょう\nB. おおさか\nC. きょうと",
+      "0": "次のうち、一週の読みはどれですか。\n\nA. いっしゅう\nB. さんねん\nC. せんねん",
       "1": "中文翻译不会被使用",
       "2": "【答案】A"
      }
@@ -116,7 +116,7 @@
      "A"
     ],
     "explanation": "",
-    "id": "b2aa4b31199f",
+    "id": "df392caae9c2",
     "items": [],
     "kind": "single",
     "mnemonic": "",
@@ -124,20 +124,20 @@
     "options": [
      {
       "key": "A",
-      "text": "とうきょう"
+      "text": "いっしゅう"
      },
      {
       "key": "B",
-      "text": "おおさか"
+      "text": "さんねん"
      },
      {
       "key": "C",
-      "text": "きょうと"
+      "text": "せんねん"
      }
     ],
     "row": 1,
     "sheet": "sst",
-    "stem": "次のうち、東京の読みはどれですか。",
+    "stem": "次のうち、一週の読みはどれですか。",
     "tag": "",
     "translation": "",
     "zh": null

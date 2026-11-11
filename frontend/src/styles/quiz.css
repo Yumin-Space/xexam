@@ -53,3 +53,33 @@
   /* 6-7 tiles per row at a 44px touch size instead of 5 oversized ones */
   .rail .tiles { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
 }
+
+/* ---------- Practice (v0.6.5) ---------- */
+/* The "Practice" tag next to "Question 3 of 25" */
+.qbar h1.l .qkind { margin-left: 10px; vertical-align: 2px; font-size: 12.5px; font-weight: 500; }
+
+/* The verdict right after checking: a mark and "Correct" / "Wrong" (the word, not only the colour, carries the result) */
+.pfeed { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+/* (v0.7) a small solid key in the colours of the graded options above it: green "Correct", orange "Wrong", white text */
+.pverdict {
+  display: inline-flex; align-items: center; gap: 8px; padding: 4px 14px 4px 10px; border-radius: 6px;
+  font-size: 16px; font-weight: 700; line-height: 1.4; color: var(--on-answer-solid);
+}
+.pverdict svg { width: 20px; height: 20px; flex: none; stroke: currentColor; }
+.pverdict.ok { background: var(--answer-right-solid); }
+.pverdict.ng { background: var(--answer-wrong-solid); }
+.pverdict:focus { outline: none; }
+.pverdict:focus-visible { outline: 2px solid var(--print); outline-offset: 3px; }
+.pfeed .verdict { margin-top: 8px; }
+
+/* Answer sheet in a practice: checked questions filled right / wrong (the legend and the tile names say which), in the same
+   solid green / orange as the graded options and the verdict (v0.7), white numbers, both themes */
+.tiles .tile.ok { background: var(--answer-right-solid); border-color: var(--answer-right-solid); color: var(--on-answer-solid); }
+.tiles .tile.ng { background: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); color: var(--on-answer-solid); }
+.legend i.ok { background: var(--answer-right-solid); border-color: var(--answer-right-solid); }
+.legend i.ng { background: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); }
+/* keep the fill under the pointer (the plain tile hover of main.css would paint over it) */
+@media (hover: hover) {
+  .tiles .tile.ok:not(.done):hover { background: var(--answer-right-solid); }
+  .tiles .tile.ng:not(.done):hover { background: var(--answer-wrong-solid); }
+}

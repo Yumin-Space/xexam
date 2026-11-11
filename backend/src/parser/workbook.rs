@@ -7,7 +7,10 @@ use crate::error::ImportError;
 use crate::models::{ParsedSheet, ParsedWorkbook, Question, SkippedRow};
 
 use super::py_space::{char_len, py_int, py_strip};
-use super::question::{classify_heading, parse_question_with_english, QuestionOutcome};
+use super::question::{
+    classify_heading, has_answer_heading, parse_question_with_english, parse_six_columns,
+    QuestionOutcome, SixCells, SKIP6_NO_ENGLISH,
+};
 use super::xml::{self, Element, XmlError};
 use super::zip_guard::{OpenError, Package, ReadError};
 
@@ -19,19 +22,32 @@ const PKG: &str = "http://schemas.openxmlformats.org/package/2006/relationships"
 const MAX_SHARED_STRINGS: usize = 1_000_000;
 const MAX_CELLS: usize = 2_000_000;
 const MAX_SHEETS: usize = 1_000;
-/// Upper limit on the byte count of all A/B/C cell text in one workbook (not in the legacy version). A shared string referenced by many cells is stored only once (`Rc<str>`),
+/// Upper limit on the byte count of all A/B/C/D cell text in one workbook (not in the legacy version). A shared string referenced by many cells is stored only once (`Rc<str>`),
 /// so this budget counts "bytes referenced by each cell" even when only one copy is stored: it bounds the total amount the parse stage has to process.
 const MAX_CELL_BYTES: usize = 64 * 1024 * 1024;
+/// The same limit for the cells of columns E and F (read since v0.7 for the six-column layout). It is a separate budget,
+/// so files of the 3 / 4-column layouts hit the A-D limit exactly as before.
+const MAX_EXTRA_CELL_BYTES: usize = 64 * 1024 * 1024;
+/// Number of columns kept per row: A-F (the six-column layout; the older layouts use the first three or four).
+const COLUMNS: usize = 6;
 
 const HEADER_WORDS: [&str; 5] = ["题目", "題目", "问题", "問題", "Question"];
 
 const MSG_NOT_XLSX: &str = "这个文件不是有效的 .xlsx（可能是 .xls、.csv，或者文件已损坏）。请在 Excel 里另存为「Excel 工作簿(.xlsx)」再上传。";
 const MSG_TOO_COMPLEX: &str = "这个文件的内容太多或层级太深，已拒绝。";
 
-/// One row in a worksheet: row number, the four columns A/B/C/D (the old three-column format uses only the first three), and whether the row ever had a non-blank cell (in any column).
+/// One row in a worksheet that had a non-blank cell (in any column): row number and the six columns A-F
+/// (the three-column format uses only the first three, the four-column format the first four).
 struct SheetRow {
     number: i64,
-    cols: [Option<Rc<str>>; 4],
+    cols: [Option<Rc<str>>; COLUMNS],
+}
+
+impl SheetRow {
+    /// Text of column `i` (0 = A); empty when the cell is missing.
+    fn text(&self, i: usize) -> &str {
+        self.cols.get(i).and_then(|c| c.as_deref()).unwrap_or("")
+    }
 }
 
 fn xml_err(e: XmlError) -> ImportError {
@@ -89,7 +105,7 @@ fn si_text(si: &Element) -> String {
     out
 }
 
-/// `_col_index`: the leading letter string of a reference -> 0-based column index. Returns None if there is no letter prefix. Values saturate (only columns 0/1/2/3 are meaningful).
+/// `_col_index`: the leading letter string of a reference -> 0-based column index. Returns None if there is no letter prefix. Values saturate (only columns 0-5 are meaningful).
 fn col_index(reference: &str) -> Option<u64> {
     let mut n: u64 = 0;
     let mut any = false;
@@ -136,7 +152,7 @@ fn read_sheet(
     member: &str,
     shared: &[Rc<str>],
     cell_budget: &mut usize,
-    byte_budget: &mut usize,
+    byte_budget: &mut [usize; 2],
     deadline: Option<Instant>,
 ) -> Result<(Vec<SheetRow>, usize), ImportError> {
     let root = parse_part(pkg, member, deadline)?;
@@ -153,7 +169,7 @@ fn read_sheet(
         else {
             continue;
         };
-        let mut cols: [Option<Rc<str>>; 4] = [None, None, None, None];
+        let mut cols: [Option<Rc<str>>; COLUMNS] = Default::default();
         let mut any = false;
         for c in row.find_all(NS, "c") {
             *cell_budget = cell_budget
@@ -186,8 +202,13 @@ fn read_sheet(
             };
             if !py_strip(&val).is_empty() {
                 any = true;
-                if let Some(slot) = usize::try_from(col).ok().and_then(|i| cols.get_mut(i)) {
-                    *byte_budget = byte_budget
+                let index = usize::try_from(col).ok();
+                if let Some((i, slot)) = index.and_then(|i| Some((i, cols.get_mut(i)?))) {
+                    // Columns A-D draw on the first budget, E-F on the second (see MAX_EXTRA_CELL_BYTES)
+                    let left = byte_budget
+                        .get_mut(usize::from(i >= 4))
+                        .ok_or_else(|| ImportError::Message(MSG_TOO_COMPLEX.to_string()))?;
+                    *left = left
                         .checked_sub(val.len())
                         .ok_or_else(|| ImportError::Message(MSG_TOO_COMPLEX.to_string()))?;
                     *slot = Some(val);
@@ -236,7 +257,7 @@ fn read_workbook(
     }
     let mut out = Vec::new();
     let mut cell_budget = MAX_CELLS;
-    let mut byte_budget = MAX_CELL_BYTES;
+    let mut byte_budget = [MAX_CELL_BYTES, MAX_EXTRA_CELL_BYTES];
     let Some(sheets) = wb.find(NS, "sheets") else {
         return Ok(out);
     };
@@ -305,6 +326,70 @@ fn detect_four_columns(rows: &[SheetRow]) -> bool {
     in_d > 0 && in_d > in_c && shaped > 0
 }
 
+/// Does column C hold Japanese while A (English) and B (Chinese) hold none? The column shape shared by the four- and
+/// six-column layouts; kana are the Japanese tell (Chinese and English text has none).
+fn japanese_in_c_only(row: &SheetRow) -> bool {
+    let is_kana = |c: char| ('\u{3040}'..='\u{30ff}').contains(&c);
+    row.text(2).chars().any(is_kana)
+        && !row.text(1).chars().any(is_kana)
+        && !row.text(0).chars().any(is_kana)
+}
+
+/// Is the worksheet in the six-column layout (A English, B Chinese, C Japanese questions; D English, E Chinese,
+/// F Japanese answers and explanations)? Looks at content only, like [`detect_four_columns`]:
+/// 1. more rows carry an answer heading in any language (【Answer】, 【答案】, 【正解】, ...) in column E or F than rows
+///    carry the legacy answer heading in column C (which would make it the three-column layout);
+/// 2. at least one of those rows has the A/B/C shape of the four-column rules (kana in C only).
+///
+/// Files of the 3 / 4-column layouts never have answer headings in E / F, so their detection is unchanged.
+fn detect_six_columns(rows: &[SheetRow]) -> bool {
+    let legacy_answer =
+        |t: &str| t.contains("【答案】") || t.contains("【正解】") || t.contains("【答え】");
+    let (mut in_c, mut in_ef, mut shaped) = (0usize, 0usize, 0usize);
+    for row in rows {
+        if legacy_answer(row.text(2)) {
+            in_c += 1;
+        }
+        if has_answer_heading(row.text(4)) || has_answer_heading(row.text(5)) {
+            in_ef += 1;
+            if japanese_in_c_only(row) {
+                shaped += 1;
+            }
+        }
+    }
+    in_ef > 0 && in_ef > in_c && shaped > 0
+}
+
+/// What to do with one row of a six-column sheet before parsing it as a question.
+enum SixRow {
+    /// A question row: parse it
+    Question,
+    /// A header or note row: ignore it silently (not counted)
+    Ignore,
+    /// A question without its English text: counted and listed as unreadable
+    NoEnglish,
+}
+
+/// Sorts the rows of a six-column sheet. A question always spans several lines (the options or the hotspot items are
+/// on their own lines), so a row whose column A is a single line and whose column D has no answer heading is a header
+/// or a note. A row without English in column A is a question only when it looks like one (a multi-line Chinese or
+/// Japanese question, or an answer heading in D-F): such a row is unreadable, because English is authoritative.
+fn classify_six_row(row: &SheetRow) -> SixRow {
+    let a = py_strip(row.text(0));
+    let answers = (3..COLUMNS).any(|i| has_answer_heading(row.text(i)));
+    if a.is_empty() {
+        let multi_line = |i: usize| py_strip(row.text(i)).contains('\n');
+        if answers || multi_line(1) || multi_line(2) {
+            return SixRow::NoEnglish;
+        }
+        return SixRow::Ignore;
+    }
+    if !a.contains('\n') && !has_answer_heading(row.text(3)) {
+        return SixRow::Ignore;
+    }
+    SixRow::Question
+}
+
 pub(super) fn parse_workbook(data: &[u8]) -> Result<ParsedWorkbook, ImportError> {
     parse_workbook_until(data, None)
 }
@@ -332,33 +417,65 @@ pub(super) fn parse_workbook_until(
             total: 0,
             usable: 0,
             skipped: Vec::new(),
+            warnings: Vec::new(),
         };
-        // Is this worksheet four-column (A English, B Chinese, C Japanese, D answer...) or the old three-column (A Japanese, B Chinese, C answer...)?
-        let four_columns = detect_four_columns(&sheet.rows);
+        // Which layout is this worksheet? Six-column (A-C questions in English / Chinese / Japanese, D-F answers in the
+        // same languages), four-column (A English, B Chinese, C Japanese, D answer...) or the old three-column
+        // (A Japanese, B Chinese, C answer...)? Six-column is checked first: its answer headings sit in E / F, where
+        // the older layouts never have them.
+        let six_columns = detect_six_columns(&sheet.rows);
+        let four_columns = !six_columns && detect_four_columns(&sheet.rows);
         for (row_no, row) in sheet.rows.iter().enumerate() {
             if row_no.is_multiple_of(256) {
                 check_deadline(deadline)?;
             }
-            let col = |i: usize| row.cols.get(i).and_then(|c| c.as_deref()).unwrap_or("");
-            // Column holding the question (Japanese): C in the four-column format, A in the three-column format
-            let (english, a, b, c) = if four_columns {
-                (col(0), col(2), col(1), col(3))
+            let (outcome, warnings) = if six_columns {
+                match classify_six_row(row) {
+                    SixRow::Ignore => continue,
+                    SixRow::NoEnglish => (
+                        QuestionOutcome::Skip(SKIP6_NO_ENGLISH.to_string()),
+                        Vec::new(),
+                    ),
+                    SixRow::Question => {
+                        let cells = SixCells {
+                            en_question: row.text(0),
+                            zh_question: row.text(1),
+                            ja_question: row.text(2),
+                            en_answer: row.text(3),
+                            zh_answer: row.text(4),
+                            ja_answer: row.text(5),
+                        };
+                        parse_six_columns(&sheet.name, row.number, &cells)
+                    }
+                }
             } else {
-                ("", col(0), col(1), col(2))
+                let col = |i: usize| row.text(i);
+                // Column holding the question (Japanese): C in the four-column format, A in the three-column format
+                let (english, a, b, c) = if four_columns {
+                    (col(0), col(2), col(1), col(3))
+                } else {
+                    ("", col(0), col(1), col(2))
+                };
+                let a_stripped = py_strip(a);
+                if a_stripped.is_empty() {
+                    continue;
+                }
+                let a_len = char_len(a_stripped);
+                if a_len < 15 && py_strip(b).is_empty() && py_strip(c).is_empty() {
+                    continue; // short text such as notes
+                }
+                if a_len <= 8
+                    && (classify_heading(a).is_some() || HEADER_WORDS.contains(&a_stripped))
+                {
+                    continue; // header row
+                }
+                (
+                    parse_question_with_english(&sheet.name, row.number, a, b, c, english),
+                    Vec::new(),
+                )
             };
-            let a_stripped = py_strip(a);
-            if a_stripped.is_empty() {
-                continue;
-            }
-            let a_len = char_len(a_stripped);
-            if a_len < 15 && py_strip(b).is_empty() && py_strip(c).is_empty() {
-                continue; // short text such as notes
-            }
-            if a_len <= 8 && (classify_heading(a).is_some() || HEADER_WORDS.contains(&a_stripped)) {
-                continue; // header row
-            }
             info.total += 1;
-            match parse_question_with_english(&sheet.name, row.number, a, b, c, english) {
+            match outcome {
                 QuestionOutcome::Fatal(e) => return Err(e),
                 QuestionOutcome::Skip(reason) => info.skipped.push(SkippedRow {
                     row: row.number,
@@ -379,6 +496,11 @@ pub(super) fn parse_workbook_until(
                     seen.insert(q.id.clone());
                     questions.push(*q);
                     info.usable += 1;
+                    info.warnings
+                        .extend(warnings.into_iter().map(|reason| SkippedRow {
+                            row: row.number,
+                            reason,
+                        }));
                 }
             }
         }

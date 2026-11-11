@@ -1,16 +1,18 @@
-// Home page: continue an unfinished exam, choose banks / sheets / range / count and start an exam,
-// plus the latest exam and an overview of the question banks in a side column.
+// Home page: continue an unfinished exam or practice, choose banks / sheets / range / count and start an exam or (v0.6.5)
+// a practice, plus the latest result (exam or practice) and an overview of the question banks in a side column.
 import '../styles/home.css';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
+import { kindTag } from '../components/kind-tag.ts';
 import { icon } from '../components/shell.ts';
+import { kindOf } from '../domain/attempt.ts';
 import { inNotebook, masterStreakOf, pickQuestions, poolOf } from '../domain/grading.ts';
 import { serverText } from '../i18n/errors.ts';
 import { t, tn } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
 import { navigate, render, resumeSession, startExam } from '../state/actions.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
-import { S, bankIdsOf, isAdmin, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
-import type { BankSummary, Mode } from '../types/api.ts';
+import { S, bankIdsOf, canManageBanks, isAdmin, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
+import type { AttemptKind, BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
@@ -66,9 +68,9 @@ function notebookChip(n: number): HTMLElement | null {
 /** The small clock at the left of the unfinished-exam banner */
 const ICON_RESUME = [{ cx: 12, cy: 12, r: 8.5 }, { d: 'M12 7.5V12l3 2' }];
 
-async function discardSaved(): Promise<void> {
+async function discardSaved(practice: boolean): Promise<void> {
   const yes = await ask({
-    title: t('home.resume.discardTitle'),
+    title: t(practice ? 'home.resume.discardTitlePractice' : 'home.resume.discardTitle'),
     body: t('home.resume.discardBody'),
     ok: t('home.resume.discardOk'),
     cancel: t('home.resume.discardCancel'),
@@ -83,21 +85,25 @@ function resumeCard(): HTMLElement | null {
   const sv = loadSaved(S.bank);
   if (!sv) return null;
   const names = bankIdsOf(sv.qs).map(bankName).join(t('common.listSep'));
-  // A compact banner: what, where it stands, and the two actions on one line (two lines on a phone)
+  const practice = sv.kind === 'practice';
+  // A compact banner: what, where it stands, and the two actions on one line (two lines on a phone). A practice counts
+  // the questions already checked, an exam the questions answered.
   const meta = [
     names,
     sv.mode !== 'all' ? modeName(sv.mode) : '',
-    t('home.resume.progress', { answered: sv.answered, total: sv.qs.length, time: fmtTime(sv.elapsed) }),
+    practice
+      ? t('home.resume.progressPractice', { checked: sv.checked.size, total: sv.qs.length, time: fmtTime(sv.elapsed) })
+      : t('home.resume.progress', { answered: sv.answered, total: sv.qs.length, time: fmtTime(sv.elapsed) }),
   ].filter(Boolean).join(' · ');
   return h('section', { class: 'resume home-resume', 'aria-labelledby': 'home-resume-h' },
     icon(ICON_RESUME, 'ico rs-ico'),
     h('div', { class: 'rs-text' },
-      h('div', { class: 'rs-head' }, h('h2', { id: 'home-resume-h' }, t('home.resume.title')), h('span', { class: 'rs-where' }, t('home.resume.lead'))),
+      h('div', { class: 'rs-head' }, h('h2', { id: 'home-resume-h' }, t(practice ? 'home.resume.titlePractice' : 'home.resume.title')), h('span', { class: 'rs-where' }, t('home.resume.lead'))),
       h('p', { class: 'rs-meta num' }, meta),
       sv.dropped ? h('p', { class: 'rs-meta' }, tn('home.resume.dropped', sv.dropped)) : null),
     h('div', { class: 'rs-acts' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => resumeSession() }, t('home.resume.continue')),
-      h('button', { class: 'btn quiet', type: 'button', onclick: () => void discardSaved() }, t('home.resume.discard'))));
+      h('button', { class: 'btn quiet', type: 'button', onclick: () => void discardSaved(practice) }, t('home.resume.discard'))));
 }
 
 // ---------------------------------------------------------------- start an exam
@@ -119,12 +125,24 @@ interface BankPick {
   sheets: Array<{ key: string; box: HTMLInputElement }>;
 }
 
-/** No questions to practise: an administrator imports a workbook; everyone else is asked to tell an administrator */
+/**
+ * No questions to practise. An administrator imports a workbook. A bank manager (v0.6.5) can import one too (it becomes
+ * theirs) or be given access to one. A plain user who sees no bank at all has not been given any yet (since v0.6.5 an
+ * administrator chooses each user's banks; GET /api/banks lists only those), so they are asked to tell an administrator.
+ */
 function emptyState(): HTMLElement {
-  if (!isAdmin()) return h('div', { class: 'emptybank' }, h('p', null, t(S.banks.length ? 'home.empty.noQuestionsUser' : 'home.empty.noBanksUser')));
-  return h('div', { class: 'emptybank' },
-    h('p', null, t(S.banks.length ? 'home.empty.noQuestions' : 'home.empty.noBanks')),
-    link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
+  const some = S.banks.length > 0;
+  if (isAdmin()) {
+    return h('div', { class: 'emptybank' },
+      h('p', null, t(some ? 'home.empty.noQuestions' : 'home.empty.noBanks')),
+      link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
+  }
+  if (!some && canManageBanks()) {
+    return h('div', { class: 'emptybank' },
+      h('p', null, t('home.empty.noBanksManager')),
+      link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
+  }
+  return h('div', { class: 'emptybank' }, h('p', null, t(some ? 'home.empty.noQuestionsUser' : 'home.empty.noAccess')));
 }
 
 function startPanel(nb: Notebook): HTMLElement {
@@ -263,7 +281,12 @@ function startPanel(nb: Notebook): HTMLElement {
       cfg.shuffle = shuffleBox.checked;
     },
   });
-  const startBtn = h('button', { class: 'btn primary big', type: 'button', onclick: () => start() }, t('home.start'));
+  // Start exam stays the main action; Start practice (v0.6.5) draws from the same scope, next to it. v0.7 (owner): Start exam
+  // is solid green and Start practice solid orange (home.css)
+  const startBtn = h('button', { class: 'btn primary big home-go-exam', type: 'button', onclick: () => start('exam') }, t('home.start'));
+  const practiceBtn = h('button', {
+    class: 'btn big home-go-practice', type: 'button', title: t('home.startPractice.hint'), onclick: () => start('practice'),
+  }, t('home.startPractice'));
   const scopeText = h('p', { class: 'home-scope', role: 'status' });
 
   /** The number typed into the count field (null = empty / not a positive number) */
@@ -313,6 +336,7 @@ function startPanel(nb: Notebook): HTMLElement {
     countInput.disabled = n === 0;
     countInput.value = n ? String(effectiveCount(n)) : '';
     startBtn.disabled = n === 0;
+    practiceBtn.disabled = n === 0;
     updateScope(n);
   }
 
@@ -327,20 +351,20 @@ function startPanel(nb: Notebook): HTMLElement {
     refresh();
   });
 
-  function start(): void {
+  function start(kind: AttemptKind): void {
     const p = pool();
     if (!p.length) return;
     readCount(p.length);
     cfg.shuffle = shuffleBox.checked;
     const n = effectiveCount(p.length);
-    void startExam(pickQuestions(p, n, cfg.shuffle), cfg.mode);
+    void startExam(pickQuestions(p, n, cfg.shuffle), cfg.mode, kind);
   }
 
   // The mode comes first: "practise my wrong answers" is a frequent start and should not sit below every sheet row
   panel.append(
     pickSet,
-    // The bar pinned to the bottom: Start, what will be asked, and the two options right next to it
-    h('div', { class: 'home-go' }, startBtn, scopeText,
+    // The bar pinned to the bottom: Start exam / Start practice, what will be asked, and the two options right next to it
+    h('div', { class: 'home-go' }, h('div', { class: 'home-go-btns' }, startBtn, practiceBtn), scopeText,
       h('div', { class: 'home-go-opts' },
         h('label', { class: 'home-count', title: t('home.count.label') }, h('span', null, t('home.count.short')), countInput),
         h('label', { class: 'home-shuffle', title: t('home.shuffle') }, shuffleBox, h('span', null, t('home.shuffle.short'))))));
@@ -363,10 +387,12 @@ function latestCard(): HTMLElement {
     return sec;
   }
   const wrong = Math.max(0, r.total - r.correct);
+  // The latest record of either kind, with its Exam / Practice tag
   sec.append(
     h('div', { class: 'stat' },
       h('b', { class: 'num' }, t('home.latest.percent', { percent: r.percent })),
-      h('span', { class: 'dim' }, t('home.latest.correct', { correct: r.correct, total: r.total }))),
+      h('span', { class: 'dim' }, t('home.latest.correct', { correct: r.correct, total: r.total })),
+      kindTag(kindOf(r))),
     facts([
       [t('home.fact.at'), h('span', { class: 'num' }, r.at)],
       [t('home.fact.banks'), recordBankNames(r.banks)],
@@ -393,10 +419,11 @@ function overviewCard(nb: Notebook): HTMLElement {
       fig(questions, t('home.overview.questions')),
       fig(nb.total, t('home.overview.notebook'), nb.total ? ' ng' : '')),
     retired ? h('p', { class: 'dim home-note' }, tn('home.overview.retired', retired)) : null,
-    // With wrong answers to review, that is the stronger action; the banks page (administrators only) is also in the menu
-    nb.total || isAdmin() ? h('div', { class: 'acts' },
+    // With wrong answers to review, that is the stronger action; the banks page (administrators and bank managers) is also
+    // in the menu
+    nb.total || canManageBanks() ? h('div', { class: 'acts' },
       nb.total ? link({ name: 'wrong' }, t('home.overview.review')) : null,
-      isAdmin() ? link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn') : null) : null);
+      canManageBanks() ? link({ name: 'banks' }, t('nav.banks'), nb.total ? 'btn quiet' : 'btn') : null) : null);
 }
 
 export function renderHome(): HTMLElement {

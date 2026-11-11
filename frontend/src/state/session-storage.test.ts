@@ -47,7 +47,7 @@ test('none of the ids are in the question bank: returns null', () => {
 });
 
 test('normal round trip: reads back exactly what was saved', () => {
-  saveSession({ qs: bank.questions, answers: { s: ['B'], h: [0, null] }, flags: new Set(['m']), idx: 1, elapsedSeconds: 75.9, mode: 'weak', sheets: ['S'] });
+  saveSession({ qs: bank.questions, answers: { s: ['B'], h: [0, null] }, flags: new Set(['m']), idx: 1, elapsedSeconds: 75.9, mode: 'weak', sheets: ['S'], kind: 'exam', checked: new Set() });
   const r = loadSaved(bank);
   assert.ok(r);
   assert.equal(r.qs.length, 3);
@@ -113,7 +113,7 @@ test('bad values of flags / idx / elapsed / mode / sheets are corrected', () => 
 });
 
 test('clearSaved clears the saved exam; keys from the old version are not read', () => {
-  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [] });
+  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set() });
   assert.ok(loadSaved(bank));
   clearSaved();
   assert.equal(loadSaved(bank), null);
@@ -122,7 +122,7 @@ test('clearSaved clears the saved exam; keys from the old version are not read',
 });
 
 test('each user has their own saved exam; nobody signed in reads and writes nothing', () => {
-  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 5, mode: 'all', sheets: [] });
+  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 5, mode: 'all', sheets: [], kind: 'exam', checked: new Set() });
   assert.ok(mem.has(KEY));
   setStorageOwner(8);
   assert.equal(loadSaved(bank), null, 'another user does not see it');
@@ -130,7 +130,7 @@ test('each user has their own saved exam; nobody signed in reads and writes noth
   assert.ok(mem.has(KEY), "another user's clearSaved leaves it alone");
   setStorageOwner(null);
   assert.equal(loadSaved(bank), null);
-  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [] });
+  saveSession({ qs: bank.questions, answers: {}, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set() });
   assert.deepEqual([...mem.keys()], [KEY], 'nothing is written without a user');
   setStorageOwner(7);
   assert.deepEqual(loadSaved(bank)?.answers.s, ['B']);
@@ -151,4 +151,34 @@ test('the saved exam of the version before users goes to the first administrator
   adoptLegacySession(7, true);
   assert.equal(mem.has(LEGACY), false);
   assert.deepEqual(loadSaved(bank)?.qs.map((x) => x.id), ['s']);
+});
+
+// ---------------------------------------------------------------- practice (v0.6.5)
+
+test('a practice keeps its kind and its checked questions; a checked question without an answer is open again', () => {
+  saveSession({
+    qs: bank.questions, answers: { s: ['B'], m: ['A'] }, flags: new Set(), idx: 2, elapsedSeconds: 30, mode: 'all', sheets: ['S'],
+    kind: 'practice', checked: new Set(['s', 'm']),
+  });
+  let sv = loadSaved(bank);
+  assert.equal(sv?.kind, 'practice');
+  assert.deepEqual([...(sv?.checked ?? [])].sort(), ['m', 's']);
+  // edited by hand: a checked id whose answer is gone, an unknown id and a non-string are dropped
+  const raw = JSON.parse(mem.get(KEY) as string) as Record<string, unknown>;
+  put({ ...raw, answers: { s: ['B'] }, checked: ['s', 'm', 'nope', 5] });
+  sv = loadSaved(bank);
+  assert.deepEqual([...(sv?.checked ?? [])], ['s']);
+});
+
+test('an exam saves no checked questions, and a save without kind (before v0.6.5) is an exam', () => {
+  saveSession({ qs: bank.questions, answers: { s: ['B'] }, flags: new Set(), idx: 0, elapsedSeconds: 0, mode: 'all', sheets: [], kind: 'exam', checked: new Set(['s']) });
+  let sv = loadSaved(bank);
+  assert.equal(sv?.kind, 'exam');
+  assert.equal(sv?.checked.size, 0);
+  put({ v: 1, ids: ['s'], answers: { s: ['B'] }, checked: ['s'] });
+  sv = loadSaved(bank);
+  assert.equal(sv?.kind, 'exam');
+  assert.equal(sv?.checked.size, 0);
+  put({ v: 1, ids: ['s'], answers: {}, kind: 'weird' });
+  assert.equal(loadSaved(bank)?.kind, 'exam');
 });

@@ -11,15 +11,32 @@
 //!   to one user, so every method that reads or writes them takes the signed-in user's id. Banks, questions and the import
 //!   history stay shared.
 //!
-//! Submodules (they extend `impl Store`): `migrate` (v1 → v2 → v3, backups, fix-ups), `banks` (bank list, delete, import
-//! targets, bank-scoped ids), `records` (exam records and their per-question detail), `settings`, `users` (accounts, sessions).
+//! - Schema v4 (v0.6.5): question banks per user and bank owners. Every read of shared bank data has a `*_as` variant that takes
+//!   the request's [`Viewer`] (or its [`BankScope`]): a plain user sees only the banks they may see, in `/api/bank`,
+//!   `/api/banks`, the statistics of `/api/progress`, the questions an exam may count and the record detail; a bank manager
+//!   imports, updates and deletes only the banks they own (checked inside the write transaction). The methods without `_as`
+//!   keep their v0.6 meaning: everything, as an administrator sees it (the `import` command, the golden tests).
+//!   Study records also have a kind (`attempts.kind`: `"exam"` or `"practice"`).
+//!
+//! - v0.7: only the six-column layout can be imported (the import entry points refuse 3- and 4-column workbooks before they
+//!   reach the store), and [`Store::retire_old_layout_questions`] retires every active question of those layouts (run by the
+//!   server and the command-line program on every start, after the migrations). The store methods themselves accept any
+//!   question, so the golden suites can replay the reference implementation's 3-column imports.
+//!
+//! Submodules (they extend `impl Store`): `migrate` (v1 → v2 → v3 → v4, backups, fix-ups), `banks` (bank list, delete, import
+//! targets, bank-scoped ids, viewers), `records` (exam records and their per-question detail), `settings`, `users` (accounts,
+//! sessions).
+use super::journal::{self, Checkpoint, JournalMode};
 use super::legacy_progress::{self, AttemptRow, StatRow};
 use super::pyjson;
 use super::schema::SCHEMA;
 use super::timefmt::{Clock, SystemClock};
 use super::{HISTORY_LIMIT, MASTER_STREAK, RECORD_RETENTION};
 use crate::error::DbError;
-use crate::models::{Attempt, ImportRecord, ImportTarget, ParsedSheet, Question, SkippedRow};
+use crate::models::{
+    Attempt, AttemptResult, BankScope, ImportRecord, ImportTarget, ParsedSheet, Question,
+    SkippedRow, Viewer,
+};
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::de::Error as _;
 use serde_json::{json, Map, Value};
@@ -36,7 +53,23 @@ mod users;
 
 pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
-pub use users::{SessionUser, UserChange, UserRow, UserUpdate};
+pub use users::{SessionUser, UpdatedUser, UserChange, UserRow, UserUpdate};
+
+/// One bank whose old-layout questions [`Store::retire_old_layout_questions`] retired.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetiredBank {
+    /// The bank id (`None`: questions without a bank, which an open normally attaches to the legacy bank first)
+    pub id: Option<i64>,
+    /// The bank's name ("" for questions without a bank)
+    pub name: String,
+    /// How many questions were retired
+    pub retired: i64,
+}
+
+/// SQL condition (over `questions`) that is true for a question that is NOT of the six-column layout: its JSON `data` has no
+/// `"lang": "en"` (3- and 4-column questions never have `lang`; data that is not valid JSON is not six-column either).
+const OLD_LAYOUT_SQL: &str =
+    "(CASE WHEN json_valid(data) THEN json_extract(data, '$.lang') END) IS NOT 'en'";
 
 /// Maximum number of placeholders in one `IN (?,…)` (SQLite's default limit is 32766; this leaves plenty of headroom).
 const IN_CHUNK: usize = 500;
@@ -48,6 +81,10 @@ pub struct Store {
     migration_backup: Option<PathBuf>,
     /// This open created the default administrator `admin` / `admin`.
     created_default_admin: bool,
+    /// This open converted a pre-release v4 database (`users.all_banks`) to the released shape (`users.new_banks`)
+    converted_prerelease: bool,
+    /// The journal mode SQLite reported after the open (lower case)
+    journal_mode: String,
 }
 
 fn json_err(msg: &str) -> DbError {
@@ -203,6 +240,8 @@ struct SheetAgg {
     total: i64,
     usable: i64,
     skipped: Vec<SkippedRow>,
+    /// Rows imported with a warning (six-column layout); shown in the preview only when there are some
+    warnings: Vec<SkippedRow>,
     added: i64,
     updated: i64,
     removed: i64,
@@ -216,6 +255,7 @@ impl SheetAgg {
             total,
             usable,
             skipped,
+            warnings: Vec::new(),
             added: 0,
             updated: 0,
             removed: 0,
@@ -223,7 +263,7 @@ impl SheetAgg {
         }
     }
     fn to_value(&self) -> Result<Value, DbError> {
-        Ok(json!({
+        let mut v = json!({
             "name": self.name,
             "total": self.total,
             "usable": self.usable,
@@ -232,7 +272,17 @@ impl SheetAgg {
             "updated": self.updated,
             "removed": self.removed,
             "restored": self.restored,
-        }))
+        });
+        // Only sheets with warnings get the key, so the plan of a 3 / 4-column file stays byte-identical
+        if !self.warnings.is_empty() {
+            if let Value::Object(m) = &mut v {
+                m.insert(
+                    "warnings".to_string(),
+                    serde_json::to_value(&self.warnings)?,
+                );
+            }
+        }
+        Ok(v)
     }
 }
 
@@ -248,7 +298,8 @@ impl Aggregator {
             pos: HashMap::new(),
         };
         for s in sheets {
-            let agg = SheetAgg::new(&s.name, s.total, s.usable, s.skipped.clone());
+            let mut agg = SheetAgg::new(&s.name, s.total, s.usable, s.skipped.clone());
+            agg.warnings.clone_from(&s.warnings);
             match a.pos.get(&s.name).copied() {
                 Some(i) => {
                     if let Some(slot) = a.aggs.get_mut(i) {
@@ -391,6 +442,7 @@ fn compute_plan(
         .map(SheetAgg::to_value)
         .collect::<Result<Vec<_>, _>>()?;
     let skipped: i64 = sheets.iter().map(|s| len_i64(s.skipped.len())).sum();
+    let warnings: i64 = sheets.iter().map(|s| len_i64(s.warnings.len())).sum();
     let out = PlanOut {
         json: Value::Null,
         added: len_i64(added.len()),
@@ -411,6 +463,13 @@ fn compute_plan(
         "removed_samples": samples,
         "removed_stats": removed_stats,
     });
+    // Six-column files: how many imported rows have a warning (left out when there is none, as in older versions)
+    let mut json = json;
+    if warnings > 0 {
+        if let Value::Object(m) = &mut json {
+            m.insert("warnings".to_string(), Value::from(warnings));
+        }
+    }
     Ok(PlanOut { json, ..out })
 }
 
@@ -473,17 +532,30 @@ fn write_import(
     Ok(plan.json)
 }
 
-fn last_import(conn: &Connection) -> Result<Option<ImportRecord>, DbError> {
-    Ok(import_rows(conn, 1)?.into_iter().next())
+fn last_import(conn: &Connection, scope: &BankScope) -> Result<Option<ImportRecord>, DbError> {
+    Ok(import_rows(conn, 1, scope)?.into_iter().next())
 }
 
-fn import_rows(conn: &Connection, limit: i64) -> Result<Vec<ImportRecord>, DbError> {
+/// The newest `limit` import rows of the banks in `scope`, newest first.
+fn import_rows(
+    conn: &Connection,
+    limit: i64,
+    scope: &BankScope,
+) -> Result<Vec<ImportRecord>, DbError> {
+    // A limited scope reads every row (the history is short: one row per upload) and keeps the visible ones
+    let sql_limit = if scope.is_all() { limit } else { -1 };
     let mut st = conn.prepare(
-        "SELECT id, at, filename, added, updated, removed, restored, skipped, total FROM imports ORDER BY id DESC LIMIT ?1",
+        "SELECT id, at, filename, added, updated, removed, restored, skipped, total, bank_id FROM imports ORDER BY id DESC LIMIT ?1",
     )?;
-    let mut rows = st.query(params![limit])?;
+    let mut rows = st.query(params![sql_limit])?;
     let mut out = Vec::new();
     while let Some(r) = rows.next()? {
+        if i64::try_from(out.len()).unwrap_or(i64::MAX) >= limit {
+            break;
+        }
+        if !scope.allows(r.get::<_, Option<i64>>(9)?) {
+            continue;
+        }
         out.push(ImportRecord {
             id: r.get(0)?,
             at: r.get(1)?,
@@ -499,8 +571,33 @@ fn import_rows(conn: &Connection, limit: i64) -> Result<Vec<ImportRecord>, DbErr
     Ok(out)
 }
 
+/// The ids of the questions (active or retired) of the banks in a limited scope; `None` for [`BankScope::All`].
+fn visible_question_ids(
+    conn: &Connection,
+    scope: &BankScope,
+) -> Result<Option<HashSet<String>>, DbError> {
+    if scope.is_all() {
+        return Ok(None);
+    }
+    let mut st = conn.prepare("SELECT id, bank_id FROM questions")?;
+    let rows = st.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
+    })?;
+    let mut out = HashSet::new();
+    for row in rows {
+        let (id, bank) = row?;
+        if scope.allows(bank) {
+            out.insert(id);
+        }
+    }
+    Ok(Some(out))
+}
+
 /// `/api/progress` of `user`. Statistics are read in the order they were first written (rowid), like the old `stats` scan.
-fn progress_from(conn: &Connection, user: i64) -> Result<Value, DbError> {
+/// With a limited `scope`, `questions` holds only the statistics of questions of visible banks (the wrong-answer notebook and
+/// the review follow it); `history` is unchanged, records stay visible as history. Every history entry ends with `kind`.
+fn progress_from(conn: &Connection, user: i64, scope: &BankScope) -> Result<Value, DbError> {
+    let visible = visible_question_ids(conn, scope)?;
     let mut questions = Map::new();
     {
         let mut st = conn.prepare(
@@ -509,6 +606,9 @@ fn progress_from(conn: &Connection, user: i64) -> Result<Value, DbError> {
         let mut rows = st.query(params![user])?;
         while let Some(r) = rows.next()? {
             let id: String = r.get(0)?;
+            if visible.as_ref().is_some_and(|v| !v.contains(&id)) {
+                continue;
+            }
             let mut rec = Map::new();
             rec.insert("attempts".to_string(), Value::from(r.get::<_, i64>(1)?));
             rec.insert("correct".to_string(), Value::from(r.get::<_, i64>(2)?));
@@ -526,7 +626,7 @@ fn progress_from(conn: &Connection, user: i64) -> Result<Value, DbError> {
     let mut history = Vec::new();
     {
         let mut st =
-            conn.prepare("SELECT at, sheets, mode, total, correct, percent, seconds FROM attempts WHERE user_id=?1 ORDER BY id DESC LIMIT ?2")?;
+            conn.prepare("SELECT at, sheets, mode, total, correct, percent, seconds, kind FROM attempts WHERE user_id=?1 ORDER BY id DESC LIMIT ?2")?;
         let mut rows = st.query(params![user, HISTORY_LIMIT])?;
         while let Some(r) = rows.next()? {
             let sheets: Value = serde_json::from_str(&r.get::<_, String>(1)?)?;
@@ -538,6 +638,7 @@ fn progress_from(conn: &Connection, user: i64) -> Result<Value, DbError> {
                 "correct": r.get::<_, i64>(4)?,
                 "percent": r.get::<_, i64>(5)?,
                 "seconds": r.get::<_, i64>(6)?,
+                "kind": r.get::<_, String>(7)?,
             }));
         }
     }
@@ -554,13 +655,27 @@ impl Store {
     ///
     /// A schema-v1 database (v0.4 and older) is migrated to schema v2 once: if it holds any data, a consistent copy is first written
     /// to `<dir of the database>/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db`; if that copy cannot be made, opening fails and nothing
-    /// is migrated. Opening a v2 database whose rows need no fix-up **does not modify the file**.
+    /// is migrated. Opening an up-to-date database whose rows need no fix-up **writes nothing** (no transaction is committed;
+    /// the only change a first v0.7 open makes to an older file is the switch to WAL in its header).
+    ///
+    /// The journal mode is WAL (see [`super::journal`]); [`Store::open_with`] takes the mode from the caller.
     pub fn open(path: &Path) -> Result<Store, DbError> {
-        Self::open_with_clock(path, Arc::new(SystemClock))
+        Self::open_with(path, Arc::new(SystemClock), JournalMode::Wal)
     }
 
     /// Same as [`Store::open`], but the time is supplied by the caller (for tests).
     pub fn open_with_clock(path: &Path, clock: Arc<dyn Clock>) -> Result<Store, DbError> {
+        Self::open_with(path, clock, JournalMode::Wal)
+    }
+
+    /// Same as [`Store::open`], with the clock and the journal mode supplied by the caller (`main.rs` passes the mode chosen
+    /// by `XEXAM_SQLITE_JOURNAL`). A mode SQLite refuses is not an error: a warning is logged and the reported mode is kept
+    /// ([`Store::journal_mode`]).
+    pub fn open_with(
+        path: &Path,
+        clock: Arc<dyn Clock>,
+        journal: JournalMode,
+    ) -> Result<Store, DbError> {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir).map_err(|e| {
                 rusqlite::Error::SqliteFailure(
@@ -575,24 +690,114 @@ impl Store {
             | OpenFlags::SQLITE_OPEN_NO_MUTEX;
         let conn = Connection::open_with_flags(path, flags)?;
         conn.busy_timeout(Duration::from_millis(5000))?;
-        // No WAL (shared memory is unreliable when Docker Desktop mounts a Windows directory); single-user, so data safety comes first
-        conn.pragma_update_and_check(None, "journal_mode", "DELETE", |r| r.get::<_, String>(0))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
         conn.execute_batch(SCHEMA)?;
-        // Check first, then write: the file content of an up-to-date database stays unchanged
+        // Check first, then write: the content of an up-to-date database stays unchanged
         let upgrade = migrate::upgrade(&conn, path, clock.as_ref())?;
+        // WAL by default (v0.7): one fsync per commit with synchronous=FULL, readers and the writer do not block each other.
+        // Switched only after a successful upgrade, so an open that fails (for example because the pre-migration backup
+        // cannot be written) leaves an older database file exactly as it was. The default auto-checkpoint (1000 pages)
+        // stays; `checkpoint` empties the -wal file at shutdown.
+        let journal_mode = journal::apply(&conn, journal);
         Ok(Store {
             conn: Mutex::new(conn),
             clock,
             migration_backup: upgrade.backup,
             created_default_admin: upgrade.created_admin,
+            converted_prerelease: upgrade.converted_prerelease,
+            journal_mode,
         })
+    }
+
+    /// The journal mode in effect, as SQLite reported it when the database was opened (lower case: `wal`, `delete`, …).
+    pub fn journal_mode(&self) -> &str {
+        &self.journal_mode
+    }
+
+    /// `PRAGMA wal_checkpoint(TRUNCATE)` (run at a graceful shutdown): copies the `-wal` file into the database file and
+    /// empties it. `Ok(None)` when the database is not in WAL mode (nothing to do).
+    pub fn checkpoint(&self) -> Result<Option<Checkpoint>, DbError> {
+        if self.journal_mode != JournalMode::Wal.as_str() {
+            return Ok(None);
+        }
+        let g = self.lock();
+        Ok(Some(journal::checkpoint_truncate(&g)?))
     }
 
     /// The backup written before this open migrated the database to the current schema, if any.
     pub fn migration_backup(&self) -> Option<&Path> {
         self.migration_backup.as_deref()
+    }
+
+    /// Whether this open converted a database of a v0.7 pre-release build (schema 4 with `users.all_banks`) to the released
+    /// shape (`users.new_banks`, see `migrate.rs`); [`Store::migration_backup`] is then the copy written before.
+    pub fn converted_prerelease(&self) -> bool {
+        self.converted_prerelease
+    }
+
+    /// v0.7: retires every active question that is not of the six-column layout (imported from the 3- or 4-column layouts,
+    /// by this version before v0.7 or by an older binary after a rollback), exactly as an import retires a question that left
+    /// its workbook: `active = 0`, `updated_at = now` and a `seq` after the bank's other questions (their relative order
+    /// kept). Study records, statistics, the wrong-answer notebook, banks and import history stay; exams, practice and the
+    /// bank's question list no longer offer the question, and the bank page counts it as retired. A bank left without active
+    /// questions stays, so it can be updated with a six-column file or deleted. Nothing is deleted.
+    ///
+    /// Idempotent and in ONE transaction; when there is nothing to retire nothing is written (the check is read-only).
+    /// Returns what was retired, per bank in id order (empty when nothing was).
+    pub fn retire_old_layout_questions(&self) -> Result<Vec<RetiredBank>, DbError> {
+        let t = self.clock.now();
+        let g = self.lock();
+        let any: bool = g.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM questions WHERE active=1 AND {OLD_LAYOUT_SQL})"),
+            [],
+            |r| r.get(0),
+        )?;
+        if !any {
+            return Ok(Vec::new());
+        }
+        run_tx(&g, |c| {
+            let old: Vec<(String, Option<i64>)> = {
+                let mut st = c.prepare(&format!(
+                    "SELECT id, bank_id FROM questions WHERE active=1 AND {OLD_LAYOUT_SQL} ORDER BY bank_id, seq, rowid"
+                ))?;
+                let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            let mut out: Vec<RetiredBank> = Vec::new();
+            let mut next_seq: HashMap<Option<i64>, i64> = HashMap::new();
+            let mut first_seq =
+                c.prepare("SELECT COALESCE(MAX(seq), -1) + 1 FROM questions WHERE bank_id IS ?1")?;
+            let mut down =
+                c.prepare("UPDATE questions SET active=0, seq=?1, updated_at=?2 WHERE id=?3")?;
+            for (id, bank) in &old {
+                if !next_seq.contains_key(bank) {
+                    let n: i64 = first_seq.query_row(params![bank], |r| r.get(0))?;
+                    next_seq.insert(*bank, n);
+                }
+                let seq = next_seq.entry(*bank).or_insert(0);
+                down.execute(params![*seq, t, id])?;
+                *seq += 1;
+                match out.last_mut() {
+                    Some(last) if last.id == *bank => last.retired += 1,
+                    _ => out.push(RetiredBank {
+                        id: *bank,
+                        name: String::new(),
+                        retired: 1,
+                    }),
+                }
+            }
+            let mut name_of = c.prepare("SELECT name FROM banks WHERE id=?1")?;
+            for b in &mut out {
+                if let Some(id) = b.id {
+                    b.name = name_of
+                        .query_row(params![id], |r| r.get::<_, String>(0))
+                        .optional()?
+                        .unwrap_or_default();
+                }
+            }
+            Ok(out)
+        })
     }
 
     fn lock(&self) -> MutexGuard<'_, Connection> {
@@ -621,6 +826,12 @@ impl Store {
     /// `/api/bank`: key order file, mtime, error, questions, sheets (see 123_after_import_bank.json). Questions carry a trailing
     /// `bank` (their bank id). All banks are listed: grouped by bank id (ascending), each bank in `seq` order.
     pub fn bank(&self) -> Result<Value, DbError> {
+        self.bank_as(&BankScope::All)
+    }
+
+    /// `/api/bank` limited to the banks in `scope` (see [`Store::bank`]): their questions and sheets only, and `file` /
+    /// `mtime` of the latest import of one of those banks.
+    pub fn bank_as(&self, scope: &BankScope) -> Result<Value, DbError> {
         let (mut rows, last) = {
             let g = self.lock();
             (
@@ -629,9 +840,12 @@ impl Store {
                     &format!("SELECT {QUESTION_COLUMNS} FROM questions ORDER BY seq"),
                     [],
                 )?,
-                last_import(&g)?,
+                last_import(&g, scope)?,
             )
         };
+        if !scope.is_all() {
+            rows.retain(|r| scope.allows(r.bank_id));
+        }
         // Stable: with a single bank this is exactly the old `ORDER BY seq` order (ties included)
         rows.sort_by_key(|r| r.bank_id);
         let mut order: Vec<(String, i64, i64)> = Vec::new();
@@ -726,19 +940,52 @@ impl Store {
         sheets: &[ParsedSheet],
         questions: &[Question],
     ) -> Result<Option<(Value, i64)>, DbError> {
+        self.apply_import_inner(None, target, filename, sheets, questions)
+    }
+
+    /// [`Store::apply_import_for`] for the signed-in `viewer`: a bank it creates is owned by them, and updating an existing
+    /// bank (the target id, or the legacy bank) requires that they may manage it, checked inside the write transaction
+    /// ([`DbError::NotBankOwner`] = nothing written).
+    pub fn apply_import_as(
+        &self,
+        viewer: &Viewer,
+        target: ImportTarget,
+        filename: &str,
+        sheets: &[ParsedSheet],
+        questions: &[Question],
+    ) -> Result<Option<(Value, i64)>, DbError> {
+        self.apply_import_inner(Some(viewer), target, filename, sheets, questions)
+    }
+
+    /// `actor`: the signed-in user (owner of a created bank; must manage an updated one), or `None` for an import without a
+    /// user (the `import` command, the legacy API): no check, created banks belong to the first administrator.
+    fn apply_import_inner(
+        &self,
+        actor: Option<&Viewer>,
+        target: ImportTarget,
+        filename: &str,
+        sheets: &[ParsedSheet],
+        questions: &[Question],
+    ) -> Result<Option<(Value, i64)>, DbError> {
         let t = self.clock.now();
+        let owner = actor.map(|v| v.user);
         self.tx(|c| {
             let bank = match target {
                 ImportTarget::Legacy => match banks::legacy_bank(c)? {
                     Some(b) => b,
-                    None => banks::create_bank(c, filename, true, &t)?,
+                    None => banks::create_bank(c, filename, true, &t, owner)?,
                 },
-                ImportTarget::New => banks::create_bank(c, filename, false, &t)?,
+                ImportTarget::New => banks::create_bank(c, filename, false, &t, owner)?,
                 ImportTarget::Bank(id) => match banks::bank_by_id(c, id)? {
                     Some(b) => b,
                     None => return Ok(None),
                 },
             };
+            if let Some(v) = actor {
+                if !v.manages(banks::bank_owner(c, bank.id)?) {
+                    return Err(DbError::NotBankOwner);
+                }
+            }
             let qs = banks::scoped_questions(Some(&bank), questions);
             let plan = write_import(c, bank.id, filename, sheets, &qs, &t)?;
             c.execute(
@@ -751,13 +998,36 @@ impl Store {
 
     pub fn import_history(&self, limit: i64) -> Result<Vec<ImportRecord>, DbError> {
         let g = self.lock();
-        import_rows(&g, limit)
+        import_rows(&g, limit, &BankScope::All)
+    }
+
+    /// `/api/imports` as `viewer` sees it: everything for an administrator, the history of the banks they own for a bank
+    /// manager (nothing for anyone else).
+    pub fn import_history_as(
+        &self,
+        viewer: &Viewer,
+        limit: i64,
+    ) -> Result<Vec<ImportRecord>, DbError> {
+        let g = self.lock();
+        let scope = if viewer.admin {
+            BankScope::All
+        } else if viewer.can_manage {
+            BankScope::Only(banks::owned_banks(&g, viewer.user)?)
+        } else {
+            BankScope::Only(Default::default())
+        };
+        import_rows(&g, limit, &scope)
     }
 
     /// `/api/progress` of `user`: `{"version":1,"questions":{…},"history":[…],"masterStreak":2}`
     pub fn progress(&self, user: i64) -> Result<Value, DbError> {
+        self.progress_as(user, &BankScope::All)
+    }
+
+    /// `/api/progress` of `user`, with the statistics of the questions in `scope` only (see [`progress_from`]).
+    pub fn progress_as(&self, user: i64, scope: &BankScope) -> Result<Value, DbError> {
         let g = self.lock();
-        progress_from(&g, user)
+        progress_from(&g, user, scope)
     }
 
     /// Records an exam without per-question answers (every detail row is stored as unanswered). See [`Store::record_attempt_with_answers`].
@@ -769,19 +1039,36 @@ impl Store {
     /// banks, in order of first appearance) and one `attempt_items` row per result (`answers[i]` belongs to `results[i]`; missing
     /// entries are stored as NULL), then keeps only the newest `RECORD_RETENTION` exams of `user` (their detail rows go with
     /// them). Everything belongs to `user`. Returns their `/api/progress`.
+    ///
+    /// Only questions that still exist are counted (v0.6.5): an exam started before its question bank was deleted, or a result
+    /// with a made-up id, must not write statistics or detail rows for a question that is gone, nor an exam record that no later
+    /// bank deletion could ever find. Such results are left out of the totals and the record; their ids come back in
+    /// `"notCounted"` (only when there are any) so the page can say so. Retired questions (`active = 0`, left over from a
+    /// re-import) still exist and are counted. When no result is left, nothing is written: [`DbError::QuestionsGone`].
     pub fn record_attempt_with_answers(
         &self,
         user: i64,
         attempt: &Attempt,
         answers: &[Option<Value>],
     ) -> Result<Value, DbError> {
-        let total = len_i64(attempt.results.len());
-        if total == 0 {
+        self.record_attempt_as(user, &BankScope::All, attempt, answers)
+    }
+
+    /// [`Store::record_attempt_with_answers`] for a user who may see only the banks in `scope` (v0.6.5): a question of a bank
+    /// outside it is treated exactly like a question that no longer exists (left out, listed in `"notCounted"`), so a made-up
+    /// or stale request can never write statistics for a bank the user cannot see. The record keeps `attempt.kind`; a practice
+    /// session updates the statistics (the wrong-answer notebook) exactly like an exam. Returns `/api/progress` limited to
+    /// `scope`.
+    pub fn record_attempt_as(
+        &self,
+        user: i64,
+        scope: &BankScope,
+        attempt: &Attempt,
+        answers: &[Option<Value>],
+    ) -> Result<Value, DbError> {
+        if attempt.results.is_empty() {
             return Err(invalid_input("an attempt needs at least one result"));
         }
-        let good = len_i64(attempt.results.iter().filter(|r| r.correct).count());
-        let percent = percent_round_half_even(good, total);
-        let sheets_json = pyjson::to_string(&attempt.sheets)?;
         let answer_texts = (0..attempt.results.len())
             .map(|i| {
                 answers
@@ -793,8 +1080,32 @@ impl Store {
             .collect::<Result<Vec<Option<String>>, _>>()?;
         let t = self.clock.now();
         let g = self.lock();
-        run_tx(&g, |c| {
+        let not_counted = run_tx(&g, |c| {
             users::ensure_active(c, user)?;
+            // Split the results into the questions that still exist and those that are gone (checked inside the transaction,
+            // so a bank deleted at the same moment is either fully counted before or fully left out after)
+            let mut kept = Vec::new();
+            let mut gone = Vec::new();
+            {
+                // Some(bank) = the question exists (bank None: a row without a bank, from an older binary)
+                let mut bank_of = c.prepare("SELECT bank_id FROM questions WHERE id=?1")?;
+                for (r, answer) in attempt.results.iter().zip(&answer_texts) {
+                    let bank: Option<Option<i64>> = bank_of
+                        .query_row(params![r.id], |row| row.get(0))
+                        .optional()?;
+                    if bank.is_some_and(|b| scope.allows(b)) {
+                        kept.push((r, answer));
+                    } else {
+                        gone.push(r.id.clone());
+                    }
+                }
+            }
+            if kept.is_empty() {
+                return Err(DbError::QuestionsGone);
+            }
+            let total = len_i64(kept.len());
+            let good = len_i64(kept.iter().filter(|(r, _)| r.correct).count());
+            let percent = percent_round_half_even(good, total);
             {
                 let mut ins = c.prepare(
                     "INSERT OR IGNORE INTO user_stats(user_id, question_id) VALUES(?1, ?2)",
@@ -805,7 +1116,7 @@ impl Store {
                 let mut bad = c.prepare(
                     "UPDATE user_stats SET attempts=attempts+1, wrong=wrong+1, streak=0, last=0, at=?1 WHERE user_id=?2 AND question_id=?3",
                 )?;
-                for r in &attempt.results {
+                for (r, _) in &kept {
                     ins.execute(params![user, r.id])?;
                     if r.correct {
                         ok.execute(params![t, user, r.id])?;
@@ -814,63 +1125,78 @@ impl Store {
                     }
                 }
             }
-            let banks_json = records::bank_snapshot(c, &attempt.results)?;
+            let counted: Vec<_> = kept.iter().map(|(r, _)| (*r).clone()).collect();
+            let banks_json = records::bank_snapshot(c, &counted)?;
+            // The record names the sheets the client sent; when questions were left out, only those sheets that a counted
+            // question belongs to (a deleted bank's sheets must not show on a record none of whose questions came from them)
+            let sheets_json = if gone.is_empty() {
+                pyjson::to_string(&attempt.sheets)?
+            } else {
+                pyjson::to_string(&counted_sheets(c, &attempt.sheets, &counted)?)?
+            };
             c.execute(
-                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user],
+                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user, attempt.kind.as_str()],
             )?;
             let attempt_id = c.last_insert_rowid();
             {
                 let mut item = c.prepare(
                     "INSERT INTO attempt_items(attempt_id, seq, question_id, answer, correct) VALUES(?1,?2,?3,?4,?5)",
                 )?;
-                for (seq, (r, answer)) in attempt.results.iter().zip(&answer_texts).enumerate() {
+                for (seq, (r, answer)) in kept.iter().enumerate() {
                     item.execute(params![attempt_id, len_i64(seq), r.id, answer, r.correct])?;
                 }
             }
             // Keep only the most recent RECORD_RETENTION sessions (and their detail); `/api/progress` still shows HISTORY_LIMIT
             records::prune(c, user, RECORD_RETENTION)?;
-            Ok(())
+            Ok(gone)
         })?;
-        progress_from(&g, user)
+        let mut progress = progress_from(&g, user, scope)?;
+        if !not_counted.is_empty() {
+            if let Some(obj) = progress.as_object_mut() {
+                obj.insert("notCounted".to_string(), json!(not_counted));
+            }
+        }
+        Ok(progress)
     }
 
     /// `/api/reset`: empties `user`'s per-question stats and every exam record of theirs (with its detail).
     pub fn reset_progress(&self, user: i64) -> Result<Value, DbError> {
         let g = self.lock();
         run_tx(&g, |c| records::delete_user_records(c, user, true))?;
-        progress_from(&g, user)
+        progress_from(&g, user, &BankScope::All)
     }
 
     /// Migration of the old progress.json into the study records of the first administrator (the account that claimed the data
-    /// of earlier versions). Returns (whether anything was migrated, message). On a malformed file returns (false, message)
-    /// without crashing.
+    /// of earlier versions). Returns (whether anything was migrated, message): the Chinese message of the reference
+    /// implementation (see [`LegacyMigration::message`]). On a malformed file returns (false, message) without crashing.
     pub fn migrate_legacy_progress(&self, path: &Path) -> Result<(bool, String), DbError> {
+        let outcome = self.migrate_legacy_progress_outcome(path)?;
+        Ok((outcome.migrated(), outcome.message()))
+    }
+
+    /// [`Store::migrate_legacy_progress`], returning what happened (the command-line program prints it in English).
+    pub fn migrate_legacy_progress_outcome(&self, path: &Path) -> Result<LegacyMigration, DbError> {
         let g = self.lock();
         if get_meta(&g, "legacy_migrated")?.is_some_and(|v| !v.is_empty()) {
-            return Ok((false, "之前已经迁移过".to_string()));
+            return Ok(LegacyMigration::AlreadyMigrated);
         }
         if !path.is_file() {
-            return Ok((false, "没有找到旧的 progress.json".to_string()));
+            return Ok(LegacyMigration::NotFound);
         }
         let (qs, hist) = match legacy_progress::load(path) {
             Ok(x) => x,
-            Err(e) => return Ok((false, format!("旧的 progress.json 读不了：{e}"))),
+            Err(e) => return Ok(LegacyMigration::Unreadable(e)),
         };
         if has_progress(&g)? {
-            return Ok((false, "数据库里已经有学习记录，没有覆盖".to_string()));
+            return Ok(LegacyMigration::HasRecords);
         }
         let (stats, attempts) = match legacy_progress::convert(&qs, &hist) {
             Ok(x) => x,
-            Err(e) => {
-                return Ok((
-                    false,
-                    format!("旧的 progress.json 里有格式不对的内容，没有迁移：{e}"),
-                ))
-            }
+            Err(e) => return Ok(LegacyMigration::Malformed(e)),
         };
         let Some(owner) = users::owner_admin(&g)? else {
-            return Ok((false, "数据库里没有管理员账户，没有迁移".to_string()));
+            return Ok(LegacyMigration::NoAdmin);
         };
         let t = self.clock.now();
         let res = run_tx(&g, |c| {
@@ -881,23 +1207,121 @@ impl Store {
             Ok(true)
         });
         match res {
-            Ok(true) => Ok((
-                true,
-                format!("迁移了 {} 场成绩、{} 道题的答题记录", hist.len(), qs.len()),
-            )),
-            Ok(false) => Ok((false, "数据库里已经有学习记录，没有覆盖".to_string())),
+            Ok(true) => Ok(LegacyMigration::Migrated {
+                sessions: hist.len(),
+                questions: qs.len(),
+            }),
+            Ok(false) => Ok(LegacyMigration::HasRecords),
             Err(DbError::Sqlite(rusqlite::Error::SqliteFailure(e, _)))
                 if e.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
-                Ok((
-                    false,
-                    "旧的 progress.json 里有格式不对的内容，没有迁移：数据不满足表的约束"
-                        .to_string(),
-                ))
+                Ok(LegacyMigration::Constraint)
             }
             Err(e) => Err(e),
         }
     }
+}
+
+/// What a migration of the old progress.json did (see [`Store::migrate_legacy_progress_outcome`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LegacyMigration {
+    /// Migrated: this many exam sessions and the statistics of this many questions
+    Migrated { sessions: usize, questions: usize },
+    /// The database says it was migrated before (the normal case on every later start)
+    AlreadyMigrated,
+    /// There is no progress.json at that path
+    NotFound,
+    /// The file cannot be read or is not the expected JSON (the reason, in English)
+    Unreadable(String),
+    /// The database already has study records: nothing is overwritten
+    HasRecords,
+    /// The file has malformed content (the reason, in English); nothing was migrated
+    Malformed(String),
+    /// The rows do not satisfy the table constraints; nothing was migrated
+    Constraint,
+    /// The database has no administrator to give the records to
+    NoAdmin,
+}
+
+impl LegacyMigration {
+    /// Whether anything was migrated.
+    pub fn migrated(&self) -> bool {
+        matches!(self, LegacyMigration::Migrated { .. })
+    }
+
+    /// The Chinese message of the reference implementation (pinned by the golden tests).
+    pub fn message(&self) -> String {
+        match self {
+            LegacyMigration::Migrated {
+                sessions,
+                questions,
+            } => format!("迁移了 {} 场成绩、{} 道题的答题记录", *sessions, *questions),
+            LegacyMigration::AlreadyMigrated => "之前已经迁移过".to_string(),
+            LegacyMigration::NotFound => "没有找到旧的 progress.json".to_string(),
+            LegacyMigration::Unreadable(e) => format!("旧的 progress.json 读不了：{e}"),
+            LegacyMigration::HasRecords => "数据库里已经有学习记录，没有覆盖".to_string(),
+            LegacyMigration::Malformed(e) => {
+                format!("旧的 progress.json 里有格式不对的内容，没有迁移：{e}")
+            }
+            LegacyMigration::Constraint => {
+                "旧的 progress.json 里有格式不对的内容，没有迁移：数据不满足表的约束".to_string()
+            }
+            LegacyMigration::NoAdmin => "数据库里没有管理员账户，没有迁移".to_string(),
+        }
+    }
+
+    /// The same in English, for the console and the log.
+    pub fn english(&self) -> String {
+        match self {
+            LegacyMigration::Migrated {
+                sessions,
+                questions,
+            } => format!(
+                "migrated {sessions} exam session(s) and the answer statistics of {questions} question(s)"
+            ),
+            LegacyMigration::AlreadyMigrated => "it was migrated before".to_string(),
+            LegacyMigration::NotFound => "there is no old progress.json".to_string(),
+            LegacyMigration::Unreadable(e) => format!("the old progress.json cannot be read: {e}"),
+            LegacyMigration::HasRecords => {
+                "the database already has study records; nothing was overwritten".to_string()
+            }
+            LegacyMigration::Malformed(e) => {
+                format!("the old progress.json has malformed content, nothing was migrated: {e}")
+            }
+            LegacyMigration::Constraint => {
+                "the old progress.json has malformed content, nothing was migrated: the data does not satisfy the table constraints".to_string()
+            }
+            LegacyMigration::NoAdmin => {
+                "the database has no administrator account; nothing was migrated".to_string()
+            }
+        }
+    }
+}
+
+/// The sheets of `sent` (in the client's order) that at least one of the `counted` questions belongs to. When none of them
+/// matches (a client that sent other labels), the sheets of the counted questions in order of first appearance instead.
+fn counted_sheets(
+    c: &Connection,
+    sent: &[String],
+    counted: &[AttemptResult],
+) -> Result<Vec<String>, DbError> {
+    let mut of_counted: Vec<String> = Vec::new();
+    {
+        let mut sheet = c.prepare("SELECT sheet FROM questions WHERE id=?1")?;
+        for r in counted {
+            let s: String = sheet.query_row(params![r.id], |row| row.get(0))?;
+            if !of_counted.contains(&s) {
+                of_counted.push(s);
+            }
+        }
+    }
+    let mut kept: Vec<String> = Vec::new();
+    for s in sent {
+        if of_counted.contains(s) && !kept.contains(s) {
+            kept.push(s.clone());
+        }
+    }
+    Ok(if kept.is_empty() { of_counted } else { kept })
 }
 
 fn write_legacy_rows(
@@ -950,9 +1374,12 @@ mod tests {
             zh: None,
             english: String::new(),
             en: None,
+            lang: String::new(),
+            ja: None,
             explanation: String::new(),
             mnemonic: String::new(),
             note: String::new(),
+            explain: None,
             id: id.to_string(),
             sheet: sheet.to_string(),
             row,
@@ -965,6 +1392,7 @@ mod tests {
             total: usable,
             usable,
             skipped: vec![],
+            warnings: vec![],
         }
     }
 
@@ -1084,6 +1512,16 @@ mod tests {
     #[test]
     fn attempt_updates_stats_and_prunes() {
         let (_d, s) = open_tmp();
+        // Only questions that exist are counted
+        s.apply_import(
+            "a.xlsx",
+            &[sheet("日本語", 2)],
+            &[
+                question("日本語", "q1", "Q1?", 1),
+                question("日本語", "q2", "Q2?", 2),
+            ],
+        )
+        .expect("import");
         let mk = |ok: bool| Attempt {
             results: vec![
                 AttemptResult {
@@ -1098,6 +1536,7 @@ mod tests {
             sheets: vec!["日本語".to_string()],
             mode: "all".to_string(),
             seconds: 7,
+            kind: Default::default(),
         };
         let p = s.record_attempt(1, &mk(false)).expect("rec");
         assert_eq!(p["questions"]["q1"]["wrong"], 1);
@@ -1119,7 +1558,8 @@ mod tests {
                     results: vec![],
                     sheets: vec![],
                     mode: "all".into(),
-                    seconds: 0
+                    seconds: 0,
+                    kind: Default::default(),
                 }
             )
             .is_err());

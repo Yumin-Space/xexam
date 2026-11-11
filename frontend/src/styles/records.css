@@ -39,7 +39,7 @@
 /* ---------- Record list: hairline rows with a soft hover (soft cards on narrow screens) ---------- */
 /* The rows reach 10px into the block's padding, so the text lines up with the heading and the hover fill has room */
 .rec-scroll { overflow-x: auto; margin: 0 -10px; }
-/* Row hover: the sheet grey in the light theme (the usual --hover fill would take the red accuracy to 4.45:1),
+/* Row hover: the sheet grey in the light theme (the usual --hover fill would take the orange accuracy to 4.45:1),
    the usual hover fill in the dark theme */
 .rec-table { width: 100%; border-collapse: collapse; font-size: 14.5px; --rec-row-hover: var(--sheet); }
 :root[data-theme="dark"] .rec-table { --rec-row-hover: var(--hover); }
@@ -64,7 +64,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-table td.num { white-space: nowrap; }
 .rec-pct { font-weight: 600; font-size: 16px; }
 .rec-pct.hi { color: var(--right); }
-.rec-pct.lo { color: var(--wrong); }
+.rec-pct.lo { color: var(--answer-wrong); }
 .rec-act { text-align: right; }
 /* "Delete": red text with a soft red hover. In the list it stays a quiet grey until its row is hovered or it has the
    focus, so a column of red words does not shout (the dialog still asks before anything is deleted). */
@@ -118,6 +118,9 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-meta { margin: 14px 0 0; }
 .rec-hints { margin-top: 10px; }
 .score .says .rec-hints p { font-size: 13.5px; color: var(--ink3); }
+/* Result page: questions deleted during the exam were not counted (v0.6.5) */
+.score .says .res-gone { margin-top: 12px; max-width: 60ch; }
+.score .says .res-gone p { font-size: 14px; }
 .rec-hints p + p { margin-top: 4px; }
 /* Exams taken before v0.5: a quiet note instead of the review */
 .rec-note { padding: 12px 16px; border-radius: 8px; background: var(--fill); color: var(--ink2); }
@@ -181,3 +184,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 @media (prefers-reduced-motion: reduce) {
   .rec-table tbody tr { transition: none; }
 }
+
+/* ---------- Exam / Practice tag (v0.6.5): in front of the bank names of a row, and in the detail's facts ---------- */
+.rec-banks .kind-tag { margin-right: 4px; vertical-align: 1px; }
+.rec-meta .kind-tag { vertical-align: 1px; }

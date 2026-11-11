@@ -2,16 +2,25 @@
 // confirm / cancel), list / inspect / update / delete the banks, the import history, and the Excel format guide.
 // Laid out as compactly as the home page: small pill choices in a heading row, one-line rows, foldable bank cards.
 // Page-local state (import target, pending preview, busy flags, open panels) lives in this module; shared state only through actions.
+// v0.6.5: administrators manage every bank and see who uploaded each; a bank manager (a plain user with the permission) sees
+// only the banks they own here, can import new banks (which become theirs), and update or delete only their own. The server
+// marks each bank "manageable" and refuses everything else (403); users without the permission get the "Not allowed" page
+// instead of this one (main.ts).
+// v0.7: only the six-column Excel layout can be imported, and the format guide explains only that one; a bank whose questions
+// are all retired (they came from an older layout, which the backend retires) says so in its card.
 import '../styles/banks.css';
 import { deleteBank, fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { pageHead } from '../components/common.ts';
 import { icon } from '../components/shell.ts';
+import { retiredOnly } from '../domain/bank-status.ts';
+import { sheetWarnings, warningTotal, type RowWarning } from '../domain/import-warnings.ts';
 import { errorText, LocalError, serverText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
 import { applyBankDeleted, navigate, onRouteChange, onSignedIn, refreshLibrary, render } from '../state/actions.ts';
-import { bankById, S } from '../state/store.ts';
+import { manageableBanks, ownerView } from '../state/bank-access.ts';
+import { bankById, isAdmin, S } from '../state/store.ts';
 import type { BankSummary, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
 import { ask, askCheck } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
@@ -121,6 +130,11 @@ const sameFileName = (a: string, b: string): boolean => a !== '' && a.toLowerCas
 const stripXlsx = (name: string): string => name.replace(/\.xlsx$/i, '') || name;
 const onBanksPage = (): boolean => S.route.name === 'banks';
 
+/** The banks this page manages: every bank for an administrator, a bank manager's own banks */
+const managed = (): BankSummary[] => manageableBanks(S.banks);
+/** A bank this page may update / replace or delete, by id */
+const managedById = (id: number): BankSummary | undefined => managed().find((b) => b.id === id);
+
 /** Joins sentences the way the UI language does (a space in English, nothing in Chinese / Japanese) */
 function sentences(...parts: Array<string | null | false | undefined>): string {
   const kept = parts.filter((p): p is string => !!p);
@@ -153,17 +167,18 @@ function nameOf(target: ImportTarget): string {
 
 /** Keeps the import target valid when banks come and go. A vanished update target never silently becomes another bank. */
 function normalizeTarget(): void {
-  if (updateId != null && !bankById(updateId)) {
+  // A bank that is gone, or that this user may no longer manage (it was given to someone else), is no longer a target
+  if (updateId != null && !managedById(updateId)) {
     updateId = null;
     if (mode === 'update') mode = 'new';
   }
-  if (!S.banks.length) mode = 'new';
-  if (updateId == null) updateId = S.banks[0]?.id ?? null;
+  if (!managed().length) mode = 'new';
+  if (updateId == null) updateId = managed()[0]?.id ?? null;
 }
 
 function currentTarget(): ImportTarget | null {
   if (mode === 'new') return 'new';
-  return updateId != null && bankById(updateId) ? updateId : null;
+  return updateId != null && managedById(updateId) ? updateId : null;
 }
 
 const smooth = (): ScrollBehavior =>
@@ -267,8 +282,9 @@ async function uploadFile(file: File | undefined): Promise<void> {
   } catch (e) {
     pv = null;
     importError = e;
-    // 404 = the target bank was deleted elsewhere: bring the list (and the target choice) up to date
-    if (e instanceof ApiError && e.status === 404) {
+    // 404 = the target bank was deleted elsewhere; 403 = it is not this user's to update (or the permission was taken away):
+    // bring the list (and the target choice) up to date
+    if (e instanceof ApiError && (e.status === 404 || e.status === 403)) {
       refreshLibrary().then(() => {
         if (onBanksPage()) render();
       }, () => {});
@@ -283,6 +299,7 @@ async function uploadFile(file: File | undefined): Promise<void> {
   }
   if (pv) {
     pending = { pv, target, file };
+    warnListOpen = false;
     after = { scroll: 'bk-import', focus: 'bk-import-h' };
   } else {
     after = { scroll: 'bk-import' };
@@ -421,7 +438,7 @@ function chooseUpdate(b: BankSummary): void {
 async function askDelete(card: BankSummary): Promise<{ b: BankSummary; withRecords: boolean } | null> {
   let b: BankSummary | undefined;
   try {
-    b = (await fetchBanks()).find((x) => x.id === card.id);
+    b = manageableBanks(await fetchBanks()).find((x) => x.id === card.id);
   } catch (e) {
     if (!onBanksPage()) return null;
     listError = e;
@@ -447,8 +464,11 @@ async function askDelete(card: BankSummary): Promise<{ b: BankSummary; withRecor
 
   const title = t('banks.delete.title', { name: b.name });
   const body = tn('banks.delete.body', b.total + b.inactive);
+  // A bank manager's counts are their own (the server counts all users only for administrators), and "also delete the
+  // study records" removes only theirs: other users' records stay, with the questions shown as deleted (v0.6.5)
+  const own = !isAdmin();
   if (b.studied === 0 && b.records === 0) {
-    const ok = await ask({ title, body: body + '\n' + t('banks.delete.noHistory'), ok: t('banks.delete.ok'), danger: true });
+    const ok = await ask({ title, body: body + '\n' + t(own ? 'banks.delete.noHistoryOwn' : 'banks.delete.noHistory'), ok: t('banks.delete.ok'), danger: true });
     return ok ? { b, withRecords: false } : null;
   }
   const r = await askCheck({
@@ -456,10 +476,15 @@ async function askDelete(card: BankSummary): Promise<{ b: BankSummary; withRecor
     body,
     ok: t('banks.delete.ok'),
     danger: true,
-    check: {
-      label: t('banks.delete.check'),
-      hint: t('banks.delete.hint', { studied: tn('banks.delete.studied', b.studied), records: tn('banks.delete.records', b.records) }),
-    },
+    check: own
+      ? {
+        label: t('banks.delete.checkOwn'),
+        hint: t('banks.delete.hintOwn', { studied: tn('banks.delete.studiedOwn', b.studied), records: tn('banks.delete.recordsOwn', b.records) }),
+      }
+      : {
+        label: t('banks.delete.check'),
+        hint: t('banks.delete.hint', { studied: tn('banks.delete.studied', b.studied), records: tn('banks.delete.records', b.records) }),
+      },
   });
   return r.ok ? { b, withRecords: r.checked } : null;
 }
@@ -487,7 +512,7 @@ async function removeBank(card: BankSummary): Promise<void> {
     if (pending && pending.target === b.id) pending = null;
     if (done && done.bankId === b.id) done = null;
     importsWanted = true;
-    toast(t(withRecords ? 'banks.delete.doneWithRecords' : 'banks.delete.done', { name: b.name }));
+    toast(t(!withRecords ? 'banks.delete.done' : isAdmin() ? 'banks.delete.doneWithRecords' : 'banks.delete.doneWithRecordsOwn', { name: b.name }));
     after = { focus: 'bk-list-h' };
   } catch (e) {
     listError = e;
@@ -537,6 +562,49 @@ function sheetPlanRow(s: SheetPlan): HTMLElement {
   return h('li', { class: 'bk-row' }, d);
 }
 
+/** What differs in a row of the six-column warnings: the Chinese answer, the Japanese one, or both (or the server's reason) */
+function warnWhat(r: RowWarning): string {
+  const sep = t('common.listSep');
+  const langs = r.langs.length === 2 ? t('banks.warn6.both') : r.langs[0] === 'zh' ? t('banks.warn6.zh') : r.langs[0] === 'ja' ? t('banks.warn6.ja') : null;
+  return [langs, ...r.other.map((x) => serverText(x))].filter(Boolean).join(sep);
+}
+
+/** Fewer listed rows than this are shown at once; a longer list is folded under "Show the rows" */
+const WARN_UNFOLDED = 8;
+/** The preview's fold of the warning rows is open (kept across re-renders of the same preview) */
+let warnListOpen = false;
+
+/**
+ * Six-column files (v0.7): answers in column E (Chinese) or F (Japanese) that differ from the English answer in column D.
+ * The rows are imported with the English answer, so this is a calm note (not an error): how many, what it means, and the
+ * rows with the language that differs, per sheet. Null when the file has none (always for 3 / 4-column files).
+ */
+function warningsBox(pv: ImportPreview): HTMLElement | null {
+  const total = warningTotal(pv);
+  if (!total) return null;
+  const sheets = sheetWarnings(pv.sheets);
+  const items: HTMLElement[] = sheets.flatMap((s) => [
+    ...s.rows.map((r) => h('li', null, t('banks.warn6.row', { sheet: s.sheet, row: r.row, what: warnWhat(r) }))),
+    ...(s.more ? [h('li', { class: 'dim' }, t('banks.warn6.more', { sheet: s.sheet, n: s.more }))] : []),
+  ]);
+  let list: HTMLElement | null = null;
+  if (items.length && items.length < WARN_UNFOLDED) {
+    list = h('ul', { class: 'bk-warn-rows' }, items);
+  } else if (items.length) {
+    const d = h('details', { class: 'bk-warn-fold', open: warnListOpen },
+      h('summary', null, t('banks.warn6.show'), icon(ICON_CHEVRON, 'ico bk-chev')),
+      h('ul', { class: 'bk-warn-rows' }, items));
+    d.addEventListener('toggle', () => {
+      warnListOpen = d.open;
+    });
+    list = d;
+  }
+  return h('div', { class: 'callout mark bk-warn6', role: 'note', 'aria-labelledby': 'bk-warn6-t' },
+    h('p', { class: 'bk-warn6-t', id: 'bk-warn6-t' }, tn('banks.warn6.title', total)),
+    h('p', null, t('banks.warn6.body')),
+    list);
+}
+
 function previewView(p: Pending): Child[] {
   const pv = p.pv;
   const isNew = p.target === 'new';
@@ -544,7 +612,8 @@ function previewView(p: Pending): Child[] {
   const nothing = pv.usable === 0;
   const same = !nothing && !pv.added && !pv.updated && !pv.removed && !pv.restored;
   const working = busy !== null;
-  const twin = isNew ? S.banks.find((b) => sameFileName(b.filename, pv.filename)) : undefined;
+  // "Update that bank instead" is offered only for a bank this user may update
+  const twin = isNew ? managed().find((b) => sameFileName(b.filename, pv.filename)) : undefined;
   const target = typeof p.target === 'number' ? bankById(p.target) : undefined;
   const otherFile = target && target.filename && !sameFileName(target.filename, pv.filename) ? target : undefined;
 
@@ -574,6 +643,7 @@ function previewView(p: Pending): Child[] {
           t('banks.preview.switchToUpdate', { name: twin.name })))) : null,
     otherFile ? h('div', { class: 'bk-info' },
       h('p', null, t('banks.preview.otherFile', { name: otherFile.name, old: otherFile.filename, file: pv.filename }))) : null,
+    nothing ? null : warningsBox(pv),
     pv.removed ? h('div', { class: 'warnbox' },
       h('p', null, sentences(
         tn('banks.retire.box', pv.removed, { name }),
@@ -618,7 +688,8 @@ function doneBox(d: Done): HTMLElement {
 
 /** The upload form: the target pills (for the heading row), the bank picker under them, the hint line and the file row */
 function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HTMLElement; row: HTMLElement } {
-  const hasBanks = S.banks.length > 0;
+  const targets = managed();
+  const hasBanks = targets.length > 0;
   const locked = busy !== null;
   const statusText = (): string => {
     if (busy === 'upload') return t('banks.drop.busy');
@@ -636,7 +707,7 @@ function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HT
       updateId = Number(select.value);
       refresh();
     },
-  }, S.banks.map((b) => h('option', { value: String(b.id) }, t('banks.target.option', { name: b.name, questions: tn('common.questions', b.total) }))));
+  }, targets.map((b) => h('option', { value: String(b.id) }, t('banks.target.option', { name: b.name, questions: tn('common.questions', b.total) }))));
   if (updateId != null) select.value = String(updateId);
   const pick = hasBanks ? h('div', { class: 'bk-pick', hidden: mode !== 'update' }, h('label', { for: 'bk-target' }, t('banks.target.select')), select) : null;
   const refresh = (): void => {
@@ -657,7 +728,7 @@ function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HT
       }),
       icon(shape, 'ico bk-seg-ico'),
       h('span', null, label));
-  const updateAbout = hasBanks ? t('banks.target.updateSub') : t('banks.target.noBanks');
+  const updateAbout = hasBanks ? t('banks.target.updateSub') : t(isAdmin() ? 'banks.target.noBanks' : 'banks.target.noBanksManager');
   const choice = h('fieldset', { class: 'bk-target', id: 'bk-target-fs' },
     h('legend', { class: 'sr-only' }, t('banks.target.legend')),
     h('div', { class: 'bk-segs' },
@@ -730,6 +801,9 @@ function bankCard(b: BankSummary): HTMLElement {
   const boxId = `bk-sheets-${b.id}`;
   const questions = tn('common.questions', b.total);
   const created = t('banks.list.createdAt', { at: b.createdAt });
+  // Administrators see whose upload each bank is (a bank manager's list holds only their own banks)
+  const owner = isAdmin() ? ownerView(b, S.user?.id) : { kind: 'none' as const };
+  const ownerText = owner.kind === 'you' ? t('banks.list.ownerYou') : owner.kind === 'other' ? t('banks.list.owner', { name: owner.name }) : null;
 
   const box = b.sheets.length ? h('div', { class: 'bk-sheetbox', id: boxId, hidden: !open },
     h('ul', { class: 'bk-sheetrows' }, b.sheets.map((s) => h('li', { class: 'bk-row' }, line(s.name, s.usable > 0
@@ -773,18 +847,25 @@ function bankCard(b: BankSummary): HTMLElement {
           h('span', null, b.filename || t('common.none')),
           b.inactive ? t('banks.list.withRetired', { questions, n: b.inactive }) : questions,
           tn('common.sheets', b.sheets.length),
-          h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt }))))),
+          h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt })),
+          ownerText ? h('span', { class: 'bk-owner' + (owner.kind === 'other' ? ' other' : '') }, ownerText) : null)),
+        // v0.7: every question retired (questions from an older Excel layout): say so, and how to use the bank again
+        retiredOnly(b) ? h('p', { class: 'bk-old' }, t('banks.list.oldLayout')) : null),
       expand),
     box);
 }
 
 function banksPanel(): HTMLElement {
+  const admin = isAdmin();
+  const list = managed();
   return h('section', { class: 'panel bk-list', 'aria-labelledby': 'bk-list-h', 'aria-busy': busy === 'delete' ? 'true' : null },
-    h('h2', { id: 'bk-list-h', tabindex: '-1' }, t('banks.list.title')),
+    h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin ? 'banks.list.title' : 'banks.list.titleMine')),
+    // A bank manager may also study banks an administrator gave them: say why those are not listed here
+    !admin && list.length ? h('p', { class: 'bk-hint bk-mgr-note' }, t('banks.list.managerNote')) : null,
     listError ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('banks.delete.failed', { reason: errorText(listError) }))) : null,
-    S.banks.length
-      ? h('div', { class: 'bk-banks' }, S.banks.map(bankCard))
-      : h('p', { class: 'empty' }, t('banks.list.empty')));
+    list.length
+      ? h('div', { class: 'bk-banks' }, list.map(bankCard))
+      : h('p', { class: 'empty' }, t(admin ? 'banks.list.empty' : 'banks.list.emptyManager')));
 }
 
 // ---------------------------------------------------------------- import history
@@ -831,35 +912,121 @@ function columns(rows: Array<[string, MsgKey]>): HTMLElement {
     h('tbody', null, rows.map(([col, key]) => h('tr', null, h('th', { scope: 'row' }, col), rich('td', t(key))))));
 }
 
-function example(title: MsgKey, colA: MsgKey, colC: MsgKey): HTMLElement {
-  const cell = (label: MsgKey, text: MsgKey): HTMLElement =>
-    h('div', null, h('p', { class: 'bk-ex-col' }, t(label)), h('pre', { class: 'bk-ex-cell' }, t(text)));
-  return h('figure', { class: 'bk-ex' },
+/** One language of an example row: its question cell and its answer cell, with their column letters */
+interface ExamplePair {
+  lang: string;
+  q: [string, string];
+  a: [string, string];
+}
+
+/**
+ * The examples of the six-column layout (v0.7: the only layout that can be imported). Made-up content, written in all three
+ * languages whatever the interface language is (that is what the columns hold), each shown as three pairs (question |
+ * answer) of one language: A | D English, B | E Chinese, C | F Japanese. Every example is one row that the parser reads
+ * without a warning (the hotspot items of B and C end with their own choices after a full-width space).
+ */
+const EXAMPLES: ReadonlyArray<{ title: MsgKey; pairs: readonly ExamplePair[] }> = [
+  {
+    title: 'banks.guide.exSingle',
+    pairs: [
+      {
+        lang: 'en',
+        q: ['A', 'Which planet is known as the Red Planet?\nA. Venus\nB. Mars\nC. Jupiter\nD. Saturn'],
+        a: ['D', '【Answer】B\n【Explanation】Iron oxide (rust) in the dust on its surface makes Mars look red.\n【Memory aid】Mars rusts red.'],
+      },
+      {
+        lang: 'zh-CN',
+        q: ['B', '哪颗行星被称为“红色星球”？\nA. 金星\nB. 火星\nC. 木星\nD. 土星'],
+        a: ['E', '【答案】B\n【解析】火星表面的尘土含有氧化铁（铁锈），所以看起来是红色的。\n【记忆口诀】火星生锈红彤彤。'],
+      },
+      {
+        lang: 'ja',
+        q: ['C', '「赤い惑星」と呼ばれる惑星はどれですか。\nA. 金星\nB. 火星\nC. 木星\nD. 土星'],
+        a: ['F', '【正解】B\n【解説】火星の表面の砂には酸化鉄（さび）が含まれているため、赤く見えます。\n【覚え方】火星はさびて赤い。'],
+      },
+    ],
+  },
+  {
+    title: 'banks.guide.exMulti',
+    pairs: [
+      {
+        lang: 'en',
+        q: ['A', 'Which two of the following are fruits?\nA. Carrot\nB. Potato\nC. Apple\nD. Onion\nE. Banana'],
+        a: ['D', '【Answer】C, E\n【Explanation】Apples and bananas are fruits; the others are vegetables.\n【Memory aid】Sweet ones are fruit.'],
+      },
+      {
+        lang: 'zh-CN',
+        q: ['B', '下面哪两个是水果？\nA. 胡萝卜\nB. 土豆\nC. 苹果\nD. 洋葱\nE. 香蕉'],
+        a: ['E', '【答案】C、E\n【解析】苹果和香蕉是水果，其他都是蔬菜。\n【记忆口诀】甜的是水果。'],
+      },
+      {
+        lang: 'ja',
+        q: ['C', '次のうち果物はどれですか。2 つ選んでください。\nA. にんじん\nB. じゃがいも\nC. りんご\nD. たまねぎ\nE. バナナ'],
+        a: ['F', '【正解】C、E\n【解説】りんごとバナナは果物で、ほかは野菜です。\n【覚え方】甘いのが果物。'],
+      },
+    ],
+  },
+  {
+    title: 'banks.guide.exHotspot',
+    pairs: [
+      {
+        lang: 'en',
+        q: ['A', 'HOTSPOT\nFor each statement, choose Yes or No.\n1. The sun rises in the east. Yes / No\n2. The moon is a star. Yes / No'],
+        a: ['D', '【Answer】1 Yes; 2 No\n【Explanation】The sun rises in the east. The moon only reflects sunlight; it is not a star.'],
+      },
+      {
+        lang: 'zh-CN',
+        q: ['B', '判断下面每句话是否正确。\n1. 太阳从东方升起。　是 / 否\n2. 月亮是恒星。　是 / 否'],
+        a: ['E', '【答案】1 是；2 否\n【解析】太阳从东方升起；月亮只是反射太阳光，不是恒星。'],
+      },
+      {
+        lang: 'ja',
+        q: ['C', '次の各文が正しいかどうかを選んでください。\n1. 太陽は東から昇る。　はい / いいえ\n2. 月は恒星である。　はい / いいえ'],
+        a: ['F', '【正解】1 はい；2 いいえ\n【解説】太陽は東から昇ります。月は太陽の光を反射しているだけで、恒星ではありません。'],
+      },
+    ],
+  },
+];
+
+function example(title: MsgKey, pairs: readonly ExamplePair[]): HTMLElement {
+  const cell = ([col, text]: [string, string], lang: string): HTMLElement =>
+    h('div', null, h('p', { class: 'bk-ex-col' }, t('banks.guide.exCol', { c: col })), h('pre', { class: 'bk-ex-cell', lang }, text));
+  return h('figure', { class: 'bk-ex bk-ex6' },
     h('figcaption', null, t(title)),
-    h('div', { class: 'bk-ex-cols' }, cell('banks.guide.exColA', colA), cell('banks.guide.exColC', colC)));
+    pairs.map((x) => h('div', { class: 'bk-ex-cols' }, cell(x.q, x.lang), cell(x.a, x.lang))));
 }
 
 function guidePanel(): HTMLElement {
   // Folded by default: the summary is the panel's heading row. Column letters are Excel's own (the same in every language).
+  // v0.7 (owner): the six-column layout is the only one that can be imported; the guide explains only that one.
   const d = h('details', { class: 'bk-guide-d', id: 'bk-guide-d', open: guideOpen },
     h('summary', { class: 'bk-guide-s', id: 'bk-guide-s' }, h('h2', { id: 'bk-guide-h' }, t('banks.guide.title')), icon(ICON_CHEVRON, 'ico bk-chev')),
     h('div', { class: 'bk-guide-body' },
       h('h3', null, t('banks.guide.basicsTitle')),
       rich('p', t('banks.guide.bank')),
+      rich('p', t('banks.guide.only')),
       rich('p', t('banks.guide.rows')),
-      h('h3', null, t('banks.guide.cols3Title')),
-      columns([['A', 'banks.guide.c3a'], ['B', 'banks.guide.c3b'], ['C', 'banks.guide.c3c']]),
-      h('h3', null, t('banks.guide.cols4Title')),
-      columns([['A', 'banks.guide.c4a'], ['B', 'banks.guide.c3b'], ['C', 'banks.guide.c4c'], ['D', 'banks.guide.c4d']]),
-      rich('p', t('banks.guide.cols4Note')),
+      h('h3', null, t('banks.guide.cols6Title')),
+      columns([['A', 'banks.guide.c6a'], ['B', 'banks.guide.c6b'], ['C', 'banks.guide.c6c'], ['D', 'banks.guide.c6d'], ['E', 'banks.guide.c6e'],
+        ['F', 'banks.guide.c6f']]),
+      rich('p', t('banks.guide.cols6Note')),
+      rich('p', t('banks.guide.detect')),
       h('h3', null, t('banks.guide.typesTitle')),
       h('ul', { class: 'bk-points' },
-        rich('li', t('banks.guide.choice')),
+        rich('li', t('banks.guide.single')),
+        rich('li', t('banks.guide.multi')),
         rich('li', t('banks.guide.hotspot')),
-        rich('li', t('banks.guide.headings'))),
+        rich('li', t('banks.guide.hotspotLangs'))),
+      h('h3', null, t('banks.guide.headingsTitle')),
+      rich('p', t('banks.guide.headings')),
+      h('ul', { class: 'bk-points' },
+        rich('li', t('banks.guide.hAnswer')),
+        rich('li', t('banks.guide.hExplain')),
+        rich('li', t('banks.guide.hMnemonic'))),
+      rich('p', t('banks.guide.headingsMore')),
       h('h3', null, t('banks.guide.exTitle')),
-      example('banks.guide.exChoice', 'banks.guide.exChoiceA', 'banks.guide.exChoiceC'),
-      example('banks.guide.exHotspot', 'banks.guide.exHotspotA', 'banks.guide.exHotspotC'),
+      rich('p', t('banks.guide.exLead')),
+      EXAMPLES.map((x) => example(x.title, x.pairs)),
       h('h3', null, t('banks.guide.importTitle')),
       h('ul', { class: 'bk-points' },
         rich('li', t('banks.guide.whole')),
@@ -867,7 +1034,8 @@ function guidePanel(): HTMLElement {
         rich('li', t('banks.guide.identity')),
         rich('li', t('banks.guide.preview')),
         rich('li', t('banks.guide.files', { mb: MAX_MB })),
-        rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') })))));
+        rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') })),
+        rich('li', t('banks.guide.oldBanks')))));
   d.addEventListener('toggle', () => {
     guideOpen = d.open;
   });

@@ -1,11 +1,12 @@
 // Application state: one typed module-level object. Page-local UI state (filters, open panels, a pending upload preview)
 // lives in module-level variables of the page file itself; only state shared between pages lives here.
 import type {
-  AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
+  AttemptKind, AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
 } from '../types/api.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
 import { type Route } from '../router.ts';
 import { firstPaintSettings } from './settings-cache.ts';
+import { mayManageBanks } from './bank-access.ts';
 
 export type Phase = 'loading' | 'fatal' | 'ready';
 
@@ -18,7 +19,7 @@ export type AuthView = 'signin' | 'password' | null;
 /** Why the sign-in page is shown, when there is something to say about it */
 export type AuthNote = 'signedOut' | 'expired' | null;
 
-/** An exam in progress */
+/** An exam or a practice in progress */
 export interface Session {
   qs: Question[];
   answers: Record<string, Answer>;
@@ -30,6 +31,10 @@ export interface Session {
   t0: number;
   mode: Mode;
   sheets: string[];
+  /** v0.6.5: an exam (feedback after submitting) or a practice (each question checked right away) */
+  kind: AttemptKind;
+  /** Practice: ids of the questions already checked (locked, feedback shown). Always empty in an exam. */
+  checked: Set<string>;
 }
 
 export interface ResultRow {
@@ -45,6 +50,10 @@ export interface ResultState {
   prev: HistoryEntry | null;
   /** Id of the saved exam record (null if saving failed or it could not be identified) */
   recordId: number | null;
+  /** Questions left out of the score because they no longer exist (their bank was deleted during the exam) */
+  notCounted: number;
+  /** Exam or practice: the result page names it, and "take it again" starts the same kind */
+  kind: AttemptKind;
 }
 
 export interface SetupConfig {
@@ -63,8 +72,11 @@ export interface AppState {
   user: AuthUser | null;
   authView: AuthView;
   authNote: AuthNote;
-  /** The sign-in page: an enabled administrator still has the default password (GET /api/auth/state, nobody signed in) */
-  defaultAdmin: boolean;
+  /**
+   * The sign-in page: the username of an enabled administrator that still has the default password (GET /api/auth/state,
+   * nobody signed in), else null
+   */
+  defaultAdmin: string | null;
   /** Why loading failed (an ApiError or anything else; shown with errorText) */
   fatal: unknown;
   route: Route;
@@ -93,7 +105,7 @@ export const S: AppState = {
   user: null,
   authView: null,
   authNote: null,
-  defaultAdmin: false,
+  defaultAdmin: null,
   fatal: null,
   route: { name: 'home' },
   navOpen: false,
@@ -158,9 +170,17 @@ export function bankIdsOf(qs: readonly Pick<Question, 'bank'>[]): number[] {
   return [...new Set(qs.map((q) => q.bank))];
 }
 
-/** Whether the signed-in user is an administrator (manages question banks and users) */
+/** Whether the signed-in user is an administrator (manages every question bank and the users) */
 export function isAdmin(): boolean {
   return S.user?.role === 'admin';
+}
+
+/**
+ * Whether the signed-in user may open Question banks (v0.6.5): administrators, and plain users with the "bank manager"
+ * permission (they import new banks and update or delete only their own). The server decides; this only hides links.
+ */
+export function canManageBanks(): boolean {
+  return mayManageBanks(S.user);
 }
 
 /** Forgets everything loaded for the signed-in user (signing out). Shared data (version) is kept. */

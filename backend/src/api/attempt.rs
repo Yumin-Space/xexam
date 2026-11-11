@@ -2,8 +2,11 @@
 //! Differences from the legacy version (inputs that used to drop the connection now give a deterministic result): `seconds` of Infinity/NaN/garbage -> 0; `results` not a list -> 400.
 //!
 //! v0.5: each result may carry an optional `answer` (see [`clean_answer`]); a malformed answer only drops the answer, never the result.
+//!
+//! v0.6.5: an optional `"kind"`: `"exam"` (the default when it is missing or null) or `"practice"`. Anything else is refused
+//! (400) rather than silently saved as an exam: a client that sends a kind means it.
 use super::json::PyVal;
-use crate::models::{Attempt, AttemptAnswers, AttemptResult};
+use crate::models::{Attempt, AttemptAnswers, AttemptKind, AttemptResult};
 use crate::security::{py_int_str, truncate_chars};
 use serde_json::Value;
 
@@ -102,12 +105,18 @@ pub fn clean_attempt_with_answers(d: &PyVal) -> Result<(Attempt, AttemptAnswers)
         Some(PyVal::Str(m)) if matches!(m.as_str(), "all" | "weak" | "retry") => m.clone(),
         _ => "all".to_string(),
     };
+    let kind = match d.get("kind") {
+        None | Some(PyVal::Null) => AttemptKind::Exam,
+        Some(PyVal::Str(k)) => AttemptKind::parse(k).ok_or_else(|| MSG_BAD_RESULTS.to_string())?,
+        Some(_) => return Err(MSG_BAD_RESULTS.to_string()),
+    };
     Ok((
         Attempt {
             results,
             sheets,
             mode,
             seconds: clean_seconds(d.get("seconds")),
+            kind,
         },
         answers,
     ))
@@ -134,6 +143,27 @@ mod tests {
         assert_eq!(a.results.len(), 2);
         assert_eq!((a.mode.as_str(), a.seconds, a.sheets.len()), ("all", 0, 0));
         assert!(a.results[0].correct && !a.results[1].correct);
+    }
+
+    #[test]
+    fn kind_defaults_to_exam_and_accepts_practice_only() {
+        let r = r#""results":[{"id":"a","correct":true}]"#;
+        assert_eq!(clean(&format!("{{{r}}}")).unwrap().kind, AttemptKind::Exam);
+        for (kind, want) in [
+            ("null", AttemptKind::Exam),
+            (r#""exam""#, AttemptKind::Exam),
+            (r#""practice""#, AttemptKind::Practice),
+        ] {
+            let a = clean(&format!(r#"{{{r},"kind":{kind}}}"#)).unwrap();
+            assert_eq!(a.kind, want, "{kind}");
+        }
+        for bad in [r#""Practice""#, r#""quiz""#, "1", "true", "[]", r#""""#] {
+            assert_eq!(
+                clean(&format!(r#"{{{r},"kind":{bad}}}"#)).unwrap_err(),
+                MSG_BAD_RESULTS,
+                "{bad}"
+            );
+        }
     }
 
     #[test]

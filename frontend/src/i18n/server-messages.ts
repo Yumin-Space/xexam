@@ -62,11 +62,6 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'An error occurred while reading this Excel file: its content is not what was expected.',
     ja: 'この Excel ファイルの読み取り中にエラーが発生しました：ファイルの内容が想定と異なります。',
   }],
-  // DbError::Join (normally replaced by MSG_INTERNAL before it reaches the page)
-  ['数据库任务异常结束', {
-    en: 'A database task ended unexpectedly.',
-    ja: 'データベースの処理が異常終了しました。',
-  }],
 
   // ---- api/response.rs
   ['文件太大了（最大 20 MB）。题库通常只有 1–2 MB，请确认选对了文件。', {
@@ -159,6 +154,26 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'The current password is not correct.',
     ja: '現在のパスワードが正しくありません。',
   }],
+  // v0.6.5: MSG_EXAM_QUESTIONS_GONE (POST /api/attempt, 409: none of the exam's questions exist any more)
+  ['这场考试的题目已经被删除，成绩没有保存。', {
+    en: 'The questions of this exam have been deleted, so the result was not saved.',
+    ja: 'この試験の問題は削除されたため、結果は保存されませんでした。',
+  }],
+  // v0.6.5: MSG_NO_BANK_PERMISSION (403: bank management routes, plain user without the "can manage question banks" permission)
+  ['你没有管理题库的权限，请联系管理员。', {
+    en: 'You do not have permission to manage question banks. Ask an administrator.',
+    ja: '問題集を管理する権限がありません。管理者に依頼してください。',
+  }],
+  // v0.6.5: MSG_NOT_BANK_OWNER (403: a bank manager updating or deleting a bank someone else uploaded)
+  ['这个题库不是你上传的，只能更新或删除你自己上传的题库。', {
+    en: 'You did not upload this question bank. You can only update or delete question banks you uploaded yourself.',
+    ja: 'この問題集はあなたがアップロードしたものではありません。更新や削除ができるのは、自分でアップロードした問題集だけです。',
+  }],
+  // v0.6.5: MSG_UNKNOWN_BANKS (400: "banks" of POST /api/users/create or /api/users/update names a bank that does not exist)
+  ['选择的题库中有不存在的（可能已被删除），请刷新页面后再试。', {
+    en: 'One of the chosen question banks does not exist (it may have been deleted). Refresh the page and try again.',
+    ja: '選んだ問題集の中に存在しないものがあります（削除された可能性があります）。ページを再読み込みしてからもう一度お試しください。',
+  }],
 
   // ---- services/mod.rs
   ['这份文件里没有读到任何可用的题，没有导入。', {
@@ -168,6 +183,11 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
   ['写入数据库失败，题库没有任何改动。', {
     en: 'Writing to the database failed. The question bank was not changed.',
     ja: 'データベースへの書き込みに失敗しました。問題集は一切変更されていません。',
+  }],
+  // v0.7: MSG_OLD_LAYOUT (400: upload or import confirm of a workbook in the old 3- or 4-column layout)
+  ['只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。', {
+    en: 'Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again.',
+    ja: '取り込めるのは 6 列形式だけです（A〜C 列：英語・中国語・日本語の問題文、D〜F 列：英語・中国語・日本語の解答）。このファイルは古い 3 列または 4 列形式です。6 列形式に直してから、もう一度インポートしてください。',
   }],
 
   // ---- api/attempt.rs
@@ -206,6 +226,28 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
   ['答案里有超长的数字（超过 4300 位），已拒绝。', {
     en: 'The answer contains an extremely long number (more than 4300 digits), so the file was rejected.',
     ja: '解答に極端に長い数字（4300 桁超）が含まれているため、拒否しました。',
+  }],
+
+  // ---- parser/question.rs: the six-column layout (English is authoritative), unreadable rows and preview warnings
+  ['这一行没有英文题目（六列格式以 A 列的英文题目为准）', {
+    en: 'This row has no English question (in the six-column layout, the English question in column A is authoritative)',
+    ja: 'この行には英語の問題文がありません（6 列形式では A 列の英語の問題文が基準です）',
+  }],
+  ['A 列的英文题目里没有找到选项（A、B、C…）或带「Yes / No」等选项的小项', {
+    en: 'The English question in column A has no options (A, B, C…) and no sub-items ending in choices such as “Yes / No”',
+    ja: 'A 列の英語の問題文に、選択肢（A、B、C…）も「Yes / No」などの選択肢が付いた小問も見つかりません',
+  }],
+  ['D 列没有找到英文答案（D 列要写「【Answer】…」）', {
+    en: 'No English answer was found in column D (column D must contain “【Answer】…”)',
+    ja: 'D 列に英語の解答が見つかりません（D 列に「【Answer】…」と書いてください）',
+  }],
+  ['E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）', {
+    en: 'The Chinese answer in column E differs from the English answer in column D (imported with the English answer)',
+    ja: 'E 列の中国語の解答が D 列の英語の解答と一致しません（英語の解答で取り込みました）',
+  }],
+  ['F 列的日文答案和 D 列的英文答案不一致（已按英文答案导入）', {
+    en: 'The Japanese answer in column F differs from the English answer in column D (imported with the English answer)',
+    ja: 'F 列の日本語の解答が D 列の英語の解答と一致しません（英語の解答で取り込みました）',
   }],
 ]);
 

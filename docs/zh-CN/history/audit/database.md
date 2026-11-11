@@ -286,8 +286,8 @@ with self.lock:                       # 进程内 RLock
 | 生成 | `datetime.now().strftime('%Y-%m-%d %H:%M')`（db.py:74-75）：**本地时区、无时区标记、精度到分钟** |
 | 示例 | `2026-11-10 06:01` |
 | 使用处 | `questions.added_at/updated_at`、`attempts.at`、`stats.at`、`imports.at`、`meta.legacy_migrated` 的值 |
-| 时区来源 | 进程的本地时区。compose 设 `TZ: Asia/Tokyo`（docker-compose.yml:32）；Dockerfile 没有安装 tzdata，**基础镜像是否带 tzdata 我没验证**（若没有，`TZ=Asia/Tokyo` 会静默回落 UTC） |
-| 可排序性 | 同一时区内字典序 = 时间序；**不唯一**（同一分钟内多条）；跨 DST 的时区会出现重复/倒退（东京无 DST）。历史排序用的是 `attempts.id`，不是 `at` |
+| 时区来源 | 进程的本地时区。compose 设 `TZ: <所在时区>`（docker-compose.yml:32）；Dockerfile 没有安装 tzdata，**基础镜像是否带 tzdata 我没验证**（若没有，`TZ=<所在时区>` 会静默回落 UTC） |
+| 可排序性 | 同一时区内字典序 = 时间序；**不唯一**（同一分钟内多条）；跨 DST 的时区会出现重复/倒退（没有夏令时的时区不会）。历史排序用的是 `attempts.id`，不是 `at` |
 | 前端 | 直接显示该字符串（app.js:356 `b.mtime`，396/399 历史，567-569 导入记录） |
 | 迁移来的 `at` | 来自旧文件的任意字符串；`h.get('at','')` 可为空串 |
 
@@ -388,7 +388,7 @@ def make_id(sheet, stem, first):
 | 现有 DB 文件名 | **高（待确认）** | 见 §13 第 1 条：v0.1（HEAD）打开的是以旧名命名的文件，v0.2 工作树打开 `xexam.db`，**代码里没有改名/复制逻辑**。所有者的 `data/` 里实际是哪个文件，我按规则不能查看 |
 | `Store` 里隐含的行为（T3/T4 缺陷） | 中 | Rust 不要照搬缺陷，但要保留「预览不写、确认单事务、不重复应用」；差异必须文档化为「已修复的缺陷」，不能静默变化 |
 | `meta.schema` 从未检查 | 中 | 一旦改 schema 必须自带版本检查 |
-| 时间戳本地时区、分钟精度 | 中 | 保留格式；容器里的 tz 数据必须存在，否则 `at` 会从东京时间变成 UTC |
+| 时间戳本地时区、分钟精度 | 中 | 保留格式；容器里的 tz 数据必须存在，否则 `at` 会从本地时间变成 UTC |
 | journal_mode / synchronous | 中 | Rust 连接必须显式执行 `journal_mode=DELETE`（rusqlite 的 `execute` 对返回行的 PRAGMA 会报错，用 `pragma_update`/`query_row`）、`synchronous=FULL`、`foreign_keys` 可保持 ON（无外键，无实际影响）、`busy_timeout=5000` |
 | 数据目录权限 | 中 | DELETE 日志要在目录里创建文件；uid 10001 |
 | `percent` 舍入 | 中 | 见 §7.2 |
@@ -436,7 +436,7 @@ def make_id(sheet, stem, first):
 4. 是否要保留 `progress.json` 自动迁移（及其「复活」行为）？建议 Rust 版只保留为显式的一次性命令。
 5. `Store` 中发现的缺陷（T3 提交失败后事务悬挂；T4 计划在事务外；`record_attempt` 不校验 id；`migrate` 可能让启动崩溃；`apply_import` 本身不拒绝空题库）在 Rust 版里是「修复并记录」还是「逐字保持」？我的建议是修复 T3/T4 与启动崩溃，其余保持，并全部写进迁移文档。
 6. 去重后缀的不稳定（重复题重排会让学习记录换题）是否接受？这是现状，建议保持并在文档中写明，不要在迁移中悄悄改变。
-7. 容器时区：Rust 镜像是否包含 tzdata，并继续用 `TZ=Asia/Tokyo` 写本地分钟字符串？还是改写 UTC？（后者会改变既有数据的含义，我建议保持本地时间格式。）
+7. 容器时区：Rust 镜像是否包含 tzdata，并继续用 `TZ=<所在时区>` 写本地分钟字符串？还是改写 UTC？（后者会改变既有数据的含义，我建议保持本地时间格式。）
 
 ## 14. 未验证项（notVerified）
 
