@@ -235,6 +235,11 @@ async fn report(a: &App, enabled: bool, suspended: &[i64], stopping: bool) {
 }
 
 async fn api(a: &App, method: &str, path: &str, cookie: &str, body: Option<&str>) -> Resp {
+    // The log-capturing tests use a per-thread subscriber (set_default) while other tests of this binary log on other
+    // threads. tracing caches each callsite's interest the first time it is hit, and a hit racing with another thread's
+    // subscriber coming or going can cache "never", so the handler's line is not captured (seen once on CI: `[]` instead of
+    // `user "admin" updated user "sam"`). Rebuilding the cache before every request makes the capture deterministic.
+    tracing::callsite::rebuild_interest_cache();
     let mut hs: Vec<(&str, Vec<u8>)> = vec![("cookie", cookie.as_bytes().to_vec())];
     let body = match body {
         Some(b) => {
