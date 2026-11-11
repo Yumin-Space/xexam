@@ -25,6 +25,12 @@ use xexam_backend::api::{build_router, AppState};
 use xexam_backend::auth::{self, Role};
 use xexam_backend::config::Config;
 use xexam_backend::database::{Store, UserChange};
+
+/// Every test of this binary runs alone. Several capture log lines with a per-thread subscriber (`set_default`), and
+/// tracing's callsite interest cache races when other tests' subscribers come and go on other threads: a handler line was
+/// sometimes not captured (seen on CI in three different tests). A tokio Mutex has no poisoning (a failed test does not
+/// fail the others) and may be held across `.await`.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 use xexam_backend::logs::{BufferLayer, BurstReport, LogBuffer};
 use xexam_backend::models::BankAccess;
 use xexam_backend::services::RealEngine;
@@ -398,6 +404,7 @@ fn backups(dir: &Path) -> Vec<String> {
 
 #[test]
 fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
+    let _serial = SERIAL.blocking_lock();
     let dir = dbc::tmp();
     let db = dir.path().join("xexam.db");
     let s = Store::open(&db).expect("open");
@@ -486,6 +493,7 @@ fn write_v4_database(db: &Path) {
 
 #[test]
 fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
+    let _serial = SERIAL.blocking_lock();
     let dir = dbc::tmp();
     let fresh = dir.path().join("fresh").join("xexam.db");
     drop(Store::open(&fresh).expect("fresh"));
@@ -560,6 +568,7 @@ fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
 
 #[test]
 fn users_an_older_binary_created_after_a_rollback_get_a_stamp_on_the_next_open() {
+    let _serial = SERIAL.blocking_lock();
     let dir = dbc::tmp();
     let db = dir.path().join("xexam.db");
     let s = Store::open(&db).expect("open");
@@ -597,6 +606,7 @@ fn users_an_older_binary_created_after_a_rollback_get_a_stamp_on_the_next_open()
 
 #[tokio::test]
 async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
+    let _serial = SERIAL.lock().await;
     use tracing_subscriber::layer::SubscriberExt;
     let lines = Arc::new(LogBuffer::new(1000));
     let _guard = tracing::subscriber::set_default(
@@ -815,6 +825,7 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
 
 #[tokio::test]
 async fn the_auth_step_signs_who_is_asking() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, asid) = admin(&a);
     let sam = add_user(&a, "sam", Role::User, true);
@@ -889,6 +900,7 @@ async fn the_auth_step_signs_who_is_asking() {
 
 #[tokio::test]
 async fn the_auth_step_refuses_like_the_api() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, _) = admin(&a);
     // no cookie, a cookie that is no session, garbage
@@ -990,6 +1002,7 @@ async fn auth_cookies(a: &App, cookies: &[&str]) -> Resp {
 /// never move a signed-in user out of their bucket.
 #[tokio::test]
 async fn the_auth_step_takes_exactly_one_plain_session_cookie() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let sam = add_user(&a, "sam", Role::User, true);
     clear_flag(&a, sam);
@@ -1050,6 +1063,7 @@ async fn the_auth_step_takes_exactly_one_plain_session_cookie() {
 
 #[tokio::test]
 async fn the_auth_step_runs_the_host_and_origin_guard_on_the_original_request_only() {
+    let _serial = SERIAL.lock().await;
     let a = app_cfg(
         apic::config_with(&[("XEXAM_ALLOWED_HOSTS", "app.example.com")]),
         true,
@@ -1121,6 +1135,7 @@ async fn the_auth_step_runs_the_host_and_origin_guard_on_the_original_request_on
 
 #[tokio::test]
 async fn the_auth_step_never_refreshes_a_session() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, asid) = admin(&a);
     let old = auth::unix_now() - 2 * 3600;
@@ -1163,6 +1178,7 @@ async fn the_auth_step_never_refreshes_a_session() {
 
 #[tokio::test]
 async fn without_a_token_the_auth_step_answers_503_and_the_token_routes_404() {
+    let _serial = SERIAL.lock().await;
     let a = app_cfg(apic::default_config(), false);
     let (ac, asid) = admin(&a);
     let r = auth_get(&a, &ac).await;
@@ -1213,6 +1229,7 @@ async fn without_a_token_the_auth_step_answers_503_and_the_token_routes_404() {
 
 #[tokio::test]
 async fn internal_paths_are_hidden_without_the_token() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, asid) = admin(&a);
     let body = json!({"sid": asid, "id": 1}).to_string();
@@ -1328,6 +1345,7 @@ async fn internal_paths_are_hidden_without_the_token() {
 
 #[tokio::test]
 async fn introspect_rechecks_a_session_without_refreshing_it() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (_, asid) = admin(&a);
     let sam = add_user(&a, "sam", Role::User, true);
@@ -1477,6 +1495,7 @@ async fn introspect_rechecks_a_session_without_refreshing_it() {
 
 #[tokio::test]
 async fn users_reports_the_requested_users_and_the_holders_of_ai_plus() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let sam = add_user(&a, "sam", Role::User, true);
     let kim = add_user(&a, "kim", Role::User, false);
@@ -1557,6 +1576,7 @@ async fn users_reports_the_requested_users_and_the_holders_of_ai_plus() {
 
 #[tokio::test]
 async fn log_lines_of_the_ai_service_go_into_the_system_log() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let send_lines = |lines: Value| {
         let a = &a;
@@ -1645,6 +1665,7 @@ async fn log_lines_of_the_ai_service_go_into_the_system_log() {
 /// before logging). The other token routes keep their 64 KiB limit.
 #[tokio::test]
 async fn a_full_log_batch_fits_the_body_limit() {
+    let _serial = SERIAL.lock().await;
     use xexam_backend::api::internal::{MAX_BODY, MAX_LOG_BODY, MAX_LOG_CHARS, MAX_LOG_LINES};
     let a = app();
     let batch = |message: &str, level: &str| {
@@ -1705,6 +1726,7 @@ fn messages_after(lines: &LogBuffer, mark: u64) -> Vec<String> {
 
 #[tokio::test]
 async fn the_heartbeat_keeps_the_last_report_of_ai_service() {
+    let _serial = SERIAL.lock().await;
     use xexam_backend::api::internal::{ServiceState, MAX_SUSPENDED_IDS};
     let (lines, _guard) = capture();
     let a = app();
@@ -1860,6 +1882,7 @@ async fn the_heartbeat_keeps_the_last_report_of_ai_service() {
 
 #[tokio::test]
 async fn the_state_route_says_whether_ai_plus_is_available() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, _) = admin(&a);
     let sam = add_user(&a, "sam", Role::User, true);
@@ -2002,6 +2025,7 @@ async fn the_state_route_says_whether_ai_plus_is_available() {
 
 #[tokio::test]
 async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, _) = admin(&a);
     let sam = add_user(&a, "sam", Role::User, true);
@@ -2122,6 +2146,7 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
 
 #[tokio::test]
 async fn switching_a_users_ai_plus_service_is_refused_while_ai_plus_is_not_available() {
+    let _serial = SERIAL.lock().await;
     let (lines, _guard) = capture();
     let a = app();
     let (ac, _) = admin(&a);
@@ -2406,6 +2431,7 @@ fn serve_once(data: &Path, env: &[(&str, &str)]) -> String {
 
 #[test]
 fn serve_finds_or_creates_the_token_and_the_subcommands_never_do() {
+    let _serial = SERIAL.blocking_lock();
     let dir = dbc::tmp();
     // no variable: <data dir>/link/internal.token, created once and read at the next start
     let data = dir.path().join("data-a");
