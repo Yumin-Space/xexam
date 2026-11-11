@@ -1,6 +1,7 @@
 // App entry: applies the cached settings (first paint), maps the route to a page inside the shell, registers the redraw function, and starts.
 // Before anything else, the sign-in pages: while S.authView is set, only the sign-in page or "choose a new password" is drawn.
 import './styles/main.css';
+import { isTooManyRequests } from './api/client.ts';
 import { brand } from './components/common.ts';
 import { installShellHandlers, shell } from './components/shell.ts';
 import { t } from './i18n/index.ts';
@@ -90,10 +91,13 @@ function draw(): void {
     return;
   }
   if (S.phase === 'fatal') {
+    // Too many requests (the proxy's rate limit, still refusing after the automatic retries) is its own message: the service
+    // is reachable and the sign-in is fine, so neither "cannot reach the service" nor the sign-in hint applies
+    const tooMany = isTooManyRequests(S.fatal);
     app.replaceChildren(solo(h('div', { class: 'err', role: 'alert' },
-      h('h2', null, t('app.fatal.title')),
-      h('p', null, S.fatal ? errorText(S.fatal) : t('app.fatal.body')),
-      h('p', { class: 'dim' }, t('app.fatal.body')),
+      h('h2', null, t(tooMany ? 'app.tooMany.title' : 'app.fatal.title')),
+      h('p', null, tooMany ? t('app.tooMany.body') : S.fatal ? errorText(S.fatal) : t('app.fatal.body')),
+      tooMany ? null : h('p', { class: 'dim' }, t('app.fatal.body')),
       h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => window.location.reload() }, t('app.reload'))))));
     document.title = t('app.name');
     return;

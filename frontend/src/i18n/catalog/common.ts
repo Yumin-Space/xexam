@@ -9,6 +9,8 @@ export default defineCatalog({
     'app.fatal.title': 'Cannot reach the service',
     'app.fatal.body': 'Make sure the program (or the Docker containers) is still running, then reload this page. If you open Xexam through your own domain, your sign-in may have expired: reload the page and sign in again.',
     'app.reload': 'Reload',
+    'app.tooMany.title': 'Too many requests',
+    'app.tooMany.body': 'Too many requests in a short time. Wait a few seconds, then reload the page.',
 
     'title.quiz': 'Question {i} of {n}',
     'title.result': 'Result',
@@ -42,7 +44,6 @@ export default defineCatalog({
     'common.ok': 'OK',
     'common.cancel': 'Cancel',
     'common.close': 'Close',
-    'common.back': 'Back',
     'common.delete': 'Delete',
     'common.retry': 'Try again',
     'common.loading': 'Loading…',
@@ -54,8 +55,6 @@ export default defineCatalog({
     'common.questions_one': '{n} question',
     'common.sheets': '{n} sheets',
     'common.sheets_one': '{n} sheet',
-    'common.banks': '{n} question banks',
-    'common.banks_one': '{n} question bank',
     'common.deletedBank': '{name} (deleted)',
     'common.unknownBank': 'Unknown question bank',
 
@@ -63,6 +62,7 @@ export default defineCatalog({
     'err.unexpected': 'The service returned something unexpected. If you open Xexam through your own domain, your sign-in may have expired: reload the page, sign in again and retry.',
     'err.status': 'The request failed (HTTP {status}). If you open Xexam through your own domain, your sign-in may have expired: reload the page and sign in again.',
     'err.generic': 'Something went wrong. Reload the page and try again.',
+    'err.tooMany': 'Too many requests in a short time. Wait a few seconds, then try again.',
 
     'kind.single': 'Single choice',
     'kind.multi': 'Multiple choice',
@@ -98,6 +98,8 @@ export default defineCatalog({
     'app.fatal.title': '连不上服务',
     'app.fatal.body': '请确认程序（或 Docker 容器）还在运行，然后刷新这个页面。如果你是通过域名访问的，也可能是登录已过期，刷新后重新登录即可。',
     'app.reload': '刷新页面',
+    'app.tooMany.title': '请求太频繁',
+    'app.tooMany.body': '短时间内请求太多，请等几秒再刷新页面。',
 
     'title.quiz': '第 {i} / {n} 题',
     'title.result': '成绩',
@@ -131,7 +133,6 @@ export default defineCatalog({
     'common.ok': '确定',
     'common.cancel': '取消',
     'common.close': '关闭',
-    'common.back': '返回',
     'common.delete': '删除',
     'common.retry': '重试',
     'common.loading': '正在读取…',
@@ -141,7 +142,6 @@ export default defineCatalog({
     'common.listSep': '、',
     'common.questions': '{n} 题',
     'common.sheets': '{n} 个工作表',
-    'common.banks': '{n} 个题库',
     'common.deletedBank': '{name}（已删除）',
     'common.unknownBank': '未知题库',
 
@@ -149,6 +149,7 @@ export default defineCatalog({
     'err.unexpected': '服务返回的不是预期的内容。如果你是通过域名访问的，可能是登录已过期，请刷新页面重新登录后再试。',
     'err.status': '请求失败（HTTP {status}）。如果你是通过域名访问的，可能是登录已过期，请刷新页面重新登录。',
     'err.generic': '出了点问题。请刷新页面后再试。',
+    'err.tooMany': '短时间内请求太多，请等几秒再试。',
 
     'kind.single': '单选',
     'kind.multi': '多选',
@@ -182,6 +183,8 @@ export default defineCatalog({
     'app.fatal.title': 'サービスに接続できません',
     'app.fatal.body': 'プログラム（または Docker コンテナ）が動いていることを確認してから、このページを再読み込みしてください。独自ドメイン経由で開いている場合は、ログインの有効期限が切れている可能性があります。再読み込みしてログインし直してください。',
     'app.reload': '再読み込み',
+    'app.tooMany.title': 'リクエストが多すぎます',
+    'app.tooMany.body': '短時間にリクエストが多すぎました。数秒待ってから、ページを再読み込みしてください。',
 
     'title.quiz': '第 {i} 問 / 全 {n} 問',
     'title.result': '結果',
@@ -215,7 +218,6 @@ export default defineCatalog({
     'common.ok': 'OK',
     'common.cancel': 'キャンセル',
     'common.close': '閉じる',
-    'common.back': '戻る',
     'common.delete': '削除',
     'common.retry': '再試行',
     'common.loading': '読み込み中…',
@@ -225,7 +227,6 @@ export default defineCatalog({
     'common.listSep': '、',
     'common.questions': '{n} 問',
     'common.sheets': '{n} シート',
-    'common.banks': '{n} 個の問題集',
     'common.deletedBank': '{name}（削除済み）',
     'common.unknownBank': '不明な問題集',
 
@@ -233,6 +234,7 @@ export default defineCatalog({
     'err.unexpected': 'サービスから想定外の応答が返りました。独自ドメイン経由で開いている場合は、ログインの有効期限が切れている可能性があります。ページを再読み込みし、ログインし直してから再試行してください。',
     'err.status': 'リクエストに失敗しました（HTTP {status}）。独自ドメイン経由で開いている場合は、ログインの有効期限が切れている可能性があります。ページを再読み込みしてログインし直してください。',
     'err.generic': '問題が発生しました。ページを再読み込みしてから再試行してください。',
+    'err.tooMany': '短時間にリクエストが多すぎました。数秒待ってから、もう一度お試しください。',
 
     'kind.single': '単一選択',
     'kind.multi': '複数選択',

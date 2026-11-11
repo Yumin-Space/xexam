@@ -10,8 +10,9 @@
 |---|---|---|
 | Rust | 1.99.1（由 `backend/rust-toolchain.toml` 固定） | `rustup` 会自动安装。`rusqlite` 的 `bundled` 特性需要 C 编译器（Linux：`build-essential`；Windows：MinGW gcc 或 MSVC） |
 | Node | 24 | 前端；单元测试用 Node 自带的测试运行器加 `--experimental-strip-types` |
-| Python | 3.8+ | 只用于 `tests/integration/` 里的集成脚本和 `scripts/` 里的两个脚本。**只用标准库** |
-| Docker | Compose v2 | 整栈检查、镜像 |
+| Python | 3.8+ | 只用于 `tests/integration/` 里的集成脚本、`scripts/` 里的两个脚本（**只用标准库**）和 `tools/screenshots/` 里的截图工具（标准库加 `openpyxl`） |
+| Docker | Compose v2 | 整栈检查、镜像、截图工具 |
+| Chrome 或 Chromium | 较新的任意版本 | 只用于截图工具（第 8.1 节） |
 
 ## 2. 后端
 
@@ -19,16 +20,17 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 302 个测试
+cargo test --all-targets          # 316 个测试
 cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 ```
 
 - 测试对着 `tests/baseline/` 里已提交的**旧版快照**运行；不需要 Python。
-- 所有测试都用临时目录里的新数据库，或 `tests/baseline/fixtures/sample.db` 的副本，**永远不碰 `data/`**。除了 `src/` 里的单元测试，测试文件有：`api_basic.rs`、`api_import.rs`、`api_misc.rs` 和 `api_golden.rs`（路由、守卫、旧版的响应），`db_golden.rs`（数据库对照旧版快照），`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs` 和 `id_vectors.rs`（解析器），以及每个版本一个文件：`v05_banks_records_settings.rs`（schema v2、题库、记录、设置）、`v06_users_and_sign_in.rs`（schema v3、账户、会话、登录限制）、`v065_bank_access_and_practice.rs`（schema v4、题库权限、可管理题库的用户、所有权、练习）、`v07_wal_and_logs.rs`（WAL 模式、检查点、服务器运行时的 `reset-password`、系统日志）和 `v07_log_floods.rs`（大量被拒绝的请求和失败的登录被汇总）。
+- 所有测试都用临时目录里的新数据库，或 `tests/baseline/fixtures/sample.db` 的副本，**永远不碰 `data/`**。除了 `src/` 里的单元测试，测试文件有：`api_basic.rs`、`api_import.rs`、`api_misc.rs` 和 `api_golden.rs`（路由、守卫、旧版的响应），`db_golden.rs`（数据库对照旧版快照），`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs` 和 `id_vectors.rs`（解析器），以及每个版本一个文件：`v05_banks_records_settings.rs`（schema v2、题库、记录、设置）、`v06_users_and_sign_in.rs`（schema v3、账户、会话、登录限制）、`v065_bank_access_and_practice.rs`（schema v4、题库权限、可管理题库的用户、所有权、练习）、`v07_bank_access_and_layouts.rs`（勾选的题库和 **包括以后导入的题库**、预发布版 v4 数据库的转换、拒绝旧格式和下架它们的题）、`v07_wal_and_logs.rs`（WAL 模式、检查点、服务器运行时的 `reset-password`、系统日志）和 `v07_log_floods.rs`（大量被拒绝的请求和失败的登录被汇总）。
 - 测试通过辅助代码登录；没有任何开关能关掉登录，测试也不例外。
+- **测试里的旧格式。** 正式运行时会拒绝三列和四列格式的工作簿（`services::check_layout`）。黄金测试套件重放旧版的导入，那些都是三列格式的文件，所以它们建立的 API 状态设置了 `old_layouts: OldLayouts::AllowForTests`（在 `backend/tests/api_common/mod.rs` 里，以及 `v05_banks_records_settings.rs` 和 `v065_bank_access_and_practice.rs` 里，这两个文件通过 API 导入已提交的三列格式夹具 `tests/baseline/fixtures/demo.xlsx`）。它是 API 状态的一个字段，只有测试代码会设置：`AppState::new` 和 `import` 命令始终用 `OldLayouts::Refuse`，没有任何环境变量、参数或设置能改变它。`v07_bank_access_and_layouts.rs` 测试正式运行时的规则。存储层的方法本身接受任何题目，所以数据库的黄金测试原样运行。
 - 常用的环境变量：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（日志级别，例如 `debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` 保留回滚日志，不用 WAL）、`XEXAM_COOKIE_SECURE`。完整的列表见 `xexam-backend --help` 和 [deployment.md](deployment.md)。
 - 在空的数据目录上第一次启动时，会创建管理员 `admin` / `admin`；第一次登录时页面会要求设置新密码。忘了的话：`cargo run -- reset-password admin --data ../data`（服务器运行时也能用）。
-- 命令行导入（导入到旧题库）：`cargo run -- import ../some.xlsx --data ../data`。
+- 命令行导入六列格式的工作簿（导入到旧题库）：`cargo run -- import ../some.xlsx --data ../data`。三列或四列格式的工作簿会被拒绝。
 - 让后端打开一个旧 schema 的数据库，会迁移它，并在旁边写一个 `backups/`。请用副本。
 - 数据库以 WAL 模式运行：后端运行时，`xexam.db` 旁边有 `xexam.db-wal` 和 `xexam.db-shm`。要么三个一起复制，要么先停止后端（之后所有内容都在 `xexam.db` 里，旁边即使留着 `-wal` 文件，也是空的）。后端运行时 `sqlite3` 也能读这个数据库。
 
@@ -38,9 +40,10 @@ cargo run -- serve --data ../data --no-browser     # 监听 127.0.0.1:8765
 cd frontend
 npm ci
 npm run typecheck      # 先对程序跑 tsc，再对测试文件跑（tsconfig.test.json）
-npm test               # 119 个单元测试：判分和随机抽题、练习的核对、保存的成绩、语言规则、记录筛选、
-                       # 锁定说明和等待时间、导入提醒、系统日志缓冲、题库权限、暂存的考试、设置缓存、
-                       # 界面文字目录、服务器提示的翻译、更新日志解析
+npm test               # 139 个单元测试：API 客户端（Nginx 的 429 和重试、时间限制）、判分和随机抽题、
+                       # 练习的核对、保存的成绩、语言规则、记录筛选、锁定说明和等待时间、导入提醒、
+                       # 系统日志缓冲、题库状态、题库权限、暂存的考试、设置缓存、界面文字目录、
+                       # 服务器提示的翻译、更新日志解析
 npm run build          # 类型检查 + vite build → dist/
 npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1:8765
 ```
@@ -93,10 +96,10 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 # 检查脚本都用临时的项目名和临时卷，从不碰 xexam_data
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 38 项检查，用一个假的后端
+python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 41 项检查，用一个假的后端（包括限流）
 python -I tests/integration/stack_check.py 18090                      # 启动整栈（会构建两个镜像）：登录、导入、
                                                                       # 交卷、持久化、WAL、系统日志、reset-password、docker stop
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # progress.json 迁移、WAL 和 DELETE 选项（先 cargo build）
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 45 项检查：progress.json 迁移、WAL 和 DELETE 选项（先 cargo build）
 ```
 
 每个脚本都会打印它的检查项，最后输出 `All N checks passed`。`nginx_check.py` 和 `stack_check.py` 的最后一个参数是它们用的宿主机端口；请选一个你机器上空闲的端口。
@@ -110,12 +113,13 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 | 快照 | 内容 | 谁在用 |
 |---|---|---|
 | `golden/NNN_*.json`（172 个文件） | 旧版在每个接口 × 每种状态下的真实响应（状态码、稳定的响应头、规范化后的正文） | `backend/tests/api_golden.rs` 按顺序对新的路由重放它们，并逐项比较 |
-| `fixtures/*.xlsx` + `parser_golden/*.json`（49 个） | 合成的工作簿，以及旧版解析器对每一份的输出 | `backend/tests/parser_golden.rs`（三列和四列格式必须逐字节保持不变） |
+| `fixtures/*.xlsx` + `parser_golden/*.json`（49 个） | 合成的工作簿（三列和四列格式，也就是旧版的格式），以及旧版解析器对每一份的输出 | `backend/tests/parser_golden.rs`（解析器读出的结果仍必须逐字节相同；导入就是靠这一点认出并拒绝它们） |
 | `golden/id_vectors.json`（85 条断言） | 关于题目 id 的断言；每一条都带着被哈希的字节 | `backend/tests/id_vectors.rs` |
 | `fixtures/sample.db` + `golden/store_sample_outputs.json` | 旧实现写的示例数据库，以及它每个接口的输出 | `backend/tests/db_golden.rs`（也检查它迁移到当前 schema） |
-| `golden/allowed_differences_rust.json`（23 条）、`allowed_probe_differences_rust.json`（51 条） | 新实现有意和旧版不同的地方，每一处都有一句理由 | `api_golden.rs` 里没有登记的差异 = 失败 |
+| `golden/allowed_differences_rust.json`（23 条）、`allowed_probe_differences_rust.json`（51 条） | Rust 实现取代旧版时有意和旧版不同的地方，每一处都有一句理由（用中文写的）；只是一份记录，没有测试读取它们 | [api.md](api.md) 第 5 节 |
 
-- 要**改变**行为（例如新增一处有意的差异）：先改代码，再把差异和理由登记进 `allowed_differences_rust.json`；不要直接改黄金响应。
+- `api_golden.rs` 把每一份抓取归入五种结果之一，用 `cargo test --test api_golden -- --nocapture` 打印出这张表。现在是：84 份一致，58 份在用抓取内容喂给引擎之后一致，16 份有意的差异（7 个不支持的方法现在得到 405，以及 9 份 `GET /api/info` 的抓取，从 v0.7.5 起比较时不看 `bankCount`），14 份跳过（静态文件由 Nginx 提供，还有一份抓取没有响应），0 份不同。只要有一份不同，测试就失败。
+- 要**改变**某份抓取覆盖的行为：先改代码，再在 `api_golden.rs` 里写明这处有意的差异和理由（就像 `bankCount` 那样）；不要直接改黄金响应。
 - 旧的抓取 / 对照 / 探测脚本依赖旧的 Python 代码，已经随它一起删掉了；需要的话，从 Git 标签 `python-v0.2` 和提交历史里找回来。
 
 ## 6. 数据安全规则
@@ -123,7 +127,7 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 - **不要**读取、打印、提交或修改 `data/`、`progress.json` 或你自己的题库 Excel 文件。
 - 永远在副本或临时目录里做实验；不要对真正的 `xexam.db` 运行「试试看会怎样」的命令。记住，用较新的版本打开较旧的数据库会迁移它（并把它切换到 WAL）。
 - 不要运行 `docker compose down -v`。
-- 代码、测试和文档里的示例只用虚构的内容，永远不用真实的考试题目（演示题库「General knowledge」和「Kitchen basics」，或者 `frontend/src/pages/banks.ts` 里虚构的六列格式示例）。
+- 代码、测试和文档里的示例只用虚构的内容，永远不用真实的考试题目（`tools/screenshots/demo_banks.py` 里的演示题库「General knowledge」和「Kitchen basics」，或者 `frontend/src/pages/banks.ts` 里虚构的六列格式示例）。
 
 ## 7. CI
 
@@ -132,9 +136,9 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 | 任务 | 做什么 |
 |---|---|
 | `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份 README 各自最新的更新日志条目 = `CODE_VERSION`；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）和文档检查（第 8 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
-| `frontend` | 类型检查、119 个单元测试、构建 |
-| `backend` | fmt、clippy、302 个测试，以及 `progress.json` 迁移检查 |
-| `stack` | 构建 `xexam-frontend` 镜像，跑 38 项 Nginx 检查；启动完整的 compose 栈，跑端到端检查 |
+| `frontend` | 类型检查、139 个单元测试、构建 |
+| `backend` | fmt、clippy、316 个测试，以及 `progress.json` 迁移检查 |
+| `stack` | 构建 `xexam-frontend` 镜像，跑 41 项 Nginx 检查；启动完整的 compose 栈，跑端到端检查 |
 | `arm64` | 为 arm64 构建两个镜像，在 QEMU 下启动它们，检查 `/api/info` 报告的是 `aarch64` 和 `CODE_VERSION` |
 | `publish` | 只有 `main`：把两个镜像（amd64 + arm64）以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签推送到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
 | `release` | 只有 `main`：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `README.md` 里的更新日志（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 7.1 节） |
@@ -158,18 +162,25 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 
 ## 8. 文档
 
-- 每种语言一个文件夹：`docs/en`（英语，原文）、`docs/ja`（日语）和 `docs/zh-CN`（简体中文）。每个文件夹里都有同样的七份文档：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`。
+- 每种语言一个文件夹：`docs/en`（英语，原文）、`docs/ja`（日语）和 `docs/zh-CN`（简体中文）。每个文件夹里都有同样的文档：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`，以及从 v0.7.5 起的 `usage`（怎样使用程序，从 README 移过来的），每个文件夹都有自己的 `screenshots/`。
 - `docs/zh-CN/history/` 里是切换到 Rust 时的旧文档（审计、计划、风险评估）。它们只有中文，不再更新。
 - `docs/en/openapi.yaml` 由所有语言共用；日语和中文的文档链接到 `../en/openapi.yaml`。
+- README 很短：Xexam 能做什么、快速开始、配置、升级、文档链接和更新日志。怎样使用程序、Excel 格式和导入规则在 `usage.md` 里；部署细节、备份、安全、架构和开发各有自己的文档。一个细节只写在一个地方，其他地方链接过去。
 - 每份文档开头都有一条语言栏，链接到另外两个文件夹里的同一份文档。链接相对于文件自己所在的文件夹：仓库根目录是 `../../`。
 - 先改英语的文档，再在同一次修改里改日语和中文的。界面上的标签用粗体，写法和那种语言的文字目录完全一样；题目语言的切换按钮总是写成 **English** / **中文** / **日本語**。
-- 七份文档中有一份在某个语言文件夹里缺失，`docs/` 里有 `en`、`ja` 和 `zh-CN` 以外的东西，或者 README 或文档里的相对链接或图片路径指向不存在的文件时，CI 的 `check` 任务会失败。指向 GitHub 页面的链接（`../../releases` 之类）也会检查：它们必须正好回到仓库页面，所以在 `README/` 里要以 `../../../` 开头。
+- `api` … `security` 这七份文档中有一份在某个语言文件夹里缺失，`docs/` 里有 `en`、`ja` 和 `zh-CN` 以外的东西，或者 README 或文档里的相对链接或图片路径指向不存在的文件时，CI 的 `check` 任务会失败。指向 GitHub 页面的链接（`../../releases` 之类）也会检查：它们必须正好回到仓库页面，所以在 `README/` 里要以 `../../../` 开头。
+
+### 8.1 截图
+
+README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 13 张电脑截图和 4 张 iPhone 截图）由在仓库根目录运行的 `python tools/screenshots/retake.py` 生成。它用 `backend/Dockerfile` 以一个唯一的标签构建后端镜像，用挂在 `/data` 上的新卷和 `TZ=UTC` 运行它；用 Vite 构建前端，在一个空闲端口上用 `vite preview` 提供它；然后通过 API 往这个实例里填入虚构的演示题库、用户和记录。它会重启后端，让系统日志里只有短短一段登录和用户修改，然后为每种语言在无头 Chrome 里操作真正的界面。图片在不会切断文字或卡片的地方裁开，并去掉 PNG 元数据。容器、卷、镜像标签、临时文件夹和进程在最后都会删掉，出错时也一样。
+
+选项：`--lang en|ja|zh-CN|all`、`--out DIR`（写到 `DIR/<lang>/`，这样可以在动 `docs/` 之前先比较）、`--only desktop-13-logs.png,...`、`--chrome PATH`（或 `XEXAM_CHROME` / `CHROME_PATH`），以及没有 Docker 时用的 `--backend cargo`（这样运行会跳过系统日志的图片）。它需要带 `openpyxl` 的 Python 3.8+、Node.js、Docker 以及 Chrome 或 Chromium；见 `tools/screenshots/README.md`。有两个页面在页面本身里被缩短，好让卡片在图片里结束：题库管理显示的格式说明打开后只有前两部分，关于页面只显示最新版本的前几点。改了界面或版本之后重新截图，先看一遍，然后才写进 `docs/`。
 
 ## 9. 版本、更新日志和许可证
 
 - 仓库根目录的 **`VERSION`** 里有两行 `KEY=VALUE`（以 `#` 开头的行是注释），每行正好出现一次：
-  - `CODE_VERSION`（现在是 `0.7`）：这个分支上代码的版本。手动调高它，同时在三份 README 里写更新日志条目，并改 `backend/Cargo.toml` 和 `frontend/package.json`（`0.7.0`；还有它们的锁文件）。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
-  - `RELEASE_VERSION`（v0.7 的发布任务运行之前是 `0.6`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 7.1 节）。单纯的推送或合并从不改变它。
+  - `CODE_VERSION`（现在是 `0.7.5`）：这个分支上代码的版本。手动调高它，同时在三份 README 里写更新日志条目，并改 `backend/Cargo.toml` 和 `frontend/package.json`（`0.7.5`；像 `0.7` 这样两段的版本号在那里写成 `0.7.0`；还有它们的锁文件）。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
+  - `RELEASE_VERSION`（v0.7.5 的发布任务运行之前是 `0.7`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 7.1 节）。单纯的推送或合并从不改变它。
 - 每次更新都要在三份 README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）的更新日志最上面加一条，版本号等于 `CODE_VERSION`。CI 会检查这一点。GitHub Release 的说明取自英语的那一份。
 - 程序的关于页面显示这些更新日志，它们是构建进前端的（第 3 节）。条目请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接在那里显示成普通文字。修改了的更新日志，要重新构建前端之后才会出现在程序里。
 - 在 `dev` 上开发；`main` 接收合并，推送到 `main` 会发布镜像和 Release。每次发布之后都要拉取 `main` 和 `dev`（第 7.1 节）。

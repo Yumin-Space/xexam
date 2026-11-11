@@ -155,6 +155,12 @@ def wait_healthy(names, secs=120):
     return False
 
 
+def bank_size():
+    """The number of active questions, from GET /api/bank as the signed-in administrator (the public /api/info no longer has it)"""
+    st, _, bank = jreq('GET', '/api/bank')
+    return len(bank['questions']) if st == 200 else -1
+
+
 def upload(path, name='garden.xlsx'):
     data = open(path, 'rb').read()
     return req('POST', '/api/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': name}, data)
@@ -205,7 +211,9 @@ try:
 
     # -- 2 Read endpoints --
     st, h, info = jreq('GET', '/api/info')
-    ok(st == 200 and info['bankCount'] == 0 and info['canShutdown'] is False, '/api/info: empty question bank, shutdown not allowed. Actual %r' % info)
+    ok(st == 200 and info['canShutdown'] is False, '/api/info: shutdown not allowed. Actual %r' % info)
+    ok(list(info.keys()) == ['version', 'arch', 'canShutdown'], '/api/info (public) does not say how many questions exist (v0.7.5). Actual %r' % info)
+    ok(bank_size() == 0, 'Empty question bank (GET /api/bank, signed in)')
     # VERSION has KEY=VALUE lines; the backend reports CODE_VERSION (the version of the code in the image)
     code_version = re.search(r'(?m)^CODE_VERSION=\s*(\S+)', open(os.path.join(ROOT, 'VERSION'), encoding='utf-8').read())
     ok(code_version is not None and info['version'] == code_version.group(1), 'Version comes from CODE_VERSION in VERSION: %s' % info['version'])
@@ -218,8 +226,7 @@ try:
     st, h, b = upload(DEMO)
     pv = json.loads(b)
     ok(st == 200 and pv['added'] == 5 and pv['usable'] == 5 and pv['token'], 'Upload garden.xlsx (six columns): preview adds 5 questions. Actual %d' % st)
-    st, _, info = jreq('GET', '/api/info')
-    ok(info['bankCount'] == 0, 'Question bank still has 0 questions during preview (preview does not write to the bank)')
+    ok(bank_size() == 0, 'Question bank still has 0 questions during preview (preview does not write to the bank)')
     st, _, e = jreq('POST', '/api/import/confirm', {'token': 'wrong-token'})
     ok(st == 409, 'Wrong confirmation token → 409. Actual %d' % st)
     st, _, e = jreq('POST', '/api/import/confirm', {'token': '题库é'})
@@ -228,8 +235,7 @@ try:
     ok(st == 200 and len(c['bank']['questions']) == 5, 'Correct confirmation token → imports 5 questions')
     st, _, e = jreq('POST', '/api/import/confirm', {'token': pv['token']})
     ok(st == 409, 'Confirmation token is single-use: repeated confirm → 409. Actual %d' % st)
-    st, _, info = jreq('GET', '/api/info')
-    ok(info['bankCount'] == 5, 'Question bank now has 5 questions')
+    ok(bank_size() == 5, 'Question bank now has 5 questions')
     st, h, b = upload(DEMO)
     pv2 = json.loads(b)
     ok(pv2['added'] == 0 and pv2['unchanged'] == 5, 'Uploading the same file again: no changes, 5 questions')
@@ -240,8 +246,7 @@ try:
     ok(len(imps['imports']) == 1 and imps['imports'][0]['filename'] == 'garden.xlsx', 'Import history has only 1 entry (preview and cancel leave no record)')
     st, _, b = upload(THREE, 'three.xlsx')
     ok(st == 400 and json.loads(b).get('error') == MSG_OLD_LAYOUT, 'A workbook of the old 3-column layout is refused (400, six-column message). Actual %d' % st)
-    st, _, info = jreq('GET', '/api/info')
-    ok(info['bankCount'] == 5, 'The refused workbook changed nothing (still 5 questions)')
+    ok(bank_size() == 5, 'The refused workbook changed nothing (still 5 questions)')
 
     # -- 4 Results --
     ids = [q['id'] for q in bank_q] if (bank_q := jreq('GET', '/api/bank')[2]['questions']) else []
@@ -271,8 +276,7 @@ try:
     ok(subprocess.run(['docker', 'volume', 'inspect', PROJECT + '_data'], capture_output=True, env=env).returncode == 0, 'Volume still exists after deleting the containers')
     dc('up', '-d')
     ok(wait_healthy(names), 'Both containers are healthy again after recreating with the same volume')
-    st, _, info = jreq('GET', '/api/info')
-    ok(info['bankCount'] == 5, 'Question bank still has 5 questions after recreation (data is in the volume)')
+    ok(bank_size() == 5, 'Question bank still has 5 questions after recreation (data is in the volume)')
     st, _, p = jreq('GET', '/api/progress')
     ok(len(p['history']) == 2, 'Result history still has 2 rounds after recreation (the session is in the volume too)')
 

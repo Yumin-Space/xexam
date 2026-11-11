@@ -26,9 +26,15 @@ async fn info_is_byte_exact_python_format() {
     assert_std_headers(&r, "application/json; charset=utf-8");
     let t = r.text();
     assert!(t.starts_with(r#"{"version": "0.3.0", "arch": ""#), "{t}");
-    assert!(
-        t.ends_with(r#", "canShutdown": false, "bankCount": 7}"#),
-        "{t}"
+    // v0.7.5: the public route no longer says how many questions exist
+    assert!(t.ends_with(r#", "canShutdown": false}"#), "{t}");
+    assert_eq!(
+        r.json()
+            .as_object()
+            .expect("object")
+            .keys()
+            .collect::<Vec<_>>(),
+        ["version", "arch", "canShutdown"]
     );
     assert_eq!(
         r.header("content-length").unwrap(),

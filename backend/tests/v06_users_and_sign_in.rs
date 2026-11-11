@@ -796,12 +796,12 @@ async fn every_non_public_route_needs_a_session() {
     .await;
     assert_eq!(r.status, 403);
     assert!(r.error().contains("evil.example"));
-    // /api/info is public and unchanged
+    // /api/info is public; since v0.7.5 it no longer says how many questions exist
     let r = get(&a, "/api/info", None).await;
     assert_eq!(r.status, 200);
     assert_eq!(
         r.json().as_object().expect("o").keys().collect::<Vec<_>>(),
-        ["version", "arch", "canShutdown", "bankCount"]
+        ["version", "arch", "canShutdown"]
     );
 }
 

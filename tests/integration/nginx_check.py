@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """Nginx behavior check (independent of the backend implementation): starts the nginx image with Docker + an "echo" fake backend, and verifies:
   Host passed through unchanged, X-Forwarded-* cleared, 413 returns JSON, security headers, static files, hidden files 404, unknown methods rejected,
-  JSON 502 when the backend is unreachable, /healthz.
+  the rate limits of /api/upload and /api/, JSON 502 when the backend is unreachable, /healthz.
 
 Usage: python -I tests/integration/nginx_check.py <image, default xexam-frontend:test> [port, default 18080]
 Uses only Docker and the standard library; created containers / networks all carry the xexam-nginxcheck prefix and are cleaned up at the end."""
+import concurrent.futures
 import http.client
 import json
 import subprocess
@@ -158,6 +159,20 @@ try:
     # -- Rate limiting --
     codes = [req('POST', '/api/upload', host='localhost', headers={'Content-Type': 'application/octet-stream', 'X-Filename': 'a.xlsx'}, body=b'x')[0] for _ in range(12)]
     ok(429 in codes, 'Upload rate limit: 429 appears after 12 rapid requests. Actual %r' % sorted(set(codes)))
+    time.sleep(6)
+    # /api/ allows 30 requests per second with a burst of 120 (users behind a tunnel share one address). A burst of normal
+    # size - ten quick page loads of about ten requests each - passes in full; a flood far beyond the burst gets 429.
+    codes = [req('GET', '/api/info', host='localhost')[0] for _ in range(100)]
+    ok(codes.count(200) == 100, 'API: a burst of 100 quick requests all pass. Actual %r' % sorted(set(codes)))
+    time.sleep(5)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
+        flood = list(pool.map(lambda _: req('GET', '/api/info', host='localhost'), range(600)))
+    codes = [st for st, _, _ in flood]
+    ok(codes.count(200) >= 120 and 429 in codes,
+       'API: a flood of 600 requests gets 429 after the burst. Actual %d x 200, %d x 429' % (codes.count(200), codes.count(429)))
+    limited = next(hh for st, hh, _ in flood if st == 429)
+    ok('json' not in limited.get('content-type', ''),
+       "API: Nginx's own 429 is not JSON (the frontend tells it apart from the sign-in lock by that). Actual %r" % limited.get('content-type'))
     time.sleep(6)
 
     # -- Backend down --

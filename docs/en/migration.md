@@ -4,38 +4,62 @@
 
 > This document covers every upgrade path, newest first:
 >
-> - **v0.6 → v0.7** (section 1): the database moves to schema v4 and to WAL mode, automatically, after a backup copy is written.
-> - **v0.5 or v0.5.1 → v0.7** (section 2): sign-in arrives together with schema v4, in one step.
-> - **v0.4 → v0.5 and later** (section 3): question banks, exam detail and settings (schema v2), today together with everything after it.
-> - **Python v0.2.x → Rust + TypeScript + Nginx (v0.3)** (sections 4–10): the database file and its schema did not change then; the switch meant "swapping the program", not "moving data". Basis for that decision: [migration-plan.md](../zh-CN/history/migration-plan.md). Risks: [risk-assessment.md](../zh-CN/history/risk-assessment.md).
-> - **v0.1 → later** (section 11): the database file name.
+> - **v0.7 → v0.7.5** (section 1): nothing to do.
+> - **v0.6 → v0.7.5** (section 2): the database moves to schema v4 and to WAL mode, automatically, after a backup copy is written; then the questions of the old three- and four-column Excel layouts are retired, and you update the banks with six-column workbooks.
+> - **v0.5 or v0.5.1 → v0.7.5** (section 3): sign-in arrives together with schema v4, in one step.
+> - **v0.4 → v0.5 and later** (section 4): question banks, exam detail and settings (schema v2), today together with everything after it.
+> - **Python v0.2.x → Rust + TypeScript + Nginx (v0.3)** (sections 5–11): the database file and its schema did not change then; the switch meant "swapping the program", not "moving data". Basis for that decision: [migration-plan.md](../zh-CN/history/migration-plan.md). Risks: [risk-assessment.md](../zh-CN/history/risk-assessment.md).
+> - **v0.1 → later** (section 12): the database file name.
 >
 > Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back always means **restoring that copy** and running the older images. The background is in section 6 of [database.md](database.md).
+>
+> **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
 
-## 1. Upgrading from v0.6 to v0.7
+## 1. Upgrading from v0.7 to v0.7.5
 
-### 1.1 What changes
+Nothing to do besides the usual pull:
 
-On its **first start** on your data volume, v0.7 does this before it accepts any request:
+```bash
+docker compose pull
+docker compose up -d
+```
+
+v0.7.5 does not change the database schema, adds no setting and needs no new `docker-compose.yml` (the new one differs only in its comments). Your `.env` stays as it is. Rolling back to v0.7 is pinning the two images to `:v0.7` and running `docker compose up -d`; the database stays as it is.
+
+A database written by a **pre-release build of v0.7** (one that still has the column `users.all_banks`) is converted at the first start of v0.7 or later, after a copy `backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`: a user who saw every bank gets every existing bank and **Include banks imported later**, any other user keeps their banks. Since v0.7.5 a user that an older version (v0.6 or before) added to such a database in between also gets every bank and **Include banks imported later**, like the users of the upgrade in section 2. The log says `Converted the question bank access of a database written by a v0.7 pre-release to the released format.` (section 6.5 of [database.md](database.md)).
+
+## 2. Upgrading from v0.6 to v0.7.5
+
+### 2.1 What changes
+
+On its **first start** on your data volume, the new version does this before it accepts any request:
 
 1. **Backup.** It writes a copy of the current database to `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`. The copy is an ordinary schema-3 database that v0.6 can open. **If the copy cannot be written** (disk full, no permission), the backend refuses to start and leaves the database unchanged; the log says why.
 2. **Migration to schema v4**, in one transaction:
-   - **Every existing user keeps seeing every question bank** (`all_banks = 1`, shown as **All question banks, including ones imported later**). Users you add later start with no bank until you choose some.
+   - **Every existing user keeps seeing every question bank**: each gets every existing bank and **Include banks imported later**, shown in User management as **Question banks: all, including ones imported later**. Users you add later start with no bank until you choose some.
    - **Every existing bank belongs to the first administrator** (the enabled administrator with the lowest id). Nobody is a **Bank manager** yet.
    - **Every existing study record is an exam.** Practice records appear only from now on.
    - Question ids, statistics, records, settings, accounts and sessions do not change: nobody is signed out.
 3. **WAL mode.** Only after a successful migration does the backend switch the database to WAL. While it runs, `xexam.db-wal` and `xexam.db-shm` sit next to `xexam.db`; a normal stop folds them back into `xexam.db` and empties `xexam.db-wal` (the two files may stay, empty and harmless).
+4. **Old-layout questions are retired**, in one more transaction: every active question imported from the three- or four-column layout (with v0.6 that is every question) is retired, exactly as an import retires a question that left its workbook. The banks, their import history, the study records, the statistics and the wrong-answer notebook stay; the questions are no longer asked, and the bank list says that the bank's questions came from an older Excel layout. The log has one warning per bank, for example `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`. This check runs at every start (also of the command-line commands), and writes nothing when there is nothing to retire.
 
 What else you will notice:
 
-- In **User management** each row shows the user's question banks, with **Change** to limit them, and the **Bank manager** permission in the Add user form and the Edit dialog. Taking a bank away keeps the user's records of it as history.
+- **Only six-column workbooks can be imported.** A three- or four-column file is refused with a message that says so (section 12 of [usage.md](usage.md)).
+- In **User management** each row shows the user's question banks, with **Change** to choose them, and the **Bank manager** permission in the Add user form and the Edit dialog. Taking a bank away keeps the user's records of it as history.
 - **Start practice** next to **Start exam** on Home; practice records are tagged **Practice** in **Study records**.
 - A **System log** entry in the menu of administrators.
-- The answers and explanations have their own **English** / **中文** / **日本語** switch on each card, and six-column workbooks can be imported (import them as a **New bank**; see the README).
+- The answers and explanations have their own **English** / **中文** / **日本語** switch on each card.
 
-The new `docker-compose.yml` differs from the one of v0.6 in three ways: it follows the host's time zone instead of a fixed default (it mounts `/etc/localtime`; a `TZ` in `docker/.env` overrides it), it limits each container's log to 3 files of 10 MB, and it passes `XEXAM_SQLITE_JOURNAL` when `docker/.env` sets it. The v0.6 file still starts v0.7, but without these changes. No variable has to be added to `.env`.
+The new `docker-compose.yml` differs from the one of v0.6: it follows the host's time zone instead of a fixed default (it mounts `/etc/localtime`; a `TZ` in `docker/.env` overrides it), it limits each container's log to 3 files of 10 MB, and it passes `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE` and `XEXAM_LOG` when `docker/.env` sets them. The v0.6 file still starts the new version, but without these changes. No variable has to be added to `.env`.
 
-### 1.2 Upgrade
+### 2.2 Before the upgrade
+
+- [ ] Prepare a **six-column version of each workbook** you use: the question in English, Chinese and Japanese in columns A–C, the answer and the explanation in the same three languages in columns D–F, English authoritative (section 12 of [usage.md](usage.md)). Chinese and Japanese may stay empty where you have none.
+- [ ] Note the number of questions of each bank (**Question banks** page), so you can compare after the upgrade.
+- [ ] Submit or discard any unfinished exam: its questions are retired by the upgrade, so it cannot be continued afterwards.
+
+### 2.3 Upgrade
 
 ```bash
 # 1. Back up the volume (stop first; the backup file holds your whole database, do not commit it)
@@ -45,38 +69,48 @@ docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xex
 # 2. Replace docker-compose.yml with the new one (your .env stays; if you changed docker-compose.yml yourself, carry those changes over)
 curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
 
-# 3. Pull v0.7 and start (do not use down -v)
+# 3. Pull the new version and start (do not use down -v)
 docker compose pull
 docker compose up -d
 
-# 4. Look for the upgrade message, the name of the copy and the journal mode
+# 4. Look for the upgrade message, the name of the copy, the journal mode and the retired questions
 docker compose logs backend
 ```
 
-The log should contain `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema3-20261111-140501.db (…)` and `SQLite journal mode: wal`.
+The log should contain `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema3-20261111-140501.db (…)`, `SQLite journal mode: wal` and one `retired … of bank "…"` warning per bank.
 
 - **Time zone.** v0.6's compose file set a fixed time zone unless `.env` named another one. If the host's zone differs from the one your timestamps so far were written in, set that zone as `TZ` in `docker/.env` (for example `TZ=UTC`), so new records continue in it. Stored times are never rewritten.
 - **A host without `/etc/localtime`**: Compose stops with "bind source path does not exist". Remove the six lines of that mount from `docker-compose.yml` and set `TZ` in `docker/.env` (section 3.1 of [deployment.md](deployment.md)).
 - **Unusual storage**: if the volume is on a network filesystem or on a Windows folder bind-mounted into Docker Desktop, put `XEXAM_SQLITE_JOURNAL=delete` in `docker/.env` before step 3.
 - **Source build**: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`, from the repository root, then `docker compose -f docker/docker-compose.build.yml logs backend`. Without Docker, the copy goes to `backups/` inside the data directory (`--data` or `XEXAM_DATA`).
 
-### 1.3 Checks after the upgrade
+### 2.4 Bringing the banks back
 
-- [ ] `version` in `/api/info` is `0.7`, and `bankCount` (the number of active questions) is the same as before.
+For each bank: **Question banks** → **Import Excel** → **Update a bank**, pick the bank under **Bank to update**, choose its six-column file and confirm.
+
+- The bank keeps its name, its owner and the users who see it.
+- The six-column layout recognises a question by its English text, the older layouts by their Japanese text, so every question of the file is **added** as a new question, without answer history, and the old ones stay retired. The study records from before still show the old questions, with a **Retired** tag; the wrong-answer notebook starts again with the new questions.
+- Instead you can import the six-column file as a **New bank** and delete the old bank later (with or without its study records).
+
+A user who opens Home before this sees a note that the banks have no active questions.
+
+### 2.5 Checks after the upgrade
+
+- [ ] `version` in `/api/info` is `0.7.5`.
 - [ ] You can sign in as before; nobody had to sign in again.
 - [ ] **User management**: every user from before shows **Question banks: all, including ones imported later**.
-- [ ] **Question banks** lists the same banks, each **uploaded by** the first administrator.
-- [ ] **Study records** lists the earlier records, each tagged **Exam**, and the wrong-answer review has as many questions as before.
-- [ ] **System log** shows the start-up lines, among them `SQLite journal mode: wal`.
-- [ ] Take a short practice and check its time in **Study records** against the clock. If it is off by whole hours, set `TZ` (section 1.2).
+- [ ] **Question banks** lists the same banks, each **uploaded by** the first administrator. Before the update of section 2.4 each one shows its questions as retired (for example **0 questions (+25 retired)**, the number you noted); after it, the number of questions of the six-column file.
+- [ ] **Study records** lists the earlier records, each tagged **Exam**.
+- [ ] **System log** shows the start-up lines, among them `SQLite journal mode: wal` and the retired questions.
+- [ ] Take a short practice and check its time in **Study records** against the clock. If it is off by whole hours, set `TZ` (section 2.3).
 - [ ] Then decide, per user, which banks they see and who may manage banks.
 
-### 1.4 Rollback to v0.6
+### 2.6 Rollback to v0.6
 
-Rolling back means **restoring the copy written before the migration** and running the v0.6 images. Everything done in v0.7 after the migration is lost: new banks, imports, records (also practice records), accounts, bank permissions and settings.
+Rolling back means **restoring the copy written before the migration** and running the v0.6 images. Everything done after the migration is lost: the six-column imports, new banks, records (also practice records), accounts, bank permissions and settings.
 
 ```bash
-# 1. Stop v0.7 (do not use down -v)
+# 1. Stop the new version (do not use down -v)
 docker compose stop
 
 # 2. Find the copy. After a normal stop any xexam.db-wal left in /data is empty.
@@ -94,64 +128,67 @@ docker compose up -d
 
 The new `docker-compose.yml` works with the v0.6 images too. For a source build, check out the release instead: `git fetch --tags && git checkout v0.6 && docker compose -f docker/docker-compose.build.yml up -d --build`.
 
-Instead of step 3 you can also restore your own `.tgz` from section 1.2 (the restore command is in section 5 of [database.md](database.md)); it holds the same data. Step 4 is needed either way.
+Instead of step 3 you can also restore your own `.tgz` from section 2.3 (the restore command is in section 5 of [database.md](database.md)); it holds the same data. Step 4 is needed either way.
 
-v0.6 can open the migrated database itself, and it switches the file back from WAL by itself, but keep that for emergencies: v0.6 does not know the v0.7 rules, so every user sees every bank again, only administrators can manage banks, and practice records look like exams. When v0.7 starts again afterwards, it repairs what v0.6 left behind: banks v0.6 imported get an owner, and users v0.6 created get **All question banks** (section 6.6 of [database.md](database.md)).
+v0.6 can open the migrated database itself, and it switches the file back from WAL by itself, but keep that for emergencies: v0.6 does not know the rules of v0.7, so every user sees every bank again, only administrators can manage banks, practice records look like exams, and it knows nothing of six-column questions. When the new version starts again afterwards, it repairs what v0.6 left behind (section 6.6 of [database.md](database.md)): banks v0.6 imported get an owner and reach the users with **Include banks imported later**, users v0.6 created get every bank and **Include banks imported later**, and questions v0.6 imported are retired again.
 
-To upgrade again later, put the v0.7 images back (tag `:latest`) and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy.
+To upgrade again later, put the new images back (tag `:latest`) and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy.
 
-### 1.5 What has been tested
+### 2.7 What has been tested
 
-With synthetic data only (`backend/tests/v065_bank_access_and_practice.rs`, `v07_wal_and_logs.rs`, `db_golden.rs` and `tests/integration/`):
+With synthetic data only (`backend/tests/v065_bank_access_and_practice.rs`, `v07_bank_access_and_layouts.rs`, `v07_wal_and_logs.rs`, `db_golden.rs` and `tests/integration/`):
 
-- A schema-3 database migrates to schema v4 with a backup; every user keeps every bank, and the banks belong to the first administrator.
+- A schema-3 database migrates to schema v4 with a backup; every user keeps every bank, with banks imported later included, and the banks belong to the first administrator.
 - If the backup cannot be written, the database is not migrated and not changed.
+- Old-layout questions are retired once, keeping the banks, the records and the notebook; a second start writes nothing. The command-line program does the same and logs one English line per bank. A bank whose questions were retired is updated with a six-column file: the new questions are added, the old ones stay retired.
+- Uploads, the import confirm and the command-line `import` refuse three- and four-column workbooks before anything is staged or written.
+- A database of a v0.7 pre-release is converted after a backup, also with users an older version added in between.
 - A new database is in WAL mode; `XEXAM_SQLITE_JOURNAL=delete` keeps DELETE, and the next start without it is in WAL again with every record still there.
 - A migration of a database in WAL mode backs up the changes that were still in the `-wal` file; the backup is one self-contained file.
 - Opening an up-to-date database writes nothing (the database file and its `-wal` file stay the same, byte for byte).
 - After `docker stop` the volume holds `xexam.db` and no `-wal` content.
 - `reset-password` works while the server has the database open.
-- Banks without an owner, stale bank assignments and users that an older version created after a rollback are repaired at the next start.
+- Banks without an owner, banks and users that an older version created after a rollback, and stale bank assignments are repaired at the next start.
 
-Not tested: a migration of **your own** database. Do it on a copy first if you want to be sure (as in section 5, "Try the new version on a copy").
+Not tested: a migration of **your own** database. Do it on a copy first if you want to be sure (as in section 6, "Try the new version on a copy").
 
-## 2. Upgrading from v0.5 or v0.5.1 to v0.7
+## 3. Upgrading from v0.5 or v0.5.1 to v0.7.5
 
-### 2.1 What changes
+### 3.1 What changes
 
-v0.6 introduced accounts and sign-in (schema v3); v0.7 adds question banks per user (schema v4). Coming from v0.5, both run on the **first start**, in one transaction, after one copy:
+v0.6 introduced accounts and sign-in (schema v3); v0.7 added question banks per user (schema v4). Coming from v0.5, both run on the **first start**, in one transaction, after one copy:
 
 1. **Backup** to `/data/backups/xexam-schema2-<YYYYmmdd-HHMMSS>.db`, an ordinary schema-2 database that v0.5 can open. If it cannot be written, nothing changes and the backend does not start.
 2. **Accounts.** The default administrator `admin` with the password `admin` is created, and it **receives everything you had**: every study record, the wrong-answer notebook and the settings.
-3. **Schema v4** as in section 1.1: `admin` sees and owns every bank.
-4. **WAL mode**, as in section 1.1.
+3. **Schema v4** as in section 2.1: `admin` sees and owns every bank.
+4. **WAL mode**, then the **retirement of the old-layout questions**, as in section 2.1: prepare six-column workbooks first (section 2.2) and update the banks with them afterwards (section 2.4).
 
 From now on, every page needs a signed-in account. Each person gets their own records, notebook and settings, so add the other people under **User management** instead of sharing `admin`.
 
-### 2.2 Upgrade
+### 3.2 Upgrade
 
-Use the commands of section 1.2, with `xexam-data-v05.tgz` as the backup name. A `docker-compose.yml` from v0.5 still pulls from `ghcr.io`; the new one pulls from Docker Hub (`docker.io/yuminspace/…`, public, no login). The project name and the volume `xexam_data` are the same, so your data stays.
+Use the commands of section 2.3, with `xexam-data-v05.tgz` as the backup name. A `docker-compose.yml` from v0.5 still pulls from `ghcr.io`; the new one pulls from Docker Hub (`docker.io/yuminspace/…`, public, no login). The project name and the volume `xexam_data` are the same, so your data stays.
 
-The log names the copy (`…/backups/xexam-schema2-….db`) and says `Created the default administrator 'admin' (password 'admin'); sign in and choose a new password.`
+The log names the copy (`…/backups/xexam-schema2-….db`), says `Created the default administrator 'admin' (password 'admin'); sign in and choose a new password.` and lists the retired questions per bank.
 
-### 2.3 Checks after the upgrade
+### 3.3 Checks after the upgrade
 
 - [ ] Open Xexam: the sign-in page appears and names the account `admin`. Sign in with `admin` / `admin` and choose your own password right away; until then anyone who can open the page can use the default password.
-- [ ] `version` in `/api/info` is `0.7`, and `bankCount` is the same as before.
-- [ ] **Question banks** lists the same banks; **Study records** lists your earlier exams, and the wrong-answer review has as many questions as before; **Settings** has your theme and languages.
+- [ ] `version` in `/api/info` is `0.7.5`.
+- [ ] **Question banks** lists the same banks, with their questions retired until you update them (section 2.4); **Study records** lists your earlier exams; **Settings** has your theme and languages.
 - [ ] Add the other users and choose their question banks.
 
-### 2.4 Rollback to v0.5
+### 3.4 Rollback to v0.5
 
-As in section 1.4, with the copy `xexam-schema2-….db` and the images `docker.io/yuminspace/xexam-backend:v0.5.1` and `docker.io/yuminspace/xexam-frontend:v0.5.1` (v0.5 itself is only on the private mirror `ghcr.io/yumin-space/`). Everything done since the upgrade is lost, the accounts included.
+As in section 2.6, with the copy `xexam-schema2-….db` and the images `docker.io/yuminspace/xexam-backend:v0.5.1` and `docker.io/yuminspace/xexam-frontend:v0.5.1` (v0.5 itself is only on the private mirror `ghcr.io/yumin-space/`). Everything done since the upgrade is lost, the accounts included.
 
-Do not run v0.5 on the migrated database: it knows no accounts, so its records would belong to nobody (v0.7 gives them to the first administrator at its next start), and every person would share one notebook again.
+Do not run v0.5 on the migrated database: it knows no accounts, so its records would belong to nobody (the new version gives them to the first administrator at its next start), and every person would share one notebook again.
 
-## 3. Upgrading from v0.4 to v0.5 and later
+## 4. Upgrading from v0.4 to v0.5 and later
 
-Today this upgrade goes straight to v0.7: the steps below, then those of sections 2.1 and 1.1, run in **one** transaction after **one** copy, `xexam-schema1-<YYYYmmdd-HHMMSS>.db`. You then sign in with `admin` / `admin` (section 2.3), and `admin` receives all your data.
+Today this upgrade goes straight to v0.7.5: the steps below, then those of sections 3.1 and 2.1, run in **one** transaction after **one** copy, `xexam-schema1-<YYYYmmdd-HHMMSS>.db`, and then the old-layout questions are retired (section 2.1, step 4). You then sign in with `admin` / `admin` (section 3.3), and `admin` receives all your data. Prepare six-column workbooks first (section 2.2).
 
-### 3.1 What happens to your data
+### 4.1 What happens to your data
 
 v0.5 added question banks, per-question exam detail and settings to the database (schema v2). The change is purely additive: nothing is rebuilt, and no question id changes. Full details: section 6 of [database.md](database.md).
 
@@ -160,7 +197,7 @@ On the **first start** of the new version on your data volume, the backend does 
 1. **Backup.** It writes a copy of the current database to `backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). The copy is an ordinary schema-1 database that v0.4 can open. An existing file is never overwritten. **If the copy cannot be written** (disk full, no permission), the backend refuses to start and leaves the database unchanged; the log says why.
 2. **Migration**, in one transaction:
    - Everything you have becomes **one question bank** (the "legacy" bank). It is named after the file of your latest import, without `.xlsx` (`Question bank` if there was never an import).
-   - **Question ids stay the same.** So the per-question statistics, the wrong-answer notebook and the exam history stay linked to their questions.
+   - **Question ids stay the same.** So the per-question statistics, the wrong-answer notebook and the exam history stay linked to their questions (which are then retired, see above).
    - **Exam records are kept** and are attributed to that bank. They have no per-question detail, because v0.4 never stored the answers you gave: their detail page shows the score but no answers, and offers no "retake" buttons.
    - The import history is kept and attributed to that bank.
 
@@ -168,13 +205,13 @@ Later starts check, read-only, that nothing needs fixing, and write nothing.
 
 What else you will notice:
 
-- **The interface starts in English.** v0.4 was in Chinese. Change it under **Settings → Interface language**, or on the sign-in page. The setting is stored in the database, so you set it once for every browser and device.
+- **The interface starts in English.** v0.4 was in Chinese. Change it under **Settings → Language**, or on the sign-in page. The setting is stored in the database, so you set it once for every browser and device.
 - The theme follows the system (light or dark) until you choose one in **Settings**.
 - The question language (Japanese / Chinese / English on the exam page) used to be remembered by the browser. The first time a browser opens the new version, it moves that choice to the server, if the server still has the default (Japanese).
-- An unfinished exam saved in the browser is kept and can be continued (it goes to the first administrator who signs in on that browser).
+- An unfinished exam saved in the browser cannot be continued after the upgrade, because its questions are retired with the rest: submit it before you upgrade.
 - The database now keeps the newest 500 records per user instead of 60.
 
-### 3.2 Upgrade
+### 4.2 Upgrade
 
 Nothing has to change in `.env`, the port or the volume (see section 6 of [deployment.md](deployment.md)). Only the image source in `docker-compose.yml` is new since v0.5.1: it pulls from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`. Replace your `docker-compose.yml` with the new one, or change its two `image:` lines to `docker.io/yuminspace/xexam-backend:latest` and `docker.io/yuminspace/xexam-frontend:latest`. The project name and the volume `xexam_data` are unchanged, so your data stays.
 
@@ -191,20 +228,19 @@ docker compose up -d
 docker compose logs backend
 ```
 
-The log should contain a line like `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`. The program writes that copy itself; the `.tgz` from step 1 is your own second copy, outside the volume.
+The log should contain a line like `Upgraded the database to schema 4. A copy of the previous version was saved first: /data/backups/xexam-schema1-20261110-140501.db (…)`, then the retired questions of the bank. The program writes that copy itself; the `.tgz` from step 1 is your own second copy, outside the volume.
 
 For a source build: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`, from the repository root. The compose files are now in `docker/`: before that command, move a `.env` at the repository root to `docker/.env` (Compose no longer reads it at the root), and add `-f docker/docker-compose.build.yml` to the later commands, such as `logs backend`. Without Docker, the copy goes to `backups/` inside the data directory (`--data` or `XEXAM_DATA`).
 
-### 3.3 Checks after the upgrade
+### 4.3 Checks after the upgrade
 
-- [ ] Sign in with `admin` / `admin` and choose your own password (section 2.3).
-- [ ] `version` in `/api/info` is the version you installed (`0.7` today), and `bankCount` (the number of active questions) is the same as before.
-- [ ] **Question banks** lists one bank with all your sheets and the same number of questions as before.
-- [ ] **Study records** lists your earlier exams, and **Study records → Wrong-answer review** has the same number of questions as the wrong-answer notebook had before.
-- [ ] (Optional) Choose **Update a bank**, pick that bank and upload the same Excel file as last time. The preview should say that the file has exactly the same questions and there is nothing to import. Then cancel. This proves the question ids did not change.
-- [ ] Answer a few questions and submit. The new record shows each question with your answer.
+- [ ] Sign in with `admin` / `admin` and choose your own password (section 3.3).
+- [ ] `version` in `/api/info` is the version you installed (`0.7.5` today).
+- [ ] **Question banks** lists one bank with all your sheets; its questions are counted as retired, as many as the old version had.
+- [ ] **Study records** lists your earlier exams.
+- [ ] Update the bank with the six-column version of your workbook (section 2.4), answer a few questions and submit. The new record shows each question with your answer.
 
-### 3.4 Rollback to v0.4
+### 4.4 Rollback to v0.4
 
 Rolling back means **restoring the copy written before the migration** and running the v0.4 images. Everything done in the new version after the migration is lost: accounts, new banks, imports, records and settings.
 
@@ -226,13 +262,13 @@ docker compose up -d
 
 For a source build, check out the tag instead: `git checkout v0.4 && docker compose -f docker-compose.build.yml up -d --build` (at that tag the compose files are still at the repository root, and Compose reads `.env` from there: if you have a `docker/.env`, copy it to the repository root first).
 
-Instead of step 3 you can also restore your own `.tgz` from section 3.2 (the restore command is in section 5 of [database.md](database.md)); it holds the same data. Step 4 is needed either way.
+Instead of step 3 you can also restore your own `.tgz` from section 4.2 (the restore command is in section 5 of [database.md](database.md)); it holds the same data. Step 4 is needed either way.
 
-**Do not run v0.4 on the migrated database** instead of restoring the copy. v0.4 can open the file, but it sees all banks as one: its next import would retire the questions of every other bank, it cuts the exam records back to 60, and it knows nothing about accounts. If it happens anyway, the next start of the new version attaches the questions v0.4 added to the legacy bank (section 6.6 of [database.md](database.md)).
+**Do not run v0.4 on the migrated database** instead of restoring the copy. v0.4 can open the file, but it sees all banks as one: its next import would retire the questions of every other bank, it cuts the exam records back to 60, and it knows nothing about accounts. If it happens anyway, the next start of the new version attaches the questions v0.4 added to the legacy bank (section 6.6 of [database.md](database.md)) and retires them, because they are in an old layout.
 
 To upgrade again later, put the new `docker-compose.yml` back (Docker Hub images, tag `:latest`) and run `docker compose pull && docker compose up -d`. The migration runs again and writes a new copy.
 
-### 3.5 What has been tested
+### 4.5 What has been tested
 
 With synthetic data only (`backend/tests/v05_banks_records_settings.rs`, `v06_users_and_sign_in.rs` and `db_golden.rs`):
 
@@ -243,15 +279,15 @@ With synthetic data only (`backend/tests/v05_banks_records_settings.rs`, `v06_us
 - Rows written by an older binary into a migrated file are attached to the legacy bank at the next start.
 - A new database and a migrated one have the same structure.
 
-Not tested: a migration of **your own** database. Do it on a copy first if you want to be sure (as in section 5, "Try the new version on a copy").
+Not tested: a migration of **your own** database. Do it on a copy first if you want to be sure (as in section 6, "Try the new version on a copy").
 
-## 4. Python to Rust (v0.3): principles
+## 5. Python to Rust (v0.3): principles
 
 1. **Never touch the original.** Back up first, try on a copy first, and switch only after you have confirmed everything is fine.
-2. **You could always go back.** Up to v0.4 both implementations read and write the same file with the same schema (a round trip in both directions was rehearsed with synthetic data during the migration, see section 8). Since v0.5 the schema has new tables and columns; going back from a newer version means restoring the copy written before the migration (section 3.4).
+2. **You could always go back.** Up to v0.4 both implementations read and write the same file with the same schema (a round trip in both directions was rehearsed with synthetic data during the migration, see section 9). Since v0.5 the schema has new tables and columns; going back from a newer version means restoring the copy written before the migration (section 4.4).
 3. **The old implementation is not lost.** The old code is at the Git tag `python-v0.2`; the old image `ghcr.io/yumin-space/xexam:v0.2.2` (along with `:v0.2` and `:v0.2.1`) is still on GHCR (private: `docker login ghcr.io` to pull it; it is not on Docker Hub) and will not be overwritten by the new pipeline. The repository's main branch no longer contains any Python code.
 
-## 5. Python to Rust: pre-upgrade checklist
+## 6. Python to Rust: pre-upgrade checklist
 
 Do these in order. No step modifies your real database.
 
@@ -272,11 +308,12 @@ Do these in order. No step modifies your real database.
   XEXAM_DATA=/tmp/xexam-trial ./target/release/xexam-backend serve --no-browser
   ```
 
-  Open <http://localhost:8765> in a browser, sign in with `admin` / `admin`, and check that the number of questions, the wrong-answer notebook and the score history match the old version. (This also migrates the copy to the current schema and writes `backups/` into the temporary directory.) **Delete this temporary directory when you are done.**
-- [ ] **Write down the old version's numbers**: `bankCount` from `/api/info`, the total number of questions on the home page, and the number of questions in the wrong-answer notebook. Compare them one by one after the upgrade.
+  Open <http://localhost:8765> in a browser, sign in with `admin` / `admin`, and check that **Question banks** shows one bank whose retired questions are as many as the old version's questions, and that **Study records** has the old score history. (This also migrates the copy to the current schema, retires its questions, which are all in an old layout, and writes `backups/` into the temporary directory.) **Delete this temporary directory when you are done.**
+- [ ] **Write down the old version's numbers**: `bankCount` from the old version's `/api/info` (the number of its questions; the current version no longer reports it), the total number of questions on the home page, and the number of exams in the score history. Compare them after the upgrade.
+- [ ] **Prepare a six-column version of your workbook** (section 12 of [usage.md](usage.md)): the current version retires every question of the old layouts at its first start (section 2.1).
 - [ ] **Check `.env`**: you can keep the old values for `XEXAM_ALLOWED_HOSTS`, `XEXAM_BIND` and so on; the variable names have not changed.
 
-## 6. Python to Rust: upgrade
+## 7. Python to Rust: upgrade
 
 ```bash
 # 1. Stop the old version (do not use down -v)
@@ -296,18 +333,17 @@ docker compose ps
 
 `docker rm xexam` removes only the **container**. It does not remove the data volume `xexam_data` (that would take `docker volume rm` or `down -v`; do not do either).
 
-Upgrading from Python straight to the current version also runs the schema migrations of section 3, with their backup copy, and creates the account `admin` / `admin` that receives your data.
+Upgrading from Python straight to the current version also runs the schema migrations of section 4, with their backup copy, creates the account `admin` / `admin` that receives your data, and retires every question, because they are all in an old layout; then update the bank with your six-column workbook (section 2.4).
 
 Checks after the upgrade:
 
-- [ ] `version` in `/api/info` is the version you installed (`0.7` today), and `bankCount` is the same as before the upgrade.
-- [ ] After signing in, the question count, the question count in the wrong-answer notebook and the score history are the same as before the upgrade.
-- [ ] Answer a few questions and submit; the score appears in the history.
-- [ ] (Optional) Upload the same Excel file again (**Update a bank**, the one bank you have): the preview should show no added, updated or retired questions (chips with a count of 0 are hidden) and say that the file has exactly the same questions, so there is nothing to import. This proves that the old and new parsers compute the **same question ids** for the same set of questions. If it shows a large number of "retired + added" entries instead, **cancel and roll back immediately** (section 7).
+- [ ] `version` in `/api/info` is the version you installed (`0.7.5` today).
+- [ ] After signing in, **Question banks** shows the one bank with as many retired questions as the old version had questions (the old `bankCount`), and **Study records** has the same score history as before the upgrade.
+- [ ] Update the bank with your six-column workbook (section 2.4), answer a few questions and submit; the score appears in the history.
 
 > ⚠️ The old and new versions use the same project name (`xexam`), the same volume (`xexam_data`) and the same port, so they **cannot run at the same time**. The old version's container is named `xexam`, while the new version's are `xexam-frontend` and `xexam-backend`, so during the upgrade you have to remove the old container as in step 2 above.
 
-## 7. Python to Rust: rollback
+## 8. Python to Rust: rollback
 
 You can go back to the Python version. The old version's compose file is no longer on the main branch; get it from the tag:
 
@@ -324,7 +360,7 @@ Note that the image tag in the old compose file is `:latest`, **and `ghcr.io/yum
 
 **From v0.3 or v0.4** the old version keeps using the same `xexam_data` volume with no data loss. It can read everything those versions wrote (newly imported questions, new scores), because they do not change the schema, do not change `journal_mode`, do not add tables or columns, do not set `user_version`, and leave no `-wal` / `-shm` files behind.
 
-**From v0.5 or later** the schema has new tables and columns (and since v0.7 the file is in WAL mode). First restore the schema-1 copy written before the migration, as in steps 1–3 of section 3.4, then start the old version as above.
+**From v0.5 or later** the schema has new tables and columns (and since v0.7 the file is in WAL mode). First restore the schema-1 copy written before the migration, as in steps 1–3 of section 4.4, then start the old version as above.
 
 If you also want the data to go back to the state before the upgrade (for example, you suspect the new version corrupted it):
 
@@ -338,7 +374,7 @@ docker compose -f docker-compose.legacy.yml up -d
 
 Rolling back without Docker: `git checkout python-v0.2` and run `python server.py` (requires Python 3.8+), with the data directory pointing at the same `xexam.db`.
 
-## 8. Python to Rust: what has been rehearsed
+## 9. Python to Rust: what has been rehearsed
 
 The following was done during the migration (while the Python code was still in the repository), **using fictional data only**; no real database was read, printed or modified. The scripts that depended on running the old Python code live were removed along with that code; the conclusions continue to be guarded by the committed snapshot tests.
 
@@ -350,7 +386,7 @@ The following was done during the migration (while the Python code was still in 
 | Parser differential | 49 synthetic workbooks, with the output of the old parser and the Rust parser compared item by item; 85 question-id vectors | All identical | `parser_golden.rs` and `id_vectors.rs` run on every CI run |
 | Full stack | `tests/integration/stack_check.py`: bring up the stack, upload / import / submit, the data is still there after the container is deleted and the stack is recreated on the same volume, `docker stop` timing, non-root | 34 checks passed at the time (the script has grown since) | Runs on every CI run |
 
-## 9. Python to Rust: intentional differences from the old version
+## 10. Python to Rust: intentional differences from the old version
 
 The full table, with reasons, is in section 5 of [api.md](api.md). Every entry is recorded in `tests/baseline/golden/allowed_differences_rust.json` and `allowed_probe_differences_rust.json`, and a difference that is not recorded makes the tests fail. The only ones visible to users are:
 
@@ -365,11 +401,11 @@ The full table, with reasons, is in section 5 of [api.md](api.md). Every entry i
 
 The API changes of later versions are listed in [api.md](api.md).
 
-## 10. Python to Rust: what has not been verified
+## 11. Python to Rust: what has not been verified
 
 - A real Cloudflare Tunnel / Access, a real iPhone, and running on real ARM hardware (arm64 has only been built and started under QEMU).
-- A rehearsal with a copy of **your own real database**: I do not have it and should not read it; please do it on your own machine following section 5.
+- A rehearsal with a copy of **your own real database**: I do not have it and should not read it; please do it on your own machine following section 6.
 
-## 11. Upgrading from v0.1
+## 12. Upgrading from v0.1
 
 From v0.2 on, the database file is named `xexam.db`. If the data directory contains another `.db` file but no `xexam.db`, the backend's startup log warns you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read). The old `progress.json` is checked once on every startup, and it is migrated only if the database has no study records yet and no migration has happened before; it is migrated only once and never overwrites existing records.

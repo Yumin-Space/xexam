@@ -10,6 +10,8 @@
     "noEmit": true
   },
   "include": [
+    "src/api/client.ts",
+    "src/api/client.test.ts",
     "src/domain/**/*.ts",
     "src/types/**/*.ts",
     "src/state/session-storage.ts",

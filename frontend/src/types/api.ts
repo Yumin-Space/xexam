@@ -1,10 +1,10 @@
 // Types of the backend REST API. Shapes come from real responses of the old version (tests/baseline/golden/); key names match the old version, do not change them.
 
+/** GET /api/info: public (the sign-in page shows the version). Since v0.7.5 it no longer says how many questions exist. */
 export interface Info {
   version: string;
   arch: string;
   canShutdown: boolean;
-  bankCount: number;
 }
 
 export interface Opt {

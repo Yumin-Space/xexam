@@ -1,13 +1,13 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "0.7"
+  version: "0.7.5"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
     differences are listed under "Differences from the old version" in docs/en/api.md, and the changes of each version under
-    "Changes in v0.5", "Changes in v0.6" and "Changes in v0.7". Endpoints and fields marked (v0.5), (v0.6) or (v0.7) were added
-    in that version.
+    "Changes in v0.5", "Changes in v0.6", "Changes in v0.7" and "Changes in v0.7.5". Endpoints and fields marked (v0.5), (v0.6)
+    or (v0.7) were added in that version.
 
     All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
     JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
@@ -26,8 +26,8 @@ info:
     answers 403 `请先设置新密码。`. Admin routes answer 403 `只有管理员可以进行这个操作。` and bank manager routes 403
     `你没有管理题库的权限，请联系管理员。` to users without the access.
 
-    **What a plain user sees** (v0.7): every bank (`"banks": "all"`) or the banks an administrator chose, plus, while they are a
-    bank manager, the banks they own. `/api/bank`, `/api/banks`, the statistics of `/api/progress`, the questions
+    **What a plain user sees** (v0.7): the banks an administrator chose for them (`banks`; with `newBanks`, every bank created
+    later is added to them when it is created), plus, while they are a bank manager, the banks they own. `/api/bank`, `/api/banks`, the statistics of `/api/progress`, the questions
     `/api/attempt` counts and the question text of `/api/record` all follow it. Administrators see and manage every bank.
 servers:
   - url: http://localhost:8765
@@ -50,9 +50,13 @@ paths:
   /api/info:
     get:
       tags: [system]
-      summary: Version, architecture, whether shutdown is allowed, question count
+      summary: Version, architecture, whether shutdown is allowed
       x-access: Public
       security: []
+      description: |
+        Public: the sign-in page and the container health check use it. (v0.7.5) It no longer returns `bankCount` (the number
+        of active questions); signed-in pages count the questions they may see from /api/bank and /api/banks. The database is
+        still read, so a database that cannot be read answers 500.
       responses:
         "200":
           description: OK
@@ -195,8 +199,10 @@ paths:
         Usernames: 1–40 characters of ASCII letters, digits and `. _ - @` (surrounding spaces removed), unique ignoring case.
         Passwords: 8–128 characters. 400 `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` for a missing or invalid username;
         400 `密码需要 8–128 个字符。`; 400 `请求的格式不对。` for a missing password, a missing or unknown role, a malformed
-        `banks` or a non-boolean `canManageBanks`; (v0.7) 400 `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` when
-        an id in `banks` is not an existing bank (nothing is created).
+        `banks` or a non-boolean `newBanks` / `canManageBanks`; (v0.7) 400 `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。`
+        when an id in `banks` is not an existing bank (nothing is created).
+        (v0.7) `banks` defaults to `[]`, `newBanks` and `canManageBanks` to false. `"banks": "all"` is a shorthand for every bank
+        that exists now, and also sets `newBanks: true` unless `newBanks` is given.
       requestBody:
         required: true
         content:
@@ -224,8 +230,9 @@ paths:
       x-access: Admin
       description: |
         Keys left out stay unchanged. Disabling an account or changing its role ends its sessions; a rename or a change of
-        `banks` / `canManageBanks` keeps them and applies at the user's next request. `banks` and `canManageBanks` are kept
-        across role changes (they matter only for plain users). Every check runs in the same transaction as the write.
+        `banks` / `newBanks` / `canManageBanks` keeps them and applies at the user's next request. `banks` replaces the chosen
+        banks; `"banks": "all"` (every bank that exists now) also sets `newBanks: true` unless `newBanks` is given. `banks`,
+        `newBanks` and `canManageBanks` are kept across role changes (they matter only for plain users). Every check runs in the same transaction as the write.
         400 as for create (`disabled` not a boolean, `id` missing or not an integer → `请求的格式不对。`).
         409: `不能对自己的账户做这个操作。` (disabling yourself or changing your own role), `至少要保留一个启用的管理员。` (no
         enabled administrator would remain), `这个用户名已经有人用了。`.
@@ -499,6 +506,11 @@ paths:
         (v0.7) A bank manager may update only a bank they own: an existing bank of somebody else as the target (also the legacy
         bank, for an upload without `X-Bank-Target`) → 403 `这个题库不是你上传的，只能更新或删除你自己上传的题库。`, before the
         file is parsed.
+
+        (v0.7) Only the six-column layout can be imported. A workbook from which the parser reads any question of the old three-
+        or four-column layout → 400 `只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。`
+        ("Only the six-column layout can be imported … Rewrite it in the six-column layout and import it again."), for a new
+        bank and for an update alike; nothing is staged.
       parameters:
         - name: X-Filename
           in: header
@@ -549,7 +561,8 @@ paths:
         (v0.5) The file replaces the content of its target bank only (questions of that bank missing from the file are
         deactivated; other banks are untouched). `bankId` is present only when the upload carried `X-Bank-Target`.
         (v0.7) `bank` is as the caller sees it. A target bank that now belongs to somebody else → 403
-        `这个题库不是你上传的，只能更新或删除你自己上传的题库。`; nothing is written and the code is used up.
+        `这个题库不是你上传的，只能更新或删除你自己上传的题库。`; nothing is written and the code is used up. A staged workbook
+        with a question of the old three- or four-column layout → 400, the same message as at the upload; nothing is written.
       requestBody:
         required: true
         content:
@@ -572,7 +585,7 @@ paths:
                   bank: { $ref: "#/components/schemas/Bank" }
                   bankId: { type: integer, description: "(v0.5) Only when the upload carried `X-Bank-Target`: the created / updated bank" }
         "400":
-          description: "This file contains no usable questions (nothing is imported): `这份文件里没有读到任何可用的题，没有导入。`"
+          description: "This file contains no usable questions (nothing is imported): `这份文件里没有读到任何可用的题，没有导入。`; (v0.7) the workbook is in an old layout (see /api/upload)"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -945,12 +958,12 @@ components:
         ok: { type: boolean, example: true }
     Info:
       type: object
-      required: [version, arch, canShutdown, bankCount]
+      description: "Key order as listed. (v0.7.5) `bankCount` is gone."
+      required: [version, arch, canShutdown]
       properties:
-        version: { type: string, example: "0.7", description: "`CODE_VERSION` of the VERSION file (or `XEXAM_VERSION`)" }
+        version: { type: string, example: "0.7.5", description: "`CODE_VERSION` of the VERSION file (or `XEXAM_VERSION`)" }
         arch: { type: string, example: x86_64 }
-        canShutdown: { type: boolean }
-        bankCount: { type: integer, description: Number of active questions in the whole library (not limited to what any user may see) }
+        canShutdown: { type: boolean, description: "True only when the program was started with `--allow-shutdown` (never in Docker)" }
 
     SessionUser:
       type: object
@@ -1000,7 +1013,7 @@ components:
         password: { type: string, minLength: 8, maxLength: 128 }
 
     BankAccess:
-      description: '(v0.7) The banks a plain user sees: `"all"` (every bank, including banks imported later) or a list of bank ids (`[]` = none)'
+      description: '(v0.7) Written by /api/users/create and /api/users/update: a list of the ids of the existing banks the user sees (`[]` = none; duplicates ignored), or `"all"`, a shorthand for every bank that exists now (it also sets `newBanks: true` unless `newBanks` is given). GET /api/users always returns a list.'
       oneOf:
         - { type: string, enum: [all] }
         - { type: array, items: { type: integer } }
@@ -1019,7 +1032,7 @@ components:
     User:
       type: object
       description: "(v0.6) One account in GET /api/users. Key order as listed."
-      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, canManageBanks, ownedBanks, lock]
+      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, ownedBanks, lock]
       properties:
         id: { type: integer }
         username: { type: string }
@@ -1029,7 +1042,8 @@ components:
         lastLoginAt: { type: string, nullable: true, description: "Local time YYYY-MM-DD HH:MM; null before the first sign-in" }
         mustChangePassword: { type: boolean }
         records: { type: integer, description: "Number of the user's study records (exams and practice)" }
-        banks: { $ref: "#/components/schemas/BankAccess" }
+        banks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks the user sees, ascending (only banks that still exist; `[]` = none)" }
+        newBanks: { type: boolean, description: "(v0.7) Include banks imported later: every bank created from now on is added to `banks` when it is created; existing banks are never added by it" }
         canManageBanks: { type: boolean, description: "(v0.7) The stored bank manager permission (administrators manage every bank anyway)" }
         ownedBanks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks this user owns (imported as new banks), ascending" }
         lock: { nullable: true, allOf: [{ $ref: "#/components/schemas/UserLock" }], description: "null while the account is in the first round and not locked" }
@@ -1046,6 +1060,7 @@ components:
         password: { type: string, minLength: 8, maxLength: 128 }
         role: { type: string, enum: [admin, user] }
         banks: { allOf: [{ $ref: "#/components/schemas/BankAccess" }], description: "(v0.7) Default `[]`: no bank until an administrator chooses some" }
+        newBanks: { type: boolean, default: false, description: "(v0.7) Include banks imported later (true with `\"banks\": \"all\"` unless given)" }
         canManageBanks: { type: boolean, default: false, description: "(v0.7) The bank manager permission" }
     UserUpdate:
       type: object
@@ -1056,6 +1071,7 @@ components:
         role: { type: string, enum: [admin, user] }
         disabled: { type: boolean }
         banks: { $ref: "#/components/schemas/BankAccess" }
+        newBanks: { type: boolean, description: "(v0.7) Include banks imported later" }
         canManageBanks: { type: boolean, description: "(v0.7)" }
     UserId:
       type: object
@@ -1139,7 +1155,7 @@ components:
         mnemonic: { type: string, description: Same rule as explanation }
         note: { type: string, description: Same rule as explanation }
         explain: { $ref: "#/components/schemas/Explain" }
-        id: { type: string, description: "Question identity (content fingerprint of sheet + question text + first option, 12 hex digits; duplicates get -2, -3 …). In banks other than the legacy bank it is scoped to the bank (see docs/en/database.md 4.1)", example: 94e4bfe00e8d }
+        id: { type: string, description: "Question identity (content fingerprint of sheet + question text + first option, 12 hex digits; duplicates get -2, -3 …). In banks other than the legacy bank it is scoped to the bank (see docs/en/database.md 4.1)", example: 1a2b3c4d5e6f }
         sheet: { type: string }
         row: { type: integer, description: Row number in Excel (for display only) }
         bank: { type: integer, nullable: true, description: "(v0.5) Id of the question's bank; always the last key" }
@@ -1398,7 +1414,7 @@ components:
         time: { type: string, description: "Local time YYYY-MM-DD HH:MM:SS" }
         level: { type: string, enum: [error, warn, info, debug, trace] }
         target: { type: string, example: "xexam_backend::api::auth", description: The module that logged it }
-        message: { type: string, description: "The message followed by its fields as ` key=value` (cut after 4000 characters)" }
+        message: { type: string, example: 'user "admin" signed in', description: "The message followed by its fields as ` key=value` (cut after 4000 characters). Users are named by their username, never by id" }
     LogPage:
       type: object
       description: "(v0.7) Key order as listed."

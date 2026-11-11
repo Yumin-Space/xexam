@@ -286,7 +286,8 @@ interface ChecklistOptions {
 /**
  * The question-bank choice of a plain user (v0.7, as the owner drew it): one line above the list holds "Include banks
  * imported later" and, at its right end, "Select all", which ticks or unticks every listed bank and shows checked, unchecked
- * or indeterminate from the list; then one box per bank. The two settings are independent: "Include banks imported later"
+ * or indeterminate from the list; then one box per bank. On a phone the two do not fit on one line in English and Japanese:
+ * the line wraps and "Select all" sits alone at the right of the next line (accepted; nothing overflows). The two settings are independent: "Include banks imported later"
  * adds only the banks imported from now on, and unticking a bank removes only that bank. Clicks change the boxes in place
  * (no redraw), so the keyboard focus stays where it is.
  */

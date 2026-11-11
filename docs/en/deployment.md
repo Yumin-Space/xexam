@@ -25,7 +25,7 @@ You only need one file from the repository, [`docker-compose.yml`](../../docker/
 docker compose up -d
 ```
 
-`docker compose up -d` pulls and starts **two containers**: `xexam-frontend` (Nginx, the only one exposed to the outside) and `xexam-backend` (Rust, private network). Then open <http://localhost:8765> in a browser and sign in with `admin` / `admin`; Xexam asks you to choose your own password right away (section 10). Open the menu (the three-line button at the top right), choose **Question banks** and import your Excel file. The interface starts in English; you can switch it to Chinese or Japanese under **Settings**, or on the sign-in page.
+`docker compose up -d` pulls and starts **two containers**: `xexam-frontend` (Nginx, the only one exposed to the outside) and `xexam-backend` (Rust, private network). Then open <http://localhost:8765> in a browser and sign in with `admin` / `admin`; Xexam asks you to choose your own password right away (section 10). Open the menu (the three-line button at the top right), choose **Question banks** and import your Excel file (in the six-column layout, see section 12 of [usage.md](usage.md)). The interface starts in English; you can switch it to Chinese or Japanese under **Settings**, or on the sign-in page.
 
 ### Build from source (when you change the code)
 
@@ -47,7 +47,7 @@ The commands below name the Compose **services**, `backend` and `frontend`. The 
 | View logs | `docker compose logs -f` (only the backend: `docker compose logs -f backend`; see section 9) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | Update to the latest version | `docker compose pull && docker compose up -d` (for a source build: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build`). Read section 6 first when you come from an older version |
-| Version and architecture | <http://localhost:8765/api/info>, or in the app: menu → **Xexam v0.7** (the About page) |
+| Version and architecture | <http://localhost:8765/api/info>, or in the app: the version entry of the menu, for example **Xexam v0.7.5** (the About page) |
 
 > ⚠️ Do not run `docker compose down -v`: `-v` deletes the data volume `xexam_data`, which holds the question banks, the accounts and all study records.
 
@@ -65,11 +65,11 @@ Create a `.env` file next to `docker-compose.yml`; in a clone that is `docker/.e
 | `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = do not check Host (only when authentication is already in front) |
 | `XEXAM_PARSE_TIMEOUT_SECS` | `30` | Maximum time to parse one Excel file |
 | `XEXAM_SQLITE_JOURNAL` | (unset: WAL) | `delete` keeps SQLite's old rollback journal instead of WAL. Set it only when the data volume is on a network filesystem or on a Windows folder bind-mounted into Docker Desktop; any other value means WAL. See section 2.1 of [database.md](database.md) |
+| `XEXAM_COOKIE_SECURE` | (unset) | `1` = the session cookies always get `Secure`. Set it only when the browser always reaches Xexam over HTTPS (for example through Cloudflare Tunnel); unset, `Secure` follows each request (section 10) |
+| `XEXAM_LOG` | (unset: `info`) | The backend's log filter, for both `docker compose logs backend` and the System log page, for example `debug` or `warn`. Empty or only spaces means `info`; a value that is not a valid filter also falls back to `info`, and the log then starts with one warning that names the problem |
 | `TZ` | (unset: the host's time zone) | Time zone of the timestamps in the database; the compose file mounts the host's `/etc/localtime`, so set `TZ` only to use another zone (for example `UTC`) |
 
-After changing `.env`, run `docker compose up -d` (it recreates the containers as needed). `TZ` and `XEXAM_SQLITE_JOURNAL` are passed into the container only when `.env` sets them.
-
-The backend reads two more variables that the compose files do not pass on: `XEXAM_COOKIE_SECURE` (`1` = the session cookie always gets `Secure`, see section 10) and `XEXAM_LOG` (the log filter, default `info`, for example `debug`). Setting them in `.env` has no effect; to use one, add it under `environment:` of the `backend` service in your `docker-compose.yml`, for example `XEXAM_LOG: "debug"`. `xexam-backend --help` lists every variable.
+After changing `.env`, run `docker compose up -d` (it recreates the containers as needed). The compose files pass `XEXAM_ALLOWED_HOSTS`, `XEXAM_ALLOWED_ORIGINS`, `XEXAM_ALLOW_ANY_HOST` and `XEXAM_PARSE_TIMEOUT_SECS` always (with the defaults above when `.env` does not set them); `TZ`, `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE` and `XEXAM_LOG` only when `.env` sets them (a line such as `XEXAM_LOG=` with nothing after it is passed as an empty value). `XEXAM_BIND` is used by Compose itself, for the published port. `xexam-backend --help` lists every variable the backend reads.
 
 ### 3.1 Time zone
 
@@ -90,43 +90,87 @@ On Docker Desktop (Windows, macOS) the host's `/etc/localtime` is the file of Do
 
 Changing the time zone later does not rewrite stored times; they keep the zone they were written in.
 
-## 4. Letting your phone / the outside connect
+## 4. Opening Xexam from a phone, another computer or the internet
 
-### An iPhone on the same Wi-Fi
+By default Xexam binds only to the local machine (`127.0.0.1`): only the machine that runs Docker can open <http://localhost:8765>. Xexam has its own sign-in, but anyone who reaches the port reaches the sign-in page, so open it up only as far as you need.
 
-Do this only on a **trusted network**. `.env`:
+### From another computer through SSH (no configuration)
 
-```ini
-XEXAM_BIND=0.0.0.0:8765
-XEXAM_ALLOWED_HOSTS=192.168.1.20      # the LAN IP of your computer
+If Xexam runs on a server, NAS or virtual machine that you can log in to with SSH, run this on your own computer:
+
+```bash
+ssh -L 8765:127.0.0.1:8765 user@server
 ```
 
-Open `http://192.168.1.20:8765` in Safari on the iPhone (iOS 15.4 or later is required).
+While this SSH connection is open, open <http://localhost:8765> in the browser on your own computer. Nothing changes on the server, and no port is opened.
+
+### A phone or a computer on the same network
+
+Do this only on a **trusted network** (such as your home Wi-Fi), not on a public or shared one:
+
+1. Find the LAN IP address of the machine that runs Docker (usually `192.168.x.x` or `10.x.x.x`): on Windows run `ipconfig` and look at the "IPv4 Address" line; on macOS run `ipconfig getifaddr en0`; on Linux run `hostname -I` (usually the first address).
+2. Put two lines into `.env`, with that address:
+
+   ```ini
+   XEXAM_BIND=0.0.0.0:8765
+   XEXAM_ALLOWED_HOSTS=192.168.1.20      # the LAN IP of the machine that runs Docker
+   ```
+
+3. Run `docker compose up -d`, then open that address with port 8765 (here `http://192.168.1.20:8765`) in the browser of the phone (Safari on an iPhone, iOS 15.4 or later) or of the other computer.
+
+Away from that network, use Cloudflare Tunnel (below); never forward the port on your router.
 
 ### From the internet through Cloudflare Tunnel
 
-The backend is not exposed in the first place, so the tunnel only needs to point at **Nginx** (the port published by `XEXAM_BIND`). Three things to do:
+Use case: Xexam runs on your LAN, `cloudflared` (Cloudflare's tunnel client) runs on a machine of the same LAN (not necessarily the same one), and you reach Xexam from outside through your own domain, protected by **Cloudflare Access**. The backend is not exposed in the first place, so the tunnel only needs to point at **Nginx** (the port published by `XEXAM_BIND`).
 
-1. Make sure cloudflared can reach Nginx: on the same machine, keep the default and point it at `http://localhost:8765`; on another machine on the LAN, set `XEXAM_BIND` to `0.0.0.0:8765` (or to a specific LAN IP).
-2. Public Hostname: `xexam.your-domain.com` → Service `HTTP` (not HTTPS) → `host-IP:8765`.
-3. Add a policy in Cloudflare Access that **allows only you** (and the people you invite). A domain with no policy is open to the whole world.
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as You (outside)
+    participant CF as Cloudflare<br/>(domain + Access)
+    participant T as cloudflared<br/>(LAN)
+    participant X as Xexam<br/>(LAN, host IP:8765)
 
-Two common Host situations (`.env`):
+    U->>CF: Open https://xexam.your-domain.com
+    CF-->>U: Require login (Cloudflare Access)
+    U->>CF: Pass authentication
+    CF->>T: Forward the request through the tunnel
+    T->>X: HTTP request (Host is your domain, or rewritten to host IP:8765)
+    X->>X: Check that Host is in the allow-list, and Origin as well for write requests
+    X-->>U: Page / data (back along the same path)
+    Note over U,X: POST requests (an upload, a submitted exam) carry the Origin https://xexam.your-domain.com<br/>The backend compares hostnames only, so they are not blocked
+```
+
+Three things to do:
+
+1. **Let cloudflared reach Nginx.** On the same machine, keep the default binding and point the tunnel at `http://localhost:8765`. On another machine of the LAN, set `XEXAM_BIND=0.0.0.0:8765` (or a specific LAN IP such as `192.168.1.20:8765`) in `.env`, together with `XEXAM_ALLOWED_HOSTS=xexam.your-domain.com`, and run `docker compose up -d`.
+2. **Public Hostname** in the Zero Trust dashboard (Networks → Tunnels → your tunnel → Public Hostname): Subdomain / Domain `xexam` / `your-domain.com`, Service Type `HTTP` (not HTTPS), URL `host-IP:8765` (for example `192.168.1.20:8765`).
+3. **A policy in Cloudflare Access** that allows **only you** and the people you invite. A domain with no policy is open to the whole world.
+
+The Host the backend sees depends on the tunnel (`.env`):
 
 | What the tunnel does | Setting |
 |---|---|
 | Host is passed through unchanged as your domain | `XEXAM_ALLOWED_HOSTS=xexam.your-domain.com` |
-| `httpHostHeader` is set, so Host is rewritten to `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.your-domain.com` |
-| Not sure | Start with the first row. When a request is rejected (403), the page states the Host / Origin it saw; add them to the matching option and run `up -d` again |
+| `httpHostHeader` is set, so Host is rewritten to `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.your-domain.com` (the browser's `Origin` is still the public domain, so it must be allowed separately) |
+| Not sure | Start with the first row. When a request is rejected (403), the page states the `Host` / `Origin` it saw and which option it belongs in; add it and run `docker compose up -d` again. The same reason is in `docker compose logs backend` and in the **System log** |
+| You do not want to list domains, and Access is in front | `XEXAM_ALLOW_ANY_HOST=1` (`Host` is no longer checked; the `Origin` check on write requests and the sign-in still apply) |
 
 Nginx passes the `Host` sent by the browser (or the tunnel) to the backend **unchanged** and clears `X-Forwarded-*`; the backend reads only the real `Host`.
 
-⚠️ Xexam has its own sign-in since v0.6, but keep Cloudflare Access in front of it anyway: let only cloudflared reach this port, and do not set up port forwarding on the router. On Linux, the host firewall cannot block ports published by Docker; use the `DOCKER-USER` chain or a specific LAN IP.
+**Everybody behind the tunnel shares one rate limit.** Nginx limits the requests per client address: `/api/` 30 requests per second with a burst of 120, `/api/upload` 1 per second with a burst of 5 (section 9 of [security.md](security.md)). Through a tunnel every user arrives from cloudflared's address, so they all count against the same limits. A page load sends about ten requests and the open System log page two a second, which stays well below them; if they are reached anyway, the page retries its reads and then says **Too many requests** (section 17 of [usage.md](usage.md)).
+
+Things not to forget:
+
+- ⚠️ **Xexam's own sign-in is the only lock on the port.** With `XEXAM_BIND=0.0.0.0:…` or `XEXAM_ALLOW_ANY_HOST=1`, anyone who can reach the port reaches the sign-in page and can try passwords (the escalating locks slow that down, but a weak password stays weak). Let only cloudflared reach the port: no port forwarding on the router. On Linux, the host firewall (ufw, firewalld) cannot block ports published by Docker; use the `DOCKER-USER` chain or a specific LAN IP in `XEXAM_BIND`. The safest setup is cloudflared and Xexam on the same machine with the default `127.0.0.1`.
+- Change the default `admin` password at the first sign-in, and give every user a password of their own.
+- Behind Cloudflare Access you sign in twice (Access, then Xexam). When the Access login expires, an upload or a submit fails with a message saying that your sign-in may have expired: reload the page and sign in again. An exam or practice in progress is kept in the browser and is not lost.
 
 How far this has been verified (stated honestly):
 
 - During the migration, the complete browser flow for both Host situations (Host preserved / Host rewritten) was run against the **old Python version**, using a real Chrome and an HTTPS reverse proxy. That script depended on the old Python code and was removed along with it.
-- For the **new stack**: `tests/integration/stack_check.py` uses header-level checks to verify that "after passing through Nginx, the Host / Origin guard still works and `X-Forwarded-*` is not trusted"; `nginx_check.py` verifies that Host is passed through unchanged.
+- For the **new stack**: `tests/integration/stack_check.py` uses header-level checks to verify that "after passing through Nginx, the Host / Origin guard still works and `X-Forwarded-*` is not trusted"; `nginx_check.py` verifies that Host is passed through unchanged and checks the rate limits.
 - It has **not** been tested with real Cloudflare. For the first go-live, follow the "Not sure" row in the table above and read the 403 message the page gives.
 
 ## 5. Data
@@ -141,13 +185,16 @@ How far this has been verified (stated honestly):
 
 Every upgrade is `docker compose pull && docker compose up -d` (with the new `docker-compose.yml` where noted). On its first start the new backend migrates the database to its schema after writing a copy to `/data/backups/`; if that copy cannot be written (disk full, no permission), it exits with an error and the database is not changed. Docker keeps restarting it, and each start tries again; Nginx does not start, because it waits for a healthy backend. `docker compose logs backend` says why. Back up the volume yourself first as well (section 5): a copy outside the volume is safer.
 
+**Coming from v0.6 or older, prepare six-column workbooks first.** Since v0.7 only the six-column layout can be imported, and on every start the backend retires every question that was imported from the three- or four-column layouts of earlier versions (the banks, the study records and the statistics stay). Every bank of v0.6 and older is in those layouts, so after the upgrade nothing can be practised until each bank is updated with a six-column file (section 13.5 of [usage.md](usage.md)).
+
 The step-by-step checklists, the checks afterwards and the rollbacks are in [migration.md](migration.md):
 
-- **From v0.6** (section 1 of migration.md): schema v3 → v4, backup `xexam-schema3-<date-time>.db`, WAL mode. Get the new `docker-compose.yml` as well: it no longer sets a fixed default time zone (it follows the host, section 3.1), limits the container logs (section 8) and passes `XEXAM_SQLITE_JOURNAL`. If your earlier timestamps were written in a zone other than the host's, set that zone as `TZ` in `.env` so new records continue in it. No variable has to be added.
-- **From v0.5 or v0.5.1** (section 2 of migration.md): schema v2 → v4 in one step, backup `xexam-schema2-<date-time>.db`. Sign-in is new: sign in with `admin` / `admin`, which now owns all earlier data.
-- **From v0.4** (section 3 of migration.md): schema v1 → v4 in one step, backup `xexam-schema1-<date-time>.db`. Since v0.5.1 the images come from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`: replace your `docker-compose.yml` with the new one (or change its two `image:` lines to `docker.io/yuminspace/xexam-backend:latest` and `docker.io/yuminspace/xexam-frontend:latest`). For a source build, the compose files are now in `docker/`: move a `.env` at the repository root to `docker/.env`.
+- **From v0.7** (section 1 of migration.md): nothing to do besides the pull; no schema change, the same `docker-compose.yml` and `.env`.
+- **From v0.6** (section 2 of migration.md): schema v3 → v4, backup `xexam-schema3-<date-time>.db`, WAL mode, then the retirement of the old-layout questions. Get the new `docker-compose.yml` as well: it no longer sets a fixed default time zone (it follows the host, section 3.1), limits the container logs (section 8) and passes `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE` and `XEXAM_LOG` when `.env` sets them. If your earlier timestamps were written in a zone other than the host's, set that zone as `TZ` in `.env` so new records continue in it. No variable has to be added.
+- **From v0.5 or v0.5.1** (section 3 of migration.md): schema v2 → v4 in one step, backup `xexam-schema2-<date-time>.db`. Sign-in is new: sign in with `admin` / `admin`, which now owns all earlier data.
+- **From v0.4** (section 4 of migration.md): schema v1 → v4 in one step, backup `xexam-schema1-<date-time>.db`. Since v0.5.1 the images come from Docker Hub (`docker.io/yuminspace/…`, public, no login) instead of `ghcr.io`: replace your `docker-compose.yml` with the new one (or change its two `image:` lines to `docker.io/yuminspace/xexam-backend:latest` and `docker.io/yuminspace/xexam-frontend:latest`). For a source build, the compose files are now in `docker/`: move a `.env` at the repository root to `docker/.env`.
 
-After the upgrade, `/api/info` shows `"version": "0.7"`. Later starts do not migrate again and write nothing extra. **Rolling back** means restoring the copy from `backups/` and running the older images; never run an older version on the migrated database for longer than an emergency. The exact commands are in [migration.md](migration.md); the background is in section 6 of [database.md](database.md).
+After the upgrade, `/api/info` shows `"version": "0.7.5"`. Later starts do not migrate again; the retirement of old-layout questions writes nothing when there is nothing left to retire. **Rolling back** means restoring the copy from `backups/` and running the older images; never run an older version on the migrated database for longer than an emergency. The exact commands are in [migration.md](migration.md); the background is in section 6 of [database.md](database.md).
 
 ## 7. Health checks and stopping
 
@@ -170,14 +217,14 @@ There are two places to read what the backend logged. Both show the same lines, 
 
 | | **System log** (menu, administrators only) | `docker compose logs backend` |
 |---|---|---|
-| Where | In the app, page `#/logs`, updated every 1.5 seconds | On the server |
+| Where | In the app, page `#/logs`, read every 0.5 seconds while it is open (longer after failed reads, at most every 10 seconds) | On the server |
 | How much | The last **2000** lines since the backend last started | Everything Docker still keeps: up to 3 files of 10 MB, across restarts |
 | After a restart | Empty again (kept in memory only, never in the database) | Kept |
 | Also | Level filter, search, **Pause** / **Resume**, **Jump to latest** | The Nginx access and error log: `docker compose logs frontend` |
 
-Without Compose: `docker logs xexam-backend`. The page's note names `docker compose logs xexam-backend`; with the compose files of this repository the service is called `backend`, so use `docker compose logs backend` (or `docker logs xexam-backend`).
+The Compose service is called `backend` (its container `xexam-backend`), so the page's note says: run `docker compose logs backend` on the server, in the folder of the compose file, or without Compose `docker logs xexam-backend`. In a clone, add `-f docker/docker-compose.yml` (or `-f docker/docker-compose.build.yml`) when you run it from the repository root.
 
-What the log contains: the start-up lines (version, data directory, journal mode, allowed hosts, the reminder about the default password), sign-ins and account changes (by user id: `user 3 signed in`), refused uploads and writes, warnings and errors. It never contains passwords, session tokens, cookie values, confirmation codes or question text. Requests rejected by the Host / Origin check, failed sign-ins and locks of usernames without an account are logged once and then summed up at most once a minute, so nobody can push the other lines out of the 2000 without signing in. Details: section 8 of [security.md](security.md).
+What the log contains: the start-up lines (version, data directory, journal mode, allowed hosts, the reminder about the default password, the upgrade lines and the questions retired because of an old Excel layout), sign-ins and account changes by username (`user "admin" signed in`, `user "admin" updated user "alex"`; a name typed at sign-in that has no account is never logged), refused uploads and writes, warnings and errors. It never contains passwords, session tokens, cookie values, confirmation codes or question text. Requests rejected by the Host / Origin check, failed sign-ins and locks of usernames without an account are logged once and then summed up at most once a minute, so nobody can push the other lines out of the 2000 without signing in. Details: section 8 of [security.md](security.md).
 
 ## 10. First start, accounts and recovery
 

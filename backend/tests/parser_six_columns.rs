@@ -107,14 +107,14 @@ const ZH_HOT_CAT_ANS: &str = "【答案】1 Prepare；2 Bake；3 Sell（第3项�
 const JA_HOT_CAT_ANS: &str = "【正解】1 準備；2 焼成；3 販売（第3項の確信度：中程度）\n\n【解説】\n生地、オーブン、カウンターの順です。\n\n【覚え方】こねる、焼く、売る。";
 
 // A yes / no hotspot: 是 / 否 in Chinese, はい / いいえ in Japanese (separated with "、" here)
-const EN_HOT_YN: &str = "HOTSPOT\nFor each statement about a made-up city, select Yes if it is true; otherwise, select No.\n\n1. The city has two rivers.\tYes / No\n\n2. The city has no bridges.\tYes / No";
-const ZH_HOT_YN: &str = "【中文翻译】\n热点题：对每条关于一座虚构城市的陈述，正确选“是”，否则选“否”。\n1. 这座城市有两条河。\t是 / 否\n2. 这座城市没有桥。\t是 / 否";
-const JA_HOT_YN: &str = "ホットスポット\n架空の都市に関する各記述について、正しければ「はい」、そうでなければ「いいえ」を選択してください。\n\n1. その都市には川が2本ある。\tはい / いいえ\n\n2. その都市には橋がない。\tはい / いいえ";
+const EN_HOT_YN: &str = "HOTSPOT\nFor each statement about a square, select Yes if it is true; otherwise, select No.\n\n1. A square has four sides.\tYes / No\n\n2. A square has three corners.\tYes / No";
+const ZH_HOT_YN: &str = "【中文翻译】\n热点题：对每条关于正方形的陈述，正确选“是”，否则选“否”。\n1. 正方形有四条边。\t是 / 否\n2. 正方形有三个角。\t是 / 否";
+const JA_HOT_YN: &str = "ホットスポット\n正方形に関する各記述について、正しければ「はい」、そうでなければ「いいえ」を選択してください。\n\n1. 正方形には辺が4本ある。\tはい / いいえ\n\n2. 正方形には角が3つある。\tはい / いいえ";
 const EN_HOT_YN_ANS: &str =
-    "【Answer】1 Yes; 2 No\n\n【Explanation】\nTwo rivers, and several bridges cross them.";
-const ZH_HOT_YN_ANS: &str = "【答案】1 是；2 否\n\n【解析·怎么选】\n两条河，河上有好几座桥。";
+    "【Answer】1 Yes; 2 No\n\n【Explanation】\nA square has four sides and four corners.";
+const ZH_HOT_YN_ANS: &str = "【答案】1 是；2 否\n\n【解析·怎么选】\n正方形有四条边、四个角。";
 const JA_HOT_YN_ANS: &str =
-    "【正解】1 はい、2 いいえ\n\n【解説】\n川は2本で、橋がいくつも架かっています。";
+    "【正解】1 はい、2 いいえ\n\n【解説】\n正方形には辺が4本、角が4つあります。";
 
 fn choice_row() -> Vec<Option<&'static str>> {
     six([
@@ -608,7 +608,7 @@ fn english_hotspot_items_with_plain_spaces_keep_the_whole_sentence() {
 
 #[test]
 fn an_english_hotspot_marker_with_a_colon_is_removed_from_the_stem() {
-    let en = "HOTSPOT: For each statement about a made-up city, select Yes or No.\n1. The city has two rivers.\tYes / No\n2. The city has no bridges.\tYes / No";
+    let en = "HOTSPOT: For each statement about a square, select Yes or No.\n1. A square has four sides.\tYes / No\n2. A square has three corners.\tYes / No";
     let pw = parse(&[six([
         en,
         ZH_HOT_YN,
@@ -621,7 +621,7 @@ fn an_english_hotspot_marker_with_a_colon_is_removed_from_the_stem() {
     assert_eq!(q.kind, Kind::Hotspot);
     assert_eq!(
         q.stem,
-        "For each statement about a made-up city, select Yes or No."
+        "For each statement about a square, select Yes or No."
     );
     assert_eq!(q.items.len(), 2);
     assert_eq!(q.answer, Answer::Indexes(vec![0, 1]));
@@ -639,6 +639,6 @@ fn an_english_hotspot_marker_with_a_colon_is_removed_from_the_stem() {
     };
     assert_eq!(
         base(en),
-        base("HOTSPOT\nFor each statement about a made-up city, select Yes or No.\n1. The city has two rivers.\tYes / No\n2. The city has no bridges.\tYes / No")
+        base("HOTSPOT\nFor each statement about a square, select Yes or No.\n1. A square has four sides.\tYes / No\n2. A square has three corners.\tYes / No")
     );
 }

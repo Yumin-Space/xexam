@@ -20,7 +20,7 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 
 | Method | Path | Access | Purpose | Writes to the database? |
 |---|---|---|---|---|
-| GET | `/api/info` | Public | Version, CPU architecture, whether the program can be shut down, question count | No |
+| GET | `/api/info` | Public | Version, CPU architecture, whether the program can be shut down | No |
 | GET | `/api/auth/state` | Public | Who is signed in, and the library stamp *(v0.6)* | No |
 | POST | `/api/auth/login` | Public | Sign in *(v0.6)* | Yes (a new session) |
 | POST | `/api/auth/logout` | Signed in | Sign out *(v0.6)* | Yes (the session is deleted) |
@@ -55,7 +55,7 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 ## 2. What every response has in common
 
 - `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
-- JSON is UTF-8, and Japanese and Chinese characters are not escaped as `\uXXXX`. The separators are `", "` and `": "` (a space after the colon), and the key order is fixed (the order shown in this document and in [openapi.yaml](openapi.yaml)). **This is part of the contract**: the smoke test runs `grep '"bankCount": 0'`.
+- JSON is UTF-8, and Japanese and Chinese characters are not escaped as `\uXXXX`. The separators are `", "` and `": "` (a space after the colon), and the key order is fixed (the order shown in this document and in [openapi.yaml](openapi.yaml)). **This is part of the contract**: the golden tests (`backend/tests/api_golden.rs`) compare the JSON byte for byte with the responses of the old version.
 - Errors look like `{"error": "<reason>"}`. The reason is a Chinese sentence that can be shown to the user as is (the frontend translates it into the interface language); section 4 lists every one of them with its English meaning. Only the low-level answers of the request layer keep the short English text of the old version: `bad content type` (415), `too large` (413), `bad json` (400), `not found` (404) and `method not allowed` (405). The 429 answer of a sign-in lock adds one key, `retryAfter`.
 - The backend never puts exception names, file paths or SQLite error messages in a response; the details go to the log only.
 
@@ -109,7 +109,7 @@ The session check runs right after the Host (and, for a POST, the Origin) check,
 ### What each user sees and manages *(v0.7)*
 
 - **Administrators** see and manage every question bank.
-- A **plain user** sees either every bank, including banks imported later (`"banks": "all"` in `GET /api/users`), or only the banks an administrator chose (a list of ids, possibly empty). A plain user with the **Bank manager** permission also sees the banks they imported themselves (only while they hold the permission: without it they see their own banks only when those are among the chosen ones).
+- A **plain user** sees exactly the banks an administrator chose for them (`banks` in `GET /api/users`, a list of ids, possibly empty). With `newBanks` (**Include banks imported later**) every bank created later is added to that list when it is created; existing banks are never added by it. A plain user with the **Bank manager** permission also sees the banks they imported themselves (only while they hold the permission: without it they see their own banks only when those are among the chosen ones).
 - A **bank manager** imports new banks (they become the owner) and updates or deletes only the banks they own. Updating or deleting a bank of an administrator or of another user answers **403** `这个题库不是你上传的，只能更新或删除你自己上传的题库。` ("You did not upload this question bank. You can only update or delete question banks you uploaded yourself."); the check runs inside the write transaction, so nothing is written.
 
 For a user who does not see every bank, every route follows the same rule:
@@ -123,15 +123,15 @@ For a user who does not see every bank, every route follows the same rule:
 | `GET /api/records` | Every one of their records stays as history, with the bank names saved in it |
 | `GET /api/record` | A question of a bank they cannot see has `"question": null`, like a deleted question (no question text) |
 | `GET /api/auth/state` | `library` follows only their banks and their access |
-| `GET /api/info` | Unchanged: `bankCount` counts every active question of the library (the route is public and serves the container health check; the frontend decides what to show from `GET /api/banks`) |
+| `GET /api/info` | The same for everyone: only the version, the architecture and `canShutdown` (the route is public and serves the container health check) |
 
 ## 4. Endpoint details
 
 ### `GET /api/info`
 ```json
-{"version": "0.7", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.7.5", "arch": "x86_64", "canShutdown": false}
 ```
-Public. `bankCount` is the number of active questions in the whole library. The version number is `CODE_VERSION` from the `VERSION` file (or `XEXAM_VERSION`).
+Public. The version number is `CODE_VERSION` from the `VERSION` file (or `XEXAM_VERSION`); `arch` is the CPU architecture of the server; `canShutdown` is `true` only when the program was started with `--allow-shutdown`. *(v0.7.5)* The key `bankCount` (the number of active questions in the whole library) is gone: the route is public, and signed-in pages count the questions they may see from `GET /api/bank` and `GET /api/banks`. The route still reads the database, so it answers 500 when the database cannot be read, and the container health check (which asks this route) reports the backend as unhealthy.
 
 ### `GET /api/auth/state` *(v0.6)*
 Public. Signed out (no cookie, or a session that is not valid any more):
@@ -178,12 +178,14 @@ Signed in (also while a new password is required). Body: `{"current": "…", "pa
 Admin. Every account, ordered by id:
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
+{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
 ```
 
 - `createdAt` / `lastLoginAt` are local times `YYYY-MM-DD HH:MM`; `lastLoginAt` is `null` before the first sign-in.
 - `records` is the number of the user's study records (exams and practice).
-- `banks` *(v0.7)*: `"all"` (every bank, including banks imported later) or the ids of the banks chosen for them, ascending (only banks that still exist; `[]` = none). `canManageBanks` *(v0.7)* is the stored **Bank manager** permission. Both are kept across role changes but matter only while the account is a plain user: administrators see and manage every bank.
+- `banks` *(v0.7)*: the ids of the banks the user sees, ascending (only banks that still exist; `[]` = none). It is always a list: `"all"` is only a shorthand for writing (below).
+- `newBanks` *(v0.7)*: **Include banks imported later**. `true`: every bank created from now on (an import as a new bank by anyone, or the command-line `import`) is added to `banks` in the same transaction. It never adds an existing bank.
+- `canManageBanks` *(v0.7)* is the stored **Bank manager** permission. `banks`, `newBanks` and `canManageBanks` are kept across role changes but matter only while the account is a plain user: administrators see and manage every bank.
 - `ownedBanks` *(v0.7)*: the ids of the banks the user imported as new banks (they own them), ascending.
 - `lock`: the in-memory sign-in state of the account. `null` while it is in the first round and not locked; otherwise:
 
@@ -201,7 +203,7 @@ Admin. Every account, ordered by id:
 | `otherUntil` / `otherRetryAfter` | Set only when the other browsers are locked at the same time, so the account is locked in every browser: the end of that second lock and its seconds (`null` / `0` otherwise) |
 
 ### `POST /api/users/create` *(v0.6)*
-Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "canManageBanks": <bool>}`. `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some) and `canManageBanks` to `false` *(both v0.7)*. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
+Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "newBanks": <bool>, "canManageBanks": <bool>}`. *(v0.7)* `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some), `newBanks` to `false` and `canManageBanks` to `false`. `"banks": "all"` is a shorthand: every bank that exists now and, unless `newBanks` is given, `newBanks: true`. Duplicate ids are ignored. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
 
 Usernames have 1–40 characters (ASCII letters, digits and `. _ - @`, surrounding spaces removed) and are unique ignoring case; passwords have 8–128 characters.
 
@@ -209,16 +211,16 @@ Usernames have 1–40 characters (ASCII letters, digits and `. _ - @`, surroundi
 |---|---|
 | **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` ("The username is not valid …") | `username` missing, not a string, or breaking the rule |
 | **400** `密码需要 8–128 个字符。` | `password` too short or too long |
-| **400** `请求的格式不对。` | `password` missing or not a string; `role` missing or not `admin` / `user`; `banks` neither `"all"` nor a list of integers; `canManageBanks` not a boolean |
-| **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` ("One of the chosen question banks does not exist …") *(v0.7)* | An id in `banks` is not an existing bank; nothing is created |
+| **400** `请求的格式不对。` | `password` missing or not a string; `role` missing or not `admin` / `user`; `banks` neither `"all"` nor a list of integers; `newBanks` or `canManageBanks` not a boolean |
+| **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` ("One of the chosen question banks does not exist …") *(v0.7)* | An id in `banks` is not an existing bank (or not a positive integer); nothing is created |
 | **409** `这个用户名已经有人用了。` ("This username is already taken.") | Another account has that name (ignoring case) |
 
 ### `POST /api/users/update` *(v0.6)*
-Admin. Body: `{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "canManageBanks"?}`; a key that is left out stays unchanged. Answer: `{"users": [...]}`.
+Admin. Body: `{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}`; a key that is left out stays unchanged. Answer: `{"users": [...]}`.
 
-- Disabling an account or changing its role ends its sessions. A rename, a change of `banks` or of `canManageBanks` keeps them; the change applies at the user's next request.
-- `banks` replaces the chosen banks (`"all"`, or a list of ids; `[]` = no bank).
-- **400**: as for create (`username`, `role`, `banks`, `canManageBanks`; `disabled` not a boolean → `请求的格式不对。`; `id` missing or not an integer (a boolean is not) → `请求的格式不对。`).
+- Disabling an account or changing its role ends its sessions. A rename, a change of `banks`, `newBanks` or `canManageBanks` keeps them; the change applies at the user's next request.
+- `banks` replaces the chosen banks (a list of ids, `[]` = no bank; or `"all"`, every bank that exists now, which also sets `newBanks: true` unless `newBanks` is given). `newBanks` alone changes only the flag: unticking it keeps the banks the user has.
+- **400**: as for create (`username`, `role`, `banks`, `newBanks`, `canManageBanks`; `disabled` not a boolean → `请求的格式不对。`; `id` missing or not an integer (a boolean is not) → `请求的格式不对。`).
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。` ("This user does not exist …").
 - **409** `不能对自己的账户做这个操作。` ("You cannot do this to your own account.") when you disable yourself or change your own role; `至少要保留一个启用的管理员。` ("At least one enabled administrator must remain.") when the change would leave no enabled administrator; `这个用户名已经有人用了。`.
 
@@ -237,7 +239,7 @@ Admin. Body: `{"id": <int>}`. Clears the account's sign-in state completely, for
 Signed in. `file` / `mtime` are the file name and time of the most recent import (of a bank the user may see); `questions` contains only active questions, of every bank the user may see, grouped by bank id (ascending) and in each bank's order; in `sheets`, each sheet name has a count of usable questions and a count of deactivated ones (sheets with the same name in different banks are counted together; `GET /api/banks` has the per-bank numbers). For the fields of a question, see `Question` in [openapi.yaml](openapi.yaml).
 Since v0.5 every question ends with one more key, `"bank": <bank id>` (after `row`).
 
-The key order of a question is `kind, tag, stem, options, items, answer, translation, zh, [english, en,] [lang, ja,] explanation, mnemonic, note, [explain,] id, sheet, row, bank`. The keys in brackets appear only for the layouts that have them, so the output for older files is byte-for-byte the same as before:
+The key order of a question is `kind, tag, stem, options, items, answer, translation, zh, [english, en,] [lang, ja,] explanation, mnemonic, note, [explain,] id, sheet, row, bank`. The keys in brackets appear only for the layouts that have them, so the output for older files is byte-for-byte the same as before. Since v0.7 only the six-column layout can be imported and the questions of the older layouts are retired at every start, so `GET /api/bank` normally holds six-column questions only; the older forms still appear in `GET /api/record`, for the retired questions of earlier records:
 
 - **Three-column layout** (A question, B Chinese, C answer): none of them.
 - **Four-column layout** (A English, B Chinese, C Japanese, D answer): `english` (the original text of column A) and `en` (the English split up following the Japanese structure). `stem`, `options`, `items` and `answer` come from the Japanese in column C.
@@ -263,7 +265,7 @@ Signed in. A question bank is one imported workbook. The banks the user may see,
 Signed in. `questions` holds the user's cumulative statistics for each question (how many times it was answered, how many correct, how many wrong, and the current streak of correct answers), limited to the banks they may see; `history` holds their last 60 study records (the database keeps 500, see `GET /api/records`), each ending with `kind` *(v0.7)*; `masterStreak` is how many consecutive correct answers move a question out of the wrong-answer notebook (2).
 
 ```json
-{"version": 1, "questions": {"94e4bfe00e8d": {"attempts": 3, "correct": 2, "wrong": 1, "streak": 2, "last": true, "at": "2026-11-10 15:10"}}, "history": [{"at": "2026-11-10 15:10", "sheets": ["Cooking"], "mode": "all", "total": 5, "correct": 4, "percent": 80, "seconds": 130, "kind": "exam"}], "masterStreak": 2}
+{"version": 1, "questions": {"1a2b3c4d5e6f": {"attempts": 3, "correct": 2, "wrong": 1, "streak": 2, "last": true, "at": "2026-11-10 15:10"}}, "history": [{"at": "2026-11-10 15:10", "sheets": ["Cooking"], "mode": "all", "total": 5, "correct": 4, "percent": 80, "seconds": 130, "kind": "exam"}], "masterStreak": 2}
 ```
 
 ### `GET /api/imports`
@@ -273,8 +275,9 @@ Bank manager. `{"imports": [{"id", "at", "filename", "added", "updated", "remove
 Bank manager. The request body is the raw bytes of the .xlsx file; the optional header `X-Filename` carries the percent-encoded file name. The server:
 
 1. Decides whether it is an .xlsx by **content** alone (magic number + ZIP structure + a workbook is present + no DOCTYPE / entity declarations + the uncompressed size has an upper limit). An empty file, an old `.xls`, a corrupted file and a file with a changed extension each get their own explanation in Chinese.
-2. Parses it, builds the preview, and puts the parse result into **the uploader's own pending slot** in memory (uploading again replaces it; other users' slots are never touched), valid for 30 minutes.
-3. **Does not write to the database.**
+2. Parses it. *(v0.7)* When the parser reads any question of the old three- or four-column layout, the upload is refused with **400** `只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。` ("Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again."), for a new bank and for an update alike; nothing is staged and the pending slot is untouched. The log gets an English line with the file name.
+3. Builds the preview and puts the parse result into **the uploader's own pending slot** in memory (uploading again replaces it; other users' slots are never touched), valid for 30 minutes.
+4. **Does not write to the database.**
 
 It returns the preview (`added / updated / unchanged / restored / removed / skipped / usable`, the details for each sheet, and the rows that could not be read, with the reasons) and a one-time confirmation code, `token`:
 
@@ -284,7 +287,7 @@ It returns the preview (`added / updated / unchanged / restored / removed / skip
 
 Each sheet lists at most 30 unreadable rows (`skipped`, each `{"row", "reason"}`); `skippedMore` says how many more there are and `skippedCount` how many in all.
 
-**Warnings** *(v0.7)*: in the six-column layout, a row whose Chinese (E) or Japanese (F) answer differs from the English answer (D) is still imported, with the English answer, and is listed as a warning. Only then do the keys appear, so the preview of a 3- or 4-column file is unchanged: a sheet with warnings gets `warnings` (at most 30 `{"row", "reason"}`, right after `restored`) and, at its end, `warningsMore` and `warningsCount`; the preview gets a total `warnings` count after `removed_stats`. The reasons are `E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）` ("The Chinese answer in column E differs from the English answer in column D (imported with the English answer)") and the same for the Japanese answer in column F.
+**Warnings** *(v0.7)*: a row whose Chinese (E) or Japanese (F) answer differs from the English answer (D) is still imported, with the English answer, and is listed as a warning. Only then do the keys appear, so a preview without warnings has exactly the keys of earlier versions: a sheet with warnings gets `warnings` (at most 30 `{"row", "reason"}`, right after `restored`) and, at its end, `warningsMore` and `warningsCount`; the preview gets a total `warnings` count after `removed_stats`. The reasons are `E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）` ("The Chinese answer in column E differs from the English answer in column D (imported with the English answer)") and the same for the Japanese answer in column F.
 
 **Target bank** *(v0.5)*: the optional header `X-Bank-Target` says which bank the file goes to. The preview has the same keys in every case; it is computed against the target bank only.
 
@@ -299,7 +302,7 @@ The header is read after the guards and the size limit, and before the file is p
 
 **Memory budget** *(v0.7)*: every administrator and bank manager has a slot, and one parsed workbook near the parser's limits holds more than 100 MB, so all staged previews together share a budget of 128 MiB (estimated from their content). Staging a new upload first drops expired previews, then the oldest previews of other users while the total is above the budget. The newest upload is always kept. A user whose preview was dropped gets **409** at confirm, exactly as after the 30 minutes.
 
-Other answers: **413** `文件太大了（最大 20 MB）。…` ("The file is too large (20 MB at most) …"); **400** with the reason the file was rejected (not an .xlsx, damaged, too large once decompressed, parsing took too long, …).
+Other answers: **413** `文件太大了（最大 20 MB）。…` ("The file is too large (20 MB at most) …"); **400** with the reason the file was rejected (not an .xlsx, damaged, too large once decompressed, parsing took too long, an old layout, …).
 
 ### `POST /api/import/confirm`
 Bank manager. The request body is `{"token": "…"}`.
@@ -307,6 +310,7 @@ Bank manager. The request body is `{"token": "…"}`.
 - The confirmation code is a 128-bit random number (22 characters) and **can be used only once**. It confirms only the caller's own pending upload: a wrong code, another user's code or a non-ASCII code is treated as "invalid" and does not consume the pending content; an expired (or dropped) preview cannot be retrieved. All of them → **409** `这次上传的预览已经过期或已被处理，请重新上传。` ("The preview of this upload has expired or has already been handled. Please upload the file again.").
 - The import completes in **one transaction**: either everything succeeds, or the question bank is left unchanged (**500** `写入数据库失败，题库没有任何改动。`, "Writing to the database failed. The question bank was not changed.").
 - If this file contains no usable question at all → **400** `这份文件里没有读到任何可用的题，没有导入。` ("No usable questions were found in this file, so nothing was imported.").
+- *(v0.7)* A staged workbook with a question of the old three- or four-column layout is refused here too (**400**, the same message as at the upload), before anything is written.
 
 Import rules (the file is treated as the **complete content of its target bank**): questions that appear for the first time are added; questions that were changed are updated; questions of that bank that cannot be found in the file are **deactivated** (their study records are kept); a deactivated question that appears again is restored automatically. Other banks are never touched.
 
@@ -380,7 +384,7 @@ Signed in. Settings are stored in the database per user (they survive container 
 `GET` returns the defaults merged with the stored values (a stored value that is not valid is ignored). `POST /api/settings` takes any subset of these keys and returns the full settings; unknown keys are ignored; a known key with an invalid value → **400** `设置的值不对。` ("A setting has an invalid value.") and nothing is written. `POST /api/settings/reset` (body `{}` or empty) restores `theme`, `uiLang` and `autoAdvance` to their defaults, keeps `questionLang`, and returns the full settings.
 
 ### `GET /api/logs` *(v0.7)*
-Admin. The system log the **System log** page shows: the most recent 2000 lines the backend logged since it started, kept in memory only (empty again after a restart; nothing is written to the database). They are the lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter), plus the startup and shutdown status lines. Log lines never contain a password, a token, a cookie value or question text.
+Admin. The system log the **System log** page shows: the most recent 2000 lines the backend logged since it started, kept in memory only (empty again after a restart; nothing is written to the database). They are the lines `docker compose logs backend` shows (behind the same `XEXAM_LOG` filter), plus the startup and shutdown status lines. Log lines name users by their username (`user "admin" updated user "alex"`), never by id and never a typed name that has no account, and they never contain a password, a token, a cookie value or question text.
 
 Query parameters, both optional:
 
@@ -388,7 +392,7 @@ Query parameters, both optional:
 - `boot=<id>`: the `boot` of the answer the client last read (1–64 characters of `A-Z a-z 0-9 _ -`).
 
 ```json
-{"lines": [{"seq": 41, "time": "2026-11-10 15:10:02", "level": "info", "target": "xexam_backend::api::auth", "message": "user 2 signed in"}], "last": 41, "dropped": false, "boot": "Xq3v9T0bLm2k"}
+{"lines": [{"seq": 41, "time": "2026-11-10 15:10:02", "level": "info", "target": "xexam_backend::api::auth", "message": "user \"admin\" signed in"}], "last": 41, "dropped": false, "boot": "Xq3v9T0bLm2k"}
 ```
 
 - `lines`: oldest first. `seq` grows by one per line, starting at 1 in each backend process; `time` is local time with seconds; `level` is `error`, `warn`, `info`, `debug` or `trace`; `target` is the module that logged it; `message` is the text followed by its fields (cut after 4000 characters).
@@ -418,6 +422,7 @@ Like every backend message they are Chinese and stable (the frontend translates 
 | 400 | `新密码不能和原来的一样。` | The new password must be different from the old one. | `POST /api/auth/password` |
 | 400 | `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` | One of the chosen question banks does not exist (it may have been deleted). Refresh the page and try again. | Users: create, update *(v0.7)* |
 | 400 | `这份文件里没有读到任何可用的题，没有导入。` | No usable questions were found in this file, so nothing was imported. | Confirm |
+| 400 | `只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。` | Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again. | Upload, confirm *(v0.7)* |
 | 401 | `请先登录。` | Please sign in first. | No valid session |
 | 401 | `用户名或密码不对。` | The username or password is not correct. | Sign-in |
 | 403 | `请先设置新密码。` | Please choose a new password first. | The account must choose a new password |
@@ -461,7 +466,7 @@ The table below lists where the new Rust backend **intentionally differs** from 
 | Run directly without `--data` / `XEXAM_DATA` | The data directory is `data` under the program directory | The data directory is `data` under the **current working directory** | Affects only local runs without Docker; please specify `--data` explicitly |
 | Subcommand placed after the options (`--data /d import x.xlsx`) | Not applicable (the old version used `--import`) | The subcommand must be the first argument, otherwise it is treated as `serve` (the old form `--import x.xlsx` still works) | Simpler argument parsing |
 
-Since v0.6 the golden tests run signed in as the default administrator (the test helpers start the session), so they still compare the same requests and responses as before sign-in existed.
+Since v0.6 the golden tests run signed in as the default administrator (the test helpers start the session), so they still compare the same requests and responses as before sign-in existed. Since v0.7 they also run with a test-only setting that lets the API stage the old version's three-column imports (`OldLayouts::AllowForTests`, a field of the API state that only test code sets; no environment variable, flag or setting can turn it on, and production always refuses those layouts). Since v0.7.5 the captures of `GET /api/info` are compared without `bankCount`, the one key the new answer leaves out.
 
 ### Changes in v0.5 (relative to v0.4)
 
@@ -491,18 +496,27 @@ Everything an older client sends keeps working, with the same answers, except:
 | What a plain user sees | Every bank | Every bank, or the banks an administrator chose (plus their own as a bank manager); applied on every route (section 3) |
 | Pending uploads | One for the whole server | One per uploader, sharing a memory budget of 128 MiB |
 | `GET /api/auth/state` | `user` without `canManageBanks`; `defaultAdmin` a boolean; `library` readable counters | `user.canManageBanks`; `defaultAdmin` a username or `null`; `library` an opaque 32-hex digest |
-| `GET /api/users` | | `banks`, `canManageBanks`, `ownedBanks`; `lock` gains `knownBrowser`, `otherUntil`, `otherRetryAfter` |
+| `GET /api/users` | | `banks`, `newBanks`, `canManageBanks`, `ownedBanks`; `lock` gains `knownBrowser`, `otherUntil`, `otherRetryAfter` |
+| `POST /api/users/create`, `POST /api/users/update` | | `banks` (`"all"` or a list of ids), `newBanks`, `canManageBanks` |
 | `GET /api/banks` | | `ownerId`, `owner`, `manageable` |
 | `POST /api/attempt` | Every result counted | `kind`; only existing, visible questions counted (`notCounted`, 409 when none is left) |
 | `GET /api/records`, `GET /api/record`, `GET /api/progress` history | | `kind` as the last key |
-| Upload preview | | `warnings` (six-column files only) |
+| Upload, confirm | The three- and four-column layouts | Only the six-column layout; the older layouts → 400 |
+| Upload preview | | `warnings` |
 | New route | | `GET /api/logs` |
 | Database schema | v3 | v4 (bank access, bank owners, record kind), see [database.md](database.md) |
+
+### Changes in v0.7.5 (relative to v0.7)
+
+| Change | v0.7 | v0.7.5 |
+|---|---|---|
+| `GET /api/info` | `{"version", "arch", "canShutdown", "bankCount"}` | `{"version", "arch", "canShutdown"}`: `bankCount` is gone |
+| Nginx rate limit of `/api/` | 10 requests per second, burst 30 | 30 requests per second, burst 120 (per client address; uploads unchanged) |
 
 ## 6. Examples
 
 ```bash
-# Check the version and the question count (public)
+# Check the version and the architecture (public)
 curl -s http://localhost:8765/api/info
 
 # Sign in and keep the session cookie in a file (use your own username and password)
@@ -512,29 +526,29 @@ curl -s -c cookies.txt -X POST http://localhost:8765/api/auth/login \
 # Who am I?
 curl -s -b cookies.txt http://localhost:8765/api/auth/state
 
-# Upload (you only get a preview; nothing is written to the database)
+# Upload a six-column workbook as a new bank (you only get a preview; nothing is written to the database)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \
-  -H 'Content-Type: application/octet-stream' -H 'X-Filename: demo.xlsx' \
-  --data-binary @tests/baseline/fixtures/demo.xlsx
+  -H 'Content-Type: application/octet-stream' -H 'X-Filename: my-bank.xlsx' -H 'X-Bank-Target: new' \
+  --data-binary @my-bank.xlsx
 
-# Confirm the import (fill in the token returned by the previous step)
+# Confirm the import (fill in the token returned by the previous step; the response ends with "bankId")
 curl -s -b cookies.txt -X POST http://localhost:8765/api/import/confirm \
   -H 'Content-Type: application/json' -d '{"token": "…"}'
 
-# Import the same file as a new, separate bank (then confirm as above; the response ends with "bankId")
+# Update bank 1 with a newer version of its workbook (then confirm as above)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \
-  -H 'Content-Type: application/octet-stream' -H 'X-Filename: demo.xlsx' -H 'X-Bank-Target: new' \
-  --data-binary @tests/baseline/fixtures/demo.xlsx
+  -H 'Content-Type: application/octet-stream' -H 'X-Filename: my-bank.xlsx' -H 'X-Bank-Target: 1' \
+  --data-binary @my-bank.xlsx
 
 # List the banks, then delete bank 2 together with its study data
 curl -s -b cookies.txt http://localhost:8765/api/banks
 curl -s -b cookies.txt -X POST http://localhost:8765/api/banks/delete \
   -H 'Content-Type: application/json' -d '{"id": 2, "withRecords": true}'
 
-# Add a bank manager who sees bank 1 (they must choose a new password at the first sign-in)
+# Add a bank manager who sees bank 1 and every bank imported later (they must choose a new password at the first sign-in)
 curl -s -b cookies.txt -X POST http://localhost:8765/api/users/create \
   -H 'Content-Type: application/json' \
-  -d '{"username": "cook", "password": "initial-pass-1", "role": "user", "banks": [1], "canManageBanks": true}'
+  -d '{"username": "cook", "password": "initial-pass-1", "role": "user", "banks": [1], "newBanks": true, "canManageBanks": true}'
 
 # Switch the interface to dark mode and Japanese
 curl -s -b cookies.txt -X POST http://localhost:8765/api/settings \

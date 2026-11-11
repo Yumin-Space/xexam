@@ -421,22 +421,22 @@ async fn get_route(
         let value = serde_json::to_value(&page).map_err(|_| AppError::Internal)?;
         return Ok(json_resp(StatusCode::OK, &value, head_only));
     }
-    let user = if path == "/api/info" {
-        0
-    } else {
-        user_of(authed)?
-    };
+    if path == "/api/info" {
+        // Public (before sign-in, and the container health check): only what the sign-in page needs. Since v0.7.5 it no longer
+        // says how many questions exist (signed-in pages count them from GET /api/bank and GET /api/banks). The database is
+        // still read, and the count dropped, so a broken database still answers 500 and the health check reports it.
+        let eng = st.0.engine.clone();
+        blocking(move || eng.count_active()).await?;
+        let value = json!({
+            "version": st.0.cfg.version,
+            "arch": machine_arch(),
+            "canShutdown": st.0.cfg.allow_shutdown,
+        });
+        return Ok(json_resp(StatusCode::OK, &value, head_only));
+    }
+    let user = user_of(authed)?;
     let eng = st.0.engine.clone();
     let value: Value = match path {
-        "/api/info" => {
-            let count = blocking(move || eng.count_active()).await?;
-            json!({
-                "version": st.0.cfg.version,
-                "arch": machine_arch(),
-                "canShutdown": st.0.cfg.allow_shutdown,
-                "bankCount": count,
-            })
-        }
         "/api/bank" => {
             let v = viewer_of(st, authed).await?;
             blocking(move || eng.bank_as(&v)).await?

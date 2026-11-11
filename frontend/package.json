@@ -1,6 +1,6 @@
 {
   "name": "xexam-frontend",
-  "version": "0.7.0",
+  "version": "0.7.5",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "preview": "vite preview",
-    "test": "node --experimental-strip-types --test src/domain/*.test.ts src/state/*.test.ts src/i18n/*.test.ts"
+    "test": "node --experimental-strip-types --test src/api/*.test.ts src/domain/*.test.ts src/state/*.test.ts src/i18n/*.test.ts"
   },
   "devDependencies": {
     "typescript": "~5.9.3",

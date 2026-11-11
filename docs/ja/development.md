@@ -10,8 +10,9 @@
 |---|---|---|
 | Rust | 1.99.1（`backend/rust-toolchain.toml` で固定） | `rustup` が自動でインストールします。`rusqlite` の `bundled` 機能には C コンパイラが必要です（Linux：`build-essential`、Windows：MinGW gcc または MSVC） |
 | Node | 24 | フロントエンド。単体テストは Node 標準のテストランナーを `--experimental-strip-types` 付きで使います |
-| Python | 3.8+ | `tests/integration/` の統合スクリプトと、`scripts/` の 2 つのスクリプトにのみ使います。**標準ライブラリのみ**を使います |
-| Docker | Compose v2 | スタック全体のチェック、イメージ |
+| Python | 3.8+ | `tests/integration/` の統合スクリプト、`scripts/` の 2 つのスクリプト（**標準ライブラリのみ**）、`tools/screenshots/` のスクリーンショットのツール（標準ライブラリと `openpyxl`）にのみ使います |
+| Docker | Compose v2 | スタック全体のチェック、イメージ、スクリーンショットのツール |
+| Chrome または Chromium | 最近のもの | スクリーンショットのツールにのみ使います（8.1 節） |
 
 ## 2. バックエンド
 
@@ -19,16 +20,17 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 302 件のテスト
+cargo test --all-targets          # 316 件のテスト
 cargo run -- serve --data ../data --no-browser     # 127.0.0.1:8765 で待ち受け
 ```
 
 - テストは `tests/baseline/` にコミット済みの**旧版スナップショット**と照合するため、Python は不要です。
-- すべてのテストは、一時ディレクトリ内の新規データベースか `tests/baseline/fixtures/sample.db` のコピーを使い、`data/` には**触れません**。`src/` の中の単体テストのほかに、次のテストファイルがあります：`api_basic.rs`、`api_import.rs`、`api_misc.rs`、`api_golden.rs`（ルート、ガード、旧版のレスポンス）、`db_golden.rs`（データベースを旧版のスナップショットと照合）、`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs`、`id_vectors.rs`（パーサー）、そしてバージョンごとのファイル：`v05_banks_records_settings.rs`（スキーマ v2、問題集、記録、設定）、`v06_users_and_sign_in.rs`（スキーマ v3、アカウント、セッション、ログインの制限）、`v065_bank_access_and_practice.rs`（スキーマ v4、問題集へのアクセス、問題集の管理権限、所有者、練習）、`v07_wal_and_logs.rs`（WAL モード、チェックポイント、サーバーの動作中の `reset-password`、システムログ）、`v07_log_floods.rs`（大量の拒否されたリクエストやログインの失敗をまとめること）。
+- すべてのテストは、一時ディレクトリ内の新規データベースか `tests/baseline/fixtures/sample.db` のコピーを使い、`data/` には**触れません**。`src/` の中の単体テストのほかに、次のテストファイルがあります：`api_basic.rs`、`api_import.rs`、`api_misc.rs`、`api_golden.rs`（ルート、ガード、旧版のレスポンス）、`db_golden.rs`（データベースを旧版のスナップショットと照合）、`parser_golden.rs`、`parser_hardening.rs`、`parser_four_columns.rs`、`parser_six_columns.rs`、`id_vectors.rs`（パーサー）、そしてバージョンごとのファイル：`v05_banks_records_settings.rs`（スキーマ v2、問題集、記録、設定）、`v06_users_and_sign_in.rs`（スキーマ v3、アカウント、セッション、ログインの制限）、`v065_bank_access_and_practice.rs`（スキーマ v4、問題集へのアクセス、問題集の管理権限、所有者、練習）、`v07_bank_access_and_layouts.rs`（選ばれた問題集と **今後インポートする問題集も含める**、リリース前の v4 データベースの変換、古い形式の拒否とその問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード、チェックポイント、サーバーの動作中の `reset-password`、システムログ）、`v07_log_floods.rs`（大量の拒否されたリクエストやログインの失敗をまとめること）。
 - テストはヘルパーを通してログインします。ログインを無効にするスイッチはなく、テストのためのものもありません。
+- **テストでの古い形式。** 本番では 3 列と 4 列のワークブックを拒否します（`services::check_layout`）。ゴールデンテストは旧版のインポート（3 列のファイル）を再現するので、それらが作る API の状態には `old_layouts: OldLayouts::AllowForTests` を設定します（`backend/tests/api_common/mod.rs` と、コミット済みの 3 列のフィクスチャ `tests/baseline/fixtures/demo.xlsx` を API 経由でインポートする `v05_banks_records_settings.rs` と `v065_bank_access_and_practice.rs`）。これはテストコードだけが設定する API の状態のフィールドです。`AppState::new` と `import` コマンドは常に `OldLayouts::Refuse` を使い、環境変数、フラグ、設定のどれでも変えられません。本番の規則は `v07_bank_access_and_layouts.rs` がテストします。ストアのメソッドそのものはどんな問題も受け付けるので、データベースのゴールデンテストは変わらず動きます。
 - よく使う環境変数：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（ログレベル、例：`debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` で WAL ではなくロールバックジャーナルのまま）、`XEXAM_COOKIE_SECURE`。全一覧は `xexam-backend --help` と [deployment.md](deployment.md) を参照してください。
 - 空のデータディレクトリで最初に起動すると、管理者 `admin` / `admin` が作られます。最初のログインで、ページが新しいパスワードを求めます。忘れたときは：`cargo run -- reset-password admin --data ../data`（サーバーの動作中でも使えます）。
-- コマンドラインからのインポート（取り込み先はレガシー問題集）：`cargo run -- import ../some.xlsx --data ../data`。
+- コマンドラインからの 6 列形式のワークブックのインポート（取り込み先はレガシー問題集）：`cargo run -- import ../some.xlsx --data ../data`。3 列や 4 列のワークブックは拒否されます。
 - 古いスキーマのデータベースをバックエンドで開くと移行が行われ、その隣に `backups/` が書き出されます。コピーを使ってください。
 - データベースは WAL モードで動きます。バックエンドの動作中は、`xexam.db` の隣に `xexam.db-wal` と `xexam.db-shm` があります。3 つともコピーするか、先にバックエンドを停止してください（停止すると、すべてが `xexam.db` に入り、隣に `-wal` ファイルが残っていても空です）。`sqlite3` は、バックエンドの動作中でもデータベースを読めます。
 
@@ -38,9 +40,10 @@ cargo run -- serve --data ../data --no-browser     # 127.0.0.1:8765 で待ち受
 cd frontend
 npm ci
 npm run typecheck      # アプリを tsc でチェックし、続いてテストファイルをチェック（tsconfig.test.json）
-npm test               # 119 件の単体テスト：採点とランダムな出題、練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、
-                       # ロックの説明と待ち時間、取り込みの警告、システムログのバッファ、問題集へのアクセス、保存した試験、設定のキャッシュ、
-                       # UI カタログ、サーバーメッセージの翻訳、更新履歴の解析
+npm test               # 139 件の単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間）、採点とランダムな出題、
+                       # 練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、ロックの説明と待ち時間、取り込みの
+                       # 警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、設定のキャッシュ、UI カタログ、
+                       # サーバーメッセージの翻訳、更新履歴の解析
 npm run build          # 型チェック + vite build → dist/
 npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 へプロキシ
 ```
@@ -93,10 +96,10 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 # チェック用スクリプトはすべて一時的なプロジェクト名と一時ボリュームを使い、xexam_data には触れません
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 38 項目、ダミーのバックエンドを使用
+python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 41 項目、ダミーのバックエンドを使用（レート制限を含む）
 python -I tests/integration/stack_check.py 18090                      # スタック全体を起動（2 つのイメージをビルドします）：ログイン、インポート、
                                                                       # 成績の記録、永続化、WAL、システムログ、reset-password、docker stop
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # progress.json の移行、WAL と DELETE への切り替え（先に cargo build が必要）
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 45 項目：progress.json の移行、WAL と DELETE への切り替え（先に cargo build が必要）
 ```
 
 どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。
@@ -110,12 +113,13 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 | スナップショット | 内容 | 使うもの |
 |---|---|---|
 | `golden/NNN_*.json`（172 件） | 旧版の各エンドポイント × 各状態の実際のレスポンス（ステータスコード、安定したレスポンスヘッダー、正規化後の本文） | `backend/tests/api_golden.rs` が順番に新しいルートへ再生し、項目ごとに比較する |
-| `fixtures/*.xlsx` + `parser_golden/*.json`（49 件） | 合成ワークブックと、それぞれに対する旧パーサーの出力 | `backend/tests/parser_golden.rs`（3 列と 4 列形式はバイト単位で同じでなければならない） |
+| `fixtures/*.xlsx` + `parser_golden/*.json`（49 件） | 合成ワークブック（旧版の形式である 3 列と 4 列）と、それぞれに対する旧パーサーの出力 | `backend/tests/parser_golden.rs`（パーサーは今もそれらをバイト単位で同じに読まなければならない。インポートはそれで形式を見分けて拒否する） |
 | `golden/id_vectors.json`（85 件のアサーション） | 問題 id のアサーション。各件にハッシュ対象のバイト列が付く | `backend/tests/id_vectors.rs` |
 | `fixtures/sample.db` + `golden/store_sample_outputs.json` | 旧実装が書き出したサンプルデータベースと、その各インターフェースの出力 | `backend/tests/db_golden.rs`（現在のスキーマへの移行も確認する） |
-| `golden/allowed_differences_rust.json`（23 項目）、`allowed_probe_differences_rust.json`（51 項目） | 旧版と意図的に異なる箇所。各項目に理由が 1 文付く | `api_golden.rs` で登録されていない差異 = 失敗 |
+| `golden/allowed_differences_rust.json`（23 項目）、`allowed_probe_differences_rust.json`（51 項目） | Rust 実装が旧版を置き換えたときに、意図的に旧版と異なっていた箇所。各項目に理由が 1 文付く（中国語）。記録であり、テストは読まない | [api.md](api.md) の第 5 節 |
 
-- 挙動を**変更**したい場合（たとえば意図的な差異を新しく加える）：コードを変更し、`allowed_differences_rust.json` に登録して理由を明記します。ゴールデンレスポンスを直接変更しないでください。
+- `api_golden.rs` は、すべてのキャプチャを 5 つの結果のどれかに分類し、`cargo test --test api_golden -- --nocapture` でその表を表示します。現在：一致 84、キャプチャからエンジンに入力して一致 58、意図した差異 16（405 を返すようになった未対応のメソッド 7 つと、v0.7.5 から `bankCount` 抜きで比較する `GET /api/info` のキャプチャ 9 つ）、スキップ 14（Nginx が配信する静的ファイルと、レスポンスのないキャプチャ 1 つ）、差異 0。差異のあるキャプチャが 1 つでもあれば、テストは失敗します。
+- キャプチャが対象とする挙動を**変更**したい場合：コードを変更し、意図した差異を理由とともに `api_golden.rs` に教えます（`bankCount` と同じように）。ゴールデンレスポンスを直接変更しないでください。
 - 旧版のキャプチャ / 照合 / プローブ用スクリプトは旧 Python コードに依存していたため、コードと共に削除されました。必要な場合は、Git タグ `python-v0.2` とコミット履歴から取り戻してください。
 
 ## 6. データ保護のルール
@@ -123,7 +127,7 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 - `data/`、`progress.json`、ご自身の問題集の Excel ファイルを、読み取る・出力する・コミットする・変更する、のいずれも**しないでください**。
 - 試す操作は必ずコピーか一時ディレクトリで行ってください。本物の `xexam.db` に対して「どうなるか見てみる」ようなコマンドを実行しないでください。古いデータベースを新しいバージョンで開くと移行される（そして WAL に切り替わる）点にも注意してください。
 - `docker compose down -v` を実行しないでください。
-- コード、テスト、ドキュメントの例には架空の内容だけを使い、本物の試験問題は使わないでください（デモ用問題集「General knowledge」と「Kitchen basics」、または `frontend/src/pages/banks.ts` にある架空の 6 列形式の例）。
+- コード、テスト、ドキュメントの例には架空の内容だけを使い、本物の試験問題は使わないでください（`tools/screenshots/demo_banks.py` のデモ用問題集「General knowledge」と「Kitchen basics」、または `frontend/src/pages/banks.ts` にある架空の 6 列形式の例）。
 
 ## 7. CI
 
@@ -132,9 +136,9 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 | ジョブ | 内容 |
 |---|---|
 | `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの README それぞれの更新履歴の最新の項目 = `CODE_VERSION`。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml` と `frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）とドキュメントのチェック（8 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
-| `frontend` | 型チェック、119 件の単体テスト、ビルド |
-| `backend` | fmt、clippy、302 件のテスト、および `progress.json` の移行チェック |
-| `stack` | `xexam-frontend` イメージをビルドして 38 項目の Nginx チェックを実行。compose スタック全体を起動してエンドツーエンドのチェックを実行 |
+| `frontend` | 型チェック、139 件の単体テスト、ビルド |
+| `backend` | fmt、clippy、316 件のテスト、および `progress.json` の移行チェック |
+| `stack` | `xexam-frontend` イメージをビルドして 41 項目の Nginx チェックを実行。compose スタック全体を起動してエンドツーエンドのチェックを実行 |
 | `arm64` | 2 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すことを確認 |
 | `publish` | `main` のみ：2 つのイメージ（amd64 + arm64）をタグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
 | `release` | `main` のみ：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `README.md` の更新履歴から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（7.1 節） |
@@ -158,18 +162,25 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 
 ## 8. ドキュメント
 
-- 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じ 7 つのドキュメントがあります：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`。
+- 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じドキュメントがあります：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`、そして v0.7.5 からは `usage`（アプリの使い方。README から移しました）。それぞれのフォルダに専用の `screenshots/` があります。
 - `docs/zh-CN/history/` には、Rust へ切り替えたときの古いドキュメント（監査、計画、リスク評価）があります。中国語のみで、今後は更新しません。
 - `docs/en/openapi.yaml` はすべての言語で共有します。日本語と中国語のドキュメントは `../en/openapi.yaml` にリンクします。
+- README は短くしてあります：Xexam でできること、クイックスタート、設定、アップグレード、ドキュメントへのリンク、更新履歴です。アプリの使い方、Excel の形式、インポートの規則は `usage.md` に、デプロイの詳細、バックアップ、セキュリティ、アーキテクチャ、開発はそれぞれのドキュメントにあります。詳細は 1 か所に書き、そこへリンクしてください。
 - どのドキュメントも、ほかの 2 つのフォルダにある同じドキュメントへのリンクを並べた言語バーで始まります。リンクはファイル自身のフォルダからの相対パスで、リポジトリのルートは `../../` です。
 - 先に英語のドキュメントを変更し、同じ変更の中で日本語と中国語のドキュメントも更新します。UI の項目名は、その言語のカタログのとおりに太字で書きます。問題の言語の切り替えは、常に **English** / **中文** / **日本語** です。
-- CI の `check` ジョブは、次のどれかに当てはまると失敗します：7 つのドキュメントのどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
+- CI の `check` ジョブは、次のどれかに当てはまると失敗します：7 つのドキュメント `api` … `security` のどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
+
+### 8.1 スクリーンショット
+
+README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごとにデスクトップ 13 枚と iPhone 4 枚）は、リポジトリのルートで `python tools/screenshots/retake.py` を実行して作ります。このツールは `backend/Dockerfile` からバックエンドのイメージを一意のタグでビルドし、`/data` に新しいボリュームを付け、`TZ=UTC` で動かします。フロントエンドを Vite でビルドし、空いているポートで `vite preview` で配信してから、API を通じて架空のデモ用問題集、ユーザー、記録をインスタンスに入れます。システムログにログインとユーザーの変更の短い流れだけが出るようにバックエンドを再起動し、それから言語ごとにヘッドレス Chrome で本物の UI を操作します。画像は、文やカードが途中で切れない位置で切り取り、PNG のメタデータを取り除きます。コンテナ、ボリューム、イメージのタグ、一時フォルダ、プロセスは、エラーの後でも最後に削除します。
+
+オプション：`--lang en|ja|zh-CN|all`、`--out DIR`（`DIR/<lang>/` に書き込むので、`docs/` に触れる前に比べられます）、`--only desktop-13-logs.png,...`、`--chrome PATH`（または `XEXAM_CHROME` / `CHROME_PATH`）、Docker が使えないときの `--backend cargo`（この場合、システムログの画像は撮りません）。Python 3.8+ と `openpyxl`、Node.js、Docker、Chrome または Chromium が必要です。`tools/screenshots/README.md` を参照してください。2 つのページは、カードが画像の中で終わるように、ページそのものの中で短くしてあります：問題集の管理では形式のガイドを最初の 2 つの部分だけ開いた状態にし、「Xexam について」では最新のバージョンの最初の項目だけを表示します。UI やバージョンを変えたら画像を撮り直し、目で確かめてから `docs/` に書き込んでください。
 
 ## 9. バージョン、更新履歴、ライセンス
 
 - リポジトリのルートの **`VERSION`** には、`KEY=VALUE` の行が 2 つ、それぞれちょうど 1 回ずつあります（`#` で始まる行はコメントです）：
-  - `CODE_VERSION`（現在は `0.7`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml` と `frontend/package.json`（`0.7.0`。それぞれのロックファイルも）と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
-  - `RELEASE_VERSION`（v0.7 のリリースジョブが動くまでは `0.6`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（7.1 節）。プッシュやマージだけで変わることはありません。
+  - `CODE_VERSION`（現在は `0.7.5`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml` と `frontend/package.json`（`0.7.5`。`0.7` のような 2 つの部分からなるバージョンは、そこでは `0.7.0` と書きます。それぞれのロックファイルも）と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
+  - `RELEASE_VERSION`（v0.7.5 のリリースジョブが動くまでは `0.7`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（7.1 節）。プッシュやマージだけで変わることはありません。
 - 更新するたびに、3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）すべての更新履歴の一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。CI がこれを確認します。GitHub Release のノートは英語版から取ります。
 - 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（3 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
 - 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（7.1 節）。

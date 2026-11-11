@@ -41,6 +41,15 @@ fn normalize(v: &Value) -> Value {
     }
 }
 
+/// `v` (an object) without its top-level `key`, the other keys in their order; any other value unchanged
+fn without_key(v: &Value, key: &str) -> Value {
+    let mut out = v.clone();
+    if let Value::Object(m) = &mut out {
+        m.shift_remove(key);
+    }
+    out
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Outcome {
     Matched,
@@ -120,12 +129,6 @@ fn prime(engine: &FakeEngine, g: &Value) -> bool {
     });
     let mut faked = false;
     match (method, path) {
-        ("GET" | "HEAD", "/api/info") if status == 200 => {
-            if let Some(n) = j["bankCount"].as_i64() {
-                engine.with(|f| f.count = n);
-                faked = true;
-            }
-        }
         ("GET", "/api/bank") if status == 200 => {
             engine.with(|f| f.bank = j.clone());
             faked = true;
@@ -335,7 +338,15 @@ async fn replay_all_golden_captures() {
         if method != "HEAD" && r.header("content-length") != Some(r.body.len().to_string()) {
             diffs.push("Content-Length != body length".into());
         }
-        let golden_norm = &g["normalized"];
+        // v0.7.5 (owner): the public /api/info no longer says how many questions exist. The rest of the old answer must
+        // still match; such an entry counts as an intended difference.
+        let info_count_dropped = path.split(['?', '#']).next() == Some("/api/info")
+            && g["normalized"].get("bankCount").is_some();
+        let golden_norm = &if info_count_dropped {
+            without_key(&g["normalized"], "bankCount")
+        } else {
+            g["normalized"].clone()
+        };
         if g["json"].is_null() {
             // Plain text (or HEAD's empty body)
             if method == "HEAD" {
@@ -401,7 +412,12 @@ async fn replay_all_golden_captures() {
                 diffs.push("shutdown signal was not sent".into());
             }
         }
-        if diffs.is_empty() {
+        if diffs.is_empty() && info_count_dropped {
+            push(
+                Outcome::Intended,
+                "bankCount left out of the public /api/info (v0.7.5); the rest matches",
+            );
+        } else if diffs.is_empty() {
             push(
                 if faked {
                     Outcome::MatchedEngineFaked

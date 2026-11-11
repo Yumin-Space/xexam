@@ -110,7 +110,7 @@ export const S: AppState = {
   route: { name: 'home' },
   navOpen: false,
   settings: firstPaintSettings(),
-  info: { version: '', arch: '', canShutdown: false, bankCount: 0 },
+  info: { version: '', arch: '', canShutdown: false },
   bank: null,
   banks: [],
   progress: null,

@@ -44,7 +44,7 @@ services:
       # 1 = the session cookies always get Secure (behind an HTTPS proxy such as Cloudflare Tunnel). Only a value set in .env
       # is passed in; with no value here, Compose does not set it inside the container (Secure then follows the request).
       XEXAM_COOKIE_SECURE:
-      # The backend's log filter (default info, for example XEXAM_LOG=debug). Only a value set in .env is passed in.
+      # The backend's log filter (default info, also when empty; for example XEXAM_LOG=debug). Only a value set in .env is passed in.
       XEXAM_LOG:
     volumes:
       # The question bank and study records all live in xexam.db in this named volume; deleting or updating the container does not lose them

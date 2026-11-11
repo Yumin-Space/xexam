@@ -94,11 +94,11 @@
   border-radius: 4px; background: var(--fill); font-size: 12.5px; font-weight: 500; line-height: 1.7; color: var(--ink2);
 }
 .bk-chip b { font: 600 12.5px/1.7 var(--num), var(--en); }
-/* In this palette --right is the print blue, so "Updated / Restored" take blue text on the neutral fill to stay apart
-   from "Added" (blue on blue) */
-.bk-chip.g { background: var(--right-soft); color: var(--right); }
+/* "Added" is a success count (--success, the print blue, not the green of a correct answer), so "Updated / Restored"
+   take blue text on the neutral fill to stay apart from it (blue on blue) */
+.bk-chip.g { background: var(--success-soft); color: var(--success); }
 .bk-chip.b { background: var(--fill); color: var(--print); }
-.bk-chip.r { background: var(--wrong-soft); color: var(--wrong); }
+.bk-chip.r { background: var(--warn-soft); color: var(--warn); }
 .bk-chip.zero { color: var(--ink3); }
 
 /* Messages are the shared callouts (main.css); here only their spacing and text size */
@@ -151,7 +151,7 @@
 @media (hover: hover) { .bk-skip > summary:hover { background: var(--hover); } }
 .bk-skip > summary:focus-visible { outline-offset: 0; }
 .bk-skip > summary .bk-line { flex: 1; }
-.bk-skipn { flex: none; padding: 0 6px; border-radius: 4px; background: var(--wrong-soft); font-size: 12.5px; font-weight: 500; line-height: 1.7; color: var(--wrong); white-space: nowrap; }
+.bk-skipn { flex: none; padding: 0 6px; border-radius: 4px; background: var(--warn-soft); font-size: 12.5px; font-weight: 500; line-height: 1.7; color: var(--warn); white-space: nowrap; }
 .bk-skip ul { margin: 8px 0 2px; padding-left: 20px; font-size: 13px; color: var(--ink2); }
 .bk-skip li { overflow-wrap: anywhere; }
 .bk-skip li + li { margin-top: 2px; }
@@ -174,9 +174,9 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
    records, so a column of red frames does not shout; the dialog still asks before anything is deleted */
 .bk-bankacts .btn.danger { color: var(--ink2); border-color: var(--line); }
 @media (hover: hover) {
-  .bk-bankacts .btn.danger:hover:not(:disabled) { color: var(--wrong); background: var(--wrong-soft); border-color: var(--ng-line); }
+  .bk-bankacts .btn.danger:hover:not(:disabled) { color: var(--danger-hover); background: var(--danger-soft); border-color: var(--danger-line); }
 }
-.bk-bankacts .btn.danger:focus-visible { color: var(--wrong); }
+.bk-bankacts .btn.danger:focus-visible { color: var(--danger); }
 .bk-bankmeta { flex-basis: 100%; font-size: 13px; color: var(--ink3); overflow-wrap: anywhere; }
 /* (v0.7) A bank whose questions are all retired (they came from an older Excel layout): a quiet note under its facts */
 .bk-old { flex-basis: 100%; margin: 2px 0 0; padding: 6px 10px; border-radius: 6px; background: var(--fill); font-size: 13px; line-height: 1.55; color: var(--ink2); overflow-wrap: anywhere; }

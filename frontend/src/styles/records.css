@@ -31,7 +31,7 @@
 /* "From" after "To": a small red callout under the fields */
 .rec-warn {
   max-width: max-content; margin-top: 12px; padding: 6px 12px; border-radius: 8px;
-  background: var(--wrong-soft); color: var(--wrong); font-size: 13.5px; font-weight: 500;
+  background: var(--danger-soft); color: var(--danger); font-size: 13.5px; font-weight: 500;
 }
 .rec-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; }
 .rec-count { font-size: 13.5px; color: var(--ink3); }
@@ -63,16 +63,17 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-mode { display: block; font-size: 12.5px; color: var(--ink3); }
 .rec-table td.num { white-space: nowrap; }
 .rec-pct { font-weight: 600; font-size: 16px; }
-.rec-pct.hi { color: var(--right); }
+.rec-pct.hi { color: var(--answer-right); }
 .rec-pct.lo { color: var(--answer-wrong); }
 .rec-act { text-align: right; }
 /* "Delete": red text with a soft red hover. In the list it stays a quiet grey until its row is hovered or it has the
    focus, so a column of red words does not shout (the dialog still asks before anything is deleted). */
-.btn.rec-del { color: var(--wrong); }
-@media (hover: hover) { .btn.rec-del:hover:not(:disabled) { background: var(--wrong-soft); color: var(--wrong); } }
+.btn.rec-del { color: var(--danger); }
+@media (hover: hover) { .btn.rec-del:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger-hover); } }
 .rec-table .btn.rec-del { color: var(--ink3); }
-@media (hover: hover) { .rec-table tbody tr:hover .btn.rec-del:not(:disabled) { color: var(--wrong); } }
-.rec-table .btn.rec-del:focus-visible { color: var(--wrong); }
+/* On a hovered row the hover red: the dark row's grey hover fill leaves #F85149 at 4.25:1, #FF7B72 at 5.65:1 */
+@media (hover: hover) { .rec-table tbody tr:hover .btn.rec-del:not(:disabled) { color: var(--danger-hover); } }
+.rec-table .btn.rec-del:focus-visible { color: var(--danger); }
 .rec-nomatch { display: grid; justify-items: start; gap: 12px; }
 .rec-retention { margin-top: 16px; font-size: 13px; }
 /* Retention note and the rarely used "Delete all" at the end of the list page */

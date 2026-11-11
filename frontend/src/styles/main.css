@@ -2,6 +2,8 @@
    calm document-style layout.
    Grading (v0.7, owner): green for correct and orange for wrong (Primer's green and "severe" orange, the --answer-* tokens),
    always with a word, a mark or a tag as well, so it does not depend on telling the colours apart.
+   Danger (v0.7.5, owner): delete buttons, destructive confirm buttons, error messages and form checks are GitHub's red (the
+   --danger-* tokens); warnings keep the orange of their own --warn-* tokens. The three families share no variable.
    Themes: light (default), dark (data-theme="dark", or "follow system" when the system is dark). Every colour below is a token.
    Layout language: one calm sheet as the page, soft blocks with a hairline instead of boxed frames, rows separated by
    hairlines inside a block, soft hover fills, small tinted tags and callouts. Radii 6 / 8 / 10 / 12, spacing 4 / 8 / 12 / 16 / 24.
@@ -26,15 +28,12 @@
   --graphite: #32383F;
   --on-graphite: #FFFFFF;
   --on-solid: #FFFFFF;
-  --right: #0969DA;
-  --right-soft: #DDF4FF;
-  --wrong: #BC4C00;
-  --wrong-soft: #FFF1E5;
+  /* Success messages that are not grading (an import done, a password changed, "Updated" counts): the print blue */
+  --success: #0969DA;
+  --success-soft: #DDF4FF;
+  --warn: #BC4C00;
+  --warn-soft: #FFF1E5;
   --mark: #D4A72C;
-  --ok-line: #54AEFF;
-  --ok-bg: #DDF4FF;
-  --ng-line: #FB8F44;
-  --ng-bg: #FFF1E5;
   --mnemo-bg: #FFF8C5;
   --scrim: rgba(31, 35, 40, .5);
   --shadow: rgba(31, 35, 40, .15);
@@ -57,15 +56,19 @@
   --field-line: #818B98;                      /* border of a text / number / date field or a select; the switch track when off */
   --seg-on-line: #818B98;                     /* edge of the selected chip of a segmented control */
   /* Graded answers (owner, v0.7): a correct answer is GREEN (GitHub Primer's green, the colour of its "Code" button) and a
-     wrong one ORANGE (Primer's "severe" orange scale), never red. These tokens are for answers only: the danger colour of
-     delete buttons, error messages and form checks (--wrong / --wrong-soft / --ng-line above) is separate and unchanged.
+     wrong one ORANGE (Primer's "severe" orange scale), never red. These tokens are for answers only: the red of delete
+     buttons, destructive confirms, error messages and form checks (--danger-* below) and the orange of warnings (--warn /
+     --warn-soft above) are separate variables, even where a value is the same.
        · solid keys (a graded option, the practice verdict, a practice answer-sheet cell, a hotspot choice in a review):
          --answer-right-solid / --answer-wrong-solid with white text (--on-answer-solid). White on the green 4.52:1 (one
          value in both themes); white on the orange 5.03:1 (light) and 4.65:1 (dark, #BD561D);
-       · letters and tags on a block: --answer-right (green, 5.08:1 on a light block, 6.82:1 on a dark one) and
-         --answer-wrong (orange, 5.03:1 / 6.84:1), the tags on --answer-wrong-soft;
+       · letters, tags, ticks and the accuracy of a record: --answer-right (green, 5.08:1 on a light block, 4.77 on the
+         sheet (a hovered record row), 4.56 on --answer-right-soft #DAFBE1; dark #3FB950 6.82:1 on a block, 5.59 on
+         its soft tint, 5.61 on a hovered row) and --answer-wrong (orange, 5.03:1 / 6.84:1), the tags on the
+         -soft tints (v0.7.5: correct answers are green everywhere, no longer the print blue);
        · -hover / -active: one and two steps darker on the same Primer scale (the Start buttons of Home use them). */
   --answer-right: #1A7F37;
+  --answer-right-soft: #DAFBE1;
   --answer-right-solid: #1F883D;
   --answer-right-solid-hover: #1A7F37;
   --answer-right-solid-active: #116329;
@@ -75,6 +78,23 @@
   --answer-wrong-solid-hover: #953800;
   --answer-wrong-solid-active: #762C00;
   --on-answer-solid: #FFFFFF;
+  /* Danger (owner, v0.7.5): GitHub's red. Contrast (WCAG), light / dark:
+       · --danger: red text and icons. #CF222E: 5.36:1 on a block, 5.03 on the sheet, 4.77 on the page, 4.67 on
+         --danger-soft. Dark #F85149: 5.16 on a block, 5.65 on the sheet, 6.13 on the page, 4.66 on --danger-soft (not
+         for text on --fill: 4.44);
+       · --danger-hover: the red text of a hovered delete button, on --danger-soft: #A40E26 6.86:1 / #FF7B72 6.20:1;
+       · --danger-soft: the tint of error messages, red tags and a hovered delete button. Opaque in both themes (the dark
+         one is the red at 10 % on a block), so nothing under it lowers the contrast of the red text on it;
+       · --danger-line: the edge of an outlined delete button (decorative: the red word names the button);
+       · --danger-solid (+ -hover): the destructive confirm button of a dialog, with white text (--on-danger-solid):
+         #CF222E 5.36:1 (hover #A40E26 7.87:1); dark #DA3633 4.61:1 (hover #B62324 6.45:1). */
+  --danger: #CF222E;
+  --danger-hover: #A40E26;
+  --danger-soft: #FFEBE9;
+  --danger-line: #FF8182;
+  --danger-solid: #CF222E;
+  --danger-solid-hover: #A40E26;
+  --on-danger-solid: #FFFFFF;
   /* Home (owner, v0.7): Start exam is a solid green button and Start practice a solid orange one (the answer colours, also
      in the dark theme, where the orange tokens above are redefined) */
   --go-exam: var(--answer-right-solid);
@@ -111,15 +131,11 @@
     --graphite: #C9D1D9;
     --on-graphite: #0D1117;
     --on-solid: #010409;
-    --right: #4493F8;
-    --right-soft: rgba(56, 139, 253, .15);
-    --wrong: #F0883E;
-    --wrong-soft: rgba(219, 109, 40, .15);
+    --success: #4493F8;
+    --success-soft: rgba(56, 139, 253, .15);
+    --warn: #F0883E;
+    --warn-soft: rgba(219, 109, 40, .15);
     --mark: #D29922;
-    --ok-line: rgba(56, 139, 253, .4);
-    --ok-bg: rgba(56, 139, 253, .1);
-    --ng-line: rgba(219, 109, 40, .4);
-    --ng-bg: rgba(219, 109, 40, .1);
     --mnemo-bg: rgba(187, 128, 9, .15);
     --scrim: rgba(1, 4, 9, .8);
     --shadow: rgba(1, 4, 9, .85);
@@ -140,11 +156,18 @@
     --field-line: #656C76;
     --seg-on-line: #9198A1;
     --answer-right: #3FB950;
+    --answer-right-soft: rgba(46, 160, 67, .15);
     --answer-wrong: #F0883E;
     --answer-wrong-soft: rgba(219, 109, 40, .15);
     --answer-wrong-solid: #BD561D;
     --answer-wrong-solid-hover: #9B4215;
     --answer-wrong-solid-active: #762D0A;
+    --danger: #F85149;
+    --danger-hover: #FF7B72;
+    --danger-soft: #2C2027;
+    --danger-line: rgba(248, 81, 73, .4);
+    --danger-solid: #DA3633;
+    --danger-solid-hover: #B62324;
   }
 }
 :root[data-theme="dark"] {
@@ -164,15 +187,11 @@
   --graphite: #C9D1D9;
   --on-graphite: #0D1117;
   --on-solid: #010409;
-  --right: #4493F8;
-  --right-soft: rgba(56, 139, 253, .15);
-  --wrong: #F0883E;
-  --wrong-soft: rgba(219, 109, 40, .15);
+  --success: #4493F8;
+  --success-soft: rgba(56, 139, 253, .15);
+  --warn: #F0883E;
+  --warn-soft: rgba(219, 109, 40, .15);
   --mark: #D29922;
-  --ok-line: rgba(56, 139, 253, .4);
-  --ok-bg: rgba(56, 139, 253, .1);
-  --ng-line: rgba(219, 109, 40, .4);
-  --ng-bg: rgba(219, 109, 40, .1);
   --mnemo-bg: rgba(187, 128, 9, .15);
   --scrim: rgba(1, 4, 9, .8);
   --shadow: rgba(1, 4, 9, .85);
@@ -193,11 +212,18 @@
   --field-line: #656C76;
   --seg-on-line: #9198A1;
   --answer-right: #3FB950;
+  --answer-right-soft: rgba(46, 160, 67, .15);
   --answer-wrong: #F0883E;
   --answer-wrong-soft: rgba(219, 109, 40, .15);
   --answer-wrong-solid: #BD561D;
   --answer-wrong-solid-hover: #9B4215;
   --answer-wrong-solid-active: #762D0A;
+  --danger: #F85149;
+  --danger-hover: #FF7B72;
+  --danger-soft: #2C2027;
+  --danger-line: rgba(248, 81, 73, .4);
+  --danger-solid: #DA3633;
+  --danger-solid-hover: #B62324;
 }
 
 * { box-sizing: border-box; }
@@ -346,7 +372,8 @@ input, select, textarea { font: inherit; color: var(--ink); }
 
 /* ---------- Buttons ----------
    Default: a white key with a visible border. Primary: filled (navy in light, blue in dark). Quiet: text only. Danger: red
-   text. Radius 6px. Regular weight except the primary: Segoe UI has no medium face, so 500 would render as semibold. */
+   text (a dialog's destructive confirm: solid red, .danger.solid). Radius 6px. Regular weight except the primary and the
+   solid danger button: Segoe UI has no medium face, so 500 would render as semibold. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 36px; padding: 6px 14px;
@@ -361,8 +388,13 @@ input, select, textarea { font: inherit; color: var(--ink); }
 @media (hover: hover) { .btn.primary:hover:not(:disabled) { background: var(--primary-hover); border-color: var(--primary-hover); } }
 .btn.quiet { border-color: transparent; background: transparent; box-shadow: none; color: var(--ink2); font-weight: 400; padding-inline: 10px; }
 @media (hover: hover) { .btn.quiet:hover:not(:disabled) { background: var(--hover); color: var(--ink); } }
-.btn.danger { border-color: var(--ng-line); color: var(--wrong); }
-@media (hover: hover) { .btn.danger:hover:not(:disabled) { background: var(--wrong-soft); border-color: var(--ng-line); } }
+.btn.danger { border-color: var(--danger-line); color: var(--danger); }
+@media (hover: hover) { .btn.danger:hover:not(:disabled) { background: var(--danger-soft); border-color: var(--danger-line); color: var(--danger-hover); } }
+/* The destructive confirm button of a dialog: solid red with white text, in place of the primary button */
+.btn.danger.solid { background: var(--danger-solid); border-color: var(--danger-solid); color: var(--on-danger-solid); font-weight: 600; }
+@media (hover: hover) {
+  .btn.danger.solid:hover:not(:disabled) { background: var(--danger-solid-hover); border-color: var(--danger-solid-hover); color: var(--on-danger-solid); }
+}
 .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .btn.big { min-height: 44px; padding: 8px 24px; border-radius: 8px; font-size: 16px; }
 
@@ -395,12 +427,12 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .inline input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--print); }
 
 /* ---------- Tags ----------
-   Small, square-ish (radius 4px), soft background, no border. .g right (blue), .r the danger colour (for example a
+   Small, square-ish (radius 4px), soft background, no border. .g a correct answer (green), .r the danger colour (for example a
    disabled account), .ng a wrong answer (orange), .b print blue, .k neutral. */
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { display: inline-block; font-size: 12.5px; font-weight: 500; line-height: 1.7; padding: 0 6px; border-radius: 4px; background: var(--fill); color: var(--ink2); white-space: nowrap; }
-.tag.g { color: var(--right); background: var(--right-soft); }
-.tag.r { color: var(--wrong); background: var(--wrong-soft); }
+.tag.g { color: var(--answer-right); background: var(--answer-right-soft); }
+.tag.r { color: var(--danger); background: var(--danger-soft); }
 .tag.ng { color: var(--answer-wrong); background: var(--answer-wrong-soft); }
 .tag.b { color: var(--print); background: var(--print-soft); }
 .tag.k { color: var(--ink2); background: var(--fill); }
@@ -411,8 +443,9 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .callout, .resume, .err, .warnbox, .okbox { border: 0; border-radius: 8px; padding: 12px 16px; overflow-wrap: anywhere; }
 .callout { background: var(--fill); color: var(--ink); }
 .callout.info { background: var(--print-soft); }
-.callout.warn, .callout.bad { background: var(--wrong-soft); }
-.callout.ok { background: var(--right-soft); }
+.callout.warn { background: var(--warn-soft); }
+.callout.bad { background: var(--danger-soft); }
+.callout.ok { background: var(--success-soft); }
 .callout.note { background: var(--fill); color: var(--ink2); }
 .callout.mark { background: var(--mnemo-bg); }
 
@@ -421,7 +454,8 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .resume .acts { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .empty { color: var(--ink2); }
-.err { background: var(--wrong-soft); color: var(--ink); margin-bottom: 16px; }
+.err { background: var(--danger-soft); color: var(--ink); margin-bottom: 16px; }
+.err h2, .err h3 { color: var(--danger); }
 
 /* ---------- Row list / property list (shared patterns) ----------
    .rows: the children are rows separated by a hairline, each with a soft hover; no box of their own.
@@ -464,14 +498,14 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .fld-eye[aria-pressed="true"] { color: var(--ink2); }
 .fld-eye .ico { width: 18px; height: 18px; }
 .fld-hint { font-size: 12.5px; line-height: 1.5; color: var(--ink3); }
-.fld-caps { font-size: 12.5px; line-height: 1.5; font-weight: 600; color: var(--wrong); }
+.fld-caps { font-size: 12.5px; line-height: 1.5; font-weight: 600; color: var(--danger); }
 
 /* Dialog checkbox (askCheck) */
 .dlg-check {
   display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 10px 12px;
   border: 1px solid var(--line-soft); border-radius: 8px; background: var(--fill); cursor: pointer;
 }
-.dlg-check input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--wrong); }
+.dlg-check input { width: 18px; height: 18px; margin: 2px 0 0; flex: none; accent-color: var(--danger); }
 .dlg-check-l { display: block; font-weight: 600; font-size: 14.5px; }
 .dlg-check-h { display: block; font-size: 13px; color: var(--ink3); }
 
@@ -489,7 +523,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .phead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 18px; color: var(--ink3); font-size: 13.5px; }
 /* A tag (question kind, verdict) */
 .badge { display: inline-block; padding: 0 6px; border: 0; border-radius: 4px; background: var(--print-soft); color: var(--print); font-weight: 500; font-size: 12.5px; line-height: 1.7; white-space: nowrap; }
-.badge.ok { color: var(--right); background: var(--right-soft); }
+.badge.ok { color: var(--answer-right); background: var(--answer-right-soft); }
 .badge.ng { color: var(--answer-wrong); background: var(--answer-wrong-soft); }
 
 /* ---------- Segmented control ----------
@@ -614,7 +648,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 }
 .strip .n { font: 600 11.5px var(--num); color: var(--ink3); }
 .strip svg { width: 20px; height: 20px; }
-.strip .ok svg { stroke: var(--right); }
+.strip .ok svg { stroke: var(--answer-right); }
 .strip .ng svg { stroke: var(--answer-wrong); }
 .strip .ng { background: var(--answer-wrong-soft); border-color: transparent; }
 .strip .ng .n { color: var(--answer-wrong); }
@@ -623,15 +657,16 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .rvhead h2 { font-size: 18px; font-weight: 600; }
 
 /* Review cards: soft blocks with a short coloured marker on the left edge, beside the "Question 6" heading row
-   (orange wrong, blue right). Its top follows the block's top padding (28px; 20px on narrow screens; 16px on a gone card). */
+   (orange wrong, green right). Its top follows the block's top padding (28px; 20px on narrow screens; 16px on a gone card). */
 .rv { margin-bottom: 16px; scroll-margin-top: 16px; }
 .rv .paper { position: relative; }
 .rv .paper::before { content: ""; position: absolute; left: -1px; top: 28px; width: 3px; height: 22px; border-radius: 0 3px 3px 0; background: var(--answer-wrong); }
 .rv.rv-gone .paper::before { top: 16px; }
-.rv.good .paper::before { background: var(--right); }
+.rv.good .paper::before { background: var(--answer-right); }
 /* "Your answer / Correct answer": a plain line under the options (the callouts below carry the tint). Its letters follow
-   the options (v0.7, owner): the correct answer green (.r), your answer green when it was right (.r) and orange when it
-   was wrong (.w); the hotspot line ("1 of 2 items correct") colours its number the same way */
+   the options (v0.7, owner): the correct answer green (.r); in your answer each letter is green (.r) when it is one of the
+   correct answers and orange (.w) when it is not (v0.7.5), so a partly right multiple choice shows both; the hotspot
+   line ("1 of 2 items correct") colours its number by the whole verdict */
 .verdict { margin: 14px 0 0; padding: 0 2px; font-size: 15px; line-height: 1.7; }
 .verdict b { font-family: var(--num), var(--en); }
 .verdict .w { color: var(--answer-wrong); font-weight: 700; }
@@ -680,12 +715,12 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .mnemo p { overflow-wrap: anywhere; font-size: 16px; font-weight: 500; line-height: 1.8; max-width: 44em; }
 .note { overflow-wrap: anywhere; margin-top: 12px; font-size: 13.5px; color: var(--ink2); }
 .stats { margin-top: 12px; font-size: 13px; color: var(--ink3); }
-.allgood { padding: 28px; text-align: center; font-size: 17px; border: 0; background: var(--right-soft); border-radius: 10px; }
+.allgood { padding: 28px; text-align: center; font-size: 17px; border: 0; background: var(--answer-right-soft); border-radius: 10px; }
 
 /* ---------- Question bank management ---------- */
-.warnbox { margin-top: 16px; background: var(--wrong-soft); }
+.warnbox { margin-top: 16px; background: var(--warn-soft); }
 .warnbox ul { margin: 6px 0; padding-left: 20px; color: var(--ink2); }
-.okbox { background: var(--right-soft); margin-bottom: 16px; }
+.okbox { background: var(--success-soft); margin-bottom: 16px; }
 .okbox .ok-t { font-weight: 600; font-size: 16px; margin-bottom: 4px; }
 .okbox .acts { margin-top: 12px; }
 .emptybank { display: grid; justify-items: start; gap: 12px; }

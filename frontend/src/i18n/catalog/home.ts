@@ -11,7 +11,6 @@ export default defineCatalog({
     'home.fact.time': 'Time used',
     'home.fact.at': 'Taken',
     'home.fact.wrong': 'Wrong',
-    'home.fact.kind': 'Type',
 
     // Unfinished exam
     'home.resume.title': 'Unfinished exam',
@@ -74,9 +73,9 @@ export default defineCatalog({
     'home.empty.noBanks': 'There are no question banks yet. Import an Excel workbook on the Question banks page, then come back here to start an exam.',
     'home.empty.noQuestions': 'Your question banks have no active questions right now (every question has been retired, for example because it came from an older Excel layout). Update them with a six-column file on the Question banks page.',
     'home.empty.go': 'Go to Question banks',
-    'home.empty.noBanksUser': 'There are no question banks yet. Ask an administrator to import one; it appears here as soon as it is ready.',
     'home.empty.noQuestionsUser': 'The question banks have no active questions right now (every question has been retired). Ask an administrator to update them with a six-column Excel file.',
     'home.empty.noAccess': 'No question bank has been made available to you yet. Ask an administrator to give you access to one; it appears here as soon as they do.',
+    'home.empty.noQuestionsManager': 'The question banks have no active questions right now (every question has been retired). On the Question banks page you can update your own banks with a six-column Excel file or import a new one; ask an administrator to update the others.',
     'home.empty.noBanksManager': 'You have no question bank yet. Import an Excel workbook on the Question banks page (the new bank is yours), or ask an administrator to give you access to one.',
 
     // Latest exam
@@ -105,7 +104,6 @@ export default defineCatalog({
     'home.fact.time': '用时',
     'home.fact.at': '时间',
     'home.fact.wrong': '答错',
-    'home.fact.kind': '类型',
 
     'home.resume.title': '没交卷的考试',
     'home.resume.titlePractice': '没做完的练习',
@@ -159,9 +157,9 @@ export default defineCatalog({
     'home.empty.noBanks': '还没有题库。先到「题库管理」导入 Excel 题库，再回来开始考试。',
     'home.empty.noQuestions': '题库里现在没有可用的题（所有题都已下架，例如因为它们来自旧的 Excel 格式）。请到「题库管理」用六列格式的文件更新题库。',
     'home.empty.go': '去题库管理',
-    'home.empty.noBanksUser': '还没有题库。请让管理员导入题库，导入后就会出现在这里。',
     'home.empty.noQuestionsUser': '题库里现在没有可用的题（所有题都已下架）。请让管理员用六列格式的 Excel 文件更新题库。',
     'home.empty.noAccess': '管理员还没有给你分配题库。请联系管理员为你开通，开通后题库就会出现在这里。',
+    'home.empty.noQuestionsManager': '题库里现在没有可用的题（所有题都已下架）。可以在「题库管理」用六列格式的 Excel 文件更新你自己的题库，或导入新题库；其他题库请让管理员更新。',
     'home.empty.noBanksManager': '你还没有题库。可以在「题库管理」导入 Excel 题库（导入的题库归你管理），也可以请管理员给你分配题库。',
 
     'home.latest.title': '最近一次成绩',
@@ -187,7 +185,6 @@ export default defineCatalog({
     'home.fact.time': '所要時間',
     'home.fact.at': '日時',
     'home.fact.wrong': '不正解',
-    'home.fact.kind': '種類',
 
     'home.resume.title': '未提出の試験',
     'home.resume.titlePractice': '未完了の練習',
@@ -241,9 +238,9 @@ export default defineCatalog({
     'home.empty.noBanks': 'まだ問題集がありません。「問題集の管理」で Excel ファイルをインポートしてから、ここで試験を始めてください。',
     'home.empty.noQuestions': '問題集に現在有効な問題がありません（古い Excel 形式の問題だったなどの理由で、すべて出題停止中です）。「問題集の管理」で 6 列形式のファイルを使って更新してください。',
     'home.empty.go': '問題集の管理へ',
-    'home.empty.noBanksUser': 'まだ問題集がありません。管理者に問題集のインポートを依頼してください。インポートされると、ここに表示されます。',
     'home.empty.noQuestionsUser': '問題集に現在有効な問題がありません（すべて出題停止中です）。管理者に 6 列形式の Excel ファイルでの更新を依頼してください。',
     'home.empty.noAccess': 'まだ管理者から問題集が割り当てられていません。管理者に問題集の利用を依頼してください。割り当てられると、ここに表示されます。',
+    'home.empty.noQuestionsManager': '問題集に現在有効な問題がありません（すべて出題停止中です）。「問題集の管理」で、自分の問題集を 6 列形式の Excel ファイルで更新するか、新しい問題集をインポートしてください。ほかの問題集は管理者に更新を依頼してください。',
     'home.empty.noBanksManager': 'まだ問題集がありません。「問題集の管理」で Excel ファイルをインポートする（インポートした問題集はあなたが管理します）か、管理者に問題集の割り当てを依頼してください。',
 
     'home.latest.title': '直近の結果',

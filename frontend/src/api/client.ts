@@ -4,10 +4,18 @@
 // Sign-in (v0.6): a 401 from any route but the sign-in itself means the session is gone, and a 403 with the "choose a new
 // password first" message means the password must be replaced; both are reported to the handler set with setAuthHandler()
 // (state/actions.ts shows the matching page), and the request still fails with its ApiError as usual.
+// Rate limit (v0.7.5): Nginx answers 429 itself when too many requests arrive (all users behind a tunnel share one address).
+// That 429 has no JSON body with "retryAfter", which is how it differs from the sign-in lock (429 with JSON "retryAfter").
+// A GET or HEAD refused that way is retried automatically (3 tries in all: wait Retry-After when given, else 1 s, then 2 s);
+// other methods are never retried. Still refused, the request fails with kind 'tooMany', which pages show as "too many
+// requests, wait a few seconds" instead of "cannot reach the service". The sign-in lock keeps its own handling ('http').
+// Time limit (v0.7.5): a GET may give a time limit per try (the System log's poll reads do); a try that has not finished by
+// then (no answer, or a body that stalls) is aborted and fails with kind 'network', like a lost connection.
 
 export type ApiErrorKind =
   | 'http' // the service returned an error status code with a JSON body; `serverMessage` holds the backend's (Chinese) reason
   | 'status' // an error status code without a JSON body (proxy error page, login page, ...)
+  | 'tooMany' // the proxy's own 429 (its rate limit, not the sign-in lock), still refused after the automatic retries
   | 'network' // cannot connect
   | 'unexpected'; // the response is not what was expected (common cause: login expired, redirected to the login page)
 
@@ -88,25 +96,95 @@ function authProblem(path: string, e: ApiError): AuthProblem | null {
   return null;
 }
 
-async function send<T>(input: string, init?: RequestInit): Promise<T> {
+/** Tries in all for a GET / HEAD that the proxy's rate limit refuses (the first request and two retries) */
+export const RATE_LIMIT_TRIES = 3;
+/** Seconds to wait before the 1st and the 2nd retry when the 429 has no usable Retry-After */
+const RETRY_WAITS = [1, 2] as const;
+/** A longer Retry-After is cut to this many seconds, so a page never sits still for long */
+const RETRY_MAX_WAIT = 10;
+
+let pause = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** For the unit tests: replaces the wait between automatic retries (milliseconds) */
+export function setRetryPause(fn: (ms: number) => Promise<void>): void {
+  pause = fn;
+}
+
+/** Whether an error is the proxy's rate limit (too many requests in a short time), after the automatic retries */
+export function isTooManyRequests(e: unknown): boolean {
+  return e instanceof ApiError && e.kind === 'tooMany';
+}
+
+/** Nginx's own 429: anything but the sign-in lock's JSON body with "retryAfter" */
+async function isProxyLimit(r: Response): Promise<boolean> {
+  if (r.status !== 429) return false;
+  if (!isJson(r)) return true;
+  try {
+    const body: unknown = await r.clone().json();
+    return !(typeof body === 'object' && body !== null && 'retryAfter' in body);
+  } catch {
+    return true;
+  }
+}
+
+/** Seconds to wait before retry number `retry` (1 or 2): the 429's Retry-After (seconds form, at most RETRY_MAX_WAIT), else 1 s, then 2 s */
+function retryWait(r: Response, retry: number): number {
+  const header = r.headers.get('Retry-After')?.trim() ?? '';
+  if (/^\d{1,9}$/.test(header)) return Math.min(Number(header), RETRY_MAX_WAIT);
+  return RETRY_WAITS[Math.min(retry, RETRY_WAITS.length) - 1] ?? 1;
+}
+
+export interface GetOptions {
+  /** Milliseconds one try may take, answer and body included; a try still running then fails with kind 'network' */
+  timeoutMs?: number;
+}
+
+/** What one try gave: the parsed answer, or the wait in seconds before the next try (Nginx's 429 on a GET / HEAD) */
+type Try<T> = { done: true; value: T } | { done: false; wait: number };
+
+async function attemptOnce<T>(input: string, init: RequestInit | undefined, retry: number | null, signal: AbortSignal | undefined): Promise<Try<T>> {
   let r: Response;
   try {
     // same-origin: the session cookie (HttpOnly, SameSite=Strict) goes along; never to another origin
-    r = await fetch(input, { credentials: 'same-origin', ...init });
+    r = await fetch(input, { credentials: 'same-origin', ...init, ...(signal ? { signal } : {}) });
   } catch {
     throw new ApiError('network');
   }
+  if (await isProxyLimit(r)) {
+    if (retry != null) return { done: false, wait: retryWait(r, retry) };
+    throw new ApiError('tooMany', 429);
+  }
   try {
-    return await parse<T>(r);
+    return { done: true, value: await parse<T>(r) };
   } catch (e) {
+    // A body cut off by the time limit is a lost connection, not "unexpected" (which hints at an expired login)
+    if (signal?.aborted) throw new ApiError('network');
     const problem = e instanceof ApiError ? authProblem(input.split('?')[0] ?? input, e) : null;
     if (problem) authHandler(problem);
     throw e;
   }
 }
 
-export function getJson<T>(path: string): Promise<T> {
-  return send<T>(path, { method: 'GET' });
+async function send<T>(input: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase();
+  const retries = method === 'GET' || method === 'HEAD';
+  for (let attempt = 1; ; attempt += 1) {
+    const ctrl = timeoutMs != null && timeoutMs > 0 ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
+    let res: Try<T>;
+    try {
+      res = await attemptOnce<T>(input, init, retries && attempt < RATE_LIMIT_TRIES ? attempt : null, ctrl?.signal);
+    } finally {
+      if (timer != null) clearTimeout(timer);
+    }
+    if (res.done) return res.value;
+    // the wait between tries is outside the time limit of a try
+    await pause(res.wait * 1000);
+  }
+}
+
+export function getJson<T>(path: string, opts: GetOptions = {}): Promise<T> {
+  return send<T>(path, { method: 'GET' }, opts.timeoutMs);
 }
 
 export function postJson<T>(path: string, body?: unknown): Promise<T> {

@@ -5,7 +5,6 @@ import { defineCatalog } from '../define.ts';
 
 export default defineCatalog({
   en: {
-    'quiz.title': 'Exam',
     'quiz.position': 'Question {i}',
     'quiz.of': 'of {n}',
     'quiz.time': 'Time used',
@@ -68,7 +67,6 @@ export default defineCatalog({
     'quiz.overwrite.practiceOk': 'Start new practice',
   },
   zh: {
-    'quiz.title': '考试',
     'quiz.position': '第 {i} 题',
     'quiz.of': '共 {n} 题',
     'quiz.time': '已用时间',
@@ -130,7 +128,6 @@ export default defineCatalog({
     'quiz.overwrite.practiceOk': '开始新练习',
   },
   ja: {
-    'quiz.title': '試験',
     'quiz.position': '第 {i} 問',
     'quiz.of': '全 {n} 問',
     'quiz.time': '経過時間',

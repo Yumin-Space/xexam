@@ -10,8 +10,9 @@
 |---|---|---|
 | Rust | 1.99.1 (pinned by `backend/rust-toolchain.toml`) | `rustup` installs it automatically. The `bundled` feature of `rusqlite` needs a C compiler (Linux: `build-essential`; Windows: MinGW gcc or MSVC) |
 | Node | 24 | Frontend; the unit tests use Node's built-in test runner with `--experimental-strip-types` |
-| Python | 3.8+ | Only for the integration scripts in `tests/integration/` and the two scripts in `scripts/`. **Standard library only** |
-| Docker | Compose v2 | Whole-stack checks, images |
+| Python | 3.8+ | Only for the integration scripts in `tests/integration/`, the two scripts in `scripts/` (**standard library only**) and the screenshot tool in `tools/screenshots/` (standard library plus `openpyxl`) |
+| Docker | Compose v2 | Whole-stack checks, images, the screenshot tool |
+| Chrome or Chromium | any recent | Only for the screenshot tool (section 8.1) |
 
 ## 2. Backend
 
@@ -19,16 +20,17 @@
 cd backend
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 302 tests
+cargo test --all-targets          # 316 tests
 cargo run -- serve --data ../data --no-browser     # listens on 127.0.0.1:8765
 ```
 
 - Tests run against the **legacy snapshot** committed in `tests/baseline/`; Python is not needed for them.
-- All tests use a fresh database in a temporary directory or a copy of `tests/baseline/fixtures/sample.db`, and **never touch `data/`**. Besides the unit tests in `src/`, the test files are: `api_basic.rs`, `api_import.rs`, `api_misc.rs` and `api_golden.rs` (routes, guards, the legacy responses), `db_golden.rs` (the database against the legacy snapshot), `parser_golden.rs`, `parser_hardening.rs`, `parser_four_columns.rs`, `parser_six_columns.rs` and `id_vectors.rs` (the parser), and one file per version: `v05_banks_records_settings.rs` (schema v2, banks, records, settings), `v06_users_and_sign_in.rs` (schema v3, accounts, sessions, the login throttle), `v065_bank_access_and_practice.rs` (schema v4, bank access, bank managers, ownership, practice), `v07_wal_and_logs.rs` (WAL mode, the checkpoint, `reset-password` while the server runs, the System log) and `v07_log_floods.rs` (floods of rejected requests and failed sign-ins are summed up).
+- All tests use a fresh database in a temporary directory or a copy of `tests/baseline/fixtures/sample.db`, and **never touch `data/`**. Besides the unit tests in `src/`, the test files are: `api_basic.rs`, `api_import.rs`, `api_misc.rs` and `api_golden.rs` (routes, guards, the legacy responses), `db_golden.rs` (the database against the legacy snapshot), `parser_golden.rs`, `parser_hardening.rs`, `parser_four_columns.rs`, `parser_six_columns.rs` and `id_vectors.rs` (the parser), and one file per version: `v05_banks_records_settings.rs` (schema v2, banks, records, settings), `v06_users_and_sign_in.rs` (schema v3, accounts, sessions, the login throttle), `v065_bank_access_and_practice.rs` (schema v4, bank access, bank managers, ownership, practice), `v07_bank_access_and_layouts.rs` (the chosen banks and **Include banks imported later**, the conversion of pre-release v4 databases, the refusal of the old layouts and the retirement of their questions), `v07_wal_and_logs.rs` (WAL mode, the checkpoint, `reset-password` while the server runs, the System log) and `v07_log_floods.rs` (floods of rejected requests and failed sign-ins are summed up).
 - Tests sign in through helpers; no switch turns sign-in off, also not for tests.
+- **The old layouts in tests.** Production refuses three- and four-column workbooks (`services::check_layout`). The golden suites replay the old version's imports, which are three-column files, so the API state they build sets `old_layouts: OldLayouts::AllowForTests` (in `backend/tests/api_common/mod.rs`, and in `v05_banks_records_settings.rs` and `v065_bank_access_and_practice.rs`, which import the committed three-column fixture `tests/baseline/fixtures/demo.xlsx` through the API). It is a field of the API state that only test code sets: `AppState::new` and the `import` command always use `OldLayouts::Refuse`, and no environment variable, flag or setting can change it. `v07_bank_access_and_layouts.rs` tests the production rule. The store methods themselves accept any question, so the database golden tests run unchanged.
 - Common environment variables: `XEXAM_DATA`, `XEXAM_PORT`, `XEXAM_ALLOWED_HOSTS`, `XEXAM_LOG` (log level, e.g. `debug`), `XEXAM_SQLITE_JOURNAL` (`delete` keeps the rollback journal instead of WAL), `XEXAM_COOKIE_SECURE`. For the full list see `xexam-backend --help` and [deployment.md](deployment.md).
 - The first start on an empty data directory creates the administrator `admin` / `admin`; the page asks for a new password at the first sign-in. If you forget it: `cargo run -- reset-password admin --data ../data` (it works while the server runs).
-- Command-line import (into the legacy bank): `cargo run -- import ../some.xlsx --data ../data`.
+- Command-line import of a six-column workbook (into the legacy bank): `cargo run -- import ../some.xlsx --data ../data`. A three- or four-column workbook is refused.
 - Pointing the backend at a database of an older schema migrates it and writes `backups/` next to it. Use a copy.
 - The database runs in WAL mode: while the backend runs, `xexam.db-wal` and `xexam.db-shm` sit next to `xexam.db`. Copy all three, or stop the backend first (everything is then in `xexam.db`; a `-wal` file left next to it is empty). `sqlite3` can read the database while the backend runs.
 
@@ -38,9 +40,10 @@ cargo run -- serve --data ../data --no-browser     # listens on 127.0.0.1:8765
 cd frontend
 npm ci
 npm run typecheck      # tsc for the app, then for the test files (tsconfig.test.json)
-npm test               # 119 unit tests: grading and random pick, practice checking, saved results, language rules, records filter,
-                       # lock notes and waits, import warnings, the System log buffer, bank access, saved exam, settings cache,
-                       # UI catalogs, server-message translation, changelog parsing
+npm test               # 139 unit tests: the API client (Nginx's 429 and its retries, time limits), grading and random pick,
+                       # practice checking, saved results, language rules, records filter, lock notes and waits, import
+                       # warnings, the System log buffer, bank status, bank access, saved exam, settings cache, UI catalogs,
+                       # server-message translation, changelog parsing
 npm run build          # type check + vite build → dist/
 npm run dev            # http://127.0.0.1:5173, /api is proxied to http://127.0.0.1:8765
 ```
@@ -93,10 +96,10 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 # The check scripts all use temporary project names and temporary volumes, and never touch xexam_data
 docker build -f nginx/Dockerfile -t xexam-frontend:test .
-python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 38 checks, using a fake backend
+python -I tests/integration/nginx_check.py xexam-frontend:test 18080   # 41 checks, using a fake backend (rate limits included)
 python -I tests/integration/stack_check.py 18090                      # starts the full stack (builds both images): sign-in, import,
                                                                       # attempts, persistence, WAL, the System log, reset-password, docker stop
-python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # progress.json migration, WAL and the DELETE opt-out (run cargo build first)
+python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend   # 45 checks: progress.json migration, WAL and the DELETE opt-out (run cargo build first)
 ```
 
 Each script prints its checks and `All N checks passed` at the end. The last argument of `nginx_check.py` and `stack_check.py` is the host port they use; pick one that is free on your machine.
@@ -110,12 +113,13 @@ The old Python implementation has been removed from the repository, but its beha
 | Snapshot | Content | Used by |
 |---|---|---|
 | `golden/NNN_*.json` (172 files) | Real responses of the legacy version for every endpoint × every state (status code, stable response headers, normalized body) | `backend/tests/api_golden.rs` replays them in order against the new routes and compares each item |
-| `fixtures/*.xlsx` + `parser_golden/*.json` (49) | Synthetic workbooks and the legacy parser's output for each | `backend/tests/parser_golden.rs` (the 3- and 4-column layouts must stay byte for byte the same) |
+| `fixtures/*.xlsx` + `parser_golden/*.json` (49) | Synthetic workbooks (three- and four-column, the layouts of the old version) and the legacy parser's output for each | `backend/tests/parser_golden.rs` (the parser must still read them byte for byte the same; that is how an import recognises and refuses them) |
 | `golden/id_vectors.json` (85 assertions) | Assertions about question ids; each entry carries the bytes that were hashed | `backend/tests/id_vectors.rs` |
 | `fixtures/sample.db` + `golden/store_sample_outputs.json` | A sample database written by the legacy implementation, and the output of each of its interfaces | `backend/tests/db_golden.rs` (also checks its migration to the current schema) |
-| `golden/allowed_differences_rust.json` (23 entries), `allowed_probe_differences_rust.json` (51 entries) | Places where the new implementation intentionally differs from the legacy version, with a one-sentence reason for each | Any difference in `api_golden.rs` that is not registered = failure |
+| `golden/allowed_differences_rust.json` (23 entries), `allowed_probe_differences_rust.json` (51 entries) | The places where the Rust implementation intentionally differed from the legacy version when it replaced it, with a one-sentence reason for each (in Chinese); a record, no test reads them | [api.md](api.md) section 5 |
 
-- To **change** behaviour (for example, to add an intentional difference): change the code, then register the difference in `allowed_differences_rust.json` with its reason; do not edit the golden responses directly.
+- `api_golden.rs` sorts every capture into one of five outcomes and prints the table with `cargo test --test api_golden -- --nocapture`. Today: 84 matched, 58 matched with the engine fed from the capture, 16 intended differences (the 7 unsupported methods that now get 405, and the 9 captures of `GET /api/info`, compared without `bankCount` since v0.7.5), 14 skipped (static files, which Nginx serves, and one capture without a response) and 0 differing. Any differing capture fails the test.
+- To **change** behaviour that a capture covers: change the code and teach `api_golden.rs` the intended difference with its reason (as for `bankCount`); do not edit the golden responses.
 - The old capture / comparison / probe scripts depended on the old Python code and were removed with it; if you need them, recover them from the Git tag `python-v0.2` and the commit history.
 
 ## 6. Data safety rules
@@ -123,7 +127,7 @@ The old Python implementation has been removed from the repository, but its beha
 - **Do not** read, print, commit or modify `data/`, `progress.json`, or your own question-bank Excel files.
 - Always experiment on a copy or in a temporary directory; do not run "let's see what happens" commands against the real `xexam.db`. Remember that opening an older database with a newer version migrates it (and switches it to WAL).
 - Do not run `docker compose down -v`.
-- Examples in code, tests and docs use made-up content only, never real exam questions (the demo banks "General knowledge" and "Kitchen basics", or the made-up six-column example in `frontend/src/pages/banks.ts`).
+- Examples in code, tests and docs use made-up content only, never real exam questions (the demo banks "General knowledge" and "Kitchen basics" of `tools/screenshots/demo_banks.py`, or the made-up six-column examples in `frontend/src/pages/banks.ts`).
 
 ## 7. CI
 
@@ -132,9 +136,9 @@ There is only one pipeline: [`.github/workflows/ci.yml`](../../.github/workflows
 | Job | What it does |
 |---|---|
 | `check` | `VERSION` has **exactly one** `CODE_VERSION=` and **one** `RELEASE_VERSION=` line, both like `0.7` or `0.6.5`, and `RELEASE_VERSION` is not newer than `CODE_VERSION`; the newest changelog entry of each of the three READMEs = `CODE_VERSION`; the release badge at the top of each README = `RELEASE_VERSION`; `backend/Cargo.toml` and `frontend/package.json` carry `CODE_VERSION`; the layout (only `README.md` at the root, the other two READMEs in `README/`, the compose files and `.env.example` in `docker/`) and the docs check (section 8). Its output `version` (`CODE_VERSION`) is what the later jobs use |
-| `frontend` | Type check, 119 unit tests, build |
-| `backend` | fmt, clippy, 302 tests, and the `progress.json` migration check |
-| `stack` | Builds the `xexam-frontend` image and runs the 38 Nginx checks; starts the full compose stack and runs the end-to-end checks |
+| `frontend` | Type check, 139 unit tests, build |
+| `backend` | fmt, clippy, 316 tests, and the `progress.json` migration check |
+| `stack` | Builds the `xexam-frontend` image and runs the 41 Nginx checks; starts the full compose stack and runs the end-to-end checks |
 | `arm64` | Builds both images for arm64, starts them under QEMU, and checks that `/api/info` reports `aarch64` and `CODE_VERSION` |
 | `publish` | `main` only: pushes both images (amd64 + arm64) with the tags `latest`, `v<CODE_VERSION>` and `sha-<commit>` to Docker Hub (`docker.io/yuminspace/`, public, what `docker/docker-compose.yml` pulls) and to ghcr.io (private mirror), and verifies the manifest and tags on both. Needs the repository secrets `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (optionally the variable `DOCKERHUB_NAMESPACE`); without them it stops before pushing anything |
 | `release` | `main` only: creates (or updates) the GitHub Release `v<CODE_VERSION>`, with the notes taken from the changelog in `README.md` (`scripts/release-notes.py`). A run of a version older than the release already recorded on `main` does not mark its Release as the latest. Its last step records the release (section 7.1) |
@@ -158,18 +162,25 @@ So after each release, `origin/main` (and usually `origin/dev`) has one commit m
 
 ## 8. Docs
 
-- One folder per language: `docs/en` (English, the source), `docs/ja` (Japanese) and `docs/zh-CN` (Simplified Chinese). The same seven documents exist in each: `api`, `architecture`, `database`, `deployment`, `development`, `migration`, `security`.
+- One folder per language: `docs/en` (English, the source), `docs/ja` (Japanese) and `docs/zh-CN` (Simplified Chinese). The same documents exist in each: `api`, `architecture`, `database`, `deployment`, `development`, `migration`, `security` and, since v0.7.5, `usage` (how to use the app, moved out of the README), each folder with its own `screenshots/`.
 - `docs/zh-CN/history/` holds older documents from the switch to Rust (audits, plans, risk assessment). They are Chinese only and are not updated any more.
 - `docs/en/openapi.yaml` is shared by all languages; the Japanese and Chinese docs link to `../en/openapi.yaml`.
+- The README is short: what Xexam does, the quick start, configuration, upgrading, the links to the docs and the changelog. How to use the app, the Excel format and the import rules are in `usage.md`; deployment details, backups, security, architecture and development are in their own documents. Write a detail in one place and link to it.
 - Every document starts with a language bar that links the same document in the other two folders. Links are relative to the file's own folder: the repository root is `../../`.
 - Change the English document first, then the Japanese and Chinese ones in the same change. UI labels are written in bold exactly as the catalog of that language says them; the question language switch is always **English** / **中文** / **日本語**.
-- The CI `check` job fails when one of the seven documents is missing in a language folder, when `docs/` contains anything other than the `en`, `ja` and `zh-CN` folders, or when a relative link or image path in a README or a doc points at a file that does not exist. Links to GitHub pages (`../../releases` and the like) are checked too: they must climb exactly to the repository page, so inside `README/` they start with `../../../`.
+- The CI `check` job fails when one of the seven documents `api` … `security` is missing in a language folder, when `docs/` contains anything other than the `en`, `ja` and `zh-CN` folders, or when a relative link or image path in a README or a doc points at a file that does not exist. Links to GitHub pages (`../../releases` and the like) are checked too: they must climb exactly to the repository page, so inside `README/` they start with `../../../`.
+
+### 8.1 Screenshots
+
+The README and docs images (`docs/<lang>/screenshots`, 13 desktop and 4 iPhone images per language) are made by `python tools/screenshots/retake.py` from the repository root. It builds the backend image from `backend/Dockerfile` under a unique tag and runs it with a fresh volume on `/data` and `TZ=UTC`. It builds the frontend with Vite and serves it with `vite preview` on a free port, then fills the instance with made-up demo banks, users and records through the API. It restarts the backend so the System log shows only a short stretch of sign-ins and user changes, then drives the real UI in headless Chrome for every language. Images are cut where no text or card is split and stripped of PNG metadata. Container, volume, image tag, temporary folders and processes are removed at the end, also after an error.
+
+Options: `--lang en|ja|zh-CN|all`, `--out DIR` (writes `DIR/<lang>/` so you can compare before touching `docs/`), `--only desktop-13-logs.png,...`, `--chrome PATH` (or `XEXAM_CHROME` / `CHROME_PATH`), and `--backend cargo` when Docker is not available (that run skips the System log image). It needs Python 3.8+ with `openpyxl`, Node.js, Docker and Chrome or Chromium; see `tools/screenshots/README.md`. Two pages are shortened in the page itself so that their card ends inside the image: Question banks shows the format guide opened with only its first two parts, and About shows only the first points of the newest version. Retake the images after a change of the UI or of the version, look at them, and only then write them into `docs/`.
 
 ## 9. Version, changelog and licence
 
 - **`VERSION`** in the repository root holds two `KEY=VALUE` lines (lines starting with `#` are comments), each exactly once:
-  - `CODE_VERSION` (`0.7` today): the version of the code on this branch. Bump it by hand, together with the changelog entry in all three READMEs, `backend/Cargo.toml` and `frontend/package.json` (`0.7.0`; also their lock files). The images are built and tagged with it, and `/api/info` reports it (the backend reads it from `/VERSION` in the image).
-  - `RELEASE_VERSION` (`0.6` until the release job of v0.7 has run): the last version that was actually published. **Never edit it by hand**: the release job writes it, together with the release badge at the top of the READMEs (section 7.1). A push or a merge alone never changes it.
+  - `CODE_VERSION` (`0.7.5` today): the version of the code on this branch. Bump it by hand, together with the changelog entry in all three READMEs, `backend/Cargo.toml` and `frontend/package.json` (`0.7.5`; a version of two parts such as `0.7` is written `0.7.0` there; also their lock files). The images are built and tagged with it, and `/api/info` reports it (the backend reads it from `/VERSION` in the image).
+  - `RELEASE_VERSION` (`0.7` until the release job of v0.7.5 has run): the last version that was actually published. **Never edit it by hand**: the release job writes it, together with the release badge at the top of the READMEs (section 7.1). A push or a merge alone never changes it.
 - Every update adds an entry at the very top of the changelog in all three READMEs (`README.md`, `README/README.ja.md`, `README/README.zh-CN.md`), with a version number equal to `CODE_VERSION`. CI checks this. The GitHub Release notes are taken from the English one.
 - The About page of the app shows these changelogs, built into the frontend (section 3). Keep the entries in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``; links to files in the repository are shown there as plain text. A changed changelog appears in the app only after the frontend is built again.
 - Work happens on `dev`; `main` receives the merge, and a push to `main` publishes the images and the Release. Pull `main` and `dev` after each release (section 7.1).

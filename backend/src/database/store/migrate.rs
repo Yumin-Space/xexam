@@ -29,7 +29,8 @@
 //! instead of `users.new_banks`. A database stamped `"4"` that still has `users.all_banks` is converted on open, after the
 //! same kind of backup (`backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db`), in one transaction: a user with `all_banks = 1` gets a
 //! row for every existing bank and `new_banks = 1`; a user with `all_banks = 0` keeps their rows, with `new_banks = 0`; then
-//! the column `all_banks` is dropped.
+//! the column `all_banks` is dropped. `meta.users_known` is left as the pre-release build wrote it, so a user an older binary
+//! created after the last pre-release open (above the mark) still gets every bank from the fix-up below.
 //!
 //! Every later open checks (read-only) and fixes, each in its own transaction, what only an older binary can leave behind
 //! after a rollback (older versions know neither `user_banks` nor `users.new_banks`, and every user saw every bank there):
@@ -316,7 +317,9 @@ fn convert_prerelease_v4(c: &Connection) -> Result<(), DbError> {
         [],
     )?;
     c.execute_batch("ALTER TABLE users DROP COLUMN all_banks;")?;
-    users::note_known_users(c)?;
+    // `users_known` is not moved here: users above the pre-release mark were created by an older binary (with no access
+    // rows and `all_banks = 0`); the bank access fix-up that runs next in the same open gives them every bank and
+    // `new_banks = 1`, then moves the mark (or writes it when there is none)
     banks::note_known_banks(c)?;
     Ok(())
 }

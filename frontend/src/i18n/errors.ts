@@ -1,6 +1,7 @@
 // Turns any error into text in the current UI language.
 //   · ApiError from the backend: the backend's (Chinese) message is translated by localizeServerMessage(); a 429 that says how
 //     long to wait (retryAfter) becomes "Try again in N minutes / hours / 1 day";
+//   · the proxy's rate limit ('tooMany', v0.7.5): "too many requests, wait a few seconds", without the sign-in hint;
 //   · network / unexpected / bare status errors: generic texts from the catalog;
 //   · LocalError: an error raised by the page itself (catalog key + params), translated lazily so a language switch also switches it.
 import { ApiError } from '../api/client.ts';
@@ -28,6 +29,9 @@ export function errorText(e: unknown, fallback: MsgKey = 'err.generic'): string 
         // Too many failed sign-ins / password checks: say how long the lock still runs
         if (e.status === 429 && e.retryAfter != null) return t('auth.err.tooMany', { wait: waitText(e.retryAfter) });
         return localizeServerMessage(e.serverMessage, uiLang());
+      case 'tooMany':
+        // The proxy's rate limit, still refusing after the automatic retries: not a lost connection or sign-in
+        return t('err.tooMany');
       case 'network':
         return t('err.network');
       case 'unexpected':

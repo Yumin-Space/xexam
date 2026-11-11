@@ -94,9 +94,14 @@ function choiceVerdict(q: Question, mine: string[] | null, correct: boolean): HT
   const right = (q.answer as string[]).join(sep);
   const key = h('span', { class: 'vp' }, withEl(t('result.q.key'), 'a', h('b', { class: 'r' }, right)));
   if (!mine) return h('p', { class: 'verdict' }, key);
-  const mineText = mine.length ? mine.join(sep) : t('result.q.unanswered');
+  // Each chosen letter follows its option (v0.7.5): green when it is one of the correct answers, orange when it is not, so a
+  // partly right multiple choice shows both colours. "Not answered" is one orange word.
+  const rightKeys = q.answer as string[];
+  const mineEl = mine.length
+    ? h('span', null, mine.flatMap((k, i) => [i ? sep : null, h('b', { class: rightKeys.includes(k) ? 'r' : 'w' }, k)]))
+    : h('b', { class: correct ? 'r' : 'w' }, t('result.q.unanswered'));
   return h('p', { class: 'verdict' },
-    h('span', { class: 'vp' }, withEl(t('result.q.mine'), 'a', h('b', { class: correct ? 'r' : 'w' }, mineText))),
+    h('span', { class: 'vp' }, withEl(t('result.q.mine'), 'a', mineEl)),
     key);
 }
 

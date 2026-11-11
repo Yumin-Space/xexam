@@ -325,7 +325,7 @@ impl PendingStore {
 |---|---|
 | rustc / cargo / rustup | `where` 找不到；`~/.cargo`、`~/.rustup` 不存在（**我检查时**）。协调者后来的 spike 报告：本机现有 rustc/cargo 1.99.1（stable-x86_64-pc-windows-gnu）、gcc 16.2、clippy、rustfmt——时间上在我检查之后，按协调者为准 |
 | MSVC | 无 `cl.exe`、无 `vswhere.exe`、无 `C:\Program Files (x86)\Microsoft Visual Studio`、无 Windows Kits；注册表仅有 VS 14.0 的空键。**没有可用的 MSVC Build Tools** |
-| `link` | `where link` → `B:\Git\usr\bin\link.exe`，`link --version` 显示是 **GNU coreutils 8.32 的 `link`**，不是 MSVC 链接器。若将来装了 MSVC 目标，Git for Windows 的这个 `link.exe` 排在前面会**抢占 PATH**（经典坑） |
+| `link` | `where link` → Git for Windows 目录下的 `usr\bin\link.exe`，`link --version` 显示是 **GNU coreutils 8.32 的 `link`**，不是 MSVC 链接器。若将来装了 MSVC 目标，Git for Windows 的这个 `link.exe` 排在前面会**抢占 PATH**（经典坑） |
 | 其它编译器 | PATH 上没有 gcc/clang/cmake/make/ninja（后来 spike 有 gcc 16.2） |
 | WSL | `wsl -l -v`：`docker-desktop`、`Ubuntu-18.04`、`Ubuntu`，均为 WSL2、均 **Stopped** |
 | Docker | CLI 28.1.1 存在；**我检查时引擎未运行**（`docker info` 连不上管道）；协调者后来说 Docker Desktop 已运行 |

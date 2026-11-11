@@ -17,8 +17,8 @@
 //! push the other lines out of the buffer.
 //!
 //! What is logged must never contain a password, a session token, a cookie value or question text: the log calls in this
-//! crate only log usernames (never a typed name that matches no account), bank and file names, ids, counts, paths and error
-//! kinds.
+//! crate only log usernames (never a typed name that matches no account), bank and file names, counts, paths and error
+//! kinds; never a user or bank id.
 use serde::Serialize;
 use std::collections::VecDeque;
 use std::fmt::Write as _;

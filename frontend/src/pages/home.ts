@@ -137,9 +137,10 @@ function emptyState(): HTMLElement {
       h('p', null, t(some ? 'home.empty.noQuestions' : 'home.empty.noBanks')),
       link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
   }
-  if (!some && canManageBanks()) {
+  // A bank manager can import banks and update their own, so they get the way to Question banks too (v0.7.5)
+  if (canManageBanks()) {
     return h('div', { class: 'emptybank' },
-      h('p', null, t('home.empty.noBanksManager')),
+      h('p', null, t(some ? 'home.empty.noQuestionsManager' : 'home.empty.noBanksManager')),
       link({ name: 'banks' }, t('home.empty.go'), 'btn primary'));
   }
   return h('div', { class: 'emptybank' }, h('p', null, t(some ? 'home.empty.noQuestionsUser' : 'home.empty.noAccess')));

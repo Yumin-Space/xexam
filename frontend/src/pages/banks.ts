@@ -363,7 +363,8 @@ async function confirmPending(): Promise<void> {
     // The confirmation code is used up (or expired) either way
     pending = null;
     busy = null;
-    importError = e instanceof ApiError && e.kind === 'http' ? e : new LocalError('banks.err.confirmFailed');
+    // The backend's reason, or "too many requests" (Nginx's rate limit): both say more than the general failure text
+    importError = e instanceof ApiError && (e.kind === 'http' || e.kind === 'tooMany') ? e : new LocalError('banks.err.confirmFailed');
     // The import may have gone through before the connection dropped: show the real state
     try {
       await refreshLibrary();

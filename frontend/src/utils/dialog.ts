@@ -27,7 +27,8 @@ function open(opts: AskOptions, extra: HTMLElement | null, onClose: (ok: boolean
     extra,
     h('div', { class: 'acts' },
       h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, cancel),
-      h('button', { class: 'btn ' + (danger ? 'danger' : 'primary'), type: 'button', onclick: () => d.close('ok') }, ok)));
+      // A destructive confirm (delete, disable) is solid red instead of the primary colour
+      h('button', { class: 'btn ' + (danger ? 'danger solid' : 'primary'), type: 'button', onclick: () => d.close('ok') }, ok)));
   d.addEventListener('close', () => {
     d.remove();
     onClose(d.returnValue === 'ok');
@@ -91,7 +92,7 @@ export function formDialog(o: FormDialogOptions): Promise<boolean> {
   return new Promise((resolve) => {
     let busy = false;
     const err = h('div', { class: 'err dlg-err', role: 'alert', hidden: true });
-    const okBtn = h('button', { class: 'btn ' + (o.danger ? 'danger' : 'primary'), type: 'submit' }, o.ok);
+    const okBtn = h('button', { class: 'btn ' + (o.danger ? 'danger solid' : 'primary'), type: 'submit' }, o.ok);
     const cancelBtn = h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, o.cancel ?? t('common.cancel'));
     const form = h('form', {
       class: 'dlg-form', novalidate: true,

@@ -432,6 +432,56 @@ fn a_prerelease_v4_database_is_converted_on_open_after_a_backup() {
 }
 
 #[test]
+fn a_user_an_older_binary_added_to_a_prerelease_database_gets_every_bank_on_conversion() {
+    let dir = dbc::tmp();
+    let db = dir.path().join("xexam.db");
+    write_prerelease_v4_database(&db);
+    // after the last pre-release open, an older binary (v0.6) created `dana` as it does: no access rows, `all_banks` left
+    // at its default 0, the mark (`users_known` = 3) not moved
+    raw(&db)
+        .execute_batch(
+            "INSERT INTO users(id, username, password_hash, role, disabled, created_at, password_changed_at, \
+             must_change_password) VALUES (4, 'dana', 'x', 'user', 0, '2026-02-01 10:00', '2026-02-01 10:00', 0);",
+        )
+        .expect("older binary user");
+    let s = Store::open(&db).expect("open");
+    assert!(s.converted_prerelease());
+    let c = raw(&db);
+    // dana sees every bank and the banks imported later, as every user did in the older version
+    assert_eq!(
+        s.viewer(4).expect("viewer").scope,
+        BankScope::Only([1, 2].into())
+    );
+    let flags: Vec<(i64, i64)> = c
+        .prepare("SELECT id, new_banks FROM users ORDER BY id")
+        .expect("prepare")
+        .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+        .expect("query")
+        .map(|r| r.expect("row"))
+        .collect();
+    assert_eq!(flags, [(1, 1), (2, 0), (3, 1), (4, 1)]);
+    // the restricted pre-release user keeps only their own row
+    assert_eq!(
+        count(&c, "SELECT COUNT(*) FROM user_banks WHERE user_id=2"),
+        1
+    );
+    let known: String = c
+        .query_row("SELECT value FROM meta WHERE key='users_known'", [], |r| {
+            r.get(0)
+        })
+        .expect("mark");
+    assert_eq!(known, "4");
+    drop(c);
+    drop(s);
+    // the next open has nothing to do
+    let bytes = dbc::db_bytes(&db);
+    let s = Store::open(&db).expect("reopen");
+    assert!(!s.converted_prerelease());
+    drop(s);
+    assert_eq!(dbc::db_bytes(&db), bytes);
+}
+
+#[test]
 fn a_new_bank_reaches_only_the_users_with_banks_imported_later() {
     let dir = dbc::tmp();
     let s = Store::open(&dir.path().join("x.db")).expect("open");

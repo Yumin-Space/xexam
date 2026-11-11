@@ -73,8 +73,8 @@ jobs:
             [ -f "docker/$c" ] || { echo "docker/$c is missing"; exit 1; }
             [ ! -e "$c" ] || { echo "$c belongs in docker/, not at the repository root"; exit 1; }
           done
-          # The seven current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN)
-          for d in api architecture database deployment development migration security; do
+          # The eight current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN)
+          for d in api architecture database deployment development migration security usage; do
             for l in en ja zh-CN; do
               [ -f "docs/$l/$d.md" ] || { echo "docs/$l/$d.md is missing: every current doc is kept in English, Japanese and Chinese"; exit 1; }
             done

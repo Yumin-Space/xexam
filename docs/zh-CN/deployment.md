@@ -25,7 +25,7 @@
 docker compose up -d
 ```
 
-`docker compose up -d` 拉取并启动**两个容器**：`xexam-frontend`（Nginx，唯一对外）和 `xexam-backend`（Rust，私有网络）。然后用浏览器打开 <http://localhost:8765>，用 `admin` / `admin` 登录；Xexam 会马上请你设置自己的密码（第 10 节）。打开菜单（右上角三条横线的按钮），选 **Question banks**（中文界面里叫 **题库管理**），导入你的 Excel。界面一开始是英语；可以在 **Settings**（中文界面里是 **设置**）里，或者在登录页上换成中文或日语。
+`docker compose up -d` 拉取并启动**两个容器**：`xexam-frontend`（Nginx，唯一对外）和 `xexam-backend`（Rust，私有网络）。然后用浏览器打开 <http://localhost:8765>，用 `admin` / `admin` 登录；Xexam 会马上请你设置自己的密码（第 10 节）。打开菜单（右上角三条横线的按钮），选 **Question banks**（中文界面里叫 **题库管理**），导入你的 Excel 文件（六列格式，见 [usage.md](usage.md) 第 12 节）。界面一开始是英语；可以在 **Settings**（中文界面里是 **设置**）里，或者在登录页上换成中文或日语。
 
 ### 从源码构建（改代码时用）
 
@@ -47,7 +47,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | 看日志 | `docker compose logs -f`（只看后端：`docker compose logs -f backend`；见第 9 节） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。从较早的版本升级时先看第 6 节 |
-| 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单 → **Xexam v0.7**（关于页面） |
+| 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单里的版本那一项，例如 **Xexam v0.7.5**（关于页面） |
 
 > ⚠️ 不要运行 `docker compose down -v`：`-v` 会删掉数据卷 `xexam_data`，题库、账户和所有学习记录都在里面。
 
@@ -65,11 +65,11 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = 不检查 Host（只在前面已经有身份验证时用） |
 | `XEXAM_PARSE_TIMEOUT_SECS` | `30` | 解析一份 Excel 的最长时间 |
 | `XEXAM_SQLITE_JOURNAL` | （不设：WAL） | `delete` 让 SQLite 继续用以前的回滚日志，而不是 WAL。只在数据卷放在网络文件系统上，或者是绑定挂载进 Docker Desktop 的 Windows 文件夹时才设置；其他任何值都表示 WAL。见 [database.md](database.md) 第 2.1 节 |
+| `XEXAM_COOKIE_SECURE` | （不设） | `1` = 会话 Cookie 总是带 `Secure`。只在浏览器总是通过 HTTPS 访问 Xexam 时设置（例如通过 Cloudflare Tunnel）；不设时，`Secure` 按每个请求决定（第 10 节） |
+| `XEXAM_LOG` | （不设：`info`） | 后端的日志过滤，`docker compose logs backend` 和系统日志页面都用它，例如 `debug` 或 `warn`。为空或只有空格 = `info`；不是有效过滤的值也退回 `info`，日志开头会有一条写明问题的警告 |
 | `TZ` | （不设：宿主机的时区） | 数据库里时间的时区；compose 文件挂载了宿主机的 `/etc/localtime`，所以只有想用别的时区时才设置 `TZ`（例如 `UTC`） |
 
-改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。只有 `.env` 里设置了 `TZ` 和 `XEXAM_SQLITE_JOURNAL` 时，它们才会传进容器。
-
-后端还读取两个 compose 文件不传递的变量：`XEXAM_COOKIE_SECURE`（`1` = 会话 Cookie 总是带 `Secure`，见第 10 节）和 `XEXAM_LOG`（日志过滤，默认 `info`，例如 `debug`）。把它们写在 `.env` 里没有效果；要用的话，请把它加到你的 `docker-compose.yml` 里 `backend` 服务的 `environment:` 下面，例如 `XEXAM_LOG: "debug"`。`xexam-backend --help` 列出所有变量。
+改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG` 只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 列出后端读取的所有变量。
 
 ### 3.1 时区
 
@@ -90,43 +90,87 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 以后再改时区不会改写已经保存的时间；它们保留写入时的时区。
 
-## 4. 让手机 / 外面连进来
+## 4. 从手机、另一台电脑或互联网打开 Xexam
 
-### 同一个 Wi-Fi 里的 iPhone
+默认 Xexam 只绑定本机（`127.0.0.1`）：只有运行 Docker 的那台机器自己能打开 <http://localhost:8765>。Xexam 有自己的登录，但能连到这个端口的人就能打开登录页，所以只开放到你需要的程度。
 
-只在**信任的网络**里这样做。`.env`：
+### 从另一台电脑经 SSH 打开（不用改配置）
 
-```ini
-XEXAM_BIND=0.0.0.0:8765
-XEXAM_ALLOWED_HOSTS=192.168.1.20      # 你电脑的局域网 IP
+Xexam 跑在一台你能用 SSH 登录的服务器、NAS 或虚拟机上时，在你自己的电脑上运行：
+
+```bash
+ssh -L 8765:127.0.0.1:8765 user@server
 ```
 
-在 iPhone 的 Safari 里打开 `http://192.168.1.20:8765`（需要 iOS 15.4 或更新）。
+这个 SSH 连接开着的时候，在你自己的电脑上用浏览器打开 <http://localhost:8765>。服务器上什么都不用改，也不用开放端口。
+
+### 同一个网络里的手机或电脑
+
+**只在你信任的网络里**这样做（例如家里的 Wi-Fi），不要在公共的或和别人共用的网络里开：
+
+1. 查出运行 Docker 的那台机器的局域网 IP（通常是 `192.168.x.x` 或 `10.x.x.x`）：Windows 上运行 `ipconfig`，看「IPv4 地址」那一行；macOS 上运行 `ipconfig getifaddr en0`；Linux 上运行 `hostname -I`（通常是第一个地址）。
+2. 在 `.env` 里写两行，用那个地址：
+
+   ```ini
+   XEXAM_BIND=0.0.0.0:8765
+   XEXAM_ALLOWED_HOSTS=192.168.1.20      # 运行 Docker 的那台机器的局域网 IP
+   ```
+
+3. 运行 `docker compose up -d`，然后在手机（iPhone 用 Safari，需要 iOS 15.4 或更新）或另一台电脑的浏览器里打开这个地址加端口 8765（这里是 `http://192.168.1.20:8765`）。
+
+离开这个网络时，请用 Cloudflare Tunnel（见下文）；永远不要在路由器上做端口映射。
 
 ### 经 Cloudflare Tunnel 从互联网访问
 
-后端本来就不对外，所以隧道只需要指向 **Nginx**（`XEXAM_BIND` 发布的端口）。要做三件事：
+适用场景：Xexam 跑在你的局域网里，`cloudflared`（Cloudflare 的隧道客户端）在同一个局域网里的某台机器上（不一定是同一台），你想通过自己的域名从外面访问 Xexam，并用 **Cloudflare Access** 保护它。后端本来就不对外，所以隧道只需要指向 **Nginx**（`XEXAM_BIND` 发布的端口）。
 
-1. 确保 cloudflared 连得到 Nginx：在同一台机器上就保持默认，指向 `http://localhost:8765`；在局域网里的另一台机器上，把 `XEXAM_BIND` 设成 `0.0.0.0:8765`（或者一个具体的局域网 IP）。
-2. Public Hostname：`xexam.你的域名.com` → Service `HTTP`（不是 HTTPS）→ `主机IP:8765`。
-3. 在 Cloudflare Access 里加一条策略，**只允许你自己**（以及你邀请的人）。没有策略的域名等于对全世界公开。
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 你（在外面）
+    participant CF as Cloudflare<br/>（域名 + Access）
+    participant T as cloudflared<br/>（局域网）
+    participant X as Xexam<br/>（局域网，主机IP:8765）
 
-两种常见的 Host 情况（`.env`）：
+    U->>CF: 打开 https://xexam.你的域名.com
+    CF-->>U: 要求登录（Cloudflare Access）
+    U->>CF: 通过验证
+    CF->>T: 经隧道转发请求
+    T->>X: HTTP 请求（Host 是你的域名，或被改写成 主机IP:8765）
+    X->>X: 检查 Host 在白名单里；写请求再检查 Origin
+    X-->>U: 页面 / 数据（原路返回）
+    Note over U,X: POST 请求（上传、交卷）带的 Origin 是 https://xexam.你的域名.com<br/>后端只比较主机名，所以不会被拦
+```
+
+要做三件事：
+
+1. **让 cloudflared 连得到 Nginx。** 在同一台机器上就保持默认的绑定，隧道指向 `http://localhost:8765`。在局域网里的另一台机器上，在 `.env` 里设置 `XEXAM_BIND=0.0.0.0:8765`（或者一个具体的局域网 IP，例如 `192.168.1.20:8765`），再加上 `XEXAM_ALLOWED_HOSTS=xexam.你的域名.com`，然后运行 `docker compose up -d`。
+2. Zero Trust 控制台里的 **Public Hostname**（Networks → Tunnels → 你的隧道 → Public Hostname）：Subdomain / Domain 填 `xexam` / `你的域名.com`，Service Type 填 `HTTP`（不是 HTTPS），URL 填 `主机IP:8765`（例如 `192.168.1.20:8765`）。
+3. **在 Cloudflare Access 里加一条策略**，**只允许你自己**和你邀请的人。没有策略的域名等于对全世界公开。
+
+后端看到的 Host 取决于隧道（`.env`）：
 
 | 隧道怎么做 | 设置 |
 |---|---|
 | Host 原样转成你的域名 | `XEXAM_ALLOWED_HOSTS=xexam.你的域名.com` |
-| 设了 `httpHostHeader`，Host 被改写成 `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.你的域名.com` |
-| 不确定 | 先照第一行做。请求被拒绝（403）时，页面会写出它看到的 Host / Origin；把它们加进对应的选项，再运行一次 `up -d` |
+| 设了 `httpHostHeader`，Host 被改写成 `192.168.1.20:8765` | `XEXAM_ALLOWED_HOSTS=192.168.1.20` + `XEXAM_ALLOWED_ORIGINS=https://xexam.你的域名.com`（浏览器发的 `Origin` 仍是公网域名，所以要单独放行） |
+| 不确定 | 先照第一行做。请求被拒绝（403）时，页面会写出它看到的 `Host` / `Origin`，以及它该加进哪个选项；加进去，再运行一次 `docker compose up -d`。同样的原因也写在 `docker compose logs backend` 和 **系统日志** 里 |
+| 不想列域名，前面已经有 Access | `XEXAM_ALLOW_ANY_HOST=1`（不再检查 `Host`；写请求的 `Origin` 检查和登录仍然有效） |
 
 Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并清掉 `X-Forwarded-*`；后端只读真实的 `Host`。
 
-⚠️ 从 v0.6 起 Xexam 有了自己的登录，但前面仍然要保留 Cloudflare Access：只让 cloudflared 连得到这个端口，路由器上不要做端口映射。在 Linux 上，主机防火墙拦不住 Docker 发布的端口；请用 `DOCKER-USER` 链，或者写一个具体的局域网 IP。
+**隧道后面的所有人共用一个限流额度。** Nginx 按客户端地址限制请求数：`/api/` 每秒 30 个请求，突发 120；`/api/upload` 每秒 1 个，突发 5（见 [security.md](security.md) 第 9 节）。通过隧道时，所有用户都来自 cloudflared 的地址，所以都算在同一个额度里。打开一个页面大约发十个请求，开着的系统日志页每秒两个，远低于这个额度；万一还是达到了，页面会重试它的读取，然后显示 **请求太频繁**（见 [usage.md](usage.md) 第 17 节）。
+
+不要忘记的事：
+
+- ⚠️ **Xexam 自己的登录是这个端口上唯一的锁。** 设了 `XEXAM_BIND=0.0.0.0:…` 或 `XEXAM_ALLOW_ANY_HOST=1` 之后，能连到这个端口的人就能打开登录页并试密码（越来越久的锁定能拖慢这种尝试，但弱密码终究是弱密码）。只让 cloudflared 连得到这个端口：路由器上不要做端口映射。在 Linux 上，主机防火墙（ufw、firewalld）拦不住 Docker 发布的端口；请用 `DOCKER-USER` 链，或者在 `XEXAM_BIND` 里写一个具体的局域网 IP。最稳的是让 cloudflared 和 Xexam 在同一台机器上，保持默认的 `127.0.0.1`。
+- 第一次登录时就把默认的 `admin` 密码改掉，并给每个用户设一个他自己的密码。
+- 在 Cloudflare Access 后面要登录两次（先 Access，再 Xexam）。Access 的登录过期后，上传或交卷会失败，提示可能是登录已过期：刷新页面、重新登录就行。做到一半的考试或练习存在浏览器里，不会丢。
 
 验证到什么程度（如实说明）：
 
 - 迁移期间，两种 Host 情况（Host 保留 / Host 被改写）下完整的浏览器流程，是在**旧的 Python 版**上，用真实的 Chrome 和一个 HTTPS 反向代理跑通的。那个脚本依赖旧的 Python 代码，已经随它一起删掉了。
-- 对**新的技术栈**：`tests/integration/stack_check.py` 用请求头层面的检查验证「经过 Nginx 之后，Host / Origin 守卫仍然有效，`X-Forwarded-*` 不被信任」；`nginx_check.py` 验证 Host 原样透传。
+- 对**新的技术栈**：`tests/integration/stack_check.py` 用请求头层面的检查验证「经过 Nginx 之后，Host / Origin 守卫仍然有效，`X-Forwarded-*` 不被信任」；`nginx_check.py` 验证 Host 原样透传，并检查限流。
 - **没有**用真正的 Cloudflare 测过。第一次上线时，请按上表「不确定」那一行做，并看页面给出的 403 提示。
 
 ## 5. 数据
@@ -141,13 +185,16 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 每次升级都是 `docker compose pull && docker compose up -d`（注明需要时，先换上新的 `docker-compose.yml`）。新的后端第一次启动时，会先往 `/data/backups/` 写一份副本，再把数据库迁移到它的 schema；副本写不出来（磁盘满、没有权限）时，它报错退出，数据库不变。Docker 会不断重启它，每次启动都再试一次；Nginx 不会启动，因为它要等后端健康。`docker compose logs backend` 里写着原因。也请先自己备份一次卷（第 5 节）：卷以外的副本更保险。
 
+**从 v0.6 或更早的版本升级，请先准备好六列格式的工作簿。** 从 v0.7 起只能导入六列格式，后端每次启动时都会下架所有从以前版本的三列或四列格式导入的题（题库、学习记录和统计保留）。v0.6 及更早版本的题库全都是这些格式，所以升级之后，要等每个题库都用六列格式的文件更新过，才有题可做（见 [usage.md](usage.md) 第 13.5 节）。
+
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
-- **从 v0.6**（migration.md 第 1 节）：schema v3 → v4，备份 `xexam-schema3-<日期时间>.db`，WAL 模式。也请换上新的 `docker-compose.yml`：它不再设置固定的默认时区（而是跟随宿主机，第 3.1 节），限制容器日志的大小（第 8 节），并传递 `XEXAM_SQLITE_JOURNAL`。如果你以前的时间是用和宿主机不同的时区写入的，请在 `.env` 里把那个时区设成 `TZ`，这样新的记录会接着用它。不需要新增任何变量。
-- **从 v0.5 或 v0.5.1**（migration.md 第 2 节）：schema v2 → v4 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
-- **从 v0.4**（migration.md 第 3 节）：schema v1 → v4 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
+- **从 v0.7**（migration.md 第 1 节）：除了拉取什么都不用做；schema 不变，`docker-compose.yml` 和 `.env` 也不变。
+- **从 v0.6**（migration.md 第 2 节）：schema v3 → v4，备份 `xexam-schema3-<日期时间>.db`，WAL 模式，然后下架旧格式的题。也请换上新的 `docker-compose.yml`：它不再设置固定的默认时区（而是跟随宿主机，第 3.1 节），限制容器日志的大小（第 8 节），并在 `.env` 里设置了时传递 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG`。如果你以前的时间是用和宿主机不同的时区写入的，请在 `.env` 里把那个时区设成 `TZ`，这样新的记录会接着用它。不需要新增任何变量。
+- **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v4 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
+- **从 v0.4**（migration.md 第 4 节）：schema v1 → v4 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
 
-升级后，`/api/info` 显示 `"version": "0.7"`。以后再启动不会再迁移，也不会多写任何东西。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
+升级后，`/api/info` 显示 `"version": "0.7.5"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
 
 ## 7. 健康检查和停止
 
@@ -170,14 +217,14 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 | | **系统日志**（菜单里，只有管理员） | `docker compose logs backend` |
 |---|---|---|
-| 在哪里 | 程序里的 `#/logs` 页面，每 1.5 秒更新一次 | 在服务器上 |
+| 在哪里 | 程序里的 `#/logs` 页面，打开时每 0.5 秒读取一次（读取失败后间隔更长，最长每 10 秒一次） | 在服务器上 |
 | 有多少 | 后端上次启动以来的最后 **2000** 行 | Docker 还保留着的全部：最多 3 个 10 MB 的文件，跨重启保留 |
 | 重启之后 | 又是空的（只在内存里，从不写进数据库） | 保留 |
 | 另外 | 级别筛选、搜索、**暂停** / **继续**、**跳到最新** | Nginx 的访问日志和错误日志：`docker compose logs frontend` |
 
-不用 Compose 时：`docker logs xexam-backend`。页面上的说明写的是 `docker compose logs xexam-backend`；用本仓库的 compose 文件时，服务名是 `backend`，所以请用 `docker compose logs backend`（或 `docker logs xexam-backend`）。
+Compose 服务叫 `backend`（容器叫 `xexam-backend`），所以页面上的说明写的是：在服务器上、compose 文件所在的文件夹里运行 `docker compose logs backend`，不用 Compose 时运行 `docker logs xexam-backend`。在克隆的仓库里从根目录运行时，加上 `-f docker/docker-compose.yml`（或 `-f docker/docker-compose.build.yml`）。
 
-日志里有什么：启动时的几行（版本、数据目录、日志模式、允许的主机、默认密码的提醒）、登录和账户变更（按用户 id：`user 3 signed in`）、被拒绝的上传和写入、警告和错误。它从不包含密码、会话令牌、Cookie 的值、确认码或题目文字。被 Host / Origin 检查拒绝的请求、失败的登录，以及没有账户的用户名被锁定，都先记一次，之后最多每分钟汇总一次，所以没人能不登录就把其他日志挤出这 2000 行。详见 [security.md](security.md) 第 8 节。
+日志里有什么：启动时的几行（版本、数据目录、日志模式、允许的主机、默认密码的提醒、升级信息，以及因为旧的 Excel 格式而被下架的题）、按用户名记录的登录和账户变更（`user "admin" signed in`、`user "admin" updated user "alex"`；登录时输入的、没有账户的名字从不记录）、被拒绝的上传和写入、警告和错误。它从不包含密码、会话令牌、Cookie 的值、确认码或题目文字。被 Host / Origin 检查拒绝的请求、失败的登录，以及没有账户的用户名被锁定，都先记一次，之后最多每分钟汇总一次，所以没人能不登录就把其他日志挤出这 2000 行。详见 [security.md](security.md) 第 8 节。
 
 ## 10. 第一次启动、账户和找回
 

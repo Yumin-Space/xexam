@@ -155,11 +155,25 @@ fn say_private(msg: &str) {
     let _ = out.flush();
 }
 
+/// The log filter for `XEXAM_LOG`: unset, empty or only spaces means the default `info` (Compose passes an empty value when
+/// `.env` has `XEXAM_LOG=`, and an empty filter would hide every line); a value that does not parse also falls back to
+/// `info`, returned with the parse error so the caller can say so once.
+fn log_filter(value: Option<&str>) -> (tracing_subscriber::EnvFilter, Option<String>) {
+    use tracing_subscriber::EnvFilter;
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        None => (EnvFilter::new("info"), None),
+        Some(v) => match EnvFilter::try_new(v) {
+            Ok(f) => (f, None),
+            Err(e) => (EnvFilter::new("info"), Some(e.to_string())),
+        },
+    }
+}
+
 fn init_tracing() {
     use tracing_subscriber::layer::SubscriberExt;
     use tracing_subscriber::util::SubscriberInitExt;
-    let filter = tracing_subscriber::EnvFilter::try_from_env("XEXAM_LOG")
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let value = std::env::var("XEXAM_LOG").ok();
+    let (filter, invalid) = log_filter(value.as_deref());
     // One filter for both outputs: stderr (what `docker compose logs` shows) and the in-memory buffer of the System log page.
     // No ANSI escapes: user-controlled strings written to the log must not inject terminal control sequences
     let _ = tracing_subscriber::registry()
@@ -171,6 +185,9 @@ fn init_tracing() {
         )
         .with(xexam_backend::logs::BufferLayer::global())
         .try_init();
+    if let Some(err) = invalid {
+        tracing::warn!("XEXAM_LOG is not a valid log filter ({err}); using the default \"info\"");
+    }
 }
 
 /// Container self-check: `GET http://127.0.0.1:<port>/api/info` with Host 127.0.0.1 (on the default allowlist); only a 200 counts as healthy.
@@ -695,6 +712,21 @@ mod tests {
 
     fn p(v: &[&str]) -> Result<Args, String> {
         parse_args(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn log_filter_defaults_to_info_when_unset_blank_or_invalid() {
+        for value in [None, Some(""), Some("   "), Some("\t \n")] {
+            let (f, err) = log_filter(value);
+            assert_eq!(f.to_string(), "info", "{value:?}");
+            assert!(err.is_none(), "{value:?}");
+        }
+        let (f, err) = log_filter(Some(" debug "));
+        assert_eq!(f.to_string(), "debug");
+        assert!(err.is_none());
+        let (f, err) = log_filter(Some("xexam_backend=loud"));
+        assert_eq!(f.to_string(), "info");
+        assert!(err.is_some());
     }
 
     #[test]

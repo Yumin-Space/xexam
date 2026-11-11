@@ -20,7 +20,7 @@
 
 | 方法 | 路径 | 访问级别 | 作用 | 写库？ |
 |---|---|---|---|---|
-| GET | `/api/info` | 公开 | 版本、CPU 架构、能否关闭程序、题数 | 否 |
+| GET | `/api/info` | 公开 | 版本、CPU 架构、能否关闭程序 | 否 |
 | GET | `/api/auth/state` | 公开 | 谁登录着，以及题库印记 *(v0.6)* | 否 |
 | POST | `/api/auth/login` | 公开 | 登录 *(v0.6)* | 是（新会话） |
 | POST | `/api/auth/logout` | 登录 | 退出登录 *(v0.6)* | 是（删除会话） |
@@ -55,7 +55,7 @@
 ## 2. 所有响应的共同点
 
 - `Cache-Control: no-store` 和 `X-Content-Type-Options: nosniff`，没有 `Server` 头。
-- JSON 是 UTF-8，日文和中文不转义成 `\uXXXX`。分隔符是 `", "` 和 `": "`（冒号后面有一个空格），键的顺序固定（就是本文和 [openapi.yaml](../en/openapi.yaml) 里的顺序）。**这是约定的一部分**：冒烟测试会执行 `grep '"bankCount": 0'`。
+- JSON 是 UTF-8，日文和中文不转义成 `\uXXXX`。分隔符是 `", "` 和 `": "`（冒号后面有一个空格），键的顺序固定（就是本文和 [openapi.yaml](../en/openapi.yaml) 里的顺序）。**这是约定的一部分**：黄金测试（`backend/tests/api_golden.rs`）把 JSON 和旧版的响应逐字节比较。
 - 错误的形式是 `{"error": "<原因>"}`。原因是一句可以直接给用户看的中文（前端会把它翻译成界面语言）；第 4 节列出了每一条及其英文意思。只有请求层的底层回答保留旧版简短的英文：`bad content type`（415）、`too large`（413）、`bad json`（400）、`not found`（404）和 `method not allowed`（405）。登录锁定时的 429 回答多一个键 `retryAfter`。
 - 后端从不在响应里放异常名、文件路径或 SQLite 的错误信息；细节只写进日志。
 
@@ -109,7 +109,7 @@ flowchart LR
 ### 每个用户能看到和管理什么 *(v0.7)*
 
 - **管理员**能看到并管理所有题库。
-- **普通用户**要么能看到所有题库，包括以后导入的（`GET /api/users` 里是 `"banks": "all"`），要么只能看到管理员选的那些（一个 id 列表，可以是空的）。有 **可管理题库** 权限的普通用户还能看到自己导入的题库（只在拥有这个权限时：没有权限时，只有自己的题库也在所选之列才能看到）。
+- **普通用户**正好能看到管理员为他选的那些题库（`GET /api/users` 里的 `banks`，一个 id 列表，可以是空的）。有了 `newBanks`（**包括以后导入的题库**），以后新建的每个题库在新建时都会加进这个列表；它从不添加已有的题库。有 **可管理题库** 权限的普通用户还能看到自己导入的题库（只在拥有这个权限时：没有权限时，只有自己的题库也在所选之列才能看到）。
 - **可管理题库的用户**可以导入新题库（他就是所有者），只能更新或删除自己的题库。更新或删除管理员或其他用户的题库，回答 **403** `这个题库不是你上传的，只能更新或删除你自己上传的题库。`；这个检查在写入的事务里进行，所以什么都不会写入。
 
 对于不能看到所有题库的用户，每个路由都遵循同样的规则：
@@ -123,15 +123,15 @@ flowchart LR
 | `GET /api/records` | 他的每条记录都作为历史保留，带着保存时的题库名 |
 | `GET /api/record` | 他看不到的题库里的题是 `"question": null`，和已删除的题一样（不发送题目文字） |
 | `GET /api/auth/state` | `library` 只跟随他的题库和他的权限 |
-| `GET /api/info` | 不变：`bankCount` 数的是整个题库里所有上架的题（这个路由是公开的，供容器的健康检查用；前端根据 `GET /api/banks` 决定显示什么） |
+| `GET /api/info` | 对所有人都一样：只有版本、架构和 `canShutdown`（这个路由是公开的，供容器的健康检查用） |
 
 ## 4. 接口细节
 
 ### `GET /api/info`
 ```json
-{"version": "0.7", "arch": "x86_64", "canShutdown": false, "bankCount": 5}
+{"version": "0.7.5", "arch": "x86_64", "canShutdown": false}
 ```
-公开。`bankCount` 是整个题库里上架的题数。版本号是 `VERSION` 文件里的 `CODE_VERSION`（或 `XEXAM_VERSION`）。
+公开。版本号是 `VERSION` 文件里的 `CODE_VERSION`（或 `XEXAM_VERSION`）；`arch` 是服务器的 CPU 架构；只有程序带着 `--allow-shutdown` 启动时，`canShutdown` 才是 `true`。*(v0.7.5)* 键 `bankCount`（整个题库里上架的题数）去掉了：这个路由是公开的，登录后的页面根据 `GET /api/bank` 和 `GET /api/banks` 自己数它们能看到的题。这个路由仍然会读取数据库，所以数据库读不出来时它回答 500，容器的健康检查（问的就是这个路由）会报告后端不健康。
 
 ### `GET /api/auth/state` *(v0.6)*
 公开。没有登录时（没有 Cookie，或会话已经无效）：
@@ -178,12 +178,14 @@ flowchart LR
 管理员。所有账户，按 id 排序：
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
+{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ownedBanks": [3], "lock": null}]}
 ```
 
 - `createdAt` / `lastLoginAt` 是本地时间 `YYYY-MM-DD HH:MM`；第一次登录之前 `lastLoginAt` 是 `null`。
 - `records` 是这个用户的学习记录条数（考试和练习）。
-- `banks` *(v0.7)*：`"all"`（所有题库，包括以后导入的），或者为他选的题库的 id，升序（只含还存在的题库；`[]` = 一个都没有）。`canManageBanks` *(v0.7)* 是保存着的 **可管理题库** 权限。两者在改角色时都会保留，但只在账户是普通用户时才起作用：管理员能看到并管理所有题库。
+- `banks` *(v0.7)*：这个用户能看到的题库的 id，升序（只含还存在的题库；`[]` = 一个都没有）。它总是一个列表：`"all"` 只是写入时的简写（见下文）。
+- `newBanks` *(v0.7)*：**包括以后导入的题库**。`true`：从现在起新建的每个题库（任何人作为新题库导入，或者命令行 `import`）都会在同一个事务里加进 `banks`。它从不添加已有的题库。
+- `canManageBanks` *(v0.7)* 是保存着的 **可管理题库** 权限。`banks`、`newBanks` 和 `canManageBanks` 在改角色时都会保留，但只在账户是普通用户时才起作用：管理员能看到并管理所有题库。
 - `ownedBanks` *(v0.7)*：这个用户作为新题库导入的题库（他是所有者）的 id，升序。
 - `lock`：账户在内存里的登录状态。还在第一轮、没有被锁定时是 `null`；否则：
 
@@ -201,7 +203,7 @@ flowchart LR
 | `otherUntil` / `otherRetryAfter` | 只有另一类浏览器同时也被锁定、账户在所有浏览器上都被锁定时才有值：那第二个锁定的结束时间和秒数（否则是 `null` / `0`） |
 
 ### `POST /api/users/create` *(v0.6)*
-管理员。请求体：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<题库 id>, …], "canManageBanks": <bool>}`。`banks` 默认是 `[]`（管理员选好之前，新用户看不到任何题库），`canManageBanks` 默认是 `false`（*两者都是 v0.7*）。新账户是启用的，第一次登录时必须设置新密码。回答：和 `GET /api/users` 一样的 `{"users": [...]}`。
+管理员。请求体：`{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<题库 id>, …], "newBanks": <bool>, "canManageBanks": <bool>}`。*(v0.7)* `banks` 默认是 `[]`（管理员选好之前，新用户看不到任何题库），`newBanks` 默认是 `false`，`canManageBanks` 默认是 `false`。`"banks": "all"` 是一种简写：现在存在的所有题库，并且在没有给出 `newBanks` 时同时设置 `newBanks: true`。重复的 id 会被忽略。新账户是启用的，第一次登录时必须设置新密码。回答：和 `GET /api/users` 一样的 `{"users": [...]}`。
 
 用户名 1–40 个字符（ASCII 字母、数字和 `. _ - @`，去掉首尾空格），不区分大小写地唯一；密码 8–128 个字符。
 
@@ -209,16 +211,16 @@ flowchart LR
 |---|---|
 | **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` | 缺少 `username`、不是字符串，或不符合规则 |
 | **400** `密码需要 8–128 个字符。` | `password` 太短或太长 |
-| **400** `请求的格式不对。` | 缺少 `password` 或不是字符串；缺少 `role` 或不是 `admin` / `user`；`banks` 既不是 `"all"` 也不是整数列表；`canManageBanks` 不是布尔值 |
-| **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` *(v0.7)* | `banks` 里有一个 id 不是现存的题库；什么都不创建 |
+| **400** `请求的格式不对。` | 缺少 `password` 或不是字符串；缺少 `role` 或不是 `admin` / `user`；`banks` 既不是 `"all"` 也不是整数列表；`newBanks` 或 `canManageBanks` 不是布尔值 |
+| **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` *(v0.7)* | `banks` 里有一个 id 不是现存的题库（或者不是正整数）；什么都不创建 |
 | **409** `这个用户名已经有人用了。` | 另一个账户用了这个名字（不区分大小写） |
 
 ### `POST /api/users/update` *(v0.6)*
-管理员。请求体：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "canManageBanks"?}`；没写的键保持不变。回答：`{"users": [...]}`。
+管理员。请求体：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?}`；没写的键保持不变。回答：`{"users": [...]}`。
 
-- 停用账户或改角色会结束它的会话。改名、改 `banks` 或 `canManageBanks` 不会结束会话；修改从这个用户的下一个请求开始生效。
-- `banks` 替换所选的题库（`"all"`，或一个 id 列表；`[]` = 一个都没有）。
-- **400**：和创建时一样（`username`、`role`、`banks`、`canManageBanks`；`disabled` 不是布尔值 → `请求的格式不对。`；缺少 `id` 或不是整数（布尔值不算） → `请求的格式不对。`）。
+- 停用账户或改角色会结束它的会话。改名、改 `banks`、`newBanks` 或 `canManageBanks` 不会结束会话；修改从这个用户的下一个请求开始生效。
+- `banks` 替换所选的题库（一个 id 列表，`[]` = 一个都没有；或者 `"all"`，现在存在的所有题库，在没有给出 `newBanks` 时还会设置 `newBanks: true`）。只给 `newBanks` 时只改这个标记：取消它不会拿走这个用户已有的题库。
+- **400**：和创建时一样（`username`、`role`、`banks`、`newBanks`、`canManageBanks`；`disabled` 不是布尔值 → `请求的格式不对。`；缺少 `id` 或不是整数（布尔值不算） → `请求的格式不对。`）。
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。`。
 - **409** `不能对自己的账户做这个操作。`：停用自己或改自己的角色时；`至少要保留一个启用的管理员。`：修改后就没有启用的管理员时；`这个用户名已经有人用了。`。
 
@@ -237,7 +239,7 @@ flowchart LR
 登录。`file` / `mtime` 是最近一次导入（用户能看到的题库）的文件名和时间；`questions` 只包含上架的题，来自用户能看到的所有题库，按题库 id（升序）分组，每个题库内按它自己的顺序；`sheets` 里每个工作表名带可用题数和已下架题数（不同题库里同名的工作表合在一起计数；每个题库各自的数字见 `GET /api/banks`）。题目的各个字段见 [openapi.yaml](../en/openapi.yaml) 里的 `Question`。
 从 v0.5 起，每道题最后多一个键 `"bank": <题库 id>`（在 `row` 之后）。
 
-一道题的键的顺序是 `kind, tag, stem, options, items, answer, translation, zh, [english, en,] [lang, ja,] explanation, mnemonic, note, [explain,] id, sheet, row, bank`。方括号里的键只在有它们的格式里出现，所以旧文件的输出和以前逐字节相同：
+一道题的键的顺序是 `kind, tag, stem, options, items, answer, translation, zh, [english, en,] [lang, ja,] explanation, mnemonic, note, [explain,] id, sheet, row, bank`。方括号里的键只在有它们的格式里出现，所以旧文件的输出和以前逐字节相同。从 v0.7 起只能导入六列格式，旧格式的题在每次启动时都会被下架，所以 `GET /api/bank` 里通常只有六列格式的题；旧的形式仍会出现在 `GET /api/record` 里，用于以前记录中已下架的题：
 
 - **三列格式**（A 题目，B 中文，C 答案）：一个都没有。
 - **四列格式**（A 英语，B 中文，C 日语，D 答案）：`english`（A 列的原文）和 `en`（按日语的结构拆开的英语）。`stem`、`options`、`items` 和 `answer` 来自 C 列的日语。
@@ -263,7 +265,7 @@ flowchart LR
 登录。`questions` 是用户每道题的累计统计（答过几次、答对几次、答错几次、当前连续答对几次），只限于他能看到的题库；`history` 是他最近 60 条学习记录（数据库保留 500 条，见 `GET /api/records`），每条最后是 `kind` *(v0.7)*；`masterStreak` 是连续答对几次后移出错题本（2）。
 
 ```json
-{"version": 1, "questions": {"94e4bfe00e8d": {"attempts": 3, "correct": 2, "wrong": 1, "streak": 2, "last": true, "at": "2026-11-10 15:10"}}, "history": [{"at": "2026-11-10 15:10", "sheets": ["Cooking"], "mode": "all", "total": 5, "correct": 4, "percent": 80, "seconds": 130, "kind": "exam"}], "masterStreak": 2}
+{"version": 1, "questions": {"1a2b3c4d5e6f": {"attempts": 3, "correct": 2, "wrong": 1, "streak": 2, "last": true, "at": "2026-11-10 15:10"}}, "history": [{"at": "2026-11-10 15:10", "sheets": ["Cooking"], "mode": "all", "total": 5, "correct": 4, "percent": 80, "seconds": 130, "kind": "exam"}], "masterStreak": 2}
 ```
 
 ### `GET /api/imports`
@@ -273,8 +275,9 @@ flowchart LR
 可管理题库。请求体是 .xlsx 文件的原始字节；可选请求头 `X-Filename` 带百分号编码的文件名。服务端：
 
 1. 只凭**内容**判断是不是 .xlsx（魔数 + ZIP 结构 + 有工作簿 + 没有 DOCTYPE / 实体声明 + 解压后大小有上限）。空文件、旧的 `.xls`、损坏的文件、改了扩展名的文件，各有自己的中文说明。
-2. 解析它，生成预览，把解析结果放进内存里**上传者自己的待确认槽位**（再上传一次就替换它；别人的槽位永远不碰），30 分钟内有效。
-3. **不写数据库。**
+2. 解析它。*(v0.7)* 解析器读出任何一道旧的三列或四列格式的题时，这次上传以 **400** `只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。` 被拒绝，新建题库和更新题库都一样；什么都不暂存，待确认槽位也不受影响。日志里会记一行带文件名的英语日志。
+3. 生成预览，把解析结果放进内存里**上传者自己的待确认槽位**（再上传一次就替换它；别人的槽位永远不碰），30 分钟内有效。
+4. **不写数据库。**
 
 返回预览（`added / updated / unchanged / restored / removed / skipped / usable`、每个工作表的详情，以及读不出来的行和原因）和一次性确认码 `token`：
 
@@ -284,7 +287,7 @@ flowchart LR
 
 每个工作表最多列出 30 个读不出来的行（`skipped`，每个是 `{"row", "reason"}`）；`skippedMore` 是还有几个，`skippedCount` 是一共几个。
 
-**提醒** *(v0.7)*：在六列格式里，中文（E 列）或日文（F 列）答案和英文答案（D 列）不一致的行仍然会导入，用的是英文答案，并作为提醒列出来。只有这时才会出现这些键，所以三列或四列文件的预览不变：有提醒的工作表多一个 `warnings`（最多 30 个 `{"row", "reason"}`，紧接在 `restored` 之后），并在最后多 `warningsMore` 和 `warningsCount`；整个预览在 `removed_stats` 之后多一个提醒总数 `warnings`。原因是 `E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）`，F 列的日文答案也是同样的写法。
+**提醒** *(v0.7)*：中文（E 列）或日文（F 列）答案和英文答案（D 列）不一致的行仍然会导入，用的是英文答案，并作为提醒列出来。只有这时才会出现这些键，所以没有提醒的预览和以前版本的键完全一样：有提醒的工作表多一个 `warnings`（最多 30 个 `{"row", "reason"}`，紧接在 `restored` 之后），并在最后多 `warningsMore` 和 `warningsCount`；整个预览在 `removed_stats` 之后多一个提醒总数 `warnings`。原因是 `E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）`，F 列的日文答案也是同样的写法。
 
 **目标题库** *(v0.5)*：可选请求头 `X-Bank-Target` 说明文件导入到哪个题库。不管哪种情况，预览的键都一样；它只和目标题库比较。
 
@@ -299,7 +302,7 @@ flowchart LR
 
 **内存额度** *(v0.7)*：每个管理员和可管理题库的用户都有一个槽位，而一份接近解析器上限的工作簿解析后会占用超过 100 MB，所以所有暂存的预览共用一个 128 MiB 的额度（按内容估算）。暂存新的上传时，先丢掉过期的预览，总量仍超过额度时，再丢掉别的用户最早的预览。最新的上传总会保留。预览被丢掉的用户在确认时得到 **409**，和过了 30 分钟一样。
 
-其他回答：**413** `文件太大了（最大 20 MB）。…`；**400** 加上文件被拒绝的原因（不是 .xlsx、已损坏、解压后太大、解析时间太长等）。
+其他回答：**413** `文件太大了（最大 20 MB）。…`；**400** 加上文件被拒绝的原因（不是 .xlsx、已损坏、解压后太大、解析时间太长、旧格式等）。
 
 ### `POST /api/import/confirm`
 可管理题库。请求体是 `{"token": "…"}`。
@@ -307,6 +310,7 @@ flowchart LR
 - 确认码是一个 128 位的随机数（22 个字符），**只能用一次**。它只能确认调用者自己待确认的上传：错误的确认码、别的用户的确认码或含非 ASCII 字符的确认码都当作「无效」，不会消耗待确认的内容；过期（或被丢掉）的预览无法找回。这些情况一律 → **409** `这次上传的预览已经过期或已被处理，请重新上传。`。
 - 导入在**一个事务**里完成：要么全部成功，要么题库保持不变（**500** `写入数据库失败，题库没有任何改动。`）。
 - 这份文件里一道可用的题都没有 → **400** `这份文件里没有读到任何可用的题，没有导入。`。
+- *(v0.7)* 暂存的工作簿里有旧的三列或四列格式的题时，这里也会在写入任何东西之前拒绝它（**400**，提示和上传时一样）。
 
 导入规则（文件被当成**目标题库的完整内容**）：第一次出现的题新增；改过的题更新；这个题库里有、文件里找不到的题**下架**（学习记录保留）；下架的题再次出现时自动恢复。其他题库永远不碰。
 
@@ -380,7 +384,7 @@ flowchart LR
 `GET` 返回默认值合并上保存的值（保存的值无效时忽略它）。`POST /api/settings` 接受这些键的任意子集，返回完整的设置；未知的键忽略；已知的键取值无效 → **400** `设置的值不对。`，什么都不写入。`POST /api/settings/reset`（请求体 `{}` 或空）把 `theme`、`uiLang` 和 `autoAdvance` 恢复成默认值，保留 `questionLang`，返回完整的设置。
 
 ### `GET /api/logs` *(v0.7)*
-管理员。**系统日志** 页面显示的日志：后端启动以来记录的最近 2000 行，只保存在内存里（重启后又是空的；什么都不写进数据库）。它们就是 `docker compose logs backend` 显示的那些行（经过同样的 `XEXAM_LOG` 过滤），再加上启动和关闭时的状态行。日志行从不包含密码、令牌、Cookie 的值或题目文字。
+管理员。**系统日志** 页面显示的日志：后端启动以来记录的最近 2000 行，只保存在内存里（重启后又是空的；什么都不写进数据库）。它们就是 `docker compose logs backend` 显示的那些行（经过同样的 `XEXAM_LOG` 过滤），再加上启动和关闭时的状态行。日志行用用户名指代用户（`user "admin" updated user "alex"`），从不用 id，也从不写没有账户的、输入的名字；日志行从不包含密码、令牌、Cookie 的值或题目文字。
 
 查询参数，两个都可选：
 
@@ -388,7 +392,7 @@ flowchart LR
 - `boot=<id>`：客户端上次读到的回答里的 `boot`（1–64 个 `A-Z a-z 0-9 _ -` 字符）。
 
 ```json
-{"lines": [{"seq": 41, "time": "2026-11-10 15:10:02", "level": "info", "target": "xexam_backend::api::auth", "message": "user 2 signed in"}], "last": 41, "dropped": false, "boot": "Xq3v9T0bLm2k"}
+{"lines": [{"seq": 41, "time": "2026-11-10 15:10:02", "level": "info", "target": "xexam_backend::api::auth", "message": "user \"admin\" signed in"}], "last": 41, "dropped": false, "boot": "Xq3v9T0bLm2k"}
 ```
 
 - `lines`：最早的在前。`seq` 每行加一，每个后端进程都从 1 开始；`time` 是带秒的本地时间；`level` 是 `error`、`warn`、`info`、`debug` 或 `trace`；`target` 是记录它的模块；`message` 是文字加上它的字段（超过 4000 个字符会截断）。
@@ -418,6 +422,7 @@ flowchart LR
 | 400 | `新密码不能和原来的一样。` | The new password must be different from the old one. | `POST /api/auth/password` |
 | 400 | `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` | One of the chosen question banks does not exist (it may have been deleted). Refresh the page and try again. | 用户：创建、修改 *(v0.7)* |
 | 400 | `这份文件里没有读到任何可用的题，没有导入。` | No usable questions were found in this file, so nothing was imported. | 确认导入 |
+| 400 | `只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。` | Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again. | 上传、确认导入 *(v0.7)* |
 | 401 | `请先登录。` | Please sign in first. | 没有有效的会话 |
 | 401 | `用户名或密码不对。` | The username or password is not correct. | 登录 |
 | 403 | `请先设置新密码。` | Please choose a new password first. | 账户需要设置新密码 |
@@ -461,7 +466,7 @@ flowchart LR
 | 不带 `--data` / `XEXAM_DATA` 直接运行 | 数据目录是程序目录下的 `data` | 数据目录是**当前工作目录**下的 `data` | 只影响不用 Docker 的本机运行；请显式指定 `--data` |
 | 子命令写在选项后面（`--data /d import x.xlsx`） | 不适用（旧版是 `--import`） | 子命令必须是第一个参数，否则被当成 `serve`（旧写法 `--import x.xlsx` 仍可用） | 参数解析更简单 |
 
-从 v0.6 起，黄金测试以默认管理员的身份登录后运行（测试辅助代码会建立会话），所以它们比较的请求和响应仍然和有登录之前一样。
+从 v0.6 起，黄金测试以默认管理员的身份登录后运行（测试辅助代码会建立会话），所以它们比较的请求和响应仍然和有登录之前一样。从 v0.7 起，它们还带着一个只用于测试的设置运行，让 API 能暂存旧版的三列格式导入（`OldLayouts::AllowForTests`，API 状态的一个字段，只有测试代码会设置；没有任何环境变量、参数或设置能打开它，正式运行时总是拒绝这些格式）。从 v0.7.5 起，`GET /api/info` 的抓取在比较时不看 `bankCount`，这是新的回答唯一省掉的键。
 
 ### v0.5 的变化（相对 v0.4）
 
@@ -491,18 +496,27 @@ flowchart LR
 | 普通用户能看到什么 | 所有题库 | 所有题库，或管理员选的题库（可管理题库的用户再加上自己的）；每个路由都这样（第 3 节） |
 | 待确认的上传 | 整个服务器只有一份 | 每个上传者一份，共用 128 MiB 的内存额度 |
 | `GET /api/auth/state` | `user` 里没有 `canManageBanks`；`defaultAdmin` 是布尔值；`library` 是能看懂的计数 | `user.canManageBanks`；`defaultAdmin` 是用户名或 `null`；`library` 是不透明的 32 位十六进制摘要 |
-| `GET /api/users` | | `banks`、`canManageBanks`、`ownedBanks`；`lock` 多了 `knownBrowser`、`otherUntil`、`otherRetryAfter` |
+| `GET /api/users` | | `banks`、`newBanks`、`canManageBanks`、`ownedBanks`；`lock` 多了 `knownBrowser`、`otherUntil`、`otherRetryAfter` |
+| `POST /api/users/create`、`POST /api/users/update` | | `banks`（`"all"` 或 id 列表）、`newBanks`、`canManageBanks` |
 | `GET /api/banks` | | `ownerId`、`owner`、`manageable` |
 | `POST /api/attempt` | 每个结果都计入 | `kind`；只计入还存在、能看到的题（`notCounted`，一个都不剩时 409） |
 | `GET /api/records`、`GET /api/record`、`GET /api/progress` 的 history | | 最后一个键是 `kind` |
-| 上传预览 | | `warnings`（只有六列文件） |
+| 上传、确认导入 | 三列和四列格式 | 只有六列格式；旧格式 → 400 |
+| 上传预览 | | `warnings` |
 | 新路由 | | `GET /api/logs` |
 | 数据库结构 | v3 | v4（题库权限、题库所有者、记录类型），见 [database.md](database.md) |
+
+### v0.7.5 的变化（相对 v0.7）
+
+| 变化 | v0.7 | v0.7.5 |
+|---|---|---|
+| `GET /api/info` | `{"version", "arch", "canShutdown", "bankCount"}` | `{"version", "arch", "canShutdown"}`：`bankCount` 去掉了 |
+| `/api/` 的 Nginx 限流 | 每秒 10 个请求，突发 30 | 每秒 30 个请求，突发 120（按客户端地址；上传不变） |
 
 ## 6. 调用示例
 
 ```bash
-# 看版本和题数（公开）
+# 看版本和架构（公开）
 curl -s http://localhost:8765/api/info
 
 # 登录，把会话 Cookie 存进一个文件（用你自己的用户名和密码）
@@ -512,29 +526,29 @@ curl -s -c cookies.txt -X POST http://localhost:8765/api/auth/login \
 # 我是谁？
 curl -s -b cookies.txt http://localhost:8765/api/auth/state
 
-# 上传（只得到预览，不写库）
+# 把一份六列格式的工作簿上传为新题库（只得到预览，不写库）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \
-  -H 'Content-Type: application/octet-stream' -H 'X-Filename: demo.xlsx' \
-  --data-binary @tests/baseline/fixtures/demo.xlsx
+  -H 'Content-Type: application/octet-stream' -H 'X-Filename: my-bank.xlsx' -H 'X-Bank-Target: new' \
+  --data-binary @my-bank.xlsx
 
-# 确认导入（把上一步返回的 token 填进来）
+# 确认导入（把上一步返回的 token 填进来；响应最后有 "bankId"）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/import/confirm \
   -H 'Content-Type: application/json' -d '{"token": "…"}'
 
-# 把同一个文件导入成一个新的、独立的题库（然后像上面那样确认；响应最后多一个 "bankId"）
+# 用工作簿的新版本更新 1 号题库（然后像上面那样确认）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/upload \
-  -H 'Content-Type: application/octet-stream' -H 'X-Filename: demo.xlsx' -H 'X-Bank-Target: new' \
-  --data-binary @tests/baseline/fixtures/demo.xlsx
+  -H 'Content-Type: application/octet-stream' -H 'X-Filename: my-bank.xlsx' -H 'X-Bank-Target: 1' \
+  --data-binary @my-bank.xlsx
 
 # 列出题库，然后删除 2 号题库，连同它的学习数据
 curl -s -b cookies.txt http://localhost:8765/api/banks
 curl -s -b cookies.txt -X POST http://localhost:8765/api/banks/delete \
   -H 'Content-Type: application/json' -d '{"id": 2, "withRecords": true}'
 
-# 添加一个能看到 1 号题库的可管理题库的用户（他第一次登录时必须设置新密码）
+# 添加一个能看到 1 号题库和以后导入的每个题库的可管理题库的用户（他第一次登录时必须设置新密码）
 curl -s -b cookies.txt -X POST http://localhost:8765/api/users/create \
   -H 'Content-Type: application/json' \
-  -d '{"username": "cook", "password": "initial-pass-1", "role": "user", "banks": [1], "canManageBanks": true}'
+  -d '{"username": "cook", "password": "initial-pass-1", "role": "user", "banks": [1], "newBanks": true, "canManageBanks": true}'
 
 # 把界面切换成深色模式和日语
 curl -s -b cookies.txt -X POST http://localhost:8765/api/settings \

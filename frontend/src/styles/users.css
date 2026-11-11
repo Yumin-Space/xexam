@@ -53,9 +53,9 @@
 /* "Delete" looks like the other actions and turns red on hover or focus (as on the banks page); the dialog asks first */
 .us-acts .btn.danger { color: var(--ink2); border-color: var(--line); }
 @media (hover: hover) {
-  .us-acts .btn.danger:hover:not(:disabled) { color: var(--wrong); background: var(--wrong-soft); border-color: var(--ng-line); }
+  .us-acts .btn.danger:hover:not(:disabled) { color: var(--danger-hover); background: var(--danger-soft); border-color: var(--danger-line); }
 }
-.us-acts .btn.danger:focus-visible { color: var(--wrong); }
+.us-acts .btn.danger:focus-visible { color: var(--danger); }
 
 /* ---------- Add a user: a soft tinted block ---------- */
 .us-add { margin: 4px 0 12px; padding: 16px; border-radius: 8px; background: var(--fill); }
