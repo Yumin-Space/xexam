@@ -142,7 +142,7 @@ docker compose up -d
 
 每次升级都还是同样的端口、同样的卷 `xexam_data`，所以数据原样保留：先 `docker compose pull`，再 `docker compose up -d`。v0.8 新增了第三个镜像和两个卷，所以从 v0.7.5 或更早的版本升级时，还需要新的 `docker-compose.yml`；v0.9 不需要新的 compose 文件。数据库 schema 有变化时，新版本第一次启动会先把数据库的一份备份副本写到卷里的 `/data/backups/`（AI 服务对自己的数据库也这样做，写在它自己的卷里），再在一个事务里迁移数据库。副本写不出来（磁盘满、没有权限）时，服务会拒绝启动，数据库保持原样；`docker compose logs backend` 和 `docker compose logs ai-service` 里会写明原因。备份副本和数据库差不多大，所以升级之前请留出这么多空闲空间；备份副本从不会自动删除。
 
-下面各节是为它们升级到的那个版本写的。直接用当前的镜像（v0.9）从更早的版本升级，会一次做完每一步：写一份以文件原来的 schema 命名的备份，数据库最后停在 schema 6（这时日志里会写 `schema 6`，而某一节写的是 `schema 5`；`/api/info` 显示 `"version": "0.9.1"`）。
+下面各节是为它们升级到的那个版本写的。直接用当前的镜像（v0.9.1）从更早的版本升级，会一次做完每一步：写一份以文件原来的 schema 命名的备份，数据库最后停在 schema 6（这时日志里会写 `schema 6`，而某一节写的是 `schema 5`；`/api/info` 显示 `"version": "0.9.1"`）。
 
 ### 从 v0.9 升级到 v0.9.1
 
@@ -221,7 +221,7 @@ docker compose logs backend
    新的 `docker-compose.yml` 跟随宿主机的时区，限制容器日志的大小，把 `.env` 里的 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE` 和 `XEXAM_LOG` 传进去，还加入了 v0.8 的 AI 服务和它的卷。
 3. **第一次启动做什么**（在响应任何请求之前）：写一份副本 `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`，把数据库迁移到 schema v5（v0.7 和 v0.7.5 停在 v4），并改用 WAL 模式。已有的每个用户都保留已有的每个题库，并设置 **包括以后导入的题库**；每个题库都归第一个管理员；以前的每条记录都是 **考试**；还没有人是可管理题库的用户。然后它下架旧格式的题，日志里每个题库一条警告，例如 `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`。
 4. **用六列格式的文件更新每个旧题库**：**题库管理** → **导入 Excel** → **更新已有题库**，选好题库，上传文件并确认。题库的名字、所有者和能看到它的用户都不变。它的题现在按英语文字识别，所以从没有答题记录开始；旧题仍保持下架，以前的记录里仍然显示它们。也可以把六列格式的文件作为 **新建题库** 导入。
-5. **之后**：决定谁是 **可管理题库** 的用户、每个用户能看到哪些题库（从现在起新添加的用户，在你选好之前看不到任何题库），并检查 <http://localhost:8765/api/info> 显示 `"version": "0.9"`。在你设置之前 AI 是关闭的（见上一节）。
+5. **之后**：决定谁是 **可管理题库** 的用户、每个用户能看到哪些题库（从现在起新添加的用户，在你选好之前看不到任何题库），并检查 <http://localhost:8765/api/info> 显示 `"version": "0.9.1"`。在你设置之前 AI 是关闭的（见上一节）。
 
 回退到 v0.6 就是恢复 `backups/` 里的那份副本；命令见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md) 第 2.6 节。
 

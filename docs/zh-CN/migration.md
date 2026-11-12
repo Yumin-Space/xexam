@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v0.9 → v0.9.1**（没有单独的一节）：除了 `docker compose pull` 和 `docker compose up -d` 之外不用做什么；数据库没有变化，没有新设置，也不需要新的 `docker-compose.yml`。回退到 v0.9 只要把三个镜像的 `:latest` 改成 `:v0.9`，再 `docker compose up -d`；数据库保持原样。
 > - **v0.8 → v0.9**（第 0 节）：不需要新的 `docker-compose.yml`；主数据库升级到 schema v6，AI 数据库升级到 schema 3，各自都在自己的备份副本写好之后自动进行。主数据库回退不需要恢复；AI 数据库需要把它的副本放回去。（这一节编号为 0，这样其他各节的编号，也就是别的文档链接到的那些，保持不变。）
 > - **v0.7.5 或 v0.7 → v0.8**（第 1 节）：带 AI 服务 `ai-service` 的新 `docker-compose.yml`（第三个镜像 `xexam-ai-service` 和两个卷）；先写一份备份副本，然后数据库自动升级到 schema v5；管理员设置之前 AI 保持关闭。
 > - **v0.6 → v0.8**（第 2 节）：先写一份备份副本，然后数据库自动升级到 schema v5，并改用 WAL 模式；然后旧的三列和四列 Excel 格式的题被下架，你再用六列格式的工作簿更新题库。
@@ -14,7 +15,7 @@
 >
 > 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_data` 里的 `/data/backups/`）。回退就是**恢复那份副本**，然后运行较早的镜像，只有一个例外：v0.8 能原样打开 v0.9 的 schema 6 主数据库（第 0.4 节）。AI 数据库有它自己的副本，在卷 `xexam_ai_data` 的 `/data/backups/` 里，名字是 `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`；v0.8 的 AI 服务打不开 v0.9 的 schema 3 数据库，所以回退到 v0.8 就要在那里恢复 schema 2 的副本。背景见 [database.md](database.md) 第 6 节。回退主数据库从不会碰到 AI 数据库，反过来也一样。
 >
-> **从更早的版本直接升级到 v0.9**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 3）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v0.9 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `0.9`，ai-service 创建的数据库是 schema 3。
+> **从更早的版本直接升级到 v0.9.1**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 3）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v0.9.1 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `0.9.1`，ai-service 创建的数据库是 schema 3。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
 
