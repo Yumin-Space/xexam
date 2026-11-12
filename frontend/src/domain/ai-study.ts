@@ -1,4 +1,4 @@
-// The state of one AI study answer (v0.9): a hint, an explanation or a record summary, as the popover and the overlay show
+// The state of one AI study answer (v0.9): a hint, an explanation or a record summary, as the panel and the overlay show
 // it. Pure: no DOM, no i18n (it runs under `node --test`). One `Entry` per cache key holds
 //   · `shown`   the newest FINISHED answer (or nothing yet), the one the window shows;
 //   · `attempt` the newest attempt: a running, stopped, failed or withheld answer, or the finished one.
@@ -30,6 +30,8 @@ export interface Answer {
 /** The answer of GET /api/ai/study/saved and /api/ai/summary/saved, normalised */
 export interface SavedPayload {
   chatId: number | null;
+  /** The chat's real title (the server's; null = unknown) */
+  chatTitle?: string | null;
   latest: Answer | null;
   lastGood: Answer | null;
 }
@@ -43,10 +45,35 @@ export interface AskError {
   running?: RunningInfo | null;
   /** The number a reached limit (ai.chatLimit / ai.messageLimit) came with */
   limit?: number;
+  /** The per-user call cap behind an `ai.callLimit` refusal (spec 3.6) */
+  quota?: CallBlock;
+}
+
+/** A reached per-user AI call cap (spec 3.6; structurally the same as `AiCallBlock` of types/api.ts, kept here so the domain stays free of it) */
+export interface CallBlock {
+  cap: 'minute' | 'hour' | 'day';
+  limit: number;
+  /** unix seconds when the block ends */
+  retryAt: number;
+}
+
+/** The code of a refusal by the per-user call caps */
+export const CALL_LIMIT = 'ai.callLimit';
+
+/** A `CallBlock` out of any value (a thrown error's `quota`); null when a field is missing or wrong */
+export function callBlockOf(v: unknown): CallBlock | null {
+  const o = obj(v);
+  const cap = o.cap;
+  const limit = numOrNull(o.limit);
+  const retryAt = numOrNull(o.retryAt);
+  if ((cap !== 'minute' && cap !== 'hour' && cap !== 'day') || limit == null || retryAt == null) return null;
+  return { cap, limit, retryAt };
 }
 
 export interface Entry {
   chatId: number | null;
+  /** The real title of that chat, as the server says it (shown in the "saved in AI Chat" tip); null = not known */
+  chatTitle: string | null;
   shown: Answer | null;
   attempt: Answer | null;
   /** The saved answer is being read */
@@ -59,7 +86,7 @@ export interface Entry {
   failure: AskError | null;
 }
 
-export const emptyEntry = (): Entry => ({ chatId: null, shown: null, attempt: null, loading: false, requesting: false, polling: false, failure: null });
+export const emptyEntry = (): Entry => ({ chatId: null, chatTitle: null, shown: null, attempt: null, loading: false, requesting: false, polling: false, failure: null });
 
 // ---------------------------------------------------------------- keys
 
@@ -75,7 +102,7 @@ export const sessionPart = (i: { key: string | null; recordId: number | null }):
 
 export const summaryKey = (recordId: number, atDigitsText: string | null): string => `${recordId}@${atDigitsText ?? ''}`;
 
-/** The cache bound of the popover (and the overlay): the oldest entries are dropped */
+/** The cache bound of the panel (and the overlay): the oldest entries are dropped */
 export const MAX_ENTRIES = 200;
 
 /** Sets `key` (making it the newest) and drops the oldest entries beyond `max` */
@@ -93,6 +120,7 @@ export function boundedSet<V>(map: Map<string, V>, key: string, value: V, max = 
 
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {});
 const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+const strOrNull = (v: unknown): string | null => (typeof v === 'string' && v !== '' ? v : null);
 const LANGS = new Set(['en', 'zh-CN', 'ja']);
 const STATUSES = new Set(['streaming', 'done', 'stopped', 'error']);
 
@@ -124,7 +152,7 @@ export function answerOf(v: unknown): Answer | null {
 /** The saved answers of a saved route: `{chatId, latest, lastGood}` */
 export function parseSaved(json: unknown): SavedPayload {
   const o = obj(json);
-  return { chatId: numOrNull(o.chatId), latest: answerOf(o.latest), lastGood: answerOf(o.lastGood) };
+  return { chatId: numOrNull(o.chatId), chatTitle: strOrNull(o.chatTitle), latest: answerOf(o.latest), lastGood: answerOf(o.lastGood) };
 }
 
 /** The `running` object of a 409 ai.busy answer, or null */
@@ -180,12 +208,13 @@ export function reduce(e: Entry, a: Action): Entry {
       return { ...e, loading: true, failure: null };
     case 'saved': {
       const { chatId, latest, lastGood } = a.saved;
+      const chatTitle = chatId == null ? null : a.saved.chatTitle || (chatId === e.chatId ? e.chatTitle : null);
       // Nothing saved: the chat may exist (other questions) but this answer does not
       // (a chat that is gone too: a deleted chat must not keep its link)
-      if (!latest) return { ...e, chatId, loading: false, polling: false, attempt: null, shown: null };
+      if (!latest) return { ...e, chatId, chatTitle, loading: false, polling: false, attempt: null, shown: null };
       const shown = isGood(latest) ? latest : lastGood;
       return {
-        ...e, chatId: chatId ?? e.chatId, loading: false, requesting: false, failure: null, attempt: latest, shown,
+        ...e, chatId: chatId ?? e.chatId, chatTitle, loading: false, requesting: false, failure: null, attempt: latest, shown,
         polling: latest.status === 'streaming',
       };
     }
@@ -216,7 +245,9 @@ function onEvent(e: Entry, ev: StreamEvent, now: number | null): Entry {
       const lang = typeof d.lang === 'string' && LANGS.has(d.lang) ? (d.lang as ReplyLang) : null;
       const sample = sampleOf(d.sample);
       const at: Answer = { ...blank(numOrNull(d.assistantMessageId), now), lang, sample };
-      return { ...e, chatId: chatId ?? e.chatId, attempt: at, requesting: false, polling: false, failure: null };
+      // Without a title in the event, the known one stays only while the chat is the same one
+      const chatTitle = strOrNull(d.chatTitle) ?? (chatId == null || chatId === e.chatId ? e.chatTitle : null);
+      return { ...e, chatId: chatId ?? e.chatId, chatTitle, attempt: at, requesting: false, polling: false, failure: null };
     }
     case 'delta': {
       const text = typeof d.text === 'string' ? d.text : '';
@@ -258,7 +289,7 @@ export type ReasonKind = 'stopped' | 'error';
 
 export type Note =
   | { kind: 'busy'; running: RunningInfo | null }
-  | { kind: 'error'; code: string | null; status: number; limit?: number }
+  | { kind: 'error'; code: string | null; status: number; limit?: number; quota?: CallBlock }
   | { kind: 'withheld' }
   | { kind: 'withheldPrev' }
   | { kind: 'failedPrev'; reason: ReasonKind; code: string | null }
@@ -282,7 +313,11 @@ export interface EntryView {
  * What the window paints for an entry. `settingsLang` = the current Settings language (a shown answer in another one gets
  * the otherLang note). One note at most; busy and request errors beat failed-regenerate notes beat the language note.
  */
-export function entryView(e: Entry, settingsLang: ReplyLang): EntryView {
+export function entryView(entry: Entry, settingsLang: ReplyLang, nowSec?: number): EntryView {
+  // A call-cap refusal expires by itself (spec 3.6): the saved answer or the "not asked" prompt shows again
+  const e = nowSec != null && entry.failure?.code === CALL_LIMIT && entry.failure.quota != null && entry.failure.quota.retryAt <= nowSec
+    ? { ...entry, failure: null }
+    : entry;
   const base = { sample: null as Sample | null, truncated: false, savedAt: null as number | null };
   if (e.loading && !e.attempt && !e.shown) {
     return { ...base, text: '', phase: 'loading', note: null, canRegenerate: false, canStop: false };
@@ -294,7 +329,10 @@ export function entryView(e: Entry, settingsLang: ReplyLang): EntryView {
   if (e.failure && !e.requesting) {
     const note: Note = e.failure.code === 'ai.busy'
       ? { kind: 'busy', running: e.failure.running ?? null }
-      : { kind: 'error', code: e.failure.code, status: e.failure.status, ...(e.failure.limit != null ? { limit: e.failure.limit } : {}) };
+      : {
+        kind: 'error', code: e.failure.code, status: e.failure.status,
+        ...(e.failure.limit != null ? { limit: e.failure.limit } : {}), ...(e.failure.quota ? { quota: e.failure.quota } : {}),
+      };
     return {
       text: shown?.content ?? '', phase: shown ? 'done' : 'error', note, canRegenerate: !(e.failure.code === 'ai.busy' && e.failure.running != null), canStop: false,
       savedAt: shown?.finishedAt ?? null, sample: shown?.sample ?? null, truncated: shown?.truncated ?? false,

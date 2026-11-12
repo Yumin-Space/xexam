@@ -22,6 +22,11 @@
 // follows domain/badge-state.ts: bright, dark with the reason in a tooltip, or none. The question-bank choice (New user form and the "Change" dialog) is the
 // compact block the owner drew: one row "Manage banks · Select all · Deselect all" directly on top of the list, "Include
 // banks imported later" as the first entry of the list, the explanations as tooltips (hover and keyboard focus).
+// v1.0 (phones first): every row action is an icon button on every width (named with the user, the reason it is greyed as tip /
+// toast), the row is compact (no default tags, no per-row sentences: the own-account / last-administrator reason and the lock
+// explanation are (i) tips, the facts are one line), the AI+ switch sits in the action row (never under a button), the bank line
+// is one 44 px row that opens the bank dialog, a new user's row is scrolled into view and highlighted, and a paused AI+ tag links
+// to AI settings.
 import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
@@ -29,17 +34,17 @@ import { createUser, deleteUser, fetchUsers, resetUserPassword, unlockUser, upda
 import { aiBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
-import { miniIcon } from '../components/mini-icons.ts';
+import { iconButton, shortLabel, withReason } from '../components/icon-button.ts';
+import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { miniSwitch } from '../components/mini-switch.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
-import { tipEl, withTip } from '../components/tooltip.ts';
+import { holdTip, infoTip, tipEl, withTip } from '../components/tooltip.ts';
 import { badgeState } from '../domain/badge-state.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
-import { aiLineKind, createAi, isServiceOff } from '../domain/user-admin.ts';
+import { SEARCH_FROM, aiLineKind, createAi, filterUsers, isServiceOff, lockUntilLabel, shortAt } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
 import { t, tn, uiLang } from '../i18n/index.ts';
-import { waitShort } from '../i18n/wait.ts';
 import { onRouteChange, onSignedIn, refreshAi, refreshLibrary, render } from '../state/actions.ts';
 import {
   accessChange, accessOf, accessView, deselectAllBanks, draftOf, editChange, isTicked, ownedBankNames, ownerView, toggleAll,
@@ -49,7 +54,8 @@ import { aiStatus } from '../state/ai.ts';
 import { S } from '../state/store.ts';
 import type { BankSummary, Role, UserRow } from '../types/api.ts';
 import { ask, formDialog } from '../utils/dialog.ts';
-import { h, type Child } from '../utils/dom.ts';
+import { h, scrollToY, type Child } from '../utils/dom.ts';
+import { TOUCH_MQ, matches } from '../utils/media.ts';
 import { toast } from '../utils/toast.ts';
 
 const ROLES: readonly Role[] = ['user', 'admin'];
@@ -84,6 +90,11 @@ const add = {
 };
 /** The element to focus after the next render */
 let focusNext: string | null = null;
+/** US-8: the row of the user just created: scrolled into view, highlighted for 2 s, its name focused (after the next render) */
+let newRowId: number | null = null;
+let newRowShown = false;
+/** US-11: the search text (a list of more than SEARCH_FROM users has a search field) */
+let searchText = '';
 /** User id → when their sign-in lock ends (performance.now() milliseconds), for the users whose lock runs */
 const lockEnds = new Map<number, number>();
 /** User id → when the shorter lock of their other browsers ends, while both are locked (the note then changes) */
@@ -105,6 +116,7 @@ onRouteChange((from, to) => {
   if (from.name === 'users' && to.name !== 'users') {
     resetAdd();
     actionError = null;
+    searchText = '';
     stopTicker();
     stopPoller();
   }
@@ -140,7 +152,7 @@ function stopTicker(): void {
   ticker = null;
 }
 
-/** Rewrites the "Locked · N min left" tags in place (no redraw, so focus and open forms stay); reads the list again when a lock ends. */
+/** Watches the running locks (the tag names the end time, so nothing is rewritten); reads the list again when a lock ends. */
 function tick(): void {
   if (!onUsersPage() || lockEnds.size === 0) {
     stopTicker();
@@ -155,9 +167,6 @@ function tick(): void {
       ended = true;
       continue;
     }
-    const tag = document.getElementById(`us-lock-${id}`);
-    const text = t('users.status.locked', { wait: waitShort(left) });
-    if (tag && tag.textContent !== text) tag.textContent = text;
   }
   // The other browsers' shorter lock ended: the note no longer says every browser is locked (read the list again)
   for (const [id, end] of otherEnds) {
@@ -252,8 +261,6 @@ function focusAfter(root: HTMLElement): void {
   });
 }
 
-const fmtAt = (at: string): string => at.slice(0, 16);
-
 // ---------------------------------------------------------------- the rules the backend enforces, shown in advance
 
 function enabledAdmins(list: readonly UserRow[]): number {
@@ -292,6 +299,11 @@ function roleChoice(name: string, value: Role, disabled: boolean, onPick: (r: Ro
 }
 
 // ---------------------------------------------------------------- question banks and the bank-manager permission (v0.6.5)
+
+/** US-6: on a touch screen, holding an option shows its tip without toggling it (the hover / focus tip stays for the mouse) */
+function holdOnTouch<T extends HTMLElement>(el: T, text: string): T {
+  return matches(TOUCH_MQ) ? holdTip(el, text) : el;
+}
 
 interface ChecklistOptions {
   /** Prefix of the element ids */
@@ -345,7 +357,7 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     onchange: () => o.set({ ...o.get(), manage: manage.checked }),
   });
   const manageWrap = withTip(
-    h('label', { class: 'us-tool', for: manage.id }, manage, miniIcon('key'), h('span', null, t('users.banks.manage'))),
+    holdOnTouch(h('label', { class: 'us-tool', for: manage.id }, manage, miniIcon('key'), h('span', null, shortLabel('users.banks.manage', 'users.tools.manageShort'))), t('users.tip.manage')),
     tipEl(`${id}-tip-manage`, t('users.tip.manage')));
   manageWrap.id = `${id}-manage-wrap`;
 
@@ -416,14 +428,17 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     withTip(legendBtn, legendTip, 'us-legend-tip'),
     h('div', { class: 'us-banktools' },
       manageWrap,
-      withTip(h('label', { class: 'us-tool', for: all.id }, all, miniIcon('checkAll'), h('span', null, t('users.banks.selectAll'))),
-        tipEl(`${id}-tip-all`, t('users.tip.selectAll'))),
-      withTip(h('label', { class: 'us-tool', for: none.id }, none, miniIcon('squareMinus'), h('span', null, t('users.banks.deselectAll'))),
-        tipEl(`${id}-tip-none`, t('users.tip.deselectAll')))),
+      withTip(holdOnTouch(h('label', { class: 'us-tool', for: all.id }, all, miniIcon('checkAll'),
+        h('span', null, shortLabel('users.banks.selectAll', 'users.tools.allShort'))), t('users.tip.selectAll')),
+      tipEl(`${id}-tip-all`, t('users.tip.selectAll'))),
+      withTip(holdOnTouch(h('label', { class: 'us-tool', for: none.id }, none, miniIcon('squareMinus'),
+        h('span', null, shortLabel('users.banks.deselectAll', 'users.tools.noneShort'))), t('users.tip.deselectAll')),
+      tipEl(`${id}-tip-none`, t('users.tip.deselectAll')))),
     h('ul', { class: 'us-banklist', id: listId },
       // Always the first entry, also when there are no banks yet
       h('li', { class: 'us-later-row' }, withTip(
-        h('label', { class: 'us-bank us-later', for: later.id }, later, miniIcon('clockPlus'), h('span', { class: 'us-bank-n' }, t('users.banks.later'))),
+        holdOnTouch(h('label', { class: 'us-bank us-later', for: later.id }, later, miniIcon('clockPlus'),
+          h('span', { class: 'us-bank-n' }, t('users.banks.later'))), t('users.tip.later')),
         tipEl(`${id}-tip-later`, t('users.tip.later')))),
       rows,
       o.banks.length ? null : h('li', { class: 'us-banks-empty' }, t('users.banks.noneYet'))));
@@ -500,14 +515,19 @@ async function submitAdd(): Promise<void> {
     // v0.8 round 2: the AI+ service only when its box is drawn (AI+ available, a plain user) and ticked
     const ai = createAi(aiAvailable, add.role, add.ai);
     // An administrator always sees and manages every bank and has AI while AI+ is available: nothing of that is stored
-    adopt(await createUser({
+    const answer = await createUser({
       username: name, password: add.password, role: add.role, banks: access.banks, newBanks: access.newBanks,
       canManageBanks: admin ? false : access.canManageBanks, ai,
-    }));
+    });
+    adopt(answer);
     if (ai) void refreshAi(true);
     toast(t('users.created', { name }));
     resetAdd();
-    focusNext = 'us-add-btn';
+    // US-8: the new row is scrolled into view, highlighted for 2 s and its name focused (renderUsers)
+    newRowId = answer.users.find((u) => u.username === name)?.id ?? null;
+    newRowShown = false;
+    searchText = '';
+    focusNext = newRowId == null ? 'us-add-btn' : null;
   } catch (e) {
     add.error = errorText(e);
     add.busy = false;
@@ -847,74 +867,61 @@ function removeUser(u: UserRow): Promise<void> {
 
 // ---------------------------------------------------------------- list
 
-function mini(id: string, label: string, aria: string, disabled: boolean, why: string | null, onclick: () => void, danger = false): HTMLElement {
-  return h('button', {
-    class: 'btn us-mini' + (danger ? ' danger' : ''), id, type: 'button', disabled, 'aria-label': aria,
-    title: disabled && why ? why : aria, 'aria-describedby': disabled && why ? id.replace(/^us-\w+-/, 'us-why-') : null, onclick,
-  }, label);
-}
-
-/** `text` with every `YYYY-MM-DD HH:MM` kept on one line (a line break after a hyphen of the date reads badly) */
-function withUnbrokenTimes(text: string): Child[] {
-  return text.split(/(\d{4}-\d{2}-\d{2} \d{2}:\d{2})/).map((part, i) => (i % 2 ? h('span', { class: 'us-nw' }, part) : part));
-}
-
-/** Unlock at the end of the row's lock note, described by it (what it ends and for which browsers) */
-function unlockButton(u: UserRow, locked: boolean, blocked: boolean, noteId: string | null): HTMLElement {
-  const b = mini(`us-unlock-${u.id}`, t('users.act.unlock'), t(locked ? 'users.act.unlockAria' : 'users.act.unlockTriesAria', { name: u.username }),
-    blocked, null, () => void unlock(u, locked));
-  if (noteId) b.setAttribute('aria-describedby', noteId);
-  // A small button in the run of the lock note (v0.7)
-  b.classList.add('us-change');
+/**
+ * One icon action of a row (US-1): named with the user (tip on a mouse device, tap-and-hold on touch). `reason`: the action is
+ * not available for a rule the administrator must be able to read (your own account, the last administrator): the button is
+ * greyed (aria-disabled), its tip says why and a tap shows it as a toast. `blocked`: a change of the list runs (really disabled).
+ */
+function act(id: string, ic: MiniIcon, aria: string, blocked: boolean, reason: string | null, onclick: () => void, danger = false): HTMLElement {
+  const tone = danger ? 'danger' : 'default';
+  if (reason) {
+    const b = iconButton({ icon: ic, label: aria, tone });
+    b.id = id;
+    return withReason(b, reason);
+  }
+  const b = iconButton({ icon: ic, label: aria, tone, onClick: onclick });
+  b.id = id;
+  b.disabled = blocked;
   return b;
 }
 
 /**
- * The row's line about question banks (v0.6.5): administrators see every bank; a plain user sees the chosen banks (counted
- * and named, so the names can be read on a phone too) or none yet, and (v0.7) whether the banks imported later are added
- * (every bank there is now plus the later ones reads "all"), plus a bank manager's own uploads.
- * v0.7: a plain user's line ends in a small "Change" button that opens the bank dialog (it used to be a "Question banks"
- * action beside Edit, which pushed Delete onto a second line on phones). Its accessible name says what it changes.
+ * The row's line about question banks, only for a plain user (an administrator sees every bank: no sentence, US-2): one 44 px
+ * tappable row (the chosen banks counted and named, a chevron) that opens the bank dialog (US-4); its accessible name says what
+ * it changes. v0.6.5: the names are written out so they can be read on a phone; v0.7: whether the banks imported later are
+ * added, plus a bank manager's own uploads.
  */
-function bankLine(u: UserRow, blocked: boolean): HTMLElement {
+function bankLine(u: UserRow, blocked: boolean): HTMLElement | null {
   const v = accessView(u, S.banks);
+  if (u.role !== 'user' || v.kind === 'admin') return null;
   const sep = t('common.listSep');
-  const main = v.kind === 'admin' ? t('users.banks.admin')
-    : v.kind === 'all' ? t('users.banks.all')
-      : v.kind === 'some' ? t(v.later ? 'users.banks.someLater' : 'users.banks.some', { n: v.names.length, names: v.names.join(sep) })
-        : t(v.later ? 'users.banks.noneLater' : 'users.banks.none');
-  // Administrators see every bank: their rows have no bank choice
-  const change = u.role === 'user'
-    ? h('button', {
-      class: 'btn us-mini us-change', id: `us-banks-${u.id}`, type: 'button', disabled: blocked,
-      'aria-label': t('users.act.banksAria', { name: u.username }), title: t('users.act.banksAria', { name: u.username }),
-      onclick: () => void chooseBanks(u),
-    }, t('users.banks.change'))
-    : null;
-  return h('p', { class: 'us-banks' + (v.kind === 'none' && !v.later && !v.own.length ? ' none' : ''), id: `us-access-${u.id}` },
-    h('span', null, main),
-    change ? [' ', change] : null,
-    v.own.length ? h('span', { class: 'us-banks-own' }, t('users.banks.own', { names: v.own.join(sep) })) : null);
+  const main = v.kind === 'all' ? t('users.banks.all')
+    : v.kind === 'some' ? t(v.later ? 'users.banks.someLater' : 'users.banks.some', { n: v.names.length, names: v.names.join(sep) })
+      : t(v.later ? 'users.banks.noneLater' : 'users.banks.none');
+  const none = v.kind === 'none' && !v.later && !v.own.length;
+  return h('button', {
+    class: 'us-bankrow' + (none ? ' none' : ''), id: `us-banks-${u.id}`, type: 'button', disabled: blocked,
+    'aria-label': t('users.act.banksAria', { name: u.username }), onclick: () => void chooseBanks(u),
+  },
+  h('span', { class: 'us-bank-sum', id: `us-access-${u.id}` }, main,
+    v.own.length ? h('span', { class: 'us-banks-own' }, t('users.banks.own', { names: v.own.join(sep) })) : null),
+  miniIcon('fwd', 'us-mi us-bank-go'));
 }
 
 /**
- * v0.8: the row's AI+ line, under the bank line: the "AI+ service" switch for a plain user; administrators always have AI
- * while AI+ is available (no switch). Round 2: no line at all while AI+ is not available (the stored switch is kept).
+ * v0.8: the AI+ switch of a plain user, in the action row at its left (US-3: never under a button, so no two tap areas share
+ * ground); administrators always have AI while AI+ is available (no switch, no sentence). Round 2: nothing while AI+ is not
+ * available (the stored switch is kept).
  */
-function aiLine(u: UserRow, blocked: boolean): HTMLElement | null {
-  const kind = aiLineKind(aiAvailable, u.role);
-  if (kind === 'none') return null;
-  if (kind === 'admin') {
-    return h('p', { class: 'us-ailine' }, h('span', { class: 'us-ai-l' }, t('users.field.ai')), h('span', { class: 'us-ai-admin' }, t('users.ai.admin')));
-  }
-  // A paused AI+ function (AI settings) is said in words here, next to the switch (the dark badge's tooltip is not enough on a phone)
+function aiSwitch(u: UserRow, blocked: boolean): HTMLElement | null {
+  if (aiLineKind(aiAvailable, u.role) !== 'switch') return null;
   return h('div', { class: 'us-ailine' },
-    h('span', { class: 'us-ai-l', 'aria-hidden': 'true' }, t('users.field.ai')),
+    h('span', { class: 'us-ai-l', 'aria-hidden': 'true' },
+      h('span', { class: 'l-full' }, t('users.field.ai')), h('span', { class: 'l-short' }, t('users.field.aiShort'))),
     miniSwitch({
       id: `us-ai-${u.id}`, checked: u.ai, label: t('users.ai.aria', { name: u.username }), disabled: blocked,
       onToggle: (on) => void setAi(u, on),
-    }),
-    u.ai && u.aiSuspended ? h('span', { class: 'tag k us-ai-paused', id: `us-ai-paused-${u.id}` }, t('users.ai.paused')) : null);
+    }));
 }
 
 /**
@@ -933,78 +940,98 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
   const left = lockLeft(u);
   const lock = lockView(u.lock, left);
   const locked = lock.state === 'locked';
-  const tags = [
-    h('span', { class: 'tag ' + (u.role === 'admin' ? 'b' : 'k') }, roleName(u.role)),
-    lim.self ? h('span', { class: 'tag k' }, t('users.you')) : null,
-    u.disabled ? h('span', { class: 'tag r' }, t('users.status.disabled')) : null,
-    // The explanation of both throttle tags is the visible note under the row (a title tooltip cannot be reached on a phone
-    // or with the keyboard)
-    locked
-      ? h('span', { class: 'tag r us-lock', id: `us-lock-${u.id}` }, t('users.status.locked', { wait: waitShort(left) }))
-      : null,
-    !u.disabled && !locked ? h('span', { class: 'tag k' }, t('users.status.normal')) : null,
-    // Past round 1 without a running lock: how many tries are left before the next (longer) lock
-    lock.state === 'tries' ? h('span', { class: 'tag k' }, tn('users.status.tries', lock.triesLeft)) : null,
-    !u.disabled && u.mustChangePassword ? h('span', { class: 'tag k' }, t('users.status.mustChange')) : null,
-    // v0.6.5: a plain user who may import and manage their own question banks (administrators always may)
-    u.role === 'user' && u.canManageBanks ? h('span', { class: 'tag b' }, t('users.tag.manager')) : null,
-    rowBadge(u),
-  ];
-  const access = bankLine(u, blocked);
+  // The lock's full explanation is an (i) tip next to its tag (US-10); the Unlock button is described by it
   const note = lockNote(u.lock, lock, {
     name: u.username, enabled: !u.disabled, mayHaveKnownBrowsers: u.lastLoginAt != null && !u.mustChangePassword,
   }).map((p) => (p.n == null ? t(p.key, p.params) : tn(p.key, p.n, p.params))).join(uiLang() === 'en' ? ' ' : '');
   const noteId = `us-locknote-${u.id}`;
-  const meta = [
-    t('users.meta.created', { at: fmtAt(u.createdAt) }),
-    u.lastLoginAt ? t('users.meta.lastLogin', { at: fmtAt(u.lastLoginAt) }) : t('users.meta.never'),
-    tn('users.meta.records', u.records),
+  const lockTip = note ? infoTip(noteId, t('users.lock.aboutAria', { name: u.username }), note, 'us-tip') : null;
+  // The reason some actions are greyed (your own account, the last administrator): one (i) tip on the row (US-2)
+  const whyTip = lim.why ? infoTip(`us-why-${u.id}`, t('users.why.aboutAria', { name: u.username }), lim.why, 'us-tip') : null;
+  const tags = [
+    // The default tags (plain user, normal) are not drawn: only what differs from the usual (US-2)
+    u.role === 'admin' ? h('span', { class: 'tag b' }, roleName(u.role)) : null,
+    lim.self ? h('span', { class: 'tag k' }, t('users.you')) : null,
+    u.disabled ? h('span', { class: 'tag r' }, t('users.status.disabled')) : null,
+    locked && u.lock?.until
+      ? h('span', { class: 'tag r us-lock', id: `us-lock-${u.id}` }, t('users.status.lockedUntil', { at: lockUntilLabel(u.lock.until, u.lock.retryAfter), n: u.lock.round }))
+      : null,
+    // Past round 1 without a running lock: how many tries are left before the next (longer) lock
+    lock.state === 'tries' ? h('span', { class: 'tag k' }, tn('users.status.tries', lock.triesLeft)) : null,
+    lockTip?.el ?? null,
+    !u.disabled && u.mustChangePassword ? h('span', { class: 'tag k' }, t('users.status.mustChange')) : null,
+    // v0.6.5: a plain user who may import and manage their own question banks (administrators always may)
+    u.role === 'user' && u.canManageBanks ? h('span', { class: 'tag b' }, t('users.tag.manager')) : null,
+    rowBadge(u),
+    // US-9: a paused AI+ function links to the users tab of AI settings (the two-switch model stays)
+    aiAvailable && u.role === 'user' && u.ai && u.aiSuspended
+      ? h('a', { class: 'tag k us-ai-paused', id: `us-ai-paused-${u.id}`, href: `#/ai-settings?tab=users&user=${u.id}` }, t('users.ai.pausedGo'))
+      : null,
+    whyTip?.el ?? null,
   ];
-  return h('li', { class: 'us-row' + (u.disabled ? ' off' : ''), 'aria-busy': busy ? 'true' : null },
-    icon(ICONS.user, 'ico us-ico'),
-    h('div', { class: 'us-main' },
-      h('div', { class: 'us-line' },
-        h('h3', { class: 'us-name', id: `us-name-${u.id}`, tabindex: '-1', title: u.username }, u.username),
-        h('span', { class: 'us-tags' }, tags)),
-      h('p', { class: 'us-meta' }, meta.map((m, i) => [
-        i ? ' ' : null,
-        h('span', { class: 'us-nw' }, m, i < meta.length - 1 ? h('span', { class: 'us-dot', 'aria-hidden': 'true' }, '·') : null),
-      ])),
-      access,
-      aiLine(u, blocked),
-      // v0.7: Unlock sits at the end of the lock note (like "Change" in the bank line), so the row keeps its four actions on
-      // one line on phones
-      note || lock.unlock
-        ? h('p', { class: 'us-locknote' },
-          note ? h('span', { id: noteId }, withUnbrokenTimes(note)) : null,
-          lock.unlock ? [note ? ' ' : null, unlockButton(u, locked, blocked, note ? noteId : null)] : null)
-        : null,
-      lim.why ? h('p', { class: 'us-why', id: `us-why-${u.id}` }, lim.why) : null),
-    h('div', { class: 'us-acts' },
+  // The facts in one line (US-2): the last sign-in and the number of study records
+  const facts = [
+    u.lastLoginAt ? t('users.meta.lastLogin', { at: shortAt(u.lastLoginAt) }) : t('users.meta.never'),
+    tn('users.meta.recordsShort', u.records),
+  ];
+  const unlockBtn = lock.unlock
+    ? iconButton({
+      icon: 'unlock', label: t(locked ? 'users.act.unlockAria' : 'users.act.unlockTriesAria', { name: u.username }),
+      describedBy: lockTip ? noteId : undefined, onClick: () => void unlock(u, locked),
+    })
+    : null;
+  if (unlockBtn) {
+    unlockBtn.id = `us-unlock-${u.id}`;
+    unlockBtn.disabled = blocked;
+  }
+  const toggleRule = lim.self || lim.lastAdmin ? lim.why : null;
+  return h('li', {
+    class: 'us-row' + (u.disabled ? ' off' : '') + (u.id === newRowId && !newRowShown ? ' us-new' : ''),
+    'aria-busy': busy ? 'true' : null, 'data-name': u.username.toLowerCase(),
+  },
+  icon(ICONS.user, 'ico us-ico'),
+  h('div', { class: 'us-main' },
+    h('div', { class: 'us-line' },
+      h('h3', { class: 'us-name', id: `us-name-${u.id}`, tabindex: '-1', title: u.username }, u.username),
+      h('span', { class: 'us-tags' }, tags)),
+    h('p', { class: 'us-meta' }, facts.map((m, i) => [
+      i ? ' ' : null,
+      h('span', { class: 'us-nw' }, m, i < facts.length - 1 ? h('span', { class: 'us-dot', 'aria-hidden': 'true' }, '·') : null),
+    ])),
+    bankLine(u, blocked)),
+  h('div', { class: 'us-acts' },
+    aiSwitch(u, blocked),
+    h('div', { class: 'us-icons' },
       busy ? h('span', { class: 'us-busy', role: 'status' }, t('users.act.busy')) : null,
-      mini(`us-edit-${u.id}`, t('users.act.edit'), t('users.act.editAria', { name: u.username }), blocked, null, () => void editUser(u, lim)),
-      mini(`us-reset-${u.id}`, t('users.act.reset'), t('users.act.resetAria', { name: u.username }), blocked || lim.self, lim.why,
-        () => void resetPassword(u)),
+      act(`us-edit-${u.id}`, 'pencil', t('users.act.editAria', { name: u.username }), blocked, null, () => void editUser(u, lim)),
+      act(`us-reset-${u.id}`, 'keyRound', t('users.act.resetAria', { name: u.username }), blocked, lim.self ? lim.why : null, () => void resetPassword(u)),
       u.disabled
-        ? mini(`us-toggle-${u.id}`, t('users.act.enable'), t('users.act.enableAria', { name: u.username }), blocked, null, () => void toggleDisabled(u))
-        : mini(`us-toggle-${u.id}`, t('users.act.disable'), t('users.act.disableAria', { name: u.username }), blocked || lim.self || lim.lastAdmin, lim.why,
-          () => void toggleDisabled(u)),
-      mini(`us-delete-${u.id}`, t('common.delete'), t('users.act.deleteAria', { name: u.username }), blocked || lim.self || lim.lastAdmin, lim.why,
-        () => void removeUser(u), true)));
+        ? act(`us-toggle-${u.id}`, 'userOn', t('users.act.enableAria', { name: u.username }), blocked, null, () => void toggleDisabled(u))
+        : act(`us-toggle-${u.id}`, 'userOff', t('users.act.disableAria', { name: u.username }), blocked, toggleRule, () => void toggleDisabled(u)),
+      unlockBtn,
+      act(`us-delete-${u.id}`, 'trash', t('users.act.deleteAria', { name: u.username }), blocked, toggleRule, () => void removeUser(u), true))));
+}
+
+function addButton(list: UsersList['users'] | null): HTMLElement {
+  const b = iconButton({
+    icon: 'plus', label: t('users.add'), showLabel: true, onClick: () => {
+      add.open = true;
+      focusNext = 'us-add-name';
+      render();
+    },
+  });
+  b.id = 'us-add-btn';
+  b.classList.add('us-addbtn');
+  b.disabled = !list;
+  return b;
 }
 
 function listPanel(): HTMLElement {
   const list = users;
+  const lead = infoTip('us-lead-tip', t('users.lead.aria'), t('users.lead'), 'us-tip');
   const head = h('div', { class: 'us-head' },
-    h('h2', { id: 'us-list-h', tabindex: '-1' }, t('users.list.title'), list ? h('span', { class: 'us-count' }, tn('users.count', list.length)) : null),
-    add.open ? null : h('button', {
-      class: 'btn us-mini us-addbtn', id: 'us-add-btn', type: 'button', disabled: !list,
-      onclick: () => {
-        add.open = true;
-        focusNext = 'us-add-name';
-        render();
-      },
-    }, icon([{ d: 'M12 5.5v13' }, { d: 'M5.5 12h13' }], 'ico us-plus'), t('users.add')));
+    h('h2', { id: 'us-list-h', tabindex: '-1' }, t('users.list.title'), list ? h('span', { class: 'us-count' }, tn('users.count', list.length)) : null, lead.el),
+    add.open ? null : addButton(list));
 
   let body: Child;
   if (!list) {
@@ -1014,7 +1041,31 @@ function listPanel(): HTMLElement {
         h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => void load() }, t('common.retry'))))
       : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   } else {
-    body = h('ul', { class: 'us-rows' }, list.map((u) => userRow(u, list)));
+    const rows = h('ul', { class: 'us-rows' }, list.map((u) => userRow(u, list)));
+    const none = h('p', { class: 'dim us-nomatch', role: 'status', hidden: true }, t('users.search.none'));
+    // US-11: a search field above a long list; it hides rows in place (no redraw, the field keeps its focus)
+    const apply = (): void => {
+      const keep = new Set(filterUsers(list, searchText).map((u) => u.username.toLowerCase()));
+      let shown = 0;
+      for (const li of Array.from(rows.children) as HTMLElement[]) {
+        const on = keep.has(li.dataset.name ?? '');
+        li.hidden = !on;
+        if (on) shown += 1;
+      }
+      none.hidden = shown > 0;
+    };
+    const search = list.length > SEARCH_FROM
+      ? h('input', {
+        type: 'search', class: 'us-search', id: 'us-search', value: searchText, placeholder: t('users.search'), 'aria-label': t('users.search'),
+        autocomplete: 'off', spellcheck: 'false',
+        oninput: (e: Event) => {
+          searchText = (e.target as HTMLInputElement).value;
+          apply();
+        },
+      })
+      : null;
+    if (search && searchText) queueMicrotask(apply);
+    body = [search, rows, none];
   }
   return h('section', { class: 'panel us-list', 'aria-labelledby': 'us-list-h', 'aria-busy': loading && !list ? 'true' : null },
     head,
@@ -1033,15 +1084,34 @@ function aiHiddenNote(): HTMLElement | null {
   return h('p', { class: 'us-ainote', id: 'us-ainote', role: 'note' }, t(disconnected ? 'users.ai.hiddenDisconnected' : 'users.ai.hidden'));
 }
 
+/** US-8: scroll the new user's row into view, highlight it for 2 s (CSS) and focus its name; once per created user */
+function showNewRow(root: HTMLElement): void {
+  const id = newRowId;
+  if (id == null || newRowShown) return;
+  newRowShown = true;
+  queueMicrotask(() => {
+    const name = root.isConnected ? document.getElementById(`us-name-${id}`) : null;
+    if (!name) return;
+    const topH = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h')) || 0;
+    const y = name.getBoundingClientRect().top + window.scrollY - topH - 72;
+    scrollToY(Math.max(0, y), true);
+    name.focus({ preventScroll: true });
+    window.setTimeout(() => {
+      document.querySelector('.us-new')?.classList.remove('us-new');
+      if (newRowId === id) newRowId = null;
+    }, 2000);
+  });
+}
+
 export function renderUsers(): HTMLElement {
   if (wanted && !loading) void load();
   startTicker();
   startPoller();
   const root = h('div', { class: 'page page-users' },
     pageHead(t('users.title')),
-    h('p', { class: 'us-lead' }, t('users.lead')),
     aiHiddenNote(),
     listPanel());
   focusAfter(root);
+  showNewRow(root);
   return root;
 }

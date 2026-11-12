@@ -6,6 +6,23 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.0 — 2026-11-12
+
+**Phones first: every page is rebuilt for a phone (icons with a label on press and hold, slimmer bars, more room for the questions and the answers), the AI help of a practice and of its results moves into one panel under the question, and every user has a limit on AI requests. Upgrading: pull the images; the AI database moves to schema 4 after a backup copy; the main database does not change.**
+
+- **Phones first**: no page scrolls sideways at 360, 390 or 412 px; touch targets are at least 44 px; bars and headers are slimmer, so questions, options, answers and AI text get the space. An icon button keeps its name for screen readers, and on a touch screen its label appears on press and hold.
+- **Practice bar**: **Check answer** and **Next** are two separate buttons on every question, in fixed places. **Check answer** is greyed out until something is chosen and after the question is checked; a single-choice question is checked as soon as you pick an option. On the last question **Next** reads **Finish practice**. An exam has no check and no AI: Previous, Next (**Submit** on the last question) and the flag.
+- **AI+ panel**: in a practice, on each result card and on a record's detail page, one collapsible panel under the question replaces the AI hint and explanation window and the AI analysis window. It starts collapsed; **AI hint**, **AI explanation** and **AI analysis** open it with that answer, and its chevron closes it. Copy, Regenerate and Stop keep their places.
+- **No jump to AI Chat**: nothing in the AI+ panel or in the AI summary window leaves the page. **Open in AI Chat** is gone; the muted text **Saved in AI Chat** appears when an answer is saved, and a tip (hover or tap) names the chat. The answers are still saved in AI Chat as before.
+- **No blue frame on titles**: a title that Xexam moves the focus to (the AI summary window, the AI+ panel) no longer shows a focus ring; real buttons keep theirs.
+- **Footer**: every page ends with a small centred line, **GitHub | Xexam 1.0**, linking to the repository and its releases. The old version line is gone; the disclaimer stays above it.
+- **Per-user AI request limits**: each user may send 5 AI requests a minute, 20 an hour and 100 a day, administrators included. Minute and hour are rolling windows; the day count starts again at 0:00 in the time zone of ai-service. A refused request says which limit was used up and when AI is available again. The connection test and the model list are not counted. The three limits are under **AI settings › AI safety**.
+- **Answer and memory length in characters**: **Characters per answer** defaults to 1000 (1 to 16000; in English 4 letters count as 1 character). The server sends the answer length to the model as `max_tokens` (1.5 tokens per character for Chinese and Japanese, 1 for English). **Characters per memory** defaults to 200. The per-message setting is gone: a user message is limited to 16000 characters, a fixed limit.
+- **AI settings in four tabs**: **AI+ function** (the switch, the connection and the model), **AI+ users**, **AI usage** and **AI safety** (chat retention, the request limits, the answer and memory length and the limits that protect the server), all on one page under the status chips.
+- **AI Chat on a phone**: inside a conversation the header is one row (**All chats**, the title and the delete button), and the on-screen keyboard does not push the page up.
+- **Database**: AI database schema 4 (three request-limit columns and the answer length). A copy `backups/xexam-ai-schema3-<date-time>.db` is written first. A memory limit still at the old default of 300 characters becomes 200; any other value stays.
+- Tests: backend 382 → 382, frontend 391 → 554, AI service 383 → 442
+
 ### v0.9.1 — 2026-11-12
 
 **Regenerate now really writes a new answer, and a few small fixes. Upgrading: nothing to do besides pulling the new images (no database change).**

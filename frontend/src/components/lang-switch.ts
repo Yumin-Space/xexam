@@ -3,6 +3,8 @@
 //   · The three buttons always say "English", "中文", "日本語" (each language named in its own script, whatever the UI
 //     language) and carry the matching lang attribute (en, zh-CN, ja), so screen readers pronounce them right.
 //   · The group's accessible name and the tooltips stay in the UI language.
+//   · v1.0 (SH-10): under PHONE the buttons read "EN | 中 | 日" (span.l-short; the full name stays in span.l-full and in the
+//     aria-label), chosen by styles/icon-button.css, so the DOM is the same at every width. The tips are hold tips (touch).
 //   · A language the question lacks stays focusable and tappable (aria-disabled, not disabled): a tap says why in a toast,
 //     because phones never show the title tooltip and a disabled button would silently ignore the tap.
 import { LANG_LABEL, SWITCH_ORDER, baseLang, hasLang, htmlLang, type Lang } from '../domain/language.ts';
@@ -10,9 +12,13 @@ import { t, type MsgKey } from '../i18n/index.ts';
 import type { Question } from '../types/api.ts';
 import { h } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
+import '../styles/icon-button.css';
+import { holdTip } from './tooltip.ts';
 
 /** The language's name in the UI language (the tooltip of an available button) */
 const LANG_NAME: Record<Lang, MsgKey> = { en: 'quiz.lang.en', zh: 'quiz.lang.zh', ja: 'quiz.lang.ja' };
+/** The short form shown on phones: each language in its own script, like LANG_LABEL */
+const LANG_SHORT: Record<Lang, string> = { en: 'EN', zh: '中', ja: '日' };
 /** Why a language button is unavailable (the question lacks that language): its tooltip, and the toast shown when it is tapped */
 const LANG_MISSING: Record<Lang, MsgKey> = { en: 'quiz.lang.noEn', zh: 'quiz.lang.noZh', ja: 'quiz.lang.noJa' };
 
@@ -31,18 +37,20 @@ export function langSwitch(q: Question, current: Lang, onPick: (lang: Lang) => v
   const base = baseLang(q);
   const button = (code: Lang): HTMLElement => {
     const missing = code === base || hasLang(q, code) ? null : t(LANG_MISSING[code]);
-    return h('button', {
+    const tip = missing ?? t(LANG_NAME[code]);
+    const btn = h('button', {
       class: 'lang-btn', type: 'button', lang: htmlLang(code),
       'aria-pressed': String(current === code),
+      'aria-label': LANG_LABEL[code],
       'data-focus': opts.focusKey ? `${opts.focusKey}-${code}` : null,
       'data-lang': code,
       'aria-disabled': missing ? 'true' : null,
-      title: missing ?? t(LANG_NAME[code]),
       onclick: () => {
         if (missing) toast(missing);
         else if (code !== current) onPick(code);
       },
-    }, LANG_LABEL[code]);
+    }, h('span', { class: 'l-full' }, LANG_LABEL[code]), h('span', { class: 'l-short', 'aria-hidden': 'true' }, LANG_SHORT[code]));
+    return holdTip(btn, tip);
   };
   return h('div', { class: 'lang' + (opts.className ? ' ' + opts.className : ''), role: 'group', 'aria-label': t('quiz.lang.label') },
     SWITCH_ORDER.map(button));

@@ -1,7 +1,9 @@
 // The study-record filters: question bank, type (exam / practice), date range, accuracy band; and "is anything filtered".
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { NO_FILTERS, isFiltered, isKindFilter, matchesRecord, type RecordFilters } from './records-filter.ts';
+import {
+  NO_FILTERS, RECORDS_PAGE, filterCount, focusAfterDelete, isFiltered, isKindFilter, matchesRecord, nextLimit, pageRows, type RecordFilters,
+} from './records-filter.ts';
 import type { RecordSummary } from '../types/api.ts';
 
 type Row = Pick<RecordSummary, 'banks' | 'at' | 'percent' | 'kind'>;
@@ -39,4 +41,35 @@ test('type filter combines with bank, dates and accuracy', () => {
 test('isKindFilter accepts only all / exam / practice', () => {
   for (const v of ['all', 'exam', 'practice']) assert.equal(isKindFilter(v), true);
   for (const v of ['', 'Exam', 'practise', null, 1]) assert.equal(isKindFilter(v), false);
+});
+
+test('paging: 50 rows first, then 50 more, never past the end (RC-6)', () => {
+  const rows = Array.from({ length: 120 }, (_, i) => i);
+  assert.equal(RECORDS_PAGE, 50);
+  const a = pageRows(rows, RECORDS_PAGE);
+  assert.equal(a.shown.length, 50);
+  assert.equal(a.rest, 70);
+  const l2 = nextLimit(RECORDS_PAGE, rows.length);
+  assert.equal(l2, 100);
+  assert.equal(pageRows(rows, l2).rest, 20);
+  const l3 = nextLimit(l2, rows.length);
+  assert.equal(l3, 120);
+  assert.equal(pageRows(rows, l3).rest, 0);
+  assert.deepEqual(pageRows([1, 2], RECORDS_PAGE), { shown: [1, 2], rest: 0 });
+  assert.deepEqual(pageRows([], RECORDS_PAGE), { shown: [], rest: 0 });
+});
+
+test('focus after a delete: the next row, else the previous, else nothing (RC-11)', () => {
+  assert.equal(focusAfterDelete([5, 6, 7], 5), 6);
+  assert.equal(focusAfterDelete([5, 6, 7], 6), 7);
+  assert.equal(focusAfterDelete([5, 6, 7], 7), 6);
+  assert.equal(focusAfterDelete([5], 5), null);
+  assert.equal(focusAfterDelete([5, 6], 9), null);
+});
+
+test('filter count: one per active field, none by default (RC-1)', () => {
+  assert.equal(filterCount(NO_FILTERS), 0);
+  assert.equal(filterCount({ ...NO_FILTERS, kind: 'exam' }), 1);
+  assert.equal(filterCount({ bank: '3', kind: 'practice', from: '2026-11-01', to: '2026-11-30', score: 'low' }), 5);
+  assert.equal(filterCount({ ...NO_FILTERS, from: '2026-11-01' }), 1);
 });

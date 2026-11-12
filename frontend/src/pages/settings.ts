@@ -1,4 +1,9 @@
 // Settings page: the account (username, role, change password), theme, interface language, auto-advance, reset to defaults.
+// v1.0: "Change password" is one collapsed 44 px row that opens the three fields in place (ST-1); the theme is a segmented
+// control (icon + short label) under PHONE and the preview cards otherwise (ST-2); the page lead is an (i) tip and the
+// descriptions that only repeat their heading are gone (ST-3); "Saved" (check icon + text) appears next to the section that
+// changed for 2 s, the heading status stays for screen readers (ST-4); the AI chat mode explains itself in its description
+// line, with the sentence that free-mode requests count towards the AI request limits (ST-5).
 // Every change goes through updateSettings(): applied at once (optimistic), saved on the server (Xexam's data directory),
 // and rolled back with a toast when saving fails. The page is redrawn by render(); the focused control keeps the focus.
 import '../styles/settings.css';
@@ -6,9 +11,11 @@ import { ApiError } from '../api/client.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk } from '../components/fields.ts';
 import { aiBadge, badgeReasonText } from '../components/ai-badge.ts';
+import { miniIcon } from '../components/mini-icons.ts';
 import { isBankManager, roleTags } from '../components/shell.ts';
+import { infoTip } from '../components/tooltip.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
-import { localeTag, t, type MsgKey } from '../i18n/index.ts';
+import { localeTag, t, uiLang, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
 import { changeOwnPassword, onRouteChange, onSignedIn, render } from '../state/actions.ts';
@@ -23,6 +30,14 @@ import { h, type Child } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
 
 const THEMES: readonly Theme[] = ['system', 'light', 'dark'];
+/** The segmented control (PHONE): light, dark, then "follow the system"; the icon and the short name of each */
+const THEME_SEG: ReadonlyArray<{ theme: Theme; icon: 'sun' | 'moon' | 'auto'; name: MsgKey }> = [
+  { theme: 'light', icon: 'sun', name: 'settings.theme.light' },
+  { theme: 'dark', icon: 'moon', name: 'settings.theme.dark' },
+  { theme: 'system', icon: 'auto', name: 'settings.theme.systemShort' },
+];
+/** The sections that can show "Saved" next to their heading */
+type SavedSection = 'appearance' | 'language' | 'answering';
 
 const THEME_NAME: Record<Theme, MsgKey> = {
   system: 'settings.theme.system',
@@ -45,9 +60,14 @@ const LANG_NATIVE: Record<UiLang, MsgKey> = {
 
 /** Saves still waiting for the server */
 let pending = 0;
-/** "Saved" is shown for a moment after the last save succeeded */
+/** "Saved" is shown for a moment after the last save succeeded, next to the section that changed (ST-4) */
 let savedShown = false;
+let savedSection: SavedSection | null = null;
 let savedTimer: number | undefined;
+/** The "Saved" slot of each section of the current render (updated in place, without a redraw) */
+let sectionStatus: Partial<Record<SavedSection, HTMLElement>> = {};
+/** How long "Saved" stays next to its section */
+const SAVED_MS = 2000;
 let resetting = false;
 /** The request that switches the AI chat mode runs */
 let modeBusy = false;
@@ -60,6 +80,14 @@ const statusText = (): string => (pending > 0 ? t('common.saving') : savedShown 
 
 function showStatus(): void {
   if (statusEl) statusEl.textContent = statusText();
+  for (const [key, el] of Object.entries(sectionStatus) as Array<[SavedSection, HTMLElement]>) {
+    el.replaceChildren(...(savedShown && savedSection === key ? [miniIcon('check', 'set-saved-ic'), t('common.saved')] : []));
+  }
+}
+
+/** The section a changed setting belongs to */
+function sectionOf(patch: Partial<Settings>): SavedSection {
+  return 'theme' in patch ? 'appearance' : 'uiLang' in patch ? 'language' : 'answering';
 }
 
 /** The data-focus key of the focused control, so it gets the focus back after the page is redrawn */
@@ -78,12 +106,12 @@ function restoreFocus(root: HTMLElement, key: string | null): void {
 }
 
 /** Settings > Account > Change password (what was typed survives a redraw; it is forgotten when the page is left) */
-const pw = { current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null as string | null, done: false };
+const pw = { open: false, current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null as string | null, done: false };
 /** The password field to focus after the next render */
 let pwFocus: string | null = null;
 
 function forgetPasswords(): void {
-  Object.assign(pw, { current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null, done: false });
+  Object.assign(pw, { open: false, current: '', next: '', repeat: '', shown: new Set<string>(), busy: false, error: null, done: false });
 }
 
 onRouteChange((from, to) => {
@@ -112,10 +140,11 @@ async function save(patch: Partial<Settings>): Promise<void> {
   }
   if (ok && pending === 0) {
     savedShown = true;
+    savedSection = sectionOf(patch);
     savedTimer = window.setTimeout(() => {
       savedShown = false;
       showStatus();
-    }, 2500);
+    }, SAVED_MS);
   }
   showStatus();
 }
@@ -224,7 +253,6 @@ function accountSection(): HTMLElement | null {
   const ownBadge = ownBadgeState(u, aiStatus());
   return h('section', { class: 'panel set-sec set-account', 'aria-labelledby': 'set-account-h' },
     h('h2', { id: 'set-account-h' }, t('settings.account')),
-    h('p', { class: 'set-desc' }, t('settings.account.desc')),
     h('dl', { class: 'props set-props' },
       h('dt', null, t('settings.account.username')), h('dd', { class: 'set-username' }, u.username),
       h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u), aiBadge(ownBadge))),
@@ -232,39 +260,60 @@ function accountSection(): HTMLElement | null {
     ownBadge.kind === 'off' ? h('p', { class: 'set-desc set-ai-reason', id: 'set-ai-reason' }, badgeReasonText(ownBadge.reason)) : null,
     // A bank manager: what the extra permission allows (v0.7)
     isBankManager(u) ? h('p', { class: 'set-desc set-manager' }, t('settings.account.managerNote')) : null,
-    h('form', {
-      class: 'set-pw', novalidate: true, 'aria-labelledby': 'set-pw-h', 'aria-busy': pw.busy ? 'true' : null,
-      onsubmit: (e: SubmitEvent) => {
-        e.preventDefault();
-        void submitPassword();
+    h('div', { class: 'set-pw' },
+      // ST-1: one 44 px row "Change password >" that opens the fields in place
+      h('h3', { id: 'set-pw-h', class: 'set-pw-h' }, h('button', {
+        class: 'set-pw-toggle', type: 'button', 'aria-expanded': String(pw.open), 'aria-controls': 'set-pw-form', 'data-focus': 'set-pw-toggle',
+        onclick: () => {
+          pw.open = !pw.open;
+          if (pw.open) pwFocus = 'set-pw-current';
+          else forceFocus = 'set-pw-toggle';
+          render();
+        },
+      }, h('span', null, t('settings.password')), miniIcon('fwd', 'set-pw-chev'))),
+      pw.done ? h('div', { class: 'callout ok set-pw-done', id: 'set-pw-done', role: 'status', tabindex: '-1' }, h('p', null, t('settings.password.done'))) : null,
+      h('form', {
+        id: 'set-pw-form', class: 'set-pw-form', novalidate: true, hidden: !pw.open, 'aria-labelledby': 'set-pw-h', 'aria-busy': pw.busy ? 'true' : null,
+        onsubmit: (e: SubmitEvent) => {
+          e.preventDefault();
+          void submitPassword();
+        },
       },
-    },
-    h('h3', { id: 'set-pw-h' }, t('settings.password')),
-    h('p', { class: 'set-desc' }, t('settings.password.desc')),
-    // For password managers: the account the new password belongs to
-    h('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: u.username, readonly: true, tabindex: '-1', 'aria-hidden': 'true' }),
-    h('div', { class: 'set-pw-grid' },
-      input('set-pw-current', 'settings.password.current', pw.current, 'current-password', (v) => {
-        pw.current = v;
-      }),
-      input('set-pw-new', 'settings.password.new', pw.next, 'new-password', (v) => {
-        pw.next = v;
-      }, 'settings.password.rule'),
-      input('set-pw-repeat', 'settings.password.repeat', pw.repeat, 'new-password', (v) => {
-        pw.repeat = v;
-      })),
-    pw.error ? h('div', { class: 'err', id: 'set-pw-err', role: 'alert', tabindex: '-1' }, h('p', null, pw.error)) : null,
-    pw.done ? h('div', { class: 'callout ok set-pw-done', id: 'set-pw-done', role: 'status', tabindex: '-1' }, h('p', null, t('settings.password.done'))) : null,
-    h('div', { class: 'acts' },
-      h('button', { class: 'btn', type: 'submit', disabled: pw.busy }, t(pw.busy ? 'settings.password.busy' : 'settings.password.submit')))));
+      h('p', { class: 'set-desc' }, t('settings.password.desc')),
+      // For password managers: the account the new password belongs to
+      h('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: u.username, readonly: true, tabindex: '-1', 'aria-hidden': 'true' }),
+      h('div', { class: 'set-pw-grid' },
+        input('set-pw-current', 'settings.password.current', pw.current, 'current-password', (v) => {
+          pw.current = v;
+        }),
+        input('set-pw-new', 'settings.password.new', pw.next, 'new-password', (v) => {
+          pw.next = v;
+        }, 'settings.password.rule'),
+        input('set-pw-repeat', 'settings.password.repeat', pw.repeat, 'new-password', (v) => {
+          pw.repeat = v;
+        })),
+      pw.error ? h('div', { class: 'err', id: 'set-pw-err', role: 'alert', tabindex: '-1' }, h('p', null, pw.error)) : null,
+      h('div', { class: 'acts' },
+        h('button', { class: 'btn', type: 'submit', disabled: pw.busy }, t(pw.busy ? 'settings.password.busy' : 'settings.password.submit'))))));
 }
 
 // ---------------------------------------------------------------- building blocks
 
-function section(id: string, title: string, desc: string, ...body: Child[]): HTMLElement {
+/** A section heading with its "Saved" slot to the right (ST-4; `key` = the sections a setting can change) */
+function sectionHead(id: string, title: string, key?: SavedSection): HTMLElement {
+  let slot: HTMLElement | null = null;
+  if (key) {
+    slot = h('span', { class: 'set-saved', role: 'status', 'aria-live': 'polite' });
+    sectionStatus[key] = slot;
+  }
+  return h('div', { class: 'set-sechead' }, h('h2', { id }, title), slot);
+}
+
+/** A section; `desc` null = no description line (ST-3: one that only repeats the heading goes) */
+function section(id: string, title: string, desc: string | null, key: SavedSection | undefined, ...body: Child[]): HTMLElement {
   return h('section', { class: 'panel set-sec', 'aria-labelledby': id },
-    h('h2', { id }, title),
-    h('p', { class: 'set-desc' }, desc),
+    sectionHead(id, title, key),
+    desc ? h('p', { class: 'set-desc' }, desc) : null,
     body);
 }
 
@@ -314,22 +363,31 @@ export function renderSettings(): HTMLElement {
   pwFocus = null;
   const s = S.settings;
 
-  statusEl = h('span', { class: 'set-status', role: 'status' }, statusText());
+  // The heading status stays for screen readers only; the visible "Saved" is next to the section that changed (ST-4)
+  statusEl = h('span', { class: 'set-status sr-only', role: 'status' }, statusText());
+  sectionStatus = {};
 
-  const appearance = section('set-appearance', t('settings.appearance'), t('settings.appearance.desc'),
-    h('div', { class: 'set-cards', role: 'group', 'aria-label': t('settings.theme.label') }, THEMES.map((theme) => card({
+  const pickTheme = (theme: Theme): void => {
+    if (S.settings.theme !== theme) void save({ theme });
+  };
+  // ST-2: the segmented control (icon + short label) under PHONE, the preview cards otherwise (the stylesheet shows one)
+  const themeSeg = h('div', { class: 'seg set-themeseg', role: 'group', 'aria-label': t('settings.theme.label') }, THEME_SEG.map((o) => h('button', {
+    type: 'button', 'aria-pressed': String(s.theme === o.theme), 'data-focus': `set-themeseg-${o.theme}`, onclick: () => pickTheme(o.theme),
+  }, miniIcon(o.icon, 'set-seg-ic'), h('span', null, t(o.name)))));
+
+  const appearance = section('set-appearance', t('settings.appearance'), null, 'appearance',
+    themeSeg,
+    h('div', { class: 'set-cards set-themecards', role: 'group', 'aria-label': t('settings.theme.label') }, THEMES.map((theme) => card({
       focus: `set-theme-${theme}`,
       pressed: s.theme === theme,
       isDefault: theme === DEFAULT_SETTINGS.theme,
       preview: preview(theme),
       name: h('span', null, t(THEME_NAME[theme])),
       desc: t(THEME_DESC[theme]),
-      onPick: () => {
-        if (S.settings.theme !== theme) void save({ theme });
-      },
+      onPick: () => pickTheme(theme),
     }))));
 
-  const language = section('set-language', t('settings.language'), t('settings.language.desc'),
+  const language = section('set-language', t('settings.language'), t('settings.language.desc'), 'language',
     h('div', { class: 'set-cards set-langs', role: 'group', 'aria-label': t('settings.uiLang.label') }, UI_LANGS.map((code) => card({
       focus: `set-lang-${code}`,
       pressed: s.uiLang === code,
@@ -342,7 +400,7 @@ export function renderSettings(): HTMLElement {
 
   const on = s.autoAdvance;
   const answering = h('section', { class: 'panel set-sec', 'aria-labelledby': 'set-answering' },
-    h('h2', { id: 'set-answering' }, t('settings.answering')),
+    sectionHead('set-answering', t('settings.answering'), 'answering'),
     h('button', {
       class: 'set-switch', type: 'button', role: 'switch', 'aria-checked': String(on),
       'aria-labelledby': 'set-auto-l', 'aria-describedby': 'set-auto-d', 'data-focus': 'set-auto',
@@ -360,18 +418,19 @@ export function renderSettings(): HTMLElement {
   const free = aiFreeMode();
   const modeSec = aiModeShown(isAdmin())
     ? h('section', { class: 'panel set-sec', 'aria-labelledby': 'set-mode-h' },
-      h('h2', { id: 'set-mode-h' }, t('settings.aiMode')),
+      sectionHead('set-mode-h', t('settings.aiMode')),
+      // ST-5: its explanation is the description line, with the sentence about the AI request limits
+      h('p', { class: 'set-desc' }, [t('settings.aiMode.hint'), t('settings.aiMode.caps')].join(uiLang() === 'en' ? ' ' : '')),
       h('div', { class: 'set-cards set-langs', role: 'group', 'aria-label': t('settings.aiMode'), 'aria-busy': modeBusy ? 'true' : null },
         ([false, true] as const).map((isFree) => h('button', {
           class: 'set-card', type: 'button', 'aria-pressed': String(free === isFree), 'aria-disabled': modeBusy ? 'true' : null,
           'data-focus': isFree ? 'set-mode-free' : 'set-mode-normal', onclick: () => void pickMode(isFree),
         }, h('span', { class: 'set-card-name' }, h('span', { class: 'set-radio', 'aria-hidden': 'true' }),
-          h('span', null, t(isFree ? 'settings.aiMode.free' : 'settings.aiMode.normal')))))),
-      h('p', { class: 'set-note' }, t('settings.aiMode.hint')))
+          h('span', null, t(isFree ? 'settings.aiMode.free' : 'settings.aiMode.normal')))))))
     : null;
 
   const defaults = atDefaults(s);
-  const resetSec = section('set-reset-h', t('settings.reset'), t('settings.reset.desc'),
+  const resetSec = section('set-reset-h', t('settings.reset'), null, undefined,
     h('div', { class: 'set-reset' },
       h('button', {
         class: 'btn', type: 'button', 'data-focus': 'set-reset', disabled: defaults || resetting,
@@ -383,8 +442,8 @@ export function renderSettings(): HTMLElement {
         : null));
 
   const root = h('div', { class: 'page page-settings' },
-    pageHead(t('settings.title'), statusEl),
-    h('p', { class: 'set-lead' }, t('settings.lead')),
+    // ST-3: the page lead is an (i) tip next to the heading status
+    pageHead(t('settings.title'), infoTip('set-lead-tip', t('settings.lead.tipBtn'), t('settings.lead')).el, statusEl),
     accountSection(),
     appearance,
     language,
@@ -392,6 +451,7 @@ export function renderSettings(): HTMLElement {
     modeSec,
     resetSec);
   restoreFocus(root, want);
+  showStatus();
   if (pwWant) {
     queueMicrotask(() => {
       if (root.isConnected) document.getElementById(pwWant)?.focus({ preventScroll: true });

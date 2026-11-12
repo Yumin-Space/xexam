@@ -67,7 +67,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_SQLITE_JOURNAL` | （不设：WAL） | `delete` 让 SQLite 继续用以前的回滚日志，而不是 WAL。只在数据卷放在网络文件系统上，或者是绑定挂载进 Docker Desktop 的 Windows 文件夹时才设置；其他任何值都表示 WAL。见 [database.md](database.md) 第 2.1 节 |
 | `XEXAM_COOKIE_SECURE` | （不设） | `1` = 会话 Cookie 总是带 `Secure`。只在浏览器总是通过 HTTPS 访问 Xexam 时设置（例如通过 Cloudflare Tunnel）；不设时，`Secure` 按每个请求决定（第 10 节） |
 | `XEXAM_LOG` | （不设：`info`） | 后端的日志过滤，`docker compose logs backend` 和系统日志页面都用它，例如 `debug` 或 `warn`。为空或只有空格 = `info`；不是有效过滤的值也退回 `info`，日志开头会有一条写明问题的警告 |
-| `TZ` | （不设：宿主机的时区） | 数据库里时间的时区，以及 AI 用量统计里日期的时区；compose 文件把宿主机的 `/etc/localtime` 挂载进了后端和 ai-service，所以只有想用别的时区时才设置 `TZ`（例如 `UTC`） |
+| `TZ` | （不设：宿主机的时区） | 数据库里时间的时区，以及 AI 用量统计里日期的时区；自 v1.0 起还包括每个用户每天的 AI 请求上限在 0:00 重新计数（ai-service）；compose 文件把宿主机的 `/etc/localtime` 挂载进了后端和 ai-service，所以只有想用别的时区时才设置 `TZ`（例如 `UTC`） |
 | `XEXAM_AI_SECRET_KEY` | （不设：AI 卷里的一个密钥文件） | 加密 AI 服务商密钥所用的密钥：32 字节，写成 64 个十六进制数字或 base64（`openssl rand -base64 32`）。见第 3.2 节 |
 | `XEXAM_INTERNAL_TOKEN` | （不设：链接卷里的一个随机令牌） | 后端和 ai-service 共用的令牌，两者用同一个值：至少 32 个可打印的 ASCII 字符，不能有空格（`openssl rand -hex 32`）。见第 3.3 节 |
 | `XEXAM_AI_LOG` | （不设：`info`） | ai-service 的日志过滤，`docker compose logs ai-service` 和它发到系统日志的行都用它；规则和 `XEXAM_LOG` 一样（为空 = `info`，无效的值退回 `info` 并记一条警告） |
@@ -251,13 +251,14 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
-- **从 v0.8**（migration.md 第 0 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库从 schema 5 升到 6（备份 `xexam-schema5-<日期时间>.db`，在 `xexam_data` 里），AI 数据库从 schema 2 升到 3（备份 `xexam-ai-schema2-<日期时间>.db`，在 `xexam_ai_data` 里）。别的都保持原样；AI+ 学习功能对有 AI+ 功能的账户马上出现，没有什么要设置的。回退：主数据库不需要恢复，AI 数据库需要（见下）。
+- **从 v0.9.1 到 v1.0**（见 migration.md 第 0 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库不变（schema 6）。AI 数据库从 schema 3 升到 4（备份 `xexam-ai-schema3-<日期时间>.db`，在 `xexam_ai_data` 里，写在变更之前；副本要放得下剩余磁盘空间）。新的每用户 AI 请求上限（每分钟 5 次、每小时 20 次、每天 100 次）和回答长度（1000 字符）马上生效，管理员也一样。回退：恢复 AI 副本并运行 v0.9.1 的镜像；主数据库不需要恢复。
+- **从 v0.8**（migration.md 第 0b 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库从 schema 5 升到 6（备份 `xexam-schema5-<日期时间>.db`，在 `xexam_data` 里），AI 数据库从 schema 2 升到 3（备份 `xexam-ai-schema2-<日期时间>.db`，在 `xexam_ai_data` 里）。别的都保持原样；AI+ 学习功能对有 AI+ 功能的账户马上出现，没有什么要设置的。回退：主数据库不需要恢复，AI 数据库需要（见下）。
 - **从 v0.7.5 或 v0.7**（migration.md 第 1 节）：**换上新的 `docker-compose.yml`**（服务 `ai-service` 和第三个镜像 `xexam-ai-service`、卷 `xexam_ai_data` 和 `xexam_link`、网络 `egress`）；schema v4 → v6，备份 `xexam-schema4-<日期时间>.db`；AI 数据库是新建的（schema 3）。管理员设置之前 AI 保持关闭。用旧的 compose 文件，除了 AI 以外一切照常：**AI 设置** 这时仍然能打开，并说明 ai-service 没有运行（提示要换上新的 compose 文件），用户管理里的 AI+ 功能开关则被隐藏。
 - **从 v0.6**（migration.md 第 2 节）：schema v3 → v6，备份 `xexam-schema3-<日期时间>.db`，WAL 模式，然后下架旧格式的题。也请换上新的 `docker-compose.yml`：它加入了 ai-service，不再设置固定的默认时区（而是跟随宿主机，第 3.1 节），限制容器日志的大小（第 8 节），并在 `.env` 里设置了时传递 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 AI 的变量。如果你以前的时间是用和宿主机不同的时区写入的，请在 `.env` 里把那个时区设成 `TZ`，这样新的记录会接着用它。不需要新增任何变量。
 - **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v6 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
 - **从 v0.4**（migration.md 第 4 节）：schema v1 → v6 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
 
-升级后，`/api/info` 显示 `"version": "0.9.1"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
+升级后，`/api/info` 显示 `"version": "1.0"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
 
 ## 7. 健康检查和停止
 

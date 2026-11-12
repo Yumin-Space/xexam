@@ -801,12 +801,14 @@ impl AnswerRow {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Saved {
     pub chat_id: Option<i64>,
+    /// The chat's real title (the browser shows it in the "saved in AI Chat" tip)
+    pub chat_title: Option<String>,
     pub latest: Option<AnswerRow>,
     pub last_good: Option<AnswerRow>,
 }
 
 impl Saved {
-    /// `{"chatId", "latest", "lastGood"}`; `summary` picks the `SummaryAnswer` shape.
+    /// `{"chatId", "chatTitle", "latest", "lastGood"}`; `summary` picks the `SummaryAnswer` shape.
     pub fn to_json(&self, summary: bool) -> Value {
         let one = |a: &Option<AnswerRow>| match a {
             None => Value::Null,
@@ -815,6 +817,7 @@ impl Saved {
         };
         json!({
             "chatId": self.chat_id,
+            "chatTitle": self.chat_title,
             "latest": one(&self.latest),
             "lastGood": one(&self.last_good),
         })
@@ -876,8 +879,14 @@ fn saved_with(
         },
         _ => None,
     };
+    let chat_title = c
+        .query_row("SELECT title FROM chats WHERE id = ?1", [chat], |r| {
+            r.get::<_, String>(0)
+        })
+        .optional()?;
     Ok(Saved {
         chat_id: Some(chat),
+        chat_title,
         latest,
         last_good,
     })
@@ -885,6 +894,7 @@ fn saved_with(
 
 const NO_SAVED: Saved = Saved {
     chat_id: None,
+    chat_title: None,
     latest: None,
     last_good: None,
 };

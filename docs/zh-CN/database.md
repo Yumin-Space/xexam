@@ -3,7 +3,7 @@
 # 数据库
 
 > 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端沿用旧 Python 版的数据库：原来的建表语句（schema v1）**一字不差**地保留，之后的每个 schema 都只是往上加东西（新表和新列；不重建、不改写任何东西）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v0.9 起它的 schema 是 **3**。两个服务从不打开对方的数据库。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.0 起它的 schema 是 **4**（从 v0.9 起是 3）。两个服务从不打开对方的数据库。**v1.0 不改变主数据库**：它仍然是 schema v6。
 > 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）和 `v09_ai_study.rs`（v6，后端的学习路由）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
@@ -380,7 +380,7 @@ docker compose start
 
 > ⚠️ 从 v0.1 升级时：数据库的文件名改了，新版本只读取 `xexam.db`。如果数据目录里有别的 `.db` 文件、却没有 `xexam.db`，启动日志会提醒你；把那个文件改名为 `xexam.db` 再启动（旧文件既不会被删除，也不会被读取）。
 
-## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v0.9 起 schema 3）
+## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v1.0 起 schema 4）
 
 ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只有它打开和迁移这个数据库；后端从不读取它，ai-service 也从不打开 `xexam.db`（数据边界，见 [architecture.md](architecture.md) 第 5 节）。
 
@@ -393,7 +393,7 @@ ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只�
 
 和主数据库一样：`busy_timeout` 5000 ms、`foreign_keys=ON`（这里的 schema 确实用了外键，见下文）、`synchronous=FULL`、WAL 模式（`XEXAM_AI_SQLITE_JOURNAL=delete` 保留回滚日志，规则和 2.1 一样），另外还有 **`secure_delete=ON`**。一个连接放在互斥锁后面，每次写入都在 `BEGIN IMMEDIATE … COMMIT` 里，锁从不跨 `.await` 持有。启动日志里会写 `AI database: /data/xexam-ai.db (journal: wal)`。
 
-### 8.2 表（schema v3）
+### 8.2 表（schema v4）
 
 ```mermaid
 erDiagram
@@ -430,8 +430,12 @@ erDiagram
         INTEGER chats_per_user "10-100000，默认 1000"
         INTEGER messages_per_chat "20-5000，默认 400"
         INTEGER memories_per_user "1-1000，默认 50"
-        INTEGER memory_chars "50-2000，默认 300"
-        INTEGER message_chars "1000-32000，默认 16000"
+        INTEGER memory_chars "50-2000，默认 200（v1.0 之前是 300；升级时值为 300 的会一次性改成 200）"
+        INTEGER message_chars "自 v1.0 起不再使用（原为 1000-32000，默认 16000）；保留，从不读取或写入"
+        INTEGER calls_per_minute "1-100，默认 5（v1.0）"
+        INTEGER calls_per_hour "1-2000，默认 20（v1.0）"
+        INTEGER calls_per_day "1-20000，默认 100（v1.0）"
+        INTEGER reply_max_chars "1-16000，默认 1000：回答长度（字符数，v1.0）"
         INTEGER updated_at "Unix 秒"
         TEXT updated_by "用户名"
     }
@@ -526,7 +530,7 @@ erDiagram
 - **指纹** 是对服务商、地址、格式和认证方式（网关时）、模型、密钥的版本号和当前加密密钥 id 计算的 SHA-256，从不包含密钥本身。只有 `enabled = 1`、`verified_fp` 等于当前指纹而且密钥能解密时，AI 才算开启。改变指纹的设置修改会在同一个事务里清除 `enabled` 和 `verified_*`。
 - **`users`** 只保存 ai-service 见过的用户（他们在主数据库里的 id 和身份标记，以及最后知道的名字）；这个用户第一次对话、写记忆或调用时才写入一行，只是看看不会写入。**`function_enabled`**（v2，默认 1）是每个用户 AI+ 功能的**暂停**：0 表示管理员暂停了这个用户（AI 设置里的 **暂停**），1 表示使用中；没有行的用户是使用中的，管理员永远不会被设为 0。它和 AI+ 功能的授权（主数据库里的 `users.ai_enabled`）是分开的：把功能关掉再打开，不会清除暂停，只有 **恢复** 才会。值为 0 的 id 就是心跳向后端报告的内容（见 [architecture.md](architecture.md) 第 5 节）。**`free_mode`**（v2，默认 0）是管理员的**自由模式**：是用户的状态，不是对话的状态。它在设置里的 **AI 对话模式** 下设置（`POST /api/ai/free`，只有管理员），并且只对管理员读取，所以留在以前的管理员身上的值不起作用。
 - **`chats`**、**`messages`** 和 **`memories`** 是用户的内容。对话没有模式：管理员的自由模式开启期间，任何对话（旧的或新的）里的每条消息都以自由模式回答。每条消息都记录它是在哪种模式下写的（**`messages.free`**，v2，默认 0），所以历史可以在模式改变时告诉模型（见 [architecture.md](architecture.md) 第 5 节）。删除一个用户的行会删除他的对话、消息、记忆和任务（`ON DELETE CASCADE`）；他的 **`usage`** 行保留，`user_id` 变成 NULL，所以按模型和按天的合计仍然正确。`memories.content` 最多允许 2000 个字符（记忆上限能设的最大值）；当前的上限由服务检查。学习消息（见下）以 `free = 0` 写入。
-- **`usage`** 每次模型调用一行（对话、测试、模型列表、记忆笔记，从 v0.9 起还有学习回答），带 Token、时间和状态，从不包含任何内容、密钥或地址。**`tokens_cached`**（v2）是服务商从它的提示词缓存里提供的那部分输入 token（AI 设置里用量的 **缓存命中** 一列）；NULL 表示服务商没有报告。**`purpose`**（v3）对学习功能的模型调用是 `hint`、`explain` 或 `summary`，对 AI 对话和没有对话的调用是 NULL；AI 设置里用量的 **按功能** 表按它给对话的行分组（AI 对话、提示、解释、总结；这四行始终都在，零也列出；`GET /api/ai/admin/usage` 把它们作为 `byPurpose` 返回）。它的行一直保留（没有保留期）；它们很小。
+- **`usage`** 每次模型调用一行（对话、测试、模型列表、记忆笔记，从 v0.9 起还有学习回答），带 Token、时间和状态，从不包含任何内容、密钥或地址。**`tokens_cached`**（v2）是服务商从它的提示词缓存里提供的那部分输入 token（AI 设置里用量的 **缓存命中** 一列）；NULL 表示服务商没有报告。**`purpose`**（v3）对学习功能的模型调用是 `hint`、`explain` 或 `summary`，对 AI 对话和没有对话的调用是 NULL；AI 设置里用量的 **按功能** 表按它给对话的行分组（AI 对话、提示、解释、总结；这四行始终都在，零也列出；`GET /api/ai/admin/usage` 把它们作为 `byPurpose` 返回）。它的行一直保留（没有保留期）；它们很小。 **每用户请求上限（v1.0）** 读取这张表，而不是自己的计数器：用户在最近一分钟、最近一小时以及服务器时区 0:00 以来的调用，是该用户的 `chat` 和 `memory` 行（每种状态都计入），加上内存里仍在运行的调用。计数用的是现有的 `idx_usage_user` 索引，没有新增索引或表。
 - **`tasks`** 是为以后的功能准备的；v0.8 里没有使用它的路由或后台任务（已结束的任务在 30 天后删除）。
 - **`audit_outbox`** 保存管理员清除操作的审计日志，直到后端把它们取走放进系统日志（见 [security.md](security.md) 第 11 节）。
 - 索引：`idx_chats_user (user_id, updated_at)`、`idx_chats_updated (updated_at)`、`idx_messages_chat (chat_id, id)`、`idx_memories_user (user_id, id)`、`idx_tasks_state (state, run_after)`、`idx_usage_day (day)`、`idx_usage_user (user_id, day)`、`idx_usage_model (model, day)`，从 v3 起还有三个部分索引：`idx_chats_ref`，在 `(user_id, kind, ref) WHERE ref IS NOT NULL` 上唯一（每次会话或每条记录一个对话，不用扫描就能找到）；`idx_messages_study`，在 `(chat_id, question_id, kind, source, role, id) WHERE question_id IS NOT NULL` 上（一道题已保存的提示或解释）；`idx_messages_streaming`，在 `(status) WHERE status = 'streaming'` 上（启动时的修复）。`tests/v09_store.rs` 用 `EXPLAIN QUERY PLAN` 检查已保存回答的查询、按引用查对话和修复的计数都用到了它们，没有临时排序。
@@ -542,12 +546,13 @@ erDiagram
 
 ### 8.3 服务怎样使用它
 
-- **打开**：创建表（`IF NOT EXISTS`），用默认值加上 `settings` 和 `limits` 两行，新数据库把 `meta.schema` 设为 `3`。`meta.schema` 为 `1` 或 `2` 的数据库会被升级（见下面的迁移）。更新的 ai-service 写的数据库（`meta.schema` 大于 `3`）会被拒绝：服务记一行日志，不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被强行终止而停在 `streaming` 的回答会被标记为 `error`，错误码 `ai.interrupted`（只在有这样的回答时；`idx_messages_streaming` 负责找出它们）。
+- **打开**：创建表（`IF NOT EXISTS`），用默认值加上 `settings` 和 `limits` 两行，新数据库把 `meta.schema` 设为 `4`。`meta.schema` 为 `1`、`2` 或 `3` 的数据库会被升级（见下面的迁移）。更新的 ai-service 写的数据库（`meta.schema` 大于 `4`）会被拒绝：服务记一行日志，不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被强行终止而停在 `streaming` 的回答会被标记为 `error`，错误码 `ai.interrupted`（只在有这样的回答时；`idx_messages_streaming` 负责找出它们）。
 - **保留**：启动 60 秒后，之后每小时一次，删除最后一条消息早于保留天数的对话（正在生成回答的除外），连同它们的消息，学习对话和别的对话一样。清理按**每个事务 20 个对话**删除，每完整的一批之后停 20 毫秒，在阻塞线程上运行，所以一次大的清理（保留期调低了，或者服务停了很久）不会长时间锁住数据库，正在写的回答也能继续保存；一行日志给出总数。用户删除自己的全部对话、管理员的清除和已删除用户的数据的移除，仍然在一个事务里删完。记忆不受保留期影响。
 - **和主程序对账**：启动时（每 30 秒重试一次，直到成功）、每 10 分钟，以及管理员打开 **AI+ 用户** 时，服务会问后端它的哪些用户 id 还存在、标记是什么、是否被授予了 AI+ 功能。已经不存在的 id，或者现在标记不同的 id（主数据库恢复后被重新使用的用户 id），会先停止这个用户的回答，再删除它的数据。带着这样的身份的请求到达时，也会马上这样做。
 - **删除的内容**：`secure_delete=ON` 时释放的页会被覆盖，每次删除用户内容之后，服务还会执行 `PRAGMA wal_checkpoint(TRUNCATE)`（最多每 10 秒一次），这样旧的页不会留在 `xexam-ai.db-wal` 里。备份和卷快照里仍然有删掉的内容。
 - **停止**：正常停止时，正在生成的回答会保存为已停止，然后执行检查点。
-- **迁移**：schema v1 是第一个 schema（v0.8 的预发布构建）；**schema v2**（v0.8）新增了四个列：`users.function_enabled`（默认 1）、`users.free_mode`（默认 0）、`messages.free`（默认 0）和 `usage.tokens_cached`（NULL）；**schema v3**（v0.9）新增**十二个列和三个索引**，别的都没有：`chats.kind`（默认 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（默认 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong` 和 `usage.purpose`（NULL），加上 `idx_chats_ref`、`idx_messages_study` 和 `idx_messages_streaming`。没有任何一行被改写，也没有任何一行改变含义：每个旧的对话和消息都是 `chat`，每个旧的用量行都没有 purpose。同一步新增既用于创建新数据库，也用于升级旧数据库，所以两者最后的表和 `sqlite_master` 都相同。**每个 schema 1 或 2 的数据库都会先复制**：用 `VACUUM INTO` 复制到 AI 数据目录里的 `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`（`<N>` 是它原来的 schema，所以 v0.8 的数据库是 `xexam-ai-schema2-…`；目录权限 0700；时间是容器的本地时间；名字已被占用时加 `-2`、`-3`…… 后缀；空数据库也会复制），然后在一个事务里升级，并用一行日志写出这份副本的名字：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: <path>.`。如果副本写不出来，服务不启动，也什么都不改。较早的预发布构建写的 schema 2 文件缺少一些 v2 的列，会在同一步里补上。重新打开 schema 3 的数据库什么都不写。**请留出大约和 AI 数据库一样大的可用磁盘空间**用于副本；副本从不清理，而且会保留后来被删除的对话和记忆（在这有关系时请自己删除，见 [security.md](security.md) 第 11 节）。**回到 v0.8 需要这份副本**：v0.8 的 ai-service 会拒绝 schema 3（`written by a newer ai-service … restore a backup`）并退出，所以请像 8.4 那样恢复 `xexam-ai-schema2-….db`；升级之后写入的对话、记忆、设置和用量不在其中，会丢失。
+- **迁移**：schema v1 是第一个 schema（v0.8 的预发布构建）；**schema v2**（v0.8）新增了四个列：`users.function_enabled`（默认 1）、`users.free_mode`（默认 0）、`messages.free`（默认 0）和 `usage.tokens_cached`（NULL）；**schema v3**（v0.9）新增**十二个列和三个索引**，别的都没有：`chats.kind`（默认 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（默认 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong` 和 `usage.purpose`（NULL），加上 `idx_chats_ref`、`idx_messages_study` 和 `idx_messages_streaming`。没有任何一行被改写，也没有任何一行改变含义：每个旧的对话和消息都是 `chat`，每个旧的用量行都没有 purpose。同一步新增既用于创建新数据库，也用于升级旧数据库，所以两者最后的表和 `sqlite_master` 都相同。**每个 schema 1、2 或 3 的数据库都会先复制**：用 `VACUUM INTO` 复制到 AI 数据目录里的 `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`（`<N>` 是它原来的 schema，所以 v0.8 的数据库是 `xexam-ai-schema2-…`；目录权限 0700；时间是容器的本地时间；名字已被占用时加 `-2`、`-3`…… 后缀；空数据库也会复制），然后在一个事务里升级，并用一行日志写出这份副本的名字：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: <path>.`。如果副本写不出来，服务不启动，也什么都不改。较早的预发布构建写的 schema 2 文件缺少一些 v2 的列，会在同一步里补上。重新打开 schema 3 的数据库什么都不写。**请留出大约和 AI 数据库一样大的可用磁盘空间**用于副本；副本从不清理，而且会保留后来被删除的对话和记忆（在这有关系时请自己删除，见 [security.md](security.md) 第 11 节）。**回到 v0.8 需要这份副本**：v0.8 的 ai-service 会拒绝 schema 3（`written by a newer ai-service … restore a backup`）并退出，所以请像 8.4 那样恢复 `xexam-ai-schema2-….db`；升级之后写入的对话、记忆、设置和用量不在其中，会丢失。
+- **Schema 4（v1.0）** 新增**四个列**，别的都没有：`limits.calls_per_minute`（默认 5）、`limits.calls_per_hour`（默认 20）、`limits.calls_per_day`（默认 100）和 `limits.reply_max_chars`（默认 1000），每个都带有其范围的 `CHECK`。什么都没有删掉：`limits.message_chars` 保留在表里，不再使用。同一事务里执行一次 `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300`，把记忆长度的旧默认值改成新的默认值；管理员设的其他值保持不变。新数据库和从 1、2 或 3 升级的数据库都执行这一步，之后的启动不会再执行。从 1、2 或 3 升级的数据库，四个新列取默认值，不从旧值推导。**保留 schema 3 数据库的副本**（`backups/xexam-ai-schema3-<日期时间>.db`）：v0.9.1 的 ai-service 会按现有的提示拒绝 schema 4，所以要回退，就得恢复那份副本并运行 v0.9.1 的镜像（第 8.4 节和 [migration.md](migration.md)）。
 
 ### 8.4 AI 卷的备份和恢复
 

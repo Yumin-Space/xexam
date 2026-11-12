@@ -16,6 +16,7 @@ export default defineCatalog({
     'about.loading': 'Loading the version history…',
     'about.failed': 'The version history could not be loaded. Reload the page and try again.',
     'about.empty': 'No version history is available.',
+    'about.showAll': 'Show all ({n})',
   },
   zh: {
     'about.title': '关于 Xexam',
@@ -31,6 +32,7 @@ export default defineCatalog({
     'about.loading': '正在读取版本记录…',
     'about.failed': '版本记录没能读取。请刷新页面后再试。',
     'about.empty': '没有可显示的版本记录。',
+    'about.showAll': '显示全部（{n} 条）',
   },
   ja: {
     'about.title': 'Xexam について',
@@ -46,5 +48,6 @@ export default defineCatalog({
     'about.loading': 'バージョン履歴を読み込んでいます…',
     'about.failed': 'バージョン履歴を読み込めませんでした。ページを再読み込みしてから再試行してください。',
     'about.empty': '表示できるバージョン履歴がありません。',
+    'about.showAll': 'すべて表示（{n} 件）',
   },
 });

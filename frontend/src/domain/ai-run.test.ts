@@ -1,15 +1,17 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { asAskError, createRunner, type RunSpec } from './ai-run.ts';
-import { entryView, type AskError, type SavedPayload, type StreamEvent } from './ai-study.ts';
+import { entryView, type AskError, type CallBlock, type SavedPayload, type StreamEvent } from './ai-study.ts';
 
 /** Manual timers: `fire()` runs the oldest pending one */
-function fakeEnv(over: { maxEntries?: number; maxPollFailures?: number } = {}) {
+function fakeEnv(over: { maxEntries?: number; maxPollFailures?: number; blocked?: () => CallBlock | null } = {}) {
   const timers = new Map<number, () => void>();
   let next = 1;
   const changes: string[] = [];
   const refused: AskError[] = [];
+  const limited: CallBlock[] = [];
   const env = {
+    onCallLimit: (q: CallBlock) => { limited.push(q); },
     setTimer: (fn: () => void) => { timers.set(next, fn); return next++; },
     clearTimer: (h: unknown) => { timers.delete(h as number); },
     onChange: (k: string) => { changes.push(k); },
@@ -24,7 +26,7 @@ function fakeEnv(over: { maxEntries?: number; maxPollFailures?: number } = {}) {
     fn();
     await tick();
   };
-  return { env, timers, changes, refused, fire };
+  return { env, timers, changes, refused, limited, fire };
 }
 
 const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
@@ -395,5 +397,154 @@ describe('asAskError', () => {
     assert.equal(e.code, 'ai.busy');
     assert.equal(e.running?.kind, 'summary');
     assert.deepEqual(asAskError({ status: 502, code: undefined }), { status: 502, code: null });
+  });
+});
+
+describe('peek', () => {
+  it('never asks: a memory hit shows at once without any request', async () => {
+    const f = fakeEnv();
+    const r = createRunner(f.env);
+    const s = spec({ saved: { chatId: 3, latest: ans(), lastGood: ans() } });
+    await r.peek('k', s);
+    s.calls.length = 0;
+    await r.peek('k', s);
+    assert.deepEqual(s.calls, []);
+    assert.equal(r.entry('k')?.shown?.content, 'saved');
+  });
+  it('a saved hit is shown, no ask', async () => {
+    const r = createRunner(fakeEnv().env);
+    const s = spec({ saved: { chatId: 3, latest: ans(), lastGood: ans() } });
+    await r.peek('k', s);
+    assert.deepEqual(s.calls, ['saved']);
+    assert.equal(entryView(r.entry('k')!, EN).phase, 'done');
+  });
+  it('nothing saved (a null lookup): the entry is removed again and nothing is asked', async () => {
+    const f = fakeEnv();
+    const r = createRunner(f.env);
+    const s = spec({ saved: null });
+    await r.peek('k', s);
+    assert.deepEqual(s.calls, ['saved'], 'looked up, never asked');
+    assert.equal(r.entry('k'), undefined);
+    assert.equal(r.size(), 0);
+    assert.ok(f.changes.includes('k'), 'the open panel is told to repaint');
+  });
+  it('nothing saved (an empty payload): an empty entry, nothing asked', async () => {
+    const r = createRunner(fakeEnv().env);
+    const s = spec();
+    await r.peek('k', s);
+    assert.deepEqual(s.calls, ['saved']);
+    assert.equal(entryView(r.entry('k')!, EN).phase, 'empty');
+  });
+  it('a failed lookup leaves an error note, never an ask', async () => {
+    const r = createRunner(fakeEnv().env);
+    const s = spec({ loadSaved: async () => { throw { status: 500, code: 'ai.internal' }; } });
+    await r.peek('k', s);
+    assert.equal(r.entry('k')?.failure?.status, 500);
+    assert.ok(!s.calls.includes('ask'));
+  });
+  it('a running saved answer is polled', async () => {
+    const f = fakeEnv();
+    const r = createRunner(f.env);
+    const s = spec({ saved: { chatId: 3, latest: ans({ status: 'streaming', content: 'Hi' }), lastGood: null } });
+    await r.peek('k', s);
+    assert.equal(f.timers.size, 1);
+  });
+  it('open after an empty peek asks exactly once', async () => {
+    const r = createRunner(fakeEnv().env);
+    const s = spec({ events: STARTED });
+    await r.peek('k', s);
+    assert.equal(s.calls.filter((c) => c === 'ask').length, 0);
+    await r.open('k', s);
+    assert.equal(s.calls.filter((c) => c === 'ask').length, 1);
+    assert.equal(r.entry('k')?.shown?.content, 'Hi');
+  });
+  it('a peek that found nothing (entry removed) and then open reads again and asks once', async () => {
+    const r = createRunner(fakeEnv().env);
+    const s = spec({ saved: null, events: STARTED });
+    await r.peek('k', s);
+    await r.open('k', s);
+    assert.equal(s.calls.filter((c) => c === 'ask').length, 1);
+  });
+});
+
+describe('call caps (blocked)', () => {
+  const block: CallBlock = { cap: 'hour', limit: 20, retryAt: 9000 };
+  const when = (b: CallBlock | null) => ({ blocked: () => b });
+  it('open on a question with nothing saved does not ask; local ai.callLimit failure', async () => {
+    const f = fakeEnv(when(block));
+    const r = createRunner(f.env);
+    const s = spec({ events: STARTED });
+    await r.open('k', s);
+    assert.deepEqual(s.calls, ['saved']);
+    const e = r.entry('k')!;
+    assert.deepEqual(e.failure, { status: 429, code: 'ai.callLimit', quota: block });
+    assert.equal(entryView(e, EN).note?.kind, 'error');
+    assert.equal(e.requesting, false);
+    assert.equal(f.limited.length, 0, 'a local refusal is not reported as a server refusal');
+  });
+  it('open on a question with a saved answer still shows it: no ask, no cap note', async () => {
+    const r = createRunner(fakeEnv(when(block)).env);
+    const s = spec({ saved: { chatId: 3, latest: ans(), lastGood: ans() } });
+    await r.open('k', s);
+    assert.deepEqual(s.calls, ['saved']);
+    assert.equal(entryView(r.entry('k')!, EN).note, null);
+    assert.equal(r.entry('k')?.failure, null);
+  });
+  it('regenerate never asks and keeps the shown answer under the cap note', async () => {
+    let b: CallBlock | null = null;
+    const r = createRunner(fakeEnv({ blocked: () => b }).env);
+    const s = spec({ saved: { chatId: 3, latest: ans(), lastGood: ans() } });
+    await r.open('k', s);
+    b = block;
+    await r.regenerate('k', s);
+    assert.ok(!s.calls.includes('ask'));
+    const v = entryView(r.entry('k')!, EN);
+    assert.equal(v.text, 'saved');
+    assert.equal(v.note?.kind === 'error' && v.note.code, 'ai.callLimit');
+    assert.equal(v.note?.kind === 'error' && v.note.quota?.retryAt, 9000);
+  });
+  it('stopAndAsk neither stops the other answer nor asks', async () => {
+    const r = createRunner(fakeEnv(when(block)).env);
+    const s = spec({ events: STARTED });
+    await r.stopAndAsk('k', s, 12);
+    assert.deepEqual(s.calls, []);
+    assert.equal(r.entry('k')?.failure?.code, 'ai.callLimit');
+  });
+  it('the block ending frees the next ask', async () => {
+    let b: CallBlock | null = block;
+    const r = createRunner(fakeEnv({ blocked: () => b }).env);
+    const s = spec({ events: STARTED });
+    await r.open('k', s);
+    b = null;
+    await r.regenerate('k', s);
+    assert.ok(s.calls.includes('ask'));
+    assert.equal(r.entry('k')?.shown?.content, 'Hi');
+  });
+  it('a blocked regenerate leaves a running answer alone', async () => {
+    let b: CallBlock | null = null;
+    const r = createRunner(fakeEnv({ blocked: () => b }).env);
+    let finish: () => void = () => undefined;
+    const s = spec({ ask: (_sig, on) => new Promise<void>((res) => { on(ev('start', { chatId: 1, assistantMessageId: 2 })); finish = res; }) });
+    const running = r.regenerate('k', s);
+    await tick();
+    b = block;
+    await r.regenerate('k', s);
+    assert.equal(r.entry('k')?.failure, null);
+    assert.equal(r.entry('k')?.attempt?.status, 'streaming');
+    finish();
+    await running;
+  });
+  it('a server ai.callLimit refusal reports the quota to the state', async () => {
+    const f = fakeEnv();
+    const r = createRunner(f.env);
+    const s = spec({ ask: async () => { throw { status: 429, code: 'ai.callLimit', quota: block }; } });
+    await r.regenerate('k', s);
+    assert.deepEqual(f.limited, [block]);
+    assert.equal(r.entry('k')?.failure?.quota?.cap, 'hour');
+  });
+  it('asAskError keeps a valid quota only for ai.callLimit', () => {
+    assert.deepEqual(asAskError({ status: 429, code: 'ai.callLimit', quota: block }), { status: 429, code: 'ai.callLimit', quota: block });
+    assert.deepEqual(asAskError({ status: 429, code: 'ai.callLimit', quota: { cap: 'week', limit: 1, retryAt: 2 } }), { status: 429, code: 'ai.callLimit' });
+    assert.deepEqual(asAskError({ status: 429, code: 'ai.other', quota: block }), { status: 429, code: 'ai.other' });
   });
 });

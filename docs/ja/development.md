@@ -73,7 +73,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # アプリを tsc でチェックし、続いてテストファイルをチェック（tsconfig.test.json）
-npm test               # 391 件の単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
+npm test               # 単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
                        # コード）、採点とランダムな出題、練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、
                        # ロックの説明と待ち時間、取り込みの警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、
                        # 設定のキャッシュ、イベントストリームのパーサー、AI チャットの状態、回答の Markdown、メモの要求、
@@ -125,6 +125,14 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 6. **状態**：ページ同士は互いにインポートしません。共有する状態は `src/state/store.ts` に置き、変更は `src/state/actions.ts` の関数（`navigate(route)`、`render()` など）を通して行います。そのページだけが使う状態は、ページモジュールの変数に置きます。ユーザーがページを離れるときや開いたときに処理を実行するには、`onRouteChange()` を使います。
 7. **API**：新しいエンドポイントには、`backend/src/api/auth.rs` のルート表 `ROUTES` に 1 行（誰が使えるか）、`src/api/` に型付きのラッパー、`src/types/api.ts` にその型を追加し、[api.md](api.md) と [openapi.yaml](../en/openapi.yaml) に記載します。AI のルートは、代わりに `ai-service/src/api/mod.rs` の `ROUTES` に、そのアクセスレベルと一緒に加えます。
 
+### 4.4 スマートフォン優先のルール（v1.0）
+
+- **メディアクエリは 1 つ。** `PHONE` は `(max-width: 600px), (orientation: landscape) and (max-height: 500px)` です。その TypeScript の定数は `src/utils/media.ts` の `PHONE_MQ` です。どのスタイルシートも、同じ文字列を自分の `@media` ブロックに書き写します。CSS は定数を import できないからです。両方を一緒に変えてください。同じファイルにある、ほかの名前付きのクエリ（`SHORT_LANDSCAPE_MQ`、`BAR_MQ`、`TOUCH_MQ`）も同様です。
+- **ラベル付きのアイコン。** アイコンだけを表示する操作は `iconButton()`（`src/components/icon-button.ts`、スタイルは `src/styles/icon-button.css`）で作ります。その形は `src/components/mini-icons.ts` から来ます（`src/domain/mini-icon-shapes.test.ts` が形を確かめます）。テキストはアクセシブルな名前として残り、タッチ操作では長押しのヒント（`src/domain/hold-tip.ts`）として表示されます。
+- **タッチの領域** は、少なくとも 44 × 44 px です。36 px のアイコンは、見た目を小さくしたまま、見えない領域を広げてもかまいません。
+- **フォーカス。** スクリプトがフォーカスする見出しやほかの操作できない要素には、フォーカスの枠が付きません（`[tabindex="-1"]:focus`）。実際の操作要素は枠を保ちます。
+- **幅。** ページを完成とみなす前に、5.1 節の幅の一覧（縦向き 360、390、412。横向き 740 と 844。タブレット 768。デスクトップ 1280）で、zh、en、ja の、ライトとダークの両方で確認してください。360 px で壊れる固定の幅は決して追加しないでください。
+
 ## 5. スタック全体
 
 ```bash
@@ -150,6 +158,26 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。`stack_check.py` は任意の `XEXAM_STACK_COMPOSE` を読みます：同じ形の別の compose ファイル（たとえば、イメージのタグとコンテナ名を変えた `docker/docker-compose.build.yml` のコピー）を使えるので、いつものものを使うインストールと並べて実行できます。コンテナは、その compose のサービスから見つけます。`nginx_check.py` には約 2 分半かかります。1 つの項目が、AI 設定の遅い **テスト** のために 95 秒待つからです。`stack_check.py` は学習用の質問の間隔を空けます（セッションの Cookie あたり約 3.2 秒）。Nginx は、バースト 10 の後は 1 つのセッションが 3 秒に 1 回しか AI の回答を始められないようにしている（ゾーン `aisend`、1 分に 20 回）ためで、これで約 1 分半増えます。スクリプトは自分で書く架空の問題集を使い、あなたのデータには触れません。
 
 compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルート（`..`）をビルドコンテキストにします。フロントエンドのイメージは、リポジトリのルートからビルドします。`nginx/Dockerfile` は、Node のビルド段階に 3 つの更新履歴をコピーします（`COPY docs/en/changelog.md /docs/en/`。`ja` と `zh-CN` も同じ）。「Xexam について」のページが、これらから作られるためです。同じ理由で、`.dockerignore` は `docs/` と README をビルドコンテキストから外したうえで、この 3 つのファイルだけを戻します。完成したイメージに入るのはビルドした静的ファイルだけです。
+
+### 5.1 電話の幅での確認（v1.0）
+
+`tools/phone-walk/walk.py` は、自分専用の使い捨てのスタックを起動します（3 つのイメージを一意な名前で、それぞれのボリュームを持たせ、`TZ=UTC`、架空の AI スタブ、127.0.0.1 の空いているポートで）。Chrome を電話のエミュレーションで DevTools プロトコル経由で操作し、`report.json` とスクリーンショットを `--out` のフォルダに書きます。作ったものだけを削除します。スクリーンショットのツール（`tools/phone-walk/README.md`）と同じく、Docker、Chrome または Chromium、`openpyxl` を入れた Python 3.8 以上が必要です。
+
+```sh
+python tools/phone-walk/walk.py                      # 既定の実行：報告とスクリーンショットを新しい一時フォルダに
+python tools/phone-walk/walk.py --full               # 幅の一覧すべてでの、すべての確認（最後のゲートだけ）
+python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu   # これらのページだけ
+python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1 # 確認 ID による絞り込み（レビューする人向け）
+python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
+python tools/phone-walk/walk.py --keep               # スタックを動かしたままにする。URL と架空のアカウントを表示
+python tools/phone-walk/walk.py --keep --lan         # 同じ。ホームネットワーク上の電話用（先に警告が出ます）
+python tools/phone-walk/walk.py --out <dir> --chrome <path>
+```
+
+- **幅の一覧**：縦向き 360×740、390×844、412×915。横向き 740×360 と 844×390。タブレット 768×1024。デスクトップ 1280×800。ライトとダークのテーマ。zh が先で、次に en と ja。
+- **既定の実行**：コントラスト（ライトとダーク、zh、390×844 と 1280×800）、文字の収まり（それを指定した行の、zh、en、ja のライト）、それ以外のすべての確認は zh・ライトで、その行が指定したサイズで行います。`--full` はすべてを幅の一覧全体で実行し、最後のゲートだけに使います。
+- **出力**：`report.json`（確認ごとに 1 項目：ID、ページ、状態、ユーザー、サイズ、言語、テーマ、合否、詳細、スクリーンショット）と、`<check>-<page>-<user>-<lang>-<theme>-<w>x<h>.png` という名前のスクリーンショット。P1 の確認が 1 つでも失敗すると終了コードは 1 です。複数を同時に動かすときは、実行ごとに別の `--out` フォルダを指定してください。
+- **データ**：架空のアカウントと問題集だけです（`seed_extra.py`、`seed.py`）。ほかのインスタンスには決して接続せず、キーを表示しません。`--lan` は自分の電話での短い試用用です。Ctrl+C までは、ネットワーク上のどの機器からもそのスタックに届きます。
 
 ## 6. 旧版との照合（回帰）
 
@@ -182,7 +210,7 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 | ジョブ | 内容 |
 |---|---|
 | `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）それぞれの最新の項目 = `CODE_VERSION` で、3 つとも同じ `### vX.Y — 日付` の見出しが同じ順に並ぶこと。どの README にも更新履歴の項目がなく、それぞれが自分の言語の更新履歴へリンクしていること。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
-| `frontend` | 型チェック、391 件の単体テスト、ビルド |
+| `frontend` | 型チェック、単体テスト、ビルド |
 | `backend` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック |
 | `ai-service` | fmt、clippy、ai-service の 383 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと |
 | `stack` | `frontend`、`backend`、`ai-service` の後：`xexam-frontend` イメージをビルドして 141 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
@@ -230,8 +258,8 @@ README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごと
 ## 10. バージョン、更新履歴、ライセンス
 
 - リポジトリのルートの **`VERSION`** には、`KEY=VALUE` の行が 2 つ、それぞれちょうど 1 回ずつあります（`#` で始まる行はコメントです）：
-  - `CODE_VERSION`（現在は `0.9.1`）：このブランチのコードのバージョン。3 つの更新履歴（`docs/<lang>/changelog.md`）すべての項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.9` のような 2 つの部分からなるバージョンは、そこでは `0.9.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
-  - `RELEASE_VERSION`（v0.9.1 のリリースジョブが動くまでは `0.9`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
+  - `CODE_VERSION`（現在は `1.0`）：このブランチのコードのバージョン。3 つの更新履歴（`docs/<lang>/changelog.md`）すべての項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.9` のような 2 つの部分からなるバージョンは、そこでは `0.9.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
+  - `RELEASE_VERSION`（v1.0 のリリースジョブが動くまでは `0.9.1`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
 - 更新するたびに、3 つの言語の更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）すべての一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。3 つの項目はいつも同じにそろえます。CI がこれを確認します。README には項目を書かず、更新履歴へのリンクだけを置きます。GitHub Release のノートは英語版から取ります。
 - 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（4 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。リンクは更新履歴のフォルダ（`docs/<lang>/`）からの相対パスで書きます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
 - 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（8.1 節）。

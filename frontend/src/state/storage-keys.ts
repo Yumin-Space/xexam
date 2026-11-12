@@ -19,6 +19,8 @@ export const paths = {
 
 /** The unfinished exam of one user */
 export const sessionKey = (userId: number): string => `xexam.u${userId}.session.v1`;
+/** Whether the answer sheet of the practice / exam page is expanded on phones (QZ-5): per user and browser */
+export const sheetOpenKey = (userId: number): string => `xexam.u${userId}.sheetOpen.v1`;
 /** First-paint cache of one user's settings */
 export const settingsKey = (userId: number): string => `xexam.u${userId}.settings.v1`;
 

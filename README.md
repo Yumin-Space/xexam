@@ -35,8 +35,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 
 | | |
 |---|---|
-| Current version | **v0.9.1** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v0.9.1**) |
-| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v0.9.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
+| Current version | **v1.0** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.0**) |
+| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.0` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -64,8 +64,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 - **Study records and a wrong-answer notebook**: every exam and practice is kept with its answers; questions you got wrong stay in the notebook until you answer them right twice in a row.
 - **Several people, one Xexam**: everyone signs in and has their own records and settings. Administrators decide who sees which question bank and who may import banks (bank managers), and can follow the **System log**.
 - **AI Chat** (optional, off until an administrator sets it up): administrators connect an OpenAI-compatible API, Anthropic or Cloudflare AI Gateway in **AI settings**, test it and switch the **AI+ feature** on, and give the **AI+ feature** to each user who may use it in **User management**. In **AI settings** they can **Pause** and **Resume** a user's **AI+ feature** without taking it away. Answers stream in (with **Thinking…** while a reasoning model works) and keep being written when the page is closed; the AI answers in the language chosen in **Settings**; chats are saved (and deleted automatically after 90 days by default); **Memory** keeps short notes the AI uses in later chats; administrators can choose **Free** under **AI chat mode** in **Settings** to talk to the model without the study-assistant instructions. Administrators see usage statistics and can view and delete the chats and memories of users with the AI+ feature, which AI Chat tells every user. The AI runs in its own container, `ai-service`, with its own database; the provider keys are stored encrypted.
-- **AI help while you study** (for users with the **AI+ feature**; nothing during an exam): in a practice, **AI hint** (how to approach the question, without giving the answer) and **AI explanation** (the answer and why), from the action bar or the bulb and book icons above the question, in a small window that streams the answer; on every practice and exam result page and on a study record's detail page, **AI analysis** of each question; on **Study records** and **Home**, an **AI summary** of the wrong answers of a record (weak knowledge points, what to watch out for, how to approach such questions). Every answer is saved in AI Chat, in the chat of its practice (`<start>-Practice`), its exam (`<start>-Exam`) or its summary (`<record time>-AI summary`). Users whose AI is paused or unavailable see these controls greyed out, marked **Unavailable**, with the reason; users without the **AI+ feature** do not see them at all. They send the question (and, for explanations and summaries, the bank's answer and explanation and your own answer) to the AI provider you set up; the hint request never contains the answer, and a hint that gives it away is hidden.
-- **Desktop and phone**: a slim header with a menu, pages centered on wide screens, touch targets of at least 44 px on phones.
+- **AI help while you study** (for users with the **AI+ feature**; nothing during an exam): in a practice, **AI hint** (how to approach the question, without giving the answer) and **AI explanation** (the answer and why), in one panel under the question; on the results and in study records, **AI analysis** and **AI summary** of your wrong answers. The answers are saved in **AI Chat**, and nothing in the AI panel leaves the page. Each user has per-minute, per-hour and per-day limits on AI requests, set by an administrator.
+- **Phones first**: every page works at phone width without sideways scrolling, with icon buttons that show their name on press and hold, touch targets of at least 44 px, a centred footer line with the project link, and the questions and answers getting most of the space. Desktop pages are centred on wide screens.
 
 How each page works, the AI help in practice and results, AI Chat and AI settings, the Excel format and the import rules: [docs/en/usage.md](docs/en/usage.md).
 
@@ -100,7 +100,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d` (read [Upgrading](#upgrading) first) |
-| Pin to a specific version | Change `:latest` to `:v0.9.1` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v1.0` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (all three containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |
@@ -142,7 +142,18 @@ Times follow the host's time zone because the compose file mounts the host's `/e
 
 Every upgrade keeps the same port and the same volume `xexam_data`, so your data stays where it is: `docker compose pull`, then `docker compose up -d`. v0.8 added a third image and two volumes, so coming from v0.7.5 or older you also need the new `docker-compose.yml`; v0.9 needs no new compose file. When a database schema changes, the first start of the new version writes a backup copy of the database first, into `/data/backups/` in the volume (the AI service does the same for its own database, in its own volume), and then migrates it in one transaction. If the copy cannot be written (disk full, no permission), the service refuses to start and leaves the database unchanged; `docker compose logs backend` and `docker compose logs ai-service` say why. A backup copy is about as large as the database, so keep that much free space before upgrading; backup copies are never deleted automatically.
 
-The sections below are written for the version they lead to. Pulling the current images (v0.9.1) from an older version does every step in one go: one backup named after the schema the file had, and the database ends at schema 6 (the log then says `schema 6` where a section says `schema 5`; `/api/info` shows `"version": "0.9.1"`).
+The sections below are written for the version they lead to. Pulling the current images (v1.0) from an older version does every step in one go: one backup named after the schema the file had, and the database ends at schema 6 (the log then says `schema 6` where a section says `schema 5`; `/api/info` shows `"version": "1.0"`).
+
+### From v0.9.1 to v1.0
+
+v1.0 changes the phone layout and the AI help. The three images, the volumes and `docker-compose.yml` stay as they are: **no new compose file is needed**. Back up both data volumes first (the commands are in the v0.9 section below), then pull and start.
+
+- **The AI service's first start** writes the copy `/data/backups/xexam-ai-schema3-<YYYYmmdd-HHMMSS>.db` in the AI volume and moves its database to schema 4: the three per-user request limits (5 a minute, 20 an hour, 100 a day) and the answer length (1000 characters). Your chats, memories, settings and keys stay. A memory limit still at the old default of 300 characters becomes 200; other values stay. The log says `Upgraded the AI database to schema 4`.
+- **The main database** does not change (it stays at schema 6).
+- **Nothing to set up** for the new pages. The limits are under **AI settings › AI safety**; the day count restarts at 0:00 in the AI service's time zone (its `TZ` setting, for example `TZ=UTC`).
+- Check that <http://localhost:8765/api/info> shows `"version": "1.0"` and that `docker compose ps` lists three healthy containers.
+
+Rolling back to v0.9.1: the main database needs no restore, but v0.9.1's AI service refuses schema 4, so its copy `xexam-ai-schema3-….db` must be restored, which loses every AI chat, setting, limit change and usage row made since the upgrade. See section 0 of [docs/en/migration.md](docs/en/migration.md).
 
 ### From v0.9 to v0.9.1
 
@@ -170,7 +181,7 @@ docker compose logs ai-service
 - **Nothing to set up**: the **AI+ feature** works as before. Everyone who can use AI now sees the new controls; users without the **AI+ feature** see nothing new. Records made before v0.9 have no session key, so their first AI analysis starts a chat of its own (section 16 of [docs/en/usage.md](docs/en/usage.md)).
 - Check that <http://localhost:8765/api/info> shows `"version": "0.9"` and that `docker compose ps` lists three healthy containers.
 
-Rolling back to v0.8: the main database needs no restore (v0.8 opens the schema-6 database as it is, and records saved afterwards simply have no key), but v0.8's AI service refuses an AI database of schema 3, so its copy `xexam-ai-schema2-….db` must be restored, which loses every AI chat, setting and usage row made since the upgrade. See section 0 of [docs/en/migration.md](docs/en/migration.md).
+Rolling back to v0.8: the main database needs no restore (v0.8 opens the schema-6 database as it is, and records saved afterwards simply have no key), but v0.8's AI service refuses an AI database of schema 3, so its copy `xexam-ai-schema2-….db` must be restored, which loses every AI chat, setting and usage row made since the upgrade. See section 0b.4 of [docs/en/migration.md](docs/en/migration.md).
 
 ### From v0.7.5 (or v0.7) to v0.8
 
@@ -193,7 +204,7 @@ docker compose logs backend
 - **The first start** writes the copy `/data/backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db` and moves the database to schema v5: two new columns on `users`, the **AI+** switch (off for everyone) and an identity stamp. Nothing else changes; banks, records, users and settings stay. The log says `Upgraded the database to schema 5`.
 - **AI is off** until an administrator sets it up in **AI settings** (section 17 of [docs/en/usage.md](docs/en/usage.md)); there is nothing to migrate for AI. Administrators can use AI Chat as soon as the **AI+ feature** is on; every other user needs the **AI+ feature** in **User management**, which can be switched on only while ai-service is connected and the **AI+ feature** is on. The AI database `xexam-ai.db` is created by ai-service at its first start; if it comes from a pre-release build of v0.8, the columns it lacks are added automatically.
 - **What to back up from now on**: both data volumes, `xexam_data` and `xexam_ai_data`. The AI volume holds the key file `secret.key` next to the AI database, so its backup can decrypt the saved keys; set `XEXAM_AI_SECRET_KEY` to keep the key apart. `xexam_link` needs no backup: the backend creates a new token when it is empty.
-- Check that <http://localhost:8765/api/info> shows the version (`"0.8"`, or `"0.9.1"` with the current images) and that `docker compose ps` lists three healthy containers (`xexam-frontend`, `xexam-backend` and `ai-service`).
+- Check that <http://localhost:8765/api/info> shows the version (`"0.8"`, or `"1.0"` with the current images) and that `docker compose ps` lists three healthy containers (`xexam-frontend`, `xexam-backend` and `ai-service`).
 
 Rolling back to v0.7.5 means restoring the copy from `backups/` and the old `docker-compose.yml`; see section 1 of [docs/en/migration.md](docs/en/migration.md).
 
@@ -221,7 +232,7 @@ Rolling back to v0.7.5 means restoring the copy from `backups/` and the old `doc
    The new `docker-compose.yml` follows the host's time zone, limits the container logs, passes `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE` and `XEXAM_LOG` from `.env`, and adds the AI service of v0.8 with its volumes.
 3. **What the first start does**, before it answers any request: it writes the copy `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`, migrates the database to schema v5 (v0.7 and v0.7.5 stop at v4) and switches it to WAL mode. Every existing user keeps every existing bank, with **Include banks imported later**; every bank belongs to the first administrator; every earlier record is an **Exam**; nobody is a bank manager yet. Then it retires the old-layout questions, with one warning per bank in the log, for example `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`.
 4. **Update each old bank with its six-column file**: **Question banks** → **Import Excel** → **Update a bank**, pick the bank, upload the file and confirm. The bank keeps its name, its owner and the users who see it. Its questions are now recognised by their English text, so they start without answer history; the old questions stay retired and still show in the old records. Or import the six-column file as a **New bank**.
-5. **Afterwards**: decide who is a **Bank manager** and which banks each user sees (a user you add from now on sees no bank until you choose some), and check that <http://localhost:8765/api/info> shows `"version": "0.9.1"`. AI is off until you set it up (see the previous section).
+5. **Afterwards**: decide who is a **Bank manager** and which banks each user sees (a user you add from now on sees no bank until you choose some), and check that <http://localhost:8765/api/info> shows `"version": "1.0"`. AI is off until you set it up (see the previous section).
 
 Rolling back to v0.6 means restoring the copy from `backups/`; the commands are in section 2.6 of [docs/en/migration.md](docs/en/migration.md).
 

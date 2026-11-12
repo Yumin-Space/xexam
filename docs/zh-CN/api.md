@@ -490,7 +490,7 @@ flowchart LR
   前端把 `/api/ai/*` 上任何不带 JSON 的 5xx 都当作 `ai.unavailable`。
 - **POST** 需要 `Content-Type: application/json`（可以带 `; charset=utf-8`；否则是 415 `ai.badRequest`）；请求体必须是 JSON 对象（空的请求体算作 `{}`），最多 128 KiB（413 `ai.badRequest`）。**路由没有列出的键会被拒绝**（400 `ai.badRequest`），类型不对的值也一样。请求体和查询字符串里的 id 都是正整数。
 - **回答**：JSON（`Content-Type: application/json; charset=utf-8`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`），**紧凑格式**（`:` 和 `,` 后面没有空格，和后端的回答不同），键的顺序就是这里写的顺序。请解析它，不要逐字节比较。
-- **错误**：`{"error": "<中文文字>", "code": "<错误码>"}`；密钥相关的错误还有 `"field": "apiKey" | "gatewayKey"`，说出某个数字的错误（`ai.tooLong`、`ai.messageLimit`、`ai.chatLimit`、`ai.memoryLimit`、`ai.memoryTooLong`）还有 `"limit": <n>`，`ai.limitRange` 还有 `"field": "<键>"`。*(v0.9)* 学习路由（5.5）的 409 `ai.busy` 以 `"running"` 结尾。错误码是固定的；前端按错误码翻译，从不按文字。服务商自己的错误文字从不转发。
+- **错误**：`{"error": "<中文文字>", "code": "<错误码>"}`；密钥相关的错误还有 `"field": "apiKey" | "gatewayKey"`，说出某个数字的错误（`ai.tooLong`、`ai.messageLimit`、`ai.chatLimit`、`ai.memoryLimit`、`ai.memoryTooLong`）还有 `"limit": <n>`，`ai.limitRange` 和 `ai.limitOrder` 还有 `"field": "<键>"`，`ai.callLimit` 还有 `cap`、`limit`、`retryAt`、`retryAfter`（5.6）。*(v1.0)* *(v0.9)* 学习路由（5.5）的 409 `ai.busy` 以 `"running"` 结尾。错误码是固定的；前端按错误码翻译，从不按文字。服务商自己的错误文字从不转发。
 - **访问级别**，来自身份声明：
 
   | 级别 | 谁 | 否则 |
@@ -520,7 +520,7 @@ flowchart LR
 | GET | `/api/ai/study/saved` | 已签名 | `?mode=&key=`，或 `&record=&source=&question=&kind=`（5.5） | `StudyAnswer` 的 `Saved` *(v0.9)* |
 | POST | `/api/ai/summary/ask` | AI 用户 | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **事件流**（5.3、5.5）*(v0.9)* |
 | GET | `/api/ai/summary/saved` | 已签名 | `?record=<id>&at=<12 位数字>`（5.5） | `SummaryAnswer` 的 `Saved` *(v0.9)* |
-| GET | `/api/ai/memories` | 已签名 | | `{"memories": [Memory], "limit": 50, "maxChars": 300}`（当前的上限） |
+| GET | `/api/ai/memories` | 已签名 | | `{"memories": [Memory], "limit": 50, "maxChars": 200}`（当前的上限；`maxChars` 是 `memoryChars`，v1.0 起默认 200） |
 | POST | `/api/ai/memories/add` | AI 用户 | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI 用户 | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/delete` | 已签名 | `{"id": <id>}` 或 `{"all": true}` | `{"deleted": <n>}` |
@@ -538,7 +538,7 @@ flowchart LR
 | GET | `/api/ai/admin/chat` | 管理员 | `?user=<用户 id>&id=<对话 id>` | `{"chat": ChatSummary, "messages": [Message]}`，**记入审计**；对话必须属于那个用户（否则 404，不写审计日志） |
 | POST | `/api/ai/admin/clear` | 管理员 | `{"userId": <id>, "what": "chat", "chatId": <id>}`，或 `{"userId": <id>, "what": "chats" \| "memories"}` | `{"deleted": <n>}`，**记入审计** |
 | GET | `/api/ai/admin/limits` | 管理员 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<键>": [min, max], …}}` |
-| POST | `/api/ai/admin/limits` | 管理员 | 七个上限键中的任意几个，整数 | 和 GET 一样 |
+| POST | `/api/ai/admin/limits` | 管理员 | 十个上限键（见下面的 `admin/limits`）中的任意几个，整数 | 和 GET 一样 |
 
 ai-service的 `GET /healthz`（`{"ok":true,"version":"0.9","arch":"x86_64"}`，不需要身份）用于它的容器健康检查；Nginx 没有为它设置 location，所以从外面访问不到。
 
@@ -552,10 +552,11 @@ Status        {"enabled": bool,          // AI+ 可用：AI+ 功能已开启（�
                "hasData": bool,          // 你至少有一个对话或一条记忆
                "running": {"chatId": n, "messageId": n} | null,   // 你正在生成的回答（最新的那个）
                "retentionDays": n, "memoryLimit": n, "memoryMaxChars": n, "maxMessageChars": n,
-               "messageChars": n, "memoryChars": n,               // 当前的安全上限（见下面的 limits）
+               "messageChars": 16000, "memoryChars": n,               // 安全上限（v1.0）：messageChars 是一条消息的固定上限，始终是 16000；memoryChars 是每条记忆的上限，默认 200
                "keyProblem": bool,       // 只对管理员：已保存的密钥无法使用（对其他人是 false）
                "configured": bool,       // 只对管理员：已保存模型和需要的密钥（对其他人是 false）
-               "freeMode": bool}         // 只对管理员：你的自由模式开着（对其他人是 false），见 POST /api/ai/free
+               "freeMode": bool,         // 只对管理员：你的自由模式开着（对其他人是 false），见 POST /api/ai/free
+               "calls"?: {"used": {"minute": n, "hour": n, "day": n}, "caps": {"minute": n, "hour": n, "day": n}, "blocked": null | {"cap", "limit", "retryAt"}}}   // v1.0：只在 AI+ 对你可用时才有（暂停与否都有）；见 5.6
 ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool,   // 对话没有模式
                "kind": "chat"|"practice"|"exam"|"summary",   // v0.9：AI 对话，或者一场练习、一场考试、一份记录总结的学习对话
                "recordId": n|null}                          // v0.9：学习对话在主程序里对应的记录（只用于显示），否则为 null
@@ -582,21 +583,22 @@ Verify        {"ok": bool, "code": str|null, "httpStatus": n|null, "latencyMs": 
                "verifiedAt": n|null, "enabled": bool, "switchedOff": bool}
 Usage         {"days": n, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "unit": "day"|"month",
                "totals": {"calls", "tokensIn", "tokensOut", "errors", "tokensCached"},
-               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "tokensCached"}],
+               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "today"?: n, "tokensCached"}],   // v1.0："today" 只在有用户 id 的行里（今天 0 点以来计入的调用，服务器时区）
                "byModel": [{"model": str, "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
                "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
                "byPurpose": [{"purpose": "chat"|"hint"|"explain"|"summary", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}   // v0.9
 AdminUserRow  {"id": n, "username": str, "role": "admin"|"user", "ai": bool, "aiAllowed": bool, "disabled": bool,
                "exists": bool, "suspended": bool,   // suspended：用户被暂停了（对管理员永远不是 true）
                "chats": n, "messages": n, "memories": n, "lastUsedAt": n|null,
-               "tokensIn": n, "tokensOut": n}
+               "tokensIn": n, "tokensOut": n,
+               "calls": {"used": {"minute": n, "hour": n, "day": n}, "blocked": null | {"cap", "limit", "retryAt"}}}   // v1.0：现在计入的调用（5.6），和 Status 里的形状一样，只是没有 caps
 StudySample   {"used": n, "usable": n, "wrong": n}   // v0.9，总结：发送的答错的题 / 题目仍然存在的答错的题 / 记录里答错的题
 StudyAnswer   {"messageId": n, "kind": "hint"|"explain", "questionId": str, "questionNo": n, "source": "practice"|"result",
                "status": "streaming"|"done"|"stopped"|"error", "error": code|null, "truncated": bool, "content": str,
                "lang": "en"|"zh-CN"|"ja", "model": str|null, "createdAt": n, "finishedAt": n|null}   // v0.9
 SummaryAnswer {"messageId": n, "recordId": n|null, "status", "error", "truncated", "content", "lang", "model", "createdAt", "finishedAt",
                "sample": StudySample|null}   // v0.9；recordId 之后的键和 StudyAnswer 一样，但没有 kind、question 和 source
-Saved         {"chatId": n|null, "latest": StudyAnswer|SummaryAnswer|null, "lastGood": StudyAnswer|SummaryAnswer|null}   // v0.9
+Saved         {"chatId": n|null, "chatTitle": str|null, "latest": StudyAnswer|SummaryAnswer|null, "lastGood": StudyAnswer|SummaryAnswer|null}   // v0.9
 RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "questionId": str|null, "questionNo": n|null,
                "source": str|null, "recordId": n|null}   // v0.9：正在生成的那个回答，在学习路由的 409 ai.busy 里
 ```
@@ -604,7 +606,7 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 时间都是 Unix 秒。各路由的说明：
 
 - **`lang`** *(v0.8，第二轮)* 在 `send`、`retry` 和 `memories/suggest` 里是设置页面的语言：`"en"`、`"zh"` 或 `"ja"`（`"zh-CN"` 按 `zh` 接受）。学习助手被告知始终用这种语言回答，除非用户在那条消息里要求用另一种；记忆建议也用这种语言写。没有 `lang` 表示英语（ai-service 不知道用户的设置，所以前端总是发送它）。给了这个键但值是别的任何东西（别的字符串、数字、`null`、`""`）是 400 `ai.badRequest`，什么都不保存，也不发给服务商。每个请求使用它自己的 `lang`，所以同一个对话可以在两条消息之间换语言；重试使用重试请求的 `lang`。
-- **`send`**：`text` 去掉首尾空白后需要 1 到 `messageChars` 个字符（默认 16 000；为空时 400 `ai.badRequest`，太长时 400 `ai.tooLong`，带 `limit`）。`chatId: null`（或不写这个键）开始一个新对话，标题取文字的开头（最多 60 个字符）；超过 `chatsPerUser` 的新对话是 409 `ai.chatLimit`，会超过 `messagesPerChat` 的对话是 409 `ai.messageLimit`。回答的**模式**不是请求的一部分：它是管理员当时的自由模式（见下一条）。请求体里的 `free` 键仍然接受，但不论值是什么都会被**忽略**（不报错，也没有效果）；对话没有模式，`ChatSummary` 也没有 `free`。发给服务商的历史是这个对话里以前已完成或已停止、带文字的消息，从最新的开始，最多 `max(24000, messageChars + 8000)` 个字符，然后按时间顺序排列，不论每条消息是在哪种模式下写的（见 **提示词和历史**）。
+- **`send`**：`text` 去掉首尾空白后需要 1 到 16 000 个字符（一条消息的固定上限，v1.0 起不再是设置；为空时 400 `ai.badRequest`，太长时 400 `ai.tooLong`，带 `limit` 16000）。`chatId: null`（或不写这个键）开始一个新对话，标题取文字的开头（最多 60 个字符）；超过 `chatsPerUser` 的新对话是 409 `ai.chatLimit`，会超过 `messagesPerChat` 的对话是 409 `ai.messageLimit`。回答的**模式**不是请求的一部分：它是管理员当时的自由模式（见下一条）。请求体里的 `free` 键仍然接受，但不论值是什么都会被**忽略**（不报错，也没有效果）；对话没有模式，`ChatSummary` 也没有 `free`。发给服务商的历史是这个对话里以前已完成或已停止、带文字的消息，从最新的开始，最多 24 000 个字符（v1.0；即 v0.9.1 的预算），然后按时间顺序排列，不论每条消息是在哪种模式下写的（见 **提示词和历史**）。
 - **自由模式**是**管理员**的状态，不是对话的状态。`POST /api/ai/free` 带 `{"free": true}` 或 `{"free": false}` 把它打开或关闭，回答 `{"free": <bool>}`。请求体必须正好只有布尔值的键 `free`（别的任何情况都是 400 `ai.badRequest`）；这个路由只有管理员可用（其他人 403 `ai.adminOnly`），AI 关闭时也可用；重复调用没有害处。这个状态按用户保存在 ai-service 自己的数据库里（`users.free_mode`），所以重新加载页面、换浏览器和重启之后都还在，`GET /api/ai/status` 用 `freeMode` 报告它（对普通用户始终是 `false`，不管保存的是什么：被降级的管理员照常得到普通回答，再次成为管理员时保存的标记又会生效）。它**开着**时，这位管理员在任何对话（旧的或新的）里的每个 `send` 和 `retry` 都用自由模式回答：系统提示词只有回复语言那一行（没有学习助手的指示、没有日期、没有记忆；记忆甚至不会被读取）。它**关着**时，每条消息都按普通模式回答。改动从**下一条**消息起生效；已经在生成的回答保持它开始时的模式。**每条消息都记录自己的模式**（`Message.free`，以及事件流里的 `start.free`）：一个问题和它的回答用发送这个问题时有效的模式，重试用重试时的模式（并且也记在那个问题上）。自由模式只解除 Xexam 自己的学习助手角色，从不解除服务商自己的安全规则。AI 对话里没有它的开关和分隔线：选择在**设置**里的「AI 对话模式」一节（普通模式 / 自由模式；只有能使用 AI 的管理员看得到它），模式开着时，AI 对话在标题旁边显示一个绿色的「自由模式」标签。
 - **提示词和历史。** 普通回答的系统提示词是带今天日期的学习助手文字，然后是用户的记忆（最近更新的在前，只放完整的笔记，最多 4000 个字符），最后是回复语言那一行。固定的部分在前，每个请求不同的部分在后，所以每个请求的开头在请求之间是相同的。当发送的历史里有和当前模式**不同**模式下写的消息时（刚切换之后），语言那一行之后会多**一行简短的模式说明**：`Current mode: normal (Xexam study assistant); earlier turns may be free mode.` 或 `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` 没有这样的消息时就没有模式说明，自由模式的提示词只有语言那一行。**旧消息在发送前会被缩短**：历史里最新的 4 条消息完整发送，更早的回答截成前 800 个字符再加 `…(shortened)`，更早的问题截成前 2000 个字符再加 `…`。截断只取决于消息本身和它的新旧，所以同一条消息总是得到同样的文字；历史额度按缩短后的长度计算。保存的消息从不改变。
 - **提示词缓存。** 在 **Anthropic** 格式里，系统提示词作为一个文本块发送，带一个 `cache_control`（`ephemeral`）断点，历史的最后一条消息（新问题之前的那条）得到第二个，所以对话能重用它缓存的开头。在 **OpenAI** 格式里什么都不加：自动缓存的服务商自己会缓存。服务商报告的、由它的缓存提供的部分（`cache_read_input_tokens`，或 `prompt_tokens_details.cached_tokens`）随这次调用一起保存，并在 `admin/usage` 里显示为 `tokensCached`；它是 `tokensIn` 的一部分，不是额外加上去的，什么都没报告的服务商计为 0。缓存改变的是服务商收的费用，从不改变回答。
@@ -613,18 +615,18 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 - **每个用户默认同时只有一个正在生成的回答**（`perUserRunning`，最多 4，同一个对话里永远不会有两个）：再来一个 `send`、`retry` 或 `memories/suggest` 得到 409 `ai.busy`。整个服务器同时进行的模型调用超过 `globalRunning` 时：503 `ai.serverBusy`。两者都在保存任何东西之前拒绝。
 - **`stop`**：用 `{}` 停止你所有正在生成的回答，用 `{"chatId": …}` 只停止那个对话的；它最多等 5 秒，直到它们保存好。没有正在生成的回答时 `stopped: false`。回答以事件 `stopped` 结束，保留它的文字。*(v0.9)* 提示、解释和总结用同样的方式停止（用它们的学习对话的 `{"chatId"}`，或 `{}`）。
 - **`chats/delete`** 先停止对话里正在生成的回答，然后马上把对话连同消息一起删除。不是你的对话的 `{"id": …}`：404。
-- **`memories/add`、`memories/update`**：文字里的空白合并成单个空格；1 到 `memoryChars` 个字符（默认 300；400 `ai.memoryTooLong`，带 `limit`）；超过 `memoriesPerUser` 条：409 `ai.memoryLimit`，带 `limit`。`source` 默认是 `manual`。
+- **`memories/add`、`memories/update`**：文字里的空白合并成单个空格；1 到 `memoryChars` 个字符（v1.0 起默认 200，原为 300；400 `ai.memoryTooLong`，带 `limit`）；超过 `memoriesPerUser` 条：409 `ai.memoryLimit`，带 `limit`。`source` 默认是 `manual`。
 - **`memories/suggest`** 请模型把你的某条消息（它的前 2000 个字符）整理成一条简短的笔记并返回；它什么都不保存（用 `memories/add` 加 `source: "chat"` 保存）。回答消息，或者别人的消息：404。建议为空：502 `ai.up.protocol`。
 - **`admin/settings` POST** 按这个顺序验证：服务商、`baseUrl`（最多 300 个字符的绝对 `http://` 或 `https://` 地址，不带用户名、查询参数或 `#`；400 `ai.badUrl`；Anthropic 格式时去掉末尾的 `/v1`）、格式和认证方式、密钥（1–400 个可打印的 ASCII 字符，不能有空格；400 `ai.badKey`，带 `field`）、**重新输入密钥**（服务商或地址的源改变时，每个已保存的密钥都必须以字符串或 `null` 重新发送；400 `ai.keyReenter`，带 `field`，什么都不保存）、请求头冲突（设置了服务商密钥时，网关认证方式 `bearer` 配 OpenAI 格式，或 `x-api-key` 配 Anthropic 格式；400 `ai.headerClash`）、模型（最多 200 个字符，只能是 `A–Z a–z 0–9 . _ : / @ + -`）、`retentionDays` 1–3650（400 `ai.badRetention`）。需要的密钥由 `models` 和 `verify` 检查，不在这里检查。修改服务商、地址、格式、认证方式、模型或某个密钥，会清除已通过的测试并关闭 AI（原来是开着的时 `switchedOff: true`；每个正在生成的回答以 `ai.disabled` 停止）。只保存 `retentionDays` 不会改变这些，也不会关闭任何东西。全新安装时，`updatedBy` 在第一次保存之前是 `""`，不管那次保存改了什么；AI 设置页面不会把全新安装的出厂值（OpenAI 兼容、默认地址、没有密钥）当作已保存的连接，所以只保存保留期限之后，它的连接标签仍然是「连接未设置」。服务商改成 `gateway` 而没有给出 `format` 时，格式取自地址的最后一段（`…/anthropic` → `anthropic`，否则是 `openai`）。
 - **`admin/models`** 用**已保存的**设置列出模型（缺少需要的密钥时 400 `ai.keyMissing`，带 `field`）。OpenAI 格式：`data[].id` 排序后返回；Anthropic 格式：按服务商给的顺序。不提供模型列表的服务商（404、405、501、空的或读不懂的列表）得到 `{"models": [], "listed": false}`：请手动输入模型。密钥、连接、额度或超时的问题得到 502 / 504 和它们的 `ai.up.*` 错误码。结果保留 10 分钟。
 - **`admin/verify`** 用已保存的设置和模型发送一个流式请求（先检查 400 `ai.modelMissing` / `ai.keyMissing`、409 `ai.keyProblem`），方式和对话一样，提示词是「Reply with the single word OK.」，消息是「Test」。成功需要一个带文字的回答，或者一个带 Token 数的正常结束。服务商拒绝这个请求（`ai.up.badRequest`）时，它会不带 `stream_options`（OpenAI 格式）或用 `max_tokens` 4096 代替 8192（Anthropic 格式）再试一次，行得通就保留这个设置。失败时回答 200，带 `ok: false`、`ai.up.*` 错误码和服务商的 HTTP 状态：指向设置的错误码（`auth`、`quota`、`notFound`、`badRequest`、`protocol`、`refused`）会清除已通过的测试并关闭 AI；临时的错误码（`rateLimit`、`overloaded`、`server`、`timeout`、`connect`）什么都不改变。每次尝试最多 2 分钟；对这个路由，Nginx 最多等 300 秒。
 - **`admin/enable`** `{"enabled": true}` 需要当前设置的测试已通过（409 `ai.notVerified`）并且密钥可读（409 `ai.keyProblem`）；`false` 停止每个正在生成的回答（`ai.disabled`）。这是整个安装的 **AI+ 功能** 开关（AI 设置里用「AI+ 功能已开启」/「AI+ 功能已关闭」标签显示它）。回答之前，ai-service 会把新状态报告给后端，所以 `aiAvailable` 马上跟着变。`settings`（它关闭 AI 时）、`verify`（它关闭 AI 时）、`suspend` 和 `resume` 也一样。
 - **`admin/suspend`** 和 **`admin/resume`** *(v0.8，第二轮)* **暂停**和**恢复**一个普通用户的 **AI+ 功能**（AI 设置里显示为按钮 **暂停** / **恢复** 和状态 **已暂停**；路由名、`suspended` 键和错误码 `ai.suspended` 仍沿用旧的词）。请求体：`{"userId": <id>}`，不能有别的键（400 `ai.badRequest`）。回答是 `{"user": AdminUserRow}`，带新的 `suspended`。用户通过后端查找（后端无法回答时 503 `ai.backendDown`；用户不存在时 404 `ai.notFound`）；管理员不能被暂停：409 `ai.adminAlways`。AI+ 功能已关闭的用户也可以通过 API 被暂停（AI 设置页面只列出有这个功能的用户）。**暂停**会马上停止这个用户正在生成的回答或记忆建议（已有的文字保留；流以 `error` 事件 `ai.suspended` 结束），从那以后这个用户的 AI 用户路由回答 403 `ai.suspended`；查看和删除他的对话和记忆仍然可以，用户也仍然保留在列表里，带着他的数据。页面不要求确认。两个路由都可以安全地重复调用：标记和它的审计行在同一个事务里写入，没有任何改变的重复调用回答 200，不产生新的行。**记入审计**：系统日志里的行是 `AI function turned off for user "<name>" by admin "<admin>"`（暂停）和 `AI function turned on for user "<name>" by admin "<admin>"`（恢复），带前缀 `AI: `；这些英文日志行的措辞没有改。这个标记保存在 ai-service 自己的数据库里（schema 2，[database.md](database.md)）；schema 2 文件里缺少的列（来自这个版本更早的构建）会在下次启动时自动添加。
-- **`admin/usage`**：7 天和 30 天按天，90 天和 365 天按月；`byPeriod` 列出范围内的每个时段，包括为零的，最早的在前；服务商没有报告的 Token 计为 0。`tokensCached` 是 `tokensIn` 中服务商从它的提示缓存里提供的那一部分（见 **提示词缓存**）；AI 设置的用量标签页把它显示为 **缓存命中** 列。在它出现之前记录的调用计为 0。`byUser` 按调用次数排序；已删除的用户合成一行，`userId: null`。在 `byModel` 里，获取模型列表的调用 `model: ""`。*(v0.9)* `byPurpose` 跟在 `byPeriod` 后面，把同一范围内的**对话调用**（不含获取模型列表的调用）正好分成四行，顺序固定，为零的也保留：`chat`（AI 对话，以及 v0.9 之前记录的每一次调用）、`hint`、`explain`、`summary`；AI 设置的用量标签页把它显示成「按功能」表。
+- **`admin/usage`**：7 天和 30 天按天，90 天和 365 天按月；`byPeriod` 列出范围内的每个时段，包括为零的，最早的在前；服务商没有报告的 Token 计为 0。`tokensCached` 是 `tokensIn` 中服务商从它的提示缓存里提供的那一部分（见 **提示词缓存**）；AI 设置的用量标签页把它显示为 **缓存命中** 列。在它出现之前记录的调用计为 0。`byUser` 按调用次数排序；已删除的用户合成一行，`userId: null`。在 `byModel` 里，获取模型列表的调用 `model: ""`。*(v1.0)* 有用户 id 的 `byUser` 行带有 `today`：该用户从服务器时区今天 0 点起计入的调用数，即日上限比较的数字（见第 5.6 节）。*(v0.9)* `byPurpose` 跟在 `byPeriod` 后面，把同一范围内的**对话调用**（不含获取模型列表的调用）正好分成四行，顺序固定，为零的也保留：`chat`（AI 对话，以及 v0.9 之前记录的每一次调用）、`hint`、`explain`、`summary`；AI 设置的用量标签页把它显示成「按功能」表。
 - **`admin/users`** 先和后端对账（删除已删除用户的 AI 数据），然后列出**有 AI+ 功能的用户**：每个管理员和每个开通了 AI+ 的用户（被暂停的也在，带 `suspended: true`），按用户名排序；Token 是全部时间的合计。*(第二轮)* AI+ 功能被关闭的用户不再列出，即使他还有 AI 数据；这些数据保留（他可以查看和删除，保留期限照常适用，`admin/user` 仍然显示它，并记入审计）。所以这里的 `exists` 始终是 `true`（保留这个键是为了让结构不变）。
 - **`admin/user`** 也会对账，只有在这个用户在主程序里已经不存在时才回答 404（没有 AI 数据的用户得到空列表）。**查看会记入审计**：`user "<admin>" viewed the AI chats and memories of user "<name>"` 这一行（对 `admin/chat` 是 `… viewed an AI chat of user "<name>" (<n> messages)`）在返回数据之前送到系统日志；后端取不了它时，回答是 503 `ai.backendDown`，不给数据。
 - **`admin/clear`**：`what: "chat"` 需要 `chatId`；`chats` 和 `memories` 不能带它（400）。被清除的对话里正在生成的回答会先被停止。审计日志（`cleared one AI chat of user …`、`cleared all <n> AI chats of user …`、`cleared all <n> AI memories of user …`）在删除的同一个事务里写入，并一直投递，直到后端取走。
-- **`admin/limits`**：键 `perUserRunning`（1–4，默认 1）、`globalRunning`（1–64，16）、`chatsPerUser`（10–100000，1000）、`messagesPerChat`（20–5000，400）、`memoriesPerUser`（1–1000，50）、`memoryChars`（50–2000，300）、`messageChars`（1000–32000，16000）。POST 接受其中任意几个；超出范围或不是整数的值是 400 `ai.limitRange`，带 `field`，未知的键是 400 `ai.badRequest`，这时什么都不保存。修改马上生效（正在进行的调用从不取消），从不关闭 AI，也从不删除或缩短已有的数据。它会记入日志：`AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`。*(v0.9)* 学习对话和其他对话一样计算：每一个都占 `chatsPerUser` 中的一个，每次提示、解释或总结在它的对话里增加两条消息，所以默认 `messagesPerChat` 为 400 时，每一场练习或考试允许提问 200 次。
+- **`admin/limits`**：键 `perUserRunning`（1–4，默认 1）、`globalRunning`（1–64，16）、`chatsPerUser`（10–100000，1000）、`messagesPerChat`（20–5000，400）、`memoriesPerUser`（1–1000，50）、`memoryChars`（50–2000 个字符，200）、`callsPerMinute`（1–100，5）、`callsPerHour`（1–2000，20）、`callsPerDay`（1–20000，100）和 `replyMaxChars`（1–16000 个字符，1000；最长的回答，作为 `max_tokens` 发给模型，见 5.6）。*(v1.0)* `messageChars` 不再是键：POST 里带它是 400 `ai.badRequest`，16 000 个字符的固定上限显示在状态里。调用上限必须保持顺序（`callsPerMinute` ≤ `callsPerHour` ≤ `callsPerDay`）：否则是 400 `ai.limitOrder`，带 `field`（值太小的那个较长的时间窗），什么都不保存。POST 接受其中任意几个；超出范围或不是整数的值是 400 `ai.limitRange`，带 `field`，未知的键是 400 `ai.badRequest`，这时什么都不保存。修改马上生效（正在进行的调用从不取消），从不关闭 AI，也从不删除或缩短已有的数据。它会记入日志：`AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`。*(v0.9)* 学习对话和其他对话一样计算：每一个都占 `chatsPerUser` 中的一个，每次提示、解释或总结在它的对话里增加两条消息，所以默认 `messagesPerChat` 为 400 时，每一场练习或考试允许提问 200 次。
 
 ### 5.3 `send` 和 `retry` 的事件流
 
@@ -681,7 +683,7 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.adminOnly` | 403 | 只有管理员可以这样做（也包括：非管理员调用 `POST /api/ai/free`）。 |
 | `ai.notFound` | 404 | 找不到了（或者不是你的）。 |
 | `ai.busy` | 409 | 上一个回答还在生成。*(v0.9)* 在学习路由上，回答最后还有 `"running"`：正在生成的那个回答的 `RunningInfo`（找不到时是 `null`），好让页面说出是哪一个。 |
-| `ai.tooLong` | 400 | 消息太长了（`limit`）。 |
+| `ai.tooLong` | 400 | 消息超过 16 000 个字符（`limit`：16000，v1.0 起是固定上限）。 |
 | `ai.messageLimit` | 409 | 这个对话已经达到 `messagesPerChat`（`limit`）：请开始一个新对话。 |
 | `ai.chatLimit` | 409 | 你已经有 `chatsPerUser` 个对话（`limit`）：请删除一些。 |
 | `ai.notRetryable` | 409 | 这个回答不能重试。*(v0.9)* 每个提示、解释和总结也一样；文字不变。 |
@@ -691,7 +693,9 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.noDetail` | 409 | *(v0.9)* 这条记录没有逐题详情（在 v0.5 之前保存；文字 `这条记录没有逐题记录，无法总结。`）。 |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | 请求无效。 |
 | `ai.memoryLimit` | 409 | 记忆已满（`limit`）。 |
-| `ai.memoryTooLong` | 400 | 一条记忆的字符太多（`limit`）。 |
+| `ai.memoryTooLong` | 400 | 一条记忆的字符太多（`limit`，即 `memoryChars`，默认 200）。 |
+| `ai.callLimit` | 429 | *(v1.0)* 达到了每用户的请求上限（每分钟、每小时或每天）：`cap`、`limit`、`retryAt` 和 `retryAfter`，还有响应头 `Retry-After`。什么都不保存；见 5.6。 |
+| `ai.limitOrder` | 400 | *(v1.0)* 调用上限的顺序不对（`field`）：较长的时间窗不能比较短的小。什么都不保存。 |
 | `ai.notVerified` | 409 | 请先保存设置并测试成功，再开启 AI。 |
 | `ai.keyProblem` | 409 | 已保存的密钥无法解密，请重新输入。 |
 | `ai.badUrl` | 400 | 不是完整的 `http://` 或 `https://` 地址（或者带了用户名、查询参数或 `#`）。 |
@@ -775,7 +779,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 查询参数，用原始值（它们都不需要百分号编码），每个名字最多出现一次，未知的名字被忽略：`mode`（`practice` 或 `exam`）、`key`（32 个小写十六进制数字）或 `record`（正的 id）中正好一个、`source`（`practice` 或 `result`）、`question`（上面那样的题目 id）和 `kind`（`hint` 或 `explain`）。适用和 `ask` 同样的组合（提示只能是 `practice` 加 `practice`；`source` 为 `practice` 需要 `mode` 为 `practice` 和一个 `key`；`mode` 为 `exam` 需要 `source` 为 `result`；`record` 需要 `source` 为 `result`）；其他一律是 400 `ai.badRequest`。
 
-回答：`StudyAnswer` 的 `Saved`。`latest` 是这道题在那个位置上最新的回答，不论状态如何（正在生成时是 `streaming`，带着已经生成的文字；每 2 秒再读一次，直到结束）；`lastGood` 是最新的、`status` 为 `done` 并且有文字的回答，只在 `latest` **不是 `done`** 时才有值（否则是 `null`），所以失败的或被拦下的重试，仍然能显示上一个好的回答。同一道题的练习回答和结果页回答是分开保存的（`source`）。什么都没找到：`{"chatId": null 或对话的 id, "latest": null, "lastGood": null}`。
+回答：`StudyAnswer` 的 `Saved`。`latest` 是这道题在那个位置上最新的回答，不论状态如何（正在生成时是 `streaming`，带着已经生成的文字；每 2 秒再读一次，直到结束）；`lastGood` 是最新的、`status` 为 `done` 并且有文字的回答，只在 `latest` **不是 `done`** 时才有值（否则是 `null`），所以失败的或被拦下的重试，仍然能显示上一个好的回答。同一道题的练习回答和结果页回答是分开保存的（`source`）。什么都没找到：`{"chatId": null 或对话的 id, "chatTitle": 对话的标题或 null, "latest": null, "lastGood": null}`。
 
 使用 `record` 时，ai-service 通过这条记录的身份找到对话，这个身份它向后端要（`record-info`，第 6 节），并在内存里最多保留 10 分钟（最多 1000 条记录）；不是这个用户的记录，或者类型不是 `mode` 的记录，得到上面那个空回答；后端不能回答时是 503 `ai.backendDown`。读取不需要 AI+ 功能，所以 AI 关闭时也能得到回答。
 
@@ -796,6 +800,22 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 #### 日志和隐私
 
 题目文字、提示、解释、总结、答案、对话标题、场次键和记录时间，从不写进后端或 ai-service 的日志；Nginx 的访问日志记录的路径不带查询字符串，所以保存类路由的 `key` 和 `at` 不会进入它。如果后端的某个回答读不懂，ai-service 每分钟最多记一行（`AI link: an answer of <path> could not be read`），只让那一个请求以 503 `ai.backendDown` 失败；数据路由的 404 不改变 AI 连接的状态。
+
+### 5.6 每用户的请求上限和回答长度 *(v1.0)*
+
+- **计入的情况。** 每一个通过准入后、由 ai-service 为登录用户向 AI 服务商发出的调用：AI 对话的发送和重试（包括自由模式）、学习的提问（提示、解释、总结，包括「重新生成」和「停止它，生成这一个」）以及每次记忆建议。结果如何不影响计数：以停止或出错结束的调用也计入。不计入的：管理员的连接测试（`admin/verify`）和模型列表（`admin/models`）；读取已保存的回答、对话或记忆；以及在准入之前就被拒绝的请求（`ai.busy`、`ai.serverBusy`、`ai.disabled`、`ai.suspended`、`ai.tooLong`、`ai.chatLimit`、`ai.messageLimit`、`ai.memoryTooLong`）。管理员和其他人有同样的上限。
+- **上限。** 每个用户：`callsPerMinute`（默认 5）、`callsPerHour`（20）和 `callsPerDay`（100），在 `admin/limits` 里设置。分钟和小时上限是滚动窗口（最近 60 秒和最近 3 600 秒）。天上限统计服务器时区（ai-service 的 `TZ`，见 deployment.md）今天 0 点以来开始的调用，并在下一个 0 点重新开始。正在进行的调用也计入。降低上限从不停止正在进行的调用；它会阻止该用户，直到有足够的调用离开窗口，或者（天上限）直到下一个 0 点。
+- **拒绝。** HTTP 429，JSON，带响应头 `Retry-After`（和 `retryAfter` 的秒数相同）：
+
+  ```json
+  {"error": "你的 AI 请求额度已用完（每小时 20 次），请联系管理员设置 AI 请求额度上限。", "code": "ai.callLimit", "cap": "hour", "limit": 20, "retryAt": 1762950300, "retryAfter": 712}
+  ```
+
+  `cap` 是 `minute`、`hour` 或 `day`：最后一个释放的上限。`limit` 是它的值。`retryAt` 是它释放的 unix 秒数（对于 `day`，是服务器时区的下一个 0 点）。`retryAfter` 是从现在起的整秒数，至少为 1。文字里会说出是哪个上限；天上限以「明天 0 点后可以再次使用。」结尾。客户端按 `code` 翻译，从不按文字。什么都不保存，发送者保留它发出的文字。流开始之前，拒绝是普通的 JSON，和 `ai.busy` 一样。Nginx 自己的 429（第 5.1 节）不是 JSON，是另一个上限。
+- **计数。** 当 AI+ 对你可用时，`GET /api/ai/status` 有 `calls`（见上面的 Shapes）。`GET /api/ai/admin/users` 和 `GET /api/ai/admin/user` 的管理员行有 `calls`（`used`、`blocked`）。`GET /api/ai/admin/usage` 中带用户 id 的每个 `byUser` 行有 `today`。
+- **日志。** 用户达到某个上限时，系统日志里在该上限释放之前写一行：`user "<name>" reached the AI request cap (20 per hour)`。每个被拒绝的请求不写一行。
+- **回答长度。** 一次计入的调用发出的 `max_tokens`，由 `replyMaxChars`（回答的字符数）按请求的回答语言计算：中文和日文是字符数 × 1.5 向上取整；英文是字符数（4 个字母算 1 个字符，约 1 个 token）。示例：1000 zh 或 ja → 1500；1000 en → 1000；1 zh → 2；1 en → 1；333 ja → 500；16000 zh → 24000；16000 en → 16000。连接测试和模型列表保留它们自己的请求体。如果 OpenAI 兼容服务商拒绝这个字段（400 或 422，并点名 `max_tokens`，发生在任何流事件之前），会在同一次调用里改用 `max_completion_tokens` 再试一次，然后不设上限再试。如果 Anthropic 服务商拒绝 `max_tokens`，会改用已保存的测试值（当它更小时）再试一次。重试属于同一次调用：它只按上限计一次，只写一行用量。成功的那一步会按设置记住，直到下一次重启。达到上限的回答以 `done` 结束，并带 `truncated: true`（AI 对话里会显示提示）；长回答，或对会先思考再回答的模型，请调高 `replyMaxChars`（它们的思考也计入）。
+- **其他上限。** 一条消息最多 16 000 个字符（固定，不是设置）。记忆只按字符数计（`memoryChars`，默认 200）。降低上限时，已有的消息和记忆从不会被截短。
 
 ## 6. 内部路由（`/internal/*`，v0.8）
 
@@ -941,6 +961,24 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | AI 对话的保留期限 | 旧的对话在一个事务里删除 | 每批 20 个对话，批与批之间短暂停顿，这样一次清理不会长时间挡住别的写入 |
 | 主数据库结构 | v5 | **v6**：`attempts.session_key`（文本）和 `attempts.started_at`（整数），所有更早的记录都是 `NULL`，没有索引，没有约束。升级（从 v5，或者从更早的结构一步升上来）先在数据库文件旁边写一份备份 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（`<N>` 是这个文件原来的结构，所以 v0.8 的数据库是 `xexam-schema5-…`），并记录 `Upgraded the database to schema 6. A copy of the previous version was saved first: …`。备份失败时什么都不改。结构 6 的文件再次打开时不会再改。见 [database.md](database.md) |
 | AI 数据库结构 | v2 | **v3**：`chats.kind`、`chats.ref`、`chats.record_id`；`messages.kind`、`question_id`、`question_no`、`source`、`lang`、`sample_used`、`sample_usable`、`sample_wrong`；`usage.purpose`（12 列），以及索引 `idx_chats_ref`（按用户、类型和 ref 唯一）、`idx_messages_study` 和 `idx_messages_streaming`。已有的对话和消息变成 `chat` 类，已有的用量行没有 purpose（算作 `chat`）。升级（从结构 1 或 2）先在 AI 数据库旁边写一份备份 `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`，并记录 `Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`；备份失败时文件保持原样，ai-service 不启动。v0.8 的 ai-service 会拒绝结构 3 的文件，并要求恢复一份备份；见 [migration.md](migration.md) |
+
+### v1.0 的变化（相对 v0.9.1）
+
+只有 AI 路由有变化，而且每一处变化都是增加的或者是默认值；其他路由和后端都不变。手机优先的布局、AI+ 面板、页脚和 AI 设置的标签页只是前端的改动，不需要 API 变化。
+
+| 变化 | v0.9.1 | v1.0 |
+|---|---|---|
+| `GET /api/ai/status` | `messageChars` 是可调的上限；以 `freeMode` 结尾 | `messageChars` 始终是 16000（固定）；`memoryChars` 默认 200；当 AI+ 对你可用时，`calls` 在 `freeMode` 之后 |
+| `Saved`（学习和总结） | `chatId`、`latest`、`lastGood` | `chatId` 之后是 `chatTitle`（对话保存的标题，没有对话时是 `null`） |
+| `GET /api/ai/admin/users`、`GET /api/ai/admin/user` | 行以 `tokensOut` 结尾 | 行以 `calls` 结尾 |
+| `GET /api/ai/admin/usage` | `byUser` 行没有 `today` | 带用户 id 的 `byUser` 行在 `lastAt` 之后有 `today` |
+| `GET` / `POST /api/ai/admin/limits` | 七个键；`messageChars` 可调 | 十个键：增加了 `callsPerMinute`、`callsPerHour`、`callsPerDay` 和 `replyMaxChars`；去掉了 `messageChars`（POST 带它：400 `ai.badRequest`）；`memoryChars` 默认 200 |
+| `POST /api/ai/admin/limits` | 没有顺序规则 | 调用上限必须保持顺序（400 `ai.limitOrder`） |
+| `GET /api/ai/memories` | `maxChars` 默认 300 | `maxChars` 默认 200 |
+| `ai.tooLong` | `limit` 是可调的 `messageChars` | `limit` 始终是 16000 |
+| 发给 AI 对话、学习和总结调用的 `max_tokens` | Anthropic：8192（测试需要时为 4096）；OpenAI 兼容：没有 token 上限 | 来自 `replyMaxChars`（5.6）；连接测试和模型列表不变 |
+| 新的错误码 | | `ai.callLimit`（429）、`ai.limitOrder`（400） |
+| AI 数据库 | 结构 3 | 结构 4：`limits` 表增加四列，`message_chars` 不再使用，`memory_chars` 的默认值仅一次改为 200（见 [database.md](database.md)） |
 
 ## 8. 调用示例
 

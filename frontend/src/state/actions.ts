@@ -13,12 +13,11 @@ import { fetchBank, fetchBanks, fetchInfo } from '../api/bank.ts';
 import { fetchProgress, fetchRecord, fetchRecords } from '../api/progress.ts';
 import { countedResults, kindOf } from '../domain/attempt.ts';
 import { completes, percentOf } from '../domain/grading.ts';
-import { checksOnPick, finalResults, isLocked, openCount } from '../domain/practice.ts';
+import { checksOnPick, finalResults, isLocked, listNumbers, openCount, openNumbers } from '../domain/practice.ts';
 import { t, tn } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
-import { adminOnly, parseHash, routeHash, sameRoute, type Route } from '../router.ts';
+import { parseHash, routeHash, sameRoute, type Route } from '../router.ts';
 import type { AttemptKind, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
-import { closeAiPop } from '../components/ai-pop.ts';
 import { dropAiSummary } from '../components/ai-summary.ts';
 import { ask } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
@@ -27,7 +26,7 @@ import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSet
 import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
 import { paths, setStorageOwner } from './storage-keys.ts';
-import { S, clearUserData, isAdmin, setBankData, type Session } from './store.ts';
+import { S, clearUserData, setBankData, type Session } from './store.ts';
 
 let renderer: () => void = () => {};
 let refreshers: Array<() => void> = [];
@@ -94,9 +93,8 @@ function sessionOf(sv: SavedSession): Session {
 
 // ---------------------------------------------------------------- routing
 
-/** Brings S.route in line with the state: no exam -> no quiz page, no result -> no result page, admin pages -> admins only. */
+/** Brings S.route in line with the state: no exam -> no quiz page, no result -> no result page. */
 function settle(r: Route): Route {
-  if (adminOnly(r) && !isAdmin()) return { name: 'home' };
   if (r.name === 'quiz' && !S.session) {
     // A reload on the quiz page: continue the saved exam if there is one
     const sv = S.phase === 'ready' ? loadSaved(S.bank) : null;
@@ -614,8 +612,6 @@ export function go(i: number): void {
   const se = S.session;
   if (!se || i < 0 || i >= se.qs.length) return;
   cancelAdvance();
-  // v0.9: the AI popover belongs to one question; another question closes it
-  if (i !== se.idx) closeAiPop(false);
   se.idx = i;
   persistSession();
   render();
@@ -729,14 +725,30 @@ export async function submit(): Promise<void> {
   if (!se || submitting) return;
   cancelAdvance();
   const open = openCount(se.kind, se.qs, se.answers, se.checked);
+  // QZ-9: the dialog names the open and the marked questions (up to 10 numbers each)
+  const numsText = (nums: number[]): string => {
+    const { shown, more } = listNumbers(nums);
+    const list = shown.join(t('quiz.dlg.sep'));
+    return more > 0 ? t('quiz.dlg.numsMore', { list, n: more }) : t('quiz.dlg.nums', { list });
+  };
+  const openNums = openNumbers(se.kind, se.qs, se.answers, se.checked);
+  const flagNums = se.qs.flatMap((q, i) => (se.flags.has(q.id) ? [i + 1] : []));
+  const lists = [openNums.length ? t('quiz.dlg.open', { nums: numsText(openNums) }) : '', flagNums.length ? t('quiz.dlg.flag', { nums: numsText(flagNums) }) : '']
+    .filter(Boolean).join(' ');
+  const withLists = (body: string): string => (lists ? `${body} ${lists}` : body);
   const go_ = se.kind === 'practice'
     ? !open || await ask({
-      title: tn('quiz.practice.finish.openTitle', open), body: t('quiz.practice.finish.openBody'), ok: t('quiz.practice.finish'), cancel: t('act.submit.back'),
+      title: tn('quiz.practice.finish.openTitle', open), body: withLists(t('quiz.practice.finish.openBody')), ok: t('quiz.practice.finish'), cancel: t('act.submit.back'),
     })
     : await ask(open
-      ? { title: tn('act.submit.openTitle', open), body: t('act.submit.openBody'), ok: t('act.submit.ok'), cancel: t('act.submit.back') }
+      ? { title: tn('act.submit.openTitle', open), body: withLists(t('act.submit.openBody')), ok: t('act.submit.ok'), cancel: t('act.submit.back') }
       : { title: t('act.submit.confirmTitle'), body: t('act.submit.confirmBody'), ok: t('act.submit.ok'), cancel: t('act.submit.check') });
-  if (!go_ || S.session !== se) return;
+  if (!go_ || S.session !== se) {
+    // 'Keep answering' jumps to the first open question (else the first marked one)
+    const target = openNums[0] ?? flagNums[0];
+    if (!go_ && S.session === se && target != null) go(target - 1);
+    return;
+  }
 
   submitting = true;
   try {

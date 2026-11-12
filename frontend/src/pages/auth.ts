@@ -2,9 +2,12 @@
 // the fields, the primary button). No shell: nothing else of the app is reachable before signing in.
 // Their language is the cached settings of the user who signed in last on this browser, else the browser's language; the
 // small language switch under the card changes it for this page only (after signing in, the user's own settings apply).
+// v1.0 (AU-1): the brand row is compact (the 32 px logo beside the app name and the title), the lead is short (two lines at most
+// on a phone), the focused field and the submit button stay in view while the on-screen keyboard is up (keepInView), the language
+// segments are 44 px on touch, and the page ends with the GitHub line under the language switch.
 import '../styles/auth.css';
 import { ApiError } from '../api/client.ts';
-import { brand } from '../components/common.ts';
+import { githubLine } from '../components/github-line.ts';
 import { field, passwordLengthOk } from '../components/fields.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
@@ -13,7 +16,7 @@ import { authEpoch, render, saveNewPassword, signIn, signOut } from '../state/ac
 import { applySettings } from '../state/preferences.ts';
 import { S } from '../state/store.ts';
 import type { UiLang } from '../types/api.ts';
-import { h, type Child } from '../utils/dom.ts';
+import { h, keepInView, type Child } from '../utils/dom.ts';
 
 const LANG_NATIVE: Record<UiLang, MsgKey> = {
   en: 'settings.lang.native.en',
@@ -76,13 +79,15 @@ function langSwitch(): HTMLElement {
 function card(title: string, lead: Child, ...body: Child[]): HTMLElement {
   return h('div', { class: 'auth' },
     h('main', { class: 'auth-card', id: 'main', 'aria-labelledby': 'auth-title' },
-      h('div', { class: 'auth-brand' }, brand()),
-      h('h1', { id: 'auth-title' }, title),
+      h('div', { class: 'auth-head' },
+        h('img', { class: 'logo auth-logo', src: '/icon.svg', alt: '', width: '32', height: '32', 'aria-hidden': 'true' }),
+        h('span', { class: 'auth-app' }, t('app.name')),
+        h('h1', { id: 'auth-title' }, title)),
       h('p', { class: 'auth-lead' }, lead),
       body),
     h('div', { class: 'auth-foot' },
       langSwitch(),
-      S.info.version ? h('span', { class: 'auth-ver' }, t('footer.version', { version: S.info.version })) : null));
+      githubLine()));
 }
 
 // ---------------------------------------------------------------- sign in
@@ -152,6 +157,9 @@ export function renderSignIn(): HTMLElement {
   const firstRun = S.defaultAdmin
     ? h('div', { class: 'callout info auth-msg', role: 'note' }, h('p', null, t('auth.firstRun', { name: S.defaultAdmin })))
     : null;
+  const submit = h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: signin.busy }, t(signin.busy ? 'auth.signin.busy' : 'auth.signin.submit'));
+  keepInView(user.input, submit);
+  keepInView(pass.input, submit);
   const form = h('form', {
     class: 'auth-form', method: 'post', action: '', novalidate: true, 'aria-busy': signin.busy ? 'true' : null,
     onsubmit: (e: SubmitEvent) => {
@@ -159,8 +167,7 @@ export function renderSignIn(): HTMLElement {
       void submitSignIn();
     },
   },
-  user.el, pass.el,
-  h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: signin.busy }, t(signin.busy ? 'auth.signin.busy' : 'auth.signin.submit')));
+  user.el, pass.el, submit);
 
   const root = card(t('auth.signin.title'), t('auth.signin.lead'),
     note && !signin.error ? h('div', { class: 'callout ' + (S.authNote === 'expired' ? 'warn' : 'info') + ' auth-msg', role: 'status' }, h('p', null, t(note))) : null,
@@ -227,6 +234,9 @@ export function renderNewPassword(): HTMLElement {
       choose.shownRepeat = v;
     },
   });
+  const submit = h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: choose.busy }, t(choose.busy ? 'auth.password.busy' : 'auth.password.submit'));
+  keepInView(pw.input, submit);
+  keepInView(again.input, submit);
   const form = h('form', {
     class: 'auth-form', method: 'post', action: '', novalidate: true, 'aria-busy': choose.busy ? 'true' : null,
     onsubmit: (e: SubmitEvent) => {
@@ -238,7 +248,7 @@ export function renderNewPassword(): HTMLElement {
   h('input', { class: 'sr-only', type: 'text', name: 'username', autocomplete: 'username', value: name, readonly: true, tabindex: '-1', 'aria-hidden': 'true' }),
   pw.el, again.el,
   h('div', { class: 'auth-acts' },
-    h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: choose.busy }, t(choose.busy ? 'auth.password.busy' : 'auth.password.submit')),
+    submit,
     h('button', { class: 'btn quiet', type: 'button', disabled: choose.busy, onclick: () => void signOut() }, t('auth.password.signOut'))));
 
   const lead = t('auth.password.lead', { name: '\u0000' }).split('\u0000');

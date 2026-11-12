@@ -152,7 +152,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1 or schema-2 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1, 2 or 3 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -172,6 +172,7 @@ impl Store {
                     tx.execute_batch(schema::SCHEMA)?;
                     add_columns(tx, &schema::V2_COLUMNS)?;
                     add_columns(tx, &schema::V3_COLUMNS)?;
+                    add_columns(tx, &schema::V4_COLUMNS)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
@@ -181,6 +182,7 @@ impl Store {
                         "INSERT OR IGNORE INTO limits (id, updated_at) VALUES (1, ?1)",
                         [now],
                     )?;
+                    tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?1)",
                         [schema::SCHEMA_VERSION],
@@ -201,10 +203,12 @@ impl Store {
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 let run = |tx: &Transaction| -> rusqlite::Result<()> {
-                    // adds what a '1' or an early '2' file lacks; a no-op for the rest
+                    // adds what a '1', '2' or '3' file lacks; a no-op for the rest
                     add_columns(tx, &schema::V2_COLUMNS)?;
                     add_columns(tx, &schema::V3_COLUMNS)?;
+                    add_columns(tx, &schema::V4_COLUMNS)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
+                    tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
@@ -337,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn a_schema_2_file_from_an_earlier_round_2_build_is_backed_up_and_upgraded_to_3() {
+    fn a_schema_2_file_from_an_earlier_round_2_build_is_backed_up_and_upgraded_to_4() {
         let dir = tempfile::tempdir().expect("dir");
         let path = dir.path().join(DB_FILE);
         {
@@ -354,7 +358,11 @@ mod tests {
         let store = Store::open(dir.path(), JournalMode::Delete).expect("open store");
         {
             let c = store.lock();
-            for (table, column, _) in schema::V2_COLUMNS.iter().chain(schema::V3_COLUMNS.iter()) {
+            for (table, column, _) in schema::V2_COLUMNS
+                .iter()
+                .chain(schema::V3_COLUMNS.iter())
+                .chain(schema::V4_COLUMNS.iter())
+            {
                 assert!(has_column(&c, table, column), "{table}.{column}");
             }
             let v: String = c
@@ -362,7 +370,7 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "3");
+            assert_eq!(v, "4");
         }
         let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
             .expect("backups")

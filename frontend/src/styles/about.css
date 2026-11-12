@@ -56,3 +56,10 @@ html:lang(zh-CN) .ab-body code { font-family: ui-monospace, "Cascadia Mono", Con
 html:lang(ja) .ab-body code { font-family: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, var(--jp); }
 @media (pointer: coarse) { details.ab-entry summary { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { details.ab-entry summary { transition: none; } }
+/* "Show all (n)" under the newest version's first bullets (AB-1) */
+.ab-more { margin: 2px 0 6px -4px; }
+/* Phones: the line that only says "newest first" goes; the version list is the page */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .ab-lead { display: none; }
+}
+@media (pointer: coarse) { .ab-more { min-height: 44px; } }

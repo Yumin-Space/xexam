@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { AiStatus } from '../state/ai.ts';
 import {
-  aiControls, aiPlusView, atDigits, basedKey, buildStudyAsk, buildSummaryAsk, busyView, chatDisplayTitle, controlState,
-  popTitleKey, recordSummaryExtra, replyLang, resultExtra, type RunningInfo,
+  aiControls, aiPlusView, atDigits, basedKey, buildStudyAsk, buildSummaryAsk, busyView, chatDisplayTitle, chatNameOf, controlState,
+  dockKey, focusKey, popTitleKey, recordSummaryExtra, replyLang, resultExtra, type RunningInfo, unavailableParts,
 } from './ai-plus.ts';
 
 const ready = (enabled: boolean, suspended = false): AiStatus =>
@@ -102,11 +102,12 @@ describe('resultExtra', () => {
 });
 
 describe('aiControls', () => {
-  it('practice: hint and explain, each with an icon and a button', () => {
+  it('practice: hint and explain, one bar button each', () => {
     const c = aiControls('practice');
     assert.deepEqual(c.map((x) => [x.kind, x.source]), [['hint', 'practice'], ['explain', 'practice']]);
-    assert.deepEqual(c.map((x) => x.focus), [{ icon: 'q-bulb', button: 'q-aihint' }, { icon: 'q-book', button: 'q-aiexplain' }]);
-    assert.deepEqual(c.map((x) => x.shortKey), ['aiplus.hint.short', 'aiplus.explain.short']);
+    assert.deepEqual(c.map((x) => x.focus), [{ button: 'q-aihint' }, { button: 'q-aiexplain' }]);
+    assert.deepEqual(c.map((x) => x.tipKey), ['aiplus.tip.hint', 'aiplus.tip.explain']);
+    assert.ok(c.every((x) => !('icon' in x.focus) && !('shortKey' in x)));
   });
   it('the exam while it runs has no AI control at all', () => {
     assert.deepEqual(aiControls('exam'), []);
@@ -221,5 +222,50 @@ describe('busyView', () => {
     assert.equal(busyView(run({ kind: 'summary', chatKind: 'summary', questionId: null }), 4).kind, 'summary');
     assert.equal(busyView(run({ kind: 'chat', chatKind: 'chat', questionId: null }), 4).kind, 'chat');
     assert.equal(busyView(run({ kind: 'chat', chatKind: 'practice', questionId: null }), 4).kind, 'chat');
+  });
+});
+
+describe('dock and focus keys', () => {
+  it('practice has one dock and fixed focus keys; cards are numbered', () => {
+    assert.equal(dockKey('practice', 7), 'practice');
+    assert.equal(dockKey('result', 3), 'rv-3');
+    assert.equal(dockKey('detail', 12), 'rv-12');
+    const [hint] = aiControls('practice');
+    assert.equal(focusKey('practice', hint!, 7), 'q-aihint');
+    const [ask] = aiControls('result');
+    assert.equal(focusKey('result', ask!, 3), 'rv-ask-3');
+  });
+});
+
+describe('unavailableParts (the greyed bar of P-20)', () => {
+  it('usable and hidden states have none', () => {
+    assert.equal(unavailableParts({ show: false }), null);
+    assert.equal(unavailableParts(controlState({ show: true, usable: true })), null);
+  });
+  it('a service problem: the badge reason is the visible one and the tip is the long form, with the tag', () => {
+    const p = unavailableParts(controlState({ show: true, usable: false, reason: 'suspended' }));
+    assert.deepEqual(p, { reasonKey: 'ai.badge.suspended', tipKey: 'aiplus.tip.na', badgeReasonKey: 'ai.badge.suspended', tag: true });
+  });
+  it('loading and card reasons use their own text and carry no tag where the state says so', () => {
+    assert.deepEqual(
+      unavailableParts(controlState({ show: true, usable: false, reason: 'loading' })),
+      { reasonKey: 'aiplus.why.loading', tipKey: 'aiplus.why.loading', badgeReasonKey: null, tag: false },
+    );
+    assert.deepEqual(
+      unavailableParts(controlState({ show: true, usable: true }, 'noDetail')),
+      { reasonKey: 'aiplus.why.noDetail', tipKey: 'aiplus.why.noDetail', badgeReasonKey: null, tag: false },
+    );
+  });
+});
+
+describe('chatNameOf', () => {
+  const tr = (k: string): string => `<${k}>`;
+  it('names a study chat like AI Chat: the title plus the kind suffix', () => {
+    assert.equal(chatNameOf({ title: '2026-11-12 09:30', kind: 'practice' }, tr), '2026-11-12 09:30-<aiplus.chat.suffix.practice>');
+    assert.equal(chatNameOf({ title: '2026-11-12 09:30', kind: 'exam' }, tr), '2026-11-12 09:30-<aiplus.chat.suffix.exam>');
+    assert.equal(chatNameOf({ title: '2026-11-12 09:30', kind: 'summary' }, tr), '2026-11-12 09:30-<aiplus.chat.suffix.summary>');
+  });
+  it('a plain chat keeps its title', () => {
+    assert.equal(chatNameOf({ title: 'Hello' }, tr), 'Hello');
   });
 });

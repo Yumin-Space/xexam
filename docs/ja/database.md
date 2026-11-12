@@ -3,7 +3,7 @@
 # データベース
 
 > データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースを引き継いでいます。元のテーブル定義（スキーマ v1）は**1 文字も変えずに**残し、その後のスキーマはどれも加えるだけです（新しいテーブルと新しい列。作り直しや書き換えは一切しません）：**スキーマ v2**（v0.5：問題集、試験の詳細、設定）、**スキーマ v3**（v0.6：ユーザーとログイン）、**スキーマ v4**（v0.7：ユーザーごとの問題集、問題集の所有者、練習の記録）、**スキーマ v5**（v0.8：ユーザーごとの AI+ 機能の付与と識別用のスタンプ）、**スキーマ v6**（v0.9：記録を保存した練習または試験のセッションのキーと開始時刻）。既存のデータベースは、新しいバージョンを初めて起動したときに、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード** で動きます（第 2 節）。
-> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v0.9 から **3** です。2 つのサービスが互いのデータベースを開くことはありません。
+> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v1.0 から **4**（v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.0 はメインのデータベースを変更しません**：スキーマ v6 のままです。
 > 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集へのアクセス、リリース前のデータベースの変換、古い形式の問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習用ルート）でテストしています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`）と `ai-service/src/store/` の単体テストでテストしています。
 
 ## 1. ファイルの場所
@@ -380,7 +380,7 @@ docker compose start
 
 > ⚠️ v0.1 からアップグレードする場合：データベースファイルの名前が変わり、新しいバージョンは `xexam.db` だけを読み込みます。データディレクトリに別の `.db` ファイルがあって `xexam.db` がない場合は、起動ログでお知らせします。そのファイルを `xexam.db` に名前変更してから起動してください（古いファイルは削除も読み取りもされません）。
 
-## 8. AI のデータベース（`xexam-ai.db`、v0.8。v0.9 からスキーマ 3）
+## 8. AI のデータベース（`xexam-ai.db`、v0.8。v1.0 からスキーマ 4）
 
 ai-service は、AI のものをすべて **専用の** SQLite データベースに保存します。このデータベースを開いて移行するのは ai-service だけです。バックエンドはこれを決して読まず、ai-service も `xexam.db` を決して開きません（データの境界。[architecture.md](architecture.md) の 5 節）。
 
@@ -393,7 +393,7 @@ ai-service は、AI のものをすべて **専用の** SQLite データベー�
 
 メインのデータベースと同じです：`busy_timeout` 5000 ms、`foreign_keys=ON`（ここではスキーマが実際に外部キーを使います。下を参照）、`synchronous=FULL`、WAL モード（`XEXAM_AI_SQLITE_JOURNAL=delete` でロールバックジャーナルのまま。規則は 2.1 節と同じ）、それに加えて **`secure_delete=ON`**。接続は 1 つでミューテックスの後ろに置き、書き込みはどれも `BEGIN IMMEDIATE … COMMIT` で行い、ロックは `.await` をまたぎません。起動時のログには `AI database: /data/xexam-ai.db (journal: wal)` と出ます。
 
-### 8.2 テーブル（スキーマ v3）
+### 8.2 テーブル（スキーマ v4）
 
 ```mermaid
 erDiagram
@@ -430,8 +430,12 @@ erDiagram
         INTEGER chats_per_user "10-100000、既定 1000"
         INTEGER messages_per_chat "20-5000、既定 400"
         INTEGER memories_per_user "1-1000、既定 50"
-        INTEGER memory_chars "50-2000、既定 300"
-        INTEGER message_chars "1000-32000、既定 16000"
+        INTEGER memory_chars "50-2000、既定 200（v1.0 より前は 300。アップグレード時に 300 の値だけ一度 200 に変わります）"
+        INTEGER message_chars "v1.0 から未使用（以前は 1000-32000、既定 16000）。残しますが、読み書きは決してしません"
+        INTEGER calls_per_minute "1-100、既定 5（v1.0）"
+        INTEGER calls_per_hour "1-2000、既定 20（v1.0）"
+        INTEGER calls_per_day "1-20000、既定 100（v1.0）"
+        INTEGER reply_max_chars "1-16000、既定 1000：回答の長さ（文字数。v1.0）"
         INTEGER updated_at "unix 秒"
         TEXT updated_by "ユーザー名"
     }
@@ -526,7 +530,7 @@ erDiagram
 - **フィンガープリント** は、プロバイダー、アドレス、（ゲートウェイの）形式と認証方式、モデル、キーのリビジョン、現在の暗号化キーの id に対する SHA-256 で、キーそのものは決して含みません。AI がオンとみなされるのは、`enabled = 1` で、`verified_fp` が現在のフィンガープリントと等しく、キーを復号できる間だけです。フィンガープリントが変わる設定の変更は、同じトランザクションで `enabled` と `verified_*` を消去します。
 - **`users`** には、ai-service が見たことのあるユーザーだけが入ります（メインのデータベースの id と識別用のスタンプ、最後に分かった名前）。行が書かれるのは、そのユーザーの最初のチャット、メモ、呼び出しのときで、見ただけでは書かれません。**`function_enabled`**（v2、既定 1）は、AI+ 機能のユーザーごとの **一時停止** です：0 は管理者がそのユーザーを一時停止した（AI 設定の **一時停止**）、1 は有効という意味で、行のないユーザーは有効、管理者が 0 になることはありません。これは AI+ 機能の付与（メインのデータベースの `users.ai_enabled`）とは別です：機能をオフにしてもう一度オンにしても一時停止は解除されず、解除するのは **再開** だけです。0 の id が、ハートビートでバックエンドに報告されるものです（[architecture.md](architecture.md) の 5 節）。**`free_mode`**（v2、既定 0）は管理者の **フリーモード** で、チャットではなくユーザーの状態です。設定の **AI 対話モード** で選び（`POST /api/ai/free`、管理者のみ）、読まれるのは管理者に対してだけなので、元管理者に残った値は何も起こしません。
 - **`chats`**、**`messages`**、**`memories`** がユーザーの内容です。チャットにはモードがありません：管理者のフリーモードがオンの間は、古いものも新しいものも、どのチャットのどのメッセージにもフリーモードで答えます。どのメッセージにも、書かれたときのモードを記録します（**`messages.free`**、v2、既定 0）。そのため、モードが変わったときに履歴からモデルに伝えられます（[architecture.md](architecture.md) の 5 節）。ユーザーの行を削除すると、そのチャット、メッセージ、メモ、タスクも削除されます（`ON DELETE CASCADE`）。その **`usage`** の行は `user_id` を NULL にして残るので、モデルごと、日ごとの合計は正しいままです。`memories.content` は最大 2000 文字（メモの上限の最大値）まで入り、現在の上限はサービスが確認します。学習用のメッセージ（下記）は `free = 0` で書かれます。
-- **`usage`** には、モデルの呼び出し（チャット、テスト、モデルの一覧、メモの作成、v0.9 からは学習用の回答）ごとに 1 行あり、トークン、時間、状態を持ちますが、内容、キー、アドレスは決して持ちません。**`tokens_cached`**（v2）は、入力トークンのうちプロバイダーがプロンプトキャッシュから提供した分です（AI 設定の使用量の **Cached** 列）。NULL はプロバイダーが報告しなかったことを示します。**`purpose`**（v3）は、学習機能のモデル呼び出しでは `hint`、`explain`、`summary` のいずれかで、AI チャットとチャットのない呼び出しでは NULL です。使用量の **機能別** の表は、チャットの行をこれでまとめます（AI チャット、ヒント、解説、要約。4 行は 0 でも常にあります。`GET /api/ai/admin/usage` は `byPurpose` として返します）。その行は残します（保存期間なし）。小さな行です。
+- **`usage`** には、モデルの呼び出し（チャット、テスト、モデルの一覧、メモの作成、v0.9 からは学習用の回答）ごとに 1 行あり、トークン、時間、状態を持ちますが、内容、キー、アドレスは決して持ちません。**`tokens_cached`**（v2）は、入力トークンのうちプロバイダーがプロンプトキャッシュから提供した分です（AI 設定の使用量の **Cached** 列）。NULL はプロバイダーが報告しなかったことを示します。**`purpose`**（v3）は、学習機能のモデル呼び出しでは `hint`、`explain`、`summary` のいずれかで、AI チャットとチャットのない呼び出しでは NULL です。使用量の **機能別** の表は、チャットの行をこれでまとめます（AI チャット、ヒント、解説、要約。4 行は 0 でも常にあります。`GET /api/ai/admin/usage` は `byPurpose` として返します）。その行は残します（保存期間なし）。小さな行です。**利用者ごとのリクエスト上限（v1.0）** は、この表を読みます（独自のカウンターは持ちません）：利用者の、直近 1 分・直近 1 時間・サーバーのタイムゾーンの 0:00 以降の呼び出しは、その利用者の `chat` と `memory` の行（どの状態も数えます）に、メモリー上で実行中の呼び出しを足したものです。数えるのに既存の `idx_usage_user` を使い、新しいインデックスもテーブルも加えません。
 - **`tasks`** は後の機能のためにあり、v0.8 にはそのためのルートも処理もありません（終わったタスクは 30 日後に削除されます）。
 - **`audit_outbox`** は、管理者による消去の監査の行を、バックエンドがシステムログのために受け取るまで持ちます（[security.md](security.md) の 11 節）。
 - インデックス：`idx_chats_user (user_id, updated_at)`、`idx_chats_updated (updated_at)`、`idx_messages_chat (chat_id, id)`、`idx_memories_user (user_id, id)`、`idx_tasks_state (state, run_after)`、`idx_usage_day (day)`、`idx_usage_user (user_id, day)`、`idx_usage_model (model, day)`。v3 からは、部分インデックスが 3 つ加わります：`idx_chats_ref`（`(user_id, kind, ref) WHERE ref IS NOT NULL` の一意インデックス。セッションまたは記録ごとに 1 つのチャットを、走査せずに見つけます）、`idx_messages_study`（`(chat_id, question_id, kind, source, role, id) WHERE question_id IS NOT NULL`。1 つの問題の保存済みのヒントや解説）、`idx_messages_streaming`（`(status) WHERE status = 'streaming'`。起動時の修復）。`tests/v09_store.rs` は、保存済みの回答の検索、参照によるチャットの検索、修復の件数の数え上げが、一時的な並べ替えなしにこれらを使うことを `EXPLAIN QUERY PLAN` で確かめています。
@@ -542,12 +546,13 @@ erDiagram
 
 ### 8.3 サービスがこれをどう扱うか
 
-- **開くとき**：テーブルを作成し（`IF NOT EXISTS`）、`settings` と `limits` の行を既定値で加え、新しいデータベースでは `meta.schema` を `3` にします。`meta.schema` が `1` または `2` のデータベースはアップグレードします（下の「移行」を参照）。より新しい ai-service が書いたデータベース（`meta.schema` が `3` より大きい）は拒否します：サービスはログに 1 行出して起動しないので、古いイメージが新しいファイルを開くことはありません。クラッシュや強制終了で `streaming` のまま残った回答は、コード `ai.interrupted` 付きで `error` にします（そうした回答があるときだけ。`idx_messages_streaming` がそれを見つけます）。
+- **開くとき**：テーブルを作成し（`IF NOT EXISTS`）、`settings` と `limits` の行を既定値で加え、新しいデータベースでは `meta.schema` を `4` にします。`meta.schema` が `1`、`2`、`3` のデータベースはアップグレードします（下の「移行」を参照）。より新しい ai-service が書いたデータベース（`meta.schema` が `4` より大きい）は拒否します：サービスはログに 1 行出して起動しないので、古いイメージが新しいファイルを開くことはありません。クラッシュや強制終了で `streaming` のまま残った回答は、コード `ai.interrupted` 付きで `error` にします（そうした回答があるときだけ。`idx_messages_streaming` がそれを見つけます）。
 - **保存期間**：起動の 60 秒後、その後は 1 時間ごとに、最後のメッセージが保存期間の日数より古いチャットを、そのメッセージと一緒に削除します（回答の作成中のものは削除しません）。学習用のチャットも、ほかのチャットと同じです。この掃除は **1 回のトランザクションにつき 20 件のチャット** を削除し、20 件がそろうたびに 20 ms の間を置き、ブロッキング用のスレッドで動くので、大きな掃除（保存期間を短くしたとき、サービスを長く止めていたとき）でもデータベースを長くロックすることはなく、作成中の回答は保存され続けます。合計は 1 行のログに出ます。ユーザーによる自分のチャットの全削除、管理者の消去、削除されたユーザーのデータの削除は、これまでどおり 1 つのトランザクションで削除します。メモは保存期間の対象ではありません。
 - **メインのアプリとの照合（reconcile）**：起動時（うまくいくまで 30 秒ごとにやり直し）、10 分ごと、管理者が **AI+ ユーザー** を開いたときに、サービスは自分のユーザー id のうちどれがまだあり、どのスタンプを持ち、AI+ 機能の付与を持つかどうかをバックエンドに問い合わせます。なくなった id や、別のスタンプを持つようになった id（メインのデータベースを復元した後に再利用されたユーザー id）のデータは、そのユーザーの回答をすべて止めた後に削除します。そのような本人確認を持つリクエストが届いたときも、すぐに同じことをします。
 - **削除した内容**：`secure_delete=ON` で解放されたページは上書きされ、ユーザーの内容を削除するたびに、サービスは `PRAGMA wal_checkpoint(TRUNCATE)` を実行します（多くても 10 秒に 1 回）。古いページが `xexam-ai.db-wal` に残らないようにするためです。バックアップとボリュームのスナップショットには、削除したものがまだ残ります。
 - **停止**：正常に停止するときは、作成中の回答を停止したものとして保存し、その後チェックポイントを実行します。
-- **移行**：スキーマ v1 が最初のスキーマでした（リリース前の v0.8 のビルド）。**スキーマ v2**（v0.8）が加えたのは 4 つの列です：`users.function_enabled`（既定 1）、`users.free_mode`（既定 0）、`messages.free`（既定 0）、`usage.tokens_cached`（NULL）。**スキーマ v3**（v0.9）が加えるのは **12 の列と 3 つのインデックス** だけです：`chats.kind`（既定 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（既定 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong`、`usage.purpose`（NULL）、そして `idx_chats_ref`、`idx_messages_study`、`idx_messages_streaming` です。書き換えられる行はなく、意味が変わる行もありません：古いチャットとメッセージはすべて `chat` で、古い使用量の行はどれも purpose を持ちません。同じ追加だけのステップで、新しいデータベースを作ることも古いものをアップグレードすることもできるので、どちらも同じテーブルと同じ `sqlite_master` になります。**スキーマ 1 または 2 のデータベースは、すべて先にコピーします**：`VACUUM INTO` で AI のデータディレクトリの中の `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` にコピーし（`<N>` はそのデータベースが持っていたスキーマで、v0.8 のデータベースなら `xexam-ai-schema2-…`。ディレクトリのモード 0700。時刻はコンテナのローカル時刻。名前が使われていれば `-2`、`-3`… を付けます。空のデータベースもコピーします）、その後 1 つのトランザクションでアップグレードし、コピーの名前を 1 行のログに出します：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: <path>.` コピーを作れないときは、サービスは起動せず、何も変更しません。v2 の列の一部がないリリース前のビルドのスキーマ 2 のファイルは、同じステップでそれらが追加されます。スキーマ 3 のデータベースを開き直しても何も書き込みません。コピーのために **AI のデータベースと同じくらいの空きディスク容量** を確保してください。コピーが自動で削除されることはなく、後で削除したチャットやメモも残るので、それが問題になるときは自分で削除してください（[security.md](security.md) の 11 節）。**v0.8 に戻すにはこのコピーが必要です**：v0.8 の ai-service はスキーマ 3 を拒否し（`written by a newer ai-service … restore a backup`）、終了するので、8.4 のとおり `xexam-ai-schema2-….db` を復元してください。アップグレード以降に書き込まれたチャット、メモ、設定、使用量は、そこにはなく失われます。
+- **移行**：スキーマ v1 が最初のスキーマでした（リリース前の v0.8 のビルド）。**スキーマ v2**（v0.8）が加えたのは 4 つの列です：`users.function_enabled`（既定 1）、`users.free_mode`（既定 0）、`messages.free`（既定 0）、`usage.tokens_cached`（NULL）。**スキーマ v3**（v0.9）が加えるのは **12 の列と 3 つのインデックス** だけです：`chats.kind`（既定 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（既定 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong`、`usage.purpose`（NULL）、そして `idx_chats_ref`、`idx_messages_study`、`idx_messages_streaming` です。書き換えられる行はなく、意味が変わる行もありません：古いチャットとメッセージはすべて `chat` で、古い使用量の行はどれも purpose を持ちません。同じ追加だけのステップで、新しいデータベースを作ることも古いものをアップグレードすることもできるので、どちらも同じテーブルと同じ `sqlite_master` になります。**スキーマ 1、2 または 3 のデータベースは、すべて先にコピーします**：`VACUUM INTO` で AI のデータディレクトリの中の `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` にコピーし（`<N>` はそのデータベースが持っていたスキーマで、v0.8 のデータベースなら `xexam-ai-schema2-…`、v0.9 または v0.9.1 のデータベースなら `xexam-ai-schema3-…`。ディレクトリのモード 0700。時刻はコンテナのローカル時刻。名前が使われていれば `-2`、`-3`… を付けます。空のデータベースもコピーします）、その後 1 つのトランザクションでアップグレードし、コピーの名前を 1 行のログに出します：`Upgraded the AI database to schema 4. A copy of the previous version was saved first: <path>.` コピーを作れないときは、サービスは起動せず、何も変更しません。v2 の列の一部がないリリース前のビルドのスキーマ 2 のファイルは、同じステップでそれらが追加されます。スキーマ 3 のデータベースを開き直しても何も書き込みません。コピーのために **AI のデータベースと同じくらいの空きディスク容量** を確保してください。コピーが自動で削除されることはなく、後で削除したチャットやメモも残るので、それが問題になるときは自分で削除してください（[security.md](security.md) の 11 節）。**v0.8 に戻すにはこのコピーが必要です**：v0.8 の ai-service はスキーマ 3 を拒否し（`written by a newer ai-service … restore a backup`）、終了するので、8.4 のとおり `xexam-ai-schema2-….db` を復元してください。アップグレード以降に書き込まれたチャット、メモ、設定、使用量は、そこにはなく失われます。
+- **スキーマ 4（v1.0）** が加えるのは **4 つの列** だけです：`limits.calls_per_minute`（既定 5）、`limits.calls_per_hour`（既定 20）、`limits.calls_per_day`（既定 100）、`limits.reply_max_chars`（既定 1000）。それぞれに範囲の `CHECK` が付きます（範囲はアプリケーションの上限の一覧と同じです）。何も削除しません：`limits.message_chars` はテーブルに残り、使われません。同じトランザクションで 1 回だけ `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300` を実行し、メモリーの長さの古い既定値を新しい既定値へ移します。管理者が選んだそれ以外の値はそのまま残ります。この処理は新しいデータベースでも、スキーマ 1、2、3 からのアップグレードでも実行され、どちらも同じ `sqlite_master` になり、後の起動では二度と実行されません。スキーマ 1、2、3 からアップグレードしたデータベースは、新しい 4 つの列に既定値を得ます。古い値から導くものはありません。**スキーマ 3 のデータベースのコピー（`backups/xexam-ai-schema3-<日時>.db`）は保管してください**：v0.9.1 の ai-service は、スキーマ 4 を既存のメッセージで拒否するので、戻るにはそのコピーを復元して v0.9.1 のイメージを動かします（8.4 節と [migration.md](migration.md)）。
 
 ### 8.4 AI のボリュームのバックアップと復元
 

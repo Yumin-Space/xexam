@@ -101,6 +101,18 @@ START_KEYS = ['chatId', 'chatTitle', 'userMessageId', 'assistantMessageId', 'mod
 CHAT_KEYS = ['id', 'title', 'createdAt', 'updatedAt', 'messageCount', 'running', 'kind', 'recordId']
 ADMIN_ROW_KEYS = ['id', 'username', 'role', 'ai', 'aiAllowed', 'disabled', 'exists', 'suspended', 'chats', 'messages',
                   'memories', 'lastUsedAt', 'tokensIn', 'tokensOut']
+# v1.0: the rows of GET /api/ai/admin/users and /api/ai/admin/user end with the user's AI call counts (the Suspend /
+# Resume answer's row does not carry them)
+ADMIN_LIST_ROW_KEYS = ADMIN_ROW_KEYS + ['calls']
+# v1.0: per-user caps on AI model calls (defaults 5 / 20 / 100). This check sends more calls per user than that, so the
+# administrator raises them to the maximum right after enabling AI; the caps themselves are covered by ai-service's tests
+CAPS_RELAXED = {'callsPerMinute': 100, 'callsPerHour': 2000, 'callsPerDay': 20000}
+# v1.0 (FB-5 revised): the safety limits answer has these 10 keys in this order; the per-message number is no longer a
+# setting (messageChars is fixed at 16000 characters and only shows in the status answer)
+LIMIT_KEYS = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryChars',
+              'callsPerMinute', 'callsPerHour', 'callsPerDay', 'replyMaxChars']
+LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000, 'messagesPerChat': 400, 'memoriesPerUser': 50,
+                  'memoryChars': 200, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxChars': 1000}
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST', 'XEXAM_INTERNAL_TOKEN', 'XEXAM_AI_SECRET_KEY'):
@@ -607,6 +619,64 @@ try:
     ok(st == 200 and v['ok'] is True and v['model'] == 'demo-chat-small', 'The test call succeeds. Actual %d %r' % (st, v))
     st, _, cfg = jreq('POST', '/api/ai/admin/enable', {'enabled': True})
     ok(st == 200 and cfg['enabled'] is True and cfg['verified'] is True, 'AI is enabled after the test. Actual %d' % st)
+    # -- A1b v1.0: the safety limits answer, the per-user call caps through Nginx --
+    st, _, lim = jreq('GET', '/api/ai/admin/limits')
+    ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
+       and lim.get('defaults') == LIMIT_DEFAULTS,
+       'GET /api/ai/admin/limits: the 10 keys in order, replyMaxChars 1000, memoryChars 200, calls 5 / 20 / 100, no messageChars. Actual %d %r' % (st, lim))
+    ok(lim['ranges']['replyMaxChars'] == [1, 16000] and lim['ranges']['memoryChars'] == [50, 2000]
+       and lim['ranges']['callsPerMinute'] == [1, 100] and lim['ranges']['callsPerHour'] == [1, 2000]
+       and lim['ranges']['callsPerDay'] == [1, 20000] and 'messageChars' not in lim['ranges'],
+       'The limits answer carries the ranges of the new keys. Actual %r' % lim['ranges'])
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'messageChars': 16000})
+    ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.badRequest',
+       'POST /api/ai/admin/limits naming messageChars (no longer a setting) -> 400 ai.badRequest. Actual %d %r' % (st, e))
+    for bad in (0, 16001):
+        st, _, e = jreq('POST', '/api/ai/admin/limits', {'replyMaxChars': bad})
+        ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitRange' and e.get('field') == 'replyMaxChars',
+           'replyMaxChars %d -> 400 ai.limitRange, field replyMaxChars. Actual %d %r' % (bad, st, e))
+    ok(jreq('GET', '/api/ai/admin/limits')[2]['limits'] == LIMIT_DEFAULTS, 'The refused updates changed no limit')
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 30})
+    ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitOrder' and e.get('field') == 'callsPerHour',
+       'callsPerMinute 30 above the hourly 20 -> 400 ai.limitOrder, field callsPerHour. Actual %d %r' % (st, e))
+    st, _, sa = jreq('GET', '/api/ai/status')
+    ok(st == 200 and list(sa.keys()) == STATUS_KEYS + ['calls'] and sa['messageChars'] == 16000 and sa['maxMessageChars'] == 16000
+       and sa['memoryChars'] == 200 and sa['memoryMaxChars'] == 200,
+       'GET /api/ai/status (AI on): calls is the last key; messageChars 16000 (fixed), memoryChars 200. Actual %d %r' % (st, sa))
+    ok(sa['calls'] == {'used': {'minute': 0, 'hour': 0, 'day': 0}, 'caps': {'minute': 5, 'hour': 20, 'day': 100}, 'blocked': None},
+       'status.calls: used (the Test is not counted), caps 5 / 20 / 100, blocked null. Actual %r' % sa['calls'])
+
+    def settled():
+        return until(lambda: jreq('GET', '/api/ai/status')[2].get('running') is None, 10)
+
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 2})
+    ok(st == 200 and e['limits']['callsPerMinute'] == 2, 'The administrator sets the per-minute cap to 2. Actual %d' % st)
+    for i in (1, 2):
+        sc = Stream('/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'}, COOKIE)
+        sc.run()
+        term = sc.terminal()
+        ok(sc.status == 200 and term is not None and term[1] == 'done', 'Cap check: AI call %d of 2 through Nginx succeeds. Actual %r %r' % (i, sc.status, sc.raw[:120]))
+        ok(settled(), 'Cap check: the finished call gave its place back')
+    st, hd, e = jreq('POST', '/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'})
+    ok(st == 429 and 'application/json' in hd.get('content-type', '') and isinstance(e, dict) and e.get('code') == 'ai.callLimit'
+       and e.get('cap') == 'minute' and e.get('limit') == 2 and isinstance(e.get('retryAt'), int) and isinstance(e.get('retryAfter'), int)
+       and '每分钟 2 次' in e.get('error', ''),
+       'The third call is refused with 429 ai.callLimit (cap minute, limit 2, retryAt, retryAfter) as JSON through Nginx. Actual %d %r' % (st, e))
+    ok(hd.get('retry-after', '').isdigit() and int(hd['retry-after']) == e['retryAfter'] and 1 <= e['retryAfter'] <= 60,
+       'The Retry-After header of the 429 survives Nginx and equals retryAfter. Actual %r %r' % (hd.get('retry-after'), e.get('retryAfter')))
+    st, _, sb = jreq('GET', '/api/ai/status')
+    ok(st == 200 and sb['calls']['used']['minute'] == 2 and sb['calls']['caps']['minute'] == 2
+       and sb['calls']['blocked'] == {'cap': 'minute', 'limit': 2, 'retryAt': e['retryAt']},
+       'GET /api/ai/status shows blocked {cap minute, limit 2, retryAt} and 2 calls in the minute. Actual %r' % sb.get('calls'))
+    st, _, v = jreq('POST', '/api/ai/admin/verify', {})
+    ok(st == 200 and v['ok'] is True, 'The admin Test is not counted and still works while the cap is reached. Actual %d %r' % (st, v))
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100})
+    ok(st == 200 and e['limits'] == LIMIT_DEFAULTS, 'The limits are reset to the defaults. Actual %d %r' % (st, e))
+    st, _, e = jreq('POST', '/api/ai/chats/delete', {'all': True})
+    ok(st == 200, "The administrator's cap-check chats are deleted again. Actual %d %r" % (st, e))
+    st, _, lim = jreq('POST', '/api/ai/admin/limits', CAPS_RELAXED)
+    ok(st == 200 and all(lim.get('limits', {}).get(k) == v for k, v in CAPS_RELAXED.items()),
+       'The administrator raises the per-user AI call caps for the rest of this check (v1.0). Actual %d %r' % (st, lim))
     state = admin_state()
     svc = state.get('aiService') or {}
     ok(state.get('aiAvailable') is True and svc.get('connected') is True and svc.get('enabled') is True
@@ -700,8 +770,26 @@ try:
     listed = {u['username']: u for u in au['users']} if st == 200 else {}
     ok('sam' in listed and listed['sam']['ai'] is True and listed['sam']['chats'] == 1 and 'kim' not in listed,
        'admin: the AI users list has sam (AI+ service, 1 chat) and not kim. Actual %r' % sorted(listed))
-    ok(all(list(u.keys()) == ADMIN_ROW_KEYS for u in au['users']) and listed['sam']['suspended'] is False,
+    ok(all(list(u.keys()) == ADMIN_LIST_ROW_KEYS for u in au['users']) and listed['sam']['suspended'] is False,
        'admin: the AI users rows carry suspended (false for sam). Actual %r' % listed.get('sam'))
+    # v1.0: the per-user call counts of the three views agree (sam made 5 counted calls above: the first chat, three
+    # language chats and one memory suggestion; refused sends are not counted)
+    calls = listed['sam'].get('calls', {})
+    ok(list(calls.keys()) == ['used', 'blocked'] and list(calls['used'].keys()) == ['minute', 'hour', 'day']
+       and calls['blocked'] is None and calls['used']['day'] == 5 and calls['used']['hour'] == 5,
+       "admin: sam's row carries calls {used {minute, hour, day}, blocked} (5 today, nothing blocked; no caps in the row). Actual %r" % calls)
+    st, _, one = jreq('GET', '/api/ai/admin/user?id=%d' % SAM_ID)
+    ok(st == 200 and one.get('user', {}).get('calls', {}).get('used', {}).get('day') == 5, "admin: the one-user view (user.calls) carries the same calls. Actual %r" % one.get('user'))
+    st, _, ss = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})
+    ok(st == 200 and list(ss.keys()) == STATUS_KEYS + ['calls'] and list(ss['calls'].keys()) == ['used', 'caps', 'blocked']
+       and ss['calls']['used']['day'] == 5 and ss['calls']['caps'] == {'minute': 100, 'hour': 2000, 'day': 20000}
+       and ss['calls']['blocked'] is None,
+       "sam: GET /api/ai/status carries calls {used, caps, blocked} (5 today; the caps of the limits). Actual %d %r" % (st, ss.get('calls')))
+    st, _, usage0 = jreq('GET', '/api/ai/admin/usage?days=30')
+    sam_row = next((u for u in usage0.get('byUser', []) if u.get('userId') == SAM_ID), {}) if st == 200 else {}
+    ok(sam_row.get('today') == 5 and all(isinstance(u.get('today'), int) for u in usage0['byUser'] if u.get('userId') is not None)
+       and all('today' not in u for u in usage0['byUser'] if u.get('userId') is None),
+       "admin: GET /api/ai/admin/usage byUser rows carry today (sam 5; none on the anonymised row). Actual %r" % sam_row)
     st, _, au = jreq('GET', '/api/ai/admin/user?id=%d' % SAM_ID)
     ok(st == 200 and [c['id'] for c in au['chats']] == [chat_id], "admin: sam's chats in the read-only view. Actual %d" % st)
     views = sum('viewed an AI chat of user' in l for l in log_messages())

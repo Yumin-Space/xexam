@@ -448,6 +448,7 @@ pub async fn ask(ctx: Ctx) -> Answer {
         }],
         guard,
         purpose: Some(purpose),
+        lang,
         attempt: ids.attempt,
     };
     launch(&ctx, &snap, target, slot, permit, l)
@@ -464,7 +465,7 @@ fn positive(text: &str) -> Option<i64> {
 }
 
 fn empty_saved() -> Value {
-    json!({"chatId": Value::Null, "latest": Value::Null, "lastGood": Value::Null})
+    json!({"chatId": Value::Null, "chatTitle": Value::Null, "latest": Value::Null, "lastGood": Value::Null})
 }
 
 pub async fn saved(ctx: Ctx) -> Answer {
@@ -659,6 +660,7 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
         }],
         guard: None,
         purpose: Some("summary"),
+        lang,
         attempt: ids.attempt,
     };
     launch(&ctx, &snap, target, slot, permit, l)

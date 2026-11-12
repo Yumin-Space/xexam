@@ -5,8 +5,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  applyEvent, chatOf, clearsComposer, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isTerminal, isThinking, localFail,
-  localSend, localStop, noAccessKey, pollResult, questionOf, readOnlyReason, retryBody, retryTarget, sendBody, shouldSend, showsEmptyHint, startOf, STOP_GUARD_MS, suggestBody,
+  applyEvent, atEnd, chatOf, clearsComposer, composerLines, composerMaxLines, composerStatus, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isBusyElsewhere, isTerminal, isThinking, localFail, MIN_MSGS_PX,
+  localSend, localStop, locksDocument, noAccessKey, pollResult, questionOf, readOnlyReason, retryBody, retryTarget, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, startOf, STOP_GUARD_MS, suggestBody,
   type ChatView, type KeyLike, type ViewMessage,
 } from './ai-chat.ts';
 import type { AiChatDetail, AiMessage } from '../types/api.ts';
@@ -342,4 +342,61 @@ test('v0.9: Retry is offered only under an AI Chat answer, never under a hint, e
   ]));
   assert.equal(retryTarget(failed('chat')), 32);
   for (const k of ['hint', 'explain', 'summary'] as const) assert.equal(retryTarget(failed(k)), null);
+});
+
+test('v1.0: the phone screen locks the document up to 900 px and shows two panes from 720 px', () => {
+  assert.equal(locksDocument(390), true);
+  assert.equal(locksDocument(900), true);
+  assert.equal(locksDocument(901), false);
+  assert.equal(showsTwoPanes(719), false);
+  assert.equal(showsTwoPanes(720), true);
+  assert.equal(showsTwoPanes(900), true);
+});
+
+test('v1.0: the list is "at the end" within 24 px', () => {
+  assert.equal(atEnd({ scrollHeight: 1000, scrollTop: 600, clientHeight: 400 }), true);
+  assert.equal(atEnd({ scrollHeight: 1000, scrollTop: 576, clientHeight: 400 }), true);
+  assert.equal(atEnd({ scrollHeight: 1000, scrollTop: 575, clientHeight: 400 }), false);
+  // a list shorter than its box is always at its end
+  assert.equal(atEnd({ scrollHeight: 200, scrollTop: 0, clientHeight: 400 }), true);
+  assert.equal(atEnd({ scrollHeight: 1000, scrollTop: 500, clientHeight: 400 }, 100), true);
+});
+
+test('v1.0: the composer status slot shows one thing, errors first, then the cap, then "busy elsewhere"', () => {
+  assert.equal(composerStatus({ sendError: 'x', capped: true, busyElsewhere: true }), 'error');
+  assert.equal(composerStatus({ sendError: null, capped: true, busyElsewhere: true }), 'cap');
+  assert.equal(composerStatus({ sendError: null, capped: false, busyElsewhere: true }), 'busy');
+  assert.equal(composerStatus({ sendError: '', capped: false, busyElsewhere: false }), null);
+});
+
+test('v1.0: another chat is busy only when the running answer is not this chat and not sent from here', () => {
+  assert.equal(isBusyElsewhere(null, 3, false), false);
+  assert.equal(isBusyElsewhere({ chatId: 3 }, 3, false), false);
+  assert.equal(isBusyElsewhere({ chatId: 4 }, 3, false), true);
+  assert.equal(isBusyElsewhere({ chatId: 4 }, null, false), true);
+  assert.equal(isBusyElsewhere({ chatId: 4 }, 3, true), false);
+});
+
+test('v1.0: the composer grows to 4 lines on touch or in a short window, else 8', () => {
+  assert.equal(composerMaxLines(true, 1000), 4);
+  assert.equal(composerMaxLines(false, 699), 4);
+  assert.equal(composerMaxLines(false, 700), 8);
+});
+
+test('composerLines follows the room left (keyboard, short landscape)', () => {
+  assert.equal(composerLines(true, 844, 800, 24), 4);
+  assert.equal(composerLines(true, 740, 407, 24), 3);
+  assert.equal(composerLines(true, 390, 215, 24), 1);
+  assert.equal(composerLines(true, 390, 50, 24), 1);
+  assert.equal(composerLines(false, 1000, 1000, 22), 8);
+});
+
+test('composerLines keeps the conversation room: the text room caps the lines, at least 1', () => {
+  // 390x844 with the keyboard: 153 px free above a one-line composer, 44 px input with 18 px padding and border
+  assert.equal(composerLines(true, 844, 464, 24, 153 + 44 - 18 - MIN_MSGS_PX), 3);
+  // 360x740 with the keyboard: 96 px free, the input stays at one line
+  assert.equal(composerLines(true, 740, 407, 24, 96 + 44 - 18 - MIN_MSGS_PX), 1);
+  assert.equal(composerLines(true, 844, 844, 24, -50), 1);
+  assert.equal(composerLines(true, 844, 844, 24, 1000), 4);
+  assert.equal(composerLines(true, 844, 844, 24, Number.POSITIVE_INFINITY), 4);
 });

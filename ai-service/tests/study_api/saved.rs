@@ -14,7 +14,10 @@ async fn nothing_saved_is_a_normal_empty_answer() {
         e.t.get(&practice_q(K1, "q1", "hint", "practice"), &e.user)
             .await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(v, json!({"chatId": null, "latest": null, "lastGood": null}));
+    assert_eq!(
+        v,
+        json!({"chatId": null, "chatTitle": null, "latest": null, "lastGood": null})
+    );
 }
 
 #[tokio::test]
@@ -27,6 +30,9 @@ async fn the_newest_answer_wins_and_the_places_are_kept_apart() {
         e.t.get(&practice_q(K1, "q1", "hint", "practice"), &e.user)
             .await;
     assert_eq!(v["chatId"], first["chatId"]);
+    // the saved route returns the chat's real title (the same one the start event named)
+    assert!(first["chatTitle"].as_str().is_some_and(|t| !t.is_empty()));
+    assert_eq!(v["chatTitle"], first["chatTitle"]);
     assert_eq!(v["latest"]["messageId"], second["assistantMessageId"]);
     assert_eq!(v["latest"]["status"], "done");
     assert_eq!(v["latest"]["content"], CLEAN_HINT);
@@ -91,7 +97,10 @@ async fn another_users_key_finds_nothing_and_the_lookup_works_with_ai_off() {
         e.t.get(&practice_q(K1, "q1", "hint", "practice"), &other)
             .await;
     assert_eq!(s, 200);
-    assert_eq!(v, json!({"chatId": null, "latest": null, "lastGood": null}));
+    assert_eq!(
+        v,
+        json!({"chatId": null, "chatTitle": null, "latest": null, "lastGood": null})
+    );
     // AI switched off: a Signed route still answers
     let (s, v) =
         e.t.post("/api/ai/admin/enable", &e.admin, json!({"enabled": false}))
@@ -134,7 +143,10 @@ async fn the_saved_answer_of_a_result_page_is_found_by_record_and_by_key() {
             &e.user,
         )
         .await;
-    assert_eq!(c, json!({"chatId": null, "latest": null, "lastGood": null}));
+    assert_eq!(
+        c,
+        json!({"chatId": null, "chatTitle": null, "latest": null, "lastGood": null})
+    );
 }
 
 #[tokio::test]

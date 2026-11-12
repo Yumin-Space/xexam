@@ -434,7 +434,8 @@ async fn verify_falls_back_once_and_chat_uses_the_same_request() {
     assert_eq!(mt, 4096);
     let ev = t.send_all(&sam, json!({"text": "hi"})).await.expect("s");
     assert_eq!(terminal(&ev).0, "done");
-    assert_eq!(t.stub.last().body["max_tokens"], json!(4096));
+    // the answer length (1000 characters, English: 1000 tokens) is below the stored ceiling of 4096
+    assert_eq!(t.stub.last().body["max_tokens"], json!(1000));
     let verify_rows: i64 = t
         .db()
         .query_row(
@@ -738,11 +739,27 @@ async fn safety_limits_routes() {
     assert_eq!(
         v["limits"],
         json!({"perUserRunning": 1, "globalRunning": 16, "chatsPerUser": 1000, "messagesPerChat": 400,
-               "memoriesPerUser": 50, "memoryChars": 300, "messageChars": 16000})
+               "memoriesPerUser": 50, "memoryChars": 200,
+               "callsPerMinute": 5, "callsPerHour": 20, "callsPerDay": 100, "replyMaxChars": 1000})
     );
+    let keys: Vec<&String> = v["limits"].as_object().expect("object").keys().collect();
+    assert_eq!(keys.len(), 10);
+    assert_eq!(
+        &keys[6..],
+        &[
+            "callsPerMinute",
+            "callsPerHour",
+            "callsPerDay",
+            "replyMaxChars"
+        ]
+    );
+    assert_eq!(v["ranges"]["callsPerMinute"], json!([1, 100]));
+    assert_eq!(v["ranges"]["callsPerHour"], json!([1, 2000]));
+    assert_eq!(v["ranges"]["callsPerDay"], json!([1, 20000]));
     assert_eq!(v["defaults"], v["limits"]);
     assert_eq!(v["ranges"]["chatsPerUser"], json!([10, 100000]));
-    assert_eq!(v["ranges"]["messageChars"], json!([1000, 32000]));
+    assert_eq!(v["ranges"]["replyMaxChars"], json!([1, 16000]));
+    assert!(v["limits"].get("messageChars").is_none());
     for (body, code, field) in [
         (
             json!({"chatsPerUser": 5}),
@@ -760,15 +777,22 @@ async fn safety_limits_routes() {
             Some("perUserRunning"),
         ),
         (
-            json!({"memoryChars": "300"}),
+            json!({"memoryChars": "200"}),
             "ai.limitRange",
             Some("memoryChars"),
         ),
         (
-            json!({"chatsPerUser": 2000, "messageChars": 999}),
+            json!({"chatsPerUser": 2000, "replyMaxChars": 16001}),
             "ai.limitRange",
-            Some("messageChars"),
+            Some("replyMaxChars"),
         ),
+        (
+            json!({"chatsPerUser": 2000, "replyMaxChars": 0}),
+            "ai.limitRange",
+            Some("replyMaxChars"),
+        ),
+        // the per-message number is not an administrator's setting any more
+        (json!({"messageChars": 16000}), "ai.badRequest", None),
         (json!({"bogus": 1}), "ai.badRequest", None),
     ] {
         let (s, v) = t.post("/api/ai/admin/limits", &admin, body.clone()).await;
@@ -782,12 +806,12 @@ async fn safety_limits_routes() {
         .post(
             "/api/ai/admin/limits",
             &admin,
-            json!({"chatsPerUser": 2000, "messageChars": 20000}),
+            json!({"chatsPerUser": 2000, "replyMaxChars": 16000}),
         )
         .await;
     assert_eq!(s, 200);
     assert_eq!(v["limits"]["chatsPerUser"], json!(2000));
-    assert!(captured_contains("AI limits changed by admin \"admin\": chatsPerUser 1000 -> 2000, messageChars 16000 -> 20000"));
+    assert!(captured_contains("AI limits changed by admin \"admin\": chatsPerUser 1000 -> 2000, replyMaxChars 1000 -> 16000"));
     // limits are not part of the fingerprint
     t.configure_openai(&admin, "demo-chat-small").await;
     let (_, _) = t

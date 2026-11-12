@@ -114,6 +114,12 @@ pub struct App {
     /// AI Chat retries per answer message: a retry rewrites the failed answer in place, so the database holds no count
     /// of the attempts (see [`App::next_retry_attempt`])
     retries: Mutex<std::collections::HashMap<i64, u32>>,
+    /// Per-user call caps that were reached and have not freed yet: (user id, cap key) -> when it frees (unix s). One log
+    /// line per entry (see [`App::note_call_cap`]); expired entries are pruned on every use.
+    cap_episodes: Mutex<std::collections::HashMap<(i64, &'static str), i64>>,
+    /// What the provider taught about the token limit for one settings fingerprint (the field it accepts, the ceiling
+    /// of an Anthropic model); a changed fingerprint starts again, a restart forgets it
+    token_memo: Mutex<Option<(String, crate::provider::TokenMemo)>>,
     /// Held for a whole outbox delivery, so two never overlap (each would send the same audit lines)
     outbox: tokio::sync::Mutex<()>,
     /// Held while one state report is read and sent, so an older state never arrives after a newer one
@@ -136,7 +142,92 @@ pub struct StudyHold {
 #[derive(Clone)]
 pub struct AppState(pub Arc<App>);
 
+impl AppState {
+    /// The requests of one counted model call (chat, study ask, memory suggestion): the answer length of the limits
+    /// converted to `max_tokens` for the reply language, in the field this settings fingerprint is known to accept,
+    /// plus the fallbacks of the ladder (spec 3.10 C-8). The limits are read now, when the call starts.
+    pub fn chat_plan(
+        &self,
+        snap: &Snapshot,
+        target: &Target,
+        spec: &crate::provider::ChatSpec<'_>,
+        lang: Option<crate::prompt::Lang>,
+    ) -> Result<crate::provider::Plan, crate::provider::UpError> {
+        let want = crate::limits::reply_tokens(self.0.limits().reply_max_chars, lang);
+        let format = snap.settings.wire_format();
+        let stored_max = snap.settings.max_tokens;
+        let memo = {
+            let m = self.0.token_memo.lock().unwrap_or_else(|e| e.into_inner());
+            m.as_ref().filter(|(fp, _)| *fp == snap.fp).map(|(_, m)| *m)
+        };
+        let first = crate::provider::first_token_limit(format, want, stored_max, memo);
+        let app = self.clone();
+        let fp = snap.fp.clone();
+        let remember: crate::provider::Remember = Arc::new(move |step| {
+            app.0.remember_token_step(&fp, format, step);
+        });
+        crate::provider::build_plan(
+            target,
+            &self.0.client,
+            spec,
+            first,
+            stored_max,
+            Some(remember),
+        )
+    }
+}
+
 impl App {
+    /// Remembers the token-limit step a provider accepted after refusing the earlier one, once per fingerprint and step
+    /// (one INFO line, English, no key, URL or content).
+    fn remember_token_step(
+        &self,
+        fp: &str,
+        format: crate::settings::Format,
+        step: &crate::provider::TokenLimit,
+    ) {
+        use crate::provider::{TokenField, TokenMemo};
+        let (memo, line) = match (format, step.field) {
+            (crate::settings::Format::Anthropic, _) => (
+                TokenMemo {
+                    field: TokenField::MaxTokens,
+                    cap: Some(step.value),
+                },
+                format!(
+                    "the AI provider refused max_tokens; using max_tokens {}",
+                    step.value
+                ),
+            ),
+            (_, TokenField::MaxCompletionTokens) => (
+                TokenMemo {
+                    field: TokenField::MaxCompletionTokens,
+                    cap: None,
+                },
+                "the AI provider refused max_tokens; using max_completion_tokens".to_string(),
+            ),
+            (_, TokenField::Omit) => (
+                TokenMemo {
+                    field: TokenField::Omit,
+                    cap: None,
+                },
+                "the AI provider refused max_completion_tokens; sending no token limit".to_string(),
+            ),
+            (_, TokenField::MaxTokens) => return,
+        };
+        let mut m = self.token_memo.lock().unwrap_or_else(|e| e.into_inner());
+        let same = m.as_ref().is_some_and(|(f, old)| f == fp && *old == memo);
+        if !same {
+            *m = Some((fp.to_string(), memo));
+            tracing::info!("{line}");
+        }
+    }
+
+    /// Forgets what a settings fingerprint learned about the token limit, so the next call starts again from the first step
+    /// (used when the admin changes the answer length: the earlier refusal may have been about the old value).
+    pub fn forget_token_memo(&self) {
+        *self.token_memo.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
     /// The attempt number of the next retry of this answer: 2 for the first retry, 3 for the second, and so on (kept in
     /// memory only; a restart starts counting again, and the table is cleared when it grows large).
     pub fn next_retry_attempt(&self, answer: i64) -> u32 {
@@ -212,6 +303,8 @@ impl App {
             unreadable_log: Throttle::new(Duration::from_secs(60)),
             study_hold: Mutex::new(None),
             retries: Mutex::new(std::collections::HashMap::new()),
+            cap_episodes: Mutex::new(std::collections::HashMap::new()),
+            token_memo: Mutex::new(None),
             outbox: tokio::sync::Mutex::new(()),
             heartbeat: tokio::sync::Mutex::new(()),
             heartbeat_signal: Arc::new(Notify::new()),
@@ -588,6 +681,27 @@ impl App {
             if let Ok(p) = h.release.acquire().await {
                 p.forget();
             }
+        }
+    }
+
+    /// Writes the one log line of a cap episode (English, username only): the first refusal of a user by a cap, until that
+    /// cap frees again. Further refusals in the same episode write nothing.
+    pub fn note_call_cap(&self, username: &str, user: i64, hit: &crate::quota::Hit, now: i64) {
+        let first = {
+            let mut m = self.cap_episodes.lock().unwrap_or_else(|e| e.into_inner());
+            m.retain(|_, until| *until > now);
+            m.insert((user, hit.cap.key()), hit.retry_at).is_none()
+        };
+        if first {
+            let per = match hit.cap {
+                crate::quota::Cap::Minute => "minute",
+                crate::quota::Cap::Hour => "hour",
+                crate::quota::Cap::Day => "day",
+            };
+            tracing::info!(
+                "user {username:?} reached the AI request cap ({} per {per})",
+                hit.limit
+            );
         }
     }
 

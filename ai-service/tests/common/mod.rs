@@ -1014,6 +1014,26 @@ fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
             &json!({"error": {"type": "invalid_request_error", "message": "unsupported"}}),
         );
     }
+    // Models that refuse a token field (the token-limit ladder of C-8b)
+    if !is_verify(body) {
+        let refuse = |field: &str| {
+            json_answer(
+                400,
+                &json!({"error": {"message": format!("Unsupported parameter: '{field}' is not supported with this model."),
+                                  "type": "invalid_request_error", "param": field, "code": "unsupported_parameter"}}),
+            )
+        };
+        if model == "demo-newparam" && body.get("max_tokens").is_some() {
+            return refuse("max_tokens");
+        }
+        if model == "demo-notokens" {
+            for f in ["max_tokens", "max_completion_tokens"] {
+                if body.get(f).is_some() {
+                    return refuse(f);
+                }
+            }
+        }
+    }
     if let Some(kind) = study_kind(body) {
         return study_openai(sh, kind, user_turn(body), usage);
     }
@@ -1134,6 +1154,12 @@ fn anthropic_event(name: &str, data: Value) -> Bytes {
 
 fn anthropic_stream(sh: StubShared, model: &str, body: &Value) -> Response {
     let max = body.get("max_tokens").and_then(Value::as_i64).unwrap_or(0);
+    if model == "demo-8k" && max > 8192 {
+        return json_answer(
+            400,
+            &json!({"type": "error", "error": {"type": "invalid_request_error", "message": format!("max_tokens: {max} > 8192, which is the maximum allowed number of output tokens for demo-8k")}}),
+        );
+    }
     if model == "demo-4k" && max > 4096 {
         return json_answer(
             400,
@@ -1344,6 +1370,15 @@ impl TestApp {
 
     pub fn router(&self) -> Router {
         xexam_ai_service::api::build_router(self.app.clone())
+    }
+
+    /// Raises the per-user call caps to their maximum (in memory only), for tests that send many messages in a row.
+    pub fn relax_caps(&self) {
+        let mut l = self.app.0.limits();
+        l.calls_per_minute = 100;
+        l.calls_per_hour = 2000;
+        l.calls_per_day = 20_000;
+        self.app.0.set_limits(l);
     }
 
     /// A second connection to the AI database.

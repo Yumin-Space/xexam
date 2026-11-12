@@ -1,6 +1,9 @@
 /* AI settings (v0.8, administrators): calm blocks one under the other (state, connection, model, test and enable, users
    with AI+, usage, chat retention, safety limits), and the read-only viewer of a user's AI data in a wide dialog. Colours
-   only from the tokens of main.css, so the light and dark themes follow. */
+   only from the tokens of main.css, so the light and dark themes follow.
+   v1.0: the blocks sit in four category cards under a row of tabs (FB-6); the users table is cards up to 900 px (AS-2); the
+   usage tables are cards up to 560 px (AS-3); the provider is a vertical list up to 480 px (AS-6); the viewer is a
+   full-screen sheet under PHONE (AS-7). PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px). */
 
 .page-ais { max-width: 920px; }
 .page-ais [hidden] { display: none !important; }
@@ -97,7 +100,6 @@
 .ais-badge .ai-badge { margin: 0; }
 .ais-uname { overflow-wrap: anywhere; }
 .ais-users tr.gone { color: var(--ink3); }
-.ais-users td .ais-note { white-space: normal; display: inline-block; min-width: 12em; }
 /* The AI+ feature of a user (round 2): Active / Paused and one button */
 .ais-fn { display: flex; align-items: center; gap: 8px; }
 .ais-fn-state { font-weight: 600; }
@@ -105,27 +107,6 @@
 .ais-fn-state.off { color: var(--warn); }
 .ais-when { color: var(--ink2); }
 .ais-table .ais-mono { font-family: var(--mono); font-size: 12.5px; font-weight: 400; }
-/* Users with AI+ on narrow screens: below 900 px the two token columns go (the same numbers are in Usage) and the last-used
-   time may wrap, so the table fits the card at 800 px with View in reach; below 560 px every user is a small card: the name
-   and View on the first line, then one "column name: value" line each (the column names come from data-l). */
-@media (max-width: 899.98px) {
-  .ais-users .ais-tok { display: none; }
-  .ais-users td.ais-when { white-space: normal; }
-}
-@media (max-width: 559.98px) {
-  .ais-users, .ais-users tbody { display: block; }
-  .ais-users thead { display: block; position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
-  .ais-users tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 2px 12px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
-  .ais-users tbody tr:first-child { border-top: 0; }
-  .ais-users tbody th, .ais-users tbody td { display: block; padding: 2px 0; border-top: 0; white-space: normal; }
-  .ais-users tbody th.ais-user { grid-column: 1; grid-row: 1; font-size: 15px; }
-  .ais-users tbody td.ais-view { grid-column: 2; grid-row: 1; }
-  .ais-users tbody td[data-l] { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 12px; text-align: right; }
-  .ais-users tbody td[data-l]::before { content: attr(data-l); flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); text-align: left; }
-  .ais-users tbody td:empty { display: none; }
-  .ais-users td .ais-note { min-width: 0; }
-}
-
 /* ---------- Usage ---------- */
 .ais-sechead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 14px; }
 .panel .ais-sechead h2 { margin: 0; }
@@ -147,6 +128,13 @@
 .ais-limitgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 16px; margin-bottom: 14px; }
 .ais-limit .ais-num { width: 100%; }
 .ais-limits .err { margin: 0 0 12px; }
+/* v1.0: the caps group (three compact fields in one row) above the server-protection fields */
+.ais-subgroup .ais-h3 { display: flex; align-items: center; gap: 4px; margin: 4px 0 8px; }
+.ais-subgroup + .ais-subgroup { margin-top: 18px; }
+.ais-caps { display: flex; flex-wrap: nowrap; gap: 10px 14px; }
+.ais-cap { flex: 0 1 auto; min-width: 0; }
+.ais-cap .ais-num { width: 6.5em; max-width: 100%; }
+.ais-caps-hint { margin: 8px 0 0; }
 
 /* ---------- The viewer of a user's AI data ---------- */
 dialog.dlg-viewer { max-width: min(880px, calc(100% - 32px)); width: calc(100% - 32px); max-height: 85dvh; padding: 18px 20px 16px; overflow: hidden; }
@@ -173,12 +161,142 @@ dialog.dlg-viewer[open] { display: flex; flex-direction: column; gap: 12px; }
   .btn.vw-back { display: inline-flex; }
 }
 
+@media (max-width: 560px) {
+  /* The server-protection fields: two columns, narrower inputs */
+  .ais-limitgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .ais-limit .ais-num { width: 7em; max-width: 100%; }
+  .ais-limit .fld-l { overflow-wrap: anywhere; }
+}
 @media (max-width: 720px) {
   .ais-row2, .ais-keys { grid-template-columns: minmax(0, 1fr); }
-  .ais-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ais-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (pointer: coarse), (max-width: 480px) {
   .ais-select, .ais-model, .ais-num, .ais-suggest-in { min-height: 44px; font-size: 16px; }
   .ais-seg-o { min-height: 40px; }
 }
 @media (prefers-reduced-motion: reduce) { .ais-seg-o { transition: none; } }
+
+/* ---------- v1.0 (F11): category tabs, summaries, users, usage cards, lengths, provider list, viewer sheet ---------- */
+
+/* The tab row (FB-6): one row, segmented like the other tabs of the app; it scrolls sideways inside itself if a language
+   ever needs more room, never the page */
+.ais-tabs { display: flex; width: fit-content; max-width: 100%; margin: 0 0 16px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.ais-tabs::-webkit-scrollbar { display: none; }
+.ais-tabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: 40px; padding-inline: 14px; }
+.ais-tabs button:focus-visible { outline-offset: -2px; }
+.ais-tab-ic { width: 16px; height: 16px; flex: none; }
+.ais-tl-short { display: none; }
+.ais-card { min-width: 0; }
+.ais-card:focus { outline: none; }
+.ais-allok { font-size: 13.5px; }
+
+/* A saved and tested connection / model: one line with a pencil (AS-4) */
+.ais-sum { display: flex; align-items: center; gap: 4px 12px; padding-block: 8px; }
+.ais-sec.ais-sum h2 { flex: none; margin: 0; font-size: 15px; }
+.ais-sumtext { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14px; color: var(--ink2); overflow-wrap: anywhere; }
+
+/* Users with AI+ (AS-2): the table above 900 px */
+.ais-users th.ais-user { max-width: 14em; white-space: normal; overflow-wrap: anywhere; }
+.ais-users td.ais-role { white-space: normal; }
+.ais-role .tag + .tag { margin-left: 4px; }
+.ais-users td.ais-calls { max-width: 20em; min-width: 11em; white-space: normal; }
+.ais-users th.ais-acts, .ais-users td.ais-acts { width: 1%; text-align: right; white-space: nowrap; }
+.ais-users td.ais-acts .ibtn + .ibtn { margin-left: 2px; }
+.ais-users .ais-cline { display: none; }
+.ais-users .ais-calls-lbl { display: none; }
+.ais-calls-fig { white-space: nowrap; }
+.ais-callsline { display: block; color: var(--ink2); }
+.ais-blocktag {
+  position: relative; display: inline-block; margin-top: 3px; padding: 0 8px; border: 0; border-radius: 4px; background: var(--warn-soft);
+  color: var(--warn); font: inherit; font-size: 12.5px; font-weight: 600; line-height: 1.7; cursor: pointer; text-align: left;
+  -webkit-tap-highlight-color: transparent; touch-action: manipulation;
+}
+.ais-blocktag:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+@media (pointer: coarse) { .ais-blocktag::after { content: ""; position: absolute; inset: -11px -4px; } }
+/* Up to 900 px every user is a card of three blocks: name, badge, eye / role, state, pause or play / counts, requests */
+@media (max-width: 900px) {
+  .ais-users, .ais-users tbody { display: block; }
+  .ais-users thead { display: block; position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .ais-users tbody tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 10px 0; border-top: 1px solid var(--line-soft); }
+  .ais-users tbody tr::before { content: ""; order: 4; flex-basis: 100%; height: 0; }
+  .ais-users tbody th, .ais-users tbody td { display: block; min-width: 0; max-width: none; padding: 0; border-top: 0; white-space: normal; text-align: left; }
+  .ais-users tbody th.ais-user { order: 1; font-size: 15px; max-width: calc(100% - 110px); }
+  .ais-users tbody td.ais-badge { order: 2; }
+  .ais-users tbody td.ais-role { order: 5; }
+  .ais-users tbody td.ais-state { order: 6; }
+  .ais-users tbody td.ais-cline { order: 8; flex-basis: 100%; display: block; color: var(--ink2); }
+  .ais-users tbody td.ais-calls { order: 9; flex-basis: 100%; max-width: none; min-width: 0; }
+  .ais-users tbody td.ais-w { display: none; }
+  .ais-users tbody td.ais-acts { display: contents; }
+  .ais-users .ais-bview { order: 3; margin-left: auto; }
+  .ais-users td.ais-acts .ibtn.ais-bfn { order: 7; margin-left: auto; }
+  .ais-users .ais-calls-lbl { display: inline; color: var(--ink3); }
+}
+
+/* Usage tables as cards up to 560 px (AS-3): line 1 the name / model / day (and the last use), line 2 "Calls 17 · Tokens
+   2,631 / 367" (the over-time rows put their bar between the two) */
+td.ais-usum { display: none; }
+.ais-convs { margin: 2px 0 6px; }
+@media (max-width: 560px) {
+  .ais-cards, .ais-cards tbody { display: block; }
+  .ais-cards thead { display: block; position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .ais-cards tbody tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 2px 10px; padding: 9px 0; border-top: 1px solid var(--line-soft); }
+  .ais-cards tbody tr:first-child { border-top: 0; }
+  .ais-cards tbody th, .ais-cards tbody td { display: block; min-width: 0; padding: 0; border-top: 0; white-space: normal; text-align: left; }
+  .ais-cards tbody th { grid-column: 1; overflow-wrap: anywhere; }
+  .ais-cards tbody td.ais-when { grid-column: 2; grid-row: 1; font-size: 12.5px; color: var(--ink3); }
+  .ais-cards tbody td.ais-c { display: none; }
+  .ais-total dd { font-size: 16px; line-height: 1.25; }
+  .ais-total { padding: 6px 10px; }
+  .ais-cards tbody tr.zero td.ais-usum { display: none; }
+  .ais-cards tbody td.ais-usum { display: block; grid-column: 1 / -1; font-size: 13px; color: var(--ink2); }
+  .ais-cards tbody td.ais-barcol { grid-column: 1 / -1; width: auto; min-width: 0; }
+  /* A day without calls is one short line: the date with its empty bar beside it */
+  .ais-cards tbody tr.zero { grid-template-columns: auto minmax(0, 1fr); align-items: center; padding-block: 6px; }
+  .ais-cards tbody tr.zero td.ais-barcol { grid-column: 2; grid-row: 1; }
+}
+
+/* Answer and memory length (FB-5 revised) */
+.ais-lengths { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; align-items: start; max-width: 36em; }
+.ais-length .ais-num { width: 6.5em; max-width: 100%; }
+.ais-length .fld-hint { margin-top: 4px; }
+.ais-live { min-height: 1.5em; overflow-wrap: anywhere; }
+@media (max-width: 560px) { .ais-lengths { grid-template-columns: minmax(0, 1fr); } }
+
+/* The model list opens above its field when there is little room below (AS-5) */
+.ais-combo-list.up { top: auto; bottom: calc(100% + 4px); }
+
+/* Provider as a vertical list with a check mark up to 480 px (AS-6) */
+.ais-seg-ck { display: none; width: 16px; height: 16px; flex: none; }
+@media (max-width: 480px) {
+  .ais-seg { display: grid; width: 100%; justify-self: stretch; gap: 0; }
+  .ais-seg-o { min-height: 44px; padding: 4px 12px; justify-content: space-between; white-space: normal; }
+  .ais-seg-o:has(input:checked) .ais-seg-ck { display: inline-block; }
+}
+
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* Tabs: icon + short label, the full label stays the accessible name */
+  .ais-tl-short { display: inline; }
+  .ais-tl-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .ais-tabs { width: 100%; }
+  .ais-tabs button { flex: 1 1 auto; min-height: 44px; gap: 4px; padding-inline: 6px; font-size: 13px; }
+  .ais-caps { gap: 8px; }
+  .ais-cap { flex: 1 1 0; }
+  .ais-cap .ais-num { width: 100%; }
+  .ais-tabs { margin-bottom: 12px; }
+  /* The viewer of a user's AI data: a full-screen sheet (AS-7); the delete buttons are in its header */
+  dialog.dlg-viewer {
+    inset: 0; width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; border: 0; border-radius: 0;
+    padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  }
+  .vw-head { gap: 2px; }
+  .vw-head h3 { font-size: 16px; }
+  .vw-menu {
+    position: absolute; z-index: 5; top: calc(max(10px, env(safe-area-inset-top)) + 44px); right: max(14px, env(safe-area-inset-right));
+    min-width: 12em; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); box-shadow: var(--shadow-pop);
+  }
+  .vw-menu-i { display: block; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--danger); font: inherit; font-size: 14.5px; text-align: left; cursor: pointer; }
+  .vw-menu-i:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+}
+@media (hover: hover) { .vw-menu-i:hover { background: var(--danger-soft); } }

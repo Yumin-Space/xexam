@@ -13,7 +13,15 @@ pub struct Limits {
     pub messages_per_chat: i64,
     pub memories_per_user: i64,
     pub memory_chars: i64,
-    pub message_chars: i64,
+    /// AI model calls per user: rolling 60 s window
+    pub calls_per_minute: i64,
+    /// AI model calls per user: rolling 60 min window
+    pub calls_per_hour: i64,
+    /// AI model calls per user: since today's 0:00 in the server's time zone
+    pub calls_per_day: i64,
+    /// Longest answer in characters (zh / ja characters; in English 4 letters count as 1); sent to the model as
+    /// `max_tokens` (see [`reply_tokens`])
+    pub reply_max_chars: i64,
 }
 
 /// One limit: JSON key, database column, default, minimum, maximum.
@@ -25,8 +33,9 @@ pub struct LimitDef {
     pub max: i64,
 }
 
-/// The seven limits, in the order of the JSON answers.
-pub const DEFS: [LimitDef; 7] = [
+/// The ten limits, in the order of the JSON answers (the per-user call caps, then the answer length, come last).
+/// The retired `limits.message_chars` column is not listed: nothing reads or writes it any more.
+pub const DEFS: [LimitDef; 10] = [
     LimitDef {
         key: "perUserRunning",
         column: "per_user_running",
@@ -65,23 +74,60 @@ pub const DEFS: [LimitDef; 7] = [
     LimitDef {
         key: "memoryChars",
         column: "memory_chars",
-        default: 300,
+        default: 200,
         min: 50,
         max: 2000,
     },
     LimitDef {
-        key: "messageChars",
-        column: "message_chars",
-        default: 16000,
-        min: 1000,
-        max: 32000,
+        key: "callsPerMinute",
+        column: "calls_per_minute",
+        default: 5,
+        min: 1,
+        max: 100,
+    },
+    LimitDef {
+        key: "callsPerHour",
+        column: "calls_per_hour",
+        default: 20,
+        min: 1,
+        max: 2000,
+    },
+    LimitDef {
+        key: "callsPerDay",
+        column: "calls_per_day",
+        default: 100,
+        min: 1,
+        max: 20_000,
+    },
+    LimitDef {
+        key: "replyMaxChars",
+        column: "reply_max_chars",
+        default: 1000,
+        min: 1,
+        max: 16_000,
     },
 ];
 
+/// The `max_tokens` the model is given for an answer of at most `chars` characters (the answer-length limit
+/// `replyMaxChars`), by the reply language: Chinese and Japanese 1 character = 1.5 tokens, rounded up, so that an
+/// answer can really reach the character count; English 1 character = 4 letters = about 1 token. Computed per call and
+/// never stored. A call without a known language uses the Chinese / Japanese factor. The frontend has the same
+/// function (`replyTokens`) with the same test vectors.
+pub fn reply_tokens(chars: i64, lang: Option<crate::prompt::Lang>) -> i64 {
+    let chars = chars.max(0);
+    match lang {
+        Some(crate::prompt::Lang::En) => chars,
+        _ => chars.saturating_mul(3).saturating_add(1) / 2,
+    }
+}
+
 /// Characters of memories put into the system prompt (whole notes only).
 pub const MEMORY_PROMPT_CHARS: usize = 4000;
-/// History budget floor (4.5); the budget is `max(24000, messageChars + 8000)`.
+/// History budget floor (4.5); the budget is `max(24000, MESSAGE_CHARS + 8000)`, which is this floor.
 pub const HISTORY_FLOOR: usize = 24_000;
+/// The fixed internal cap of one user message (characters). Not an administrator's setting: it only protects the
+/// server (v1.0: the per-message limit is expressed by the answer length, not by an admin field).
+pub const MESSAGE_CHARS: usize = 16_000;
 /// Longest streamed answer (characters); then the upstream request is dropped (`ai.up.tooLong`).
 pub const MAX_ANSWER_CHARS: usize = 100_000;
 /// Request bodies read by hand, at most this many bytes.
@@ -100,7 +146,10 @@ impl Default for Limits {
             messages_per_chat: 0,
             memories_per_user: 0,
             memory_chars: 0,
-            message_chars: 0,
+            calls_per_minute: 0,
+            calls_per_hour: 0,
+            calls_per_day: 0,
+            reply_max_chars: 0,
         };
         for d in &DEFS {
             l.set(d.key, d.default);
@@ -127,12 +176,15 @@ impl Limits {
             "messagesPerChat" => self.messages_per_chat,
             "memoriesPerUser" => self.memories_per_user,
             "memoryChars" => self.memory_chars,
-            "messageChars" => self.message_chars,
+            "callsPerMinute" => self.calls_per_minute,
+            "callsPerHour" => self.calls_per_hour,
+            "callsPerDay" => self.calls_per_day,
+            "replyMaxChars" => self.reply_max_chars,
             _ => 0,
         }
     }
 
-    fn set(&mut self, key: &str, v: i64) {
+    pub(crate) fn set(&mut self, key: &str, v: i64) {
         match key {
             "perUserRunning" => self.per_user_running = v,
             "globalRunning" => self.global_running = v,
@@ -140,18 +192,43 @@ impl Limits {
             "messagesPerChat" => self.messages_per_chat = v,
             "memoriesPerUser" => self.memories_per_user = v,
             "memoryChars" => self.memory_chars = v,
-            "messageChars" => self.message_chars = v,
+            "callsPerMinute" => self.calls_per_minute = v,
+            "callsPerHour" => self.calls_per_hour = v,
+            "callsPerDay" => self.calls_per_day = v,
+            "replyMaxChars" => self.reply_max_chars = v,
             _ => {}
         }
     }
 
-    /// The history budget in characters.
+    /// The history budget in characters: `max(24000, MESSAGE_CHARS + 8000)`, a constant since the per-message limit is
+    /// fixed.
     pub fn history_budget(&self) -> usize {
-        let m = usize::try_from(self.message_chars).unwrap_or(0);
-        HISTORY_FLOOR.max(m.saturating_add(8000))
+        HISTORY_FLOOR.max(MESSAGE_CHARS.saturating_add(8000))
     }
 
-    /// Applies an update (any subset of the seven keys, integers only), all or nothing.
+    /// The three call caps as the pure counting function wants them.
+    pub fn caps(&self) -> crate::quota::Caps {
+        crate::quota::Caps {
+            minute: self.calls_per_minute,
+            hour: self.calls_per_hour,
+            day: self.calls_per_day,
+        }
+    }
+
+    /// The order rule of the call caps (`callsPerMinute <= callsPerHour <= callsPerDay`; equal is allowed). Returns the
+    /// field to blame: the larger window whose value is too small (`callsPerHour` first, then `callsPerDay`), or `None`.
+    /// Checked by the update route after `apply_update` (400 `ai.limitOrder` with `field`).
+    pub fn order_violation(&self) -> Option<&'static str> {
+        if self.calls_per_hour < self.calls_per_minute {
+            Some("callsPerHour")
+        } else if self.calls_per_day < self.calls_per_hour {
+            Some("callsPerDay")
+        } else {
+            None
+        }
+    }
+
+    /// Applies an update (any subset of the ten keys, integers only), all or nothing.
     pub fn apply_update(&self, body: &Map<String, Value>) -> Result<Limits, LimitError> {
         for k in body.keys() {
             if !DEFS.iter().any(|d| d.key == k) {
@@ -174,7 +251,7 @@ impl Limits {
         Ok(next)
     }
 
-    /// `"chatsPerUser 1000 -> 2000, messageChars 16000 -> 20000"` for the keys that differ, or `None`.
+    /// `"chatsPerUser 1000 -> 2000, memoryChars 200 -> 300"` for the keys that differ, or `None`.
     pub fn describe_change(&self, next: &Limits) -> Option<String> {
         let parts: Vec<String> = DEFS
             .iter()
@@ -217,6 +294,7 @@ impl Limits {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prompt::Lang;
     use serde_json::json;
 
     fn obj(v: Value) -> Map<String, Value> {
@@ -231,21 +309,46 @@ mod tests {
         assert_eq!(l.chats_per_user, 1000);
         assert_eq!(l.messages_per_chat, 400);
         assert_eq!(l.memories_per_user, 50);
-        assert_eq!(l.memory_chars, 300);
-        assert_eq!(l.message_chars, 16000);
+        assert_eq!(l.memory_chars, 200);
+        assert_eq!(l.reply_max_chars, 1000);
+        assert_eq!(
+            (l.calls_per_minute, l.calls_per_hour, l.calls_per_day),
+            (5, 20, 100)
+        );
         assert_eq!(l.history_budget(), 24000);
-        let big = l
-            .apply_update(&obj(json!({"messageChars": 32000})))
-            .expect("ok");
-        assert_eq!(big.history_budget(), 40000);
+        assert_eq!(MESSAGE_CHARS, 16_000);
+    }
+
+    #[test]
+    fn reply_tokens_vectors() {
+        // The same vectors as the frontend's replyTokens
+        let v = [
+            (1000, Some(Lang::Zh), 1500),
+            (1000, Some(Lang::Ja), 1500),
+            (1000, Some(Lang::En), 1000),
+            (1, Some(Lang::Zh), 2),
+            (1, Some(Lang::En), 1),
+            (333, Some(Lang::Ja), 500),
+            (16000, Some(Lang::Zh), 24000),
+            (16000, Some(Lang::En), 16000),
+            (300, Some(Lang::Zh), 450),
+            (1000, None, 1500),
+        ];
+        for (chars, lang, want) in v {
+            assert_eq!(reply_tokens(chars, lang), want, "{chars} {lang:?}");
+        }
     }
 
     #[test]
     fn validation_is_all_or_nothing() {
         let l = Limits::default();
         assert_eq!(
-            l.apply_update(&obj(json!({"chatsPerUser": 2000, "messageChars": 999}))),
-            Err(LimitError::Range("messageChars"))
+            l.apply_update(&obj(json!({"chatsPerUser": 2000, "replyMaxChars": 0}))),
+            Err(LimitError::Range("replyMaxChars"))
+        );
+        assert_eq!(
+            l.apply_update(&obj(json!({"replyMaxChars": 16001}))),
+            Err(LimitError::Range("replyMaxChars"))
         );
         assert_eq!(
             l.apply_update(&obj(json!({"perUserRunning": 2.5}))),
@@ -259,12 +362,17 @@ mod tests {
             l.apply_update(&obj(json!({"bogus": 1}))),
             Err(LimitError::BadRequest)
         );
+        // messageChars left the adjustable limits: an unknown key now
+        assert_eq!(
+            l.apply_update(&obj(json!({"messageChars": 16000}))),
+            Err(LimitError::BadRequest)
+        );
         let n = l
-            .apply_update(&obj(json!({"chatsPerUser": 2000, "messageChars": 20000})))
+            .apply_update(&obj(json!({"chatsPerUser": 2000, "replyMaxChars": 16000})))
             .expect("ok");
         assert_eq!(
             l.describe_change(&n).as_deref(),
-            Some("chatsPerUser 1000 -> 2000, messageChars 16000 -> 20000")
+            Some("chatsPerUser 1000 -> 2000, replyMaxChars 1000 -> 16000")
         );
         assert_eq!(l.describe_change(&l), None);
     }
@@ -275,5 +383,78 @@ mod tests {
         let s = serde_json::to_string(&a).expect("json");
         assert!(s.starts_with("{\"limits\":{\"perUserRunning\":1,\"globalRunning\":16,"));
         assert!(s.contains("\"ranges\":{\"perUserRunning\":[1,4]"));
+        // ten keys: the call caps, then the answer length last
+        let keys: Vec<&String> = a["limits"].as_object().expect("object").keys().collect();
+        assert_eq!(keys.len(), 10);
+        assert_eq!(
+            &keys[5..],
+            &[
+                "memoryChars",
+                "callsPerMinute",
+                "callsPerHour",
+                "callsPerDay",
+                "replyMaxChars"
+            ]
+        );
+        assert_eq!(a["defaults"], a["limits"]);
+        assert_eq!(a["limits"]["replyMaxChars"], json!(1000));
+        assert_eq!(a["limits"]["memoryChars"], json!(200));
+        assert_eq!(a["ranges"]["replyMaxChars"], json!([1, 16000]));
+        assert_eq!(a["ranges"]["callsPerMinute"], json!([1, 100]));
+        assert_eq!(a["ranges"]["callsPerHour"], json!([1, 2000]));
+        assert_eq!(a["ranges"]["callsPerDay"], json!([1, 20000]));
+        assert!(a["limits"].get("messageChars").is_none());
+    }
+
+    #[test]
+    fn call_caps_are_validated_and_ordered() {
+        let l = Limits::default();
+        assert_eq!(
+            l.apply_update(&obj(json!({"callsPerMinute": 0}))),
+            Err(LimitError::Range("callsPerMinute"))
+        );
+        assert_eq!(
+            l.apply_update(&obj(json!({"callsPerMinute": 101}))),
+            Err(LimitError::Range("callsPerMinute"))
+        );
+        assert_eq!(
+            l.apply_update(&obj(json!({"callsPerHour": 2001}))),
+            Err(LimitError::Range("callsPerHour"))
+        );
+        assert_eq!(
+            l.apply_update(&obj(json!({"callsPerDay": 20001}))),
+            Err(LimitError::Range("callsPerDay"))
+        );
+        let ok = l
+            .apply_update(&obj(
+                json!({"callsPerMinute": 10, "callsPerHour": 10, "callsPerDay": 10}),
+            ))
+            .expect("equal is allowed");
+        assert_eq!(ok.order_violation(), None);
+        assert_eq!(Limits::default().order_violation(), None);
+        // minute > hour blames the hour field
+        let bad = l
+            .apply_update(&obj(json!({"callsPerMinute": 30})))
+            .expect("in range");
+        assert_eq!(bad.order_violation(), Some("callsPerHour"));
+        // hour > day blames the day field
+        let bad = l
+            .apply_update(&obj(json!({"callsPerHour": 200})))
+            .expect("in range");
+        assert_eq!(bad.order_violation(), Some("callsPerDay"));
+        let caps = ok.caps();
+        assert_eq!((caps.minute, caps.hour, caps.day), (10, 10, 10));
+    }
+
+    #[test]
+    fn describe_change_names_the_call_caps() {
+        let l = Limits::default();
+        let n = l
+            .apply_update(&obj(json!({"callsPerHour": 30})))
+            .expect("ok");
+        assert_eq!(
+            l.describe_change(&n).as_deref(),
+            Some("callsPerHour 20 -> 30")
+        );
     }
 }

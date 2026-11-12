@@ -297,13 +297,18 @@ async fn verify_attempt(
         role: Role::User,
         content: prompt::VERIFY_MESSAGE.to_string(),
     }];
+    // The test keeps its v0.9.1 body: no token field for OpenAI-compatible services, the stored value for Anthropic
+    let token = match s.wire_format() {
+        Format::OpenAi => provider::TokenLimit::omit(),
+        Format::Anthropic => provider::TokenLimit::max_tokens(max_tokens),
+    };
     let body = provider::chat_body(
         s.wire_format(),
         &s.model,
         prompt::VERIFY_PROMPT,
         &turns,
         usage_option,
-        max_tokens,
+        token,
     );
     let result = match app.0.target(snap) {
         Err(_) => Err(UpError::new(UpCode::BadRequest, None)),
@@ -312,7 +317,13 @@ async fn verify_attempt(
             Ok(req) => {
                 drop(target);
                 let t = app.0.timeouts;
-                provider::collect_chat(&app.0.client, req, s.wire_format(), t, t.verify_total).await
+                provider::collect_chat(
+                    &app.0.client,
+                    provider::Plan::single(s.wire_format(), req),
+                    t,
+                    t.verify_total,
+                )
+                .await
             }
         },
     };
@@ -532,6 +543,9 @@ pub async fn usage(ctx: Ctx) -> Answer {
             stats::by_purpose(c, &from_s, &to_s)?,
         ))
     })?;
+    // Each listed user's counted calls since today's 0:00 (the number the day cap compares), independent of the period
+    let ids: Vec<i64> = users.iter().filter_map(|(id, ..)| *id).collect();
+    let today = super::user::call_states(app, &ids, unix_now())?;
     let by_user: Vec<Value> = users
         .iter()
         .map(|(id, name, s, last)| {
@@ -546,6 +560,9 @@ pub async fn usage(ctx: Ctx) -> Answer {
             );
             m.extend(sums_json(s));
             m.insert("lastAt".into(), Value::from(*last));
+            if let Some(st) = id.and_then(|i| today.get(&i)) {
+                m.insert("today".into(), Value::from(st.used.day));
+            }
             m.insert("tokensCached".into(), Value::from(s.tokens_cached));
             Value::Object(m)
         })
@@ -623,8 +640,13 @@ pub async fn usage(ctx: Ctx) -> Answer {
 }
 
 /// One row of "Users with AI+" (`AdminUserRow`, round-2 contracts 3.5). `exists` is always true (kept for the shape).
-fn admin_row(u: &BackendUser, c: &stats::UserCounts, suspended: bool) -> Value {
-    json!({
+fn admin_row(
+    u: &BackendUser,
+    c: &stats::UserCounts,
+    suspended: bool,
+    calls: Option<&super::user::CallState>,
+) -> Value {
+    let mut row = json!({
         "id": u.id,
         "username": u.username,
         "role": u.role,
@@ -639,7 +661,11 @@ fn admin_row(u: &BackendUser, c: &stats::UserCounts, suspended: bool) -> Value {
         "lastUsedAt": c.last_used_at,
         "tokensIn": c.tokens_in,
         "tokensOut": c.tokens_out,
-    })
+    });
+    if let (Some(st), Some(m)) = (calls, row.as_object_mut()) {
+        m.insert("calls".into(), super::user::calls_json(st, None));
+    }
+    row
 }
 
 /// The usage counts of a user and whether the user's AI+ function is suspended (never for administrators).
@@ -662,13 +688,20 @@ pub async fn users(ctx: Ctx) -> Answer {
     let answer = retention::reconcile_once(app, true, &[])
         .await
         .map_err(|_| ApiError::backend_down())?;
+    let listed: Vec<&BackendUser> = answer
+        .iter()
+        .filter(|u| u.role == "admin" || u.ai)
+        .collect();
+    // One read for every listed user's call counts (finished calls grouped in Rust, plus the running ones)
+    let ids: Vec<i64> = listed.iter().map(|u| u.id).collect();
+    let calls = super::user::call_states(&app.0, &ids, unix_now())?;
     let mut rows: Vec<(String, Value)> = Vec::new();
-    for u in &answer {
-        if u.role != "admin" && !u.ai {
-            continue;
-        }
+    for u in listed {
         let (c, suspended) = counts_and_suspended(app, u)?;
-        rows.push((u.username.clone(), admin_row(u, &c, suspended)));
+        rows.push((
+            u.username.clone(),
+            admin_row(u, &c, suspended, calls.get(&u.id)),
+        ));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
     let list: Vec<Value> = rows.into_iter().map(|(_, v)| v).collect();
@@ -685,6 +718,7 @@ pub async fn user(ctx: Ctx) -> Answer {
         return Err(ApiError::not_found());
     };
     let (counts, suspended) = counts_and_suspended(app, u)?;
+    let calls = super::user::call_states(&app.0, &[id], unix_now())?;
     let (chats, memories) = app
         .0
         .store
@@ -702,7 +736,7 @@ pub async fn user(ctx: Ctx) -> Answer {
         return Err(ApiError::backend_down());
     }
     ok(json!({
-        "user": admin_row(u, &counts, suspended),
+        "user": admin_row(u, &counts, suspended, calls.get(&id)),
         "chats": chats,
         "memories": memories,
     }))
@@ -767,7 +801,8 @@ pub async fn set_function(ctx: Ctx, enabled: bool) -> Answer {
     }
     app.0.heartbeat_now().await;
     let (counts, suspended) = counts_and_suspended(app, &u)?;
-    ok(json!({ "user": admin_row(&u, &counts, suspended) }))
+    // The Suspend / Resume answer keeps the row without `calls` (the spec adds them to the two list routes only)
+    ok(json!({ "user": admin_row(&u, &counts, suspended, None) }))
 }
 
 pub async fn chat(ctx: Ctx) -> Answer {
@@ -886,12 +921,19 @@ pub async fn limits_post(ctx: Ctx) -> Answer {
             return Err(ApiError::limit_range(k, min, max));
         }
     };
+    // The call caps must stay in order (minute <= hour <= day); refused as a whole
+    if let Some(field) = next.order_violation() {
+        return Err(ApiError::limit_order(field));
+    }
     let now = unix_now();
     let by = ctx.who.username.clone();
     app.0
         .store
         .write(|tx| tables::save_limits(tx, &next, &by, now))?;
     app.0.set_limits(next);
+    if cur.reply_max_chars != next.reply_max_chars {
+        app.0.forget_token_memo();
+    }
     if let Some(change) = cur.describe_change(&next) {
         tracing::info!("AI limits changed by admin {by:?}: {change}");
     }

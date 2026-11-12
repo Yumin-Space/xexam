@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pickFocusTarget } from './ai-popover.ts';
+import { pickFocusTarget } from './ai-overlay.ts';
 
 test('a lost focus goes to the header button when there is one', () => {
   assert.equal(pickFocusTarget('stop', 'title'), 'stop');

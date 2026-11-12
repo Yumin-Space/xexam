@@ -6,10 +6,12 @@ import { defineCatalog } from '../define.ts';
 export default defineCatalog({
   en: {
     'settings.title': 'Settings',
+    'settings.lead.tipBtn': 'About these settings',
+    'settings.theme.systemShort': 'System',
+    'settings.aiMode.caps': 'Requests in free mode count towards your AI request limits too.',
     'settings.lead': 'Your settings are saved with your account on the Xexam server, so they are the same in every browser and on every device.',
 
     'settings.account': 'Account',
-    'settings.account.desc': 'The account you are signed in with.',
     'settings.account.username': 'Username',
     'settings.account.role': 'Role',
     'settings.password': 'Change password',
@@ -27,7 +29,6 @@ export default defineCatalog({
     'settings.off': 'Off',
 
     'settings.appearance': 'Appearance',
-    'settings.appearance.desc': 'Choose the colour theme. “System” switches between light and dark together with your device.',
     'settings.theme.label': 'Theme',
     'settings.theme.system': 'System',
     'settings.theme.system.desc': 'Follows the light or dark setting of your device',
@@ -54,7 +55,6 @@ export default defineCatalog({
     'settings.aiMode.hint': 'Normal: the AI answers as the study assistant and uses AI memories. Free: you talk to the model directly, without the study-assistant instructions and AI memories. It applies to all your AI chats.',
 
     'settings.reset': 'Reset to defaults',
-    'settings.reset.desc': 'Theme, interface language and auto-advance go back to their defaults.',
     'settings.reset.button': 'Reset to defaults',
     'settings.reset.busy': 'Resetting…',
     'settings.reset.already': 'Theme, interface language and auto-advance already use their defaults.',
@@ -67,10 +67,12 @@ export default defineCatalog({
   },
   zh: {
     'settings.title': '设置',
+    'settings.lead.tipBtn': '关于这些设置',
+    'settings.theme.systemShort': '跟随系统',
+    'settings.aiMode.caps': '自由模式的请求同样计入你的 AI 请求额度。',
     'settings.lead': '设置随你的账户保存在 Xexam 服务器上，换浏览器、换设备都一样。',
 
     'settings.account': '账户',
-    'settings.account.desc': '你当前登录的账户。',
     'settings.account.username': '用户名',
     'settings.account.role': '角色',
     'settings.password': '修改密码',
@@ -88,7 +90,6 @@ export default defineCatalog({
     'settings.off': '关',
 
     'settings.appearance': '外观',
-    'settings.appearance.desc': '选择界面的配色。「跟随系统」会随设备的浅色 / 深色设置自动切换。',
     'settings.theme.label': '主题',
     'settings.theme.system': '跟随系统',
     'settings.theme.system.desc': '按设备的浅色或深色设置显示',
@@ -115,7 +116,6 @@ export default defineCatalog({
     'settings.aiMode.hint': '普通模式：AI 按学习助手的设定回答，并使用 AI 记忆。自由模式：直接和模型对话，不使用学习助手的设定和 AI 记忆。对你所有的 AI 对话生效。',
 
     'settings.reset': '恢复默认设置',
-    'settings.reset.desc': '把主题、界面语言和「答完自动跳到下一题」恢复成默认值。',
     'settings.reset.button': '恢复默认设置',
     'settings.reset.busy': '正在恢复…',
     'settings.reset.already': '主题、界面语言和「答完自动跳到下一题」现在都是默认值。',
@@ -128,10 +128,12 @@ export default defineCatalog({
   },
   ja: {
     'settings.title': '設定',
+    'settings.lead.tipBtn': 'この設定について',
+    'settings.theme.systemShort': 'システム',
+    'settings.aiMode.caps': 'フリーモードのリクエストも AI リクエストの上限に数えられます。',
     'settings.lead': '設定はアカウントごとに Xexam のサーバーに保存され、どのブラウザ・端末でも同じになります。',
 
     'settings.account': 'アカウント',
-    'settings.account.desc': 'ログイン中のアカウントです。',
     'settings.account.username': 'ユーザー名',
     'settings.account.role': '権限',
     'settings.password': 'パスワードの変更',
@@ -149,7 +151,6 @@ export default defineCatalog({
     'settings.off': 'オフ',
 
     'settings.appearance': '外観',
-    'settings.appearance.desc': '画面の配色を選びます。「システムに合わせる」では、端末のライト／ダーク設定に合わせて切り替わります。',
     'settings.theme.label': 'テーマ',
     'settings.theme.system': 'システムに合わせる',
     'settings.theme.system.desc': '端末のライト／ダーク設定に従います',
@@ -176,7 +177,6 @@ export default defineCatalog({
     'settings.aiMode.hint': '通常モード：AI は学習アシスタントの設定に従って回答し、AI メモリーを使います。フリーモード：学習アシスタントの設定と AI メモリーを使わず、モデルと直接やり取りします。あなたのすべての AI チャットに適用されます。',
 
     'settings.reset': '既定の設定に戻す',
-    'settings.reset.desc': 'テーマ、表示言語、「回答したら自動で次の問題へ進む」を既定値に戻します。',
     'settings.reset.button': '既定の設定に戻す',
     'settings.reset.busy': '戻しています…',
     'settings.reset.already': 'テーマ、表示言語、「回答したら自動で次の問題へ進む」はすでに既定値です。',

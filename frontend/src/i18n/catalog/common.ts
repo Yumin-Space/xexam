@@ -33,6 +33,8 @@ export default defineCatalog({
 
     'footer.version': 'Xexam v{version}',
     'footer.disclaimer': 'Xexam only provides tools to import, organize and practise questions and answers. The software itself does not provide or include any exam questions, answers or related materials. Users must make sure that the materials they import and use come from lawful sources and that they have the right to use them.',
+    'footer.github': 'GitHub',
+    'footer.release': 'Xexam {version}',
     'footer.shutdown': 'Shut down',
     'shutdown.title': 'Shut down Xexam?',
     'shutdown.body': 'This page stops working after shutdown; start the program again next time. Your study records are already saved.',
@@ -97,6 +99,17 @@ export default defineCatalog({
     'nav.accountLabelAiOff': 'Signed in as {name} ({role}); AI+: {reason}',
     'forbidden.ai': 'AI Chat is not available for your account right now.',
     'forbidden.aiSettings': 'Only administrators can open AI settings.',
+    // v1.0 shared (F2)
+    'common.more': 'More actions',
+    'common.backTo': 'Back to {name}',
+    'common.toTop': 'Back to top',
+    'common.expand': 'Expand',
+    'common.collapse': 'Collapse',
+    // v1.0 dialogs (F1)
+    // v1.0 shell (F3)
+    'nav.aiPaused': 'AI+ function paused · ask an administrator',
+    'forbidden.users': 'Only administrators can manage users.',
+    // v1.0 records (F12)
   },
   zh: {
     'app.name': 'Xexam',
@@ -128,6 +141,8 @@ export default defineCatalog({
 
     'footer.version': 'Xexam v{version}',
     'footer.disclaimer': 'Xexam 仅提供题目与答案的导入、整理及练习功能，软件本身不提供或收录考试题目、答案及相关资料。用户应确保导入和使用的资料来源合法，并拥有相应使用权限。',
+    'footer.github': 'GitHub',
+    'footer.release': 'Xexam {version}',
     'footer.shutdown': '关闭程序',
     'shutdown.title': '关闭程序？',
     'shutdown.body': '关闭后这个页面就用不了了，下次要重新启动。学习记录已经保存好了。',
@@ -188,6 +203,17 @@ export default defineCatalog({
     'nav.accountLabelAiOff': '已登录：{name}（{role}）；AI+：{reason}',
     'forbidden.ai': '你的账号现在不能使用 AI 对话。',
     'forbidden.aiSettings': '只有管理员可以打开 AI 设置。',
+    // v1.0 shared (F2)
+    'common.more': '更多操作',
+    'common.backTo': '返回{name}',
+    'common.toTop': '回到顶部',
+    'common.expand': '展开',
+    'common.collapse': '收起',
+    // v1.0 dialogs (F1)
+    // v1.0 shell (F3)
+    'nav.aiPaused': 'AI+ 功能已暂停 · 请联系管理员',
+    'forbidden.users': '只有管理员可以管理用户。',
+    // v1.0 records (F12)
   },
   ja: {
     'app.name': 'Xexam',
@@ -219,6 +245,8 @@ export default defineCatalog({
 
     'footer.version': 'Xexam v{version}',
     'footer.disclaimer': 'Xexam は問題と解答のインポート・整理・練習の機能のみを提供するもので、ソフトウェア自体は試験問題・解答および関連資料を提供・収録していません。インポートして利用する資料は、入手元が適法であり、必要な使用権限を有していることをユーザー自身で確認してください。',
+    'footer.github': 'GitHub',
+    'footer.release': 'Xexam {version}',
     'footer.shutdown': 'プログラムを終了',
     'shutdown.title': 'プログラムを終了しますか？',
     'shutdown.body': '終了するとこのページは使えなくなります。次回はプログラムを起動し直してください。学習記録は保存済みです。',
@@ -279,5 +307,16 @@ export default defineCatalog({
     'nav.accountLabelAiOff': '{name}（{role}）でログイン中。AI+：{reason}',
     'forbidden.ai': 'このアカウントでは今 AI チャットを使えません。',
     'forbidden.aiSettings': 'AI 設定を開けるのは管理者だけです。',
+    // v1.0 shared (F2)
+    'common.more': 'その他の操作',
+    'common.backTo': '{name}に戻る',
+    'common.toTop': 'ページの先頭へ',
+    'common.expand': '展開',
+    'common.collapse': '折りたたむ',
+    // v1.0 dialogs (F1)
+    // v1.0 shell (F3)
+    'nav.aiPaused': 'AI+ 機能は一時停止中 · 管理者に連絡してください',
+    'forbidden.users': 'ユーザーを管理できるのは管理者だけです。',
+    // v1.0 records (F12)
   },
 });

@@ -67,7 +67,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_SQLITE_JOURNAL` | （未設定：WAL） | `delete` にすると、WAL ではなく SQLite の従来のロールバックジャーナルのままになります。データボリュームがネットワークファイルシステムや、Docker Desktop にバインドマウントした Windows のフォルダにある場合にだけ設定します。それ以外の値は WAL を意味します。[database.md](database.md) の 2.1 節を参照 |
 | `XEXAM_COOKIE_SECURE` | （未設定） | `1` = セッションの Cookie に常に `Secure` を付けます。ブラウザが常に HTTPS で Xexam に届く場合（たとえば Cloudflare Tunnel 経由）だけ設定してください。未設定なら、`Secure` はリクエストごとに決まります（第 10 節） |
 | `XEXAM_LOG` | （未設定：`info`） | バックエンドのログのフィルターで、`docker compose logs backend` とシステムログのページの両方に効きます。例：`debug`、`warn`。空やスペースだけなら `info` です。フィルターとして正しくない値の場合も `info` になり、ログの最初に、問題を示す警告が 1 行出ます |
-| `TZ` | （未設定：ホストのタイムゾーン） | データベース内のタイムスタンプと、AI の使用量の統計の日付のタイムゾーン。compose ファイルがホストの `/etc/localtime` をバックエンドと ai-service にマウントするので、別のタイムゾーン（例：`UTC`）を使うときだけ設定します |
+| `TZ` | （未設定：ホストのタイムゾーン） | データベース内のタイムスタンプと、AI の使用量の統計の日付のタイムゾーン。v1.0 からは、利用者ごとの AI リクエスト上限の 1 日分の 0:00 のリセット（ai-service）も含みます。compose ファイルがホストの `/etc/localtime` をバックエンドと ai-service にマウントするので、別のタイムゾーン（例：`UTC`）を使うときだけ設定します |
 | `XEXAM_AI_SECRET_KEY` | （未設定：AI ボリューム内のキーファイル） | AI プロバイダーのキーを暗号化するキー：32 バイトを 16 進数 64 桁か base64 で（`openssl rand -base64 32`）。3.2 節 |
 | `XEXAM_INTERNAL_TOKEN` | （未設定：リンクボリューム内のランダムなトークン） | バックエンドと ai-service が共有するトークンで、両方に同じ値を使います：空白を含まない表示可能な ASCII 文字で 32 文字以上（`openssl rand -hex 32`）。3.3 節 |
 | `XEXAM_AI_LOG` | （未設定：`info`） | ai-service のログのフィルターで、`docker compose logs ai-service` とシステムログに送る行に効きます。規則は `XEXAM_LOG` と同じです（空なら `info`、正しくない値なら警告を 1 回出して `info`） |
@@ -251,13 +251,14 @@ ai-service も自分のデータベースに同じことをします：v0.9 の 
 
 手順のチェックリスト、その後の確認、ロールバックは [migration.md](migration.md) にあります。
 
-- **v0.8 から**（migration.md の第 0 節）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースはスキーマ 5 から 6 に（バックアップは `xexam_data` の `xexam-schema5-<日時>.db`）、AI のデータベースはスキーマ 2 から 3 に（バックアップは `xexam_ai_data` の `xexam-ai-schema2-<日時>.db`）移ります。ほかはそのままです。AI+ の学習機能は、AI+ 機能を持つアカウントにすぐ表示され、設定するものはありません。戻すとき：メインのデータベースは復元が不要で、AI のデータベースは必要です（下記）。
+- **v0.9.1 から v1.0 へ**（migration.md の 0.9.1 → 1.0 の部分）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースは変わりません（スキーマ 6）。AI のデータベースはスキーマ 3 から 4 に（バックアップは `xexam_ai_data` の `xexam-ai-schema3-<日時>.db`。書き込む前に作られ、コピーは空きディスク容量に収まる必要があります）。新しい利用者ごとの AI リクエスト上限（1 分に 5 回、1 時間に 20 回、1 日に 100 回）と回答の長さ（1000 文字）は、管理者を含めてすぐに適用されます。戻るには AI のコピーを復元し、v0.9.1 のイメージを動かします。メインのデータベースは復元の必要がありません。
+- **v0.8 から**（migration.md の第 0b 節）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースはスキーマ 5 から 6 に（バックアップは `xexam_data` の `xexam-schema5-<日時>.db`）、AI のデータベースはスキーマ 2 から 3 に（バックアップは `xexam_ai_data` の `xexam-ai-schema2-<日時>.db`）移ります。ほかはそのままです。AI+ の学習機能は、AI+ 機能を持つアカウントにすぐ表示され、設定するものはありません。戻すとき：メインのデータベースは復元が不要で、AI のデータベースは必要です（下記）。
 - **v0.7.5 または v0.7 から**（migration.md の第 1 節）：**新しい `docker-compose.yml` を取得してください**（サービス `ai-service`、3 つ目のイメージ `xexam-ai-service`、ボリューム `xexam_ai_data` と `xexam_link`、ネットワーク `egress`）。スキーマ v4 → v6、バックアップ `xexam-schema4-<日時>.db`。AI のデータベースは新しく作られます（スキーマ 3）。AI は管理者が設定するまでオフのままです。古い compose ファイルのままでも、AI 以外はすべて動きます：**AI 設定** は開き、ai-service が動いていないと表示し（新しい compose ファイルを使うようにという案内付き）、ユーザー管理の AI+ 機能のスイッチは隠れます。
 - **v0.6 から**（migration.md の第 2 節）：スキーマ v3 → v6、バックアップ `xexam-schema3-<日時>.db`、WAL モード、その後に古い形式の問題の出題停止。新しい `docker-compose.yml` も取得してください。新しいファイルでは ai-service が加わり、決まった既定のタイムゾーンを設定しなくなり（ホストに従います。3.1 節）、コンテナのログを制限し（第 8 節）、`.env` で設定されていれば `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、AI の変数を渡します。これまでのタイムスタンプがホストとは別のタイムゾーンで書かれていた場合は、新しい記録も同じタイムゾーンで続くように、そのタイムゾーンを `.env` の `TZ` に設定してください。追加しなければならない変数はありません。
 - **v0.5 または v0.5.1 から**（migration.md の第 3 節）：スキーマ v2 → v6 を一度に、バックアップ `xexam-schema2-<日時>.db`。ログインが新しく加わります：`admin` / `admin` でログインしてください。これまでのデータはすべてこのアカウントのものになります。
 - **v0.4 から**（migration.md の第 4 節）：スキーマ v1 → v6 を一度に、バックアップ `xexam-schema1-<日時>.db`。v0.5.1 から、イメージは `ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から取得します。お使いの `docker-compose.yml` を新しいファイルに差し替えてください（または、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更します）。ソースからビルドする場合、compose ファイルは `docker/` に移ったので、リポジトリのルートにある `.env` は `docker/.env` に移動してください。
 
-アップグレードの後、`/api/info` には `"version": "0.9.1"` と表示されます。2 回目以降の起動では移行は行われません。古い形式の問題の出題停止も、出題停止にするものが残っていなければ何も書き込みません。**ロールバック**とは、`backups/` のコピーを復元して古いイメージを動かすことです（v0.9 から v0.8 へは、コピーが必要なのは AI のデータベースだけです：v0.8 のバックエンドはスキーマ 6 のメインのデータベースをそのまま開きますが、v0.8 の ai-service はスキーマ 3 の AI のデータベースを拒否し、復元するとアップグレード以降に AI が書いたものはすべて失われます）。移行済みのデータベースで古いバージョンを動かすのは、緊急のときだけにしてください。具体的なコマンドは [migration.md](migration.md)、背景は [database.md](database.md) の第 6 節にあります。
+アップグレードの後、`/api/info` には `"version": "1.0"` と表示されます。2 回目以降の起動では移行は行われません。古い形式の問題の出題停止も、出題停止にするものが残っていなければ何も書き込みません。**ロールバック**とは、`backups/` のコピーを復元して古いイメージを動かすことです（v0.9 から v0.8 へは、コピーが必要なのは AI のデータベースだけです：v0.8 のバックエンドはスキーマ 6 のメインのデータベースをそのまま開きますが、v0.8 の ai-service はスキーマ 3 の AI のデータベースを拒否し、復元するとアップグレード以降に AI が書いたものはすべて失われます）。移行済みのデータベースで古いバージョンを動かすのは、緊急のときだけにしてください。具体的なコマンドは [migration.md](migration.md)、背景は [database.md](database.md) の第 6 節にあります。
 
 ## 7. ヘルスチェックと停止
 

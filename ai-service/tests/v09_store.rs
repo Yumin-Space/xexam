@@ -1,4 +1,4 @@
-//! v0.9 storage (contracts 4 and 5): AI database schema 3 (fresh and upgraded files, backups, plans), the study chats
+//! v0.9 storage (contracts 4 and 5): AI database schema 4 (fresh and upgraded files, backups, plans), the study chats
 //! and their ask transaction, saved lookups, usage by feature and the batched retention sweep. Store level only; all
 //! content is made up.
 use rusqlite::{params, Connection};
@@ -72,15 +72,22 @@ fn backups(dir: &Path) -> Vec<PathBuf> {
     out
 }
 
-/// A schema-1 (`version` "1") or schema-2 file with a user, a chat with two messages and a usage row.
+/// A schema-1, schema-2 or schema-3 file (`version`) with a user, a chat with two messages and a usage row.
 fn write_old_fixture(dir: &Path, version: &str, with_rows: bool) {
     let c = Connection::open(dir.join(DB_FILE)).expect("fixture");
     c.execute_batch(schema::SCHEMA).expect("v1 schema");
-    if version == "2" {
+    if version == "2" || version == "3" {
         for (table, _, def) in schema::V2_COLUMNS {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {def};"))
                 .expect("v2 column");
         }
+    }
+    if version == "3" {
+        for (table, _, def) in schema::V3_COLUMNS {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {def};"))
+                .expect("v3 column");
+        }
+        c.execute_batch(schema::V3_INDEXES).expect("v3 indexes");
     }
     c.execute(
         "INSERT INTO settings (id, updated_at) VALUES (1, ?1)",
@@ -123,16 +130,20 @@ fn write_old_fixture(dir: &Path, version: &str, with_rows: bool) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// Schema 3
+// Schema 4 (v1.0; the study columns and indexes come from schema 3)
 
 #[test]
-fn a_fresh_database_is_schema_3_with_every_column_and_index() {
+fn a_fresh_database_is_schema_4_with_every_column_and_index() {
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "3");
-            for (table, column, _) in schema::V2_COLUMNS.iter().chain(schema::V3_COLUMNS.iter()) {
+            assert_eq!(schema_of(c), "4");
+            for (table, column, _) in schema::V2_COLUMNS
+                .iter()
+                .chain(schema::V3_COLUMNS.iter())
+                .chain(schema::V4_COLUMNS.iter())
+            {
                 assert!(has_column(c, table, column), "{table}.{column}");
             }
             for name in [
@@ -169,12 +180,17 @@ fn upgraded_from(version: &str, with_rows: bool) {
     // the copy is the old database as it was
     let copy = Connection::open(&copies[0]).expect("copy");
     assert_eq!(schema_of(&copy), version);
-    assert!(!has_column(&copy, "chats", "kind"));
+    assert_eq!(has_column(&copy, "chats", "kind"), version == "3");
+    assert!(!has_column(&copy, "limits", "calls_per_minute"));
     drop(copy);
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "3");
-            for (table, column, _) in schema::V2_COLUMNS.iter().chain(schema::V3_COLUMNS.iter()) {
+            assert_eq!(schema_of(c), "4");
+            for (table, column, _) in schema::V2_COLUMNS
+                .iter()
+                .chain(schema::V3_COLUMNS.iter())
+                .chain(schema::V4_COLUMNS.iter())
+            {
                 assert!(has_column(c, table, column), "{table}.{column}");
             }
             for name in ["idx_chats_ref", "idx_messages_study", "idx_messages_streaming"] {
@@ -231,6 +247,169 @@ fn an_empty_schema_2_file_is_backed_up_too() {
 }
 
 #[test]
+fn a_schema_3_file_is_backed_up_and_upgraded() {
+    upgraded_from("3", true);
+}
+
+#[test]
+fn an_empty_schema_3_file_is_backed_up_too() {
+    upgraded_from("3", false);
+}
+
+#[test]
+fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
+    let dir = tempfile::tempdir().expect("dir");
+    write_old_fixture(dir.path(), "3", true);
+    {
+        // made-up changed limits and a memory, written like v0.9.1 did
+        let c = Connection::open(dir.path().join(DB_FILE)).expect("fixture");
+        c.execute(
+            "UPDATE limits SET per_user_running = 2, global_running = 9, chats_per_user = 777, messages_per_chat = 123,
+                    memories_per_user = 12, memory_chars = 222, message_chars = 4321, updated_by = 'root'
+             WHERE id = 1",
+            [],
+        )
+        .expect("limits");
+        c.execute(
+            "INSERT INTO memories (user_id, content, created_at, updated_at) VALUES (5, 'a made-up note', ?1, ?1)",
+            [NOW],
+        )
+        .expect("memory");
+    }
+    let store = open(dir.path());
+    let copies = backups(dir.path());
+    assert_eq!(copies.len(), 1, "{copies:?}");
+    assert!(copies[0]
+        .file_name()
+        .and_then(|n| n.to_str())
+        .expect("name")
+        .starts_with("xexam-ai-schema3-"));
+    store
+        .read(|c| {
+            assert_eq!(schema_of(c), "4");
+            let l = xexam_ai_service::store::tables::load_limits(c)?;
+            assert_eq!(
+                (
+                    l.per_user_running,
+                    l.global_running,
+                    l.chats_per_user,
+                    l.messages_per_chat,
+                    l.memories_per_user,
+                    l.memory_chars
+                ),
+                (2, 9, 777, 123, 12, 222)
+            );
+            assert_eq!(
+                (l.calls_per_minute, l.calls_per_hour, l.calls_per_day),
+                (5, 20, 100)
+            );
+            // The answer length gets its default; nothing is derived from old values
+            assert_eq!(l.reply_max_chars, 1000);
+            // The retired column keeps what it had (nothing reads or writes it any more)
+            let retired: i64 =
+                c.query_row("SELECT message_chars FROM limits WHERE id = 1", [], |r| {
+                    r.get(0)
+                })?;
+            assert_eq!(retired, 4321);
+            let counts: (i64, i64, i64, i64) = c.query_row(
+                "SELECT (SELECT COUNT(*) FROM chats), (SELECT COUNT(*) FROM messages),
+                        (SELECT COUNT(*) FROM memories), (SELECT COUNT(*) FROM usage)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )?;
+            assert_eq!(counts, (1, 2, 1, 1));
+            let by: String =
+                c.query_row("SELECT updated_by FROM limits WHERE id = 1", [], |r| {
+                    r.get(0)
+                })?;
+            assert_eq!(by, "root");
+            Ok(())
+        })
+        .expect("read");
+}
+
+/// The memory length a schema-`from` file reads after the upgrade, when it had `before` characters.
+fn memory_chars_after_upgrade(from: &str, before: i64) -> i64 {
+    let dir = tempfile::tempdir().expect("dir");
+    write_old_fixture(dir.path(), from, true);
+    {
+        let c = Connection::open(dir.path().join(DB_FILE)).expect("fixture");
+        c.execute("UPDATE limits SET memory_chars = ?1 WHERE id = 1", [before])
+            .expect("limits");
+    }
+    let store = open(dir.path());
+    let v = store
+        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_chars))
+        .expect("read");
+    drop(store);
+    v
+}
+
+#[test]
+fn the_old_memory_default_moves_to_200_once_and_other_values_stay() {
+    // v0.8 / v0.9 default 300 -> the new default 200, from every upgradable schema
+    for from in ["1", "2", "3"] {
+        assert_eq!(memory_chars_after_upgrade(from, 300), 200, "from {from}");
+    }
+    // a value an administrator chose stays
+    assert_eq!(memory_chars_after_upgrade("3", 500), 500);
+    assert_eq!(memory_chars_after_upgrade("3", 50), 50);
+    // a fresh database reads 200
+    let dir = tempfile::tempdir().expect("dir");
+    let store = open(dir.path());
+    let v = store
+        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_chars))
+        .expect("read");
+    assert_eq!(v, 200);
+    drop(store);
+    // a 300 set after the upgrade survives the next start (the move runs only while creating / upgrading)
+    {
+        let c = Connection::open(dir.path().join(DB_FILE)).expect("open");
+        c.execute("UPDATE limits SET memory_chars = 300 WHERE id = 1", [])
+            .expect("set");
+    }
+    let store = open(dir.path());
+    let v = store
+        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_chars))
+        .expect("read");
+    assert_eq!(v, 300);
+}
+
+#[test]
+fn the_check_ranges_of_the_call_caps_equal_the_limit_definitions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let store = open(dir.path());
+    store
+        .read(|c| {
+            for d in xexam_ai_service::limits::DEFS
+                .iter()
+                .filter(|d| d.column.starts_with("calls_per_") || d.column == "reply_max_chars")
+            {
+                for v in [d.min, d.max] {
+                    c.execute(
+                        &format!("UPDATE limits SET {} = ?1 WHERE id = 1", d.column),
+                        [v],
+                    )
+                    .unwrap_or_else(|e| panic!("{} = {v} must be accepted: {e}", d.column));
+                }
+                for v in [d.min - 1, d.max + 1] {
+                    assert!(
+                        c.execute(
+                            &format!("UPDATE limits SET {} = ?1 WHERE id = 1", d.column),
+                            [v]
+                        )
+                        .is_err(),
+                        "{} = {v} must be refused",
+                        d.column
+                    );
+                }
+            }
+            Ok(())
+        })
+        .expect("read");
+}
+
+#[test]
 fn a_failed_backup_refuses_the_upgrade_and_changes_nothing() {
     let dir = tempfile::tempdir().expect("dir");
     write_old_fixture(dir.path(), "2", true);
@@ -257,7 +436,7 @@ fn fresh_and_upgraded_databases_have_the_same_master_table() {
     let fresh = tempfile::tempdir().expect("dir");
     drop(open(fresh.path()));
     let fresh_rows = master_rows(&fresh.path().join(DB_FILE));
-    for version in ["1", "2"] {
+    for version in ["1", "2", "3"] {
         let dir = tempfile::tempdir().expect("dir");
         write_old_fixture(dir.path(), version, true);
         drop(open(dir.path()));
@@ -290,23 +469,23 @@ fn reopening_a_current_database_writes_nothing() {
 }
 
 #[test]
-fn a_newer_schema_is_refused_with_the_schema_3_line() {
+fn a_newer_schema_is_refused_with_the_schema_4_line() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     let path = dir.path().join(DB_FILE);
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '4' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '5' WHERE key = 'schema'", [])
             .expect("set");
     }
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 4 must be refused"),
+        Ok(_) => panic!("schema 5 must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 4, written by a newer ai-service; this version (schema 3) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 5, written by a newer ai-service; this version (schema 4) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );
@@ -806,7 +985,7 @@ fn saved_returns_the_newest_answer_and_the_last_good_only_when_needed() {
     assert!(none.latest.is_none() && none.last_good.is_none());
     assert_eq!(
         none.to_json(false),
-        json!({"chatId": null, "latest": null, "lastGood": null})
+        json!({"chatId": null, "chatTitle": null, "latest": null, "lastGood": null})
     );
 
     let first = ask(&store, 1, "hint", "q1", "practice", "practice", NOW);
@@ -1000,6 +1179,9 @@ fn summary_saved_finds_the_newest_summary_of_its_ref() {
         Some("first summary")
     );
     let j = s.to_json(true);
+    // The saved route returns the chat's real title (the browser shows it in the "saved in AI Chat" tip)
+    assert_eq!(s.chat_title.as_deref(), Some("2026-11-11 21:58"));
+    assert_eq!(j["chatTitle"], json!("2026-11-11 21:58"));
     assert_eq!(j["lastGood"]["recordId"], json!(42));
     assert_eq!(
         j["lastGood"]["sample"],

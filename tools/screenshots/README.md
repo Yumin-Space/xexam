@@ -1,7 +1,7 @@
 # Screenshot tool
 
-Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 19 desktop and 5 iPhone images per
-language, 24 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
+Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 20 desktop and 7 iPhone images per
+language, 27 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
 made up, also on the AI pages: the stub's address `http://ai-stub:9000/v1`, the fake key (shown as `…9c21`), the
 `demo-*` models, the demo users and banks. The tool never connects to any other instance, so real addresses, keys or
 model choices cannot appear. Run it from the repository root:
@@ -63,20 +63,37 @@ A full run of the three languages takes a few minutes, plus the image builds whe
    administrator-only AI chat mode section that the Settings image shows, with Normal selected), starts a chat through the
    API in the language of the run, opens it, sends a second question through its composer and deletes the chat again
    and turns free mode off afterwards; its conversation box follows the window height, so the window is made just tall enough for the whole
-   conversation and the image ends below it. The AI settings page is shot in two parts (the four status chips and the
-   ai-service connection note, connection, model, test and the users with the AI+ feature with their Pause / Resume buttons;
-   then usage (with the cached-tokens column), chat retention and safety limits) after the scene presses Refresh list and Test. Each language
-   therefore adds a few calls to the AI usage numbers, so they differ slightly between the languages. PNG text, time
-   and EXIF chunks are removed (`browser.strip_png`).
-   The study scenes of v0.9 (`desktop-17-ai-hint`, `desktop-18-ai-result`, `desktop-19-ai-summary`, `iphone-5-ai-hint`)
-   open the AI hint window of a practice question, the AI analysis window of the first card of the exam result and the AI
-   summary window of a study record, each with the made-up stub's text in the language of the run (the screenshot user is
-   the administrator, who always has the AI+ feature). Their asks are saved in AI Chat; the run deletes the
-   administrator's AI chats before the AI Chat scenes and at the end. The same pass checks the layout (a failed check stops
-   the run with a message): at 390 px the practice action bar has at most two rows of buttons (every language), at 800 px
-   the Study records list (English and Japanese) is in the card layout with no horizontal scroll and Delete on one line;
-   for alex (AI+ feature paused) the practice page at 390 and 360 px has at most two rows in the bar, no horizontal scroll
-   and greyed AI controls.
+   conversation and the image ends below it.
+   The v1.0 UI is phone-first, and the scenes follow it:
+   - **Practice and the AI+ panel** (`desktop-11-practice`, `desktop-17-ai-hint`, `iphone-5-ai-hint`): the bar shows both
+     Check answer and Next as two separate buttons; the AI hint opens the collapsible AI+ panel under the card (expanded on
+     the stub's hint) with the muted "Saved in AI Chat" text in its footer (a tip names the chat; there is no Open in AI
+     Chat control and nothing in the panel navigates away). On the iPhone image the panel is scrolled in under the top row.
+   - **Result and summary** (`desktop-18-ai-result`, `iphone-6-result`, `desktop-19-ai-summary`): card 1 of the exam result
+     with its panel expanded on AI analysis and card 2's collapsed AI+ bar below it; the summary window of a study
+     record with the same Saved text.
+   - **AI Chat on a phone** (`iphone-7-ai-chat`): a short chat started through the API, opened full height.
+   - **AI settings** is one page with category tabs under the status chips; the scene presses Refresh list and Test on
+     the AI+ function tab (`#/ai-settings?tab=feature`), then shoots `?tab=users` (`desktop-15-ai-settings`), `?tab=usage`
+     (`desktop-16-ai-usage`, with the Today column) and `?tab=safety` (`desktop-20-ai-safety`: chat retention and the
+     limits: the per-user request caps, the "Answer and memory length" group, the server protection). Sam asks one
+     made-up question while seeding, so the users list shows a calls line and the usage table has more than one user.
+   - **The footer** (the disclaimer, then the centered "GitHub | Xexam <version>" line) is part of the whole-page Home
+     image and is checked on the phone Home and on the AI Chat list pane.
+   Their asks are saved in AI Chat; the run deletes the administrator's AI chats before the AI Chat scenes and at the
+   end. Each language adds a few calls to the AI usage numbers, so they differ slightly between the languages. PNG text,
+   time and EXIF chunks are removed (`browser.strip_png`).
+   The same pass checks the layout and the owner's feedback (a failed check stops the run with a message), in every
+   language: at 360, 390 and 412 px the practice bar is one row with Check answer and Next as separate buttons in fixed
+   places (nothing moves before / after the check or on the next question), 44 px touch targets and no sideways scroll;
+   for alex (AI+ feature paused) at 390 and 360 px the same, the AI controls greyed and the greyed AI+ bar in view; the
+   exam bar is one row with no Check answer and no AI buttons; the AI+ panel and the summary window show the Saved
+   text, contain no link or Open in AI Chat control and draw no focus frame on a title focused by script; the
+   footer line is centered with its two links (`https://github.com/Yumin-Space/xexam` and `.../releases`, new tab, `noopener
+   noreferrer`) below the disclaimer, with no old "Xexam v..." line; AI settings has four category tabs with the right
+   one selected and, in AI safety, the three limit groups; Study records cards are at most 140 px tall at 360 px; at
+   800 px the Study records list (English and Japanese) is in the card layout with no horizontal scroll and Delete on
+   one line.
 6. The containers, the volumes, the network, the image tags, the temporary folders and every process the tool started
    are removed at the end, also after an error or Ctrl+C. Nothing is pushed anywhere.
 
@@ -92,7 +109,7 @@ first is retried with another one), and `npm ci` (only when `frontend/node_modul
 | `retake.py` | Entry point: options, backend and ai-service, frontend, seeding, the languages, clean-up |
 | `demo_banks.py` | The made-up demo question banks |
 | `seed.py` | Users, banks, records, the AI setup (with the AI+ feature of sam and alex, alex paused) and the System log activity, through the API |
-| `scenes.py` | The 24 scenes (AI hint, AI result and AI summary included), the layout checks, and how each image is sized |
+| `scenes.py` | The 27 scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
 | `browser.py` | Finding and starting Chrome, a small DevTools (CDP) client, PNG metadata removal |
 | `../../tests/integration/ai_stub.py` | The made-up AI provider (shared with the stack check of CI) |
 

@@ -15,6 +15,7 @@ pub mod link;
 pub mod logs;
 pub mod prompt;
 pub mod provider;
+pub mod quota;
 pub mod retention;
 pub mod secret;
 pub mod settings;

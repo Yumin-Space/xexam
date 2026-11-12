@@ -28,7 +28,7 @@ export default defineCatalog({
     'auth.wait.days_one': '{n} day',
 
     'auth.password.title': 'Choose a new password',
-    'auth.password.lead': 'You signed in as {name} with a default or initial password. Other people know such a password, so replace it with one only you know before you continue.',
+    'auth.password.lead': 'You signed in as {name} with a default password. Choose one only you know.',
     'auth.password.rule': '8 to 128 characters; any characters, spaces included.',
     'auth.password.new': 'New password',
     'auth.password.repeat': 'Repeat the new password',
@@ -65,7 +65,7 @@ export default defineCatalog({
     'auth.wait.days': '{n} 天',
 
     'auth.password.title': '设置新密码',
-    'auth.password.lead': '你以 {name} 的身份，用默认密码或初始密码登录。这种密码别人也可能知道，继续之前请换成一个只有你自己知道的密码。',
+    'auth.password.lead': '你以 {name} 登录，用的是默认密码。请换成只有你自己知道的密码。',
     'auth.password.rule': '8–128 个字符，可以使用任何字符（包括空格）。',
     'auth.password.new': '新密码',
     'auth.password.repeat': '再输入一次新密码',
@@ -102,7 +102,7 @@ export default defineCatalog({
     'auth.wait.days': '{n} 日',
 
     'auth.password.title': '新しいパスワードを設定',
-    'auth.password.lead': '{name} として、既定または初期のパスワードでログインしました。このパスワードはほかの人も知っているため、続ける前に自分だけが知っているパスワードに変更してください。',
+    'auth.password.lead': '{name} は初期パスワードです。自分だけのパスワードに変更してください。',
     'auth.password.rule': '8〜128 文字。スペースを含め、どの文字でも使えます。',
     'auth.password.new': '新しいパスワード',
     'auth.password.repeat': '新しいパスワード（確認）',

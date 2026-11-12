@@ -111,7 +111,7 @@ async fn a_summary_streams_with_its_sample_and_lands_in_the_record_chat() {
             .await;
     assert_eq!(
         other,
-        json!({"chatId": null, "latest": null, "lastGood": null})
+        json!({"chatId": null, "chatTitle": null, "latest": null, "lastGood": null})
     );
     for bad in [
         "/api/ai/summary/saved?record=42&at=2026-11-11-21:58",

@@ -1,4 +1,8 @@
 // A tiny DOM builder: all text is written into the page with createTextNode and HTML is never concatenated (content from Excel is untrusted).
+// v1.0 adds the page-scroll helpers (scrollToY / isAppScroll), the on-screen keyboard variables (--vvh, --kb, html.kb-open),
+// undoViewportPan and keepInView (spec SH-7, SH-13).
+import { keyboardInset, revealDelta, shouldUndoPan } from '../domain/viewport.ts';
+import { TOUCH_MQ, matches } from './media.ts';
 
 export type Child = Node | string | number | false | null | undefined | Child[];
 export type Props = Record<string, unknown> | null | undefined;
@@ -100,3 +104,112 @@ export function keepFocus(draw: () => void): void {
     // an input type without a caret
   }
 }
+
+// ---------- Page scrolling made by the app (SH-7) ----------
+
+let appScrolling = false;
+let appScrollStop: (() => void) | null = null;
+
+/** Whether a scroll made by the app (`scrollToY`) is still under way; the shell top bar's scroll listener ignores it */
+export function isAppScroll(): boolean {
+  return appScrolling;
+}
+
+/**
+ * Scrolls the page to `y`. Every programmatic page scroll in v1.0 goes through here: the flag of `isAppScroll` stays set
+ * until `scrollend` (or 700 ms, for browsers without it and for a scroll that does not move), so the top bar does not
+ * hide or show because of it. Smooth scrolling is dropped when the user asks for reduced motion.
+ */
+export function scrollToY(y: number, smooth: boolean): void {
+  appScrollStop?.();
+  appScrolling = true;
+  let timer = 0;
+  const stop = (): void => {
+    window.clearTimeout(timer);
+    window.removeEventListener('scrollend', stop);
+    appScrolling = false;
+    if (appScrollStop === stop) appScrollStop = null;
+  };
+  appScrollStop = stop;
+  window.addEventListener('scrollend', stop);
+  timer = window.setTimeout(stop, 700);
+  const calm = typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  window.scrollTo({ top: y, behavior: smooth && !calm ? 'smooth' : 'auto' });
+}
+
+// ---------- On-screen keyboard (SH-13) ----------
+
+let vvInstalled = false;
+
+/**
+ * Keeps `--vvh` (the visual viewport height in px) and `--kb` (the part of the layout viewport the keyboard covers, px)
+ * on :root, and `html.kb-open` while `--kb` > 0, from one rAF-throttled visualViewport listener. Nothing is set where
+ * there is no visualViewport. Runs once when this module loads; calling it again does nothing.
+ */
+export function installViewportVars(): void {
+  if (vvInstalled || typeof window === 'undefined' || typeof document === 'undefined') return;
+  const vv = window.visualViewport;
+  if (!vv) return;
+  vvInstalled = true;
+  const root = document.documentElement;
+  let frame = 0;
+  const update = (): void => {
+    frame = 0;
+    const kb = keyboardInset(window.innerHeight, vv.height, vv.offsetTop);
+    root.style.setProperty('--vvh', `${vv.height}px`);
+    root.style.setProperty('--kb', `${kb}px`);
+    root.classList.toggle('kb-open', kb > 0);
+  };
+  const queue = (): void => {
+    if (!frame) frame = window.requestAnimationFrame(update);
+  };
+  vv.addEventListener('resize', queue);
+  vv.addEventListener('scroll', queue);
+  update();
+}
+
+/**
+ * Undoes Safari's pan when a locked document (AI Chat, `html.no-doc-scroll`) was moved to bring a focused field into view:
+ * back to the top, through scrollToY so the top bar's listener ignores it. Used by AI Chat only.
+ */
+export function undoViewportPan(): void {
+  const locked = document.documentElement.classList.contains('no-doc-scroll');
+  if (shouldUndoPan(locked, window.scrollY, window.visualViewport?.offsetTop ?? 0)) scrollToY(0, false);
+}
+
+/**
+ * Keeps a text field (and its submit control) inside the visual viewport while the keyboard is up: on `focus` on touch,
+ * again 300 ms later (the keyboard animates) and on every visualViewport `resize` while the field has the focus. A field in
+ * a dialog scrolls the dialog's body; any other field scrolls the page (through scrollToY). Not for the AI Chat composer,
+ * which never scrolls the page (CH-13).
+ */
+export function keepInView(field: HTMLElement, submit?: HTMLElement | null): void {
+  const reveal = (): void => {
+    if (!field.isConnected) return;
+    const vv = window.visualViewport;
+    const viewTop = vv ? vv.offsetTop : 0;
+    const viewBottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+    const f = field.getBoundingClientRect();
+    const s = submit?.isConnected ? submit.getBoundingClientRect() : null;
+    const top = s ? Math.min(f.top, s.top) : f.top;
+    const bottom = s ? Math.max(f.bottom, s.bottom) : f.bottom;
+    const delta = revealDelta(top, bottom, viewTop, viewBottom);
+    if (delta === 0) return;
+    if (field.closest('dialog')) field.scrollIntoView({ block: 'nearest' });
+    else scrollToY(window.scrollY + delta, false);
+  };
+  let timer = 0;
+  field.addEventListener('focus', () => {
+    if (!matches(TOUCH_MQ)) return;
+    reveal();
+    window.clearTimeout(timer);
+    timer = window.setTimeout(reveal, 300);
+    window.visualViewport?.addEventListener('resize', reveal);
+  });
+  field.addEventListener('blur', () => {
+    window.clearTimeout(timer);
+    window.visualViewport?.removeEventListener('resize', reveal);
+  });
+}
+
+installViewportVars();

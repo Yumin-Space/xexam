@@ -507,6 +507,27 @@ export interface AiService {
   link: boolean;
 }
 
+/** v1.0: the AI request cap that would refuse a new call now (`retryAt`: unix seconds; for the day cap the next 0:00 of the server) */
+export interface AiCallBlock {
+  cap: 'minute' | 'hour' | 'day';
+  limit: number;
+  retryAt: number;
+}
+
+/** v1.0: counted AI model calls of one user (minute / hour rolling, day since 0:00 of the server's time zone) */
+export interface AiCallCounts {
+  minute: number;
+  hour: number;
+  day: number;
+}
+
+/** v1.0: the per-user caps on AI model calls, with the user's own counts */
+export interface AiCalls {
+  used: AiCallCounts;
+  caps: AiCallCounts;
+  blocked: AiCallBlock | null;
+}
+
 /** `GET /api/ai/status`: what the signed-in user may do with AI right now */
 export interface AiStatusJson {
   /** The AI+ service is on (and its settings passed a test) and ai-service reached the main service less than 60 s ago */
@@ -532,6 +553,8 @@ export interface AiStatusJson {
   configured: boolean;
   /** Administrators only (false for others): the free mode is on (every AI answer, in any chat, is a free-mode answer) */
   freeMode: boolean;
+  /** v1.0: the per-user AI request caps and the user's counts; present exactly when `enabled` and the user has the AI+ service */
+  calls?: AiCalls;
 }
 
 export interface AiChatSummary {
@@ -684,7 +707,13 @@ export interface AiUsage {
   unit: 'day' | 'month';
   totals: AiUsageCounts;
   /** `userId: null` is the one row of deleted users */
-  byUser: Array<AiUsageCounts & { userId: number | null; username: string | null; lastAt: number | null }>;
+  byUser: Array<AiUsageCounts & {
+    userId: number | null;
+    username: string | null;
+    lastAt: number | null;
+    /** v1.0: this user's counted calls since today's 0:00 of the server's time zone (the number the day cap compares) */
+    today?: number;
+  }>;
   byModel: Array<AiUsageCounts & { model: string }>;
   byPeriod: Array<AiUsageCounts & { period: string }>;
   /** v0.9: chat, hint, explain, summary in server order */
@@ -713,6 +742,8 @@ export interface AiAdminUserRow {
   lastUsedAt: number | null;
   tokensIn: number;
   tokensOut: number;
+  /** v1.0: the user's counted AI calls and whether a cap blocks a new call now (same shape as the status without `caps`) */
+  calls?: Omit<AiCalls, 'caps'>;
 }
 
 /** `GET /api/ai/admin/user?id=N` */
@@ -734,6 +765,10 @@ export interface AiLimits {
   memoriesPerUser: number;
   memoryChars: number;
   messageChars: number;
+  /** v1.0: AI model calls one user may make per minute / hour / day (everyone, administrators included) */
+  callsPerMinute: number;
+  callsPerHour: number;
+  callsPerDay: number;
 }
 
 /** `GET` / `POST /api/ai/admin/limits` */

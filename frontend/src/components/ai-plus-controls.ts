@@ -1,10 +1,11 @@
-// The AI+ study controls of every page (v0.9): the bulb / book icons, the AI 提示 / AI 解释 / AI 解析 buttons, the AI 总结
-// button of a record, the 无法使用 tag and the note above the records table. ONE component builds them all, so every page
-// greys, tags, explains and opens them the same way (the popover / overlay themselves are components/ai-pop.ts and
-// ai-summary.ts). A control a user may not see is never built (null): without the AI+ feature the DOM stays the v0.8 one.
+// The AI+ study controls of every page: the practice bar's AI 提示 / AI 解释 buttons, the docks the panel lives in (also the
+// greyed bar of a paused / unavailable AI+), the AI 总结 button of a record, the 无法使用 tag and the note above the records
+// table. ONE component builds them all, so every page greys, tags, explains and opens them the same way (the panel / overlay
+// themselves are components/ai-panel.ts and ai-summary.ts). A control a user may not see is never built (null): without the
+// AI+ feature the DOM stays the v0.8 one.
 import {
-  aiControls, aiPlusView, buildStudyAsk, controlState, type AiPlusView, type ControlSpec, type ControlState, type QuestionLang, type RunningInfo,
-  resultExtra,
+  aiControls, aiPlusView, buildStudyAsk, controlState, dockKey, focusKey, resultExtra, unavailableParts,
+  type AiPlusView, type ControlSpec, type ControlState, type QuestionLang, type RunningInfo,
 } from '../domain/ai-plus.ts';
 import { studySavedQuery, studySpec } from '../domain/ai-spec.ts';
 import { sessionPart, studyKey } from '../domain/ai-study.ts';
@@ -13,11 +14,12 @@ import { t, uiLang, type MsgKey } from '../i18n/index.ts';
 import { aiStatus } from '../state/ai.ts';
 import { S } from '../state/store.ts';
 import { h } from '../utils/dom.ts';
-import { toast } from '../utils/toast.ts';
-import { openAiPop, type PopOpenArgs } from './ai-pop.ts';
+import { AI_BADGE_TEXT } from './ai-badge.ts';
+import { openAiPanel, type PanelOpenArgs } from './ai-panel.ts';
 import { openAiSummary } from './ai-summary.ts';
+import { iconButton, withReason } from './icon-button.ts';
 import { miniIcon } from './mini-icons.ts';
-import { tipEl, withTip } from './tooltip.ts';
+import { holdTip } from './tooltip.ts';
 import '../styles/ai-plus.css';
 
 const msg = (k: string): MsgKey => k as MsgKey;
@@ -64,21 +66,13 @@ export function studyState(target: StudyTarget): ControlState {
   return controlState(view, extra);
 }
 
-/** The words a greyed control says (its tooltip and the toast of a tap) */
-function greyText(state: ControlState, labelKey: string): string {
-  if (!state.show || state.usable) return '';
-  const tip = state.tip;
-  if (tip.key === 'aiplus.tip.na' && tip.reasonKey) return t('aiplus.tip.na', { label: t(msg(labelKey)), reason: t(msg(tip.reasonKey)) });
-  return t(msg(tip.key));
-}
-
-/** What an opener hands to the popover (also the answer of `resolveRunning`) */
-function popArgs(
+/** What an opener hands to the panel (also the answer of `resolveRunning`) */
+function panelArgs(
   target: StudyTarget, spec: ControlSpec, anchorKey: string, o: { bar: boolean; byKeyboard: boolean },
-): PopOpenArgs {
+): PanelOpenArgs {
   const part = sessionPart({ key: target.key, recordId: target.recordId }) ?? `q${target.questionId}`;
   const recordId = target.page === 'practice' ? null : target.recordId;
-  const args: PopOpenArgs = {
+  const args: PanelOpenArgs = {
     kind: spec.kind,
     qid: target.questionId,
     source: spec.source,
@@ -99,6 +93,7 @@ function popArgs(
     sessionPrefix: `${target.mode}|${part}|`,
     fromBar: o.bar,
     byKeyboard: o.byKeyboard,
+    dock: dockKey(target.page, target.no),
   };
   const resolve = target.resolve;
   if (resolve) {
@@ -106,74 +101,95 @@ function popArgs(
     args.resolveRunning = (r) => {
       const next = resolve(r);
       const own = next ? aiControls(next.page).find((c) => c.kind === r.kind && c.source === r.source) : undefined;
-      return next && own ? popArgs(next, own, focusKeyOf(next, own, 'button'), { bar: true, byKeyboard: false }) : null;
+      return next && own ? panelArgs(next, own, focusKey(next.page, own, next.no), { bar: true, byKeyboard: false }) : null;
     };
   }
   return args;
 }
 
-/** The data-focus key of an opener (D12): practice `q-bulb`…, result / detail `rv-book-<n>`… */
-function focusKeyOf(target: StudyTarget, spec: ControlSpec, which: 'icon' | 'button'): string {
-  const base = spec.focus[which];
-  return target.page === 'practice' ? base : `${base}-${target.no}`;
+/** A bar button or a dock that can rebuild its panel arguments (a redraw or a question change re-anchors through it) */
+type ArgsEl = HTMLElement & { __aipArgs?: () => PanelOpenArgs };
+/** The `div.aip-dock` of one place (components/ai-panel.ts fills it with the panel or its collapsed bar) */
+export type AipDockEl = ArgsEl;
+
+/** The text a greyed control says (its tip and the toast of a tap): `label` names the control */
+function greyText(state: ControlState, label: string): string {
+  const p = unavailableParts(state);
+  if (!p) return '';
+  return p.badgeReasonKey ? t('aiplus.tip.na', { label, reason: t(msg(p.badgeReasonKey)) }) : t(msg(p.tipKey));
 }
 
-let tipSeq = 0;
+// ---------------------------------------------------------------- practice bar buttons (spec 2.12 c)
 
-/** A greyed control: aria-disabled (never `disabled`), its reason as tooltip and aria-describedby, a tap shows it as a toast */
-function greyOut(control: HTMLElement, focusKey: string, text: string): HTMLElement {
-  tipSeq += 1;
-  const id = `aip-tip-${focusKey}-${tipSeq}`;
-  control.classList.add('aip-off');
-  control.setAttribute('aria-disabled', 'true');
-  control.setAttribute('aria-describedby', id);
-  control.addEventListener('click', () => toast(text));
-  return withTip(control, tipEl(id, text), 'aip-tipwrap');
-}
-
-/** What every study opener shares; returns the control, wrapped in its tooltip when it has one */
-function opener(
-  control: HTMLButtonElement, target: StudyTarget, spec: ControlSpec, state: ControlState, focusKey: string, bar: boolean,
-): HTMLElement {
-  control.type = 'button';
-  control.setAttribute('data-focus', focusKey);
-  control.setAttribute('data-aip-opener', '');
-  control.setAttribute('data-aip-pair', `${target.questionId}|${spec.kind}|${spec.source}`);
-  control.setAttribute('aria-haspopup', 'dialog');
-  if (!state.show) return control;
-  if (!state.usable) return greyOut(control, focusKey, greyText(state, spec.labelKey));
-  control.addEventListener('click', (e) => {
-    openAiPop(popArgs(target, spec, focusKey, { bar, byKeyboard: e.detail === 0 }));
-  });
-  if (!spec.tipKey) return control;
-  tipSeq += 1;
-  const id = `aip-tip-${focusKey}-${tipSeq}`;
-  control.setAttribute('aria-describedby', id);
-  return withTip(control, tipEl(id, t(spec.tipKey)), 'aip-tipwrap');
-}
-
-/** Header icon (bulb = hint, book = explain): button.aip-ico, null when !state.show */
-export function studyIcon(target: StudyTarget, spec: ControlSpec, state: ControlState): HTMLElement | null {
-  if (!state.show) return null;
-  const label = t(spec.labelKey);
-  const btn = h('button', { class: 'aip-ico', 'aria-label': label, title: spec.tipKey ? null : label },
-    miniIcon(spec.kind === 'hint' ? 'bulb' : 'book', 'aip-mi'));
-  return opener(btn, target, spec, state, focusKeyOf(target, spec, 'icon'), false);
-}
+/** The "AI" corner mark of a bar button (a constant like the badge's letters, not a catalog text; aria-hidden) */
+const AI_MARK = 'AI';
 
 /**
- * Text button (AI 提示 / AI 解释 / AI 解析): button.btn.aip-btn with the orange mini icon. `bar` = in the bottom action bar
- * (the popover opens upwards); the buttons that have a short label hold both spans and the CSS shows one of them.
+ * The practice bar's AI 提示 / AI 解释 button: `button.ibtn.aip-bar-btn[data-slot]` = icon + `span.aip-ai-mark` + `span.lbl`.
+ * The same DOM at every width; ai-plus.css shows the label (wide) or the mark (up to 880 px / a phone turned sideways).
+ * Usable: opens the panel with this kind (`__aipArgs` lets the panel follow a question change). Greyed (P-20): the same
+ * button with aria-disabled and the reason (`withReason`, never `disabled`). `bar` = the button sits in the action bar.
  */
 export function studyButton(target: StudyTarget, spec: ControlSpec, state: ControlState, o: { bar: boolean }): HTMLElement | null {
   if (!state.show) return null;
-  const full = t(spec.labelKey);
-  const kids = spec.shortKey
-    ? [h('span', { class: 'aip-full' }, full), h('span', { class: 'aip-short', 'aria-hidden': 'true' }, t(spec.shortKey))]
-    : [full];
-  const btn = h('button', { class: 'btn aip-btn', 'aria-label': spec.shortKey ? full : null },
-    miniIcon(spec.kind === 'hint' ? 'bulb' : 'book', 'aip-mi'), ...kids);
-  return opener(btn, target, spec, state, focusKeyOf(target, spec, 'button'), o.bar);
+  const label = t(spec.labelKey);
+  const key = focusKey(target.page, spec, target.no);
+  const usable = state.usable;
+  const btn: ArgsEl = iconButton({
+    icon: spec.kind === 'hint' ? 'bulb' : 'book',
+    label,
+    tone: 'ai',
+    focusKey: key,
+    onClick: usable ? (e) => openAiPanel(panelArgs(target, spec, key, { bar: o.bar, byKeyboard: e.detail === 0 })) : undefined,
+  });
+  btn.classList.add('aip-bar-btn');
+  btn.dataset.slot = spec.kind;
+  btn.append(h('span', { class: 'aip-ai-mark', 'aria-hidden': 'true' }, AI_MARK), h('span', { class: 'lbl' }, label));
+  if (!usable) return withReason(btn, greyText(state, label));
+  btn.setAttribute('data-aip-opener', '');
+  btn.setAttribute('data-aip-pair', `${target.questionId}|${spec.kind}|${spec.source}`);
+  btn.__aipArgs = () => panelArgs(target, spec, key, { bar: o.bar, byKeyboard: false });
+  // The tip explains what the button does; its accessible name stays the label
+  if (spec.tipKey) holdTip(btn, t(spec.tipKey));
+  return btn;
+}
+
+// ---------------------------------------------------------------- docks (spec 2.12 b)
+
+/** The greyed bar of P-20: [dark AI+ badge] title [无法使用] reason (ellipsis); a tap shows the full reason; no chevron */
+function greyedBar(title: string, state: ControlState): HTMLElement {
+  const p = unavailableParts(state);
+  const reason = p ? t(msg(p.reasonKey)) : '';
+  const btn = h('button', {
+    type: 'button', class: 'aip-na-bar', 'aria-label': t(msg('aiplus.panel.unavailable'), { label: title }),
+  },
+    h('span', { class: 'ai-badge off', 'aria-hidden': 'true' },
+      h('span', { class: 'ai-badge-t' }, AI_BADGE_TEXT.slice(0, -1), h('span', { class: 'ai-badge-plus' }, AI_BADGE_TEXT.slice(-1)))),
+    h('span', { class: 'aip-na-title' }, title),
+    naTag(state),
+    h('span', { class: 'aip-na-reason' }, reason));
+  return withReason(btn, greyText(state, title));
+}
+
+/**
+ * The AI+ dock of one place (spec 2.12 b). Practice: key `practice`; result / detail card n: `rv-<n>`.
+ *  - !state.show: null (nothing in the DOM);
+ *  - greyed: `div.aip-dock.aip-dock-na[data-aip-dock-na]` holding the greyed bar; it never takes the live panel;
+ *  - usable: an empty `div.aip-dock[data-aip-dock]`; a card's dock carries `__aipArgs` (its AI 解析 arguments), the practice
+ *    dock none (the bar buttons carry theirs).
+ */
+export function studyDock(target: StudyTarget, spec: ControlSpec, state: ControlState): AipDockEl | null {
+  if (!state.show) return null;
+  const key = dockKey(target.page, target.no);
+  if (!state.usable) {
+    const title = target.page === 'practice' ? t(msg('aiplus.panel.idleTitle')) : t(spec.labelKey);
+    return h('div', { class: 'aip-dock aip-dock-na', 'data-aip-dock-na': key }, greyedBar(title, state));
+  }
+  const dock: AipDockEl = h('div', { class: 'aip-dock', 'data-aip-dock': key });
+  if (target.page !== 'practice') {
+    dock.__aipArgs = () => panelArgs(target, spec, focusKey(target.page, spec, target.no), { bar: false, byKeyboard: false });
+  }
+  return dock;
 }
 
 /** The 无法使用 tag of one group: span.aip-na[aria-hidden=true]; null unless greyed with tag:true */
@@ -182,13 +198,10 @@ export function naTag(state: ControlState): HTMLElement | null {
   return h('span', { class: 'aip-na', 'aria-hidden': 'true' }, t('aiplus.na'));
 }
 
-/** span.phead-r wrapping [span.aip-icons(icons…), naTag, langSwitch] (nulls skipped; no span.aip-icons when no icon) */
-export function pheadRight(icons: Array<HTMLElement | null>, tag: HTMLElement | null, sw: HTMLElement): HTMLElement {
-  const present = icons.filter((i): i is HTMLElement => i != null);
-  return h('span', { class: 'phead-r' }, present.length > 0 ? h('span', { class: 'aip-icons' }, present) : null, tag, sw);
-}
-
-/** The AI 总结 button of a record (records cell: quiet + no own tag; Home: own tag after it); null when !state.show */
+/**
+ * The AI 总结 button of a record (records cell: quiet + no own tag; Home: own tag after it); null when !state.show.
+ * Sparkle icon + text; usable ones are outlined, greyed ones flat (SH-17) with the reason as tip and tap toast.
+ */
 export function summaryButton(
   rec: { id: number; at: string; kind: 'practice' | 'exam' }, state: ControlState,
   o: { anchorKey: string; quiet: boolean; tag: boolean },
@@ -202,7 +215,9 @@ export function summaryButton(
   if (state.usable) {
     btn.addEventListener('click', (e) => openAiSummary({ rec, anchorKey: o.anchorKey, byKeyboard: e.detail === 0 }));
   } else {
-    control = greyOut(btn, o.anchorKey, greyText(state, 'aiplus.summary'));
+    control = withReason(btn, greyText(state, t('aiplus.summary')));
+    // The pages (Home) lay the wrapper out by this class
+    control.classList.add('aip-tipwrap');
   }
   const tag = o.tag ? naTag(state) : null;
   return tag ? h('span', { class: 'aip-grp-inline' }, control, tag) : control;
@@ -212,5 +227,5 @@ export function summaryButton(
 export function aiTableNote(state: ControlState): HTMLElement | null {
   const tag = naTag(state);
   if (!tag) return null;
-  return h('p', { class: 'aip-tablenote' }, tag, ' ', greyText(state, 'aiplus.summary'));
+  return h('p', { class: 'aip-tablenote' }, tag, ' ', greyText(state, t('aiplus.summary')));
 }

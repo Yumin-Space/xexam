@@ -73,7 +73,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # 先对程序跑 tsc，再对测试文件跑（tsconfig.test.json）
-npm test               # 391 个单元测试：API 客户端（Nginx 的 429 和重试、时间限制、AI 的流和错误码）、
+npm test               # 单元测试：API 客户端（Nginx 的 429 和重试、时间限制、AI 的流和错误码）、
                        # 判分和随机抽题、练习的核对、保存的成绩、语言规则、记录筛选、
                        # 锁定说明和等待时间、导入提醒、系统日志缓冲、题库状态、题库权限、暂存的考试、
                        # 设置缓存、事件流解析、AI 对话的状态、回答的 Markdown、记忆的请求、
@@ -125,6 +125,15 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 6. **状态**：页面之间从不互相 import。共享状态放在 `src/state/store.ts` 里；修改都通过 `src/state/actions.ts` 里的函数（`navigate(route)`、`render()` 等）。只有这个页面需要的状态放在页面模块的变量里。用户离开或进入一个页面时，`onRouteChange()` 会运行代码。
 7. **API**：新的接口要在 `backend/src/api/auth.rs` 的路由表 `ROUTES` 里加一行（谁能用它），在 `src/api/` 里加一个带类型的封装，在 `src/types/api.ts` 里加它的类型，并写进 [api.md](api.md) 和 [openapi.yaml](../en/openapi.yaml)。AI 路由则加进 `ai-service/src/api/mod.rs` 的 `ROUTES`，带它的访问级别。
 
+### 4.4 手机优先的规则（v1.0）
+
+- **一条手机查询。** `PHONE` 是 `(max-width: 600px), (orientation: landscape) and (max-height: 500px)`。它的 TypeScript 常量是 `src/utils/media.ts` 里的 `PHONE_MQ`；每个样式表在自己的 `@media` 块里重复同样的文字，因为 CSS 不能导入常量。两处一起改。同一文件里还有其他的命名查询（`SHORT_LANDSCAPE_MQ`、`BAR_MQ`、`TOUCH_MQ`）。
+- **带文字的图标。** 只显示图标的控件用 `iconButton()` 构建（`src/components/icon-button.ts`，样式在 `src/styles/icon-button.css`）；它的形状来自 `src/components/mini-icons.ts`（`src/domain/mini-icon-shapes.test.ts` 检查这些形状）。文字仍是它的无障碍名称，在触摸屏上以长按提示的形式显示（`src/domain/hold-tip.ts`）。
+- **触摸目标** 至少 44 × 44 px；36 px 的图标可以在视觉上较小，但要有不可见的放大区域。
+- **焦点。** 脚本聚焦的标题或其他非交互元素不显示焦点框（`[tabindex="-1"]:focus`）；真正的控件保留焦点框。
+- **宽度。** 在认为页面完成之前，在 5.1 节的宽度矩阵（竖屏 360、390、412；横屏 740 和 844；平板 768；桌面 1280）下，用 zh、en 和 ja，亮色和暗色检查页面。不要添加会在 360 px 时破版的固定宽度。
+
+
 ## 5. 整栈
 
 ```bash
@@ -150,6 +159,27 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 每个脚本都会打印它的检查项，最后输出 `All N checks passed`。`nginx_check.py` 和 `stack_check.py` 的最后一个参数是它们用的宿主机端口；请选一个你机器上空闲的端口。`stack_check.py` 读取一个可选的 `XEXAM_STACK_COMPOSE`：另一个结构相同的 compose 文件（例如 `docker/docker-compose.build.yml` 的一份副本，换了别的镜像标签和容器名），这样它就能在一个用着通常名字的安装旁边运行；它通过 compose 服务找到容器。`nginx_check.py` 大约要两分半钟，因为有一项检查要为 AI 设置里一次很慢的 **测试** 等 95 秒。`stack_check.py` 会给它的学习提问限速（每个会话 Cookie 大约 3.2 秒一次），因为 Nginx 在突发 10 个之后，每 3 秒才让一个会话开始一个 AI 回答（区域 `aisend`，每分钟 20 个）；这大约多花一分半钟。这些脚本用它们自己写出来的虚构题库；没有一个会碰你的数据。
 
 compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` 以仓库根目录（`..`）为构建上下文。前端镜像从仓库根目录构建。`nginx/Dockerfile` 把三份更新日志复制进它的 Node 构建阶段（`COPY docs/en/changelog.md /docs/en/`，`ja` 和 `zh-CN` 也一样），因为关于页面是从它们构建出来的；出于同样的原因，`.dockerignore` 把 `docs/` 和 README 排除在构建上下文之外，只把这三个文件放回来。最终镜像里只有构建出的静态文件。
+
+### 5.1 手机走查（v1.0）
+
+`tools/phone-walk/walk.py` 会启动它自己的一次性栈（三个镜像用唯一的名字，带自己的卷、`TZ=UTC`、模拟的 AI 桩和 127.0.0.1 上的空闲端口），用 DevTools 协议以手机模拟驱动 Chrome，并把 `report.json` 和截图写入它的 `--out` 文件夹。它只删除自己创建的东西。它需要 Docker、Chrome 或 Chromium，以及 Python 3.8+ 和 `openpyxl`，与截图工具一样（`tools/phone-walk/README.md`）。
+
+```sh
+python tools/phone-walk/walk.py                      # 默认运行：报告和截图写入一个新的临时文件夹
+python tools/phone-walk/walk.py --full               # 整个宽度矩阵上的全部检查（只用于最终检查）
+python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu   # 只这些页面
+python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1 # 按检查编号的子集（审阅者用）
+python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
+python tools/phone-walk/walk.py --keep               # 保持栈运行；打印它的地址和虚构的账户
+python tools/phone-walk/walk.py --keep --lan         # 同上，供家里网络里的手机使用（会先警告）
+python tools/phone-walk/walk.py --out <dir> --chrome <path>
+```
+
+- **宽度矩阵**：竖屏 360×740、390×844 和 412×915；横屏 740×360 和 844×390；平板 768×1024；桌面 1280×800。亮色和暗色主题；先 zh，然后 en 和 ja。
+- **默认运行**：对比度（亮色和暗色，zh，390×844 和 1280×800）；文字适配（写明它的行，用 zh、en 和 ja，亮色）；其他每项检查在 zh、亮色下，用它的行所写的尺寸。`--full` 在整个矩阵上运行全部检查，只用于最终检查。
+- **输出**：`report.json`（每项检查一个条目：编号、页面、状态、用户、尺寸、语言、主题、是否通过、详情、截图），以及名为 `<check>-<page>-<user>-<lang>-<theme>-<w>x<h>.png` 的截图。当 P1 检查失败时退出码为 1。同时运行多次时，每次给一个自己的 `--out` 文件夹。
+- **数据**：只有虚构的账户和题库（`seed_extra.py`、`seed.py`）；它从不连接到其他实例，也从不打印密钥。`--lan` 只用于在自己的手机上短暂试用：局域网里的每台设备都能访问那个栈，直到 Ctrl+C。
+
 
 ## 6. 和旧版对照（回归）
 
@@ -182,7 +212,7 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 | 任务 | 做什么 |
 |---|---|
 | `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）各自最新的条目 = `CODE_VERSION`，三份的 `### vX.Y — 日期` 标题相同、顺序相同；README 里不再有更新日志条目，每份 README 都链接到自己语言的更新日志；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）、`docker/docker-compose.yml` 从 Docker Hub 拉取三个镜像，以及文档检查（第 9 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
-| `frontend` | 类型检查、391 个单元测试、构建 |
+| `frontend` | 类型检查、单元测试、构建 |
 | `backend` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查 |
 | `ai-service` | fmt、clippy、ai-service 的 383 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls` |
 | `stack` | 在 `frontend`、`backend` 和 `ai-service` 之后：构建 `xexam-frontend` 镜像，跑 141 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
@@ -230,8 +260,8 @@ README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 19 张�
 ## 10. 版本、更新日志和许可证
 
 - 仓库根目录的 **`VERSION`** 里有两行 `KEY=VALUE`（以 `#` 开头的行是注释），每行正好出现一次：
-  - `CODE_VERSION`（现在是 `0.9.1`）：这个分支上代码的版本。手动调高它，同时在三份更新日志（`docs/<lang>/changelog.md`）里写条目，并改 `backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json`（像 `0.9` 这样两段的版本号在那里写成 `0.9.0`；还有它们的锁文件）以及 `docs/en/openapi.yaml` 里的 `info.version`。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
-  - `RELEASE_VERSION`（v0.9.1 的发布任务运行之前是 `0.9`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 8.1 节）。单纯的推送或合并从不改变它。
+  - `CODE_VERSION`（现在是 `1.0`）：这个分支上代码的版本。手动调高它，同时在三份更新日志（`docs/<lang>/changelog.md`）里写条目，并改 `backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json`（像 `0.9` 这样两段的版本号在那里写成 `0.9.0`；还有它们的锁文件）以及 `docs/en/openapi.yaml` 里的 `info.version`。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
+  - `RELEASE_VERSION`（v1.0 的发布任务运行之前是 `0.9.1`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 8.1 节）。单纯的推送或合并从不改变它。
 - 每次更新都要在三种语言的更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）最上面加一条，版本号等于 `CODE_VERSION`；三份的条目始终保持一致。CI 会检查这一点。README 里不写条目，只放一个指向更新日志的链接。GitHub Release 的说明取自英语的那一份。
 - 程序的关于页面显示这些更新日志，它们是构建进前端的（第 4 节）。条目请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接在那里显示成普通文字，链接要写成相对于更新日志所在文件夹（`docs/<lang>/`）的路径。修改了的更新日志，要重新构建前端之后才会出现在程序里。
 - 在 `dev` 上开发；`main` 接收合并，推送到 `main` 会发布镜像和 Release。每次发布之后都要拉取 `main` 和 `dev`（第 8.1 节）。

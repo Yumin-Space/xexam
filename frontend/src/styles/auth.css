@@ -5,18 +5,21 @@
 .auth {
   min-height: 100vh; min-height: 100dvh;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
-  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, calc(6px + env(safe-area-inset-bottom))) max(16px, env(safe-area-inset-left));
 }
+/* Owner (v1.0): the card stays in the middle of the free space, the language switch and the GitHub line at the screen bottom */
+.auth > .auth-card, .auth > .auth-foot { margin-top: auto; }
 .auth-card {
   width: 100%; max-width: 400px; padding: 32px 32px 28px;
   background: var(--card); border: 1px solid var(--line-soft); border-radius: 12px; box-shadow: var(--shadow-xs);
 }
-.auth-brand { margin-bottom: 24px; }
-/* v0.8: the app icon is a little bigger on the sign-in page */
-.auth-brand .logo { width: 40px; height: 40px; border-radius: 11px; }
-.auth-card h1 { margin-bottom: 4px; font-size: 22px; font-weight: 700; line-height: 1.3; }
+/* The brand row (v1.0, AU-1): the logo beside the app name and the title, one compact block */
+.auth-head { display: grid; grid-template-columns: auto minmax(0, 1fr); column-gap: 12px; align-items: center; margin-bottom: 14px; }
+.auth-head .auth-logo { grid-row: 1 / span 2; width: 40px; height: 40px; border-radius: 11px; }
+.auth-app { align-self: end; font: 700 13px/1.3 var(--num), var(--en); letter-spacing: .02em; color: var(--ink3); }
+.auth-card h1 { margin: 0; font-size: 22px; font-weight: 700; line-height: 1.3; overflow-wrap: anywhere; }
 .auth-card h1:lang(en) { letter-spacing: -.01em; }
-.auth-lead { margin-bottom: 20px; font-size: 14.5px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.auth-lead { margin-bottom: 16px; font-size: 14.5px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
 .auth-name { font-weight: 600; color: var(--ink); }
 .auth-msg { margin: 0 0 16px; font-size: 14px; line-height: 1.6; }
 .auth-msg p { margin: 0; }
@@ -29,10 +32,15 @@
 /* Under the card: the language of these two pages, and the version */
 .auth-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; font-size: 12.5px; color: var(--ink3); }
 .auth-langs button { min-height: 28px; padding: 2px 10px; font-size: 13px; }
+@media (pointer: coarse) { .auth-langs button { min-height: 44px; padding-inline: 14px; } }
 
 @media (max-width: 480px) {
   /* Phones: the card starts near the top (the keyboard takes the lower half) */
   .auth { justify-content: flex-start; padding-top: max(32px, env(safe-area-inset-top)); }
-  .auth-card { padding: 24px 20px 22px; border-radius: 10px; }
-  .auth-brand { margin-bottom: 20px; }
+  .auth-card { padding: 20px 16px 18px; border-radius: 10px; }
+  .auth-head { margin-bottom: 10px; }
+  .auth-head .auth-logo { width: 32px; height: 32px; border-radius: 9px; }
+  .auth-card h1 { font-size: 20px; }
+  .auth-lead { margin-bottom: 12px; font-size: 14px; }
+  .auth-form { gap: 12px; }
 }

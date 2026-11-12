@@ -1,0 +1,70 @@
+/* The shell's v1.0 rules (spec SH-7, SH-14): the slim top bar of phones that hides on scroll, and the menu that never
+   outgrows the screen. Loaded after main.css, so these refine its .topbar / .nav-pop rules. Colours come from the tokens of
+   main.css only. */
+
+/* The menu: never taller than the room under its button (components/shell.ts fits the exact height), scrolls inside
+   when its list is longer, and a scroll that reaches its end does not move the page behind it */
+.nav-pop {
+  max-height: calc(100dvh - 72px - env(safe-area-inset-bottom));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Scroll shadows: a soft edge at the top / bottom shows there is more to scroll to (--shadow is dark enough to show on
+     the dark card too) */
+  background:
+    linear-gradient(var(--card) 30%, transparent) 0 0 / 100% 24px no-repeat local,
+    linear-gradient(transparent, var(--card) 70%) 0 100% / 100% 24px no-repeat local,
+    linear-gradient(var(--shadow), transparent) 0 0 / 100% 10px no-repeat scroll,
+    linear-gradient(transparent, var(--shadow)) 0 100% / 100% 10px no-repeat scroll,
+    var(--card);
+}
+
+/* The line under the name of a user whose AI+ function an administrator paused (MN-4) */
+.nav-paused { margin: 0; padding: 0 10px 6px 36px; font-size: 12.5px; line-height: 1.4; color: var(--ink3); }
+
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* The bar is 44 px tall (the logo 28 px, the label and the menu button as before), 8 px above the page */
+  .topbar { min-height: 44px; margin-bottom: 8px; }
+  /* On every page except AI Chat it stays at the top of the screen: the safe area is its own padding, so the page
+     above it has none, and it can slide away completely */
+  .main-pin { padding-top: 0; }
+  .topbar-pin {
+    position: sticky; top: 0; z-index: 30; box-sizing: border-box;
+    height: calc(44px + env(safe-area-inset-top)); min-height: 0; padding-top: env(safe-area-inset-top);
+    background: var(--sheet);
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  /* A hairline once the page has moved */
+  .topbar-pin.topbar-scrolled { box-shadow: 0 1px 0 var(--line-soft); }
+  /* Hidden while reading down the page; any upward scroll, an open menu or focus inside it brings it back */
+  .topbar-pin.topbar-hide { transform: translateY(-100%); box-shadow: none; }
+  /* A focused element scrolled into view stays below the bar, which comes back on an upward scroll (WCAG 2.4.11) */
+  html { scroll-padding-top: calc(44px + env(safe-area-inset-top) + 8px); }
+}
+
+@media (orientation: landscape) and (max-height: 500px) { /* SHORT_LANDSCAPE */
+  /* Rows of 40 px with a 4 px gap: the invisible 2 px on each side makes the hit area 44 px without touching the next row */
+  .nav-list { gap: 4px; }
+  .nav-pop .nav-link { position: relative; min-height: 40px; padding-block: 4px; }
+  .nav-pop .nav-link::after { content: ""; position: absolute; inset: -2px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topbar-pin { transition: none; }
+}
+
+/* ---------- The GitHub line (v1.0 footer): [icon] GitHub | Xexam <version>, centered, muted; hover / focus turn it to the main text colour ---------- */
+.gh-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 0 8px; margin: 0; font-size: 12.5px; line-height: 1.6; color: var(--ink3); }
+.gh-link { position: relative; display: inline-flex; align-items: center; gap: 5px; color: var(--ink3); text-decoration: none; border-radius: 4px; transition: color .15s ease; }
+.gh-link:hover, .gh-link:focus-visible { color: var(--ink-hover); }
+.gh-ic { width: 14px; height: 14px; flex: none; color: inherit; }
+.gh-sep { color: var(--ink3); opacity: .6; }
+/* Touch: an invisible tap area of 44 px height without making the line taller */
+@media (pointer: coarse) { .gh-link::after { content: ""; position: absolute; inset: -14px -6px; } }
+@media (prefers-reduced-motion: reduce) { .gh-link { transition: none; } }
+/* Quiz page: the line closes the page under the grid (the pinned bar rests above it) */
+.wrap.qz > .gh-line { margin-top: 12px; }
+.wrap.qz { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+/* Sign-in pages: its own row under the language switch */
+.auth-foot .gh-line { flex-basis: 100%; margin-top: 12px; }
+/* The error and shut-down screens: under their message */
+.solo > .gh-line { margin-top: 24px; }

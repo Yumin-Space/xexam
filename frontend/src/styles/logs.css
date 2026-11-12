@@ -1,26 +1,36 @@
-/* System log page (v0.7): a toolbar (level filter, search, live status with Pause / Resume), the count, then the lines in a
-   monospace list that scrolls inside its own soft frame, with "Jump to latest" floating at its bottom right, and the note on
-   what is kept. Long lines wrap with a hanging indent. Colours come only from the tokens in main.css (light and dark). */
+/* System log page (v0.7, phones first in v1.0): a toolbar (level segments, search, live status with Pause / Resume as an icon),
+   the count with the page's (i) tip, then the lines. Wide screens: the lines scroll inside their own soft frame, with "Jump to
+   latest" at its bottom right. Phones (PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px)): no inner
+   frame, the lines use the page scroll, the toolbar is sticky under the top bar and "Jump to latest" floats at the bottom right.
+   Colours come only from the tokens in main.css (light and dark). */
 
 .page-logs { max-width: 1080px; }
-.lg-lead { margin: -8px 0 20px; max-width: 52em; font-size: 14.5px; line-height: 1.6; color: var(--ink2); }
 
 /* ---------- Toolbar ---------- */
-.lg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; }
-.lg-search { flex: 1 1 14em; min-width: 0; max-width: 28em; min-height: 34px; padding: 4px 10px; font-size: 14px; }
-.lg-run { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+.lg-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.lg-segb { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+.lg-seg-i { width: 14px; height: 14px; flex: none; color: inherit; }
+/* Wide: icons and labels; the counts show on phones (below) */
+.lg-seg-n { display: none; font-variant-numeric: tabular-nums; }
+.lg-searchslot { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 14em; min-width: 0; max-width: 32em; }
+.lg-searchslot > .ibtn[hidden] { display: none; }
+.lg-searchbox { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
+.lg-searchbox[hidden] { display: none; }
+.lg-search { flex: 1 1 auto; min-width: 0; min-height: 34px; padding: 4px 10px; font-size: 16px; }
+.lg-run { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.lg-run-btn { display: inline-flex; }
 .lg-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ink2); white-space: nowrap; }
 .lg-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--print); }
 .lg-status.off { color: var(--ink3); }
 .lg-status.off .lg-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink3); }
-.page-logs .btn.lg-mini { position: relative; min-height: 30px; padding: 3px 12px; font-size: 13px; font-weight: 400; }
-.lg-meta { margin: 12px 0 6px; font-size: 12.5px; color: var(--ink3); }
+.lg-meta { display: flex; align-items: center; gap: 6px; margin: 10px 0 6px; font-size: 12.5px; color: var(--ink3); }
+.lg-info { vertical-align: middle; }
 .page-logs .lg-err { margin: 0 0 10px; font-size: 14px; line-height: 1.6; }
 
-/* ---------- The lines ---------- */
+/* ---------- The lines (wide screens: a framed box) ---------- */
 .lg-wrap { position: relative; }
 .lg-box {
-  height: min(64vh, 720px); min-height: 260px; overflow-y: auto; overscroll-behavior: contain;
+  height: min(64vh, 720px); min-height: 260px; overflow-y: auto; overscroll-behavior-y: auto;
   padding: 6px 0; border-radius: 8px; background: var(--fill);
 }
 .lg-box:focus-visible { outline-offset: 2px; }
@@ -31,37 +41,93 @@
 }
 .lg-line > * { text-indent: 0; }
 .lg-time, .lg-target { color: var(--ink3); }
-/* The level as a small tag (the log's own word: ERROR, WARN, INFO, DEBUG, TRACE) */
-.lg-lv { display: inline-block; min-width: 5.2ch; padding: 0 4px; border-radius: 3px; font-size: 11px; font-weight: 600; line-height: 1.6; text-align: center; vertical-align: 1px; }
+/* The level as a small tag (the log's own word: ERROR, WARN, INFO, DEBUG, TRACE): 12 px, 4.5:1 or better in both themes (LG-5) */
+.lg-lv { display: inline-block; min-width: 5.2ch; padding: 0 4px; border-radius: 3px; font-size: 12px; font-weight: 600; line-height: 1.6; text-align: center; vertical-align: 1px; }
 .lg-lv.lv-error { background: var(--danger-soft); color: var(--danger); }
 .lg-lv.lv-warn { background: var(--mnemo-bg); color: var(--ink); box-shadow: inset 0 0 0 1px var(--mark); }
-.lg-lv.lv-info { background: var(--print-soft); color: var(--print); }
+.lg-lv.lv-info { background: var(--print-soft); color: var(--ink); box-shadow: inset 0 0 0 1px var(--print); }
 .lg-lv.lv-debug, .lg-lv.lv-trace { background: var(--hover-strong); color: var(--ink2); }
 /* An error line gets a soft tint over the whole row, so it is found when scrolling */
 .lg-line.lv-error { background: var(--danger-soft); }
 .lg-gap { margin: 4px 0; padding-block: 3px; text-indent: 0; padding-left: 12px; font-family: inherit; font-size: 12.5px; font-style: italic; color: var(--ink2); border-block: 1px dashed var(--line); }
 .lg-empty { padding: 12px; font-size: 14px; color: var(--ink3); }
-.lg-jump { position: absolute; right: 12px; bottom: 12px; min-height: 32px; padding: 4px 12px; font-size: 13px; box-shadow: var(--shadow-pop); }
+.lg-day { display: none; }
+/* Jump to latest: icon + text at the box's bottom right */
+.lg-jump { position: absolute; right: 12px; bottom: 12px; z-index: 2; border: 1px solid var(--line); background: var(--card); color: var(--ink); box-shadow: var(--shadow-pop); }
 .lg-jump[hidden] { display: none; }
-.lg-note { margin-top: 10px; max-width: 52em; font-size: 13px; line-height: 1.6; color: var(--ink3); overflow-wrap: anywhere; }
-.lg-code { font-family: var(--mono); font-size: .92em; padding: 1px 5px; border-radius: 4px; background: var(--fill); color: var(--ink2); white-space: nowrap; }
+@media (hover: hover) { .lg-jump:hover:not([aria-disabled="true"]) { background: var(--hover-strong); } }
 
-@media (max-width: 720px) {
-  .lg-search { max-width: none; flex-basis: 100%; order: 2; }
-  .lg-run { margin-left: auto; }
+/* ---------- Narrow screens: the segments show counts instead of words ---------- */
+@media (max-width: 480px) {
+  .lg-seg-l { display: none; }
+  .lg-seg-n { display: inline; font-size: 13px; }
+  .lg-seg { flex: 0 1 auto; }
+  .lg-seg button { padding-inline: 8px; }
+  .lg-segb { gap: 4px; }
+  /* The live dot stays; its word is only for screen readers */
+  .lg-status-t { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .lg-run { gap: 4px; }
+  .lg-bar { gap: 6px 8px; }
+  /* An open search field takes the whole next row */
+  .lg-searchslot:has(.lg-searchbox:not([hidden])) { order: 3; flex-basis: 100%; max-width: none; }
+  /* A closed search (only the icon) must not claim a row of its own */
+  .lg-searchslot:not(:has(.lg-searchbox:not([hidden]))) { flex: 0 0 auto; }
 }
 
-@media (max-width: 480px) {
-  /* Phones: the time without the date (the tooltip has it), a slightly smaller face and indent */
-  .lg-date { display: none; }
-  .lg-line, .lg-gap { padding-left: calc(10px + 1.5em); padding-right: 10px; text-indent: -1.5em; font-size: 12px; }
-  .lg-gap { padding-left: 10px; text-indent: 0; }
-  .lg-box { height: 62vh; }
-  .lg-seg { flex: 1 1 auto; }
-  .lg-seg button { flex: 1 1 0; }
+/* ---------- Phones (LG-1, LG-4): no box, the page scrolls; entries as dot + icon, message, last target segment ---------- */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* The toolbar stays in reach under the top bar (or at the top while that is hidden) */
+  .lg-bar {
+    position: sticky; top: max(var(--top-h, 0px), env(safe-area-inset-top, 0px)); z-index: 6;
+    padding: 6px 0; background: var(--card); border-bottom: 1px solid var(--line-soft);
+  }
+  .lg-box { height: auto; min-height: 0; overflow: visible; padding: 0; background: transparent; border-radius: 0; }
+  .lg-list { margin-top: 2px; }
+  .lg-line.lg-phone { padding: 0; text-indent: 0; font: 12px/1.5 var(--mono); }
+  .lg-line.lg-phone + .lg-line.lg-phone { border-top: 1px solid var(--line-soft); }
+  .lg-row {
+    display: flex; align-items: flex-start; gap: 8px; width: 100%; min-height: 44px; padding: 8px 4px; border: 0; border-radius: 0;
+    background: transparent; color: var(--ink); font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .lg-row:focus-visible { outline-offset: -2px; }
+  /* A row focused by the keyboard clears the sticky toolbar too (WCAG 2.4.11): the page's scroll padding (shell.css: the top
+     bar) grows by the toolbar, about 53 px for one row and 99 px with the search field open. Padding, not a scroll margin on
+     the rows: the browser leaves a row it counts as visible where it is, and only the padding is part of that test */
+  html:has(.lg-panel) { scroll-padding-top: calc(44px + env(safe-area-inset-top) + 8px + 56px); }
+  @media (max-width: 480px) { /* only here does the open search field take a second toolbar row */
+    html:has(.lg-searchbox:not([hidden])) { scroll-padding-top: calc(44px + env(safe-area-inset-top) + 8px + 102px); }
+  }
+  /* The level: a coloured dot and (for error, warn, info) a small icon */
+  .lg-ic { display: inline-flex; align-items: center; flex: none; gap: 4px; min-width: 14px; height: 1.5em; color: var(--ink3); }
+  .lg-ic::before { content: ""; width: 6px; height: 6px; flex: none; border-radius: 50%; background: currentColor; }
+  .lg-ic-i { width: 14px; height: 14px; flex: none; color: inherit; }
+  .lv-error .lg-ic { color: var(--danger); }
+  .lv-warn .lg-ic { color: var(--warn); }
+  .lv-info .lg-ic { color: var(--print); }
+  /* The message first, two lines until the entry is opened; the last segment of the target muted at the end */
+  .lg-phone .lg-msg {
+    flex: 1 1 auto; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .lg-phone.open .lg-msg { display: block; -webkit-line-clamp: unset; overflow: visible; }
+  .lg-tail { flex: none; max-width: 30%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink3); }
+  /* Opened: the full time and target under the message */
+  .lg-detail { display: flex; flex-direction: column; gap: 2px; padding: 0 4px 8px 30px; font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
+  .lg-detail[hidden] { display: none; }
+  /* A new day */
+  .lg-day { display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 4px 4px; font: 600 12px/1.4 var(--mono); color: var(--ink2); }
+  .lg-day::before, .lg-day::after { content: ""; flex: 1; height: 1px; background: var(--line-soft); }
+  .lg-gap { padding-left: 4px; }
+  /* Jump to latest: a round 44 px button at the bottom right, above the safe area */
+  .lg-jump {
+    position: fixed; right: max(12px, env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom)); width: 44px; height: 44px;
+    border-radius: 50%;
+  }
 }
 
 @media (pointer: coarse), (max-width: 480px) {
-  .page-logs .btn.lg-mini { min-height: 36px; }
-  .lg-search { min-height: 40px; font-size: 16px; }
+  .lg-search { min-height: 40px; }
+  .lg-segb { min-width: 44px; }
+  /* The (i) tip's 44 px tap area stays inside its own row */
+  .lg-meta { min-height: 44px; margin: 0; }
 }

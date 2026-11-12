@@ -2,6 +2,11 @@
    Colours come only from the tokens in main.css, so light and dark themes both work.
    Look: soft blocks on the sheet, rows split by hairlines inside a block, soft hover fills, small tags (see main.css). */
 
+/* Moved from main.css (W0 of v1.0): the .home-grid part of its 880px rule */
+@media (max-width: 880px) {
+  .home-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 .home-grid { display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 16px; align-items: start; }
 .home-main, .home-side { display: grid; gap: 16px; align-content: start; min-width: 0; }
 /* The columns space their blocks with `gap`; drop the shared stacking margins */
@@ -203,12 +208,11 @@
 }
 
 /* Phones: the "questions from" choice and the "select all / clear" buttons stay on the row of their heading.
-   Tighter chips; English and Japanese show the icon and the count only (their words are longer; the name stays for
-   screen readers and in the tooltip), Chinese keeps its two-character words, which fit. */
+   Tighter chips; every language keeps its word next to the count ("All 51", "Wrong 13", HM-3): English and Japanese use
+   the short word, and the switch wraps under the title when there is no room. */
 @media (max-width: 480px) {
   .home-setup-head { gap: 6px 8px; }
   .mseg { gap: 4px; padding: 2px 8px 2px 7px; }
-  html:not(:lang(zh-CN)) .mseg .mseg-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .home-pickacts .btn.quiet { padding-inline: 8px; }
 }
 
@@ -222,3 +226,93 @@
 
 /* ---------- Latest result: the AI summary button sits between the two links (v0.9); its tag stays on the same line ---------- */
 .home-latest .acts { align-items: center; }
+
+/* ---------- Questions from: the short word of the wrong-answer choice (HM-3) ---------- */
+.mseg .hm-short { display: none; }
+@media (max-width: 480px) {
+  .mseg .hm-full { display: none; }
+  .mseg .hm-short { display: inline; }
+}
+
+/* ---------- Latest result: one row of equal cells (HM-2) ---------- */
+.home-latest { container-type: inline-size; }
+.home-latest .acts.home-latest-acts {
+  display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 6px; align-items: stretch;
+}
+.home-latest-acts > .btn, .home-latest-acts .home-cell > * { min-width: 0; }
+.home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn {
+  width: 100%; justify-content: center; text-align: center; padding-inline: 8px; line-height: 1.3;
+}
+.home-latest-acts .home-cell { display: flex; min-width: 0; }
+.home-latest-acts .home-cell > .aip-tipwrap, .home-latest-acts .home-cell > .aip-grp-inline { display: flex; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
+.home-latest-acts .home-cell .aip-sum-btn { flex: 1 1 auto; white-space: normal; }
+.home-latest-acts .hm-fwd { width: 14px; height: 14px; flex: none; }
+.home-latest-acts .hm-short, .home-latest-acts .hm-ai-na { display: none; }
+@media (pointer: coarse), (max-width: 480px) {
+  .home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn { min-height: 44px; }
+}
+/* Narrow cards (by the card's own width, not the viewport: a side card is narrow on a tablet and a sideways phone too):
+   14px labels, the page name instead of "All study records", and for a greyed AI summary the tag in place of the label
+   ("✦ 无法使用"); the tag after the button goes. No label ever breaks inside a word. */
+.home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn { overflow-wrap: normal; word-break: keep-all; }
+@container (max-width: 400px) {
+  .home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn { font-size: 14px; gap: 4px; padding-inline: 6px; min-height: 44px; }
+}
+/* The short forms (HM-2) only on a phone (480 px or less) or in a really narrow card; wider screens show "All study records" */
+@media (max-width: 480px) {
+  .home-latest-acts .hm-full { display: none; }
+  .home-latest-acts .hm-short { display: inline; }
+  .home-latest-acts .hm-ai-lbl { display: none; }
+  .home-latest-acts .hm-ai-na { display: inline-block; margin: 0; }
+  .home-latest-acts .home-cell .aip-grp-inline > .aip-na { display: none; }
+}
+@container (max-width: 340px) {
+  .home-latest-acts .hm-full { display: none; }
+  .home-latest-acts .hm-short { display: inline; }
+  .home-latest-acts .hm-ai-lbl { display: none; }
+  .home-latest-acts .hm-ai-na { display: inline-block; margin: 0; }
+  .home-latest-acts .home-cell .aip-grp-inline > .aip-na { display: none; }
+}
+@container (max-width: 330px) {
+  .home-latest .acts.home-latest-acts { gap: 3px; }
+  .home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn { font-size: 13px; gap: 3px; padding-inline: 4px; }
+}
+/* The side card of a sideways phone (about 290 px): "✦ AI summary" still on one line */
+@container (max-width: 300px) {
+  .home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn { font-size: 12.5px; padding-inline: 2px; }
+  .home-latest-acts .aip-sum-btn .aip-mi { width: 14px; height: 14px; }
+}
+
+/* ---------- Phone: the start bar still runs edge to edge (HM-1) ----------
+   SH-1 makes .panel 14px 12px under PHONE, so the bar's negative margins cancel that padding. The bar's own padding is
+   untouched. */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .home-go { margin: 0 -12px -14px; }
+}
+
+/* HM-4: the review count inside the sub line of a bank / sheet row; HM-5: the notebook figure as a link; HM-6: one-line resume card */
+.nbwrong { color: var(--answer-wrong); }
+/* Every bank row has the same two-line structure: the name on its own line, the sub line under it (a short name never pulls
+   the sub line up beside it) */
+.page-home .home-bankrow .grow > .name { flex-basis: 100%; }
+/* Discard is red text (it throws the saved answers away; the confirm dialog stays) */
+.home-resume .rs-acts .btn.quiet { color: var(--danger); }
+a.home-fig { color: inherit; text-decoration: none; }
+a.home-fig:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+@media (hover: hover) { a.home-fig:hover { filter: brightness(.97); } }
+.home-resume .rs-text { flex: 1 1 12em; }
+.home-resume .rs-head { flex-wrap: nowrap; align-items: baseline; gap: 0 8px; }
+.home-resume .rs-head h2 { white-space: nowrap; }
+.home-resume .rs-where { color: var(--ink2); font-size: 13.5px; white-space: nowrap; }
+
+/* Short landscape (a phone held sideways): the pinned start bar is one slim row (Start buttons, the scope text, count and
+   shuffle), so the bank list keeps most of the 320-430 px high screen */
+@media (orientation: landscape) and (max-height: 500px) {
+  .home-go { flex-wrap: nowrap; gap: 6px 12px; padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .home-go-btns { flex-wrap: nowrap; gap: 6px; }
+  .home-go-btns .btn.big { padding-inline: 14px; font-size: 15px; white-space: nowrap; }
+  .home-scope { flex: 1 1 0; font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
+  .home-go-opts { flex-wrap: nowrap; gap: 4px 10px; font-size: 13px; }
+  .home-count, .home-shuffle { gap: 6px; }
+  .home-count input { width: 52px; padding-inline: 6px; font-size: 14px; }
+}

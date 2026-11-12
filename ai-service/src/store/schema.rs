@@ -1,13 +1,13 @@
-//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 3: the tables of
-//! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` and `V3_COLUMNS` and the indexes of `V3_INDEXES`,
-//! added by the same additive steps on every path (new file, upgrade from 1, upgrade from 2), so `sqlite_master` is the
-//! same either way.
+//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 4: the tables of
+//! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS`, `V3_COLUMNS` and `V4_COLUMNS` and the indexes of
+//! `V3_INDEXES`, added by the same additive steps on every path (new file, upgrade from 1, 2 or 3), so `sqlite_master`
+//! is the same either way.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "3";
+pub const SCHEMA_VERSION: &str = "4";
 
 /// The schema versions upgraded by this version (after a backup copy).
-pub const UPGRADABLE: [&str; 2] = ["1", "2"];
+pub const UPGRADABLE: [&str; 3] = ["1", "2", "3"];
 
 /// Columns added by schema v2 (each only when `pragma_table_info` lacks it): (table, column, column definition).
 pub const V2_COLUMNS: [(&str, &str, &str); 4] = [
@@ -76,6 +76,37 @@ pub const V3_COLUMNS: [(&str, &str, &str); 12] = [
         "purpose TEXT CHECK (purpose IS NULL OR purpose IN ('hint', 'explain', 'summary'))",
     ),
 ];
+
+/// Columns added by AI schema 4 (the ranges equal `limits::DEFS`): the per-user caps on AI model calls and the answer
+/// length in characters. The retired `limits.message_chars` column (version 1) stays in the table, unused.
+pub const V4_COLUMNS: [(&str, &str, &str); 4] = [
+    (
+        "limits",
+        "calls_per_minute",
+        "calls_per_minute INTEGER NOT NULL DEFAULT 5 CHECK (calls_per_minute BETWEEN 1 AND 100)",
+    ),
+    (
+        "limits",
+        "calls_per_hour",
+        "calls_per_hour INTEGER NOT NULL DEFAULT 20 CHECK (calls_per_hour BETWEEN 1 AND 2000)",
+    ),
+    (
+        "limits",
+        "calls_per_day",
+        "calls_per_day INTEGER NOT NULL DEFAULT 100 CHECK (calls_per_day BETWEEN 1 AND 20000)",
+    ),
+    (
+        "limits",
+        "reply_max_chars",
+        "reply_max_chars INTEGER NOT NULL DEFAULT 1000 CHECK (reply_max_chars BETWEEN 1 AND 16000)",
+    ),
+];
+
+/// Run once in the transaction that creates schema 4 or upgrades to it (never on a later start): the memory length
+/// default moved from 300 (v0.8 / v0.9) to 200. Only the old default moves; any other value an administrator chose
+/// stays. The version-1 `SCHEMA` text keeps its `DEFAULT 300` (it is never edited).
+pub const V4_MEMORY_DEFAULT: &str =
+    "UPDATE limits SET memory_chars = 200 WHERE id = 1 AND memory_chars = 300";
 
 /// Indexes added by AI schema 3 (all `IF NOT EXISTS`; they need the columns of `V3_COLUMNS`).
 pub const V3_INDEXES: &str = "

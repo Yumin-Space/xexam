@@ -5,9 +5,11 @@
 //     switch. The switch starts at the question language from the settings and changes only that card: its question text,
 //     options, explanation and memory aid. Languages the question lacks are greyed out. (It replaces the old separate
 //     "Chinese translation" fold.)
-//   · reviewBlock(): the correct / wrong strip, the "wrong only / all" switch and the list of review items.
+//   · reviewParts() / reviewBlock(): the correct / wrong strip (collapsed to a summary row on phones), the "wrong only / all"
+//     switch and the list of review items; reviewParts() also gives `jump(i)` (scrolls card i below the pinned top bar).
 //   · answerReview() / explainBlocks(): the answer part and the explanation part of a card, for the practice page.
 // Question content is shown with the lang attribute of the language it is in; every label goes through the "result.*" catalog.
+import '../styles/review.css';
 import '../styles/records.css';
 import { aiControls } from '../domain/ai-plus.ts';
 import { inNotebook, masterStreakOf, stateOf, type Answer } from '../domain/grading.ts';
@@ -16,11 +18,13 @@ import { t, tn, type MsgKey } from '../i18n/index.ts';
 import { onRouteChange } from '../state/actions.ts';
 import { S } from '../state/store.ts';
 import type { Question } from '../types/api.ts';
-import { h, paras, svgMark, type Child } from '../utils/dom.ts';
-import { reanchorAiPop } from './ai-pop.ts';
-import { aiPlusNow, naTag, pheadRight, studyButton, studyIcon, studyState, type StudyTarget } from './ai-plus-controls.ts';
+import { h, paras, scrollToY, svgMark, type Child } from '../utils/dom.ts';
+import { toast } from '../utils/toast.ts';
+import { reanchorAiPanel } from './ai-panel.ts';
+import { aiPlusNow, studyDock, studyState, type StudyTarget } from './ai-plus-controls.ts';
 import { bankName, kindLabel } from './common.ts';
 import { langSwitch } from './lang-switch.ts';
+import { miniIcon } from './mini-icons.ts';
 
 export interface ReviewEntry {
   q: Question;
@@ -78,12 +82,23 @@ function withEl(text: string, name: string, el: HTMLElement): Child[] {
   return [text.slice(0, i), el, text.slice(i + mark.length)];
 }
 
-/** "Answered 5 times so far (2 wrong); still in the wrong-answer notebook." */
+/**
+ * "Answered 5 times so far (2 wrong); still in the wrong-answer notebook." as one chip row "↻ 5 · ✗ 2 · Notebook" (RS-5).
+ * The full sentence is the accessible name and what a tap shows (phones have no hover tip).
+ */
 function statsLine(q: Question): HTMLElement | null {
   const st = S.progress?.questions?.[q.id];
   if (!st) return null;
-  const key: MsgKey = inNotebook(st, masterStreakOf(S.progress)) ? 'result.stats.inNotebook' : st.wrong ? 'result.stats.left' : 'result.stats';
-  return h('p', { class: 'stats' }, tn(key, st.attempts, { wrong: st.wrong }));
+  const inBook = inNotebook(st, masterStreakOf(S.progress));
+  const key: MsgKey = inBook ? 'result.stats.inNotebook' : st.wrong ? 'result.stats.left' : 'result.stats';
+  const sentence = tn(key, st.attempts, { wrong: st.wrong });
+  const tail = inBook ? t('result.stats.chipNotebook') : st.wrong ? t('result.stats.chipLeft') : null;
+  const chip = (cls: string, text: string | number): HTMLElement => h('span', { class: 'stat-chip ' + cls, 'aria-hidden': 'true' }, text);
+  return h('p', { class: 'stats' },
+    h('button', { class: 'stats-chips', type: 'button', 'aria-label': sentence, title: sentence, onclick: () => toast(sentence) },
+      chip('att', '↻ ' + st.attempts),
+      chip('wr', '✗ ' + st.wrong),
+      tail ? chip('nb', tail) : null));
 }
 
 function choiceBody(q: Question, view: Shown, mine: string[] | null): HTMLElement {
@@ -204,54 +219,76 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
       cardLang.set(q.id, l);
       draw(l, true);
     });
-    // v0.9: the AI analysis control of the card (AI+ accounts only): the book icon in the header, the AI 解析 button at the
-    // right of the answer line. Its question language is the one the card shows now.
-    let head: HTMLElement = sw;
-    let answerLine: HTMLElement = verdict;
+    // v1.0, AI+ accounts only: ONE AI+ dock per card, right under the answer line (spec 2.4). The panel fills it with its
+    // collapsed bar (or the live panel); the dock holds nothing but that bar, so the head carries only the language switch.
+    let dock: HTMLElement | null = null;
     if (opts.ai && aiPlusNow().show) {
       const target: StudyTarget = {
         page: opts.ai.page, mode: opts.ai.mode, key: opts.ai.key, startedAt: opts.ai.startedAt, recordId: opts.ai.recordId,
         questionId: q.id, no: opts.no, qlang: () => shown(q, cardLang.get(q.id) ?? S.settings.questionLang).lang,
       };
       const spec = aiControls(opts.ai.page)[0];
-      if (spec) {
-        const state = studyState(target);
-        head = pheadRight([studyIcon(target, spec, state)], naTag(state), sw);
-        answerLine = h('div', { class: 'verdict-row' }, verdict, studyButton(target, spec, state, { bar: false }));
-      }
+      if (spec) dock = studyDock(target, spec, studyState(target));
     }
     paper.replaceChildren(
       h('div', { class: 'phead' },
-        h('b', { class: 'num' }, t('result.q.no', { n: opts.no })),
+        h('b', { class: 'num' },
+          h('span', { class: 'rv-no-full' }, t('result.q.no', { n: opts.no })),
+          h('span', { class: 'rv-no-short', 'aria-hidden': 'true' }, t('result.q.noShort', { n: opts.no }))),
         status,
-        h('span', { class: 'badge' }, kindLabel(q)),
+        h('span', { class: 'badge rv-kind', title: kindLabel(q) },
+          h('span', { class: 'rv-kind-full' }, kindLabel(q)),
+          h('span', { class: 'rv-kind-short', 'aria-hidden': 'true' }, t(q.kind === 'hotspot' ? 'result.kind.hotspot.short' : q.kind === 'multi' ? 'result.kind.multi.short' : 'result.kind.single.short'))),
         opts.retired ? h('span', { class: 'badge retired' }, t('result.q.retired')) : null,
-        h('span', { class: 'rv-src' }, source),
-        head),
+        sw),
+      h('p', { class: 'rv-src', title: source }, source),
       ...[
         opts.retired ? h('p', { class: 'rv-retired' }, t('result.q.retiredHint')) : null,
         h('div', { class: 'stem' }, paras(view.stem, undefined, htmlLang(view.lang))),
         body,
-        answerLine,
+        verdict,
+        dock,
         ...explainBlocks(q, view.lang),
         stats,
       ].filter((x): x is HTMLElement => !!x));
     // Switching redraws the card: the focus goes back to the pressed button instead of being lost
     if (focusSwitch) sw.querySelector<HTMLElement>('[aria-pressed="true"]')?.focus({ preventScroll: true });
-    // The redraw replaced the opener of an open popover: it follows the new one
-    if (opts.ai) reanchorAiPop();
+    // The redraw replaced the dock of an open panel: the panel follows the new one
+    if (opts.ai) reanchorAiPanel();
   };
   draw(cardLang.get(q.id) ?? S.settings.questionLang, false);
 
   return h('article', { class: 'rv' + (showMine && e.correct ? ' good' : ''), tabindex: '-1', 'aria-label': t('result.q.no', { n: opts.no }) }, paper);
 }
 
+/** What reviewParts() returns: the three elements in display order, the strip alone, and the jump to one card. */
+export interface ReviewParts {
+  els: HTMLElement[];
+  strip: HTMLElement;
+  /** Scrolls card `i` into view below the pinned top bar (`--top-h`), shows it first when the filter hides it, and moves focus to it. */
+  jump: (i: number) => void;
+}
+
+/** The pinned top height of the page (px), written to :root as `--top-h` by the page that owns the pinned row (spec 2.12 e) */
+function topInset(): number {
+  try {
+    const v = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h'));
+    return Number.isFinite(v) ? v : 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** Gap kept between the pinned top bar and a card after a jump (px) */
+const JUMP_GAP = 12;
+
 /**
  * The review part of a result: a strip with one button per question (jumps to it), a heading with the
  * "wrong only / all" switch, and the list. Rendered items are kept, so switching does not rebuild them.
- * Returns the three elements in display order.
+ * The strip is wrapped with a toggle that only phones show (RS-2): collapsed to "wrong 3 · correct 11" there, every key
+ * on wider screens. The same DOM at every width; CSS decides.
  */
-export function reviewBlock(rows: readonly ReviewRow[], filter: { get: () => ReviewFilter; set: (f: ReviewFilter) => void }): HTMLElement[] {
+export function reviewParts(rows: readonly ReviewRow[], filter: { get: () => ReviewFilter; set: (f: ReviewFilter) => void }): ReviewParts {
   const total = rows.length;
   const wrong = rows.filter((r) => !r.correct).length;
   const built = new Map<number, HTMLElement>();
@@ -289,19 +326,35 @@ export function reviewBlock(rows: readonly ReviewRow[], filter: { get: () => Rev
   const jump = (i: number): void => {
     if (filter.get() === 'wrong' && rows[i]?.correct) setFilter('all');
     const el = itemEl(i);
-    el.scrollIntoView({ block: 'start' });
+    const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    scrollToY(Math.max(0, el.getBoundingClientRect().top + window.scrollY - topInset() - JUMP_GAP), !reduce);
     el.focus({ preventScroll: true });
   };
-  const strip = h('div', { class: 'strip', role: 'group', 'aria-label': t('result.strip.label') }, rows.map((r, i) => h('button', {
+  const keys = h('div', { class: 'strip', id: 'rv-strip', role: 'group', 'aria-label': t('result.strip.label') }, rows.map((r, i) => h('button', {
     class: r.correct ? 'ok' : 'ng',
     type: 'button',
     'aria-label': t('result.strip.item', { n: i + 1, verdict: r.correct ? t('result.q.correct') : t('result.q.wrong') }),
     onclick: () => jump(i),
   }, h('span', { class: 'n' }, i + 1), svgMark(r.correct))));
 
+  // Phones: the keys start folded behind one summary row (RS-2); a tap on the row toggles them
+  const toggle = h('button', { class: 'strip-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'rv-strip' },
+    h('span', { class: 'strip-sum' }, t('result.strip.summary', { wrong, good: total - wrong })),
+    miniIcon('chevDown', 'strip-chev'));
+  const strip = h('div', { class: 'strip-wrap' }, toggle, keys);
+  toggle.addEventListener('click', () => {
+    const open = strip.classList.toggle('open');
+    toggle.setAttribute('aria-expanded', String(open));
+  });
+
   const head = h('div', { class: 'rvhead' },
     h('h2', null, t('result.review.heading')),
     h('div', { class: 'seg', role: 'group', 'aria-label': t('result.review.filter') }, segW, segA));
 
-  return [strip, head, list];
+  return { els: [strip, head, list], strip, jump };
+}
+
+/** reviewParts(...).els: the strip, the heading row and the list (kept for the records page) */
+export function reviewBlock(rows: readonly ReviewRow[], filter: { get: () => ReviewFilter; set: (f: ReviewFilter) => void }): HTMLElement[] {
+  return reviewParts(rows, filter).els;
 }

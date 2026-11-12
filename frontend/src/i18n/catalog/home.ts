@@ -16,6 +16,7 @@ export default defineCatalog({
     'home.resume.title': 'Unfinished exam',
     'home.resume.titlePractice': 'Unfinished practice',
     'home.resume.lead': 'Saved in this browser only',
+    'home.resume.pos': 'Question {i}/{n}',
     'home.resume.progress': '{answered} of {total} answered · {time}',
     'home.resume.progressPractice': '{checked} of {total} checked · {time}',
     'home.resume.dropped': '{n} questions of this exam are no longer in the question banks and will be skipped.',
@@ -50,6 +51,8 @@ export default defineCatalog({
     'home.mode.legend': 'Questions from',
     'home.mode.allShort': 'All',
     'home.mode.weakShort': 'Wrong answers',
+    // Phone form next to the count ("Wrong 13"), shown at 480 px and below
+    'home.mode.weakPhone': 'Wrong',
     'home.mode.allSub': 'Every question in the selected sheets',
     'home.mode.weakSub': '{n} questions to review in the selected sheets. A question leaves the notebook after {k} correct answers in a row.',
     'home.mode.weakSub_one': '{n} question to review in the selected sheets. A question leaves the notebook after {k} correct answers in a row.',
@@ -84,6 +87,8 @@ export default defineCatalog({
     'home.latest.correct': '{correct} of {total} correct',
     'home.latest.view': 'View details',
     'home.latest.all': 'All study records',
+    // Short form of the third action (the name of the page it opens), shown on phones
+    'home.latest.allShort': 'Records',
     'home.latest.empty': 'Nothing yet. When you finish an exam or a practice, its result appears here.',
 
     // Overview
@@ -95,6 +100,7 @@ export default defineCatalog({
     'home.overview.retired': '{n} retired questions are not counted.',
     'home.overview.retired_one': '{n} retired question is not counted.',
     'home.overview.review': 'Review wrong answers',
+    'home.overview.reviewN': 'Review wrong answers ({n})',
   },
   zh: {
     'home.title': '主页',
@@ -108,6 +114,7 @@ export default defineCatalog({
     'home.resume.title': '没交卷的考试',
     'home.resume.titlePractice': '没做完的练习',
     'home.resume.lead': '只保存在这个浏览器里',
+    'home.resume.pos': '第 {i}/{n} 题',
     'home.resume.progress': '已答 {answered} / {total} 题 · 用时 {time}',
     'home.resume.progressPractice': '已核对 {checked} / {total} 题 · 用时 {time}',
     'home.resume.dropped': '这场考试里有 {n} 题已经不在题库里，继续作答时会跳过。',
@@ -137,6 +144,7 @@ export default defineCatalog({
     'home.mode.legend': '从哪里出题',
     'home.mode.allShort': '全部',
     'home.mode.weakShort': '错题本',
+    'home.mode.weakPhone': '错题本',
     'home.mode.allSub': '按所选工作表出题',
     'home.mode.weakSub': '所选工作表里有 {n} 题待巩固，连续答对 {k} 次后移出错题本。',
     'home.mode.weakEmpty': '还没有错题，先考一轮。答错的题会自动收进错题本。',
@@ -167,6 +175,7 @@ export default defineCatalog({
     'home.latest.correct': '答对 {correct} / {total} 题',
     'home.latest.view': '查看详情',
     'home.latest.all': '全部学习记录',
+    'home.latest.allShort': '学习记录',
     'home.latest.empty': '还没有记录。考完一场或练完一次，成绩会出现在这里。',
 
     'home.overview.title': '概况',
@@ -176,6 +185,7 @@ export default defineCatalog({
     'home.overview.notebook': '错题本',
     'home.overview.retired': '另有 {n} 题已下架，未计入。',
     'home.overview.review': '复习错题',
+    'home.overview.reviewN': '复习错题（{n}）',
   },
   ja: {
     'home.title': 'ホーム',
@@ -189,6 +199,7 @@ export default defineCatalog({
     'home.resume.title': '未提出の試験',
     'home.resume.titlePractice': '未完了の練習',
     'home.resume.lead': 'このブラウザにだけ保存',
+    'home.resume.pos': '{i}/{n} 問目',
     'home.resume.progress': '{answered} / {total} 問回答 · {time}',
     'home.resume.progressPractice': '{checked} / {total} 問答え合わせ済み · {time}',
     'home.resume.dropped': 'この試験のうち {n} 問は問題集からなくなっているため、続きから回答するときはスキップされます。',
@@ -218,6 +229,7 @@ export default defineCatalog({
     'home.mode.legend': '出題範囲',
     'home.mode.allShort': 'すべて',
     'home.mode.weakShort': '間違いノート',
+    'home.mode.weakPhone': '間違い',
     'home.mode.allSub': '選んだシートのすべての問題から出題します',
     'home.mode.weakSub': '選んだシートに要復習の問題が {n} 問あります。{k} 回続けて正解するとノートから外れます。',
     'home.mode.weakEmpty': 'まだ空です。間違えた問題はここに自動で集まるので、まずは一度試験を受けてみましょう。',
@@ -248,6 +260,7 @@ export default defineCatalog({
     'home.latest.correct': '{total} 問中 {correct} 問正解',
     'home.latest.view': '詳細を見る',
     'home.latest.all': 'すべての学習記録',
+    'home.latest.allShort': '学習記録',
     'home.latest.empty': 'まだ記録がありません。試験や練習を終えると、結果がここに表示されます。',
 
     'home.overview.title': '概要',
@@ -257,5 +270,6 @@ export default defineCatalog({
     'home.overview.notebook': '間違いノート',
     'home.overview.retired': 'ほかに出題停止中の問題が {n} 問あります（上の数には含みません）。',
     'home.overview.review': '間違えた問題を復習',
+    'home.overview.reviewN': '間違えた問題を復習（{n}）',
   },
 });

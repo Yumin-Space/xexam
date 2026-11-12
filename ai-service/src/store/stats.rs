@@ -169,9 +169,9 @@ pub fn user_counts(c: &Connection, user: i64) -> rusqlite::Result<UserCounts> {
         "SELECT (SELECT COUNT(*) FROM chats WHERE user_id = ?1),
                 (SELECT COUNT(*) FROM messages m JOIN chats c ON c.id = m.chat_id WHERE c.user_id = ?1),
                 (SELECT COUNT(*) FROM memories WHERE user_id = ?1),
-                (SELECT MAX(at) FROM usage WHERE user_id = ?1),
-                (SELECT COALESCE(SUM(tokens_in), 0) FROM usage WHERE user_id = ?1),
-                (SELECT COALESCE(SUM(tokens_out), 0) FROM usage WHERE user_id = ?1)",
+                u.last_at, u.tin, u.tout
+         FROM (SELECT MAX(at) AS last_at, COALESCE(SUM(tokens_in), 0) AS tin, COALESCE(SUM(tokens_out), 0) AS tout
+               FROM usage WHERE user_id = ?1) u",
         [user],
         |r| {
             Ok(UserCounts {
@@ -184,6 +184,55 @@ pub fn user_counts(c: &Connection, user: i64) -> rusqlite::Result<UserCounts> {
             })
         },
     )
+}
+
+/// The usage kinds that count as an AI model call for the per-user caps (as an SQL list); the administrator's connection
+/// test (`verify`) and model detection (`models`) are not counted. One constant for every counting query.
+pub const COUNTED_KINDS: &str = "('chat', 'memory')";
+
+/// The bounds of a counting read: `(earliest start any window still needs, first calendar day to scan)`. The earliest
+/// start is the hour window's edge (`now - 3599`) or today's 0:00, whichever is earlier; the day scan begins one calendar
+/// day before it, so rows written under another time zone (a date up to one day off) are still found. The date only
+/// narrows the index range; the exact filter is the start time.
+fn count_bounds(now: i64, day_start: i64) -> (i64, String) {
+    let earliest = (now - 3599).min(day_start);
+    (earliest, crate::util::local_date(earliest - 86400))
+}
+
+/// Start times (unix s) of one user's counted calls (kinds in [`COUNTED_KINDS`], whatever their status) that any cap
+/// window can still need: `at - latency_ms / 1000 >= min(now - 3599, day_start)`. Callers sort them into the windows with
+/// `quota::check`. Reads an index range of `idx_usage_user` (about one to two days of that user's rows).
+pub fn recent_starts(
+    c: &Connection,
+    user: i64,
+    now: i64,
+    day_start: i64,
+) -> rusqlite::Result<Vec<i64>> {
+    let (earliest, from_day) = count_bounds(now, day_start);
+    let mut st = c.prepare(&format!(
+        "SELECT at - latency_ms / 1000 FROM usage
+         WHERE user_id = ?1 AND day >= ?2 AND kind IN {COUNTED_KINDS}
+           AND at - latency_ms / 1000 >= ?3"
+    ))?;
+    let rows = st.query_map(params![user, from_day, earliest], |r| r.get(0))?;
+    rows.collect()
+}
+
+/// [`recent_starts`] for every user at once: `(user id, start)` pairs, rows without a user excluded. The unary `+` on
+/// `user_id` keeps the planner on `idx_usage_day`; never a `GROUP BY user_id` over `usage` (it walks the whole index).
+pub fn recent_starts_all(
+    c: &Connection,
+    now: i64,
+    day_start: i64,
+) -> rusqlite::Result<Vec<(i64, i64)>> {
+    let (earliest, from_day) = count_bounds(now, day_start);
+    let mut st = c.prepare(&format!(
+        "SELECT user_id, at - latency_ms / 1000 FROM usage
+         WHERE day >= ?1 AND kind IN {COUNTED_KINDS} AND +user_id IS NOT NULL
+           AND at - latency_ms / 1000 >= ?2"
+    ))?;
+    let rows = st.query_map(params![from_day, earliest], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    rows.collect()
 }
 
 /// Inserts an audit line into the outbox; returns its id.
@@ -238,4 +287,269 @@ pub fn sweep_tasks(c: &Connection, cutoff: i64) -> rusqlite::Result<usize> {
         "DELETE FROM tasks WHERE state IN ('done', 'failed', 'cancelled') AND updated_at < ?1",
         [cutoff],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::JournalMode;
+    use crate::store::Store;
+
+    const NOW: i64 = 1_700_000_000;
+
+    fn store() -> (tempfile::TempDir, Store) {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = Store::open(dir.path(), JournalMode::Delete).expect("store");
+        (dir, store)
+    }
+
+    fn add_user(c: &Connection, id: i64) {
+        c.execute(
+            "INSERT INTO users (id, stamp, username, first_seen_at, last_seen_at) VALUES (?1, ?2, ?3, 1, 1)",
+            params![id, format!("{id:032x}"), format!("user{id}")],
+        )
+        .expect("user");
+    }
+
+    /// Inserts a usage row that started at `start` and took `latency_s` seconds (so `at = start + latency_s`; the
+    /// millisecond part is 999 to prove the integer division).
+    fn add_call(c: &Connection, user: Option<i64>, kind: &'static str, start: i64, latency_s: i64) {
+        add_call_day(c, user, kind, start, latency_s, None);
+    }
+
+    fn add_call_day(
+        c: &Connection,
+        user: Option<i64>,
+        kind: &'static str,
+        start: i64,
+        latency_s: i64,
+        day: Option<&str>,
+    ) {
+        insert_usage(
+            c,
+            &UsageRow {
+                user_id: user,
+                at: start + latency_s,
+                kind,
+                provider: "openai",
+                model: "demo-model".into(),
+                tokens_in: None,
+                tokens_out: None,
+                tokens_cached: None,
+                latency_ms: latency_s * 1000 + 999,
+                first_byte_ms: None,
+                status: "ok",
+                error_code: None,
+            },
+        )
+        .expect("usage");
+        if let Some(d) = day {
+            c.execute(
+                "UPDATE usage SET day = ?1 WHERE id = last_insert_rowid()",
+                [d],
+            )
+            .expect("day");
+        }
+    }
+
+    fn sorted(mut v: Vec<i64>) -> Vec<i64> {
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn recent_starts_bound_is_the_earlier_of_the_hour_edge_and_today() {
+        let (_d, store) = store();
+        store
+            .write(|tx| {
+                add_user(tx, 1);
+                add_call(tx, Some(1), "chat", NOW - 3599, 5);
+                add_call(tx, Some(1), "chat", NOW - 3600, 5);
+                Ok::<_, rusqlite::Error>(())
+            })
+            .expect("rows");
+        // just after 0:00 (day_start = now - 600): the hour edge is the earlier bound
+        let got = store
+            .read(|c| recent_starts(c, 1, NOW, NOW - 600))
+            .expect("read");
+        assert_eq!(got, vec![NOW - 3599]);
+
+        // two hours later in the day: today's 0:00 is the earlier bound
+        let day_start = NOW - 600;
+        let later = day_start + 7200;
+        store
+            .write(|tx| {
+                add_call(tx, Some(1), "memory", day_start, 2);
+                add_call(tx, Some(1), "chat", day_start - 1, 2);
+                Ok::<_, rusqlite::Error>(())
+            })
+            .expect("rows");
+        let got = store
+            .read(|c| recent_starts(c, 1, later, day_start))
+            .expect("read");
+        assert_eq!(got, vec![day_start]);
+    }
+
+    #[test]
+    fn recent_starts_use_the_start_and_find_rows_dated_one_day_off() {
+        let (_d, store) = store();
+        let day_start = NOW - 20_000;
+        let far_date = crate::util::local_date(NOW - 5 * 86400);
+        store
+            .write(|tx| {
+                add_user(tx, 1);
+                // ended after the bound but started before it: not returned
+                add_call(tx, Some(1), "chat", day_start - 30, 100);
+                // started at the bound, `day` written under another zone (one calendar day early): returned
+                add_call_day(
+                    tx,
+                    Some(1),
+                    "chat",
+                    day_start,
+                    1,
+                    Some(&crate::util::local_date(day_start - 86400)),
+                );
+                // a `day` further back than the slack is outside the index range
+                add_call_day(tx, Some(1), "chat", day_start + 10, 1, Some(&far_date));
+                Ok::<_, rusqlite::Error>(())
+            })
+            .expect("rows");
+        let got = store
+            .read(|c| recent_starts(c, 1, NOW, day_start))
+            .expect("read");
+        assert_eq!(got, vec![day_start]);
+    }
+
+    #[test]
+    fn only_counted_kinds_of_the_user_come_back() {
+        let (_d, store) = store();
+        store
+            .write(|tx| {
+                add_user(tx, 1);
+                add_user(tx, 2);
+                add_call(tx, Some(1), "chat", NOW - 10, 1);
+                add_call(tx, Some(1), "memory", NOW - 20, 1);
+                add_call(tx, Some(1), "verify", NOW - 30, 1);
+                add_call(tx, Some(1), "models", NOW - 40, 1);
+                add_call(tx, Some(2), "chat", NOW - 50, 1);
+                add_call(tx, None, "chat", NOW - 60, 1);
+                Ok::<_, rusqlite::Error>(())
+            })
+            .expect("rows");
+        let one = store
+            .read(|c| recent_starts(c, 1, NOW, NOW - 40_000))
+            .expect("read");
+        assert_eq!(sorted(one), vec![NOW - 20, NOW - 10]);
+        assert_eq!(COUNTED_KINDS, "('chat', 'memory')");
+    }
+
+    #[test]
+    fn recent_starts_all_matches_recent_starts_per_user() {
+        let (_d, store) = store();
+        let day_start = NOW - 5000;
+        store
+            .write(|tx| {
+                add_user(tx, 1);
+                add_user(tx, 2);
+                for (u, start) in [
+                    (1, NOW - 3599),
+                    (1, NOW - 3600),
+                    (1, day_start),
+                    (1, day_start - 1),
+                    (2, NOW - 100),
+                    (2, NOW - 4000),
+                    (2, NOW - 3000),
+                ] {
+                    add_call(tx, Some(u), "chat", start, 3);
+                }
+                add_call(tx, Some(2), "memory", NOW - 7, 3);
+                add_call(tx, Some(1), "verify", NOW - 8, 3);
+                add_call(tx, Some(2), "models", NOW - 9, 3);
+                add_call(tx, None, "chat", NOW - 10, 3);
+                Ok::<_, rusqlite::Error>(())
+            })
+            .expect("rows");
+        for (now, ds) in [(NOW, day_start), (NOW - 4400, NOW - 6000), (NOW, NOW - 600)] {
+            let all = store.read(|c| recent_starts_all(c, now, ds)).expect("all");
+            assert!(all.iter().all(|(u, _)| *u == 1 || *u == 2), "no NULL user");
+            for u in [1_i64, 2] {
+                let mine: Vec<i64> = all
+                    .iter()
+                    .filter(|(x, _)| *x == u)
+                    .map(|(_, s)| *s)
+                    .collect();
+                let one = store.read(|c| recent_starts(c, u, now, ds)).expect("one");
+                assert_eq!(sorted(mine), sorted(one), "user {u}, now {now}");
+            }
+        }
+    }
+
+    fn plan(store: &Store, sql: &str, args: &[&dyn rusqlite::ToSql]) -> String {
+        store
+            .read(|c| {
+                let mut st = c.prepare(&format!("EXPLAIN QUERY PLAN {sql}"))?;
+                let rows: Vec<String> = st
+                    .query_map(args, |r| r.get::<_, String>(3))?
+                    .collect::<rusqlite::Result<_>>()?;
+                Ok(rows.join(" | "))
+            })
+            .expect("plan")
+    }
+
+    #[test]
+    fn query_plans_use_the_usage_indexes() {
+        let (_d, store) = store();
+        let one = plan(
+            &store,
+            &format!(
+                "SELECT at - latency_ms / 1000 FROM usage
+                 WHERE user_id = ?1 AND day >= ?2 AND kind IN {COUNTED_KINDS}
+                   AND at - latency_ms / 1000 >= ?3"
+            ),
+            &[&1_i64, &"2026-01-01", &0_i64],
+        );
+        assert!(
+            one.contains("USING INDEX idx_usage_user (user_id=? AND day>?)"),
+            "{one}"
+        );
+        assert!(!one.contains("SCAN usage"), "{one}");
+        let all = plan(
+            &store,
+            &format!(
+                "SELECT user_id, at - latency_ms / 1000 FROM usage
+                 WHERE day >= ?1 AND kind IN {COUNTED_KINDS} AND +user_id IS NOT NULL
+                   AND at - latency_ms / 1000 >= ?2"
+            ),
+            &[&"2026-01-01", &0_i64],
+        );
+        assert!(all.contains("USING INDEX idx_usage_day (day>?)"), "{all}");
+        assert!(!all.contains("SCAN usage"), "{all}");
+    }
+
+    #[test]
+    fn user_counts_read_the_usage_numbers_in_one_pass() {
+        let (_d, store) = store();
+        store
+            .write(|tx| {
+                add_user(tx, 1);
+                tx.execute(
+                    "INSERT INTO usage (user_id, at, day, kind, provider, latency_ms, status, tokens_in, tokens_out)
+                     VALUES (1, 100, '2026-01-01', 'chat', 'openai', 5, 'ok', 10, 20),
+                            (1, 300, '2026-01-02', 'chat', 'openai', 5, 'ok', 1, 2)",
+                    [],
+                )?;
+                Ok::<_, rusqlite::Error>(())
+            })
+            .expect("rows");
+        let n = store.read(|c| user_counts(c, 1)).expect("counts");
+        assert_eq!(
+            (n.last_used_at, n.tokens_in, n.tokens_out),
+            (Some(300), 11, 22)
+        );
+        let none = store.read(|c| user_counts(c, 99)).expect("counts");
+        assert_eq!(
+            (none.last_used_at, none.tokens_in, none.tokens_out),
+            (None, 0, 0)
+        );
+    }
 }

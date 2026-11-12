@@ -1,10 +1,17 @@
 //! OpenAI-compatible format: request body and stream handling (4.4, 4.6).
 use super::errors::{from_error_value, UpCode};
-use super::{Item, Turn};
+use super::{Item, TokenLimit, Turn};
 use serde_json::{json, Map, Value};
 
-/// `{"model", "messages": [system, …], "stream": true, "stream_options"?}`. Nothing else (maximum compatibility).
-pub fn body(model: &str, system: &str, turns: &[Turn], usage_option: bool) -> Value {
+/// `{"model", "messages": [system, …], "stream": true, "stream_options"?, "max_tokens"? | "max_completion_tokens"?}`.
+/// Nothing else (maximum compatibility); the token field is absent for `TokenField::Omit`.
+pub fn body(
+    model: &str,
+    system: &str,
+    turns: &[Turn],
+    usage_option: bool,
+    token: TokenLimit,
+) -> Value {
     let mut messages = vec![json!({"role": "system", "content": system})];
     for t in turns {
         messages.push(json!({"role": t.role.as_str(), "content": t.content}));
@@ -15,6 +22,9 @@ pub fn body(model: &str, system: &str, turns: &[Turn], usage_option: bool) -> Va
     m.insert("stream".into(), Value::Bool(true));
     if usage_option {
         m.insert("stream_options".into(), json!({"include_usage": true}));
+    }
+    if let Some(key) = token.field.key() {
+        m.insert(key.into(), Value::from(token.value));
     }
     Value::Object(m)
 }
@@ -207,6 +217,7 @@ impl State {
 mod tests {
     use super::super::Role;
     use super::*;
+    use crate::provider::TokenField;
 
     fn run(events: &[&str]) -> Vec<Item> {
         let mut s = State::default();
@@ -228,12 +239,26 @@ mod tests {
             role: Role::User,
             content: "hi".into(),
         }];
-        let b = body("m", "sys", &t, true);
+        let b = body("m", "sys", &t, true, TokenLimit::omit());
         assert_eq!(
             serde_json::to_string(&b).expect("json"),
             r#"{"model":"m","messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true}}"#
         );
-        assert!(body("m", "sys", &t, false).get("stream_options").is_none());
+        assert!(body("m", "sys", &t, false, TokenLimit::omit())
+            .get("stream_options")
+            .is_none());
+        let with = |field| body("m", "sys", &t, true, TokenLimit { field, value: 1500 });
+        assert_eq!(
+            serde_json::to_string(&with(TokenField::MaxTokens)).expect("json"),
+            r#"{"model":"m","messages":[{"role":"system","content":"sys"},{"role":"user","content":"hi"}],"stream":true,"stream_options":{"include_usage":true},"max_tokens":1500}"#
+        );
+        let c = with(TokenField::MaxCompletionTokens);
+        assert_eq!(c["max_completion_tokens"], json!(1500));
+        assert!(c.get("max_tokens").is_none());
+        // everything but the token field is identical
+        let mut plain = body("m", "sys", &t, true, TokenLimit::omit());
+        plain["max_completion_tokens"] = json!(1500);
+        assert_eq!(plain, c);
     }
 
     #[test]

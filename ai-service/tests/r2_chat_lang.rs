@@ -65,6 +65,7 @@ fn assert_study_prompt(sys: &str, language: &str) {
 #[tokio::test]
 async fn send_puts_the_settings_language_into_the_system_prompt() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
     t.configure_openai(&admin, "demo-chat-small").await;
@@ -235,6 +236,7 @@ async fn retry_uses_the_language_of_its_own_request() {
 #[tokio::test]
 async fn memory_suggestions_are_written_in_the_settings_language() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
     t.configure_openai(&admin, "demo-chat-small").await;

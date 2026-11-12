@@ -13,7 +13,10 @@
   token routes and ai-service's heartbeat) and /_ai_auth are 404 from outside, also through a path with ".." in it;
   the admin's Test (/api/ai/admin/verify) has its own location that is checked the same way and waits longer than the
   90 s of the other AI routes (an answer after 95 s still arrives); the three AI proxy locations carry the same auth,
-  header and error lines and the upstream http://ai-service:8766 (read from nginx -T).
+  header and error lines and the upstream http://ai-service:8766 (read from nginx -T);
+  AI (v1.0): a 429 JSON answer of ai-service (the per-user call cap, code ai.callLimit) reaches the browser unchanged on
+  every kind of AI location (the two streaming routes, an ordinary AI route, the admin Test): status, JSON body and
+  Retry-After header intact, not replaced by an Nginx error page, and Nginx's own 429 (limit_req) stays non-JSON.
 
 Usage: python -I tests/integration/nginx_check.py <image, default xexam-frontend:test> [port, default 18080]
 Uses only Docker and the standard library; the containers and the network carry the prefix xexam-nginxcheck- plus a random
@@ -45,7 +48,8 @@ WEB = 'xexam-nginxcheck-web-' + RUN
 #           headers; pw / guard -> 403 + X-Xexam-Deny; down -> 502; anything else -> 401 + X-Xexam-Deny: signin)
 #  ai-service: POST /api/ai/send, /api/ai/retry, /api/ai/study/ask and /api/ai/summary/ask stream text/event-stream (an "echo" event with what arrived, then one
 #           "delta" event per second for 4 s); POST /api/ai/admin/verify?delay=N waits N seconds before its
-#           answer; everything else answers a JSON echo of the request
+#           answer; a POST whose query holds capped=1 answers 429 JSON with Retry-After: 17 (v1.0 per-user caps);
+#           everything else answers a JSON echo of the request
 ECHO = r'''
 import http.server, json, os, sys, time, urllib.parse
 NAME = os.environ.get("ECHO_NAME", "backend")
@@ -81,6 +85,10 @@ class H(http.server.BaseHTTPRequestHandler):
             if s == "down":
                 return self._send(502, b"down", [("Content-Type", "text/plain")])
             return self._send(401, b'{"error": "x"}', [("X-Xexam-Deny", "signin"), ("Content-Type", "application/json")])
+        if NAME == "ai-service" and self.command == "POST" and "capped=1" in self.path:
+            cap = json.dumps({"error": "made-up cap text", "code": "ai.callLimit", "limit": 5, "cap": "minute",
+                              "retryAt": 1790000000, "retryAfter": 17})
+            return self._send(429, cap.encode(), [("Content-Type", "application/json"), ("Retry-After", "17"), ("Cache-Control", "no-store")])
         if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry", "/api/ai/study/ask", "/api/ai/summary/ask"):
             self.send_response(200)
             self.send_header("X-Echo-Name", NAME)
@@ -489,6 +497,19 @@ try:
     t0 = time.time()
     st, _, _ = send('xexam_session=good-b')
     ok(st == 200, 'Another session can send at once (separate bucket). Actual %d after %.1f s' % (st, time.time() - t0))
+
+    # v1.0 per-user call caps: ai-service answers 429 JSON with Retry-After; Nginx hands it on unchanged on every kind of AI
+    # location (no error_page swap, no buffering of the refusal into HTML)
+    for path in ('/api/ai/send', '/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/memories/suggest',
+                 '/api/ai/admin/verify'):
+        st, hh, b = req('POST', path + '?capped=1', host=host,
+                        headers={'Cookie': 'xexam_session=good-cap', 'Content-Type': 'application/json'}, body=b'{}')
+        j = jbody(b) or {}
+        ok(st == 429 and hh.get('x-echo-name') == 'ai-service' and 'application/json' in hh.get('content-type', ''),
+           'POST %s: the AI service 429 reaches the browser as JSON from the AI service. Actual %d %r %r' % (path, st, hh.get('content-type'), b[:120]))
+        ok(hh.get('retry-after') == '17', 'POST %s: the Retry-After header of the 429 is intact. Actual %r' % (path, hh.get('retry-after')))
+        ok(j == {'error': 'made-up cap text', 'code': 'ai.callLimit', 'limit': 5, 'cap': 'minute', 'retryAt': 1790000000, 'retryAfter': 17},
+           'POST %s: the 429 body (code, cap, limit, retryAt, retryAfter) arrives unchanged. Actual %r' % (path, j))
 
     # /internal/ and the auth location are not reachable from outside, also not through crafted paths
     internal_calls = lambda: len(re.findall(r'(?m)^[A-Z]+ /internal/', echo_log(BACK)))

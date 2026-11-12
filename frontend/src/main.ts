@@ -3,14 +3,15 @@
 import './styles/main.css';
 import { studyTransport } from './api/ai.ts';
 import { isTooManyRequests } from './api/client.ts';
-import { installAiPop, reanchorAiPop } from './components/ai-pop.ts';
+import { installAiPanel, reanchorAiPanel } from './components/ai-panel.ts';
 import { installAiSummary } from './components/ai-summary.ts';
 import type { StudyUiDeps } from './components/ai-study-ui.ts';
 import { brand } from './components/common.ts';
-import { installShellHandlers, shell } from './components/shell.ts';
+import { githubLine } from './components/github-line.ts';
+import { afterShellRender, installShellHandlers, resetTopH, shell } from './components/shell.ts';
 import { installTooltips } from './components/tooltip.ts';
 import { t, uiLang } from './i18n/index.ts';
-import { errorText, studyErrorText } from './i18n/errors.ts';
+import { errorText, setAdminForTexts, studyErrorText } from './i18n/errors.ts';
 import { renderAbout } from './pages/about.ts';
 import { renderAiChat, renderAiNoAccess, renderAiUnavailable } from './pages/ai.ts';
 import { renderAiSettings } from './pages/ai-settings.ts';
@@ -24,11 +25,12 @@ import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
 import { renderSettings } from './pages/settings.ts';
 import { renderUsers } from './pages/users.ts';
-import { boot, navigate, refreshAi, setRenderer } from './state/actions.ts';
-import { aiStatus } from './state/ai.ts';
+import { boot, refreshAi, setRenderer } from './state/actions.ts';
+import { aiStatus, onCallBlockChange } from './state/ai.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S, canManageBanks, isAdmin } from './state/store.ts';
 import { h, keepFocus, must } from './utils/dom.ts';
+import { BAR_MQ, matches } from './utils/media.ts';
 
 function solo(...kids: Array<HTMLElement | null>): HTMLElement {
   return h('div', { class: 'solo' }, h('div', { class: 'solo-brand' }, brand()), kids);
@@ -44,7 +46,10 @@ function page(): { el: HTMLElement; title: string } {
         ? { el: renderBanks(), title: t('nav.banks') }
         : { el: renderForbidden('forbidden.banks'), title: t('forbidden.title') };
     case 'users':
-      return { el: renderUsers(), title: t('users.title') };
+      // Administrators only; everyone else sees why (US-12), like the other administrator pages
+      return isAdmin()
+        ? { el: renderUsers(), title: t('users.title') }
+        : { el: renderForbidden('forbidden.users'), title: t('forbidden.title') };
     case 'logs':
       // Administrators only (v0.7); bank managers and users see why they cannot open it
       return isAdmin()
@@ -123,6 +128,9 @@ function draw(): void {
   S.timer = null;
   const app = must<HTMLElement>('#app');
 
+  // Pages without the shell pin nothing at the top (the quiz page sets `--top-h` itself)
+  if (!(S.route.name === 'quiz' && S.session) && (S.authView || S.phase !== 'ready')) resetTopH();
+
   // The sign-in pages set their own document title
   if (S.authView === 'signin') {
     app.replaceChildren(renderSignIn());
@@ -145,19 +153,23 @@ function draw(): void {
       h('h2', null, t(tooMany ? 'app.tooMany.title' : 'app.fatal.title')),
       h('p', null, tooMany ? t('app.tooMany.body') : S.fatal ? errorText(S.fatal) : t('app.fatal.body')),
       tooMany ? null : h('p', { class: 'dim' }, t('app.fatal.body')),
-      h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => window.location.reload() }, t('app.reload'))))));
+      h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => window.location.reload() }, t('app.reload')))),
+      // The page's last line, as on every page (the version part only when /api/info was read)
+      githubLine()));
     document.title = t('app.name');
     return;
   }
   if (S.route.name === 'quiz' && S.session) {
     app.replaceChildren(renderQuiz());
-    reanchorAiPop();
+    reanchorAiPanel();
     document.title = `${t('title.quiz', { i: S.session.idx + 1, n: S.session.qs.length })} - ${t('app.name')}`;
     return;
   }
   const p = page();
   app.replaceChildren(shell(p.el));
-  reanchorAiPop();
+  // The bar's measured height (`--top-h`) and the menu's height first: the AI+ panel's scroll rule reads them
+  afterShellRender();
+  reanchorAiPanel();
   document.title = `${p.title} - ${t('app.name')}`;
 }
 
@@ -165,7 +177,7 @@ applySettings(S.settings);
 watchSystemTheme();
 setRenderer(render);
 installShellHandlers();
-// v0.9: the AI hint / explanation popover and the AI summary window (both live in document.body, outside the page)
+// v0.9: the AI+ panel (v1.0: a panel inside the page) and the AI summary window (in document.body, outside the page)
 const studyDeps: StudyUiDeps = {
   transport: studyTransport,
   uiLang,
@@ -174,10 +186,28 @@ const studyDeps: StudyUiDeps = {
   langName: (l) => t(l === 'en' ? 'ai.langName.en' : l === 'ja' ? 'ai.langName.ja' : 'ai.langName.zh'),
   // actions.ts draws the page again when the status changed
   refreshAi: (force) => void refreshAi(force),
-  openChat: (chatId) => navigate({ name: 'ai', chatId }),
 };
-installAiPop(studyDeps);
+installAiPanel(studyDeps);
 installAiSummary(studyDeps);
+// v1.0: the texts of the AI request caps name the administrator's settings only for administrators; a change of the caps
+// block redraws the page, so the AI controls enable or disable themselves
+setAdminForTexts(() => S.user?.role === 'admin');
+onCallBlockChange(render);
+// v1.0: under BAR_MQ the practice action bar sits under the AI+ panel, above it otherwise (spec 2.6): the quiz page is
+// drawn again when the width crosses that line. Nothing else depends on the width in code (the rest is CSS).
+if (typeof window.matchMedia === 'function') {
+  const barQuery = window.matchMedia(BAR_MQ);
+  let barShown = matches(BAR_MQ);
+  barQuery.addEventListener('change', () => {
+    if (barQuery.matches === barShown) return;
+    barShown = barQuery.matches;
+    if (S.route.name === 'quiz' && S.session) render();
+  });
+}
+// v1.0 (SH-15): the AI+ badge's animation stops while the tab is hidden (`html.is-hidden`, styles/main.css)
+document.addEventListener('visibilitychange', () => {
+  document.documentElement.classList.toggle('is-hidden', document.hidden);
+});
 installTooltips();
 installQuizKeys();
 void boot();

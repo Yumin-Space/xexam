@@ -10,7 +10,7 @@
 //   · the safety limits form (v0.8 spec 14.1) and the retention days;
 //   · round 2: why ai-service is not connected (the status panel), and which listed models are probably not chat models.
 import type {
-  AiFormat, AiGatewayAuth, AiKeySlot, AiLimits, AiProvider, AiService, AiSettings, AiSettingsUpdate, AiVerify,
+  AiFormat, AiGatewayAuth, AiKeySlot, AiProvider, AiService, AiSettings, AiSettingsUpdate, AiVerify,
 } from '../types/api.ts';
 
 export const PROVIDERS: readonly AiProvider[] = ['openai', 'anthropic', 'gateway'];
@@ -405,47 +405,186 @@ export function retentionOf(text: string): number | null {
   return n >= RETENTION_MIN && n <= RETENTION_MAX ? n : null;
 }
 
-// ---------------------------------------------------------------- safety limits (v0.8 spec 14.1)
+// ---------------------------------------------------------------- safety limits (v0.8 spec 14.1, v1.0 spec 3.2 / 3.10)
 
-export const LIMIT_KEYS: readonly (keyof AiLimits)[] = [
-  'perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryChars', 'messageChars',
-];
+/** The ten limits of the AI service (v1.0): the three per-user caps, the two lengths, the five that protect the server */
+export type LimitKey =
+  | 'callsPerMinute' | 'callsPerHour' | 'callsPerDay' | 'replyMaxChars' | 'memoryChars'
+  | 'perUserRunning' | 'globalRunning' | 'chatsPerUser' | 'messagesPerChat' | 'memoriesPerUser';
+/** The values of the limits; a key the service did not send falls back to its default where it is read */
+export type LimitValues = Partial<Record<LimitKey, number>>;
+export type LimitRanges = Partial<Record<LimitKey, [number, number]>>;
+
+/** v1.0: the per-user caps on AI model calls (spec 3.7), shown first, in this order */
+export const CAP_KEYS: readonly LimitKey[] = ['callsPerMinute', 'callsPerHour', 'callsPerDay'];
+/** v1.0 (FB-5 revised): the length of one answer and of one memory, in characters, second sub-group */
+export const LENGTH_KEYS: readonly LimitKey[] = ['replyMaxChars', 'memoryChars'];
+/** The limits that protect the server (the five of v0.8 that are left) */
+export const SERVER_KEYS: readonly LimitKey[] = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser'];
+export const LIMIT_KEYS: readonly LimitKey[] = [...CAP_KEYS, ...LENGTH_KEYS, ...SERVER_KEYS];
 
 /** The defaults and ranges of the spec (the service sends its own; these are used only until it answers) */
-export const DEFAULT_LIMITS: AiLimits = {
-  perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50, memoryChars: 300, messageChars: 16000,
+export const DEFAULT_LIMITS: Record<LimitKey, number> = {
+  callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxChars: 1000, memoryChars: 200,
+  perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50,
 };
-export const LIMIT_RANGES: Record<keyof AiLimits, [number, number]> = {
-  perUserRunning: [1, 4], globalRunning: [1, 64], chatsPerUser: [10, 100000], messagesPerChat: [20, 5000],
-  memoriesPerUser: [1, 1000], memoryChars: [50, 2000], messageChars: [1000, 32000],
+export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
+  callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], replyMaxChars: [1, 16000], memoryChars: [50, 2000],
+  perUserRunning: [1, 4], globalRunning: [1, 64], chatsPerUser: [10, 100000], messagesPerChat: [20, 5000], memoriesPerUser: [1, 1000],
 };
 
-export type LimitsForm = Record<keyof AiLimits, string>;
+export type LimitsForm = Record<LimitKey, string>;
 
-export function limitsFormOf(l: AiLimits): LimitsForm {
+export function limitsFormOf(l: LimitValues): LimitsForm {
   const f = {} as LimitsForm;
-  for (const k of LIMIT_KEYS) f[k] = String(l[k]);
+  for (const k of LIMIT_KEYS) f[k] = String(l[k] ?? DEFAULT_LIMITS[k]);
   return f;
 }
 
-/** The first field that is not a whole number in its range, or null */
-export function limitProblem(form: LimitsForm, ranges: Record<keyof AiLimits, [number, number]>): keyof AiLimits | null {
+/** The range of a limit: the service's own when it sent one, else the spec's */
+export const rangeOf = (ranges: LimitRanges | undefined, k: LimitKey): [number, number] => ranges?.[k] ?? LIMIT_RANGES[k];
+
+/** What is wrong with the form: a value outside its range, or the caps out of order (hour below minute, day below hour) */
+export interface LimitIssue {
+  key: LimitKey;
+  kind: 'range' | 'order';
+}
+
+const whole = (s: string): number | null => (/^\d{1,9}$/.test(s.trim()) ? Number(s.trim()) : null);
+
+/** The first problem of the form, or null: every field in its range first (in field order), then the order of the caps */
+export function limitIssue(form: LimitsForm, ranges?: LimitRanges): LimitIssue | null {
   for (const k of LIMIT_KEYS) {
-    const s = form[k].trim();
-    const [min, max] = ranges[k];
-    if (!/^\d{1,9}$/.test(s) || Number(s) < min || Number(s) > max) return k;
+    const n = whole(form[k]);
+    const [min, max] = rangeOf(ranges, k);
+    if (n == null || n < min || n > max) return { key: k, kind: 'range' };
   }
+  // All numbers are valid here
+  if (Number(form.callsPerHour) < Number(form.callsPerMinute)) return { key: 'callsPerHour', kind: 'order' };
+  if (Number(form.callsPerDay) < Number(form.callsPerHour)) return { key: 'callsPerDay', kind: 'order' };
   return null;
 }
 
+/** The first field with a problem (range or order), or null */
+export function limitProblem(form: LimitsForm, ranges?: LimitRanges): LimitKey | null {
+  return limitIssue(form, ranges)?.key ?? null;
+}
+
 /** The changed limits (only valid numbers; check limitProblem first) */
-export function limitsUpdate(saved: AiLimits, form: LimitsForm): Partial<AiLimits> {
-  const u: Partial<AiLimits> = {};
+export function limitsUpdate(saved: LimitValues, form: LimitsForm): LimitValues {
+  const u: LimitValues = {};
   for (const k of LIMIT_KEYS) {
     const s = form[k].trim();
-    if (/^\d{1,9}$/.test(s) && Number(s) !== saved[k]) u[k] = Number(s);
+    if (/^\d{1,9}$/.test(s) && Number(s) !== (saved[k] ?? DEFAULT_LIMITS[k])) u[k] = Number(s);
   }
   return u;
+}
+
+/**
+ * The max_tokens the service sends for an answer of `chars` characters (FB-5 revised; the twin of `limits::reply_tokens` in
+ * ai-service, with the same vectors): Chinese and Japanese 1 character = 1.5 tokens, so an answer can really reach the
+ * count; English 4 letters count as 1 character = about 1 token.
+ */
+export function replyTokens(chars: number, lang: 'zh-CN' | 'en' | 'ja'): number {
+  const n = Math.max(0, Math.floor(chars));
+  return lang === 'en' ? n : Math.floor((3 * n + 1) / 2);
+}
+
+/** The live line under the answer length: what the typed number means as max_tokens, or null while it is not a usable number */
+export function replyTokensLine(text: string, ranges?: LimitRanges): { zh: number; en: number } | null {
+  const n = whole(text);
+  const [min, max] = rangeOf(ranges, 'replyMaxChars');
+  if (n == null || n < min || n > max) return null;
+  return { zh: replyTokens(n, 'zh-CN'), en: replyTokens(n, 'en') };
+}
+
+// ---------------------------------------------------------------- the category tabs (FB-6, AS-9)
+
+/** The four categories of AI settings, in the order of the tab row (no generation tab in v1.0) */
+export const AI_TABS = ['feature', 'users', 'usage', 'safety'] as const;
+export type AiTab = (typeof AI_TABS)[number];
+
+/** The tab a location hash names (`#/ai-settings?tab=users`); a missing or unknown value is the first tab */
+export function tabOfHash(hash: string): AiTab {
+  const q = hash.indexOf('?');
+  if (q < 0) return 'feature';
+  const v = new URLSearchParams(hash.slice(q + 1)).get('tab');
+  return (AI_TABS as readonly string[]).includes(v ?? '') ? (v as AiTab) : 'feature';
+}
+
+/** The hash of a tab: always `#/ai-settings?tab=<key>` */
+export const hashOfTab = (tab: AiTab): string => `#/ai-settings?tab=${tab}`;
+
+// ---------------------------------------------------------------- per-user AI request counts (C-7, AS-2)
+
+/** The counts of one user as the admin list sends them (`calls` of a row; absent on an older service) */
+export interface UserCalls {
+  used: { minute: number; hour: number; day: number };
+  blocked: { cap: 'minute' | 'hour' | 'day'; limit: number; retryAt: number } | null;
+}
+
+/**
+ * The tag a blocked user gets: minute / hour cap "Used up · back at <time>", the day cap "Used up today"; null when nothing
+ * blocks. The page names the time from `retryAt`.
+ */
+export function blockTag(c: Pick<UserCalls, 'blocked'> | undefined): { kind: 'timed' | 'today'; retryAt: number } | null {
+  const b = c?.blocked;
+  if (!b) return null;
+  return { kind: b.cap === 'day' ? 'today' : 'timed', retryAt: b.retryAt };
+}
+
+/** The figures of a user's line "1 min 2/5 · 1 h 7/20 · today 37/100": "used/limit" for each window */
+export function callsFigures(c: UserCalls | undefined, limits: LimitValues | undefined): { minute: string; hour: string; day: string } | null {
+  if (!c) return null;
+  const cap = (k: 'callsPerMinute' | 'callsPerHour' | 'callsPerDay'): number => limits?.[k] ?? DEFAULT_LIMITS[k];
+  return {
+    minute: `${c.used.minute}/${cap('callsPerMinute')}`,
+    hour: `${c.used.hour}/${cap('callsPerHour')}`,
+    day: `${c.used.day}/${cap('callsPerDay')}`,
+  };
+}
+
+/** The "今天" cell of Usage > By user: `today / callsPerDay` (an older service sends no `today`: a dash) */
+export function todayCell(today: number | undefined, callsPerDay: number | undefined): string {
+  return today == null ? '–' : `${today} / ${callsPerDay ?? DEFAULT_LIMITS.callsPerDay}`;
+}
+
+// ---------------------------------------------------------------- summaries once saved and tested (AS-4)
+
+/** The host (with the port when it is not the default) of an address, or the trimmed text when it is not an address */
+export function hostOf(url: string): string {
+  try {
+    return new URL(normalizeUrl(url)).host;
+  } catch {
+    return normalizeUrl(url);
+  }
+}
+
+/** The connection shows as a one-line summary (with an edit button): saved, tested, nothing typed and no key problem */
+export function connCollapsed(
+  s: Pick<AiSettings, 'verified' | 'keyProblem' | 'keys' | 'provider' | 'baseUrl' | 'updatedBy' | 'defaults'>, dirty: boolean, editing: boolean,
+): boolean {
+  return !editing && !dirty && s.verified && !s.keyProblem && s.baseUrl.trim() !== '' && connectionSaved(s) && requiredKeysSaved(s);
+}
+
+/** The model shows as a one-line summary: a model is saved, the test passed and the field still holds the saved one */
+export function modelCollapsed(s: Pick<AiSettings, 'verified' | 'model'>, typedModel: string, editing: boolean): boolean {
+  return !editing && s.verified && s.model.trim() !== '' && (typedModel.trim() === '' || typedModel.trim() === s.model);
+}
+
+/** All fine: connection, model and test are OK and AI+ is on (the status line is then one sentence instead of four chips) */
+export const allFine = (c: StatusChips, keyProblem: boolean): boolean =>
+  c.conn === 'ok' && c.model === 'ok' && c.test === 'ok' && c.ai === 'on' && !keyProblem;
+
+/** The conversation figures shown with the usage: the sums over the listed users */
+export function convTotals(rows: ReadonlyArray<{ chats: number; messages: number; memories: number }>): { chats: number; messages: number; memories: number } {
+  const t = { chats: 0, messages: 0, memories: 0 };
+  for (const r of rows) {
+    t.chats += r.chats;
+    t.messages += r.messages;
+    t.memories += r.memories;
+  }
+  return t;
 }
 
 /** The width of a usage bar in percent of the largest value (at least a sliver for anything above 0) */

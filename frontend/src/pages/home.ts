@@ -2,7 +2,7 @@
 // a practice, plus the latest result (exam or practice) and an overview of the question banks in a side column.
 import '../styles/home.css';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
-import { aiPlusNow, summaryButton } from '../components/ai-plus-controls.ts';
+import { aiPlusNow, naTag, summaryButton } from '../components/ai-plus-controls.ts';
 import { kindTag } from '../components/kind-tag.ts';
 import { icon } from '../components/shell.ts';
 import { controlState, recordSummaryExtra } from '../domain/ai-plus.ts';
@@ -18,6 +18,7 @@ import type { AttemptKind, BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
+import { liftToastAbove } from '../utils/toast.ts';
 
 /** Wrong-answer notebook over the active questions: total size and size per sheet key */
 interface Notebook {
@@ -41,7 +42,7 @@ function notebook(): Notebook {
 }
 
 /** An in-app link: a real href (open in a new tab works), plain clicks go through navigate() */
-function link(route: Route, label: string, cls = 'btn'): HTMLAnchorElement {
+function link(route: Route, label: Child, cls = 'btn'): HTMLAnchorElement {
   return h('a', {
     class: cls,
     href: routeHash(route),
@@ -60,9 +61,9 @@ function facts(rows: Array<Fact | null>): HTMLDListElement {
   return h('dl', { class: 'home-facts props' }, rows.map((r) => (r ? [h('dt', null, r[0]), h('dd', { class: r[2] }, r[1])] : null)));
 }
 
-/** Wrong-notebook count chip (nothing when zero) */
-function notebookChip(n: number): HTMLElement | null {
-  return n ? h('span', { class: 'chipnum', title: t('home.pick.notebookTitle') }, t('home.pick.notebook', { n })) : null;
+/** HM-4: the sub line of a bank / sheet row; the review count joins it (last part, in the wrong colour) instead of a chip */
+function subLine(base: string, review: number): HTMLElement {
+  return h('span', { class: 'sub' }, base, review ? [' · ', h('span', { class: 'nbwrong', title: t('home.pick.notebookTitle') }, t('home.pick.notebook', { n: review }))] : null);
 }
 
 // ---------------------------------------------------------------- unfinished exam
@@ -86,22 +87,16 @@ async function discardSaved(practice: boolean): Promise<void> {
 function resumeCard(): HTMLElement | null {
   const sv = loadSaved(S.bank);
   if (!sv) return null;
-  const names = bankIdsOf(sv.qs).map(bankName).join(t('common.listSep'));
   const practice = sv.kind === 'practice';
-  // A compact banner: what, where it stands, and the two actions on one line (two lines on a phone). A practice counts
-  // the questions already checked, an exam the questions answered.
-  const meta = [
-    names,
-    sv.mode !== 'all' ? modeName(sv.mode) : '',
-    practice
-      ? t('home.resume.progressPractice', { checked: sv.checked.size, total: sv.qs.length, time: fmtTime(sv.elapsed) })
-      : t('home.resume.progress', { answered: sv.answered, total: sv.qs.length, time: fmtTime(sv.elapsed) }),
-  ].filter(Boolean).join(' · ');
+  // HM-6: one line, "Unfinished practice · Question 12/51", then Continue and Discard (what was saved stays in the title)
+  const names = bankIdsOf(sv.qs).map(bankName).join(t('common.listSep'));
+  const detail = [names, sv.mode !== 'all' ? modeName(sv.mode) : '', t('home.resume.lead')].filter(Boolean).join(' · ');
   return h('section', { class: 'resume home-resume', 'aria-labelledby': 'home-resume-h' },
     icon(ICON_RESUME, 'ico rs-ico'),
-    h('div', { class: 'rs-text' },
-      h('div', { class: 'rs-head' }, h('h2', { id: 'home-resume-h' }, t(practice ? 'home.resume.titlePractice' : 'home.resume.title')), h('span', { class: 'rs-where' }, t('home.resume.lead'))),
-      h('p', { class: 'rs-meta num' }, meta),
+    h('div', { class: 'rs-text', title: detail },
+      h('div', { class: 'rs-head' },
+        h('h2', { id: 'home-resume-h' }, t(practice ? 'home.resume.titlePractice' : 'home.resume.title')),
+        h('span', { class: 'rs-where num' }, t('home.resume.pos', { i: sv.idx + 1, n: sv.qs.length }))),
       sv.dropped ? h('p', { class: 'rs-meta' }, tn('home.resume.dropped', sv.dropped)) : null),
     h('div', { class: 'rs-acts' },
       h('button', { class: 'btn primary', type: 'button', onclick: () => resumeSession() }, t('home.resume.continue')),
@@ -113,6 +108,8 @@ function resumeCard(): HTMLElement | null {
 /** "All questions": a stack of sheets. "Wrong-answer notebook": a notebook with a cross. */
 const ICON_ALL = [{ d: 'M12 4 3.5 8.5 12 13l8.5-4.5L12 4Z' }, { d: 'M3.5 12.5 12 17l8.5-4.5' }, { d: 'M3.5 16.5 12 21l8.5-4.5' }];
 const ICON_CHEVRON = [{ d: 'M6.5 9.5 12 15l5.5-5.5' }];
+/** A chevron pointing right: the third action of the latest-result card ("Records ›") */
+const ICON_FWD = [{ d: 'M9.5 6.5 15 12l-5.5 5.5' }];
 /** Banks the user unfolded / folded during this visit (otherwise: unfolded when there are at most two banks) */
 const openBanks = new Map<number, boolean>();
 const ICON_WEAK = [{ d: 'M6.5 3.5h9l3 3v14h-12Z' }, { d: 'M9.8 10.3l4.4 4.4' }, { d: 'M14.2 10.3l-4.4 4.4' }];
@@ -196,9 +193,9 @@ function startPanel(nb: Notebook): HTMLElement {
     const label = h('label', { class: 'home-bankrow' }, box,
       h('span', { class: 'grow' },
         h('span', { class: 'name' }, bank.name),
-        h('span', { class: 'sub' }, t('home.pick.bankSub', { questions: tn('common.questions', bank.total), sheets: tn('common.sheets', usable.length) })),
-        info),
-      notebookChip(keys.reduce((n, k) => n + (nb.byKey.get(k) ?? 0), 0)));
+        subLine(t('home.pick.bankSub', { questions: tn('common.questions', bank.total), sheets: tn('common.sheets', usable.length) }),
+          keys.reduce((n, k) => n + (nb.byKey.get(k) ?? 0), 0)),
+        info));
     const sheetBox = h('div', { class: 'home-sheets', id: `home-sheets-${bank.id}`, role: 'group', 'aria-label': bank.name, hidden: !open });
     const expand = h('button', {
       class: 'home-expand', type: 'button', 'aria-expanded': String(open), 'aria-controls': `home-sheets-${bank.id}`,
@@ -230,8 +227,7 @@ function startPanel(nb: Notebook): HTMLElement {
       return h('label', { class: 'home-sheetrow' }, sbox,
         h('span', { class: 'grow' },
           h('span', { class: 'name' }, s.name),
-          h('span', { class: 'sub' }, s.inactive ? tn('home.pick.sheetSubRetired', s.usable, { retired: s.inactive }) : tn('home.pick.sheetSub', s.usable))),
-        notebookChip(nb.byKey.get(key) ?? 0));
+          subLine(s.inactive ? tn('home.pick.sheetSubRetired', s.usable, { retired: s.inactive }) : tn('home.pick.sheetSub', s.usable), nb.byKey.get(key) ?? 0)));
     });
 
     // One card per bank: the bank row is the card's header, its sheets are compact rows inside the same card
@@ -267,7 +263,7 @@ function startPanel(nb: Notebook): HTMLElement {
   const allCount = h('span', { class: 'mseg-n num' });
   const weakCount = h('span', { class: 'mseg-n num' });
   const modeHint = h('p', { class: 'mseg-hint', id: 'home-mode-hint' });
-  const weakRow = h('label', { class: 'mseg weak', title: t('mode.weak') }, weakBox, icon(ICON_WEAK, 'ico mseg-ico'), h('span', { class: 'mseg-label' }, t('home.mode.weakShort')), weakCount);
+  const weakRow = h('label', { class: 'mseg weak', title: t('mode.weak') }, weakBox, icon(ICON_WEAK, 'ico mseg-ico'), h('span', { class: 'mseg-label' }, h('span', { class: 'hm-full' }, t('home.mode.weakShort')), h('span', { class: 'hm-short' }, t('home.mode.weakPhone'))), weakCount);
   const modeSet = h('fieldset', { class: 'home-mode', 'aria-describedby': 'home-mode-hint' },
     h('legend', { class: 'sr-only' }, t('home.mode.legend')),
     h('div', { class: 'mseg-group' },
@@ -363,19 +359,38 @@ function startPanel(nb: Notebook): HTMLElement {
     void startExam(pickQuestions(p, n, cfg.shuffle), cfg.mode, kind);
   }
 
+  // The bar pinned to the bottom: Start exam / Start practice, what will be asked, and the two options right next to it
+  const goBar = h('div', { class: 'home-go' }, h('div', { class: 'home-go-btns' }, startBtn, practiceBtn), scopeText,
+    h('div', { class: 'home-go-opts' },
+      h('label', { class: 'home-count', title: t('home.count.label') }, h('span', null, t('home.count.short')), countInput),
+      h('label', { class: 'home-shuffle', title: t('home.shuffle') }, shuffleBox, h('span', null, t('home.shuffle.short')))));
   // The mode comes first: "practise my wrong answers" is a frequent start and should not sit below every sheet row
-  panel.append(
-    pickSet,
-    // The bar pinned to the bottom: Start exam / Start practice, what will be asked, and the two options right next to it
-    h('div', { class: 'home-go' }, h('div', { class: 'home-go-btns' }, startBtn, practiceBtn), scopeText,
-      h('div', { class: 'home-go-opts' },
-        h('label', { class: 'home-count', title: t('home.count.label') }, h('span', null, t('home.count.short')), countInput),
-        h('label', { class: 'home-shuffle', title: t('home.shuffle') }, shuffleBox, h('span', null, t('home.shuffle.short'))))));
+  panel.append(pickSet, goBar);
+  // v1.0 (SH-4): toasts sit above the start bar while it is on screen (this moves the toasts, never the bar: HM-1)
+  liftToastAbove(goBar);
   refresh();
   return panel;
 }
 
 // ---------------------------------------------------------------- side column
+
+/**
+ * A greyed AI summary: in the narrow cell the 无法使用 tag replaces the button's label (HM-2). The button keeps its label
+ * (wrapped, hidden by CSS at 480 px and below) and gets its own copy of the tag; the tag after the button shows on wide
+ * layouts only. The reason stays the accessible description.
+ */
+function tagInsideButton(root: HTMLElement, state: ReturnType<typeof controlState>): void {
+  const btn = root instanceof HTMLButtonElement ? root : root.querySelector<HTMLButtonElement>('button.aip-sum-btn');
+  const tag = naTag(state);
+  if (!btn || !tag) return;
+  for (const n of Array.from(btn.childNodes)) {
+    if (n.nodeType === Node.TEXT_NODE && n.textContent?.trim()) {
+      const lbl = h('span', { class: 'hm-ai-lbl' }, n.textContent);
+      btn.replaceChild(lbl, n);
+    }
+  }
+  btn.append(h('span', { class: 'aip-na hm-ai-na', 'aria-hidden': 'true' }, tag.textContent));
+}
 
 function latestCard(): HTMLElement {
   const sec = h('section', { class: 'panel home-latest', 'aria-labelledby': 'home-latest-h' },
@@ -392,9 +407,11 @@ function latestCard(): HTMLElement {
   const wrong = Math.max(0, r.total - r.correct);
   // v0.9: the AI summary of the latest record (only for users with the AI+ feature; greyed with its own tag when unusable)
   const view = aiPlusNow();
+  const state = controlState(view, recordSummaryExtra(r));
   const summary = view.show
-    ? summaryButton({ id: r.id, at: r.at, kind: kindOf(r) }, controlState(view, recordSummaryExtra(r)), { anchorKey: 'home-ai', quiet: false, tag: true })
+    ? summaryButton({ id: r.id, at: r.at, kind: kindOf(r) }, state, { anchorKey: 'home-ai', quiet: false, tag: true })
     : null;
+  if (summary && state.show && !state.usable) tagInsideButton(summary, state);
   // The latest record of either kind, with its Exam / Practice tag
   sec.append(
     h('div', { class: 'stat' },
@@ -408,11 +425,23 @@ function latestCard(): HTMLElement {
       [t('home.fact.wrong'), tn('common.questions', wrong), wrong ? 'ng' : undefined],
       [t('home.fact.time'), h('span', { class: 'num' }, fmtTime(r.seconds))],
     ]),
-    h('div', { class: 'acts' },
+    // One row of equal cells (two without AI+): details, AI summary, all records (text + chevron, a short name on phones)
+    h('div', { class: 'acts home-latest-acts' },
       link({ name: 'record', id: r.id }, t('home.latest.view')),
-      summary,
-      link({ name: 'records' }, t('home.latest.all'), 'btn quiet')));
+      summary ? h('div', { class: 'home-cell' }, summary) : null,
+      link({ name: 'records' }, [
+        h('span', { class: 'hm-full' }, t('home.latest.all')),
+        h('span', { class: 'hm-short' }, t('home.latest.allShort')),
+        icon(ICON_FWD, 'ico hm-fwd'),
+      ], 'btn quiet')));
   return sec;
+}
+
+/** HM-5: the wrong-notebook figure is a link to the wrong-answer review when there is something to review */
+function notebookFig(total: number): HTMLElement {
+  const a = link({ name: 'wrong' }, [h('b', { class: 'num' }, total), h('span', null, t('home.overview.notebook'))], 'home-fig ng');
+  a.setAttribute('aria-label', t('home.overview.reviewN', { n: total }));
+  return a;
 }
 
 function overviewCard(nb: Notebook): HTMLElement {
@@ -426,7 +455,7 @@ function overviewCard(nb: Notebook): HTMLElement {
       fig(S.banks.length, t('home.overview.banks')),
       fig(usableSheetKeys().length, t('home.overview.sheets')),
       fig(questions, t('home.overview.questions')),
-      fig(nb.total, t('home.overview.notebook'), nb.total ? ' ng' : '')),
+      nb.total ? notebookFig(nb.total) : fig(nb.total, t('home.overview.notebook'))),
     retired ? h('p', { class: 'dim home-note' }, tn('home.overview.retired', retired)) : null,
     // With wrong answers to review, that is the stronger action; the banks page (administrators and bank managers) is also
     // in the menu
@@ -436,6 +465,8 @@ function overviewCard(nb: Notebook): HTMLElement {
 }
 
 export function renderHome(): HTMLElement {
+  // the start panel sets it again when it has its bar (no questions: no bar, toasts at the default height)
+  liftToastAbove(null);
   const nb = notebook();
   return h('div', { class: 'page page-home' },
     pageHead(t('home.title')),

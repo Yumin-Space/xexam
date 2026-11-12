@@ -26,6 +26,7 @@ fn keys(v: &Value) -> Vec<&str> {
 #[tokio::test]
 async fn openai_cached_tokens_are_recorded_and_shown_in_the_usage() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
     t.configure_openai(&admin, "demo-cached").await;
@@ -129,6 +130,7 @@ async fn the_anthropic_request_carries_two_cache_breakpoints() {
 #[tokio::test]
 async fn old_messages_are_cut_the_same_way_on_every_request() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     t.configure_openai(&admin, "demo-chat-small").await;
     let long = |c: char| c.to_string().repeat(2100);

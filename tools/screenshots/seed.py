@@ -124,6 +124,13 @@ def prepare(base, banks, stub_base):
     # is paused in AI settings
     for name in ('sam', 'alex'):
         admin.call('/api/users/update', {'id': admin.user_id(name), 'ai': True})
+    # One made-up question of sam, so that the AI+ users list shows a calls line and the usage table a Today column with
+    # more than the administrator in it
+    try:
+        sam = Session(base).sign_in('sam', DEMO_PASSWORD)     # the first sign-in above chose it
+        ai_chat(base, sam.cookie[COOKIE], 'What is a good way to plan a week of study?', 'en')
+    except Exception as e:  # cosmetic only: the images do not depend on it
+        print("  warning: the AI question of sam was not asked: %s" % e)
     row = admin.call('/api/ai/admin/suspend', {'userId': admin.user_id('alex')})['user']
     print('  AI+ feature: sam, alex (AI+ feature of %s: %s)'
           % (row['username'], 'paused' if row['suspended'] else 'NOT PAUSED'))
@@ -166,6 +173,24 @@ def ai_chat(base, cookie, text, lang):
     if not events or events[0][0] != 'start' or events[-1][0] != 'done':
         raise RuntimeError('the AI answer did not finish: %r' % [n for n, _ in events])
     return events[0][1]['chatId']
+
+
+def wait_for_ai_room(base, cookie, need, most=75):
+    """Waits (at most `most` seconds) until the signed-in user may make `need` more AI calls within the per-minute cap
+    (GET /api/ai/status, field calls), so a scene never shows the cap callout because the scenes before it used the
+    minute's calls. Returns the seconds waited."""
+    s = Session(base)
+    s.cookie[COOKIE] = cookie
+    t0 = time.time()
+    while True:
+        calls = s.call('/api/ai/status').get('calls') or {}
+        used, caps = calls.get('used') or {}, calls.get('caps') or {}
+        room = min(caps.get(k, 10 ** 6) - used.get(k, 0) for k in ('minute', 'hour', 'day')) if caps else need
+        if room >= need or time.time() - t0 >= most:
+            if room < need:
+                print('  warning: only %d AI calls left within the caps' % room)
+            return round(time.time() - t0)
+        time.sleep(3)
 
 
 def set_free(base, cookie, free):

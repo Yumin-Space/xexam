@@ -353,3 +353,65 @@ export function readOnlyReason(st: { enabled: boolean; allowed: boolean; suspend
   if (st.suspended) return 'suspended';
   return st.enabled && !st.allowed ? 'noFunction' : 'unavailable';
 }
+
+// ---------------------------------------------------------------- the phone screen (v1.0: CH-1, CH-9, CH-13)
+
+/** AI Chat is a full-height screen with a locked document up to this width (px); wider, the owner's fixed-height box */
+export const LOCK_MAX_WIDTH = 900;
+
+/** From this width (px) the chat list and the conversation sit side by side again (tablets, CH-10) */
+export const TWO_PANES_MIN_WIDTH = 720;
+
+/** Within this many pixels of the end the list counts as "at the end" and follows new text and a changed height */
+export const END_PX = 24;
+
+/** Whether a scroller is at its end (within `px`): the list then keeps showing the newest message when its height changes */
+export function atEnd(box: { scrollHeight: number; scrollTop: number; clientHeight: number }, px = END_PX): boolean {
+  return box.scrollHeight - box.scrollTop - box.clientHeight <= px;
+}
+
+/** Whether the AI Chat page locks the document (no page scroll; only the lists scroll) at this window width */
+export const locksDocument = (width: number): boolean => width <= LOCK_MAX_WIDTH;
+
+/** Whether the chat list and the conversation are both shown at this window width (otherwise one at a time) */
+export const showsTwoPanes = (width: number): boolean => width >= TWO_PANES_MIN_WIDTH;
+
+// ---------------------------------------------------------------- the composer (v1.0: CH-7, CH-8, C-6)
+
+/** What the status slot above the composer's input shows (one thing at a time, never more than two lines) */
+export type ComposerStatus = 'error' | 'cap' | 'busy' | null;
+
+/**
+ * The status slot: a send error (red) first, then the request-cap callout (warn), then "another chat is writing an answer"
+ * (with its Stop it button). A cap refusal is shown as the callout, never also as a send error.
+ */
+export function composerStatus(o: { sendError: string | null; capped: boolean; busyElsewhere: boolean }): ComposerStatus {
+  if (o.sendError) return 'error';
+  if (o.capped) return 'cap';
+  return o.busyElsewhere ? 'busy' : null;
+}
+
+/** An answer is being written in another chat of this user (a study answer counts too), not in the open one */
+export function isBusyElsewhere(running: { chatId: number } | null | undefined, openChatId: number | null, sendingHere: boolean): boolean {
+  return running != null && !sendingHere && running.chatId !== openChatId;
+}
+
+/** How many lines the composer's input grows to before it scrolls: 4 on touch screens or in a window under 700 px tall, else 8 */
+export const composerMaxLines = (coarsePointer: boolean, windowHeight: number): number => (coarsePointer || windowHeight < 700 ? 4 : 8);
+
+/** The full-height chat screen keeps at least this much of the conversation (px) visible while the input grows */
+export const MIN_MSGS_PX = 100;
+
+/**
+ * How many lines the input may grow to given the room left: at most `composerMaxLines`, never more than about 22% of the
+ * visual viewport, and never more than `textRoomPx` (the px its text may take so that MIN_MSGS_PX of the conversation stay
+ * visible above the composer: the open keyboard, a short landscape screen); at least 1.
+ */
+export function composerLines(coarsePointer: boolean, windowHeight: number, viewportHeight: number, lineHeight: number,
+  textRoomPx = Number.POSITIVE_INFINITY): number {
+  const lh = Math.max(1, lineHeight);
+  const cap = composerMaxLines(coarsePointer, windowHeight);
+  const room = Math.floor((0.22 * viewportHeight) / lh);
+  const fit = Number.isFinite(textRoomPx) ? Math.floor(textRoomPx / lh) : cap;
+  return Math.max(1, Math.min(cap, room, fit));
+}

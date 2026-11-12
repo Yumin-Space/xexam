@@ -11,6 +11,7 @@ use crate::codes::ApiError;
 use crate::identity::Identity;
 use crate::prompt::{self, Lang};
 use crate::provider::{self, Role, UpCode};
+use crate::quota;
 use crate::store::{data, stats};
 use crate::util::{char_len, chat_title, collapse_ws, cut_chars, unix_now};
 use axum::body::{Body, Bytes};
@@ -34,7 +35,14 @@ pub async fn status(ctx: Ctx) -> Answer {
         .map_or(Value::Null, |(c, m)| json!({"chatId": c, "messageId": m}));
     let l = app.limits();
     let admin = who.is_admin();
-    ok(json!({
+    // The per-user call counts: only for a user who has the AI+ service while AI is on (paused or not)
+    let calls = if eff && who.ai_allowed {
+        let st = call_states(app, &[who.id], unix_now())?.remove(&who.id);
+        st.map(|st| calls_json(&st, Some(l.caps())))
+    } else {
+        None
+    };
+    let mut answer = json!({
         "enabled": eff,
         "allowed": eff && who.ai_allowed && !suspended,
         "suspended": suspended,
@@ -43,13 +51,87 @@ pub async fn status(ctx: Ctx) -> Answer {
         "retentionDays": snap.settings.retention_days,
         "memoryLimit": l.memories_per_user,
         "memoryMaxChars": l.memory_chars,
-        "maxMessageChars": l.message_chars,
-        "messageChars": l.message_chars,
+        "maxMessageChars": crate::limits::MESSAGE_CHARS,
+        "messageChars": crate::limits::MESSAGE_CHARS,
         "memoryChars": l.memory_chars,
         "keyProblem": admin && snap.key_problem.is_some(),
         "configured": admin && snap.configured(),
         "freeMode": admin && free_mode_of(app, who)?,
-    }))
+    });
+    if let (Some(c), Some(m)) = (calls, answer.as_object_mut()) {
+        m.insert("calls".into(), c);
+    }
+    ok(answer)
+}
+
+/// What the per-user caps say about one user right now: calls counted in each window (running ones included) and the
+/// cap that would refuse one more call, if any.
+pub(super) struct CallState {
+    pub used: quota::Used,
+    pub blocked: Option<quota::Hit>,
+}
+
+/// The call state of each of `ids` at `now`, read in one `store.read`: the finished calls from the usage rows
+/// (`recent_starts` for one user, one `recent_starts_all` pass grouped in Rust for several, never a `GROUP BY`), plus the
+/// running calls of the registry, read inside the same closure (lock order store -> registry).
+pub(super) fn call_states(
+    app: &crate::app::App,
+    ids: &[i64],
+    now: i64,
+) -> rusqlite::Result<std::collections::HashMap<i64, CallState>> {
+    let caps = app.limits().caps();
+    app.store.read(|c| {
+        let running: Vec<Vec<i64>> = ids
+            .iter()
+            .map(|&u| app.registry.starts_of(u, None))
+            .collect();
+        let day = crate::util::day_bounds(now);
+        let mut finished: std::collections::HashMap<i64, Vec<i64>> =
+            std::collections::HashMap::new();
+        if let [one] = ids {
+            finished.insert(*one, stats::recent_starts(c, *one, now, day.start)?);
+        } else if !ids.is_empty() {
+            for (user, start) in stats::recent_starts_all(c, now, day.start)? {
+                finished.entry(user).or_default().push(start);
+            }
+        }
+        let mut out = std::collections::HashMap::new();
+        for (&user, run) in ids.iter().zip(running) {
+            let mut starts = finished.remove(&user).unwrap_or_default();
+            starts.extend(run);
+            out.insert(
+                user,
+                CallState {
+                    used: quota::used(&starts, now, day),
+                    blocked: quota::check(&starts, now, day, caps).err(),
+                },
+            );
+        }
+        Ok(out)
+    })
+}
+
+/// `{"used": {...}, "caps": {...}?, "blocked": null | {"cap", "limit", "retryAt"}}` (`caps` only for the status).
+pub(super) fn calls_json(st: &CallState, caps: Option<quota::Caps>) -> Value {
+    let mut m = Map::new();
+    m.insert(
+        "used".into(),
+        json!({"minute": st.used.minute, "hour": st.used.hour, "day": st.used.day}),
+    );
+    if let Some(c) = caps {
+        m.insert(
+            "caps".into(),
+            json!({"minute": c.minute, "hour": c.hour, "day": c.day}),
+        );
+    }
+    m.insert(
+        "blocked".into(),
+        st.blocked.map_or(
+            Value::Null,
+            |h| json!({"cap": h.cap.key(), "limit": h.limit, "retryAt": h.retry_at}),
+        ),
+    );
+    Value::Object(m)
 }
 
 pub async fn chats(ctx: Ctx) -> Answer {
@@ -191,6 +273,8 @@ pub(super) struct Launch {
     pub history: Vec<provider::Turn>,
     pub guard: Option<crate::study::guard::HintGuard>,
     pub purpose: Option<&'static str>,
+    /// The reply language (the answer length in characters becomes `max_tokens` by it)
+    pub lang: crate::prompt::Lang,
     /// 1 for a first ask; above 1 a regenerate: the gateway cache is bypassed and the last user turn sent carries the
     /// regenerate note of that number (never stored)
     pub attempt: u32,
@@ -228,15 +312,14 @@ pub(super) fn launch(
     let app = &ctx.app;
     let s = &snap.settings;
     let history = with_regenerate_note(&l.history, l.attempt);
-    let body = provider::chat_body(
-        s.wire_format(),
-        &s.model,
-        &l.system,
-        &history,
-        s.usage_option,
-        s.max_tokens,
-    );
-    let request = match target.chat_request(&app.0.client, &body, l.attempt > 1) {
+    let spec = provider::ChatSpec {
+        model: &s.model,
+        system: &l.system,
+        turns: &history,
+        usage_option: s.usage_option,
+        skip_cache: l.attempt > 1,
+    };
+    let plan = match app.chat_plan(snap, &target, &spec, Some(l.lang)) {
         Ok(r) => r,
         Err(e) => {
             let now = unix_now();
@@ -262,8 +345,7 @@ pub(super) fn launch(
         message: l.answer,
         model: s.model.clone(),
         provider: s.provider,
-        format: s.wire_format(),
-        request,
+        plan,
         frames: tx,
         guard: l.guard,
         purpose: l.purpose,
@@ -313,6 +395,7 @@ fn start_stream(
         history: p.history,
         guard: None,
         purpose: None,
+        lang,
         attempt,
     };
     launch(ctx, snap, target, slot, permit, l)
@@ -344,6 +427,20 @@ pub(super) fn take_places(
     if app.suspended(&ctx.who) {
         return Err(ApiError::suspended());
     }
+    // The per-user caps on model calls, everyone included. The registry is read inside the same store read as the
+    // usage rows (lock order store -> registry), and only the entries reserved before this one count.
+    let now = unix_now();
+    let hit = app.store.read(|c| {
+        let running = app.registry.starts_of(ctx.who.id, Some(&slot));
+        let day = crate::util::day_bounds(now);
+        let mut starts = stats::recent_starts(c, ctx.who.id, now, day.start)?;
+        starts.extend(running);
+        Ok(quota::check(&starts, now, day, l.caps()).err())
+    })?;
+    if let Some(hit) = hit {
+        app.note_call_cap(&ctx.who.username, ctx.who.id, &hit, now);
+        return Err(ApiError::call_limit(&hit, now));
+    }
     Ok((slot, permit))
 }
 
@@ -364,8 +461,8 @@ pub async fn send(ctx: Ctx) -> Answer {
     if text.is_empty() {
         return Err(ApiError::bad_request());
     }
-    if char_len(&text) > crate::limits::Limits::usize_of(limits.message_chars) {
-        return Err(ApiError::too_long(limits.message_chars));
+    if char_len(&text) > crate::limits::MESSAGE_CHARS {
+        return Err(ApiError::too_long(crate::limits::MESSAGE_CHARS as i64));
     }
     let target = ctx.app.0.target(&snap)?;
     let (slot, permit) = take_places(&ctx, Kind::Chat, chat_id)?;
@@ -659,53 +756,70 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         role: Role::User,
         content: cut_chars(&text, prompt::SUGGEST_INPUT_CHARS),
     }];
-    let body = provider::chat_body(
-        s.wire_format(),
-        &s.model,
-        &prompt::suggest_prompt(lang),
-        &turns,
-        s.usage_option,
-        s.max_tokens,
-    );
-    let req = target
-        .chat_request(&app.client, &body, false)
+    let system = prompt::suggest_prompt(lang);
+    let spec = provider::ChatSpec {
+        model: &s.model,
+        system: &system,
+        turns: &turns,
+        usage_option: s.usage_option,
+        skip_cache: false,
+    };
+    let plan = ctx
+        .app
+        .chat_plan(&snap, &target, &spec, Some(lang))
         .map_err(|e| ApiError::upstream(e.code))?;
     drop(target);
-    let started = std::time::Instant::now();
-    let t = app.timeouts;
-    let mut cancel = slot.cancel.clone();
-    let mut shutdown = app.shutdown.clone();
-    let result = tokio::select! {
-        r = provider::collect_chat(&app.client, req, s.wire_format(), t, t.short_total) => Ok(r),
-        _ = cancel.wait_for(|v| v.is_some()) => Err(slot.stopped().unwrap_or(StopReason::Stop)),
-        _ = shutdown.wait_for(|v| *v) => Err(StopReason::Shutdown),
+    // The provider call and its usage row run in one spawned task that owns the slot and the permit: a browser that
+    // goes away (the handler future is dropped) neither cancels the call nor loses its row, so the cap still counts it.
+    let task = {
+        let app = ctx.app.clone();
+        let who = who.clone();
+        let (provider_name, model) = (s.provider.as_str(), s.model.clone());
+        tokio::spawn(async move {
+            let started = std::time::Instant::now();
+            let t = app.0.timeouts;
+            let mut cancel = slot.cancel.clone();
+            let mut shutdown = app.0.shutdown.clone();
+            let result = tokio::select! {
+                r = provider::collect_chat(&app.0.client, plan, t, t.short_total) => Ok(r),
+                _ = cancel.wait_for(|v| v.is_some()) => Err(slot.stopped().unwrap_or(StopReason::Stop)),
+                _ = shutdown.wait_for(|v| *v) => Err(StopReason::Shutdown),
+            };
+            let now = unix_now();
+            let (status, code, tin, tout) = match &result {
+                Ok(Ok(c)) => ("ok", None, c.tokens_in, c.tokens_out),
+                Ok(Err(e)) => ("error", Some(e.code.short().to_string()), None, None),
+                Err(_) => ("stopped", None, None, None),
+            };
+            let usage = stats::UsageRow {
+                user_id: Some(who.id),
+                at: now,
+                kind: "memory",
+                provider: provider_name,
+                model,
+                tokens_in: tin,
+                tokens_out: tout,
+                tokens_cached: None,
+                latency_ms: provider::ms(started.elapsed()),
+                first_byte_ms: None,
+                status,
+                error_code: code,
+            };
+            let written = app.0.store.write(|tx| {
+                data::ensure_user(tx, &who, now)?;
+                stats::insert_usage(tx, &usage)
+            });
+            // The row is committed before the places are given back (the caps count both the registry and the rows)
+            drop(permit);
+            drop(slot);
+            written.map(|()| result)
+        })
     };
-    let now = unix_now();
-    let (status, code, tin, tout) = match &result {
-        Ok(Ok(c)) => ("ok", None, c.tokens_in, c.tokens_out),
-        Ok(Err(e)) => ("error", Some(e.code.short().to_string()), None, None),
-        Err(_) => ("stopped", None, None, None),
+    let result = match task.await {
+        Ok(Ok(r)) => r,
+        Ok(Err(e)) => return Err(e.into()),
+        Err(_) => return Err(ApiError::internal()),
     };
-    let usage = stats::UsageRow {
-        user_id: Some(who.id),
-        at: now,
-        kind: "memory",
-        provider: s.provider.as_str(),
-        model: s.model.clone(),
-        tokens_in: tin,
-        tokens_out: tout,
-        tokens_cached: None,
-        latency_ms: provider::ms(started.elapsed()),
-        first_byte_ms: None,
-        status,
-        error_code: code,
-    };
-    app.store.write(|tx| {
-        data::ensure_user(tx, who, now)?;
-        stats::insert_usage(tx, &usage)
-    })?;
-    drop(permit);
-    drop(slot);
     match result {
         Ok(Ok(c)) => {
             let max = crate::limits::Limits::usize_of(app.limits().memory_chars);

@@ -97,25 +97,42 @@ export type AiPage = 'practice' | 'exam' | 'result' | 'detail';
 export interface ControlSpec {
   kind: StudyKind;
   source: StudySource;
-  /** `data-focus` keys of the header icon and of the button */
-  focus: { icon: string; button: string };
-  /** Label key of the button and the icon (the book icon on result pages is the same control as AI 解析) */
+  /** `data-focus` key of the opener button (result / detail cards add `-<n>`, see `focusKey`) */
+  focus: { button: string };
+  /** Label key of the button (the explanation of a result page is the same control as AI 解析) */
   labelKey: 'aiplus.hint' | 'aiplus.explain' | 'aiplus.analyze';
-  shortKey: 'aiplus.hint.short' | 'aiplus.explain.short' | null;
   tipKey: 'aiplus.tip.hint' | 'aiplus.tip.explain' | null;
 }
 
 export function aiControls(page: AiPage): ControlSpec[] {
   if (page === 'practice') {
     return [
-      { kind: 'hint', source: 'practice', focus: { icon: 'q-bulb', button: 'q-aihint' }, labelKey: 'aiplus.hint', shortKey: 'aiplus.hint.short', tipKey: 'aiplus.tip.hint' },
-      { kind: 'explain', source: 'practice', focus: { icon: 'q-book', button: 'q-aiexplain' }, labelKey: 'aiplus.explain', shortKey: 'aiplus.explain.short', tipKey: 'aiplus.tip.explain' },
+      { kind: 'hint', source: 'practice', focus: { button: 'q-aihint' }, labelKey: 'aiplus.hint', tipKey: 'aiplus.tip.hint' },
+      { kind: 'explain', source: 'practice', focus: { button: 'q-aiexplain' }, labelKey: 'aiplus.explain', tipKey: 'aiplus.tip.explain' },
     ];
   }
   if (page === 'result' || page === 'detail') {
-    return [{ kind: 'explain', source: 'result', focus: { icon: 'rv-book', button: 'rv-ai' }, labelKey: 'aiplus.analyze', shortKey: null, tipKey: null }];
+    return [{ kind: 'explain', source: 'result', focus: { button: 'rv-ask' }, labelKey: 'aiplus.analyze', tipKey: null }];
   }
   return [];
+}
+
+/** The data-focus key of an opener: practice `q-aihint`…, result / detail `rv-ask-<n>` */
+export const focusKey = (page: 'practice' | 'result' | 'detail', spec: ControlSpec, no: number): string =>
+  page === 'practice' ? spec.focus.button : `${spec.focus.button}-${no}`;
+
+/** The `data-aip-dock` value of a place: practice `practice`, result / detail card n `rv-<n>` (spec 2.12 b) */
+export const dockKey = (page: 'practice' | 'result' | 'detail', no: number): string => (page === 'practice' ? 'practice' : `rv-${no}`);
+
+/**
+ * What the greyed bar of P-20 says: `reasonKey` is the short visible reason (the badge's reason, or the control's own),
+ * `tipKey` + `badgeReasonKey` build the full text of the toast (`aiplus.tip.na` takes {label} and {reason}).
+ */
+export function unavailableParts(state: ControlState): { reasonKey: string; tipKey: string; badgeReasonKey: string | null; tag: boolean } | null {
+  if (!state.show || state.usable) return null;
+  const tip = state.tip;
+  const badgeReasonKey = tip.key === 'aiplus.tip.na' && tip.reasonKey ? tip.reasonKey : null;
+  return { reasonKey: badgeReasonKey ?? tip.key, tipKey: tip.key, badgeReasonKey, tag: state.tag };
 }
 
 /** The popover title key: the explanation of a result page is "AI 解析" */
@@ -222,6 +239,12 @@ export function chatDisplayTitle(c: { title: string; kind?: ChatKind | null }): 
     case 'summary': return { text: c.title, suffixKey: 'aiplus.chat.suffix.summary' };
     default: return { text: c.title, suffixKey: null };
   }
+}
+
+/** The full name of a chat as AI Chat shows it (`<time>-练习`); `tr` translates the suffix key */
+export function chatNameOf(c: { title: string; kind?: ChatKind | null }, tr: (key: ChatSuffixKey) => string): string {
+  const d = chatDisplayTitle(c);
+  return d.suffixKey ? `${d.text}-${tr(d.suffixKey)}` : d.text;
 }
 
 // ---------------------------------------------------------------- what is running (409 ai.busy, spec 5.5 / 7.8)

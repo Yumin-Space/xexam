@@ -14,7 +14,11 @@
 // AI (v0.8): the AI service's error JSON carries a stable `code` (and `field` for a key error, `limit` for a limit that was
 // reached) besides the Chinese text; the pages translate by code. A 5xx without JSON on /api/ai/* means the AI service is
 // not there (code 'ai.unavailable'). postStream() reads the streamed answer (server-sent events over a POST) with no retry.
+// AI call caps (v1.0): a 429 with code 'ai.callLimit' also carries `cap`, `limit` and `retryAt`; they are parsed into `quota`
+// (ApiError.quota) so the pages can say which cap was reached and when it frees. Its JSON has `retryAfter`, so it is never
+// taken for Nginx's rate limit and never retried.
 import { createSseParser, SseTooLarge } from '../domain/sse.ts';
+import type { AiCallBlock } from '../types/api.ts';
 
 export type ApiErrorKind =
   | 'http' // the service returned an error status code with a JSON body; `serverMessage` holds the backend's (Chinese) reason
@@ -38,6 +42,8 @@ export class ApiError extends Error {
   readonly limit: number | undefined;
   /** v0.9: what is running now, on a 409 `ai.busy` (an object, or null when the server names nothing) */
   readonly running: unknown;
+  /** v1.0: which AI request cap was reached and when it frees, on a 429 `ai.callLimit` (undefined otherwise or when malformed) */
+  readonly quota: AiCallBlock | undefined;
 
   constructor(kind: ApiErrorKind, status = 0, serverMessage = '', retryAfter: number | null = null, extra: ApiErrorExtra = {}) {
     super(serverMessage || extra.code || `${kind} ${status}`);
@@ -50,6 +56,7 @@ export class ApiError extends Error {
     this.field = extra.field;
     this.limit = extra.limit;
     this.running = extra.running;
+    this.quota = extra.quota;
   }
 }
 
@@ -58,15 +65,27 @@ export interface ApiErrorExtra {
   field?: string | undefined;
   limit?: number | undefined;
   running?: unknown;
+  quota?: AiCallBlock | undefined;
 }
 
-/** `code`, `field`, `limit` and `running` of an error body (each only when it has the right type) */
+/** The `cap` / `limit` / `retryAt` of an `ai.callLimit` body, when all three are valid */
+function quotaOf(b: { cap?: unknown; limit?: unknown; retryAt?: unknown }): AiCallBlock | undefined {
+  const { cap, limit, retryAt } = b;
+  if (cap !== 'minute' && cap !== 'hour' && cap !== 'day') return undefined;
+  if (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 0) return undefined;
+  if (typeof retryAt !== 'number' || !Number.isFinite(retryAt) || retryAt <= 0) return undefined;
+  return { cap, limit, retryAt };
+}
+
+/** `code`, `field`, `limit`, `running` and (for `ai.callLimit`) `quota` of an error body (each only when it has the right type) */
 function extraOf(body: unknown): ApiErrorExtra {
   if (typeof body !== 'object' || body === null) return {};
-  const b = body as { code?: unknown; field?: unknown; limit?: unknown; running?: unknown };
+  const b = body as { code?: unknown; field?: unknown; limit?: unknown; running?: unknown; cap?: unknown; retryAt?: unknown };
   const running = typeof b.running === 'object' ? b.running : undefined;
+  const quota = b.code === 'ai.callLimit' ? quotaOf(b) : undefined;
   return {
     ...(running !== undefined ? { running } : {}),
+    ...(quota ? { quota } : {}),
     code: typeof b.code === 'string' && b.code ? b.code : undefined,
     field: typeof b.field === 'string' && b.field ? b.field : undefined,
     limit: typeof b.limit === 'number' && Number.isFinite(b.limit) ? b.limit : undefined,

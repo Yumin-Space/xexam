@@ -10,7 +10,7 @@ use crate::codes::text_of;
 use crate::identity::Identity;
 use crate::link::{LinkError, SessionUser};
 use crate::provider::{self, ms, Up, UpCode, UpError};
-use crate::settings::{Format, Provider};
+use crate::settings::Provider;
 use crate::store::{data, stats};
 use crate::study::guard::{HintGuard, Verdict};
 use serde_json::{json, Value};
@@ -157,6 +157,8 @@ struct Entry {
     chat: Option<i64>,
     message: i64,
     seq: u64,
+    /// When the call was reserved (unix seconds): its start for the per-user call caps
+    started: i64,
     cancel: watch::Sender<Option<StopReason>>,
     done: watch::Receiver<bool>,
 }
@@ -238,6 +240,7 @@ impl Registry {
                 chat,
                 message: 0,
                 seq: id,
+                started: crate::util::unix_now(),
                 cancel: cancel_tx,
                 done: done_rx,
             },
@@ -248,6 +251,18 @@ impl Registry {
             cancel: cancel_rx,
             done: done_tx,
         })
+    }
+
+    /// Start times (unix s) of the user's running calls, for the per-user call caps. With `before`, only the entries
+    /// reserved before that place (a total order on reservations: the call being admitted never counts itself and the
+    /// earlier of two simultaneous asks passes); with `None`, every running entry of the user.
+    pub fn starts_of(&self, user: i64, before: Option<&Slot>) -> Vec<i64> {
+        self.lock()
+            .entries
+            .values()
+            .filter(|e| e.user == user && before.is_none_or(|s| e.seq < s.id))
+            .map(|e| e.started)
+            .collect()
     }
 
     /// Names the chat of a reserved place before anything is written (the study asks bind it inside their write
@@ -379,8 +394,8 @@ pub struct Generation {
     pub message: i64,
     pub model: String,
     pub provider: Provider,
-    pub format: Format,
-    pub request: reqwest::Request,
+    /// The requests of this one call (the first and the token-limit fallbacks)
+    pub plan: provider::Plan,
     pub frames: UnboundedSender<Frame>,
     /// Hints only: the guard that decides what part of the text may be shown and stored
     pub guard: Option<HintGuard>,
@@ -427,8 +442,7 @@ pub async fn run(g: Generation) {
         message,
         model,
         provider,
-        format,
-        request,
+        plan,
         frames,
         mut guard,
         purpose,
@@ -438,7 +452,7 @@ pub async fn run(g: Generation) {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let client = app.0.client.clone();
     let reader = tokio::spawn(async move {
-        provider::stream_chat(&client, request, format, t, tx).await;
+        provider::stream_plan(&client, plan, t, tx).await;
     });
     let mut text = String::new();
     let mut flushed = 0usize;
@@ -705,6 +719,32 @@ mod tests {
         assert!(g.try_acquire().is_none());
         drop((a, b, c));
         assert_eq!(g.available(), 3);
+    }
+
+    #[tokio::test]
+    async fn starts_of_counts_only_earlier_reservations_of_that_user() {
+        let reg = Arc::new(Registry::default());
+        let a = reg.reserve(1, Kind::Chat, None, 4).expect("a");
+        let b = reg.reserve(1, Kind::Suggest, None, 4).expect("b");
+        let other = reg.reserve(2, Kind::Chat, None, 4).expect("other");
+        let c = reg.reserve(1, Kind::Chat, None, 4).expect("c");
+        assert!(
+            reg.starts_of(1, Some(&a)).is_empty(),
+            "nothing before the first"
+        );
+        assert_eq!(reg.starts_of(1, Some(&b)).len(), 1);
+        assert_eq!(
+            reg.starts_of(1, Some(&c)).len(),
+            2,
+            "a and b, never c itself"
+        );
+        assert_eq!(reg.starts_of(1, None).len(), 3, "every entry of the user");
+        assert_eq!(reg.starts_of(2, None).len(), 1, "other users never mix in");
+        assert_eq!(reg.starts_of(3, None).len(), 0);
+        drop(a);
+        assert_eq!(reg.starts_of(1, Some(&c)).len(), 1);
+        drop((b, c, other));
+        assert!(reg.starts_of(1, None).is_empty());
     }
 
     #[tokio::test]

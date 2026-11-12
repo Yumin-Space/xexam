@@ -1124,7 +1124,7 @@ dependencies = [
 
 [[package]]
 name = "xexam-backend"
-version = "0.9.1"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "argon2",

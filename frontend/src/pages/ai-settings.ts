@@ -3,8 +3,11 @@
 // reports) and loads the settings only while ai-service is connected. Otherwise it shows a status panel that names the
 // cause (main service down, the AI link off, ai-service not running / stopped / not connected / no report yet; one probe of
 // GET /api/ai/status tells "not running" from "not connected") and checks again every 10 s. Sections, in order:
-//   0. the four status chips (connection, model, test, AI on / off), the connection to ai-service, and a key problem;
-//   1. Connection: provider (OpenAI-compatible API, Anthropic, Cloudflare AI Gateway), address, keys. Key fields are always
+// v1.0 (FB-6): ONE page, four category tabs under the status line (the hash keeps the tab: #/ai-settings?tab=feature | users |
+// usage | safety; a missing or unknown value is the first): AI+ 功能 (0 to 3), AI+ 用户 (4), AI 用量 (5), AI 安全 (6 and 7).
+//   0. the status line: one sentence while everything is fine, else the four chips (connection, model, test, AI on / off),
+//      the connection to ai-service, and a key problem; always above the tabs;
+//   1. Connection (a one-line summary with a pencil once it is saved and tested, AS-4): provider (OpenAI-compatible API, Anthropic, Cloudflare AI Gateway), address, keys. Key fields are always
 //      empty (never prefilled; "Saved: …1234" under them); an empty field keeps the saved key, unless the provider or the
 //      address's origin changed (then every saved key must be typed again). Saving lists the models automatically;
 //   2. Model: the current model, one input with the listed models as suggestions (or typed by hand); models that are
@@ -16,9 +19,10 @@
 //      AI+ feature of User management), counts, tokens (not on narrow screens: they are in Usage), and a read-only viewer of
 //      their chats and memories with Delete buttons (every view, delete, pause and resume is written to the System log by the
 //      AI service). Below 560 px each user is a small card instead of a table row (View stays on the name line);
-//   5. Usage: calls and tokens by user, by model and over time (no chart library: CSS bars);
+//   5. Usage: calls and tokens by user (with today's count), by model, by feature and over time (no chart library: CSS bars);
 //   6. Chat retention: days after the last message;
-//   7. Safety limits (v0.8 spec 14.1): they protect the server; they are not usage limits.
+//   7. Safety limits: the per-user AI request caps, the answer and memory lengths (in characters), and the limits that protect
+//      the server.
 // Typed keys live only in this module's state and are forgotten after a successful save, when the page is left and on
 // sign-out.
 import '../styles/ai-settings.css';
@@ -32,31 +36,36 @@ import { aiBadge } from '../components/ai-badge.ts';
 import { markdownEl } from '../components/ai-render.ts';
 import { pageHead } from '../components/common.ts';
 import { field } from '../components/fields.ts';
-import { miniIcon } from '../components/mini-icons.ts';
+import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { miniSwitch } from '../components/mini-switch.ts';
-import { icon, ICONS, roleName } from '../components/shell.ts';
-import { infoTip } from '../components/tooltip.ts';
+import { iconButton } from '../components/icon-button.ts';
+import { roleName } from '../components/shell.ts';
+import { holdTip, infoTip } from '../components/tooltip.ts';
 import { fmtAiTime, footerOf } from '../domain/ai-chat.ts';
 import { chatTitleEl, chatTitleText, userBody, whoLine } from './ai.ts';
 import { renderForbidden } from './forbidden.ts';
 import {
-  aiServiceOf, barPercent, canEnable, changesFingerprint, connUpdate, DEFAULT_LIMITS, defaultUrl, fieldOfError, fieldsOf, filterModels,
-  FORMATS, formOf, GATEWAY_AUTHS, GATEWAY_PLACEHOLDER, headerClash, httpWarning, inferFormat, isDirty, keyAfter, LIMIT_KEYS,
-  connectionSaved, focusAfterClear, LIMIT_RANGES, limitProblem, limitsFormOf, limitsUpdate, modelKind, needsReentry, orderModels, PROVIDERS, requiredKeysSaved,
-  retentionOf, savedToastKey, serviceCause, statusChips, testLineOf, urlAfterSwitch, type ConnForm, type LimitsForm, type ModelKind, type SettingsField,
-  type SvcCause, type SvcProbe,
+  AI_TABS, aiServiceOf, allFine, barPercent, blockTag, callsFigures, canEnable, changesFingerprint, connCollapsed, connUpdate, convTotals,
+  DEFAULT_LIMITS, defaultUrl, hostOf, modelCollapsed,
+  fieldOfError, fieldsOf, filterModels, FORMATS, formOf, GATEWAY_AUTHS, GATEWAY_PLACEHOLDER, hashOfTab, headerClash, httpWarning,
+  inferFormat, isDirty, keyAfter, LIMIT_KEYS, CAP_KEYS, connectionSaved, focusAfterClear, limitIssue, limitsFormOf,
+  limitsUpdate, modelKind, needsReentry, orderModels, PROVIDERS, rangeOf, replyTokensLine, requiredKeysSaved, retentionOf,
+  savedToastKey, serviceCause, SERVER_KEYS, statusChips, tabOfHash, testLineOf, todayCell, urlAfterSwitch, type AiTab, type ConnForm,
+  type LimitKey, type LimitRanges, type LimitsForm, type LimitValues, type ModelKind, type SettingsField, type SvcCause, type SvcProbe,
 } from '../domain/ai-settings.ts';
 import { badgeState } from '../domain/badge-state.ts';
 import { aiCodeText, errorText } from '../i18n/errors.ts';
 import { localeTag, t, tn, type MsgKey } from '../i18n/index.ts';
+import { clockText, waitText } from '../i18n/wait.ts';
 import { onRouteChange, onSignedIn, refreshAi, render } from '../state/actions.ts';
 import { S, onClearUserData } from '../state/store.ts';
 import type {
-  AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiKeySlot, AiLimits, AiLimitsAnswer, AiMessage, AiModels, AiProvider, AiService,
+  AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiKeySlot, AiLimitsAnswer, AiMessage, AiModels, AiProvider, AiService,
   AiSettings, AiUsage, AiVerify,
 } from '../types/api.ts';
 import { ask, dialogTitleId } from '../utils/dialog.ts';
-import { h, type Child } from '../utils/dom.ts';
+import { h, scrollToY, type Child } from '../utils/dom.ts';
+import { matches, PHONE_MQ, TOUCH_MQ } from '../utils/media.ts';
 import { toast } from '../utils/toast.ts';
 
 const PROVIDER_LABEL: Record<AiProvider, MsgKey> = {
@@ -65,10 +74,18 @@ const PROVIDER_LABEL: Record<AiProvider, MsgKey> = {
 const GATEWAY_AUTH_LABEL: Record<string, string> = {
   bearer: 'Authorization: Bearer', 'x-api-key': 'x-api-key', 'cf-aig-authorization': 'cf-aig-authorization',
 };
-const LIMIT_LABEL: Record<keyof AiLimits, MsgKey> = {
+const LIMIT_LABEL: Record<LimitKey, MsgKey> = {
+  callsPerMinute: 'ai.set.limit.callsPerMinute', callsPerHour: 'ai.set.limit.callsPerHour', callsPerDay: 'ai.set.limit.callsPerDay',
+  replyMaxChars: 'ai.set.limit.replyMaxChars', memoryChars: 'ai.set.limit.memoryChars',
   perUserRunning: 'ai.set.limit.perUserRunning', globalRunning: 'ai.set.limit.globalRunning', chatsPerUser: 'ai.set.limit.chatsPerUser',
-  messagesPerChat: 'ai.set.limit.messagesPerChat', memoriesPerUser: 'ai.set.limit.memoriesPerUser', memoryChars: 'ai.set.limit.memoryChars',
-  messageChars: 'ai.set.limit.messageChars',
+  messagesPerChat: 'ai.set.limit.messagesPerChat', memoriesPerUser: 'ai.set.limit.memoriesPerUser',
+};
+/** The category tabs (FB-6, AS-9): the icon, and the full and the short label (the short one under PHONE) */
+const TABS: Record<AiTab, { icon: MiniIcon; full: MsgKey; short: MsgKey }> = {
+  feature: { icon: 'plug', full: 'ai.set.tab.feature', short: 'ai.set.tab.featureShort' },
+  users: { icon: 'users', full: 'ai.set.tab.users', short: 'ai.set.tab.usersShort' },
+  usage: { icon: 'chart', full: 'ai.set.tab.usage', short: 'ai.set.tab.usageShort' },
+  safety: { icon: 'shield', full: 'ai.set.tab.safety', short: 'ai.set.tab.safetyShort' },
 };
 const PERIODS = [7, 30, 90, 365] as const;
 /** The tag of a listed model that is probably not a chat model (round 2) */
@@ -122,6 +139,9 @@ let testBusy = false;
 let testResult: AiVerify | null = null;
 let testError: string | null = null;
 let enableBusy = false;
+/** AS-4: the connection / the model are shown as one-line summaries once saved and tested; the pencil opens them */
+let editConn = false;
+let editModel = false;
 
 let users: AiAdminUserRow[] | null = null;
 let usersError: unknown = null;
@@ -139,7 +159,7 @@ let retentionSaving = false;
 let limits: AiLimitsAnswer | null = null;
 let limitsForm: LimitsForm | null = null;
 let limitsError: unknown = null;
-let limitsFieldErr: { key: keyof AiLimits; text: string } | null = null;
+let limitsFieldErr: { key: LimitKey; text: string } | null = null;
 let limitsSaveError: string | null = null;
 let limitsSaving = false;
 
@@ -172,6 +192,8 @@ function resetAll(): void {
   modelError = null;
   testResult = null;
   testError = null;
+  editConn = false;
+  editModel = false;
   users = null;
   usersError = null;
   fnBusy = null;
@@ -199,6 +221,8 @@ onRouteChange((from, to) => {
     connError = null;
     testResult = null;
     testError = null;
+    editConn = false;
+    editModel = false;
     if (settings) form = formOf(settings);
   }
 });
@@ -447,6 +471,7 @@ async function saveConnection(): Promise<void> {
     const next = await saveAiSettings(u);
     // The typed keys are forgotten now
     adopt(next);
+    editConn = false;
     toast(t(savedToastKey(next.switchedOff === true)));
     models = null;
     testResult = null;
@@ -483,6 +508,7 @@ async function saveModel(): Promise<boolean> {
     const manualModel = !(models?.listed && models.models.includes(model));
     const next = await saveAiSettings({ model, manualModel });
     adopt(next, true);
+    editModel = false;
     modelInput = next.model;
     testResult = null;
     toast(t(savedToastKey(next.switchedOff === true)));
@@ -532,6 +558,8 @@ async function runTest(): Promise<void> {
   if (testTimer != null) window.clearInterval(testTimer);
   testTimer = null;
   testBusy = false;
+  editConn = false;
+  editModel = false;
   void refreshAi(true);
   if (onPage()) render();
   document.getElementById('ai-test-btn')?.focus();
@@ -567,6 +595,8 @@ async function saveRetention(): Promise<void> {
     return;
   }
   if (n === settings.retentionDays) {
+    retentionError = null;
+    render();
     toast(t('ai.set.nothing'));
     return;
   }
@@ -585,20 +615,34 @@ async function saveRetention(): Promise<void> {
   if (onPage()) render();
 }
 
+/** The text under a limit field: the allowed range, or (for the caps) that a longer period cannot allow fewer requests */
+function limitFieldText(key: LimitKey, kind: 'range' | 'order', ranges: LimitRanges): string {
+  if (kind === 'order') return t('ai.err.limitOrder');
+  const [min, max] = rangeOf(ranges, key);
+  return t('ai.set.limitBad', { min: num(min), max: num(max) });
+}
+
 async function saveLimitsForm(): Promise<void> {
   const l = limits;
   const f = limitsForm;
   if (!l || !f || limitsSaving) return;
-  const bad = limitProblem(f, l.ranges);
-  if (bad) {
-    const [min, max] = l.ranges[bad];
-    limitsFieldErr = { key: bad, text: t('ai.set.limitBad', { min: num(min), max: num(max) }) };
+  const issue = limitIssue(f, l.ranges);
+  if (issue) {
+    limitsFieldErr = { key: issue.key, text: limitFieldText(issue.key, issue.kind, l.ranges) };
     render();
-    document.getElementById(`ai-lim-${bad}`)?.focus();
+    const bad = document.getElementById(`ai-lim-${issue.key}`);
+    if (bad) {
+      // No default focus scroll: the pinned top bar would cover the field
+      bad.focus({ preventScroll: true });
+      bad.scrollIntoView({ block: 'center' });
+    }
     return;
   }
   const u = limitsUpdate(l.limits, f);
   if (!Object.keys(u).length) {
+    limitsFieldErr = null;
+    limitsSaveError = null;
+    render();
     toast(t('ai.set.nothing'));
     return;
   }
@@ -610,12 +654,18 @@ async function saveLimitsForm(): Promise<void> {
     limits = await saveLimits(u);
     limitsForm = limitsFormOf(limits.limits);
     toast(t('ai.set.limitsSaved'));
+    // The administrator's own block follows the new caps at once (C-7): force a status read, not the cached one
     void refreshAi(true);
+    // The counts of the users (and their "today / cap" figures) are measured against the new caps
+    void loadUsers();
+    void loadUsage();
   } catch (e) {
-    const key = e instanceof ApiError ? (LIMIT_KEYS as readonly string[]).find((k) => k === e.field) as keyof AiLimits | undefined : undefined;
+    // The service names the field of a refused value; an order problem without a field belongs under the hourly one
+    const named = e instanceof ApiError ? (LIMIT_KEYS as readonly string[]).find((k) => k === e.field) as LimitKey | undefined : undefined;
+    const order = e instanceof ApiError && e.code === 'ai.limitOrder';
+    const key = named ?? (order ? 'callsPerHour' : undefined);
     if (key) {
-      const [min, max] = l.ranges[key];
-      limitsFieldErr = { key, text: t('ai.set.limitBad', { min: num(min), max: num(max) }) };
+      limitsFieldErr = { key, text: limitFieldText(key, order ? 'order' : 'range', l.ranges) };
     } else if (!aiDown(e)) {
       limitsSaveError = errorText(e);
     }
@@ -687,6 +737,37 @@ function fieldError(where: SettingsField): HTMLElement | null {
   return text ? h('p', { class: 'ais-ferr', role: 'alert' }, text) : null;
 }
 
+/** A saved and tested part as one line with a pencil (AS-4) */
+function summarySection(id: string, head: MsgKey, text: string, editLabel: string, editId: string, onEdit: () => void): HTMLElement {
+  const btn = iconButton({ icon: 'pencil', label: editLabel, onClick: onEdit });
+  btn.id = editId;
+  return h('section', { class: 'panel ais-sec ais-sum', 'aria-labelledby': id },
+    h('h2', { id }, t(head)),
+    h('p', { class: 'ais-sumtext' }, text),
+    btn);
+}
+
+function connectionPart(s: AiSettings, f: ConnForm, dirty: boolean): HTMLElement {
+  if (!connCollapsed(s, dirty, editConn)) return connectionSection(s, f);
+  return summarySection('ais-conn-h', 'ai.set.sec.connection', `${t(PROVIDER_LABEL[s.provider])} · ${hostOf(s.baseUrl)}`,
+    t('ai.set.sum.editConn'), 'ai-conn-edit', () => {
+      editConn = true;
+      render();
+      document.getElementById('ai-url')?.focus();
+    });
+}
+
+function modelPart(s: AiSettings, dirty: boolean): HTMLElement {
+  if (!modelCollapsed(s, modelInput, editModel)) return modelSection(s, dirty);
+  return summarySection('ais-model-h', 'ai.set.sec.model', s.model, t('ai.set.sum.editModel'), 'ai-model-edit', () => {
+    editModel = true;
+    // The picker shows the full list (AS-5); a model-list call is not counted against the caps
+    if (!models && !modelsBusy) void detectModels();
+    render();
+    document.getElementById('ai-model')?.focus();
+  });
+}
+
 function connectionSection(s: AiSettings, f: ConnForm): HTMLElement {
   const fields = fieldsOf(f.provider);
   const dirty = isDirty(s, f);
@@ -701,7 +782,7 @@ function connectionSection(s: AiSettings, f: ConnForm): HTMLElement {
     h('legend', { class: 'fld-l' }, t('ai.set.provider')),
     h('div', { class: 'ais-seg' }, PROVIDERS.map((p) => h('label', { class: 'ais-seg-o' },
       h('input', { type: 'radio', name: 'ai-prov', id: `ai-prov-${p}`, value: p, checked: p === f.provider, disabled: saving, onchange: () => pick(p) }),
-      h('span', null, t(PROVIDER_LABEL[p]))))));
+      h('span', null, t(PROVIDER_LABEL[p])), miniIcon('check', 'ais-seg-ck')))));
 
   const url = field({
     id: 'ai-url', label: t(f.provider === 'gateway' ? 'ai.set.gatewayUrl' : 'ai.set.baseUrl'), value: f.baseUrl, autocomplete: 'url', maxlength: 300,
@@ -867,6 +948,12 @@ function modelSection(s: AiSettings, dirty: boolean): HTMLElement {
   };
   function open(on: boolean): void {
     const show = on && offered.length > 0;
+    if (show) {
+      // Above the field when less than 200 px are free below it (the on-screen keyboard counts: the visual viewport)
+      const vv = window.visualViewport;
+      const bottom = vv ? vv.offsetTop + vv.height : window.innerHeight;
+      listEl.classList.toggle('up', bottom - input.getBoundingClientRect().bottom < 200);
+    }
     listEl.hidden = !show;
     input.setAttribute('aria-expanded', String(show));
     if (show) paintList();
@@ -878,6 +965,17 @@ function modelSection(s: AiSettings, dirty: boolean): HTMLElement {
     onfocus: () => {
       typed = false;
       active = -1;
+      // On touch the field goes near the top of the visual viewport (below the top bar), so the list and the keyboard fit
+      if (matches(TOUCH_MQ)) {
+        const nudge = (): void => {
+          if (!input.isConnected) return;
+          const top = (window.visualViewport?.offsetTop ?? 0) + (parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h')) || 0) + 12;
+          const delta = input.getBoundingClientRect().top - top;
+          if (Math.abs(delta) > 4) scrollToY(window.scrollY + delta, false);
+        };
+        nudge();
+        window.setTimeout(nudge, 300);
+      }
       open(true);
     },
     onblur: () => open(false),
@@ -971,21 +1069,47 @@ function badgeFor(u: Pick<AiAdminUserRow, 'role' | 'ai' | 'suspended'>, enabled:
   return aiBadge(badgeState({ role: u.role, service: u.ai, suspended: u.suspended === true, available: enabled }), { admin: true });
 }
 
-/** The AI+ feature of a listed user: its state (Active / Paused) and one button (Pause / Resume); administrators are never paused */
-function functionCell(u: AiAdminUserRow): HTMLElement {
-  const td = (...kids: Child[]): HTMLElement => h('td', { role: 'cell', class: 'ais-fncell', 'data-l': t('ai.set.col.function') }, ...kids);
-  if (!u.exists) return td();
-  if (u.role === 'admin') return td(h('span', { class: 'ais-note' }, t('ai.set.user.adminAlways')));
-  const off = u.suspended === true;
-  return td(h('div', { class: 'ais-fn' },
-    h('span', { class: 'ais-fn-state ' + (off ? 'off' : 'on') }, t(off ? 'ai.set.fn.suspended' : 'ai.set.fn.active')),
-    h('button', {
-      class: 'btn ai-mini', id: `ais-fn-${u.id}`, type: 'button', disabled: fnBusy != null,
-      'aria-label': t(off ? 'ai.set.fn.resumeAria' : 'ai.set.fn.suspendAria', { name: u.username }),
-      onclick: () => void setFunction(u, !off),
-    }, t(off ? 'ai.set.fn.resume' : 'ai.set.fn.suspend'))));
+/** The text of a user's cap tag when tapped: who, which cap, and when the user can use AI again */
+function blockedText(name: string, q: { cap: 'minute' | 'hour' | 'day'; limit: number; retryAt: number }): string {
+  const nowSec = Date.now() / 1000;
+  const cap = t(q.cap === 'minute' ? 'ai.cap.minute' : q.cap === 'hour' ? 'ai.cap.hour' : 'ai.cap.day', { n: num(q.limit) });
+  const left = Math.max(1, Math.ceil(q.retryAt - nowSec));
+  const when = q.cap === 'day'
+    ? t('ai.set.calls.whenDay')
+    : left < 60 ? t('ai.set.calls.whenSoon') : t('ai.set.calls.whenWait', { wait: waitText(left), time: clockText(q.retryAt, nowSec) });
+  return t('ai.set.calls.blocked', { name, cap, when });
 }
 
+/**
+ * C-7: "AI requests 1 min 2/5 · 1 h 7/20 · today 37/100" and, while a cap blocks, a warn tag ("Used up · back at 14:05" /
+ * "Used up today") that shows the cap text when tapped. The label in front is only for the card layout (the table has the
+ * column name).
+ */
+function callsCell(u: AiAdminUserRow): HTMLElement {
+  const td = h('td', { role: 'cell', class: 'ais-calls', 'data-l': t('ai.set.col.calls') });
+  const fig = u.exists ? callsFigures(u.calls, limits?.limits) : null;
+  if (!fig || !u.calls) return td;
+  td.append(h('span', { class: 'ais-callsline' },
+    h('span', { class: 'ais-calls-lbl' }, `${t('ai.set.calls.lbl')} `),
+    ...[t('ai.set.calls.min', { v: fig.minute }), t('ai.set.calls.hour', { v: fig.hour }), t('ai.set.calls.today', { v: fig.day })]
+      .flatMap((x, i): Child[] => [i ? ' · ' : '', h('span', { class: 'ais-calls-fig' }, x)])));
+  const tag = blockTag(u.calls);
+  const q = u.calls.blocked;
+  if (tag && q) {
+    td.append(h('button', {
+      type: 'button', class: 'ais-blocktag',
+      onclick: () => toast(blockedText(u.username, q), 7000),
+    }, t(tag.kind === 'today' ? 'ai.set.calls.tagToday' : 'ai.set.calls.tagTimed', { time: clockText(tag.retryAt, Date.now() / 1000) })));
+  }
+  return td;
+}
+
+/**
+ * The users with AI+ (AS-2). Wider than 900 px a table (the name wraps, the role tag next to a short "Always on" tag, the
+ * calls line, a narrow last column of icon buttons); up to 900 px every row is a card of three lines: name, badge and the
+ * eye; role, state and the pause / play button; the counts line and the calls line. The cells of the card's counts line are
+ * the same cells as the table's counts, so the stylesheet shows one or the other.
+ */
 function usersSection(s: AiSettings): HTMLElement {
   let body: Child;
   if (!users) {
@@ -995,29 +1119,53 @@ function usersSection(s: AiSettings): HTMLElement {
   } else if (!users.length) {
     body = h('p', { class: 'ais-note' }, t('ai.set.user.noUsers'));
   } else {
-    // Explicit table roles: below 560 px the CSS turns the rows into cards (display: block), which would drop the table
+    // Explicit table roles: up to 900 px the CSS turns the rows into cards (display: grid), which would drop the table
     // semantics in some browsers. `data-l` is the column name shown in front of a value inside a card.
     const col = (key: MsgKey, cls = ''): HTMLElement => h('th', { scope: 'col', role: 'columnheader', class: cls || null }, t(key));
     const cell = (label: MsgKey, cls: string, ...kids: Child[]): HTMLElement => h('td', { role: 'cell', class: cls || null, 'data-l': t(label) }, ...kids);
+    const row = (u: AiAdminUserRow): HTMLElement => {
+      const off = u.suspended === true;
+      const view = iconButton({ icon: 'eye', label: t('ai.set.user.viewAria', { name: u.username }), onClick: () => void openViewer(u) });
+      view.id = `ais-view-${u.id}`;
+      view.classList.add('ais-bview');
+      // Administrators are never paused; a deleted user has nothing to pause
+      let fn: HTMLButtonElement | null = null;
+      if (u.exists && u.role !== 'admin') {
+        fn = iconButton({
+          icon: off ? 'playCircle' : 'pauseCircle', label: t(off ? 'ai.set.fn.resumeAria' : 'ai.set.fn.suspendAria', { name: u.username }),
+          onClick: () => void setFunction(u, !off),
+        });
+        fn.id = `ais-fn-${u.id}`;
+        fn.classList.add('ais-bfn');
+        fn.disabled = fnBusy != null;
+      }
+      const role = u.exists
+        ? [h('span', { class: 'tag k' }, roleName(u.role)),
+          u.role === 'admin' ? h('span', { class: 'tag g', title: t('ai.set.user.adminAlways') }, t('ai.set.user.alwaysTag')) : null]
+        : [];
+      const state = u.exists && u.role !== 'admin'
+        ? h('span', { class: 'ais-fn-state ' + (off ? 'off' : 'on') }, t(off ? 'ai.set.fn.suspended' : 'ai.set.fn.active'))
+        : null;
+      return h('tr', { role: 'row', class: u.exists ? null : 'gone' },
+        h('th', { scope: 'row', role: 'rowheader', class: 'ais-user' }, h('span', { class: 'ais-uname', title: u.username }, u.username)),
+        cell('ai.set.col.badge', 'ais-badge', u.exists ? badgeFor(u, s.enabled) : h('span', { class: 'dim' }, t('ai.set.user.deleted'))),
+        cell('ai.set.col.role', 'ais-role', role),
+        cell('ai.set.col.function', 'ais-state', state),
+        cell('ai.set.user.chats', 'n ais-w', num(u.chats)), cell('ai.set.user.memories', 'n ais-w', num(u.memories)),
+        cell('ai.set.user.lastUsed', 'ais-when ais-w', when(u.lastUsedAt)),
+        h('td', { role: 'cell', class: 'ais-cline' }, t('ai.set.user.line', { c: num(u.chats), m: num(u.memories), last: when(u.lastUsedAt) })),
+        callsCell(u),
+        h('td', { role: 'cell', class: 'ais-acts' }, view, fn));
+    };
     body = h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-users', role: 'table' },
       h('thead', { role: 'rowgroup' }, h('tr', { role: 'row' },
         // The name and the AI+ badge in columns of their own, so names of any length line up (owner's request)
         col('ai.set.col.user'), col('ai.set.col.badge'), col('ai.set.col.role'), col('ai.set.col.function'),
-        col('ai.set.user.chats', 'n'), col('ai.set.user.memories', 'n'), col('ai.set.tokensIn', 'n ais-tok'), col('ai.set.tokensOut', 'n ais-tok'),
-        col('ai.set.user.lastUsed'),
-        h('th', { scope: 'col', role: 'columnheader', class: 'ais-view' }, h('span', { class: 'sr-only' }, t('ai.set.user.view'))))),
-      h('tbody', { role: 'rowgroup' }, users.map((u) => h('tr', { role: 'row', class: u.exists ? null : 'gone' },
-        h('th', { scope: 'row', role: 'rowheader', class: 'ais-user' }, h('span', { class: 'ais-uname' }, u.username)),
-        cell('ai.set.col.badge', 'ais-badge', u.exists ? badgeFor(u, s.enabled) : h('span', { class: 'dim' }, t('ai.set.user.deleted'))),
-        cell('ai.set.col.role', '', roleName(u.role)),
-        functionCell(u),
-        cell('ai.set.user.chats', 'n', num(u.chats)), cell('ai.set.user.memories', 'n', num(u.memories)),
-        cell('ai.set.tokensIn', 'n ais-tok', num(u.tokensIn)), cell('ai.set.tokensOut', 'n ais-tok', num(u.tokensOut)),
-        cell('ai.set.user.lastUsed', 'ais-when', when(u.lastUsedAt)),
-        h('td', { role: 'cell', class: 'ais-view' }, h('button', {
-          class: 'btn ai-mini', id: `ais-view-${u.id}`, type: 'button', 'aria-label': t('ai.set.user.viewAria', { name: u.username }),
-          onclick: () => void openViewer(u),
-        }, t('ai.set.user.view'))))))));
+        col('ai.set.user.chats', 'n ais-w'), col('ai.set.user.memories', 'n ais-w'), col('ai.set.user.lastUsed', 'ais-w'),
+        h('th', { scope: 'col', role: 'columnheader', class: 'ais-cline' }, h('span', { class: 'sr-only' }, `${t('ai.set.user.chats')} · ${t('ai.set.user.memories')} · ${t('ai.set.user.lastUsed')}`)),
+        col('ai.set.col.calls'),
+        h('th', { scope: 'col', role: 'columnheader', class: 'ais-acts' }, h('span', { class: 'sr-only' }, t('ai.set.user.view'))))),
+      h('tbody', { role: 'rowgroup' }, users.map(row))));
   }
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-users-h' },
     h('h2', { id: 'ais-users-h' }, t('ai.set.sec.users')), body);
@@ -1048,6 +1196,10 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
   let chatId: number | null = null;
   let chatErr: unknown = null;
   let busy = false;
+  // PHONE: a full-screen sheet with a back chevron, the title and ×; the delete buttons become a trash icon (the open chat)
+  // and a "Clear…" menu (all chats, all memories). Wider screens keep the dialog with its buttons at the bottom.
+  let menuOpen = false;
+  const phoneMq = typeof window.matchMedia === 'function' ? window.matchMedia(PHONE_MQ) : null;
   const d = h('dialog', { class: 'dlg-viewer', 'aria-labelledby': titleId });
 
   const loadDetail = async (): Promise<void> => {
@@ -1120,12 +1272,50 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
     void loadUsage();
   };
 
+  const backToList = (): void => {
+    const was = chatId;
+    chatId = null;
+    chat = null;
+    draw();
+    if (was != null) document.getElementById(`vw-c-${was}`)?.focus();
+  };
+
   function draw(): void {
     const dt = detail;
+    const phone = matches(PHONE_MQ);
+    const closeBtn = iconButton({ icon: 'x', label: t('common.close'), onClick: () => d.close() });
+    closeBtn.classList.add('vw-close');
+    const openChat1 = phone && dt != null && vtab === 'chats' && chatId != null;
+    let back: HTMLButtonElement | null = null;
+    if (openChat1) {
+      back = iconButton({ icon: 'back', label: t('ai.back'), onClick: backToList });
+      back.id = 'vw-back';
+    }
+    const tools: Child[] = [];
+    if (phone && dt && (dt.chats.length || dt.memories.length)) {
+      if (openChat1) {
+        const trash = iconButton({ icon: 'trash', tone: 'danger', label: t('ai.set.user.clearChat'), onClick: () => void clear('chat') });
+        trash.disabled = busy;
+        tools.push(trash);
+      }
+      const more = iconButton({ icon: 'more', label: t('ai.set.user.clearMenu'), onClick: () => {
+        menuOpen = !menuOpen;
+        draw();
+        document.getElementById('vw-more')?.focus();
+      } });
+      more.id = 'vw-more';
+      more.classList.add('vw-more');
+      more.setAttribute('aria-haspopup', 'menu');
+      more.setAttribute('aria-expanded', String(menuOpen));
+      more.disabled = busy;
+      tools.push(more);
+    }
     const head = h('div', { class: 'vw-head' },
+      back,
       h('h3', { id: titleId }, t('ai.set.user.title', { name: u.username })),
-      h('span', { class: 'tag k' }, t('ai.set.user.readOnly')),
-      h('button', { class: 'icon-btn vw-close', type: 'button', 'aria-label': t('common.close'), title: t('common.close'), onclick: () => d.close() }, icon(ICONS.close)));
+      phone ? null : h('span', { class: 'tag k' }, t('ai.set.user.readOnly')),
+      ...tools,
+      closeBtn);
     if (!dt) {
       d.replaceChildren(head, err
         ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.set.user.err', { reason: errorText(err) })))
@@ -1140,6 +1330,18 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
         document.getElementById(`vw-tab-${which}`)?.focus();
       },
     }, label);
+    // The "Clear…" menu (PHONE): the two bulk deletes, in red text; each still asks first
+    const menu = phone && menuOpen
+      ? h('div', { class: 'vw-menu', role: 'menu', 'aria-label': t('ai.set.user.clearMenu') },
+        dt.chats.length ? h('button', { type: 'button', role: 'menuitem', class: 'vw-menu-i', onclick: () => {
+          menuOpen = false;
+          void clear('chats');
+        } }, t('ai.set.user.clearChats')) : null,
+        dt.memories.length ? h('button', { type: 'button', role: 'menuitem', class: 'vw-menu-i', onclick: () => {
+          menuOpen = false;
+          void clear('memories');
+        } }, t('ai.set.user.clearMemories')) : null)
+      : null;
     let body: Child;
     if (!dt.chats.length && !dt.memories.length) {
       body = h('p', { class: 'ais-note' }, t('ai.set.user.noData'));
@@ -1165,33 +1367,48 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
       body = h('div', { class: 'vw-panes ' + (chatId == null ? 'on-list' : 'on-chat') },
         h('div', { class: 'vw-list' }, dt.chats.length ? list : h('p', { class: 'ais-note' }, t('ai.empty'))),
         h('div', { class: 'vw-chat' },
-          h('button', {
-            class: 'btn quiet vw-back', id: 'vw-back', type: 'button',
-            onclick: () => {
-              const was = chatId;
-              chatId = null;
-              chat = null;
-              draw();
-              if (was != null) document.getElementById(`vw-c-${was}`)?.focus();
-            },
-          }, miniIcon('back', 'ai-mi'), t('ai.back')),
+          // The back control is in the header on PHONE; below 720 px (not PHONE) it stays above the chat
+          phone ? null : h('button', { class: 'btn quiet vw-back', id: 'vw-back', type: 'button', onclick: backToList }, miniIcon('back', 'ai-mi'), t('ai.back')),
           pane));
     }
     d.replaceChildren(head,
+      ...(menu ? [menu] : []),
       h('div', { class: 'seg vw-tabs', role: 'group' },
         tabBtn('chats', `${t('ai.set.user.chats')} (${num(dt.chats.length)})`),
         tabBtn('memories', `${t('ai.set.user.memories')} (${num(dt.memories.length)})`)),
       h('div', { class: 'vw-body' }, body),
-      h('div', { class: 'acts vw-acts' },
+      // PHONE has no bottom row (the duplicate Close and the red buttons moved to the header)
+      ...(phone ? [] : [h('div', { class: 'acts vw-acts' },
         vtab === 'chats' && chatId != null
           ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('chat') }, t('ai.set.user.clearChat'))
           : null,
         dt.chats.length ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('chats') }, t('ai.set.user.clearChats')) : null,
         dt.memories.length ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('memories') }, t('ai.set.user.clearMemories')) : null,
-        h('button', { class: 'btn', type: 'button', onclick: () => d.close() }, t('common.close'))));
+        h('button', { class: 'btn', type: 'button', onclick: () => d.close() }, t('common.close')))]));
   }
 
+  // A turn of the phone between portrait and landscape (or a resize across 600 px) draws the other layout
+  const onMq = (): void => {
+    menuOpen = false;
+    draw();
+  };
+  phoneMq?.addEventListener('change', onMq);
+  // A tap outside the menu closes it; so does Escape (before it closes the sheet)
+  d.addEventListener('click', (e) => {
+    if (menuOpen && !(e.target as Element | null)?.closest('.vw-menu, .vw-more')) {
+      menuOpen = false;
+      draw();
+    }
+  });
+  d.addEventListener('cancel', (e) => {
+    if (!menuOpen) return;
+    e.preventDefault();
+    menuOpen = false;
+    draw();
+    document.getElementById('vw-more')?.focus();
+  });
   d.addEventListener('close', () => {
+    phoneMq?.removeEventListener('change', onMq);
     d.remove();
     document.getElementById(`ais-view-${u.id}`)?.focus();
   });
@@ -1199,21 +1416,34 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
   document.body.append(d);
   if (typeof d.showModal === 'function') d.showModal();
   else d.setAttribute('open', '');
-  (d.querySelector<HTMLElement>('.vw-close'))?.focus();
+  d.querySelector<HTMLElement>('.vw-close')?.focus();
   await loadDetail();
 }
 
 // ---------------------------------------------------------------- usage
 
-function countsCells(c: { calls: number; tokensIn: number; tokensOut: number; errors: number; tokensCached: number }): HTMLElement[] {
-  return [h('td', { class: 'n' }, num(c.calls)), h('td', { class: 'n' }, num(c.tokensIn)), h('td', { class: 'n' }, num(c.tokensOut)), h('td', { class: 'n' }, num(c.tokensCached)), h('td', { class: 'n' }, num(c.errors))];
+type Counts = { calls: number; tokensIn: number; tokensOut: number; errors: number; tokensCached: number };
+
+/** The five count cells of a usage row (hidden in the card layout, where `sumCell` says the same in one line) */
+function countsCells(c: Counts): HTMLElement[] {
+  return [h('td', { class: 'n ais-c' }, num(c.calls)), h('td', { class: 'n ais-c' }, num(c.tokensIn)), h('td', { class: 'n ais-c' }, num(c.tokensOut)),
+    h('td', { class: 'n ais-c' }, num(c.tokensCached)), h('td', { class: 'n ais-c' }, num(c.errors))];
 }
 
 const countsHead = (): HTMLElement[] => [
-  h('th', { scope: 'col', class: 'n' }, t('ai.set.calls')), h('th', { scope: 'col', class: 'n' }, t('ai.set.tokensIn')),
-  h('th', { scope: 'col', class: 'n' }, t('ai.set.tokensOut')), h('th', { scope: 'col', class: 'n' }, t('ai.set.tokensCached')),
-  h('th', { scope: 'col', class: 'n' }, t('ai.set.errors')),
+  h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.calls')), h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.tokensIn')),
+  h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.tokensOut')), h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.tokensCached')),
+  h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.errors')),
 ];
+
+/** AS-3, up to 560 px: "Calls 17 · Tokens 2,631 / 367" (cached and errors only when not zero; today's count when given) */
+function sumCell(c: Counts, today?: string): HTMLElement {
+  return h('td', { class: 'ais-usum' },
+    t('ai.set.usage.sum', { calls: num(c.calls), tin: num(c.tokensIn), tout: num(c.tokensOut) }),
+    c.tokensCached ? t('ai.set.usage.sumCached', { n: num(c.tokensCached) }) : '',
+    c.errors ? t('ai.set.usage.sumErr', { n: num(c.errors) }) : '',
+    today ? t('ai.set.usage.sumToday', { v: today }) : '');
+}
 
 function usageSection(): HTMLElement {
   const select = h('select', {
@@ -1235,45 +1465,55 @@ function usageSection(): HTMLElement {
     const tiles = h('dl', { class: 'ais-totals' },
       ([['ai.set.calls', u.totals.calls], ['ai.set.tokensIn', u.totals.tokensIn], ['ai.set.tokensOut', u.totals.tokensOut], ['ai.set.tokensCached', u.totals.tokensCached], ['ai.set.errors', u.totals.errors]] as Array<[MsgKey, number]>)
         .map(([k, v]) => h('div', { class: 'ais-total' }, h('dt', null, t(k)), h('dd', { class: 'num' }, num(v)))));
+    // The conversation figures that go with the usage (the owner's "用量跟对话"): the sums over the listed AI+ users
+    const conv = users && users.length ? convTotals(users) : null;
+    const convs = conv
+      ? h('p', { class: 'ais-note ais-convs' }, t('ai.set.usage.convs', { chats: num(conv.chats), messages: num(conv.messages), memories: num(conv.memories) }))
+      : null;
+    const perDay = limits?.limits.callsPerDay;
     if (!u.totals.calls) {
-      body = [tiles, h('p', { class: 'ais-note' }, t('ai.set.noUsage'))];
+      body = [tiles, convs, h('p', { class: 'ais-note' }, t('ai.set.noUsage'))];
     } else {
       const maxCalls = Math.max(0, ...u.byPeriod.map((p) => p.calls));
       body = [
         tiles,
+        convs,
         h('h3', { class: 'ais-h3' }, t('ai.set.byUser')),
-        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table' },
-          h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.col.user')), countsHead(), h('th', { scope: 'col' }, t('ai.set.user.lastUsed')))),
+        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards' },
+          h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.col.user')), countsHead(),
+            h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.col.today')), h('th', { scope: 'col', class: 'ais-whenh' }, t('ai.set.user.lastUsed')))),
           h('tbody', null, u.byUser.map((r) => h('tr', null,
             h('th', { scope: 'row' }, r.userId == null ? t('ai.set.deletedUsers') : r.username ?? `#${r.userId}`), countsCells(r),
-            h('td', { class: 'ais-when' }, when(r.lastAt))))))),
+            h('td', { class: 'n ais-c' }, todayCell(r.today, perDay)),
+            h('td', { class: 'ais-when' }, when(r.lastAt)),
+            sumCell(r, r.today == null ? undefined : todayCell(r.today, perDay))))))),
         h('h3', { class: 'ais-h3' }, t('ai.set.byModel')),
-        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table' },
+        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards' },
           h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.col.model')), countsHead())),
           // The model-listing calls are stored without a model (kind 'models'): labelled like "Deleted users" above
           h('tbody', null, u.byModel.map((r) => h('tr', null,
             r.model ? h('th', { scope: 'row', class: 'ais-mono' }, r.model) : h('th', { scope: 'row' }, t('ai.set.modelListCalls')),
-            countsCells(r)))))),
+            countsCells(r), sumCell(r)))))),
         // v0.9: what the calls were for (AI Chat, hint, explanation, summary), in the server's order
         u.byPurpose
           ? h('h3', { class: 'ais-h3' }, t('ai.set.usage.byPurpose'))
           : null,
         u.byPurpose
-          ? h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table' },
+          ? h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards' },
             h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.usage.byPurpose')), countsHead())),
             h('tbody', null, u.byPurpose.map((r) => h('tr', null,
-              h('th', { scope: 'row' }, t(`ai.set.usage.purpose.${r.purpose}` as MsgKey)), countsCells(r))))))
+              h('th', { scope: 'row' }, t(`ai.set.usage.purpose.${r.purpose}` as MsgKey)), countsCells(r), sumCell(r))))))
           : null,
         h('h3', { class: 'ais-h3' }, t('ai.set.byPeriod')),
-        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-period' },
+        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards ais-period' },
           h('thead', null, h('tr', null,
             h('th', { scope: 'col' }, t(u.unit === 'month' ? 'ai.set.col.month' : 'ai.set.col.day')),
             h('th', { scope: 'col', class: 'ais-barcol' }, h('span', { class: 'sr-only' }, t('ai.set.calls'))),
             countsHead())),
-          h('tbody', null, u.byPeriod.map((r) => h('tr', null,
+          h('tbody', null, u.byPeriod.map((r) => h('tr', { class: r.calls ? null : 'zero' },
             h('th', { scope: 'row', class: 'num' }, r.period),
             h('td', { class: 'ais-barcol', 'aria-hidden': 'true' }, h('span', { class: 'ais-bar' }, h('i', { style: `width:${barPercent(r.calls, maxCalls)}%` }))),
-            countsCells(r)))))),
+            countsCells(r), sumCell(r)))))),
       ];
     }
   }
@@ -1309,6 +1549,77 @@ function retentionSection(): HTMLElement {
     retentionError ? h('p', { class: 'ais-ferr', role: 'alert' }, retentionError) : null);
 }
 
+/** One number field of the limits form (whole numbers; 16 px text on touch comes from the stylesheet) */
+function limitInput(k: LimitKey, f: LimitsForm, bad: boolean, describedBy: string): HTMLInputElement {
+  const [min, max] = rangeOf(limits?.ranges, k);
+  const input = h('input', {
+    type: 'number', id: `ai-lim-${k}`, class: 'ais-num', min: String(min), max: String(max), step: '1', inputmode: 'numeric',
+    value: f[k], disabled: limitsSaving, 'aria-describedby': describedBy, 'aria-invalid': bad ? 'true' : null,
+    oninput: () => {
+      if (limitsForm) limitsForm = { ...limitsForm, [k]: input.value };
+      // The live line of the answer length follows the typed number (no redraw: the caret stays)
+      if (k === 'replyMaxChars') {
+        const live = document.getElementById('ai-lim-replyMaxChars-live');
+        if (live) live.textContent = replyLine(input.value);
+      }
+    },
+  });
+  return input;
+}
+
+/** C-7: the per-user caps, first: three compact fields in one row, one hint line and the (i) tip with the full rule */
+function capsGroup(l: AiLimitsAnswer, f: LimitsForm): HTMLElement {
+  const tip = infoTip('ai-caps-tip', t('ai.set.caps.tipBtn'), t('ai.set.caps.tip'));
+  const bad = CAP_KEYS.find((k) => limitsFieldErr?.key === k);
+  return h('div', { class: 'ais-subgroup ais-caps-group', role: 'group', 'aria-labelledby': 'ais-caps-h' },
+    h('h3', { class: 'ais-h3', id: 'ais-caps-h' }, t('ai.set.caps.title'), tip.el),
+    h('div', { class: 'ais-caps' }, CAP_KEYS.map((k) => {
+      const [min, max] = rangeOf(l.ranges, k);
+      const def = defOf(l, k);
+      const input = limitInput(k, f, limitsFieldErr?.key === k, `ai-caps-hint ai-caps-tip ai-lim-${k}-range`);
+      return h('div', { class: 'fld ais-cap' },
+        h('label', { class: 'fld-l', for: input.id }, t(LIMIT_LABEL[k])),
+        input,
+        // The range and the default stay available to screen readers without taking room on the row
+        h('span', { class: 'sr-only', id: `ai-lim-${k}-range` }, t('ai.set.limitHint', { min: num(min), max: num(max), def: num(def) })));
+    })),
+    h('p', { class: 'fld-hint ais-caps-hint', id: 'ai-caps-hint' }, t('ai.set.caps.hint')),
+    bad ? h('p', { class: 'ais-ferr', role: 'alert' }, limitsFieldErr?.text ?? '') : null);
+}
+
+/** The default of a limit: the service's own when it sent one, else the spec's */
+const defOf = (l: AiLimitsAnswer, k: LimitKey): number => (l.defaults as LimitValues)[k] ?? DEFAULT_LIMITS[k];
+
+/** The live line under the answer length: what the typed number is as max_tokens (empty while it is not a usable number) */
+function replyLine(text: string): string {
+  const v = replyTokensLine(text, limits?.ranges);
+  return v ? t('ai.set.limit.replyTokens', { zh: num(v.zh), en: num(v.en) }) : '';
+}
+
+/** FB-5 (revised): the length of one answer and of one memory, in characters, between the caps and the server limits */
+function lengthGroup(l: AiLimitsAnswer, f: LimitsForm): HTMLElement {
+  const tip = infoTip('ai-length-tip', t('ai.set.limits.lengthTipBtn'), t('ai.set.limits.lengthTip'));
+  const field = (k: LimitKey, extra: Child[], describedBy: string): HTMLElement => {
+    const [min, max] = rangeOf(l.ranges, k);
+    const def = defOf(l, k);
+    const bad = limitsFieldErr?.key === k;
+    const input = limitInput(k, f, bad, `ai-lim-${k}-hint ${describedBy}`);
+    return h('div', { class: 'fld ais-length' },
+      h('label', { class: 'fld-l', for: input.id }, t(LIMIT_LABEL[k])),
+      input,
+      h('p', { class: 'fld-hint', id: `ai-lim-${k}-hint` }, t('ai.set.limitHint', { min: num(min), max: num(max), def: num(def) })),
+      extra,
+      bad ? h('p', { class: 'ais-ferr', role: 'alert' }, limitsFieldErr?.text ?? '') : null);
+  };
+  const hint = h('p', { class: 'fld-hint', id: 'ai-lim-replyMaxChars-hint2' }, t('ai.set.limit.replyMaxCharsHint'));
+  const live = h('p', { class: 'fld-hint ais-live', id: 'ai-lim-replyMaxChars-live', 'aria-live': 'polite' }, replyLine(f.replyMaxChars));
+  return h('div', { class: 'ais-subgroup ais-length-group', role: 'group', 'aria-labelledby': 'ais-length-h' },
+    h('h3', { class: 'ais-h3', id: 'ais-length-h' }, t('ai.set.limits.length'), tip.el),
+    h('div', { class: 'ais-lengths' },
+      field('replyMaxChars', [hint, live], 'ai-lim-replyMaxChars-hint2 ai-lim-replyMaxChars-live'),
+      field('memoryChars', [], 'ai-length-tip')));
+}
+
 function limitsSection(): HTMLElement {
   const l = limits;
   const f = limitsForm;
@@ -1325,23 +1636,21 @@ function limitsSection(): HTMLElement {
         void saveLimitsForm();
       },
     },
-    h('div', { class: 'ais-limitgrid' }, LIMIT_KEYS.map((k) => {
-      const [min, max] = l.ranges[k] ?? LIMIT_RANGES[k];
-      const def = l.defaults[k] ?? DEFAULT_LIMITS[k];
-      const bad = limitsFieldErr?.key === k;
-      const input = h('input', {
-        type: 'number', id: `ai-lim-${k}`, class: 'ais-num', min: String(min), max: String(max), step: '1', inputmode: 'numeric',
-        value: f[k], disabled: limitsSaving, 'aria-describedby': `ai-lim-${k}-hint`, 'aria-invalid': bad ? 'true' : null,
-        oninput: () => {
-          if (limitsForm) limitsForm = { ...limitsForm, [k]: input.value };
-        },
-      });
-      return h('div', { class: 'fld ais-limit' },
-        h('label', { class: 'fld-l', for: input.id }, t(LIMIT_LABEL[k])),
-        input,
-        h('p', { class: 'fld-hint', id: `ai-lim-${k}-hint` }, t('ai.set.limitHint', { min: num(min), max: num(max), def: num(def) })),
-        bad ? h('p', { class: 'ais-ferr', role: 'alert' }, limitsFieldErr?.text ?? '') : null);
-    })),
+    capsGroup(l, f),
+    lengthGroup(l, f),
+    h('div', { class: 'ais-subgroup', role: 'group', 'aria-labelledby': 'ais-srv-h' },
+      h('h3', { class: 'ais-h3', id: 'ais-srv-h' }, t('ai.set.server.title')),
+      h('div', { class: 'ais-limitgrid' }, SERVER_KEYS.map((k) => {
+        const [min, max] = rangeOf(l.ranges, k);
+        const def = defOf(l, k);
+        const bad = limitsFieldErr?.key === k;
+        const input = limitInput(k, f, bad, `ai-lim-${k}-hint`);
+        return h('div', { class: 'fld ais-limit' },
+          h('label', { class: 'fld-l', for: input.id }, t(LIMIT_LABEL[k])),
+          input,
+          h('p', { class: 'fld-hint', id: `ai-lim-${k}-hint` }, t('ai.set.limitHint', { min: num(min), max: num(max), def: num(def) })),
+          bad ? h('p', { class: 'ais-ferr', role: 'alert' }, limitsFieldErr?.text ?? '') : null);
+      }))),
     limitsSaveError ? h('div', { class: 'err', role: 'alert' }, h('p', null, limitsSaveError)) : null,
     h('div', { class: 'acts' },
       h('button', { class: 'btn primary', id: 'ai-limits-save', type: 'submit', disabled: limitsSaving }, t(limitsSaving ? 'common.saving' : 'ai.set.save')),
@@ -1357,7 +1666,7 @@ function limitsSection(): HTMLElement {
   }
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-lim-h' },
     h('h2', { id: 'ais-lim-h' }, t('ai.set.sec.limits')),
-    h('p', { class: 'ais-lead' }, t('ai.set.limitsLead')),
+    h('p', { class: 'ais-lead' }, t('ai.set.limitsLeadV10')),
     body);
 }
 
@@ -1368,12 +1677,16 @@ function statusBanner(s: AiSettings): HTMLElement {
   const c = statusChips(s, testResult != null && !testResult.ok);
   const problem = s.keyProblem === 'mismatch' ? 'ai.set.keyProblem' : s.keyProblem === 'invalidEnv' ? 'ai.set.keyEnv' : s.keyProblem === 'invalidFile' ? 'ai.set.keyFile' : null;
   const chip = (cls: string, key: MsgKey): HTMLElement => h('span', { class: 'ais-chip ' + cls }, t(key));
+  // Everything fine: one calm sentence; the four chips only when something is not OK (AS-4)
+  const fine = allFine(c, problem != null);
   return h('div', { class: 'ais-status', role: 'status' },
-    chip(c.conn === 'ok' ? 'ok' : 'none', c.conn === 'ok' ? 'ai.set.chip.connOk' : 'ai.set.chip.connNone'),
-    chip(c.model === 'ok' ? 'ok' : 'none', c.model === 'ok' ? 'ai.set.chip.modelOk' : 'ai.set.chip.modelNone'),
-    chip(c.test === 'ok' ? 'ok' : c.test === 'fail' ? 'fail' : 'unverified',
-      c.test === 'ok' ? 'ai.set.chip.testOk' : c.test === 'fail' ? 'ai.set.chip.testFail' : 'ai.set.chip.testNone'),
-    chip(c.ai === 'on' ? 'on' : 'none', c.ai === 'on' ? 'ai.set.state.on' : 'ai.set.state.off'),
+    ...(fine
+      ? [h('span', { class: 'ais-chip ok ais-allok' }, t('ai.set.allOk'))]
+      : [chip(c.conn === 'ok' ? 'ok' : 'none', c.conn === 'ok' ? 'ai.set.chip.connOk' : 'ai.set.chip.connNone'),
+        chip(c.model === 'ok' ? 'ok' : 'none', c.model === 'ok' ? 'ai.set.chip.modelOk' : 'ai.set.chip.modelNone'),
+        chip(c.test === 'ok' ? 'ok' : c.test === 'fail' ? 'fail' : 'unverified',
+          c.test === 'ok' ? 'ai.set.chip.testOk' : c.test === 'fail' ? 'ai.set.chip.testFail' : 'ai.set.chip.testNone'),
+        chip(c.ai === 'on' ? 'on' : 'none', c.ai === 'on' ? 'ai.set.state.on' : 'ai.set.state.off')]),
     // Round 2: the connection to ai-service, under the chips (the chips themselves are unchanged)
     svc?.connected
       ? h('p', { class: 'ais-svc-ok' }, t('ai.set.svc.connected', { v: svc.version ?? '–', time: when(svc.lastSeen) }))
@@ -1396,6 +1709,32 @@ function servicePanel(): HTMLElement {
         t('common.retry'))));
 }
 
+/** The row of category tabs under the status line (FB-6): icon + label, short labels under PHONE, one row */
+function tabsRow(tab: AiTab): HTMLElement {
+  return h('div', { class: 'seg ais-tabs', role: 'group', 'aria-label': t('ai.set.tabs.aria') },
+    AI_TABS.map((k) => {
+      const d = TABS[k];
+      const b = h('button', {
+        type: 'button', id: `ais-tab-${k}`, 'aria-pressed': String(k === tab), 'aria-controls': 'ais-card', onclick: () => selectTab(k),
+      }, miniIcon(d.icon, 'ais-tab-ic'), h('span', { class: 'ais-tl-full' }, t(d.full)), h('span', { class: 'ais-tl-short', 'aria-hidden': 'true' }, t(d.short)));
+      // The full name is the accessible name and, by hold (touch) or hover, the tip
+      holdTip(b, t(d.full));
+      return b;
+    }));
+}
+
+/** Shows a category: the hash keeps it (`#/ai-settings?tab=users`), replaced in place, so Back does not walk through tabs */
+function selectTab(k: AiTab): void {
+  if (tabOfHash(window.location.hash) === k && window.location.hash.includes('tab=')) return;
+  try {
+    window.history.replaceState(window.history.state, '', hashOfTab(k));
+  } catch {
+    window.location.hash = hashOfTab(k);
+  }
+  render();
+  document.getElementById(`ais-tab-${k}`)?.focus();
+}
+
 export function renderAiSettings(): HTMLElement {
   if (wanted && !svcBusy) void checkService();
   if (forbidden) return renderForbidden('forbidden.aiSettings');
@@ -1414,14 +1753,25 @@ export function renderAiSettings(): HTMLElement {
     return h('div', { class: 'page page-ais' }, head, body);
   }
   const dirty = isDirty(s, f);
+  const tab = tabOfHash(window.location.hash);
+  // Only the shown category is in the DOM; the status line stays above in every tab
+  let card: Child[];
+  switch (tab) {
+    case 'users':
+      card = [usersSection(s)];
+      break;
+    case 'usage':
+      card = [usageSection()];
+      break;
+    case 'safety':
+      card = [retentionSection(), limitsSection()];
+      break;
+    default:
+      card = [connectionPart(s, f, dirty), modelPart(s, dirty), testSection(s, dirty)];
+  }
   return h('div', { class: 'page page-ais' },
     head,
     statusBanner(s),
-    connectionSection(s, f),
-    modelSection(s, dirty),
-    testSection(s, dirty),
-    usersSection(s),
-    usageSection(),
-    retentionSection(),
-    limitsSection());
+    tabsRow(tab),
+    h('section', { class: 'ais-card', id: 'ais-card', 'aria-labelledby': `ais-tab-${tab}` }, card));
 }

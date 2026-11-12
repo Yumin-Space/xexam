@@ -1,14 +1,12 @@
 // Applying and saving the settings (theme, UI language, auto-advance, question language).
 // The server (data directory) is the source of truth; see settings-cache.ts for the browser-side first-paint cache.
 import { fetchSettings, resetSettings as apiResetSettings, saveSettings } from '../api/settings.ts';
+import { barColor } from '../domain/theme-color.ts';
 import { localeTag, setUiLang } from '../i18n/index.ts';
 import type { Settings } from '../types/api.ts';
 import { cacheSettings, normalizeSettings } from './settings-cache.ts';
 import { paths } from './storage-keys.ts';
 import { S } from './store.ts';
-
-const LIGHT_BAR = '#F6F8FA';
-const DARK_BAR = '#0D1117';
 
 function systemDark(): boolean {
   return typeof window.matchMedia === 'function' && window.matchMedia('(prefers-color-scheme: dark)').matches;
@@ -26,8 +24,10 @@ export function applySettings(s: Settings): void {
   root.lang = localeTag(s.uiLang);
   if (s.theme === 'system') delete root.dataset.theme;
   else root.dataset.theme = s.theme;
-  const bar = document.querySelector('meta[name="theme-color"]');
-  if (bar) bar.setAttribute('content', isDark(s) ? DARK_BAR : LIGHT_BAR);
+  // index.html has two theme-color metas (light / dark system); every one gets its colour, so a forced theme wins on both
+  for (const bar of document.querySelectorAll('meta[name="theme-color"]')) {
+    bar.setAttribute('content', barColor(s.theme, bar.getAttribute('media'), systemDark()));
+  }
 }
 
 /** Keeps the browser bar colour in step when the system theme changes while "follow system" is selected. */

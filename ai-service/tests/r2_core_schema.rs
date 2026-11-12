@@ -163,7 +163,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
     assert_eq!(n, 2);
     drop(copy);
     assert!(captured_contains(&format!(
-        "Upgraded the AI database to schema 3. A copy of the previous version was saved first: {}.",
+        "Upgraded the AI database to schema 4. A copy of the previous version was saved first: {}.",
         copies[0].display()
     )));
 
@@ -174,7 +174,18 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "3");
+    assert_eq!(v, "4");
+    for col in ["calls_per_minute", "calls_per_hour", "calls_per_day"] {
+        assert!(has_column(&c, "limits", col), "{col}");
+    }
+    let caps: (i64, i64, i64) = c
+        .query_row(
+            "SELECT calls_per_minute, calls_per_hour, calls_per_day FROM limits WHERE id = 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("caps");
+    assert_eq!(caps, (5, 20, 100));
     let (fe, free): (i64, i64) = c
         .query_row(
             "SELECT (SELECT function_enabled FROM users WHERE id = 5), (SELECT free_mode FROM users WHERE id = 5)",
@@ -249,6 +260,15 @@ async fn new_and_upgraded_databases_have_the_same_tables() {
         users_sql.contains("free_mode INTEGER NOT NULL DEFAULT 0"),
         "{users_sql}"
     );
+    // both carry the three call-cap columns of schema 4
+    let limits_sql = fresh_rows
+        .iter()
+        .find(|r| r.0 == "table" && r.1 == "limits")
+        .and_then(|r| r.3.clone())
+        .expect("limits");
+    for col in ["calls_per_minute", "calls_per_hour", "calls_per_day"] {
+        assert!(limits_sql.contains(col), "{limits_sql}");
+    }
     // a new database needs no copy
     assert!(backups(&fresh.dir.path().join("ai")).is_empty());
 }
@@ -297,18 +317,18 @@ async fn a_newer_schema_is_refused() {
     t.app.0.store.release_file();
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '4' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '5' WHERE key = 'schema'", [])
             .expect("set");
     }
     let cfg = test_config(t.dir.path(), &t.backend.url, &Opts::default());
     let err = match xexam_ai_service::app::App::open(cfg) {
-        Ok(_) => panic!("a schema-4 database must be refused"),
+        Ok(_) => panic!("a schema-5 database must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 4, written by a newer ai-service; this version (schema 3) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 5, written by a newer ai-service; this version (schema 4) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

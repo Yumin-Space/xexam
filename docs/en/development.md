@@ -73,7 +73,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
 cd frontend
 npm ci
 npm run typecheck      # tsc for the app, then for the test files (tsconfig.test.json)
-npm test               # 391 unit tests: the API client (Nginx's 429 and its retries, time limits, the AI stream and error
+npm test               # unit tests: the API client (Nginx's 429 and its retries, time limits, the AI stream and error
                        # codes), grading and random pick, practice checking, saved results, language rules, records filter,
                        # lock notes and waits, import warnings, the System log buffer, bank status, bank access, saved exam,
                        # settings cache, the event-stream parser, the AI chat state, the answers' Markdown, memory requests,
@@ -125,6 +125,14 @@ Backend error messages are Chinese and stable (they are part of the tested API).
 6. **State**: pages never import each other. Shared state lives in `src/state/store.ts`; changes go through functions in `src/state/actions.ts` (`navigate(route)`, `render()`, …). State that only this page needs stays in variables of the page module. `onRouteChange()` runs code when the user leaves or enters a page.
 7. **API**: a new endpoint gets a line in the route table `ROUTES` of `backend/src/api/auth.rs` (who may use it), a typed wrapper in `src/api/` and its types in `src/types/api.ts`, and is documented in [api.md](api.md) and [openapi.yaml](openapi.yaml). An AI route goes into `ROUTES` of `ai-service/src/api/mod.rs` instead, with its access level.
 
+### 4.4 Phone-first rules (v1.0)
+
+- **One phone query.** `PHONE` is `(max-width: 600px), (orientation: landscape) and (max-height: 500px)`. Its TypeScript constant is `PHONE_MQ` in `src/utils/media.ts`; every stylesheet repeats the same text in its own `@media` block, because CSS cannot import a constant. Change both together. The other named queries (`SHORT_LANDSCAPE_MQ`, `BAR_MQ`, `TOUCH_MQ`) are in the same file.
+- **Icons with labels.** A control that shows only an icon is built with `iconButton()` (`src/components/icon-button.ts`, styles in `src/styles/icon-button.css`); its shape comes from `src/components/mini-icons.ts` (`src/domain/mini-icon-shapes.test.ts` checks the shapes). The text stays its accessible name, and on touch it shows as a tap-and-hold tip (`src/domain/hold-tip.ts`).
+- **Touch targets** are at least 44 × 44 px; a 36 px icon may stay visually smaller with an invisible enlarged area.
+- **Focus.** A title or other non-interactive element that a script focuses gets no focus ring (`[tabindex="-1"]:focus`); real controls keep the ring.
+- **Width.** Check a page at the width matrix in section 5.1 (360, 390, 412 portrait; 740 and 844 landscape; 768 tablet; 1280 desktop) in zh, en and ja, light and dark, before you call the page done. Never add a fixed width that breaks at 360 px.
+
 ## 5. Full stack
 
 ```bash
@@ -150,6 +158,26 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 Each script prints its checks and `All N checks passed` at the end. The last argument of `nginx_check.py` and `stack_check.py` is the host port they use; pick one that is free on your machine. `stack_check.py` reads an optional `XEXAM_STACK_COMPOSE`: another compose file of the same shape (for example a copy of `docker/docker-compose.build.yml` with other image tags and container names), so it can run next to an installation that uses the usual ones; it finds the containers through their compose services. `nginx_check.py` takes about two and a half minutes, because one check waits 95 seconds for a slow **Test** of AI settings. `stack_check.py` paces its study asks (about 3.2 seconds per session cookie), because Nginx lets one session start an AI answer every 3 seconds after a burst of 10 (zone `aisend`, 20 a minute); that adds about a minute and a half. The scripts use made-up banks that they write themselves; none touches your data.
 
 The compose files and `.env` are in `docker/`; `docker/docker-compose.build.yml` uses the repository root (`..`) as its build context. The frontend image is built from the repository root. `nginx/Dockerfile` copies the three changelogs into its Node build stage (`COPY docs/en/changelog.md /docs/en/`, and the same for `ja` and `zh-CN`), because the About page is built from them; for the same reason `.dockerignore`, which keeps `docs/` and the READMEs out of the build context, lets exactly these three files back in. Only the built static files go into the final image.
+
+### 5.1 The phone walk (v1.0)
+
+`tools/phone-walk/walk.py` starts its own throw-away stack (the three images under unique names, with their own volumes, `TZ=UTC`, the made-up AI stub and free ports on 127.0.0.1), drives Chrome with phone emulation over the DevTools protocol, and writes a `report.json` and screenshots into its `--out` folder. It removes only what it created. It needs Docker, Chrome or Chromium, and Python 3.8+ with `openpyxl`, like the screenshot tool (`tools/phone-walk/README.md`).
+
+```sh
+python tools/phone-walk/walk.py                      # default run: report and screenshots in a new temporary folder
+python tools/phone-walk/walk.py --full               # every check on the whole width matrix (final gate only)
+python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu   # only these pages
+python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1 # subsets, by check ID (reviewers)
+python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
+python tools/phone-walk/walk.py --keep               # leave the stack running; prints its URL and the made-up accounts
+python tools/phone-walk/walk.py --keep --lan         # the same, for a phone on the home network (warns first)
+python tools/phone-walk/walk.py --out <dir> --chrome <path>
+```
+
+- **Width matrix**: 360×740, 390×844 and 412×915 portrait; 740×360 and 844×390 landscape; 768×1024 tablet; 1280×800 desktop. Light and dark themes; zh first, then en and ja.
+- **Default run**: contrast (light and dark, zh, 390×844 and 1280×800); text fit (the rows that name it, in zh, en and ja, light); every other check in zh, light, at the sizes its row names. `--full` runs everything on the whole matrix and is for the final gate only.
+- **Output**: `report.json` (one entry per check: ID, page, state, user, size, language, theme, pass, detail, screenshot) and screenshots named `<check>-<page>-<user>-<lang>-<theme>-<w>x<h>.png`. The exit code is 1 when a P1 check fails. Give each run its own `--out` folder when several run at once.
+- **Data**: made-up accounts and banks only (`seed_extra.py`, `seed.py`); it never connects to another instance and never prints a key. `--lan` is for a short trial on your own phone: every device on the network can reach that stack until Ctrl+C.
 
 ## 6. Comparing against the legacy version (regression)
 
@@ -182,7 +210,7 @@ There is only one pipeline: [`.github/workflows/ci.yml`](../../.github/workflows
 | Job | What it does |
 |---|---|
 | `check` | `VERSION` has **exactly one** `CODE_VERSION=` and **one** `RELEASE_VERSION=` line, both like `0.7` or `0.6.5`, and `RELEASE_VERSION` is not newer than `CODE_VERSION`; the newest entry of each of the three changelogs (`docs/en/changelog.md`, `docs/ja/changelog.md`, `docs/zh-CN/changelog.md`) = `CODE_VERSION`, and the three have the same `### vX.Y — date` headings in the same order; no README holds a changelog entry, and each links to the changelog of its language; the release badge at the top of each README = `RELEASE_VERSION`; `backend/Cargo.toml`, `ai-service/Cargo.toml` and `frontend/package.json` carry `CODE_VERSION`; the layout (only `README.md` at the root, the other two READMEs in `README/`, the compose files and `.env.example` in `docker/`), `docker/docker-compose.yml` pulling the three images from Docker Hub, and the docs check (section 9). Its output `version` (`CODE_VERSION`) is what the later jobs use |
-| `frontend` | Type check, 391 unit tests, build |
+| `frontend` | Type check, unit tests, build |
 | `backend` | fmt, clippy, 382 tests, and the `progress.json` migration check |
 | `ai-service` | fmt, clippy, 383 tests of ai-service, and the TLS guard: `cargo tree` must not contain `aws-lc`, `openssl-sys` or `native-tls` |
 | `stack` | After `frontend`, `backend` and `ai-service`: builds the `xexam-frontend` image and runs the 141 Nginx checks; starts the full compose stack (three images, the made-up AI provider) and runs the 314 end-to-end checks (45 minutes at most) |
@@ -230,8 +258,8 @@ The app icon (the header logo, the browser tab, the phone's home screen, the REA
 ## 10. Version, changelog and licence
 
 - **`VERSION`** in the repository root holds two `KEY=VALUE` lines (lines starting with `#` are comments), each exactly once:
-  - `CODE_VERSION` (`0.9.1` today): the version of the code on this branch. Bump it by hand, together with the changelog entry in all three changelogs (`docs/<lang>/changelog.md`), `backend/Cargo.toml`, `ai-service/Cargo.toml` and `frontend/package.json` (a version of two parts such as `0.9` is written `0.9.0` there; also their lock files) and `info.version` in `docs/en/openapi.yaml`. The images are built and tagged with it, and `/api/info` reports it (the backend reads it from `/VERSION` in the image).
-  - `RELEASE_VERSION` (`0.9` until the release job of v0.9.1 has run): the last version that was actually published. **Never edit it by hand**: the release job writes it, together with the release badge at the top of the READMEs (section 8.1). A push or a merge alone never changes it.
+  - `CODE_VERSION` (`1.0` today): the version of the code on this branch. Bump it by hand, together with the changelog entry in all three changelogs (`docs/<lang>/changelog.md`), `backend/Cargo.toml`, `ai-service/Cargo.toml` and `frontend/package.json` (a version of two parts such as `0.9` is written `0.9.0` there; also their lock files) and `info.version` in `docs/en/openapi.yaml`. The images are built and tagged with it, and `/api/info` reports it (the backend reads it from `/VERSION` in the image).
+  - `RELEASE_VERSION` (`0.9.1` until the release job of v1.0 has run): the last version that was actually published. **Never edit it by hand**: the release job writes it, together with the release badge at the top of the READMEs (section 8.1). A push or a merge alone never changes it.
 - Every update adds an entry at the very top of the changelog in all three languages (`docs/en/changelog.md`, `docs/ja/changelog.md`, `docs/zh-CN/changelog.md`), with a version number equal to `CODE_VERSION`; the three keep the same entries. CI checks this. The READMEs hold no entries, only a link to the changelog. The GitHub Release notes are taken from the English one.
 - The About page of the app shows these changelogs, built into the frontend (section 4). Keep the entries in simple Markdown: paragraphs, `- ` bullets, nested `  - ` bullets, `**bold**` and `` `code` ``; links to files in the repository are shown there as plain text, and they are written relative to the changelog's folder (`docs/<lang>/`). A changed changelog appears in the app only after the frontend is built again.
 - Work happens on `dev`; `main` receives the merge, and a push to `main` publishes the images and the Release. Pull `main` and `dev` after each release (section 8.1).

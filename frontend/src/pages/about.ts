@@ -1,8 +1,11 @@
 // About page: version, server, license, and what is new in each version (the changelog of the UI language, docs/<lang>/changelog.md).
 // The changelog is a separate chunk (dynamic import), loaded only when this page is opened.
+// v1.0 (AB-1): the newest version shows its lead paragraph and its first three bullets, then "Show all (n)"; the earlier versions
+// stay folded as before.
 import '../styles/about.css';
 import { pageHead } from '../components/common.ts';
-import { blocks, inlineTokens, type ChangelogEntry } from '../domain/changelog.ts';
+import { foldEntry } from '../domain/about-fold.ts';
+import { blocks, inlineTokens, type Block, type ChangelogEntry } from '../domain/changelog.ts';
 import { t, uiLang } from '../i18n/index.ts';
 import { render } from '../state/actions.ts';
 import { S } from '../state/store.ts';
@@ -42,11 +45,35 @@ function inline(text: string): Array<Node | string> {
   });
 }
 
-function entryBody(e: ChangelogEntry): HTMLElement {
-  return h('div', { class: 'ab-body' }, blocks(e.lines).map((b) => b.kind === 'para'
+function blockEls(bs: readonly Block[]): HTMLElement[] {
+  return bs.map((b) => b.kind === 'para'
     ? h('p', null, inline(b.text))
     : h('ul', null, b.items.map((it) => h('li', null, inline(it.text),
-      it.children.length ? h('ul', null, it.children.map((c) => h('li', null, inline(c)))) : null)))));
+      it.children.length ? h('ul', null, it.children.map((c) => h('li', null, inline(c)))) : null))));
+}
+
+function entryBody(e: ChangelogEntry): HTMLElement {
+  return h('div', { class: 'ab-body' }, blockEls(blocks(e.lines)));
+}
+
+/** The newest version is open in two steps (AB-1): the lead and three bullets, "Show all (n)" for the rest (kept across redraws) */
+let showAllNewest = false;
+
+function newestBody(e: ChangelogEntry): HTMLElement {
+  const all = blocks(e.lines);
+  const f = foldEntry(all);
+  const body = h('div', { class: 'ab-body', id: 'ab-newest' }, blockEls(f.folded && !showAllNewest ? f.shown : all));
+  if (!f.folded) return body;
+  const btn = h('button', {
+    type: 'button', class: 'btn quiet ab-more', id: 'ab-more', 'aria-expanded': String(showAllNewest), 'aria-controls': 'ab-newest',
+    onclick: () => {
+      showAllNewest = !showAllNewest;
+      body.replaceChildren(...blockEls(showAllNewest ? all : f.shown));
+      btn.setAttribute('aria-expanded', String(showAllNewest));
+      btn.textContent = t(showAllNewest ? 'common.collapse' : 'about.showAll', { n: f.total });
+    },
+  }, t(showAllNewest ? 'common.collapse' : 'about.showAll', { n: f.total }));
+  return h('div', { class: 'ab-newest' }, body, btn);
 }
 
 function versionHead(e: ChangelogEntry): Array<HTMLElement | string> {
@@ -76,7 +103,7 @@ function news(): HTMLElement {
   const running = (e: ChangelogEntry): boolean => !!S.info.version && (S.info.version === e.version || S.info.version === e.version + '.0');
   panel.append(h('article', { class: 'ab-entry ab-first' },
     h('h3', null, versionHead(first), running(first) ? h('span', { class: 'ab-tag' }, t('about.current')) : null),
-    entryBody(first)));
+    newestBody(first)));
   if (rest.length) {
     panel.append(h('h3', { class: 'ab-older-h' }, t('about.older')),
       ...rest.map((e) => h('details', { class: 'ab-entry' },

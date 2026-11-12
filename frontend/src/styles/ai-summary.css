@@ -1,0 +1,92 @@
+/* AI summary overlay (v0.9; v1.0 P-30). A large modal window under the page title: header (title at the left, Regenerate / Stop
+   and x at the right, the meta line under the title), an optional note row (the cap callout, errors, the busy flow), the body
+   that scrolls inside, and a one-row footer (state text, Copy, the saved-in-AI-Chat text). The buttons are the shared .ibtn icon buttons
+   of icon-button.ts. The shared .aip-note / .aip-state and the controls are styled in ai-plus.css; the Markdown rules
+   (.ai-md) are in ai.css / ai-md.css. */
+
+/* ---------- The summary overlay ---------- */
+/* Overrides the base dialog rules (max-width, padding, grey paragraphs); see the v0.8 viewer in ai-settings.css. Centred by
+   left / right 0 and auto side margins, never by a transform: a transform would make the window the containing block of its
+   position: fixed tips (the saved-in-AI-Chat tip, the hold tips), which would then sit off by the window's offset and be
+   clipped by its overflow: hidden. */
+dialog.aip-sum {
+  max-width: none; max-height: none; padding: 0; margin: 0 auto; overflow: hidden; color: var(--ink);
+  position: fixed; top: var(--aip-top, 16px); left: 0; right: 0;
+  width: min(960px, calc(100% - 32px)); height: calc(100dvh - var(--aip-top, 16px) - 16px - env(safe-area-inset-bottom, 0px));
+}
+dialog.aip-sum[open] { display: flex; flex-direction: column; }
+dialog.aip-sum::backdrop { background: var(--scrim-soft); }
+.aip-sum-in { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* Header: the title and the buttons in one row, the meta line under the title (spans both columns) */
+.aip-sum-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'title right' 'meta meta';
+  align-items: center; column-gap: 12px; padding: 12px 12px 0 20px;
+}
+.aip-sum-head h2 { grid-area: title; min-width: 0; margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; }
+/* At least 12 px between Regenerate / Stop and the x, so a thumb aimed at one never hits the other */
+.aip-sum-right { grid-area: right; display: inline-flex; align-items: center; gap: 12px; }
+.aip-sum-acts { display: inline-flex; align-items: center; }
+.aip-sum-meta { grid-area: meta; margin: 0; padding: 0 8px 6px 0; font-size: 13px; color: var(--ink2); }
+
+/* Regenerate / Stop: icon + label; the label is a span that PHONE hides (the aria-label names the button at every width) */
+dialog.aip-sum .ibtn.aip-sum-act { width: auto; padding: 0 12px 0 10px; gap: 6px; font-size: 13.5px; white-space: nowrap; }
+dialog.aip-sum .ibtn.aip-sum-act .lbl { display: inline; }
+dialog.aip-sum .ibtn.aip-sum-act[aria-disabled="true"] { color: var(--ink3); cursor: not-allowed; }
+dialog.aip-sum .ibtn.aip-sum-act[aria-disabled="true"]:hover { background: transparent; }
+
+/* The note row: the callout (cap, with a clock icon) or the plain note; the busy flow's text button sits at its end */
+.aip-sum-noterow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 4px 20px 6px; }
+.aip-sum-noterow[hidden] { display: none; }
+.aip-sum-noterow .aip-note { flex: 1 1 14em; min-width: 0; padding: 0; }
+.aip-sum-noterow .aip-note.callout { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px; font-size: 13.5px; color: var(--ink); }
+.aip-note-ico { flex: none; width: 16px; height: 16px; margin-top: 3px; color: var(--warn); }
+.aip-sum-noteacts { display: inline-flex; gap: 8px; flex: none; }
+@media (pointer: coarse) { .aip-sum-busy { min-height: 44px; } }
+
+.aip-sum-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 20px 16px; border-top: 1px solid var(--line-soft); }
+.aip-sum-body:focus-visible { outline-offset: -2px; }
+dialog.aip-sum .ai-md p, dialog.aip-sum .ai-md li { margin-bottom: 0; color: var(--ink); font-size: inherit; white-space: normal; }
+
+/* Footer: one row at every width, state text at the left, Copy and the saved-in-AI-Chat text at the right */
+.aip-sum-bar { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; padding: 4px 12px 4px 20px; border-top: 1px solid var(--line-soft); }
+.aip-sum-bar .aip-state { flex: 1 1 auto; min-width: 0; margin-right: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aip-sum-foot { display: inline-flex; flex: none; align-items: center; gap: 4px; }
+/* The "saved in AI Chat" text (not a button) keeps its place until a chat exists (nothing moves when it appears) */
+.aip-sum-saved { color: var(--ink3); font-size: 12.5px; white-space: nowrap; padding: 4px 6px; border-radius: 6px; cursor: default; }
+.aip-sum-saved:focus-visible { outline-offset: 1px; }
+.aip-sum-chat.aip-gone { visibility: hidden; }
+html.aip-lock { overflow: hidden; }
+
+/* PHONE: 8 px side margins, the window runs down to the bottom safe area; the header labels go (icons only) */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  dialog.aip-sum {
+    left: 0; margin-left: max(8px, env(safe-area-inset-left, 0px));
+    width: calc(100% - max(8px, env(safe-area-inset-left, 0px)) - max(8px, env(safe-area-inset-right, 0px)));
+    height: calc(100dvh - var(--aip-top, 16px) - 8px - env(safe-area-inset-bottom, 0px));
+  }
+  .aip-sum-head { padding-left: 14px; padding-right: 8px; }
+  .aip-sum-meta { padding-right: 0; }
+  .aip-sum-noterow { padding-left: 14px; padding-right: 14px; }
+  .aip-sum-body { padding: 10px 14px 14px; }
+  .aip-sum-bar { padding-left: 14px; padding-right: 8px; }
+  dialog.aip-sum .ibtn.aip-sum-act { width: 40px; padding: 0; }
+  dialog.aip-sum .ibtn.aip-sum-act .lbl { display: none; }
+}
+
+/* Short landscape (a phone turned sideways): the window uses the whole height; the meta line moves into the header row with an
+   ellipsis (a tap shows all of it); header and footer padding 8 px */
+@media (orientation: landscape) and (max-height: 500px) {
+  dialog.aip-sum {
+    top: calc(8px + env(safe-area-inset-top, 0px));
+    height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  }
+  .aip-sum-head { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: 'title meta right'; padding: 8px 8px 8px 14px; }
+  .aip-sum-meta { padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .aip-sum-meta.open { white-space: normal; }
+  .aip-sum-noterow { padding-top: 2px; padding-bottom: 4px; }
+  .aip-sum-bar { padding-top: 2px; padding-bottom: 2px; }
+}
+@media (forced-colors: active) {
+  dialog.aip-sum { border: 1px solid CanvasText; }
+}

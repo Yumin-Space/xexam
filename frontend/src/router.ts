@@ -106,14 +106,3 @@ export function sectionOf(r: Route): NavSection | null {
 export function sameRoute(a: Route, b: Route): boolean {
   return routeHash(a) === routeHash(b);
 }
-
-/**
- * Pages only administrators may open; everyone else is sent home (the backend refuses their requests anyway). Question banks
- * is not one of them since v0.6.5: bank managers use it too, and anyone else who opens #/banks sees the "Not allowed" page
- * instead of being redirected silently (main.ts). The system log (#/logs, v0.7) is not one either: it is for administrators
- * only, but others who open it see the "Not allowed" page too. Neither are AI Chat and AI settings (v0.8): main.ts decides,
- * from the AI status and the role, between the page and the "Not allowed" page.
- */
-export function adminOnly(r: Route): boolean {
-  return r.name === 'users';
-}

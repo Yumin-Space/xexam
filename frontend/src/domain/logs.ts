@@ -169,6 +169,37 @@ export function atBottom(scrollTop: number, clientHeight: number, scrollHeight: 
   return scrollHeight - (scrollTop + clientHeight) <= slack;
 }
 
+/**
+ * Phones (LG-1): the lines use the page scroll, so "at the end" means the last line's bottom edge (`listBottom`, in viewport
+ * coordinates) is within `slack` pixels below the viewport's bottom (or above it). Live updates follow the end only then.
+ */
+export function endVisible(listBottom: number, viewportHeight: number, slack = 24): boolean {
+  return listBottom - viewportHeight <= slack;
+}
+
+/** How many of `lines` each level filter shows (the counts of the phone toolbar's segments, LG-2) */
+export function levelCounts(lines: readonly LogLine[]): Record<LevelFilter, number> {
+  let warn = 0;
+  let error = 0;
+  for (const l of lines) {
+    const lv = levelOf(l.level);
+    if (lv === 'error') error += 1;
+    else if (lv === 'warn') warn += 1;
+  }
+  return { all: lines.length, warn: warn + error, error };
+}
+
+/** The last segment of a target (`xexam_backend::api::users` → `users`; also `/` and `.` as separators), LG-4 */
+export function lastSegment(target: string): string {
+  const parts = target.split(/::|[/.]/).filter(Boolean);
+  return parts.length ? (parts[parts.length - 1] as string) : target;
+}
+
+/** The date part of a line's time (`2026-01-02 03:04:05` → `2026-01-02`), or '' when it has none (the date dividers, LG-4) */
+export function dateOf(time: string): string {
+  return /^(\d{4}-\d{2}-\d{2})[ T]/.exec(time)?.[1] ?? '';
+}
+
 /** What the poll loop needs from the page and the browser (injected, so the loop is tested with fake timers) */
 export interface PollHost {
   /**

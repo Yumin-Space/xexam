@@ -432,7 +432,7 @@ test('the saved study lookups ask the exact URL (this order, nothing percent-enc
     '/api/ai/summary/saved?record=42&at=202611112158',
   ]);
   for (const c of calls) assert.ok(!c.url.includes('%'), c.url);
-  assert.deepEqual(parsed, { chatId: 3, latest: null, lastGood: null });
+  assert.deepEqual(parsed, { chatId: 3, chatTitle: null, latest: null, lastGood: null });
 });
 
 test('the study and summary asks are POSTs of JSON streamed as events; stopChat always names the chat', async () => {
@@ -469,4 +469,39 @@ test('a 409 ai.busy keeps the running answer (an object, or null) on the ApiErro
   assert.equal(errs[1]?.running, null);
   assert.equal(errs[2]?.running, undefined);
   assert.equal(errs[3]?.running, undefined);
+});
+
+// v1.0: the AI request caps. A 429 with code ai.callLimit and `retryAfter` is a server refusal (never retried, never "too many
+// requests"); cap / limit / retryAt are parsed into ApiError.quota only when they are all valid.
+test('a 429 ai.callLimit carries its quota, is not retried and is not Nginx\'s limit', async () => {
+  const body = { error: '你的 AI 请求额度已用完（每小时 20 次）', code: 'ai.callLimit', cap: 'hour', limit: 20, retryAt: 1762950300, retryAfter: 712 };
+  reply(json(429, body, { 'Retry-After': '712' }), json(200, {}));
+  const g = await getJson('/api/ai/status').then(() => assert.fail('should fail'), (err: unknown) => err);
+  assert.ok(g instanceof ApiError && g.kind === 'http' && g.status === 429 && g.code === 'ai.callLimit');
+  assert.equal(g.retryAfter, 712);
+  assert.deepEqual(g.quota, { cap: 'hour', limit: 20, retryAt: 1762950300 });
+  assert.equal(calls.length, 1, 'no automatic retry');
+  assert.equal(isTooManyRequests(g), false);
+  assert.match(errorText(g), /\(20 per hour\)/);
+
+  reply(json(429, body, { 'Retry-After': '712' }));
+  const r = await collect('/api/ai/send', { chatId: 1, text: 'x' });
+  assert.ok(r.error instanceof ApiError && r.error.quota?.cap === 'hour' && r.error.status === 429);
+});
+
+test('quota is only parsed for ai.callLimit and only when cap, limit and retryAt are valid', async () => {
+  const cases: Array<[Record<string, unknown>, boolean]> = [
+    [{ code: 'ai.callLimit', cap: 'day', limit: 100, retryAt: 1762950300, retryAfter: 5 }, true],
+    [{ code: 'ai.callLimit', cap: 'week', limit: 100, retryAt: 1762950300, retryAfter: 5 }, false],
+    [{ code: 'ai.callLimit', cap: 'day', limit: '100', retryAt: 1762950300, retryAfter: 5 }, false],
+    [{ code: 'ai.callLimit', cap: 'day', limit: 100, retryAfter: 5 }, false],
+    [{ code: 'ai.callLimit', cap: 'day', limit: 100, retryAt: -1, retryAfter: 5 }, false],
+    [{ code: 'ai.busy', cap: 'day', limit: 100, retryAt: 1762950300, retryAfter: 5 }, false],
+  ];
+  for (const [b, ok] of cases) {
+    reply(json(429, { error: 'x', ...b }));
+    const e = await postJson('/api/ai/send', {}).then(() => assert.fail('should fail'), (err: unknown) => err);
+    assert.ok(e instanceof ApiError);
+    assert.equal(e.quota !== undefined, ok, JSON.stringify(b));
+  }
 });

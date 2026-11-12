@@ -58,7 +58,8 @@ async fn users_with_ai_and_audited_views() {
             "memories",
             "lastUsedAt",
             "tokensIn",
-            "tokensOut"
+            "tokensOut",
+            "calls"
         ]
     );
     assert_eq!(

@@ -4,9 +4,10 @@
 .page-settings { max-width: 880px; }
 .page-settings .page-acts { min-height: 1.7em; align-items: center; }
 .set-status { font-size: 13.5px; color: var(--ink3); }
-.set-lead { margin: -8px 0 24px; max-width: 46em; color: var(--ink2); }
 
 .set-sec h2 { margin-bottom: 4px; }
+.set-sechead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 12px; }
+:is(.set-sechead, .set-themeseg) + .set-cards, .set-sechead + .set-themeseg, .set-sechead + .set-switch { margin-top: 12px; }
 .set-desc { margin-bottom: 16px; max-width: 46em; font-size: 14px; color: var(--ink3); }
 .set-note { margin-top: 12px; font-size: 13px; color: var(--ink3); max-width: 46em; }
 
@@ -109,7 +110,6 @@
 .set-reset { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
 .set-reset .set-note { margin-top: 0; flex: 1 1 16em; }
 .set-reset .set-note:focus { outline: none; }
-.set-reset .set-note:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; border-radius: 4px; }
 
 /* ---------- Narrow screens ---------- */
 @media (max-width: 720px) {
@@ -149,3 +149,34 @@
 @media (max-width: 720px) {
   .set-pw-grid { grid-template-columns: minmax(0, 1fr); max-width: 420px; }
 }
+
+/* ---------- v1.0 (F15): saved slot, collapsed password row, theme segmented control ---------- */
+/* ST-4: "Saved" (check icon + text) next to the section that changed, for 2 s */
+.set-saved { display: inline-flex; align-items: center; gap: 4px; min-height: 1.4em; font-size: 13px; font-weight: 600; color: var(--answer-right); }
+.set-saved-ic { width: 14px; height: 14px; flex: none; }
+
+/* ST-1: "Change password >" is one 44 px row; the fields open in place */
+.set-pw-h { margin: 0; font-size: 15px; font-weight: 600; }
+.set-pw-toggle {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: calc(100% + 24px); min-height: 44px; margin: 0 -12px;
+  padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 15px; font-weight: 600;
+  text-align: left; cursor: pointer; transition: background-color .12s ease;
+}
+@media (hover: hover) { .set-pw-toggle:hover { background: var(--hover); } }
+.set-pw-toggle:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+.set-pw-chev { width: 16px; height: 16px; flex: none; color: var(--ink3); transition: transform .12s ease; }
+.set-pw-toggle[aria-expanded="true"] .set-pw-chev { transform: rotate(90deg); }
+.set-pw-form { margin-top: 8px; }
+.set-pw-form[hidden] { display: none; }
+.set-pw > .callout { margin: 8px 0 4px; }
+
+/* ST-2: the theme as a segmented control (icon + short label) under PHONE; the preview cards above it */
+.set-themeseg { display: none; width: 100%; }
+.set-themeseg button { flex: 1 1 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 0; white-space: nowrap; }
+.set-seg-ic { width: 16px; height: 16px; flex: none; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .set-themeseg { display: flex; }
+  .set-themecards { display: none; }
+  .set-themeseg button { min-height: 44px; padding-inline: 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .set-pw-toggle, .set-pw-chev { transition: none; } }

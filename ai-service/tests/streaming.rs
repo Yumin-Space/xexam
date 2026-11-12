@@ -83,7 +83,8 @@ async fn openai_stream_is_saved_with_usage() {
         json!({"role": "user", "content": "What is a list?"})
     );
     assert_eq!(req.body["stream_options"], json!({"include_usage": true}));
-    assert!(req.body.get("max_tokens").is_none());
+    // the answer length of the limits (1000 characters, English: 1 token each) is the max_tokens
+    assert_eq!(req.body["max_tokens"], json!(1000));
     assert!(req.body.get("temperature").is_none());
 
     let chat = chat_of(&ev);
@@ -160,7 +161,7 @@ async fn anthropic_stream_with_ping_and_usage() {
     assert_eq!(req.path, "/anthropic/v1/messages");
     assert_eq!(req.header("x-api-key"), Some(KEY));
     assert_eq!(req.header("anthropic-version"), Some("2023-06-01"));
-    assert_eq!(req.body["max_tokens"], json!(8192));
+    assert_eq!(req.body["max_tokens"], json!(1000));
     assert!(req.body["system"][0]["text"]
         .as_str()
         .unwrap_or("")
@@ -595,6 +596,7 @@ async fn a_held_answer_with_pings_outlives_the_idle_limit() {
 #[tokio::test]
 async fn chat_and_message_limits_refuse_new_items_only() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
     t.configure_openai(&admin, "demo-chat-small").await;
@@ -652,25 +654,25 @@ async fn chat_and_message_limits_refuse_new_items_only() {
         .send_all(&sam, json!({"text": "fits again"}))
         .await
         .is_ok());
-    // message length uses the adjustable limit
-    let (code, _) = t
+    // message length: a fixed internal cap of 16000 characters (not an administrator's setting)
+    let (code, v) = t
+        .post("/api/ai/send", &sam, json!({"text": "z".repeat(16001)}))
+        .await;
+    assert_eq!(
+        (code, v["code"].clone(), v["limit"].clone()),
+        (400, json!("ai.tooLong"), json!(16000))
+    );
+    let (code, v) = t
         .post(
             "/api/ai/admin/limits",
             &admin,
             json!({"messageChars": 1000}),
         )
         .await;
-    assert_eq!(code, 200);
-    let (code, v) = t
-        .post("/api/ai/send", &sam, json!({"text": "z".repeat(1001)}))
-        .await;
-    assert_eq!(
-        (code, v["code"].clone(), v["limit"].clone()),
-        (400, json!("ai.tooLong"), json!(1000))
-    );
+    assert_eq!((code, v["code"].clone()), (400, json!("ai.badRequest")));
     let (_, st) = t.get("/api/ai/status", &sam).await;
-    assert_eq!(st["messageChars"], json!(1000));
-    assert_eq!(st["maxMessageChars"], json!(1000));
+    assert_eq!(st["messageChars"], json!(16000));
+    assert_eq!(st["maxMessageChars"], json!(16000));
     let (code, v) = t.post("/api/ai/send", &sam, json!({"text": "   "})).await;
     assert_eq!((code, v["code"].clone()), (400, json!("ai.badRequest")));
 }
@@ -728,6 +730,7 @@ async fn retry_replaces_a_failed_answer() {
 #[tokio::test]
 async fn upstream_errors_are_mapped_and_never_echoed() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
     t.configure_openai(&admin, "demo-chat-small").await;
@@ -1002,12 +1005,12 @@ async fn memories_and_the_model_suggestion() {
         .post(
             "/api/ai/memories/add",
             &sam,
-            json!({"content": "x".repeat(301)}),
+            json!({"content": "x".repeat(201)}),
         )
         .await;
     assert_eq!(
         (code, v["code"].clone(), v["limit"].clone()),
-        (400, json!("ai.memoryTooLong"), json!(300))
+        (400, json!("ai.memoryTooLong"), json!(200))
     );
     let (code, v) = t
         .post(
@@ -1019,7 +1022,7 @@ async fn memories_and_the_model_suggestion() {
     assert_eq!((code, v["memory"]["source"].clone()), (200, json!("chat")));
     let (_, v) = t.get("/api/ai/memories", &sam).await;
     assert_eq!(v["limit"], json!(50));
-    assert_eq!(v["maxChars"], json!(300));
+    assert_eq!(v["maxChars"], json!(200));
     assert_eq!(v["memories"].as_array().map(Vec::len), Some(2));
     // the memories go into the system prompt, newest first
     let ev = t

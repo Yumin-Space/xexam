@@ -4,8 +4,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  EMPTY_LOG, POLL_MAX_MS, POLL_MS, atBottom, chunkOf, createPoller, isLevelFilter, levelOf, levelPasses, lineOf, linePasses, mergeChunk,
-  pollDelay, searchPasses, type LogChunk, type LogLine, type PollHost,
+  EMPTY_LOG, POLL_MAX_MS, POLL_MS, atBottom, chunkOf, createPoller, dateOf, endVisible, isLevelFilter, lastSegment, levelCounts, levelOf,
+  levelPasses, lineOf, linePasses, mergeChunk, pollDelay, searchPasses, type LogChunk, type LogLine, type PollHost,
 } from './logs.ts';
 
 const line = (seq: number, level = 'info', message = `line ${seq}`, target = 'xexam_backend::api'): LogLine =>
@@ -354,4 +354,27 @@ test('poller: a request that finishes after stop schedules nothing, also when it
     assert.equal(f.calls(), 1);
     assert.ok(!p.busy);
   }
+});
+
+test('endVisible: the last line within reach of the viewport bottom (phones follow the end only then)', () => {
+  assert.equal(endVisible(800, 800), true);
+  assert.equal(endVisible(700, 800), true);
+  assert.equal(endVisible(820, 800), true);
+  assert.equal(endVisible(900, 800), false);
+});
+
+test('levelCounts: all, warnings (with errors) and errors', () => {
+  const ls = [line(1, 'info'), line(2, 'WARN'), line(3, 'error'), line(4, 'debug'), line(5, 'warning')];
+  assert.deepEqual(levelCounts(ls), { all: 5, warn: 3, error: 1 });
+  assert.deepEqual(levelCounts([]), { all: 0, warn: 0, error: 0 });
+});
+
+test('lastSegment and dateOf', () => {
+  assert.equal(lastSegment('xexam_backend::api::users'), 'users');
+  assert.equal(lastSegment('hyper/util'), 'util');
+  assert.equal(lastSegment('plain'), 'plain');
+  assert.equal(lastSegment(''), '');
+  assert.equal(dateOf('2026-01-02 03:04:05'), '2026-01-02');
+  assert.equal(dateOf('2026-01-02T03:04:05'), '2026-01-02');
+  assert.equal(dateOf('03:04:05'), '');
 });

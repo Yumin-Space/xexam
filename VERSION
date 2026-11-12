@@ -4,7 +4,7 @@
 # all three changelogs (docs/en, docs/ja and docs/zh-CN/changelog.md), backend/Cargo.toml, ai-service/Cargo.toml and
 # frontend/package.json (CI checks that they match). The three images are built and tagged with this version, and
 # /api/info and the AI service's /healthz report it.
-CODE_VERSION=0.9.1
+CODE_VERSION=1.0
 #
 # RELEASE_VERSION: the last version that was actually published (images on Docker Hub and GHCR, GitHub Release).
 # Do not edit it by hand: the release job of .github/workflows/ci.yml writes it, together with the release badge at

@@ -1,61 +1,75 @@
-/* User management: compact like the home and banks pages. One block with one row per user (an icon, the name with small
-   tags, one line of facts, the small actions), rows split by hairlines; the "Add user" form opens as a soft tinted block at
-   the top of the list. Colours come only from the tokens in main.css, so the page follows the light and dark themes. */
+/* User management (v1.0, phones first): compact like the home and banks pages. One block with one row per user: an icon, the name
+   with the tags of what differs from the usual, one line of facts, the bank line as one tappable row, and the action row (the AI+
+   switch at its left, icon buttons for edit / reset password / disable / unlock / delete). The "Add user" form opens as a soft
+   tinted block at the top of the list. Colours come only from the tokens in main.css, so the page follows the light and dark
+   themes. PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), as in every stylesheet. */
 
 .page-users { max-width: 880px; }
-.us-lead { margin: -8px 0 20px; max-width: 46em; font-size: 14.5px; line-height: 1.6; color: var(--ink2); }
-.page-users [tabindex="-1"]:focus:not(:focus-visible) { outline: none; }
 
-/* Heading row: title with the count, "Add user" on the right */
+/* Heading row: title with the count and the page's (i) tip, "Add user" on the right */
 .us-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
-.page-users .panel .us-head h2 { display: flex; align-items: baseline; gap: 8px; margin: 0; }
+.page-users .panel .us-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
 .us-count { font-size: 13px; font-weight: 400; color: var(--ink3); }
-
-/* Small buttons: the shared button, only smaller (like the bank actions) */
-.page-users .btn.us-mini { position: relative; min-height: 28px; padding: 3px 10px; font-size: 13px; font-weight: 400; }
-.us-plus { width: 15px; height: 15px; margin-left: -2px; }
+.us-tip { vertical-align: middle; }
+.page-users .us-addbtn { box-shadow: inset 0 0 0 1px var(--line); background: var(--card); }
+@media (hover: hover) { .page-users .us-addbtn:hover:not(:disabled) { background: var(--hover); } }
+.us-search { width: 100%; max-width: 28em; min-height: 34px; margin: 0 0 8px; padding: 4px 10px; font-size: 14px; }
+.us-nomatch { margin: 8px 0 0; font-size: 14px; }
+.us-nomatch[hidden], .us-rows > li[hidden] { display: none; }
 
 /* ---------- Rows ---------- */
 .us-rows { list-style: none; margin: 0; padding: 0; }
 .us-row {
-  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 12px; align-items: start;
-  padding: 12px 0; border-top: 1px solid var(--line-soft);
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: start;
+  margin: 0 -8px; padding: 10px 8px; border-top: 1px solid var(--line-soft); border-radius: 8px;
 }
 .us-row:first-child { border-top: 0; }
-.us-row:last-child { padding-bottom: 0; }
+.us-row:last-child { padding-bottom: 4px; }
 .us-ico { width: 20px; height: 20px; margin-top: 2px; color: var(--ink3); }
 .us-main { min-width: 0; }
 .us-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
 .us-name { min-width: 0; font-size: 15.5px; font-weight: 600; line-height: 1.45; overflow-wrap: anywhere; }
 .us-row.off .us-name { color: var(--ink3); }
-.us-tags { display: inline-flex; flex-wrap: wrap; gap: 4px; }
-/* The lock countdown changes every minute: digits of one width keep the tag from jumping */
+.us-tags { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.us-tags .ai-badge { margin-left: 2px; }
+/* The lock tag says when the lock ends (a fixed text, so nothing jumps) */
 .us-lock { font-variant-numeric: tabular-nums; }
-.us-meta { margin-top: 2px; font-size: 13px; line-height: 1.6; color: var(--ink3); }
+/* The paused AI+ tag is a link to the users tab of AI settings */
+.us-ai-paused { position: relative; text-decoration: none; }
+.us-ai-paused:hover { color: var(--ink); }
+.us-ai-paused:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.us-meta { margin-top: 1px; font-size: 13px; line-height: 1.5; color: var(--ink3); }
 /* Each fact stays on one line; the line breaks between facts (after the dot), never inside one */
 .us-dot { margin-left: 6px; }
 .us-nw { white-space: nowrap; }
-/* What a lock or the tries left mean (visible text, so it can be read on a phone and with the keyboard) */
-.us-locknote { margin-top: 4px; max-width: 46em; font-size: 12.5px; line-height: 1.55; color: var(--ink2); }
-/* Which question banks the user sees (v0.6.5): the names are written out, so they can be read on a phone too */
-.us-banks { margin-top: 2px; max-width: 46em; font-size: 13px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
-.us-banks.none { color: var(--ink3); }
-.us-banks-own { display: block; color: var(--ink3); }
-/* "Change" at the end of a plain user's bank line (v0.7): a small button in the run of the text, so the row's actions stay on
-   one line on phones. Its tap area grows invisibly on touch screens (see the end of this file). */
-.page-users .btn.us-mini.us-change { min-height: 22px; margin-left: 2px; padding: 0 8px; font-size: 12.5px; line-height: 20px; vertical-align: baseline; }
-/* Why some actions of the row are not available */
-.us-why { margin-top: 4px; max-width: 40em; font-size: 12.5px; line-height: 1.55; color: var(--ink3); }
-/* Wide enough for all five actions of a row with Unlock on one line in every language (ja is the widest, about 385px at
-   13px), so Delete never sits alone on a second line at desktop widths; narrower windows move the actions under the facts */
-.us-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px; max-width: 420px; }
-.us-busy { font-size: 12.5px; color: var(--ink3); }
-/* "Delete" looks like the other actions and turns red on hover or focus (as on the banks page); the dialog asks first */
-.us-acts .btn.danger { color: var(--ink2); border-color: var(--line); }
-@media (hover: hover) {
-  .us-acts .btn.danger:hover:not(:disabled) { color: var(--danger-hover); background: var(--danger-soft); border-color: var(--danger-line); }
+
+/* The bank line (plain users): one tappable row, the summary and a chevron (US-4). Names are written out, so they can be read on a phone. */
+.us-bankrow {
+  display: flex; align-items: center; gap: 8px; width: calc(100% + 16px); min-height: 40px; margin: 2px -8px 0; padding: 4px 8px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--ink2); font: inherit; font-size: 13px; line-height: 1.55;
+  text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
 }
-.us-acts .btn.danger:focus-visible { color: var(--danger); }
+@media (hover: hover) { .us-bankrow:hover:not(:disabled) { background: var(--hover); } }
+.us-bankrow:disabled { cursor: default; opacity: .6; }
+.us-bankrow.none { color: var(--ink3); }
+.us-bank-sum { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.us-bank-go { flex: none; width: 16px; height: 16px; color: var(--ink3); }
+.us-banks-own { display: block; color: var(--ink3); }
+
+/* The action row: the AI+ switch at the left, then the icon buttons; one line while it fits, never one under the other, so no
+   two tap areas share ground (US-3) */
+.us-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 14px; min-height: 40px; }
+.us-icons { display: inline-flex; align-items: center; gap: 4px; }
+.us-busy { margin-right: 6px; font-size: 12.5px; color: var(--ink3); }
+/* AI+ of a row (v0.8): a small switch for a plain user (administrators always have AI while it is enabled: no line) */
+.us-ailine { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
+.us-ai-l .l-short { display: none; }
+.us-icons .ibtn[aria-disabled="true"] { opacity: .45; }
+.us-ai-l { font-size: 12.5px; font-weight: 700; letter-spacing: .02em; color: var(--ink2); white-space: nowrap; }
+/* The row of a user just created: tinted for 2 s (the page removes the class) */
+.us-row.us-new { background: var(--print-soft); animation: us-flash 2s ease-out; }
+@keyframes us-flash { from { background: var(--print-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { .us-row.us-new { animation: none; } }
 
 /* ---------- Add a user: a soft tinted block ---------- */
 .us-add { margin: 4px 0 12px; padding: 16px; border-radius: 8px; background: var(--fill); }
@@ -78,7 +92,7 @@
 /* ---------- Question banks (Add user form, the "Change" dialog), v0.8 as the owner drew it ----------
    The legend with its info button on one line; then one row of tools (Manage banks, Select all, Deselect all) that sits
    directly on top of the list and shares its border; "Include banks imported later" is the first entry of the list, set
-   apart by its icon, a soft fill and a thin divider. No helper paragraphs: the explanations are tooltips. */
+   apart by its icon, a soft fill and a thin divider. No helper paragraphs: the explanations are tooltips (tap-and-hold on touch). */
 .us-banksfld { display: block; gap: 0; min-width: 0; }
 .us-banksfld > legend { float: left; margin: 0; line-height: 24px; }
 .us-legend-tip { float: left; margin-left: 6px; }
@@ -88,8 +102,8 @@
 }
 .us-banktools > .has-tip[hidden] { display: none; }
 .us-tool {
-  display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 13.5px; line-height: 1.4; color: var(--ink2);
-  cursor: pointer; white-space: nowrap;
+  position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 13.5px; line-height: 1.4; color: var(--ink2);
+  cursor: pointer; white-space: nowrap; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
 }
 .us-tool input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--print); }
 .us-tool:has(input:disabled) { cursor: default; opacity: .55; }
@@ -98,6 +112,7 @@
 .us-tool:has(input[aria-disabled="true"]) input { opacity: .55; }
 .us-bank {
   display: flex; align-items: flex-start; gap: 10px; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; line-height: 1.45;
+  -webkit-touch-callout: none;
 }
 @media (hover: hover) { .us-bank:hover:not(:has(input:disabled)) { background: var(--hover); } }
 .us-bank input { width: 17px; height: 17px; margin: 1px 0 0; flex: none; accent-color: var(--print); }
@@ -119,20 +134,14 @@
 @media (hover: hover) { .us-later-row .us-bank:hover:not(:has(input:disabled)) { background: var(--hover-strong); } }
 .us-banks-empty { padding: 8px 10px; font-size: 13px; line-height: 1.6; color: var(--ink3); }
 .dlg-form > .us-banksfld { margin-top: 14px; }
-dialog .us-banklist { max-height: min(248px, 40vh); }
+/* In a dialog the dialog's body is the one scroller: the list has no scroller of its own (SH-5) */
+dialog .us-banklist { max-height: none; overflow: visible; }
 
 /* The page's own checkboxes (account enabled, AI+) are blue, not the red of the delete confirmations */
 .us-check input { accent-color: var(--print); }
 .us-check:has(input:disabled) { cursor: default; }
-
-/* AI+ of a row (v0.8): a small switch for a plain user; administrators always have AI while it is enabled */
-.us-ailine { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 6px; font-size: 13px; line-height: 1.5; color: var(--ink2); }
-.us-ai-l { font-size: 12.5px; font-weight: 700; letter-spacing: .02em; color: var(--ink2); }
-.us-ai-admin { color: var(--ink3); }
-.us-ai-paused { font-size: 12px; }
-/* Why the AI+ switches are hidden (one short line under the page lead) */
+/* Why the AI+ switches are hidden (one short line under the page title) */
 .us-ainote { margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; background: var(--hover); color: var(--ink2); font-size: 13px; line-height: 1.6; }
-.us-tags .ai-badge { margin-left: 2px; }
 
 /* Role: a segmented choice with radio semantics (the recipe of the segmented control in main.css) */
 .us-rolefld legend { margin-bottom: 4px; }
@@ -159,30 +168,55 @@ dialog .us-banklist { max-height: min(248px, 40vh); }
 
 @media (max-width: 720px) {
   .us-add-grid, .us-add-access { grid-template-columns: minmax(0, 1fr); }
-  /* The actions move under the facts */
+  /* The actions move under the facts: the switch at the left, the icons at the right */
   .us-row { grid-template-columns: auto minmax(0, 1fr); }
-  .us-acts { grid-column: 2; justify-content: flex-start; max-width: none; margin-top: 8px; }
+  .us-acts { grid-column: 2; justify-content: space-between; }
+  .us-icons { margin-left: auto; }
+}
+
+@media (max-width: 400px) {
+  /* The short switch label and tighter gaps keep the AI+ switch and five icons on one row at 360 px */
+  .us-ai-l .l-full { display: none; }
+  .us-ai-l .l-short { display: inline; }
+  .us-acts { column-gap: 8px; }
 }
 
 @media (max-width: 480px) {
-  /* Phones: the icon makes room, so the four actions fit on one line */
-  .us-row { grid-template-columns: minmax(0, 1fr); }
+  /* Phones: the icon makes room, the row is one column */
+  .us-row { grid-template-columns: minmax(0, 1fr); padding-block: 8px; }
   .us-ico { display: none; }
   .us-acts { grid-column: 1; }
+  .us-add { padding: 12px; }
+  /* The owner's bank-access row stays one row: smaller gaps and icons, the short labels (US-5) */
+  /* (6 px apart: the ja labels need it at 360 px; the 2 px tap margins of neighbours still do not meet) */
+  .us-banktools { gap: 4px 6px; padding: 6px; }
+  .us-tool { gap: 3px; font-size: 13px; }
+  .us-tool .us-mi { width: 14px; height: 14px; }
+  .us-tool .l-short { display: inline; }
+  .us-tool .l-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 }
 
-/* Touch screens: the small buttons stay small to look at; an invisible margin makes them ~44px to tap */
+/* Touch screens: the bank row and the options are 44 px to tap; the icon buttons bring their own 44 px hit area */
 @media (pointer: coarse), (max-width: 480px) {
-  .page-users .btn.us-mini { min-height: 28px; min-width: 0; }
-  .page-users .btn.us-mini.us-change { min-height: 22px; }
-  .page-users .btn.us-mini::after { content: ""; position: absolute; inset: -9px -3px; }
-  .us-acts { gap: 18px 8px; }
+  .us-bankrow { min-height: 44px; }
+  /* Every line of the action row is 44 px tall, also when it wraps, so the tap areas of the switch and of the icons never reach
+     each other or the bank row above (US-3) */
+  .us-acts { min-height: 44px; }
+  .us-ailine, .us-icons { min-height: 44px; }
   .us-seg-o { min-height: 40px; }
   .us-bank { padding-block: 10px; }
   .us-tool { min-height: 40px; }
+  .us-tool::after { content: ""; position: absolute; inset: -2px -2px; }
+  .us-ai-paused::after { content: ""; position: absolute; inset: -12px -2px; }
+  .us-search { min-height: 40px; font-size: 16px; }
 }
 
-/* Phones: the tools row wraps; the labels stay */
-@media (max-width: 560px) {
-  .us-banktools { gap: 0 12px; }
+/* Short landscape: the tinted add form stays small */
+@media (orientation: landscape) and (max-height: 500px) {
+  .us-row { padding-block: 6px; }
+}
+
+/* The lock tip sits between two text lines: a 48 px tap area keeps a full 44 px at any sub-pixel position */
+@media (pointer: coarse), (max-width: 480px) {
+  .us-tip .tip-btn::after { inset: -12px; }
 }

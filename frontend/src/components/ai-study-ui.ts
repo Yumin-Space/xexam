@@ -1,7 +1,8 @@
-// Shared pieces of the AI popover and the AI summary overlay (v0.9): the dependencies they get from the page layer, the
+// Shared pieces of the AI+ panel and the AI summary overlay (v0.9, v1.0): the dependencies they get from the page layer, the
 // wording of notes and states, and a few DOM helpers. The wording is the only place that calls t() for study answers; the
 // decisions behind it are pure (domain/ai-study.ts, domain/ai-plus.ts).
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
+import { isAdmin } from '../state/store.ts';
 import { busyView, type ReplyLang, type UiLangCode } from '../domain/ai-plus.ts';
 import type { AskError, EntryView, Note } from '../domain/ai-study.ts';
 import type { StudyTransport } from '../domain/ai-spec.ts';
@@ -17,12 +18,13 @@ export interface StudyUiDeps {
   langName(l: ReplyLang): string;
   /** `refreshAi(force)` of state/actions.ts followed by a redraw when the status changed */
   refreshAi(force: boolean): void;
-  /** Navigates to AI Chat with that chat open (`#/ai/<id>`) */
-  openChat(chatId: number): void;
 }
 
 /** A key built at run time (the pure domain returns plain strings) */
 export const msgKey = (k: string): MsgKey => k as MsgKey;
+
+/** `text` without a sentence-final "。" / "." (and the space after it) */
+export const stripFinalStop = (text: string): string => text.replace(/[。.]\s*$/, '');
 
 /** The text of a note (the one line under the title) */
 export function noteText(note: Note, deps: StudyUiDeps, sessionChatId: number | null): string {
@@ -32,13 +34,17 @@ export function noteText(note: Note, deps: StudyUiDeps, sessionChatId: number | 
       return b.kind === 'study' ? t(b.noteKey, { label: t(b.labelKey), n: b.n }) : t(b.noteKey);
     }
     case 'error':
-      return deps.errorText({ status: note.status, code: note.code, ...(note.limit != null ? { limit: note.limit } : {}) });
+      return deps.errorText({
+        status: note.status, code: note.code, ...(note.limit != null ? { limit: note.limit } : {}), ...(note.quota ? { quota: note.quota } : {}),
+      });
     case 'withheld':
       return t('aiplus.withheld');
     case 'withheldPrev':
       return t('aiplus.failed.withheldPrev');
     case 'failedPrev':
-      return t('aiplus.failed.prev', { reason: note.reason === 'stopped' ? t('ai.status.stopped') : deps.errorText({ status: 0, code: note.code }) });
+      // The catalog template already wraps the reason in brackets: a sentence-final full stop of the reason would sit right
+      // before the closing bracket ("（连不上 AI 服务商。）"), so it is dropped here, once, for every window
+      return t('aiplus.failed.prev', { reason: stripFinalStop(note.reason === 'stopped' ? t('ai.status.stopped') : deps.errorText({ status: 0, code: note.code })) });
     case 'otherLang':
       return t('aiplus.otherLang', { lang: deps.langName(note.lang) });
   }
@@ -60,10 +66,15 @@ export function stateText(v: EntryView): string {
   }
 }
 
+/** The note for an answer cut at the length limit; administrators also learn where to raise it */
+export function truncatedText(): string {
+  return isAdmin() ? `${t('aiplus.truncated')} ${t('aiplus.truncatedAdmin')}` : t('aiplus.truncated');
+}
+
 /** HH:MM of a unix time in the Settings language's locale */
 export function clock(unix: number): string {
   try {
-    return new Date(unix * 1000).toLocaleTimeString(localeTag(), { hour: '2-digit', minute: '2-digit' });
+    return new Date(unix * 1000).toLocaleTimeString(localeTag(), { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
   } catch {
     return '';
   }
@@ -95,7 +106,8 @@ export function replaceKeepingFocus(box: HTMLElement, kids: HTMLElement[]): void
   if (slot < 0) return;
   const ok = (el: HTMLElement | undefined): el is HTMLElement => el != null && !(el instanceof HTMLButtonElement && el.disabled);
   const pick = [kids[slot], ...kids.slice(0, slot).reverse(), ...kids.slice(slot + 1)].find(ok);
-  pick?.focus();
+  // A wrapper (span.has-tip around the panel's "saved in AI Chat" text) is not focusable itself: focus what it holds
+  (pick && pick.tabIndex < 0 ? pick.querySelector<HTMLElement>('[tabindex="0"]') ?? pick : pick)?.focus();
 }
 
 /** env(safe-area-inset-top / -bottom) in px (a probe element reads the computed padding) */

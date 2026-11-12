@@ -1,0 +1,84 @@
+/* Icon buttons, hold tips, short labels and the compact language switch (v1.0, spec SH-2 / SH-10 / SH-17).
+   Imported by components/icon-button.ts and components/lang-switch.ts. Every colour is a token of main.css.
+   PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), as in every stylesheet. */
+
+/* ---------- .ibtn ----------
+   36 x 36 px visual on a mouse device, 40 x 40 on touch; an invisible ::after makes the hit area 44 x 44 on touch (it
+   grows by 2 px per side, so it never reaches a neighbour that is at least 4 px away). */
+.ibtn {
+  position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none;
+  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--ink2);
+  font: inherit; font-size: 13.5px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer;
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background-color .12s ease, color .12s ease;
+}
+.ibtn .ibtn-ic { width: 18px; height: 18px; flex: none; color: inherit; }
+.ibtn-label { width: auto; min-width: 36px; padding: 0 10px; }
+.ibtn[aria-pressed="true"] { background: var(--hover-strong); color: var(--ink); }
+.ibtn:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+
+/* Tones */
+.ibtn-quiet { color: var(--ink3); }
+.ibtn-danger { color: var(--danger); }
+.ibtn-ai { color: var(--ai-3); border: 1px solid var(--line); background: var(--card); }
+@media (hover: hover) {
+  .ibtn:hover:not([aria-disabled="true"]) { background: var(--hover); color: var(--ink); }
+  .ibtn-danger:hover:not([aria-disabled="true"]) { background: var(--danger-soft); color: var(--danger-hover); }
+  .ibtn-ai:hover:not([aria-disabled="true"]) { color: var(--ai-3); }
+}
+
+/* Greyed (SH-17): flat, no fill, no edge, no shadow, --ink3 icon and text; the reason comes by tip / toast */
+.ibtn[aria-disabled="true"], .ibtn:disabled {
+  background: transparent; border-color: transparent; box-shadow: none; color: var(--ink3); cursor: not-allowed;
+}
+.ibtn:disabled:not([aria-disabled]) { opacity: .45; }
+
+@media (pointer: coarse) {
+  .ibtn { width: 40px; height: 40px; }
+  .ibtn-label { width: auto; min-width: 40px; }
+  .ibtn::after { content: ""; position: absolute; inset: -2px; }
+  /* The outlined tone has a 1 px border and the ::after is placed from inside it: one more pixel gives the same 44 px */
+  .ibtn-ai::after { inset: -3px; }
+}
+
+@media (forced-colors: active) {
+  .ibtn[aria-disabled="true"], .ibtn:disabled { border: 1px dashed GrayText; color: GrayText; }
+}
+
+/* A greyed control inside withReason(): the icon button's own hold tip says the reason, the wrapper's tip stays hidden */
+.has-tip.ibtn-reason-own > .tip { display: none !important; }
+
+/* ---------- Hold tip (components/tooltip.ts holdTip) ----------
+   One shared element, same look as .tip; never takes pointer events. */
+.hold-tip {
+  position: fixed; left: 0; top: 0; z-index: 70; display: none; width: max-content; max-width: min(320px, 90vw);
+  padding: 6px 10px; border-radius: 6px; background: var(--ink); color: var(--on-ink); box-shadow: var(--shadow-pop);
+  font-size: 12.5px; font-weight: 400; line-height: 1.5; letter-spacing: 0; text-align: left;
+  white-space: normal; overflow-wrap: anywhere; pointer-events: none;
+}
+.hold-tip.hold-tip-on { display: block; }
+
+/* ---------- Short labels (shortLabel) ----------
+   The short text shows at 400 px and below; the full one is then only clipped away (not display: none), so it stays the
+   accessible name. */
+.l-short { display: none; }
+@media (max-width: 400px) {
+  .l-short { display: inline; }
+  .l-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+}
+
+/* ---------- Compact language switch (SH-10) ----------
+   Under PHONE the question-language switch reads EN | 中 | 日 (the full names are the aria-labels); the segments stay 36 px
+   tall, with a 44 px hit area from the invisible ::after of main.css. */
+.lang-btn .l-short { display: none; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .lang-btn .l-short { display: inline; }
+  .lang-btn .l-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .lang-btn { min-width: 36px; padding-inline: 10px; }
+}
+/* Touch: the segments sit 2 px apart, so their invisible ::after (main.css) can only add 1 px per side; 42 px wide
+   segments give the 44 px tap width without reaching into a neighbour */
+@media (max-width: 600px) and (pointer: coarse), (orientation: landscape) and (max-height: 500px) and (pointer: coarse) { /* PHONE, touch */
+  .lang-btn { min-width: 42px; }
+}

@@ -1,15 +1,17 @@
-// The engine behind the AI popover and the summary overlay (v0.9): owns the entries of ai-study.ts, reads saved answers,
+// The engine behind the AI+ panel and the summary overlay (v0.9): owns the entries of ai-study.ts, reads saved answers,
 // starts and stops generations, polls a running answer every 2 s, and applies the busy flow. No DOM and no fetch: the
 // transport (a `RunSpec` per request), the timers and the notifications are injected, so `node --test` drives it with fakes.
 // Rules it keeps (spec 2.3, 2.5, 2.16, 7.8):
-//   · opening shows a saved answer at once; only when nothing is saved does it generate;
+//   · opening shows a saved answer at once; only when nothing is saved does it generate; `peek` only ever shows (never asks);
+//   · while the per-user call caps block the user (`env.blocked`), nothing is sent to the model: the entry gets a local
+//     `ai.callLimit` failure instead, and saved answers still open (spec 3.6);
 //   · a closed window never stops a generation (nothing here is tied to a window); reopening finds the entry again;
 //   · Stop = abort the fetch + stop THAT chat (never `stop {}`); the attempt becomes `stopped` at once;
 //   · a busy answer is never stopped automatically: `stopAndAsk` stops the named chat and asks again once;
 //   · a lost stream turns into polling of the saved route.
 import {
-  type Action, type AskError, type Entry, type SavedPayload, type StreamEvent,
-  boundedSet, emptyEntry, MAX_ENTRIES, reduce, refreshesStatus, runningOf,
+  type Action, type AskError, type CallBlock, type Entry, type SavedPayload, type StreamEvent,
+  boundedSet, CALL_LIMIT, callBlockOf, emptyEntry, MAX_ENTRIES, reduce, refreshesStatus, runningOf,
 } from './ai-study.ts';
 
 export interface RunSpec {
@@ -28,6 +30,10 @@ export interface RunnerEnv {
   onChange(key: string): void;
   /** Called for a refusal that makes the AI status stale (refreshesStatus): refresh it and redraw the controls */
   onRefuse(error: AskError): void;
+  /** The per-user call cap that blocks model calls right now, or null (spec 3.6: `callBlock()` of state/ai.ts) */
+  blocked?: () => CallBlock | null;
+  /** The server refused a call with `ai.callLimit` (state update: `noteCallBlock`) */
+  onCallLimit?: (quota: CallBlock) => void;
   /** unix seconds, for the end of an answer */
   now?: () => number;
   pollMs?: number;
@@ -50,6 +56,8 @@ export interface Runner {
   open(key: string, spec: RunSpec): Promise<void>;
   /** Regenerate: a new ask whatever is saved */
   regenerate(key: string, spec: RunSpec): Promise<void>;
+  /** Show what memory or the server has saved, but never ask (a question change in the AI+ panel, a card's chevron) */
+  peek(key: string, spec: RunSpec): Promise<void>;
   /** Stop: abort the stream and stop the chat's answer */
   stop(key: string, spec: RunSpec): Promise<void>;
   /** The busy flow's button: stop the running chat (named), then ask again once */
@@ -143,9 +151,22 @@ export function createRunner(env: RunnerEnv): Runner {
     }
     apply(key, { type: 'askFailed', error: e });
     if (refreshesStatus(e)) env.onRefuse(e);
+    if (e.code === CALL_LIMIT && e.quota) env.onCallLimit?.(e.quota);
+  };
+
+  /** While a call cap blocks the user: the local refusal (nothing is sent); false = not blocked */
+  const refuseWhenBlocked = (key: string): boolean => {
+    const block = env.blocked?.() ?? null;
+    if (!block) return false;
+    // An answer that is being written goes on untouched (the caller's guard ignores such a press anyway)
+    const cur = entries.get(key);
+    if (cur && (cur.requesting || cur.attempt?.status === 'streaming')) return true;
+    apply(key, { type: 'askFailed', error: { status: 429, code: CALL_LIMIT, quota: block } });
+    return true;
   };
 
   const startAsk = (key: string, spec: RunSpec): Promise<void> => {
+    if (refuseWhenBlocked(key)) return Promise.resolve();
     const l = lv(key);
     stopPoll(key);
     l.abort?.abort();
@@ -221,7 +242,9 @@ export function createRunner(env: RunnerEnv): Runner {
     async open(key, spec) {
       const cur = entries.get(key);
       const stale = cur != null && cur.failure != null && !cur.requesting && cur.attempt?.status !== 'streaming';
-      if (cur && !cur.loading && !stale) {
+      // An empty entry (a peek found nothing saved) is read again: nothing is saved, so this open asks once (spec 2.3)
+      const empty = cur != null && !cur.loading && cur.shown == null && cur.attempt == null && !cur.requesting && !cur.polling && cur.failure == null;
+      if (cur && !cur.loading && !stale && !empty) {
         // In memory: show it at once; a running answer without a stream keeps being polled
         boundedSet(entries, key, cur, max);
         env.onChange(key);
@@ -233,6 +256,38 @@ export function createRunner(env: RunnerEnv): Runner {
       await read(key, spec);
     },
     regenerate: (key, spec) => startAsk(key, spec),
+    async peek(key, spec) {
+      const cur = entries.get(key);
+      if (cur && !cur.loading) {
+        boundedSet(entries, key, cur, max);
+        env.onChange(key);
+        if (cur.polling) startPoll(key, spec);
+        return;
+      }
+      if (cur?.loading) return;
+      const l = lv(key);
+      l.gen += 1;
+      const gen = l.gen;
+      apply(key, { type: 'loading' });
+      let saved: SavedPayload | null;
+      try {
+        saved = await spec.loadSaved();
+      } catch (err) {
+        if (l.gen !== gen) return;
+        apply(key, { type: 'loadFailed', error: asAskError(err) });
+        return;
+      }
+      if (l.gen !== gen) return;
+      if (saved) {
+        const next = apply(key, { type: 'saved', saved });
+        if (next.polling) startPoll(key, spec);
+      } else {
+        // Nothing to look up: the entry is forgotten again, so the next press asks once (like an empty answer)
+        entries.delete(key);
+        release(key);
+        env.onChange(key);
+      }
+    },
     async stop(key, spec) {
       const l = lv(key);
       const cur = entries.get(key);
@@ -251,6 +306,8 @@ export function createRunner(env: RunnerEnv): Runner {
       }
     },
     async stopAndAsk(key, spec, runningChatId) {
+      // Blocked: the other answer is left running (stopping it would lose it for nothing)
+      if (refuseWhenBlocked(key)) return;
       try {
         await spec.stopChat(runningChatId);
       } catch {
@@ -289,12 +346,14 @@ export function createRunner(env: RunnerEnv): Runner {
  */
 export function asAskError(v: unknown): AskError {
   if (typeof v === 'object' && v !== null) {
-    const o = v as { status?: unknown; code?: unknown; running?: unknown; limit?: unknown };
+    const o = v as { status?: unknown; code?: unknown; running?: unknown; limit?: unknown; quota?: unknown };
     if (typeof o.status === 'number') {
       const e: AskError = { status: o.status, code: typeof o.code === 'string' && o.code ? o.code : null };
       const running = runningOf(o.running);
       if (running) e.running = running;
       if (typeof o.limit === 'number' && Number.isFinite(o.limit)) e.limit = o.limit;
+      const quota = e.code === CALL_LIMIT ? callBlockOf(o.quota) : null;
+      if (quota) e.quota = quota;
       return e;
     }
   }

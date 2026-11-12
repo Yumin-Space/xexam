@@ -32,6 +32,7 @@ async fn set_free(t: &TestApp, who: &Who, on: bool) {
 #[tokio::test]
 async fn the_mode_follows_the_administrator_into_old_and_new_chats() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     t.configure_openai(&admin, "demo-chat-small").await;
     let (code, v) = t

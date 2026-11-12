@@ -1,12 +1,13 @@
 /* Area "records": study-record list, exam detail, wrong-answer review, the result page and the shared review cards
-   (components/review.ts). Builds on the shared layer in main.css (soft blocks, tags, callouts, the property list .props,
-   the segmented control .seg, the form-field base). Colours: tokens only (light and dark themes). */
+   (components/review.ts; the cards' own rules are in review.css since v1.0). Builds on the shared layer in main.css
+   (soft blocks, tags, callouts, the property list .props, the segmented control .seg, the form-field base). Colours:
+   tokens only (light and dark themes). */
 
 /* `hidden` must win over the display of .btn / flex helpers */
 .page-records [hidden], .page-result [hidden] { display: none !important; }
 
-.rec-back { padding-inline: 10px 14px; }
-.rec-back span { font-size: 1.1em; line-height: 1; }
+.rec-back { padding-inline: 10px 14px; gap: 4px; }
+.rec-back .rec-back-ic { width: 16px; height: 16px; flex: none; }
 
 /* ---------- Overview: soft tiles (three numbers, then the latest results as small bars) ---------- */
 .rec-scope { margin: -10px 0 16px; font-size: 13.5px; color: var(--ink3); }
@@ -33,10 +34,16 @@
   max-width: max-content; margin-top: 12px; padding: 6px 12px; border-radius: 8px;
   background: var(--danger-soft); color: var(--danger); font-size: 13.5px; font-weight: 500;
 }
-.rec-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; }
+.rec-filter { display: flex; flex-direction: column; }
+.rec-filter > h2 { order: 0; }
+.rec-filters { order: 1; }
+.rec-warn { order: 2; }
+.rec-bar { order: 3; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 12px; }
 .rec-count { font-size: 13.5px; color: var(--ink3); }
+/* The fold button of the phone filter bar (RC-1) is only there up to 640px */
+.rec-ftoggle { display: none; }
 
-/* ---------- Record list: hairline rows with a soft hover (soft cards on narrow screens) ---------- */
+/* ---------- Record list: hairline rows with a soft hover (soft cards up to 900px) ---------- */
 /* The rows reach 10px into the block's padding, so the text lines up with the heading and the hover fill has room */
 .rec-scroll { overflow-x: auto; margin: 0 -10px; }
 /* Row hover: the sheet grey in the light theme (the usual --hover fill would take the orange accuracy to 4.45:1),
@@ -60,62 +67,99 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-time a { color: var(--print); font-weight: 600; text-decoration: none; border-radius: 4px; }
 .rec-time a:hover { text-decoration: underline; color: var(--print); }
 .rec-banks { overflow-wrap: anywhere; min-width: 8em; }
+.rec-banks .rec-bnames { overflow-wrap: anywhere; }
 .rec-mode { display: block; font-size: 12.5px; color: var(--ink3); }
 .rec-table td.num { white-space: nowrap; }
 .rec-pct { font-weight: 600; font-size: 16px; }
 .rec-pct.hi { color: var(--answer-right); }
 .rec-pct.lo { color: var(--answer-wrong); }
-.rec-act { text-align: right; white-space: nowrap; }
-/* The row's Delete never wraps (it broke into "删 / 除" at about 800px, v0.8): the button keeps one line and its cell takes
-   only the button's width, so the other columns give way instead */
-.rec-table td.rec-act { width: 1%; white-space: nowrap; }
-.rec-table .btn.rec-del { white-space: nowrap; }
-/* "Delete": red text with a soft red hover. In the list it stays a quiet grey until its row is hovered or it has the
-   focus, so a column of red words does not shout (the dialog still asks before anything is deleted). */
-.btn.rec-del { color: var(--danger); }
-@media (hover: hover) { .btn.rec-del:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger-hover); } }
-.rec-table .btn.rec-del { color: var(--ink3); }
-/* On a hovered row the hover red: the dark row's grey hover fill leaves #F85149 at 4.25:1, #FF7B72 at 5.65:1 */
-@media (hover: hover) { .rec-table tbody tr:hover .btn.rec-del:not(:disabled) { color: var(--danger-hover); } }
-.rec-table .btn.rec-del:focus-visible { color: var(--danger); }
+/* The action cells hold one icon button each (the red trash; AI 总结 first): their cells take only the button's width.
+   The trash is red everywhere, hover or not (SH-16). */
+.rec-table td.rec-act, .rec-table td.rec-ai { width: 1%; white-space: nowrap; }
+.rec-act { text-align: right; }
+.rec-table td.rec-ai { padding-right: 0; }
+.rec-table.has-ai th:first-child { padding-right: 0; }
 .rec-nomatch { display: grid; justify-items: start; gap: 12px; }
 .rec-retention { margin-top: 16px; font-size: 13px; }
 /* Retention note and the rarely used "Delete all" at the end of the list page */
 .rec-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-top: 16px; }
 .rec-foot .rec-retention { flex: 1 1 20em; margin-top: 0; }
+/* "Show more (N left)" under a long list (RC-6) */
+.rec-more { display: flex; margin: 12px auto 0; }
 
-/* Stacked cards whenever the list is narrower than the table needs (about 630px in English, plus room for longer bank
-   names and labels): phones and small tablets up to 760px */
-@media (max-width: 760px) {
-  /* The list block steps back: its heading sits on the sheet and every exam is a soft card of its own (no box in a box) */
+/* The AI 总结 control: the sparkle icon with its text where there is room (the table; the detail row); the labelled icon
+   buttons of the detail row use the same shape. Icon only: the text is hidden and the button is the usual square. */
+.ibtn.rec-lblbtn { width: auto; min-width: 36px; padding: 0 10px; border: 1px solid var(--line); background: var(--card); }
+.ibtn.rec-lblbtn.ibtn-danger { background: var(--card); }
+.ibtn.rec-lblbtn[aria-disabled="true"] { border-color: transparent; background: transparent; }
+.rec-lbl { font-size: 13px; font-weight: 500; }
+@media (pointer: coarse) {
+  .ibtn.rec-lblbtn { min-width: 40px; }
+  /* Outlined like .ibtn-ai: the ::after is placed from inside the 1 px border, so one more pixel gives the 44 px tap area */
+  .ibtn.rec-lblbtn::after { inset: -3px; }
+}
+
+/* Stacked cards whenever the list is narrower than the table needs: up to 900px (the AI 总结 column needs about that much
+   room as well). Three rows (RC-3): (1) the date link with › and the accuracy; (2) kind tag, bank names, mode;
+   (3) "Correct 8/12 · Time used 5:00" (+ "Answered n/m" only when something was left out), then ✦ and the trash. */
+@media (max-width: 900px) {
+  /* The list block steps back: its heading sits on the sheet and every record is a soft card of its own (no box in a box) */
   .rec-listpanel { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
   .rec-listpanel > h2 { margin: 8px 0 10px; }
   .rec-scroll { overflow-x: visible; margin: 0; }
   .rec-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
   .rec-table, .rec-table tbody { display: block; }
-  /* Row 1: date and accuracy; row 2: banks; row 3: answered, time used, correct and Delete */
   .rec-table tr {
-    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px 12px;
-    margin-bottom: 8px; padding: 12px 14px;
+    display: grid; grid-template-columns: auto auto auto minmax(0, 1fr) auto auto; align-items: center; gap: 6px 0;
+    margin-bottom: 8px; padding: 10px 14px;
     border: 1px solid var(--line-soft); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-xs);
   }
   .rec-table tbody tr:last-child { margin-bottom: 0; }
   .rec-table td { display: block; padding: 0; border: 0; min-width: 0; }
-  .rec-table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--ink3); }
-  .rec-table .rec-time { grid-column: 1 / 4; grid-row: 1; }
-  /* The date needs no label, and the whole card is the tap target (no extra padding on the link) */
-  .rec-table td.rec-time[data-label]::before { display: none; }
-  .rec-table .rec-time a { padding-block: 0; }
+  .rec-table .rec-time { grid-column: 1 / 6; grid-row: 1; }
+  .rec-table .rec-time a { display: inline-block; padding-block: 4px; }
   .rec-table .rec-time a::after { content: "›"; content: "›" / ""; margin-left: 6px; color: var(--ink3); }
-  .rec-table .rec-pct { grid-column: 4; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
-  .rec-table .rec-banks { grid-column: 1 / -1; min-width: 0; }
-  .rec-table .rec-act { grid-column: 4; align-self: end; display: flex; justify-content: flex-end; margin-top: 0; }
-  /* (a card's grid gives the Delete column its own width: no table-cell sizing here) */
-  .rec-table td.rec-act { width: auto; }
+  .rec-table .rec-pct { grid-column: 6; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
+  /* Row 2: tag, names (one line, ellipsis), mode */
+  .rec-table .rec-banks { grid-column: 1 / -1; grid-row: 2; display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 13.5px; }
+  .rec-table .rec-banks .kind-tag { flex: none; margin: 0; }
+  .rec-table .rec-banks .rec-bnames { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rec-table .rec-mode { display: inline; flex: none; }
+  .rec-table .rec-mode::before { content: "·"; margin-right: 4px; }
+  /* Row 3: the figures, with their labels in front (no label on the date or the accuracy) */
+  .rec-table td.rec-st { grid-row: 3; font-size: 13px; color: var(--ink2); white-space: nowrap; }
+  .rec-table td.rec-st::before { content: attr(data-label) " "; color: var(--ink3); }
+  .rec-table td.rec-st-ok { grid-column: 1; }
+  .rec-table td.rec-st-dur { grid-column: 2; }
+  /* "Answered n / m" only exists when something was left out: it gets a line of its own, so no figure ever breaks */
+  .rec-table td.rec-st-ans { grid-column: 1 / 5; grid-row: 4; }
+  /* ... and ✦ and the trash span rows 3 and 4 there, so the extra line costs only a few pixels (RC-3: 140 px at most) */
+  .rec-table tr.rec-part td.rec-ai, .rec-table tr.rec-part td.rec-act { grid-row: 3 / 5; }
+  .rec-table td.rec-st-dur::before { content: "· " attr(data-label) " "; margin-left: 6px; }
+  .rec-table td.rec-full { display: none; }
+  .rec-table td.rec-ai { grid-column: 5; grid-row: 3; width: auto; }
+  .rec-table td.rec-act { grid-column: 6; grid-row: 3; width: auto; display: flex; justify-content: flex-end; }
+  /* Without AI+ the trash is the last item of the row: it takes the AI column's place at its right edge */
+  /* The card is the tap target: its buttons are icons only */
+  .rec-table .rec-ai .rec-lbl { display: none; }
+  .rec-table .rec-ai .ibtn.rec-lblbtn { width: 36px; padding: 0; }
+}
+@media (max-width: 900px) and (pointer: coarse) {
+  .rec-table .rec-ai .ibtn.rec-lblbtn { width: 40px; }
+  /* ✦ and the trash keep apart by their tap margins (3 + 2 px), so neither takes a strip of the other's 44 px */
+  .rec-table td.rec-ai { margin-inline-end: 6px; }
+  /* The date link keeps its 31 px line in the card; an invisible margin above and below makes it 44 px to tap */
+  .rec-table .rec-time a { position: relative; }
+  .rec-table .rec-time a::before { content: ""; position: absolute; inset: -7px 0; }
 }
 /* A card keeps its own white under the hover fill */
-@media (max-width: 760px) and (hover: hover) {
+@media (max-width: 900px) and (hover: hover) {
   .rec-table tbody tr:hover { background: var(--card); background-image: linear-gradient(var(--rec-row-hover), var(--rec-row-hover)); }
+}
+/* A phone turned sideways (RC-7): two columns of cards */
+@media (orientation: landscape) and (max-height: 500px) and (min-width: 640px) and (max-width: 900px) {
+  .rec-table tbody { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; align-items: start; }
+  .rec-table tr { margin-bottom: 0; }
 }
 
 /* ---------- Exam detail ---------- */
@@ -125,15 +169,30 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-meta { margin: 14px 0 0; }
 .rec-hints { margin-top: 10px; }
 .score .says .rec-hints p { font-size: 13.5px; color: var(--ink3); }
-/* Result page: questions deleted during the exam were not counted (v0.6.5) */
-.score .says .res-gone { margin-top: 12px; max-width: 60ch; }
-.score .says .res-gone p { font-size: 14px; }
 .rec-hints p + p { margin-top: 4px; }
 /* Exams taken before v0.5: a quiet note instead of the review */
 .rec-note { padding: 12px 16px; border-radius: 8px; background: var(--fill); color: var(--ink2); }
 .rec-err-acts { margin-top: 12px; }
-/* "Delete this record": a quiet text button at the end of the row, apart from retry / retake */
+/* The action row (RC-8): [重做错题] [retake] [AI 总结] and the red delete, apart at the end of the row */
+.rec-acts { align-items: center; }
 .rec-score .acts .rec-del:not(:first-child) { margin-inline-start: auto; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* Icons only, except the primary text button */
+  .rec-acts .rec-lbl { display: none; }
+  .rec-acts .ibtn.rec-lblbtn { width: 36px; padding: 0; }
+}
+@media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
+  .rec-acts .ibtn.rec-lblbtn { width: 40px; }
+}
+/* The score block (phones): the number and the summary line side by side, the facts and the actions across the full width */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .score.rec-score { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "big says" "meta meta" "acts acts" "hints hints"; }
+  .rec-score .says { display: contents; }
+  .rec-score .says > p:first-child { grid-area: says; }
+  .rec-score .rec-meta { grid-area: meta; margin: 4px 0 0; }
+  .rec-score .rec-acts { grid-area: acts; }
+  .rec-score .rec-hints { grid-area: hints; margin-top: 0; }
+}
 /* Label and value stay side by side on phones too (the labels are short in every language) */
 @media (max-width: 480px) { .rec-meta { gap: 4px 14px; } }
 /* "Retry wrong answers" / "Practise these" again after a long list */
@@ -148,37 +207,55 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .wr-tools { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 20px; margin-bottom: 16px; }
 .wr-tools .rec-field { width: min(320px, 100%); }
 .wr-count { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
-.wr-stats p + p { margin-top: 2px; }
-.wr-left { color: var(--print); font-weight: 600; }
+/* The stats and the "still missing" chip share one row (RC-10); the chip is neutral, not a blue line */
+.wr-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.wr-left {
+  display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--fill); color: var(--ink2);
+  font-size: 12.5px; font-weight: 500; line-height: 1.5; white-space: nowrap;
+}
 
-/* ---------- Review cards (shared) ---------- */
+/* ---------- Review cards (shared; the card rules themselves are in review.css) ---------- */
 .badge.retired { color: var(--ink3); background: var(--fill); }
-.rv-src { min-width: 0; overflow-wrap: anywhere; }
-.rv-retired { margin: -8px 0 16px; font-size: 13.5px; color: var(--ink3); }
-.rv:focus { outline: none; }
-.rv:focus-visible .paper { outline: 2px solid var(--print); outline-offset: 2px; }
-.rv-gone .paper { padding-block: 16px; }
-.rv-gone .phead { margin-bottom: 8px; }
 .verdict .vp { display: inline-block; margin-right: 1.5em; }
 .verdict .vp:last-child { margin-right: 0; }
 .page-result .seg, .page-records .seg { max-width: 100%; flex-wrap: wrap; }
-@media (max-width: 900px) {
-  /* The narrow-screen top bar is sticky: keep the card heading below it after a jump */
-  .page-result .rv, .page-records .rv { scroll-margin-top: 72px; }
-}
 
-/* ---------- Narrow screens ---------- */
-@media (max-width: 640px) {
+/* ---------- Narrow screens (and a phone turned sideways) ---------- */
+@media (max-width: 640px), (orientation: landscape) and (max-height: 500px) {
+  /* Overview (RC-2): one compact row of the three numbers; the heading and the scope line are only hidden visually (the
+     panel stays named), the bars are left out */
+  .rec-sum { padding-block: 8px; }
+  .rec-sum > h2, .rec-sum > .rec-scope {
+    position: absolute; width: 1px; height: 1px; margin: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+  }
   .rec-sum-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-  .rec-chart { grid-column: 1 / -1; }
+  .rec-chart { display: none; }
   /* The labels may wrap here: each label stays right under its number */
-  .rec-kpi { align-content: start; padding: 10px 12px; }
-  .rec-kpi b { font-size: 22px; }
-  /* Filters in two rows (bank + score, from + to), so the first exam starts on the first screen. The heading is only
-     hidden visually: the panel's aria-labelledby still points to it. */
-  .rec-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+  .rec-kpi { align-content: start; gap: 2px; padding: 6px 10px; }
+  .rec-kpi b { font-size: 20px; }
+  .rec-kpi span { font-size: 12.5px; line-height: 1.35; }
+  /* Filters (RC-1): one bar [筛选 (n)] · the count · 清除筛选; the five fields open inline, two columns. The heading is
+     only hidden visually: the panel's aria-labelledby still points to it. */
   .rec-filter > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .rec-bar { margin-top: 10px; }
+  .rec-filter { padding-block: 8px; }
+  .rec-bar { order: 0; flex-wrap: nowrap; justify-content: flex-start; gap: 4px 10px; margin-top: 0; }
+  .rec-bar .rec-count { flex: 1 1 auto; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec-bar .rec-ftoggle { display: inline-flex; flex: none; gap: 6px; padding-inline: 10px; }
+  .rec-bar .rec-reset, .rec-bar > .btn.quiet { flex: none; padding-inline: 8px; }
+  .rec-ftoggle .rec-fi { width: 16px; height: 16px; flex: none; }
+  .rec-ftoggle .rec-fchev { width: 16px; height: 16px; flex: none; transition: transform .15s ease; }
+  .rec-filter.open .rec-fchev { transform: rotate(180deg); }
+  .rec-filter:not(.open) .rec-filters { display: none; }
+  .rec-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; margin-top: 10px; }
+  .rec-warn { margin-top: 10px; }
+}
+/* Clear filters: the x alone on narrow bars, so the bar stays one 44 px row */
+.rec-reset .rec-ri { display: none; width: 16px; height: 16px; flex: none; }
+@media (max-width: 400px) {
+  .rec-bar .rec-reset { display: inline-flex; align-items: center; justify-content: center; width: 40px; padding: 0; }
+  .rec-bar .rec-reset[hidden] { display: none; }
+  .rec-reset .rec-ri { display: block; }
+  .rec-reset .rec-rtxt { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 }
 @media (pointer: coarse), (max-width: 480px) {
   .rec-field select, .rec-field input { height: 44px; }
@@ -190,44 +267,31 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 }
 @media (prefers-reduced-motion: reduce) {
   .rec-table tbody tr { transition: none; }
+  .rec-ftoggle .rec-fchev { transition: none; }
 }
 
 /* ---------- Exam / Practice tag (v0.6.5): in front of the bank names of a row, and in the detail's facts ---------- */
 .rec-banks .kind-tag { margin-right: 4px; vertical-align: 1px; }
 .rec-meta .kind-tag { vertical-align: 1px; }
 
-/* ---------- AI summary column (v0.9; only with the AI+ feature, class has-ai) ---------- */
-/* The first column holds one compact button; its cell takes only the button's width */
-.rec-table td.rec-ai { width: 1%; white-space: nowrap; padding-right: 0; }
-.rec-table.has-ai th:first-child { padding-right: 0; }
-
-/* The extra column needs the stacked cards earlier: with it, the table breaks at about 900px (the 760px rules above,
-   repeated for has-ai only; without has-ai nothing changes) */
-@media (max-width: 900px) {
-  .rec-listpanel.has-ai { padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; }
-  .rec-listpanel.has-ai > h2 { margin: 8px 0 10px; }
-  .rec-listpanel.has-ai .rec-scroll { overflow-x: visible; margin: 0; }
-  .rec-table.has-ai thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
-  .rec-table.has-ai, .rec-table.has-ai tbody { display: block; }
-  .rec-table.has-ai tr {
-    display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)) auto; gap: 8px 12px;
-    margin-bottom: 8px; padding: 12px 14px;
-    border: 1px solid var(--line-soft); border-radius: 10px; background: var(--card); box-shadow: var(--shadow-xs);
+/* ---------- Floating question-number button and its sheet (RC-9, phones) ---------- */
+.rec-fab { display: none; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .rec-fab.show {
+    position: fixed; z-index: 30; display: flex; align-items: center; justify-content: center; width: 44px; height: 44px;
+    right: calc(16px + env(safe-area-inset-right)); bottom: calc(16px + env(safe-area-inset-bottom));
+    padding: 0; border: 1px solid var(--line); border-radius: 50%; background: var(--card); color: var(--ink);
+    box-shadow: var(--shadow-pop); cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation;
   }
-  .rec-table.has-ai tbody tr:last-child { margin-bottom: 0; }
-  .rec-table.has-ai td { display: block; padding: 0; border: 0; min-width: 0; }
-  .rec-table.has-ai td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; font-weight: 500; line-height: 1.5; color: var(--ink3); }
-  .rec-table.has-ai .rec-time { grid-column: 1 / 4; grid-row: 1; }
-  .rec-table.has-ai td.rec-time[data-label]::before { display: none; }
-  .rec-table.has-ai .rec-time a { padding-block: 0; }
-  .rec-table.has-ai .rec-time a::after { content: "\203A"; content: "\203A" / ""; margin-left: 6px; color: var(--ink3); }
-  .rec-table.has-ai .rec-pct { grid-column: 4; grid-row: 1; text-align: right; font-size: 22px; line-height: 1.2; }
-  .rec-table.has-ai .rec-banks { grid-column: 1 / -1; min-width: 0; }
-  .rec-table.has-ai .rec-act { grid-column: 4; align-self: end; display: flex; justify-content: flex-end; margin-top: 0; }
-  .rec-table.has-ai td.rec-act { width: auto; }
-  /* The AI summary button: its own line at the end of the card */
-  .rec-table.has-ai td.rec-ai { grid-column: 1 / -1; grid-row: 4; justify-self: start; width: auto; padding: 0; }
+  .rec-fab .rec-fab-ic { width: 20px; height: 20px; }
+  .rec-fab:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 }
-@media (max-width: 900px) and (hover: hover) {
-  .rec-table.has-ai tbody tr:hover { background: var(--card); background-image: linear-gradient(var(--rec-row-hover), var(--rec-row-hover)); }
+/* The sheet: the strip of the result page, then 回到顶部 and close */
+dialog.rec-jump .strip { margin: 8px 0 4px; }
+dialog.rec-jump .acts .btn { gap: 6px; }
+dialog.rec-jump .rec-up-ic { width: 16px; height: 16px; flex: none; }
+
+/* ---------- A phone turned sideways: the detail's facts in two columns (RC-7) ---------- */
+@media (orientation: landscape) and (max-height: 500px) and (min-width: 640px) {
+  .rec-meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); gap: 4px 16px; }
 }

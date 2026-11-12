@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   aiServiceOf, barPercent, canEnable, changesFingerprint, connUpdate, DEFAULT_LIMITS, defaultUrl, fieldOfError, fieldsOf, formOf,
-  headerClash, httpWarning, inferFormat, isDirty, keyAfter, LIMIT_KEYS, LIMIT_RANGES, limitProblem, limitsFormOf, limitsUpdate,
+  CAP_KEYS, allFine, connCollapsed, convTotals, hostOf, modelCollapsed, LENGTH_KEYS, replyTokens, replyTokensLine, AI_TABS, tabOfHash, hashOfTab, blockTag, callsFigures, todayCell, rangeOf, headerClash, httpWarning, inferFormat, isDirty, keyAfter, LIMIT_KEYS, LIMIT_RANGES, limitIssue, limitProblem, limitsFormOf, limitsUpdate, SERVER_KEYS,
   modelKind, needsReentry, filterModels, orderModels, originOf, requiredKeysSaved, retentionOf, serviceCause, shownCode, stateChip,
   connectionSaved, focusAfterClear, savedToastKey, statusChips, SVC_WAIT_MS, testHint, testLineOf, urlAfterSwitch, type ConnForm,
 } from './ai-settings.ts';
@@ -187,19 +187,43 @@ test('retention days and the safety limits form', () => {
   assert.equal(retentionOf('3650'), 3650);
   for (const bad of ['0', '3651', '', '1.5', '-3', 'abc']) assert.equal(retentionOf(bad), null, bad);
 
-  assert.equal(LIMIT_KEYS.length, 7);
+  assert.equal(LIMIT_KEYS.length, 10);
+  assert.deepEqual([...CAP_KEYS], ['callsPerMinute', 'callsPerHour', 'callsPerDay']);
+  assert.equal(SERVER_KEYS.length, 5);
+  assert.deepEqual([...LENGTH_KEYS], ['replyMaxChars', 'memoryChars']);
+  // FB-5 revised: ten keys, no messageChars; the answer length 1000, the memory length 200
   assert.deepEqual(DEFAULT_LIMITS, {
-    perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50, memoryChars: 300, messageChars: 16000,
+    callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxChars: 1000, memoryChars: 200,
+    perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50,
   });
+  assert.ok(!('messageChars' in DEFAULT_LIMITS));
+  assert.deepEqual(LIMIT_RANGES.replyMaxChars, [1, 16000]);
   const form = limitsFormOf(DEFAULT_LIMITS);
-  assert.equal(form.messageChars, '16000');
+  assert.equal(form.replyMaxChars, '1000');
+  assert.equal(form.memoryChars, '200');
   assert.equal(limitProblem(form, LIMIT_RANGES), null);
   assert.equal(limitProblem({ ...form, chatsPerUser: '9' }, LIMIT_RANGES), 'chatsPerUser');
   assert.equal(limitProblem({ ...form, globalRunning: '65' }, LIMIT_RANGES), 'globalRunning');
   assert.equal(limitProblem({ ...form, memoryChars: '2.5' }, LIMIT_RANGES), 'memoryChars');
   assert.equal(limitProblem({ ...form, perUserRunning: '' }, LIMIT_RANGES), 'perUserRunning');
-  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, chatsPerUser: '2000', messageChars: '20000' }), { chatsPerUser: 2000, messageChars: 20000 });
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, chatsPerUser: '2000', replyMaxChars: '2000' }), { chatsPerUser: 2000, replyMaxChars: 2000 });
+  assert.equal(limitProblem({ ...form, replyMaxChars: '0' }, LIMIT_RANGES), 'replyMaxChars');
+  assert.equal(limitProblem({ ...form, replyMaxChars: '16001' }, LIMIT_RANGES), 'replyMaxChars');
+  assert.equal(limitProblem({ ...form, replyMaxChars: '16000' }, LIMIT_RANGES), null);
+  assert.equal(limitProblem({ ...form, memoryChars: '49' }, LIMIT_RANGES), 'memoryChars');
   assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, form), {});
+  // v1.0 caps: ranges 1-100 / 1-2000 / 1-20000
+  assert.equal(limitProblem({ ...form, callsPerMinute: '0' }, LIMIT_RANGES), 'callsPerMinute');
+  assert.equal(limitProblem({ ...form, callsPerMinute: '101' }, LIMIT_RANGES), 'callsPerMinute');
+  assert.equal(limitProblem({ ...form, callsPerDay: '20001' }, LIMIT_RANGES), 'callsPerDay');
+  assert.deepEqual(limitIssue({ ...form, callsPerHour: '2001' }, LIMIT_RANGES), { key: 'callsPerHour', kind: 'range' });
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, callsPerDay: '250' }), { callsPerDay: 250 });
+  // order: hour >= minute, day >= hour (equal is fine)
+  assert.deepEqual(limitIssue({ ...form, callsPerMinute: '30' }, LIMIT_RANGES), { key: 'callsPerHour', kind: 'order' });
+  assert.deepEqual(limitIssue({ ...form, callsPerHour: '200', callsPerDay: '150' }, LIMIT_RANGES), { key: 'callsPerDay', kind: 'order' });
+  assert.equal(limitIssue({ ...form, callsPerMinute: '20', callsPerHour: '20', callsPerDay: '20' }, LIMIT_RANGES), null);
+  // a range problem is reported before an order problem
+  assert.deepEqual(limitIssue({ ...form, callsPerMinute: '30', chatsPerUser: '9' }, LIMIT_RANGES), { key: 'chatsPerUser', kind: 'range' });
   assert.equal(barPercent(0, 10), 0);
   assert.equal(barPercent(10, 10), 100);
   assert.equal(barPercent(1, 1000), 2, 'a sliver for anything above 0');
@@ -346,4 +370,79 @@ test('focusAfterClear: the focus stays inside the viewer dialog after a delete',
   // memories: their tab, whatever is left
   assert.equal(focusAfterClear('memories', [3]), 'vw-tab-memories');
   assert.equal(focusAfterClear('memories', []), 'vw-tab-memories');
+});
+
+test('replyTokens: the same vectors as limits::reply_tokens in ai-service', () => {
+  assert.equal(replyTokens(1000, 'zh-CN'), 1500);
+  assert.equal(replyTokens(1000, 'ja'), 1500);
+  assert.equal(replyTokens(1000, 'en'), 1000);
+  assert.equal(replyTokens(1, 'zh-CN'), 2);
+  assert.equal(replyTokens(1, 'en'), 1);
+  assert.equal(replyTokens(333, 'ja'), 500);
+  assert.equal(replyTokens(16000, 'zh-CN'), 24000);
+  assert.equal(replyTokens(16000, 'en'), 16000);
+  // the live line of the field: the two numbers of the typed value, nothing while it is not usable
+  assert.deepEqual(replyTokensLine('1000'), { zh: 1500, en: 1000 });
+  assert.deepEqual(replyTokensLine(' 2000 '), { zh: 3000, en: 2000 });
+  for (const bad of ['', '0', '16001', '1.5', 'abc']) assert.equal(replyTokensLine(bad), null, bad);
+  assert.deepEqual(replyTokensLine('300', { replyMaxChars: [1, 500] }), { zh: 450, en: 300 });
+  assert.equal(replyTokensLine('600', { replyMaxChars: [1, 500] }), null);
+  assert.deepEqual(rangeOf(undefined, 'replyMaxChars'), [1, 16000]);
+});
+
+test('the category tabs live in the hash; a missing or unknown value is the first tab', () => {
+  assert.deepEqual([...AI_TABS], ['feature', 'users', 'usage', 'safety']);
+  assert.equal(tabOfHash('#/ai-settings'), 'feature');
+  assert.equal(tabOfHash('#/ai-settings?tab=users'), 'users');
+  assert.equal(tabOfHash('#/ai-settings?tab=usage'), 'usage');
+  assert.equal(tabOfHash('#/ai-settings?tab=safety'), 'safety');
+  assert.equal(tabOfHash('#/ai-settings?tab=generate'), 'feature');
+  assert.equal(tabOfHash('#/ai-settings?tab='), 'feature');
+  assert.equal(tabOfHash('#/ai-settings?x=1&tab=users'), 'users');
+  for (const k of AI_TABS) assert.equal(tabOfHash(hashOfTab(k)), k);
+  assert.equal(hashOfTab('feature'), '#/ai-settings?tab=feature');
+});
+
+test('the calls line, the block tag and the today cell of an AI+ user', () => {
+  const calls = { used: { minute: 2, hour: 7, day: 37 }, blocked: null };
+  assert.deepEqual(callsFigures(calls, { callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100 }), { minute: '2/5', hour: '7/20', day: '37/100' });
+  assert.deepEqual(callsFigures(calls, undefined), { minute: '2/5', hour: '7/20', day: '37/100' });
+  assert.equal(callsFigures(undefined, undefined), null);
+  assert.equal(blockTag(calls), null);
+  assert.equal(blockTag(undefined), null);
+  assert.deepEqual(blockTag({ blocked: { cap: 'minute', limit: 5, retryAt: 100 } }), { kind: 'timed', retryAt: 100 });
+  assert.deepEqual(blockTag({ blocked: { cap: 'hour', limit: 20, retryAt: 200 } }), { kind: 'timed', retryAt: 200 });
+  assert.deepEqual(blockTag({ blocked: { cap: 'day', limit: 100, retryAt: 300 } }), { kind: 'today', retryAt: 300 });
+  assert.equal(todayCell(37, 100), '37 / 100');
+  assert.equal(todayCell(0, undefined), '0 / 100');
+  assert.equal(todayCell(undefined, 100), '–');
+});
+
+test('summaries once saved and tested (AS-4): the connection, the model, the status line', () => {
+  assert.equal(hostOf('https://llm.example.com:8443/v1/'), 'llm.example.com:8443');
+  assert.equal(hostOf('https://llm.example.com/v1'), 'llm.example.com');
+  assert.equal(hostOf('not an address/'), 'not an address');
+  const ready = saved({ keys: { apiKey: SET, gatewayKey: NONE }, verified: true, model: 'm-1', enabled: true });
+  assert.equal(connCollapsed(ready, false, false), true);
+  assert.equal(connCollapsed(ready, true, false), false, 'typed changes open it');
+  assert.equal(connCollapsed(ready, false, true), false, 'the pencil opens it');
+  assert.equal(connCollapsed({ ...ready, verified: false }, false, false), false, 'not tested');
+  assert.equal(connCollapsed({ ...ready, keyProblem: 'mismatch' }, false, false), false);
+  assert.equal(connCollapsed(saved({ verified: true }), false, false), false, 'the untouched factory connection is not a saved one');
+  assert.equal(modelCollapsed({ verified: true, model: 'm-1' }, 'm-1', false), true);
+  assert.equal(modelCollapsed({ verified: true, model: 'm-1' }, '', false), true);
+  assert.equal(modelCollapsed({ verified: true, model: 'm-1' }, 'm-2', false), false, 'an unsaved model is being edited');
+  assert.equal(modelCollapsed({ verified: true, model: '' }, '', false), false);
+  assert.equal(modelCollapsed({ verified: false, model: 'm-1' }, 'm-1', false), false);
+  assert.equal(modelCollapsed({ verified: true, model: 'm-1' }, 'm-1', true), false);
+  const chips = { conn: 'ok', model: 'ok', test: 'ok', ai: 'on' } as const;
+  assert.equal(allFine(chips, false), true);
+  assert.equal(allFine(chips, true), false);
+  assert.equal(allFine({ ...chips, ai: 'off' }, false), false);
+  assert.equal(allFine({ ...chips, test: 'fail' }, false), false);
+});
+
+test('the conversation figures that go with the usage', () => {
+  assert.deepEqual(convTotals([]), { chats: 0, messages: 0, memories: 0 });
+  assert.deepEqual(convTotals([{ chats: 2, messages: 10, memories: 1 }, { chats: 3, messages: 5, memories: 0 }]), { chats: 5, messages: 15, memories: 1 });
 });

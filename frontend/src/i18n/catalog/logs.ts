@@ -29,6 +29,9 @@ export default defineCatalog({
     'logs.gap': 'Lines were dropped here: the log keeps only the newest {n}.',
     'logs.err': 'The log could not be read: {reason}',
     'logs.retrying': 'Trying again…',
+    'logs.filter.named': '{name}: {n}',
+    'logs.search.close': 'Close the search',
+    'logs.tip.aria': 'About the system log',
   },
   zh: {
     'logs.title': '系统日志',
@@ -55,6 +58,9 @@ export default defineCatalog({
     'logs.gap': '这里有一些日志已被丢弃：最多只保留最新的 {n} 行。',
     'logs.err': '无法读取日志：{reason}',
     'logs.retrying': '正在重试…',
+    'logs.filter.named': '{name}：{n}',
+    'logs.search.close': '关闭搜索',
+    'logs.tip.aria': '关于系统日志',
   },
   ja: {
     'logs.title': 'システムログ',
@@ -81,5 +87,8 @@ export default defineCatalog({
     'logs.gap': 'ここで一部の行が破棄されました（保持されるのは最新の {n} 行だけです）。',
     'logs.err': 'ログを読み込めませんでした：{reason}',
     'logs.retrying': '再試行しています…',
+    'logs.filter.named': '{name}：{n}',
+    'logs.search.close': '検索を閉じる',
+    'logs.tip.aria': 'システムログについて',
   },
 });

@@ -12,6 +12,7 @@
    blue; the dark theme is GitHub's near-black (canvas #0D1117, blocks #151B23) with a filled blue primary button. */
 
 :root {
+  --sa-t: env(safe-area-inset-top); --sa-r: env(safe-area-inset-right); --sa-l: env(safe-area-inset-left);
   color-scheme: light;
   --page: #EFF2F5;
   --sheet: #F6F8FA;
@@ -123,6 +124,19 @@
   /* Log lines and commands (v0.7): a monospace face for Latin text, the CJK text faces after it (no generic "monospace":
      it would pick a poor CJK fallback) */
   --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, "Microsoft YaHei UI", "Yu Gothic UI", sans-serif;
+
+  /* v1.0 phone type scale and spacing (SH-1): every new rule uses these */
+  --fs-xs: 12px;      /* tags, meta */
+  --fs-s: 13.5px;     /* secondary text */
+  --fs-m: 15px;       /* body, controls */
+  --fs-stem: 16.5px;  /* the question stem on phones */
+  --fs-h: 20px;       /* page title at 480px and below */
+  --sp-1: 4px; --sp-2: 8px; --sp-3: 12px; --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+  /* Icon buttons (SH-2, drawn by styles/icon-button.css): the visual size, and the least size of the tap area */
+  --ibtn-size: 36px;
+  --ibtn-hit: 44px;
+  /* The knob of every on / off switch (SH-9): .mini-switch here, .set-switch in settings.css */
+  --switch-knob: #FFFFFF;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -189,6 +203,7 @@
     --ai-off-bg: #3A4250;
     --ai-off-ink: #E6EAF0;
     --ai-off-ring: var(--line);
+    --switch-knob: var(--ink);
   }
 }
 :root[data-theme="dark"] {
@@ -253,6 +268,7 @@
   --ai-off-bg: #3A4250;
   --ai-off-ink: #E6EAF0;
   --ai-off-ring: var(--line);
+  --switch-knob: var(--ink);
 }
 
 * { box-sizing: border-box; }
@@ -278,6 +294,9 @@ button { font: inherit; color: inherit; cursor: pointer; }
 input, select, textarea { font: inherit; color: var(--ink); }
 ::selection { background: var(--print-soft); color: var(--ink); }
 :focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+/* Non-interactive elements focused by script (dialog / page / panel titles, notes, verdicts) keep the focus move for screen
+   readers but never draw a frame; real controls keep the ring above. */
+[tabindex="-1"]:focus, [tabindex="-1"]:focus-visible { outline: none; }
 .num { font-family: var(--num), var(--en); font-variant-numeric: tabular-nums; }
 /* The DIN-like face is for display figures (timer, tiles, bubbles, scores, big numbers, count tags). Dates, times and
    counts inside running text keep the text face: Bahnschrift reads heavier than the text around it at 13-14px. */
@@ -285,6 +304,8 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .rec-table td.num:not(.rec-pct), .phead b.num, .rail-count .num { font-family: inherit; }
 .dim { color: var(--ink3); }
 .pre { white-space: pre-line; overflow-wrap: anywhere; }
+/* User content wraps wherever it must (SH-1): no page scrolls sideways, whatever a question, bank name or username holds */
+.paper, .panel, .callout, .opt, .chip, .props dd, .hist .meta, .explain, .mnemo { overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 /* ---------- Form fields ----------
@@ -316,10 +337,17 @@ input, select, textarea { font: inherit; color: var(--ink); }
 
 /* ---------- App shell: slim header (logo left, menu button right), centered page ---------- */
 /* The navigation is a small dropdown under the menu button; nothing else takes screen space when it is closed. */
-.shell { min-height: 100vh; min-height: 100dvh; }
+.shell { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; }
+/* Owner (v1.0): on a page shorter than the screen the footer sits at the screen bottom; the space goes above it */
+.main { flex: 1 0 auto; width: 100%; display: flex; flex-direction: column; }
+.main-body { flex: 1 0 auto; display: flow-root; min-width: 0; }
 .main {
   max-width: 1120px; margin: 0 auto;
-  padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(6px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+}
+/* Touch: at least 12 px under the footer's last line, so its links keep a 44 px tap height on screens without a bottom safe area */
+@media (pointer: coarse) {
+  .main { padding-bottom: max(12px, calc(6px + env(safe-area-inset-bottom))); }
 }
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 48px; margin: 0 -6px 20px -4px; }
 .top-brand { flex: none; color: inherit; text-decoration: none; border-radius: 6px; padding: 4px; }
@@ -345,6 +373,9 @@ input, select, textarea { font: inherit; color: var(--ink); }
 }
 @media (hover: hover) { .icon-btn:hover { background: var(--hover); color: var(--ink); } }
 .icon-btn .ico { width: 20px; height: 20px; }
+/* Deleting is red everywhere (SH-16), also on touch where there is no hover */
+.icon-btn.danger { color: var(--danger); }
+@media (hover: hover) { .icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger-hover); } }
 .menu-btn.on { background: var(--hover-strong); color: var(--ink); }
 .nav-pop {
   position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
@@ -393,10 +424,10 @@ input, select, textarea { font: inherit; color: var(--ink); }
   .page-head h1, .page-head h1:lang(zh), .page-head h1:lang(ja) { font-size: 26px; }
 }
 @media (max-width: 480px) {
-  .main { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+  .main { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
   .topbar { margin-bottom: 12px; }
-  .page-head { margin-bottom: 20px; }
-  .page-head h1, .page-head h1:lang(zh), .page-head h1:lang(ja) { font-size: 24px; }
+  .page-head { margin-bottom: var(--sp-3); }
+  .page-head h1, .page-head h1:lang(zh), .page-head h1:lang(ja) { font-size: var(--fs-h); line-height: 1.3; }
 }
 
 /* ---------- Buttons ----------
@@ -425,6 +456,15 @@ input, select, textarea { font: inherit; color: var(--ink); }
   .btn.danger.solid:hover:not(:disabled) { background: var(--danger-solid-hover); border-color: var(--danger-solid-hover); color: var(--on-danger-solid); }
 }
 .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
+.btn[aria-disabled="true"] { cursor: not-allowed; }
+/* A disabled primary button is a neutral key, not a faded blue one (SH-8): --ink3 on --fill is 5.6:1 light / 5.0:1 dark,
+   where the old 45 % opacity gave 2.1:1 in the dark theme. aria-disabled gets the same look (it only keeps the focus). */
+.btn.primary:disabled, .btn.primary[aria-disabled="true"] {
+  background: var(--fill); border-color: var(--line); color: var(--ink3); opacity: 1; box-shadow: none; font-weight: 600;
+}
+@media (hover: hover) {
+  .btn.primary[aria-disabled="true"]:hover { background: var(--fill); border-color: var(--line); color: var(--ink3); }
+}
 .btn.big { min-height: 44px; padding: 8px 24px; border-radius: 8px; font-size: 16px; }
 
 /* ---------- Brand ---------- */
@@ -467,6 +507,8 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .ai-badge:focus-visible { outline: 2px solid var(--print); outline-offset: 3px; }
 @keyframes ai-shine { 0%, 100% { background-position: 0% 0; } 50% { background-position: 100% 0; } }
 @media (prefers-reduced-motion: reduce) { .ai-badge { animation: none; } }
+/* Nothing animates in a hidden tab (F3 sets html.is-hidden on visibilitychange) */
+html.is-hidden .ai-badge { animation-play-state: paused; }
 @media (forced-colors: active) { .ai-badge { forced-color-adjust: auto; border: 1px solid CanvasText; } }
 .acct-btn .ai-badge { margin-left: -1px; }
 .nav-who-tags .ai-badge { margin-left: 2px; }
@@ -481,7 +523,7 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .mini-track { position: relative; display: block; width: 44px; height: 26px; border-radius: 999px; background: var(--field-line); transition: background-color .12s ease; }
 .mini-knob {
   position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%;
-  background: var(--card); box-shadow: var(--shadow-sm); transition: transform .12s ease;
+  background: var(--switch-knob); box-shadow: var(--shadow-sm); transition: transform .12s ease;
 }
 .mini-switch[aria-checked="true"] .mini-track { background: var(--print); }
 .mini-switch[aria-checked="true"] .mini-knob { transform: translateX(18px); }
@@ -523,7 +565,7 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .panel { background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; padding: 24px; box-shadow: var(--shadow-xs); }
 .panel + .panel { margin-top: 16px; }
 .panel h2 { font-size: 16.5px; font-weight: 600; margin-bottom: 14px; }
-@media (max-width: 480px) { .panel { padding: 18px 16px; } }
+@media (max-width: 480px) { .panel { padding: 14px 12px; } }
 
 fieldset { border: 0; padding: 0; margin: 0 0 20px; min-width: 0; }
 legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
@@ -588,8 +630,10 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .hist .meta { font-size: 13.5px; color: var(--ink2); overflow-wrap: anywhere; }
 .bars { display: flex; align-items: flex-end; gap: 4px; height: 44px; margin: 8px 0 0; }
 .bars i { flex: 1; max-width: 22px; background: var(--print); border-radius: 3px 3px 1px 1px; min-height: 2px; }
-.foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line-soft); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; color: var(--ink3); font-size: 12.5px; line-height: 1.6; }
-.foot .btn.quiet { min-height: 30px; font-size: 13px; color: var(--ink3); }
+/* v1.0 footer: the disclaimer (small, muted) and, as the last line of the page, the centered GitHub line; compact, the page's bottom */
+.foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: var(--ink3); font-size: 12px; line-height: 1.55; }
+.foot-note { margin: 0; }
+.foot .btn.quiet { align-self: flex-start; min-height: 30px; font-size: 13px; color: var(--ink3); }
 
 /* ---------- Labelled form fields (sign-in pages, Settings > Account, User management) ----------
    Label above the field, an optional hint under it; a password field has a quiet show / hide button inside its right end
@@ -621,15 +665,6 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .dlg-check-l { display: block; font-weight: 600; font-size: 14.5px; }
 .dlg-check-h { display: block; font-size: 13px; color: var(--ink3); }
 
-/* ---------- Taking an exam ---------- */
-.qbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
-.qbar .l { display: flex; align-items: baseline; gap: 8px; font-size: 18px; }
-.qbar .r { display: flex; align-items: center; gap: 14px; }
-.timer { font-size: 17px; font-weight: 600; }
-.meter { height: 4px; background: var(--hover-strong); border-radius: 999px; margin-bottom: 20px; overflow: hidden; }
-.meter i { display: block; height: 100%; background: var(--print); border-radius: 999px; }
-
-.quiz-grid { display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: 24px; align-items: start; }
 /* The question sheet: a soft block */
 .paper { background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; padding: 28px 32px 24px; box-shadow: var(--shadow-xs); }
 .phead { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 18px; color: var(--ink3); font-size: 13.5px; }
@@ -701,80 +736,6 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .chip[aria-pressed="true"] { border-color: var(--print); background: var(--print-soft); font-weight: 600; }
 .chip[aria-pressed="true"] .dot { background: var(--graphite); border-color: var(--graphite); }
 
-.pfoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
-.pfoot .grp { display: flex; flex-wrap: wrap; gap: 8px; }
-/* "Mark to revisit": a small yellow marker in front of the label, like the marker on the answer-sheet tiles.
-   When on: a soft yellow key with an --ink2 edge (the yellow alone is under 3:1 on white), the marker filled. */
-.flagbtn::before { content: ""; width: 10px; height: 10px; flex: none; border-radius: 2px; border: 1.5px solid var(--ink3); }
-.flagbtn[aria-pressed="true"] { background: var(--mnemo-bg); border-color: var(--ink2); }
-.flagbtn[aria-pressed="true"]::before { background: var(--mark); border-color: var(--ink2); }
-
-/* (v0.6.5: the "Chinese translation" fold of the review cards is gone; every card has the English / 中文 / 日本語 switch) */
-/* A review card's language switch keeps its three buttons together: when the heading row is full it wraps as a whole */
-.rv .phead .lang { flex: none; }
-
-/* The answer sheet: a soft block beside the question */
-.rail { position: sticky; top: 16px; background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px 18px; box-shadow: var(--shadow-xs); }
-.rail h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; }
-.tiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
-.tile {
-  position: relative; aspect-ratio: 1; display: grid; place-items: center;
-  border: 1.5px solid var(--print); border-radius: 50%; background: var(--card); color: var(--print);
-  font: 700 14px var(--num); padding: 0;
-  transition: background-color .12s ease, border-color .12s ease;
-}
-@media (hover: hover) { .tile:not(.done):not(.part):hover { background: var(--print-soft); } }
-.tile.done { background: var(--graphite); border-color: var(--graphite); color: var(--on-graphite); }
-.tile.part { background: linear-gradient(90deg, var(--graphite) 50%, var(--card) 50%); border-color: var(--graphite); color: var(--ink); text-shadow: 0 0 3px var(--card), 0 0 3px var(--card); }
-.tile.cur { outline: 2px solid var(--ink); outline-offset: 2px; }
-.tile.flag::after { content: ""; position: absolute; top: -3px; right: -3px; width: 11px; height: 11px; background: var(--mark); border: 1.5px solid var(--card); border-radius: 3px; }
-.legend { display: grid; gap: 4px; margin: 14px 0; font-size: 12.5px; color: var(--ink3); }
-.legend span { display: flex; align-items: center; gap: 8px; }
-.legend i { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--print); background: var(--card); flex: none; }
-.legend i.done { background: var(--graphite); border-color: var(--graphite); }
-.legend i.part { background: radial-gradient(circle, var(--card) 0 40%, transparent 41%), linear-gradient(90deg, var(--graphite) 50%, var(--card) 50%); border-color: var(--graphite); }
-.legend i.flag { border-radius: 3px; background: var(--mark); border-color: var(--mark); }
-.rail .btn { width: 100%; }
-.keys { margin-top: 12px; font-size: 12.5px; color: var(--ink3); line-height: 1.7; }
-
-/* ---------- Results ---------- */
-.score { display: grid; grid-template-columns: auto 1fr; gap: 8px 40px; align-items: end; margin-bottom: 24px; }
-.score .big { font: 700 clamp(76px, 11vw, 120px)/.9 var(--num); letter-spacing: -.03em; }
-.score .big small { font-size: .36em; color: var(--print); margin-left: 4px; letter-spacing: 0; }
-.score .says { padding-bottom: 6px; }
-.score .says p { font-size: 17px; }
-.score .says .dim { font-size: 14px; margin-top: 4px; }
-.score .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-
-/* One small key per question */
-.strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 32px; }
-.strip button {
-  width: 40px; padding: 4px 0 6px; display: grid; justify-items: center; gap: 2px;
-  border: 1px solid var(--line-soft); border-radius: 6px; background: var(--card);
-  transition: background-color .12s ease, border-color .12s ease;
-}
-@media (hover: hover) {
-  .strip button:hover { border-color: var(--line); background-image: linear-gradient(var(--hover), var(--hover)); }
-  /* a wrong key keeps its plain tint (the hover fill on it would take the orange number under 4.5:1); the border shows the hover */
-  .strip .ng:hover { background-image: none; }
-}
-.strip .n { font: 600 11.5px var(--num); color: var(--ink3); }
-.strip svg { width: 20px; height: 20px; }
-.strip .ok svg { stroke: var(--answer-right); }
-.strip .ng svg { stroke: var(--answer-wrong); }
-.strip .ng { background: var(--answer-wrong-soft); border-color: transparent; }
-.strip .ng .n { color: var(--answer-wrong); }
-
-.rvhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.rvhead h2 { font-size: 18px; font-weight: 600; }
-
-/* Review cards: soft blocks with a short coloured marker on the left edge, beside the "Question 6" heading row
-   (orange wrong, green right). Its top follows the block's top padding (28px; 20px on narrow screens; 16px on a gone card). */
-.rv { margin-bottom: 16px; scroll-margin-top: 16px; }
-.rv .paper { position: relative; }
-.rv .paper::before { content: ""; position: absolute; left: -1px; top: 28px; width: 3px; height: 22px; border-radius: 0 3px 3px 0; background: var(--answer-wrong); }
-.rv.rv-gone .paper::before { top: 16px; }
-.rv.good .paper::before { background: var(--answer-right); }
 /* "Your answer / Correct answer": a plain line under the options (the callouts below carry the tint). Its letters follow
    the options (v0.7, owner): the correct answer green (.r); in your answer each letter is green (.r) when it is one of the
    correct answers and orange (.w) when it is not (v0.7.5), so a partly right multiple choice shows both; the hotspot
@@ -827,7 +788,6 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .mnemo p { overflow-wrap: anywhere; font-size: 16px; font-weight: 500; line-height: 1.8; max-width: 44em; }
 .note { overflow-wrap: anywhere; margin-top: 12px; font-size: 13.5px; color: var(--ink2); }
 .stats { margin-top: 12px; font-size: 13px; color: var(--ink3); }
-.allgood { padding: 28px; text-align: center; font-size: 17px; border: 0; background: var(--answer-right-soft); border-radius: 10px; }
 
 /* ---------- Question bank management ---------- */
 .warnbox { margin-top: 16px; background: var(--warn-soft); }
@@ -853,39 +813,60 @@ dialog.dlg-wide { max-width: 460px; }
 .dlg-form > .fld + .fld { margin-top: 14px; }
 .dlg-err { margin: 14px 0 0; font-size: 14px; }
 .dlg-err p { margin: 0; color: var(--ink); }
+/* dialog.dlg (SH-5): every dialog of utils/dialog.ts, and a page's own <dialog> that sets the class. Layout: one scroller
+   (the dialog itself); the title row sticks to the top and the action row to the bottom, so the buttons stay visible in
+   landscape and with a long form. The dialog has no vertical padding of its own: the title row carries the top one
+   (--dlg-pt) and the action row the bottom one (--dlg-pb), so they sit flush with the edges while they are stuck.
+   Not for dialog.aip-sum or dialog.dlg-viewer (own layouts). */
+dialog.dlg {
+  --dlg-pt: 22px; --dlg-pb: 20px;
+  padding: 0 24px;
+  max-height: calc(100dvh - 16px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
+  overflow-y: auto; overscroll-behavior: contain;
+}
+dialog.dlg > h3, dialog.dlg > .dlg-form > h3 {
+  position: sticky; top: 0; z-index: 1; margin: 0 0 4px; padding: var(--dlg-pt) 0 4px;
+  background: var(--card); overflow-wrap: anywhere;
+}
+dialog.dlg h3:focus { outline: none; }
+dialog.dlg > .acts, dialog.dlg > .dlg-form > .acts {
+  position: sticky; bottom: 0; z-index: 1; margin: 12px 0 0; padding: 8px 0 var(--dlg-pb); background: var(--card);
+}
+/* No scroller inside the scroller: a list in a dialog is as tall as its rows */
+dialog.dlg :is(ul, ol, .rows) { max-height: none; overflow: visible; }
+@keyframes dlg-sheet-in { from { transform: translateY(100%); } to { transform: none; } }
+/* Narrow phones and short landscape: a bottom sheet (full width, rounded top, the safe area under the buttons) */
+@media (max-width: 480px), (orientation: landscape) and (max-height: 500px) {
+  dialog.dlg, dialog.dlg.dlg-wide {
+    --dlg-pb: calc(16px + env(safe-area-inset-bottom));
+    width: 100%; max-width: none; margin: auto 0 var(--kb, 0px);
+    padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right));
+    max-height: calc(var(--vvh, 100dvh) - 8px - env(safe-area-inset-top));
+    border-radius: 12px 12px 0 0; border-bottom-width: 0;
+    animation: dlg-sheet-in .15s ease-out;
+  }
+}
+@media (prefers-reduced-motion: reduce) { dialog.dlg { animation: none !important; } }
+/* The toast sits above a pinned bottom bar while there is one (liftToastAbove in utils/toast.ts sets --toast-lift) */
 #toast {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50;
+  position: fixed; left: 50%; transform: translateX(-50%); z-index: 50;
   background: var(--ink); color: var(--on-ink); padding: 10px 16px; border-radius: 8px; font-size: 14px; line-height: 1.5;
   box-shadow: var(--shadow-pop);
-  width: max-content; max-width: calc(100% - 32px); opacity: 0; pointer-events: none;
-  bottom: calc(96px + env(safe-area-inset-bottom));
+  width: max-content; max-width: min(560px, calc(100% - 32px - env(safe-area-inset-left) - env(safe-area-inset-right))); opacity: 0; pointer-events: none;
+  bottom: calc(var(--toast-lift, 24px) + max(env(safe-area-inset-bottom), var(--kb, 0px)));
   transition: opacity .15s ease;
 }
 #toast.show { opacity: 1; }
 
 /* Motion: only colour fades, and none at all when the system asks for less motion */
 @media (prefers-reduced-motion: reduce) {
-  .icon-btn, .acct-btn, .fld-eye, .nav-link, .btn, .lang-btn, .seg button, .opt, .chip, .tile, .strip button, #toast,
+  .icon-btn, .acct-btn, .fld-eye, .nav-link, .btn, .lang-btn, .seg button, .opt, .chip, #toast,
   :where(input, select, textarea) { transition: none; }
 }
 
 /* ---------- Small screens ---------- */
 @media (max-width: 880px) {
-  .home-grid, .quiz-grid { grid-template-columns: minmax(0, 1fr); }
-  .rail { position: static; }
-  .tiles { grid-template-columns: repeat(8, 1fr); }
-  .score { grid-template-columns: minmax(0, 1fr); }
   .paper { padding: 20px 16px; }
-  /* While answering, "Previous / Next" are pinned to the bottom of the screen, so long questions do not need scrolling to the end to turn the page */
-  .quiz-grid .pfoot {
-    position: sticky; bottom: 0; z-index: 5;
-    margin: 24px -16px -20px; padding: 12px 16px;
-    padding-bottom: calc(12px + env(safe-area-inset-bottom));
-    background: var(--card); border-radius: 0 0 10px 10px;
-    /* only the hairline of .pfoot above it: no shadow (it would show as a grey haze while the bar is not pinned) */
-    box-shadow: none;
-  }
-  .rv .paper::before { top: 20px; }
 }
 @media (max-width: 480px) {
   /* The bar stays one row: the badge takes its short form and the username keeps a few letters before the ellipsis */
@@ -894,10 +875,20 @@ dialog.dlg-wide { max-width: 460px; }
   .acct-btn.has-ai .acct-name { max-width: 6.5em; }
   .acct-role-l { display: none; }
   .acct-role-s { display: inline; }
-  .tiles { grid-template-columns: repeat(5, 1fr); }
   .wrap { padding-inline: 12px; padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
   .brand h1 { font-size: 24px; }
-  .pfoot .btn { padding-inline: 14px; }
+}
+
+/* PHONE (spec, "How to read it"): cards and panels get tighter padding so the content has the room (SH-1) */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .panel, .paper { padding: 14px 12px; }
+}
+
+/* Short landscape (a phone turned sideways, SH-12): the page title, the cards and the dialogs (sheets, above) get smaller */
+@media (orientation: landscape) and (max-height: 500px) {
+  .page-head { margin-bottom: var(--sp-2); }
+  .page-head h1, .page-head h1:lang(zh), .page-head h1:lang(ja) { font-size: 18px; line-height: 1.3; }
+  .panel, .paper { padding: 8px 12px; }
 }
 
 @media (max-width: 360px) {
@@ -924,11 +915,21 @@ dialog.dlg-wide { max-width: 460px; }
   .inline label { min-height: 44px; }
   .inline input[type="number"] { min-height: 44px; }
   .chip { min-height: 44px; }
-  .strip button { width: 44px; min-height: 48px; }
   .foot .btn.quiet { min-height: 44px; }
   /* v0.8: the small switch and the info buttons keep their look; an invisible margin makes them 44px to tap */
   .mini-switch::after { content: ""; position: absolute; inset: -9px -2px; }
   .tip-btn::after { content: ""; position: absolute; inset: -10px; }
+  /* A tip in the page head sits right under the top bar: its tap margin leans down, so it never reaches into the bar */
+  .page-head .tip-btn::after { inset: -8px -10px -12px; }
 }
-/* Keyboard shortcut hints are meaningless on devices without a keyboard */
-@media (hover: none) { .keys { display: none; } }
+
+/* Touch baseline (SH-20): every button-like class of this file has a tap area of at least 44x44, by an invisible ::after
+   centred on the control (a control that is bigger already keeps its size). Controls with their own ::after (the segments,
+   .tip-btn, .mini-switch, a page's mini buttons) keep theirs: those rules are more specific. Inline links in running text,
+   <summary> rows and the answer-sheet tiles on desktop are exempt. */
+@media (pointer: coarse) {
+  :root { --ibtn-size: 40px; }
+  .btn, .chip { position: relative; }
+  /* inset: min(0, 50% - 22px) grows a box smaller than 44px to exactly 44px (from the padding box) and leaves a bigger one alone */
+  .btn::after, .chip::after, .fld-eye::after { content: ""; position: absolute; inset: min(0px, calc(50% - var(--ibtn-hit) / 2)); }
+}

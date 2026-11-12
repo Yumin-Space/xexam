@@ -150,39 +150,77 @@ pub fn delete_secret(c: &Connection, name: SecretName) -> rusqlite::Result<bool>
     Ok(c.execute("DELETE FROM secrets WHERE name = ?1", [name.db()])? > 0)
 }
 
+/// Reads the limits row by column name (never by position): every field of [`DEFS`] comes from its own column.
 pub fn load_limits(c: &Connection) -> rusqlite::Result<Limits> {
     let cols: Vec<&str> = DEFS.iter().map(|d| d.column).collect();
     let sql = format!("SELECT {} FROM limits WHERE id = 1", cols.join(", "));
     c.query_row(&sql, [], |r| {
-        Ok(Limits {
-            per_user_running: r.get(0)?,
-            global_running: r.get(1)?,
-            chats_per_user: r.get(2)?,
-            messages_per_chat: r.get(3)?,
-            memories_per_user: r.get(4)?,
-            memory_chars: r.get(5)?,
-            message_chars: r.get(6)?,
-        })
+        let mut l = Limits::default();
+        for d in &DEFS {
+            l.set(d.key, r.get(d.column)?);
+        }
+        Ok(l)
     })
 }
 
+/// Writes the limits row: one `column = ?n` per entry of [`DEFS`], bound in the same order.
 pub fn save_limits(c: &Connection, l: &Limits, by: &str, now: i64) -> rusqlite::Result<()> {
-    c.execute(
-        "UPDATE limits SET per_user_running = ?1, global_running = ?2, chats_per_user = ?3,
-                messages_per_chat = ?4, memories_per_user = ?5, memory_chars = ?6, message_chars = ?7,
-                updated_at = ?8, updated_by = ?9
-         WHERE id = 1",
-        params![
-            l.per_user_running,
-            l.global_running,
-            l.chats_per_user,
-            l.messages_per_chat,
-            l.memories_per_user,
-            l.memory_chars,
-            l.message_chars,
-            now,
-            by
-        ],
-    )?;
+    let sets: Vec<String> = DEFS
+        .iter()
+        .enumerate()
+        .map(|(i, d)| format!("{} = ?{}", d.column, i + 1))
+        .collect();
+    let n = DEFS.len();
+    let sql = format!(
+        "UPDATE limits SET {}, updated_at = ?{}, updated_by = ?{} WHERE id = 1",
+        sets.join(", "),
+        n + 1,
+        n + 2
+    );
+    let mut values: Vec<rusqlite::types::Value> = DEFS
+        .iter()
+        .map(|d| rusqlite::types::Value::Integer(l.get(d.key)))
+        .collect();
+    values.push(rusqlite::types::Value::Integer(now));
+    values.push(rusqlite::types::Value::Text(by.to_string()));
+    c.execute(&sql, rusqlite::params_from_iter(values))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::JournalMode;
+    use crate::store::Store;
+
+    #[test]
+    fn limits_round_trip_keeps_every_field_in_its_own_field() {
+        let dir = tempfile::tempdir().expect("dir");
+        let store = Store::open(dir.path(), JournalMode::Delete).expect("store");
+        // ten distinct values inside every range; a positional mix-up changes at least one field
+        let mut l = Limits::default();
+        let values = [2, 15, 150, 330, 44, 222, 7, 33, 444, 12_345];
+        for (d, v) in DEFS.iter().zip(values) {
+            assert!((d.min..=d.max).contains(&v), "{}", d.key);
+            l.set(d.key, v);
+        }
+        store
+            .write(|tx| save_limits(tx, &l, "root", 1_700_000_000))
+            .expect("save");
+        let back = store.read(load_limits).expect("load");
+        assert_eq!(back, l);
+        for (d, v) in DEFS.iter().zip(values) {
+            assert_eq!(back.get(d.key), v, "{}", d.key);
+        }
+        let (at, by): (i64, String) = store
+            .read(|c| {
+                c.query_row(
+                    "SELECT updated_at, updated_by FROM limits WHERE id = 1",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+            })
+            .expect("row");
+        assert_eq!((at, by.as_str()), (1_700_000_000, "root"));
+    }
 }

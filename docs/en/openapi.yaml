@@ -1,17 +1,17 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "0.9.1"
+  version: "1.0"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
     differences are listed under "Differences from the old version" in docs/en/api.md, and the changes of each version under
     "Changes in v0.5", "Changes in v0.6", "Changes in v0.7", "Changes in v0.7.5", "Changes in v0.8" and "Changes in v0.9". Endpoints
-    and fields marked (v0.5), (v0.6), (v0.7), (v0.8) or (v0.9) were added in that version.
+    and fields marked (v0.5), (v0.6), (v0.7), (v0.8), (v0.9) or (v1.0) were added in that version.
 
     All responses carry `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`, and no `Server` header.
     JSON is UTF-8 and the key order is fixed (see the order of the properties in each schema).
-    Errors are always `{"error": "<reason, in Chinese>"}` (a 429 adds `retryAfter`); docs/en/api.md lists every message with
+    Errors are always `{"error": "<reason, in Chinese>"}` (a 429 adds `retryAfter`; the v1.0 `ai.callLimit` 429 adds `cap`, `limit`, `retryAt`); docs/en/api.md lists every message with
     its English meaning. Only the low-level answers of the request layer keep the old short English text (`bad content type`,
     `too large`, `bad json`, `not found`, `method not allowed`).
 
@@ -994,7 +994,7 @@ paths:
         "409": { $ref: "#/components/responses/AiError" }
         "413": { $ref: "#/components/responses/AiError" }
         "415": { $ref: "#/components/responses/AiError" }
-        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "429": { $ref: "#/components/responses/AiCallLimit" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
         "503": { $ref: "#/components/responses/AiBackendDown" }
   /api/ai/retry:
@@ -1028,7 +1028,7 @@ paths:
         "403": { $ref: "#/components/responses/AiForbidden" }
         "404": { $ref: "#/components/responses/AiNotFound" }
         "409": { $ref: "#/components/responses/AiError" }
-        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "429": { $ref: "#/components/responses/AiCallLimit" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
         "503": { $ref: "#/components/responses/AiBackendDown" }
   /api/ai/free:
@@ -1172,7 +1172,7 @@ paths:
         "409": { $ref: "#/components/responses/AiError" }
         "413": { $ref: "#/components/responses/AiError" }
         "415": { $ref: "#/components/responses/AiError" }
-        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "429": { $ref: "#/components/responses/AiCallLimit" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
         "503": { $ref: "#/components/responses/AiBackendDown" }
   /api/ai/study/saved:
@@ -1239,7 +1239,7 @@ paths:
         "409": { $ref: "#/components/responses/AiError" }
         "413": { $ref: "#/components/responses/AiError" }
         "415": { $ref: "#/components/responses/AiError" }
-        "429": { $ref: "#/components/responses/ProxyLimit" }
+        "429": { $ref: "#/components/responses/AiCallLimit" }
         "502": { $ref: "#/components/responses/AiUnavailable" }
         "503": { $ref: "#/components/responses/AiBackendDown" }
   /api/ai/summary/saved:
@@ -1280,7 +1280,7 @@ paths:
                 properties:
                   memories: { type: array, items: { $ref: "#/components/schemas/AiMemory" } }
                   limit: { type: integer, example: 50, description: "memoriesPerUser" }
-                  maxChars: { type: integer, example: 300, description: "memoryChars" }
+                  maxChars: { type: integer, example: 200, description: "memoryChars (200 by default since v1.0)" }
         "401": { $ref: "#/components/responses/AiSignIn" }
   /api/ai/memories/add:
     post:
@@ -1710,7 +1710,7 @@ paths:
       summary: "(v0.8) Change any of the safety limits (all or nothing; applies at once, never switches AI off)"
       x-access: AiAdmin
       description: |
-        A value out of range or not an integer: 400 `ai.limitRange` with `field`; an unknown key: 400 `ai.badRequest`; nothing
+        A value out of range or not an integer: 400 `ai.limitRange` with `field`; an unknown key (also `messageChars`, v1.0): 400 `ai.badRequest`; call caps out of order: 400 `ai.limitOrder` with `field`; nothing
         is saved then. Lowering a limit never deletes or shortens existing data. Logged as
         `AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`.
       requestBody:
@@ -2193,6 +2193,17 @@ components:
       content:
         application/json:
           schema: { $ref: "#/components/schemas/AiError" }
+    AiCallLimit:
+      description: "(v1.0) Either Nginx's own rate limit (not JSON, see ProxyLimit) or the per-user request cap: JSON `ai.callLimit` with `cap`, `limit`, `retryAt` and `retryAfter`, and the header `Retry-After` (section 5.6 of api.md)"
+      headers:
+        Retry-After:
+          description: "Seconds until the cap frees (the same number as retryAfter)"
+          schema: { type: integer, minimum: 1 }
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/AiError" }
+        text/html:
+          schema: { type: string }
     AiNotFound:
       description: "(v0.8) `ai.notFound`: it does not exist, or it is not yours"
       content:
@@ -2789,11 +2800,14 @@ components:
             auth.signin, auth.password, auth.guard (the auth step); ai.unavailable, ai.backendDown, ai.serverBusy, ai.internal,
             ai.disabled, ai.suspended, ai.notAllowed, ai.adminOnly, ai.adminAlways, ai.serviceOff (the backend's), ai.notFound, ai.busy, ai.tooLong, ai.messageLimit, ai.chatLimit,
             ai.notRetryable, ai.hintLeak (stream only), ai.noWrong, ai.noUsable, ai.noDetail, ai.badRequest, ai.memoryLimit, ai.memoryTooLong, ai.notVerified, ai.keyProblem, ai.badUrl, ai.badKey,
-            ai.headerClash, ai.keyMissing, ai.keyReenter, ai.modelMissing, ai.badRetention, ai.limitRange, ai.interrupted (stored
+            ai.headerClash, ai.keyMissing, ai.keyReenter, ai.modelMissing, ai.badRetention, ai.limitRange, ai.limitOrder, ai.callLimit (429, v1.0), ai.interrupted (stored
             only), ai.up.auth, ai.up.quota, ai.up.notFound, ai.up.rateLimit, ai.up.overloaded, ai.up.server, ai.up.badRequest,
             ai.up.timeout, ai.up.connect, ai.up.protocol, ai.up.refused, ai.up.tooLong (stream only)
-        field: { type: string, description: "apiKey or gatewayKey; for ai.limitRange the limit's key" }
-        limit: { type: integer, description: "The limit in effect (ai.tooLong, ai.messageLimit, ai.chatLimit, ai.memoryLimit, ai.memoryTooLong)" }
+        field: { type: string, description: "apiKey or gatewayKey; for ai.limitRange and ai.limitOrder the limit's key" }
+        limit: { type: integer, description: "The limit in effect (ai.tooLong 16000, ai.messageLimit, ai.chatLimit, ai.memoryLimit, ai.memoryTooLong; ai.callLimit: the value of the cap)" }
+        cap: { type: string, enum: [minute, hour, day], description: "(v1.0) ai.callLimit only: the cap that frees last" }
+        retryAt: { type: integer, description: "(v1.0) ai.callLimit only: unix seconds when the cap frees (day: the next 0:00 in the server time zone)" }
+        retryAfter: { type: integer, minimum: 1, description: "(v1.0) ai.callLimit only: whole seconds from now (also the Retry-After header)" }
         running:
           description: "(v0.9) Only on 409 ai.busy of the study routes, always last: the answer being written, or null when it cannot be found"
           nullable: true
@@ -2817,13 +2831,41 @@ components:
             messageId: { type: integer }
         retentionDays: { type: integer, example: 90 }
         memoryLimit: { type: integer, example: 50, description: "memoriesPerUser" }
-        memoryMaxChars: { type: integer, example: 300, description: "memoryChars (same value as memoryChars)" }
+        memoryMaxChars: { type: integer, example: 200, description: "memoryChars (same value as memoryChars)" }
         maxMessageChars: { type: integer, example: 16000, description: "messageChars (same value as messageChars)" }
-        messageChars: { type: integer, example: 16000 }
-        memoryChars: { type: integer, example: 300 }
+        messageChars: { type: integer, example: 16000, description: "(v1.0) The fixed cap of one message; always 16000, not a setting" }
+        memoryChars: { type: integer, example: 200, description: "(v1.0) Characters per memory; 200 by default" }
         keyProblem: { type: boolean, description: "Administrators only: the saved keys cannot be used (false for others)" }
         configured: { type: boolean, description: "Administrators only: a model and the needed keys are saved (false for others)" }
         freeMode: { type: boolean, description: "(v0.8, round 2) Administrators only: your free mode is on (always false for a plain user, whatever is stored). Set with POST /api/ai/free; it applies to every message in any chat from the next one" }
+        calls:
+          type: object
+          description: "(v1.0) Your counted AI calls (section 5.6 of api.md). Present only when AI+ is available to you (paused or not); absent otherwise"
+          required: [used, blocked]
+          properties:
+            used:
+              type: object
+              required: [minute, hour, day]
+              properties:
+                minute: { type: integer, description: "Calls in the last 60 seconds (running ones included)" }
+                hour: { type: integer, description: "Calls in the last 3600 seconds" }
+                day: { type: integer, description: "Calls since 0:00 today, server time zone" }
+            caps:
+              type: object
+              description: "The caps in effect (status only)"
+              properties:
+                minute: { type: integer }
+                hour: { type: integer }
+                day: { type: integer }
+            blocked:
+              type: object
+              nullable: true
+              description: "The cap that refuses one more call now, or null"
+              required: [cap, limit, retryAt]
+              properties:
+                cap: { type: string, enum: [minute, hour, day] }
+                limit: { type: integer }
+                retryAt: { type: integer }
     AiChatSummary:
       type: object
       required: [id, title, createdAt, updatedAt, messageCount, running]
@@ -2978,6 +3020,7 @@ components:
                 required: [lastAt]
                 properties:
                   lastAt: { type: integer }
+                  today: { type: integer, description: "(v1.0) Rows with a user id only: counted calls since 0:00 today, server time zone" }
         byModel:
           type: array
           description: "model \"\" = the calls that listed the models"
@@ -3028,6 +3071,12 @@ components:
         lastUsedAt: { type: integer, nullable: true }
         tokensIn: { type: integer, description: All time }
         tokensOut: { type: integer, description: All time }
+        calls:
+          type: object
+          description: "(v1.0) The counted calls now (section 5.6); the same shape as in AiStatus, without caps"
+          properties:
+            used: { type: object, properties: { minute: { type: integer }, hour: { type: integer }, day: { type: integer } } }
+            blocked: { type: object, nullable: true, description: "{cap, limit, retryAt} or null" }
     AiUserId:
       type: object
       required: [userId]
@@ -3037,15 +3086,18 @@ components:
     AiLimits:
       type: object
       additionalProperties: false
-      description: "The safety limits (all integers). POST: any subset; GET: all seven."
+      description: "The safety limits (all integers). POST: any subset; GET: all ten (v1.0). messageChars is not a key any more."
       properties:
         perUserRunning: { type: integer, minimum: 1, maximum: 4, default: 1 }
         globalRunning: { type: integer, minimum: 1, maximum: 64, default: 16 }
         chatsPerUser: { type: integer, minimum: 10, maximum: 100000, default: 1000 }
         messagesPerChat: { type: integer, minimum: 20, maximum: 5000, default: 400 }
         memoriesPerUser: { type: integer, minimum: 1, maximum: 1000, default: 50 }
-        memoryChars: { type: integer, minimum: 50, maximum: 2000, default: 300 }
-        messageChars: { type: integer, minimum: 1000, maximum: 32000, default: 16000 }
+        memoryChars: { type: integer, minimum: 50, maximum: 2000, default: 200, description: "Characters per memory" }
+        callsPerMinute: { type: integer, minimum: 1, maximum: 100, default: 5, description: "(v1.0) Calls per rolling 60 s" }
+        callsPerHour: { type: integer, minimum: 1, maximum: 2000, default: 20, description: "(v1.0) Calls per rolling hour; at least callsPerMinute" }
+        callsPerDay: { type: integer, minimum: 1, maximum: 20000, default: 100, description: "(v1.0) Calls since 0:00 in the server time zone; at least callsPerHour" }
+        replyMaxChars: { type: integer, minimum: 1, maximum: 16000, default: 1000, description: "(v1.0) Longest answer in characters, sent as max_tokens (section 5.6)" }
     AiLimitsAnswer:
       type: object
       required: [limits, defaults, ranges]
@@ -3054,7 +3106,7 @@ components:
         defaults: { $ref: "#/components/schemas/AiLimits" }
         ranges:
           type: object
-          description: "\"<key>\": [min, max] for each of the seven keys"
+          description: "\"<key>\": [min, max] for each of the ten keys"
           additionalProperties:
             type: array
             items: { type: integer }
@@ -3175,6 +3227,7 @@ components:
       required: [chatId, latest, lastGood]
       properties:
         chatId: { type: integer, nullable: true, description: "The study chat, or null when there is none yet" }
+        chatTitle: { type: string, nullable: true, description: "(v1.0) The chat's stored title (the server's real title), or null without a chat" }
         latest: { allOf: [{ $ref: "#/components/schemas/AiStudyAnswer" }], nullable: true, description: "The newest answer of that question in that place, whatever its status" }
         lastGood: { allOf: [{ $ref: "#/components/schemas/AiStudyAnswer" }], nullable: true, description: "The newest answer with status done and some text; filled only when `latest` is not done" }
     AiSummarySaved:
@@ -3183,6 +3236,7 @@ components:
       required: [chatId, latest, lastGood]
       properties:
         chatId: { type: integer, nullable: true }
+        chatTitle: { type: string, nullable: true, description: "(v1.0) The chat's stored title, or null without a chat" }
         latest: { allOf: [{ $ref: "#/components/schemas/AiSummaryAnswer" }], nullable: true }
         lastGood: { allOf: [{ $ref: "#/components/schemas/AiSummaryAnswer" }], nullable: true, description: "Filled only when `latest` is not done" }
     InternalStudyRefusal:

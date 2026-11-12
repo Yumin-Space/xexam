@@ -13,8 +13,19 @@ pub struct ApiError {
     pub text: String,
     pub field: Option<&'static str>,
     pub limit: Option<i64>,
+    /// `ai.callLimit`: which cap and when one more call is possible (boxed: keeps `ApiError` small)
+    pub call: Option<Box<CallInfo>>,
     /// `ai.busy` of the study routes: what is running (`null` when nothing could be found); serialised last
     pub running: Option<Box<Value>>,
+}
+
+/// The extra fields of `ai.callLimit`: the cap (`minute` / `hour` / `day`), when one more call is possible (unix s) and in
+/// how many whole seconds (at least 1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallInfo {
+    pub cap: &'static str,
+    pub retry_at: i64,
+    pub retry_after: i64,
 }
 
 impl ApiError {
@@ -25,6 +36,7 @@ impl ApiError {
             text: text.to_string(),
             field: None,
             limit: None,
+            call: None,
             running: None,
         }
     }
@@ -47,13 +59,50 @@ impl ApiError {
         if let Some(f) = self.field {
             m.insert("field".into(), Value::from(f));
         }
+        if let Some(c) = &self.call {
+            m.insert("cap".into(), Value::from(c.cap));
+        }
         if let Some(n) = self.limit {
             m.insert("limit".into(), Value::from(n));
+        }
+        if let Some(c) = &self.call {
+            m.insert("retryAt".into(), Value::from(c.retry_at));
+            m.insert("retryAfter".into(), Value::from(c.retry_after));
         }
         if let Some(r) = &self.running {
             m.insert("running".into(), (**r).clone());
         }
         Value::Object(m)
+    }
+
+    /// A per-user cap on AI model calls is reached (429 `ai.callLimit`): names the cap, its limit and when the user can
+    /// call again. The day cap ends with the owner's "明天 0 点后可以再次使用。".
+    pub fn call_limit(hit: &crate::quota::Hit, now: i64) -> ApiError {
+        let (name, tail) = match hit.cap {
+            crate::quota::Cap::Minute => ("每分钟", ""),
+            crate::quota::Cap::Hour => ("每小时", ""),
+            crate::quota::Cap::Day => ("每天", "明天 0 点后可以再次使用。"),
+        };
+        let text = format!(
+            "你的 AI 请求额度已用完（{name} {} 次），请联系管理员设置 AI 请求额度上限。{tail}",
+            hit.limit
+        );
+        let mut e = ApiError::new(429, "ai.callLimit", &text).with_limit(hit.limit);
+        e.call = Some(Box::new(CallInfo {
+            cap: hit.cap.key(),
+            retry_at: hit.retry_at,
+            retry_after: (hit.retry_at - now).max(1),
+        }));
+        e
+    }
+    /// The call caps are not in order (minute <= hour <= day): 400 `ai.limitOrder` naming the larger window's field
+    pub fn limit_order(field: &'static str) -> ApiError {
+        ApiError::new(
+            400,
+            "ai.limitOrder",
+            "每小时的次数不能少于每分钟的次数，每天的次数不能少于每小时的次数。",
+        )
+        .with_field(field)
     }
 
     pub fn backend_down() -> ApiError {
@@ -312,5 +361,36 @@ mod tests {
         assert!(ApiError::busy().to_json().get("running").is_none());
         assert_eq!(ApiError::suspended().status.as_u16(), 403);
         assert_eq!(ApiError::admin_always().status.as_u16(), 409);
+    }
+
+    #[test]
+    fn call_limit_shape() {
+        use crate::quota::{Cap, Hit};
+        let hour = Hit {
+            cap: Cap::Hour,
+            limit: 20,
+            retry_at: 1_762_950_300,
+        };
+        let e = ApiError::call_limit(&hour, 1_762_949_588);
+        assert_eq!(e.status.as_u16(), 429);
+        assert_eq!(
+            serde_json::to_string(&e.to_json()).expect("json"),
+            r#"{"error":"你的 AI 请求额度已用完（每小时 20 次），请联系管理员设置 AI 请求额度上限。","code":"ai.callLimit","cap":"hour","limit":20,"retryAt":1762950300,"retryAfter":712}"#
+        );
+        let day = Hit {
+            cap: Cap::Day,
+            limit: 100,
+            retry_at: 1_000,
+        };
+        let e = ApiError::call_limit(&day, 5_000);
+        assert!(e.text.ends_with("明天 0 点后可以再次使用。"), "{}", e.text);
+        assert_eq!(
+            e.call.as_ref().map(|c| c.retry_after),
+            Some(1),
+            "never below one second"
+        );
+        let o = ApiError::limit_order("callsPerHour");
+        assert_eq!(o.field, Some("callsPerHour"));
+        assert_eq!(o.status.as_u16(), 400);
     }
 }

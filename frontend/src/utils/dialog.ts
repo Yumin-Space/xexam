@@ -1,5 +1,6 @@
 import { t } from '../i18n/index.ts';
-import { h, type Child } from './dom.ts';
+import { h, keepInView, type Child } from './dom.ts';
+import { TOUCH_MQ, matches } from './media.ts';
 
 export interface AskOptions {
   title: string;
@@ -30,11 +31,23 @@ export function dialogTitleId(): string {
   return `dlg-title-${titleSeq}`;
 }
 
+/**
+ * Where the focus goes when a dialog opens (SH-5): on a touch screen the title (tabindex -1), so the keyboard does not cover
+ * the form at once; with a mouse the caller's own choice (the first field).
+ */
+function focusTitle(d: HTMLElement, titleId: string): boolean {
+  if (!matches(TOUCH_MQ)) return false;
+  const title = d.querySelector<HTMLElement>('#' + titleId);
+  if (!title) return false;
+  title.focus({ preventScroll: true });
+  return true;
+}
+
 function open(opts: AskOptions, extra: HTMLElement | null, onClose: (ok: boolean) => void): void {
   const { title, body, ok = t('common.ok'), cancel = t('common.cancel'), danger = false } = opts;
   const titleId = dialogTitleId();
-  const d = h('dialog', { 'aria-labelledby': titleId },
-    h('h3', { id: titleId }, title),
+  const d = h('dialog', { class: 'dlg', 'aria-labelledby': titleId },
+    h('h3', { id: titleId, tabindex: '-1' }, title),
     h('p', null, body),
     extra,
     h('div', { class: 'acts' },
@@ -47,6 +60,7 @@ function open(opts: AskOptions, extra: HTMLElement | null, onClose: (ok: boolean
   });
   document.body.append(d);
   d.showModal();
+  focusTitle(d, titleId);
 }
 
 const hasDialog = (): boolean => typeof (document.createElement('dialog') as HTMLDialogElement).showModal === 'function';
@@ -114,12 +128,12 @@ export function formDialog(o: FormDialogOptions): Promise<boolean> {
         void run();
       },
     },
-    h('h3', { id: titleId }, o.title),
+    h('h3', { id: titleId, tabindex: '-1' }, o.title),
     o.body ? h('p', null, o.body) : null,
     o.content,
     err,
     h('div', { class: 'acts' }, cancelBtn, okBtn));
-    const d = h('dialog', { class: 'dlg-wide', 'aria-labelledby': titleId }, form);
+    const d = h('dialog', { class: 'dlg dlg-wide', 'aria-labelledby': titleId }, form);
 
     async function run(): Promise<void> {
       if (busy) return;
@@ -159,6 +173,10 @@ export function formDialog(o: FormDialogOptions): Promise<boolean> {
     document.body.append(d);
     if (typeof d.showModal === 'function') d.showModal();
     else d.setAttribute('open', '');
+    // The text fields stay inside the visual viewport with the keyboard up (SH-13)
+    form.querySelectorAll<HTMLElement>('input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), textarea')
+      .forEach((f) => keepInView(f, okBtn));
+    if (focusTitle(d, titleId)) return;
     const first = o.focus ?? form.querySelector<HTMLElement>('input:not([type="hidden"]):not(:disabled), select, textarea');
     first?.focus();
   });

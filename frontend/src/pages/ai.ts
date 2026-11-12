@@ -3,7 +3,10 @@
 //   · An always-visible line under the title says that administrators can view and delete the user's AI chats and
 //     memories and see their usage (no pop-up, never dismissible).
 //   · Two views: Chats (the chat list, and the conversation with its composer) and Memory (notes the AI uses in every chat).
-//     From 900 px wide the list and the conversation sit side by side; narrower, one at a time with a back button.
+//     Wider than 900 px the owner's fixed-height box; up to 900 px (v1.0) a full-height chat screen: the document is locked
+//     (html.no-doc-scroll), only the lists scroll, the composer is a fixed footer lifted by the on-screen keyboard (--kb),
+//     and the page never slides up when the keyboard opens (CH-13). From 720 px the list and the conversation sit side by
+//     side; narrower, one at a time with a back button.
 //   · Answers stream in (server-sent events over a POST, api/client.ts postStream). The page draws itself in place while an
 //     answer streams (only the answer being written is redrawn, at most every 100 ms); render() of the whole page happens
 //     only on navigation and menu changes. The composer element is kept across those, so the text, the caret and an input
@@ -14,6 +17,7 @@
 //   · Round 2: every send, retry and memory suggestion carries the interface language of Settings (the AI replies in it);
 //     a reasoning model's thinking shows "Thinking…" until its first text
 //     (the free mode is a Settings choice for administrators); a suspended AI+ function makes the page read only.
+import { githubLine } from '../components/github-line.ts';
 import '../styles/ai.css';
 import {
   addMemory, deleteAllChats, deleteAllMemories, deleteChat, deleteMemory, fetchChat, fetchChats, fetchMemories, retryAnswer,
@@ -22,34 +26,37 @@ import {
 import { ApiError, isAbortError, type StreamEvent, type StreamOptions } from '../api/client.ts';
 import { badgeReasonText } from '../components/ai-badge.ts';
 import { fillMarkdown, markdownEl } from '../components/ai-render.ts';
-import { miniIcon } from '../components/mini-icons.ts';
+import { iconButton } from '../components/icon-button.ts';
+import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
+import { holdTip } from '../components/tooltip.ts';
 import {
-  applyEvent, chatOf, clearsComposer, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isTerminal, localFail,
-  isThinking, localSend, localStop, noAccessKey, pollResult, readOnlyReason, questionOf, retryTarget, sendBody, shouldSend, showsEmptyHint, type ChatView, type ViewMessage,
+  applyEvent, atEnd, chatOf, clearsComposer, composerLines, composerStatus, emptyChat, END_PX, fmtAiTime, footerOf, ignoreSendClick, isTerminal, localFail,
+  isBusyElsewhere, isThinking, localSend, localStop, LOCK_MAX_WIDTH, locksDocument, MIN_MSGS_PX, noAccessKey, pollResult, readOnlyReason, questionOf,
+  retryTarget, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatView, type ViewMessage,
 } from '../domain/ai-chat.ts';
 import { chatDisplayTitle, popTitleKey } from '../domain/ai-plus.ts';
 import { memoryLength, wantsMemory } from '../domain/ai-memory.ts';
 import { shownCode } from '../domain/ai-settings.ts';
-import { aiCodeText, errorText } from '../i18n/errors.ts';
+import { aiCodeText, callLimitText, errorText } from '../i18n/errors.ts';
 import { localeTag, t, tn, uiLang } from '../i18n/index.ts';
+import { clockText } from '../i18n/wait.ts';
 import { parseHash } from '../router.ts';
 import { onRouteChange, onSignedIn, refreshAi, render } from '../state/actions.ts';
-import { aiFreeMode, aiStatus } from '../state/ai.ts';
+import { aiFreeMode, aiStatus, callBlock, noteCallBlock, onCallBlockChange, recheckCallBlock } from '../state/ai.ts';
 import { S, isAdmin, onClearUserData } from '../state/store.ts';
-import type { AiChatKind, AiChatSummary, AiMemory, AiMessage } from '../types/api.ts';
-import { forgetStudyChats as forgetPopChats } from '../components/ai-pop.ts';
+import type { AiCallBlock, AiChatKind, AiChatSummary, AiMemory, AiMessage } from '../types/api.ts';
+import { forgetStudyChats as forgetPanelChats } from '../components/ai-panel.ts';
 import { forgetStudyChats as forgetSummaryChats } from '../components/ai-summary.ts';
 import { copyText } from '../utils/clipboard.ts';
 import { ask } from '../utils/dialog.ts';
-import { h, keepFocus, type Child } from '../utils/dom.ts';
-import { toast } from '../utils/toast.ts';
+import { h, keepFocus, undoViewportPan, type Child } from '../utils/dom.ts';
+import { liftToastAbove, toast } from '../utils/toast.ts';
 
 export type ChatMode = 'full' | 'readOnly';
 
 const POLL_MS = 2000;
 const PAINT_MS = 100;
-/** Within this many pixels of the end the conversation follows new text */
-const FOLLOW_PX = 48;
+const ico = (name: MiniIcon, cls = 'ai-mi'): SVGSVGElement => miniIcon(name, cls);
 
 // ---------------------------------------------------------------- page-local state (kept while the app runs)
 
@@ -84,6 +91,10 @@ let stick = true;
 let composing = false;
 /** When the Send button last turned into Stop (Date.now()): a click right after it is part of the click that sent */
 let stopSince = 0;
+/** The administrator notice (CH-3) shows its full text instead of one line */
+let noticeOpen = false;
+/** The "more" menu of the chat list (CH-6) is open */
+let listMenu = false;
 
 interface Composer {
   form: HTMLFormElement;
@@ -91,12 +102,21 @@ interface Composer {
   label: HTMLLabelElement;
   count: HTMLElement;
   btn: HTMLButtonElement;
-  err: HTMLElement;
+  /** The status slot above the input (CH-7): a send error, the request-cap callout, or "another chat is busy" */
+  status: HTMLElement;
   latest: HTMLButtonElement;
   latestText: HTMLElement;
+  /** The fixed footer (CH-13): the form, and the administrator notice line under it */
+  dock: HTMLElement;
+  notice: HTMLElement;
 }
 /** Kept across renders of the page, so its text, caret, undo history and composition survive */
 let composer: Composer | null = null;
+/** What the status slot shows now (it is redrawn only when this changes, so an alert is announced once) */
+let statusSig = '';
+/** Copy feedback on the icon (CH-5): message id -> 'ok' | 'fail' for 1.5 s */
+const copyState = new Map<number, 'ok' | 'fail'>();
+const COPY_MS = 1500;
 
 let memories: AiMemory[] | null = null;
 let memError: unknown = null;
@@ -112,9 +132,43 @@ let suggestion: { messageId: number; text: string; busy: boolean; error: string 
 
 /** The open chat is in the address (#/ai/<id>; a new chat not sent yet is #/ai/new), so a reload opens it again
  *  (owner's report); replaceState, so the back button is not filled with chats and no route change runs */
-function setChatInUrl(id: number | 'new' | null): void {
+function setChatInUrl(id: number | 'new' | null, push = false): void {
   const want = id != null ? `#/ai/${id}` : '#/ai';
-  if (location.hash !== want) history.replaceState(history.state, '', want);
+  if (location.hash === want) return;
+  if (push) {
+    // One-pane phone, list -> conversation: a page change, so the system back gesture returns to the list
+    history.pushState(history.state, '', want);
+    pushedConv = true;
+  } else {
+    history.replaceState(history.state, '', want);
+    if (id == null) pushedConv = false;
+  }
+}
+
+/** This page pushed a history entry for the open conversation (one-pane phone), so Back there returns to the list */
+let pushedConv = false;
+
+/** The open chat was deleted: the address no longer names it (a pushed conversation entry is popped, so Back is not wasted) */
+function leaveChatUrl(): void {
+  if (pushedConv) {
+    pushedConv = false;
+    history.back();
+  } else {
+    setChatInUrl(null);
+  }
+}
+
+/** One pane at a time (a phone up to 719 px) */
+const onePane = (): boolean => phoneScreen() && !showsTwoPanes(window.innerWidth);
+
+/** Shows the chat list pane (the back button, the system back gesture) */
+function goList(): void {
+  pane = 'list';
+  pushedConv = false;
+  setChatInUrl(null);
+  paint();
+  announce(t('ai.tab.chats'));
+  document.getElementById(view.chatId != null ? `ai-c-${view.chatId}` : 'ai-new')?.focus();
 }
 
 /** The chat the address asks for: an id, 'new' for a new chat not sent yet, or null for the list */
@@ -136,13 +190,14 @@ const sending = (): boolean => stream != null || view.pending != null || view.st
 /** The user's limits from the AI status (the service's current safety limits) */
 function limits(): { messageChars: number; memoryChars: number; memories: number } {
   const st = aiStatus();
-  if (st.state !== 'ready') return { messageChars: 16000, memoryChars: 300, memories: 50 };
+  if (st.state !== 'ready') return { messageChars: 16000, memoryChars: 200, memories: 50 };
   return { messageChars: st.messageChars ?? st.maxMessageChars, memoryChars: st.memoryChars ?? st.memoryMaxChars, memories: st.memoryLimit };
 }
 
 function resetAll(): void {
   detachStream();
   stopPolling();
+  watchBusy(false);
   tab = 'chats';
   entered = false;
   chats = null;
@@ -156,6 +211,13 @@ function resetAll(): void {
   sendError = null;
   stick = true;
   composer = null;
+  statusSig = '';
+  copyState.clear();
+  dockObserver?.disconnect();
+  dockObserver = null;
+  lockDocument(false);
+  listMenu = false;
+  noticeOpen = false;
   memories = null;
   memError = null;
   memLoading = false;
@@ -172,11 +234,15 @@ onRouteChange((from, to) => {
   if (from.name === 'ai' && to.name === 'ai' && to.chatId != null && to.chatId !== view.chatId) void openChat(to.chatId);
   if (from.name === 'ai' && to.name === 'ai' && to.fresh && view.chatId != null) newChat();
   if (from.name === 'ai' && to.name !== 'ai') {
+    lockDocument(false);
+    listMenu = false;
     // The answer keeps being written on the server; coming back re-attaches to it
     detachStream();
     stopPolling();
+    watchBusy(false);
     entered = false;
     pane = null;
+    pushedConv = false;
     sendError = null;
     memEdit = null;
     memFormError = null;
@@ -198,7 +264,116 @@ function installOnce(): void {
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && onPage() && (view.streamingId != null || view.running) && !polling) void checkAttached();
   });
-  window.addEventListener('scroll', onScroll, { passive: true });
+  // Leaving #/ai: the document scrolls again (also covers a route change that did not go through onRouteChange)
+  // The system back gesture from a pushed conversation (one-pane phone): the list pane, not another page
+  window.addEventListener('popstate', () => {
+    if (!onPage() || tab !== 'chats' || !onePane() || chatInUrl() != null) return;
+    if (panesClass() === 'ai-panes on-conv') goList();
+    else pushedConv = false;
+  });
+  window.addEventListener('hashchange', () => {
+    if (parseHash(location.hash).name !== 'ai') lockDocument(false);
+  });
+  // Crossing 900 px (a tablet turned): the page is drawn again with or without the lock
+  if (typeof window.matchMedia === 'function') {
+    window.matchMedia(LOCK_MQ).addEventListener('change', () => {
+      if (onPage()) render();
+      else lockDocument(false);
+    });
+  }
+  // The request cap came or went (C-6): the callout, Send, Retry and Remember follow without a reload
+  onCallBlockChange(() => {
+    if (!onPage()) return;
+    if (tab === 'chats') paintMsgs();
+    syncComposer();
+  });
+  // The "more" menu of the chat list: a tap outside it or Esc closes it
+  document.addEventListener('pointerdown', (e) => {
+    if (!listMenu || !(e.target instanceof Node)) return;
+    if (e.target instanceof Element && e.target.closest('.ai-more-wrap')) return;
+    listMenu = false;
+    if (onPage()) paint();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !listMenu || !onPage()) return;
+    listMenu = false;
+    paint();
+    document.getElementById('ai-more')?.focus();
+  });
+}
+
+// ---------------------------------------------------------------- the phone screen (CH-1, CH-13)
+
+/** The document is locked up to this width: the one media query of the full-height chat screen */
+const LOCK_MQ = `(max-width: ${LOCK_MAX_WIDTH}px)`;
+const phoneScreen = (): boolean => locksDocument(window.innerWidth);
+
+/** Observes the composer's footer: its height is what the conversation pane reserves (--composer-h) */
+let dockObserver: ResizeObserver | null = null;
+/** Observes the message list: when its height changes (keyboard, composer growth) and it was at the end, it stays at the end */
+let listObserver: ResizeObserver | null = null;
+let panWatching = false;
+let panFrame = 0;
+
+/**
+ * Locks the document (html.no-doc-scroll: only the lists scroll) or frees it. Every AI Chat render at up to 900 px locks it;
+ * leaving the page, or growing wider than 900 px, frees it.
+ */
+function lockDocument(on: boolean): void {
+  const el = document.documentElement;
+  el.classList.toggle('no-doc-scroll', on);
+  if (on) return;
+  el.style.removeProperty('--composer-h');
+  listObserver?.disconnect();
+  listObserver = null;
+  stopPanWatch();
+}
+
+function syncComposerHeight(): void {
+  const el = document.documentElement;
+  if (!composer || !el.classList.contains('no-doc-scroll')) return;
+  el.style.setProperty('--composer-h', `${Math.ceil(composer.dock.offsetHeight)}px`);
+}
+
+/** Keeps the newest message in view when the list's height changes and the list was at its end (no smooth scroll) */
+function watchList(): void {
+  listObserver?.disconnect();
+  listObserver = null;
+  const el = scroller();
+  if (!el || typeof ResizeObserver === 'undefined') return;
+  listObserver = new ResizeObserver(() => {
+    if (stick) el.scrollTop = el.scrollHeight;
+  });
+  listObserver.observe(el);
+}
+
+function onViewportMove(): void {
+  if (panFrame) return;
+  panFrame = window.requestAnimationFrame(() => {
+    panFrame = 0;
+    undoViewportPan();
+    if (composer) autoGrow(composer.input);
+  });
+}
+
+/** While the composer has the focus: undo the pan at once, on every viewport change and 300 ms after the focus */
+function startPanWatch(): void {
+  undoViewportPan();
+  window.setTimeout(undoViewportPan, 300);
+  if (panWatching) return;
+  panWatching = true;
+  window.visualViewport?.addEventListener('resize', onViewportMove);
+  window.visualViewport?.addEventListener('scroll', onViewportMove);
+}
+
+function stopPanWatch(): void {
+  if (panWatching) {
+    panWatching = false;
+    window.visualViewport?.removeEventListener('resize', onViewportMove);
+    window.visualViewport?.removeEventListener('scroll', onViewportMove);
+  }
+  // Once the keyboard has gone
+  window.setTimeout(undoViewportPan, 300);
 }
 
 // ---------------------------------------------------------------- loading
@@ -262,6 +437,10 @@ function detachStream(): void {
   const s = stream;
   stream = null;
   s?.abort();
+  // The answer keeps running on the server: read the status again so "another chat is answering" shows at once
+  if (s) void refreshAi(true).then(() => {
+    if (onPage()) syncComposer();
+  });
 }
 
 function stopPolling(): void {
@@ -294,7 +473,7 @@ async function pollTick(): Promise<void> {
       polling = false;
       if (wasRunning) announceEnd(view.messages[view.messages.length - 1]);
       void loadChats();
-          return;
+      return;
     }
   } catch (e) {
     if (e instanceof ApiError && e.status === 404) {
@@ -344,11 +523,13 @@ async function openChat(id: number): Promise<void> {
   openError = null;
   const summary = chats?.find((c) => c.id === id);
   view = { ...emptyChat(), chatId: id, title: summary?.title ?? '', kind: summary?.kind ?? 'chat' };
-  setChatInUrl(id);
+  setChatInUrl(id, onePane() && panesClass() === 'ai-panes on-list');
   opening = true;
   pane = 'conv';
   stick = true;
   paint();
+  // One pane at a time: the focus goes to the conversation title (CH-9)
+  if (phoneScreen() && !showsTwoPanes(window.innerWidth)) document.getElementById('ai-conv-t')?.focus({ preventScroll: true });
   try {
     const d = await fetchChat(id);
     if (view.chatId !== id) return;
@@ -374,8 +555,9 @@ async function openChat(id: number): Promise<void> {
 function newChat(): void {
   detachStream();
   stopPolling();
+  const fromList = onePane() && panesClass() === 'ai-panes on-list';
   view = emptyChat();
-  setChatInUrl('new');
+  setChatInUrl('new', fromList);
   opening = false;
   openError = null;
   suggestion = null;
@@ -383,6 +565,8 @@ function newChat(): void {
   pane = 'conv';
   stick = true;
   paint();
+  announce(t('ai.new'));
+  // New chat keeps the focus on the composer (CH-9)
   composer?.input.focus();
 }
 
@@ -423,6 +607,7 @@ function onStreamEvent(ev: StreamEvent): void {
       announce(t('ai.writing'));
       paint();
       toBottom();
+      void refreshAi(true);
       void loadChats();
       return;
     }
@@ -453,7 +638,7 @@ function onStreamEvent(ev: StreamEvent): void {
   // The question asked to remember something: offer a note (saved only when the user saves it)
   if (ev.event === 'done' && full() && done != null) {
     const q = questionOf(view, done);
-    if (q && wantsMemory(q.content)) void suggest(q.id);
+    if (q && wantsMemory(q.content) && !callBlock()) void suggest(q.id);
   }
   // The first chat makes the user one "with AI data" (the menu keeps AI Chat even if AI+ is switched off later)
   void refreshAi(true);
@@ -491,7 +676,24 @@ async function runStream(call: (o: StreamOptions) => Promise<void>, text: string
     if (!started) {
       // Nothing was saved: the text stays in the composer, the reason above it
       view = localFail(view);
-      sendError = errorText(e);
+      if (e instanceof ApiError && e.code === 'ai.busy') {
+        // Another answer runs: read the status, so "another chat is writing [Stop it]" shows (watchBusy clears it when it
+        // ends). Running in this very chat (another tab or device): follow it here, with Stop in the Send slot
+        sendError = null;
+        void refreshAi(true).then(() => {
+          if (!onPage()) return;
+          const st = aiStatus();
+          if (st.state === 'ready' && st.running && st.running.chatId === view.chatId && !stream) startPolling();
+          syncComposer();
+        });
+      } else if (e instanceof ApiError && e.quota) {
+        // A request cap: the callout in the status slot says it (not a red send error); the text stays in the composer
+        sendError = null;
+        noteCallBlock(e.quota);
+        announce(errorText(e));
+      } else {
+        sendError = errorText(e);
+      }
       if (e instanceof ApiError && e.code != null && ACCESS_CODES.includes(e.code)) void refreshAi(true);
       if (e instanceof ApiError && e.code === 'ai.notFound' && view.chatId != null) {
         view = emptyChat();
@@ -504,14 +706,58 @@ async function runStream(call: (o: StreamOptions) => Promise<void>, text: string
     }
   } finally {
     if (stream === ctrl) stream = null;
+    // Remember / Retry follow the end of the send
+    if (onPage() && tab === 'chats') paintMsgs();
     syncComposer();
   }
+}
+
+/** The text of the cap that blocks AI calls now (for the tip, the toast and the callout) */
+const capText = (q: AiCallBlock): string => callLimitText(q, isAdmin(), Date.now() / 1000);
+
+/** The cap callout in the composer: one short line pair (CH-7 allows 2 lines); capText() is its tip and what a reader hears */
+function capShort(q: AiCallBlock): string {
+  const cap = t(q.cap === 'minute' ? 'ai.cap.minute' : q.cap === 'hour' ? 'ai.cap.hour' : 'ai.cap.day', { n: q.limit.toLocaleString(localeTag()) });
+  const left = Math.max(1, Math.ceil(q.retryAt - Date.now() / 1000));
+  const when = q.cap === 'day' ? t('ai.cap.shortDay') : left < 60 ? t('ai.cap.shortSoon') : t('ai.cap.shortWhen', { time: clockText(q.retryAt, Date.now() / 1000) });
+  return t(isAdmin() ? 'ai.cap.shortAdmin' : 'ai.cap.short', { cap, when });
+}
+
+/**
+ * Runs `action` unless the request cap blocks AI calls (C-6): then the tap first asks the server again (an administrator may
+ * have raised the limits); still blocked, the cap text is the answer (a toast), free again, the action runs once.
+ */
+function guarded(action: () => void): () => void {
+  return () => {
+    if (!callBlock()) {
+      action();
+      return;
+    }
+    void recheckCallBlock().then((still) => {
+      const q = callBlock();
+      if (still && q) toast(capText(q), 6000);
+      else if (onPage()) action();
+    });
+  };
+}
+
+/** A control that needs a model call, while the cap blocks calls: aria-disabled (never `disabled`), the cap text as its tip */
+function applyCap(btn: HTMLButtonElement): void {
+  const q = callBlock();
+  if (!q || !full()) return;
+  btn.setAttribute('aria-disabled', 'true');
+  btn.setAttribute('aria-describedby', 'ai-cap-note');
+  holdTip(btn, capText(q));
 }
 
 function send(): void {
   if (!full() || !composer || sending()) return;
   const text = composer.input.value.trim();
   if (!text) return;
+  if (callBlock()) {
+    guarded(send)();
+    return;
+  }
   const max = limits().messageChars;
   if (memoryLength(text) > max) {
     sendError = aiCodeText('ai.tooLong', max);
@@ -550,19 +796,60 @@ async function stop(): Promise<void> {
   if (view.chatId != null) startPolling();
 }
 
+/** "Stop it" in the status slot: stops the answer that runs in another chat (no id), then reads the status again */
+async function stopElsewhere(): Promise<void> {
+  try {
+    await stopAnswer(null);
+  } catch {
+    /* the answer may have just ended */
+  }
+  await refreshAi(true);
+  if (onPage()) syncComposer();
+}
+
+/** Brings the memory suggestion bar into the free area of the conversation scroller (only its scrollTop moves, never the page) */
+function revealSuggest(): void {
+  const sc = scroller();
+  const bar = sc?.querySelector<HTMLElement>('.ai-suggest');
+  if (!sc || !bar) return;
+  const s = sc.getBoundingClientRect();
+  const b = bar.getBoundingClientRect();
+  // The fixed composer covers the bottom of the scroller on phones: keep clear of it
+  const dock = document.getElementById('ai-composer');
+  const dockTop = dock && getComputedStyle(dock).position === 'fixed' ? dock.getBoundingClientRect().top : Infinity;
+  const bottom = Math.min(s.bottom, dockTop);
+  if (b.bottom > bottom) sc.scrollTop += b.bottom - bottom + 8;
+  if (b.top < s.top) sc.scrollTop -= s.top - b.top + 8;
+}
+
 async function suggest(messageId: number): Promise<void> {
   suggestion = { messageId, text: '', busy: true, error: null };
   paintMsgs();
+  revealSuggest();
   try {
     const text = await suggestMemory(messageId, uiLang());
     if (suggestion?.messageId !== messageId) return;
     suggestion = { messageId, text, busy: false, error: null };
+    paintMsgs();
+    revealSuggest();
+    return;
   } catch (e) {
     if (suggestion?.messageId !== messageId) return;
+    if (e instanceof ApiError && e.quota) {
+      // A request cap: the callout in the composer's status slot says it; no suggestion bar
+      suggestion = null;
+      noteCallBlock(e.quota);
+      announce(errorText(e));
+      if (onPage()) paintMsgs();
+      return;
+    }
     suggestion = { messageId, text: '', busy: false, error: errorText(e) };
     if (e instanceof ApiError && e.code != null && ACCESS_CODES.includes(e.code)) void refreshAi(true);
   }
-  if (onPage()) paintMsgs();
+  if (onPage()) {
+    paintMsgs();
+    revealSuggest();
+  }
 }
 
 async function saveSuggestion(): Promise<void> {
@@ -586,15 +873,18 @@ async function saveSuggestion(): Promise<void> {
 
 /** The deleted chats' saved hints / explanations / summaries must not be offered as saved any more (null = every chat) */
 function forgetStudyChats(chatId: number | null): void {
-  forgetPopChats(chatId);
+  forgetPanelChats(chatId);
   forgetSummaryChats(chatId);
 }
 
 async function removeChat(c: Pick<AiChatSummary, 'id' | 'title' | 'kind'>): Promise<void> {
   const title = chatTitleText(c);
   if (!(await ask({ title: t('ai.delete'), body: t('ai.delete.ask', { title }), ok: t('common.delete'), danger: true }))) return;
+  const idx = chats?.findIndex((x) => x.id === c.id) ?? -1;
+  let deleted = false;
   try {
     await deleteChat(c.id);
+    deleted = true;
     forgetStudyChats(c.id);
     toast(t('ai.delete.done'));
     if (view.chatId === c.id) {
@@ -603,12 +893,20 @@ async function removeChat(c: Pick<AiChatSummary, 'id' | 'title' | 'kind'>): Prom
       view = emptyChat();
       suggestion = null;
       pane = null;
+      leaveChatUrl();
     }
   } catch (e) {
     toast(errorText(e), 6000);
   }
   await loadChats();
   void refreshAi(true);
+  if (deleted && onPage()) {
+    // The row is gone: the focus goes to the next row (else the previous one, else New chat) and the result is announced
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.ai-chats .ai-chat-open'));
+    const target = rows[Math.min(Math.max(idx, 0), rows.length - 1)] ?? document.getElementById('ai-new');
+    target?.focus({ preventScroll: true });
+    announce(t('ai.delete.done'));
+  }
 }
 
 async function removeAllChats(): Promise<void> {
@@ -623,6 +921,7 @@ async function removeAllChats(): Promise<void> {
     view = emptyChat();
     suggestion = null;
     pane = null;
+    leaveChatUrl();
     toast(t('ai.delete.done'));
   } catch (e) {
     toast(errorText(e), 6000);
@@ -633,32 +932,20 @@ async function removeAllChats(): Promise<void> {
 
 // ---------------------------------------------------------------- scrolling
 
-/** The element that scrolls the conversation: always its own fixed-height box (on phones too, owner's request); null only
- *  while the conversation pane is not drawn */
+/** The element that scrolls the conversation: its own box (a fixed-height box on desktop, the free space of the full-height
+ *  screen on phones); null only while the conversation pane is not drawn */
 function scroller(): HTMLElement | null {
   return document.getElementById('ai-scroll');
 }
 
-/** Phones: how far the end of the conversation (its composer) is below the bottom of the window */
-function convBelow(): number {
-  const conv = document.querySelector('.ai-conv');
-  return conv ? conv.getBoundingClientRect().bottom - window.innerHeight : 0;
-}
-
 function nearEnd(): boolean {
   const el = scroller();
-  if (el) return el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_PX;
-  return convBelow() <= FOLLOW_PX;
+  return el ? atEnd(el, END_PX) : true;
 }
 
 function toBottom(): void {
   const el = scroller();
   if (el) el.scrollTop = el.scrollHeight;
-  // Phones: the end of the conversation at the bottom of the window (not the page's footer); never while the chat list
-  // is the pane shown (the conversation is hidden then)
-  else if (document.getElementById('ai-msgs') && (document.querySelector('.ai-conv') as HTMLElement | null)?.offsetParent) {
-    window.scrollBy(0, convBelow() + 8);
-  }
   stick = true;
   syncLatest();
 }
@@ -688,12 +975,35 @@ function nodes(kids: readonly Child[]): Node[] {
   return out;
 }
 
+/** What the chat list shows: the list is redrawn only when this changes (a poll repaints every 2 s while an answer runs;
+ *  redrawing the rows each time would stop a fling and swap the row under a finger) */
+let listSig = '';
+function listSignature(): string {
+  const st = aiStatus();
+  return JSON.stringify([uiLang(), full(), tab, listMenu, chatsError != null ? errorText(chatsError) : null, view.chatId, isThinking(view), st.state,
+    st.state === 'ready' ? st.retentionDays : null, chats?.map((c) => [c.id, c.title, c.kind, c.running, c.updatedAt]) ?? null]);
+}
+
 function paint(): void {
   const panes = document.getElementById('ai-panes');
   if (!panes) return;
   keepFocus(() => {
     panes.className = panesClass();
-    document.getElementById('ai-list-body')?.replaceChildren(...nodes(listBody()));
+    // FB-8: the page carries which pane shows, so a phone can drop the title row inside a conversation
+    panes.closest('.page-ai')?.classList.toggle('conv-on', panes.classList.contains('on-conv'));
+    const lb = document.getElementById('ai-list-body');
+    const sig = listSignature();
+    if (lb && sig !== listSig) {
+      listSig = sig;
+      // Redrawing the list must not throw the reader back to the top
+      const keep = lb.scrollTop;
+      const keepUl = lb.querySelector('.ai-chats')?.scrollTop ?? 0;
+      document.getElementById('ai-list-head')?.replaceWith(listHead());
+      lb.replaceChildren(...nodes(listBody()));
+      if (keep) lb.scrollTop = keep;
+      const ul = lb.querySelector('.ai-chats');
+      if (ul && keepUl) ul.scrollTop = keepUl;
+    }
     document.getElementById('ai-conv-head')?.replaceChildren(...nodes(convHead()));
     paintMsgs();
   });
@@ -800,11 +1110,31 @@ function listThinking(c: AiChatSummary): boolean {
   return c.id === view.chatId && isThinking(view);
 }
 
+/** The list pane's scroller: the rows, then the GitHub line as its last item (the header row stays above it) */
 function listBody(): Child[] {
+  return [...listRows(), githubLine()];
+}
+
+/** The header row of the list pane, above its scroller (so the scroller's edge never cuts its buttons' tap margins):
+ *  [+ New chat] ... [more]; the more menu holds Delete all and the retention note (CH-6) */
+function listHead(): HTMLElement {
+  const st = aiStatus();
+  const hasMenu = (chats?.length ?? 0) > 0 || st.state === 'ready';
+  // A phone turned sideways shares this row with the tabs: there the button shows only its "+" (the label stays its name
+  // and its tap-and-hold tip; CSS hides the text)
+  const newBtn = full()
+    ? h('button', { class: 'btn ai-new', id: 'ai-new', type: 'button', 'aria-label': t('ai.new'), onclick: () => newChat() },
+      ico('plus'), h('span', { class: 'ai-new-l', 'aria-hidden': 'true' }, t('ai.new')))
+    : null;
+  if (newBtn) holdTip(newBtn, t('ai.new'));
+  return h('div', { class: 'ai-list-head', id: 'ai-list-head' },
+    newBtn ?? h('span', { class: 'ai-list-title' }, t('ai.tab.chats')),
+    tabs('ai-ltab', 'ai-ltabs'),
+    hasMenu ? moreMenu() : null);
+}
+
+function listRows(): Child[] {
   const out: Child[] = [];
-  if (full()) {
-    out.push(h('button', { class: 'btn ai-new', id: 'ai-new', type: 'button', onclick: () => newChat() }, miniIcon('plus', 'ai-mi'), t('ai.new')));
-  }
   if (!chats) {
     out.push(chatsError
       ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.err.load', { reason: errorText(chatsError) })),
@@ -825,40 +1155,76 @@ function listBody(): Child[] {
         },
         chatTitleEl(c),
         h('span', { class: 'ai-chat-at' }, c.running ? t(listThinking(c) ? 'ai.thinking' : 'ai.writing') : fmtAiTime(c.updatedAt, localeTag()))),
-        h('button', {
-          class: 'icon-btn ai-chat-del', id: `ai-cdel-${c.id}`, type: 'button', 'aria-label': t('ai.deleteOne.aria', { title }),
-          title: t('ai.deleteOne.aria', { title }), onclick: () => void removeChat(c),
-        }, miniIcon('trash', 'ai-mi')));
+        chatDeleteButton(c, title));
     })));
-    out.push(h('button', { class: 'btn danger ai-delall', id: 'ai-delall', type: 'button', onclick: () => void removeAllChats() }, t('ai.deleteAll')));
   }
-  const st = aiStatus();
-  if (st.state === 'ready') out.push(h('p', { class: 'ai-retention' }, t('ai.retention', { n: st.retentionDays })));
   return out;
+}
+
+/** The red trash icon of a list row (44 px hit area on touch, tap-and-hold tip with the name) */
+function chatDeleteButton(c: AiChatSummary, title: string): HTMLButtonElement {
+  const label = t('ai.deleteOne.aria', { title });
+  const btn = iconButton({ icon: 'trash', tone: 'danger', label, onClick: () => void removeChat(c) });
+  btn.id = `ai-cdel-${c.id}`;
+  btn.classList.add('ai-chat-del');
+  return btn;
+}
+
+/** The "more" button of the list header and its small menu: Delete all chats (red text, confirm kept) and the retention note */
+function moreMenu(): HTMLElement {
+  const st = aiStatus();
+  const menu = listMenu
+    ? h('div', { class: 'ai-menu', id: 'ai-menu', role: 'group', 'aria-label': t('ai.more') },
+      chats?.length
+        ? h('button', {
+          class: 'btn danger ai-delall', id: 'ai-delall', type: 'button',
+          onclick: () => {
+            listMenu = false;
+            paint();
+            void removeAllChats();
+          },
+        }, t('ai.deleteAll'))
+        : null,
+      st.state === 'ready' ? h('p', { class: 'ai-retention' }, t('ai.retention', { n: st.retentionDays })) : null)
+    : null;
+  const more = iconButton({
+    icon: 'more', label: t('ai.more'),
+    onClick: () => {
+      listMenu = !listMenu;
+      paint();
+    },
+  });
+  more.id = 'ai-more';
+  more.classList.add('ai-more');
+  more.setAttribute('aria-haspopup', 'true');
+  more.setAttribute('aria-expanded', String(listMenu));
+  more.setAttribute('aria-controls', 'ai-menu');
+  return h('div', { class: 'ai-more-wrap' }, more, menu);
 }
 
 // ---------------------------------------------------------------- the conversation pane
 
 function convHead(): Child[] {
   const title = view.chatId == null ? t('ai.new') : chatTitleText(view);
-  return [
-    h('button', {
-      class: 'btn quiet ai-back', id: 'ai-back', type: 'button',
-      onclick: () => {
-        pane = 'list';
-        setChatInUrl(null);
-        paint();
-        document.getElementById(view.chatId != null ? `ai-c-${view.chatId}` : 'ai-new')?.focus();
-      },
-    }, miniIcon('back', 'ai-mi'), t('ai.back')),
-    h('h2', { class: 'ai-conv-t', id: 'ai-conv-t' }, title),
-    view.chatId != null
-      ? h('button', {
-        class: 'btn ai-mini danger ai-del', id: 'ai-del', type: 'button',
-        onclick: () => void removeChat({ id: view.chatId as number, title: view.title, kind: view.kind }),
-      }, t('ai.delete'))
-      : null,
-  ];
+  // [back icon + "All chats" (up to 900 px)] [title, at most 2 lines] [red trash icon]
+  const back = iconButton({
+    icon: 'back', label: t('ai.back'), showLabel: true,
+    onClick: () => {
+      // The conversation was pushed as an entry: going back pops it (the popstate listener shows the list)
+      if (pushedConv) history.back();
+      else goList();
+    },
+  });
+  back.id = 'ai-back';
+  back.classList.add('ai-back');
+  let del: HTMLButtonElement | null = null;
+  if (view.chatId != null) {
+    const c = { id: view.chatId, title: view.title, kind: view.kind };
+    del = iconButton({ icon: 'trash', tone: 'danger', label: t('ai.deleteOne.aria', { title }), onClick: () => void removeChat(c) });
+    del.id = 'ai-del';
+    del.classList.add('ai-del');
+  }
+  return [back, h('h2', { class: 'ai-conv-t', id: 'ai-conv-t', tabindex: '-1', title }, title), del];
 }
 
 function footerText(m: ViewMessage): string | null {
@@ -915,11 +1281,33 @@ function suggestionBar(): HTMLElement | null {
       }, t('ai.mem.dismiss'))));
 }
 
+function showCopyState(btn: HTMLElement, st: 'ok' | 'fail' | null): void {
+  btn.classList.remove('ok', 'fail');
+  if (st) btn.classList.add(st);
+  btn.replaceChildren(ico(st === 'ok' ? 'check' : st === 'fail' ? 'xCircle' : 'copy', 'ibtn-ic'));
+}
+
+/** Copy: an icon button; the feedback is on the icon (it turns into a check for 1.5 s), no toast; the live region says it (CH-5) */
 function copyButton(m: AiMessage, text: string): HTMLElement {
-  return h('button', {
-    class: 'btn quiet ai-mini ai-copy', id: `ai-copy-${m.id}`, type: 'button', 'aria-label': t('ai.copyLabel'),
-    onclick: async () => toast(t((await copyText(text)) ? 'ai.copied' : 'ai.copyFailed'), 2500),
-  }, miniIcon('copy', 'ai-mi'), t('ai.copy'));
+  const state = copyState.get(m.id);
+  const btn = iconButton({
+    icon: state === 'ok' ? 'check' : state === 'fail' ? 'xCircle' : 'copy', label: t('ai.copyLabel'),
+    onClick: async () => {
+      const ok = await copyText(text);
+      copyState.set(m.id, ok ? 'ok' : 'fail');
+      announce(t(ok ? 'ai.copied' : 'ai.copyFailed'));
+      // Only this button changes (in place): redrawing every message would replace a button another finger is holding
+      showCopyState(btn, ok ? 'ok' : 'fail');
+      window.setTimeout(() => {
+        copyState.delete(m.id);
+        showCopyState(btn, null);
+      }, COPY_MS);
+    },
+  });
+  btn.id = `ai-copy-${m.id}`;
+  btn.classList.add('ai-copy');
+  if (state) btn.classList.add(state);
+  return btn;
 }
 
 /** What Copy copies: the text shown. A summary request shows only its label, so Copy copies that label, not the
@@ -952,17 +1340,11 @@ function messageEl(m: ViewMessage, retryId: number | null): HTMLElement {
   const showSuggest = suggestion != null && (
     (!user && questionOf(view, m.id)?.id === suggestion.messageId) || (user && m.id === suggestion.messageId && (!next || next.role !== 'assistant')));
   // Every message, sent or answered, has a Copy button (owner's request); not while the answer is still being written
+  const chatKind = (m.kind ?? 'chat') === 'chat';
   const buttons: Child[] = [
     busy || copySource(m).trim() === '' ? null : copyButton(m, copySource(m)),
-    user && full() && (m.kind ?? 'chat') === 'chat'
-      ? h('button', {
-        class: 'btn quiet ai-mini ai-remember', id: `ai-rem-${m.id}`, type: 'button', disabled: sending() || suggestion?.busy === true,
-        onclick: () => void suggest(m.id),
-      }, miniIcon('sparkle', 'ai-mi'), t('ai.mem.remember'))
-      : null,
-    !user && retryId === m.id && full() && (m.kind ?? 'chat') === 'chat'
-      ? h('button', { class: 'btn ai-mini', id: 'ai-retry', type: 'button', onclick: retry }, t('ai.retry'))
-      : null,
+    user && full() && chatKind ? rememberButton(m) : null,
+    !user && retryId === m.id && full() && chatKind ? retryButton() : null,
   ];
   return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant'), id: `ai-m-${m.id}`, 'aria-busy': busy ? 'true' : null },
     whoLine(m),
@@ -970,6 +1352,25 @@ function messageEl(m: ViewMessage, retryId: number | null): HTMLElement {
     foot ? h('p', { class: 'ai-foot' + (bad ? ' bad' : ''), id: `ai-foot-${m.id}` }, foot) : null,
     actsRow(buttons),
     showSuggest ? suggestionBar() : null);
+}
+
+/** Remember (user messages): asks the model for a note, so it follows the request cap (C-6) */
+function rememberButton(m: AiMessage): HTMLElement {
+  const btn = iconButton({ icon: 'memory', label: t('ai.mem.remember'), onClick: guarded(() => void suggest(m.id)) });
+  btn.id = `ai-rem-${m.id}`;
+  btn.classList.add('ai-remember');
+  btn.disabled = sending() || suggestion?.busy === true;
+  applyCap(btn);
+  return btn;
+}
+
+/** Retry (a failed answer): another model call, so it follows the request cap (C-6) */
+function retryButton(): HTMLElement {
+  const btn = iconButton({ icon: 'refresh', label: t('ai.retry'), onClick: guarded(retry) });
+  btn.id = 'ai-retry';
+  btn.classList.add('ai-retry');
+  applyCap(btn);
+  return btn;
 }
 
 function msgsBody(): Child[] {
@@ -990,12 +1391,30 @@ function msgsBody(): Child[] {
 
 // ---------------------------------------------------------------- the composer
 
+/**
+ * The full-height screen (CH-1 / CH-13): the px the input's text may take so that MIN_MSGS_PX of the conversation stay
+ * visible between its head and the composer; Infinity elsewhere (desktop box, list pane shown). Read while the input has its
+ * one-line height (autoGrow has just set it to auto).
+ */
+function textRoom(input: HTMLTextAreaElement, chrome: number): number {
+  if (!composer || !document.documentElement.classList.contains('no-doc-scroll')) return Number.POSITIVE_INFINITY;
+  const head = document.getElementById('ai-conv-head');
+  if (!head || !head.getClientRects().length || !composer.dock.getClientRects().length) return Number.POSITIVE_INFINITY;
+  const free = composer.dock.getBoundingClientRect().top - head.getBoundingClientRect().bottom;
+  return free + input.offsetHeight - chrome - MIN_MSGS_PX;
+}
+
 function autoGrow(input: HTMLTextAreaElement): void {
   input.style.height = 'auto';
   const cs = window.getComputedStyle(input);
   const line = parseFloat(cs.lineHeight) || 22;
   const pad = (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
-  const max = line * 8 + pad;
+  // CH-7: 4 lines on touch or in a window under 700 px tall, 8 on desktop, then the input scrolls inside; never more than
+  // ~22% of the visual viewport, and on the full-height screen never so tall that less than MIN_MSGS_PX of the conversation
+  // stays visible (the open keyboard, a short landscape screen)
+  const room = window.visualViewport?.height ?? window.innerHeight;
+  const lines = composerLines(window.matchMedia('(pointer: coarse)').matches, window.innerHeight, room, line, textRoom(input, pad));
+  const max = line * lines + pad;
   const want = input.scrollHeight + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
   input.style.height = `${Math.ceil(Math.min(want, max))}px`;
   input.style.overflowY = want > max ? 'auto' : 'hidden';
@@ -1015,6 +1434,9 @@ function makeComposer(): Composer {
       autoGrow(input);
       syncCount();
     },
+    // CH-13: iOS pans the page to the focused field; put it back (while the field has the focus and once after it)
+    onfocus: () => startPanWatch(),
+    onblur: () => stopPanWatch(),
     oncompositionstart: () => {
       composing = true;
     },
@@ -1034,9 +1456,10 @@ function makeComposer(): Composer {
   });
   const label = h('label', { class: 'sr-only', for: 'ai-input' });
   const count = h('span', { class: 'ai-count', id: 'ai-count', hidden: true });
-  const btn = h('button', {
-    id: 'ai-send', class: 'btn primary ai-send', type: 'submit',
-    onclick: (e: MouseEvent) => {
+  // Send = the send icon; while an answer is written the same slot is Stop (syncComposer swaps icon, name and tip)
+  const btn = iconButton({
+    icon: 'send', label: t('ai.send'), tone: 'ai',
+    onClick: (e: MouseEvent) => {
       // The first click of a double-click sends and turns this same button into Stop: the second click (and any click
       // within a moment of the switch) must not stop the answer it just started. Enter / Space on the focused button
       // (click count 0) still stops.
@@ -1050,7 +1473,22 @@ function makeComposer(): Composer {
       }
     },
   });
-  const err = h('div', { class: 'err ai-send-err', id: 'ai-send-err', role: 'alert', hidden: true });
+  // Pressing Send / Stop must not take the focus from the input (the keyboard would close after every send)
+  let keptFocus = false;
+  const holdInput = (e: Event): void => {
+    keptFocus = document.activeElement === input;
+    if (keptFocus) e.preventDefault();
+  };
+  btn.addEventListener('pointerdown', holdInput);
+  btn.addEventListener('mousedown', holdInput);
+  btn.addEventListener('click', () => {
+    if (keptFocus && document.activeElement !== input) input.focus({ preventScroll: true });
+    keptFocus = false;
+  });
+  btn.id = 'ai-send';
+  btn.classList.add('ai-send');
+  btn.type = 'submit';
+  const status = h('div', { class: 'ai-status', id: 'ai-status', hidden: true });
   const latestText = h('span', null);
   const latest = h('button', {
     class: 'btn ai-latest', id: 'ai-latest', type: 'button', hidden: true,
@@ -1058,16 +1496,42 @@ function makeComposer(): Composer {
       toBottom();
       composer?.input.focus({ preventScroll: true });
     },
-  }, miniIcon('down', 'ai-mi'), latestText);
+  }, ico('down'), latestText);
   const form = h('form', {
-    class: 'ai-composer', id: 'ai-composer', novalidate: true,
+    class: 'ai-form', id: 'ai-form', novalidate: true,
     onsubmit: (e: SubmitEvent) => {
       e.preventDefault();
       if (sending()) return;
       send();
     },
-  }, latest, err, label, input, h('div', { class: 'ai-composer-side' }, count, btn));
-  return { form, input, label, count, btn, err, latest, latestText };
+  }, latest, status, label, input, h('div', { class: 'ai-composer-side' }, count, btn));
+  // The fixed footer of CH-13: the form (full mode only) and the administrator notice line under it (CH-3)
+  const notice = noticeButton('ai-notice-dock');
+  const dock = h('div', { class: 'ai-composer', id: 'ai-composer' }, form, notice);
+  dockObserver?.disconnect();
+  dockObserver = null;
+  if (typeof ResizeObserver !== 'undefined') {
+    dockObserver = new ResizeObserver(syncComposerHeight);
+    // The border box: html.kb-open changes only the footer's bottom padding (safe area -> 8 px), which the content box misses
+    dockObserver.observe(dock, { box: 'border-box' });
+  }
+  return { form, input, label, count, btn, status, latest, latestText, dock, notice };
+}
+
+function toggleNotice(): void {
+  noticeOpen = !noticeOpen;
+  for (const b of document.querySelectorAll<HTMLElement>('.ai-notice-btn')) {
+    b.classList.toggle('open', noticeOpen);
+    b.setAttribute('aria-expanded', String(noticeOpen));
+  }
+  syncComposerHeight();
+}
+
+/** The administrator notice as one muted line with the info icon (ellipsis); a tap shows the full text in place (CH-3) */
+function noticeButton(extra: string): HTMLButtonElement {
+  return h('button', {
+    type: 'button', class: `ai-notice-btn ${extra}` + (noticeOpen ? ' open' : ''), 'aria-expanded': String(noticeOpen), onclick: toggleNotice,
+  }, ico('info'), h('span', null, t('ai.adminNotice')));
 }
 
 function syncCount(): void {
@@ -1080,7 +1544,63 @@ function syncCount(): void {
   composer.count.classList.toggle('over', n > max);
 }
 
-/** Brings the composer in line with the state: the language, Send or Stop, the counter, the error */
+/** An answer is being written in another chat (CH-7): the status slot says so and offers Stop it */
+function busyElsewhere(): boolean {
+  const st = aiStatus();
+  return st.state === 'ready' && isBusyElsewhere(st.running, view.chatId, sending());
+}
+
+/** While "another chat is busy" shows: the AI status is read again every few seconds, so the line goes when that answer ends */
+const BUSY_POLL_MS = 3000;
+let busyTimer: number | null = null;
+
+function watchBusy(on: boolean): void {
+  if (!on) {
+    if (busyTimer != null) window.clearTimeout(busyTimer);
+    busyTimer = null;
+    return;
+  }
+  if (busyTimer != null) return;
+  busyTimer = window.setTimeout(() => {
+    busyTimer = null;
+    if (!onPage() || !busyElsewhere()) return;
+    void refreshAi(true).then(() => {
+      if (onPage()) syncComposer();
+    });
+  }, BUSY_POLL_MS);
+}
+
+/** Redraws the status slot when what it shows changed: an error, the cap callout, or "another chat is busy" + Stop it */
+function syncStatus(c: Composer): void {
+  const block = callBlock();
+  const kind = composerStatus({ sendError, capped: block != null, busyElsewhere: busyElsewhere() });
+  watchBusy(kind === 'busy' && onPage());
+  const text = kind === 'error' ? (sendError ?? '') : kind === 'cap' && block ? capShort(block) : kind === 'busy' ? t('ai.busyElsewhere') : '';
+  const sig = `${kind}|${text}|${uiLang()}`;
+  if (sig === statusSig) return;
+  statusSig = sig;
+  // The slot's height changed: the input may now take more or fewer lines (the conversation keeps its room)
+  if (composer && document.activeElement === composer.input) queueMicrotask(() => composer && autoGrow(composer.input));
+  c.status.hidden = kind == null;
+  if (kind === 'error') {
+    c.status.replaceChildren(h('div', { class: 'err ai-send-err', id: 'ai-send-err', role: 'alert' }, h('p', null, text)));
+  } else if (kind === 'cap') {
+    // Warn callout with the clock; no alert role (it only stands there while the cap blocks calls)
+    const longText = block ? capText(block) : text;
+    const note = h('div', { class: 'callout warn ai-cap', id: 'ai-cap-note' }, ico('clock'),
+      h('span', { class: 'ai-cap-t', 'aria-hidden': 'true' }, text), h('span', { class: 'sr-only' }, longText));
+    holdTip(note, longText);
+    c.status.replaceChildren(note);
+  } else if (kind === 'busy') {
+    c.status.replaceChildren(h('div', { class: 'ai-busy', id: 'ai-busy' },
+      h('span', null, text),
+      h('button', { class: 'btn ai-mini', id: 'ai-stop-other', type: 'button', onclick: () => void stopElsewhere() }, t('ai.stopIt'))));
+  } else {
+    c.status.replaceChildren();
+  }
+}
+
+/** Brings the composer in line with the state: the language, Send or Stop, the counter, the status slot */
 function syncComposer(): void {
   const c = composer;
   if (!c) return;
@@ -1090,11 +1610,28 @@ function syncComposer(): void {
   if (busy && c.btn.type !== 'button') stopSince = Date.now();
   c.btn.type = busy ? 'button' : 'submit';
   c.btn.classList.toggle('stop', busy);
-  c.btn.classList.toggle('primary', !busy);
-  c.btn.textContent = t(busy ? 'ai.stop' : 'ai.send');
-  c.err.hidden = !sendError;
-  c.err.replaceChildren(sendError ? h('p', null, sendError) : '');
+  const label = t(busy ? 'ai.stop' : 'ai.send');
+  const icon = busy ? 'stop' : 'send';
+  if (c.btn.dataset.icon !== icon) {
+    c.btn.dataset.icon = icon;
+    c.btn.replaceChildren(ico(icon, 'ibtn-ic'));
+  }
+  c.btn.setAttribute('aria-label', label);
+  // Send needs a model call: while the cap blocks calls it is aria-disabled with the cap text as its tip; Stop never is
+  const q = callBlock();
+  if (!busy && q) {
+    c.btn.setAttribute('aria-disabled', 'true');
+    c.btn.setAttribute('aria-describedby', 'ai-cap-note');
+    holdTip(c.btn, capText(q));
+  } else {
+    c.btn.removeAttribute('aria-disabled');
+    c.btn.removeAttribute('aria-describedby');
+    holdTip(c.btn, label);
+  }
+  syncStatus(c);
   c.latestText.textContent = t('ai.latest');
+  const noticeText = c.notice.lastElementChild;
+  if (noticeText) noticeText.textContent = t('ai.adminNotice');
   syncCount();
   syncLatest();
 }
@@ -1185,6 +1722,14 @@ function cancelMemEdit(id: number): void {
   document.getElementById(`ai-medit-${id}`)?.focus();
 }
 
+/** An icon button of a memory row (pencil, red trash, save, cancel): the name is the label, disabled while a save runs */
+function memIcon(icon: MiniIcon, label: string, id: string, onClick: () => void, tone: 'default' | 'danger' | 'ai' = 'default'): HTMLButtonElement {
+  const b = iconButton({ icon, label, tone, onClick });
+  b.id = id;
+  b.disabled = memBusy;
+  return b;
+}
+
 function memoryRow(m: AiMemory): HTMLElement {
   const editing = memEdit?.id === m.id;
   const max = limits().memoryChars;
@@ -1205,31 +1750,21 @@ function memoryRow(m: AiMemory): HTMLElement {
     area.value = memEdit.text;
     return h('li', { class: 'ai-mem-row editing' },
       area,
-      h('div', { class: 'ai-mem-acts' },
-        h('button', { class: 'btn primary ai-mini', id: `ai-msave-${m.id}`, type: 'button', disabled: memBusy, onclick: () => void saveMemEdit() }, t('ai.mem.save')),
-        h('button', {
-          class: 'btn quiet ai-mini', type: 'button', disabled: memBusy,
-          onclick: () => cancelMemEdit(m.id),
-        }, t('ai.mem.cancel'))));
+      h('div', { class: 'ai-mem-acts' }, memIcon('check', t('ai.mem.save'), `ai-msave-${m.id}`, () => void saveMemEdit(), 'ai'),
+        memIcon('x', t('ai.mem.cancel'), `ai-mcancel-${m.id}`, () => cancelMemEdit(m.id))));
   }
   return h('li', { class: 'ai-mem-row' },
-    h('span', { class: 'ai-mem-src', role: 'img', 'aria-label': t(src), title: t(src) }, miniIcon(m.source === 'chat' ? 'chat' : 'pencil', 'ai-mi')),
+    h('span', { class: 'ai-mem-src', role: 'img', 'aria-label': t(src), title: t(src) }, miniIcon(m.source === 'chat' ? 'chat' : 'plus', 'ai-mi')),
     h('p', { class: 'ai-mem-t' }, m.content),
     h('div', { class: 'ai-mem-acts' },
       full()
-        ? h('button', {
-          class: 'btn quiet ai-mini', id: `ai-medit-${m.id}`, type: 'button', disabled: memBusy, 'aria-label': t('ai.mem.editAria', { text: shortText(m.content) }),
-          onclick: () => {
-            memEdit = { id: m.id, text: m.content };
-            render();
-            document.getElementById(`ai-medit-in-${m.id}`)?.focus();
-          },
-        }, t('ai.mem.edit'))
+        ? memIcon('pencil', t('ai.mem.editAria', { text: shortText(m.content) }), `ai-medit-${m.id}`, () => {
+          memEdit = { id: m.id, text: m.content };
+          render();
+          document.getElementById(`ai-medit-in-${m.id}`)?.focus();
+        })
         : null,
-      h('button', {
-        class: 'btn quiet ai-mini danger', id: `ai-mdel-${m.id}`, type: 'button', disabled: memBusy,
-        'aria-label': t('ai.mem.deleteAria', { text: shortText(m.content) }), onclick: () => void removeMem(m),
-      }, t('ai.mem.delete'))));
+      memIcon('trash', t('ai.mem.deleteAria', { text: shortText(m.content) }), `ai-mdel-${m.id}`, () => void removeMem(m), 'danger')));
 }
 
 function memoryView(): HTMLElement {
@@ -1260,6 +1795,10 @@ function memoryView(): HTMLElement {
   });
   area.value = memDraft;
   const count = h('span', { class: 'ai-count', id: 'ai-mem-count' }, t('ai.mem.count', { n: memoryLength(memDraft), max: lim.memoryChars }));
+  const addBtn = iconButton({ icon: 'plus', label: t('ai.mem.add'), tone: 'ai', showLabel: true });
+  addBtn.id = 'ai-mem-add';
+  addBtn.type = 'submit';
+  addBtn.disabled = memBusy || (list != null && list.length >= lim.memories);
   const form = full()
     ? h('form', {
       class: 'ai-mem-add', novalidate: true,
@@ -1269,10 +1808,8 @@ function memoryView(): HTMLElement {
       },
     },
     h('label', { class: 'fld-l', for: 'ai-mem-input' }, t('ai.mem.addLabel')),
-    area,
-    h('div', { class: 'ai-mem-addrow' }, count,
-      h('button', { class: 'btn primary ai-mini', id: 'ai-mem-add', type: 'submit', disabled: memBusy || (list != null && list.length >= lim.memories) },
-        miniIcon('plus', 'ai-mi'), t('ai.mem.add'))))
+    h('div', { class: 'ai-mem-addrow' }, area, addBtn),
+    count)
     : null;
   return h('section', { class: 'panel ai-mem', 'aria-labelledby': 'ai-mem-h' },
     h('div', { class: 'ai-mem-head' },
@@ -1281,34 +1818,62 @@ function memoryView(): HTMLElement {
     h('p', { class: 'ai-mem-intro' }, t('ai.mem.intro')),
     form,
     memFormError ? h('div', { class: 'err', role: 'alert' }, h('p', null, memFormError)) : null,
-    body);
+    body,
+    // The last item of the memory scroller
+    githubLine());
 }
 
 // ---------------------------------------------------------------- the page
 
-function tabs(): HTMLElement {
-  const b = (which: 'chats' | 'memory', label: string): HTMLElement => h('button', {
-    type: 'button', id: `ai-tab-${which}`, 'aria-pressed': String(tab === which),
+/** The Chats / Memory switch: icon + short label; icon only up to 380 px (CSS), the name stays as aria-label and tip (CH-2).
+ *  `idp` tells the three places apart: the title row, the list header and the memory head (the last two show in short
+ *  landscape only, where the title row is hidden, CH-11) */
+function tabs(idp = 'ai-tab', cls = ''): HTMLElement {
+  const b = (which: 'chats' | 'memory', label: string, icon: MiniIcon): HTMLElement => holdTip(h('button', {
+    type: 'button', id: `${idp}-${which}`, 'aria-pressed': String(tab === which), 'aria-label': label, title: label,
     onclick: () => {
       if (tab === which) return;
       tab = which;
       memEdit = null;
       render();
+      // A tab switch keeps the focus on the pressed tab (the visible one of the sets; CH-9). Back to an open conversation on a
+      // phone no tab is shown (FB-8): the focus goes to the conversation title, as when a chat is opened
+      const next = ['ai-tab', 'ai-ltab', 'ai-mtab'].map((p) => document.getElementById(`${p}-${which}`)).find((el) => el?.offsetParent != null);
+      (next ?? document.getElementById('ai-conv-t'))?.focus({ preventScroll: true });
     },
-  }, label);
-  return h('div', { class: 'seg ai-tabs', role: 'group', 'aria-label': t('ai.tabs') }, b('chats', t('ai.tab.chats')), b('memory', t('ai.tab.memory')));
+  }, ico(icon), h('span', { class: 'ai-tab-l' }, label)), label);
+  return h('div', { class: 'seg ai-tabs' + (cls ? ` ${cls}` : ''), role: 'group', 'aria-label': t('ai.tabs') },
+    b('chats', t('ai.tab.chats'), 'chat'), b('memory', t('ai.tab.memory'), 'memory'));
+}
+
+/** CH-8: a paused user with chats sees one muted line in the composer's place (the notice line stays under it) */
+function readOnlyLine(): HTMLElement {
+  const st = aiStatus();
+  const reason = st.state === 'ready' ? readOnlyReason(st) : 'unavailable';
+  const paused = reason === 'suspended';
+  const text = paused
+    ? t('ai.readOnly.paused')
+    : (reason === 'noFunction' ? t('ai.err.notAllowed') : badgeReasonText(reason, isAdmin())) + (uiLang() === 'en' ? ' ' : '') + t('ai.readOnlyTail');
+  return h('p', { class: 'ai-readonly-line', id: 'ai-readonly' }, ico(paused ? 'pauseCircle' : 'info'), h('span', null, text));
 }
 
 function chatsView(): HTMLElement {
   if (!composer) composer = makeComposer();
   syncComposer();
+  listSig = listSignature();
+  composer.dock.replaceChildren(...(full() ? [composer.form] : [readOnlyLine()]), composer.notice);
   const conv = h('section', { class: 'ai-conv', 'aria-labelledby': 'ai-conv-t' },
     h('div', { class: 'ai-conv-head', id: 'ai-conv-head' }, convHead()),
     h('div', { class: 'ai-scroll', id: 'ai-scroll', tabindex: '0', role: 'region', 'aria-label': t('ai.msgs.label'), onscroll: onScroll },
       h('div', { class: 'ai-msgs-wrap', id: 'ai-msgs-wrap' }, msgsBody())),
-    full() ? composer.form : null);
+    composer.dock);
   return h('div', { class: panesClass(), id: 'ai-panes' },
-    h('aside', { class: 'ai-list', 'aria-label': t('ai.tab.chats') }, h('div', { class: 'ai-list-body', id: 'ai-list-body' }, listBody())),
+    h('aside', { class: 'ai-list', 'aria-label': t('ai.tab.chats') },
+      listHead(),
+      // The footer line is the last item of the list's scroller (listBody), never inside a conversation
+      h('div', { class: 'ai-list-body', id: 'ai-list-body' }, listBody()),
+      // The notice also shows under the list on phones (the composer's one is in the conversation pane)
+      noticeButton('ai-notice-flow')),
     conv);
 }
 
@@ -1317,6 +1882,7 @@ function chatsView(): HTMLElement {
  * blame the account. Retry reads the status again; the page follows when the service answers.
  */
 export function renderAiUnavailable(): HTMLElement {
+  lockDocument(false);
   const retryBtn = h('button', {
     class: 'btn', id: 'ai-unavail-retry', type: 'button',
     onclick: async () => {
@@ -1337,6 +1903,7 @@ export function renderAiUnavailable(): HTMLElement {
  * account without it. Nothing here names the ai-service container (administrators see that only in AI settings).
  */
 export function renderAiNoAccess(): HTMLElement {
+  lockDocument(false);
   const st = aiStatus();
   const key = st.state === 'ready' ? noAccessKey(st) : 'ai.noAccess.noFn';
   return h('div', { class: 'page page-ai' },
@@ -1347,26 +1914,44 @@ export function renderAiNoAccess(): HTMLElement {
 export function renderAiChat(m: ChatMode): HTMLElement {
   installOnce();
   mode = m;
+  // Up to 900 px the document is locked: only the lists scroll (CH-1, CH-13)
+  lockDocument(phoneScreen());
   if (!entered) enter();
-  const st = aiStatus();
-  // Why the page is read only; the reason reads exactly like the header badge's tooltip (the same texts), then what still works
-  const reason = st.state === 'ready' ? readOnlyReason(st) : 'unavailable';
-  const why = reason === 'noFunction' ? t('ai.err.notAllowed') : badgeReasonText(reason, isAdmin());
-  const readOnlyNote = m === 'readOnly' ? h('p', { class: 'callout note ai-readonly' }, why + (uiLang() === 'en' ? ' ' : '') + t('ai.readOnlyTail')) : null;
-  const root = h('div', { class: 'page page-ai' + (m === 'readOnly' ? ' ro' : '') },
+  const root = h('div', { class: 'page page-ai' + (m === 'readOnly' ? ' ro' : '') + (tab === 'chats' && panesClass() === 'ai-panes on-conv' ? ' conv-on' : '') },
     h('header', { class: 'page-head ai-head' },
       // Free mode on (administrators, chosen in Settings): a green tag next to the title; nothing in normal mode
       h('div', { class: 'ai-title' }, h('h1', null, t('ai.title')),
         isAdmin() && aiFreeMode() ? h('span', { class: 'ai-mode-tag', role: 'status' }, t('ai.freeTag')) : null),
       tabs()),
-    h('p', { class: 'ai-notice' }, miniIcon('info', 'ai-mi'), h('span', null, t('ai.adminNotice'))),
-    readOnlyNote,
-    tab === 'chats' ? chatsView() : memoryView(),
+    // Wide screens: the line under the title; up to 900 px it sits under the composer / the lists instead (CH-3)
+    h('p', { class: 'ai-notice ai-notice-top' }, miniIcon('info', 'ai-mi'), h('span', null, t('ai.adminNotice'))),
+    tab === 'chats' ? chatsView() : h('div', { class: 'ai-memwrap' }, tabs('ai-mtab', 'ai-ltabs ai-mtabs'), memoryView(), noticeButton('ai-notice-flow')),
     h('div', { class: 'sr-only', id: 'ai-sr', role: 'status', 'aria-live': 'polite' }));
+  // CH-13: every other text field (suggestion, memory edits) also undoes iOS's page pan while it has the focus
+  const otherField = (e: Event): boolean => {
+    const el = e.target as HTMLElement | null;
+    return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') && el.id !== 'ai-input';
+  };
+  root.addEventListener('focusin', (e) => {
+    if (otherField(e) && document.documentElement.classList.contains('no-doc-scroll')) startPanWatch();
+  });
+  root.addEventListener('focusout', (e) => {
+    if (otherField(e)) stopPanWatch();
+  });
   // After the page is in the document: the composer's height, and the conversation at its end
   queueMicrotask(() => {
-    if (!root.isConnected || tab !== 'chats') return;
+    if (!root.isConnected) return;
+    if (tab !== 'chats') {
+      listObserver?.disconnect();
+      listObserver = null;
+      liftToastAbove(null);
+      return;
+    }
+    // Toasts sit above the composer's footer (SH-4)
+    liftToastAbove(composer && full() ? composer.dock : null);
     if (composer) autoGrow(composer.input);
+    syncComposerHeight();
+    watchList();
     if (stick) toBottom();
   });
   return root;

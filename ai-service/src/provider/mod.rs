@@ -231,19 +231,223 @@ impl Target {
     }
 }
 
-/// The chat request body in the target's format.
+/// How the answer-length limit is put into a request body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenField {
+    /// OpenAI-compatible: `"max_tokens"` (Anthropic always uses this one)
+    MaxTokens,
+    /// OpenAI-compatible: `"max_completion_tokens"` (OpenAI's reasoning and newer models)
+    MaxCompletionTokens,
+    /// OpenAI-compatible: no token field at all (the body of v0.9.1)
+    Omit,
+}
+
+impl TokenField {
+    /// The JSON key, or `None` for [`TokenField::Omit`].
+    pub fn key(self) -> Option<&'static str> {
+        match self {
+            TokenField::MaxTokens => Some("max_tokens"),
+            TokenField::MaxCompletionTokens => Some("max_completion_tokens"),
+            TokenField::Omit => None,
+        }
+    }
+}
+
+/// The field and the value of the answer-length limit of one request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenLimit {
+    pub field: TokenField,
+    pub value: i64,
+}
+
+impl TokenLimit {
+    /// No token field (the administrator's connection test with an OpenAI-compatible service).
+    pub fn omit() -> TokenLimit {
+        TokenLimit {
+            field: TokenField::Omit,
+            value: 0,
+        }
+    }
+
+    pub fn max_tokens(value: i64) -> TokenLimit {
+        TokenLimit {
+            field: TokenField::MaxTokens,
+            value,
+        }
+    }
+}
+
+/// The chat request body in the target's format. OpenAI-compatible: the token field is added when it is not `Omit`
+/// and nothing else changes; Anthropic: `max_tokens` is always sent (the API requires it).
 pub fn chat_body(
     format: Format,
     model: &str,
     system: &str,
     turns: &[Turn],
     usage_option: bool,
-    max_tokens: i64,
+    token: TokenLimit,
 ) -> Value {
     match format {
-        Format::OpenAi => openai::body(model, system, turns, usage_option),
-        Format::Anthropic => anthropic::body(model, system, turns, max_tokens),
+        Format::OpenAi => openai::body(model, system, turns, usage_option, token),
+        Format::Anthropic => anthropic::body(model, system, turns, token.value),
     }
+}
+
+/// What a settings fingerprint learned about the token limit (kept in memory only, see `App`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenMemo {
+    pub field: TokenField,
+    /// Anthropic: the ceiling the model accepted
+    pub cap: Option<i64>,
+}
+
+/// The first request's limit: the answer length converted to tokens (`want`), in the field the remembered step of this
+/// settings fingerprint says (OpenAI-compatible), or clamped to what the model is known to accept (Anthropic: the
+/// remembered cap, else 4096 when the stored connection test found 8192 too large).
+pub fn first_token_limit(
+    format: Format,
+    want: i64,
+    stored_max: i64,
+    memo: Option<TokenMemo>,
+) -> TokenLimit {
+    match format {
+        Format::OpenAi => TokenLimit {
+            field: memo.map_or(TokenField::MaxTokens, |m| m.field),
+            value: want,
+        },
+        Format::Anthropic => {
+            let cap = memo
+                .and_then(|m| m.cap)
+                .or((stored_max == 4096).then_some(4096));
+            TokenLimit::max_tokens(cap.map_or(want, |c| want.min(c)))
+        }
+    }
+}
+
+/// The step after `sent` on the ladder, whatever the refusal said: OpenAI-compatible `MaxTokens` ->
+/// `MaxCompletionTokens` (same value) -> `Omit` -> none; Anthropic `v` -> `min(v, stored_max)` when that is smaller.
+pub fn ladder_after(format: Format, sent: &TokenLimit, stored_max: i64) -> Option<TokenLimit> {
+    match format {
+        Format::OpenAi => match sent.field {
+            TokenField::MaxTokens => Some(TokenLimit {
+                field: TokenField::MaxCompletionTokens,
+                value: sent.value,
+            }),
+            TokenField::MaxCompletionTokens => Some(TokenLimit {
+                field: TokenField::Omit,
+                value: sent.value,
+            }),
+            TokenField::Omit => None,
+        },
+        Format::Anthropic => (stored_max < sent.value).then(|| TokenLimit::max_tokens(stored_max)),
+    }
+}
+
+/// `true` when the error body (JSON, as OpenAI or Anthropic write it) names `field` as `error.param` or inside
+/// `error.message` / `message`.
+fn body_names(error_body: &str, field: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(error_body) else {
+        return false;
+    };
+    let err = v.get("error");
+    let candidates = [
+        err.and_then(|e| e.get("param")).and_then(Value::as_str),
+        err.and_then(|e| e.get("message")).and_then(Value::as_str),
+        err.and_then(Value::as_str),
+        v.get("message").and_then(Value::as_str),
+    ];
+    candidates.iter().flatten().any(|text| text.contains(field))
+}
+
+/// The next step of the ladder after an HTTP refusal answered before any stream event: only for status 400 or 422
+/// whose error body names the field that was sent; otherwise `None` (the refusal stays the ordinary upstream error).
+pub fn next_token_limit(
+    format: Format,
+    sent: &TokenLimit,
+    status: u16,
+    error_body: &str,
+    stored_max: i64,
+) -> Option<TokenLimit> {
+    if !matches!(status, 400 | 422) {
+        return None;
+    }
+    let field = match (format, sent.field.key()) {
+        (_, Some(k)) => k,
+        (Format::Anthropic, None) => "max_tokens",
+        (Format::OpenAi, None) => return None,
+    };
+    if !body_names(error_body, field) {
+        return None;
+    }
+    ladder_after(format, sent, stored_max)
+}
+
+/// Called with the step that was accepted after a refusal.
+pub type Remember = Arc<dyn Fn(&TokenLimit) + Send + Sync>;
+
+/// The requests of one model call, in ladder order: the first request and, behind it, each fallback that can follow a
+/// refused token field. Built together while the key is decrypted; the reader sends a next one only on such a refusal.
+/// No `Debug` (the requests carry keys).
+pub struct Plan {
+    pub format: Format,
+    /// The stored result of the connection test (the Anthropic ceiling)
+    pub stored_max: i64,
+    pub steps: Vec<(TokenLimit, reqwest::Request)>,
+    /// The app remembers the accepted step per settings fingerprint
+    pub remember: Option<Remember>,
+}
+
+impl Plan {
+    /// A call without a ladder (the connection test).
+    pub fn single(format: Format, req: reqwest::Request) -> Plan {
+        Plan {
+            format,
+            stored_max: 0,
+            steps: vec![(TokenLimit::omit(), req)],
+            remember: None,
+        }
+    }
+}
+
+/// The parts of a chat request besides the token limit.
+pub struct ChatSpec<'a> {
+    pub model: &'a str,
+    pub system: &'a str,
+    pub turns: &'a [Turn],
+    pub usage_option: bool,
+    pub skip_cache: bool,
+}
+
+/// Builds the plan: the request with `first`, then one request per later step of the ladder.
+pub fn build_plan(
+    target: &Target,
+    client: &reqwest::Client,
+    spec: &ChatSpec<'_>,
+    first: TokenLimit,
+    stored_max: i64,
+    remember: Option<Remember>,
+) -> Result<Plan, UpError> {
+    let mut steps = Vec::new();
+    let mut limit = Some(first);
+    while let Some(l) = limit {
+        let body = chat_body(
+            target.format,
+            spec.model,
+            spec.system,
+            spec.turns,
+            spec.usage_option,
+            l,
+        );
+        let req = target.chat_request(client, &body, spec.skip_cache)?;
+        steps.push((l, req));
+        limit = ladder_after(target.format, &l, stored_max);
+    }
+    Ok(Plan {
+        format: target.format,
+        stored_max,
+        steps,
+        remember,
+    })
 }
 
 /// Reads at most `cap` bytes of a body (each read within `idle`); `None` when it is larger or the read fails.
@@ -290,6 +494,13 @@ impl Handler {
     }
 }
 
+/// What one request ended in: it ran (its result went to the channel), or the service refused it by HTTP status before
+/// any stream event (nothing was sent to the channel yet).
+enum Attempt {
+    Ran,
+    Refused { status: u16, body: Vec<u8> },
+}
+
 /// Sends a streaming chat request and reports what arrives on `tx`, ending with exactly one `Done` or `Fail`.
 /// Dropping the future (abort) drops the connection.
 pub async fn stream_chat(
@@ -299,15 +510,72 @@ pub async fn stream_chat(
     t: Timeouts,
     tx: UnboundedSender<Up>,
 ) {
+    if let Attempt::Refused { status, body } = stream_once(client, req, format, t, &tx).await {
+        let _ = tx.send(Up::Fail(UpError::new(
+            errors::from_body(status, &body),
+            Some(status),
+        )));
+    }
+}
+
+/// Runs a plan: the first request, and after an HTTP 400 / 422 that names the token field it sent (before any stream
+/// event) the next step of the ladder. Several requests, but one call: the caller counts, times and records it once.
+/// Ends with exactly one `Done` or `Fail` on `tx`.
+pub async fn stream_plan(
+    client: &reqwest::Client,
+    plan: Plan,
+    t: Timeouts,
+    tx: UnboundedSender<Up>,
+) {
+    let Plan {
+        format,
+        stored_max,
+        steps,
+        remember,
+    } = plan;
+    let total = steps.len();
+    for (i, (sent, req)) in steps.into_iter().enumerate() {
+        match stream_once(client, req, format, t, &tx).await {
+            Attempt::Ran => {
+                if i > 0 {
+                    if let Some(r) = &remember {
+                        r(&sent);
+                    }
+                }
+                return;
+            }
+            Attempt::Refused { status, body } => {
+                let text = String::from_utf8_lossy(&body);
+                let retry = i + 1 < total
+                    && next_token_limit(format, &sent, status, &text, stored_max).is_some();
+                if !retry {
+                    let _ = tx.send(Up::Fail(UpError::new(
+                        errors::from_body(status, &body),
+                        Some(status),
+                    )));
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn stream_once(
+    client: &reqwest::Client,
+    req: reqwest::Request,
+    format: Format,
+    t: Timeouts,
+    tx: &UnboundedSender<Up>,
+) -> Attempt {
     let fail = |code: UpCode, http: Option<u16>| Up::Fail(UpError::new(code, http));
     let mut resp = match tokio::time::timeout(t.first_byte, client.execute(req)).await {
         Err(_) => {
             let _ = tx.send(fail(UpCode::Timeout, None));
-            return;
+            return Attempt::Ran;
         }
         Ok(Err(e)) => {
             let _ = tx.send(fail(errors::from_reqwest(&e), None));
-            return;
+            return Attempt::Ran;
         }
         Ok(Ok(r)) => r,
     };
@@ -320,8 +588,7 @@ pub async fn stream_chat(
                 .await
                 .unwrap_or_default()
         };
-        let _ = tx.send(fail(errors::from_body(status, &body), Some(status)));
-        return;
+        return Attempt::Refused { status, body };
     }
     let mut parser = sse::SseParser::new(MAX_EVENT);
     let mut handler = match format {
@@ -333,11 +600,11 @@ pub async fn stream_chat(
         let chunk = match tokio::time::timeout(t.idle, resp.chunk()).await {
             Err(_) => {
                 let _ = tx.send(fail(UpCode::Timeout, Some(status)));
-                return;
+                return Attempt::Ran;
             }
             Ok(Err(e)) => {
                 let _ = tx.send(fail(errors::from_reqwest(&e), Some(status)));
-                return;
+                return Attempt::Ran;
             }
             Ok(Ok(c)) => c,
         };
@@ -349,7 +616,7 @@ pub async fn stream_chat(
             Ok(e) => e,
             Err(sse::TooLarge) => {
                 let _ = tx.send(fail(UpCode::Protocol, Some(status)));
-                return;
+                return Attempt::Ran;
             }
         };
         let mut items = Vec::new();
@@ -369,7 +636,7 @@ pub async fn stream_chat(
                     chars += s.chars().count();
                     if chars > MAX_ANSWER_CHARS {
                         let _ = tx.send(fail(UpCode::TooLong, Some(status)));
-                        return;
+                        return Attempt::Ran;
                     }
                     Up::Text(s)
                 }
@@ -379,17 +646,17 @@ pub async fn stream_chat(
                 Item::Truncated => Up::Truncated,
                 Item::Done => {
                     let _ = tx.send(Up::Done);
-                    return;
+                    return Attempt::Ran;
                 }
                 Item::Fail(code) => {
                     let _ = tx.send(fail(code, Some(status)));
-                    return;
+                    return Attempt::Ran;
                 }
             };
             let _ = tx.send(up);
         }
         if chunk.is_none() {
-            return;
+            return Attempt::Ran;
         }
     }
 }
@@ -404,18 +671,17 @@ pub struct Collected {
     pub first_byte_ms: Option<i64>,
 }
 
-/// Runs a chat request to the end within `total`, collecting the text.
+/// Runs a chat call (its whole plan) to the end within `total`, collecting the text.
 pub async fn collect_chat(
     client: &reqwest::Client,
-    req: reqwest::Request,
-    format: Format,
+    plan: Plan,
     t: Timeouts,
     total: Duration,
 ) -> Result<Collected, UpError> {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let started = std::time::Instant::now();
     let client = client.clone();
-    let reader = tokio::spawn(async move { stream_chat(&client, req, format, t, tx).await });
+    let reader = tokio::spawn(async move { stream_plan(&client, plan, t, tx).await });
     let mut out = Collected::default();
     let deadline = tokio::time::sleep(total);
     tokio::pin!(deadline);
@@ -681,6 +947,156 @@ mod tests {
         );
         assert_eq!(parse_models(br#"{"data":[]}"#, Format::OpenAi), None);
         assert_eq!(parse_models(b"oops", Format::OpenAi), None);
+    }
+
+    fn turns() -> Vec<Turn> {
+        vec![Turn {
+            role: Role::User,
+            content: "hi".into(),
+        }]
+    }
+
+    #[test]
+    fn chat_body_per_token_field() {
+        let t = turns();
+        let tl = |field, value| TokenLimit { field, value };
+        let plain = chat_body(Format::OpenAi, "m", "s", &t, true, TokenLimit::omit());
+        assert!(plain.get("max_tokens").is_none());
+        assert!(plain.get("max_completion_tokens").is_none());
+        let a = chat_body(
+            Format::OpenAi,
+            "m",
+            "s",
+            &t,
+            true,
+            tl(TokenField::MaxTokens, 1500),
+        );
+        assert_eq!(a["max_tokens"], serde_json::json!(1500));
+        let b = chat_body(
+            Format::OpenAi,
+            "m",
+            "s",
+            &t,
+            true,
+            tl(TokenField::MaxCompletionTokens, 1500),
+        );
+        assert_eq!(b["max_completion_tokens"], serde_json::json!(1500));
+        assert!(b.get("max_tokens").is_none());
+        // nothing else changed
+        for (k, v) in plain.as_object().expect("object") {
+            assert_eq!(&a[k], v);
+            assert_eq!(&b[k], v);
+        }
+        assert_eq!(a.as_object().map(|m| m.len()), Some(5));
+        // Anthropic: always max_tokens
+        let c = chat_body(
+            Format::Anthropic,
+            "m",
+            "s",
+            &t,
+            true,
+            TokenLimit::max_tokens(1500),
+        );
+        assert_eq!(c["max_tokens"], serde_json::json!(1500));
+    }
+
+    #[test]
+    fn first_limit_uses_the_memo_and_the_stored_ceiling() {
+        let want = 24000;
+        assert_eq!(
+            first_token_limit(Format::OpenAi, want, 8192, None),
+            TokenLimit::max_tokens(want)
+        );
+        let memo = TokenMemo {
+            field: TokenField::MaxCompletionTokens,
+            cap: None,
+        };
+        assert_eq!(
+            first_token_limit(Format::OpenAi, 1500, 8192, Some(memo)),
+            TokenLimit {
+                field: TokenField::MaxCompletionTokens,
+                value: 1500
+            }
+        );
+        // Anthropic: the stored 4096 clamps at once; 8192 stored does not
+        assert_eq!(
+            first_token_limit(Format::Anthropic, 24000, 4096, None),
+            TokenLimit::max_tokens(4096)
+        );
+        assert_eq!(
+            first_token_limit(Format::Anthropic, 1500, 4096, None),
+            TokenLimit::max_tokens(1500)
+        );
+        assert_eq!(
+            first_token_limit(Format::Anthropic, 24000, 8192, None),
+            TokenLimit::max_tokens(24000)
+        );
+        let memo = TokenMemo {
+            field: TokenField::MaxTokens,
+            cap: Some(8192),
+        };
+        assert_eq!(
+            first_token_limit(Format::Anthropic, 24000, 8192, Some(memo)),
+            TokenLimit::max_tokens(8192)
+        );
+    }
+
+    #[test]
+    fn the_token_ladder() {
+        let mt = TokenLimit::max_tokens(1500);
+        let mct = TokenLimit {
+            field: TokenField::MaxCompletionTokens,
+            value: 1500,
+        };
+        let omit = TokenLimit {
+            field: TokenField::Omit,
+            value: 1500,
+        };
+        let unsupported_mt = r#"{"error":{"message":"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.","type":"invalid_request_error","param":"max_tokens","code":"unsupported_parameter"}}"#;
+        let by_param = r#"{"error":{"message":"bad","param":"max_completion_tokens"}}"#;
+        let by_message = r#"{"message":"unknown field max_completion_tokens"}"#;
+        let other = r#"{"error":{"message":"model not found","type":"invalid_request_error"}}"#;
+        let f = Format::OpenAi;
+        assert_eq!(
+            next_token_limit(f, &mt, 400, unsupported_mt, 8192),
+            Some(mct)
+        );
+        assert_eq!(
+            next_token_limit(f, &mt, 422, unsupported_mt, 8192),
+            Some(mct)
+        );
+        assert_eq!(next_token_limit(f, &mct, 400, by_param, 8192), Some(omit));
+        assert_eq!(next_token_limit(f, &mct, 400, by_message, 8192), Some(omit));
+        // the end of the ladder
+        assert_eq!(next_token_limit(f, &omit, 400, unsupported_mt, 8192), None);
+        // a 400 that does not name the sent field, a body that is not JSON, other statuses
+        assert_eq!(next_token_limit(f, &mt, 400, other, 8192), None);
+        assert_eq!(next_token_limit(f, &mt, 400, by_param, 8192), None);
+        assert_eq!(next_token_limit(f, &mt, 400, "max_tokens", 8192), None);
+        assert_eq!(next_token_limit(f, &mt, 401, unsupported_mt, 8192), None);
+        assert_eq!(next_token_limit(f, &mt, 429, unsupported_mt, 8192), None);
+        assert_eq!(next_token_limit(f, &mt, 500, unsupported_mt, 8192), None);
+        // Anthropic: the stored ceiling, once
+        let a = Format::Anthropic;
+        let big = TokenLimit::max_tokens(24000);
+        let refused = r#"{"type":"error","error":{"type":"invalid_request_error","message":"max_tokens: 24000 > 8192, which is the maximum allowed number of output tokens for demo"}}"#;
+        assert_eq!(
+            next_token_limit(a, &big, 400, refused, 8192),
+            Some(TokenLimit::max_tokens(8192))
+        );
+        assert_eq!(
+            next_token_limit(a, &TokenLimit::max_tokens(8192), 400, refused, 8192),
+            None
+        );
+        assert_eq!(
+            next_token_limit(a, &TokenLimit::max_tokens(4096), 400, refused, 4096),
+            None
+        );
+        assert_eq!(next_token_limit(a, &big, 400, other, 8192), None);
+        assert_eq!(
+            next_token_limit(a, &big, 422, refused, 4096),
+            Some(TokenLimit::max_tokens(4096))
+        );
     }
 
     #[test]

@@ -29,6 +29,12 @@ export function isFiltered(f: Readonly<RecordFilters>): boolean {
   return f.bank !== 'all' || f.kind !== 'all' || !!f.from || !!f.to || f.score !== 'any';
 }
 
+/** How many of the five filters narrow the list (the "筛选 (n)" count of the phone filter bar, RC-1) */
+export function filterCount(f: Readonly<RecordFilters>): number {
+  // "From" and "To" are two fields of the grid, so each counts on its own
+  return (f.bank !== 'all' ? 1 : 0) + (f.kind !== 'all' ? 1 : 0) + (f.from ? 1 : 0) + (f.to ? 1 : 0) + (f.score !== 'any' ? 1 : 0);
+}
+
 type Row = Pick<RecordSummary, 'banks' | 'at' | 'percent' | 'kind'>;
 
 export function matchesRecord(r: Row, f: Readonly<RecordFilters>): boolean {
@@ -47,4 +53,33 @@ export function matchesRecord(r: Row, f: Readonly<RecordFilters>): boolean {
     default:
       return true;
   }
+}
+
+// ---------------------------------------------------------------- paging (v1.0, RC-6)
+
+/** How many records the list shows at first, and how many each "show more" adds */
+export const RECORDS_PAGE = 50;
+
+/** The first `limit` rows and how many are left out */
+export function pageRows<T>(rows: readonly T[], limit: number): { shown: T[]; rest: number } {
+  const n = Math.max(0, Math.floor(limit));
+  return { shown: rows.slice(0, n), rest: Math.max(0, rows.length - n) };
+}
+
+/** The limit after one "show more" tap (never beyond what exists, so the label count stays exact) */
+export function nextLimit(limit: number, total: number): number {
+  return Math.min(Math.max(total, 0), Math.max(0, limit) + RECORDS_PAGE);
+}
+
+/**
+ * Where the focus goes after a record of the shown rows was deleted (RC-11): the next row, else the previous one, else
+ * null (the page puts it on the list heading). `ids` are the shown rows' ids in display order.
+ */
+export function focusAfterDelete(ids: readonly number[], deleted: number): number | null {
+  const i = ids.indexOf(deleted);
+  if (i < 0) return null;
+  const next = ids[i + 1];
+  if (next !== undefined) return next;
+  const prev = ids[i - 1];
+  return prev !== undefined ? prev : null;
 }

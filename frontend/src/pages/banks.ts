@@ -8,11 +8,17 @@
 // instead of this one (main.ts).
 // v0.7: only the six-column Excel layout can be imported, and the format guide explains only that one; a bank whose questions
 // are all retired (they came from an older layout, which the backend retires) says so in its card.
+// v1.0 (phones first): a bank's actions are icon buttons (upload = update, red trash = delete, a chevron for the sheets; the
+// words show beside the icons on wide screens), the card is one header row (name clamped to two lines, buttons at the right) with
+// the facts line under it (a tap on it also folds the sheets); the Excel guide is a set of foldable sub-sections (the first
+// open) with a "Collapse" at its end, and a code chip never separates from the punctuation next to it.
 import '../styles/banks.css';
 import { deleteBank, fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { pageHead } from '../components/common.ts';
+import { iconButton } from '../components/icon-button.ts';
+import { holdTip } from '../components/tooltip.ts';
 import { icon } from '../components/shell.ts';
 import { retiredOnly } from '../domain/bank-status.ts';
 import { sheetWarnings, warningTotal, type RowWarning } from '../domain/import-warnings.ts';
@@ -23,7 +29,8 @@ import { manageableBanks, ownerView } from '../state/bank-access.ts';
 import { bankById, isAdmin, S } from '../state/store.ts';
 import type { BankSummary, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
 import { ask, askCheck } from '../utils/dialog.ts';
-import { h, type Child } from '../utils/dom.ts';
+import { h, scrollToY, type Child } from '../utils/dom.ts';
+import { PHONE_MQ, TOUCH_MQ, matches } from '../utils/media.ts';
 import { toast } from '../utils/toast.ts';
 
 /** Upload limit of the backend (config::MAX_UPLOAD); checked here too so a wrong, huge file is not sent at all */
@@ -85,6 +92,10 @@ const openSheets = new Set<number>();
 const openSkips = new Set<string>();
 /** The Excel format guide is folded until the user opens it (kept across re-renders) */
 let guideOpen = false;
+/** The guide's sub-sections that are open (the first one is, BK-2; kept across re-renders) */
+const openSubs = new Set<string>(['basics']);
+/** The page is drawn for a phone (the bank buttons are icons only) */
+let phone = false;
 
 /** Scroll / focus to apply once the next render is in the document */
 let after: { scroll?: string; focus?: string } | null = null;
@@ -111,6 +122,13 @@ onSignedIn(() => {
   importError = null;
   listError = null;
 });
+
+// A phone turned sideways or a window resized across the phone breakpoint: draw the buttons in the other form
+if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+  window.matchMedia(PHONE_MQ).addEventListener('change', () => {
+    if (onBanksPage() && phone !== matches(PHONE_MQ)) render();
+  });
+}
 
 // A file dropped next to the drop zone would make the browser open (download) it and leave the app: swallow it on this page.
 const draggingFiles = (e: DragEvent): boolean => Array.from(e.dataTransfer?.types ?? []).includes('Files');
@@ -181,11 +199,20 @@ function currentTarget(): ImportTarget | null {
   return updateId != null && managedById(updateId) ? updateId : null;
 }
 
-const smooth = (): ScrollBehavior =>
-  typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth';
+/** Height of what is pinned at the top right now (`--top-h`, spec 2.12 e): the top bar while it shows, else 0 */
+function topInset(): number {
+  const v = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--top-h'));
+  return Number.isFinite(v) ? v : 0;
+}
 
+/**
+ * Scrolls the target 16 px under the free area's top and focuses `focusId`. The scroll goes through scrollToY (SH-7), so
+ * the top bar keeps its state: hidden stays hidden, and a bar that shows is subtracted, so nothing lands under it.
+ * scrollToY drops the smooth motion under prefers-reduced-motion.
+ */
 function scrollAndFocus(scrollId: string | undefined, focusId: string | undefined): void {
-  if (scrollId) document.getElementById(scrollId)?.scrollIntoView({ block: 'start', behavior: smooth() });
+  const target = scrollId ? document.getElementById(scrollId) : null;
+  if (target) scrollToY(Math.max(0, target.getBoundingClientRect().top + window.scrollY - topInset() - 16), true);
   if (focusId) document.getElementById(focusId)?.focus({ preventScroll: !!scrollId });
 }
 
@@ -214,9 +241,46 @@ function applyAfter(): void {
   });
 }
 
-/** Rich text of the guide: parts in `backticks` are Excel content and shown as code */
+/** Punctuation that must stay on the line of the code chip it touches (BK-2): closers after it, openers before it */
+const AFTER_CODE = /^[,.;:!?\u3001\u3002\uff0c\uff0e\uff1b\uff1a\uff01\uff1f)\uff09\u300d\u300f\u3011\u3015]+/;
+const BEFORE_CODE = /[(\uff08\u300c\u300e\u3010\u3014]+$/;
+
+/**
+ * Rich text of the guide: parts in `backticks` are Excel content and shown as code. A code chip and the punctuation right
+ * after it (and an opening bracket right before it) are wrapped in one nowrap span, so a line never breaks between them.
+ */
+function richParts(text: string): Array<string | HTMLElement> {
+  const parts = text.split('`');
+  const out: Array<string | HTMLElement> = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    let part = parts[i] ?? '';
+    if (i % 2 === 0) {
+      // Text: the closer after the previous chip is already taken; keep an opener back for the next chip
+      let opener = '';
+      if (i + 1 < parts.length) {
+        const m = BEFORE_CODE.exec(part);
+        if (m) {
+          opener = m[0];
+          part = part.slice(0, part.length - opener.length);
+        }
+      }
+      if (part) out.push(part);
+      parts[i] = opener;
+    } else {
+      const next = parts[i + 1] ?? '';
+      const m = AFTER_CODE.exec(next);
+      const closer = m ? m[0] : '';
+      if (closer) parts[i + 1] = next.slice(closer.length);
+      const code = h('code', { class: 'bk-code' }, part);
+      const opener = parts[i - 1] ?? '';
+      out.push(opener || closer ? h('span', { class: 'bk-nw' }, opener, code, closer) : code);
+    }
+  }
+  return out;
+}
+
 function rich<K extends 'p' | 'li' | 'td'>(tag: K, text: string): HTMLElementTagNameMap[K] {
-  return h(tag, null, text.split('`').map((s, i) => (i % 2 ? h('code', { class: 'bk-code' }, s) : s)));
+  return h(tag, null, richParts(text));
 }
 
 // ---------------------------------------------------------------- import history
@@ -716,9 +780,11 @@ function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HT
     status.textContent = statusText();
   };
 
+  // On a touch screen holding an option shows its explanation (the title is for the mouse)
+  const holdOnTouch = <T extends HTMLElement>(el: T, text: string): T => (matches(TOUCH_MQ) ? holdTip(el, text) : el);
   // Two small pills with radio semantics; the full explanation is the tooltip and the radio's description
   const seg = (val: 'new' | 'update', label: string, about: string, shape: typeof ICON_NEW, disabled: boolean): HTMLElement =>
-    h('label', { class: 'bk-seg' + (disabled ? ' off' : ''), title: about },
+    holdOnTouch(h('label', { class: 'bk-seg' + (disabled ? ' off' : ''), title: about },
       h('input', {
         type: 'radio', name: 'bk-target-mode', value: val, id: `bk-mode-${val}`, checked: mode === val, disabled: disabled || locked,
         'aria-describedby': `bk-mode-${val}-d`,
@@ -728,7 +794,7 @@ function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HT
         },
       }),
       icon(shape, 'ico bk-seg-ico'),
-      h('span', null, label));
+      h('span', null, label)), about);
   const updateAbout = hasBanks ? t('banks.target.updateSub') : t(isAdmin() ? 'banks.target.noBanks' : 'banks.target.noBanksManager');
   const choice = h('fieldset', { class: 'bk-target', id: 'bk-target-fs' },
     h('legend', { class: 'sr-only' }, t('banks.target.legend')),
@@ -796,6 +862,15 @@ function importPanel(): HTMLElement {
 // ---------------------------------------------------------------- bank list
 
 /** One card per bank: name and the two actions, one line of facts, and a chevron that folds / unfolds its sheet rows */
+/** One of a bank's actions: an icon button; the words show beside the icon on wide screens (the accessible name keeps the bank's name) */
+function bankAct(id: string, ic: 'upload' | 'trash', text: string, aria: string | null, disabled: boolean, onClick: () => void): HTMLButtonElement {
+  const btn = iconButton({ icon: ic, label: aria ?? text, tone: ic === 'trash' ? 'danger' : 'default', showLabel: !phone, onClick });
+  btn.id = id;
+  btn.disabled = disabled;
+  if (!phone && aria) btn.setAttribute('aria-label', aria);
+  return btn;
+}
+
 function bankCard(b: BankSummary): HTMLElement {
   const deleting = deletingId === b.id;
   const open = openSheets.has(b.id);
@@ -812,47 +887,42 @@ function bankCard(b: BankSummary): HTMLElement {
       : t('banks.sheet.allRetired'))))),
     h('p', { class: 'bk-created num' }, created)) : null;
 
-  const tip = (on: boolean): string => t(on ? 'banks.list.hideSheets' : 'banks.list.showSheets', { name: b.name });
-  const expand = box ? h('button', {
-    class: 'bk-expand', id: `bk-expand-${b.id}`, type: 'button', 'aria-expanded': String(open), 'aria-controls': boxId,
-    'aria-label': tip(open), title: tip(open),
-    onclick: () => {
-      const now = box.hidden;
-      box.hidden = !now;
-      if (now) openSheets.add(b.id);
-      else openSheets.delete(b.id);
-      expand?.setAttribute('aria-expanded', String(now));
-      expand?.setAttribute('aria-label', tip(now));
-      if (expand) expand.title = tip(now);
-    },
-  }, icon(ICON_CHEVRON)) : null;
+  // The chevron and a tap on the facts line fold the sheets (BK-1); the label is fixed, aria-expanded says the state
+  let expand: HTMLButtonElement | null = null;
+  const toggle = (): void => {
+    if (!box || !expand) return;
+    const now = box.hidden;
+    box.hidden = !now;
+    if (now) openSheets.add(b.id);
+    else openSheets.delete(b.id);
+    expand.setAttribute('aria-expanded', String(now));
+  };
+  if (box) {
+    expand = iconButton({ icon: 'chevDown', label: t('banks.list.sheetsAria', { name: b.name }), onClick: toggle });
+    expand.id = `bk-expand-${b.id}`;
+    expand.classList.add('bk-expand');
+    expand.setAttribute('aria-expanded', String(open));
+    expand.setAttribute('aria-controls', boxId);
+  }
 
   return h('article', { class: 'bk-bank', 'aria-labelledby': `bk-name-${b.id}` },
     h('div', { class: 'bk-bankhead' },
-      h('div', { class: 'bk-bankmain' },
-        h('h3', { class: 'bk-bankname', id: `bk-name-${b.id}` }, b.name),
-        h('div', { class: 'bk-bankacts' },
-          h('button', {
-            class: 'btn bk-mini', id: `bk-update-${b.id}`, type: 'button', disabled: busy === 'delete',
-            'aria-label': t('banks.list.updateAria', { name: b.name }), title: t('banks.list.updateAria', { name: b.name }),
-            onclick: () => chooseUpdate(b),
-          }, t('banks.list.update')),
-          h('button', {
-            class: 'btn bk-mini danger', id: `bk-delete-${b.id}`, type: 'button', disabled: busy !== null,
-            'aria-label': deleting ? null : t('banks.list.deleteAria', { name: b.name }), title: deleting ? null : t('banks.list.deleteAria', { name: b.name }),
-            onclick: () => void removeBank(b),
-          }, deleting ? t('banks.list.deleting') : t('common.delete'))),
-        // Without sheet rows there is nothing to unfold, so the creation date is the tooltip of this line
-        // The file name may be long and wraps anywhere; the other facts each stay on one line
-        h('p', { class: 'bk-bankmeta', title: box ? null : created }, dotted(
-          h('span', null, b.filename || t('common.none')),
-          b.inactive ? t('banks.list.withRetired', { questions, n: b.inactive }) : questions,
-          tn('common.sheets', b.sheets.length),
-          h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt })),
-          ownerText ? h('span', { class: 'bk-owner' + (owner.kind === 'other' ? ' other' : '') }, ownerText) : null)),
-        // v0.7: every question retired (questions from an older Excel layout): say so, and how to use the bank again
-        retiredOnly(b) ? h('p', { class: 'bk-old' }, t('banks.list.oldLayout')) : null),
-      expand),
+      h('h3', { class: 'bk-bankname', id: `bk-name-${b.id}` }, b.name),
+      h('div', { class: 'bk-bankacts' },
+        bankAct(`bk-update-${b.id}`, 'upload', t('banks.list.update'), t('banks.list.updateAria', { name: b.name }), busy === 'delete', () => chooseUpdate(b)),
+        bankAct(`bk-delete-${b.id}`, 'trash', deleting ? t('banks.list.deleting') : t('common.delete'), deleting ? null : t('banks.list.deleteAria', { name: b.name }),
+          busy !== null, () => void removeBank(b)),
+        expand)),
+    // Without sheet rows there is nothing to unfold, so the creation date is the tooltip of this line
+    // The file name may be long and wraps anywhere; the other facts each stay on one line
+    h('p', { class: 'bk-bankmeta' + (box ? ' bk-tap' : ''), title: box ? null : created, onclick: box ? toggle : null }, dotted(
+      h('span', null, b.filename || t('common.none')),
+      b.inactive ? t('banks.list.withRetired', { questions, n: b.inactive }) : questions,
+      tn('common.sheets', b.sheets.length),
+      h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt })),
+      ownerText ? h('span', { class: 'bk-owner' + (owner.kind === 'other' ? ' other' : '') }, ownerText) : null)),
+    // v0.7: every question retired (questions from an older Excel layout): say so, and how to use the bank again
+    retiredOnly(b) ? h('p', { class: 'bk-old' }, t('banks.list.oldLayout')) : null,
     box);
 }
 
@@ -997,46 +1067,68 @@ function example(title: MsgKey, pairs: readonly ExamplePair[]): HTMLElement {
     pairs.map((x) => h('div', { class: 'bk-ex-cols' }, cell(x.q, x.lang), cell(x.a, x.lang))));
 }
 
+/** One foldable sub-section of the guide (BK-2): its open state is kept across re-renders */
+function sub(key: string, title: MsgKey, ...body: Child[]): HTMLElement {
+  const d = h('details', { class: 'bk-sub', open: openSubs.has(key) },
+    h('summary', { class: 'bk-sub-s' }, h('h3', null, t(title)), icon(ICON_CHEVRON, 'ico bk-chev')),
+    h('div', { class: 'bk-sub-body' }, body));
+  d.addEventListener('toggle', () => {
+    if (d.open) openSubs.add(key);
+    else openSubs.delete(key);
+  });
+  return d;
+}
+
 function guidePanel(): HTMLElement {
   // Folded by default: the summary is the panel's heading row. Column letters are Excel's own (the same in every language).
   // v0.7 (owner): the six-column layout is the only one that can be imported; the guide explains only that one.
+  // v1.0 (BK-2): the six parts fold on their own (the first is open), and "Collapse" at the end closes the whole guide.
   const d = h('details', { class: 'bk-guide-d', id: 'bk-guide-d', open: guideOpen },
     h('summary', { class: 'bk-guide-s', id: 'bk-guide-s' }, h('h2', { id: 'bk-guide-h' }, t('banks.guide.title')), icon(ICON_CHEVRON, 'ico bk-chev')),
     h('div', { class: 'bk-guide-body' },
-      h('h3', null, t('banks.guide.basicsTitle')),
-      rich('p', t('banks.guide.bank')),
-      rich('p', t('banks.guide.only')),
-      rich('p', t('banks.guide.rows')),
-      h('h3', null, t('banks.guide.cols6Title')),
-      columns([['A', 'banks.guide.c6a'], ['B', 'banks.guide.c6b'], ['C', 'banks.guide.c6c'], ['D', 'banks.guide.c6d'], ['E', 'banks.guide.c6e'],
-        ['F', 'banks.guide.c6f']]),
-      rich('p', t('banks.guide.cols6Note')),
-      rich('p', t('banks.guide.detect')),
-      h('h3', null, t('banks.guide.typesTitle')),
-      h('ul', { class: 'bk-points' },
-        rich('li', t('banks.guide.single')),
-        rich('li', t('banks.guide.multi')),
-        rich('li', t('banks.guide.hotspot')),
-        rich('li', t('banks.guide.hotspotLangs'))),
-      h('h3', null, t('banks.guide.headingsTitle')),
-      rich('p', t('banks.guide.headings')),
-      h('ul', { class: 'bk-points' },
-        rich('li', t('banks.guide.hAnswer')),
-        rich('li', t('banks.guide.hExplain')),
-        rich('li', t('banks.guide.hMnemonic'))),
-      rich('p', t('banks.guide.headingsMore')),
-      h('h3', null, t('banks.guide.exTitle')),
-      rich('p', t('banks.guide.exLead')),
-      EXAMPLES.map((x) => example(x.title, x.pairs)),
-      h('h3', null, t('banks.guide.importTitle')),
-      h('ul', { class: 'bk-points' },
-        rich('li', t('banks.guide.whole')),
-        rich('li', t('banks.guide.others')),
-        rich('li', t('banks.guide.identity')),
-        rich('li', t('banks.guide.preview')),
-        rich('li', t('banks.guide.files', { mb: MAX_MB })),
-        rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') })),
-        rich('li', t('banks.guide.oldBanks')))));
+      sub('basics', 'banks.guide.basicsTitle',
+        rich('p', t('banks.guide.bank')),
+        rich('p', t('banks.guide.only')),
+        rich('p', t('banks.guide.rows'))),
+      sub('columns', 'banks.guide.cols6Title',
+        columns([['A', 'banks.guide.c6a'], ['B', 'banks.guide.c6b'], ['C', 'banks.guide.c6c'], ['D', 'banks.guide.c6d'], ['E', 'banks.guide.c6e'],
+          ['F', 'banks.guide.c6f']]),
+        rich('p', t('banks.guide.cols6Note')),
+        rich('p', t('banks.guide.detect'))),
+      sub('types', 'banks.guide.typesTitle',
+        h('ul', { class: 'bk-points' },
+          rich('li', t('banks.guide.single')),
+          rich('li', t('banks.guide.multi')),
+          rich('li', t('banks.guide.hotspot')),
+          rich('li', t('banks.guide.hotspotLangs')))),
+      sub('headings', 'banks.guide.headingsTitle',
+        rich('p', t('banks.guide.headings')),
+        h('ul', { class: 'bk-points' },
+          rich('li', t('banks.guide.hAnswer')),
+          rich('li', t('banks.guide.hExplain')),
+          rich('li', t('banks.guide.hMnemonic'))),
+        rich('p', t('banks.guide.headingsMore'))),
+      sub('examples', 'banks.guide.exTitle',
+        rich('p', t('banks.guide.exLead')),
+        EXAMPLES.map((x) => example(x.title, x.pairs))),
+      sub('import', 'banks.guide.importTitle',
+        h('ul', { class: 'bk-points' },
+          rich('li', t('banks.guide.whole')),
+          rich('li', t('banks.guide.others')),
+          rich('li', t('banks.guide.identity')),
+          rich('li', t('banks.guide.preview')),
+          rich('li', t('banks.guide.files', { mb: MAX_MB })),
+          rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') })),
+          rich('li', t('banks.guide.oldBanks')))),
+      h('div', { class: 'bk-guide-end' },
+        h('button', {
+          type: 'button', class: 'btn quiet bk-collapse', id: 'bk-guide-collapse',
+          onclick: () => {
+            d.open = false;
+            guideOpen = false;
+            scrollAndFocus('bk-guide', 'bk-guide-s');
+          },
+        }, t('common.collapse')))));
   d.addEventListener('toggle', () => {
     guideOpen = d.open;
   });
@@ -1046,6 +1138,7 @@ function guidePanel(): HTMLElement {
 // ---------------------------------------------------------------- page
 
 export function renderBanks(): HTMLElement {
+  phone = matches(PHONE_MQ);
   normalizeTarget();
   if (importsWanted && !importsLoading) void loadImports();
   const el = h('div', { class: 'page page-banks' },

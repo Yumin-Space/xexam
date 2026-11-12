@@ -103,6 +103,20 @@ describe('saved answers', () => {
     assert.equal(e.chatId, 3);
     assert.equal(entryView(e, 'en').phase, 'empty');
   });
+  it('the chat title (the server title) is remembered from the saved route and from the start event', () => {
+    assert.equal(parseSaved({ chatId: 3, chatTitle: '2026-11-12 09:30', latest: null, lastGood: null }).chatTitle, '2026-11-12 09:30');
+    const saved = run(emptyEntry(), { type: 'saved', saved: { chatId: 3, chatTitle: '2026-11-12 09:30-练习', latest: answer(), lastGood: null } });
+    assert.equal(saved.chatTitle, '2026-11-12 09:30-练习');
+    const started = run(emptyEntry(), { type: 'ask' }, { type: 'event', ev: { event: 'start', data: { chatId: 7, chatTitle: 'T1', assistantMessageId: 2 } }, now: 1 });
+    assert.equal(started.chatTitle, 'T1');
+    // A later saved answer without a title keeps the known one; no chat at all has no title
+    assert.equal(run(started, { type: 'saved', saved: { chatId: 7, latest: answer(), lastGood: null } }).chatTitle, 'T1');
+    assert.equal(run(started, { type: 'saved', saved: { chatId: null, latest: null, lastGood: null } }).chatTitle, null);
+    // Another chat without a title: the old title is not carried over to it
+    assert.equal(run(started, { type: 'saved', saved: { chatId: 8, latest: answer(), lastGood: null } }).chatTitle, null);
+    assert.equal(run(started, { type: 'event', ev: { event: 'start', data: { chatId: 8, assistantMessageId: 3 } }, now: 2 }).chatTitle, null);
+    assert.equal(run(started, { type: 'event', ev: { event: 'start', data: { chatId: 7, assistantMessageId: 3 } }, now: 2 }).chatTitle, 'T1');
+  });
   it('latest done is shown at once', () => {
     const e = run(emptyEntry(), { type: 'saved', saved: { chatId: 3, latest: answer({ content: 'saved text' }), lastGood: null } });
     const v = entryView(e, 'en');
@@ -234,12 +248,13 @@ describe('cache keys and bound', () => {
 
 describe('parsing the wire', () => {
   it('parseSaved with the three shapes', () => {
-    assert.deepEqual(parseSaved({ chatId: null, latest: null, lastGood: null }), { chatId: null, latest: null, lastGood: null });
+    assert.deepEqual(parseSaved({ chatId: null, latest: null, lastGood: null }), { chatId: null, chatTitle: null, latest: null, lastGood: null });
     const p = parseSaved({
       chatId: 4, lastGood: null,
       latest: { messageId: 9, kind: 'hint', status: 'streaming', error: null, truncated: false, content: 'x', lang: 'zh-CN', createdAt: 5, finishedAt: null },
     });
     assert.equal(p.chatId, 4);
+    assert.equal(p.chatTitle, null);
     assert.equal(p.latest?.status, 'streaming');
     assert.equal(p.latest?.lang, 'zh-CN');
   });
@@ -250,7 +265,7 @@ describe('parsing the wire', () => {
     assert.equal(a?.content, '');
     assert.equal(a?.lang, null);
     assert.equal(a?.sample, null);
-    assert.deepEqual(parseSaved('x'), { chatId: null, latest: null, lastGood: null });
+    assert.deepEqual(parseSaved('x'), { chatId: null, chatTitle: null, latest: null, lastGood: null });
   });
   it('a summary answer keeps its sample', () => {
     const a = answerOf({ status: 'done', content: 's', sample: { used: 70, usable: 75, wrong: 80 } });
@@ -280,5 +295,33 @@ describe('parsing the wire', () => {
     const e2 = run(e, ev('delta', { text: 'Hi' }));
     assert.equal(entryView(e2, 'en').thinking, false);
     assert.equal(entryView(e2, 'en').text, 'Hi');
+  });
+});
+
+describe('call-cap refusals expire by themselves', () => {
+  const quota = { cap: 'minute' as const, limit: 5, retryAt: 1000 };
+  const limited = { ...emptyEntry(), failure: { status: 429, code: 'ai.callLimit', quota } };
+  it('before retryAt the note shows (with its quota)', () => {
+    const v = entryView(limited, 'en', 999);
+    assert.equal(v.note?.kind === 'error' && v.note.quota?.cap, 'minute');
+    assert.equal(v.phase, 'error');
+  });
+  it('at and after retryAt the failure is gone: the prompt (empty) shows again', () => {
+    for (const now of [1000, 1500]) {
+      const v = entryView(limited, 'en', now);
+      assert.equal(v.note, null);
+      assert.equal(v.phase, 'empty');
+    }
+  });
+  it('without a clock nothing expires; other failures never expire', () => {
+    assert.equal(entryView(limited, 'en').note?.kind, 'error');
+    const other = { ...emptyEntry(), failure: { status: 500, code: 'ai.internal' } };
+    assert.equal(entryView(other, 'en', 99999).note?.kind, 'error');
+  });
+  it('an expired cap failure leaves the saved answer without a note', () => {
+    const good = answer({ content: 'ok' });
+    const v = entryView({ ...limited, shown: good, attempt: good }, 'en', 2000);
+    assert.equal(v.text, 'ok');
+    assert.equal(v.note, null);
   });
 });

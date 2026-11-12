@@ -1,0 +1,128 @@
+/* Review cards (components/review.ts): the result page, the record detail and the wrong-answer review. W0 of v1.0 moved
+   these rules here, same selectors and same order, from main.css (score, strip, cards), ai-plus.css (.verdict-row) and
+   records.css (card parts). Rules several pages share (.paper, .phead, .badge, .opts, .opt, .verdict, .lang, .seg, .btn …)
+   stay in main.css. Colour tokens only. */
+
+/* (v0.6.5: the "Chinese translation" fold of the review cards is gone; every card has the English / 中文 / 日本語 switch) */
+/* A review card's language switch keeps its three buttons together: when the heading row is full it wraps as a whole */
+.rv .phead .lang { flex: none; }
+
+/* ---------- Results ---------- */
+.score { display: grid; grid-template-columns: auto 1fr; grid-template-areas: "big says" "big acts"; gap: 8px 40px; align-items: end; margin-bottom: 24px; }
+.score .big { grid-area: big; align-self: end; font: 700 clamp(76px, 11vw, 120px)/.9 var(--num); letter-spacing: -.03em; }
+.score .big small { font-size: .36em; color: var(--print); margin-left: 4px; letter-spacing: 0; }
+.score .says { grid-area: says; padding-bottom: 0; }
+.score .says p { font-size: 17px; }
+.score .says .dim { font-size: 14px; margin-top: 4px; }
+.score .acts { grid-area: acts; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 6px; }
+/* Icon actions with a text label beside the icon; phones hide the label (RS-1), the name stays the aria-label */
+.score .acts .res-act { width: auto; padding-inline: 10px 14px; gap: 6px; }
+.score .acts .res-act .lbl { font-size: 14px; white-space: nowrap; }
+
+/* One small key per question (36 px visual; a 44 px hit area on touch). On phones the keys fold behind the summary row (RS-2) */
+.strip-toggle { display: none; }
+.strip { display: grid; grid-template-columns: repeat(auto-fill, 36px); gap: 8px; margin: 4px 0 32px; }
+.strip button {
+  position: relative; width: 36px; padding: 4px 0 6px; display: grid; justify-items: center; gap: 2px;
+  border: 1px solid var(--line-soft); border-radius: 6px; background: var(--card);
+  transition: background-color .12s ease, border-color .12s ease;
+}
+@media (hover: hover) {
+  .strip button:hover { border-color: var(--line); background-image: linear-gradient(var(--hover), var(--hover)); }
+  /* a wrong key keeps its plain tint (the hover fill on it would take the orange number under 4.5:1); the border shows the hover */
+  .strip .ng:hover { background-image: none; }
+}
+.strip .n { font: 600 11.5px var(--num); color: var(--ink3); }
+.strip svg { width: 20px; height: 20px; }
+.strip .ok svg { stroke: var(--answer-right); }
+.strip .ng svg { stroke: var(--answer-wrong); }
+.strip .ng { background: var(--answer-wrong-soft); border-color: transparent; }
+.strip .ng .n { color: var(--answer-wrong); }
+
+.rvhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.rvhead h2 { font-size: 18px; font-weight: 600; }
+
+/* Review cards: soft blocks with a short coloured marker on the left edge, beside the "Question 6" heading row
+   (orange wrong, green right). Its top follows the block's top padding (28px; 20px on narrow screens; 16px on a gone card). */
+.rv { margin-bottom: 16px; scroll-margin-top: calc(var(--top-h, 0px) + 12px); }
+.rv .phead { margin-bottom: 6px; }
+/* The AI+ dock of a card sits under the answer line; the panel (ai-panel.css) draws what is inside it */
+.rv .aip-dock { margin-top: 12px; }
+.rv .paper { position: relative; }
+.rv .paper::before { content: ""; position: absolute; left: -1px; top: 28px; width: 3px; height: 22px; border-radius: 0 3px 3px 0; background: var(--answer-wrong); }
+.rv.rv-gone .paper::before { top: 16px; }
+.rv.good .paper::before { background: var(--answer-right); }
+.allgood { padding: 28px; text-align: center; font-size: 17px; border: 0; background: var(--answer-right-soft); border-radius: 10px; }
+/* Motion (the .strip part of main.css's reduced-motion rule) */
+@media (prefers-reduced-motion: reduce) {
+  .strip button { transition: none; }
+}
+/* Small screens and touch (the review parts of main.css's blocks) */
+@media (max-width: 880px) {
+  .score { grid-template-columns: minmax(0, 1fr); grid-template-areas: "big" "says" "acts"; }
+  .rv .paper::before { top: 20px; }
+}
+@media (pointer: coarse) {
+  .strip button::after { content: ""; position: absolute; inset: -4px; }
+}
+
+/* ---------- Header and verdict rows (from ai-plus.css) ---------- */
+.verdict-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+
+/* ---------- Card parts (from records.css) ---------- */
+/* Result page: questions deleted during the exam were not counted (v0.6.5) */
+.score .says .res-gone { margin-top: 12px; max-width: 60ch; }
+.score .says .res-gone p { font-size: 14px; }
+.rv-src { min-width: 0; margin: 0 0 12px; font-size: 12.5px; color: var(--ink3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rv-retired { margin: -8px 0 16px; font-size: 13.5px; color: var(--ink3); }
+.rv:focus { outline: none; }
+.rv-gone .paper { padding-block: 16px; }
+.rv-gone .phead { margin-bottom: 8px; }
+
+/* ---------- Stats chip row (RS-5) ---------- */
+.stats-chips {
+  position: relative; display: inline-flex; flex-wrap: wrap; gap: 6px; padding: 0; border: 0; background: none;
+  font: inherit; color: inherit; text-align: left; cursor: default;
+}
+.stat-chip { padding: 2px 9px; border-radius: 999px; background: var(--fill); font-size: 12.5px; line-height: 1.5; color: var(--ink2); white-space: nowrap; }
+@media (pointer: coarse) {
+  .stats-chips::after { content: ""; position: absolute; inset: -10px -4px; }
+}
+
+/* ---------- Phones (PHONE, spec 4.6) ---------- */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* RS-1: the score at the left, the summary and the meta line at the right; the actions in a row below */
+  .score { grid-template-columns: auto minmax(0, 1fr); grid-template-areas: "big says" "acts acts"; gap: 8px 16px; align-items: center; margin-bottom: 16px; }
+  .score .big { font-size: 56px; align-self: center; }
+  .score .says p { font-size: 15px; }
+  .score .says .dim { font-size: 13px; margin-top: 2px; }
+  .score .acts { flex-wrap: nowrap; margin: 4px 0 0; }
+  /* One row: the three icons keep their size, a long "retry wrong answers" label wraps inside its button instead */
+  .score .acts > .btn.primary { flex: 0 1 auto; min-width: 0; white-space: normal; line-height: 1.25; text-align: center; }
+  .score .acts .res-act { width: 40px; padding: 0; }
+  .score .acts .res-act .lbl { display: none; }
+  /* RS-2: the keys fold behind one summary row */
+  .strip-wrap { margin: 0 0 16px; }
+  .strip-toggle {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 0 12px;
+    border: 1px solid var(--line-soft); border-radius: 8px; background: var(--card); color: var(--ink2); font-size: 14px; text-align: left;
+  }
+  .strip-chev { flex: none; transition: transform .15s ease; }
+  .strip-wrap.open .strip-chev { transform: rotate(180deg); }
+  .strip-wrap:not(.open) .strip { display: none; }
+  .strip { margin: 8px 0 0; }
+  /* RS-3: the card header stays one line. The number (English: "Q12") and the verdict never shrink; the kind badge takes its
+     short name and is the one that may shrink; the language switch keeps its size. The full names stay for screen readers. */
+  .rv .phead { flex-wrap: nowrap; gap: 6px; }
+  .rv .phead .lang { flex: none; }
+  .rv .phead > .num, .rv .phead > .badge.ok, .rv .phead > .badge.ng { flex: none; white-space: nowrap; }
+  .rv .phead > .rv-kind, .rv .phead > .badge.retired { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rv .phead .rv-kind-full, .rv .phead .rv-no-full {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  .rv .phead .rv-kind-short, .rv .phead .rv-no-short { display: inline; }
+}
+.rv-kind-short, .rv-no-short { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .strip-chev { transition: none; }
+}

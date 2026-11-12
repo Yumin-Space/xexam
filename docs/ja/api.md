@@ -490,7 +490,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
   フロントエンドは、`/api/ai/*` での JSON のない 5xx をすべて `ai.unavailable` として扱います。
 - **POST** には `Content-Type: application/json` が必要です（`; charset=utf-8` は付けても構いません。そうでなければ 415 `ai.badRequest`）。ボディは JSON のオブジェクトで（空のボディは `{}` とみなします）、最大 128 KiB です（413 `ai.badRequest`）。**ルートが挙げていないキーは拒否します**（400 `ai.badRequest`）。型の違う値も同じです。id は、ボディでもクエリ文字列でも正の整数です。
 - **応答**：JSON（`Content-Type: application/json; charset=utf-8`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`）で、バックエンドの応答と違って **コンパクト**（`:` と `,` の後に空白なし）、キーはここに示す順です。パースして使い、バイト単位で比べないでください。
-- **エラー**：`{"error": "<中国語のテキスト>", "code": "<コード>"}`。キーのエラーには `"field": "apiKey" | "gatewayKey"`、数を示すエラー（`ai.tooLong`、`ai.messageLimit`、`ai.chatLimit`、`ai.memoryLimit`、`ai.memoryTooLong`）には `"limit": <n>`、`ai.limitRange` には `"field": "<キー>"` が加わります。*(v0.9)* 学習用ルート（5.5）の 409 `ai.busy` は、最後に `"running"` が付きます。コードは固定で、フロントエンドはテキストではなく、常にコードで翻訳します。プロバイダー自身のエラーテキストが渡されることはありません。
+- **エラー**：`{"error": "<中国語のテキスト>", "code": "<コード>"}`。キーのエラーには `"field": "apiKey" | "gatewayKey"`、数を示すエラー（`ai.tooLong`、`ai.messageLimit`、`ai.chatLimit`、`ai.memoryLimit`、`ai.memoryTooLong`）には `"limit": <n>`、`ai.limitRange` と `ai.limitOrder` には `"field": "<キー>"`、`ai.callLimit`（5.6）には `cap`、`limit`、`retryAt`、`retryAfter` が加わります。*(v1.0)* *(v0.9)* *(v0.9)* 学習用ルート（5.5）の 409 `ai.busy` は、最後に `"running"` が付きます。コードは固定で、フロントエンドはテキストではなく、常にコードで翻訳します。プロバイダー自身のエラーテキストが渡されることはありません。
 - **アクセスレベル**（本人確認の文から決まります）：
 
   | レベル | 対象 | それ以外 |
@@ -520,7 +520,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | GET | `/api/ai/study/saved` | 署名あり | `?mode=&key=`、または `&record=&source=&question=&kind=`（5.5） | `StudyAnswer` の `Saved` *(v0.9)* |
 | POST | `/api/ai/summary/ask` | AI ユーザー | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **イベントストリーム**（5.3、5.5） *(v0.9)* |
 | GET | `/api/ai/summary/saved` | 署名あり | `?record=<id>&at=<12 桁>`（5.5） | `SummaryAnswer` の `Saved` *(v0.9)* |
-| GET | `/api/ai/memories` | 署名あり | | `{"memories": [Memory], "limit": 50, "maxChars": 300}`（現在の上限） |
+| GET | `/api/ai/memories` | 署名あり | | `{"memories": [Memory], "limit": 50, "maxChars": 200}`（現在の上限。`maxChars` は `memoryChars`、v1.0 から既定 200） |
 | POST | `/api/ai/memories/add` | AI ユーザー | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI ユーザー | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/delete` | 署名あり | `{"id": <id>}` または `{"all": true}` | `{"deleted": <n>}` |
@@ -538,7 +538,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | GET | `/api/ai/admin/chat` | 管理者 | `?user=<ユーザーの id>&id=<チャットの id>` | `{"chat": ChatSummary, "messages": [Message]}`、**監査あり**。チャットはそのユーザーのものでなければならない（そうでなければ 404 で、監査の行なし） |
 | POST | `/api/ai/admin/clear` | 管理者 | `{"userId": <id>, "what": "chat", "chatId": <id>}`、または `{"userId": <id>, "what": "chats" \| "memories"}` | `{"deleted": <n>}`、**監査あり** |
 | GET | `/api/ai/admin/limits` | 管理者 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
-| POST | `/api/ai/admin/limits` | 管理者 | 7 つの上限のキーのどれか、整数 | GET と同じ |
+| POST | `/api/ai/admin/limits` | 管理者 | 10 の上限のキーのどれか（下の `admin/limits` を参照）、整数 | GET と同じ |
 
 ai-serviceの `GET /healthz`（`{"ok":true,"version":"0.9","arch":"x86_64"}`、本人確認は不要）は、そのコンテナのヘルスチェックが使います。Nginx にはこのための location がないので、外からは届きません。
 
@@ -552,10 +552,11 @@ Status        {"enabled": bool,          // AI+ が利用できる：AI+ 機能�
                "hasData": bool,          // チャットかメモが少なくとも 1 つある
                "running": {"chatId": n, "messageId": n} | null,   // 作成中の自分の回答（最新のもの）
                "retentionDays": n, "memoryLimit": n, "memoryMaxChars": n, "maxMessageChars": n,
-               "messageChars": n, "memoryChars": n,               // 現在の安全上限（下の limits を参照）
+               "messageChars": 16000, "memoryChars": n,               // 安全上限（v1.0）：messageChars は 1 つのメッセージの固定の上限で、常に 16000。memoryChars は 1 つのメモの上限で、既定 200
                "keyProblem": bool,       // 管理者だけ：保存したキーを使えない（ほかの人には false）
                "configured": bool,       // 管理者だけ：モデルと必要なキーが保存されている（ほかの人には false）
-               "freeMode": bool}         // 管理者だけ：あなたのフリーモードがオン（ほかの人には false）。POST /api/ai/free を参照
+               "freeMode": bool,         // 管理者だけ：あなたのフリーモードがオン（ほかの人には false）。POST /api/ai/free を参照
+               "calls"?: {"used": {"minute": n, "hour": n, "day": n}, "caps": {"minute": n, "hour": n, "day": n}, "blocked": null | {"cap", "limit", "retryAt"}}}   // v1.0：AI+ があなたに使えるとき（一時停止中かどうかを問わず）だけ。5.6 を参照
 ChatSummary   {"id": n, "title": str, "createdAt": n, "updatedAt": n, "messageCount": n, "running": bool,   // チャットにモードはない
                "kind": "chat"|"practice"|"exam"|"summary",   // v0.9：AI チャット、または練習・試験・記録のまとめの学習チャット
                "recordId": n|null}                          // v0.9：学習チャットのメインアプリの記録（表示用のみ）。それ以外は null
@@ -582,21 +583,22 @@ Verify        {"ok": bool, "code": str|null, "httpStatus": n|null, "latencyMs": 
                "verifiedAt": n|null, "enabled": bool, "switchedOff": bool}
 Usage         {"days": n, "from": "YYYY-MM-DD", "to": "YYYY-MM-DD", "unit": "day"|"month",
                "totals": {"calls", "tokensIn", "tokensOut", "errors", "tokensCached"},
-               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "tokensCached"}],
+               "byUser": [{"userId": n|null, "username": str|null, "calls", "tokensIn", "tokensOut", "errors", "lastAt", "today"?: n, "tokensCached"}],   // v1.0："today" はユーザー ID のある行だけ（サーバーのタイムゾーンで今日 0 時からの数えた呼び出し）
                "byModel": [{"model": str, "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
                "byPeriod": [{"period": "YYYY-MM-DD"|"YYYY-MM", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}],
                "byPurpose": [{"purpose": "chat"|"hint"|"explain"|"summary", "calls", "tokensIn", "tokensOut", "errors", "tokensCached"}]}   // v0.9
 AdminUserRow  {"id": n, "username": str, "role": "admin"|"user", "ai": bool, "aiAllowed": bool, "disabled": bool,
                "exists": bool, "suspended": bool,   // suspended：一時停止中（管理者では決して true にならない）
                "chats": n, "messages": n, "memories": n, "lastUsedAt": n|null,
-               "tokensIn": n, "tokensOut": n}
+               "tokensIn": n, "tokensOut": n,
+               "calls": {"used": {"minute": n, "hour": n, "day": n}, "blocked": null | {"cap", "limit", "retryAt"}}}   // v1.0：いま数えている呼び出し（5.6）。Status の caps のない形と同じ
 StudySample   {"used": n, "usable": n, "wrong": n}   // v0.9、まとめ：送った間違い / 問題がまだ存在する間違い / 記録にある間違い
 StudyAnswer   {"messageId": n, "kind": "hint"|"explain", "questionId": str, "questionNo": n, "source": "practice"|"result",
                "status": "streaming"|"done"|"stopped"|"error", "error": code|null, "truncated": bool, "content": str,
                "lang": "en"|"zh-CN"|"ja", "model": str|null, "createdAt": n, "finishedAt": n|null}   // v0.9
 SummaryAnswer {"messageId": n, "recordId": n|null, "status", "error", "truncated", "content", "lang", "model", "createdAt", "finishedAt",
                "sample": StudySample|null}   // v0.9；recordId の後は StudyAnswer と同じキーで、kind、question、source はなし
-Saved         {"chatId": n|null, "latest": StudyAnswer|SummaryAnswer|null, "lastGood": StudyAnswer|SummaryAnswer|null}   // v0.9
+Saved         {"chatId": n|null, "chatTitle": str|null, "latest": StudyAnswer|SummaryAnswer|null, "lastGood": StudyAnswer|SummaryAnswer|null}   // v0.9
 RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "questionId": str|null, "questionNo": n|null,
                "source": str|null, "recordId": n|null}   // v0.9：作成中の回答。学習用ルートの 409 ai.busy に入る
 ```
@@ -604,7 +606,7 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 時刻は unix 秒です。ルートごとの注記：
 
 - **`lang`** *(v0.8、ラウンド 2)*：`send`、`retry`、`memories/suggest` で、設定ページの言語です：`"en"`、`"zh"`、`"ja"`（`"zh-CN"` は `zh` として受け付けます）。学習アシスタントは、そのメッセージでユーザーが別の言語を求めない限り、常にその言語で答えるよう指示されます。メモの提案もその言語で書かれます。`lang` がなければ英語になります（ai-service はユーザーの設定を知らないので、フロントエンドは常に送ります）。値があるのにそれ以外（別の文字列、数、`null`、`""`）なら 400 `ai.badRequest` で、何も保存せず、プロバイダーにも何も送りません。リクエストごとにそれぞれの `lang` を使うので、1 つのチャットの中でメッセージごとに言語が変わることがあります。再試行は、再試行のリクエストの `lang` を使います。
-- **`send`**：`text` は前後の空白を除き、1〜`messageChars` 文字が必要です（既定 16 000。空なら 400 `ai.badRequest`、長すぎれば `limit` 付きの 400 `ai.tooLong`）。`chatId: null`（またはキーなし）は新しいチャットを始め、そのタイトルは文の冒頭（最大 60 文字）になります。`chatsPerUser` を超える新しいチャットは 409 `ai.chatLimit`、`messagesPerChat` を超えることになるチャットは 409 `ai.messageLimit` です。回答の**モード**はリクエストに含まれません。その時点での管理者のフリーモードで決まります（次の項目）。ボディの `free` キーは今も受け付けますが、値にかかわらず**無視されます**（エラーも効果もありません）。チャットにモードはなく、`ChatSummary` に `free` はありません。プロバイダーに送る履歴は、そのチャットのそれまでの完了または停止した文章のあるメッセージで、新しいものから、最大 `max(24000, messageChars + 8000)` 文字を取り、その後時系列に並べたものです。各メッセージがどのモードで書かれたかは問いません（**プロンプトと履歴** を参照）。
+- **`send`**：`text` は前後の空白を除き、1〜16 000 文字が必要です（v1.0 からは設定ではなく、1 つのメッセージの固定の上限。空なら 400 `ai.badRequest`、長すぎれば `limit` 16000 付きの 400 `ai.tooLong`）。`chatId: null`（またはキーなし）は新しいチャットを始め、そのタイトルは文の冒頭（最大 60 文字）になります。`chatsPerUser` を超える新しいチャットは 409 `ai.chatLimit`、`messagesPerChat` を超えることになるチャットは 409 `ai.messageLimit` です。回答の**モード**はリクエストに含まれません。その時点での管理者のフリーモードで決まります（次の項目）。ボディの `free` キーは今も受け付けますが、値にかかわらず**無視されます**（エラーも効果もありません）。チャットにモードはなく、`ChatSummary` に `free` はありません。プロバイダーに送る履歴は、そのチャットのそれまでの完了または停止した文章のあるメッセージで、新しいものから、最大 24 000 文字を取り（v1.0。v0.9.1 の予算）、その後時系列に並べたものです。各メッセージがどのモードで書かれたかは問いません（**プロンプトと履歴** を参照）。
 - **フリーモード** はチャットではなく**管理者**の状態です。`POST /api/ai/free` に `{"free": true}` または `{"free": false}` を送るとオン・オフが切り替わり、`{"free": <bool>}` が返ります。ボディはブール値のキー `free` だけを持たなければならず（それ以外は 400 `ai.badRequest`）、ルートは管理者専用で（管理者以外は 403 `ai.adminOnly`）、AI がオフの間も使え、繰り返しても害はありません。状態は ai-service 自身のデータベース（`users.free_mode`）にユーザーごとに保存されるので、再読み込み、別のブラウザ、再起動の後も残り、`GET /api/ai/status` は `freeMode` として報告します（一般ユーザーでは、何が保存されていても常に `false`：降格された管理者には通常どおり応答し、再び管理者になれば保存されたフラグがまた効きます）。**オン**の間は、その管理者のすべての `send` と `retry` が、古いチャットでも新しいチャットでも、フリーモードで答えられます：システムプロンプトは返答言語の 1 行だけです（学習アシスタントの指示も、日付も、メモリーもなし。メモリーは読みもしません）。**オフ**の間は、すべてのメッセージが通常どおりに答えられます。変更が効くのは**次の**メッセージからで、すでに作成中の回答は、始まったときのモードのままです。**どのメッセージもモードを記録します**（`Message.free` と、イベントストリームの `start.free`）：質問とその回答は、質問を送ったときに有効だったモードを持ち、再試行は再試行のときのモードを使います（質問にもそれを記録します）。フリーモードが外すのは Xexam 自身の学習アシスタントの役割だけで、プロバイダー自身の安全規則は外しません。AI チャットにはそのためのスイッチも区切り線もありません：選ぶのは**設定**の「AI 対話モード」の項目です（通常モード / フリーモード。AI を使える管理者にだけ表示されます）。AI チャットは、モードがオンの間、タイトルの横に緑色の「フリーモード」のタグを表示します。
 - **プロンプトと履歴**。通常の回答のシステムプロンプトは、今日の日付を添えた学習アシスタントの文、次にユーザーのメモリー（更新が新しいものから、メモ全体だけ、最大 4000 文字）、最後に返答言語の 1 行の順です。固定の部分が先、リクエストごとに変わる部分が後なので、リクエストの先頭はリクエスト間で同一です。送る履歴に、現在とは**別の**モードで書かれたメッセージが含まれるとき（切り替えの直後）は、言語の行の後に**短いモードの行が 1 つ**付きます：`Current mode: normal (Xexam study assistant); earlier turns may be free mode.` または `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` そのようなメッセージがなければモードの行はなく、フリーモードのプロンプトは言語の行だけです。**古いメッセージは短くしてから**送ります：履歴の最新の 4 件は全文で送り、それより古い回答は先頭 800 文字で切って `…(shortened)` を付け、それより古い質問は先頭 2000 文字で切って `…` を付けます。切り方はメッセージとその古さだけで決まるので、同じメッセージは常に同じ文章になります。履歴の文字数の枠は短くした後の長さで数えます。保存されたメッセージは変更されません。
 - **プロンプトキャッシュ**。**Anthropic** 形式では、システムプロンプトは `cache_control`（`ephemeral`）の区切りを持つ 1 つのテキストブロックとして送られ、履歴の最後のメッセージ（新しい質問の直前のもの）にも 2 つ目が付くので、会話は、キャッシュされた先頭部分を再利用します。**OpenAI** 形式では何も加えません：自動でキャッシュするプロバイダーは、自分でそうします。プロバイダーが自分のキャッシュから提供したと報告したもの（`cache_read_input_tokens`、または `prompt_tokens_details.cached_tokens`）は呼び出しとともに保存され、`admin/usage` に `tokensCached` として表示されます。これは `tokensIn` の一部であり、それに加えるものではありません。何も報告しないプロバイダーは 0 と数えます。キャッシュが変えるのはプロバイダーの課金であり、回答は変わりません。
@@ -613,18 +615,18 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 - 既定では **作成中の回答は 1 ユーザーにつき 1 つ** です（`perUserRunning`、最大 4。同じチャットで 2 つになることはない）：ほかの `send`、`retry`、`memories/suggest` は 409 `ai.busy` になります。サーバー全体で `globalRunning` を超えるモデルの呼び出しは 503 `ai.serverBusy` です。どちらも、何かを保存する前に拒否します。
 - **`stop`**：`{}` なら作成中の自分の回答をすべて、`{"chatId": …}` ならそのチャットの回答だけを止めます。それらが保存されるまで最大 5 秒待ちます。何も作成中でなければ `stopped: false` です。回答はイベント `stopped` で終わり、その文章は残ります。*(v0.9)* ヒント、解説、まとめも同じ方法で止まります（その学習チャットの `{"chatId"}`、または `{}`）。
 - **`chats/delete`** は、そのチャットで作成中の回答を先に止め、その後チャットをそのメッセージと一緒にすぐ削除します。自分のものでないチャットの `{"id": …}`：404。
-- **`memories/add`、`memories/update`**：文の空白は 1 つの空白にまとめます。1〜`memoryChars` 文字（既定 300。`limit` 付きの 400 `ai.memoryTooLong`）。`memoriesPerUser` を超えるメモ：`limit` 付きの 409 `ai.memoryLimit`。`source` の既定は `manual` です。
+- **`memories/add`、`memories/update`**：文の空白は 1 つの空白にまとめます。1〜`memoryChars` 文字（v1.0 から既定 200。以前は 300。`limit` 付きの 400 `ai.memoryTooLong`）。`memoriesPerUser` を超えるメモ：`limit` 付きの 409 `ai.memoryLimit`。`source` の既定は `manual` です。
 - **`memories/suggest`** は、自分のメッセージの 1 つ（その最初の 2000 文字）を短いメモにするようモデルに頼み、それを返します。何も保存しません（`memories/add` に `source: "chat"` を付けて保存します）。回答のメッセージやほかの人のメッセージ：404。空の提案：502 `ai.up.protocol`。
 - **`admin/settings` の POST** は次の順に検証します：プロバイダー、`baseUrl`（最大 300 文字の絶対の `http://` または `https://` のアドレスで、ユーザー名、クエリ、`#` なし。400 `ai.badUrl`。Anthropic 形式では末尾の `/v1` を取り除きます）、形式と認証方式、キー（空白なしの表示可能な ASCII 文字 1〜400 文字。`field` 付きの 400 `ai.badKey`）、**キーの再入力**（プロバイダーやアドレスのオリジンが変わるとき、保存したすべてのキーを文字列か `null` でもう一度送らなければなりません。`field` 付きの 400 `ai.keyReenter` で、何も保存しません）、ヘッダーの衝突（プロバイダーのキーがあるときに、ゲートウェイの方式 `bearer` と OpenAI 形式、または `x-api-key` と Anthropic 形式。400 `ai.headerClash`）、モデル（`A–Z a–z 0–9 . _ : / @ + -` で最大 200 文字）、`retentionDays` 1〜3650（400 `ai.badRetention`）。必要なキーがそろっているかは、ここではなく `models` と `verify` が確認します。プロバイダー、アドレス、形式、認証方式、モデル、キーのどれかを変えると、通っていたテストが消え、AI がオフになります（オンだったときは `switchedOff: true`。作成中の回答はすべて `ai.disabled` で止まります）。`retentionDays` だけを保存しても、これらは何も変わらず、何もオフになりません。`updatedBy` は、新規インストールでは最初の保存まで `""` で、その保存が何を変えたかにかかわらず同じです。AI 設定のページは、新規インストールの初期値（OpenAI 互換、その既定のアドレス、キーなし）を保存された接続とはみなさないので、保持期間だけを保存しても、接続のチップは「接続が未設定」のままです。`format` なしでプロバイダーを `gateway` に変えると、形式はアドレスの最後の部分から決まります（`…/anthropic` → `anthropic`、それ以外は `openai`）。
 - **`admin/models`** は **保存した** 設定でモデルを一覧にします（必要なキーがないときは `field` 付きの 400 `ai.keyMissing`）。OpenAI 形式：`data[].id` を並べ替えたもの。Anthropic 形式：プロバイダーの順。モデルを一覧にしないプロバイダー（404、405、501、空または読めない一覧）では `{"models": [], "listed": false}` になります：モデルを手入力してください。キー、接続、利用枠、タイムアウトの問題は、その `ai.up.*` のコード付きの 502 / 504 になります。結果は 10 分間保持します。
 - **`admin/verify`** は、保存した設定とモデルでストリーミングのリクエストを 1 つ、チャットと同じ方法で、プロンプト "Reply with the single word OK." とメッセージ "Test" で送ります（先に 400 `ai.modelMissing` / `ai.keyMissing`、409 `ai.keyProblem` を確認します）。成功には、文章のある回答か、トークン数付きの正常な終了が必要です。プロバイダーがリクエストを拒否した（`ai.up.badRequest`）ときは、`stream_options` なしで（OpenAI 形式）、または `max_tokens` を 8192 ではなく 4096 にして（Anthropic 形式）もう一度試し、うまくいけばその設定を残します。失敗は 200 で `ok: false`、`ai.up.*` のコード、プロバイダーの HTTP ステータスを返します：設定を指すコード（`auth`、`quota`、`notFound`、`badRequest`、`protocol`、`refused`）は通っていたテストを消して AI をオフにし、一時的なもの（`rateLimit`、`overloaded`、`server`、`timeout`、`connect`）は何も変えません。1 回の試行に最大 2 分かかることがあり、Nginx はこのルートで最大 300 秒待ちます。
 - **`admin/enable`** の `{"enabled": true}` には、今の設定のテストに通っていること（409 `ai.notVerified`）と、キーが読めること（409 `ai.keyProblem`）が必要です。`false` は作成中の回答をすべて止めます（`ai.disabled`）。これはインストール全体の **AI+ 機能** のスイッチです（AI 設定ではチップ「AI+ 機能はオン」/「AI+ 機能はオフ」で表示されます）。応答する前に、ai-service が新しい状態をバックエンドに報告するので、`aiAvailable` はすぐに追随します。`settings`（AI をオフにするとき）、`verify`（AI をオフにするとき）、`suspend`、`resume` も同じです。
 - **`admin/suspend`** と **`admin/resume`** *(v0.8、ラウンド 2)* は、1 人の一般ユーザーの AI+ 機能を**一時停止**・**再開**します（AI 設定ではボタン **一時停止** / **再開** と状態 **一時停止中** として表示されます。ルート名、`suspended` キー、コード `ai.suspended` は、以前の語のままです）。ボディは `{"userId": <id>}` だけです（ほかは 400 `ai.badRequest`）。応答は、新しい `suspended` を持つ `{"user": AdminUserRow}` です。ユーザーはバックエンドを通じて調べます（バックエンドが応えられないときは 503 `ai.backendDown`、ユーザーが存在しなければ 404 `ai.notFound`）。管理者は一時停止できません：409 `ai.adminAlways`。AI+ 機能がオフのユーザーも API からは一時停止できます（AI 設定のページに並ぶのは、その機能を持つユーザーだけです）。**一時停止** は、そのユーザーの作成中の回答やメモの提案をすぐに止め（そこまでの文章は残り、ストリームは `error` イベント `ai.suspended` で終わります）、それ以後、そのユーザーの AI ユーザーのルートは 403 `ai.suspended` を返します。チャットとメモリーの閲覧と削除はできて、ユーザーはデータとともに一覧に残ります。ページは確認を求めません。どちらのルートも繰り返して安全です：フラグと監査の行は 1 つのトランザクションで書き、何も変えない繰り返しは、新しい行なしで 200 を返します。**監査あり**：システムログの行は、`AI function turned off for user "<name>" by admin "<admin>"`（一時停止）と `AI function turned on for user "<name>" by admin "<admin>"`（再開）で、接頭辞 `AI: ` が付きます。この英語のログの行は、文面を変えていません。フラグは ai-service 自身のデータベースに保存されます（スキーマ 2、[database.md](database.md)）。スキーマ 2 のファイルにない列（この版の以前のビルドのもの）は、次の起動時に自動で追加されます。
-- **`admin/usage`**：7 日と 30 日は日ごと、90 日と 365 日は月ごと。`byPeriod` は範囲のすべての期間を 0 も含めて古い順に並べます。プロバイダーが報告しなかったトークンは 0 と数えます。`tokensCached` は、プロバイダーが自分のプロンプトキャッシュから提供した `tokensIn` の一部です（**プロンプトキャッシュ** を参照）。AI 設定の使用量タブでは **キャッシュ** 列として表示されます。それが追加される前に記録された呼び出しは 0 と数えます。`byUser` は呼び出しの数で並べ、削除されたユーザーは `userId: null` の 1 行です。`byModel` では、モデルを一覧にした呼び出しは `model: ""` です。*(v0.9)* `byPurpose` は `byPeriod` の後に付き、同じ範囲の**チャットの呼び出し**（モデルを一覧にした呼び出しは含みません）を、必ずこの順の 4 行に分けます（0 の行も残します）：`chat`（AI チャット、および v0.9 より前に記録されたすべての呼び出し）、`hint`、`explain`、`summary`。AI 設定の使用量タブでは「機能別」の表として表示されます。
+- **`admin/usage`**：7 日と 30 日は日ごと、90 日と 365 日は月ごと。`byPeriod` は範囲のすべての期間を 0 も含めて古い順に並べます。プロバイダーが報告しなかったトークンは 0 と数えます。`tokensCached` は、プロバイダーが自分のプロンプトキャッシュから提供した `tokensIn` の一部です（**プロンプトキャッシュ** を参照）。AI 設定の使用量タブでは **キャッシュ** 列として表示されます。それが追加される前に記録された呼び出しは 0 と数えます。`byUser` は呼び出しの数で並べ、削除されたユーザーは `userId: null` の 1 行です。`byModel` では、モデルを一覧にした呼び出しは `model: ""` です。*(v1.0)* ユーザー ID のある `byUser` の行には `today` があります：そのユーザーの今日 0 時（サーバーのタイムゾーン）以降に数えた呼び出しで、日の上限が比べる数です（5.6 を参照）。*(v0.9)* `byPurpose` は `byPeriod` の後に付き、同じ範囲の**チャットの呼び出し**（モデルを一覧にした呼び出しは含みません）を、必ずこの順の 4 行に分けます（0 の行も残します）：`chat`（AI チャット、および v0.9 より前に記録されたすべての呼び出し）、`hint`、`explain`、`summary`。AI 設定の使用量タブでは「機能別」の表として表示されます。
 - **`admin/users`** は、まずバックエンドと照合し（削除されたユーザーの AI データを削除）、その後、**AI+ 機能を持つユーザー**を一覧にします：すべての管理者と、AI+ がオンのすべてのユーザー（一時停止中のユーザーも `suspended: true` で含む）をユーザー名の順に並べます。トークンは全期間の合計です。*(ラウンド 2)* AI+ 機能をオフにされたユーザーは、まだ AI データがあっても一覧に載りません。そのデータは残ります（本人は閲覧と削除ができ、保存期間が適用され、`admin/user` は今も監査付きでそれを表示します）。そのためここでは `exists` は常に `true` です（形が変わらないよう、キーは残してあります）。
 - **`admin/user`** も照合を行い、ユーザーがメインのアプリにもう存在しないときだけ 404 を返します（AI データのないユーザーには空の一覧）。**表示は監査されます**：行 `user "<admin>" viewed the AI chats and memories of user "<name>"`（`admin/chat` では `… viewed an AI chat of user "<name>" (<n> messages)`）を、データを返す前にシステムログに届けます。バックエンドがそれを受け取れないときの応答は 503 `ai.backendDown` で、データはありません。
 - **`admin/clear`**：`what: "chat"` には `chatId` が必要で、`chats` と `memories` には付けてはいけません（400）。消去するチャットで作成中の回答は先に止めます。監査の行（`cleared one AI chat of user …`、`cleared all <n> AI chats of user …`、`cleared all <n> AI memories of user …`）は、削除と同じトランザクションで書き、バックエンドが受け取るまで届け続けます。
-- **`admin/limits`**：キーは `perUserRunning`（1〜4、既定 1）、`globalRunning`（1〜64、16）、`chatsPerUser`（10〜100000、1000）、`messagesPerChat`（20〜5000、400）、`memoriesPerUser`（1〜1000、50）、`memoryChars`（50〜2000、300）、`messageChars`（1000〜32000、16000）です。POST は任意の一部を受け付けます。範囲外または整数でない値は `field` 付きの 400 `ai.limitRange`、知らないキーは 400 `ai.badRequest` で、そのときは何も保存しません。変更はすぐに反映され（実行中の呼び出しは取り消しません）、AI をオフにすることも、既存のデータを削除・短縮することもありません。ログに出ます：`AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`。*(v0.9)* 学習チャットもほかのチャットと同じに数えます：1 つにつき `chatsPerUser` の 1 つ分で、ヒント、解説、まとめを求めるたびにそのチャットにメッセージが 2 つ加わるので、既定の `messagesPerChat` 400 では、1 回の練習や試験で 200 回まで尋ねられます。
+- **`admin/limits`**：キーは `perUserRunning`（1〜4、既定 1）、`globalRunning`（1〜64、16）、`chatsPerUser`（10〜100000、1000）、`messagesPerChat`（20〜5000、400）、`memoriesPerUser`（1〜1000、50）、`memoryChars`（50〜2000 文字、200）、`callsPerMinute`（1〜100、5）、`callsPerHour`（1〜2000、20）、`callsPerDay`（1〜20000、100）、`replyMaxChars`（1〜16000 文字、1000。最長の回答で、モデルへ `max_tokens` として送ります。5.6 を参照）です。*(v1.0)* `messageChars` はもうキーではありません。それを指定した POST は 400 `ai.badRequest` で、16 000 文字の固定の上限は状態に示されます。呼び出しの上限は順序を守る必要があります（`callsPerMinute` ≤ `callsPerHour` ≤ `callsPerDay`）。そうでなければ、`field`（値が小さすぎるより長い時間枠）付きの 400 `ai.limitOrder` となり、何も保存されません。POST は任意の一部を受け付けます。範囲外または整数でない値は `field` 付きの 400 `ai.limitRange`、知らないキーは 400 `ai.badRequest` で、そのときは何も保存しません。変更はすぐに反映され（実行中の呼び出しは取り消しません）、AI をオフにすることも、既存のデータを削除・短縮することもありません。ログに出ます：`AI limits changed by admin "<name>": chatsPerUser 1000 -> 2000`。*(v0.9)* 学習チャットもほかのチャットと同じに数えます：1 つにつき `chatsPerUser` の 1 つ分で、ヒント、解説、まとめを求めるたびにそのチャットにメッセージが 2 つ加わるので、既定の `messagesPerChat` 400 では、1 回の練習や試験で 200 回まで尋ねられます。
 
 ### 5.3 `send` と `retry` のイベントストリーム
 
@@ -681,7 +683,7 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.adminOnly` | 403 | 管理者だけが操作できます（管理者以外による `POST /api/ai/free` も）。 |
 | `ai.notFound` | 404 | 見つかりません（またはあなたのものではありません）。 |
 | `ai.busy` | 409 | まだ回答を作成中です。*(v0.9)* 学習用ルートでは、応答の最後に `"running"` も付きます：作成中の回答の `RunningInfo`（見つからないときは `null`）で、ページはどの回答かを示せます。 |
-| `ai.tooLong` | 400 | メッセージが長すぎます（`limit`）。 |
+| `ai.tooLong` | 400 | メッセージが 16 000 文字を超えています（`limit`：16000。v1.0 から固定の上限）。 |
 | `ai.messageLimit` | 409 | チャットが `messagesPerChat` に達しました（`limit`）：新しいチャットを始めてください。 |
 | `ai.chatLimit` | 409 | チャットが `chatsPerUser` 件あります（`limit`）：いくつか削除してください。 |
 | `ai.notRetryable` | 409 | この回答は再試行できません。*(v0.9)* すべてのヒント、解説、まとめも同じです。テキストは変わりません。 |
@@ -691,7 +693,9 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.noDetail` | 409 | *(v0.9)* その記録には問題ごとの明細がありません（v0.5 より前に保存されたもの。テキスト `这条记录没有逐题记录，无法总结。`）。 |
 | `ai.badRequest` | 400 / 405 / 413 / 415 | リクエストが無効です。 |
 | `ai.memoryLimit` | 409 | メモリーがいっぱいです（`limit`）。 |
-| `ai.memoryTooLong` | 400 | メモの文字数が多すぎます（`limit`）。 |
+| `ai.memoryTooLong` | 400 | メモの文字数が多すぎます（`limit`、`memoryChars`、既定 200）。 |
+| `ai.callLimit` | 429 | *(v1.0)* ユーザーごとの呼び出し上限（分、時間、日のいずれか）に達しました：`cap`、`limit`、`retryAt`、`retryAfter`、およびヘッダー `Retry-After`。何も保存されません。5.6 を参照。 |
+| `ai.limitOrder` | 400 | *(v1.0)* 呼び出しの上限の順序が正しくありません（`field`）：長い時間枠は短い時間枠より小さくできません。何も保存されません。 |
 | `ai.notVerified` | 409 | AI を有効にする前に、設定を保存してテストに通してください。 |
 | `ai.keyProblem` | 409 | 保存したキーを復号できません。入力し直してください。 |
 | `ai.badUrl` | 400 | 完全な `http://` または `https://` のアドレスではありません（またはユーザー名、クエリ、`#` 付き）。 |
@@ -775,7 +779,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 クエリ。生の値で（どれもパーセントエンコーディングは不要）、各名前は多くても 1 回、知らない名前は無視します：`mode`（`practice` または `exam`）、`key`（小文字の 16 進数 32 桁）か `record`（正の id）のどちらかちょうど 1 つ、`source`（`practice` または `result`）、`question`（上と同じ問題 id）、`kind`（`hint` または `explain`）。`ask` と同じ組み合わせが適用されます（ヒントは `practice` と `practice` のときだけ。`source` が `practice` なら `mode` は `practice` で `key` が必要。`mode` が `exam` なら `source` は `result`。`record` には `source` が `result` であることが必要）。それ以外は 400 `ai.badRequest` です。
 
-応答：`StudyAnswer` の `Saved`。`latest` は、その場所のその問題の最新の回答で、status は問いません（作成中なら `streaming` で、そこまでの文章付き。終わるまで 2 秒ごとに読み直してください）。`lastGood` は、`status` が `done` で文章がある最新の回答で、**`latest` が `done` でないときだけ**入ります（それ以外は `null`）。そのため、失敗した、または伏せられた再試行の後でも、最後に成功した回答が表示できます。同じ問題への練習中の回答と結果ページの回答は、別々に保たれます（`source`）。何も見つからないとき：`{"chatId": null またはそのチャットの id, "latest": null, "lastGood": null}`。
+応答：`StudyAnswer` の `Saved`。`latest` は、その場所のその問題の最新の回答で、status は問いません（作成中なら `streaming` で、そこまでの文章付き。終わるまで 2 秒ごとに読み直してください）。`lastGood` は、`status` が `done` で文章がある最新の回答で、**`latest` が `done` でないときだけ**入ります（それ以外は `null`）。そのため、失敗した、または伏せられた再試行の後でも、最後に成功した回答が表示できます。同じ問題への練習中の回答と結果ページの回答は、別々に保たれます（`source`）。何も見つからないとき：`{"chatId": null またはそのチャットの id, "chatTitle": そのチャットのタイトルまたは null, "latest": null, "lastGood": null}`。
 
 `record` を使うときは、ai-service が記録の身元をバックエンドに尋ね（`record-info`、第 6 節）、それをメモリに最大 10 分間（最大 1000 件）保持して、チャットを探します。そのユーザーのものでない記録、または種類が `mode` と違う記録は、上の空の応答になります。バックエンドが応えられないときは 503 `ai.backendDown` です。読むのに AI+ 機能は不要なので、AI がオフの間も応答します。
 
@@ -796,6 +800,22 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 #### ログとプライバシー
 
 問題文、ヒント、解説、まとめ、回答、チャットのタイトル、セッションキー、記録の時刻は、バックエンドのログにも ai-service のログにも決して書かれません。Nginx のアクセスログはクエリ文字列を除いたパスを記録するので、saved ルートの `key` と `at` はそこに届きません。バックエンドの応答を読み取れないときは、ai-service は 1 分に最大 1 行（`AI link: an answer of <path> could not be read`）を記録し、そのリクエストだけを 503 `ai.backendDown` で失敗させます。データのルートからの 404 は、AI との接続の状態を変えません。
+
+### 5.6 ユーザーごとのリクエスト上限と回答の長さ *(v1.0)*
+
+- **数えるもの。** ai-service が、サインインしたユーザーのために AI プロバイダーへ行う呼び出しで、受け付けられたものすべて：AI チャットの送信と再試行（フリーモードを含む）、学習用の質問（ヒント、解説、まとめ。再生成、「止めてこれを生成」を含む）、各メモの提案。結果は問いません。停止したり、エラーで終わったりした呼び出しも数えます。数えないもの：管理者の接続テスト（`admin/verify`）とモデル一覧（`admin/models`）、保存された回答・チャット・メモリーの読み取り、受け付けられる前に拒否されたリクエスト（`ai.busy`、`ai.serverBusy`、`ai.disabled`、`ai.suspended`、`ai.tooLong`、`ai.chatLimit`、`ai.messageLimit`、`ai.memoryTooLong`）。管理者にも同じ上限があります。
+- **上限。** ユーザーごとに `callsPerMinute`（既定 5）、`callsPerHour`（20）、`callsPerDay`（100）を `admin/limits` で設定します。分と時間の上限は移動する時間枠です（直近 60 秒と直近 3 600 秒）。日の上限は、サーバーのタイムゾーン（ai-service の `TZ`、deployment.md を参照）の今日 0 時以降に始まった呼び出しを数え、次の 0 時に再び始まります。実行中の呼び出しも数えます。上限を下げても実行中の呼び出しは止まりません。ユーザーは、時間枠から十分な呼び出しが出ていくまで（日の上限の場合は次の 0 時まで）止められます。
+- **拒否。** HTTP 429、JSON、ヘッダー `Retry-After`（`retryAfter` と同じ秒数）：
+
+  ```json
+  {"error": "你的 AI 请求额度已用完（每小时 20 次），请联系管理员设置 AI 请求额度上限。", "code": "ai.callLimit", "cap": "hour", "limit": 20, "retryAt": 1762950300, "retryAfter": 712}
+  ```
+
+  `cap` は `minute`、`hour`、`day` のいずれかで、最も遅く解放される上限です。`limit` はその値です。`retryAt` はそれが解放される unix 秒（`day` の場合はサーバーのタイムゾーンの次の 0 時）です。`retryAfter` は今からの整数秒で、最低 1 です。テキストは上限名を示し、日の上限は「明天 0 点后可以再次使用。」で終わります（メッセージは中国語のまま）。クライアントは `code` で翻訳し、テキストでは翻訳しません。何も保存されず、呼び出し側は送ったテキストを保持します。ストリームが始まる前は、拒否は `ai.busy` と同じく普通の JSON です。Nginx 自身の 429（5.1 節）は JSON ではなく、別の上限です。
+- **数。** `GET /api/ai/status` は、AI+ があなたに使えるとき `calls` を持ちます（上の形を参照）。`GET /api/ai/admin/users` と `GET /api/ai/admin/user` の管理者の行は `calls`（`used`、`blocked`）を持ちます。ユーザー ID のある `GET /api/ai/admin/usage` の各 `byUser` 行は `today` を持ちます。
+- **ログ。** ユーザーが上限に達すると、その上限が再び解放されるまでシステムログに 1 行出ます：`user "<name>" reached the AI request cap (20 per hour)`。拒否されたリクエストごとの行はありません。
+- **回答の長さ。** 数えられる呼び出しは、`replyMaxChars`（回答の文字数）から計算した `max_tokens` を、リクエストの回答言語によって送ります：中国語と日本語は文字数 × 1.5 を切り上げ、英語は文字数です（英字 4 字は 1 文字として数え、およそ 1 トークン）。例：1000 zh または ja → 1500；1000 en → 1000；1 zh → 2；1 en → 1；333 ja → 500；16000 zh → 24000；16000 en → 16000。接続テストとモデル一覧は独自のリクエストボディを保ちます。フィールドを拒否する OpenAI 互換プロバイダー（`max_tokens` を名指しする 400 または 422。ストリームのイベントが出る前）には、同じ呼び出しの中で `max_completion_tokens` で再び頼み、次に上限なしで頼みます。`max_tokens` を拒否する Anthropic プロバイダーには、保存されたテストの値がそれより小さいとき、その値で再び頼みます。再試行は同じ呼び出しに属するので、上限に対しては 1 回、使用量の行は 1 つだけ数えます。うまくいった方式は、次に再起動するまで設定ごとに覚えます。上限に達した回答は `truncated: true` 付きの `done` で終わります（AI チャットに注記が出ます）。長い回答や、答える前に考えるモデル（その思考も数えます）には `replyMaxChars` を上げてください。
+- **ほかの上限。** メッセージは最大 16 000 文字です（固定で、設定ではありません）。メモリーは文字数だけで数えます（`memoryChars`、既定 200）。上限を下げても、既存のメッセージとメモリーは切られません。
 
 ## 6. 内部ルート（`/internal/*`、v0.8）
 
@@ -941,6 +961,24 @@ v0.6 からは、ゴールデンテストは既定の管理者としてログイ
 | AI チャットの保存期間による削除 | 古いチャットを 1 つのトランザクションで削除 | 20 件ずつのまとまりで、間に短い休みを入れて削除するので、1 回の掃除がほかの書き込みを長く止めることはない |
 | メインのデータベーススキーマ | v5 | **v6**：`attempts.session_key`（テキスト）と `attempts.started_at`（整数）。古い記録ではどちらも `NULL`、インデックスも制約もなし。アップグレード（v5 から、またはもっと古いスキーマから一度に）は、先にデータベースファイルの隣にバックアップ `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` を書き出し（`<N>` はそのファイルが持っていたスキーマで、v0.8 のデータベースなら `xexam-schema5-…`）、`Upgraded the database to schema 6. A copy of the previous version was saved first: …` をログに出します。バックアップに失敗すると、何も変更しません。スキーマ 6 のファイルは、開いても再び変更されません。[database.md](database.md) を参照 |
 | AI のデータベーススキーマ | v2 | **v3**：`chats.kind`、`chats.ref`、`chats.record_id`。`messages.kind`、`question_id`、`question_no`、`source`、`lang`、`sample_used`、`sample_usable`、`sample_wrong`。`usage.purpose`（12 列）。インデックス `idx_chats_ref`（ユーザー、種類、ref ごとに一意）、`idx_messages_study`、`idx_messages_streaming`。既存のチャットとメッセージは種類が `chat` になり、既存の使用量の行には purpose がありません（`chat` として数えます）。アップグレード（スキーマ 1 または 2 から）は、先に AI のデータベースの隣にバックアップ `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` を書き出し、`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …` をログに出します。バックアップに失敗すると、ファイルはそのままで、ai-service は起動しません。v0.8 の ai-service はスキーマ 3 のファイルを拒否し、バックアップの復元を求めます。[migration.md](migration.md) を参照 |
+
+### v1.0 での変更（v0.9.1 との比較）
+
+AI のルートだけが変わり、どの変更も追加か既定値です。ほかのルートとバックエンドは変わりません。スマホ向けのレイアウト、AI+ パネル、フッター、AI 設定のタブはフロントエンドだけで、API の変更は要りません。
+
+| 変更 | v0.9.1 | v1.0 |
+|---|---|---|
+| `GET /api/ai/status` | `messageChars` は調整できる上限。最後は `freeMode` | `messageChars` は常に 16000（固定）。`memoryChars` は既定 200。AI+ があなたに使えるとき、`freeMode` の後に `calls` |
+| `Saved`（学習用とまとめ） | `chatId`、`latest`、`lastGood` | `chatId` の後に `chatTitle`（保存されたチャットのタイトル。チャットがなければ `null`） |
+| `GET /api/ai/admin/users`、`GET /api/ai/admin/user` | 行は `tokensOut` で終わる | 行は `calls` で終わる |
+| `GET /api/ai/admin/usage` | `byUser` の行に `today` はない | ユーザー ID のある `byUser` の行は、`lastAt` の後に `today` を持つ |
+| `GET` / `POST /api/ai/admin/limits` | 7 つのキー。`messageChars` は調整可能 | 10 のキー：`callsPerMinute`、`callsPerHour`、`callsPerDay`、`replyMaxChars` を追加。`messageChars` は削除（それを指定する POST は 400 `ai.badRequest`）。`memoryChars` は既定 200 |
+| `POST /api/ai/admin/limits` | 順序の規則なし | 呼び出しの上限は順序を守る必要がある（400 `ai.limitOrder`） |
+| `GET /api/ai/memories` | `maxChars` の既定 300 | `maxChars` の既定 200 |
+| `ai.tooLong` | `limit` は調整できる `messageChars` | `limit` は常に 16000 |
+| AI チャット、学習、まとめの呼び出しで送る `max_tokens` | Anthropic：8192（テストで必要な場合は 4096）。OpenAI 互換：トークン上限なし | `replyMaxChars` から（5.6）。接続テストとモデル一覧は変更なし |
+| 新しいコード | | `ai.callLimit`（429）、`ai.limitOrder`（400） |
+| AI のデータベース | スキーマ 3 | スキーマ 4：`limits` に 4 つの新しい列。`message_chars` は未使用。`memory_chars` は一度だけ既定 200 に（[database.md](database.md) を参照） |
 
 ## 8. 呼び出し例
 

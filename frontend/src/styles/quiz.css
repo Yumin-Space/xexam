@@ -1,13 +1,36 @@
-/* Exam page: additions to the quiz styles in main.css (top bar heading, auto-advance indicator, unavailable languages,
-   the pressed mark button, partly answered tiles, the answer sheet on narrow screens).
-   Colour tokens only. */
+/* Practice / exam page: the quiz-only rules (v1.0 phone-first update, spec 4.3: QZ-1 top row, QZ-2 card header, QZ-3 action
+   bar, QZ-5 answer sheet, QZ-8 short landscape). Colour tokens only.
+   PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), the one query of the whole app (utils/media.ts).
+   BAR_MQ = (max-width: 880px), (orientation: landscape) and (max-height: 500px): the action bar sits under the AI+ panel.
+   The DOM is the same at every width; the rules below decide what shows. */
 
-/* The "Question 3 of 25" text is the page heading (h1); it keeps the look of the old plain text */
-.qbar { flex-wrap: wrap; row-gap: 6px; }
-.qbar h1.l { margin: 0; font-size: 18px; font-weight: 400; line-height: 1.35; }
+/* ---------- The page gutters, as variables the full-bleed rows use ---------- */
+.wrap.qz {
+  --qz-gl: max(20px, env(safe-area-inset-left));
+  --qz-gr: max(20px, env(safe-area-inset-right));
+}
+@media (max-width: 480px) {
+  .wrap.qz { --qz-gl: max(12px, env(safe-area-inset-left)); --qz-gr: max(12px, env(safe-area-inset-right)); }
+}
+
+/* ---------- Top row (QZ-1): "Question 3 of 25", the practice tag, the clock, Save and exit; the meter is its bottom edge ---------- */
+.qbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; row-gap: 6px; margin-bottom: 20px; }
+.qbar .ql { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 18px; }
+/* The "Question 3 of 25" text is the page heading (h1); it keeps the look of plain text */
+.qbar h1.l { margin: 0; font-size: 18px; font-weight: 400; line-height: 1.35; display: flex; align-items: baseline; gap: 8px; }
 .qbar h1.l b { font-weight: 700; }
-.qbar .r { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }
-.qtime { display: inline-flex; align-items: baseline; }
+.qbar .pos-full { display: inline-flex; align-items: baseline; gap: 8px; }
+.qbar .pos-short { display: none; }
+/* "3 / 51": the slash keeps a little space on both sides (the leading space of the second part is dropped in the flex row) */
+.qbar .pos-short .dim { margin-left: .25em; }
+.qbar .qkind { vertical-align: 2px; font-size: 12.5px; font-weight: 500; }
+.qbar .r { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 14px; }
+.timer { font-size: 17px; font-weight: 600; }
+.qtime { display: inline-flex; align-items: baseline; gap: 4px; }
+.qtime .mi, .qexit .mi { display: none; }
+/* The progress meter: a thin bar below the row on wide screens, the row's bottom edge on phones */
+.meter { flex: 0 0 100%; height: 4px; margin: 4px 0 0; background: var(--hover-strong); border-radius: 999px; overflow: hidden; pointer-events: none; }
+.meter i { display: block; height: 100%; background: var(--print); border-radius: 999px; }
 
 /* Auto-advance indicator: a small quiet tag with a dot, only there as a reminder */
 .qauto {
@@ -17,47 +40,262 @@
 }
 .qauto-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--print); }
 
-.rail-count { margin-bottom: 12px; font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+/* ---------- Question card ---------- */
+.quiz-grid { display: grid; grid-template-columns: minmax(0, 1fr) 264px; gap: 24px; align-items: start; }
+.quiz-main { min-width: 0; }
+/* The AI+ dock (the panel, or the greyed bar) under the card: its own gap on wide screens; under BAR_MQ the column's gap */
+.quiz-main > .aip-dock { margin-top: 16px; }
+.phead-sheet { min-width: 0; overflow-wrap: anywhere; }
 
-/* A language the question lacks: still tappable (a tap shows why in a toast), but looks unavailable */
-.lang-btn[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
-@media (hover: hover) { .phead .lang .lang-btn[aria-disabled="true"]:hover { background: transparent; color: var(--ink3); } }
-
-/* "Mark to revisit" when on: readable in both themes (ink on a soft yellow, never ink on the plain --mark fill), with a
-   1px --ink2 edge (the yellow alone is under 3:1 on white) and no extra frame.
-   The yellow marker in front of the label matches the yellow marker on the answer-sheet tiles. */
-.pfoot .flagbtn[aria-pressed="true"] {
-  background: var(--mnemo-bg); border-color: var(--ink2); color: var(--ink);
-  box-shadow: none;
+/* ---------- Action bar (QZ-3) ----------
+   Wide (> 880 px), inside the card: [‹ Previous] [Check answer] [Next ›] [AI hint] [AI explanation] … [⚑ Mark to revisit].
+   Check answer and Next are two separate buttons in fixed places (an exam has only Next). */
+.pfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.pfoot .bar-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.pfoot [data-slot="flag"] { margin-left: auto; }
+.pfoot .btn .mi { width: 18px; height: 18px; flex: none; }
+/* Next: the label first, the chevron after it */
+.pfoot .btn[data-act="next"] { gap: 4px; }
+/* A practice's Next / Finish practice place holds both labels in one grid cell (pages/quiz.ts nextOrFinish): it is as wide as
+   the wider one, so the AI buttons after it keep their place on the last question. The hidden label is measured in the
+   primary button's weight (Finish practice is a primary button), so Next is not a few px narrower than Finish. */
+.pfoot .nx-two { display: inline-grid; }
+.pfoot .nx-two > span { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.pfoot .nx-two > .off { visibility: hidden; font-weight: 600; }
+/* "Mark to revisit" (the flag icon, v1.0) when on: readable in both themes (ink on a soft yellow, never ink on the plain
+   --mark fill), with a 1px --ink2 edge (the yellow alone is under 3:1 on white) and no extra frame. */
+.pfoot .flagbtn[aria-pressed="true"] { background: var(--mnemo-bg); border-color: var(--ink2); color: var(--ink); box-shadow: none; }
+/* A wide bar whose labels do not fit on one row (pages/quiz.ts fitWideBar): Previous and the flag become 44 px icons first
+   (pf-c1), then the two AI buttons too (pf-c2, with the small AI mark of the phone bar). Names and tips stay. */
+@media (min-width: 881px) and (min-height: 501px) {
+  .pfoot.pf-c1 .bbtn { width: 44px; min-width: 44px; padding: 0; justify-content: center; }
+  .pfoot.pf-c1 .bbtn .lbl { display: none; }
+  .pfoot.pf-c2 .ibtn.aip-bar-btn { width: 44px; min-width: 44px; padding: 0; }
+  .pfoot.pf-c2 .aip-bar-btn .lbl { display: none; }
+  .pfoot.pf-c2 .aip-bar-btn .aip-ai-mark {
+    display: block; position: absolute; top: 2px; right: 2px; padding: 0 3px; border-radius: 6px; background: var(--ai-2);
+    color: #fff; font-size: 9px; font-weight: 700; font-style: italic; line-height: 12px; letter-spacing: 0; pointer-events: none;
+  }
+  .pfoot.pf-c2 .aip-bar-btn[aria-disabled="true"] .aip-ai-mark { background: var(--ink3); }
 }
 
+/* ---------- Answer sheet (QZ-5) ---------- */
+.rail {
+  position: sticky; top: 16px; display: flex; flex-direction: column; max-height: calc(100vh - 32px);
+  background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; padding: 16px 18px 18px; box-shadow: var(--shadow-xs);
+}
+.rail-sum { flex: none; display: block; }
+.rail h2 { margin: 0 0 4px; font-size: 15px; font-weight: 600; }
+.rail-count { margin: 0 0 10px; font-size: 13.5px; font-weight: 600; color: var(--ink2); overflow-wrap: anywhere; }
+.rail-sum > .btn { width: 100%; margin-bottom: 14px; }
+.rail-toggle { display: none; }
+/* Desktop: the tiles scroll inside the sheet, so the sheet is never taller than the window */
+.rail-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, 36px); justify-content: start; gap: 6px; padding: 3px; }
+.tile {
+  position: relative; display: grid; place-items: center; width: 36px; height: 36px;
+  border: 1.5px solid var(--print); border-radius: 50%; background: var(--card); color: var(--print);
+  font: 700 14px var(--num); padding: 0;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+@media (pointer: coarse) {
+  .tiles { grid-template-columns: repeat(auto-fill, 44px); }
+  .tile { width: 44px; height: 44px; }
+}
+@media (hover: hover) { .tile:not(.done):not(.part):hover { background: var(--print-soft); } }
+.tile.done { background: var(--graphite); border-color: var(--graphite); color: var(--on-graphite); }
+.tile.part { background: linear-gradient(90deg, var(--graphite) 50%, var(--card) 50%); border-color: var(--graphite); color: var(--ink); text-shadow: 0 0 3px var(--card), 0 0 3px var(--card); }
+.tile.cur { outline: 2px solid var(--ink); outline-offset: 2px; }
+.tile.flag::after { content: ""; position: absolute; top: -3px; right: -3px; width: 11px; height: 11px; background: var(--mark); border: 1.5px solid var(--card); border-radius: 3px; }
+/* One inline row of swatches (wraps when it must) */
+/* QZ-5 filter chips over the tiles */
+.sheet-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 10px; }
+.sheet-chip { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 16px; background: var(--card); color: var(--ink2); font: inherit; font-size: 13px; cursor: pointer; }
+.sheet-chip[aria-pressed="true"] { background: var(--hover-strong); border-color: var(--ink2); color: var(--ink); font-weight: 600; }
+.sheet-chip:disabled { opacity: .5; cursor: default; }
+.sheet-chip:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+@media (pointer: coarse) { .sheet-chip { min-height: 44px; } }
+.tiles .tile[hidden] { display: none; }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 12px 0; font-size: 12.5px; color: var(--ink3); }
+.legend span { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--print); background: var(--card); flex: none; }
+.legend i.done { background: var(--graphite); border-color: var(--graphite); }
+.legend i.part { background: linear-gradient(90deg, var(--graphite) 50%, var(--card) 50%); border-color: var(--graphite); }
+.legend i.flag { border-radius: 3px; background: var(--mark); border-color: var(--mark); }
+.keys { margin-top: 12px; font-size: 12.5px; color: var(--ink3); line-height: 1.7; }
+/* Keyboard shortcut hints are meaningless on devices without a keyboard */
+@media (hover: none) { .keys { display: none; } }
 /* Partly answered hotspot tile (often the current one): the number sits on a card-coloured disc inside the half-filled ring,
    so it stays readable in both themes instead of straddling the graphite / card boundary */
 .tiles .tile.part {
   background: radial-gradient(circle, var(--card) 0 40%, transparent 41%), linear-gradient(90deg, var(--graphite) 50%, var(--card) 50%);
   text-shadow: none;
 }
-
-/* Narrow screens: the answer sheet sits below the question, so "Answered x of n" and Submit come first,
-   right under the heading, instead of below every tile and the legend */
-@media (max-width: 880px) {
-  .rail { display: flex; flex-direction: column; }
-  .rail h2 { order: -2; }
-  .rail-count, .rail > .btn.primary { order: -1; }
-  .rail > .btn.primary { margin-bottom: 14px; }
+@media (prefers-reduced-motion: reduce) {
+  .tile { transition: none; }
 }
 
-@media (max-width: 480px) {
-  .qbar .r { gap: 8px 10px; }
-  .qauto { padding-inline: 6px; font-size: 12px; }
-  /* 6-7 tiles per row at a 44px touch size instead of 5 oversized ones */
-  .rail .tiles { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
+/* A language the question lacks: still tappable (a tap shows why in a toast), but looks unavailable */
+.lang-btn[aria-disabled="true"] { opacity: .4; cursor: not-allowed; }
+@media (hover: hover) { .phead .lang .lang-btn[aria-disabled="true"]:hover { background: transparent; color: var(--ink3); } }
+
+/* ---------- Up to 880 px, or a phone turned sideways (BAR_MQ): one column; the bar is pinned under the card and the panel ---------- */
+@media (max-width: 880px), (orientation: landscape) and (max-height: 500px) { /* BAR_MQ */
+  .quiz-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
+  .quiz-main { display: flex; flex-direction: column; gap: 12px; }
+  .quiz-main > .aip-dock { margin-top: 0; }
+  /* The bar is fixed to the screen bottom (never moves, however the page is scrolled); the page ends above it */
+  .wrap.qz { padding-bottom: calc(56px + env(safe-area-inset-bottom) + 24px); }
+  .quiz-main > .pfoot {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; flex-wrap: nowrap; gap: 4px; margin: 0; box-sizing: border-box;
+    padding: 6px var(--qz-gr, 16px) calc(6px + env(safe-area-inset-bottom)) var(--qz-gl, 16px); border-top: 1px solid var(--line-soft);
+    background: var(--card); box-shadow: none;
+  }
+  .pfoot .bar-main { flex: 1 1 0; min-width: 0; flex-wrap: nowrap; gap: 4px; }
+  .pfoot .bar-main > .btn { min-width: 0; flex: 1 1 0; }
+  .pfoot [data-slot="flag"] { margin-left: 0; }
+  /* The AI buttons and the flag are icons from here down (the AI buttons' own width rules are in ai-plus.css) */
+  .pfoot .bbtn[data-slot="flag"] { flex: none; width: 44px; padding: 0; }
+  .pfoot .bbtn[data-slot="flag"] .lbl { display: none; }
+  .pfoot [data-slot="hint"], .pfoot [data-slot="explain"] { flex: none; }
+  /* The sheet sits under the panel, in its place in the flow */
+  .rail { position: static; max-height: none; padding: 14px 16px; }
+  .rail-body { overflow: visible; }
+  .rail-sum { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px; }
+  .rail-sum > .btn { width: auto; margin: 0; white-space: nowrap; }
+  .rail-count { margin: 0; font-size: 13px; }
+  .rail-body { margin-top: 12px; }
+}
+
+/* ---------- PHONE ---------- */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* The top row: 44 px (+ the safe area), pinned; the meter is its 3 px bottom edge */
+  /* Bottom: the GitHub line closes the page; under it only the safe area, and at least 12 px so its tap height stays 44 px */
+  .wrap.qz { padding-top: 0; padding-left: var(--qz-gl); padding-right: var(--qz-gr); padding-bottom: calc(56px + env(safe-area-inset-bottom) + 24px); }
+  .wrap.qz { --qz-gl: max(12px, env(safe-area-inset-left)); --qz-gr: max(12px, env(safe-area-inset-right)); }
+  .qbar {
+    position: sticky; top: 0; z-index: 6; flex-wrap: nowrap; justify-content: space-between; gap: 8px;
+    box-sizing: border-box; height: calc(44px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) var(--qz-gr) 0 var(--qz-gl);
+    margin: 0 calc(-1 * var(--qz-gr)) 8px calc(-1 * var(--qz-gl)); background: var(--sheet);
+  }
+  .qbar .ql { gap: 8px; flex: 1 1 auto; }
+  .qbar h1.l { font-size: 16px; gap: 0; }
+  .qbar .pos-full { display: none; }
+  .qbar .pos-short { display: inline-flex; align-items: baseline; }
+  .qbar .r { flex: none; flex-wrap: nowrap; gap: 8px; }
+  .timer { font-size: 16px; }
+  .qtime { align-items: center; }
+  .qtime .mi { display: inline; width: 16px; height: 16px; color: var(--ink3); }
+  .meter { position: absolute; left: 0; right: 0; bottom: 0; flex: none; height: 3px; margin: 0; border-radius: 0; }
+  .meter i { border-radius: 0; }
+  /* Auto-advance: only a dot (the text stays for screen readers) */
+  .qauto { padding: 0; background: transparent; gap: 0; }
+  .qauto-dot { width: 8px; height: 8px; }
+  .qauto-l { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  /* Save and exit: the icon (the label is its name and its tip) */
+  .btn.quiet.qexit { width: 44px; min-width: 44px; padding: 0; }
+  .qexit .mi { display: inline; width: 20px; height: 20px; }
+  .qexit .lbl { display: none; }
+
+  /* The card: one header line (QZ-2), the stem a little larger and tighter */
+  .wrap.qz .phead { flex-wrap: nowrap; gap: 8px; min-height: 36px; margin-bottom: 8px; }
+  .wrap.qz .phead-sheet { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .wrap.qz .phead .lang { flex: none; }
+  .wrap.qz .stem { margin-bottom: 12px; }
+  .wrap.qz .stem p { font-size: var(--fs-stem); line-height: 1.7; }
+
+  /* The bar: one row of fixed slots, 56 px (+ the safe area), fixed to the screen bottom: it never moves between questions
+     or after an AI press, and a second tap on the same spot hits the same button (QZ-3) */
+  .quiz-main > .pfoot { min-height: 56px; }
+  .pfoot .btn.bbtn { padding: 0; }
+  .pfoot .bbtn[data-slot="prev"] { flex: none; width: 44px; min-width: 44px; }
+  .pfoot .bbtn[data-slot="prev"] .lbl { display: none; }
+  .pfoot .bar-main > .btn { padding-inline: 12px; font-size: 15px; }
+
+  /* The answer sheet: folded under the panel, the chevron opens it */
+  .rail-toggle {
+    position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0;
+    border: 0; border-radius: 8px; background: transparent; color: var(--ink2);
+  }
+  .rail-toggle .mi { width: 20px; height: 20px; transition: transform .15s ease; }
+  .rail.open .rail-toggle .mi { transform: rotate(180deg); }
+  .rail:not(.open) .rail-body { display: none; }
+  .rail h2 { margin: 0; font-size: 14px; }
+  .rail-count { font-size: 12.5px; font-weight: 500; }
+}
+@media (max-width: 600px) and (prefers-reduced-motion: reduce), (orientation: landscape) and (max-height: 500px) and (prefers-reduced-motion: reduce) {
+  .rail-toggle .mi { transition: none; }
+}
+
+/* Short labels follow the room the two main buttons really have (the .bar-main container), not the viewport width: the full
+   labels (核对答案 / 完成练习, Check answer / Finish practice) show wherever they fit, the short ones (shortLabel) only when
+   the buttons are squeezed, and Next keeps its chevron while it has room. The bar is excluded from the global <= 400 px
+   .l-short rule (icon-button.css). Thresholds = (widest label set + padding) x 2 + the 4 px gap, with CJK glyphs counted
+   at 1 em (as on an iPhone) and a margin for Latin fonts:
+   zh  full 核对答案 / 完成练习 4 em (bar-main >= 144 px); 下一题 + chevron needs 64 px (>= 160 px, else no chevron);
+   ja  full 練習を終える 6 em at 15 px (>= 220 px); en full Finish practice (>= 240 px); every language: short labels and no
+   chevron below 136 px. Next / Finish share one grid cell (.nx-two), so the hidden one also needs one line. */
+.pfoot .bar-main > .btn { white-space: nowrap; }
+/* Only where the bar is one row (BAR_MQ, .bar-main is flex: 1 1 0): a size container has no width of its own, so on a
+   wide screen (.bar-main sized by its buttons) it would collapse to 0 and show the short labels */
+@media (max-width: 880px), (orientation: landscape) and (max-height: 500px) { /* BAR_MQ */
+  .pfoot .bar-main { container-type: inline-size; container-name: barmain; }
+}
+.pfoot .bar-main .l-short { display: none; }
+@media (max-width: 520px) {
+  .pfoot .bar-main > .btn { padding-inline: 8px; }
+}
+@media (max-width: 400px) {
+  .pfoot .bar-main > .btn { padding-inline: 6px; font-size: 14px; }
+  .pfoot .bar-main .l-full { position: static; width: auto; height: auto; padding: 0; margin: 0; overflow: visible; clip: auto; white-space: nowrap; }
+}
+@container barmain (max-width: 239.98px) {
+  html:not(:lang(zh)):not(:lang(ja)) .pfoot .bar-main .l-short { display: inline; }
+  html:not(:lang(zh)):not(:lang(ja)) .pfoot .bar-main .l-full {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+}
+@container barmain (max-width: 219.98px) {
+  html:lang(ja) .pfoot .bar-main .l-short { display: inline; }
+  html:lang(ja) .pfoot .bar-main .l-full {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+}
+@container barmain (max-width: 159.98px) {
+  html:lang(zh) .pfoot .bar-main [data-slot="next"] .mi { display: none; }
+}
+@container barmain (max-width: 143.98px) {
+  html:lang(zh) .pfoot .bar-main .l-short { display: inline; }
+  html:lang(zh) .pfoot .bar-main .l-full {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+}
+@container barmain (max-width: 135.98px) {
+  html .pfoot .bar-main .l-short { display: inline; }
+  html .pfoot .bar-main .l-full {
+    position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+  }
+  html .pfoot .bar-main [data-slot="next"] .mi { display: none; }
+}
+
+/* ---------- Short landscape (QZ-8, SH-12) ---------- */
+@media (orientation: landscape) and (max-height: 500px) {
+  .qbar { height: calc(36px + env(safe-area-inset-top)); margin-bottom: 4px; }
+  .wrap.qz { padding-bottom: calc(48px + env(safe-area-inset-bottom) + 24px); }
+  .qbar h1.l, .timer { font-size: 15px; }
+  .btn.quiet.qexit { width: 40px; min-width: 40px; min-height: 36px; }
+  /* The 36 px row sits at the top edge of the screen: the tap area reaches 9 px below the button instead (44 px in all,
+     counted from inside its 1 px border) */
+  .qbar .btn.quiet.qexit::after { content: ""; position: absolute; inset: -4px -3px -9px; }
+  .wrap.qz .paper { padding: 8px 12px; }
+  .wrap.qz .phead { min-height: 28px; margin-bottom: 4px; }
+  .wrap.qz .stem { margin-bottom: 8px; }
+  .quiz-main > .pfoot { min-height: 48px; padding-top: 2px; padding-bottom: calc(2px + env(safe-area-inset-bottom)); }
+  .pfoot .btn { min-height: 40px; }
+  .pfoot .bbtn[data-slot="prev"], .pfoot .bbtn[data-slot="flag"] { width: 44px; }
 }
 
 /* ---------- Practice (v0.6.5) ---------- */
-/* The "Practice" tag next to "Question 3 of 25" */
-.qbar h1.l .qkind { margin-left: 10px; vertical-align: 2px; font-size: 12.5px; font-weight: 500; }
-
 /* The verdict right after checking: a mark and "Correct" / "Wrong" (the word, not only the colour, carries the result) */
 .pfeed { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 /* (v0.7) a small solid key in the colours of the graded options above it: green "Correct", orange "Wrong", white text */
@@ -69,7 +307,6 @@
 .pverdict.ok { background: var(--answer-right-solid); }
 .pverdict.ng { background: var(--answer-wrong-solid); }
 .pverdict:focus { outline: none; }
-.pverdict:focus-visible { outline: 2px solid var(--print); outline-offset: 3px; }
 .pfeed .verdict { margin-top: 8px; }
 
 /* Answer sheet in a practice: checked questions filled right / wrong (the legend and the tile names say which), in the same
@@ -78,7 +315,7 @@
 .tiles .tile.ng { background: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); color: var(--on-answer-solid); }
 .legend i.ok { background: var(--answer-right-solid); border-color: var(--answer-right-solid); }
 .legend i.ng { background: var(--answer-wrong-solid); border-color: var(--answer-wrong-solid); }
-/* keep the fill under the pointer (the plain tile hover of main.css would paint over it) */
+/* keep the fill under the pointer (the plain tile hover would paint over it) */
 @media (hover: hover) {
   .tiles .tile.ok:not(.done):hover { background: var(--answer-right-solid); }
   .tiles .tile.ng:not(.done):hover { background: var(--answer-wrong-solid); }

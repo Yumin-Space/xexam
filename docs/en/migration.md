@@ -4,8 +4,9 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v0.9.1 → v1.0** (section 0): no new `docker-compose.yml`; the AI database moves to schema 4 after its backup copy `backups/xexam-ai-schema3-<date-time>.db` is written; the main database does not change. Rolling back to v0.9.1 needs that copy restored (section 0.4).
 > - **v0.9 → v0.9.1** (no section of its own): nothing to do besides `docker compose pull` and `docker compose up -d`; no database change, no new setting and no new `docker-compose.yml`. Rolling back to v0.9 is changing `:latest` to `:v0.9` for the three images and running `docker compose up -d`; the databases stay as they are.
-> - **v0.8 → v0.9** (section 0): no new `docker-compose.yml`; the main database moves to schema v6 and the AI database to schema 3, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back. (This section is numbered 0 so that the numbers of the others, which other documents link to, stay as they are.)
+> - **v0.8 → v0.9** (section 0b): no new `docker-compose.yml`; the main database moves to schema v6 and the AI database to schema 3, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back. (This section is numbered 0b so that the numbers of the others, which other documents link to, stay as they are.)
 > - **v0.7.5 or v0.7 → v0.8** (section 1): a new `docker-compose.yml` with the AI service, `ai-service` (a third image, `xexam-ai-service`, and two volumes); the database moves to schema v5 automatically, after a backup copy is written; AI stays off until an administrator sets it up.
 > - **v0.6 → v0.8** (section 2): the database moves to schema v5 and to WAL mode, automatically, after a backup copy is written; then the questions of the old three- and four-column Excel layouts are retired, and you update the banks with six-column workbooks.
 > - **v0.5 or v0.5.1 → v0.8** (section 3): sign-in arrives together with the later schemas, in one step.
@@ -13,17 +14,54 @@
 > - **Python v0.2.x → Rust + TypeScript + Nginx (v0.3)** (sections 5–11): the database file and its schema did not change then; the switch meant "swapping the program", not "moving data". Basis for that decision: [migration-plan.md](../zh-CN/history/migration-plan.md). Risks: [risk-assessment.md](../zh-CN/history/risk-assessment.md).
 > - **v0.1 → later** (section 12): the database file name.
 >
-> Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back means **restoring that copy** and running the older images, with one exception: v0.8 opens the schema-6 main database of v0.9 as it is (section 0.4). The AI database has its own copies, `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` in `/data/backups/` of the volume `xexam_ai_data`; the AI service of v0.8 cannot open the schema-3 database of v0.9, so rolling back to v0.8 means restoring the schema-2 copy there. The background is in section 6 of [database.md](database.md). A rollback of the main database never touches the AI database, and the other way round.
+> Every upgrade that changes the schema writes **one** copy of the database first, named after the schema it had: `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db` (in Docker: `/data/backups/` in the volume `xexam_data`). Rolling back means **restoring that copy** and running the older images, with one exception: v0.8 opens the schema-6 main database of v0.9 as it is (section 0b.4). The AI database has its own copies, `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` in `/data/backups/` of the volume `xexam_ai_data`; the AI service of v0.8 cannot open the schema-3 database of v0.9, so rolling back to v0.8 means restoring the schema-2 copy there. The background is in section 6 of [database.md](database.md). A rollback of the main database never touches the AI database, and the other way round.
 >
-> **Going straight to v0.9.1 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 3 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v0.9.1 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `0.9.1` and ai-service creates its database at schema 3.
+> **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
 
-## 0. Upgrading from v0.8 to v0.9
+## 0. Upgrading from v0.9.1 to v1.0
 
-This section is numbered 0 so that the numbers of sections 1 to 12, which other documents link to, stay as they are.
+This section is numbered 0 because it is the newest one. The older sections keep their numbers (0b for v0.9, 1 to 12 as before).
 
 ### 0.1 What changes
+
+- **The AI database** moves from schema 3 to **schema 4**, once, on the first start of the new AI service. It gets three columns for the per-user request limits (**5 per minute, 20 per hour, 100 per day**) and one for the **answer length** (**1000 characters**). Your AI chats, memories, keys, settings and usage rows stay.
+- **Memory length**: a **Characters per memory** limit still at the old default of 300 becomes 200 during that upgrade. Any other value you chose stays. If you want 300 back, set it again in AI settings › AI safety.
+- **Per-message length**: the **Characters per message** setting is gone. A user message is always limited to 16000 characters (a fixed limit). Messages that were stored earlier are not cut.
+- **Answer length**: answers are now limited to **Characters per answer**, which defaults to 1000 (it was not a setting before). Long answers, above all an AI summary over many wrong answers, may now stop at the limit; raise it in AI settings › AI safety if you need longer ones.
+- **Request limits**: from the upgrade on, every AI request of a user counts toward the three per-user limits, administrators included. The day count starts again at 0:00 in the time zone of the AI service (its `TZ` setting; example `TZ=UTC`).
+- **The main database does not change** (it stays at schema 6). Study records, banks and users are untouched.
+- **Appearance and behaviour**: the phone layout, the AI+ panel that replaces the AI windows of a practice and its results, the separate **Check answer** and **Next** buttons, the centred footer line and the four tabs of AI settings. Nothing needs to be set up for them.
+
+### 0.2 Upgrade
+
+1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)). The AI service writes its own copy before it changes its database, but a copy of both volumes is still the simplest way back.
+2. **Pull the three images and start** (do not use `down -v`): `docker compose pull`, then `docker compose up -d`. The compose file, the volumes and `.env` stay as they are.
+3. **Read the AI service's log**: `docker compose logs ai-service` should say that it wrote the copy `backups/xexam-ai-schema3-<YYYYMMDD-HHMMSS>.db` in the AI volume and upgraded the AI database to schema 4. The backup is about as large as the AI database; keep that much free space before the upgrade.
+
+### 0.3 Checks after the upgrade
+
+- `http://localhost:8765/api/info` shows the running version (`"version": "1.0"` in the release).
+- `docker compose ps` lists three healthy containers.
+- Open **AI settings** (administrators): the page has the four tabs **AI+ function**, **AI+ users**, **AI usage** and **AI safety**; under **AI safety** the request limits read 5, 20 and 100, and the answer length reads 1000.
+- Decide the limits for your users: the defaults are a cost and abuse protection, not a usage quota. Check that the time zone of the AI service (`TZ`) gives the day reset you want.
+
+### 0.4 Rollback to v0.9.1
+
+The main database needs no restore (v0.9.1 opens its schema-6 database as it is). The AI database does: v0.9.1 refuses schema 4. To go back, stop the containers, restore the AI volume's copy `backups/xexam-ai-schema3-<date-time>.db` as the AI database, and start the v0.9.1 images. Everything in AI that was written after the upgrade is lost with it: chats, memories, saved answers, usage rows and changes to AI settings and limits. The study records of the same time stay.
+
+### 0.5 What has been tested
+
+Tests that pin this upgrade: the AI service upgrades schema 1, 2 and 3 to 4 with the same `sqlite_master` on every path, writes one backup copy first, keeps made-up rows and the old limit values, and sets a memory limit at the old default of 300 to 200 once. Tests are listed in the changelog entry of v1.0 (`docs/en/changelog.md`).
+
+---
+
+## 0b. Upgrading from v0.8 to v0.9
+
+This section is numbered 0b so that the numbers of sections 1 to 12, which other documents link to, stay as they are.
+
+### 0b.1 What changes
 
 v0.9 adds the AI help for studying (AI hint and AI explanation in practice, AI analysis on result pages, AI summary of a record; section 5.1, 6.1 and 7.1 of [usage.md](usage.md)). It needs **no new `docker-compose.yml`**: the same three images with the new tag, the same volumes and networks, no new setting.
 
@@ -52,7 +90,7 @@ What else you will notice:
 - AI usage statistics get a **By feature** table (AI Chat, AI hint, AI explanation, AI summary).
 - **The chat limits count the new chats**: every practice, exam and summarised record is a chat, and a request is two messages, so a very long practice uses up the default 400 messages per chat after about 200 requests (usage.md, section 17).
 
-### 0.2 Upgrade
+### 0b.2 Upgrade
 
 ```bash
 # 1. Back up both volumes (stop first; the backup files hold your whole databases, do not commit them)
@@ -72,7 +110,7 @@ docker compose logs ai-service
 
 Your `docker-compose.yml` and `.env` stay as they are. **Source build**: `git pull && docker compose -f docker/docker-compose.build.yml up -d --build` from the repository root. To stay on v0.8 on purpose, keep the `:v0.8` tag on all three images.
 
-### 0.3 Checks after the upgrade
+### 0b.3 Checks after the upgrade
 
 - [ ] `docker compose ps` lists `xexam-frontend`, `xexam-backend` and `ai-service`, all `healthy`.
 - [ ] `version` in `/api/info` is `0.9`.
@@ -82,7 +120,7 @@ Your `docker-compose.yml` and `.env` stay as they are. **Source build**: `git pu
 - [ ] To try the new features, sign in with an account that has the **AI+ feature**, start a practice and press **AI hint** (usage.md, section 5.1).
 - [ ] A second restart of the containers writes no new copy and no upgrade line.
 
-### 0.4 Rollback to v0.8
+### 0b.4 Rollback to v0.8
 
 The two databases roll back differently.
 
@@ -112,7 +150,7 @@ If you would rather go without AI for a while, skip steps 2 and 3: the main app 
 
 To upgrade again later, put the v0.9 images back. A main database that is still at schema 6 is not migrated again and gets no new copy; an AI database that you restored to schema 2 is migrated again, after a new copy.
 
-### 0.5 What has been tested
+### 0b.5 What has been tested
 
 With synthetic data only (`backend/tests/v09_ai_study.rs`, `db_golden.rs`, `ai-service/tests/` and `tests/integration/`):
 

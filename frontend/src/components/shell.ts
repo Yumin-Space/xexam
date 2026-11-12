@@ -1,18 +1,22 @@
 // App shell: a slim header (logo left; the account label and the menu button right, the navigation opens as a small
 // dropdown) + the centered page + footer. The quiz page and the sign-in pages do not use the shell.
+import '../styles/shell.css';
 import { shutdownApp } from '../api/import.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
+import { barStep, initialBar } from '../domain/top-bar.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
-import { sectionOf, type NavSection, type Route } from '../router.ts';
+import { routeHash, sectionOf, type NavSection, type Route } from '../router.ts';
 import { navigate, setNavOpen, signOut } from '../state/actions.ts';
 import { aiStatus } from '../state/ai.ts';
 import { navAllowed, type NavNeed } from '../state/bank-access.ts';
 import { S, isAdmin } from '../state/store.ts';
 import type { AuthUser, Role } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
-import { h } from '../utils/dom.ts';
+import { h, isAppScroll } from '../utils/dom.ts';
+import { matches, PHONE_MQ } from '../utils/media.ts';
 import { aiBadge, badgeReasonText } from './ai-badge.ts';
 import { brand } from './common.ts';
+import { githubLine } from './github-line.ts';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
@@ -49,7 +53,12 @@ export const ICONS = {
   home: [{ d: 'M3.5 11 12 4l8.5 7' }, { d: 'M6 9.5V20h12V9.5' }, { d: 'M10 20v-5.5h4V20' }],
   banks: [{ d: 'M4 6.5C4 5.1 7.6 4 12 4s8 1.1 8 2.5S16.4 9 12 9 4 7.9 4 6.5Z' }, { d: 'M4 6.5v5C4 12.9 7.6 14 12 14s8-1.1 8-2.5v-5' }, { d: 'M4 11.5v5C4 17.9 7.6 19 12 19s8-1.1 8-2.5v-5' }],
   records: [{ d: 'M3.5 20h17' }, { d: 'M6.5 20v-7' }, { d: 'M12 20V5' }, { d: 'M17.5 20v-10' }],
-  settings: [{ d: 'M4 7h9' }, { d: 'M17 7h3' }, { cx: 15, cy: 7, r: 2 }, { d: 'M4 17h3' }, { d: 'M11 17h9' }, { cx: 9, cy: 17, r: 2 }],
+  /** v1.0 (MN-3), Settings: a hub ring with eight teeth, so it no longer looks like AI settings' sliders */
+  gear: [
+    { cx: 12, cy: 12, r: 3 }, { cx: 12, cy: 12, r: 6.2 },
+    { d: 'M18.2 12h2.4' }, { d: 'M16.38 7.62l1.7-1.7' }, { d: 'M12 5.8V3.4' }, { d: 'M7.62 7.62l-1.7-1.7' },
+    { d: 'M5.8 12H3.4' }, { d: 'M7.62 16.38l-1.7 1.7' }, { d: 'M12 18.2v2.4' }, { d: 'M16.38 16.38l1.7 1.7' },
+  ],
   menu: [{ d: 'M4 7h16' }, { d: 'M4 12h16' }, { d: 'M4 17h16' }],
   about: [{ cx: 12, cy: 12, r: 8.5 }, { d: 'M12 11v5.5' }, { d: 'M12 7.6v.4' }],
   close: [{ d: 'M6 6l12 12' }, { d: 'M18 6 6 18' }],
@@ -62,11 +71,11 @@ export const ICONS = {
     { d: 'M10 3.5c.7 4.2 2.6 6.1 6.8 6.8-4.2.7-6.1 2.6-6.8 6.8-.7-4.2-2.6-6.1-6.8-6.8 4.2-.7 6.1-2.6 6.8-6.8Z' },
     { d: 'M18 14.5c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z' },
   ],
-  /** v0.8, AI settings: three lines with knobs */
-  sliders: [
-    { d: 'M4 6h3' }, { d: 'M11 6h9' }, { cx: 9, cy: 6, r: 2 },
-    { d: 'M4 12h9' }, { d: 'M17 12h3' }, { cx: 15, cy: 12, r: 2 },
-    { d: 'M4 18h2' }, { d: 'M10 18h10' }, { cx: 8, cy: 18, r: 2 },
+  /** v1.0 (MN-3), AI settings: two sliders and a small spark above them */
+  aiSliders: [
+    { d: 'M4 11h3' }, { d: 'M11 11h2' }, { cx: 9, cy: 11, r: 2 },
+    { d: 'M4 18h9' }, { d: 'M17 18h3' }, { cx: 15, cy: 18, r: 2 },
+    { d: 'M18.5 3.5c.3 1.9 1.1 2.7 3 3-1.9.3-2.7 1.1-3 3-.3-1.9-1.1-2.7-3-3 1.9-.3 2.7-1.1 3-3Z' },
   ],
 } satisfies Record<string, Shape[]>;
 
@@ -79,9 +88,9 @@ const NAV: Array<{ section: NavSection; route: Route; label: MsgKey; icon: Shape
   { section: 'records', route: { name: 'records' }, label: 'nav.records', icon: ICONS.records },
   { section: 'ai', route: { name: 'ai' }, label: 'nav.aiChat', icon: ICONS.sparkle, need: 'ai' },
   { section: 'users', route: { name: 'users' }, label: 'nav.users', icon: ICONS.users, need: 'admin' },
-  { section: 'aiSettings', route: { name: 'aiSettings' }, label: 'nav.aiSettings', icon: ICONS.sliders, need: 'admin' },
+  { section: 'aiSettings', route: { name: 'aiSettings' }, label: 'nav.aiSettings', icon: ICONS.aiSliders, need: 'admin' },
   { section: 'logs', route: { name: 'logs' }, label: 'nav.logs', icon: ICONS.logs, need: 'admin' },
-  { section: 'settings', route: { name: 'settings' }, label: 'nav.settings', icon: ICONS.settings },
+  { section: 'settings', route: { name: 'settings' }, label: 'nav.settings', icon: ICONS.gear },
 ];
 
 const HREF: Record<NavSection, string> = {
@@ -120,14 +129,98 @@ async function quitProgram(): Promise<void> {
     /* the connection may drop when the server shuts down quickly */
   }
   document.getElementById('app')?.replaceChildren(h('div', { class: 'solo' }, h('div', { class: 'panel' },
-    h('h2', null, t('shutdown.done.title')), h('p', null, t('shutdown.done.body')))));
+    h('h2', null, t('shutdown.done.title')), h('p', null, t('shutdown.done.body'))), githubLine()));
 }
 
 export function footer(): HTMLElement {
   return h('footer', { class: 'foot' },
-    S.info.version ? h('span', { class: 'num' }, t('footer.version', { version: S.info.version })) : null,
-    h('span', null, t('footer.disclaimer')),
-    S.info.canShutdown && isAdmin() ? h('button', { class: 'btn quiet', type: 'button', onclick: () => void quitProgram() }, t('footer.shutdown')) : null);
+    h('p', { class: 'foot-note' }, t('footer.disclaimer')),
+    S.info.canShutdown && isAdmin() ? h('button', { class: 'btn quiet', type: 'button', onclick: () => void quitProgram() }, t('footer.shutdown')) : null,
+    githubLine());
+}
+
+// ---------------------------------------------------------------- the slim top bar on phones (SH-7)
+
+/** Whether the top bar is the pinned one: PHONE, and not AI Chat (its page owns the whole height, CH-1) */
+const barPinned = (): boolean => matches(PHONE_MQ) && S.route.name !== 'ai';
+
+let bar = initialBar();
+/** The route the bar state belongs to: a new page always starts with the bar shown */
+let barRoute = '';
+
+function barEl(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('.topbar');
+}
+
+/** `--top-h` (spec 2.12 e): the height of what is pinned at the top, 0 while the bar is hidden or not pinned */
+function setTopH(px: number): void {
+  document.documentElement.style.setProperty('--top-h', `${px}px`);
+}
+
+/** Clears `--top-h` on pages without the shell (sign-in, loading); the quiz page sets its own */
+export function resetTopH(): void {
+  setTopH(0);
+}
+
+function paintBar(): void {
+  const el = barEl();
+  if (!el) return;
+  const pinned = barPinned();
+  const hidden = pinned && bar.hidden && !S.navOpen;
+  el.classList.toggle('topbar-hide', hidden);
+  el.classList.toggle('topbar-scrolled', pinned && window.scrollY > 0);
+  setTopH(pinned && !hidden ? el.offsetHeight : 0);
+}
+
+function showBar(): void {
+  if (!bar.hidden) return;
+  bar = { ...bar, hidden: false, dir: 0 };
+  paintBar();
+}
+
+/** A tap that closed the menu must not also press the control under it: eat the click that follows (for about 400 ms) */
+function swallowNextClick(): void {
+  const eat = (ev: Event): void => {
+    ev.stopPropagation();
+    ev.preventDefault();
+    off();
+  };
+  const off = (): void => {
+    window.clearTimeout(t);
+    document.removeEventListener('click', eat, true);
+  };
+  const t = window.setTimeout(off, 400);
+  document.addEventListener('click', eat, true);
+}
+
+/** The menu may not be taller than the room under its button (MN-1); it scrolls inside when the list is longer */
+function fitMenu(): void {
+  const nav = document.getElementById('nav-menu');
+  if (!nav) return;
+  const top = Math.max(0, Math.round(nav.getBoundingClientRect().top));
+  nav.style.maxHeight = `calc(100dvh - ${top}px - 8px - env(safe-area-inset-bottom))`;
+}
+
+/** Called by main.ts right after every shell page was put into the document (the bar needs its measured height) */
+export function afterShellRender(): void {
+  paintBar();
+  fitMenu();
+}
+
+function onPageScroll(): void {
+  if (!barPinned() || !barEl()) return;
+  const y = window.scrollY;
+  const root = document.documentElement;
+  // A scroll the app made (the panel's, a jump) never moves the bar; the next user scroll starts from here
+  if (isAppScroll()) {
+    bar = { ...bar, lastY: Math.max(0, y), dir: 0 };
+    paintBar();
+    return;
+  }
+  const next = barStep(bar, y, root.scrollHeight - window.innerHeight);
+  const was = bar.hidden;
+  bar = S.navOpen ? { ...next, hidden: false } : next;
+  if (bar.hidden !== was || (y > 0) !== barEl()?.classList.contains('topbar-scrolled')) paintBar();
 }
 
 /** Set when the menu was opened from the keyboard, so focus moves into it (a mouse click leaves focus on the button). */
@@ -150,12 +243,21 @@ export function shell(content: HTMLElement): HTMLElement {
   // it now, none without the service; domain/badge-state.ts)
   const badge = ownBadgeState(user, ai);
 
+  // A new page, or an open menu, always shows the bar
+  const here = routeHash(S.route);
+  if (here !== barRoute || open) {
+    barRoute = here;
+    bar = initialBar(Math.max(0, window.scrollY));
+  }
+
   // Who is signed in, and Sign out: the bottom of the menu, under a hairline
   const account = user ? h('div', { class: 'nav-account' },
     h('div', { class: 'nav-who' },
       icon(ICONS.user),
       h('span', { class: 'nav-who-name', title: user.username }, user.username),
       h('span', { class: 'nav-who-tags' }, roleTags(user), aiBadge(badge))),
+    // MN-4: the dark badge's reason in words under the name; a tooltip is not reachable on a touch screen
+    badge.kind === 'off' && badge.reason === 'suspended' ? h('p', { class: 'nav-paused' }, t('nav.aiPaused')) : null,
     h('button', { class: 'nav-link nav-signout', type: 'button', onclick: () => void signOut() },
       icon(ICONS.signOut), h('span', { class: 'nav-label' }, t('nav.signOut')))) : null;
 
@@ -221,7 +323,11 @@ export function shell(content: HTMLElement): HTMLElement {
 
   // The logo on the left, the account label and the menu button on the right (the dropdown opens towards the left,
   // aligned to the right edge)
-  const header = h('header', { class: 'topbar' },
+  // The classes follow the bar state from the start, so a redraw while the bar is hidden does not make it slide in and out
+  const pinned = S.route.name !== 'ai';
+  const barClass = 'topbar' + (pinned ? ' topbar-pin' : '') + (pinned && bar.hidden && !open ? ' topbar-hide' : '')
+    + (pinned && window.scrollY > 0 ? ' topbar-scrolled' : '');
+  const header = h('header', { class: barClass },
     h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()),
     h('div', { class: 'menu-wrap' }, accountBtn, menuBtn, menu));
 
@@ -229,7 +335,9 @@ export function shell(content: HTMLElement): HTMLElement {
     focusMenuOnOpen = false;
     queueMicrotask(() => document.querySelector<HTMLElement>('#nav-menu .nav-link.on, #nav-menu .nav-link')?.focus());
   }
-  return h('div', { class: 'shell' }, h('main', { class: 'main', id: 'main' }, header, content, footer()));
+  // .main-body takes the height left over, so on a short page the footer sits at the screen bottom (owner, v1.0)
+  return h('div', { class: 'shell' }, h('main', { class: 'main' + (pinned ? ' main-pin' : ''), id: 'main' },
+    h('div', { class: 'main-body' }, header, content), footer()));
 }
 
 /** Installs the closing behaviour of the menu (once): Esc, a click outside it. */
@@ -241,9 +349,61 @@ export function installShellHandlers(): void {
       queueMicrotask(() => document.getElementById(opener)?.focus());
     }
   });
-  document.addEventListener('pointerdown', (e) => {
-    if (!S.navOpen) return;
+  // MN-2: outside the menu and its buttons only a tap closes it (the pointer is lifted within 10 px and 500 ms of going
+  // down), so a swipe that scrolls the page, or a press that turns into a long press, leaves it open
+  let down: { x: number; y: number; at: number } | null = null;
+  const outside = (e: Event): boolean => {
     const wrap = document.querySelector('.menu-wrap');
-    if (wrap && e.target instanceof Node && !wrap.contains(e.target)) setNavOpen(false);
+    return !!wrap && e.target instanceof Node && !wrap.contains(e.target);
+  };
+  document.addEventListener('pointerdown', (e) => {
+    down = S.navOpen && outside(e) ? { x: e.clientX, y: e.clientY, at: e.timeStamp } : null;
   });
+  document.addEventListener('pointercancel', () => {
+    down = null;
+  });
+  document.addEventListener('pointerup', (e) => {
+    const d = down;
+    down = null;
+    if (!d || !S.navOpen || !outside(e)) return;
+    if (Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 10 && e.timeStamp - d.at <= 500) {
+      setNavOpen(false);
+      swallowNextClick();
+    }
+  });
+  // The top bar (SH-7): hides on a scroll down, comes back on a scroll up, on focus inside it and while the menu is open
+  window.addEventListener('scroll', onPageScroll, { passive: true });
+  window.addEventListener('resize', afterShellRender);
+  document.addEventListener('focusin', (e) => {
+    if (e.target instanceof Node && barEl()?.contains(e.target)) showBar();
+    // Tab leaving the menu closes it without moving focus (otherwise focus lands under the open menu)
+    if (S.navOpen && outside(e)) closeMenuKeepingFocus(e.target);
+  });
+}
+
+/** The child indexes from <body> down to `node` (the closed menu changes only .menu-wrap, so paths outside it stay valid) */
+function pathOf(node: Node): number[] | null {
+  const out: number[] = [];
+  let n: Element | null = node instanceof Element ? node : null;
+  while (n && n !== document.body) {
+    const parent: Element | null = n.parentElement;
+    if (!parent) return null;
+    out.unshift(Array.prototype.indexOf.call(parent.children, n));
+    n = parent;
+  }
+  return n ? out : null;
+}
+
+/**
+ * Closes the menu after Tab took the focus outside it. The render rebuilds the page and keepFocus only finds elements with
+ * an id, so the element that took the focus is found again by its place in the page (otherwise the focus would fall back
+ * to <body> and the next Tab would start at the top).
+ */
+function closeMenuKeepingFocus(target: EventTarget | null): void {
+  const path = target instanceof Node ? pathOf(target) : null;
+  setNavOpen(false);
+  if (!path || (target instanceof Node && target.isConnected)) return;
+  let el: Element | undefined = document.body;
+  for (const i of path) el = el?.children[i];
+  if (el instanceof HTMLElement && document.activeElement !== el) el.focus({ preventScroll: true });
 }

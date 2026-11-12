@@ -15,8 +15,8 @@ export default defineCatalog({
     'aiplus.summary': 'AI summary',
     'aiplus.regenerate': 'Regenerate',
     'aiplus.close': 'Close',
-    'aiplus.openChat': 'Open in AI Chat',
     'aiplus.na': 'Unavailable',
+    'aiplus.pop.no': 'Question {n}',
     'aiplus.pop.title.hint': 'AI hint · Question {n}',
     'aiplus.pop.title.explain': 'AI explanation · Question {n}',
     'aiplus.pop.title.analyze': 'AI analysis · Question {n}',
@@ -25,6 +25,8 @@ export default defineCatalog({
     'aiplus.tip.na': '{label}: unavailable. {reason}',
     'aiplus.state.loading': 'Loading the saved answer…',
     'aiplus.state.saved': 'Saved {time}',
+    'aiplus.truncated': 'The answer was cut at the length limit.',
+    'aiplus.truncatedAdmin': 'You can raise “Max characters per answer” in AI Settings › AI safety.',
     'aiplus.otherLang': 'This answer is in {lang}. Regenerate it to get it in the language of your settings.',
     'aiplus.withheld': 'This hint gave the answer away, so it was hidden. Regenerate to get a new hint.',
     'aiplus.failed.prev': 'The new answer was not finished ({reason}). The previous answer is shown.',
@@ -49,6 +51,21 @@ export default defineCatalog({
     'aiplus.chat.suffix.exam': 'Exam',
     'aiplus.chat.suffix.summary': 'AI summary',
     'aiplus.chat.label.summary': 'AI summary · {used} of {wrong} wrong answers',
+    // v1.0 panel (F5b)
+    'aiplus.panel.expand': 'Expand',
+    'aiplus.panel.collapse': 'Collapse',
+    'aiplus.panel.empty': 'Press AI hint or AI explanation to see it here.',
+    'aiplus.panel.notAsked': 'No {label} for this question yet. Press {label} to ask.',
+    'aiplus.panel.idleTitle': 'AI hint / AI explanation',
+    'aiplus.panel.unavailable': '{label} · Unavailable',
+    'aiplus.panel.copied': 'Copied',
+    'aiplus.saved': 'Saved in AI Chat',
+    'aiplus.savedTip': 'Saved in the AI Chat "{title}"',
+    'aiplus.panel.regenerating': 'Writing a new answer…',
+    // v1.0 controls (F5c)
+    // v1.0 summary (F6)
+    // v1.0 records (F12)
+    'aiplus.summaryPaused': 'The AI+ feature has been paused by an administrator, so AI summary cannot be used for now.',
   },
   zh: {
     'aiplus.hint': 'AI 提示',
@@ -59,8 +76,8 @@ export default defineCatalog({
     'aiplus.summary': 'AI 总结',
     'aiplus.regenerate': '重新生成',
     'aiplus.close': '关闭',
-    'aiplus.openChat': '在 AI 对话中打开',
     'aiplus.na': '无法使用',
+    'aiplus.pop.no': '第 {n} 题',
     'aiplus.pop.title.hint': 'AI 提示 · 第 {n} 题',
     'aiplus.pop.title.explain': 'AI 解释 · 第 {n} 题',
     'aiplus.pop.title.analyze': 'AI 解析 · 第 {n} 题',
@@ -69,6 +86,8 @@ export default defineCatalog({
     'aiplus.tip.na': '{label}：无法使用。{reason}',
     'aiplus.state.loading': '正在读取已保存的回答…',
     'aiplus.state.saved': '保存于 {time}',
+    'aiplus.truncated': '回答在字数上限处被截断。',
+    'aiplus.truncatedAdmin': '可以在「AI 设置 › AI 安全」调高「每条回答最多字数」。',
     'aiplus.otherLang': '这个回答是{lang}的。重新生成即可换成设置里的语言。',
     'aiplus.withheld': '这个提示透露了答案，已被隐藏。请重新生成。',
     'aiplus.failed.prev': '新的回答没有完成（{reason}），下面是上一次的回答。',
@@ -93,6 +112,21 @@ export default defineCatalog({
     'aiplus.chat.suffix.exam': '考试',
     'aiplus.chat.suffix.summary': 'AI总结',
     'aiplus.chat.label.summary': 'AI 总结 · {wrong} 道答错的题中的 {used} 道',
+    // v1.0 panel (F5b)
+    'aiplus.panel.expand': '展开',
+    'aiplus.panel.collapse': '收起',
+    'aiplus.panel.empty': '点「AI 提示」或「AI 解释」，会在这里显示。',
+    'aiplus.panel.notAsked': '这道题还没有 {label}。点「{label}」生成。',
+    'aiplus.panel.idleTitle': 'AI 提示 / AI 解释',
+    'aiplus.panel.unavailable': '{label} · 无法使用',
+    'aiplus.panel.copied': '已复制',
+    'aiplus.saved': 'AI 对话已记录',
+    'aiplus.savedTip': '已保存在 AI 对话「{title}」中',
+    'aiplus.panel.regenerating': '正在重新生成…',
+    // v1.0 controls (F5c)
+    // v1.0 summary (F6)
+    // v1.0 records (F12)
+    'aiplus.summaryPaused': 'AI+ 功能已被管理员暂停，暂时不能使用 AI 总结。',
   },
   ja: {
     'aiplus.hint': 'AI ヒント',
@@ -103,8 +137,8 @@ export default defineCatalog({
     'aiplus.summary': 'AI まとめ',
     'aiplus.regenerate': '再生成',
     'aiplus.close': '閉じる',
-    'aiplus.openChat': 'AI チャットで開く',
     'aiplus.na': '使用不可',
+    'aiplus.pop.no': '第 {n} 問',
     'aiplus.pop.title.hint': 'AI ヒント · 第 {n} 問',
     'aiplus.pop.title.explain': 'AI 解説 · 第 {n} 問',
     'aiplus.pop.title.analyze': 'AI 解析 · 第 {n} 問',
@@ -113,6 +147,8 @@ export default defineCatalog({
     'aiplus.tip.na': '{label}：使用不可。{reason}',
     'aiplus.state.loading': '保存済みの回答を読み込み中…',
     'aiplus.state.saved': '{time} に保存',
+    'aiplus.truncated': '回答が文字数の上限で途切れました。',
+    'aiplus.truncatedAdmin': '「AI 設定 › AI セーフティ」の「1 回答あたりの最大文字数」を上げられます。',
     'aiplus.otherLang': 'この回答は{lang}です。再生成すると設定の言語で作り直します。',
     'aiplus.withheld': 'このヒントは答えを明かしてしまったため非表示にしました。再生成してください。',
     'aiplus.failed.prev': '新しい回答は完成しませんでした（{reason}）。前回の回答を表示しています。',
@@ -137,5 +173,20 @@ export default defineCatalog({
     'aiplus.chat.suffix.exam': '試験',
     'aiplus.chat.suffix.summary': 'AIまとめ',
     'aiplus.chat.label.summary': 'AI まとめ · 間違えた {wrong} 問中 {used} 問',
+    // v1.0 panel (F5b)
+    'aiplus.panel.expand': '展開',
+    'aiplus.panel.collapse': '折りたたむ',
+    'aiplus.panel.empty': '「AI ヒント」か「AI 解説」を押すと、ここに表示されます。',
+    'aiplus.panel.notAsked': 'この問題の{label}はまだありません。「{label}」を押すと作成します。',
+    'aiplus.panel.idleTitle': 'AI ヒント / AI 解説',
+    'aiplus.panel.unavailable': '{label} · 使用不可',
+    'aiplus.panel.copied': 'コピーしました',
+    'aiplus.saved': 'AI チャットに記録済み',
+    'aiplus.savedTip': 'AI チャット「{title}」に保存されています',
+    'aiplus.panel.regenerating': '新しい回答を作成中…',
+    // v1.0 controls (F5c)
+    // v1.0 summary (F6)
+    // v1.0 records (F12)
+    'aiplus.summaryPaused': 'AI+ 機能は管理者によって一時停止されているため、今は AI まとめを使えません。',
   },
 });

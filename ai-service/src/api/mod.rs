@@ -190,6 +190,11 @@ pub fn error_response(e: &ApiError) -> Response {
         r.headers_mut()
             .insert(header::ALLOW, HeaderValue::from_static("GET, POST"));
     }
+    if let Some(c) = &e.call {
+        if let Ok(v) = HeaderValue::from_str(&c.retry_after.to_string()) {
+            r.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+    }
     r
 }
 

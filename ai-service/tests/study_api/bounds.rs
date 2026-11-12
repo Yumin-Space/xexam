@@ -69,6 +69,7 @@ async fn busy_while_a_memory_suggestion_holds_the_place_says_null() {
 #[tokio::test]
 async fn the_message_limit_and_the_chat_limit() {
     let e = env().await;
+    e.t.relax_caps();
     set_limit(&e.t, &e.admin, "messagesPerChat", 20).await;
     for i in 0..10 {
         let ev = ask(&e.t, &e.user, hint_body(K1, "q1", i + 1)).await;

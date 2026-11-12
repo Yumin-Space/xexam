@@ -73,6 +73,7 @@ fn assert_free(sys: &str, block: bool) {
 #[tokio::test]
 async fn the_full_history_is_sent_and_the_prompt_names_the_mode() {
     let t = start().await;
+    t.relax_caps();
     let admin = t.user("admin", true, false);
     t.configure_openai(&admin, "demo-chat-small").await;
     let (code, v) = t
