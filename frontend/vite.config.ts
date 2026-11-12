@@ -74,15 +74,15 @@ function xexamAiAuth(): Plugin {
 }
 
 /**
- * `virtual:changelog`: the changelog entries of the three READMEs (English, Chinese, Japanese), parsed at build time for the
- * About page. The READMEs stay the single source of truth (CI checks their newest entry against CODE_VERSION in VERSION).
- * Paths are relative to the repository root: README.md, README/README.ja.md, README/README.zh-CN.md. The nginx image build
- * copies them to the same places above the frontend sources (see nginx/Dockerfile).
+ * `virtual:changelog`: the entries of the three changelogs (English, Chinese, Japanese), parsed at build time for the About
+ * page. The changelog files are the single source of truth (CI checks their newest entry against CODE_VERSION in VERSION).
+ * Paths are relative to the repository root: docs/en/changelog.md, docs/zh-CN/changelog.md, docs/ja/changelog.md. The nginx
+ * image build copies them to the same places above the frontend sources (see nginx/Dockerfile).
  */
 function changelog(): Plugin {
   const id = 'virtual:changelog';
   const resolved = '\0' + id;
-  const files = { en: 'README.md', zh: 'README/README.zh-CN.md', ja: 'README/README.ja.md' } as const;
+  const files = { en: 'docs/en/changelog.md', zh: 'docs/zh-CN/changelog.md', ja: 'docs/ja/changelog.md' } as const;
   const path = (f: string): string => fileURLToPath(new URL(`../${f}`, import.meta.url));
   return {
     name: 'xexam-changelog',

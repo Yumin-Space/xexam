@@ -37,7 +37,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 初回のビルドには数分かかります（Rust とフロントエンドをコンパイルするため）。2 回目以降はキャッシュが効きます。クローンしたリポジトリでは、compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルートをビルドコンテキストにします。以下のコマンドは、リポジトリのルートで `-f docker/docker-compose.build.yml` を付けて実行してください（例：`docker compose -f docker/docker-compose.build.yml logs -f`）。
 
-フロントエンドのイメージには 3 つの README が必要です。**Xexam について** のページにその更新履歴が表示され、フロントエンドに組み込まれるためです。そのため `nginx/Dockerfile` は `README.md`、`README/README.ja.md`、`README/README.zh-CN.md` をビルド段階にコピーし、`.dockerignore` は `README.md` と `README/` をビルドコンテキストに残します。完成したイメージに入るのはビルドした静的ファイルだけです。
+フロントエンドのイメージには 3 つの更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）が必要です。**Xexam について** のページにそれが表示され、フロントエンドに組み込まれるためです。そのため `nginx/Dockerfile` はこれらをビルド段階にコピーし、`.dockerignore` は `docs/` をビルドコンテキストから外したうえで、この 3 つのファイルだけを戻します。完成したイメージに入るのはビルドした静的ファイルだけです。
 
 以下のコマンドでは Compose の**サービス**の名前 `backend`、`ai-service`、`frontend` を使います。コンテナの名前は `xexam-backend`、`ai-service`、`xexam-frontend` です。素の `docker` コマンド（`docker logs`、`docker exec`）では、こちらの名前を使います。`docker/docker-compose.build.yml` は `ai-service/Dockerfile` をイメージ `xexam-ai-service:local` としてビルドします。
 
@@ -47,7 +47,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | ログを見る | `docker compose logs -f`（バックエンドだけなら `docker compose logs -f backend`、ai-service だけなら `docker compose logs -f ai-service`。第 9 節を参照） |
 | 停止 / 再起動 | `docker compose stop` / `docker compose start` |
 | 最新バージョンに更新 | `docker compose pull && docker compose up -d`（ソースからビルドした場合：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。古いバージョンから更新する場合は、先に第 6 節を読んでください |
-| バージョンとアーキテクチャ | <http://localhost:8765/api/info>、またはアプリで：メニューのバージョンの項目、たとえば **Xexam v0.9**（「Xexam について」のページ） |
+| バージョンとアーキテクチャ | <http://localhost:8765/api/info>、またはアプリで：メニューのバージョンの項目、たとえば **Xexam v0.9.1**（「Xexam について」のページ） |
 
 > ⚠️ `docker compose down -v` は実行しないでください。`-v` を付けると 2 つのデータボリュームが削除されます：`xexam_data`（問題集、アカウント、すべての学習記録）と `xexam_ai_data`（AI 設定とキー、チャットとメモ）です。
 
@@ -257,7 +257,7 @@ ai-service も自分のデータベースに同じことをします：v0.9 の 
 - **v0.5 または v0.5.1 から**（migration.md の第 3 節）：スキーマ v2 → v6 を一度に、バックアップ `xexam-schema2-<日時>.db`。ログインが新しく加わります：`admin` / `admin` でログインしてください。これまでのデータはすべてこのアカウントのものになります。
 - **v0.4 から**（migration.md の第 4 節）：スキーマ v1 → v6 を一度に、バックアップ `xexam-schema1-<日時>.db`。v0.5.1 から、イメージは `ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から取得します。お使いの `docker-compose.yml` を新しいファイルに差し替えてください（または、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更します）。ソースからビルドする場合、compose ファイルは `docker/` に移ったので、リポジトリのルートにある `.env` は `docker/.env` に移動してください。
 
-アップグレードの後、`/api/info` には `"version": "0.9"` と表示されます。2 回目以降の起動では移行は行われません。古い形式の問題の出題停止も、出題停止にするものが残っていなければ何も書き込みません。**ロールバック**とは、`backups/` のコピーを復元して古いイメージを動かすことです（v0.9 から v0.8 へは、コピーが必要なのは AI のデータベースだけです：v0.8 のバックエンドはスキーマ 6 のメインのデータベースをそのまま開きますが、v0.8 の ai-service はスキーマ 3 の AI のデータベースを拒否し、復元するとアップグレード以降に AI が書いたものはすべて失われます）。移行済みのデータベースで古いバージョンを動かすのは、緊急のときだけにしてください。具体的なコマンドは [migration.md](migration.md)、背景は [database.md](database.md) の第 6 節にあります。
+アップグレードの後、`/api/info` には `"version": "0.9.1"` と表示されます。2 回目以降の起動では移行は行われません。古い形式の問題の出題停止も、出題停止にするものが残っていなければ何も書き込みません。**ロールバック**とは、`backups/` のコピーを復元して古いイメージを動かすことです（v0.9 から v0.8 へは、コピーが必要なのは AI のデータベースだけです：v0.8 のバックエンドはスキーマ 6 のメインのデータベースをそのまま開きますが、v0.8 の ai-service はスキーマ 3 の AI のデータベースを拒否し、復元するとアップグレード以降に AI が書いたものはすべて失われます）。移行済みのデータベースで古いバージョンを動かすのは、緊急のときだけにしてください。具体的なコマンドは [migration.md](migration.md)、背景は [database.md](database.md) の第 6 節にあります。
 
 ## 7. ヘルスチェックと停止
 
@@ -292,7 +292,7 @@ Compose のサービスの名前は `backend`（コンテナは `xexam-backend`�
 
 ログに含まれるもの：起動時の行（バージョン、データディレクトリ、ジャーナルモード、許可したホスト、AI との接続、既定のパスワードについての注意、アップグレードの行、古い Excel 形式のために出題停止にした問題）、ユーザー名によるログインとアカウントの変更（`user "admin" signed in`、`user "admin" updated user "alex"`。ログインで入力された、アカウントのない名前は決して記録しません）、拒否したアップロードと書き込み、警告とエラーです。パスワード、セッションのトークン、Cookie の値、確認コード、問題文は決して含みません。Host / Origin の確認で拒否したリクエスト、ログインの失敗、アカウントのないユーザー名のロックは、1 回記録したあとは多くても 1 分に 1 回まとめて記録するので、ログインせずに 2000 行からほかの行を押し出すことは誰にもできません。詳細：[security.md](security.md) の第 8 節。
 
-ai-service の行：その起動（`Xexam AI service 0.9 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、暗号化キーの出どころ）、接続（`AI link: connected to the main service` は接続ごとに 1 回書かれ、切れたときは `AI link: lost the main service`。そのため長い障害でも、再試行のたびに 1 行ではなく、1 組の行で済みます）、管理者による AI 設定と安全上限のすべての変更、テスト、**AI+ 機能** のスイッチ、管理者による一時停止と再開（行は今も `AI function turned off for user "sam" by admin "admin"`、と `… turned on …` と書かれます）、AI のデータベースのスキーマのアップグレード（バックアップのコピーの名前付き：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`。スキーマ 1 または 2 のデータベースのすべてで出ます。開き直しても何も書き込みません）、保存期間の合計（`AI retention: deleted N chats older than D days`）、答えを挙げてしまったために差し止めたヒント（`AI hint withheld because it gave the answer away (user "sam")`。1 分に最大 1 行で、その後 `N more AI hints were withheld since the last report`。文は決して含みません）、バックエンドの学習用ルートの読み取れなかった応答（`AI link: an answer of /internal/ai/question could not be read`。1 分に最大 1 行）、失敗した AI の呼び出し（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`。理由ごとに 1 分に最大 1 行）、保存期間、削除されたユーザーのデータの削除、そして管理者がユーザーの AI データを表示または消去したときの監査の行です。キー、内部トークン、プロンプト、回答、チャットのタイトル、メモの内容、問題文、セッションのキー、記録の時刻は決して含みません。ハートビートは行を書きません。バックエンドに届かない間、ai-service は最大 500 行を保持して後から送ります。捨てなければならない行があったときは、`<n> AI log lines were dropped while the main service was unreachable` から始めます。監査の行は決して捨てません。
+ai-service の行：その起動（`Xexam AI service 0.9.1 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、暗号化キーの出どころ）、接続（`AI link: connected to the main service` は接続ごとに 1 回書かれ、切れたときは `AI link: lost the main service`。そのため長い障害でも、再試行のたびに 1 行ではなく、1 組の行で済みます）、管理者による AI 設定と安全上限のすべての変更、テスト、**AI+ 機能** のスイッチ、管理者による一時停止と再開（行は今も `AI function turned off for user "sam" by admin "admin"`、と `… turned on …` と書かれます）、AI のデータベースのスキーマのアップグレード（バックアップのコピーの名前付き：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`。スキーマ 1 または 2 のデータベースのすべてで出ます。開き直しても何も書き込みません）、保存期間の合計（`AI retention: deleted N chats older than D days`）、答えを挙げてしまったために差し止めたヒント（`AI hint withheld because it gave the answer away (user "sam")`。1 分に最大 1 行で、その後 `N more AI hints were withheld since the last report`。文は決して含みません）、バックエンドの学習用ルートの読み取れなかった応答（`AI link: an answer of /internal/ai/question could not be read`。1 分に最大 1 行）、失敗した AI の呼び出し（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`。理由ごとに 1 分に最大 1 行）、保存期間、削除されたユーザーのデータの削除、そして管理者がユーザーの AI データを表示または消去したときの監査の行です。キー、内部トークン、プロンプト、回答、チャットのタイトル、メモの内容、問題文、セッションのキー、記録の時刻は決して含みません。ハートビートは行を書きません。バックエンドに届かない間、ai-service は最大 500 行を保持して後から送ります。捨てなければならない行があったときは、`<n> AI log lines were dropped while the main service was unreachable` から始めます。監査の行は決して捨てません。
 
 ## 10. 初回起動、アカウント、復旧
 

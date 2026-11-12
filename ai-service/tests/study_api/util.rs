@@ -48,6 +48,7 @@ pub async fn env_with(opts: Opts) -> Env {
         ("q-slow", "[slow]"),
         ("q-long", "[long]"),
         ("q-think", "[think]"),
+        ("q-think-late", "[think-late]"),
         ("q-leakerr", "[leak][err]"),
         ("q-leakslow", "[leak][slow]"),
     ] {

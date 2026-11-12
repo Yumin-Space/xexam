@@ -151,7 +151,7 @@ What else you will notice:
 - **User management**: an **AI+ feature** switch per user (shown only while ai-service is connected and the **AI+ feature** is on in AI settings; **Pause** and **Resume** for a user are in AI settings under **Users with AI+**); the bank choice of **Change** and **Add user** is more compact (**Manage banks**, **Select all** and **Deselect all** in one row on top of the list, **Include banks imported later** as the first entry of the list, the explanations as tooltips), and **Manage banks** moved there from **Edit**.
 - A new icon in the header, the browser tab and on the phone's home screen (a home-screen icon added before may keep the old picture until you add it again).
 
-Coming from v0.7 (not v0.7.5), the changes of v0.7.5 come along (see the changelog in the README); the database steps are the same.
+Coming from v0.7 (not v0.7.5), the changes of v0.7.5 come along (see the [changelog](changelog.md)); the database steps are the same.
 
 A database written by a **pre-release build of v0.7** (one that still has the column `users.all_banks`) is converted at the same start, in the same transaction and after the same one copy (`xexam-schema4-…`): a user who saw every bank gets every existing bank and **Include banks imported later**, any other user keeps their banks, and a user that an older version (v0.6 or before) added in between also gets every bank and **Include banks imported later**. The log then says `Converted the question bank access of a database written by a v0.7 pre-release to the released format and upgraded the database to schema 5. A copy of the previous version was saved first: <path>.` (section 6.5 of [database.md](database.md)).
 

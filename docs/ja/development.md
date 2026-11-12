@@ -43,12 +43,12 @@ AI サービスは `ai-service/` にある独立したクレート（パッケ�
 cd ai-service
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 369 件のテスト（と、ドキュメントテスト 1 件、`cargo test --doc`：ヒントのプロンプトは解答を受け取ってはならない）
+cargo test --all-targets          # 383 件のテスト（と、ドキュメントテスト 1 件、`cargo test --doc`：ヒントのプロンプトは解答を受け取ってはならない）
 cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 何も出力しないこと（CI の TLS ガード）
 ```
 
 - **構成**（全一覧は [architecture.md](architecture.md) の第 2 節）：`src/api/`（ディスパッチ、ユーザーと管理者のルート）、`src/chat.rs`（回答を書くタスク、ユーザーごとと全体の枠、取り消し）、`src/app.rs`（共有の状態とバックエンドへのハートビート）、`src/provider/`（OpenAI 互換と Anthropic のアダプター、イベントストリームのパーサー、エラーの対応付け）、`src/store/`（AI のデータベース）、`src/identity.rs` と `src/link.rs`（本人確認の文とバックエンドの呼び出し）、`src/secret.rs` と `src/settings.rs`（キーの暗号化。プロバイダー、URL の方針、フィンガープリント）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（サービスのすべての中国語のテキスト）、`src/config.rs`。v0.9 からは、`src/api/study.rs`（4 つの学習用ルート）、`src/study/`（プロンプトの `hint.rs`、`explain.rs`、`summary.rs` とその組み立て、`guard.rs` と `guard/{lists,norm,rules}.rs` のヒントのガード、`title.rs`、`wire.rs` のバックエンドのデータルートの厳密な通信用の型、`cache.rs` の記録の識別情報のキャッシュ）、そして `src/store/` の `data.rs` の学習用チャットの関数と `stats.rs` の目的別の使用量もあります。
-- **テスト**（`ai-service/tests/`。ライブラリに対して、プロセス内の偽のプロバイダーと、ハートビートも記録する偽のバックエンドを使い、どれもネットワークに触れません）：`streaming.rs`（イベント、停止、再試行、制限時間、切り離し、呼び出しの実行中のゲートと上限）、`settings_and_keys.rs`（検証、キーの再入力、ヘッダーの衝突、暗号化、キーファイルと `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（文、アクセスレベル、範囲、トークンの規則）、`admin_data.rs`（管理者の表示と消去、監査の行と送信待ち、使用量、照合）、`logs_no_secrets.rs`（どのログの行にもキー、トークン、プロンプト、回答がないこと）、`proxy_env.rs`（環境の `HTTP_PROXY` を無視すること）。v0.8 の第 2 ラウンドでは、`r2_core_heartbeat.rs`（報告、そのタイミング、60 秒の規則）、`r2_core_schema.rs`（スキーマ 2、スキーマ 1 のバックアップとアップグレード、一部の列がないスキーマ 2 のファイルに足される列）、`r2_core_suspend.rs`（一時停止 / 再開、監査の行、回答の停止）、`r2_chat_lang.rs`（返答言語）、`r2_chat_free.rs`（管理者の状態としてのフリーモード：`POST /api/ai/free`、`freeMode`、チャットごとのフラグはなし）、`r2_free_history.rs`（どちらのモードでも履歴全体、モードごとのシステムプロンプト、切り替えの後のモードの行、どのメッセージにも付く `free`）、`r2_cache.rs`（プロンプトキャッシュ、使用量の行のキャッシュされたトークン、古い履歴のメッセージの短縮）、`r2_chat_thinking.rs`（`thinking` イベント。推論のテキストがストリーム、データベース、ログに現れてはならない）、`r2_chat_suspend.rs`（状態と再確認）。v0.9 では、`v09_store.rs`（スキーマ 3：新しいファイル、スキーマ 1 と 2 からのアップグレードとそのバックアップ、書き出せないバックアップ、どちらの経路でも同じ `sqlite_master`、開き直しても何も書き込まないこと、保存済みの回答の検索、学習用のチャット、尋ねるトランザクションの `EXPLAIN QUERY PLAN`、目的別の使用量、保存期間のバッチ）、`study_guard.rs`（ヒントのガード：記号、序数、ホットスポットの記述、キーの文、リスト、ストリームをどう区切っても同じ判定になること、上限、保持の規則。モジュールは `tests/study_guard/`）、`study_prompts.rs`（プロンプト、`compile_fail` のドキュメントテスト）、`study_api.rs`（偽のバックエンドを相手にした学習用ルートの端から端まで：ストリーミング、チャットの識別、保存済みの回答の取得、範囲、要約の拒否、アクセス、管理者の表示、内容のないログ。モジュールは `tests/study_api/`）。それに `src/` の単体テスト。`study_api` の一部のテストは短いスリープ（200 ms と 120 ms）に頼っており、安定していますがタイミングに依存します。`TestApp` ヘルパーは、破棄されるときにサービスを停止してデータベースのファイルを解放するので、テストは一時フォルダに何も残しません（Windows では、開いたままのファイルがそのディレクトリを残してしまいます）。
+- **テスト**（`ai-service/tests/`。ライブラリに対して、プロセス内の偽のプロバイダーと、ハートビートも記録する偽のバックエンドを使い、どれもネットワークに触れません）：`streaming.rs`（イベント、停止、再試行、制限時間、切り離し、呼び出しの実行中のゲートと上限）、`settings_and_keys.rs`（検証、キーの再入力、ヘッダーの衝突、暗号化、キーファイルと `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（文、アクセスレベル、範囲、トークンの規則）、`admin_data.rs`（管理者の表示と消去、監査の行と送信待ち、使用量、照合）、`logs_no_secrets.rs`（どのログの行にもキー、トークン、プロンプト、回答がないこと）、`proxy_env.rs`（環境の `HTTP_PROXY` を無視すること）。v0.8 の第 2 ラウンドでは、`r2_core_heartbeat.rs`（報告、そのタイミング、60 秒の規則）、`r2_core_schema.rs`（スキーマ 2、スキーマ 1 のバックアップとアップグレード、一部の列がないスキーマ 2 のファイルに足される列）、`r2_core_suspend.rs`（一時停止 / 再開、監査の行、回答の停止）、`r2_chat_lang.rs`（返答言語）、`r2_chat_free.rs`（管理者の状態としてのフリーモード：`POST /api/ai/free`、`freeMode`、チャットごとのフラグはなし）、`r2_free_history.rs`（どちらのモードでも履歴全体、モードごとのシステムプロンプト、切り替えの後のモードの行、どのメッセージにも付く `free`）、`r2_cache.rs`（プロンプトキャッシュ、使用量の行のキャッシュされたトークン、古い履歴のメッセージの短縮）、`r2_chat_thinking.rs`（`thinking` イベント。推論のテキストがストリーム、データベース、ログに現れてはならない）、`r2_chat_suspend.rs`（状態と再確認）。v0.9 では、`v09_store.rs`（スキーマ 3：新しいファイル、スキーマ 1 と 2 からのアップグレードとそのバックアップ、書き出せないバックアップ、どちらの経路でも同じ `sqlite_master`、開き直しても何も書き込まないこと、保存済みの回答の検索、学習用のチャット、尋ねるトランザクションの `EXPLAIN QUERY PLAN`、目的別の使用量、保存期間のバッチ）、`study_guard.rs`（ヒントのガード：記号、序数、ホットスポットの記述、キーの文、リスト、`<think>` のタグ、ストリームをどう区切っても同じ判定になること、上限、保持の規則。モジュールは `tests/study_guard/`）、`study_prompts.rs`（プロンプト、`compile_fail` のドキュメントテスト）、`study_api.rs`（偽のバックエンドを相手にした学習用ルートの端から端まで：ストリーミング、チャットの識別、保存済みの回答の取得、範囲、要約の拒否、アクセス、管理者の表示、内容のないログ、再生成のメモと Cloudflare AI Gateway のキャッシュ回避（AI チャットの再試行も）。モジュールは `tests/study_api/`）。それに `src/` の単体テスト。`study_api` の一部のテストは短いスリープ（200 ms と 120 ms）に頼っており、安定していますがタイミングに依存します。`TestApp` ヘルパーは、破棄されるときにサービスを停止してデータベースのファイルを解放するので、テストは一時フォルダに何も残しません（Windows では、開いたままのファイルがそのディレクトリを残してしまいます）。
 - **ローカルで動かす**（バックエンドと並べて）。2 つは内部トークンを共有しなければなりません：バックエンドがリンクディレクトリ（既定ではデータディレクトリの中の `link`）に書くトークンのファイルか、両方のシェルで同じ `XEXAM_INTERNAL_TOKEN` です。
 
   ```bash
@@ -85,7 +85,7 @@ npm run dev            # http://127.0.0.1:5173、/api は http://127.0.0.1:8765 
 - 開発時は `localhost` か `127.0.0.1` でページを開いてください。Vite プロキシの `changeOrigin` は `false` にする必要があります：バックエンドは `Host` と `Origin` を比較するため、`Host` が書き換えられると書き込みリクエストが 403 になります。
 - バックエンドが既定のアドレスにない場合：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`。ai-service では `XEXAM_AI_BACKEND=http://127.0.0.1:9001`。
 - **開発時の AI のリクエスト**（v0.8）：`vite.config.ts` のプラグイン `xexamAiAuth()` が、`npm run dev` と `npm run preview` で、本番の Nginx と同じことをします。パスが `/api/ai/` で始まるリクエストごとに、まずバックエンドに問い合わせ（Cookie と `X-Original-Host`、`X-Original-Origin`、`X-Original-Method` を付けた `GET /internal/ai/auth`）、その後 `Cookie`、`Authorization`、`Cf-Access-Jwt-Assertion` を取り除き、バックエンドが返した本人確認の文を設定します（ブラウザが送ったヘッダーは常に置き換えます）。バックエンドの 401 / 403 はそのまま渡し、それ以外（バックエンドの停止）は 503 `ai.backendDown` になります。スラッシュのない `/api/ai` は、Nginx と同じくバックエンドへ行きます。
-- 「Xexam について」のページには、`README.md`、`README/README.ja.md`、`README/README.zh-CN.md` の更新履歴が表示されます。`vite.config.ts` のプラグイン `xexam-changelog` が、フロントエンドのビルド時に（`npm run dev` では「Xexam について」のページを初めて開いたときに）`frontend/` の 1 つ上のフォルダ（リポジトリのルート）からこれらを読むので、そこになければなりません。どれかに更新履歴の項目（`### vX.Y — 日付`）が 1 つもないと、ビルドはエラーで止まります。
+- 「Xexam について」のページには、`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md` の更新履歴が表示されます。`vite.config.ts` のプラグイン `xexam-changelog` が、フロントエンドのビルド時に（`npm run dev` では「Xexam について」のページを初めて開いたときに）リポジトリのルート（`frontend/` の 1 つ上のフォルダ）からこれらを読むので、そこになければなりません。どれかに更新履歴の項目（`### vX.Y — 日付`）が 1 つもないと、ビルドはエラーで止まります。
 - テストファイルを 1 つだけ実行するには：`node --experimental-strip-types --test src/i18n/server-messages.test.ts`。
 - インポートパスには `.ts` 拡張子を使います（Node 標準のテストランナーの要件です）。
 - TypeScript は `~5.9.3` に固定しています。
@@ -149,7 +149,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 どのスクリプトも、確認した項目と、最後に `All N checks passed` を出力します。`nginx_check.py` と `stack_check.py` の最後の引数は、使うホストのポートです。お使いのマシンで空いているものを選んでください。`stack_check.py` は任意の `XEXAM_STACK_COMPOSE` を読みます：同じ形の別の compose ファイル（たとえば、イメージのタグとコンテナ名を変えた `docker/docker-compose.build.yml` のコピー）を使えるので、いつものものを使うインストールと並べて実行できます。コンテナは、その compose のサービスから見つけます。`nginx_check.py` には約 2 分半かかります。1 つの項目が、AI 設定の遅い **テスト** のために 95 秒待つからです。`stack_check.py` は学習用の質問の間隔を空けます（セッションの Cookie あたり約 3.2 秒）。Nginx は、バースト 10 の後は 1 つのセッションが 3 秒に 1 回しか AI の回答を始められないようにしている（ゾーン `aisend`、1 分に 20 回）ためで、これで約 1 分半増えます。スクリプトは自分で書く架空の問題集を使い、あなたのデータには触れません。
 
-compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルート（`..`）をビルドコンテキストにします。フロントエンドのイメージは、リポジトリのルートからビルドします。`nginx/Dockerfile` は、Node のビルド段階に 3 つの README をコピーします（`COPY README.md /` と `COPY README/README.ja.md README/README.zh-CN.md /README/`）。「Xexam について」のページの更新履歴が、これらから作られるためです。同じ理由で、`.dockerignore` は `README.md` と `README/` をビルドコンテキストに残します。完成したイメージに入るのはビルドした静的ファイルだけです。
+compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.build.yml` はリポジトリのルート（`..`）をビルドコンテキストにします。フロントエンドのイメージは、リポジトリのルートからビルドします。`nginx/Dockerfile` は、Node のビルド段階に 3 つの更新履歴をコピーします（`COPY docs/en/changelog.md /docs/en/`。`ja` と `zh-CN` も同じ）。「Xexam について」のページが、これらから作られるためです。同じ理由で、`.dockerignore` は `docs/` と README をビルドコンテキストから外したうえで、この 3 つのファイルだけを戻します。完成したイメージに入るのはビルドした静的ファイルだけです。
 
 ## 6. 旧版との照合（回帰）
 
@@ -181,14 +181,14 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 
 | ジョブ | 内容 |
 |---|---|
-| `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの README それぞれの更新履歴の最新の項目 = `CODE_VERSION`。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
+| `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）それぞれの最新の項目 = `CODE_VERSION` で、3 つとも同じ `### vX.Y — 日付` の見出しが同じ順に並ぶこと。どの README にも更新履歴の項目がなく、それぞれが自分の言語の更新履歴へリンクしていること。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
 | `frontend` | 型チェック、391 件の単体テスト、ビルド |
 | `backend` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック |
-| `ai-service` | fmt、clippy、ai-service の 369 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと |
+| `ai-service` | fmt、clippy、ai-service の 383 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと |
 | `stack` | `frontend`、`backend`、`ai-service` の後：`xexam-frontend` イメージをビルドして 141 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
 | `arm64` | 3 つのイメージを arm64 向けにビルドし、QEMU 上で起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すこと、ai-service が単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返すことを確認（最大 60 分） |
 | `publish` | `main` のみ：3 つのイメージ（amd64 + arm64）をタグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）にプッシュし、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
-| `release` | `main` のみ：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `README.md` の更新履歴から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
+| `release` | `main` のみ：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `docs/en/changelog.md` から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
 
 `dev` へのプッシュと `main` へのプルリクエストでは、検査のジョブ（`check` から `arm64` まで）だけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
 
@@ -209,13 +209,13 @@ compose ファイルと `.env` は `docker/` にあり、`docker/docker-compose.
 
 ## 9. ドキュメント
 
-- 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じ 8 つのドキュメントがあります：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`、そして v0.7.5 からは `usage`（アプリの使い方。README から移しました）。それぞれのフォルダに専用の `screenshots/` があります。
+- 言語ごとに 1 つのフォルダがあります：`docs/en`（英語、原文）、`docs/ja`（日本語）、`docs/zh-CN`（簡体字中国語）。どのフォルダにも同じ 9 つのドキュメントがあります：`api`、`architecture`、`changelog`（v0.9.1 から。以前は README の中にありました）、`database`、`deployment`、`development`、`migration`、`security`、そして v0.7.5 からは `usage`（アプリの使い方。README から移しました）。それぞれのフォルダに専用の `screenshots/` があります。
 - `docs/zh-CN/history/` には、Rust へ切り替えたときの古いドキュメント（監査、計画、リスク評価）があります。中国語のみで、今後は更新しません。
 - `docs/en/openapi.yaml` はすべての言語で共有します。日本語と中国語のドキュメントは `../en/openapi.yaml` にリンクします。
-- README は短くしてあります：Xexam でできること、クイックスタート、設定、アップグレード、ドキュメントへのリンク、更新履歴です。アプリの使い方、Excel の形式、インポートの規則は `usage.md` に、デプロイの詳細、バックアップ、セキュリティ、アーキテクチャ、開発はそれぞれのドキュメントにあります。詳細は 1 か所に書き、そこへリンクしてください。
+- README は短くしてあります：Xexam でできること、クイックスタート、設定、アップグレード、ドキュメントへのリンク、更新履歴（同じ言語の `changelog.md`）へのリンクです。アプリの使い方、Excel の形式、インポートの規則は `usage.md` に、デプロイの詳細、バックアップ、セキュリティ、アーキテクチャ、開発はそれぞれのドキュメントにあります。詳細は 1 か所に書き、そこへリンクしてください。
 - どのドキュメントも、ほかの 2 つのフォルダにある同じドキュメントへのリンクを並べた言語バーで始まります。リンクはファイル自身のフォルダからの相対パスで、リポジトリのルートは `../../` です。
 - 先に英語のドキュメントを変更し、同じ変更の中で日本語と中国語のドキュメントも更新します。UI の項目名は、その言語のカタログのとおりに太字で書きます。問題の言語の切り替えは、常に **English** / **中文** / **日本語** です。
-- CI の `check` ジョブは、次のどれかに当てはまると失敗します：8 つのドキュメント `api` … `usage` のどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
+- CI の `check` ジョブは、次のどれかに当てはまると失敗します：9 つのドキュメント `api` … `usage` のどれかが言語フォルダにない、`docs/` に `en`、`ja`、`zh-CN` 以外のフォルダやファイルがある、README やドキュメントの相対リンクや画像のパスが存在しないファイルを指している。GitHub のページへのリンク（`../../releases` など）も確認します。これらは `../` でちょうどリポジトリのページまで戻る必要があります（`README/` の中では `../../../` で始まります）。
 
 ### 9.1 スクリーンショット
 
@@ -230,9 +230,9 @@ README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごと
 ## 10. バージョン、更新履歴、ライセンス
 
 - リポジトリのルートの **`VERSION`** には、`KEY=VALUE` の行が 2 つ、それぞれちょうど 1 回ずつあります（`#` で始まる行はコメントです）：
-  - `CODE_VERSION`（現在は `0.9`）：このブランチのコードのバージョン。3 つの README すべての更新履歴の項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.9` のような 2 つの部分からなるバージョンは、そこでは `0.9.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
-  - `RELEASE_VERSION`（v0.9 のリリースジョブが動くまでは `0.8`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
-- 更新するたびに、3 つの README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）すべての更新履歴の一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。CI がこれを確認します。GitHub Release のノートは英語版から取ります。
-- 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（4 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
+  - `CODE_VERSION`（現在は `0.9.1`）：このブランチのコードのバージョン。3 つの更新履歴（`docs/<lang>/changelog.md`）すべての項目、`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json`（`0.9` のような 2 つの部分からなるバージョンは、そこでは `0.9.0` と書きます。それぞれのロックファイルも）、`docs/en/openapi.yaml` の `info.version` と一緒に、手で上げます。イメージはこのバージョンでビルドされてタグが付き、`/api/info` もこれを返します（バックエンドはイメージの `/VERSION` から読みます）。
+  - `RELEASE_VERSION`（v0.9.1 のリリースジョブが動くまでは `0.9`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
+- 更新するたびに、3 つの言語の更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）すべての一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。3 つの項目はいつも同じにそろえます。CI がこれを確認します。README には項目を書かず、更新履歴へのリンクだけを置きます。GitHub Release のノートは英語版から取ります。
+- 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（4 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。リンクは更新履歴のフォルダ（`docs/<lang>/`）からの相対パスで書きます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
 - 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（8.1 節）。
 - このプロジェクトは MIT ライセンスです（リポジトリのルートの `LICENSE`）。

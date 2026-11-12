@@ -607,6 +607,10 @@ pub struct StudyIds {
     pub record_id: Option<i64>,
     pub user_msg: i64,
     pub answer: i64,
+    /// 1 + the assistant answers the chat already held for the same key (question / kind / source, or the summary),
+    /// whatever their status: above 1 this ask regenerates it (a stopped, failed or withdrawn answer may still sit in the
+    /// gateway cache)
+    pub attempt: u32,
 }
 
 #[derive(Debug)]
@@ -700,6 +704,21 @@ pub fn prepare_study(
             params![chat, record],
         )?;
     }
+    let held: i64 = if s.kind == "summary" {
+        c.query_row(
+            "SELECT COUNT(*) FROM messages WHERE chat_id = ?1 AND role = 'assistant' AND kind = 'summary'",
+            [chat],
+            |r| r.get(0),
+        )?
+    } else {
+        c.query_row(
+            "SELECT COUNT(*) FROM messages
+             WHERE chat_id = ?1 AND question_id = ?2 AND kind = ?3 AND source = ?4 AND role = 'assistant'",
+            params![chat, s.question_id, s.kind, s.source],
+            |r| r.get(0),
+        )?
+    };
+    let attempt = u32::try_from(held).unwrap_or(u32::MAX).saturating_add(1);
     let user_msg = insert_study_message(c, chat, "user", s.user_content, "done", None, s)?;
     let answer = insert_study_message(c, chat, "assistant", "", "streaming", Some(s.model), s)?;
     touch_chat(c, chat, s.now)?;
@@ -715,6 +734,7 @@ pub fn prepare_study(
         record_id,
         user_msg,
         answer,
+        attempt,
     })
 }
 

@@ -1,5 +1,6 @@
-# Keep these out of the image build context: personal data, build artifacts, the repository, docs.
-# The three READMEs stay in (README.md and the README/ folder): the nginx image build reads their changelogs for the About page.
+# Keep these out of the image build context: personal data, build artifacts, the repository, docs and the READMEs.
+# Exactly three files come back in (the ! lines at the end, which must stay below the docs line): docs/en, docs/ja and
+# docs/zh-CN/changelog.md, which the nginx image build reads for the About page.
 # The compose files and .env live in docker/, which is not needed inside an image. backend/, ai-service/, frontend/ and nginx/ stay in:
 # each Dockerfile copies only what its image needs (ai-service/Dockerfile also reuses two build scripts from backend/).
 **/data
@@ -25,3 +26,8 @@ docs
 scripts
 tests
 tools
+README.md
+README
+!docs/en/changelog.md
+!docs/ja/changelog.md
+!docs/zh-CN/changelog.md

@@ -37,7 +37,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 第一次构建要几分钟（编译 Rust 和前端），之后会用缓存。克隆下来的仓库里，compose 文件和 `.env` 都在 `docker/` 里；`docker/docker-compose.build.yml` 以仓库根目录为构建上下文。下面的命令要在仓库根目录运行，并加上 `-f docker/docker-compose.build.yml`（例如 `docker compose -f docker/docker-compose.build.yml logs -f`）。
 
-前端镜像需要三份 README：**关于 Xexam** 页面显示它们的更新日志，这些更新日志是构建进前端的。所以 `nginx/Dockerfile` 把 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md` 复制进它的构建阶段，`.dockerignore` 也把 `README.md` 和 `README/` 留在构建上下文里。最终镜像里只有构建出的静态文件。
+前端镜像需要三份更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md` 和 `docs/zh-CN/changelog.md`）：**关于 Xexam** 页面显示它们，它们是构建进前端的。所以 `nginx/Dockerfile` 把它们复制进它的构建阶段，`.dockerignore` 把 `docs/` 排除在构建上下文之外，只把这三个文件放回来。最终镜像里只有构建出的静态文件。
 
 下面的命令用的是 Compose 的**服务名** `backend`、`ai-service` 和 `frontend`。容器的名字是 `xexam-backend`、`ai-service` 和 `xexam-frontend`；普通的 `docker` 命令（`docker logs`、`docker exec`）要用容器名。`docker/docker-compose.build.yml` 把 `ai-service/Dockerfile` 构建成镜像 `xexam-ai-service:local`。
 
@@ -47,7 +47,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | 看日志 | `docker compose logs -f`（只看后端：`docker compose logs -f backend`；只看 ai-service：`docker compose logs -f ai-service`；见第 9 节） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。从较早的版本升级时先看第 6 节 |
-| 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单里的版本那一项，例如 **Xexam v0.9**（关于页面） |
+| 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单里的版本那一项，例如 **Xexam v0.9.1**（关于页面） |
 
 > ⚠️ 不要运行 `docker compose down -v`：`-v` 会删掉两个数据卷：`xexam_data`（题库、账户和所有学习记录）和 `xexam_ai_data`（AI 设置和密钥、对话和记忆）。
 
@@ -257,7 +257,7 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 - **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v6 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
 - **从 v0.4**（migration.md 第 4 节）：schema v1 → v6 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
 
-升级后，`/api/info` 显示 `"version": "0.9"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
+升级后，`/api/info` 显示 `"version": "0.9.1"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
 
 ## 7. 健康检查和停止
 
@@ -292,7 +292,7 @@ Compose 服务叫 `backend`（容器叫 `xexam-backend`），所以页面上的�
 
 日志里有什么：启动时的几行（版本、数据目录、日志模式、允许的主机、AI 连接、默认密码的提醒、升级信息，以及因为旧的 Excel 格式而被下架的题）、按用户名记录的登录和账户变更（`user "admin" signed in`、`user "admin" updated user "alex"`；登录时输入的、没有账户的名字从不记录）、被拒绝的上传和写入、警告和错误。它从不包含密码、会话令牌、Cookie 的值、确认码或题目文字。被 Host / Origin 检查拒绝的请求、失败的登录，以及没有账户的用户名被锁定，都先记一次，之后最多每分钟汇总一次，所以没人能不登录就把其他日志挤出这 2000 行。详见 [security.md](security.md) 第 8 节。
 
-ai-service 的日志行：它的启动（`Xexam AI service 0.9 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、加密密钥的来源）、连接（`AI link: connected to the main service`，每个连接只写一次；断开时写 `AI link: lost the main service`，所以长时间的中断是一对日志行，而不是每次重试一行）、管理员对 AI 设置和安全上限的每次修改、测试、**AI+ 功能** 开关、管理员的 暂停 和 恢复（日志行仍然写 `AI function turned off for user "sam" by admin "admin"`，以及 `… turned on …`）、AI 数据库的 schema 升级（带它备份副本的名字，`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`，对每个 schema 1 或 schema 2 的数据库都写；重新打开不写任何东西）、对话保留的总数（`AI retention: deleted N chats older than D days`）、因为泄露了答案而被扣下的提示（`AI hint withheld because it gave the answer away (user "sam")`，每分钟最多一行，之后是 `N more AI hints were withheld since the last report`，从不含任何文字）、后端学习路由的一个读不懂的回答（`AI link: an answer of /internal/ai/question could not be read`，每分钟最多一行）、失败的 AI 调用（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`，同一个原因每分钟最多一行）、对话保留、删除已删除用户的数据，以及管理员查看或清除用户 AI 数据的审计日志。它们从不包含密钥、内部令牌、提示词、回答、对话标题、记忆笔记、题目文字、会话 key 或记录时间。心跳不写任何日志行。连不上后端期间，ai-service 最多保留 500 行，之后再发送；不得不丢掉一些时，开头会有一行 `<n> AI log lines were dropped while the main service was unreachable`；审计日志从不丢弃。
+ai-service 的日志行：它的启动（`Xexam AI service 0.9.1 listening on 0.0.0.0:8766`、`AI database: /data/xexam-ai.db (journal: wal)`、加密密钥的来源）、连接（`AI link: connected to the main service`，每个连接只写一次；断开时写 `AI link: lost the main service`，所以长时间的中断是一对日志行，而不是每次重试一行）、管理员对 AI 设置和安全上限的每次修改、测试、**AI+ 功能** 开关、管理员的 暂停 和 恢复（日志行仍然写 `AI function turned off for user "sam" by admin "admin"`，以及 `… turned on …`）、AI 数据库的 schema 升级（带它备份副本的名字，`Upgraded the AI database to schema 3. A copy of the previous version was saved first: …`，对每个 schema 1 或 schema 2 的数据库都写；重新打开不写任何东西）、对话保留的总数（`AI retention: deleted N chats older than D days`）、因为泄露了答案而被扣下的提示（`AI hint withheld because it gave the answer away (user "sam")`，每分钟最多一行，之后是 `N more AI hints were withheld since the last report`，从不含任何文字）、后端学习路由的一个读不懂的回答（`AI link: an answer of /internal/ai/question could not be read`，每分钟最多一行）、失败的 AI 调用（`AI call failed for user "sam": ai.up.rateLimit (HTTP 429)`，同一个原因每分钟最多一行）、对话保留、删除已删除用户的数据，以及管理员查看或清除用户 AI 数据的审计日志。它们从不包含密钥、内部令牌、提示词、回答、对话标题、记忆笔记、题目文字、会话 key 或记录时间。心跳不写任何日志行。连不上后端期间，ai-service 最多保留 500 行，之后再发送；不得不丢掉一些时，开头会有一行 `<n> AI log lines were dropped while the main service was unreachable`；审计日志从不丢弃。
 
 ## 10. 第一次启动、账户和找回
 

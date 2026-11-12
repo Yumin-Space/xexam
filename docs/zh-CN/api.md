@@ -608,7 +608,7 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 - **自由模式**是**管理员**的状态，不是对话的状态。`POST /api/ai/free` 带 `{"free": true}` 或 `{"free": false}` 把它打开或关闭，回答 `{"free": <bool>}`。请求体必须正好只有布尔值的键 `free`（别的任何情况都是 400 `ai.badRequest`）；这个路由只有管理员可用（其他人 403 `ai.adminOnly`），AI 关闭时也可用；重复调用没有害处。这个状态按用户保存在 ai-service 自己的数据库里（`users.free_mode`），所以重新加载页面、换浏览器和重启之后都还在，`GET /api/ai/status` 用 `freeMode` 报告它（对普通用户始终是 `false`，不管保存的是什么：被降级的管理员照常得到普通回答，再次成为管理员时保存的标记又会生效）。它**开着**时，这位管理员在任何对话（旧的或新的）里的每个 `send` 和 `retry` 都用自由模式回答：系统提示词只有回复语言那一行（没有学习助手的指示、没有日期、没有记忆；记忆甚至不会被读取）。它**关着**时，每条消息都按普通模式回答。改动从**下一条**消息起生效；已经在生成的回答保持它开始时的模式。**每条消息都记录自己的模式**（`Message.free`，以及事件流里的 `start.free`）：一个问题和它的回答用发送这个问题时有效的模式，重试用重试时的模式（并且也记在那个问题上）。自由模式只解除 Xexam 自己的学习助手角色，从不解除服务商自己的安全规则。AI 对话里没有它的开关和分隔线：选择在**设置**里的「AI 对话模式」一节（普通模式 / 自由模式；只有能使用 AI 的管理员看得到它），模式开着时，AI 对话在标题旁边显示一个绿色的「自由模式」标签。
 - **提示词和历史。** 普通回答的系统提示词是带今天日期的学习助手文字，然后是用户的记忆（最近更新的在前，只放完整的笔记，最多 4000 个字符），最后是回复语言那一行。固定的部分在前，每个请求不同的部分在后，所以每个请求的开头在请求之间是相同的。当发送的历史里有和当前模式**不同**模式下写的消息时（刚切换之后），语言那一行之后会多**一行简短的模式说明**：`Current mode: normal (Xexam study assistant); earlier turns may be free mode.` 或 `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` 没有这样的消息时就没有模式说明，自由模式的提示词只有语言那一行。**旧消息在发送前会被缩短**：历史里最新的 4 条消息完整发送，更早的回答截成前 800 个字符再加 `…(shortened)`，更早的问题截成前 2000 个字符再加 `…`。截断只取决于消息本身和它的新旧，所以同一条消息总是得到同样的文字；历史额度按缩短后的长度计算。保存的消息从不改变。
 - **提示词缓存。** 在 **Anthropic** 格式里，系统提示词作为一个文本块发送，带一个 `cache_control`（`ephemeral`）断点，历史的最后一条消息（新问题之前的那条）得到第二个，所以对话能重用它缓存的开头。在 **OpenAI** 格式里什么都不加：自动缓存的服务商自己会缓存。服务商报告的、由它的缓存提供的部分（`cache_read_input_tokens`，或 `prompt_tokens_details.cached_tokens`）随这次调用一起保存，并在 `admin/usage` 里显示为 `tokensCached`；它是 `tokensIn` 的一部分，不是额外加上去的，什么都没报告的服务商计为 0。缓存改变的是服务商收的费用，从不改变回答。
-- **`retry`**：对话的最后一条消息必须是一个失败了或被停止的回答，并且在一条用户消息之后；它会在原位置重新生成（同一个消息 id，没有新的用户消息）。否则是 409 `ai.notRetryable`。*(v0.9)* 学习回答（提示、解释或总结：`kind` 不是 `chat` 的消息）永远不能这样重试，即使它失败了或被停止了：409 `ai.notRetryable`。它要通过它自己的路由（5.5）重新提问，那里保留它自己的提示词和回答检查。
+- **`retry`**：对话的最后一条消息必须是一个失败了或被停止的回答，并且在一条用户消息之后；它会在原位置重新生成（同一个消息 id，没有新的用户消息）。否则是 409 `ai.notRetryable`。*(v0.9)* 学习回答（提示、解释或总结：`kind` 不是 `chat` 的消息）永远不能这样重试，即使它失败了或被停止了：409 `ai.notRetryable`。它要通过它自己的路由（5.5）重新提问，那里保留它自己的提示词和回答检查。*(v0.9.1)* 重试发给服务商的请求，以附在最后一个用户回合末尾的带编号备注 `(Regenerate request #N: …)` 结尾：N 在这个回答第一次重试时是 2，下一次是 3，依此类推（只在 ai-service 的内存里计数，所以重启后重新计数）。备注从不保存也不显示。服务商是 Cloudflare AI Gateway 时，请求还带上请求头 `cf-aig-skip-cache: true`，所以网关不会用缓存来回答。再问一次的学习回答也带同样的备注和请求头（5.5）。
 - **AI 对话里的学习对话** *(v0.9)*：5.5 的对话对 `chats`、`chat`、`chats/delete` 和管理员的查看来说是普通对话。可以使用 AI 的用户也可以向其中一个 `send`（追问）：那条消息是普通的 `chat` 消息，所以像任何 AI 对话的消息一样回答（带这个对话的历史、记忆和自由模式），它的 `start` 事件里 `chatKind` 是 `practice`、`exam` 或 `summary`。`memories/suggest` 只接受 `chat` 类的消息：学习对话的消息得到 404。
 - **每个用户默认同时只有一个正在生成的回答**（`perUserRunning`，最多 4，同一个对话里永远不会有两个）：再来一个 `send`、`retry` 或 `memories/suggest` 得到 409 `ai.busy`。整个服务器同时进行的模型调用超过 `globalRunning` 时：503 `ai.serverBusy`。两者都在保存任何东西之前拒绝。
 - **`stop`**：用 `{}` 停止你所有正在生成的回答，用 `{"chatId": …}` 只停止那个对话的；它最多等 5 秒，直到它们保存好。没有正在生成的回答时 `stopped: false`。回答以事件 `stopped` 结束，保留它的文字。*(v0.9)* 提示、解释和总结用同样的方式停止（用它们的学习对话的 `{"chatId"}`，或 `{}`）。
@@ -758,6 +758,8 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 
 模型拿到什么：**提示**拿到不带答案的题目（从不给正确答案、它的解释或它的备注）；**解释**拿到题目、答案、以及保存的解释，在结果页上（`source` 为 `result`）还有用户当时的作答，或者这道题没有作答。题目有 `qlang` 这种语言的翻译时，就用它显示。保存的用户消息是不带任何答案部分的题目文字，截到 4000 个字符。
 
+*(v0.9.1)* **再问一次。** 对话里已经有同一道题、`kind` 和 `source` 都相同的回答时（不论状态：完成、失败、停止或被扣下），这次提问就是重新生成：发给服务商的请求以 `retry`（5.2）那样的带编号备注结尾，N 是 1 加上已有回答的数量；在 Cloudflare AI Gateway 上还带 `cf-aig-skip-cache: true`。`summary/ask` 对它的对话里已有的总结也这样做。第一次提问两样都不带，所以会缓存的网关可能用缓存来回答。备注从不保存也不显示。
+
 流和 5.3 的一样。`start` 事件带更多的键：
 
 ```text
@@ -767,7 +769,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 只有 `source` 为 `result` 时 `recordId` 才是那条记录（否则是 `null`）；`sample` 始终是 `null`；`lang` 是回复的语言（`en`、`zh-CN` 或 `ja`）。达到 6000 个字符的提示会在那里被截断，以 `done` 和 `truncated: true` 结束。
 
-**提示从不透露答案。** ai-service 在提示生成的同时，对照答案检查它的文字，只有确定没有提到答案的文字才放出去。如果检查发现提示透露了答案，回答就以事件 `error` `ai.hintLeak` 和 `"withdraw": true` 结束：客户端必须删掉它已经显示的这段提示文字。这个提示的任何内容都不保存（消息的状态是 `error`，错误码是 `ai.hintLeak`，`content` 为空），这次调用在用量里算作一次错误，ai-service 每分钟最多向系统日志写一行（`AI hint withheld because it gave the answer away (user "<name>")`，然后是 `<n> more AI hints were withheld since the last report`），这一行从不包含任何文字。再问一次（新的请求，不是 `retry`）会得到新的提示。这个检查是由词表和规则组成的安全网，不是保证。解释和总结不检查：它们本来就是要说出答案的。
+**提示从不透露答案。** ai-service 在提示生成的同时，对照答案检查它的文字，只有确定没有提到答案的文字才放出去。如果检查发现提示透露了答案，回答就以事件 `error` `ai.hintLeak` 和 `"withdraw": true` 结束：客户端必须删掉它已经显示的这段提示文字。这个提示的任何内容都不保存（消息的状态是 `error`，错误码是 `ai.hintLeak`，`content` 为空），这次调用在用量里算作一次错误，ai-service 每分钟最多向系统日志写一行（`AI hint withheld because it gave the answer away (user "<name>")`，然后是 `<n> more AI hints were withheld since the last report`），这一行从不包含任何文字。再问一次（新的请求，不是 `retry`）会得到新的提示。这个检查是由词表和规则组成的安全网，不是保证。含有 `<think>`、`</think>`、`<thinking>` 或 `</thinking>`（不分大小写；只有 OpenAI 格式的回答最开头的 `<think>…</think>` 片段按推理处理，在检查之前丢掉）的提示也会同样被扣下。解释和总结不检查：它们本来就是要说出答案的。
 
 #### `GET /api/ai/study/saved`
 

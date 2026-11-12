@@ -516,15 +516,15 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | POST | `/api/ai/free` | 管理者 | `{"free": <bool>}` | `{"free": <bool>}`（管理者のフリーモード、下記） |
 | POST | `/api/ai/stop` | 署名あり | `{}` または `{"chatId": <id>}` | `{"ok": true, "stopped": <bool>}` |
 | POST | `/api/ai/chats/delete` | 署名あり | `{"id": <id>}` または `{"all": true}` | `{"deleted": <n>}` |
+| POST | `/api/ai/study/ask` | AI ユーザー | `StudyAsk`（5.5）：`kind` は `hint` または `explain`、セッションと問題 | **イベントストリーム**（5.3、5.5） *(v0.9)* |
+| GET | `/api/ai/study/saved` | 署名あり | `?mode=&key=`、または `&record=&source=&question=&kind=`（5.5） | `StudyAnswer` の `Saved` *(v0.9)* |
+| POST | `/api/ai/summary/ask` | AI ユーザー | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **イベントストリーム**（5.3、5.5） *(v0.9)* |
+| GET | `/api/ai/summary/saved` | 署名あり | `?record=<id>&at=<12 桁>`（5.5） | `SummaryAnswer` の `Saved` *(v0.9)* |
 | GET | `/api/ai/memories` | 署名あり | | `{"memories": [Memory], "limit": 50, "maxChars": 300}`（現在の上限） |
 | POST | `/api/ai/memories/add` | AI ユーザー | `{"content": "…", "source"?: "manual" \| "chat"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/update` | AI ユーザー | `{"id": <id>, "content": "…"}` | `{"memory": Memory}` |
 | POST | `/api/ai/memories/delete` | 署名あり | `{"id": <id>}` または `{"all": true}` | `{"deleted": <n>}` |
 | POST | `/api/ai/memories/suggest` | AI ユーザー | `{"messageId": <自分のユーザーメッセージの id>, "lang"?: "en" \| "zh" \| "ja"}` | `{"suggestion": "…"}`（何も保存しない） |
-| POST | `/api/ai/study/ask` | AI ユーザー | `StudyAsk`（5.5）：`kind` は `hint` または `explain`、セッションと問題 | **イベントストリーム**（5.3、5.5） *(v0.9)* |
-| GET | `/api/ai/study/saved` | 署名あり | `?mode=&key=`、または `&record=&source=&question=&kind=`（5.5） | `StudyAnswer` の `Saved` *(v0.9)* |
-| POST | `/api/ai/summary/ask` | AI ユーザー | `{"recordId": <id>, "lang"?: "en" \| "zh" \| "ja"}` | **イベントストリーム**（5.3、5.5） *(v0.9)* |
-| GET | `/api/ai/summary/saved` | 署名あり | `?record=<id>&at=<12 桁>`（5.5） | `SummaryAnswer` の `Saved` *(v0.9)* |
 | GET | `/api/ai/admin/settings` | 管理者 | | `Settings` |
 | POST | `/api/ai/admin/settings` | 管理者 | `SettingsUpdate` | `Settings` + `"switchedOff": <bool>` |
 | POST | `/api/ai/admin/models` | 管理者 | `{}` | `{"models": ["…"], "listed": <bool>}` |
@@ -608,7 +608,7 @@ RunningInfo   {"chatId": n, "messageId": n, "chatKind": str, "kind": str, "quest
 - **フリーモード** はチャットではなく**管理者**の状態です。`POST /api/ai/free` に `{"free": true}` または `{"free": false}` を送るとオン・オフが切り替わり、`{"free": <bool>}` が返ります。ボディはブール値のキー `free` だけを持たなければならず（それ以外は 400 `ai.badRequest`）、ルートは管理者専用で（管理者以外は 403 `ai.adminOnly`）、AI がオフの間も使え、繰り返しても害はありません。状態は ai-service 自身のデータベース（`users.free_mode`）にユーザーごとに保存されるので、再読み込み、別のブラウザ、再起動の後も残り、`GET /api/ai/status` は `freeMode` として報告します（一般ユーザーでは、何が保存されていても常に `false`：降格された管理者には通常どおり応答し、再び管理者になれば保存されたフラグがまた効きます）。**オン**の間は、その管理者のすべての `send` と `retry` が、古いチャットでも新しいチャットでも、フリーモードで答えられます：システムプロンプトは返答言語の 1 行だけです（学習アシスタントの指示も、日付も、メモリーもなし。メモリーは読みもしません）。**オフ**の間は、すべてのメッセージが通常どおりに答えられます。変更が効くのは**次の**メッセージからで、すでに作成中の回答は、始まったときのモードのままです。**どのメッセージもモードを記録します**（`Message.free` と、イベントストリームの `start.free`）：質問とその回答は、質問を送ったときに有効だったモードを持ち、再試行は再試行のときのモードを使います（質問にもそれを記録します）。フリーモードが外すのは Xexam 自身の学習アシスタントの役割だけで、プロバイダー自身の安全規則は外しません。AI チャットにはそのためのスイッチも区切り線もありません：選ぶのは**設定**の「AI 対話モード」の項目です（通常モード / フリーモード。AI を使える管理者にだけ表示されます）。AI チャットは、モードがオンの間、タイトルの横に緑色の「フリーモード」のタグを表示します。
 - **プロンプトと履歴**。通常の回答のシステムプロンプトは、今日の日付を添えた学習アシスタントの文、次にユーザーのメモリー（更新が新しいものから、メモ全体だけ、最大 4000 文字）、最後に返答言語の 1 行の順です。固定の部分が先、リクエストごとに変わる部分が後なので、リクエストの先頭はリクエスト間で同一です。送る履歴に、現在とは**別の**モードで書かれたメッセージが含まれるとき（切り替えの直後）は、言語の行の後に**短いモードの行が 1 つ**付きます：`Current mode: normal (Xexam study assistant); earlier turns may be free mode.` または `Current mode: free (general assistant, not the study-assistant role); earlier turns may be normal mode.` そのようなメッセージがなければモードの行はなく、フリーモードのプロンプトは言語の行だけです。**古いメッセージは短くしてから**送ります：履歴の最新の 4 件は全文で送り、それより古い回答は先頭 800 文字で切って `…(shortened)` を付け、それより古い質問は先頭 2000 文字で切って `…` を付けます。切り方はメッセージとその古さだけで決まるので、同じメッセージは常に同じ文章になります。履歴の文字数の枠は短くした後の長さで数えます。保存されたメッセージは変更されません。
 - **プロンプトキャッシュ**。**Anthropic** 形式では、システムプロンプトは `cache_control`（`ephemeral`）の区切りを持つ 1 つのテキストブロックとして送られ、履歴の最後のメッセージ（新しい質問の直前のもの）にも 2 つ目が付くので、会話は、キャッシュされた先頭部分を再利用します。**OpenAI** 形式では何も加えません：自動でキャッシュするプロバイダーは、自分でそうします。プロバイダーが自分のキャッシュから提供したと報告したもの（`cache_read_input_tokens`、または `prompt_tokens_details.cached_tokens`）は呼び出しとともに保存され、`admin/usage` に `tokensCached` として表示されます。これは `tokensIn` の一部であり、それに加えるものではありません。何も報告しないプロバイダーは 0 と数えます。キャッシュが変えるのはプロバイダーの課金であり、回答は変わりません。
-- **`retry`**：チャットの最後のメッセージが、ユーザーのメッセージの後の、失敗したか停止した回答でなければなりません。それをその場で書き直します（同じメッセージ id、新しいユーザーメッセージはなし）。そうでなければ 409 `ai.notRetryable` です。*(v0.9)* 学習用の回答（ヒント、解説、まとめ。`kind` が `chat` でないメッセージ）は、失敗や停止であっても、この方法では決して再試行されません：409 `ai.notRetryable`。それぞれ専用のルート（5.5）でもう一度尋ねます。専用のルートは、自分のプロンプトと回答の確認を保つからです。
+- **`retry`**：チャットの最後のメッセージが、ユーザーのメッセージの後の、失敗したか停止した回答でなければなりません。それをその場で書き直します（同じメッセージ id、新しいユーザーメッセージはなし）。そうでなければ 409 `ai.notRetryable` です。*(v0.9)* 学習用の回答（ヒント、解説、まとめ。`kind` が `chat` でないメッセージ）は、失敗や停止であっても、この方法では決して再試行されません：409 `ai.notRetryable`。それぞれ専用のルート（5.5）でもう一度尋ねます。専用のルートは、自分のプロンプトと回答の確認を保つからです。*(v0.9.1)* 再試行のプロバイダーへのリクエストは、最後のユーザーのターンに付けた番号付きのメモ `(Regenerate request #N: …)` で終わります。N はその回答の最初の再試行で 2、次で 3、というように増えます（ai-service のメモリーの中だけで数えるので、再起動すると数え直しになります）。このメモは保存も表示もされません。プロバイダーが Cloudflare AI Gateway のときは、リクエストにヘッダー `cf-aig-skip-cache: true` も付くので、ゲートウェイはキャッシュから答えません。もう一度尋ねた学習用の回答にも、同じメモとヘッダーが付きます（5.5）。
 - **AI チャットの中の学習チャット** *(v0.9)*：5.5 のチャットは、`chats`、`chat`、`chats/delete`、管理者の表示にとって普通のチャットです。AI を使えるユーザーは、その中に `send` することもできます（続きの質問）：そのメッセージは通常の `chat` メッセージなので、AI チャットのメッセージと同じように（チャットの履歴、メモリー、フリーモードを使って）答えられ、その `start` イベントの `chatKind` は `practice`、`exam`、`summary` のどれかになります。`memories/suggest` が受け付けるのは種類が `chat` のメッセージだけで、学習チャットのメッセージには 404 を返します。
 - 既定では **作成中の回答は 1 ユーザーにつき 1 つ** です（`perUserRunning`、最大 4。同じチャットで 2 つになることはない）：ほかの `send`、`retry`、`memories/suggest` は 409 `ai.busy` になります。サーバー全体で `globalRunning` を超えるモデルの呼び出しは 503 `ai.serverBusy` です。どちらも、何かを保存する前に拒否します。
 - **`stop`**：`{}` なら作成中の自分の回答をすべて、`{"chatId": …}` ならそのチャットの回答だけを止めます。それらが保存されるまで最大 5 秒待ちます。何も作成中でなければ `stopped: false` です。回答はイベント `stopped` で終わり、その文章は残ります。*(v0.9)* ヒント、解説、まとめも同じ方法で止まります（その学習チャットの `{"chatId"}`、または `{}`）。
@@ -758,6 +758,8 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 
 モデルが受け取るもの：**ヒント**は、答えのない問題（正解、その解説、その注記は決して含まれません）。**解説**は、問題、正解、保存されている解説で、結果ページ（`source` が `result`）では、さらにユーザーの回答、または未回答だったことも含みます。問題は、その翻訳がある場合は `qlang` で表示されます。保存されるユーザーメッセージは、答えの部分のない問題文で、4000 文字で切ります。
 
+*(v0.9.1)* **もう一度尋ねる。** チャットに、同じ問題で `kind` と `source` も同じ回答が、状態を問わず（完了、失敗、停止、差し止め）すでにあるとき、その質問は再生成です：プロバイダーへのリクエストは `retry`（5.2）と同じ番号付きのメモで終わり、N は 1 + すでにある回答の数です。Cloudflare AI Gateway では `cf-aig-skip-cache: true` も付きます。`summary/ask` も、そのチャットにすでにあるまとめについて同じことをします。最初の質問にはどちらも付かないので、キャッシュするゲートウェイがキャッシュから答えることがあります。メモは保存も表示もされません。
+
 ストリームは 5.3 のものです。`start` イベントには、さらにキーが付きます：
 
 ```text
@@ -767,7 +769,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 `recordId` は `source` が `result` のときだけその記録で（それ以外は `null`）、`sample` は常に `null`、`lang` は返答の言語（`en`、`zh-CN`、`ja`）です。6000 文字に達したヒントはそこで切られ、`done` と `truncated: true` で終わります。
 
-**ヒントは答えを明かしません。** ai-service は、ヒントを書いている間、その文章を正解と照らして確認し、答えを挙げていないと分かっている文章だけを通します。ヒントが答えを挙げていると確認でわかったときは、回答はイベント `error` の `ai.hintLeak` と `"withdraw": true` で終わります：クライアントは、すでに表示したヒントの文章を取り除かなければなりません。そのヒントは何も保存されず（メッセージは status が `error`、error が `ai.hintLeak`、`content` は空）、その呼び出しは使用量でエラーとして数えられ、ai-service は、システムログに 1 分に最大 1 行を書きます（`AI hint withheld because it gave the answer away (user "<name>")`、続いて `<n> more AI hints were withheld since the last report`）。この行に文章は含まれません。もう一度尋ねると（`retry` ではなく新しいリクエスト）、新しいヒントが得られます。この確認は、単語リストと規則による安全網であって、保証ではありません。解説とまとめは確認しません：答えを挙げるためのものだからです。
+**ヒントは答えを明かしません。** ai-service は、ヒントを書いている間、その文章を正解と照らして確認し、答えを挙げていないと分かっている文章だけを通します。ヒントが答えを挙げていると確認でわかったときは、回答はイベント `error` の `ai.hintLeak` と `"withdraw": true` で終わります：クライアントは、すでに表示したヒントの文章を取り除かなければなりません。そのヒントは何も保存されず（メッセージは status が `error`、error が `ai.hintLeak`、`content` は空）、その呼び出しは使用量でエラーとして数えられ、ai-service は、システムログに 1 分に最大 1 行を書きます（`AI hint withheld because it gave the answer away (user "<name>")`、続いて `<n> more AI hints were withheld since the last report`）。この行に文章は含まれません。もう一度尋ねると（`retry` ではなく新しいリクエスト）、新しいヒントが得られます。この確認は、単語リストと規則による安全網であって、保証ではありません。`<think>`、`</think>`、`<thinking>`、`</thinking>`（大文字小文字は問いません。OpenAI 形式の回答のいちばん最初にある `<think>…</think>` の範囲だけは推論として扱い、確認の前に捨てます）を含むヒントも、同じように差し止めます。解説とまとめは確認しません：答えを挙げるためのものだからです。
 
 #### `GET /api/ai/study/saved`
 

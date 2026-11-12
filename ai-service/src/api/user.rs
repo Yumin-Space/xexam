@@ -191,6 +191,29 @@ pub(super) struct Launch {
     pub history: Vec<provider::Turn>,
     pub guard: Option<crate::study::guard::HintGuard>,
     pub purpose: Option<&'static str>,
+    /// 1 for a first ask; above 1 a regenerate: the gateway cache is bypassed and the last user turn sent carries the
+    /// regenerate note of that number (never stored)
+    pub attempt: u32,
+}
+
+/// The line appended to the last user turn of a regenerate (attempt 2 and up). Only the provider request carries it, so
+/// the request differs from every earlier one even for a gateway that caches by content and ignores cache headers.
+fn regenerate_note(attempt: u32) -> String {
+    format!(
+        "(Regenerate request #{attempt}: write a new answer; do not repeat an earlier answer word for word.)"
+    )
+}
+
+/// The turns sent upstream: for a regenerate the note ends the last user turn (the stored message is untouched).
+fn with_regenerate_note(history: &[provider::Turn], attempt: u32) -> Vec<provider::Turn> {
+    let mut turns = history.to_vec();
+    if attempt > 1 {
+        if let Some(t) = turns.last_mut().filter(|t| t.role == Role::User) {
+            t.content.push_str("\n\n");
+            t.content.push_str(&regenerate_note(attempt));
+        }
+    }
+    turns
 }
 
 /// Starts the generation of a prepared answer and returns the SSE response.
@@ -204,15 +227,16 @@ pub(super) fn launch(
 ) -> Answer {
     let app = &ctx.app;
     let s = &snap.settings;
+    let history = with_regenerate_note(&l.history, l.attempt);
     let body = provider::chat_body(
         s.wire_format(),
         &s.model,
         &l.system,
-        &l.history,
+        &history,
         s.usage_option,
         s.max_tokens,
     );
-    let request = match target.chat_request(&app.0.client, &body) {
+    let request = match target.chat_request(&app.0.client, &body, l.attempt > 1) {
         Ok(r) => r,
         Err(e) => {
             let now = unix_now();
@@ -259,6 +283,11 @@ fn start_stream(
 ) -> Answer {
     let Stream { p, lang, retry } = stream;
     let s = &snap.settings;
+    let attempt = if retry {
+        ctx.app.0.next_retry_attempt(p.answer)
+    } else {
+        1
+    };
     let system = if p.free {
         prompt::free_prompt(lang, p.switched)
     } else {
@@ -284,6 +313,7 @@ fn start_stream(
         history: p.history,
         guard: None,
         purpose: None,
+        attempt,
     };
     launch(ctx, snap, target, slot, permit, l)
 }
@@ -638,7 +668,7 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         s.max_tokens,
     );
     let req = target
-        .chat_request(&app.client, &body)
+        .chat_request(&app.client, &body, false)
         .map_err(|e| ApiError::upstream(e.code))?;
     drop(target);
     let started = std::time::Instant::now();

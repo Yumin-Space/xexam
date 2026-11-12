@@ -12,5 +12,7 @@ mod limits;
 mod lists;
 #[path = "study_guard/persistence.rs"]
 mod persistence;
+#[path = "study_guard/think.rs"]
+mod think;
 #[path = "study_guard/util.rs"]
 mod util;

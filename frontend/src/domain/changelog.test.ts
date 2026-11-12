@@ -5,11 +5,11 @@ import { blocks, inlineTokens, parseChangelog } from './changelog.ts';
 
 const SAMPLE = [
   '# Title', '', '## Changelog', '', 'Intro text that is not an entry.', '',
-  '### v0.5 — 2026-11-10', '', '**Summary line.**', '', '- **New**: one', '  continued', '- two `code`', '  - nested',
-  '', '### v0.4 - 2026-11-09', '- old', '', '## Next section', '- not part of the changelog',
+  '### v0.5 — 2026-11-10', '', '**Summary line.**', '<!-- inside an entry -->', '', '- **New**: one', '  continued', '- two `code`', '  - nested',
+  '', '### v0.4 - 2026-11-09', '- old', '<!-- a comment for maintainers -->', '', '## Next section', '- not part of the changelog',
 ].join('\n');
 
-test('parseChangelog finds every entry and stops at the next level-2 section', () => {
+test('parseChangelog finds every entry and stops at the next level-2 section and skips comment lines', () => {
   const e = parseChangelog(SAMPLE);
   assert.deepEqual(e.map((x) => [x.version, x.date]), [['0.5', '2026-11-10'], ['0.4', '2026-11-09']]);
   assert.deepEqual(e[1]?.lines, ['- old']);
@@ -31,14 +31,21 @@ test('inlineTokens splits bold, code and links and keeps the rest as text', () =
   assert.deepEqual(inlineTokens('plain'), [{ kind: 'text', text: 'plain' }]);
 });
 
-test('the three READMEs have a changelog whose newest entry equals CODE_VERSION in VERSION', () => {
+test('the three changelogs have the same entries, the newest equal to CODE_VERSION in VERSION; the READMEs have none', () => {
   const root = new URL('../../../', import.meta.url);
   // VERSION has KEY=VALUE lines (CODE_VERSION, RELEASE_VERSION) and # comments; the changelog follows CODE_VERSION
   const version = /^CODE_VERSION=\s*(\S+)\s*$/m.exec(readFileSync(new URL('VERSION', root), 'utf8'))?.[1] ?? '';
-  for (const f of ['README.md', 'README/README.ja.md', 'README/README.zh-CN.md']) {
-    const e = parseChangelog(readFileSync(new URL(f, root), 'utf8'));
+  const read = (f: string) => parseChangelog(readFileSync(new URL(f, root), 'utf8'));
+  const heads = (f: string) => read(f).map((e) => `${e.version} ${e.date}`);
+  for (const f of ['docs/en/changelog.md', 'docs/ja/changelog.md', 'docs/zh-CN/changelog.md']) {
+    const e = read(f);
     assert.ok(e.length > 3, `${f}: changelog entries found`);
     assert.equal(e[0]?.version, version, `${f}: newest entry`);
     assert.ok((e[0]?.lines.length ?? 0) > 0, `${f}: newest entry has text`);
+    assert.deepEqual(heads(f), heads('docs/en/changelog.md'), `${f}: same entries as docs/en/changelog.md`);
+    assert.ok(e.every((x) => x.lines.every((l) => !l.includes('<!--'))), `${f}: no comment shown as text`);
+  }
+  for (const f of ['README.md', 'README/README.ja.md', 'README/README.zh-CN.md']) {
+    assert.equal(read(f).length, 0, `${f}: the changelog is in docs/<lang>/changelog.md, not in the README`);
   }
 });

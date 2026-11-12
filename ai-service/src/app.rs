@@ -111,6 +111,9 @@ pub struct App {
     pub unreadable_log: Throttle,
     /// Test hook of the study asks (see [`StudyHold`]); `None` in production
     study_hold: Mutex<Option<StudyHold>>,
+    /// AI Chat retries per answer message: a retry rewrites the failed answer in place, so the database holds no count
+    /// of the attempts (see [`App::next_retry_attempt`])
+    retries: Mutex<std::collections::HashMap<i64, u32>>,
     /// Held for a whole outbox delivery, so two never overlap (each would send the same audit lines)
     outbox: tokio::sync::Mutex<()>,
     /// Held while one state report is read and sent, so an older state never arrives after a newer one
@@ -134,6 +137,18 @@ pub struct StudyHold {
 pub struct AppState(pub Arc<App>);
 
 impl App {
+    /// The attempt number of the next retry of this answer: 2 for the first retry, 3 for the second, and so on (kept in
+    /// memory only; a restart starts counting again, and the table is cleared when it grows large).
+    pub fn next_retry_attempt(&self, answer: i64) -> u32 {
+        let mut m = self.retries.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() >= 10_000 && !m.contains_key(&answer) {
+            m.clear();
+        }
+        let n = m.entry(answer).or_insert(1);
+        *n = n.saturating_add(1);
+        *n
+    }
+
     /// Opens the service: key, database, link, limits, key state. Logs the startup lines of section 6.3.
     pub fn open(mut cfg: Config) -> Result<AppState, String> {
         let env_key = cfg.secret_key.take();
@@ -196,6 +211,7 @@ impl App {
             records: RecordCache::default(),
             unreadable_log: Throttle::new(Duration::from_secs(60)),
             study_hold: Mutex::new(None),
+            retries: Mutex::new(std::collections::HashMap::new()),
             outbox: tokio::sync::Mutex::new(()),
             heartbeat: tokio::sync::Mutex::new(()),
             heartbeat_signal: Arc::new(Notify::new()),

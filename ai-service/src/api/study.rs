@@ -448,6 +448,7 @@ pub async fn ask(ctx: Ctx) -> Answer {
         }],
         guard,
         purpose: Some(purpose),
+        attempt: ids.attempt,
     };
     launch(&ctx, &snap, target, slot, permit, l)
 }
@@ -658,6 +659,7 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
         }],
         guard: None,
         purpose: Some("summary"),
+        attempt: ids.attempt,
     };
     launch(&ctx, &snap, target, slot, permit, l)
 }

@@ -25,10 +25,11 @@ env:
 
 jobs:
   # (1) Check: VERSION holds CODE_VERSION (the code on this branch) and RELEASE_VERSION (the last published release, written
-  #     by the release job below, never by hand). The newest changelog entry of EVERY README (English README.md at the root,
-  #     Japanese and Chinese in README/) and the backend / AI service / frontend manifests equal CODE_VERSION; the release badge
-  #     at the top of every README equals RELEASE_VERSION; docker/docker-compose.yml pulls the three images; the README, docker
-  #     and docs layout is as documented and every relative link resolves. Takes seconds; if it fails nothing else runs. Its
+  #     by the release job below, never by hand). The newest entry of EVERY changelog (docs/en, docs/ja and docs/zh-CN/
+  #     changelog.md, the same entries in all three) and the backend / AI service / frontend manifests equal CODE_VERSION;
+  #     the READMEs hold no changelog entry and each links to the changelog of its language; the release badge at the top
+  #     of every README equals RELEASE_VERSION; docker/docker-compose.yml pulls the three images; the README, docker and
+  #     docs layout is as documented and every relative link resolves. Takes seconds; if it fails nothing else runs. Its
   #     output "version" is CODE_VERSION.
   check:
     name: check version and changelog
@@ -58,10 +59,28 @@ jobs:
           readmes="README.md README/README.ja.md README/README.zh-CN.md"
           for f in $readmes; do
             [ -f "$f" ] || { echo "$f is missing: the project keeps three READMEs (README.md in English at the root, README/README.ja.md, README/README.zh-CN.md)"; exit 1; }
-            top=$(grep -m1 -E '^### v[0-9]' "$f" | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
-            [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but CODE_VERSION is $v. Write the changelog entry in all three READMEs and keep them equal to CODE_VERSION."; exit 1; }
+            # Since v0.9.1 the changelog is not in the READMEs: it lives in docs/<lang>/changelog.md and each README links to it
+            if grep -qE '^### v[0-9]' "$f"; then
+              echo "$f holds a changelog entry (### vX.Y): the changelog lives in docs/en, docs/ja and docs/zh-CN/changelog.md, the README only links to it"; exit 1
+            fi
             # The release badge at the top shows the last published release; the release job updates it (scripts/set-release-version.py)
             grep -q "img.shields.io/badge/release-v$rv-green" "$f" || { echo "The release badge at the top of $f does not say v$rv (RELEASE_VERSION). Do not edit it by hand: the release job sets it after a release."; exit 1; }
+          done
+          # Each README links to the changelog of its language (the link check below makes sure the file exists)
+          for pair in README.md:docs/en/changelog.md README/README.ja.md:../docs/ja/changelog.md README/README.zh-CN.md:../docs/zh-CN/changelog.md; do
+            grep -qF "](${pair#*:})" "${pair%%:*}" || { echo "${pair%%:*} must link to the changelog of its language (${pair#*:})"; exit 1; }
+          done
+          # The changelog in three languages: the newest entry of each equals CODE_VERSION, and the three have the same entries
+          # (the same "### vX.Y — date" headings in the same order)
+          changelogs="docs/en/changelog.md docs/ja/changelog.md docs/zh-CN/changelog.md"
+          for f in $changelogs; do
+            [ -f "$f" ] || { echo "$f is missing: the changelog is kept in English, Japanese and Chinese (docs/en, docs/ja, docs/zh-CN)"; exit 1; }
+            top=$(grep -m1 -E '^### v[0-9]' "$f" | sed -E 's/^### v([0-9][0-9.]*).*$/\1/')
+            [ "$top" = "$v" ] || { echo "The newest changelog entry in $f is v${top:-(none found)}, but CODE_VERSION is $v. Write the entry at the top of all three changelogs (docs/en, docs/ja and docs/zh-CN/changelog.md) and keep it equal to CODE_VERSION."; exit 1; }
+          done
+          heads=$(grep -E '^### v[0-9]' docs/en/changelog.md)
+          for f in docs/ja/changelog.md docs/zh-CN/changelog.md; do
+            [ "$(grep -E '^### v[0-9]' "$f")" = "$heads" ] || { echo "$f does not have the same entries as docs/en/changelog.md (the ### vX.Y — date headings must be the same, in the same order)"; exit 1; }
           done
           for m in backend/Cargo.toml ai-service/Cargo.toml frontend/package.json; do
             [ -f "$m" ] || { echo "$m is missing"; exit 1; }
@@ -80,8 +99,8 @@ jobs:
             grep -Eq "^[[:space:]]*image: docker\.io/[a-z0-9._-]+/$img:latest[[:space:]]*$" docker/docker-compose.yml || {
               echo "docker/docker-compose.yml must pull the image with image: docker.io/<namespace>/$img:latest"; exit 1; }
           done
-          # The eight current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN)
-          for d in api architecture database deployment development migration security usage; do
+          # The nine current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN); the changelog is one of them
+          for d in api architecture changelog database deployment development migration security usage; do
             for l in en ja zh-CN; do
               [ -f "docs/$l/$d.md" ] || { echo "docs/$l/$d.md is missing: every current doc is kept in English, Japanese and Chinese"; exit 1; }
             done
@@ -109,7 +128,7 @@ jobs:
             done
           done
           [ "$bad" = 0 ] || exit 1
-          echo "version v$v, changelog entries present in all three READMEs, README / docker / docs layout as documented, links resolve, manifests match, compose pulls the three images"
+          echo "version v$v, newest changelog entry v$v in docs/en, docs/ja and docs/zh-CN (the same entries in all three, none left in the READMEs), README / docker / docs layout as documented, links resolve, manifests match, compose pulls the three images"
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   # (2) Frontend: type check, unit tests, build
@@ -429,7 +448,7 @@ jobs:
           done
 
   # (4) After the three images are published and verified, create (or update) the Release of this version on GitHub's Releases page.
-  #    The notes come from the changelog of the English README (scripts/release-notes.py), so the Release page and the README always agree.
+  #    The notes come from the English changelog (docs/en/changelog.md, through scripts/release-notes.py), so the Release page and the changelog always agree.
   #    If the images were not published this job is never reached, so the Release page never shows a version whose images cannot be pulled.
   release:
     name: GitHub release
@@ -454,7 +473,7 @@ jobs:
           set -eu
           ns="${HUB_NAMESPACE:-$HUB_USER}"
           # Docker Hub first (what docker/docker-compose.yml pulls), ghcr.io as the mirror
-          python3 scripts/release-notes.py "$VERSION" "docker.io/${ns,,},ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" README.md > notes.md
+          python3 scripts/release-notes.py "$VERSION" "docker.io/${ns,,},ghcr.io/${GITHUB_REPOSITORY_OWNER,,}" docs/en/changelog.md > notes.md
           tag="v$VERSION"
           title="Xexam v$VERSION"
           # The newest release recorded on main (RELEASE_VERSION). A re-run of an older run must not mark its Release as the

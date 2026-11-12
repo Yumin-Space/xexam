@@ -136,7 +136,7 @@ Users with the **AI+ feature** can ask an AI model for help on any question of a
 
 ![The practice page with the AI hint window open on question 1: how to approach it and its knowledge points, without the answer, then Saved, Copy, Regenerate and Open in AI Chat; the bulb and book icons next to the language switch, and AI hint and AI explanation in the action bar](screenshots/desktop-17-ai-hint.png)
 
-**Saved answers.** Every answer is saved. Pressing the same button (or icon) for the same question again shows the saved answer at once and asks the model nothing. **Regenerate** writes a new one and shows it instead; a new answer that fails, is stopped or is hidden leaves the previous one in place and says so. The hint and the explanation of a question are saved separately. When you **Save and exit** and **Continue** later, the practice keeps its saved answers and its chat.
+**Saved answers.** Every answer is saved. Pressing the same button (or icon) for the same question again shows the saved answer at once and asks the model nothing. **Regenerate** writes a new one and shows it instead; a new answer that fails, is stopped or is hidden leaves the previous one in place and says so. The hint and the explanation of a question are saved separately. When you **Save and exit** and **Continue** later, the practice keeps its saved answers and its chat. A regenerate always goes to the model as a new request (a numbered note is added to its end, saved nowhere and shown nowhere), so an AI gateway that caches responses cannot hand back its cached answer.
 
 **Language.** The answer is written in the language chosen in **Settings**, whatever the question language; the question text sent to the model is the one the page shows (its **English** / **中文** / **日本語** switch). A saved answer in another language than your Settings says so (**This answer is in … Regenerate it to get it in the language of your settings.**).
 
@@ -227,7 +227,7 @@ Settings belong to your account and are saved on the Xexam server, together with
 
 ## 10. About Xexam
 
-The version entry of the menu (for example **Xexam v0.7.5**) opens **About Xexam**: the **Version**, the CPU architecture of the **Server**, the **License**, and **What’s new**, which is the changelog of the README in the interface language. The newest version is open; the earlier ones are folded under **Earlier versions**.
+The version entry of the menu (for example **Xexam v0.7.5**) opens **About Xexam**: the **Version**, the CPU architecture of the **Server**, the **License**, and **What’s new**, which is the [changelog](changelog.md) in the interface language. The newest version is open; the earlier ones are folded under **Earlier versions**.
 
 ![About Xexam on a desktop, with What’s new showing the newest version and the earlier versions folded](screenshots/desktop-8-about.png)
 

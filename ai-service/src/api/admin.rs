@@ -307,7 +307,7 @@ async fn verify_attempt(
     );
     let result = match app.0.target(snap) {
         Err(_) => Err(UpError::new(UpCode::BadRequest, None)),
-        Ok(target) => match target.chat_request(&app.0.client, &body) {
+        Ok(target) => match target.chat_request(&app.0.client, &body, false) {
             Err(e) => Err(e),
             Ok(req) => {
                 drop(target);

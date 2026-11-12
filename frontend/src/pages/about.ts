@@ -1,4 +1,4 @@
-// About page: version, server, license, and what is new in each version (the changelog of the README in the UI language).
+// About page: version, server, license, and what is new in each version (the changelog of the UI language, docs/<lang>/changelog.md).
 // The changelog is a separate chunk (dynamic import), loaded only when this page is opened.
 import '../styles/about.css';
 import { pageHead } from '../components/common.ts';

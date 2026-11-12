@@ -43,12 +43,12 @@ AI 服务是 `ai-service/` 里一个单独的 crate（包和可执行程序叫 `
 cd ai-service
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
-cargo test --all-targets          # 369 个测试（以及 1 个文档测试，`cargo test --doc`：提示的提示词不能接受解答）
+cargo test --all-targets          # 383 个测试（以及 1 个文档测试，`cargo test --doc`：提示的提示词不能接受解答）
 cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 必须什么都不打印（CI 的 TLS 检查）
 ```
 
 - **结构**（完整的列表见 [architecture.md](architecture.md) 第 2 节）：`src/api/`（分发、用户路由和管理员路由）、`src/chat.rs`（生成回答的任务、每个用户和全局的名额、取消）、`src/app.rs`（共享状态和发给后端的心跳）、`src/provider/`（OpenAI 兼容和 Anthropic 适配器、事件流解析器、错误映射）、`src/store/`（AI 数据库）、`src/identity.rs` 和 `src/link.rs`（身份声明和对后端的调用）、`src/secret.rs` 和 `src/settings.rs`（密钥加密；服务商、URL 规则、指纹）、`src/limits.rs`、`src/prompt.rs`、`src/retention.rs`、`src/logs.rs`、`src/codes.rs`（服务的每一段中文文字）、`src/config.rs`。从 v0.9 起还有 `src/api/study.rs`（四个学习路由）、`src/study/`（提示词 `hint.rs`、`explain.rs`、`summary.rs` 及其渲染，`guard.rs` 和 `guard/{lists,norm,rules}.rs` 里的提示守卫，`title.rs`，`wire.rs` 里后端数据路由的严格类型，`cache.rs` 里的记录身份缓存），以及 `src/store/` 里 `data.rs` 的学习对话函数和 `stats.rs` 的按用途统计的用量。
-- **测试**（`ai-service/tests/`，针对库运行，带进程内的假服务商和假后端（它还会记录心跳）；没有一个访问网络）：`streaming.rs`（事件、停止、重试、时间限制、脱离、调用进行中的闸门和上限）、`settings_and_keys.rs`（验证、重新输入密钥、请求头冲突、加密、密钥文件和 `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（声明、访问级别、范围、令牌规则）、`admin_data.rs`（管理员的查看和清除、审计日志和发件箱、用量、对账）、`logs_no_secrets.rs`（任何日志行里都没有密钥、令牌、提示词或回答）和 `proxy_env.rs`（忽略环境里的 `HTTP_PROXY`）；v0.8 第二轮的有 `r2_core_heartbeat.rs`（报告、它的时间和 60 秒规则）、`r2_core_schema.rs`（schema 2、schema 1 的备份和升级、给缺了几列的 schema 2 文件补上的列）、`r2_core_suspend.rs`（暂停 / 恢复、审计日志、停止正在生成的回答）、`r2_chat_lang.rs`（回复语言）、`r2_chat_free.rs`（自由模式是管理员的状态：`POST /api/ai/free`、`freeMode`、没有按对话的标志）、`r2_free_history.rs`（两种模式下都发送整个历史、每种模式的系统提示词、切换之后的模式说明、每条消息上的 `free`）、`r2_cache.rs`（提示词缓存、用量行里缓存命中的 token、更早的历史消息被缩短）、`r2_chat_thinking.rs`（`thinking` 事件；推理文字不能出现在流、数据库或日志里）和 `r2_chat_suspend.rs`（状态和重新检查）；v0.9 的有 `v09_store.rs`（schema 3：新文件、从 schema 1 和 2 升级及其备份、写不出来的备份、两条路径得到相同的 `sqlite_master`、重新打开什么都不写、已保存回答的查询的 `EXPLAIN QUERY PLAN`、学习对话和提问事务、按用途的用量、分批保留）、`study_guard.rs`（提示守卫：字母、序数、热点题的陈述、答案文字、词表、对流的任何分块都得到同样的结论、上限、持久化规则；模块在 `tests/study_guard/` 里）、`study_prompts.rs`（提示词、`compile_fail` 文档测试）和 `study_api.rs`（对着假后端端到端测试学习路由：流式输出、对话的身份、已保存回答的查询、边界、总结的拒绝、访问、管理员的查看、不含内容的日志；模块在 `tests/study_api/` 里）；再加上 `src/` 里的单元测试。`study_api` 的一些测试依赖短暂的等待（200 毫秒和 120 毫秒），它们是稳定的，但取决于时间。`TestApp` 辅助程序在被丢弃时会关闭服务并释放数据库文件，所以测试不会在临时文件夹里留下任何东西（在 Windows 上，打开着的文件会让它的目录留下来）。
+- **测试**（`ai-service/tests/`，针对库运行，带进程内的假服务商和假后端（它还会记录心跳）；没有一个访问网络）：`streaming.rs`（事件、停止、重试、时间限制、脱离、调用进行中的闸门和上限）、`settings_and_keys.rs`（验证、重新输入密钥、请求头冲突、加密、密钥文件和 `XEXAM_AI_SECRET_KEY`）、`identity_access.rs`（声明、访问级别、范围、令牌规则）、`admin_data.rs`（管理员的查看和清除、审计日志和发件箱、用量、对账）、`logs_no_secrets.rs`（任何日志行里都没有密钥、令牌、提示词或回答）和 `proxy_env.rs`（忽略环境里的 `HTTP_PROXY`）；v0.8 第二轮的有 `r2_core_heartbeat.rs`（报告、它的时间和 60 秒规则）、`r2_core_schema.rs`（schema 2、schema 1 的备份和升级、给缺了几列的 schema 2 文件补上的列）、`r2_core_suspend.rs`（暂停 / 恢复、审计日志、停止正在生成的回答）、`r2_chat_lang.rs`（回复语言）、`r2_chat_free.rs`（自由模式是管理员的状态：`POST /api/ai/free`、`freeMode`、没有按对话的标志）、`r2_free_history.rs`（两种模式下都发送整个历史、每种模式的系统提示词、切换之后的模式说明、每条消息上的 `free`）、`r2_cache.rs`（提示词缓存、用量行里缓存命中的 token、更早的历史消息被缩短）、`r2_chat_thinking.rs`（`thinking` 事件；推理文字不能出现在流、数据库或日志里）和 `r2_chat_suspend.rs`（状态和重新检查）；v0.9 的有 `v09_store.rs`（schema 3：新文件、从 schema 1 和 2 升级及其备份、写不出来的备份、两条路径得到相同的 `sqlite_master`、重新打开什么都不写、已保存回答的查询的 `EXPLAIN QUERY PLAN`、学习对话和提问事务、按用途的用量、分批保留）、`study_guard.rs`（提示守卫：字母、序数、热点题的陈述、答案文字、词表、`<think>` 标签、对流的任何分块都得到同样的结论、上限、持久化规则；模块在 `tests/study_guard/` 里）、`study_prompts.rs`（提示词、`compile_fail` 文档测试）和 `study_api.rs`（对着假后端端到端测试学习路由：流式输出、对话的身份、已保存回答的查询、边界、总结的拒绝、访问、管理员的查看、不含内容的日志、重新生成的备注和 Cloudflare AI Gateway 的缓存绕过（AI 对话的重试也算）；模块在 `tests/study_api/` 里）；再加上 `src/` 里的单元测试。`study_api` 的一些测试依赖短暂的等待（200 毫秒和 120 毫秒），它们是稳定的，但取决于时间。`TestApp` 辅助程序在被丢弃时会关闭服务并释放数据库文件，所以测试不会在临时文件夹里留下任何东西（在 Windows 上，打开着的文件会让它的目录留下来）。
 - **在本地和后端一起运行**。两者必须共用内部令牌：要么用后端写进它的链接目录的令牌文件（默认是它的数据目录里的 `link`），要么在两个 shell 里设置同一个 `XEXAM_INTERNAL_TOKEN`。
 
   ```bash
@@ -85,7 +85,7 @@ npm run dev            # http://127.0.0.1:5173，/api 代理到 http://127.0.0.1
 - 开发时请通过 `localhost` 或 `127.0.0.1` 打开页面。Vite 代理的 `changeOrigin` 必须是 `false`：后端会比较 `Host` 和 `Origin`，改写 `Host` 会让写请求得到 403。
 - 后端不在默认地址时：`XEXAM_BACKEND=http://127.0.0.1:9000 npm run dev`；ai-service：`XEXAM_AI_BACKEND=http://127.0.0.1:9001`。
 - **开发时的 AI 请求**（v0.8）：`vite.config.ts` 里的插件 `xexamAiAuth()` 在 `npm run dev` 和 `npm run preview` 里做 Nginx 在正式环境里做的事。对每个路径以 `/api/ai/` 开头的请求，它先问后端（`GET /internal/ai/auth`，带 Cookie 和 `X-Original-Host`、`X-Original-Origin`、`X-Original-Method`），然后去掉 `Cookie`、`Authorization` 和 `Cf-Access-Jwt-Assertion`，设置后端返回的身份声明（浏览器发来的这个请求头总会被替换）。后端的 401 / 403 原样转发；其他情况（后端停了）变成 503 `ai.backendDown`。不带斜杠的 `/api/ai` 和 Nginx 一样转到后端。
-- 关于页面显示 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md` 的更新日志。`vite.config.ts` 里的 `xexam-changelog` 插件在构建前端时（`npm run dev` 时是第一次打开关于页面时）从 `frontend/` 的上一级文件夹（仓库根目录）读取它们，所以它们必须在那里。其中某一份没有更新日志条目（`### vX.Y — 日期`）时，构建会报错停下。
+- 关于页面显示 `docs/en/changelog.md`、`docs/ja/changelog.md` 和 `docs/zh-CN/changelog.md` 这三份更新日志。`vite.config.ts` 里的 `xexam-changelog` 插件在构建前端时（`npm run dev` 时是第一次打开关于页面时）从仓库根目录（`frontend/` 的上一级文件夹）读取它们，所以它们必须在那里。其中某一份没有更新日志条目（`### vX.Y — 日期`）时，构建会报错停下。
 - 只跑一个测试文件：`node --experimental-strip-types --test src/i18n/server-messages.test.ts`。
 - import 路径要写 `.ts` 扩展名（Node 自带的测试运行器要求这样）。
 - TypeScript 固定为 `~5.9.3`。
@@ -149,7 +149,7 @@ python -I tests/integration/migrate_check.py backend/target/debug/xexam-backend 
 
 每个脚本都会打印它的检查项，最后输出 `All N checks passed`。`nginx_check.py` 和 `stack_check.py` 的最后一个参数是它们用的宿主机端口；请选一个你机器上空闲的端口。`stack_check.py` 读取一个可选的 `XEXAM_STACK_COMPOSE`：另一个结构相同的 compose 文件（例如 `docker/docker-compose.build.yml` 的一份副本，换了别的镜像标签和容器名），这样它就能在一个用着通常名字的安装旁边运行；它通过 compose 服务找到容器。`nginx_check.py` 大约要两分半钟，因为有一项检查要为 AI 设置里一次很慢的 **测试** 等 95 秒。`stack_check.py` 会给它的学习提问限速（每个会话 Cookie 大约 3.2 秒一次），因为 Nginx 在突发 10 个之后，每 3 秒才让一个会话开始一个 AI 回答（区域 `aisend`，每分钟 20 个）；这大约多花一分半钟。这些脚本用它们自己写出来的虚构题库；没有一个会碰你的数据。
 
-compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` 以仓库根目录（`..`）为构建上下文。前端镜像从仓库根目录构建。`nginx/Dockerfile` 把三份 README 复制进它的 Node 构建阶段（`COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`），因为关于页面的更新日志是从它们构建出来的；出于同样的原因，`.dockerignore` 把 `README.md` 和 `README/` 留在构建上下文里。最终镜像里只有构建出的静态文件。
+compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` 以仓库根目录（`..`）为构建上下文。前端镜像从仓库根目录构建。`nginx/Dockerfile` 把三份更新日志复制进它的 Node 构建阶段（`COPY docs/en/changelog.md /docs/en/`，`ja` 和 `zh-CN` 也一样），因为关于页面是从它们构建出来的；出于同样的原因，`.dockerignore` 把 `docs/` 和 README 排除在构建上下文之外，只把这三个文件放回来。最终镜像里只有构建出的静态文件。
 
 ## 6. 和旧版对照（回归）
 
@@ -181,14 +181,14 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 
 | 任务 | 做什么 |
 |---|---|
-| `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份 README 各自最新的更新日志条目 = `CODE_VERSION`；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）、`docker/docker-compose.yml` 从 Docker Hub 拉取三个镜像，以及文档检查（第 9 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
+| `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）各自最新的条目 = `CODE_VERSION`，三份的 `### vX.Y — 日期` 标题相同、顺序相同；README 里不再有更新日志条目，每份 README 都链接到自己语言的更新日志；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）、`docker/docker-compose.yml` 从 Docker Hub 拉取三个镜像，以及文档检查（第 9 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
 | `frontend` | 类型检查、391 个单元测试、构建 |
 | `backend` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查 |
-| `ai-service` | fmt、clippy、ai-service 的 369 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls` |
+| `ai-service` | fmt、clippy、ai-service 的 383 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls` |
 | `stack` | 在 `frontend`、`backend` 和 `ai-service` 之后：构建 `xexam-frontend` 镜像，跑 141 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
 | `arm64` | 为 arm64 构建三个镜像，在 QEMU 下启动它们，检查 `/api/info` 报告的是 `aarch64` 和 `CODE_VERSION`，并检查单独运行的 ai-service 通过它的健康检查（`xexam-ai-service healthcheck`）、在 `/healthz` 里报告同样的内容（最多 60 分钟） |
 | `publish` | 只有 `main`：把三个镜像（amd64 + arm64）以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签推送到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
-| `release` | 只有 `main`：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `README.md` 里的更新日志（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |
+| `release` | 只有 `main`：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `docs/en/changelog.md`（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |
 
 推送到 `dev` 和向 `main` 提拉取请求只跑检查任务（`check` 到 `arm64`），**从不发布**；只有推送到 `main` 才会发布。手动启动的运行，和推送到它所在的分支效果一样。
 
@@ -209,13 +209,13 @@ compose 文件和 `.env` 在 `docker/` 里；`docker/docker-compose.build.yml` �
 
 ## 9. 文档
 
-- 每种语言一个文件夹：`docs/en`（英语，原文）、`docs/ja`（日语）和 `docs/zh-CN`（简体中文）。每个文件夹里都有同样的八份文档：`api`、`architecture`、`database`、`deployment`、`development`、`migration`、`security`，以及从 v0.7.5 起的 `usage`（怎样使用程序，从 README 移过来的），每个文件夹都有自己的 `screenshots/`。
+- 每种语言一个文件夹：`docs/en`（英语，原文）、`docs/ja`（日语）和 `docs/zh-CN`（简体中文）。每个文件夹里都有同样的九份文档：`api`、`architecture`、`changelog`（从 v0.9.1 起；以前在 README 里）、`database`、`deployment`、`development`、`migration`、`security`，以及从 v0.7.5 起的 `usage`（怎样使用程序，从 README 移过来的），每个文件夹都有自己的 `screenshots/`。
 - `docs/zh-CN/history/` 里是切换到 Rust 时的旧文档（审计、计划、风险评估）。它们只有中文，不再更新。
 - `docs/en/openapi.yaml` 由所有语言共用；日语和中文的文档链接到 `../en/openapi.yaml`。
-- README 很短：Xexam 能做什么、快速开始、配置、升级、文档链接和更新日志。怎样使用程序、Excel 格式和导入规则在 `usage.md` 里；部署细节、备份、安全、架构和开发各有自己的文档。一个细节只写在一个地方，其他地方链接过去。
+- README 很短：Xexam 能做什么、快速开始、配置、升级、文档链接，以及指向更新日志（同一语言的 `changelog.md`）的链接。怎样使用程序、Excel 格式和导入规则在 `usage.md` 里；部署细节、备份、安全、架构和开发各有自己的文档。一个细节只写在一个地方，其他地方链接过去。
 - 每份文档开头都有一条语言栏，链接到另外两个文件夹里的同一份文档。链接相对于文件自己所在的文件夹：仓库根目录是 `../../`。
 - 先改英语的文档，再在同一次修改里改日语和中文的。界面上的标签用粗体，写法和那种语言的文字目录完全一样；题目语言的切换按钮总是写成 **English** / **中文** / **日本語**。
-- `api` … `usage` 这八份文档中有一份在某个语言文件夹里缺失，`docs/` 里有 `en`、`ja` 和 `zh-CN` 以外的东西，或者 README 或文档里的相对链接或图片路径指向不存在的文件时，CI 的 `check` 任务会失败。指向 GitHub 页面的链接（`../../releases` 之类）也会检查：它们必须正好回到仓库页面，所以在 `README/` 里要以 `../../../` 开头。
+- `api` … `usage` 这九份文档中有一份在某个语言文件夹里缺失，`docs/` 里有 `en`、`ja` 和 `zh-CN` 以外的东西，或者 README 或文档里的相对链接或图片路径指向不存在的文件时，CI 的 `check` 任务会失败。指向 GitHub 页面的链接（`../../releases` 之类）也会检查：它们必须正好回到仓库页面，所以在 `README/` 里要以 `../../../` 开头。
 
 ### 9.1 截图
 
@@ -230,9 +230,9 @@ README 和文档里的图片（`docs/<lang>/screenshots`，每种语言 19 张�
 ## 10. 版本、更新日志和许可证
 
 - 仓库根目录的 **`VERSION`** 里有两行 `KEY=VALUE`（以 `#` 开头的行是注释），每行正好出现一次：
-  - `CODE_VERSION`（现在是 `0.9`）：这个分支上代码的版本。手动调高它，同时在三份 README 里写更新日志条目，并改 `backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json`（像 `0.9` 这样两段的版本号在那里写成 `0.9.0`；还有它们的锁文件）以及 `docs/en/openapi.yaml` 里的 `info.version`。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
-  - `RELEASE_VERSION`（v0.9 的发布任务运行之前是 `0.8`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 8.1 节）。单纯的推送或合并从不改变它。
-- 每次更新都要在三份 README（`README.md`、`README/README.ja.md`、`README/README.zh-CN.md`）的更新日志最上面加一条，版本号等于 `CODE_VERSION`。CI 会检查这一点。GitHub Release 的说明取自英语的那一份。
-- 程序的关于页面显示这些更新日志，它们是构建进前端的（第 4 节）。条目请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接在那里显示成普通文字。修改了的更新日志，要重新构建前端之后才会出现在程序里。
+  - `CODE_VERSION`（现在是 `0.9.1`）：这个分支上代码的版本。手动调高它，同时在三份更新日志（`docs/<lang>/changelog.md`）里写条目，并改 `backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json`（像 `0.9` 这样两段的版本号在那里写成 `0.9.0`；还有它们的锁文件）以及 `docs/en/openapi.yaml` 里的 `info.version`。镜像用它来构建和打标签，`/api/info` 报告的也是它（后端从镜像里的 `/VERSION` 读取它）。
+  - `RELEASE_VERSION`（v0.9.1 的发布任务运行之前是 `0.9`）：最后一个真正发布出去的版本。**永远不要手动修改它**：由发布任务写入，同时更新 README 顶部的发布徽章（第 8.1 节）。单纯的推送或合并从不改变它。
+- 每次更新都要在三种语言的更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）最上面加一条，版本号等于 `CODE_VERSION`；三份的条目始终保持一致。CI 会检查这一点。README 里不写条目，只放一个指向更新日志的链接。GitHub Release 的说明取自英语的那一份。
+- 程序的关于页面显示这些更新日志，它们是构建进前端的（第 4 节）。条目请只用简单的 Markdown：段落、`- ` 列表、缩进的 `  - ` 子列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接在那里显示成普通文字，链接要写成相对于更新日志所在文件夹（`docs/<lang>/`）的路径。修改了的更新日志，要重新构建前端之后才会出现在程序里。
 - 在 `dev` 上开发；`main` 接收合并，推送到 `main` 会发布镜像和 Release。每次发布之后都要拉取 `main` 和 `dev`（第 8.1 节）。
 - 本项目采用 MIT 许可证（仓库根目录的 `LICENSE`）。

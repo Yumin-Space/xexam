@@ -14,6 +14,8 @@ mod identity;
 mod logs;
 #[path = "study_api/saved.rs"]
 mod saved;
+#[path = "study_api/skip_cache.rs"]
+mod skip_cache;
 #[path = "study_api/streaming.rs"]
 mod streaming;
 #[path = "study_api/summary.rs"]

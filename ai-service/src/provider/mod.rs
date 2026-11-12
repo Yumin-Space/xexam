@@ -202,15 +202,23 @@ impl Target {
         Some(h)
     }
 
-    /// The streaming chat request.
+    /// The streaming chat request. `skip_cache` (a regenerate) asks Cloudflare AI Gateway to bypass its cache for this
+    /// one request; it is sent only when the provider is the gateway.
     pub fn chat_request(
         &self,
         client: &reqwest::Client,
         body: &Value,
+        skip_cache: bool,
     ) -> Result<reqwest::Request, UpError> {
-        let headers = self
+        let mut headers = self
             .auth_headers()
             .ok_or(UpError::new(UpCode::BadRequest, None))?;
+        if skip_cache && self.provider == Provider::Gateway {
+            headers.insert(
+                HeaderName::from_static("cf-aig-skip-cache"),
+                HeaderValue::from_static("true"),
+            );
+        }
         let bytes = serde_json::to_vec(body).map_err(|_| UpError::new(UpCode::Protocol, None))?;
         client
             .post(self.chat_url())
@@ -620,6 +628,44 @@ mod tests {
         );
         assert_eq!(t.chat_url(), "http://127.0.0.1:9/x/v1/messages");
         assert_eq!(t.models_url(), "http://127.0.0.1:9/x/v1/models?limit=1000");
+    }
+
+    #[test]
+    fn skip_cache_header_only_for_the_gateway_and_only_when_asked() {
+        let client = provider_client("0.9", &Timeouts::default()).expect("client");
+        let body = serde_json::json!({"a": 1});
+        let header = |t: &Target, skip: bool| {
+            t.chat_request(&client, &body, skip)
+                .expect("request")
+                .headers()
+                .get("cf-aig-skip-cache")
+                .and_then(|v| v.to_str().ok().map(str::to_string))
+        };
+        let gw = target(
+            Provider::Gateway,
+            Format::OpenAi,
+            GatewayAuth::CfAig,
+            true,
+            true,
+        );
+        assert_eq!(header(&gw, true).as_deref(), Some("true"));
+        assert_eq!(header(&gw, false), None);
+        let oa = target(
+            Provider::OpenAi,
+            Format::OpenAi,
+            GatewayAuth::Bearer,
+            true,
+            false,
+        );
+        assert_eq!(header(&oa, true), None);
+        let an = target(
+            Provider::Anthropic,
+            Format::Anthropic,
+            GatewayAuth::Bearer,
+            true,
+            false,
+        );
+        assert_eq!(header(&an, true), None);
     }
 
     #[test]

@@ -394,6 +394,9 @@ impl Rules {
     /// `fin` says that no more text follows.
     pub fn leaks(&self, s: &[Nc], from: usize, fin: bool) -> bool {
         let cx = Cx { s, fin };
+        if think_tag(&cx, from) {
+            return true;
+        }
         if self.rule2(&cx, from) {
             return true;
         }
@@ -862,6 +865,18 @@ impl Rules {
         }
         false
     }
+}
+
+/// A reasoning tag (`THINK_TAGS`) that ends inside the window `s[from..]`; its start may lie in the context.
+fn think_tag(cx: &Cx, from: usize) -> bool {
+    let longest = THINK_TAGS
+        .iter()
+        .map(|t| t.chars().count())
+        .max()
+        .unwrap_or(0);
+    let start = from.saturating_sub(longest.saturating_sub(1));
+    (start..cx.s.len())
+        .any(|i| cx.s[i].ch == '<' && THINK_TAGS.iter().any(|t| cx.lit_at(i, t).is_some()))
 }
 
 /// Is `gap` made only of connector tokens? Punctuation, spaces and symbols

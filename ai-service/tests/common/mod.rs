@@ -923,6 +923,11 @@ fn study_text(kind: Study, user: &str) -> String {
 {t}"
                 );
             }
+            if user.contains("[think-late]") {
+                // reasoning after the text: the provider keeps it as text, so the hint guard must catch it by the tag
+                // alone (the reasoning names no answer, so no other rule of the guard fires)
+                t.push_str(" <think>Made-up reasoning.</think>");
+            }
             if user.contains("[leak]") {
                 t.push_str(if user.contains("statements, each") {
                     LEAK_STATEMENT
@@ -938,7 +943,11 @@ fn study_text(kind: Study, user: &str) -> String {
                 .nth(1)
                 .and_then(|r| r.split("</answer_key>").next())
                 .unwrap_or("?");
-            format!("**Answer: {letters}**\n\nThis question tests a made-up fact.\n\nThe other choices fail for made-up reasons.")
+            let mut t = format!("**Answer: {letters}**\n\nThis question tests a made-up fact.\n\nThe other choices fail for made-up reasons.");
+            if user.contains("[think-late]") {
+                t.push_str("\n\n<think>Made-up reasoning.</think>");
+            }
+            t
         }
         Study::Summary => {
             let n = user.matches("<item").count();
@@ -948,7 +957,7 @@ fn study_text(kind: Study, user: &str) -> String {
 }
 
 /// The answer to a study prompt. Markers in the user turn: `[leak]` (the hint ends with a verdict), `[err]` (an
-/// upstream error after the text), `[slow]` (waits for `release()` after the text), `[long]` (a hint over the limit), `[think]` (an inline <think> span first).
+/// upstream error after the text), `[slow]` (waits for `release()` after the text), `[long]` (a hint over the limit), `[think]` (an inline <think> span first), `[think-late]` (a <think> span after the text).
 fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
     tokio::spawn(async move {

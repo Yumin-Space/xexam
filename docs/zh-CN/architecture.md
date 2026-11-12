@@ -40,7 +40,7 @@ flowchart TB
 ```
 frontend/       TypeScript 5.9（strict）+ Vite，原生 DOM，不用框架
   vite.config.ts  构建设置、开发用的 /api 和 /api/ai/ 代理、xexamAiAuth 插件（和 Nginx 一样做 AI 请求的
-                  认证步骤）、xexam-changelog 插件（读取三份 README）
+                  认证步骤）、xexam-changelog 插件（读取 docs/ 里的三份更新日志）
   src/main.ts     入口：用缓存的设置画第一屏、检查登录、把路由映射到页面
   src/router.ts   hash 路由（#/、#/banks、#/users、#/logs、#/ai、#/ai-settings、#/records、#/records/<id>、#/records/wrong、
                   #/settings、#/about、#/quiz、#/result）
@@ -100,18 +100,18 @@ ai-service/     AI 服务（v0.8）：Rust（Axum 0.8 + Tokio + rusqlite + 使�
                   保留、对账和发件箱；日志和转发；错误码和它们的文字；环境变量
   tests/          流式输出、设置和密钥、身份和访问、管理员查看的数据、不含机密的日志、代理环境变量；v0.9：
                   存储（v09_store）、守卫（study_guard）、提示词（study_prompts）和学习路由（study_api）
-nginx/          nginx.conf + Dockerfile（构建前端，带上三份 README → 只带静态产物）
+nginx/          nginx.conf + Dockerfile（构建前端，带上三份更新日志 → 只带静态产物）
 docker/         docker-compose.yml（拉取三个镜像）、docker-compose.build.yml（构建它们；上下文是仓库根目录）、.env.example
-scripts/        release-notes.py（从更新日志生成 Release 说明）、set-release-version.py（RELEASE_VERSION 和 README 徽章）
+scripts/        release-notes.py（从 docs/en/changelog.md 生成 Release 说明）、set-release-version.py（RELEASE_VERSION 和 README 徽章）
 tools/          screenshots/：用一个用完即弃的实例重新拍 README 和文档里的截图；icons/：生成程序的图标
                 （见 development.md）
 VERSION         CODE_VERSION（代码的版本）和 RELEASE_VERSION（最后一次发布的版本）
-README.md       带更新日志的英语 README；README/ 里是 README.ja.md 和 README.zh-CN.md
+README.md       英语 README（链接到 docs/en/ 里的更新日志）；README/ 里是 README.ja.md 和 README.zh-CN.md
 LICENSE         MIT 许可证
 tests/          baseline/（旧版的黄金响应和夹具）· integration/（nginx、整栈、progress.json 迁移、
                 ai_stub.py：供检查和截图用的虚构 AI 服务商）
 docs/           en/（英语，原文）· ja/ · zh-CN/（带 history/：以前的文档，只有中文）；每个文件夹都有自己的
-                screenshots/；en/openapi.yaml
+                screenshots/ 和 changelog.md；en/openapi.yaml
 ```
 
 ## 3. 数据模型（v0.9）
@@ -318,7 +318,7 @@ sequenceDiagram
 
 - **浏览器只发 id，从不发题目文字。** 请求体里有题目 id、页面显示的题号、题目语言、回复语言（`lang`，即设置里的语言：`en`、`zh-CN` 或 `ja`，也接受 `zh`）、练习的会话 key 和开始时间，以及成绩页或详情页的记录 id。ai-service 用身份声明里的会话 id 向后端读取题目，所以伪造的请求体无法指向别的用户的题目或记录。题目以所要求的语言返回，带选项字母，旁边是解答（答案、解析、记忆口诀、备注、正确选项的文字），全都有长度上限。其中从不含原始的翻译列、工作表、行、题库 id 或名字、所有者、用户名或统计。
 - **提示从不接收答案。** `hint_prompt` 只接收题目：它的签名里没有解答参数（一个 `compile_fail` 测试把这一点固定下来），提示词还告诉模型永远不要说出或暗示哪个选项正确。解答只会到达**提示守卫**（见下）。解释的提示词会拿到解答，成绩页上的那种还会拿到用户在那条记录里的作答（或者说明这道题没有作答）。题目和答案的文字放在标签之间当作数据，提示词说明标签里的文字不是指令；回复语言那一行没有「除非用户另有要求」的尾巴，因为这些提示词没有自由输入的用户回合。
-- **提示守卫**（`study/guard/`）在提示流出的过程中过滤它。它扣住文字最新的一段（64 到 600 个字符，取决于题目），在规范化后的文字上扫描窗口，找出点明答案的说法（选项字母和数字加上判定词、「第一个选项」这类序数、被说成对或错的热点题陈述、正确选项的文字——当它不在题干里、也不是错误选项时），只放行通过的文字，所以发送、保存和计数的都只是放行的文字。一条规则触发时，提示的内容一概不留：回答以错误码 `ai.hintLeak` 的错误保存，流以带 `withdraw: true` 的 `error` 事件结束（页面撤掉已经显示的内容），并且写一行日志（最多每分钟一次），说明一个提示被扣下了（`AI hint withheld because it gave the answer away (user "…")`，之后是后续次数），不含任何内容。超过 6000 个字符的提示以带 `truncated` 的 `done` 结束。守卫是**尽力而为的过滤，不是证明**：它靠词表和规则工作，它的测试里有它抓不到的说法；不依赖它的保护是提示词里根本没有答案。内容流开头的 `<think>…</think>` 片段（没有推理解析器的服务器）按推理文字处理，在守卫看到之前就丢掉。
+- **提示守卫**（`study/guard/`）在提示流出的过程中过滤它。它扣住文字最新的一段（64 到 600 个字符，取决于题目），在规范化后的文字上扫描窗口，找出点明答案的说法（选项字母和数字加上判定词、「第一个选项」这类序数、被说成对或错的热点题陈述、正确选项的文字——当它不在题干里、也不是错误选项时），只放行通过的文字，所以发送、保存和计数的都只是放行的文字。一条规则触发时，提示的内容一概不留：回答以错误码 `ai.hintLeak` 的错误保存，流以带 `withdraw: true` 的 `error` 事件结束（页面撤掉已经显示的内容），并且写一行日志（最多每分钟一次），说明一个提示被扣下了（`AI hint withheld because it gave the answer away (user "…")`，之后是后续次数），不含任何内容。超过 6000 个字符的提示以带 `truncated` 的 `done` 结束。守卫是**尽力而为的过滤，不是证明**：它靠词表和规则工作，它的测试里有它抓不到的说法；不依赖它的保护是提示词里根本没有答案。内容流开头的 `<think>…</think>` 片段（没有推理解析器的服务器）按推理文字处理，在守卫看到之前就丢掉。其他任何 `<think>`、`</think>`、`<thinking>` 或 `</thinking>`（正文后面的片段或单独的标签，不分大小写，标签被拆在流的几个片段里也算）都是混进正文的推理，守卫会扣下这个提示（`ai.hintLeak`）。解释、解析和总结不检查。
 - **用哪个对话。** 带记录时（成绩页、记录详情页），对话来自后端的记录，而不是浏览器：记录的会话 key 对应那次会话的对话（所以详情页和练习或考试共用对话和已保存的回答）；没有 key 的记录（v0.9 之前保存的）得到自己的对话，用 `r<id>@<记录时间>` 命名，类型是记录的类型。浏览器如果也发了 key 而且和记录的不同，回答是 404 `ai.notFound`。没有记录时（练习页），对话就是会话 key 的那个。标题是会话开始的时间，按容器的时区（别的都不知道时用记录的时间）。同一次会话的两个同时到达的第一次提问，最后落在同一个对话里（`idx_chats_ref`）。
 - **一次只生成一个回答。** 默认每个用户只有一个正在生成的回答（安全上限）；有回答在生成时再问一个，会被 409 `ai.busy` 拒绝，错误里带 `running`，说明是哪一个（对话 id、消息 id、对话类型、种类、题目 id 和题号、来源、记录 id），页面可以说出是哪一个，并给出**停止它，生成这一个**。那个按钮停止被点名的对话，然后只再问一次；什么都不会被自动停止，停止也从不发送空的 `stop`。
 - **已保存回答的查询。** `GET /api/ai/study/saved`（模式、`key` 或 `record`、来源、题目、种类）和 `GET /api/ai/summary/saved`（记录 id 和记录时间的 12 位数字）回答 `{chatId, latest, lastGood}`：任何状态的最新回答，以及最新的一个好回答（当它不是前者时）。它们只需要有效的身份，不需要 AI+ 功能，所以已保存的回答始终可读。带 `record=` 时，记录的身份来自一个按用户 id、用户标记和记录 id 为键的小缓存（1000 条，10 分钟，「未找到」从不缓存），否则来自 `POST /internal/ai/record-info`；页面在有回答正在写、而它没有对应的流时，每 2 秒轮询这些路由。
@@ -335,7 +335,7 @@ sequenceDiagram
 | 流式输出和脱离 | 每个回答在自己的任务里运行，和 HTTP 响应无关：浏览器关闭不会让它停下。任务最多每 2 秒、并在结束时把文字写进数据库，每次都是短事务（数据库锁从不跨 `.await` 持有）。回答进行中，页面每 2 秒读取一次 `GET /api/ai/chat`，重新接上它 |
 | 停止 | 停止、删除对话、管理员清除、关闭 AI+ 功能、失去访问权限、暂停和关机都会取消这个任务；已经生成的文字保留，并且正好写一行用量。删除会等任务的最后一次写入完成后再删除 |
 | 并发 | AI 设置里的安全上限：每个用户同时生成的回答数（默认 1，同一个对话里永远不会有两个；学习提问和 AI 对话的回答一样算，有另一个在生成时会被 409 `ai.busy` 拒绝）和整个实例同时进行的模型调用数（默认 16，一个运行时可以调整大小的信号量）。它们保存在 AI 数据库的 `limits` 表里 |
-| 服务商 | OpenAI 兼容（`/chat/completions`）、Anthropic（`/v1/messages`），以及使用其中任一种格式的 Cloudflare AI Gateway；手写的事件流解析器（推理文字，开头的内联 `<think>` 片段也算，只用来发出一个 `thinking` 事件，从不保存也不记录）；每个阶段各自的时间限制；上游错误映射成固定的错误码（`ai.up.*`），从不回显服务商的文字 |
+| 服务商 | OpenAI 兼容（`/chat/completions`）、Anthropic（`/v1/messages`），以及使用其中任一种格式的 Cloudflare AI Gateway；手写的事件流解析器（推理文字，开头的内联 `<think>` 片段也算，只用来发出一个 `thinking` 事件，从不保存也不记录）；每个阶段各自的时间限制；上游错误映射成固定的错误码（`ai.up.*`），从不回显服务商的文字；重新生成和重试会在发给服务商的请求里，把一条带编号的备注附在最后一个用户回合末尾（从不保存也不显示；学习回答重新生成的编号来自已保存的回答，AI 对话重试的编号来自内存里的计数），Cloudflare AI Gateway 还会带上 `cf-aig-skip-cache: true`，所以会缓存的网关不会拿缓存的回答来应答（v0.9.1） |
 | 自由模式 | 是**管理员**的状态，不是对话的状态：`users.free_mode`，在设置里的 **AI 对话模式** 下设置（普通模式 / 自由模式；`POST /api/ai/free`，只有管理员，在 `GET /api/ai/status` 里作为 `freeMode` 报告）。开启期间，任何对话（旧的或新的）里的每次发送和重试都使用自由提示词（只有回答语言那一行：没有学习助手的指示、没有日期、没有记忆）；请求体里发来的 `free` 会被忽略。对话没有模式，AI 对话里也没有开关或分隔线，只在模式开启期间，标题旁边有一个绿色的 **自由模式** 标签。自由模式只解除 Xexam 自己设定的角色，从不解除服务商的规则 |
 | 提示词和历史 | 系统提示词的构造让它的开头在各次请求之间完全相同（固定文字、日期、记忆，最后才是语言那一行）。每条消息都记录它的模式（`messages.free`），**整个**历史在两种模式下都会发给模型；只有切换之后，发送的历史里含有另一种模式的消息时，语言那一行后面才会多一行简短的模式说明（"Current mode: normal … earlier turns may be free mode." 或自由模式的对应说明）。最新的 4 条历史消息完整发送；更早的回答截到 800 个字符（再加 `…(shortened)`），更早的问题截到 2000 个字符，总是在同一个位置截断，所以同一条消息在每次请求里得到同样的文字。长度预算（消息长度上限加 8000 个字符，至少 24 000）按截短后的文字计算，先丢掉最旧的 |
 | 提示词缓存 | Anthropic 格式：在系统块和最后一条历史消息（新问题之前的那一条）上各放一个 `cache_control` 断点；OpenAI 格式：由服务商那边自动完成，不发送任何东西。服务商报告的缓存命中的输入 token 存进 `usage.tokens_cached`，在用量里显示为 **缓存命中** |
@@ -394,7 +394,7 @@ flowchart LR
 - **练习**（`kind = practice` 的答题页，规则在 `src/domain/practice.ts`；AI+ 控件见下文）：单选题选好选项就马上核对；多选题和热点题有 **核对答案**，选了任何内容之后就能点。核对过的题锁定，显示答对或答错、标好的选项、正确答案、解析和记忆口诀。永远不会自动跳到下一题。**结束练习** 只在还有题没核对时才会先问；没核对的题算未作答。结果以 `"kind": "practice"` 提交；成绩页写着 **练习成绩**，再来一次时开始的也是练习。
 - **随机抽题**：`src/domain/grading.ts` 里的 `pickQuestions()`。**题数** 比范围小时，从整个范围里随机抽题，每道题的机会相同。**打乱顺序** 只决定之后按随机顺序还是按题库顺序出题。
 - **题目语言**（`src/components/lang-switch.ts`）：答题页、练习页以及每张答案与解析的卡片都有同一个切换按钮，不管界面是什么语言，总是写着 **English** / **中文** / **日本語**，每个按钮带自己的 `lang` 属性。题目没有的语言仍然可以点，会用一条提示说明原因。每张卡片从「题目语言」设置开始，只切换它自己。六列格式的题显示每种语言自己的解析；某种语言没有时，显示另一种语言的（依次是中文、日语、英语）。
-- **关于页面**（`src/pages/about.ts`，`#/about`）：版本和服务器的 CPU 架构（来自 `/api/info`）、许可证（MIT）和 **更新内容**：界面语言那一份 README 的更新日志（`README.md`、`README/README.zh-CN.md` 或 `README/README.ja.md`）。最新的版本是展开的，更早的折叠在 **更早的版本** 下面，服务器正在运行的那个版本的条目标着 **当前版本**。更新日志不在运行时读取：`frontend/vite.config.ts` 里的 `xexam-changelog` 插件在构建前端时读取三份 README，用 `src/domain/changelog.ts` 解析其中 `### vX.Y — 日期` 形式的条目，并以模块 `virtual:changelog` 提供。页面只在打开时才把这个模块作为单独的文件加载。它显示段落、带一层嵌套的 `- ` 列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接显示成普通文字。
+- **关于页面**（`src/pages/about.ts`，`#/about`）：版本和服务器的 CPU 架构（来自 `/api/info`）、许可证（MIT）和 **更新内容**：界面语言那一份更新日志（`docs/en/changelog.md`、`docs/zh-CN/changelog.md` 或 `docs/ja/changelog.md`）。最新的版本是展开的，更早的折叠在 **更早的版本** 下面，服务器正在运行的那个版本的条目标着 **当前版本**。更新日志不在运行时读取：`frontend/vite.config.ts` 里的 `xexam-changelog` 插件在构建前端时读取三份更新日志，用 `src/domain/changelog.ts` 解析其中 `### vX.Y — 日期` 形式的条目，并以模块 `virtual:changelog` 提供。页面只在打开时才把这个模块作为单独的文件加载。它显示段落、带一层嵌套的 `- ` 列表、`**粗体**` 和 `` `代码` ``；指向仓库里文件的链接显示成普通文字。
 - **设置**（`src/state/preferences.ts`）：应用主题（`<html data-theme>`）和语言（`<html lang>`）。修改马上生效，然后用 `POST /api/settings` 保存；保存失败时恢复原来的设置并显示提示。设置页还有账户部分（修改自己的密码），其中显示暗色 AI+ 徽章的原因那一行，以及（只对管理员，并且只在 AI+ 功能开启时）**AI 对话模式** 一节（**普通模式** / **自由模式**，`POST /api/ai/free`；状态来自服务器，所以刷新和换设备后都还在）。在触屏上，点一下暗色的 AI+ 徽章会显示它的原因；点别处或按 Esc 关闭。
 - **AI 状态**（`src/state/ai.ts`）：`loading`、`unavailable`，或者带 `GET /api/ai/status` 回答（包括 `suspended`，管理员还有 `freeMode`）的 `ready`。登录后读取，会话检查期间最多每 60 秒读一次，管理员修改 AI 之后马上读取；失败（网络、502、503、不是 JSON）只表示 `unavailable`，不显示错误页。它决定菜单项、徽章和 AI 对话的模式。徽章本身是一个纯函数，`src/domain/badge-state.ts` 里的 `badgeState()`（没有 / 暗色，原因是已停用或不可用 / 亮色），页头、用户管理和 AI 设置都用它。
 - **AI 对话**（`src/pages/ai.ts`）：和系统日志页一样在原地重画自己；输入框元素在重画时保留，所以输入的文字和光标都不会丢。`src/api/client.ts` 里的 `postStream()` 用 `fetch` 发送 `POST /api/ai/send` 或 `/retry`（总是带 `lang`，即设置里的语言），把响应体交给 `src/domain/sse.ts` 的事件解析器；`src/domain/ai-chat.ts` 的 reducer 处理 `start` / `thinking` / `delta` / `done` / `stopped` / `error`（`thinking` 在第一段文字出现之前显示「正在思考…」）。管理员的自由模式开启期间，标题旁边有一个绿色的 **自由模式** 标签；AI 对话里没有开关，也没有模式分隔线（选择在设置里，`src/pages/settings.ts`，**AI 对话模式** 一节，只在 AI+ 功能开启时显示给管理员）。没有某个对话的访问权限、但还有对话或记忆的用户，看到的是只读的 AI 对话，原因文字和暗色徽章的相同。消息框是可以用键盘聚焦的区域；点 **重试** 会把焦点放回输入框。读取出错之后、标签页重新可见时，以及页面打开时正好有回答在生成时，它每 2 秒读取一次对话，直到回答结束。回答由 `src/domain/ai-markdown.ts` 和 `src/components/ai-render.ts` 只用文本节点渲染，从不用 `innerHTML`。
@@ -513,11 +513,11 @@ sequenceDiagram
 
 | 镜像 | 构建 | 运行时的内容 |
 |---|---|---|
-| `xexam-frontend` | `node:24-alpine` 编译前端；三份 README 复制进这个构建阶段，供关于页面的更新日志用 → `nginxinc/nginx-unprivileged:1.27-alpine` | nginx.conf + 静态文件；非 root uid；监听 8080 |
+| `xexam-frontend` | `node:24-alpine` 编译前端；三份更新日志（`docs/<lang>/changelog.md`）复制进这个构建阶段，供关于页面用 → `nginxinc/nginx-unprivileged:1.27-alpine` | nginx.conf + 静态文件；非 root uid；监听 8080 |
 | `xexam-backend` | `rust:1.99.1-slim-bookworm` 在构建机自己的架构上运行，用 zig 交叉编译成静态的 musl 程序 → `alpine:3.21` + tzdata（带一个 UTC 的 `/etc/localtime` 作为后备） | 一个可执行文件 + `/VERSION`（从中读取 `CODE_VERSION`）；uid 10001；根文件系统只读；`/data` 和 `/link` |
 | `xexam-ai-service`（v0.8） | `ai-service/Dockerfile`：和后端一样的构建（zig、musl，复用 `backend/zigcc-aarch64.sh` 和 `backend/build-release.sh`）；TLS 用 rustls + ring，Mozilla 根证书编译进程序，所以不需要 CA 证书包，也不需要 cmake / nasm / go → `alpine:3.21` + tzdata | 一个可执行文件 + `/VERSION`；uid 10001；`/data`（权限 0700）和 `/link`；健康检查 `xexam-ai-service healthcheck` |
 
-为了关于页面的更新日志，`nginx/Dockerfile` 把 `README.md`、`README/README.ja.md` 和 `README/README.zh-CN.md` 复制到前端源码的上一级文件夹，布局和仓库里一样（`COPY README.md /` 和 `COPY README/README.ja.md README/README.zh-CN.md /README/`），`vite.config.ts` 就从那里读取它们。所以 `.dockerignore` 把这三份 README（`README.md` 和 `README/`）留在构建上下文里（`docs/` 等仍然排除）。最终镜像里只有构建出的静态文件，没有 README。
+为了关于页面，`nginx/Dockerfile` 把 `docs/en/changelog.md`、`docs/ja/changelog.md` 和 `docs/zh-CN/changelog.md` 复制到前端源码的上一级文件夹，布局和仓库里一样（`COPY docs/en/changelog.md /docs/en/`，`ja` 和 `zh-CN` 也一样），`vite.config.ts` 就从那里读取它们。所以 `.dockerignore` 把 `docs/` 和 README 排除在构建上下文之外，只把这三个文件放回来（`!docs/en/changelog.md`，`ja` 和 `zh-CN` 也一样）。最终镜像里只有构建出的静态文件，没有更新日志文件。
 
 三个服务都用 `cap_drop: ALL`、`no-new-privileges`、`read_only: true` 和 `tmpfs: /tmp`，并且最多保留三个 10 MB 的容器日志文件。后端只能写 `/data`（数据卷）、`/link`（链接卷）和 `/tmp`；ai-service 只能写它自己的 `/data` 和 `/tmp`（它以只读方式挂载 `/link`）。两者都以只读方式挂载宿主机的 `/etc/localtime`，所以它们的时间跟随宿主机的时区（在 Docker Desktop 上是 Docker 自己的虚拟机的时区，通常是 UTC）。网络：`public`（Nginx 发布的端口）、`internal`（`internal: true`：Nginx、后端和 AI 服务）和 `egress`（只有 ai-service）。
 

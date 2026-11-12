@@ -151,7 +151,7 @@ ai-service 第一次启动时，用默认设置创建它的数据库 `xexam-ai.d
 - **用户管理**：每个用户一个 **AI+ 功能** 开关（只在 ai-service 已连接、而且 AI 设置里的 **AI+ 功能** 已开启时显示；某个用户的 **暂停** 和 **恢复** 在 AI 设置的 **AI+ 用户** 下面）；**更改** 和 **添加用户** 里选择题库的部分更紧凑了（**管理题库**、**全选** 和 **全部不选** 排成一行放在列表上方，**包括以后导入的题库** 是列表的第一项，说明都改成了提示框），**管理题库** 从 **编辑** 移到了这里。
 - 页头、浏览器标签页和手机主屏幕上的新图标（以前添加到主屏幕的图标可能还是旧的样子，重新添加一次就好）。
 
-从 v0.7（而不是 v0.7.5）升级时，v0.7.5 的变化也会一起带来（见 README 里的更新日志）；数据库的步骤相同。
+从 v0.7（而不是 v0.7.5）升级时，v0.7.5 的变化也会一起带来（见 [更新日志](changelog.md)）；数据库的步骤相同。
 
 由 **v0.7 的预发布版** 写入的数据库（仍然有 `users.all_banks` 这一列），会在同一次启动时、在同一个事务里、在写完同一份副本（`xexam-schema4-…`）之后被转换：能看到所有题库的用户得到每个已有题库和 **包括以后导入的题库**，其他用户保留他们的题库，在这期间由更早的版本（v0.6 或之前）加进来的用户也会得到所有题库和 **包括以后导入的题库**。这时日志里会写 `Converted the question bank access of a database written by a v0.7 pre-release to the released format and upgraded the database to schema 5. A copy of the previous version was saved first: <path>.`（见 [database.md](database.md) 第 6.5 节）。
 

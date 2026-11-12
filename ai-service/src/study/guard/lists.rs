@@ -332,3 +332,8 @@ pub const HOLD_MAX: usize = 600;
 pub const HOLD_MARGIN: usize = 48;
 /// Maximum characters of one hint; the run ends as truncated (one definition, in `limits`).
 pub use crate::limits::HINT_MAX_CHARS;
+
+/// Reasoning tags (lowercase; matched on the normalised text, so any letter case and full-width forms count). A leading
+/// `<think>…</think>` span is removed by the OpenAI-format provider before the guard sees the text, so a tag here is
+/// reasoning that reached the hint and may name the answer: the hint is withheld.
+pub const THINK_TAGS: &[&str] = &["<think>", "</think>", "<thinking>", "</thinking>"];

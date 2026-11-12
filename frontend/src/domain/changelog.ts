@@ -1,7 +1,7 @@
-// The changelog shown on the About page comes from the "### vX.Y — date" entries of the three READMEs (one source of truth:
-// the READMEs are what CI checks against CODE_VERSION in VERSION). The Vite plugin in vite.config.ts parses them at build
-// time with parseChangelog(); the page renders the lines with a tiny Markdown subset (lists, bold, inline code, links), text
-// only.
+// The changelog shown on the About page comes from the "### vX.Y — date" entries of the three changelogs,
+// docs/en/changelog.md, docs/ja/changelog.md and docs/zh-CN/changelog.md (one source of truth: the files CI checks against
+// CODE_VERSION in VERSION). The Vite plugin in vite.config.ts parses them at build time with parseChangelog(); the page
+// renders the lines with a tiny Markdown subset (lists, bold, inline code, links), text only.
 
 export interface ChangelogEntry {
   /** "0.5" */
@@ -14,7 +14,7 @@ export interface ChangelogEntry {
 
 const ENTRY = /^###\s+v(\d+(?:\.\d+)*)\s*(?:[—–-]\s*)?(.*)$/;
 
-/** All entries from the first "### vX" heading to the next "## " heading (or the end). */
+/** All entries from the first "### vX" heading to the next "## " heading (or the end); whole-line HTML comments (such as the footer "write new versions above this line") are skipped. */
 export function parseChangelog(markdown: string): ChangelogEntry[] {
   const out: ChangelogEntry[] = [];
   let cur: ChangelogEntry | null = null;
@@ -27,6 +27,7 @@ export function parseChangelog(markdown: string): ChangelogEntry[] {
     }
     if (!cur) continue;
     if (/^##\s/.test(raw)) break; // the next level-2 section ends the changelog
+    if (/^\s*<!--.*-->\s*$/.test(raw)) continue; // a comment for maintainers, not part of the entry
     cur.lines.push(raw);
   }
   for (const e of out) {

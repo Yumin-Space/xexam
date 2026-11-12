@@ -243,6 +243,31 @@ async fn a_leaking_hint_is_withheld_and_nothing_of_it_is_kept() {
 }
 
 #[tokio::test]
+async fn a_think_tag_after_the_text_withholds_a_hint_but_not_an_explanation() {
+    let e = env().await;
+    let ev = ask(&e.t, &e.user, hint_body(K1, "q-think-late", 1)).await;
+    let (name, data) = terminal(&ev);
+    assert_eq!(name, "error");
+    assert_eq!(data["code"], "ai.hintLeak");
+    assert_eq!(data["withdraw"], true);
+    assert!(!text(&ev).contains("<think>"), "no tag was shown");
+    let chat = start_of(&ev)["chatId"].as_i64().expect("chat");
+    let (content, status): (String, String) =
+        e.t.db()
+            .query_row(
+                "SELECT content, status FROM messages WHERE chat_id = ?1 AND role = 'assistant'",
+                [chat],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("assistant");
+    assert_eq!((content.as_str(), status.as_str()), ("", "error"));
+    // explanations are not checked
+    let ev = ask(&e.t, &e.user, explain_body(K1, "q-think-late", 1)).await;
+    assert_eq!(terminal_name(&ev), "done");
+    assert!(text(&ev).contains("<think>"), "{:?}", text(&ev));
+}
+
+#[tokio::test]
 async fn a_leak_on_a_statements_question_is_withheld_too() {
     let e = env().await;
     let ev = ask(&e.t, &e.user, hint_body(K1, "qh-leak", 2)).await;
