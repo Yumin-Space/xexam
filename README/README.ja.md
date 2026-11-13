@@ -2,7 +2,7 @@
 
 <!-- The release badge shows RELEASE_VERSION from VERSION, the last published release. Do not edit it by hand: the release job of .github/workflows/ci.yml writes it (scripts/set-release-version.py) after the images and the GitHub Release are published. GitHub rounds an image's corners only when it has both width and height, so every badge carries its exact size (in px, from shields.io). -->
 <p>
-  <a href="../../../releases/latest"><img width="132" height="28" alt="リリース v1.0" src="https://img.shields.io/badge/release-v1.0-green?style=for-the-badge"></a>
+  <a href="../../../releases/latest"><img width="132" height="28" alt="リリース v1.1" src="https://img.shields.io/badge/release-v1.1-green?style=for-the-badge"></a>
 </p>
 
 <p align="center">
