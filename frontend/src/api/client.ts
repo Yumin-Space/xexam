@@ -44,6 +44,8 @@ export class ApiError extends Error {
   readonly running: unknown;
   /** v1.0: which AI request cap was reached and when it frees, on a 429 `ai.callLimit` (undefined otherwise or when malformed) */
   readonly quota: AiCallBlock | undefined;
+  /** v1.1: the whole JSON body of the refusal (the AI bank routes read `need`, `have`, `what`, `ext`, `maxMb`, `job`, …) */
+  readonly body: Record<string, unknown> | undefined;
 
   constructor(kind: ApiErrorKind, status = 0, serverMessage = '', retryAfter: number | null = null, extra: ApiErrorExtra = {}) {
     super(serverMessage || extra.code || `${kind} ${status}`);
@@ -57,6 +59,7 @@ export class ApiError extends Error {
     this.limit = extra.limit;
     this.running = extra.running;
     this.quota = extra.quota;
+    this.body = extra.body;
   }
 }
 
@@ -66,6 +69,7 @@ export interface ApiErrorExtra {
   limit?: number | undefined;
   running?: unknown;
   quota?: AiCallBlock | undefined;
+  body?: Record<string, unknown> | undefined;
 }
 
 /** The `cap` / `limit` / `retryAt` of an `ai.callLimit` body, when all three are valid */
@@ -86,6 +90,7 @@ function extraOf(body: unknown): ApiErrorExtra {
   return {
     ...(running !== undefined ? { running } : {}),
     ...(quota ? { quota } : {}),
+    body: body as Record<string, unknown>,
     code: typeof b.code === 'string' && b.code ? b.code : undefined,
     field: typeof b.field === 'string' && b.field ? b.field : undefined,
     limit: typeof b.limit === 'number' && Number.isFinite(b.limit) ? b.limit : undefined,
@@ -96,11 +101,11 @@ function extraOf(body: unknown): ApiErrorExtra {
 const AI_PREFIX = '/api/ai/';
 
 /** Whole seconds from the body's `retryAfter` or the `Retry-After` header (seconds form only); null when neither is usable */
-function retryAfterOf(r: Response, body: unknown): number | null {
+function retryAfterOf(header: string | null, body: unknown): number | null {
   const fromBody = typeof body === 'object' && body !== null ? (body as { retryAfter?: unknown }).retryAfter : undefined;
   if (typeof fromBody === 'number' && Number.isFinite(fromBody) && fromBody >= 0) return Math.ceil(fromBody);
-  const header = r.headers.get('Retry-After')?.trim() ?? '';
-  return /^\d{1,9}$/.test(header) ? Number(header) : null;
+  const h = header?.trim() ?? '';
+  return /^\d{1,9}$/.test(h) ? Number(h) : null;
 }
 
 function isJson(r: Response): boolean {
@@ -122,13 +127,42 @@ async function parse<T>(r: Response, path = ''): Promise<T> {
     throw new ApiError('unexpected', r.status);
   }
   if (!r.ok) {
-    const msg = typeof body === 'object' && body !== null && 'error' in body && typeof (body as { error: unknown }).error === 'string'
-      ? (body as { error: string }).error
-      : '';
-    const extra = extraOf(body);
-    throw msg || extra.code ? new ApiError('http', r.status, msg, retryAfterOf(r, body), extra) : new ApiError('status', r.status);
+    throw errorFromBody(r.status, body, r.headers.get('Retry-After'));
   }
   return body as T;
+}
+
+/** The ApiError of an error status with a parsed JSON body (`retryAfterHeader`: the Retry-After header, seconds form only) */
+function errorFromBody(status: number, body: unknown, retryAfterHeader: string | null): ApiError {
+  const msg = typeof body === 'object' && body !== null && 'error' in body && typeof (body as { error: unknown }).error === 'string'
+    ? (body as { error: string }).error
+    : '';
+  const extra = extraOf(body);
+  return msg || extra.code ? new ApiError('http', status, msg, retryAfterOf(retryAfterHeader, body), extra) : new ApiError('status', status);
+}
+
+/**
+ * v1.1: the ApiError the fetch client builds for an error status, from the raw body text and Retry-After header (the XHR
+ * upload of the AI import uses it, so both paths show the same errors). A body that is not JSON gives kind 'status'; a 5xx
+ * without JSON on `/api/ai/*` is `ai.unavailable`.
+ */
+export function errorFromResponse(status: number, bodyText: string, retryAfter: string | null, path = ''): ApiError {
+  let body: unknown;
+  try {
+    body = JSON.parse(bodyText);
+  } catch {
+    // Nginx's own 429 (an HTML page): its rate limit, never the sign-in lock
+    if (status === 429) return new ApiError('tooMany', 429);
+    return new ApiError('status', status, '', null, status >= 500 && path.startsWith(AI_PREFIX) ? { code: 'ai.unavailable' } : {});
+  }
+  if (status === 429 && !(typeof body === 'object' && body !== null && 'retryAfter' in body)) return new ApiError('tooMany', 429);
+  return errorFromBody(status, body, retryAfter);
+}
+
+/** Runs the sign-in handling for an error of `path` that did not come through the fetch client (the XHR upload): a 401 or the password change */
+export function reportAuthError(path: string, e: ApiError): void {
+  const problem = authProblem(path, e);
+  if (problem) authHandler(problem);
 }
 
 /** The backend's MSG_PASSWORD_CHANGE_REQUIRED (backend/src/api/response.rs), sent with 403 */

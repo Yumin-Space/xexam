@@ -5,8 +5,14 @@
 //!
 //! v0.6.5: an optional `"kind"`: `"exam"` (the default when it is missing or null) or `"practice"`. Anything else is refused
 //! (400) rather than silently saved as an exam: a client that sends a kind means it.
+//!
+//! v1.1: two more optional keys, never refused. `"limit"` (an integer of seconds, 60 ..= 36000) is the time limit of a timed
+//! exam; `"end"` (`"submit"` or `"timeUp"`) says how an exam ended. For every exam the cleaned attempt carries `end` (`Some`;
+//! `"timeUp"` only together with a limit, else `Submit`), which makes the store record it under the not-answered rule; a
+//! practice session carries neither (`limit` and `end` are `None`).
 use super::json::PyVal;
-use crate::models::{Attempt, AttemptAnswers, AttemptKind, AttemptResult, SessionTag};
+pub use crate::models::is_empty_answer;
+use crate::models::{Attempt, AttemptAnswers, AttemptEnd, AttemptKind, AttemptResult, SessionTag};
 use crate::security::{py_int_str, truncate_chars};
 use serde_json::Value;
 
@@ -15,6 +21,9 @@ pub const MSG_NO_RESULTS: &str = "没有成绩可保存";
 const MAX_RESULTS: usize = 2000;
 const MAX_SHEETS: usize = 50;
 const MAX_SECONDS: i128 = 7 * 86400;
+/// The shortest and the longest time limit of a timed exam, in seconds (`attempts.time_limit`'s CHECK).
+const MIN_LIMIT: i128 = 60;
+const MAX_LIMIT: i128 = 36_000;
 /// Limits of one stored answer: at most this many elements, each a string of at most `MAX_ANSWER_CHARS` characters, an integer
 /// `0..=MAX_ANSWER_INT`, or null.
 const MAX_ANSWER_ITEMS: usize = 64;
@@ -80,6 +89,32 @@ pub fn clean_session_tag(d: &PyVal) -> SessionTag {
     SessionTag { key, started_at }
 }
 
+/// v1.1: the time limit of a request: an integer of seconds in `MIN_LIMIT ..= MAX_LIMIT`, else `None` (missing, null, out of
+/// range, a float, a string, a bool). Never refuses a request.
+fn clean_limit(d: &PyVal) -> Option<i64> {
+    match d.get("limit") {
+        Some(PyVal::Int(i)) if (MIN_LIMIT..=MAX_LIMIT).contains(i) => i64::try_from(*i).ok(),
+        _ => None,
+    }
+}
+
+/// v1.1: `(limit, end)` of an attempt of `kind`. A practice session has neither. An exam always has an `end`: `TimeUp` when
+/// the request says `"timeUp"` and a valid limit is stored, `Submit` in every other case (`"submit"`, `"timeUp"` without a
+/// limit, a missing or any other value). Records written by v1.1 thus always follow the not-answered rule.
+fn clean_limit_and_end(d: &PyVal, kind: AttemptKind) -> (Option<i64>, Option<AttemptEnd>) {
+    if kind != AttemptKind::Exam {
+        return (None, None);
+    }
+    let limit = clean_limit(d);
+    let time_up = matches!(d.get("end"), Some(PyVal::Str(s)) if s == "timeUp");
+    let end = if time_up && limit.is_some() {
+        AttemptEnd::TimeUp
+    } else {
+        AttemptEnd::Submit
+    };
+    (limit, Some(end))
+}
+
 pub fn clean_attempt(d: &PyVal) -> Result<Attempt, String> {
     clean_attempt_with_answers(d).map(|(attempt, _)| attempt)
 }
@@ -132,6 +167,7 @@ pub fn clean_attempt_with_answers(d: &PyVal) -> Result<(Attempt, AttemptAnswers)
         Some(PyVal::Str(k)) => AttemptKind::parse(k).ok_or_else(|| MSG_BAD_RESULTS.to_string())?,
         Some(_) => return Err(MSG_BAD_RESULTS.to_string()),
     };
+    let (limit, end) = clean_limit_and_end(d, kind);
     Ok((
         Attempt {
             results,
@@ -139,6 +175,8 @@ pub fn clean_attempt_with_answers(d: &PyVal) -> Result<(Attempt, AttemptAnswers)
             mode,
             seconds: clean_seconds(d.get("seconds")),
             kind,
+            limit,
+            end,
         },
         answers,
     ))
@@ -391,6 +429,128 @@ mod tests {
         assert_eq!(one(&format!("[{over}]")), None, "65 elements");
         // duplicate keys: the later one wins (same as the rest of the request)
         assert_eq!(one(r#"["A"], "answer": ["B"]"#), Some(json!(["B"])));
+    }
+
+    #[test]
+    fn limit_and_end_are_cleaned_for_exams_only_and_never_refuse() {
+        let r = r#""results":[{"id":"a","correct":true}]"#;
+        let one = |extra: &str| clean(&format!("{{{r}{extra}}}")).unwrap();
+        // an exam always has an end; the default is a hand-in without a limit
+        let a = one("");
+        assert_eq!((a.limit, a.end), (None, Some(AttemptEnd::Submit)));
+        for (extra, limit, end) in [
+            (r#","limit":3600"#, Some(3600), AttemptEnd::Submit),
+            (
+                r#","limit":3600,"end":"submit""#,
+                Some(3600),
+                AttemptEnd::Submit,
+            ),
+            (
+                r#","limit":3600,"end":"timeUp""#,
+                Some(3600),
+                AttemptEnd::TimeUp,
+            ),
+            (
+                r#","limit":60,"end":"timeUp""#,
+                Some(60),
+                AttemptEnd::TimeUp,
+            ),
+            (
+                r#","limit":36000,"end":"timeUp""#,
+                Some(36000),
+                AttemptEnd::TimeUp,
+            ),
+            // time-up without a stored limit is a hand-in
+            (r#","end":"timeUp""#, None, AttemptEnd::Submit),
+            (r#","limit":59,"end":"timeUp""#, None, AttemptEnd::Submit),
+            (r#","limit":36001,"end":"timeUp""#, None, AttemptEnd::Submit),
+            (r#","limit":1.5,"end":"timeUp""#, None, AttemptEnd::Submit),
+            (
+                r#","limit":3600.0,"end":"timeUp""#,
+                None,
+                AttemptEnd::Submit,
+            ),
+            (
+                r#","limit":"3600","end":"timeUp""#,
+                None,
+                AttemptEnd::Submit,
+            ),
+            (r#","limit":true,"end":"timeUp""#, None, AttemptEnd::Submit),
+            (r#","limit":null,"end":"timeUp""#, None, AttemptEnd::Submit),
+            (r#","limit":-5"#, None, AttemptEnd::Submit),
+            // anything but "timeUp" is a hand-in
+            (
+                r#","limit":3600,"end":"TIMEUP""#,
+                Some(3600),
+                AttemptEnd::Submit,
+            ),
+            (r#","limit":3600,"end":5"#, Some(3600), AttemptEnd::Submit),
+            (
+                r#","limit":3600,"end":null"#,
+                Some(3600),
+                AttemptEnd::Submit,
+            ),
+            (
+                r#","limit":3600,"end":["timeUp"]"#,
+                Some(3600),
+                AttemptEnd::Submit,
+            ),
+            (
+                r#","kind":"exam","limit":600,"end":"timeUp""#,
+                Some(600),
+                AttemptEnd::TimeUp,
+            ),
+        ] {
+            let a = one(extra);
+            assert_eq!((a.limit, a.end), (limit, Some(end)), "{extra}");
+        }
+        // a practice session has neither, whatever is sent
+        for extra in [
+            r#","kind":"practice""#,
+            r#","kind":"practice","limit":3600"#,
+            r#","kind":"practice","limit":3600,"end":"timeUp""#,
+            r#","kind":"practice","end":"submit""#,
+        ] {
+            let a = one(extra);
+            assert_eq!(
+                (a.kind, a.limit, a.end),
+                (AttemptKind::Practice, None, None),
+                "{extra}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_answers_are_nothing_chosen() {
+        for empty in [
+            None,
+            Some(json!(null)),
+            Some(json!([])),
+            Some(json!([null])),
+            Some(json!([null, null, null])),
+        ] {
+            assert!(is_empty_answer(empty.as_ref()), "{empty:?}");
+        }
+        for answered in [
+            json!(["C"]),
+            json!(["A", "D"]),
+            json!([0, 1, null]),
+            json!([null, 0]),
+            json!([0]),
+            json!([""]),
+        ] {
+            assert!(!is_empty_answer(Some(&answered)), "{answered}");
+        }
+        // what the cleaning keeps as Some: `[]` and `[null, ...]` reach this check
+        let (_, ans) = clean_with_answers(
+            r#"{"results":[
+                {"id":"a","correct":false,"answer":[]},
+                {"id":"b","correct":false,"answer":[null,null]},
+                {"id":"c","correct":false,"answer":"A"},
+                {"id":"d","correct":false}
+            ]}"#,
+        );
+        assert!(ans.iter().all(|a| is_empty_answer(a.as_ref())), "{ans:?}");
     }
 
     #[test]

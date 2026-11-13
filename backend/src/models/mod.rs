@@ -205,10 +205,48 @@ pub struct Attempt {
     pub seconds: i64,
     /// v0.6.5: an exam or a practice session (`"kind"` of the request; stored in `attempts.kind`)
     pub kind: AttemptKind,
+    /// v1.1: the time limit of a timed exam in seconds (60 ..= 36000; `None` = untimed, and always `None` for a practice
+    /// session); stored in `attempts.time_limit` only together with `end`
+    pub limit: Option<i64>,
+    /// v1.1: how an exam ended. `Some` for every exam saved by v1.1 (timed or not): the record is saved under the
+    /// not-answered rule (a question without an answer is neither wrong nor in the wrong-answer notebook) and `ended` is
+    /// stored. `None` for a practice session and for what stands for a record written before v1.1 (the v1.0 rule: an empty
+    /// answer is wrong).
+    pub end: Option<AttemptEnd>,
+}
+
+/// How an exam saved by v1.1 ended (`attempts.ended`, schema v7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptEnd {
+    /// The user submitted by hand (timed or untimed)
+    Submit,
+    /// The time limit ran out (timed exams only)
+    TimeUp,
+}
+
+impl AttemptEnd {
+    /// The stored and serialised name: `"submit"` or `"timeUp"`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AttemptEnd::Submit => "submit",
+            AttemptEnd::TimeUp => "timeUp",
+        }
+    }
+}
+
+/// Whether a cleaned answer says "nothing was chosen": `None` (null, missing or malformed), an empty list, or a list without
+/// a non-null element (a hotspot answer `[null, null]`). `[0, null]` is an answer.
+pub fn is_empty_answer(answer: Option<&Value>) -> bool {
+    match answer {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(items)) => items.iter().all(Value::is_null),
+        Some(_) => false,
+    }
 }
 
 /// What kind of study session a record is (`attempts.kind`, schema v4). Both kinds update the wrong-answer notebook the same
-/// way and count toward the same retention limit; they differ only in how the page shows them.
+/// way and count toward the same retention limit, except the not-answered questions of an exam saved under the not-answered
+/// rule (`Attempt::end` is `Some`), which leave the statistics untouched; they differ in how the page shows them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AttemptKind {
     /// A timed exam (the only kind before v0.6.5; the column default)

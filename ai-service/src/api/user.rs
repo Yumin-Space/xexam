@@ -8,6 +8,7 @@
 use super::{body_id, id_or_all, ok, only_keys, query_id, require_ai_user, Answer, Ctx};
 use crate::chat::{self, Frame, Generation, Kind, StopReason};
 use crate::codes::ApiError;
+use crate::features::Feature;
 use crate::identity::Identity;
 use crate::prompt::{self, Lang};
 use crate::provider::{self, Role, UpCode};
@@ -50,16 +51,41 @@ pub async fn status(ctx: Ctx) -> Answer {
         "running": running,
         "retentionDays": snap.settings.retention_days,
         "memoryLimit": l.memories_per_user,
-        "memoryMaxChars": l.memory_chars,
+        "memoryMaxTokens": l.memory_tokens,
         "maxMessageChars": crate::limits::MESSAGE_CHARS,
         "messageChars": crate::limits::MESSAGE_CHARS,
-        "memoryChars": l.memory_chars,
+        "memoryTokens": l.memory_tokens,
         "keyProblem": admin && snap.key_problem.is_some(),
         "configured": admin && snap.configured(),
         "freeMode": admin && free_mode_of(app, who)?,
     });
     if let (Some(c), Some(m)) = (calls, answer.as_object_mut()) {
         m.insert("calls".into(), c);
+    }
+    if let Some(m) = answer.as_object_mut() {
+        // `why`: null when usable; `off` when the AI+ service is not effective; `link` when it is effective but the
+        // main service has not accepted a report for 60 s
+        let why = if eff {
+            Value::Null
+        } else if !snap.effective() {
+            Value::from("off")
+        } else {
+            Value::from("link")
+        };
+        m.insert("why".into(), why);
+        // `features` and `gen` exactly when the user has the AI+ service, whether AI is enabled or not
+        if who.ai_allowed {
+            let off = if admin {
+                0
+            } else {
+                app.store.read(|c| data::features_off(c, who.id))?
+            };
+            m.insert("features".into(), crate::features::to_json(off));
+            m.insert(
+                "gen".into(),
+                crate::gen::runner::gen_status(&ctx.app, who, unix_now())?,
+            );
+        }
     }
     ok(answer)
 }
@@ -273,8 +299,6 @@ pub(super) struct Launch {
     pub history: Vec<provider::Turn>,
     pub guard: Option<crate::study::guard::HintGuard>,
     pub purpose: Option<&'static str>,
-    /// The reply language (the answer length in characters becomes `max_tokens` by it)
-    pub lang: crate::prompt::Lang,
     /// 1 for a first ask; above 1 a regenerate: the gateway cache is bypassed and the last user turn sent carries the
     /// regenerate note of that number (never stored)
     pub attempt: u32,
@@ -318,8 +342,9 @@ pub(super) fn launch(
         turns: &history,
         usage_option: s.usage_option,
         skip_cache: l.attempt > 1,
+        prefix: None,
     };
-    let plan = match app.chat_plan(snap, &target, &spec, Some(l.lang)) {
+    let plan = match app.chat_plan(snap, &target, &spec) {
         Ok(r) => r,
         Err(e) => {
             let now = unix_now();
@@ -395,7 +420,6 @@ fn start_stream(
         history: p.history,
         guard: None,
         purpose: None,
-        lang,
         attempt,
     };
     launch(ctx, snap, target, slot, permit, l)
@@ -408,6 +432,7 @@ pub(super) fn take_places(
     ctx: &Ctx,
     kind: Kind,
     chat: Option<i64>,
+    feature: crate::features::Feature,
 ) -> Result<(chat::Slot, chat::GatePermit), ApiError> {
     let app = &ctx.app.0;
     let l = app.limits();
@@ -426,6 +451,11 @@ pub(super) fn take_places(
     }
     if app.suspended(&ctx.who) {
         return Err(ApiError::suspended());
+    }
+    // The feature the administrator may have switched off for this user (never for administrators); before the caps, so
+    // a refusal counts nothing
+    if !app.feature_allowed(&ctx.who, feature) {
+        return Err(ApiError::feature_off(feature));
     }
     // The per-user caps on model calls, everyone included. The registry is read inside the same store read as the
     // usage rows (lock order store -> registry), and only the entries reserved before this one count.
@@ -465,7 +495,7 @@ pub async fn send(ctx: Ctx) -> Answer {
         return Err(ApiError::too_long(crate::limits::MESSAGE_CHARS as i64));
     }
     let target = ctx.app.0.target(&snap)?;
-    let (slot, permit) = take_places(&ctx, Kind::Chat, chat_id)?;
+    let (slot, permit) = take_places(&ctx, Kind::Chat, chat_id, Feature::Chat)?;
     let who = &ctx.who;
     let model = snap.settings.model.clone();
     let now = unix_now();
@@ -544,7 +574,7 @@ pub async fn retry(ctx: Ctx) -> Answer {
     let chat_id = body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?;
     let lang = lang_of(&ctx.body)?;
     let target = ctx.app.0.target(&snap)?;
-    let (slot, permit) = take_places(&ctx, Kind::Chat, Some(chat_id))?;
+    let (slot, permit) = take_places(&ctx, Kind::Chat, Some(chat_id), Feature::Chat)?;
     let who = &ctx.who;
     let model = snap.settings.model.clone();
     let now = unix_now();
@@ -659,21 +689,21 @@ pub async fn memories(ctx: Ctx) -> Answer {
     let rows = app.store.read(|c| data::list_memories(c, ctx.who.id))?;
     let l = app.limits();
     let list: Vec<Value> = rows.iter().map(data::MemoryRow::to_json).collect();
-    ok(json!({"memories": list, "limit": l.memories_per_user, "maxChars": l.memory_chars}))
+    ok(json!({"memories": list, "limit": l.memories_per_user, "maxTokens": l.memory_tokens}))
 }
 
-/// Memory text: whitespace collapsed (a note is one line in the prompt), 1 to `memoryChars` characters.
+/// Memory text: whitespace collapsed (a note is one line in the prompt), 1 to `memoryTokens` estimated tokens.
 fn memory_text(ctx: &Ctx) -> Result<String, ApiError> {
     let raw = match ctx.body.get("content") {
         Some(Value::String(s)) => s,
         _ => return Err(ApiError::bad_request()),
     };
     let text = collapse_ws(raw);
-    let max = ctx.app.0.limits().memory_chars;
+    let max = ctx.app.0.limits().memory_tokens;
     if text.is_empty() {
         return Err(ApiError::bad_request());
     }
-    if char_len(&text) > crate::limits::Limits::usize_of(max) {
+    if crate::limits::estimate_tokens(&text) > max {
         return Err(ApiError::memory_too_long(max));
     }
     Ok(text)
@@ -750,7 +780,7 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         return Err(ApiError::not_found());
     };
     let target = app.target(&snap)?;
-    let (slot, permit) = take_places(&ctx, Kind::Suggest, None)?;
+    let (slot, permit) = take_places(&ctx, Kind::Suggest, None, Feature::Chat)?;
     let s = &snap.settings;
     let turns = [provider::Turn {
         role: Role::User,
@@ -763,10 +793,11 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         turns: &turns,
         usage_option: s.usage_option,
         skip_cache: false,
+        prefix: None,
     };
     let plan = ctx
         .app
-        .chat_plan(&snap, &target, &spec, Some(lang))
+        .chat_plan(&snap, &target, &spec)
         .map_err(|e| ApiError::upstream(e.code))?;
     drop(target);
     // The provider call and its usage row run in one spawned task that owns the slot and the permit: a browser that
@@ -786,10 +817,24 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
                 _ = shutdown.wait_for(|v| *v) => Err(StopReason::Shutdown),
             };
             let now = unix_now();
-            let (status, code, tin, tout) = match &result {
-                Ok(Ok(c)) => ("ok", None, c.tokens_in, c.tokens_out),
-                Ok(Err(e)) => ("error", Some(e.code.short().to_string()), None, None),
-                Err(_) => ("stopped", None, None, None),
+            let (status, code, tin, tout, tcached, tcw) = match &result {
+                Ok(Ok(c)) => (
+                    "ok",
+                    None,
+                    c.tokens_in,
+                    c.tokens_out,
+                    c.tokens_cached,
+                    c.tokens_cache_write,
+                ),
+                Ok(Err(e)) => (
+                    "error",
+                    Some(e.code.short().to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                ),
+                Err(_) => ("stopped", None, None, None, None, None),
             };
             let usage = stats::UsageRow {
                 user_id: Some(who.id),
@@ -799,7 +844,8 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
                 model,
                 tokens_in: tin,
                 tokens_out: tout,
-                tokens_cached: None,
+                tokens_cached: tcached,
+                tokens_cache_write: tcw,
                 latency_ms: provider::ms(started.elapsed()),
                 first_byte_ms: None,
                 status,
@@ -822,8 +868,8 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
     };
     match result {
         Ok(Ok(c)) => {
-            let max = crate::limits::Limits::usize_of(app.limits().memory_chars);
-            let suggestion = cut_chars(&collapse_ws(c.text.trim()), max);
+            let max = app.limits().memory_tokens;
+            let suggestion = crate::limits::cut_to_tokens(&collapse_ws(c.text.trim()), max);
             if suggestion.is_empty() {
                 return Err(ApiError::upstream(UpCode::Protocol));
             }

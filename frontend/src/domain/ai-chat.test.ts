@@ -400,3 +400,14 @@ test('composerLines keeps the conversation room: the text room caps the lines, a
   assert.equal(composerLines(true, 844, 844, 24, 1000), 4);
   assert.equal(composerLines(true, 844, 844, 24, Number.POSITIVE_INFINITY), 4);
 });
+
+test('readOnlyReason (v1.1): the chat feature unticked, and the cause named by `why`', () => {
+  const base = { enabled: true, allowed: true, suspended: false };
+  assert.equal(readOnlyReason({ ...base, features: { chat: false } }), 'featureOff');
+  assert.equal(readOnlyReason({ ...base, features: { chat: true } }), 'unavailable');
+  assert.equal(readOnlyReason({ ...base, suspended: true, features: { chat: false } }), 'suspended');
+  assert.equal(readOnlyReason({ enabled: false, allowed: false, suspended: false, why: 'off' }), 'off');
+  assert.equal(readOnlyReason({ enabled: false, allowed: false, suspended: false, why: 'link' }), 'down');
+  assert.equal(readOnlyReason({ enabled: false, allowed: false, suspended: false, why: null }), 'unavailable');
+  assert.equal(readOnlyReason({ enabled: true, allowed: false, suspended: false, why: null }), 'noFunction');
+});

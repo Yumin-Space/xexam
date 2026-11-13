@@ -12,21 +12,26 @@ import { submitAttempt } from '../api/progress.ts';
 import { fetchBank, fetchBanks, fetchInfo } from '../api/bank.ts';
 import { fetchProgress, fetchRecord, fetchRecords } from '../api/progress.ts';
 import { countedResults, kindOf } from '../domain/attempt.ts';
+import { aiServiceOf } from '../domain/ai-settings.ts';
+import {
+  attemptTail, defaultFilter, examAnswer, isEmptyAnswer, isTimeUp, markUnanswered, noticeDue, recordSeconds, remaining, resultCounts, srDue, submitConfirm,
+  type EndKind, type TimedFields,
+} from '../domain/exam-timer.ts';
 import { completes, percentOf } from '../domain/grading.ts';
-import { checksOnPick, finalResults, isLocked, listNumbers, openCount, openNumbers } from '../domain/practice.ts';
+import { finalResults, isLocked, listNumbers, openCount, openNumbers } from '../domain/practice.ts';
 import { t, tn } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
 import { parseHash, routeHash, sameRoute, type Route } from '../router.ts';
 import type { AttemptKind, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
 import { dropAiSummary } from '../components/ai-summary.ts';
-import { ask } from '../utils/dialog.ts';
+import { ask, closeAllDialogs } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
 import { refreshAiStatus } from './ai.ts';
 import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSettings } from './preferences.ts';
 import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
 import { paths, setStorageOwner } from './storage-keys.ts';
-import { S, clearUserData, setBankData, type Session } from './store.ts';
+import { S, clearUserData, setBankData, type ResultRow, type Session } from './store.ts';
 
 let renderer: () => void = () => {};
 let refreshers: Array<() => void> = [];
@@ -79,15 +84,19 @@ export function persistSession(): void {
   if (!se) return;
   persist({
     qs: se.qs, answers: se.answers, flags: se.flags, idx: se.idx, elapsedSeconds: elapsed(), mode: se.mode, sheets: se.sheets,
-    kind: se.kind, checked: se.checked, key: se.key, startedAt: se.startedAt,
+    kind: se.kind, checked: se.checked, key: se.key, startedAt: se.startedAt, timed: timedOf(se),
   });
 }
+
+/** The time-limit fields of a session (TL-8 `TimedFields`) */
+export const timedOf = (se: Pick<Session, 'limit' | 'warned' | 'timeUp'>): TimedFields => ({ limit: se.limit, warned: se.warned, timeUp: se.timeUp });
 
 /** The session to continue from what was saved in this browser (the timer goes on from the saved time) */
 function sessionOf(sv: SavedSession): Session {
   return {
     qs: sv.qs, answers: sv.answers, flags: sv.flags, idx: sv.idx, base: sv.elapsed, t0: Date.now(), mode: sv.mode, sheets: sv.sheets,
     kind: sv.kind, checked: sv.checked, key: sv.key, startedAt: sv.startedAt,
+    limit: sv.timed.limit, warned: sv.timed.warned, timeUp: sv.timed.timeUp,
   };
 }
 
@@ -100,6 +109,7 @@ function settle(r: Route): Route {
     const sv = S.phase === 'ready' ? loadSaved(S.bank) : null;
     if (sv) {
       S.session = sessionOf(sv);
+      afterOpen();
       return r;
     }
     return { name: 'home' };
@@ -166,6 +176,17 @@ export function refreshAi(force = false): Promise<void> {
   return refreshAiStatus({ force, mustChangePassword: S.user?.mustChangePassword ?? true }).then((changed) => {
     if (changed && S.user && !S.authView) render();
   });
+}
+
+/**
+ * v1.1 (BT-2): keeps `S.aiService` in line with an auth-state answer (administrators get `aiService`, everyone else none).
+ * Returns whether it changed, so a caller that can re-render does.
+ */
+function noteAiService(st: unknown): boolean {
+  const next = aiServiceOf(st);
+  const changed = JSON.stringify(next) !== JSON.stringify(S.aiService);
+  S.aiService = next;
+  return changed;
 }
 
 /** Loads everything the pages need. Any single failure goes to the fatal page. */
@@ -271,6 +292,7 @@ async function enterApp(): Promise<void> {
     // The stamp first: a bank imported while the rest loads makes the next check read the banks once more, never less
     const st = await fetchAuthState();
     libraryStamp = st.library ?? null;
+    noteAiService(st);
     await loadAll();
     await keepFirstVisitLang();
     dataOwner = S.user?.id ?? null;
@@ -287,6 +309,8 @@ async function enterApp(): Promise<void> {
   if (!sameRoute(next, S.route)) history.replaceState(null, '', routeHash(next));
   S.route = next;
   render();
+  // TL-5 step 7: a timed exam whose time ran out while signed out (or before a reload) is submitted now
+  afterOpen();
 }
 
 let checking = false;
@@ -318,7 +342,8 @@ function checkSession(): void {
       // menu and the Question banks page follow at the next check. v0.8: the same for AI+ (the AI status is read again
       // at once then; otherwise at most every 60 s)
       const aiChanged = st.user.aiAllowed !== me.aiAllowed;
-      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks || aiChanged) {
+      const svcChanged = noteAiService(st);
+      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks || aiChanged || svcChanged) {
         S.user = st.user;
         render();
       }
@@ -375,6 +400,7 @@ function watchOtherTabs(): void {
 export async function boot(): Promise<void> {
   window.addEventListener('hashchange', onHashChange);
   setAuthHandler(onAuthProblem);
+  installSessionGuards();
   watchOtherTabs();
   S.phase = 'loading';
   S.route = parseHash(location.hash);
@@ -515,6 +541,7 @@ export async function refreshLibrary(): Promise<void> {
   // The stamp first (see enterApp)
   const st = await fetchAuthState().catch(() => null);
   if (st?.library) libraryStamp = st.library;
+  if (st?.user) noteAiService(st);
   // The bank-manager permission may have changed with the banks (a refused bank change is often the first sign of it)
   if (st?.user && S.user && st.user.id === S.user.id && st.user.canManageBanks !== S.user.canManageBanks) S.user = st.user;
   const [bank, banks] = await Promise.all([fetchBank(), fetchBanks()]);
@@ -561,11 +588,17 @@ export function applyRecordsDeleted(d: RecordsDeleted): void {
 
 // ---------------------------------------------------------------- exams
 
-export function startSession(qs: Question[], mode: Mode, kind: AttemptKind = 'exam'): void {
+/** Options of a new session: `limit` = the time limit of an exam in seconds (TL-2; ignored for a practice) */
+export interface StartOptions {
+  limit?: number | null;
+}
+
+export function startSession(qs: Question[], mode: Mode, kind: AttemptKind = 'exam', opts: StartOptions = {}): void {
   S.session = {
     qs, answers: {}, flags: new Set(), idx: 0, base: 0, t0: Date.now(), mode,
     sheets: [...new Set(qs.map((q) => q.sheet))],
     kind, checked: new Set(), key: newSessionKey(), startedAt: Math.floor(Date.now() / 1000),
+    limit: kind === 'exam' && opts.limit != null ? opts.limit : null, warned: false, timeUp: false,
   };
   persistSession();
   navigate({ name: 'quiz' });
@@ -575,7 +608,7 @@ export function startSession(qs: Question[], mode: Mode, kind: AttemptKind = 'ex
  * Starts an exam or (v0.6.5) a practice; if an unfinished exam or practice is saved, asks before replacing it (the texts
  * name what is saved and what starts). Used by the home, result and records pages.
  */
-export async function startExam(qs: Question[], mode: Mode, kind: AttemptKind = 'exam'): Promise<void> {
+export async function startExam(qs: Question[], mode: Mode, kind: AttemptKind = 'exam', opts: StartOptions = {}): Promise<void> {
   if (!qs.length) return;
   const saved = loadSaved(S.bank);
   if (saved) {
@@ -589,7 +622,7 @@ export async function startExam(qs: Question[], mode: Mode, kind: AttemptKind = 
     });
     if (!ok) return;
   }
-  startSession(qs, mode, kind);
+  startSession(qs, mode, kind, opts);
 }
 
 export function resumeSession(): void {
@@ -601,6 +634,12 @@ export function resumeSession(): void {
   S.session = sessionOf(sv);
   if (sv.dropped) toast(tn('act.resume.dropped', sv.dropped));
   navigate({ name: 'quiz' });
+  afterOpen();
+}
+
+/** Home's resume card of a session whose time ran out (TL-6): resumes it and submits at once (answering stays impossible) */
+export function resumeAndSubmit(): void {
+  resumeSession();
 }
 
 /** "Save and exit" on the quiz page */
@@ -610,7 +649,7 @@ export function leaveQuiz(): void {
 
 export function go(i: number): void {
   const se = S.session;
-  if (!se || i < 0 || i >= se.qs.length) return;
+  if (!se || i < 0 || i >= se.qs.length || timeIsUp(se)) return;
   cancelAdvance();
   se.idx = i;
   persistSession();
@@ -657,18 +696,13 @@ function scheduleAdvance(): void {
 
 export function pick(q: Question, key: string): void {
   const se = S.session;
-  if (!se || isLocked(se.kind, se.checked, q.id)) return;
+  if (!se || timeIsUp(se) || isLocked(se.kind, se.checked, q.id)) return;
   let a = (se.answers[q.id] as string[] | undefined) ?? [];
   const adding = !a.includes(key);
   if (q.kind === 'single') a = adding ? [key] : [];
   else a = adding ? [...a, key].sort() : a.filter((k) => k !== key);
   if (a.length) se.answers[q.id] = a;
   else delete se.answers[q.id];
-  // Practice: a single-choice question is checked by the pick itself
-  if (se.kind === 'practice' && adding && checksOnPick(q)) {
-    checkAnswer(q);
-    return;
-  }
   syncQuiz();
   if (q.kind === 'single' && adding) scheduleAdvance();
   else cancelAdvance();
@@ -676,7 +710,7 @@ export function pick(q: Question, key: string): void {
 
 export function pickItem(q: Question, i: number, j: number): void {
   const se = S.session;
-  if (!se || isLocked(se.kind, se.checked, q.id)) return;
+  if (!se || timeIsUp(se) || isLocked(se.kind, se.checked, q.id)) return;
   const cur = se.answers[q.id];
   const a: Array<number | null> = Array.isArray(cur) ? (cur.slice() as Array<number | null>) : Array<number | null>(q.items.length).fill(null);
   const adding = a[i] !== j;
@@ -695,7 +729,7 @@ export function pickItem(q: Question, i: number, j: number): void {
  */
 export function checkAnswer(q: Question): void {
   const se = S.session;
-  if (!se || se.kind !== 'practice' || se.checked.has(q.id) || !Array.isArray(se.answers[q.id])) return;
+  if (!se || timeIsUp(se) || se.kind !== 'practice' || se.checked.has(q.id) || !Array.isArray(se.answers[q.id])) return;
   se.checked.add(q.id);
   cancelAdvance();
   persistSession();
@@ -707,54 +741,189 @@ export function checkAnswer(q: Question): void {
 
 export function toggleFlag(q: Question): void {
   const se = S.session;
-  if (!se) return;
+  if (!se || timeIsUp(se)) return;
   if (se.flags.has(q.id)) se.flags.delete(q.id);
   else se.flags.add(q.id);
   syncQuiz();
 }
 
+// ---------------------------------------------------------------- the time limit of an exam (v1.1, TL-3 ... TL-6)
+
+/**
+ * TL-5: whether the time of a timed exam is up, read from the clock every time (a background tab ticks a second or a minute
+ * late), never only from the flag the tick sets.
+ */
+export function checkTimeUp(se: Session): boolean {
+  return se.limit != null && (se.timeUp || isTimeUp(se.limit, elapsed()));
+}
+
+/** Input guard: when the time is up, the input is ignored and the time-up steps start (true) */
+function timeIsUp(se: Session): boolean {
+  if (!checkTimeUp(se)) return false;
+  startTimeUp();
+  return true;
+}
+
+let timeUpRunning = false;
+let prevLeft: { se: Session; left: number } | null = null;
+
+/**
+ * TL-5 steps 1 - 4: marks the session, saves it at once, closes every dialog, locks the page (the overlay is drawn by the quiz
+ * page from `se.timeUp`) and submits without a confirm. One run at a time; nothing while the sign-in page is showing (the
+ * run starts again after signing in, `afterOpen`).
+ */
+export function startTimeUp(): void {
+  const se = S.session;
+  if (!se || se.limit == null || timeUpRunning || submitting || S.authView) return;
+  timeUpRunning = true;
+  se.timeUp = true;
+  persistSession();
+  closeAllDialogs();
+  cancelAdvance();
+  render();
+  void submit({ end: 'timeUp' }).finally(() => {
+    timeUpRunning = false;
+  });
+}
+
+/**
+ * The 1-second tick of a timed exam (the quiz page's interval): the time-up check, the 30-minute notice (TL-4) and the
+ * screen-reader lines at 5 minutes and 1 minute. Returns the seconds left (null for an untimed session).
+ */
+export function examTick(): number | null {
+  const se = S.session;
+  if (!se || se.limit == null || S.route.name !== 'quiz') return null;
+  if (checkTimeUp(se)) {
+    startTimeUp();
+    return 0;
+  }
+  const left = remaining(se.limit, elapsed());
+  if (noticeDue(se.limit, left, se.warned)) {
+    se.warned = true;
+    persistSession();
+    const text = t('quiz.notice30');
+    toast(text, 6000);
+    const live = document.getElementById('quiz-sr-alert');
+    if (live) live.textContent = text;
+  }
+  const before = prevLeft && prevLeft.se === se ? prevLeft.left : left;
+  const due = srDue(se.limit, before, left);
+  if (due) {
+    const live = document.getElementById('quiz-sr');
+    if (live) live.textContent = t(due === 'm5' ? 'quiz.sr5min' : 'quiz.sr1min');
+  }
+  prevLeft = { se, left };
+  return left;
+}
+
+/** After a session is opened or resumed (a reload, a resume, the sign-in page leaving): a timed exam whose time is up ends now (TL-5) */
+function afterOpen(): void {
+  queueMicrotask(() => {
+    // No route check: a resume navigates by hash change, which lands after this microtask
+    const se = S.session;
+    if (se && checkTimeUp(se)) startTimeUp();
+  });
+}
+
+/**
+ * TL-6: the countdown pauses at the moment the page goes away. On `pagehide` and when the page becomes hidden, an exam or
+ * practice on the quiz page is saved; when the page is visible (or restored from the cache) again the time limit is checked
+ * before anything else. Called once from `boot()`.
+ */
+export function installSessionGuards(): void {
+  const save = (): void => {
+    if (S.route.name === 'quiz' && S.session) persistSession();
+  };
+  const check = (): void => {
+    const se = S.session;
+    if (se && S.route.name === 'quiz' && checkTimeUp(se)) startTimeUp();
+  };
+  window.addEventListener('pagehide', save);
+  window.addEventListener('pageshow', check);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') save();
+    else check();
+  });
+}
+
 let submitting = false;
+
+export interface SubmitOptions {
+  /** 'timeUp': the time ran out - no confirm, the result page shows the time-up banner (TL-5) */
+  end?: EndKind;
+}
 
 /**
  * Submits the exam / finishes the practice: confirm first, then save the result; the saved session is cleared only after
- * saving succeeded (on failure the answers are still there, so it can be submitted again). An exam always asks; a practice
- * asks only when some questions were not checked (they count as not answered).
+ * saving succeeded (on failure the answers are still there, so it can be submitted again). An exam always asks (TL-5a: the
+ * wording says what the not-completed questions mean); a practice asks only when some questions were not checked (they
+ * count as not answered). At time-up (`end: 'timeUp'`) nothing is asked.
  */
-export async function submit(): Promise<void> {
+export async function submit(opts: SubmitOptions = {}): Promise<void> {
   const se = S.session;
   if (!se || submitting) return;
-  cancelAdvance();
-  const open = openCount(se.kind, se.qs, se.answers, se.checked);
-  // QZ-9: the dialog names the open and the marked questions (up to 10 numbers each)
-  const numsText = (nums: number[]): string => {
-    const { shown, more } = listNumbers(nums);
-    const list = shown.join(t('quiz.dlg.sep'));
-    return more > 0 ? t('quiz.dlg.numsMore', { list, n: more }) : t('quiz.dlg.nums', { list });
-  };
-  const openNums = openNumbers(se.kind, se.qs, se.answers, se.checked);
-  const flagNums = se.qs.flatMap((q, i) => (se.flags.has(q.id) ? [i + 1] : []));
-  const lists = [openNums.length ? t('quiz.dlg.open', { nums: numsText(openNums) }) : '', flagNums.length ? t('quiz.dlg.flag', { nums: numsText(flagNums) }) : '']
-    .filter(Boolean).join(' ');
-  const withLists = (body: string): string => (lists ? `${body} ${lists}` : body);
-  const go_ = se.kind === 'practice'
-    ? !open || await ask({
-      title: tn('quiz.practice.finish.openTitle', open), body: withLists(t('quiz.practice.finish.openBody')), ok: t('quiz.practice.finish'), cancel: t('act.submit.back'),
-    })
-    : await ask(open
-      ? { title: tn('act.submit.openTitle', open), body: withLists(t('act.submit.openBody')), ok: t('act.submit.ok'), cancel: t('act.submit.back') }
-      : { title: t('act.submit.confirmTitle'), body: t('act.submit.confirmBody'), ok: t('act.submit.ok'), cancel: t('act.submit.check') });
-  if (!go_ || S.session !== se) {
-    // 'Keep answering' jumps to the first open question (else the first marked one)
-    const target = openNums[0] ?? flagNums[0];
-    if (!go_ && S.session === se && target != null) go(target - 1);
+  // The time ran out while the button was pressed: it becomes the time-up submit, without a confirm
+  if (opts.end !== 'timeUp' && checkTimeUp(se)) {
+    startTimeUp();
     return;
+  }
+  const end: EndKind = opts.end === 'timeUp' ? 'timeUp' : 'submit';
+  const exam = se.kind === 'exam';
+  cancelAdvance();
+  if (end === 'submit') {
+    const open = openCount(se.kind, se.qs, se.answers, se.checked);
+    // QZ-9: the dialog names the open and the marked questions (up to 10 numbers each)
+    const numsText = (nums: number[]): string => {
+      const { shown, more } = listNumbers(nums);
+      const list = shown.join(t('quiz.dlg.sep'));
+      return more > 0 ? t('quiz.dlg.numsMore', { list, n: more }) : t('quiz.dlg.nums', { list });
+    };
+    const openNums = openNumbers(se.kind, se.qs, se.answers, se.checked);
+    const flagNums = se.qs.flatMap((q, i) => (se.flags.has(q.id) ? [i + 1] : []));
+    const lists = [openNums.length ? t('quiz.dlg.open', { nums: numsText(openNums) }) : '', flagNums.length ? t('quiz.dlg.flag', { nums: numsText(flagNums) }) : '']
+      .filter(Boolean).join(' ');
+    const withLists = (body: string): string => (lists ? `${body} ${lists}` : body);
+    let go_: boolean;
+    if (!exam) {
+      go_ = !open || await ask({
+        title: tn('quiz.practice.finish.openTitle', open), body: withLists(t('quiz.practice.finish.openBody')), ok: t('quiz.practice.finish'), cancel: t('act.submit.back'),
+      });
+    } else {
+      // TL-5a, every exam: `empty` = questions with no answer (not completed); `open` also counts partly answered hotspots
+      const empty = se.qs.filter((q) => isEmptyAnswer(se.answers[q.id])).length;
+      const c = submitConfirm(open, empty);
+      const dlg = c.kind === 'empty'
+        ? {
+          title: tn('act.submit.emptyTitle', empty),
+          body: withLists(c.partial > 0 ? `${t('act.submit.emptyBody')} ${tn('act.submit.partialMore', c.partial)}` : t('act.submit.emptyBody')),
+          ok: t('act.submit.ok'), cancel: t('act.submit.back'),
+        }
+        : c.kind === 'partial'
+          ? { title: tn('act.submit.partialTitle', open), body: withLists(t('act.submit.partialBody')), ok: t('act.submit.ok'), cancel: t('act.submit.back') }
+          : { title: t('act.submit.confirmTitle'), body: t('act.submit.confirmBody'), ok: t('act.submit.ok'), cancel: t('act.submit.check') };
+      go_ = await ask(dlg);
+    }
+    if (!go_ || S.session !== se) {
+      // 'Keep answering' jumps to the first open question (else the first marked one); not when the time ran out meanwhile
+      const target = openNums[0] ?? flagNums[0];
+      if (!go_ && S.session === se && !se.timeUp && target != null) go(target - 1);
+      return;
+    }
+    // The time may have run out while the confirm was open: the time-up submit takes over (nothing more is asked)
+    if (checkTimeUp(se)) {
+      startTimeUp();
+      return;
+    }
   }
 
   submitting = true;
   try {
-    // A practice counts its unchecked questions as not answered (see domain/practice.ts)
-    const results = finalResults(se.kind, se.qs, se.answers, se.checked);
-    const seconds = Math.floor(elapsed());
+    // A practice counts its unchecked questions as not answered (see domain/practice.ts); an exam marks its not-completed
+    // questions (TL-7) and sends no answer for them
+    const graded = finalResults(se.kind, se.qs, se.answers, se.checked);
+    const results: ResultRow[] = exam ? markUnanswered(graded, 'exam') : graded;
+    const timed = timedOf(se);
+    const seconds = exam ? recordSeconds(se.limit, elapsed()) : Math.floor(elapsed());
     let prev = null;
     let saved = false;
     // The results that count: all of them, unless the server left out questions that no longer exist (v0.6.5)
@@ -763,8 +932,11 @@ export async function submit(): Promise<void> {
     let recordId: number | null = null;
     try {
       const { notCounted: gone, recordId: savedId, ...progress } = await submitAttempt({
-        results: results.map((r) => ({ id: r.q.id, correct: r.correct, answer: Array.isArray(r.ans) ? r.ans : null })),
-        sheets: se.sheets, mode: se.mode, seconds, kind: se.kind, key: se.key, startedAt: se.startedAt,
+        results: results.map((r) => {
+          const a = exam ? examAnswer(r.ans, r.correct) : r.ans;
+          return { id: r.q.id, correct: r.correct, answer: Array.isArray(a) ? a : null };
+        }),
+        sheets: se.sheets, mode: se.mode, seconds, kind: se.kind, key: se.key, startedAt: se.startedAt, ...attemptTail(se.kind, timed, end),
       });
       recordId = savedId ?? null;
       S.progress = progress;
@@ -790,8 +962,11 @@ export async function submit(): Promise<void> {
       toast(`${t('act.submit.saveFailed')} (${errorText(e)})`, 9000);
     }
     S.session = null;
-    S.result = { results: counted, seconds, mode: se.mode, prev, recordId, notCounted, kind: se.kind, key: se.key, startedAt: se.startedAt };
-    S.rvFilter = 'wrong';
+    S.result = {
+      results: counted, seconds, mode: se.mode, prev, recordId, notCounted, kind: se.kind, key: se.key, startedAt: se.startedAt,
+      limit: exam ? se.limit : null, ended: exam ? end : null,
+    };
+    S.rvFilter = defaultFilter(resultCounts(counted));
     navigate({ name: 'result' });
     // Some questions were deleted meanwhile: the banks in memory are out of date too
     if (notCounted) refreshLibrary().then(render, () => {});

@@ -43,20 +43,20 @@ async fn openai_cached_tokens_are_recorded_and_shown_in_the_usage() {
     let (code, u) = t.get("/api/ai/admin/usage?days=7", &admin).await;
     assert_eq!(code, 200, "{u}");
     assert_eq!(u["totals"]["tokensCached"], json!(8));
-    for row in [
-        &u["totals"],
-        &u["byUser"][0],
-        &u["byModel"][0],
-        &u["byPeriod"][6],
-    ] {
-        assert_eq!(keys(row).last(), Some(&"tokensCached"), "{row}");
+    // the connection test of `configure_openai` is the "other" row (empty model name), the chat is the cached model
+    let model_row = u["byModel"]
+        .as_array()
+        .and_then(|a| a.iter().find(|r| r["model"] == json!("demo-cached")))
+        .expect("model row");
+    for row in [&u["totals"], &u["byUser"][0], model_row, &u["byPeriod"][6]] {
+        assert_eq!(keys(row).last(), Some(&"tokensCacheWrite"), "{row}");
     }
     let sam_row = u["byUser"]
         .as_array()
         .and_then(|a| a.iter().find(|r| r["username"] == json!("sam")))
         .expect("sam");
     assert_eq!(sam_row["tokensCached"], json!(8));
-    assert_eq!(u["byModel"][0]["tokensCached"], json!(8));
+    assert_eq!(model_row["tokensCached"], json!(8));
     assert_eq!(u["byPeriod"][6]["tokensCached"], json!(8));
     assert_eq!(u["byPeriod"][0]["tokensCached"], json!(0));
 }

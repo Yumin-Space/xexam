@@ -9,6 +9,8 @@
 //     `auth.signin` / `auth.password` carry the backend's own texts and are translated like any backend message.
 //   · v1.0: `ai.callLimit` (a per-user AI request cap) with its `quota` (cap, limit, retryAt) becomes callLimitText(): the
 //     cap named, when it frees, and for administrators where to change it. Without a usable quota it is the plain sentence.
+//   · v1.1: the AI bank codes (`ai.gen.*`, `ai.import.*`, `ai.genCount`, I18N-4 / I18N-7) become their own texts, with the
+//     numbers of the answer (`need`, `have`, `limit`, `maxMb`, `ext`) or of a job (`errorArg`): see genCodeText().
 import { ApiError } from '../api/client.ts';
 import { DEFAULT_LIMITS } from '../domain/ai-settings.ts';
 import type { AiCallBlock } from '../types/api.ts';
@@ -50,8 +52,86 @@ const LIMIT_OF: Record<string, number> = {
   'ai.chatLimit': DEFAULT_LIMITS.chatsPerUser,
   'ai.memoryFull': DEFAULT_LIMITS.memoriesPerUser,
   'ai.memoryLimit': DEFAULT_LIMITS.memoriesPerUser,
-  'ai.memoryTooLong': DEFAULT_LIMITS.memoryChars,
+  'ai.memoryTooLong': DEFAULT_LIMITS.memoryTokens,
 };
+
+/** The numbers a text of an AI bank code may need (from the error body, or from a job's `errorArg`) */
+export interface GenCodeArgs {
+  need?: number;
+  have?: number;
+  what?: string;
+  limit?: number;
+  max?: number;
+  maxMb?: number;
+  ext?: string;
+  arg?: number | null;
+}
+
+const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+
+/** The numbers of an error body (an ApiError's `body`) for genCodeText() */
+export function genArgsOf(body: Record<string, unknown> | undefined): GenCodeArgs {
+  if (!body) return {};
+  const out: GenCodeArgs = {};
+  const set = <K extends keyof GenCodeArgs>(k: K, v: GenCodeArgs[K] | undefined): void => {
+    if (v !== undefined) out[k] = v;
+  };
+  set('need', num(body['need']));
+  set('have', num(body['have']));
+  set('limit', num(body['limit']));
+  set('max', num(body['max']));
+  set('maxMb', num(body['maxMb']));
+  if (typeof body['what'] === 'string') out.what = body['what'];
+  if (typeof body['ext'] === 'string') out.ext = body['ext'];
+  return out;
+}
+
+/**
+ * v1.1 (I18N-4, I18N-7): the text of an AI bank code (a refusal of the generation / import routes or the `error` of a job),
+ * or null when the code is not one of them. Numbers come from `args`.
+ */
+export function genCodeText(code: string, args: GenCodeArgs = {}): string | null {
+  const grouped = (n: number): string => n.toLocaleString(localeTag());
+  switch (code) {
+    case 'ai.genCount': return t('ai.set.gen.totalBad');
+    case 'ai.gen.badName': return t('aigen.dlg.nameBad');
+    case 'ai.import.nameTaken': return t('aigen.imp.cfm.nameTaken');
+    case 'ai.import.nameEmpty': return t('aigen.imp.cfm.nameNeed');
+    case 'ai.gen.busy': return t('aigen.why.busy');
+    case 'ai.gen.quota': return args.limit === 0 ? t('aigen.why.quotaZero') : t('aigen.why.quota', { limit: args.limit ?? 0 });
+    case 'ai.gen.tooFew':
+      return t(args.what === 'wrong' ? 'aigen.why.fewWrong' : 'aigen.why.fewSource', { need: args.need ?? 0, have: args.have ?? 0 });
+    case 'ai.gen.forbidden': return t('aigen.err.forbidden');
+    case 'ai.gen.aiSource': return t('aigen.why.aiSource');
+    case 'ai.gen.notFound': return t('aigen.err.notFound');
+    case 'ai.gen.tooLate': return t('aigen.err.tooLate');
+    case 'ai.gen.quality': return t('aigen.err.quality');
+    case 'ai.gen.stopped': return t('aigen.err.stopped');
+    case 'ai.gen.timeout': return t('aigen.err.timeout');
+    case 'ai.gen.interrupted': return t('aigen.err.interrupted');
+    case 'ai.gen.save': return t('aigen.err.save');
+    case 'ai.import.type': return t('aigen.imp.err.type', { ext: args.ext ? `.${args.ext.replace(/^\./, '')}` : '', types: t('aigen.imp.types') });
+    case 'ai.import.legacy': return t('aigen.imp.err.legacy');
+    case 'ai.import.image': return t('aigen.imp.err.image');
+    case 'ai.import.empty': return t('aigen.imp.err.empty');
+    case 'ai.import.tooLarge': return t('aigen.imp.err.tooLarge', { mb: args.maxMb ?? 20 });
+    case 'ai.import.notWaiting': return t('aigen.imp.err.notWaiting');
+    case 'ai.import.noText': return t('aigen.imp.err.noText');
+    case 'ai.import.encoding': return t('aigen.imp.err.encoding');
+    case 'ai.import.protected': return t('aigen.imp.err.protected');
+    case 'ai.import.corrupt': return t('aigen.imp.err.corrupt');
+    case 'ai.import.tooComplex': return t('aigen.imp.err.tooComplex');
+    case 'ai.import.tooMuchText': return t('aigen.imp.err.tooMuchText', { max: grouped(args.arg ?? args.max ?? 400000) });
+    case 'ai.import.readTimeout': return t('aigen.imp.err.readTimeout');
+    case 'ai.import.noContent': return t('aigen.imp.err.noContent');
+    case 'ai.import.unclear': return t('aigen.imp.err.unclear');
+    case 'ai.import.tooMany': return t('aigen.imp.err.tooMany', { max: grouped(args.arg ?? args.max ?? 50) });
+    case 'ai.import.tooLongQuestion': return t('aigen.imp.err.tooLongQuestion', { no: args.arg ?? 0, max: grouped(3000) });
+    case 'ai.import.callLimit': return t('aigen.imp.err.callLimit');
+    case 'ai.import.expired': return t('aigen.imp.card.expired');
+    default: return null;
+  }
+}
 
 /** The catalog key of an AI error code, or null when the catalog has no text for it */
 function aiKey(code: string): MsgKey | null {
@@ -62,16 +142,24 @@ function aiKey(code: string): MsgKey | null {
 }
 
 /** Whether an AI error code has a text of its own */
-export const knownAiCode = (code: string): boolean => aiKey(code) != null;
+export const knownAiCode = (code: string): boolean => aiKey(code) != null || genCodeText(code) != null;
 
 /**
  * The text of an AI error code (a stream's error event, a failed answer, a test result). `limit`: the number the answer
  * gave for a limit that was reached. An unknown code falls back to the generic internal error of AI.
  */
 export function aiCodeText(code: string, limit?: number): string {
+  const g = genCodeText(code, limit == null ? {} : { limit });
+  if (g != null) return g;
   const key = aiKey(code) ?? 'ai.err.internal';
   const n = limit ?? LIMIT_OF[code];
   return t(key, n == null ? undefined : { n: n.toLocaleString(localeTag()) });
+}
+
+/** The reason text of a failed job (`error` code and `errorArg` of the Job object, IM-9) */
+export function jobReasonText(job: { error: string | null; errorArg: number | null }): string {
+  if (!job.error) return t('ai.err.internal');
+  return genCodeText(job.error, { arg: job.errorArg }) ?? aiCodeText(job.error);
 }
 
 export class LocalError extends Error {
@@ -91,6 +179,10 @@ export function errorText(e: unknown, fallback: MsgKey = 'err.generic'): string 
   if (e instanceof ApiError) {
     // before the sign-in lock's 429 branch below: the cap refusal is a 429 with retryAfter too
     if (e.code === 'ai.callLimit' && e.quota) return callLimitText(e.quota, isAdminForTexts(), nowSeconds());
+    if (e.code) {
+      const g = genCodeText(e.code, genArgsOf(e.body));
+      if (g != null) return g;
+    }
     if (e.code && aiKey(e.code)) return aiCodeText(e.code, e.limit);
     switch (e.kind) {
       case 'http':

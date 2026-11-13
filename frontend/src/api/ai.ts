@@ -129,3 +129,11 @@ export const fetchAiUserChat = (userId: number, chatId: number): Promise<AiChatD
 export const clearAiData = (c: AiClear): Promise<{ deleted: number }> => postJson('/api/ai/admin/clear', c);
 export const fetchLimits = (): Promise<AiLimitsAnswer> => getJson<AiLimitsAnswer>('/api/ai/admin/limits');
 export const saveLimits = (l: Partial<AiLimits>): Promise<AiLimitsAnswer> => postJson<AiLimitsAnswer>('/api/ai/admin/limits', l);
+
+/** v1.1 (A-OWNER-21): an administrator switches the AI Chat free mode of an administrator account; answers its row */
+export const setAiAdminFree = async (userId: number, free: boolean): Promise<AiAdminUserRow> =>
+  (await postJson<{ user: AiAdminUserRow }>('/api/ai/admin/free', { userId, free })).user;
+
+/** v1.1 (API-A2): the six feature switches of a user (all six values every time); answers the user's row */
+export const setAiUserFeatures = async (userId: number, features: Record<string, boolean>): Promise<AiAdminUserRow> =>
+  (await postJson<{ user: AiAdminUserRow }>('/api/ai/admin/features', { userId, features })).user;

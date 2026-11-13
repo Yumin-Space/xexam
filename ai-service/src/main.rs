@@ -1,4 +1,5 @@
-//! Binary entry point: `xexam-ai-service serve` (default), `xexam-ai-service healthcheck`, `xexam-ai-service --help`.
+//! Binary entry point: `xexam-ai-service serve` (default), `xexam-ai-service healthcheck`, `xexam-ai-service --help`, and
+//! `xexam-ai-service extract …` (the file-extraction child of the AI import, run by the service itself).
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
@@ -155,6 +156,16 @@ async fn serve(cfg: Config) -> i32 {
 
 fn main() {
     let argv: Vec<String> = std::env::args().skip(1).collect();
+    // The extraction child of the AI file import (IX-1): before any configuration, database or logging set-up, so it
+    // works with an empty environment and never touches a data directory
+    if argv.first().map(String::as_str) == Some("extract") {
+        let code = xexam_ai_service::extract::child::child_main(
+            argv.get(1..).unwrap_or(&[]),
+            std::io::stdin().lock(),
+            std::io::stdout().lock(),
+        );
+        std::process::exit(code);
+    }
     let cmd = match parse_args(&argv) {
         Ok(c) => c,
         Err(e) => {

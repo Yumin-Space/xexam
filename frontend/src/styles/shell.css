@@ -64,7 +64,7 @@
 /* Quiz page: the line closes the page under the grid (the pinned bar rests above it) */
 .wrap.qz > .gh-line { margin-top: 12px; }
 .wrap.qz { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
-/* Sign-in pages: its own row under the language switch */
-.auth-foot .gh-line { flex-basis: 100%; margin-top: 12px; }
+/* Sign-in pages: the line at the bottom of the screen */
+.auth-bottom .gh-line { flex-basis: 100%; margin-top: 0; }
 /* The error and shut-down screens: under their message */
 .solo > .gh-line { margin-top: 24px; }

@@ -1,7 +1,6 @@
-//! v1.0 answer and memory length (spec 3.10, FB-5 revised): the answer length in characters (`replyMaxChars`, default
-//! 1000) becomes the provider's `max_tokens` by the reply language, with the fallback ladder inside one counted call;
-//! the memory length is a plain character count (`memoryChars`, default 200); the user message has a fixed cap of 16000
-//! characters. All names, texts and keys are made up.
+//! v1.1 answer and memory length (A-OWNER-43): the answer length in tokens (`replyMaxTokens`, default 3000) is the
+//! provider's `max_tokens` as it is (no language factor), with the fallback ladder inside one counted call; the memory
+//! length is in estimated tokens (`memoryTokens`, default 1000); the user message has a fixed cap of 16000 characters. All names, texts and keys are made up.
 mod common;
 
 #[path = "study_api/util.rs"]
@@ -32,19 +31,19 @@ fn hint_in(lang: &str, q: &str, no: i64) -> Value {
     b
 }
 
-async fn set_reply_chars(e: &Env, n: i64) {
-    set_limit(&e.t, &e.admin, "replyMaxChars", n).await;
+async fn set_reply_tokens(e: &Env, n: i64) {
+    set_limit(&e.t, &e.admin, "replyMaxTokens", n).await;
 }
 
 #[tokio::test]
 async fn defaults_by_language_for_every_kind_of_call() {
     let e = env().await;
-    // zh study ask: ceil(1000 x 1.5)
+    // zh study ask: the setting as it is
     let ev = ask(&e.t, &e.user, hint_in("zh", "q1", 1)).await;
     assert_eq!(terminal_name(&ev), "done");
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(1500));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
     assert!(e.t.stub.last().body.get("max_completion_tokens").is_none());
-    // en AI Chat send: 1 character = 1 token
+    // en AI Chat send: the same value
     let ev =
         e.t.send_all(
             &e.user,
@@ -53,14 +52,14 @@ async fn defaults_by_language_for_every_kind_of_call() {
         .await
         .expect("send");
     assert_eq!(terminal(&ev).0, "done");
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(1000));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
     let msg = ev[0].1["userMessageId"].as_i64().expect("message");
     // zh memory suggestion
     let (s, v) =
         e.t.post(SUGGEST, &e.user, json!({"messageId": msg, "lang": "zh"}))
             .await;
     assert_eq!(s, 200, "{v}");
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(1500));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
     // ja summary ask
     let items = vec![
         item("q1", json!(["A"]), false),
@@ -82,10 +81,10 @@ async fn defaults_by_language_for_every_kind_of_call() {
     )
     .await;
     assert_eq!(terminal_name(&ev), "done");
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(1500));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
     // another question in English uses the same rule
     let _ = ask(&e.t, &e.user, hint_in("en", "q2", 2)).await;
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(1000));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
     // the administrator's connection test sent no token field (the body of v0.9.1)
     let verify =
         e.t.stub
@@ -104,12 +103,12 @@ async fn defaults_by_language_for_every_kind_of_call() {
 #[tokio::test]
 async fn a_changed_answer_length_applies_to_the_next_ask() {
     let e = env().await;
-    set_reply_chars(&e, 300).await;
+    set_reply_tokens(&e, 300).await;
     let _ = ask(&e.t, &e.user, hint_in("zh", "q1", 1)).await;
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(450));
-    set_reply_chars(&e, 16000).await;
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(300));
+    set_reply_tokens(&e, 16000).await;
     let _ = ask(&e.t, &e.user, hint_in("zh", "q2", 2)).await;
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(24000));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(16000));
     let _ = ask(&e.t, &e.user, hint_in("en", "q1", 3)).await;
     assert_eq!(e.t.stub.last().body["max_tokens"], json!(16000));
 }
@@ -129,9 +128,9 @@ async fn a_refused_max_tokens_is_retried_inside_one_counted_call_and_remembered(
         2,
         "first max_tokens, then the fallback"
     );
-    assert_eq!(reqs[before].body["max_tokens"], json!(1000));
+    assert_eq!(reqs[before].body["max_tokens"], json!(3000));
     assert!(reqs[before].body.get("max_completion_tokens").is_none());
-    assert_eq!(reqs[before + 1].body["max_completion_tokens"], json!(1000));
+    assert_eq!(reqs[before + 1].body["max_completion_tokens"], json!(3000));
     assert!(reqs[before + 1].body.get("max_tokens").is_none());
     // one INFO line for the step, without any key, URL or content
     assert!(captured_contains(
@@ -145,7 +144,7 @@ async fn a_refused_max_tokens_is_retried_inside_one_counted_call_and_remembered(
     assert_eq!(terminal_name(&ev), "done");
     let reqs = chat_requests(&e.t);
     assert_eq!(reqs.len() - before, 3, "no refused request this time");
-    assert_eq!(reqs[before + 2].body["max_completion_tokens"], json!(1000));
+    assert_eq!(reqs[before + 2].body["max_completion_tokens"], json!(3000));
     // two counted calls with a cap of 2: the retry did not count, the third ask is refused
     let (s, v) = refused(&e.t, &e.user, STUDY_ASK, hint_in("en", "q1", 3)).await;
     assert_eq!((s, v["code"].clone()), (429, json!("ai.callLimit")), "{v}");
@@ -153,7 +152,7 @@ async fn a_refused_max_tokens_is_retried_inside_one_counted_call_and_remembered(
     e.t.set_model(&e.admin, "demo-chat-small").await;
     e.t.relax_caps();
     let _ = ask(&e.t, &e.user, hint_in("en", "q1", 4)).await;
-    assert_eq!(e.t.stub.last().body["max_tokens"], json!(1000));
+    assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
     assert!(e.t.stub.last().body.get("max_completion_tokens").is_none());
 }
 
@@ -166,8 +165,8 @@ async fn a_service_that_refuses_both_fields_gets_no_token_limit() {
     assert_eq!(terminal_name(&ev), "done");
     let reqs = chat_requests(&e.t);
     assert_eq!(reqs.len() - before, 3);
-    assert_eq!(reqs[before].body["max_tokens"], json!(1500));
-    assert_eq!(reqs[before + 1].body["max_completion_tokens"], json!(1500));
+    assert_eq!(reqs[before].body["max_tokens"], json!(3000));
+    assert_eq!(reqs[before + 1].body["max_completion_tokens"], json!(3000));
     assert!(reqs[before + 2].body.get("max_tokens").is_none());
     assert!(reqs[before + 2].body.get("max_completion_tokens").is_none());
     let rows: i64 = q1(&e.t, "SELECT COUNT(*) FROM usage WHERE kind = 'chat'");
@@ -189,13 +188,13 @@ async fn a_changed_answer_length_forgets_the_remembered_step() {
     assert_eq!(reqs.len() - before, 4);
     assert!(reqs[before + 3].body.get("max_tokens").is_none());
     // the admin changes the answer length: the next call starts again from max_tokens with the new value
-    set_reply_chars(&e, 300).await;
+    set_reply_tokens(&e, 300).await;
     let _ = ask(&e.t, &e.user, hint_in("zh", "q1", 3)).await;
     let reqs = chat_requests(&e.t);
     assert_eq!(reqs.len() - before, 7);
-    assert_eq!(reqs[before + 4].body["max_tokens"], json!(450));
+    assert_eq!(reqs[before + 4].body["max_tokens"], json!(300));
     // an unchanged length (another limit saved) keeps the remembered step
-    set_limit(&e.t, &e.admin, "memoryChars", 150).await;
+    set_limit(&e.t, &e.admin, "memoryTokens", 150).await;
     let _ = ask(&e.t, &e.user, hint_in("zh", "q2", 4)).await;
     let reqs = chat_requests(&e.t);
     assert_eq!(reqs.len() - before, 8);
@@ -231,7 +230,7 @@ async fn use_anthropic(e: &Env, model: &str) {
 #[tokio::test]
 async fn anthropic_is_clamped_to_the_stored_test_result() {
     let e = env().await;
-    set_reply_chars(&e, 16000).await;
+    set_reply_tokens(&e, 16000).await;
     // demo-4k: the test finds that 8192 is too large and stores 4096, so the first request is already at most 4096
     use_anthropic(&e, "demo-4k").await;
     let stored: i64 = q1(&e.t, "SELECT max_tokens FROM settings");
@@ -243,7 +242,7 @@ async fn anthropic_is_clamped_to_the_stored_test_result() {
     assert_eq!(reqs.len() - before, 1);
     assert_eq!(reqs[before].body["max_tokens"], json!(4096));
     // a short answer length stays as it is
-    set_reply_chars(&e, 1000).await;
+    set_reply_tokens(&e, 1000).await;
     let _ = ask(&e.t, &e.user, hint_in("en", "q2", 2)).await;
     assert_eq!(e.t.stub.last().body["max_tokens"], json!(1000));
 }
@@ -251,7 +250,7 @@ async fn anthropic_is_clamped_to_the_stored_test_result() {
 #[tokio::test]
 async fn anthropic_refusing_the_value_gets_the_stored_ceiling_once() {
     let e = env().await;
-    set_reply_chars(&e, 16000).await;
+    set_reply_tokens(&e, 16000).await;
     // demo-8k accepts the test's 8192 (stored) but refuses 24000
     use_anthropic(&e, "demo-8k").await;
     let stored: i64 = q1(&e.t, "SELECT max_tokens FROM settings");
@@ -261,7 +260,7 @@ async fn anthropic_refusing_the_value_gets_the_stored_ceiling_once() {
     assert_eq!(terminal_name(&ev), "done");
     let reqs = chat_requests(&e.t);
     assert_eq!(reqs.len() - before, 2);
-    assert_eq!(reqs[before].body["max_tokens"], json!(24000));
+    assert_eq!(reqs[before].body["max_tokens"], json!(16000));
     assert_eq!(reqs[before + 1].body["max_tokens"], json!(8192));
     let rows: i64 = q1(&e.t, "SELECT COUNT(*) FROM usage WHERE kind = 'chat'");
     assert_eq!(rows, 1);
@@ -280,7 +279,7 @@ async fn the_test_call_keeps_its_v091_body() {
     assert!(verify.body.get("max_tokens").is_none());
     assert!(verify.body.get("max_completion_tokens").is_none());
     // Anthropic: the stored value (8192, then 4096 after a refusal), independent of the answer length
-    set_reply_chars(&e, 100).await;
+    set_reply_tokens(&e, 100).await;
     use_anthropic(&e, "demo-4k").await;
     let tests: Vec<i64> =
         e.t.stub
@@ -321,30 +320,32 @@ async fn message_and_memory_lengths() {
     let (_, st) = e.t.get("/api/ai/status", &e.user).await;
     assert_eq!(st["messageChars"], json!(16000));
     assert_eq!(st["maxMessageChars"], json!(16000));
-    assert_eq!(st["memoryChars"], json!(200));
-    assert_eq!(st["memoryMaxChars"], json!(200));
-    // a memory: 201 characters are too long on a fresh database, 200 pass
+    assert_eq!(st["memoryTokens"], json!(1000));
+    assert_eq!(st["memoryMaxTokens"], json!(1000));
+    // a memory: 4001 ASCII characters (1001 estimated tokens) are too long on a fresh database, 4000 pass
     let (s, v) =
         e.t.post(
             "/api/ai/memories/add",
             &e.user,
-            json!({"content": "x".repeat(201)}),
+            json!({"content": "x".repeat(4001)}),
         )
         .await;
     assert_eq!(
         (s, v["code"].clone(), v["limit"].clone()),
-        (400, json!("ai.memoryTooLong"), json!(200))
+        (400, json!("ai.memoryTooLong"), json!(1000))
     );
     let (s, v) =
         e.t.post(
             "/api/ai/memories/add",
             &e.user,
-            json!({"content": "x".repeat(200)}),
+            json!({"content": "x".repeat(4000)}),
         )
         .await;
     assert_eq!(s, 200, "{v}");
     // the answer length of the limits answer
     let (_, v) = e.t.get("/api/ai/admin/limits", &e.admin).await;
-    assert_eq!(v["limits"]["replyMaxChars"], json!(1000));
-    assert_eq!(v["limits"]["memoryChars"], json!(200));
+    assert_eq!(v["limits"]["replyMaxTokens"], json!(3000));
+    assert_eq!(v["limits"]["memoryTokens"], json!(1000));
+    assert_eq!(v["limits"]["genCallTokens"], json!(20000));
+    assert_eq!(v["ranges"]["replyMaxTokens"], json!([1, 250000]));
 }

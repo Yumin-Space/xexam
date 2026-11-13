@@ -56,11 +56,18 @@
 //! older database still gets its single backup named after the schema it had): the v6 step adds `attempts.session_key` and
 //! `attempts.started_at` (both NULL for every existing record) and stamps the schema `"6"`. A v0.8 binary opens a v6 file
 //! unchanged (it treats a newer schema as current and never reads the two columns), so a rollback needs no restore.
+//!
+//! Schema v6 → v7 (v1.1), in the same way once more (`backups/xexam-schema6-<YYYYmmdd-HHMMSS>.db` for a v6 database; every
+//! older database still gets its single backup named after the schema it had): the v7 step adds `attempts.time_limit`,
+//! `attempts.ended`, `banks.ai_job` and `banks.ai_meta` (each only when `pragma_table_info` lacks it; NULL for every
+//! existing row), then the two indexes `idx_banks_ai_job` and `idx_questions_layout`, and stamps the schema `"7"`. A v1.0
+//! binary opens a v7 file unchanged (it never reads the new columns; its own inserts leave them NULL, which the CHECKs
+//! accept), so a rollback needs no restore, but an AI bank then looks like an imported one.
 use super::super::pyjson;
 use super::super::schema::{
     MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
-    MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS,
-    V5_COLUMNS, V6_COLUMNS,
+    MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, SCHEMA_VERSION, V2_COLUMNS,
+    V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -83,7 +90,7 @@ pub(super) struct Upgrade {
     pub converted_prerelease: bool,
 }
 
-/// Brings the database opened at `db_path` up to schema v6.
+/// Brings the database opened at `db_path` up to schema v7.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -96,12 +103,13 @@ pub(super) fn upgrade(
         Some("3") => 3,
         Some("4") => 4,
         Some("5") => 5,
-        // "6", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 6,
+        Some("6") => 6,
+        // "7", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 7,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 6 || pre {
+    if from < 7 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         if has_any_data(conn)? {
             out.backup = Some(write_backup(conn, db_path, from)?);
@@ -125,7 +133,10 @@ pub(super) fn upgrade(
             if from < 5 {
                 migrate_v5(c)?;
             }
-            migrate_v6(c)?;
+            if from < 6 {
+                migrate_v6(c)?;
+            }
+            migrate_v7(c)?;
             Ok(created)
         })?;
         out.converted_prerelease = pre;
@@ -339,6 +350,19 @@ fn migrate_v6(c: &Connection) -> Result<(), DbError> {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
         }
     }
+    set_schema(c, "6")
+}
+
+/// The v7 DDL (inside the caller's transaction): the four columns, then the two indexes (the unique one needs
+/// `banks.ai_job`), then the schema version. Nothing to backfill: an older exam is untimed and has no `ended` (it keeps the
+/// v1.0 rule), an older bank is an imported one.
+fn migrate_v7(c: &Connection) -> Result<(), DbError> {
+    for (table, column, definition) in V7_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    c.execute_batch(MIGRATE_V7_INDEXES)?;
     set_schema(c, SCHEMA_VERSION)
 }
 
@@ -606,7 +630,15 @@ fn attach_unassigned(c: &Connection, now: &str) -> Result<Option<(i64, String)>,
                 .map(|(_, at)| at)
                 .or(last_updated)
                 .unwrap_or_else(|| now.to_string());
-            let id = banks::insert_bank(c, &name, &filename, true, &created_at, &updated_at)?;
+            let id = banks::insert_bank(
+                c,
+                &name,
+                &filename,
+                true,
+                &created_at,
+                &updated_at,
+                banks::NewBankShare::All,
+            )?;
             (id, name)
         }
     };

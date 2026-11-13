@@ -19,6 +19,8 @@ use xexam_ai_service::app::{App, AppState};
 use xexam_ai_service::config::{Config, JournalMode, Timeouts};
 use zeroize::Zeroizing;
 
+pub mod genkit;
+
 /// The stub's answer (made-up text).
 pub const ANSWER: &str =
     "Here is a **short answer** with a list:\n- one\n- two\n- three\nUse `x + 1` to check.";
@@ -179,6 +181,8 @@ pub struct BackendState {
     pub study_switch: StudySwitch,
     /// The `uiLang` of every study answer
     pub ui_lang: String,
+    /// The generation and import routes
+    pub gen: genkit::GenBackend,
 }
 
 /// A made-up question and its solution, as JSON of the wire (backend contracts section 3).
@@ -410,6 +414,12 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
             }
             a
         }
+        p if p.starts_with("/internal/ai/gen/") || p == "/internal/ai/import/check" => {
+            match genkit::answer(&mut s, p, &body) {
+                Ok(v) => v,
+                Err(code) => return text_answer(code, "no"),
+            }
+        }
         _ => return text_answer(404, "not found"),
     };
     match mode {
@@ -617,6 +627,7 @@ pub async fn fake_backend() -> FakeBackend {
         records: BTreeMap::new(),
         study_switch: StudySwitch::Normal,
         ui_lang: "en".to_string(),
+        gen: genkit::GenBackend::default(),
     }));
     let router = Router::new()
         .fallback(backend_handler)
@@ -651,6 +662,12 @@ pub struct StubState {
     pub force: Option<(u16, String)>,
     /// Delay before the response headers (ms)
     pub head_delay_ms: u64,
+    /// A scripted provider (generation and import tests): consulted before the stub's own behaviour
+    pub script: Option<genkit::Script>,
+    /// Input tokens the scripted answers report as read from the provider's prompt cache (`None` = no figure)
+    pub cached_tokens: Option<i64>,
+    /// Anthropic stub: cache-write tokens every answer reports
+    pub cache_write_tokens: Option<i64>,
 }
 
 pub struct Stub {
@@ -871,9 +888,18 @@ fn user_turn(body: &Value) -> String {
     body["messages"]
         .as_array()
         .and_then(|m| m.iter().rev().find(|x| x["role"] == "user"))
-        .and_then(|m| m["content"].as_str())
-        .unwrap_or("")
-        .to_string()
+        .and_then(|m| match &m["content"] {
+            Value::String(s) => Some(s.clone()),
+            // Anthropic: the text blocks of the turn (a cached prefix, then the task), joined like the OpenAI form
+            Value::Array(a) => Some(
+                a.iter()
+                    .filter_map(|b| b["text"].as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1002,7 +1028,45 @@ fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Respo
     sse_body(rx)
 }
 
+/// A scripted answer as an OpenAI-compatible stream (usage included).
+fn scripted_stream(text: &str, cut: bool, cached: Option<i64>, written: Option<i64>) -> Response {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let _ = tx.send(openai_chunk(text));
+    let reason = if cut { "length" } else { "stop" };
+    let _ = tx.send(Bytes::from(format!(
+        "data: {}\n\n",
+        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": reason}]})
+    )));
+    let _ = tx.send(Bytes::from(format!(
+        "data: {}\n\n",
+        match (cached, written) {
+            (Some(n), w) => json!({"choices": [], "usage": {"prompt_tokens": 21, "completion_tokens": 13, "prompt_tokens_details": {"cached_tokens": n, "cache_creation_tokens": w.unwrap_or(0)}}}),
+            (None, _) => json!({"choices": [], "usage": {"prompt_tokens": 21, "completion_tokens": 13}}),
+        }
+    )));
+    let _ = tx.send(Bytes::from("data: [DONE]\n\n"));
+    sse_body(rx)
+}
+
 fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
+    let script = sh
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .script
+        .clone();
+    let (cached, written) = {
+        let st = sh.state.lock().unwrap_or_else(|e| e.into_inner());
+        (st.cached_tokens, st.cache_write_tokens)
+    };
+    if let (Some(f), false) = (script, is_verify(body)) {
+        match f(&system_text(body), &user_turn(body)) {
+            genkit::Reply::Text(t) => return scripted_stream(&t, false, cached, written),
+            genkit::Reply::Cut(t) => return scripted_stream(&t, true, cached, written),
+            genkit::Reply::Status(code, b) => return text_answer(code, &b),
+            genkit::Reply::Fall => {}
+        }
+    }
     let usage = body
         .get("stream_options")
         .and_then(|o| o.get("include_usage"))
@@ -1074,7 +1138,7 @@ fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
             }
             "demo-big" => {
                 let piece = "y".repeat(1000);
-                for _ in 0..105 {
+                for _ in 0..1005 {
                     if tx.send(openai_chunk(&piece)).is_err() {
                         return;
                     }
@@ -1167,6 +1231,35 @@ fn anthropic_stream(sh: StubShared, model: &str, body: &Value) -> Response {
         );
     }
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let (script, cached, written) = {
+        let st = sh.state.lock().unwrap_or_else(|e| e.into_inner());
+        (st.script.clone(), st.cached_tokens, st.cache_write_tokens)
+    };
+    if let (Some(f), false) = (script, is_verify(body)) {
+        if let genkit::Reply::Text(t) = f(&system_text(body), &user_turn(body)) {
+            let _ = tx.send(anthropic_event(
+                "message_start",
+                json!({"type": "message_start", "message": {"usage": {"input_tokens": 21, "cache_read_input_tokens": cached.unwrap_or(0), "cache_creation_input_tokens": written.unwrap_or(0), "output_tokens": 1}}}),
+            ));
+            let _ = tx.send(anthropic_event(
+                "content_block_start",
+                json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            ));
+            let _ = tx.send(anthropic_event(
+                "content_block_delta",
+                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": t}}),
+            ));
+            let _ = tx.send(anthropic_event(
+                "message_delta",
+                json!({"type": "message_delta", "delta": {"stop_reason": "end_turn"}, "usage": {"output_tokens": 13}}),
+            ));
+            let _ = tx.send(anthropic_event(
+                "message_stop",
+                json!({"type": "message_stop"}),
+            ));
+            return sse_body(rx);
+        }
+    }
     let model = if is_verify(body) {
         "demo-claude".to_string()
     } else {
@@ -1559,6 +1652,19 @@ impl TestApp {
         assert_eq!(v["enabled"], json!(true), "{v}");
     }
 
+    /// Admin: Anthropic-format settings against the stub, a model, test, enable.
+    pub async fn configure_anthropic(&self, admin: &Who, model: &str) {
+        let (s, v) = self
+            .post(
+                "/api/ai/admin/settings",
+                admin,
+                json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic/v1", self.stub.url), "apiKey": KEY, "model": model}),
+            )
+            .await;
+        assert_eq!(s, 200, "{v}");
+        self.verify_and_enable(admin).await;
+    }
+
     /// Admin: only the model (fingerprint change: test and enable again).
     pub async fn set_model(&self, admin: &Who, model: &str) {
         let (s, v) = self
@@ -1587,6 +1693,43 @@ impl TestApp {
             .iter()
             .filter(|p| *p == path)
             .count()
+    }
+
+    /// Uploads a file to the AI import (raw octet-stream body, `X-Filename` percent-encoded) and answers like `post`.
+    pub async fn upload(&self, who: &Who, name: &str, bytes: Vec<u8>) -> (u16, Value) {
+        self.upload_with(who, name, bytes, "application/octet-stream", &[])
+            .await
+    }
+
+    pub async fn upload_with(
+        &self,
+        who: &Who,
+        name: &str,
+        bytes: Vec<u8>,
+        content_type: &str,
+        extra: &[(&str, &str)],
+    ) -> (u16, Value) {
+        let mut enc = String::new();
+        for b in name.bytes() {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                enc.push(b as char);
+            } else {
+                enc.push_str(&format!("%{b:02X}"));
+            }
+        }
+        let mut b = Request::builder()
+            .method(Method::POST)
+            .uri("/api/ai/import/upload")
+            .header("x-xexam-identity", self.ident(who))
+            .header("content-type", content_type)
+            .header("content-length", bytes.len())
+            .header("x-filename", enc);
+        for (k, v) in extra {
+            b = b.header(*k, *v);
+        }
+        let req = b.body(Body::from(bytes)).expect("request");
+        let resp = self.router().oneshot(req).await.expect("response");
+        read_json(resp).await
     }
 
     pub fn usage_rows(&self) -> i64 {

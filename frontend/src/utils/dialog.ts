@@ -63,6 +63,14 @@ function open(opts: AskOptions, extra: HTMLElement | null, onClose: (ok: boolean
   focusTitle(d, titleId);
 }
 
+/**
+ * v1.1 (TL-5): closes every open dialog as cancelled, so each pending `ask` / `askCheck` / `formDialog` resolves with false
+ * (the time-up of an exam closes the submit confirm and any other question, then goes on by itself).
+ */
+export function closeAllDialogs(): void {
+  document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach((d) => d.close('cancel'));
+}
+
 const hasDialog = (): boolean => typeof (document.createElement('dialog') as HTMLDialogElement).showModal === 'function';
 
 /** Confirmation dialog. Falls back to the system confirm() when <dialog> is unavailable (Safari before iOS 15.4). */
@@ -73,6 +81,43 @@ export function ask(opts: AskOptions): Promise<boolean> {
       return;
     }
     open(opts, null, resolve);
+  });
+}
+
+export interface AskChoiceOptions {
+  title: string;
+  body: string;
+  /** The primary (safe) button, the destructive button and the way back */
+  keep: string;
+  discard: string;
+  back: string;
+}
+
+/**
+ * A-OWNER-66: a dialog with two answers and a way back: 'keep' (primary), 'discard' (red), or null (back button, Esc, closed
+ * from outside). The buttons are 44 px high and keep their tab order: keep, discard, back.
+ */
+export function askChoice(o: AskChoiceOptions): Promise<'keep' | 'discard' | null> {
+  return new Promise((resolve) => {
+    if (!hasDialog()) {
+      resolve(window.confirm([o.title, o.body, o.keep].join(String.fromCharCode(10))) ? 'keep' : window.confirm(o.discard + '?') ? 'discard' : null);
+      return;
+    }
+    const titleId = dialogTitleId();
+    const d = h('dialog', { class: 'dlg dlg-choice', 'aria-labelledby': titleId },
+      h('h3', { id: titleId, tabindex: '-1' }, o.title),
+      h('p', null, o.body),
+      h('div', { class: 'acts' },
+        h('button', { class: 'btn primary', type: 'button', onclick: () => d.close('keep') }, o.keep),
+        h('button', { class: 'btn danger solid', type: 'button', onclick: () => d.close('discard') }, o.discard),
+        h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, o.back)));
+    d.addEventListener('close', () => {
+      d.remove();
+      resolve(d.returnValue === 'keep' || d.returnValue === 'discard' ? d.returnValue : null);
+    });
+    document.body.append(d);
+    d.showModal();
+    focusTitle(d, titleId);
   });
 }
 

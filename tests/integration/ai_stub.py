@@ -39,11 +39,22 @@ and a knowledge-points list; when the user turn contains [leak] the hint ends wi
 <answer_key>>**" and three short paragraphs. "answered wrong" (the summary) answers four Markdown headings and one line
 "Items: <n>" (n = the number of <item tags). [slow] in the last user turn keeps working for all of them.
 
+AI banks (v1.1; the system text decides, by its first words):
+"You write new multiple-choice exam questions" (bank generation) and "You write exam questions from a user's study
+material" (import, material mode): one valid made-up question per slot of the SLOTS list (three languages, the options and
+the number of correct ones the slot names). "You sort a user's file": {"kind": ...} by a marker in the sample: "STUBQ" =
+questions, "STUBM" = material, "STUBN" = none, else material. "You find the exam questions": the ranges of the numbered
+lines whose text starts with "Q" followed by a digit (a question ends before the next one). "You convert exam questions":
+one conversion per slot that keeps the source's stem and choices (a "make" slot gets four made-up choices, a "truefalse"
+slot the two constants). All of them use only self-made words (no real question text ever).
+
 One line per request is printed to stdout: method, path (without the query) and status. Never headers or bodies.
 """
 import argparse
 import http.server
+import itertools
 import json
+import random
 import re
 import signal
 import sys
@@ -103,6 +114,175 @@ LANGUAGE_LINES = (re.compile(r'Always reply in (English|Simplified Chinese|Japan
                   re.compile(r'Write the note in (English|Simplified Chinese|Japanese)'))
 LANGUAGE_NAMES = {'English': 'en', 'Simplified Chinese': 'zh', 'Japanese': 'ja'}
 NL = '\n'
+
+# ---- v1.1: AI banks (generation and file import)
+CONS = 'bcdfghjklmprstvwz'
+VOW = 'aeiou'
+
+
+def pw(n):
+    """A unique pseudo word of six letters (the same generator idea as the Rust test kit; never a real word)."""
+    out = ''
+    x = n
+    for _ in range(3):
+        out += CONS[x % len(CONS)]
+        x //= len(CONS)
+        out += VOW[x % len(VOW)]
+        x //= len(VOW)
+    return out
+
+
+def slot_list(user):
+    """The JSON array after the line "SLOTS" of a generation / conversion / material user message."""
+    m = re.search(r'SLOTS\n(\[.*?\])\n', user, re.S)
+    try:
+        return json.loads(m.group(1)) if m else []
+    except ValueError:
+        return []
+
+
+def tri(text):
+    return {'en': text, 'zh': '这是中文题目：' + text, 'ja': 'これは日本語の問題です：' + text}
+
+
+# A process-wide counter: every made-up question gets fresh pseudo words, so ai-service's de-duplication (4-gram / bigram
+# Jaccard >= 0.5 across the whole job) never sees two alike stems; the template words are kept short for the same reason
+SEQ = itertools.count(1)
+
+
+def made_up(slot, seq):
+    """One valid made-up question for a generation / material slot (`seq` is ignored; the counter keeps stems apart)."""
+    seq = next(SEQ) * 97
+    n_opts = int(slot.get('options') or 4)
+    n_right = max(1, int(slot.get('correct') or 1))
+    words = ' '.join(pw(random.Random(seq * 10 + k).randrange(614125)) for k in range(5))
+    # zh is compared by character bigrams: its pseudo words are made of Han characters (an arbitrary block, no meaning)
+    rnd = random.Random(seq)
+    han = ''.join(chr(0x4E00 + rnd.randrange(6000)) for _ in range(12))
+    stem = {'en': 'Which %s fits?' % words, 'zh': '哪一项符合%s？' % han, 'ja': 'どれが %s に合いますか？' % words}
+    options = []
+    for k in range(n_opts):
+        word = pw(seq * 31 + k * 5 + 11) + ' ' + pw(seq * 17 + k * 3 + 5)
+        o = tri('The %s works as described' % word)
+        o['correct'] = k < n_right
+        options.append(o)
+    return {'slot': slot.get('slot'), 'stem': stem, 'options': options,
+            'explanation': tri('The marked statements hold because of the %s rule; the others contradict it in this case.' % pw(seq * 13 + 3))}
+
+
+WHOLE_SYSTEM = 'You work on one file of a user of Xexam'
+SEEN_PREFIXES = set()
+
+
+def file_lines(last):
+    """{line number: text} of the L<n> lines of a whole-file prefix."""
+    return {int(a): b for a, b in re.findall(r'^L(\d+): (.*)$', last, re.M)}
+
+
+def lines_of(rng, lines):
+    """The non-empty texts of the lines a slot names ("L12-L18" or "L5")."""
+    m = re.match(r'L(\d+)(?:-L(\d+))?$', str(rng or ''))
+    if not m:
+        return []
+    lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+    return [lines[n].strip() for n in range(lo, hi + 1) if n in lines and lines[n].strip()]
+
+
+def whole_answer(last):
+    """The reply of a whole-file call (TASK RECOGNISE / CONVERT / WRITE) of the import."""
+    lines = file_lines(last)
+    task = last[last.rfind('TASK '):] if 'TASK ' in last else ''
+    if task.startswith('TASK RECOGNISE'):
+        starts = [n for n in sorted(lines) if re.match(r'(Q\d|\d+[.)．、])', lines[n].strip())]
+        if 'STUBN' in last:
+            kind = 'none'
+        elif 'STUBM' in last:
+            kind = 'material'
+        else:
+            kind = 'questions' if 'STUBQ' in last or len(starts) >= 3 else 'material'
+        qs = []
+        if kind == 'questions':
+            top = max(lines) if lines else 1
+            for i, n in enumerate(starts):
+                end = (starts[i + 1] - 1) if i + 1 < len(starts) else top
+                qs.append({'start': n, 'end': max(n, end), 'type': 'single'})
+        return json.dumps({'kind': kind, 'language': 'en', 'questions': qs})
+    slots = slot_list(task)
+    if task.startswith('TASK CONVERT'):
+        return convert_slots(slots, lambda sl: lines_of(sl.get('lines'), lines))
+    return json.dumps({'questions': [made_up(sl, i) for i, sl in enumerate(slots)]}, ensure_ascii=False)
+
+
+def cache_usage(system, last):
+    """(cache read, cache write) tokens of a whole-file call: the first call of a prefix writes it, later ones read it."""
+    if not system.startswith(WHOLE_SYSTEM) or 'TASK ' not in last:
+        return 0, 0
+    prefix = last[:last.rfind('TASK ')]
+    n = len(prefix) // 4 + 1
+    if prefix in SEEN_PREFIXES:
+        return n, 0
+    SEEN_PREFIXES.add(prefix)
+    return 0, n
+
+
+def convert_slots(slots, region_lines):
+    """The answers of a conversion call; `region_lines(slot)` gives the source lines of a slot."""
+    out = []
+    for slot in slots:
+        no = slot.get('slot')
+        lines = region_lines(slot)
+        stem_line = re.sub(r'^Q?\d+[.)]?\s*', '', lines[0]) if lines else 'Made-up question'
+        kind = slot.get('choices')
+        if kind == 'truefalse':
+            opts = [{'en': 'True', 'zh': '正确', 'ja': '正しい', 'correct': True}, {'en': 'False', 'zh': '错误', 'ja': '誤り', 'correct': False}]
+        elif kind == 'make':
+            opts = []
+            for k in range(int(slot.get('count') or 4)):
+                o = tri('The %s choice number %d' % (pw(no * 9 + k), k + 1))
+                o['correct'] = k == 0
+                opts.append(o)
+        else:
+            texts = [re.sub(r'^\(?[A-Ha-h]\)?[.)．、:：]?\s*', '', x) for x in lines[1:] if re.match(r'^\(?[A-Ha-h][.)．、:：)]', x)]
+            texts = texts or ['First choice', 'Second choice']
+            opts = []
+            for k, text in enumerate(texts):
+                o = {'en': text, 'zh': '选项：' + text, 'ja': '選択肢：' + text}
+                o['correct'] = k == 0
+                opts.append(o)
+        out.append({'slot': no, 'stem': {'en': stem_line, 'zh': '这是中文题目：' + stem_line, 'ja': 'これは日本語の問題です：' + stem_line},
+                    'options': opts, 'explanation': tri('The marked choice is right because of the %s rule; the others do not fit.' % pw(no * 5 + 1))})
+    return json.dumps({'questions': out}, ensure_ascii=False)
+
+
+def import_answer(system, last):
+    """The reply of an import / generation request by the first words of its system text, or None for any other request."""
+    if system.startswith(WHOLE_SYSTEM):
+        return whole_answer(last)
+    if system.startswith("You sort a user's file"):
+        kind = 'questions' if 'STUBQ' in last else 'none' if 'STUBN' in last else 'material'
+        return json.dumps({'kind': kind, 'language': 'en'})
+    if system.startswith('You find the exam questions'):
+        m = re.search(r'start on lines L(\d+) to L(\d+)', last)
+        lo, hi = (int(m.group(1)), int(m.group(2))) if m else (1, 1)
+        lines = {int(a): b for a, b in re.findall(r'^L(\d+): (.*)$', last, re.M)}
+        starts = [n for n in sorted(lines) if lo <= n <= hi and re.match(r'Q\d', lines[n].strip())]
+        top = max(lines) if lines else hi
+        qs = []
+        for i, n in enumerate(starts):
+            end = (starts[i + 1] - 1) if i + 1 < len(starts) else min(top, hi)
+            qs.append({'start': n, 'end': max(n, end), 'type': 'single'})
+        return json.dumps({'questions': qs})
+    if system.startswith('You convert exam questions'):
+        def region_lines(slot):
+            src = str(slot.get('source'))
+            region = re.search(r'<<<%s [0-9a-f]+>>>\n(.*?)\n<<<END %s ' % (re.escape(src), re.escape(src)), last, re.S)
+            return [x.strip() for x in (region.group(1) if region else '').split('\n') if x.strip()]
+        return convert_slots(slot_list(last), region_lines)
+    if system.startswith('You write new multiple-choice exam questions') or system.startswith("You write exam questions from a user's study material"):
+        slots = slot_list(last)
+        seq0 = sum(ord(c) for c in re.findall(r'<<<(?:SOURCE|MATERIAL) ([0-9a-f]+)>>>', last)[:1] and last[:40]) % 50
+        return json.dumps({'questions': [made_up(sl, seq0 + int(sl.get('slot') or i + 1) * 3 + i) for i, sl in enumerate(slots)]}, ensure_ascii=False)
+    return None
 # Study answers (v0.9): made-up texts, in the reply language; the hints name no option letter
 HINTS = {
     'en': ('First work out what the question is really asking, then compare it with what you know about the topic, one step at a time.' + NL + NL +
@@ -333,6 +513,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         last = next((text_of(m.get('content')) for m in reversed(messages)
                      if isinstance(m, dict) and m.get('role') == 'user'), '')
         answer, slow = self._answer(system, last)
+        c_read, c_write = cache_usage(system, last)
         usage = bool((req.get('stream_options') or {}).get('include_usage'))
         prompt = sum(len(text_of(m.get('content'))) for m in messages if isinstance(m, dict))
 
@@ -360,7 +541,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._chunk('data: %s\n\n' % json.dumps({
                 'id': 'chatcmpl-demo', 'object': 'chat.completion.chunk', 'created': int(time.time()), 'model': model,
                 'choices': [], 'usage': {'prompt_tokens': tokens(' ' * prompt), 'completion_tokens': tokens(answer),
-                                         'total_tokens': tokens(' ' * prompt) + tokens(answer)}}))
+                                         'total_tokens': tokens(' ' * prompt) + tokens(answer),
+                                         'prompt_tokens_details': {'cached_tokens': c_read, 'cache_creation_tokens': c_write}}}))
         self._chunk('data: [DONE]\n\n')
         self._stream_end()
 
@@ -400,6 +582,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         last = next((text_of(m.get('content')) for m in reversed(messages)
                      if isinstance(m, dict) and m.get('role') == 'user'), '')
         answer, slow = self._answer(system, last)
+        c_read, c_write = cache_usage(system, last)
         prompt = len(system) + sum(len(text_of(m.get('content'))) for m in messages if isinstance(m, dict))
 
         def event(name, obj):
@@ -409,7 +592,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self._chunk(event('message_start', {'type': 'message_start', 'message': {
             'id': 'msg_demo', 'type': 'message', 'role': 'assistant', 'model': model, 'content': [],
             'stop_reason': None, 'stop_sequence': None,
-            'usage': {'input_tokens': tokens(' ' * prompt), 'output_tokens': 1}}}))
+            'usage': {'input_tokens': tokens(' ' * prompt), 'output_tokens': 1,
+                      'cache_read_input_tokens': c_read, 'cache_creation_input_tokens': c_write}}}))
         self._chunk(event('content_block_start', {'type': 'content_block_start', 'index': 0,
                                                   'content_block': {'type': 'text', 'text': ''}}))
         self._chunk(event('ping', {'type': 'ping'}))
@@ -435,6 +619,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _answer(system, last):
         """(answer text, slow) for the last user message, in the language the system text names (else the message's)."""
         lang = named_lang(system) or lang_of(last)
+        ai_bank = import_answer(system, last)
+        if ai_bank is not None:
+            return ai_bank, False
         if last.strip() == 'Test':
             return 'OK', False
         if 'remember for later chats' in system:     # the memory suggestion (one short note)

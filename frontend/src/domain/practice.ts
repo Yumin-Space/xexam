@@ -1,19 +1,15 @@
 // Practice mode (v0.6.5): the quiz page with immediate feedback. Pure rules, no DOM, no network, so the checking logic is
 // tested on its own (practice.test.ts):
-//   · a single-choice question is checked as soon as an option is chosen; multiple-choice and hotspot questions have a
-//     "Check answer" button, usable once something is chosen;
+//   · every question type (single, multiple choice, hotspot) is checked only by the "Check answer" button, usable once
+//     something is chosen; until then the pick can change (v1.1, PC-1: a single-choice pick no longer checks by itself);
 //   · a checked question is locked: its answer can no longer change;
 //   · when the practice is finished, every checked question counts with its answer; an unchecked question counts as not
-//     answered (wrong), like an unanswered question of an exam - whatever was chosen on it without checking.
+//     answered (wrong) - whatever was chosen on it without checking. This is practice only: an exam follows the
+//     "not completed" rule of exam-timer.ts (v1.1, TL-7).
 import type { AttemptKind, Question } from '../types/api.ts';
 import { grade, stateOf, type Answer } from './grading.ts';
 
 type Q = Pick<Question, 'kind' | 'items' | 'answer'>;
-
-/** Single-choice questions are checked by the pick itself (no "Check answer" button) */
-export function checksOnPick(q: Pick<Question, 'kind'>): boolean {
-  return q.kind === 'single';
-}
 
 /** Whether "Check answer" can be pressed: not checked yet, and something is chosen (any hotspot item is enough) */
 export function canCheck(q: Pick<Question, 'kind' | 'items'>, a: Answer, checked: boolean): boolean {
@@ -91,8 +87,9 @@ export function sheetMatches(f: SheetFilter, tile: { open: boolean; wrong: boole
 }
 
 /**
- * The graded results of a finished exam or practice, in question order. Exam: every answer as given. Practice: the answers
- * of checked questions; an unchecked question has no answer (null) and is wrong.
+ * The graded results of a finished exam or practice, in question order. Exam: every answer as given (the caller then marks
+ * the not-completed ones, exam-timer.ts). Practice: the answers of checked questions; an unchecked question has no answer
+ * (null) and is wrong.
  */
 export function finalResults<T extends Q & { id: string }>(
   kind: AttemptKind,
@@ -147,7 +144,7 @@ export interface BarInput {
 /**
  * The slot logic of the action bar as a pure function, so its invariants run in CI: the slot list depends only on the page
  * (kind and AI state), never on the question; a practice always shows Check answer (usable once something is chosen and the
- * question is not checked yet, greyed otherwise, a single-choice question is checked by the pick) and, as a separate button
+ * question is not checked yet, greyed otherwise; v1.1: for every question type) and, as a separate button
  * in the next place, Next (Finish practice on the last question); an exam has no Check answer, only Next (Submit on the last).
  */
 export function barSlots(i: BarInput): BarSlots {
@@ -160,7 +157,7 @@ export function barSlots(i: BarInput): BarSlots {
   slots.push({ slot: 'flag', enabled: true });
 
   const main: BarItem[] = [];
-  if (practice) main.push({ act: 'check', enabled: i.answered && !i.checked && !checksOnPick({ kind: i.qType }) });
+  if (practice) main.push({ act: 'check', enabled: i.answered && !i.checked });
   main.push({ act: i.last ? (practice ? 'finish' : 'submit') : 'next', enabled: true });
   return { slots, main };
 }

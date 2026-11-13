@@ -30,14 +30,14 @@
 
 ## 1. Your first exam
 
-1. Open the menu (the three-line button at the top right) and choose **Question banks** (administrators and bank managers see it). Under **Import Excel**, leave **New bank** selected, click **Choose Excel file** and pick your workbook (in the six-column layout, see [section 12](#12-excel-question-bank-format)). Check the preview, then click **Create the question bank**.
+1. Open the menu (the three-line button at the top right) and choose **Question banks** (administrators and bank managers see it). Under **Import Excel**, leave **New bank** selected, click **Import Excel file** and pick your workbook (in the six-column layout, see [section 12](#12-excel-question-bank-format)). Check the preview, then click **Create the question bank**.
 2. Click **Start an exam** in the message that confirms the import (or choose **Home** in the menu). In the **Start an exam or practice** panel every sheet is ticked at first: untick the ones you do not want, then click **Start exam** in the bar at the bottom of the panel (**Count** and **Shuffle** in the same bar set how many questions are asked and in which order). **Start practice** next to it starts a [practice](#5-practice) with the same questions instead.
 3. Answer the questions, then click **Submit**. The result page shows the score and, for each wrong question, the correct answer and the explanation (**All questions (n)** shows every question).
 4. To see the exam again later: open the menu, choose **Study records** and click the time of the exam.
 
 A new bank is visible to you and to the administrators, and to every user who has **Include banks imported later**. An administrator gives it to other users in [User management](#14-users-and-sign-in).
 
-![The exam page: a hotspot question in English, the English / 中文 / 日本語 switch and the answer sheet with Submit](screenshots/desktop-2-quiz.png)
+![The exam page: a hotspot question in English, the English / 中文 / 日本語 switch and the answer sheet with Finish exam](screenshots/desktop-2-quiz.png)
 
 ## 2. The layout
 
@@ -52,7 +52,7 @@ A new bank is visible to you and to the administrators, and to every user who ha
 - On wide screens the page content is centered and at most 1120 px wide.
 - **On a phone** (up to 719 px wide) the header hides while you scroll down and comes back when you scroll up. The bar at the bottom of a practice or exam, and on Home, stays on the screen.
 - **Icons**: the buttons that are only an icon (for example the arrows, the AI icons and the flag in a practice) have a name for screen readers; on a touch screen, press and hold one to see its label.
-- **The footer**: every page ends with a small centred line, **GitHub | Xexam 1.0** (the version of the running app). **GitHub** opens the project's repository and **Xexam 1.0** its releases, both in a new tab. The disclaimer about the question banks stays above it. On AI Chat the line is at the bottom of the list of chats, never inside a conversation.
+- **The footer**: every page ends with a small centred line, **GitHub | Xexam 1.1** (the version of the running app). **GitHub** opens the project's repository and **Xexam 1.1** its releases, both in a new tab. The disclaimer about the question banks stays above it. On AI Chat the line is at the bottom of the list of chats, never inside a conversation.
 - The exam and the practice are focused full-screen pages without the header.
 - Opening **Question banks**, **AI settings** or **System log** without the permission shows **Not allowed** with **Back to Home**; **User management** sends everyone but administrators to Home.
 - Everything that deletes asks first, in a dialog that says what goes and that it cannot be undone; its confirm button is solid red. **Delete** buttons are red, or turn red when you point at them.
@@ -84,11 +84,22 @@ After that, Home has:
 
 The unfinished exam as a compact banner; **All** and **Wrong answers** in the corner of **Start an exam or practice**; **Select all** and **Clear** on the row of **Banks and sheets**; the two demo banks as unfolded cards with their sheets; the bar with the green **Start exam**, the orange **Start practice**, the scope, **Count** and **Shuffle**; on the right, the latest result and the overview.
 
+### 3.1 Exam time limit
+
+On **Home**, next to the number of questions and the shuffle option, tick the time-limit box and type the minutes, from 1 to 600. The limit applies to **exams only**: practice ignores it. The box and the number start empty and unticked each time Home opens; the number you typed stays while you remain on the page. Typing a number ticks the box, and unticking it ignores the number. If the box is ticked and the number is not a whole number from 1 to 600, the exam does not start and the field says why.
+
+A timed exam shows the **time left** at the top of the page; an untimed exam and every practice show the time used, as before. **Save and exit**, closing the page or reloading it pauses the countdown, and the exam continues from the same second when you come back. When the time is up, the exam is submitted by itself, and its unanswered questions are **not completed**, exactly as with a submit by hand.
+
+
+![A timed exam on a desktop: the time left (37:10) at the top right next to Save and exit, and the answer sheet with Answered 2/12 and Finish exam](screenshots/desktop-22-timed-exam.png)
+
 ## 4. The exam page
 
 The screenshot in [section 1](#1-your-first-exam) shows it.
 
 - At the top: **Question 4 of 12** (for example), the time used, and **Save and exit**, which keeps your answers and the time used so you can continue later from Home in the same browser.
+- **In a narrow window or on a phone** (when the answer sheet is not shown beside the questions) the top row also shows **Done 3/12** and a green **Finish exam** button (in a practice, an orange **Finish practice** button), both inside the bar; the answer sheet then has no finish button of its own. On the narrowest phones the count reads **3/12**, and the button may show only its icon, with its name on press and hold.
+- **Time limit** (only when you set one on Home, see [section 3.1](#31-exam-time-limit)): the time left counts down at the top of the page instead of the time used, in a larger bold figure. A notice appears when 30 minutes are left (never for a limit of 30 minutes or less). Closing or reloading the page pauses the countdown. At zero the exam is submitted by itself.
 - **No right/wrong feedback and no score while you answer.**
 - **English** / **中文** / **日本語** switches the question text. Switching changes only the text: your answers, the option letters, the timer and the grading stay the same. The option buttons of hotspot questions switch too.
   - English is the base language of every question: it is always there. Chinese and Japanese are there when the workbook has them.
@@ -96,10 +107,12 @@ The screenshot in [section 1](#1-your-first-exam) shows it.
   - Your choice is saved as a setting and is also where the answers and explanations start after you submit.
 - **Previous** and **Next** move between questions (on the last question, **Next** becomes **Submit**). **Mark to revisit** marks a question you want to come back to.
 - **Answer sheet**: one tile per question. Solid = answered, half-filled = a hotspot question partly answered, hollow = not answered, small yellow square = marked to revisit. Click a tile to jump there. On a phone the sheet is folded until you open it. Above the tiles are three chips, **All n**, **Open n** and **Marked n**, which show only the questions of that kind (the counts follow your answers). Below the tiles: **Answered 3 of 12** and **Submit**.
-- **Submit** asks for confirmation; unanswered questions count as wrong. When some questions are open or marked, the dialog lists their numbers; **Keep answering** jumps to the first open question (or, when none is open, to the first marked one).
+- **Submit** asks for confirmation. An unanswered question is **not completed** in every exam, timed or not: it is not wrong, it does not go into the wrong-answer notebook, it is listed under **Not completed** on the result page and in the record, and the score counts all questions. When some questions are open or marked, the dialog lists their numbers; **Keep answering** jumps to the first open question (or, when none is open, to the first marked one).
 - Grading: a single-choice or multiple-choice question is correct only when you chose exactly the correct options; a hotspot question is correct only when every item is right.
 - Keyboard (desktop): `←` `→` previous / next question, `A`–`H` choose an answer (choice questions), `M` mark to revisit.
 - **No AI help while an exam runs**, for anybody: the exam page has none of the AI buttons or icons of [section 5.1](#51-ai-hint-ai-explanation-and-the-ai-panel). An exam gets AI only after you have submitted it, on its [result page](#61-ai-analysis) and in its study record.
+
+![Finishing an exam with open questions: the dialog "10 questions are not completed" says they are not counted as wrong, lists the open numbers and offers Keep answering and Submit](screenshots/desktop-23-exam-submit.png)
 
 ## 5. Practice
 
@@ -108,7 +121,7 @@ A practice uses the same page as the exam, but checks every answer right away. S
 - A **Practice** tag sits next to **Question 4 of 12**.
 - **The bar at the bottom** holds, in this order: **Previous** (‹), **Check answer**, **Next** (›), **AI hint** and **AI explanation** (only for users with the **AI+ feature**, see [section 5.1](#51-ai-hint-ai-explanation-and-the-ai-panel)) and **Mark to revisit** (a flag). **Check answer** and **Next** are two separate buttons in fixed places on every question; neither turns into the other.
 - **On a phone** the arrows, the AI icons and the flag show only their icons, each with its name on press and hold; **Check answer** and **Next** keep their text (shortened to **Check** and **Next** on a narrow screen). Every button is at least 44 px tall on a touch screen.
-- **Check answer** works once something is chosen and the question is not checked yet. Until then it is greyed out in the same place. A single-choice question is checked as soon as you pick an option, so its **Check answer** is greyed out from then on. A multiple-choice or hotspot question is checked with **Check answer**; for a hotspot question one item is enough, and items left open count as wrong.
+- **Check answer** works once something is chosen and the question is not checked yet. Until then it is greyed out in the same place. Every question type is checked with **Check answer** only: picking a single-choice option does not check it, and the pick can still be changed until you check the question. A multiple-choice or hotspot question is checked with **Check answer**; for a hotspot question one item is enough, and items left open count as wrong.
 - **Next** goes to the next question at any time. On the last question the same place reads **Finish practice**.
 - **After checking**, the question is locked and shows:
   - **Correct** or **Wrong**;
@@ -117,7 +130,7 @@ A practice uses the same page as the exam, but checks every answer right away. S
   - the explanation and the memory aid, in the language of the page's **English** / **中文** / **日本語** switch.
 - Auto-advance never applies in a practice: you move on with **Next**.
 - The answer sheet fills checked questions green (correct) or orange (wrong), and says, for example, **Checked 4 of 12 · 3 correct**.
-- **Finish practice** (below the answer sheet, and on the last question) asks only when some questions are not checked yet. Those count as not answered (wrong), even when an answer is chosen.
+- **Finish practice** (below the answer sheet on a wide screen, in the top row in a narrow window or on a phone, and on the last question) asks only when some questions are not checked yet. Those count as not answered (wrong), even when an answer is chosen.
 - **Save and exit** works as in an exam; Home then shows **Unfinished practice** with how many questions are checked.
 - A finished practice opens the **Practice result** page, is saved in **Study records** as a **Practice** record, and counts in the wrong-answer notebook like an exam.
 
@@ -149,7 +162,7 @@ Users with the **AI+ feature** can ask an AI model for help on any question of a
 
 **One answer at a time.** While an answer is being written, a request for another one does not start it. The panel says which one is still running (**AI hint for question 3 is still being written.**, or that an AI summary or an answer in AI Chat is) and offers **Stop it and write this one** (and **Show it** when it is on this page). Nothing is stopped by itself. By default each user may have one answer at a time ([section 17](#17-ai-settings)).
 
-**Limits.** Every answer asked of the model counts toward the per-user AI request limits in [section 17](#17-ai-settings) (per minute, per hour and per day). When one is used up, the panel says which one and when AI is available again, and the buttons wait until then.
+**Limits.** Every answer asked of the model in chat, hint, explanation and summary counts toward the per-user AI request limits in [section 17](#17-ai-settings) (per minute, per hour and per day). AI generation and AI import are outside these three limits; they are limited by their own call ceilings and the daily number of AI bank jobs. When one is used up, the panel says which one and when AI is available again, and the buttons wait until then.
 
 **In AI Chat.** Each practice has one chat, `<start time>-Practice`, that holds every hint and explanation of it, in order ([section 16.1](#161-chats-of-practices-exams-and-summaries)). What is sent to the AI provider is listed at the end of [section 16](#16-ai-chat).
 
@@ -174,6 +187,8 @@ Buttons: **Retry wrong answers only**, **Take it again** (**Retake practice** af
 ![Result page on a desktop](screenshots/desktop-3-result.png)
 
 An exam with two wrong answers, **Wrong only** open: the score, then a choice question with the chosen option in solid orange and the correct ones in solid green, its own **English** / **中文** / **日本語** switch, and the explanation and the memory aid.
+
+![The result of an exam with questions not completed: 1 correct, 1 wrong, 10 not completed, the time limit in the summary line, the filter Not completed (10) and a hotspot question with the Not completed tag and its correct answers](screenshots/desktop-24-not-completed.png)
 
 ### 6.1 AI analysis
 
@@ -230,7 +245,7 @@ Settings belong to your account and are saved on the Xexam server, together with
 
 <table>
 <tr>
-<td width="50%"><img src="screenshots/desktop-6-settings.png" alt="Settings page on a desktop, with the AI chat mode section that only administrators see"></td>
+<td width="50%"><img src="screenshots/desktop-6-settings.png" alt="Settings page on a desktop: account, appearance, language, answering and reset to defaults (free mode is no longer here; it is a switch in AI settings › AI+ users)"></td>
 <td width="50%"><img src="screenshots/desktop-7-dark.png" alt="Exam page in the dark theme"></td>
 </tr>
 <tr>
@@ -249,12 +264,12 @@ The version entry of the menu (for example **Xexam v0.7.5**) opens **About Xexam
 
 Here administrators and bank managers import Excel workbooks. Users without the permission do not see the page in the menu; opening it directly shows **Not allowed** with **Back to Home**.
 
-- **Import Excel**: pick **New bank** or **Update a bank** (two small buttons next to the title; their tooltips explain them; for an update you choose the bank under **Bank to update**), then click **Choose Excel file** or drop the file anywhere on the panel. The hint line says to upload the whole workbook in the six-column layout and ends in a link to the **Excel format guide**.
+- **Import Excel**: pick **New bank** or **Update a bank** (two small buttons next to the title; their tooltips explain them; for an update you choose the bank under **Bank to update**), then click **Import Excel file** or drop the file anywhere on the panel. The hint line says to upload the whole workbook in the six-column layout and ends in a link to the **Excel format guide**.
 - **The bank list**, one compact row per bank: its file, number of questions (with the retired ones, for example **5 questions (+2 retired)**) and sheets and last update, with **Update** and **Delete**. Its sheets are folded under the arrow on the right of the row. A bank whose questions are all retired because they came from an older Excel layout says so, and that an update with a six-column file brings it back into use.
   - An **administrator** sees **All question banks**, each with who imported it (**uploaded by sam**, **uploaded by you**), and may update or delete any of them.
   - A **bank manager** sees **Your question banks**: only the banks they imported, which they may update or delete. Banks an administrator gave them to study are on Home.
 - **Import history**: one line per import, the latest 8 (an administrator sees all imports, a bank manager those of their own banks).
-- **Excel format and import guide**, folded until you open it, is the short version of [section 12](#12-excel-question-bank-format) and [section 13](#13-importing-question-banks).
+- **Excel format and import guide**, folded until you open it, is the short version of [section 12](#12-excel-question-bank-format) and [section 13](#13-importing-question-banks). Its last part, **Use an outside AI to make the Excel file**, has numbered steps and a ready prompt with a **Copy** button ([section 13.10](#1310-making-the-excel-file-with-an-outside-ai)).
 
 ![Question banks page as an administrator: the preview of an update of “Kitchen basics” with a warning about a differing Japanese answer, the bank list with who uploaded each bank, and the Excel format guide opened at its first sections](screenshots/desktop-5-banks.png)
 
@@ -396,6 +411,85 @@ To use such a bank again, **update it with a six-column version of its workbook*
 
 A delete cannot be undone; your own backup is the only way back (section 5 of [database.md](database.md)).
 
+### 13.7 Checkboxes and bulk actions
+
+Every bank and every sheet in the bank list has a checkbox. Ticking a bank ticks all its sheets; a bank with only some sheets ticked shows a mixed box. When something is ticked, a toolbar appears above the list:
+
+- **Delete selected** deletes the ticked banks and sheets after one dialog that lists what goes and asks whether their study records go too (the same choice as deleting a bank). A bank whose sheets are all ticked is deleted as a whole. A sheet is deleted on its own only while other sheets of the bank remain; an AI-generated bank has one sheet and is deleted as a whole.
+- **AI questions** starts an AI-generated bank from the ticked banks and sheets (section 13.9). It is flat amber with white text; when it cannot be used (nothing usable is ticked, an AI+ bank is ticked, the daily limit) it is a plain grey button, with no text under it: tap, hover or focus it to read the reason in a small tip box (Esc or a tap elsewhere closes it). A new AI bank is not ticked on Home by itself.
+
+Each bank row shows its name in bold, a line of counts (for example **7 questions, 2 sheets**), an arrow that folds its sheets, and the AI+ badge of an AI-generated bank (section 13.9). On a phone the row's buttons (**Update** and **Delete**) sit on their own line under the name, the badge has its own line too, and long names wrap.
+
+### 13.8 AI file import
+
+On **Question banks**, the **AI import** card sits under the **Import Excel** card, with its own drop zone. Choose a file or drag it there: PDF, Word (.docx), Excel (.xlsx), PowerPoint (.pptx), Markdown, TXT or CSV, up to 20 MB. The card says that the file is sent to the AI service you configured in [AI settings](#17-ai-settings), and it shows the limits that are set there (size, and at most 50 questions per import). Only users with the AI import feature and a usable AI+ see the card; otherwise it is hidden, or greyed out (the reason is in the tip on tap, hover or focus). The button has the same flat amber as the AI generation buttons and the size of **Import Excel file**.
+
+ai-service reads the file in memory and never saves it on disk; the file is gone after processing. The whole file is sent once, as the cached start of every request of the job (prompt caching), so the later calls mostly read it from the provider's cache. The first call reads the whole file: whether it holds questions or study material, and how many questions. After it, up to four calls write the questions at the same time. A file too large for the model is read in parts instead, two or three at a time, and the card shows the progress (for example **Recognising segment 3/9…**).
+
+The confirm step shows what was found. If the file holds questions, a label shows their number (**File has 69 questions**); when there are more than the limit (50 by default), the label is red and a second red label says **Only the first 50 can be imported**: the import takes the first 50 in file order, and the finished card says **the first 50 of 69 questions**. If it is material, the AI writes exactly 20 questions from it. Before **Import**, give the new bank a name: the box is filled with a suggestion, and the button stays greyed out while the box is empty. A name that already exists is refused with **This name already exists — try another one.** Nothing is saved before you confirm; declining, or letting the confirm step expire, costs nothing. Confirming uses one of the day's AI bank jobs (generation and import share them; administrators are exempt, as in section 13.9). AI import, like AI generation, does not count against the per-user AI request limits (per minute, hour and day) and is never refused by them.
+
+While the job runs, its card shows the progress and one line of figures, for example **This run: 9 calls, input/output used: 1.4K/21K tokens** (plus **cache written** when the provider reports it); the line stays on the finished card. A question that fails three times (missing, unreadable or refused by the checks) is skipped, also with **Unlimited** on, so a job always ends: the bank holds the questions that passed and the card lists the skipped ones, for example **imported 48 of 50; 2 could not be converted**. **Cancel** on a running import that already has converted questions asks whether to **Save the N finished** as an AI bank, **Discard all**, or **Keep going** (material always needs its 20 questions, so there it is a plain cancel). A failed job says why and creates no bank.
+
+### 13.9 AI-generated question banks
+
+Who: users with the AI+ feature, the generation feature and bank management (administrators always qualify). There are three places to start one: **AI questions** in the toolbar of Bank management (for the ticked banks and sheets), **AI questions** on Home (for the ticked banks and sheets), and **AI wrong-answer drill** in the wrong-answer notebook mode of Home.
+
+- **Minimum source**: 30 single- or multiple-choice questions in the ticked banks (hotspot questions do not count); in wrong-answer mode, 10 wrong single- or multiple-choice questions.
+- **AI banks are never a source**: as soon as the ticked banks and sheets contain an AI-generated bank, AI generation is greyed out (in both modes, on Home and in Bank management) until you untick it.
+- **Result**: a new bank with one sheet named **AI** and exactly 20 valid questions, in Chinese, English and Japanese, each with its answer and explanation: 14 single and 6 multiple choice (never hotspot). A partial bank is never saved: a missing or invalid question is generated again (at most 5 tries per question); if one still fails, the job fails and saves nothing.
+- **Name**: you type the name in the start dialog (Home and Bank management); a suggestion is filled in, for example `Kitchen basics_sample01_20261113101530` (source, the first 8 characters of your username and the start time).
+- **Quota**: 3 AI bank jobs per user per day, generation and file import together, reset at 0:00 of the server time. One job counts as 1, however many AI calls it needs. A job counts when it is done, or when it is cancelled after a call was sent. Failures and jobs cancelled before their first call do not count. Administrators are exempt. The per-user AI request limits (per minute, hour and day) do not apply to generation or import.
+- **Limits**: **Unlimited** is on by default for generation and for import (section 17.5): no call ceiling, no limit on the answer length per call and no deadline. Two safety stops always remain: the job fails after 3 provider errors in a row, and you can always cancel. With **Unlimited** off, a generation makes at most 15 AI calls (an import 25; 8 to 40 in AI settings, the same for everyone, administrators included), each call keeps the length of section 17.5, and the job has 30 minutes. A failure says why, with the rejection counts by reason, and the same reason is written to the System log at ERROR level.
+- **Progress**: a progress card on Home and Bank management shows the questions made against the goal and one line of figures (calls and input / output tokens). You may leave the page; the card tells you when the job is done or has failed, and its corner button closes it. A finished bank appears on Home and in Bank management at once, even if you were on another page or in a hidden tab.
+- **Marker**: the AI+ badge with a word for where the bank came from: **AI+practice set** (ticked banks and sheets, Home or Bank management), **AI+wrong-answer set** (wrong-answer notebook mode) or **AI+imported set** (AI file import). It appears on the bank row, on the question cards of its questions and on every review card of them (result, record, wrong-answer review). Its tip names who generated it and when, and says that AI-generated answers may be wrong.
+- **Sharing**: an AI bank is shared like any new bank: users who may see every source bank get it when they have the option to include future banks. An administrator can remove an AI bank from a user in User management, like any other bank.
+
+
+![Home after an AI generation: the card saying the AI bank "Everyday mix" is ready with 20 questions, its token line and Practise it, and the new bank in the list with the AI+practice set badge](screenshots/desktop-25-ai-bank-home.png)
+
+### 13.10 Making the Excel file with an outside AI
+
+This is the guide part **Use an outside AI to make the Excel file** (on the **Question banks** page, inside the Excel format guide). The prompt is shown in a box that scrolls inside itself, with a **Copy** button; replace the two placeholders in square brackets before you send it. Prompt text (English):
+
+1. Open the AI chat you already use outside Xexam.
+2. Attach or paste your own material: notes, a PDF, a list of questions or the text of a web page.
+3. Copy the prompt below, paste it into the chat, and replace [NUMBER OF QUESTIONS] and [TOPIC] with your own words.
+4. Ask for the result as an .xlsx file to download. If the AI cannot make a file, ask for the table, paste it into Excel starting at cell A1 and save it as “Excel Workbook (.xlsx)”.
+5. Open the file and check a few rows: the options, the answer letters and the three languages.
+6. Import it here with “Import Excel file”, as a new bank or as an update of a bank.
+
+```text
+I want to turn my own material into a question bank: one Excel file (.xlsx) that I will import into a study app. Use only the material I give you (attached or pasted); do not add facts that are not in it.
+
+Make [NUMBER OF QUESTIONS] questions about [TOPIC].
+
+FILE
+- One workbook (.xlsx) with exactly one worksheet, named after the topic (short; none of the characters : \ / ? * [ ]).
+- If you cannot create a file, give me one table with the same six columns that I can paste into Excel starting at cell A1.
+- Plain text cells only: no merged cells, no images, no formulas, no extra worksheets, no extra columns, no comments.
+
+ROWS
+- Row 1 is the heading row, exactly these six headings in columns A to F: Question (English), Question (Chinese), Question (Japanese), Answer (English), Answer (Chinese), Answer (Japanese).
+- From row 2 on, one question per row. Never put two questions in one row or one question in two rows. Fill all six cells of every row.
+
+COLUMNS A, B, C: the question in English, Chinese (Simplified) and Japanese
+- Each cell holds the question text, then the options, one option per line (line breaks inside the cell). Write the options as A. text, B. text, C. text and so on (4 or 5 options, at most 8, letters in order).
+- The three cells of a row are the same question with the same options in the same order and with the same letters.
+- Single choice has exactly one right option. Multiple choice has two or more, and its question text says how many to choose.
+- Write natural Japanese in column C (with hiragana and katakana). If my material is in another language, translate it.
+
+COLUMNS D, E, F: the answer, in English, Chinese and Japanese
+- Line 1 of each cell is the heading and the answer letters only: single choice 【Answer】B, multiple choice 【Answer】C, E (letters in alphabetical order, separated by commas). Chinese uses 【答案】, Japanese uses 【正解】.
+- Then a new line with the explanation (one or two sentences): 【Explanation】 in English, 【解析】 in Chinese, 【解説】 in Japanese.
+- Then a new line with a short memory aid: 【Memory aid】 in English, 【记忆口诀】 in Chinese, 【覚え方】 in Japanese.
+- Use the brackets 【 】 exactly as written. The letters must be the same in D, E and F.
+
+Answer with the file (or the table) only, and no other text in the cells.
+```
+
+- The outside AI’s terms and costs are your own business. Do not send material that you may not share.
+- AI can make mistakes: check the answers before you study from them.
+
 ## 14. Users and sign-in
 
 Since v0.6 everyone signs in. There are three kinds of account:
@@ -501,7 +595,7 @@ Every AI hint, explanation, analysis and summary is saved in **AI Chat**, in a c
 
 **AI settings** (menu, administrators only; anybody else gets **Only administrators can open AI settings.**) is where AI is connected, tested, switched on and watched. The page always opens, also when ai-service is not running.
 
-**The four tabs.** AI settings is one page with four tabs under the status chips: **AI+ function** (the switch, the connection and the model: items 1 to 3 below), **AI+ users** (item 4), **AI usage** (item 5) and **AI safety** (chat retention and safety limits: items 6 and 7). On a phone the tabs are one compact row of icons with short labels (**Function**, **Users**, **Usage**, **Safety**). A fifth tab for AI question-bank generation will come later and is not in this version.
+**The tabs.** AI settings is one page with five tabs under the status chips: **AI+ function** (the switch, the connection and the model: items 1 to 3 below), **AI+ users** (item 4), **AI usage** (item 5), **AI banks** (section 17.5) and **AI safety** (chat retention and safety limits: items 6 and 7). On a phone the tabs are one compact row of icons with short labels (**Function**, **Users**, **Usage**, **Safety**). A fifth tab for AI question-bank generation will come later and is not in this version.
 
 **Connection to ai-service.** The page first asks the main service whether ai-service is connected: ai-service reports its state to the main service when it starts, at once when something changes, every 25 seconds, and when it stops; a report older than 60 seconds counts as not connected. While it is connected, one line under the chips says **ai-service is connected (version 1.0; last report 03:04 PM).** and the settings below load. When it is not, the page shows only a panel, **Connection to ai-service**, that names the cause, with **Last report: …** (or **No report since the main service started.**), **Version: …**, **This page checks again every 10 seconds.** and **Try again**; as soon as ai-service is connected, the settings appear by themselves. The causes:
 
@@ -533,7 +627,7 @@ At the top four chips show where the set-up stands: **Connection saved** (or **C
 4. **Users with AI+**: every administrator and every user who has the **AI+ feature** (the switch in User management), the paused ones included, with **User**, the **Badge** (bright, dark or none, as in [section 14](#14-users-and-sign-in); administrators read the administrator wording of its tooltip), **Role**, the **AI+ feature** status, **Chats**, **Memories**, **Tokens in**, **Tokens out**, **Last used** and **View**. Below 900 px wide the two token columns are left out (they are in **Usage**) and the time may wrap, so the table fits a tablet; below 560 px each user is a small card with the name and **View** on the first line and one “column name: value” line per field. (The AI data of an account deleted in User management is removed when this list loads, and every 10 minutes anyway.)
    - **AI+ feature** status: **Active** or **Paused**, with one button, **Pause** or **Resume** (administrators show **Administrators always have AI.** and have no button). No confirmation is asked. **Pause** stops a running answer of that user at once, and from then on they can read and delete their chats and memories, but not write, retry or remember (AI Chat says **The AI+ feature was paused by an administrator.** in its read-only line). **Resume** gives it back. The user stays listed and keeps their data, and the **AI+ feature** switch in User management is not touched. A pause stays until **Resume**, also when the user's AI+ feature is switched off and on again. The System log records both, for example `AI: AI function turned off for user "sam" by admin "admin"` (a pause). A user whose **AI+ feature** is switched off in User management leaves this list; their chats and memories stay (they can still read and delete them) until they are deleted or the retention removes the chats.
    - **View** opens **AI data of sam** (for example), marked **Read only**, with the chats (every message with who wrote it and the time) and the memories; click a chat to read it. **Delete this chat**, **Delete all chats** and **Delete all memories** ask first (the confirm button reads **Delete**). After a delete the focus stays inside the dialog. The viewer shows nothing about free or normal mode. Every view and every delete is written to the System log by username, for example `AI: user "admin" viewed the AI chats and memories of user "sam"`, never with any content.
-5. **Usage**: for the **Last 7**, **30**, **90** or **365 days**: the totals (**Calls**, **Tokens in**, **Tokens out**, **Cached**, **Errors**), then **By user**, **By model**, **By feature** and **Over time** (per day for 7 and 30 days, per month for 90 and 365). **By feature** splits the calls into **AI Chat**, **AI hint**, **AI explanation** (which includes the AI analysis of result pages) and **AI summary**, always in that order, zeros included; only chat answers are counted there, so tests, model lists and memory notes are not in it; answers recorded by an older version count as **AI Chat**. **Cached** is the part of **Tokens in** that the provider served from its prompt cache (0 when the provider does not report it). Calls include tests, model lists (the row **Model list**) and memory notes. Users that were deleted are summed up in one row, **Deleted users**. Tokens are counted as the provider reports them; a provider that does not report them counts 0. Only numbers are kept, never what was asked or answered. The days follow the time zone of ai-service (`TZ`).
+5. **Usage**: for the **Last 7**, **30**, **90** or **365 days**: the totals (**Calls**, **Tokens in**, **Tokens out**, **Cached**, **Errors**), then **By user**, **By model**, **By feature** and **Over time** (per day for 7 and 30 days, per month for 90 and 365). **By user** has a search box, columns you can sort and 10 rows per page (on a phone a small table with its own sideways scroll and the name column fixed). **By feature** splits the calls into **AI Chat** (memory notes included), **AI hint**, **AI explanation** (which includes the AI analysis of result pages), **AI summary**, **AI bank generation**, **AI bank import** and **Other (model lists / connection tests)**, so the bars add up to the total; answers recorded by an older version count as **AI Chat**. A line under the totals gives the cache figures: **Cache: read X / written Y tokens**. **Cached** is the part of **Tokens in** that the provider served from its prompt cache (0 when the provider does not report it). Calls include tests, model lists and memory notes. Users that were deleted are summed up in one row, **Deleted users**. Tokens are counted as the provider reports them; a provider that does not report them counts 0. Only numbers are kept, never what was asked or answered. The days follow the time zone of ai-service (`TZ`).
 6. **Chat retention**: **Delete chats after (days)**, 1 to 3650, 90 by default. A chat, whatever its kind, is deleted that many days after its last message (checked every hour, in small batches so that running answers are not held up); memories are not affected. The chats of practices, exams and summaries ([section 16.1](#161-chats-of-practices-exams-and-summaries)) follow it too.
 7. **Safety limits** (tab **AI safety**): each number has its range and default, and there are **Reset to defaults** and **Save**. A change applies at once and never switches AI off. Lowering a limit deletes or shortens nothing: it only refuses new chats, messages, notes and requests beyond it. Every change is written to the System log, for example `AI limits changed by admin "admin": callsPerHour 20 -> 30`.
    - **Requests per user to the AI provider** (for everyone, administrators included; a request counts whatever its result, and free mode, memory suggestions and every hint, explanation, analysis, summary and chat answer count; the administrator's connection **Test** and the model list do not):
@@ -549,8 +643,8 @@ At the top four chips show where the set-up stands: **Connection saved** (or **C
 
      | Limit | Default | Range | What it means |
      |---|---|---|---|
-     | **Characters per answer** | 1000 | 1–16000 | The longest answer, in characters. In English 4 letters count as 1 character. The server sends it to the model as `max_tokens`: 1.5 tokens per character for Chinese and Japanese, 1 token per character for English, so an answer can really reach its length. |
-     | **Characters per memory** | 200 | 50–2000 | The longest memory note, counted exactly. |
+     | **Tokens per answer** | 3000 | 1–250000 | The longest answer, in tokens. The server sends it to the model as `max_tokens` unchanged, so an answer can really reach its length; the provider's own limit still applies. |
+     | **Tokens per memory** | 1000 | 50–250000 | The longest memory note, estimated in tokens (ASCII letters about 1/4 token each, other characters 3/2). |
 
      An answer that reaches the limit is cut and shows the note **The answer reached the model’s length limit.** An AI summary of many wrong answers is the most likely to be cut; raise the limit for it, or for a model that thinks before it answers. Existing memories and messages are never cut.
    - **Protection of the server** (these protect the server; they are not usage limits):
@@ -570,7 +664,7 @@ At the top four chips show where the set-up stands: **Connection saved** (or **C
 <table>
 <tr>
 <td width="50%"><img src="screenshots/desktop-15-ai-settings.png" alt="AI settings, tab AI+ users: the status chip and the ai-service line above the four tabs, then every user with AI+: the badge, the role, the AI+ feature (Always on for administrators, Active with Pause, Paused with Resume) and the AI requests of the last minute, hour and today against the limits"></td>
-<td width="50%"><img src="screenshots/desktop-16-ai-usage.png" alt="AI settings, tab AI usage: the totals of the last 7 days, the conversations, then the tables By user (with Today against the day limit), By model, By feature and Over time"></td>
+<td width="50%"><img src="screenshots/desktop-16-ai-usage.png" alt="AI settings, tab AI usage: the totals of the last 7 days, the conversations, then the table By user (search, sortable columns, Today against the day limit, pages) and the charts By model, By feature and Over time, each with its Calls | Tokens switch"></td>
 </tr>
 <tr>
 <td>The <b>AI+ users</b> tab: under the status chip and the four tabs, every user with AI+ with the badge, the role, the <b>AI+ feature</b> (<b>Always on</b>, <b>Active</b> with Pause, <b>Paused</b> with Resume) and the AI requests of the last minute, hour and today against the limits. Every value in these images comes from a made-up provider.</td>
@@ -578,9 +672,36 @@ At the top four chips show where the set-up stands: **Connection saved** (or **C
 </tr>
 </table>
 
-![AI settings, tab AI safety: Chat retention, then Safety limits with AI requests per user (Per minute 5, Per hour 20, Per day 100), Answer and memory length (Characters per answer 1000 with the line of what is sent to the model as max_tokens, Characters per memory 200) and Protect the server](screenshots/desktop-20-ai-safety.png)
+![AI settings, tab AI safety: Chat retention, then Safety limits with AI requests per user (Per minute 5, Per hour 20, Per day 100), Answer and memory length (Tokens per answer 3000, Tokens per memory 1000) and Protect the server](screenshots/desktop-20-ai-safety.png)
 
 **Setting up AI, step by step**: check that **AI settings** says **ai-service is connected**; choose the provider, enter the address and the key, **Save**; pick a model from the list (or type its ID) and **Save model**; **Test**; switch on the **AI+ feature**; then turn on the **AI+ feature** for the users who may use it, in **User management** (the switch appears once the steps above are done), and pause or resume a user's **AI+ feature** here under **Users with AI+**. Administrators who want to talk to the model directly choose **Free** under **AI chat mode** in **Settings**. Where ai-service runs, how it reaches the provider and what each provider needs: section 3.4 of [deployment.md](deployment.md).
+
+### 17.5 AI banks tab
+
+The **AI banks** tab sets the limits of generation and import, in two cards: **AI question generation** (quota, source, per generation, calls) and **AI file import** (file, calls). **Recent AI bank jobs** follows them: time, user, source, new bank, state, questions and calls / tokens (on a phone each job is a compact card). Changing the limits never switches AI off, and nothing already made is changed.
+
+| Setting | Default | What it does |
+|---|---|---|
+| AI bank jobs per user per day | 3 | Generation and file import together; reset at 0:00 of the server time. Administrators are exempt when the switch is on. |
+| Unlimited (generation) | on | No call ceiling, no limit on the answer length per call and no deadline for a generation. 3 provider errors in a row and Cancel still stop a job. |
+| Most AI calls per generation | 15 | Used when Unlimited is off (8 to 40). Applies to everyone, administrators included. |
+| Tokens per call | 20000 | The most tokens one call may write (1000 to 250000); the questions per call follow from it. Greyed out while an Unlimited switch is on. |
+| Unlimited (import) | on | The same for file import, recognition included. |
+| Most AI calls per import | 25 | Used when Unlimited is off (8 to 40), recognition included. |
+| Calls per recognition | 20 | Used when Unlimited is off: the most AI calls the reading of one file may make before the confirm step (8 to 40). |
+| Largest file | 20 MB | The size limit of the AI import card. |
+| Questions per import, at most | 50 | The most questions one import takes from a file that already holds questions (1 to 50). A file with more takes the first ones. |
+
+![AI settings, tab AI banks: the card AI question generation (quota, source, per generation, calls with Unlimited ticked), the card AI file import (file, calls with Unlimited ticked), Save, and Recent AI bank jobs](screenshots/desktop-21-ai-banks.png)
+
+### 17.6 Feature permissions
+
+In **AI+ users**, each user row has six checkboxes: **Chat**, **Hint**, **Explanation**, **Summary**, **AI generation** and **AI import**. An unticked feature is greyed out for that user with the reason **You do not have permission to use this feature.** Administrator rows have all six ticked and locked, and a **Free mode** switch (it used to be in Settings). Pausing a user still wins over every checkbox.
+
+### 17.7 AI usage charts
+
+**AI usage** shows three charts: **By model**, **By feature** and **Over time**. The titles say what is drawn, for example **By model (calls: times)** or **By model (tokens: input / output)**. All three have a switch at the top right, **Calls | Tokens** (your choice is remembered in this browser): in Tokens mode each bar is the input and the output tokens stacked, with the total on top, and **Over time** shows the input and output as stacked areas under the total line, with a small legend. Every bar has its number; a bar **Other (model list and connection tests)** makes the bars add up to the total. Large numbers on the bars and axes are shown with K / M (for example 12.3K, 4.5M); the totals at the top are exact, with thousands separators. A tip (hover, tap or the arrow keys) gives the exact calls, tokens and errors. **Over time** is a line per day, or per month for a long period, with a wide area around each point for hover and tap. Each chart has its figures as a text table for screen readers.
+
 
 ## 18. On an iPhone
 
@@ -588,7 +709,7 @@ At the top four chips show where the set-up stands: **Connection saved** (or **C
 - Tap the Share button → **Add to Home Screen**. After that it opens full-screen like a standalone app, with the Xexam icon: four dots and a light-blue bar on a navy square.
 - The three-line button at the top right opens the same small menu as on a computer.
 - On Home, **All** and **Wrong answers** stay next to the **Start an exam or practice** title (in English and Japanese with only their icon and number). The bar at the bottom of the screen has two rows: the scope, **Count** and **Shuffle** on the first; **Start exam** (the wider one) and **Start practice** on the second.
-- On the exam and practice page, the bar stays at the bottom: **Previous**, **Next** and the flag for **Mark to revisit** as icons. In a practice, **Check answer** and **Next** are two buttons side by side, in fixed places, and the AI icons sit on the same bar for AI+ users. The answer sheet sits below the question with **Answered x of n** and **Submit** (or **Finish practice**) above the tiles.
+- On the exam and practice page, the bar stays at the bottom: **Previous**, **Next** and the flag for **Mark to revisit** as icons. In a practice, **Check answer** and **Next** are two buttons side by side, in fixed places, and the AI icons sit on the same bar for AI+ users. The top row shows **Done x/n** and the green **Finish exam** (or orange **Finish practice**) button; the answer sheet below the question has no finish button.
 - Study records are shown as compact cards; with the **AI+ feature** each card has its **AI summary** button.
 - With the **AI+ feature**, the AI+ panel sits under the question card. It is closed at first; **AI hint** or **AI explanation** in the bar opens it, and its chevron closes it. Its buttons keep fixed places, and a text in the panel says **Saved in AI Chat** when the answer is saved (a tap shows the name of the chat). Greyed-out controls (AI paused or unavailable) stay in place and a tap on one shows why it cannot be used. The **AI summary** opens a window over most of the page.
 - **AI Chat** shows the chat list or one chat at a time (**All chats** goes back). Inside a conversation the header is one row, and the message box stays at the bottom of the screen, right above the keyboard.
@@ -621,6 +742,13 @@ Screenshots on an iPhone (390 px wide):
 <td>Practice with the <b>AI+ feature</b>: the AI+ panel open under the question on the AI hint; the bar keeps its places.</td>
 <td>Exam result: the compact score, the folded strip and the cards, each with its AI+ bar.</td>
 <td>AI Chat: one conversation over the full height, the message box at the bottom.</td>
+</tr>
+</table>
+
+<table>
+<tr>
+<td width="33%"><img src="screenshots/iphone-8-banks.png" alt="Bank management on an iPhone: under each bank name its meta line and its actions on their own line; the AI bank shows the AI+practice set badge on its own line"></td>
+<td>Bank management: each bank's actions sit on their own line under the name, and an AI bank shows its AI+ badge on its own line.</td>
 </tr>
 </table>
 

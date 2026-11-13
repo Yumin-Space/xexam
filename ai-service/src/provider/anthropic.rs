@@ -78,6 +78,9 @@ impl State {
                 if let Some(n) = c2 {
                     out.push(Item::Cached(n));
                 }
+                if let Some(n) = c1 {
+                    out.push(Item::CacheWrite(n));
+                }
             }
             // Extended thinking (a model or gateway may enable it on its own): only the fact is kept, the thinking
             // text, its signature and redacted blocks are dropped here
@@ -111,6 +114,12 @@ impl State {
                     .and_then(|u| u.get("cache_read_input_tokens")))
                 {
                     out.push(Item::Cached(n));
+                }
+                if let Some(n) = int(v
+                    .get("usage")
+                    .and_then(|u| u.get("cache_creation_input_tokens")))
+                {
+                    out.push(Item::CacheWrite(n));
                 }
                 if let Some(o) = int(v.get("usage").and_then(|u| u.get("output_tokens"))) {
                     out.push(Item::Usage {
@@ -208,6 +217,25 @@ mod tests {
             serde_json::to_string(&b).expect("json"),
             r#"{"model":"m","max_tokens":8192,"system":[{"type":"text","text":"sys","cache_control":{"type":"ephemeral"}}],"messages":[{"role":"user","content":"a\n\nb"},{"role":"assistant","content":[{"type":"text","text":"c","cache_control":{"type":"ephemeral"}}]},{"role":"user","content":"d"}],"stream":true}"#
         );
+    }
+
+    #[test]
+    fn cache_write_tokens_are_reported() {
+        let out = run(&[
+            (
+                "message_start",
+                r#"{"type":"message_start","message":{"usage":{"input_tokens":4,"cache_creation_input_tokens":13000,"cache_read_input_tokens":0}}}"#,
+            ),
+            (
+                "message_delta",
+                r#"{"type":"message_delta","delta":{},"usage":{"output_tokens":3,"cache_creation_input_tokens":13000}}"#,
+            ),
+        ]);
+        assert!(out.contains(&Item::CacheWrite(13000)));
+        assert!(out.contains(&Item::Usage {
+            input: Some(13004),
+            output: None
+        }));
     }
 
     #[test]

@@ -6,12 +6,13 @@ import { beforeEach, mock, test } from 'node:test';
 import {
   AI_STATUS_MAX_AGE_MS, aiBadgeOn, aiChatVisible, aiEnabled, aiFreeMode, aiModeShown, aiNeedsRender, aiStatus, aiSuspended, callBlock, noteCallBlock,
   onCallBlockChange, recheckCallBlock, RECHECK_MIN_MS, refreshAiStatus, resetAiStatus, setAiFreeMode, statusOf,
+  aiGenStatus, genStatusOf, jobOf, onAiStatusChange, setAiGenJob, setAiStatusForTest,
   type AiStatus,
 } from './ai.ts';
 import type { AiCallBlock } from '../types/api.ts';
 
 const answer = (o: Record<string, unknown> = {}) => ({
-  enabled: true, allowed: true, hasData: false, running: null, retentionDays: 90, memoryLimit: 50, memoryMaxChars: 300,
+  enabled: true, allowed: true, hasData: false, running: null, retentionDays: 90, memoryLimit: 50, memoryMaxTokens: 300,
   maxMessageChars: 16000, keyProblem: false, configured: false, ...o,
 });
 
@@ -23,7 +24,7 @@ test('it starts as loading, then becomes ready with the answer', async () => {
   assert.equal(changed, true);
   const st = aiStatus();
   assert.equal(st.state, 'ready');
-  assert.ok(st.state === 'ready' && st.allowed && st.enabled && st.messageChars === 16000 && st.memoryChars === 300);
+  assert.ok(st.state === 'ready' && st.allowed && st.enabled && st.messageChars === 16000 && st.memoryTokens === 300);
   assert.equal(aiBadgeOn(), true);
   assert.equal(aiChatVisible(), true);
   assert.equal(aiEnabled(), true);
@@ -41,7 +42,7 @@ test('any failure is "unavailable", silently (no throw); a malformed answer too'
 
 test('without the length fields the status falls back to 16000 message / 200 memory characters (v1.0 C-8d)', () => {
   const st = statusOf({ enabled: true, allowed: true, hasData: false, running: null, memoryLimit: 50 });
-  assert.ok(st.state === 'ready' && st.messageChars === 16000 && st.memoryChars === 200);
+  assert.ok(st.state === 'ready' && st.messageChars === 16000 && st.memoryTokens === 1000);
 });
 
 test('not asked while a new password must be chosen', async () => {
@@ -112,8 +113,8 @@ test('the menu and the badge: allowed shows both; data only shows AI Chat (read 
   assert.equal(aiChatVisible(neither), false);
   assert.equal(aiEnabled(neither), false);
   // the spec's other spelling of the limits (14.1) is read too
-  const st = statusOf(answer({ messageChars: 20000, memoryChars: 500 }));
-  assert.ok(st.state === 'ready' && st.messageChars === 20000 && st.memoryChars === 500);
+  const st = statusOf(answer({ messageChars: 20000, memoryTokens: 500 }));
+  assert.ok(st.state === 'ready' && st.messageChars === 20000 && st.memoryTokens === 500);
   const running = statusOf(answer({ running: { chatId: 4, messageId: 9 } }));
   assert.ok(running.state === 'ready' && running.running?.chatId === 4);
 });
@@ -271,4 +272,93 @@ test('caps: recheckCallBlock forces a read, throttled to one per 5 s; false when
   assert.equal(await recheckCallBlock({ now: 1000 + RECHECK_MIN_MS, fetcher }), false, 'freed by the new caps');
   assert.equal(reads, 2);
   assert.equal(callBlock(), null);
+});
+
+const job = (o: Record<string, unknown> = {}) => ({
+  id: 7, state: 'running', phase: 'writing', source: 'bank', name: 'Kitchen basics_alexandr_20261112093000',
+  from: [{ id: 3, name: 'Kitchen basics' }], fromCount: 1, made: 8, goal: 20, calls: 2, createdAt: 1, startedAt: 2, finishedAt: null,
+  bankId: null, error: null, charged: true, ...o,
+});
+
+test('v1.1: statusOf reads why, features (six keys, a missing import key is on) and gen', () => {
+  const st = statusOf(answer({ why: 'link', features: { chat: true, hint: false, explain: true, summary: true, generate: true } }));
+  assert.ok(st.state === 'ready');
+  if (st.state !== 'ready') return;
+  assert.equal(st.why, 'link');
+  assert.deepEqual(st.features, { chat: true, hint: false, explain: true, summary: true, generate: true, import: true });
+  assert.equal(st.gen, undefined);
+  // an older ai-service: no why, no features
+  const old = statusOf(answer());
+  assert.ok(old.state === 'ready' && old.why === null && old.features === undefined);
+});
+
+test('v1.1: gen.import and the six file keys of a Job have fallbacks', () => {
+  const st = statusOf(answer({
+    gen: {
+      perDay: 3, used: 1, left: 2, unlimited: false, resetAt: 99, minSource: 30, minWrong: 10, bank: { single: 14, multi: 6 },
+      wrong: { single: 14, multi: 6 }, job: job(), unseen: [job({ id: 8, state: 'done' }), 'junk'],
+    },
+  }));
+  assert.ok(st.state === 'ready' && st.gen);
+  if (st.state !== 'ready' || !st.gen) return;
+  assert.equal(st.gen.import, undefined);
+  assert.equal(st.gen.job?.id, 7);
+  assert.deepEqual([st.gen.job?.file, st.gen.job?.mode, st.gen.job?.read, st.gen.job?.confirmBy, st.gen.job?.errorArg, st.gen.job?.skipped], [null, null, null, null, null, null]);
+  assert.equal(st.gen.unseen.length, 1);
+  const withImport = statusOf(answer({
+    gen: {
+      perDay: null, left: null, unlimited: true, import: { maxMb: 20, maxQuestions: 50, types: ['pdf', 'docx'] }, job: job({
+        source: 'file', phase: 'confirm', file: { name: 'Kitchen notes.pdf', type: 'pdf', size: 2411520 }, mode: 'questions',
+        read: { done: 4, total: 4 }, confirmBy: 1794477600, skipped: [3, 17],
+      }), unseen: [],
+    },
+  }));
+  assert.ok(withImport.state === 'ready' && withImport.gen);
+  if (withImport.state !== 'ready' || !withImport.gen) return;
+  assert.deepEqual(withImport.gen.import, { maxMb: 20, maxQuestions: 50, types: ['pdf', 'docx'] });
+  assert.equal(withImport.gen.perDay, null);
+  assert.equal(withImport.gen.job?.file?.name, 'Kitchen notes.pdf');
+  assert.equal(withImport.gen.job?.mode, 'questions');
+  assert.deepEqual(withImport.gen.job?.skipped, [3, 17]);
+  assert.equal(withImport.gen.job?.phase, 'confirm');
+  assert.equal(jobOf({ id: 1, state: 'weird', source: 'bank' }), null);
+  assert.equal(jobOf(null), null);
+});
+
+test('v1.1: a changed feature or why makes the page draw again; setAiGenJob follows a job answer', () => {
+  const a = statusOf(answer({ features: { hint: true } }));
+  const b = statusOf(answer({ features: { hint: false } }));
+  assert.equal(aiNeedsRender(a, b), true);
+  assert.equal(aiNeedsRender(a, statusOf(answer({ features: { hint: true } }))), false);
+  assert.equal(aiNeedsRender(statusOf(answer({ why: null })), statusOf(answer({ why: 'off' }))), true);
+  setAiStatusForTest(statusOf(answer({ gen: { job: null, unseen: [] } })));
+  setAiGenJob(jobOf(job()));
+  assert.equal(aiGenStatus()?.job?.id, 7);
+  setAiGenJob(null, genStatusOf({ perDay: 3, used: 2, left: 1, job: null, unseen: [] }));
+  assert.equal(aiGenStatus()?.left, 1);
+  assert.equal(aiGenStatus()?.job, null);
+  // a finished job moves to the front of `unseen`; a cancelled one is gone
+  setAiGenJob(jobOf(job({ id: 11, state: 'done' })));
+  assert.equal(aiGenStatus()?.job, null);
+  assert.deepEqual(aiGenStatus()?.unseen.map((j) => j.id), [11]);
+  setAiGenJob(jobOf(job({ id: 12, state: 'cancelled' })));
+  assert.deepEqual(aiGenStatus()?.unseen.map((j) => j.id), [11]);
+  let calls = 0;
+  const off = onAiStatusChange(() => { calls += 1; });
+  setAiGenJob(jobOf(job({ id: 13 })));
+  assert.equal(calls, 1);
+  off();
+  setAiGenJob(null);
+  assert.equal(calls, 1);
+});
+
+test('jobOf keeps the import counts the service sends (total / taken, approx) and the cached tokens (A-OWNER-70)', () => {
+  const j = jobOf({ id: 4, state: 'running', source: 'file', phase: 'confirm', mode: 'questions', goal: 50, total: 69, taken: 50, usage: { calls: 3, tokensIn: 100, tokensOut: 20, tokensCached: 80, tokensCacheWrite: 13000 } });
+  assert.equal(j?.usage?.tokensCacheWrite, 13000);
+  assert.equal(j?.total, 69);
+  assert.equal(j?.taken, 50);
+  assert.equal(j?.approx, undefined);
+  assert.equal(j?.usage?.tokensCached, 80);
+  assert.equal(jobOf({ id: 4, state: 'running', source: 'file', total: 69, uncertain: true })?.approx, true);
+  assert.equal(jobOf({ id: 4, state: 'running', source: 'file' })?.total, null);
 });

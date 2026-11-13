@@ -8,7 +8,7 @@ const INVENTORY = [
   'back', 'fwd', 'chevDown', 'up', 'down', 'flag', 'exit', 'clock', 'grid', 'bulb', 'book', 'sparkle', 'copy', 'check',
   'xCircle', 'x', 'refresh', 'retake', 'stop', 'send', 'chat', 'memory', 'more', 'plus', 'pencil', 'keyRound', 'pauseCircle',
   'playCircle', 'userOff', 'userOn', 'unlock', 'eye', 'trash', 'upload', 'warn', 'search', 'pause', 'play', 'sun', 'moon',
-  'auto', 'filter', 'list', 'home', 'info', 'key', 'plug', 'users', 'chart', 'shield',
+  'auto', 'filter', 'list', 'home', 'info', 'key', 'plug', 'users', 'chart', 'shield', 'hourglass', 'aiGen', 'aiImport', 'submit',
 ];
 
 test('every icon of the inventory exists', () => {

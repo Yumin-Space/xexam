@@ -251,6 +251,7 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
+- **从 v1.0 升级到 v1.1**（见 migration.md 的第 00 节）：`docker compose pull && docker compose up -d`，compose 文件、卷和变量都不用改。主数据库从 schema 6 升到 7（备份 `xexam-schema6-<日期时间>.db`，在 `xexam_data` 中）；AI 数据库从 schema 4 升到 6（备份 `xexam-ai-schema4-<日期时间>.db`，在 `xexam_ai_data` 中）。新的 Token 长度默认值（回答 3000、记忆 1000、每次调用 20000）和新的调用上限在升级后立即生效。回退：两个数据库都恢复副本，然后运行 v1.0 镜像。
 - **从 v0.9.1 到 v1.0**（见 migration.md 第 0 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库不变（schema 6）。AI 数据库从 schema 3 升到 4（备份 `xexam-ai-schema3-<日期时间>.db`，在 `xexam_ai_data` 里，写在变更之前；副本要放得下剩余磁盘空间）。新的每用户 AI 请求上限（每分钟 5 次、每小时 20 次、每天 100 次）和回答长度（1000 字符）马上生效，管理员也一样。回退：恢复 AI 副本并运行 v0.9.1 的镜像；主数据库不需要恢复。
 - **从 v0.8**（migration.md 第 0b 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库从 schema 5 升到 6（备份 `xexam-schema5-<日期时间>.db`，在 `xexam_data` 里），AI 数据库从 schema 2 升到 3（备份 `xexam-ai-schema2-<日期时间>.db`，在 `xexam_ai_data` 里）。别的都保持原样；AI+ 学习功能对有 AI+ 功能的账户马上出现，没有什么要设置的。回退：主数据库不需要恢复，AI 数据库需要（见下）。
 - **从 v0.7.5 或 v0.7**（migration.md 第 1 节）：**换上新的 `docker-compose.yml`**（服务 `ai-service` 和第三个镜像 `xexam-ai-service`、卷 `xexam_ai_data` 和 `xexam_link`、网络 `egress`）；schema v4 → v6，备份 `xexam-schema4-<日期时间>.db`；AI 数据库是新建的（schema 3）。管理员设置之前 AI 保持关闭。用旧的 compose 文件，除了 AI 以外一切照常：**AI 设置** 这时仍然能打开，并说明 ai-service 没有运行（提示要换上新的 compose 文件），用户管理里的 AI+ 功能开关则被隐藏。
@@ -258,7 +259,16 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 - **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v6 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
 - **从 v0.4**（migration.md 第 4 节）：schema v1 → v6 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。
 
-升级后，`/api/info` 显示 `"version": "1.0"`。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
+升级后，`/api/info` 显示你拉取的镜像版本（本版本为 `"version": "1.1"`）。以后再启动不会再迁移；没有剩下要下架的旧格式题目时，下架这一步也什么都不写。**回退**就是恢复 `backups/` 里的副本，然后运行较早的镜像（从 v0.9 回到 v0.8，只有 AI 数据库需要它的副本：v0.8 的后端会原样打开 schema 6 的主数据库，而 v0.8 的 ai-service 会拒绝 schema 3 的 AI 数据库，恢复时 AI 在升级之后写的一切都会丢失）；除了应急，不要在迁移过的数据库上长时间运行较早的版本。具体的命令见 [migration.md](migration.md)；背景见 [database.md](database.md) 第 6 节。
+
+### v1.1 注意事项：导入上传、内存与设置
+
+- **上传路由**：Nginx 只在 `/api/ai/import/upload` 上接受最大 20 MB 的正文，`/api/ai/` 的其余部分仍保持较小的限制。前面的反向代理也必须在该路径上允许相同的大小，否则上传会在到达 Xexam 之前被以 413 拒绝。
+- **内存**：ai-service 同时最多可保存 4 个 20 MB 的上传（每个用户同一时间一个），外加一个抽取子进程。子进程由看门狗在 768 MiB 时终止。子进程与主程序是同一个二进制文件，因此镜像不变。
+- **临时文件**：Nginx 在请求期间把上传正文保存在 tmpfs（RAM）的临时目录中。抽取子进程在 `/tmp` 中工作，compose 文件中的 `/tmp` 即为 tmpfs。
+- **设置**：没有新的环境变量。导入大小、每次导入的题数以及调用上限在 **AI 设置 › AI 题库** 中设置。
+- **时区**：每日生成配额在 ai-service 时区（其 `TZ` 设置，例如 `TZ=UTC`）的 0:00 重置。
+
 
 ## 7. 健康检查和停止
 

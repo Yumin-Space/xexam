@@ -57,6 +57,8 @@ export function shortLabel(full: MsgKey, short: MsgKey): [HTMLSpanElement, HTMLS
 export interface ReasonOptions {
   /** Runs first on a tap; returning true means "handled" and no reason toast is shown (e.g. a re-check that freed the control) */
   beforeToast?: () => boolean;
+  /** A-OWNER-65b: no toast; a tap, hover or focus shows the reason as a tip box (the tap-to-open tip of the job-card numbers) */
+  tapTip?: boolean;
 }
 
 let reasonSeq = 0;
@@ -72,13 +74,15 @@ export function withReason(control: HTMLElement, text: string, opts: ReasonOptio
   const id = `reason-${reasonSeq}`;
   control.setAttribute('aria-disabled', 'true');
   control.setAttribute('aria-describedby', id);
-  control.addEventListener('click', () => {
-    if (opts.beforeToast?.()) return;
-    toast(text);
-  });
+  if (!opts.tapTip) {
+    control.addEventListener('click', () => {
+      if (opts.beforeToast?.()) return;
+      toast(text);
+    });
+  }
   // An icon-only button already has a hold tip (its label): that tip now says the reason; the wrapper's own tip stays hidden
   // (aria-describedby still reads it)
   const own = control.classList.contains('ibtn') && !control.classList.contains('ibtn-label');
   if (own) holdTip(control, text);
-  return withTip(control, tipEl(id, text), own ? 'ibtn-reason ibtn-reason-own' : 'ibtn-reason');
+  return withTip(control, tipEl(id, text), (own ? 'ibtn-reason ibtn-reason-own' : 'ibtn-reason') + (opts.tapTip && !own ? ' tip-tap' : ''));
 }

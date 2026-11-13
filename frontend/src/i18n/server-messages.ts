@@ -101,6 +101,19 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'A setting has an invalid value.',
     ja: '設定の値が正しくありません。',
   }],
+  // v1.1: AI banks (MSG_AI_BANK_IMPORT) and the sheet delete route (MSG_SHEETS_ALL, MSG_AI_BANK_SHEETS)
+  ['AI 生成的题库不能用 Excel 更新。', {
+    en: 'AI-generated banks cannot be updated with an Excel file.',
+    ja: 'AI で作成した問題集は Excel で更新できません。',
+  }],
+  ['要删除全部工作表，请删除整个题库。', {
+    en: 'To delete every sheet, delete the whole bank instead.',
+    ja: 'すべてのシートを削除するには、問題集ごと削除してください。',
+  }],
+  ['AI 题集只有一个工作表，请删除整个题库。', {
+    en: 'An AI set has only one sheet. Delete the whole bank instead.',
+    ja: 'AI 問題集のシートは 1 つだけです。問題集ごと削除してください。',
+  }],
   // v0.6, users and sign-in (MSG_SIGN_IN_REQUIRED … MSG_WRONG_PASSWORD)
   ['请先登录。', {
     en: 'Please sign in first.',
@@ -116,7 +129,7 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
   }],
   ['登录失败次数太多，请稍后再试。', {
     en: 'Too many failed attempts. Please try again later.',
-    ja: '失敗が多すぎます。しばらくしてから、もう一度お試しください。',
+    ja: 'ログインの失敗が多すぎます。しばらくしてから、もう一度お試しください。',
   }],
   ['请先设置新密码。', {
     en: 'Please choose a new password first.',
@@ -193,7 +206,7 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
   // v0.7: MSG_OLD_LAYOUT (400: upload or import confirm of a workbook in the old 3- or 4-column layout)
   ['只能导入六列格式（A–C 列：英文、中文、日文题目；D–F 列：英文、中文、日文答案）。这个文件是旧的三列或四列格式，请改成六列格式后再导入。', {
     en: 'Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again.',
-    ja: '取り込めるのは 6 列形式だけです（A〜C 列：英語・中国語・日本語の問題文、D〜F 列：英語・中国語・日本語の解答）。このファイルは古い 3 列または 4 列形式です。6 列形式に直してから、もう一度インポートしてください。',
+    ja: 'インポートできるのは 6 列形式だけです（A〜C 列：英語・中国語・日本語の問題文、D〜F 列：英語・中国語・日本語の解答）。このファイルは古い 3 列または 4 列形式です。6 列形式に直してから、もう一度インポートしてください。',
   }],
 
   // ---- api/attempt.rs
@@ -249,11 +262,11 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
   }],
   ['E 列的中文答案和 D 列的英文答案不一致（已按英文答案导入）', {
     en: 'The Chinese answer in column E differs from the English answer in column D (imported with the English answer)',
-    ja: 'E 列の中国語の解答が D 列の英語の解答と一致しません（英語の解答で取り込みました）',
+    ja: 'E 列の中国語の解答が D 列の英語の解答と一致しません（英語の解答でインポートしました）',
   }],
   ['F 列的日文答案和 D 列的英文答案不一致（已按英文答案导入）', {
     en: 'The Japanese answer in column F differs from the English answer in column D (imported with the English answer)',
-    ja: 'F 列の日本語の解答が D 列の英語の解答と一致しません（英語の解答で取り込みました）',
+    ja: 'F 列の日本語の解答が D 列の英語の解答と一致しません（英語の解答でインポートしました）',
   }],
 ]);
 

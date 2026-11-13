@@ -38,7 +38,7 @@ test('AI limit texts carry the number of the answer, or the default', () => {
     assert.equal(aiCodeText('ai.tooLong', 20000), 'The message is too long (at most 20,000 characters).');
     assert.equal(aiCodeText('ai.tooLong'), 'The message is too long (at most 16,000 characters).');
     assert.equal(aiCodeText('ai.chatLimit'), 'You have too many chats (at most 1,000). Delete some old chats first.');
-    assert.equal(aiCodeText('ai.memoryTooLong', 500), 'A memory can have at most 500 characters.');
+    assert.equal(aiCodeText('ai.memoryTooLong', 500), 'A memory can have at most 500 tokens.');
     setUiLang('zh');
     assert.equal(aiCodeText('ai.memoryFull', 40), '记忆已满（最多 40 条），请先删除一条。');
     setUiLang('ja');
@@ -58,7 +58,9 @@ test('codes: ai.* and auth.guard have texts; an unknown code falls back to the i
 });
 
 test('round 2: the exact Chinese words of the owner', () => {
-  assert.equal(ai.zh['ai.badge.suspended'], 'AI+ 功能已被管理员暂停。');
+  // v1.1 (BT-5): the paused tip no longer says who paused it
+  assert.equal(ai.zh['ai.badge.suspended'], 'AI+ 功能已被暂停使用。');
+  assert.equal(ai.zh['ai.badge.tip.on'], 'AI+ 功能已开启');
   assert.equal(ai.zh['ai.badge.unavailable'], 'AI 暂时无法使用，请稍后再试或联系管理员。');
   assert.equal(ai.zh['ai.set.fn.suspend'], '暂停');
   assert.equal(ai.zh['ai.set.fn.resume'], '恢复');
@@ -116,7 +118,7 @@ test('AI Chat texts for users call it the AI+ feature, never the service or the 
   assert.equal(ai.ja['ai.err.unavailableAdmin'], 'ai-service に接続していません。');
   assert.equal(ai.zh['ai.err.unavailable'], 'AI 暂时无法使用，请稍后再试或联系管理员。');
   assert.equal(ai.en['ai.err.unavailable'], 'AI is not available right now. Try again later or ask an administrator.');
-  assert.equal(ai.ja['ai.err.unavailable'], 'AI は今使えません。しばらくしてからもう一度試すか、管理者に連絡してください。');
+  assert.equal(ai.ja['ai.err.unavailable'], 'AI は現在利用できません。しばらくしてからもう一度試すか、管理者に連絡してください。');
 });
 
 test('the empty-chat hint names the reply language by its own name', () => {
@@ -149,7 +151,7 @@ test('owner decisions of 2026-11-12: pause / resume everywhere, one name, no con
   assert.equal(ai.zh['ai.set.state.off'], 'AI+ 功能已关闭');
   assert.equal(ai.ja['ai.set.state.on'], 'AI+ 機能はオン');
   // only administrators see the container: every user text outside the settings page and the *Admin keys leaves it out
-  const userKeys = Object.keys(ai.en).filter((k) => !k.startsWith('ai.set.') && !k.endsWith('Admin') && k !== 'ai.err.guard');
+  const userKeys = Object.keys(ai.en).filter((k) => !k.startsWith('ai.set.') && !k.endsWith('Admin') && !k.startsWith('ai.badge.tip.admin') && k !== 'ai.err.guard');
   for (const lang of langs) {
     for (const key of userKeys) assert.ok(!/ai-service/i.test(ai[lang][key as keyof typeof ai.en] ?? ''), `${lang} ${key}`);
     assert.ok(/ai-service/.test(ai[lang]['ai.set.svc.notConnected']));
@@ -208,4 +210,13 @@ test('the study popover text: Nginx 429 is "too many requests", a limit keeps it
   assert.ok(studyErrorText({ status: 409, code: 'ai.messageLimit', limit: 100 }).includes('100'));
   assert.ok(studyErrorText({ status: 502, code: null }).includes('502'));
   assert.equal(studyErrorText({ status: 0, code: null }), errorText(new ApiError('network', 0)));
+});
+
+test('every error code of the AI service has a front-end text (no Chinese server message in en / ja)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../../../ai-service/src/codes.rs', import.meta.url), 'utf8');
+  const codes = [...new Set([...src.matchAll(/"(ai\.[A-Za-z]+(?:\.[A-Za-z]+)*)"/g)].map((m) => m[1]!))];
+  assert.ok(codes.length > 50);
+  const missing = codes.filter((c) => !knownAiCode(c));
+  assert.deepEqual(missing, []);
 });

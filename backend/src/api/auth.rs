@@ -99,6 +99,7 @@ pub const ROUTES: &[Route] = &[
     route("POST", "/api/import/confirm", Access::BankManager),
     route("POST", "/api/import/cancel", Access::BankManager),
     route("POST", "/api/banks/delete", Access::BankManager),
+    route("POST", "/api/banks/sheets/delete", Access::BankManager),
     route("POST", "/api/attempt", Access::SignedIn),
     route("POST", "/api/records/delete", Access::SignedIn),
     route("POST", "/api/reset", Access::SignedIn),

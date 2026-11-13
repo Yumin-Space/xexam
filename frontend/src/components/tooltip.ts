@@ -100,6 +100,11 @@ export function installTooltips(): void {
     const wrap = wrapOf(e.target);
     if (wrap) place(wrap);
   });
+  // A-OWNER-65b: a tap-opened tip closes when its control loses the focus
+  document.addEventListener('focusout', (e) => {
+    const wrap = wrapOf(e.target);
+    if (wrap?.classList.contains('tip-tap') && !wrap.contains(e.relatedTarget as Node | null)) wrap.classList.remove('tip-open');
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') hideAll();
   }, true);
@@ -194,8 +199,9 @@ function installHoldGlobals(): void {
 /**
  * Gives `control` (an icon button) its tip: shown on mouse hover and keyboard focus, and on touch / pen by holding the finger
  * on it for 450 ms (the click that ends such a press is swallowed once). `text` is what the control is called.
+ * v1.1: `touchOnly` gives the hold on touch / pen only (a button whose own badge shows the tip on mouse hover).
  */
-export function holdTip<T extends HTMLElement>(control: T, text: string): T {
+export function holdTip<T extends HTMLElement>(control: T, text: string, o: { touchOnly?: boolean } = {}): T {
   const first = !holdTexts.has(control);
   holdTexts.set(control, text);
   if (!first) return control;
@@ -206,14 +212,15 @@ export function holdTip<T extends HTMLElement>(control: T, text: string): T {
   // so a held button that was redrawn meanwhile never fires on release
   const mine = (): boolean => holdOwner === control
     || (holdOwner != null && !holdOwner.isConnected && holdOwner.id !== '' && holdOwner.id === control.id);
+  const hoverTip = o.touchOnly !== true;
   control.addEventListener('pointerenter', (e) => {
-    if (!touchy(e)) showHoldTip(control);
+    if (hoverTip && !touchy(e)) showHoldTip(control);
   });
   control.addEventListener('pointerleave', (e) => {
     if (!touchy(e) && shownFor === control) hideHoldTip();
   });
   control.addEventListener('focus', () => {
-    if (control.matches(':focus-visible')) showHoldTip(control);
+    if (hoverTip && control.matches(':focus-visible')) showHoldTip(control);
   });
   control.addEventListener('blur', () => {
     if (shownFor === control) hideHoldTip();

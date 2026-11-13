@@ -11,6 +11,8 @@
     if (!e || !(e instanceof Element)) return false;
     const cs = getComputedStyle(e);
     if (cs.visibility === 'hidden' || cs.display === 'none') return false;
+    // content of a closed <details> (content-visibility: hidden) has boxes but is not rendered and cannot be tapped
+    if (e.checkVisibility && !e.checkVisibility({ contentVisibilityAuto: true })) return false;
     const r = e.getBoundingClientRect();
     if (r.width <= 0 || r.height <= 0) return false;
     for (let p = e; p; p = p.parentElement) {
@@ -156,6 +158,12 @@
       if (!pinned && (r.top < W.topH() + 4 || r.bottom > Math.min(innerHeight, pinnedBottomTop()) - 4)) {
         e.scrollIntoView({ block: 'center', inline: 'nearest' });
         r = e.getBoundingClientRect();
+      }
+      // A small control near the top of the page cannot be centred (the page does not scroll up any further): scroll the page
+      // down until its tap margin (up to 22 px each side) clears the pinned bottom bar, as a thumb would
+      if (!pinned) {
+        const m = Math.max(0, (44 - r.height) / 2), lim = Math.min(innerHeight, pinnedBottomTop()) - 4;
+        if (r.bottom + m > lim && r.top - m > W.topH() + 4) { window.scrollBy(0, Math.min(r.bottom + m - lim, r.top - m - W.topH() - 4)); r = e.getBoundingClientRect(); }
       }
       // Inside a scroller of its own (a menu, a list) and scrolled (partly) out of it: bring it into that scroller's view first
       // (a row cut by the scroller's edge is what a thumb scrolls into view before tapping it)

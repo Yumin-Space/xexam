@@ -348,10 +348,15 @@ export function noAccessKey(st: { enabled: boolean; suspended: boolean }): 'ai.n
   return st.enabled ? 'ai.noAccess.noFn' : 'ai.noAccess.disabled';
 }
 
-/** Why AI Chat is read only: the AI+ function paused, the account without it, or the AI+ feature not available (off / not connected) */
-export function readOnlyReason(st: { enabled: boolean; allowed: boolean; suspended: boolean }): 'suspended' | 'noFunction' | 'unavailable' {
+/** Why AI Chat is read only: the AI+ function paused, the `chat` feature unticked (v1.1), the account without it, or the AI+ feature not available (off / not connected) */
+export function readOnlyReason(
+  st: { enabled: boolean; allowed: boolean; suspended: boolean; why?: 'off' | 'link' | null; features?: { chat?: boolean } },
+): 'suspended' | 'featureOff' | 'noFunction' | 'off' | 'down' | 'unavailable' {
   if (st.suspended) return 'suspended';
-  return st.enabled && !st.allowed ? 'noFunction' : 'unavailable';
+  if (st.enabled && st.allowed && st.features?.chat === false) return 'featureOff';
+  if (st.enabled && !st.allowed) return 'noFunction';
+  // v1.1 (BT-2): the cause of "not available" when the status names it
+  return st.why === 'off' ? 'off' : st.why === 'link' ? 'down' : 'unavailable';
 }
 
 // ---------------------------------------------------------------- the phone screen (v1.0: CH-1, CH-9, CH-13)

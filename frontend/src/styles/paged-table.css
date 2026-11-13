@@ -1,0 +1,72 @@
+/* Search, sortable headers and pager of the long admin tables (v1.1 L-54). Colours are the theme tokens (light / dark). */
+.ptb-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 8px; min-height: 40px; }
+.ptb-q { flex: 1 1 14em; min-width: 0; max-width: 26em; min-height: 40px; padding: 6px 10px; font-size: 15px; }
+.ptb-sortsel { display: none; align-items: center; gap: 6px; }
+.ptb-sel { min-height: 40px; padding: 6px 10px; font-size: 15px; max-width: 14em; }
+.ptb-dir, .ptb-pg {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; padding: 0 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; font-size: 15px; cursor: pointer;
+}
+.ptb-pg.on { background: var(--hover-strong); border-color: var(--field-line); font-weight: 600; cursor: default; }
+.ptb-pg[aria-disabled="true"] { opacity: .45; cursor: default; }
+@media (hover: hover) { .ptb-dir:hover, .ptb-pg:not(.on):not([aria-disabled="true"]):hover { background: var(--hover); } }
+.ptb-dir:focus-visible, .ptb-pg:focus-visible, .ptb-sort:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+
+/* Sortable header: a button that looks like the header text, with a fixed-width arrow so nothing shifts */
+.ptb-sort {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 32px; padding: 0 2px; border: 0; background: none;
+  color: inherit; font: inherit; font-weight: inherit; text-align: inherit; cursor: pointer; white-space: nowrap;
+}
+th.n .ptb-sort { justify-content: flex-end; }
+.ptb-arrow { display: inline-block; width: 1em; text-align: center; font-size: 11px; color: var(--ink3); opacity: .55; }
+.ptb-th.on .ptb-arrow { opacity: 1; color: var(--print); }
+.ptb-th.on .ptb-lbl { color: var(--ink); }
+@media (hover: hover) { .ptb-sort:hover .ptb-arrow { opacity: 1; } }
+
+.ptb-pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 14px; margin-top: 10px; min-height: 44px; }
+.ptb-btns { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ptb-gap { min-width: 16px; text-align: center; color: var(--ink3); }
+.ptb-of { color: var(--ink2); font-size: 13.5px; white-space: nowrap; }
+.ptb-none { min-height: 44px; margin: 8px 0; }
+
+/* Cards: the header row is hidden and not focusable (visibility), the select takes over */
+@media (max-width: 560px) {
+  .ptb-560 .ptb-sortsel { display: flex; }
+  .ptb-560 .ptb-table thead { visibility: hidden; }
+}
+@media (max-width: 900px) {
+  .ptb-900 .ptb-sortsel { display: flex; }
+  .ptb-900 .ptb-table thead { visibility: hidden; }
+}
+@media (pointer: coarse), (max-width: 480px) {
+  .ptb-q, .ptb-sel { min-height: 44px; font-size: 16px; }
+  .ptb-tools { min-height: 44px; }
+  .ptb-dir, .ptb-pg { min-width: 44px; min-height: 44px; }
+  .ptb-sort { min-height: 44px; }
+}
+@media (max-width: 480px) {
+  .ptb-q { flex-basis: 100%; max-width: none; }
+  .ptb-pager { justify-content: center; }
+}
+.ptb { margin-bottom: 16px; }
+
+/* Phone mini table (A-OWNER-59): the same columns, smaller type, tighter cells, the header row kept (taps sort, at least 32 px
+   tall); the box scrolls sideways by itself with the first column fixed; the page never does */
+.ptb-mini .ais-tablewrap { max-width: 100%; }
+@media (max-width: 560px) {
+  /* v1.1: the eight columns fit a 360 px phone without sideways scrolling: 11 px type, 3 px cell padding, headers that wrap,
+     "used / cap" without its spaces; a really narrow box still scrolls inside itself (the page never does) */
+  .ptb-mini .ptb-table { width: 100%; font-size: 11px; line-height: 1.3; }
+  .ptb-mini .ptb-table th, .ptb-mini .ptb-table td { padding: 5px 3px; }
+  .ptb-mini .ptb-table thead th { font-size: 10.5px; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; }
+  .ptb-mini .ptb-table td.n { white-space: nowrap; }
+  .ptb-mini .ptb-table td.ais-today { word-spacing: -.3em; }
+  .ptb-mini .ptb-sort { min-height: 32px; gap: 1px; padding-inline: 0; text-align: left; white-space: normal; }
+  .ptb-mini .ptb-arrow { width: .6em; font-size: 8px; }
+  .ptb-mini .ptb-table tbody th, .ptb-mini .ptb-table thead th:first-child {
+    position: sticky; left: 0; z-index: 1; background: var(--card); max-width: 4.6em; overflow: hidden; text-overflow: ellipsis;
+    box-shadow: 1px 0 0 var(--line-soft);
+  }
+  .ptb-mini .ais-x { display: none; }
+}
+@media (min-width: 561px) { .ptb-mini .ais-k { display: none; } }

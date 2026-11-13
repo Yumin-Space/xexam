@@ -256,6 +256,7 @@ pub async fn models(ctx: Ctx) -> Answer {
             tokens_in: None,
             tokens_out: None,
             tokens_cached: None,
+            tokens_cache_write: None,
             latency_ms: provider::ms(started.elapsed()),
             first_byte_ms: None,
             status,
@@ -349,6 +350,7 @@ async fn verify_attempt(
             tokens_in: tin,
             tokens_out: tout,
             tokens_cached: None,
+            tokens_cache_write: None,
             latency_ms: latency,
             // time to the first text is recorded for chat answers only
             first_byte_ms: None,
@@ -564,6 +566,7 @@ pub async fn usage(ctx: Ctx) -> Answer {
                 m.insert("today".into(), Value::from(st.used.day));
             }
             m.insert("tokensCached".into(), Value::from(s.tokens_cached));
+            m.insert("tokensCacheWrite".into(), Value::from(s.tokens_cache_write));
             Value::Object(m)
         })
         .collect();
@@ -572,8 +575,11 @@ pub async fn usage(ctx: Ctx) -> Answer {
         .map(|(model, s)| {
             let mut m = Map::new();
             m.insert("model".into(), Value::from(model.clone()));
+            // the empty name is the "other" row: the model list and the connection tests, which use no feature
+            m.insert("other".into(), Value::Bool(model.is_empty()));
             m.extend(sums_json(s));
             m.insert("tokensCached".into(), Value::from(s.tokens_cached));
+            m.insert("tokensCacheWrite".into(), Value::from(s.tokens_cache_write));
             Value::Object(m)
         })
         .collect();
@@ -611,6 +617,7 @@ pub async fn usage(ctx: Ctx) -> Answer {
             m.insert("period".into(), Value::from(k.clone()));
             m.extend(sums_json(&s));
             m.insert("tokensCached".into(), Value::from(s.tokens_cached));
+            m.insert("tokensCacheWrite".into(), Value::from(s.tokens_cache_write));
             Value::Object(m)
         })
         .collect();
@@ -621,11 +628,16 @@ pub async fn usage(ctx: Ctx) -> Answer {
             m.insert("purpose".into(), Value::from(*purpose));
             m.extend(sums_json(s));
             m.insert("tokensCached".into(), Value::from(s.tokens_cached));
+            m.insert("tokensCacheWrite".into(), Value::from(s.tokens_cache_write));
             Value::Object(m)
         })
         .collect();
     let mut totals_json = sums_json(&totals);
     totals_json.insert("tokensCached".into(), Value::from(totals.tokens_cached));
+    totals_json.insert(
+        "tokensCacheWrite".into(),
+        Value::from(totals.tokens_cache_write),
+    );
     ok(json!({
         "days": days,
         "from": from_s,
@@ -644,8 +656,15 @@ fn admin_row(
     u: &BackendUser,
     c: &stats::UserCounts,
     suspended: bool,
+    features_off: i64,
+    free: bool,
     calls: Option<&super::user::CallState>,
 ) -> Value {
+    let features = if u.role == "admin" {
+        crate::features::all_on_json()
+    } else {
+        crate::features::to_json(features_off)
+    };
     let mut row = json!({
         "id": u.id,
         "username": u.username,
@@ -661,7 +680,12 @@ fn admin_row(
         "lastUsedAt": c.last_used_at,
         "tokensIn": c.tokens_in,
         "tokensOut": c.tokens_out,
+        "features": features,
     });
+    // A-OWNER-21: an administrator row carries its free mode (the switch in AI settings > AI+ users)
+    if let (true, Some(m)) = (u.role == "admin", row.as_object_mut()) {
+        m.insert("freeMode".into(), Value::Bool(free));
+    }
     if let (Some(st), Some(m)) = (calls, row.as_object_mut()) {
         m.insert("calls".into(), super::user::calls_json(st, None));
     }
@@ -672,11 +696,13 @@ fn admin_row(
 fn counts_and_suspended(
     app: &AppState,
     u: &BackendUser,
-) -> rusqlite::Result<(stats::UserCounts, bool)> {
+) -> rusqlite::Result<(stats::UserCounts, bool, i64, bool)> {
     app.0.store.read(|c| {
         let counts = stats::user_counts(c, u.id)?;
         let on = u.role == "admin" || data::function_enabled(c, u.id)?;
-        Ok((counts, !on))
+        let off = data::features_off(c, u.id)?;
+        let free = u.role == "admin" && data::free_mode(c, u.id)?;
+        Ok((counts, !on, off, free))
     })
 }
 
@@ -697,10 +723,10 @@ pub async fn users(ctx: Ctx) -> Answer {
     let calls = super::user::call_states(&app.0, &ids, unix_now())?;
     let mut rows: Vec<(String, Value)> = Vec::new();
     for u in listed {
-        let (c, suspended) = counts_and_suspended(app, u)?;
+        let (c, suspended, off, free) = counts_and_suspended(app, u)?;
         rows.push((
             u.username.clone(),
-            admin_row(u, &c, suspended, calls.get(&u.id)),
+            admin_row(u, &c, suspended, off, free, calls.get(&u.id)),
         ));
     }
     rows.sort_by(|a, b| a.0.cmp(&b.0));
@@ -717,7 +743,7 @@ pub async fn user(ctx: Ctx) -> Answer {
     let Some(u) = answer.iter().find(|u| u.id == id) else {
         return Err(ApiError::not_found());
     };
-    let (counts, suspended) = counts_and_suspended(app, u)?;
+    let (counts, suspended, off, free) = counts_and_suspended(app, u)?;
     let calls = super::user::call_states(&app.0, &[id], unix_now())?;
     let (chats, memories) = app
         .0
@@ -736,7 +762,7 @@ pub async fn user(ctx: Ctx) -> Answer {
         return Err(ApiError::backend_down());
     }
     ok(json!({
-        "user": admin_row(u, &counts, suspended, calls.get(&id)),
+        "user": admin_row(u, &counts, suspended, off, free, calls.get(&id)),
         "chats": chats,
         "memories": memories,
     }))
@@ -800,9 +826,124 @@ pub async fn set_function(ctx: Ctx, enabled: bool) -> Answer {
         app.0.deliver_outbox().await;
     }
     app.0.heartbeat_now().await;
-    let (counts, suspended) = counts_and_suspended(app, &u)?;
+    let (counts, suspended, off, free) = counts_and_suspended(app, &u)?;
     // The Suspend / Resume answer keeps the row without `calls` (the spec adds them to the two list routes only)
-    ok(json!({ "user": admin_row(&u, &counts, suspended, None) }))
+    ok(json!({ "user": admin_row(&u, &counts, suspended, off, free, None) }))
+}
+
+/// `POST /api/ai/admin/features` (API-A2), body `{"userId": N, "features": {six booleans}}`: sets the AI features of one
+/// plain user. Works like [`set_function`]: the user is looked up through the backend, an AI row of another account is
+/// purged first, the row is created when missing, and the audit line goes through the outbox when something changed.
+pub async fn set_features(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["userId", "features"])?;
+    let id = body_id(&ctx.body, "userId")?.ok_or_else(ApiError::bad_request)?;
+    let off = match ctx.body.get("features") {
+        Some(Value::Object(m)) => {
+            crate::features::from_json(m).map_err(|_| ApiError::bad_request())?
+        }
+        _ => return Err(ApiError::bad_request()),
+    };
+    let app = &ctx.app;
+    let found = app
+        .0
+        .link
+        .users(&[id], false)
+        .await
+        .map_err(|_| ApiError::backend_down())?;
+    let Some(u) = found.into_iter().find(|u| u.id == id) else {
+        return Err(ApiError::not_found());
+    };
+    if u.role == "admin" {
+        return Err(ApiError::admin_always());
+    }
+    if let Some((stamp, _)) = app.0.store.read(|c| data::user_row(c, id))? {
+        if stamp != u.stamp {
+            app.0.purge_user(id).await;
+            tracing::info!(
+                "Removed the AI data of a user id that now belongs to another account (id {id})"
+            );
+        }
+    }
+    let admin = &ctx.who.username;
+    let now = unix_now();
+    let line = app
+        .0
+        .store
+        .write(|tx| -> rusqlite::Result<Option<String>> {
+            let was = data::set_features_off(tx, id, &u.stamp, &u.username, off, now)?;
+            let Some(change) = crate::features::describe_change(was, off) else {
+                return Ok(None);
+            };
+            let line = format!(
+                "admin {admin:?} changed the AI features of {:?}: {change}",
+                u.username
+            );
+            stats::outbox_add(tx, now, &line)?;
+            Ok(Some(line))
+        })?;
+    if let Some(line) = line {
+        tracing::info!(target: "audit", "{line}");
+        app.0.deliver_outbox().await;
+    }
+    let (counts, suspended, off, free) = counts_and_suspended(app, &u)?;
+    ok(json!({ "user": admin_row(&u, &counts, suspended, off, free, None) }))
+}
+
+/// `POST /api/ai/admin/free`, body `{"userId": N, "free": bool}` (A-OWNER-21): an administrator switches the AI Chat free
+/// mode of any administrator account (its own included); refused for an ordinary account (409 `ai.freeAdminOnly`, free
+/// mode stays an administrator state). Written with its audit line only when the value changed.
+pub async fn set_free(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["userId", "free"])?;
+    let id = body_id(&ctx.body, "userId")?.ok_or_else(ApiError::bad_request)?;
+    let Some(Value::Bool(free)) = ctx.body.get("free") else {
+        return Err(ApiError::bad_request());
+    };
+    let free = *free;
+    let app = &ctx.app;
+    let found = app
+        .0
+        .link
+        .users(&[id], false)
+        .await
+        .map_err(|_| ApiError::backend_down())?;
+    let Some(u) = found.into_iter().find(|u| u.id == id) else {
+        return Err(ApiError::not_found());
+    };
+    if u.role != "admin" {
+        return Err(ApiError::free_admin_only());
+    }
+    if let Some((stamp, _)) = app.0.store.read(|c| data::user_row(c, id))? {
+        if stamp != u.stamp {
+            app.0.purge_user(id).await;
+            tracing::info!(
+                "Removed the AI data of a user id that now belongs to another account (id {id})"
+            );
+        }
+    }
+    let admin = &ctx.who.username;
+    let now = unix_now();
+    let line = app
+        .0
+        .store
+        .write(|tx| -> rusqlite::Result<Option<String>> {
+            let was = data::set_free_mode_of(tx, id, &u.stamp, &u.username, free, now)?;
+            if was == free {
+                return Ok(None);
+            }
+            let state = if free { "on" } else { "off" };
+            let line = format!(
+                "admin {admin:?} switched the AI Chat free mode of {:?} {state}",
+                u.username
+            );
+            stats::outbox_add(tx, now, &line)?;
+            Ok(Some(line))
+        })?;
+    if let Some(line) = line {
+        tracing::info!(target: "audit", "{line}");
+        app.0.deliver_outbox().await;
+    }
+    let (counts, suspended, off, free) = counts_and_suspended(app, &u)?;
+    ok(json!({ "user": admin_row(&u, &counts, suspended, off, free, None) }))
 }
 
 pub async fn chat(ctx: Ctx) -> Answer {
@@ -925,13 +1066,17 @@ pub async fn limits_post(ctx: Ctx) -> Answer {
     if let Some(field) = next.order_violation() {
         return Err(ApiError::limit_order(field));
     }
+    // The number of questions of each generation mode (single + multiple) must stay 1 ..= 100
+    if let Some(field) = next.gen_count_violation() {
+        return Err(ApiError::gen_count(field));
+    }
     let now = unix_now();
     let by = ctx.who.username.clone();
     app.0
         .store
         .write(|tx| tables::save_limits(tx, &next, &by, now))?;
     app.0.set_limits(next);
-    if cur.reply_max_chars != next.reply_max_chars {
+    if cur.reply_max_tokens != next.reply_max_tokens {
         app.0.forget_token_memo();
     }
     if let Some(change) = cur.describe_change(&next) {

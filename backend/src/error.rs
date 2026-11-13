@@ -90,6 +90,17 @@ pub enum DbError {
     /// (400 `MSG_UNKNOWN_BANKS`) by the users store; never leaves it.
     #[error("unknown question bank id")]
     UnknownBanks,
+    /// v1.1: an Excel import aimed at an AI-generated bank (checked before parsing and again inside the write
+    /// transaction); nothing was written. The API answers 400 `MSG_AI_BANK_IMPORT`.
+    #[error("an AI-generated question bank cannot be updated from an Excel file")]
+    AiBank,
+    /// v1.1 (C-B1): a sheet deletion that names every sheet of the bank; nothing was written. 400 `MSG_SHEETS_ALL`.
+    #[error("every sheet of the bank was named")]
+    SheetsAll,
+    /// v1.1 (C-B1): a sheet deletion aimed at an AI-generated bank (it has one sheet); nothing was written. 400
+    /// `MSG_AI_BANK_SHEETS`.
+    #[error("an AI-generated question bank has a single sheet")]
+    AiBankSheets,
 }
 
 /// Errors at the HTTP layer. `IntoResponse` is implemented in `api::error_response`.

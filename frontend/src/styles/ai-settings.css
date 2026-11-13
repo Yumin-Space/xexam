@@ -115,7 +115,7 @@
 .ais-totals { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 0 0 8px; }
 .ais-total { padding: 8px 12px; border-radius: 8px; background: var(--fill); }
 .ais-total dt { font-size: 12px; color: var(--ink3); }
-.ais-total dd { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3; }
+.ais-total dd { margin: 0; font-size: 20px; font-weight: 700; line-height: 1.3; white-space: nowrap; }
 .ais-h3 { margin: 18px 0 4px; font-size: 14px; font-weight: 600; }
 .ais-barcol { width: 30%; min-width: 90px; }
 .ais-bar { display: block; height: 8px; border-radius: 4px; background: var(--fill); overflow: hidden; }
@@ -171,6 +171,10 @@ dialog.dlg-viewer[open] { display: flex; flex-direction: column; gap: 12px; }
   .ais-row2, .ais-keys { grid-template-columns: minmax(0, 1fr); }
   .ais-totals { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
+@media (max-width: 400px) {
+  /* big exact figures (11,175,340) stay on one line: two columns, a smaller figure */
+  .ais-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 @media (pointer: coarse), (max-width: 480px) {
   .ais-select, .ais-model, .ais-num, .ais-suggest-in { min-height: 44px; font-size: 16px; }
   .ais-seg-o { min-height: 40px; }
@@ -200,7 +204,8 @@ dialog.dlg-viewer[open] { display: flex; flex-direction: column; gap: 12px; }
 .ais-users th.ais-user { max-width: 14em; white-space: normal; overflow-wrap: anywhere; }
 .ais-users td.ais-role { white-space: normal; }
 .ais-role .tag + .tag { margin-left: 4px; }
-.ais-users td.ais-calls { max-width: 20em; min-width: 11em; white-space: normal; }
+.ais-users td.ais-calls { min-width: 11em; white-space: nowrap; }
+.ais-users th, .ais-users td { padding-inline: 6px; }
 .ais-users th.ais-acts, .ais-users td.ais-acts { width: 1%; text-align: right; white-space: nowrap; }
 .ais-users td.ais-acts .ibtn + .ibtn { margin-left: 2px; }
 .ais-users .ais-cline { display: none; }
@@ -300,3 +305,142 @@ td.ais-usum { display: none; }
   .vw-menu-i:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
 }
 @media (hover: hover) { .vw-menu-i:hover { background: var(--danger-soft); } }
+
+/* ---------- v1.1 (UC-1): the usage charts ---------- */
+/* The v1.0 tables stay in the DOM for screen readers; the charts show the same numbers */
+.ais-tablewrap.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); }
+.uc-chart { position: relative; width: 100%; min-width: 0; margin: 4px 0 6px; }
+.uc-svg { display: block; max-width: 100%; height: auto; overflow: visible; }
+.uc-axis { stroke: var(--ink3); stroke-width: 1; }
+.uc-grid { stroke: var(--line-soft); stroke-width: 1; }
+.uc-bar { fill: var(--print); }
+.uc-stroke { stroke: var(--print); stroke-width: 3; stroke-linejoin: round; stroke-linecap: round; }
+.uc-area { fill: var(--print); opacity: .12; }
+/* A-OWNER-63: token mode of the time chart, opaque so the input area sits cleanly over the total one */
+.uc-area-out { fill: color-mix(in srgb, var(--print) 70%, var(--card)); opacity: 1; }
+.uc-area-in { fill: color-mix(in srgb, var(--print) 42%, var(--card)); opacity: 1; }
+.uc-stroke-in { stroke-width: 1.5; opacity: .6; }
+.uc-dot { fill: var(--card); stroke: var(--print); stroke-width: 1.5; }
+.uc-hot { fill: var(--print); fill-opacity: .18; stroke: var(--print); stroke-width: 1.5; pointer-events: none; }
+.uc-label { fill: var(--ink3); font-size: 11px; font-family: inherit; }
+.uc-val { fill: var(--ink); font-size: 11.5px; font-weight: 600; font-family: inherit; font-variant-numeric: tabular-nums; }
+@media (forced-colors: active) { .uc-bar, .uc-area { fill: CanvasText; } .uc-area-in { fill: GrayText; } .uc-stroke, .uc-dot { stroke: CanvasText; } }
+
+/* ---------- v1.1 (FP-4): the feature boxes of an AI+ user ---------- */
+.ais-featrow > td { padding: 0 8px 10px; border-top: 0; white-space: normal; }
+.ais-users tr:has(+ .ais-featrow) > * { border-bottom: 0; }
+.ais-feats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; font-size: 13px; }
+.ais-feat-t { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
+.ais-fg { display: flex; flex-wrap: nowrap; align-items: center; gap: 0 10px; min-width: 0; }
+.ais-fg-l { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
+.ais-fl { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; white-space: nowrap; cursor: pointer; }
+.ais-fl:has(input:disabled) { cursor: default; color: var(--ink3); }
+.ais-fbox { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+.ais-fbox:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.ais-feat-err { flex-basis: 100%; margin: 0; }
+.ais-feat-saved:empty { display: none; }
+@media (pointer: coarse) { .ais-fl { min-height: 44px; } }
+@media (max-width: 900px) {
+  .ais-users tr.ais-featrow { display: block; padding: 0 12px 10px; margin-top: -6px; }
+  .ais-users tr.ais-featrow > td { display: block; padding: 0; }
+}
+@media (max-width: 400px) { .ais-fg { gap: 0 6px; } .ais-fl { gap: 3px; font-size: 12.5px; } }
+
+/* ---------- v1.1 (GS-2, IS-2): the AI banks tab ---------- */
+.ais-gentitle { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
+.ais-gen-h { margin: 0; font-size: 16px; }
+.ais-pre { white-space: pre-line; }
+.ais-gencard { margin-bottom: 14px; }
+.ais-subcard { margin: 0 0 14px; }
+.ais-subcard + .ais-subcard { padding-top: 12px; border-top: 1px solid var(--line-soft); }
+.ais-subh { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
+.ais-genrow { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 16px; align-items: start; margin-bottom: 10px; }
+.ais-genfld .ais-num { width: 6.5em; max-width: 100%; font-size: 16px; }
+.ais-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; align-self: center; }
+.ais-comp { margin-bottom: 14px; }
+.ais-comp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-bottom: 6px; }
+.ais-comp-l { font-size: 14px; font-weight: 600; }
+.ais-comp-hint { margin: 0; }
+.ais-comp-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.ais-comp-f { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.ais-comp-f .ais-num { width: 5em; font-size: 16px; }
+.ais-comp-total { font-size: 13.5px; color: var(--ink2); font-variant-numeric: tabular-nums; }
+.ais-comp-total.bad { color: var(--danger); }
+.ais-genacts { margin: 4px 0 18px; }
+.ais-genjobs td.n, .ais-genjobs th.n { text-align: right; font-variant-numeric: tabular-nums; }
+.ais-genname { overflow-wrap: anywhere; white-space: normal; }
+.ais-genjobs td, .ais-genjobs th { white-space: normal; }
+.ais-genjobs td.ais-when, .ais-genjobs td.ais-gencalls, .ais-genjobs td.ais-genmade, .ais-genjobs td.ais-gensrc { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ais-genwhy { color: var(--danger); }
+.ais-jchip { display: inline-block; }
+.ais-srcm { display: none; }
+/* A-OWNER-55: the calls / tokens figures, one tip on the line */
+.ais-stats { display: inline-flex; gap: 10px; align-items: center; justify-content: flex-end; cursor: default; border-radius: 6px; }
+.ais-stats:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.ais-st { display: inline-flex; align-items: center; gap: 3px; }
+.ais-st .ais-ji { width: 12px; height: 12px; color: var(--ink3); }
+.ais-arr { color: var(--ink3); }
+/* A-OWNER-51 / 55: on phones every job is a card of three short lines (+ one red failure line); all cards share ONE grid
+   (the tbody's), so times, names and chips line up and nothing shifts with the length of the source text */
+@media (max-width: 900px) {
+  .ais-genjobs, .ais-genjobs tbody { display: block; }
+  .ais-genjobs thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); }
+  .ais-genjobs tbody { display: grid; grid-template-columns: 8.6em minmax(0, 1fr) auto; column-gap: 8px; }
+  .ais-genjobs tbody tr { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; row-gap: 3px; padding: 10px 0; border-top: 1px solid var(--line-soft); align-items: center; }
+  .ais-genjobs tbody th, .ais-genjobs tbody td { display: block; padding: 0; border: 0; text-align: left; min-width: 0; }
+  .ais-genjobs .ais-when { grid-column: 1; grid-row: 1; font-size: 12.5px; color: var(--ink3); }
+  .ais-genjobs .ais-uname { grid-column: 2; grid-row: 1; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ais-genjobs .ais-genst { display: contents; }
+  .ais-jchip { grid-column: 3; grid-row: 1; justify-self: end; padding: 1px 9px; border-radius: 999px; font-size: 12px; background: var(--line-soft); color: var(--ink2); }
+  .ais-jchip.done { background: var(--answer-right-soft); color: var(--answer-right); }
+  .ais-jchip.failed { background: var(--danger-soft, var(--line-soft)); color: var(--danger); }
+  .ais-jchip.running, .ais-jchip.queued { background: var(--warn-soft); color: var(--warn); }
+  .ais-genjobs .ais-gensrc { display: none; }
+  .ais-genjobs .ais-genname { grid-column: 1 / -1; grid-row: 2; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+  .ais-genjobs .ais-srcm { display: inline; font-size: 13px; color: var(--ink2); }
+  .ais-genjobs .ais-srcm::after { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 8px 1px 7px; border: solid var(--ink3); border-width: 1.5px 1.5px 0 0; transform: rotate(45deg); }
+  .ais-genjobs .ais-genmade { grid-column: 1; grid-row: 3; }
+  .ais-genjobs .ais-gencalls { grid-column: 2 / -1; grid-row: 3; }
+  .ais-genjobs td.ais-genmade, .ais-genjobs td.ais-gencalls { font-size: 12.5px; color: var(--ink3); text-align: left; white-space: nowrap; }
+  .ais-genjobs .ais-stats { justify-content: flex-start; min-height: 24px; }
+  .ais-genjobs .ais-d { display: none; }
+  .ais-genjobs .ais-genwhy { grid-column: 1 / -1; grid-row: 4; display: block; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* A-OWNER-39 / 40: the bar's hit area, the tip, the calls | tokens switch and the stacked bars */
+.uc-hit { fill: transparent; }
+.uc-item { outline: none; cursor: default; }
+.uc-item:focus-visible .uc-hit { stroke: var(--print); stroke-width: 2; }
+.uc-svg:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.uc-bar-in { opacity: .5; }
+.uc-tip { position: absolute; z-index: 3; max-width: min(260px, 100%); padding: 6px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--ink); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); font-size: 12.5px; line-height: 1.45; pointer-events: none; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.uc-tip[hidden] { display: none; }
+.uc-tip-h { font-weight: 700; }
+.uc-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.uc-head .uc-title { margin: 0; min-width: 0; }
+.uc-switch { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; flex: none; }
+.uc-sw-btn { min-height: 32px; padding: 4px 12px; border: 0; background: transparent; color: var(--ink2); font: inherit; font-size: 13px; cursor: pointer; }
+.uc-sw-btn + .uc-sw-btn { border-left: 1px solid var(--line); }
+.uc-sw-btn[aria-pressed="true"] { background: color-mix(in srgb, var(--print) 70%, #000); color: #fff; font-weight: 600; }
+.uc-sw-btn:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+@media (pointer: coarse) { .uc-sw-btn { min-height: 44px; padding-inline: 14px; } }
+.uc-legend { display: flex; gap: 14px; margin: 6px 0 0; font-size: 12px; color: var(--ink3); }
+.uc-legend[hidden] { display: none; }
+.uc-key { display: inline-flex; align-items: center; gap: 5px; }
+.uc-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--print); }
+.uc-sw-in { opacity: .5; }
+/* the by-time card's legend uses the area colours */
+.uc-sw-lin { background: color-mix(in srgb, var(--print) 42%, var(--card)); box-shadow: inset 0 0 0 1px var(--print); }
+.uc-sw-lout { background: color-mix(in srgb, var(--print) 70%, var(--card)); box-shadow: inset 0 0 0 1px var(--print); }
+@media (max-width: 480px) { .uc-head { flex-direction: column; align-items: flex-start; flex-wrap: nowrap; } }
+@media (forced-colors: active) { .uc-sw-btn[aria-pressed="true"] { background: Highlight; color: HighlightText; } .uc-bar-in { opacity: 1; fill: GrayText; } }
+.ais-numrow { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; }
+.ais-num:disabled { opacity: 0.5; }
+@media (max-width: 400px) {
+  /* five tabs must fit 320 px without clipping the selected one's outline */
+  .ais-tabs button { padding-inline: 4px; gap: 2px; }
+  /* A-OWNER-77: the ja short labels (ユーザー, セキュリティ) are wider than zh / en; the icons give way, the labels stay */
+  html:lang(ja) .ais-tabs .ais-tab-ic { display: none; }
+}
+
+.ais-genjobs .ais-skipn { color: var(--ink3); }

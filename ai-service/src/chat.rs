@@ -77,6 +77,32 @@ impl Gate {
         })
     }
 
+    /// Waits for a place (FIFO: the semaphore queues its waiters in order). Used by the generation job places.
+    pub async fn acquire(self: &Arc<Self>) -> GatePermit {
+        // The semaphore is never closed, so this only fails if the gate is dropped, which cannot happen while `self`
+        // is alive
+        let permit = self.sem.clone().acquire_owned().await.ok();
+        GatePermit {
+            permit,
+            gate: self.clone(),
+        }
+    }
+
+    /// A place only when MORE than `keep` places are free right now (taken under the state lock, so two callers cannot
+    /// both take the last spare place). A generation call uses `keep = 1` so one place always stays free for an
+    /// interactive call.
+    pub fn try_acquire_spare(self: &Arc<Self>, keep: usize) -> Option<GatePermit> {
+        let _st = self.lock();
+        if self.sem.available_permits() <= keep {
+            return None;
+        }
+        let p = self.sem.clone().try_acquire_owned().ok()?;
+        Some(GatePermit {
+            permit: Some(p),
+            gate: self.clone(),
+        })
+    }
+
     /// Changes the number of places. Raising adds places at once; lowering removes free places at once and the rest
     /// as running calls finish.
     pub fn resize(&self, size: usize) {
@@ -459,6 +485,7 @@ pub async fn run(g: Generation) {
     let mut tokens_in = None;
     let mut tokens_out = None;
     let mut tokens_cached = None;
+    let mut tokens_cache_write = None;
     let mut truncated = false;
     let mut first_byte_ms = None;
     let mut thinking = false;
@@ -532,6 +559,7 @@ pub async fn run(g: Generation) {
                     if output.is_some() { tokens_out = output; }
                 }
                 Some(Up::Cached(n)) => tokens_cached = Some(n),
+                Some(Up::CacheWrite(n)) => tokens_cache_write = Some(n),
                 Some(Up::Truncated) => truncated = true,
                 Some(Up::Done) => break Outcome::Done,
                 Some(Up::Fail(e)) => break Outcome::Failed(e),
@@ -634,6 +662,7 @@ pub async fn run(g: Generation) {
         tokens_in,
         tokens_out,
         tokens_cached,
+        tokens_cache_write,
         latency_ms: ms(started.elapsed()),
         first_byte_ms,
         status: usage_status,

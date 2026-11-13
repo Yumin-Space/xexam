@@ -8,7 +8,7 @@ use crate::config::Timeouts;
 use crate::limits::MAX_ANSWER_CHARS;
 use crate::settings::{Format, GatewayAuth, Provider, ANTHROPIC_VERSION};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedSender;
@@ -65,6 +65,8 @@ pub enum Item {
     },
     /// Input tokens served from the provider's prompt cache
     Cached(i64),
+    /// Input tokens the provider wrote to its prompt cache
+    CacheWrite(i64),
     Truncated,
     Done,
     Fail(UpCode),
@@ -82,6 +84,8 @@ pub enum Up {
     },
     /// Input tokens served from the provider's prompt cache
     Cached(i64),
+    /// Input tokens the provider wrote to its prompt cache
+    CacheWrite(i64),
     Truncated,
     Done,
     Fail(UpError),
@@ -293,6 +297,32 @@ pub fn chat_body(
     }
 }
 
+/// Puts `prefix` in front of the first user turn of a built body. Anthropic: the turn becomes two text blocks, the prefix
+/// with a `cache_control` breakpoint and the turn's own text after it; the `system` block carries its breakpoint
+/// already, so the system text and the prefix are the cached part. OpenAI-compatible: the prefix, a blank line, the text.
+pub fn put_prefix(format: Format, body: &mut Value, prefix: &str) {
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    let Some(first) = messages
+        .iter_mut()
+        .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+    else {
+        return;
+    };
+    let own = match first.get("content") {
+        Some(Value::String(s)) => s.clone(),
+        _ => return,
+    };
+    first["content"] = match format {
+        Format::Anthropic => json!([
+            {"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": own}
+        ]),
+        Format::OpenAi => Value::String(format!("{prefix}\n\n{own}")),
+    };
+}
+
 /// What a settings fingerprint learned about the token limit (kept in memory only, see `App`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenMemo {
@@ -310,12 +340,16 @@ pub fn first_token_limit(
     stored_max: i64,
     memo: Option<TokenMemo>,
 ) -> TokenLimit {
+    let unlimited = want >= crate::limits::UNLIMITED_TOKENS;
     match format {
+        Format::OpenAi if unlimited => TokenLimit::omit(),
         Format::OpenAi => TokenLimit {
             field: memo.map_or(TokenField::MaxTokens, |m| m.field),
             value: want,
         },
         Format::Anthropic => {
+            // the API requires a value: the largest one a model accepts, lowered by the ladder when refused
+            let want = if unlimited { 64_000 } else { want };
             let cap = memo
                 .and_then(|m| m.cap)
                 .or((stored_max == 4096).then_some(4096));
@@ -416,6 +450,10 @@ pub struct ChatSpec<'a> {
     pub turns: &'a [Turn],
     pub usage_option: bool,
     pub skip_cache: bool,
+    /// A text that opens the first user turn and is byte-identical across the calls of a job (the whole file of an AI
+    /// import, A-OWNER-71): Anthropic gets it as its own text block with a `cache_control` breakpoint, an
+    /// OpenAI-compatible service gets the same text first in the user message (providers that cache automatically hit it)
+    pub prefix: Option<&'a str>,
 }
 
 /// Builds the plan: the request with `first`, then one request per later step of the ladder.
@@ -430,7 +468,7 @@ pub fn build_plan(
     let mut steps = Vec::new();
     let mut limit = Some(first);
     while let Some(l) = limit {
-        let body = chat_body(
+        let mut body = chat_body(
             target.format,
             spec.model,
             spec.system,
@@ -438,6 +476,9 @@ pub fn build_plan(
             spec.usage_option,
             l,
         );
+        if let Some(p) = spec.prefix {
+            put_prefix(target.format, &mut body, p);
+        }
         let req = target.chat_request(client, &body, spec.skip_cache)?;
         steps.push((l, req));
         limit = ladder_after(target.format, &l, stored_max);
@@ -643,6 +684,7 @@ async fn stream_once(
                 Item::Thinking => Up::Thinking,
                 Item::Usage { input, output } => Up::Usage { input, output },
                 Item::Cached(n) => Up::Cached(n),
+                Item::CacheWrite(n) => Up::CacheWrite(n),
                 Item::Truncated => Up::Truncated,
                 Item::Done => {
                     let _ = tx.send(Up::Done);
@@ -669,6 +711,19 @@ pub struct Collected {
     pub tokens_out: Option<i64>,
     pub truncated: bool,
     pub first_byte_ms: Option<i64>,
+    /// Input tokens the provider read from its prompt cache (when it says so)
+    pub tokens_cached: Option<i64>,
+    /// Input tokens the provider wrote to its prompt cache (when it says so)
+    pub tokens_cache_write: Option<i64>,
+}
+
+/// Aborts a spawned task when dropped.
+struct AbortOnDrop(tokio::task::AbortHandle);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Runs a chat call (its whole plan) to the end within `total`, collecting the text.
@@ -682,6 +737,8 @@ pub async fn collect_chat(
     let started = std::time::Instant::now();
     let client = client.clone();
     let reader = tokio::spawn(async move { stream_plan(&client, plan, t, tx).await });
+    // Dropping this future (a cancel, a stop, a deadline) drops the in-flight request too
+    let _abort_on_drop = AbortOnDrop(reader.abort_handle());
     let mut out = Collected::default();
     let deadline = tokio::time::sleep(total);
     tokio::pin!(deadline);
@@ -701,7 +758,8 @@ pub async fn collect_chat(
                     if input.is_some() { out.tokens_in = input; }
                     if output.is_some() { out.tokens_out = output; }
                 }
-                Some(Up::Cached(_)) => {}
+                Some(Up::Cached(n)) => out.tokens_cached = Some(n),
+                Some(Up::CacheWrite(n)) => out.tokens_cache_write = Some(n),
                 Some(Up::Truncated) => out.truncated = true,
                 Some(Up::Done) => break Ok(()),
                 Some(Up::Fail(e)) => break Err(e),
@@ -724,6 +782,8 @@ pub struct ModelList {
     pub models: Vec<String>,
     /// `false`: the service does not list models (manual entry)
     pub listed: bool,
+    /// Context sizes in tokens the listing names (`context_length`, `context_window`, `max_input_tokens`), by model id
+    pub contexts: std::collections::HashMap<String, usize>,
 }
 
 /// Lists the models (4.9). 404 / 405 / 501, an unparsable or empty answer → `listed: false`.
@@ -735,6 +795,7 @@ pub async fn list_models(
     let unlisted = ModelList {
         models: Vec::new(),
         listed: false,
+        contexts: Default::default(),
     };
     let headers = target
         .auth_headers()
@@ -781,10 +842,18 @@ pub fn parse_models(body: &[u8], format: Format) -> Option<ModelList> {
     let v: Value = serde_json::from_slice(body).ok()?;
     let data = v.get("data")?.as_array()?;
     let mut ids: Vec<String> = Vec::new();
+    let mut contexts = std::collections::HashMap::new();
     for item in data {
         if let Some(id) = item.get("id").and_then(Value::as_str) {
             if !id.is_empty() && crate::settings::valid_model(id) && !ids.iter().any(|x| x == id) {
                 ids.push(id.to_string());
+                let ctx = ["context_length", "context_window", "max_input_tokens"]
+                    .iter()
+                    .find_map(|k| item.get(*k).and_then(Value::as_u64))
+                    .filter(|n| *n > 0);
+                if let Some(n) = ctx {
+                    contexts.insert(id.to_string(), usize::try_from(n).unwrap_or(usize::MAX));
+                }
             }
         }
     }
@@ -795,6 +864,7 @@ pub fn parse_models(body: &[u8], format: Format) -> Option<ModelList> {
     (!ids.is_empty()).then_some(ModelList {
         models: ids,
         listed: true,
+        contexts,
     })
 }
 
@@ -1001,6 +1071,23 @@ mod tests {
     }
 
     #[test]
+    fn unlimited_sends_no_token_field_or_the_largest_anthropic_value() {
+        let u = crate::limits::UNLIMITED_TOKENS;
+        assert_eq!(
+            first_token_limit(Format::OpenAi, u, 8192, None),
+            TokenLimit::omit()
+        );
+        assert_eq!(
+            first_token_limit(Format::Anthropic, u, 8192, None),
+            TokenLimit::max_tokens(64_000)
+        );
+        assert_eq!(
+            first_token_limit(Format::Anthropic, u, 4096, None),
+            TokenLimit::max_tokens(4096)
+        );
+    }
+
+    #[test]
     fn first_limit_uses_the_memo_and_the_stored_ceiling() {
         let want = 24000;
         assert_eq!(
@@ -1104,5 +1191,92 @@ mod tests {
         let t = Timeouts::default();
         assert!(provider_client("0.8", &t).is_ok());
         assert!(backend_client("0.8", &t).is_ok());
+    }
+
+    fn one_turn(text: &str) -> Vec<Turn> {
+        vec![Turn {
+            role: Role::User,
+            content: text.into(),
+        }]
+    }
+
+    #[test]
+    fn an_anthropic_prefix_is_its_own_block_with_the_breakpoint_and_the_text_follows() {
+        let turns = one_turn("TASK CONVERT now");
+        let mut body = chat_body(
+            Format::Anthropic,
+            "m",
+            "rules",
+            &turns,
+            true,
+            TokenLimit::max_tokens(900),
+        );
+        put_prefix(Format::Anthropic, &mut body, "FILE\nL1: made-up line");
+        let content = &body["messages"][0]["content"];
+        assert_eq!(
+            content,
+            &json!([
+                {"type": "text", "text": "FILE\nL1: made-up line", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "TASK CONVERT now"}
+            ])
+        );
+        // the rules block keeps its own breakpoint, so the cached part is rules + prefix
+        assert_eq!(
+            body["system"][0]["cache_control"],
+            json!({"type": "ephemeral"})
+        );
+        // the varying text carries no breakpoint
+        assert!(content[1].get("cache_control").is_none());
+    }
+
+    #[test]
+    fn an_openai_prefix_comes_first_in_the_user_message_and_nothing_else_changes() {
+        let turns = one_turn("TASK CONVERT now");
+        let plain = chat_body(
+            Format::OpenAi,
+            "m",
+            "rules",
+            &turns,
+            true,
+            TokenLimit::omit(),
+        );
+        let mut body = plain.clone();
+        put_prefix(Format::OpenAi, &mut body, "FILE\nL1: made-up line");
+        assert_eq!(
+            body["messages"][1]["content"],
+            json!("FILE\nL1: made-up line\n\nTASK CONVERT now")
+        );
+        body["messages"][1]["content"] = plain["messages"][1]["content"].clone();
+        assert_eq!(body, plain, "only the user message changed");
+        assert!(body.to_string().find("cache_control").is_none());
+    }
+
+    #[test]
+    fn the_prefix_bytes_are_identical_for_two_different_tasks() {
+        let a = one_turn("TASK RECOGNISE\nRecognise the file now.");
+        let b = one_turn("TASK CONVERT\nSLOTS\n[]\n\nConvert the 3 questions now.");
+        for f in [Format::Anthropic, Format::OpenAi] {
+            let (mut x, mut y) = (
+                chat_body(f, "m", "rules", &a, true, TokenLimit::max_tokens(900)),
+                chat_body(f, "m", "rules", &b, true, TokenLimit::max_tokens(900)),
+            );
+            put_prefix(f, &mut x, "PREFIX-BYTES");
+            put_prefix(f, &mut y, "PREFIX-BYTES");
+            let head = |v: &Value| match f {
+                Format::Anthropic => v["messages"][0]["content"][0].to_string(),
+                Format::OpenAi => v["messages"][1]["content"].as_str().unwrap()[..12].to_string(),
+            };
+            assert_eq!(head(&x), head(&y));
+            assert_eq!(x["system"], y["system"]);
+        }
+    }
+
+    #[test]
+    fn the_model_listing_keeps_the_context_figures_it_names() {
+        let body = br#"{"data":[{"id":"demo-a","context_length":200000},{"id":"demo-b","max_input_tokens":32000},{"id":"demo-c"}]}"#;
+        let l = parse_models(body, Format::OpenAi).expect("list");
+        assert_eq!(l.contexts.get("demo-a"), Some(&200_000));
+        assert_eq!(l.contexts.get("demo-b"), Some(&32_000));
+        assert!(!l.contexts.contains_key("demo-c"));
     }
 }

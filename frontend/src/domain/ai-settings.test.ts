@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   aiServiceOf, barPercent, canEnable, changesFingerprint, connUpdate, DEFAULT_LIMITS, defaultUrl, fieldOfError, fieldsOf, formOf,
-  CAP_KEYS, allFine, connCollapsed, convTotals, hostOf, modelCollapsed, LENGTH_KEYS, replyTokens, replyTokensLine, AI_TABS, tabOfHash, hashOfTab, blockTag, callsFigures, todayCell, rangeOf, headerClash, httpWarning, inferFormat, isDirty, keyAfter, LIMIT_KEYS, LIMIT_RANGES, limitIssue, limitProblem, limitsFormOf, limitsUpdate, SERVER_KEYS,
+  CAP_KEYS, allFine, connCollapsed, convTotals, hostOf, modelCollapsed, LENGTH_KEYS, AI_TABS, tabOfHash, hashOfTab, blockTag, callsFigures, todayCell, rangeOf, headerClash, httpWarning, inferFormat, isDirty, keyAfter, LIMIT_KEYS, LIMIT_RANGES, limitIssue, limitProblem, limitsFormOf, limitsUpdate, SERVER_KEYS,
+  AS_KEYS, BANK_KEYS, GEN_KEYS, IMPORT_KEYS, compBad, compTotal, genCallLive, perCall,
   modelKind, needsReentry, filterModels, orderModels, originOf, requiredKeysSaved, retentionOf, serviceCause, shownCode, stateChip,
   connectionSaved, focusAfterClear, savedToastKey, statusChips, SVC_WAIT_MS, testHint, testLineOf, urlAfterSwitch, type ConnForm,
 } from './ai-settings.ts';
@@ -187,30 +188,34 @@ test('retention days and the safety limits form', () => {
   assert.equal(retentionOf('3650'), 3650);
   for (const bad of ['0', '3651', '', '1.5', '-3', 'abc']) assert.equal(retentionOf(bad), null, bad);
 
-  assert.equal(LIMIT_KEYS.length, 10);
+  assert.equal(LIMIT_KEYS.length, 27);
+  assert.equal(AS_KEYS.length, 10);
   assert.deepEqual([...CAP_KEYS], ['callsPerMinute', 'callsPerHour', 'callsPerDay']);
   assert.equal(SERVER_KEYS.length, 5);
-  assert.deepEqual([...LENGTH_KEYS], ['replyMaxChars', 'memoryChars']);
-  // FB-5 revised: ten keys, no messageChars; the answer length 1000, the memory length 200
-  assert.deepEqual(DEFAULT_LIMITS, {
-    callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxChars: 1000, memoryChars: 200,
+  assert.deepEqual([...LENGTH_KEYS], ['replyMaxTokens', 'memoryTokens']);
+  // FB-5 revised: ten keys, no messageChars; the answer length 3000 tokens, the memory length 1000 tokens
+  assert.deepEqual(Object.fromEntries(AS_KEYS.map((k) => [k, DEFAULT_LIMITS[k]])), {
+    callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxTokens: 3000, memoryTokens: 1000,
     perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50,
   });
   assert.ok(!('messageChars' in DEFAULT_LIMITS));
-  assert.deepEqual(LIMIT_RANGES.replyMaxChars, [1, 16000]);
+  assert.deepEqual(LIMIT_RANGES.replyMaxTokens, [1, 250000]);
+  assert.deepEqual(LIMIT_RANGES.memoryTokens, [50, 250000]);
+  assert.deepEqual(LIMIT_RANGES.genCallTokens, [1000, 250000]);
+  assert.equal(DEFAULT_LIMITS.genCallTokens, 20000);
   const form = limitsFormOf(DEFAULT_LIMITS);
-  assert.equal(form.replyMaxChars, '1000');
-  assert.equal(form.memoryChars, '200');
+  assert.equal(form.replyMaxTokens, '3000');
+  assert.equal(form.memoryTokens, '1000');
   assert.equal(limitProblem(form, LIMIT_RANGES), null);
   assert.equal(limitProblem({ ...form, chatsPerUser: '9' }, LIMIT_RANGES), 'chatsPerUser');
   assert.equal(limitProblem({ ...form, globalRunning: '65' }, LIMIT_RANGES), 'globalRunning');
-  assert.equal(limitProblem({ ...form, memoryChars: '2.5' }, LIMIT_RANGES), 'memoryChars');
+  assert.equal(limitProblem({ ...form, memoryTokens: '2.5' }, LIMIT_RANGES), 'memoryTokens');
   assert.equal(limitProblem({ ...form, perUserRunning: '' }, LIMIT_RANGES), 'perUserRunning');
-  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, chatsPerUser: '2000', replyMaxChars: '2000' }), { chatsPerUser: 2000, replyMaxChars: 2000 });
-  assert.equal(limitProblem({ ...form, replyMaxChars: '0' }, LIMIT_RANGES), 'replyMaxChars');
-  assert.equal(limitProblem({ ...form, replyMaxChars: '16001' }, LIMIT_RANGES), 'replyMaxChars');
-  assert.equal(limitProblem({ ...form, replyMaxChars: '16000' }, LIMIT_RANGES), null);
-  assert.equal(limitProblem({ ...form, memoryChars: '49' }, LIMIT_RANGES), 'memoryChars');
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, chatsPerUser: '2000', replyMaxTokens: '2000' }), { chatsPerUser: 2000, replyMaxTokens: 2000 });
+  assert.equal(limitProblem({ ...form, replyMaxTokens: '0' }, LIMIT_RANGES), 'replyMaxTokens');
+  assert.equal(limitProblem({ ...form, replyMaxTokens: '250001' }, LIMIT_RANGES), 'replyMaxTokens');
+  assert.equal(limitProblem({ ...form, replyMaxTokens: '250000' }, LIMIT_RANGES), null);
+  assert.equal(limitProblem({ ...form, memoryTokens: '49' }, LIMIT_RANGES), 'memoryTokens');
   assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, form), {});
   // v1.0 caps: ranges 1-100 / 1-2000 / 1-20000
   assert.equal(limitProblem({ ...form, callsPerMinute: '0' }, LIMIT_RANGES), 'callsPerMinute');
@@ -372,26 +377,14 @@ test('focusAfterClear: the focus stays inside the viewer dialog after a delete',
   assert.equal(focusAfterClear('memories', []), 'vw-tab-memories');
 });
 
-test('replyTokens: the same vectors as limits::reply_tokens in ai-service', () => {
-  assert.equal(replyTokens(1000, 'zh-CN'), 1500);
-  assert.equal(replyTokens(1000, 'ja'), 1500);
-  assert.equal(replyTokens(1000, 'en'), 1000);
-  assert.equal(replyTokens(1, 'zh-CN'), 2);
-  assert.equal(replyTokens(1, 'en'), 1);
-  assert.equal(replyTokens(333, 'ja'), 500);
-  assert.equal(replyTokens(16000, 'zh-CN'), 24000);
-  assert.equal(replyTokens(16000, 'en'), 16000);
-  // the live line of the field: the two numbers of the typed value, nothing while it is not usable
-  assert.deepEqual(replyTokensLine('1000'), { zh: 1500, en: 1000 });
-  assert.deepEqual(replyTokensLine(' 2000 '), { zh: 3000, en: 2000 });
-  for (const bad of ['', '0', '16001', '1.5', 'abc']) assert.equal(replyTokensLine(bad), null, bad);
-  assert.deepEqual(replyTokensLine('300', { replyMaxChars: [1, 500] }), { zh: 450, en: 300 });
-  assert.equal(replyTokensLine('600', { replyMaxChars: [1, 500] }), null);
-  assert.deepEqual(rangeOf(undefined, 'replyMaxChars'), [1, 16000]);
+test('lengths are tokens: no language factor, one range for the three length settings', () => {
+  assert.deepEqual(rangeOf(undefined, 'replyMaxTokens'), [1, 250000]);
+  assert.deepEqual(rangeOf({ replyMaxTokens: [1, 500] }, 'replyMaxTokens'), [1, 500]);
 });
 
 test('the category tabs live in the hash; a missing or unknown value is the first tab', () => {
-  assert.deepEqual([...AI_TABS], ['feature', 'users', 'usage', 'safety']);
+  assert.deepEqual([...AI_TABS], ['feature', 'users', 'usage', 'safety', 'gen']);
+  assert.equal(tabOfHash('#/ai-settings?tab=gen'), 'gen');
   assert.equal(tabOfHash('#/ai-settings'), 'feature');
   assert.equal(tabOfHash('#/ai-settings?tab=users'), 'users');
   assert.equal(tabOfHash('#/ai-settings?tab=usage'), 'usage');
@@ -445,4 +438,67 @@ test('summaries once saved and tested (AS-4): the connection, the model, the sta
 test('the conversation figures that go with the usage', () => {
   assert.deepEqual(convTotals([]), { chats: 0, messages: 0, memories: 0 });
   assert.deepEqual(convTotals([{ chats: 2, messages: 10, memories: 1 }, { chats: 3, messages: 5, memories: 0 }]), { chats: 5, messages: 15, memories: 1 });
+});
+
+test('v1.1: the 25 keys, the ten + two of the AI banks tab, defaults and ranges of GS-1 / IS-1', () => {
+  assert.deepEqual([...GEN_KEYS], ['genPerDay', 'genAdminsExempt', 'genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti', 'genCallTokens', 'genRunning', 'genMaxCalls', 'genUnlimited']);
+  assert.deepEqual([...IMPORT_KEYS], ['importMaxMb', 'importMaxQuestions', 'importMaxCalls', 'recognizeMaxCalls', 'importUnlimited']);
+  assert.equal(BANK_KEYS.length, 17);
+  assert.deepEqual([...LIMIT_KEYS], [...AS_KEYS, ...GEN_KEYS, ...IMPORT_KEYS]);
+  assert.equal(new Set(LIMIT_KEYS).size, 27);
+  assert.deepEqual(GEN_KEYS.map((k) => DEFAULT_LIMITS[k]), [3, 1, 30, 10, 14, 6, 14, 6, 20000, 2, 15, 1]);
+  assert.deepEqual(IMPORT_KEYS.map((k) => DEFAULT_LIMITS[k]), [20, 50, 25, 20, 1]);
+  assert.deepEqual(GEN_KEYS.map((k) => LIMIT_RANGES[k]), [[0, 100], [0, 1], [5, 2000], [1, 500], [0, 100], [0, 100], [0, 100], [0, 100], [1000, 250000], [1, 8], [8, 40], [0, 1]]);
+  assert.deepEqual(IMPORT_KEYS.map((k) => LIMIT_RANGES[k]), [[1, 20], [1, 50], [8, 40], [8, 40], [0, 1]]);
+  assert.equal(limitIssue({ ...limitsFormOf(DEFAULT_LIMITS), genUnlimited: '2' }, LIMIT_RANGES)?.key, 'genUnlimited');
+  assert.equal(limitIssue({ ...limitsFormOf({ ...DEFAULT_LIMITS, importUnlimited: 1, genUnlimited: 1 }) }, LIMIT_RANGES), null);
+  const form = limitsFormOf(DEFAULT_LIMITS);
+  assert.equal(limitIssue(form, LIMIT_RANGES), null);
+  assert.deepEqual(limitIssue({ ...form, importMaxMb: '21' }, LIMIT_RANGES), { key: 'importMaxMb', kind: 'range' });
+  assert.deepEqual(limitIssue({ ...form, genCallTokens: '999' }, LIMIT_RANGES), { key: 'genCallTokens', kind: 'range' });
+  // the tab saves only what changed, of the twelve
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, genPerDay: '5', importMaxQuestions: '30' }), { genPerDay: 5, importMaxQuestions: 30 });
+});
+
+test('v1.1: the composition rule (A0): each mode 1 .. 100 in total, the bank mode first, the field is the multi key', () => {
+  const form = limitsFormOf(DEFAULT_LIMITS);
+  assert.deepEqual(limitIssue({ ...form, genBankSingle: '0', genBankMulti: '0' }, LIMIT_RANGES), { key: 'genBankMulti', kind: 'comp' });
+  assert.deepEqual(limitIssue({ ...form, genWrongSingle: '60', genWrongMulti: '41' }, LIMIT_RANGES), { key: 'genWrongMulti', kind: 'comp' });
+  assert.deepEqual(limitIssue({ ...form, genBankSingle: '0', genBankMulti: '0', genWrongSingle: '0', genWrongMulti: '0' }, LIMIT_RANGES), { key: 'genBankMulti', kind: 'comp' });
+  assert.equal(limitIssue({ ...form, genBankSingle: '0', genBankMulti: '1' }, LIMIT_RANGES), null);
+  assert.equal(limitIssue({ ...form, genBankSingle: '100', genBankMulti: '0' }, LIMIT_RANGES), null);
+  assert.equal(limitIssue({ ...form, genBankSingle: '100', genBankMulti: '1' }, LIMIT_RANGES)?.kind, 'comp');
+  assert.equal(compTotal('14', '6'), 20);
+  assert.ok(Number.isNaN(compTotal('14', 'x')));
+  assert.equal(compBad('14', '6'), false);
+  assert.equal(compBad('0', '0'), true);
+  assert.equal(compBad('101', '0'), true);
+  assert.equal(compBad('', '5'), true);
+});
+
+test('v1.1: perCall vectors are the Rust ones; the live line of the length field', () => {
+  assert.equal(perCall(20000, null), 5);
+  assert.equal(perCall(20000, 4096), 1);
+  assert.equal(perCall(20000, 8192), 2);
+  assert.equal(perCall(1000, null), 1);
+  assert.equal(perCall(250000, null), 5);
+  assert.equal(perCall(7200, null), 3);
+  assert.deepEqual(genCallLive('20000', LIMIT_RANGES), { q: 5 });
+  assert.deepEqual(genCallLive('1000', LIMIT_RANGES), { q: 1 });
+  assert.equal(genCallLive('999', LIMIT_RANGES), null);
+  assert.equal(genCallLive('abc', LIMIT_RANGES), null);
+});
+
+test('A-OWNER-48: the two unlimited switches are on by default', () => {
+  assert.equal(DEFAULT_LIMITS.genUnlimited, 1);
+  assert.equal(DEFAULT_LIMITS.importUnlimited, 1);
+  assert.equal(limitsFormOf({} as never).genUnlimited, '1');
+});
+
+test('every length key is sent under the token name the server knows', () => {
+  const form = limitsFormOf(DEFAULT_LIMITS);
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, replyMaxTokens: '4000' }), { replyMaxTokens: 4000 });
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, memoryTokens: '1500' }), { memoryTokens: 1500 });
+  assert.deepEqual(limitsUpdate(DEFAULT_LIMITS, { ...form, genCallTokens: '30000' }), { genCallTokens: 30000 });
+  for (const k of Object.keys(DEFAULT_LIMITS)) assert.ok(!/Chars$/.test(k), k);
 });

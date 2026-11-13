@@ -17,6 +17,17 @@ pub struct ApiError {
     pub call: Option<Box<CallInfo>>,
     /// `ai.busy` of the study routes: what is running (`null` when nothing could be found); serialised last
     pub running: Option<Box<Value>>,
+    /// More keys of the answer and a `Retry-After` header (generation / import refusals), boxed to keep `ApiError` small
+    pub more: Option<Box<More>>,
+}
+
+/// The rarely used parts of an error answer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct More {
+    /// More keys (`job`, `feature`, `used`, ...), serialised after the others
+    pub extra: Vec<(&'static str, Value)>,
+    /// A `Retry-After` header in seconds (`ai.gen.quota`)
+    pub retry_header: Option<i64>,
 }
 
 /// The extra fields of `ai.callLimit`: the cap (`minute` / `hour` / `day`), when one more call is possible (unix s) and in
@@ -38,7 +49,22 @@ impl ApiError {
             limit: None,
             call: None,
             running: None,
+            more: None,
         }
+    }
+
+    /// Adds one more key to the answer.
+    pub fn with_extra(mut self, key: &'static str, value: Value) -> ApiError {
+        self.more
+            .get_or_insert_with(Default::default)
+            .extra
+            .push((key, value));
+        self
+    }
+
+    /// The `Retry-After` header of this answer, if it has one.
+    pub fn retry_header(&self) -> Option<i64> {
+        self.more.as_ref().and_then(|m| m.retry_header)
     }
 
     fn with_field(mut self, field: &'static str) -> ApiError {
@@ -71,6 +97,11 @@ impl ApiError {
         }
         if let Some(r) = &self.running {
             m.insert("running".into(), (**r).clone());
+        }
+        if let Some(more) = &self.more {
+            for (k, v) in &more.extra {
+                m.insert((*k).into(), v.clone());
+            }
         }
         Value::Object(m)
     }
@@ -126,6 +157,10 @@ impl ApiError {
         ApiError::new(403, "ai.suspended", "管理员已暂停你的 AI+ 功能。")
     }
     /// Pausing an administrator's AI+ feature
+    /// A-OWNER-21: free mode is an administrator state; an ordinary account cannot get it
+    pub fn free_admin_only() -> ApiError {
+        ApiError::new(409, "ai.freeAdminOnly", "只有管理员账号可以使用自由模式。")
+    }
     pub fn admin_always() -> ApiError {
         ApiError::new(409, "ai.adminAlways", "管理员始终可以使用 AI，不能暂停。")
     }
@@ -198,6 +233,91 @@ impl ApiError {
     pub fn method_not_allowed() -> ApiError {
         ApiError::new(405, "ai.badRequest", "请求无效。")
     }
+    // —— AI features, generation and import (v1.1) ——————————————————————————————————————————————————————————————————————
+
+    /// The caller's AI+ feature is switched off for this user (FP-2)
+    pub fn feature_off(f: crate::features::Feature) -> ApiError {
+        ApiError::new(403, "ai.featureOff", text_of("ai.featureOff"))
+            .with_extra("feature", Value::from(f.key()))
+    }
+    /// The composition counts of a mode do not add up to 1 ..= 100
+    pub fn gen_count(field: &'static str) -> ApiError {
+        ApiError::new(400, "ai.genCount", text_of("ai.genCount")).with_field(field)
+    }
+    pub fn gen_bad_name(max: i64) -> ApiError {
+        ApiError::new(400, "ai.gen.badName", text_of("ai.gen.badName"))
+            .with_extra("max", Value::from(max))
+    }
+    /// The bank name typed at the import confirm step is empty after trimming
+    pub fn import_name_empty() -> ApiError {
+        ApiError::new(400, "ai.import.nameEmpty", text_of("ai.import.nameEmpty"))
+    }
+    /// A bank with that name exists already; nothing was created
+    pub fn import_name_taken() -> ApiError {
+        ApiError::new(409, "ai.import.nameTaken", text_of("ai.import.nameTaken"))
+    }
+    pub fn gen_forbidden() -> ApiError {
+        ApiError::new(403, "ai.gen.forbidden", text_of("ai.gen.forbidden"))
+    }
+    pub fn gen_not_found() -> ApiError {
+        ApiError::new(404, "ai.gen.notFound", text_of("ai.gen.notFound"))
+    }
+    /// A job of this user is queued or running; `job` is its Job object (`null` while an upload is being taken)
+    pub fn gen_busy(job: Value) -> ApiError {
+        ApiError::new(409, "ai.gen.busy", text_of("ai.gen.busy")).with_extra("job", job)
+    }
+    pub fn gen_ai_source() -> ApiError {
+        ApiError::new(422, "ai.gen.aiSource", text_of("ai.gen.aiSource"))
+    }
+    pub fn gen_too_few(have: i64, need: i64, what: &'static str) -> ApiError {
+        ApiError::new(
+            422,
+            "ai.gen.tooFew",
+            &format!("题目太少，无法生成（至少需要 {need} 道，现有 {have} 道）。"),
+        )
+        .with_extra("have", Value::from(have))
+        .with_extra("need", Value::from(need))
+        .with_extra("what", Value::from(what))
+    }
+    /// Today's AI bank units are used up (generation and import share them)
+    pub fn gen_quota(used: i64, limit: i64, reset_at: i64, now: i64) -> ApiError {
+        let mut e = ApiError::new(
+            429,
+            "ai.gen.quota",
+            &format!("今天的 {limit} 次 AI 题库机会（生成和导入共用）已经用完，0 点后可以再用。"),
+        )
+        .with_extra("used", Value::from(used))
+        .with_extra("limit", Value::from(limit))
+        .with_extra("resetAt", Value::from(reset_at))
+        .with_extra("retryAfter", Value::from((reset_at - now).max(1)));
+        e.more.get_or_insert_with(Default::default).retry_header = Some((reset_at - now).max(1));
+        e
+    }
+    pub fn gen_too_late(job: Value) -> ApiError {
+        ApiError::new(409, "ai.gen.tooLate", text_of("ai.gen.tooLate")).with_extra("job", job)
+    }
+    pub fn import_not_waiting(job: Value) -> ApiError {
+        ApiError::new(409, "ai.import.notWaiting", text_of("ai.import.notWaiting"))
+            .with_extra("job", job)
+    }
+    /// An upload refused by its file type (`ai.import.type`, `.legacy`, `.image`; 415)
+    pub fn import_type(code: &'static str, ext: &str) -> ApiError {
+        ApiError::new(415, code, text_of(code)).with_extra("ext", Value::from(ext))
+    }
+    pub fn import_empty() -> ApiError {
+        ApiError::new(400, "ai.import.empty", text_of("ai.import.empty"))
+    }
+    pub fn import_too_large(max_mb: i64) -> ApiError {
+        ApiError::new(
+            413,
+            "ai.import.tooLarge",
+            &format!("文件太大了（最大 {max_mb} MB）。"),
+        )
+        .with_extra("maxMb", Value::from(max_mb))
+    }
+    pub fn length_required() -> ApiError {
+        ApiError::new(411, "ai.badRequest", "请求无效。")
+    }
     pub fn memory_limit(n: i64) -> ApiError {
         ApiError::new(
             409,
@@ -210,7 +330,7 @@ impl ApiError {
         ApiError::new(
             400,
             "ai.memoryTooLong",
-            &format!("一条记忆最多 {n} 个字符。"),
+            &format!("一条记忆最多 {n} 个 Token。"),
         )
         .with_limit(n)
     }
@@ -311,6 +431,42 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.noWrong" => "这次没有答错的题（未作答的题不计入 AI 总结）。",
         "ai.noUsable" => "这些答错的题已经不可用（题库已删除或没有访问权限），无法总结。",
         "ai.noDetail" => "这条记录没有逐题记录，无法总结。",
+        "ai.featureOff" => "你没有权限使用这个功能。",
+        "ai.genCount" => "每次生成的题数（单选 + 多选）必须在 1 到 100 之间。",
+        "ai.gen.badName" => "名称不能为空，不能太长，也不能含有控制字符。",
+        "ai.gen.forbidden" => "你没有题库管理权限，不能使用这个功能。",
+        "ai.gen.notFound" => "找不到这个题库或工作表。",
+        "ai.gen.busy" => "你已经有一个 AI 题库任务在进行，请等它结束。",
+        "ai.gen.aiSource" => "勾选里包含 AI+题集，不能用来生成题目，请取消勾选 AI+题集。",
+        "ai.gen.tooFew" => "题目太少，无法生成。",
+        "ai.gen.quota" => "今天的 AI 题库机会（生成和导入共用）已经用完，0 点后可以再用。",
+        "ai.gen.tooLate" => "已经来不及取消了。",
+        "ai.gen.quality" => "AI 没能写出足够多合格的题目，请稍后再试。",
+        "ai.gen.stopped" => "AI 功能被关闭或暂停，任务已停止。",
+        "ai.gen.timeout" => "任务用时太长，已停止。",
+        "ai.gen.interrupted" => "服务重启，任务被中断了。",
+        "ai.gen.save" => "题库没能保存，请稍后再试。",
+        "ai.import.type" => "不支持这种文件类型。",
+        "ai.import.legacy" => "不支持旧版 Office 或加密的文件，请另存为新格式。",
+        "ai.import.image" => "不支持图片，请使用有文字的文件。",
+        "ai.import.empty" => "这个文件是空的。",
+        "ai.import.tooLarge" => "文件太大了。",
+        "ai.import.notWaiting" => "这个导入现在不需要确认。",
+        "ai.import.nameEmpty" => "请输入题库名称。",
+        "ai.import.nameTaken" => "已经有同名题库，请换一个名称。",
+        "ai.import.noText" => "读不到文字：文件可能是扫描件或图片。",
+        "ai.import.encoding" => "无法识别这个文本文件的编码。",
+        "ai.import.protected" => "文件受密码保护，无法读取。",
+        "ai.import.corrupt" => "文件已损坏或格式不对，无法读取。",
+        "ai.import.tooComplex" => "文件太复杂，无法读取。",
+        "ai.import.tooMuchText" => "文件的文字太多，请拆分后再导入。",
+        "ai.import.readTimeout" => "读取文件用时太长，已停止。",
+        "ai.import.noContent" => "文件里没有可以学习的内容。",
+        "ai.import.unclear" => "AI 没能看懂这个文件，请稍后再试。",
+        "ai.import.tooMany" => "文件里的题目太多，请拆分后再导入。",
+        "ai.import.tooLongQuestion" => "文件里有一道题太长，无法导入。",
+        "ai.import.callLimit" => "AI 请求次数已达上限，请稍后再试。",
+        "ai.import.expired" => "超过 30 分钟没有确认，导入已取消。",
         _ => "AI 内部出错了，请稍后再试。",
     }
 }
@@ -392,5 +548,116 @@ mod tests {
         let o = ApiError::limit_order("callsPerHour");
         assert_eq!(o.field, Some("callsPerHour"));
         assert_eq!(o.status.as_u16(), 400);
+    }
+
+    #[test]
+    fn generation_and_import_answers() {
+        use crate::features::Feature;
+        let e = ApiError::feature_off(Feature::Import);
+        assert_eq!(
+            serde_json::to_string(&e.to_json()).expect("json"),
+            r#"{"error":"你没有权限使用这个功能。","code":"ai.featureOff","feature":"import"}"#
+        );
+        assert_eq!(e.status.as_u16(), 403);
+        let q = ApiError::gen_quota(3, 3, 2_000, 1_900);
+        assert_eq!(q.status.as_u16(), 429);
+        let keys: Vec<String> = q
+            .to_json()
+            .as_object()
+            .expect("obj")
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(
+            keys,
+            ["error", "code", "used", "limit", "resetAt", "retryAfter"]
+        );
+        assert_eq!(q.retry_header(), Some(100));
+        assert_eq!(q.to_json()["retryAfter"], 100);
+        let b = ApiError::gen_busy(Value::Null);
+        assert_eq!(b.to_json()["job"], Value::Null);
+        assert_eq!(b.status.as_u16(), 409);
+        let t = ApiError::gen_too_few(18, 30, "source");
+        assert_eq!(
+            (
+                t.status.as_u16(),
+                t.to_json()["have"].clone(),
+                t.to_json()["need"].clone(),
+                t.to_json()["what"].clone()
+            ),
+            (
+                422,
+                serde_json::json!(18),
+                serde_json::json!(30),
+                serde_json::json!("source")
+            )
+        );
+        let i = ApiError::import_type("ai.import.legacy", "doc");
+        assert_eq!(
+            (i.status.as_u16(), i.to_json()["ext"].clone()),
+            (415, serde_json::json!("doc"))
+        );
+        let l = ApiError::import_too_large(20);
+        assert_eq!(
+            (l.status.as_u16(), l.to_json()["maxMb"].clone()),
+            (413, serde_json::json!(20))
+        );
+        assert_eq!(ApiError::gen_ai_source().status.as_u16(), 422);
+        assert_eq!(ApiError::gen_bad_name(60).to_json()["max"], 60);
+        assert_eq!(
+            ApiError::gen_count("genBankMulti").field,
+            Some("genBankMulti")
+        );
+        assert_eq!(ApiError::length_required().status.as_u16(), 411);
+    }
+
+    #[test]
+    fn every_job_code_has_its_own_text() {
+        let generic = text_of("nonsense");
+        for code in [
+            "ai.featureOff",
+            "ai.genCount",
+            "ai.gen.badName",
+            "ai.gen.forbidden",
+            "ai.gen.notFound",
+            "ai.gen.busy",
+            "ai.gen.aiSource",
+            "ai.gen.tooFew",
+            "ai.gen.quota",
+            "ai.gen.tooLate",
+            "ai.gen.quality",
+            "ai.gen.stopped",
+            "ai.gen.timeout",
+            "ai.gen.interrupted",
+            "ai.gen.save",
+            "ai.import.type",
+            "ai.import.legacy",
+            "ai.import.image",
+            "ai.import.empty",
+            "ai.import.tooLarge",
+            "ai.import.notWaiting",
+            "ai.import.nameEmpty",
+            "ai.import.nameTaken",
+            "ai.import.noText",
+            "ai.import.encoding",
+            "ai.import.protected",
+            "ai.import.corrupt",
+            "ai.import.tooComplex",
+            "ai.import.tooMuchText",
+            "ai.import.readTimeout",
+            "ai.import.noContent",
+            "ai.import.unclear",
+            "ai.import.tooMany",
+            "ai.import.tooLongQuestion",
+            "ai.import.callLimit",
+            "ai.import.expired",
+        ] {
+            assert_ne!(text_of(code), generic, "{code}");
+        }
+        // every extraction error maps to a code that has a text
+        for e in crate::extract::ALL_ERRORS {
+            let code = format!("ai.import.{}", e.code());
+            assert_ne!(text_of(&code), generic, "{code}");
+        }
     }
 }

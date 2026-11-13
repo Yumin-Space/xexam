@@ -13,14 +13,21 @@
 // the facts line under it (a tap on it also folds the sheets); the Excel guide is a set of foldable sub-sections (the first
 // open) with a "Collapse" at its end, and a code chip never separates from the punctuation next to it.
 import '../styles/banks.css';
-import { deleteBank, fetchBanks } from '../api/bank.ts';
+import { deleteBank, deleteSheets, fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
+import { aiSetBadge } from '../components/ai-badge.ts';
+import { genCardHost, selectedGenButton } from '../components/ai-gen.ts';
+import { importCard } from '../components/ai-import.ts';
 import { pageHead } from '../components/common.ts';
 import { iconButton } from '../components/icon-button.ts';
+import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
 import { icon } from '../components/shell.ts';
+import { aiMetaLine } from '../domain/ai-gen.ts';
+import { copyOutsidePrompt, outsidePrompt } from '../domain/outside-prompt.ts';
 import { retiredOnly } from '../domain/bank-status.ts';
+import { deletionPlan, selectionCount, sheetSelKey, type SelBank } from '../domain/bank-select.ts';
 import { sheetWarnings, warningTotal, type RowWarning } from '../domain/import-warnings.ts';
 import { errorText, LocalError, serverText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
@@ -28,6 +35,7 @@ import { applyBankDeleted, navigate, onRouteChange, onSignedIn, refreshLibrary, 
 import { manageableBanks, ownerView } from '../state/bank-access.ts';
 import { bankById, isAdmin, S } from '../state/store.ts';
 import type { BankSummary, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
+import { copyText } from '../utils/clipboard.ts';
 import { ask, askCheck } from '../utils/dialog.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
 import { PHONE_MQ, TOUCH_MQ, matches } from '../utils/media.ts';
@@ -94,8 +102,13 @@ const openSkips = new Set<string>();
 let guideOpen = false;
 /** The guide's sub-sections that are open (the first one is, BK-2; kept across re-renders) */
 const openSubs = new Set<string>(['basics']);
-/** The page is drawn for a phone (the bank buttons are icons only) */
+/** The page is drawn for a phone (v1.1: the bank actions go on their own line under the name at <= 900 px, the AI row is full width) */
 let phone = false;
+/** v1.1 (BL-3): the checked sheets, key `bank id + sheet name` -> where it is (memory only, never stored) */
+const sel = new Map<string, { bank: number; sheet: string }>();
+/** The toolbar of the checked sheets and the boxes: updated in place (no redraw, so the focus stays) */
+let barHost: HTMLElement | null = null;
+let boxSync: Array<() => void> = [];
 
 /** Scroll / focus to apply once the next render is in the document */
 let after: { scroll?: string; focus?: string } | null = null;
@@ -732,6 +745,15 @@ function previewView(p: Pending): Child[] {
 
 function doneBox(d: Done): HTMLElement {
   return h('div', { class: 'okbox', role: 'status', id: 'bk-done', tabindex: '-1' },
+    // A-OWNER-33: the close "x" in the notice's top-right corner, as on the AI status cards
+    h('button', {
+      class: 'gen-x', type: 'button', 'aria-label': t('common.close'), title: t('common.close'),
+      onclick: () => {
+        done = null;
+        after = { focus: 'bk-import-h' };
+        render();
+      },
+    }, miniIcon('x')),
     h('p', { class: 'ok-t' }, d.isNew
       ? t('banks.done.titleNew', { name: d.name, file: d.file })
       : t('banks.done.titleUpdate', { name: d.name, file: d.file })),
@@ -740,20 +762,12 @@ function doneBox(d: Done): HTMLElement {
       tn('banks.done.total', d.total),
       d.plan.skipped ? tn('banks.done.skipped', d.plan.skipped) : null)),
     h('div', { class: 'acts' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'home' }) }, t('banks.done.start')),
-      h('button', {
-        class: 'btn quiet', type: 'button',
-        onclick: () => {
-          done = null;
-          after = { focus: 'bk-import-h' };
-          render();
-        },
-      }, t('common.close'))));
+      h('button', { class: 'btn primary', type: 'button', onclick: () => navigate({ name: 'home' }) }, t('banks.done.start'))));
 }
 
 /** The upload form: the target pills (for the heading row), the bank picker under them, the hint line and the file row */
 function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HTMLElement; row: HTMLElement } {
-  const targets = managed();
+  const targets = managed().filter((b) => !b.ai);
   const hasBanks = targets.length > 0;
   const locked = busy !== null;
   const statusText = (): string => {
@@ -819,7 +833,7 @@ function uploadForm(): { choice: HTMLElement; pick: HTMLElement | null; hint: HT
   });
   const row = h('div', { class: 'bk-droprow', role: 'group', 'aria-label': t('banks.drop.label') },
     h('button', {
-      class: 'btn primary', id: 'bk-choose', type: 'button', disabled: locked, 'aria-describedby': 'bk-drop-t bk-drop-note',
+      class: 'btn bk-choose', id: 'bk-choose', type: 'button', disabled: locked, 'aria-describedby': 'bk-drop-t bk-drop-note',
       onclick: () => input.click(),
     }, t('banks.drop.choose')),
     busy === 'upload' ? null : h('span', { class: 'bk-or' }, t('banks.drop.or')),
@@ -861,81 +875,200 @@ function importPanel(): HTMLElement {
 
 // ---------------------------------------------------------------- bank list
 
-/** One card per bank: name and the two actions, one line of facts, and a chevron that folds / unfolds its sheet rows */
-/** One of a bank's actions: an icon button; the words show beside the icon on wide screens (the accessible name keeps the bank's name) */
-function bankAct(id: string, ic: 'upload' | 'trash', text: string, aria: string | null, disabled: boolean, onClick: () => void): HTMLButtonElement {
-  const btn = iconButton({ icon: ic, label: aria ?? text, tone: ic === 'trash' ? 'danger' : 'default', showLabel: !phone, onClick });
+/** One of a bank's actions (BL-1): a mini icon and 2 to 3 words in the UI language; the bank's name is only in the accessible name */
+function bankAct(id: string, ic: MiniIcon, text: string, aria: string, disabled: boolean, onClick: () => void, tone: 'default' | 'danger' = 'default'): HTMLButtonElement {
+  const btn = iconButton({ icon: ic, label: text, tone, showLabel: true, onClick });
   btn.id = id;
   btn.disabled = disabled;
-  if (!phone && aria) btn.setAttribute('aria-label', aria);
+  btn.classList.add('bk-act');
+  btn.setAttribute('aria-label', aria);
   return btn;
+}
+
+/** The checkbox of a bank or a sheet: a 44 px tap area around a 20 px box */
+function selBox(label: string, on: () => void): { wrap: HTMLElement; box: HTMLInputElement } {
+  const box = h('input', { type: 'checkbox', class: 'bk-box', 'aria-label': label, onchange: on });
+  return { wrap: h('label', { class: 'bk-check' }, box), box };
+}
+
+/** Bank list parts of the selection, from the page's own list */
+const selBanks = (): SelBank[] => managed().map((b) => ({ id: b.id, ai: b.ai != null, sheets: b.sheets.map((x) => x.name) }));
+
+function syncBoxes(): void {
+  for (const fn of boxSync) fn();
+  drawBar();
 }
 
 function bankCard(b: BankSummary): HTMLElement {
   const deleting = deletingId === b.id;
   const open = openSheets.has(b.id);
   const boxId = `bk-sheets-${b.id}`;
-  const questions = tn('common.questions', b.total);
   const created = t('banks.list.createdAt', { at: b.createdAt });
   // Administrators see whose upload each bank is (a bank manager's list holds only their own banks)
   const owner = isAdmin() ? ownerView(b, S.user?.id) : { kind: 'none' as const };
   const ownerText = owner.kind === 'you' ? t('banks.list.ownerYou') : owner.kind === 'other' ? t('banks.list.owner', { name: owner.name }) : null;
+  const usable = b.sheets.filter((x) => x.usable > 0).length;
+  const counts = t('home.pick.bankSub', { questions: tn('common.questions', b.total), sheets: tn('common.sheets', usable) });
 
-  const box = b.sheets.length ? h('div', { class: 'bk-sheetbox', id: boxId, hidden: !open },
-    h('ul', { class: 'bk-sheetrows' }, b.sheets.map((s) => h('li', { class: 'bk-row' }, line(s.name, s.usable > 0
-      ? facts(tn('banks.sheet.usable', s.usable), s.inactive ? tn('banks.list.sheetRetired', s.inactive) : null)
-      : t('banks.sheet.allRetired'))))),
-    h('p', { class: 'bk-created num' }, created)) : null;
+  // BL-3: the bank box is tri-state over its sheets; an AI bank has its one sheet only as part of the bank
+  const bankBox = selBox(t('banks.sel.bankBox', { name: b.name }), () => {
+    for (const x of b.sheets) {
+      if (bankBox.box.checked) sel.set(sheetSelKey(b.id, x.name), { bank: b.id, sheet: x.name });
+      else sel.delete(sheetSelKey(b.id, x.name));
+    }
+    syncBoxes();
+  });
+  const sheetBoxes: Array<{ name: string; box: HTMLInputElement }> = [];
+  const sync = (): void => {
+    const n = b.sheets.filter((x) => sel.has(sheetSelKey(b.id, x.name))).length;
+    bankBox.box.checked = b.sheets.length > 0 && n === b.sheets.length;
+    bankBox.box.indeterminate = n > 0 && n < b.sheets.length;
+    for (const x of sheetBoxes) x.box.checked = sel.has(sheetSelKey(b.id, x.name));
+  };
 
-  // The chevron and a tap on the facts line fold the sheets (BK-1); the label is fixed, aria-expanded says the state
-  let expand: HTMLButtonElement | null = null;
-  const toggle = (): void => {
-    if (!box || !expand) return;
+  const rows = b.ai ? [] : b.sheets.map((x) => {
+    const sb = selBox(t('banks.sel.sheetBox', { sheet: x.name, name: b.name }), () => {
+      if (sb.box.checked) sel.set(sheetSelKey(b.id, x.name), { bank: b.id, sheet: x.name });
+      else sel.delete(sheetSelKey(b.id, x.name));
+      syncBoxes();
+    });
+    sheetBoxes.push({ name: x.name, box: sb.box });
+    return h('li', { class: 'bk-row bk-sheetrow' }, sb.wrap, line(x.name, x.usable > 0
+      ? facts(tn('banks.sheet.usable', x.usable), x.inactive ? tn('banks.list.sheetRetired', x.inactive) : null)
+      : t('banks.sheet.allRetired')));
+  });
+  boxSync.push(sync);
+
+  // the facts that used to sit under the name (file, updated, owner) live in the folded part, so the row stays compact
+  const metaLine = b.ai ? t(aiMetaLine(b.ai).key as MsgKey, aiMetaLine(b.ai).params) : b.filename || t('common.none');
+  const factsLine = h('p', { class: 'bk-bankfacts' }, dotted(
+    h('span', null, metaLine),
+    h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt })),
+    ownerText ? h('span', { class: 'bk-owner' + (owner.kind === 'other' ? ' other' : '') }, ownerText) : null));
+  const box = h('div', { class: 'bk-sheetbox', id: boxId, hidden: !open },
+    rows.length ? h('ul', { class: 'bk-sheetrows' }, rows) : null,
+    factsLine,
+    h('p', { class: 'bk-created num' }, created));
+
+  const expand = iconButton({ icon: 'chevDown', label: t('banks.list.sheetsAria', { name: b.name }), onClick: () => {
     const now = box.hidden;
     box.hidden = !now;
     if (now) openSheets.add(b.id);
     else openSheets.delete(b.id);
     expand.setAttribute('aria-expanded', String(now));
-  };
-  if (box) {
-    expand = iconButton({ icon: 'chevDown', label: t('banks.list.sheetsAria', { name: b.name }), onClick: toggle });
-    expand.id = `bk-expand-${b.id}`;
-    expand.classList.add('bk-expand');
-    expand.setAttribute('aria-expanded', String(open));
-    expand.setAttribute('aria-controls', boxId);
-  }
+  } });
+  expand.id = `bk-expand-${b.id}`;
+  expand.classList.add('bk-expand');
+  expand.setAttribute('aria-expanded', String(open));
+  expand.setAttribute('aria-controls', boxId);
 
-  return h('article', { class: 'bk-bank', 'aria-labelledby': `bk-name-${b.id}` },
+  const acts = h('div', { class: 'bk-bankacts' },
+    b.ai ? null : bankAct(`bk-update-${b.id}`, 'upload', t('banks.act.updateShort'), t('banks.list.updateAria', { name: b.name }), busy === 'delete', () => chooseUpdate(b)),
+    bankAct(`bk-delete-${b.id}`, 'trash', deleting ? t('banks.list.deleting') : t('banks.act.deleteShort'), t('banks.list.deleteAria', { name: b.name }),
+      busy !== null, () => void removeBank(b), 'danger'));
+
+  const card = h('article', { class: 'bk-bank', 'aria-labelledby': `bk-name-${b.id}` },
     h('div', { class: 'bk-bankhead' },
-      h('h3', { class: 'bk-bankname', id: `bk-name-${b.id}` }, b.name),
-      h('div', { class: 'bk-bankacts' },
-        bankAct(`bk-update-${b.id}`, 'upload', t('banks.list.update'), t('banks.list.updateAria', { name: b.name }), busy === 'delete', () => chooseUpdate(b)),
-        bankAct(`bk-delete-${b.id}`, 'trash', deleting ? t('banks.list.deleting') : t('common.delete'), deleting ? null : t('banks.list.deleteAria', { name: b.name }),
-          busy !== null, () => void removeBank(b)),
-        expand)),
-    // Without sheet rows there is nothing to unfold, so the creation date is the tooltip of this line
-    // The file name may be long and wraps anywhere; the other facts each stay on one line
-    h('p', { class: 'bk-bankmeta' + (box ? ' bk-tap' : ''), title: box ? null : created, onclick: box ? toggle : null }, dotted(
-      h('span', null, b.filename || t('common.none')),
-      b.inactive ? t('banks.list.withRetired', { questions, n: b.inactive }) : questions,
-      tn('common.sheets', b.sheets.length),
-      h('span', { class: 'num bk-nw' }, t('banks.list.updatedAt', { at: b.updatedAt })),
-      ownerText ? h('span', { class: 'bk-owner' + (owner.kind === 'other' ? ' other' : '') }, ownerText) : null)),
+      bankBox.wrap,
+      h('div', { class: 'bk-bankmain' },
+        h('h3', { class: 'bk-bankname', id: `bk-name-${b.id}` }, b.name),
+        h('p', { class: 'bk-bankmeta bk-tap', onclick: () => expand.click() },
+          b.inactive ? t('banks.list.withRetired', { questions: counts, n: b.inactive }) : counts)),
+      b.ai ? aiSetBadge(b.ai) : null,
+      acts,
+      expand),
     // v0.7: every question retired (questions from an older Excel layout): say so, and how to use the bank again
     retiredOnly(b) ? h('p', { class: 'bk-old' }, t('banks.list.oldLayout')) : null,
     box);
+  sync();
+  return card;
+}
+
+/** The toolbar of the checked sheets (BL-3): the count, AI 生成题, 删除所选 and a clear button; greyed while nothing is checked */
+function drawBar(): void {
+  if (!barHost) return;
+  const n = selectionCount(sel.keys(), selBanks());
+  // always drawn (greyed while nothing is ticked) so the list never jumps when the first box is ticked
+  barHost.hidden = false;
+  // A-OWNER-30: the button reads the whole selection, so ticking only AI banks greys it with the reason (AI sheets are never sent)
+  const scope = [...sel.values()];
+  barHost.replaceChildren(
+    h('span', { class: 'bk-selcount', role: 'status' }, tn('banks.sel.count', n)),
+    h('div', { class: 'bk-selacts' },
+      selectedGenButton(scope),
+      h('button', { class: 'btn danger bk-seldel', type: 'button', disabled: busy !== null || n === 0, onclick: () => void removeSelected() }, t('banks.sel.delete')),
+      h('button', { class: 'btn quiet', type: 'button', disabled: n === 0, onclick: () => { sel.clear(); syncBoxes(); } }, t('banks.sel.clear'))));
+}
+
+/** One confirm for everything that goes (BL-3): whole banks through the bank route, partly checked banks through the sheet route */
+async function removeSelected(): Promise<void> {
+  if (busy || asking) return;
+  const plan = deletionPlan(sel.keys(), selBanks());
+  if (!plan.banks.length && !plan.parts.length) return;
+  const byId = (id: number): BankSummary | undefined => managedById(id);
+  const lines = [
+    ...plan.banks.map((id) => t('banks.sel.delBank', { name: byId(id)?.name ?? '' })),
+    ...plan.parts.map((p) => t('banks.sel.delSheets', { name: byId(p.id)?.name ?? '', sheets: p.sheets.join(t('common.listSep')) })),
+  ];
+  asking = true;
+  let r: Awaited<ReturnType<typeof askCheck>>;
+  try {
+    r = await askCheck({
+      title: t('banks.sel.delTitle'), body: lines.map((l) => `• ${l}`).join('\n') + '\n' + t('banks.sel.delWarn'), ok: t('common.delete'), danger: true,
+      check: { label: t('banks.sel.delCheck') },
+    });
+  } finally {
+    asking = false;
+  }
+  if (!r.ok || busy) return;
+  busy = 'delete';
+  listError = null;
+  render();
+  try {
+    for (const id of plan.banks) {
+      applyBankDeleted(await deleteBank(id, r.checked));
+      if (pending && pending.target === id) pending = null;
+      if (done && done.bankId === id) done = null;
+    }
+    for (const p of plan.parts) applyBankDeleted(await deleteSheets(p.id, p.sheets, r.checked));
+    importsWanted = true;
+    sel.clear();
+    toast(t('banks.sel.done'));
+    after = { focus: 'bk-list-h' };
+  } catch (e) {
+    listError = e;
+    try {
+      await refreshLibrary();
+    } catch {
+      /* keep what we have */
+    }
+  }
+  busy = null;
+  if (onBanksPage()) render();
 }
 
 function banksPanel(): HTMLElement {
   const admin = isAdmin();
   const list = managed();
+  // forget checks of banks and sheets that are gone
+  for (const [k, v] of [...sel]) {
+    const b = list.find((x) => x.id === v.bank);
+    if (!b || !b.sheets.some((x) => x.name === v.sheet)) sel.delete(k);
+  }
+  boxSync = [];
+  barHost = h('div', { class: 'bk-selbar', role: 'group', 'aria-label': t('banks.sel.group') });
+  const cards = list.map(bankCard);
+  drawBar();
   return h('section', { class: 'panel bk-list', 'aria-labelledby': 'bk-list-h', 'aria-busy': busy === 'delete' ? 'true' : null },
     h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin ? 'banks.list.title' : 'banks.list.titleMine')),
+    // v1.1 (GB-7): the progress card of a generation / import at the top of the list
+    genCardHost('banks'),
     // A bank manager may also study banks an administrator gave them: say why those are not listed here
     !admin && list.length ? h('p', { class: 'bk-hint bk-mgr-note' }, t('banks.list.managerNote')) : null,
     listError ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('banks.delete.failed', { reason: errorText(listError) }))) : null,
+    list.length ? barHost : null,
     list.length
-      ? h('div', { class: 'bk-banks' }, list.map(bankCard))
+      ? h('div', { class: 'bk-banks' }, cards)
       : h('p', { class: 'empty' }, t(admin ? 'banks.list.empty' : 'banks.list.emptyManager')));
 }
 
@@ -1079,6 +1212,26 @@ function sub(key: string, title: MsgKey, ...body: Child[]): HTMLElement {
   return d;
 }
 
+/** "Use an outside AI" part of the guide (A-OWNER-79): numbered steps, the prompt in a box that scrolls inside itself, a copy button */
+function outsideAiBody(): Child[] {
+  const copyBtn = h('button', {
+    type: 'button', class: 'btn quiet bk-prompt-copy', id: 'bk-prompt-copy',
+    onclick: async () => {
+      const ok = await copyOutsidePrompt(copyText);
+      toast(t(ok ? 'ai.copied' : 'ai.copyFailed'));
+    },
+  }, t('ai.copy'));
+  const steps = ['aiStep1', 'aiStep2', 'aiStep3', 'aiStep4', 'aiStep5', 'aiStep6'] as const;
+  return [
+    rich('p', t('banks.guide.aiLead')),
+    h('ol', { class: 'bk-points bk-steps' },
+      steps.map((k) => rich('li', t(`banks.guide.${k}`, { import: t('banks.drop.choose') })))),
+    h('div', { class: 'bk-prompt-head' }, h('p', { class: 'bk-ex-col', id: 'bk-prompt-label' }, t('banks.guide.aiPromptLabel')), copyBtn),
+    h('pre', { class: 'bk-prompt', id: 'bk-prompt', tabindex: '0', role: 'region', 'aria-labelledby': 'bk-prompt-label' }, outsidePrompt()),
+    h('ul', { class: 'bk-points' }, rich('li', t('banks.guide.aiNote1')), rich('li', t('banks.guide.aiNote2'))),
+  ];
+}
+
 function guidePanel(): HTMLElement {
   // Folded by default: the summary is the panel's heading row. Column letters are Excel's own (the same in every language).
   // v0.7 (owner): the six-column layout is the only one that can be imported; the guide explains only that one.
@@ -1120,6 +1273,7 @@ function guidePanel(): HTMLElement {
           rich('li', t('banks.guide.files', { mb: MAX_MB })),
           rich('li', t('banks.guide.newOrUpdate', { new: t('banks.target.new'), update: t('banks.target.update') })),
           rich('li', t('banks.guide.oldBanks')))),
+      sub('outside', 'banks.guide.aiTitle', ...outsideAiBody()),
       h('div', { class: 'bk-guide-end' },
         h('button', {
           type: 'button', class: 'btn quiet bk-collapse', id: 'bk-guide-collapse',
@@ -1144,7 +1298,7 @@ export function renderBanks(): HTMLElement {
   const el = h('div', { class: 'page page-banks' },
     pageHead(t('banks.title')),
     h('div', { class: 'bk-grid' },
-      h('div', { class: 'bk-col' }, importPanel(), banksPanel()),
+      h('div', { class: 'bk-col' }, importPanel(), importCard(), banksPanel()),
       h('div', { class: 'bk-col' }, historyPanel(), guidePanel())));
   applyAfter();
   return el;

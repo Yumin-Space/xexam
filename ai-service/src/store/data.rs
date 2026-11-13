@@ -193,6 +193,37 @@ pub fn set_function_enabled(
     Ok(was != enabled)
 }
 
+/// The user's switched-off feature bits (`users.features_off`, see `features`); 0 for a user without a row.
+pub fn features_off(c: &Connection, user: i64) -> rusqlite::Result<i64> {
+    Ok(c.query_row(
+        "SELECT features_off FROM users WHERE id = ?1",
+        [user],
+        |r| r.get::<_, i64>(0),
+    )
+    .optional()?
+    .unwrap_or(0))
+}
+
+/// Sets the feature bits of a user, creating the row first when it is missing (like [`set_function_enabled`]). Returns
+/// the value stored before (0 when there was no row).
+pub fn set_features_off(
+    c: &Connection,
+    user: i64,
+    stamp: &str,
+    username: &str,
+    off: i64,
+    now: i64,
+) -> rusqlite::Result<i64> {
+    let was = features_off(c, user)?;
+    c.execute(
+        "INSERT INTO users (id, stamp, username, first_seen_at, last_seen_at, features_off)
+         VALUES (?1, ?2, ?3, ?4, ?4, ?5)
+         ON CONFLICT(id) DO UPDATE SET features_off = excluded.features_off, username = excluded.username",
+        params![user, stamp, username, now, off],
+    )?;
+    Ok(was)
+}
+
 /// Ids of the users whose AI+ function is suspended, lowest first, at most `limit`.
 pub fn suspended_ids(c: &Connection, limit: usize) -> rusqlite::Result<Vec<i64>> {
     let mut st =
@@ -329,6 +360,30 @@ pub fn free_mode(c: &Connection, user: i64) -> rusqlite::Result<bool> {
         .optional()?
         .is_some_and(|v| v != 0),
     )
+}
+
+/// A-OWNER-21: sets the free mode of an administrator account by id (the row is created first when it is missing, under
+/// the account's current stamp; a row of an older account under the same id is purged by the caller first). Returns the
+/// previous value.
+pub fn set_free_mode_of(
+    c: &Connection,
+    id: i64,
+    stamp: &str,
+    username: &str,
+    free: bool,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    c.execute(
+        "INSERT INTO users (id, stamp, username, first_seen_at, last_seen_at) VALUES (?1, ?2, ?3, ?4, ?4)
+         ON CONFLICT(id) DO NOTHING",
+        params![id, stamp, username, now],
+    )?;
+    let was = free_mode(c, id)?;
+    c.execute(
+        "UPDATE users SET free_mode = ?2 WHERE id = ?1",
+        params![id, i64::from(free)],
+    )?;
+    Ok(was)
 }
 
 /// Sets the free mode of the caller (the row is created first when it is missing).

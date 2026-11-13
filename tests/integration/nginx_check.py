@@ -18,6 +18,12 @@
   every kind of AI location (the two streaming routes, an ordinary AI route, the admin Test): status, JSON body and
   Retry-After header intact, not replaced by an Nginx error page, and Nginx's own 429 (limit_req) stays non-JSON.
 
+  AI import (v1.1, IX-7 / SEC-1): the exact location = /api/ai/import/upload copies every proxy, header-scrub, auth and error
+  line of /api/ai/ and differs only in the body limit, the read timeout, the request rate zone and the buffering of the
+  request; an unauthenticated 20 MiB POST is answered 401 by the auth step and its body never reaches the AI service; a
+  good session reaches the AI service with the identity and without Cookie / Authorization / forwarding headers; a body of
+  20 MiB + 1 is 413 JSON with the code ai.import.tooLarge; GET on the route is 403 or 405; other methods are refused.
+
 Usage: python -I tests/integration/nginx_check.py <image, default xexam-frontend:test> [port, default 18080]
 Uses only Docker and the standard library; the containers and the network carry the prefix xexam-nginxcheck- plus a random
 suffix and are removed at the end."""
@@ -251,6 +257,20 @@ try:
        'The three AI locations share their auth, proxy_set_header and error_page lines (%d lines)' % len(same(ai_prefix)))
     ok(all('set $ai_upstream http://ai-service:8766;' in b for b in (ai_prefix, ai_stream, ai_verify)),
        'The three AI locations proxy to the compose service ai-service (set $ai_upstream http://ai-service:8766;)')
+    # v1.1 (IX-7, SEC-1): the exact upload location copies every proxy / header / auth / error line of /api/ai/
+    ai_upload = location_block(r.stdout, '= /api/ai/import/upload')
+    ok(ai_upload is not None, 'nginx -T shows the exact location = /api/ai/import/upload')
+    keep = lambda lines: [line for line in lines if line.startswith(('auth_request', 'auth_request_set', 'set $ai_upstream', 'proxy_pass',
+                                                                     'proxy_http_version', 'proxy_set_header', 'proxy_connect_timeout',
+                                                                     'proxy_intercept_errors', 'error_page'))]
+    # the one listed difference (IX-7): its 413 goes to @ai_import_too_large instead of @ai_too_large
+    not413 = lambda lines: [line for line in keep(lines) if not line.startswith('error_page 413')]
+    ok(not413(ai_upload) == not413(ai_prefix) and len(not413(ai_upload)) >= 20
+       and 'error_page 413 = @ai_import_too_large;' in ai_upload and 'error_page 413 = @ai_too_large;' in ai_prefix,
+       'The upload location carries the same auth, proxy_set_header (every scrub) and error_page lines as /api/ai/, its 413 '
+       'going to @ai_import_too_large (%d lines)' % len(keep(ai_upload)))
+    ok('client_max_body_size 20m;' in ai_upload or any(l.startswith('client_max_body_size 20') for l in ai_upload),
+       'The upload location allows bodies up to 20 MiB. Actual %r' % [l for l in ai_upload if l.startswith('client_max_body_size')])
     no_read = lambda lines: [line for line in lines if not line.startswith('proxy_read_timeout ')]
     ok(no_read(ai_verify) == no_read(ai_prefix), 'The admin Test location equals /api/ai/ except for the read timeout')
     timeouts = [[line for line in b if line.startswith('proxy_read_timeout ')] for b in (ai_prefix, ai_stream, ai_verify)]
@@ -576,6 +596,35 @@ try:
                     body=b'{}')
     ok(st == 502 and (jbody(b) or {}).get('code') == 'ai.unavailable',
        'AI service stopped: POST /api/ai/admin/verify -> 502 JSON ai.unavailable. Actual %d' % st)
+
+    # -- AI import upload (v1.1, IX-7 / SEC-1); the fake AI service was stopped by the section above: start it again --
+    sh('docker', 'start', AI)
+    for _ in range(40):
+        if req('GET', '/api/ai/status', host=host, headers={'Cookie': 'xexam_session=good'})[0] == 200:
+            break
+        time.sleep(0.5)
+    up_headers = {'Content-Type': 'application/octet-stream', 'X-Filename': 'Kitchen%20notes.pdf'}
+    before = echo_log(AI).count('POST /api/ai/import/upload')
+    st, hh, b = req('POST', '/api/ai/import/upload', host=host, headers=up_headers, body=b'x' * (20 * 1024 * 1024))
+    ok(st in (401, 403) and (jbody(b) or {}).get('code'), 'An unauthenticated 20 MiB upload is refused by the auth step with a JSON code. Actual %d' % st)
+    ok(echo_log(AI).count('POST /api/ai/import/upload') == before, 'The refused upload never reaches the AI service')
+    st, hh, b = req('POST', '/api/ai/import/upload', host=host, headers=dict(up_headers, Cookie='xexam_session=good; CF_Authorization=z',
+                    Authorization='Bearer x', **{'X-Xexam-Identity': 'forged', 'X-Forwarded-For': '203.0.113.9'}), body=b'0123456789')
+    seen = jbody(b) or {}
+    ok(st == 200 and hh.get('x-echo-name') == 'ai-service' and seen.get('path') == '/api/ai/import/upload',
+       'A good session reaches the AI service on the upload route. Actual %d %r' % (st, hh.get('x-echo-name')))
+    for k in ('cookie', 'authorization', 'x-forwarded-for', 'forwarded', 'x-real-ip'):
+        ok(k not in (seen.get('headers') or {}), 'The AI service does not receive %s on the upload route' % k)
+    ok((seen.get('headers') or {}).get('x-xexam-identity', 'forged') != 'forged' and seen.get('body_len') == 10,
+       'The upload carries the identity of the auth step (a client value is overwritten) and its body')
+    ok((seen.get('headers') or {}).get('x-filename') == 'Kitchen%20notes.pdf', 'X-Filename reaches the AI service unchanged')
+    st, hh, b = req('POST', '/api/ai/import/upload', host=host, headers=dict(up_headers, Cookie='xexam_session=good'), body=b'x' * (20 * 1024 * 1024 + 1))
+    ok(st == 413 and (jbody(b) or {}).get('code') == 'ai.import.tooLarge' and 'json' in hh.get('content-type', ''),
+       '20 MiB + 1 is 413 JSON with the code ai.import.tooLarge. Actual %d %r' % (st, b[:100]))
+    st, hh, b = req('GET', '/api/ai/import/upload', host=host, headers={'Cookie': 'xexam_session=good'})
+    ok(st in (403, 405), 'GET on the upload route is refused (403 or 405). Actual %d' % st)
+    st, hh, b = req('PUT', '/api/ai/import/upload', host=host, headers=dict(up_headers, Cookie='xexam_session=good'), body=b'x')
+    ok(st in (403, 405, 444), 'PUT on the upload route is refused. Actual %d' % st)
 
     # -- Backend down --
     sh('docker', 'stop', BACK)

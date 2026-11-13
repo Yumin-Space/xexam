@@ -3,7 +3,7 @@
 # 数据库
 
 > 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端沿用旧 Python 版的数据库：原来的建表语句（schema v1）**一字不差**地保留，之后的每个 schema 都只是往上加东西（新表和新列；不重建、不改写任何东西）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.0 起它的 schema 是 **4**（从 v0.9 起是 3）。两个服务从不打开对方的数据库。**v1.0 不改变主数据库**：它仍然是 schema v6。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.1 起它的 schema 是 **6**（v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
 > 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）和 `v09_ai_study.rs`（v6，后端的学习路由）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
@@ -362,6 +362,18 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 
 **AI 数据库不一样**：v0.8 的 ai-service 会拒绝 schema 3 的文件（第 8.3 节），所以回到 v0.8 意味着要恢复 AI 备份 `backups/xexam-ai-schema2-….db`，并丢掉升级之后写入的每一条对话、记忆、设置和用量。具体的命令见 [migration.md](migration.md)。
 
+### 6.12 schema v7（v1.1）
+
+主数据库在 v1.1 后端第一次启动时，从 schema 6 **升级到 schema 7**，只升级一次，升级前先写一份副本 `backups/xexam-schema6-<日期时间>.db`。新增四列（`database/schema.rs`，`V7_COLUMNS`）：
+
+- `attempts.time_limit`（INTEGER）：限时考试的时限，单位秒（60 到 36000）。不限时的考试、练习和 v1.1 之前保存的所有记录为 NULL。
+- `attempts.ended`（TEXT）：`submit`（手动交卷）或 `timeUp`（倒计时结束，只用于限时考试）。v1.1 保存的每次考试都会设置；练习和旧记录为 NULL。在 `ended` 已设置的记录中，没有答案且 `correct` 为 0 的项目就是 **没有完成的题**：它不算错题，也不进错题本。
+- `banks.ai_job`（TEXT）：AI 生成题库的任务键（32 位小写十六进制）。导入的题库为 NULL。
+- `banks.ai_meta`（TEXT）：AI 题库的 JSON 信息（来源、作者、题数、时间）。导入的题库为 NULL。
+
+新索引覆盖任务键（每个任务只对应一个题库）以及 v1.1 的范围查询。v1.0 的题库和记录不变。
+
+
 ## 7. 旧的 `progress.json`
 
 更早的版本把成绩保存在 `progress.json` 里。和旧的 Python 版一样，程序**每次启动时**都会检查数据目录里有没有它：如果有，而且数据库里还没有学习记录、以前也没有迁移过，就把它迁移进数据库（迁到第一个管理员的记录里）。`meta` 里的 `legacy_migrated` 标记保证它只迁移一次，已有的学习记录永远不会被覆盖。
@@ -380,7 +392,7 @@ docker compose start
 
 > ⚠️ 从 v0.1 升级时：数据库的文件名改了，新版本只读取 `xexam.db`。如果数据目录里有别的 `.db` 文件、却没有 `xexam.db`，启动日志会提醒你；把那个文件改名为 `xexam.db` 再启动（旧文件既不会被删除，也不会被读取）。
 
-## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v1.0 起 schema 4）
+## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v1.1 起 schema 6）
 
 ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只有它打开和迁移这个数据库；后端从不读取它，ai-service 也从不打开 `xexam.db`（数据边界，见 [architecture.md](architecture.md) 第 5 节）。
 
@@ -430,12 +442,12 @@ erDiagram
         INTEGER chats_per_user "10-100000，默认 1000"
         INTEGER messages_per_chat "20-5000，默认 400"
         INTEGER memories_per_user "1-1000，默认 50"
-        INTEGER memory_chars "50-2000，默认 200（v1.0 之前是 300；升级时值为 300 的会一次性改成 200）"
+        INTEGER memory_tokens "50-250000，默认 1000（v1.1；之前的上限是 200 个字符：仍为 200 的值改为 1000，其他值在升级到 schema 6 时一次性乘以 1.5；memory_chars 不再使用）"
         INTEGER message_chars "自 v1.0 起不再使用（原为 1000-32000，默认 16000）；保留，从不读取或写入"
         INTEGER calls_per_minute "1-100，默认 5（v1.0）"
         INTEGER calls_per_hour "1-2000，默认 20（v1.0）"
         INTEGER calls_per_day "1-20000，默认 100（v1.0）"
-        INTEGER reply_max_chars "1-16000，默认 1000：回答长度（字符数，v1.0）"
+        INTEGER reply_max_tokens "1-250000，默认 3000：回答长度（Token 数，v1.1；reply_max_chars 为 v1.0 的 1000 字符，保留不用）"
         INTEGER updated_at "Unix 秒"
         TEXT updated_by "用户名"
     }
@@ -482,7 +494,7 @@ erDiagram
     memories {
         INTEGER id PK "自增"
         INTEGER user_id FK "users.id，ON DELETE CASCADE"
-        TEXT content "1-2000 个字符（上限：memoryChars）"
+        TEXT content "1-250000 个估算的 Token（上限：memoryTokens）；v1.1 起该列最多可存 2000000 个字符（表已重建一次）"
         TEXT source "manual · chat"
         INTEGER created_at "Unix 秒"
         INTEGER updated_at "Unix 秒"
@@ -529,7 +541,7 @@ erDiagram
 - **`settings`**（一行）从不保存机密。**`secrets`** 加密保存 API 密钥和网关密钥（见 [security.md](security.md) 第 11 节）；`key_id` 说明一个值是用哪个加密密钥封存的，`rev` 用于计算指纹。**`limits`**（一行）保存 AI 设置里的安全上限，每一项都有一个检查其范围的 `CHECK`；它们不属于指纹，所以修改它们从不关闭 AI。
 - **指纹** 是对服务商、地址、格式和认证方式（网关时）、模型、密钥的版本号和当前加密密钥 id 计算的 SHA-256，从不包含密钥本身。只有 `enabled = 1`、`verified_fp` 等于当前指纹而且密钥能解密时，AI 才算开启。改变指纹的设置修改会在同一个事务里清除 `enabled` 和 `verified_*`。
 - **`users`** 只保存 ai-service 见过的用户（他们在主数据库里的 id 和身份标记，以及最后知道的名字）；这个用户第一次对话、写记忆或调用时才写入一行，只是看看不会写入。**`function_enabled`**（v2，默认 1）是每个用户 AI+ 功能的**暂停**：0 表示管理员暂停了这个用户（AI 设置里的 **暂停**），1 表示使用中；没有行的用户是使用中的，管理员永远不会被设为 0。它和 AI+ 功能的授权（主数据库里的 `users.ai_enabled`）是分开的：把功能关掉再打开，不会清除暂停，只有 **恢复** 才会。值为 0 的 id 就是心跳向后端报告的内容（见 [architecture.md](architecture.md) 第 5 节）。**`free_mode`**（v2，默认 0）是管理员的**自由模式**：是用户的状态，不是对话的状态。它在设置里的 **AI 对话模式** 下设置（`POST /api/ai/free`，只有管理员），并且只对管理员读取，所以留在以前的管理员身上的值不起作用。
-- **`chats`**、**`messages`** 和 **`memories`** 是用户的内容。对话没有模式：管理员的自由模式开启期间，任何对话（旧的或新的）里的每条消息都以自由模式回答。每条消息都记录它是在哪种模式下写的（**`messages.free`**，v2，默认 0），所以历史可以在模式改变时告诉模型（见 [architecture.md](architecture.md) 第 5 节）。删除一个用户的行会删除他的对话、消息、记忆和任务（`ON DELETE CASCADE`）；他的 **`usage`** 行保留，`user_id` 变成 NULL，所以按模型和按天的合计仍然正确。`memories.content` 最多允许 2000 个字符（记忆上限能设的最大值）；当前的上限由服务检查。学习消息（见下）以 `free = 0` 写入。
+- **`chats`**、**`messages`** 和 **`memories`** 是用户的内容。对话没有模式：管理员的自由模式开启期间，任何对话（旧的或新的）里的每条消息都以自由模式回答。每条消息都记录它是在哪种模式下写的（**`messages.free`**，v2，默认 0），所以历史可以在模式改变时告诉模型（见 [architecture.md](architecture.md) 第 5 节）。删除一个用户的行会删除他的对话、消息、记忆和任务（`ON DELETE CASCADE`）；他的 **`usage`** 行保留，`user_id` 变成 NULL，所以按模型和按天的合计仍然正确。`memories.content` 自 v1.1 起最多允许 2000000 个字符（记忆上限能设的最大值，250000 个 Token）；当前的上限由服务检查。学习消息（见下）以 `free = 0` 写入。
 - **`usage`** 每次模型调用一行（对话、测试、模型列表、记忆笔记，从 v0.9 起还有学习回答），带 Token、时间和状态，从不包含任何内容、密钥或地址。**`tokens_cached`**（v2）是服务商从它的提示词缓存里提供的那部分输入 token（AI 设置里用量的 **缓存命中** 一列）；NULL 表示服务商没有报告。**`purpose`**（v3）对学习功能的模型调用是 `hint`、`explain` 或 `summary`，对 AI 对话和没有对话的调用是 NULL；AI 设置里用量的 **按功能** 表按它给对话的行分组（AI 对话、提示、解释、总结；这四行始终都在，零也列出；`GET /api/ai/admin/usage` 把它们作为 `byPurpose` 返回）。它的行一直保留（没有保留期）；它们很小。 **每用户请求上限（v1.0）** 读取这张表，而不是自己的计数器：用户在最近一分钟、最近一小时以及服务器时区 0:00 以来的调用，是该用户的 `chat` 和 `memory` 行（每种状态都计入），加上内存里仍在运行的调用。计数用的是现有的 `idx_usage_user` 索引，没有新增索引或表。
 - **`tasks`** 是为以后的功能准备的；v0.8 里没有使用它的路由或后台任务（已结束的任务在 30 天后删除）。
 - **`audit_outbox`** 保存管理员清除操作的审计日志，直到后端把它们取走放进系统日志（见 [security.md](security.md) 第 11 节）。
@@ -544,6 +556,24 @@ erDiagram
 - **已保存的回答。** 一个（对话、题目、种类、来源）里最新的助手消息就是页面显示的回答。失败、被停止或被扣下的重新生成作为它自己的一条消息保存，页面继续在一条说明下显示最后一个好回答（`GET /api/ai/study/saved` 里的 `lastGood`）。
 - **额度会计入它们。** 每次练习、每场考试和每份记录总结都是一个对话，所以学习对话计入 `chats_per_user`（超出之后的新会话被 409 `ai.chatLimit` 拒绝；已经打开的对话照常工作），每次提问加两条消息，所以 `messages_per_chat` 的 400 允许一次会话里提问 200 次：下一次回答 409 `ai.messageLimit`，直到管理员在 **安全上限** 里调高上限。在 AI 对话里删除学习对话会释放额度。
 
+### 8.2a schema v5（v1.1）与增长
+
+AI 数据库在 v1.1 的 ai-service 第一次启动时，从 schema 4 **升级到 schema 6**（下面 schema 5 和 6 的步骤一起完成），只升级一次，升级前先写副本 `backups/xexam-ai-schema4-<日期时间>.db`。新增内容包括：
+
+- 生成和导入任务的记录（`tasks`，类型 `bank_gen`）：`charged` 与 `charged_at`。任务在计入配额的当天计数（生成在开始时，导入在确认时）。
+- `gen_calls.purpose`：区分生成调用、导入调用和识别调用。
+- `users.features_off`（INTEGER，默认 0）：置位的位表示该用户的某项功能已关闭。六项功能是对话、提示、解释、总结、生成和导入。
+- 生成与导入的上限（`gen_max_calls` 15、`import_max_calls` 25、`recognize_max_calls` 20（8 到 40）、`gen_call_tokens` 20000、`import_max_mb` 20、`import_max_questions` 50（1 到 50）），与 v1.0 的上限并列。
+
+早期 v1.1 开发版本创建、缺少 `limits.recognize_max_calls` 的架构 5 文件，在打开时会补上这一列（幂等的一步，版本号不变，也不做备份）。
+
+任何地方都不保存文件内容：导入的文件只在处理期间留在内存中，任务结束后文本不再保留。
+
+**增长（主数据库）。** 一个 20 题的 AI 生成题库约 90 KB，能看到它的每个人的题库下载中也有同样大小的内容。每天生成 5 次，每年约 170 MB；20 个用户每人每天生成 3 次，每年约 2 GB。v1.1 不限制保留的 AI 题库数量。`AI_BANKS_AUTO_SHARE`（默认 `true`）决定新的 AI 题库是否像其他题库一样共享；管理员可以在用户管理中把某个用户的该题库移除。
+
+**作者。** AI 题库的名称包含作者用户名的前 8 个字符，提示中显示作者（DR1-13 的特例）。`authorId` 不会离开服务器。
+
+
 ### 8.3 服务怎样使用它
 
 - **打开**：创建表（`IF NOT EXISTS`），用默认值加上 `settings` 和 `limits` 两行，新数据库把 `meta.schema` 设为 `4`。`meta.schema` 为 `1`、`2` 或 `3` 的数据库会被升级（见下面的迁移）。更新的 ai-service 写的数据库（`meta.schema` 大于 `4`）会被拒绝：服务记一行日志，不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被强行终止而停在 `streaming` 的回答会被标记为 `error`，错误码 `ai.interrupted`（只在有这样的回答时；`idx_messages_streaming` 负责找出它们）。
@@ -553,6 +583,8 @@ erDiagram
 - **停止**：正常停止时，正在生成的回答会保存为已停止，然后执行检查点。
 - **迁移**：schema v1 是第一个 schema（v0.8 的预发布构建）；**schema v2**（v0.8）新增了四个列：`users.function_enabled`（默认 1）、`users.free_mode`（默认 0）、`messages.free`（默认 0）和 `usage.tokens_cached`（NULL）；**schema v3**（v0.9）新增**十二个列和三个索引**，别的都没有：`chats.kind`（默认 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（默认 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong` 和 `usage.purpose`（NULL），加上 `idx_chats_ref`、`idx_messages_study` 和 `idx_messages_streaming`。没有任何一行被改写，也没有任何一行改变含义：每个旧的对话和消息都是 `chat`，每个旧的用量行都没有 purpose。同一步新增既用于创建新数据库，也用于升级旧数据库，所以两者最后的表和 `sqlite_master` 都相同。**每个 schema 1、2 或 3 的数据库都会先复制**：用 `VACUUM INTO` 复制到 AI 数据目录里的 `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`（`<N>` 是它原来的 schema，所以 v0.8 的数据库是 `xexam-ai-schema2-…`；目录权限 0700；时间是容器的本地时间；名字已被占用时加 `-2`、`-3`…… 后缀；空数据库也会复制），然后在一个事务里升级，并用一行日志写出这份副本的名字：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: <path>.`。如果副本写不出来，服务不启动，也什么都不改。较早的预发布构建写的 schema 2 文件缺少一些 v2 的列，会在同一步里补上。重新打开 schema 3 的数据库什么都不写。**请留出大约和 AI 数据库一样大的可用磁盘空间**用于副本；副本从不清理，而且会保留后来被删除的对话和记忆（在这有关系时请自己删除，见 [security.md](security.md) 第 11 节）。**回到 v0.8 需要这份副本**：v0.8 的 ai-service 会拒绝 schema 3（`written by a newer ai-service … restore a backup`）并退出，所以请像 8.4 那样恢复 `xexam-ai-schema2-….db`；升级之后写入的对话、记忆、设置和用量不在其中，会丢失。
 - **Schema 4（v1.0）** 新增**四个列**，别的都没有：`limits.calls_per_minute`（默认 5）、`limits.calls_per_hour`（默认 20）、`limits.calls_per_day`（默认 100）和 `limits.reply_max_chars`（默认 1000），每个都带有其范围的 `CHECK`。什么都没有删掉：`limits.message_chars` 保留在表里，不再使用。同一事务里执行一次 `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300`，把记忆长度的旧默认值改成新的默认值；管理员设的其他值保持不变。新数据库和从 1、2 或 3 升级的数据库都执行这一步，之后的启动不会再执行。从 1、2 或 3 升级的数据库，四个新列取默认值，不从旧值推导。**保留 schema 3 数据库的副本**（`backups/xexam-ai-schema3-<日期时间>.db`）：v0.9.1 的 ai-service 会按现有的提示拒绝 schema 4，所以要回退，就得恢复那份副本并运行 v0.9.1 的镜像（第 8.4 节和 [migration.md](migration.md)）。
+
+- **schema 5 到 6（v1.1）**：长度改为 Token 数。新增三列，各有自己的 `CHECK` 范围：`limits.reply_max_tokens`（1 到 250000，默认 3000）、`limits.memory_tokens`（50 到 250000，默认 1000）和 `limits.gen_call_tokens`（1000 到 250000，默认 20000）。`reply_max_chars`、`memory_chars` 和 `gen_call_chars` 保留在表里但不再使用。在同一个事务里一次性处理：仍为旧默认值的改为新默认值，其他值乘以 1.5 并限制在范围内。`memories` 表重建一次（保留行和 id），让一条记忆最多可存 2000000 个字符。从 schema 5 升级时，先写副本 `backups/xexam-ai-schema5-<日期时间>.db`。
 
 ### 8.4 AI 卷的备份和恢复
 

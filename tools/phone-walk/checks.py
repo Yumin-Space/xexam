@@ -40,7 +40,7 @@ DEFAULT_CAPS = {'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100}
 WALK_CAPS = {'callsPerMinute': 100, 'callsPerHour': 2000, 'callsPerDay': 20000}
 CLEAR_SESSION = "Object.keys(localStorage).filter(k => /session\\.v1$/.test(k)).forEach(k => localStorage.removeItem(k)); 1"
 # Parts of a check that are P2 (reported, never fail the run): (check id, state)
-P2_STATES = {('W-US-1', 'bank-row'), ('W-AS-1', 'usage-cards'), ('W-US-2', 'forbidden'), ('W-SH-10', 'short-page')}
+P2_STATES = {('W-JC-1', 'wide'), ('W-US-1', 'bank-row'), ('W-AS-1', 'usage-cards'), ('W-US-2', 'forbidden'), ('W-SH-10', 'short-page')}
 with open(os.path.join(HERE, 'checks.js'), encoding='utf-8') as _fh:
     CHECKS_JS = _fh.read()
 
@@ -191,6 +191,33 @@ class Run:
             self.cache['longuser'] = name
         return self.cache['longuser']
 
+    def paging_users(self):
+        """Twelve made-up AI+ users, each with one AI call, so that both admin tables run to a second page (W-PT-*)."""
+        if 'pgusers' not in self.cache:
+            s = self.session('admin')
+            names = []
+            for i in range(12):
+                name = 'walk-pg-%02d' % (i + 1)
+                try:
+                    s.call('/api/users/create', {'username': name, 'password': seed.INITIAL, 'role': 'user'})
+                except Exception:
+                    pass
+                try:
+                    s.call('/api/users/update', {'id': s.user_id(name), 'ai': True})
+                except Exception:
+                    pass
+                try:
+                    cookie = seed.Session(self.walk.base).sign_in(name, seed.INITIAL).cookie[seed.COOKIE]
+                except Exception:
+                    cookie = seed.Session(self.walk.base).sign_in(name, seed.DEMO_PASSWORD).cookie[seed.COOKIE]
+                try:
+                    ai_send(self.walk.base, cookie, 'One short tip about knives, please. ' + name, 'zh')
+                except Exception:
+                    pass
+                names.append(name)
+            self.cache['pgusers'] = names
+        return self.cache['pgusers']
+
     # -- the report
     def rec(self, cid, page, state, user, size, lang, theme, ok, detail='', d=None):
         size_s = sz(size) if not isinstance(size, str) else size
@@ -282,8 +309,11 @@ def set_count(d, n):
 
 
 def start_quiz(d, kind, count=None):
+    # v1.1 (TL-6): leaving a quiz page saves its session on pagehide, so the saved session is cleared only after leaving it
+    goto(d, '#/', 0.8)
     d.js(CLEAR_SESSION)
-    goto(d, '#/')
+    d.reload(1.4)
+    d.js(CHECKS_JS)
     if count:
         set_count(d, count)
     d.js("window.__start('%s')" % kind)
@@ -722,7 +752,9 @@ def g_panel(rc):
 def panel_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     start_quiz(d, 'practice')
-    d.tap_sel('.opt', 0)            # a single-choice question is checked at once: Check answer greys out, Next stays in its own place
+    d.tap_sel('.opt', 0)            # v1.1 (PC-1): no question type is checked on pick; the pick is checked by the 核对答案 button
+    time.sleep(0.4)
+    d.tap_sel('.pfoot [data-act="check"]')
     time.sleep(0.6)
     tap_ai(d, 'hint')
     if rc.want('W-QZ-3') and size[0] in (390, 412):
@@ -789,7 +821,7 @@ def greyed_case(rc, lang, theme, size):
     start_quiz(d, 'practice')
     r = d.js("""(() => { const e = [...document.querySelectorAll('.aip-dock-na, [data-aip-dock-na]')].find(x => x.offsetParent); if (!e) return null;
       const b = e.getBoundingClientRect(); return {x: b.left, r: b.right, y: b.top, b: b.bottom, text: (e.innerText || '').replace(/\\s+/g, ' ').trim()} })()""")
-    ok = bool(r) and r['x'] >= -0.5 and r['r'] <= size[0] + 0.5 and 0 <= r['y'] < size[1] and bool(re.search('无法使用|Unavailable|使用不可', r['text']))
+    ok = bool(r) and r['x'] >= -0.5 and r['r'] <= size[0] + 0.5 and 0 <= r['y'] < size[1] and bool(re.search('无法使用|Unavailable|利用不可', r['text']))
     rc.rec('W-QZ-6', 'quiz', 'greyed', 'alex', size, lang, theme, ok, ('greyed bar "%s" at %d..%d x %d' % (r['text'][:50], r['x'], r['r'], r['y'])) if r else 'no greyed AI+ bar', d if not ok else None)
 
 
@@ -910,12 +942,12 @@ def result_case(rc, lang, theme, size):
         d.js("window.__settle('#aip-panel-body')")
         asks = d.net_requests('/api/ai/study/ask')
         if len(asks) != 1:
-            problems.append('AI 解析 sent %d ask requests (expected 1)' % len(asks))
+            problems.append('AI analysis sent %d ask requests (expected 1)' % len(asks))
         d.net_clear()
         d.tap_sel('.rv .aip-ask')
         time.sleep(0.8)
         if d.net_requests('/api/ai/study/ask'):
-            problems.append('a second press of AI 解析 asked again')
+            problems.append('a second press of AI analysis asked again')
         rc.rec('W-RS-2', 'result', 'ai-row', 'sam', size, lang, theme, not problems, '; '.join(problems) or 'one AI row, chevron without request, one ask', d if problems else None)
 
 
@@ -1388,7 +1420,89 @@ def us2_case(rc, lang, theme, size):
            'hash %s; forbidden text %s' % (r['hash'], 'shown' if want and want in r['text'] else 'missing'), d if not ok else None)
 
 
-# ---- W-CH-4: the memory editor counts characters (n / 200); 201 are refused, 200 save
+# ---- W-CH-5 (A-OWNER-76): on a phone the history list / conversation only SCROLL their rows; the frame never drags
+def g_ch5(rc):
+    if not rc.want('W-CH-5') or not rc.walk.wants_page('ai'):
+        return
+    for size in rc.sizes([(390, 844), (360, 740)], lambda s: s in ((390, 844), (360, 740))):
+        rc.guard('W-CH-5', 'ai', ch5_case, rc, rc.langs(['zh'])[0], rc.themes(['light'])[0], size)
+
+
+CH5_STATE = """(sel => { const r = s => { const e = document.querySelector(s); if (!e || !e.offsetParent) return null;
+    const b = e.getBoundingClientRect(); return [Math.round(b.top * 10) / 10, Math.round(b.left * 10) / 10, Math.round(b.height * 10) / 10]; };
+  const vv = window.visualViewport || {};
+  const sc = document.querySelector(sel);
+  return { frame: ['.topbar', '.ai-list-head', '.ai-conv-head', '.ai-dock', '.ai-composer'].map(r),
+    win: [scrollX, scrollY, document.scrollingElement.scrollTop, vv.offsetTop || 0, vv.offsetLeft || 0, vv.pageTop || 0],
+    st: sc ? sc.scrollTop : -1, over: sc ? sc.scrollHeight - sc.clientHeight : -1 } })"""
+
+# a synthetic, cancelable one-finger touchmove: the guard must cancel it (frame) or leave it (a scroller that can follow)
+CH5_PROBE = """((sel, dy) => { const e = document.querySelector(sel); if (!e) return null;
+  const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + Math.min(b.height / 2, 40);
+  const mk = (type, yy) => { const t = new Touch({ identifier: 7, target: e, clientX: x, clientY: yy, pageX: x, pageY: yy });
+    return new TouchEvent(type, { touches: type === 'touchend' ? [] : [t], targetTouches: type === 'touchend' ? [] : [t], changedTouches: [t], bubbles: true, cancelable: true }); };
+  e.dispatchEvent(mk('touchstart', y)); const ev = mk('touchmove', y + dy); e.dispatchEvent(ev); e.dispatchEvent(mk('touchend', y + dy));
+  return ev.defaultPrevented })"""
+
+
+def ch5_case(rc, lang, theme, size):
+    d = rc.dev('sam', lang, theme, size)
+    goto(d, '#/ai', 2.0)
+    d.js(CHECKS_JS)
+    problems = []
+    sel = '.ai-list-body'
+    if not d.js("(() => { const e = document.querySelector('.ai-list-body'); return !!e && e.offsetParent !== null })()"):
+        rc.rec('W-CH-5', 'ai', 'history-swipe', 'sam', size, lang, theme, False, 'no history list on screen', d)
+        return
+    tmpl = "(n => { const ul = document.querySelector('.ai-chats'); if (!ul || !ul.firstElementChild) return -1; const rows = Array.from(ul.children); rows.slice(n || 1).forEach(r => r.remove()); "            "if (n > 1) for (let i = rows.length; i < n; i++) ul.appendChild(rows[0].cloneNode(true)); return ul.children.length })"
+    for label, n in (('short', 1), ('long', 40)):
+        goto(d, '#/ai', 1.5)
+        d.js(CHECKS_JS)
+        d.js_call(tmpl, n)
+        if label == 'short':
+            d.js("Array.from(document.querySelectorAll('.ai-list-body > :not(.ai-chats)')).forEach(e => { e.style.display = 'none' })")
+        time.sleep(0.3)
+        for dy in (-180, 180):
+            before = d.js_call(CH5_STATE, sel)
+            r = d.rect(sel, 0, scroll=False)
+            d.swipe(r['cx'], r['cy'], dy)
+            after = d.js_call(CH5_STATE, sel)
+            tag = '%s list swipe %+d' % (label, dy)
+            if before['frame'] != after['frame']:
+                problems.append('%s: the frame moved (%s -> %s)' % (tag, before['frame'], after['frame']))
+            if before['win'] != after['win']:
+                problems.append('%s: document / visual viewport offset changed (%s -> %s)' % (tag, before['win'], after['win']))
+            if label == 'long' and dy < 0 and after['over'] > 4 and after['st'] <= before['st']:
+                problems.append('the long list did not scroll (overflow %s px)' % after['over'])
+            if label == 'short' and after['st'] != before['st']:
+                problems.append('the short list scrolled')
+        # deterministic: the guard cancels a drag nothing can follow, and leaves a drag a scroller can follow
+        st = d.js_call(CH5_STATE, sel)
+        prevented_head = d.js_call(CH5_PROBE, '.ai-list-head', 60)
+        if prevented_head is False:
+            problems.append('%s: a drag on the list header was not cancelled' % label)
+        if label == 'short':
+            if d.js_call(CH5_PROBE, '.ai-chats', -60) is False:
+                problems.append('short list: a drag on rows that cannot scroll was not cancelled')
+        elif st['over'] > 4:
+            d.js("document.querySelector('.ai-list-body').scrollTop = 20")
+            if d.js_call(CH5_PROBE, '.ai-chats', -60) is True:
+                problems.append('long list: a drag a scroller can follow was cancelled')
+    # the conversation: a drag on its head never moves anything
+    goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.2)
+    d.js(CHECKS_JS)
+    before = d.js_call(CH5_STATE, '.ai-scroll')
+    head = d.rect('.ai-conv-head', 0, scroll=False) or d.rect('.topbar', 0, scroll=False)
+    d.swipe(head['cx'], head['cy'], 150)
+    d.swipe(head['cx'], head['cy'], -150)
+    after = d.js_call(CH5_STATE, '.ai-scroll')
+    if before['frame'] != after['frame'] or before['win'] != after['win']:
+        problems.append('conversation head swipe moved the frame (%s -> %s)' % (before, after))
+    rc.rec('W-CH-5', 'ai', 'history-swipe', 'sam', size, lang, theme, not problems,
+           '; '.join(problems) or 'short and long list, conversation head: frame and viewport unchanged, long list scrolled', d if problems else None)
+
+
+# ---- W-CH-4: the memory editor counts tokens (n / 1000, A-OWNER-43b: ASCII 1/4, other characters 3/2 token); over 1000 is refused, 1000 saves
 def g_ch4(rc):
     if not rc.want('W-CH-4') or not rc.walk.wants_page('ai'):
         return
@@ -1408,23 +1522,23 @@ def ch4_case(rc, lang, theme, size):
     time.sleep(0.8)
     problems = []
     count = d.js("(document.getElementById('ai-mem-count') || {}).innerText || ''")
-    if digits(count) != '0200':
-        problems.append('counter reads %r (want 0 / 200)' % count)
-    # 201 characters typed: the field keeps at most 200 (maxlength), or the add is refused with the catalog text
+    if digits(count) != '01000':
+        problems.append('counter reads %r (want 0 / 1000)' % count)
+    # 667 CJK characters = 1001 tokens by the estimate: the add is refused with the catalog text (nothing is sent), or the field stops sooner
     d.js("document.getElementById('ai-mem-input').focus()")
-    d.type('记' * 201)
+    d.js_call(SET_VALUE, '#ai-mem-input', '记' * 667)
     time.sleep(0.3)
     n = d.js("document.getElementById('ai-mem-input').value.length")
-    if n > 200:
+    if n > 666:
         d.net_clear()
         d.tap_sel('#ai-mem-add')
         time.sleep(0.8)
         posts = [u for m, u in d.net_requests('/api/ai/memories') if m == 'POST']
-        err = fill(cat(lang, 'ai.err.memoryTooLong'), n=200)
+        err = fill(cat(lang, 'ai.err.memoryTooLong'), n=1000)
         if posts and err not in d.js('document.body.innerText'):
-            problems.append('201 characters were sent and no %r shown' % err)
+            problems.append('1001 tokens were sent and no %r shown' % err)
     before = len(rc.session('sam').call('/api/ai/memories').get('memories', []))
-    text = ('练习记忆' * 50)[:200]
+    text = ('练习记忆' * 200)[:666]
     d.js_call(SET_VALUE, '#ai-mem-input', text)
     time.sleep(0.3)
     d.tap_sel('#ai-mem-add')
@@ -1432,18 +1546,18 @@ def ch4_case(rc, lang, theme, size):
     mems = rc.session('sam').call('/api/ai/memories').get('memories', [])
     saved = [m for m in mems if m.get('content') == text]
     if len(mems) != before + 1 or not saved:
-        problems.append('200 characters did not save (%d -> %d memories)' % (before, len(mems)))
+        problems.append('1000 tokens did not save (%d -> %d memories)' % (before, len(mems)))
     for m in saved:     # leave the made-up user as it was
         try:
             rc.session('sam').call('/api/ai/memories/delete', {'id': m['id']})
         except Exception:
             pass
     rc.rec('W-CH-4', 'ai', 'memory-length', 'sam', size, lang, theme, not problems,
-           '; '.join(problems) or 'counter 0 / 200; 201 refused (field keeps %d); 200 saved' % min(n, 200), d if problems else None)
+           '; '.join(problems) or 'counter 0 / 1000; 1001 tokens refused (field keeps %d); 999 saved' % min(n, 667), d if problems else None)
 
 
-# ---- W-AS-3: four category tabs under the status chips
-AS3_SIZES = [(360, 740), (390, 844), (768, 1024), (1280, 800)]
+# ---- W-AS-3: the category tabs under the status chips (v1.1: five, the fifth is AI 题库)
+AS3_SIZES = [(320, 640), (360, 740), (390, 844), (768, 1024), (1280, 800)]
 AS3_CONTENT = {'feature': '#ai-limits-save', 'users': '.ais-users', 'usage': '.ais-totals', 'safety': '#ai-limits-save'}
 
 
@@ -1451,7 +1565,7 @@ def g_as3(rc):
     if not rc.want('W-AS-3') or not rc.walk.wants_page('ai-settings'):
         return
     for lang in rc.langs(LANGS):
-        for size in rc.sizes([(360, 740), (390, 844), (1280, 800)], lambda s: s in AS3_SIZES):
+        for size in rc.sizes([(320, 640), (360, 740), (390, 844), (1280, 800)], lambda s: s in AS3_SIZES):
             rc.guard('W-AS-3', 'ai-settings', as3_case, rc, lang, rc.themes(['light'])[0], size)
 
 
@@ -1463,11 +1577,11 @@ def as3_case(rc, lang, theme, size):
     r = d.js("""(() => { const t = [...document.querySelectorAll('.ais-tabs button')];
       return {ids: t.map(b => b.id), pressed: t.filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.id),
               chips: !!document.querySelector('.ais-status')} })()""")
-    if r['ids'] != ['ais-tab-feature', 'ais-tab-users', 'ais-tab-usage', 'ais-tab-safety']:
+    if r['ids'] != ['ais-tab-feature', 'ais-tab-users', 'ais-tab-usage', 'ais-tab-safety', 'ais-tab-gen']:
         problems.append('tabs %s' % ','.join(r['ids']))
     if r['pressed'] != ['ais-tab-feature']:
         problems.append('#/ai-settings opens %s' % (r['pressed'] or 'no tab'))
-    row = W(d, 'oneRow', '.ais-tabs', 'button', 4)
+    row = W(d, 'oneRow', '.ais-tabs', 'button', 5)
     if not row.get('found') or not row['one']:
         problems.append('the tabs are not one row (spread %s)' % row.get('spread'))
     if phone(size):
@@ -1501,10 +1615,10 @@ def as3_case(rc, lang, theme, size):
     if kept != 'ais-tab-safety':
         problems.append('a reload shows %s' % kept)
     rc.rec('W-AS-3', 'ai-settings', 'tabs', 'admin', size, lang, theme, not problems,
-           '; '.join(problems) or '4 tabs in one row; each tab replaces the hash, keeps the chips and survives a reload', d if problems else None)
+           '; '.join(problems) or '5 tabs in one row; each tab replaces the hash, keeps the chips and survives a reload', d if problems else None)
 
 
-# ---- W-AS-2: the answer and memory length in characters
+# ---- W-AS-2: the answer and memory length in tokens
 def g_as2(rc):
     if not rc.want('W-AS-2') or not rc.walk.wants_page('ai-settings'):
         return
@@ -1520,41 +1634,36 @@ def as2_case(rc, lang, theme, size):
     problems = []
     r = d.js("""(() => { const g = [...document.querySelectorAll('.ais-limits .ais-subgroup')].map(e => e.classList.contains('ais-caps-group') ? 'caps' : e.classList.contains('ais-length-group') ? 'length' : 'server');
       const v = id => (document.getElementById(id) || {}).value;
-      return {groups: g, reply: v('ai-lim-replyMaxChars'), mem: v('ai-lim-memoryChars'), msg: !!document.getElementById('ai-lim-messageChars'),
-              hint: (document.getElementById('ai-lim-replyMaxChars-hint2') || {}).innerText || '', live: (document.getElementById('ai-lim-replyMaxChars-live') || {}).innerText || ''} })()""")
+      return {groups: g, reply: v('ai-lim-replyMaxTokens'), mem: v('ai-lim-memoryTokens'), msg: !!document.getElementById('ai-lim-messageChars'),
+              hint: (document.getElementById('ai-lim-replyMaxTokens-hint2') || {}).innerText || '', live: (document.getElementById('ai-lim-replyMaxTokens-live') || {}).innerText || '', hint1: (document.getElementById('ai-lim-replyMaxTokens-hint') || {}).innerText || ''} })()""")
     if r['groups'] != ['caps', 'length', 'server']:
         problems.append('groups %s' % ','.join(r['groups']))
-    if r['reply'] != '1000' or r['mem'] != '200' or r['msg']:
+    if r['reply'] != '3000' or r['mem'] != '1000' or r['msg']:
         problems.append('fields reply %s, memory %s, per-message field %s' % (r['reply'], r['mem'], r['msg']))
-    if r['hint'].strip() != cat(lang, 'ai.set.limit.replyMaxCharsHint'):
-        problems.append('hint %r' % r['hint'])
-    if '1500' not in digits(r['live']) or '1000' not in digits(r['live']):
-        problems.append('live line %r' % r['live'])
-    d.js_call(SET_VALUE, '#ai-lim-replyMaxChars', '2000')
-    time.sleep(0.4)
-    live = d.js("(document.getElementById('ai-lim-replyMaxChars-live') || {}).innerText || ''")
-    if '3000' not in digits(live) or '2000' not in digits(live):
-        problems.append('after 2000 the live line reads %r' % live)
+    if r['hint'] or r['live']:
+        problems.append('the character hint / live line is still there (lengths are tokens now): %r %r' % (r['hint'], r['live']))
+    if '250000' not in digits(r['hint1']) or '3000' not in digits(r['hint1']):
+        problems.append('range hint %r' % r['hint1'])
     if W(d, 'overflow')['doc'] > 1:
         problems.append('the page scrolls sideways')
     if lang == 'zh' and size == (390, 844):
         admin = rc.session('admin')
-        for bad in ('0', '16001'):
-            d.js_call(SET_VALUE, '#ai-lim-replyMaxChars', bad)
+        for bad in ('0', '250001'):
+            d.js_call(SET_VALUE, '#ai-lim-replyMaxTokens', bad)
             d.tap_sel('#ai-limits-save', wait=1.2)
-            err = d.js("(() => { const f = document.getElementById('ai-lim-replyMaxChars'); const box = f && f.closest('.ais-length'); const e = box && box.querySelector('.ais-ferr'); return e ? e.innerText : null })()")
-            now = admin.call('/api/ai/admin/limits').get('limits', {}).get('replyMaxChars')
-            if not err or now != 1000:
+            err = d.js("(() => { const f = document.getElementById('ai-lim-replyMaxTokens'); const box = f && f.closest('.ais-length'); const e = box && box.querySelector('.ais-ferr'); return e ? e.innerText : null })()")
+            now = admin.call('/api/ai/admin/limits').get('limits', {}).get('replyMaxTokens')
+            if not err or now != 3000:
                 problems.append('%s: error %r, stored %s' % (bad, err, now))
-        d.js_call(SET_VALUE, '#ai-lim-replyMaxChars', '16000')
+        d.js_call(SET_VALUE, '#ai-lim-replyMaxTokens', '250000')
         d.tap_sel('#ai-limits-save', wait=1.5)
-        now = admin.call('/api/ai/admin/limits').get('limits', {}).get('replyMaxChars')
-        if now != 16000:
-            problems.append('16000 did not save (stored %s)' % now)
-        admin.call('/api/ai/admin/limits', {'replyMaxChars': 1000, 'memoryChars': 200})
+        now = admin.call('/api/ai/admin/limits').get('limits', {}).get('replyMaxTokens')
+        if now != 250000:
+            problems.append('250000 did not save (stored %s)' % now)
+        admin.call('/api/ai/admin/limits', {'replyMaxTokens': 3000, 'memoryTokens': 1000})
     rc.rec('W-AS-2', 'ai-settings', 'lengths', 'admin', size, lang, theme, not problems,
-           '; '.join(problems) or 'caps, length, server; 1000 / 200, live line 1500 / 1000 then 3000 / 2000%s' % (
-               '; 0 and 16001 refused, 16000 saved' if lang == 'zh' and size == (390, 844) else ''), d if problems else None)
+           '; '.join(problems) or 'caps, length, server; 3000 / 1000 tokens, no character hint%s' % (
+               '; 0 and 250001 refused, 250000 saved' if lang == 'zh' and size == (390, 844) else ''), d if problems else None)
 
 
 # ---- W-QZ-9: Check answer and Next are two separate buttons on every practice question
@@ -1596,7 +1705,7 @@ def qz9_case(rc, lang, theme, size):
         if d.js('(%s)("single")' % GOTO_KIND) >= 0:
             grab('single-before', False)
             d.js('window.__answer(false)')
-            grab('single-after', False)
+            grab('single-after', True)    # v1.1 (PC-1): nothing is checked on pick; Check answer checks a single too
         if d.js('(%s)("multi")' % GOTO_KIND) >= 0:
             grab('multi-empty', False)
             d.js('window.__answer(false)')
@@ -1672,9 +1781,11 @@ FOOTER_JS = """(async (ver) => {
     if (!note || note.getBoundingClientRect().bottom > gr.top + 0.5) out.problems.push('the disclaimer is not above the GitHub line');
     else {
       const prev = btn && v(btn) ? btn.getBoundingClientRect() : note.getBoundingClientRect();
-      if (gr.top - prev.bottom > 8.5) out.problems.push('gap above the GitHub line ' + Math.round(gr.top - prev.bottom) + ' px');
-      const ft = shell.getBoundingClientRect().top;
-      if (note.getBoundingClientRect().top - ft > 12.5) out.problems.push('rule to disclaimer ' + Math.round(note.getBoundingClientRect().top - ft) + ' px');
+      // A-OWNER-20 (v1.1): one blank text line above the GitHub line and one between the divider and the disclaimer
+      const line = parseFloat(getComputedStyle(note).lineHeight) || 18.6;
+      const gap = gr.top - prev.bottom, rule = note.getBoundingClientRect().top - shell.getBoundingClientRect().top;
+      if (gap < line - 5 || gap > line + 6) out.problems.push('gap above the GitHub line ' + Math.round(gap) + ' px (one line: ' + Math.round(line) + ')');
+      if (rule < line - 5 || rule > line + 6) out.problems.push('rule to disclaimer ' + Math.round(rule) + ' px (one line: ' + Math.round(line) + ')');
     }
   }
   if (!document.documentElement.classList.contains('no-doc-scroll')) {
@@ -1948,10 +2059,1514 @@ def saved_setup(d):
     wait_shown(d, '#aip-panel .aip-saved')
 
 
+# ---------------------------------------------------------------------------------------------------- v1.1 checks
+# W-IM-1 (the AI import card of Bank management), W-GB-1 (Home's AI button), W-BT-1 (every badge has a tip), W-FP-1 (six boxes in two
+# groups), W-UC-1 (the usage charts), W-AS-1v (the top-row 交卷 / 完成 button and count, no finish button in the narrow answer sheet), W-FT-1 (footer space), W-SI-1 (sign-in).
+# They use only the classes of the v1.1 components (.bk-aicard, .gen-home, .ai-badge-tip, .ais-feats, .uc-chart ...).
+NO_SIDE_SCROLL = "(() => document.documentElement.scrollWidth <= window.innerWidth + 1)()"
+BADGE_TIPS = """(() => {
+  const out = [];
+  for (const b of document.querySelectorAll('.ai-badge')) {
+    const host = b.closest('.has-tip');
+    const tip = host ? host.querySelector(':scope > .tip') : null;
+    const text = tip ? (tip.textContent || '').trim() : '';
+    out.push({where: (b.closest('[id], .nav-who-tags, .set-role, .us-row, .ais-badge, .aip-panel-head, .aip-na-bar, .home-bankhead, .bk-bankhead') || b.parentElement || {}).className || '?', tip: text});
+  }
+  return out })()"""
+LABEL_OVERLAP = """(() => {
+  const res = [];
+  for (const svg of document.querySelectorAll('.uc-chart svg')) {
+    const bars = !!svg.closest('.uc-bars');
+    const rs = [...svg.querySelectorAll('.uc-label')].filter(e => !(bars && e.hasAttribute('transform'))).map(e => e.getBoundingClientRect()).filter(r => r.width > 0);
+    let bad = 0;
+    for (let i = 0; i < rs.length; i++) for (let j = i + 1; j < rs.length; j++) {
+      const a = rs[i], b = rs[j];
+      if (a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5) bad++;
+    }
+    const box = svg.getBoundingClientRect();
+    res.push({label: svg.getAttribute('aria-label'), role: svg.getAttribute('role'), bars, overlaps: bad, w: Math.round(box.width), host: Math.round(svg.parentElement.getBoundingClientRect().width)});
+  }
+  return res })()"""
+FEAT_ROWS = """(() => {
+  const rows = [...document.querySelectorAll('.ais-feats')].map(f => {
+    // v1.1 (A-OWNER-21): an administrator row also has the free-mode switch (.ais-fg-free), not one of the six boxes
+    const boxes = f.querySelectorAll('.ais-fg:not(.ais-fg-free) input[type=checkbox]').length;
+    const groups = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free)')].map(g => new Set([...g.querySelectorAll('label')].map(l => Math.round(l.getBoundingClientRect().top))).size);
+    const free = f.querySelectorAll('.ais-fg-free input[role=switch]').length;
+    const admin = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free) input')].every(i => i.disabled);
+    return {boxes, groups, admin, free, freeOk: admin ? free === 1 : free === 0};
+  });
+  return rows })()"""
+
+
+def g_v11(rc):
+    for gid, fn in (('W-IM-1', im1_case), ('W-IM-2', im2_case), ('W-GB-1', gb1_case), ('W-BT-1', bt1_case), ('W-FP-1', fp1_case), ('W-UC-1', uc1_case), ('W-UC-2', uc2_case),
+                    ('W-AS-1v', as1_case), ('W-FT-1', ft1_case), ('W-SI-1', si1_case), ('W-BK-29', bk29_case), ('W-AB-1', ab1_case), ('W-L26', l26_case), ('W-AI-BTN', aibtn_case), ('W-L73', l73_case)):
+        if not rc.want(gid):
+            continue
+        for lang in rc.langs(['zh']):
+            sizes = rc.sizes([(360, 740), (390, 844), (412, 915)] if gid in ('W-IM-1', 'W-IM-2', 'W-GB-1', 'W-FP-1', 'W-UC-1')
+                             else [(390, 844)], lambda s: True)
+            if gid == 'W-L26':
+                sizes = [(390, 844)]
+            if gid == 'W-L73':
+                sizes = [(360, 740), (390, 844), (1280, 800)]
+            if gid == 'W-AI-BTN':
+                for theme in rc.themes(['light', 'dark']):
+                    for size in [(390, 844), (1280, 800)]:
+                        rc.guard(gid, 'v11', fn, rc, lang, theme, size)
+                continue
+            if gid == 'W-UC-2':
+                for theme in rc.themes(['light', 'dark']):
+                    for size in [(320, 640), (390, 844), (1280, 800)]:
+                        rc.guard(gid, 'v11', fn, rc, lang, theme, size)
+                continue
+            if gid == 'W-IM-1':
+                sizes = [(360, 740), (390, 844), (412, 915), (768, 1024), (1280, 800)]
+            if gid in ('W-AS-1v', 'W-BK-29'):
+                sizes = [(320, 640), (360, 740), (390, 844), (768, 1024), (1280, 800)]
+            for size in sizes:
+                rc.guard(gid, 'v11', fn, rc, lang, rc.themes(['light'])[0], size)
+
+
+def l26_case(rc, lang, theme, size):
+    """L-26: a generation started from Home, whose job finishes while the user stays on Home, shows its new bank row there
+    without a reload"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/', 2.0)
+    # an AI+ bank in the scope greys the button: untick the AI+ banks first (order-independent)
+    d.js("""(() => { for (const row of document.querySelectorAll('.home-setup input[type=checkbox]')) { const host = row.closest('.home-bankhead'); if (row.checked && host && host.querySelector('.ai-badge')) row.click(); } return 1 })()""")
+    time.sleep(0.5)
+    if not d.js("!!document.querySelector('.home-setup-head .gen-btn:not([aria-disabled=true])')"):
+        rc.rec('W-L26', 'home', 'refresh', 'admin', size, lang, theme, None, 'no usable AI button on Home on this stack')
+        return
+    name = 'L26walk%s%d' % (lang, size[0])
+    d.tap_sel('.home-setup-head .gen-btn')
+    if not until(d, "document.querySelector('dialog[open] #gen-name')", 6.0):
+        rc.rec('W-L26', 'home', 'refresh', 'admin', size, lang, theme, False, 'the generation dialog did not open', d)
+        return
+    d.js("(() => { const i = document.querySelector('dialog[open] #gen-name'); i.value = %r; i.dispatchEvent(new Event('input', {bubbles: true})); return 1 })()" % name)
+    d.js("document.querySelector('dialog[open] .acts .btn.primary').click()")
+    ok = until(d, "document.body.innerText.includes(%r)" % name, 60.0)
+    rc.rec('W-L26', 'home', 'refresh', 'admin', size, lang, theme, ok,
+           'the new bank row appeared on Home without a reload' if ok else 'the finished job did not redraw Home (no row %s after 60 s)' % name,
+           d if not ok else None)
+
+
+# A-OWNER-64.3 / 65 / 65b / 65c: the AI+ action buttons (AI import, Home and Bank-management generation) share the darker orange
+# with white text; greyed they are plain grey buttons with no reason line, the reason is in a tip on tap / hover / focus
+AIBTN_JS = """((sel) => { const b = document.querySelector(sel); if (!b) return null;
+  const cs = getComputedStyle(b), rgb = (c) => (c.match(/[\\d.]+/g) || []).map(Number);
+  const lin = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const L = (c) => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const bg = rgb(cs.backgroundColor), fg = rgb(cs.color);
+  const hi = Math.max(L(bg), L(fg)) + 0.05, lo = Math.min(L(bg), L(fg)) + 0.05;
+  const r = b.getBoundingClientRect(); const wrap = b.closest('.has-tip'); const tip = wrap && wrap.querySelector(':scope > .tip');
+  return {bg: cs.backgroundColor, fg: cs.color, ratio: Math.round(hi / lo * 100) / 100, dis: b.getAttribute('aria-disabled') === 'true',
+          h: Math.round(r.height), desc: b.getAttribute('aria-describedby'), tipId: tip ? tip.id : null, tipText: tip ? tip.textContent.trim() : '',
+          tipTap: !!(wrap && wrap.classList.contains('tip-tap'))} })(%s)"""
+# A-OWNER-73b: flat amber #F59E0B with white text (the owner's pick; its text outline carries the contrast, so no 4.5:1 rule here)
+ORANGE = 'rgb(245, 158, 11)'
+AIBTN_UNTICK = """(() => { for (const row of document.querySelectorAll('.home-setup input[type=checkbox]')) { const host = row.closest('.home-bankhead'); if (row.checked && host && host.querySelector('.ai-badge')) row.click(); } return 1 })()"""
+AIBTN_TICK = """(() => { for (const row of document.querySelectorAll('.home-setup input[type=checkbox]')) { const host = row.closest('.home-bankhead'); if (!row.checked && host && host.querySelector('.ai-badge')) { row.click(); return 1 } } return 0 })()"""
+
+
+def aibtn_look(d, sel, what, problems, want_dis, coarse):
+    """Colour / state of one AI button; a greyed one must be grey (not orange), with the reason only in its tip"""
+    r = d.js(AIBTN_JS % json.dumps(sel))
+    if r is None:
+        problems.append('%s: no button' % what)
+        return None
+    if not want_dis:
+        if r['dis']:
+            problems.append('%s: greyed, expected usable' % what)
+        elif r['bg'] != ORANGE or r['fg'] != 'rgb(255, 255, 255)':
+            problems.append('%s: %s on %s, expected white on %s' % (what, r['fg'], r['bg'], ORANGE))
+    else:
+        if not r['dis']:
+            problems.append('%s: usable, expected greyed' % what)
+            return r
+        if r['bg'] == ORANGE or r['fg'] == 'rgb(255, 255, 255)':
+            problems.append('%s: greyed but still orange / white (%s on %s)' % (what, r['fg'], r['bg']))
+        if not (r['tipId'] and r['tipText'] and r['desc'] == r['tipId'] and r['tipTap']):
+            problems.append('%s: the reason is not a tap tip described by the button (%s)' % (what, r['tipId']))
+    if coarse and r['h'] < 40:
+        problems.append('%s: %d px high' % (what, r['h']))
+    return r
+
+
+def aibtn_tip(d, sel, what, problems):
+    """Tap the greyed button: the tip box shows inside the window, no toast, nothing starts; Escape closes it"""
+    d.tap_sel(sel)
+    time.sleep(0.3)
+    q = json.dumps(sel)
+    r = d.js("""((sel) => { const b = document.querySelector(sel), w = b && b.closest('.has-tip'), tip = w && w.querySelector(':scope > .tip');
+      const cs = tip ? getComputedStyle(tip) : null, rc = tip ? tip.getBoundingClientRect() : null;
+      return {open: !!tip && cs.display !== 'none' && rc.width > 0, inside: !!rc && rc.left >= 0 && rc.right <= innerWidth + 1 && rc.top >= 0,
+              toast: !!tip && !!document.querySelector('#toast.show') && document.getElementById('toast').textContent.trim() === tip.textContent.trim(), dialog: !!document.querySelector('dialog[open]')} })(%s)""" % q)
+    if not r['open']:
+        problems.append('%s: a tap shows no tip box' % what)
+    elif not r['inside']:
+        problems.append('%s: the tip box is outside the window' % what)
+    if r['toast']:
+        problems.append('%s: a toast shows besides the tip' % what)
+    if r['dialog']:
+        problems.append('%s: a tap on the greyed button started something' % what)
+    d.key('Escape', 'Escape', 27)
+    time.sleep(0.2)
+    if d.js("""((sel) => { const w = document.querySelector(sel).closest('.has-tip'), tip = w.querySelector(':scope > .tip'); return getComputedStyle(tip).display !== 'none' })(%s)""" % q):
+        problems.append('%s: Escape does not close the tip' % what)
+
+
+def aibtn_banks(d, who, problems, seen, coarse):
+    """The Bank management toolbar generation button and the AI import button of the signed-in device, in whatever state they are"""
+    goto(d, '#/banks', 2.0)
+    st = d.js(AIBTN_JS % json.dumps('.bk-selbar .gen-sel'))
+    if st is not None:
+        aibtn_look(d, '.bk-selbar .gen-sel', who + 'Banks toolbar', problems, st['dis'], coarse)
+        seen.append(who + 'Banks toolbar ' + ('greyed' if st['dis'] else 'usable'))
+        if st['dis']:
+            aibtn_tip(d, '.bk-selbar .gen-sel', who + 'Banks toolbar', problems)
+    imp = d.js(AIBTN_JS % json.dumps('.bk-aicard .gen-impbtn'))
+    if imp is not None:
+        aibtn_look(d, '.bk-aicard .gen-impbtn', who + 'AI import', problems, imp['dis'], coarse)
+        seen.append(who + 'AI import ' + ('greyed' if imp['dis'] else 'usable'))
+        if d.js("!!document.querySelector('.gen-impwhy')"):
+            problems.append(who + 'AI import: a reason line is under the button')
+        if imp['dis']:
+            aibtn_tip(d, '.bk-aicard .gen-impbtn', who + 'AI import', problems)
+
+
+def aibtn_case(rc, lang, theme, size):
+    d = rc.dev('admin', lang, theme, size)
+    coarse = phone(size)
+    problems = []
+    seen = []
+    # Home: no AI+ bank ticked -> usable orange; one ticked -> grey with the tip only
+    goto(d, '#/', 2.0)
+    d.js(AIBTN_UNTICK)
+    time.sleep(0.5)
+    if aibtn_look(d, '.home-setup-head .gen-btn', 'Home usable', problems, False, coarse):
+        seen.append('Home usable')
+    if d.js(AIBTN_TICK):
+        time.sleep(0.5)
+        r = aibtn_look(d, '.home-setup-head .gen-btn', 'Home greyed', problems, True, coarse)
+        if r:
+            seen.append('Home greyed')
+            n = d.js("""((t) => { let c = 0; for (const e of document.querySelectorAll('body *')) { if (e.closest('.tip, .hold-tip, [hidden], #toast')) continue; if ([...e.childNodes].some((x) => x.nodeType === 3 && x.textContent.includes(t))) c++; } return c })(%s)""" % json.dumps(r['tipText'][:12]))
+            if n:
+                problems.append('Home greyed: the reason is also written on the page (%d places)' % n)
+            aibtn_tip(d, '.home-setup-head .gen-btn', 'Home greyed', problems)
+        d.js(AIBTN_UNTICK)
+    # Bank management: the toolbar button and the AI import button, whatever state they are in (admin, then a bank manager)
+    aibtn_banks(d, 'admin ', problems, seen, coarse)
+    d2 = rc.dev('sam', lang, theme, size)
+    aibtn_banks(d2, 'sam ', problems, seen, coarse)
+    if not seen:
+        rc.rec('W-AI-BTN', 'home', 'ai-buttons', 'admin', size, lang, theme, None, 'no AI button on this stack')
+        return
+    rc.rec('W-AI-BTN', 'home', 'ai-buttons', 'admin', size, lang, theme, not problems,
+           '; '.join(problems) or 'AI+ buttons (%s): white on %s, greyed ones plain grey with the reason only in the tip' % (', '.join(seen), ORANGE),
+           d if problems else None)
+
+
+def im1_case(rc, lang, theme, size):
+    """A-OWNER-35 / 37 / 29b: the AI import is its own card (not inside the Excel card) with a heading, the limits note
+    (types, MB and the question limit), the button with "or drop it here" and the notice; the button is the Excel button's
+    twin and aligned with it"""
+    d = rc.dev('sam', lang, theme, size)
+    goto(d, '#/banks', 2.0)
+    r = d.js("""(() => { const card = document.querySelector('.bk-aicard'); if (!card) return null;
+      const btn = card.querySelector('.gen-impbtn, button'); const note = card.querySelector('.gen-impnote');
+      const lh = note ? parseFloat(getComputedStyle(note).lineHeight) || 20 : 20;
+      const x = document.querySelector('.bk-choose'); const rx = x ? x.getBoundingClientRect() : null; const rb = btn ? btn.getBoundingClientRect() : null;
+      return {btnH: rb ? Math.round(rb.height) : 0, btnW: rb ? Math.round(rb.width) : 0, cardW: Math.round(card.getBoundingClientRect().width),
+              noteLines: note ? Math.round(note.getBoundingClientRect().height / lh) : 0, note: note ? note.textContent : '',
+              inExcel: !!document.querySelector('#bk-import .gen-impbtn'), head: !!card.querySelector('h2'),
+              drop: !!card.querySelector('.bk-droprow'), over: card.classList.contains('bk-drop'),
+              twin: rx && rb ? {dw: Math.round(Math.abs(rx.width - rb.width)), dh: Math.round(Math.abs(rx.height - rb.height)), dl: Math.round(Math.abs(rx.left - rb.left))} : null} })()""")
+    if r is None:
+        rc.rec('W-IM-1', 'banks', 'ai-card', 'sam', size, lang, theme, None, 'no AI card (AI+ not usable for this account on this stack)')
+        return
+    problems = []
+    if not d.js(NO_SIDE_SCROLL):
+        problems.append('sideways scroll')
+    if r['inExcel']:
+        problems.append('the AI button is inside the Excel card')
+    if not (r['head'] and r['drop'] and r['over']):
+        problems.append('the AI card lacks its heading / drop zone')
+    if not re.search(r'\d+', r['note']) or len(re.findall(r'\d+', r['note'])) < 3:
+        problems.append('the note does not name the size and the question limit: %s' % r['note'][:60])
+    if phone(size) and r['btnH'] < 44:
+        problems.append('button %d px high' % r['btnH'])
+    if r['noteLines'] > 5:
+        problems.append('note %d lines' % r['noteLines'])
+    t = r['twin']
+    if t and (t['dw'] > 2 or t['dh'] > 2 or t['dl'] > 2):
+        problems.append('the AI button is not the twin of the Excel button (%s)' % t)
+    rc.rec('W-IM-1', 'banks', 'ai-card', 'sam', size, lang, theme, not problems,
+           '; '.join(problems) or 'AI card: button %d px high (twin of the Excel button), note %d lines, no sideways scroll' % (r['btnH'], r['noteLines']),
+           d if problems else None)
+    # a user without AI+ sees no card (A-OWNER-15)
+    d2 = rc.dev('riley', lang, theme, size)
+    goto(d2, '#/banks', 1.6)
+    if d2.js("!!document.querySelector('.bk-aicard')"):
+        rc.rec('W-IM-1', 'banks', 'no-ai', 'riley', size, lang, theme, False, 'a user without the AI+ feature sees the AI card', d2)
+
+
+def im2_case(rc, lang, theme, size):
+    """A-OWNER-33: a failed import card has a close button in its top-right corner (44 px on a phone) that removes the card.
+    The made-up file has no text, so it fails on the server with no AI call and no daily job used."""
+    d = rc.dev('sam', lang, theme, size)
+    goto(d, '#/banks', 2.0)
+    if not d.js("!!document.querySelector('#bk-aifile')"):
+        rc.rec('W-IM-2', 'banks', 'failed-card', 'sam', size, lang, theme, None, 'no AI card (AI+ not usable for this account on this stack)')
+        return
+    until(d, "document.querySelector('.bk-aicard .gen-impbtn:not([disabled])')", 10.0)
+    # a file with only a space: the upload is accepted, the server finds no text and fails the job with no AI call and no
+    # charge (A-OWNER-47 / 58b: a long file is not a local error any more); only the import notice dialog is confirmed
+    d.js("""(() => {
+      const dt = new DataTransfer(); dt.items.add(new File([' '], 'walk-blank.txt', {type: 'text/plain'}));
+      const input = document.querySelector('#bk-aifile'); input.files = dt.files;
+      input.dispatchEvent(new Event('change', {bubbles: true})); return 1 })()""")
+    notice = "document.querySelector('dialog[open]:has(.gen-file-line) .acts .btn.primary')"
+    if until(d, notice, 6.0):
+        d.js(notice + '.click()')
+    if not until(d, "document.querySelector('.gen-file .gen-x')", 25.0):
+        seen = d.js("(() => [...document.querySelectorAll('.gen-card, .gen-error, [role=alert], #toast, dialog[open]')].map((e) => e.className + ': ' + e.textContent.trim().slice(0, 80)).join(' | '))()")
+        rc.rec('W-IM-2', 'banks', 'failed-card', 'sam', size, lang, theme, False, 'no failed import card with a close button appeared (page: %s)' % seen, d)
+        return
+    r = d.js("""(() => { const card = document.querySelector('.gen-file'), x = card.querySelector('.gen-x');
+      const rc = card.getBoundingClientRect(), rx = x.getBoundingClientRect(), cs = getComputedStyle(card);
+      const pad = parseFloat(cs.paddingTop) || 0;
+      return {w: Math.round(rx.width), h: Math.round(rx.height), right: Math.round(rc.right - rx.right), top: Math.round(rx.top - rc.top),
+              coarse: matchMedia('(pointer: coarse)').matches, pad: Math.round(pad)} })()""")
+    problems = []
+    if r['coarse'] and (r['w'] < 44 or r['h'] < 44):
+        problems.append('close button %dx%d px (want 44)' % (r['w'], r['h']))
+    if r['right'] > 24 or r['top'] > 24 or r['right'] < -12 or r['top'] < -12:
+        problems.append('close button is not in the top-right corner (%d px from the right, %d from the top)' % (r['right'], r['top']))
+    d.js("document.querySelector('.gen-file .gen-x').click()")
+    if not until(d, "!document.querySelector('.gen-file')", 5.0):
+        problems.append('tapping the close button did not remove the card')
+    rc.rec('W-IM-2', 'banks', 'failed-card', 'sam', size, lang, theme, not problems,
+           '; '.join(problems) or 'failed card: close button %dx%d px in the top-right corner, tapping it removes the card' % (r['w'], r['h']),
+           d if problems else None)
+
+
+def bk29_case(rc, lang, theme, size):
+    # A-OWNER-29 / 29b / 30: no text element of Bank management under about 4 characters wide, no per-row AI action, and the
+    # AI import button is the same box as the Excel button
+    d = rc.dev('sam', lang, theme, size)
+    goto(d, '#/banks', 2.0)
+    if not d.js("!!document.querySelector('.bk-bank .ai-badge')"):
+        # the check needs a bank row with the AI+ badge: make one (long name) from Home, once per stack
+        goto(d, '#/', 2.0)
+        if d.js("!!document.querySelector('.home-setup-head .gen-btn:not([aria-disabled=true])')"):
+            d.tap_sel('.home-setup-head .gen-btn')
+            if until(d, "document.querySelector('dialog[open] #gen-name')", 6.0):
+                d.js("(() => { const i = document.querySelector('dialog[open] #gen-name'); i.value = 'Bk29 walk sample bank with a rather long name 2026'; i.dispatchEvent(new Event('input', {bubbles: true})); return 1 })()")
+                d.js("document.querySelector('dialog[open] .acts .btn.primary').click()")
+                until(d, "document.body.innerText.includes('Bk29 walk sample')", 60.0)
+        goto(d, '#/banks', 2.0)
+    r = d.js("""(() => { const out = {narrow: [], rowGen: document.querySelectorAll('.bk-bank .gen-btn, .bk-bank .gen-host').length};
+      for (const el of document.querySelectorAll('.bk-bank, .bk-bank *')) {
+        if (el.closest('svg') || el.closest('[hidden]') || el.closest('.sr-only')) continue;
+        const own = [...el.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent.trim()).join('');
+        if (own.length < 4) continue;
+        const rc = el.getBoundingClientRect(); if (!rc.width || !rc.height) continue;
+        const fs = parseFloat(getComputedStyle(el).fontSize) || 14;
+        if (rc.width < fs * 3 && rc.height > fs * 2.2) out.narrow.push((el.className || el.tagName) + ' ' + Math.round(rc.width) + 'px: ' + own.slice(0, 20));
+      }
+      out.badge = [];
+      const bar = document.querySelector('.bk-selbar'); out.barShown = !!bar && !bar.hidden && bar.getClientRects().length > 0;
+      out.barBtns = bar ? [...bar.querySelectorAll('button')].map((b) => Math.round(b.getBoundingClientRect().height)) : [];
+      out.coarse = matchMedia('(pointer: coarse)').matches;
+      for (const card of document.querySelectorAll('.bk-bank')) {
+        const bd = card.querySelector('.ai-badge'), nm = card.querySelector('.bk-bankname'); if (!bd || !nm) continue;
+        const cr = card.getBoundingClientRect(), br = bd.getBoundingClientRect(), nr = nm.getBoundingClientRect(), hr = card.querySelector('.bk-bankhead').getBoundingClientRect();
+        if (br.right > cr.right + 0.5) out.badge.push('badge past the card edge');
+        if (innerWidth <= 900 && br.top < nr.bottom - 1) out.badge.push('badge beside the name');
+        if (nr.width < hr.width * 0.5) out.badge.push('name only ' + Math.round(nr.width) + 'px');
+      }
+      const x = document.querySelector('.bk-choose'), a = document.querySelector('.gen-impbtn');
+      if (x && a) { const rx = x.getBoundingClientRect(), ra = a.getBoundingClientRect();
+        out.twin = {dw: Math.round(Math.abs(rx.width - ra.width)), dh: Math.round(Math.abs(rx.height - ra.height)), dl: Math.round(Math.abs(rx.left - ra.left))}; }
+      return out; })()""")
+    problems = []
+    if r['narrow']:
+        problems.append('narrow text: ' + '; '.join(r['narrow'][:3]))
+    if r['rowGen']:
+        problems.append('a per-row AI action is back')
+    if not r['barShown']:
+        problems.append('the selection toolbar is not always shown (the list jumps on the first tick)')
+    elif r['coarse'] and any(h < 44 for h in r['barBtns']):
+        problems.append('toolbar buttons under 44 px: %s' % r['barBtns'])
+    if r['badge']:
+        problems.append('AI row: ' + '; '.join(r['badge'][:2]))
+    t = r.get('twin')
+    if t and (t['dw'] > 2 or t['dh'] > 2 or t['dl'] > 2):
+        problems.append('the AI import button is not the twin of the Excel button (%s)' % t)
+    rc.rec('W-BK-29', 'banks', 'rows', 'sam', size, lang, theme, not problems,
+           '; '.join(problems) or 'no text under 3 em wide, no row AI action, import button matches the Excel button', d if problems else None)
+
+
+def gb1_case(rc, lang, theme, size):
+    d = rc.dev('sam', lang, theme, size)
+    goto(d, '#/', 2.0)
+    r = d.js("""(() => { const b = document.querySelector('.home-setup-head .gen-btn'); if (!b) return null;
+      const r = b.getBoundingClientRect(); return {h: Math.round(r.height), w: Math.round(r.width), right: Math.round(r.right), vw: innerWidth} })()""")
+    if r is None:
+        rc.rec('W-GB-1', 'home', 'button', 'sam', size, lang, theme, None, 'no AI button (AI+ not usable for this account on this stack)')
+        return
+    problems = []
+    if not d.js(NO_SIDE_SCROLL):
+        problems.append('sideways scroll')
+    if r['right'] > r['vw']:
+        problems.append('the button leaves the screen')
+    rc.rec('W-GB-1', 'home', 'button', 'sam', size, lang, theme, not problems,
+           '; '.join(problems) or 'AI button %dx%d px inside the header, no sideways scroll' % (r['w'], r['h']), d if problems else None)
+
+
+def bt1_case(rc, lang, theme, size):
+    problems = []
+    d = rc.dev('admin', lang, theme, size)
+    for route in ('#/', '#/settings', '#/users', '#/ai-settings?tab=users'):
+        goto(d, route, 2.0)
+        for b in d.js(BADGE_TIPS) or []:
+            if not b['tip']:
+                problems.append('%s: a badge (%s) has no tip' % (route, b['where']))
+        if d.js("(() => { const b = document.getElementById('acct-btn'); return !!b && b.hasAttribute('title') })()"):
+            problems.append('%s: the account button still has a native title' % route)
+    d2 = rc.dev('sam', lang, theme, size)
+    goto(d2, '#/', 2.0)
+    for b in d2.js(BADGE_TIPS) or []:
+        if not b['tip']:
+            problems.append('sam #/: a badge (%s) has no tip' % b['where'])
+    rc.rec('W-BT-1', 'v11', 'badge-tips', 'admin', size, lang, theme, not problems, '; '.join(problems[:4]) or 'every badge has a non-empty tip', d if problems else None)
+
+
+def fp1_case(rc, lang, theme, size):
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/ai-settings?tab=users', 2.5)
+    rows = d.js(FEAT_ROWS) or []
+    if not rows:
+        rc.rec('W-FP-1', 'ai-settings', 'features', 'admin', size, lang, theme, None, 'no AI+ users listed')
+        return
+    problems = []
+    for i, r in enumerate(rows):
+        if r['boxes'] != 6:
+            problems.append('row %d has %d boxes' % (i, r['boxes']))
+        if not r['freeOk']:
+            problems.append('row %d (%s) has %d free-mode switches' % (i, 'administrator' if r['admin'] else 'user', r['free']))
+        if len(r['groups']) != 2:
+            problems.append('row %d has %d groups' % (i, len(r['groups'])))
+        elif lang in ('zh', 'ja') and any(g > 1 for g in r['groups']):
+            problems.append('row %d: a group wraps at %d px in %s' % (i, size[0], lang))
+    if not any(r['admin'] for r in rows):
+        problems.append('no administrator row with disabled boxes')
+    rc.rec('W-FP-1', 'ai-settings', 'features', 'admin', size, lang, theme, not problems,
+           '; '.join(problems[:3]) or '%d rows: six boxes in two groups' % len(rows), d if problems else None)
+
+
+UC_BARS = """(() => {
+  const out = [];
+  for (const host of document.querySelectorAll('.uc-bars')) {
+    const items = [...host.querySelectorAll('.uc-item')];
+    const labels = items.map(g => (g.querySelector('.uc-label') || {}).textContent || '');
+    const card = host.closest('.uc-card');
+    out.push({n: items.length, labelled: labels.filter(Boolean).length, title: card ? card.querySelector('.uc-title').textContent : '',
+      switchBtns: card ? card.querySelectorAll('.uc-sw-btn').length : 0, other: labels.some(l => /其他|Other|その他/.test(l)),
+      stacked: host.querySelectorAll('.uc-bar-in').length});
+  }
+  return out })()"""
+UC_TIPS = """(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const res = {};
+  const bars = document.querySelector('.uc-bars');
+  const g = bars && bars.querySelector('.uc-item');
+  if (g) { g.dispatchEvent(new MouseEvent('click', {bubbles: true})); await wait(80);
+    const tip = bars.querySelector('.uc-tip'); res.barTip = tip && !tip.hidden ? tip.textContent : ''; }
+  const line = document.querySelector('.uc-line svg');
+  if (line) {
+    res.stroke = parseFloat(getComputedStyle(line.querySelector('.uc-stroke')).strokeWidth);
+    const dots = [...line.querySelectorAll('.uc-dot')]; const dot = dots[dots.length - 1];
+    if (dot) { const r = dot.getBoundingClientRect();
+      // 10 px beside and 10 px above the point: inside the hit area, outside the point
+      line.dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerType: 'mouse', clientX: r.left + r.width / 2 - 4, clientY: r.top + r.height / 2 - 10}));
+      await wait(80); const tip = document.querySelector('.uc-line .uc-tip'); res.lineTip = tip && !tip.hidden ? tip.textContent : '';
+      line.dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerType: 'mouse', clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 - 90}));
+      await wait(80); res.lineFar = (() => { const t2 = document.querySelector('.uc-line .uc-tip'); return t2 && !t2.hidden; })(); }
+  }
+  return res })()"""
+
+
+def uc1_case(rc, lang, theme, size):
+    """W-UC-1 plus A-OWNER-39 / 40: every bar labelled, a 调用次数 | Token 数 switch on both bar charts (stacked tokens, the
+    title follows), a tip on a bar and near the line, the line 3 px"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/ai-settings?tab=usage', 3.0)
+    charts = d.js(LABEL_OVERLAP) or []
+    if len(charts) < 3:
+        rc.rec('W-UC-1', 'ai-settings', 'charts', 'admin', size, lang, theme, None, '%d charts (no usage in the period yet)' % len(charts))
+        return
+    problems = []
+    for c in charts:
+        if c['role'] != ('group' if c['bars'] else 'img') or not c['label']:
+            problems.append('a chart has no role / label')
+        if c['overlaps']:
+            problems.append('%s: %d overlapping labels' % (c['label'], c['overlaps']))
+        if c['w'] > c['host'] + 1:
+            problems.append('%s: %d px in a %d px box' % (c['label'], c['w'], c['host']))
+    if not d.js(NO_SIDE_SCROLL):
+        problems.append('sideways scroll')
+    if d.js(UC2_OUTSIDE):
+        problems.append('a label leaves its card')
+    bars = d.js(UC_BARS) or []
+    if len(bars) != 2:
+        problems.append('%d bar charts with the switch (2 expected)' % len(bars))
+    for b in bars:
+        if b['labelled'] != b['n']:
+            problems.append('%d of %d bars have a label' % (b['labelled'], b['n']))
+        if b['switchBtns'] != 2:
+            problems.append('no calls / tokens switch')
+    # the switch: tokens on the first chart (stacked bars when anything was counted), the title follows, then back
+    if bars and d.js("(() => { const b = document.querySelectorAll('.uc-sw-btn')[1]; if (!b) return false; b.click(); return true })()"):
+        time.sleep(0.4)
+        after = d.js(UC_BARS)
+        if not re.search(r'Token|トークン', after[0]['title'], re.I):
+            problems.append('the title did not follow the switch: %s' % after[0]['title'])
+        d.js("document.querySelectorAll('.uc-sw-btn')[0].click()")
+        time.sleep(0.3)
+    tips = d.js(UC_TIPS) or {}
+    if bars and not tips.get('barTip'):
+        problems.append('a bar shows no tip on tap')
+    if tips.get('stroke') is not None and tips['stroke'] < 2.9:
+        problems.append('the line is %s px' % tips['stroke'])
+    if 'lineTip' in tips and not tips['lineTip']:
+        problems.append('no tip 10 px beside the point')
+    if tips.get('lineFar'):
+        problems.append('a tip 90 px from the line')
+    rc.rec('W-UC-1', 'ai-settings', 'charts', 'admin', size, lang, theme, not problems,
+           '; '.join(problems[:3]) or '%d charts, every bar labelled, switch + tips work, labels never overlap, they fit the card' % len(charts),
+           d if problems else None)
+
+
+UC2_JS = r"""(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const line = document.querySelector('.uc-line'); if (!line) return {none: true};
+  const card = line.closest('.uc-card');
+  const q = (s) => card.querySelector(s);
+  const btns = [...card.querySelectorAll('.uc-sw-btn')];
+  const sw = q('.uc-switch');
+  // computed colours can be color(srgb ...) or color-mix results: draw one pixel to get plain 0-255 channels
+  const cv = document.createElement('canvas'); cv.width = cv.height = 1; const cx = cv.getContext('2d', {willReadFrequently: true});
+  const px = (c) => { cx.clearRect(0, 0, 1, 1); cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1); return [...cx.getImageData(0, 0, 1, 1).data]; };
+  const lum = (c) => { const m = px(c); const f = (v) => { v /= 255; return v <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; };
+    return .2126 * f(m[0]) + .7152 * f(m[1]) + .0722 * f(m[2]); };
+  const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
+  const res = {pref: localStorage.getItem('xexam.uc.period'), title0: q('.uc-title').textContent, n: btns.length,
+    labels: btns.map(b => b.textContent), pressed0: btns.map(b => b.getAttribute('aria-pressed')),
+    swRole: sw.getAttribute('role'), swLabel: sw.getAttribute('aria-label'), btnH: btns.map(b => Math.round(b.getBoundingClientRect().height)),
+    coarse: matchMedia('(pointer: coarse)').matches, legend0: q('.uc-legend').hidden};
+  btns[1].click(); await wait(250);
+  const line2 = card.querySelector('.uc-line'); const svg = line2.querySelector('svg');
+  res.title1 = q('.uc-title').textContent; res.pressed1 = btns.map(b => b.getAttribute('aria-pressed'));
+  res.legend1 = !q('.uc-legend').hidden && q('.uc-legend').getClientRects().length > 0;
+  res.legendTxt = q('.uc-legend').textContent;
+  res.areas = [svg.querySelectorAll('.uc-area-out').length, svg.querySelectorAll('.uc-area-in').length, svg.querySelectorAll('.uc-stroke-in').length];
+  const fillOut = getComputedStyle(svg.querySelector('.uc-area-out')).fill, fillIn = getComputedStyle(svg.querySelector('.uc-area-in')).fill;
+  const cardBg = getComputedStyle(card.closest('.panel') || document.body).backgroundColor;
+  res.fills = [fillOut, fillIn, cardBg];
+  try { res.crOutIn = +cr(fillOut, fillIn).toFixed(2); res.crInBg = +cr(fillIn, cardBg).toFixed(2); } catch (e) { res.crErr = String(e); }
+  const pb = btns[1]; res.btnCr = +cr(getComputedStyle(pb).color, getComputedStyle(pb).backgroundColor).toFixed(2);
+  const sws = [...card.querySelectorAll('.uc-sw')].map(e => getComputedStyle(e)); res.swatch = sws.map(s => s.backgroundColor + '@' + s.opacity);
+  res.legendMatch = sws.length === 2 && sws[0].backgroundColor === fillIn && sws[1].backgroundColor === fillOut;
+  res.ticks = [...svg.querySelectorAll('text.uc-label:not([transform])')].map(t => t.textContent);
+  res.svgW = Math.round(svg.getBoundingClientRect().width); res.hostW = Math.round(line2.getBoundingClientRect().width);
+  res.side = document.documentElement.scrollWidth <= innerWidth + 1;
+  // keyboard: focus the plot, End = the newest period, ArrowLeft one back
+  svg.focus(); svg.dispatchEvent(new KeyboardEvent('keydown', {key: 'End', bubbles: true})); await wait(80);
+  const tip = line2.querySelector('.uc-tip'); res.tipEnd = tip && !tip.hidden ? [...tip.children].map(c => c.textContent) : null;
+  svg.dispatchEvent(new KeyboardEvent('keydown', {key: 'ArrowLeft', bubbles: true})); await wait(80);
+  res.tipLeft = tip && !tip.hidden ? tip.firstChild.textContent : null;
+  res.focusable = svg.getAttribute('tabindex');
+  // the hit area of the input band: a point on the input line well below the total line
+  const pts = [...svg.querySelectorAll('.uc-dot')];
+  svg.blur(); await wait(50);
+  return res; })()"""
+
+UC2_HIT = r"""(async () => {
+  const wait = (ms) => new Promise(r => setTimeout(r, ms));
+  const line = document.querySelector('.uc-line'); const svg = line.querySelector('svg');
+  const inP = svg.querySelector('.uc-stroke-in'); const tot = svg.querySelector('.uc-stroke:not(.uc-stroke-in)');
+  if (!inP) return {noIn: true};
+  // walk the input path, find an x where the total line is >= 40 px above it
+  const L = inP.getTotalLength(); const m = svg.getScreenCTM(); let found = null;
+  for (let s = 0; s <= L; s += 3) { const p = inP.getPointAtLength(s);
+    const L2 = tot.getTotalLength(); let best = null;
+    for (let u = 0; u <= L2; u += 3) { const q = tot.getPointAtLength(u); if (!best || Math.abs(q.x - p.x) < Math.abs(best.x - p.x)) best = q; }
+    if (best && p.y - best.y >= 40) { found = {p, gap: p.y - best.y}; break; } }
+  if (!found) return {noGap: true};
+  const sx = found.p.x * m.a + m.e, sy = found.p.y * m.d + m.f;
+  svg.dispatchEvent(new PointerEvent('pointermove', {bubbles: true, pointerType: 'mouse', clientX: sx, clientY: sy})); await wait(80);
+  const tip = line.querySelector('.uc-tip');
+  return {gap: Math.round(found.gap), tipOnInputLine: !!(tip && !tip.hidden)}; })()"""
+
+
+
+UC2_TITLES = {
+    'zh': ('按时间（调用次数：次）', '按时间（Token：输入 / 输出）', '调用次数', 'Token 数'),
+    'en': ('Over time (calls: times)', 'Over time (tokens: input / output)', 'Calls', 'Tokens'),
+    'ja': ('期間別（呼び出し回数）', '期間別（Token：入力 / 出力）', '呼び出し回数', 'Token 数'),
+}
+UC2_OUTSIDE = """(() => { const bad = []; for (const card of document.querySelectorAll('.uc-card')) { const c = card.getBoundingClientRect();
+  for (const l of card.querySelectorAll('.uc-label')) { const r = l.getBoundingClientRect(); if (r.width && (r.left < c.left - 1 || r.right > c.right + 1 || r.bottom > c.bottom + 1 || r.top < c.top - 1)) bad.push(l.textContent.slice(0, 12)); } }
+  return bad })()"""
+UC2_MOVE = """(async () => { const wait = (ms) => new Promise(r => setTimeout(r, ms)); const cards = [...document.querySelectorAll('.uc-card')]; const res = [];
+  for (const card of cards) { card.scrollIntoView({block: 'start'}); await wait(150); const btns = [...card.querySelectorAll('.uc-sw-btn')]; const was = btns.map(b => b.getBoundingClientRect().top);
+    btns[1].click(); await wait(200); const now = [...card.querySelectorAll('.uc-sw-btn')].map(b => b.getBoundingClientRect().top);
+    res.push(Math.abs(now[1] - was[1]) < 1); card.querySelectorAll('.uc-sw-btn')[0].click(); await wait(150); }
+  return res })()"""
+
+
+def uc2_case(rc, lang, theme, size):
+    """W-UC-2 (A-OWNER-63 / 59): the by-time chart has the calls | tokens switch (titles, aria-pressed, 44 px on touch, pressed text
+    4.5:1), token mode shows the input / output areas with a legend that matches them, K/M ticks, the exact tip against the API,
+    End / ArrowLeft, the choice is remembered; the switches do not move; no label leaves its card"""
+    d = rc.dev('admin', lang, theme, size)
+    d.js("localStorage.removeItem('xexam.uc.period')")
+    goto(d, '#/ai-settings?tab=usage', 3.0)
+    r = d.js(UC2_JS)
+    if not r or r.get('none'):
+        rc.rec('W-UC-2', 'ai-settings', 'by-time', 'admin', size, lang, theme, None, 'no by-time chart (no usage in the period yet)')
+        return
+    T = UC2_TITLES[lang]
+    p = []
+    if r['title0'] != T[0] or r['title1'] != T[1]:
+        p.append('titles %r / %r' % (r['title0'], r['title1']))
+    if r['labels'] != [T[2], T[3]]:
+        p.append('switch labels %r' % r['labels'])
+    if r['pressed0'] != ['true', 'false'] or r['pressed1'] != ['false', 'true']:
+        p.append('aria-pressed %r -> %r' % (r['pressed0'], r['pressed1']))
+    if r['swRole'] not in ('group', 'radiogroup') or not r['swLabel']:
+        p.append('switch role / label')
+    if not r['legend0'] or not r['legend1']:
+        p.append('legend wrong (hidden in calls: %s, shown in tokens: %s)' % (r['legend0'], r['legend1']))
+    if r['areas'][:2] != [1, 1]:
+        p.append('areas %r' % r['areas'])
+    if not r.get('legendMatch'):
+        p.append('legend swatches differ from the areas %r' % r['swatch'])
+    if r.get('crInBg', 9) < 1.4:
+        p.append('input area %s:1 against the card' % r.get('crInBg'))
+    if min(r['btnH']) < (44 if r['coarse'] else 32):
+        p.append('switch %r px (coarse %s)' % (r['btnH'], r['coarse']))
+    if r.get('btnCr', 9) < 4.5:
+        p.append('pressed button contrast %s' % r['btnCr'])
+    bad = [x for x in r['ticks'] if not re.fullmatch(r'\d+(\.\d)?[KM]?', x) or (x.isdigit() and int(x) >= 1000)]
+    if bad:
+        p.append('y ticks not K/M: %r' % bad[:4])
+    if r['svgW'] > r['hostW'] + 1 or not r['side']:
+        p.append('width %d in %d / side scroll' % (r['svgW'], r['hostW']))
+    usage = d.js("fetch('/api/ai/admin/usage?days=7').then(x => x.json())") or {}
+    per = usage.get('byPeriod') or []
+    tip = r['tipEnd'] or []
+    if len(per) >= 2:
+        last = per[-1]
+        joined = ' | '.join(tip)
+        for v in (last['tokensIn'], last['tokensOut'], last['tokensIn'] + last['tokensOut']):
+            if '{:,}'.format(v) not in joined:
+                p.append('tip lacks exact %s: %s' % ('{:,}'.format(v), joined))
+                break
+        if not tip or tip[0] != last['period']:
+            p.append('tip head %r (expected %s)' % (tip[:1], last['period']))
+        if r['tipLeft'] != per[-2]['period']:
+            p.append('ArrowLeft tip %r' % r['tipLeft'])
+    ov = [c for c in (d.js(LABEL_OVERLAP) or []) if c['overlaps']]
+    if ov:
+        p.append('overlapping labels')
+    out = d.js(UC2_OUTSIDE) or []
+    if out:
+        p.append('labels outside their card: %r' % out[:2])
+    mv = d.js(UC2_MOVE) or []
+    if not all(mv):
+        p.append('a switch moved when tapped %r' % mv)
+    # the choice is remembered per browser (re-query: the click replaced the chart)
+    d.js("document.querySelector('.uc-line').closest('.uc-card').querySelectorAll('.uc-sw-btn')[1].click()")
+    goto(d, '#/ai-settings?tab=usage', 3.0)
+    rem = d.js("(() => { const c = document.querySelector('.uc-line').closest('.uc-card'); return [localStorage.getItem('xexam.uc.period'), c.querySelector('.uc-title').textContent, [...c.querySelectorAll('.uc-sw-btn')].map(b => b.getAttribute('aria-pressed'))] })()")
+    if not rem or rem[0] != 'tokens' or rem[1] != T[1] or rem[2] != ['false', 'true']:
+        p.append('not remembered after a reload: %r' % (rem,))
+    hit = d.js(UC2_HIT) or {}
+    if hit.get('gap') and not hit.get('tipOnInputLine'):
+        p.append('no tip on the input line')
+    d.js("document.querySelector('.uc-line').closest('.uc-card').querySelectorAll('.uc-sw-btn')[0].click(); localStorage.setItem('xexam.uc.period', 'calls')")
+    rc.rec('W-UC-2', 'ai-settings', 'by-time', 'admin', size, lang, theme, not p,
+           '; '.join(p[:3]) or 'switch, areas, legend, K/M ticks, exact tip, keys and the remembered choice are right', d if p else None)
+
+
+def ab1_case(rc, lang, theme, size):
+    """A-OWNER-27 / 28 / 28b: the AI+题集 badge (with its tip and the caution line) on the live question card and on the review
+    cards of the result page; one AI bank is generated for it and deleted again"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/', 2.0)
+    started = d.js("""(async () => { const post = async (u, b) => { const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}); return [r.status, await r.json().catch(() => null)]; };
+      const banks = (await (await fetch('/api/banks')).json()).banks; const g = banks.find(b => !b.ai && b.sheets.length);
+      if (!g) return ['no source bank'];
+      const before = (await (await fetch('/api/ai/admin/limits')).json()).limits.genMinSource;
+      await post('/api/ai/admin/limits', {genMinSource: 5});
+      let s; try { s = await post('/api/ai/gen/start', {source: 'scope', sheets: g.sheets.map(x => ({bank: g.id, sheet: x.name})), name: 'Walk AI set'}); }
+      finally { await post('/api/ai/admin/limits', {genMinSource: before}); }
+      if (s[0] !== 202) return ['start ' + s[0]];
+      const id = s[1].job.id;
+      for (let i = 0; i < 240; i++) { await window.__wait(500); const j = (await (await fetch('/api/ai/gen/job?id=' + id)).json()).job;
+        if (!['queued', 'running'].includes(j.state)) return [j.state, j.bankId, id]; }
+      return ['timeout', null, id] })()""")
+    state, bank, job = (started + [None, None])[:3]
+    if state != 'done' or not bank:
+        rc.rec('W-AB-1', 'quiz', 'ai-badge', 'admin', size, lang, theme, None, 'no AI bank to look at (%s)' % state)
+        return
+    try:
+        goto(d, '#/', 2.0)
+        if not d.js("(() => { const b = [...document.querySelectorAll('.gen-card .btn.primary')][0]; if (!b) return false; b.click(); return true })()"):
+            rc.rec('W-AB-1', 'quiz', 'ai-badge', 'admin', size, lang, theme, False, 'no practice button on the finished AI card', d)
+            return
+        time.sleep(1.0)
+        d.js(CHECKS_JS)
+        d.js("window.__start('practice')")
+        until(d, "location.hash.indexOf('quiz') >= 0 && document.querySelector('.stem')", 10)
+        time.sleep(0.6)
+        d.js(CHECKS_JS)
+        card = d.js("""(() => { const b = document.querySelector('.stem') && document.querySelector('.ai-badge.ai-set'); if (!b) return null;
+          const host = b.closest('.has-tip'); const tip = host ? host.querySelector(':scope > .tip') : null; return {tip: tip ? tip.textContent.trim() : ''} })()""")
+        problems = []
+        if card is None:
+            problems.append('no AI+题集 badge on the question card')
+        elif not re.search(r'AI', card['tip']) or not re.search(r'有误|wrong|誤り', card['tip']):
+            problems.append('the badge tip lacks the author line or the caution: %s' % card['tip'][:60])
+        d.js('(%s)(5)' % FINISH_JS)
+        time.sleep(1.0)
+        d.js(CHECKS_JS)
+        if d.js("!document.querySelector('.ai-badge.ai-set')") and d.js("!!document.querySelector('.rv-card, .review-card, .result-item')"):
+            problems.append('no AI+题集 badge on the review cards of the result')
+        rc.rec('W-AB-1', 'quiz', 'ai-badge', 'admin', size, lang, theme, not problems,
+               '; '.join(problems) or 'AI+题集 badge with its tip on the question card and on the result', d if problems else None)
+    finally:
+        d.js("""(async () => { const post = (u, b) => fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)});
+          await post('/api/ai/gen/dismiss', {id: %d}); await post('/api/banks/delete', {id: %d, withRecords: true}); return 1 })()""" % (job or 0, bank))
+
+
+TOP_SUBMIT = """(() => { const vis = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).display !== 'none';
+  const r = e => { const b = e.getBoundingClientRect(); return {l: b.left, r: b.right, t: b.top, b: b.bottom, h: b.height, w: b.width} };
+  const rail = document.querySelector('.rail .btn.primary'); const sub = document.querySelector('.qbar .qsubmit');
+  const cnt = document.querySelector('.qbar .qcount'); const clock = document.querySelector('.qbar .qtime'); const exit = document.querySelector('.qbar .qexit');
+  const over = (a, b) => a && b && a.l < b.r - 0.5 && b.l < a.r - 0.5 && a.t < b.b - 0.5 && b.t < a.b - 0.5;
+  const rs = vis(sub) ? r(sub) : null, rc = vis(clock) ? r(clock) : null, re = vis(exit) ? r(exit) : null, rn = vis(cnt) ? r(cnt) : null;
+  return {rail: vis(rail), sub: !!rs, count: rn ? ((vis(cnt.querySelector('.qcount-s')) ? cnt.querySelector('.qcount-s') : cnt.querySelector('.qcount-l')).textContent.trim()) : null, subH: rs ? Math.round(rs.h) : 0, subW: rs ? Math.round(rs.w) : 0,
+    overlap: !!(over(rs, rc) || over(rs, re) || over(rn, rs) || over(rn, rc)), inside: !rs || (rs.r <= innerWidth + 0.5 && rs.l >= -0.5),
+    leftOfClock: !rs || !rc || rs.r <= rc.l + 0.5,
+    colors: sub ? (() => { const c = getComputedStyle(sub); const q = document.createElement('i'); q.style.color = 'var(--go-exam)'; document.body.appendChild(q); const ex = getComputedStyle(q).color; q.style.color = 'var(--go-practice)'; const pr = getComputedStyle(q).color; q.remove();
+      return {bg: c.backgroundColor, fg: c.color, ex, pr, tip: sub.getAttribute('aria-label'), lbl: (sub.querySelector('.lbl') || {}).textContent || ''} })() : null, label: !!sub && vis(sub.querySelector('.lbl')), side: document.documentElement.scrollWidth <= innerWidth + 1} })()"""
+
+
+def as1_case(rc, lang, theme, size):
+    """A-OWNER-22 / 24b / 25: up to the rail line (880 px) the answer sheet has no finish button (folded or open) and the top
+    row has the count + a 交卷 / 完成 pill left of the clock (no overlap); wider, the rail keeps its button
+    and the top row has neither"""
+    for kind in ('practice', 'exam'):
+        d = rc.dev('sam', lang, theme, size)
+        start_quiz(d, kind)
+        toggle = '[data-focus="rail-toggle"], .rail-toggle'
+        states = [d.js(TOP_SUBMIT)]
+        if size[0] <= 600 and d.js("!!document.querySelector('%s') && getComputedStyle(document.querySelector('.rail-toggle')).display !== 'none'" % toggle):
+            d.tap_sel(toggle)
+            time.sleep(0.4)
+            states.append(d.js(TOP_SUBMIT))
+            d.tap_sel(toggle)
+            time.sleep(0.3)
+        narrow = size[0] <= 880
+        s0 = states[0]
+        if narrow and s0['colors']:
+            # A-OWNER-44 / 44b: exam green, practice orange (the Home button colours), white text, the full name as the tip
+            cl = s0['colors']
+            want = {'practice': ('完成练习', 'Finish practice', '練習を終了'), 'exam': ('完成考试', 'Finish exam', '試験を終了')}[kind]
+            s0['sub'] = bool(s0['sub']) and cl['bg'] == (cl['ex'] if kind == 'exam' else cl['pr']) and cl['fg'] == 'rgb(255, 255, 255)'                 and cl['tip'] in want and (not s0['label'] or cl['lbl'] in want)
+        if narrow:
+            ok = (not any(x['rail'] for x in states) and s0['sub'] and s0['count'] and not s0['overlap'] and s0['inside']
+                  and s0['leftOfClock'] and s0['side'])  # the pill is 30 px high with a 44 px tap area (A-OWNER-60; W-L60 measures that)
+        else:
+            ok = s0['rail'] and not s0['sub'] and not s0['count']
+        rc.rec('W-AS-1v', 'quiz', 'top-submit-' + kind, 'sam', size, lang, theme, ok,
+               'sheet button %s; top row: count %r, button %s (%dx%d px, label %s), overlap %s' % (
+                   'shown' if any(x['rail'] for x in states) else 'hidden', s0['count'], 'shown' if s0['sub'] else 'hidden',
+                   s0['subW'], s0['subH'], 'shown' if s0['label'] else 'hidden', s0['overlap']), d if not ok else None)
+
+
+def ft1_case(rc, lang, theme, size):
+    d = rc.dev('sam', lang, theme, size)
+    goto(d, '#/about', 1.6)
+    r = d.js("""(() => { const f = document.querySelector('.main .foot, .foot'); if (!f) return null;
+      const note = f.querySelector('.foot-note') || f.firstElementChild; const fr = f.getBoundingClientRect();
+      const gh = f.querySelector('.gh-line');
+      return {gap: note ? Math.round(note.getBoundingClientRect().top - fr.top) : 0, gap2: note && gh ? Math.round(gh.getBoundingClientRect().top - note.getBoundingClientRect().bottom) : -1,
+        line: note ? Math.round(parseFloat(getComputedStyle(note).lineHeight) || 18) : 18} })()""")
+    if r is None:
+        rc.rec('W-FT-1', 'about', 'footer', 'sam', size, lang, theme, None, 'no footer on this page')
+        return
+    # A-OWNER-20: one blank text line between the divider and the text, and one between the text and the GitHub line
+    lo, hi = r['line'] - 5, r['line'] + 6
+    ok = lo <= r['gap'] <= hi and lo <= r['gap2'] <= hi
+    rc.rec('W-FT-1', 'about', 'footer', 'sam', size, lang, theme, ok, 'divider to text %d px, text to GitHub line %d px (one %d px line each)' % (r['gap'], r['gap2'], r['line']), d if not ok else None)
+
+
+def si1_case(rc, lang, theme, size):
+    d = rc.dev(None, lang, theme, size)
+    goto(d, '#/', 1.6)
+    r = d.js("""(() => { const c = document.querySelector('.auth-card'), l = document.querySelector('.auth-lang'), b = document.querySelector('.auth-bottom');
+      if (!c || !l || !b) return null; const cr = c.getBoundingClientRect(), lr = l.getBoundingClientRect(), br = b.getBoundingClientRect();
+      return {gap: Math.round(lr.top - cr.bottom), bottomGap: Math.round(innerHeight - br.bottom), vh: innerHeight, sh: document.documentElement.scrollHeight} })()""")
+    if r is None:
+        rc.rec('W-SI-1', 'signin', 'lang-switch', None, size, lang, theme, None, 'not the sign-in page')
+        return
+    problems = []
+    if not 10 <= r['gap'] <= 24:
+        problems.append('the language switch is %d px under the card (want about 16)' % r['gap'])
+    if r['sh'] <= r['vh'] + 1 and r['bottomGap'] > 40:
+        problems.append('the GitHub line is %d px above the screen bottom' % r['bottomGap'])
+    rc.rec('W-SI-1', 'signin', 'lang-switch', None, size, lang, theme, not problems,
+           '; '.join(problems) or 'switch %d px under the card, GitHub line at the bottom' % r['gap'], d if problems else None)
+
+
+# ---------------------------------------------------------------------------------------------------- v1.1 L-54: search, sort, paging
+PT_STATE = """((id, rowSel) => { const q = s => document.querySelector(s); const root = q('#' + id + '-q') && q('#' + id + '-q').closest('.ptb');
+  if (!root) return null; const vis = e => !!e && getComputedStyle(e).visibility !== 'hidden' && e.getClientRects().length > 0;
+  const rows = [...root.querySelectorAll(rowSel)].map(e => e.textContent.trim());
+  const th = [...root.querySelectorAll('th[aria-sort]')]; const on = th.find(e => e.getAttribute('aria-sort') !== 'none');
+  const r = e => { if (!e) return null; const b = e.getBoundingClientRect(); return {t: Math.round(b.top + scrollY), l: Math.round(b.left), w: b.width, h: b.height} };
+  const of = root.querySelector('.ptb-of'); const cur = root.querySelector('.ptb-pg.on'); const act = document.activeElement;
+  return {rows, of: of ? of.textContent : '', cur: cur ? cur.textContent : '', q: q('#' + id + '-q').value,
+    sortCol: on ? on.textContent.replace(/[▲▼↕]/g, '').trim() : '', sortDir: on ? on.getAttribute('aria-sort') : '', nSortable: th.length,
+    selVisible: vis(root.querySelector('.ptb-sel')), selVal: root.querySelector('.ptb-sel').value, dirLabel: root.querySelector('.ptb-dir').getAttribute('aria-label') || '',
+    headBtns: [...root.querySelectorAll('thead .ptb-sort')].map(e => vis(e)), tableHidden: root.querySelector('.ais-tablewrap').hidden,
+    none: !root.querySelector('.ptb-none').hidden ? root.querySelector('.ptb-none').textContent : '',
+    prevOff: q('#' + id + '-prev').getAttribute('aria-disabled') === 'true', nextOff: q('#' + id + '-next').getAttribute('aria-disabled') === 'true',
+    pages: [...root.querySelectorAll('.ptb-pg:not(.ptb-step)')].map(e => e.textContent), focus: act ? act.id : '',
+    tools: r(root.querySelector('.ptb-tools')), search: r(q('#' + id + '-q')), pager: r(root.querySelector('.ptb-pager')),
+    sizes: [...root.querySelectorAll('.ptb-q, .ptb-pg, .ptb-dir, .ptb-sel')].filter(vis).map(e => [e.className.split(' ')[0], Math.round(e.getBoundingClientRect().width), Math.round(e.getBoundingClientRect().height)]),
+    label: !!root.querySelector('nav[aria-label]'), live: !!root.querySelector('[role=status][aria-live=polite]'),
+    side: document.documentElement.scrollWidth <= innerWidth + 1, rowN: rows.length} })"""
+
+
+def pt(d, id_, row_sel):
+    return d.js('(%s)(%s, %s)' % (PT_STATE, json.dumps(id_), json.dumps(row_sel)))
+
+
+def pt_set_select(d, id_, value):
+    d.js("""(() => { const s = document.getElementById(%s + '-sort'); s.value = %s; s.dispatchEvent(new Event('change', {bubbles: true})); return 1 })()""" % (json.dumps(id_), json.dumps(value)))
+
+
+def g_l54(rc):
+    if not any(rc.want(i) for i in ('W-PT-1', 'W-PT-2', 'W-JC-1', 'W-AB-2', 'W-GB-2')):
+        return
+    if rc.want('W-PT-1') or rc.want('W-PT-2'):
+        rc.paging_users()
+        for gid, tab, id_, row in (('W-PT-1', 'usage', 'usage-users', 'tbody > tr > th'), ('W-PT-2', 'users', 'ai-users', 'tbody > tr:not(.ais-featrow) > th.ais-user')):
+            if not rc.want(gid):
+                continue
+            for lang in rc.langs(['zh']):
+                for size in rc.sizes([(360, 740), (390, 844), (844, 390), (768, 1024), (1280, 800)], lambda s: True):
+                    rc.guard(gid, 'ai-settings', pt_case, rc, gid, tab, id_, row, lang, rc.themes(['light'])[0], size)
+            if not rc.args.themes and not rc.args.full:
+                for size in ((390, 844), (1280, 800)):
+                    rc.guard(gid, 'ai-settings', pt_case, rc, gid, tab, id_, row, 'zh', 'dark', size)
+    if rc.want('W-JC-1'):
+        for size in rc.sizes([(360, 740), (390, 844), (844, 390), (1280, 800)], lambda s: True):
+            rc.guard('W-JC-1', 'ai-settings', jc1_case, rc, 'zh', rc.themes(['light'])[0], size)
+    if rc.want('W-AB-2') or rc.want('W-GB-2'):
+        for size in rc.sizes([(390, 844), (1280, 800)], lambda s: True):
+            rc.guard('W-AB-2', 'banks', ab2_case, rc, 'zh', rc.themes(['light'])[0], size)
+
+
+def pt_case(rc, gid, tab, id_, row, lang, theme, size):
+    """A-OWNER-54 / 54b: search, sortable columns and 10 per page on the "by user" table and on the AI+ users list"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/ai-settings?tab=' + tab, 2.5)
+    cards = tab != 'usage' and size[0] <= 900   # A-OWNER-59: the usage table is a mini table on phones, never cards
+    first_head = '#%s-q' % id_
+    problems = []
+    s0 = pt(d, id_, row)
+    if not s0:
+        rc.rec(gid, 'ai-settings', 'paging', 'admin', size, lang, theme, None, 'no table in the %s tab yet' % tab)
+        return
+    if s0['rowN'] != 10:
+        problems.append('page 1 shows %d rows, not 10' % s0['rowN'])
+    m = re.search(r'(\d+)\D+(\d+)', s0['of'])
+    if not m or m.group(1) != '1' or int(m.group(2)) < 2:
+        problems.append('pager text "%s" (no page 1 of 2+)' % s0['of'])
+    if lang == 'zh' and not re.fullmatch(r'第 1 / \d+ 页', s0['of']):
+        problems.append('pager text is not "第 1 / y 页": %s' % s0['of'])
+    if not s0['prevOff'] or s0['nextOff']:
+        problems.append('arrows on page 1: prev off=%s next off=%s' % (s0['prevOff'], s0['nextOff']))
+    if not s0['sortCol'] or s0['sortDir'] == 'none':
+        problems.append('no active sort column is marked')
+    if not (s0['label'] and s0['live']):
+        problems.append('pager nav label / live status missing')
+    if not s0['side']:
+        problems.append('sideways scroll')
+    # keyboard / screen reader: header buttons are real buttons (focusable) on wide screens, hidden in the card layout
+    if cards:
+        if any(s0['headBtns']):
+            problems.append('hidden card header still has a focusable sort button')
+        if not s0['selVisible']:
+            problems.append('no sort select on the card layout')
+    else:
+        if not s0['headBtns'] or not all(s0['headBtns']):
+            problems.append('sort buttons missing or hidden in the header')
+        if s0['selVisible']:
+            problems.append('the sort select shows on the wide layout')
+    if d.js("matchMedia('(pointer: coarse)').matches"):
+        small = [x for x in s0['sizes'] if x[2] < 43.5 or (x[0] == 'ptb-pg' and x[1] < 43.5)]
+        if small:
+            problems.append('targets under 44 px: %s' % small[:3])
+    names0 = s0['rows']
+    # next page: the focus stays in the pager, the toolbar does not move
+    d.tap_sel('#%s-next' % id_)
+    s1 = pt(d, id_, row)
+    if s1['cur'] != '2' or s1['rows'] == names0 or not s1['rows']:
+        problems.append('next did not show page 2 (%s)' % s1['of'])
+    if not s1['focus'].startswith(id_ + '-'):
+        problems.append('the focus left the pager after paging (%s)' % s1['focus'])
+    if abs(s1['tools']['t'] - s0['tools']['t']) > 1 or abs(s1['search']['l'] - s0['search']['l']) > 1:
+        problems.append('the toolbar moved when paging')
+    if s1['sortCol'] != s0['sortCol'] or s1['sortDir'] != s0['sortDir']:
+        problems.append('paging changed the sort')
+    # sort by name: a header click on wide screens, the select on cards; back to page 1
+    head_btn = '.ptb th.ptb-th:first-child .ptb-sort'
+    if cards:
+        pt_set_select(d, id_, 'user')
+    else:
+        d.tap_sel('#%s' % id_ if False else head_btn)
+    s2 = pt(d, id_, row)
+    if s2['cur'] != '1':
+        problems.append('sorting did not return to page 1 (%s)' % s2['of'])
+    if s2['sortDir'] not in ('ascending', 'descending'):
+        problems.append('sort direction not marked')
+    # the same column again (or the order button) reverses
+    if cards:
+        d.tap_sel('#%s-dir' % id_)
+    else:
+        d.tap_sel(head_btn)
+    s3 = pt(d, id_, row)
+    if s3['sortDir'] == s2['sortDir'] or s3['cur'] != '1':
+        problems.append('a second click did not reverse the order (%s -> %s)' % (s2['sortDir'], s3['sortDir']))
+    n2 = [r.lower() for r in s2['rows']]
+    n3 = [r.lower() for r in s3['rows']]
+    up, down = (n2, n3) if s2['sortDir'] == 'ascending' else (n3, n2)
+    if up != sorted(up) or down != sorted(down, reverse=True):
+        problems.append('names are not in order / not reversed')
+    # search: page 1, the focus stays in the box, only matching rows, the sort is kept; paging keeps both
+    d.tap_sel(first_head)
+    d.type('walk-pg')
+    time.sleep(0.4)
+    s4 = pt(d, id_, row)
+    if s4['cur'] != '1' or not s4['rows'] or any('walk-pg' not in r for r in s4['rows']):
+        problems.append('search did not filter (%s)' % s4['rows'][:2])
+    if s4['focus'] != id_ + '-q':
+        problems.append('the search box lost the focus while typing (%s)' % s4['focus'])
+    if abs(s4['search']['t'] - s0['search']['t']) > 1:
+        problems.append('the search box moved')
+    if s4['sortCol'] != s3['sortCol'] or s4['sortDir'] != s3['sortDir']:
+        problems.append('searching changed the sort')
+    d.js("document.getElementById('%s-q').blur()" % id_)
+    if '2' in s4['pages']:
+        d.tap_sel('#%s-p2' % id_)
+        s5 = pt(d, id_, row)
+        if s5['q'] != 'walk-pg' or any('walk-pg' not in r for r in s5['rows']) or s5['cur'] != '2':
+            problems.append('paging dropped the search')
+        if s5['sortDir'] != s4['sortDir']:
+            problems.append('paging dropped the sort')
+    else:
+        problems.append('12 matching users but no page 2 (%s)' % s4['pages'])
+    # nothing found
+    d.tap_sel(first_head)
+    d.js("document.getElementById('%s-q').select()" % id_)
+    d.type('zzzz-none')
+    time.sleep(0.4)
+    s6 = pt(d, id_, row)
+    want = {'zh': '没有找到匹配的用户', 'en': 'No matching users found', 'ja': '一致するユーザーが見つかりません'}[lang]
+    if s6['none'] != want or not s6['tableHidden'] or s6['rowN'] != 0:
+        problems.append('empty search: text "%s", table hidden=%s' % (s6['none'], s6['tableHidden']))
+    if s6['cur'] != '1' or not (s6['prevOff'] and s6['nextOff']):
+        problems.append('empty search pager is not 1 / 1')
+    rc.rec(gid, 'ai-settings', 'paging-' + tab, 'admin', size, lang, theme, not problems,
+           '; '.join(problems[:4]) or 'search, sort, 10 per page, empty text, focus, toolbar fixed (%s)' % ('cards' if cards else 'table'),
+           d if problems or theme == 'dark' else None)
+
+
+def jc1_case(rc, lang, theme, size):
+    """A-OWNER-51: the AI bank jobs are cards of short lines up to 900 px (a chip, no sideways scroll), the table when wider"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/ai-settings?tab=gen', 2.5)
+    r = d.js("""(() => { const t = document.querySelector('.ais-genjobs'); if (!t) return null; const rows = [...t.querySelectorAll('tbody tr')];
+      if (!rows.length) return {n: 0}; const row = rows[0]; const chip = row.querySelector('.ais-jchip');
+      const lines = new Set([...row.children].filter(e => getComputedStyle(e).display !== 'none' && getComputedStyle(e).display !== 'contents').map(e => Math.round(e.getBoundingClientRect().top / 4))).size;
+      return {n: rows.length, grid: getComputedStyle(row).display === 'grid', chip: !!chip && chip.getBoundingClientRect().width > 0,
+        theadHidden: getComputedStyle(t.querySelector('thead')).position === 'absolute', lines, text: row.innerText.slice(0, 120),
+        side: document.documentElement.scrollWidth <= innerWidth + 1, over: [...row.querySelectorAll('*')].some(e => e.getBoundingClientRect().right > innerWidth + 1)} })()""")
+    state = 'cards' if size[0] <= 900 else 'wide'
+    if not r or not r['n']:
+        rc.rec('W-JC-1', 'ai-settings', state, 'admin', size, lang, theme, None, 'no AI bank job to look at')
+        return
+    problems = []
+    if not r['side'] or r['over']:
+        problems.append('sideways scroll / content past the screen')
+    if size[0] <= 900:
+        if not r['grid'] or not r['theadHidden']:
+            problems.append('not a card (grid=%s, head hidden=%s)' % (r['grid'], r['theadHidden']))
+        if not r['chip']:
+            problems.append('no status chip')
+        if r['lines'] > 5:
+            problems.append('%d lines in the card' % r['lines'])
+    # A-OWNER-55 / 59: "YYYY-MM-DD HH:MM", one grid (times, names and chips each in one column), the tip and names on the figures,
+    # no box glyph, K / M (never 万) in the figures
+    f = d.js("""(() => { const rows = [...document.querySelectorAll('.ais-genjobs tbody tr')];
+      const col = (sel, key) => [...new Set(rows.map(r => { const e = r.querySelector(sel); return e && e.getBoundingClientRect().width ? Math.round(e.getBoundingClientRect()[key]) : null }).filter(x => x != null))];
+      const st = rows[0].querySelector('.ais-stats');
+      return {times: rows.map(r => (r.querySelector('.ais-when') || {}).textContent), lefts: col('.ais-when', 'left'), names: col('.ais-uname', 'left'),
+        chips: col('.ais-jchip', 'right'), tabbable: !!st && st.tabIndex === 0, sr: st ? [...st.querySelectorAll('.sr-only')].map(e => e.textContent.trim()) : [],
+        text: document.querySelector('.ais-genjobs').innerText} })()""")
+    if any(not re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d', (x or '').strip()) for x in f['times']):
+        problems.append('time is not YYYY-MM-DD HH:MM: %s' % f['times'][:2])
+    if size[0] <= 900 and (len(f['lefts']) > 1 or len(f['names']) > 1 or len(f['chips']) > 1):
+        problems.append('the cards do not share one grid (time left %s, name left %s, chip right %s)' % (f['lefts'], f['names'], f['chips']))
+    if not f['tabbable'] or len([x for x in f['sr'] if x]) < 3:
+        problems.append('the figures have no tip target / screen-reader names (%s)' % f['sr'])
+    if '万' in f['text'] or '□' in f['text'] or '�' in f['text']:
+        problems.append('the job list holds 万 or a box glyph')
+    rc.rec('W-JC-1', 'ai-settings', state, 'admin', size, lang, theme, not problems,
+           '; '.join(problems) or 'job card: %d lines, chip, no sideways scroll (%s)' % (r['lines'], r['text'].replace('\n', ' | ')[:60]), d if problems else None)
+
+
+def ab2_case(rc, lang, theme, size):
+    """L-53 badge word (the practice set for a bank generated from a scope) and L-52 (an AI bank among the ticked sheets
+    greys the generate button); one AI bank is generated and deleted again"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/', 2.0)
+    started = d.js("""(async () => { const post = async (u, b) => { const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}); return [r.status, await r.json().catch(() => null)]; };
+      const banks = (await (await fetch('/api/banks')).json()).banks; const g = banks.find(b => !b.ai && b.sheets.length);
+      if (!g) return ['no source bank'];
+      const before = (await (await fetch('/api/ai/admin/limits')).json()).limits.genMinSource;
+      await post('/api/ai/admin/limits', {genMinSource: 5});
+      let s; try { s = await post('/api/ai/gen/start', {source: 'scope', sheets: g.sheets.map(x => ({bank: g.id, sheet: x.name})), name: 'Walk AI badge set'}); }
+      finally { await post('/api/ai/admin/limits', {genMinSource: before}); }
+      if (s[0] !== 202) return ['start ' + s[0]];
+      const id = s[1].job.id;
+      for (let i = 0; i < 240; i++) { await window.__wait(500); const j = (await (await fetch('/api/ai/gen/job?id=' + id)).json()).job;
+        if (!['queued', 'running'].includes(j.state)) return [j.state, j.bankId, id]; }
+      return ['timeout', null, id] })()""")
+    state, bank, job = (started + [None, None])[:3]
+    if state != 'done' or not bank:
+        rc.rec('W-AB-2', 'banks', 'badge-word', 'admin', size, lang, theme, None, 'no AI bank to look at (%s)' % state)
+        return
+    try:
+        problems = []
+        goto(d, '#/banks', 2.0)
+        word = {'zh': '练题集', 'en': 'practice set', 'ja': '練習問題集'}[lang]
+        grab = "(() => { const b = document.querySelector('.ai-badge.ai-set'); return b ? b.textContent.trim() : null })()"
+        badge = d.js(grab)
+        if badge is None:
+            problems.append('no AI+ badge on the AI bank in Bank management')
+        elif word not in badge:
+            problems.append('badge word is "%s", expected "%s"' % (badge, word))
+        goto(d, '#/', 2.0)
+        home = d.js(grab)
+        if home is not None and word not in home:
+            problems.append('Home badge word is "%s"' % home)
+        rc.rec('W-AB-2', 'banks', 'badge-word', 'admin', size, lang, theme, not problems,
+               '; '.join(problems) or 'AI+ badge says "%s" in Bank management (Home: %s)' % (badge, home), d if problems else None)
+        problems = []
+        g = d.js("""(() => { const b = document.querySelector('.home-setup-head .gen-btn'); if (!b) return null;
+          const dd = b.getAttribute('aria-describedby') && document.getElementById(b.getAttribute('aria-describedby'));
+          return {aria: b.getAttribute('aria-disabled'), dis: b.disabled, tip: (dd ? dd.textContent : '') || b.getAttribute('title') || b.getAttribute('aria-label') || '',
+            all: document.querySelector('.home-setup-head').innerText} })()""")
+        if g is None:
+            rc.rec('W-GB-2', 'home', 'greyed', 'admin', size, lang, theme, None, 'no AI generate button on Home')
+        else:
+            if g['aria'] != 'true' and not g['dis']:
+                problems.append('the generate button is not greyed with an AI bank in the scope')
+            rc.rec('W-GB-2', 'home', 'greyed', 'admin', size, lang, theme, not problems,
+                   '; '.join(problems) or 'button greyed (aria-disabled=%s); reason: %s' % (g['aria'], (g['tip'] or g['all'])[:60].replace('\n', ' ')), d if problems else None)
+    finally:
+        d.js("""(async () => { const post = (u, b) => fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)});
+          await post('/api/ai/gen/dismiss', {id: %d}); await post('/api/banks/delete', {id: %d, withRecords: true}); return 1 })()""" % (job or 0, bank))
+
+
+# ---- sprint 10 (L-55, L-57, L-59): AI bank job cards need jobs, the import name box, the usage mini table and K / M
+def ensure_jobs(rc, d, n=2):
+    """At least `n` finished AI bank jobs for the job cards (W-JC-1): generated from the first source bank, kept (made-up data)"""
+    return d.js("""(async (n) => { const post = async (u, b) => { const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}); return [r.status, await r.json().catch(() => null)]; };
+      const have = async () => ((await (await fetch('/api/ai/admin/gen/jobs')).json().catch(() => ({}))).jobs || []).length;
+      const banks = (await (await fetch('/api/banks')).json()).banks; const g = banks.find(b => !b.ai && b.sheets.length);
+      if (!g) return 'no source bank';
+      const before = (await (await fetch('/api/ai/admin/limits')).json()).limits;
+      await post('/api/ai/admin/limits', {genMinSource: 5, genPerDay: 20});
+      try {
+        for (let k = await have(); k < n; k++) {
+          const s = await post('/api/ai/gen/start', {source: 'scope', sheets: g.sheets.map(x => ({bank: g.id, sheet: x.name})), name: 'Walk job ' + k});
+          if (s[0] !== 202) return 'start ' + s[0];
+          for (let i = 0; i < 240; i++) { await window.__wait(500); const j = (await (await fetch('/api/ai/gen/job?id=' + s[1].job.id)).json()).job;
+            if (!['queued', 'running'].includes(j.state)) break; }
+          await post('/api/ai/gen/dismiss', {id: s[1].job.id});
+        }
+      } finally { await post('/api/ai/admin/limits', {genMinSource: before.genMinSource, genPerDay: before.genPerDay}); }
+      return 'ok' })(%d)""" % n)
+
+
+# Wraps fetch in the page: the usage answer gets its token figures multiplied (so K / M show), the status gets a made-up import
+# job waiting for the confirm, and POST /api/ai/import/confirm is answered by the script (the bodies are kept in window.__cfm)
+FAKE_JS = """(() => { if (window.__fake) return 1; window.__fake = true; window.__cfm = []; window.__cfmAnswers = []; const real = window.fetch.bind(window); window.__realFetch = window.fetch;
+  const grow = (o) => { if (Array.isArray(o)) o.forEach(grow); else if (o && typeof o === 'object') for (const k of Object.keys(o)) {
+    if (/^tokens(In|Out|Cached)$/.test(k) && typeof o[k] === 'number') o[k] = o[k] * 4321 + 1234; else grow(o[k]); } };
+  window.fetch = async (u, init) => { const url = String(u);
+    if (url.includes('/api/ai/import/confirm')) { window.__cfm.push(JSON.parse(init.body)); const a = window.__cfmAnswers.shift() || {status: 400, body: {code: 'ai.gen.badName'}};
+      return new Response(JSON.stringify(a.body), {status: a.status, headers: {'Content-Type': 'application/json'}}); }
+    const r = await real(u, init);
+    if (url.includes('/api/ai/admin/usage')) { const j = await r.clone().json(); grow(j); return new Response(JSON.stringify(j), {status: r.status, headers: {'Content-Type': 'application/json'}}); }
+    if (/\\/api\\/ai\\/status(\\?|$)/.test(url) && window.__fakeJob) { const j = await r.clone().json(); if (j && j.gen) j.gen.job = window.__fakeJob;
+      return new Response(JSON.stringify(j), {status: r.status, headers: {'Content-Type': 'application/json'}}); }
+    return r; }; return 1 })()"""
+
+
+def g_l60(rc):
+    if not rc.want('W-L60') or not rc.walk.wants_page('quiz'):
+        return
+    for lang in rc.langs(['zh']):
+        for size in rc.sizes([(320, 640), (360, 740), (390, 844), (430, 932), (1280, 800)], lambda s: True):
+            rc.guard('W-L60', 'quiz', l60_case, rc, lang, rc.themes(['light'])[0], size)
+    if not rc.args.themes and not rc.args.full:
+        rc.guard('W-L60', 'quiz', l60_case, rc, 'zh', 'dark', (390, 844))
+
+
+L60_JS = """(() => { const b = e => { const r = e.getBoundingClientRect(); return {x: r.left, r: r.right, y: r.top, bt: r.bottom, h: r.height, w: r.width} };
+  const bar = document.querySelector('.qbar'); const sub = document.querySelector('.btn.qsubmit'); const cnt = document.querySelector('.qcount'); const r = bar.querySelector('.r');
+  const vis = e => e && e.getClientRects().length > 0;
+  const items = [...r.children].filter(vis).map(e => ({c: e.className.split(' ')[0], ...b(e)}));
+  let overlap = ''; for (let i = 0; i < items.length; i++) for (let j = i + 1; j < items.length; j++) if (items[i].x < items[j].r - 0.5 && items[j].x < items[i].r - 0.5) overlap += items[i].c + '/' + items[j].c + ' ';
+  const cs = sub ? getComputedStyle(sub) : null; const after = sub ? getComputedStyle(sub, '::after') : null;
+  const vtxt = e => [...e.children].filter(c => getComputedStyle(c).position !== 'absolute' && c.getClientRects().length).map(c => c.textContent).join('');
+  return {bar: b(bar), sub: sub && vis(sub) ? b(sub) : null, cnt: cnt && vis(cnt) ? b(cnt) : null, cntText: cnt ? vtxt(cnt) : '', cntAria: cnt ? cnt.textContent : '',
+    label: sub ? [...sub.querySelectorAll('.lbl')].filter(vis).map(e => e.textContent).join('') : '', border: cs ? cs.borderTopWidth : '', shadow: cs ? cs.boxShadow : '',
+    hitH: after ? parseFloat(after.height) || 0 : 0, hitW: after ? parseFloat(after.width) || 0 : 0, overlap, side: document.documentElement.scrollWidth <= innerWidth + 1,
+    barKids: [...bar.children].filter(vis).length, rBottom: b(r).bt, rTop: b(r).y, safeTop: parseFloat(getComputedStyle(bar).paddingTop) || 0,
+    wrap: items.length ? Math.max(...items.map(i => i.y)) - Math.min(...items.map(i => i.y)) : 0} })()"""
+
+
+L60_POS_JS = """(() => { const q = document.querySelector('.qbar .ql'); const vis = e => e.getClientRects().length > 0;
+  const parts = [...q.querySelectorAll('.pos-full .num, .pos-short .num')].filter(vis);
+  const tops = [...q.querySelectorAll('.pos-full, .pos-short, .qkind')].filter(vis).map(e => e.getBoundingClientRect().top);
+  const lines = parts.length ? Math.max(...parts.map(e => Math.round(e.getBoundingClientRect().height / (parseFloat(getComputedStyle(e).lineHeight) || 20)))) : 0;
+  return {lines: Math.max(1, lines), spread: tops.length ? Math.max(...tops) - Math.min(...tops) : 0, text: parts.map(e => e.textContent).join(' ')} })()"""
+
+
+def l60_case(rc, lang, theme, size):
+    """A-OWNER-60: the finish pill sits inside the top bar (bar height unchanged, pill <= 32 px tall, 44 px tap area on touch, one frame),
+    the count reads "<word> a/n" with spacing (only "a/n" up to 360 px), no overlap, no wrap, no sideways scroll; exam and practice"""
+    for user, kind in (('riley', 'exam'), ('sam', 'practice')):
+        d = rc.dev(user, lang, theme, size)
+        start_quiz(d, kind, 51)
+        time.sleep(0.4)
+        r = d.js(L60_JS)
+        problems = []
+        want_word = cat(lang, 'quiz.top.answered').split('{')[0].strip()
+        if size[0] > 880:
+            if r['sub'] or r['cnt']:
+                problems.append('the pill / count show on the wide layout')
+        else:
+            if not r['sub']:
+                problems.append('no finish pill')
+            else:
+                phone_bar = 36 + r['safeTop'] if size[0] > size[1] else 44 + r['safeTop']
+                if r['bar']['h'] > phone_bar + 1.5:
+                    problems.append('bar %d px (max %d)' % (r['bar']['h'], phone_bar + 1))
+                if r['sub']['h'] > 32.5:
+                    problems.append('the pill is %d px tall' % r['sub']['h'])
+                if r['sub']['y'] < r['bar']['y'] - 0.5 or r['sub']['bt'] > r['bar']['bt'] + 0.5:
+                    problems.append('the pill sticks out of the bar')
+                if r['border'] not in ('0px', '') or r['shadow'] != 'none':
+                    problems.append('a second frame (border %s, shadow %s)' % (r['border'], r['shadow'][:30]))
+                if d.js("matchMedia('(pointer: coarse)').matches") and (r['hitH'] < 43.5 or r['hitW'] < 43.5 and r['sub']['w'] < 43.5):
+                    problems.append('tap area %dx%d' % (r['hitW'], r['hitH']))
+            if not r['cnt']:
+                problems.append('no count')
+            else:
+                nums = r['cntText'].strip()
+                if not re.fullmatch(r'(%s ?)?0/51' % re.escape(want_word), nums) or (size[0] > 360 and not nums.startswith(want_word)):
+                    problems.append('count reads "%s"' % nums)
+                if r['sub'] and r['sub']['x'] - r['cnt']['r'] < 6:
+                    problems.append('count and pill %d px apart' % (r['sub']['x'] - r['cnt']['r']))
+        if r['overlap']:
+            problems.append('overlap: ' + r['overlap'])
+        if not r['side'] or r['wrap'] > 12:
+            problems.append('side scroll or wrapped row (spread %d)' % r['wrap'])
+        # the position counter itself ("1 / 12", "第 1 题 共 12 题") stays on one line next to the kind tag (owner rule: one line)
+        start_quiz(d, kind, 12)
+        time.sleep(0.4)
+        pos = d.js(L60_POS_JS)
+        if pos['lines'] > 1 or pos['spread'] > 6:
+            problems.append('the position "%s" wraps (%d lines, spread %d px)' % (pos['text'], pos['lines'], pos['spread']))
+        rc.rec('W-L60', 'quiz', kind, user, size, lang, theme, not problems,
+               '; '.join(problems) or 'bar %dpx, pill %s, count "%s", label "%s", tap %dx%d' % (r['bar']['h'], round(r['sub']['h']) if r['sub'] else '-', r['cntText'].strip(), r['label'], r['hitW'] or 0, r['hitH'] or 0), d if problems else None)
+
+
+def g_s10(rc):
+    if not any(rc.want(i) for i in ('W-L59', 'W-L57', 'W-JC-1')) or not rc.walk.wants_page('ai-settings'):
+        return
+    if rc.want('W-JC-1'):
+        d = rc.dev('admin', 'zh', 'light', (390, 844))
+        goto(d, '#/', 2.0)
+        rc.notes.append('jobs for the cards: %s' % ensure_jobs(rc, d))
+    if rc.want('W-L59'):
+        rc.paging_users()
+        for lang in rc.langs(['zh']):
+            for size in rc.sizes([(360, 740), (390, 844), (1280, 800)], lambda s: True):
+                rc.guard('W-L59', 'ai-settings', l59_case, rc, lang, rc.themes(['light'])[0], size)
+        if not rc.args.themes and not rc.args.full:
+            rc.guard('W-L59', 'ai-settings', l59_case, rc, 'zh', 'dark', (390, 844))
+    if rc.want('W-L57'):
+        for lang in rc.langs(['zh']):
+            for size in rc.sizes([(360, 740), (390, 844), (1280, 800)], lambda s: True):
+                rc.guard('W-L57', 'banks', l57_case, rc, lang, rc.themes(['light'])[0], size)
+        if not rc.args.themes and not rc.args.full:
+            rc.guard('W-L57', 'banks', l57_case, rc, 'zh', 'dark', (390, 844))
+
+
+def l73_case(rc, lang, theme, size):
+    """L-73 (A-OWNER-79): the guide's "use an outside AI" part has six numbered steps, the prompt in a box that scrolls inside
+    itself (no sideways scroll of the page) and a copy button that is a real tap target"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/banks', 2.0)
+    d.js("(() => { document.getElementById('bk-guide-d').open = true; const subs = [...document.querySelectorAll('.bk-sub')]; subs[subs.length - 1].open = true; return 1 })()")
+    time.sleep(0.4)
+    r = d.js("""(() => { const pre = document.getElementById('bk-prompt'), btn = document.getElementById('bk-prompt-copy'); if (!pre || !btn) return null;
+      pre.scrollIntoView({block: 'center'});
+      const sub = pre.closest('.bk-sub'), cr = pre.getBoundingClientRect(), br = btn.getBoundingClientRect();
+      return {steps: sub.querySelectorAll('ol li').length, inner: pre.scrollHeight > pre.clientHeight + 4, fits: cr.right <= innerWidth + 0.5 && cr.left >= -0.5,
+              mono: /mono|Consolas|Menlo/i.test(getComputedStyle(pre).fontFamily), btnH: Math.round(br.height), btnW: Math.round(br.width),
+              text: pre.textContent.length, btnIn: br.right <= innerWidth + 0.5} })()""")
+    problems = []
+    if r is None:
+        rc.rec('W-L73', 'banks', 'outside-ai', 'admin', size, lang, theme, False, 'the prompt box or the copy button is missing')
+        return
+    if not d.js(NO_SIDE_SCROLL):
+        problems.append('sideways scroll')
+    if r['steps'] != 6:
+        problems.append('%d steps instead of 6' % r['steps'])
+    if not r['inner']:
+        problems.append('the prompt box does not scroll inside itself')
+    if not (r['fits'] and r['btnIn']):
+        problems.append('the prompt box or the copy button is past the screen edge')
+    if not r['mono']:
+        problems.append('the prompt is not monospace')
+    if r['btnH'] < 32 or r['btnW'] < 44:
+        problems.append('copy button %dx%d' % (r['btnW'], r['btnH']))
+    if r['text'] < 500:
+        problems.append('the prompt text is only %d characters' % r['text'])
+    rc.rec('W-L73', 'banks', 'outside-ai', 'admin', size, lang, theme, not problems, '; '.join(problems) or 'steps 6, prompt box scrolls inside, copy button %dx%d' % (r['btnW'], r['btnH']), d)
+
+
+def l59_case(rc, lang, theme, size):
+    """A-OWNER-59: the by-user table is a mini table on phones (header row, own sideways scroll, first column fixed, 10 per page),
+    K / M figures in every language (never 万), exact figures with separators at the top"""
+    d = rc.dev('admin', lang, theme, size)
+    goto(d, '#/ai-settings?tab=feature', 2.5)
+    d.js(FAKE_JS)
+    d.tap_sel('#ais-tab-usage', wait=2.5)
+    d.js("(() => { const s = document.getElementById('ai-days'); s.value = s.options[s.options.length - 1].value; s.dispatchEvent(new Event('change', {bubbles: true})); return 1 })()")
+    time.sleep(2.5)
+    r = d.js("""(() => { const root = document.querySelector('.ptb-mini'); if (!root) return null; const q = (s) => [...root.querySelectorAll(s)];
+      const vis = (e) => { const c = getComputedStyle(e), b = e.getBoundingClientRect(); return c.display !== 'none' && c.visibility !== 'hidden' && b.width > 0 && b.height > 0 };
+      const wrap = root.querySelector('.ais-tablewrap'); const first = root.querySelector('tbody th');
+      const cells = q('tbody td.ais-c').filter(vis).map(e => e.innerText.trim()).filter(x => !x.includes('/'));
+      return {head: q('thead th').filter(vis).length, heads: q('thead .ptb-sort').map(e => Math.round(e.getBoundingClientRect().height)), sel: q('.ptb-sortsel').some(vis),
+        cardRows: q('tbody tr').some(e => getComputedStyle(e).display === 'grid'), rows: q('tbody tr').length, cells, sticky: first ? getComputedStyle(first).position : '',
+        own: wrap.scrollWidth, ownW: wrap.clientWidth, page: document.documentElement.scrollWidth <= innerWidth + 1,
+        tops: [...document.querySelectorAll('.ais-total dd')].map(e => e.textContent.trim()), body: document.querySelector('.ais-sec, .panel').innerText} })()""")
+    d.js("window.fetch = window.__realFetch; window.__fake = false; 1")
+    if not r:
+        rc.rec('W-L59', 'ai-settings', 'mini-table', 'admin', size, lang, theme, None, 'no by-user table yet')
+        return
+    problems = []
+    phone_w = size[0] <= 560
+    if not r['page']:
+        problems.append('the page scrolls sideways')
+    if r['rows'] != 10:
+        problems.append('%d rows on page 1' % r['rows'])
+    if r['sel'] or r['cardRows']:
+        problems.append('cards / sort select instead of the table')
+    if not r['head']:
+        problems.append('no header row')
+    if '万' in r['body']:
+        problems.append('万 in the usage tab')
+    bad_top = [x for x in r['tops'] if not re.fullmatch(r'\d{1,3}(,\d{3})*', x)]
+    if bad_top:
+        problems.append('top figures are not exact with separators: %s' % bad_top)
+    if phone_w:
+        if min(r['heads'] or [0]) < 31.5:
+            problems.append('header taps under 32 px: %s' % r['heads'])
+        if r['sticky'] != 'sticky':
+            problems.append('the name column is not fixed (%s)' % r['sticky'])
+        # ja (A-OWNER-77 short headers, Token in English) fits 360 px without scrolling: nothing to prove there
+        if r['own'] <= r['ownW'] and size[0] <= 360 and lang != 'ja':
+            problems.append('the table does not scroll inside its own box (%d / %d)' % (r['own'], r['ownW']))
+        wrong = [x for x in r['cells'] if not re.fullmatch(r'\d+(\.\d)?[KM]?', x)]
+        if wrong:
+            problems.append('cells are not compact K / M figures: %s' % wrong[:3])
+        elif not any(re.search(r'[KM]$', x) for x in r['cells']):
+            problems.append('no K / M figure among the cells %s' % r['cells'][:6])
+    else:
+        if any(re.search(r'[KM]$', x) for x in r['cells']):
+            problems.append('the wide table shows compact figures')
+    rc.rec('W-L59', 'ai-settings', 'mini-table', 'admin', size, lang, theme, not problems,
+           '; '.join(problems) or 'mini table: header, %d rows, K / M figures, top %s' % (r['rows'], r['tops'][:3]), d if problems else None)
+
+
+def l57_case(rc, lang, theme, size):
+    """A-OWNER-57: the confirm dialog of an AI import has a required bank name box, filled in advance; the import button stays
+    off while the trimmed name is empty (reason shown); the body carries the name; a server refusal shows and keeps the dialog"""
+    d = rc.dev('admin', lang, theme, size)
+    job_js = """window.__fakeJob = {id: 987001, state: 'running', phase: 'confirm', source: 'file', name: 'Made-up notes_admin_20261113120000', from: [], fromCount: 0,
+      file: {name: 'Made-up notes.docx', type: 'docx', size: 2048}, mode: 'questions', found: 8, read: {done: 3, total: 3}, confirmBy: Math.floor(Date.now() / 1000) + 3000,
+      made: 0, goal: 8, calls: 3, createdAt: Math.floor(Date.now() / 1000) - 60, startedAt: Math.floor(Date.now() / 1000) - 50, bankId: null, error: null, charged: false}; 1"""
+    # the status read at page load already holds the made-up job (the status is read at most every 60 s afterwards)
+    script = d.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=FAKE_JS + ';' + job_js)
+    try:
+        goto(d, '#/banks', 1.0)
+        d.reload(3.0)
+        opened = until(d, "!!document.querySelector('dialog.gen-cfm[open]')", 14)
+        if not opened:
+            rc.rec('W-L57', 'banks', 'name-box', 'admin', size, lang, theme, False, 'the confirm dialog did not open', d)
+            return
+        l57_checks(rc, d, lang, theme, size)
+    finally:
+        try:
+            d.cdp.call('Page.removeScriptToEvaluateOnNewDocument', identifier=(script or {}).get('identifier'))
+        except Exception:
+            pass
+        d.reload(1.5)
+
+
+def l57_checks(rc, d, lang, theme, size):
+    need = cat(lang, 'aigen.imp.cfm.nameNeed')
+    r = d.js("""(() => { const dlg = document.querySelector('dialog.gen-cfm'); const n = dlg.querySelector('input.gen-cfm-name'); const go = dlg.querySelector('.acts .btn.primary');
+      const b = (e) => e.getBoundingClientRect(); const lab = dlg.querySelector('label[for="' + n.id + '"]');
+      return {value: n.value, label: lab ? lab.textContent : '', ph: n.placeholder, h: Math.round(b(n).height), btnH: Math.round(b(go).height), off: go.disabled,
+        side: document.documentElement.scrollWidth <= innerWidth + 1, inView: b(dlg).right <= innerWidth + 1 && b(dlg).left >= -1} })()""")
+    problems = []
+    if r['value'] != 'Made-up notes_admin_20261113120000':
+        problems.append('the name box is not pre-filled (%s)' % r['value'])
+    if r['label'] != cat(lang, 'aigen.imp.cfm.nameLabel') or r['ph'] != cat(lang, 'aigen.imp.cfm.namePh'):
+        problems.append('label / placeholder: %s / %s' % (r['label'], r['ph']))
+    if r['off']:
+        problems.append('the import button is off with a name filled in')
+    if d.js("matchMedia('(pointer: coarse)').matches") and (r['h'] < 43.5 or r['btnH'] < 43.5):
+        problems.append('targets under 44 px (box %d, button %d)' % (r['h'], r['btnH']))
+    if not r['side'] or not r['inView']:
+        problems.append('the dialog runs past the screen')
+    d.js("""(() => { const n = document.querySelector('input.gen-cfm-name'); n.value = '   '; n.dispatchEvent(new Event('input', {bubbles: true})); return 1 })()""")
+    e = d.js("""(() => { const dlg = document.querySelector('dialog.gen-cfm'); return {off: dlg.querySelector('.acts .btn.primary').disabled, need: dlg.querySelector('.gen-cfm-need').textContent,
+      invalid: dlg.querySelector('input.gen-cfm-name').getAttribute('aria-invalid')} })()""")
+    if not e['off'] or e['need'] != need or e['invalid'] != 'true':
+        problems.append('empty name: button off=%s, reason "%s" (want "%s")' % (e['off'], e['need'], need))
+    # a refusal of the server (the made-up answer) shows under the box; the dialog stays open and the name is kept
+    d.js("""(() => { const n = document.querySelector('input.gen-cfm-name'); n.value = '  Walk name  '; n.dispatchEvent(new Event('input', {bubbles: true}));
+      document.querySelector('dialog.gen-cfm .acts .btn.primary').click(); return 1 })()""")
+    time.sleep(1.0)
+    f = d.js("""(() => { const dlg = document.querySelector('dialog.gen-cfm'); return {open: !!dlg && dlg.open, err: dlg ? dlg.querySelector('.gen-cfm-err').textContent : '',
+      shown: dlg ? !dlg.querySelector('.gen-cfm-err').hidden : false, sent: window.__cfm} })()""")
+    if not f['open'] or not f['shown'] or not f['err']:
+        problems.append('a refused name did not stay as an error in the open dialog (%s)' % f)
+    if not f['sent'] or f['sent'][0].get('name') != 'Walk name' or f['sent'][0].get('id') != 987001:
+        problems.append('the confirm request carries %s' % f['sent'])
+    d.js("document.querySelector('dialog.gen-cfm').close('cancel'); window.__fakeJob = null; 1")
+    rc.rec('W-L57', 'banks', 'name-box', 'admin', size, lang, theme, not problems,
+           '; '.join(problems) or 'name box pre-filled, empty -> "%s" and the button off, refusal shown, trimmed name sent' % need, d if problems else None)
+
+
+def g_tk(rc):
+    """W-TK-1 (A-OWNER-67c/67d, 68): the token line stays on one line at every width / language; the cancel button is a red outline button"""
+    if not rc.want('W-TK-1') or not rc.walk.wants_page('banks'):
+        return
+    for lang in rc.langs(['zh', 'en', 'ja']):
+        for size in rc.sizes([(320, 640), (360, 740), (390, 844), (430, 932), (1280, 800)], lambda s: True):
+            for source in ('file', 'bank'):
+                rc.guard('W-TK-1', 'banks', tk_case, rc, lang, rc.themes(['light'])[0], size, source)
+                if size[0] <= 360:  # worst case: 3-digit calls and 6-digit tokens (the count drops, the numbers never cut)
+                    rc.guard('W-TK-1', 'banks', tk_case, rc, lang, rc.themes(['light'])[0], size, source, True)
+    if not rc.args.themes and not rc.args.full:
+        rc.guard('W-TK-1', 'banks', tk_case, rc, 'zh', 'dark', (390, 844), 'bank')
+
+
+TK_JS = """(() => { const u = document.querySelector('.gen-usage'); const c = document.querySelector('.gen-cancel'); if (!u || !c) return null;
+  const cs = getComputedStyle(u); const lh = parseFloat(cs.lineHeight) || 18; const r = document.createRange(); r.selectNodeContents(u);
+  const lines = new Set([...r.getClientRects()].map(x => Math.round(x.top))).size;
+  const rgb = (v) => (v.match(/[\d.]+/g) || []).slice(0, 3).map(Number);
+  const lum = (a) => { const f = a.map(x => { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4) }); return 0.2126 * f[0] + 0.7152 * f[1] + 0.0722 * f[2] };
+  const bgOf = (e) => { for (; e; e = e.parentElement) { const b = getComputedStyle(e).backgroundColor; const m = b.match(/[\d.]+/g) || []; if (m.length >= 3 && (m.length < 4 || +m[3] > 0.9)) return rgb(b) } return [255, 255, 255] };
+  const cc = getComputedStyle(c); const fg = lum(rgb(cc.color)); const bg = lum(bgOf(c)); const ratio = (Math.max(fg, bg) + 0.05) / (Math.min(fg, bg) + 0.05);
+  const cb = c.getBoundingClientRect(); const ub = u.getBoundingClientRect();
+  return {text: u.textContent, lines, fit: u.scrollWidth <= u.clientWidth, fs: parseFloat(cs.fontSize), nowrap: cs.whiteSpace, tab: cs.fontVariantNumeric, right: ub.right, vw: innerWidth,
+    side: document.documentElement.scrollWidth <= innerWidth + 1, cH: cb.height, ic: !!c.querySelector('svg'), border: cc.borderTopColor, ratio, label: c.textContent.trim(),
+    tip: (u.closest('.has-tip').querySelector('.tip') || {}).textContent, coarse: matchMedia('(pointer: coarse)').matches} })()"""
+
+
+def tk_case(rc, lang, theme, size, source, big=False):
+    d = rc.dev('admin', lang, theme, size)
+    now = 'Math.floor(Date.now() / 1000)'
+    job_js = """window.__fakeJob = {id: 987002, state: 'running', phase: 'writing', source: '%s', name: 'Made-up bank_admin_20261113120000', from: [], fromCount: 0,
+      file: %s, mode: null, found: null, read: null, confirmBy: null, made: 4, goal: 20, calls: 9, createdAt: %s - 60, startedAt: %s - 50, bankId: null, error: null, charged: false,
+      usage: {calls: %s, tokensIn: %s, tokensOut: %s, tokensCacheWrite: %s}}; 1""" % (
+        source, "{name: 'Made-up notes.docx', type: 'docx', size: 2048}" if source == 'file' else 'null', now, now, *((120, 999949, 987654, 1234567) if big else (12, 1434, 21907, 13000)))
+    script = d.cdp.call('Page.addScriptToEvaluateOnNewDocument', source=FAKE_JS + ';' + job_js)
+    try:
+        goto(d, '#/banks', 1.0)
+        d.reload(3.0)
+        if not until(d, "!!document.querySelector('.gen-usage')", 12):
+            rc.rec('W-TK-1', 'banks', source, 'admin', size, lang, theme, False, 'no token line on the running card', d)
+            return
+        time.sleep(0.6)
+        r = d.js(TK_JS)
+    finally:
+        try:
+            d.cdp.call('Page.removeScriptToEvaluateOnNewDocument', identifier=(script or {}).get('identifier'))
+        except Exception:
+            pass
+        d.js("window.__fakeJob = null; 1")
+        d.reload(1.5)
+    problems = []
+    if r is None:
+        problems.append('no token line or no cancel button')
+    else:
+        if r['lines'] != 1 or not r['fit'] or r['nowrap'] != 'nowrap':
+            problems.append('token line not on one line (lines %s, fit %s, %s): %s' % (r['lines'], r['fit'], r['nowrap'], r['text']))
+        if not 12 <= r['fs'] <= 13 or 'tabular' not in r['tab']:
+            problems.append('token line type %s / %s' % (r['fs'], r['tab']))
+        if ('999.9K/987.7K' if big else '1.4K/21.9K') not in r['text'].replace(' ', ''):
+            problems.append('numbers missing in "%s"' % r['text'])
+        # A-OWNER-74b: the cache-write figure ends the line (words may shorten, the number never)
+        if ('1.2M' if big else '13K') not in r['text'].replace(' ', ''):
+            problems.append('cache-write figure missing in "%s"' % r['text'])
+        # A-OWNER-74b: the cache words shorten before the call count goes
+        calls = 120 if big else 12
+        long_words = cat(lang, 'aigen.card.cw').split('{n}')[0].strip(' ,，、')
+        if not re.search(r'(?<![\d.,])%d(?![\d.,KM])' % calls, r['text']) and long_words in r['text']:
+            problems.append('the call count is gone while the cache words are still long: "%s"' % r['text'])
+        if not any(x in (r['tip'] or '') for x in (('1,234,567', '1.234.567', '1 234 567') if big else ('13,000', '13.000', '13 000'))):
+            problems.append('the tip has no exact cache-write number: %s' % r['tip'])
+        if r['right'] > r['vw'] + 0.5 or not r['side']:
+            problems.append('the token line runs past the screen')
+        if not any(x in (r['tip'] or '') for x in (('999,949', '999.949', '999 949') if big else ('1,434', '1.434', '1 434'))):
+            problems.append('the tip has no exact numbers: %s' % r['tip'])
+        if r['coarse'] and r['cH'] < 43.5:
+            problems.append('cancel button %s px high' % r['cH'])
+        if not r['ic'] or r['ratio'] < 4.5 or r['label'] != cat(lang, 'aigen.card.cancel') and r['label'] != cat(lang, 'aigen.imp.card.cancel'):
+            problems.append('cancel button: icon %s, contrast %.2f, label "%s"' % (r['ic'], r['ratio'], r['label']))
+    rc.rec('W-TK-1', 'banks', source, 'admin', size, lang, theme, not problems,
+           '; '.join(problems) or 'one line "%s", cancel button red %.1f:1' % (r['text'], r['ratio']), d if problems else None)
+
+
 # ---------------------------------------------------------------------------------------------------- entry point
+# ---------------------------------------------------------------------------------------------------- sprint 13
+# W-RS-9: a not-completed hotspot question is not judged: its items carry no right / wrong tag and no "n of m right" line
+RS9_JS = """(() => { const hs = [...document.querySelectorAll('.rv')].filter(x => x.querySelector('.hs'));
+  return {n: hs.length, tags: hs.reduce((a, x) => a + x.querySelectorAll('.hs-item .tag').length, 0), verdict: hs.length ? (hs[0].querySelector('.verdict') || {}).textContent || '' : ''} })()"""
+
+
+def g_s13(rc):
+    if rc.want('W-RS-9') and rc.walk.wants_page('result'):
+        for lang in rc.langs(['zh']):
+            rc.guard('W-RS-9', 'result', rs9_case, rc, lang, rc.themes(['light'])[0], (1280, 800))
+    if rc.want('W-IM-3') and rc.walk.wants_page('banks'):
+        for lang in rc.langs(['zh']):
+            rc.guard('W-IM-3', 'banks', im3_case, rc, lang, rc.themes(['light'])[0], (390, 844))
+
+
+def rs9_case(rc, lang, theme, size):
+    d = rc.dev('riley', lang, theme, size)
+    start_quiz(d, 'exam', 51)
+    time.sleep(0.4)
+    d.js("""(async () => { const w = ms => new Promise(r => setTimeout(r, ms)); const click = s => { const e = document.querySelector(s); if (e && !e.disabled) { e.click(); return true } return false };
+      click('[data-act="submit"]') || click('[data-act="finish"]') || click('.rail .btn.primary'); await w(500);
+      click('dialog[open] .acts .btn.primary') || click('dialog[open] .btn.primary'); await w(2500) })()""")
+    time.sleep(3)
+    r = d.js(RS9_JS)
+    problems = []
+    if not r['n']:
+        problems.append('no hotspot card on the result page')
+    else:
+        if r['tags']:
+            problems.append('%d right / wrong tags on a not-completed hotspot question' % r['tags'])
+        if len(re.findall(r'\d+', r['verdict'])) > 1:   # "n items and you got k right" has two numbers, the plain rule one
+            problems.append('verdict %r' % r['verdict'])
+    rc.rec('W-RS-9', 'result', 'hotspot-open', 'riley', size, lang, theme, not problems,
+           '; '.join(problems) or '%d hotspot cards, no tags, verdict "%s"' % (r['n'], r['verdict'][:40]), d if problems else None)
+
+
+IM3_JS = """(() => { const c = document.querySelector('.gen-file'); if (!c) return null;
+  const labs = [...c.querySelectorAll('.gen-cnt')].map(e => { const cs = getComputedStyle(e); return {t: e.textContent, bg: cs.backgroundColor, fg: cs.color} });
+  return {labs, line: (c.querySelector('.gen-line') || {}).textContent || ''} })()"""
+
+
+def im3_case(rc, lang, theme, size):
+    """A-OWNER-70 / 72 / 73: an import of 60 made-up questions: the confirm card names the file's count and the limit (two red labels with
+    white text) and the line "found 60, the first 50 are imported"; the confirm dialog repeats them; the done card says "50 of 60"."""
+    u = rc.session('lee')
+    filler = 'This made-up sample sentence only pads the stem. ' * 3
+    text = '\n'.join('Q%d. Sample question %d: %s Which choice is the made-up one?\nA. First\nB. Second\nC. Third\nD. Fourth' % (i, i, filler) for i in range(1, 61)) + '\n'
+    a = u.call('/api/ai/import/upload', raw=text.encode(), headers={'Content-Type': 'application/octet-stream', 'X-Filename': 'sample-q.txt', 'X-Ui-Lang': lang})
+    jid = a.get('id') or a.get('job', {}).get('id')
+    j = {}
+    t0 = time.time()
+    while time.time() - t0 < 240:
+        j = u.call('/api/ai/gen/job?id=%s' % jid)
+        j = j.get('job', j)
+        if j.get('state') in ('failed', 'done') or j.get('phase') == 'confirm':
+            break
+        time.sleep(1)
+    problems = []
+    d = rc.dev('lee', lang, theme, size)
+    try:
+        if j.get('phase') != 'confirm' or j.get('total') != 60 or j.get('taken') != 50:
+            problems.append('job state %s / %s total %s taken %s' % (j.get('state'), j.get('phase'), j.get('total'), j.get('taken')))
+        else:
+            goto(d, '#/banks', 2.5)
+            r = d.js(IM3_JS)
+            want_line = fill(cat(lang, 'aigen.imp.card.confirmQCut'), n=50, found=60)
+            want = [fill(cat(lang, 'aigen.imp.cnt.file'), n=60), fill(cat(lang, 'aigen.imp.cnt.limit'), n=50)]
+            if not r or [x['t'] for x in r['labs']] != want:
+                problems.append('labels %s (want %s)' % (r and [x['t'] for x in r['labs']], want))
+            elif any(x['bg'] != 'rgb(185, 28, 28)' or x['fg'] != 'rgb(255, 255, 255)' for x in r['labs']):
+                problems.append('the labels are not white on red: %s' % r['labs'])
+            if r and r['line'].replace(chr(160), ' ') != want_line.replace(chr(160), ' '):
+                problems.append('line %r (want %r)' % (r['line'], want_line))
+            # the confirm dialog
+            d.js("(() => { const b = [...document.querySelectorAll('.gen-file .btn.primary, .gen-file .btn.ai')][0]; if (b) b.click() })()")
+            time.sleep(0.8)
+            dl = d.js("(() => { const x = document.querySelector('dialog.gen-cfm[open]'); return x ? {labs: [...x.querySelectorAll('.gen-cnt')].map(e => e.textContent), body: x.querySelector('p:not(.gen-counts)').textContent} : null })()")
+            if not dl or dl['labs'] != want or '60' not in dl['body']:
+                problems.append('confirm dialog %r' % (dl,))
+            d.js("(() => { const x = document.querySelector('dialog.gen-cfm[open]'); if (x) x.close() })()")
+    finally:
+        try:
+            u.call('/api/ai/gen/cancel', {'id': jid})
+        except Exception:
+            pass
+    rc.rec('W-IM-3', 'banks', 'import-confirm', 'lee', size, lang, theme, not problems,
+           '; '.join(problems) or 'two red labels "%s" / "%s"; the line and the dialog name 60 and 50' % (want[0], want[1]), d if problems else None)
+
+
 GROUPS = [g_shared, g_toast, g_pinned, g_contrast, g_dialogs, g_menu, g_first_line, g_bar, g_panel, g_greyed, g_landscape,
           g_result, g_records, g_home, g_chat, g_users, g_logs_settings, g_ai_settings,
-          g_sh8, g_sh9, g_sh10, g_qz9, g_as2, g_as3, g_ch4, g_us2, g_caps]
+          g_sh8, g_sh9, g_sh10, g_qz9, g_as2, g_as3, g_ch4, g_ch5, g_us2, g_caps, g_v11, g_s10, g_l54, g_l60, g_tk, g_s13]
 
 
 def run(walk):

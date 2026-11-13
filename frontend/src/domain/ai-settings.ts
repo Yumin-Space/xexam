@@ -409,28 +409,56 @@ export function retentionOf(text: string): number | null {
 
 /** The ten limits of the AI service (v1.0): the three per-user caps, the two lengths, the five that protect the server */
 export type LimitKey =
-  | 'callsPerMinute' | 'callsPerHour' | 'callsPerDay' | 'replyMaxChars' | 'memoryChars'
-  | 'perUserRunning' | 'globalRunning' | 'chatsPerUser' | 'messagesPerChat' | 'memoriesPerUser';
+  | 'callsPerMinute' | 'callsPerHour' | 'callsPerDay' | 'replyMaxTokens' | 'memoryTokens'
+  | 'perUserRunning' | 'globalRunning' | 'chatsPerUser' | 'messagesPerChat' | 'memoriesPerUser'
+  // v1.1 (GS-1, IS-1): the AI banks tab
+  | 'genPerDay' | 'genAdminsExempt' | 'genMinSource' | 'genMinWrong' | 'genBankSingle' | 'genBankMulti' | 'genWrongSingle'
+  | 'genWrongMulti' | 'genCallTokens' | 'genRunning' | 'importMaxMb' | 'importMaxQuestions'
+  // A-OWNER-31b / 36 / 36b: the per-job call ceilings (generation, file import), the same for everyone
+  | 'genMaxCalls' | 'importMaxCalls'
+  // A-OWNER-38: the ceiling of the recognition step of an import (before the confirm)
+  | 'recognizeMaxCalls'
+  // A-OWNER-45: the "no ceiling" switches of the two call ceilings (0 / 1)
+  | 'genUnlimited' | 'importUnlimited';
 /** The values of the limits; a key the service did not send falls back to its default where it is read */
 export type LimitValues = Partial<Record<LimitKey, number>>;
 export type LimitRanges = Partial<Record<LimitKey, [number, number]>>;
 
 /** v1.0: the per-user caps on AI model calls (spec 3.7), shown first, in this order */
 export const CAP_KEYS: readonly LimitKey[] = ['callsPerMinute', 'callsPerHour', 'callsPerDay'];
-/** v1.0 (FB-5 revised): the length of one answer and of one memory, in characters, second sub-group */
-export const LENGTH_KEYS: readonly LimitKey[] = ['replyMaxChars', 'memoryChars'];
+/** v1.0 (FB-5 revised): the length of one answer and of one memory, in tokens (v1.1, A-OWNER-43), second sub-group */
+export const LENGTH_KEYS: readonly LimitKey[] = ['replyMaxTokens', 'memoryTokens'];
 /** The limits that protect the server (the five of v0.8 that are left) */
 export const SERVER_KEYS: readonly LimitKey[] = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser'];
-export const LIMIT_KEYS: readonly LimitKey[] = [...CAP_KEYS, ...LENGTH_KEYS, ...SERVER_KEYS];
+/** v1.0's ten limits (the AI safety tab) */
+export const AS_KEYS: readonly LimitKey[] = [...CAP_KEYS, ...LENGTH_KEYS, ...SERVER_KEYS];
+/** v1.1 (GS-1): the eleven settings of AI bank generation (the call ceiling last, A-OWNER-31b) */
+export const GEN_KEYS: readonly LimitKey[] = [
+  'genPerDay', 'genAdminsExempt', 'genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti',
+  'genCallTokens', 'genRunning', 'genMaxCalls', 'genUnlimited',
+];
+/** v1.1 (IS-1): the settings of the AI file import (the call ceilings last, A-OWNER-36b / 38) */
+export const IMPORT_KEYS: readonly LimitKey[] = ['importMaxMb', 'importMaxQuestions', 'importMaxCalls', 'recognizeMaxCalls', 'importUnlimited'];
+/** The 27 keys of the limits row */
+export const LIMIT_KEYS: readonly LimitKey[] = [...AS_KEYS, ...GEN_KEYS, ...IMPORT_KEYS];
+/** The AI banks tab saves these fourteen */
+export const BANK_KEYS: readonly LimitKey[] = [...GEN_KEYS, ...IMPORT_KEYS];
 
 /** The defaults and ranges of the spec (the service sends its own; these are used only until it answers) */
 export const DEFAULT_LIMITS: Record<LimitKey, number> = {
-  callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxChars: 1000, memoryChars: 200,
+  callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxTokens: 3000, memoryTokens: 1000,
   perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50,
+  genPerDay: 3, genAdminsExempt: 1, genMinSource: 30, genMinWrong: 10, genBankSingle: 14, genBankMulti: 6, genWrongSingle: 14,
+  genWrongMulti: 6, genCallTokens: 20000, genRunning: 2, importMaxMb: 20, importMaxQuestions: 50, genMaxCalls: 15, importMaxCalls: 25, recognizeMaxCalls: 20,
+  genUnlimited: 1, importUnlimited: 1,
 };
 export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
-  callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], replyMaxChars: [1, 16000], memoryChars: [50, 2000],
+  callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
   perUserRunning: [1, 4], globalRunning: [1, 64], chatsPerUser: [10, 100000], messagesPerChat: [20, 5000], memoriesPerUser: [1, 1000],
+  genPerDay: [0, 100], genAdminsExempt: [0, 1], genMinSource: [5, 2000], genMinWrong: [1, 500], genBankSingle: [0, 100],
+  genBankMulti: [0, 100], genWrongSingle: [0, 100], genWrongMulti: [0, 100], genCallTokens: [1000, 250000], genRunning: [1, 8],
+  importMaxMb: [1, 20], importMaxQuestions: [1, 50], genMaxCalls: [8, 40], importMaxCalls: [8, 40], recognizeMaxCalls: [8, 40],
+  genUnlimited: [0, 1], importUnlimited: [0, 1],
 };
 
 export type LimitsForm = Record<LimitKey, string>;
@@ -447,7 +475,8 @@ export const rangeOf = (ranges: LimitRanges | undefined, k: LimitKey): [number, 
 /** What is wrong with the form: a value outside its range, or the caps out of order (hour below minute, day below hour) */
 export interface LimitIssue {
   key: LimitKey;
-  kind: 'range' | 'order';
+  /** `comp` (v1.1, A0): single + multiple of a mode is not 1 .. 100; `key` is the multi key of the mode that fails */
+  kind: 'range' | 'order' | 'comp';
 }
 
 const whole = (s: string): number | null => (/^\d{1,9}$/.test(s.trim()) ? Number(s.trim()) : null);
@@ -462,7 +491,46 @@ export function limitIssue(form: LimitsForm, ranges?: LimitRanges): LimitIssue |
   // All numbers are valid here
   if (Number(form.callsPerHour) < Number(form.callsPerMinute)) return { key: 'callsPerHour', kind: 'order' };
   if (Number(form.callsPerDay) < Number(form.callsPerHour)) return { key: 'callsPerDay', kind: 'order' };
+  // The composition rule (A0), the bank mode first
+  if (!compOk(form.genBankSingle, form.genBankMulti)) return { key: 'genBankMulti', kind: 'comp' };
+  if (!compOk(form.genWrongSingle, form.genWrongMulti)) return { key: 'genWrongMulti', kind: 'comp' };
   return null;
+}
+
+/** single + multiple of a generation mode: 1 .. 100 in total (each is a valid number by now) */
+function compOk(single: string, multi: string): boolean {
+  const n = Number(single) + Number(multi);
+  return Number.isFinite(n) && n >= 1 && n <= 100;
+}
+
+/** The live total of a composition row (`NaN` while a field is not a number) */
+export function compTotal(single: string, multi: string): number {
+  const a = whole(single);
+  const b = whole(multi);
+  return a == null || b == null ? Number.NaN : a + b;
+}
+
+/** Whether a typed composition is in range (the live total turns red otherwise) */
+export const compBad = (single: string, multi: string): boolean => {
+  const n = compTotal(single, multi);
+  return Number.isNaN(n) || n < 1 || n > 100;
+};
+
+/** Estimated output tokens of one generated question (twin of `EST_TOKENS_PER_QUESTION` in ai-service) */
+export const EST_TOKENS_PER_QUESTION = 2400;
+
+/** GP-1 `per_call`: questions per model call: `clamp(min(callTokens, ceiling * 2 / 3) / 2400, 1, 5)` */
+export function perCall(callTokens: number, tokenCeiling: number | null): number {
+  const room = tokenCeiling == null ? callTokens : Math.min(callTokens, Math.floor((tokenCeiling * 2) / 3));
+  return Math.min(5, Math.max(1, Math.floor(room / EST_TOKENS_PER_QUESTION)));
+}
+
+/** The live line under the length field of the AI banks tab (GS-2): questions per call, or null for a bad number */
+export function genCallLive(text: string, ranges?: LimitRanges): { q: number } | null {
+  const n = whole(text);
+  const [min, max] = rangeOf(ranges, 'genCallTokens');
+  if (n == null || n < min || n > max) return null;
+  return { q: perCall(n, null) };
 }
 
 /** The first field with a problem (range or order), or null */
@@ -480,28 +548,10 @@ export function limitsUpdate(saved: LimitValues, form: LimitsForm): LimitValues 
   return u;
 }
 
-/**
- * The max_tokens the service sends for an answer of `chars` characters (FB-5 revised; the twin of `limits::reply_tokens` in
- * ai-service, with the same vectors): Chinese and Japanese 1 character = 1.5 tokens, so an answer can really reach the
- * count; English 4 letters count as 1 character = about 1 token.
- */
-export function replyTokens(chars: number, lang: 'zh-CN' | 'en' | 'ja'): number {
-  const n = Math.max(0, Math.floor(chars));
-  return lang === 'en' ? n : Math.floor((3 * n + 1) / 2);
-}
-
-/** The live line under the answer length: what the typed number means as max_tokens, or null while it is not a usable number */
-export function replyTokensLine(text: string, ranges?: LimitRanges): { zh: number; en: number } | null {
-  const n = whole(text);
-  const [min, max] = rangeOf(ranges, 'replyMaxChars');
-  if (n == null || n < min || n > max) return null;
-  return { zh: replyTokens(n, 'zh-CN'), en: replyTokens(n, 'en') };
-}
-
 // ---------------------------------------------------------------- the category tabs (FB-6, AS-9)
 
-/** The four categories of AI settings, in the order of the tab row (no generation tab in v1.0) */
-export const AI_TABS = ['feature', 'users', 'usage', 'safety'] as const;
+/** The five categories of AI settings, in the order of the tab row (v1.1: the fifth, `gen`, is "AI 题库" / AI banks) */
+export const AI_TABS = ['feature', 'users', 'usage', 'safety', 'gen'] as const;
 export type AiTab = (typeof AI_TABS)[number];
 
 /** The tab a location hash names (`#/ai-settings?tab=users`); a missing or unknown value is the first tab */
@@ -591,4 +641,11 @@ export function convTotals(rows: ReadonlyArray<{ chats: number; messages: number
 export function barPercent(v: number, max: number): number {
   if (!(v > 0) || !(max > 0)) return 0;
   return Math.max(2, Math.round((v / max) * 100));
+}
+
+/** L-55: a job card's time with its date, local: "2026-11-13 18:04" */
+export function jobTime(sec: number): string {
+  const d = new Date(sec * 1000);
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }

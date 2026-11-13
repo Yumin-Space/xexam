@@ -48,6 +48,13 @@ pub const MSG_UNKNOWN_BANKS: &str = "选择的题库中有不存在的（可能�
 /// 409: an AI+ feature switch of a user (POST /api/users/update with "ai", POST /api/users/create with "ai": true) while
 /// AI+ is not available (ai-service not connected, or the AI+ feature off in AI settings)
 pub const MSG_AI_SERVICE_OFF: &str = "请先在 AI 设置里开启 AI+ 功能。";
+// v1.1
+/// 400: an Excel upload or confirmation aimed at an AI-generated bank (the frontend maps it to `banks.err.aiBank`)
+pub const MSG_AI_BANK_IMPORT: &str = "AI 生成的题库不能用 Excel 更新。";
+/// 400: a sheet deletion that names every sheet of the bank (the frontend maps it to `banks.err.sheetsAll`)
+pub const MSG_SHEETS_ALL: &str = "要删除全部工作表，请删除整个题库。";
+/// 400: a sheet deletion aimed at an AI-generated bank (the frontend maps it to `banks.err.aiSheets`)
+pub const MSG_AI_BANK_SHEETS: &str = "AI 题集只有一个工作表，请删除整个题库。";
 /// `"code"` of the [`MSG_AI_SERVICE_OFF`] answer (the frontend translates by it)
 pub const CODE_AI_SERVICE_OFF: &str = "ai.serviceOff";
 
@@ -145,6 +152,15 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
         }
         AppError::Db(crate::error::DbError::NotBankOwner) => {
             error_json(StatusCode::FORBIDDEN, MSG_NOT_BANK_OWNER, head_only)
+        }
+        AppError::Db(crate::error::DbError::AiBank) => {
+            error_json(StatusCode::BAD_REQUEST, MSG_AI_BANK_IMPORT, head_only)
+        }
+        AppError::Db(crate::error::DbError::SheetsAll) => {
+            error_json(StatusCode::BAD_REQUEST, MSG_SHEETS_ALL, head_only)
+        }
+        AppError::Db(crate::error::DbError::AiBankSheets) => {
+            error_json(StatusCode::BAD_REQUEST, MSG_AI_BANK_SHEETS, head_only)
         }
         AppError::Db(_) | AppError::Internal => {
             error_json(StatusCode::INTERNAL_SERVER_ERROR, MSG_INTERNAL, head_only)

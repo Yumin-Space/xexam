@@ -31,7 +31,7 @@ cargo run -- serve --data ../data --no-browser     # 127.0.0.1:8765 で待ち受
 - よく使う環境変数：`XEXAM_DATA`、`XEXAM_PORT`、`XEXAM_ALLOWED_HOSTS`、`XEXAM_LOG`（ログレベル、例：`debug`）、`XEXAM_SQLITE_JOURNAL`（`delete` で WAL ではなくロールバックジャーナルのまま）、`XEXAM_COOKIE_SECURE`、`XEXAM_LINK_DIR` と `XEXAM_INTERNAL_TOKEN`（ai-service との接続。第 3 節）。全一覧は `xexam-backend --help` と [deployment.md](deployment.md) を参照してください。
 - `serve` は、`<データディレクトリ>/link/internal.token`（または `XEXAM_LINK_DIR/internal.token`）がなければ作ります。ほかのコマンドは決してこれに触れません。
 - 空のデータディレクトリで最初に起動すると、管理者 `admin` / `admin` が作られます。最初のログインで、ページが新しいパスワードを求めます。忘れたときは：`cargo run -- reset-password admin --data ../data`（サーバーの動作中でも使えます）。
-- コマンドラインからの 6 列形式のワークブックのインポート（取り込み先はレガシー問題集）：`cargo run -- import ../some.xlsx --data ../data`。3 列や 4 列のワークブックは拒否されます。
+- コマンドラインからの 6 列形式のワークブックのインポート（インポート先はレガシー問題集）：`cargo run -- import ../some.xlsx --data ../data`。3 列や 4 列のワークブックは拒否されます。
 - 古いスキーマのデータベースをバックエンドで開くと移行が行われ、その隣に `backups/` が書き出されます。コピーを使ってください。v0.9 の学習用ルート（`api/internal_study.rs`、`database/store/study.rs` の射影）はトークンのルートです：バックエンドはこれに AI サービスにだけ応え、何も書き込まず、何も記録しません。バックエンドは、これらのために中国語のリテラルをテストコードの外に書くこともありません（`server-messages.test.ts` が `backend/src` を走査します）。
 - データベースは WAL モードで動きます。バックエンドの動作中は、`xexam.db` の隣に `xexam.db-wal` と `xexam.db-shm` があります。3 つともコピーするか、先にバックエンドを停止してください（停止すると、すべてが `xexam.db` に入り、隣に `-wal` ファイルが残っていても空です）。`sqlite3` は、バックエンドの動作中でもデータベースを読めます。
 
@@ -62,7 +62,7 @@ cargo tree -e normal --target all | grep -E 'aws-lc|openssl-sys|native-tls'   # 
   cd frontend && npm run dev
   ```
 
-  ai-service は `127.0.0.1:8766`（`XEXAM_AI_HOST`、`XEXAM_AI_PORT`）で待ち受け、`http://127.0.0.1:8765`（`XEXAM_AI_BACKEND_URL`、素の http だけ）でバックエンドを呼び出します。`xexam-ai-service --help` ですべての変数が表示されます。トークンを得るとすぐに、バックエンドへ報告します（ハートビート。25 秒ごと。[architecture.md](architecture.md) の第 5 節）。バックエンドが報告を見るまでは、ユーザー管理に AI+ 機能のスイッチは出ず、AI 設定は ai-service が最初の報告を待っていると表示するので、両方を起動した数秒後はそれで正常です。トークンがない間は、すべての AI のルートに 503 `ai.backendDown` を返し、ファイルが現れるまで `AI link: waiting for the internal token at …` とログに出します。`ai_stub.py`（標準ライブラリのみ）には、Anthropic のルート（`/anthropic`）、ゲートウェイのルート（`/gw/openai`、`/gw/anthropic`。`gw-demo-…` のようなゲートウェイのキーを使う）、エラーの経路のための特別なモデル、考え中の状態（`demo-reasoning`。最初に架空の推論を送ります）、チャット用でないモデルの表示（`demo-embedding`。一覧には出ますが、チャットは拒否します）もあります。システムプロンプトの「Always reply in …」の行の言語で答えます。その docstring に一覧があります。
+  ai-service は `127.0.0.1:8766`（`XEXAM_AI_HOST`、`XEXAM_AI_PORT`）で待ち受け、`http://127.0.0.1:8765`（`XEXAM_AI_BACKEND_URL`、素の http だけ）でバックエンドを呼び出します。`xexam-ai-service --help` ですべての変数が表示されます。トークンを得るとすぐに、バックエンドへ報告します（ハートビート。25 秒ごと。[architecture.md](architecture.md) の第 5 節）。バックエンドが報告を見るまでは、ユーザー管理に AI+ 機能のスイッチは出ず、AI 設定は ai-service が最初の報告を待っていると表示するので、両方を起動した数秒後はそれで正常です。トークンがない間は、すべての AI のルートに 503 `ai.backendDown` を返し、ファイルが現れるまで `AI link: waiting for the internal token at …` とログに出します。`ai_stub.py`（標準ライブラリのみ）には、Anthropic のルート（`/anthropic`）、Gateway のルート（`/gw/openai`、`/gw/anthropic`。`gw-demo-…` のような Gateway のキーを使う）、エラーの経路のための特別なモデル、考え中の状態（`demo-reasoning`。最初に架空の推論を送ります）、チャット用でないモデルの表示（`demo-embedding`。一覧には出ますが、チャットは拒否します）もあります。システムプロンプトの「Always reply in …」の行の言語で答えます。その docstring に一覧があります。
 - **学習機能**（v0.9）：テストと `tests/integration/ai_stub.py` の代用プロバイダーは、システムプロンプトで答えを変えます：`asked for a HINT` なら自作のきれいなヒントを返し（`[leak]` を含むユーザーのターンには、ガードのテスト用に、答えを挙げた文で終わるものを返します）、`asked for an EXPLANATION` なら `**Answer: <letters>**` と文を返し、`answered wrong` なら 4 つの見出しと `Items: <n>` を返します。ガードが差し止めるものを変えるには、`guard/lists.rs` のリストを編集し、その文を `tests/study_guard/` に加えます。ヒントのプロンプトは `Solution` を受け取らず、これを守り続けなければなりません（ドキュメントテストがこれを固定しています）。バックエンドの学習用ルートに新しいデータの項目を加えるには、`backend/src/api/internal_study.rs`、`src/study/wire.rs`（知らないキーは拒否します）、そして両側のコントラクトのテストに、同じ変更が必要です。
 - **規則**：サービスのすべての中国語のテキストは `src/codes.rs` にあります（フロントエンドはコードで翻訳するので、新しいコードには `frontend/src/i18n/catalog/ai.ts` に `ai.err.*` のキーを加えます）。ログの行は英語で、ユーザーはユーザー名の `{:?}` で示し、キー、内部トークン、本人確認の文、ヘッダーの値、ベース URL、プロンプト、回答、チャットのタイトル、メモの内容は決して含めません。`logs_no_secrets.rs` がこれを確認します。キーやトークンを持つ型には、派生した `Debug` がありません。リクエストのボディは自前で検証します（知らないキーは拒否）。JSON のキーは記載した順に保ってください（`preserve_order` 付きの `serde_json`）。
 - 接続の **バックエンド側** は `backend/src/api/internal.rs`（トークン、本人確認の文、ハートビートのルートと最後の報告のメモリ上の記録を含む `/internal/ai/*`）、`backend/src/api/internal_study.rs`（v0.9：`question`、`record`、`record-info`）、`api::auth::introspect`（認証ステップ）で、そのテストは `backend/tests/v08_ai_link.rs` と `v09_ai_study.rs` にあります。
@@ -75,7 +75,7 @@ npm ci
 npm run typecheck      # アプリを tsc でチェックし、続いてテストファイルをチェック（tsconfig.test.json）
 npm test               # 単体テスト：API クライアント（Nginx の 429 とそのやり直し、制限時間、AI のストリームとエラー
                        # コード）、採点とランダムな出題、練習の答え合わせ、保存した結果、言語の規則、記録の絞り込み、
-                       # ロックの説明と待ち時間、取り込みの警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、
+                       # ロックの説明と待ち時間、インポートの警告、システムログのバッファ、問題集の状態、問題集へのアクセス、保存した試験、
                        # 設定のキャッシュ、イベントストリームのパーサー、AI チャットの状態、回答の Markdown、メモの要求、
                        # AI 設定の規則（接続の原因とモデルの種類を含む）、AI の状態、バッジの状態、ユーザー管理の AI+ 機能の規則、ルーター（`#/ai/<id>`、`#/ai/new`）、UI カタログ（オーナーの文言の決定そのままの言葉）、サーバーメッセージの翻訳、更新履歴の解析、そして v0.9 の AI+ の学習機能（どのコントロールを誰に見せるか、回答の状態、偽のタイマーと通信を使うエンジン、ポップオーバーの規則、リクエストの組み立て、フォーカスの行き先、セッションのキー）
 npm run build          # 型チェック + vite build → dist/
@@ -198,7 +198,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 ## 7. データ保護のルール
 
 - `data/`、`data-ai/`、`progress.json`、ご自身の問題集の Excel ファイルを、読み取る・出力する・コミットする・変更する、のいずれも**しないでください**。
-- 本物の AI のキーを、コード、テスト、ドキュメント、スクリーンショットに決して入れないでください：テストは明らかに偽物のキー（`sk-demo-…`、`gw-demo-…`）を使い、例には `example.com` のアドレス、たとえばゲートウェイなら `https://ai-gateway.example.com/<route>` を使います。
+- 本物の AI のキーを、コード、テスト、ドキュメント、スクリーンショットに決して入れないでください：テストは明らかに偽物のキー（`sk-demo-…`、`gw-demo-…`）を使い、例には `example.com` のアドレス、たとえば Gateway なら `https://ai-gateway.example.com/<route>` を使います。
 - 試す操作は必ずコピーか一時ディレクトリで行ってください。本物の `xexam.db` に対して「どうなるか見てみる」ようなコマンドを実行しないでください。古いデータベースを新しいバージョンで開くと移行される（そして WAL に切り替わる）点にも注意してください。
 - `docker compose down -v` を実行しないでください。
 - コード、テスト、ドキュメントの例には架空の内容だけを使い、本物の試験問題は使わないでください（`tools/screenshots/demo_banks.py` のデモ用問題集「General knowledge」と「Kitchen basics」、または `frontend/src/pages/banks.ts` にある架空の 6 列形式の例）。
@@ -262,5 +262,5 @@ README とドキュメントの画像（`docs/<lang>/screenshots`。言語ごと
   - `RELEASE_VERSION`（v1.0 のリリースジョブが動くまでは `0.9.1`）：実際に公開された最後のバージョン。**手で編集しないでください**。リリースジョブが、README の冒頭のリリースバッジと一緒に書き換えます（8.1 節）。プッシュやマージだけで変わることはありません。
 - 更新するたびに、3 つの言語の更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）すべての一番上に、`CODE_VERSION` と同じバージョン番号の項目を 1 つ追加します。3 つの項目はいつも同じにそろえます。CI がこれを確認します。README には項目を書かず、更新履歴へのリンクだけを置きます。GitHub Release のノートは英語版から取ります。
 - 「Xexam について」のページには、フロントエンドに組み込んだこれらの更新履歴が表示されます（4 節）。項目は簡単な Markdown で書きます：段落、`- ` の箇条書き、`  - ` の入れ子の箇条書き、`**太字**`、`` `コード` ``。リポジトリ内のファイルへのリンクは、そのページでは文字として表示されます。リンクは更新履歴のフォルダ（`docs/<lang>/`）からの相対パスで書きます。更新履歴を変えても、アプリに表示されるのはフロントエンドをもう一度ビルドした後です。
-- 作業は `dev` で行い、`main` にはマージで取り込みます。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（8.1 節）。
+- 作業は `dev` で行い、`main` にはマージでインポートします。`main` へのプッシュでイメージと Release が公開されます。リリースのたびに `main` と `dev` を pull してください（8.1 節）。
 - このプロジェクトは MIT ライセンスです（リポジトリのルートの `LICENSE`）。

@@ -38,6 +38,11 @@
 .strip .ng svg { stroke: var(--answer-wrong); }
 .strip .ng { background: var(--answer-wrong-soft); border-color: transparent; }
 .strip .ng .n { color: var(--answer-wrong); }
+/* v1.1 (TL-7): a not-completed question: a neutral orange outline and a dash, never the red of a wrong answer */
+.strip .open { background: var(--card); border-color: var(--warn); }
+.strip .open .n { color: var(--warn); }
+.strip .dash { height: 20px; line-height: 20px; font-size: 18px; font-weight: 600; color: var(--warn); }
+.badge.open { color: var(--warn); background: transparent; box-shadow: inset 0 0 0 1px var(--warn); }
 
 .rvhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .rvhead h2 { font-size: 18px; font-weight: 600; }
@@ -115,7 +120,7 @@
      short name and is the one that may shrink; the language switch keeps its size. The full names stay for screen readers. */
   .rv .phead { flex-wrap: nowrap; gap: 6px; }
   .rv .phead .lang { flex: none; }
-  .rv .phead > .num, .rv .phead > .badge.ok, .rv .phead > .badge.ng { flex: none; white-space: nowrap; }
+  .rv .phead > .num, .rv .phead > .badge.ok, .rv .phead > .badge.ng, .rv .phead > .badge.open { flex: none; white-space: nowrap; }
   .rv .phead > .rv-kind, .rv .phead > .badge.retired { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rv .phead .rv-kind-full, .rv .phead .rv-no-full {
     position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;

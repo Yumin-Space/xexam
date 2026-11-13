@@ -16,7 +16,7 @@
 .aip-panel-head {
   display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 4px 4px 4px 14px; cursor: pointer; user-select: none;
 }
-.aip-panel-head .ai-badge { flex: none; }
+.aip-panel-head .ai-badge, .aip-panel-head > .has-tip { flex: none; }
 .aip-panel-title { flex: 1 1 auto; min-width: 0; margin: 0; font-size: 14.5px; font-weight: 600; line-height: 1.4; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
   .aip-title-no { display: none; }

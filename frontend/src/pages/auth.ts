@@ -85,9 +85,9 @@ function card(title: string, lead: Child, ...body: Child[]): HTMLElement {
         h('h1', { id: 'auth-title' }, title)),
       h('p', { class: 'auth-lead' }, lead),
       body),
-    h('div', { class: 'auth-foot' },
-      langSwitch(),
-      githubLine()));
+    // v1.1 (SI-1): the language switch sits right under the card; only the GitHub line is pushed to the screen bottom
+    h('div', { class: 'auth-lang' }, langSwitch()),
+    h('div', { class: 'auth-bottom' }, githubLine()));
 }
 
 // ---------------------------------------------------------------- sign in

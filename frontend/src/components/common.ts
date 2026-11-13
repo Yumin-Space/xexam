@@ -1,7 +1,9 @@
 import { t } from '../i18n/index.ts';
 import type { Mode, Question, RecordBank } from '../types/api.ts';
-import { bankById } from '../state/store.ts';
+import { bankById, S } from '../state/store.ts';
 import { h } from '../utils/dom.ts';
+import { aiOfBank } from '../domain/ai-gen.ts';
+import { aiSetBadge } from './ai-badge.ts';
 
 const MODE_KEYS = { all: 'mode.all', weak: 'mode.weak', retry: 'mode.retry' } as const;
 
@@ -33,4 +35,10 @@ export function brand(): HTMLElement {
 /** A page heading block: title (h1) and optional actions on the right */
 export function pageHead(title: string, ...actions: Array<HTMLElement | null>): HTMLElement {
   return h('header', { class: 'page-head' }, h('h1', null, title), actions.some(Boolean) ? h('div', { class: 'page-acts' }, actions) : null);
+}
+
+/** The AI+题集 marker for a question's bank (A-OWNER-27): a label only, shown in every mode including an exam; null for an ordinary bank */
+export function aiSetMark(bankId: number): HTMLElement | null {
+  const ai = aiOfBank(S.banks, bankId);
+  return ai ? aiSetBadge(ai) : null;
 }

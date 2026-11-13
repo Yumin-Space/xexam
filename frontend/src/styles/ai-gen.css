@@ -1,0 +1,99 @@
+/* AI-generated banks (v1.1, section 5): the buttons, the progress cards, the dialogs' small parts. Imported by
+   components/ai-gen.ts. Colour tokens only. PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px). */
+
+.gen-host { display: inline-flex; align-items: center; min-width: 0; }
+.gen-host[hidden] { display: none; }
+.gen-btn { gap: 6px; }
+.gen-btn .l-short { display: none; }
+@media (max-width: 480px) {
+  .gen-btn .l-full { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .gen-btn .l-short { display: inline; }
+}
+/* the 无法使用 tag of a greyed control */
+.gen-na { flex: none; padding: 1px 6px; border-radius: 4px; background: var(--hover-strong); color: var(--ink3); font-size: 11px; font-weight: 600; line-height: 1.5; }
+.gen-running { font-size: 13px; white-space: nowrap; }
+
+/* A-OWNER-73b / 73c: every AI+ action button (AI import, Home and Bank-management generation) shares one flat amber (#F59E0B, hover
+   #D97706, pressed #B45309) in light and dark; only the background / border change, the text keeps its font, weight, colour and outline;
+   when it cannot be used it is a plain grey button (A-OWNER-65, reason in its tip) */
+.gen-btn.ibtn-ai, .gen-impbtn.ibtn {
+  border: 1px solid #F59E0B; background: #F59E0B; color: var(--ai-ink); font-weight: 700; text-shadow: 0 1px 0 rgba(110, 32, 0, .55);
+}
+.gen-btn.ibtn-ai .ibtn-ic, .gen-btn.ibtn-ai .ibtn-lbl, .gen-impbtn.ibtn .ibtn-ic, .gen-impbtn.ibtn .ibtn-lbl { color: inherit; }
+@media (hover: hover) {
+  .gen-btn.ibtn-ai:hover:not([aria-disabled="true"]), .gen-impbtn.ibtn:hover:not([aria-disabled="true"]) { background: #D97706; border-color: #D97706; color: var(--ai-ink); }
+}
+.gen-btn.ibtn-ai:active:not([aria-disabled="true"]), .gen-impbtn.ibtn:active:not([aria-disabled="true"]) { background: #B45309; border-color: #B45309; color: var(--ai-ink); }
+.gen-btn.ibtn-ai[aria-disabled="true"], .gen-impbtn.ibtn[aria-disabled="true"] {
+  border-color: var(--line); background: var(--hover-strong); color: var(--ink3); text-shadow: none; font-weight: 500; cursor: not-allowed; opacity: 1;
+}
+.gen-btn.ibtn-ai[aria-disabled="true"] .ibtn-ic, .gen-impbtn.ibtn[aria-disabled="true"] .ibtn-ic { color: var(--ink3); }
+.gen-btn.ibtn-ai[aria-disabled="true"] .gen-na, .gen-impbtn.ibtn[aria-disabled="true"] .gen-na { background: var(--card); }
+
+/* ---------- Progress card ---------- */
+.gen-cards { display: flex; flex-direction: column; gap: 10px; margin-bottom: 12px; min-width: 0; }
+.gen-cards[hidden] { display: none; }
+.gen-card { padding: 14px 16px; min-width: 0; }
+.gen-card:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.gen-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.gen-file-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gen-bar { height: 8px; margin: 4px 0 10px; border-radius: 4px; background: var(--line-soft); overflow: hidden; }
+.gen-fill { height: 100%; width: 0; border-radius: 4px; background: var(--ai-2); transition: width .2s ease; }
+.gen-bar.ind .gen-fill { width: 30%; animation: gen-slide 1.4s ease-in-out infinite; }
+@keyframes gen-slide { 0% { margin-left: -30%; } 100% { margin-left: 100%; } }
+@media (prefers-reduced-motion: reduce) {
+  .gen-fill { transition: none; }
+  .gen-bar.ind .gen-fill { animation: none; margin-left: 0; width: 100%; opacity: .5; }
+}
+.gen-line { margin: 0 0 4px; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.gen-note { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; overflow-wrap: anywhere; }
+.gen-done, .gen-failed { display: flex; align-items: flex-start; gap: 8px; }
+.gen-ic { flex: none; margin-top: 3px; }
+.gen-done .gen-ic { color: var(--answer-right, var(--ink2)); }
+.gen-failed { color: var(--danger); }
+.gen-acts { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 8px; margin-top: 6px; }
+.gen-acts .btn { min-height: 40px; }
+/* A-OWNER-33: the close "x" floats in the card's top-right corner (first child), so the card's text wraps beside it, never under
+   it; a small rounded-square outline, 36 px, 44 px on touch */
+.gen-card { display: flow-root; }
+.gen-x {
+  float: right; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin: -6px -6px 6px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink3); cursor: pointer;
+}
+@media (pointer: coarse) { .gen-x { width: 44px; height: 44px; margin: -10px -8px 4px 8px; } }
+@media (hover: hover) { .gen-x:hover { background: var(--hover); color: var(--ink); } }
+.gen-x:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+/* A-OWNER-68: the cancel button of a running AI bank job is a clear danger button (red outline, red text, cancel mark) */
+.btn.gen-cancel { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--danger); background: transparent; color: var(--danger); }
+.btn.gen-cancel .gen-cancel-ic { width: 18px; height: 18px; flex: none; }
+@media (pointer: coarse) { .btn.gen-cancel { min-height: 44px; } }
+@media (hover: hover) { .btn.gen-cancel:hover:not(:disabled):not([aria-disabled="true"]) { color: var(--danger-hover); border-color: var(--danger-hover); background: var(--danger-soft); } }
+.btn.gen-cancel:focus-visible { outline: 2px solid var(--danger); outline-offset: 2px; }
+.btn.gen-cancel:active:not(:disabled) { background: var(--danger-soft); transform: translateY(1px); }
+.btn.gen-cancel:disabled, .btn.gen-cancel[aria-busy="true"] { opacity: .5; cursor: default; pointer-events: none; }
+.gen-usage-wrap { display: block; }
+/* A-OWNER-67d: one line, smaller than the progress line; the script shortens the text when it would not fit */
+.gen-usage { font-size: 12px; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; margin: 4px 0; }
+.gen-usage:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; border-radius: 4px; }
+.btn.danger-text { color: var(--danger); }
+@media (hover: hover) { .btn.danger-text:hover:not(:disabled) { color: var(--danger-hover); background: var(--danger-soft); } }
+
+/* the primary button of the AI tone (Import) */
+.btn.primary.ai { background: var(--ai-2); border-color: var(--ai-2); color: var(--ai-ink); text-shadow: 0 1px 0 rgba(110, 32, 0, .55); }
+@media (hover: hover) { .btn.primary.ai:hover:not(:disabled) { background: var(--ai-3); border-color: var(--ai-3); } }
+
+/* ---------- Dialog parts ---------- */
+.gen-form { display: flex; flex-direction: column; gap: 8px; }
+.gen-label { font-weight: 600; font-size: 14px; }
+.gen-name { width: 100%; box-sizing: border-box; font-size: 16px; }
+.gen-hint { margin: 0; font-size: 12.5px; }
+.gen-quota { margin: 4px 0 0; font-size: 13px; color: var(--ink2); line-height: 1.5; }
+.gen-file-line { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.gen-privacy { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 10px 12px; border-radius: 8px; background: var(--hover); color: var(--ink2); font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) {
+  .gen-card { padding: 12px 12px; }
+  .gen-confirm-acts { flex-wrap: nowrap; }
+  .gen-confirm-acts .btn { flex: 1 1 0; min-width: 0; padding-inline: 6px; }
+}
+@media (max-width: 340px) { .gen-confirm-acts { flex-wrap: wrap; } }

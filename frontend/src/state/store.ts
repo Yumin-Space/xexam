@@ -1,7 +1,7 @@
 // Application state: one typed module-level object. Page-local UI state (filters, open panels, a pending upload preview)
 // lives in module-level variables of the page file itself; only state shared between pages lives here.
 import type {
-  AttemptKind, AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
+  AiService, AttemptKind, AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
 } from '../types/api.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
 import { type Route } from '../router.ts';
@@ -39,12 +39,20 @@ export interface Session {
   /** v0.9: the session key (32 lower-case hex) and the start time (unix seconds) that tie the session to its AI chat and record */
   key: string;
   startedAt: number;
+  /** v1.1 (TL-2): the time limit of a timed exam in seconds (null = untimed, and always null for a practice) */
+  limit: number | null;
+  /** The 30-minute notice was shown (TL-4); saved with the session */
+  warned: boolean;
+  /** The time ran out (TL-5); saved with the session, so a reload can never continue answering */
+  timeUp: boolean;
 }
 
 export interface ResultRow {
   q: Question;
   ans: Answer;
   correct: boolean;
+  /** v1.1 (TL-7): an exam question that was not completed (no answer, not correct); never set for a practice */
+  unanswered?: boolean;
 }
 
 export interface ResultState {
@@ -61,6 +69,10 @@ export interface ResultState {
   /** v0.9: the session this result came from (AI hints and explanations of the result page belong to its chat) */
   key: string;
   startedAt: number;
+  /** v1.1 (TL-7): the limit of a timed exam in seconds, null for an untimed exam and a practice */
+  limit: number | null;
+  /** v1.1: how the exam ended; null for a practice */
+  ended: 'submit' | 'timeUp' | null;
 }
 
 export interface SetupConfig {
@@ -103,8 +115,13 @@ export interface AppState {
   cfg: SetupConfig;
   session: Session | null;
   result: ResultState | null;
-  rvFilter: 'wrong' | 'all';
+  rvFilter: 'wrong' | 'open' | 'all';
   timer: number | null;
+  /**
+   * v1.1 (BT-2): the state of ai-service as the main service reports it (`GET /api/auth/state` `aiService`, administrators
+   * only), null = not known or not an administrator; the admin badges take their reason from it
+   */
+  aiService: AiService | null;
 }
 
 export const S: AppState = {
@@ -129,6 +146,7 @@ export const S: AppState = {
   result: null,
   rvFilter: 'wrong',
   timer: null,
+  aiService: null,
 };
 
 /** Selection key of one sheet of one bank (sheet names repeat across banks) */
@@ -156,7 +174,9 @@ export function syncSelection(): void {
   if (!c.selected) {
     c.selected = new Set(keys);
   } else {
-    for (const k of keys) if (!c.known.includes(k)) c.selected.add(k);
+    // A-OWNER-64.2: a new AI bank appears in the list unticked (so AI generation is not greyed by it); other new banks are ticked
+    const aiKeys = new Set(S.banks.filter((b) => b.ai).flatMap((b) => b.sheets.map((s) => sheetKey(b.id, s.name))));
+    for (const k of keys) if (!c.known.includes(k) && !aiKeys.has(k)) c.selected.add(k);
     for (const k of [...c.selected]) if (!keys.includes(k)) c.selected.delete(k);
   }
   c.known = keys;
@@ -215,5 +235,6 @@ export function clearUserData(): void {
   S.session = null;
   S.result = null;
   S.rvFilter = 'wrong';
+  S.aiService = null;
   S.navOpen = false;
 }

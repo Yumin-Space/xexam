@@ -14,6 +14,9 @@
 //! - v0.7: "include banks imported later" (`users.new_banks`): whenever a bank is created ([`insert_bank`], every path that
 //!   inserts a `banks` row), the same transaction adds a `user_banks` row for every user with the flag on. Existing banks are
 //!   never added by the flag, and unticking one bank removes only that bank's row.
+//! - v1.1: AI-generated banks (`banks.ai_job` / `banks.ai_meta`, schema v7; see `ai_gen`). They are banks like any other for
+//!   access (the same `user_banks` rows, shared to the "include banks imported later" users while `AI_BANKS_AUTO_SHARE`), but
+//!   an Excel import into one is refused ([`DbError::AiBank`]) and the bank list names their source ([`ai_summary`]).
 //! - The `*_as` methods take that viewer: the bank list is limited to the visible banks, and deleting a bank checks the owner
 //!   inside the same transaction as the delete ([`DbError::NotBankOwner`] = nothing written).
 use super::records::snapshot_ids;
@@ -117,7 +120,7 @@ pub(super) fn name_from_filename(filename: &str) -> String {
 }
 
 /// `base`, or `base (2)`, `base (3)`, … — the first one no other bank uses.
-fn unique_name(c: &Connection, base: &str) -> Result<String, DbError> {
+pub(super) fn unique_name(c: &Connection, base: &str) -> Result<String, DbError> {
     let taken: HashSet<String> = {
         let mut st = c.prepare("SELECT name FROM banks")?;
         let rows = st.query_map([], |r| r.get::<_, String>(0))?;
@@ -132,8 +135,21 @@ fn unique_name(c: &Connection, base: &str) -> Result<String, DbError> {
     Ok(name)
 }
 
-/// Inserts a bank row (inside the caller's transaction). Every bank this version creates goes through here: the users who
-/// chose "include banks imported later" get it at once ([`bank_created`]).
+/// Who gets a `user_banks` row for a bank that was just created ([`insert_bank`]). Every variant records the bank as known
+/// to this version (`note_known_banks`), otherwise the next open's rollback fix-up would share it anyway.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum NewBankShare<'a> {
+    /// Every user with "include banks imported later" (an import: v0.7 behaviour)
+    All,
+    /// Only the "include later" users who can see every one of these (source) banks (an AI bank while
+    /// `AI_BANKS_AUTO_SHARE`); an empty list shares with nobody
+    Visible(&'a [i64]),
+    /// Nobody (an AI bank while `AI_BANKS_AUTO_SHARE` is off)
+    Nobody,
+}
+
+/// Inserts a bank row (inside the caller's transaction). Every bank this version creates goes through here: the users in
+/// `share` get it at once ([`bank_created`]).
 pub(super) fn insert_bank(
     c: &Connection,
     name: &str,
@@ -141,13 +157,14 @@ pub(super) fn insert_bank(
     legacy: bool,
     created_at: &str,
     updated_at: &str,
+    share: NewBankShare<'_>,
 ) -> Result<i64, DbError> {
     c.execute(
         "INSERT INTO banks(name, filename, legacy_ids, created_at, updated_at) VALUES(?1,?2,?3,?4,?5)",
         params![name, filename, i64::from(legacy), created_at, updated_at],
     )?;
     let id = c.last_insert_rowid();
-    bank_created(c, id)?;
+    bank_created(c, id, share)?;
     Ok(id)
 }
 
@@ -167,11 +184,12 @@ pub(super) fn note_known_banks(c: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-/// A bank was just created (inside the same transaction): every user with "include banks imported later" (`new_banks = 1`)
-/// gets a `user_banks` row for it, and the bank is known to this version. Nothing happens while the users table does not
-/// exist yet (the v1 → v2 step of a migration creates the legacy bank before the v3 step adds users; the v4 step then gives
-/// every user every bank).
-fn bank_created(c: &Connection, id: i64) -> Result<(), DbError> {
+/// A bank was just created (inside the same transaction): the users in `share` get a `user_banks` row for it (`All`: every
+/// user with "include banks imported later", `new_banks = 1`; `Visible`: those of them who can see every source bank, the
+/// rule of `viewer_of`; `Nobody`: none), and the bank is known to this version. Nothing happens while the users table does
+/// not exist yet (the v1 → v2 step of a migration creates the legacy bank before the v3 step adds users; the v4 step then
+/// gives every user every bank).
+fn bank_created(c: &Connection, id: i64, share: NewBankShare<'_>) -> Result<(), DbError> {
     let has_flag: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM pragma_table_info('users') WHERE name='new_banks')",
         [],
@@ -180,10 +198,30 @@ fn bank_created(c: &Connection, id: i64) -> Result<(), DbError> {
     if !has_flag {
         return Ok(());
     }
-    c.execute(
-        "INSERT OR IGNORE INTO user_banks(user_id, bank_id) SELECT id, ?1 FROM users WHERE new_banks <> 0",
-        params![id],
-    )?;
+    match share {
+        NewBankShare::All => {
+            c.execute(
+                "INSERT OR IGNORE INTO user_banks(user_id, bank_id) SELECT id, ?1 FROM users WHERE new_banks <> 0",
+                params![id],
+            )?;
+        }
+        NewBankShare::Visible(from) if !from.is_empty() => {
+            // A user is given the bank only when every source bank is visible to them (administrators, a `user_banks` row,
+            // or a bank they own while they may manage banks): a bank manager assigned a restricted bank must not spread
+            // questions derived from it to people who cannot see it
+            c.execute(
+                "INSERT OR IGNORE INTO user_banks(user_id, bank_id) \
+                 SELECT u.id, ?1 FROM users u \
+                 WHERE u.new_banks <> 0 \
+                   AND NOT EXISTS (SELECT 1 FROM json_each(?2) f WHERE NOT ( \
+                         u.role = 'admin' \
+                      OR EXISTS (SELECT 1 FROM user_banks ub WHERE ub.user_id = u.id AND ub.bank_id = f.value) \
+                      OR (u.can_manage_banks <> 0 AND EXISTS (SELECT 1 FROM banks b WHERE b.id = f.value AND b.owner_id = u.id))))",
+                params![id, serde_json::to_string(from)?],
+            )?;
+        }
+        NewBankShare::Visible(_) | NewBankShare::Nobody => {}
+    }
     note_known_banks(c)
 }
 
@@ -197,7 +235,7 @@ pub(super) fn create_bank(
     owner: Option<i64>,
 ) -> Result<BankRow, DbError> {
     let name = unique_name(c, &name_from_filename(filename))?;
-    let id = insert_bank(c, &name, filename, legacy, now, now)?;
+    let id = insert_bank(c, &name, filename, legacy, now, now, NewBankShare::All)?;
     // `insert_bank` also serves the v2 migration, which runs before `owner_id` exists, so the owner is set here
     let owner = match owner {
         Some(o) => Some(o),
@@ -215,6 +253,84 @@ pub(super) fn create_bank(
         created_at: now.to_string(),
         updated_at: now.to_string(),
     })
+}
+
+/// Whether bank `id` is an AI-generated bank (`banks.ai_job` is set; schema v7). False for a bank that does not exist.
+pub(super) fn is_ai_bank(c: &Connection, id: i64) -> Result<bool, DbError> {
+    Ok(c.query_row(
+        "SELECT ai_job IS NOT NULL FROM banks WHERE id=?1",
+        params![id],
+        |r| r.get::<_, bool>(0),
+    )
+    .optional()?
+    .unwrap_or(false))
+}
+
+/// The `"ai"` object of an AI bank in `GET /api/banks`: `{"source", "from": [source bank names], "author", "made", "goal",
+/// "at"}`, read leniently from `banks.ai_meta`. `from` lists only the source banks `viewer` can see (administrators: all) and
+/// drops banks without a name, so the bank list never names a bank outside the viewer's scope. The author (a username) is
+/// shown to everyone who sees the bank (owner-approved exception to "the bank list never names other accounts"); the author's
+/// id never leaves the server.
+pub(super) fn ai_summary(meta: &str, viewer: &Viewer) -> Value {
+    let m: Value = serde_json::from_str(meta).unwrap_or(Value::Null);
+    let source = m
+        .get("source")
+        .and_then(Value::as_str)
+        .filter(|s| matches!(*s, "bank" | "scope" | "wrong" | "file"))
+        .unwrap_or("bank");
+    let from: Vec<Value> = m
+        .get("from")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|b| {
+                    let id = b.get("id")?.as_i64()?;
+                    let name = b.get("name")?.as_str()?;
+                    viewer.scope.allows(Some(id)).then(|| json!(name))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut out = serde_json::Map::new();
+    out.insert("source".into(), json!(source));
+    out.insert("from".into(), Value::Array(from));
+    if source == "file" {
+        // P-37: the file name (shown as text), the mode and, in questions mode, the numbers that could not be converted
+        out.insert(
+            "file".into(),
+            json!(m.pointer("/file/name").and_then(Value::as_str)),
+        );
+        let mode = m
+            .get("mode")
+            .and_then(Value::as_str)
+            .filter(|s| matches!(*s, "questions" | "material"));
+        out.insert("mode".into(), json!(mode));
+        if mode == Some("questions") {
+            let skipped: Vec<i64> = m
+                .get("skipped")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_i64).collect())
+                .unwrap_or_default();
+            out.insert("skipped".into(), json!(skipped));
+        }
+    }
+    out.insert(
+        "author".into(),
+        json!(m.get("author").and_then(Value::as_str)),
+    );
+    out.insert(
+        "made".into(),
+        json!(m.get("made").and_then(Value::as_i64).unwrap_or(0)),
+    );
+    out.insert(
+        "goal".into(),
+        json!(m.get("goal").and_then(Value::as_i64).unwrap_or(0)),
+    );
+    out.insert(
+        "at".into(),
+        json!(m.get("at").and_then(Value::as_str).unwrap_or("")),
+    );
+    Value::Object(out)
 }
 
 /// The owner of bank `id` (`None`: no such bank, or a bank without a recorded owner).
@@ -304,6 +420,15 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<Result<_, _>>()?
     };
+    // v1.1: the facts of the AI-generated banks
+    let ai_metas: HashMap<i64, String> = {
+        let mut st = c.prepare("SELECT id, ai_meta FROM banks WHERE ai_job IS NOT NULL")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get::<_, Option<String>>(1)?)))?;
+        rows.collect::<Result<Vec<(i64, Option<String>)>, _>>()?
+            .into_iter()
+            .map(|(id, meta)| (id, meta.unwrap_or_default()))
+            .collect()
+    };
     let usernames: HashMap<i64, String> = {
         let mut st = c.prepare("SELECT id, username FROM users")?;
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
@@ -381,7 +506,7 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
                 .iter()
                 .map(|(name, usable, inactive)| json!({"name": name, "usable": usable, "inactive": inactive}))
                 .collect();
-            json!({
+            let mut bank = json!({
                 "id": b.id,
                 "name": b.name,
                 "filename": b.filename,
@@ -398,7 +523,12 @@ fn banks_json(c: &Connection, viewer: &Viewer) -> Result<Value, DbError> {
                 "ownerId": if viewer.admin { owner } else { owner.filter(|o| *o == viewer.user) },
                 "owner": if viewer.admin { owner.and_then(|o| usernames.get(&o)) } else { None },
                 "manageable": viewer.manages(owner),
-            })
+            });
+            // v1.1: an AI bank carries one more key at the end
+            if let (Some(meta), Some(obj)) = (ai_metas.get(&b.id), bank.as_object_mut()) {
+                obj.insert("ai".to_string(), ai_summary(meta, viewer));
+            }
+            bank
         })
         .collect();
     Ok(json!({ "banks": list }))
@@ -450,7 +580,8 @@ impl Store {
     }
 
     /// Whether `viewer` may write an import into `target`: `Ok(true)` yes, `Ok(false)` the bank does not exist,
-    /// [`DbError::NotBankOwner`] it exists but they may not update it. A new bank is always allowed (the route already checked
+    /// [`DbError::NotBankOwner`] it exists but they may not update it, [`DbError::AiBank`] it is an AI-generated bank (never
+    /// updated from a workbook). A new bank is always allowed (the route already checked
     /// the permission); so is the legacy target while there is no legacy bank (it would be created, owned by them).
     pub fn check_import_target(
         &self,
@@ -470,11 +601,14 @@ impl Store {
                 None => return Ok(false),
             },
         };
-        if viewer.manages(bank_owner(&g, bank.id)?) {
-            Ok(true)
-        } else {
-            Err(DbError::NotBankOwner)
+        if !viewer.manages(bank_owner(&g, bank.id)?) {
+            return Err(DbError::NotBankOwner);
         }
+        // v1.1: an AI-generated bank is never updated from a workbook
+        if is_ai_bank(&g, bank.id)? {
+            return Err(DbError::AiBank);
+        }
+        Ok(true)
     }
 
     /// An opaque stamp of the whole question library as an administrator sees it (`"library"` of `GET /api/auth/state`): it
@@ -562,6 +696,123 @@ fn visible_banks_stamp(g: &Connection, ids: &BTreeSet<i64>) -> Result<String, Db
         }
     }
     Ok(out)
+}
+
+impl Store {
+    /// v1.1 (C-B1): deletes the named sheets of bank `id` (questions of those sheets, active or retired), in one transaction.
+    /// `Ok(None)` = no such bank, not manageable by the viewer, or a name that is not a sheet of it (nothing written);
+    /// [`DbError::SheetsAll`] = every sheet is named (delete the bank instead); [`DbError::AiBankSheets`] = an AI bank (one
+    /// sheet; delete the bank instead). The wrong-answer statistics of the deleted questions are removed for every user (they
+    /// would be orphans); with `with_records` the exam items of those questions go too (the viewer's own when a bank manager,
+    /// everyone's for an administrator) and so do the exams left without any item. Without it the attempts stay as stored.
+    pub fn delete_sheets_as(
+        &self,
+        viewer: &Viewer,
+        id: i64,
+        sheets: &[String],
+        with_records: bool,
+    ) -> Result<Option<DeletedBank>, DbError> {
+        let g = self.lock();
+        run_tx(&g, |c| {
+            let Some(bank) = bank_by_id(c, id)? else {
+                return Ok(None);
+            };
+            if !viewer.manages(bank_owner(c, id)?) {
+                return Ok(None);
+            }
+            if is_ai_bank(c, id)? {
+                return Err(DbError::AiBankSheets);
+            }
+            let existing: HashSet<String> = {
+                let mut st = c.prepare("SELECT DISTINCT sheet FROM questions WHERE bank_id=?1")?;
+                let rows = st.query_map(params![id], |r| r.get::<_, String>(0))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            let named: HashSet<&String> = sheets.iter().collect();
+            if named.is_empty() || named.iter().any(|n| !existing.contains(*n)) {
+                return Ok(None);
+            }
+            if existing.iter().all(|e| named.contains(e)) {
+                return Err(DbError::SheetsAll);
+            }
+            let mut question_ids: Vec<String> = Vec::new();
+            {
+                let mut st = c.prepare("SELECT id FROM questions WHERE bank_id=?1 AND sheet=?2")?;
+                for name in &named {
+                    let rows = st.query_map(params![id, name], |r| r.get::<_, String>(0))?;
+                    for row in rows {
+                        question_ids.push(row?);
+                    }
+                }
+            }
+            {
+                let mut del = c.prepare("DELETE FROM questions WHERE bank_id=?1 AND sheet=?2")?;
+                for name in &named {
+                    del.execute(params![id, name])?;
+                }
+            }
+            exec_in_chunks(
+                c,
+                "DELETE FROM user_stats WHERE question_id IN ({marks})",
+                &question_ids,
+            )?;
+            if with_records {
+                let only_user = (!viewer.admin).then_some(viewer.user);
+                let mut touched: BTreeSet<i64> = BTreeSet::new();
+                for chunk in question_ids.chunks(IN_CHUNK) {
+                    let marks = vec!["?"; chunk.len()].join(",");
+                    let mut st = c.prepare(&format!(
+                        "SELECT DISTINCT attempt_id FROM attempt_items WHERE question_id IN ({marks})"
+                    ))?;
+                    let rows = st.query_map(rusqlite::params_from_iter(chunk.iter()), |r| {
+                        r.get::<_, i64>(0)
+                    })?;
+                    for row in rows {
+                        touched.insert(row?);
+                    }
+                }
+                for attempt in touched {
+                    if let Some(user) = only_user {
+                        let mine = c
+                            .query_row(
+                                "SELECT 1 FROM attempts WHERE id=?1 AND user_id=?2",
+                                params![attempt, user],
+                                |_| Ok(()),
+                            )
+                            .optional()?
+                            .is_some();
+                        if !mine {
+                            continue;
+                        }
+                    }
+                    for chunk in question_ids.chunks(IN_CHUNK) {
+                        let marks = vec!["?"; chunk.len()].join(",");
+                        let mut args: Vec<rusqlite::types::Value> = vec![attempt.into()];
+                        args.extend(chunk.iter().map(|q| q.clone().into()));
+                        c.execute(
+                            &format!(
+                                "DELETE FROM attempt_items WHERE attempt_id=? AND question_id IN ({marks})"
+                            ),
+                            rusqlite::params_from_iter(args),
+                        )?;
+                    }
+                    let left: i64 = c.query_row(
+                        "SELECT COUNT(*) FROM attempt_items WHERE attempt_id=?1",
+                        params![attempt],
+                        |r| r.get(0),
+                    )?;
+                    if left == 0 {
+                        c.execute("DELETE FROM attempts WHERE id=?1", params![attempt])?;
+                    }
+                }
+            }
+            Ok(Some(DeletedBank {
+                id,
+                legacy: bank.legacy,
+                name: bank.name,
+            }))
+        })
+    }
 }
 
 impl Store {

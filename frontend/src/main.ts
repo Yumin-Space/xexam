@@ -6,12 +6,14 @@ import { isTooManyRequests } from './api/client.ts';
 import { installAiPanel, reanchorAiPanel } from './components/ai-panel.ts';
 import { installAiSummary } from './components/ai-summary.ts';
 import type { StudyUiDeps } from './components/ai-study-ui.ts';
+import './components/ai-import.ts';
 import { brand } from './components/common.ts';
 import { githubLine } from './components/github-line.ts';
 import { afterShellRender, installShellHandlers, resetTopH, shell } from './components/shell.ts';
 import { installTooltips } from './components/tooltip.ts';
 import { t, uiLang } from './i18n/index.ts';
 import { errorText, setAdminForTexts, studyErrorText } from './i18n/errors.ts';
+import { readFeatures } from './domain/ai-features.ts';
 import { renderAbout } from './pages/about.ts';
 import { renderAiChat, renderAiNoAccess, renderAiUnavailable } from './pages/ai.ts';
 import { renderAiSettings } from './pages/ai-settings.ts';
@@ -27,6 +29,7 @@ import { renderSettings } from './pages/settings.ts';
 import { renderUsers } from './pages/users.ts';
 import { boot, refreshAi, setRenderer } from './state/actions.ts';
 import { aiStatus, onCallBlockChange } from './state/ai.ts';
+import { installAiGen } from './state/ai-gen.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
 import { S, canManageBanks, isAdmin } from './state/store.ts';
 import { h, keepFocus, must } from './utils/dom.ts';
@@ -71,7 +74,10 @@ function page(): { el: HTMLElement; title: string } {
       if (ai.state === 'loading') {
         return { el: h('div', { class: 'page page-ai' }, h('p', { class: 'dim', role: 'status' }, t('ai.loading'))), title: t('ai.title') };
       }
-      if (ai.state === 'ready' && ai.allowed) return { el: renderAiChat('full'), title: t('ai.title') };
+      // v1.1 (FP-3): with the `chat` feature unticked the page opens read only (the history stays readable)
+      if (ai.state === 'ready' && ai.allowed) {
+        return { el: renderAiChat(readFeatures(ai.features).chat || isAdmin() ? 'full' : 'readOnly'), title: t('ai.title') };
+      }
       // AI+ or AI switched off, but the user has chats or memories: they can still read and delete them
       if (ai.state === 'ready' && ai.hasData) return { el: renderAiChat('readOnly'), title: t('ai.title') };
       // The AI service cannot be reached: say so (with Retry) instead of blaming the account
@@ -189,6 +195,7 @@ const studyDeps: StudyUiDeps = {
 };
 installAiPanel(studyDeps);
 installAiSummary(studyDeps);
+installAiGen();
 // v1.0: the texts of the AI request caps name the administrator's settings only for administrators; a change of the caps
 // block redraws the page, so the AI controls enable or disable themselves
 setAdminForTexts(() => S.user?.role === 'admin');

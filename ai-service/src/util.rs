@@ -43,6 +43,28 @@ pub fn local_minute(ts: i64) -> String {
     }
 }
 
+/// `YYYYMMDDHHMMSS` of a unix time in the server's time zone (the time stamp of a generated bank's name).
+pub fn local_stamp(ts: i64) -> String {
+    match jiff::Timestamp::from_second(ts) {
+        Ok(t) => t
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y%m%d%H%M%S")
+            .to_string(),
+        Err(_) => "19700101000000".to_string(),
+    }
+}
+
+/// `YYYY-MM-DD HH:MM:SS` of a unix time in the server's time zone (the `at` of the create route).
+pub fn local_second(ts: i64) -> String {
+    match jiff::Timestamp::from_second(ts) {
+        Ok(t) => t
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+        Err(_) => "1970-01-01 00:00:00".to_string(),
+    }
+}
+
 /// Today's local date.
 pub fn local_today() -> jiff::civil::Date {
     jiff::Zoned::now().date()

@@ -396,7 +396,7 @@ fn a_prerelease_v4_database_is_converted_on_open_after_a_backup() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "6");
+    assert_eq!(schema, "7");
     assert_eq!(
         count(
             &c,
@@ -893,6 +893,8 @@ fn old_layout_questions_are_retired_once_keeping_records_notebook_and_banks() {
                 mode: "all".to_string(),
                 seconds: 9,
                 kind: Default::default(),
+                limit: None,
+                end: None,
             },
         )
         .expect("record");

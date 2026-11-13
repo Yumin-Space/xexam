@@ -14,8 +14,10 @@ import type { AuthUser, Role } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, isAppScroll } from '../utils/dom.ts';
 import { matches, PHONE_MQ } from '../utils/media.ts';
-import { aiBadge, badgeReasonText } from './ai-badge.ts';
+import { offList, readFeatures } from '../domain/ai-features.ts';
+import { aiBadge, badgeReasonText, badgeTipText } from './ai-badge.ts';
 import { brand } from './common.ts';
+import { holdTip } from './tooltip.ts';
 import { githubLine } from './github-line.ts';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -242,6 +244,8 @@ export function shell(content: HTMLElement): HTMLElement {
   // v0.8: the AI+ badge (round 2: bright while the user can use AI now, dark while they have the AI+ service but cannot use
   // it now, none without the service; domain/badge-state.ts)
   const badge = ownBadgeState(user, ai);
+  // v1.1 (BT-2): the features that are off name themselves in the bright badge's tip (administrators have them all)
+  const off = ai.state === 'ready' && user?.role !== 'admin' ? offList(readFeatures(ai.features)) : [];
 
   // A new page, or an open menu, always shows the bar
   const here = routeHash(S.route);
@@ -255,7 +259,7 @@ export function shell(content: HTMLElement): HTMLElement {
     h('div', { class: 'nav-who' },
       icon(ICONS.user),
       h('span', { class: 'nav-who-name', title: user.username }, user.username),
-      h('span', { class: 'nav-who-tags' }, roleTags(user), aiBadge(badge))),
+      h('span', { class: 'nav-who-tags' }, roleTags(user), aiBadge(badge, { off }))),
     // MN-4: the dark badge's reason in words under the name; a tooltip is not reachable on a touch screen
     badge.kind === 'off' && badge.reason === 'suspended' ? h('p', { class: 'nav-paused' }, t('nav.aiPaused')) : null,
     h('button', { class: 'nav-link nav-signout', type: 'button', onclick: () => void signOut() },
@@ -303,8 +307,9 @@ export function shell(content: HTMLElement): HTMLElement {
     : badge.kind === 'on' ? t('nav.accountLabelAi', { name: user.username, role: roleText(user) })
       : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: user.username, role: roleText(user), reason: badgeReasonText(badge.reason) })
         : t('nav.accountLabel', { name: user.username, role: roleText(user) });
-  const accountBtn = user ? h('button', {
-    class: 'acct-btn' + (open ? ' on' : '') + (badge.kind !== 'none' ? ' has-ai' : ''), id: 'acct-btn', type: 'button', title: user.username,
+  // v1.1 (BT-6): no native title on the button (it would cover the badge's tip); on touch the badge tip is a tap-and-hold
+  const accountBtn0 = user ? h('button', {
+    class: 'acct-btn' + (open ? ' on' : '') + (badge.kind !== 'none' ? ' has-ai' : ''), id: 'acct-btn', type: 'button',
     'aria-label': accountLabel,
     'aria-haspopup': 'true', 'aria-expanded': String(open), 'aria-controls': 'nav-menu',
     onclick: (e: MouseEvent) => {
@@ -315,11 +320,13 @@ export function shell(content: HTMLElement): HTMLElement {
   },
   icon(ICONS.user, 'ico acct-ico'),
   h('span', { class: 'acct-name' }, user.username),
-  aiBadge(badge, { inButton: true }),
+  aiBadge(badge, { inButton: true, off }),
   // Phones show the short form ("Admin"), so the username keeps its room; the full role is in the label and in the menu
   admin ? h('span', { class: 'tag b acct-role' },
     h('span', { class: 'acct-role-l' }, roleName('admin')),
     h('span', { class: 'acct-role-s' }, t('role.admin.short'))) : null) : null;
+  const accountTip = badgeTipText(badge, 'own', off);
+  const accountBtn = accountBtn0 && accountTip ? holdTip(accountBtn0, accountTip, { touchOnly: true }) : accountBtn0;
 
   // The logo on the left, the account label and the menu button on the right (the dropdown opens towards the left,
   // aligned to the right edge)

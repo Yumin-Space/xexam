@@ -7,8 +7,9 @@
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
   padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(12px, calc(6px + env(safe-area-inset-bottom))) max(16px, env(safe-area-inset-left));
 }
-/* Owner (v1.0): the card stays in the middle of the free space, the language switch and the GitHub line at the screen bottom */
-.auth > .auth-card, .auth > .auth-foot { margin-top: auto; }
+/* Owner (v1.1, SI-1): the card stays in the middle of the free space, the language switch right under it (the flex gap, 16 px),
+   and only the GitHub line at the screen bottom */
+.auth > .auth-card, .auth > .auth-bottom { margin-top: auto; }
 .auth-card {
   width: 100%; max-width: 400px; padding: 32px 32px 28px;
   background: var(--card); border: 1px solid var(--line-soft); border-radius: 12px; box-shadow: var(--shadow-xs);
@@ -29,8 +30,9 @@
 .auth-acts .btn.quiet { justify-self: center; }
 .auth-hint { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line-soft); font-size: 13px; line-height: 1.6; color: var(--ink3); }
 
-/* Under the card: the language of these two pages, and the version */
-.auth-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; font-size: 12.5px; color: var(--ink3); }
+/* Under the card: the language of these two pages; at the bottom of the screen: the GitHub line and the version */
+.auth-lang { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; font-size: 12.5px; color: var(--ink3); }
+.auth-bottom { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 16px; font-size: 12.5px; color: var(--ink3); }
 .auth-langs button { min-height: 28px; padding: 2px 10px; font-size: 13px; }
 @media (pointer: coarse) { .auth-langs button { min-height: 44px; padding-inline: 14px; } }
 

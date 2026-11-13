@@ -8,6 +8,12 @@
 //! v0.6.5 (schema v4): every record has a `kind` (`"exam"` or `"practice"`, `attempts.kind`), the trailing key of a summary.
 //! Records stay visible as history when the user can no longer see a bank: in the detail, the questions of a bank outside
 //! their [`BankScope`] are left out exactly like deleted questions (`"question": null`, no text).
+//!
+//! v1.1 (schema v7): a record whose `ended` is set (every exam saved under the not-answered rule, timed or not) gets the
+//! keys `"limit"` (only a timed exam), `"ended"` (`"submit"` | `"timeUp"`) and `"unanswered"` (the count, also 0) right
+//! after `"kind"`; its items whose answer is NULL and `correct` 0 are the unanswered ones and carry `"unanswered": true`
+//! after `"correct"`. Nothing is stored for them: they are derived. A record with `ended` NULL (a practice, or anything
+//! written before v1.1) is byte-identical to v1.0 and is never re-derived.
 use super::super::{pyjson, RECORD_RETENTION};
 use super::{load_questions, question_object, run_tx, Store, QUESTION_COLUMNS};
 use crate::error::DbError;
@@ -109,12 +115,12 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
         let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect::<Result<_, _>>()?
     };
-    // attempt id -> (detail rows, answered rows)
-    let mut counts: HashMap<i64, (i64, i64)> = HashMap::new();
+    // attempt id -> (detail rows, answered rows, unanswered rows)
+    let mut counts: HashMap<i64, (i64, i64, i64)> = HashMap::new();
     {
         let sql = match only {
-            Some(_) => "SELECT attempt_id, COUNT(*), COUNT(answer) FROM attempt_items WHERE attempt_id=?1 GROUP BY attempt_id",
-            None => "SELECT i.attempt_id, COUNT(*), COUNT(i.answer) FROM attempt_items i JOIN attempts a ON a.id = i.attempt_id \
+            Some(_) => "SELECT attempt_id, COUNT(*), COUNT(answer), COALESCE(SUM(answer IS NULL AND correct = 0), 0) FROM attempt_items WHERE attempt_id=?1 GROUP BY attempt_id",
+            None => "SELECT i.attempt_id, COUNT(*), COUNT(i.answer), COALESCE(SUM(i.answer IS NULL AND i.correct = 0), 0) FROM attempt_items i JOIN attempts a ON a.id = i.attempt_id \
                      WHERE a.user_id=?1 GROUP BY i.attempt_id",
         };
         let mut st = c.prepare(sql)?;
@@ -123,10 +129,10 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             None => st.query(params![user])?,
         };
         while let Some(r) = rows.next()? {
-            counts.insert(r.get(0)?, (r.get(1)?, r.get(2)?));
+            counts.insert(r.get(0)?, (r.get(1)?, r.get(2)?, r.get(3)?));
         }
     }
-    let base = "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks, kind, session_key, started_at FROM attempts";
+    let base = "SELECT id, at, sheets, mode, total, correct, percent, seconds, banks, kind, session_key, started_at, time_limit, ended FROM attempts";
     let mut st = match only {
         Some(_) => c.prepare(&format!("{base} WHERE id=?1 AND user_id=?2"))?,
         None => c.prepare(&format!("{base} WHERE user_id=?1 ORDER BY id DESC"))?,
@@ -150,9 +156,9 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
                 })
             })
             .collect();
-        let (items, answered) = match counts.get(&id) {
-            Some(&(n, a)) if n > 0 => (n, Value::from(a)),
-            _ => (0, Value::Null),
+        let (items, answered, unanswered) = match counts.get(&id) {
+            Some(&(n, a, u)) if n > 0 => (n, Value::from(a), u),
+            _ => (0, Value::Null, 0),
         };
         let mut summary = json!({
             "id": id,
@@ -168,6 +174,18 @@ fn summaries(c: &Connection, user: i64, only: Option<i64>) -> Result<Vec<Value>,
             "detail": items > 0,
             "kind": r.get::<_, String>(9)?,
         });
+        // v1.1: an exam saved under the not-answered rule (`ended` set) says how it ended and how many questions were left
+        // unanswered; the time limit only when it was timed. Records with `ended` NULL keep exactly the v1.0 keys.
+        let time_limit: Option<i64> = r.get(12)?;
+        if let Some(ended) = r.get::<_, Option<String>>(13)? {
+            if let Some(obj) = summary.as_object_mut() {
+                if let Some(limit) = time_limit {
+                    obj.insert("limit".to_string(), json!(limit));
+                }
+                obj.insert("ended".to_string(), json!(ended));
+                obj.insert("unanswered".to_string(), json!(unanswered));
+            }
+        }
         // v0.9: the detail of one record also says which session it was saved from (null for older records)
         if only.is_some() {
             if let Some(obj) = summary.as_object_mut() {
@@ -236,8 +254,11 @@ impl Store {
             rows.collect::<Result<_, _>>()?
         };
         let question_sql = format!("SELECT {QUESTION_COLUMNS} FROM questions WHERE id=?1");
+        // v1.1: the items of a record saved under the not-answered rule (`ended` set) that were left unanswered are flagged
+        let derives_unanswered = record.get("ended").is_some();
         let mut items = Vec::with_capacity(rows.len());
         for (seq, question_id, answer, correct) in rows {
+            let unanswered = derives_unanswered && answer.is_none() && !correct;
             let answer: Value = match answer {
                 Some(text) => serde_json::from_str(&text)?,
                 None => Value::Null,
@@ -253,13 +274,19 @@ impl Store {
                 }
                 None => Value::Null,
             };
-            items.push(json!({
+            let mut item = json!({
                 "seq": seq,
                 "questionId": question_id,
                 "answer": answer,
                 "correct": correct,
-                "question": question,
-            }));
+            });
+            if let Some(obj) = item.as_object_mut() {
+                if unanswered {
+                    obj.insert("unanswered".to_string(), Value::Bool(true));
+                }
+                obj.insert("question".to_string(), question);
+            }
+            items.push(item);
         }
         Ok(Some(json!({ "record": record, "items": items })))
     }

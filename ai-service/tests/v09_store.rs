@@ -133,16 +133,17 @@ fn write_old_fixture(dir: &Path, version: &str, with_rows: bool) {
 // Schema 4 (v1.0; the study columns and indexes come from schema 3)
 
 #[test]
-fn a_fresh_database_is_schema_4_with_every_column_and_index() {
+fn a_fresh_database_is_schema_5_with_every_column_and_index() {
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "4");
+            assert_eq!(schema_of(c), "6");
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
                 .chain(schema::V4_COLUMNS.iter())
+                .chain(schema::V5_COLUMNS.iter())
             {
                 assert!(has_column(c, table, column), "{table}.{column}");
             }
@@ -150,6 +151,13 @@ fn a_fresh_database_is_schema_4_with_every_column_and_index() {
                 "idx_chats_ref",
                 "idx_messages_study",
                 "idx_messages_streaming",
+                "idx_tasks_active",
+                "idx_tasks_job",
+                "idx_tasks_user",
+                "idx_tasks_charged",
+                "idx_gen_calls_day",
+                "idx_gen_calls_task",
+                "idx_gen_calls_user",
             ] {
                 assert!(index_exists(c, name), "{name}");
             }
@@ -185,11 +193,12 @@ fn upgraded_from(version: &str, with_rows: bool) {
     drop(copy);
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "4");
+            assert_eq!(schema_of(c), "6");
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
                 .chain(schema::V4_COLUMNS.iter())
+                .chain(schema::V5_COLUMNS.iter())
             {
                 assert!(has_column(c, table, column), "{table}.{column}");
             }
@@ -286,7 +295,7 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
         .starts_with("xexam-ai-schema3-"));
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "4");
+            assert_eq!(schema_of(c), "6");
             let l = xexam_ai_service::store::tables::load_limits(c)?;
             assert_eq!(
                 (
@@ -295,16 +304,16 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
                     l.chats_per_user,
                     l.messages_per_chat,
                     l.memories_per_user,
-                    l.memory_chars
+                    l.memory_tokens
                 ),
-                (2, 9, 777, 123, 12, 222)
+                (2, 9, 777, 123, 12, 333)
             );
             assert_eq!(
                 (l.calls_per_minute, l.calls_per_hour, l.calls_per_day),
                 (5, 20, 100)
             );
-            // The answer length gets its default; nothing is derived from old values
-            assert_eq!(l.reply_max_chars, 1000);
+            // The answer length was at its old default: it moves to the new default (A-OWNER-43)
+            assert_eq!(l.reply_max_tokens, 3000);
             // The retired column keeps what it had (nothing reads or writes it any more)
             let retired: i64 =
                 c.query_row("SELECT message_chars FROM limits WHERE id = 1", [], |r| {
@@ -328,8 +337,8 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
         .expect("read");
 }
 
-/// The memory length a schema-`from` file reads after the upgrade, when it had `before` characters.
-fn memory_chars_after_upgrade(from: &str, before: i64) -> i64 {
+/// The memory length (tokens) a schema-`from` file reads after the upgrade, when it had `before` characters.
+fn memory_tokens_after_upgrade(from: &str, before: i64) -> i64 {
     let dir = tempfile::tempdir().expect("dir");
     write_old_fixture(dir.path(), from, true);
     {
@@ -339,40 +348,72 @@ fn memory_chars_after_upgrade(from: &str, before: i64) -> i64 {
     }
     let store = open(dir.path());
     let v = store
-        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_chars))
+        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_tokens))
         .expect("read");
     drop(store);
     v
 }
 
 #[test]
-fn the_old_memory_default_moves_to_200_once_and_other_values_stay() {
-    // v0.8 / v0.9 default 300 -> the new default 200, from every upgradable schema
+fn the_memory_length_moves_to_tokens_once() {
+    // the old defaults (300 of v0.8 / v0.9, 200 of v1.0) -> the new default 1000 tokens, from every upgradable schema
     for from in ["1", "2", "3"] {
-        assert_eq!(memory_chars_after_upgrade(from, 300), 200, "from {from}");
+        assert_eq!(memory_tokens_after_upgrade(from, 300), 1000, "from {from}");
+        assert_eq!(memory_tokens_after_upgrade(from, 200), 1000, "from {from}");
     }
-    // a value an administrator chose stays
-    assert_eq!(memory_chars_after_upgrade("3", 500), 500);
-    assert_eq!(memory_chars_after_upgrade("3", 50), 50);
-    // a fresh database reads 200
+    // a value an administrator chose is multiplied by 1.5
+    assert_eq!(memory_tokens_after_upgrade("3", 500), 750);
+    assert_eq!(memory_tokens_after_upgrade("3", 50), 75);
+    // a fresh database reads 1000
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     let v = store
-        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_chars))
+        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_tokens))
         .expect("read");
-    assert_eq!(v, 200);
+    assert_eq!(v, 1000);
     drop(store);
-    // a 300 set after the upgrade survives the next start (the move runs only while creating / upgrading)
+    // a value set after the upgrade survives the next start (the move runs only while upgrading)
     {
         let c = Connection::open(dir.path().join(DB_FILE)).expect("open");
-        c.execute("UPDATE limits SET memory_chars = 300 WHERE id = 1", [])
+        c.execute("UPDATE limits SET memory_tokens = 300 WHERE id = 1", [])
             .expect("set");
     }
     let store = open(dir.path());
     let v = store
-        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_chars))
+        .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_tokens))
         .expect("read");
     assert_eq!(v, 300);
+}
+
+#[test]
+fn a_schema_5_file_gets_its_three_lengths_in_tokens_with_a_backup() {
+    let tokens_after = |reply: i64, gen: i64, mem: i64| -> (i64, i64, i64) {
+        let dir = tempfile::tempdir().expect("dir");
+        drop(open(dir.path()));
+        {
+            let c = Connection::open(dir.path().join(DB_FILE)).expect("open");
+            c.execute(
+                "UPDATE limits SET reply_max_chars = ?1, gen_call_chars = ?2, memory_chars = ?3 WHERE id = 1",
+                [reply, gen, mem],
+            )
+            .expect("old values");
+            c.execute("UPDATE meta SET value = '5' WHERE key = 'schema'", [])
+                .expect("schema 5");
+        }
+        let store = open(dir.path());
+        assert_eq!(backups(dir.path()).len(), 1);
+        let l = store
+            .read(xexam_ai_service::store::tables::load_limits)
+            .expect("read");
+        (l.reply_max_tokens, l.gen_call_tokens, l.memory_tokens)
+    };
+    // the old defaults become the new defaults
+    assert_eq!(tokens_after(1000, 10000, 200), (3000, 20000, 1000));
+    // other values: x 1.5
+    assert_eq!(tokens_after(2000, 20000, 600), (3000, 30000, 900));
+    assert_eq!(tokens_after(1, 1000, 50), (1, 1500, 75));
+    // the old maxima stay inside the new range
+    assert_eq!(tokens_after(16000, 32000, 2000), (24000, 48000, 3000));
 }
 
 #[test]
@@ -383,7 +424,7 @@ fn the_check_ranges_of_the_call_caps_equal_the_limit_definitions() {
         .read(|c| {
             for d in xexam_ai_service::limits::DEFS
                 .iter()
-                .filter(|d| d.column.starts_with("calls_per_") || d.column == "reply_max_chars")
+                .filter(|d| d.column.starts_with("calls_per_") || d.column == "reply_max_tokens")
             {
                 for v in [d.min, d.max] {
                     c.execute(
@@ -469,23 +510,23 @@ fn reopening_a_current_database_writes_nothing() {
 }
 
 #[test]
-fn a_newer_schema_is_refused_with_the_schema_4_line() {
+fn a_newer_schema_is_refused_with_the_schema_5_line() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     let path = dir.path().join(DB_FILE);
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '5' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '7' WHERE key = 'schema'", [])
             .expect("set");
     }
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 5 must be refused"),
+        Ok(_) => panic!("schema 7 must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 5, written by a newer ai-service; this version (schema 4) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 7, written by a newer ai-service; this version (schema 6) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );
@@ -1387,6 +1428,7 @@ fn usage(user: i64, status: &'static str, tin: i64, tout: i64) -> UsageRow {
         tokens_in: Some(tin),
         tokens_out: Some(tout),
         tokens_cached: None,
+        tokens_cache_write: None,
         latency_ms: 10,
         first_byte_ms: Some(5),
         status,
@@ -1395,7 +1437,7 @@ fn usage(user: i64, status: &'static str, tin: i64, tout: i64) -> UsageRow {
 }
 
 #[test]
-fn usage_by_purpose_has_four_rows_in_a_fixed_order() {
+fn usage_by_purpose_has_seven_rows_in_a_fixed_order() {
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     let day = xexam_ai_service::util::local_date(NOW);
@@ -1406,7 +1448,7 @@ fn usage_by_purpose_has_four_rows_in_a_fixed_order() {
         .expect("empty");
     assert_eq!(
         rows.iter().map(|r| r.0).collect::<Vec<_>>(),
-        ["chat", "hint", "explain", "summary"]
+        ["chat", "hint", "explain", "summary", "generate", "import", "other"]
     );
     assert!(rows.iter().all(|r| r.1.calls == 0));
     store
@@ -1417,7 +1459,10 @@ fn usage_by_purpose_has_four_rows_in_a_fixed_order() {
             stats::insert_usage_purpose(tx, &usage(1, "ok", 100, 200), Some("hint"))?;
             stats::insert_usage_purpose(tx, &usage(1, "error", 0, 0), Some("hint"))?;
             stats::insert_usage_purpose(tx, &usage(1, "ok", 5, 6), Some("summary"))?;
-            // a non-chat call never counts
+            // a memory suggestion is AI Chat's; a connection test belongs to no feature (the "other" row)
+            let mut m = usage(1, "ok", 3, 4);
+            m.kind = "memory";
+            stats::insert_usage(tx, &m)?;
             let mut v = usage(1, "ok", 999, 999);
             v.kind = "verify";
             stats::insert_usage(tx, &v)?;
@@ -1436,7 +1481,12 @@ fn usage_by_purpose_has_four_rows_in_a_fixed_order() {
     let chat = get("chat");
     assert_eq!(
         (chat.calls, chat.tokens_in, chat.tokens_out, chat.errors),
-        (2, 11, 22, 0)
+        (3, 14, 26, 0)
+    );
+    let other = get("other");
+    assert_eq!(
+        (other.calls, other.tokens_in, other.tokens_out),
+        (1, 999, 999)
     );
     let hint = get("hint");
     assert_eq!(
@@ -1447,7 +1497,7 @@ fn usage_by_purpose_has_four_rows_in_a_fixed_order() {
     assert_eq!(get("summary").calls, 1);
     assert_eq!(
         rows.iter().map(|r| r.0).collect::<Vec<_>>(),
-        ["chat", "hint", "explain", "summary"]
+        ["chat", "hint", "explain", "summary", "generate", "import", "other"]
     );
     // the CHECK refuses an unknown purpose
     let bad =

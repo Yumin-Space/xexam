@@ -77,7 +77,7 @@ is reported as `skipped` with the reason.
 |---|---|
 | Shared | W-SH-1 sideways scroll, W-SH-2 toast vs pinned bars and the screen, W-SH-3 hit areas, W-SH-4 insets, W-SH-5 nothing covers a control, W-SH-6 contrast (also the footer lines and the Saved text), W-SH-7 dialog action rows, W-SH-8 nothing in the AI+ panel or the AI summary window navigates (the Saved text and its tip), W-SH-9 no focus frame on titles focused by script, W-SH-10 the footer's GitHub line on every page (a short page's blank space under it is reported as P2), W-MN-1 menu |
 | Practice / exam | W-QZ-1 first stem line, W-QZ-2 one-row bar, one-line button labels and fixed slots (Check answer and Next too), W-QZ-3 Next not covered, W-QZ-4 panel head position, W-QZ-5 question changes keep the panel and send no ask, W-QZ-6 greyed bar, W-QZ-7 landscape space, W-QZ-8 answer sheet, W-QZ-9 Check answer and Next are two buttons on every practice question (no Check answer in an exam) |
-| Other pages | W-RS-1 / 2 result, W-RC-1 records, W-HM-1 Home, W-CH-1 / 2 / 3 AI Chat (W-CH-3 = the keyboard, CH-13), W-US-1 users, W-LG-1 log swipe, W-ST-1 Settings, W-AS-1 AI settings, W-AS-2 answer and memory length in characters, W-AS-3 the four category tabs, W-CH-4 memory length (n / 200), W-US-2 #/users without permission (P2) |
+| Other pages | W-RS-1 / 2 result, W-RC-1 records, W-HM-1 Home, W-CH-1 / 2 / 3 AI Chat (W-CH-3 = the keyboard, CH-13), W-US-1 users, W-LG-1 log swipe, W-ST-1 Settings, W-AS-1 AI settings, W-AS-2 answer and memory length in characters, W-AS-3 the four category tabs, W-CH-4 memory length (n / 200), W-CH-5 touch swipes on the history list / conversation head move no frame (A-OWNER-76), W-US-2 #/users without permission (P2) |
 | Caps | W-CAP-1 second ask (with `--slow`: the callout goes away after `retryAt`), W-CAP-2 AI Chat capped, W-CAP-3 stale block |
 
 Run dimensions (spec 5.4): the default run is zh / light at the sizes a check names (default 360x740, 390x844, 844x390); the
@@ -117,3 +117,24 @@ spec 2.12 f.
 `js_call`, `rect`, `tap`, `tap_sel`, `swipe`, `type`, `key`, `scroll`, `shot`, `net_clear` / `net_requests`, `close`.
 `safe_area_supported` is False when this Chrome has no `Emulation.setSafeAreaInsetsOverride`; the checks that need the
 insets are then reported as skipped.
+
+## v1.1 checks
+
+`checks.py` group `g_v11` (run them alone with `--only W-IM-1,W-IM-2,W-GB-1,W-BT-1,W-FP-1,W-UC-1,W-AS-1v,W-FT-1,W-SI-1,W-AB-1`):
+
+| Check | What |
+|---|---|
+| W-IM-1 | Bank management (sam) at 360 / 390 / 412 / 768 / 1280: the AI import is its own card (not inside the Excel card) with a heading, a note naming the size and question limit, a drop zone; its button is the Excel button's twin (same size and left edge), 44 px high on phones, no sideways scroll; a user without AI+ (riley) sees no card |
+| W-IM-2 | Bank management (sam) at 360 / 390 / 412: a made-up file with 130 numbered lines fails locally (no AI call); the failed import card has a close button in its top-right corner, 44 px on a phone, and tapping it removes the card |
+| W-GB-1 | Home (sam): the AI generation button sits in the start panel header inside the screen, no sideways scroll |
+| W-BT-1 | every AI+ badge (header, menu, Settings, User management, AI settings rows, Home) has a non-empty tip; the account button has no native `title` |
+| W-FP-1 | AI settings > AI+ users: six checkboxes in two groups per row, each group on one row in zh / ja; administrators' boxes disabled |
+| W-UC-1 | AI settings > AI usage at 360 / 390 / 412: three charts with an `aria-label`, every bar labelled, the calls / tokens switch on both bar charts (the title follows, tokens are stacked), a tip on a tapped bar and 10 px beside the line (none 90 px away), the line 3 px, labels never overlap, they fit the card |
+| W-AB-1 | one AI bank is generated (admin), practised and deleted again: the AI+题集 badge with its tip and caution line is on the question card and on the result (skipped when no AI bank can be made on the stack) |
+| W-AS-1v | practice and exam at 360 / 390 / 768: no finish button in the answer sheet (folded or open), the top row has "已答 x/n" and a 完成考试 (green) / 完成练习 (orange) button, white text, left of the clock (44 px on touch, no overlap, inside the screen); at 1280 the rail keeps its button and the top row has neither |
+| W-FT-1 | the footer has one blank text line between its divider and its text, and one between the text and the GitHub line |
+| W-SI-1 | sign-in page: the language switch is about 16 px under the card; the GitHub line is at the screen bottom |
+
+`panel_case` (W-QZ-3 / 4 / 5) now taps an option and then 核对答案 (v1.1: no question type is checked on pick). End-to-end AI
+import / generation runs against the made-up provider in `tests/integration/stack_check.py` (section A6); the walk does not
+upload files.

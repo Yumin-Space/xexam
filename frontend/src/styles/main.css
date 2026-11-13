@@ -495,6 +495,10 @@ input, select, textarea { font: inherit; color: var(--ink); }
   text-shadow: 0 1px 0 rgba(110, 32, 0, .7), 1px 0 0 rgba(110, 32, 0, .35);
   animation: ai-shine 3.2s ease-in-out infinite;
 }
+/* v1.1 (GB-6): the AI+题集 marker is the same badge with the word after the hung "+": only the right padding changes */
+.ai-badge.ai-set { padding-right: 11px; }
+.ai-badge.ai-set .ai-badge-plus { position: static; margin-left: .06em; }
+.ai-badge-w { display: inline-flex; align-items: baseline; gap: 0; }
 .ai-badge-t { display: inline-block; }
 /* "AI" sits near the middle of the badge (a little left of centre, owner's request); the "+" is a symbol hung just right
    of it, in the right padding. */
@@ -631,9 +635,11 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .bars { display: flex; align-items: flex-end; gap: 4px; height: 44px; margin: 8px 0 0; }
 .bars i { flex: 1; max-width: 22px; background: var(--print); border-radius: 3px 3px 1px 1px; min-height: 2px; }
 /* v1.0 footer: the disclaimer (small, muted) and, as the last line of the page, the centered GitHub line; compact, the page's bottom */
-.foot { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; align-items: stretch; gap: 4px; color: var(--ink3); font-size: 12px; line-height: 1.55; }
+/* A-OWNER-20 (v1.1), from the bottom up: the GitHub line, one blank text line, the disclaimer, one blank text line, the divider */
+.foot { margin-top: 20px; padding-top: 1.55em; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; align-items: stretch; gap: 0; color: var(--ink3); font-size: 12px; line-height: 1.55; }
 .foot-note { margin: 0; }
-.foot .btn.quiet { align-self: flex-start; min-height: 30px; font-size: 13px; color: var(--ink3); }
+.foot .btn.quiet { align-self: flex-start; min-height: 30px; margin-top: 4px; font-size: 13px; color: var(--ink3); }
+.foot > .gh-line { margin-top: calc(12px * 1.55); }
 
 /* ---------- Labelled form fields (sign-in pages, Settings > Account, User management) ----------
    Label above the field, an optional hint under it; a password field has a quiet show / hide button inside its right end

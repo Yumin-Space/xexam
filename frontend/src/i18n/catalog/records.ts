@@ -118,6 +118,8 @@ export default defineCatalog({
     'records.wrong.stats': 'Wrong answers: {wrong} · Attempts: {attempts} · Correct in a row now: {streak}',
     'records.wrong.empty.title': 'Your wrong-answer notebook is empty',
     'records.wrong.empty.body': 'Questions you answer wrong in an exam or a practice are collected here, so you can go over them and practise them again.',
+    // v1.1
+    'records.timeUpTag': 'Time up',
   },
   zh: {
     'records.title': '学习记录',
@@ -224,6 +226,8 @@ export default defineCatalog({
     'records.wrong.stats': '答错 {wrong} 次 · 共答 {attempts} 次 · 当前连对 {streak} 次',
     'records.wrong.empty.title': '错题本是空的',
     'records.wrong.empty.body': '考试或练习中答错的题会收集到这里，方便你复习和再练习。',
+    // v1.1
+    'records.timeUpTag': '时间到',
   },
   ja: {
     'records.title': '学習記録',
@@ -297,8 +301,8 @@ export default defineCatalog({
     'records.deleteAll.doneStats': 'すべての学習記録、間違いノート、各問題の回答統計を削除しました。',
     'records.deleteFailed': '削除できませんでした：{reason}',
 
-    'records.detail.title': '試験の詳細',
-    'records.detail.titlePractice': '練習の詳細',
+    'records.detail.title': '試験記録',
+    'records.detail.titlePractice': '練習記録',
     'records.detail.loading': 'この記録を読み込んでいます…',
     'records.detail.notFound': '記録が見つかりません',
     'records.detail.loadFailed': 'この記録を読み込めませんでした',
@@ -330,5 +334,7 @@ export default defineCatalog({
     'records.wrong.stats': '不正解 {wrong} 回・回答 {attempts} 回・現在 {streak} 回連続正解',
     'records.wrong.empty.title': '間違いノートは空です',
     'records.wrong.empty.body': '試験や練習で間違えた問題はここに集まります。見直したり、もう一度練習したりできます。',
+    // v1.1
+    'records.timeUpTag': '時間切れ',
   },
 });

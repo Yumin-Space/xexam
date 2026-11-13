@@ -222,6 +222,16 @@ pub trait Engine: Send + Sync + 'static {
         }
     }
     /// `POST /api/banks/delete` as `v` (a bank manager: only their own banks, and only their own records go with it).
+    /// `POST /api/banks/sheets/delete` as `v` (C-B1).
+    fn delete_sheets_as(
+        &self,
+        _v: &Viewer,
+        _id: i64,
+        _sheets: &[String],
+        _with_records: bool,
+    ) -> Result<Option<DeletedBank>, DbError> {
+        Err(DbError::Unsupported)
+    }
     fn delete_bank_as(
         &self,
         v: &Viewer,
@@ -405,5 +415,14 @@ impl Engine for RealEngine {
         with_records: bool,
     ) -> Result<Option<DeletedBank>, DbError> {
         self.store.delete_bank_as(v, id, with_records)
+    }
+    fn delete_sheets_as(
+        &self,
+        v: &Viewer,
+        id: i64,
+        sheets: &[String],
+        with_records: bool,
+    ) -> Result<Option<DeletedBank>, DbError> {
+        self.store.delete_sheets_as(v, id, sheets, with_records)
     }
 }

@@ -171,10 +171,10 @@ export default defineCatalog({
     'settings.auto.desc': '単一選択問題、またはホットスポット問題の全小問に答えると次の問題へ進みます。複数選択問題では進みません。',
     'settings.auto.note': '既定ではオフです。オンの間は、試験ページの上部に「{label}」と表示されます。',
 
-    'settings.aiMode': 'AI 対話モード',
+    'settings.aiMode': 'AI チャットモード',
     'settings.aiMode.normal': '通常モード',
     'settings.aiMode.free': 'フリーモード',
-    'settings.aiMode.hint': '通常モード：AI は学習アシスタントの設定に従って回答し、AI メモリーを使います。フリーモード：学習アシスタントの設定と AI メモリーを使わず、モデルと直接やり取りします。あなたのすべての AI チャットに適用されます。',
+    'settings.aiMode.hint': '通常モード：AI は学習アシスタントとして回答し、AI メモリーを使います。フリーモード：学習アシスタント用の指示と AI メモリーを使わず、モデルと直接やり取りします。あなたのすべての AI チャットに適用されます。',
 
     'settings.reset': '既定の設定に戻す',
     'settings.reset.button': '既定の設定に戻す',
@@ -185,6 +185,6 @@ export default defineCatalog({
     'settings.reset.ok': '戻す',
     'settings.reset.done': '既定の設定に戻しました。',
     'settings.reset.failed': '既定の設定に戻せませんでした：{reason}',
-    'settings.account.managerNote': '問題集の管理を許可されています。新しい問題集をインポートし、自分でインポートした問題集を更新・削除できます。',
+    'settings.account.managerNote': '問題集管理者として、新しい問題集をインポートし、自分がインポートした問題集を更新・削除できます。',
   },
 });

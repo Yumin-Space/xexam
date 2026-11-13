@@ -232,7 +232,8 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
   html.no-doc-scroll .ai-panes.on-list .ai-conv, html.no-doc-scroll .ai-panes.on-conv .ai-list { display: none; }
   /* 44 px inside its 1 px hairline, so the 40 px buttons sit on whole pixels and their tap margin stays inside the head */
   html.no-doc-scroll .ai-conv-head { flex: none; min-height: 45px; padding: 0; }
-  html.no-doc-scroll .ai-scroll { flex: 1; min-height: 0; height: auto; padding: 10px 0 12px; overflow-x: hidden; }
+  /* Owner (v1.1, A-OWNER-46): a little inner gutter, so answers and bubbles never touch the screen edge */
+  html.no-doc-scroll .ai-scroll { flex: 1; min-height: 0; height: auto; padding: 10px 4px 12px; overflow-x: hidden; overscroll-behavior: none; }
   /* The list has no side padding here: the buttons under a message line up with the bubble's edge itself (no negative
      margin that would make the list scroll sideways or clip the first / last button) */
   html.no-doc-scroll .ai-meta, html.no-doc-scroll .ai-msg.user .ai-meta { margin-left: 0; margin-right: 0; }
@@ -263,6 +264,9 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
   }
   html.no-doc-scroll .ai-composer .ai-notice-btn { min-height: 40px; align-items: center; padding: 4px 0; }
   html.no-doc-scroll .ai-composer .ai-notice-btn .ai-mi { margin-top: 0; }
+  /* Owner (v1.1, A-OWNER-46): the notice under the composer is centred as one group (icon + text) */
+  html.no-doc-scroll .ai-composer .ai-notice-btn { justify-content: center; }
+  html.no-doc-scroll .ai-composer .ai-notice-btn span { flex: 0 1 auto; }
   html.no-doc-scroll .ai-notice-btn { min-height: 40px; }
   html.no-doc-scroll .ai-notice-btn::after { inset: -2px 0; }
   /* The tabs sit 4 px under the top bar: their tap margin reaches up to it, never into the menu button's */
@@ -270,7 +274,7 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
 
   /* Memory: its own scroller above the notice line */
   html.no-doc-scroll .ai-memwrap { display: flex; flex: 1; flex-direction: column; min-height: 0; }
-  html.no-doc-scroll .ai-mem { flex: 1; min-height: 0; max-width: none; overflow-y: auto; overscroll-behavior: contain; }
+  html.no-doc-scroll .ai-mem { flex: 1; min-height: 0; max-width: none; overflow-y: auto; overscroll-behavior: none; }
   html.no-doc-scroll .ai-mtabs { align-self: flex-start; flex: none; margin: 4px 0 8px; }
 }
 /* Tablets: the list (240px) and the conversation side by side (CH-10) */

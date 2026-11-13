@@ -218,6 +218,10 @@ export interface AttemptRequest {
   /** v0.9: the session key (32 lower-case hex) and start time (unix seconds) that tie a record to its AI chat */
   key?: string;
   startedAt?: number;
+  /** v1.1 (TL-9): the time limit of a timed exam in seconds (60 ... 36000); ignored for practice */
+  limit?: number;
+  /** v1.1 (TL-9): how an exam ended; sent for every exam */
+  end?: 'submit' | 'timeUp';
 }
 
 export interface ApiErrorBody {
@@ -261,6 +265,23 @@ export interface BankSummary {
   owner: string | null;
   /** Whether the signed-in user may update / replace and delete this bank (an administrator, or a bank manager who owns it) */
   manageable: boolean;
+  /** v1.1 (API-M1): present exactly for AI-generated / AI-imported banks */
+  ai?: BankAi;
+}
+
+/** v1.1: where an AI bank came from (`generate` / file import); `authorId` never leaves the server */
+export interface BankAi {
+  source: 'bank' | 'scope' | 'wrong' | 'file';
+  from: string[];
+  /** File imports only (P-37) */
+  file?: string;
+  mode?: 'questions' | 'material';
+  skipped?: number[];
+  author: string | null;
+  made: number;
+  goal: number;
+  /** `YYYY-MM-DD HH:mm:ss`, server time */
+  at: string;
 }
 
 export interface BanksResponse {
@@ -302,6 +323,12 @@ export interface RecordSummary {
   /** v0.9, `GET /api/record` only: the session key and start time of the record (null for records saved before v0.9) */
   sessionKey?: string | null;
   startedAt?: number | null;
+  /** v1.1 (TL-9): the limit of a timed exam in seconds */
+  limit?: number;
+  /** v1.1 (TL-9): present = the record was saved under the not-completed rule (every exam since v1.1) */
+  ended?: 'submit' | 'timeUp';
+  /** v1.1 (TL-9): the number of not-completed questions (with `ended`) */
+  unanswered?: number;
 }
 
 export interface RecordsResponse {
@@ -318,6 +345,8 @@ export interface RecordItem {
   /** What was picked: letters for single / multi, choice indexes (or null) per item for hotspot; null = unanswered */
   answer: Array<string | number | null> | null;
   correct: boolean;
+  /** v1.1 (TL-9): not completed (only on records with `ended`) */
+  unanswered?: boolean;
   /** Null when the question no longer exists (its bank was deleted) */
   question: StoredQuestion | null;
 }
@@ -542,11 +571,11 @@ export interface AiStatusJson {
   running: { chatId: number; messageId: number } | null;
   retentionDays: number;
   memoryLimit: number;
-  memoryMaxChars: number;
+  memoryMaxTokens: number;
   maxMessageChars: number;
   /** Section 14.1 of the v0.8 spec names these two as well; the page reads either spelling */
   messageChars?: number;
-  memoryChars?: number;
+  memoryTokens?: number;
   /** Administrators only (false for others): the saved keys cannot be decrypted */
   keyProblem: boolean;
   /** Administrators only (false for others): a model and the required keys are saved */
@@ -555,7 +584,74 @@ export interface AiStatusJson {
   freeMode: boolean;
   /** v1.0: the per-user AI request caps and the user's counts; present exactly when `enabled` and the user has the AI+ service */
   calls?: AiCalls;
+  /** v1.1 (BT-2): why AI is not enabled; null when enabled; absent on an older ai-service */
+  why?: 'off' | 'link' | null;
+  /** v1.1 (FP-3, P-11): present exactly when the user has the AI+ service; a missing `import` key counts as true */
+  features?: Partial<Record<AiFeatureKey, boolean>>;
+  /** v1.1 (API-U1): present exactly when the user has the AI+ service, also while AI is off */
+  gen?: GenStatus;
 }
+
+export type AiFeatureKey = 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import';
+
+export type GenSource = 'bank' | 'scope' | 'wrong' | 'file';
+export type GenState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type GenPhase = 'reading' | 'confirm' | 'writing' | 'saving';
+export type ImportFileType = 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'md' | 'txt' | 'csv';
+
+/** v1.1 (API-U1, P-30): one generation / import job */
+export interface GenJob {
+  id: number;
+  state: GenState;
+  phase: GenPhase | null;
+  source: GenSource;
+  name: string;
+  from: Array<{ id: number; name: string }>;
+  fromCount: number;
+  file: { name: string; type: ImportFileType; size: number } | null;
+  mode: 'questions' | 'material' | null;
+  /** A-OWNER-70: questions found in the file (the service's `total`) and how many of them the import takes (`taken`); null while unknown */
+  total?: number | null;
+  taken?: number | null;
+  /** The count is an estimate (the recognition was not sure): shown as "about N" */
+  approx?: boolean;
+  /** Older name of `total` (kept readable) */
+  found?: number | null;
+  read: { done: number; total: number } | null;
+  confirmBy: number | null;
+  errorArg: number | null;
+  skipped: number[] | null;
+  made: number;
+  goal: number;
+  calls: number;
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  bankId: number | null;
+  error: string | null;
+  charged: boolean;
+  /** A-OWNER-67: exact sums of the job's own model calls (recognition included) */
+  usage?: { calls: number; tokensIn: number; tokensOut: number; tokensCached?: number; tokensCacheWrite?: number };
+}
+
+/** v1.1 (API-U1): `gen` of the status */
+export interface GenStatus {
+  perDay: number | null;
+  used: number;
+  left: number | null;
+  unlimited: boolean;
+  resetAt: number;
+  minSource: number;
+  minWrong: number;
+  bank: { single: number; multi: number };
+  wrong: { single: number; multi: number };
+  import?: { maxMb: number; maxQuestions: number; types: string[] };
+  job: GenJob | null;
+  unseen: GenJob[];
+}
+
+/** v1.1: row of `GET /api/ai/admin/gen` */
+export type GenAdminJob = GenJob & { userId: number; username: string; tokensIn: number; tokensOut: number };
 
 export interface AiChatSummary {
   id: number;
@@ -617,7 +713,7 @@ export interface AiMemory {
 export interface AiMemoriesAnswer {
   memories: AiMemory[];
   limit: number;
-  maxChars: number;
+  maxTokens: number;
 }
 
 export type AiProvider = 'openai' | 'anthropic' | 'gateway';
@@ -697,6 +793,8 @@ export interface AiUsageCounts {
   errors: number;
   /** Input tokens the provider served from its prompt cache */
   tokensCached: number;
+  /** Input tokens the provider wrote to its prompt cache (A-OWNER-74) */
+  tokensCacheWrite?: number;
 }
 
 /** `GET /api/ai/admin/usage?days=N` */
@@ -717,7 +815,7 @@ export interface AiUsage {
   byModel: Array<AiUsageCounts & { model: string }>;
   byPeriod: Array<AiUsageCounts & { period: string }>;
   /** v0.9: chat, hint, explain, summary in server order */
-  byPurpose?: Array<AiUsageCounts & { purpose: 'chat' | 'hint' | 'explain' | 'summary' }>;
+  byPurpose?: Array<AiUsageCounts & { purpose: 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import' }>;
 }
 
 /**
@@ -744,6 +842,10 @@ export interface AiAdminUserRow {
   tokensOut: number;
   /** v1.0: the user's counted AI calls and whether a cap blocks a new call now (same shape as the status without `caps`) */
   calls?: Omit<AiCalls, 'caps'>;
+  /** v1.1 (FP-4): the user's feature switches; missing = all on */
+  features?: Partial<Record<AiFeatureKey, boolean>>;
+  /** v1.1 (A-OWNER-21): administrator rows only: the AI Chat free mode of that account */
+  freeMode?: boolean;
 }
 
 /** `GET /api/ai/admin/user?id=N` */
@@ -763,12 +865,25 @@ export interface AiLimits {
   chatsPerUser: number;
   messagesPerChat: number;
   memoriesPerUser: number;
-  memoryChars: number;
+  memoryTokens: number;
   messageChars: number;
   /** v1.0: AI model calls one user may make per minute / hour / day (everyone, administrators included) */
   callsPerMinute: number;
   callsPerHour: number;
   callsPerDay: number;
+  /** v1.1 (GS-1 / IS-1): the AI banks tab */
+  genPerDay?: number;
+  genAdminsExempt?: number;
+  genMinSource?: number;
+  genMinWrong?: number;
+  genBankSingle?: number;
+  genBankMulti?: number;
+  genWrongSingle?: number;
+  genWrongMulti?: number;
+  genCallTokens?: number;
+  genRunning?: number;
+  importMaxMb?: number;
+  importMaxQuestions?: number;
 }
 
 /** `GET` / `POST /api/ai/admin/limits` */

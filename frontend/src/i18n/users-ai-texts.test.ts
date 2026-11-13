@@ -48,12 +48,14 @@ test('the note about hidden AI+ switches gives a cause; only it (administrators)
 test('the dark badge tells a user "AI is not available" without the container; an administrator reads the feature', () => {
   assert.equal(ai.zh['ai.badge.unavailable'], 'AI 暂时无法使用，请稍后再试或联系管理员。');
   assert.equal(ai.en['ai.badge.unavailable'], 'AI is not available right now. Try again later or ask an administrator.');
-  assert.equal(ai.ja['ai.badge.unavailable'], 'AI は今使えません。しばらくしてからもう一度試すか、管理者に連絡してください。');
+  assert.equal(ai.ja['ai.badge.unavailable'], 'AI は現在利用できません。しばらくしてからもう一度試すか、管理者に連絡してください。');
   for (const lang of LANGS) assert.doesNotMatch(ai[lang]['ai.badge.unavailable'], /ai-service|AI\+/);
   assert.equal(ai.zh['ai.badge.unavailableAdmin'], 'AI+ 功能暂时不可用。');
   setUiLang('en');
   assert.equal(badgeReasonText('unavailable'), ai.en['ai.badge.unavailable']);
   assert.equal(badgeReasonText('unavailable', true), ai.en['ai.badge.unavailableAdmin']);
-  assert.equal(badgeReasonText('suspended', true), ai.en['ai.badge.suspended']);
+  // v1.1 (BT-2): an administrator reads the admin wording of the paused tip
+  assert.equal(badgeReasonText('suspended', true), ai.en['ai.badge.tip.adminSuspended']);
+  assert.equal(badgeReasonText('suspended'), ai.en['ai.badge.tip.suspended']);
   assert.equal(AI_BADGE_TEXT, 'AI+');
 });

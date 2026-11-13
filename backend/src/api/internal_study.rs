@@ -25,11 +25,11 @@ use crate::error::AppError;
 use crate::models::AttemptKind;
 use serde_json::{json, Map, Value};
 
-fn bad_request() -> AppError {
+pub(super) fn bad_request() -> AppError {
     AppError::BadRequest(MSG_BAD_REQUEST.to_string())
 }
 
-fn is_lower_hex(s: &str, len: usize) -> bool {
+pub(super) fn is_lower_hex(s: &str, len: usize) -> bool {
     s.len() == len && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
@@ -41,7 +41,7 @@ fn is_question_id(s: &str) -> bool {
 }
 
 /// `data` must have exactly the keys in `required`, plus any of `optional`.
-fn check_keys(
+pub(super) fn check_keys(
     data: &Map<String, Value>,
     required: &[&str],
     optional: &[&str],
@@ -53,7 +53,7 @@ fn check_keys(
     Ok(())
 }
 
-fn positive(data: &Map<String, Value>, key: &str) -> Result<i64, AppError> {
+pub(super) fn positive(data: &Map<String, Value>, key: &str) -> Result<i64, AppError> {
     data.get(key)
         .and_then(Value::as_i64)
         .filter(|i| *i > 0)
@@ -75,7 +75,7 @@ fn sid(data: &Map<String, Value>) -> Result<String, AppError> {
 }
 
 /// `{"ok": false, "reason": ...}` (HTTP 200).
-fn refused(reason: &str) -> Value {
+pub(super) fn refused(reason: &str) -> Value {
     json!({ "ok": false, "reason": reason })
 }
 

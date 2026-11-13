@@ -360,7 +360,7 @@ fn v3_database_migrates_to_v4_with_a_backup_everyone_keeping_every_bank() {
         assert_eq!(count(&b, "SELECT COUNT(*) FROM attempts"), 2);
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
     // every user that existed keeps seeing every bank (a row for each, 3 users x 2 banks) and gets the banks imported later
     // (v0.7: the two settings are independent); nobody gets the bank permission
     assert_eq!(count(&c, "SELECT COUNT(*) FROM users WHERE new_banks=1"), 3);
@@ -436,7 +436,7 @@ fn a_fresh_database_is_schema_4_and_its_default_administrator_sees_everything() 
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none(), "nothing to back up");
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
     // the default administrator exists at the v4 step of a new database: it gets "banks imported later" like every user
     assert_eq!(count(&c, "SELECT new_banks FROM users WHERE id=1"), 1);
     assert_eq!(s.viewer(1).expect("viewer"), Viewer::admin(1));
@@ -1284,6 +1284,7 @@ fn the_bank_manager_routes_are_exactly_the_bank_management_routes() {
         [
             ("GET", "/api/imports"),
             ("POST", "/api/banks/delete"),
+            ("POST", "/api/banks/sheets/delete"),
             ("POST", "/api/import/cancel"),
             ("POST", "/api/import/confirm"),
             ("POST", "/api/upload"),
@@ -1782,6 +1783,8 @@ fn the_store_keeps_the_kind_of_an_attempt() {
         mode: "retry".to_string(),
         seconds: 5,
         kind: AttemptKind::Practice,
+        limit: None,
+        end: None,
     };
     let p = s.record_attempt(1, &attempt).expect("record");
     assert_eq!(p["history"][0]["kind"], "practice");

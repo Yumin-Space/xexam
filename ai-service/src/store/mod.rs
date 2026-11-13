@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::Notify;
 
 pub mod data;
+pub mod jobs;
 pub mod schema;
 pub mod stats;
 pub mod tables;
@@ -85,6 +86,35 @@ fn add_columns(c: &Connection, cols: &[(&str, &str, &str)]) -> rusqlite::Result<
     Ok(())
 }
 
+/// A memory note may be as long as the memory length setting allows (up to 250,000 tokens, A-OWNER-43b), but the
+/// schema-1 table limits `content` to 2000 characters. A CHECK cannot be altered, so the table is rebuilt once with
+/// the wider bound (rows and ids kept). The same step for new and upgraded databases; a no-op when already wide.
+fn relax_memory_check(c: &Connection) -> rusqlite::Result<()> {
+    let old: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'memories' AND sql LIKE '%AND 2000)%')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !old {
+        return Ok(());
+    }
+    c.execute_batch(
+        "ALTER TABLE memories RENAME TO memories_old;
+         CREATE TABLE memories (
+           id          INTEGER PRIMARY KEY AUTOINCREMENT,
+           user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+           content     TEXT NOT NULL CHECK (length(content) BETWEEN 1 AND 2000000),
+           source      TEXT NOT NULL DEFAULT 'manual' CHECK (source IN ('manual', 'chat')),
+           created_at  INTEGER NOT NULL,
+           updated_at  INTEGER NOT NULL
+         );
+         INSERT INTO memories (id, user_id, content, source, created_at, updated_at)
+           SELECT id, user_id, content, source, created_at, updated_at FROM memories_old;
+         DROP TABLE memories_old;
+         CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id, id);",
+    )
+}
+
 /// Copies the whole database (`VACUUM INTO`) to `<backups>/xexam-ai-schema<from>-<YYYYMMDD-HHMMSS>.db` (local time;
 /// `-2`, `-3`, ... when the name is taken) and returns the path. The directory is created private (0700).
 fn backup_copy(conn: &Connection, backups: &Path, from: &str) -> Result<PathBuf, String> {
@@ -152,7 +182,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1, 2 or 3 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1 … 5 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -173,7 +203,12 @@ impl Store {
                     add_columns(tx, &schema::V2_COLUMNS)?;
                     add_columns(tx, &schema::V3_COLUMNS)?;
                     add_columns(tx, &schema::V4_COLUMNS)?;
+                    add_columns(tx, &schema::V5_COLUMNS)?;
+                    add_columns(tx, &schema::V6_COLUMNS)?;
+                    relax_memory_check(tx)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
+                    tx.execute_batch(schema::V5_TABLES)?;
+                    add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
                         [now],
@@ -193,8 +228,37 @@ impl Store {
                 tx.commit()
                     .map_err(|e| format!("cannot create the AI database {{path}}: {e}"))?;
             }
-            // The current schema: nothing to do, nothing written
-            Some(v) if v == schema::SCHEMA_VERSION => {}
+            // The current schema: nothing to do, nothing written, except that a schema-6 file may lack a column added later: add it (idempotent, no version change)
+            Some(v) if v == schema::SCHEMA_VERSION => {
+                let missing = |c: &Connection| -> rusqlite::Result<bool> {
+                    for (table, column, _) in schema::V5_COLUMNS
+                        .iter()
+                        .chain(schema::V6_COLUMNS.iter())
+                        .chain(schema::LATE_COLUMNS.iter())
+                    {
+                        let present: bool = c.query_row(
+                            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+                            [table, column],
+                            |r| r.get(0),
+                        )?;
+                        if !present {
+                            return Ok(true);
+                        }
+                    }
+                    Ok(false)
+                };
+                if missing(&conn).unwrap_or(false) {
+                    let tx = conn
+                        .transaction_with_behavior(TransactionBehavior::Immediate)
+                        .map_err(|e| format!("cannot open the AI database {{path}}: {e}"))?;
+                    add_columns(&tx, &schema::V5_COLUMNS)
+                        .and_then(|()| add_columns(&tx, &schema::V6_COLUMNS))
+                        .and_then(|()| add_columns(&tx, &schema::LATE_COLUMNS))
+                        .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                    tx.commit()
+                        .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                }
+            }
             Some(v) if schema::UPGRADABLE.contains(&v) => {
                 let copy = backup_copy(&conn, backups, v).map_err(|e| {
                     format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
@@ -203,12 +267,18 @@ impl Store {
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 let run = |tx: &Transaction| -> rusqlite::Result<()> {
-                    // adds what a '1', '2' or '3' file lacks; a no-op for the rest
+                    // adds what a '1' … '4' file lacks; a no-op for the rest
                     add_columns(tx, &schema::V2_COLUMNS)?;
                     add_columns(tx, &schema::V3_COLUMNS)?;
                     add_columns(tx, &schema::V4_COLUMNS)?;
+                    add_columns(tx, &schema::V5_COLUMNS)?;
+                    add_columns(tx, &schema::V6_COLUMNS)?;
+                    relax_memory_check(tx)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
+                    tx.execute_batch(schema::V5_TABLES)?;
+                    add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
+                    tx.execute_batch(schema::V6_MIGRATE)?;
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
@@ -230,6 +300,67 @@ impl Store {
                     schema::SCHEMA_VERSION
                 ));
             }
+        }
+        // A-OWNER-48: the two "unlimited" switches default to on. A schema-6 file written before that keeps its stored 0 until
+        // this one-time step (after a backup copy) moves it; every other path already has the new column default.
+        let flagged: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE key = ?1)",
+                [schema::UNLIMITED_DEFAULT_KEY],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+        if !flagged {
+            if existing.as_deref() == Some(schema::SCHEMA_VERSION) {
+                let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
+                    format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
+                })?;
+                conn.execute_batch(schema::UNLIMITED_DEFAULT_SET)
+                    .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                tracing::info!(
+                    "The AI call ceilings now default to unlimited. A copy of the previous database was saved first: {}.",
+                    copy.display()
+                );
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, '1')",
+                [schema::UNLIMITED_DEFAULT_KEY],
+            )
+            .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+        }
+        // A-OWNER-58b: one import takes at most 50 questions. A file written while the ceiling was 100 keeps a larger
+        // stored value until this one-time step (after a backup copy) lowers it.
+        let flagged: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE key = ?1)",
+                [schema::IMPORT_MAX_KEY],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+        if !flagged {
+            let high: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM limits WHERE id = 1 AND import_max_questions > 50)",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+            if high {
+                let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
+                    format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
+                })?;
+                conn.execute_batch(schema::IMPORT_MAX_SET)
+                    .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                tracing::info!(
+                    "The AI import limit is now at most 50 questions. A copy of the previous database was saved first: {}.",
+                    copy.display()
+                );
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, '1')",
+                [schema::IMPORT_MAX_KEY],
+            )
+            .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
         }
         // Answers left 'streaming' by a crash (check first: reopening a clean database writes nothing)
         let left: i64 = conn
@@ -341,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn a_schema_2_file_from_an_earlier_round_2_build_is_backed_up_and_upgraded_to_4() {
+    fn a_schema_2_file_from_an_earlier_round_2_build_is_backed_up_and_upgraded_to_5() {
         let dir = tempfile::tempdir().expect("dir");
         let path = dir.path().join(DB_FILE);
         {
@@ -362,6 +493,9 @@ mod tests {
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
                 .chain(schema::V4_COLUMNS.iter())
+                .chain(schema::V5_COLUMNS.iter())
+                .chain(schema::V6_COLUMNS.iter())
+                .chain(schema::LATE_COLUMNS.iter())
             {
                 assert!(has_column(&c, table, column), "{table}.{column}");
             }
@@ -370,7 +504,7 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "4");
+            assert_eq!(v, "6");
         }
         let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
             .expect("backups")
@@ -380,5 +514,19 @@ mod tests {
         drop(store);
         // reopening the repaired file works too
         Store::open(dir.path(), JournalMode::Delete).expect("reopen");
+    }
+
+    #[test]
+    fn a_schema_5_file_without_recognize_max_calls_gets_the_column_on_open() {
+        let dir = tempfile::tempdir().expect("dir");
+        drop(Store::open(dir.path(), JournalMode::Delete).expect("create"));
+        let path = dir.path().join(DB_FILE);
+        {
+            let c = Connection::open(&path).expect("open");
+            c.execute_batch("ALTER TABLE limits DROP COLUMN recognize_max_calls;")
+                .expect("drop");
+        }
+        let store = Store::open(dir.path(), JournalMode::Delete).expect("reopen");
+        assert!(has_column(&store.lock(), "limits", "recognize_max_calls"));
     }
 }

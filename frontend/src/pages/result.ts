@@ -6,6 +6,7 @@ import '../styles/records.css';
 import { modeName, pageHead } from '../components/common.ts';
 import { iconButton } from '../components/icon-button.ts';
 import { reviewBlock, reviewItem } from '../components/review.ts';
+import { resultCounts } from '../domain/exam-timer.ts';
 import { percentOf, shuffle } from '../domain/grading.ts';
 import { t, tn } from '../i18n/index.ts';
 import { navigate, startExam } from '../state/actions.ts';
@@ -25,24 +26,33 @@ export function renderResult(): HTMLElement {
   }
 
   const n = R.results.length;
-  const good = R.results.filter((r) => r.correct).length;
-  const wrong = n - good;
+  // v1.1 (TL-7): right, wrong and (exams) not completed; the score counts every question
+  const { good, wrong, open } = resultCounts(R.results);
   const pct = percentOf(good, n);
 
   // startExam asks first when an unsubmitted exam is saved (for example when saving this result failed and the answers were kept)
   // Again / retry start the same kind as this result: a practice continues as a practice
   const again = (): void => void startExam(shuffle(R.results.map((r) => r.q)), R.mode, R.kind);
-  const retryWrong = (): void => void startExam(shuffle(R.results.filter((r) => !r.correct).map((r) => r.q)), 'retry', R.kind);
+  const retryWrong = (): void => void startExam(shuffle(R.results.filter((r) => !r.correct && !r.unanswered).map((r) => r.q)), 'retry', R.kind);
   const practice = R.kind === 'practice';
   const home = (): void => navigate({ name: 'home' });
   const recordId = R.recordId;
 
   const meta = { mode: modeName(R.mode), time: fmtTime(R.seconds) };
-  const metaText = R.prev ? tn('result.metaPrev', n, { ...meta, prev: R.prev.percent }) : tn('result.meta', n, meta);
+  const baseMeta = R.prev ? tn('result.metaPrev', n, { ...meta, prev: R.prev.percent }) : tn('result.meta', n, meta);
+  const metaText = R.limit != null ? `${baseMeta} · ${t('result.limitMeta', { min: Math.round(R.limit / 60) })}` : baseMeta;
+
+  // TL-5 step 5 / 6: the banner of an exam that ended by the clock (and, when saving failed, what to do)
+  const timeUpBanner = R.ended === 'timeUp'
+    ? h('div', { class: 'callout warn res-timeup', role: 'note' },
+      h('p', null, h('b', null, t('result.timeUp.title'))),
+      h('p', null, recordId == null ? t('result.timeUp.notSaved') : open > 0 ? tn('result.timeUp.body', open) : t('result.timeUp.bodyNone')))
+    : null;
 
   const rows = R.results.map((r, i) => ({
     correct: r.correct,
-    render: () => reviewItem({ q: r.q, ans: r.ans, correct: r.correct }, {
+    unanswered: r.unanswered,
+    render: () => reviewItem({ q: r.q, ans: r.ans, correct: r.correct, unanswered: r.unanswered }, {
       no: i + 1,
       ai: { page: 'result', mode: R.kind, key: R.key, startedAt: R.startedAt, recordId: R.recordId },
     }),
@@ -61,8 +71,11 @@ export function renderResult(): HTMLElement {
     h('section', { class: 'score' },
       h('div', { class: 'big num', role: 'img', 'aria-label': t('result.scoreLabel', { pct }) }, String(pct), h('small', null, '%')),
       h('div', { class: 'says' },
-        h('p', null, wrong === 0 ? t('result.allCorrect') : t('result.summary', { good, wrong })),
+        h('p', null, open > 0 ? t('result.summaryOpen', { good, wrong, open }) : wrong === 0 ? t('result.allCorrect') : t('result.summary', { good, wrong })),
+        // TL-5a: a hand-submitted exam with not-completed questions says what that means (the time-up banner says it otherwise)
+        open > 0 && R.ended === 'submit' ? h('p', { class: 'dim res-opennote' }, t('result.openNote')) : null,
         h('p', { class: 'dim' }, metaText),
+        timeUpBanner,
         // Questions deleted during the exam (v0.6.5): left out of the score, the record and the review below
         R.notCounted ? h('div', { class: 'callout warn res-gone', role: 'note' }, h('p', null, tn('result.notCounted', R.notCounted))) : null),
       h('div', { class: 'acts' },

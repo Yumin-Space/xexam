@@ -332,13 +332,16 @@ async fn access_matrix_and_scoping() {
             "running",
             "retentionDays",
             "memoryLimit",
-            "memoryMaxChars",
+            "memoryMaxTokens",
             "maxMessageChars",
             "messageChars",
-            "memoryChars",
+            "memoryTokens",
             "keyProblem",
             "configured",
-            "freeMode"
+            "freeMode",
+            "why",
+            "features",
+            "gen"
         ]
     );
     assert_eq!(

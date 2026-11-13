@@ -12,6 +12,7 @@ pub struct UsageRow {
     pub tokens_in: Option<i64>,
     pub tokens_out: Option<i64>,
     pub tokens_cached: Option<i64>,
+    pub tokens_cache_write: Option<i64>,
     pub latency_ms: i64,
     pub first_byte_ms: Option<i64>,
     pub status: &'static str,
@@ -33,8 +34,8 @@ pub fn insert_usage_purpose(
 ) -> rusqlite::Result<()> {
     c.execute(
         "INSERT INTO usage (user_id, at, day, kind, provider, model, tokens_in, tokens_out, latency_ms, first_byte_ms,
-                            status, error_code, tokens_cached, purpose)
-         VALUES ((SELECT id FROM users WHERE id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                            status, error_code, tokens_cached, purpose, tokens_cache_write)
+         VALUES ((SELECT id FROM users WHERE id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             u.user_id,
             u.at,
@@ -50,6 +51,7 @@ pub fn insert_usage_purpose(
             u.error_code,
             u.tokens_cached,
             purpose,
+            u.tokens_cache_write,
         ],
     )?;
     Ok(())
@@ -63,10 +65,19 @@ pub struct Sums {
     pub tokens_out: i64,
     pub errors: i64,
     pub tokens_cached: i64,
+    pub tokens_cache_write: i64,
 }
 
+/// Every model call of a statistics period: the `usage` rows and the `gen_calls` rows of generation and import jobs
+/// (`UNION ALL`; the per-user call caps use `usage` only: import and generation calls are outside them, A-OWNER-56).
+const ALL_CALLS: &str =
+    "(SELECT user_id, at, day, model, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
+     UNION ALL
+     SELECT user_id, at, day, model, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM gen_calls)";
+
 const SUMS: &str = "COUNT(*), COALESCE(SUM(tokens_in), 0), COALESCE(SUM(tokens_out), 0),
-     COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0), COALESCE(SUM(tokens_cached), 0)";
+     COALESCE(SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END), 0), COALESCE(SUM(tokens_cached), 0),
+     COALESCE(SUM(tokens_cache_write), 0)";
 
 fn sums_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<Sums> {
     Ok(Sums {
@@ -75,12 +86,13 @@ fn sums_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<Sums> {
         tokens_out: r.get(i + 2)?,
         errors: r.get(i + 3)?,
         tokens_cached: r.get(i + 4)?,
+        tokens_cache_write: r.get(i + 5)?,
     })
 }
 
 pub fn totals(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Sums> {
     c.query_row(
-        &format!("SELECT {SUMS} FROM usage WHERE day BETWEEN ?1 AND ?2"),
+        &format!("SELECT {SUMS} FROM {ALL_CALLS} WHERE day BETWEEN ?1 AND ?2"),
         [from, to],
         |r| sums_at(r, 0),
     )
@@ -93,39 +105,58 @@ pub type UserUsage = (Option<i64>, Option<String>, Sums, i64);
 pub fn by_user(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<UserUsage>> {
     let mut st = c.prepare(&format!(
         "SELECT u.user_id, (SELECT username FROM users WHERE id = u.user_id), {SUMS}, MAX(u.at)
-         FROM usage u WHERE u.day BETWEEN ?1 AND ?2 GROUP BY u.user_id
+         FROM {ALL_CALLS} u WHERE u.day BETWEEN ?1 AND ?2 GROUP BY u.user_id
          ORDER BY COUNT(*) DESC, u.user_id IS NULL, u.user_id"
     ))?;
     let rows = st.query_map([from, to], |r| {
-        Ok((r.get(0)?, r.get(1)?, sums_at(r, 2)?, r.get(7)?))
+        Ok((r.get(0)?, r.get(1)?, sums_at(r, 2)?, r.get(8)?))
     })?;
     rows.collect()
 }
 
+/// Calls of the period per model. The calls that use no chosen model for a feature, the administrators' model list and
+/// connection tests (`usage` kinds `models` and `verify`), are one row with the empty model name (the "other" row), so
+/// the rows add up to the total calls.
 pub fn by_model(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(String, Sums)>> {
     let mut st = c.prepare(&format!(
-        "SELECT model, {SUMS} FROM usage WHERE day BETWEEN ?1 AND ?2 GROUP BY model ORDER BY COUNT(*) DESC, model"
+        "SELECT m, {SUMS} FROM (
+           SELECT CASE WHEN kind IN ('verify', 'models') THEN '' ELSE model END AS m,
+                  day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
+           UNION ALL
+           SELECT model AS m, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM gen_calls)
+         WHERE day BETWEEN ?1 AND ?2 GROUP BY m ORDER BY COUNT(*) DESC, m"
     ))?;
     let rows = st.query_map([from, to], |r| Ok((r.get(0)?, sums_at(r, 1)?)))?;
     rows.collect()
 }
 
-/// The four features, in the order `by_purpose` returns them.
-pub const PURPOSES: [&str; 4] = ["chat", "hint", "explain", "summary"];
+/// The features, in the order `by_purpose` returns them. `generate` = AI bank generation calls; `import` = the AI file
+/// import's calls (`gen_calls` purposes `import` and `recognise`); `other` = the calls that belong to no feature (the
+/// administrators' model list and connection tests).
+pub const PURPOSES: [&str; 7] = [
+    "chat", "hint", "explain", "summary", "generate", "import", "other",
+];
 
-/// Chat calls (`kind = 'chat'`) of the period per feature (`COALESCE(purpose, 'chat')`); always the four rows in the
-/// order chat, hint, explain, summary, zeros kept.
+/// Calls of the period per feature, always the seven rows in the order chat, hint, explain, summary, generate, import,
+/// other, zeros kept: the `usage` rows by `COALESCE(purpose, 'chat')` (memory suggestions are AI Chat's; the model list and
+/// connection tests are `other`), then the `gen_calls` rows. The rows add up to the total calls.
 pub fn by_purpose(
     c: &Connection,
     from: &str,
     to: &str,
 ) -> rusqlite::Result<Vec<(&'static str, Sums)>> {
     let mut st = c.prepare(&format!(
-        "SELECT COALESCE(purpose, 'chat') AS p, {SUMS} FROM usage
-         WHERE kind = 'chat' AND day BETWEEN ?1 AND ?2 GROUP BY p"
+        "SELECT CASE WHEN kind IN ('verify', 'models') THEN 'other' ELSE COALESCE(purpose, 'chat') END AS p, {SUMS}
+         FROM usage WHERE day BETWEEN ?1 AND ?2 GROUP BY p"
     ))?;
     let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
-    let found: Vec<(String, Sums)> = rows.collect::<rusqlite::Result<_>>()?;
+    let mut found: Vec<(String, Sums)> = rows.collect::<rusqlite::Result<_>>()?;
+    let mut st = c.prepare(&format!(
+        "SELECT CASE WHEN purpose = 'generate' THEN 'generate' ELSE 'import' END AS p, {SUMS} FROM gen_calls
+         WHERE day BETWEEN ?1 AND ?2 GROUP BY p"
+    ))?;
+    let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
+    found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
     Ok(PURPOSES
         .iter()
         .map(|p| {
@@ -147,7 +178,7 @@ pub fn by_period(
     len: i64,
 ) -> rusqlite::Result<Vec<(String, Sums)>> {
     let mut st = c.prepare(&format!(
-        "SELECT substr(day, 1, ?3) AS p, {SUMS} FROM usage WHERE day BETWEEN ?1 AND ?2 GROUP BY p ORDER BY p"
+        "SELECT substr(day, 1, ?3) AS p, {SUMS} FROM {ALL_CALLS} WHERE day BETWEEN ?1 AND ?2 GROUP BY p ORDER BY p"
     ))?;
     let rows = st.query_map(params![from, to, len], |r| Ok((r.get(0)?, sums_at(r, 1)?)))?;
     rows.collect()
@@ -281,6 +312,62 @@ pub fn sweep_chats(
     c.execute(&sql, params![cutoff, limit])
 }
 
+/// One model call of a generation or import job (never content).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenCallRow {
+    pub task_id: i64,
+    pub user_id: i64,
+    /// `generate`, `recognise` or `import`
+    pub purpose: &'static str,
+    pub at: i64,
+    pub provider: &'static str,
+    pub model: String,
+    pub tokens_in: Option<i64>,
+    pub tokens_out: Option<i64>,
+    pub tokens_cached: Option<i64>,
+    pub tokens_cache_write: Option<i64>,
+    pub latency_ms: i64,
+    pub first_byte_ms: Option<i64>,
+    /// `ok`, `error` or `stopped`
+    pub status: &'static str,
+    pub error_code: Option<String>,
+    pub asked: i64,
+    pub accepted: i64,
+    pub truncated: bool,
+}
+
+/// Inserts a `gen_calls` row (FK-safe: a task or user purged meanwhile is stored as NULL).
+pub fn insert_gen_call(c: &Connection, g: &GenCallRow) -> rusqlite::Result<()> {
+    c.execute(
+        "INSERT INTO gen_calls (task_id, user_id, purpose, at, day, provider, model, tokens_in, tokens_out,
+                                tokens_cached, latency_ms, first_byte_ms, status, error_code, asked, accepted, truncated,
+                                tokens_cache_write)
+         VALUES ((SELECT id FROM tasks WHERE id = ?1), (SELECT id FROM users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9,
+                 ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+        params![
+            g.task_id,
+            g.user_id,
+            g.purpose,
+            g.at,
+            crate::util::local_date(g.at),
+            g.provider,
+            g.model,
+            g.tokens_in,
+            g.tokens_out,
+            g.tokens_cached,
+            g.latency_ms,
+            g.first_byte_ms,
+            g.status,
+            g.error_code,
+            g.asked,
+            g.accepted,
+            i64::from(g.truncated),
+            g.tokens_cache_write,
+        ],
+    )?;
+    Ok(())
+}
+
 /// Finished tasks older than `cutoff`.
 pub fn sweep_tasks(c: &Connection, cutoff: i64) -> rusqlite::Result<usize> {
     c.execute(
@@ -336,6 +423,7 @@ mod tests {
                 tokens_in: None,
                 tokens_out: None,
                 tokens_cached: None,
+                tokens_cache_write: None,
                 latency_ms: latency_s * 1000 + 999,
                 first_byte_ms: None,
                 status: "ok",

@@ -124,6 +124,16 @@ impl State {
             {
                 out.push(Item::Cached(n));
             }
+            // Gateways differ: a details field (two spellings) or a top-level Anthropic-style figure
+            let details = u.get("prompt_tokens_details");
+            let write = details
+                .and_then(|d| d.get("cache_creation_tokens"))
+                .or_else(|| details.and_then(|d| d.get("cache_write_tokens")))
+                .or_else(|| u.get("cache_creation_input_tokens"))
+                .and_then(Value::as_i64);
+            if let Some(n) = write {
+                out.push(Item::CacheWrite(n));
+            }
         }
     }
 
@@ -231,6 +241,21 @@ mod tests {
         s.flush(&mut out);
         out.push(s.finish());
         out
+    }
+
+    #[test]
+    fn cache_write_tokens_in_each_gateway_spelling() {
+        for usage in [
+            r#"{"prompt_tokens":20,"completion_tokens":2,"prompt_tokens_details":{"cache_creation_tokens":9}}"#,
+            r#"{"prompt_tokens":20,"completion_tokens":2,"prompt_tokens_details":{"cache_write_tokens":9}}"#,
+            r#"{"prompt_tokens":20,"completion_tokens":2,"cache_creation_input_tokens":9}"#,
+        ] {
+            let ev = format!(r#"{{"choices":[],"usage":{usage}}}"#);
+            let out = run(&[ev.as_str()]);
+            assert!(out.contains(&Item::CacheWrite(9)), "{usage}");
+        }
+        let out = run(&[r#"{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":2}}"#]);
+        assert!(!out.iter().any(|i| matches!(i, Item::CacheWrite(_))));
     }
 
     #[test]

@@ -20,3 +20,13 @@ export function wantsMemory(text: string): boolean {
 
 /** Characters as the AI service counts them (Unicode code points) */
 export const memoryLength = (s: string): number => [...s].length;
+
+/** Estimated tokens as the AI service counts them: an ASCII character is 1/4 token, any other 6/4, rounded up */
+export const memoryTokenCount = (s: string): number => {
+  let q = 0;
+  for (const c of s) q += c.charCodeAt(0) < 128 ? 1 : 6;
+  return Math.floor((q + 3) / 4);
+};
+
+/** A safe `maxlength` for a memory box: the most characters that can still fit `max` tokens (all ASCII) */
+export const memoryBoxChars = (max: number): number => Math.max(1, max * 4);

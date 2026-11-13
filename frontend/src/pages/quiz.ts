@@ -1,18 +1,19 @@
 // Quiz page: question stem + options / hotspot sub-items, the English / 中文 / 日本語 switch, answer sheet, timer, keyboard.
 // Two kinds (v0.6.5):
 //   · exam: correctness is not shown while answering; Submit grades everything at the end;
-//   · practice: immediate feedback. A single-choice question is checked as soon as an option is chosen, multiple-choice and
-//     hotspot questions have a "Check answer" button. A checked question is locked and shows right / wrong, the correct
+//   · practice: immediate feedback. Every question (single, multiple choice, hotspot) has a "Check answer" button (v1.1: a
+//     pick alone never checks). A checked question is locked and shows right / wrong, the correct
 //     answer, the explanation and the memory aid (in the language of the page's switch); the answer sheet marks it right or
 //     wrong. "Finish practice" saves it like an exam (kind "practice"). Auto-advance does not apply.
 import '../styles/quiz.css';
 import { githubLine } from '../components/github-line.ts';
 import { barSlots, practiceCounts, practiceMark, sheetMatches, type BarAct, type PracticeMark, type SheetFilter } from '../domain/practice.ts';
 import { aiControls } from '../domain/ai-plus.ts';
+import { countdownText, remaining, timerTone } from '../domain/exam-timer.ts';
 import { grade, stateOf, type Answer } from '../domain/grading.ts';
 import { htmlLang, shown } from '../domain/language.ts';
 import { studyButton, studyDock, studyState, type StudyTarget } from '../components/ai-plus-controls.ts';
-import { kindLabel } from '../components/common.ts';
+import { aiSetMark, kindLabel } from '../components/common.ts';
 import { shortLabel } from '../components/icon-button.ts';
 import { langSwitch } from '../components/lang-switch.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
@@ -22,7 +23,7 @@ import { t, type MsgKey } from '../i18n/index.ts';
 import { S, type Session } from '../state/store.ts';
 import { sheetOpenKey } from '../state/storage-keys.ts';
 import {
-  checkAnswer, elapsed, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setQuestionLang, submit, toggleFlag,
+  checkAnswer, elapsed, examTick, go, leaveQuiz, onRefresh, pick, pickItem, resetRefreshers, runRefreshers, setQuestionLang, submit, toggleFlag,
 } from '../state/actions.ts';
 import type { Question } from '../types/api.ts';
 import { h, paras, svgMark } from '../utils/dom.ts';
@@ -96,14 +97,21 @@ export function renderQuiz(): HTMLElement {
   const answerOf = (id: string): Answer => se.answers[id];
   const meterFill = h('i');
   const railCount = h('span', { class: 'num' });
+  // A-OWNER-24b / 25: up to the rail line (BAR_MQ) the top row shows the answered count ("已完成 1/50"; up to 360 px only "1/50")
+  const topCountFull = h('span', { class: 'qcount-l' });
+  const topCountShort = h('span', { class: 'qcount-s num', 'aria-hidden': 'true' });
+  const topCount = h('span', { class: 'qcount num', 'data-focus': 'q-count' }, topCountFull, topCountShort);
   const flagsPart = (): string => (se.flags.size > 0 ? t('quiz.sum.flags', { f: se.flags.size }) : '');
   onRefresh(() => {
+    const answered = se.qs.filter((x) => stateOf(x, answerOf(x.id)) === 2).length;
+    topCountFull.textContent = t('quiz.top.answered', { a: answered, n });
+    topCountShort.textContent = `${answered}/${n}`;
     if (practice) {
       const c = practiceCounts(se.qs, se.answers, se.checked);
       meterFill.style.width = (100 * c.checked) / n + '%';
       railCount.textContent = t('quiz.sum.practice', { c: c.checked, n, r: c.right }) + flagsPart();
     } else {
-      const a = se.qs.filter((x) => stateOf(x, answerOf(x.id)) === 2).length;
+      const a = answered;
       meterFill.style.width = (100 * a) / n + '%';
       railCount.textContent = t('quiz.sum.exam', { a, n }) + flagsPart();
     }
@@ -161,7 +169,7 @@ export function renderQuiz(): HTMLElement {
     ai: !aiOn ? 'none' : aiState.usable ? 'usable' : 'greyed',
   });
   const plan = slotsOf();
-  const finishLabel = practice ? t('quiz.practice.finish') : t('quiz.submit');
+  const finishLabel = practice ? t('quiz.practice.finish') : t('quiz.top.finishExam');
 
   // the main area's controls: Check answer and Next (Finish practice / Submit on the last question) are two separate buttons,
   // each with its own fixed place; Check answer is greyed (never hidden) when there is nothing to check
@@ -214,6 +222,7 @@ export function renderQuiz(): HTMLElement {
     h('div', { class: 'phead' },
       h('span', { class: 'badge' }, kindLabel(q)),
       h('span', { class: 'phead-sheet', title: q.sheet }, q.sheet),
+      aiSetMark(q.bank),
       langSwitch(q, view.lang, (l) => setQuestionLang(l), { focusKey: 'lang' })),
     h('div', { class: 'stem' }, paras(view.stem, undefined, lang)),
     body,
@@ -306,10 +315,13 @@ export function renderQuiz(): HTMLElement {
     class: 'rail-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'rail-body', 'aria-label': t('quiz.sheet'), 'data-focus': 'rail-toggle',
   }, miniIcon('chevDown', 'mi'));
   holdTip(toggle, t('quiz.sheet'));
+  // A-OWNER-25: the summary row's finish button belongs to the side rail (> 880 px); under BAR_MQ the CSS hides it and the
+  // top row's 交卷 / 完成 button takes its place
+  const finishBtn = h('button', { class: 'btn primary', type: 'button', 'data-focus': 'rail-submit', onclick: () => void submit() }, finishLabel);
   const rail = h('aside', { class: 'rail', 'aria-labelledby': 'rail-h' },
     h('div', { class: 'rail-sum' },
       h('div', { class: 'rail-t' }, h('h2', { id: 'rail-h' }, t('quiz.sheet')), h('p', { class: 'rail-count' }, railCount)),
-      h('button', { class: 'btn primary', type: 'button', 'data-focus': 'rail-submit', onclick: () => void submit() }, finishLabel),
+      finishBtn,
       toggle),
     sheetBody);
   const setSheetOpen = (open: boolean): void => {
@@ -323,9 +335,22 @@ export function renderQuiz(): HTMLElement {
     writeSheetOpen(open);
   });
 
-  const timerEl = h('span', { class: 'timer num', id: 'timer' }, fmtTime(elapsed()));
+  // TL-3: a timed exam shows the time left (countdown); an untimed exam and a practice keep the count-up
+  const limit = !practice ? se.limit : null;
+  const timerEl = h('span', { class: 'timer num', id: 'timer' });
+  const paintTimer = (): void => {
+    if (limit == null) {
+      timerEl.textContent = fmtTime(elapsed());
+      return;
+    }
+    const left = remaining(limit, elapsed());
+    timerEl.textContent = countdownText(left);
+    timerEl.className = 'timer num' + (timerTone(limit, left) === 'normal' ? '' : ' ' + timerTone(limit, left));
+  };
+  paintTimer();
   S.timer = window.setInterval(() => {
-    timerEl.textContent = fmtTime(elapsed());
+    paintTimer();
+    if (limit != null) examTick();
   }, 1000);
 
   // Auto-advance (a setting, exams only): a reminder in the top row (a text tag; on phones a small dot, the text stays for
@@ -341,6 +366,13 @@ export function renderQuiz(): HTMLElement {
     miniIcon('exit', 'mi'), h('span', { class: 'lbl' }, t('quiz.saveExit')));
   holdTip(exit, t('quiz.saveExit.tip', { hint: t(practice ? 'quiz.saveExit.hintPractice' : 'quiz.saveExit.hint') }));
 
+  // A-OWNER-22 / 25: under BAR_MQ one small 交卷 / 完成 button left of the clock (icon + short label; the label goes when the
+  // row does not fit, the tip stays); it opens the same confirm dialog as the rail button and the last question's bar button
+  const topSubmit = h('button', {
+    class: `btn qsubmit ${practice ? 'qsubmit-practice' : 'qsubmit-exam'}`, type: 'button', 'aria-label': finishLabel, 'data-focus': 'q-submit', onclick: () => void submit(),
+  }, miniIcon('submit', 'mi'), h('span', { class: 'lbl', 'aria-hidden': 'true' }, t(practice ? 'quiz.top.finish' : 'quiz.top.submit')));
+  holdTip(topSubmit, finishLabel);
+
   runRefreshers();
 
   const qbar = h('div', { class: 'qbar' },
@@ -351,14 +383,21 @@ export function renderQuiz(): HTMLElement {
       kindTag),
     h('div', { class: 'r' },
       autoTag,
-      h('span', { class: 'qtime', title: t('quiz.time') }, miniIcon('clock', 'mi'), h('span', { class: 'sr-only' }, t('quiz.time')), timerEl),
+      topCount,
+      topSubmit,
+      h('span', { class: 'qtime' + (limit != null ? ' timed' : ''), title: limit != null ? t('quiz.timeLeftTip', { min: Math.round(limit / 60) }) : t('quiz.time') },
+        miniIcon(limit != null ? 'hourglass' : 'clock', 'mi'), h('span', { class: 'sr-only' }, t(limit != null ? 'quiz.timeLeft' : 'quiz.time')), timerEl),
       exit),
     h('div', { class: 'meter', 'aria-hidden': 'true' }, meterFill));
 
   const root = h('div', { class: 'wrap qz' + (practice ? ' practice' : '') },
     qbar,
     h('div', { class: 'quiz-grid' }, h('div', { class: 'quiz-main' }, paper, dock, barPinned ? pfoot : null), rail),
-    githubLine());
+    githubLine(),
+    // TL-4: the 30-minute notice (assertive) and the 5 / 1 minute lines (polite) for screen readers; examTick() writes them
+    limit != null ? h('div', { id: 'quiz-sr-alert', class: 'sr-only', role: 'alert', 'aria-live': 'assertive' }) : null,
+    limit != null ? h('div', { id: 'quiz-sr', class: 'sr-only', 'aria-live': 'polite' }) : null,
+    se.timeUp ? timeUpOverlay() : null);
   if (fresh && verdictEl) {
     const v = verdictEl;
     queueMicrotask(() => {
@@ -373,6 +412,17 @@ export function renderQuiz(): HTMLElement {
   syncTopH();
   window.requestAnimationFrame(syncTopH);
   return root;
+}
+
+/** TL-5 step 3: the locked page - a full-page overlay with the title focused and no buttons while the answers are saved */
+function timeUpOverlay(): HTMLElement {
+  const title = h('h2', { id: 'timeup-title', tabindex: '-1' }, t('quiz.timeUp.title'));
+  const box = h('div', { class: 'timeup', role: 'alertdialog', 'aria-modal': 'true', 'aria-labelledby': 'timeup-title', 'aria-describedby': 'timeup-body' },
+    h('div', { class: 'timeup-card' }, title, h('p', { id: 'timeup-body' }, t('quiz.timeUp.saving'))));
+  queueMicrotask(() => {
+    if (title.isConnected) title.focus({ preventScroll: true });
+  });
+  return box;
 }
 
 /**
@@ -469,6 +519,14 @@ let topRow: HTMLElement | null = null;
 
 function syncTopH(): void {
   const row = topRow;
+  // A-OWNER-22: the top-row 交卷 / 完成 button drops its label when the row's right group does not fit on one line
+  const right = row && row.isConnected ? row.querySelector<HTMLElement>('.r') : null;
+  const left = row && row.isConnected ? row.querySelector<HTMLElement>('.ql') : null;
+  if (row && right && left) {
+    row.classList.remove('tight');
+    const over = left.scrollWidth > left.clientWidth + 1 || right.offsetTop > left.offsetTop + 4 || row.scrollWidth > row.clientWidth + 1;
+    row.classList.toggle('tight', over);
+  }
   const px = row && row.isConnected && matches(PHONE_MQ) ? row.offsetHeight : 0;
   document.documentElement.style.setProperty('--top-h', `${px}px`);
 }
@@ -478,6 +536,9 @@ export function installQuizKeys(): void {
   // A phone turned sideways (or a window resized across the PHONE line) changes the pinned row's height: --top-h follows
   if (typeof window.matchMedia === 'function') {
     window.matchMedia(PHONE_MQ).addEventListener('change', () => {
+      if (S.route.name === 'quiz') syncTopH();
+    });
+    window.addEventListener('resize', () => {
       if (S.route.name === 'quiz') syncTopH();
     });
   }
@@ -500,7 +561,7 @@ export function installQuizKeys(): void {
     } else if (e.key === 'm' || e.key === 'M') {
       toggleFlag(q);
     } else if (/^[a-hA-H]$/.test(e.key) && q.kind !== 'hotspot') {
-      // pick() ignores a checked (locked) practice question; in a practice it checks a single-choice question at once
+      // pick() ignores a checked (locked) practice question; in a practice a pick only chooses, 核对答案 checks
       const k = e.key.toUpperCase();
       if (q.options.some((o) => o.key === k)) pick(q, k);
     }

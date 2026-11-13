@@ -2,7 +2,7 @@
 // questions that merely contain the word do not. Made-up sentences only. Run with `node --experimental-strip-types --test`.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { memoryLength, wantsMemory } from './ai-memory.ts';
+import { memoryBoxChars, memoryLength, memoryTokenCount, wantsMemory } from './ai-memory.ts';
 
 test('explicit requests in en / zh / ja', () => {
   for (const s of [
@@ -36,4 +36,11 @@ test('the length counts characters, not UTF-16 units', () => {
   assert.equal(memoryLength('abc'), 3);
   assert.equal(memoryLength('漢字'), 2);
   assert.equal(memoryLength('😀'), 1);
+});
+
+test('memoryTokenCount estimates tokens like the service', () => {
+  assert.equal(memoryTokenCount('abcd'), 1);
+  assert.equal(memoryTokenCount('abcde'), 2);
+  assert.equal(memoryTokenCount('漢字'), 3);
+  assert.equal(memoryBoxChars(1000), 4000);
 });

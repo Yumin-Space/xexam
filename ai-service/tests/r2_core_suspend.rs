@@ -130,7 +130,8 @@ async fn suspend_and_resume_are_audited_once_and_idempotent() {
             "memories",
             "lastUsedAt",
             "tokensIn",
-            "tokensOut"
+            "tokensOut",
+            "features"
         ]
     );
     assert_eq!(

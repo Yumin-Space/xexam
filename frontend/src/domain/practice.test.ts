@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { kindOf } from './attempt.ts';
-import { barSlots, canCheck, checksOnPick, finalResults, isLocked, listNumbers, openCount, openNumbers, practiceCounts, practiceMark, sheetMatches, type BarInput } from './practice.ts';
+import { barSlots, canCheck, finalResults, isLocked, listNumbers, openCount, openNumbers, practiceCounts, practiceMark, sheetMatches, type BarInput } from './practice.ts';
 import type { Answer } from './grading.ts';
 import type { Question } from '../types/api.ts';
 
@@ -16,10 +16,14 @@ const H1: Q = {
 };
 const qs: Q[] = [S1, M1, H1];
 
-test('single choice is checked by the pick; multiple choice and hotspot need "Check answer"', () => {
-  assert.equal(checksOnPick(S1), true);
-  assert.equal(checksOnPick(M1), false);
-  assert.equal(checksOnPick(H1), false);
+test('every question type is checked only by "Check answer": a single-choice pick does not check, the pick can change until checked', () => {
+  // after a pick, Check answer is enabled for single, multiple choice and hotspot alike
+  for (const [q, a] of [[S1, ['A']], [M1, ['A']], [H1, [0, null]]] as const) {
+    assert.equal(canCheck(q, a as unknown as Answer, false), true, q.kind);
+    // the pick can change while it is not checked (it is not locked)
+    assert.equal(isLocked('practice', new Set(), q.id), false);
+  }
+  assert.equal(canCheck(S1, ['B'], true), false);
 });
 
 test('"Check answer" is usable once something is chosen and not after checking', () => {
@@ -136,7 +140,7 @@ test('barSlots: the main area is [Check answer, Next | Finish] in a practice and
   }
 });
 
-test('barSlots: Check answer is usable once answered, only until checked, and a single-choice question is checked by the pick', () => {
+test('barSlots: Check answer is usable once answered, only until checked, for every type', () => {
   const checkOf = (i: BarInput) => barSlots(i).main.find((x) => x.act === 'check');
   assert.equal(checkOf({ ...base, kind: 'exam', qType: 'multi' }), undefined);
   for (const qType of ['multi', 'hotspot'] as const) {
@@ -144,8 +148,9 @@ test('barSlots: Check answer is usable once answered, only until checked, and a 
     assert.equal(checkOf({ ...base, qType, answered: true })?.enabled, true);
     assert.equal(checkOf({ ...base, qType, answered: true, checked: true })?.enabled, false);
   }
-  // single choice: the button stays in its place, greyed (the pick has already checked it)
-  assert.equal(checkOf({ ...base, qType: 'single', answered: true })?.enabled, false);
+  // v1.1 (PC-1): single choice too: usable once a pick is made, not after checking
+  assert.equal(checkOf({ ...base, qType: 'single', answered: false })?.enabled, false);
+  assert.equal(checkOf({ ...base, qType: 'single', answered: true })?.enabled, true);
   assert.equal(checkOf({ ...base, qType: 'single', answered: true, checked: true })?.enabled, false);
 });
 

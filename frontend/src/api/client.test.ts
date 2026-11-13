@@ -331,7 +331,7 @@ test('JSON errors of the AI routes: code and field; the guard and the texts in t
   setUiLang('zh');
   assert.equal(errorText(e), '密钥格式不对：只能是 1–400 个可见的英文字符，不能有空格。');
   setUiLang('ja');
-  assert.equal(errorText(e), 'キーは空白なしの表示可能な文字 1〜400 文字です。');
+  assert.equal(errorText(e), 'キーは空白を含まない表示可能な文字で 1〜400 文字にしてください。');
   setUiLang('en');
 
   reply(json(403, { error: '被拒绝：这个请求的 Host 或 Origin 不在允许的列表里，请检查 XEXAM_ALLOWED_HOSTS 和 XEXAM_ALLOWED_ORIGINS。', code: 'auth.guard' }));

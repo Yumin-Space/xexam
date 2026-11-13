@@ -71,7 +71,7 @@ test('administrators are pointed to AI settings > Safety limits instead of "ask 
     setUiLang('en');
     assert.match(callLimitText(q, true, NOW), /You can change the limits in AI settings › Safety limits\./);
     setUiLang('ja');
-    assert.match(callLimitText(q, true, NOW), /「AI 設定 › 安全上限」で変更できます。/);
+    assert.match(callLimitText(q, true, NOW), /「AI 設定 › セキュリティ上限」で変更できます。/);
   } finally {
     setUiLang('en');
   }

@@ -36,7 +36,7 @@ export default defineCatalog({
   },
   ja: {
     'about.title': 'Xexam について',
-    'about.lead': 'Xexam は、自分の Excel の問題集を取り込み、解説と間違いノート付きの試験形式で練習するためのアプリです。自分のサーバーで動き、データもそこにだけ保存されます。',
+    'about.lead': 'Xexam は、自分の Excel 問題集をインポートし、解説と間違いノート付きの試験形式で練習できるアプリです。自分のサーバーで動作し、データもそのサーバーにだけ保存されます。',
     'about.version': 'バージョン',
     'about.server': 'サーバー',
     'about.license': 'ライセンス',

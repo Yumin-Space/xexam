@@ -85,6 +85,8 @@ fn attempt(results: &[(&str, bool)]) -> Attempt {
         mode: "all".to_string(),
         seconds: 42,
         kind: Default::default(),
+        limit: None,
+        end: None,
     }
 }
 
@@ -140,7 +142,7 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     let c = raw(&db);
     // intended difference (v0.6, v0.6.5, v0.8): a new database goes straight to the current schema (tests/v06_users_and_sign_in.rs,
     // tests/v065_bank_access_and_practice.rs, tests/v08_ai_link.rs)
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 0);
     for t in ["banks", "attempt_items", "settings"] {
         assert_eq!(
@@ -277,7 +279,7 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
     );
     // intended difference (v0.6, v0.6.5, v0.8): v1 → v2 → v3 → v4 → v5 in one go (one schema-1 backup); v3 / v4 / v5 are
     // covered in tests/v06_users_and_sign_in.rs, tests/v065_bank_access_and_practice.rs and tests/v08_ai_link.rs
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "6");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempt_items"),
         0,
@@ -1601,7 +1603,7 @@ async fn api_records_attempt_answers_and_query_parsing() {
         j["records"][0],
         json!({"id": 1, "at": FIXED_NOW, "banks": [{"id": 1, "name": "demo", "deleted": false}], "sheets": ["demo"],
                "mode": "weak", "total": 5, "correct": 3, "percent": 60, "seconds": 61, "answered": 2, "detail": true,
-               "kind": "exam"})
+               "kind": "exam", "ended": "submit", "unanswered": 1})
     );
     let r = get(&a.app, "/api/record?id=1").await;
     assert_eq!(r.status, 200, "{}", r.text());

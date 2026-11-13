@@ -1869,8 +1869,12 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
             None,
         );
         assert!(rec > 0);
+        // (v1.1: a fresh database also has the v7 columns and indexes, which go first: `ended`'s CHECK names `time_limit`)
         c.execute_batch(
-            "ALTER TABLE attempts DROP COLUMN session_key; \
+            "DROP INDEX idx_banks_ai_job; DROP INDEX idx_questions_layout; \
+             ALTER TABLE attempts DROP COLUMN ended; ALTER TABLE attempts DROP COLUMN time_limit; \
+             ALTER TABLE banks DROP COLUMN ai_meta; ALTER TABLE banks DROP COLUMN ai_job; \
+             ALTER TABLE attempts DROP COLUMN session_key; \
              ALTER TABLE attempts DROP COLUMN started_at; \
              UPDATE meta SET value = '5' WHERE key = 'schema';",
         )
@@ -1903,7 +1907,7 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "6");
+    assert_eq!(v, "7");
     // the existing record is intact and has no session
     assert_eq!(
         count(

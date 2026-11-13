@@ -2,23 +2,45 @@
 // a practice, plus the latest result (exam or practice) and an overview of the question banks in a side column.
 import '../styles/home.css';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
+import { aiSetBadge } from '../components/ai-badge.ts';
+import { genCardHost, homeGenButton } from '../components/ai-gen.ts';
 import { aiPlusNow, naTag, summaryButton } from '../components/ai-plus-controls.ts';
 import { kindTag } from '../components/kind-tag.ts';
+import { holdTip } from '../components/tooltip.ts';
 import { icon } from '../components/shell.ts';
 import { controlState, recordSummaryExtra } from '../domain/ai-plus.ts';
 import { kindOf } from '../domain/attempt.ts';
+import { LIMIT_MAX_MINUTES, LIMIT_MIN_MINUTES, autoTick, countdownText, readLimitControls, resumeView } from '../domain/exam-timer.ts';
 import { inNotebook, masterStreakOf, pickQuestions, poolOf } from '../domain/grading.ts';
 import { serverText } from '../i18n/errors.ts';
 import { t, tn } from '../i18n/index.ts';
 import { routeHash, type Route } from '../router.ts';
-import { navigate, render, resumeSession, startExam } from '../state/actions.ts';
+import { navigate, onRouteChange, render, resumeAndSubmit, resumeSession, startExam } from '../state/actions.ts';
 import { clearSaved, loadSaved } from '../state/session-storage.ts';
-import { S, bankIdsOf, canManageBanks, isAdmin, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
+import { S, bankIdsOf, canManageBanks, isAdmin, onClearUserData, pool, questionSheetKey, sheetKey, usableSheetKeys } from '../state/store.ts';
 import type { AttemptKind, BankSummary, Mode } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
 import { liftToastAbove } from '../utils/toast.ts';
+
+/**
+ * v1.1 (TL-1): the exam time-limit controls. Kept only here, so a re-render of Home (library refresh, AI status) keeps what was
+ * typed; back to the defaults (unticked, empty) when an exam starts, when the route leaves Home, on sign-out and on reload.
+ * Never written to localStorage, the settings or `S.cfg`.
+ */
+const limitDraft = { checked: false, raw: '' };
+const resetLimitDraft = (): void => {
+  limitDraft.checked = false;
+  limitDraft.raw = '';
+};
+onRouteChange((from) => {
+  if (from.name === 'home') resetLimitDraft();
+});
+onClearUserData(resetLimitDraft);
+
+/** Full-width digits typed into the field are shown as ASCII digits */
+const asciiDigits = (raw: string): string => raw.replace(/[\uFF10-\uFF19]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
 
 /** Wrong-answer notebook over the active questions: total size and size per sheet key */
 interface Notebook {
@@ -91,15 +113,21 @@ function resumeCard(): HTMLElement | null {
   // HM-6: one line, "Unfinished practice · Question 12/51", then Continue and Discard (what was saved stays in the title)
   const names = bankIdsOf(sv.qs).map(bankName).join(t('common.listSep'));
   const detail = [names, sv.mode !== 'all' ? modeName(sv.mode) : '', t('home.resume.lead')].filter(Boolean).join(' · ');
+  // TL-6: a timed exam shows the time left instead of the time used; a session whose time ran out can only be submitted
+  const timed = practice ? { left: null, timeUp: false } : resumeView(sv.timed, sv.elapsed);
   return h('section', { class: 'resume home-resume', 'aria-labelledby': 'home-resume-h' },
     icon(ICON_RESUME, 'ico rs-ico'),
     h('div', { class: 'rs-text', title: detail },
       h('div', { class: 'rs-head' },
         h('h2', { id: 'home-resume-h' }, t(practice ? 'home.resume.titlePractice' : 'home.resume.title')),
         h('span', { class: 'rs-where num' }, t('home.resume.pos', { i: sv.idx + 1, n: sv.qs.length }))),
+      timed.timeUp ? h('p', { class: 'rs-meta' }, t('home.resume.timeUp'))
+        : timed.left != null ? h('p', { class: 'rs-meta' }, t('home.resume.progressTimed', { answered: sv.answered, total: sv.qs.length, left: countdownText(timed.left) })) : null,
       sv.dropped ? h('p', { class: 'rs-meta' }, tn('home.resume.dropped', sv.dropped)) : null),
     h('div', { class: 'rs-acts' },
-      h('button', { class: 'btn primary', type: 'button', onclick: () => resumeSession() }, t('home.resume.continue')),
+      timed.timeUp
+        ? h('button', { class: 'btn primary', type: 'button', onclick: () => resumeAndSubmit() }, t('home.resume.submitNow'))
+        : h('button', { class: 'btn primary', type: 'button', onclick: () => resumeSession() }, t('home.resume.continue')),
       h('button', { class: 'btn quiet', type: 'button', onclick: () => void discardSaved(practice) }, t('home.resume.discard'))));
 }
 
@@ -211,7 +239,9 @@ function startPanel(nb: Notebook): HTMLElement {
         expand.title = tip;
       },
     }, icon(ICON_CHEVRON));
-    const row = h('div', { class: 'home-bankhead' }, label, expand);
+    // GB-6: the AI+题集 marker sits at the right end of an AI bank's row, between the label and the chevron (a tap on it never
+    // toggles the checkbox); sheet rows get nothing
+    const row = h('div', { class: 'home-bankhead' }, label, bank.ai ? aiSetBadge(bank.ai) : null, expand);
     const pick: BankPick = { keys, box, row, info, sheets: [] };
     picks.push(pick);
 
@@ -269,7 +299,10 @@ function startPanel(nb: Notebook): HTMLElement {
     h('div', { class: 'mseg-group' },
       h('label', { class: 'mseg', title: t('home.mode.allSub') }, allBox, icon(ICON_ALL, 'ico mseg-ico'), h('span', { class: 'mseg-label' }, t('home.mode.allShort')), allCount),
       weakRow));
-  head.append(modeSet);
+  // GB-3: the AI generation button sits left of the 全部 / 错题本 switch; its label follows the switch and its state follows the
+  // selection (refresh() below fills the slot; null = hidden, M-7)
+  const genSlot = h('span', { class: 'home-gen-slot' });
+  head.append(h('div', { class: 'home-setup-tools' }, genSlot, modeSet));
   head.after(modeHint);
 
   // Count, order, start
@@ -306,6 +339,10 @@ function startPanel(nb: Notebook): HTMLElement {
       : k < n ? t('home.scopePart', { n, count: k }) : tn('home.scope', n);
   };
 
+  /** The checked sheets in Home's order (AI banks included: the generation rules, M-9, are decided by the button's own state) */
+  const scopeSheets = (): Array<{ bank: number; sheet: string }> =>
+    S.banks.flatMap((b) => b.sheets.filter((sh) => sh.usable > 0 && selected.has(sheetKey(b.id, sh.name))).map((sh) => ({ bank: b.id, sheet: sh.name })));
+
   // Updates everything that depends on the selection in place (no re-render: keeps focus and scroll position)
   function refresh(): void {
     for (const p of picks) {
@@ -337,6 +374,7 @@ function startPanel(nb: Notebook): HTMLElement {
     startBtn.disabled = n === 0;
     practiceBtn.disabled = n === 0;
     updateScope(n);
+    genSlot.replaceChildren(...[homeGenButton(cfg.mode === 'weak' ? 'wrong' : 'all', scopeSheets())].filter((x): x is HTMLElement => !!x));
   }
 
   // While typing only the scope text follows; the field itself is normalised when the edit is committed
@@ -353,17 +391,62 @@ function startPanel(nb: Notebook): HTMLElement {
   function start(kind: AttemptKind): void {
     const p = pool();
     if (!p.length) return;
+    // TL-1: only the exam reads the time-limit controls; a practice ignores them, whatever they hold
+    let limit: number | null = null;
+    if (kind === 'exam') {
+      const r = readLimitControls(limitBox.checked, limitInput.value);
+      if (!r.ok) {
+        limitInput.setAttribute('aria-invalid', 'true');
+        limitErr.textContent = t('home.limit.bad', { min: LIMIT_MIN_MINUTES, max: LIMIT_MAX_MINUTES });
+        limitErr.hidden = false;
+        limitInput.focus();
+        return;
+      }
+      limit = r.limit;
+    }
     readCount(p.length);
     cfg.shuffle = shuffleBox.checked;
     const n = effectiveCount(p.length);
-    void startExam(pickQuestions(p, n, cfg.shuffle), cfg.mode, kind);
+    const before = S.session;
+    void startExam(pickQuestions(p, n, cfg.shuffle), cfg.mode, kind, { limit }).then(() => {
+      // the controls go back to their defaults once an exam has started (an overwrite question answered "no" keeps them)
+      if (S.session !== before && kind === 'exam') resetLimitDraft();
+    });
   }
+
+  // TL-1: the exam time limit: a tick box, a number field of the count field's size, the unit; typing a digit ticks the box once
+  const limitBox = h('input', {
+    type: 'checkbox', checked: limitDraft.checked,
+    onchange: () => {
+      limitDraft.checked = limitBox.checked;
+    },
+  });
+  const limitInput = h('input', {
+    type: 'text', inputmode: 'numeric', autocomplete: 'off', maxlength: '4', class: 'home-limit-field', 'aria-label': t('home.limit.field'), value: limitDraft.raw,
+  });
+  const limitErr = h('p', { class: 'home-limit-err', role: 'alert', hidden: true });
+  limitInput.addEventListener('input', () => {
+    const next = asciiDigits(limitInput.value);
+    if (next !== limitInput.value) limitInput.value = next;
+    if (autoTick(limitDraft.raw, next, limitBox.checked)) {
+      limitBox.checked = true;
+      limitDraft.checked = true;
+    }
+    limitDraft.raw = next;
+    limitInput.removeAttribute('aria-invalid');
+    limitErr.hidden = true;
+  });
+  holdTip(limitBox, t('home.limit.tip'));
+  holdTip(limitInput, t('home.limit.tip'));
+  const limitLabel = h('label', { class: 'home-limit' }, limitBox, h('span', null, t('home.limit.check')), limitInput, h('span', null, t('home.limit.unit')));
 
   // The bar pinned to the bottom: Start exam / Start practice, what will be asked, and the two options right next to it
   const goBar = h('div', { class: 'home-go' }, h('div', { class: 'home-go-btns' }, startBtn, practiceBtn), scopeText,
     h('div', { class: 'home-go-opts' },
       h('label', { class: 'home-count', title: t('home.count.label') }, h('span', null, t('home.count.short')), countInput),
-      h('label', { class: 'home-shuffle', title: t('home.shuffle') }, shuffleBox, h('span', null, t('home.shuffle.short')))));
+      h('label', { class: 'home-shuffle', title: t('home.shuffle') }, shuffleBox, h('span', null, t('home.shuffle.short'))),
+      limitLabel),
+    limitErr);
   // The mode comes first: "practise my wrong answers" is a frequent start and should not sit below every sheet row
   panel.append(pickSet, goBar);
   // v1.0 (SH-4): toasts sit above the start bar while it is on screen (this moves the toasts, never the bar: HM-1)
@@ -404,10 +487,12 @@ function latestCard(): HTMLElement {
     sec.append(h('p', { class: 'empty' }, t('home.latest.empty')));
     return sec;
   }
-  const wrong = Math.max(0, r.total - r.correct);
+  // v1.1 (TL-7): a not-completed question is not wrong
+  const unanswered = r.unanswered ?? 0;
+  const wrong = Math.max(0, r.total - r.correct - unanswered);
   // v0.9: the AI summary of the latest record (only for users with the AI+ feature; greyed with its own tag when unusable)
   const view = aiPlusNow();
-  const state = controlState(view, recordSummaryExtra(r));
+  const state = controlState(view, recordSummaryExtra(r), 'summary');
   const summary = view.show
     ? summaryButton({ id: r.id, at: r.at, kind: kindOf(r) }, state, { anchorKey: 'home-ai', quiet: false, tag: true })
     : null;
@@ -423,6 +508,7 @@ function latestCard(): HTMLElement {
       [t('home.fact.banks'), recordBankNames(r.banks)],
       modeName(r.mode) ? [t('home.fact.mode'), modeName(r.mode)] : null,
       [t('home.fact.wrong'), tn('common.questions', wrong), wrong ? 'ng' : undefined],
+      unanswered > 0 ? [t('home.fact.unanswered'), tn('common.questions', unanswered)] : null,
       [t('home.fact.time'), h('span', { class: 'num' }, fmtTime(r.seconds))],
     ]),
     // One row of equal cells (two without AI+): details, AI summary, all records (text + chevron, a short name on phones)
@@ -471,6 +557,7 @@ export function renderHome(): HTMLElement {
   return h('div', { class: 'page page-home' },
     pageHead(t('home.title')),
     h('div', { class: 'home-grid' },
-      h('div', { class: 'home-main' }, resumeCard(), startPanel(nb)),
+      // the generation progress card (GB-7) sits at the top of the main column, above the resume card
+      h('div', { class: 'home-main' }, genCardHost('home'), resumeCard(), startPanel(nb)),
       h('div', { class: 'home-side' }, latestCard(), overviewCard(nb))));
 }

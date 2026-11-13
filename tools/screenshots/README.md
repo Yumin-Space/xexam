@@ -1,7 +1,7 @@
 # Screenshot tool
 
-Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 20 desktop and 7 iPhone images per
-language, 27 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
+Retakes every screenshot of the READMEs and docs (`docs/<lang>/screenshots/`, 25 desktop and 8 iPhone images per
+language, 33 in all) from a throw-away Xexam instance that holds only made-up demo data. Every value the images show is
 made up, also on the AI pages: the stub's address `http://ai-stub:9000/v1`, the fake key (shown as `…9c21`), the
 `demo-*` models, the demo users and banks. The tool never connects to any other instance, so real addresses, keys or
 model choices cannot appear. Run it from the repository root:
@@ -80,6 +80,13 @@ A full run of the three languages takes a few minutes, plus the image builds whe
      made-up question while seeding, so the users list shows a calls line and the usage table has more than one user.
    - **The footer** (the disclaimer, then the centered "GitHub | Xexam <version>" line) is part of the whole-page Home
      image and is checked on the phone Home and on the AI Chat list pane.
+   - **v1.1** (`desktop-22-timed-exam` … `desktop-25-ai-bank-home`, `desktop-21-ai-banks`, `iphone-8-banks`): an exam
+     started with the exam time limit ticked on Home (45 minutes, the countdown in the top row), its submit confirm with
+     questions not completed and its result filtered on them; then one AI generation from the checked sheets of General
+     knowledge, made by the stub (the minimum source size is lowered to 5 only for the start, the demo bank being small),
+     with a name per language: Home with the AI+ Set row and the done card, the AI banks tab of AI settings with the job,
+     Bank management on a phone. The AI bank is deleted right after these images, so no other scene asks its made-up
+     questions.
    Their asks are saved in AI Chat; the run deletes the administrator's AI chats before the AI Chat scenes and at the
    end. Each language adds a few calls to the AI usage numbers, so they differ slightly between the languages. PNG text,
    time and EXIF chunks are removed (`browser.strip_png`).
@@ -90,7 +97,7 @@ A full run of the three languages takes a few minutes, plus the image builds whe
    exam bar is one row with no Check answer and no AI buttons; the AI+ panel and the summary window show the Saved
    text, contain no link or Open in AI Chat control and draw no focus frame on a title focused by script; the
    footer line is centered with its two links (`https://github.com/Yumin-Space/xexam` and `.../releases`, new tab, `noopener
-   noreferrer`) below the disclaimer, with no old "Xexam v..." line; AI settings has four category tabs with the right
+   noreferrer`) below the disclaimer, with no old "Xexam v..." line; AI settings has five category tabs with the right
    one selected and, in AI safety, the three limit groups; Study records cards are at most 140 px tall at 360 px; at
    800 px the Study records list (English and Japanese) is in the card layout with no horizontal scroll and Delete on
    one line.
@@ -109,7 +116,7 @@ first is retried with another one), and `npm ci` (only when `frontend/node_modul
 | `retake.py` | Entry point: options, backend and ai-service, frontend, seeding, the languages, clean-up |
 | `demo_banks.py` | The made-up demo question banks |
 | `seed.py` | Users, banks, records, the AI setup (with the AI+ feature of sam and alex, alex paused) and the System log activity, through the API |
-| `scenes.py` | The 27 scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
+| `scenes.py` | The 33 scenes (the AI+ panel, result, summary, AI Chat, the AI settings tabs and safety limits included), the layout / feedback checks, and how each image is sized |
 | `browser.py` | Finding and starting Chrome, a small DevTools (CDP) client, PNG metadata removal |
 | `../../tests/integration/ai_stub.py` | The made-up AI provider (shared with the stack check of CI) |
 

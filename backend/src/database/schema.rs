@@ -22,8 +22,12 @@
 //! - Schema v6 (v0.9) adds two nullable columns to `attempts` and nothing else (`V6_COLUMNS`): the key and the start time of
 //!   the practice / exam session a record was saved from, so the AI service can find the one chat of a session again from
 //!   its record. Older records keep NULL.
+//! - Schema v7 (v1.1) adds four nullable columns and two indexes (`V7_COLUMNS`, `MIGRATE_V7_INDEXES`): the time limit of a
+//!   timed exam and how an exam ended (`attempts.time_limit`, `attempts.ended`; `ended` set marks a record saved under the
+//!   not-answered rule, whose unanswered questions are derived, never stored as a column), and the job key and the JSON
+//!   facts of an AI-generated bank (`banks.ai_job`, `banks.ai_meta`). Older rows keep NULL.
 
-pub const SCHEMA_VERSION: &str = "6";
+pub const SCHEMA_VERSION: &str = "7";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -209,3 +213,41 @@ pub const V6_COLUMNS: [(&str, &str, &str); 2] = [
     // When that session started (unix seconds, the browser's clock); NULL like `session_key`.
     ("attempts", "started_at", "started_at INTEGER"),
 ];
+
+/// Columns added by schema v7 (same rules as [`V2_COLUMNS`]). In this order: `ended`'s CHECK names `time_limit`, and
+/// `ai_meta`'s names `ai_job` (`ADD COLUMN` accepts and enforces both). The CHECKs are a safety net only: the cleaning of
+/// `POST /api/attempt` and the AI-bank create route never write a value they refuse, and a rolled-back v1.0 binary writes
+/// NULL / NULL, which they accept.
+pub const V7_COLUMNS: [(&str, &str, &str); 4] = [
+    // The time limit of a timed exam (seconds, 60..=36000); NULL = untimed (every untimed exam, every practice, every record
+    // before v1.1)
+    (
+        "attempts",
+        "time_limit",
+        "time_limit INTEGER CHECK (time_limit IS NULL OR (time_limit BETWEEN 60 AND 36000 AND kind = 'exam'))",
+    ),
+    // How an exam saved by v1.1 or later ended: 'timeUp' (submitted by the countdown; timed only) or 'submit' (by hand, timed
+    // or not); NULL = a practice, or a record written before v1.1 (the v1.0 rule: an empty answer is wrong). Set = saved under
+    // the not-answered rule; the unanswered items are derived (items of such a record with answer NULL and correct 0). CASE
+    // keeps the CHECK NULL-safe (a NULL result would pass a CHECK).
+    (
+        "attempts",
+        "ended",
+        "ended TEXT CHECK (CASE WHEN ended IS NULL THEN time_limit IS NULL \
+         ELSE kind = 'exam' AND (ended = 'submit' OR (ended = 'timeUp' AND time_limit IS NOT NULL)) END)",
+    ),
+    // The ai-service job key of an AI-generated bank (32 lower-case hex digits); NULL = an imported bank
+    ("banks", "ai_job", "ai_job TEXT"),
+    // JSON facts of an AI-generated bank (source, source banks, author, counts, time); NULL = an imported bank
+    (
+        "banks",
+        "ai_meta",
+        "ai_meta TEXT CHECK ((ai_meta IS NULL) = (ai_job IS NULL))",
+    ),
+];
+
+/// Indexes created after the v7 columns: one bank per job (the create route's idempotency), and the covering index of the
+/// bank list (`banks_json`'s aggregate then reads only the index).
+pub const MIGRATE_V7_INDEXES: &str = "
+CREATE UNIQUE INDEX IF NOT EXISTS idx_banks_ai_job ON banks(ai_job) WHERE ai_job IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_questions_layout ON questions(bank_id, sheet, active, seq);";

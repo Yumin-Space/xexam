@@ -434,8 +434,8 @@ async fn verify_falls_back_once_and_chat_uses_the_same_request() {
     assert_eq!(mt, 4096);
     let ev = t.send_all(&sam, json!({"text": "hi"})).await.expect("s");
     assert_eq!(terminal(&ev).0, "done");
-    // the answer length (1000 characters, English: 1000 tokens) is below the stored ceiling of 4096
-    assert_eq!(t.stub.last().body["max_tokens"], json!(1000));
+    // the answer length (3000 tokens) is below the stored ceiling of 4096
+    assert_eq!(t.stub.last().body["max_tokens"], json!(3000));
     let verify_rows: i64 = t
         .db()
         .query_row(
@@ -739,26 +739,31 @@ async fn safety_limits_routes() {
     assert_eq!(
         v["limits"],
         json!({"perUserRunning": 1, "globalRunning": 16, "chatsPerUser": 1000, "messagesPerChat": 400,
-               "memoriesPerUser": 50, "memoryChars": 200,
-               "callsPerMinute": 5, "callsPerHour": 20, "callsPerDay": 100, "replyMaxChars": 1000})
+               "memoriesPerUser": 50, "memoryTokens": 1000,
+               "callsPerMinute": 5, "callsPerHour": 20, "callsPerDay": 100, "replyMaxTokens": 3000,
+               "genPerDay": 3, "genAdminsExempt": 1, "genMinSource": 30, "genMinWrong": 10,
+               "genBankSingle": 14, "genBankMulti": 6, "genWrongSingle": 14, "genWrongMulti": 6,
+               "genCallTokens": 20000, "genMaxCalls": 15, "importMaxCalls": 25, "recognizeMaxCalls": 20, "genUnlimited": 1, "importUnlimited": 1, "genRunning": 2, "importMaxMb": 20, "importMaxQuestions": 50})
     );
     let keys: Vec<&String> = v["limits"].as_object().expect("object").keys().collect();
-    assert_eq!(keys.len(), 10);
+    assert_eq!(keys.len(), 27);
     assert_eq!(
-        &keys[6..],
+        &keys[6..10],
         &[
             "callsPerMinute",
             "callsPerHour",
             "callsPerDay",
-            "replyMaxChars"
+            "replyMaxTokens"
         ]
     );
+    assert_eq!(keys[10], "genPerDay");
+    assert_eq!(keys[26], "importMaxQuestions");
     assert_eq!(v["ranges"]["callsPerMinute"], json!([1, 100]));
     assert_eq!(v["ranges"]["callsPerHour"], json!([1, 2000]));
     assert_eq!(v["ranges"]["callsPerDay"], json!([1, 20000]));
     assert_eq!(v["defaults"], v["limits"]);
     assert_eq!(v["ranges"]["chatsPerUser"], json!([10, 100000]));
-    assert_eq!(v["ranges"]["replyMaxChars"], json!([1, 16000]));
+    assert_eq!(v["ranges"]["replyMaxTokens"], json!([1, 250000]));
     assert!(v["limits"].get("messageChars").is_none());
     for (body, code, field) in [
         (
@@ -777,19 +782,19 @@ async fn safety_limits_routes() {
             Some("perUserRunning"),
         ),
         (
-            json!({"memoryChars": "200"}),
+            json!({"memoryTokens": "200"}),
             "ai.limitRange",
-            Some("memoryChars"),
+            Some("memoryTokens"),
         ),
         (
-            json!({"chatsPerUser": 2000, "replyMaxChars": 16001}),
+            json!({"chatsPerUser": 2000, "replyMaxTokens": 250001}),
             "ai.limitRange",
-            Some("replyMaxChars"),
+            Some("replyMaxTokens"),
         ),
         (
-            json!({"chatsPerUser": 2000, "replyMaxChars": 0}),
+            json!({"chatsPerUser": 2000, "replyMaxTokens": 0}),
             "ai.limitRange",
-            Some("replyMaxChars"),
+            Some("replyMaxTokens"),
         ),
         // the per-message number is not an administrator's setting any more
         (json!({"messageChars": 16000}), "ai.badRequest", None),
@@ -806,12 +811,12 @@ async fn safety_limits_routes() {
         .post(
             "/api/ai/admin/limits",
             &admin,
-            json!({"chatsPerUser": 2000, "replyMaxChars": 16000}),
+            json!({"chatsPerUser": 2000, "replyMaxTokens": 16000}),
         )
         .await;
     assert_eq!(s, 200);
     assert_eq!(v["limits"]["chatsPerUser"], json!(2000));
-    assert!(captured_contains("AI limits changed by admin \"admin\": chatsPerUser 1000 -> 2000, replyMaxChars 1000 -> 16000"));
+    assert!(captured_contains("AI limits changed by admin \"admin\": chatsPerUser 1000 -> 2000, replyMaxTokens 3000 -> 16000"));
     // limits are not part of the fingerprint
     t.configure_openai(&admin, "demo-chat-small").await;
     let (_, _) = t
@@ -830,4 +835,24 @@ async fn safety_limits_routes() {
         .post("/api/ai/admin/limits", &sam, json!({"chatsPerUser": 20}))
         .await;
     assert_eq!((s, v["code"].clone()), (403, json!("ai.adminOnly")));
+}
+
+#[tokio::test]
+async fn unlimited_switches_are_zero_or_one() {
+    let t = start().await;
+    let admin = t.user("admin", true, false);
+    let (s, v) = t
+        .post(
+            "/api/ai/admin/limits",
+            &admin,
+            json!({"genUnlimited": 1, "importUnlimited": 1}),
+        )
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["limits"]["genUnlimited"], json!(1));
+    assert_eq!(v["limits"]["importUnlimited"], json!(1));
+    let (s, _) = t
+        .post("/api/ai/admin/limits", &admin, json!({"genUnlimited": 2}))
+        .await;
+    assert_eq!(s, 400);
 }

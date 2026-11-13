@@ -5,7 +5,7 @@
 // AI+ feature the DOM stays the v0.8 one.
 import {
   aiControls, aiPlusView, buildStudyAsk, controlState, dockKey, focusKey, resultExtra, unavailableParts,
-  type AiPlusView, type ControlSpec, type ControlState, type QuestionLang, type RunningInfo,
+  type AiPlusView, type ControlSpec, type ControlState, type QuestionLang, type RunningInfo, type StudyKind,
 } from '../domain/ai-plus.ts';
 import { studySavedQuery, studySpec } from '../domain/ai-spec.ts';
 import { sessionPart, studyKey } from '../domain/ai-study.ts';
@@ -14,7 +14,7 @@ import { t, uiLang, type MsgKey } from '../i18n/index.ts';
 import { aiStatus } from '../state/ai.ts';
 import { S } from '../state/store.ts';
 import { h } from '../utils/dom.ts';
-import { AI_BADGE_TEXT } from './ai-badge.ts';
+import { aiBadge } from './ai-badge.ts';
 import { openAiPanel, type PanelOpenArgs } from './ai-panel.ts';
 import { openAiSummary } from './ai-summary.ts';
 import { iconButton, withReason } from './icon-button.ts';
@@ -58,12 +58,20 @@ export interface StudyTarget {
  * controlState(aiPlusNow(), extra): the practice page has no row-level reason; elsewhere an exam without a record id, or a
  * target with neither a key nor a record id, is 'notSaved'.
  */
-export function studyState(target: StudyTarget): ControlState {
+export function studyState(target: StudyTarget, kind?: StudyKind): ControlState {
   const view = aiPlusNow();
-  if (target.page === 'practice') return controlState(view, null);
+  // v1.1 (FP-3): result / detail AI 解析 is the `explain` feature; a practice control passes its own kind
+  if (target.page === 'practice') return controlState(view, null, kind);
   const extra = resultExtra({ mode: target.mode, recordId: target.recordId })
     ?? (target.key == null && target.recordId == null ? 'notSaved' : null);
-  return controlState(view, extra);
+  return controlState(view, extra, 'explain');
+}
+
+/** v1.1: a usable shared state of the practice bar becomes greyed (feature off) for the one kind whose switch is off */
+function gated(state: ControlState, kind: StudyKind): ControlState {
+  if (!state.show || !state.usable) return state;
+  const own = controlState(aiPlusNow(), null, kind);
+  return own.show && !own.usable ? own : state;
 }
 
 /** What an opener hands to the panel (also the answer of `resolveRunning`) */
@@ -130,7 +138,8 @@ const AI_MARK = 'AI';
  * Usable: opens the panel with this kind (`__aipArgs` lets the panel follow a question change). Greyed (P-20): the same
  * button with aria-disabled and the reason (`withReason`, never `disabled`). `bar` = the button sits in the action bar.
  */
-export function studyButton(target: StudyTarget, spec: ControlSpec, state: ControlState, o: { bar: boolean }): HTMLElement | null {
+export function studyButton(target: StudyTarget, spec: ControlSpec, shared: ControlState, o: { bar: boolean }): HTMLElement | null {
+  const state = gated(shared, spec.kind);
   if (!state.show) return null;
   const label = t(spec.labelKey);
   const key = focusKey(target.page, spec, target.no);
@@ -156,6 +165,17 @@ export function studyButton(target: StudyTarget, spec: ControlSpec, state: Contr
 
 // ---------------------------------------------------------------- docks (spec 2.12 b)
 
+/**
+ * The badge of the greyed bar (BT-3 place 7): dark with the control's reason (the cause of the greyed state), or bright when
+ * only the feature switch is off; decorative for screen readers, tip on hover and tap-and-hold
+ */
+function barBadge(state: ControlState): HTMLElement | null {
+  const reason = state.show && !state.usable ? state.reason : 'unavailable';
+  if (reason === 'featureOff') return aiBadge({ kind: 'on' }, { held: true });
+  const r = reason === 'suspended' || reason === 'off' || reason === 'down' ? reason : 'unavailable';
+  return aiBadge({ kind: 'off', reason: r }, { held: true });
+}
+
 /** The greyed bar of P-20: [dark AI+ badge] title [无法使用] reason (ellipsis); a tap shows the full reason; no chevron */
 function greyedBar(title: string, state: ControlState): HTMLElement {
   const p = unavailableParts(state);
@@ -163,8 +183,7 @@ function greyedBar(title: string, state: ControlState): HTMLElement {
   const btn = h('button', {
     type: 'button', class: 'aip-na-bar', 'aria-label': t(msg('aiplus.panel.unavailable'), { label: title }),
   },
-    h('span', { class: 'ai-badge off', 'aria-hidden': 'true' },
-      h('span', { class: 'ai-badge-t' }, AI_BADGE_TEXT.slice(0, -1), h('span', { class: 'ai-badge-plus' }, AI_BADGE_TEXT.slice(-1)))),
+    barBadge(state),
     h('span', { class: 'aip-na-title' }, title),
     naTag(state),
     h('span', { class: 'aip-na-reason' }, reason));

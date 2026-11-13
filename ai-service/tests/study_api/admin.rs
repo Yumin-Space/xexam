@@ -123,7 +123,7 @@ async fn retention_deletes_old_study_chats_and_a_deleted_user_takes_them_along()
 }
 
 #[tokio::test]
-async fn usage_by_purpose_counts_the_four_kinds_in_a_fixed_order() {
+async fn usage_by_purpose_counts_the_kinds_in_a_fixed_order() {
     let e = env().await;
     let _ = two_study_chats(&e).await;
     let _ = ask(&e.t, &e.user, explain_body(K1, "q2", 2)).await;
@@ -145,14 +145,17 @@ async fn usage_by_purpose_counts_the_four_kinds_in_a_fixed_order() {
             )
         })
         .collect();
-    // the administrator's own test calls are not chat rows; the user's: 1 chat, 2 hints (one withheld), 1 explanation, 1 summary
+    // the administrator's own connection test is the one "other" row, not a chat row; the user's: 1 chat, 2 hints (one withheld), 1 explanation, 1 summary
     assert_eq!(
         by,
         vec![
             ("chat".to_string(), 1, 0),
             ("hint".to_string(), 2, 1),
             ("explain".to_string(), 1, 0),
-            ("summary".to_string(), 1, 0)
+            ("summary".to_string(), 1, 0),
+            ("generate".to_string(), 0, 0),
+            ("import".to_string(), 0, 0),
+            ("other".to_string(), 1, 0)
         ]
     );
     for r in rows {
@@ -170,7 +173,8 @@ async fn usage_by_purpose_counts_the_four_kinds_in_a_fixed_order() {
                 "tokensIn",
                 "tokensOut",
                 "errors",
-                "tokensCached"
+                "tokensCached",
+                "tokensCacheWrite"
             ]
         );
     }

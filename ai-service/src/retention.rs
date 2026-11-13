@@ -173,6 +173,13 @@ pub fn spawn_all(app: &AppState) -> Vec<JoinHandle<()>> {
         }
     }));
 
+    // Jobs that were saving a bank when the service stopped: the backend is asked whether the bank exists
+    let a = app.clone();
+    tasks.push(tokio::spawn(async move {
+        a.0.link.wait_for_token(a.0.shutdown.clone()).await;
+        crate::gen::runner::settle_saving(&a).await;
+    }));
+
     // Retention: 60 s after start, then every hour
     let a = app.clone();
     tasks.push(tokio::spawn(async move {

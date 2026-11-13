@@ -2,8 +2,8 @@
 
 # Database
 
-> The database is SQLite, **a single file, `xexam.db`**. The Rust backend reuses the old Python version's database: the original table definitions (schema v1) are kept **character for character**, and every later schema only adds to them (new tables and new columns; nothing is rebuilt or rewritten): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
-> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **4** since v1.0 (3 since v0.9). The two services never open each other's database. **v1.0 does not change the main database**: it stays at schema v6.
+> The database is SQLite, **a single file, `xexam.db`**. The Rust backend reuses the old Python version's database: the original table definitions (schema v1) are kept **character for character**, and every later schema only adds to them (new tables and new columns; nothing is rebuilt or rewritten): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
+> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **6** since v1.1 (4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
 > Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5) and `v09_ai_study.rs` (v6, the study routes of the backend); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3) and the unit tests of `ai-service/src/store/`.
 
 ## 1. Where the file lives
@@ -362,6 +362,18 @@ The main database needs **no restore** to go back: a v0.8 backend opens a schema
 
 The **AI database is different**: a v0.8 ai-service refuses a schema-3 file (section 8.3), so going back to v0.8 means restoring the AI backup `backups/xexam-ai-schema2-….db` and losing every chat, memory, setting and usage row written since the upgrade. The step-by-step commands are in [migration.md](migration.md).
 
+### 6.12 Schema v7 (v1.1)
+
+The main database moves from schema 6 to **schema 7** once, on the first start of the v1.1 backend, after one backup copy `backups/xexam-schema6-<date-time>.db`. It adds four columns (`database/schema.rs`, `V7_COLUMNS`):
+
+- `attempts.time_limit` (INTEGER): the limit of a timed exam in seconds (60 to 36000). NULL for untimed exams, practice and every record saved before v1.1.
+- `attempts.ended` (TEXT): `submit` (submitted by hand) or `timeUp` (the countdown ended the exam; timed exams only). Set on every exam saved by v1.1; NULL for practice and older records. In a record with `ended` set, an item with no answer and `correct` 0 is a question **not completed**: it is not wrong and not in the wrong-answer notebook.
+- `banks.ai_job` (TEXT): the job key of an AI-generated bank (32 lower-case hex). NULL for imported banks.
+- `banks.ai_meta` (TEXT): JSON facts of an AI-generated bank (source, author, counts, time). NULL for imported banks.
+
+New indexes cover the job key (one bank per job) and the scoped queries of v1.1. Records and banks of v1.0 are not changed.
+
+
 ## 7. The old `progress.json`
 
 Earlier versions kept scores in `progress.json`. As in the old Python version, **on every startup** the app checks whether the data directory contains it: if it does, and the database has no study records yet and has not been migrated before, it is migrated into the database (into the records of the first administrator). The `legacy_migrated` flag in `meta` guarantees it is migrated only once, and existing study records are never overwritten.
@@ -380,7 +392,7 @@ docker compose start
 
 > ⚠️ When upgrading from v0.1: the database file name changed, and the new version only reads `xexam.db`. If the data directory has another `.db` file but no `xexam.db`, the startup log will warn you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read).
 
-## 8. The AI database (`xexam-ai.db`, v0.8; schema 4 since v1.0)
+## 8. The AI database (`xexam-ai.db`, v0.8; schema 6 since v1.1)
 
 ai-service keeps everything of AI in its **own** SQLite database, which only it opens and migrates; the backend never reads it, and ai-service never opens `xexam.db` (the data boundary, section 5 of [architecture.md](architecture.md)).
 
@@ -430,12 +442,12 @@ erDiagram
         INTEGER chats_per_user "10-100000, default 1000"
         INTEGER messages_per_chat "20-5000, default 400"
         INTEGER memories_per_user "1-1000, default 50"
-        INTEGER memory_chars "50-2000, default 200 (300 before v1.0; a value of 300 is moved to 200 once, at the upgrade)"
+        INTEGER memory_tokens "50-250000, default 1000 (v1.1; before v1.1 the limit was 200 characters: a value still at 200 becomes 1000, any other value is multiplied by 1.5 once, at the upgrade to schema 6; memory_chars stays unused)"
         INTEGER message_chars "unused since v1.0 (was 1000-32000, default 16000); kept, never read or written"
         INTEGER calls_per_minute "1-100, default 5 (v1.0)"
         INTEGER calls_per_hour "1-2000, default 20 (v1.0)"
         INTEGER calls_per_day "1-20000, default 100 (v1.0)"
-        INTEGER reply_max_chars "1-16000, default 1000: the answer length in characters (v1.0)"
+        INTEGER reply_max_tokens "1-250000, default 3000: the answer length in tokens (v1.1; reply_max_chars, 1000 characters in v1.0, stays unused)"
         INTEGER updated_at "unix seconds"
         TEXT updated_by "username"
     }
@@ -482,7 +494,7 @@ erDiagram
     memories {
         INTEGER id PK "auto-increment"
         INTEGER user_id FK "users.id, ON DELETE CASCADE"
-        TEXT content "1-2000 characters (limit: memoryChars)"
+        TEXT content "1-250000 estimated tokens (limit: memoryTokens); the column holds up to 2000000 characters since v1.1 (the table is rebuilt once)"
         TEXT source "manual · chat"
         INTEGER created_at "unix seconds"
         INTEGER updated_at "unix seconds"
@@ -529,7 +541,7 @@ erDiagram
 - **`settings`** (one row) never holds a secret. **`secrets`** holds the API key and the gateway key encrypted (section 11 of [security.md](security.md)); `key_id` tells which encryption key sealed a value, and `rev` feeds the fingerprint. **`limits`** (one row) holds the safety limits of AI settings, each with a `CHECK` of its range; they are not part of the fingerprint, so changing them never switches AI off.
 - **The fingerprint** is a SHA-256 over the provider, the address, the format and auth scheme (for a gateway), the model, the revisions of the keys and the current encryption key id, never over key material. AI counts as on only while `enabled = 1`, `verified_fp` equals the current fingerprint and the keys can be decrypted. A settings change that changes the fingerprint clears `enabled` and `verified_*` in the same transaction.
 - **`users`** holds only the users ai-service has seen (their id and identity stamp from the main database, and the last known name); a row is written at the first chat, memory or call of that user, not when they merely look. **`function_enabled`** (v2, default 1) is the per-user **pause** of the AI+ feature: 0 means an administrator paused the user (**Pause** in AI settings), 1 means active; a user without a row is active, and administrators are never set to 0. It is separate from the AI+ grant (`users.ai_enabled` in the main database): switching the feature off and on again does not clear a pause, only **Resume** does. The ids with 0 are what the heartbeat reports to the backend (section 5 of [architecture.md](architecture.md)). **`free_mode`** (v2, default 0) is the administrator's **free mode**: a state of the user, not of a chat. It is set in Settings under **AI chat mode** (`POST /api/ai/free`, administrators only) and is read only for administrators, so a value left on a former administrator does nothing.
-- **`chats`**, **`messages`** and **`memories`** are the user content. A chat has no mode: while an administrator's free mode is on, every message in any chat, old or new, is answered in free mode. Every message records the mode it was written in (**`messages.free`**, v2, default 0), so the history can tell the model when the mode changed (section 5 of [architecture.md](architecture.md)). Deleting a user's row deletes their chats, messages, memories and tasks (`ON DELETE CASCADE`); their **`usage`** rows stay with `user_id` NULL, so the totals per model and per day stay right. `memories.content` allows up to 2000 characters (the highest memory limit); the current limit is checked by the service. Study messages (below) are written with `free = 0`.
+- **`chats`**, **`messages`** and **`memories`** are the user content. A chat has no mode: while an administrator's free mode is on, every message in any chat, old or new, is answered in free mode. Every message records the mode it was written in (**`messages.free`**, v2, default 0), so the history can tell the model when the mode changed (section 5 of [architecture.md](architecture.md)). Deleting a user's row deletes their chats, messages, memories and tasks (`ON DELETE CASCADE`); their **`usage`** rows stay with `user_id` NULL, so the totals per model and per day stay right. `memories.content` allows up to 2000000 characters since v1.1 (the highest memory limit, 250000 tokens); the current limit is checked by the service. Study messages (below) are written with `free = 0`.
 - **`usage`** has one row per model call (chats, tests, model lists, memory notes, and since v0.9 the study answers), with tokens, times and status, never any content, key or address. **`tokens_cached`** (v2) is the part of the input tokens that the provider served from its prompt cache (the **Cached** column of Usage in AI settings); NULL means the provider did not report it. **`purpose`** (v3) is `hint`, `explain` or `summary` for the model calls of the study features and NULL for AI Chat and for the calls without a chat; the **By feature** table of Usage groups the chat rows by it (AI Chat, hint, explain, summary; the four rows are always there, zeros included; `GET /api/ai/admin/usage` returns them as `byPurpose`). Its rows are kept (no retention); they are small. **The per-user request caps (v1.0)** read this table, not a counter of their own: the calls of a user in the last minute, the last hour and since 0:00 of the server's time zone are the `chat` and `memory` rows of that user (every status counts), plus the calls still running in memory. The count uses the existing `idx_usage_user` and no new index or table is added.
 - **`tasks`** exists for later features; v0.8 has no route or worker for it (tasks that ended are deleted after 30 days).
 - **`audit_outbox`** holds the audit lines of administrators' clears until the backend has taken them for the System log (section 11 of [security.md](security.md)).
@@ -544,6 +556,24 @@ erDiagram
 - **Saved answers.** The newest assistant message of a (chat, question, kind, source) is the answer the page shows. A failed, stopped or withheld regeneration is stored as its own message, and the page keeps showing the last good one under a note (`lastGood` in `GET /api/ai/study/saved`).
 - **Quotas count them.** Every practice, every exam and every record summary is a chat, so study chats count toward `chats_per_user` (a new session beyond it is refused with 409 `ai.chatLimit`; chats already open keep working), and every ask adds two messages, so `messages_per_chat` 400 allows 200 asks in one session: the next one answers 409 `ai.messageLimit` until an administrator raises the limit in **Safety limits**. Deleting study chats in AI Chat frees the quota.
 
+### 8.2a Schema v5 (v1.1) and growth
+
+The AI database moves from schema 4 to **schema 6** once (the schema-5 steps below, then the schema-6 step), on the first start of the v1.1 ai-service, after the copy `backups/xexam-ai-schema4-<date-time>.db`. It adds:
+
+- the bookkeeping of generation and import jobs (`tasks`, kind `bank_gen`): `charged` and `charged_at`; a job counts toward the daily quota on the day it was charged (at start for a generation, at confirm for an import);
+- `gen_calls.purpose`, which tells generation calls from import calls and recognition calls;
+- `users.features_off` (INTEGER, default 0): a set bit is a feature switched off for that user; the six features are chat, hint, explain, summary, generate and import;
+- the limits of generation and import (`gen_max_calls` 15, `import_max_calls` 25, `recognize_max_calls` 20 (8 to 40), `gen_call_tokens` 20000, `import_max_mb` 20, `import_max_questions` 50 (1 to 50)) next to the v1.0 limits.
+
+A schema-5 file made by an earlier v1.1 development build that lacks `limits.recognize_max_calls` gets the column when it is opened (an idempotent step, no version change and no backup).
+
+No file content is stored anywhere: an import file lives in memory while it is processed, and its text is not kept after the job.
+
+**Growth (main database).** An AI-generated bank of 20 questions takes about 90 KB, and the same amount is in the bank download of everyone who can see it. At 5 generations a day that is about 170 MB a year; at 20 users with 3 generations a day it is about 2 GB a year. v1.1 puts no cap on kept AI banks. `AI_BANKS_AUTO_SHARE` (default `true`) decides whether a new AI bank is shared like any bank; an administrator can remove it from one user in User management.
+
+**Author.** An AI bank's name holds the first 8 characters of its author's username, and its tip shows the author (a deliberate exception, DR1-13). `authorId` never leaves the server.
+
+
 ### 8.3 What the service does with it
 
 - **Opening**: the tables are created (`IF NOT EXISTS`), the `settings` and `limits` rows are added with their defaults, and `meta.schema` is set to `4` on a new database. A database with `meta.schema` `1`, `2` or `3` is upgraded (see Migrations below). A database written by a newer ai-service (`meta.schema` above `4`) is refused: the service logs one line and does not start, so an older image never opens a newer file. Answers left `streaming` by a crash or a kill are marked `error` with the code `ai.interrupted` (only when there are any; `idx_messages_streaming` finds them).
@@ -553,6 +583,8 @@ erDiagram
 - **Stopping**: on a normal stop the running answers are saved as stopped, then a checkpoint runs.
 - **Migrations**: schema v1 was the first schema (a pre-release v0.8 build); **schema v2** (v0.8) added four columns: `users.function_enabled` (default 1), `users.free_mode` (default 0), `messages.free` (default 0) and `usage.tokens_cached` (NULL); **schema v3** (v0.9) adds **twelve columns and three indexes** and nothing else: `chats.kind` (default `chat`), `chats.ref`, `chats.record_id`, `messages.kind` (default `chat`), `messages.question_id`, `messages.question_no`, `messages.source`, `messages.lang`, `messages.sample_used`, `messages.sample_usable`, `messages.sample_wrong` and `usage.purpose` (NULL), plus `idx_chats_ref`, `idx_messages_study` and `idx_messages_streaming`. No row is rewritten and no row changes meaning: every old chat and message is `chat` and every old usage row has no purpose. The same additive step creates a new database and upgrades an old one, so both end up with the same tables and the same `sqlite_master`. **Every database of schema 1, 2 or 3 is copied first** with `VACUUM INTO` to `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` inside the AI data directory (`<N>` is the schema it had, so `xexam-ai-schema2-…` for a v0.8 database and `xexam-ai-schema3-…` for a v0.9 or v0.9.1 database; directory mode 0700; the time is the container's local time; a `-2`, `-3`… suffix if the name is taken; an empty database is copied too), then upgraded in one transaction, and one log line names the copy: `Upgraded the AI database to schema 4. A copy of the previous version was saved first: <path>.` If the copy cannot be made the service does not start and nothing is changed. A schema-2 file of an earlier pre-release build that lacks some of the v2 columns gets them added in the same step. Reopening a schema-3 database writes nothing. **Keep free disk space of about the size of the AI database** for the copy; copies are never pruned and keep chats and memories that were deleted later (delete them yourself when that matters, section 11 of [security.md](security.md)). **Going back to v0.8 needs the copy**: a v0.8 ai-service refuses schema 3 (`written by a newer ai-service … restore a backup`) and exits, so restore `xexam-ai-schema2-….db` as in 8.4; chats, memories, settings and usage written after the upgrade are not in it and are lost.
 - **Schema 4 (v1.0)** adds **four columns** and nothing else: `limits.calls_per_minute` (default 5), `limits.calls_per_hour` (default 20), `limits.calls_per_day` (default 100) and `limits.reply_max_chars` (default 1000), each with a `CHECK` of its range (the ranges are the same as in the application's list of limits). Nothing is dropped: `limits.message_chars` stays in the table, unused. Once, in the same transaction, `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300` moves the old default of the memory length to the new one; any other value an administrator chose stays. The same step runs on a new database and on an upgrade from 1, 2 or 3, so both end up with the same `sqlite_master`, and never again on a later start. A database upgraded from 1, 2 or 3 gets the defaults for the four new columns; nothing is derived from old values. **Keep the copy of the schema-3 database** (`backups/xexam-ai-schema3-<date-time>.db`): a v0.9.1 ai-service refuses schema 4 with its existing message, so going back means restoring that copy and running the v0.9.1 images (section 8.4 and [migration.md](migration.md)).
+
+- **Schema 5 to 6 (v1.1)** moves the lengths to tokens. Three columns are added with their own `CHECK` ranges: `limits.reply_max_tokens` (1 to 250000, default 3000), `limits.memory_tokens` (50 to 250000, default 1000) and `limits.gen_call_tokens` (1000 to 250000, default 20000). `reply_max_chars`, `memory_chars` and `gen_call_chars` stay in the table, unused. Once, in the same transaction: a value still at its old default becomes the new default, any other value is multiplied by 1.5 and clamped to its range. The `memories` table is rebuilt once (rows and ids kept) so that one memory may hold up to 2000000 characters. Upgrading from schema 5 writes the copy `backups/xexam-ai-schema5-<date-time>.db` first.
 
 ### 8.4 Backup and restore of the AI volume
 

@@ -2,8 +2,8 @@
 // v1.0: "Change password" is one collapsed 44 px row that opens the three fields in place (ST-1); the theme is a segmented
 // control (icon + short label) under PHONE and the preview cards otherwise (ST-2); the page lead is an (i) tip and the
 // descriptions that only repeat their heading are gone (ST-3); "Saved" (check icon + text) appears next to the section that
-// changed for 2 s, the heading status stays for screen readers (ST-4); the AI chat mode explains itself in its description
-// line, with the sentence that free-mode requests count towards the AI request limits (ST-5).
+// changed for 2 s, the heading status stays for screen readers (ST-4). v1.1 (A-OWNER-21): the AI chat mode moved to AI settings >
+// AI+ users (one free-mode switch per administrator row).
 // Every change goes through updateSettings(): applied at once (optimistic), saved on the server (Xexam's data directory),
 // and rolled back with a toast when saving fails. The page is redrawn by render(); the focused control keeps the focus.
 import '../styles/settings.css';
@@ -14,16 +14,16 @@ import { aiBadge, badgeReasonText } from '../components/ai-badge.ts';
 import { miniIcon } from '../components/mini-icons.ts';
 import { isBankManager, roleTags } from '../components/shell.ts';
 import { infoTip } from '../components/tooltip.ts';
+import { offList, readFeatures } from '../domain/ai-features.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
-import { localeTag, t, uiLang, type MsgKey } from '../i18n/index.ts';
+import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { UI_LANGS } from '../i18n/define.ts';
 import { errorText } from '../i18n/errors.ts';
 import { changeOwnPassword, onRouteChange, onSignedIn, render } from '../state/actions.ts';
-import { setFreeMode } from '../api/ai.ts';
-import { aiFreeMode, aiModeShown, aiStatus, setAiFreeMode } from '../state/ai.ts';
+import { aiStatus } from '../state/ai.ts';
 import { resetSettings, updateSettings } from '../state/preferences.ts';
 import { DEFAULT_SETTINGS } from '../state/settings-cache.ts';
-import { S, isAdmin } from '../state/store.ts';
+import { S } from '../state/store.ts';
 import type { Settings, Theme, UiLang } from '../types/api.ts';
 import { ask } from '../utils/dialog.ts';
 import { h, type Child } from '../utils/dom.ts';
@@ -69,8 +69,6 @@ let sectionStatus: Partial<Record<SavedSection, HTMLElement>> = {};
 /** How long "Saved" stays next to its section */
 const SAVED_MS = 2000;
 let resetting = false;
-/** The request that switches the AI chat mode runs */
-let modeBusy = false;
 /** The status text of the current render (updated in place, without a redraw) */
 let statusEl: HTMLElement | null = null;
 /** A control to focus after the next render instead of the one that had the focus */
@@ -147,23 +145,6 @@ async function save(patch: Partial<Settings>): Promise<void> {
     }, SAVED_MS);
   }
   showStatus();
-}
-
-/** Settings > AI chat mode: sets the administrator's free mode on the server; an error shows as a toast */
-async function pickMode(free: boolean): Promise<void> {
-  if (modeBusy || aiFreeMode() === free) return;
-  modeBusy = true;
-  forceFocus = free ? 'set-mode-free' : 'set-mode-normal';
-  render();
-  try {
-    const r = await setFreeMode(free);
-    setAiFreeMode(r.free === true);
-  } catch (e) {
-    toast(errorText(e), 6000);
-  } finally {
-    modeBusy = false;
-  }
-  if (S.route.name === 'settings') render();
 }
 
 async function reset(): Promise<void> {
@@ -251,11 +232,13 @@ function accountSection(): HTMLElement | null {
     },
   }).el;
   const ownBadge = ownBadgeState(u, aiStatus());
+  const ownSt = aiStatus();
+  const ownOff = ownSt.state === 'ready' && u.role !== 'admin' ? offList(readFeatures(ownSt.features)) : [];
   return h('section', { class: 'panel set-sec set-account', 'aria-labelledby': 'set-account-h' },
     h('h2', { id: 'set-account-h' }, t('settings.account')),
     h('dl', { class: 'props set-props' },
       h('dt', null, t('settings.account.username')), h('dd', { class: 'set-username' }, u.username),
-      h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u), aiBadge(ownBadge))),
+      h('dt', null, t('settings.account.role')), h('dd', { class: 'set-role' }, roleTags(u), aiBadge(ownBadge, { off: ownOff }))),
     // The dark AI+ badge's reason in words too: a tap shows it as a tip on a phone, and this line needs no tap at all
     ownBadge.kind === 'off' ? h('p', { class: 'set-desc set-ai-reason', id: 'set-ai-reason' }, badgeReasonText(ownBadge.reason)) : null,
     // A bank manager: what the extra permission allows (v0.7)
@@ -414,21 +397,6 @@ export function renderSettings(): HTMLElement {
       h('span', { class: 'set-switch-state', 'aria-hidden': 'true' }, t(on ? 'settings.on' : 'settings.off')))),
     h('p', { class: 'set-note' }, t('settings.auto.note', { label: t('quiz.auto.on') })));
 
-  // Administrators only: the AI chat mode (the server's state, not a setting saved with the others)
-  const free = aiFreeMode();
-  const modeSec = aiModeShown(isAdmin())
-    ? h('section', { class: 'panel set-sec', 'aria-labelledby': 'set-mode-h' },
-      sectionHead('set-mode-h', t('settings.aiMode')),
-      // ST-5: its explanation is the description line, with the sentence about the AI request limits
-      h('p', { class: 'set-desc' }, [t('settings.aiMode.hint'), t('settings.aiMode.caps')].join(uiLang() === 'en' ? ' ' : '')),
-      h('div', { class: 'set-cards set-langs', role: 'group', 'aria-label': t('settings.aiMode'), 'aria-busy': modeBusy ? 'true' : null },
-        ([false, true] as const).map((isFree) => h('button', {
-          class: 'set-card', type: 'button', 'aria-pressed': String(free === isFree), 'aria-disabled': modeBusy ? 'true' : null,
-          'data-focus': isFree ? 'set-mode-free' : 'set-mode-normal', onclick: () => void pickMode(isFree),
-        }, h('span', { class: 'set-card-name' }, h('span', { class: 'set-radio', 'aria-hidden': 'true' }),
-          h('span', null, t(isFree ? 'settings.aiMode.free' : 'settings.aiMode.normal')))))))
-    : null;
-
   const defaults = atDefaults(s);
   const resetSec = section('set-reset-h', t('settings.reset'), null, undefined,
     h('div', { class: 'set-reset' },
@@ -448,7 +416,6 @@ export function renderSettings(): HTMLElement {
     appearance,
     language,
     answering,
-    modeSec,
     resetSec);
   restoreFocus(root, want);
   showStatus();

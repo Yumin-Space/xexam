@@ -310,7 +310,7 @@ impl FailureLog {
         if due {
             st.0.insert(code, now);
             let status = http.map_or_else(|| "-".to_string(), |s| s.to_string());
-            tracing::warn!("AI call failed for user {username:?}: {code} (HTTP {status})");
+            tracing::error!("AI call failed for user {username:?}: {code} (HTTP {status})");
         } else {
             st.1 += 1;
         }
@@ -343,7 +343,7 @@ impl FailureLog {
         let mut st = self.state.lock().unwrap_or_else(|e| e.into_inner());
         let n = std::mem::take(&mut st.1);
         if n > 0 {
-            tracing::warn!("{n} more AI call failures since the last report");
+            tracing::error!("{n} more AI call failures since the last report");
         }
     }
 }

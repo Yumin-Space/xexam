@@ -10,7 +10,8 @@
 // v1.0 per-user AI request caps: `status.calls` is the server's view; `callBlock()` is what the controls follow. It is set from
 // `status.calls.blocked` and from any refusal with code `ai.callLimit` (noteCallBlock), and clears by itself at `retryAt`.
 import { fetchAiStatus } from '../api/ai.ts';
-import type { AiCallBlock, AiCalls, AiCallCounts, AiStatusJson } from '../types/api.ts';
+import type { AiCallBlock, AiCalls, AiCallCounts, AiStatusJson, GenJob, GenPhase, GenSource, GenState, GenStatus, ImportFileType } from '../types/api.ts';
+import { readFeatures, sameFeatures } from '../domain/ai-features.ts';
 
 export type AiStatus =
   | { state: 'loading' }
@@ -28,6 +29,20 @@ let inflight: Promise<boolean> | null = null;
 
 export const aiStatus = (): AiStatus => status;
 
+const statusListeners = new Set<() => void>();
+
+/** v1.1: registers a function called whenever the kept status is replaced (a read, a job answer, a sign-out); returns the remover */
+export function onAiStatusChange(fn: () => void): () => void {
+  statusListeners.add(fn);
+  return () => {
+    statusListeners.delete(fn);
+  };
+}
+
+function statusChanged(): void {
+  for (const fn of [...statusListeners]) fn();
+}
+
 /** Signing out (or another user): back to 'loading' for the next user */
 export function resetAiStatus(): void {
   status = { state: 'loading' };
@@ -37,6 +52,7 @@ export function resetAiStatus(): void {
   lastNoteAt = 0;
   lastRecheckAt = -Infinity;
   setBlock(null);
+  statusChanged();
 }
 
 /** For the tests: sets the status directly */
@@ -129,6 +145,107 @@ function callsOf(v: unknown): AiCalls | undefined {
   return used && caps && blocked !== undefined ? { used, caps, blocked } : undefined;
 }
 
+const GEN_STATES: readonly string[] = ['queued', 'running', 'done', 'failed', 'cancelled'];
+const GEN_PHASES: readonly string[] = ['reading', 'confirm', 'writing', 'saving'];
+const GEN_SOURCES: readonly string[] = ['bank', 'scope', 'wrong', 'file'];
+const FILE_TYPES: readonly string[] = ['pdf', 'docx', 'xlsx', 'pptx', 'md', 'txt', 'csv'];
+
+const numOr = (v: unknown, d: number): number => (typeof v === 'number' && Number.isFinite(v) ? v : d);
+const numOrNull = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+/**
+ * One Job object of API-U1 (status, job, cancel, start, confirm). Fallbacks (an older ai-service, P-30): the six file keys
+ * default to null; unknown states / sources make the whole job unusable (null).
+ */
+function usageOf(v: unknown): { calls: number; tokensIn: number; tokensOut: number; tokensCached?: number; tokensCacheWrite?: number } {
+  const u = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+  const cached = numOr(u.tokensCached, 0);
+  const written = numOr(u.tokensCacheWrite, 0);
+  return { calls: numOr(u.calls, 0), tokensIn: numOr(u.tokensIn, 0), tokensOut: numOr(u.tokensOut, 0), ...(cached > 0 ? { tokensCached: cached } : {}), ...(written > 0 ? { tokensCacheWrite: written } : {}) };
+}
+
+export function jobOf(v: unknown): GenJob | null {
+  if (typeof v !== 'object' || v === null) return null;
+  const o = v as Record<string, unknown>;
+  if (typeof o.id !== 'number' || typeof o.state !== 'string' || !GEN_STATES.includes(o.state)) return null;
+  if (typeof o.source !== 'string' || !GEN_SOURCES.includes(o.source)) return null;
+  const f = typeof o.file === 'object' && o.file !== null ? (o.file as Record<string, unknown>) : null;
+  const file = f && typeof f.name === 'string' && typeof f.type === 'string' && FILE_TYPES.includes(f.type)
+    ? { name: f.name, type: f.type as ImportFileType, size: numOr(f.size, 0) }
+    : null;
+  const r = typeof o.read === 'object' && o.read !== null ? (o.read as Record<string, unknown>) : null;
+  const from = Array.isArray(o.from)
+    ? o.from.flatMap((x): Array<{ id: number; name: string }> => {
+        const e = x as Record<string, unknown> | null;
+        return e && typeof e.id === 'number' && typeof e.name === 'string' ? [{ id: e.id, name: e.name }] : [];
+      })
+    : [];
+  return {
+    id: o.id,
+    state: o.state as GenState,
+    phase: typeof o.phase === 'string' && GEN_PHASES.includes(o.phase) ? (o.phase as GenPhase) : null,
+    source: o.source as GenSource,
+    name: typeof o.name === 'string' ? o.name : '',
+    from,
+    fromCount: numOr(o.fromCount, from.length),
+    file,
+    mode: o.mode === 'questions' || o.mode === 'material' ? o.mode : null,
+    // A-OWNER-70: the service sends the questions found in the file (`total`) and how many the import takes (`taken`)
+    total: numOrNull(o.total),
+    taken: numOrNull(o.taken),
+    ...(o.approx === true || o.uncertain === true ? { approx: true } : {}),
+    read: r ? { done: numOr(r.done, 0), total: numOr(r.total, 0) } : null,
+    confirmBy: numOrNull(o.confirmBy),
+    errorArg: numOrNull(o.errorArg),
+    skipped: Array.isArray(o.skipped) ? o.skipped.filter((n): n is number => typeof n === 'number') : null,
+    made: numOr(o.made, 0),
+    goal: numOr(o.goal, 0),
+    calls: numOr(o.calls, 0),
+    createdAt: numOr(o.createdAt, 0),
+    startedAt: numOrNull(o.startedAt),
+    finishedAt: numOrNull(o.finishedAt),
+    bankId: numOrNull(o.bankId),
+    error: typeof o.error === 'string' && o.error ? o.error : null,
+    charged: o.charged === true,
+    usage: usageOf(o.usage),
+  };
+}
+
+const compOf = (v: unknown, d: { single: number; multi: number }): { single: number; multi: number } => {
+  const o = typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {};
+  return { single: numOr(o.single, d.single), multi: numOr(o.multi, d.multi) };
+};
+
+/** `gen` of the status; undefined when absent or not an object */
+export function genStatusOf(v: unknown): GenStatus | undefined {
+  if (typeof v !== 'object' || v === null) return undefined;
+  const o = v as Record<string, unknown>;
+  const imp = typeof o.import === 'object' && o.import !== null ? (o.import as Record<string, unknown>) : null;
+  const unlimited = o.unlimited === true;
+  return {
+    perDay: unlimited ? null : numOrNull(o.perDay),
+    used: numOr(o.used, 0),
+    left: unlimited ? null : numOrNull(o.left),
+    unlimited,
+    resetAt: numOr(o.resetAt, 0),
+    minSource: numOr(o.minSource, 30),
+    minWrong: numOr(o.minWrong, 10),
+    bank: compOf(o.bank, { single: 14, multi: 6 }),
+    wrong: compOf(o.wrong, { single: 14, multi: 6 }),
+    ...(imp
+      ? {
+          import: {
+            maxMb: numOr(imp.maxMb, 20),
+            maxQuestions: numOr(imp.maxQuestions, 50),
+            types: Array.isArray(imp.types) ? imp.types.filter((x): x is string => typeof x === 'string') : [...FILE_TYPES],
+          },
+        }
+      : {}),
+    job: jobOf(o.job),
+    unseen: Array.isArray(o.unseen) ? o.unseen.flatMap((x) => { const j = jobOf(x); return j ? [j] : []; }) : [],
+  };
+}
+
 /** The status for an answer of GET /api/ai/status: 'ready' when it has the expected shape, else 'unavailable' */
 export function statusOf(json: unknown): AiStatus {
   if (typeof json !== 'object' || json === null) return { state: 'unavailable' };
@@ -137,8 +254,9 @@ export function statusOf(json: unknown): AiStatus {
   const r = typeof j.running === 'object' && j.running !== null ? (j.running as Record<string, unknown>) : null;
   const running = r && typeof r.chatId === 'number' && typeof r.messageId === 'number' ? { chatId: r.chatId, messageId: r.messageId } : null;
   const messageChars = count(j.messageChars ?? j.maxMessageChars, 16000);
-  const memoryChars = count(j.memoryChars ?? j.memoryMaxChars, 200);
+  const memoryTokens = count(j.memoryTokens ?? j.memoryMaxTokens, 1000);
   const calls = callsOf(j.calls);
+  const gen = genStatusOf(j.gen);
   return {
     state: 'ready',
     enabled: j.enabled,
@@ -148,14 +266,17 @@ export function statusOf(json: unknown): AiStatus {
     running,
     retentionDays: count(j.retentionDays, 90),
     memoryLimit: count(j.memoryLimit, 50),
-    memoryMaxChars: memoryChars,
+    memoryMaxTokens: memoryTokens,
     maxMessageChars: messageChars,
     messageChars,
-    memoryChars,
+    memoryTokens,
     keyProblem: bool(j.keyProblem),
     configured: bool(j.configured),
     freeMode: bool(j.freeMode),
     ...(calls ? { calls } : {}),
+    why: j.why === 'off' || j.why === 'link' ? j.why : null,
+    ...(typeof j.features === 'object' && j.features !== null ? { features: readFeatures(j.features) } : {}),
+    ...(gen ? { gen } : {}),
   };
 }
 
@@ -164,7 +285,28 @@ export function aiNeedsRender(prev: AiStatus, next: AiStatus): boolean {
   if (prev.state !== next.state) return true;
   if (prev.state !== 'ready' || next.state !== 'ready') return false;
   return prev.enabled !== next.enabled || prev.allowed !== next.allowed || prev.suspended !== next.suspended || prev.hasData !== next.hasData
+    || prev.why !== next.why || !sameFeatures(readFeatures(prev.features), readFeatures(next.features))
     || !sameBlock(prev.calls?.blocked ?? null, next.calls?.blocked ?? null);
+}
+
+/** v1.1: the status of the AI bank jobs (`gen`), when the user has the AI+ feature */
+export const aiGenStatus = (s: AiStatus = status): GenStatus | null => (s.state === 'ready' && s.gen ? s.gen : null);
+
+/**
+ * v1.1: a job answer (start, confirm, cancel, an upload) is put into the kept status at once, so the controls follow before
+ * the next read. `gen` (the answer's GenStatus) replaces the kept one when given.
+ */
+export function setAiGenJob(job: GenJob | null, gen?: GenStatus): void {
+  if (status.state !== 'ready') return;
+  const base = gen ?? status.gen;
+  if (!base) return;
+  // A finished job is never the active one: a done / failed job goes to the front of `unseen` (until the next read of the
+  // status says which ones the user has dismissed), a cancelled one is simply gone (cancel marks it seen)
+  const finished = job != null && (job.state === 'done' || job.state === 'failed');
+  const active = job != null && (job.state === 'queued' || job.state === 'running') ? job : null;
+  const unseen = finished && job ? [job, ...base.unseen.filter((j) => j.id !== job.id)].slice(0, 3) : base.unseen;
+  status = { ...status, gen: { ...base, job: active, unseen } };
+  statusChanged();
 }
 
 /** The header badge (and the account areas): the user can use AI right now */
@@ -233,6 +375,7 @@ export function refreshAiStatus(o: RefreshOptions): Promise<boolean> {
     const prev = status;
     status = next;
     readAt = o.now ?? Date.now();
+    statusChanged();
     if (next.state === 'ready') {
       const blocked = next.calls?.blocked ?? null;
       // The server's block wins at once; "no block" only counts when the read started after the last refusal we noted

@@ -233,3 +233,33 @@ test('an invalid key or start time (wrong shape, upper case, 0, a float, far in 
   put({ ids: ['s'], key: K1, startedAt: Math.floor(Date.now() / 1000) + 200 });
   assert.equal(loadSaved(bank)?.key, K1);
 });
+
+test('v1.1 TL-6: a timed exam keeps limit / warned / timeUp; an untimed exam writes none; a bad limit drops all three', () => {
+  saveSession({ ...base, kind: 'exam', key: K1, startedAt: T1, timed: { limit: 3600, warned: true, timeUp: false } });
+  let raw = JSON.parse(mem.get(KEY) as string) as Record<string, unknown>;
+  assert.equal(raw.v, 1);
+  assert.equal(raw.limit, 3600);
+  assert.equal(raw.warned, true);
+  assert.deepEqual(loadSaved(bank)?.timed, { limit: 3600, warned: true, timeUp: false });
+  saveSession({ ...base, kind: 'exam', key: K1, startedAt: T1, timed: { limit: 600, warned: false, timeUp: true } });
+  assert.deepEqual(loadSaved(bank)?.timed, { limit: 600, warned: false, timeUp: true });
+  saveSession({ ...base, kind: 'exam', key: K1, startedAt: T1 });
+  raw = JSON.parse(mem.get(KEY) as string) as Record<string, unknown>;
+  assert.equal('limit' in raw || 'warned' in raw || 'timeUp' in raw, false);
+  assert.deepEqual(loadSaved(bank)?.timed, { limit: null, warned: false, timeUp: false });
+  for (const bad of [59, 36001, 3600.5, '3600', null]) {
+    put({ ids: ['s'], limit: bad, warned: true, timeUp: true });
+    assert.deepEqual(loadSaved(bank)?.timed, { limit: null, warned: false, timeUp: false }, String(bad));
+  }
+  // flags without a limit are dropped
+  put({ ids: ['s'], warned: true });
+  assert.deepEqual(loadSaved(bank)?.timed, { limit: null, warned: false, timeUp: false });
+});
+
+test('v1.1: a practice never carries a time limit, even when the save has one', () => {
+  saveSession({ ...base, kind: 'practice', key: K1, startedAt: T1, timed: { limit: 600, warned: false, timeUp: false } });
+  const raw = JSON.parse(mem.get(KEY) as string) as Record<string, unknown>;
+  assert.equal('limit' in raw, false);
+  put({ ids: ['s'], kind: 'practice', limit: 600 });
+  assert.equal(loadSaved(bank)?.timed.limit, null);
+});

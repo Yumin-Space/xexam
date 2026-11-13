@@ -7,7 +7,9 @@
 //! the token routes: `POST /internal/ai/introspect` (re-checks a session during a running answer),
 //! `POST /internal/ai/users` (which users exist and who has AI+), `POST /internal/ai/log` (its lines for the System log),
 //! `POST /internal/ai/heartbeat` (its state, [`ServiceReport`]) and, since v0.9, the three study-data routes
-//! `POST /internal/ai/question`, `POST /internal/ai/record` and `POST /internal/ai/record-info` (see `internal_study`).
+//! `POST /internal/ai/question`, `POST /internal/ai/record` and `POST /internal/ai/record-info` (see `internal_study`), and,
+//! since v1.1, the four AI-bank routes `POST /internal/ai/gen/source`, `/gen/seeds`, `/gen/create` and `/gen/lookup` (see
+//! `internal_gen`).
 //!
 //! - The backend never calls the AI service. ai-service reports its state with the heartbeat (at its start, at once after a
 //!   change, every 25 s, and a last "stopping" report when it shuts down); the last report is kept in memory only
@@ -71,6 +73,10 @@ pub const IDENTITY_TTL_SECS: i64 = 60;
 /// Largest body of `POST /internal/ai/introspect`, `POST /internal/ai/users` and `POST /internal/ai/heartbeat` (and what is
 /// drained of a refused request).
 pub const MAX_BODY: usize = 64 * 1024;
+/// Largest body of `POST /internal/ai/gen/create` (v1.1, the only route that gets it): a generated bank of 100 questions at
+/// the generator's maximum lengths is about 4.6 MB of JSON, a worst-case file import (questions mode) about 8.1 MB; a typical
+/// one is about 60 KB. Every other internal route keeps [`MAX_BODY`].
+pub const MAX_GEN_BODY: usize = 10 * 1024 * 1024;
 /// A heartbeat older than this means ai-service is not connected (it reports every 25 s).
 pub const REPORT_STALE: Duration = Duration::from_secs(60);
 /// Most user ids in `"suspended"` of one heartbeat.
@@ -552,7 +558,12 @@ pub(super) async fn dispatch(
             | "/internal/ai/heartbeat"
             | "/internal/ai/question"
             | "/internal/ai/record"
-            | "/internal/ai/record-info",
+            | "/internal/ai/record-info"
+            | "/internal/ai/gen/source"
+            | "/internal/ai/gen/seeds"
+            | "/internal/ai/gen/create"
+            | "/internal/ai/gen/lookup"
+            | "/internal/ai/import/check",
         ) => {
             if !st.0.ai_link.accepts(headers) {
                 body::drain(&mut body, 0, MAX_BODY.saturating_mul(4)).await;
@@ -566,10 +577,10 @@ pub(super) async fn dispatch(
                 }
                 return not_found(false);
             }
-            let max = if path == "/internal/ai/log" {
-                MAX_LOG_BODY
-            } else {
-                MAX_BODY
+            let max = match path {
+                "/internal/ai/log" => MAX_LOG_BODY,
+                "/internal/ai/gen/create" => MAX_GEN_BODY,
+                _ => MAX_BODY,
             };
             let data = match read_object(headers, body, max).await {
                 Ok(d) => d,
@@ -582,6 +593,11 @@ pub(super) async fn dispatch(
                 "/internal/ai/question" => super::internal_study::question(st, &data).await,
                 "/internal/ai/record" => super::internal_study::record(st, &data).await,
                 "/internal/ai/record-info" => super::internal_study::record_info(st, &data).await,
+                "/internal/ai/gen/source" => super::internal_gen::source(st, &data).await,
+                "/internal/ai/gen/seeds" => super::internal_gen::seeds(st, &data).await,
+                "/internal/ai/gen/create" => super::internal_gen::create(st, &data).await,
+                "/internal/ai/gen/lookup" => super::internal_gen::lookup(st, &data).await,
+                "/internal/ai/import/check" => super::internal_gen::import_check(st, &data).await,
                 _ => log_lines(st, &data),
             };
             match answer {

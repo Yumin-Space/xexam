@@ -4,13 +4,16 @@
 import type { Role } from '../types/api.ts';
 import type { AiStatus } from '../state/ai.ts';
 import { badgeState } from './badge-state.ts';
+import { offList, readFeatures, type FeatureKey, type Features } from './ai-features.ts';
 
 // ---------------------------------------------------------------- visibility (spec 7.2)
 
-export type AiPlusReason = 'loading' | 'suspended' | 'unavailable';
+/** v1.1 (BT-2): `off` / `down` name the cause of "AI is not available"; `unavailable` = cause unknown */
+export type AiPlusReason = 'loading' | 'suspended' | 'off' | 'down' | 'unavailable';
 export type AiPlusView =
+  /** `features` is present only while some feature is switched off (FP-3), so a plain usable view stays `{ show, usable }` */
   | { show: false }
-  | { show: true; usable: true }
+  | { show: true; usable: true; features?: Features }
   | { show: true; usable: false; reason: AiPlusReason };
 
 /**
@@ -24,23 +27,26 @@ export function aiPlusView(i: { role: Role; service: boolean; status: AiStatus }
     return i.role === 'user' && i.service ? { show: true, usable: false, reason: 'loading' } : { show: false };
   }
   const ready = st.state === 'ready';
+  const cause = !ready ? 'down' : st.why === 'off' ? 'off' : st.why === 'link' ? 'down' : undefined;
   const b = badgeState({
     role: i.role, service: i.service, suspended: ready && st.suspended === true, available: ready && st.enabled === true,
+    ...(cause ? { unavailableReason: cause } : {}),
   });
   if (b.kind === 'none') return { show: false };
   if (b.kind === 'off') return { show: true, usable: false, reason: b.reason };
-  return { show: true, usable: true };
+  const features = ready && i.role !== 'admin' ? readFeatures(st.features) : null;
+  return features && offList(features).length > 0 ? { show: true, usable: true, features } : { show: true, usable: true };
 }
 
 // ---------------------------------------------------------------- control state (view + row-level reasons)
 
 /** Reasons that grey one control although AI itself works (no 无法使用 tag) */
 export type ExtraReason = 'noDetail' | 'noWrong' | 'notSaved';
-export type ControlReason = AiPlusReason | ExtraReason;
+export type ControlReason = AiPlusReason | ExtraReason | 'featureOff';
 
 /** The tooltip of a greyed control: a message key, plus for `aiplus.tip.na` the key of the badge reason text */
 export type TipSpec =
-  | { key: 'aiplus.tip.na'; reasonKey: 'ai.badge.suspended' | 'ai.badge.unavailable' }
+  | { key: 'aiplus.tip.na'; reasonKey: 'ai.badge.suspended' | 'ai.badge.tip.off' | 'ai.badge.tip.down' | 'ai.badge.unavailable' }
   | { key: string; reasonKey?: undefined };
 
 export type ControlState =
@@ -55,18 +61,27 @@ const WHY_KEY: Record<'loading' | ExtraReason, string> = {
   notSaved: 'aiplus.why.notSaved',
 };
 
+/** The own-viewer badge tip of a reason (BT-2): what a greyed control says is wrong */
+const REASON_TIP: Record<'suspended' | 'off' | 'down' | 'unavailable', 'ai.badge.suspended' | 'ai.badge.tip.off' | 'ai.badge.tip.down' | 'ai.badge.unavailable'> = {
+  suspended: 'ai.badge.suspended', off: 'ai.badge.tip.off', down: 'ai.badge.tip.down', unavailable: 'ai.badge.unavailable',
+};
+
 /**
- * One control's state: the view first (a service problem greys everything, with the 无法使用 tag for `suspended` /
- * `unavailable` only), then the control's own reason (greyed without a tag).
+ * One control's state: the view first (a service problem greys everything, with the 无法使用 tag for every reason but
+ * `loading`), then v1.1's feature switch (`feature` unticked: greyed with the tag and `ai.err.featureOff`, FP-3), then the
+ * control's own reason (greyed without a tag).
  */
-export function controlState(view: AiPlusView, extra: ExtraReason | null = null): ControlState {
+export function controlState(view: AiPlusView, extra: ExtraReason | null = null, feature?: FeatureKey): ControlState {
   if (!view.show) return { show: false };
   if (!view.usable) {
     const r = view.reason;
     const tip: TipSpec = r === 'loading'
       ? { key: WHY_KEY.loading }
-      : { key: 'aiplus.tip.na', reasonKey: r === 'suspended' ? 'ai.badge.suspended' : 'ai.badge.unavailable' };
+      : { key: 'aiplus.tip.na', reasonKey: REASON_TIP[r] };
     return { show: true, usable: false, reason: r, tag: r !== 'loading', tip };
+  }
+  if (feature && view.features && view.features[feature] === false) {
+    return { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOff' } };
   }
   if (extra) return { show: true, usable: false, reason: extra, tag: false, tip: { key: WHY_KEY[extra] } };
   return { show: true, usable: true };

@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "1.0"
+  version: "1.1"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -1276,11 +1276,11 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [memories, limit, maxChars]
+                required: [memories, limit, maxTokens]
                 properties:
                   memories: { type: array, items: { $ref: "#/components/schemas/AiMemory" } }
                   limit: { type: integer, example: 50, description: "memoriesPerUser" }
-                  maxChars: { type: integer, example: 200, description: "memoryChars (200 by default since v1.0)" }
+                  maxTokens: { type: integer, example: 200, description: "memoryTokens (1000 by default since v1.1, estimated tokens)" }
         "401": { $ref: "#/components/responses/AiSignIn" }
   /api/ai/memories/add:
     post:
@@ -1288,7 +1288,7 @@ paths:
       summary: "(v0.8) Add a memory note"
       x-access: AiUser
       description: |
-        Whitespace is collapsed to single spaces; 1 to memoryChars characters (400 `ai.memoryTooLong` with `limit`); beyond
+        Whitespace is collapsed to single spaces; 1 to memoryTokens estimated tokens (400 `ai.memoryTooLong` with `limit`); beyond
         memoriesPerUser notes 409 `ai.memoryLimit` with `limit`.
       requestBody:
         required: true
@@ -1377,7 +1377,7 @@ paths:
                 type: object
                 required: [suggestion]
                 properties:
-                  suggestion: { type: string, description: "One line, at most memoryChars characters" }
+                  suggestion: { type: string, description: "One line, at most memoryTokens estimated tokens" }
         "400": { $ref: "#/components/responses/AiError" }
         "401": { $ref: "#/components/responses/AiSignIn" }
         "403": { $ref: "#/components/responses/AiForbidden" }
@@ -1578,7 +1578,7 @@ paths:
       tags: [ai-admin]
       summary: "(v0.8) Usage statistics: calls, tokens, cached tokens and errors by user, model and period (never content)"
       x-access: AiAdmin
-      description: "(v0.9) `byPurpose` splits the chat calls of the range into four rows, always in the order chat, hint, explain, summary (zeros kept). `chat` is AI Chat and every call recorded before v0.9; the calls that listed models are in no row."
+      description: "(v0.9) `byPurpose` splits the calls of the range into seven rows since v1.1 (four before), always in the order chat, hint, explain, summary, generate, import, other (zeros kept). `chat` is AI Chat and every call recorded before v0.9; `other` is the model list and the connection tests."
       parameters:
         - name: days
           in: query
@@ -1729,6 +1729,118 @@ paths:
         "403": { $ref: "#/components/responses/AiForbidden" }
 
   # ---------------------------------------------------------------- (v0.8) internal routes, NOT reachable through Nginx
+  /api/ai/gen/start:
+    post:
+      tags: [ai]
+      summary: "(v1.1) Start an AI-generated bank from checked banks or sheets, or from wrong answers"
+      description: |
+        One job per user (409 `ai.gen.busy`, `job` may be null). The daily quota counts one generation per job
+        (429 `ai.gen.quota`). An AI-generated bank is never a source (422 `ai.gen.aiSource`). Section 5.7 of api.md.
+      x-access: AiUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: "OK, the job" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { description: "ai.gen.busy: another job of this user runs" }
+        "429": { description: "ai.gen.quota: the daily generation quota is used" }
+  /api/ai/gen/job:
+    get:
+      tags: [ai]
+      summary: "(v1.1) The job: state, made / goal, progress and, on failure, the reason code and rejection counts"
+      x-access: AiUser
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+  /api/ai/gen/cancel:
+    post:
+      tags: [ai]
+      summary: "(v1.1) Cancel a queued or running job of the user"
+      x-access: AiUser
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+  /api/ai/gen/dismiss:
+    post:
+      tags: [ai]
+      summary: "(v1.1) Hide a finished job's card"
+      x-access: AiUser
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+  /api/ai/admin/gen:
+    get:
+      tags: [ai-admin]
+      summary: "(v1.1) Recent generation and import jobs of every user (limit 1 to 200, default 50)"
+      x-access: AiAdmin
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+  /api/ai/admin/free:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.1) Free mode for an administrator account (a non-administrator target: 409 ai.freeAdminOnly)"
+      x-access: AiAdmin
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { description: "ai.freeAdminOnly" }
+  /api/ai/import/upload:
+    post:
+      tags: [ai]
+      summary: "(v1.1) Upload a file for AI import (raw body; the name in X-Filename, URL-encoded)"
+      description: |
+        The body is the file itself, `Content-Type: application/octet-stream`; any other type is 415 `ai.badRequest`.
+        The answer is the job with its preview. Nothing is saved before /api/ai/import/confirm. While the file is recognised the
+        job's `read` is `{done, total}` (parts read of all parts; `{0, 0}` until counted). A failure `ai.import.tooMuchText`
+        carries `errorArg`, the most characters a questions file may have. Section 5.7 of api.md.
+      x-access: AiUser
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        "200": { description: "OK, the job with the preview" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "413": { description: "The file is over the size limit of the AI settings" }
+        "415": { description: "ai.badRequest: Content-Type is not application/octet-stream" }
+        "429": { description: "The per-user request limits or the daily quota" }
+  /api/ai/import/confirm:
+    post:
+      tags: [ai]
+      summary: "(v1.1) Confirm the preview of an import: the bank is created and the daily quota is charged"
+      description: |
+        Body `{"id": <job id>, "name": "<bank name>"}`. `name` is required (trimmed): 400 `ai.import.nameEmpty` when
+        empty, 400 `ai.gen.badName` when too long or with control characters, 409 `ai.import.nameTaken` when a bank
+        has that name (the job keeps waiting, nothing is created). Permission is checked again (403 `ai.gen.forbidden`
+        when it was removed while the job waited). Declining or letting the preview expire costs nothing.
+      x-access: AiUser
+      responses:
+        "200": { description: OK }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { description: "ai.gen.forbidden or ai.featureOff" }
+  /api/banks/sheets/delete:
+    post:
+      tags: [banks]
+      summary: "(v1.1) Delete some sheets of a manageable bank (not AI banks, not all sheets)"
+      description: |
+        Body `{"id": <bank id>, "sheets": ["…"], "withRecords": true or false}`. 404 `MSG_BANK_NOT_FOUND` for a missing,
+        not manageable or unknown sheet; 400 `MSG_SHEETS_ALL` when every sheet is named; 400 `MSG_AI_BANK_SHEETS` for an
+        AI bank. Answers like /api/banks/delete.
+      x-access: BankManager
+      responses:
+        "200": { description: OK }
+        "400": { description: "MSG_SHEETS_ALL or MSG_AI_BANK_SHEETS" }
+        "404": { description: "MSG_BANK_NOT_FOUND" }
+
   /internal/ai/auth:
     get:
       tags: [internal]
@@ -2815,7 +2927,7 @@ components:
             - { $ref: "#/components/schemas/AiRunningInfo" }
     AiStatus:
       type: object
-      required: [enabled, allowed, suspended, hasData, running, retentionDays, memoryLimit, memoryMaxChars, maxMessageChars, messageChars, memoryChars, keyProblem, configured, freeMode]
+      required: [enabled, allowed, suspended, hasData, running, retentionDays, memoryLimit, memoryMaxTokens, maxMessageChars, messageChars, memoryTokens, keyProblem, configured, freeMode]
       properties:
         enabled: { type: boolean, description: "AI+ is available: the AI+ feature is on (enabled, tested with the current settings, keys readable) and the backend accepted ai-service's report less than 60 s ago" }
         allowed: { type: boolean, description: "You may chat now: enabled and (administrator or AI+) and not paused" }
@@ -2831,10 +2943,10 @@ components:
             messageId: { type: integer }
         retentionDays: { type: integer, example: 90 }
         memoryLimit: { type: integer, example: 50, description: "memoriesPerUser" }
-        memoryMaxChars: { type: integer, example: 200, description: "memoryChars (same value as memoryChars)" }
+        memoryMaxTokens: { type: integer, example: 200, description: "The limit of one memory in tokens (the same value as memoryTokens)" }
         maxMessageChars: { type: integer, example: 16000, description: "messageChars (same value as messageChars)" }
         messageChars: { type: integer, example: 16000, description: "(v1.0) The fixed cap of one message; always 16000, not a setting" }
-        memoryChars: { type: integer, example: 200, description: "(v1.0) Characters per memory; 200 by default" }
+        memoryTokens: { type: integer, example: 200, description: "(v1.1) Estimated tokens per memory; 1000 by default (200 characters in v1.0)" }
         keyProblem: { type: boolean, description: "Administrators only: the saved keys cannot be used (false for others)" }
         configured: { type: boolean, description: "Administrators only: a model and the needed keys are saved (false for others)" }
         freeMode: { type: boolean, description: "(v0.8, round 2) Administrators only: your free mode is on (always false for a plain user, whatever is stored). Set with POST /api/ai/free; it applies to every message in any chat from the next one" }
@@ -3023,13 +3135,14 @@ components:
                   today: { type: integer, description: "(v1.0) Rows with a user id only: counted calls since 0:00 today, server time zone" }
         byModel:
           type: array
-          description: "model \"\" = the calls that listed the models"
+          description: "model \"\" with other true = the calls that use no chosen model for a feature (the model list and the connection tests); the rows add up to the total calls"
           items:
             allOf:
               - type: object
                 required: [model]
                 properties:
                   model: { type: string }
+                  other: { type: boolean, description: "(v1.1) true for the one row with the empty model name" }
               - { $ref: "#/components/schemas/AiUsageSums" }
         byPeriod:
           type: array
@@ -3043,9 +3156,9 @@ components:
               - { $ref: "#/components/schemas/AiUsageSums" }
         byPurpose:
           type: array
-          minItems: 4
-          maxItems: 4
-          description: "(v0.9) The chat calls of the range by feature: exactly four rows in the order chat, hint, explain, summary, zeros kept. `chat` = AI Chat and every call recorded before v0.9; the calls that listed models are in no row"
+          minItems: 7
+          maxItems: 7
+          description: "(v0.9, seven rows since v1.1) The calls of the range by feature: exactly seven rows in the order chat, hint, explain, summary, generate, import, other, zeros kept; the rows add up to the total calls. `chat` = AI Chat and every call recorded before v0.9; `generate` = AI bank generation; `import` = AI file import (recognition and writing); `other` = the model list and the connection tests"
           items:
             allOf:
               - type: object
@@ -3086,18 +3199,34 @@ components:
     AiLimits:
       type: object
       additionalProperties: false
-      description: "The safety limits (all integers). POST: any subset; GET: all ten (v1.0). messageChars is not a key any more."
+      description: "The safety limits (all integers). POST: any subset; GET: all 25 keys (v1.0 ten, v1.1 fifteen more: the generation and import settings, with defaults as in section 5.7 of api.md). messageChars is not a key any more."
       properties:
         perUserRunning: { type: integer, minimum: 1, maximum: 4, default: 1 }
         globalRunning: { type: integer, minimum: 1, maximum: 64, default: 16 }
         chatsPerUser: { type: integer, minimum: 10, maximum: 100000, default: 1000 }
         messagesPerChat: { type: integer, minimum: 20, maximum: 5000, default: 400 }
+        genPerDay: { type: integer, default: 3, description: "(v1.1) Generations per user per day" }
+        genAdminsExempt: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.1) 1 = administrators are not limited by genPerDay" }
+        genMinSource: { type: integer, default: 30, description: "(v1.1) Questions a bank source needs (single and multiple choice)" }
+        genMinWrong: { type: integer, default: 10, description: "(v1.1) Wrong answers needed for a wrong-answer generation" }
+        genBankSingle: { type: integer, default: 14, description: "(v1.1) Single-choice questions per generated bank" }
+        genBankMulti: { type: integer, default: 6, description: "(v1.1) Multiple-choice questions per generated bank" }
+        genWrongSingle: { type: integer, default: 14, description: "(v1.1) Single-choice questions from wrong answers" }
+        genWrongMulti: { type: integer, default: 6, description: "(v1.1) Multiple-choice questions from wrong answers" }
+        genCallTokens: { type: integer, minimum: 1000, maximum: 250000, default: 20000, description: "(v1.1) Tokens per AI call" }
+        genMaxCalls: { type: integer, minimum: 8, maximum: 40, default: 15, description: "(v1.1) Most AI calls per generation job, for everyone" }
+        importMaxCalls: { type: integer, minimum: 8, maximum: 40, default: 25, description: "(v1.1) Most AI calls per file-import job, for everyone" }
+        recognizeMaxCalls: { type: integer, minimum: 8, maximum: 40, default: 20, description: "(v1.1) Most AI calls the recognition step of one imported file may make, for everyone" }
+        genRunning: { type: integer, default: 2, description: "(v1.1) Generation and import jobs running at once, server-wide" }
+        importMaxMb: { type: integer, default: 20, description: "(v1.1) Largest file of an AI import, in MiB" }
+        importMaxQuestions: { type: integer, default: 50, minimum: 1, maximum: 50, description: "(v1.1) Most questions one import may take from a file" }
+
         memoriesPerUser: { type: integer, minimum: 1, maximum: 1000, default: 50 }
-        memoryChars: { type: integer, minimum: 50, maximum: 2000, default: 200, description: "Characters per memory" }
+        memoryTokens: { type: integer, minimum: 50, maximum: 250000, default: 1000, description: "Estimated tokens per memory" }
         callsPerMinute: { type: integer, minimum: 1, maximum: 100, default: 5, description: "(v1.0) Calls per rolling 60 s" }
         callsPerHour: { type: integer, minimum: 1, maximum: 2000, default: 20, description: "(v1.0) Calls per rolling hour; at least callsPerMinute" }
         callsPerDay: { type: integer, minimum: 1, maximum: 20000, default: 100, description: "(v1.0) Calls since 0:00 in the server time zone; at least callsPerHour" }
-        replyMaxChars: { type: integer, minimum: 1, maximum: 16000, default: 1000, description: "(v1.0) Longest answer in characters, sent as max_tokens (section 5.6)" }
+        replyMaxTokens: { type: integer, minimum: 1, maximum: 250000, default: 3000, description: "(v1.1) Longest answer in tokens, sent unchanged as max_tokens (section 5.6)" }
     AiLimitsAnswer:
       type: object
       required: [limits, defaults, ranges]

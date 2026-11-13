@@ -20,6 +20,43 @@
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
 
+## 00. Upgrading from v1.0 to v1.1
+
+This section is numbered 00 because it is the newest one. The older sections keep their numbers.
+
+### 00.1 What changes
+
+- **The main database** moves from schema 6 to **schema 7**, once, on the first start of the new backend. It gets four columns: the **time limit** of an exam (`attempts.time_limit`, NULL for untimed exams and practice), how an exam ended (`attempts.ended`: submitted by hand, or by the countdown), and two JSON fields for AI-generated banks (`banks.ai_job`, `banks.ai_meta`). Every record saved before v1.1 stays as it is and is still scored the v1.0 way.
+- **The AI database** moves from schema 4 to **schema 6**, once, on the first start of the new AI service (the schema 5 and schema 6 steps run in one transaction). It gets the bookkeeping of generation and import jobs, the day on which a generation or import was charged to the quota, the per-user **feature permissions** (`users.features_off`, all six features allowed by default), and the new limits: **generation calls per job (15)**, **import calls per job (25)**, the **import size (20 MB)** and the **import question limit (50)**. Your AI chats, memories, keys, settings and usage rows stay.
+- **Features**: after the upgrade every user with the AI+ feature may use all six features (chat, hint, explanation, summary, AI generation and AI import), subject to the other rules (pause, the request limits, the daily generation quota). Use **AI settings › AI+ users** to switch any of them off for one user.
+- **Lengths in tokens**: the answer length (`replyMaxTokens`, default 3000), the memory length (`memoryTokens`, default 1000) and the length of one generation or import call (`genCallTokens`, default 20000) are counted in tokens from v1.1 on. A value still at its old default moves to the new default; any other value you set is multiplied by 1.5 once, so the text you allow stays about the same.
+- **Exams**: every exam now records whether it was submitted by hand or ended by the countdown, and a question left unanswered counts as **not completed**, not wrong. The rule applies to every exam, timed or not. Practice is unchanged.
+- **Banks**: the bank management page has checkboxes, a toolbar for **Delete selected** and **AI generate**, and a separate **AI import** card. Nothing in your existing banks changes. AI-generated banks are shared like any new bank (`AI_BANKS_AUTO_SHARE`, default on).
+- **Growth**: an AI-generated bank of 20 questions takes about 90 KB, and so does its copy in the bank download of everyone who can see it. At 5 generations a day that is about 170 MB a year; at 20 users with 3 generations a day it is about 2 GB a year. v1.1 does not cap the number of kept AI banks.
+
+### 00.2 Upgrade
+
+1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)). The backend and the AI service each write their own copy before they change their database, but a copy of both volumes is the simplest way back.
+2. **Pull the three images and start** (do not use `down -v`): `docker compose pull`, then `docker compose up -d`. The compose file, the volumes and `.env` stay as they are.
+3. **Read the logs**: `docker compose logs backend` should say that it wrote `backups/xexam-schema6-<YYYYMMDD-HHMMSS>.db` and upgraded the database to schema 7; `docker compose logs ai-service` should say that it wrote `backups/xexam-ai-schema4-<YYYYMMDD-HHMMSS>.db` and upgraded the AI database to schema 6. Keep free space of about the size of both databases before you upgrade.
+
+### 00.3 Checks after the upgrade
+
+- `http://localhost:8765/api/info` shows `"version": "1.1"`.
+- `docker compose ps` lists three healthy containers.
+- Open **AI settings** (administrators): the tabs are **AI+ function**, **AI+ users**, **AI usage**, **AI banks** (new) and **AI safety**; the generation and import call limits read 15 and 25.
+- Open **Bank management** and an exam: a timed exam can be started from Home, and a practice still works without a limit.
+
+### 00.4 Rollback to v1.0
+
+Both databases have to go back, because v1.0 refuses schema 7 and schema 6. Stop the containers, restore the copy `backups/xexam-schema6-<date-time>.db` as the main database and `backups/xexam-ai-schema4-<date-time>.db` as the AI database (the AI volume also keeps the key file `secret.key`, which does not change), and start the v1.0 images. Everything written after the upgrade is lost with the copies: new exams, AI-generated and imported banks, AI jobs and their usage rows.
+
+### 00.5 What has been tested
+
+The upgrade paths of v1.1 are tested with made-up rows in `backend/tests/v11_time_limit.rs` (the main database from schema 6) and `ai-service/tests/v11_store.rs` (the AI database from schema 4): one backup copy is written first, the old records stay as they were, and the new columns and indexes exist.
+
+---
+
 ## 0. Upgrading from v0.9.1 to v1.0
 
 This section is numbered 0 because it is the newest one. The older sections keep their numbers (0b for v0.9, 1 to 12 as before).

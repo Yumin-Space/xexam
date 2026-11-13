@@ -3,6 +3,7 @@
 // read or written.
 import type { AttemptKind, Bank, Mode, Question } from '../types/api.ts';
 import { kindOf } from '../domain/attempt.ts';
+import { readTimedFields, writeTimedFields, UNTIMED, type TimedFields } from '../domain/exam-timer.ts';
 import { stateOf, type Answer } from '../domain/grading.ts';
 import { paths, sessionKey, storageOwner } from './storage-keys.ts';
 
@@ -30,6 +31,8 @@ export interface SavedSession {
   /** v0.9: the session key (32 lower-case hex) and start time (unix seconds); a save without valid ones gets new values */
   key: string;
   startedAt: number;
+  /** v1.1 (TL-6): the time limit of a timed exam and its flags (an untimed exam, a practice and a bad save read back as untimed) */
+  timed: TimedFields;
 }
 
 export interface SessionToSave {
@@ -44,6 +47,8 @@ export interface SessionToSave {
   checked: Set<string>;
   key: string;
   startedAt: number;
+  /** Absent = untimed */
+  timed?: TimedFields;
 }
 
 const MODES: readonly string[] = ['all', 'weak', 'retry'];
@@ -67,6 +72,8 @@ export function saveSession(se: SessionToSave): void {
       kind: se.kind, checked: se.kind === 'practice' ? [...se.checked] : [],
       // v0.9 (still format v1: older versions ignore the two keys)
       key: se.key, startedAt: se.startedAt,
+      // v1.1 (still format v1: older versions ignore the keys): limit / warned / timeUp of a timed exam, nothing otherwise
+      ...(se.kind === 'exam' ? writeTimedFields(se.timed ?? UNTIMED) : {}),
     }));
   } catch {
     /* If it cannot be saved, so be it */
@@ -166,5 +173,6 @@ export function loadSaved(bank: Bank | null): SavedSession | null {
     dropped: (d.ids as unknown[]).length - qs.length,
     kind,
     checked,
+    timed: kind === 'exam' ? readTimedFields(d) : { ...UNTIMED },
   };
 }

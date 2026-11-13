@@ -35,7 +35,7 @@ import {
   retryTarget, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatView, type ViewMessage,
 } from '../domain/ai-chat.ts';
 import { chatDisplayTitle, popTitleKey } from '../domain/ai-plus.ts';
-import { memoryLength, wantsMemory } from '../domain/ai-memory.ts';
+import { memoryBoxChars, memoryLength, memoryTokenCount, wantsMemory } from '../domain/ai-memory.ts';
 import { shownCode } from '../domain/ai-settings.ts';
 import { aiCodeText, callLimitText, errorText } from '../i18n/errors.ts';
 import { localeTag, t, tn, uiLang } from '../i18n/index.ts';
@@ -188,10 +188,10 @@ const full = (): boolean => mode === 'full';
 const sending = (): boolean => stream != null || view.pending != null || view.streamingId != null || view.running;
 
 /** The user's limits from the AI status (the service's current safety limits) */
-function limits(): { messageChars: number; memoryChars: number; memories: number } {
+function limits(): { messageChars: number; memoryTokens: number; memories: number } {
   const st = aiStatus();
-  if (st.state !== 'ready') return { messageChars: 16000, memoryChars: 200, memories: 50 };
-  return { messageChars: st.messageChars ?? st.maxMessageChars, memoryChars: st.memoryChars ?? st.memoryMaxChars, memories: st.memoryLimit };
+  if (st.state !== 'ready') return { messageChars: 16000, memoryTokens: 1000, memories: 50 };
+  return { messageChars: st.messageChars ?? st.maxMessageChars, memoryTokens: st.memoryTokens ?? st.memoryMaxTokens, memories: st.memoryLimit };
 }
 
 function resetAll(): void {
@@ -315,6 +315,56 @@ let listObserver: ResizeObserver | null = null;
 let panWatching = false;
 let panFrame = 0;
 
+/** True when `el` is a vertical scroller that can still move in the direction the finger drags (dy > 0: content goes down) */
+function canScrollFor(el: Element, dy: number): boolean {
+  const oy = getComputedStyle(el).overflowY;
+  if ((oy !== 'auto' && oy !== 'scroll') || el.scrollHeight <= el.clientHeight + 1) return false;
+  return dy > 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
+let touchY = 0;
+let touchX = 0;
+let touchGuarding = false;
+
+function onGuardStart(e: TouchEvent): void {
+  const t = e.touches.length === 1 ? e.touches[0] : undefined;
+  if (!t) return;
+  touchY = t.clientY;
+  touchX = t.clientX;
+}
+
+/**
+ * While the document is locked (phones), a vertical drag may only scroll a row list: any move that no scroller under the
+ * finger can still follow (a short list, a list at its top / bottom edge, the header, the composer frame) is cancelled, so
+ * the screen never drags, bounces or pans (iOS Safari rubber-bands even under overflow: hidden). Horizontal moves,
+ * pinch (two fingers) and taps are left alone.
+ */
+function onGuardMove(e: TouchEvent): void {
+  const t = e.touches.length === 1 ? e.touches[0] : undefined;
+  if (!t || !e.cancelable) return;
+  const dy = t.clientY - touchY;
+  const dx = t.clientX - touchX;
+  touchY = t.clientY;
+  touchX = t.clientX;
+  if (Math.abs(dx) > Math.abs(dy) || dy === 0) return;
+  for (let n = e.target instanceof Element ? e.target : null; n && n !== document.documentElement; n = n.parentElement) {
+    if (canScrollFor(n, dy)) return;
+  }
+  e.preventDefault();
+}
+
+function setTouchGuard(on: boolean): void {
+  if (on === touchGuarding) return;
+  touchGuarding = on;
+  if (on) {
+    document.addEventListener('touchstart', onGuardStart, { passive: true });
+    document.addEventListener('touchmove', onGuardMove, { passive: false });
+  } else {
+    document.removeEventListener('touchstart', onGuardStart);
+    document.removeEventListener('touchmove', onGuardMove);
+  }
+}
+
 /**
  * Locks the document (html.no-doc-scroll: only the lists scroll) or frees it. Every AI Chat render at up to 900 px locks it;
  * leaving the page, or growing wider than 900 px, frees it.
@@ -322,6 +372,7 @@ let panFrame = 0;
 function lockDocument(on: boolean): void {
   const el = document.documentElement;
   el.classList.toggle('no-doc-scroll', on);
+  setTouchGuard(on);
   if (on) return;
   el.style.removeProperty('--composer-h');
   listObserver?.disconnect();
@@ -1249,7 +1300,7 @@ function footerText(m: ViewMessage): string | null {
 function suggestionBar(): HTMLElement | null {
   const s = suggestion;
   if (!s) return null;
-  const max = limits().memoryChars;
+  const max = limits().memoryTokens;
   if (s.busy && !s.text) return h('div', { class: 'ai-suggest', role: 'status' }, h('span', { class: 'dim' }, t('ai.mem.suggestBusy')));
   const input = h('input', {
     type: 'text', id: 'ai-suggest-input', class: 'ai-suggest-in', value: s.text, maxlength: String(max), disabled: s.busy,
@@ -1641,8 +1692,8 @@ function syncComposer(): void {
 async function addMem(): Promise<void> {
   const text = memDraft.trim();
   if (!text || memBusy) return;
-  const max = limits().memoryChars;
-  if (memoryLength(text) > max) {
+  const max = limits().memoryTokens;
+  if (memoryTokenCount(text) > max) {
     memFormError = aiCodeText('ai.memoryTooLong', max);
     render();
     return;
@@ -1732,11 +1783,11 @@ function memIcon(icon: MiniIcon, label: string, id: string, onClick: () => void,
 
 function memoryRow(m: AiMemory): HTMLElement {
   const editing = memEdit?.id === m.id;
-  const max = limits().memoryChars;
+  const max = limits().memoryTokens;
   const src = m.source === 'chat' ? 'ai.mem.source.chat' : 'ai.mem.source.manual';
   if (editing && memEdit) {
     const area = h('textarea', {
-      id: `ai-medit-in-${m.id}`, class: 'ai-mem-in', rows: '2', maxlength: String(max), 'aria-label': t('ai.mem.editLabel'),
+      id: `ai-medit-in-${m.id}`, class: 'ai-mem-in', rows: '2', maxlength: String(memoryBoxChars(max)), 'aria-label': t('ai.mem.editLabel'),
       oninput: () => {
         if (memEdit) memEdit = { ...memEdit, text: area.value };
       },
@@ -1786,15 +1837,15 @@ function memoryView(): HTMLElement {
     ];
   }
   const area = h('textarea', {
-    id: 'ai-mem-input', class: 'ai-mem-in', rows: '2', maxlength: String(lim.memoryChars), placeholder: t('ai.mem.placeholder'),
+    id: 'ai-mem-input', class: 'ai-mem-in', rows: '2', maxlength: String(memoryBoxChars(lim.memoryTokens)), placeholder: t('ai.mem.placeholder'),
     disabled: memBusy, 'aria-describedby': 'ai-mem-count',
     oninput: () => {
       memDraft = area.value;
-      count.textContent = t('ai.mem.count', { n: memoryLength(area.value), max: lim.memoryChars });
+      count.textContent = t('ai.mem.count', { n: memoryTokenCount(area.value), max: lim.memoryTokens });
     },
   });
   area.value = memDraft;
-  const count = h('span', { class: 'ai-count', id: 'ai-mem-count' }, t('ai.mem.count', { n: memoryLength(memDraft), max: lim.memoryChars }));
+  const count = h('span', { class: 'ai-count', id: 'ai-mem-count' }, t('ai.mem.count', { n: memoryTokenCount(memDraft), max: lim.memoryTokens }));
   const addBtn = iconButton({ icon: 'plus', label: t('ai.mem.add'), tone: 'ai', showLabel: true });
   addBtn.id = 'ai-mem-add';
   addBtn.type = 'submit';
@@ -1853,7 +1904,9 @@ function readOnlyLine(): HTMLElement {
   const paused = reason === 'suspended';
   const text = paused
     ? t('ai.readOnly.paused')
-    : (reason === 'noFunction' ? t('ai.err.notAllowed') : badgeReasonText(reason, isAdmin())) + (uiLang() === 'en' ? ' ' : '') + t('ai.readOnlyTail');
+    : reason === 'featureOff'
+      ? t('ai.err.featureOff')
+      : (reason === 'noFunction' ? t('ai.err.notAllowed') : badgeReasonText(reason, isAdmin())) + (uiLang() === 'en' ? ' ' : '') + t('ai.readOnlyTail');
   return h('p', { class: 'ai-readonly-line', id: 'ai-readonly' }, ico(paused ? 'pauseCircle' : 'info'), h('span', null, text));
 }
 

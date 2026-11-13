@@ -23,7 +23,7 @@ describe('aiPlusView', () => {
     // suspended wins over unavailable, like the dark badge
     assert.deepEqual(aiPlusView({ role: 'user', service: true, status: ready(false, true) }), { show: true, usable: false, reason: 'suspended' });
     assert.deepEqual(aiPlusView({ role: 'user', service: true, status: ready(false) }), { show: true, usable: false, reason: 'unavailable' });
-    assert.deepEqual(aiPlusView({ role: 'user', service: true, status: DOWN }), { show: true, usable: false, reason: 'unavailable' });
+    assert.deepEqual(aiPlusView({ role: 'user', service: true, status: DOWN }), { show: true, usable: false, reason: 'down' });
   });
   it('status still loading: a user with the service is greyed with reason loading; an administrator sees nothing', () => {
     assert.deepEqual(aiPlusView({ role: 'user', service: true, status: LOADING }), { show: true, usable: false, reason: 'loading' });
@@ -267,5 +267,43 @@ describe('chatNameOf', () => {
   });
   it('a plain chat keeps its title', () => {
     assert.equal(chatNameOf({ title: 'Hello' }, tr), 'Hello');
+  });
+});
+
+describe('v1.1: reasons off / down and the feature switch (BT-2, FP-3)', () => {
+  const rd = (o: Record<string, unknown>): AiStatus => ({ state: 'ready', enabled: true, allowed: true, suspended: false, ...o }) as unknown as AiStatus;
+
+  it('why names the cause; suspended still wins', () => {
+    assert.deepEqual(aiPlusView({ role: 'user', service: true, status: rd({ enabled: false, why: 'off' }) }), { show: true, usable: false, reason: 'off' });
+    assert.deepEqual(aiPlusView({ role: 'user', service: true, status: rd({ enabled: false, why: 'link' }) }), { show: true, usable: false, reason: 'down' });
+    assert.deepEqual(aiPlusView({ role: 'user', service: true, status: rd({ enabled: false, why: 'off', suspended: true }) }), { show: true, usable: false, reason: 'suspended' });
+  });
+
+  it('the tip keys are the own-viewer badge tips', () => {
+    const tip = (reason: 'suspended' | 'off' | 'down' | 'unavailable') => controlState({ show: true, usable: false, reason });
+    assert.deepEqual((tip('off') as { tip: unknown }).tip, { key: 'aiplus.tip.na', reasonKey: 'ai.badge.tip.off' });
+    assert.deepEqual((tip('down') as { tip: unknown }).tip, { key: 'aiplus.tip.na', reasonKey: 'ai.badge.tip.down' });
+    assert.deepEqual((tip('unavailable') as { tip: unknown }).tip, { key: 'aiplus.tip.na', reasonKey: 'ai.badge.unavailable' });
+  });
+
+  it('featureOff: greyed with the tag, only for the unticked feature, not for administrators', () => {
+    const st = rd({ features: { chat: true, hint: false, explain: true, summary: true, generate: true } });
+    const view = aiPlusView({ role: 'user', service: true, status: st });
+    assert.equal(view.show && view.usable && view.features?.hint, false);
+    assert.deepEqual(controlState(view, null, 'hint'), { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOff' } });
+    assert.deepEqual(controlState(view, null, 'explain'), { show: true, usable: true });
+    assert.deepEqual(controlState(view, 'noWrong', 'hint').show && (controlState(view, 'noWrong', 'hint') as { reason: string }).reason, 'featureOff');
+    const admin = aiPlusView({ role: 'admin', service: true, status: st });
+    assert.deepEqual(controlState(admin, null, 'hint'), { show: true, usable: true });
+    // no feature argument: not gated
+    assert.deepEqual(controlState(view), { show: true, usable: true });
+  });
+
+  it('A-v11-Q8: an unticked AI 总结 greys every summary control (Home, records list, record detail pass "summary")', () => {
+    const st = rd({ features: { chat: true, hint: true, explain: true, summary: false, generate: true } });
+    const view = aiPlusView({ role: 'user', service: true, status: st });
+    assert.deepEqual(controlState(view, null, 'summary'), { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOff' } });
+    assert.equal((controlState(view, 'noWrong', 'summary') as { reason: string }).reason, 'featureOff');
+    assert.deepEqual(controlState(view, null, 'hint'), { show: true, usable: true });
   });
 });

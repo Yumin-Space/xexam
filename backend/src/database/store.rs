@@ -37,8 +37,8 @@ use super::timefmt::{Clock, SystemClock};
 use super::{HISTORY_LIMIT, MASTER_STREAK, RECORD_RETENTION};
 use crate::error::DbError;
 use crate::models::{
-    Attempt, AttemptResult, BankScope, ImportRecord, ImportTarget, ParsedSheet, Question,
-    SessionTag, SkippedRow, Viewer,
+    is_empty_answer, Attempt, AttemptEnd, AttemptKind, AttemptResult, BankScope, ImportRecord,
+    ImportTarget, ParsedSheet, Question, SessionTag, SkippedRow, Viewer,
 };
 use rusqlite::{params, Connection, OpenFlags, OptionalExtension};
 use serde::de::Error as _;
@@ -48,6 +48,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod ai_gen;
 mod banks;
 mod migrate;
 mod records;
@@ -55,6 +56,11 @@ mod settings;
 mod study;
 mod users;
 
+pub use ai_gen::{
+    ai_question_id, build_question, id_seed, AiBankInfo, AiBankOutcome, AiBankReq, AiFile, AiMode,
+    AiQuestion, GenFound, GenItem, GenKind, GenSeeds, GenSource, GenSourceReq, GenStratum, Tri,
+    AI_BANKS_AUTO_SHARE, AI_SHEET,
+};
 pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
 pub use study::{QuestionAsk, StudyLang, MAX_SAMPLE, TEXT_BUDGET};
@@ -90,6 +96,15 @@ pub struct Store {
     converted_prerelease: bool,
     /// The journal mode SQLite reported after the open (lower case)
     journal_mode: String,
+}
+
+/// Whether the stored JSON text of a cleaned answer says "nothing was chosen" ([`is_empty_answer`]); text that is not JSON is
+/// treated as empty too (it can never be shown as an answer).
+fn answer_text_is_empty(text: &str) -> bool {
+    match serde_json::from_str::<Value>(text) {
+        Ok(v) => is_empty_answer(Some(&v)),
+        Err(_) => true,
+    }
 }
 
 fn json_err(msg: &str) -> DbError {
@@ -839,18 +854,27 @@ impl Store {
     pub fn bank_as(&self, scope: &BankScope) -> Result<Value, DbError> {
         let (mut rows, last) = {
             let g = self.lock();
-            (
-                load_questions(
+            let rows = match scope {
+                BankScope::All => load_questions(
                     &g,
                     &format!("SELECT {QUESTION_COLUMNS} FROM questions ORDER BY seq"),
                     [],
                 )?,
-                last_import(&g, scope)?,
-            )
+                // v1.1: a limited viewer reads only their own banks (the ids as one JSON array), not the whole library
+                // filtered in Rust. `seq` is unique inside a bank, so the order is the one the Rust filter produced.
+                BankScope::Only(ids) => {
+                    let ids_json = serde_json::to_string(&ids.iter().collect::<Vec<_>>())?;
+                    load_questions(
+                        &g,
+                        &format!(
+                            "SELECT {QUESTION_COLUMNS} FROM questions WHERE bank_id IN (SELECT value FROM json_each(?1)) ORDER BY bank_id, seq"
+                        ),
+                        params![ids_json],
+                    )?
+                }
+            };
+            (rows, last_import(&g, scope)?)
         };
-        if !scope.is_all() {
-            rows.retain(|r| scope.allows(r.bank_id));
-        }
         // Stable: with a single bank this is exactly the old `ORDER BY seq` order (ties included)
         rows.sort_by_key(|r| r.bank_id);
         let mut order: Vec<(String, i64, i64)> = Vec::new();
@@ -991,6 +1015,10 @@ impl Store {
                     return Err(DbError::NotBankOwner);
                 }
             }
+            // v1.1: an AI-generated bank is never updated from a workbook (checked inside the transaction: nothing written)
+            if banks::is_ai_bank(c, bank.id)? {
+                return Err(DbError::AiBank);
+            }
             let qs = banks::scoped_questions(Some(&bank), questions);
             let plan = write_import(c, bank.id, filename, sheets, &qs, &t)?;
             c.execute(
@@ -1077,6 +1105,14 @@ impl Store {
     /// [`Store::record_attempt_as`] that also stores the session key and start time of `tag` in the record (v0.9; NULL for
     /// what is `None`). The answer is `/api/progress` plus, when there are any, `"notCounted"`, plus the new record's
     /// `"recordId"` (the `attempts.id`), always last.
+    ///
+    /// v1.1, the not-answered rule: for an exam with `attempt.end` set (every exam the v1.1 page saves, timed or not, handed
+    /// in by hand or at time-up) a result that is not correct AND has an empty answer ([`is_empty_answer`]: missing, null,
+    /// `[]`, `[null, ...]`) is *unanswered*: it is neither wrong nor in the wrong-answer notebook. Its detail row is stored
+    /// with answer NULL and correct 0, it writes no `user_stats` row (no `INSERT`, no update), but it counts in `total`
+    /// (the score is correct / all). The record stores `ended` (and `time_limit` for a timed exam). A practice session, and
+    /// an attempt with `end: None` (what a record written before v1.1 stands for), keep the v1.0 rule: an empty answer is
+    /// wrong and writes statistics.
     pub fn record_attempt_tagged(
         &self,
         user: i64,
@@ -1097,6 +1133,19 @@ impl Store {
                     .transpose()
             })
             .collect::<Result<Vec<Option<String>>, _>>()?;
+        // v1.1: only an exam saved with `end` set follows the not-answered rule and stores the two attempt columns. `TimeUp`
+        // without a valid limit is a hand-in and a limit outside 60 ..= 36000 is not stored, so the column CHECKs never fire.
+        let exam_end = match (attempt.kind, attempt.end) {
+            (AttemptKind::Exam, Some(end)) => Some(end),
+            _ => None,
+        };
+        let stored_limit = attempt
+            .limit
+            .filter(|l| exam_end.is_some() && (60..=36_000).contains(l));
+        let stored_end = exam_end.map(|e| match (e, stored_limit) {
+            (AttemptEnd::TimeUp, Some(_)) => AttemptEnd::TimeUp.as_str(),
+            _ => AttemptEnd::Submit.as_str(),
+        });
         let t = self.clock.now();
         let g = self.lock();
         let (not_counted, record_id) = run_tx(&g, |c| {
@@ -1122,6 +1171,15 @@ impl Store {
             if kept.is_empty() {
                 return Err(DbError::QuestionsGone);
             }
+            // v1.1: the unanswered results of an exam saved under the not-answered rule (index-aligned with `kept`)
+            let unanswered: Vec<bool> = kept
+                .iter()
+                .map(|(r, answer)| {
+                    exam_end.is_some()
+                        && !r.correct
+                        && answer.as_deref().is_none_or(answer_text_is_empty)
+                })
+                .collect();
             let total = len_i64(kept.len());
             let good = len_i64(kept.iter().filter(|(r, _)| r.correct).count());
             let percent = percent_round_half_even(good, total);
@@ -1135,7 +1193,10 @@ impl Store {
                 let mut bad = c.prepare(
                     "UPDATE user_stats SET attempts=attempts+1, wrong=wrong+1, streak=0, last=0, at=?1 WHERE user_id=?2 AND question_id=?3",
                 )?;
-                for (r, _) in &kept {
+                for ((r, _), skip) in kept.iter().zip(&unanswered) {
+                    if *skip {
+                        continue;
+                    }
                     ins.execute(params![user, r.id])?;
                     if r.correct {
                         ok.execute(params![t, user, r.id])?;
@@ -1154,16 +1215,18 @@ impl Store {
                 pyjson::to_string(&counted_sheets(c, &attempt.sheets, &counted)?)?
             };
             c.execute(
-                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind, session_key, started_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)",
-                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user, attempt.kind.as_str(), tag.key, tag.started_at],
+                "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind, session_key, started_at, time_limit, ended) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)",
+                params![t, sheets_json, attempt.mode, total, good, percent, attempt.seconds, banks_json, user, attempt.kind.as_str(), tag.key, tag.started_at, stored_limit, stored_end],
             )?;
             let attempt_id = c.last_insert_rowid();
             {
                 let mut item = c.prepare(
                     "INSERT INTO attempt_items(attempt_id, seq, question_id, answer, correct) VALUES(?1,?2,?3,?4,?5)",
                 )?;
-                for (seq, (r, answer)) in kept.iter().enumerate() {
-                    item.execute(params![attempt_id, len_i64(seq), r.id, answer, r.correct])?;
+                for (seq, ((r, answer), skip)) in kept.iter().zip(&unanswered).enumerate() {
+                    // An unanswered result stores NULL (an empty list sent by the page is not kept), correct 0
+                    let stored: Option<&String> = if *skip { None } else { answer.as_ref() };
+                    item.execute(params![attempt_id, len_i64(seq), r.id, stored, r.correct])?;
                 }
             }
             // Keep only the most recent RECORD_RETENTION sessions (and their detail); `/api/progress` still shows HISTORY_LIMIT
@@ -1559,6 +1622,8 @@ mod tests {
             mode: "all".to_string(),
             seconds: 7,
             kind: Default::default(),
+            limit: None,
+            end: None,
         };
         let p = s.record_attempt(1, &mk(false)).expect("rec");
         assert_eq!(p["questions"]["q1"]["wrong"], 1);
@@ -1582,6 +1647,8 @@ mod tests {
                     mode: "all".into(),
                     seconds: 0,
                     kind: Default::default(),
+                    limit: None,
+                    end: None,
                 }
             )
             .is_err());

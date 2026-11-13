@@ -21,6 +21,8 @@ use serde_json::{json, Map, Value};
 use std::any::Any;
 
 pub mod admin;
+pub mod gen;
+pub mod import;
 pub mod study;
 pub mod user;
 
@@ -60,6 +62,15 @@ enum Route {
     LimitsPost,
     Suspend,
     Resume,
+    Features,
+    AdminFree,
+    GenStart,
+    GenJob,
+    GenCancel,
+    GenDismiss,
+    AdminGen,
+    ImportUpload,
+    ImportConfirm,
     StudyAsk,
     StudySaved,
     SummaryAsk,
@@ -105,6 +116,15 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
     ),
     ("/api/ai/admin/suspend", None, Some(Route::Suspend)),
     ("/api/ai/admin/resume", None, Some(Route::Resume)),
+    ("/api/ai/admin/features", None, Some(Route::Features)),
+    ("/api/ai/admin/free", None, Some(Route::AdminFree)),
+    ("/api/ai/gen/start", None, Some(Route::GenStart)),
+    ("/api/ai/gen/job", Some(Route::GenJob), None),
+    ("/api/ai/gen/cancel", None, Some(Route::GenCancel)),
+    ("/api/ai/gen/dismiss", None, Some(Route::GenDismiss)),
+    ("/api/ai/admin/gen", Some(Route::AdminGen), None),
+    ("/api/ai/import/upload", None, Some(Route::ImportUpload)),
+    ("/api/ai/import/confirm", None, Some(Route::ImportConfirm)),
     ("/api/ai/study/ask", None, Some(Route::StudyAsk)),
     ("/api/ai/study/saved", Some(Route::StudySaved), None),
     ("/api/ai/summary/ask", None, Some(Route::SummaryAsk)),
@@ -128,6 +148,9 @@ impl Route {
             | Route::LimitsPost
             | Route::Suspend
             | Route::Resume
+            | Route::Features
+            | Route::AdminFree
+            | Route::AdminGen
             | Route::Free => Access::Admin,
             _ => Access::Signed,
         }
@@ -192,6 +215,11 @@ pub fn error_response(e: &ApiError) -> Response {
     }
     if let Some(c) = &e.call {
         if let Ok(v) = HeaderValue::from_str(&c.retry_after.to_string()) {
+            r.headers_mut().insert(header::RETRY_AFTER, v);
+        }
+    }
+    if let Some(n) = e.retry_header() {
+        if let Ok(v) = HeaderValue::from_str(&n.to_string()) {
             r.headers_mut().insert(header::RETRY_AFTER, v);
         }
     }
@@ -299,6 +327,12 @@ async fn handle(app: AppState, req: Request) -> Answer {
         return Err(ApiError::method_not_allowed());
     };
     let who = identify(&app, req.headers())?;
+    // The raw upload replaces only the body step of the guard order (method, path, identity, then its own Content-Type
+    // and body rules): the file is not a JSON body and is read by its own reader with the limit of the setting
+    if route == Route::ImportUpload {
+        app.0.reconcile_identity(&who).await?;
+        return import::upload(app, who, req).await;
+    }
     let query = req.uri().query().map(str::to_string);
     let body = if method == Method::POST {
         if !json_content_type(req.headers()) {
@@ -346,6 +380,15 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::LimitsPost => admin::limits_post(ctx).await,
         Route::Suspend => admin::set_function(ctx, false).await,
         Route::Resume => admin::set_function(ctx, true).await,
+        Route::Features => admin::set_features(ctx).await,
+        Route::AdminFree => admin::set_free(ctx).await,
+        Route::GenStart => gen::start(ctx).await,
+        Route::GenJob => gen::job(ctx).await,
+        Route::GenCancel => gen::cancel(ctx).await,
+        Route::GenDismiss => gen::dismiss(ctx).await,
+        Route::AdminGen => gen::admin_list(ctx).await,
+        Route::ImportUpload => Err(ApiError::bad_request()),
+        Route::ImportConfirm => import::confirm(ctx).await,
         Route::StudyAsk => study::ask(ctx).await,
         Route::StudySaved => study::saved(ctx).await,
         Route::SummaryAsk => study::summary_ask(ctx).await,

@@ -279,3 +279,38 @@ async fn memory_suggestions_are_written_in_the_settings_language() {
     assert_eq!(code, 200, "{v}");
     assert_eq!(system_of(&t.stub.last()), "Reply with the single word OK.");
 }
+
+#[tokio::test]
+async fn a_memory_suggestion_records_its_cache_read_and_write_tokens() {
+    let t = start().await;
+    t.relax_caps();
+    let admin = t.user("admin", true, false);
+    let sam = t.user("sam", false, true);
+    t.configure_openai(&admin, "demo-chat-small").await;
+    let ev = t
+        .send_all(
+            &sam,
+            json!({"text": "Please remember that I like short answers"}),
+        )
+        .await
+        .expect("stream");
+    let msg = ev[0].1["userMessageId"].as_i64().expect("message");
+    t.stub.st().script = Some(std::sync::Arc::new(|_: &str, _: &str| {
+        common::genkit::Reply::Text("Likes short answers.".into())
+    }));
+    t.stub.st().cached_tokens = Some(11);
+    t.stub.st().cache_write_tokens = Some(6);
+    let (code, v) = t
+        .post("/api/ai/memories/suggest", &sam, json!({"messageId": msg}))
+        .await;
+    assert_eq!(code, 200, "{v}");
+    let (c, w): (Option<i64>, Option<i64>) = t
+        .db()
+        .query_row(
+            "SELECT tokens_cached, tokens_cache_write FROM usage WHERE kind = 'memory' ORDER BY id DESC LIMIT 1",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .expect("the memory row");
+    assert_eq!((c, w), (Some(11), Some(6)));
+}

@@ -37,6 +37,9 @@ What is checked:
       it with ai.notAllowed within 5 s (keep-alive comments arrive while the provider is silent) and removes sam from
       AI settings while sam can still list and delete the chats; a suspension survives switching the service off and
       on; a deleted user's usage stays anonymised
+  A6. AI banks (v1.1): per-user feature switches (six), generation from a bank (exactly 20, shared quota of 3), an AI bank is never a
+      source, file import (a made-up .docx with questions, a .txt of study material, confirm counts, 20 MiB + 1 -> 413), the
+      22 limits, usage and the job list. The made-up provider answers these by the first words of the system text
   A4. No response, no System log line and no container log contains the made-up key, the question or the answer
   6. Recreate from the same volumes after deleting the containers: data and AI settings are still there, AI+ becomes
      available again; docker stop duration of each service; when ai-service stops, the backend knows at once (its last
@@ -95,8 +98,8 @@ MSG_AI_SUSPENDED = '管理员已暂停你的 AI+ 功能。'
 USER_ROW_KEYS = ['id', 'username', 'role', 'disabled', 'createdAt', 'lastLoginAt', 'mustChangePassword', 'records',
                  'banks', 'newBanks', 'canManageBanks', 'ai', 'ownedBanks', 'lock', 'aiSuspended']
 AI_SERVICE_KEYS = ['connected', 'stopped', 'lastSeen', 'version', 'enabled', 'link']
-STATUS_KEYS = ['enabled', 'allowed', 'suspended', 'hasData', 'running', 'retentionDays', 'memoryLimit', 'memoryMaxChars',
-               'maxMessageChars', 'messageChars', 'memoryChars', 'keyProblem', 'configured', 'freeMode']
+STATUS_KEYS = ['enabled', 'allowed', 'suspended', 'hasData', 'running', 'retentionDays', 'memoryLimit', 'memoryMaxTokens',
+               'maxMessageChars', 'messageChars', 'memoryTokens', 'keyProblem', 'configured', 'freeMode']
 START_KEYS = ['chatId', 'chatTitle', 'userMessageId', 'assistantMessageId', 'model', 'newChat', 'retry', 'free', 'chatKind']
 CHAT_KEYS = ['id', 'title', 'createdAt', 'updatedAt', 'messageCount', 'running', 'kind', 'recordId']
 ADMIN_ROW_KEYS = ['id', 'username', 'role', 'ai', 'aiAllowed', 'disabled', 'exists', 'suspended', 'chats', 'messages',
@@ -104,15 +107,31 @@ ADMIN_ROW_KEYS = ['id', 'username', 'role', 'ai', 'aiAllowed', 'disabled', 'exis
 # v1.0: the rows of GET /api/ai/admin/users and /api/ai/admin/user end with the user's AI call counts (the Suspend /
 # Resume answer's row does not carry them)
 ADMIN_LIST_ROW_KEYS = ADMIN_ROW_KEYS + ['calls']
+# v1.1: a status answer goes on with 'calls' (when the caps apply), 'why', and 'features' / 'gen' for AI+ users; an
+# AdminUserRow with 'features' (FP-4) and, on administrator rows, 'freeMode' (A-OWNER-21), before 'calls'
+def status_keys_ok(keys, calls):
+    want = STATUS_KEYS + (['calls'] if calls else []) + ['why']
+    return keys[:len(want)] == want and keys[len(want):] in ([], ['features', 'gen'])
+def admin_row_keys_ok(u, calls):
+    want = ADMIN_ROW_KEYS + ['features'] + (['freeMode'] if u.get('role') == 'admin' else []) + (['calls'] if calls else [])
+    return list(u.keys()) == want
 # v1.0: per-user caps on AI model calls (defaults 5 / 20 / 100). This check sends more calls per user than that, so the
 # administrator raises them to the maximum right after enabling AI; the caps themselves are covered by ai-service's tests
 CAPS_RELAXED = {'callsPerMinute': 100, 'callsPerHour': 2000, 'callsPerDay': 20000}
 # v1.0 (FB-5 revised): the safety limits answer has these 10 keys in this order; the per-message number is no longer a
 # setting (messageChars is fixed at 16000 characters and only shows in the status answer)
-LIMIT_KEYS = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryChars',
-              'callsPerMinute', 'callsPerHour', 'callsPerDay', 'replyMaxChars']
+LIMIT_KEYS = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryTokens',
+              'callsPerMinute', 'callsPerHour', 'callsPerDay', 'replyMaxTokens',
+              # v1.1: the seventeen AI bank limits (27 keys); lengths are in tokens (A-OWNER-43)
+              'genPerDay', 'genAdminsExempt', 'genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle',
+              'genWrongMulti', 'genCallTokens', 'genMaxCalls', 'importMaxCalls', 'recognizeMaxCalls', 'genUnlimited',
+              'importUnlimited', 'genRunning', 'importMaxMb', 'importMaxQuestions']
 LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000, 'messagesPerChat': 400, 'memoriesPerUser': 50,
-                  'memoryChars': 200, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxChars': 1000}
+                  'memoryTokens': 1000, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxTokens': 3000,
+                  'genPerDay': 3, 'genAdminsExempt': 1, 'genMinSource': 30, 'genMinWrong': 10, 'genBankSingle': 14, 'genBankMulti': 6,
+                  'genWrongSingle': 14, 'genWrongMulti': 6, 'genCallTokens': 20000, 'genMaxCalls': 15, 'importMaxCalls': 25,
+                  'recognizeMaxCalls': 20, 'genUnlimited': 1, 'importUnlimited': 1, 'genRunning': 2, 'importMaxMb': 20,
+                  'importMaxQuestions': 50}
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST', 'XEXAM_INTERNAL_TOKEN', 'XEXAM_AI_SECRET_KEY'):
@@ -207,6 +226,30 @@ def study_workbooks():
                            '第 %d 题。哪个字母在字母表里排第一？' % i + NL + 'A. A' + NL + 'B. B' + NL + 'C. C',
                            '問題 %d。アルファベットで最初に来る文字はどれですか。' % i + NL + NL + 'A. A' + NL + NL + 'B. B' + NL + NL + 'C. C',
                            'A', 'A comes first.') for i in range(1, 81)])
+
+
+
+def docx_bytes(paragraphs):
+    """A minimal made-up .docx (a zip with the three parts a reader needs) whose body holds `paragraphs`, one w:p each."""
+    import io
+    import zipfile
+    from xml.sax.saxutils import escape
+    body = ''.join('<w:p><w:r><w:t xml:space="preserve">%s</w:t></w:r></w:p>' % escape(t) for t in paragraphs)
+    doc = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/'
+           'wordprocessingml/2006/main"><w:body>%s</w:body></w:document>' % body)
+    types = ('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+             '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+             '<Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/'
+             'vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>')
+    rels = ('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+            'Target="word/document.xml"/></Relationships>')
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('[Content_Types].xml', types)
+        z.writestr('_rels/.rels', rels)
+        z.writestr('word/document.xml', doc)
+    return out.getvalue()
 
 
 def write_workbooks():
@@ -603,7 +646,7 @@ try:
     ok(st == 200 and s0['enabled'] is False and s0['allowed'] is False and s0['suspended'] is False and s0['hasData'] is False
        and s0['configured'] is False,
        'GET /api/ai/status (administrator, nothing set up): enabled, allowed, suspended, hasData, configured all false. Actual %d %r' % (st, s0))
-    ok(list(s0.keys()) == STATUS_KEYS and s0['freeMode'] is False,
+    ok(status_keys_ok(list(s0.keys()), False) and s0['freeMode'] is False,
        'GET /api/ai/status: keys in order (suspended after allowed, freeMode last and false). Actual %r' % s0)
     st, _, cfg = jreq('POST', '/api/ai/admin/settings', {'provider': 'openai', 'baseUrl': 'http://ai-stub:9000/v1', 'apiKey': DEMO_KEY})
     ok(st == 200 and cfg['keys']['apiKey'] == {'set': True, 'hint': '\u2026' + DEMO_KEY[-4:], 'unreadable': False},
@@ -623,26 +666,26 @@ try:
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
        and lim.get('defaults') == LIMIT_DEFAULTS,
-       'GET /api/ai/admin/limits: the 10 keys in order, replyMaxChars 1000, memoryChars 200, calls 5 / 20 / 100, no messageChars. Actual %d %r' % (st, lim))
-    ok(lim['ranges']['replyMaxChars'] == [1, 16000] and lim['ranges']['memoryChars'] == [50, 2000]
+       'GET /api/ai/admin/limits: the 27 keys in order, replyMaxTokens 3000, memoryTokens 1000, calls 5 / 20 / 100, no messageChars. Actual %d %r' % (st, lim))
+    ok(lim['ranges']['replyMaxTokens'] == [1, 250000] and lim['ranges']['memoryTokens'] == [50, 250000]
        and lim['ranges']['callsPerMinute'] == [1, 100] and lim['ranges']['callsPerHour'] == [1, 2000]
        and lim['ranges']['callsPerDay'] == [1, 20000] and 'messageChars' not in lim['ranges'],
        'The limits answer carries the ranges of the new keys. Actual %r' % lim['ranges'])
     st, _, e = jreq('POST', '/api/ai/admin/limits', {'messageChars': 16000})
     ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.badRequest',
        'POST /api/ai/admin/limits naming messageChars (no longer a setting) -> 400 ai.badRequest. Actual %d %r' % (st, e))
-    for bad in (0, 16001):
-        st, _, e = jreq('POST', '/api/ai/admin/limits', {'replyMaxChars': bad})
-        ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitRange' and e.get('field') == 'replyMaxChars',
-           'replyMaxChars %d -> 400 ai.limitRange, field replyMaxChars. Actual %d %r' % (bad, st, e))
+    for bad in (0, 250001):
+        st, _, e = jreq('POST', '/api/ai/admin/limits', {'replyMaxTokens': bad})
+        ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitRange' and e.get('field') == 'replyMaxTokens',
+           'replyMaxTokens %d -> 400 ai.limitRange, field replyMaxTokens. Actual %d %r' % (bad, st, e))
     ok(jreq('GET', '/api/ai/admin/limits')[2]['limits'] == LIMIT_DEFAULTS, 'The refused updates changed no limit')
     st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 30})
     ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitOrder' and e.get('field') == 'callsPerHour',
        'callsPerMinute 30 above the hourly 20 -> 400 ai.limitOrder, field callsPerHour. Actual %d %r' % (st, e))
     st, _, sa = jreq('GET', '/api/ai/status')
-    ok(st == 200 and list(sa.keys()) == STATUS_KEYS + ['calls'] and sa['messageChars'] == 16000 and sa['maxMessageChars'] == 16000
-       and sa['memoryChars'] == 200 and sa['memoryMaxChars'] == 200,
-       'GET /api/ai/status (AI on): calls is the last key; messageChars 16000 (fixed), memoryChars 200. Actual %d %r' % (st, sa))
+    ok(st == 200 and status_keys_ok(list(sa.keys()), True) and sa['messageChars'] == 16000 and sa['maxMessageChars'] == 16000
+       and sa['memoryTokens'] == 1000 and sa['memoryMaxTokens'] == 1000,
+       'GET /api/ai/status (AI on): calls is the last key; messageChars 16000 (fixed), memoryTokens 1000. Actual %d %r' % (st, sa))
     ok(sa['calls'] == {'used': {'minute': 0, 'hour': 0, 'day': 0}, 'caps': {'minute': 5, 'hour': 20, 'day': 100}, 'blocked': None},
        'status.calls: used (the Test is not counted), caps 5 / 20 / 100, blocked null. Actual %r' % sa['calls'])
 
@@ -770,7 +813,7 @@ try:
     listed = {u['username']: u for u in au['users']} if st == 200 else {}
     ok('sam' in listed and listed['sam']['ai'] is True and listed['sam']['chats'] == 1 and 'kim' not in listed,
        'admin: the AI users list has sam (AI+ service, 1 chat) and not kim. Actual %r' % sorted(listed))
-    ok(all(list(u.keys()) == ADMIN_LIST_ROW_KEYS for u in au['users']) and listed['sam']['suspended'] is False,
+    ok(all(admin_row_keys_ok(u, True) for u in au['users']) and listed['sam']['suspended'] is False,
        'admin: the AI users rows carry suspended (false for sam). Actual %r' % listed.get('sam'))
     # v1.0: the per-user call counts of the three views agree (sam made 5 counted calls above: the first chat, three
     # language chats and one memory suggestion; refused sends are not counted)
@@ -781,7 +824,7 @@ try:
     st, _, one = jreq('GET', '/api/ai/admin/user?id=%d' % SAM_ID)
     ok(st == 200 and one.get('user', {}).get('calls', {}).get('used', {}).get('day') == 5, "admin: the one-user view (user.calls) carries the same calls. Actual %r" % one.get('user'))
     st, _, ss = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})
-    ok(st == 200 and list(ss.keys()) == STATUS_KEYS + ['calls'] and list(ss['calls'].keys()) == ['used', 'caps', 'blocked']
+    ok(st == 200 and status_keys_ok(list(ss.keys()), True) and list(ss['calls'].keys()) == ['used', 'caps', 'blocked']
        and ss['calls']['used']['day'] == 5 and ss['calls']['caps'] == {'minute': 100, 'hour': 2000, 'day': 20000}
        and ss['calls']['blocked'] is None,
        "sam: GET /api/ai/status carries calls {used, caps, blocked} (5 today; the caps of the limits). Actual %d %r" % (st, ss.get('calls')))
@@ -824,6 +867,11 @@ try:
        'admin: GET /api/ai/chats lists that chat without a mode. Actual %r' % ac)
     st, _, e = free(False)
     ok(st == 200 and e == {'free': False}, 'admin: POST /api/ai/free {"free": false} → 200. Actual %d %r' % (st, e))
+    # v1.1 (A-OWNER-21): the admin route sets an administrator's free mode by id; an ordinary account is refused
+    st, _, e = jreq('POST', '/api/ai/admin/free', {'userId': SAM_ID, 'free': True})
+    ok(st == 409 and e.get('code') == 'ai.freeAdminOnly', 'admin: POST /api/ai/admin/free for sam → 409 ai.freeAdminOnly. Actual %d %r' % (st, e))
+    st, _, e = jreq('POST', '/api/ai/admin/free', {'userId': SAM_ID, 'free': True}, headers={'Cookie': SAM})
+    ok(st == 403, 'sam: POST /api/ai/admin/free → 403. Actual %d %r' % (st, e))
     fs = Stream('/api/ai/send', {'chatId': free_id, 'text': 'And one more?', 'lang': 'en', 'free': True}, COOKIE)
     fs.run()
     term = fs.terminal()
@@ -1120,6 +1168,135 @@ try:
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
     ok(st == 200 and [c['id'] for c in chats['chats']] == [chat_id], 'sam is back to the one AI Chat chat. Actual %r' % chats)
 
+    # -- A6 AI banks (v1.1): features, generation, file import (questions and material), quota, limits --
+    # The made-up provider answers by the first words of the system text (ai_stub.py); every question here is self-made.
+    st, _, status = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})
+    ok(st == 200 and list(status.get('features', {})) == ['chat', 'hint', 'explain', 'summary', 'generate', 'import']
+       and status.get('why') is None and status['gen']['import']['maxMb'] == 20 and status['gen']['job'] is None and status['gen']['unseen'] == [],
+       "sam's status has the six feature switches, why null, gen with the import limits. Actual %d %r" % (st, {k: status.get(k) for k in ('features', 'why')}))
+    st, _, banks = jreq('GET', '/api/banks', headers={'Cookie': SAM})
+    source = next((b for b in banks['banks'] if b['total'] >= 30 and not b.get('ai')), None)
+    ok(st == 200 and source is not None, 'sam sees a bank with at least 30 questions to generate from. Actual %d' % st)
+
+    def set_features(user_id, **off):
+        feats = {k: True for k in ('chat', 'hint', 'explain', 'summary', 'generate', 'import')}
+        feats.update({k: not v for k, v in off.items()})
+        return jreq('POST', '/api/ai/admin/features', {'userId': user_id, 'features': feats})
+
+    st, _, j = set_features(SAM_ID, generate=True)
+    ok(st == 200 and j['user']['features']['generate'] is False and j['user']['features']['import'] is True,
+       'The administrator unticks AI bank generation for sam only. Actual %d' % st)
+    st, _, j = jreq('POST', '/api/ai/gen/start', {'source': 'bank', 'bankId': source['id']}, headers={'Cookie': SAM})
+    ok(st == 403 and j.get('code') == 'ai.featureOff' and j.get('feature') == 'generate', 'A generation with the feature off is refused (403 ai.featureOff). Actual %d %r' % (st, j))
+    st, _, j = set_features(SAM_ID, **{'import': True})
+    ok(st == 200, 'The administrator unticks AI bank import for sam instead. Actual %d' % st)
+    data = docx_bytes(['STUBQ', 'Q1. What keeps milk cold?', 'A. A fridge', 'B. An oven'])
+    st, _, b = req('POST', '/api/ai/import/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'Kitchen%20notes.docx', 'Cookie': SAM}, data)
+    j = json.loads(b) if b[:1] == b'{' else {}
+    ok(st == 403 and j.get('code') == 'ai.featureOff' and j.get('feature') == 'import', 'An import with that feature off is refused (403 ai.featureOff). Actual %d' % st)
+    st, _, j = set_features(SAM_ID)
+    ok(st == 200 and all(j['user']['features'].values()), 'Every feature of sam is ticked again. Actual %d' % st)
+
+    def wait_job(job_id, want, secs=150):
+        """Polls GET /api/ai/gen/job until its state is in `want` (or the phase is `confirm` when want has 'confirm')."""
+        t0 = time.time()
+        job = None
+        while time.time() - t0 < secs:
+            st, _, jj = jreq('GET', '/api/ai/gen/job?id=%d' % job_id, headers={'Cookie': SAM})
+            job = jj['job'] if st == 200 else None
+            if job and (job['state'] in want or ('confirm' in want and job['phase'] == 'confirm')):
+                return job
+            time.sleep(1)
+        return job
+
+    st, _, j = jreq('POST', '/api/ai/gen/start', {'source': 'bank', 'bankId': source['id']}, headers={'Cookie': SAM})
+    ok(st == 202 and j['job']['source'] == 'bank' and j['job']['goal'] == 20 and j['gen']['job']['id'] == j['job']['id'],
+       'Generation from a bank starts (202, goal 20). Actual %d %r' % (st, j if st != 202 else ''))
+    gen_id = j['job']['id']
+    st, _, j2 = jreq('POST', '/api/ai/gen/start', {'source': 'bank', 'bankId': source['id']}, headers={'Cookie': SAM})
+    ok(st == 409 and j2.get('code') == 'ai.gen.busy' and j2['job']['id'] == gen_id, 'A second job of the same user is refused (409 ai.gen.busy with the job). Actual %d' % st)
+    job = wait_job(gen_id, ('done', 'failed', 'cancelled'))
+    ok(job and job['state'] == 'done' and job['made'] == 20 and job['bankId'] and job['charged'] is True,
+       'The generation ends done with exactly 20 questions and counts. Actual %r' % (job and {k: job[k] for k in ('state', 'made', 'error')}))
+    st, _, banks = jreq('GET', '/api/banks', headers={'Cookie': SAM})
+    ai_bank = next((b for b in banks['banks'] if b['id'] == job['bankId']), None)
+    ok(ai_bank and ai_bank['total'] == 20 and ai_bank['ai']['source'] == 'bank' and ai_bank['ai']['author'] == 'sam' and ai_bank['ai']['made'] == 20,
+       'The new bank is listed with its ai object (source bank, author sam, 20 questions). Actual %r' % (ai_bank and ai_bank.get('ai')))
+    st, _, j = jreq('POST', '/api/ai/gen/dismiss', {'id': gen_id}, headers={'Cookie': SAM})
+    ok(st == 200 and j.get('ok') is True, 'Dismissing the finished card works. Actual %d' % st)
+    st, _, j = jreq('POST', '/api/ai/gen/start', {'source': 'bank', 'bankId': job['bankId']}, headers={'Cookie': SAM})
+    ok(st == 422 and j.get('code') == 'ai.gen.aiSource', 'An AI bank is never a source (422 ai.gen.aiSource). Actual %d' % st)
+    st, _, raw = req('POST', '/api/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'garden.xlsx',
+                                             'X-Bank-Target': str(job['bankId']), 'Cookie': SAM}, open(DEMO, 'rb').read())
+    if st == 200:  # a staged preview: the refusal comes with the confirm
+        st, _, raw = req('POST', '/api/import/confirm', {'Content-Type': 'application/json', 'Cookie': SAM},
+                         json.dumps({'token': json.loads(raw)['token']}).encode())
+    ok(st == 400 and json.loads(raw or b'{}').get('error') == 'AI 生成的题库不能用 Excel 更新。',
+       'An Excel upload may not update an AI bank (400 with the AI-bank message). Actual %d %r' % (st, raw[:200]))
+
+    # Import, questions mode: a made-up .docx with a marker the stub reads as "these are questions"
+    paras = ['STUBQ'] + [x for i in range(1, 7) for x in ('Q%d. Which tool number %d cuts bread?' % (i, i), 'A. A bread knife', 'B. A whisk', 'C. A ladle')]
+    st, _, b = req('POST', '/api/ai/import/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'Kitchen%20notes.docx', 'Cookie': SAM}, docx_bytes(paras))
+    j = json.loads(b) if b[:1] == b'{' else {}
+    ok(st == 202 and j['job']['source'] == 'file' and j['job']['file']['name'] == 'Kitchen notes.docx' and j['job']['charged'] is False,
+       'The .docx upload starts a file job that is not counted yet (202). Actual %d %r' % (st, b[:200]))
+    imp_id = j['job']['id']
+    job = wait_job(imp_id, ('confirm', 'failed', 'cancelled'))
+    ok(job and job['phase'] == 'confirm' and job['mode'] == 'questions' and job['goal'] == 6 and job['confirmBy'],
+       'AI recognised 6 questions and waits for the confirmation. Actual %r' % (job and {k: job[k] for k in ('state', 'phase', 'mode', 'goal', 'error')}))
+    st, _, j = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})
+    ok(j['gen']['used'] == 1 and j['gen']['job']['charged'] is False, 'Before the confirm the import is not counted (1 of 3 used). Actual %r' % j['gen']['used'])
+    st, _, j = jreq('POST', '/api/ai/import/confirm', {'id': imp_id}, headers={'Cookie': SAM})
+    ok(st == 400, 'A confirm without a bank name is refused (400). Actual %d' % st)
+    st, _, j = jreq('POST', '/api/ai/import/confirm', {'id': imp_id, 'name': 'Kitchen sample bank'}, headers={'Cookie': SAM})
+    ok(st == 200 and j['job']['charged'] is True and j['gen']['used'] == 2, 'The confirm counts it (200, 2 of 3 used). Actual %d' % st)
+    job = wait_job(imp_id, ('done', 'failed', 'cancelled'))
+    ok(job and job['state'] == 'done' and job['made'] == 6, 'The import ends done with 6 questions. Actual %r' % (job and {k: job[k] for k in ('state', 'made', 'error')}))
+    st, _, banks = jreq('GET', '/api/banks', headers={'Cookie': SAM})
+    fb = next((b for b in banks['banks'] if b['id'] == job['bankId']), None)
+    ok(fb and fb['ai']['source'] == 'file' and fb['ai']['file'] == 'Kitchen notes.docx' and fb['ai']['mode'] == 'questions' and fb['total'] == 6,
+       'The imported bank has ai.file and ai.mode. Actual %r' % (fb and fb.get('ai')))
+    jreq('POST', '/api/ai/gen/dismiss', {'id': imp_id}, headers={'Cookie': SAM})
+
+    # Import, material mode: a made-up .txt the stub reads as study material -> exactly 20 questions
+    text = 'STUBM\n' + '\n'.join('The %s rule says part %d of the care routine must be repeated.' % ('kaloba', i) for i in range(1, 40))
+    st, _, b = req('POST', '/api/ai/import/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'Care%20notes.txt', 'Cookie': SAM}, text.encode())
+    j = json.loads(b) if b[:1] == b'{' else {}
+    ok(st == 202, 'The .txt upload starts a file job (202). Actual %d %r' % (st, b[:200]))
+    mat_id = j['job']['id']
+    job = wait_job(mat_id, ('confirm', 'failed', 'cancelled'))
+    ok(job and job['phase'] == 'confirm' and job['mode'] == 'material' and job['goal'] == 20, 'The material is recognised: 20 questions will be written. Actual %r' % (job and {k: job[k] for k in ('phase', 'mode', 'goal', 'error')}))
+    st, _, j = jreq('POST', '/api/ai/import/confirm', {'id': mat_id, 'name': 'Care sample bank'}, headers={'Cookie': SAM})
+    ok(st == 200 and j['gen']['used'] == 3 and j['gen']['left'] == 0, 'The confirm uses the third job of the day. Actual %d' % st)
+    job = wait_job(mat_id, ('done', 'failed', 'cancelled'))
+    ok(job and job['state'] == 'done' and job['made'] == 20, 'The material import ends done with exactly 20 questions. Actual %r' % (job and {k: job[k] for k in ('state', 'made', 'error')}))
+    jreq('POST', '/api/ai/gen/dismiss', {'id': mat_id}, headers={'Cookie': SAM})
+
+    # The quota is shared: 3 used, the next upload and the next generation are refused (429 ai.gen.quota)
+    st, _, b = req('POST', '/api/ai/import/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'More.txt', 'Cookie': SAM}, b'STUBM\nmore text')
+    j = json.loads(b) if b[:1] == b'{' else {}
+    ok(st == 429 and j.get('code') == 'ai.gen.quota', 'The fourth AI bank job of the day is refused (429 ai.gen.quota). Actual %d' % st)
+
+    # Upload limits through Nginx: 20 MiB + 1 is refused with the import code; a wrong type, an empty file
+    st, _, b = req('POST', '/api/ai/import/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'Big.txt', 'Cookie': SAM}, b'x' * (20 * 1024 * 1024 + 1), timeout=60)
+    j = json.loads(b) if b[:1] == b'{' else {}
+    ok(st == 413 and j.get('code') == 'ai.import.tooLarge', '20 MiB + 1 is refused with 413 ai.import.tooLarge. Actual %d %r' % (st, b[:120]))
+    st, _, b = req('POST', '/api/ai/import/upload', {'Content-Type': 'application/octet-stream', 'X-Filename': 'old.doc', 'Cookie': SAM}, b'x')
+    j = json.loads(b) if b[:1] == b'{' else {}
+    ok(st in (415, 429) and j.get('code') in ('ai.import.legacy', 'ai.gen.quota'), 'An old .doc is refused. Actual %d %r' % (st, j.get('code')))
+    st, _, _ = req('GET', '/api/ai/import/upload', {'Cookie': SAM})
+    ok(st in (403, 404, 405), 'GET on the upload route is not served. Actual %d' % st)
+    # Limits: 27 keys answer, the AI banks tab keys are validated (composition rule)
+    st, _, lim = jreq('GET', '/api/ai/admin/limits')
+    ok(st == 200 and len(lim['limits']) == 27 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20, 'The limits answer has the 27 keys. Actual %d %d' % (st, len(lim.get('limits', {}))))
+    st, _, j = jreq('POST', '/api/ai/admin/limits', {'genBankSingle': 0, 'genBankMulti': 0})
+    ok(st == 400 and j.get('code') == 'ai.genCount' and j.get('field') == 'genBankMulti', 'Single + multiple of 0 is refused (400 ai.genCount, field genBankMulti). Actual %d %r' % (st, j))
+    st, _, u = jreq('GET', '/api/ai/admin/usage?days=7')
+    purposes = [r['purpose'] for r in u.get('byPurpose', [])]
+    ok(st == 200 and purposes[-3:] == ['generate', 'import', 'other'], 'Usage by feature ends with generate, import and other (model lists and tests, L-40). Actual %r' % purposes)
+    st, _, gl = jreq('GET', '/api/ai/admin/gen?limit=50')
+    ok(st == 200 and len(gl['jobs']) >= 3 and gl['jobs'][0]['username'] == 'sam', 'The administrators see the recent AI bank jobs. Actual %d' % st)
+
     # -- A3 Suspend / Resume of sam's AI+ function (AI settings), and the AI+ service switched off --
     OFF_LINE = 'AI function turned off for user "sam" by admin "admin"'
     ON_LINE = 'AI function turned on for user "sam" by admin "admin"'
@@ -1134,7 +1311,7 @@ try:
     st, _, e = jreq('POST', '/api/ai/admin/suspend', {'userId': SAM_ID, 'reason': 'x'})
     ok(st == 400 and e.get('code') == 'ai.badRequest', 'A suspend body with another key → 400 ai.badRequest. Actual %d %r' % (st, e))
     st, _, r = jreq('POST', '/api/ai/admin/suspend', {'userId': SAM_ID})
-    ok(st == 200 and isinstance(r, dict) and list(r.get('user', {}).keys()) == ADMIN_ROW_KEYS and r['user']['suspended'] is True
+    ok(st == 200 and isinstance(r, dict) and admin_row_keys_ok(r.get('user', {}), False) and r['user']['suspended'] is True
        and r['user']['username'] == 'sam', 'admin suspends sam: 200 {"user": AdminUserRow} with suspended true. Actual %d %r' % (st, r))
     st, _, e = jreq('POST', '/api/ai/send', {'chatId': chat_id, 'text': QUESTION, 'lang': 'en'}, headers={'Cookie': SAM})
     ok(st == 403 and e.get('code') == 'ai.suspended', 'sam (suspended): POST /api/ai/send → 403 ai.suspended. Actual %d %r' % (st, e))
@@ -1239,6 +1416,7 @@ try:
     ok(not any(b'sk-demo' in b for b in BODIES), 'No response of the run contained the made-up key (%d responses)' % len(BODIES))
 
     # -- 6 Persistence --
+    ADMIN_Q = bank_size()          # v1.1: A6 added AI banks since the count above
     dc('rm', '-sf', 'frontend', 'backend', 'ai-service')
     ok(docker('volume', 'inspect', PROJECT + '_data').returncode == 0 and docker('volume', 'inspect', PROJECT + '_ai_data').returncode == 0,
        'The volumes still exist after deleting the containers')

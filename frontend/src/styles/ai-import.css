@@ -1,0 +1,43 @@
+/* AI file import (v1.1, section 5A): the AI import card of Bank management (A-OWNER-35). Imported by components/ai-import.ts.
+   Colour tokens only. PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px). */
+
+.bk-aicard[hidden] { display: none; }
+.bk-aicard .bk-droprow > .has-tip { min-width: 0; }
+.bk-aicard .bk-hint.gen-impnote { margin: 0 0 10px; }
+.bk-aicard .gen-imppriv { display: flex; align-items: flex-start; gap: 6px; margin: 10px 0 0; }
+.bk-aicard .gen-imppriv .gen-ic { flex: none; margin-top: 2px; }
+.bk-aicard .err { margin-top: 10px; }
+.bk-aicard .err[hidden] { display: none; }
+/* A-OWNER-29b: the solid twin of the green Excel button (.btn.bk-choose): same box, AI+ orange (no shine), white bold text; both
+   share one min-width, and the two cards have the same layout so the buttons share one left edge */
+.btn.bk-choose, .gen-impbtn.ibtn { min-width: 13em; }
+/* A-OWNER-77: the ja labels (「Excel ファイルをインポート」, 「AI でファイルをインポート」) are wider than 13em; one px width keeps them twins */
+html:lang(ja) .btn.bk-choose, html:lang(ja) .gen-impbtn.ibtn { min-width: 244px; }
+.gen-impbtn { flex: none; }
+.gen-impwrap { flex: none; display: inline-flex; max-width: 100%; }
+/* the AI+ fill, the focus ring and the greyed look of .gen-impbtn.ibtn come from styles/ai-gen.css (shared with the generation buttons, A-OWNER-65) */
+.gen-impbtn.ibtn { width: auto; height: auto; min-height: 36px; padding: 6px 14px; border-radius: 6px; font-size: 14.5px; font-weight: 700; line-height: 1.4; }
+.gen-impbusy { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; color: var(--ai-3); }
+
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) {
+  /* the same size as the Excel button (A-OWNER-29b): only the 44 px touch height */
+  .bk-aidrop .ibtn-label, .bk-aidrop .gen-impbtn.ibtn, .gen-impbusy { min-height: 44px; }
+}
+
+/* The bank name box of the confirm dialog (A-OWNER-57): 44 px on phones, the reason under it, a server refusal in red */
+.gen-cfm .fld { margin: 8px 0 2px; }
+.gen-cfm .gen-cfm-name { min-height: 44px; font-size: 16px; }
+.gen-cfm .gen-cfm-need { min-height: 1.4em; margin: 0; color: var(--danger); }
+.gen-cfm .gen-cfm-err { margin: 6px 0 0; }
+.gen-cfm .acts .btn { min-height: 44px; }
+.gen-cfm .acts .btn:disabled { opacity: .5; cursor: not-allowed; }
+
+/* The keep / discard / back dialog of an import cancel (A-OWNER-66): 44 px buttons that wrap on a phone */
+.dlg-choice .acts { flex-wrap: wrap; }
+.dlg-choice .acts .btn { min-height: 44px; }
+
+/* A-OWNER-72 / 73: the file's question count and the limit, two labels (red background, white text when over the limit) */
+.gen-counts { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 8px; }
+.gen-cnt { display: inline-block; padding: 2px 9px; border-radius: 6px; border: 1px solid var(--line); background: var(--hover-strong); color: var(--ink); font-size: 13px; font-weight: 700; line-height: 1.5; white-space: nowrap; }
+.gen-cnt-red { border-color: #B91C1C; background: #B91C1C; color: #fff; }
+@media (max-width: 340px) { .gen-cnt { white-space: normal; } }

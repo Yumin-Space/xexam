@@ -1,6 +1,6 @@
 [package]
 name = "xexam-ai-service"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2021"
 license = "MIT"
 rust-version = "1.89"
@@ -37,6 +37,12 @@ base64 = "0.22.1"
 jiff = "=0.2.38"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "std"] }
+# AI file import (text extraction in a child process): pure Rust, no C
+zip = { version = "9.5.0", default-features = false, features = ["deflate"] }
+quick-xml = "0.42.0"
+pdf-extract = "0.12.1"
+encoding_rs = "0.8.42"
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 
 [dev-dependencies]
 tempfile = "3"

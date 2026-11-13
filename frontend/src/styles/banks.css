@@ -108,7 +108,7 @@
 .page-banks .warnbox ul { margin: 2px 0; }
 .page-banks .err { margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
 .page-banks .err p + p { margin-top: 4px; }
-.page-banks .okbox { margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
+.page-banks .okbox { display: flow-root; margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
 .page-banks .okbox p { overflow-wrap: anywhere; }
 .page-banks .okbox .ok-t { font-size: 15px; margin-bottom: 2px; }
 .page-banks .okbox .acts { margin-top: 12px; }
@@ -158,33 +158,62 @@
 details[open] > summary .bk-chev { transform: rotate(180deg); }
 
 /* ---------- Bank list ---------- */
-/* One card per bank, separated by hairlines: a header row with the name (two lines at most) and the icon buttons at its right
-   (update, delete in red, the chevron that unfolds the sheets), the facts line under it, and the sheet rows indented under a soft
-   rule. Wide screens show the words beside the icons. */
-.bk-banks { display: grid; margin: -6px 0 -8px; }
-.bk-bank { min-width: 0; padding: 8px 0 10px; }
+/* v1.1 (BL-1 .. BL-3): one compact card per bank, like Home's bank list: a checkbox, the bold name (never cut, wraps anywhere)
+   with the counts line under it, the AI+题集 marker at the row end and the chevron that folds the sheet rows. The actions
+   (mini icon + two or three words) sit at the right on wide screens and on their own line under the name at every width (the name and counts keep the full row). */
+.bk-banks { display: grid; margin: 0 0 -8px; }
+.bk-bank { min-width: 0; padding: 6px 0 8px; }
 .bk-bank + .bk-bank { border-top: 1px solid var(--line-soft); }
-.bk-bankhead { display: flex; align-items: flex-start; gap: 8px; }
-.bk-bankname {
-  flex: 1 1 auto; min-width: 0; margin: 0; padding-top: 6px; font-size: 15.5px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere;
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden;
-}
-.bk-bankacts { display: flex; flex: none; align-items: center; gap: 4px; }
+.bk-bankhead { display: grid; grid-template-columns: auto minmax(12ch, 1fr) auto auto; align-items: center; column-gap: 6px; min-height: 44px; }
+.bk-bankmain { grid-column: 2; min-width: 0; }
+.bk-bankhead > .has-tip { grid-column: 3; }
+.bk-bankacts { grid-column: 2 / -1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 2px 4px; margin-top: 2px; }
+.bk-bankacts:empty { display: none; }
+.bk-expand { grid-column: 4; }
+.bk-bankname { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; word-break: normal; }
+.bk-bankmeta { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink3); overflow-wrap: anywhere; }
+.bk-bankmeta.bk-tap { cursor: pointer; }
+.bk-act { font-size: 13.5px; }
+.bk-act.ibtn-danger { color: var(--danger); }
 .bk-expand .ibtn-ic { transition: transform .15s ease; }
 .bk-expand[aria-expanded="true"] .ibtn-ic { transform: rotate(180deg); }
-.bk-bankmeta { margin: 2px 0 0; font-size: 13px; line-height: 1.55; color: var(--ink3); overflow-wrap: anywhere; }
-.bk-bankmeta.bk-tap { cursor: pointer; }
-/* (v0.7) A bank whose questions are all retired (they came from an older Excel layout): a quiet note under its facts */
+.bk-bankfacts { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--ink3); overflow-wrap: anywhere; }
+/* The checkbox of a bank or a sheet: 20 px box, 44 px tap area */
+.bk-check { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; margin-left: -10px; cursor: pointer; }
+.bk-box { width: 20px; height: 20px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.bk-box:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+/* On phones and tablets the AI+ marker sits on its own line under the name (the name keeps the full row); the actions follow */
+@media (max-width: 900px) {
+  .bk-bankhead > .has-tip { grid-column: 2 / 4; grid-row: 2; justify-self: start; max-width: 100%; margin-top: 4px; }
+  .bk-bankhead > .has-tip { min-width: 0; }
+  .bk-bankhead > .has-tip .ai-badge { max-width: 100%; white-space: normal; }
+  .bk-bankacts { grid-row: 3; }
+}
+/* The toolbar of the checked sheets */
+.bk-selbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 0 0 8px; padding: 8px 12px; border-radius: 8px; background: var(--hover); }
+.bk-selbar[hidden] { display: none; }
+.bk-selcount { font-size: 13.5px; font-weight: 600; }
+.bk-selacts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
+.bk-selacts .btn { min-height: 36px; }
+@media (pointer: coarse) { .bk-selacts .btn, .bk-selacts .ibtn { min-height: 44px; } }
+/* (v0.7) A bank whose questions are all retired (questions from an older Excel layout): a quiet note under its facts */
 .bk-old { margin: 6px 0 0; padding: 6px 10px; border-radius: 6px; background: var(--fill); font-size: 13px; line-height: 1.55; color: var(--ink2); overflow-wrap: anywhere; }
 /* Whose upload a bank is (administrators only, v0.6.5): someone else's name reads a little darker than "uploaded by you" */
 .bk-owner { overflow-wrap: anywhere; }
 .bk-owner.other { color: var(--ink2); }
 /* A bank manager's list: why only their own banks are shown */
 .bk-mgr-note { margin: -4px 0 8px; }
-.bk-sheetbox { margin: 6px 40px 4px 2px; padding: 2px 0 2px 14px; border-left: 2px solid var(--line-soft); }
+.bk-sheetbox { margin: 4px 0 4px 8px; padding: 2px 0 2px 10px; border-left: 2px solid var(--line-soft); }
 .bk-sheetbox[hidden] { display: none; }
-.bk-sheetrows .bk-row { padding: 3px 0; }
+.bk-sheetrows .bk-row { padding: 0; }
+.bk-sheetrow { display: flex; align-items: center; gap: 4px; min-height: 40px; }
+.bk-sheetrow > .bk-line, .bk-sheetrow > :last-child { min-width: 0; }
 .bk-created { margin-top: 4px; font-size: 12.5px; color: var(--ink3); }
+/* BX-1: "Import Excel file" has the colours of Home's start-exam button (green, white text) */
+.btn.bk-choose { background: var(--go-exam); border-color: var(--go-exam); color: var(--on-answer-solid); font-weight: 600; }
+@media (hover: hover) { .btn.bk-choose:hover:not(:disabled) { background: var(--go-exam-hover); border-color: var(--go-exam-hover); } }
+.btn.bk-choose:active:not(:disabled) { background: var(--go-exam-active); border-color: var(--go-exam-active); }
+.btn.bk-choose:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 
 /* ---------- Import history ---------- */
 .bk-hist { list-style: none; margin: 0; padding: 0; font-size: 13.5px; line-height: 1.55; color: var(--ink3); }
@@ -261,6 +290,18 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
   font-family: inherit; font-size: 13.5px; line-height: 1.7; white-space: pre-wrap; overflow-wrap: anywhere;
 }
 
+/* "Use an outside AI" (A-OWNER-79): numbered steps, then the prompt in a box that scrolls inside itself */
+.bk-guide .bk-steps { margin: 8px 0 12px; }
+.bk-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.bk-prompt-head .bk-ex-col { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.bk-prompt {
+  margin: 0 0 12px; padding: 10px 12px; max-height: 280px; overflow: auto; overscroll-behavior: contain;
+  background: var(--fill); border: 0; border-radius: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace; font-size: 12.5px; line-height: 1.6;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.bk-prompt:focus-visible { outline-offset: 2px; }
+
 /* Motion: colour fades only (and the small busy ring), none at all when the system asks for less motion */
 @media (prefers-reduced-motion: reduce) {
   .linkbtn, .bk-seg, .bk-droprow, .bk-import, .bk-skip > summary, .bk-sub-s, .bk-guide-s,
@@ -280,7 +321,7 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
   /* Confirm / cancel share the row when they fit; once wrapped, each takes the full width */
   .bk-acts .btn { flex: 1 1 auto; padding-inline: 12px; }
   .bk-droprow { padding: 8px; }
-  .bk-sheetbox { margin-right: 0; padding-left: 12px; }
+  .bk-sheetbox { padding-left: 8px; }
   .bk-guide-s { padding: 12px 12px 12px 16px; }
   .bk-guide-body { padding: 0 16px 14px; }
   /* The single-letter column gives its spare width to the content column */

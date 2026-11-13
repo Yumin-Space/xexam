@@ -117,15 +117,81 @@ pub struct App {
     /// Per-user call caps that were reached and have not freed yet: (user id, cap key) -> when it frees (unix s). One log
     /// line per entry (see [`App::note_call_cap`]); expired entries are pruned on every use.
     cap_episodes: Mutex<std::collections::HashMap<(i64, &'static str), i64>>,
+    /// The job places of AI bank generation and import (`genRunning`); a job holds one for its whole writing phase
+    pub gen_gate: Arc<Gate>,
+    /// Running and queued generation / import jobs of this process (cancel signals)
+    pub jobs: crate::gen::runner::Jobs,
+    /// One extraction at a time, server-wide (FIFO)
+    pub extract_gate: Arc<tokio::sync::Semaphore>,
+    /// Uploads held in memory while they wait for or are in extraction (`IMPORT_PENDING_MAX`)
+    pub import_pending: Arc<tokio::sync::Semaphore>,
+    /// Users with an upload being taken right now (SEC-7)
+    pub uploading: Mutex<std::collections::HashSet<i64>>,
+    /// The binary the extraction child is started from (`App::import_exe`)
+    exe: PathBuf,
+    /// Timers of the jobs (tests lower them)
+    pub knobs: Knobs,
     /// What the provider taught about the token limit for one settings fingerprint (the field it accepts, the ceiling
     /// of an Anthropic model); a changed fingerprint starts again, a restart forgets it
     token_memo: Mutex<Option<(String, crate::provider::TokenMemo)>>,
+    /// The most questions per call a provider really delivered for one settings fingerprint (L-44: answers were cut
+    /// below the token setting); memory only, forgotten with the token memo
+    gen_per_call: Mutex<Option<(String, usize)>>,
     /// Held for a whole outbox delivery, so two never overlap (each would send the same audit lines)
     outbox: tokio::sync::Mutex<()>,
     /// Held while one state report is read and sent, so an older state never arrives after a newer one
     heartbeat: tokio::sync::Mutex<()>,
     /// Wakes the heartbeat task for a report at once
     heartbeat_signal: Arc<Notify>,
+}
+
+/// Uploads kept in memory at once (IX-1).
+pub const IMPORT_PENDING_MAX: usize = 4;
+
+/// The timers of generation and import jobs (seconds). The defaults are the binding numbers; tests lower them.
+pub struct Knobs {
+    /// Wait for the user's confirm of a recognised import (IJ-3: 30 minutes)
+    pub confirm_secs: std::sync::atomic::AtomicU64,
+    /// From the upload to the end of recognising (20 minutes)
+    pub reading_secs: std::sync::atomic::AtomicU64,
+    /// A job's writing time, from the start / the confirm (30 minutes)
+    pub writing_secs: std::sync::atomic::AtomicU64,
+    /// The extraction child is killed after this many seconds (30)
+    pub kill_secs: std::sync::atomic::AtomicU64,
+    /// Percent of the binding backoff after provider errors (100 = 15 s x errors in a row, at most 60 s)
+    pub backoff_scale: std::sync::atomic::AtomicU64,
+    /// Milliseconds between two tries for a spare model-call place (2000)
+    pub place_poll_ms: std::sync::atomic::AtomicU64,
+    /// Test hook: the model context (tokens) the whole-file import fits its prefix into; 0 = the model listing's figure,
+    /// else 128 000 (A-OWNER-71)
+    pub import_context_tokens: std::sync::atomic::AtomicU64,
+    /// Test hook: the extraction child hangs (debug builds only)
+    pub hang_child: std::sync::atomic::AtomicBool,
+    /// Test hook: the binary the extraction child is started from (integration tests pass the service's own binary)
+    pub exe_override: Mutex<Option<PathBuf>>,
+}
+
+impl Default for Knobs {
+    fn default() -> Knobs {
+        use std::sync::atomic::{AtomicBool, AtomicU64};
+        Knobs {
+            confirm_secs: AtomicU64::new(1800),
+            reading_secs: AtomicU64::new(1200),
+            writing_secs: AtomicU64::new(1800),
+            kill_secs: AtomicU64::new(crate::extract::child::EXTRACT_KILL_SECS),
+            backoff_scale: AtomicU64::new(100),
+            place_poll_ms: AtomicU64::new(2000),
+            import_context_tokens: AtomicU64::new(0),
+            hang_child: AtomicBool::new(false),
+            exe_override: Mutex::new(None),
+        }
+    }
+}
+
+impl Knobs {
+    pub fn get(a: &std::sync::atomic::AtomicU64) -> u64 {
+        a.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// Test hook: while set, every study ask waits after it took its places and before its write transaction, until the
@@ -144,16 +210,49 @@ pub struct AppState(pub Arc<App>);
 
 impl AppState {
     /// The requests of one counted model call (chat, study ask, memory suggestion): the answer length of the limits
-    /// converted to `max_tokens` for the reply language, in the field this settings fingerprint is known to accept,
+    /// as `max_tokens`, in the field this settings fingerprint is known to accept,
     /// plus the fallbacks of the ladder (spec 3.10 C-8). The limits are read now, when the call starts.
     pub fn chat_plan(
         &self,
         snap: &Snapshot,
         target: &Target,
         spec: &crate::provider::ChatSpec<'_>,
-        lang: Option<crate::prompt::Lang>,
     ) -> Result<crate::provider::Plan, crate::provider::UpError> {
-        let want = crate::limits::reply_tokens(self.0.limits().reply_max_chars, lang);
+        let want = self.0.limits().reply_max_tokens;
+        self.token_plan(snap, target, spec, want)
+            .map(|(plan, _)| plan)
+    }
+
+    /// The first token limit a call of `want` tokens starts with (from the settings and what the provider taught), the
+    /// same inputs `token_plan` uses. A generation takes its batch size from it.
+    pub fn first_token_limit(&self, snap: &Snapshot, want: i64) -> crate::provider::TokenLimit {
+        let format = snap.settings.wire_format();
+        let stored_max = snap.settings.max_tokens;
+        let memo = {
+            let m = self.0.token_memo.lock().unwrap_or_else(|e| e.into_inner());
+            m.as_ref().filter(|(fp, _)| *fp == snap.fp).map(|(_, m)| *m)
+        };
+        crate::provider::first_token_limit(format, want, stored_max, memo)
+    }
+
+    /// The batch ceiling of a generation: `Some(first.value)` when the first step has a token field and a value below
+    /// `want` (Anthropic with a learned cap), else `None` (GP-1).
+    pub fn token_ceiling(&self, snap: &Snapshot, want: i64) -> Option<usize> {
+        let first = self.first_token_limit(snap, want);
+        (first.field != crate::provider::TokenField::Omit && first.value < want)
+            .then(|| usize::try_from(first.value).unwrap_or(0))
+    }
+
+    /// The requests of one model call of `want` tokens, with the plan and its first token limit (`chat_plan` is this with
+    /// the answer length of the limits).
+    pub fn token_plan(
+        &self,
+        snap: &Snapshot,
+        target: &Target,
+        spec: &crate::provider::ChatSpec<'_>,
+        want: i64,
+    ) -> Result<(crate::provider::Plan, crate::provider::TokenLimit), crate::provider::UpError>
+    {
         let format = snap.settings.wire_format();
         let stored_max = snap.settings.max_tokens;
         let memo = {
@@ -166,14 +265,15 @@ impl AppState {
         let remember: crate::provider::Remember = Arc::new(move |step| {
             app.0.remember_token_step(&fp, format, step);
         });
-        crate::provider::build_plan(
+        let plan = crate::provider::build_plan(
             target,
             &self.0.client,
             spec,
             first,
             stored_max,
             Some(remember),
-        )
+        )?;
+        Ok((plan, first))
     }
 }
 
@@ -226,6 +326,33 @@ impl App {
     /// (used when the admin changes the answer length: the earlier refusal may have been about the old value).
     pub fn forget_token_memo(&self) {
         *self.token_memo.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.gen_per_call.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// Remembers that this settings fingerprint delivers at most `n` questions per call (keeps the smaller value).
+    pub fn note_gen_per_call(&self, fp: &str, n: usize) {
+        let mut m = self.gen_per_call.lock().unwrap_or_else(|e| e.into_inner());
+        let n = n.max(1);
+        match m.as_mut() {
+            Some((f, old)) if f == fp => {
+                if n < *old {
+                    *old = n;
+                    tracing::info!(
+                        "the AI provider cuts long answers; asking {n} questions per call"
+                    );
+                }
+            }
+            _ => {
+                *m = Some((fp.to_string(), n));
+                tracing::info!("the AI provider cuts long answers; asking {n} questions per call");
+            }
+        }
+    }
+
+    /// The remembered questions per call of this fingerprint, if any.
+    pub fn gen_per_call_cap(&self, fp: &str) -> Option<usize> {
+        let m = self.gen_per_call.lock().unwrap_or_else(|e| e.into_inner());
+        m.as_ref().filter(|(f, _)| f == fp).map(|(_, n)| *n)
     }
 
     /// The attempt number of the next retry of this answer: 2 for the first retry, 3 for the second, and so on (kept in
@@ -293,6 +420,13 @@ impl App {
             client,
             registry: Arc::new(Registry::default()),
             gate: Gate::new(Limits::usize_of(limits.global_running)),
+            gen_gate: Gate::new(Limits::usize_of(limits.gen_running)),
+            jobs: crate::gen::runner::Jobs::default(),
+            extract_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            import_pending: Arc::new(tokio::sync::Semaphore::new(IMPORT_PENDING_MAX)),
+            uploading: Mutex::new(std::collections::HashSet::new()),
+            exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("xexam-ai-service")),
+            knobs: Knobs::default(),
             limits: RwLock::new(limits),
             models_cache: Mutex::new(None),
             shutdown,
@@ -305,12 +439,16 @@ impl App {
             retries: Mutex::new(std::collections::HashMap::new()),
             cap_episodes: Mutex::new(std::collections::HashMap::new()),
             token_memo: Mutex::new(None),
+            gen_per_call: Mutex::new(None),
             outbox: tokio::sync::Mutex::new(()),
             heartbeat: tokio::sync::Mutex::new(()),
             heartbeat_signal: Arc::new(Notify::new()),
         };
         app.check_keys_at_start()?;
-        Ok(AppState(Arc::new(app)))
+        let app = AppState(Arc::new(app));
+        // Jobs cut off by a restart (before anything can start a new one)
+        crate::gen::runner::repair_at_start(&app);
+        Ok(app)
     }
 
     /// Key state at start (3.4) and rule 4 of 2.3: a stored `enabled = 1` that is not effective is written as 0 once.
@@ -421,6 +559,7 @@ impl App {
     pub fn set_limits(&self, l: Limits) {
         *self.limits.write().unwrap_or_else(|e| e.into_inner()) = l;
         self.gate.resize(Limits::usize_of(l.global_running));
+        self.gen_gate.resize(Limits::usize_of(l.gen_running));
     }
 
     /// Decrypts the saved keys into a request target. A key that does not open switches AI off (`ai.keyProblem`).
@@ -477,6 +616,10 @@ impl App {
     /// Removes all AI data of a user (deleted, or an id now used by another account): stops and awaits the user's
     /// running calls first, then deletes the row (cascades; usage rows become anonymous).
     pub async fn purge_user(&self, id: i64) -> bool {
+        // The user's generation or import job stops first and writes nothing more (the tasks rows cascade below)
+        self.jobs
+            .cancel_user(id, crate::gen::runner::StopWhy::Purged)
+            .await;
         self.registry
             .cancel_and_wait(StopReason::UserRemoved, |u, _, _| u == id)
             .await;
@@ -522,6 +665,16 @@ impl App {
         Ok(())
     }
 
+    /// The binary the extraction child is started from: this process's own executable (a test may point elsewhere).
+    pub fn import_exe(&self) -> PathBuf {
+        self.knobs
+            .exe_override
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .unwrap_or_else(|| self.exe.clone())
+    }
+
     /// `true` while the main backend accepted a state report less than 60 s ago (contracts 2.6).
     pub fn link_fresh(&self) -> bool {
         self.link.report_fresh()
@@ -543,6 +696,21 @@ impl App {
             Err(e) => {
                 tracing::warn!("could not read the AI+ function of a user: {e}");
                 true
+            }
+        }
+    }
+
+    /// `false` when the feature is switched off for the user (administrators always have every feature). A database error
+    /// counts as off (no AI use without a known state), like [`App::suspended`].
+    pub fn feature_allowed(&self, who: &Identity, f: crate::features::Feature) -> bool {
+        if who.is_admin() {
+            return true;
+        }
+        match self.store.read(|c| data::features_off(c, who.id)) {
+            Ok(off) => crate::features::allowed(off, f),
+            Err(e) => {
+                tracing::warn!("could not read the AI features of a user: {e}");
+                false
             }
         }
     }

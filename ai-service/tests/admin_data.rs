@@ -59,6 +59,7 @@ async fn users_with_ai_and_audited_views() {
             "lastUsedAt",
             "tokensIn",
             "tokensOut",
+            "features",
             "calls"
         ]
     );
@@ -613,7 +614,7 @@ async fn usage_statistics() {
     // 1 verify (admin) + 3 chats (sam)
     assert_eq!(
         v["totals"],
-        json!({"calls": 4, "tokensIn": 21 * 3, "tokensOut": 13 * 3, "errors": 1, "tokensCached": 0})
+        json!({"calls": 4, "tokensIn": 21 * 3, "tokensOut": 13 * 3, "errors": 1, "tokensCached": 0, "tokensCacheWrite": 0})
     );
     assert_eq!(v["byUser"][0]["username"], json!("sam"));
     assert_eq!(v["byUser"][0]["calls"], json!(3));
@@ -640,7 +641,8 @@ async fn usage_statistics() {
             .await;
         assert_eq!(s, 400, "{bad}");
     }
-    // A model listing uses no model: it counts under '' even while a model is saved
+    // The connection test and a model listing use no feature and no chosen model: both are the "other" row ('' model,
+    // `other` true, purpose `other`), so the model bars and the feature bars each add up to the total (A-OWNER-39)
     let (s, l) = t.post("/api/ai/admin/models", &admin, json!({})).await;
     assert_eq!(s, 200, "{l}");
     let (_, v) = t.get("/api/ai/admin/usage?days=7", &admin).await;
@@ -652,6 +654,66 @@ async fn usage_statistics() {
     };
     assert_eq!(
         (calls("demo-chat-small"), calls("")),
-        (Some(json!(4)), Some(json!(1)))
+        (Some(json!(3)), Some(json!(2)))
+    );
+    let other = rows
+        .iter()
+        .find(|r| r["model"] == json!(""))
+        .expect("other row");
+    assert_eq!(other["other"], json!(true));
+    assert!(rows
+        .iter()
+        .filter(|r| r["model"] != json!(""))
+        .all(|r| r["other"] == json!(false)));
+    // L-41: input and output tokens per model and per feature; both lists add up to the totals
+    let sum = |list: &str, key: &str| -> i64 {
+        v[list]
+            .as_array()
+            .expect("list")
+            .iter()
+            .map(|r| r[key].as_i64().expect(key))
+            .sum()
+    };
+    for key in ["calls", "tokensIn", "tokensOut", "errors"] {
+        let total = v["totals"][key].as_i64().expect(key);
+        assert_eq!(sum("byModel", key), total, "byModel {key}");
+        assert_eq!(sum("byPurpose", key), total, "byPurpose {key}");
+    }
+    assert_eq!(v["totals"]["calls"], json!(5));
+    let small = rows
+        .iter()
+        .find(|r| r["model"] == json!("demo-chat-small"))
+        .expect("model");
+    assert_eq!(
+        (small["tokensIn"].clone(), small["tokensOut"].clone()),
+        (json!(21 * 2), json!(13 * 2)),
+        "two answered chats; the failed one and the connection test are not in this model's tokens"
+    );
+    assert_eq!(
+        (other["tokensIn"].clone(), other["tokensOut"].clone()),
+        (json!(21), json!(13))
+    );
+    let purposes: Vec<(&str, i64)> = v["byPurpose"]
+        .as_array()
+        .expect("byPurpose")
+        .iter()
+        .map(|r| {
+            (
+                r["purpose"].as_str().expect("p"),
+                r["calls"].as_i64().expect("c"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        purposes,
+        vec![
+            ("chat", 3),
+            ("hint", 0),
+            ("explain", 0),
+            ("summary", 0),
+            ("generate", 0),
+            ("import", 0),
+            ("other", 2)
+        ]
     );
 }

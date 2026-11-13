@@ -43,7 +43,7 @@ test('a 429 with retryAfter says how long to wait; without it the general messag
     setUiLang('zh');
     assert.equal(errorText(e), '失败次数太多，请在 5 分钟后再试。');
     setUiLang('ja');
-    assert.equal(errorText(e), '失敗が多すぎます。5 分後にもう一度お試しください。');
+    assert.equal(errorText(e), 'ログインの失敗が多すぎます。5 分後にもう一度お試しください。');
     setUiLang('en');
     assert.equal(errorText(new ApiError('http', 429, MSG_TOO_MANY_LOGINS, 86_400)), 'Too many failed attempts. Try again in 1 day.');
     assert.equal(errorText(new ApiError('http', 429, MSG_TOO_MANY_LOGINS)), 'Too many failed attempts. Please try again later.');

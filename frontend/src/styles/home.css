@@ -38,6 +38,11 @@
 .home-setup-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 16px; }
 .home-setup-head h2 { margin: 0; }
 .home-mode { margin: 0; }
+/* v1.1 GB-3: the AI button and the switch share the right side of the header; at 360 px and below the header wraps (title on
+   line 1, button and switch on line 2) */
+.home-setup-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px 10px; min-width: 0; }
+.home-gen-slot { display: inline-flex; }
+.home-gen-slot:empty { display: none; }
 .home-setup-head + .mseg-hint { margin: -8px 0 16px; }
 /* The track; the selected option is a raised chip on it (the recipe of the segmented control in main.css) */
 .mseg-group { display: inline-flex; flex-wrap: wrap; gap: 2px; padding: 2px; border-radius: 8px; background: var(--fill); }
@@ -139,6 +144,7 @@
 .home-go-btns .btn.home-go-exam, .home-go-btns .btn.home-go-practice { color: var(--on-answer-solid); font-weight: 600; }
 .home-go-btns .btn.home-go-exam { background: var(--go-exam); border-color: var(--go-exam); }
 .home-go-btns .btn.home-go-practice { background: var(--go-practice); border-color: var(--go-practice); }
+.home-go-btns .btn.home-go-exam:disabled, .home-go-btns .btn.home-go-practice:disabled { background: var(--fill); border-color: var(--line); color: var(--ink3); opacity: 1; }
 @media (hover: hover) {
   .home-go-btns .btn.home-go-exam:hover:not(:disabled) { background: var(--go-exam-hover); border-color: var(--go-exam-hover); }
   .home-go-btns .btn.home-go-practice:hover:not(:disabled) { background: var(--go-practice-hover); border-color: var(--go-practice-hover); }
@@ -153,6 +159,13 @@
 .home-count input { width: 64px; min-height: 34px; padding: 2px 8px; font: 500 15px var(--num), var(--en); }
 @media (hover: hover) { .home-count input:hover:not(:focus):not(:disabled) { border-color: var(--ink3); } }
 .home-shuffle input { width: 16px; height: 16px; margin: 0; accent-color: var(--print); }
+/* v1.1 TL-1: the exam time limit: a tick box, a number field of the count field's size, the unit */
+.home-limit { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; cursor: pointer; }
+.home-limit input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--print); }
+.home-limit .home-limit-field { width: 64px; min-height: 34px; padding: 2px 8px; font: 500 15px var(--num), var(--en); cursor: text; }
+@media (hover: hover) { .home-limit .home-limit-field:hover:not(:focus):not(:disabled) { border-color: var(--ink3); } }
+.home-limit-err { flex: 1 0 100%; margin: 0; font-size: 13px; color: var(--danger); }
+.home-limit-err[hidden] { display: none; }
 
 /* ---------- Fact lists (latest exam): property rows, see .props in main.css ---------- */
 .props.home-facts { margin: 16px 0 20px; }
@@ -186,9 +199,12 @@
   .home-go-btns .btn.big { flex: 1 1 0; min-width: 0; padding-inline: 12px; }
   .home-go-btns .btn.big.primary { flex-grow: 1.35; }
   .home-scope { font-size: 13px; line-height: 1.35; }
-  .home-go-opts { gap: 4px 10px; font-size: 13px; }
-  .home-count, .home-shuffle { gap: 6px; }
-  .home-count input { width: 52px; min-height: 34px; font-size: 14px; padding-inline: 6px; }
+  /* v1.1: the options may shrink and wrap (the time limit is a line of its own), never wider than the screen */
+  .home-go-opts { flex: 1 1 auto; min-width: 0; gap: 4px 10px; font-size: 13px; }
+  .home-count, .home-shuffle, .home-limit { gap: 6px; }
+  .home-count input, .home-limit .home-limit-field { width: 52px; min-height: 34px; font-size: 14px; padding-inline: 6px; }
+  /* line 1: count + shuffle; line 2: the time limit */
+  .home-limit { flex: 0 0 100%; }
   .home-figs { gap: 8px; }
   .home-fig b { font-size: 22px; }
 }
@@ -204,7 +220,10 @@
   .home-sheetrow + .home-sheetrow::before { left: 42px; }
   .home-bankrow input, .home-sheetrow input, .home-shuffle input { width: 20px; height: 20px; }
   /* the count / shuffle labels are the tap targets around their small fields */
-  .home-count, .home-shuffle { min-height: 44px; }
+  .home-count, .home-shuffle, .home-limit { min-height: 44px; }
+  .home-limit input[type="checkbox"] { width: 20px; height: 20px; }
+  /* the limit's label also holds its tick box, so the field itself is the 44 px tap target */
+  .home-limit .home-limit-field { min-height: 44px; }
 }
 
 /* Phones: the "questions from" choice and the "select all / clear" buttons stay on the row of their heading.
@@ -266,7 +285,7 @@
   .home-latest-acts .hm-ai-na { display: inline-block; margin: 0; }
   .home-latest-acts .home-cell .aip-grp-inline > .aip-na { display: none; }
 }
-@container (max-width: 340px) {
+@container (max-width: 440px) {
   .home-latest-acts .hm-full { display: none; }
   .home-latest-acts .hm-short { display: inline; }
   .home-latest-acts .hm-ai-lbl { display: none; }
@@ -313,6 +332,7 @@ a.home-fig:focus-visible { outline: 2px solid var(--print); outline-offset: 2px;
   .home-go-btns .btn.big { padding-inline: 14px; font-size: 15px; white-space: nowrap; }
   .home-scope { flex: 1 1 0; font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
   .home-go-opts { flex-wrap: nowrap; gap: 4px 10px; font-size: 13px; }
-  .home-count, .home-shuffle { gap: 6px; }
-  .home-count input { width: 52px; padding-inline: 6px; font-size: 14px; }
+  .home-count, .home-shuffle, .home-limit { gap: 6px; }
+  .home-count input, .home-limit .home-limit-field { width: 52px; padding-inline: 6px; font-size: 14px; }
+  .home-limit { flex: none; }
 }

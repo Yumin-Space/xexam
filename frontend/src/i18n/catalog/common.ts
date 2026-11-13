@@ -74,9 +74,6 @@ export default defineCatalog({
     'mode.weak': 'Wrong-answer notebook',
     'mode.retry': 'Retry wrong answers',
 
-    'act.submit.openTitle': '{n} questions are not finished',
-    'act.submit.openTitle_one': '{n} question is not finished',
-    'act.submit.openBody': 'Unfinished questions count as wrong. Submit now?',
     'act.submit.ok': 'Submit',
     'act.submit.back': 'Keep answering',
     'act.submit.confirmTitle': 'Submit the exam?',
@@ -110,6 +107,15 @@ export default defineCatalog({
     'nav.aiPaused': 'AI+ function paused · ask an administrator',
     'forbidden.users': 'Only administrators can manage users.',
     // v1.0 records (F12)
+    // v1.1
+    'act.submit.emptyTitle': '{n} questions are not completed',
+    'act.submit.emptyTitle_one': '{n} question is not completed',
+    'act.submit.emptyBody': 'Questions not completed are not counted as wrong and are not added to the wrong-answer notebook; they are listed under “Not completed”. The score counts every question, and a question not completed earns no point. Submit now?',
+    'act.submit.partialMore': '{n} more hotspot questions are only partly answered; they count as wrong.',
+    'act.submit.partialMore_one': '{n} more hotspot question is only partly answered; it counts as wrong.',
+    'act.submit.partialTitle': '{n} hotspot questions are only partly answered',
+    'act.submit.partialTitle_one': '{n} hotspot question is only partly answered',
+    'act.submit.partialBody': 'Partly answered hotspot questions count as wrong. Submit now?',
   },
   zh: {
     'app.name': 'Xexam',
@@ -180,8 +186,6 @@ export default defineCatalog({
     'mode.weak': '错题本',
     'mode.retry': '重做错题',
 
-    'act.submit.openTitle': '还有 {n} 道题没答完',
-    'act.submit.openBody': '没答完的题按答错计分。现在交卷吗？',
     'act.submit.ok': '交卷',
     'act.submit.back': '回去继续',
     'act.submit.confirmTitle': '确认交卷？',
@@ -214,6 +218,12 @@ export default defineCatalog({
     'nav.aiPaused': 'AI+ 功能已暂停 · 请联系管理员',
     'forbidden.users': '只有管理员可以管理用户。',
     // v1.0 records (F12)
+    // v1.1
+    'act.submit.emptyTitle': '还有 {n} 道题没有完成',
+    'act.submit.emptyBody': '没有完成的题不算错题，也不进错题本，会单独列在「没有完成的题」里；分数按全部题目计算，没有完成的题不得分。现在交卷吗？',
+    'act.submit.partialMore': '另有 {n} 道热点题只答了一部分，按答错计算。',
+    'act.submit.partialTitle': '有 {n} 道热点题只答了一部分',
+    'act.submit.partialBody': '只答了一部分的热点题按答错计算。现在交卷吗？',
   },
   ja: {
     'app.name': 'Xexam',
@@ -284,8 +294,6 @@ export default defineCatalog({
     'mode.weak': '間違いノート',
     'mode.retry': '間違えた問題をやり直し',
 
-    'act.submit.openTitle': 'まだ {n} 問が未回答です',
-    'act.submit.openBody': '未回答の問題は不正解として採点されます。提出しますか？',
     'act.submit.ok': '提出する',
     'act.submit.back': '回答を続ける',
     'act.submit.confirmTitle': '提出しますか？',
@@ -298,14 +306,14 @@ export default defineCatalog({
     'act.overwrite.ok': '新しい試験を始める',
     'act.overwrite.cancel': '戻る',
     'act.settings.saveFailed': '設定を保存できませんでした：{reason}',
-    'role.manager': '問題集を管理',
+    'role.manager': '問題集管理者',
     'nav.logs': 'システムログ',
     'forbidden.logs': 'システムログを見られるのは管理者だけです。',
     'nav.aiChat': 'AI チャット',
     'nav.aiSettings': 'AI 設定',
     'nav.accountLabelAi': '{name}（{role}）でログイン中、AI+ 有効',
     'nav.accountLabelAiOff': '{name}（{role}）でログイン中。AI+：{reason}',
-    'forbidden.ai': 'このアカウントでは今 AI チャットを使えません。',
+    'forbidden.ai': 'このアカウントでは現在 AI チャットを使えません。',
     'forbidden.aiSettings': 'AI 設定を開けるのは管理者だけです。',
     // v1.0 shared (F2)
     'common.more': 'その他の操作',
@@ -318,5 +326,11 @@ export default defineCatalog({
     'nav.aiPaused': 'AI+ 機能は一時停止中 · 管理者に連絡してください',
     'forbidden.users': 'ユーザーを管理できるのは管理者だけです。',
     // v1.0 records (F12)
+    // v1.1
+    'act.submit.emptyTitle': 'まだ {n} 問が未回答です',
+    'act.submit.emptyBody': '未回答の問題は不正解に数えず、間違いノートにも追加しません（結果の「未回答」に一覧表示されます）。得点はすべての問題を対象に計算し、未回答の問題は 0 点です。提出しますか？',
+    'act.submit.partialMore': 'ほかに一部だけ回答したホットスポット問題が {n} 問あり、不正解になります。',
+    'act.submit.partialTitle': '一部だけ回答したホットスポット問題が {n} 問あります',
+    'act.submit.partialBody': '一部だけ回答したホットスポット問題は不正解になります。提出しますか？',
   },
 });

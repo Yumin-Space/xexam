@@ -50,6 +50,7 @@ pub mod attempt;
 pub mod auth;
 pub mod guard;
 pub mod internal;
+mod internal_gen;
 mod internal_study;
 pub mod json;
 pub mod response;
@@ -305,6 +306,19 @@ where
             tracing::info!("refused: the user may not manage that question bank");
             Err(AppError::Status(403, response::MSG_NOT_BANK_OWNER))
         }
+        Ok(Err(DbError::AiBank)) => {
+            // An Excel upload aimed at an AI-generated bank: nothing was written
+            tracing::info!("refused: an AI-generated question bank is not updated from Excel");
+            Err(AppError::BadRequest(
+                response::MSG_AI_BANK_IMPORT.to_string(),
+            ))
+        }
+        Ok(Err(DbError::SheetsAll)) => {
+            Err(AppError::BadRequest(response::MSG_SHEETS_ALL.to_string()))
+        }
+        Ok(Err(DbError::AiBankSheets)) => Err(AppError::BadRequest(
+            response::MSG_AI_BANK_SHEETS.to_string(),
+        )),
         Ok(Err(e)) => {
             tracing::error!("database error: {e}");
             Err(AppError::Db(e))
@@ -631,6 +645,7 @@ async fn post_body(
             Ok(json_resp(StatusCode::OK, &progress, false))
         }
         "/api/banks/delete" => delete_bank(st, a, &data).await,
+        "/api/banks/sheets/delete" => delete_sheets(st, a, &data).await,
         "/api/records/delete" => delete_records(st, a, &data).await,
         "/api/settings" => update_settings(st, user, &data).await,
         "/api/settings/reset" => {
@@ -722,6 +737,10 @@ async fn confirm(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, Ap
         Ok(Ok(None)) => Err(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND)),
         // The bank changed owner after the preview (or the permission is gone): nothing was written
         Ok(Err(DbError::NotBankOwner)) => Err(AppError::Status(403, response::MSG_NOT_BANK_OWNER)),
+        // The target is an AI-generated bank: nothing was written
+        Ok(Err(DbError::AiBank)) => Err(AppError::BadRequest(
+            response::MSG_AI_BANK_IMPORT.to_string(),
+        )),
         Ok(Err(e)) => {
             tracing::error!("apply_import failed: {e}");
             Ok(error_json(
@@ -760,6 +779,61 @@ async fn delete_bank(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response
         tracing::info!(
             "dropped the pending import of deleted bank {:?}",
             deleted.name
+        );
+    }
+    let eng = st.0.engine.clone();
+    let body = blocking(move || {
+        Ok(json!({
+            "banks": take_key(&mut eng.banks_as(&v)?, "banks"),
+            "bank": eng.bank_as(&v)?,
+            "progress": eng.progress_as(&v)?,
+        }))
+    })
+    .await?;
+    Ok(json_resp(StatusCode::OK, &body, false))
+}
+
+/// `POST /api/banks/sheets/delete` (v1.1, C-B1) `{"id": <int>, "sheets": ["name", ...], "withRecords": <bool>}` (exactly these
+/// keys; `withRecords` may be left out = false; 1 ... 200 distinct names) → the answer of `/api/banks/delete`. 404
+/// `MSG_BANK_NOT_FOUND` for a missing or not manageable bank or an unknown sheet; 400 `MSG_SHEETS_ALL` when every sheet is
+/// named, 400 `MSG_AI_BANK_SHEETS` for an AI bank.
+async fn delete_sheets(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
+    let PyVal::Dict(entries) = data else {
+        return Err(bad_request());
+    };
+    if entries
+        .iter()
+        .any(|(k, _)| !matches!(k.as_str(), "id" | "sheets" | "withRecords"))
+    {
+        return Err(bad_request());
+    }
+    let id = body_id(data.get("id"))?;
+    let with_records = body_flag(data.get("withRecords"))?;
+    let Some(PyVal::List(items)) = data.get("sheets") else {
+        return Err(bad_request());
+    };
+    if items.is_empty() || items.len() > 200 {
+        return Err(bad_request());
+    }
+    let mut names: Vec<String> = Vec::with_capacity(items.len());
+    for it in items {
+        match it {
+            PyVal::Str(s) if !names.contains(s) => names.push(s.clone()),
+            _ => return Err(bad_request()),
+        }
+    }
+    let id = id.ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
+    let v = auth::viewer(st, a).await?;
+    let eng = st.0.engine.clone();
+    let actor = v.clone();
+    let touched = blocking(move || eng.delete_sheets_as(&actor, id, &names, with_records))
+        .await?
+        .ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
+    // A staged upload for that bank was previewed against sheets that no longer exist
+    if st.0.pending.drop_for_deleted_bank(&touched) {
+        tracing::info!(
+            "dropped the pending import of bank #{} (sheets deleted)",
+            touched.id
         );
     }
     let eng = st.0.engine.clone();

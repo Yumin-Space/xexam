@@ -22,7 +22,7 @@ import { h, paras, scrollToY, svgMark, type Child } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
 import { reanchorAiPanel } from './ai-panel.ts';
 import { aiPlusNow, studyDock, studyState, type StudyTarget } from './ai-plus-controls.ts';
-import { bankName, kindLabel } from './common.ts';
+import { aiSetMark, bankName, kindLabel } from './common.ts';
 import { langSwitch } from './lang-switch.ts';
 import { miniIcon } from './mini-icons.ts';
 
@@ -31,6 +31,8 @@ export interface ReviewEntry {
   /** What was picked (letters, or one choice index per hotspot item); null / undefined = unanswered. Ignored when showMine is false. */
   ans: Answer;
   correct: boolean;
+  /** v1.1 (TL-7): an exam question that was not completed: not wrong, shown with its own neutral verdict */
+  unanswered?: boolean;
 }
 
 export interface ReviewOptions {
@@ -55,11 +57,14 @@ export interface ReviewOptions {
   };
 }
 
-export type ReviewFilter = 'wrong' | 'all';
+/** v1.1: `open` = the not-completed questions of an exam (TL-7); only offered when there are some */
+export type ReviewFilter = 'wrong' | 'open' | 'all';
 
 /** One row of reviewBlock(): whether it was answered correctly, and how to draw it (drawn lazily, once). */
 export interface ReviewRow {
   correct: boolean;
+  /** v1.1: not completed (never true for a correct row) */
+  unanswered?: boolean;
   render: () => HTMLElement;
 }
 
@@ -172,11 +177,13 @@ function hotspotBody(q: Question, view: Shown, ans: Answer, showMine: boolean): 
  * The answer part of a card in the language of `view`: the options (or hotspot items) marked right / wrong / chosen, and
  * the verdict line. showMine false: only the correct answer (wrong-answer review).
  */
-export function answerReview(q: Question, view: Shown, ans: Answer, correct: boolean, showMine = true): { body: HTMLElement; verdict: HTMLElement } {
+export function answerReview(q: Question, view: Shown, ans: Answer, correct: boolean, showMine = true, notJudged = false): { body: HTMLElement; verdict: HTMLElement } {
   if (q.kind === 'hotspot') {
-    const hs = hotspotBody(q, view, ans, showMine);
+    // a not-completed question is not judged (v1.1): its items get no right / wrong verdict, only the right answers show
+    const judged = showMine && !notJudged;
+    const hs = hotspotBody(q, view, ans, judged);
     const n = q.items.length;
-    const verdict = showMine
+    const verdict = judged
       ? h('p', { class: 'verdict' }, withEl(tn('result.q.hsVerdict', n), 'ok', h('b', { class: correct ? 'r' : 'w' }, hs.okN)))
       : h('p', { class: 'verdict' }, tn('result.q.hsRule', n));
     return { body: hs.body, verdict };
@@ -204,9 +211,13 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
   const { q } = e;
   const showMine = opts.showMine !== false;
   const unanswered = stateOf(q, e.ans) === 0;
+  // v1.1 (TL-7): a not-completed exam question has its own neutral verdict (not red); records from before v1.1 and practice
+  // keep v1.0's "Not answered" in the wrong colour
   const status = !showMine ? null : e.correct
     ? h('span', { class: 'badge ok' }, t('result.q.correct'))
-    : h('span', { class: 'badge ng' }, unanswered ? t('result.q.unanswered') : t('result.q.wrong'));
+    : e.unanswered
+      ? h('span', { class: 'badge open' }, t('result.q.notCompleted'))
+      : h('span', { class: 'badge ng' }, unanswered ? t('result.q.unanswered') : t('result.q.wrong'));
   const source = S.banks.length > 1 ? t('result.q.source', { bank: bankName(q.bank), sheet: q.sheet }) : q.sheet;
   const stats = opts.stats === undefined ? statsLine(q) : opts.stats;
   const paper = h('div', { class: 'paper' });
@@ -214,7 +225,7 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
   // Draws the card's content in a language (the effective one: a language the question lacks falls back to its base)
   const draw = (want: Lang, focusSwitch: boolean): void => {
     const view = shown(q, want);
-    const { body, verdict } = answerReview(q, view, e.ans, e.correct, showMine);
+    const { body, verdict } = answerReview(q, view, e.ans, e.correct, showMine, !e.correct && !!e.unanswered);
     const sw = langSwitch(q, view.lang, (l) => {
       cardLang.set(q.id, l);
       draw(l, true);
@@ -239,6 +250,7 @@ export function reviewItem(e: ReviewEntry, opts: ReviewOptions): HTMLElement {
         h('span', { class: 'badge rv-kind', title: kindLabel(q) },
           h('span', { class: 'rv-kind-full' }, kindLabel(q)),
           h('span', { class: 'rv-kind-short', 'aria-hidden': 'true' }, t(q.kind === 'hotspot' ? 'result.kind.hotspot.short' : q.kind === 'multi' ? 'result.kind.multi.short' : 'result.kind.single.short'))),
+        aiSetMark(q.bank),
         opts.retired ? h('span', { class: 'badge retired' }, t('result.q.retired')) : null,
         sw),
       h('p', { class: 'rv-src', title: source }, source),
@@ -283,6 +295,17 @@ function topInset(): number {
 const JUMP_GAP = 12;
 
 /**
+ * One key of the strip (also used by the records page's jump sheet): right, wrong or (v1.1) not completed - a dash in the
+ * neutral orange, never a red cross. The verdict is in the accessible name.
+ */
+export function stripKey(r: { correct: boolean; unanswered?: boolean }, i: number, onClick: () => void): HTMLElement {
+  const open = !r.correct && !!r.unanswered;
+  const verdict = r.correct ? t('result.q.correct') : open ? t('result.q.notCompleted') : t('result.q.wrong');
+  return h('button', { class: r.correct ? 'ok' : open ? 'open' : 'ng', type: 'button', 'aria-label': t('result.strip.item', { n: i + 1, verdict }), onclick: onClick },
+    h('span', { class: 'n' }, i + 1), open ? h('span', { class: 'dash', 'aria-hidden': 'true' }, '–') : svgMark(r.correct));
+}
+
+/**
  * The review part of a result: a strip with one button per question (jumps to it), a heading with the
  * "wrong only / all" switch, and the list. Rendered items are kept, so switching does not rebuild them.
  * The strip is wrapped with a toggle that only phones show (RS-2): collapsed to "wrong 3 · correct 11" there, every key
@@ -290,7 +313,10 @@ const JUMP_GAP = 12;
  */
 export function reviewParts(rows: readonly ReviewRow[], filter: { get: () => ReviewFilter; set: (f: ReviewFilter) => void }): ReviewParts {
   const total = rows.length;
-  const wrong = rows.filter((r) => !r.correct).length;
+  const open = rows.filter((r) => !r.correct && r.unanswered).length;
+  const wrong = rows.filter((r) => !r.correct && !r.unanswered).length;
+  const matchesFilter = (r: ReviewRow, f: ReviewFilter): boolean =>
+    f === 'all' || (f === 'open' ? !r.correct && !!r.unanswered : !r.correct && !r.unanswered);
   const built = new Map<number, HTMLElement>();
   const itemEl = (i: number): HTMLElement => {
     let el = built.get(i);
@@ -304,12 +330,15 @@ export function reviewParts(rows: readonly ReviewRow[], filter: { get: () => Rev
 
   const list = h('div', { class: 'rvlist' });
   const segW = h('button', { type: 'button' }, t('result.review.onlyWrong', { n: wrong }));
+  const segO = open > 0 ? h('button', { type: 'button' }, t('result.review.onlyOpen', { n: open })) : null;
   const segA = h('button', { type: 'button' }, t('result.review.all', { n: total }));
   const fill = (): void => {
-    const f = filter.get();
+    // A filter that is not offered (no not-completed questions) falls back to the one that is
+    const f: ReviewFilter = filter.get() === 'open' && !segO ? 'all' : filter.get();
     segW.setAttribute('aria-pressed', String(f === 'wrong'));
+    segO?.setAttribute('aria-pressed', String(f === 'open'));
     segA.setAttribute('aria-pressed', String(f === 'all'));
-    const shownRows = rows.map((r, i) => ({ r, i })).filter(({ r }) => f === 'all' || !r.correct);
+    const shownRows = rows.map((r, i) => ({ r, i })).filter(({ r }) => matchesFilter(r, f));
     list.replaceChildren(...(shownRows.length
       ? shownRows.map(({ i }) => itemEl(i))
       : [h('div', { class: 'allgood' }, t('result.review.allGood'))]));
@@ -320,26 +349,25 @@ export function reviewParts(rows: readonly ReviewRow[], filter: { get: () => Rev
     fill();
   };
   segW.addEventListener('click', () => setFilter('wrong'));
+  segO?.addEventListener('click', () => setFilter('open'));
   segA.addEventListener('click', () => setFilter('all'));
   fill();
 
   const jump = (i: number): void => {
-    if (filter.get() === 'wrong' && rows[i]?.correct) setFilter('all');
+    const row = rows[i];
+    if (filter.get() !== 'all' && row && !matchesFilter(row, filter.get())) setFilter('all');
     const el = itemEl(i);
     const reduce = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
     scrollToY(Math.max(0, el.getBoundingClientRect().top + window.scrollY - topInset() - JUMP_GAP), !reduce);
     el.focus({ preventScroll: true });
   };
-  const keys = h('div', { class: 'strip', id: 'rv-strip', role: 'group', 'aria-label': t('result.strip.label') }, rows.map((r, i) => h('button', {
-    class: r.correct ? 'ok' : 'ng',
-    type: 'button',
-    'aria-label': t('result.strip.item', { n: i + 1, verdict: r.correct ? t('result.q.correct') : t('result.q.wrong') }),
-    onclick: () => jump(i),
-  }, h('span', { class: 'n' }, i + 1), svgMark(r.correct))));
+  const keys = h('div', { class: 'strip', id: 'rv-strip', role: 'group', 'aria-label': t('result.strip.label') }, rows.map((r, i) => stripKey(r, i, () => jump(i))));
 
   // Phones: the keys start folded behind one summary row (RS-2); a tap on the row toggles them
   const toggle = h('button', { class: 'strip-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': 'rv-strip' },
-    h('span', { class: 'strip-sum' }, t('result.strip.summary', { wrong, good: total - wrong })),
+    h('span', { class: 'strip-sum' }, open > 0
+      ? t('result.strip.summaryOpen', { wrong, open, good: total - wrong - open })
+      : t('result.strip.summary', { wrong, good: total - wrong })),
     miniIcon('chevDown', 'strip-chev'));
   const strip = h('div', { class: 'strip-wrap' }, toggle, keys);
   toggle.addEventListener('click', () => {
@@ -349,7 +377,7 @@ export function reviewParts(rows: readonly ReviewRow[], filter: { get: () => Rev
 
   const head = h('div', { class: 'rvhead' },
     h('h2', null, t('result.review.heading')),
-    h('div', { class: 'seg', role: 'group', 'aria-label': t('result.review.filter') }, segW, segA));
+    h('div', { class: 'seg', role: 'group', 'aria-label': t('result.review.filter') }, segW, segO, segA));
 
   return { els: [strip, head, list], strip, jump };
 }

@@ -331,11 +331,8 @@ function buildStub(dock: AipDockEl, args: PanelOpenArgs): HTMLElement {
 
 /** The decorative badge of a panel head (bright; the head's text says what it is) */
 function badge(): HTMLElement | null {
-  const b = aiBadge({ kind: 'on' } as BadgeState);
-  b?.setAttribute('aria-hidden', 'true');
-  b?.removeAttribute('role');
-  b?.removeAttribute('aria-label');
-  return b;
+  // v1.1 (BT-3 place 6): decorative for screen readers, the tip shows on hover and on a tap-and-hold
+  return aiBadge({ kind: 'on' } as BadgeState, { held: true });
 }
 
 /** A click that landed on a button or link inside the head (the head's own pointer toggle ignores those) */

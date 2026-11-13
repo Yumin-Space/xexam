@@ -31,7 +31,7 @@ import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { createUser, deleteUser, fetchUsers, resetUserPassword, unlockUser, updateUser, type UsersList } from '../api/users.ts';
-import { aiBadge } from '../components/ai-badge.ts';
+import { aiBadge, aiSetBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
 import { iconButton, shortLabel, withReason } from '../components/icon-button.ts';
@@ -39,7 +39,7 @@ import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { miniSwitch } from '../components/mini-switch.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
 import { holdTip, infoTip, tipEl, withTip } from '../components/tooltip.ts';
-import { badgeState } from '../domain/badge-state.ts';
+import { badgeState, serviceReason } from '../domain/badge-state.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
 import { SEARCH_FROM, aiLineKind, createAi, filterUsers, isServiceOff, lockUntilLabel, shortAt } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
@@ -394,8 +394,10 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     });
     boxes.push([b.id, box]);
     const note = o.noteOf?.(b) ?? null;
-    return h('li', null, h('label', { class: 'us-bank', for: box.id }, box,
-      h('span', { class: 'us-bank-t' }, h('span', { class: 'us-bank-n' }, b.name), note ? h('span', { class: 'us-bank-h' }, note) : null)));
+    // v1.1 (GB-6, P2): the AI+题集 marker after an AI bank's name, outside the label so a tap on it never ticks the box
+    return h('li', { class: b.ai ? 'us-bank-li' : null }, h('label', { class: 'us-bank', for: box.id }, box,
+      h('span', { class: 'us-bank-t' }, h('span', { class: 'us-bank-n' }, b.name), note ? h('span', { class: 'us-bank-h' }, note) : null)),
+    b.ai ? aiSetBadge(b.ai) : null);
   });
 
   const sync = (): void => {
@@ -930,7 +932,10 @@ function aiSwitch(u: UserRow, blocked: boolean): HTMLElement | null {
  * without the service (and for an administrator while AI+ is not available). Shown whether or not the switch is.
  */
 function rowBadge(u: UserRow): HTMLElement | null {
-  return aiBadge(badgeState({ role: u.role, service: u.ai, suspended: u.aiSuspended, available: aiAvailable }), { admin: true });
+  const why = serviceReason(S.aiService);
+  return aiBadge(badgeState({
+    role: u.role, service: u.ai, suspended: u.aiSuspended, available: aiAvailable, ...(why ? { unavailableReason: why } : {}),
+  }), { admin: true });
 }
 
 function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {

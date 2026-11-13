@@ -92,6 +92,7 @@ fn insert_call(t: &TestApp, user: i64, start: i64, kind: &'static str, code: Opt
         tokens_in: None,
         tokens_out: None,
         tokens_cached: None,
+        tokens_cache_write: None,
         latency_ms: 0,
         first_byte_ms: None,
         status: if code.is_some() { "error" } else { "ok" },

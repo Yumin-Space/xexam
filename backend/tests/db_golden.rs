@@ -111,6 +111,8 @@ fn attempt(ids: &[(&str, bool)], mode: &str, seconds: i64) -> Attempt {
         mode: mode.to_string(),
         seconds,
         kind: Default::default(),
+        limit: None,
+        end: None,
     }
 }
 
@@ -446,7 +448,10 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
             "attempts",
             ", banks TEXT NOT NULL DEFAULT '[]', user_id INTEGER, \
              kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice')), \
-             session_key TEXT, started_at INTEGER",
+             session_key TEXT, started_at INTEGER, \
+             time_limit INTEGER CHECK (time_limit IS NULL OR (time_limit BETWEEN 60 AND 36000 AND kind = 'exam')), \
+             ended TEXT CHECK (CASE WHEN ended IS NULL THEN time_limit IS NULL \
+             ELSE kind = 'exam' AND (ended = 'submit' OR (ended = 'timeUp' AND time_limit IS NOT NULL)) END)",
         ),
         ("imports", ", bank_id INTEGER"),
     ];
@@ -488,6 +493,9 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
             ("index", "sqlite_autoindex_user_banks_1"),
             ("index", "idx_user_banks_bank"),
             ("index", "idx_banks_owner"),
+            // v1.1 (schema 7): the AI-bank job key and the covering index of the bank list
+            ("index", "idx_banks_ai_job"),
+            ("index", "idx_questions_layout"),
         ]
     );
     // Intended difference (v0.7): the backend switches the database to WAL, which is stored in the file (the Python-written
@@ -509,7 +517,7 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         meta,
         vec![
             ("banks_known".to_string(), "0".to_string()),
-            ("schema".to_string(), "6".to_string()),
+            ("schema".to_string(), "7".to_string()),
             ("users_known".to_string(), "1".to_string())
         ]
     );

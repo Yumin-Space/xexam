@@ -125,8 +125,9 @@ fn chat_busy(ctx: &Ctx, chat: Option<i64>) -> ApiError {
 fn places(
     ctx: &Ctx,
     chat: Option<i64>,
+    feature: crate::features::Feature,
 ) -> Result<(crate::chat::Slot, crate::chat::GatePermit), ApiError> {
-    take_places(ctx, Kind::Chat, chat).map_err(|e| {
+    take_places(ctx, Kind::Chat, chat, feature).map_err(|e| {
         if e.code == "ai.busy" {
             chat_busy(ctx, chat)
         } else {
@@ -393,7 +394,11 @@ pub async fn ask(ctx: Ctx) -> Answer {
     let chat_opt = app
         .store
         .read(|c| data::chat_by_ref(c, who.id, ident.kind, &ident.chat_ref))?;
-    let (slot, permit) = places(&ctx, chat_opt)?;
+    let feature = match a.kind {
+        AskKind::Hint => crate::features::Feature::Hint,
+        AskKind::Explain => crate::features::Feature::Explain,
+    };
+    let (slot, permit) = places(&ctx, chat_opt, feature)?;
     app.study_hold_point().await;
     let limits = app.limits();
     let model = snap.settings.model.clone();
@@ -448,7 +453,6 @@ pub async fn ask(ctx: Ctx) -> Answer {
         }],
         guard,
         purpose: Some(purpose),
-        lang,
         attempt: ids.attempt,
     };
     launch(&ctx, &snap, target, slot, permit, l)
@@ -605,7 +609,7 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
     let chat_opt = app
         .store
         .read(|c| data::chat_by_ref(c, who.id, "summary", &chat_ref))?;
-    let (slot, permit) = places(&ctx, chat_opt)?;
+    let (slot, permit) = places(&ctx, chat_opt, crate::features::Feature::Summary)?;
     app.study_hold_point().await;
     let limits = app.limits();
     let model = snap.settings.model.clone();
@@ -660,7 +664,6 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
         }],
         guard: None,
         purpose: Some("summary"),
-        lang,
         attempt: ids.attempt,
     };
     launch(&ctx, &snap, target, slot, permit, l)

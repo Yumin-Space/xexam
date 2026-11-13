@@ -15,7 +15,8 @@ import { kindOf } from '../domain/attempt.ts';
 import {
   NO_FILTERS, RECORDS_PAGE, filterCount, focusAfterDelete, isFiltered, isKindFilter, matchesRecord, nextLimit, pageRows, type RecordFilters,
 } from '../domain/records-filter.ts';
-import { reviewItem, reviewParts, type ReviewFilter, type ReviewParts, type ReviewRow } from '../components/review.ts';
+import { reviewItem, reviewParts, stripKey, type ReviewFilter, type ReviewParts, type ReviewRow } from '../components/review.ts';
+import { defaultFilter, resultCounts } from '../domain/exam-timer.ts';
 import { inNotebook, masterStreakOf, percentOf, shuffle } from '../domain/grading.ts';
 import { errorText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
@@ -24,7 +25,7 @@ import { applyRecordsDeleted, loadRecord, navigate, onRouteChange, onSignedIn, r
 import { S, bankIdsOf } from '../state/store.ts';
 import type { Mode, Question, RecordBank, RecordDetail, RecordItem, RecordSummary } from '../types/api.ts';
 import { ask, askCheck, dialogTitleId } from '../utils/dialog.ts';
-import { h, scrollToY, svgMark } from '../utils/dom.ts';
+import { h, scrollToY } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
 import { liftToastAbove, toast } from '../utils/toast.ts';
 
@@ -40,8 +41,8 @@ let listError: { e: unknown } | null = null;
 /** Exam detail being fetched / failed to fetch, by record id (a failure is forgotten when the route changes, so coming back retries) */
 const pending = new Set<number>();
 const failures = new Map<number, unknown>();
-/** "Wrong only / all" on the detail page; back to "wrong only" whenever another record is opened */
-let detailFilter: ReviewFilter = 'wrong';
+/** "Wrong only / not completed / all" on the detail page; null = the default of the record (TL-7), again whenever another record is opened */
+let detailFilter: ReviewFilter | null = null;
 /** Bank filter of the wrong-answer review */
 let wrongBank: number | 'all' = 'all';
 /** Scroll position of the list when an exam was opened from it (0 = nothing to restore) */
@@ -60,7 +61,7 @@ onRouteChange((from, to) => {
   jumpWatch = null;
   failures.clear();
   listError = null;
-  if (to.name === 'record' && !(from.name === 'record' && from.id === to.id)) detailFilter = 'wrong';
+  if (to.name === 'record' && !(from.name === 'record' && from.id === to.id)) detailFilter = null;
   // Back from an exam to the list: return to where the list was. The hooks run before render() and the scroll to the
   // top, so scrollY is still the list's position here, and the animation frame comes after both.
   if (from.name === 'records' && to.name === 'record') {
@@ -246,11 +247,12 @@ function recordRow(r: RecordSummary, view: AiPlusView, onDelete: (r: RecordSumma
       navigate({ name: 'record', id: r.id });
     },
   },
-  view.show ? h('td', { role: 'cell', class: 'rec-ai' }, summaryControl(r, controlState(view, recordSummaryExtra(r)))) : null,
+  view.show ? h('td', { role: 'cell', class: 'rec-ai' }, summaryControl(r, controlState(view, recordSummaryExtra(r), 'summary'))) : null,
   cell(t('records.col.time'), 'rec-time num', h('a', { href: `#/records/${r.id}`, 'data-rec': r.id }, r.at)),
   // The kind tag leads the cell, so exams and practice tell apart in the list and in the phone cards alike
   h('td', { role: 'cell', class: 'rec-banks', 'data-label': t('records.col.banks') },
-    kindTag(kindOf(r)), h('span', { class: 'rec-bnames' }, recordBankNames(r.banks)), mode ? h('span', { class: 'rec-mode' }, mode) : null),
+    kindTag(kindOf(r)), r.ended === 'timeUp' ? h('span', { class: 'tag kind-tag k rec-timeup' }, t('records.timeUpTag')) : null,
+    h('span', { class: 'rec-bnames' }, recordBankNames(r.banks)), mode ? h('span', { class: 'rec-mode' }, mode) : null),
   cell(t('records.col.answered'), 'num rec-st rec-st-ans' + (full ? ' rec-full' : ''), `${r.answered ?? t('common.none')} / ${r.total}`),
   cell(t('records.col.duration'), 'num rec-st rec-st-dur', fmtTime(r.seconds)),
   cell(t('records.col.score'), 'num rec-st rec-st-ok', `${r.correct} / ${r.total}`),
@@ -468,7 +470,7 @@ function renderList(): HTMLElement {
   const listPanel = h('section', { class: 'panel rec-listpanel' + (view.show ? ' has-ai' : ''), 'aria-labelledby': 'rec-list-h' },
     h('h2', { id: 'rec-list-h', tabindex: '-1' }, t('records.list.heading')),
     // When AI 总结 is greyed for everyone, one note says why (instead of a tag on every row)
-    view.show ? aiNote(controlState(view)) : null,
+    view.show ? aiNote(controlState(view, null, 'summary')) : null,
     listBox);
 
   update();
@@ -514,7 +516,9 @@ function goneCard(it: RecordItem, no: number): HTMLElement {
   const unanswered = !it.answer || it.answer.every((x) => x == null);
   const status = it.correct
     ? h('span', { class: 'badge ok' }, t('result.q.correct'))
-    : h('span', { class: 'badge ng' }, unanswered ? t('result.q.unanswered') : t('result.q.wrong'));
+    : it.unanswered
+      ? h('span', { class: 'badge open' }, t('result.q.notCompleted'))
+      : h('span', { class: 'badge ng' }, unanswered ? t('result.q.unanswered') : t('result.q.wrong'));
   return h('article', { class: 'rv rv-gone' + (it.correct ? ' good' : ''), tabindex: '-1', 'aria-label': t('result.q.no', { n: no }) },
     h('div', { class: 'paper' },
       h('div', { class: 'phead' }, h('b', { class: 'num' }, t('result.q.no', { n: no })), status),
@@ -525,7 +529,9 @@ function detailView(d: RecordDetail): HTMLElement {
   const rec = d.record;
   const items = [...d.items].sort((a, b) => a.seq - b.seq);
   const active = activeById();
-  const wrongItems = items.filter((it) => !it.correct);
+  // v1.1 (TL-7): a record saved by v1.1 flags its not-completed items; older records and practice have none
+  const wrongItems = items.filter((it) => !it.correct && !it.unanswered);
+  const counts = resultCounts(items);
   const wrongIds = uniq(wrongItems.map((it) => it.questionId));
   const allIds = uniq(items.map((it) => it.questionId));
   const retryQs = wrongIds.map((id) => active.get(id)).filter(isQuestion);
@@ -542,7 +548,7 @@ function detailView(d: RecordDetail): HTMLElement {
     pair(t('records.detail.banks'), recordBankNames(rec.banks)),
     rec.sheets.length ? pair(t('records.detail.sheets'), rec.sheets.join(t('common.listSep'))) : null,
     modeName(rec.mode) ? pair(t('records.detail.mode'), modeName(rec.mode)) : null,
-    pair(t('records.detail.duration'), fmtTime(rec.seconds)),
+    pair(t('records.detail.duration'), rec.limit != null ? `${fmtTime(rec.seconds)} · ${t('result.limitMeta', { min: Math.round(rec.limit / 60) })}` : fmtTime(rec.seconds)),
     pair(t('records.detail.answered'), t('records.detail.answeredValue', { answered: rec.answered ?? t('common.none'), total: rec.total })));
 
   const hints: string[] = [];
@@ -574,7 +580,7 @@ function detailView(d: RecordDetail): HTMLElement {
     else if (retakeQs.length < allIds.length) hints.push(tn('records.detail.retakeSkip', allIds.length - retakeQs.length));
   }
   // AI 总结: the same control as in the list (AI+ users only; a record without detail has no wrong answers to read)
-  const aiBtn = summaryControl(rec, controlState(aiPlusNow(), recordSummaryExtra(rec)));
+  const aiBtn = summaryControl(rec, controlState(aiPlusNow(), recordSummaryExtra(rec), 'summary'));
   // The red trash button, set apart from the study actions (the dialog still asks before anything is deleted)
   const delBtn = labelled(
     deleteButton(rec, () => void removeOne(rec, () => navigate({ name: 'records' })), t('records.detail.delete')),
@@ -586,7 +592,10 @@ function detailView(d: RecordDetail): HTMLElement {
     h('section', { class: 'score rec-score' },
       h('div', { class: 'big num', role: 'img', 'aria-label': t('records.detail.scoreLabel', { pct: rec.percent }) }, String(rec.percent), h('small', null, '%')),
       h('div', { class: 'says' },
-        h('p', null, t('records.detail.summary', { correct: rec.correct, total: rec.total })),
+        h('p', null, counts.open > 0
+          ? t('result.summaryOpen', { good: rec.correct, wrong: rec.total - rec.correct - counts.open, open: counts.open })
+          : t('records.detail.summary', { correct: rec.correct, total: rec.total })),
+        counts.open > 0 && rec.ended === 'submit' ? h('p', { class: 'dim rec-opennote' }, t('result.openNote')) : null,
         meta,
         h('div', { class: 'acts rec-acts' }, retryBtn, retakeBtn, aiBtn, delBtn),
         hints.length ? h('div', { class: 'rec-hints' }, hints.map((x) => h('p', null, x))) : null)));
@@ -598,8 +607,9 @@ function detailView(d: RecordDetail): HTMLElement {
 
   const rows: ReviewRow[] = items.map((it, i) => ({
     correct: it.correct,
+    unanswered: it.unanswered,
     render: () => (it.question
-      ? reviewItem({ q: it.question, ans: it.answer, correct: it.correct }, {
+      ? reviewItem({ q: it.question, ans: it.answer, correct: it.correct, unanswered: it.unanswered }, {
         no: i + 1,
         retired: !it.question.active,
         // v0.9: AI analysis of this record's questions (the controls build themselves only for users with the AI+ feature)
@@ -607,7 +617,9 @@ function detailView(d: RecordDetail): HTMLElement {
       })
       : goneCard(it, i + 1)),
   }));
-  const parts = reviewParts(rows, { get: () => detailFilter, set: (f) => { detailFilter = f; } });
+  // The default filter: wrong answers first, else the not-completed ones, else all (TL-7); a record from before v1.1 keeps v1.0's
+  const dflt: ReviewFilter = rec.ended ? defaultFilter(counts) : 'wrong';
+  const parts = reviewParts(rows, { get: () => detailFilter ?? dflt, set: (f) => { detailFilter = f; } });
   page.append(...parts.els);
   // After reading through the answers, practise the wrong ones without scrolling back up
   if (wrongIds.length && retryQs.length) page.append(h('div', { class: 'acts wr-foot' }, retryButton()));
@@ -655,14 +667,10 @@ function jumpButton(rows: readonly ReviewRow[], parts: ReviewParts): HTMLElement
 function openJumpSheet(rows: readonly ReviewRow[], parts: ReviewParts): void {
   const titleId = dialogTitleId();
   const close = (): void => d.close();
-  const keys = h('div', { class: 'strip', role: 'group', 'aria-label': t('result.strip.label') }, rows.map((r, i) => h('button', {
-    class: r.correct ? 'ok' : 'ng', type: 'button',
-    'aria-label': t('result.strip.item', { n: i + 1, verdict: r.correct ? t('result.q.correct') : t('result.q.wrong') }),
-    onclick: () => {
-      close();
-      parts.jump(i);
-    },
-  }, h('span', { class: 'n' }, i + 1), svgMark(r.correct))));
+  const keys = h('div', { class: 'strip', role: 'group', 'aria-label': t('result.strip.label') }, rows.map((r, i) => stripKey(r, i, () => {
+    close();
+    parts.jump(i);
+  })));
   const d = h('dialog', { class: 'dlg rec-jump', 'aria-labelledby': titleId },
     h('h3', { id: titleId, tabindex: '-1' }, t('records.jump.title')),
     keys,

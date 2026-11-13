@@ -29,14 +29,14 @@
 
 Xexam is a self-hosted app for practising exam questions in the browser. You import your own Excel question banks, then take exams or practise with them, and review the questions you got wrong. If an administrator connects an AI provider and gives them the **AI+ feature**, users can also ask an AI model in **AI Chat** and get AI help while they study: hints and explanations in practice, an AI analysis of every question on result pages and an AI summary of their wrong answers. It works on computers and on phones (iPhone).
 
-![The exam page: a hotspot question in English, the English / 中文 / 日本語 switch and the answer sheet with Submit](docs/en/screenshots/desktop-2-quiz.png)
+![The exam page: a hotspot question in English, the English / 中文 / 日本語 switch and the answer sheet with Finish exam](docs/en/screenshots/desktop-2-quiz.png)
 
 The repository contains **no questions**. Xexam only provides the tools to import, organize and practise questions; your question banks are your own Excel files and are never committed (`.gitignore` excludes them). The screenshots use made-up demo banks, not content from any real exam.
 
 | | |
 |---|---|
-| Current version | **v1.0** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.0**) |
-| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.0` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
+| Current version | **v1.1** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.1**) |
+| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -100,7 +100,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d` (read [Upgrading](#upgrading) first) |
-| Pin to a specific version | Change `:latest` to `:v1.0` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v1.1` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (all three containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |
@@ -140,105 +140,7 @@ Times follow the host's time zone because the compose file mounts the host's `/e
 
 ## Upgrading
 
-Every upgrade keeps the same port and the same volume `xexam_data`, so your data stays where it is: `docker compose pull`, then `docker compose up -d`. v0.8 added a third image and two volumes, so coming from v0.7.5 or older you also need the new `docker-compose.yml`; v0.9 needs no new compose file. When a database schema changes, the first start of the new version writes a backup copy of the database first, into `/data/backups/` in the volume (the AI service does the same for its own database, in its own volume), and then migrates it in one transaction. If the copy cannot be written (disk full, no permission), the service refuses to start and leaves the database unchanged; `docker compose logs backend` and `docker compose logs ai-service` say why. A backup copy is about as large as the database, so keep that much free space before upgrading; backup copies are never deleted automatically.
-
-The sections below are written for the version they lead to. Pulling the current images (v1.0) from an older version does every step in one go: one backup named after the schema the file had, and the database ends at schema 6 (the log then says `schema 6` where a section says `schema 5`; `/api/info` shows `"version": "1.0"`).
-
-### From v0.9.1 to v1.0
-
-v1.0 changes the phone layout and the AI help. The three images, the volumes and `docker-compose.yml` stay as they are: **no new compose file is needed**. Back up both data volumes first (the commands are in the v0.9 section below), then pull and start.
-
-- **The AI service's first start** writes the copy `/data/backups/xexam-ai-schema3-<YYYYmmdd-HHMMSS>.db` in the AI volume and moves its database to schema 4: the three per-user request limits (5 a minute, 20 an hour, 100 a day) and the answer length (1000 characters). Your chats, memories, settings and keys stay. A memory limit still at the old default of 300 characters becomes 200; other values stay. The log says `Upgraded the AI database to schema 4`.
-- **The main database** does not change (it stays at schema 6).
-- **Nothing to set up** for the new pages. The limits are under **AI settings › AI safety**; the day count restarts at 0:00 in the AI service's time zone (its `TZ` setting, for example `TZ=UTC`).
-- Check that <http://localhost:8765/api/info> shows `"version": "1.0"` and that `docker compose ps` lists three healthy containers.
-
-Rolling back to v0.9.1: the main database needs no restore, but v0.9.1's AI service refuses schema 4, so its copy `xexam-ai-schema3-….db` must be restored, which loses every AI chat, setting, limit change and usage row made since the upgrade. See section 0 of [docs/en/migration.md](docs/en/migration.md).
-
-### From v0.9 to v0.9.1
-
-Nothing to do: `docker compose pull`, then `docker compose up -d`. There is no database change and no new setting; the three images, the volumes, `docker-compose.yml` and `.env` stay as they are. The changes are listed in the [changelog](docs/en/changelog.md) (it lives in `docs/<lang>/changelog.md` now).
-
-### From v0.8 to v0.9
-
-v0.9 adds the AI help for studying (see the [changelog](docs/en/changelog.md)). The three images, the volumes and the `docker-compose.yml` stay as they are: **no new compose file is needed**. Back up both data volumes first, then pull and start.
-
-```bash
-# 1. Back up both volumes (stop first; the backup files hold your whole databases, do not commit them)
-docker compose stop
-docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v08.tgz -C /data .
-docker run --rm -v xexam_ai_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-ai-data-v08.tgz -C /data .
-
-# 2. Pull the three images and start (do not use down -v), then read the upgrade lines
-docker compose pull
-docker compose up -d
-docker compose logs backend
-docker compose logs ai-service
-```
-
-- **The backend's first start** writes the copy `/data/backups/xexam-schema5-<YYYYmmdd-HHMMSS>.db` and moves the database to schema v6: two new columns on `attempts`, `session_key` and `started_at`, empty for every record you already have. Nothing else changes. The log says `Upgraded the database to schema 6`.
-- **The AI service's first start** writes the copy `/data/backups/xexam-ai-schema2-<YYYYMMDD-HHMMSS>.db` in the AI volume and moves its database to schema 3 (study chats and their messages, and a `purpose` on the usage rows). Your chats, memories, settings and keys stay. The log says `Upgraded the AI database to schema 3`.
-- **Nothing to set up**: the **AI+ feature** works as before. Everyone who can use AI now sees the new controls; users without the **AI+ feature** see nothing new. Records made before v0.9 have no session key, so their first AI analysis starts a chat of its own (section 16 of [docs/en/usage.md](docs/en/usage.md)).
-- Check that <http://localhost:8765/api/info> shows `"version": "0.9"` and that `docker compose ps` lists three healthy containers.
-
-Rolling back to v0.8: the main database needs no restore (v0.8 opens the schema-6 database as it is, and records saved afterwards simply have no key), but v0.8's AI service refuses an AI database of schema 3, so its copy `xexam-ai-schema2-….db` must be restored, which loses every AI chat, setting and usage row made since the upgrade. See section 0b.4 of [docs/en/migration.md](docs/en/migration.md).
-
-### From v0.7.5 (or v0.7) to v0.8
-
-v0.8 adds the AI service: a third image, `xexam-ai-service` (the container and the Compose service are called `ai-service`); two new volumes, `xexam_ai_data` (the AI database and its key file) and `xexam_link` (only the token the backend and the AI service share); and the network `egress` (internet access for the AI service only). **Download the new `docker-compose.yml`**. With the old one everything works except AI, and **AI settings** says that ai-service is not running.
-
-```bash
-# 1. Back up the volume (stop first; the backup file holds your whole database, do not commit it)
-docker compose stop
-docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v075.tgz -C /data .
-
-# 2. Replace docker-compose.yml with the new one (your .env stays; carry over your own changes to the old file)
-curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
-
-# 3. Pull the three images and start (do not use down -v), then read the upgrade line
-docker compose pull
-docker compose up -d
-docker compose logs backend
-```
-
-- **The first start** writes the copy `/data/backups/xexam-schema4-<YYYYmmdd-HHMMSS>.db` and moves the database to schema v5: two new columns on `users`, the **AI+** switch (off for everyone) and an identity stamp. Nothing else changes; banks, records, users and settings stay. The log says `Upgraded the database to schema 5`.
-- **AI is off** until an administrator sets it up in **AI settings** (section 17 of [docs/en/usage.md](docs/en/usage.md)); there is nothing to migrate for AI. Administrators can use AI Chat as soon as the **AI+ feature** is on; every other user needs the **AI+ feature** in **User management**, which can be switched on only while ai-service is connected and the **AI+ feature** is on. The AI database `xexam-ai.db` is created by ai-service at its first start; if it comes from a pre-release build of v0.8, the columns it lacks are added automatically.
-- **What to back up from now on**: both data volumes, `xexam_data` and `xexam_ai_data`. The AI volume holds the key file `secret.key` next to the AI database, so its backup can decrypt the saved keys; set `XEXAM_AI_SECRET_KEY` to keep the key apart. `xexam_link` needs no backup: the backend creates a new token when it is empty.
-- Check that <http://localhost:8765/api/info> shows the version (`"0.8"`, or `"1.0"` with the current images) and that `docker compose ps` lists three healthy containers (`xexam-frontend`, `xexam-backend` and `ai-service`).
-
-Rolling back to v0.7.5 means restoring the copy from `backups/` and the old `docker-compose.yml`; see section 1 of [docs/en/migration.md](docs/en/migration.md).
-
-### From v0.6 to v0.7 and later
-
-> ⚠️ Since v0.7 **only the six-column Excel layout can be imported**, and every question that was imported from the three- or four-column layouts of earlier versions is **retired at every start**. All banks of v0.6 are in those layouts, so after the upgrade nothing can be practised until you update them with six-column workbooks. The banks, the study records and the statistics stay.
-
-1. **Before the upgrade**, prepare a six-column version of each workbook (format: section 12 of [docs/en/usage.md](docs/en/usage.md)), and submit or discard any unfinished exam: its questions are retired, so it cannot be continued afterwards.
-2. **Back up and upgrade**:
-
-   ```bash
-   # 1. Back up the volume (stop first; the backup file holds your whole database, do not commit it)
-   docker compose stop
-   docker run --rm -v xexam_data:/data -v "${PWD}:/backup" alpine tar czf /backup/xexam-data-v06.tgz -C /data .
-
-   # 2. Replace docker-compose.yml with the new one (your .env stays)
-   curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker-compose.yml
-
-   # 3. Pull and start (do not use down -v), then read the upgrade lines
-   docker compose pull
-   docker compose up -d
-   docker compose logs backend
-   ```
-
-   The new `docker-compose.yml` follows the host's time zone, limits the container logs, passes `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE` and `XEXAM_LOG` from `.env`, and adds the AI service of v0.8 with its volumes.
-3. **What the first start does**, before it answers any request: it writes the copy `/data/backups/xexam-schema3-<YYYYmmdd-HHMMSS>.db`, migrates the database to schema v5 (v0.7 and v0.7.5 stop at v4) and switches it to WAL mode. Every existing user keeps every existing bank, with **Include banks imported later**; every bank belongs to the first administrator; every earlier record is an **Exam**; nobody is a bank manager yet. Then it retires the old-layout questions, with one warning per bank in the log, for example `retired 12 questions of bank "Kitchen basics": they use the old 3- / 4-column layout; import the six-column version of the workbook`.
-4. **Update each old bank with its six-column file**: **Question banks** → **Import Excel** → **Update a bank**, pick the bank, upload the file and confirm. The bank keeps its name, its owner and the users who see it. Its questions are now recognised by their English text, so they start without answer history; the old questions stay retired and still show in the old records. Or import the six-column file as a **New bank**.
-5. **Afterwards**: decide who is a **Bank manager** and which banks each user sees (a user you add from now on sees no bank until you choose some), and check that <http://localhost:8765/api/info> shows `"version": "1.0"`. AI is off until you set it up (see the previous section).
-
-Rolling back to v0.6 means restoring the copy from `backups/`; the commands are in section 2.6 of [docs/en/migration.md](docs/en/migration.md).
-
-### From older versions
-
-From v0.5, v0.4 or the Python version v0.2.x the same steps apply, with a few more (sign-in arrives, the image source changed in v0.5.1, the old single container must be removed): see [docs/en/migration.md](docs/en/migration.md), which also has every rollback.
+Every upgrade keeps the same port and the same volume `xexam_data`: `docker compose pull`, then `docker compose up -d`. Back up first; the steps for every version, the backup copies and every rollback are in [docs/en/migration.md](docs/en/migration.md).
 
 ---
 

@@ -28,6 +28,37 @@
 .timer { font-size: 17px; font-weight: 600; }
 .qtime { display: inline-flex; align-items: baseline; gap: 4px; }
 .qtime .mi, .qexit .mi { display: none; }
+/* v1.1 TL-3: the countdown of a timed exam; the same box width as the count-up (tabular digits), tone by the time left */
+.timer.warn { color: var(--warn); }
+.timer.danger { color: var(--danger); font-weight: 700; }
+.qtime.timed .timer { min-width: 4.6ch; text-align: right; }
+/* v1.1 A-OWNER-23: a timed exam's countdown stands out a little (one size up, bold, tabular digits) */
+.qtime.timed .timer { font-size: 19px; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* v1.1 A-OWNER-22 / 24b / 25: the top row's answered count and 交卷 / 完成 button exist only under BAR_MQ (see below) */
+.qcount, .btn.qsubmit { display: none; }
+.qcount { font-size: 13.5px; color: var(--ink2); white-space: nowrap; }
+.qcount-s { display: none; }
+.btn.qsubmit { position: relative; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; border: 0; box-shadow: none; white-space: nowrap;
+  color: var(--on-answer-solid); font-size: 13.5px; font-weight: 600; line-height: 1.2; }
+/* A-OWNER-60: the visible pill (30 px) sits inside the 44 px bar; its tap area is the invisible 44 px box around it, and the one frame
+   is the pill itself (no border, no shadow, a focus ring only for the keyboard) */
+.btn.qsubmit::after { content: ""; position: absolute; inset: -7px -4px; }
+.btn.qsubmit:focus:not(:focus-visible) { outline: none; }
+.btn.qsubmit-exam { background: var(--go-exam); border-color: var(--go-exam); }
+.btn.qsubmit-practice { background: var(--go-practice); border-color: var(--go-practice); }
+@media (hover: hover) {
+  .btn.qsubmit-exam:hover:not(:disabled) { background: var(--go-exam-hover); }
+  .btn.qsubmit-practice:hover:not(:disabled) { background: var(--go-practice-hover); }
+}
+.btn.qsubmit-exam:active:not(:disabled) { background: var(--go-exam-active); }
+.btn.qsubmit-practice:active:not(:disabled) { background: var(--go-practice-active); }
+.btn.qsubmit .mi { width: 16px; height: 16px; }
+/* v1.1 TL-5: the locked page of an exam whose time ran out */
+.timeup { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0, 0, 0, .45); }
+.timeup-card { max-width: 420px; width: 100%; padding: 24px 22px; text-align: center; background: var(--card); border: 1px solid var(--line-soft); border-radius: 12px; box-shadow: var(--shadow-xs); }
+.timeup-card h2 { margin: 0 0 8px; font-size: 20px; }
+.timeup-card h2:focus { outline: none; }
+.timeup-card p { margin: 0; color: var(--ink2); }
 /* The progress meter: a thin bar below the row on wide screens, the row's bottom edge on phones */
 .meter { flex: 0 0 100%; height: 4px; margin: 4px 0 0; background: var(--hover-strong); border-radius: 999px; overflow: hidden; pointer-events: none; }
 .meter i { display: block; height: 100%; background: var(--print); border-radius: 999px; }
@@ -161,8 +192,14 @@
   /* The sheet sits under the panel, in its place in the flow */
   .rail { position: static; max-height: none; padding: 14px 16px; }
   .rail-body { overflow: visible; }
-  .rail-sum { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px 8px; }
-  .rail-sum > .btn { width: auto; margin: 0; white-space: nowrap; }
+  .rail-sum { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; }
+  /* A-OWNER-25: the sheet card has no finish button here; the top row has the count and the 交卷 / 完成 button */
+  .rail-sum > .btn { display: none; }
+  .qcount { display: inline; }
+  .btn.qsubmit { display: inline-flex; }
+  /* 601-880 px: the progress meter is the bar's bottom edge, not an extra row (the bar stays one row, about 44 px) */
+  .qbar { position: relative; padding-bottom: 6px; }
+  .meter { position: absolute; left: 0; right: 0; bottom: 0; flex: none; margin: 0; }
   .rail-count { margin: 0; font-size: 13px; }
   .rail-body { margin-top: 12px; }
 }
@@ -178,12 +215,21 @@
     box-sizing: border-box; height: calc(44px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) var(--qz-gr) 0 var(--qz-gl);
     margin: 0 calc(-1 * var(--qz-gr)) 8px calc(-1 * var(--qz-gl)); background: var(--sheet);
   }
-  .qbar .ql { gap: 8px; flex: 1 1 auto; }
+  /* one line always (A-OWNER rule): "1 / 12" never breaks; when the row is too narrow the finish pill drops its label (.tight) */
+  .qbar .ql { gap: 8px; flex: 1 1 auto; white-space: nowrap; }
   .qbar h1.l { font-size: 16px; gap: 0; }
   .qbar .pos-full { display: none; }
   .qbar .pos-short { display: inline-flex; align-items: baseline; }
   .qbar .r { flex: none; flex-wrap: nowrap; gap: 8px; }
   .timer { font-size: 16px; }
+  .qtime.timed .timer { font-size: 18px; }
+  /* A-OWNER-60: the count keeps its word ("已完成 1/50"; up to 360 px only "1/50", screen readers keep the full text); the button is a
+     30 px pill with a 44 px tap area, its label goes when the row does not fit (.tight, set by the quiz page), the hold tip names it */
+  .qcount { font-size: 13px; margin-right: 2px; }
+  .btn.qsubmit { min-width: 30px; padding: 0 9px; justify-content: center; }
+  .qbar.tight .btn.qsubmit { padding: 0; }
+  .qbar.tight .btn.qsubmit::after { inset: -7px; }
+  .qbar.tight .qsubmit .lbl { display: none; }
   .qtime { align-items: center; }
   .qtime .mi { display: inline; width: 16px; height: 16px; color: var(--ink3); }
   .meter { position: absolute; left: 0; right: 0; bottom: 0; flex: none; height: 3px; margin: 0; border-radius: 0; }
@@ -233,7 +279,7 @@
    .l-short rule (icon-button.css). Thresholds = (widest label set + padding) x 2 + the 4 px gap, with CJK glyphs counted
    at 1 em (as on an iPhone) and a margin for Latin fonts:
    zh  full 核对答案 / 完成练习 4 em (bar-main >= 144 px); 下一题 + chevron needs 64 px (>= 160 px, else no chevron);
-   ja  full 練習を終える 6 em at 15 px (>= 220 px); en full Finish practice (>= 240 px); every language: short labels and no
+   ja  full 練習を終了 6 em at 15 px (>= 220 px); en full Finish practice (>= 240 px); every language: short labels and no
    chevron below 136 px. Next / Finish share one grid cell (.nx-two), so the hidden one also needs one line. */
 .pfoot .bar-main > .btn { white-space: nowrap; }
 /* Only where the bar is one row (BAR_MQ, .bar-main is flex: 1 1 0): a size container has no width of its own, so on a
@@ -278,6 +324,11 @@
   html .pfoot .bar-main [data-slot="next"] .mi { display: none; }
 }
 
+@media (max-width: 360px) {
+  .qcount-l { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .qcount-s { display: inline; }
+}
+
 /* ---------- Short landscape (QZ-8, SH-12) ---------- */
 @media (orientation: landscape) and (max-height: 500px) {
   .qbar { height: calc(36px + env(safe-area-inset-top)); margin-bottom: 4px; }
@@ -287,6 +338,9 @@
   /* The 36 px row sits at the top edge of the screen: the tap area reaches 9 px below the button instead (44 px in all,
      counted from inside its 1 px border) */
   .qbar .btn.quiet.qexit::after { content: ""; position: absolute; inset: -4px -3px -9px; }
+  /* A-OWNER-22 / 60: the 交卷 / 完成 pill (28 px) fits the 36 px row; its 44 px tap area reaches below it */
+  .btn.qsubmit { min-height: 28px; }
+  .qbar .btn.qsubmit::after { inset: -4px -4px -12px; }
   .wrap.qz .paper { padding: 8px 12px; }
   .wrap.qz .phead { min-height: 28px; margin-bottom: 4px; }
   .wrap.qz .stem { margin-bottom: 8px; }

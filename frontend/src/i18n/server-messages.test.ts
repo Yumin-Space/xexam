@@ -530,7 +530,7 @@ test('v0.7: the refusal of the old 3- / 4-column layouts is translated', () => {
     localizeServerMessage(msg, 'en'),
     'Only the six-column layout can be imported (columns A–C: the question in English, Chinese and Japanese; columns D–F: the answer in English, Chinese and Japanese). This file uses the old three- or four-column layout. Rewrite it in the six-column layout and import it again.',
   );
-  assert.match(localizeServerMessage(msg, 'ja'), /^取り込めるのは 6 列形式だけです/);
+  assert.match(localizeServerMessage(msg, 'ja'), /^インポートできるのは 6 列形式だけです/);
 });
 
 test('concrete translations', () => {

@@ -28,7 +28,7 @@
 import '../styles/ai-settings.css';
 import {
   clearAiData, enableAi, fetchAiSettings, fetchAiStatus, fetchAiUser, fetchAiUserChat, fetchAiUsers, fetchLimits, fetchUsage,
-  listModels, resumeAiUser, saveAiSettings, saveLimits, suspendAiUser, verifyAi,
+  listModels, resumeAiUser, saveAiSettings, saveLimits, setAiAdminFree, setAiUserFeatures, suspendAiUser, verifyAi,
 } from '../api/ai.ts';
 import { fetchAuthState } from '../api/auth.ts';
 import { ApiError, isSignInError } from '../api/client.ts';
@@ -36,11 +36,14 @@ import { aiBadge } from '../components/ai-badge.ts';
 import { markdownEl } from '../components/ai-render.ts';
 import { pageHead } from '../components/common.ts';
 import { field } from '../components/fields.ts';
+import { pagedTable, type PtColumn } from '../components/paged-table.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { miniSwitch } from '../components/mini-switch.ts';
 import { iconButton } from '../components/icon-button.ts';
 import { roleName } from '../components/shell.ts';
 import { holdTip, infoTip } from '../components/tooltip.ts';
+import { usageBarCard, usageLineCard } from '../components/usage-charts.ts';
+import { formatBig, modelRows, purposeRows } from '../domain/usage-bars.ts';
 import { fmtAiTime, footerOf } from '../domain/ai-chat.ts';
 import { chatTitleEl, chatTitleText, userBody, whoLine } from './ai.ts';
 import { renderForbidden } from './forbidden.ts';
@@ -49,20 +52,25 @@ import {
   DEFAULT_LIMITS, defaultUrl, hostOf, modelCollapsed,
   fieldOfError, fieldsOf, filterModels, FORMATS, formOf, GATEWAY_AUTHS, GATEWAY_PLACEHOLDER, hashOfTab, headerClash, httpWarning,
   inferFormat, isDirty, keyAfter, LIMIT_KEYS, CAP_KEYS, connectionSaved, focusAfterClear, limitIssue, limitsFormOf,
-  limitsUpdate, modelKind, needsReentry, orderModels, PROVIDERS, rangeOf, replyTokensLine, requiredKeysSaved, retentionOf,
+  limitsUpdate, modelKind, needsReentry, orderModels, PROVIDERS, rangeOf, requiredKeysSaved, retentionOf,
   savedToastKey, serviceCause, SERVER_KEYS, statusChips, tabOfHash, testLineOf, todayCell, urlAfterSwitch, type AiTab, type ConnForm,
   type LimitKey, type LimitRanges, type LimitsForm, type LimitValues, type ModelKind, type SettingsField, type SvcCause, type SvcProbe,
+  AS_KEYS, BANK_KEYS, compBad, compTotal, genCallLive,
+  jobTime,
 } from '../domain/ai-settings.ts';
-import { badgeState } from '../domain/badge-state.ts';
-import { aiCodeText, errorText } from '../i18n/errors.ts';
-import { localeTag, t, tn, type MsgKey } from '../i18n/index.ts';
+import { ALL_ON, FEATURE_GROUPS, offList, readFeatures, type FeatureKey } from '../domain/ai-features.ts';
+import { badgeState, serviceReason } from '../domain/badge-state.ts';
+import { aiCodeText, errorText, jobReasonText } from '../i18n/errors.ts';
+import { localeTag, t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
 import { clockText, waitText } from '../i18n/wait.ts';
 import { onRouteChange, onSignedIn, refreshAi, render } from '../state/actions.ts';
+import { setAiFreeMode } from '../state/ai.ts';
 import { S, onClearUserData } from '../state/store.ts';
 import type {
   AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiKeySlot, AiLimitsAnswer, AiMessage, AiModels, AiProvider, AiService,
-  AiSettings, AiUsage, AiVerify,
+  AiSettings, AiUsage, AiVerify, GenAdminJob,
 } from '../types/api.ts';
+import { fetchAdminGen } from '../api/ai-gen.ts';
 import { ask, dialogTitleId } from '../utils/dialog.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
 import { matches, PHONE_MQ, TOUCH_MQ } from '../utils/media.ts';
@@ -76,9 +84,15 @@ const GATEWAY_AUTH_LABEL: Record<string, string> = {
 };
 const LIMIT_LABEL: Record<LimitKey, MsgKey> = {
   callsPerMinute: 'ai.set.limit.callsPerMinute', callsPerHour: 'ai.set.limit.callsPerHour', callsPerDay: 'ai.set.limit.callsPerDay',
-  replyMaxChars: 'ai.set.limit.replyMaxChars', memoryChars: 'ai.set.limit.memoryChars',
+  replyMaxTokens: 'ai.set.limit.replyMaxTokens', memoryTokens: 'ai.set.limit.memoryTokens',
   perUserRunning: 'ai.set.limit.perUserRunning', globalRunning: 'ai.set.limit.globalRunning', chatsPerUser: 'ai.set.limit.chatsPerUser',
   messagesPerChat: 'ai.set.limit.messagesPerChat', memoriesPerUser: 'ai.set.limit.memoriesPerUser',
+  genPerDay: 'ai.set.limit.genPerDay', genAdminsExempt: 'ai.set.limit.genAdminsExempt', genMinSource: 'ai.set.limit.genMinSource',
+  genMinWrong: 'ai.set.limit.genMinWrong', genBankSingle: 'ai.set.limit.genSingle', genBankMulti: 'ai.set.limit.genMulti',
+  genWrongSingle: 'ai.set.limit.genSingle', genWrongMulti: 'ai.set.limit.genMulti', genCallTokens: 'ai.set.limit.genCallTokens',
+  genRunning: 'ai.set.limit.genRunning', importMaxMb: 'ai.set.limit.importMaxMb', importMaxQuestions: 'ai.set.limit.importMaxQuestions',
+  genMaxCalls: 'ai.set.limit.genMaxCalls', importMaxCalls: 'ai.set.limit.importMaxCalls', recognizeMaxCalls: 'ai.set.limit.recognizeMaxCalls',
+  genUnlimited: 'ai.set.limit.unlimited', importUnlimited: 'ai.set.limit.unlimited',
 };
 /** The category tabs (FB-6, AS-9): the icon, and the full and the short label (the short one under PHONE) */
 const TABS: Record<AiTab, { icon: MiniIcon; full: MsgKey; short: MsgKey }> = {
@@ -86,8 +100,11 @@ const TABS: Record<AiTab, { icon: MiniIcon; full: MsgKey; short: MsgKey }> = {
   users: { icon: 'users', full: 'ai.set.tab.users', short: 'ai.set.tab.usersShort' },
   usage: { icon: 'chart', full: 'ai.set.tab.usage', short: 'ai.set.tab.usageShort' },
   safety: { icon: 'shield', full: 'ai.set.tab.safety', short: 'ai.set.tab.safetyShort' },
+  gen: { icon: 'aiGen', full: 'ai.set.tab.gen', short: 'ai.set.tab.genShort' },
 };
 const PERIODS = [7, 30, 90, 365] as const;
+/** The six features of the usage chart (UC-1), in the order of the bars */
+const PURPOSES = ['chat', 'hint', 'explain', 'summary', 'generate', 'import'] as const;
 /** The tag of a listed model that is probably not a chat model (round 2) */
 const KIND_LABEL: Record<ModelKind, MsgKey> = {
   rerank: 'ai.set.kind.rerank', embedding: 'ai.set.kind.embedding', guard: 'ai.set.kind.guard', image: 'ai.set.kind.image',
@@ -162,6 +179,12 @@ let limitsError: unknown = null;
 let limitsFieldErr: { key: LimitKey; text: string } | null = null;
 let limitsSaveError: string | null = null;
 let limitsSaving = false;
+/** v1.1: the recent AI bank jobs of the AI banks tab (GS-2 item 5) and the saving of a user's feature boxes (FP-4) */
+let genJobs: GenAdminJob[] | null = null;
+let genJobsError: unknown = null;
+let featBusy: number | null = null;
+const featErr = new Map<number, string>();
+let featSaved = '';
 
 function forgetTyped(): void {
   if (form) form = { ...form, keys: { apiKey: '', gatewayKey: '' }, remove: { apiKey: false, gatewayKey: false } };
@@ -383,6 +406,7 @@ async function load(): Promise<void> {
     void loadUsers();
     void loadUsage();
     void loadLimits();
+    void loadGenJobs();
     // The models are listed by themselves when an administrator has saved the connection (not for the untouched
     // defaults of a fresh instance) and no model is chosen yet
     if (!s.model && connectionSaved(s) && requiredKeysSaved(s) && !s.keyProblem && !models) void detectModels();
@@ -417,6 +441,17 @@ async function loadUsage(): Promise<void> {
   } catch (e) {
     if (aiDown(e)) return;
     usageError = e;
+  }
+  if (onPage()) render();
+}
+
+async function loadGenJobs(): Promise<void> {
+  try {
+    genJobs = await fetchAdminGen(50);
+    genJobsError = null;
+  } catch (e) {
+    if (aiDown(e)) return;
+    genJobsError = e;
   }
   if (onPage()) render();
 }
@@ -616,13 +651,18 @@ async function saveRetention(): Promise<void> {
 }
 
 /** The text under a limit field: the allowed range, or (for the caps) that a longer period cannot allow fewer requests */
-function limitFieldText(key: LimitKey, kind: 'range' | 'order', ranges: LimitRanges): string {
+function limitFieldText(key: LimitKey, kind: 'range' | 'order' | 'comp', ranges: LimitRanges): string {
   if (kind === 'order') return t('ai.err.limitOrder');
+  if (kind === 'comp') return t('ai.set.gen.totalBad');
   const [min, max] = rangeOf(ranges, key);
   return t('ai.set.limitBad', { min: num(min), max: num(max) });
 }
 
-async function saveLimitsForm(): Promise<void> {
+/** The tab whose Save is running (the toast differs) */
+let limitsTab: 'safety' | 'gen' = 'safety';
+
+async function saveLimitsForm(tab: 'safety' | 'gen' = 'safety'): Promise<void> {
+  limitsTab = tab;
   const l = limits;
   const f = limitsForm;
   if (!l || !f || limitsSaving) return;
@@ -653,19 +693,21 @@ async function saveLimitsForm(): Promise<void> {
   try {
     limits = await saveLimits(u);
     limitsForm = limitsFormOf(limits.limits);
-    toast(t('ai.set.limitsSaved'));
+    toast(t(limitsTab === 'gen' ? 'ai.set.gen.saved' : 'ai.set.limitsSaved'));
     // The administrator's own block follows the new caps at once (C-7): force a status read, not the cached one
     void refreshAi(true);
     // The counts of the users (and their "today / cap" figures) are measured against the new caps
     void loadUsers();
     void loadUsage();
+    void loadGenJobs();
   } catch (e) {
     // The service names the field of a refused value; an order problem without a field belongs under the hourly one
     const named = e instanceof ApiError ? (LIMIT_KEYS as readonly string[]).find((k) => k === e.field) as LimitKey | undefined : undefined;
     const order = e instanceof ApiError && e.code === 'ai.limitOrder';
+    const comp = e instanceof ApiError && e.code === 'ai.genCount';
     const key = named ?? (order ? 'callsPerHour' : undefined);
     if (key) {
-      limitsFieldErr = { key, text: limitFieldText(key, order ? 'order' : 'range', l.ranges) };
+      limitsFieldErr = { key, text: limitFieldText(key, comp ? 'comp' : order ? 'order' : 'range', l.ranges) };
     } else if (!aiDown(e)) {
       limitsSaveError = errorText(e);
     }
@@ -1065,8 +1107,12 @@ function testSection(s: AiSettings, dirty: boolean): HTMLElement {
 
 /** The badge of a listed user (one rule for every badge, domain/badge-state.ts): this page is shown only while ai-service is
  *  connected, so AI+ is available exactly when the AI+ feature is on */
-function badgeFor(u: Pick<AiAdminUserRow, 'role' | 'ai' | 'suspended'>, enabled: boolean): HTMLElement | null {
-  return aiBadge(badgeState({ role: u.role, service: u.ai, suspended: u.suspended === true, available: enabled }), { admin: true });
+function badgeFor(u: Pick<AiAdminUserRow, 'role' | 'ai' | 'suspended' | 'features'>, enabled: boolean): HTMLElement | null {
+  const why = serviceReason(S.aiService);
+  const off = u.role === 'admin' ? [] : offList(readFeatures(u.features));
+  return aiBadge(badgeState({
+    role: u.role, service: u.ai, suspended: u.suspended === true, available: enabled, ...(why ? { unavailableReason: why } : {}),
+  }), { admin: true, off });
 }
 
 /** The text of a user's cap tag when tapped: who, which cap, and when the user can use AI again */
@@ -1104,6 +1150,78 @@ function callsCell(u: AiAdminUserRow): HTMLElement {
   return td;
 }
 
+/** The feature boxes of one user (FP-4): two groups, each on one row; administrators' are ticked and disabled */
+function featuresLine(u: AiAdminUserRow): HTMLElement {
+  const admin = u.role === 'admin';
+  const f = admin ? ALL_ON : readFeatures(u.features);
+  const busy = featBusy === u.id;
+  const box = (k: FeatureKey): HTMLElement => {
+    const full = t(`ai.feature.${k}` as MsgKey);
+    const input = h('input', {
+      type: 'checkbox', class: 'ais-fbox', id: `ais-feat-${u.id}-${k}`, checked: f[k], disabled: admin || busy,
+      'aria-label': `${full}: ${u.username}`, onchange: () => void setFeature(u, k, input.checked),
+    });
+    return h('label', { class: 'ais-fl', title: full }, input, h('span', null, t(`ai.feature.${k}.short` as MsgKey)));
+  };
+  const colon = uiLang() === 'en' ? ':' : '：';
+  const err = featErr.get(u.id);
+  return h('div', { class: 'ais-feats', role: 'group', 'aria-label': `${t('ai.set.feat.title')}: ${u.username}`, title: admin ? t('ai.set.feat.adminAll') : null },
+    h('span', { class: 'ais-feat-t' }, t('ai.set.feat.title')),
+    h('div', { class: 'ais-fg' }, FEATURE_GROUPS.main.map(box)),
+    h('div', { class: 'ais-fg ais-fg-banks' }, h('span', { class: 'ais-fg-l' }, t('ai.feature.group.banks') + colon), FEATURE_GROUPS.banks.map(box)),
+    admin ? h('span', { class: 'sr-only' }, t('ai.set.feat.adminAll')) : null,
+    admin ? freeSwitch(u) : null,
+    err ? h('p', { class: 'ais-ferr ais-feat-err', role: 'alert' }, err) : null);
+}
+
+/** A-OWNER-21: an administrator row's AI Chat free mode switch (ordinary users never get one); saved at once */
+function freeSwitch(u: AiAdminUserRow): HTMLElement {
+  const on = u.freeMode === true;
+  const input = h('input', {
+    type: 'checkbox', role: 'switch', class: 'ais-fbox', id: `ais-free-${u.id}`, checked: on, disabled: featBusy != null,
+    'aria-label': `${t('ai.set.free')}: ${u.username}`, onchange: () => void setFree(u, input.checked),
+  });
+  return h('div', { class: 'ais-fg ais-fg-free' }, h('label', { class: 'ais-fl', title: t('ai.set.free.tip') }, input, h('span', null, t('ai.set.free'))));
+}
+
+async function setFree(u: AiAdminUserRow, on: boolean): Promise<void> {
+  if (featBusy != null) return;
+  featBusy = u.id;
+  featErr.delete(u.id);
+  render();
+  try {
+    const row = await setAiAdminFree(u.id, on);
+    if (users) users = users.map((x) => (x.id === u.id ? { ...x, ...row } : x));
+    featSaved = t('ai.set.free.saved', { name: u.username, state: t(row.freeMode ? 'settings.on' : 'settings.off') });
+    if (u.username === S.user?.username) setAiFreeMode(row.freeMode === true);
+  } catch (e) {
+    if (!aiDown(e)) featErr.set(u.id, t('ai.set.feat.failed', { reason: errorText(e) }));
+  }
+  featBusy = null;
+  if (onPage()) render();
+  document.getElementById(`ais-free-${u.id}`)?.focus();
+}
+
+/** One box changed: all six values go to the server at once; a failure puts the box back and shows the error under the line */
+async function setFeature(u: AiAdminUserRow, key: FeatureKey, on: boolean): Promise<void> {
+  if (featBusy != null) return;
+  const next = { ...readFeatures(u.features), [key]: on };
+  featBusy = u.id;
+  featErr.delete(u.id);
+  render();
+  try {
+    const row = await setAiUserFeatures(u.id, next);
+    if (users) users = users.map((x) => (x.id === u.id ? { ...x, ...row } : x));
+    featSaved = t('ai.set.feat.saved', { name: u.username });
+    void refreshAi(true);
+  } catch (e) {
+    if (!aiDown(e)) featErr.set(u.id, t('ai.set.feat.failed', { reason: errorText(e) }));
+  }
+  featBusy = null;
+  if (onPage()) render();
+  document.getElementById(`ais-feat-${u.id}-${key}`)?.focus();
+}
+
 /**
  * The users with AI+ (AS-2). Wider than 900 px a table (the name wraps, the role tag next to a short "Always on" tag, the
  * calls line, a narrow last column of icon buttons); up to 900 px every row is a card of three lines: name, badge and the
@@ -1121,7 +1239,6 @@ function usersSection(s: AiSettings): HTMLElement {
   } else {
     // Explicit table roles: up to 900 px the CSS turns the rows into cards (display: grid), which would drop the table
     // semantics in some browsers. `data-l` is the column name shown in front of a value inside a card.
-    const col = (key: MsgKey, cls = ''): HTMLElement => h('th', { scope: 'col', role: 'columnheader', class: cls || null }, t(key));
     const cell = (label: MsgKey, cls: string, ...kids: Child[]): HTMLElement => h('td', { role: 'cell', class: cls || null, 'data-l': t(label) }, ...kids);
     const row = (u: AiAdminUserRow): HTMLElement => {
       const off = u.suspended === true;
@@ -1157,18 +1274,35 @@ function usersSection(s: AiSettings): HTMLElement {
         callsCell(u),
         h('td', { role: 'cell', class: 'ais-acts' }, view, fn));
     };
-    body = h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-users', role: 'table' },
-      h('thead', { role: 'rowgroup' }, h('tr', { role: 'row' },
-        // The name and the AI+ badge in columns of their own, so names of any length line up (owner's request)
-        col('ai.set.col.user'), col('ai.set.col.badge'), col('ai.set.col.role'), col('ai.set.col.function'),
-        col('ai.set.user.chats', 'n ais-w'), col('ai.set.user.memories', 'n ais-w'), col('ai.set.user.lastUsed', 'ais-w'),
-        h('th', { scope: 'col', role: 'columnheader', class: 'ais-cline' }, h('span', { class: 'sr-only' }, `${t('ai.set.user.chats')} · ${t('ai.set.user.memories')} · ${t('ai.set.user.lastUsed')}`)),
-        col('ai.set.col.calls'),
-        h('th', { scope: 'col', role: 'columnheader', class: 'ais-acts' }, h('span', { class: 'sr-only' }, t('ai.set.user.view'))))),
-      h('tbody', { role: 'rowgroup' }, users.map(row))));
+    const c = (key: string, label: MsgKey, cls = '', text = false): PtColumn => ({ key, label: t(label), cls, text });
+    const plain = (key: string, label: MsgKey, cls = ''): PtColumn => ({ key, label: t(label), cls, plain: true });
+    const numCmp = (f: (r: AiAdminUserRow) => number) => (a: AiAdminUserRow, b: AiAdminUserRow): number => f(a) - f(b);
+    body = pagedTable<AiAdminUserRow>({
+      id: 'ai-users', rows: users, name: (u) => u.username, cardsAt: 900, roles: true, tableClass: 'ais-table ais-users',
+      defaultSort: { key: 'user', dir: 'asc' },
+      // The name and the AI+ badge in columns of their own, so names of any length line up (owner's request)
+      columns: [
+        c('user', 'ai.set.col.user', '', true), plain('badge', 'ai.set.col.badge'), c('role', 'ai.set.col.role', '', true), plain('fn', 'ai.set.col.function'),
+        c('chats', 'ai.set.user.chats', 'n ais-w'), c('memories', 'ai.set.user.memories', 'n ais-w'), c('last', 'ai.set.user.lastUsed', 'ais-w'),
+        { key: 'line', label: `${t('ai.set.user.chats')} · ${t('ai.set.user.memories')} · ${t('ai.set.user.lastUsed')}`, cls: 'ais-cline', plain: true, srOnly: true },
+        plain('calls', 'ai.set.col.calls'),
+        { key: 'acts', label: t('ai.set.user.view'), cls: 'ais-acts', plain: true, srOnly: true },
+      ],
+      cmp: {
+        user: (a, b) => a.username.localeCompare(b.username, localeTag()),
+        role: (a, b) => roleName(a.role).localeCompare(roleName(b.role), localeTag()),
+        chats: numCmp((u) => u.chats), memories: numCmp((u) => u.memories), last: numCmp((u) => u.lastUsedAt ?? 0),
+      },
+      renderRow: (u) => [row(u), u.exists
+        ? h('tr', { role: 'row', class: 'ais-featrow' }, h('td', { role: 'cell', colspan: '10' }, featuresLine(u)))
+        : null],
+    });
   }
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-users-h' },
-    h('h2', { id: 'ais-users-h' }, t('ai.set.sec.users')), body);
+    h('h2', { id: 'ais-users-h' }, t('ai.set.sec.users')),
+    // the polite text after a features change (no toast, FP-4)
+    h('p', { class: 'ais-note ais-feat-saved', role: 'status', 'aria-live': 'polite' }, featSaved),
+    body);
 }
 
 function viewerMessage(m: AiMessage): HTMLElement {
@@ -1422,12 +1556,21 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
 
 // ---------------------------------------------------------------- usage
 
-type Counts = { calls: number; tokensIn: number; tokensOut: number; errors: number; tokensCached: number };
+type Counts = { calls: number; tokensIn: number; tokensOut: number; errors: number; tokensCached: number; tokensCacheWrite?: number };
+
+/** A-OWNER-74: "Cache: read X / written Y tokens"; "—" for a figure the provider never reported (0 or missing) */
+function cacheText(c: { tokensCached?: number; tokensCacheWrite?: number }): string {
+  const v = (n: number | undefined): string => (n ? num(n) : '—');
+  return t('ai.set.cacheLine', { r: v(c.tokensCached), w: v(c.tokensCacheWrite) });
+}
 
 /** The five count cells of a usage row (hidden in the card layout, where `sumCell` says the same in one line) */
-function countsCells(c: Counts): HTMLElement[] {
-  return [h('td', { class: 'n ais-c' }, num(c.calls)), h('td', { class: 'n ais-c' }, num(c.tokensIn)), h('td', { class: 'n ais-c' }, num(c.tokensOut)),
-    h('td', { class: 'n ais-c' }, num(c.tokensCached)), h('td', { class: 'n ais-c' }, num(c.errors))];
+function countsCells(c: Counts, mini = false): HTMLElement[] {
+  // The mini table of phones (A-OWNER-59) shows compact figures (1.2K, 3.4M); the exact number stays in the tip and the wide table
+  const cell = (n: number): HTMLElement => (mini
+    ? h('td', { class: 'n ais-c', title: num(n) }, h('span', { class: 'ais-x' }, num(n)), h('span', { class: 'ais-k', 'aria-label': num(n) }, formatBig(n)))
+    : h('td', { class: 'n ais-c' }, num(n)));
+  return [cell(c.calls), cell(c.tokensIn), cell(c.tokensOut), cell(c.tokensCached), cell(c.errors)];
 }
 
 const countsHead = (): HTMLElement[] => [
@@ -1443,6 +1586,33 @@ function sumCell(c: Counts, today?: string): HTMLElement {
     c.tokensCached ? t('ai.set.usage.sumCached', { n: num(c.tokensCached) }) : '',
     c.errors ? t('ai.set.usage.sumErr', { n: num(c.errors) }) : '',
     today ? t('ai.set.usage.sumToday', { v: today }) : '');
+}
+
+type UsageUser = AiUsage['byUser'][number];
+
+/** v1.1 (L-54): the "by user" table with a search box, sortable columns and 10 users per page */
+function usageUsersTable(rows: UsageUser[], perDay: number | undefined): HTMLElement {
+  const nameOf = (r: UsageUser): string => (r.userId == null ? t('ai.set.deletedUsers') : r.username ?? `#${r.userId}`);
+  const numCmp = (f: (r: UsageUser) => number) => (a: UsageUser, b: UsageUser): number => f(a) - f(b);
+  const col = (key: string, label: MsgKey, cls: string, text = false): PtColumn => ({ key, label: t(label), cls, text });
+  return pagedTable<UsageUser>({
+    id: 'usage-users', rows, name: nameOf, cardsAt: 'mini', tableClass: 'ais-table ais-mini',
+    defaultSort: { key: 'calls', dir: 'desc' },
+    columns: [
+      col('user', 'ai.set.col.user', '', true), col('calls', 'ai.set.calls', 'n ais-c'), col('tin', 'ai.set.tokensIn', 'n ais-c'),
+      col('tout', 'ai.set.tokensOut', 'n ais-c'), { ...col('cached', 'ai.set.tokensCached', 'n ais-c'), plain: true },
+      col('errors', 'ai.set.errors', 'n ais-c'), col('today', 'ai.set.col.today', 'n ais-c'), col('last', 'ai.set.user.lastUsed', 'ais-whenh'),
+    ],
+    cmp: {
+      user: (a, b) => nameOf(a).localeCompare(nameOf(b), localeTag()),
+      calls: numCmp((r) => r.calls), tin: numCmp((r) => r.tokensIn), tout: numCmp((r) => r.tokensOut), errors: numCmp((r) => r.errors),
+      today: numCmp((r) => r.today ?? -1), last: numCmp((r) => r.lastAt ?? 0),
+    },
+    renderRow: (r) => h('tr', null,
+      h('th', { scope: 'row', title: cacheText(r) }, nameOf(r)), countsCells(r, true),
+      h('td', { class: 'n ais-c ais-today' }, todayCell(r.today, perDay)),
+      h('td', { class: 'ais-when' }, when(r.lastAt))),
+  });
 }
 
 function usageSection(): HTMLElement {
@@ -1465,30 +1635,27 @@ function usageSection(): HTMLElement {
     const tiles = h('dl', { class: 'ais-totals' },
       ([['ai.set.calls', u.totals.calls], ['ai.set.tokensIn', u.totals.tokensIn], ['ai.set.tokensOut', u.totals.tokensOut], ['ai.set.tokensCached', u.totals.tokensCached], ['ai.set.errors', u.totals.errors]] as Array<[MsgKey, number]>)
         .map(([k, v]) => h('div', { class: 'ais-total' }, h('dt', null, t(k)), h('dd', { class: 'num' }, num(v)))));
+    const cacheNote = h('p', { class: 'ais-note ais-cache' }, cacheText(u.totals));
     // The conversation figures that go with the usage (the owner's "用量跟对话"): the sums over the listed AI+ users
     const conv = users && users.length ? convTotals(users) : null;
     const convs = conv
-      ? h('p', { class: 'ais-note ais-convs' }, t('ai.set.usage.convs', { chats: num(conv.chats), messages: num(conv.messages), memories: num(conv.memories) }))
+      ? h('p', { class: 'ais-note ais-convs' }, t('ai.set.usage.convs', { chats: tn('ai.set.usage.nChats', conv.chats, { n: num(conv.chats) }), messages: tn('ai.set.usage.nMessages', conv.messages, { n: num(conv.messages) }), memories: tn('ai.set.usage.nMemories', conv.memories, { n: num(conv.memories) }) }))
       : null;
     const perDay = limits?.limits.callsPerDay;
     if (!u.totals.calls) {
-      body = [tiles, convs, h('p', { class: 'ais-note' }, t('ai.set.noUsage'))];
+      body = [tiles, cacheNote, convs, h('p', { class: 'ais-note' }, t('ai.set.noUsage'))];
     } else {
       const maxCalls = Math.max(0, ...u.byPeriod.map((p) => p.calls));
       body = [
         tiles,
+        cacheNote,
         convs,
         h('h3', { class: 'ais-h3' }, t('ai.set.byUser')),
-        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards' },
-          h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.col.user')), countsHead(),
-            h('th', { scope: 'col', class: 'n ais-c' }, t('ai.set.col.today')), h('th', { scope: 'col', class: 'ais-whenh' }, t('ai.set.user.lastUsed')))),
-          h('tbody', null, u.byUser.map((r) => h('tr', null,
-            h('th', { scope: 'row' }, r.userId == null ? t('ai.set.deletedUsers') : r.username ?? `#${r.userId}`), countsCells(r),
-            h('td', { class: 'n ais-c' }, todayCell(r.today, perDay)),
-            h('td', { class: 'ais-when' }, when(r.lastAt)),
-            sumCell(r, r.today == null ? undefined : todayCell(r.today, perDay))))))),
-        h('h3', { class: 'ais-h3' }, t('ai.set.byModel')),
-        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards' },
+        usageUsersTable(u.byUser, perDay),
+        // v1.1 (UC-1, A-OWNER-39 / 40): vertical bars by model, calls or stacked tokens; the model lists are the "other" bar;
+        // the numbers stay in the visually hidden table
+        usageBarCard({ pref: 'model', kind: 'model', maxLabel: 18, exact: num, rows: modelRows(u.byModel, t('ai.set.uc.other')) }),
+        h('div', { class: 'ais-tablewrap sr-only' }, h('table', { class: 'ais-table ais-cards' },
           h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.col.model')), countsHead())),
           // The model-listing calls are stored without a model (kind 'models'): labelled like "Deleted users" above
           h('tbody', null, u.byModel.map((r) => h('tr', null,
@@ -1496,16 +1663,20 @@ function usageSection(): HTMLElement {
             countsCells(r), sumCell(r)))))),
         // v0.9: what the calls were for (AI Chat, hint, explanation, summary), in the server's order
         u.byPurpose
-          ? h('h3', { class: 'ais-h3' }, t('ai.set.usage.byPurpose'))
+          ? usageBarCard({
+            pref: 'purpose', kind: 'purpose', maxLabel: 14, exact: num,
+            rows: purposeRows(PURPOSES, u.byPurpose, u.totals, (k) => t(`ai.set.usage.purpose.${k}` as MsgKey), t('ai.set.uc.other')),
+          })
           : null,
         u.byPurpose
-          ? h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards' },
+          ? h('div', { class: 'ais-tablewrap sr-only' }, h('table', { class: 'ais-table ais-cards' },
             h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.usage.byPurpose')), countsHead())),
             h('tbody', null, u.byPurpose.map((r) => h('tr', null,
               h('th', { scope: 'row' }, t(`ai.set.usage.purpose.${r.purpose}` as MsgKey)), countsCells(r), sumCell(r))))))
           : null,
-        h('h3', { class: 'ais-h3' }, t('ai.set.byPeriod')),
-        h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-cards ais-period' },
+        // A-OWNER-63: the same 调用次数 | Token 数 switch as the bar charts
+        usageLineCard({ unit: u.unit, from: u.from, to: u.to, rows: u.byPeriod, format: num }),
+        h('div', { class: 'ais-tablewrap sr-only' }, h('table', { class: 'ais-table ais-cards ais-period' },
           h('thead', null, h('tr', null,
             h('th', { scope: 'col' }, t(u.unit === 'month' ? 'ai.set.col.month' : 'ai.set.col.day')),
             h('th', { scope: 'col', class: 'ais-barcol' }, h('span', { class: 'sr-only' }, t('ai.set.calls'))),
@@ -1557,11 +1728,6 @@ function limitInput(k: LimitKey, f: LimitsForm, bad: boolean, describedBy: strin
     value: f[k], disabled: limitsSaving, 'aria-describedby': describedBy, 'aria-invalid': bad ? 'true' : null,
     oninput: () => {
       if (limitsForm) limitsForm = { ...limitsForm, [k]: input.value };
-      // The live line of the answer length follows the typed number (no redraw: the caret stays)
-      if (k === 'replyMaxChars') {
-        const live = document.getElementById('ai-lim-replyMaxChars-live');
-        if (live) live.textContent = replyLine(input.value);
-      }
     },
   });
   return input;
@@ -1590,13 +1756,7 @@ function capsGroup(l: AiLimitsAnswer, f: LimitsForm): HTMLElement {
 /** The default of a limit: the service's own when it sent one, else the spec's */
 const defOf = (l: AiLimitsAnswer, k: LimitKey): number => (l.defaults as LimitValues)[k] ?? DEFAULT_LIMITS[k];
 
-/** The live line under the answer length: what the typed number is as max_tokens (empty while it is not a usable number) */
-function replyLine(text: string): string {
-  const v = replyTokensLine(text, limits?.ranges);
-  return v ? t('ai.set.limit.replyTokens', { zh: num(v.zh), en: num(v.en) }) : '';
-}
-
-/** FB-5 (revised): the length of one answer and of one memory, in characters, between the caps and the server limits */
+/** FB-5 (revised): the length of one answer and of one memory, in tokens, between the caps and the server limits */
 function lengthGroup(l: AiLimitsAnswer, f: LimitsForm): HTMLElement {
   const tip = infoTip('ai-length-tip', t('ai.set.limits.lengthTipBtn'), t('ai.set.limits.lengthTip'));
   const field = (k: LimitKey, extra: Child[], describedBy: string): HTMLElement => {
@@ -1611,13 +1771,22 @@ function lengthGroup(l: AiLimitsAnswer, f: LimitsForm): HTMLElement {
       extra,
       bad ? h('p', { class: 'ais-ferr', role: 'alert' }, limitsFieldErr?.text ?? '') : null);
   };
-  const hint = h('p', { class: 'fld-hint', id: 'ai-lim-replyMaxChars-hint2' }, t('ai.set.limit.replyMaxCharsHint'));
-  const live = h('p', { class: 'fld-hint ais-live', id: 'ai-lim-replyMaxChars-live', 'aria-live': 'polite' }, replyLine(f.replyMaxChars));
   return h('div', { class: 'ais-subgroup ais-length-group', role: 'group', 'aria-labelledby': 'ais-length-h' },
     h('h3', { class: 'ais-h3', id: 'ais-length-h' }, t('ai.set.limits.length'), tip.el),
     h('div', { class: 'ais-lengths' },
-      field('replyMaxChars', [hint, live], 'ai-lim-replyMaxChars-hint2 ai-lim-replyMaxChars-live'),
-      field('memoryChars', [], 'ai-length-tip')));
+      field('replyMaxTokens', [], 'ai-length-tip'),
+      field('memoryTokens', [], 'ai-length-tip')));
+}
+
+/** Fills the defaults of `keys` into the form (not saved until Save); the other tab's fields keep what they hold */
+function resetKeys(keys: readonly LimitKey[]): void {
+  if (!limits || !limitsForm) return;
+  const d = limitsFormOf(limits.defaults);
+  const next = { ...limitsForm };
+  for (const k of keys) next[k] = d[k];
+  limitsForm = next;
+  limitsFieldErr = null;
+  render();
 }
 
 function limitsSection(): HTMLElement {
@@ -1656,18 +1825,202 @@ function limitsSection(): HTMLElement {
       h('button', { class: 'btn primary', id: 'ai-limits-save', type: 'submit', disabled: limitsSaving }, t(limitsSaving ? 'common.saving' : 'ai.set.save')),
       h('button', {
         class: 'btn', id: 'ai-limits-reset', type: 'button', disabled: limitsSaving,
-        onclick: () => {
-          if (!limits) return;
-          limitsForm = limitsFormOf(limits.defaults);
-          limitsFieldErr = null;
-          render();
-        },
+        onclick: () => resetKeys(AS_KEYS),
       }, t('ai.set.limitsReset'))));
   }
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-lim-h' },
     h('h2', { id: 'ais-lim-h' }, t('ai.set.sec.limits')),
     h('p', { class: 'ais-lead' }, t('ai.set.limitsLeadV10')),
     body);
+}
+
+// ---------------------------------------------------------------- the AI banks tab (GS-2, IS-2, IS-3)
+
+/** A-OWNER-50: either "unlimited" switch also lifts the answer length per call (a shared box), so it greys with them */
+function syncCallLength(): void {
+  const el = document.getElementById('ai-lim-genCallTokens') as HTMLInputElement | null;
+  if (el && limitsForm) el.disabled = limitsSaving || limitsForm.genUnlimited === '1' || limitsForm.importUnlimited === '1';
+}
+
+/** One numeric field of the AI banks tab: label, input, the range / hint line and its error */
+function genField(k: LimitKey, l: AiLimitsAnswer, f: LimitsForm, hintKey: MsgKey | null, extra: Child[] = [], unlimitedKey?: LimitKey, showSwitch = true): HTMLElement {
+  const [min, max] = rangeOf(l.ranges, k);
+  const def = defOf(l, k);
+  const bad = limitsFieldErr?.key === k;
+  const input = limitInput(k, f, bad, `ai-lim-${k}-hint`);
+  if (k === 'genCallTokens' && (f.genUnlimited === '1' || f.importUnlimited === '1')) input.disabled = true;
+  // A-OWNER-45: the "unlimited" switch greys the number box (the value is kept)
+  let sw: HTMLElement | null = null;
+  if (unlimitedKey) {
+    const uk = unlimitedKey;
+    const on = f[uk] === '1';
+    input.disabled = limitsSaving || on;
+    if (showSwitch) {
+    const box = h('input', {
+      type: 'checkbox', id: `ai-lim-${uk}`, checked: on, disabled: limitsSaving,
+      onchange: () => {
+        if (limitsForm) limitsForm = { ...limitsForm, [uk]: box.checked ? '1' : '0' };
+        input.disabled = limitsSaving || box.checked;
+        syncCallLength();
+        // The import switch also covers the recognition box
+        if (uk === 'importUnlimited') {
+          const rec = document.getElementById('ai-lim-recognizeMaxCalls') as HTMLInputElement | null;
+          if (rec) rec.disabled = limitsSaving || box.checked;
+        }
+      },
+    });
+    sw = h('label', { class: 'ais-check', for: box.id }, box, h('span', null, t('ai.set.limit.unlimited')));
+    }
+  }
+  return h('div', { class: 'fld ais-genfld' },
+    h('label', { class: 'fld-l', for: input.id }, t(LIMIT_LABEL[k])),
+    sw ? h('div', { class: 'ais-numrow' }, input, sw) : input,
+    h('p', { class: 'fld-hint', id: `ai-lim-${k}-hint` }, hintKey ? t(hintKey) + ' ' : '', t('ai.set.limitHint', { min: num(min), max: num(max), def: num(def) })),
+    unlimitedKey && showSwitch ? h('p', { class: 'fld-hint' }, t('ai.set.limit.unlimitedHint')) : null,
+    extra,
+    bad && limitsFieldErr?.text ? h('p', { class: 'ais-ferr', role: 'alert' }, limitsFieldErr.text) : null);
+}
+
+/** `单选 [14] 多选 [6] · 共 20 道` of one mode, the total live (red with the rule's text outside 1 .. 100) */
+function compRow(mode: 'bank' | 'wrong', l: AiLimitsAnswer, f: LimitsForm): HTMLElement {
+  const sk: LimitKey = mode === 'bank' ? 'genBankSingle' : 'genWrongSingle';
+  const mk: LimitKey = mode === 'bank' ? 'genBankMulti' : 'genWrongMulti';
+  const sIn = limitInput(sk, f, limitsFieldErr?.key === sk, `ai-comp-${mode}-h`);
+  const mIn = limitInput(mk, f, limitsFieldErr?.key === mk, `ai-comp-${mode}-h`);
+  const total = h('span', { class: 'ais-comp-total', id: `ai-comp-total-${mode}`, 'aria-live': 'polite' });
+  const sync = (): void => {
+    const v = limitsForm ?? f;
+    const bad = compBad(v[sk], v[mk]);
+    const n = compTotal(v[sk], v[mk]);
+    const el = document.getElementById(`ai-comp-total-${mode}`) ?? total;
+    el.classList.toggle('bad', bad);
+    el.textContent = Number.isNaN(n) ? t('ai.set.gen.totalBad') : bad ? `${t('ai.set.gen.total', { n })} · ${t('ai.set.gen.totalBad')}` : t('ai.set.gen.total', { n });
+  };
+  for (const input of [sIn, mIn]) input.addEventListener('input', sync);
+  sync();
+  void l;
+  return h('div', { class: 'ais-comp', role: 'group', 'aria-labelledby': `ai-comp-${mode}-h` },
+    h('div', { class: 'ais-comp-head' },
+      h('span', { class: 'ais-comp-l', id: `ai-comp-${mode}-h` }, t(mode === 'bank' ? 'ai.set.gen.compBank' : 'ai.set.gen.compWrong')),
+      h('span', { class: 'fld-hint ais-comp-hint' }, t(mode === 'bank' ? 'ai.set.gen.compBankHint' : 'ai.set.gen.compWrongHint'))),
+    h('div', { class: 'ais-comp-fields' },
+      h('label', { class: 'ais-comp-f', for: sIn.id }, h('span', null, t('ai.set.limit.genSingle')), sIn),
+      h('label', { class: 'ais-comp-f', for: mIn.id }, h('span', null, t('ai.set.limit.genMulti')), mIn),
+      total));
+}
+
+function genJobsTable(): HTMLElement {
+  if (!genJobs) {
+    return genJobsError
+      ? h('div', { class: 'err', role: 'alert' }, h('p', null, errorText(genJobsError)))
+      : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
+  }
+  if (!genJobs.length) return h('p', { class: 'ais-note' }, t('ai.set.gen.jobsEmpty'));
+  const col = (k: MsgKey, cls = ''): HTMLElement => h('th', { scope: 'col', class: cls || null }, t(k));
+  const state = (j: GenAdminJob): string =>
+    t(`ai.set.gen.state.${j.state}` as MsgKey) + (j.state === 'running' && (j.phase === 'reading' || j.phase === 'confirm') ? ` · ${t(`ai.set.gen.phase.${j.phase}` as MsgKey)}` : '');
+  const source = (j: GenAdminJob): string =>
+    j.source === 'file' ? t('ai.set.gen.source.file', { type: (j.file?.type ?? '').toUpperCase() }) : t(`ai.set.gen.source.${j.source}` as MsgKey);
+  const big = (n: number): string => formatBig(n);
+  const rows = genJobs.map((j) => {
+    const why = j.state === 'failed' || (j.state === 'cancelled' && j.error) ? jobReasonText(j) : null;
+    const whyEl = why ? holdTip(h('span', { class: 'ais-genwhy', tabindex: '0' }, h('span', { class: 'ais-d' }, ' — '), why), why) : null;
+    const cr = j.usage?.tokensCached ?? 0;
+    const cw = j.usage?.tokensCacheWrite ?? 0;
+    const tip = t('ai.set.gen.stats.tip', { calls: num(j.calls), tin: num(j.tokensIn), tout: num(j.tokensOut) })
+      + (cr > 0 || cw > 0 ? ` · ${t('aigen.card.cached', { r: num(cr), w: num(cw) })}` : '');
+    // L-55: icons carry screen-reader names; the whole figure line has one tip (hover / focus / hold)
+    const stats = holdTip(h('span', { class: 'ais-stats', tabindex: '0' },
+      h('span', { class: 'ais-st' }, miniIcon('refresh', 'ais-ji'), h('span', { class: 'sr-only' }, t('ai.set.gen.stats.calls') + ' '), num(j.calls)),
+      h('span', { class: 'ais-st' }, h('span', { class: 'ais-arr', 'aria-hidden': 'true' }, '↓'), h('span', { class: 'sr-only' }, t('ai.set.gen.stats.in') + ' '), big(j.tokensIn)),
+      h('span', { class: 'ais-st' }, h('span', { class: 'ais-arr', 'aria-hidden': 'true' }, '↑'), h('span', { class: 'sr-only' }, t('ai.set.gen.stats.out') + ' '), big(j.tokensOut))), tip);
+    const nameText = j.state === 'done' ? j.name : (j.file?.name ?? j.name);
+    return h('tr', { class: 'ais-genjob ' + j.state },
+      h('td', { class: 'ais-when', 'data-l': t('ai.set.gen.col.at') }, jobTime(j.createdAt)),
+      h('th', { scope: 'row', class: 'ais-uname' }, j.username),
+      h('td', { class: 'ais-gensrc', 'data-l': t('ai.set.gen.col.source') }, source(j)),
+      h('td', { class: 'ais-genname', 'data-l': t('ai.set.gen.col.name') },
+        h('span', { class: 'ais-srcm' }, source(j)), h('span', { class: j.state === 'done' ? 'ais-nm' : 'ais-nm dim' }, nameText)),
+      h('td', { class: 'ais-genst', 'data-l': t('ai.set.gen.col.state') }, h('span', { class: 'ais-jchip ' + j.state }, state(j)), whyEl),
+      h('td', { class: 'n ais-genmade', 'data-l': t('ai.set.gen.col.made') }, `${num(j.made)} / ${num(j.goal)}`,
+        j.skipped && j.skipped.length > 0 ? h('span', { class: 'ais-skipn' }, ' · ' + t('ai.set.gen.skipped', { n: j.skipped.length, list: j.skipped.join(',') })) : null),
+      h('td', { class: 'n ais-gencalls', 'data-l': t('ai.set.gen.col.calls') }, stats));
+  });
+  return h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-genjobs' },
+    h('thead', null, h('tr', null, col('ai.set.gen.col.at'), col('ai.set.gen.col.user'), col('ai.set.gen.col.source'), col('ai.set.gen.col.name'),
+      col('ai.set.gen.col.state'), col('ai.set.gen.col.made', 'n'), col('ai.set.gen.col.calls', 'n'))),
+    h('tbody', null, rows)));
+}
+
+/** The fifth tab, "AI 题库" (GS-2 + IS-2): rules, composition, length, the import card, one Save, the recent jobs */
+function genSection(): HTMLElement[] {
+  const l = limits;
+  const f = limitsForm;
+  if (!l || !f) {
+    return [h('section', { class: 'panel ais-sec' }, limitsError
+      ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.set.limitsErr', { reason: errorText(limitsError) })))
+      : h('p', { class: 'dim', role: 'status' }, t('common.loading')))];
+  }
+  const card = (id: string, title: MsgKey, ...kids: Child[]): HTMLElement =>
+    h('section', { class: 'panel ais-sec ais-gencard', 'aria-labelledby': id }, h('h2', { id }, t(title)), ...kids);
+  // A sub-group inside a card (A-OWNER-49): a small heading and its fields
+  const sub = (id: string, title: MsgKey, ...kids: Child[]): HTMLElement =>
+    h('div', { class: 'ais-subcard', role: 'group', 'aria-labelledby': id }, h('h3', { class: 'ais-subh', id }, t(title)), ...kids);
+  const exempt = f.genAdminsExempt === '1';
+  const exemptBox = h('input', {
+    type: 'checkbox', id: 'ai-lim-genAdminsExempt', checked: exempt, disabled: limitsSaving,
+    onchange: () => {
+      if (limitsForm) limitsForm = { ...limitsForm, genAdminsExempt: exemptBox.checked ? '1' : '0' };
+    },
+  });
+  const tip = infoTip('ai-gen-tip', t('ai.set.tab.gen'), `${t('ai.set.gen.howTip')}\n\n${t('ai.set.imp.howTip')}`, 'ais-pre');
+  const live = h('p', { class: 'fld-hint ais-live', id: 'ai-lim-genCallTokens-live', 'aria-live': 'polite' });
+  const liveText = (text: string): string => {
+    const v = genCallLive(text, l.ranges);
+    return v ? t('ai.set.limit.genCallLive', { q: v.q }) : '';
+  };
+  live.textContent = liveText(f.genCallTokens);
+  const form = h('form', {
+    class: 'ais-genform', novalidate: true, 'aria-busy': limitsSaving ? 'true' : null,
+    onsubmit: (e: SubmitEvent) => {
+      e.preventDefault();
+      void saveLimitsForm('gen');
+    },
+  },
+  card('ais-gen-h', 'ai.set.gen.card',
+    sub('ais-sub-quota', 'ai.set.sub.quota',
+      h('div', { class: 'ais-genrow' },
+        genField('genPerDay', l, f, 'ai.set.limit.genPerDayHint'),
+        h('label', { class: 'ais-check', for: 'ai-lim-genAdminsExempt' }, exemptBox, h('span', null, t('ai.set.limit.genAdminsExempt'))))),
+    sub('ais-sub-source', 'ai.set.sub.source',
+      h('div', { class: 'ais-genrow' },
+        genField('genMinSource', l, f, 'ai.set.limit.genMinSourceHint'),
+        genField('genMinWrong', l, f, null))),
+    sub('ais-sub-comp', 'ai.set.gen.comp', compRow('bank', l, f), compRow('wrong', l, f)),
+    sub('ais-sub-calls', 'ai.set.sub.calls',
+      genField('genCallTokens', l, f, 'ai.set.limit.genCallTokensHint', [live]),
+      genField('genMaxCalls', l, f, 'ai.set.limit.genMaxCallsHint', [], 'genUnlimited'),
+      genField('genRunning', l, f, null))),
+  card('ais-imp-h', 'ai.set.imp.title',
+    sub('ais-sub-file', 'ai.set.sub.file',
+      h('div', { class: 'ais-genrow' },
+        genField('importMaxMb', l, f, 'ai.set.limit.importMaxMbHint'),
+        genField('importMaxQuestions', l, f, 'ai.set.limit.importMaxQuestionsHint'))),
+    sub('ais-sub-impcalls', 'ai.set.sub.calls',
+      genField('recognizeMaxCalls', l, f, 'ai.set.limit.recognizeMaxCallsHint', [], 'importUnlimited', false),
+      genField('importMaxCalls', l, f, 'ai.set.limit.importMaxCallsHint', [], 'importUnlimited')),
+    h('p', { class: 'ais-note' }, t('ai.set.imp.shared'))),
+  limitsSaveError ? h('div', { class: 'err', role: 'alert' }, h('p', null, limitsSaveError)) : null,
+  h('div', { class: 'acts ais-genacts' },
+    h('button', { class: 'btn primary', id: 'ai-gen-save', type: 'submit', disabled: limitsSaving }, t(limitsSaving ? 'common.saving' : 'ai.set.save')),
+    h('button', { class: 'btn', id: 'ai-gen-reset', type: 'button', disabled: limitsSaving, onclick: () => resetKeys(BANK_KEYS) }, t('ai.set.limitsReset'))));
+  // the live line follows the typed length without a redraw
+  form.addEventListener('input', (e) => {
+    if ((e.target as HTMLElement).id === 'ai-lim-genCallTokens') live.textContent = liveText((e.target as HTMLInputElement).value);
+  });
+  const jobs = h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-gen-jobs-h' },
+    h('h2', { id: 'ais-gen-jobs-h' }, t('ai.set.gen.jobs')), genJobsTable());
+  return [h('div', { class: 'ais-gentitle' }, h('h2', { class: 'ais-gen-h' }, t('ai.set.tab.gen')), tip.el), form, jobs];
 }
 
 // ---------------------------------------------------------------- the page
@@ -1765,6 +2118,9 @@ export function renderAiSettings(): HTMLElement {
       break;
     case 'safety':
       card = [retentionSection(), limitsSection()];
+      break;
+    case 'gen':
+      card = genSection();
       break;
     default:
       card = [connectionPart(s, f, dirty), modelPart(s, dirty), testSection(s, dirty)];

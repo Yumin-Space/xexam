@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """The screenshot scenes: headless Chrome drives the real UI through DOM clicks, one browser per language.
 
-shoot_language() writes, into one folder, the 27 images the READMEs and docs use (20 desktop images 1280 px wide and 7
+shoot_language() writes, into one folder, the 33 images the READMEs and docs use (25 desktop images 1280 px wide and 8
 iPhone images 390 x 844, both at device scale 2). Since v1.0 the UI is phone-first (icons with tap-and-hold labels, a
 one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub footer line); the scenes follow it:
 
@@ -41,12 +41,23 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   desktop-17-ai-hint    a practice question of the made-up demo bank with the AI+ panel expanded on the AI hint (the
                         screenshot user has the AI+ feature); the stub's hint, in the UI language, and the muted "Saved in
                         AI Chat" text (no Open in AI Chat control: nothing in the panel navigates away)
-  desktop-18-ai-result  the result of the exam: card 1 with the AI+ panel expanded on the AI analysis (AI 解析), card 2's
+  desktop-18-ai-result  the result of the exam: card 1 with the AI+ panel expanded on the AI analysis (AI 分析), card 2's
                         collapsed AI+ bar below it
   desktop-19-ai-summary Study records with the AI summary window open: the "based on" line, the stub's four headings and the
                         "Saved in AI Chat" text
   desktop-20-ai-safety  AI settings, tab "AI safety": chat retention and the safety limits (the per-user request caps, the
                         "Answer and memory length" group, the server protection)
+  desktop-21-ai-banks   AI settings, tab "AI banks" (v1.1): the generation rules, the questions per generation (single +
+                        multiple, the live total), the length, the AI file import card (file size, questions per import)
+                        and the recent AI bank jobs. The AI+ users image (desktop-15) shows the six feature boxes of every
+                        user in two groups, and the usage image (desktop-16) the three charts
+  desktop-22-timed-exam  (v1.1) an exam started from Home with the exam time limit ticked (45 minutes): the countdown in
+                        the top row, a few questions answered
+  desktop-23-exam-submit (v1.1) the submit confirm of that exam with questions not completed (they are not counted as wrong)
+  desktop-24-not-completed (v1.1) its result, the review filter on "Not completed" (the questions listed separately)
+  desktop-25-ai-bank-home (v1.1) Home after an AI generation from the checked sheets (made by the stub provider, a name typed
+                        per language): the AI+ Set row in the bank list and the done card; the bank is deleted again after
+                        this scene, desktop-21 and iphone-8 (so no other scene asks its made-up questions)
   iphone-1-home         Home with the latest card (one-row actions) and the start bar
   iphone-2-quiz         an exam: compact top row, one-row bar (previous, Next, flag), collapsed answer sheet
   iphone-3-menu         the menu
@@ -54,6 +65,8 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   iphone-5-ai-hint      the practice page with the AI+ panel expanded on the AI hint, scrolled into view under the top row
   iphone-6-result       the exam result: compact score, collapsed strip, cards with their AI+ bar
   iphone-7-ai-chat      AI Chat full height with a short conversation
+  iphone-8-banks        Bank management on a phone (v1.1): the compact bank list with its checkboxes and the AI file
+                        import row under the Excel row
 
 Layout checks (assertions, not images) run in the same pass, in every language: at 360, 390 and 412 px the practice bar is
 ONE row with Check answer and Next as two separate buttons in fixed places (nothing moves between an unchecked and a
@@ -61,7 +74,7 @@ checked question, or between questions), 44 px touch targets, no sideways overfl
 visible at 390 and 360 px; the exam bar is one row without a check button; the AI+ panel and the AI summary window show
 the "Saved in AI Chat" text, are not links / buttons and have no Open in AI Chat control; no title focused by script draws
 a focus frame; the footer line is centered with its two links (Home, phone Home, AI Chat list pane); AI settings has the
-four category tabs and, in AI safety, the "Answer and memory length" group; Study records cards are at most 140 px tall at
+five category tabs (v1.1) and, in AI safety, the "Answer and memory length" group; Study records cards are at most 140 px tall at
 360 px; at 800 px the Study records list (en and ja) is in the card layout with no horizontal scroll and its Delete buttons
 on one line. The AI asks of the scenes are saved in AI Chat like any other; the run deletes the administrator's AI chats
 before the AI Chat scenes and at the end.
@@ -83,10 +96,11 @@ from browser import Chrome, strip_png
 
 SCENES = ['desktop-%d-%s.png' % kv for kv in enumerate(
     ['home', 'quiz', 'result', 'records', 'banks', 'settings', 'dark', 'about', 'signin', 'users', 'practice',
-     'user-banks', 'logs', 'ai-chat', 'ai-settings', 'ai-usage', 'ai-hint', 'ai-result', 'ai-summary', 'ai-safety'],
+     'user-banks', 'logs', 'ai-chat', 'ai-settings', 'ai-usage', 'ai-hint', 'ai-result', 'ai-summary', 'ai-safety', 'ai-banks',
+     'timed-exam', 'exam-submit', 'not-completed', 'ai-bank-home'],
     start=1)] + [
     'iphone-1-home.png', 'iphone-2-quiz.png', 'iphone-3-menu.png', 'iphone-4-records.png', 'iphone-5-ai-hint.png',
-    'iphone-6-result.png', 'iphone-7-ai-chat.png']
+    'iphone-6-result.png', 'iphone-7-ai-chat.png', 'iphone-8-banks.png']
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
 UI_LANG = {'en': 'en', 'zh-CN': 'zh', 'ja': 'ja'}          # the uiLang / questionLang setting
@@ -157,6 +171,9 @@ PRELUDE = r"""
     if (sh && sh.checked) sh.click();
     document.querySelector(kind === 'practice' ? '.page-home .home-go-btns .btn.big:not(.primary)' : '.page-home .home-go-btns .btn.primary.big').click();
     await window.__wait(450);
+    // since v1.1 a session is saved again when the page goes away (TL-6 pagehide), so a cleared one may be back: replace it
+    const over = document.querySelector('dialog[open] .btn.danger.solid');
+    if (over && !document.querySelector('.stem')) { over.click(); await window.__wait(450); }
   };
 })();
 """
@@ -181,7 +198,7 @@ JS_EXAM = r"""(async () => {
     await window.__answer(bad);
   }
   window.__skew = 394000;                              // the result shows about 6:34
-  q1('[data-focus="rail-submit"]').click(); await wait(250);
+  (q1('[data-focus="q-submit"]') || q1('[data-focus="rail-submit"]')).click(); await wait(250);
   q1('dialog[open] .btn.primary').click(); await wait(1600);
   window.scrollTo(0, 0);
   return q1('.score .big')?.getAttribute('aria-label') + ' / ' + n + ' questions';
@@ -516,8 +533,12 @@ JS_FOOTER = r"""((root, touch) => {
     if (host.bottom > de.scrollHeight + 1) bad.push('the line is outside the page');
   }
   if (touch) {
-    const small = links.filter(a => Math.max(a.getBoundingClientRect().height, line.getBoundingClientRect().height) < 43.5);
-    if (small.length) notes.push('WARNING: a footer link is under 44 px tall (' + Math.round(links[0].getBoundingClientRect().height) + ')');
+    // the tap area is the link box united with its invisible ::after (CSS, coarse pointers only)
+    const tapH = a => Math.max(a.getBoundingClientRect().height, line.getBoundingClientRect().height, parseFloat(getComputedStyle(a, '::after').height) || 0);
+    const small = links.filter(a => tapH(a) < 43.5);
+    if (small.length) notes.push(matchMedia('(pointer: coarse)').matches
+      ? 'WARNING: a footer link tap area is under 44 px tall (' + Math.round(tapH(small[0])) + ')'
+      : "the browser has no coarse pointer: the 44 px tap area of the footer links (::after) cannot be measured here");
   }
   return [bad, notes];
 })"""
@@ -614,7 +635,7 @@ JS_EXAM_BAR = r"""(() => {
 JS_AI_TABS = r"""((expected) => {
   const bad = [];
   const tabs = window.__qa('button[aria-pressed][aria-controls]').filter(b => window.__shown(b));
-  if (tabs.length !== 4) bad.push(tabs.length + ' category tabs (four expected)');
+  if (tabs.length !== 5) bad.push(tabs.length + ' category tabs (five expected: the fifth, AI banks, is new in v1.1)');
   const on = tabs.filter(b => b.getAttribute('aria-pressed') === 'true');
   if (on.length !== 1) bad.push(on.length + ' tabs selected (one expected)');
   const label = b => (b.getAttribute('aria-label') || b.innerText || '').replace(/\s+/g, ' ').trim();
@@ -660,7 +681,7 @@ JS_BAR_ROWS = r"""(() => {
   return tops.length;
 })()"""
 
-# Result page of the exam: open the AI+ panel of the first answer card on its AI analysis (AI 解析), wait for the text and the
+# Result page of the exam: open the AI+ panel of the first answer card on its AI analysis (AI 分析), wait for the text and the
 # Saved text; returns [text length or a message, the lowest bottom (page coordinates) of that card's panel and the collapsed
 # bar of card 2 under it]
 JS_AI_RESULT = r"""(async () => {
@@ -711,6 +732,77 @@ JS_RECORDS_LAYOUT = r"""(() => {
   }
   return bad;
 })()"""
+
+
+# v1.1: an exam with the time limit ticked on Home (TL-1), a few questions answered, the clock moved on by 7:48 (45:00 ->
+# about 37:12 left, no 30-minute notice yet)
+JS_TIMED = r"""(async (minutes) => {
+  const wait = window.__wait, qa = window.__qa, q1 = s => document.querySelector(s);
+  window.__skew = 0;
+  const box = q1('.home-limit input[type="checkbox"]'), field = q1('.home-limit-field');
+  if (!box || !field) return 'NO TIME LIMIT CONTROLS';
+  field.value = String(minutes);
+  field.dispatchEvent(new Event('input', {bubbles: true}));
+  if (!box.checked) box.click();
+  await window.__start('exam');
+  for (let i = 0; i < 3; i++) { qa('.tile')[i].click(); await wait(60); if (!q1('.hs-item')) await window.__answer(i === 1); }
+  qa('.tile')[3]?.click(); await wait(60);
+  window.__skew = 468000;
+  await wait(1400);
+  document.activeElement?.blur?.();
+  window.scrollTo(0, 0);
+  return 'timer ' + (q1('.timer')?.innerText || 'NOT SHOWN') + ', ' + qa('.tile').length + ' questions';
+})"""
+
+JS_SUBMIT_OPEN = r"""(async () => {
+  const q1 = s => document.querySelector(s);
+  (q1('[data-focus="q-submit"]') || q1('[data-focus="rail-submit"]')).click();
+  await window.__wait(400);
+  document.activeElement?.blur?.();
+  const d = q1('dialog[open]');
+  return d ? d.innerText.replace(/\s+/g, ' ').slice(0, 160) : 'NO DIALOG';
+})()"""
+
+# Confirm the submit, then the last review filter of the result ("Not completed" when there are such questions)
+JS_SUBMIT_CONFIRM = r"""(async () => {
+  const q1 = s => document.querySelector(s), qa = window.__qa;
+  q1('dialog[open] .btn.primary').click(); await window.__wait(1600);
+  const seg = qa('.page-result button').filter(b => b.parentElement && b.parentElement.querySelectorAll(':scope > button').length >= 3
+    && /\d/.test(b.innerText) && !b.closest('.rvstrip, .strip'));
+  // the filters are Wrong only | Not completed | All questions: pick "Not completed" (the middle one)
+  const pick = seg.length >= 3 ? seg[1] : null;
+  if (pick) { pick.click(); await window.__wait(400); }
+  window.scrollTo(0, 0);
+  return (q1('.score .big')?.getAttribute('aria-label') || 'no score') + '; filters: ' + seg.map(b => b.innerText.trim()).join(' | ')
+    + '; open keys: ' + qa('.page-result button.open').length;
+})()"""
+
+# An AI generation from the checked sheets of "General knowledge" (Home's "AI generation", GB-3), through the API as the
+# administrator: the demo bank has only 7 questions, so the minimum source size is lowered to 5 for the start and set back
+# at once; the job is followed to its end (the stub answers in seconds). Returns [state, bank id, job id, made].
+JS_GEN = r"""(async (name) => {
+  const post = async (u, b) => { const r = await fetch(u, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(b)}); return [r.status, await r.json().catch(() => null)]; };
+  const banks = (await (await fetch('/api/banks')).json()).banks;
+  const g = banks.find(b => /^General/.test(b.name));
+  const before = (await (await fetch('/api/ai/admin/limits')).json()).limits.genMinSource;
+  await post('/api/ai/admin/limits', {genMinSource: 5});
+  let started;
+  try {
+    started = await post('/api/ai/gen/start', {source: 'scope', sheets: g.sheets.map(s => ({bank: g.id, sheet: s.name})), name});
+  } finally {
+    await post('/api/ai/admin/limits', {genMinSource: before});
+  }
+  if (started[0] !== 202) return ['start ' + started[0] + ' ' + JSON.stringify(started[1]).slice(0, 200), null, null, 0];
+  const id = started[1].job.id;
+  for (let i = 0; i < 240; i++) {
+    await window.__wait(500);
+    const j = (await (await fetch('/api/ai/gen/job?id=' + id)).json()).job;
+    if (!['queued', 'running'].includes(j.state)) return [j.state + (j.error ? ' ' + j.error : ''), j.bankId, id, j.made];
+  }
+  return ['still running after 120 s', null, id, 0];
+})"""
+
+GEN_NAMES = {'en': 'Everyday mix', 'zh': '日常综合练习', 'ja': '日常ミックス'}
 
 
 class Shooter:
@@ -772,10 +864,15 @@ class Shooter:
         self.cdp.call('Emulation.setUserAgentOverride', userAgent=IPHONE_UA)
         self.metrics(PHONE_W, PHONE_H, True)
 
-    def page(self, name, cap=1100, fixed=None, minimum=560):
-        """A desktop image: `fixed` px tall, or as tall as the page up to `cap`, cut where nothing is split."""
+    def page(self, name, cap=1100, fixed=None, minimum=560, to_footer=False):
+        """A desktop image: `fixed` px tall, or as tall as the page up to `cap`, cut where nothing is split. `to_footer`: the
+        image ends just under the GitHub line (or an open dialog), so a page that fills the window has no empty area under it."""
         if not self.wanted(name):
             return
+        if to_footer:
+            self.metrics(WIDTH, 900, False)
+            time.sleep(0.3)
+            fixed = max(minimum, self.js(FOOT_FIT_JS))
         if fixed is None:
             self.metrics(WIDTH, 900, False)
             time.sleep(0.3)
@@ -789,6 +886,12 @@ class Shooter:
             self.js("document.querySelector(%s)?.scrollIntoView({block: 'start'}); window.scrollBy(0, -64); 'ok'"
                     % json.dumps(scroll_to))
         self.png(name, PHONE_W, PHONE_H, True)
+
+
+# The height that ends 28 px under the GitHub line (or 24 px under an open dialog, whichever is lower)
+FOOT_FIT_JS = """(() => { const f = document.querySelector('.gh-line, footer.foot'); let b = f ? f.getBoundingClientRect().bottom + scrollY + 28 : 0;
+  const d = document.querySelector('dialog[open]'); if (d) b = Math.max(b, d.getBoundingClientRect().bottom + scrollY + 24);
+  return Math.ceil(b || 560) })()"""
 
 
 def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_log=True):
@@ -808,6 +911,7 @@ def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_lo
         _desktop_scenes(s, base, cookie, code, upload, with_log)
         _ai_scenes(s, base, cookie, code)
         _phone_scenes(s, base, cookie, code)
+        _v11_scenes(s, base, cookie, code)
         _check_practice_bar(s, base, cookie, code)
         seed.delete_ai_chats(base, cookie)
         # leave nothing behind for the next language: the saved exam and the exam record of this run
@@ -873,7 +977,7 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
         s.js(JS_CLEAR_SAVED)
     s.nav()
     print('  quiz:', s.js(JS_QUIZ))
-    s.page('desktop-2-quiz.png', cap=900)
+    s.page('desktop-2-quiz.png', cap=900, to_footer=True)
     s.js(JS_SAVE_EXIT)
     if s.wanted('desktop-1-home.png'):
         _footer(s, 'Home')
@@ -923,7 +1027,7 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
     s.js(JS_SETUP + "(%s, 'dark')" % json.dumps(code))
     s.nav()
     s.js(JS_RESUME)
-    s.page('desktop-7-dark.png', cap=900)
+    s.page('desktop-7-dark.png', cap=900, to_footer=True)
     s.js(JS_SETUP + "(%s, 'light')" % json.dumps(code))
     s.nav('#/about', settle=2.4)
     bottom, kept, hidden = s.js('(%s)(%d)' % (JS_ABOUT, 1500))
@@ -1040,6 +1144,60 @@ def _ai_scenes(s, base, cookie, code):
         _expect(bad, 'AI safety tab')
         print('  AI safety groups: ' + ' | '.join(groups))
         _tab_image(s, 'desktop-20-ai-safety.png', 'ais-lim-h', 2100)
+
+
+def _v11_scenes(s, base, cookie, code):
+    """The v1.1 scenes: the timed exam (countdown, the submit confirm with questions not completed, the result filtered on
+    them), then one AI generation (desktop-25 Home, desktop-21 AI banks tab, iphone-8 Bank management) whose bank is
+    deleted again at the end."""
+    if any(s.wanted(n) for n in ('desktop-22-timed-exam.png', 'desktop-23-exam-submit.png', 'desktop-24-not-completed.png')):
+        s.desktop()
+        s.js(JS_CLEAR_SAVED)
+        s.nav()
+        print('  timed exam:', s.js('(%s)(45)' % JS_TIMED))
+        s.page('desktop-22-timed-exam.png', cap=900, to_footer=True)
+        print('  submit confirm:', s.js(JS_SUBMIT_OPEN))
+        s.page('desktop-23-exam-submit.png', to_footer=True)
+        print('  result:', s.js(JS_SUBMIT_CONFIRM))
+        s.page('desktop-24-not-completed.png', cap=1300)
+        s.js(JS_CLEAR_SAVED)
+    if not any(s.wanted(n) for n in ('desktop-25-ai-bank-home.png', 'desktop-21-ai-banks.png', 'iphone-8-banks.png')):
+        return
+    s.desktop()
+    s.nav()
+    state, bank, job, made = s.js('(%s)(%s)' % (JS_GEN, json.dumps(GEN_NAMES[code], ensure_ascii=False)))
+    print('  AI generation: %s, %s question(s), bank %s' % (state, made, bank))
+    try:
+        if state != 'done' or not bank:
+            raise AssertionError('the AI generation of the screenshots did not finish: %s' % state)
+        s.nav(settle=2.4)
+        s.page('desktop-25-ai-bank-home.png', cap=1500)
+        if s.wanted('desktop-21-ai-banks.png'):
+            # desktop-21 (v1.1): the AI banks tab, from the status chips through the card of the AI generation jobs (the job list)
+            s.nav('#/ai-settings?tab=gen', settle=2.6)
+            _tabs(s, 4, 'AI banks')
+            _tab_image(s, 'desktop-21-ai-banks.png', 'ais-gen-jobs-h', 3400)
+        if s.wanted('iphone-8-banks.png'):
+            s.iphone()
+            s.nav('#/banks', settle=2.4)
+            row = s.js("(() => { const r = document.querySelector('.bk-aicard'); return r ? Math.round(r.getBoundingClientRect().height) : 0 })()")
+            problems = s.js("(() => { const bad = []; const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally'); "
+                            "if (!document.querySelector('.bk-bank .bk-box')) bad.push('no checkbox on the bank rows'); return bad; })()")
+            _expect(problems, 'Bank management on a phone')
+            print('  Bank management at 390 px: the AI import card is %s' % ('%d px high' % row if row else 'not shown (no AI+ for this account)'))
+            # the AI bank row with its AI+ badge must be above the fold: scroll so that it sits about a third down the screen
+            print('  AI bank row:', s.js("(() => { const r = [...document.querySelectorAll('.bk-bank')].find(e => /AI\+/.test(e.textContent)); "
+                                          "if (!r) return 'not found'; window.scrollTo(0, 0); const y = r.getBoundingClientRect().top; "
+                                          "window.scrollTo(0, Math.max(0, y - 260)); const b = r.getBoundingClientRect(); return 'row at ' + Math.round(b.top) + '-' + Math.round(b.bottom) })()"))
+            s.phone('iphone-8-banks.png')
+    finally:
+        if job:
+            s.js("fetch('/api/ai/gen/dismiss', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+                 "body: JSON.stringify({id: %d})}).then(r => r.status)" % job)
+        if bank:
+            print('  AI bank deleted:', s.js("fetch('/api/banks/delete', {method: 'POST', headers: {'Content-Type': 'application/json'}, "
+                                             "body: JSON.stringify({id: %d, withRecords: true})}).then(r => r.status)" % bank))
+        s.desktop()
 
 
 def _check_practice_bar(s, base, cookie, code):
