@@ -6,6 +6,12 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.2.1 — 2026-11-14
+
+**Fix: on an iPhone the AI Chat input box sometimes jumped above the top of the screen when the keyboard opened. Upgrading: pull the images; no database changes.**
+
+- **AI Chat keyboard (iPhone)**: tapping the message box the first time could lift it out of the screen above the top bar, so you could not see what you typed (it was right after a second tap). The keyboard height is now read again once the screen has finished resizing, so the box always sits right above the keyboard.
+
 ### v1.2 — 2026-11-14
 
 **Phone fixes: the finish button keeps its label, AI Chat stays put when you drag and its header no longer overlaps, the token figures are tidier, and the usage charts have no slanted labels. Upgrading: pull the images; no database changes.**

@@ -163,8 +163,22 @@ export function installViewportVars(): void {
   const queue = (): void => {
     if (!frame) frame = window.requestAnimationFrame(update);
   };
-  vv.addEventListener('resize', queue);
+  // v1.2.1: with interactive-widget=resizes-content (iOS 26 Safari honours it too) the keyboard shrinks the LAYOUT viewport
+  // as well, and the visualViewport resize can come before window.innerHeight has changed. Read only on that event, --kb
+  // then held the whole keyboard height on top of the already shorter layout: the AI Chat composer was lifted twice, out
+  // of the screen above the top bar, until the next tap. Re-read on every layout resize and once more after the keyboard
+  // animation, so --kb always ends from settled values (0 when the layout itself shrank).
+  let settle = 0;
+  const queueSettled = (): void => {
+    queue();
+    window.clearTimeout(settle);
+    settle = window.setTimeout(queue, 350);
+  };
+  vv.addEventListener('resize', queueSettled);
   vv.addEventListener('scroll', queue);
+  window.addEventListener('resize', queueSettled);
+  document.addEventListener('focusin', queueSettled);
+  document.addEventListener('focusout', queueSettled);
   update();
 }
 

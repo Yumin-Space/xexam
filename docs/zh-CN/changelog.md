@@ -6,6 +6,12 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.2.1 — 2026-11-14
+
+**修复：在 iPhone 上，AI 对话的输入框有时会在键盘弹出时冲出屏幕顶部。升级：拉取新镜像；数据库没有变化。**
+
+- **AI 对话的键盘（iPhone）**：第一次点输入框时，输入框可能被抬到顶栏上方、移出屏幕，看不到正在输入的内容（第二次点才正常）。现在等屏幕尺寸调整完后会重新读取键盘高度，输入框始终贴在键盘正上方。
+
 ### v1.2 — 2026-11-14
 
 **手机上的修复：完成按钮始终显示文字，AI 对话不再被拖动或互相遮盖，Token 行更整齐，用量图表不再有斜着的文字。升级：拉取新镜像；数据库没有变化。**

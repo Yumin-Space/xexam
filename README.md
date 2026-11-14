@@ -35,8 +35,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 
 | | |
 |---|---|
-| Current version | **v1.2** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.2**) |
-| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.2` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
+| Current version | **v1.2.1** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.2.1**) |
+| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.2.1` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -100,7 +100,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d` (read [Upgrading](#upgrading) first) |
-| Pin to a specific version | Change `:latest` to `:v1.2` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v1.2.1` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (all three containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |

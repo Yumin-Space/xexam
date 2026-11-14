@@ -35,8 +35,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v1.2**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v1.2**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v1.2` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v1.2.1**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v1.2.1**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v1.2.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -100,7 +100,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v1.2`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v1.2.1`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |

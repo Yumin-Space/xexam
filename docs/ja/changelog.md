@@ -6,6 +6,12 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.2.1 — 2026-11-14
+
+**修正：iPhone で AI チャットの入力欄が、キーボードを開いたときに画面の上へ飛び出すことがありました。アップグレード：新しいイメージを取得してください。データベースの変更はありません。**
+
+- **AI チャットのキーボード（iPhone）**：最初に入力欄をタップすると、入力欄が上部バーより上の画面外に出てしまい、入力中の文字が見えないことがありました（2 回目のタップでは正しく表示）。画面のサイズ変更が終わった後にキーボードの高さを読み直すようにし、入力欄が常にキーボードのすぐ上に表示されるようになりました。
+
 ### v1.2 — 2026-11-14
 
 **スマートフォン向けの修正：終了ボタンの文字を常に表示し、AI チャットはドラッグしても画面が動かず、上部の表示も重ならなくなりました。Token の表示を整え、使用量のグラフから斜めの文字をなくしました。アップグレード：新しいイメージを取得してください。データベースの変更はありません。**
