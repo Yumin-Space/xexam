@@ -128,8 +128,56 @@ export function wrapLabel(label: string, slot: number, maxLines = 3): string[] |
   return lines.length > 0 && lines.length <= maxLines ? lines : null;
 }
 
-/** Whether the labels of a slot this narrow turn to a slant (they do not fit their own slot, so neighbours would collide) */
-export const rotateLabels = (slot: number, labelWidth: number): boolean => slot > 0 && labelWidth + 6 > slot;
+/** A chart box this narrow (px) is a phone: the by-feature and by-model charts are horizontal there (A-OWNER-86) */
+export const PHONE_CHART = 520;
+
+/**
+ * Whether the by-feature / by-model chart is drawn as horizontal rows: on a phone-wide box, or whenever the column chart could
+ * not show every label flat (`wrapped` holds `wrapLabel` of each label; a null means that label does not fit its column).
+ * No label is ever slanted, so there is no third layout.
+ */
+export const horizontalBars = (width: number, wrapped: ReadonlyArray<readonly string[] | null>): boolean =>
+  width < PHONE_CHART || wrapped.some((l) => l == null);
+
+/**
+ * `s` cut with an ellipsis so that its width is at most `maxPx` (the full text is in the tip); at least one character. `width`
+ * measures a text (default: the estimate `textWidth`; the chart passes a canvas measure of the real font).
+ */
+export function fitText(s: string, maxPx: number, width: (s: string) => number = textWidth): string {
+  if (width(s) <= maxPx) return s;
+  const a = [...s];
+  let out = '';
+  for (const c of a) {
+    if (width(`${out}${c}…`) > maxPx) break;
+    out += c;
+  }
+  return `${out === '' ? a[0]! : out}…`;
+}
+
+/**
+ * The width (px) of the name column of the horizontal bars: the widest name, but at most `share` (40 percent) of the box and
+ * never below `min`. Longer names are cut by `fitText`.
+ */
+export function nameColumn(widths: readonly number[], box: number, share = 0.4, min = 40): number {
+  return Math.max(min, Math.min(Math.ceil(Math.max(0, ...widths)), Math.floor(box * share)));
+}
+
+/** The short form of a period for the x axis: `YYYY-MM-DD` becomes `MM-DD`; a month (`YYYY-MM`) already is short */
+export function shortPeriod(period: string): string {
+  const m = /^\d{4}-(\d{2}-\d{2})$/.exec(period);
+  return m ? m[1]! : period;
+}
+
+/**
+ * The indexes of the x labels to draw, counted from the newest one back (so the newest is always named): every `step`-th of
+ * `n`. `fits(i)` may drop one that would leave the box (the oldest ones near the edge).
+ */
+export function newestIndexes(n: number, step: number, fits: (i: number) => boolean = () => true): number[] {
+  const out: number[] = [];
+  const s = Math.max(1, Math.floor(step));
+  for (let i = n - 1; i >= 0; i -= s) if (i === n - 1 || fits(i)) out.push(i);
+  return out.reverse();
+}
 
 export interface Bar {
   x: number;
@@ -152,6 +200,30 @@ export function bars(values: readonly number[], box: { left: number; top: number
     const height = (Math.max(0, value) / max) * box.height;
     return { x: box.left + slot * i + (slot - w) / 2, width: w, y: box.top + box.height - height, height, value };
   });
+}
+
+export interface HBar {
+  /** the row's top */
+  rowY: number;
+  x: number;
+  width: number;
+  y: number;
+  height: number;
+  value: number;
+}
+
+/**
+ * Horizontal bars, one row of `rowH` px each from `top`: the bar starts at `left` and grows right up to `width` px for the
+ * maximum `max` (the room for the value at its end is the caller's: it is not part of `width`). A bar is at most `maxBar`
+ * thick, centred in its row; a zero value is a 0-wide bar (the value still shows its 0).
+ */
+export function hbars(values: readonly number[], box: { left: number; top: number; width: number }, max: number, rowH = 30, maxBar = 16): HBar[] {
+  if (values.length === 0 || max <= 0) return [];
+  const thick = Math.min(maxBar, Math.max(2, rowH - 8));
+  return values.map((value, i) => ({
+    rowY: box.top + rowH * i, x: box.left, width: (Math.max(0, value) / max) * Math.max(0, box.width),
+    y: box.top + rowH * i + (rowH - thick) / 2, height: thick, value,
+  }));
 }
 
 /** x positions of `n` points over a plot box (one point sits in the middle) */

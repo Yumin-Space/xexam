@@ -1558,10 +1558,9 @@ async function openViewer(u: AiAdminUserRow): Promise<void> {
 
 type Counts = { calls: number; tokensIn: number; tokensOut: number; errors: number; tokensCached: number; tokensCacheWrite?: number };
 
-/** A-OWNER-74: "Cache: read X / written Y tokens"; "—" for a figure the provider never reported (0 or missing) */
+/** A-OWNER-84: "Cache write/read: 6.9K/76.3K" (the same pair as the live token text; missing figures count as 0) */
 function cacheText(c: { tokensCached?: number; tokensCacheWrite?: number }): string {
-  const v = (n: number | undefined): string => (n ? num(n) : '—');
-  return t('ai.set.cacheLine', { r: v(c.tokensCached), w: v(c.tokensCacheWrite) });
+  return t('ai.set.cacheLine', { w: formatBig(c.tokensCacheWrite ?? 0), r: formatBig(c.tokensCached ?? 0) });
 }
 
 /** The five count cells of a usage row (hidden in the card layout, where `sumCell` says the same in one line) */
@@ -1583,7 +1582,7 @@ const countsHead = (): HTMLElement[] => [
 function sumCell(c: Counts, today?: string): HTMLElement {
   return h('td', { class: 'ais-usum' },
     t('ai.set.usage.sum', { calls: num(c.calls), tin: num(c.tokensIn), tout: num(c.tokensOut) }),
-    c.tokensCached ? t('ai.set.usage.sumCached', { n: num(c.tokensCached) }) : '',
+    c.tokensCached || c.tokensCacheWrite ? t('ai.set.usage.sumCached', { w: formatBig(c.tokensCacheWrite ?? 0), r: formatBig(c.tokensCached ?? 0) }) : '',
     c.errors ? t('ai.set.usage.sumErr', { n: num(c.errors) }) : '',
     today ? t('ai.set.usage.sumToday', { v: today }) : '');
 }
@@ -1654,7 +1653,7 @@ function usageSection(): HTMLElement {
         usageUsersTable(u.byUser, perDay),
         // v1.1 (UC-1, A-OWNER-39 / 40): vertical bars by model, calls or stacked tokens; the model lists are the "other" bar;
         // the numbers stay in the visually hidden table
-        usageBarCard({ pref: 'model', kind: 'model', maxLabel: 18, exact: num, rows: modelRows(u.byModel, t('ai.set.uc.other')) }),
+        usageBarCard({ pref: 'model', kind: 'model', exact: num, rows: modelRows(u.byModel, t('ai.set.uc.other')) }),
         h('div', { class: 'ais-tablewrap sr-only' }, h('table', { class: 'ais-table ais-cards' },
           h('thead', null, h('tr', null, h('th', { scope: 'col' }, t('ai.set.col.model')), countsHead())),
           // The model-listing calls are stored without a model (kind 'models'): labelled like "Deleted users" above
@@ -1664,7 +1663,7 @@ function usageSection(): HTMLElement {
         // v0.9: what the calls were for (AI Chat, hint, explanation, summary), in the server's order
         u.byPurpose
           ? usageBarCard({
-            pref: 'purpose', kind: 'purpose', maxLabel: 14, exact: num,
+            pref: 'purpose', kind: 'purpose', exact: num,
             rows: purposeRows(PURPOSES, u.byPurpose, u.totals, (k) => t(`ai.set.usage.purpose.${k}` as MsgKey), t('ai.set.uc.other')),
           })
           : null,
@@ -1887,6 +1886,8 @@ function compRow(mode: 'bank' | 'wrong', l: AiLimitsAnswer, f: LimitsForm): HTML
   const mk: LimitKey = mode === 'bank' ? 'genBankMulti' : 'genWrongMulti';
   const sIn = limitInput(sk, f, limitsFieldErr?.key === sk, `ai-comp-${mode}-h`);
   const mIn = limitInput(mk, f, limitsFieldErr?.key === mk, `ai-comp-${mode}-h`);
+  sIn.setAttribute('aria-label', t('ai.set.limit.genSingle'));
+  mIn.setAttribute('aria-label', t('ai.set.limit.genMulti'));
   const total = h('span', { class: 'ais-comp-total', id: `ai-comp-total-${mode}`, 'aria-live': 'polite' });
   const sync = (): void => {
     const v = limitsForm ?? f;
@@ -1904,8 +1905,9 @@ function compRow(mode: 'bank' | 'wrong', l: AiLimitsAnswer, f: LimitsForm): HTML
       h('span', { class: 'ais-comp-l', id: `ai-comp-${mode}-h` }, t(mode === 'bank' ? 'ai.set.gen.compBank' : 'ai.set.gen.compWrong')),
       h('span', { class: 'fld-hint ais-comp-hint' }, t(mode === 'bank' ? 'ai.set.gen.compBankHint' : 'ai.set.gen.compWrongHint'))),
     h('div', { class: 'ais-comp-fields' },
-      h('label', { class: 'ais-comp-f', for: sIn.id }, h('span', null, t('ai.set.limit.genSingle')), sIn),
-      h('label', { class: 'ais-comp-f', for: mIn.id }, h('span', null, t('ai.set.limit.genMulti')), mIn),
+      // A-OWNER-87: short visible labels keep the row on one line; the full names stay the inputs' accessible names
+      h('label', { class: 'ais-comp-f', for: sIn.id }, h('span', { 'aria-hidden': 'true' }, t('ai.set.limit.genSingleShort')), sIn),
+      h('label', { class: 'ais-comp-f', for: mIn.id }, h('span', { 'aria-hidden': 'true' }, t('ai.set.limit.genMultiShort')), mIn),
       total));
 }
 
@@ -1928,14 +1930,23 @@ function genJobsTable(): HTMLElement {
     const cr = j.usage?.tokensCached ?? 0;
     const cw = j.usage?.tokensCacheWrite ?? 0;
     const tip = t('ai.set.gen.stats.tip', { calls: num(j.calls), tin: num(j.tokensIn), tout: num(j.tokensOut) })
-      + (cr > 0 || cw > 0 ? ` · ${t('aigen.card.cached', { r: num(cr), w: num(cw) })}` : '');
+      + (cr > 0 || cw > 0 ? t('ai.set.usage.sumCached', { w: num(cw), r: num(cr) }) : '');
     // L-55: icons carry screen-reader names; the whole figure line has one tip (hover / focus / hold)
     const stats = holdTip(h('span', { class: 'ais-stats', tabindex: '0' },
       h('span', { class: 'ais-st' }, miniIcon('refresh', 'ais-ji'), h('span', { class: 'sr-only' }, t('ai.set.gen.stats.calls') + ' '), num(j.calls)),
       h('span', { class: 'ais-st' }, h('span', { class: 'ais-arr', 'aria-hidden': 'true' }, '↓'), h('span', { class: 'sr-only' }, t('ai.set.gen.stats.in') + ' '), big(j.tokensIn)),
       h('span', { class: 'ais-st' }, h('span', { class: 'ais-arr', 'aria-hidden': 'true' }, '↑'), h('span', { class: 'sr-only' }, t('ai.set.gen.stats.out') + ' '), big(j.tokensOut))), tip);
     const nameText = j.state === 'done' ? j.name : (j.file?.name ?? j.name);
-    return h('tr', { class: 'ais-genjob ' + j.state },
+    const skipText = j.skipped && j.skipped.length > 0 ? t('ai.set.gen.skipped', { n: j.skipped.length, list: j.skipped.join(',') }) : null;
+    // v1.2 (owner): on wide screens the failure reason and the skipped note go on one full-width line under the job
+    // (like the phone card) instead of squeezing the state and count columns; phones keep them inside the card
+    const detail = why || skipText
+      ? h('tr', { class: 'ais-gendetail ' + j.state },
+        h('td', { colspan: '7' },
+          why ? h('span', { class: 'ais-genwhy-w' }, why) : null,
+          skipText ? h('span', { class: 'ais-skipn-w' }, skipText) : null))
+      : null;
+    const row = h('tr', { class: 'ais-genjob ' + j.state + (detail ? ' has-detail' : '') },
       h('td', { class: 'ais-when', 'data-l': t('ai.set.gen.col.at') }, jobTime(j.createdAt)),
       h('th', { scope: 'row', class: 'ais-uname' }, j.username),
       h('td', { class: 'ais-gensrc', 'data-l': t('ai.set.gen.col.source') }, source(j)),
@@ -1943,9 +1954,10 @@ function genJobsTable(): HTMLElement {
         h('span', { class: 'ais-srcm' }, source(j)), h('span', { class: j.state === 'done' ? 'ais-nm' : 'ais-nm dim' }, nameText)),
       h('td', { class: 'ais-genst', 'data-l': t('ai.set.gen.col.state') }, h('span', { class: 'ais-jchip ' + j.state }, state(j)), whyEl),
       h('td', { class: 'n ais-genmade', 'data-l': t('ai.set.gen.col.made') }, `${num(j.made)} / ${num(j.goal)}`,
-        j.skipped && j.skipped.length > 0 ? h('span', { class: 'ais-skipn' }, ' · ' + t('ai.set.gen.skipped', { n: j.skipped.length, list: j.skipped.join(',') })) : null),
+        skipText ? h('span', { class: 'ais-skipn' }, skipText) : null),
       h('td', { class: 'n ais-gencalls', 'data-l': t('ai.set.gen.col.calls') }, stats));
-  });
+    return detail ? [row, detail] : [row];
+  }).flat();
   return h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-genjobs' },
     h('thead', null, h('tr', null, col('ai.set.gen.col.at'), col('ai.set.gen.col.user'), col('ai.set.gen.col.source'), col('ai.set.gen.col.name'),
       col('ai.set.gen.col.state'), col('ai.set.gen.col.made', 'n'), col('ai.set.gen.col.calls', 'n'))),

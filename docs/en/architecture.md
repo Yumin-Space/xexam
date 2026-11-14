@@ -384,7 +384,7 @@ flowchart LR
         S["Settings<br/>#/settings"]
         AB["About Xexam<br/>#/about"]
         D["Record detail<br/>#/records/{id}"]
-        W["Wrong-answer review<br/>#/records/wrong"]
+        W["Wrong answers<br/>#/records/wrong"]
         RS["Result<br/>#/result"]
     end
     Q["Quiz #/quiz: exam or practice<br/>(full screen, no shell)"]
@@ -394,7 +394,7 @@ flowchart LR
     Q -->|"Submit / Finish practice"| RS
     RS -->|"Retake / wrong only"| Q
     D -->|"Retake / wrong only"| Q
-    W -->|"Practise these"| Q
+    W -->|"Practise"| Q
 ```
 
 - **Sign-in** (`src/pages/auth.ts`): at start-up the app asks `GET /api/auth/state` first. Nobody signed in → the sign-in page; an account that must choose a new password → the **Choose a new password** page. Both replace the whole app (no shell, no route). While an administrator still has the default password, the sign-in page names that account in a hint. On every page change and when the tab comes back into view the app asks again, so a session that ended elsewhere shows the sign-in page at the next click, and a changed permission or library stamp applies without signing out.

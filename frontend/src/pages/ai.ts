@@ -5,7 +5,8 @@
 //   · Two views: Chats (the chat list, and the conversation with its composer) and Memory (notes the AI uses in every chat).
 //     Wider than 900 px the owner's fixed-height box; up to 900 px (v1.0) a full-height chat screen: the document is locked
 //     (html.no-doc-scroll), only the lists scroll, the composer is a fixed footer lifted by the on-screen keyboard (--kb),
-//     and the page never slides up when the keyboard opens (CH-13). From 720 px the list and the conversation sit side by
+//     and the page never slides up when the keyboard opens (CH-13); the messages stay still too, the list only gets shorter
+//     from the bottom (v1.2, A-OWNER-88, watchList). From 720 px the list and the conversation sit side by
 //     side; narrower, one at a time with a back button.
 //   · Answers stream in (server-sent events over a POST, api/client.ts postStream). The page draws itself in place while an
 //     answer streams (only the answer being written is redrawn, at most every 100 ms); render() of the whole page happens
@@ -281,6 +282,9 @@ function installOnce(): void {
       else lockDocument(false);
     });
   }
+  // A-OWNER-83: the title row is measured again when the width changes and once the web fonts are in
+  window.addEventListener('resize', queueFitHead);
+  void document.fonts?.ready.then(queueFitHead);
   // The request cap came or went (C-6): the callout, Send, Retry and Remember follow without a reload
   onCallBlockChange(() => {
     if (!onPage()) return;
@@ -315,29 +319,63 @@ let listObserver: ResizeObserver | null = null;
 let panWatching = false;
 let panFrame = 0;
 
-/** True when `el` is a vertical scroller that can still move in the direction the finger drags (dy > 0: content goes down) */
-function canScrollFor(el: Element, dy: number): boolean {
-  const oy = getComputedStyle(el).overflowY;
-  if ((oy !== 'auto' && oy !== 'scroll') || el.scrollHeight <= el.clientHeight + 1) return false;
-  return dy > 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+/**
+ * A box with less than this to scroll (px) counts as fixed. v1.2 (A-OWNER-82): on touch screens the GitHub line's invisible
+ * tap area (shell.css .gh-link::after) stuck 2 px out of the bottom of the history list, so a list of a few chats was a real
+ * scroller with 2 px of travel: the guard saw "can scroll", let the drag through, and iOS Safari dragged and bounced the whole
+ * box (rows, empty area, GitHub line) with the finger. ai.css now keeps that tap area inside the scrollers; this keeps any
+ * such sliver (rounding, a font) from turning a fixed box into a scroller again.
+ */
+const MIN_TRAVEL = 4;
+
+/** True when `el` scrolls on `axis` with real travel and can still move in the direction of the drag (d > 0: content follows down / right) */
+function canScroll(el: Element, axis: 'x' | 'y', d: number): boolean {
+  const cs = getComputedStyle(el);
+  const o = axis === 'y' ? cs.overflowY : cs.overflowX;
+  if (o !== 'auto' && o !== 'scroll') return false;
+  const [pos, view, size] = axis === 'y' ? [el.scrollTop, el.clientHeight, el.scrollHeight] : [el.scrollLeft, el.clientWidth, el.scrollWidth];
+  if (size < view + MIN_TRAVEL) return false;
+  return d === 0 || (d > 0 ? pos > 0 : pos + view < size - 1);
+}
+
+/** True when a scroller from `target` up to the document can follow the drag (`d` 0: has travel at all, whatever its position) */
+function followable(target: EventTarget | null, axis: 'x' | 'y', d: number): boolean {
+  for (let n = target instanceof Element ? target : null; n && n !== document.documentElement; n = n.parentElement) {
+    if (canScroll(n, axis, d)) return true;
+  }
+  return false;
 }
 
 let touchY = 0;
 let touchX = 0;
+let startY = 0;
+let startX = 0;
 let touchGuarding = false;
+/** v1.2 (A-OWNER-82): the gesture started outside the conversation view (history list, memory, title row, top bar there) */
+let frameGesture = false;
 
 function onGuardStart(e: TouchEvent): void {
   const t = e.touches.length === 1 ? e.touches[0] : undefined;
   if (!t) return;
-  touchY = t.clientY;
-  touchX = t.clientX;
+  touchY = startY = t.clientY;
+  touchX = startX = t.clientX;
+  // The conversation view (phones: the whole screen once a chat is open; tablets: the conversation pane) keeps the v1.1 rule
+  const inConv = e.target instanceof Element && !!e.target.closest('.ai-conv');
+  frameGesture = !inConv && !document.querySelector('.page-ai.conv-on');
 }
 
 /**
- * While the document is locked (phones), a vertical drag may only scroll a row list: any move that no scroller under the
- * finger can still follow (a short list, a list at its top / bottom edge, the header, the composer frame) is cancelled, so
- * the screen never drags, bounces or pans (iOS Safari rubber-bands even under overflow: hidden). Horizontal moves,
- * pinch (two fingers) and taps are left alone.
+ * While the document is locked (phones), a drag may only scroll a row list; the screen never drags, bounces or pans (iOS
+ * Safari rubber-bands even under overflow: hidden). Pinch (two fingers) and taps are left alone.
+ *
+ * The conversation view keeps the v1.1 rule unchanged (owner, A-OWNER-82 constraint): a mostly vertical move that no
+ * scroller under the finger can still follow is cancelled.
+ *
+ * The history list and memory screens (v1.2, A-OWNER-82) are fixed frames: v1.1 let through every move with no vertical
+ * part or a bigger sideways part, and so the first move of most swipes; once Safari starts its own pan on a move nobody
+ * cancels, the later moves of that gesture are not cancelable. Here every move, the first one included, is judged by the
+ * whole path from the touch start and cancelled unless a scroller can follow it. Sideways jitter at the start of a swipe on
+ * a list with rows to scroll counts as vertical, so it never blocks that list. ai.css adds touch-action: pinch-zoom there.
  */
 function onGuardMove(e: TouchEvent): void {
   const t = e.touches.length === 1 ? e.touches[0] : undefined;
@@ -346,10 +384,16 @@ function onGuardMove(e: TouchEvent): void {
   const dx = t.clientX - touchX;
   touchY = t.clientY;
   touchX = t.clientX;
-  if (Math.abs(dx) > Math.abs(dy) || dy === 0) return;
-  for (let n = e.target instanceof Element ? e.target : null; n && n !== document.documentElement; n = n.parentElement) {
-    if (canScrollFor(n, dy)) return;
+  if (!frameGesture) {
+    if (Math.abs(dx) > Math.abs(dy) || dy === 0) return;
+    if (!followable(e.target, 'y', dy)) e.preventDefault();
+    return;
   }
+  const cx = t.clientX - startX;
+  const cy = t.clientY - startY;
+  const listUnder = followable(e.target, 'y', 0);
+  const side = Math.abs(cx) > Math.abs(cy) && (!listUnder || (Math.abs(cx) >= 6 && Math.abs(cx) > 2 * Math.abs(cy)));
+  if (side ? followable(e.target, 'x', dx || cx) : cy === 0 ? listUnder : followable(e.target, 'y', dy || cy)) return;
   e.preventDefault();
 }
 
@@ -386,14 +430,27 @@ function syncComposerHeight(): void {
   el.style.setProperty('--composer-h', `${Math.ceil(composer.dock.offsetHeight)}px`);
 }
 
-/** Keeps the newest message in view when the list's height changes and the list was at its end (no smooth scroll) */
+/**
+ * Keeps the newest message in view when the list's size changes and the list was at its end (no smooth scroll).
+ * v1.2 (A-OWNER-88): on the full-height phone screen (html.no-doc-scroll) a change of the list's HEIGHT alone (the iOS
+ * keyboard opening or closing, the composer growing while typing, its safe-area padding switching) never moves the text:
+ * the list keeps its scrollTop and top edge and only its visible height changes at the bottom, so the bottom part is
+ * covered until the user swipes (the list still scrolls to its very end, right above the composer). A new message or a
+ * streaming reply still follows the end (paintMsgs / paintStreaming / toBottom). A change of WIDTH (rotation, the side
+ * pane) re-flows the text, so there the end is kept as before; wider than 900 px every change keeps the end (v1.1).
+ */
 function watchList(): void {
   listObserver?.disconnect();
   listObserver = null;
   const el = scroller();
   if (!el || typeof ResizeObserver === 'undefined') return;
+  let width = el.clientWidth;
   listObserver = new ResizeObserver(() => {
-    if (stick) el.scrollTop = el.scrollHeight;
+    const w = el.clientWidth;
+    const reflow = w !== width;
+    width = w;
+    if (!stick) return;
+    if (reflow || !document.documentElement.classList.contains('no-doc-scroll')) el.scrollTop = el.scrollHeight;
   });
   listObserver.observe(el);
 }
@@ -425,6 +482,35 @@ function stopPanWatch(): void {
   }
   // Once the keyboard has gone
   window.setTimeout(undoViewportPan, 300);
+}
+
+/**
+ * v1.2 (A-OWNER-83): the title row of the phone screen (title, the free-mode tag, the Chats / Memory switch) never overlaps.
+ * v1.1 let the title box shrink (min-width 0) while its title and tag could not (no wrap, no shrink), and the tab names hid
+ * only by a viewport rule: when text renders larger than CSS px predict (iOS text size, page zoom) the tag was drawn over
+ * the tabs. Now the row is measured after it is drawn and steps down until nothing is cut: the switch shows its icons only
+ * (names stay as aria-label and the hold tip), then the tag its short form; the title ellipsises as the last resort (CSS).
+ */
+function fitHead(): void {
+  const head = document.querySelector<HTMLElement>('.page-ai .ai-head');
+  if (!head) return;
+  head.classList.remove('fit-icons', 'fit-short');
+  if (!document.documentElement.classList.contains('no-doc-scroll') || head.offsetParent === null) return;
+  // scrollWidth rounds up and clientWidth down: 1 px is the rounding of a box that fits exactly
+  const over = (e: Element | null): boolean => !!e && e.scrollWidth > e.clientWidth + 1;
+  const cut = (): boolean => over(head.querySelector('.ai-title')) || over(head.querySelector('.ai-title h1'));
+  if (!cut()) return;
+  head.classList.add('fit-icons');
+  if (cut()) head.classList.add('fit-short');
+}
+
+let fitFrame = 0;
+function queueFitHead(): void {
+  if (fitFrame || !onPage()) return;
+  fitFrame = window.requestAnimationFrame(() => {
+    fitFrame = 0;
+    fitHead();
+  });
 }
 
 // ---------------------------------------------------------------- loading
@@ -1041,7 +1127,12 @@ function paint(): void {
   keepFocus(() => {
     panes.className = panesClass();
     // FB-8: the page carries which pane shows, so a phone can drop the title row inside a conversation
-    panes.closest('.page-ai')?.classList.toggle('conv-on', panes.classList.contains('on-conv'));
+    const page = panes.closest('.page-ai');
+    if (page && page.classList.contains('conv-on') !== panes.classList.contains('on-conv')) {
+      page.classList.toggle('conv-on', panes.classList.contains('on-conv'));
+      // The title row shows again on the list pane: it may need its compact form (A-OWNER-83)
+      fitHead();
+    }
     const lb = document.getElementById('ai-list-body');
     const sig = listSignature();
     if (lb && sig !== listSig) {
@@ -1973,8 +2064,12 @@ export function renderAiChat(m: ChatMode): HTMLElement {
   const root = h('div', { class: 'page page-ai' + (m === 'readOnly' ? ' ro' : '') + (tab === 'chats' && panesClass() === 'ai-panes on-conv' ? ' conv-on' : '') },
     h('header', { class: 'page-head ai-head' },
       // Free mode on (administrators, chosen in Settings): a green tag next to the title; nothing in normal mode
+      // A-OWNER-83: the tag carries its full and its short text; the title row shows the short one when it is tight
       h('div', { class: 'ai-title' }, h('h1', null, t('ai.title')),
-        isAdmin() && aiFreeMode() ? h('span', { class: 'ai-mode-tag', role: 'status' }, t('ai.freeTag')) : null),
+        isAdmin() && aiFreeMode() ? h('span', { class: 'ai-mode-tag', role: 'status', title: t('ai.freeTag') },
+          h('span', { class: 'sr-only' }, t('ai.freeTag')),
+          h('span', { class: 'ai-mode-l', 'aria-hidden': 'true' }, t('ai.freeTag')),
+          h('span', { class: 'ai-mode-s', 'aria-hidden': 'true' }, t('ai.freeTagShort'))) : null),
       tabs()),
     // Wide screens: the line under the title; up to 900 px it sits under the composer / the lists instead (CH-3)
     h('p', { class: 'ai-notice ai-notice-top' }, miniIcon('info', 'ai-mi'), h('span', null, t('ai.adminNotice'))),
@@ -1994,6 +2089,7 @@ export function renderAiChat(m: ChatMode): HTMLElement {
   // After the page is in the document: the composer's height, and the conversation at its end
   queueMicrotask(() => {
     if (!root.isConnected) return;
+    fitHead();
     if (tab !== 'chats') {
       listObserver?.disconnect();
       listObserver = null;

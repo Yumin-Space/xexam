@@ -6,6 +6,18 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.2 — 2026-11-14
+
+**Phone fixes: the finish button keeps its label, AI Chat stays put when you drag and its header no longer overlaps, the token figures are tidier, and the usage charts have no slanted labels. Upgrading: pull the images; no database changes.**
+
+- **Finish button**: the green or orange button in the top row of an exam or practice page always shows its label. When the row is tight, English and Japanese switch to a short label (**Finish** in English) instead of hiding it.
+- **AI Chat on a phone**: dragging in the empty area under the chat list, or on the title row, the top bar and the memory page, no longer moves anything; the lists still scroll. With a large text size, the title, the **Free mode** tag, the tabs and the account tag no longer overlap (they shrink step by step). When the keyboard opens, the messages stay where they are instead of jumping up.
+- **Token figures**: on a running AI generation or import card, the call count and tokens sit in two aligned lines: **input/output** and, below it, **Cache write/read**. AI usage shows the cache as the same write/read pair. The cancel button on an import card now says **Cancel import**.
+- **Usage charts**: no label is slanted any more. On a phone, **By feature** and **By model** are horizontal bar charts (name on the left, value at the end of the bar), and **Over time** shows short, horizontal dates.
+- **English and Japanese on a phone**: labels that wrapped or pushed a button to a new row on an iPhone-sized screen are shorter now (for example **Answers** with **Wrong only** / **All** on the result page, **Wrong answers** with **Records** and **Practise** on the wrong-answer page, **Days to keep** in AI settings), so each page has the same rows as in Chinese. Where a label is shortened, the full text stays its accessible name.
+- **Recent AI bank jobs** (AI settings): on a wide screen the columns no longer break one character per line. The failure reason and the skipped questions now sit on one full-width line under the job instead of squeezing the State and Questions columns; on a phone they stay inside the job card.
+- Tests: frontend 674 → 682
+
 ### v1.1 — 2026-11-13
 
 **Exams with a time limit, unanswered questions counted apart from wrong ones, AI-generated question banks, and AI file import. Upgrading: pull the images; the main database moves to schema 7 and the AI database to schema 6, each after a backup copy is written.**

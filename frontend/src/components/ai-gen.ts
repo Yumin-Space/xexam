@@ -18,7 +18,7 @@ import { ask, formDialog } from '../utils/dialog.ts';
 import { h } from '../utils/dom.ts';
 import { toast } from '../utils/toast.ts';
 import { fileCard } from './ai-import.ts';
-import { formatBig } from '../domain/usage-bars.ts';
+import { tokenFigures } from '../domain/usage-bars.ts';
 import { iconButton, shortLabel, withReason } from './icon-button.ts';
 import { tipEl } from './tooltip.ts';
 import { miniIcon } from './mini-icons.ts';
@@ -204,32 +204,27 @@ export function usageNote(job: GenJob): HTMLElement[] {
   const u = job.usage;
   if (!u || u.calls <= 0 || job.state === 'queued') return [];
   const f = (n: number): string => n.toLocaleString(localeTag());
-  // A-OWNER-67c: the compact live line; its tip (tap / hover / focus) gives the exact numbers
-  const key: MsgKey = job.source === 'file' ? 'aigen.imp.card.run' : 'aigen.card.run';
-  const io = `${formatBig(u.tokensIn)}/${formatBig(u.tokensOut)}`;
-  // A-OWNER-67d / 74b: one line always. The steps in order: the cache-write words get short first, then the prefix goes, then
-  // the call count shortens and goes, then the " Token" word; the numbers are never cut (the call count stays in the tip)
-  const written = u.tokensCacheWrite != null && u.tokensCacheWrite > 0 ? formatBig(u.tokensCacheWrite) : null;
-  type Step = readonly [MsgKey, 'cw' | 'cws'];
-  const steps: Step[] = written
-    ? [[key, 'cw'], ['aigen.card.run1', 'cw'], [key, 'cws'], ['aigen.card.run1', 'cws'], ['aigen.card.run2', 'cws'],
-      ['aigen.card.run3', 'cws'], ['aigen.card.run4', 'cws'], ['aigen.card.run5', 'cws']]
-    : ([key, 'aigen.card.run1', 'aigen.card.run2', 'aigen.card.run3', 'aigen.card.run4', 'aigen.card.run5'] as const).map((k): Step => [k, 'cw']);
-  const text = (i: number): string => {
-    const [k, w] = steps[Math.min(i, steps.length - 1)] ?? [key, 'cw'];
-    const base = tn(k, u.calls, { calls: f(u.calls), io });
-    return written ? base + t(w === 'cw' ? 'aigen.card.cw' : 'aigen.card.cws', { n: written }) : base;
-  };
-  const cached = (u.tokensCached ?? 0) > 0 || (u.tokensCacheWrite ?? 0) > 0
-    ? ` · ${t('aigen.card.cached', { r: f(u.tokensCached ?? 0), w: f(u.tokensCacheWrite ?? 0) })}` : '';
-  const exact = tn('aigen.card.usage', u.calls, { calls: f(u.calls), tin: f(u.tokensIn), tout: f(u.tokensOut) }) + cached;
+  // A-OWNER-84: one grid, three max-content columns: "本轮调用 N 次，" | label | numbers; row 2 (cache) only when write or read > 0.
+  // The exact numbers stay in the tip (tap / hover / focus).
+  const { io, cache } = tokenFigures(u);
+  const exactCache = cache ? t('ai.set.usage.sumCached', { w: f(u.tokensCacheWrite ?? 0), r: f(u.tokensCached ?? 0) }) : '';
+  const exact = tn('aigen.card.usage', u.calls, { calls: f(u.calls), tin: f(u.tokensIn), tout: f(u.tokensOut) }) + exactCache;
   const id = `gen-usage-tip-${job.id}`;
-  const p: HTMLElement = h('p', { class: 'dim gen-note gen-usage', tabindex: '0', 'aria-describedby': id }, text(0));
+  const cell = (cls: string, ...kids: Array<string | HTMLElement>): HTMLElement => h('span', { class: cls }, ...kids);
+  const rows: HTMLElement[] = [
+    cell('gu-n', tn('aigen.card.calls', u.calls, { calls: f(u.calls) }), cell('gu-c', t('aigen.card.callsSep'))),
+    cell('gu-l', t('aigen.card.ioLabel')), cell('gu-v', `${io} Token`),
+  ];
+  if (cache) rows.push(cell('gu-n gu-e', ''), cell('gu-l', t('aigen.card.cacheLabel')), cell('gu-v', `${cache} Token`));
+  const p: HTMLElement = h('div', { class: 'dim gen-note gen-usage', tabindex: '0', 'aria-describedby': id }, ...rows);
+  // Never break a row: when the three columns do not fit, the call count takes its own line (no comma) and the label rows sit
+  // under each other; if even that is too wide the type shrinks a little
   const fit = (): void => {
     if (!p.isConnected || p.clientWidth === 0) return;
-    let i = 0;
-    p.textContent = text(i);
-    while (p.scrollWidth > p.clientWidth && i < steps.length - 1) p.textContent = text(++i);
+    p.classList.remove('gu-narrow', 'gu-tiny');
+    if (p.scrollWidth <= p.clientWidth) return;
+    p.classList.add('gu-narrow');
+    if (p.scrollWidth > p.clientWidth) p.classList.add('gu-tiny');
   };
   if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(p);
   return [h('span', { class: 'has-tip tip-tap gen-usage-wrap' }, p, tipEl(id, exact))];

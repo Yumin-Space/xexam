@@ -38,6 +38,7 @@
 .qcount, .btn.qsubmit { display: none; }
 .qcount { font-size: 13.5px; color: var(--ink2); white-space: nowrap; }
 .qcount-s { display: none; }
+.btn.qsubmit .lbl-s { display: none; }
 .btn.qsubmit { position: relative; align-items: center; gap: 4px; min-height: 30px; padding: 0 10px; border: 0; box-shadow: none; white-space: nowrap;
   color: var(--on-answer-solid); font-size: 13.5px; font-weight: 600; line-height: 1.2; }
 /* A-OWNER-60: the visible pill (30 px) sits inside the 44 px bar; its tap area is the invisible 44 px box around it, and the one frame
@@ -226,10 +227,12 @@
   /* A-OWNER-60: the count keeps its word ("已完成 1/50"; up to 360 px only "1/50", screen readers keep the full text); the button is a
      30 px pill with a 44 px tap area, its label goes when the row does not fit (.tight, set by the quiz page), the hold tip names it */
   .qcount { font-size: 13px; margin-right: 2px; }
-  .btn.qsubmit { min-width: 30px; padding: 0 9px; justify-content: center; }
-  .qbar.tight .btn.qsubmit { padding: 0; }
-  .qbar.tight .btn.qsubmit::after { inset: -7px; }
+  /* A-OWNER-81: the label is always visible; the pill is a little smaller here, and .tight (row too narrow) only swaps in the short label */
+  .btn.qsubmit { min-width: 30px; padding: 0 8px; gap: 3px; font-size: 12.5px; justify-content: center; }
+  .btn.qsubmit .mi { width: 14px; height: 14px; }
+  .qbar.tight .btn.qsubmit { padding: 0 7px; }
   .qbar.tight .qsubmit .lbl { display: none; }
+  .qbar.tight .qsubmit .lbl-s { display: inline; }
   .qtime { align-items: center; }
   .qtime .mi { display: inline; width: 16px; height: 16px; color: var(--ink3); }
   .meter { position: absolute; left: 0; right: 0; bottom: 0; flex: none; height: 3px; margin: 0; border-radius: 0; }

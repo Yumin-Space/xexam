@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  wrapLabel, areaPath, axisMax, bars, controlYs, dayRange, fillPeriods, labelStep, monotonePath, monthRange, niceMax, rotateLabels, xs, yOf, yTicks,
+  wrapLabel, areaPath, axisMax, bars, controlYs, dayRange, fillPeriods, labelStep, monotonePath, monthRange, niceMax, xs, yOf, yTicks,
+  PHONE_CHART, fitText, hbars, horizontalBars, nameColumn, newestIndexes, shortPeriod, textWidth,
 } from './usage-chart.ts';
 
 test('niceMax rounds up to 1, 2, 5, 10 times a power of ten', () => {
@@ -95,9 +96,6 @@ test('label thinning and rotation: never overlap', () => {
     const step = labelStep(slot, 70);
     assert.ok(step * slot >= 70, `slot ${slot} step ${step}`);
   }
-  assert.equal(rotateLabels(80, 70), false);
-  assert.equal(rotateLabels(40, 70), true);
-  assert.equal(rotateLabels(20, 70), true);
 });
 
 test('bars: centred in their slots, heights follow the values, a zero is flat', () => {
@@ -119,4 +117,67 @@ test('wrapLabel: Latin labels break at spaces, CJK between characters, never ins
   assert.deepEqual(wrapLabel('练习提示与解释', 48), ['练习提示', '与解释']);
   assert.deepEqual(wrapLabel('練習のヒント', 58), ['練習のヒ', 'ント']);
   assert.equal(wrapLabel('一二三四五六七八九十一二', 30), null);
+});
+
+test('horizontalBars: a phone-wide box, or any label the column chart cannot show flat', () => {
+  const flat = [['Chat'], ['Hints']];
+  assert.equal(horizontalBars(PHONE_CHART - 1, flat), true);
+  assert.equal(horizontalBars(393, flat), true);
+  assert.equal(horizontalBars(PHONE_CHART, flat), false);
+  assert.equal(horizontalBars(1000, flat), false);
+  assert.equal(horizontalBars(1000, [['Chat'], null]), true);
+  assert.equal(horizontalBars(1000, []), false);
+});
+
+test('fitText: cut with an ellipsis by estimated width, never empty, never wider than the room', () => {
+  assert.equal(fitText('Chat', 100), 'Chat');
+  const long = 'example-model-long-name-5-5';
+  for (const px of [30, 60, 90, 140]) {
+    const c = fitText(long, px);
+    assert.ok(c.endsWith('…'));
+    assert.ok(textWidth(c) <= px + 0.01, `${c} in ${px}`);
+    assert.ok(long.startsWith(c.slice(0, -1)));
+  }
+  assert.equal(fitText('练习提示与解释', 12), '练…');
+  assert.equal(fitText('abc', 0), 'a…');
+});
+
+test('nameColumn: the widest name, at most 40 percent of the box, at least 40 px', () => {
+  assert.equal(nameColumn([50, 80], 360), 80);
+  assert.equal(nameColumn([50, 300], 360), 144);
+  assert.equal(nameColumn([10], 360), 40);
+  assert.equal(nameColumn([], 360), 40);
+  assert.equal(nameColumn([500], 200), 80);
+});
+
+test('shortPeriod: MM-DD for a day, a month stays', () => {
+  assert.equal(shortPeriod('2026-11-13'), '11-13');
+  assert.equal(shortPeriod('2026-11'), '2026-11');
+  assert.equal(shortPeriod('x'), 'x');
+});
+
+test('newestIndexes: counted from the newest, the newest is always named, none touch', () => {
+  assert.deepEqual(newestIndexes(7, 3), [0, 3, 6]);
+  assert.deepEqual(newestIndexes(7, 1), [0, 1, 2, 3, 4, 5, 6]);
+  assert.deepEqual(newestIndexes(1, 5), [0]);
+  assert.deepEqual(newestIndexes(0, 2), []);
+  // a label the box cannot hold is dropped, the newest never
+  assert.deepEqual(newestIndexes(7, 3, (i) => i !== 0), [3, 6]);
+  assert.deepEqual(newestIndexes(7, 3, () => false), [6]);
+  for (const n of [2, 8, 30, 90]) for (const step of [1, 2, 4, 7]) {
+    const idx = newestIndexes(n, step);
+    assert.equal(idx[idx.length - 1], n - 1);
+    assert.ok(idx.every((v, k) => k === 0 || v - idx[k - 1]! === step));
+  }
+});
+
+test('hbars: rows from the top, the bar grows right in proportion, centred in its row', () => {
+  const b = hbars([10, 5, 0], { left: 100, top: 6, width: 200 }, 10, 30, 16);
+  assert.equal(b.length, 3);
+  assert.deepEqual(b.map((x) => x.width), [200, 100, 0]);
+  assert.deepEqual(b.map((x) => x.rowY), [6, 36, 66]);
+  assert.ok(b.every((x) => x.x === 100 && x.height === 16 && x.y === x.rowY + 7));
+  assert.deepEqual(hbars([], { left: 0, top: 0, width: 10 }, 1), []);
+  assert.deepEqual(hbars([1], { left: 0, top: 0, width: 10 }, 0), []);
+  assert.equal(hbars([-3], { left: 0, top: 0, width: 10 }, 5)[0]!.width, 0);
 });

@@ -30,7 +30,7 @@ export default defineCatalog({
     'home.resume.discardCancel': 'Keep it',
 
     // Start an exam
-    'home.setup.title': 'Start an exam or practice',
+    'home.setup.title': 'Exam or practice',
     'home.pick.legend': 'Banks and sheets',
     'home.pick.all': 'Select all',
     'home.pick.none': 'Clear',
@@ -56,7 +56,7 @@ export default defineCatalog({
     'home.mode.allSub': 'Every question in the selected sheets',
     'home.mode.weakSub': '{n} questions to review in the selected sheets. A question leaves the notebook after {k} correct answers in a row.',
     'home.mode.weakSub_one': '{n} question to review in the selected sheets. A question leaves the notebook after {k} correct answers in a row.',
-    'home.mode.weakEmpty': 'Empty for now. Questions you answer wrong are collected here, so take an exam first.',
+    'home.mode.weakEmpty': 'Empty for now. Take an exam; wrong answers land here.',
     'home.mode.weakNone': '{n} questions are in the notebook, but none of them are in the selected sheets.',
     'home.mode.weakNone_one': '{n} question is in the notebook, but it is not in the selected sheets.',
 
@@ -96,7 +96,7 @@ export default defineCatalog({
     'home.overview.banks': 'Question banks',
     'home.overview.sheets': 'Usable sheets',
     'home.overview.questions': 'Active questions',
-    'home.overview.notebook': 'Wrong-answer notebook',
+    'home.overview.notebook': 'To review',
     'home.overview.retired': '{n} retired questions are not counted.',
     'home.overview.retired_one': '{n} retired question is not counted.',
     'home.overview.review': 'Review wrong answers',
@@ -252,7 +252,7 @@ export default defineCatalog({
     'home.mode.weakPhone': '間違い',
     'home.mode.allSub': '選んだシートのすべての問題から出題します',
     'home.mode.weakSub': '選んだシートに要復習の問題が {n} 問あります。{k} 回続けて正解するとノートから外れます。',
-    'home.mode.weakEmpty': 'まだ空です。間違えた問題はここに自動で集まるので、まずは一度試験を受けてみましょう。',
+    'home.mode.weakEmpty': 'まだ空です。試験で間違えた問題が自動でここに入ります。',
     'home.mode.weakNone': '間違いノートには {n} 問ありますが、選んだシートには含まれていません。',
 
     'home.count.label': '問題数',

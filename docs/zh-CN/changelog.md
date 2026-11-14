@@ -6,6 +6,18 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.2 — 2026-11-14
+
+**手机上的修复：完成按钮始终显示文字，AI 对话不再被拖动或互相遮盖，Token 行更整齐，用量图表不再有斜着的文字。升级：拉取新镜像；数据库没有变化。**
+
+- **完成按钮**：考试和练习页面顶部一行里的绿色或橙色按钮始终显示文字。这一行太挤时，英文和日文改用简短的 **Finish** / **終了**，不再隐藏文字。
+- **手机上的 AI 对话**：在对话列表下方的空白处、标题行、顶栏和记忆页面上拖动，不会再带动任何东西；列表仍可滚动。文字调大时，标题、**自由模式** 标签、标签页和账号标识不再互相遮盖（会逐步缩小）。键盘弹出时，消息留在原处，不再向上跳。
+- **Token 行**：正在运行的 AI 生成或导入卡片上，调用次数和 Token 排成对齐的两行：**输入/输出消费** 和其下的 **缓存写入/读取**。AI 用量里的缓存也用同样的写入/读取成对显示。导入卡片的按钮现在是 **取消导入**。
+- **用量图表**：不再有斜着的文字。**按功能** 和 **按模型** 在手机上是横向条形（名称在左，数值在条的末端），**按时间** 显示简短的横向日期。
+- **手机上的英文和日文**：在 iPhone 尺寸的屏幕上会折行、或把按钮挤到下一行的英文和日文文字改短了，每个页面的行数和排列都和中文一致；中文界面不变。改成短标签的地方，完整文字仍作为无障碍名称保留。
+- **最近的 AI 题库任务**（AI 设置）：宽屏上各列不再一个字一行地竖着排。失败原因和跳过的题目改为在这条任务下方单独一整行显示，不再挤占「状态」和「题数」两列；手机上仍显示在任务卡片里。
+- 测试：前端 674 → 682
+
 ### v1.1 — 2026-11-13
 
 **有时间限制的考试，没有完成的题与错题分开计分，AI 生成题库，以及 AI 导入文件。升级：拉取新镜像；主库升级到 schema 7，AI 库升级到 schema 6，升级前都会先写一份备份。**

@@ -1,7 +1,7 @@
 // The rows of the usage bar charts: the "other" bar, the 万 / K format, the metric.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { formatBig, modelRows, purposeRows, valueOf } from './usage-bars.ts';
+import { cachePair, formatBig, modelRows, purposeRows, tokenFigures, valueOf } from './usage-bars.ts';
 
 const c = (calls: number, tokensIn = 0, tokensOut = 0, errors = 0) => ({ calls, tokensIn, tokensOut, errors });
 
@@ -47,4 +47,14 @@ test('modelRows: the cache figures are summed when a row has them and left out w
   assert.equal(rows[0]?.tokensCached, 5);
   assert.equal(rows[0]?.tokensCacheWrite, 10);
   assert.equal('tokensCached' in (rows[1] ?? {}), false);
+});
+
+test('A-OWNER-84 tokenFigures: input/output pair, cache write/read pair, row 2 hidden at 0, K / M', () => {
+  assert.deepEqual(tokenFigures({ tokensIn: 85400, tokensOut: 59200, tokensCached: 76300, tokensCacheWrite: 6900 }), { io: '85.4K/59.2K', cache: '6.9K/76.3K' });
+  assert.equal(tokenFigures({ tokensIn: 1434, tokensOut: 21907 }).cache, null);
+  assert.equal(tokenFigures({ tokensIn: 1, tokensOut: 2, tokensCached: 0, tokensCacheWrite: 0 }).cache, null);
+  assert.equal(tokenFigures({ tokensIn: 1, tokensOut: 2, tokensCached: 5 }).cache, '0/5');
+  assert.equal(tokenFigures({ tokensIn: 1, tokensOut: 2, tokensCacheWrite: 1_234_567 }).cache, '1.2M/0');
+  assert.equal(cachePair(6934, 76345), '6.9K/76.3K');
+  assert.equal(cachePair(1, 2, (n) => String(n * 10)), '10/20');
 });

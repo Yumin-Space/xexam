@@ -6,7 +6,7 @@ export default defineCatalog({
   en: {
     'auth.signin.title': 'Sign in',
     'auth.signin.lead': 'Sign in with your Xexam account.',
-    'auth.signin.hint': 'No account yet? Ask an administrator of this Xexam to create one for you.',
+    'auth.signin.hint': 'No account? Ask an administrator of this Xexam.',
     'auth.firstRun': 'First start: sign in with the username {name} and the password admin. You will choose your own password right after.',
     'auth.signin.submit': 'Sign in',
     'auth.signin.busy': 'Signing in…',
@@ -83,7 +83,7 @@ export default defineCatalog({
   ja: {
     'auth.signin.title': 'ログイン',
     'auth.signin.lead': 'Xexam のアカウントでログインしてください。',
-    'auth.signin.hint': 'アカウントがない場合は、この Xexam の管理者に作成を依頼してください。',
+    'auth.signin.hint': 'アカウントはこの Xexam の管理者が作成します。',
     'auth.firstRun': '初回起動です。ユーザー名 {name}、パスワード admin でログインしてください。ログイン後すぐに自分のパスワードを設定します。',
     'auth.signin.submit': 'ログイン',
     'auth.signin.busy': 'ログインしています…',

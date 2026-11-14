@@ -68,3 +68,10 @@
 .auth-bottom .gh-line { flex-basis: 100%; margin-top: 0; }
 /* The error and shut-down screens: under their message */
 .solo > .gh-line { margin-top: 24px; }
+
+/* v1.2 (A-OWNER-83): the steps of a tight top bar (components/shell.ts fitBar), each only when the account label would spill
+   over the menu button (large iOS text size, page zoom): no user icon, then no role tag, then the logo alone (the name stays
+   for screen readers) */
+.topbar.fit-1 .acct-ico { display: none; }
+.topbar.fit-2 .acct-role { display: none; }
+.topbar.fit-3 .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

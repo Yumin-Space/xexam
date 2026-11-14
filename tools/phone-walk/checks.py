@@ -1136,13 +1136,14 @@ def keyboard_verdict(before, after, bottom, size):
         problems.append('no composer')
     elif abs(comp['b'] - bottom) > 1.5:
         problems.append('composer bottom %d, expected %d' % (comp['b'], bottom))
-    last, sc = after['last'], after['scroller']
-    if before['atEnd'] and last and comp:
-        if last['b'] > comp['y'] + 1.5 or (sc and last['b'] < sc['y']):
-            problems.append('the newest message is not visible (bottom %d, composer top %d)' % (last['b'], comp['y']))
+    # v1.2 (A-OWNER-88): the messages never move when the keyboard opens (the list only gets shorter from the bottom);
+    # W-CH-88 in checks_v12_ai.py checks every message and the scroll to the very end
+    last = after['last']
+    if before['last'] and last and abs(before['last']['y'] - last['y']) > 1.01:
+        problems.append('the newest message moved %d -> %d' % (before['last']['y'], last['y']))
     if after['font'] is not None and after['font'] < 16:
         problems.append('textarea font %spx < 16' % after['font'])
-    return (not problems, '; '.join(problems) or 'nothing slid; composer on the keyboard at %d; newest message visible; text %spx' % (bottom, after['font']))
+    return (not problems, '; '.join(problems) or 'nothing slid; composer on the keyboard at %d; messages still; text %spx' % (bottom, after['font']))
 
 
 # ---------------------------------------------------------------------------------------------------- users, logs, settings, AI settings
@@ -1436,13 +1437,19 @@ CH5_STATE = """(sel => { const r = s => { const e = document.querySelector(s); i
     win: [scrollX, scrollY, document.scrollingElement.scrollTop, vv.offsetTop || 0, vv.offsetLeft || 0, vv.pageTop || 0],
     st: sc ? sc.scrollTop : -1, over: sc ? sc.scrollHeight - sc.clientHeight : -1 } })"""
 
-# a synthetic, cancelable one-finger touchmove: the guard must cancel it (frame) or leave it (a scroller that can follow)
-CH5_PROBE = """((sel, dy) => { const e = document.querySelector(sel); if (!e) return null;
-  const b = e.getBoundingClientRect(); const x = b.left + b.width / 2, y = b.top + Math.min(b.height / 2, 40);
-  const mk = (type, yy) => { const t = new Touch({ identifier: 7, target: e, clientX: x, clientY: yy, pageX: x, pageY: yy });
+# a synthetic, cancelable one-finger drag (a touchstart and three moves of dx / dy each): the guard must cancel it (frame) or
+# leave it (a scroller that can follow). `at`: 'top' of the element, or 'below' = the empty area under the rows (A-OWNER-82)
+CH5_PROBE = """((sel, dy, dx, at) => { const e = document.querySelector(sel); if (!e) return null;
+  const b = e.getBoundingClientRect(); let x = b.left + b.width / 2, y = b.top + Math.min(b.height / 2, 40);
+  if (at === 'below') { const ul = document.querySelector('.ai-chats').getBoundingClientRect(); const gh = document.querySelector('.ai-list-body > .gh-line');
+    y = (ul.bottom + (gh ? gh.getBoundingClientRect().top : b.bottom)) / 2; }
+  const target = document.elementFromPoint(x, y) || e;
+  const mk = (type, xx, yy) => { const t = new Touch({ identifier: 7, target, clientX: xx, clientY: yy, pageX: xx, pageY: yy });
     return new TouchEvent(type, { touches: type === 'touchend' ? [] : [t], targetTouches: type === 'touchend' ? [] : [t], changedTouches: [t], bubbles: true, cancelable: true }); };
-  e.dispatchEvent(mk('touchstart', y)); const ev = mk('touchmove', y + dy); e.dispatchEvent(ev); e.dispatchEvent(mk('touchend', y + dy));
-  return ev.defaultPrevented })"""
+  target.dispatchEvent(mk('touchstart', x, y)); let any = false;
+  for (let i = 1; i <= 3; i++) { const ev = mk('touchmove', x + (dx || 0) * i, y + dy * i); target.dispatchEvent(ev); any = any || ev.defaultPrevented; }
+  target.dispatchEvent(mk('touchend', x + (dx || 0) * 3, y + dy * 3));
+  return any })"""
 
 
 def ch5_case(rc, lang, theme, size):
@@ -1455,13 +1462,18 @@ def ch5_case(rc, lang, theme, size):
         rc.rec('W-CH-5', 'ai', 'history-swipe', 'sam', size, lang, theme, False, 'no history list on screen', d)
         return
     tmpl = "(n => { const ul = document.querySelector('.ai-chats'); if (!ul || !ul.firstElementChild) return -1; const rows = Array.from(ul.children); rows.slice(n || 1).forEach(r => r.remove()); "            "if (n > 1) for (let i = rows.length; i < n; i++) ul.appendChild(rows[0].cloneNode(true)); return ul.children.length })"
-    for label, n in (('short', 1), ('long', 40)):
+    # v1.2 (A-OWNER-82): the short list is the owner's 5 chats WITH the GitHub line (its tap area once made a 2 px scroller)
+    for label, n in (('short', 5), ('long', 40)):
         goto(d, '#/ai', 1.5)
         d.js(CHECKS_JS)
         d.js_call(tmpl, n)
         if label == 'short':
-            d.js("Array.from(document.querySelectorAll('.ai-list-body > :not(.ai-chats)')).forEach(e => { e.style.display = 'none' })")
+            d.js("Array.from(document.querySelectorAll('.ai-list-body > :not(.ai-chats):not(.gh-line)')).forEach(e => { e.style.display = 'none' })")
         time.sleep(0.3)
+        if label == 'short':
+            over = d.js("(() => { const e = document.querySelector('.ai-list-body'); return [e.scrollHeight - e.clientHeight, !!e.querySelector('.gh-line') && e.querySelector('.gh-line').offsetParent !== null] })()")
+            if over[0] > 0 or not over[1]:
+                problems.append('short list: %s px to scroll, GitHub line %s' % (over[0], 'shown' if over[1] else 'missing'))
         for dy in (-180, 180):
             before = d.js_call(CH5_STATE, sel)
             r = d.rect(sel, 0, scroll=False)
@@ -1478,16 +1490,26 @@ def ch5_case(rc, lang, theme, size):
                 problems.append('the short list scrolled')
         # deterministic: the guard cancels a drag nothing can follow, and leaves a drag a scroller can follow
         st = d.js_call(CH5_STATE, sel)
-        prevented_head = d.js_call(CH5_PROBE, '.ai-list-head', 60)
-        if prevented_head is False:
-            problems.append('%s: a drag on the list header was not cancelled' % label)
+        # up, down, sideways and diagonal (A-OWNER-82 constraint 2: the frame never moves sideways either)
+        drags = ((-20, 0), (20, 0), (0, -20), (0, 20), (-14, 14), (14, -14))
+        for dy, dx in drags:
+            if d.js_call(CH5_PROBE, '.ai-list-head', dy, dx, 'top') is False:
+                problems.append('%s: a drag (%+d, %+d) on the list header was not cancelled' % (label, dx, dy))
         if label == 'short':
-            if d.js_call(CH5_PROBE, '.ai-chats', -60) is False:
-                problems.append('short list: a drag on rows that cannot scroll was not cancelled')
+            for dy, dx in drags:
+                if d.js_call(CH5_PROBE, '.ai-chats', dy, dx, 'top') is False:
+                    problems.append('short list: a drag (%+d, %+d) on rows that cannot scroll was not cancelled' % (dx, dy))
+                if d.js_call(CH5_PROBE, '.ai-list-body', dy, dx, 'below') is False:
+                    problems.append('short list: a drag (%+d, %+d) on the empty area under the rows was not cancelled' % (dx, dy))
+                if d.js_call(CH5_PROBE, '.ai-list-body > .gh-line', dy, dx, 'top') is False:
+                    problems.append('short list: a drag (%+d, %+d) on the GitHub line was not cancelled' % (dx, dy))
         elif st['over'] > 4:
             d.js("document.querySelector('.ai-list-body').scrollTop = 20")
-            if d.js_call(CH5_PROBE, '.ai-chats', -60) is True:
-                problems.append('long list: a drag a scroller can follow was cancelled')
+            for dy, dx in ((-20, 0), (20, 0), (-14, 6)):
+                if d.js_call(CH5_PROBE, '.ai-chats', dy, dx, 'top') is True:
+                    problems.append('long list: a drag (%+d, %+d) the list can follow was cancelled' % (dx, dy))
+            if d.js_call(CH5_PROBE, '.ai-chats', 0, -20, 'top') is False:
+                problems.append('long list: a sideways drag was not cancelled')
     # the conversation: a drag on its head never moves anything
     goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.2)
     d.js(CHECKS_JS)
@@ -2582,7 +2604,7 @@ UC2_JS = r"""(async () => {
   const pb = btns[1]; res.btnCr = +cr(getComputedStyle(pb).color, getComputedStyle(pb).backgroundColor).toFixed(2);
   const sws = [...card.querySelectorAll('.uc-sw')].map(e => getComputedStyle(e)); res.swatch = sws.map(s => s.backgroundColor + '@' + s.opacity);
   res.legendMatch = sws.length === 2 && sws[0].backgroundColor === fillIn && sws[1].backgroundColor === fillOut;
-  res.ticks = [...svg.querySelectorAll('text.uc-label:not([transform])')].map(t => t.textContent);
+  res.ticks = [...svg.querySelectorAll('text.uc-label:not([transform]):not(.uc-date)')].map(t => t.textContent);
   res.svgW = Math.round(svg.getBoundingClientRect().width); res.hostW = Math.round(line2.getBoundingClientRect().width);
   res.side = document.documentElement.scrollWidth <= innerWidth + 1;
   // keyboard: focus the plot, End = the newest period, ArrowLeft one back
@@ -3566,7 +3588,15 @@ def im3_case(rc, lang, theme, size):
 
 GROUPS = [g_shared, g_toast, g_pinned, g_contrast, g_dialogs, g_menu, g_first_line, g_bar, g_panel, g_greyed, g_landscape,
           g_result, g_records, g_home, g_chat, g_users, g_logs_settings, g_ai_settings,
-          g_sh8, g_sh9, g_sh10, g_qz9, g_as2, g_as3, g_ch4, g_ch5, g_us2, g_caps, g_v11, g_s10, g_l54, g_l60, g_tk, g_s13]
+          g_sh8, g_sh9, g_sh10, g_qz9, g_as2, g_as3, g_ch4, g_ch5, g_us2, g_caps, g_v11, g_s10, g_l54, g_l60, g_s13]
+
+# v1.2 groups (their files import this module, so they are pulled in here at the end)
+from checks_v12_quiz import GROUPS_V12_QUIZ  # noqa: E402
+from checks_v12_ai import GROUPS_V12_AI  # noqa: E402
+from checks_v12_tokens import GROUPS_V12_TOKENS  # noqa: E402
+from checks_v12_charts import GROUPS_V12_CHARTS  # noqa: E402
+
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS
 
 
 def run(walk):

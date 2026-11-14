@@ -11,8 +11,6 @@
 /* A-OWNER-29b: the solid twin of the green Excel button (.btn.bk-choose): same box, AI+ orange (no shine), white bold text; both
    share one min-width, and the two cards have the same layout so the buttons share one left edge */
 .btn.bk-choose, .gen-impbtn.ibtn { min-width: 13em; }
-/* A-OWNER-77: the ja labels (「Excel ファイルをインポート」, 「AI でファイルをインポート」) are wider than 13em; one px width keeps them twins */
-html:lang(ja) .btn.bk-choose, html:lang(ja) .gen-impbtn.ibtn { min-width: 244px; }
 .gen-impbtn { flex: none; }
 .gen-impwrap { flex: none; display: inline-flex; max-width: 100%; }
 /* the AI+ fill, the focus ring and the greyed look of .gen-impbtn.ibtn come from styles/ai-gen.css (shared with the generation buttons, A-OWNER-65) */

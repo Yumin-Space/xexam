@@ -138,3 +138,17 @@ insets are then reported as skipped.
 `panel_case` (W-QZ-3 / 4 / 5) now taps an option and then 核对答案 (v1.1: no question type is checked on pick). End-to-end AI
 import / generation runs against the made-up provider in `tests/integration/stack_check.py` (section A6); the walk does not
 upload files.
+
+## v1.2 checks
+
+Each group lives in its own file (`checks_v12_*.py`) and is registered at the end of `checks.py` (`GROUPS_V12_*`). The old
+one-line token check W-TK-1 is retired (its group `g_tk` stays in `checks.py` but is no longer in `GROUPS`); W-TK-2 replaces it.
+
+| Check | What |
+|---|---|
+| W-QZ-81 | `checks_v12_quiz.py`: the finish pill in the top row of an exam / practice always shows its text (zh 完成练习 / 完成考试; en and ja use a short label when the row is tight), one line, 44 px tap area, zh / en / ja at nine sizes |
+| W-CH-82 | `checks_v12_ai.py`: AI Chat history and memory screens are fixed frames: every drag (up, down, sideways, diagonal) on the empty area under a short list, the rows, the GitHub line, the list head and the top bar is cancelled; a long list still scrolls |
+| W-CH-83 | the AI Chat title row and the top bar never overlap or spill at text zoom 1 / 1.25 / 1.5 |
+| W-CH-88 | with the keyboard open the messages do not move (open, typing, close; list at its end, middle and top), a send still ends at the bottom |
+| W-TK-2 | `checks_v12_tokens.py`: the live token text of a running generation / import card is a grid of two aligned lines (calls + Input/output, Cache write/read), no wrap, no sideways scroll; the import card says Cancel import |
+| W-UC-3 | `checks_v12_charts.py`: AI usage charts have no slanted label; By feature / By model are horizontal bars on a phone, By time has short horizontal dates, nothing outside the card |

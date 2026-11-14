@@ -59,6 +59,10 @@ th.n .ptb-sort { justify-content: flex-end; }
   .ptb-mini .ptb-table { width: 100%; font-size: 11px; line-height: 1.3; }
   .ptb-mini .ptb-table th, .ptb-mini .ptb-table td { padding: 5px 3px; }
   .ptb-mini .ptb-table thead th { font-size: 10.5px; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; vertical-align: bottom; }
+  /* A-OWNER-87: English heads break only between words ("Calls", not "Call|s"); Japanese heads keep ー and small kana
+     with the character before them ("ユー|ザー", not "ユーザ|ー") */
+  html:lang(en) .ptb-mini .ptb-table thead th { overflow-wrap: break-word; }
+  html:lang(ja) .ptb-mini .ptb-table thead th { line-break: strict; }
   .ptb-mini .ptb-table td.n { white-space: nowrap; }
   .ptb-mini .ptb-table td.ais-today { word-spacing: -.3em; }
   .ptb-mini .ptb-sort { min-height: 32px; gap: 1px; padding-inline: 0; text-align: left; white-space: normal; }

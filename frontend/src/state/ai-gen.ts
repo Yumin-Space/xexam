@@ -102,7 +102,7 @@ export async function cancelJob(job: GenJob, decline = false, keep = false): Pro
   try {
     const j = await cancelGen(job.id, keep);
     setAiGenJob(j);
-    toast(decline ? t('aigen.imp.toast.declined') : keep && j.phase === 'saving' ? t('aigen.toast.keepSaving') : t('aigen.toast.cancelled'), 3000);
+    toast(decline ? t('aigen.imp.toast.declined') : keep && j.phase === 'saving' ? t('aigen.toast.keepSaving') : t(job.source === 'file' ? 'aigen.imp.toast.cancelled' : 'aigen.toast.cancelled'), 3000);
     void refreshAi(true);
     return null;
   } catch (e) {

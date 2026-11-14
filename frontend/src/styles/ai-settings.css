@@ -371,6 +371,22 @@ td.ais-usum { display: none; }
 .ais-genname { overflow-wrap: anywhere; white-space: normal; }
 .ais-genjobs td, .ais-genjobs th { white-space: normal; }
 .ais-genjobs td.ais-when, .ais-genjobs td.ais-gencalls, .ais-genjobs td.ais-genmade, .ais-genjobs td.ais-gensrc { white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* v1.2 (owner report): on wide screens the headers, the user name and the state chip never break per character, and the
+   bank name keeps a readable width (it wraps at word boundaries, a long unbroken name only as a last resort); the
+   "skipped" note goes to its own line under the count instead of widening the count column */
+.ais-genjobs thead th, .ais-genjobs th.ais-uname, .ais-genjobs td.ais-genst .ais-jchip { white-space: nowrap; overflow-wrap: normal; }
+.ais-genjobs td.ais-genname { min-width: 12em; max-width: 30em; }
+.ais-gendetail { display: none; }
+@media (min-width: 901px) {
+  /* the failure reason and the skipped note: one full-width line under the job (the copies inside the cells are for phones) */
+  .ais-genjobs .ais-genst .ais-genwhy, .ais-genjobs .ais-genmade .ais-skipn { display: none; }
+  .ais-gendetail { display: table-row; }
+  .ais-genjobs tr.has-detail > td, .ais-genjobs tr.has-detail > th { padding-bottom: 2px; }
+  .ais-genjobs .ais-gendetail > td { border-top: 0; padding: 0 8px 9px; white-space: normal; font-size: 12.5px; line-height: 1.45; }
+  .ais-genwhy-w { color: var(--danger); }
+  .ais-skipn-w { color: var(--ink3); }
+  .ais-genwhy-w + .ais-skipn-w::before { content: " · "; color: var(--ink3); }
+}
 .ais-genwhy { color: var(--danger); }
 .ais-jchip { display: inline-block; }
 .ais-srcm { display: none; }
@@ -404,6 +420,12 @@ td.ais-usum { display: none; }
   .ais-genjobs td.ais-genmade, .ais-genjobs td.ais-gencalls { font-size: 12.5px; color: var(--ink3); text-align: left; white-space: nowrap; }
   .ais-genjobs .ais-stats { justify-content: flex-start; min-height: 24px; }
   .ais-genjobs .ais-d { display: none; }
+  .ais-genjobs tbody tr.ais-gendetail { display: none; }
+  /* a job with skipped questions: the count and its "skipped" note share one full-width line, the figures go under it */
+  .ais-genjobs tr:has(.ais-skipn) .ais-genmade { grid-column: 1 / -1; }
+  .ais-genjobs tr:has(.ais-skipn) .ais-gencalls { grid-column: 1 / -1; grid-row: 4; }
+  .ais-genjobs tr:has(.ais-skipn) .ais-genwhy { grid-row: 5; }
+  .ais-genjobs .ais-skipn { display: inline; margin-left: 8px; }
   .ais-genjobs .ais-genwhy { grid-column: 1 / -1; grid-row: 4; display: block; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
@@ -442,5 +464,7 @@ td.ais-usum { display: none; }
   /* A-OWNER-77: the ja short labels (ユーザー, セキュリティ) are wider than zh / en; the icons give way, the labels stay */
   html:lang(ja) .ais-tabs .ais-tab-ic { display: none; }
 }
+/* A-OWNER-87: at 320 px the English labels (Function, Users, Usage, Safety, Banks) need the icons' room too */
+@media (max-width: 340px) { html:lang(en) .ais-tabs .ais-tab-ic { display: none; } }
 
 .ais-genjobs .ais-skipn { color: var(--ink3); }

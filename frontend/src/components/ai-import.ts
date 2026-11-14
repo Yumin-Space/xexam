@@ -39,9 +39,9 @@ function actionButtons(m: CardModel, job: GenJob | null, upload: UploadView | nu
       case 'cancelUpload':
         return [cancelButton(t('aigen.imp.card.cancelUpload'), () => upload?.abort())];
       case 'cancel':
-        return job ? [cancelButton(t('aigen.card.cancel'), (btn) => void askCancelImport(job, m.cancelBodyKey ?? 'aigen.card.cancelBody', btn, m.cancelKeep))] : [];
+        return job ? [cancelButton(t('aigen.imp.card.cancel'), (btn) => void askCancelImport(job, m.cancelBodyKey ?? 'aigen.card.cancelBody', btn, m.cancelKeep))] : [];
       case 'cancelDisabled':
-        return [withReason(cancelButton(t('aigen.card.cancel'), () => undefined), t('aigen.err.tooLate'))];
+        return [withReason(cancelButton(t('aigen.imp.card.cancel'), () => undefined), t('aigen.err.tooLate'))];
       case 'import':
         return job ? [h('button', { type: 'button', class: 'btn primary ai gen-import', onclick: () => openConfirm(job) }, t('aigen.imp.card.import'))] : [];
       case 'decline':
@@ -59,7 +59,7 @@ async function askCancelImport(job: GenJob, bodyKey: string, btn: HTMLButtonElem
   if (finished) {
     // A-OWNER-66: finished questions exist, so the answer is "save them" or "discard all"
     const r = await askChoice({
-      title: t('aigen.card.cancelAsk'), body: tn(msg('aigen.imp.card.keepBody'), finished),
+      title: t('aigen.imp.card.cancelAsk'), body: tn(msg('aigen.imp.card.keepBody'), finished),
       keep: t(msg('aigen.imp.card.keepOk'), { n: finished }), discard: t('aigen.imp.card.keepDiscard'), back: t('aigen.card.cancelKeep'),
     });
     if (!r) return;
@@ -67,7 +67,7 @@ async function askCancelImport(job: GenJob, bodyKey: string, btn: HTMLButtonElem
     return;
   }
   const ok = await ask({
-    title: t('aigen.card.cancelAsk'), body: t(msg(bodyKey)), ok: t('aigen.card.cancelOk'), cancel: t('aigen.card.cancelKeep'), danger: true,
+    title: t('aigen.imp.card.cancelAsk'), body: t(msg(bodyKey)), ok: t('aigen.imp.card.cancelOk'), cancel: t('aigen.card.cancelKeep'), danger: true,
   });
   if (!ok) return;
   await whileSending(btn, () => cancelJob(job));

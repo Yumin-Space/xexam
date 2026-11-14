@@ -72,8 +72,20 @@
 .btn.gen-cancel:active:not(:disabled) { background: var(--danger-soft); transform: translateY(1px); }
 .btn.gen-cancel:disabled, .btn.gen-cancel[aria-busy="true"] { opacity: .5; cursor: default; pointer-events: none; }
 .gen-usage-wrap { display: block; }
-/* A-OWNER-67d: one line, smaller than the progress line; the script shortens the text when it would not fit */
-.gen-usage { font-size: 12px; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; margin: 4px 0; }
+/* A-OWNER-84: a grid of three max-content columns (calls | label | numbers) so row 2 (cache) sits under row 1's label and numbers in
+   any font / language; no cell ever wraps. The script adds .gu-narrow (the call count on its own line, the label rows under each
+   other) and then .gu-tiny (a slightly smaller type) when the columns do not fit */
+.gen-usage { display: grid; grid-template-columns: repeat(3, max-content); justify-content: start; font-size: 12px; line-height: 1.5; white-space: nowrap; font-variant-numeric: tabular-nums; margin: 4px 0; }
+.gen-usage > span { white-space: nowrap; }
+.gen-usage .gu-v { padding-left: .4em; }
+/* en: the separator is ", "; pre keeps its trailing space before the label column */
+.gen-usage .gu-c { white-space: pre; }
+/* en: the label starts its own line in the narrow layout ("input/output:" follows a comma in the wide one) */
+.gen-usage.gu-narrow .gu-l::first-letter { text-transform: uppercase; }
+.gen-usage.gu-narrow { grid-template-columns: repeat(2, max-content); }
+.gen-usage.gu-narrow .gu-n { grid-column: 1 / -1; }
+.gen-usage.gu-narrow .gu-c, .gen-usage.gu-narrow .gu-e { display: none; }
+.gen-usage.gu-tiny { font-size: 11px; }
 .gen-usage:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; border-radius: 4px; }
 .btn.danger-text { color: var(--danger); }
 @media (hover: hover) { .btn.danger-text:hover:not(:disabled) { color: var(--danger-hover); background: var(--danger-soft); } }

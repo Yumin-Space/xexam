@@ -1,11 +1,14 @@
-// The usage charts of AI settings > AI 用量 (v1.1, UC-1, A-OWNER-39 / 40): vertical bars by model and by feature (calls, or
-// tokens stacked input + output) and a smooth line over time. Hand-made inline SVG (no chart library); the geometry is
+// The usage charts of AI settings > AI 用量 (v1.1, UC-1, A-OWNER-39 / 40): bars by model and by feature (calls, or tokens
+// stacked input + output) and a smooth line over time. v1.2 (A-OWNER-86): no label is ever slanted. The bars are horizontal rows
+// (the name on the left, the value at the bar's end) on a phone and wherever the column chart could not show every label flat;
+// the dates of the line are short and horizontal, thinned by the room, the newest always named. Hand-made inline SVG (no chart library); the geometry is
 // domain/usage-chart.ts and the rows are domain/usage-bars.ts (pure, tested). Colours are theme tokens (styles/ai-settings.css
 // `.uc-*`), so light and dark follow. The numbers stay available in the (visually hidden) tables next to each chart. The
 // drawing follows the width of its box (a resize redraws it), so the text keeps its size on a 360 px phone and on a desktop;
 // crowded labels turn, never overlap and are never left out.
 import {
-  areaPath, axisMax, bars, fillPeriods, labelStep, monotonePath, rotateLabels, wrapLabel, xs, yOf, yTicks,
+  areaPath, axisMax, bars, fillPeriods, fitText, hbars, horizontalBars, labelStep, monotonePath, nameColumn, newestIndexes, shortPeriod,
+  textWidth, wrapLabel, xs, yOf, yTicks,
 } from '../domain/usage-chart.ts';
 import { formatBig, valueOf, type UsageMetric, type UsageRow } from '../domain/usage-bars.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
@@ -20,8 +23,20 @@ function svgEl<K extends keyof SVGElementTagNameMap>(tag: K, attrs: Record<strin
   return el;
 }
 
-/** The estimated width of a label of `n` characters at the chart's 11 px type (CJK is wider) */
-const labelWidth = (s: string): number => [...s].reduce((w, c) => w + (c.charCodeAt(0) > 0x2e80 ? 11 : 6.2), 0);
+/** The estimated width of a label at the chart's 11 px type (CJK is wider) */
+const labelWidth = textWidth;
+
+/** The measured width of a text in the page's font at 11 px (a canvas; the estimate where a canvas is not available) */
+function measurer(): (s: string) => number {
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return labelWidth;
+    ctx.font = `11px ${getComputedStyle(document.body).fontFamily || 'sans-serif'}`;
+    return (s) => Math.max(labelWidth(s) * 0.5, ctx.measureText(s).width) + 1;
+  } catch {
+    return labelWidth;
+  }
+}
 
 /** A label cut to `max` characters with an ellipsis (the full text is in the tip) */
 export function cut(s: string, max: number): string {
@@ -89,65 +104,81 @@ export interface BarItem {
   tip?: readonly string[];
 }
 
+/** Shows the tip of an item (a bar, its label and the space around it) at (x, y) on hover, tap and focus */
+function itemTip(g: SVGElement, tip: Tip, lines: readonly string[], x: number, y: number): void {
+  const showTip = (): void => tip.show(x, y, lines);
+  g.addEventListener('pointerenter', showTip);
+  g.addEventListener('click', showTip);
+  g.addEventListener('focus', showTip);
+  g.addEventListener('blur', () => tip.hide());
+}
+
 /**
- * Vertical bars: x = the item, the value printed on top of its bar. Every bar has its label (long ones are cut with an
- * ellipsis, the full name is in the tip; crowded ones turn, they are never left out). A bar, its label and the space above
- * it show the tip on hover, tap and focus.
+ * The by-feature / by-model bars. On a phone-wide box, or when the column chart could not show every label flat, they are
+ * HORIZONTAL rows (A-OWNER-86): the full name on the left on one line (cut with an ellipsis only beyond 40 percent of the card,
+ * the full name is in the tip), the bar growing right, the value at the bar's end. Otherwise vertical columns with the value on
+ * top and the label wrapped flat below (up to three lines). A row / column, its label and the space around show the tip on
+ * hover, tap and focus; every item is a focusable image with the same text for screen readers. No label is ever slanted.
  */
-export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; format: (n: number) => string; maxLabel?: number }): HTMLElement {
+export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; format: (n: number) => string }): HTMLElement {
   const host = document.createElement('div');
   host.className = 'uc-chart uc-bars';
   const tip = makeTip(host);
+  const max = Math.max(1, ...o.items.map((i) => i.value));
+  const linesOf = (it: BarItem): readonly string[] => it.tip ?? [it.label, o.format(it.value)];
   responsive(host, (w) => {
-    const H = 210;
     const n = o.items.length;
-    const right = 8;
-    const top = 22;
-    const max = Math.max(1, ...o.items.map((i) => i.value));
-    let left = 8;
-    let slot = (w - left - right) / Math.max(1, n);
-    // one layout for every language: labels wrap into up to three lines inside their slot (the full text is in the tip); only when a
-    // Latin word cannot fit its slot (a phone) do the labels slant, cut shorter when that would squeeze the plot
+    const slot = (w - 16) / Math.max(1, n);
     const wrapped = o.items.map((i) => wrapLabel(i.label, slot));
-    const wrap = wrapped.every((l) => l != null);
+    const svgOf = (H: number): SVGSVGElement => svgEl('svg', { viewBox: `0 0 ${w} ${H}`, width: w, height: H, role: 'group', 'aria-label': o.ariaLabel, class: 'uc-svg' });
+    const item = (it: BarItem): SVGGElement => svgEl('g', { class: 'uc-item', tabindex: 0, role: 'img', 'aria-label': linesOf(it).join(', ') });
+    if (horizontalBars(w, wrapped)) {
+      const rowH = 30;
+      const top = 4;
+      const right = 8;
+      const measure = measurer();
+      const nameW = nameColumn(o.items.map((i) => measure(i.label)), w - right);
+      const left = nameW + 12;
+      const valRoom = Math.max(0, ...o.items.map((i) => o.format(i.value).length)) * 6.6 + 8;
+      const svg = svgOf(top + rowH * n + 6);
+      svg.classList.add('uc-hsvg');
+      svg.append(svgEl('line', { x1: left, y1: top, x2: left, y2: top + rowH * n, class: 'uc-axis' }));
+      hbars(o.items.map((i) => i.value), { left, top, width: w - left - right - valRoom }, max, rowH).forEach((b, i) => {
+        const it = o.items[i]!;
+        const g = item(it);
+        itemTip(g, tip, linesOf(it), Math.min(w - 4, b.x + b.width), b.rowY + 4);
+        g.append(svgEl('rect', { x: 0, y: b.rowY, width: w, height: rowH, class: 'uc-hit' }));
+        if (it.parts && it.value > 0) {
+          const outW = (it.parts[1] / it.value) * b.width;
+          const inW = b.width - outW;
+          g.append(svgEl('rect', { x: b.x, y: b.y, width: Math.max(inW, 0), height: b.height, class: 'uc-bar uc-bar-in' }));
+          g.append(svgEl('rect', { x: b.x + inW, y: b.y, width: Math.max(outW, 0), height: b.height, rx: 2, class: 'uc-bar' }));
+        } else {
+          g.append(svgEl('rect', { x: b.x, y: b.y, width: Math.max(b.width, 0.5), height: b.height, rx: 2, class: 'uc-bar' }));
+        }
+        g.append(svgEl('text', { x: nameW, y: b.rowY + rowH / 2 + 4, 'text-anchor': 'end', class: 'uc-label uc-name' }, fitText(it.label, nameW, measure)));
+        g.append(svgEl('text', { x: b.x + b.width + 5, y: b.rowY + rowH / 2 + 4, class: 'uc-val' }, o.format(it.value)));
+        svg.append(g);
+      });
+      return svg;
+    }
+    // columns: every label fits flat (wrapped into up to three lines inside its slot)
+    const H = 210;
+    const right = 8;
+    const left = 8;
+    const top = 22;
     const lineH = 13;
-    let maxLen = o.maxLabel ?? 16;
-    let labels = o.items.map((i) => (wrap ? i.label : cut(i.label, maxLen)));
-    let widest = Math.max(0, ...labels.map(labelWidth));
-    let turn = !wrap && rotateLabels(slot, widest);
-    let steep = turn && slot < 13;
-    const rows = wrap ? Math.max(1, ...wrapped.map((l) => l!.length)) : 1;
-    let bottom = wrap ? 12 + rows * lineH : turn ? 14 + widest * (steep ? 0.9 : 0.72) : 26;
-    while (turn && bottom > 110 && maxLen > 6) {
-      maxLen -= 2;
-      labels = o.items.map((i) => cut(i.label, maxLen));
-      widest = Math.max(0, ...labels.map(labelWidth));
-      turn = rotateLabels(slot, widest);
-      steep = turn && slot < 13;
-      bottom = turn ? 14 + widest * (steep ? 0.9 : 0.72) : 26;
-    }
-    // a slanted label runs down to the left of its bar: the first ones need room on the left, or they would leave the card
-    if (turn) {
-      const across = steep ? 0.47 : 0.79;
-      const need = Math.max(...labels.map((l, i) => labelWidth(l) * across + 12 - (slot * (i + 0.5) + 3)));
-      left = Math.max(8, Math.ceil(need) + 4);
-      slot = (w - left - right) / Math.max(1, n);
-    }
-    const box = { left, top, width: w - left - right, height: H - top - bottom };
-    const svg = svgEl('svg', { viewBox: `0 0 ${w} ${H}`, width: w, height: H, role: 'group', 'aria-label': o.ariaLabel, class: 'uc-svg' });
+    const rows = Math.max(1, ...wrapped.map((l) => l!.length));
+    const box = { left, top, width: w - left - right, height: H - top - (12 + rows * lineH) };
+    const svg = svgOf(H);
     svg.append(svgEl('line', { x1: left, y1: top + box.height, x2: w - right, y2: top + box.height, class: 'uc-axis' }));
     // the numbers on top are thinned when they would touch; the labels never are
     const valStep = labelStep(slot, Math.max(0, ...o.items.map((i) => o.format(i.value).length)) * 6.6);
     bars(o.items.map((i) => i.value), box, max).forEach((b, i) => {
       const it = o.items[i]!;
-      const lines = it.tip ?? [it.label, o.format(it.value)];
-      const g = svgEl('g', { class: 'uc-item', tabindex: 0, role: 'img', 'aria-label': lines.join(', ') });
+      const g = item(it);
       const cx = b.x + b.width / 2;
-      const showTip = (): void => tip.show(cx, b.y, lines);
-      g.addEventListener('pointerenter', showTip);
-      g.addEventListener('click', showTip);
-      g.addEventListener('focus', showTip);
-      g.addEventListener('blur', () => tip.hide());
+      itemTip(g, tip, linesOf(it), cx, b.y);
       // the whole slot (bar, label and the space above) is the target
       g.append(svgEl('rect', { x: left + slot * i, y: 0, width: slot, height: H, class: 'uc-hit' }));
       if (it.parts && it.value > 0) {
@@ -159,16 +190,9 @@ export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; form
         g.append(svgEl('rect', { x: b.x, y: b.y, width: b.width, height: Math.max(b.height, 0.5), rx: 2, class: 'uc-bar' }));
       }
       if (i % valStep === 0) g.append(svgEl('text', { x: cx, y: b.y - 5, 'text-anchor': 'middle', class: 'uc-val' }, o.format(it.value)));
-      const ly = top + box.height + 14;
-      if (wrap) {
-        const lab = svgEl('text', { x: cx, y: ly, 'text-anchor': 'middle', class: 'uc-label' });
-        wrapped[i]!.forEach((line, k) => lab.append(svgEl('tspan', { x: cx, dy: k === 0 ? 0 : lineH }, line)));
-        g.append(lab);
-      } else {
-        g.append(svgEl('text', turn
-          ? { x: cx + 3, y: ly - 2, 'text-anchor': 'end', transform: `rotate(${steep ? -62 : -38} ${cx + 3} ${ly - 2})`, class: 'uc-label' }
-          : { x: cx, y: ly, 'text-anchor': 'middle', class: 'uc-label' }, labels[i]!));
-      }
+      const lab = svgEl('text', { x: cx, y: top + box.height + 14, 'text-anchor': 'middle', class: 'uc-label' });
+      wrapped[i]!.forEach((line, k) => lab.append(svgEl('tspan', { x: cx, dy: k === 0 ? 0 : lineH }, line)));
+      g.append(lab);
       svg.append(g);
     });
     return svg;
@@ -199,7 +223,7 @@ function rowTip(r: UsageRow, metric: UsageMetric, exact: (n: number) => string):
   if (metric === 'tokens') lines.push(t('ai.set.uc.tip.total', { n: exact(r.tokensIn + r.tokensOut) }));
   lines.push(t('ai.set.uc.tip.err', { n: exact(r.errors) }));
   // A-OWNER-74: the cache figures ride in the tip, not in a new column
-  lines.push(t('ai.set.cacheLine', { r: r.tokensCached ? exact(r.tokensCached) : '—', w: r.tokensCacheWrite ? exact(r.tokensCacheWrite) : '—' }));
+  lines.push(t('ai.set.cacheLine', { w: exact(r.tokensCacheWrite ?? 0), r: exact(r.tokensCached ?? 0) }));
   return lines;
 }
 
@@ -246,12 +270,12 @@ function metricCard(o: { line?: boolean; pref: string; titleKey: (m: UsageMetric
  * A bar chart card (A-OWNER-40 / 40b): calls as plain bars, tokens as bars stacked input + output (two shades, a small legend).
  * `kind` names the title keys.
  */
-export function usageBarCard(o: { pref: string; kind: 'model' | 'purpose'; rows: readonly UsageRow[]; maxLabel: number; exact: (n: number) => string }): HTMLElement {
+export function usageBarCard(o: { pref: string; kind: 'model' | 'purpose'; rows: readonly UsageRow[]; exact: (n: number) => string }): HTMLElement {
   const titleKey = (m: UsageMetric): MsgKey => `ai.set.uc.${o.kind}.${m}` as MsgKey;
   return metricCard({
     pref: o.pref, titleKey,
     draw: (metric) => barChart({
-      ariaLabel: t(titleKey(metric)), maxLabel: o.maxLabel, format: (n) => formatBig(n),
+      ariaLabel: t(titleKey(metric)), format: (n) => formatBig(n),
       items: o.rows.map((r) => ({
         label: r.label, value: valueOf(r, metric), tip: rowTip(r, metric, o.exact),
         ...(metric === 'tokens' ? { parts: [r.tokensIn, r.tokensOut] as const } : {}),
@@ -312,12 +336,14 @@ export function lineChart(o: {
     const axis = axisMax(max);
     const widestY = Math.max(...ticks.map((tk) => tickText(tk).length)) * 6.4 + 10;
     const left = Math.round(widestY) + 4;
-    const right = 12;
-    const lw = Math.max(...pts.map((p) => labelWidth(p.period)), 10);
+    const shorts = pts.map((p) => shortPeriod(p.period));
+    const lw = Math.max(...shorts.map(labelWidth), 10);
+    // the newest label is centred on the last point: leave room on the right for half of it
+    const right = Math.max(12, Math.ceil(lw / 2) + 2);
     const slot = (w - left - right) / Math.max(1, n - 1);
-    // a label slanted by 38 degrees takes cos(38) of its length plus sin(38) of its height across: thinned by that box
-    const step = labelStep(slot, lw * 0.79 + 7);
-    const bottom = 14 + lw * 0.72 * 0.74 + 8;
+    // horizontal short dates, thinned by the room (a gap of 12 px between two), counted from the newest back
+    const step = labelStep(slot, lw, 12);
+    const bottom = 30;
     const plotW = w - left - right;
     const plotH = H - top - bottom;
     const svg = svgEl('svg', { viewBox: `0 0 ${w} ${H}`, width: w, height: H, role: 'img', 'aria-label': o.ariaLabel, class: 'uc-svg', tabindex: 0 });
@@ -340,15 +366,11 @@ export function lineChart(o: {
     svg.append(svgEl('path', { d: line, class: 'uc-stroke', fill: 'none' }));
     const hot = svgEl('circle', { r: 6, class: 'uc-hot' });
     hot.style.display = 'none';
+    const named = new Set(newestIndexes(n, step, (i) => px[i]! - labelWidth(shorts[i]!) / 2 >= 0));
     pts.forEach((p, i) => {
       const [x, y] = points[i]!;
       if (n <= 45 || val(p) > 0) svg.append(svgEl('circle', { cx: x, cy: y, r: 3.4, class: 'uc-dot' }));
-      // counted from the newest period back, so the last day is always named and the labels never touch
-      // a slanted label runs down to the left: one that would reach under the y labels (the oldest periods) is left out
-      if ((n - 1 - i) % step === 0 && x - labelWidth(p.period) * 0.79 >= left - 4) {
-        const ly = top + plotH + 14;
-        svg.append(svgEl('text', { x, y: ly - 2, 'text-anchor': 'end', transform: `rotate(-38 ${x} ${ly - 2})`, class: 'uc-label' }, p.period));
-      }
+      if (named.has(i)) svg.append(svgEl('text', { x, y: top + plotH + 18, 'text-anchor': 'middle', class: 'uc-label uc-date' }, shorts[i]!));
     });
     svg.append(hot);
     const showAt = (i: number): void => {

@@ -203,8 +203,28 @@ function fitMenu(): void {
   nav.style.maxHeight = `calc(100dvh - ${top}px - 8px - env(safe-area-inset-bottom))`;
 }
 
+/**
+ * v1.2 (A-OWNER-83): nothing in the top bar is drawn over the menu button. Its parts cannot wrap, and when text renders larger
+ * than CSS px predict (iOS text size, page zoom) the account label spilled over the menu button. The bar is measured after
+ * it is drawn and steps down until the label fits: no user icon, then no role tag (the menu and the label still name the
+ * role), then the logo without the visible name. At the usual text size nothing changes.
+ */
+function fitBar(): void {
+  const el = barEl();
+  const acct = el?.querySelector<HTMLElement>('.acct-btn');
+  if (!el || !acct) return;
+  el.classList.remove('fit-1', 'fit-2', 'fit-3');
+  // scrollWidth rounds up and clientWidth down: 1 px is the rounding of a box that fits exactly
+  const tight = (): boolean => acct.scrollWidth > acct.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1;
+  for (const step of ['fit-1', 'fit-2', 'fit-3']) {
+    if (!tight()) return;
+    el.classList.add(step);
+  }
+}
+
 /** Called by main.ts right after every shell page was put into the document (the bar needs its measured height) */
 export function afterShellRender(): void {
+  fitBar();
   paintBar();
   fitMenu();
 }
@@ -381,6 +401,8 @@ export function installShellHandlers(): void {
   // The top bar (SH-7): hides on a scroll down, comes back on a scroll up, on focus inside it and while the menu is open
   window.addEventListener('scroll', onPageScroll, { passive: true });
   window.addEventListener('resize', afterShellRender);
+  // The bar is measured again once the web fonts are in (A-OWNER-83)
+  void document.fonts?.ready.then(afterShellRender);
   document.addEventListener('focusin', (e) => {
     if (e.target instanceof Node && barEl()?.contains(e.target)) showBar();
     // Tab leaving the menu closes it without moving focus (otherwise focus lands under the open menu)

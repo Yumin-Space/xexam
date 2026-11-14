@@ -996,7 +996,9 @@ function drawBar(): void {
     h('span', { class: 'bk-selcount', role: 'status' }, tn('banks.sel.count', n)),
     h('div', { class: 'bk-selacts' },
       selectedGenButton(scope),
-      h('button', { class: 'btn danger bk-seldel', type: 'button', disabled: busy !== null || n === 0, onclick: () => void removeSelected() }, t('banks.sel.delete')),
+      h('button', {
+        class: 'btn danger bk-seldel', type: 'button', disabled: busy !== null || n === 0, 'aria-label': t('banks.sel.delete'), onclick: () => void removeSelected(),
+      }, t('banks.sel.deleteShort')),
       h('button', { class: 'btn quiet', type: 'button', disabled: n === 0, onclick: () => { sel.clear(); syncBoxes(); } }, t('banks.sel.clear'))));
 }
 

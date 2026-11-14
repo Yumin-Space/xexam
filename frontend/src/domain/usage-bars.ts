@@ -52,6 +52,19 @@ export function formatBig(n: number): string {
   return String(v);
 }
 
+/** "write/read" pair of the cache figures in one format (A-OWNER-84: write first, then read) */
+export const cachePair = (write: number, read: number, fmt: (n: number) => string = formatBig): string => `${fmt(write)}/${fmt(read)}`;
+
+/**
+ * A-OWNER-84: the figures of the live token text. `io` is "input/output", `cache` is "write/read" and null while both are 0
+ * (row 2 is then not drawn). Missing cache figures count as 0.
+ */
+export function tokenFigures(u: { tokensIn: number; tokensOut: number; tokensCached?: number; tokensCacheWrite?: number }): { io: string; cache: string | null } {
+  const w = Math.max(0, u.tokensCacheWrite ?? 0);
+  const r = Math.max(0, u.tokensCached ?? 0);
+  return { io: cachePair(u.tokensIn, u.tokensOut), cache: w > 0 || r > 0 ? cachePair(w, r) : null };
+}
+
 /** The bar value of a row in a metric (tokens: input + output) */
 export const valueOf = (c: Counts, m: UsageMetric): number => (m === 'calls' ? c.calls : c.tokensIn + c.tokensOut);
 

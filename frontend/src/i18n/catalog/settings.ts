@@ -15,7 +15,7 @@ export default defineCatalog({
     'settings.account.username': 'Username',
     'settings.account.role': 'Role',
     'settings.password': 'Change password',
-    'settings.password.desc': 'Every other browser and device where you are signed in is signed out after the change; this one stays signed in.',
+    'settings.password.desc': 'Other browsers and devices are signed out after the change; this one stays signed in.',
     'settings.password.current': 'Current password',
     'settings.password.new': 'New password',
     'settings.password.repeat': 'Repeat the new password',
@@ -38,7 +38,7 @@ export default defineCatalog({
     'settings.theme.dark.desc': 'Dark background, easier on the eyes at night',
 
     'settings.language': 'Language',
-    'settings.language.desc': 'The language of menus, buttons and messages everywhere, including the exam page. The questions themselves have their own language switch on the exam page.',
+    'settings.language.desc': 'Menus, buttons and messages, also on the exam page. Questions have their own switch there.',
     'settings.uiLang.label': 'Interface language',
     'settings.lang.native.en': 'English',
     'settings.lang.native.zh': '中文',
@@ -46,7 +46,7 @@ export default defineCatalog({
 
     'settings.answering': 'Answering',
     'settings.auto.label': 'Auto-advance to the next question',
-    'settings.auto.desc': 'After you answer a single-choice question, or every item of a hotspot question, the next question opens. Multiple-choice questions never move on by themselves.',
+    'settings.auto.desc': 'Moves on after a single-choice answer or a fully answered hotspot; never after multiple choice.',
     'settings.auto.note': 'Off by default. While it is on, the exam page shows “{label}” at the top.',
 
     'settings.aiMode': 'AI chat mode',
@@ -168,7 +168,7 @@ export default defineCatalog({
 
     'settings.answering': '回答',
     'settings.auto.label': '回答したら自動で次の問題へ進む',
-    'settings.auto.desc': '単一選択問題、またはホットスポット問題の全小問に答えると次の問題へ進みます。複数選択問題では進みません。',
+    'settings.auto.desc': '単一選択か、ホットスポットの全小問に答えると次へ進みます。複数選択では進みません。',
     'settings.auto.note': '既定ではオフです。オンの間は、試験ページの上部に「{label}」と表示されます。',
 
     'settings.aiMode': 'AI チャットモード',

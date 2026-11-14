@@ -89,8 +89,9 @@ function activeById(): Map<string, Question> {
 }
 
 /** A "back" link in the page head, named like the page it leads to (RC-10; a real link: it can also be opened in a new tab) */
-function backButton(label: string, to: Route): HTMLElement {
-  return h('a', { class: 'btn quiet rec-back', href: routeHash(to) }, miniIcon('back', 'rec-back-ic'), label);
+/** `name`: the accessible name when the visible label is a short form (A-OWNER-87) */
+function backButton(label: string, to: Route, name?: string): HTMLElement {
+  return h('a', { class: 'btn quiet rec-back', href: routeHash(to), 'aria-label': name ?? null }, miniIcon('back', 'rec-back-ic'), label);
 }
 
 // ---------------------------------------------------------------- deleting
@@ -730,7 +731,7 @@ function renderWrong(): HTMLElement {
     },
   }, t('records.wrong.practise'));
   const page = h('div', { class: 'page page-records page-wrong' },
-    pageHead(t('records.reviewWrong'), backButton(t('records.title'), { name: 'records' }), all.length ? practise() : null));
+    pageHead(t('records.wrong.title'), backButton(t('records.wrong.back'), { name: 'records' }, t('records.title')), all.length ? practise() : null));
 
   if (!all.length) {
     page.append(h('section', { class: 'panel rec-empty' },

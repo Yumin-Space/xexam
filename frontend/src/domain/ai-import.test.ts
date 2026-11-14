@@ -241,3 +241,20 @@ test('A-OWNER-70 / 72: within the limit no limit label; uncertain counts say "ab
   assert.equal(countLabels(job({ mode: 'material', goal: 20, total: 99 })), null);
   assert.equal(countLabels(job({ mode: 'questions', goal: 20 })), null);
 });
+
+test('A-OWNER-84: an import job cancels with import words, generation keeps its own; the token text keys exist in zh / en / ja', async () => {
+  const { t, tn, setUiLang } = await import('../i18n/index.ts');
+  const want = {
+    zh: ['取消导入', '要取消导入吗？', '已取消导入。', '本轮调用 12 次', '缓存写入/读取:', '取消生成'],
+    en: ['Cancel import', 'Cancel the import?', 'Import cancelled.', '12 calls this run', 'Cache write/read:', 'Stop generating'],
+    ja: ['インポートを中止', 'インポートを中止しますか？', 'インポートを中止しました。', '今回の呼び出し 12 回', 'キャッシュ書き込み/読み取り:', '作成を中止'],
+  } as const;
+  for (const lang of ['zh', 'en', 'ja'] as const) {
+    setUiLang(lang);
+    const w = want[lang];
+    assert.deepEqual([t('aigen.imp.card.cancel'), t('aigen.imp.card.cancelAsk'), t('aigen.imp.toast.cancelled'), tn('aigen.card.calls', 12, { calls: 12 }), t('aigen.card.cacheLabel'), t('aigen.card.cancel')], [...w], lang);
+  }
+  setUiLang('en');
+  assert.equal(tn('aigen.card.calls', 1, { calls: 1 }), '1 call this run');
+  setUiLang('zh');
+});

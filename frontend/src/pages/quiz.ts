@@ -366,11 +366,12 @@ export function renderQuiz(): HTMLElement {
     miniIcon('exit', 'mi'), h('span', { class: 'lbl' }, t('quiz.saveExit')));
   holdTip(exit, t('quiz.saveExit.tip', { hint: t(practice ? 'quiz.saveExit.hintPractice' : 'quiz.saveExit.hint') }));
 
-  // A-OWNER-22 / 25: under BAR_MQ one small 交卷 / 完成 button left of the clock (icon + short label; the label goes when the
-  // row does not fit, the tip stays); it opens the same confirm dialog as the rail button and the last question's bar button
+  // A-OWNER-22 / 25 / 81: under BAR_MQ one small finish button left of the clock (icon + label, never hidden; when the row does
+  // not fit, .tight swaps the full label for the short one: en "Finish", ja 「終了」, zh stays 4 characters); it opens the same confirm dialog as the rail button and the last question's bar button
   const topSubmit = h('button', {
     class: `btn qsubmit ${practice ? 'qsubmit-practice' : 'qsubmit-exam'}`, type: 'button', 'aria-label': finishLabel, 'data-focus': 'q-submit', onclick: () => void submit(),
-  }, miniIcon('submit', 'mi'), h('span', { class: 'lbl', 'aria-hidden': 'true' }, t(practice ? 'quiz.top.finish' : 'quiz.top.submit')));
+  }, miniIcon('submit', 'mi'), h('span', { class: 'lbl', 'aria-hidden': 'true' }, t(practice ? 'quiz.top.finish' : 'quiz.top.submit')),
+    h('span', { class: 'lbl-s', 'aria-hidden': 'true' }, t(practice ? 'quiz.top.finishS' : 'quiz.top.submitS')));
   holdTip(topSubmit, finishLabel);
 
   runRefreshers();
@@ -519,7 +520,7 @@ let topRow: HTMLElement | null = null;
 
 function syncTopH(): void {
   const row = topRow;
-  // A-OWNER-22: the top-row 交卷 / 完成 button drops its label when the row's right group does not fit on one line
+  // A-OWNER-81: when the row's right group does not fit on one line, the top-row finish pill switches to its short label (never drops it)
   const right = row && row.isConnected ? row.querySelector<HTMLElement>('.r') : null;
   const left = row && row.isConnected ? row.querySelector<HTMLElement>('.ql') : null;
   if (row && right && left) {
