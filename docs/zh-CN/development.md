@@ -215,7 +215,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 | `frontend` | 类型检查、单元测试、构建 |
 | `backend` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查；Rust 缓存每次用新的键，并恢复同一份 `Cargo.lock` 最新的缓存 |
 | `ai-service` | fmt、clippy、ai-service 的 383 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls`；Rust 缓存的处理与 `backend` 相同 |
-| `stack` | 在 `frontend`、`backend` 和 `ai-service` 之后：构建 `xexam-frontend` 镜像，跑 141 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
+| `stack` | 在 `check` 之后立即开始，与单元测试同时进行：构建 `xexam-frontend` 镜像，跑 141 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
 | `arm64` | 为 arm64 构建三个镜像，在 GitHub 的 ARM runner（`ubuntu-24.04-arm`，不模拟）上原生启动它们，检查 `/api/info` 报告的是 `aarch64` 和 `CODE_VERSION`，并检查单独运行的 ai-service 通过它的健康检查（`xexam-ai-service healthcheck`）、在 `/healthz` 里报告同样的内容（最多 60 分钟） |
 | `publish` 和 `merge` | 只有 `main`：`publish` 让三个镜像各自在原生 runner 上并行构建（amd64 用 `ubuntu-latest`，arm64 用 `ubuntu-24.04-arm`）并按摘要推送；`merge` 再把两者合成每个镜像一个多架构镜像，以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签发布到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
 | `release` | 只有 `main`（在 `merge` 之后）：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `docs/en/changelog.md`（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |

@@ -227,9 +227,10 @@ jobs:
 
   # (2) Build the three images on amd64, run the Nginx behaviour checks (two fake upstreams: the backend and the AI service) and the
   #     full-stack end-to-end check (compose up, import, submit, AI with a made-up provider, data survives removing the containers, docker stop)
+  # Starts right after check, at the same time as the unit tests (it does not use their results); publish still waits for all of them.
   stack:
     name: stack (images, nginx checks, end to end)
-    needs: [frontend, backend, ai-service]
+    needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -244,9 +245,10 @@ jobs:
   # (2) arm64: the three images are really built and really started on GitHub's native ARM runner (ubuntu-24.04-arm, free for
   #    public repositories), no emulation. The Rust stage of the backend and the AI service runs on the build machine's own
   #    architecture (arm64 here) and compiles with zig. Build only, no push; discarded afterwards.
+  # Like stack: starts right after check, in parallel with the unit tests.
   arm64:
     name: arm64 (images build and start natively on ARM)
-    needs: [check, frontend, backend, ai-service]
+    needs: check
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:

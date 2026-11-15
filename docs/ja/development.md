@@ -213,7 +213,7 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 | `frontend` | 型チェック、単体テスト、ビルド |
 | `backend` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック。Rust キャッシュは毎回新しいキーを使い、同じ `Cargo.lock` の最新キャッシュを読み込む |
 | `ai-service` | fmt、clippy、ai-service の 383 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと。Rust キャッシュは `backend` と同じ扱い |
-| `stack` | `frontend`、`backend`、`ai-service` の後：`xexam-frontend` イメージをビルドして 141 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
+| `stack` | `check` の直後、単体テストと並行して：`xexam-frontend` イメージをビルドして 141 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
 | `arm64` | 3 つのイメージを arm64 向けにビルドし、GitHub の ARM ランナー（`ubuntu-24.04-arm`、エミュレーションなし）上でネイティブに起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すこと、ai-service が単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返すことを確認（最大 60 分） |
 | `publish` と `merge` | `main` のみ：`publish` が 3 つのイメージをそれぞれ専用のネイティブランナー（amd64 は `ubuntu-latest`、arm64 は `ubuntu-24.04-arm`、並行）でビルドしてダイジェストでプッシュし、`merge` が両者を 1 つのマルチアーキテクチャイメージにまとめて、タグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）に付け、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
 | `release` | `main` のみ（`merge` の後）：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `docs/en/changelog.md` から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
