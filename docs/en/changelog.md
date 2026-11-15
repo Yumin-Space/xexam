@@ -6,6 +6,13 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.7 — 2026-11-16
+
+**One broken question no longer costs a whole AI generation or import call, and the thinking-strength level starts at the model's own default. Upgrading: pull the images; nothing else changes (no database, settings or compose change).**
+
+- **AI generation and AI import keep the readable questions**: the model sometimes leaves out the `"options":[` key after a question's stem, which used to make the whole answer unreadable and threw away every question of that call (usually 5). That slip is now repaired automatically. When an answer still does not parse as a whole, each question in it is read on its own: the readable ones are kept and only the broken one is written again. An answer that is really cut off still counts as cut (the questions-per-call rule is unchanged).
+- **Thinking strength**: when you pick a family button in AI settings, the level starts at the model's own known default if that family has it (otherwise as before).
+
 ### v1.6 — 2026-11-16
 
 **Bank download as Excel or Word, thinking strength per AI feature, steadier AI generation and import, and places filled in for old sign-ins. Upgrading: pull the images; the main database moves to schema 10 automatically after a backup copy; the AI database stays at schema 8 (one column is added by itself).**
@@ -18,6 +25,7 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 - **Places for old sign-ins**: after the location source is switched to the **external lookup API**, or new provider settings are saved while it is the API, the backend looks up again every stored address whose records have no place (any age: **System log** rows, last sign-in and last activity), one lookup per distinct address, live lookups first, 30 a minute; a rate-limit answer pauses it for 15 minutes and an address is tried at most 3 times. Existing places are never overwritten. It stops when the eye is turned off, the source goes back to Cloudflare, or the records are cleared. In Cloudflare mode the **System log** rows that ai-service writes now carry the Cloudflare place as well (Nginx passes `X-Geo-*` to ai-service, from trusted proxies only). The **On** / **Off** switch of the sign-in IP and location eye now asks for confirmation both ways. Section 14.2 of [usage.md](usage.md).
 - **AI import drop box**: it shows the size limit (**max 20 MB**, the configured value).
 - **Database**: main schema 9 to 10 (one column, `users.can_download_banks`, default off), with a backup copy `backups/xexam-schema9-<date-time>.db` first; the AI database stays at schema 8 (the column `model_slots.effort` is added on start, no backup copy is needed). Rolling back to v1.5 needs no restore. Section 00000 of [migration.md](migration.md).
+- **CI**: the x86 frontend image is built on its own and the Nginx test starts as soon as it is ready; end-to-end waits for all three x86 images; publishing still waits for every check.
 - **Upgrading from v1.5**: pull the images (no new `docker-compose.yml` variable). The new `nginx/snippets/ai-proxy.conf` is part of the frontend image.
 
 ### v1.5 — 2026-11-15

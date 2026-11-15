@@ -74,3 +74,28 @@ test('Google levels keep the choice case-insensitively and fall back to MEDIUM',
   assert.equal(levelForFamily('XHIGH', oa), 'xhigh');
   assert.equal(levelForFamily('MINIMAL', oa), 'medium');
 });
+
+test('a family change picks the model default when the family has it (case-insensitively), else the generic fallback', () => {
+  const anth = ['low', 'medium', 'high', 'xhigh', 'max'];
+  const go = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH'];
+  // current level still wins when the family has it
+  assert.equal(levelForFamily('low', anth, 'high'), 'low');
+  // no current level: the model default, matched ignoring case, in the family's own spelling
+  assert.equal(levelForFamily(null, anth, knownDefault('claude-sonnet-5-5')), 'high');
+  assert.equal(levelForFamily(null, go, knownDefault('claude-sonnet-5-5')), 'HIGH');
+  assert.equal(levelForFamily('none', go, knownDefault('gemini-3.5-flash-lite')), 'MINIMAL');
+  // a default the family lacks falls back to the generic choice
+  assert.equal(levelForFamily(null, ['HIGH', 'MINIMAL'], 'medium'), 'HIGH');
+  assert.equal(levelForFamily(null, anth, null), 'medium');
+});
+
+test('the "none" hints of gpt-5.4 / 5.2 / 5.1 stay known but are never picked for a family without "none"', () => {
+  const oa = ['low', 'medium', 'high', 'xhigh', 'max'];
+  for (const m of ['gpt-5.4', 'gpt-5.2', 'gpt-5.1']) {
+    assert.equal(knownDefault(m), 'none', m);
+    assert.equal(levelForFamily(null, oa, knownDefault(m)), 'medium', m);
+    assert.equal(levelForFamily('none', oa, knownDefault(m)), 'medium', m);
+  }
+  // a family that does offer "none" (Responses API) may pick it
+  assert.equal(levelForFamily(null, ['none', 'minimal', 'low', 'medium', 'high'], 'none'), 'none');
+});

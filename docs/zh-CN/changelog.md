@@ -6,6 +6,13 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.7 — 2026-11-16
+
+**一道题坏了，不再让一次 AI 出题或导入白做；思考强度的级别从模型自己的默认值开始。升级：拉取镜像即可（数据库、设置、compose 都没有变化）。**
+
+- **AI 出题和 AI 导入保留读得出来的题**：模型有时会在题干后面漏写 `"options":[` 这个键，过去会让整个回答无法解析，这一次调用的所有题（通常 5 道）都白费。现在这个笔误会被自动修复；如果回答整体仍然解析不了，就把里面的每道题单独读一遍：读得出的保留，只让模型重写坏的那一道。真正被截断的回答仍然算截断（每次调用的题数规则不变）。
+- **思考强度**：在 AI 设置里点选某一族的按钮时，如果这一族有模型自己已知的默认值，级别就从它开始（没有则和以前一样）。
+
 ### v1.6 — 2026-11-16
 
 **更稳的 AI 出题和导入、每个功能单独设置的思考强度、题库下载（Excel 和 Word）、登录所在地的补查。升级：拉取镜像；主数据库自动升到 schema 10（先写一份备份副本），AI 数据库仍是 schema 8（自动加一列）；不需要新的 `docker-compose.yml`。**
@@ -16,6 +23,7 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 - **题库下载**（**题库管理**）：每个题库有一个**下载**按钮，打开的对话框里可选 **Excel** 或 **Word**。Excel 是六列的导入格式，每个工作表一个 sheet（下载后再导入，得到的题目相同）。Word 是标题加正文：先是英语的每个工作表，再是中文的每个工作表，再是日语的每个工作表（每种语言另起一页），使用内置的标题样式，标出正确选项，并写出答案、解析、助记和备注。谁能下载：管理员，以及在**用户管理**的题库对话框里（紧接在**管理题库**之后；**全选** / **全部不选**移到了这一行的最右端）拥有新的每用户权限 **下载题库** 的用户，只限于他能看到的题库；由服务器检查。路由 `GET /api/banks/download?id=<bank>&format=xlsx|docx`；系统日志事件 `bank.download`。主数据库 schema 10（`users.can_download_banks`，默认关），启动时自动升级，先写备份副本。
 - **登录 IP 和所在地的补查**：把所在地来源切换到外部 API 之后，或在它是 API 时保存新的服务商设置之后，后端会把所有存下来的、记录里没有所在地的地址再查一遍（不论多旧；系统日志的行、最后登录和最后活动都算），每个不同的地址只查一次，实时查询优先，每分钟 30 次；服务商回答限流时暂停 15 分钟，每个地址最多试 3 次；已有的所在地从不被覆盖。关掉开关、来源改回 Cloudflare 或清除记录时，补查会停止。Cloudflare 模式下，ai-service 写入系统日志的行现在也带上 Cloudflare 的所在地（Nginx 只对可信代理把 `X-Geo-*` 转给 AI 服务）。**开启 / 关闭**开关现在两个方向都要确认。
 - **AI 导入的拖放区**显示大小上限（**最大 20 MB**，即设置的值）。
+- **CI**：x86 的 frontend 镜像单独构建，Nginx 测试在它就绪后立即开始；端到端测试等三个 x86 镜像都就绪；发布仍然要等所有检查通过。
 - **从 v1.5 升级**：拉取镜像再 `docker compose up -d`；主数据库升到 schema 10（只增不改：`users.can_download_banks`，默认关，所以只有管理员能下载，直到你在用户管理里给别的用户开启）；AI 数据库自动加上 `model_slots.effort`（schema 仍是 8）；设置、compose 和卷都不变。回退到 v1.5 时，v1.5 的后端能原样打开 schema 10 的文件（新列被忽略）。
 
 ### v1.5 — 2026-11-15

@@ -123,9 +123,208 @@ fn element(v: &Value) -> Result<RawQuestion, usize> {
     })
 }
 
+/// Index just after the string literal that opens at `i` (`b[i] == b'"'`); the text length when it never closes.
+fn skip_string(b: &[u8], i: usize) -> usize {
+    let mut j = i + 1;
+    while j < b.len() {
+        match b[j] {
+            b'\\' => j += 2,
+            b'"' => return j + 1,
+            _ => j += 1,
+        }
+    }
+    b.len()
+}
+
+/// Index of the `}` that closes the object opening at `i` (string-aware), or None when it never closes.
+fn match_brace(b: &[u8], i: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut j = i;
+    while j < b.len() {
+        match b[j] {
+            b'"' => {
+                j = skip_string(b, j);
+                continue;
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(j);
+                }
+            }
+            _ => {}
+        }
+        j += 1;
+    }
+    None
+}
+
+fn skip_ws(b: &[u8], mut i: usize) -> usize {
+    while i < b.len() && b[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    i
+}
+
+/// `true` when the string literal spanning `text[i..end]` is exactly `"key"`.
+fn is_key(text: &str, i: usize, end: usize, key: &str) -> bool {
+    end <= text.len()
+        && text.get(i + 1..end.saturating_sub(1)) == Some(key)
+        && end - i == key.len() + 2
+}
+
+/// Repair for one known slip: a `"stem":{en,zh,ja}` object followed straight by `,{` (the model left out the
+/// `"options":[` key before the first option). Inserts the key. None when nothing was changed.
+fn repair_missing_options(text: &str) -> Option<String> {
+    let b = text.as_bytes();
+    let mut out = String::with_capacity(text.len() + 16);
+    let (mut last, mut i, mut changed) = (0usize, 0usize, false);
+    while i < b.len() {
+        if b[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let end = skip_string(b, i);
+        let stem = is_key(text, i, end, "stem");
+        i = end;
+        if !stem {
+            continue;
+        }
+        let colon = skip_ws(b, i);
+        if b.get(colon) != Some(&b':') {
+            continue;
+        }
+        let open = skip_ws(b, colon + 1);
+        if b.get(open) != Some(&b'{') {
+            continue;
+        }
+        let Some(close) = match_brace(b, open) else {
+            continue;
+        };
+        let is_tri = serde_json::from_str::<Value>(&text[open..=close])
+            .ok()
+            .and_then(|v| tri_of(&v, true))
+            .is_some();
+        let comma = skip_ws(b, close + 1);
+        if !is_tri || b.get(comma) != Some(&b',') {
+            continue;
+        }
+        let next = skip_ws(b, comma + 1);
+        if b.get(next) != Some(&b'{') {
+            continue;
+        }
+        out.push_str(&text[last..=comma]);
+        out.push_str("\"options\":[");
+        last = comma + 1;
+        changed = true;
+        i = close + 1;
+    }
+    if !changed {
+        return None;
+    }
+    out.push_str(&text[last..]);
+    Some(out)
+}
+
+/// Parses `text` as JSON, with the missing-`options` repair as the second try.
+fn parse_value(text: &str) -> Option<Value> {
+    if let Ok(v) = serde_json::from_str::<Value>(text) {
+        return Some(v);
+    }
+    serde_json::from_str::<Value>(&repair_missing_options(text)?).ok()
+}
+
+/// The `slot` number written in one question object's text (0 when none can be read).
+fn slot_in(text: &str) -> usize {
+    let b = text.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let end = skip_string(b, i);
+        if is_key(text, i, end, "slot") {
+            let colon = skip_ws(b, end);
+            if b.get(colon) == Some(&b':') {
+                let d = skip_ws(b, colon + 1);
+                let digits: String = text[d..].chars().take_while(char::is_ascii_digit).collect();
+                if let Ok(n) = digits.parse::<usize>() {
+                    return n;
+                }
+            }
+        }
+        i = end;
+    }
+    0
+}
+
+/// Per-question salvage: splits the `questions` array text into its top-level objects (string-aware; an object that
+/// never closes is dropped) and reads each on its own. A broken object with a readable slot is `Err(slot)`; one
+/// without a slot is skipped (its slot is redone as missing).
+fn salvage(text: &str) -> Vec<Result<RawQuestion, usize>> {
+    let b = text.as_bytes();
+    let mut i = 0;
+    let mut at = None;
+    while i < b.len() {
+        if b[i] != b'"' {
+            i += 1;
+            continue;
+        }
+        let end = skip_string(b, i);
+        if is_key(text, i, end, "questions") {
+            let colon = skip_ws(b, end);
+            if b.get(colon) == Some(&b':') {
+                let open = skip_ws(b, colon + 1);
+                if b.get(open) == Some(&b'[') {
+                    at = Some(open + 1);
+                    break;
+                }
+            }
+        }
+        i = end;
+    }
+    let mut out = Vec::new();
+    let Some(mut i) = at else { return out };
+    while i < b.len() {
+        match b[i] {
+            b'"' => i = skip_string(b, i),
+            b']' => break,
+            b'{' => {
+                let Some(close) = match_brace(b, i) else {
+                    break;
+                };
+                let obj = &text[i..=close];
+                match parse_value(obj) {
+                    Some(v) => out.push(element(&v)),
+                    None => {
+                        let slot = slot_in(obj);
+                        if slot > 0 {
+                            out.push(Err(slot));
+                        }
+                    }
+                }
+                i = close + 1;
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
 /// Parses the model's answer. Fences and prose around the JSON are tolerated. An element that does not fit is
-/// `Err(slot)` (0 when the slot itself is unusable).
+/// `Err(slot)` (0 when the slot itself is unusable). A known slip is repaired, and when the whole text is still not
+/// JSON the questions that are readable on their own are kept.
 pub fn parse_answer(text: &str) -> Result<Vec<Result<RawQuestion, usize>>, ParseError> {
+    parse_answer_flagged(text).map(|(list, _)| list)
+}
+
+/// Like `parse_answer`, and also says whether the list came from per-question salvage (the whole text is not JSON);
+/// the caller still decides from the text whether the answer was cut.
+pub fn parse_answer_flagged(
+    text: &str,
+) -> Result<(Vec<Result<RawQuestion, usize>>, bool), ParseError> {
     let trimmed = text.trim();
     let unfenced: String;
     let mut body = trimmed;
@@ -143,13 +342,20 @@ pub fn parse_answer(text: &str) -> Result<Vec<Result<RawQuestion, usize>>, Parse
     if end < start {
         return Err(ParseError::NoJson);
     }
-    let value: Value = serde_json::from_str(&body[start..=end]).map_err(|_| ParseError::NoJson)?;
+    let Some(value) = parse_value(&body[start..=end]) else {
+        let list = salvage(&body[start..]);
+        // nothing with a usable slot (only stray objects such as a lone option): the answer stays unreadable
+        if list.iter().all(|r| matches!(r, Err(0))) {
+            return Err(ParseError::NoJson);
+        }
+        return Ok((list, true));
+    };
     let list = value
         .get("questions")
         .and_then(Value::as_array)
         .filter(|a| !a.is_empty())
         .ok_or(ParseError::NoQuestions)?;
-    Ok(list.iter().map(element).collect())
+    Ok((list.iter().map(element).collect(), false))
 }
 
 #[cfg(test)]
@@ -340,6 +546,136 @@ mod tests {
         assert_eq!(q.stem.en, "Hi there\nlinetwo");
         assert_eq!(q.options[0].text.en, "ab");
         assert_eq!(q.explanation.en, "x\ny");
+    }
+
+    // ---- v1.7: repair and salvage (self-made samples)
+
+    /// One question; `tail` follows the stem (`,` = the missing-options slip, `,"options":[` = the right form).
+    fn q(slot: usize, tail: &str) -> String {
+        format!(
+            r#"{{"slot":{slot},"stem":{{"en":"E{slot}","zh":"Z","ja":"J"}}{tail}{{"en":"a","zh":"b","ja":"c"}},{{"en":"d","zh":"e","ja":"f"}}],"answer":["B"],"explanation":{{"en":"x","zh":"y","ja":"z"}}}}"#
+        )
+    }
+    const OPT: &str = r#","options":["#;
+
+    #[test]
+    fn the_missing_options_key_is_repaired() {
+        let t = format!(
+            r#"{{"questions":[{},{},{}]}}"#,
+            q(1, ","),
+            q(2, OPT),
+            q(3, ",")
+        );
+        let (list, salvaged) = parse_answer_flagged(&t).unwrap();
+        assert!(!salvaged, "whole-text repair, not salvage");
+        assert_eq!(list.len(), 3);
+        for (i, r) in list.iter().enumerate() {
+            let r = r.as_ref().unwrap();
+            assert_eq!(r.slot, i + 1);
+            assert_eq!(r.options.len(), 2);
+            assert!(!r.options[0].correct && r.options[1].correct);
+        }
+    }
+
+    #[test]
+    fn one_garbage_question_costs_only_its_own_slot() {
+        let bad = r#"{"slot":3,"stem":{"en":"E","zh":"Z" "ja":}, ???}"#;
+        let t = format!(
+            r#"{{"questions":[{},{},{bad},{},{}]}}"#,
+            q(1, OPT),
+            q(2, ","),
+            q(4, OPT),
+            q(5, ",")
+        );
+        let (list, salvaged) = parse_answer_flagged(&t).unwrap();
+        assert!(salvaged);
+        assert_eq!(list.len(), 5);
+        assert_eq!(list.iter().filter(|r| r.is_ok()).count(), 4);
+        assert_eq!(list[2], Err(3));
+        assert_eq!(list[4].as_ref().unwrap().slot, 5);
+    }
+
+    #[test]
+    fn a_broken_object_without_a_slot_is_skipped() {
+        let t = format!(
+            r#"{{"questions":[{},{{"stem":oops}},{}]}}"#,
+            q(1, OPT),
+            q(2, OPT)
+        );
+        let list = parse_answer(&t).unwrap();
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().all(|r| r.is_ok()));
+    }
+
+    #[test]
+    fn braces_and_escaped_quotes_inside_strings_do_not_confuse_the_matcher() {
+        let tricky = r#"{"slot":1,"stem":{"en":"say \"} {\" now","zh":"Z","ja":"J"},{"en":"a \"{\"","zh":"b","ja":"c"},{"en":"d}","zh":"e","ja":"f"}],"answer":["A"],"explanation":{"en":"x","zh":"y","ja":"z"}}"#;
+        let t = format!(r#"{{"questions":[{tricky},{{"slot":2,"stem":nope}}]}}"#);
+        let list = parse_answer(&t).unwrap();
+        assert_eq!(list.len(), 2);
+        let first = list[0].as_ref().unwrap();
+        assert_eq!(first.stem.en, "say \"} {\" now");
+        assert_eq!(first.options[0].text.en, "a \"{\"");
+        assert_eq!(first.options[1].text.en, "d}");
+        assert_eq!(list[1], Err(2));
+    }
+
+    #[test]
+    fn a_cut_answer_keeps_its_complete_questions() {
+        let full = format!(
+            r#"{{"questions":[{},{},{}]}}"#,
+            q(1, OPT),
+            q(2, ","),
+            q(3, OPT)
+        );
+        let cut = &full[..full.len() - 60];
+        assert!(!cut.ends_with('}'));
+        let (list, salvaged) = parse_answer_flagged(cut).unwrap();
+        assert!(salvaged);
+        assert_eq!(list.len(), 2);
+        assert!(list.iter().all(|r| r.is_ok()));
+        // nothing complete at all: the old error
+        assert_eq!(
+            parse_answer(r#"{"questions":[{"slot":1,"stem":{"en":"cut"#),
+            Err(ParseError::NoJson)
+        );
+        assert_eq!(
+            parse_answer(r#"{"questions":[{"slot":1,"stem":{"en":"a","zh":"b","ja":"c"}"#),
+            Err(ParseError::NoJson)
+        );
+    }
+
+    #[test]
+    fn salvage_handles_cjk_text_nested_arrays_and_a_trailing_fence() {
+        let cjk = r#"{"slot":1,"stem":{"en":"Pick {one}","zh":"选择「}」和【{】中的一个","ja":"どれ？\"}\""},{"en":"a","zh":"甲}","ja":"あ{"},{"en":"b","zh":"乙","ja":"い"}],"answer":["A"],"explanation":{"en":"[x]","zh":"因为]","ja":"理由"}}"#;
+        let t = format!(
+            "```json\n{{\"questions\":[{cjk},{{\"slot\":2,\"stem\":[1,[2,{{}}]],\"bad\":}},{}]}}\n```",
+            q(3, OPT)
+        );
+        let (list, salvaged) = parse_answer_flagged(&t).unwrap();
+        assert!(salvaged);
+        assert_eq!(list.len(), 3);
+        let first = list[0].as_ref().unwrap();
+        assert_eq!(first.stem.zh, "选择「}」和【{】中的一个");
+        assert_eq!(first.stem.ja, "どれ？\"}\"");
+        assert_eq!(first.options[0].text.zh, "甲}");
+        assert!(first.options[0].correct);
+        assert_eq!(list[1], Err(2));
+        assert_eq!(list[2].as_ref().unwrap().slot, 3);
+        // only stray objects without a slot (a lone option after a broken question): still unreadable
+        assert_eq!(
+            parse_answer(r#"{"questions":[{"slot":x},{"en":"a","zh":"b","ja":"c"}]"#),
+            Err(ParseError::NoJson)
+        );
+    }
+
+    #[test]
+    fn the_repair_leaves_normal_answers_and_other_objects_alone() {
+        assert!(repair_missing_options(ONE).is_none());
+        // a stem that is not a full en / zh / ja object is not touched
+        assert!(repair_missing_options(r#"{"stem":{"en":"a"},{"x":1}}"#).is_none());
+        // the word "stem" inside a string is not a key
+        assert!(repair_missing_options(r#"["\"stem\":{}",{"a":1}]"#).is_none());
     }
 
     #[test]

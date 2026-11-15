@@ -400,7 +400,7 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
     ...EFFORT_FAMILIES.map((f) => btn(f, fam === f,
       [providerIcon(f)],
       effortAria(f), effortTip(f),
-      () => void saveEffort(slot, { family: f, level: levelForFamily(cur?.level, lists[f] ?? []) }, `${id}-${f}`))),
+      () => void saveEffort(slot, { family: f, level: levelForFamily(cur?.level, lists[f] ?? [], dflt) }, `${id}-${f}`))),
   ];
   const select = h('select', {
     id: `${id}-level`, class: 'ais-select ais-effort-level', 'aria-label': t('ai.set.effort.levelOf', { slot: slotName }),

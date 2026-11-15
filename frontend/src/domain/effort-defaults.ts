@@ -43,8 +43,17 @@ export function knownDefault(model: string | null | undefined): string | null {
   return Object.prototype.hasOwnProperty.call(TABLE, k) ? TABLE[k] ?? null : null;
 }
 
-/** The level after a family button: the current one when the new family has it (case-insensitive: "high" and "HIGH" are the same level), else the family's middle level ("medium" / "MEDIUM"), or "high" / "HIGH" when that is missing (Responses API, Gemma), or the first level */
-export function levelForFamily(current: string | null | undefined, levels: readonly string[]): string {
+/**
+ * The level after a family button: the current one when the new family has it (case-insensitive: "high" and "HIGH" are the
+ * same level), else the model's known default when the family has it (a hint such as "none" is never picked when the family
+ * does not offer it), else the family's middle level ("medium" / "MEDIUM"), or "high" / "HIGH" when that is missing
+ * (Responses API, Gemma), or the first level
+ */
+export function levelForFamily(
+  current: string | null | undefined, levels: readonly string[], modelDefault?: string | null,
+): string {
   const find = (x: string): string | undefined => levels.find((l) => l.toLowerCase() === x.toLowerCase());
-  return (current != null ? find(current) : undefined) ?? find('medium') ?? find('high') ?? levels[0] ?? 'high';
+  return (current != null ? find(current) : undefined)
+    ?? (modelDefault != null ? find(modelDefault) : undefined)
+    ?? find('medium') ?? find('high') ?? levels[0] ?? 'high';
 }

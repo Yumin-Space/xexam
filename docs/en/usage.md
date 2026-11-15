@@ -818,7 +818,7 @@ At the top of the **Connections and models** tab, four cards show where the set-
 
 ### 17.5 AI banks tab
 
-*(v1.6)* Generation and import ask the provider for structured output where it supports it and fall back to a plain request where it does not. A question names its correct options once, as letters; the program sets the option flags. The token budget of a plan call is the smaller of 22 000 and 6 200 + 90 × questions (20 questions: 8 000) and the global plan has 8 000, so a model that thinks first still has room to answer; the questions per call shrink only when an answer was really cut.
+*(v1.6)* Generation and import ask the provider for structured output where it supports it and fall back to a plain request where it does not. A question names its correct options once, as letters; the program sets the option flags. The token budget of a plan call is the smaller of 22 000 and 6 200 + 90 × questions (20 questions: 8 000) and the global plan has 8 000, so a model that thinks first still has room to answer; the questions per call shrink only when an answer was really cut. *(v1.7)* A slip such as a missing `"options":[` key is repaired, and an answer that still does not parse as a whole is read question by question: the readable questions are kept and only the broken one is written again.
 
 The **AI banks** tab sets the limits of generation and import, in two cards: **AI question generation** (quota, source, per generation, calls) and **AI file import** (file, calls). **Recent AI bank jobs** follows them: time, user, source, new bank, state, questions and calls / tokens (on a phone each job is a compact card). Changing the limits never switches AI off, and nothing already made is changed.
 
@@ -858,6 +858,7 @@ In **AI+ users**, each user row has five checkboxes: **Chat**, **Hint + analysis
 On the **Connections and models** tab, above the connection and model pickers of the default model and of every slot (chat, hint + analysis, summary, generation, import), a **Thinking strength** row sets how hard that feature's model thinks. It has six buttons, **Default**, **Anthropic**, **OpenAI**, **Google**, **Responses API** and **Gemma**, and a list of levels for the chosen button. A change is saved at once (no extra button), needs no connection test and never switches AI+ off.
 
 - Each row has its own setting, also a feature that follows the default model: it uses the default model with the thinking strength of its own row.
+- **Picking a family (v1.7)**: the level starts at the current one when the new family has it; otherwise at the model's own known default when the family has it (the grey **Model default** line); otherwise at the family's middle level.
 - **Default** sends nothing: the model uses its own default. A grey line **Model default: high** shows that default where it is documented for the model.
 - The other buttons send one request parameter at the level you pick. The level names are always shown in English, exactly as they are sent, in every language of the app. Hovering, focusing or touch-and-holding a button shows the parameter:
 

@@ -11,7 +11,7 @@ use std::collections::{HashMap, VecDeque};
 use crate::gen::assemble::{place, FinalQuestion};
 use crate::gen::check::{check, Reject};
 use crate::gen::dedup::Deduper;
-use crate::gen::parse::{parse_answer, RawQuestion};
+use crate::gen::parse::{parse_answer_flagged, RawQuestion};
 use crate::gen::plan::{Plan, Slot};
 use crate::gen::rng::Rng;
 use crate::import::convert::{
@@ -612,7 +612,8 @@ impl Run {
     /// (`finish_reason: length` / `stop_reason: max_tokens`). Parses, checks, de-duplicates and places each question;
     /// rejected and missing slots go to the redo queue. A rejection counts toward the seed switch for any GP-4 / GP-5
     /// reason or for a slot missing from a parsed answer; an unparsable answer and truncation do not count. Only a real
-    /// cut shrinks the batch size: the provider said so (`truncated`), or the unreadable text does not end with `}`. A
+    /// cut shrinks the batch size: the provider said so (`truncated`), or the text that is not JSON as a whole (unreadable,
+    /// or read only by per-question salvage) does not end with `}`. A
     /// complete JSON answer with unreadable or missing slots never shrinks it.
     pub fn on_answer(&mut self, batch: &[usize], text: &str, truncated: bool) -> BatchReport {
         self.calls += 1;
@@ -622,8 +623,15 @@ impl Run {
             self.shrink(batch);
         }
         let mut report = BatchReport::default();
-        let parsed = match parse_answer(text) {
-            Ok(list) => list,
+        let parsed = match parse_answer_flagged(text) {
+            Ok((list, salvaged)) => {
+                // Per-question salvage must not hide a real cut: a salvaged text that does not end with `}` still
+                // shrinks the batch (the unfinished question is simply missing and is redone)
+                if salvaged && !truncated && looks_cut(text) {
+                    self.shrink(batch);
+                }
+                list
+            }
             Err(_) => {
                 for &i in batch {
                     self.lack(i, "unreadable", batch.len() > 1, truncated, &mut report);
@@ -1388,6 +1396,63 @@ RETRY
         assert_eq!(run.per_call(), 1);
     }
 
+    /// `good()` rewritten the way a slipping model writes it: after each stem the `"options":[` key is left out.
+    fn slipped(run: &Run, batch: &[usize]) -> String {
+        slip(&good(run, batch))
+    }
+
+    /// Any well-formed answer rewritten with the missing-`"options":[` slip after every stem.
+    fn slip(answer: &str) -> String {
+        let v: serde_json::Value = serde_json::from_str(answer).unwrap();
+        let qs: Vec<String> = v["questions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|q| {
+                let opts = serde_json::to_string(&q["options"]).unwrap();
+                let opts = &opts[1..opts.len() - 1];
+                let ans = serde_json::to_string(&q["answer"]).unwrap();
+                format!(
+                    "{{\"slot\":{},\"stem\":{},{}],\"answer\":{},\"explanation\":{}}}",
+                    q["slot"], q["stem"], opts, ans, q["explanation"]
+                )
+            })
+            .collect();
+        format!("{{\"questions\":[{}]}}", qs.join(","))
+    }
+
+    #[test]
+    fn an_answer_with_the_missing_options_slip_fills_every_slot() {
+        let mut run = make_run(14, 6, 5);
+        let Next::Ask(b) = run.next() else { panic!() };
+        let t = slipped(&run, &b);
+        assert!(serde_json::from_str::<serde_json::Value>(&t).is_err());
+        let rep = run.on_answer(&b, &t, false);
+        assert!(rep.missing.is_empty() && rep.rejected.is_empty(), "{rep:?}");
+        assert_eq!(run.per_call(), 5);
+    }
+
+    #[test]
+    fn a_cut_salvaged_answer_still_shrinks_the_batch_but_keeps_its_questions() {
+        let mut run = make_run(14, 6, 5);
+        let Next::Ask(b) = run.next() else { panic!() };
+        let t = slipped(&run, &b);
+        // cut inside the last question: the first four are complete
+        let last = t.rfind("{\"slot\"").unwrap();
+        let cut = &t[..last + 20];
+        assert!(looks_cut(cut));
+        let rep = run.on_answer(&b, cut, false);
+        assert_eq!(rep.missing, vec![5]);
+        assert_eq!(run.per_call(), 3, "a cut still shrinks");
+        // not cut (complete text with one garbage question): no shrink
+        let mut run = make_run(14, 6, 5);
+        let Next::Ask(b) = run.next() else { panic!() };
+        let t = slipped(&run, &b).replacen("{\"slot\":2,\"stem\":", "{\"slot\":2,\"stem\":!!", 1);
+        let rep = run.on_answer(&b, &t, false);
+        assert_eq!(rep.missing, vec![2]);
+        assert_eq!(run.per_call(), 5);
+    }
+
     #[test]
     fn looks_cut_ignores_a_trailing_fence_and_whitespace() {
         assert!(!looks_cut("{\"a\":1}"));
@@ -1839,6 +1904,21 @@ RETRY
         let qs = run.questions();
         assert_eq!(qs[0].answer, vec!["B"]);
         assert_eq!(qs[0].options.len(), 3);
+    }
+
+    #[test]
+    fn import_convert_answers_with_the_missing_options_slip_are_read_too() {
+        let regions: Vec<String> = (1..=6).map(region).collect();
+        let mut run = convert_run(&regions);
+        while let Next::Ask(b) = run.next() {
+            let t = slip(&convert_good(&run, &regions, &b));
+            assert!(serde_json::from_str::<serde_json::Value>(&t).is_err());
+            let rep = run.on_answer(&b, &t, false);
+            assert!(rep.missing.is_empty() && rep.rejected.is_empty(), "{rep:?}");
+        }
+        assert_eq!(run.outcome(), Outcome::Full);
+        assert_eq!(run.made(), 6);
+        assert_eq!(run.calls(), 2, "every slot read on the first try");
     }
 
     #[test]
