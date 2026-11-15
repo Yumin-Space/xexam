@@ -13,6 +13,7 @@ import '../../styles/ai-settings.css';
 import { fetchAiSettings } from '../../api/ai-admin.ts';
 import { pageHead } from '../../components/common.ts';
 import { miniIcon, type MiniIcon } from '../../components/mini-icons.ts';
+import { resetUsageMetrics } from '../../components/usage-charts.ts';
 import { holdTip } from '../../components/tooltip.ts';
 import { AI_TABS, hashOfTab, tabOfHash, type AiTab } from '../../domain/ai-settings.ts';
 import { errorText } from '../../i18n/errors.ts';
@@ -43,6 +44,8 @@ const TABS: Record<AiTab, { icon: MiniIcon; full: MsgKey; short: MsgKey }> = {
 // ---------------------------------------------------------------- loading
 
 async function load(): Promise<void> {
+  // Every chart shows tokens again on entering the page
+  resetUsageMetrics();
   A.wanted = false;
   A.loading = true;
   try {
@@ -108,6 +111,8 @@ function tabsRow(tab: AiTab): HTMLElement {
 /** Shows a category: the hash keeps it (`#/ai-settings?tab=users`), replaced in place, so Back does not walk through tabs */
 function selectTab(k: AiTab): void {
   if (tabOfHash(window.location.hash) === k && window.location.hash.includes('tab=')) return;
+  // Entering the Usage tab from another one shows tokens again
+  if (k === 'usage' && tabOfHash(window.location.hash) !== 'usage') resetUsageMetrics();
   try {
     window.history.replaceState(window.history.state, '', hashOfTab(k));
   } catch {

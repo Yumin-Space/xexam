@@ -200,21 +200,20 @@ export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; form
   return host;
 }
 
-/** The remembered metric of a chart (per browser; a blocked store just means the default, tokens) */
+/** The chosen metric per chart, kept in memory only: it survives redraws while the Usage tab stays open, never a visit (default: tokens) */
+const metricChoice = new Map<string, UsageMetric>();
+
+/** Back to tokens for every chart; called when the AI settings page or its Usage tab is entered */
+export function resetUsageMetrics(): void {
+  metricChoice.clear();
+}
+
 function readMetric(pref: string): UsageMetric {
-  try {
-    return localStorage.getItem(`xexam.uc.${pref}`) === 'calls' ? 'calls' : 'tokens';
-  } catch {
-    return 'tokens';
-  }
+  return metricChoice.get(pref) ?? 'tokens';
 }
 
 function writeMetric(pref: string, m: UsageMetric): void {
-  try {
-    localStorage.setItem(`xexam.uc.${pref}`, m);
-  } catch {
-    // not remembered
-  }
+  metricChoice.set(pref, m);
 }
 
 /** The remembered order of a category chart, per chart (per browser; default: by amount, high to low) */
@@ -246,7 +245,7 @@ function rowTip(r: UsageRow, metric: UsageMetric, exact: (n: number) => string):
 
 /**
  * A chart card: its title and the 调用次数 | Token 数 switch at the top right (A-OWNER-40 / 40b / 63), the legend 输入 / 输出 in
- * token mode, and the chart `draw` makes for the chosen metric. `pref` names the remembered choice, `titleKey` the title.
+ * token mode, and the chart `draw` makes for the chosen metric. `pref` names the in-memory choice, `titleKey` the title.
  */
 function metricCard(o: { line?: boolean; pref: string; sortable?: boolean; titleKey: (m: UsageMetric) => MsgKey; draw: (m: UsageMetric, sort: UsageSort) => HTMLElement }): HTMLElement {
   let metric = readMetric(o.pref);
