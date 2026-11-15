@@ -4,7 +4,7 @@ import { afterEach, test } from 'node:test';
 import { setUiLang, t, type MsgKey } from './index.ts';
 
 afterEach(() => setUiLang('en'));
-const LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'true', 'false'];
+const LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'gemma.HIGH', 'gemma.MINIMAL'];
 const KEYS = ['label', 'default', 'defaultTip', 'levelOf', 'modelDefault', ...LEVELS.map((l) => `level.${l}`)].map((k) => `ai.set.effort.${k}`);
 
 test('thinking-strength keys exist in every language', () => {
@@ -23,10 +23,12 @@ test('binding zh texts', () => {
   assert.equal(t('ai.set.effort.default'), '默认');
   assert.equal(t('ai.set.effort.modelDefault', { level: '中' }), '模型默认：中');
   assert.equal(t('act.a.ai.settings.effort' as MsgKey), '修改思考强度');
-  assert.equal(t('ai.set.effort.level.true'), 'True（开启思考）');
-  assert.equal(t('ai.set.effort.level.false'), 'False（关闭思考）');
+  assert.equal(t('ai.set.effort.level.gemma.HIGH' as MsgKey), 'HIGH（开启思考）');
+  assert.equal(t('ai.set.effort.level.gemma.MINIMAL' as MsgKey), 'MINIMAL（关闭思考）');
   setUiLang('en');
-  assert.equal(t('ai.set.effort.level.true'), 'True (thinking on)');
+  assert.equal(t('ai.set.effort.level.gemma.HIGH' as MsgKey), 'HIGH (thinking on)');
+  assert.equal(t('ai.set.effort.level.gemma.MINIMAL' as MsgKey), 'MINIMAL (thinking off)');
   setUiLang('ja');
-  assert.equal(t('ai.set.effort.level.true'), 'True（思考オン）');
+  assert.equal(t('ai.set.effort.level.gemma.HIGH' as MsgKey), 'HIGH（思考オン）');
+  assert.equal(t('ai.set.effort.level.gemma.MINIMAL' as MsgKey), 'MINIMAL（思考オフ）');
 });

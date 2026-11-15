@@ -8,17 +8,18 @@ const TABLE: Record<string, string> = {
   'gpt-6.1-sol': 'medium', 'gpt-6.1-terra': 'medium', 'gpt-6-sol': 'medium', 'gpt-6-luna': 'medium', 'gpt-5.6': 'medium',
   'gpt-5.5': 'medium',
   'gpt-5.4': 'none', 'gpt-5.2': 'none', 'gpt-5.1': 'none',
-  'gemini-4-hydrogen': 'high', 'gemini-3.1-pro-preview': 'high', 'gemini-3-flash-preview': 'high', 'gemini-3-pro-preview': 'high',
-  'gemini-4-carbon': 'medium', 'gemini-4-argon': 'medium', 'gemini-3.8-flash': 'medium', 'gemini-3.6-flash': 'medium',
-  'gemini-3.5-flash-lite': 'minimal', 'gemini-3.1-flash-lite': 'minimal',
+  'gemini-4-hydrogen': 'HIGH', 'gemini-3.1-pro-preview': 'HIGH', 'gemini-3-flash-preview': 'HIGH', 'gemini-3-pro-preview': 'HIGH',
+  'gemini-4-carbon': 'MEDIUM', 'gemini-4-argon': 'MEDIUM', 'gemini-3.8-flash': 'MEDIUM', 'gemini-3.6-flash': 'MEDIUM',
+  'gemini-3.5-flash-lite': 'MINIMAL', 'gemini-3.1-flash-lite': 'MINIMAL',
+  // Gemini 2.5 Flash-Lite does not think unless asked: shown as "none" (not a Google button level)
   'gemini-2.5-flash-lite': 'none',
 };
 
 // DeepSeek thinking mode: effort high unless set (https://api-docs.deepseek.com/guides/thinking_mode/)
 const DEEPSEEK_DEFAULT = 'high';
 
-// Gemma thinks by default (observed live on Workers AI, 2026-11-16): enable_thinking true
-const GEMMA_DEFAULT = 'true';
+// Gemma thinks by default (observed live, 2026-11-16): thinking_level HIGH
+const GEMMA_DEFAULT = 'HIGH';
 
 const ROUTING = /^(us|eu|apac|global|anthropic|google|openai)\./;
 
@@ -42,9 +43,8 @@ export function knownDefault(model: string | null | undefined): string | null {
   return Object.prototype.hasOwnProperty.call(TABLE, k) ? TABLE[k] ?? null : null;
 }
 
-/** The level after a family button: the current one when the new family has it, else "medium", or "high" when that is missing (DeepSeek has no "medium"), or the first level (Gemma: "true") */
+/** The level after a family button: the current one when the new family has it (case-insensitive: "high" and "HIGH" are the same level), else the family's middle level ("medium" / "MEDIUM"), or "high" / "HIGH" when that is missing (DeepSeek, Gemma), or the first level */
 export function levelForFamily(current: string | null | undefined, levels: readonly string[]): string {
-  if (current != null && levels.includes(current)) return current;
-  if (levels.includes('medium')) return 'medium';
-  return levels.includes('high') ? 'high' : levels[0] ?? 'high';
+  const find = (x: string): string | undefined => levels.find((l) => l.toLowerCase() === x.toLowerCase());
+  return (current != null ? find(current) : undefined) ?? find('medium') ?? find('high') ?? levels[0] ?? 'high';
 }

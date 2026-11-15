@@ -75,12 +75,12 @@ async fn set(e: &E, slot: &str, family: &str, level: &str) {
 
 /// One distinct level per slot, so a call that used the wrong slot's row shows.
 const ROWS: [(&str, &str, &str); 6] = [
-    ("default", "openai", "minimal"),
+    ("default", "openai", "max"),
     ("chat", "openai", "high"),
-    ("study", "google", "low"),
+    ("study", "google", "LOW"),
     ("summary", "openai", "xhigh"),
     ("generate", "openai", "medium"),
-    ("import", "google", "high"),
+    ("import", "google", "HIGH"),
 ];
 
 async fn set_all(e: &E) {
@@ -115,7 +115,12 @@ fn q1<T: rusqlite::types::FromSql>(t: &TestApp, sql: &str) -> T {
 fn all_carry(bodies: &[Value], level: &str) {
     assert!(!bodies.is_empty(), "no model call");
     for b in bodies {
-        assert_eq!(b["reasoning_effort"], json!(level), "{b}");
+        // OpenAI / Anthropic-style bodies carry reasoning_effort; Google / Gemma carry extra_body thinking_level
+        let got = b["reasoning_effort"]
+            .as_str()
+            .or_else(|| b["extra_body"]["google"]["thinking_config"]["thinking_level"].as_str())
+            .unwrap_or_else(|| panic!("no thinking parameter: {b}"));
+        assert!(got.eq_ignore_ascii_case(level), "{got} vs {level}: {b}");
     }
 }
 
@@ -129,10 +134,10 @@ async fn effort_save_round_trip() {
         v["effortLevels"],
         json!({
             "anthropic": ["low", "medium", "high", "xhigh", "max"],
-            "openai": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-            "google": ["none", "minimal", "low", "medium", "high", "xhigh"],
-            "deepseek": ["none", "low", "high", "max"],
-            "gemma": ["true", "false"],
+            "openai": ["low", "medium", "high", "xhigh", "max"],
+            "google": ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"],
+            "deepseek": ["low", "high", "max"],
+            "gemma": ["HIGH", "MINIMAL"],
         })
     );
     for slot in ["default", "chat", "study", "summary", "generate", "import"] {
@@ -181,8 +186,14 @@ async fn effort_save_rejects_bad_input() {
         json!({"slot": "chat", "effort": {"family": "google", "level": "max"}}),
         json!({"slot": "chat", "effort": {"family": "deepseek", "level": "medium"}}),
         json!({"slot": "chat", "effort": {"family": "deepseek", "level": "xhigh"}}),
+        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "none"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "high"}}),
-        json!({"slot": "chat", "effort": {"family": "gemma", "level": "True"}}),
+        json!({"slot": "chat", "effort": {"family": "gemma", "level": "true"}}),
+        json!({"slot": "chat", "effort": {"family": "gemma", "level": "false"}}),
+        json!({"slot": "chat", "effort": {"family": "google", "level": "low"}}),
+        json!({"slot": "chat", "effort": {"family": "google", "level": "none"}}),
+        json!({"slot": "chat", "effort": {"family": "openai", "level": "none"}}),
+        json!({"slot": "chat", "effort": {"family": "openai", "level": "minimal"}}),
         json!({"slot": "chat", "effort": {"family": "openai", "level": "High"}}),
         json!({"slot": "chat", "effort": {"family": "openai", "level": " high"}}),
         json!({"slot": "chat", "effort": {"family": "openai", "level": 3}}),
@@ -278,16 +289,21 @@ async fn deepseek_effort_round_trip_and_wire() {
 }
 
 #[tokio::test]
-async fn gemma_effort_round_trip_and_wire() {
+async fn google_and_gemma_effort_round_trip_and_wire() {
     let e = env().await;
-    for (lvl, want) in [("true", true), ("false", false)] {
-        set(&e, "chat", "gemma", lvl).await;
+    for (fam, lvl) in [
+        ("gemma", "HIGH"),
+        ("gemma", "MINIMAL"),
+        ("google", "MEDIUM"),
+        ("google", "XHIGH"),
+    ] {
+        set(&e, "chat", fam, lvl).await;
         let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
-        assert_eq!(tag, format!("gemma:{lvl}"));
+        assert_eq!(tag, format!("{fam}:{lvl}"));
         let v = settings(&e.t, &e.admin).await;
         assert_eq!(
             v["slots"]["chat"]["effort"],
-            json!({"family": "gemma", "level": lvl})
+            json!({"family": fam, "level": lvl})
         );
         let from = n_requests(&e.t);
         let ev =
@@ -299,21 +315,53 @@ async fn gemma_effort_round_trip_and_wire() {
         assert!(!bodies.is_empty());
         for b in &bodies {
             assert_eq!(
-                b["chat_template_kwargs"],
-                json!({"enable_thinking": want}),
+                b["extra_body"],
+                json!({"google": {"thinking_config": {"thinking_level": lvl}}}),
                 "{b}"
             );
             assert!(b.get("reasoning_effort").is_none(), "{b}");
+            assert!(b.get("thinking_level").is_none(), "{b}");
+            let s = b.to_string();
+            assert!(
+                !s.contains("chat_template_kwargs") && !s.contains("enable_thinking"),
+                "{b}"
+            );
         }
     }
 }
 
 #[tokio::test]
-async fn generic_workers_ai_refusal_retries_without_thinking_parameter() {
+async fn legacy_stored_levels_read_in_the_new_form() {
     let e = env().await;
-    set(&e, "chat", "gemma", "false").await;
+    set(&e, "chat", "openai", "high").await;
+    for (old, want) in [
+        ("google:low", json!({"family": "google", "level": "LOW"})),
+        ("gemma:true", json!({"family": "gemma", "level": "HIGH"})),
+        (
+            "gemma:false",
+            json!({"family": "gemma", "level": "MINIMAL"}),
+        ),
+        ("google:none", Value::Null),
+        ("openai:minimal", Value::Null),
+        ("openai:none", Value::Null),
+    ] {
+        e.t.db()
+            .execute(
+                "UPDATE model_slots SET effort = ?1 WHERE slot = 'chat'",
+                [old],
+            )
+            .expect("update");
+        let v = settings(&e.t, &e.admin).await;
+        assert_eq!(v["slots"]["chat"]["effort"], want, "{old}");
+    }
+}
+
+#[tokio::test]
+async fn unnamed_google_refusal_retries_without_thinking_level() {
+    let e = env().await;
+    set(&e, "chat", "gemma", "MINIMAL").await;
     e.t.stub.refuse_if_body_has(Some((
-        "chat_template_kwargs",
+        "thinking_level",
         400,
         r#"{"errors":[{"message":"AiError: AiError: Invalid input (0b1f)","code":8001}]}"#,
     )));
@@ -325,14 +373,14 @@ async fn generic_workers_ai_refusal_retries_without_thinking_parameter() {
     assert_eq!(terminal(&ev).0, "done", "{ev:?}");
     let bodies = calls_from(&e.t, from);
     assert_eq!(bodies.len(), 2, "the refused request and one retry");
-    assert!(bodies[0].get("chat_template_kwargs").is_some());
-    assert!(bodies[1].get("chat_template_kwargs").is_none());
+    assert!(bodies[0].get("extra_body").is_some());
+    assert!(bodies[1].get("extra_body").is_none());
 }
 
 #[tokio::test]
 async fn effort_save_writes_activity_event() {
     let e = env().await;
-    set(&e, "summary", "google", "minimal").await;
+    set(&e, "summary", "google", "MINIMAL").await;
     let (s, _) =
         e.t.post(EFFORT, &e.admin, json!({"slot": "summary", "effort": null}))
             .await;
@@ -351,7 +399,7 @@ async fn effort_save_writes_activity_event() {
     assert_eq!(evs[0]["userId"], json!(e.admin.id));
     assert_eq!(
         evs[0]["detail"],
-        json!({"family": "google", "level": "minimal"})
+        json!({"family": "google", "level": "MINIMAL"})
     );
     assert_eq!(evs[1]["object"], "summary");
     assert_eq!(evs[1]["detail"], json!({"family": "default"}));

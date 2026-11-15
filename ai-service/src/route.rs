@@ -409,7 +409,7 @@ mod tests {
         use crate::effort::{Effort, EffortFamily};
         let hi = Effort::new(EffortFamily::OpenAi, "high");
         let lo = Effort::new(EffortFamily::Anthropic, "low");
-        let md = Effort::new(EffortFamily::Google, "medium");
+        let md = Effort::new(EffortFamily::Google, "MEDIUM");
         let mut v = view();
         // default: md, chat: hi (falls back to the default model), study: lo (own model), summary: none
         v.efforts = [md, hi, lo, None, None, None];

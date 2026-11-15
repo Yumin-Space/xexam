@@ -8,9 +8,9 @@ const TABLE: Array<[string, string]> = [
   ['claude-sonnet-5', 'high'], ['claude-opus-4-8', 'high'], ['claude-opus-4-7', 'high'], ['claude-opus-4-6', 'high'],
   ['claude-sonnet-4-6', 'high'], ['gpt-6.1-sol', 'medium'], ['gpt-6.1-terra', 'medium'], ['gpt-6-sol', 'medium'],
   ['gpt-6-luna', 'medium'], ['gpt-5.6', 'medium'], ['gpt-5.5', 'medium'], ['gpt-5.4', 'none'], ['gpt-5.2', 'none'],
-  ['gpt-5.1', 'none'], ['gemini-4-hydrogen', 'high'], ['gemini-3.1-pro-preview', 'high'], ['gemini-3-flash-preview', 'high'],
-  ['gemini-3-pro-preview', 'high'], ['gemini-4-carbon', 'medium'], ['gemini-4-argon', 'medium'], ['gemini-3.8-flash', 'medium'],
-  ['gemini-3.6-flash', 'medium'], ['gemini-3.5-flash-lite', 'minimal'], ['gemini-3.1-flash-lite', 'minimal'],
+  ['gpt-5.1', 'none'], ['gemini-4-hydrogen', 'HIGH'], ['gemini-3.1-pro-preview', 'HIGH'], ['gemini-3-flash-preview', 'HIGH'],
+  ['gemini-3-pro-preview', 'HIGH'], ['gemini-4-carbon', 'MEDIUM'], ['gemini-4-argon', 'MEDIUM'], ['gemini-3.8-flash', 'MEDIUM'],
+  ['gemini-3.6-flash', 'MEDIUM'], ['gemini-3.5-flash-lite', 'MINIMAL'], ['gemini-3.1-flash-lite', 'MINIMAL'],
   ['gemini-2.5-flash-lite', 'none'],
 ];
 
@@ -22,7 +22,7 @@ test('routing prefixes, versions, dates and dots normalize', () => {
   assert.equal(knownDefault('us.anthropic.claude-opus-5-5-v1:0'), 'medium');
   assert.equal(knownDefault('anthropic/claude-sonnet-4.6'), 'high');
   assert.equal(knownDefault('claude-opus-5-20260101'), 'high');
-  assert.equal(knownDefault('models/gemini-3-flash-preview'), 'high');
+  assert.equal(knownDefault('models/gemini-3-flash-preview'), 'HIGH');
   assert.equal(knownDefault('GPT-5.5'), 'medium');
 });
 
@@ -49,11 +49,27 @@ test('DeepSeek models default to high; levels are none / low / high / max', () =
   assert.equal(levelForFamily('xhigh', ds), 'high');
 });
 
-test('Gemma models default to True; the level list is true / false', () => {
-  for (const m of ['gemma-4-31b-it', '@cf/google/gemma-4-26b-a4b-it', 'google/gemma-3-27b']) assert.equal(knownDefault(m), 'true', m);
-  const g = ['true', 'false'];
-  assert.equal(levelForFamily('false', g), 'false');
-  assert.equal(levelForFamily('true', g), 'true');
-  assert.equal(levelForFamily('high', g), 'true');
-  assert.equal(levelForFamily(null, g), 'true');
+test('Gemma models default to HIGH; the level list is HIGH / MINIMAL', () => {
+  for (const m of ['gemma-4-31b-it', '@cf/google/gemma-4-26b-a4b-it', 'google/gemma-3-27b']) assert.equal(knownDefault(m), 'HIGH', m);
+  const g = ['HIGH', 'MINIMAL'];
+  assert.equal(levelForFamily('MINIMAL', g), 'MINIMAL');
+  assert.equal(levelForFamily('HIGH', g), 'HIGH');
+  assert.equal(levelForFamily('high', g), 'HIGH');
+  assert.equal(levelForFamily('minimal', g), 'MINIMAL');
+  assert.equal(levelForFamily('medium', g), 'HIGH');
+  assert.equal(levelForFamily('max', g), 'HIGH');
+  assert.equal(levelForFamily(null, g), 'HIGH');
+});
+
+test('Google levels keep the choice case-insensitively and fall back to MEDIUM', () => {
+  const go = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH'];
+  assert.equal(levelForFamily('high', go), 'HIGH');
+  assert.equal(levelForFamily('xhigh', go), 'XHIGH');
+  assert.equal(levelForFamily('LOW', go), 'LOW');
+  assert.equal(levelForFamily('max', go), 'MEDIUM');
+  assert.equal(levelForFamily('none', go), 'MEDIUM');
+  assert.equal(levelForFamily(null, go), 'MEDIUM');
+  const oa = ['low', 'medium', 'high', 'xhigh', 'max'];
+  assert.equal(levelForFamily('XHIGH', oa), 'xhigh');
+  assert.equal(levelForFamily('MINIMAL', oa), 'medium');
 });

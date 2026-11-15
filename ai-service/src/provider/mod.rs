@@ -558,25 +558,33 @@ fn output_config(body: &mut Value) -> &mut serde_json::Map<String, Value> {
 }
 
 /// Adds the thinking-strength parameter of `effort` to a body. Anthropic family: merges `"effort"` into
-/// `output_config` (next to a structured-output `format`); OpenAI / Google / DeepSeek family: `"reasoning_effort": <level>`;
-/// Gemma: `"chat_template_kwargs": {"enable_thinking": <bool>}` (merged into an existing object).
+/// `output_config` (next to a structured-output `format`); OpenAI / DeepSeek family: `"reasoning_effort": <level>`;
+/// Google / Gemma family: `"extra_body": {"google": {"thinking_config": {"thinking_level": <LEVEL>}}}` (merged into
+/// whatever of that path already exists; a top-level `thinking_level` is rejected by the gateway).
 /// The connection's wire format does not matter (owner: the choice only changes the parameter).
 pub fn put_effort(body: &mut Value, effort: Effort) {
     match effort.family() {
         EffortFamily::Anthropic => {
             output_config(body).insert("effort".into(), json!(effort.level()));
         }
-        EffortFamily::OpenAi | EffortFamily::Google | EffortFamily::DeepSeek => {
+        EffortFamily::OpenAi | EffortFamily::DeepSeek => {
             body["reasoning_effort"] = json!(effort.level());
         }
-        EffortFamily::Gemma => {
-            let on = effort.level() == "true";
-            match body.get_mut("chat_template_kwargs") {
-                Some(Value::Object(o)) => {
-                    o.insert("enable_thinking".into(), json!(on));
+        EffortFamily::Google | EffortFamily::Gemma => {
+            let mut node = &mut *body;
+            for key in ["extra_body", "google", "thinking_config"] {
+                if !node.is_object() {
+                    *node = json!({});
                 }
-                _ => body["chat_template_kwargs"] = json!({"enable_thinking": on}),
+                node = match node {
+                    Value::Object(o) => o.entry(key).or_insert_with(|| json!({})),
+                    _ => unreachable!("node was just made an object"),
+                };
             }
+            if !node.is_object() {
+                *node = json!({});
+            }
+            node["thinking_level"] = json!(effort.level());
         }
     }
 }
@@ -2264,8 +2272,8 @@ mod tests {
     #[test]
     fn openai_family_puts_reasoning_effort() {
         let mut b = plain_body(Format::OpenAi);
-        put_effort(&mut b, eff(EffortFamily::OpenAi, "minimal"));
-        assert_eq!(b["reasoning_effort"], "minimal");
+        put_effort(&mut b, eff(EffortFamily::OpenAi, "low"));
+        assert_eq!(b["reasoning_effort"], "low");
         assert!(b.get("output_config").is_none());
     }
 
@@ -2283,19 +2291,56 @@ mod tests {
     }
 
     #[test]
-    fn google_family_puts_reasoning_effort_only() {
+    fn google_family_puts_extra_body_thinking_level_only() {
         let mut b = plain_body(Format::OpenAi);
-        put_effort(&mut b, eff(EffortFamily::Google, "none"));
-        assert_eq!(b["reasoning_effort"], "none");
-        for k in [
-            "thinking_level",
-            "thinking_config",
-            "extra_body",
-            "thinking",
-        ] {
+        put_effort(&mut b, eff(EffortFamily::Google, "MINIMAL"));
+        assert_eq!(
+            b["extra_body"],
+            json!({"google": {"thinking_config": {"thinking_level": "MINIMAL"}}})
+        );
+        for k in ["reasoning_effort", "thinking_level", "output_config"] {
             assert!(b.get(k).is_none(), "{k}");
         }
-        assert!(!b.to_string().contains("thinking"));
+    }
+
+    #[test]
+    fn google_family_merges_into_existing_extra_body() {
+        let mut b = plain_body(Format::OpenAi);
+        b["extra_body"] =
+            json!({"x": 1, "google": {"a": 2, "thinking_config": {"include_thoughts": true}}});
+        put_effort(&mut b, eff(EffortFamily::Google, "XHIGH"));
+        assert_eq!(
+            b["extra_body"],
+            json!({"x": 1, "google": {"a": 2, "thinking_config": {"include_thoughts": true, "thinking_level": "XHIGH"}}})
+        );
+        put_effort(&mut b, eff(EffortFamily::Google, "LOW"));
+        assert_eq!(
+            b["extra_body"]["google"]["thinking_config"]["thinking_level"],
+            "LOW"
+        );
+        // a non-object in the way is replaced
+        let mut c = plain_body(Format::OpenAi);
+        c["extra_body"] = json!("junk");
+        put_effort(&mut c, eff(EffortFamily::Google, "HIGH"));
+        assert_eq!(
+            c["extra_body"]["google"]["thinking_config"]["thinking_level"],
+            "HIGH"
+        );
+    }
+
+    #[test]
+    fn gemma_family_sends_thinking_level_only() {
+        for l in ["HIGH", "MINIMAL"] {
+            let mut b = plain_body(Format::OpenAi);
+            put_effort(&mut b, eff(EffortFamily::Gemma, l));
+            assert_eq!(
+                b["extra_body"],
+                json!({"google": {"thinking_config": {"thinking_level": l}}})
+            );
+            let s = b.to_string();
+            assert!(!s.contains("chat_template_kwargs") && !s.contains("enable_thinking"));
+            assert!(b.get("reasoning_effort").is_none());
+        }
     }
 
     #[test]
@@ -2444,33 +2489,11 @@ mod tests {
             r#"{"errors":[{"message":"AiError: AiError: Invalid input (abc)","code":8001}]}"#;
         assert!(effort_refused(400, workers));
         assert!(effort_refused(400, "not json"));
-        let google = r#"[{"error":{"code":400,"message":"Unknown name chat_template_kwargs: Cannot find field."}}]"#;
+        let google = r#"[{"error":{"code":400,"message":"Unknown name \"thinking_level\": Cannot find field."}}]"#;
         assert!(effort_refused(400, google));
         for st in [200, 401, 404, 429, 500, 503] {
             assert!(!effort_refused(st, param), "{st}");
         }
-    }
-
-    #[test]
-    fn gemma_family_puts_chat_template_kwargs() {
-        for (lvl, want) in [("true", true), ("false", false)] {
-            for f in [Format::OpenAi, Format::Anthropic] {
-                let mut b = plain_body(f);
-                put_effort(&mut b, eff(EffortFamily::Gemma, lvl));
-                assert_eq!(b["chat_template_kwargs"], json!({"enable_thinking": want}));
-                assert!(b.get("reasoning_effort").is_none());
-                assert!(b.get("enable_thinking").is_none());
-                assert!(b.get("output_config").is_none());
-            }
-        }
-        // merged into an existing object
-        let mut b = plain_body(Format::OpenAi);
-        b["chat_template_kwargs"] = json!({"other": 1});
-        put_effort(&mut b, eff(EffortFamily::Gemma, "false"));
-        assert_eq!(
-            b["chat_template_kwargs"],
-            json!({"other": 1, "enable_thinking": false})
-        );
     }
 
     #[test]

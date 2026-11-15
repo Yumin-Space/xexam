@@ -16,12 +16,13 @@ pub enum EffortFamily {
 
 /// Levels per family (official docs, 2026-11-16). Order = UI order.
 pub const ANTHROPIC_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
-pub const OPENAI_LEVELS: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
-pub const GOOGLE_LEVELS: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+pub const OPENAI_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+/// Google `thinking_level`, written uppercase as Google writes it.
+pub const GOOGLE_LEVELS: [&str; 5] = ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"];
 /// DeepSeek thinking mode (official docs): none / low / high / max. Thinking is on by default, effort high.
-pub const DEEPSEEK_LEVELS: [&str; 4] = ["none", "low", "high", "max"];
-/// Gemma: `chat_template_kwargs.enable_thinking`, a boolean; the levels are its two values.
-pub const GEMMA_LEVELS: [&str; 2] = ["true", "false"];
+pub const DEEPSEEK_LEVELS: [&str; 3] = ["low", "high", "max"];
+/// Gemma 4 on Google accepts only these two `thinking_level` values: HIGH = thinking, MINIMAL = no thinking.
+pub const GEMMA_LEVELS: [&str; 2] = ["HIGH", "MINIMAL"];
 
 impl EffortFamily {
     pub const ALL: [EffortFamily; 5] = [
@@ -62,8 +63,8 @@ impl EffortFamily {
     pub fn param(self) -> &'static str {
         match self {
             Self::Anthropic => "output_config.effort",
-            Self::OpenAi | Self::Google | Self::DeepSeek => "reasoning_effort",
-            Self::Gemma => "chat_template_kwargs.enable_thinking",
+            Self::OpenAi | Self::DeepSeek => "reasoning_effort",
+            Self::Google | Self::Gemma => "extra_body.google.thinking_config.thinking_level",
         }
     }
 }
@@ -95,10 +96,21 @@ impl Effort {
         format!("{}:{}", self.family.as_str(), self.level)
     }
 
-    /// Splits once on `:`; anything invalid is `None`.
+    /// Splits once on `:`; anything invalid is `None`. Legacy stored values stay readable: Google levels
+    /// case-insensitively (`google:low` = `LOW`; `google:none` and the removed OpenAI `none` / `minimal` are `None`),
+    /// `gemma:true` / `gemma:false` = HIGH / MINIMAL.
     pub fn parse_tag(s: &str) -> Option<Effort> {
         let (f, l) = s.split_once(':')?;
-        Effort::new(EffortFamily::parse(f)?, l)
+        let family = EffortFamily::parse(f)?;
+        match family {
+            EffortFamily::Google => Effort::new(family, &l.to_ascii_uppercase()),
+            EffortFamily::Gemma => match l {
+                "true" => Effort::new(family, "HIGH"),
+                "false" => Effort::new(family, "MINIMAL"),
+                _ => Effort::new(family, l),
+            },
+            _ => Effort::new(family, l),
+        }
     }
 
     /// `{"family": "anthropic", "level": "high"}`
@@ -139,13 +151,17 @@ mod tests {
         for (f, l) in [
             (Anthropic, "none"),
             (Anthropic, "minimal"),
+            (OpenAi, "none"),
+            (OpenAi, "minimal"),
             (Google, "max"),
+            (Google, "none"),
+            (Google, "low"),
             (DeepSeek, "xhigh"),
             (DeepSeek, "medium"),
             (Gemma, "high"),
-            (Gemma, "True"),
+            (Gemma, "true"),
             (Gemma, "none"),
-            (Google, "low "),
+            (Google, "LOW "),
             (OpenAi, "High"),
             (OpenAi, " high"),
             (OpenAi, ""),
@@ -178,33 +194,41 @@ mod tests {
     #[test]
     fn level_lists_match_research() {
         assert_eq!(ANTHROPIC_LEVELS, ["low", "medium", "high", "xhigh", "max"]);
-        assert_eq!(
-            OPENAI_LEVELS,
-            ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-        );
-        assert_eq!(
-            GOOGLE_LEVELS,
-            ["none", "minimal", "low", "medium", "high", "xhigh"]
-        );
-        assert_eq!(DEEPSEEK_LEVELS, ["none", "low", "high", "max"]);
-        assert_eq!(GEMMA_LEVELS, ["true", "false"]);
-        assert_eq!(
-            Effort::parse_tag("deepseek:none").unwrap().tag(),
-            "deepseek:none"
-        );
-        // the removed DeepSeek level reads as the default (None)
+        assert_eq!(OPENAI_LEVELS, ["low", "medium", "high", "xhigh", "max"]);
+        assert_eq!(GOOGLE_LEVELS, ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"]);
+        assert_eq!(DEEPSEEK_LEVELS, ["low", "high", "max"]);
+        assert_eq!(GEMMA_LEVELS, ["HIGH", "MINIMAL"]);
+        // DeepSeek's documented Thinking Effort Control is low / high / max: removed levels read as the default (None)
+        assert!(Effort::parse_tag("deepseek:none").is_none());
         assert!(Effort::parse_tag("deepseek:xhigh").is_none());
         assert_eq!(
-            Effort::parse_tag("gemma:false").unwrap().tag(),
-            "gemma:false"
+            Effort::parse_tag("deepseek:low").unwrap().tag(),
+            "deepseek:low"
         );
-        assert_eq!(levels_json()["gemma"].as_array().unwrap().len(), 2);
         let j = levels_json();
-        assert_eq!(j["deepseek"].as_array().unwrap().len(), 4);
-        assert_eq!(j["openai"].as_array().unwrap().len(), 7);
+        assert_eq!(j["gemma"], json!(["HIGH", "MINIMAL"]));
+        assert_eq!(j["deepseek"].as_array().unwrap().len(), 3);
+        assert_eq!(j["openai"].as_array().unwrap().len(), 5);
+        assert_eq!(j["google"].as_array().unwrap().len(), 5);
         assert_eq!(
-            Effort::new(EffortFamily::Google, "high").unwrap().to_json(),
-            json!({"family": "google", "level": "high"})
+            Effort::new(EffortFamily::Google, "HIGH").unwrap().to_json(),
+            json!({"family": "google", "level": "HIGH"})
         );
+    }
+
+    #[test]
+    fn legacy_tags_still_parse() {
+        let t = |s: &str| Effort::parse_tag(s).map(|e| e.tag());
+        assert_eq!(t("google:low").as_deref(), Some("google:LOW"));
+        assert_eq!(t("google:xHigh").as_deref(), Some("google:XHIGH"));
+        assert_eq!(t("google:MEDIUM").as_deref(), Some("google:MEDIUM"));
+        assert_eq!(t("google:minimal").as_deref(), Some("google:MINIMAL"));
+        assert_eq!(t("google:none"), None);
+        assert_eq!(t("gemma:true").as_deref(), Some("gemma:HIGH"));
+        assert_eq!(t("gemma:false").as_deref(), Some("gemma:MINIMAL"));
+        assert_eq!(t("gemma:HIGH").as_deref(), Some("gemma:HIGH"));
+        assert_eq!(t("openai:none"), None);
+        assert_eq!(t("openai:minimal"), None);
+        assert_eq!(t("openai:xhigh").as_deref(), Some("openai:xhigh"));
     }
 }

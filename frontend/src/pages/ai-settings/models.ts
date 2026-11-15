@@ -361,7 +361,7 @@ export function enableSection(s: AiSettings): HTMLElement {
 
 // ---------------------------------------------------------------- thinking strength (v1.6)
 
-const LEVEL_KEYS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'true', 'false']);
+const LEVEL_KEYS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
 
 /** Saves one slot's thinking strength at once (null = default, nothing sent); the row is busy meanwhile */
 async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string): Promise<void> {
@@ -387,7 +387,9 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
   const cur = s.slots[slot].effort ?? null;
   const fam = cur && lists[cur.family] ? cur.family : null;
   const lvl = fam ? cur?.level ?? '' : '';
-  const lvlLabel = (x: string): string => (LEVEL_KEYS.has(x) ? t(`ai.set.effort.level.${x}` as MsgKey) : x);
+  // Google levels show as written (uppercase); Gemma's two get a short hint; the others use the level keys
+  const lvlLabel = (x: string, family?: string): string =>
+    family === 'gemma' && (x === 'HIGH' || x === 'MINIMAL') ? t(`ai.set.effort.level.gemma.${x}` as MsgKey) : LEVEL_KEYS.has(x) ? t(`ai.set.effort.level.${x}` as MsgKey) : x;
   const id = `ai-slot-${slot}-effort`;
   const dflt = knownDefault(slotUsing(s, slot)?.model);
   const btn = (key: EffortFamily | 'default', pressed: boolean, label: Child[], name: string, title: string, onClick: () => void): HTMLElement =>
@@ -411,11 +413,11 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
     },
   }, fam === null
     ? h('option', { value: '' }, '')
-    : (lists[fam] ?? []).map((x) => h('option', { value: x, title: x }, lvlLabel(x))));
+    : (lists[fam] ?? []).map((x) => h('option', { value: x, title: x }, lvlLabel(x, fam))));
   if (fam) (select as HTMLSelectElement).value = lvl;
   return h('div', { class: 'ais-effort' },
     h('div', { class: 'ais-effort-b', role: 'group', 'aria-label': t('ai.set.effort.label') }, buttons),
-    dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: lvlLabel(dflt) })) : null,
+    dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: lvlLabel(dflt, /gemma/i.test(slotUsing(s, slot)?.model ?? '') ? 'gemma' : undefined) })) : null,
     select);
 }
 
