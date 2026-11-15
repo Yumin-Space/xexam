@@ -40,7 +40,7 @@ test('a family change keeps a valid level and falls back to medium', () => {
   assert.equal(levelForFamily(null, anth), 'medium');
 });
 
-test('DeepSeek models default to high; levels are none / low / high / max', () => {
+test('deepseek model ids default to high under the Responses API family; levels are none / low / high / max', () => {
   for (const m of ['deepseek-v4', 'deepseek-reasoner', 'deepseek/deepseek-chat', 'us.deepseek.r1-v1:0']) assert.equal(knownDefault(m), 'high', m);
   const ds = ['none', 'low', 'high', 'max'];
   assert.equal(levelForFamily('none', ds), 'none');

@@ -118,6 +118,7 @@ fn all_carry(bodies: &[Value], level: &str) {
         // OpenAI / Anthropic-style bodies carry reasoning_effort; Google / Gemma carry extra_body thinking_level
         let got = b["reasoning_effort"]
             .as_str()
+            .or_else(|| b["reasoning"]["effort"].as_str())
             .or_else(|| b["extra_body"]["google"]["thinking_config"]["thinking_level"].as_str())
             .unwrap_or_else(|| panic!("no thinking parameter: {b}"));
         assert!(got.eq_ignore_ascii_case(level), "{got} vs {level}: {b}");
@@ -136,7 +137,7 @@ async fn effort_save_round_trip() {
             "anthropic": ["low", "medium", "high", "xhigh", "max"],
             "openai": ["low", "medium", "high", "xhigh", "max"],
             "google": ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"],
-            "deepseek": ["low", "high", "max"],
+            "responses": ["none", "low", "high", "max"],
             "gemma": ["HIGH", "MINIMAL"],
         })
     );
@@ -184,9 +185,9 @@ async fn effort_save_rejects_bad_input() {
         json!({"slot": "chat", "effort": {"family": "mistral", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "anthropic", "level": "none"}}),
         json!({"slot": "chat", "effort": {"family": "google", "level": "max"}}),
-        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "medium"}}),
-        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "xhigh"}}),
-        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "none"}}),
+        json!({"slot": "chat", "effort": {"family": "responses", "level": "medium"}}),
+        json!({"slot": "chat", "effort": {"family": "responses", "level": "xhigh"}}),
+        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "true"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "false"}}),
@@ -265,15 +266,15 @@ async fn effort_save_is_admin_only() {
 }
 
 #[tokio::test]
-async fn deepseek_effort_round_trip_and_wire() {
+async fn responses_effort_round_trip_and_wire() {
     let e = env().await;
-    set(&e, "chat", "deepseek", "max").await;
+    set(&e, "chat", "responses", "max").await;
     let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
-    assert_eq!(tag, "deepseek:max");
+    assert_eq!(tag, "responses:max");
     let v = settings(&e.t, &e.admin).await;
     assert_eq!(
         v["slots"]["chat"]["effort"],
-        json!({"family": "deepseek", "level": "max"})
+        json!({"family": "responses", "level": "max"})
     );
     let from = n_requests(&e.t);
     let ev =
@@ -341,6 +342,11 @@ async fn legacy_stored_levels_read_in_the_new_form() {
             "gemma:false",
             json!({"family": "gemma", "level": "MINIMAL"}),
         ),
+        (
+            "deepseek:max",
+            json!({"family": "responses", "level": "max"}),
+        ),
+        ("deepseek:medium", Value::Null),
         ("google:none", Value::Null),
         ("openai:minimal", Value::Null),
         ("openai:none", Value::Null),
@@ -834,6 +840,28 @@ async fn unnamed_refusal_is_retried_without_effort() {
     assert_eq!(terminal(&ev).0, "done", "{ev:?}");
     let bodies = calls_from(&e.t, from);
     assert_eq!(bodies.len(), 2, "one retry without the parameter");
+    assert!(bodies[1].get("reasoning_effort").is_none());
+}
+
+#[tokio::test]
+async fn responses_refusal_retries_without_reasoning_object() {
+    let e = env().await;
+    set(&e, "chat", "responses", "low").await;
+    e.t.stub.refuse_if_body_has(Some((
+        "reasoning",
+        400,
+        r#"{"error":{"message":"Unknown parameter: 'reasoning'.","type":"invalid_request_error","param":"reasoning"}}"#,
+    )));
+    let from = n_requests(&e.t);
+    let ev =
+        e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
+            .await
+            .expect("send");
+    assert_eq!(terminal(&ev).0, "done", "{ev:?}");
+    let bodies = calls_from(&e.t, from);
+    assert_eq!(bodies.len(), 2, "the refused request and one retry");
+    assert_eq!(bodies[0]["reasoning"], json!({"effort": "low"}));
+    assert!(bodies[1].get("reasoning").is_none(), "{}", bodies[1]);
     assert!(bodies[1].get("reasoning_effort").is_none());
 }
 

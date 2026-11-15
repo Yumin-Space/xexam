@@ -10,7 +10,7 @@ pub enum EffortFamily {
     Anthropic,
     OpenAi,
     Google,
-    DeepSeek,
+    Responses,
     Gemma,
 }
 
@@ -19,8 +19,8 @@ pub const ANTHROPIC_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"
 pub const OPENAI_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Google `thinking_level`, written uppercase as Google writes it.
 pub const GOOGLE_LEVELS: [&str; 5] = ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"];
-/// DeepSeek thinking mode (official docs): none / low / high / max. Thinking is on by default, effort high.
-pub const DEEPSEEK_LEVELS: [&str; 3] = ["low", "high", "max"];
+/// Responses-API style `reasoning.effort` (the DeepSeek-style set): none / low / high / max.
+pub const RESPONSES_LEVELS: [&str; 4] = ["none", "low", "high", "max"];
 /// Gemma 4 on Google accepts only these two `thinking_level` values: HIGH = thinking, MINIMAL = no thinking.
 pub const GEMMA_LEVELS: [&str; 2] = ["HIGH", "MINIMAL"];
 
@@ -29,17 +29,17 @@ impl EffortFamily {
         Self::Anthropic,
         Self::OpenAi,
         Self::Google,
-        Self::DeepSeek,
+        Self::Responses,
         Self::Gemma,
     ];
 
-    /// `anthropic | openai | google | deepseek | gemma`
+    /// `anthropic | openai | google | responses | gemma`
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Anthropic => "anthropic",
             Self::OpenAi => "openai",
             Self::Google => "google",
-            Self::DeepSeek => "deepseek",
+            Self::Responses => "responses",
             Self::Gemma => "gemma",
         }
     }
@@ -54,7 +54,7 @@ impl EffortFamily {
             Self::Anthropic => &ANTHROPIC_LEVELS,
             Self::OpenAi => &OPENAI_LEVELS,
             Self::Google => &GOOGLE_LEVELS,
-            Self::DeepSeek => &DEEPSEEK_LEVELS,
+            Self::Responses => &RESPONSES_LEVELS,
             Self::Gemma => &GEMMA_LEVELS,
         }
     }
@@ -63,7 +63,8 @@ impl EffortFamily {
     pub fn param(self) -> &'static str {
         match self {
             Self::Anthropic => "output_config.effort",
-            Self::OpenAi | Self::DeepSeek => "reasoning_effort",
+            Self::OpenAi => "reasoning_effort",
+            Self::Responses => "reasoning.effort",
             Self::Google | Self::Gemma => "extra_body.google.thinking_config.thinking_level",
         }
     }
@@ -101,7 +102,8 @@ impl Effort {
     /// `gemma:true` / `gemma:false` = HIGH / MINIMAL.
     pub fn parse_tag(s: &str) -> Option<Effort> {
         let (f, l) = s.split_once(':')?;
-        let family = EffortFamily::parse(f)?;
+        // legacy: the family was called `deepseek` before it became `responses`
+        let family = EffortFamily::parse(if f == "deepseek" { "responses" } else { f })?;
         match family {
             EffortFamily::Google => Effort::new(family, &l.to_ascii_uppercase()),
             EffortFamily::Gemma => match l {
@@ -119,13 +121,13 @@ impl Effort {
     }
 }
 
-/// `{"anthropic": [...], "openai": [...], "google": [...], "deepseek": [...], "gemma": [...]}`: the level lists for the settings answer.
+/// `{"anthropic": [...], "openai": [...], "google": [...], "responses": [...], "gemma": [...]}`: the level lists for the settings answer.
 pub fn levels_json() -> Value {
     json!({
         "anthropic": ANTHROPIC_LEVELS,
         "openai": OPENAI_LEVELS,
         "google": GOOGLE_LEVELS,
-        "deepseek": DEEPSEEK_LEVELS,
+        "responses": RESPONSES_LEVELS,
         "gemma": GEMMA_LEVELS,
     })
 }
@@ -156,8 +158,8 @@ mod tests {
             (Google, "max"),
             (Google, "none"),
             (Google, "low"),
-            (DeepSeek, "xhigh"),
-            (DeepSeek, "medium"),
+            (Responses, "xhigh"),
+            (Responses, "medium"),
             (Gemma, "high"),
             (Gemma, "true"),
             (Gemma, "none"),
@@ -196,18 +198,22 @@ mod tests {
         assert_eq!(ANTHROPIC_LEVELS, ["low", "medium", "high", "xhigh", "max"]);
         assert_eq!(OPENAI_LEVELS, ["low", "medium", "high", "xhigh", "max"]);
         assert_eq!(GOOGLE_LEVELS, ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"]);
-        assert_eq!(DEEPSEEK_LEVELS, ["low", "high", "max"]);
+        assert_eq!(RESPONSES_LEVELS, ["none", "low", "high", "max"]);
         assert_eq!(GEMMA_LEVELS, ["HIGH", "MINIMAL"]);
-        // DeepSeek's documented Thinking Effort Control is low / high / max: removed levels read as the default (None)
-        assert!(Effort::parse_tag("deepseek:none").is_none());
-        assert!(Effort::parse_tag("deepseek:xhigh").is_none());
+        // Responses family: none / low / high / max; others read as None; legacy deepseek:* maps over
+        assert_eq!(
+            Effort::parse_tag("responses:none").unwrap().tag(),
+            "responses:none"
+        );
+        assert!(Effort::parse_tag("responses:xhigh").is_none());
         assert_eq!(
             Effort::parse_tag("deepseek:low").unwrap().tag(),
-            "deepseek:low"
+            "responses:low"
         );
+        assert!(Effort::parse_tag("deepseek:medium").is_none());
         let j = levels_json();
         assert_eq!(j["gemma"], json!(["HIGH", "MINIMAL"]));
-        assert_eq!(j["deepseek"].as_array().unwrap().len(), 3);
+        assert_eq!(j["responses"].as_array().unwrap().len(), 4);
         assert_eq!(j["openai"].as_array().unwrap().len(), 5);
         assert_eq!(j["google"].as_array().unwrap().len(), 5);
         assert_eq!(

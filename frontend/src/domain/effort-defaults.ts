@@ -15,7 +15,7 @@ const TABLE: Record<string, string> = {
   'gemini-2.5-flash-lite': 'none',
 };
 
-// DeepSeek thinking mode: effort high unless set (https://api-docs.deepseek.com/guides/thinking_mode/)
+// deepseek model ids (Responses API family): effort high unless set (https://api-docs.deepseek.com/guides/thinking_mode/)
 const DEEPSEEK_DEFAULT = 'high';
 
 // Gemma thinks by default (observed live, 2026-11-16): thinking_level HIGH
@@ -43,7 +43,7 @@ export function knownDefault(model: string | null | undefined): string | null {
   return Object.prototype.hasOwnProperty.call(TABLE, k) ? TABLE[k] ?? null : null;
 }
 
-/** The level after a family button: the current one when the new family has it (case-insensitive: "high" and "HIGH" are the same level), else the family's middle level ("medium" / "MEDIUM"), or "high" / "HIGH" when that is missing (DeepSeek, Gemma), or the first level */
+/** The level after a family button: the current one when the new family has it (case-insensitive: "high" and "HIGH" are the same level), else the family's middle level ("medium" / "MEDIUM"), or "high" / "HIGH" when that is missing (Responses API, Gemma), or the first level */
 export function levelForFamily(current: string | null | undefined, levels: readonly string[]): string {
   const find = (x: string): string | undefined => levels.find((l) => l.toLowerCase() === x.toLowerCase());
   return (current != null ? find(current) : undefined) ?? find('medium') ?? find('high') ?? levels[0] ?? 'high';

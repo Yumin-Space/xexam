@@ -11,7 +11,7 @@ const mk = (_ns: string, tag: string): El => {
 
 test('each family gives a monochrome hidden svg with a path', () => {
   (globalThis as unknown as { document: unknown }).document = { createElementNS: mk };
-  for (const f of ['anthropic', 'openai', 'google', 'deepseek', 'gemma'] as const) {
+  for (const f of ['anthropic', 'openai', 'google', 'responses', 'gemma'] as const) {
     const s = providerIcon(f) as unknown as El;
     assert.equal(s.tag, 'svg');
     assert.equal(s.attrs['aria-hidden'], 'true');
@@ -23,7 +23,7 @@ test('each family gives a monochrome hidden svg with a path', () => {
 });
 
 test('provider names', () => {
-  assert.deepEqual(PROVIDER_NAME, { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', gemma: 'Gemma' });
-  assert.deepEqual(Object.keys(PROVIDER_NAME), ['anthropic', 'openai', 'google', 'deepseek', 'gemma']);
-  assert.deepEqual(EFFORT_FAMILIES, ['anthropic', 'openai', 'google', 'deepseek', 'gemma'], 'row order after [Default]');
+  assert.deepEqual(PROVIDER_NAME, { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', responses: 'Responses API', gemma: 'Gemma' });
+  assert.deepEqual(Object.keys(PROVIDER_NAME), ['anthropic', 'openai', 'google', 'responses', 'gemma']);
+  assert.deepEqual(EFFORT_FAMILIES, ['anthropic', 'openai', 'google', 'responses', 'gemma'], 'row order after [Default]');
 });

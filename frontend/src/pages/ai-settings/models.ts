@@ -380,7 +380,7 @@ async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string
   document.getElementById(focusId)?.focus();
 }
 
-/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] [DeepSeek] [Gemma] and the level list; hidden on an older ai-service */
+/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] [Responses API] [Gemma] and the level list; hidden on an older ai-service */
 function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string): HTMLElement | null {
   const lists = s.effortLevels;
   if (!lists) return null;

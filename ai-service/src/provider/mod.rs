@@ -558,7 +558,7 @@ fn output_config(body: &mut Value) -> &mut serde_json::Map<String, Value> {
 }
 
 /// Adds the thinking-strength parameter of `effort` to a body. Anthropic family: merges `"effort"` into
-/// `output_config` (next to a structured-output `format`); OpenAI / DeepSeek family: `"reasoning_effort": <level>`;
+/// `output_config` (next to a structured-output `format`); OpenAI family: `"reasoning_effort": <level>`; Responses family: `"reasoning": {"effort": <level>}` (merged into an existing `reasoning` object);
 /// Google / Gemma family: `"extra_body": {"google": {"thinking_config": {"thinking_level": <LEVEL>}}}` (merged into
 /// whatever of that path already exists; a top-level `thinking_level` is rejected by the gateway).
 /// The connection's wire format does not matter (owner: the choice only changes the parameter).
@@ -567,8 +567,14 @@ pub fn put_effort(body: &mut Value, effort: Effort) {
         EffortFamily::Anthropic => {
             output_config(body).insert("effort".into(), json!(effort.level()));
         }
-        EffortFamily::OpenAi | EffortFamily::DeepSeek => {
+        EffortFamily::OpenAi => {
             body["reasoning_effort"] = json!(effort.level());
+        }
+        EffortFamily::Responses => {
+            if !body["reasoning"].is_object() {
+                body["reasoning"] = json!({});
+            }
+            body["reasoning"]["effort"] = json!(effort.level());
         }
         EffortFamily::Google | EffortFamily::Gemma => {
             let mut node = &mut *body;
@@ -2278,16 +2284,22 @@ mod tests {
     }
 
     #[test]
-    fn deepseek_family_puts_reasoning_effort_only() {
+    fn responses_family_puts_nested_reasoning_effort() {
         let mut b = plain_body(Format::OpenAi);
-        put_effort(&mut b, eff(EffortFamily::DeepSeek, "max"));
-        assert_eq!(b["reasoning_effort"], "max");
+        put_effort(&mut b, eff(EffortFamily::Responses, "low"));
+        assert_eq!(b["reasoning"], json!({"effort": "low"}));
+        assert!(b.get("reasoning_effort").is_none());
         assert!(b.get("output_config").is_none());
-        // DeepSeek's extra_body "thinking" toggle is never sent
-        for k in ["thinking", "extra_body", "thinking_config"] {
-            assert!(b.get(k).is_none(), "{k}");
-        }
-        assert!(!b.to_string().contains("thinking"));
+        // merged into an existing reasoning object
+        let mut c = plain_body(Format::OpenAi);
+        c["reasoning"] = json!({"summary": "auto", "effort": "high"});
+        put_effort(&mut c, eff(EffortFamily::Responses, "max"));
+        assert_eq!(c["reasoning"], json!({"summary": "auto", "effort": "max"}));
+        // a non-object value is replaced
+        let mut d = plain_body(Format::OpenAi);
+        d["reasoning"] = json!("x");
+        put_effort(&mut d, eff(EffortFamily::Responses, "none"));
+        assert_eq!(d["reasoning"], json!({"effort": "none"}));
     }
 
     #[test]

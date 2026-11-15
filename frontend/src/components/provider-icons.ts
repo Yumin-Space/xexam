@@ -1,16 +1,16 @@
 // Provider marks for the thinking-strength row of the AI settings (v1.6): inline SVG built with createElementNS, one
 // colour (fill = currentColor, so light / dark follow the theme), hidden from screen readers (the button carries the name).
-// Anthropic, Google and DeepSeek use the Simple Icons paths; OpenAI uses the owner's traced mark, Gemma a star drawn here.
+// Anthropic, Google and the Responses API family (the DeepSeek whale) use the Simple Icons paths; OpenAI uses the owner's traced mark, Gemma a star drawn here.
 import type { AiEffortFamily } from '../types/api.ts';
 
 export type EffortFamily = AiEffortFamily;
 const SVGNS = 'http://www.w3.org/2000/svg';
 
 /** The family buttons of the row, in order: [Default] then these */
-export const EFFORT_FAMILIES: readonly EffortFamily[] = ['anthropic', 'openai', 'google', 'deepseek', 'gemma'];
+export const EFFORT_FAMILIES: readonly EffortFamily[] = ['anthropic', 'openai', 'google', 'responses', 'gemma'];
 
 /** The provider names are proper nouns and stay the same in every language */
-export const PROVIDER_NAME: Record<EffortFamily, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', deepseek: 'DeepSeek', gemma: 'Gemma' };
+export const PROVIDER_NAME: Record<EffortFamily, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', responses: 'Responses API', gemma: 'Gemma' };
 
 // Simple Icons 16.38.0 (CC0): the anthropic, google and deepseek paths, viewBox 0 0 24 24
 export const ANTHROPIC_PATH = 'M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z';
@@ -23,7 +23,7 @@ export const OPENAI_PATH =
 // Gemma's four-point star, redrawn (owner's choice, 2026-11-16): concave sides made of four quarter-circle arcs
 export const GEMMA_PATH = 'M12 1.5 A10.5 10.5 0 0 0 22.5 12 A10.5 10.5 0 0 0 12 22.5 A10.5 10.5 0 0 0 1.5 12 A10.5 10.5 0 0 0 12 1.5 Z';
 
-const PATH: Record<EffortFamily, string> = { anthropic: ANTHROPIC_PATH, openai: OPENAI_PATH, google: GOOGLE_PATH, deepseek: DEEPSEEK_PATH, gemma: GEMMA_PATH };
+const PATH: Record<EffortFamily, string> = { anthropic: ANTHROPIC_PATH, openai: OPENAI_PATH, google: GOOGLE_PATH, responses: DEEPSEEK_PATH, gemma: GEMMA_PATH };
 
 /** A 16×16 monochrome mark (fill = currentColor), aria-hidden */
 export function providerIcon(f: EffortFamily, cls = 'ais-pi'): SVGSVGElement {
