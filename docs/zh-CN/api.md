@@ -40,6 +40,7 @@
 | POST | `/api/upload` | 可管理题库 | 上传 .xlsx，得到**预览**和一次性确认码；可选请求头 `X-Bank-Target` *(v0.5)* | **否**（只暂存在内存里） |
 | POST | `/api/import/confirm` | 可管理题库 | 确认导入 | **是**（一个事务） |
 | POST | `/api/import/cancel` | 可管理题库 | 取消自己待确认的导入 | 否 |
+| GET | `/api/banks/download` | 可下载题库 | 把一个题库下载为 `.xlsx`（六列导入格式）或 `.docx` *(v1.6)* | 否 |
 | POST | `/api/banks/delete` | 可管理题库 | 删除题库（可以连同学习数据） *(v0.5)* | 是 |
 | GET | `/api/users` | 管理员 | 所有账户，带权限和登录锁定 *(v0.6)* | 否 |
 | POST | `/api/users/create` | 管理员 | 添加用户 *(v0.6)* | 是 |
@@ -152,7 +153,7 @@ flowchart LR
 {"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
-- `role` 是 `admin` 或 `user`。`canManageBanks` *(v0.7)* 对所有管理员都是 `true`，对有 **可管理题库** 权限的普通用户也是 `true`。`aiAllowed` *(v0.8)* 对所有管理员都是 `true`，对开通了 **AI+** 的普通用户也是 `true`；AI 到底开没开，看 `GET /api/ai/status`。登录和修改密码的回答里也是同样的 `user` 对象。
+- `role` 是 `admin` 或 `user`。`canManageBanks` *(v0.7)* 对所有管理员都是 `true`，对有 **可管理题库** 权限的普通用户也是 `true`。`canDownloadBanks` *(v1.6)* 同理：对所有管理员都是 `true`，对有 **下载题库** 权限的普通用户也是 `true`。`aiAllowed` *(v0.8)* 对所有管理员都是 `true`，对开通了 **AI+** 的普通用户也是 `true`；AI 到底开没开，看 `GET /api/ai/status`。登录和修改密码的回答里也是同样的 `user` 对象。
 - `library` 是用户能看到的题库的一个不透明印记：32 位十六进制数字，是一个摘要，不公开构成它的任何数字。只要其中某个题库被导入、替换或删除（也包括别的进程里的 `import` 命令），它就会变；*(v0.7)* 用户能看到或管理的题库变了（管理员分配了题库或改了权限，某个题库换了所有者），它也会变。打开着的页面会比较它，变了就重新读取题库。对于只能看到部分题库的用户，印记只由这些题库构成：它既不透露、也不跟随他看不到的题库的大小、题数或更新时间。
 
 - `aiAvailable` *(v0.8，第二轮)* 在 AI+ 可用时是 `true`：ai-service 不到 60 秒前向后端报告过（并且没有说它正在停止），**并且** AI 设置里它的 **AI+ 功能** 开关是开着的。对所有登录的用户都一样。用户管理页面用它决定要不要显示 AI+ 开关，后端用它拒绝这些开关（下面的 `POST /api/users/update` 和 `create`）。
@@ -201,6 +202,7 @@ flowchart LR
 - `records` 是这个用户的学习记录条数（考试和练习）。
 - `banks` *(v0.7)*：这个用户能看到的题库的 id，升序（只含还存在的题库；`[]` = 一个都没有）。它总是一个列表：`"all"` 只是写入时的简写（见下文）。
 - `newBanks` *(v0.7)*：**包括以后导入的题库**。`true`：从现在起新建的每个题库（任何人作为新题库导入，或者命令行 `import`）都会在同一个事务里加进 `banks`。它从不添加已有的题库。
+- `canDownloadBanks` *(v1.6)* 是保存着的 **下载题库** 权限（`users.can_download_banks`，默认 `false`）；和 `canManageBanks` 一样，在改角色时保留，只对普通用户起作用。
 - `canManageBanks` *(v0.7)* 是保存着的 **可管理题库** 权限。`banks`、`newBanks` 和 `canManageBanks` 在改角色时都会保留，但只在账户是普通用户时才起作用：管理员能看到并管理所有题库。
 - `ai` *(v0.8)*：保存着的用户的 **AI+ 功能** 开关。它只对普通用户有意义（AI+ 功能开启时管理员始终可以使用），而且只在 AI 设置里开着 AI+ 功能时才有意义。AI+ 不可用时它也保留。
 - `aiSuspended` *(v0.8，第二轮)*，在 `lock` 之后：`true` 表示管理员在 AI 设置里暂停了这个用户的 **AI+ 功能**（第 5 节，`suspend`；界面上写作 暂停 / 已暂停，JSON 里仍沿用 `suspended` 这个名字）。它来自 ai-service 最近一次报告，所以后端没有报告时（例如刚重启之后）对所有人都是 `false`，对管理员也始终是 `false`，因为管理员不能被暂停。它和 `ai` 是分开的：暂停不会改变保存着的开关。
@@ -236,7 +238,7 @@ flowchart LR
 | **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}` *(v0.8，第二轮)* | AI+ 不可用时给了 `ai: true`。它在请求体通过验证之后（格式不对的 `ai` 仍然是 400）、写入任何东西或给密码做哈希之前检查 |
 
 ### `POST /api/users/update` *(v0.6)*
-管理员。请求体：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`；没写的键保持不变。回答：`{"users": [...]}`。
+管理员。请求体：`{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "canDownloadBanks"?, "ai"?}`；没写的键保持不变。回答：`{"users": [...]}`。
 
 - 停用账户或改角色会结束它的会话。改名、改 `banks`、`newBanks`、`canManageBanks` 或 `ai` 不会结束会话；修改从这个用户的下一个请求开始生效。
 - `ai` *(v0.8)* 开通或关闭用户的 **AI+ 功能**。它马上对下一个 AI 请求生效（后端检查每个 AI 请求），关闭时，正在为这个用户生成的回答会在大约 2 秒内停止；这个用户的 AI 对话和记忆保留。修改会记录为 `user "<admin>" turned AI+ on for user "<name>"`（或 `off`）。
@@ -340,6 +342,15 @@ flowchart LR
 
 ### `POST /api/import/cancel`
 可管理题库。丢掉调用者自己待确认的上传（别的用户的上传保留）。不需要确认码。回答：`{"ok": true}`。
+
+### `GET /api/banks/download?id=<bank>&format=xlsx|docx` *(v1.6)*
+
+管理员，或有 **下载题库** 权限的用户（`canDownloadBanks`）；对普通用户只限他能看到的题库。回答是一个文件下载（`Content-Disposition: attachment`）：
+
+- `format=xlsx`：六列的导入格式，每个工作表一个 sheet；再导入得到相同的题目。
+- `format=docx`：标题，然后英语 → 每个工作表，中文 → 每个工作表，日语 → 每个工作表（每种语言另起一页），使用内置的标题样式，标出正确选项，并写出答案、解析、助记和备注。
+
+错误：**400**（`id` 或 `format` 缺失或不对，键重复也算）；**403** `你没有下载题库的权限，请联系管理员。`；**404**（题库不存在，和看不到的题库一样）；**500**（生成文件失败）。文件在数据库锁之外、在一个占用解析名额的阻塞任务里生成。成功的下载（`HEAD` 不算）写系统日志事件 `bank.download`（`object` 是题库名，`detail` 带 `format`、`sheets`、`questions`）。
 
 ### `POST /api/banks/delete` *(v0.5)*
 可管理题库。请求体：`{"id": <int>, "withRecords": <bool，默认 false>}`。在一个事务里删除这个题库的题目（上架的和已下架的）、导入记录、用户对它的访问权以及题库本身。`withRecords: true` 时还删除这个题库的学习数据：这些题的统计（错题本）、它们每道题的详情，以及所有用到这个题库、又没有用到任何现存题库的学习记录（通常就是只用了这个题库的记录；还用了一个早先已删除的题库的记录也会删掉，而不是留下一条空记录）。不带它时，学习记录和统计都保留；它们的详情里这些题显示为已删除。
@@ -905,6 +916,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | `POST connections/save` | 用 `id`、`rev`、`name`、`provider`、`baseUrl`、`format`、`gatewayAuth`、`apiKey`、`gatewayKey`、`reuseKeysFrom`、`confirmHost` 创建或修改连接。先测试；测试失败回答 `{"ok": false, "saved": false, "code": …}`。错误：`ai.badUrl`、`ai.badKey`、`ai.headerClash`、`ai.badName`、`ai.nameTaken`、`ai.conflict`、`ai.connectionLimit`、`ai.busy`、`ai.keyMissing`、`ai.keyReuseConfirm`（`host`、`oldHost`、`slots`） |
 | `POST connections/test`、`delete`、`order` | 测试、删除（`ai.connectionInUse`、`ai.defaultNeeded`、`newDefault`）和排序 |
 | `GET models?refresh=` | 每个可用连接的模型（缓存 10 分钟） |
+| `POST models/effort` | *(v1.6)* `{"slot", "effort"}`：`effort` 是 `null`（默认，什么都不发送）或 `{"family", "level"}`（`family`：`anthropic`、`openai`、`google`、`responses`、`gemma`；级别见 [usage.md](usage.md) 的 17.9 节）。保存后回答 `{"settings": …}`；系统日志事件 `ai.settings.effort`。不认识的键、一族或级别 → 400 |
 | `POST models/pick`、`models/test`、`models/remove` | 给槽位指定模型（先测试）、测试一个、从池里移除（`ai.modelInUse`） |
 | `POST enable` | `{"enabled", "default"}`；槽位为空时必须给默认模型，并会测试 |
 | `POST feature-switches` | `chat`、`hint`、`explain`、`summary`、`generate`、`import` 中的任意几个；只针对普通用户。`hint` 和 `explain` 总是一起变 |
@@ -960,6 +972,12 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 **永远不会发送**：IPv4 的 `0.0.0.0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、`192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、`203.0.113/24`、组播和 `240/4`（以及它们的 `::ffff:` 形式）；IPv6 中 `2000::/3` 之外的全部，以及 `2001::/23`、`2001:db8::/32`、`2002::/16` 和 `3fff::/20`（代码 `refused`）。
 
+
+### 5.10 思考强度和补查（v1.6）
+
+- **思考强度**：`GET settings` 的回答里，每个槽位多一个 `slots.<slot>.effort`（`null` 或 `{"family", "level"}`），顶层多一个 `effortLevels`（每一族可用的级别，按发送的写法）。参数：Anthropic `output_config.effort`，OpenAI `reasoning_effort`，Google `extra_body.google.thinking_config.thinking_level`，Responses API 嵌套的 `reasoning.effort`，Gemma `thinking_level`（和 Google 位置相同）。带参数的请求被拒绝（HTTP 400 / 422）时，去掉参数再发送一次，并在内存里记住这个连接不支持它；**默认**什么都不发送。
+- **结构化的题目回答**：要求回答是题目时，ai-service 向服务商要结构化输出（Anthropic `output_config.format` json_schema，OpenAI 兼容 `response_format` json_schema strict），服务商拒绝时改用普通请求（按连接记住）。每道题的正确选项只在 `answer` 字段里写一次（字母）；旧的每个选项一个 `correct` 的写法仍然能读。
+- **补查**：`POST /internal/ai/geo/source` 把来源设为 `api`（或 5.9 节的服务商设置被保存）之后，后端会把没有所在地的已存地址再查一遍（见 [usage.md](usage.md) 的 14.2 节）。补查走同一对 `geo/next` / `geo/result` 路由：实时查询优先，补查每分钟 30 次，限流时暂停 15 分钟，每个地址最多 3 次，已有的所在地从不被覆盖。
 
 ## 6. 内部路由（`/internal/*`，v0.8）
 
@@ -1162,6 +1180,13 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **共享回答和出题**：`fresh` 和 `shared`、任务的题目列表、`ai.gen.tooBig`、`ai.budget`、`/internal/ai/gen/corpus`、`MAX_GOAL` 300。
 - **其他**：题库路由的 `ETag` 和 `304`、幂等的 `POST /api/attempt`（`duplicate`）。
 - **版本**：`GET /api/info` 返回 `"version": "1.3"`，AI 服务的 `/healthz` 也一样。
+
+### v1.6 的变化（相对 v1.5）
+
+- **题库下载**：`GET /api/banks/download?id=&format=xlsx|docx`（新的访问级别 **可下载题库**）；用户的 `canDownloadBanks`（`GET /api/auth/state`、`GET /api/users`、`POST /api/users/create`、`POST /api/users/update`）；系统日志事件 `bank.download`。
+- **AI 设置**：`POST /api/ai/admin/models/effort`；设置的回答带 `slots.<slot>.effort` 和 `effortLevels`；系统日志事件 `ai.settings.effort`。
+- **补查**：见 5.10 节；内部路由没有新增。
+- **版本**：`GET /api/info` 返回 `"version": "1.6"`，AI 服务的 `/healthz` 也一样。
 
 ## 8. 调用示例
 

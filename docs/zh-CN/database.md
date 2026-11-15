@@ -3,7 +3,7 @@
 # 数据库
 
 > 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端沿用旧 Python 版的数据库：原来的建表语句（schema v1）**一字不差**地保留，之后的每个 schema 都只是往上加东西（新表和新列；不重建、不改写任何东西）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.3 起它的 schema 是 **7**（v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.4 起它的 schema 是 **8**（v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
 > 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）和 `v09_ai_study.rs`（v6，后端的学习路由）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
@@ -400,6 +400,16 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 
 日志行是 `system.migrate`，带 `{"from": 8, "to": 9}`（从 schema 7 升级时也只写一行）。v1.3 的后端可以原样打开 schema 9 的文件（新列会被忽略）。
 
+
+### 6.16 Schema v10（v1.6）
+
+主数据库在 v1.6 后端第一次启动时，先写一份备份副本 `backups/xexam-schema9-<date-time>.db`，然后从 schema 9 升到 **schema 10**，只做一次。这一步只增不改，不回填任何数据。
+
+- `users`：`can_download_banks`（INTEGER，默认 0）：用户是否可以下载题库（Excel 或 Word），范围是他能看到的题库。管理员不看这一列，始终可以下载。用户管理的题库对话框里的 **下载题库** 写它；`POST /api/users/create` 和 `/api/users/update` 的 `canDownloadBanks` 读写它。
+- 其他都不变。
+
+日志行是 `system.migrate`，带 `{"from": 9, "to": 10}`。v1.5 的后端可以原样打开 schema 10 的文件（新列会被忽略）。
+
 ## 7. 旧的 `progress.json`
 
 更早的版本把成绩保存在 `progress.json` 里。和旧的 Python 版一样，程序**每次启动时**都会检查数据目录里有没有它：如果有，而且数据库里还没有学习记录、以前也没有迁移过，就把它迁移进数据库（迁到第一个管理员的记录里）。`meta` 里的 `legacy_migrated` 标记保证它只迁移一次，已有的学习记录永远不会被覆盖。
@@ -627,6 +637,10 @@ AI 数据库在 v1.4 ai-service 第一次启动时，从 schema 7 升到 **schem
 - **`geo_settings`**（新）：最多一行（`id = 1`），是外部所在地查询的设置：`preset`（`ipinfo`、`ipapi`、`ipapico`、`ipwhois`、`ipsb` 或 `custom`，仅用于显示）、`url_template`（含 `{ip}`，也可含 `{key}`）、`key_header_name` 和 `key_header_value`（可选的、用来带密钥的请求头）、字段映射（`map_country`、`map_country_code`、`map_region`、`map_city`、`ok_path`、`ok_value`、`error_path`、`message_path`；点号路径）、**加密后的密钥**（`key_id`、`key_nonce`、`key_ciphertext`、`key_hint`；没有密钥时为 NULL 或空；用主密钥和专用绑定加密，永不返回）以及 `tested_at`、`updated_at`、`updated_by`。只有“测试并保存”通过后才有这一行，所以已保存就是已测试；删除设置会删除这一行。升级后这张表是空的。
 
 新文件和升级后的文件得到相同的表。v1.3 的 ai-service 会拒绝 schema 8 的文件；要回退请恢复 schema 7 的备份副本。
+
+### 8.2d model_slots.effort（v1.6）
+
+AI 数据库的 schema 仍是 **8**。ai-service 启动时给 `model_slots` 加一列可为 NULL 的 `effort`（TEXT）：每个功能的思考强度，保存为 `<一族>:<级别>`（一族是 `anthropic`、`openai`、`google`、`responses` 或 `gemma`；级别见 [usage.md](usage.md) 的 17.9 节），NULL = **默认**，什么都不发送。这一步只增不改，不需要备份副本；v1.5 的 ai-service 忽略这一列。修改走 `POST /api/ai/admin/models/effort`，写系统日志事件 `ai.settings.effort`。
 
 ### 8.3 服务怎样使用它
 

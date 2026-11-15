@@ -2,8 +2,8 @@
 
 # Database
 
-> The database is SQLite, **a single file, `xexam.db`**. The Rust backend reuses the old Python version's database: the original table definitions (schema v1) are kept **character for character**, and every later schema only adds to them (new tables and new columns; nothing is rebuilt or rewritten): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
-> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **7** since v1.3 (6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
+> The database is SQLite, **a single file, `xexam.db`**. The Rust backend reuses the old Python version's database: the original table definitions (schema v1) are kept **character for character**, and every later schema only adds to them (new tables and new columns; nothing is rebuilt or rewritten): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks), **schema v8** (v1.3: sessions, the activity log and system settings), **schema v9** (v1.4: the last-activity columns) and **schema v10** (v1.6: the per-user permission to download question banks). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
+> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **8** since v1.4 (7 since v1.3, 6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
 > Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5) and `v09_ai_study.rs` (v6, the study routes of the backend); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3) and the unit tests of `ai-service/src/store/`.
 
 ## 1. Where the file lives
@@ -104,6 +104,7 @@ erDiagram
         INTEGER can_manage_banks "1 = bank manager (v4)"
         INTEGER ai_enabled "1 = AI+ on (v5)"
         TEXT uid "identity stamp, 32 hex, never changes (v5)"
+        INTEGER can_download_banks "1 = may download the banks they can see (v10)"
     }
     sessions {
         TEXT token_hash PK "SHA-256 of the cookie value (v3)"
@@ -278,7 +279,7 @@ The files in `backups/` are part of the volume, so a volume backup includes them
 
 ## 6. Schema migrations and going back
 
-`meta.schema` says which schema a database has (`1` up to v0.4, `2` in v0.5, `3` in v0.6, `4` in v0.7 and v0.7.5, `5` in v0.8, `6` since v0.9). When a version opens a database with an older schema, it brings it up to its own schema in one go:
+`meta.schema` says which schema a database has (`1` up to v0.4, `2` in v0.5, `3` in v0.6, `4` in v0.7 and v0.7.5, `5` in v0.8, `6` in v0.9 and v1.0, up to `10` since v1.6: sections 6.12 to 6.16). When a version opens a database with an older schema, it brings it up to its own schema in one go:
 
 1. **Backup.** If the database contains any data, a consistent copy is written with SQLite's `VACUUM INTO` to `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db`, where `<N>` is the schema the file had before this start (an existing file is never overwritten; `-2`, `-3`, … are appended instead). There is always **one** backup, also when several steps follow. The copy is one self-contained file in the old schema; changes that were still in the `-wal` file are in it too. `VACUUM INTO` writes a complete file, so **keep free disk space of about the size of the database** before you upgrade; the copy is never pruned, and it keeps what you delete later (records, banks, users), so remove old copies yourself when that matters. **If the copy cannot be written** (disk full, no permission), the program refuses to start and changes nothing; the log says why.
 2. **Migration**, in **one** `BEGIN IMMEDIATE` transaction: every step from the old schema to the current one (6.1, 6.4, 6.5, 6.8, 6.10, and the conversion of a pre-release v4 database), then `meta.schema` is set.
@@ -399,6 +400,14 @@ The main database moves from schema 8 to **schema 9** once, on the first start o
 - Nothing else changes: the per-IP memory and the queue of the external lookup are in memory only.
 
 The log row is `system.migrate` with `{"from": 8, "to": 9}` (one row, also when upgrading from schema 7). A v1.3 backend opens a schema-9 file as it is: the new columns are ignored.
+
+### 6.16 Schema v10 (v1.6)
+
+The main database moves from schema 9 to **schema 10** once, on the first start of the v1.6 backend, after one backup copy `backups/xexam-schema9-<date-time>.db`. The step adds one column and backfills nothing.
+
+- `users.can_download_banks INTEGER NOT NULL DEFAULT 0`: `1` = a plain user may download the question banks they can see (Excel or Word, section 11.1 of [usage.md](usage.md)). Every existing user gets `0`. It is stored like `can_manage_banks`: kept across role changes, set in the bank dialog of **User management**, read from the database on every request; **administrators may always download**, whatever is stored. The downloaded file is built from the questions of `questions.data` and is never stored.
+
+The log row is `system.migrate` with `{"from": 9, "to": 10}` (one row, also when upgrading from an older schema, only when the file held data). A v1.5 backend opens a schema-10 file as it is: the new column is ignored (its own inserts get the default `0`).
 
 ## 7. The old `progress.json`
 
@@ -627,6 +636,10 @@ The AI database moves from schema 7 to **schema 8** once (one transaction, one c
 - **`geo_settings`** (new): at most one row (`id = 1`), the settings of the external location lookup: `preset` (`ipinfo`, `ipapi`, `ipapico`, `ipwhois`, `ipsb` or `custom`, for display), `url_template` (with `{ip}` and optionally `{key}`), `key_header_name` and `key_header_value` (the optional header that carries the key), the field mapping (`map_country`, `map_country_code`, `map_region`, `map_city`, `ok_path`, `ok_value`, `error_path`, `message_path`; dot paths), the **sealed key** (`key_id`, `key_nonce`, `key_ciphertext`, `key_hint`; all NULL / empty without a key; sealed with the master key and its own binding, never returned) and `tested_at`, `updated_at`, `updated_by`. A row exists only after a passing "test and save", so saved means tested; deleting the settings deletes the row. The table is empty after the upgrade.
 
 A new file and an upgraded file end with the same tables. A v1.3 ai-service refuses a schema-8 file; restore the schema-7 copy to go back.
+
+### 8.2d Thinking strength (v1.6, no schema change)
+
+`model_slots` gets one nullable column, `effort TEXT`: the thinking strength of the slot as `"<family>:<level>"` (for example `anthropic:high`, `google:MEDIUM`, `responses:none`; family `anthropic`, `openai`, `google`, `responses` or `gemma`), or NULL for **Default** (nothing is sent). The column is added at start when it is missing (`ALTER TABLE ... ADD COLUMN`); **the AI schema stays 8, so there is no backup copy and no new migration step**, and a v1.5 ai-service opens the file as it is (it never reads the column). A value that does not parse is read as NULL. The page sets it with `POST /api/ai/admin/models/effort` (section 5.10 of [api.md](api.md)). The refusal memory of the parameter (and of structured output) is in memory only.
 
 ### 8.3 What the service does with it
 

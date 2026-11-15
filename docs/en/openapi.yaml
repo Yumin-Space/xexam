@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "1.5"
+  version: "1.6"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -19,12 +19,13 @@ info:
     Content-Type → request body size → JSON parsing → routing. The session check runs before any of the body is read.
 
     **Access levels** (`x-access` on each operation): `Public` (no session), `SignedIn` (any signed-in user), `BankManager`
-    (administrators, and plain users with the "can manage question banks" permission, v0.7), `Admin` (administrators only).
+    (administrators, and plain users with the "can manage question banks" permission, v0.7), `BankDownloader` (administrators, and plain users with the "download question banks" permission, v1.6), `Admin` (administrators only).
     Without a valid session every non-public route, known or not, answers 401 `请先登录。`. While the account must choose a new
     password, every route except the public ones (`GET /api/info`, `GET /api/auth/state`, `POST /api/auth/login`) and
     `POST /api/auth/password` and `POST /api/auth/logout`
     answers 403 `请先设置新密码。`. Admin routes answer 403 `只有管理员可以进行这个操作。` and bank manager routes 403
-    `你没有管理题库的权限，请联系管理员。` to users without the access.
+    `你没有管理题库的权限，请联系管理员。` to users without the access, and bank downloader routes 403
+    `你没有下载题库的权限，请联系管理员。`.
 
     **(v0.8) AI routes** (`/api/ai/*`, tags `ai` and `ai-admin`) are answered by ai-service (the `ai-service` container), not the backend. Nginx first
     has the backend check each request (`auth_request` to `/internal/ai/auth`: Host / Origin guard, session, password change)
@@ -685,6 +686,52 @@ paths:
         "403": { $ref: "#/components/responses/Forbidden" }
         "415": { $ref: "#/components/responses/BadContentType" }
 
+  /api/banks/download:
+    get:
+      tags: [banks]
+      summary: "(v1.6) Download one question bank as an Excel (import layout) or Word file"
+      x-access: BankDownloader
+      description: |
+        Administrators, and plain users with the "download question banks" permission (read from the database on every
+        request); a plain user can download only the banks they can see. `HEAD` answers the headers without a body.
+
+        `format=xlsx`: the six-column import layout, one worksheet per sheet, so importing the file again gives the same
+        questions. `format=docx`: the title, then English, Chinese and Japanese (each language on a new page, every sheet),
+        with built-in heading styles, the correct options marked, the answer, the explanation, the mnemonic and the note.
+        Only active questions are exported. The file name is the bank name plus `.xlsx` / `.docx` (`Content-Disposition:
+        attachment` with `filename` and `filename*`; the plain `filename` is `xexam-bank-<id>.<ext>` for a non-ASCII name).
+
+        A successful download writes the activity entry `bank.download` (detail `{format, sheets, questions}`).
+      parameters:
+        - { name: id, in: query, required: true, schema: { type: integer }, description: "The bank id" }
+        - { name: format, in: query, required: true, schema: { type: string, enum: [xlsx, docx] } }
+      responses:
+        "200":
+          description: The file
+          headers:
+            Content-Disposition: { schema: { type: string } }
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: { type: string, format: binary }
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema: { type: string, format: binary }
+        "400":
+          description: "`id` or `format` missing, malformed or unknown, or a key given twice: `请求的格式不对。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403":
+          description: "A plain user without the permission: `你没有下载题库的权限，请联系管理员。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { $ref: "#/components/responses/BankNotFound" }
+        "500":
+          description: "Building the file failed: `服务器内部出错，请稍后再试。`"
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
   /api/banks/delete:
     post:
       tags: [banks]
@@ -2637,6 +2684,47 @@ paths:
         "401": { $ref: "#/components/responses/AiSignIn" }
         "403": { $ref: "#/components/responses/AiForbidden" }
         "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/models/effort:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.6) Set the thinking strength of a slot"
+      x-access: AiAdmin
+      description: |
+        `{slot, effort}`, nothing else. `effort: null` is Default: no parameter is sent. Otherwise `{family, level}` with the
+        parameter and levels of the family:
+
+        | family | parameter | levels |
+        |---|---|---|
+        | `anthropic` | `output_config.effort` | low, medium, high, xhigh, max |
+        | `openai` | `reasoning_effort` | low, medium, high, xhigh, max |
+        | `google` | `extra_body.google.thinking_config.thinking_level` | MINIMAL, LOW, MEDIUM, HIGH, XHIGH |
+        | `responses` | `reasoning.effort` (nested) | none, minimal, low, medium, high, xhigh, max |
+        | `gemma` | `extra_body.google.thinking_config.thinking_level` | HIGH, MINIMAL |
+
+        The choice is not checked against the connection's format. A request that carries the parameter and is refused with
+        HTTP 400 or 422 is sent again without it and the connection is remembered as not supporting it (in memory). Activity
+        event `ai.settings.effort`. The settings answer carries `slots.<slot>.effort` and `effortLevels`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slot, effort]
+              properties:
+                slot: { type: string, enum: [default, chat, study, summary, generate, import] }
+                effort:
+                  nullable: true
+                  type: object
+                  required: [family, level]
+                  properties:
+                    family: { type: string, enum: [anthropic, openai, google, responses, gemma] }
+                    level: { type: string, description: "One of the levels of the family, case-sensitive" }
+      responses:
+        "200": { description: "OK; the answer is `{settings}` (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
   /api/ai/admin/models/pick:
     post:
       tags: [ai-admin]
@@ -3040,13 +3128,14 @@ components:
     SessionUser:
       type: object
       description: "(v0.6) The signed-in user. Key order as listed."
-      required: [id, username, role, mustChangePassword, canManageBanks, aiAllowed]
+      required: [id, username, role, mustChangePassword, canManageBanks, canDownloadBanks, aiAllowed]
       properties:
         id: { type: integer }
         username: { type: string }
         role: { type: string, enum: [admin, user] }
         mustChangePassword: { type: boolean }
         canManageBanks: { type: boolean, description: "(v0.7) True for every administrator, and for a plain user with the bank manager permission" }
+        canDownloadBanks: { type: boolean, description: "(v1.6) True for every administrator, and for a plain user with the download banks permission" }
         aiAllowed: { type: boolean, description: "(v0.8) True for every administrator, and for a plain user with AI+ (whether AI is on: GET /api/ai/status)" }
     UserEnvelope:
       type: object
@@ -3123,7 +3212,7 @@ components:
     User:
       type: object
       description: "(v0.6) One account in GET /api/users. Key order as listed."
-      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, ai, ownedBanks, lock, aiSuspended]
+      required: [id, username, role, disabled, createdAt, lastLoginAt, mustChangePassword, records, banks, newBanks, canManageBanks, canDownloadBanks, ai, ownedBanks, lock, aiSuspended]
       properties:
         id: { type: integer }
         username: { type: string }
@@ -3136,6 +3225,7 @@ components:
         banks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks the user sees, ascending (only banks that still exist; `[]` = none)" }
         newBanks: { type: boolean, description: "(v0.7) Include banks imported later: every bank created from now on is added to `banks` when it is created; existing banks are never added by it" }
         canManageBanks: { type: boolean, description: "(v0.7) The stored bank manager permission (administrators manage every bank anyway)" }
+        canDownloadBanks: { type: boolean, description: "(v1.6) The stored download banks permission (default false; kept across role changes; administrators may always download)" }
         ai: { type: boolean, description: "(v0.8) The stored AI+ feature switch of the user (administrators may always use AI while it is on); kept while AI+ is not available" }
         ownedBanks: { type: array, items: { type: integer }, description: "(v0.7) Ids of the banks this user owns (imported as new banks), ascending" }
         lock: { nullable: true, allOf: [{ $ref: "#/components/schemas/UserLock" }], description: "null while the account is in the first round and not locked" }
@@ -3156,6 +3246,7 @@ components:
         banks: { allOf: [{ $ref: "#/components/schemas/BankAccess" }], description: "(v0.7) Default `[]`: no bank until an administrator chooses some" }
         newBanks: { type: boolean, default: false, description: "(v0.7) Include banks imported later (true with `\"banks\": \"all\"` unless given)" }
         canManageBanks: { type: boolean, default: false, description: "(v0.7) The bank manager permission" }
+        canDownloadBanks: { type: boolean, default: false, description: "(v1.6) The permission to download the banks the user can see" }
         ai: { type: boolean, default: false, description: "(v0.8) The AI+ feature of the user. `true` while AI+ is not available: 409 `ai.serviceOff`" }
     UserUpdate:
       type: object
@@ -3168,6 +3259,7 @@ components:
         banks: { $ref: "#/components/schemas/BankAccess" }
         newBanks: { type: boolean, description: "(v0.7) Include banks imported later" }
         canManageBanks: { type: boolean, description: "(v0.7)" }
+        canDownloadBanks: { type: boolean, description: "(v1.6)" }
         ai: { type: boolean, description: "(v0.8) The AI+ feature of the user, on or off. Any `ai` key while AI+ is not available: 409 `ai.serviceOff`, the whole request is refused" }
     UserId:
       type: object

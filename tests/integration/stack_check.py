@@ -98,7 +98,9 @@ MSG_AI_SERVICE_OFF = '请先在 AI 设置里开启 AI+ 功能。'
 MSG_AI_SUSPENDED = '管理员已暂停你的 AI+ 功能。'
 # Key orders of the JSON answers checked here (contracts of v0.8)
 USER_ROW_KEYS = ['id', 'username', 'role', 'disabled', 'createdAt', 'lastLoginAt', 'mustChangePassword', 'records',
-                 'banks', 'newBanks', 'canManageBanks', 'ai', 'ownedBanks', 'lastActiveAt', 'lastLoginIp', 'lastLoginLocation',
+                 'banks', 'newBanks', 'canManageBanks',
+                 # v1.6: the per-user bank download right, right after canManageBanks
+                 'canDownloadBanks', 'ai', 'ownedBanks', 'lastActiveAt', 'lastLoginIp', 'lastLoginLocation',
                  # v1.4: the last activity's IP, place and user agent
                  'lastActiveIp', 'lastActiveLocation', 'lastActiveUa',
                  'lock', 'aiSuspended']
@@ -569,6 +571,19 @@ try:
     ok(st == 400 and json.loads(b).get('error') == MSG_OLD_LAYOUT, 'A workbook of the old 3-column layout is refused (400, six-column message). Actual %d' % st)
     ok(bank_size() == 5, 'The refused workbook changed nothing (still 5 questions)')
 
+    # -- 3b Bank download (v1.6): an administrator always may; both formats are zip files; a bad format or id is 400 / 404 --
+    st, _, bl = jreq('GET', '/api/banks')
+    GARDEN_ID = bl['banks'][0]['id'] if st == 200 and bl.get('banks') else None
+    ok(GARDEN_ID is not None, 'GET /api/banks lists the imported bank. Actual %d' % st)
+    for fmt, mime in (('xlsx', 'spreadsheetml'), ('docx', 'wordprocessingml')):
+        st, h, b = req('GET', '/api/banks/download?id=%s&format=%s' % (GARDEN_ID, fmt))
+        ok(st == 200 and b[:2] == b'PK' and mime in h.get('content-type', '') and 'attachment' in h.get('content-disposition', ''),
+           'v1.6: the administrator downloads the bank as %s (a zip attachment). Actual %d %r' % (fmt, st, h.get('content-type')))
+    st, _, _ = req('GET', '/api/banks/download?id=%s&format=pdf' % GARDEN_ID)
+    ok(st == 400, 'v1.6: an unknown download format is 400. Actual %d' % st)
+    st, _, _ = req('GET', '/api/banks/download?format=xlsx')
+    ok(st == 400, 'v1.6: a download without an id is 400. Actual %d' % st)
+
     # -- 4 Results --
     ids = [q['id'] for q in bank_q] if (bank_q := jreq('GET', '/api/bank')[2]['questions']) else []
     st, _, p = jreq('POST', '/api/attempt', {'results': [{'id': ids[0], 'correct': True}, {'id': ids[1], 'correct': False}], 'sheets': ['demo'], 'mode': 'all', 'seconds': 12})
@@ -688,6 +703,17 @@ try:
     ok(st == 200 and cfg['enabled'] is True and cfg['state'] == 'on' and cfg['slots']['default']['using'] is not None
        and [p['model'] for p in cfg['pool']] == ['demo-chat-small'],
        'AI is enabled with demo-chat-small as the default model. Actual %d %r' % (st, cfg))
+    # -- A1a v1.6: thinking strength per feature --
+    ok(isinstance(cfg.get('effortLevels'), dict) and list(cfg['effortLevels'].keys()) == ['anthropic', 'openai', 'google', 'responses', 'gemma']
+       and cfg['effortLevels']['gemma'] == ['HIGH', 'MINIMAL'] and cfg['slots']['default'].get('effort') is None,
+       'v1.6: the settings answer carries effortLevels (five families) and slots.default.effort null. Actual %r' % cfg.get('effortLevels'))
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'anthropic', 'level': 'high'}})
+    ok(st == 200 and r['settings']['slots']['default']['effort'] == {'family': 'anthropic', 'level': 'high'},
+       'v1.6: a thinking strength is saved on change. Actual %d %r' % (st, r))
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'gemma', 'level': 'MEDIUM'}})
+    ok(st == 400, 'v1.6: a level that the family does not have is 400. Actual %d' % st)
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': None})
+    ok(st == 200 and r['settings']['slots']['default']['effort'] is None, 'v1.6: Default clears the thinking strength. Actual %d %r' % (st, r))
     # -- A1b v1.0: the safety limits answer, the per-user call caps through Nginx --
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
@@ -953,6 +979,17 @@ try:
     # sam may import banks (canManageBanks); lee has the AI+ feature but sees no bank at all
     st, _, _ = jreq('POST', '/api/users/update', {'id': SAM_ID, 'canManageBanks': True})
     ok(st == 200, 'admin lets sam manage banks (needed to import the made-up study banks). Actual %d' % st)
+    # v1.6: sam sees every bank but has no download right yet -> 403; with the right -> 200; the user row carries the flag
+    st, _, _ = req('GET', '/api/banks/download?id=%s&format=xlsx' % GARDEN_ID, {'Cookie': SAM})
+    ok(st == 403, 'v1.6: sam without the download right gets 403. Actual %d' % st)
+    st, _, _ = jreq('POST', '/api/users/update', {'id': SAM_ID, 'canDownloadBanks': 'yes'})
+    ok(st == 400, 'v1.6: canDownloadBanks must be a boolean (400). Actual %d' % st)
+    st, _, _ = jreq('POST', '/api/users/update', {'id': SAM_ID, 'canDownloadBanks': True})
+    ok(st == 200 and user_rows()['sam']['canDownloadBanks'] is True, 'v1.6: admin gives sam the download right. Actual %d' % st)
+    st, _, b = req('GET', '/api/banks/download?id=%s&format=xlsx' % GARDEN_ID, {'Cookie': SAM})
+    ok(st == 200 and b[:2] == b'PK', 'v1.6: sam with the right downloads the bank. Actual %d' % st)
+    st, _, _ = jreq('POST', '/api/users/update', {'id': SAM_ID, 'canDownloadBanks': False})
+    ok(st == 200 and user_rows()['sam']['canDownloadBanks'] is False, 'v1.6: the right is withdrawn again. Actual %d' % st)
     st, _, _ = jreq('POST', '/api/users/create', {'username': 'lee', 'password': 'lee-initial-2026', 'role': 'user', 'banks': [], 'ai': True})
     ok(st == 200, 'admin creates lee with the AI+ feature and no bank. Actual %d' % st)
     LEE = sign_in_new_user('lee', 'lee-initial-2026', 'lee-stack-2026')

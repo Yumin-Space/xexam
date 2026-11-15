@@ -6,6 +6,18 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.6 — 2026-11-16
+
+**更稳的 AI 出题和导入、每个功能单独设置的思考强度、题库下载（Excel 和 Word）、登录所在地的补查。升级：拉取镜像；主数据库自动升到 schema 10（先写一份备份副本），AI 数据库仍是 schema 8（自动加一列）；不需要新的 `docker-compose.yml`。**
+
+- **AI 出题和 AI 导入更稳**（ai-service）：要求回答是题目时，请求带上结构化输出（Anthropic 的 `output_config.format` json_schema，OpenAI 兼容的 `response_format` json_schema strict）；服务商拒绝时自动改用普通请求，并按连接记住。每道题只在一个 `answer` 字段里写出正确选项的字母，选项的对错标记由程序设置（旧的每个选项一个 `correct` 的写法仍然能读；有选项为 true 时，没有 `correct` 的选项按 false 算）。规划调用的 Token 预算是 min(22 000, 6 200 + 90 × 题数)（20 道题 → 8 000），整体规划 8 000，给模型自己的思考留出空间；每次调用的题数只在回答真的被截断时才减少（不会再在几个任务之间出现 5 → 3 → 2 → 1 道一调用越缩越小）。
+- **每个功能单独设置思考强度**（**AI 设置** → 模型）：每个功能的服务商和模型选择框上面有一排 [默认] [Anthropic] [OpenAI] [Google] [Responses API] [Gemma] 和一个级别列表，更改后自动保存；**默认**什么都不发送（用模型自己的默认值）。参数和级别（级别名在所有界面语言里都按发送的原样显示英文；悬停、聚焦或长按按钮会显示参数名）：Anthropic `output_config.effort` low / medium / high / xhigh / max；OpenAI `reasoning_effort` low / medium / high / xhigh / max；Google `thinking_level`（以 `extra_body.google.thinking_config.thinking_level` 发送）MINIMAL / LOW / MEDIUM / HIGH / XHIGH；Responses API `reasoning.effort`（嵌套的 `"reasoning": {"effort"}`）none / minimal / low / medium / high / xhigh / max；Gemma `thinking_level` HIGH / MINIMAL（在 Google AI Studio 上 Gemma 4 只接受这两个，MINIMAL 即关闭思考）。任何一族都可以用于任何连接；带参数的请求被拒绝（HTTP 400 / 422）时，会去掉参数再发送一次，并记住这个连接不支持它。已知的模型默认值有文档说明时，会显示一行灰色提示。保存在 AI 数据库里（`model_slots.effort`；AI schema 仍是 8，列自动添加）；管理员路由 `POST /api/ai/admin/models/effort`，系统日志事件 `ai.settings.effort`；设置的回答带 `slots.<slot>.effort` 和 `effortLevels`。
+- **AI 设置**：**连接与模型**标签页的顺序现在是连接、AI+ 总开关、功能开关、模型。用量图表（按模型 / 按功能 / 按时间）默认显示 Token；**调用次数 | Token 数**的选择按用户记在当前浏览器里。
+- **题库下载**（**题库管理**）：每个题库有一个**下载**按钮，打开的对话框里可选 **Excel** 或 **Word**。Excel 是六列的导入格式，每个工作表一个 sheet（下载后再导入，得到的题目相同）。Word 是标题加正文：先是英语的每个工作表，再是中文的每个工作表，再是日语的每个工作表（每种语言另起一页），使用内置的标题样式，标出正确选项，并写出答案、解析、助记和备注。谁能下载：管理员，以及在**用户管理**的题库对话框里（紧接在**管理题库**之后；**全选** / **全部不选**移到了这一行的最右端）拥有新的每用户权限 **下载题库** 的用户，只限于他能看到的题库；由服务器检查。路由 `GET /api/banks/download?id=<bank>&format=xlsx|docx`；系统日志事件 `bank.download`。主数据库 schema 10（`users.can_download_banks`，默认关），启动时自动升级，先写备份副本。
+- **登录 IP 和所在地的补查**：把所在地来源切换到外部 API 之后，或在它是 API 时保存新的服务商设置之后，后端会把所有存下来的、记录里没有所在地的地址再查一遍（不论多旧；系统日志的行、最后登录和最后活动都算），每个不同的地址只查一次，实时查询优先，每分钟 30 次；服务商回答限流时暂停 15 分钟，每个地址最多试 3 次；已有的所在地从不被覆盖。关掉开关、来源改回 Cloudflare 或清除记录时，补查会停止。Cloudflare 模式下，ai-service 写入系统日志的行现在也带上 Cloudflare 的所在地（Nginx 只对可信代理把 `X-Geo-*` 转给 AI 服务）。**开启 / 关闭**开关现在两个方向都要确认。
+- **AI 导入的拖放区**显示大小上限（**最大 20 MB**，即设置的值）。
+- **从 v1.5 升级**：拉取镜像再 `docker compose up -d`；主数据库升到 schema 10（只增不改：`users.can_download_banks`，默认关，所以只有管理员能下载，直到你在用户管理里给别的用户开启）；AI 数据库自动加上 `model_slots.effort`（schema 仍是 8）；设置、compose 和卷都不变。回退到 v1.5 时，v1.5 的后端能原样打开 schema 10 的文件（新列被忽略）。
+
 ### v1.5 — 2026-11-15
 
 **只改了 CI：Xexam 本身没有变化，镜像除版本号外与 v1.4 相同。升级：不需要做任何事（想要新的版本号时拉取镜像即可）。**

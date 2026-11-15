@@ -149,6 +149,7 @@ flowchart LR
 | 公开 | `GET /api/info`、`GET /api/auth/state`、`POST /api/auth/login` |
 | 登录 | 和你自己学习有关的一切：你能看到的题库、你的进度、记录和设置、交卷、自己的密码、退出登录 |
 | 可管理题库（管理员和有这个权限的用户） | `POST /api/upload`、`/api/import/confirm`、`/api/import/cancel`、`/api/banks/delete`、`GET /api/imports`。其他人：403 `你没有管理题库的权限，请联系管理员。` |
+| 可下载题库（管理员和有 **下载题库** 权限的用户，v1.6） | `GET /api/banks/download`。其他人：403 `你没有下载题库的权限，请联系管理员。`；范围只限用户能看到的题库（看不到的题库回答 404，和不存在的一样）。权限随会话从数据库读出，每次下载都写系统日志（`bank.download`） |
 | 管理员 | `GET /api/users`、`GET /api/logs`、`POST /api/users/*`、`POST /api/shutdown`。其他人：403 `只有管理员可以进行这个操作。` |
 
 AI 路由（`/api/ai/*`）由 ai-service 响应，它有自己的三个级别（任何已登录的用户，从 v0.9 起包括学习功能的两个已保存回答的查询；AI 用户：AI+ 功能已开启、ai-service 已连接，用户是管理员或拥有 AI+ 功能，并且没有被暂停，从 v0.9 起包括请求提示、解析或总结；管理员，用于 `/api/ai/admin/*`）；见 §11 和 [api.md](api.md) 第 5 节。

@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v1.5 → v1.6** (section 00000): no new `docker-compose.yml` variable; the main database moves to schema 10 automatically after its own backup copy is written (additive: one column, `users.can_download_banks`). The AI database stays at schema 8 (one column, `model_slots.effort`, is added by itself, with no backup copy). Rolling back to v1.5 needs no restore.
 > - **v1.3 → v1.4** (section 0000): the main database moves to schema 9 and the AI database to schema 8, each automatically after its own backup copy is written (additive: last-activity columns, and the table of the external location lookup). **The Docker volumes are renamed** (`xexam_data` → `xexam_backend_data`, `xexam_link` → `xexam_ai_auth`): copy `xexam_data` into `xexam_backend_data` before the first v1.4 start, or Xexam starts with an empty database. Rolling back to v1.3 uses `xexam_data` again; the AI database needs its copy back (section 0000.4).
 > - **v1.2 → v1.3** (section 000): a new `docker-compose.yml` is recommended (a `tunnel` network and the optional `cloudflared` service, for real client addresses); the main database moves to schema 8 and the AI database to schema 7, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back (section 000.4).
 > - **v0.9.1 → v1.0** (section 0): no new `docker-compose.yml`; the AI database moves to schema 4 after its backup copy `backups/xexam-ai-schema3-<date-time>.db` is written; the main database does not change. Rolling back to v0.9.1 needs that copy restored (section 0.4).
@@ -21,6 +22,40 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 00000. Upgrading from v1.5 to v1.6
+
+This section is numbered 00000 because it is the newest one. The older sections keep their numbers. (v1.5 itself changed only the CI and has no section: upgrading to it needed nothing.)
+
+### 00000.1 What changes
+
+- **The main database** moves from schema 9 to **schema 10**, once, on the first start of the new backend, after the copy `backups/xexam-schema9-<date-time>.db`. The step is additive: `users` gets `can_download_banks` (0 for every user, so **nobody but administrators can download banks until an administrator ticks Download banks for them**). The log row is `system.migrate` with `from` 9 and `to` 10.
+- **The AI database** stays at **schema 8**. On start ai-service adds the nullable column `model_slots.effort` (the thinking strength of each slot; NULL = **Default**, nothing is sent), so every slot behaves as before until an administrator chooses a strength. No backup copy is written because the schema number does not change.
+- **Bank download** (Excel or Word) appears on **Question banks** for administrators at once; plain users get it with the new per-user right (section 11.1 of [usage.md](usage.md)).
+- **Thinking strength** rows appear in **AI settings**; nothing is sent until one is chosen (section 17.9 of [usage.md](usage.md)). AI generation and import now ask for structured output where the provider supports it and use a larger plan budget; nothing needs to be set.
+- **Nginx** now passes `X-Geo-*` to ai-service, from trusted proxies only, so the **System log** rows written by ai-service carry the Cloudflare place too (nothing to configure). If you use the external lookup API, the first switch to it (or the next save of its settings) after the upgrade looks up places for old records without one (section 14.2 of [usage.md](usage.md)).
+
+### 00000.2 Upgrade
+
+1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)).
+2. `docker compose pull`, then `docker compose up -d`. No change to `docker-compose.yml` or `.env` is needed.
+
+### 00000.3 Checks after the upgrade
+
+- `/api/info` and the **About** page show `1.6`; the backend log has `Upgraded the database to schema 10` with the copy it wrote. ai-service logs no schema upgrade (its schema is still 8).
+- As an administrator, **Question banks** shows a **Download** button on every bank; the **Question banks of ...** dialog in **User management** has **Download banks** (unticked) next to **Manage banks**.
+- **AI settings** shows **Thinking strength** with **Default** pressed in every model row.
+
+### 00000.4 Rollback to v1.5
+
+- **Main database**: nothing to restore. A v1.5 backend opens the schema-10 file as it is and ignores `can_download_banks` (its own inserts get the default 0); the copy `xexam-schema9-<date-time>.db` is optional. Download rights set under v1.6 are not used by v1.5 and are still there when you upgrade again.
+- **AI database**: nothing to restore. A v1.5 ai-service opens the file (schema 8) and never reads `model_slots.effort`; the strengths you chose are used again by v1.6.
+- Change the three images to `:v1.5` and run `docker compose up -d`. v1.6 does not delete the pre-migration copy; remove it by hand when you no longer need it.
+
+### 00000.5 What has been tested
+
+- The schema 9 to 10 step on files with data and on empty files (one backup, one `system.migrate` row, the same tables as a new file), the permission (off by default, kept across role changes, always on for administrators, 403 without it, read on every request), the Excel round trip (download, import again, same questions), the Word file (structure, language order, marked answers), the thinking-strength parameter of every family and its retry without the parameter after a 400 / 422, the structured-output fallback, the `answer` field, and the sign-in place backfill (one lookup per address, pause after a rate limit, no overwriting), with local stubs only.
+- Not covered by the release checks: a Word document opened in every Word version (the file uses built-in styles only), a provider on the real internet beyond a few manual calls, and the phone layouts on a real device.
 
 ## 0000. Upgrading from v1.3 to v1.4
 

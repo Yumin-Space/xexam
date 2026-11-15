@@ -6,6 +6,27 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.6 — 2026-11-16
+
+**AI の問題作成とインポートが、構造化された回答でより安定しました。機能ごとの思考の強さ、問題集のダウンロード（Excel / Word）、ログイン場所の再照会が加わります。アップグレード：イメージを pull します（compose ファイルの変更はありません）。メインデータベースはスキーマ 10 に自動で移行し、先にバックアップのコピーが作られます。AI データベースはスキーマ 8 のままです（`model_slots.effort` 列が自動で加わります）。**
+
+- **構造化された回答で、より確実な AI 問題作成と AI インポート**：問題の形で返してもらう回答は、構造化出力（Anthropic の `output_config.format` の json_schema、OpenAI 互換の `response_format` の json_schema（strict））を求めます。プロバイダーが拒否したときは通常のリクエストに戻り、接続ごとにそのことが記憶されます。各問題は正解の選択肢を、`answer` フィールドに一度だけ（文字で）書き、選択肢のフラグはプログラムが設定します（選択肢ごとの `correct` という従来の形も読めます。ほかの選択肢が true のとき、`correct` のない選択肢は false として数えます）。呼び出し 1 回の出力枠は min(22 000, 6 200 + 90 × 問題数) になり（20 問なら 8 000）、全体の計画は 8 000 です。モデル自身の思考の余地を残すためです。1 回の呼び出しで書く問題数が減るのは、回答が本当に途中で切れたときだけです（ジョブをまたいで 5 → 3 → 2 → 1 と減っていくことはなくなりました）。
+- **機能ごとの思考の強さ**（**AI 設定** → **モデル**）：各機能のプロバイダーとモデルの選択欄の上に、行 **[既定] [Anthropic] [OpenAI] [Google] [Responses API] [Gemma]** とレベルの一覧が加わりました。変更するとすぐに保存されます。**既定**は何も送らず、モデル自身の既定に任せます。レベル名は、どの表示言語でも送られるとおりの英語で表示され、ボタンにマウスを重ねる、フォーカスする、長押しするとパラメーター名が表示されます。
+  - Anthropic：`output_config.effort`（low / medium / high / xhigh / max）。
+  - OpenAI：`reasoning_effort`（low / medium / high / xhigh / max）。
+  - Google：`thinking_level`（`extra_body.google.thinking_config.thinking_level` として送信。MINIMAL / LOW / MEDIUM / HIGH / XHIGH）。
+  - Responses API：`reasoning.effort`（入れ子の `"reasoning": {"effort"}`。none / minimal / low / medium / high / xhigh / max）。
+  - Gemma：`thinking_level`（HIGH / MINIMAL。Google AI Studio の Gemma 4 はこの 2 つだけを受け付け、MINIMAL は思考をオフにします）。
+  - どの種類も、どの接続にも選べます。パラメーター付きのリクエストが拒否された（HTTP 400 / 422）ときは、パラメーターなしで一度だけ送り直し、その接続は非対応として記憶されます。公開されているモデルの既定値は、灰色のヒントで表示されます。設定は AI データベースの `model_slots.effort` に保存されます（AI のスキーマは 8 のままで、列は自動で加わります）。管理者用のルートと、システムログのイベント `ai.settings.effort` があり、設定の応答には `slots.<slot>.effort` と `effortLevels` が加わります。
+- **AI 設定の並び順と使用量**：**モデル**タブの順序は、接続、AI+ スイッチ、機能スイッチ、モデルになりました。使用量のグラフ（モデル別・機能別・期間別）は既定で Token を表示し、**呼び出し回数 | Token 数**の選択はユーザーごとに、そのブラウザーに記憶されます。
+- **問題集のダウンロード**（問題集の管理）：各問題集の**ダウンロード**ボタンで、**Excel** と **Word** を選ぶダイアログが開きます。
+  - **Excel**：インポートと同じ 6 列の形式で、シートごとに 1 枚のワークシートです（ダウンロードして再びインポートすると、同じ問題になります）。
+  - **Word**：タイトルに続いて、英語 → すべてのシート、中国語 → すべてのシート、日本語 → すべてのシートの順で、言語ごとに新しいページから始まります。組み込みの見出しスタイルを使い、正解の選択肢、解答、解説、語呂合わせ、メモが入ります。
+  - **使える人**：管理者と、見られる問題集に限り、ユーザー管理の問題集のダイアログ（**問題集を管理**の次）にある新しいユーザーごとの権限 **問題集のダウンロード**を持つユーザーです。**すべて選択** / **すべて解除**は、その行の右端に移りました。サーバーが権限を確認します。ルート `GET /api/banks/download?id=<bank>&format=xlsx|docx`、システムログのイベント `bank.download`。メインデータベースはスキーマ 10（`users.can_download_banks`、既定はオフ）で、起動時に自動で移行し、先にバックアップが作られます。
+- **ログイン IP と所在地の再照会**：所在地の取得元を外部 API に切り替えたとき、または外部 API のまま新しいプロバイダーの設定を保存したときに、バックエンドは、記録に場所がない保存済みのアドレス（古さは問わず：システムログの行、最終ログイン、最終アクティブ）をもう一度照会します。照会はアドレスごとに 1 回、現在のものを先に、1 分に 30 回までで、レート制限の応答があると 15 分間休み、1 つのアドレスにつき最大 3 回試します。すでにある場所は上書きしません。スイッチをオフにする、取得元を Cloudflare に戻す、記録を消去すると止まります。Cloudflare モードでは、AI サービスが書くシステムログの行にも Cloudflare の場所が付くようになりました（Nginx は信頼するプロキシからの場合だけ `X-Geo-*` を AI サービスに渡します）。オン / オフのスイッチは、どちらの向きでも確認を求めます。
+- **AI インポートのドロップ領域**に、サイズの上限（「最大 20 MB」。設定された値）が表示されます。
+- **v1.5 からのアップグレード**：イメージを pull するだけです（compose ファイルと設定の変更はありません）。メインデータベースはスキーマ 9 から 10 に移り、`backups/xexam-schema9-<date-time>.db` が作られます。v1.5 のバックエンドはスキーマ 10 のファイルをそのまま開けます（新しい列は無視されます）。
+
 ### v1.5 — 2026-11-15
 
 **CI のみの更新：Xexam 本体は変わらず、イメージはバージョン番号以外 v1.4 と同じです。アップグレード：何もする必要はありません（新しいバージョン番号が必要なときだけイメージを pull してください）。**

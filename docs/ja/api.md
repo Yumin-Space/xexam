@@ -41,6 +41,7 @@
 | POST | `/api/import/confirm` | 問題集の管理 | インポートを確定する | **はい**（1 つのトランザクション） |
 | POST | `/api/import/cancel` | 問題集の管理 | 自分の確認待ちのインポートを取り消す | いいえ |
 | POST | `/api/banks/delete` | 問題集の管理 | 問題集を削除する（その学習データも一緒に削除できる） *(v0.5)* | はい |
+| GET | `/api/banks/download?id=<bank>&format=xlsx\|docx` | 管理者、または問題集のダウンロード権限 | 問題集を Excel（インポート形式）または Word のファイルとして返す *(v1.6)* | いいえ |
 | GET | `/api/users` | 管理者 | すべてのアカウントと、その権限とログインのロック *(v0.6)* | いいえ |
 | POST | `/api/users/create` | 管理者 | ユーザーを追加する *(v0.6)* | はい |
 | POST | `/api/users/update` | 管理者 | ユーザーの名前変更、権限の変更、無効化・有効化、使える問題集と問題集の管理権限の設定 *(v0.6)* | はい |
@@ -202,6 +203,7 @@ flowchart LR
 - `banks` *(v0.7)*：そのユーザーが見られる問題集の id の昇順のリスト（まだ存在する問題集だけ。`[]` = なし）。常にリストです。`"all"` は書き込むときの省略形にすぎません（下記）。
 - `newBanks` *(v0.7)*：**今後インポートする問題集も含める**。`true` なら、これから作られる問題集（誰かが新しい問題集としてインポートしたもの、またはコマンドラインの `import`）は、同じトランザクションで `banks` に加わります。既存の問題集を加えることはありません。
 - `canManageBanks` *(v0.7)* は、保存されている **問題集を管理できる** 権限です。`banks`、`newBanks`、`canManageBanks` は権限が変わっても保持されますが、意味を持つのはアカウントが一般ユーザーの間だけです。管理者はすべての問題集を利用・管理できます。
+- `canDownloadBanks` *(v1.6)*：保存されている **問題集のダウンロード** の権限（既定は `false`）。意味があるのは一般ユーザーだけで（管理者は常にダウンロードできます）、見られる問題集に限ります。`GET /api/auth/state` と各ログイン応答の `user` にも入り（管理者は常に `true`）、権限が変わっても保持されます。`POST /api/users/create` と `POST /api/users/update` は省略可能な真偽値 `canDownloadBanks` を受け付け（真偽値以外は 400）、更新ではシステムログに変更したキーとして記録されます。
 - `ai` *(v0.8)*：保存されている、ユーザーの **AI+ 機能** のスイッチ。意味があるのは一般ユーザーだけで（管理者は AI がオンの間は常に使えます）、AI 設定で AI+ 機能がオンの間だけです。AI+ が利用できないときも保持されます。
 - `aiSuspended` *(v0.8、ラウンド 2)*、`lock` の後：管理者が AI 設定でそのユーザーの **AI+ 機能** を一時停止したとき `true`（第 5 節の `suspend`。画面では「一時停止」「一時停止中」と表示され、JSON では名前 `suspended` のままです）。ai-service の最後の報告から来るので、バックエンドに報告がない間（たとえば再起動の直後）は全員 `false` で、一時停止できない管理者は常に `false` です。`ai` とは別で、一時停止しても保存されているスイッチは変わりません。
 - `aiAvailable` *(v0.8、ラウンド 2)*、`users` の隣のトップレベルのキー：`GET /api/auth/state` と同じ値。**ユーザーの一覧を返すすべての応答**にあります（`create`、`update`、`password`、`delete`、`unlock` も）。
@@ -350,6 +352,20 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 この問題集をインポート先にしている確認待ちのアップロード（この id へのアップロード、またはこれがレガシー問題集のときの `X-Bank-Target` なしのアップロード）は、どのユーザーのものでも破棄されます。
 
 レスポンス：`{"banks": [...], "bank": <GET /api/bank>, "progress": <GET /api/progress>}`。3 つとも、呼び出した人から見たものです。`id` がない、または整数でない場合（真偽値は整数とみなしません）、あるいは `withRecords` があるのに真偽値でない場合 → **400** `请求的格式不对。`。存在しない id → **404** `这个题库不存在（可能已被删除），请刷新页面后再试。`。
+
+### `GET /api/banks/download?id=<bank>&format=xlsx|docx` *(v1.6)*
+管理者、または **問題集のダウンロード** の権限を持つユーザー。1 つの問題集をファイルとして返します（`Content-Disposition: attachment`。`HEAD` は本文なし）。`id` は問題集の id、`format` は `xlsx` または `docx` です。
+
+- **`xlsx`**：[usage.md](usage.md) の 12 節の 6 列形式で、シートごとに 1 枚のワークシートです。これをそのままインポートすると、同じ問題になります。
+- **`docx`**：タイトル、続いて英語 → すべてのシート、中国語 → すべてのシート、日本語 → すべてのシート（言語ごとに新しいページ）。組み込みの見出しスタイルを使い、正解の選択肢、解答、解説、語呂合わせ、メモが入ります。
+- 一般ユーザーは、見られる問題集だけをダウンロードできます。ファイルはデータベースのロックの外で、別のスレッドで作られます。成功したダウンロード（`HEAD` を除く）は、システムログに `bank.download`（`format`、`sheets`、`questions`）として 1 行書かれます。
+
+| 応答 | 場面 |
+|---|---|
+| **400** `请求的格式不对。` | `id` がない、または整数でない。`format` が `xlsx` / `docx` でない。キーが重複している |
+| **403** `你没有下载题库的权限，请联系管理员。`（「問題集をダウンロードする権限がありません……」） | 権限のない一般ユーザー |
+| **404** | 問題集がない、またはユーザーに見えない（どちらも同じ応答） |
+| **500** | ファイルを作れなかった |
 
 ### `POST /api/attempt`
 ログイン。リクエストボディは `{"results": [{"id": "…", "correct": true, "answer": ["B"]}], "sheets": ["…"], "mode": "all", "seconds": 123, "kind": "exam"}` です。
@@ -548,6 +564,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | POST | `/api/ai/admin/connections/delete` | 管理者 | `{"id": <id>, "force"?, "newDefault"?}` | `Settings` |
 | POST | `/api/ai/admin/connections/order` | 管理者 | `{"ids": [<id>, …]}` | `Settings` |
 | POST | `/api/ai/admin/models/pick` | 管理者 | `{"slot", "connectionId", "model", "manual"?}` または `{"slot", "clear": true}` | `Settings`。テストに失敗したときは `{"ok": false, "code", …}` |
+| POST | `/api/ai/admin/models/effort` | 管理者 | `{"slot", "effort": null \| {"family", "level"}}`（v1.6。`family`：`anthropic`、`openai`、`google`、`responses`、`gemma`。`null` = 既定で何も送らない） | `{"settings": Settings}`（`slots.<slot>.effort` と `effortLevels` を含む）。システムログの `ai.settings.effort` |
 | POST | `/api/ai/admin/models/test` | 管理者 | `{"connectionId": <id>, "model": "…"}` | `Settings` |
 | POST | `/api/ai/admin/models/remove` | 管理者 | `{"poolId": <id>}` | `Settings` |
 | POST | `/api/ai/admin/feature-switches` | 管理者 | `chat`、`hint`、`explain`、`summary`、`generate`、`import` のいずれか（真偽値） | `Settings` |
@@ -1162,6 +1179,14 @@ AI のルートだけが変わり、どの変更も追加か既定値です。�
 - **共有回答と生成**：`fresh` と `shared`、ジョブの項目、`ai.gen.tooBig`、`ai.budget`、`/internal/ai/gen/corpus`、`MAX_GOAL` 300。
 - **細かな変更**：問題集のルートの `ETag` と `304`、冪等な `POST /api/attempt`（`duplicate`）。
 - **バージョン**：`GET /api/info` は `"version": "1.3"` を返し、AI サービスの `/healthz` も同じです。
+
+### v1.6 での変更（v1.5 との比較）
+
+- **問題集のダウンロード**：`GET /api/banks/download?id=<bank>&format=xlsx|docx`（上記）、ユーザーの `canDownloadBanks`（`GET /api/users`、`GET /api/auth/state` の `user`、`POST /api/users/create`、`POST /api/users/update`）、システムログのイベント `bank.download`。メインデータベースはスキーマ 10。
+- **AI 設定**：`POST /api/ai/admin/models/effort`（機能ごとの思考の強さ）、設定の応答に `slots.<slot>.effort`（`null` または `{"family", "level"}`）と `effortLevels`（系統ごとのレベルの一覧）、システムログのイベント `ai.settings.effort`。思考の強さのパラメーター付きのリクエストが 400 / 422 で拒否されたときは、パラメーターなしで一度だけ送り直し、その接続は記憶されます。
+- **構造化出力**：問題の形の回答は、構造化出力（json_schema）を求め、拒否されたら通常のリクエストに戻ります（接続ごとに記憶）。問題は `answer` フィールドに正解を一度だけ書き、従来の `correct` の形も読めます。
+- **所在地の再照会**：外部 API への切り替えと、外部 API のままの設定の保存の後に、場所のない保存済みのアドレスをバックグラウンドで照会します（アドレスごとに 1 回、1 分 30 回、レート制限で 15 分休止、最大 3 回）。
+- **バージョン**：`GET /api/info` は `"version": "1.6"` を返し、AI サービスの `/healthz` も同じです。
 
 ## 8. 呼び出し例
 

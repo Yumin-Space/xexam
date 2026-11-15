@@ -16,6 +16,7 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | **Public** | Anyone, without signing in |
 | **Signed in** | Any signed-in user |
 | **Bank manager** | Administrators, and plain users with the **Bank manager** permission *(v0.7)* |
+| **Bank downloader** | Administrators, and plain users with the **Download banks** permission *(v1.6)* |
 | **Admin** | Administrators only |
 
 | Method | Path | Access | Purpose | Writes to the database? |
@@ -27,6 +28,7 @@ Every route has one access level (the route table `ROUTES` in `backend/src/api/a
 | POST | `/api/auth/password` | Signed in | Change your own password *(v0.6)* | Yes |
 | GET | `/api/bank` | Signed in | The questions of every bank the user may see (active questions only) | No |
 | GET | `/api/banks` | Signed in | The question banks the user may see, with their sheets and counts *(v0.5)* | No |
+| GET | `/api/banks/download?id=<int>&format=xlsx\|docx` | Bank downloader | One question bank as an Excel or Word file *(v1.6)* | No (one activity row) |
 | GET | `/api/progress` | Signed in | The user's study records | No |
 | GET | `/api/records` | Signed in | Every kept study record of the user, newest first *(v0.5)* | No |
 | GET | `/api/record?id=<int>` | Signed in | One study record with its per-question detail *(v0.5)* | No |
@@ -149,10 +151,10 @@ Public. Signed out (no cookie, or a session that is not valid any more):
 Signed in (also while the account must choose a new password):
 
 ```json
-{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
+{"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": false, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true}, "library": "3f0c9a7d5e21b4c88a9d0e6f17b2c453", "aiAvailable": true, "aiService": {"connected": true, "stopped": false, "lastSeen": 1789900000, "version": "0.9", "enabled": true, "link": true}}
 ```
 
-- `role` is `admin` or `user`. `canManageBanks` *(v0.7)* is `true` for every administrator, and for a plain user with the **Bank manager** permission. `aiAllowed` *(v0.8)* is `true` for every administrator, and for a plain user with **AI+**; whether the user can use AI right now is in `GET /api/ai/status`. The same `user` object is in the answers of sign-in and of the password change.
+- `role` is `admin` or `user`. `canManageBanks` *(v0.7)* is `true` for every administrator, and for a plain user with the **Bank manager** permission. `canDownloadBanks` *(v1.6)* is `true` for every administrator, and for a plain user with the **Download banks** permission. `aiAllowed` *(v0.8)* is `true` for every administrator, and for a plain user with **AI+**; whether the user can use AI right now is in `GET /api/ai/status`. The same `user` object is in the answers of sign-in and of the password change.
 - `library` is an opaque stamp of the question banks the user may see: 32 hexadecimal digits, a digest that publishes none of the numbers it is made of. It changes whenever one of those banks is imported, replaced or deleted (also by the `import` command, from another process), and *(v0.7)* whenever the banks the user may see or manage change (an administrator assigned banks or changed the permission, a bank changed owner). Open pages compare it and re-read the banks when it changes. For a user limited to some banks, the stamp is made only of those banks: it neither reveals nor follows the size, the question count or the update times of the banks they cannot see.
 
 - `aiAvailable` *(v0.8, round 2)* is `true` while AI+ is available: ai-service has reported to the backend less than 60 seconds ago (and did not say it was stopping) **and** its **AI+ feature** switch in AI settings is on. It is the same for every signed-in user. The User management page uses it to decide whether to show the AI+ switches, and the backend uses it to refuse them (`POST /api/users/update` and `create`, below).
@@ -194,7 +196,7 @@ Signed in (also while a new password is required). Body: `{"current": "…", "pa
 Admin. Every account, ordered by id:
 
 ```json
-{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
+{"users": [{"id": 2, "username": "cook", "role": "user", "disabled": false, "createdAt": "2026-11-10 14:00", "lastLoginAt": "2026-11-10 15:02", "mustChangePassword": false, "records": 12, "banks": [1, 3], "newBanks": true, "canManageBanks": true, "canDownloadBanks": false, "ai": true, "ownedBanks": [3], "lock": null, "aiSuspended": false}], "aiAvailable": true}
 ```
 
 - `createdAt` / `lastLoginAt` are local times `YYYY-MM-DD HH:MM`; `lastLoginAt` is `null` before the first sign-in.
@@ -202,6 +204,7 @@ Admin. Every account, ordered by id:
 - `banks` *(v0.7)*: the ids of the banks the user sees, ascending (only banks that still exist; `[]` = none). It is always a list: `"all"` is only a shorthand for writing (below).
 - `newBanks` *(v0.7)*: **Include banks imported later**. `true`: every bank created from now on (an import as a new bank by anyone, or the command-line `import`) is added to `banks` in the same transaction. It never adds an existing bank.
 - `canManageBanks` *(v0.7)* is the stored **Bank manager** permission. `banks`, `newBanks` and `canManageBanks` are kept across role changes but matter only while the account is a plain user: administrators see and manage every bank.
+- `canDownloadBanks` *(v1.6)*, after `canManageBanks`: the stored **Download banks** permission (default `false`). It is kept across role changes like `canManageBanks`, matters only while the account is a plain user, and administrators may always download.
 - `ai` *(v0.8)*: the stored **AI+ feature** switch of the user. It matters only for plain users (administrators may always use AI while it is on) and only while the AI+ feature is on in AI settings. It is kept when AI+ is not available.
 - `aiSuspended` *(v0.8, round 2)*, after `lock`: `true` when an administrator paused the user's **AI+ feature** in AI settings (section 5, `suspend`; the screens say Pause / Paused, the JSON keeps the name `suspended`). It comes from ai-service's last report, so it is `false` for everybody while the backend has no report (for example right after a restart) and always `false` for administrators, who cannot be suspended. It is separate from `ai`: a pause does not change the stored switch.
 - `aiAvailable` *(v0.8, round 2)*, a top-level key next to `users`: the same value as in `GET /api/auth/state`. **Every answer that returns the user list** has it (`create`, `update`, `password`, `delete`, `unlock` too).
@@ -222,7 +225,7 @@ Admin. Every account, ordered by id:
 | `otherUntil` / `otherRetryAfter` | Set only when the other browsers are locked at the same time, so the account is locked in every browser: the end of that second lock and its seconds (`null` / `0` otherwise) |
 
 ### `POST /api/users/create` *(v0.6)*
-Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "ai": <bool>}`. *(v0.7)* `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some), `newBanks` to `false` and `canManageBanks` to `false`; *(v0.8)* `ai` (**AI+**) to `false`. Creating a user with `ai: true` also logs `user "<admin>" turned AI+ on for user "<name>"`; *(v0.8, round 2)* while AI+ is not available (see `aiAvailable` above) it is refused with **409** `ai.serviceOff` and the user is not created. `ai: false` or no `ai` works as always. `"banks": "all"` is a shorthand: every bank that exists now and, unless `newBanks` is given, `newBanks: true`. Duplicate ids are ignored. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
+Admin. Body: `{"username": "…", "password": "…", "role": "admin" | "user", "banks": "all" | [<bank id>, …], "newBanks": <bool>, "canManageBanks": <bool>, "canDownloadBanks": <bool>, "ai": <bool>}`. *(v0.7)* `banks` defaults to `[]` (the new user sees no bank until an administrator chooses some), `newBanks` to `false` and `canManageBanks` to `false`; *(v1.6)* `canDownloadBanks` to `false`; *(v0.8)* `ai` (**AI+**) to `false`. Creating a user with `ai: true` also logs `user "<admin>" turned AI+ on for user "<name>"`; *(v0.8, round 2)* while AI+ is not available (see `aiAvailable` above) it is refused with **409** `ai.serviceOff` and the user is not created. `ai: false` or no `ai` works as always. `"banks": "all"` is a shorthand: every bank that exists now and, unless `newBanks` is given, `newBanks: true`. Duplicate ids are ignored. The new account is enabled and must choose a new password at its first sign-in. Answer: `{"users": [...]}` as in `GET /api/users`.
 
 Usernames have 1–40 characters (ASCII letters, digits and `. _ - @`, surrounding spaces removed) and are unique ignoring case; passwords have 8–128 characters.
 
@@ -230,19 +233,19 @@ Usernames have 1–40 characters (ASCII letters, digits and `. _ - @`, surroundi
 |---|---|
 | **400** `用户名不对：1–40 个字符，只能用字母、数字和 . _ - @。` ("The username is not valid …") | `username` missing, not a string, or breaking the rule |
 | **400** `密码需要 8–128 个字符。` | `password` too short or too long |
-| **400** `请求的格式不对。` | `password` missing or not a string; `role` missing or not `admin` / `user`; `banks` neither `"all"` nor a list of integers; `newBanks`, `canManageBanks` or `ai` not a boolean |
+| **400** `请求的格式不对。` | `password` missing or not a string; `role` missing or not `admin` / `user`; `banks` neither `"all"` nor a list of integers; `newBanks`, `canManageBanks`, `canDownloadBanks` or `ai` not a boolean |
 | **400** `选择的题库中有不存在的（可能已被删除），请刷新页面后再试。` ("One of the chosen question banks does not exist …") *(v0.7)* | An id in `banks` is not an existing bank (or not a positive integer); nothing is created |
 | **409** `这个用户名已经有人用了。` ("This username is already taken.") | Another account has that name (ignoring case) |
 | **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}` ("Turn on the AI+ feature in AI settings first.") *(v0.8, round 2)* | `ai: true` while AI+ is not available. It is checked after the body was validated (a malformed `ai` is still 400) and before anything is written or the password is hashed |
 
 ### `POST /api/users/update` *(v0.6)*
-Admin. Body: `{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`; a key that is left out stays unchanged. Answer: `{"users": [...]}`.
+Admin. Body: `{"id": <int>, "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "canDownloadBanks"?, "ai"?}`; a key that is left out stays unchanged. Answer: `{"users": [...]}`.
 
-- Disabling an account or changing its role ends its sessions. A rename, a change of `banks`, `newBanks`, `canManageBanks` or `ai` keeps them; the change applies at the user's next request.
+- Disabling an account or changing its role ends its sessions. A rename, a change of `banks`, `newBanks`, `canManageBanks`, `canDownloadBanks` or `ai` keeps them; the change applies at the user's next request.
 - `ai` *(v0.8)* switches the **AI+ feature** of the user on or off. It applies to the next AI request at once (the backend checks every AI request), and an answer being written for the user stops within about 2 seconds when it is switched off; the user's AI chats and memories are kept. A change is logged as `user "<admin>" turned AI+ on for user "<name>"` (or `off`).
 - *(v0.8, round 2)* While AI+ is not available (ai-service not connected, or the AI+ feature off in AI settings), **any request with an `ai` key is refused as a whole** with **409** `{"error": "请先在 AI 设置里开启 AI+ 功能。", "code": "ai.serviceOff"}`: `true` or `false`, equal to the stored value or not, alone or together with other fields. Nothing is written and nothing is logged. A request without `ai` is not affected. This is the only error of the backend's own routes that carries a `code`. The stored switches of all users are kept while AI+ is unavailable and are in force again once it is.
 - `banks` replaces the chosen banks (a list of ids, `[]` = no bank; or `"all"`, every bank that exists now, which also sets `newBanks: true` unless `newBanks` is given). `newBanks` alone changes only the flag: unticking it keeps the banks the user has.
-- **400**: as for create (`username`, `role`, `banks`, `newBanks`, `canManageBanks`, `ai`; `disabled` not a boolean → `请求的格式不对。`; `id` missing or not an integer (a boolean is not) → `请求的格式不对。`).
+- **400**: as for create (`username`, `role`, `banks`, `newBanks`, `canManageBanks`, `canDownloadBanks`, `ai`; `disabled` not a boolean → `请求的格式不对。`; `id` missing or not an integer (a boolean is not) → `请求的格式不对。`).
 - **404** `这个用户不存在（可能已被删除），请刷新页面后再试。` ("This user does not exist …").
 - **409** `不能对自己的账户做这个操作。` ("You cannot do this to your own account.") when you disable yourself or change your own role; `至少要保留一个启用的管理员。` ("At least one enabled administrator must remain.") when the change would leave no enabled administrator; `这个用户名已经有人用了。`.
 
@@ -340,6 +343,16 @@ Response: `{"result": <same shape as the preview, without filename / token>, "ba
 
 ### `POST /api/import/cancel`
 Bank manager. Discards the caller's own pending upload (other users' uploads stay). No confirmation code is needed. Answer: `{"ok": true}`.
+
+### `GET /api/banks/download?id=<int>&format=xlsx|docx` *(v1.6)*
+Bank downloader (administrators, and plain users with the **Download banks** permission). One question bank as a file; `HEAD` answers the same headers without a body. Query: `id` is the bank id, `format` is `xlsx` or `docx`; a missing or malformed `id` or `format`, an unknown format, or a key given twice is **400** `请求的格式不对。`.
+
+- **`xlsx`** (`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`): the six-column import layout, one worksheet per sheet of the bank in the order of the questions, one question per row. Importing the file again (as a new bank or as an update) gives the same questions; the round trip is tested.
+- **`docx`** (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`): the bank name as the title, then the English text of every sheet, then the Chinese, then the Japanese, each language on a new page, with Word's built-in heading styles, the correct options marked, the answer, the explanation, the mnemonic and the note.
+- Only active questions are exported (retired ones are left out); a sheet with none is left out. The file name is the bank name plus `.xlsx` or `.docx`, sent in `Content-Disposition: attachment` with both `filename` and `filename*` (the plain `filename` is `xexam-bank-<id>.<ext>` when the name is not printable ASCII).
+- A bank that does not exist and a bank the user may not see both answer **404** `这个题库不存在（可能已被删除），请刷新页面后再试。`. A plain user without the permission gets **403** `你没有下载题库的权限，请联系管理员。` ("You do not have permission to download question banks. Please contact an administrator.") before anything is read; the permission is read from the database on every request.
+- The file is built outside the database lock, in a blocking task that shares the concurrency gate of the import parser; a failure to build it is **500** `服务器内部出错，请稍后再试。`.
+- A successful download (not a `HEAD`) writes the activity entry `bank.download` (object: the bank name; detail `{"format", "sheets", "questions"}`) and one service log line.
 
 ### `POST /api/banks/delete` *(v0.5)*
 Bank manager. Request body: `{"id": <int>, "withRecords": <bool, default false>}`. In one transaction it deletes the bank's questions (active and deactivated), its import history, the users' access to it and the bank itself. With `withRecords: true` it also deletes the bank's study data: the statistics (wrong-answer notebook) of those questions, their per-question detail, and every study record that drew from this bank and from no bank that still exists (usually: only from this bank; a record that also used a bank deleted earlier goes too, instead of staying behind as an empty record). Without it, study records and statistics stay; their detail shows the questions as deleted.
@@ -453,6 +466,7 @@ Like every backend message they are Chinese and stable (the frontend translates 
 | 403 | `请先设置新密码。` | Please choose a new password first. | The account must choose a new password |
 | 403 | `只有管理员可以进行这个操作。` | Only an administrator can do this. | Admin routes |
 | 403 | `你没有管理题库的权限，请联系管理员。` | You do not have permission to manage question banks. Ask an administrator. | Bank manager routes *(v0.7)* |
+| 403 | `你没有下载题库的权限，请联系管理员。` | You do not have permission to download question banks. Please contact an administrator. | `GET /api/banks/download` *(v1.6)* |
 | 403 | `这个题库不是你上传的，只能更新或删除你自己上传的题库。` | You did not upload this question bank. You can only update or delete question banks you uploaded yourself. | Upload, confirm, bank delete *(v0.7)* |
 | 403 | `当前密码不对。` | The current password is not correct. | `POST /api/auth/password` |
 | 404 | `这个题库不存在（可能已被删除），请刷新页面后再试。` | This question bank does not exist (it may have been deleted). Reload the page and try again. | `X-Bank-Target`, confirm, bank delete |
@@ -478,6 +492,7 @@ Like every backend message they are Chinese and stable (the frontend translates 
 - **`POST /api/users/signin-info/clear`** (administrator; body `{}`) clears every stored sign-in address and location (`users.last_login_ip` / `_country` / `_region` / `_city`, `sessions.ip`, and `ip` / `country` / `region` / `city` of the activity log, the log in batches of 5000), whether the eye is open or closed, and returns the users answer. It cannot be undone; what is recorded afterwards stays. Activity entry `users.signinInfoClear` with `{"rows": <rows changed>}`.
 - *(v1.4)* **Last activity and the location source.** The users answer has two more top-level keys, `geoSource` (`"cloudflare"` or `"api"`) and `aiServiceUp` (`true` while ai-service is connected, whether or not AI+ is on), and every user has `lastActiveIp` (a string or `null`) and `lastActiveLocation` (`{"country", "region", "city"}`, each `null` when unknown; the whole value is `null` only when all three are unknown), both `null` while the eye is closed, and `lastActiveUa` (the cleaned User-Agent of the last activity, at most 256 characters; present also while the eye is closed). They are written together with `lastActiveAt`, at most once a minute, and only while the eye is open (the User-Agent always); never for anonymous requests. `lastLoginLocation` and `lastActiveLocation` hold a two-letter country code or a country name in `country`, and `country` itself may be `null`. The source decides the place: Cloudflare mode stores the request's `X-Geo-*` values, `api` mode the remembered lookup result of that IP (section 5.9). **`POST /api/users/signin-info/clear`** also clears `users.last_active_ip` / `_country` / `_region` / `_city` (not `last_active_ua`) and the lookup memory and queue; closing the eye (`POST /api/users/signin-info`) drops the waiting lookups.
 - **`POST /api/users/geo-source`** *(v1.4, administrator)* `{"source": "cloudflare"}` and nothing else (400 for `"api"` or any other key: switching to the external source goes through ai-service, `/api/ai/admin/geo/enable`, so that only a tested configuration can be enabled). Sets `system_settings` `geo.source`, clears the queue and returns the users answer. Activity entry `users.geoSource` with `{"source": "cloudflare"}`.
+- *(v1.6)* **Places for old records.** When the source becomes `api` (`POST /internal/ai/geo/source`, which ai-service also posts again after `admin/geo/save` while the source already is `api`), the backend collects every stored public address that has a record without a place (the activity log rows, `users.last_login_*` and `users.last_active_*`), most recently seen first, and looks each one up once (the backfill lane of the lookup queue: after the live jobs, inside the same cap of 30 a minute; a `rateLimited` answer pauses it for 15 minutes; at most 3 hand-outs per address). The answer fills every record of that address that has no place and never overwrites one. The lane lives in memory and is emptied when the eye closes, when the source goes back to `cloudflare` and on `signin-info/clear`.
 - **`GET /api/activity`** (administrator) `?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` returns `{"entries": [...], "next", "newest", "facets", "settings"}`; newest first, keyset paging. `GET /api/activity/settings` and `POST /api/activity/settings` (`{"retentionDays": 7..3650, "userVisits": bool}`, either key optional). `ip` and `location` are `null` while sign-in info is off. These reads do not keep a session alive and are not logged.
 - **`POST /api/activity/visit`** `{"page": "home"}` (signed in; `page` is one of `home`, `banks`, `users`, `logs`, `records`, `record`, `wrong`, `settings`, `about`, `quiz`, `result`, `ai`, `aiSettings`, else 400): administrators are logged, users only when the setting is on; at most 30 writes per user per minute.
 - **`POST /api/attempt`**: a repeat of the same save (same `key`, `startedAt` and kind) writes nothing and answers the first answer plus `"duplicate": true`.
@@ -547,6 +562,7 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
 | POST | `/api/ai/admin/connections/test` | Admin | `{"id": <id>}` | `Settings` |
 | POST | `/api/ai/admin/connections/delete` | Admin | `{"id": <id>, "force"?, "newDefault"?}` | `Settings` |
 | POST | `/api/ai/admin/connections/order` | Admin | `{"ids": [<id>, …]}` | `Settings` |
+| POST | `/api/ai/admin/models/effort` | Admin | `{"slot", "effort": null \| {"family", "level"}}` | `{"settings": Settings}` *(v1.6, section 5.10)* |
 | POST | `/api/ai/admin/models/pick` | Admin | `{"slot", "connectionId", "model", "manual"?}` or `{"slot", "clear": true}` | `Settings`, or `{"ok": false, "code", …}` when the test fails |
 | POST | `/api/ai/admin/models/test` | Admin | `{"connectionId": <id>, "model": "…"}` | `Settings` |
 | POST | `/api/ai/admin/models/remove` | Admin | `{"poolId": <id>}` | `Settings` |
@@ -906,6 +922,7 @@ The `start` frame of the stream also has `mode` (`send`, `regenerate`, `edit`), 
 | `POST connections/test`, `delete`, `order` | Test, delete (`ai.connectionInUse`, `ai.defaultNeeded`, `newDefault`) and reorder |
 | `GET models?refresh=` | The models of every usable connection (cached 10 minutes) |
 | `POST models/pick`, `models/test`, `models/remove` | Assign a model to a slot (tested first), test one, remove from the pool (`ai.modelInUse`) |
+| `POST models/effort` | *(v1.6)* Set the thinking strength of a slot (section 5.10) |
 | `POST enable` | `{"enabled", "default"}`; the default model is required while the slot is empty and tested |
 | `POST feature-switches` | Any of `chat`, `hint`, `explain`, `summary`, `generate`, `import`; normal users only. `hint` and `explain` always change together |
 | `GET/POST limits` | The limits of v1.2 and `callsAdminsExempt`, `studyShare`, `studyShareDays`, `genMaxChunks`, `summaryMaxItems`, `dailyTokenBudget`; `importMaxQuestions` is 1 to 300 (default 100) |
@@ -960,6 +977,28 @@ Failure `code`s (also in the internal result route): `timeout`, `unreachable`, `
 
 **Never sent**: `0.0.0.0/8`, `10/8`, `100.64/10`, `127/8`, `169.254/16`, `172.16/12`, `192.0.0/24`, `192.0.2/24`, `192.168/16`, `198.18/15`, `198.51.100/24`, `203.0.113/24`, multicast and `240/4` for IPv4 (and `::ffff:` forms of them), and for IPv6 everything outside `2000::/3` plus `2001::/23`, `2001:db8::/32`, `2002::/16` and `3fff::/20` (code `refused`).
 
+
+### 5.10 Thinking strength, structured answers and places in log rows *(v1.6)*
+
+**`POST /api/ai/admin/models/effort`** (Admin) `{"slot": "default" | "chat" | "study" | "summary" | "generate" | "import", "effort": null | {"family", "level"}}`; nothing else is accepted (400 `ai.badRequest`). `null` is **Default**: no parameter is sent. `family` is one of `anthropic`, `openai`, `google`, `responses`, `gemma` (lower case); `level` must be one of the family's levels (case-sensitive, as sent):
+
+| `family` | Request parameter | `level` |
+|---|---|---|
+| `anthropic` | `output_config.effort` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `openai` | `reasoning_effort` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `google` | `extra_body.google.thinking_config.thinking_level` | `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`, `XHIGH` |
+| `responses` | `reasoning.effort` (nested: `"reasoning": {"effort": …}`) | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `gemma` | `extra_body.google.thinking_config.thinking_level` | `HIGH`, `MINIMAL` |
+
+The choice is not checked against the connection's format: it only decides the parameter put into the request body of that slot's calls. A slot that follows the default model uses the default model with its own effort. Answer: `{"settings": Settings}`. Activity event `ai.settings.effort` (object: the slot; detail `{"family": "<family>" | "default", "level": "<level>" | null}`).
+
+`GET /api/ai/admin/settings` carries `slots.<slot>.effort` (`null` or `{"family", "level"}`) next to `modelId` and `using`, and a top-level `effortLevels` (`{"anthropic": [...], "openai": [...], "google": [...], "responses": [...], "gemma": [...]}`, the lists of the table above, for the page to draw).
+
+**When a provider refuses it.** A request that carries the parameter and is answered with HTTP 400 or 422 is sent once more without it; the connection is remembered as not supporting it (in memory, until ai-service restarts or an effort is changed), and the answer is used as if **Default** were chosen. No error reaches the user.
+
+**Structured answers.** Questions-shaped answers (generation and import) ask for structured output: Anthropic connections send `output_config.format` with a JSON schema, OpenAI-compatible ones `response_format` of type `json_schema` with `strict: true`. A provider that refuses it gets the plain request instead, remembered per connection in memory. The schema asks for one `answer` field per question, the letters of the correct options; ai-service sets the option flags from it. The older form (a boolean `correct` on every option) is still read, and an option without `correct` counts as false when another option is true. The token budget of a plan call is `min(22 000, 6 200 + 90 × questions)` (20 questions: 8 000) and that of the global plan 8 000.
+
+**Place in log rows.** In Cloudflare mode the events of `POST /internal/ai/activity` may carry optional `country`, `region` and `city` (the place from the request's `X-Geo-*` headers, which Nginx now passes to ai-service from trusted proxies only). The backend cleans them like the headers (a country is two letters, not `XX` or `T1`; region and city lose control characters and are cut at 64 characters; a non-string value is 400) and stores them with the address only while the sign-in info eye is open. In API mode they are ignored and the cached lookup of the address is used.
 
 ## 6. Internal routes (`/internal/*`, v0.8)
 
@@ -1162,6 +1201,14 @@ Only the AI routes change, and every change is additive or a default; the other 
 - **Shared answers and generation**: `fresh` and `shared`, the job items, `ai.gen.tooBig`, `ai.budget`, `/internal/ai/gen/corpus`, `MAX_GOAL` 300.
 - **Smaller**: `ETag` and `304` on the bank routes, the idempotent `POST /api/attempt` (`duplicate`).
 - **Version**: `GET /api/info` reports `"version": "1.3"`, and the AI service's `/healthz` as well.
+
+### Changes in v1.6 (relative to v1.5)
+
+- **Bank download**: `GET /api/banks/download?id=&format=xlsx|docx`, the new access level **Bank downloader**, 403 `你没有下载题库的权限，请联系管理员。`, activity event `bank.download`.
+- **Download permission**: `canDownloadBanks` in `user` of `GET /api/auth/state`, `POST /api/auth/login` and `POST /api/auth/password` (after `canManageBanks`), in every user row, and as an optional boolean of `POST /api/users/create` and `POST /api/users/update`.
+- **Thinking strength**: `POST /api/ai/admin/models/effort`, `slots.<slot>.effort` and `effortLevels` in the settings answer, activity event `ai.settings.effort`.
+- **Places**: the backfill after the source becomes `api`; optional `country`, `region`, `city` in the events of `POST /internal/ai/activity`.
+- **Version**: `GET /api/info` reports `"version": "1.6"`, and the AI service's `/healthz` as well. The main database is schema 10.
 
 ## 8. Examples
 
