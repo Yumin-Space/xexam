@@ -40,13 +40,14 @@ test('a family change keeps a valid level and falls back to medium', () => {
   assert.equal(levelForFamily(null, anth), 'medium');
 });
 
-test('deepseek model ids default to high under the Responses API family; levels are none / low / high / max', () => {
+test('deepseek model ids default to high under the Responses API family; levels are the seven none … max', () => {
   for (const m of ['deepseek-v4', 'deepseek-reasoner', 'deepseek/deepseek-chat', 'us.deepseek.r1-v1:0']) assert.equal(knownDefault(m), 'high', m);
-  const ds = ['none', 'low', 'high', 'max'];
+  const ds = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
   assert.equal(levelForFamily('none', ds), 'none');
   assert.equal(levelForFamily('max', ds), 'max');
-  assert.equal(levelForFamily('medium', ds), 'high');
-  assert.equal(levelForFamily('xhigh', ds), 'high');
+  assert.equal(levelForFamily('medium', ds), 'medium');
+  assert.equal(levelForFamily('xhigh', ds), 'xhigh');
+  assert.equal(levelForFamily('MINIMAL', ds), 'minimal');
 });
 
 test('Gemma models default to HIGH; the level list is HIGH / MINIMAL', () => {

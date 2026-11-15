@@ -12,6 +12,15 @@ export const EFFORT_FAMILIES: readonly EffortFamily[] = ['anthropic', 'openai', 
 /** The provider names are proper nouns and stay the same in every language */
 export const PROVIDER_NAME: Record<EffortFamily, string> = { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', responses: 'Responses API', gemma: 'Gemma' };
 
+/** The request parameter each family button sends: the visible tooltip (not the vendor name), never translated */
+export const EFFORT_PARAM: Record<EffortFamily, string> = { anthropic: 'output_config.effort', openai: 'reasoning_effort', google: 'thinking_level', responses: 'reasoning.effort', gemma: 'thinking_level' };
+
+/** Tooltip of a family button: the parameter it sends */
+export const effortTip = (f: EffortFamily): string => EFFORT_PARAM[f];
+
+/** Accessible name of a family button: the provider and the parameter, e.g. "Anthropic, output_config.effort" */
+export const effortAria = (f: EffortFamily): string => `${PROVIDER_NAME[f]}, ${EFFORT_PARAM[f]}`;
+
 // Simple Icons 16.38.0 (CC0): the anthropic, google and deepseek paths, viewBox 0 0 24 24
 export const ANTHROPIC_PATH = 'M17.3041 3.541h-3.6718l6.696 16.918H24Zm-10.6082 0L0 20.459h3.7442l1.3693-3.5527h7.0052l1.3693 3.5528h3.7442L10.5363 3.5409Zm-.3712 10.2232 2.2914-5.9456 2.2914 5.9456Z';
 export const GOOGLE_PATH = 'M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z';

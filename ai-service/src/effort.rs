@@ -19,8 +19,9 @@ pub const ANTHROPIC_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"
 pub const OPENAI_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 /// Google `thinking_level`, written uppercase as Google writes it.
 pub const GOOGLE_LEVELS: [&str; 5] = ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"];
-/// Responses-API style `reasoning.effort` (the DeepSeek-style set): none / low / high / max.
-pub const RESPONSES_LEVELS: [&str; 4] = ["none", "low", "high", "max"];
+/// Responses-API style `reasoning.effort`: the full set, weakest to strongest.
+pub const RESPONSES_LEVELS: [&str; 7] =
+    ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 /// Gemma 4 on Google accepts only these two `thinking_level` values: HIGH = thinking, MINIMAL = no thinking.
 pub const GEMMA_LEVELS: [&str; 2] = ["HIGH", "MINIMAL"];
 
@@ -158,8 +159,8 @@ mod tests {
             (Google, "max"),
             (Google, "none"),
             (Google, "low"),
-            (Responses, "xhigh"),
-            (Responses, "medium"),
+            (Responses, "turbo"),
+            (Responses, "HIGH"),
             (Gemma, "high"),
             (Gemma, "true"),
             (Gemma, "none"),
@@ -198,22 +199,33 @@ mod tests {
         assert_eq!(ANTHROPIC_LEVELS, ["low", "medium", "high", "xhigh", "max"]);
         assert_eq!(OPENAI_LEVELS, ["low", "medium", "high", "xhigh", "max"]);
         assert_eq!(GOOGLE_LEVELS, ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"]);
-        assert_eq!(RESPONSES_LEVELS, ["none", "low", "high", "max"]);
+        assert_eq!(
+            RESPONSES_LEVELS,
+            ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+        );
         assert_eq!(GEMMA_LEVELS, ["HIGH", "MINIMAL"]);
-        // Responses family: none / low / high / max; others read as None; legacy deepseek:* maps over
+        // Responses family: seven levels; others read as None; legacy deepseek:* maps over those it matches
         assert_eq!(
             Effort::parse_tag("responses:none").unwrap().tag(),
             "responses:none"
         );
-        assert!(Effort::parse_tag("responses:xhigh").is_none());
+        assert_eq!(
+            Effort::parse_tag("responses:xhigh").unwrap().tag(),
+            "responses:xhigh"
+        );
+        assert!(Effort::parse_tag("responses:turbo").is_none());
         assert_eq!(
             Effort::parse_tag("deepseek:low").unwrap().tag(),
             "responses:low"
         );
-        assert!(Effort::parse_tag("deepseek:medium").is_none());
+        assert_eq!(
+            Effort::parse_tag("deepseek:medium").unwrap().tag(),
+            "responses:medium"
+        );
+        assert!(Effort::parse_tag("deepseek:turbo").is_none());
         let j = levels_json();
         assert_eq!(j["gemma"], json!(["HIGH", "MINIMAL"]));
-        assert_eq!(j["responses"].as_array().unwrap().len(), 4);
+        assert_eq!(j["responses"].as_array().unwrap().len(), 7);
         assert_eq!(j["openai"].as_array().unwrap().len(), 5);
         assert_eq!(j["google"].as_array().unwrap().len(), 5);
         assert_eq!(

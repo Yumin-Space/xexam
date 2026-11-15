@@ -137,7 +137,7 @@ async fn effort_save_round_trip() {
             "anthropic": ["low", "medium", "high", "xhigh", "max"],
             "openai": ["low", "medium", "high", "xhigh", "max"],
             "google": ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"],
-            "responses": ["none", "low", "high", "max"],
+            "responses": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
             "gemma": ["HIGH", "MINIMAL"],
         })
     );
@@ -185,8 +185,8 @@ async fn effort_save_rejects_bad_input() {
         json!({"slot": "chat", "effort": {"family": "mistral", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "anthropic", "level": "none"}}),
         json!({"slot": "chat", "effort": {"family": "google", "level": "max"}}),
-        json!({"slot": "chat", "effort": {"family": "responses", "level": "medium"}}),
-        json!({"slot": "chat", "effort": {"family": "responses", "level": "xhigh"}}),
+        json!({"slot": "chat", "effort": {"family": "responses", "level": "turbo"}}),
+        json!({"slot": "chat", "effort": {"family": "responses", "level": "HIGH"}}),
         json!({"slot": "chat", "effort": {"family": "deepseek", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "true"}}),
@@ -263,6 +263,21 @@ async fn effort_save_is_admin_only() {
     assert!(!v.to_string().contains("effort"), "{v}");
     let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
     assert_eq!(tag, "openai:high", "the refused save changed nothing");
+}
+
+#[tokio::test]
+async fn responses_new_levels_round_trip() {
+    let e = env().await;
+    for lvl in ["minimal", "xhigh"] {
+        set(&e, "chat", "responses", lvl).await;
+        let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
+        assert_eq!(tag, format!("responses:{lvl}"));
+        let v = settings(&e.t, &e.admin).await;
+        assert_eq!(
+            v["slots"]["chat"]["effort"],
+            json!({"family": "responses", "level": lvl})
+        );
+    }
 }
 
 #[tokio::test]
@@ -346,7 +361,11 @@ async fn legacy_stored_levels_read_in_the_new_form() {
             "deepseek:max",
             json!({"family": "responses", "level": "max"}),
         ),
-        ("deepseek:medium", Value::Null),
+        (
+            "deepseek:medium",
+            json!({"family": "responses", "level": "medium"}),
+        ),
+        ("deepseek:turbo", Value::Null),
         ("google:none", Value::Null),
         ("openai:minimal", Value::Null),
         ("openai:none", Value::Null),

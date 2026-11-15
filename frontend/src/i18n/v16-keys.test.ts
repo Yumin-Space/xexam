@@ -4,8 +4,7 @@ import { afterEach, test } from 'node:test';
 import { setUiLang, t, type MsgKey } from './index.ts';
 
 afterEach(() => setUiLang('en'));
-const LEVELS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'gemma.HIGH', 'gemma.MINIMAL'];
-const KEYS = ['label', 'default', 'defaultTip', 'levelOf', 'modelDefault', ...LEVELS.map((l) => `level.${l}`)].map((k) => `ai.set.effort.${k}`);
+const KEYS = ['label', 'default', 'defaultTip', 'levelOf', 'modelDefault'].map((k) => `ai.set.effort.${k}`);
 
 test('thinking-strength keys exist in every language', () => {
   for (const lang of ['en', 'zh', 'ja'] as const) {
@@ -21,14 +20,24 @@ test('binding zh texts', () => {
   setUiLang('zh');
   assert.equal(t('ai.set.effort.label'), '思考强度');
   assert.equal(t('ai.set.effort.default'), '默认');
-  assert.equal(t('ai.set.effort.modelDefault', { level: '中' }), '模型默认：中');
   assert.equal(t('act.a.ai.settings.effort' as MsgKey), '修改思考强度');
-  assert.equal(t('ai.set.effort.level.gemma.HIGH' as MsgKey), 'HIGH（开启思考）');
-  assert.equal(t('ai.set.effort.level.gemma.MINIMAL' as MsgKey), 'MINIMAL（关闭思考）');
-  setUiLang('en');
-  assert.equal(t('ai.set.effort.level.gemma.HIGH' as MsgKey), 'HIGH (thinking on)');
-  assert.equal(t('ai.set.effort.level.gemma.MINIMAL' as MsgKey), 'MINIMAL (thinking off)');
+});
+
+test('known-default hint shows the raw English level in every language', () => {
+  setUiLang('zh');
+  assert.equal(t('ai.set.effort.modelDefault', { level: 'HIGH' }), '模型默认：HIGH');
   setUiLang('ja');
-  assert.equal(t('ai.set.effort.level.gemma.HIGH' as MsgKey), 'HIGH（思考オン）');
-  assert.equal(t('ai.set.effort.level.gemma.MINIMAL' as MsgKey), 'MINIMAL（思考オフ）');
+  assert.equal(t('ai.set.effort.modelDefault', { level: 'xhigh' }), 'モデルの既定：xhigh');
+  setUiLang('en');
+  assert.equal(t('ai.set.effort.modelDefault', { level: 'low' }), 'Model default: low');
+});
+
+test('translated level labels and Gemma hints are gone from every catalog', () => {
+  for (const lang of ['en', 'zh', 'ja'] as const) {
+    setUiLang(lang);
+    for (const l of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'gemma.HIGH', 'gemma.MINIMAL']) {
+      const k = `ai.set.effort.level.${l}`;
+      assert.equal(t(k as MsgKey), k, `${lang} ${k}`);
+    }
+  }
 });

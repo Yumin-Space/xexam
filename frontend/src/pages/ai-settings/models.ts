@@ -8,7 +8,8 @@
 import { fetchModels, pickModel, setEffort, setEnabled as setEnabledApi } from '../../api/ai-admin.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { miniSwitch } from '../../components/mini-switch.ts';
-import { EFFORT_FAMILIES, PROVIDER_NAME, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
+import { holdTip } from '../../components/tooltip.ts';
+import { EFFORT_FAMILIES, effortAria, effortTip, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
 import {
   defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotModel, slotNote, slotUsing, SLOTS,
   type ModelGroup,
@@ -361,8 +362,6 @@ export function enableSection(s: AiSettings): HTMLElement {
 
 // ---------------------------------------------------------------- thinking strength (v1.6)
 
-const LEVEL_KEYS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
-
 /** Saves one slot's thinking strength at once (null = default, nothing sent); the row is busy meanwhile */
 async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string): Promise<void> {
   if (A.slotBusy[slot]) return;
@@ -387,22 +386,20 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
   const cur = s.slots[slot].effort ?? null;
   const fam = cur && lists[cur.family] ? cur.family : null;
   const lvl = fam ? cur?.level ?? '' : '';
-  // Google levels show as written (uppercase); Gemma's two get a short hint; the others use the level keys
-  const lvlLabel = (x: string, family?: string): string =>
-    family === 'gemma' && (x === 'HIGH' || x === 'MINIMAL') ? t(`ai.set.effort.level.gemma.${x}` as MsgKey) : LEVEL_KEYS.has(x) ? t(`ai.set.effort.level.${x}` as MsgKey) : x;
   const id = `ai-slot-${slot}-effort`;
   const dflt = knownDefault(slotUsing(s, slot)?.model);
-  const btn = (key: EffortFamily | 'default', pressed: boolean, label: Child[], name: string, title: string, onClick: () => void): HTMLElement =>
-    h('button', {
+  // The tip shows on hover / keyboard focus and on tap-and-hold (touch): a family button's tip is the parameter it sends
+  const btn = (key: EffortFamily | 'default', pressed: boolean, label: Child[], name: string, tip: string, onClick: () => void): HTMLElement =>
+    holdTip(h('button', {
       type: 'button', id: `${id}-${key}`, class: 'ais-eb' + (pressed ? ' on' : ''), 'aria-pressed': pressed ? 'true' : 'false',
-      'aria-label': name, title, disabled: busy, onclick: onClick,
-    }, ...label);
+      'aria-label': name, disabled: busy, onclick: onClick,
+    }, ...label), tip);
   const buttons = [
     btn('default', fam === null, [t('ai.set.effort.default')], t('ai.set.effort.default'), t('ai.set.effort.defaultTip'),
       () => void saveEffort(slot, null, `${id}-default`)),
     ...EFFORT_FAMILIES.map((f) => btn(f, fam === f,
       [providerIcon(f)],
-      PROVIDER_NAME[f], PROVIDER_NAME[f],
+      effortAria(f), effortTip(f),
       () => void saveEffort(slot, { family: f, level: levelForFamily(cur?.level, lists[f] ?? []) }, `${id}-${f}`))),
   ];
   const select = h('select', {
@@ -413,11 +410,11 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
     },
   }, fam === null
     ? h('option', { value: '' }, '')
-    : (lists[fam] ?? []).map((x) => h('option', { value: x, title: x }, lvlLabel(x, fam))));
+    : (lists[fam] ?? []).map((x) => h('option', { value: x, title: x }, x)));
   if (fam) (select as HTMLSelectElement).value = lvl;
   return h('div', { class: 'ais-effort' },
     h('div', { class: 'ais-effort-b', role: 'group', 'aria-label': t('ai.set.effort.label') }, buttons),
-    dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: lvlLabel(dflt, /gemma/i.test(slotUsing(s, slot)?.model ?? '') ? 'gemma' : undefined) })) : null,
+    dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: dflt })) : null,
     select);
 }
 
