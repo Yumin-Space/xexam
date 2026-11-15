@@ -329,7 +329,7 @@ Accounts with the AI+ feature can ask the AI for a hint or an analysis of a ques
 - **Study chats count toward the AI quotas** and can be many; a user's practice is one chat of up to 400 messages by default (200 asks).
 - **The identity statement is valid for 60 seconds.** Whoever reads it inside the Docker network could replay it to the AI service for that long; it is never logged and only Nginx and the ai-service container see it. ai-service also checks the session again every 2 seconds while it writes an answer.
 - **Streaming through Cloudflare Tunnel** has been checked with the made-up provider through Nginx, not through a real Cloudflare account; the keep-alive every 15 seconds stays well under Cloudflare's idle limit. A slow **Test** in AI settings can still be cut by Cloudflare after about 100 seconds (the test itself finishes).
-- The arm64 build of the new images: CI has **built and started** it under QEMU (`/api/info` reports `aarch64`), but it has not been run on real ARM hardware. The aarch64 backend binary does not include the linker workaround for Cortex-A53 erratum #843419 (see [deployment.md](deployment.md)).
+- The arm64 build of the new images: CI has **built and started** it on GitHub's native ARM runner (`/api/info` reports `aarch64`), but it has not yet been run as a full deployment on an ARM server outside CI. The aarch64 backend binary does not include the linker workaround for Cortex-A53 erratum #843419 (see [deployment.md](deployment.md)).
 
 ## 13. Reporting vulnerabilities
 

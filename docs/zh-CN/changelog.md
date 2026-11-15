@@ -6,6 +6,15 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.5 — 2026-11-15
+
+**只改了 CI：Xexam 本身没有变化，镜像除版本号外与 v1.4 相同。升级：不需要做任何事（想要新的版本号时拉取镜像即可）。**
+
+- **原生 ARM 构建**：arm64 检查和发布的 arm64 镜像，现在改在 GitHub 自己的 ARM runner 上构建和启动，不再在 x86 上用 QEMU 模拟；amd64 镜像在各自的 runner 上并行构建，再按每个标签（`latest`、`v1.5`、`sha-<commit>`）在 Docker Hub 和 ghcr.io 上合并成一个多架构镜像。
+- **Rust 缓存每次刷新**：后端和 AI 服务的检查会恢复最新的构建缓存并保存自己的，不再是每个 `Cargo.lock` 只写一次缓存。
+- **从 v1.4 升级**：对你没有任何变化（数据库、设置、compose 都没改）。
+- **文档：v1.4 的卷复制命令改成先清空新卷。** 如果 v1.4 已经启动过一次，`xexam_backend_data` 里会有一个新的空数据库（以及它的日志文件），直接把旧数据复制过去可能会混在一起。README、deployment.md 和 migration.md 里的命令现在是 `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`（先停掉 Xexam 再执行）。
+
 ### v1.4 — 2026-11-15
 
 **AI 对话只在需要的地方显示模型名，Nginx 默认信任内网代理。升级：拉取镜像（并取用新的 `docker-compose.yml`）；卷已改名：先把 `xexam_data` 复制到 `xexam_backend_data`（步骤见下）；主数据库自动升到 schema 9，AI 数据库升到 schema 8，两者都会先写一份备份副本。**
@@ -17,7 +26,7 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 - **用户最后在哪里活动，以及没有 Cloudflare 时的所在地**：**用户管理**里除最后登录外，现在还显示每位用户的**最后活动 IP**、**活动所在地**和**最后活动设备**（IP 和所在地只在登录信息的眼睛打开时显示；点设备这一行可看完整的 User-Agent），**系统日志**每一行显示 **IP · 所在地 · 设备**。登录 IP 区块新增**所在地来源**设置：**Cloudflare 请求头**（默认），或给没有用 Cloudflare 的部署用的**外部查询 API**（有 ipinfo、ip-api、ipapi.co、ipwho.is、ip.sb 预设，也可自定义含 `{ip}` 和 `{key}` 的地址模板和字段映射；密钥加密保存、不再显示；必须测试通过才能启用）。查询由 ai-service 发出，AI+ 关闭时也能用，不会拖慢登录，从不发送内网或保留地址，每个 IP 的所在地记住 24 小时，每分钟最多查 30 次；显示什么只由所选来源决定。见 [usage.md](usage.md) 的 14.2 节和 [deployment.md](deployment.md) 的 3.5 节。
 - **系统日志：展开全部详情**：活动记录列表的工具栏新增绿色眼睛按钮，一点就展开每条记录的详情（完整设备信息、IP、所在地、完整对象），之后加载的记录也会展开；再点一下全部收起。另外，在 iPhone 上点记录时页面不再往上弹。
 - **没有占位符的提示词**：题库管理 → 指南 →“用外部 AI 制作要导入的 Excel”里的提示词现在可以直接使用：附上文件、粘贴提示词即可，不需要改任何内容。资料里已有题目时，它会让 AI 把每一道都转换过来（数量、内容和答案不变，非选择题改写成选择题），否则按资料的多少决定题数；工作表名用资料的主题。提示词末尾附有两行示例（一道单选题、一道多选题，六个单元格齐全），只用来说明格式。AI 生成和 AI 导入的提示词也附带了一道虚构的示例题，被拒绝后重新请求的回答会更少。
-- **升级步骤：Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`；挂载路径 `/data` 和 `/link`、`XEXAM_DATA` 和 `XEXAM_LINK_DIR` 都不变）。更新后，在把旧数据复制过去之前，Xexam 会以**空数据库**启动：1. `docker compose down`；2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`；3. `docker compose up -d`（Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`）。旧卷 `xexam_data` 和 `xexam_link` 原样保留，直到你手动删除（`docker volume rm`）；`xexam_link` 用不着，会新建一个令牌。
+- **升级步骤：Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`；挂载路径 `/data` 和 `/link`、`XEXAM_DATA` 和 `XEXAM_LINK_DIR` 都不变）。更新后，在把旧数据复制过去之前，Xexam 会以**空数据库**启动：1. `docker compose down`；2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`；3. `docker compose up -d`（Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`）。旧卷 `xexam_data` 和 `xexam_link` 原样保留，直到你手动删除（`docker volume rm`）；`xexam_link` 用不着，会新建一个令牌。
 - **AI 设置用量**：时间范围新增**近 12 小时**和**今天**（按时间按小时显示；默认仍是 7 天），AI 设置里所有时间（包括**最近使用**）都显示完整的 `YYYY-MM-DD HH:mm`。
 - **Token 数显示**：应用里显示的 Token 数一律用简写（999、1.2K、3.4M、3.4B、1.2T；精确数字在悬停 / 长按提示里），**AI 用量** 顶部的总数除外；所选的用量时间范围会记在当前浏览器里。
 - 测试：后端 548 → 583，前端 784 → 819，AI 服务 1044 → 1113

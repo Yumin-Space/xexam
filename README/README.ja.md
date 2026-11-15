@@ -35,8 +35,8 @@ Xexam は、ブラウザで使うセルフホスト型の問題演習アプリ�
 
 | | |
 |---|---|
-| 現在のバージョン | **v1.4**（[更新履歴](../docs/ja/changelog.md)、またはリポジトリの [Releases](../../../releases) ページを参照。アプリでは：メニュー → **Xexam v1.4**） |
-| イメージ | 3 つ。Docker Hub（公開、ログイン不要）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend`、`docker.io/yuminspace/xexam-ai-service`。タグは `latest` / `v1.4` / `sha-<コミット>`（`sha-` のタグは問題の調査用）。ミラー：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend`、`ghcr.io/yumin-space/xexam-ai-service`（非公開、タグは同じ） |
+| 現在のバージョン | **v1.5**（[更新履歴](../docs/ja/changelog.md)、またはリポジトリの [Releases](../../../releases) ページを参照。アプリでは：メニュー → **Xexam v1.5**） |
+| イメージ | 3 つ。Docker Hub（公開、ログイン不要）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend`、`docker.io/yuminspace/xexam-ai-service`。タグは `latest` / `v1.5` / `sha-<コミット>`（`sha-` のタグは問題の調査用）。ミラー：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend`、`ghcr.io/yumin-space/xexam-ai-service`（非公開、タグは同じ） |
 | CPU アーキテクチャ | `linux/amd64`、`linux/arm64`（同じタグの中から自動的に適切なものが選ばれます） |
 | ポート | `8765`（既定ではローカルマシンのみにバインド） |
 | ライセンス | [MIT](../LICENSE) |
@@ -100,7 +100,7 @@ docker compose up -d
 | 操作 | コマンド |
 |---|---|
 | 最新バージョンに更新 | `docker compose pull` の後に `docker compose up -d`（先に [アップグレード](#アップグレード) を読んでください） |
-| 特定のバージョンに固定 | `docker-compose.yml` 内の 3 つのイメージの `:latest` をすべて `:v1.4` に変更してから、`docker compose up -d` を実行 |
+| 特定のバージョンに固定 | `docker-compose.yml` 内の 3 つのイメージの `:latest` をすべて `:v1.5` に変更してから、`docker compose up -d` を実行 |
 | 状態を確認 | `docker compose ps`（3 つのコンテナがすべて `healthy` になっていれば正常） |
 | 停止 / 再起動 | `docker compose stop` / `docker compose start` |
 | ログを見る | `docker compose logs -f backend` と `docker compose logs -f ai-service`（管理者はメニューの **システムログ** でも見られます。AI サービスの行も表示されます） |
@@ -143,7 +143,7 @@ compose ファイルがホストの `/etc/localtime` をバックエンドと AI
 
 ## アップグレード
 
-どのアップグレードでも、ポートは同じままです。`docker compose pull` の後に `docker compose up -d`。**v1.3 以前から v1.4 へのアップグレードでは、ボリュームの名前が変わり**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`）、古いデータをコピーするまで Xexam は空のデータベースで起動します：1. `docker compose down`、2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`、3. `docker compose up -d`（Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data` にコピーします）。古いボリュームは、手動で削除するまで残ります。先にバックアップを取ってください。各バージョンの手順、バックアップコピー、ロールバックは [docs/ja/migration.md](../docs/ja/migration.md) にあります。
+どのアップグレードでも、ポートは同じままです。`docker compose pull` の後に `docker compose up -d`。**v1.3 以前から v1.4 へのアップグレードでは、ボリュームの名前が変わり**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`）、古いデータをコピーするまで Xexam は空のデータベースで起動します：1. `docker compose down`、2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`、3. `docker compose up -d`（Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data` にコピーします）。古いボリュームは、手動で削除するまで残ります。先にバックアップを取ってください。各バージョンの手順、バックアップコピー、ロールバックは [docs/ja/migration.md](../docs/ja/migration.md) にあります。
 
 ---
 

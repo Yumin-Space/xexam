@@ -329,7 +329,7 @@ AI 对话在自己的容器 `ai-service` 里运行，有自己的数据库，放
 - **学习对话计入 AI 额度**，而且可能很多；一次练习默认是一个最多 400 条消息的对话（200 次提问）。
 - **身份声明 60 秒内有效。** 在 Docker 网络里读到它的人可以在这段时间内把它重放给 AI 服务；它从不记录，只有 Nginx 和 ai-service 容器能看到。生成回答期间，ai-service 也会每 2 秒重新检查一次会话。
 - **经过 Cloudflare Tunnel 的流式输出** 只用虚构的服务商通过 Nginx 检查过，没有用真正的 Cloudflare 账户测过；每 15 秒一次的 keep-alive 远低于 Cloudflare 的空闲上限。AI 设置里很慢的 **测试** 仍然可能在大约 100 秒后被 Cloudflare 切断（测试本身会完成）。
-- 新镜像的 arm64 版本：CI 在 QEMU 下**构建并启动**过（`/api/info` 报告 `aarch64`），但没有在真正的 ARM 硬件上运行过。aarch64 的后端程序不带针对 Cortex-A53 勘误 #843419 的链接器规避（见 [deployment.md](deployment.md)）。
+- 新镜像的 arm64 版本：CI 在 GitHub 的原生 ARM runner 上**构建并启动**过（`/api/info` 报告 `aarch64`），但还没有在 CI 之外的 ARM 服务器上作为完整部署运行过。aarch64 的后端程序不带针对 Cortex-A53 勘误 #843419 的链接器规避（见 [deployment.md](deployment.md)）。
 
 ## 13. 报告漏洞
 

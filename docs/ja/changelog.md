@@ -6,6 +6,15 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.5 — 2026-11-15
+
+**CI のみの更新：Xexam 本体は変わらず、イメージはバージョン番号以外 v1.4 と同じです。アップグレード：何もする必要はありません（新しいバージョン番号が必要なときだけイメージを pull してください）。**
+
+- **ARM をネイティブでビルド**：arm64 の確認と公開する arm64 イメージは、x86 上の QEMU によるエミュレーションではなく、GitHub 自身の ARM ランナーでビルド・起動するようになりました。amd64 イメージはそれぞれ専用のランナーで並行してビルドされ、両者は Docker Hub と ghcr.io のタグ（`latest`、`v1.5`、`sha-<commit>`）ごとに 1 つのマルチアーキテクチャイメージにまとめられます。
+- **Rust のキャッシュを毎回更新**：バックエンドと AI サービスのチェックは、`Cargo.lock` ごとに一度だけキャッシュを書くのではなく、最新のビルドキャッシュを読み込み、自分のキャッシュを保存するようになりました。
+- **v1.4 からのアップグレード**：利用者側の変更はありません（データベース、設定、compose の変更なし）。
+- **ドキュメント：v1.4 のボリュームのコピーコマンドが、先に新しいボリュームを空にするようになりました。** v1.4 を一度でも起動していると、`xexam_backend_data` には新しい空のデータベース（とそのジャーナルファイル）があり、その上に古いデータをコピーすると両者が混ざるおそれがあります。README、deployment.md、migration.md のコマンドは `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'` になりました（Xexam を停止してから実行してください）。
+
 ### v1.4 — 2026-11-15
 
 **AI チャットはモデル名を必要な場面だけで表示し、Nginx は既定でプライベートネットワークのプロキシを信頼します。アップグレード：イメージを pull します（新しい `docker-compose.yml` も取り込んでください）。ボリューム名が変わったため、先に `xexam_data` を `xexam_backend_data` へコピーしてください（手順は下記）。メインデータベースはスキーマ 9、AI データベースはスキーマ 8 に自動で移行し、どちらも先にバックアップのコピーが作られます。**
@@ -17,7 +26,7 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 - **ユーザーが最後に動いた場所、Cloudflare なしの所在地**：**ユーザー管理**に、最終ログインに加えて各ユーザーの**最終アクティブ IP**、**アクティブ場所**、**最終アクティブ端末**が表示されます（IP と場所はログイン情報の目が開いている間のみ。端末の行をクリックするとユーザーエージェントの全文が出ます）。**システムログ**の各行には **IP · 場所 · 端末**が表示されます。ログイン IP のパネルに**所在地の取得元**の設定が加わり、**Cloudflare のリクエストヘッダー**（既定）または、Cloudflare を使わない環境向けの**外部照会 API** を選べます（ipinfo、ip-api、ipapi.co、ipwho.is、ip.sb のプリセット、または `{ip}` と `{key}` を使うカスタム URL テンプレートとフィールドの対応。キーは暗号化して保存され、表示されません。有効にする前にテストが必要です）。照会は ai-service が行い、AI+ がオフでも動き、ログインを遅らせず、プライベートや予約済みのアドレスは送らず、場所は IP ごとに 24 時間記憶し、照会は 1 分 30 回までです。表示は選んだ取得元だけが決めます。[usage.md](usage.md) の 14.2 節、[deployment.md](deployment.md) の 3.5 節を参照してください。
 - **システムログ：すべての詳細を表示**：操作記録の一覧のツールバーに緑の目のボタンが加わり、すべての記録の詳細（端末情報の全文、IP、場所、対象の全文）を一度に開きます。あとから読み込まれた記録も開きます。もう一度押すと閉じます。iPhone で記録をタップしたときに画面が跳ねなくなりました。
 - **プレースホルダーのないプロンプト**：問題集の管理 → ガイド →「外部の AI で Excel ファイルを作る」のプロンプトが、そのまま使えるようになりました。ファイルを添付してプロンプトを貼り付けるだけで、書き換える所はありません。資料にすでに問題がある場合はそのすべてを変換し（数・内容・正解はそのまま、選択式でない問題は選択式に書き直し）、そうでなければ資料の量から問題数を決めます。シート名は資料のテーマ名です。プロンプトの最後には、形式だけを示す 2 行の例（単一選択と複数選択、6 つのセルすべて）が付いています。AI 生成と AI インポートのプロンプトにも、作り話の例題が 1 問付き、回答が拒否されて再依頼される回数が減ります。
-- **アップグレード手順：Docker ボリュームの名前を変更しました**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`。マウントパスの `/data` と `/link`、`XEXAM_DATA`、`XEXAM_LINK_DIR` は変わりません）。更新後は、古いデータをコピーするまで Xexam は**空のデータベース**で起動します：1. `docker compose down`、2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`、3. `docker compose up -d`（Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data` にコピーします）。古いボリューム `xexam_data` と `xexam_link` は、手動で削除する（`docker volume rm`）まで手つかずのまま残ります。`xexam_link` は不要です（新しいトークンが作られます）。
+- **アップグレード手順：Docker ボリュームの名前を変更しました**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`。マウントパスの `/data` と `/link`、`XEXAM_DATA`、`XEXAM_LINK_DIR` は変わりません）。更新後は、古いデータをコピーするまで Xexam は**空のデータベース**で起動します：1. `docker compose down`、2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`、3. `docker compose up -d`（Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data` にコピーします）。古いボリューム `xexam_data` と `xexam_link` は、手動で削除する（`docker volume rm`）まで手つかずのまま残ります。`xexam_link` は不要です（新しいトークンが作られます）。
 - **AI 設定の使用量**：期間に**直近 12 時間**と**今日**が加わり（期間別は 1 時間ごと、既定は 7 日のまま）、**最終使用**を含む AI 設定の日時はすべて `YYYY-MM-DD HH:mm` の完全な形式で表示されます。
 - **Token 数の表示**：アプリに表示される Token 数はすべて短い形式（999、1.2K、3.4M、3.4B、1.2T。正確な数はホバー / 長押しのヒントに表示）になります。**AI 使用量** 上部の合計は除きます。選択した使用量の期間はこのブラウザーに記憶されます。
 - テスト：バックエンド 548 → 583、フロントエンド 784 → 819、AI サービス 1044 → 1113

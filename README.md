@@ -35,8 +35,8 @@ The repository contains **no questions**. Xexam only provides the tools to impor
 
 | | |
 |---|---|
-| Current version | **v1.4** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.4**) |
-| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.4` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
+| Current version | **v1.5** (see the [changelog](docs/en/changelog.md) or the repository's [Releases](../../releases) page; in the app: menu → **Xexam v1.5**) |
+| Images | Three, on Docker Hub (public, no login needed): `docker.io/yuminspace/xexam-frontend`, `docker.io/yuminspace/xexam-backend` and `docker.io/yuminspace/xexam-ai-service`, with tags `latest` / `v1.5` / `sha-<commit>` (the `sha-` tags are for troubleshooting). Mirror: `ghcr.io/yumin-space/xexam-frontend`, `ghcr.io/yumin-space/xexam-backend` and `ghcr.io/yumin-space/xexam-ai-service` (private, same tags) |
 | CPU architecture | `linux/amd64`, `linux/arm64` (the right one is picked automatically under the same tag) |
 | Port | `8765` (bound to the local machine only by default) |
 | License | [MIT](LICENSE) |
@@ -100,7 +100,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | Action | Command |
 |---|---|
 | Update to the latest version | `docker compose pull`, then `docker compose up -d` (read [Upgrading](#upgrading) first) |
-| Pin to a specific version | Change `:latest` to `:v1.4` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
+| Pin to a specific version | Change `:latest` to `:v1.5` for all three images in `docker-compose.yml`, then run `docker compose up -d` |
 | Check status | `docker compose ps` (all three containers should be `healthy`) |
 | Stop / start again | `docker compose stop` / `docker compose start` |
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |
@@ -143,7 +143,7 @@ Times follow the host's time zone because the compose file mounts the host's `/e
 
 ## Upgrading
 
-Every upgrade keeps the same port: `docker compose pull`, then `docker compose up -d`. **Upgrading from v1.3 or older to v1.4 renames the volumes** (`xexam_data` → `xexam_backend_data`, `xexam_link` → `xexam_ai_auth`) and Xexam starts with an empty database until you copy the old data over: 1. `docker compose down`; 2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`; 3. `docker compose up -d` (Portainer: copy the contents of `xexam_data` into `xexam_backend_data` the same way). The old volumes stay until you remove them by hand. Back up first; the steps for every version, the backup copies and every rollback are in [docs/en/migration.md](docs/en/migration.md).
+Every upgrade keeps the same port: `docker compose pull`, then `docker compose up -d`. **Upgrading from v1.3 or older to v1.4 renames the volumes** (`xexam_data` → `xexam_backend_data`, `xexam_link` → `xexam_ai_auth`) and Xexam starts with an empty database until you copy the old data over: 1. `docker compose down`; 2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`; 3. `docker compose up -d` (Portainer: copy the contents of `xexam_data` into `xexam_backend_data` the same way). The old volumes stay until you remove them by hand. Back up first; the steps for every version, the backup copies and every rollback are in [docs/en/migration.md](docs/en/migration.md).
 
 ---
 

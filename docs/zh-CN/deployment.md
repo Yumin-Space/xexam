@@ -7,8 +7,8 @@
 ## 1. 前提
 
 - 装了 Docker（含 Compose v2）的机器，x86（amd64）或 ARM（arm64）都行。
-  - arm64 镜像在 CI 里用 QEMU **构建并启动**验证过（`/api/info` 报 `aarch64` 和正确的版本，Nginx `/healthz` 正常）；**没有在真正的 ARM 硬件上跑过**。
-  - 后端和 ai-service 是在 x86 构建机上用 zig 交叉编译出 aarch64 版本的（冷缓存下 CI 各约 5 分钟，不需要在 QEMU 里编 Rust）。
+  - arm64 镜像在 CI 里用 GitHub 的原生 ARM runner **构建并启动**验证过（`/api/info` 报 `aarch64` 和正确的版本，Nginx `/healthz` 正常）；**还没有在 CI 之外的 ARM 服务器上作为完整部署运行过**。
+  - 后端和 ai-service 是在构建机上用 zig 交叉编译出 aarch64 版本的（不涉及模拟）。
     因为 zig 的链接器不接受 rustc 默认给 aarch64 加的 `--fix-cortex-a53-843419`，aarch64 产物**不带**这个针对 Cortex-A53 核心的勘误规避。
     Oracle Cloud 的 Ampere A1 用 Ampere Altra（据 Wikipedia 是 Arm Neoverse N1 核心），不是 Cortex-A53，所以不受影响；
     如果你要在 Cortex-A53 核心的板子上跑（部分老款开发板），请别用这个镜像，先告诉我。
@@ -286,7 +286,7 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
-- **从 v1.3（或任何更早的版本）升级到 v1.4**（见 migration.md 的第 0000 节）：**Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`；挂载路径和变量不变），所以只执行 `docker compose pull && docker compose up -d` 的话，Xexam 会以**空数据库**启动。换上新的 `docker-compose.yml`，然后依次执行：`docker compose pull`、`docker compose down`、`docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（Portainer 里用同样的方法把 `xexam_data` 的内容复制到 `xexam_backend_data`）、`docker compose up -d`。旧卷原样保留，直到你手动删除；`xexam_link` 用不着（会新建一个令牌）。更早的版本也一样，在它自己那一项的步骤之外再做这一步。
+- **从 v1.3（或任何更早的版本）升级到 v1.4**（见 migration.md 的第 0000 节）：**Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`；挂载路径和变量不变），所以只执行 `docker compose pull && docker compose up -d` 的话，Xexam 会以**空数据库**启动。换上新的 `docker-compose.yml`，然后依次执行：`docker compose pull`、`docker compose down`、`docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`（Portainer 里用同样的方法把 `xexam_data` 的内容复制到 `xexam_backend_data`）、`docker compose up -d`。旧卷原样保留，直到你手动删除；`xexam_link` 用不着（会新建一个令牌）。更早的版本也一样，在它自己那一项的步骤之外再做这一步。
 - **从 v1.2 到 v1.3**（migration.md 的第 000 节）：建议使用新的 `docker-compose.yml`（真实访客地址、可选的 `cloudflared` 服务）。主数据库从 schema 7 升到 8（备份 `xexam-schema7-<日期-时间>.db`），AI 数据库从 schema 6 升到 7（备份 `xexam-ai-schema6-<日期-时间>.db`）。空闲超过 24 小时的管理员需要重新登录。
 - **从 v1.0 升级到 v1.1**（见 migration.md 的第 00 节）：`docker compose pull && docker compose up -d`，compose 文件、卷和变量都不用改。主数据库从 schema 6 升到 7（备份 `xexam-schema6-<日期时间>.db`，在 `xexam_data` 中）；AI 数据库从 schema 4 升到 6（备份 `xexam-ai-schema4-<日期时间>.db`，在 `xexam_ai_data` 中）。新的 Token 长度默认值（回答 3000、记忆 1000、每次调用 20000）和新的调用上限在升级后立即生效。回退：两个数据库都恢复副本，然后运行 v1.0 镜像。
 - **从 v0.9.1 到 v1.0**（见 migration.md 第 0 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库不变（schema 6）。AI 数据库从 schema 3 升到 4（备份 `xexam-ai-schema3-<日期时间>.db`，在 `xexam_ai_data` 里，写在变更之前；副本要放得下剩余磁盘空间）。新的每用户 AI 请求上限（每分钟 5 次、每小时 20 次、每天 100 次）和回答长度（1000 字符）马上生效，管理员也一样。回退：恢复 AI 副本并运行 v0.9.1 的镜像；主数据库不需要恢复。

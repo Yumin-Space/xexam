@@ -1,6 +1,6 @@
 name: Build, test and publish
 
-# Xexam pipeline: check -> test (frontend, backend, AI service, Nginx / full-stack checks of the three images) -> build amd64 + arm64 -> publish the three images -> create the Release.
+# Xexam pipeline: check -> test (frontend, backend, AI service, Nginx / full-stack checks of the three images) -> build amd64 + arm64 (each on its own native runner) -> publish the three images -> create the Release.
 #   - Push to main: everything runs, the xexam-frontend, xexam-backend and xexam-ai-service images are published, and the GitHub Release is created (or updated).
 #   - Push to dev, pull requests and other branches: check and test only, **never publish** (publish and release require refs/heads/main).
 on:
@@ -173,7 +173,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             backend/target
-          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}
+          # A new key every run: the run restores the newest cache of the same Cargo.lock and saves its own build afterwards
+          key: cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ hashFiles('backend/Cargo.lock') }}-
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
@@ -204,7 +207,10 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ai-service/target
-          key: cargo-ai-service-${{ runner.os }}-${{ hashFiles('ai-service/Cargo.lock') }}
+          # A new key every run: the run restores the newest cache of the same Cargo.lock and saves its own build afterwards
+          key: cargo-ai-service-${{ runner.os }}-${{ hashFiles('ai-service/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            cargo-ai-service-${{ runner.os }}-${{ hashFiles('ai-service/Cargo.lock') }}-
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test --all-targets
@@ -235,18 +241,16 @@ jobs:
       - name: End to end (compose up, import, attempts, AI, persistence, docker stop)
         run: python3 -I tests/integration/stack_check.py 18090
 
-  # (2) arm64: the three images are really built and really started under QEMU (the backend and the AI service are cross-compiled with zig on the build machine, not compiled as Rust inside QEMU).
-  #    Private repositories cannot use GitHub's native arm64 runners, so running is emulated with QEMU. Build only, no push; discarded afterwards.
+  # (2) arm64: the three images are really built and really started on GitHub's native ARM runner (ubuntu-24.04-arm, free for
+  #    public repositories), no emulation. The Rust stage of the backend and the AI service runs on the build machine's own
+  #    architecture (arm64 here) and compiles with zig. Build only, no push; discarded afterwards.
   arm64:
-    name: arm64 (images build and start under QEMU)
+    name: arm64 (images build and start natively on ARM)
     needs: [check, frontend, backend, ai-service]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
-      - uses: docker/setup-qemu-action@v4
-        with:
-          platforms: arm64
       - uses: docker/setup-buildx-action@v4
       - name: Build xexam-backend (arm64, not pushed)
         uses: docker/build-push-action@v7
@@ -331,11 +335,13 @@ jobs:
   #     docker/docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other
   #     branches never publish. Docker Hub needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access
   #     token with Read & Write). The namespace is DOCKERHUB_USERNAME, or the repository variable DOCKERHUB_NAMESPACE if set.
+  #     Two steps: "publish" builds every image on the native runner of each architecture (amd64: ubuntu-latest, arm64:
+  #     ubuntu-24.04-arm) and pushes it by digest only (no tags); "merge" then creates the multi-arch tags of each image.
   publish:
-    name: publish ${{ matrix.image }} (amd64 + arm64)
+    name: build ${{ matrix.image }} (${{ matrix.arch }})
     needs: [check, frontend, backend, ai-service, stack, arm64]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -343,6 +349,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        image: [xexam-backend, xexam-frontend, xexam-ai-service]
+        arch: [amd64, arm64]
         include:
           - image: xexam-backend
             dockerfile: backend/Dockerfile
@@ -350,6 +358,10 @@ jobs:
             dockerfile: nginx/Dockerfile
           - image: xexam-ai-service
             dockerfile: ai-service/Dockerfile
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v7
 
@@ -379,9 +391,105 @@ jobs:
           echo "HUB_IMAGE=docker.io/${ns,,}/$NAME" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to ghcr.io
+        uses: docker/login-action@v4
         with:
-          platforms: arm64
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Only the labels are used here; the tags are made by the merge job
+      - name: Image labels
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: |
+            ${{ env.HUB_IMAGE }}
+            ${{ env.IMAGE }}
+          labels: |
+            org.opencontainers.image.version=v${{ env.VERSION }}
+
+      # Pushed by digest only (no tag) to both registries; name-canonical makes the digest the same name in both
+      - name: Build and push by digest (native)
+        id: push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/${{ matrix.arch }}
+          provenance: false        # no extra unknown/unknown entry, so tools such as Synology, Raspberry Pi and Portainer do not break
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,"name=${{ env.HUB_IMAGE }},${{ env.IMAGE }}",push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-publish-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.image }}-publish-${{ matrix.arch }},mode=max
+
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: |
+          set -eu
+          [ -n "$DIGEST" ] || { echo "Could not get the digest of the pushed image"; exit 1; }
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      - name: Upload the digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # (3b) One job per image: the two digests (amd64, arm64) become one multi-arch image with the tags latest, vX.Y and
+  #      sha-<commit>, on both registries; then both registries are read back once.
+  merge:
+    name: tags ${{ matrix.image }} (amd64 + arm64)
+    needs: [check, publish]
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write          # needed to push to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [xexam-backend, xexam-frontend, xexam-ai-service]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Image names
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          NAME: ${{ matrix.image }}
+          HUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          HUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          HUB_NAMESPACE: ${{ vars.DOCKERHUB_NAMESPACE }}
+        run: |
+          set -eu
+          if [ -z "$HUB_USER" ] || [ -z "$HUB_TOKEN" ]; then
+            echo "::error::Docker Hub secrets missing: add DOCKERHUB_USERNAME and DOCKERHUB_TOKEN under Settings > Secrets and variables > Actions"
+            exit 1
+          fi
+          ns="${HUB_NAMESPACE:-$HUB_USER}"
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$NAME" >> "$GITHUB_ENV"
+          echo "HUB_IMAGE=docker.io/${ns,,}/$NAME" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Download the digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
 
       - uses: docker/setup-buildx-action@v4
 
@@ -413,28 +521,26 @@ jobs:
           labels: |
             org.opencontainers.image.version=v${{ env.VERSION }}
 
-      - name: Build and push (amd64 + arm64)
-        id: push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          provenance: false        # no extra unknown/unknown entry, so tools such as Synology, Raspberry Pi and Portainer do not break
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=${{ matrix.image }}-publish
-          cache-to: type=gha,scope=${{ matrix.image }}-publish,mode=max
-
-      # After publishing, look back once at both registries: read the manifest by "the digest just pushed"; it must contain both amd64 and arm64
-      - name: Verify published manifest
-        env:
-          DIGEST: ${{ steps.push.outputs.digest }}
+      # Per registry: every tag of that registry points to the manifest list made of the two digests pushed there
+      - name: Create the multi-arch tags
+        working-directory: ${{ runner.temp }}/digests
         run: |
           set -eu
-          [ -n "$DIGEST" ] || { echo "Could not get the digest of the pushed image"; exit 1; }
+          [ "$(ls | wc -l)" = 2 ] || { echo "Expected exactly two digests (amd64, arm64), found:"; ls; exit 1; }
           for img in "$HUB_IMAGE" "$IMAGE"; do
+            tags=$(printf '%s' "$DOCKER_METADATA_OUTPUT_JSON" | jq -cr --arg p "$img:" '.tags | map(select(startswith($p))) | map("-t " + .) | join(" ")')
+            [ -n "$tags" ] || { echo "No tags for $img"; exit 1; }
+            # shellcheck disable=SC2046,SC2086
+            docker buildx imagetools create $tags $(printf "$img@sha256:%s " *)
+          done
+
+      # After publishing, look back once at both registries: every tag must point to the same manifest list, which must contain both amd64 and arm64
+      - name: Verify published manifest
+        run: |
+          set -eu
+          for img in "$HUB_IMAGE" "$IMAGE"; do
+            DIGEST=$(docker buildx imagetools inspect "$img:v$VERSION" | awk '/^Digest:/{print $2; exit}')
+            [ -n "$DIGEST" ] || { echo "Could not read the digest of $img:v$VERSION"; exit 1; }
             out=$(docker buildx imagetools inspect "$img@$DIGEST")
             echo "$out"
             echo "$out" | grep -Eq 'Platform: +linux/amd64' || { echo "$img is missing amd64"; exit 1; }
@@ -442,7 +548,7 @@ jobs:
             # The first "Digest:" line of the default output is the digest of this tag (the top-level manifest)
             for t in latest "v$VERSION"; do
               got=$(docker buildx imagetools inspect "$img:$t" | awk '/^Digest:/{print $2; exit}')
-              [ "$got" = "$DIGEST" ] || { echo "Tag $t of $img does not point to the image just pushed ($got vs $DIGEST)"; exit 1; }
+              [ "$got" = "$DIGEST" ] || { echo "Tag $t of $img does not point to the same image as v$VERSION ($got vs $DIGEST)"; exit 1; }
             done
             echo "Published: $img:latest and $img:v$VERSION, both containing amd64 and arm64 (digest $DIGEST)"
           done
@@ -452,7 +558,7 @@ jobs:
   #    If the images were not published this job is never reached, so the Release page never shows a version whose images cannot be pulled.
   release:
     name: GitHub release
-    needs: [check, publish]
+    needs: [check, merge]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 10

@@ -29,7 +29,7 @@ This section is numbered 0000 because it is the newest one. The older sections k
 **Upgrade step first: the volumes are renamed** (`xexam_data` → `xexam_backend_data`, `xexam_link` → `xexam_ai_auth`). After the update Xexam starts with an empty database until the old data is copied over:
 
 1. `docker compose down`
-2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`
+2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`
 3. `docker compose up -d`
 
 In Portainer, copy the contents of `xexam_data` into `xexam_backend_data` the same way. The old volumes `xexam_data` and `xexam_link` stay untouched until you remove them by hand (`docker volume rm`); `xexam_link` is not needed, a new token is created.
@@ -44,7 +44,7 @@ In Portainer, copy the contents of `xexam_data` into `xexam_backend_data` the sa
 ### 0000.2 Upgrade
 
 1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)).
-2. Take the new `docker-compose.yml` (it carries the `XEXAM_TRUSTED_PROXIES` default) and keep your `.env`, then `docker compose pull`, `docker compose down`, the copy command `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/` (the steps at the top of this section; **before** the first v1.4 start), and `docker compose up -d`. Do not use `down -v`.
+2. Take the new `docker-compose.yml` (it carries the `XEXAM_TRUSTED_PROXIES` default) and keep your `.env`, then `docker compose pull`, `docker compose down`, the copy command `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'` (the steps at the top of this section; **before** the first v1.4 start), and `docker compose up -d`. Do not use `down -v`.
 3. Optional: to show places without Cloudflare, see section 3.5 of [deployment.md](deployment.md).
 
 ### 0000.3 Checks after the upgrade
@@ -763,7 +763,7 @@ The API changes of later versions are listed in [api.md](api.md).
 
 ## 11. Python to Rust: what has not been verified
 
-- A real Cloudflare Tunnel / Access, a real iPhone, and running on real ARM hardware (arm64 has only been built and started under QEMU).
+- A real Cloudflare Tunnel / Access, a real iPhone, and running a full deployment on an ARM server outside CI (arm64 has only been built and started in CI, on GitHub's ARM runner).
 - A rehearsal with a copy of **your own real database**: I do not have it and should not read it; please do it on your own machine following section 6.
 
 ## 12. Upgrading from v0.1

@@ -30,7 +30,7 @@
 **最初にアップグレード手順：ボリュームの名前が変わりました**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`）。更新後は、古いデータをコピーするまで Xexam は空のデータベースで起動します：
 
 1. `docker compose down`
-2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`
+2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`
 3. `docker compose up -d`
 
 Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data` にコピーします。古いボリューム `xexam_data` と `xexam_link` は、手動で削除する（`docker volume rm`）まで手つかずのまま残ります。`xexam_link` は不要です（新しいトークンが作られます）。
@@ -45,7 +45,7 @@ Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data`
 ### 0000.2 アップグレード
 
 1. **2 つのデータボリュームをバックアップします**（先に停止します。[README](../../README.md#upgrading) のアップグレードの節と同じです）。
-2. 新しい `docker-compose.yml`（`XEXAM_TRUSTED_PROXIES` の既定値を含みます）を取り込み、`.env` はそのままにして、`docker compose pull`、`docker compose down`、コピーのコマンド `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（この節の冒頭の手順。v1.4 を最初に起動する**前**に実行）、`docker compose up -d` の順に実行します。`down -v` は使わないでください。
+2. 新しい `docker-compose.yml`（`XEXAM_TRUSTED_PROXIES` の既定値を含みます）を取り込み、`.env` はそのままにして、`docker compose pull`、`docker compose down`、コピーのコマンド `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`（この節の冒頭の手順。v1.4 を最初に起動する**前**に実行）、`docker compose up -d` の順に実行します。`down -v` は使わないでください。
 3. 任意：Cloudflare なしで所在地を表示するには、[deployment.md](deployment.md) の 3.5 節を参照してください。
 
 ### 0000.3 アップグレード後の確認
@@ -765,7 +765,7 @@ Docker を使わないロールバック：`git checkout python-v0.2` を実行�
 
 ## 11. Python から Rust へ：検証していないもの
 
-- 本物の Cloudflare Tunnel / Access、iPhone の実機、本物の ARM ハードウェア上での実行（arm64 は QEMU 上でビルドして起動を確認しただけです）。
+- 本物の Cloudflare Tunnel / Access、iPhone の実機、CI の外の ARM サーバーでの本格的なデプロイ（arm64 は CI 上で GitHub の ARM ランナーによりビルドして起動を確認しただけです）。
 - **ご自身の実データベース**のコピーを使った予行演習：こちらでは入手しておらず、読み取るべきでもありません。第 6 節に従って、ご自身のマシンで行ってください。
 
 ## 12. v0.1 からのアップグレード

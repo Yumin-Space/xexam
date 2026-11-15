@@ -7,8 +7,8 @@
 ## 1. 前提
 
 - Docker（Compose v2 を含む）が入ったマシン。x86（amd64）でも ARM（arm64）でも構いません。
-  - arm64 イメージは CI 上で QEMU を使って**ビルドして起動する**ところまで検証済みです（`/api/info` が `aarch64` と正しいバージョンを返し、Nginx の `/healthz` も正常でした）。ただし、**本物の ARM ハードウェア上では動かしていません**。
-  - バックエンドと ai-service は、x86 のビルドマシン上で zig を使って aarch64 版をクロスコンパイルしています（キャッシュが空の状態で CI はそれぞれ約 5 分かかります。QEMU 上で Rust をコンパイルする必要はありません）。
+  - arm64 イメージは CI 上の GitHub のネイティブ ARM ランナーで**ビルドして起動する**ところまで検証済みです（`/api/info` が `aarch64` と正しいバージョンを返し、Nginx の `/healthz` も正常でした）。ただし、**CI の外の ARM サーバーで本格的なデプロイとして動かしたことはまだありません**。
+  - バックエンドと ai-service は、ビルドマシン上で zig を使って aarch64 版をクロスコンパイルしています（エミュレーションは使いません）。
     zig のリンカーは、rustc が aarch64 向けに既定で付ける `--fix-cortex-a53-843419` を受け付けないため、aarch64 のバイナリには Cortex-A53 コア向けのこのエラッタ回避策が**含まれていません**。
     Oracle Cloud の Ampere A1 は Ampere Altra（Wikipedia によれば Arm Neoverse N1 コア）を使っており、Cortex-A53 ではないため影響を受けません。
     Cortex-A53 コアのボード（一部の古い開発ボード）で動かす場合は、このイメージを使わず、先に知らせてください。
@@ -286,7 +286,7 @@ ai-service も自分のデータベースに同じことをします：v0.9 の 
 
 手順のチェックリスト、その後の確認、ロールバックは [migration.md](migration.md) にあります。
 
-- **v1.3（またはそれ以前の版）から v1.4 へ**（migration.md の第 0000 節）：**Docker ボリュームの名前が変わります**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`。マウントパスと変数は変わりません）。そのため `docker compose pull && docker compose up -d` だけでは、Xexam は**空のデータベース**で起動します。新しい `docker-compose.yml` を取り込み、`docker compose pull`、`docker compose down`、`docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（Portainer では `xexam_data` の中身を同じ方法で `xexam_backend_data` にコピー）、`docker compose up -d` の順に実行します。古いボリュームは手動で削除するまで手つかずのまま残ります。`xexam_link` は不要です（新しいトークンが作られます）。これはそれ以前のどの版にも当てはまり、その版自身の項目の手順に加えて行います。
+- **v1.3（またはそれ以前の版）から v1.4 へ**（migration.md の第 0000 節）：**Docker ボリュームの名前が変わります**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`。マウントパスと変数は変わりません）。そのため `docker compose pull && docker compose up -d` だけでは、Xexam は**空のデータベース**で起動します。新しい `docker-compose.yml` を取り込み、`docker compose pull`、`docker compose down`、`docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`（Portainer では `xexam_data` の中身を同じ方法で `xexam_backend_data` にコピー）、`docker compose up -d` の順に実行します。古いボリュームは手動で削除するまで手つかずのまま残ります。`xexam_link` は不要です（新しいトークンが作られます）。これはそれ以前のどの版にも当てはまり、その版自身の項目の手順に加えて行います。
 - **v1.2 から v1.3 へ**（migration.md の第 000 節）：新しい `docker-compose.yml` を推奨します（実際のクライアントアドレス、任意の `cloudflared` サービス）。メインデータベースはスキーマ 7 から 8（バックアップ `xexam-schema7-<日時>.db`）、AI データベースはスキーマ 6 から 7（バックアップ `xexam-ai-schema6-<日時>.db`）に移行します。24 時間以上操作していない管理者はログインし直します。
 - **v1.0 から v1.1 へ**（migration.md の第 00 節）：`docker compose pull && docker compose up -d`。compose ファイル、ボリューム、変数は変更しません。主データベースはスキーマ 6 から 7 へ（バックアップ `xexam-schema6-<日付時刻>.db`、ボリューム `xexam_data`）、AI データベースはスキーマ 4 から 6 へ（バックアップ `xexam-ai-schema4-<日付時刻>.db`、ボリューム `xexam_ai_data`）。トークン単位の既定の長さ（回答 3000、メモリー 1000、呼び出し 20000）と新しい呼び出し上限は、アップグレード直後から適用されます。戻すには両方のデータベースのコピーを復元し、v1.0 のイメージを起動します。
 - **v0.9.1 から v1.0 へ**（migration.md の 0.9.1 → 1.0 の部分）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースは変わりません（スキーマ 6）。AI のデータベースはスキーマ 3 から 4 に（バックアップは `xexam_ai_data` の `xexam-ai-schema3-<日時>.db`。書き込む前に作られ、コピーは空きディスク容量に収まる必要があります）。新しい利用者ごとの AI リクエスト上限（1 分に 5 回、1 時間に 20 回、1 日に 100 回）と回答の長さ（1000 文字）は、管理者を含めてすぐに適用されます。戻るには AI のコピーを復元し、v0.9.1 のイメージを動かします。メインのデータベースは復元の必要がありません。

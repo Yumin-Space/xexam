@@ -35,8 +35,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v1.4**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v1.4**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v1.4` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v1.5**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v1.5**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v1.5` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -100,7 +100,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v1.4`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v1.5`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |
@@ -143,7 +143,7 @@ docker compose up -d
 
 ## 升级
 
-每次升级端口都保持不变：先 `docker compose pull`，再 `docker compose up -d`。**从 v1.3 或更早升级到 v1.4 时卷会改名**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`），在把旧数据复制过去之前，Xexam 会以空数据库启动：1. `docker compose down`；2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`；3. `docker compose up -d`（Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`）。旧卷会一直保留，直到你手动删除。请先备份；各版本的步骤、备份副本和所有回滚方法见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
+每次升级端口都保持不变：先 `docker compose pull`，再 `docker compose up -d`。**从 v1.3 或更早升级到 v1.4 时卷会改名**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`），在把旧数据复制过去之前，Xexam 会以空数据库启动：1. `docker compose down`；2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`；3. `docker compose up -d`（Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`）。旧卷会一直保留，直到你手动删除。请先备份；各版本的步骤、备份副本和所有回滚方法见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
 
 ---
 

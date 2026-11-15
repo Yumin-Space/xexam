@@ -29,7 +29,7 @@
 **先做升级步骤：卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`）。更新后，在把旧数据复制过去之前，Xexam 会以空数据库启动：
 
 1. `docker compose down`
-2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`
+2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`
 3. `docker compose up -d`
 
 Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`。旧卷 `xexam_data` 和 `xexam_link` 原样保留，直到你手动删除（`docker volume rm`）；`xexam_link` 用不着，会新建一个令牌。
@@ -44,7 +44,7 @@ Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_bac
 ### 0000.2 升级
 
 1. **备份两个数据卷**（先停止，做法同 [README](../../README.md#upgrading) 的升级一节）。
-2. 取用新的 `docker-compose.yml`（里面有 `XEXAM_TRUSTED_PROXIES` 的默认值），保留你的 `.env`，然后依次执行 `docker compose pull`、`docker compose down`、复制命令 `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（本节开头的步骤；在第一次启动 v1.4 **之前**），最后 `docker compose up -d`。不要用 `down -v`。
+2. 取用新的 `docker-compose.yml`（里面有 `XEXAM_TRUSTED_PROXIES` 的默认值），保留你的 `.env`，然后依次执行 `docker compose pull`、`docker compose down`、复制命令 `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`（本节开头的步骤；在第一次启动 v1.4 **之前**），最后 `docker compose up -d`。不要用 `down -v`。
 3. 可选：没有 Cloudflare 时要显示所在地，见 [deployment.md](deployment.md) 的 3.5 节。
 
 ### 0000.3 升级后的检查
@@ -763,7 +763,7 @@ docker compose -f docker-compose.legacy.yml up -d
 
 ## 11. Python 到 Rust：没有验证过的
 
-- 真正的 Cloudflare Tunnel / Access、真正的 iPhone，以及在真正的 ARM 硬件上运行（arm64 只在 QEMU 下构建并启动过）。
+- 真正的 Cloudflare Tunnel / Access、真正的 iPhone，以及在 CI 之外的 ARM 服务器上运行完整部署（arm64 只在 CI 里、GitHub 的 ARM runner 上构建并启动过）。
 - 用**你自己的真实数据库**的副本演练：我没有它，也不应该读取它；请在你自己的机器上按第 6 节做。
 
 ## 12. 从 v0.1 升级
