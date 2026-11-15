@@ -12,6 +12,7 @@ import {
 } from '../domain/usage-chart.ts';
 import { formatBig, sortRows, valueOf, type UsageMetric, type UsageRow, type UsageSort } from '../domain/usage-bars.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
+import { storageOwner } from '../state/storage-keys.ts';
 import { h } from '../utils/dom.ts';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -200,20 +201,29 @@ export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; form
   return host;
 }
 
-/** The chosen metric per chart, kept in memory only: it survives redraws while the Usage tab stays open, never a visit (default: tokens) */
-const metricChoice = new Map<string, UsageMetric>();
-
-/** Back to tokens for every chart; called when the AI settings page or its Usage tab is entered */
-export function resetUsageMetrics(): void {
-  metricChoice.clear();
+/** localStorage key of one chart's calls | tokens choice: per signed-in user and browser (null when nobody is signed in) */
+function metricKey(pref: string): string | null {
+  const id = storageOwner();
+  return id == null ? null : `xexam.uc.u${id}.${pref}`;
 }
 
+/** The remembered metric of a chart, per user in this browser; tokens unless that user chose calls */
 function readMetric(pref: string): UsageMetric {
-  return metricChoice.get(pref) ?? 'tokens';
+  try {
+    const k = metricKey(pref);
+    return k && localStorage.getItem(k) === 'calls' ? 'calls' : 'tokens';
+  } catch {
+    return 'tokens';
+  }
 }
 
 function writeMetric(pref: string, m: UsageMetric): void {
-  metricChoice.set(pref, m);
+  try {
+    const k = metricKey(pref);
+    if (k) localStorage.setItem(k, m);
+  } catch {
+    // not remembered
+  }
 }
 
 /** The remembered order of a category chart, per chart (per browser; default: by amount, high to low) */
