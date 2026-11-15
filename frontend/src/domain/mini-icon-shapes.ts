@@ -125,6 +125,12 @@ export const MINI = {
   aiImport: [{ d: 'M8.5 14.2H4.2A1.2 1.2 0 0 1 3 13V3a1.2 1.2 0 0 1 1.2-1.2H8.5' }, { d: 'M7.5 11.2V6' }, { d: 'M5.3 8l2.2-2.2L9.7 8' }, { d: 'M12.2 8.4c.2 1.2.7 1.7 1.9 1.9-1.2.2-1.7.7-1.9 1.9-.2-1.2-.7-1.7-1.9-1.9 1.2-.2 1.7-.7 1.9-1.9Z' }],
   /** v1.1: a sheet with an up arrow: hand in the paper (the quiz top row's 交卷 / 完成) */
   submit: [{ d: 'M4.2 1.8h5l3 3v8a1.2 1.2 0 0 1-1.2 1.2H4.2A1.2 1.2 0 0 1 3 12.8V3a1.2 1.2 0 0 1 1.2-1.2Z' }, { d: 'M7.6 12V7' }, { d: 'M5.5 9l2.1-2.1L9.7 9' }],
+  /** v1.6: a tray with a down arrow: download */
+  download: [{ d: 'M2.5 10v3h11v-3' }, { d: 'M8 2.8v7.7' }, { d: 'M4.8 7.4 8 10.6l3.2-3.2' }],
+  /** v1.6: a grid sheet: the Excel format */
+  excel: [{ x: 2.5, y: 2.5, w: 11, h: 11, rx: 1.5 }, { d: 'M2.5 6.2h11' }, { d: 'M2.5 9.8h11' }, { d: 'M6.5 2.5v11' }],
+  /** v1.6: a page with lines: the Word format */
+  word: [{ d: 'M4 1.8h5.5L12 4.3v9.9H4z' }, { d: 'M6 7h4' }, { d: 'M6 9.3h4' }, { d: 'M6 11.6h2.5' }],
 } satisfies Record<string, Shape[]>;
 
 export type MiniIcon = keyof typeof MINI;

@@ -13,7 +13,7 @@
 // the facts line under it (a tap on it also folds the sheets); the Excel guide is a set of foldable sub-sections (the first
 // open) with a "Collapse" at its end, and a code chip never separates from the punctuation next to it.
 import '../styles/banks.css';
-import { deleteBank, deleteSheets, fetchBanks } from '../api/bank.ts';
+import { deleteBank, deleteSheets, downloadBank, fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { aiSetBadge } from '../components/ai-badge.ts';
@@ -25,6 +25,7 @@ import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
 import { icon } from '../components/shell.ts';
 import { aiMetaLine } from '../domain/ai-gen.ts';
+import { fallbackFileName, FORMAT_CHOICES, type DownloadFormat } from '../domain/bank-download.ts';
 import { copyOutsidePrompt, outsidePrompt } from '../domain/outside-prompt.ts';
 import { retiredOnly } from '../domain/bank-status.ts';
 import { deletionPlan, selectionCount, sheetSelKey, type SelBank } from '../domain/bank-select.ts';
@@ -32,11 +33,12 @@ import { sheetWarnings, warningTotal, type RowWarning } from '../domain/import-w
 import { errorText, LocalError, serverText } from '../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../i18n/index.ts';
 import { applyBankDeleted, navigate, onRouteChange, onSignedIn, refreshLibrary, render } from '../state/actions.ts';
-import { manageableBanks, ownerView } from '../state/bank-access.ts';
+import { bankPageView, listedBanks, manageableBanks, mayDownloadBanks, ownerView } from '../state/bank-access.ts';
 import { bankById, isAdmin, S } from '../state/store.ts';
 import type { BankSummary, ImportPlan, ImportPreview, ImportRecord, ImportTarget, SheetPlan } from '../types/api.ts';
 import { copyText } from '../utils/clipboard.ts';
-import { ask, askCheck } from '../utils/dialog.ts';
+import { ask, askCheck, askPick } from '../utils/dialog.ts';
+import { saveFile } from '../utils/download.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
 import { PHONE_MQ, TOUCH_MQ, matches } from '../utils/media.ts';
 import { toast } from '../utils/toast.ts';
@@ -79,6 +81,8 @@ let mode: 'new' | 'update' = 'new';
 let updateId: number | null = null;
 let busy: Busy = null;
 let deletingId: number | null = null;
+/** v1.6: the bank whose file is being prepared / downloaded (every Download button is disabled meanwhile) */
+let downloadingId: number | null = null;
 /** A delete dialog is being prepared (current counts are fetched) or is open: a second click must not open another one */
 let asking = false;
 /** Error of the import panel (ApiError or LocalError) */
@@ -163,6 +167,10 @@ const onBanksPage = (): boolean => S.route.name === 'banks';
 
 /** The banks this page manages: every bank for an administrator, a bank manager's own banks */
 const managed = (): BankSummary[] => manageableBanks(S.banks);
+/** v1.6: the banks the page lists (an administrator or a user who may download: every bank they can see; a manager: their own) */
+const listed = (): BankSummary[] => listedBanks(S.user, S.banks);
+/** v1.6: whether the page offers management (import, select, update, delete) for this bank */
+const manageable = (b: BankSummary): boolean => bankPageView(S.user) !== 'download' && managedById(b.id) !== undefined;
 /** A bank this page may update / replace or delete, by id */
 const managedById = (id: number): BankSummary | undefined => managed().find((b) => b.id === id);
 
@@ -875,6 +883,43 @@ function importPanel(): HTMLElement {
 
 // ---------------------------------------------------------------- bank list
 
+/**
+ * v1.6: the Download button. The format dialog (Excel / Word) opens first; one tap on a format starts the download. The
+ * server is the real check (403 without the right, 404 for a bank the user cannot see); the button is a convenience.
+ */
+async function chooseDownload(b: BankSummary): Promise<void> {
+  if (asking || downloadingId !== null) return;
+  asking = true;
+  let fmt: DownloadFormat | null;
+  try {
+    fmt = await askPick({
+      title: t('banks.dl.title'),
+      body: t('banks.dl.body', { name: b.name }),
+      choices: FORMAT_CHOICES.map((c) => ({ value: c.format, icon: c.icon, label: t(c.label), hint: t(c.hint), aria: t(c.aria, { name: b.name }) })),
+      back: t('banks.dl.back'),
+    });
+  } finally {
+    asking = false;
+  }
+  if (!fmt || downloadingId !== null) return;
+
+  downloadingId = b.id;
+  if (onBanksPage()) render();
+  try {
+    const f = await downloadBank(b.id, fmt);
+    const file = f.name ?? fallbackFileName(b.name, fmt);
+    saveFile(f.blob, file);
+    toast(t('banks.dl.done', { file }));
+  } catch (e) {
+    toast(errorText(e));
+    // The right or the bank is gone (403 / 404): read the library and the sign-in state again
+    if (e instanceof ApiError && (e.status === 403 || e.status === 404)) void refreshLibrary().catch(() => {});
+  } finally {
+    downloadingId = null;
+    if (onBanksPage()) render();
+  }
+}
+
 /** One of a bank's actions (BL-1): a mini icon and 2 to 3 words in the UI language; the bank's name is only in the accessible name */
 function bankAct(id: string, ic: MiniIcon, text: string, aria: string, disabled: boolean, onClick: () => void, tone: 'default' | 'danger' = 'default'): HTMLButtonElement {
   const btn = iconButton({ icon: ic, label: text, tone, showLabel: true, onClick });
@@ -900,6 +945,8 @@ function syncBoxes(): void {
 }
 
 function bankCard(b: BankSummary): HTMLElement {
+  const canManage = manageable(b);
+  const canDownload = mayDownloadBanks(S.user);
   const deleting = deletingId === b.id;
   const open = openSheets.has(b.id);
   const boxId = `bk-sheets-${b.id}`;
@@ -927,6 +974,11 @@ function bankCard(b: BankSummary): HTMLElement {
   };
 
   const rows = b.ai ? [] : b.sheets.map((x) => {
+    if (!canManage) {
+      return h('li', { class: 'bk-row bk-sheetrow' }, line(x.name, x.usable > 0
+        ? facts(tn('banks.sheet.usable', x.usable), x.inactive ? tn('banks.list.sheetRetired', x.inactive) : null)
+        : t('banks.sheet.allRetired')));
+    }
     const sb = selBox(t('banks.sel.sheetBox', { sheet: x.name, name: b.name }), () => {
       if (sb.box.checked) sel.set(sheetSelKey(b.id, x.name), { bank: b.id, sheet: x.name });
       else sel.delete(sheetSelKey(b.id, x.name));
@@ -937,7 +989,7 @@ function bankCard(b: BankSummary): HTMLElement {
       ? facts(tn('banks.sheet.usable', x.usable), x.inactive ? tn('banks.list.sheetRetired', x.inactive) : null)
       : t('banks.sheet.allRetired')));
   });
-  boxSync.push(sync);
+  if (canManage) boxSync.push(sync);
 
   // the facts that used to sit under the name (file, updated, owner) live in the folded part, so the row stays compact
   const metaLine = b.ai ? t(aiMetaLine(b.ai).key as MsgKey, aiMetaLine(b.ai).params) : b.filename || t('common.none');
@@ -963,13 +1015,20 @@ function bankCard(b: BankSummary): HTMLElement {
   expand.setAttribute('aria-controls', boxId);
 
   const acts = h('div', { class: 'bk-bankacts' },
-    b.ai ? null : bankAct(`bk-update-${b.id}`, 'upload', t('banks.act.updateShort'), t('banks.list.updateAria', { name: b.name }), busy === 'delete', () => chooseUpdate(b)),
-    bankAct(`bk-delete-${b.id}`, 'trash', deleting ? t('banks.list.deleting') : t('banks.act.deleteShort'), t('banks.list.deleteAria', { name: b.name }),
-      busy !== null, () => void removeBank(b), 'danger'));
+    // v1.6: Download comes first and is the only action of a bank this page does not manage
+    canDownload
+      ? bankAct(`bk-download-${b.id}`, 'download', downloadingId === b.id ? t('banks.dl.preparing') : t('banks.act.downloadShort'),
+        t('banks.list.downloadAria', { name: b.name }), downloadingId !== null, () => void chooseDownload(b))
+      : null,
+    canManage && !b.ai ? bankAct(`bk-update-${b.id}`, 'upload', t('banks.act.updateShort'), t('banks.list.updateAria', { name: b.name }), busy === 'delete', () => chooseUpdate(b)) : null,
+    canManage
+      ? bankAct(`bk-delete-${b.id}`, 'trash', deleting ? t('banks.list.deleting') : t('banks.act.deleteShort'), t('banks.list.deleteAria', { name: b.name }),
+        busy !== null, () => void removeBank(b), 'danger')
+      : null);
 
   const card = h('article', { class: 'bk-bank', 'aria-labelledby': `bk-name-${b.id}` },
     h('div', { class: 'bk-bankhead' },
-      bankBox.wrap,
+      canManage ? bankBox.wrap : null,
       h('div', { class: 'bk-bankmain' },
         h('h3', { class: 'bk-bankname', id: `bk-name-${b.id}` }, b.name),
         h('p', { class: 'bk-bankmeta bk-tap', onclick: () => expand.click() },
@@ -1051,10 +1110,13 @@ async function removeSelected(): Promise<void> {
 
 function banksPanel(): HTMLElement {
   const admin = isAdmin();
-  const list = managed();
+  const view = bankPageView(S.user);
+  const downloadOnly = view === 'download';
+  const list = listed();
+  const mayManage = managed().length > 0 && !downloadOnly;
   // forget checks of banks and sheets that are gone
   for (const [k, v] of [...sel]) {
-    const b = list.find((x) => x.id === v.bank);
+    const b = managed().find((x) => x.id === v.bank);
     if (!b || !b.sheets.some((x) => x.name === v.sheet)) sel.delete(k);
   }
   boxSync = [];
@@ -1062,18 +1124,20 @@ function banksPanel(): HTMLElement {
   const cards = list.map(bankCard);
   drawBar();
   return h('section', { class: 'panel bk-list', 'aria-labelledby': 'bk-list-h', 'aria-busy': busy === 'delete' ? 'true' : null },
-    h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin ? 'banks.list.title' : 'banks.list.titleMine')),
+    h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin || mayDownloadBanks(S.user) ? 'banks.list.title' : 'banks.list.titleMine')),
+    // v1.6: a user who may only download gets one line instead of the management parts
+    downloadOnly ? h('p', { class: 'bk-hint' }, t('banks.dl.viewOnly')) : null,
     // v1.1 (GB-7): the progress card of a generation / import at the top of the list
-    genCardHost('banks'),
+    downloadOnly ? null : genCardHost('banks'),
     // v1.3: the coming bank of a running generation (not selectable, no menu)
-    placeholderRow('banks'),
+    downloadOnly ? null : placeholderRow('banks'),
     // A bank manager may also study banks an administrator gave them: say why those are not listed here
-    !admin && list.length ? h('p', { class: 'bk-hint bk-mgr-note' }, t('banks.list.managerNote')) : null,
+    !admin && !downloadOnly && !mayDownloadBanks(S.user) && list.length ? h('p', { class: 'bk-hint bk-mgr-note' }, t('banks.list.managerNote')) : null,
     listError ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('banks.delete.failed', { reason: errorText(listError) }))) : null,
-    list.length ? barHost : null,
+    list.length && mayManage ? barHost : null,
     list.length
       ? h('div', { class: 'bk-banks' }, cards)
-      : h('p', { class: 'empty' }, t(admin ? 'banks.list.empty' : 'banks.list.emptyManager')));
+      : h('p', { class: 'empty' }, t(downloadOnly ? 'banks.dl.empty' : admin ? 'banks.list.empty' : 'banks.list.emptyManager')));
 }
 
 // ---------------------------------------------------------------- import history
@@ -1299,11 +1363,14 @@ export function renderBanks(): HTMLElement {
   phone = matches(PHONE_MQ);
   normalizeTarget();
   if (importsWanted && !importsLoading) void loadImports();
+  // v1.6: a user who may only download sees the bank list alone (no import, history or format guide)
   const el = h('div', { class: 'page page-banks' },
     pageHead(t('banks.title')),
-    h('div', { class: 'bk-grid' },
-      h('div', { class: 'bk-col' }, importPanel(), importCard(), banksPanel()),
-      h('div', { class: 'bk-col' }, historyPanel(), guidePanel())));
+    bankPageView(S.user) === 'download'
+      ? h('div', { class: 'bk-grid bk-grid-one' }, h('div', { class: 'bk-col' }, banksPanel()))
+      : h('div', { class: 'bk-grid' },
+        h('div', { class: 'bk-col' }, importPanel(), importCard(), banksPanel()),
+        h('div', { class: 'bk-col' }, historyPanel(), guidePanel())));
   applyAfter();
   return el;
 }

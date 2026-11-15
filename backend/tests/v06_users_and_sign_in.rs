@@ -409,7 +409,7 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
             .get::<_, String>(0))
             .expect("schema"),
         // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well; v0.9: → v6; v1.1: → v7; v1.3: → v8; v1.4: → v9
-        "9"
+        "10"
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");
@@ -530,7 +530,7 @@ async fn login_ok_wrong_password_unknown_and_disabled_users() {
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(
         r.json()["user"],
-        json!({"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true, "aiAllowed": true})
+        json!({"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true, "canDownloadBanks": true, "aiAllowed": true})
     );
     // v1.3: the answer also says which lifetime rule the session follows
     assert_eq!(r.json()["session"]["rule"], "admin");
@@ -1011,6 +1011,7 @@ async fn users_crud_and_validation() {
             "banks",
             "newBanks",
             "canManageBanks",
+            "canDownloadBanks",
             // v0.8 (tests/v08_ai_link.rs)
             "ai",
             "ownedBanks",

@@ -29,8 +29,10 @@
 //! v0.8: every path that starts with `/internal/` goes to [`internal::dispatch`] first, before the Host guard and without the
 //! session layer: the auth step of the AI routes and the token routes the AI service calls (see `api::internal`). The
 //! `/api/*` routing above is unchanged.
+use crate::activity::{Actor, Entry};
 use crate::config::{Config, MAX_JSON, MAX_UPLOAD};
 use crate::error::{AppError, DbError};
+use crate::export;
 use crate::models::{setting_valid, ImportTarget, ParsedWorkbook, Viewer, SETTING_KEYS};
 use crate::security::body::{self, BodyError};
 use crate::security::{clean_filename, latin1, py_int_str, py_strip, strip_ctrl, truncate_chars};
@@ -453,6 +455,78 @@ async fn viewer_of(st: &AppState, authed: Option<&Authed>) -> Result<Viewer, App
     }
 }
 
+/// `GET /api/banks/download?id=<bank id>&format=xlsx|docx` (v1.6): one bank as a file. `authorize` has checked the session
+/// and the download permission. 400 for a missing or bad `id` / `format` (any key twice too), 404 `MSG_BANK_NOT_FOUND` for a
+/// missing bank and an invisible one alike, 500 when building the file fails. The file is built outside the database lock,
+/// in a blocking task that holds a `parse_gate` permit. A successful download (not HEAD) is recorded in the activity log.
+async fn download_bank(
+    st: &AppState,
+    query: Option<&str>,
+    head_only: bool,
+    authed: Option<&Authed>,
+) -> Result<Response, AppError> {
+    let id = query_id(query).ok_or_else(bad_request)?;
+    let format = query_once(query, "format")?
+        .as_deref()
+        .and_then(export::ExportFormat::parse)
+        .ok_or_else(bad_request)?;
+    let v = viewer_of(st, authed).await?;
+    let store = st.0.store.clone();
+    let bank = blocking(move || store.export_bank_as(&v, id))
+        .await?
+        .ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
+    let permit =
+        st.0.parse_gate
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| AppError::Internal)?;
+    let built = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        let bytes = export::export(&bank, format, jiff::Timestamp::now());
+        (bank, bytes)
+    })
+    .await;
+    let (bank, bytes) = match built {
+        Ok((bank, Ok(bytes))) => (bank, bytes),
+        Ok((_, Err(e))) => {
+            tracing::error!("bank download failed: {e}");
+            return Err(AppError::Internal);
+        }
+        Err(e) => {
+            tracing::error!("bank download failed: {e}");
+            return Err(AppError::Internal);
+        }
+    };
+    let resp = response::attachment(
+        format.mime(),
+        bytes,
+        &export::content_disposition(&bank, format),
+        head_only,
+    );
+    if !head_only {
+        if let Some(a) = authed {
+            st.0.activity.record(
+                Entry::new(Actor::of(&a.user), "bank.download")
+                    .client(&a.client)
+                    .object(bank.name.clone())
+                    .detail(json!({
+                        "format": format.as_str(),
+                        "sheets": bank.sheets.len(),
+                        "questions": bank.question_count()
+                    })),
+            );
+            tracing::info!(
+                "user {:?} downloaded bank {:?} as {}",
+                a.user.username,
+                bank.name,
+                format.as_str()
+            );
+        }
+    }
+    Ok(resp)
+}
+
 async fn get_route(
     st: &AppState,
     path: &str,
@@ -504,6 +578,9 @@ async fn get_route(
             "canShutdown": st.0.cfg.allow_shutdown,
         });
         return Ok(json_resp(StatusCode::OK, &value, head_only));
+    }
+    if path == "/api/banks/download" {
+        return download_bank(st, query, head_only, authed).await;
     }
     let user = user_of(authed)?;
     let eng = st.0.engine.clone();

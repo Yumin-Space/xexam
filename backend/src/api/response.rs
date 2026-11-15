@@ -40,6 +40,8 @@ pub const MSG_WRONG_PASSWORD: &str = "当前密码不对。";
 pub const MSG_EXAM_QUESTIONS_GONE: &str = "这场考试的题目已经被删除，成绩没有保存。";
 /// 403: a plain user without the "can manage question banks" permission on a bank management route
 pub const MSG_NO_BANK_PERMISSION: &str = "你没有管理题库的权限，请联系管理员。";
+/// 403: a plain user without the "download question banks" permission (the frontend translates it)
+pub const MSG_NO_DOWNLOAD_PERMISSION: &str = "你没有下载题库的权限，请联系管理员。";
 /// 403: a bank manager updating or deleting a bank that an administrator or another user uploaded
 pub const MSG_NOT_BANK_OWNER: &str = "这个题库不是你上传的，只能更新或删除你自己上传的题库。";
 /// 400: `"banks"` of POST /api/users/create or /api/users/update names a bank that does not exist
@@ -74,6 +76,20 @@ pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: b
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
+    resp
+}
+
+/// v1.6: a file download: `make(200, ctype, body, head_only)` plus `Content-Disposition: <disposition>`.
+pub fn attachment(
+    ctype: &'static str,
+    body: Vec<u8>,
+    disposition: &str,
+    head_only: bool,
+) -> Response {
+    let mut resp = make(StatusCode::OK, ctype, body, head_only);
+    if let Ok(v) = HeaderValue::from_str(disposition) {
+        resp.headers_mut().insert(header::CONTENT_DISPOSITION, v);
+    }
     resp
 }
 

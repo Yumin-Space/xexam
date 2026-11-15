@@ -3,14 +3,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  accessChange, accessOf, accessView, bankPageView, deselectAllBanks, draftOf, editChange, isTicked, manageableBanks, mayManageBanks,
-  navAllowed, ownedBankNames, ownerView, sameAccess, selectAllBanks, selectAllState, toggleAll, toggleBank, toolState,
+  accessChange, accessOf, accessView, bankPageView, deselectAllBanks, draftOf, editChange, isTicked, listedBanks, manageableBanks,
+  mayDownloadBanks, mayManageBanks, mayOpenBanks, navAllowed, ownedBankNames, ownerView, sameAccess, selectAllBanks, selectAllState, toggleAll, toggleBank, toolState,
 } from './bank-access.ts';
 import type { UserRow } from '../types/api.ts';
 
 const admin = { role: 'admin' as const, canManageBanks: true };
 const manager = { role: 'user' as const, canManageBanks: true };
 const plain = { role: 'user' as const, canManageBanks: false };
+const downloader = { role: 'user' as const, canManageBanks: false, canDownloadBanks: true };
+const managerDl = { role: 'user' as const, canManageBanks: true, canDownloadBanks: true };
 
 const BANKS = [
   { id: 1, name: 'Demo Alpha' },
@@ -20,7 +22,7 @@ const BANKS = [
 
 const row = (o: Partial<UserRow> = {}): UserRow => ({
   id: 7, username: 'demo-user', role: 'user', disabled: false, createdAt: '2026-01-01 10:00:00', lastLoginAt: null,
-  mustChangePassword: false, records: 0, banks: [], newBanks: false, canManageBanks: false, ai: false, ownedBanks: [], lock: null, aiSuspended: false, ...o,
+  mustChangePassword: false, records: 0, banks: [], newBanks: false, canManageBanks: false, canDownloadBanks: false, ai: false, ownedBanks: [], lock: null, aiSuspended: false, ...o,
 });
 
 test('administrators and bank managers may open Question banks; plain users and nobody may not', () => {
@@ -92,49 +94,49 @@ test('a bank manager also sees their own banks; a plain user who lost the permis
 
 test('the checklist: a new user starts with nothing ticked; the two settings are independent', () => {
   const empty = draftOf([], false);
-  assert.deepEqual(empty, { ids: [], later: false, manage: false });
-  assert.deepEqual(accessOf(empty, BANKS), { banks: [], newBanks: false, canManageBanks: false });
+  assert.deepEqual(empty, { ids: [], later: false, manage: false, download: false });
+  assert.deepEqual(accessOf(empty, BANKS), { banks: [], newBanks: false, canManageBanks: false, canDownloadBanks: false });
 
   let d = toggleBank(toggleBank(empty, 5, true), 1, true);
-  assert.deepEqual(d, { ids: [1, 5], later: false, manage: false });
-  assert.deepEqual(accessOf(d, BANKS), { banks: [1, 5], newBanks: false, canManageBanks: false });
+  assert.deepEqual(d, { ids: [1, 5], later: false, manage: false, download: false });
+  assert.deepEqual(accessOf(d, BANKS), { banks: [1, 5], newBanks: false, canManageBanks: false, canDownloadBanks: false });
   d = toggleBank(d, 5, false);
-  assert.deepEqual(accessOf(d, BANKS), { banks: [1], newBanks: false, canManageBanks: false });
+  assert.deepEqual(accessOf(d, BANKS), { banks: [1], newBanks: false, canManageBanks: false, canDownloadBanks: false });
   assert.equal(isTicked(d, 1), true);
   assert.equal(isTicked(d, 2), false);
 
   // the owner's example: General knowledge ticked, Kitchen basics not, banks imported later included
   const later = { ...d, later: true };
-  assert.deepEqual(accessOf(later, BANKS), { banks: [1], newBanks: true, canManageBanks: false });
+  assert.deepEqual(accessOf(later, BANKS), { banks: [1], newBanks: true, canManageBanks: false, canDownloadBanks: false });
   // unticking a bank keeps "later" (and "Manage banks")
-  assert.deepEqual(toggleBank(later, 1, false), { ids: [], later: true, manage: false });
-  assert.deepEqual(toggleBank({ ...later, manage: true }, 1, false), { ids: [], later: true, manage: true });
+  assert.deepEqual(toggleBank(later, 1, false), { ids: [], later: true, manage: false, download: false });
+  assert.deepEqual(toggleBank({ ...later, manage: true, download: false }, 1, false), { ids: [], later: true, manage: true, download: false });
 
-  assert.deepEqual(draftOf([5, 1, 5], true), { ids: [1, 5], later: true, manage: false });
-  assert.deepEqual(draftOf([2], false, true), { ids: [2], later: false, manage: true });
+  assert.deepEqual(draftOf([5, 1, 5], true), { ids: [1, 5], later: true, manage: false, download: false });
+  assert.deepEqual(draftOf([2], false, true), { ids: [2], later: false, manage: true, download: false });
 });
 
 test('"Select all" ticks or unticks every listed bank and shows checked / unchecked / indeterminate', () => {
   const none = draftOf([], true);
   assert.equal(selectAllState(none, BANKS), 'none');
   const all = toggleAll(none, BANKS);
-  assert.deepEqual(all, { ids: [1, 2, 5], later: true, manage: false }, '"later" is not touched');
+  assert.deepEqual(all, { ids: [1, 2, 5], later: true, manage: false, download: false }, '"later" is not touched');
   assert.equal(selectAllState(all, BANKS), 'all');
-  assert.deepEqual(toggleAll(all, BANKS), { ids: [], later: true, manage: false });
+  assert.deepEqual(toggleAll(all, BANKS), { ids: [], later: true, manage: false, download: false });
   const some = draftOf([2], false);
   assert.equal(selectAllState(some, BANKS), 'some');
-  assert.deepEqual(toggleAll(some, BANKS), { ids: [1, 2, 5], later: false, manage: false }, 'from indeterminate: every bank');
+  assert.deepEqual(toggleAll(some, BANKS), { ids: [1, 2, 5], later: false, manage: false, download: false }, 'from indeterminate: every bank');
   // a ticked id that is no longer listed does not count
   assert.equal(selectAllState(draftOf([9], false), BANKS), 'none');
   assert.equal(selectAllState(draftOf([], false), []), 'none');
 });
 
 test('the checklist drops a bank that was deleted while it was open', () => {
-  assert.deepEqual(accessOf({ ids: [1, 3, 5], later: false, manage: false }, BANKS), { banks: [1, 5], newBanks: false, canManageBanks: false });
+  assert.deepEqual(accessOf({ ids: [1, 3, 5], later: false, manage: false, download: false }, BANKS), { banks: [1, 5], newBanks: false, canManageBanks: false, canDownloadBanks: false });
 });
 
 test('two settings are the same regardless of order; "Manage banks" counts too (v0.8)', () => {
-  const c = (banks: number[], newBanks: boolean, canManageBanks = false) => ({ banks, newBanks, canManageBanks });
+  const c = (banks: number[], newBanks: boolean, canManageBanks = false, canDownloadBanks = false) => ({ banks, newBanks, canManageBanks, canDownloadBanks });
   assert.equal(sameAccess(c([2, 1], false), c([1, 2], false)), true);
   assert.equal(sameAccess(c([1], false), c([1, 2], false)), false);
   assert.equal(sameAccess(c([1], true), c([1], false)), false);
@@ -157,11 +159,11 @@ test('the Edit dialog sends only what changed, including the bank-manager permis
 
 test('"Select all" and "Deselect all" change only the listed banks; "later" and "Manage banks" stay', () => {
   const d = draftOf([2], true, true);
-  assert.deepEqual(selectAllBanks(d, BANKS), { ids: [1, 2, 5], later: true, manage: true });
-  assert.deepEqual(deselectAllBanks(d), { ids: [], later: true, manage: true });
-  assert.deepEqual(selectAllBanks(draftOf([], false), []), { ids: [], later: false, manage: false });
+  assert.deepEqual(selectAllBanks(d, BANKS), { ids: [1, 2, 5], later: true, manage: true, download: false });
+  assert.deepEqual(deselectAllBanks(d), { ids: [], later: true, manage: true, download: false });
+  assert.deepEqual(selectAllBanks(draftOf([], false), []), { ids: [], later: false, manage: false, download: false });
   // the draft itself is not changed
-  assert.deepEqual(d, { ids: [2], later: true, manage: true });
+  assert.deepEqual(d, { ids: [2], later: true, manage: true, download: false });
 });
 
 test('the tool states: all, some, and none (then "Deselect all" shows ticked and refuses the click)', () => {
@@ -177,17 +179,17 @@ test('the tool states: all, some, and none (then "Deselect all" shows ticked and
 test('the "Change" dialog: only Manage banks changed sends {id, canManageBanks}', () => {
   const u = row({ id: 7, banks: [1], newBanks: false, canManageBanks: false });
   const same = draftOf([1], false, false);
-  assert.deepEqual(accessChange(u, same, BANKS), { body: null, banks: false, manage: false });
-  assert.deepEqual(accessChange(u, { ...same, manage: true }, BANKS), { body: { id: 7, canManageBanks: true }, banks: false, manage: true });
+  assert.deepEqual(accessChange(u, same, BANKS), { body: null, banks: false, manage: false, download: false });
+  assert.deepEqual(accessChange(u, { ...same, manage: true, download: false }, BANKS), { body: { id: 7, canManageBanks: true }, banks: false, manage: true, download: false });
   // banks changed: banks and newBanks, not the permission
   assert.deepEqual(accessChange(u, draftOf([1, 5], false, false), BANKS),
-    { body: { id: 7, banks: [1, 5], newBanks: false }, banks: true, manage: false });
+    { body: { id: 7, banks: [1, 5], newBanks: false }, banks: true, manage: false, download: false });
   // only "later" changed counts as a bank change too
   assert.deepEqual(accessChange(u, draftOf([1], true, false), BANKS),
-    { body: { id: 7, banks: [1], newBanks: true }, banks: true, manage: false });
+    { body: { id: 7, banks: [1], newBanks: true }, banks: true, manage: false, download: false });
   // both
   assert.deepEqual(accessChange(row({ id: 7, banks: [], canManageBanks: true }), draftOf([2], false, false), BANKS),
-    { body: { id: 7, banks: [2], newBanks: false, canManageBanks: false }, banks: true, manage: true });
+    { body: { id: 7, banks: [2], newBanks: false, canManageBanks: false }, banks: true, manage: true, download: false });
   // the order of the stored ids does not matter; a bank deleted meanwhile is dropped
   assert.deepEqual(accessChange(row({ id: 7, banks: [5, 1] }), draftOf([1, 5, 9], false), BANKS).body, null);
 });
@@ -204,4 +206,70 @@ test('AI Chat is in the menu when the user can use AI now or has AI data; never 
   assert.equal(navAllowed('ai', null, ready(true, true)), false);
   // AI settings is an administrators' entry (always shown to them)
   assert.equal(navAllowed('admin', admin, { state: 'unavailable' }), true);
+});
+
+// ---------------------------------------------------------------- v1.6: the download right
+
+test('v1.6: who may download and who may open Question banks', () => {
+  assert.equal(mayDownloadBanks(admin), true);
+  assert.equal(mayDownloadBanks({ role: 'admin', canManageBanks: false, canDownloadBanks: false }), true, 'the stored flag of an administrator does not matter');
+  assert.equal(mayDownloadBanks(downloader), true);
+  assert.equal(mayDownloadBanks(manager), false);
+  assert.equal(mayDownloadBanks(plain), false);
+  assert.equal(mayDownloadBanks(null), false);
+  assert.equal(mayOpenBanks(downloader), true);
+  assert.equal(mayOpenBanks(manager), true);
+  assert.equal(mayOpenBanks(plain), false);
+  assert.equal(mayOpenBanks(undefined), false);
+  assert.equal(bankPageView(admin), 'admin');
+  assert.equal(bankPageView(manager), 'manager');
+  assert.equal(bankPageView(managerDl), 'manager');
+  assert.equal(bankPageView(downloader), 'download');
+  assert.equal(bankPageView(plain), 'forbidden');
+  assert.equal(bankPageView(null), 'forbidden');
+  assert.equal(navAllowed('banks', downloader), true);
+  assert.equal(navAllowed('banks', plain), false);
+});
+
+test('v1.6: listedBanks follows the role and the right', () => {
+  const banks = [{ id: 1, manageable: true }, { id: 2, manageable: false }, { id: 3, manageable: true }];
+  assert.deepEqual(listedBanks(admin, banks).map((b) => b.id), [1, 2, 3]);
+  assert.deepEqual(listedBanks(downloader, banks).map((b) => b.id), [1, 2, 3]);
+  assert.deepEqual(listedBanks(managerDl, banks).map((b) => b.id), [1, 2, 3]);
+  assert.deepEqual(listedBanks(manager, banks).map((b) => b.id), [1, 3]);
+  assert.deepEqual(listedBanks(plain, banks), []);
+  assert.deepEqual(listedBanks(null, banks), []);
+});
+
+test('v1.6: the draft keeps the download right through select all, deselect all and toggleAll', () => {
+  assert.deepEqual(draftOf([2, 1], false, true, true), { ids: [1, 2], later: false, manage: true, download: true });
+  assert.deepEqual(draftOf([], false), { ids: [], later: false, manage: false, download: false });
+  const d = draftOf([2], false, false, true);
+  assert.equal(selectAllBanks(d, BANKS).download, true);
+  assert.equal(deselectAllBanks(d).download, true);
+  assert.equal(toggleAll(d, BANKS).download, true);
+  assert.equal(toggleBank(d, 1, true).download, true);
+});
+
+test('v1.6: accessOf and sameAccess carry canDownloadBanks', () => {
+  assert.deepEqual(accessOf(draftOf([1], false, false, true), BANKS), { banks: [1], newBanks: false, canManageBanks: false, canDownloadBanks: true });
+  const c = (dl: boolean) => ({ banks: [1], newBanks: false, canManageBanks: false, canDownloadBanks: dl });
+  assert.equal(sameAccess(c(true), c(false)), false);
+  assert.equal(sameAccess(c(true), c(true)), true);
+});
+
+test('v1.6: the Change dialog sends canDownloadBanks only when it changed', () => {
+  const u = row({ id: 7, banks: [1], newBanks: false, canManageBanks: false, canDownloadBanks: false });
+  assert.deepEqual(accessChange(u, draftOf([1], false, false, true), BANKS),
+    { body: { id: 7, canDownloadBanks: true }, banks: false, manage: false, download: true });
+  assert.deepEqual(accessChange(u, draftOf([1], false, false, false), BANKS), { body: null, banks: false, manage: false, download: false });
+  const on = row({ id: 7, banks: [1], canDownloadBanks: true });
+  assert.deepEqual(accessChange(on, draftOf([1], false, false, false), BANKS),
+    { body: { id: 7, canDownloadBanks: false }, banks: false, manage: false, download: true });
+  // unchanged right: the key is not sent, other changes still are
+  assert.deepEqual(accessChange(on, draftOf([1, 5], false, false, true), BANKS),
+    { body: { id: 7, banks: [1, 5], newBanks: false }, banks: true, manage: false, download: false });
+  // all three
+  assert.deepEqual(accessChange(u, draftOf([2], true, true, true), BANKS),
+    { body: { id: 7, banks: [2], newBanks: true, canManageBanks: true, canDownloadBanks: true }, banks: true, manage: true, download: true });
 });

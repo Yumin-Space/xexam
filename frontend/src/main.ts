@@ -31,7 +31,7 @@ import { boot, isRetryingStart, refreshAi, retryStartup, setRenderer } from './s
 import { aiStatus, onCallBlockChange } from './state/ai.ts';
 import { installAiGen } from './state/ai-gen.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
-import { S, canManageBanks, isAdmin } from './state/store.ts';
+import { S, canOpenBanks, isAdmin } from './state/store.ts';
 import { h, keepFocus, must } from './utils/dom.ts';
 import { BAR_MQ, matches } from './utils/media.ts';
 
@@ -44,8 +44,8 @@ function page(): { el: HTMLElement; title: string } {
   const r = S.route;
   switch (r.name) {
     case 'banks':
-      // Bank managers and administrators; anyone else sees why they cannot use it (owner, v0.6.5)
-      return canManageBanks()
+      // Bank managers, users who may download banks, and administrators; anyone else sees why they cannot use it (owner, v0.6.5)
+      return canOpenBanks()
         ? { el: renderBanks(), title: t('nav.banks') }
         : { el: renderForbidden('forbidden.banks'), title: t('forbidden.title') };
     case 'users':

@@ -8,7 +8,7 @@ import { poolOf, type Answer } from '../domain/grading.ts';
 import { type Route } from '../router.ts';
 import { firstPaintSettings } from './settings-cache.ts';
 import { resetAiStatus } from './ai.ts';
-import { mayManageBanks } from './bank-access.ts';
+import { mayDownloadBanks, mayManageBanks, mayOpenBanks } from './bank-access.ts';
 
 export type Phase = 'loading' | 'fatal' | 'ready';
 
@@ -211,6 +211,16 @@ export function isAdmin(): boolean {
  */
 export function canManageBanks(): boolean {
   return mayManageBanks(S.user);
+}
+
+/** v1.6: whether the signed-in user may download the banks they can see (administrators, or the "download banks" permission) */
+export function canDownloadBanks(): boolean {
+  return mayDownloadBanks(S.user);
+}
+
+/** v1.6: whether the signed-in user may open Question banks (manage or download) */
+export function canOpenBanks(): boolean {
+  return mayOpenBanks(S.user);
 }
 
 const clearHooks: Array<() => void> = [];

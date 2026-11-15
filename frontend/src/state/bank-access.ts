@@ -13,7 +13,7 @@
 import type { AuthUser, BankSummary, Role, UserRow, UserUpdate } from '../types/api.ts';
 
 /** The fields of a user that decide what they may do with question banks */
-type Holder = Pick<AuthUser, 'role' | 'canManageBanks'>;
+type Holder = Pick<AuthUser, 'role' | 'canManageBanks' | 'canDownloadBanks'>;
 
 /** Administrators, and plain users with the bank-manager permission, may open Question banks. */
 export function mayManageBanks(u: Holder | null | undefined): boolean {
@@ -24,12 +24,23 @@ export function mayManageBanks(u: Holder | null | undefined): boolean {
  * How the Question banks page is shown: administrators manage every bank and see each bank's owner; a bank manager sees and
  * manages only their own banks; anyone else gets the "Not allowed" page.
  */
-export type BankPageView = 'admin' | 'manager' | 'forbidden';
+export type BankPageView = 'admin' | 'manager' | 'download' | 'forbidden';
 
 export function bankPageView(u: Holder | null | undefined): BankPageView {
   if (!u) return 'forbidden';
   if (u.role === 'admin') return 'admin';
-  return u.canManageBanks ? 'manager' : 'forbidden';
+  if (u.canManageBanks) return 'manager';
+  return u.canDownloadBanks === true ? 'download' : 'forbidden';
+}
+
+/** Administrators, and plain users with the "download banks" permission (v1.6) */
+export function mayDownloadBanks(u: Holder | null | undefined): boolean {
+  return !!u && (u.role === 'admin' || u.canDownloadBanks === true);
+}
+
+/** Who may open Question banks (v1.6): manage OR download */
+export function mayOpenBanks(u: Holder | null | undefined): boolean {
+  return mayManageBanks(u) || mayDownloadBanks(u);
 }
 
 /** What a menu entry needs: an administrator, the permission to manage question banks, or (v0.8) AI Chat */
@@ -50,7 +61,7 @@ export function navAllowed(need: NavNeed | undefined, u: Holder | null | undefin
   if (!need) return true;
   if (need === 'admin') return u?.role === 'admin';
   if (need === 'ai') return !!u && ai?.state === 'ready' && (ai.allowed === true || ai.hasData === true);
-  return mayManageBanks(u);
+  return mayOpenBanks(u);
 }
 
 /**
@@ -69,6 +80,16 @@ export function ownerView(b: Pick<BankSummary, 'ownerId' | 'owner'>, viewerId: n
   if (b.ownerId == null) return { kind: 'none' };
   if (viewerId != null && b.ownerId === viewerId) return { kind: 'you' };
   return b.owner ? { kind: 'other', name: b.owner } : { kind: 'none' };
+}
+
+/**
+ * v1.6: the banks the Question banks page lists. An administrator and a user with the download right: every bank the server
+ * sent (the banks they can see); a bank manager without it: only `manageableBanks(banks)`; anyone else: none.
+ */
+export function listedBanks<B extends Pick<BankSummary, 'manageable'>>(u: Holder | null | undefined, banks: readonly B[]): B[] {
+  if (!u) return [];
+  if (mayDownloadBanks(u)) return [...banks];
+  return mayManageBanks(u) ? manageableBanks(banks) : [];
 }
 
 // ---------------------------------------------------------------- what a row of User management says
@@ -122,11 +143,13 @@ export interface AccessDraft {
   ids: number[];
   later: boolean;
   manage: boolean;
+  /** v1.6: "Download banks" (the per-user download right) */
+  download: boolean;
 }
 
-/** The draft of a stored setting (a new user starts with nothing ticked, `later` and `manage` off: `draftOf([], false)`) */
-export function draftOf(banks: readonly number[], later: boolean, manage = false): AccessDraft {
-  return { ids: [...new Set(banks)].sort((a, b) => a - b), later, manage };
+/** The draft of a stored setting (a new user starts with nothing ticked, `later`, `manage` and `download` off: `draftOf([], false)`) */
+export function draftOf(banks: readonly number[], later: boolean, manage = false, download = false): AccessDraft {
+  return { ids: [...new Set(banks)].sort((a, b) => a - b), later, manage, download };
 }
 
 /** Ticks or unticks one bank */
@@ -173,6 +196,8 @@ export interface AccessChoice {
   newBanks: boolean;
   /** v0.8: "Manage banks" (the stored bank-manager permission) */
   canManageBanks: boolean;
+  /** v1.6: "Download banks" (the stored download permission) */
+  canDownloadBanks: boolean;
 }
 
 /**
@@ -181,14 +206,14 @@ export interface AccessChoice {
  */
 export function accessOf(d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[]): AccessChoice {
   const known = new Set(banks.map((b) => b.id));
-  return { banks: d.ids.filter((id) => known.has(id)), newBanks: d.later, canManageBanks: d.manage };
+  return { banks: d.ids.filter((id) => known.has(id)), newBanks: d.later, canManageBanks: d.manage, canDownloadBanks: d.download };
 }
 
 /** Whether two settings are the same: the banks (in any order), "later" and "Manage banks" */
 export function sameAccess(a: AccessChoice, b: AccessChoice): boolean {
   const x = [...new Set(a.banks)].sort((p, q) => p - q);
   const y = [...new Set(b.banks)].sort((p, q) => p - q);
-  return a.newBanks === b.newBanks && a.canManageBanks === b.canManageBanks && x.length === y.length && x.every((v, i) => v === y[i]);
+  return a.newBanks === b.newBanks && a.canManageBanks === b.canManageBanks && a.canDownloadBanks === b.canDownloadBanks && x.length === y.length && x.every((v, i) => v === y[i]);
 }
 
 /** What the "Change" dialog sends, and what changed (for the toast) */
@@ -199,26 +224,33 @@ export interface AccessChange {
   banks: boolean;
   /** "Manage banks" changed */
   manage: boolean;
+  /** v1.6: "Download banks" changed */
+  download: boolean;
 }
 
 /**
  * The body of POST /api/users/update for the "Change" dialog (v0.8): `{id}`, plus `banks` and `newBanks` when either
- * changed, plus `canManageBanks` when it changed; null when nothing did.
+ * changed, plus `canManageBanks` and (v1.6) `canDownloadBanks` when they changed; null when nothing did.
  */
 export function accessChange(
-  u: Pick<UserRow, 'id' | 'banks' | 'newBanks' | 'canManageBanks'>, d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[],
+  u: Pick<UserRow, 'id' | 'banks' | 'newBanks' | 'canManageBanks' | 'canDownloadBanks'>, d: AccessDraft, banks: readonly Pick<BankSummary, 'id'>[],
 ): AccessChange {
   const next = accessOf(d, banks);
-  const banksChanged = !sameAccess({ ...next, canManageBanks: false }, { banks: u.banks, newBanks: u.newBanks, canManageBanks: false });
+  const banksChanged = !sameAccess(
+    { ...next, canManageBanks: false, canDownloadBanks: false },
+    { banks: u.banks, newBanks: u.newBanks, canManageBanks: false, canDownloadBanks: false },
+  );
   const manageChanged = next.canManageBanks !== u.canManageBanks;
-  if (!banksChanged && !manageChanged) return { body: null, banks: false, manage: false };
+  const downloadChanged = next.canDownloadBanks !== (u.canDownloadBanks === true);
+  if (!banksChanged && !manageChanged && !downloadChanged) return { body: null, banks: false, manage: false, download: false };
   const body: UserUpdate = { id: u.id };
   if (banksChanged) {
     body.banks = next.banks;
     body.newBanks = next.newBanks;
   }
   if (manageChanged) body.canManageBanks = next.canManageBanks;
-  return { body, banks: banksChanged, manage: manageChanged };
+  if (downloadChanged) body.canDownloadBanks = next.canDownloadBanks;
+  return { body, banks: banksChanged, manage: manageChanged, download: downloadChanged };
 }
 
 // ---------------------------------------------------------------- the Edit dialog

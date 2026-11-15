@@ -558,6 +558,55 @@ impl Store {
         Ok(bank_by_id(&g, id)?.is_some())
     }
 
+    /// v1.6: the bank `id` as the download exports it, if `v` may see it (`v.scope.allows(Some(id))`); `None` when the bank
+    /// does not exist or is not visible (answered alike). Only active questions; sheets in order of their first `seq`.
+    pub fn export_bank_as(
+        &self,
+        v: &Viewer,
+        id: i64,
+    ) -> Result<Option<crate::export::ExportBank>, DbError> {
+        if !v.scope.allows(Some(id)) {
+            return Ok(None);
+        }
+        let g = self.lock();
+        let Some(bank) = bank_by_id(&g, id)? else {
+            return Ok(None);
+        };
+        let mut st = g.prepare(
+            "SELECT sheet, row_no, data FROM questions WHERE bank_id=?1 AND active=1 ORDER BY seq",
+        )?;
+        let rows = st.query_map(params![id], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut sheets: Vec<crate::export::ExportSheet> = Vec::new();
+        // Sheet name -> index in `sheets`: the same sheet never appears twice, whatever the order of its rows
+        let mut index: HashMap<String, usize> = HashMap::new();
+        for row in rows {
+            let (sheet, row_no, data) = row?;
+            let mut q: Question = serde_json::from_str(&data)?;
+            q.sheet = sheet.clone();
+            q.row = row_no;
+            q.id = String::new();
+            let at = *index.entry(sheet.clone()).or_insert_with(|| {
+                sheets.push(crate::export::ExportSheet {
+                    name: sheet,
+                    questions: Vec::new(),
+                });
+                sheets.len() - 1
+            });
+            sheets[at].questions.push(q);
+        }
+        Ok(Some(crate::export::ExportBank {
+            id: bank.id,
+            name: bank.name,
+            sheets,
+        }))
+    }
+
     /// `GET /api/banks` as an administrator sees it: `{"banks": [{"id", "name", "filename", "legacy", "createdAt",
     /// "updatedAt", "total", "inactive", "sheets": [{"name", "usable", "inactive"}], "studied", "records", "ownerId", "owner",
     /// "manageable"}]}` (`ownerId` / `owner`: the owner's id and username, null when unknown).

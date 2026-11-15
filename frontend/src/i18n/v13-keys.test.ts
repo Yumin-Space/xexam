@@ -13,7 +13,7 @@ const SLOTS = ['default', 'chat', 'study', 'summary', 'generate', 'import'];
 const ACTIONS = [
   'auth.signin', 'auth.signout', 'auth.expired', 'auth.password', 'auth.lock', 'users.create', 'users.update', 'users.password',
   'users.unlock', 'users.delete', 'users.signinInfo', 'users.signinInfoClear', 'bank.upload', 'bank.import', 'bank.importCancel', 'bank.delete',
-  'bank.sheetsDelete', 'study.submit', 'records.delete', 'progress.reset', 'settings.update', 'settings.reset', 'logs.settings',
+  'bank.sheetsDelete', 'bank.download', 'study.submit', 'records.delete', 'progress.reset', 'settings.update', 'settings.reset', 'logs.settings',
   'system.shutdown', 'page.view', 'admin.request', 'system.start', 'system.stop', 'system.migrate', 'system.guard',
   'system.aiLink', 'system.logPurge', 'system.logDropped', 'system.signinFlood', 'system.sessionsPurged',
   'ai.settings.connectionAdd', 'ai.settings.connectionUpdate', 'ai.settings.connectionRemove', 'ai.settings.connectionTest',

@@ -25,7 +25,7 @@ const json = (status: number, body: unknown) => (): Response =>
 
 const row = (o: Partial<UserRow> = {}): UserRow => ({
   id: 2, username: 'demo-user', role: 'user', disabled: false, createdAt: '2026-01-01 10:00:00', lastLoginAt: null,
-  mustChangePassword: false, records: 0, banks: [], newBanks: false, canManageBanks: false, ai: false, ownedBanks: [], lock: null,
+  mustChangePassword: false, records: 0, banks: [], newBanks: false, canManageBanks: false, canDownloadBanks: false, ai: false, ownedBanks: [], lock: null,
   aiSuspended: false, lastActiveAt: null, lastLoginIp: null, lastLoginLocation: null, lastActiveIp: null, lastActiveLocation: null,
   lastActiveUa: null, ...o,
 });
@@ -144,4 +144,20 @@ test('setGeoSource posts only the cloudflare source and returns the list', async
   assert.equal(calls[0]?.method, 'POST');
   assert.deepEqual(calls[0]?.body, { source: 'cloudflare' });
   assert.equal(out.aiServiceUp, true);
+});
+
+test('usersListOf: v1.6 canDownloadBanks defaults to false and keeps true', () => {
+  const old = usersListOf(JSON.parse('{"users":[{"id":2,"username":"demo-user","role":"user"}],"aiAvailable":false}'));
+  assert.equal(old.users[0]?.canDownloadBanks, false);
+  const odd = usersListOf(JSON.parse('{"users":[{"id":2,"canDownloadBanks":"yes"}],"aiAvailable":false}'));
+  assert.equal(odd.users[0]?.canDownloadBanks, false);
+  assert.equal(usersListOf({ users: [row({ canDownloadBanks: true })], aiAvailable: false }).users[0]?.canDownloadBanks, true);
+});
+
+test('v1.6: createUser and updateUser pass canDownloadBanks through', async () => {
+  replies = [json(200, { users: [row()], aiAvailable: false }), json(200, { users: [row()], aiAvailable: false })];
+  await createUser({ username: 'demo-new', password: 'demo-pass-1', role: 'user', banks: [], newBanks: false, canManageBanks: false, canDownloadBanks: true, ai: false });
+  await updateUser({ id: 2, canDownloadBanks: false });
+  assert.deepEqual(calls[0]?.body, { username: 'demo-new', password: 'demo-pass-1', role: 'user', banks: [], newBanks: false, canManageBanks: false, canDownloadBanks: true, ai: false });
+  assert.deepEqual(calls[1]?.body, { id: 2, canDownloadBanks: false });
 });

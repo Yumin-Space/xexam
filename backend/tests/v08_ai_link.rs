@@ -411,8 +411,8 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none());
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "9");
-    // the v5 columns come after the v4 ones, the v8 ones (five) and the v9 ones (five) after them
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    // the v5 columns come after the v4 ones, the v8 ones (five) and the v9 ones (five) after them, then the v10 one
     let columns: Vec<String> = c
         .prepare("SELECT name FROM pragma_table_info('users') ORDER BY cid")
         .expect("prepare")
@@ -421,7 +421,7 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
         .map(|r| r.expect("row"))
         .collect();
     assert_eq!(
-        columns[columns.len() - 14..columns.len() - 10],
+        columns[columns.len() - 15..columns.len() - 11],
         ["new_banks", "can_manage_banks", "ai_enabled", "uid"]
     );
     // the default administrator (created by the v3 step, before the column existed) has a stamp and AI+ off
@@ -485,7 +485,7 @@ fn write_v4_database(db: &Path) {
     drop(s);
     raw(db)
         .execute_batch(
-            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; \
+            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; ALTER TABLE users DROP COLUMN can_download_banks; \
              ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
              ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
              ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
@@ -533,7 +533,7 @@ fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
         );
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "9");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
     // every user: AI+ off (also ben, whose earlier switch went with the dropped column), a unique 32-hex stamp
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM users WHERE ai_enabled = 0"),
@@ -642,6 +642,7 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
             "role",
             "mustChangePassword",
             "canManageBanks",
+            "canDownloadBanks",
             "aiAllowed"
         ]
     );
@@ -699,6 +700,7 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
             "banks",
             "newBanks",
             "canManageBanks",
+            "canDownloadBanks",
             "ai",
             "ownedBanks",
             // v1.3 (tests/v13_db.rs)

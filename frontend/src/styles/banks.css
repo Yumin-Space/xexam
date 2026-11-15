@@ -169,6 +169,8 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
 .bk-bankhead > .has-tip { grid-column: 3; }
 .bk-bankacts { grid-column: 2 / -1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 2px 4px; margin-top: 2px; }
 .bk-bankacts:empty { display: none; }
+/* v1.6: the list alone (a user who may only download) uses one column */
+.bk-grid.bk-grid-one { grid-template-columns: minmax(0, 1fr); max-width: 720px; }
 .bk-expand { grid-column: 4; }
 .bk-bankname { margin: 0; font-size: 15.5px; font-weight: 700; line-height: 1.4; overflow-wrap: anywhere; word-break: normal; }
 .bk-bankmeta { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink3); overflow-wrap: anywhere; }

@@ -1167,6 +1167,7 @@ mod tests {
             role,
             must_change_password: false,
             can_manage_banks: true,
+            can_download_banks: true,
             ai_allowed: false,
             uid: String::new(),
         };
@@ -1270,6 +1271,7 @@ mod tests {
             role: Role::Admin,
             must_change_password: false,
             can_manage_banks: true,
+            can_download_banks: true,
             ai_allowed: false,
             uid: String::new(),
         };

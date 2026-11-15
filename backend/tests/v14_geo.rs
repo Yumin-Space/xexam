@@ -1063,7 +1063,7 @@ async fn the_cap_keeps_a_flood_of_sign_ins_from_hammering_the_provider() {
 
 // ---------------------------------------------------------------- the migration to schema 9
 
-const DOWNGRADE_TO_8: &str = "ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; \
+const DOWNGRADE_TO_8: &str = "ALTER TABLE users DROP COLUMN can_download_banks; ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; \
     ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; \
     ALTER TABLE users DROP COLUMN last_active_ua; UPDATE meta SET value = '8' WHERE key = 'schema';";
 
@@ -1114,7 +1114,7 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "9");
+    assert_eq!(schema, "10");
     // data intact, the new columns empty
     let (login, ip, ua): (Option<String>, Option<String>, Option<String>) = c
         .query_row(
@@ -1133,7 +1133,7 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(rows, vec![r#"{"from":8,"to":9}"#.to_string()]);
+    assert_eq!(rows, vec![r#"{"from":8,"to":10}"#.to_string()]);
     // fresh == migrated, and the next open changes nothing
     assert_eq!(master(&db), master(&fresh));
     drop(c);
@@ -1163,7 +1163,7 @@ fn a_fresh_database_is_schema_9_without_a_migrate_row() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "9");
+    assert_eq!(schema, "10");
     let n: i64 = c
         .query_row("SELECT COUNT(*) FROM activity_log", [], |r| r.get(0))
         .expect("count");
@@ -1176,7 +1176,7 @@ fn a_fresh_database_is_schema_9_without_a_migrate_row() {
         .map(|r| r.expect("row"))
         .collect();
     assert_eq!(
-        cols[cols.len() - 5..],
+        cols[cols.len() - 6..cols.len() - 1],
         [
             "last_active_ip",
             "last_active_country",

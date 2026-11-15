@@ -1,3 +1,4 @@
+import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { t } from '../i18n/index.ts';
 import { h, keepInView, type Child } from './dom.ts';
 import { TOUCH_MQ, matches } from './media.ts';
@@ -114,6 +115,42 @@ export function askChoice(o: AskChoiceOptions): Promise<'keep' | 'discard' | nul
     d.addEventListener('close', () => {
       d.remove();
       resolve(d.returnValue === 'keep' || d.returnValue === 'discard' ? d.returnValue : null);
+    });
+    document.body.append(d);
+    d.showModal();
+    focusTitle(d, titleId);
+  });
+}
+
+export interface PickChoice<T extends string> { value: T; icon: MiniIcon; label: string; hint: string; aria: string }
+export interface AskPickOptions<T extends string> { title: string; body: string; choices: readonly PickChoice<T>[]; back: string }
+
+/** v1.6: a dialog with large icon buttons (one per choice) and a back button; resolves with the chosen value, or null
+ *  (back, Esc, closed from outside). One tap on a choice closes it and resolves at once. */
+export function askPick<T extends string>(o: AskPickOptions<T>): Promise<T | null> {
+  return new Promise((resolve) => {
+    if (!hasDialog()) {
+      // No <dialog>: ask for the first choice, then the second; neither gives null
+      const nl = String.fromCharCode(10);
+      const picked = o.choices.find((c, i) => window.confirm(i === 0 ? [o.title, o.body, c.label].join(nl) : c.label + '?'));
+      resolve(picked ? picked.value : null);
+      return;
+    }
+    const titleId = dialogTitleId();
+    const d = h('dialog', { class: 'dlg dlg-pick', 'aria-labelledby': titleId },
+      h('h3', { id: titleId, tabindex: '-1' }, o.title),
+      h('p', null, o.body),
+      h('div', { class: 'picks' }, o.choices.map((c) =>
+        h('button', { class: 'btn pick', type: 'button', id: `dlg-pick-${c.value}`, 'aria-label': c.aria, onclick: () => d.close(c.value) },
+          miniIcon(c.icon, 'pick-ico'),
+          h('span', { class: 'pick-l' }, c.label),
+          h('span', { class: 'pick-h' }, c.hint)))),
+      h('div', { class: 'acts' },
+        h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, o.back)));
+    d.addEventListener('close', () => {
+      d.remove();
+      const hit = o.choices.find((c) => c.value === d.returnValue);
+      resolve(hit ? hit.value : null);
     });
     document.body.append(d);
     d.showModal();

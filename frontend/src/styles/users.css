@@ -110,6 +110,8 @@
   border: 1px solid var(--line-soft); border-bottom: 0; border-radius: 8px 8px 0 0; background: var(--card);
 }
 .us-banktools > .has-tip[hidden] { display: none; }
+/* v1.6: Select all / Deselect all sit at the right end of the row (they wrap to a second line on narrow phones) */
+.us-banktools .us-tool-end { margin-left: auto; }
 .us-tool {
   position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 13.5px; line-height: 1.4; color: var(--ink2);
   cursor: pointer; white-space: nowrap; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
@@ -196,7 +198,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-ico { display: none; }
   .us-acts { grid-column: 1; }
   .us-add { padding: 12px; }
-  /* The owner's bank-access row stays one row: smaller gaps and icons, the short labels (US-5) */
+  /* The owner's bank-access row: smaller gaps and icons, the short labels (US-5); v1.6: with four tools it may wrap to two lines */
   /* (6 px apart: the ja labels need it at 360 px; the 2 px tap margins of neighbours still do not meet) */
   .us-banktools { gap: 4px 6px; padding: 6px; }
   .us-tool { gap: 3px; font-size: 13px; }

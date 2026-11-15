@@ -21,6 +21,7 @@ export function usersListOf(a: UsersResponse): UsersList {
   return {
     users: a.users.map((u) => ({
       ...u,
+      canDownloadBanks: u.canDownloadBanks === true,
       aiSuspended: u.aiSuspended === true,
       lastActiveAt: typeof u.lastActiveAt === 'string' ? u.lastActiveAt : null,
       lastLoginIp: typeof u.lastLoginIp === 'string' ? u.lastLoginIp : null,

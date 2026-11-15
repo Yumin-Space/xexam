@@ -383,6 +383,16 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     tipEl(`${id}-tip-manage`, t('users.tip.manage')));
   manageWrap.id = `${id}-manage-wrap`;
 
+  // v1.6: "Download banks", right after "Manage banks"
+  const download = h('input', {
+    type: 'checkbox', id: `${id}-download`, 'aria-describedby': `${id}-tip-download`,
+    onchange: () => o.set({ ...o.get(), download: download.checked }),
+  });
+  const downloadWrap = withTip(
+    holdOnTouch(h('label', { class: 'us-tool', for: download.id }, download, miniIcon('download'), h('span', null, shortLabel('users.banks.download', 'users.tools.downloadShort'))), t('users.tip.download')),
+    tipEl(`${id}-tip-download`, t('users.tip.download')));
+  downloadWrap.id = `${id}-download-wrap`;
+
   const all = h('input', {
     type: 'checkbox', id: `${id}-all`, 'aria-controls': listId, 'aria-describedby': `${id}-tip-all`,
     onchange: () => {
@@ -431,6 +441,9 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     manageWrap.hidden = admin;
     manage.checked = d.manage;
     manage.disabled = busy;
+    downloadWrap.hidden = admin;
+    download.checked = d.download;
+    download.disabled = busy;
     later.checked = d.later;
     later.disabled = off;
     for (const [bankId, box] of boxes) {
@@ -452,9 +465,10 @@ function bankChecklist(o: ChecklistOptions): Checklist {
     withTip(legendBtn, legendTip, 'us-legend-tip'),
     h('div', { class: 'us-banktools' },
       manageWrap,
+      downloadWrap,
       withTip(holdOnTouch(h('label', { class: 'us-tool', for: all.id }, all, miniIcon('checkAll'),
         h('span', null, shortLabel('users.banks.selectAll', 'users.tools.allShort'))), t('users.tip.selectAll')),
-      tipEl(`${id}-tip-all`, t('users.tip.selectAll'))),
+      tipEl(`${id}-tip-all`, t('users.tip.selectAll')), 'us-tool-end'),
       withTip(holdOnTouch(h('label', { class: 'us-tool', for: none.id }, none, miniIcon('squareMinus'),
         h('span', null, shortLabel('users.banks.deselectAll', 'users.tools.noneShort'))), t('users.tip.deselectAll')),
       tipEl(`${id}-tip-none`, t('users.tip.deselectAll')))),
@@ -541,7 +555,7 @@ async function submitAdd(): Promise<void> {
     // An administrator always sees and manages every bank and has AI while AI+ is available: nothing of that is stored
     const answer = await createUser({
       username: name, password: add.password, role: add.role, banks: access.banks, newBanks: access.newBanks,
-      canManageBanks: admin ? false : access.canManageBanks, ai,
+      canManageBanks: admin ? false : access.canManageBanks, canDownloadBanks: admin ? false : access.canDownloadBanks, ai,
     });
     adopt(answer);
     if (ai) void refreshAi(true);
@@ -796,7 +810,7 @@ function chooseBanks(u: UserRow): Promise<void> {
   return guarded(async () => {
     const banks = await currentBanks();
     if (!onUsersPage()) return;
-    let draft = draftOf(u.banks, u.newBanks, u.canManageBanks);
+    let draft = draftOf(u.banks, u.newBanks, u.canManageBanks, u.canDownloadBanks);
     const list = bankChecklist({
       id: 'us-bdlg', banks, disabled: false, role: u.role,
       get: () => draft,
@@ -820,9 +834,12 @@ function chooseBanks(u: UserRow): Promise<void> {
         }
         try {
           adopt(await updateUser(ch.body));
-          saved = ch.banks
+          const kinds = [ch.banks, ch.manage, ch.download].filter(Boolean).length;
+          saved = ch.banks || kinds > 1
             ? t('users.banks.done', { name: u.username })
-            : t(draft.manage ? 'users.banks.manageOn' : 'users.banks.manageOff', { name: u.username });
+            : ch.manage
+              ? t(draft.manage ? 'users.banks.manageOn' : 'users.banks.manageOff', { name: u.username })
+              : t(draft.download ? 'users.banks.downloadOn' : 'users.banks.downloadOff', { name: u.username });
           return null;
         } catch (e) {
           refreshAfter(e);

@@ -12,30 +12,33 @@ Steps:
   F. SQLite journal mode (v0.7): the database runs in WAL mode and the log says so once; XEXAM_SQLITE_JOURNAL=delete switches it back to
      DELETE (what an older version does on a rollback) with every record kept, and the next start without it is in WAL mode again.
   G. Only the six-column layout (v0.7): a schema-3 database (as v0.6 wrote it) whose bank holds questions of the old 3-column
-     layout is upgraded (now straight to schema 9) with one backup, and its old-layout questions are retired (records,
+     layout is upgraded (now straight to schema 10) with one backup, and its old-layout questions are retired (records,
      statistics and the bank stay; the log names the bank); the next start retires nothing more. The `import` command refuses
      a 3-column workbook (English message, exit code 1, nothing written) and imports a six-column one into that bank. The
      workbooks are made-up and written by this script (a minimal .xlsx built with zipfile).
   H. Schema 4 to 8 in one step (v0.8 + v0.9 + v1.1 + v1.3): a schema-4 database (as v0.7.5 wrote it: the G database with a second
-     user, the two v0.8, the two v0.9 and the four v1.1 columns dropped again and meta.schema set back to 4) is upgraded to schema 9
+     user, the two v0.8, the two v0.9 and the four v1.1 columns dropped again and meta.schema set back to 4) is upgraded to schema 10
      with a backup named xexam-schema4-*; every user then has ai_enabled = 0 and its own 32-hex uid; the next start
      writes nothing (no second backup, the same uids).
   I. The AI link (v0.8): `serve` creates <data>/link/internal.token (43 base64url characters; mode 600 and a folder of
      mode 700 on POSIX systems) and reads the same token again on the next start; with XEXAM_INTERNAL_TOKEN set no file
      is created; a token shorter than 32 characters turns the link off with a log line and the app still runs.
   J. Schema 5 to 8 (v0.9 + v1.1 + v1.3): a v0.8 database with study records (the H database with the two v0.9 attempts columns and
-     the four v1.1 columns dropped again and meta.schema set back to 5) is upgraded to schema 9 with exactly one backup named
+     the four v1.1 columns dropped again and meta.schema set back to 5) is upgraded to schema 10 with exactly one backup named
      xexam-schema5-*; attempts.session_key, attempts.started_at, attempts.time_limit and attempts.ended exist and are NULL
      for the old records, every record is unchanged, and
      the next start writes nothing (no new backup, no upgrade line, the same rows).
   K. Schema 7 to 8 (v1.3): the J database turned back into what v1.2 wrote (no v1.3 columns, tables or index, a session row with
      only the v1.2 columns) is upgraded with exactly one backup named xexam-schema7-*; users.last_active_at is backfilled with
-     seconds, sessions.started_at is filled, the first activity row is system.migrate {"from": 7, "to": 9}, the sign-in switch
+     seconds, sessions.started_at is filled, the first activity row is system.migrate {"from": 7, "to": 10}, the sign-in switch
      stays off, the next start writes nothing; a fresh database has the same columns and index names as the migrated one; a
      v1.2-style session row (no started_at) still works on v1.3.
-  M. Schema 8 to 9 (v1.4): the database turned back into what v1.3 wrote (no users.last_active_ip / _country / _region / _city / _ua) is
-     upgraded with exactly one backup named xexam-schema8-*, the columns exist and are empty, the only system.migrate row says
-     {"from": 8, "to": 9}, and the next start writes nothing.
+  M. Schema 8 to 10 (v1.4 + v1.6): the database turned back into what v1.3 wrote (no users.last_active_ip / _country / _region / _city /
+     _ua, no users.can_download_banks) is upgraded with exactly one backup named xexam-schema8-*, the columns exist and are empty,
+     the only system.migrate row says {"from": 8, "to": 10}, and the next start writes nothing.
+  N. Schema 9 to 10 (v1.6): the database turned back into what v1.4 / v1.5 wrote (no users.can_download_banks) is upgraded with
+     exactly one backup named xexam-schema9-*, the column exists and is 0 for every user, the only system.migrate row says
+     {"from": 9, "to": 10}, and the next start writes nothing.
   L. Sign-in info matrix (v1.3, one switch, the eye): closed (default) -> NOTHING is recorded (no IP or location in users,
      sessions or activity_log), every API answers null, the device (User-Agent) is stored; open -> recording starts and is shown
      (the sign-in made while closed has none); a malformed address falls back to the connecting address, a malformed country is
@@ -65,6 +68,8 @@ exe = os.path.abspath(sys.argv[1])
 results = []
 # v1.4 (schema 9): the last-activity columns of users
 V9_USER_COLS = ('last_active_ip', 'last_active_country', 'last_active_region', 'last_active_city', 'last_active_ua')
+# v1.6 (schema 10): the per-user bank download permission
+V10_USER_COLS = ('can_download_banks',)
 
 
 def ok(cond, msg):
@@ -364,7 +369,7 @@ try:
     os.makedirs(g)
     write_v3_database(os.path.join(g, 'xexam.db'), admin_hash)
     prog, log = run_once(g, 'g1.log')
-    ok('Upgraded the database to schema 9' in log, 'G. the schema-3 database is upgraded to schema 9')
+    ok('Upgraded the database to schema 10' in log, 'G. the schema-3 database is upgraded to schema 10')
     names = [n for n in os.listdir(os.path.join(g, 'backups')) if n.startswith('xexam-schema')]
     ok(len(names) == 1 and names[0].startswith('xexam-schema3-'),
        'G. one backup of the schema-3 database was written first (xexam-schema3-*). Actual %r' % names)
@@ -409,8 +414,8 @@ try:
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         cols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
         ok('ai_enabled' in cols and 'uid' in cols, 'H. a v0.8 database has users.ai_enabled and users.uid. Actual %r' % cols)
-        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '9', 'H. a v1.4 database is schema 9')
-        for col in V9_USER_COLS:  # the v1.4 (schema 9) columns go first: they were added last
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '10', 'H. a v1.6 database is schema 10')
+        for col in V10_USER_COLS + V9_USER_COLS:  # the v1.6 (schema 10) and v1.4 (schema 9) columns go first: they were added last
             c.execute('ALTER TABLE users DROP COLUMN %s' % col)
         c.execute('ALTER TABLE users DROP COLUMN ai_enabled')
         c.execute('ALTER TABLE users DROP COLUMN uid')
@@ -426,13 +431,13 @@ try:
         c.commit()
     before = set(os.listdir(backups))
     prog, log = run_once(g, 'h2.log')
-    ok('Upgraded the database to schema 9' in log, 'H. the schema-4 database is upgraded to schema 9')
+    ok('Upgraded the database to schema 10' in log, 'H. the schema-4 database is upgraded to schema 10')
     added = set(os.listdir(backups)) - before
     ok(len(added) == 1 and next(iter(added)).startswith('xexam-schema4-'), 'H. one backup named xexam-schema4-* was written first. Actual %r' % sorted(added))
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         users = c.execute('SELECT username, ai_enabled, uid FROM users ORDER BY id').fetchall()
         schema = c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0]
-    ok(schema == '9' and len(users) == 2, 'H. schema 9 with both users. Actual %r, %d users' % (schema, len(users)))
+    ok(schema == '10' and len(users) == 2, 'H. schema 10 with both users. Actual %r, %d users' % (schema, len(users)))
     ok(all(u[1] == 0 for u in users), 'H. every user starts with AI+ off (ai_enabled = 0)')
     ok(all(re.fullmatch(r'[0-9a-f]{32}', u[2] or '') for u in users) and len({u[2] for u in users}) == len(users),
        'H. every user has its own 32-hex uid')
@@ -451,8 +456,8 @@ try:
                     [r[1] for r in c.execute('PRAGMA table_info(attempts)')])
 
     rows_before, schema, cols = attempts_state()
-    ok(schema == '9' and 'session_key' in cols and 'started_at' in cols and len(rows_before) >= 1,
-       'J. the upgraded database is schema 9 with attempts.session_key and attempts.started_at and holds records. Actual %r %r' % (schema, cols))
+    ok(schema == '10' and 'session_key' in cols and 'started_at' in cols and len(rows_before) >= 1,
+       'J. the upgraded database is schema 10 with attempts.session_key and attempts.started_at and holds records. Actual %r %r' % (schema, cols))
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         c.execute('DROP INDEX IF EXISTS idx_attempts_session')  # v1.3 index on session_key
         c.execute('ALTER TABLE attempts DROP COLUMN session_key')
@@ -466,19 +471,19 @@ try:
         c.commit()
     before5 = set(os.listdir(backups))
     prog, log = run_once(g, 'j1.log')
-    ok('Upgraded the database to schema 9' in log, 'J. the schema-5 database is upgraded to schema 9')
+    ok('Upgraded the database to schema 10' in log, 'J. the schema-5 database is upgraded to schema 10')
     added5 = set(os.listdir(backups)) - before5
     ok(len(added5) == 1 and next(iter(added5)).startswith('xexam-schema5-'), 'J. exactly one backup named xexam-schema5-* was written first. Actual %r' % sorted(added5))
     rows_after, schema, cols = attempts_state()
-    ok(schema == '9' and all(k in cols for k in ('session_key', 'started_at', 'time_limit', 'ended')),
-       'J. meta.schema is 9 and the v0.9 and v1.1 attempts columns exist. Actual %r %r' % (schema, cols))
+    ok(schema == '10' and all(k in cols for k in ('session_key', 'started_at', 'time_limit', 'ended')),
+       'J. meta.schema is 10 and the v0.9 and v1.1 attempts columns exist. Actual %r %r' % (schema, cols))
     ok(rows_after == rows_before, 'J. every record is unchanged by the upgrade')
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         tags = c.execute('SELECT COUNT(*), COUNT(session_key), COUNT(started_at), COUNT(time_limit), COUNT(ended) FROM attempts').fetchone()
     ok(tags[0] >= 1 and tags[1:] == (0, 0, 0, 0), 'J. session_key, started_at, time_limit and ended are NULL for the old records. Actual %r' % (tags,))
     ok(prog is not None and len(prog['history']) == 1, 'J. the records are still served')
     prog, log = run_once(g, 'j2.log')
-    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before5 | added5 and attempts_state() == (rows_after, '9', cols),
+    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before5 | added5 and attempts_state() == (rows_after, '10', cols),
        'J. the next start writes nothing: no upgrade line, no new backup, the same rows')
 
     # K: schema 7 -> 8. The J database is turned back into what v1.2 wrote, then upgraded
@@ -489,7 +494,7 @@ try:
         c.execute('DROP INDEX IF EXISTS idx_attempts_session')
         c.execute('DROP TABLE IF EXISTS activity_log')
         c.execute('DROP TABLE IF EXISTS system_settings')
-        for col in V9_USER_COLS + V8_USER_COLS:
+        for col in V10_USER_COLS + V9_USER_COLS + V8_USER_COLS:
             c.execute('ALTER TABLE users DROP COLUMN %s' % col)
         for col in V8_SESSION_COLS:
             c.execute('ALTER TABLE sessions DROP COLUMN %s' % col)
@@ -500,7 +505,7 @@ try:
         c.commit()
     before7 = set(os.listdir(backups))
     prog, log = run_once(g, 'k1.log')
-    ok('Upgraded the database to schema 9' in log, 'K. the schema-7 database is upgraded to schema 9')
+    ok('Upgraded the database to schema 10' in log, 'K. the schema-7 database is upgraded to schema 10')
     added7 = set(os.listdir(backups)) - before7
     ok(len(added7) == 1 and next(iter(added7)).startswith('xexam-schema7-'), 'K. exactly one backup named xexam-schema7-* was written first. Actual %r' % sorted(added7))
     with contextlib.closing(sqlite3.connect(os.path.join(backups, next(iter(added7))))) as c:
@@ -516,7 +521,7 @@ try:
         ok(c.execute('SELECT COUNT(*) FROM sessions WHERE started_at IS NULL').fetchone()[0] == 0, 'K. sessions.started_at is filled by the backfill')
         ok(c.execute('SELECT remember FROM sessions').fetchone()[0] == 1, 'K. an old session row reads remember = 1')
         mig = c.execute("SELECT actor, result, detail FROM activity_log WHERE action = 'system.migrate'").fetchall()
-        ok(len(mig) == 1 and mig[0][0] == 'system' and json.loads(mig[0][2]) == {'from': 7, 'to': 9}, 'K. the only log row is system.migrate from 7 to 9. Actual %r' % (mig,))
+        ok(len(mig) == 1 and mig[0][0] == 'system' and json.loads(mig[0][2]) == {'from': 7, 'to': 10}, 'K. the only log row is system.migrate from 7 to 10. Actual %r' % (mig,))
         ok(c.execute("SELECT COUNT(*) FROM system_settings WHERE key = 'users.signin_info' AND value <> '0'").fetchone()[0] == 0, 'K. the sign-in info switch is off after the upgrade')
         ok(c.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_attempts_session'").fetchone() is not None, 'K. the idempotent-save index exists')
     prog, log = run_once(g, 'k2.log')
@@ -547,27 +552,49 @@ try:
         ok(st == 200 and 'user' in j, 'K. a v1.2-style session row (no started_at) is still signed in on v1.3. Actual %d %r' % (st, j))
     run_once(g, 'k3.log', check=old_row_works)
 
-    # M: schema 8 -> 9 (v1.4). The K database is turned back into what v1.3 wrote, then upgraded
+    # M: schema 8 -> 10 (v1.4 + v1.6). The K database is turned back into what v1.3 wrote, then upgraded
     with contextlib.closing(sqlite3.connect(gdb)) as c:
-        for col in V9_USER_COLS:
+        for col in V10_USER_COLS + V9_USER_COLS:
             c.execute('ALTER TABLE users DROP COLUMN %s' % col)
         c.execute('DELETE FROM activity_log WHERE action = ?', ('system.migrate',))
         c.execute("UPDATE meta SET value = '8' WHERE key = 'schema'")
         c.commit()
     before8 = set(os.listdir(backups))
     prog, log = run_once(g, 'm1.log')
-    ok('Upgraded the database to schema 9' in log, 'M. the schema-8 database is upgraded to schema 9')
+    ok('Upgraded the database to schema 10' in log, 'M. the schema-8 database is upgraded to schema 10')
     added8 = set(os.listdir(backups)) - before8
     ok(len(added8) == 1 and next(iter(added8)).startswith('xexam-schema8-'), 'M. exactly one backup named xexam-schema8-* was written first. Actual %r' % sorted(added8))
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         ucols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
-        ok(all(k in ucols for k in V9_USER_COLS), 'M. the v1.4 columns exist. Actual %r' % ucols)
-        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '9', 'M. meta.schema is 9')
+        ok(all(k in ucols for k in V9_USER_COLS + V10_USER_COLS), 'M. the v1.4 and v1.6 columns exist. Actual %r' % ucols)
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '10', 'M. meta.schema is 10')
         mig = c.execute("SELECT detail FROM activity_log WHERE action = 'system.migrate'").fetchall()
-        ok(len(mig) == 1 and json.loads(mig[0][0]) == {'from': 8, 'to': 9}, 'M. the only log row is system.migrate from 8 to 9. Actual %r' % (mig,))
+        ok(len(mig) == 1 and json.loads(mig[0][0]) == {'from': 8, 'to': 10}, 'M. the only log row is system.migrate from 8 to 10. Actual %r' % (mig,))
         ok(c.execute('SELECT COUNT(*) FROM users WHERE last_active_ip IS NOT NULL OR last_active_city IS NOT NULL').fetchone()[0] == 0, 'M. nothing is backfilled')
     prog, log = run_once(g, 'm2.log')
     ok('Upgraded the database' not in log and set(os.listdir(backups)) == before8 | added8, 'M. the next start writes no upgrade line and no new backup')
+
+    # N: schema 9 -> 10 (v1.6). The M database is turned back into what v1.4 / v1.5 wrote, then upgraded
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        for col in V10_USER_COLS:
+            c.execute('ALTER TABLE users DROP COLUMN %s' % col)
+        c.execute('DELETE FROM activity_log WHERE action = ?', ('system.migrate',))
+        c.execute("UPDATE meta SET value = '9' WHERE key = 'schema'")
+        c.commit()
+    before9 = set(os.listdir(backups))
+    prog, log = run_once(g, 'n1.log')
+    ok('Upgraded the database to schema 10' in log, 'N. the schema-9 database is upgraded to schema 10')
+    added9 = set(os.listdir(backups)) - before9
+    ok(len(added9) == 1 and next(iter(added9)).startswith('xexam-schema9-'), 'N. exactly one backup named xexam-schema9-* was written first. Actual %r' % sorted(added9))
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        ucols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
+        ok(all(k in ucols for k in V10_USER_COLS), 'N. the v1.6 column exists. Actual %r' % ucols)
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '10', 'N. meta.schema is 10')
+        ok(c.execute('SELECT COUNT(*) FROM users WHERE can_download_banks <> 0').fetchone()[0] == 0, 'N. no user may download banks after the upgrade')
+        mig = c.execute("SELECT detail FROM activity_log WHERE action = 'system.migrate'").fetchall()
+        ok(len(mig) == 1 and json.loads(mig[0][0]) == {'from': 9, 'to': 10}, 'N. the only log row is system.migrate from 9 to 10. Actual %r' % (mig,))
+    prog, log = run_once(g, 'n2.log')
+    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before9 | added9, 'N. the next start writes no upgrade line and no new backup')
 
     # L: the sign-in info matrix on a fresh database
     l = os.path.join(root, 'l')

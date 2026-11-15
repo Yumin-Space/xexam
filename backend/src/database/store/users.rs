@@ -15,6 +15,8 @@
 //!   use AI Chat while AI is enabled) and the identity stamp `uid` (32 random lower-case hex digits, set by SQLite's
 //!   `randomblob` when the account is created and never changed; never sent to the browser). The AI service keeps the
 //!   stamp next to the user id, so an id that belongs to another account after a restore is never taken for the old one.
+//! - Schema v10 (v1.6): the permission to download the banks a user can see (`can_download_banks`), stored like
+//!   `can_manage_banks` (kept across role changes) and always true for administrators.
 use super::{run_tx, Store};
 use crate::auth::{self, Role, MAX_SESSIONS_PER_USER, SESSION_REFRESH_SECS, SESSION_TTL_SECS};
 use crate::error::DbError;
@@ -37,6 +39,8 @@ pub struct UserRow {
     pub new_banks: bool,
     /// The stored "can manage question banks" permission (`users.can_manage_banks`)
     pub can_manage_banks: bool,
+    /// v1.6: the stored "can download question banks" permission (`users.can_download_banks`)
+    pub can_download_banks: bool,
     /// v0.8: the stored AI+ switch (`users.ai_enabled`)
     pub ai_enabled: bool,
     /// v0.8: the identity stamp (`users.uid`, 32 lower-case hex digits; `""` only for a user an older binary created and
@@ -158,6 +162,9 @@ pub struct SessionUser {
     /// May import banks and update / delete their own: always true for administrators (whatever is stored), else the stored
     /// permission. Read from the database on every request, so a change applies at once.
     pub can_manage_banks: bool,
+    /// May download the banks they can see: always true for administrators, else the stored permission. Read from the
+    /// database on every request.
+    pub can_download_banks: bool,
     /// v0.8: may use AI Chat while AI is enabled in AI settings: always true for administrators (whatever is stored), else
     /// the stored AI+ switch. Read from the database on every request, like `can_manage_banks`.
     pub ai_allowed: bool,
@@ -169,7 +176,7 @@ impl SessionUser {
     pub fn is_admin(&self) -> bool {
         self.role == Role::Admin
     }
-    /// `{"id", "username", "role", "mustChangePassword", "canManageBanks", "aiAllowed"}` (`GET /api/auth/state` and
+    /// `{"id", "username", "role", "mustChangePassword", "canManageBanks", "canDownloadBanks", "aiAllowed"}` (`GET /api/auth/state` and
     /// friends). The identity stamp is not part of it.
     pub fn to_json(&self) -> Value {
         json!({
@@ -178,6 +185,7 @@ impl SessionUser {
             "role": self.role.as_str(),
             "mustChangePassword": self.must_change_password,
             "canManageBanks": self.can_manage_banks,
+            "canDownloadBanks": self.can_download_banks,
             "aiAllowed": self.ai_allowed,
         })
     }
@@ -191,6 +199,7 @@ impl From<&UserRow> for SessionUser {
             role: u.role,
             must_change_password: u.must_change_password,
             can_manage_banks: u.role == Role::Admin || u.can_manage_banks,
+            can_download_banks: u.role == Role::Admin || u.can_download_banks,
             ai_allowed: u.role == Role::Admin || u.ai_enabled,
             uid: u.uid.clone(),
         }
@@ -255,6 +264,8 @@ pub struct UserUpdate {
     pub new_banks: Option<bool>,
     /// v0.6.5: the "can manage question banks" permission
     pub can_manage_banks: Option<bool>,
+    /// v1.6: the "can download question banks" permission
+    pub can_download_banks: Option<bool>,
     /// v0.8: the AI+ switch
     pub ai: Option<bool>,
 }
@@ -270,10 +281,10 @@ pub struct UpdatedUser {
 }
 
 /// Number of columns in [`USER_COLUMNS`] (the next column of a query that appends one is at this index).
-const USER_COLUMN_COUNT: usize = 12;
+const USER_COLUMN_COUNT: usize = 13;
 
 const USER_COLUMNS: &str = "id, username, password_hash, role, disabled, created_at, last_login_at, must_change_password, \
-     new_banks, can_manage_banks, ai_enabled, uid";
+     new_banks, can_manage_banks, ai_enabled, uid, can_download_banks";
 
 fn user_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<UserRow> {
     let role: String = r.get(3)?;
@@ -291,6 +302,7 @@ fn user_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<UserRow> {
         can_manage_banks: r.get::<_, i64>(9)? != 0,
         ai_enabled: r.get::<_, i64>(10)? != 0,
         uid: r.get(11)?,
+        can_download_banks: r.get::<_, i64>(12)? != 0,
     })
 }
 
@@ -543,6 +555,7 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
             "banks": assigned.remove(&u.id).unwrap_or_default(),
             "newBanks": u.new_banks,
             "canManageBanks": u.can_manage_banks,
+            "canDownloadBanks": u.can_download_banks,
             "ai": u.ai_enabled,
             "ownedBanks": owned.remove(&u.id).unwrap_or_default(),
             "lastActiveAt": last_active,
@@ -673,7 +686,7 @@ impl Store {
         let found: Option<(i64, i64, UserRow)> = g
             .query_row(
                 "SELECT s.last_seen_at, s.expires_at, u.id, u.username, u.password_hash, u.role, u.disabled, u.created_at, \
-                 u.last_login_at, u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid \
+                 u.last_login_at, u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks \
                  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=?1",
                 params![token_hash],
                 |r| {
@@ -690,6 +703,7 @@ impl Store {
                         can_manage_banks: r.get::<_, i64>(11)? != 0,
                         ai_enabled: r.get::<_, i64>(12)? != 0,
                         uid: r.get(13)?,
+                        can_download_banks: r.get::<_, i64>(14)? != 0,
                     };
                     Ok((r.get(0)?, r.get(1)?, user))
                 },
@@ -731,7 +745,7 @@ impl Store {
             .query_row(
                 "SELECT s.user_id, s.started_at, s.last_seen_at, s.expires_at, s.remember, s.ip, s.ua, \
                  u.id, u.username, u.password_hash, u.role, u.disabled, u.created_at, u.last_login_at, \
-                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid \
+                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid, u.can_download_banks \
                  FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=?1",
                 params![token_hash],
                 |r| {
@@ -757,6 +771,7 @@ impl Store {
                         can_manage_banks: r.get::<_, i64>(16)? != 0,
                         ai_enabled: r.get::<_, i64>(17)? != 0,
                         uid: r.get(18)?,
+                        can_download_banks: r.get::<_, i64>(19)? != 0,
                     };
                     Ok((user, row))
                 },
@@ -1064,6 +1079,30 @@ impl Store {
         )
     }
 
+    /// [`Store::create_user_full`] without the download permission.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_user_opts(
+        &self,
+        username: &str,
+        hash: &str,
+        role: Role,
+        banks: &BankAccess,
+        new_banks: bool,
+        can_manage_banks: bool,
+        ai: bool,
+    ) -> Result<UserChange<i64>, DbError> {
+        self.create_user_full(
+            username,
+            hash,
+            role,
+            banks,
+            new_banks,
+            can_manage_banks,
+            ai,
+            false,
+        )
+    }
+
     /// [`Store::create_user_opts`] with AI+ off (the default of `POST /api/users/create`).
     pub fn create_user_with(
         &self,
@@ -1087,11 +1126,11 @@ impl Store {
 
     /// `POST /api/users/create`: a new enabled account that must choose a new password at its first sign-in, seeing the
     /// existing banks `banks`, with "include banks imported later" `new_banks`, the bank management permission
-    /// `can_manage_banks` and the AI+ switch `ai` (v0.8), and a new random identity stamp. `username` is already cleaned
+    /// `can_manage_banks`, the AI+ switch `ai` (v0.8) and the download permission `can_download_banks` (v1.6), and a new random identity stamp. `username` is already cleaned
     /// ([`auth::clean_username`]) and `hash` computed. Returns the new id; [`UserChange::UnknownBanks`] when a bank id does
     /// not exist (nothing written).
     #[allow(clippy::too_many_arguments)]
-    pub fn create_user_opts(
+    pub fn create_user_full(
         &self,
         username: &str,
         hash: &str,
@@ -1100,6 +1139,7 @@ impl Store {
         new_banks: bool,
         can_manage_banks: bool,
         ai: bool,
+        can_download_banks: bool,
     ) -> Result<UserChange<i64>, DbError> {
         let at = self.clock.now();
         let g = self.lock();
@@ -1109,8 +1149,8 @@ impl Store {
             }
             c.execute(
                 "INSERT INTO users(username, password_hash, role, disabled, created_at, password_changed_at, must_change_password, \
-                 new_banks, can_manage_banks, ai_enabled, uid) \
-                 VALUES(?1, ?2, ?3, 0, ?4, ?4, 1, ?5, ?6, ?7, lower(hex(randomblob(16))))",
+                 new_banks, can_manage_banks, ai_enabled, uid, can_download_banks) \
+                 VALUES(?1, ?2, ?3, 0, ?4, ?4, 1, ?5, ?6, ?7, lower(hex(randomblob(16))), ?8)",
                 params![
                     username,
                     hash,
@@ -1118,7 +1158,8 @@ impl Store {
                     at,
                     i64::from(new_banks),
                     i64::from(can_manage_banks),
-                    i64::from(ai)
+                    i64::from(ai),
+                    i64::from(can_download_banks)
                 ],
             )?;
             let id = c.last_insert_rowid();
@@ -1169,8 +1210,8 @@ impl Store {
             let username = change.username.clone().unwrap_or_else(|| u.username.clone());
             let ai = change.ai.unwrap_or(u.ai_enabled);
             c.execute(
-                "UPDATE users SET username=?1, role=?2, disabled=?3, new_banks=?4, can_manage_banks=?5, ai_enabled=?6 \
-                 WHERE id=?7",
+                "UPDATE users SET username=?1, role=?2, disabled=?3, new_banks=?4, can_manage_banks=?5, ai_enabled=?6, can_download_banks=?7 \
+                 WHERE id=?8",
                 params![
                     username,
                     role.as_str(),
@@ -1178,6 +1219,7 @@ impl Store {
                     i64::from(change.new_banks.unwrap_or(u.new_banks)),
                     i64::from(change.can_manage_banks.unwrap_or(u.can_manage_banks)),
                     i64::from(ai),
+                    i64::from(change.can_download_banks.unwrap_or(u.can_download_banks)),
                     id
                 ],
             )?;

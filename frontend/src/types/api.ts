@@ -392,6 +392,8 @@ export interface AuthUser {
   mustChangePassword: boolean;
   /** v0.6.5: may open Question banks (import new banks, update and delete their own); always true for administrators */
   canManageBanks: boolean;
+  /** v1.6: may download the banks they can see (Excel / Word); always true for administrators. Optional: an older server omits it; only `true` counts */
+  canDownloadBanks?: boolean;
   /**
    * v0.8: may use AI Chat while AI is enabled in AI settings (administrators always, plain users with AI+). Whether AI is
    * enabled at all comes from the AI service (GET /api/ai/status), not from here.
@@ -457,6 +459,8 @@ export interface UserRow {
   newBanks: boolean;
   /** v0.6.5: the stored "can manage question banks" permission (administrators always have it, whatever is stored) */
   canManageBanks: boolean;
+  /** v1.6: the stored "download banks" permission (administrators always may, whatever is stored); false when absent */
+  canDownloadBanks: boolean;
   /**
    * v0.8: the stored AI+ service switch of User management (administrators always have AI while AI+ is available, whatever
    * is stored). Kept while AI+ is not available; the page then shows no switch.
@@ -526,6 +530,8 @@ export interface UserUpdate {
   banks?: BankAccess;
   newBanks?: boolean;
   canManageBanks?: boolean;
+  /** v1.6: the "download banks" permission */
+  canDownloadBanks?: boolean;
   /** v0.8: the AI+ switch */
   ai?: boolean;
 }
@@ -538,6 +544,8 @@ export interface UserCreate {
   banks: BankAccess;
   newBanks: boolean;
   canManageBanks: boolean;
+  /** v1.6: the "download banks" permission (false when left out) */
+  canDownloadBanks?: boolean;
   ai: boolean;
 }
 

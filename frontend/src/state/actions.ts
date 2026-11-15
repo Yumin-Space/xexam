@@ -390,7 +390,7 @@ function checkSession(): void {
       // at once then; otherwise at most every 60 s)
       const aiChanged = st.user.aiAllowed !== me.aiAllowed;
       const svcChanged = noteAiService(st);
-      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks || aiChanged || svcChanged) {
+      if (st.user.username !== me.username || st.user.canManageBanks !== me.canManageBanks || (st.user.canDownloadBanks === true) !== (me.canDownloadBanks === true) || aiChanged || svcChanged) {
         S.user = st.user;
         render();
       }
@@ -624,7 +624,7 @@ export async function refreshLibrary(): Promise<void> {
   if (st?.library) libraryStamp = st.library;
   if (st?.user) noteAiService(st);
   // The bank-manager permission may have changed with the banks (a refused bank change is often the first sign of it)
-  if (st?.user && S.user && st.user.id === S.user.id && st.user.canManageBanks !== S.user.canManageBanks) S.user = st.user;
+  if (st?.user && S.user && st.user.id === S.user.id && (st.user.canManageBanks !== S.user.canManageBanks || (st.user.canDownloadBanks === true) !== (S.user.canDownloadBanks === true))) S.user = st.user;
   const [bank, banks] = await Promise.all([fetchBank(), fetchBanks()]);
   setBankData(bank, banks);
   // Exam detail shows the questions as stored now; an import may have changed them

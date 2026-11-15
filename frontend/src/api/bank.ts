@@ -1,5 +1,6 @@
 import type { Bank, BankDeleted, BanksResponse, BankSummary, Info } from '../types/api.ts';
-import { getJson, postJson } from './client.ts';
+import { downloadPath, type DownloadFormat } from '../domain/bank-download.ts';
+import { getFile, getJson, postJson, type FileDownload } from './client.ts';
 
 export const fetchInfo = (): Promise<Info> => getJson<Info>('/api/info');
 /** All active questions of all banks (each question carries its `bank` id) */
@@ -15,3 +16,7 @@ export const deleteBank = (id: number, withRecords: boolean): Promise<BankDelete
  */
 export const deleteSheets = (id: number, sheets: readonly string[], withRecords: boolean): Promise<BankDeleted> =>
   postJson<BankDeleted>('/api/banks/sheets/delete', { id, sheets, withRecords });
+
+/** v1.6: one bank as .xlsx (import format) or .docx (for reading). Default time limit 120 s. */
+export const downloadBank = (id: number, format: DownloadFormat): Promise<FileDownload> =>
+  getFile(downloadPath(id, format), { timeoutMs: 120_000 });

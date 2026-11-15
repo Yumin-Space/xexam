@@ -71,14 +71,17 @@
 //!
 //! Schema v8 → v9 (v1.4), in the same way (`backups/xexam-schema8-<YYYYmmdd-HHMMSS>.db` for a v8 database): the v9 step adds
 //! the five `users.last_active_*` columns (NULL for every existing row), writes the ONE `system.migrate` activity row of the
-//! upgrade (`{"from": <old schema>, "to": 9}`, only when the file held data) and stamps the schema `"9"`. A v1.3 binary
-//! opens a v9 file unchanged.
+//! upgrade and stamps the schema `"9"`. A v1.3 binary opens a v9 file unchanged.
+//!
+//! Schema v9 → v10 (v1.6), in the same way: the v10 step adds `users.can_download_banks` (0 for every existing row), writes
+//! the ONE `system.migrate` activity row of the upgrade (`{"from": <old schema>, "to": 10}`, only when the file held data)
+//! and stamps the schema `"10"`. A v1.5 binary opens a v10 file unchanged.
 use super::super::pyjson;
 use super::super::schema::{
     MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
     MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES,
-    MIGRATE_V8_TABLES, SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS,
-    V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
+    MIGRATE_V8_TABLES, SCHEMA_VERSION, V10_COLUMNS, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS,
+    V6_COLUMNS, V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -101,7 +104,7 @@ pub(super) struct Upgrade {
     pub converted_prerelease: bool,
 }
 
-/// Brings the database opened at `db_path` up to schema v9.
+/// Brings the database opened at `db_path` up to schema v10.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -117,12 +120,13 @@ pub(super) fn upgrade(
         Some("6") => 6,
         Some("7") => 7,
         Some("8") => 8,
-        // "9", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 9,
+        Some("9") => 9,
+        // "10", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 10,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 9 || pre {
+    if from < 10 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         let had_data = has_any_data(conn)?;
         if had_data {
@@ -154,7 +158,8 @@ pub(super) fn upgrade(
             if from < 8 {
                 migrate_v8(c)?;
             }
-            migrate_v9(c, from, had_data)?;
+            migrate_v9(c)?;
+            migrate_v10(c, from, had_data)?;
             Ok(created)
         })?;
         out.converted_prerelease = pre;
@@ -387,7 +392,7 @@ fn migrate_v7(c: &Connection) -> Result<(), DbError> {
 /// The v8 DDL and its backfill (inside the caller's transaction): the columns, the activity log and `system_settings`, the
 /// attempts index, `sessions.started_at` = now and `users.last_active_at` = `last_login_at` for the rows that exist. No IP
 /// or location is written here: the sign-in info switch starts off. The upgrade's activity row and the schema stamp are
-/// written by [`migrate_v9`] (one row per upgrade).
+/// written by [`migrate_v10`] (one row per upgrade).
 fn migrate_v8(c: &Connection) -> Result<(), DbError> {
     for (table, column, definition) in V8_COLUMNS {
         if !has_column(c, table, column)? {
@@ -409,20 +414,31 @@ fn migrate_v8(c: &Connection) -> Result<(), DbError> {
     set_schema(c, "8")
 }
 
-/// The v9 DDL (inside the caller's transaction): the five `users.last_active_*` columns (each only when missing), the one
-/// activity row of the upgrade (`system.migrate` `{"from": <old schema>, "to": 9}`, only when the file held data), then the
-/// schema version. Nothing is backfilled.
-fn migrate_v9(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> {
+/// The v9 DDL (inside the caller's transaction): the five `users.last_active_*` columns (each only when missing). Nothing is
+/// backfilled. The upgrade's activity row and the final schema stamp are written by [`migrate_v10`].
+fn migrate_v9(c: &Connection) -> Result<(), DbError> {
     for (table, column, definition) in V9_COLUMNS {
         if !has_column(c, table, column)? {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
         }
     }
-    if had_data && from < 9 {
+    set_schema(c, "9")
+}
+
+/// The v10 DDL (inside the caller's transaction): the `users.can_download_banks` column (only when missing), the one
+/// activity row of the upgrade (`system.migrate` `{"from": <old schema>, "to": 10}`, only when the file held data), then the
+/// schema version.
+fn migrate_v10(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> {
+    for (table, column, definition) in V10_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    if had_data && from < 10 {
         let unix = jiff::Timestamp::now().as_second();
         c.execute(
             "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result)              VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
-            params![unix, json!({ "from": from, "to": 9 }).to_string()],
+            params![unix, json!({ "from": from, "to": 10 }).to_string()],
         )?;
     }
     set_schema(c, SCHEMA_VERSION)

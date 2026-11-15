@@ -18,6 +18,7 @@
 // (ApiError.quota) so the pages can say which cap was reached and when it frees. Its JSON has `retryAfter`, so it is never
 // taken for Nginx's rate limit and never retried.
 import { createSseParser, SseTooLarge } from '../domain/sse.ts';
+import { filenameFromDisposition } from '../domain/bank-download.ts';
 import type { AiCallBlock } from '../types/api.ts';
 
 export type ApiErrorKind =
@@ -262,6 +263,9 @@ export interface GetOptions {
   timeoutMs?: number;
 }
 
+/** How a 2xx body is read: parsed JSON, or a file (v1.6 download; an error status is always the usual JSON error) */
+type ReadMode = 'json' | 'blob';
+
 /** What one try gave: the parsed answer, or the wait in seconds before the next try (Nginx's 429 on a GET / HEAD) */
 type Try<T> = { done: true; value: T } | { done: false; wait: number };
 
@@ -330,6 +334,7 @@ async function readEvents(r: Response, opts: StreamOptions): Promise<void> {
 
 async function attemptOnce<T>(
   input: string, init: RequestInit | undefined, retry: number | null, signal: AbortSignal | undefined, stream?: StreamOptions,
+  mode: ReadMode = 'json',
 ): Promise<Try<T>> {
   let r: Response;
   try {
@@ -350,6 +355,10 @@ async function attemptOnce<T>(
       await readEvents(r, stream);
       return { done: true, value: undefined as T };
     }
+    if (mode === 'blob' && r.ok) {
+      const blob = await r.blob();
+      return { done: true, value: { blob, name: filenameFromDisposition(r.headers.get('Content-Disposition')) } as T };
+    }
     return { done: true, value: await parse<T>(r, path) };
   } catch (e) {
     if (stream && isAbortError(e)) throw e;
@@ -361,7 +370,7 @@ async function attemptOnce<T>(
   }
 }
 
-async function send<T>(input: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
+async function send<T>(input: string, init?: RequestInit, timeoutMs?: number, mode: ReadMode = 'json'): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const retries = method === 'GET' || method === 'HEAD';
   const plan = retryPlan(method, input.split('?')[0] ?? input);
@@ -372,7 +381,7 @@ async function send<T>(input: string, init?: RequestInit, timeoutMs?: number): P
     const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
     let res: Try<T>;
     try {
-      res = await attemptOnce<T>(input, init, retries && attempt < RATE_LIMIT_TRIES ? attempt : null, ctrl?.signal);
+      res = await attemptOnce<T>(input, init, retries && attempt < RATE_LIMIT_TRIES ? attempt : null, ctrl?.signal, undefined, mode);
     } catch (e) {
       if (timer != null) clearTimeout(timer);
       if (failures + 1 < plan.tries && isTransient(e)) {
@@ -394,6 +403,15 @@ async function send<T>(input: string, init?: RequestInit, timeoutMs?: number): P
 
 export function getJson<T>(path: string, opts: GetOptions = {}): Promise<T> {
   return send<T>(path, { method: 'GET' }, opts.timeoutMs);
+}
+
+export interface FileDownload { blob: Blob; name: string | null }
+
+/** GET a file (v1.6 bank download). Same cookie, retry, 429 and auth handling as getJson. A non-2xx answer is read as the
+ *  usual JSON error and thrown as ApiError, exactly like getJson. `name` comes from Content-Disposition
+ *  (filenameFromDisposition). */
+export function getFile(path: string, opts: GetOptions = {}): Promise<FileDownload> {
+  return send<FileDownload>(path, { method: 'GET' }, opts.timeoutMs, 'blob');
 }
 
 export function postJson<T>(path: string, body?: unknown): Promise<T> {

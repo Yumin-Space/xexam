@@ -10,6 +10,8 @@
 //! - Bank management routes (v0.6.5: upload, import confirm / cancel, import history, bank delete) answer 403
 //!   `MSG_NO_BANK_PERMISSION` to plain users without the "can manage question banks" permission. Which banks a bank manager may
 //!   update or delete (only their own) is checked by the handlers, against the database, inside the write.
+//! - v1.6: the bank download route answers 403 `MSG_NO_DOWNLOAD_PERMISSION` to plain users without the "download question
+//!   banks" permission (`Access::BankDownloader`).
 //! - The session is read from the `xexam_session` cookie only. v1.3: how long a session lives depends on the user's current
 //!   role and the "keep me signed in" box ([`auth::session_deadline`]): administrators 24 h idle / 7 days hard, users 30 days
 //!   sliding or 12 h. A request that counts as activity (every route but the ones with `activity: false`) touches the session
@@ -28,9 +30,9 @@
 //!   (409 [`MSG_AI_SERVICE_OFF`](super::response::MSG_AI_SERVICE_OFF), nothing written).
 use super::response::{
     json_resp, MSG_ADMIN_ONLY, MSG_BAD_LOGIN, MSG_BAD_PASSWORD, MSG_BAD_REQUEST, MSG_BAD_USERNAME,
-    MSG_LAST_ADMIN, MSG_NOT_YOURSELF, MSG_NO_BANK_PERMISSION, MSG_PASSWORD_CHANGE_REQUIRED,
-    MSG_SAME_PASSWORD, MSG_SIGN_IN_REQUIRED, MSG_UNKNOWN_BANKS, MSG_USERNAME_TAKEN,
-    MSG_USER_NOT_FOUND, MSG_WRONG_PASSWORD,
+    MSG_LAST_ADMIN, MSG_NOT_YOURSELF, MSG_NO_BANK_PERMISSION, MSG_NO_DOWNLOAD_PERMISSION,
+    MSG_PASSWORD_CHANGE_REQUIRED, MSG_SAME_PASSWORD, MSG_SIGN_IN_REQUIRED, MSG_UNKNOWN_BANKS,
+    MSG_USERNAME_TAKEN, MSG_USER_NOT_FOUND, MSG_WRONG_PASSWORD,
 };
 use super::{blocking, body_flag, body_id, AppState, PyVal};
 use crate::activity::{Actor, ClientInfo, Entry};
@@ -61,6 +63,8 @@ pub enum Access {
     Admin,
     /// Administrators and plain users with the "can manage question banks" permission (v0.6.5)
     BankManager,
+    /// Administrators and plain users with the "download question banks" permission (v1.6)
+    BankDownloader,
 }
 
 /// One route of the API.
@@ -101,6 +105,7 @@ pub const ROUTES: &[Route] = &[
     quiet("GET", "/api/auth/state", Access::Public),
     route("GET", "/api/bank", Access::SignedIn),
     route("GET", "/api/banks", Access::SignedIn),
+    route("GET", "/api/banks/download", Access::BankDownloader),
     route("GET", "/api/progress", Access::SignedIn),
     route("GET", "/api/imports", Access::BankManager),
     route("GET", "/api/records", Access::SignedIn),
@@ -533,6 +538,10 @@ pub async fn authorize(
     // `can_manage_banks` is true for every administrator (see `SessionUser`) and read from the database with the session
     if access == Access::BankManager && !a.user.can_manage_banks {
         return Err(status(StatusCode::FORBIDDEN, MSG_NO_BANK_PERMISSION));
+    }
+    // v1.6: `can_download_banks` is true for every administrator and read from the database with the session
+    if access == Access::BankDownloader && !a.user.can_download_banks {
+        return Err(status(StatusCode::FORBIDDEN, MSG_NO_DOWNLOAD_PERMISSION));
     }
     Ok(Some(a))
 }
@@ -1340,6 +1349,14 @@ fn can_manage_field(data: &PyVal) -> Result<Option<bool>, AppError> {
     }
 }
 
+/// `"canDownloadBanks"` (v1.6): absent → `None`; a bool → that; anything else → 400.
+fn can_download_field(data: &PyVal) -> Result<Option<bool>, AppError> {
+    match data.get("canDownloadBanks") {
+        None => Ok(None),
+        some => body_flag(some).map(Some),
+    }
+}
+
 /// `"ai"` (v0.8, the AI+ switch): absent → `None`; a bool → that; anything else → 400.
 fn ai_field(data: &PyVal) -> Result<Option<bool>, AppError> {
     match data.get("ai") {
@@ -1387,10 +1404,12 @@ fn user_id(data: &PyVal) -> Result<i64, AppError> {
     body_id(data.get("id"))?.ok_or(status(StatusCode::NOT_FOUND, MSG_USER_NOT_FOUND))
 }
 
-/// `POST /api/users/create` `{"username", "password", "role", "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}` →
+/// `POST /api/users/create` `{"username", "password", "role", "banks"?, "newBanks"?, "canManageBanks"?,
+/// "canDownloadBanks"?, "ai"?}` →
 /// `{"users": [...]}`. The new user must change the password at the first sign-in. `banks` (the existing banks they see)
 /// defaults to `[]` (no bank until an administrator chooses some), `newBanks` ("include banks imported later") to false
-/// (true with the shorthand `"banks": "all"`), `canManageBanks` to false, `ai` (v0.8, AI+; stored for administrators too,
+/// (true with the shorthand `"banks": "all"`), `canManageBanks` and `canDownloadBanks` (v1.6, download the banks they can
+/// see; stored for administrators too, who always may) to false, `ai` (v0.8, AI+; stored for administrators too,
 /// who always have it) to false. `"ai": true` while AI+ is not available is refused (409 `MSG_AI_SERVICE_OFF`) after the
 /// body is checked and before anything else (the password is not hashed, the user not created, nothing logged).
 pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
@@ -1402,6 +1421,7 @@ pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     let new_banks = new_banks_of(data, banks.as_ref())?.unwrap_or(false);
     let banks = banks.unwrap_or(BankAccess::Only(Vec::new()));
     let can_manage = can_manage_field(data)?.unwrap_or(false);
+    let can_download = can_download_field(data)?.unwrap_or(false);
     let ai = ai_field(data)?.unwrap_or(false);
     if ai {
         require_ai_available(st)?;
@@ -1411,7 +1431,16 @@ pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     let name = username.clone();
     refused(
         blocking(move || {
-            store.create_user_opts(&name, &phc, role, &banks, new_banks, can_manage, ai)
+            store.create_user_full(
+                &name,
+                &phc,
+                role,
+                &banks,
+                new_banks,
+                can_manage,
+                ai,
+                can_download,
+            )
         })
         .await?,
     )?;
@@ -1423,9 +1452,10 @@ pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     users_body_noted(st, &username, note).await
 }
 
-/// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`
+/// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?,
+/// "canDownloadBanks"?, "ai"?}`
 /// → `{"users": [...]}`; only the fields that are given change (`"banks": "all"` also sets `newBanks` unless it is given).
-/// A role change keeps `banks`, `newBanks`, `canManageBanks` and `ai` (they matter only while the user is a plain user).
+/// A role change keeps `banks`, `newBanks`, `canManageBanks`, `canDownloadBanks` and `ai` (they matter only while the user is a plain user).
 /// Switching AI+ on or off is logged on its own line (`user "admin" turned AI+ off for user "sam"`); a request that only
 /// switches AI+ logs just that line. A request with `"ai"` (true or false, changed or not, alone or with other fields)
 /// while AI+ is not available is refused as a whole (409 `MSG_AI_SERVICE_OFF`, nothing written, nothing logged).
@@ -1443,6 +1473,7 @@ pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
         new_banks: new_banks_of(data, banks.as_ref())?,
         banks,
         can_manage_banks: can_manage_field(data)?,
+        can_download_banks: can_download_field(data)?,
         ai: ai_field(data)?,
     };
     if change.ai.is_some() {
@@ -1471,6 +1502,9 @@ pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     }
     if change.can_manage_banks.is_some() {
         changed.push("canManageBanks");
+    }
+    if change.can_download_banks.is_some() {
+        changed.push("canDownloadBanks");
     }
     if change.ai.is_some() {
         changed.push("ai");

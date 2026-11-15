@@ -85,6 +85,11 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
     en: 'An internal server error occurred. Please try again later.',
     ja: 'サーバー内部でエラーが発生しました。しばらくしてから再試行してください。',
   }],
+  // v1.6 (MSG_NO_DOWNLOAD_PERMISSION)
+  ['你没有下载题库的权限，请联系管理员。', {
+    en: 'You do not have permission to download question banks. Please contact an administrator.',
+    ja: '問題集をダウンロードする権限がありません。管理者に連絡してください。',
+  }],
   // v0.5 (MSG_BANK_NOT_FOUND, MSG_RECORD_NOT_FOUND, MSG_BAD_TARGET, MSG_BAD_REQUEST, MSG_BAD_SETTINGS)
   ['这个题库不存在（可能已被删除），请刷新页面后再试。', {
     en: 'This question bank does not exist (it may have been deleted). Reload the page and try again.',
