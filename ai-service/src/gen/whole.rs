@@ -48,14 +48,14 @@ You get SLOTS. For every slot write exactly one NEW question that tests the same
 Rules:
 1. Never copy a source question. Use a new scenario and new wording; do not reuse a source stem or a source option list. The new question must be answerable with the knowledge the source tests.
 2. Write every text in three languages: English ("en"), Simplified Chinese ("zh") and Japanese ("ja"). The three say the same thing. Product names, commands, numbers and code stay unchanged in all three. A source text may lack a language; still write all three.
-3. "single" slots have exactly one correct option. "multi" slots have exactly the number of correct options the slot names. Mark every option with "correct": true or false.
+3. "single" slots have exactly one correct option. "multi" slots have exactly the number of correct options the slot names. Do not mark options. Give the correct ones in one field "answer": an array of letters in option order (A = the first option you write, B = the second, C = the third, ...), e.g. ["B"] or ["A","D"]; every option carries only its text.
 4. Write exactly the number of options the slot names. Options are distinct, plausible and similar in length and style. Never use "all of the above", "none of the above" or options that refer to other options.
 5. The explanation says why the correct option(s) are correct and why each other option is wrong. Refer to options by their content, never by a letter or a position ("A", "the first option"): the options are shuffled afterwards.
 6. Do not repeat a question from the ALREADY WRITTEN list.
 7. Answer with ONE JSON object and nothing else (no Markdown, no code fence, no comment), exactly in this shape:
-{"questions":[{"slot":1,"stem":{"en":"...","zh":"...","ja":"..."},"options":[{"en":"...","zh":"...","ja":"...","correct":true}],"explanation":{"en":"...","zh":"...","ja":"..."}}]}
+{"questions":[{"slot":1,"stem":{"en":"...","zh":"...","ja":"..."},"options":[{"en":"...","zh":"...","ja":"..."}],"answer":["A"],"explanation":{"en":"...","zh":"...","ja":"..."}}]}
 Example of one complete question (made-up; only the format and style count, never copy its content):
-{"questions":[{"slot":1,"stem":{"en":"Why should an oven be preheated before baking bread?","zh":"烘焙面包之前为什么要先预热烤箱？","ja":"パンを焼く前にオーブンを予熱するのはなぜですか。"},"options":[{"en":"So the dough bakes at the right temperature from the start","zh":"让面团从一开始就在合适的温度下烘烤","ja":"生地を最初から適切な温度で焼けるようにするため","correct":true},{"en":"So the yeast is woken up by the dry heat of the oven air","zh":"让酵母被烤箱里干燥的热空气唤醒","ja":"酵母がオーブンの乾いた熱気で目覚めるようにするため","correct":false},{"en":"So the oven uses less energy over the whole baking time","zh":"让烤箱在整个烘烤过程中耗电更少","ja":"オーブンが焼成の間ずっと使う電力を減らせるようにするため","correct":false},{"en":"So the crust is set before the inside has a chance to rise","zh":"让外皮在内部来得及发起之前就定型","ja":"中が膨らむ前に表面を固めてしまうため","correct":false}],"explanation":{"en":"Preheating means the dough meets the right temperature from the start, so it rises and sets as intended. The yeast does not need dry oven air to wake up, preheating does not save energy, and a crust that sets before the inside has risen would make the loaf dense, not better.","zh":"预热后面团从一开始就处于合适的温度，能按预期膨胀和定型。酵母并不需要干燥的热空气来唤醒，预热也不会省电，而外皮在内部发起之前就定型只会让面包变得又密又硬。","ja":"予熱しておくと、生地は最初から適切な温度に触れ、狙いどおりに膨らんで固まります。酵母は乾いた熱気がなくても目覚め、予熱で電力が減ることはなく、中が膨らむ前に表面が固まると生地は詰まった仕上がりになってしまいます。"}}]}
+{"questions":[{"slot":1,"stem":{"en":"Why should an oven be preheated before baking bread?","zh":"烘焙面包之前为什么要先预热烤箱？","ja":"パンを焼く前にオーブンを予熱するのはなぜですか。"},"options":[{"en":"So the dough bakes at the right temperature from the start","zh":"让面团从一开始就在合适的温度下烘烤","ja":"生地を最初から適切な温度で焼けるようにするため"},{"en":"So the yeast is woken up by the dry heat of the oven air","zh":"让酵母被烤箱里干燥的热空气唤醒","ja":"酵母がオーブンの乾いた熱気で目覚めるようにするため"},{"en":"So the oven uses less energy over the whole baking time","zh":"让烤箱在整个烘烤过程中耗电更少","ja":"オーブンが焼成の間ずっと使う電力を減らせるようにするため"},{"en":"So the crust is set before the inside has a chance to rise","zh":"让外皮在内部来得及发起之前就定型","ja":"中が膨らむ前に表面を固めてしまうため"}],"answer":["A"],"explanation":{"en":"Preheating means the dough meets the right temperature from the start, so it rises and sets as intended. The yeast does not need dry oven air to wake up, preheating does not save energy, and a crust that sets before the inside has risen would make the loaf dense, not better.","zh":"预热后面团从一开始就处于合适的温度，能按预期膨胀和定型。酵母并不需要干燥的热空气来唤醒，预热也不会省电，而外皮在内部发起之前就定型只会让面包变得又密又硬。","ja":"予熱しておくと、生地は最初から適切な温度に触れ、狙いどおりに膨らんで固まります。酵母は乾いた熱気がなくても目覚め、予熱で電力が減ることはなく、中が膨らむ前に表面が固まると生地は詰まった仕上がりになってしまいます。"}}]}
 Lengths: a stem at most 600 characters per language, an option at most 200, an explanation at most 800."##;
 
 // —— the prefix ——————————————————————————————————————————————————————————————————————————————————————————————————————
@@ -441,14 +441,14 @@ pub fn slot_list(slots: &[&Slot]) -> Value {
     )
 }
 
-/// The output tokens of a plan call for `goal` slots: `min(18600, 3200 + 90 * goal)` (the answer's budget plus 2600
-/// tokens of room for the model's thinking).
+/// The output tokens of a plan call for `goal` slots: `min(22000, 6200 + 90 * goal)` (the answer's budget plus 5600
+/// tokens of room for the model's thinking; 20 slots get 8000, the owner's figure).
 pub fn plan_want(goal: usize) -> i64 {
     i64::try_from(goal)
         .unwrap_or(i64::MAX)
         .saturating_mul(90)
-        .saturating_add(3_200)
-        .min(18_600)
+        .saturating_add(6_200)
+        .min(22_000)
 }
 
 /// The user text of a plan call: the slot list of one chunk (and that chunk's notes of the global plan).
@@ -1168,8 +1168,8 @@ mod tests {
         assert!(u.starts_with("TASK PLAN\nSLOTS\n[{\"slot\":3"));
         assert!(u.contains("GLOBAL NOTES") && u.ends_with("Plan the 2 questions now."));
         assert!(!plan_user(&refs, None).contains("GLOBAL NOTES"));
-        assert_eq!(plan_want(20), 5_000);
-        assert_eq!(plan_want(300), 18_600);
+        assert_eq!(plan_want(20), 8_000);
+        assert_eq!(plan_want(300), 22_000);
     }
 
     #[test]

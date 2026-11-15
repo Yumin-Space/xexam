@@ -443,12 +443,24 @@ fn body_names(error_body: &str, field: &str) -> bool {
     candidates.iter().flatten().any(|text| text.contains(field))
 }
 
-/// `true` for a 400 / 422 whose error body names the thinking-strength parameter: `effort` (this also matches
-/// `reasoning_effort`), or `output_config` without `format` (a structured-output refusal stays with the schema ladder).
+/// `true` for a 400 / 422 whose error body is about the thinking-strength parameter: it names `effort` (this also
+/// matches `reasoning_effort`), `reasoning` or `thinking` (Google answers "Thinking level is not supported for this
+/// model." for a Gemma model), or `output_config` without `format` (a structured-output refusal stays with the schema
+/// ladder). Case does not matter, and a body that is a JSON array (Google's form) is read by its first element.
 pub fn effort_refused(status: u16, error_body: &str) -> bool {
-    matches!(status, 400 | 422)
-        && (body_names(error_body, "effort")
-            || (body_names(error_body, "output_config") && !body_names(error_body, "format")))
+    if !matches!(status, 400 | 422) {
+        return false;
+    }
+    let lower = error_body.to_lowercase();
+    let first = match serde_json::from_str::<Value>(&lower) {
+        Ok(Value::Array(a)) => a.into_iter().next().map(|v| v.to_string()),
+        _ => None,
+    };
+    let body = first.as_deref().unwrap_or(&lower);
+    ["effort", "reasoning", "thinking"]
+        .iter()
+        .any(|w| body_names(body, w))
+        || (body_names(body, "output_config") && !body_names(body, "format"))
 }
 
 /// The next step of the ladder after an HTTP refusal answered before any stream event: only for status 400 or 422
@@ -2430,6 +2442,14 @@ mod tests {
         let mt = r#"{"error":{"message":"max_tokens is too large","param":"max_tokens"}}"#;
         assert!(!effort_refused(400, mt));
         assert!(!effort_refused(400, "not json"));
+        // Google (OpenAI compatibility) answers a Gemma model with a JSON array and the words "Thinking level" / "budget"
+        let google = r#"[{ "error": { "code": 400, "message": "Thinking level is not supported for this model.", "status": "INVALID_ARGUMENT" } } ]"#;
+        assert!(effort_refused(400, google));
+        let budget = r#"[{"error":{"code":400,"message":"Thinking budget is not supported for this model."}}]"#;
+        assert!(effort_refused(400, budget));
+        assert!(!effort_refused(500, google));
+        let other = r#"[{"error":{"code":400,"message":"Request contains an invalid argument."}}]"#;
+        assert!(!effort_refused(400, other));
     }
 
     #[test]

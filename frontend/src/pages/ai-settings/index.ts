@@ -152,7 +152,8 @@ export function renderAiSettings(): HTMLElement {
       card = genSection();
       break;
     default:
-      card = [connectionsSection(s), enableSection(s), modelsSection(s), switchesSection(s)];
+      // Owner's order (v1.6): connections, the AI+ master switch, the feature switches, then the models
+      card = [connectionsSection(s), enableSection(s), switchesSection(s), modelsSection(s)];
   }
   return h('div', { class: 'page page-ais' },
     head,

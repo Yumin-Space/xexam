@@ -1160,8 +1160,8 @@ async fn drive_generation(ctx: &Ctx, job: &GenJob, run: &mut Run) -> Result<(), 
                 whole_gen::GEN_WHOLE_SYSTEM_PROMPT,
                 None,
                 &user,
-                // the answer (about 4 000 tokens at most) plus room for the model's own thinking (v1.6)
-                6_600,
+                // the answer (about 4 000 tokens at most) plus room for the model's own thinking (v1.6, owner: 8 000)
+                8_000,
                 Some(false),
                 attempt,
                 crate::gen::schema::global_plan(),

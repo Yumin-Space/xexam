@@ -45,6 +45,19 @@ fn tri_of(v: &Value, keep_newline: bool) -> Option<Tri> {
     })
 }
 
+/// One entry of `answer`: a letter A, B, C ... (case-insensitive) or a 0-based integer, as an option index.
+fn answer_index(v: &Value) -> Option<usize> {
+    if let Some(n) = v.as_u64() {
+        return usize::try_from(n).ok();
+    }
+    let mut chars = v.as_str()?.trim().chars();
+    let c = chars.next()?.to_ascii_uppercase();
+    if chars.next().is_some() || !c.is_ascii_uppercase() {
+        return None;
+    }
+    Some((c as u8 - b'A') as usize)
+}
+
 fn element(v: &Value) -> Result<RawQuestion, usize> {
     let slot = v
         .get("slot")
@@ -63,25 +76,44 @@ fn element(v: &Value) -> Result<RawQuestion, usize> {
         .ok_or(unusable)?;
     let list = v.get("options").and_then(Value::as_array).ok_or(unusable)?;
     let mut options = Vec::with_capacity(list.len());
-    let mut any_true = false;
-    let mut any_missing = false;
     for o in list {
         let text = tri_of(o, false).ok_or(unusable)?;
-        // A missing `correct` is decided below; a present one must be a boolean.
-        let correct = match o.get("correct") {
-            None => {
-                any_missing = true;
-                false
-            }
-            Some(c) => c.as_bool().ok_or(unusable)?,
-        };
-        any_true |= correct;
-        options.push(RawOption { text, correct });
+        options.push(RawOption {
+            text,
+            correct: false,
+        });
     }
-    // Lenient: an option without `correct` counts as false when another option of the element is marked true;
-    // with no true option at all the element stays unusable.
-    if any_missing && !any_true {
-        return Err(unusable);
+    match v.get("answer") {
+        // v1.6 shape: one `answer` array of option letters (or 0-based positions) decides every flag.
+        Some(answer) => {
+            let picks = answer.as_array().ok_or(unusable)?;
+            if picks.is_empty() {
+                return Err(unusable);
+            }
+            for p in picks {
+                let idx = answer_index(p).ok_or(unusable)?;
+                options.get_mut(idx).ok_or(unusable)?.correct = true;
+            }
+        }
+        // Old shape: per-option `correct` booleans. A missing one counts as false when another option is true;
+        // with no true option at all the element stays unusable.
+        None => {
+            let mut any_true = false;
+            let mut any_missing = false;
+            for (o, raw) in list.iter().zip(options.iter_mut()) {
+                raw.correct = match o.get("correct") {
+                    None => {
+                        any_missing = true;
+                        false
+                    }
+                    Some(c) => c.as_bool().ok_or(unusable)?,
+                };
+                any_true |= raw.correct;
+            }
+            if any_missing && !any_true {
+                return Err(unusable);
+            }
+        }
     }
     Ok(RawQuestion {
         slot,
@@ -220,6 +252,79 @@ mod tests {
             r#"{"en":"a","zh":"b","ja":"c","correct":true},{"en":"d","zh":"e","ja":"f","correct":"yes"}"#,
         );
         assert_eq!(parse_answer(&t).unwrap()[0], Err(4));
+    }
+
+    fn with_answer(opts: &str, answer: &str) -> String {
+        with_options(opts).replace(
+            r#""options":["#,
+            &format!(r#""answer":{answer},"options":["#),
+        )
+    }
+
+    const THREE: &str =
+        r#"{"en":"a","zh":"b","ja":"c"},{"en":"d","zh":"e","ja":"f"},{"en":"g","zh":"h","ja":"i"}"#;
+
+    fn flags(t: &str) -> Vec<bool> {
+        let q = parse_answer(t).unwrap().remove(0).unwrap();
+        q.options.iter().map(|o| o.correct).collect()
+    }
+
+    #[test]
+    fn answer_letters_set_the_flags() {
+        assert_eq!(flags(&with_answer(THREE, r#"["B"]"#)), [false, true, false]);
+        assert_eq!(
+            flags(&with_answer(THREE, r#"["A","C"]"#)),
+            [true, false, true]
+        );
+        assert_eq!(
+            flags(&with_answer(THREE, r#"["C","C"]"#)),
+            [false, false, true]
+        );
+    }
+
+    #[test]
+    fn answer_accepts_lower_case_and_integers() {
+        assert_eq!(flags(&with_answer(THREE, r#"["b"]"#)), [false, true, false]);
+        assert_eq!(flags(&with_answer(THREE, r#"[0,2]"#)), [true, false, true]);
+    }
+
+    #[test]
+    fn a_bad_answer_is_unusable() {
+        for a in [
+            r#"["D"]"#,
+            "[3]",
+            "[]",
+            r#"["AB"]"#,
+            r#"[""]"#,
+            r#""B""#,
+            "[true]",
+            "[null]",
+        ] {
+            assert_eq!(
+                parse_answer(&with_answer(THREE, a)).unwrap()[0],
+                Err(4),
+                "{a}"
+            );
+        }
+        // no answer and no `correct` flags at all
+        assert_eq!(parse_answer(&with_options(THREE)).unwrap()[0], Err(4));
+    }
+
+    #[test]
+    fn answer_wins_over_old_correct_flags() {
+        let t = with_answer(
+            r#"{"en":"a","zh":"b","ja":"c","correct":true},{"en":"d","zh":"e","ja":"f","correct":false}"#,
+            r#"["B"]"#,
+        );
+        assert_eq!(flags(&t), [false, true]);
+    }
+
+    #[test]
+    fn old_form_without_answer_still_reads() {
+        let t = with_options(
+            r#"{"en":"a","zh":"b","ja":"c","correct":false},{"en":"d","zh":"e","ja":"f","correct":true}"#,
+        );
+        assert_eq!(flags(&t), [false, true]);
     }
 
     #[test]

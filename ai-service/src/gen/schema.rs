@@ -25,10 +25,9 @@ fn option() -> Value {
         "properties": {
             "en": {"type": "string"},
             "zh": {"type": "string"},
-            "ja": {"type": "string"},
-            "correct": {"type": "boolean"}
+            "ja": {"type": "string"}
         },
-        "required": ["en", "zh", "ja", "correct"],
+        "required": ["en", "zh", "ja"],
         "additionalProperties": false
     })
 }
@@ -45,9 +44,10 @@ static QUESTIONS: LazyLock<Value> = LazyLock::new(|| {
                         "slot": {"type": "integer"},
                         "stem": tri(),
                         "options": {"type": "array", "items": option()},
+                        "answer": {"type": "array", "items": {"type": "string"}},
                         "explanation": tri()
                     },
-                    "required": ["slot", "stem", "options", "explanation"],
+                    "required": ["slot", "stem", "options", "answer", "explanation"],
                     "additionalProperties": false
                 }
             }
@@ -118,7 +118,7 @@ static GLOBAL_PLAN: LazyLock<Value> = LazyLock::new(|| {
     })
 });
 
-/// The answer of a writing call: `{"questions":[{"slot","stem","options","explanation"}]}`.
+/// The answer of a writing call: `{"questions":[{"slot","stem","options","answer","explanation"}]}`.
 pub fn questions() -> &'static Value {
     &QUESTIONS
 }

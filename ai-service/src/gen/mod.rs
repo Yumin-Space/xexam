@@ -334,18 +334,35 @@ pub(crate) mod testkit {
         }
     }
 
-    /// The JSON text a well-behaved model would answer for these raw questions.
+    /// The JSON text a well-behaved model would answer for these raw questions: the v1.6 shape (option texts plus
+    /// one `answer` array of letters). A question without any correct option is written in the old per-option
+    /// `correct` shape instead, so tests of the downstream count checks still reach those checks.
     pub fn answer_json(raws: &[RawQuestion]) -> String {
         let qs: Vec<serde_json::Value> = raws
             .iter()
             .map(|q| {
-                serde_json::json!({
+                let letters: Vec<String> = q
+                    .options
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, o)| o.correct)
+                    .map(|(k, _)| char::from(b'A' + k as u8).to_string())
+                    .collect();
+                let old = letters.is_empty();
+                let mut m = serde_json::json!({
                     "slot": q.slot,
                     "stem": {"en": q.stem.en, "zh": q.stem.zh, "ja": q.stem.ja},
-                    "options": q.options.iter().map(|o| serde_json::json!(
-                        {"en": o.text.en, "zh": o.text.zh, "ja": o.text.ja, "correct": o.correct})).collect::<Vec<_>>(),
+                    "options": q.options.iter().map(|o| if old {
+                        serde_json::json!({"en": o.text.en, "zh": o.text.zh, "ja": o.text.ja, "correct": o.correct})
+                    } else {
+                        serde_json::json!({"en": o.text.en, "zh": o.text.zh, "ja": o.text.ja})
+                    }).collect::<Vec<_>>(),
                     "explanation": {"en": q.explanation.en, "zh": q.explanation.zh, "ja": q.explanation.ja},
-                })
+                });
+                if !old {
+                    m["answer"] = serde_json::json!(letters);
+                }
+                m
             })
             .collect();
         serde_json::json!({ "questions": qs }).to_string()
