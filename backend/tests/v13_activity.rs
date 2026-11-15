@@ -121,6 +121,9 @@ fn admin(a: &App) -> String {
 }
 
 async fn get(a: &App, path: &str, cookie: &str) -> Resp {
+    // Two tests capture log lines with a per-thread subscriber; rebuilding the callsite interest cache before every
+    // request keeps another thread's subscriber from leaving a cached "never" (see v08_ai_link.rs)
+    tracing::callsite::rebuild_interest_cache();
     send(
         &a.router,
         build(
@@ -135,6 +138,9 @@ async fn get(a: &App, path: &str, cookie: &str) -> Resp {
 }
 
 async fn post_h(a: &App, path: &str, cookie: &str, body: &Value, extra: &[(&str, &[u8])]) -> Resp {
+    // Two tests capture log lines with a per-thread subscriber; rebuilding the callsite interest cache before every
+    // request keeps another thread's subscriber from leaving a cached "never" (see v08_ai_link.rs)
+    tracing::callsite::rebuild_interest_cache();
     let text = body.to_string();
     let len = text.len().to_string();
     let mut hs: Vec<(&str, &[u8])> = vec![
@@ -1085,6 +1091,9 @@ async fn secrets_never_reach_rows_or_log_lines() {
         tracing_subscriber::registry().with(BufferLayer::new(lines.clone())),
     );
     let a = app();
+    // tracing caches each callsite's interest when it is first hit; a hit racing with another test's subscriber on
+    // another thread can cache "never", and the line is not captured (seen on CI, as in v08_ai_link.rs)
+    tracing::callsite::rebuild_interest_cache();
     let adm = admin(&a);
     let token = adm.split('=').nth(1).expect("token").to_string();
     let secret_headers: Vec<(&str, &[u8])> = vec![
@@ -1166,6 +1175,9 @@ async fn log_line_has_no_address_while_the_switch_is_off() {
         tracing_subscriber::registry().with(BufferLayer::new(lines.clone())),
     );
     let a = app();
+    // tracing caches each callsite's interest when it is first hit; a hit racing with another test's subscriber on
+    // another thread can cache "never", and the line is not captured (seen on CI, as in v08_ai_link.rs)
+    tracing::callsite::rebuild_interest_cache();
     let adm = admin(&a);
     post_h(
         &a,
