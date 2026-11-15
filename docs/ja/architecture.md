@@ -21,9 +21,9 @@ flowchart TB
     N -->|"/api/ai/*：まずバックエンドへ auth_request"| B
     N -->|"/api/ai/*  X-Xexam-Identity だけ、Cookie なし"| A
     A -->|"内部トークン付きの /internal/ai/*<br/>（25 秒ごとのハートビートを含む）"| B
-    B --> D[("SQLite（WAL）<br/>ボリューム xexam_data → /data/xexam.db")]
+    B --> D[("SQLite（WAL）<br/>ボリューム xexam_backend_data → /data/xexam.db")]
     A --> AD[("SQLite（WAL）+ キーファイル<br/>ボリューム xexam_ai_data → /data")]
-    B -->|"書き込む"| L[("ボリューム xexam_link<br/>/link/internal.token")]
+    B -->|"書き込む"| L[("ボリューム xexam_ai_auth<br/>/link/internal.token")]
     L -->|"読み取り専用"| A
     A -->|"HTTPS、ネットワーク egress だけ"| P["AI プロバイダーまたは<br/>Cloudflare AI Gateway"]
     CF["Cloudflare Tunnel + Access<br/>（オーナー自身が設定）"] -.-> N
@@ -246,13 +246,13 @@ AI チャット、AI のメモリー、AI 設定には、3 つ目のコンテナ
 
 オーナーの規則です。コードと compose ファイルはこれに従います。
 
-- **どの SQLite ファイルも、2 つのコンテナから開かれることはありません。** `xexam_data`（`xexam.db` を含む）をマウントするのはバックエンドだけ、`xexam_ai_data`（`xexam-ai.db` とキーファイル `secret.key` を含む）をマウントするのは `ai-service` だけです。フロントエンドはボリュームをマウントしません。
+- **どの SQLite ファイルも、2 つのコンテナから開かれることはありません。** `xexam_backend_data`（`xexam.db` を含む）をマウントするのはバックエンドだけ、`xexam_ai_data`（`xexam-ai.db` とキーファイル `secret.key` を含む）をマウントするのは `ai-service` だけです。フロントエンドはボリュームをマウントしません。
 - **ai-service がメインのアプリのデータに届くのは、バックエンドの API を通してだけです**：トークンで守られたルート `/internal/ai/introspect`、`/internal/ai/users`、`/internal/ai/log`、`/internal/ai/heartbeat`（セッションが誰のものか、どのユーザーがいて誰が AI+ 機能を持つか、システムログ用の自分の行、自分自身の状態）と、v0.9 からは `/internal/ai/question`、`/internal/ai/record`、`/internal/ai/record-info`。この 3 つが渡すのは、**呼び出したユーザーが見られる問題 1 つ、または呼び出したユーザー自身の記録で、しかも呼び出したユーザーの有効なセッションで尋ねられたときだけ**です：バックエンドはセッションをユーザーに結び付け、別のユーザーのセッション、ユーザーが見られない問題集の問題、呼び出したユーザーのものでない記録には何も答えません（どれにも、まったく同じ「見つからない」という応答を返します）。それでも、問題集、記録、設定を自分で読むことは決してなく、この 3 つの射影以上のものを受け取ることもありません（下の「AI+ の学習支援」）。
 - **バックエンドが AI のデータに届くのは、ai-service の API を通してだけです**。そして v0.8 では一度もそうしません：バックエンドは ai-service をまったく呼び出しません。ハートビートは逆向きです（ai-service がバックエンドに知らせます。下を参照）。バックエンドが AI について知っているのは、最後に受け取った報告だけで、メモリ上にだけ保持します。
 - **各データベースを移行するのは、それぞれのサービスだけです**：バックエンドは `xexam.db`（スキーマ v6。v1.0 で変更なし）を移行し、ai-service は `xexam-ai.db`（スキーマ v4。v1.0 から。[database.md](database.md) の 8 節を参照）を作成して開きます。
-- **唯一の共有ボリューム `xexam_link` には、ファイル `internal.token` が 1 つあるだけです**。データベースは決して置きません。書き込むのはバックエンドで、ai-service は読み取り専用でマウントします。
+- **唯一の共有ボリューム `xexam_ai_auth` には、ファイル `internal.token` が 1 つあるだけです**。データベースは決して置きません。書き込むのはバックエンドで、ai-service は読み取り専用でマウントします。
 
-そのため、`xexam_data` のバックアップには AI の秘密もチャットも入らず、`xexam_ai_data` のバックアップには問題集もパスワードも学習記録も入りません。
+そのため、`xexam_backend_data` のバックアップには AI の秘密もチャットも入らず、`xexam_ai_data` のバックアップには問題集もパスワードも学習記録も入りません。
 
 ### 誰からの要求か：認証ステップと本人確認の文
 
@@ -544,7 +544,7 @@ sequenceDiagram
 
 「Xexam について」のページのために、`nginx/Dockerfile` は `docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md` を、リポジトリと同じ配置でフロントエンドのソースの 1 つ上のフォルダへコピーします（`COPY docs/en/changelog.md /docs/en/`。`ja` と `zh-CN` も同じ）。`vite.config.ts` はそこから読み込みます。そのため `.dockerignore` は、`docs/` と README をビルドコンテキストから外したうえで、この 3 つのファイルだけを戻します（`!docs/en/changelog.md`。`ja` と `zh-CN` も同じ）。最終的なイメージに入るのはビルドした静的ファイルだけで、更新履歴のファイルは入りません。
 
-3 つのサービスはどれも `cap_drop: ALL`、`no-new-privileges`、`read_only: true`、`tmpfs: /tmp` を使い、コンテナのログファイルは 10 MB のものを最大 3 つまで残します。バックエンドが書き込めるのは `/data`（データボリューム）、`/link`（リンクボリューム）、`/tmp` だけ、ai-service は自分の `/data` と `/tmp` だけです（`/link` は読み取り専用でマウントします）。どちらもホストの `/etc/localtime` を読み取り専用でマウントするので、タイムスタンプはホストのタイムゾーンに従います（Docker Desktop では Docker 自身の仮想マシンのタイムゾーンで、たいてい UTC です）。ネットワーク：`public`（Nginx の公開ポート）、`internal`（`internal: true`：Nginx、バックエンド、AI サービス）、`egress`（ai-service だけ）。
+3 つのサービスはどれも `cap_drop: ALL`、`no-new-privileges`、`read_only: true`、`tmpfs: /tmp` を使い、コンテナのログファイルは 10 MB のものを最大 3 つまで残します。バックエンドが書き込めるのは `/data`（データボリューム）、`/link`（ai_auth ボリューム）、`/tmp` だけ、ai-service は自分の `/data` と `/tmp` だけです（`/link` は読み取り専用でマウントします）。どちらもホストの `/etc/localtime` を読み取り専用でマウントするので、タイムスタンプはホストのタイムゾーンに従います（Docker Desktop では Docker 自身の仮想マシンのタイムゾーンで、たいてい UTC です）。ネットワーク：`public`（Nginx の公開ポート）、`internal`（`internal: true`：Nginx、バックエンド、AI サービス）、`egress`（ai-service だけ）。
 
 ## 9. 旧版との対応
 

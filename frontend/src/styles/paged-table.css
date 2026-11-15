@@ -71,7 +71,6 @@ th.n .ptb-sort { justify-content: flex-end; }
     position: sticky; left: 0; z-index: 1; background: var(--card); max-width: 4.6em; overflow: hidden; text-overflow: ellipsis;
     box-shadow: 1px 0 0 var(--line-soft);
   }
-  .ptb-mini .ais-x { display: none; }
   /* owner (v1.3): the mini table shows its short heads, each on one line, so the header row is even (the full label stays
      for screen readers) */
   .ptb-mini .ptb-short { display: inline; }
@@ -83,4 +82,3 @@ th.n .ptb-sort { justify-content: flex-end; }
   .ptb-mini .ptb-table:has(.ptb-short) th, .ptb-mini .ptb-table:has(.ptb-short) td { padding: 5px 2px; }
 }
 .ptb-short { display: none; }
-@media (min-width: 561px) { .ptb-mini .ais-k { display: none; } }

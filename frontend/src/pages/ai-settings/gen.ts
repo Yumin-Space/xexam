@@ -5,7 +5,7 @@ import { fetchAdminGen } from '../../api/ai-gen.ts';
 import { holdTip, infoTip } from '../../components/tooltip.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { compBad, compTotal, BANK_KEYS, jobTime, type LimitKey } from '../../domain/ai-settings.ts';
-import { formatBig } from '../../domain/usage-bars.ts';
+import { tokenLabel } from '../../domain/usage-bars.ts';
 import { errorText, jobReasonText } from '../../i18n/errors.ts';
 import { t, type MsgKey } from '../../i18n/index.ts';
 import type { GenAdminJob } from '../../types/api.ts';
@@ -67,7 +67,8 @@ function genJobsTable(): HTMLElement {
     t(`ai.set.gen.state.${j.state}` as MsgKey) + (j.state === 'running' && (j.phase === 'reading' || j.phase === 'confirm') ? ` · ${t(`ai.set.gen.phase.${j.phase}` as MsgKey)}` : '');
   const source = (j: GenAdminJob): string =>
     j.source === 'file' ? t('ai.set.gen.source.file', { type: (j.file?.type ?? '').toUpperCase() }) : t(`ai.set.gen.source.${j.source}` as MsgKey);
-  const big = (n: number): string => formatBig(n);
+  // the line's holdTip is the place of the exact numbers, so no title here
+  const big = (n: number): HTMLElement => { const l = tokenLabel(n, num); return h('span', null, h('span', { 'aria-hidden': 'true' }, l.text), h('span', { class: 'sr-only' }, l.title)); };
   const rows = A.genJobs.map((j) => {
     const why = j.state === 'failed' || (j.state === 'cancelled' && j.error) ? jobReasonText(j) : null;
     const whyEl = why ? holdTip(h('span', { class: 'ais-genwhy', tabindex: '0' }, h('span', { class: 'ais-d' }, ' — '), why), why) : null;

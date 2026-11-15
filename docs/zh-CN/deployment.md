@@ -2,7 +2,7 @@
 
 # 部署
 
-> 新架构：`nginx`（唯一对外）+ `backend`（Rust，私有网络，不能上网）+ SQLite（命名卷 `xexam_data`），从 v0.8 起还有 `ai-service`（Rust，私有网络加上向外访问互联网，自己的 SQLite 放在卷 `xexam_ai_data` 里）。结构图见 [architecture.md](architecture.md)，安全边界见 [security.md](security.md)。
+> 新架构：`nginx`（唯一对外）+ `backend`（Rust，私有网络，不能上网）+ SQLite（命名卷 `xexam_backend_data`），从 v0.8 起还有 `ai-service`（Rust，私有网络加上向外访问互联网，自己的 SQLite 放在卷 `xexam_ai_data` 里）。结构图见 [architecture.md](architecture.md)，安全边界见 [security.md](security.md)。
 
 ## 1. 前提
 
@@ -49,9 +49,9 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | 更新到最新版本 | `docker compose pull && docker compose up -d`（源码构建：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。从较早的版本升级时先看第 6 节 |
 | 版本和架构 | <http://localhost:8765/api/info>，或者在程序里：菜单里的版本那一项，例如 **Xexam v0.9.1**（关于页面） |
 
-> ⚠️ 不要运行 `docker compose down -v`：`-v` 会删掉两个数据卷：`xexam_data`（题库、账户和所有学习记录）和 `xexam_ai_data`（AI 设置和密钥、对话和记忆）。
+> ⚠️ 不要运行 `docker compose down -v`：`-v` 会删掉两个数据卷：`xexam_backend_data`（题库、账户和所有学习记录）和 `xexam_ai_data`（AI 设置和密钥、对话和记忆）。
 
-**`docker/docker-compose.yml` 和 `docker/docker-compose.build.yml` 用的是同一个项目名（`xexam`）、同样的卷（`xexam_data`、`xexam_ai_data`、`xexam_link`）和同样的容器名**，所以两者不能同时运行；切换前先 `docker compose stop`。数据是两者共用的；见 [migration.md](migration.md)。
+**`docker/docker-compose.yml` 和 `docker/docker-compose.build.yml` 用的是同一个项目名（`xexam`）、同样的卷（`xexam_backend_data`、`xexam_ai_data`、`xexam_ai_auth`）和同样的容器名**，所以两者不能同时运行；切换前先 `docker compose stop`。数据是两者共用的；见 [migration.md](migration.md)。
 
 ## 3. 配置（`.env`）
 
@@ -69,7 +69,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_LOG` | （不设：`info`） | 后端的日志过滤，`docker compose logs backend` 和系统日志页面都用它，例如 `debug` 或 `warn`。为空或只有空格 = `info`；不是有效过滤的值也退回 `info`，日志开头会有一条写明问题的警告 |
 | `TZ` | （不设：宿主机的时区） | 数据库里时间的时区，以及 AI 用量统计里日期的时区；自 v1.0 起还包括每个用户每天的 AI 请求上限在 0:00 重新计数（ai-service）；compose 文件把宿主机的 `/etc/localtime` 挂载进了后端和 ai-service，所以只有想用别的时区时才设置 `TZ`（例如 `UTC`） |
 | `XEXAM_AI_SECRET_KEY` | （不设：AI 卷里的一个密钥文件） | 加密 AI 服务商密钥所用的密钥：32 字节，写成 64 个十六进制数字或 base64（`openssl rand -base64 32`）。见第 3.2 节 |
-| `XEXAM_INTERNAL_TOKEN` | （不设：链接卷里的一个随机令牌） | 后端和 ai-service 共用的令牌，两者用同一个值：至少 32 个可打印的 ASCII 字符，不能有空格（`openssl rand -hex 32`）。见第 3.3 节 |
+| `XEXAM_INTERNAL_TOKEN` | （不设：ai_auth 卷里的一个随机令牌） | 后端和 ai-service 共用的令牌，两者用同一个值：至少 32 个可打印的 ASCII 字符，不能有空格（`openssl rand -hex 32`）。见第 3.3 节 |
 | `XEXAM_AI_LOG` | （不设：`info`） | ai-service 的日志过滤，`docker compose logs ai-service` 和它发到系统日志的行都用它；规则和 `XEXAM_LOG` 一样（为空 = `info`，无效的值退回 `info` 并记一条警告） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （不设：WAL） | `delete` = AI 数据库用回滚日志，用于和 `XEXAM_SQLITE_JOURNAL` 一样的特殊存储 |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | *（v1.3，默认值在 v1.4 改变，frontend 容器）* Nginx 信任其 `CF-Connecting-IP` 和位置头的代理地址或网段（写法见 3.5 节）。留空或空值 = 默认值；`none` = 谁都不信任 |
@@ -128,11 +128,11 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 
 后端和 ai-service 共用一个机密，即**内部令牌**：后端用它给 Nginx 传给 ai-service 的那份简短的「是谁在请求」的声明签名，ai-service 调用后端时用它认证（包括它的状态报告，即心跳；见 [architecture.md](architecture.md) 第 5 节）。
 
-- **不设（默认）**：`/link/internal.token` 不存在时，`xexam-backend serve` 在卷 `xexam_link` 里创建它（32 个随机字节，43 个字符，权限 0600），并记录 `AI link: /link/internal.token`。ai-service 从同一个卷（以只读方式挂载）读取它，并记录 `AI link: connected to the main service`。什么都不用做。
+- **不设（默认）**：`/link/internal.token` 不存在时，`xexam-backend serve` 在卷 `xexam_ai_auth` 里创建它（32 个随机字节，43 个字符，权限 0600），并记录 `AI link: /link/internal.token`。ai-service 从同一个卷（以只读方式挂载）读取它，并记录 `AI link: connected to the main service`。什么都不用做。
 - **`.env` 里的 `XEXAM_INTERNAL_TOKEN`**：至少 32 个可打印的 ASCII 字符，不能有空格，例如 `openssl rand -hex 32` 的输出。compose 文件把这一行传给两个服务，所以它们总是得到同一个值；这时后端不写文件，并记录 `AI link: using XEXAM_INTERNAL_TOKEN`。值前后的空白会被忽略。
 - 不符合规则的值会在**两个**服务里关闭这条连接，并记录下面其中一行：`XEXAM_INTERNAL_TOKEN is too short (at least 32 characters); AI link off` 或 `XEXAM_INTERNAL_TOKEN may contain only printable ASCII characters without spaces; AI link off`。改正之前 AI 对话不可用（`ai.backendDown`）。
 - 两个服务不一致时（例如不用这个 compose 文件运行时，只给其中一个设置了令牌），ai-service 记录 `AI link: the main service refused the internal token (XEXAM_INTERNAL_TOKEN must be the same for both services)`，没有有效声明就到达它的请求会被拒绝，并记录 `refused a request without a valid identity (requests must come through Nginx; XEXAM_INTERNAL_TOKEN must be the same for both services)`，最多每分钟一次。
-- 更换令牌：停止两个服务，清空链接卷（`docker run --rm -v xexam_link:/link alpine rm -f /link/internal.token`）或修改 `XEXAM_INTERNAL_TOKEN`，然后再启动。ai-service 也会在几秒内自己用上新的令牌。
+- 更换令牌：停止两个服务，清空 ai_auth 卷（`docker run --rm -v xexam_ai_auth:/link alpine rm -f /link/internal.token`）或修改 `XEXAM_INTERNAL_TOKEN`，然后再启动。ai-service 也会在几秒内自己用上新的令牌。
 
 ### 3.4 AI 服务商（在程序里设置，不在 `.env` 里）
 
@@ -268,17 +268,17 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 
 ## 5. 数据
 
-- 位置：命名卷 `xexam_data` → 容器里的 `/data/xexam.db`。更新、重建或删除容器都不会丢。数据库里有题库、账户、学习记录和设置。
+- 位置：命名卷 `xexam_backend_data` → 容器里的 `/data/xexam.db`。更新、重建或删除容器都不会丢。数据库里有题库、账户、学习记录和设置。
 - 后端运行时，数据库旁边有 SQLite 的 `xexam.db-wal` 和 `xexam.db-shm`（WAL 模式，从 v0.7 起）。正常停止时，后端把所有内容复制进 `xexam.db`，并清空 `xexam.db-wal`；这两个文件可能空着留在旁边，没有害处。
-- 卷里还可能有一个 `/data/backups/` 文件夹，里面是 schema 迁移前写的副本（第 6 节）。程序永远不会删除这些文件。查看它们：`docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups`。
-- **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）；从 v0.9 起，它的对话里还包括 AI+ 学习功能的练习、考试和记录总结对话，其中有题目文字和 AI 的回答，卷里还会有一个文件夹 `/data/backups/`，放着 AI schema 升级前写的副本（第 6 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_data`。
-- **链接卷** `xexam_link` → `/link` 里只有 `internal.token`（第 3.3 节）；后端以读写方式挂载它，ai-service 以只读方式挂载。
-- **备份**：先停止 Xexam（`docker compose stop`），打包**两个数据卷**，再启动：命令见 [database.md](database.md) 第 5 节和第 8.4 节。后端运行时只复制 `xexam.db`，可能会漏掉还在 `xexam.db-wal` 里的最新修改；不能停止时，请把 `xexam.db`、`xexam.db-wal` 和 `xexam.db-shm` 一起复制（`xexam-ai.db` 也一样）。备份卷时也会备份 `backups/`。`xexam_ai_data` 的备份里有密钥文件，它能解密已保存的 AI 密钥：请像对待密钥一样妥善保管，或者设置 `XEXAM_AI_SECRET_KEY`，让密钥不在卷里。删除了的对话仍然留在你以前做的备份里。`xexam_link` 不用备份：它为空时后端会写一个新令牌。
+- 卷里还可能有一个 `/data/backups/` 文件夹，里面是 schema 迁移前写的副本（第 6 节）。程序永远不会删除这些文件。查看它们：`docker run --rm -v xexam_backend_data:/data alpine ls -l /data /data/backups`。
+- **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）；从 v0.9 起，它的对话里还包括 AI+ 学习功能的练习、考试和记录总结对话，其中有题目文字和 AI 的回答，卷里还会有一个文件夹 `/data/backups/`，放着 AI schema 升级前写的副本（第 6 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_backend_data`。
+- **ai_auth 卷** `xexam_ai_auth` → `/link` 里只有 `internal.token`（第 3.3 节）；后端以读写方式挂载它，ai-service 以只读方式挂载。
+- **备份**：先停止 Xexam（`docker compose stop`），打包**两个数据卷**，再启动：命令见 [database.md](database.md) 第 5 节和第 8.4 节。后端运行时只复制 `xexam.db`，可能会漏掉还在 `xexam.db-wal` 里的最新修改；不能停止时，请把 `xexam.db`、`xexam.db-wal` 和 `xexam.db-shm` 一起复制（`xexam-ai.db` 也一样）。备份卷时也会备份 `backups/`。`xexam_ai_data` 的备份里有密钥文件，它能解密已保存的 AI 密钥：请像对待密钥一样妥善保管，或者设置 `XEXAM_AI_SECRET_KEY`，让密钥不在卷里。删除了的对话仍然留在你以前做的备份里。`xexam_ai_auth` 不用备份：它为空时后端会写一个新令牌。
 - 不用 Docker、直接运行后端（开发时）：见 [development.md](development.md)。
 
 ## 6. 升级
 
-每次升级都是 `docker compose pull && docker compose up -d`（注明需要时，先换上新的 `docker-compose.yml`）。新的后端第一次启动时，会先往 `/data/backups/` 写一份副本，再把数据库迁移到它的 schema；副本写不出来（磁盘满、没有权限）时，它报错退出，数据库不变。Docker 会不断重启它，每次启动都再试一次；Nginx 不会启动，因为它要等后端健康。`docker compose logs backend` 里写着原因。也请先自己备份一次卷（第 5 节）：卷以外的副本更保险。
+每次升级都是 `docker compose pull && docker compose up -d`（注明需要时，先换上新的 `docker-compose.yml`；升级到 v1.4 是例外：卷改名了，要先把旧数据复制过去，见下面第一项）。新的后端第一次启动时，会先往 `/data/backups/` 写一份副本，再把数据库迁移到它的 schema；副本写不出来（磁盘满、没有权限）时，它报错退出，数据库不变。Docker 会不断重启它，每次启动都再试一次；Nginx 不会启动，因为它要等后端健康。`docker compose logs backend` 里写着原因。也请先自己备份一次卷（第 5 节）：卷以外的副本更保险。
 
 ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启动时，会先往**AI 卷里**的 `/data/backups/` 写一份副本（`xexam-ai-schema<N>-<日期时间>.db`），再把 `xexam-ai.db` 升级到 schema 3；副本写不出来时它不启动（Xexam 的其余部分照常工作；`docker compose logs ai-service` 里写着原因）。**请为每个数据库留出大约和它一样大的可用磁盘空间**（副本是一个完整的文件），并且要知道这些副本从不清理，会保留你以后删除的东西（记录、题库、对话）：在这有关系时请自己删掉旧的。
 
@@ -286,11 +286,12 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
+- **从 v1.3（或任何更早的版本）升级到 v1.4**（见 migration.md 的第 0000 节）：**Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`；挂载路径和变量不变），所以只执行 `docker compose pull && docker compose up -d` 的话，Xexam 会以**空数据库**启动。换上新的 `docker-compose.yml`，然后依次执行：`docker compose pull`、`docker compose down`、`docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（Portainer 里用同样的方法把 `xexam_data` 的内容复制到 `xexam_backend_data`）、`docker compose up -d`。旧卷原样保留，直到你手动删除；`xexam_link` 用不着（会新建一个令牌）。更早的版本也一样，在它自己那一项的步骤之外再做这一步。
 - **从 v1.2 到 v1.3**（migration.md 的第 000 节）：建议使用新的 `docker-compose.yml`（真实访客地址、可选的 `cloudflared` 服务）。主数据库从 schema 7 升到 8（备份 `xexam-schema7-<日期-时间>.db`），AI 数据库从 schema 6 升到 7（备份 `xexam-ai-schema6-<日期-时间>.db`）。空闲超过 24 小时的管理员需要重新登录。
 - **从 v1.0 升级到 v1.1**（见 migration.md 的第 00 节）：`docker compose pull && docker compose up -d`，compose 文件、卷和变量都不用改。主数据库从 schema 6 升到 7（备份 `xexam-schema6-<日期时间>.db`，在 `xexam_data` 中）；AI 数据库从 schema 4 升到 6（备份 `xexam-ai-schema4-<日期时间>.db`，在 `xexam_ai_data` 中）。新的 Token 长度默认值（回答 3000、记忆 1000、每次调用 20000）和新的调用上限在升级后立即生效。回退：两个数据库都恢复副本，然后运行 v1.0 镜像。
 - **从 v0.9.1 到 v1.0**（见 migration.md 第 0 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库不变（schema 6）。AI 数据库从 schema 3 升到 4（备份 `xexam-ai-schema3-<日期时间>.db`，在 `xexam_ai_data` 里，写在变更之前；副本要放得下剩余磁盘空间）。新的每用户 AI 请求上限（每分钟 5 次、每小时 20 次、每天 100 次）和回答长度（1000 字符）马上生效，管理员也一样。回退：恢复 AI 副本并运行 v0.9.1 的镜像；主数据库不需要恢复。
 - **从 v0.8**（migration.md 第 0b 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库从 schema 5 升到 6（备份 `xexam-schema5-<日期时间>.db`，在 `xexam_data` 里），AI 数据库从 schema 2 升到 3（备份 `xexam-ai-schema2-<日期时间>.db`，在 `xexam_ai_data` 里）。别的都保持原样；AI+ 学习功能对有 AI+ 功能的账户马上出现，没有什么要设置的。回退：主数据库不需要恢复，AI 数据库需要（见下）。
-- **从 v0.7.5 或 v0.7**（migration.md 第 1 节）：**换上新的 `docker-compose.yml`**（服务 `ai-service` 和第三个镜像 `xexam-ai-service`、卷 `xexam_ai_data` 和 `xexam_link`、网络 `egress`）；schema v4 → v6，备份 `xexam-schema4-<日期时间>.db`；AI 数据库是新建的（schema 3）。管理员设置之前 AI 保持关闭。用旧的 compose 文件，除了 AI 以外一切照常：**AI 设置** 这时仍然能打开，并说明 ai-service 没有运行（提示要换上新的 compose 文件），用户管理里的 AI+ 功能开关则被隐藏。
+- **从 v0.7.5 或 v0.7**（migration.md 第 1 节）：**换上新的 `docker-compose.yml`**（服务 `ai-service` 和第三个镜像 `xexam-ai-service`、卷 `xexam_ai_data` 和 `xexam_ai_auth`、网络 `egress`）；schema v4 → v6，备份 `xexam-schema4-<日期时间>.db`；AI 数据库是新建的（schema 3）。管理员设置之前 AI 保持关闭。用旧的 compose 文件，除了 AI 以外一切照常：**AI 设置** 这时仍然能打开，并说明 ai-service 没有运行（提示要换上新的 compose 文件），用户管理里的 AI+ 功能开关则被隐藏。
 - **从 v0.6**（migration.md 第 2 节）：schema v3 → v6，备份 `xexam-schema3-<日期时间>.db`，WAL 模式，然后下架旧格式的题。也请换上新的 `docker-compose.yml`：它加入了 ai-service，不再设置固定的默认时区（而是跟随宿主机，第 3.1 节），限制容器日志的大小（第 8 节），并在 `.env` 里设置了时传递 `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 AI 的变量。如果你以前的时间是用和宿主机不同的时区写入的，请在 `.env` 里把那个时区设成 `TZ`，这样新的记录会接着用它。不需要新增任何变量。
 - **从 v0.5 或 v0.5.1**（migration.md 第 3 节）：schema v2 → v6 一步到位，备份 `xexam-schema2-<日期时间>.db`。登录是新加的：用 `admin` / `admin` 登录，以前的所有数据现在都归它。
 - **从 v0.4**（migration.md 第 4 节）：schema v1 → v6 一步到位，备份 `xexam-schema1-<日期时间>.db`。从 v0.5.1 起，镜像来自 Docker Hub（`docker.io/yuminspace/…`，公开，不用登录），不再来自 `ghcr.io`：把你的 `docker-compose.yml` 换成新的那份（或者把里面的两行 `image:` 改成 `docker.io/yuminspace/xexam-backend:latest` 和 `docker.io/yuminspace/xexam-frontend:latest`）。源码构建时，compose 文件现在在 `docker/` 里：把仓库根目录的 `.env` 移到 `docker/.env`。

@@ -11,10 +11,10 @@ import { pagedTable, type PtColumn } from '../../components/paged-table.ts';
 import { roleName } from '../../components/shell.ts';
 import { ALL_ON, FEATURE_GROUPS, featureLabelKey, itemOn, offList, readFeatures, withItem, type FeatureKey } from '../../domain/ai-features.ts';
 import { badgeState, serviceReason } from '../../domain/badge-state.ts';
-import { blockTag, callsFigures } from '../../domain/ai-settings.ts';
+import { blockTag, callsFigures, jobTime } from '../../domain/ai-settings.ts';
 import { errorText } from '../../i18n/errors.ts';
 import { localeTag, t, uiLang, type MsgKey } from '../../i18n/index.ts';
-import { clockText, waitText } from '../../i18n/wait.ts';
+import { waitText } from '../../i18n/wait.ts';
 import { refreshAi } from '../../state/actions.ts';
 import { setAiFreeMode } from '../../state/ai.ts';
 import { S } from '../../state/store.ts';
@@ -78,7 +78,7 @@ function blockedText(name: string, q: { cap: 'minute' | 'hour' | 'day'; limit: n
   const left = Math.max(1, Math.ceil(q.retryAt - nowSec));
   const when = q.cap === 'day'
     ? t('ai.set.calls.whenDay')
-    : left < 60 ? t('ai.set.calls.whenSoon') : t('ai.set.calls.whenWait', { wait: waitText(left), time: clockText(q.retryAt, nowSec) });
+    : left < 60 ? t('ai.set.calls.whenSoon') : t('ai.set.calls.whenWait', { wait: waitText(left), time: jobTime(q.retryAt) });
   return t('ai.set.calls.blocked', { name, cap, when });
 }
 
@@ -101,7 +101,7 @@ function callsCell(u: AiAdminUserRow): HTMLElement {
     td.append(h('button', {
       type: 'button', class: 'ais-blocktag',
       onclick: () => toast(blockedText(u.username, q), 7000),
-    }, t(tag.kind === 'today' ? 'ai.set.calls.tagToday' : 'ai.set.calls.tagTimed', { time: clockText(tag.retryAt, Date.now() / 1000) })));
+    }, t(tag.kind === 'today' ? 'ai.set.calls.tagToday' : 'ai.set.calls.tagTimed', { time: jobTime(tag.retryAt) })));
   }
   return td;
 }

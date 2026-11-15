@@ -306,7 +306,7 @@ jobs:
           [ "$(docker exec arm64-frontend uname -m)" = "aarch64" ] || { echo "frontend is not aarch64"; exit 1; }
           docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
           # The AI service alone (no backend): its own healthcheck and /healthz do not depend on the backend or a provider.
-          # The token only lets it start without the link volume; the value is a throw-away one for this check.
+          # The token only lets it start without the ai_auth volume; the value is a throw-away one for this check.
           docker volume create arm64aidata >/dev/null
           docker run -d --name xexam-ai-service-arm64 --platform linux/arm64 -e XEXAM_INTERNAL_TOKEN=arm64-check-0123456789abcdefghijklmnopqrstuvwxyz \
             -v arm64aidata:/data xexam-ai-service:arm64 >/dev/null

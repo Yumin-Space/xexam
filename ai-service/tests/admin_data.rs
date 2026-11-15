@@ -609,6 +609,7 @@ async fn usage_statistics() {
         keys,
         vec![
             "days",
+            "period",
             "from",
             "to",
             "unit",
@@ -740,4 +741,33 @@ async fn usage_statistics() {
             ("other", 1)
         ]
     );
+}
+
+#[tokio::test]
+async fn usage_short_periods_answer_by_hour() {
+    let t = start().await;
+    let admin = t.user("admin", true, false);
+    let sam = t.user("sam", false, true);
+    t.configure_openai(&admin, "demo-chat-small").await;
+    t.send_all(&sam, json!({"text": "q1"})).await.expect("s");
+    for (q, unit) in [
+        ("period=12h", "hour"),
+        ("period=today", "hour"),
+        ("days=7", "day"),
+    ] {
+        let (s, v) = t.get(&format!("/api/ai/admin/usage?{q}"), &admin).await;
+        assert_eq!(s, 200, "{v}");
+        assert_eq!(v["unit"], unit, "{q}");
+        assert!(v["totals"]["calls"].as_i64().expect("n") >= 1, "{q}");
+        let rows = v["byPeriod"].as_array().expect("rows");
+        assert!(!rows.is_empty());
+        if unit == "hour" {
+            assert!(rows.iter().all(|r| r["period"]
+                .as_str()
+                .is_some_and(|p| p.len() == 5 && p.ends_with(":00"))));
+            assert!(v["days"].is_null());
+        }
+    }
+    let (s, _) = t.get("/api/ai/admin/usage?period=3h", &admin).await;
+    assert_eq!(s, 400);
 }

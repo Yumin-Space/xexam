@@ -5,19 +5,19 @@
 # The build context is the repository root (.. from this folder); the Dockerfiles stay in backend/, ai-service/ and nginx/.
 # .env is read from this folder (docker/.env, next to this file; the template is docker/.env.example). A .env at the repository
 # root is not read: move an old one to docker/.env.
-# Uses the same project name (xexam), the same volumes (xexam_data, xexam_ai_data, xexam_link) and the same container names as
+# Uses the same project name (xexam), the same volumes (xexam_backend_data, xexam_ai_data, xexam_ai_auth) and the same container names as
 # docker-compose.yml, so the two cannot run at the same time; stop the running one before switching (for example
 # docker compose -f docker/docker-compose.build.yml stop). The data is the same.
 #
 #   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point, :8080 → host XEXAM_BIND)
 #                 ├─ frontend static files (baked into the image at build time)
 #                 ├─ /api/    ──> xexam-backend (private network, no published port, no internet)
-#                 │                 └─ SQLite (named volume xexam_data → /data/xexam.db); internal token (xexam_link)
+#                 │                 └─ SQLite (named volume xexam_backend_data → /data/xexam.db); internal token (xexam_ai_auth)
 #                 └─ /api/ai/ ──> checked by xexam-backend first, then ──> ai-service (no published port)
 #                                   ├─ reports its state to the backend (at start, on changes, every 25 s)
 #                                   └─ SQLite + key file (named volume xexam_ai_data → /data); internet (egress) only here
 #
-# ⚠️ `docker compose down -v` deletes the two data volumes xexam_data and xexam_ai_data as well.
+# ⚠️ `docker compose down -v` deletes the two data volumes xexam_backend_data and xexam_ai_data as well.
 
 name: xexam
 
@@ -62,14 +62,16 @@ services:
       # XEXAM_LOG:  info
       # Or: XEXAM_LOG:  debug
       XEXAM_LOG:
-      # Not set = the default, a random token in the link volume (the same value goes to ai-service):
+      # Not set = the default, a random token in the ai_auth volume (the same value goes to ai-service):
       # XEXAM_INTERNAL_TOKEN:  (random)
       # Or: XEXAM_INTERNAL_TOKEN:  the output of openssl rand -hex 32 (at least 32 printable ASCII characters, no spaces)
       XEXAM_INTERNAL_TOKEN:
     volumes:
-      - data:/data
-      # Holds only internal.token (never a database), which ai-service reads
-      - link:/link
+      # backend_data: the question banks, accounts and study records (xexam.db)
+      - backend_data:/data
+      # ai_auth: internal.token, the key backend and ai-service use to authenticate each other (never a database).
+      # This side creates it and writes it; ai-service gets the same volume read only.
+      - ai_auth:/link
       # Follow the host's time zone (read only). Docker shares the host's clock anyway; this only gives the same zone.
       # create_host_path: false = on a host without /etc/localtime, Compose stops with "bind source path does not exist"
       # instead of creating an empty folder there (which cannot be mounted over the image's file). On such a host, remove
@@ -124,8 +126,9 @@ services:
       XEXAM_AI_SQLITE_JOURNAL:
     volumes:
       - ai_data:/data
-      # internal.token written by the backend (read only here)
-      - link:/link:ro
+      # ai_auth: internal.token, the key backend and ai-service use to authenticate each other.
+      # Written by the backend; read only here.
+      - ai_auth:/link:ro
       # Follow the host's time zone (read only), the same as the backend
       - type: bind
         source: /etc/localtime
@@ -228,6 +231,6 @@ networks:
   egress: {}
 
 volumes:
-  data:
+  backend_data:
   ai_data:
-  link:
+  ai_auth:

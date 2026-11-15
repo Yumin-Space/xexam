@@ -10,6 +10,7 @@ import {
   type LimitKey, type LimitRanges, type LimitValues,
 } from '../../domain/ai-settings.ts';
 import { aiCodeText, errorText } from '../../i18n/errors.ts';
+import { limitHintArgs } from '../../domain/usage-bars.ts';
 import { t, type MsgKey } from '../../i18n/index.ts';
 import { refreshAi } from '../../state/actions.ts';
 import type { AiLimitsAnswer } from '../../types/api.ts';
@@ -20,6 +21,9 @@ import { aiDown } from './status.ts';
 import { A, adopt, num, redraw } from './state.ts';
 import { loadUsage } from './usage.ts';
 import { loadUsers } from './users.ts';
+
+/** The limits counted in tokens (their range hint is shown compact) */
+const TOKEN_LIMITS: ReadonlySet<LimitKey> = new Set<LimitKey>(['replyMaxTokens', 'memoryTokens', 'genCallTokens', 'dailyTokenBudget']);
 
 export const LIMIT_LABEL: Record<LimitKey, MsgKey> = {
   callsPerMinute: 'ai.set.limit.callsPerMinute', callsPerHour: 'ai.set.limit.callsPerHour', callsPerDay: 'ai.set.limit.callsPerDay',
@@ -247,7 +251,14 @@ export function limitField(k: LimitKey, l: AiLimitsAnswer, f: Record<LimitKey, s
   return h('div', { class: 'fld ais-genfld' },
     h('label', { class: 'fld-l', for: input.id }, t(LIMIT_LABEL[k])),
     sw ? h('div', { class: 'ais-numrow' }, input, sw) : input,
-    h('p', { class: 'fld-hint', id: `ai-lim-${k}-hint` }, hintKey ? t(hintKey) + ' ' : '', t('ai.set.limitHint', { min: num(min), max: num(max), def: num(def) })),
+    h('p', { class: 'fld-hint', id: `ai-lim-${k}-hint` }, hintKey ? t(hintKey) + ' ' : '', (() => {
+      // v1.4: a token range is shown compact; the exact numbers are in the title and in hidden text
+      const a = limitHintArgs(TOKEN_LIMITS.has(k), min, max, def, num);
+      const exact = t('ai.set.limitHint', a.exact);
+      return a.compact
+        ? h('span', { title: exact }, h('span', { 'aria-hidden': 'true' }, t('ai.set.limitHint', a.compact)), h('span', { class: 'sr-only' }, exact))
+        : exact;
+    })()),
     unlimitedKey && showSwitch ? h('p', { class: 'fld-hint' }, t('ai.set.limit.unlimitedHint')) : null,
     extra,
     bad && A.limitsFieldErr?.text ? h('p', { class: 'ais-ferr', role: 'alert' }, A.limitsFieldErr.text) : null);

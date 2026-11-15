@@ -1674,7 +1674,7 @@ function copySource(m: AiMessage): string {
  *  (an administrator in the free mode, `chatShowsModel`, or the administrators' chat viewer), everyone else only "AI" and the
  *  time (owner, v1.3 sprint 2 / v1.4); right-aligned over a sent message's bubble. The buttons go on one line right under
  *  the message (`actsRow`). */
-export function whoLine(m: AiMessage, showModel: boolean): HTMLElement {
+export function whoLine(m: AiMessage, showModel: boolean, fmt: (sec: number) => string = (s) => fmtAiTime(s, localeTag())): HTMLElement {
   const who = whoParts(m, showModel);
   // One line, always: the connection and the time keep their width; only the model name gives way and is cut at its end
   // with an ellipsis (CSS). The full "connection · model" stays in the text (screen readers) and in `title`.
@@ -1687,7 +1687,7 @@ export function whoLine(m: AiMessage, showModel: boolean): HTMLElement {
     : null;
   const mark = who.mark === 'you' ? t('ai.you') : who.mark === 'ai' ? t('ai.assistant') : null;
   return h('div', { class: 'ai-who' }, mark ? h('span', { class: 'ai-who-mark' }, mark) : null, model,
-    h('time', { class: 'ai-time', datetime: new Date(m.createdAt * 1000).toISOString() }, fmtAiTime(m.createdAt, localeTag())));
+    h('time', { class: 'ai-time', datetime: new Date(m.createdAt * 1000).toISOString() }, fmt(m.createdAt)));
 }
 
 function reasoningLabel(v: { live: boolean; seconds: number | null }): string {

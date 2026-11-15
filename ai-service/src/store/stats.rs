@@ -75,6 +75,35 @@ pub struct Sums {
     pub tokens_cache_write: i64,
 }
 
+/// The calls a statistics read covers: a range of local calendar days (`usage.day`, both ends included) or every call
+/// since a moment (`at >= start`, for "last 12 hours" and "today").
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Window {
+    Days { from: String, to: String },
+    Since(i64),
+}
+
+impl Window {
+    pub fn days(from: &str, to: &str) -> Self {
+        Window::Days {
+            from: from.to_string(),
+            to: to.to_string(),
+        }
+    }
+
+    /// The `WHERE` condition (placeholders `?1`, `?2`) and its values.
+    fn filter(&self) -> (&'static str, Vec<rusqlite::types::Value>) {
+        use rusqlite::types::Value;
+        match self {
+            Window::Days { from, to } => (
+                "day BETWEEN ?1 AND ?2",
+                vec![Value::Text(from.clone()), Value::Text(to.clone())],
+            ),
+            Window::Since(at) => ("at >= ?1", vec![Value::Integer(*at)]),
+        }
+    }
+}
+
 /// Every model call of a statistics period: the `usage` rows and the `gen_calls` rows of generation and import jobs
 /// (`UNION ALL`; the per-user call caps use `usage` only: import and generation calls are outside them, A-OWNER-56).
 const ALL_CALLS: &str =
@@ -97,10 +126,11 @@ fn sums_at(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<Sums> {
     })
 }
 
-pub fn totals(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Sums> {
+pub fn totals(c: &Connection, w: &Window) -> rusqlite::Result<Sums> {
+    let (f, vals) = w.filter();
     c.query_row(
-        &format!("SELECT {SUMS} FROM {ALL_CALLS} WHERE day BETWEEN ?1 AND ?2"),
-        [from, to],
+        &format!("SELECT {SUMS} FROM {ALL_CALLS} WHERE {f}"),
+        rusqlite::params_from_iter(vals),
         |r| sums_at(r, 0),
     )
 }
@@ -109,13 +139,14 @@ pub fn totals(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Sums> {
 pub type UserUsage = (Option<i64>, Option<String>, Sums, i64);
 
 /// Per user, sorted by calls, most first.
-pub fn by_user(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<UserUsage>> {
+pub fn by_user(c: &Connection, w: &Window) -> rusqlite::Result<Vec<UserUsage>> {
+    let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
         "SELECT u.user_id, (SELECT username FROM users WHERE id = u.user_id), {SUMS}, MAX(u.at)
-         FROM {ALL_CALLS} u WHERE u.day BETWEEN ?1 AND ?2 GROUP BY u.user_id
+         FROM {ALL_CALLS} u WHERE {f} GROUP BY u.user_id
          ORDER BY COUNT(*) DESC, u.user_id IS NULL, u.user_id"
     ))?;
-    let rows = st.query_map([from, to], |r| {
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
         Ok((r.get(0)?, r.get(1)?, sums_at(r, 2)?, r.get(8)?))
     })?;
     rows.collect()
@@ -124,16 +155,19 @@ pub fn by_user(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<Use
 /// Calls of the period per model. The calls that use no chosen model for a feature, the administrators' model list and
 /// connection tests (`usage` kinds `models` and `verify`), are one row with the empty model name (the "other" row), so
 /// the rows add up to the total calls.
-pub fn by_model(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(String, Sums)>> {
+pub fn by_model(c: &Connection, w: &Window) -> rusqlite::Result<Vec<(String, Sums)>> {
+    let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
         "SELECT m, {SUMS} FROM (
            SELECT CASE WHEN kind IN ('verify', 'models') THEN '' ELSE model END AS m,
-                  day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
+                  at, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
            UNION ALL
-           SELECT model AS m, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM gen_calls)
-         WHERE day BETWEEN ?1 AND ?2 GROUP BY m ORDER BY COUNT(*) DESC, m"
+           SELECT model AS m, at, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM gen_calls)
+         WHERE {f} GROUP BY m ORDER BY COUNT(*) DESC, m"
     ))?;
-    let rows = st.query_map([from, to], |r| Ok((r.get(0)?, sums_at(r, 1)?)))?;
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
+        Ok((r.get(0)?, sums_at(r, 1)?))
+    })?;
     rows.collect()
 }
 
@@ -159,22 +193,19 @@ pub struct ConnectionUsage {
 
 /// `by_model` with the connection in the key: the same rows split by (connection id, connection name). The model list
 /// and connection tests stay the one "other" row per connection.
-pub fn by_model_connection(
-    c: &Connection,
-    from: &str,
-    to: &str,
-) -> rusqlite::Result<Vec<ModelUsage>> {
+pub fn by_model_connection(c: &Connection, w: &Window) -> rusqlite::Result<Vec<ModelUsage>> {
+    let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
         "SELECT cid, cname, m, {SUMS} FROM (
            SELECT connection_id AS cid, connection AS cname,
                   CASE WHEN kind IN ('verify', 'models') THEN '' ELSE model END AS m,
-                  day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
+                  at, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
            UNION ALL
-           SELECT connection_id, connection, model, day, tokens_in, tokens_out, tokens_cached, status,
+           SELECT connection_id, connection, model, at, day, tokens_in, tokens_out, tokens_cached, status,
                   tokens_cache_write FROM gen_calls)
-         WHERE day BETWEEN ?1 AND ?2 GROUP BY cid, cname, m ORDER BY COUNT(*) DESC, cname, m"
+         WHERE {f} GROUP BY cid, cname, m ORDER BY COUNT(*) DESC, cname, m"
     ))?;
-    let rows = st.query_map([from, to], |r| {
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
         Ok(ModelUsage {
             connection_id: r.get(0)?,
             connection: r.get(1)?,
@@ -187,22 +218,19 @@ pub fn by_model_connection(
 
 /// Calls of the period per connection (`byConnection`), most calls first; the row with no connection (calls before v1.3)
 /// comes last.
-pub fn by_connection(
-    c: &Connection,
-    from: &str,
-    to: &str,
-) -> rusqlite::Result<Vec<ConnectionUsage>> {
+pub fn by_connection(c: &Connection, w: &Window) -> rusqlite::Result<Vec<ConnectionUsage>> {
+    let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
         "SELECT connection_id, connection, {SUMS} FROM (
-           SELECT connection_id, connection, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write
+           SELECT connection_id, connection, at, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write
            FROM usage
            UNION ALL
-           SELECT connection_id, connection, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write
+           SELECT connection_id, connection, at, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write
            FROM gen_calls)
-         WHERE day BETWEEN ?1 AND ?2 GROUP BY connection_id, connection
+         WHERE {f} GROUP BY connection_id, connection
          ORDER BY connection_id IS NULL, COUNT(*) DESC, connection"
     ))?;
-    let rows = st.query_map([from, to], |r| {
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
         Ok(ConnectionUsage {
             connection_id: r.get(0)?,
             connection: r.get(1)?,
@@ -236,22 +264,23 @@ pub const PURPOSES: [&str; 7] = [
 /// Calls of the period per feature, always the seven rows in the order chat, hint, explain, summary, generate, import,
 /// other, zeros kept: the `usage` rows by `COALESCE(purpose, 'chat')` (memory suggestions are AI Chat's; the model list and
 /// connection tests are `other`), then the `gen_calls` rows. The rows add up to the total calls.
-pub fn by_purpose(
-    c: &Connection,
-    from: &str,
-    to: &str,
-) -> rusqlite::Result<Vec<(&'static str, Sums)>> {
+pub fn by_purpose(c: &Connection, w: &Window) -> rusqlite::Result<Vec<(&'static str, Sums)>> {
+    let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
         "SELECT CASE WHEN kind IN ('verify', 'models') THEN 'other' ELSE COALESCE(purpose, 'chat') END AS p, {SUMS}
-         FROM usage WHERE day BETWEEN ?1 AND ?2 GROUP BY p"
+         FROM usage WHERE {f} GROUP BY p"
     ))?;
-    let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
+    let rows = st.query_map(rusqlite::params_from_iter(vals.clone()), |r| {
+        Ok((r.get::<_, String>(0)?, sums_at(r, 1)?))
+    })?;
     let mut found: Vec<(String, Sums)> = rows.collect::<rusqlite::Result<_>>()?;
     let mut st = c.prepare(&format!(
         "SELECT CASE WHEN purpose IN ('generate', 'plan') THEN 'generate' ELSE 'import' END AS p, {SUMS} FROM gen_calls
-         WHERE day BETWEEN ?1 AND ?2 GROUP BY p"
+         WHERE {f} GROUP BY p"
     ))?;
-    let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
+        Ok((r.get::<_, String>(0)?, sums_at(r, 1)?))
+    })?;
     found.extend(rows.collect::<rusqlite::Result<Vec<_>>>()?);
     Ok(PURPOSES
         .iter()
@@ -266,18 +295,56 @@ pub fn by_purpose(
         .collect())
 }
 
-/// Per period key: the first `len` characters of `day` (10 = day, 7 = month).
-pub fn by_period(
-    c: &Connection,
-    from: &str,
-    to: &str,
-    len: i64,
-) -> rusqlite::Result<Vec<(String, Sums)>> {
+/// Per period key: the first `len` characters of `day` (10 = day, 7 = month). Only for a `Window::Days`.
+pub fn by_period(c: &Connection, w: &Window, len: i64) -> rusqlite::Result<Vec<(String, Sums)>> {
+    let (f, vals) = w.filter();
     let mut st = c.prepare(&format!(
-        "SELECT substr(day, 1, ?3) AS p, {SUMS} FROM {ALL_CALLS} WHERE day BETWEEN ?1 AND ?2 GROUP BY p ORDER BY p"
+        "SELECT substr(day, 1, {len}) AS p, {SUMS} FROM {ALL_CALLS} WHERE {f} GROUP BY p ORDER BY p"
     ))?;
-    let rows = st.query_map(params![from, to, len], |r| Ok((r.get(0)?, sums_at(r, 1)?)))?;
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
+        Ok((r.get(0)?, sums_at(r, 1)?))
+    })?;
     rows.collect()
+}
+
+/// Per local hour (`HH:00`, the server's time zone), oldest first, for the short windows. Rows are grouped by minute in
+/// SQL and folded into hours here, so a time zone with a half-hour offset still lines up with its wall clock.
+pub fn by_hour(c: &Connection, w: &Window) -> rusqlite::Result<Vec<(String, Sums)>> {
+    let (f, vals) = w.filter();
+    let mut st = c.prepare(&format!(
+        "SELECT MIN(at), {SUMS} FROM {ALL_CALLS} WHERE {f} GROUP BY at / 60 ORDER BY at / 60"
+    ))?;
+    let rows = st.query_map(rusqlite::params_from_iter(vals), |r| {
+        Ok((r.get::<_, i64>(0)?, sums_at(r, 1)?))
+    })?;
+    let mut out: Vec<(String, Sums)> = Vec::new();
+    for row in rows {
+        let (at, s) = row?;
+        let label = hour_label(at);
+        match out.last_mut() {
+            Some((l, acc)) if *l == label => {
+                acc.calls += s.calls;
+                acc.tokens_in += s.tokens_in;
+                acc.tokens_out += s.tokens_out;
+                acc.errors += s.errors;
+                acc.tokens_cached += s.tokens_cached;
+                acc.tokens_cache_write += s.tokens_cache_write;
+            }
+            _ => out.push((label, s)),
+        }
+    }
+    Ok(out)
+}
+
+/// `HH:00` of the local hour a unix time falls in.
+pub fn hour_label(ts: i64) -> String {
+    match jiff::Timestamp::from_second(ts) {
+        Ok(t) => t
+            .to_zoned(jiff::tz::TimeZone::system())
+            .strftime("%H:00")
+            .to_string(),
+        Err(_) => "00:00".to_string(),
+    }
 }
 
 /// Per-user counts for the administrators' list: chats, messages, memories, last usage time, all-time tokens.
@@ -743,5 +810,100 @@ mod tests {
             (none.last_used_at, none.tokens_in, none.tokens_out),
             (None, 0, 0)
         );
+    }
+
+    #[test]
+    fn since_windows_cut_on_the_call_time_for_every_statistic() {
+        let (_d, st) = store();
+        let edge = NOW - 12 * 3600;
+        st.write(|tx| {
+            add_user(tx, 1);
+            // exactly at the edge and later: inside; one second before: outside (even on the same day)
+            add_call(tx, Some(1), "chat", edge, 0);
+            add_call(tx, Some(1), "chat", edge + 5, 0);
+            add_call(tx, Some(1), "chat", edge - 1, 0);
+            Ok::<_, rusqlite::Error>(())
+        })
+        .expect("fill");
+        let w = Window::Since(edge);
+        let (tot, users, models, purposes, conns, hours) = st
+            .read(|c| {
+                Ok((
+                    totals(c, &w)?,
+                    by_user(c, &w)?,
+                    by_model_connection(c, &w)?,
+                    by_purpose(c, &w)?,
+                    by_connection(c, &w)?,
+                    by_hour(c, &w)?,
+                ))
+            })
+            .expect("read");
+        assert_eq!(tot.calls, 2);
+        assert_eq!(users[0].2.calls, 2);
+        assert_eq!(models[0].sums.calls, 2);
+        assert_eq!(purposes.iter().map(|p| p.1.calls).sum::<i64>(), 2);
+        assert_eq!(conns[0].sums.calls, 2);
+        assert_eq!(hours.iter().map(|h| h.1.calls).sum::<i64>(), 2);
+        // a later start leaves only the newer call
+        let late = st
+            .read(|c| totals(c, &Window::Since(edge + 1)))
+            .expect("late");
+        assert_eq!(late.calls, 1);
+    }
+
+    #[test]
+    fn today_window_splits_at_the_start_of_the_day() {
+        let (_d, st) = store();
+        let start = crate::util::day_bounds(NOW).start;
+        st.write(|tx| {
+            add_call(tx, Some(1), "chat", start - 1, 0);
+            add_call(tx, Some(1), "chat", start, 0);
+            add_call(tx, Some(1), "chat", start + 60, 0);
+            Ok::<_, rusqlite::Error>(())
+        })
+        .expect("fill");
+        let got = st
+            .read(|c| totals(c, &Window::Since(start)))
+            .expect("today");
+        assert_eq!(got.calls, 2);
+    }
+
+    #[test]
+    fn hourly_buckets_follow_the_local_hour() {
+        let (_d, st) = store();
+        let base = NOW - 5 * 3600;
+        let times = [
+            base,
+            base + 1,
+            base + 2 * 3600,
+            base + 2 * 3600 + 1,
+            base + 4 * 3600,
+        ];
+        st.write(|tx| {
+            for t in times {
+                add_call(tx, Some(1), "chat", t, 0);
+            }
+            Ok::<_, rusqlite::Error>(())
+        })
+        .expect("fill");
+        let got = st
+            .read(|c| by_hour(c, &Window::Since(base)))
+            .expect("hours");
+        let mut want: Vec<(String, i64)> = Vec::new();
+        for t in times {
+            let l = hour_label(t);
+            match want.last_mut() {
+                Some((k, n)) if *k == l => *n += 1,
+                _ => want.push((l, 1)),
+            }
+        }
+        assert_eq!(
+            got.iter()
+                .map(|(k, s)| (k.clone(), s.calls))
+                .collect::<Vec<_>>(),
+            want
+        );
+        assert!(got.len() >= 3);
+        assert!(got.iter().all(|(k, _)| k.len() == 5 && k.ends_with(":00")));
     }
 }

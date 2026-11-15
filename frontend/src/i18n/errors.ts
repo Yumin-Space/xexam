@@ -13,6 +13,7 @@
 //     numbers of the answer (`need`, `have`, `limit`, `maxMb`, `ext`) or of a job (`errorArg`): see genCodeText().
 import { ApiError } from '../api/client.ts';
 import { DEFAULT_LIMITS } from '../domain/ai-settings.ts';
+import { formatBig } from '../domain/usage-bars.ts';
 import type { AiCallBlock } from '../types/api.ts';
 import { hasKey, localeTag, t, uiLang, type MsgKey, type Params } from './index.ts';
 import { localizeServerMessage } from './server-messages.ts';
@@ -96,9 +97,11 @@ export function genArgsOf(body: Record<string, unknown> | undefined): GenCodeArg
  */
 export function genCodeText(code: string, args: GenCodeArgs = {}): string | null {
   const grouped = (n: number): string => n.toLocaleString(localeTag());
+  // v1.4: compact, with the exact number in parentheses when they differ (this plain text has no title)
+  const tokensText = (n: number): string => (formatBig(n) === grouped(n) ? grouped(n) : `${formatBig(n)} (${grouped(n)})`);
   switch (code) {
     case 'ai.genCount': return t('ai.set.gen.totalBad');
-    case 'ai.gen.tooBig': return t('aigen.tooBig', { tokens: grouped(args.tokens ?? 0) });
+    case 'ai.gen.tooBig': return t('aigen.tooBig', { tokens: tokensText(args.tokens ?? 0) });
     case 'ai.gen.badName': return t('aigen.dlg.nameBad');
     case 'ai.import.nameTaken': return t('aigen.imp.cfm.nameTaken');
     case 'ai.import.nameEmpty': return t('aigen.imp.cfm.nameNeed');

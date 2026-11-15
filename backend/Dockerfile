@@ -53,7 +53,7 @@ RUN apk add --no-cache tzdata \
 COPY --from=build /xexam-backend /usr/local/bin/xexam-backend
 COPY VERSION /VERSION
 USER app
-# /link (the volume xexam_link in docker-compose.yml): serve creates internal.token there, the secret it shares with the AI
+# /link (the volume xexam_ai_auth in docker-compose.yml): serve creates internal.token there, the secret it shares with the AI
 # service (ai-service mounts the same volume read-only). It never holds a database.
 ENV XEXAM_DATA=/data XEXAM_HOST=0.0.0.0 XEXAM_PORT=8765 XEXAM_VERSION_FILE=/VERSION XEXAM_LINK_DIR=/link XEXAM_BEHIND_PROXY=1
 VOLUME ["/data"]

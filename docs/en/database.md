@@ -10,10 +10,10 @@
 
 | How you run it | Location |
 |---|---|
-| Docker (recommended) | Named volume `xexam_data`, mounted at `/data` in the container; the file is `/data/xexam.db`. Updating or deleting the container does not lose it |
+| Docker (recommended) | Named volume `xexam_backend_data`, mounted at `/data` in the container; the file is `/data/xexam.db`. Updating or deleting the container does not lose it |
 | Without Docker | `xexam.db` in the data directory (default `./data`, or `XEXAM_DATA`, or `--data`) |
 
-The volume's real name is `<project name>_<volume name>` = `xexam_data`, and `docker volume ls` shows it. **Do not run `docker compose down -v`**: `-v` deletes the volume along with the containers.
+The volume's real name is `<project name>_<volume name>` = `xexam_backend_data`, and `docker volume ls` shows it. **Do not run `docker compose down -v`**: `-v` deletes the volume along with the containers.
 
 Other files next to the database:
 
@@ -27,7 +27,7 @@ What is kept where:
 | `xexam.db` in the volume (with `-wal` / `-shm` while running) | The question banks with their owners and questions (retired ones included), the import history, the users (password hashes only), their sessions and which banks each user sees, each user's per-question statistics (wrong-answer notebook), study records (exams and practice) with their per-question detail and, since v0.9, the key and start time of the session each was saved from, and settings (theme, interface language, auto-advance, question language) |
 | `backups/` in the volume | The copies of the database written before each schema migration (`xexam-schema1-…` up to `xexam-schema5-…`) |
 | Memory of the backend only | The System log, the sign-in locks and the import previews; all of them start empty after a restart |
-| The volume `xexam_link` (v0.8) | Only `internal.token`, the token the backend and ai-service share; written by the backend, read by ai-service. No database |
+| The volume `xexam_ai_auth` (v0.8) | Only `internal.token`, the token the backend and ai-service share; written by the backend, read by ai-service. No database |
 | The volume `xexam_ai_data` of ai-service (v0.8) | `xexam-ai.db` (AI settings, encrypted provider keys, safety limits, chats, memories, usage statistics; since v0.9 the chats include one chat per practice session, per exam and per record summary, with the question texts and the AI answers they hold), the key file `secret.key` and the folder `backups/` with the copies written before an AI schema upgrade (section 8) |
 | The browser (`localStorage`) | Per user: the unfinished exam or practice (question ids, answers, marks, checked questions, time used; no question text) and a copy of the settings to paint the first screen |
 
@@ -242,7 +242,7 @@ For clients that know only one explanation, `explanation`, `mnemonic` and `note`
 
 ## 5. Backup and restore
 
-Since v0.8 there are **two data volumes** to back up: `xexam_data` (this database) and `xexam_ai_data` (the AI database and its key file, section 8.4). `xexam_link` needs no backup. The commands below are for `xexam_data`; the AI volume works the same way.
+Since v0.8 there are **two data volumes** to back up: `xexam_backend_data` (this database) and `xexam_ai_data` (the AI database and its key file, section 8.4). `xexam_ai_auth` needs no backup. The commands below are for `xexam_backend_data`; the AI volume works the same way.
 
 **Stop the backend before you copy the database.** In WAL mode the latest changes can sit in `xexam.db-wal` while the backend runs, so a copy of `xexam.db` alone can miss them; after a normal stop everything is in `xexam.db`, and a `-wal` file left next to it is empty.
 
@@ -250,7 +250,7 @@ Since v0.8 there are **two data volumes** to back up: `xexam_data` (this databas
 docker compose stop
 
 # Back up: pack the volume into xexam-data.tgz in the current directory (it holds the whole database; it is ignored by .gitignore, do not commit it)
-docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
+docker run --rm -v xexam_backend_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
 
 docker compose start
 ```
@@ -268,7 +268,7 @@ sqlite3 work/xexam.db "PRAGMA integrity_check"      # must print ok
 
 ```bash
 docker compose stop
-docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && tar xzf /backup/xexam-data.tgz -C /data'
+docker run --rm -v xexam_backend_data:/data -v "$PWD:/backup" alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && tar xzf /backup/xexam-data.tgz -C /data'
 docker compose start
 ```
 
@@ -410,7 +410,7 @@ In Docker, copy the file into the volume with a temporary container (the command
 
 ```bash
 docker compose stop
-docker run --rm -v xexam_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/progress.json /data/progress.json && chown 10001:10001 /data/progress.json"
+docker run --rm -v xexam_backend_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/progress.json /data/progress.json && chown 10001:10001 /data/progress.json"
 docker compose start
 ```
 
@@ -655,4 +655,4 @@ Restore it like the main volume: stop, remove `xexam-ai.db-wal` and `xexam-ai.db
 
 - With `XEXAM_AI_SECRET_KEY` set, the key file is not used: back up that value separately (it is not in the volume). Without the right key the restored keys cannot be decrypted; AI then stays off until an administrator enters the keys again, and nothing else is lost.
 - A restored AI volume and a main volume from another point in time fit together: users that no longer exist lose their AI data at the next reconcile, and a user id that now belongs to another account is recognised by its stamp.
-- `xexam_link` needs no backup: it holds only `internal.token`, which the backend creates again when it is missing (the AI service picks up the new token by itself).
+- `xexam_ai_auth` needs no backup: it holds only `internal.token`, which the backend creates again when it is missing (the AI service picks up the new token by itself).

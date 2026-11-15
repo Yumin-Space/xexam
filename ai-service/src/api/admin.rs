@@ -355,34 +355,79 @@ fn sums_json(s: &stats::Sums) -> Map<String, Value> {
     m
 }
 
+/// The period of the usage answer: `days=7|30|90|365` (calendar days, today included), or `period=12h` (the last 12
+/// hours) / `period=today` (since today's 0:00, server time zone). Both together, or any other value, is a 400; neither
+/// means 7 days.
+enum UsagePeriod {
+    Days(i64),
+    Last12Hours,
+    Today,
+}
+
+fn usage_period(query: Option<&str>) -> Result<UsagePeriod, ApiError> {
+    let days = query_text(query, "days")?;
+    let period = query_text(query, "period")?;
+    match (days, period) {
+        (Some(_), Some(_)) => Err(ApiError::bad_request()),
+        (_, Some("12h")) => Ok(UsagePeriod::Last12Hours),
+        (_, Some("today")) => Ok(UsagePeriod::Today),
+        (_, Some(_)) => Err(ApiError::bad_request()),
+        (None | Some("7"), None) => Ok(UsagePeriod::Days(7)),
+        (Some("30"), None) => Ok(UsagePeriod::Days(30)),
+        (Some("90"), None) => Ok(UsagePeriod::Days(90)),
+        (Some("365"), None) => Ok(UsagePeriod::Days(365)),
+        (Some(_), None) => Err(ApiError::bad_request()),
+    }
+}
+
 pub async fn usage(ctx: Ctx) -> Answer {
-    let days: i64 = match query_text(ctx.query.as_deref(), "days")? {
-        None => 7,
-        Some("7") => 7,
-        Some("30") => 30,
-        Some("90") => 90,
-        Some("365") => 365,
-        Some(_) => return Err(ApiError::bad_request()),
-    };
+    let period = usage_period(ctx.query.as_deref())?;
     let to = crate::util::local_today();
-    let from = to
-        .checked_sub(jiff::Span::new().days(days - 1))
-        .map_err(|_| ApiError::internal())?;
-    let monthly = days >= 90;
-    let (from_s, to_s) = (from.to_string(), to.to_string());
-    let app = &ctx.app.0;
     let now = unix_now();
+    let day_start = crate::util::day_bounds(now).start;
+    let (window, hourly_from, days) = match period {
+        UsagePeriod::Days(d) => {
+            let from = to
+                .checked_sub(jiff::Span::new().days(d - 1))
+                .map_err(|_| ApiError::internal())?;
+            (
+                stats::Window::days(&from.to_string(), &to.to_string()),
+                None,
+                Some((from, d)),
+            )
+        }
+        UsagePeriod::Last12Hours => (
+            stats::Window::Since(now - 12 * 3600),
+            Some(now - 12 * 3600),
+            None,
+        ),
+        UsagePeriod::Today => (stats::Window::Since(day_start), Some(day_start), None),
+    };
+    // `from` / `to`: the first and last calendar day (the short windows: today's date twice)
+    let from_s = days.map_or_else(|| to.to_string(), |(f, _)| f.to_string());
+    let to_s = to.to_string();
+    let period_name = match period {
+        UsagePeriod::Days(d) => format!("{d}d"),
+        UsagePeriod::Last12Hours => "12h".to_string(),
+        UsagePeriod::Today => "today".to_string(),
+    };
+    let monthly = days.is_some_and(|(_, d)| d >= 90);
+    let app = &ctx.app.0;
     let today_s = to_s.clone();
     let (totals, users, models, periods, purposes, conns, shared, used_today) =
         app.store.read(|c| {
             Ok((
-                stats::totals(c, &from_s, &to_s)?,
-                stats::by_user(c, &from_s, &to_s)?,
-                stats::by_model_connection(c, &from_s, &to_s)?,
-                stats::by_period(c, &from_s, &to_s, if monthly { 7 } else { 10 })?,
-                stats::by_purpose(c, &from_s, &to_s)?,
-                stats::by_connection(c, &from_s, &to_s)?,
-                crate::store::shared::shared_stats(c, crate::util::day_bounds(now).start)?,
+                stats::totals(c, &window)?,
+                stats::by_user(c, &window)?,
+                stats::by_model_connection(c, &window)?,
+                if hourly_from.is_some() {
+                    stats::by_hour(c, &window)?
+                } else {
+                    stats::by_period(c, &window, if monthly { 7 } else { 10 })?
+                },
+                stats::by_purpose(c, &window)?,
+                stats::by_connection(c, &window)?,
+                crate::store::shared::shared_stats(c, day_start)?,
                 stats::tokens_today(c, &today_s)?,
             ))
         })?;
@@ -429,24 +474,40 @@ pub async fn usage(ctx: Ctx) -> Answer {
         .collect();
     // Every period of the range, zeros included, oldest first
     let mut keys: Vec<String> = Vec::new();
-    if monthly {
-        let mut d = from.first_of_month();
-        let end = to.first_of_month();
-        while d <= end {
-            keys.push(format!("{:04}-{:02}", d.year(), d.month()));
-            d = match d.checked_add(jiff::Span::new().months(1)) {
-                Ok(n) => n,
-                Err(_) => break,
-            };
+    if let Some(start) = hourly_from {
+        // one key per local hour from the window's start to now
+        let mut t = start;
+        while t <= now {
+            let k = stats::hour_label(t);
+            if keys.last() != Some(&k) {
+                keys.push(k);
+            }
+            t += 1800;
         }
-    } else {
-        let mut d = from;
-        while d <= to {
-            keys.push(d.to_string());
-            d = match d.tomorrow() {
-                Ok(n) => n,
-                Err(_) => break,
-            };
+        let last = stats::hour_label(now);
+        if keys.last() != Some(&last) {
+            keys.push(last);
+        }
+    } else if let Some((from, _)) = days {
+        if monthly {
+            let mut d = from.first_of_month();
+            let end = to.first_of_month();
+            while d <= end {
+                keys.push(format!("{:04}-{:02}", d.year(), d.month()));
+                d = match d.checked_add(jiff::Span::new().months(1)) {
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+            }
+        } else {
+            let mut d = from;
+            while d <= to {
+                keys.push(d.to_string());
+                d = match d.tomorrow() {
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+            }
         }
     }
     let by_period: Vec<Value> = keys
@@ -498,10 +559,11 @@ pub async fn usage(ctx: Ctx) -> Answer {
         })
         .collect();
     ok(json!({
-        "days": days,
+        "days": days.map(|(_, d)| d),
+        "period": period_name,
         "from": from_s,
         "to": to_s,
-        "unit": if monthly { "month" } else { "day" },
+        "unit": if hourly_from.is_some() { "hour" } else if monthly { "month" } else { "day" },
         "totals": Value::Object(totals_json),
         "byUser": by_user,
         "byModel": by_model,
@@ -1085,4 +1147,29 @@ pub async fn limits_post(ctx: Ctx) -> Answer {
         Event::new(Some(&ctx.who), "ai.settings.limits", &ctx.client).detail(json!({"keys": keys})),
     );
     ok(next.answer())
+}
+
+#[cfg(test)]
+mod usage_period_tests {
+    use super::*;
+
+    fn kind(q: &str) -> Result<String, ()> {
+        usage_period(Some(q)).map_err(|_| ()).map(|p| match p {
+            UsagePeriod::Days(d) => format!("{d}d"),
+            UsagePeriod::Last12Hours => "12h".into(),
+            UsagePeriod::Today => "today".into(),
+        })
+    }
+
+    #[test]
+    fn the_period_parameter_adds_two_windows_and_days_still_works() {
+        assert_eq!(kind("").as_deref(), Ok("7d"));
+        assert_eq!(kind("days=30").as_deref(), Ok("30d"));
+        assert_eq!(kind("days=365").as_deref(), Ok("365d"));
+        assert_eq!(kind("period=12h").as_deref(), Ok("12h"));
+        assert_eq!(kind("period=today").as_deref(), Ok("today"));
+        assert!(kind("period=3h").is_err());
+        assert!(kind("days=8").is_err());
+        assert!(kind("days=7&period=today").is_err());
+    }
 }

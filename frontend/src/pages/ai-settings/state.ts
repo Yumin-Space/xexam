@@ -1,7 +1,9 @@
 // AI settings page: the state every section shares (one object, so the sections can live in their own files), a few helpers,
 // and the hooks the entry file fills in (which breaks the import cycle between the entry and the sections). Typed keys live
 // only in this state: they are forgotten after a successful save, when the page is left and on sign-out.
-import { fmtAiTime } from '../../domain/ai-chat.ts';
+import type { UsagePeriod } from '../../api/ai-admin.ts';
+import { jobTime } from '../../domain/ai-settings.ts';
+import { parsePeriod } from '../../domain/usage-bars.ts';
 import type { ConnForm, LimitKey, LimitsForm, SettingsField, SvcCause } from '../../domain/ai-settings.ts';
 import { localeTag, t } from '../../i18n/index.ts';
 import { render } from '../../state/actions.ts';
@@ -9,6 +11,25 @@ import { S } from '../../state/store.ts';
 import type {
   AiAdminUserRow, AiLimitsAnswer, AiModelList, AiService, AiSettings, AiSlot, AiUsage, GenAdminJob,
 } from '../../types/api.ts';
+
+const PERIOD_KEY = 'xexam.ais.usagePeriod';
+
+/** v1.4: the remembered usage period (an unknown or missing value is 7 days) */
+function readPeriod(): UsagePeriod {
+  try {
+    return parsePeriod(localStorage.getItem(PERIOD_KEY));
+  } catch {
+    return 7;
+  }
+}
+
+export function writePeriod(p: UsagePeriod): void {
+  try {
+    localStorage.setItem(PERIOD_KEY, String(p));
+  } catch {
+    // not remembered
+  }
+}
 
 /** While the status panel is shown, the page checks again this often */
 export const RECHECK_MS = 10_000;
@@ -66,7 +87,8 @@ export interface PageState {
   /** The user whose AI+ feature is being paused or resumed (the buttons wait meanwhile) */
   fnBusy: number | null;
   usage: AiUsage | null;
-  usageDays: number;
+  /** Usage period: days, or '12h' / 'today' */
+  usageDays: UsagePeriod;
   usageError: unknown;
   retentionText: string;
   retentionError: string | null;
@@ -92,7 +114,7 @@ function fresh(): PageState {
     open: null, form: null, fieldErr: {}, connBusy: false, connSecs: 0, connTimer: null, connMsg: null, retest: {},
     models: null, modelsBusy: false, modelsError: null, enableChoice: '', enableBusy: false, enableMsg: null, slotBusy: {}, slotMsg: {},
     manualOpen: null, featBusy: null, switchBusy: false, switchMsg: null,
-    users: null, usersError: null, fnBusy: null, usage: null, usageDays: 7, usageError: null,
+    users: null, usersError: null, fnBusy: null, usage: null, usageDays: readPeriod(), usageError: null,
     retentionText: '', retentionError: null, retentionSaving: false,
     limits: null, limitsForm: null, limitsError: null, limitsFieldErr: null, limitsSaveError: null, limitsSaving: false, limitsTab: 'safety',
     genJobs: null, genJobsError: null, featErr: new Map(), featSaved: '', shareBusy: false,
@@ -122,7 +144,7 @@ export function redraw(): void {
 }
 
 export const num = (n: number): string => n.toLocaleString(localeTag());
-export const when = (sec: number | null): string => (sec == null ? t('common.none') : fmtAiTime(sec, localeTag()));
+export const when = (sec: number | null): string => (sec == null ? t('common.none') : jobTime(sec));
 
 /** The comma of a list of names, per language */
 export const listSep = (lang: string): string => (lang === 'en' ? ', ' : '、');

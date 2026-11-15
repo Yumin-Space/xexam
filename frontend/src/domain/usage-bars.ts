@@ -41,16 +41,37 @@ const nonNeg = (c: Counts): Counts => ({
 const used = (c: Counts): boolean => c.calls > 0 || c.tokensIn > 0 || c.tokensOut > 0 || c.errors > 0;
 
 /**
- * Compact number, the same in every language (A-OWNER-59): K from 1 000, M from 1 000 000 (1.2K, 48K, 3.4M); one decimal at
- * most, no trailing ".0"; below 1 000 the plain digits. Never 万.
+ * Compact number, the same in every language (A-OWNER-59, v1.4): K from 1 000, M from 1 000 000, B from 1 000 000 000, T from 1 000 000 000 000 (1.2K, 48K,
+ * 3.4M, 3.4B, 1.2T); one decimal at most, no trailing ".0"; below 1 000 the plain digits. Never 万.
  */
 export function formatBig(n: number): string {
   const v = Math.max(0, Math.round(n));
   const one = (x: number): string => String(Math.round(x * 10) / 10);
+  // rounding to one decimal can reach 1000 of a unit (999 950 -> "1000K"): that carries into the next unit
+  if (v >= 1_000_000_000_000 || Math.round(v / 100_000_000) / 10 >= 1000) return `${one(v / 1_000_000_000_000)}T`;
+  if (v >= 1_000_000_000 || Math.round(v / 100_000) / 10 >= 1000) return `${one(v / 1_000_000_000)}B`;
   if (v >= 1_000_000 || Math.round(v / 100) / 10 >= 1000) return `${one(v / 1_000_000)}M`;
   if (v >= 1000) return `${one(v / 1000)}K`;
   return String(v);
 }
+
+/** v1.4: a shown token figure: the compact text and the exact number for title / screen readers */
+export const tokenLabel = (n: number, exact: (n: number) => string): { text: string; title: string } => ({ text: formatBig(n), title: exact(n) });
+
+/** v1.4: the args of the limit range hint: `exact` always; `compact` only for a token limit (null otherwise) */
+export function limitHintArgs(token: boolean, min: number, max: number, def: number, exact: (n: number) => string):
+  { exact: { min: string; max: string; def: string }; compact: { min: string; max: string; def: string } | null } {
+  return {
+    exact: { min: exact(min), max: exact(max), def: exact(def) },
+    compact: token ? { min: formatBig(min), max: formatBig(max), def: formatBig(def) } : null,
+  };
+}
+
+/** v1.4: the usage periods of AI settings, in the order of the select */
+export const USAGE_PERIODS: ReadonlyArray<number | '12h' | 'today'> = ['12h', 'today', 7, 30, 90, 365];
+
+/** The remembered usage period from its stored text; anything unknown (or nothing) is 7 days */
+export const parsePeriod = (raw: string | null | undefined): number | '12h' | 'today' => USAGE_PERIODS.find((p) => String(p) === raw) ?? 7;
 
 /** "write/read" pair of the cache figures in one format (A-OWNER-84: write first, then read) */
 export const cachePair = (write: number, read: number, fmt: (n: number) => string = formatBig): string => `${fmt(write)}/${fmt(read)}`;

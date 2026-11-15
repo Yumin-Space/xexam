@@ -60,7 +60,7 @@ What is checked:
       without the bank (lee) and a user without the AI+ feature (kim) are refused; the System log holds no question,
       hint or summary text and no session key
   9. Volumes (v0.8): the AI volume holds secret.key (mode 600, uid 10001) and xexam-ai.db; the main volume holds no AI
-     secret and no AI table, and users has ai_enabled and uid; the link volume holds internal.token (mode 600)
+     secret and no AI table, and users has ai_enabled and uid; the ai_auth volume holds internal.token (mode 600)
 """
 import codecs
 import http.client
@@ -99,6 +99,8 @@ MSG_AI_SUSPENDED = '管理员已暂停你的 AI+ 功能。'
 # Key orders of the JSON answers checked here (contracts of v0.8)
 USER_ROW_KEYS = ['id', 'username', 'role', 'disabled', 'createdAt', 'lastLoginAt', 'mustChangePassword', 'records',
                  'banks', 'newBanks', 'canManageBanks', 'ai', 'ownedBanks', 'lastActiveAt', 'lastLoginIp', 'lastLoginLocation',
+                 # v1.4: the last activity's IP, place and user agent
+                 'lastActiveIp', 'lastActiveLocation', 'lastActiveUa',
                  'lock', 'aiSuspended']
 AI_SERVICE_KEYS = ['connected', 'stopped', 'lastSeen', 'version', 'enabled', 'link']
 STATUS_KEYS = ['enabled', 'allowed', 'suspended', 'hasData', 'running', 'retentionDays', 'memoryLimit', 'memoryMaxTokens',
@@ -623,8 +625,10 @@ try:
        'ai-service has reported to the backend (connected, link on, version %s, AI+ service off): aiAvailable false. Actual %r'
        % (code_version.group(1), svc))
     ul = users_list()
-    ok(list(ul.keys()) == ['users', 'signinInfo', 'aiAvailable'] and ul['aiAvailable'] is False and ul['signinInfo'] is False,
-       'GET /api/users: top-level keys users, signinInfo (v1.3, off by default), aiAvailable; aiAvailable false before AI is set up. Actual %r' % ul)
+    ok(list(ul.keys()) == ['users', 'signinInfo', 'aiAvailable', 'geoSource', 'aiServiceUp'] and ul['aiAvailable'] is False
+       and ul['signinInfo'] is False and ul['geoSource'] == 'cloudflare' and ul['aiServiceUp'] is True,
+       'GET /api/users: top-level keys users, signinInfo (v1.3, off by default), aiAvailable, geoSource (v1.4, cloudflare by default), '
+       'aiServiceUp; aiAvailable false before AI is set up. Actual %r' % ul)
     ok(all(list(u.keys()) == USER_ROW_KEYS for u in ul['users']) and all(u['aiSuspended'] is False for u in ul['users']),
        'GET /api/users: row keys in order, aiSuspended appended after lock. Actual %r' % [list(u.keys()) for u in ul['users']][:1])
     ok(all(u['lastLoginIp'] is None and u['lastLoginLocation'] is None for u in ul['users']),
@@ -1469,7 +1473,7 @@ try:
     # -- 6 Persistence --
     ADMIN_Q = bank_size()          # v1.1: A6 added AI banks since the count above
     dc('rm', '-sf', 'frontend', 'backend', 'ai-service')
-    ok(docker('volume', 'inspect', PROJECT + '_data').returncode == 0 and docker('volume', 'inspect', PROJECT + '_ai_data').returncode == 0,
+    ok(docker('volume', 'inspect', PROJECT + '_backend_data').returncode == 0 and docker('volume', 'inspect', PROJECT + '_ai_data').returncode == 0,
        'The volumes still exist after deleting the containers')
     dc('up', '-d')
     ok(wait_healthy(services), 'The three containers are healthy again after recreating with the same volumes')
@@ -1539,18 +1543,18 @@ try:
     ok(dt < 9, 'docker stop backend took %.1f s (<9)' % dt)
     ok('WAL checkpoint at shutdown' in backend_log(), 'docker stop runs the WAL checkpoint (shutdown log)')
     image = docker('inspect', '-f', '{{.Image}}', BACKEND).stdout.strip()
-    r = docker('run', '--rm', '--network', 'none', '-v', PROJECT + '_data:/data', '--entrypoint', 'sh', image, '-c',
+    r = docker('run', '--rm', '--network', 'none', '-v', PROJECT + '_backend_data:/data', '--entrypoint', 'sh', image, '-c',
                'test -s /data/xexam.db && { test -s /data/xexam.db-wal && echo WAL_HAS_CONTENT || echo WAL_EMPTY; }')
     ok(r.stdout.strip() == 'WAL_EMPTY', 'After docker stop the volume holds xexam.db and no -wal content. Actual %r' % (r.stdout.strip() or r.stderr.strip()[-200:]))
 
-    # -- 9 Volumes: each database stays in its own volume; the link volume holds only the token --
+    # -- 9 Volumes: each database stays in its own volume; the ai_auth volume holds only the token --
     ai_vol = volume_report(PROJECT + '_ai_data', (
         "import json, os, stat\n"
         "k = os.stat('/v/secret.key') if os.path.exists('/v/secret.key') else None\n"
         "print(json.dumps({'files': sorted(os.listdir('/v')), 'key_mode': k and oct(stat.S_IMODE(k.st_mode)), 'key_uid': k and k.st_uid}))"))
     ok('xexam-ai.db' in ai_vol.get('files', []) and ai_vol.get('key_mode') == '0o600' and ai_vol.get('key_uid') == 10001,
        'The AI volume holds xexam-ai.db and secret.key (mode 600, uid 10001). Actual %r' % ai_vol)
-    main_vol = volume_report(PROJECT + '_data', (
+    main_vol = volume_report(PROJECT + '_backend_data', (
         "import json, os, sqlite3\n"
         "c = sqlite3.connect('file:/v/xexam.db?immutable=1', uri=True)\n"
         "tables = [r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type = 'table'\")]\n"
@@ -1560,12 +1564,12 @@ try:
        'The main volume holds no AI key file and no AI database. Actual %r' % main_vol.get('files', main_vol))
     ok('chats' not in main_vol.get('tables', ['chats']) and 'ai_enabled' in main_vol.get('user_columns', []) and 'uid' in main_vol.get('user_columns', []),
        'The main database has no AI table; users has ai_enabled and uid. Actual %r' % main_vol)
-    link_vol = volume_report(PROJECT + '_link', (
+    ai_auth_vol = volume_report(PROJECT + '_ai_auth', (
         "import json, os, stat\n"
         "t = os.stat('/v/internal.token') if os.path.exists('/v/internal.token') else None\n"
         "print(json.dumps({'files': sorted(os.listdir('/v')), 'mode': t and oct(stat.S_IMODE(t.st_mode))}))"))
-    ok(link_vol.get('files') == ['internal.token'] and link_vol.get('mode') == '0o600',
-       'The link volume holds only internal.token (mode 600). Actual %r' % link_vol)
+    ok(ai_auth_vol.get('files') == ['internal.token'] and ai_auth_vol.get('mode') == '0o600',
+       'The ai_auth volume holds only internal.token (mode 600). Actual %r' % ai_auth_vol)
 
 finally:
     cleanup()

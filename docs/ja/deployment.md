@@ -2,7 +2,7 @@
 
 # デプロイ
 
-> 新しいアーキテクチャ：`nginx`（外部に公開されるのはこれだけ）+ `backend`（Rust、プライベートネットワーク内、インターネット接続なし）+ SQLite（名前付きボリューム `xexam_data`）、そして v0.8 からは `ai-service`（Rust、プライベートネットワークに加えて外向きのインターネット接続、ボリューム `xexam_ai_data` に専用の SQLite）。構成図は [architecture.md](architecture.md)、セキュリティ境界は [security.md](security.md) を参照してください。
+> 新しいアーキテクチャ：`nginx`（外部に公開されるのはこれだけ）+ `backend`（Rust、プライベートネットワーク内、インターネット接続なし）+ SQLite（名前付きボリューム `xexam_backend_data`）、そして v0.8 からは `ai-service`（Rust、プライベートネットワークに加えて外向きのインターネット接続、ボリューム `xexam_ai_data` に専用の SQLite）。構成図は [architecture.md](architecture.md)、セキュリティ境界は [security.md](security.md) を参照してください。
 
 ## 1. 前提
 
@@ -49,9 +49,9 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | 最新バージョンに更新 | `docker compose pull && docker compose up -d`（ソースからビルドした場合：`git pull && docker compose -f docker/docker-compose.build.yml up -d --build`）。古いバージョンから更新する場合は、先に第 6 節を読んでください |
 | バージョンとアーキテクチャ | <http://localhost:8765/api/info>、またはアプリで：メニューのバージョンの項目、たとえば **Xexam v0.9.1**（「Xexam について」のページ） |
 
-> ⚠️ `docker compose down -v` は実行しないでください。`-v` を付けると 2 つのデータボリュームが削除されます：`xexam_data`（問題集、アカウント、すべての学習記録）と `xexam_ai_data`（AI 設定とキー、チャットとメモ）です。
+> ⚠️ `docker compose down -v` は実行しないでください。`-v` を付けると 2 つのデータボリュームが削除されます：`xexam_backend_data`（問題集、アカウント、すべての学習記録）と `xexam_ai_data`（AI 設定とキー、チャットとメモ）です。
 
-**`docker/docker-compose.yml` と `docker/docker-compose.build.yml` は、同じプロジェクト名（`xexam`）、同じボリューム（`xexam_data`、`xexam_ai_data`、`xexam_link`）、同じコンテナ名を使います**。そのため、両者を同時に実行することはできません。切り替える前に `docker compose stop` を実行してください。データは共通です。詳しくは [migration.md](migration.md) を参照してください。
+**`docker/docker-compose.yml` と `docker/docker-compose.build.yml` は、同じプロジェクト名（`xexam`）、同じボリューム（`xexam_backend_data`、`xexam_ai_data`、`xexam_ai_auth`）、同じコンテナ名を使います**。そのため、両者を同時に実行することはできません。切り替える前に `docker compose stop` を実行してください。データは共通です。詳しくは [migration.md](migration.md) を参照してください。
 
 ## 3. 設定（`.env`）
 
@@ -69,7 +69,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_LOG` | （未設定：`info`） | バックエンドのログのフィルターで、`docker compose logs backend` とシステムログのページの両方に効きます。例：`debug`、`warn`。空やスペースだけなら `info` です。フィルターとして正しくない値の場合も `info` になり、ログの最初に、問題を示す警告が 1 行出ます |
 | `TZ` | （未設定：ホストのタイムゾーン） | データベース内のタイムスタンプと、AI の使用量の統計の日付のタイムゾーン。v1.0 からは、利用者ごとの AI リクエスト上限の 1 日分の 0:00 のリセット（ai-service）も含みます。compose ファイルがホストの `/etc/localtime` をバックエンドと ai-service にマウントするので、別のタイムゾーン（例：`UTC`）を使うときだけ設定します |
 | `XEXAM_AI_SECRET_KEY` | （未設定：AI ボリューム内のキーファイル） | AI プロバイダーのキーを暗号化するキー：32 バイトを 16 進数 64 桁か base64 で（`openssl rand -base64 32`）。3.2 節 |
-| `XEXAM_INTERNAL_TOKEN` | （未設定：リンクボリューム内のランダムなトークン） | バックエンドと ai-service が共有するトークンで、両方に同じ値を使います：空白を含まない表示可能な ASCII 文字で 32 文字以上（`openssl rand -hex 32`）。3.3 節 |
+| `XEXAM_INTERNAL_TOKEN` | （未設定：ai_auth ボリューム内のランダムなトークン） | バックエンドと ai-service が共有するトークンで、両方に同じ値を使います：空白を含まない表示可能な ASCII 文字で 32 文字以上（`openssl rand -hex 32`）。3.3 節 |
 | `XEXAM_AI_LOG` | （未設定：`info`） | ai-service のログのフィルターで、`docker compose logs ai-service` とシステムログに送る行に効きます。規則は `XEXAM_LOG` と同じです（空なら `info`、正しくない値なら警告を 1 回出して `info`） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （未設定：WAL） | `delete` = AI のデータベースでロールバックジャーナルを使います。`XEXAM_SQLITE_JOURNAL` と同じく特殊なストレージのためです |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | *（v1.3、既定値は v1.4 で変更、frontend コンテナ）* `CF-Connecting-IP` と位置ヘッダーを Nginx が信じるプロキシのアドレスまたはネットワーク（書き方は 3.5 節）。空欄または空 = 既定値、`none` = 誰も信頼しない |
@@ -128,11 +128,11 @@ ai-service は、**AI 設定** で入力したプロバイダーのキーを暗�
 
 バックエンドと ai-service は、1 つの秘密である **内部トークン** を共有します：バックエンドはこれで、Nginx が ai-service に渡す「誰からの要求か」を示す短い文に署名し、ai-service はバックエンドを呼び出すとき（自分の状態の報告であるハートビートも含みます）にこれで認証します（[architecture.md](architecture.md) の 5 節）。
 
-- **未設定（既定）**：`xexam-backend serve` は、ボリューム `xexam_link` に `/link/internal.token` がなければ作り（32 バイトのランダム値、43 文字、モード 0600）、`AI link: /link/internal.token` とログに出します。ai-service は同じボリュームを読み取り専用でマウントしてこれを読み、`AI link: connected to the main service` とログに出します。何もする必要はありません。
+- **未設定（既定）**：`xexam-backend serve` は、ボリューム `xexam_ai_auth` に `/link/internal.token` がなければ作り（32 バイトのランダム値、43 文字、モード 0600）、`AI link: /link/internal.token` とログに出します。ai-service は同じボリュームを読み取り専用でマウントしてこれを読み、`AI link: connected to the main service` とログに出します。何もする必要はありません。
 - **`.env` の `XEXAM_INTERNAL_TOKEN`**：空白を含まない表示可能な ASCII 文字で 32 文字以上。例：`openssl rand -hex 32` の出力。compose ファイルはこの 1 行を両方のサービスに渡すので、両者は常に同じ値を受け取ります。このときバックエンドはファイルを書かず、`AI link: using XEXAM_INTERNAL_TOKEN` とログに出します。値の前後の空白は無視されます。
 - 規則に合わない値では、**両方の** サービスで接続がオフになり、次のどちらかの行が出ます：`XEXAM_INTERNAL_TOKEN is too short (at least 32 characters); AI link off` または `XEXAM_INTERNAL_TOKEN may contain only printable ASCII characters without spaces; AI link off`。直すまで、AI チャットは使えません（`ai.backendDown`）。
 - 2 つのサービスの値が一致しないとき（たとえば、この compose ファイルを使わずに動かしていて、片方にだけトークンを設定したとき）、ai-service は `AI link: the main service refused the internal token (XEXAM_INTERNAL_TOKEN must be the same for both services)` とログに出し、有効な文なしで届いたリクエストは `refused a request without a valid identity (requests must come through Nginx; XEXAM_INTERNAL_TOKEN must be the same for both services)` で拒否します（多くても 1 分に 1 回）。
-- トークンを変えるには：両方のサービスを停止し、リンクボリュームを空にするか（`docker run --rm -v xexam_link:/link alpine rm -f /link/internal.token`）、`XEXAM_INTERNAL_TOKEN` を変えて、もう一度起動します。ai-service は、新しいトークンを数秒以内に自分でも読み込みます。
+- トークンを変えるには：両方のサービスを停止し、ai_auth ボリュームを空にするか（`docker run --rm -v xexam_ai_auth:/link alpine rm -f /link/internal.token`）、`XEXAM_INTERNAL_TOKEN` を変えて、もう一度起動します。ai-service は、新しいトークンを数秒以内に自分でも読み込みます。
 
 ### 3.4 AI プロバイダー（`.env` ではなくアプリで設定）
 
@@ -268,17 +268,17 @@ Nginx は、ブラウザ（またはトンネル）から届いた `Host` を**�
 
 ## 5. データ
 
-- 場所：名前付きボリューム `xexam_data` → コンテナ内の `/data/xexam.db`。更新、再作成、コンテナの削除をしても失われません。データベースには、問題集、アカウント、学習記録、設定が保存されます。
+- 場所：名前付きボリューム `xexam_backend_data` → コンテナ内の `/data/xexam.db`。更新、再作成、コンテナの削除をしても失われません。データベースには、問題集、アカウント、学習記録、設定が保存されます。
 - バックエンドの動作中は、データベースの隣に SQLite の `xexam.db-wal` と `xexam.db-shm` があります（WAL モード、v0.7 から）。正常に停止すると、バックエンドがすべてを `xexam.db` に書き写し、`xexam.db-wal` を空にします。この 2 つのファイルは空のまま残ることがありますが、害はありません。
-- ボリュームには、スキーマ移行の前に書き出したコピーを入れた `/data/backups/` フォルダもできることがあります（第 6 節）。プログラムがこれらのファイルを削除することはありません。中身を見るには：`docker run --rm -v xexam_data:/data alpine ls -l /data /data/backups`。
-- **AI サービスのデータ**（v0.8）は、専用の名前付きボリューム `xexam_ai_data` → `ai-service` コンテナ内の `/data` にあります：`xexam-ai.db`（AI 設定、暗号化したプロバイダーのキー、安全上限、チャット、メモ、使用量の統計。WAL モードで、その `-wal` / `-shm` のファイルを伴う）とキーファイル `secret.key`（3.2 節）。v0.9 からは、そのチャットに AI+ の学習機能の練習、試験、記録の要約のチャットも加わり、問題文と AI の回答を含みます。また、ボリュームには、AI のスキーマをアップグレードする前に書き出したコピーのフォルダー `/data/backups/` ができます（第 6 節）。バックエンドはこれを決してマウントせず、ai-service も `xexam_data` を決してマウントしません。
-- **リンクボリューム** `xexam_link` → `/link` には `internal.token` だけが入ります（3.3 節）。バックエンドは読み書きできる形で、ai-service は読み取り専用でマウントします。
-- **バックアップ**：まず Xexam を停止し（`docker compose stop`）、**2 つのデータボリュームの両方** をまとめてから、もう一度起動します。コマンドは [database.md](database.md) の第 5 節と 8.4 節にあります。バックエンドの動作中に取った `xexam.db` だけのコピーでは、まだ `xexam.db-wal` にある最新の変更が抜けることがあります。停止できない場合は、`xexam.db`、`xexam.db-wal`、`xexam.db-shm` を一緒にコピーしてください（`xexam-ai.db` も同じです）。ボリュームのバックアップには `backups/` も含まれます。`xexam_ai_data` のバックアップには、保存した AI のキーを復号するキーファイルが入っています：キーと同じように人に渡さないか、キーがボリュームに入らないよう `XEXAM_AI_SECRET_KEY` を設定してください。削除したチャットは、それより前に作ったバックアップに残ります。`xexam_link` はバックアップ不要です：空ならバックエンドが新しいトークンを書き込みます。
+- ボリュームには、スキーマ移行の前に書き出したコピーを入れた `/data/backups/` フォルダもできることがあります（第 6 節）。プログラムがこれらのファイルを削除することはありません。中身を見るには：`docker run --rm -v xexam_backend_data:/data alpine ls -l /data /data/backups`。
+- **AI サービスのデータ**（v0.8）は、専用の名前付きボリューム `xexam_ai_data` → `ai-service` コンテナ内の `/data` にあります：`xexam-ai.db`（AI 設定、暗号化したプロバイダーのキー、安全上限、チャット、メモ、使用量の統計。WAL モードで、その `-wal` / `-shm` のファイルを伴う）とキーファイル `secret.key`（3.2 節）。v0.9 からは、そのチャットに AI+ の学習機能の練習、試験、記録の要約のチャットも加わり、問題文と AI の回答を含みます。また、ボリュームには、AI のスキーマをアップグレードする前に書き出したコピーのフォルダー `/data/backups/` ができます（第 6 節）。バックエンドはこれを決してマウントせず、ai-service も `xexam_backend_data` を決してマウントしません。
+- **ai_auth ボリューム** `xexam_ai_auth` → `/link` には `internal.token` だけが入ります（3.3 節）。バックエンドは読み書きできる形で、ai-service は読み取り専用でマウントします。
+- **バックアップ**：まず Xexam を停止し（`docker compose stop`）、**2 つのデータボリュームの両方** をまとめてから、もう一度起動します。コマンドは [database.md](database.md) の第 5 節と 8.4 節にあります。バックエンドの動作中に取った `xexam.db` だけのコピーでは、まだ `xexam.db-wal` にある最新の変更が抜けることがあります。停止できない場合は、`xexam.db`、`xexam.db-wal`、`xexam.db-shm` を一緒にコピーしてください（`xexam-ai.db` も同じです）。ボリュームのバックアップには `backups/` も含まれます。`xexam_ai_data` のバックアップには、保存した AI のキーを復号するキーファイルが入っています：キーと同じように人に渡さないか、キーがボリュームに入らないよう `XEXAM_AI_SECRET_KEY` を設定してください。削除したチャットは、それより前に作ったバックアップに残ります。`xexam_ai_auth` はバックアップ不要です：空ならバックエンドが新しいトークンを書き込みます。
 - Docker を使わずにバックエンドを直接実行する（開発）：[development.md](development.md) を参照してください。
 
 ## 6. アップグレード
 
-どのアップグレードも `docker compose pull && docker compose up -d` です（指示がある場合は新しい `docker-compose.yml` を使います）。新しいバックエンドは、初回の起動時に `/data/backups/` にコピーを書き出してから、データベースをそのスキーマに移行します。このコピーを書き出せない場合（ディスクがいっぱい、権限がないなど）、エラーで終了し、データベースは変更されません。Docker が再起動を繰り返し、起動のたびにもう一度試みます。Nginx は healthy なバックエンドを待つため、起動しません。理由は `docker compose logs backend` で確認できます。先にご自身でもボリュームをバックアップしてください（第 5 節）。ボリュームの外にもコピーがあるほうが安全です。
+どのアップグレードも `docker compose pull && docker compose up -d` です（指示がある場合は新しい `docker-compose.yml` を使います。例外は v1.4 へのアップグレードで、ボリューム名が変わり、先に古いデータをコピーする必要があります。下の最初の項目を参照）。新しいバックエンドは、初回の起動時に `/data/backups/` にコピーを書き出してから、データベースをそのスキーマに移行します。このコピーを書き出せない場合（ディスクがいっぱい、権限がないなど）、エラーで終了し、データベースは変更されません。Docker が再起動を繰り返し、起動のたびにもう一度試みます。Nginx は healthy なバックエンドを待つため、起動しません。理由は `docker compose logs backend` で確認できます。先にご自身でもボリュームをバックアップしてください（第 5 節）。ボリュームの外にもコピーがあるほうが安全です。
 
 ai-service も自分のデータベースに同じことをします：v0.9 の ai-service は、最初の起動で、**AI のボリュームの** `/data/backups/`（`xexam-ai-schema<N>-<日時>.db`）にコピーを書き出してから `xexam-ai.db` をアップグレードし（スキーマ 3）、コピーを書き出せないときは起動しません（Xexam のほかの部分は動き続けます。理由は `docker compose logs ai-service` に出ます）。**それぞれのデータベースと同じくらいの空きディスク容量を確保してください**（コピーは完全なファイルです）。また、これらのコピーは自動では削除されず、後で削除したもの（記録、問題集、チャット）も残ることを知っておいてください。それが問題になるときは、古いコピーを自分で削除してください。
 
@@ -286,11 +286,12 @@ ai-service も自分のデータベースに同じことをします：v0.9 の 
 
 手順のチェックリスト、その後の確認、ロールバックは [migration.md](migration.md) にあります。
 
+- **v1.3（またはそれ以前の版）から v1.4 へ**（migration.md の第 0000 節）：**Docker ボリュームの名前が変わります**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`。マウントパスと変数は変わりません）。そのため `docker compose pull && docker compose up -d` だけでは、Xexam は**空のデータベース**で起動します。新しい `docker-compose.yml` を取り込み、`docker compose pull`、`docker compose down`、`docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（Portainer では `xexam_data` の中身を同じ方法で `xexam_backend_data` にコピー）、`docker compose up -d` の順に実行します。古いボリュームは手動で削除するまで手つかずのまま残ります。`xexam_link` は不要です（新しいトークンが作られます）。これはそれ以前のどの版にも当てはまり、その版自身の項目の手順に加えて行います。
 - **v1.2 から v1.3 へ**（migration.md の第 000 節）：新しい `docker-compose.yml` を推奨します（実際のクライアントアドレス、任意の `cloudflared` サービス）。メインデータベースはスキーマ 7 から 8（バックアップ `xexam-schema7-<日時>.db`）、AI データベースはスキーマ 6 から 7（バックアップ `xexam-ai-schema6-<日時>.db`）に移行します。24 時間以上操作していない管理者はログインし直します。
 - **v1.0 から v1.1 へ**（migration.md の第 00 節）：`docker compose pull && docker compose up -d`。compose ファイル、ボリューム、変数は変更しません。主データベースはスキーマ 6 から 7 へ（バックアップ `xexam-schema6-<日付時刻>.db`、ボリューム `xexam_data`）、AI データベースはスキーマ 4 から 6 へ（バックアップ `xexam-ai-schema4-<日付時刻>.db`、ボリューム `xexam_ai_data`）。トークン単位の既定の長さ（回答 3000、メモリー 1000、呼び出し 20000）と新しい呼び出し上限は、アップグレード直後から適用されます。戻すには両方のデータベースのコピーを復元し、v1.0 のイメージを起動します。
 - **v0.9.1 から v1.0 へ**（migration.md の 0.9.1 → 1.0 の部分）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースは変わりません（スキーマ 6）。AI のデータベースはスキーマ 3 から 4 に（バックアップは `xexam_ai_data` の `xexam-ai-schema3-<日時>.db`。書き込む前に作られ、コピーは空きディスク容量に収まる必要があります）。新しい利用者ごとの AI リクエスト上限（1 分に 5 回、1 時間に 20 回、1 日に 100 回）と回答の長さ（1000 文字）は、管理者を含めてすぐに適用されます。戻るには AI のコピーを復元し、v0.9.1 のイメージを動かします。メインのデータベースは復元の必要がありません。
 - **v0.8 から**（migration.md の第 0b 節）：`docker compose pull && docker compose up -d` だけで、compose の変更も新しい変数もありません。メインのデータベースはスキーマ 5 から 6 に（バックアップは `xexam_data` の `xexam-schema5-<日時>.db`）、AI のデータベースはスキーマ 2 から 3 に（バックアップは `xexam_ai_data` の `xexam-ai-schema2-<日時>.db`）移ります。ほかはそのままです。AI+ の学習機能は、AI+ 機能を持つアカウントにすぐ表示され、設定するものはありません。戻すとき：メインのデータベースは復元が不要で、AI のデータベースは必要です（下記）。
-- **v0.7.5 または v0.7 から**（migration.md の第 1 節）：**新しい `docker-compose.yml` を取得してください**（サービス `ai-service`、3 つ目のイメージ `xexam-ai-service`、ボリューム `xexam_ai_data` と `xexam_link`、ネットワーク `egress`）。スキーマ v4 → v6、バックアップ `xexam-schema4-<日時>.db`。AI のデータベースは新しく作られます（スキーマ 3）。AI は管理者が設定するまでオフのままです。古い compose ファイルのままでも、AI 以外はすべて動きます：**AI 設定** は開き、ai-service が動いていないと表示し（新しい compose ファイルを使うようにという案内付き）、ユーザー管理の AI+ 機能のスイッチは隠れます。
+- **v0.7.5 または v0.7 から**（migration.md の第 1 節）：**新しい `docker-compose.yml` を取得してください**（サービス `ai-service`、3 つ目のイメージ `xexam-ai-service`、ボリューム `xexam_ai_data` と `xexam_ai_auth`、ネットワーク `egress`）。スキーマ v4 → v6、バックアップ `xexam-schema4-<日時>.db`。AI のデータベースは新しく作られます（スキーマ 3）。AI は管理者が設定するまでオフのままです。古い compose ファイルのままでも、AI 以外はすべて動きます：**AI 設定** は開き、ai-service が動いていないと表示し（新しい compose ファイルを使うようにという案内付き）、ユーザー管理の AI+ 機能のスイッチは隠れます。
 - **v0.6 から**（migration.md の第 2 節）：スキーマ v3 → v6、バックアップ `xexam-schema3-<日時>.db`、WAL モード、その後に古い形式の問題の出題停止。新しい `docker-compose.yml` も取得してください。新しいファイルでは ai-service が加わり、決まった既定のタイムゾーンを設定しなくなり（ホストに従います。3.1 節）、コンテナのログを制限し（第 8 節）、`.env` で設定されていれば `XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、AI の変数を渡します。これまでのタイムスタンプがホストとは別のタイムゾーンで書かれていた場合は、新しい記録も同じタイムゾーンで続くように、そのタイムゾーンを `.env` の `TZ` に設定してください。追加しなければならない変数はありません。
 - **v0.5 または v0.5.1 から**（migration.md の第 3 節）：スキーマ v2 → v6 を一度に、バックアップ `xexam-schema2-<日時>.db`。ログインが新しく加わります：`admin` / `admin` でログインしてください。これまでのデータはすべてこのアカウントのものになります。
 - **v0.4 から**（migration.md の第 4 節）：スキーマ v1 → v6 を一度に、バックアップ `xexam-schema1-<日時>.db`。v0.5.1 から、イメージは `ghcr.io` ではなく Docker Hub（`docker.io/yuminspace/…`、公開、ログイン不要）から取得します。お使いの `docker-compose.yml` を新しいファイルに差し替えてください（または、その 2 つの `image:` の行を `docker.io/yuminspace/xexam-backend:latest` と `docker.io/yuminspace/xexam-frontend:latest` に変更します）。ソースからビルドする場合、compose ファイルは `docker/` に移ったので、リポジトリのルートにある `.env` は `docker/.env` に移動してください。

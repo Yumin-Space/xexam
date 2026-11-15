@@ -1450,7 +1450,7 @@ fn usage_by_purpose_has_seven_rows_in_a_fixed_order() {
     let (from, to) = (day.to_string(), day.to_string());
     // nothing: four zero rows
     let rows = store
-        .read(|c| stats::by_purpose(c, &from, &to))
+        .read(|c| stats::by_purpose(c, &stats::Window::days(&from, &to)))
         .expect("empty");
     assert_eq!(
         rows.iter().map(|r| r.0).collect::<Vec<_>>(),
@@ -1476,7 +1476,7 @@ fn usage_by_purpose_has_seven_rows_in_a_fixed_order() {
         })
         .expect("usage");
     let rows = store
-        .read(|c| stats::by_purpose(c, &from, &to))
+        .read(|c| stats::by_purpose(c, &stats::Window::days(&from, &to)))
         .expect("rows");
     let get = |p: &str| {
         rows.iter()

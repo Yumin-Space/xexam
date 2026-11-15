@@ -1594,7 +1594,7 @@ fn statistics_split_by_connection_and_the_day_total_counts_both_tables() {
     let day = xexam_ai_service::util::local_date(NOW);
     store
         .read(|c| {
-            let by_conn = stats::by_connection(c, &day, &day)?;
+            let by_conn = stats::by_connection(c, &stats::Window::days(&day, &day))?;
             let view: Vec<(Option<i64>, i64, i64)> = by_conn
                 .iter()
                 .map(|r| (r.connection_id, r.sums.calls, r.sums.tokens_in))
@@ -1604,13 +1604,13 @@ fn statistics_split_by_connection_and_the_day_total_counts_both_tables() {
                 view,
                 vec![(Some(1), 4, 1000 + 300), (Some(2), 1, 100), (None, 1, 100)]
             );
-            let total = stats::totals(c, &day, &day)?;
+            let total = stats::totals(c, &stats::Window::days(&day, &day))?;
             assert_eq!(total.calls, 6);
             assert_eq!(
                 by_conn.iter().map(|r| r.sums.calls).sum::<i64>(),
                 total.calls
             );
-            let by_model = stats::by_model_connection(c, &day, &day)?;
+            let by_model = stats::by_model_connection(c, &stats::Window::days(&day, &day))?;
             assert_eq!(by_model.iter().map(|r| r.sums.calls).sum::<i64>(), 6);
             let main: Vec<(&str, i64)> = by_model
                 .iter()
@@ -1625,7 +1625,7 @@ fn statistics_split_by_connection_and_the_day_total_counts_both_tables() {
             );
             // the old by_model still adds up too
             assert_eq!(
-                stats::by_model(c, &day, &day)?
+                stats::by_model(c, &stats::Window::days(&day, &day))?
                     .iter()
                     .map(|r| r.1.calls)
                     .sum::<i64>(),

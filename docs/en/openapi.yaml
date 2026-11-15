@@ -1548,7 +1548,12 @@ paths:
           in: query
           required: false
           schema: { type: string, enum: ["7", "30", "90", "365"], default: "7" }
-          description: Per day for 7 and 30, per month for 90 and 365
+          description: Per day for 7 and 30, per month for 90 and 365. Not together with `period` (400)
+        - name: period
+          in: query
+          required: false
+          schema: { type: string, enum: ["12h", "today"] }
+          description: "(v1.4) `12h` = the last 12 hours, `today` = since 0:00 of the server time zone; every statistic uses the window and `byPeriod` is per local hour (`HH:00`, `unit` hour, `days` null). Not together with `days` (400)"
       responses:
         "200":
           description: OK
@@ -3744,12 +3749,13 @@ components:
         tokensCached: { type: integer, description: "(v0.8, round 2) The part of tokensIn the provider served from its prompt cache (prompt caching; Anthropic `cache_read_input_tokens`, OpenAI `prompt_tokens_details.cached_tokens`). A provider that reports nothing counts 0. Shown as the Cached column (缓存命中) of the Usage tab" }
     AiUsage:
       type: object
-      required: [days, from, to, unit, totals, byUser, byModel, byPeriod, byPurpose]
+      required: [days, period, from, to, unit, totals, byUser, byModel, byPeriod, byPurpose]
       properties:
-        days: { type: integer, enum: [7, 30, 90, 365] }
+        days: { type: integer, enum: [7, 30, 90, 365], nullable: true, description: "null for period 12h and today" }
+        period: { type: string, enum: [7d, 30d, 90d, 365d, 12h, today] }
         from: { type: string, example: "2026-11-05" }
         to: { type: string, example: "2026-11-11" }
-        unit: { type: string, enum: [day, month] }
+        unit: { type: string, enum: [day, month, hour] }
         totals: { $ref: "#/components/schemas/AiUsageSums" }
         byUser:
           type: array
@@ -3780,7 +3786,7 @@ components:
               - { $ref: "#/components/schemas/AiUsageSums" }
         byPeriod:
           type: array
-          description: "Every day (unit day) or month (unit month) of the range, zeros included, oldest first"
+          description: "Every day (unit day), month (unit month) or local hour `HH:00` (unit hour) of the range, zeros included, oldest first"
           items:
             allOf:
               - type: object

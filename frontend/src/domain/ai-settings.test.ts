@@ -8,7 +8,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  aiServiceOf, AI_TABS, AS_KEYS, barPercent, BANK_KEYS, blankForm, CALLS_KEYS, CAP_KEYS, CHAT_KEYS, compBad, compTotal, CONTENT_KEYS,
+  jobTime, aiServiceOf, AI_TABS, AS_KEYS, barPercent, BANK_KEYS, blankForm, CALLS_KEYS, CAP_KEYS, CHAT_KEYS, compBad, compTotal, CONTENT_KEYS,
   confirmHostOf, connLabel, connPayload, connResult, DEFAULT_LIMITS, defaultUnusable, defaultUrl, fieldOfError, fieldsOf, filterModels,
   firstChoice, focusAfterClear, formOf, formProblem, genCallLive, hashOfTab, headerClash, hostOf, httpWarning, inferFormat, isDirty,
   isRotation, keyAfter, keyLine, LENGTH_KEYS, limitIssue, limitProblem, LIMIT_KEYS, LIMIT_RANGES, limitsFormOf, limitsUpdate,
@@ -604,4 +604,11 @@ test('the host of an address, and the old tab id stays', () => {
   assert.equal(hostOf('nonsense/'), 'nonsense');
   assert.equal(tabOfHash('#/ai-settings'), 'feature');
   assert.equal(hashOfTab('feature'), '#/ai-settings?tab=feature');
+});
+
+test('jobTime: the full local date and time YYYY-MM-DD HH:mm, also for today', () => {
+  const d = new Date(2026, 10, 5, 7, 4, 59);
+  assert.equal(jobTime(Math.floor(d.getTime() / 1000)), '2026-11-05 07:04');
+  const now = new Date();
+  assert.match(jobTime(Math.floor(now.getTime() / 1000)), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
 });

@@ -106,7 +106,7 @@ This pulls the three images and starts **three containers**: `xexam-frontend` (N
 | View logs | `docker compose logs -f backend` and `docker compose logs -f ai-service` (administrators can also open **System log** in the menu; it shows the AI service's lines too) |
 | See which version and architecture are running | Open <http://localhost:8765/api/info> in a browser |
 
-> ⚠️ **Do not run `docker compose down -v`**: `-v` also deletes the two data volumes, `xexam_data` (your question banks, users, study records and settings) and `xexam_ai_data` (the AI settings, the encrypted keys and their key file, the chats and memories).
+> ⚠️ **Do not run `docker compose down -v`**: `-v` also deletes the two data volumes, `xexam_backend_data` (your question banks, users, study records and settings) and `xexam_ai_data` (the AI settings, the encrypted keys and their key file, the chats and memories).
 
 - **From a phone or another computer**, or **from the internet through Cloudflare Tunnel**: section 4 of [docs/en/deployment.md](docs/en/deployment.md).
 - **Building the images from source** (when you change the code): `docker compose -f docker/docker-compose.build.yml up -d --build` in a clone, see section 2 of [docs/en/deployment.md](docs/en/deployment.md).
@@ -130,7 +130,7 @@ The defaults work on one computer without any configuration. To change something
 | `XEXAM_LOG` | unset (`info`) | The backend's log filter, for example `debug`; empty means `info` |
 | `TZ` | unset (the host's time zone) | Time zone of the times Xexam shows and of the days in the AI usage statistics, for example `TZ=UTC` |
 | `XEXAM_AI_SECRET_KEY` | unset (a key file in the AI volume) | The key that encrypts the saved AI provider keys: 32 bytes as 64 hex digits or as base64, for example from `openssl rand -base64 32`. Set it to keep the key apart from the AI volume, so that a copy of that volume alone cannot decrypt the keys. If it changes or is lost, the AI keys must be entered again in **AI settings** |
-| `XEXAM_INTERNAL_TOKEN` | unset (a random token in the link volume) | The token the backend and the AI service share; the compose file passes the same value to both. At least 32 printable ASCII characters without spaces, for example from `openssl rand -hex 32`. It also authenticates the AI service's own calls to the backend, such as its state report. A value that breaks this rule switches AI Chat off: **AI settings** then says that ai-service cannot connect, and a log line says why |
+| `XEXAM_INTERNAL_TOKEN` | unset (a random token in the ai_auth volume) | The token the backend and the AI service share; the compose file passes the same value to both. At least 32 printable ASCII characters without spaces, for example from `openssl rand -hex 32`. It also authenticates the AI service's own calls to the backend, such as its state report. A value that breaks this rule switches AI Chat off: **AI settings** then says that ai-service cannot connect, and a log line says why |
 | `XEXAM_AI_LOG` | unset (`info`) | The AI service's log filter, like `XEXAM_LOG` |
 | `XEXAM_AI_SQLITE_JOURNAL` | unset (WAL) | `delete` for the AI database, like `XEXAM_SQLITE_JOURNAL` |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` (private networks) | The proxies whose `CF-Connecting-IP` and location headers Nginx believes, so rate limits, the IP column and the location refer to the visitor. The default suits a closed private network (a `cloudflared` on the host or on another private machine needs no setting). Narrow it (for example `172.31.254.2`, only the bundled `cloudflared`) or write `none` to trust nobody; blank or empty means the default (see [deployment](docs/en/deployment.md), section 3.5) |
@@ -143,7 +143,7 @@ Times follow the host's time zone because the compose file mounts the host's `/e
 
 ## Upgrading
 
-Every upgrade keeps the same port and the same volume `xexam_data`: `docker compose pull`, then `docker compose up -d`. Back up first; the steps for every version, the backup copies and every rollback are in [docs/en/migration.md](docs/en/migration.md).
+Every upgrade keeps the same port: `docker compose pull`, then `docker compose up -d`. **Upgrading from v1.3 or older to v1.4 renames the volumes** (`xexam_data` → `xexam_backend_data`, `xexam_link` → `xexam_ai_auth`) and Xexam starts with an empty database until you copy the old data over: 1. `docker compose down`; 2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`; 3. `docker compose up -d` (Portainer: copy the contents of `xexam_data` into `xexam_backend_data` the same way). The old volumes stay until you remove them by hand. Back up first; the steps for every version, the backup copies and every rollback are in [docs/en/migration.md](docs/en/migration.md).
 
 ---
 

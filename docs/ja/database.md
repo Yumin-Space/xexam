@@ -10,10 +10,10 @@
 
 | 実行方法 | 場所 |
 |---|---|
-| Docker（推奨） | 名前付きボリューム `xexam_data`。コンテナの `/data` にマウントされ、ファイルは `/data/xexam.db` です。コンテナを更新・削除しても失われません |
+| Docker（推奨） | 名前付きボリューム `xexam_backend_data`。コンテナの `/data` にマウントされ、ファイルは `/data/xexam.db` です。コンテナを更新・削除しても失われません |
 | Docker を使わない場合 | データディレクトリ（既定は `./data`、または `XEXAM_DATA`、または `--data`）の下の `xexam.db` |
 
-ボリュームの実際の名前は `<プロジェクト名>_<ボリューム名>` = `xexam_data` で、`docker volume ls` で確認できます。**`docker compose down -v` は実行しないでください**。`-v` を付けるとボリュームもコンテナと一緒に削除されます。
+ボリュームの実際の名前は `<プロジェクト名>_<ボリューム名>` = `xexam_backend_data` で、`docker volume ls` で確認できます。**`docker compose down -v` は実行しないでください**。`-v` を付けるとボリュームもコンテナと一緒に削除されます。
 
 データベースと同じ場所にあるほかのファイル：
 
@@ -27,7 +27,7 @@
 | ボリューム内の `xexam.db`（動作中は `-wal` / `-shm` も） | 問題集とその所有者と問題（出題停止中のものを含む）、インポート履歴、ユーザー（パスワードはハッシュだけ）とそのセッション、各ユーザーが使える問題集、ユーザーごとの問題ごとの統計（間違いノート）、問題ごとの詳細を含む学習記録（試験と練習。v0.9 からは、それぞれを保存したセッションのキーと開始時刻も）、設定（テーマ、表示言語、自動で次の問題へ進む設定、問題の言語） |
 | ボリューム内の `backups/` | スキーマ移行の前に書き出されたデータベースのコピー（`xexam-schema1-…` から `xexam-schema5-…` まで） |
 | バックエンドのメモリだけ | システムログ、ログインのロック、インポートのプレビュー。どれも再起動すると空になります |
-| ボリューム `xexam_link`（v0.8） | バックエンドと ai-service が共有するトークン `internal.token` だけ。バックエンドが書き込み、ai-service が読みます。データベースはありません |
+| ボリューム `xexam_ai_auth`（v0.8） | バックエンドと ai-service が共有するトークン `internal.token` だけ。バックエンドが書き込み、ai-service が読みます。データベースはありません |
 | ai-service のボリューム `xexam_ai_data`（v0.8） | `xexam-ai.db`（AI 設定、暗号化したプロバイダーのキー、安全上限、チャット、メモ、使用量の統計。v0.9 からは、チャットに練習のセッションごと、試験ごと、記録の要約ごとのチャットが入り、それらが持つ問題文と AI の回答も含みます）、キーファイル `secret.key`、そして AI のスキーマをアップグレードする前に書き出したコピーのフォルダー `backups/`（第 8 節） |
 | ブラウザ（`localStorage`） | ユーザーごとに：未提出の試験や未完了の練習（問題 id、回答、印、答え合わせ済みの問題、経過時間。問題文は含みません）、最初の画面を表示するための設定のコピー |
 
@@ -242,7 +242,7 @@ sha1( ワークシート名 + "\n" + 空白除去(問題文)[:300] + "|" + 空�
 
 ## 5. バックアップと復元
 
-v0.8 からは、バックアップするデータボリュームが **2 つ** あります：`xexam_data`（このデータベース）と `xexam_ai_data`（AI のデータベースとそのキーファイル。8.4 節）です。`xexam_link` はバックアップ不要です。下のコマンドは `xexam_data` のためのもので、AI のボリュームも同じ方法で扱えます。
+v0.8 からは、バックアップするデータボリュームが **2 つ** あります：`xexam_backend_data`（このデータベース）と `xexam_ai_data`（AI のデータベースとそのキーファイル。8.4 節）です。`xexam_ai_auth` はバックアップ不要です。下のコマンドは `xexam_backend_data` のためのもので、AI のボリュームも同じ方法で扱えます。
 
 **データベースをコピーする前に、バックエンドを停止してください。** WAL モードでは、バックエンドの動作中は最新の変更が `xexam.db-wal` にあることがあるので、`xexam.db` だけのコピーでは抜けることがあります。正常に停止した後は、すべてが `xexam.db` にあり、隣に `-wal` ファイルが残っていても空です。
 
@@ -250,7 +250,7 @@ v0.8 からは、バックアップするデータボリュームが **2 つ** �
 docker compose stop
 
 # バックアップ：ボリュームを現在のフォルダ内の xexam-data.tgz にまとめる（中身はデータベース全体。.gitignore で無視されるので、コミットしないこと）
-docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
+docker run --rm -v xexam_backend_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
 
 docker compose start
 ```
@@ -268,7 +268,7 @@ sqlite3 work/xexam.db "PRAGMA integrity_check"      # ok と出力されるこ�
 
 ```bash
 docker compose stop
-docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && tar xzf /backup/xexam-data.tgz -C /data'
+docker run --rm -v xexam_backend_data:/data -v "$PWD:/backup" alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && tar xzf /backup/xexam-data.tgz -C /data'
 docker compose start
 ```
 
@@ -410,7 +410,7 @@ Docker では、一時的なコンテナを使ってファイルをボリュー�
 
 ```bash
 docker compose stop
-docker run --rm -v xexam_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/progress.json /data/progress.json && chown 10001:10001 /data/progress.json"
+docker run --rm -v xexam_backend_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/progress.json /data/progress.json && chown 10001:10001 /data/progress.json"
 docker compose start
 ```
 
@@ -655,4 +655,4 @@ docker compose start
 
 - `XEXAM_AI_SECRET_KEY` を設定しているときは、キーファイルは使われません：その値は別にバックアップしてください（ボリュームには入っていません）。正しいキーがないと、復元したキーは復号できません。その場合、管理者がキーを入力し直すまで AI はオフのままですが、ほかに失われるものはありません。
 - 復元した AI のボリュームと、別の時点のメインのボリュームを組み合わせても問題ありません：もう存在しないユーザーは次の照合で AI データを失い、別のアカウントのものになったユーザー id はスタンプで見分けられます。
-- `xexam_link` はバックアップ不要です：入っているのは `internal.token` だけで、ない場合はバックエンドがもう一度作ります（AI サービスは新しいトークンを自分で読み込みます）。
+- `xexam_ai_auth` はバックアップ不要です：入っているのは `internal.token` だけで、ない場合はバックエンドがもう一度作ります（AI サービスは新しいトークンを自分で読み込みます）。

@@ -319,7 +319,7 @@ export function usageBarCard(o: { pref: string; kind: 'model' | 'purpose'; rows:
 type PeriodRow = { period: string; calls: number; tokensIn?: number; tokensOut?: number; errors?: number };
 
 /** The 按时间 card (A-OWNER-63): the line of calls, or the tokens as two stacked areas input + output, with the same switch */
-export function usageLineCard(o: { unit: 'day' | 'month'; from: string; to: string; rows: ReadonlyArray<PeriodRow>; format: (n: number) => string }): HTMLElement {
+export function usageLineCard(o: { unit: 'day' | 'month' | 'hour'; from: string; to: string; rows: ReadonlyArray<PeriodRow>; format: (n: number) => string }): HTMLElement {
   const titleKey = (m: UsageMetric): MsgKey => (m === 'tokens' ? 'ai.set.uc.period.tokens' : 'ai.set.uc.period');
   return metricCard({
     line: true, pref: 'period', titleKey,
@@ -333,7 +333,7 @@ export function usageLineCard(o: { unit: 'day' | 'month'; from: string; to: stri
  * hit area of 16 px around it: hover, tap or the arrow keys show the date, calls and tokens of the nearest period.
  */
 export function lineChart(o: {
-  ariaLabel: string; unit: 'day' | 'month'; from: string; to: string;
+  ariaLabel: string; unit: 'day' | 'month' | 'hour'; from: string; to: string;
   rows: ReadonlyArray<PeriodRow>;
   format: (n: number) => string;
   /** 'tokens': the total input + output as the line, the input below it as a lighter area (A-OWNER-63); default 'calls' */

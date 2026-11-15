@@ -17,6 +17,7 @@ import { h, type Child } from '../../utils/dom.ts';
 import { matches, PHONE_MQ } from '../../utils/media.ts';
 import { toast } from '../../utils/toast.ts';
 import { chatTitleEl, chatTitleText, reasoningEl, userBody, whoLine } from '../ai.ts';
+import { jobTime } from '../../domain/ai-settings.ts';
 import { aiDown } from './status.ts';
 import { num, when } from './state.ts';
 
@@ -48,7 +49,7 @@ function viewerMessage(m: AiMessage, show: (at: number) => void, open: Map<numbe
           : f.kind === 'noAnswer' ? t('ai.status.noAnswer', { reason: aiCodeText(f.code) })
             : t('ai.status.truncated');
   return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant') },
-    whoLine(m, true),
+    whoLine(m, true, jobTime),
     m.connection ? h('span', { class: 'tag k ais-vconn' }, m.connection) : null,
     versionSwitch(m, show),
     user ? null : reasoningEl(m, { idBase: 'ais-rs', userOpen: open.get(m.id), onToggle: (o) => open.set(m.id, o) }),

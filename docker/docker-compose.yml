@@ -10,14 +10,14 @@
 #   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point)
 #                 ├─ frontend static files (baked into the image at build time)
 #                 ├─ /api/    ──> xexam-backend (Rust, private network, no published port, no internet)
-#                 │                 ├─ SQLite (named volume xexam_data → /data/xexam.db)
-#                 │                 └─ writes the internal token (named volume xexam_link → /link/internal.token)
+#                 │                 ├─ SQLite (named volume xexam_backend_data → /data/xexam.db)
+#                 │                 └─ writes the internal token (named volume xexam_ai_auth → /link/internal.token)
 #                 └─ /api/ai/ ──> checked by xexam-backend first, then ──> ai-service (Rust, no published port)
 #                                   ├─ SQLite + its key file (named volume xexam_ai_data → /data)
-#                                   ├─ reads the internal token (xexam_link, read only)
+#                                   ├─ reads the internal token (xexam_ai_auth, read only)
 #                                   ├─ reports its state to the backend (at start, on changes, every 25 s)
 #                                   └─ the only container with internet access (network egress): the AI provider
-# The two databases are never shared: xexam_data is mounted only by the backend and xexam_ai_data only by ai-service.
+# The two databases are never shared: xexam_backend_data is mounted only by the backend and xexam_ai_data only by ai-service.
 # The app works without ai-service (AI Chat is then hidden and AI settings says that ai-service is not running); AI is
 # off until an administrator sets it up in AI settings.
 #
@@ -31,7 +31,7 @@
 #       XEXAM_ALLOWED_HOSTS=xexam.your-domain.com
 #   Then run docker compose up -d. See the README and docs/en/deployment.md for full instructions.
 #
-# ⚠️ Do not run `docker compose down -v`: -v also deletes the two data volumes xexam_data (question banks, users, records)
+# ⚠️ Do not run `docker compose down -v`: -v also deletes the two data volumes xexam_backend_data (question banks, users, records)
 #    and xexam_ai_data (AI settings, encrypted keys, chats, memories).
 
 name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in (volumes xexam_*; containers xexam-backend, ai-service, xexam-frontend)
@@ -74,15 +74,16 @@ services:
       # XEXAM_LOG:  info
       # Or: XEXAM_LOG:  debug
       XEXAM_LOG:
-      # Not set = the default, a random token in the link volume (the same value goes to ai-service):
+      # Not set = the default, a random token in the ai_auth volume (the same value goes to ai-service):
       # XEXAM_INTERNAL_TOKEN:  (random)
       # Or: XEXAM_INTERNAL_TOKEN:  the output of openssl rand -hex 32 (at least 32 printable ASCII characters, no spaces)
       XEXAM_INTERNAL_TOKEN:
     volumes:
-      # The question bank and study records all live in xexam.db in this named volume; deleting or updating the container does not lose them
-      - data:/data
-      # Holds only internal.token (never a database), which ai-service reads
-      - link:/link
+      # backend_data: the question banks, accounts and study records (xexam.db); deleting or updating the container does not lose them
+      - backend_data:/data
+      # ai_auth: internal.token, the key backend and ai-service use to authenticate each other (never a database).
+      # This side creates it and writes it; ai-service gets the same volume read only.
+      - ai_auth:/link
       # Follow the host's time zone (read only). Docker shares the host's clock anyway; this only gives the same zone.
       # create_host_path: false = on a host without /etc/localtime, Compose stops with "bind source path does not exist"
       # instead of creating an empty folder there (which cannot be mounted over the image's file). On such a host, remove
@@ -136,8 +137,9 @@ services:
     volumes:
       # AI settings, encrypted keys, the key file secret.key, chats and memories: xexam-ai.db in this named volume
       - ai_data:/data
-      # internal.token written by the backend (read only here)
-      - link:/link:ro
+      # ai_auth: internal.token, the key backend and ai-service use to authenticate each other.
+      # Written by the backend; read only here.
+      - ai_auth:/link:ro
       # Follow the host's time zone (read only), the same as the backend
       - type: bind
         source: /etc/localtime
@@ -239,6 +241,6 @@ networks:
   egress: {}
 
 volumes:
-  data:
+  backend_data:
   ai_data:
-  link:
+  ai_auth:

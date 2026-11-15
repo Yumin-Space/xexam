@@ -10,10 +10,10 @@
 
 | 运行方式 | 位置 |
 |---|---|
-| Docker（推荐） | 命名卷 `xexam_data`，挂载到容器里的 `/data`；文件是 `/data/xexam.db`。更新或删除容器都不会丢 |
+| Docker（推荐） | 命名卷 `xexam_backend_data`，挂载到容器里的 `/data`；文件是 `/data/xexam.db`。更新或删除容器都不会丢 |
 | 不用 Docker | 数据目录里的 `xexam.db`（默认 `./data`，或 `XEXAM_DATA`，或 `--data`） |
 
-卷的真实名字是 `<项目名>_<卷名>` = `xexam_data`，`docker volume ls` 能看到。**不要运行 `docker compose down -v`**：`-v` 会把卷和容器一起删掉。
+卷的真实名字是 `<项目名>_<卷名>` = `xexam_backend_data`，`docker volume ls` 能看到。**不要运行 `docker compose down -v`**：`-v` 会把卷和容器一起删掉。
 
 数据库旁边的其他文件：
 
@@ -27,7 +27,7 @@
 | 卷里的 `xexam.db`（运行时还有 `-wal` / `-shm`） | 题库及其所有者和题目（包括已下架的）、导入记录、用户（只存密码哈希）、他们的会话和每个用户能看到哪些题库、每个用户每道题的答题统计（错题本）、学习记录（考试和练习）和每道题的作答详情（从 v0.9 起还有每条记录是从哪次会话保存的，即那次会话的 key 和开始时间），以及设置（主题、界面语言、答完自动跳到下一题、题目语言） |
 | 卷里的 `backups/` | 每次 schema 迁移前写的数据库副本（从 `xexam-schema1-…` 到 `xexam-schema5-…`） |
 | 只在后端的内存里 | 系统日志、登录锁定和导入预览；重启后都从空的开始 |
-| 卷 `xexam_link`（v0.8） | 只有 `internal.token`，后端和 ai-service 共用的令牌；后端写入，ai-service 读取。没有数据库 |
+| 卷 `xexam_ai_auth`（v0.8） | 只有 `internal.token`，后端和 ai-service 共用的令牌；后端写入，ai-service 读取。没有数据库 |
 | ai-service 的卷 `xexam_ai_data`（v0.8） | `xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；从 v0.9 起，对话里包括每次练习、每场考试和每份记录总结各一个对话，其中有它们保存的题目文字和 AI 的回答）、密钥文件 `secret.key`，以及文件夹 `backups/`，里面是 AI schema 升级前写的副本（第 8 节） |
 | 浏览器（`localStorage`） | 每个用户各一份：没交卷的考试或没做完的练习（题目 id、答案、标记、已核对的题、用时；不含题目文字），以及一份设置的副本（用来显示第一屏） |
 
@@ -242,7 +242,7 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 
 ## 5. 备份和恢复
 
-从 v0.8 起，要备份的是**两个数据卷**：`xexam_data`（这个数据库）和 `xexam_ai_data`（AI 数据库和它的密钥文件，第 8.4 节）。`xexam_link` 不用备份。下面的命令针对 `xexam_data`；AI 卷的做法一样。
+从 v0.8 起，要备份的是**两个数据卷**：`xexam_backend_data`（这个数据库）和 `xexam_ai_data`（AI 数据库和它的密钥文件，第 8.4 节）。`xexam_ai_auth` 不用备份。下面的命令针对 `xexam_backend_data`；AI 卷的做法一样。
 
 **复制数据库之前先停止后端。** WAL 模式下，后端运行时最新的修改可能还在 `xexam.db-wal` 里，所以只复制 `xexam.db` 可能会漏掉它们；正常停止之后，所有内容都在 `xexam.db` 里，旁边即使留着 `-wal` 文件，也是空的。
 
@@ -250,7 +250,7 @@ sha1( 工作表名 + "\n" + 去空白(题干)[:300] + "|" + 去空白(第一个�
 docker compose stop
 
 # 备份：把卷打包成当前目录里的 xexam-data.tgz（里面是整个数据库；.gitignore 已忽略它，不要提交）
-docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
+docker run --rm -v xexam_backend_data:/data -v "$PWD:/backup" alpine tar czf /backup/xexam-data.tgz -C /data .
 
 docker compose start
 ```
@@ -268,7 +268,7 @@ sqlite3 work/xexam.db "PRAGMA integrity_check"      # 必须输出 ok
 
 ```bash
 docker compose stop
-docker run --rm -v xexam_data:/data -v "$PWD:/backup" alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && tar xzf /backup/xexam-data.tgz -C /data'
+docker run --rm -v xexam_backend_data:/data -v "$PWD:/backup" alpine sh -c 'rm -f /data/xexam.db-wal /data/xexam.db-shm && tar xzf /backup/xexam-data.tgz -C /data'
 docker compose start
 ```
 
@@ -410,7 +410,7 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 
 ```bash
 docker compose stop
-docker run --rm -v xexam_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/progress.json /data/progress.json && chown 10001:10001 /data/progress.json"
+docker run --rm -v xexam_backend_data:/data -v "${PWD}:/src:ro" alpine sh -c "cp /src/progress.json /data/progress.json && chown 10001:10001 /data/progress.json"
 docker compose start
 ```
 
@@ -655,4 +655,4 @@ docker compose start
 
 - 设置了 `XEXAM_AI_SECRET_KEY` 时不使用密钥文件：请单独备份这个值（它不在卷里）。没有正确的密钥，恢复出来的密钥就无法解密；这时 AI 保持关闭，直到管理员重新输入密钥，其他什么都不会丢。
 - 恢复的 AI 卷和另一个时间点的主卷可以搭配使用：已经不存在的用户会在下一次对账时失去他们的 AI 数据，现在属于另一个账户的用户 id 会通过标记认出来。
-- `xexam_link` 不用备份：它里面只有 `internal.token`，缺少时后端会重新创建（AI 服务会自己用上新的令牌）。
+- `xexam_ai_auth` 不用备份：它里面只有 `internal.token`，缺少时后端会重新创建（AI 服务会自己用上新的令牌）。

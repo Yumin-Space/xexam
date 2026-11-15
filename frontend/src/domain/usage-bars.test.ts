@@ -1,7 +1,7 @@
 // The rows of the usage bar charts: the "other" bar, the 万 / K format, the metric.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cachePair, formatBig, modelRows, purposeRows, sortRows, tokenFigures, valueOf } from './usage-bars.ts';
+import { cachePair, formatBig, limitHintArgs, modelRows, parsePeriod, purposeRows, sortRows, tokenFigures, tokenLabel, valueOf } from './usage-bars.ts';
 
 const c = (calls: number, tokensIn = 0, tokensOut = 0, errors = 0) => ({ calls, tokensIn, tokensOut, errors });
 
@@ -76,4 +76,37 @@ test('sortRows: by amount high to low with stable ties, by name with CJK and nat
   }
   assert.deepEqual(sortRows([r('x', 1, 50), r('y', 9, 10)], 'amount', 'tokens').map((x) => x.label), ['x', 'y']);
   assert.equal(rows[0]!.label, 'b');
+});
+
+test('v1.4 formatBig: B / T units, rounding carries into the next unit', () => {
+  assert.deepEqual([0, 999, 1000, 1049, 999_949, 999_950, 1_000_000, 999_950_000, 1_000_000_000, 3_400_000_000, 999_950_000_000, 1_200_000_000_000].map(formatBig),
+    ['0', '999', '1K', '1K', '999.9K', '1M', '1M', '1B', '1B', '3.4B', '1T', '1.2T']);
+});
+
+test('v1.4 tokenLabel: compact text, exact number for the title', () => {
+  assert.deepEqual(tokenLabel(3_400_123_456, (n) => n.toLocaleString('en-US')), { text: '3.4B', title: '3,400,123,456' });
+  assert.deepEqual(tokenLabel(85_400, (n) => n.toLocaleString('en-US')), { text: '85.4K', title: '85,400' });
+});
+
+test('v1.4 parsePeriod: the remembered period, unknown falls back to 7 days', () => {
+  assert.equal(parsePeriod('12h'), '12h');
+  assert.equal(parsePeriod('today'), 'today');
+  assert.equal(parsePeriod('90'), 90);
+  assert.equal(parsePeriod('365'), 365);
+  assert.equal(parsePeriod('8'), 7);
+  assert.equal(parsePeriod(null), 7);
+  assert.equal(parsePeriod(undefined), 7);
+});
+
+test('v1.4 tokenFigures / cachePair: big figures render compact (B, T)', () => {
+  assert.deepEqual(tokenFigures({ tokensIn: 3_400_000_000, tokensOut: 1_200_000_000_000, tokensCacheWrite: 85_400, tokensCached: 2_000_000 }), { io: '3.4B/1.2T', cache: '85.4K/2M' });
+  assert.equal(cachePair(999, 1000), '999/1K');
+});
+
+test('v1.4 limitHintArgs: a token limit is compact with the exact numbers, a call limit stays exact', () => {
+  const ex = (n: number): string => n.toLocaleString('en-US');
+  const a = limitHintArgs(true, 1000, 3_400_000_000, 8000, ex);
+  assert.deepEqual(a.compact, { min: '1K', max: '3.4B', def: '8K' });
+  assert.equal(a.exact.max, '3,400,000,000');
+  assert.equal(limitHintArgs(false, 1, 600, 5, ex).compact, null);
 });

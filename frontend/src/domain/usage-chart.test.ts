@@ -181,3 +181,9 @@ test('hbars: rows from the top, the bar grows right in proportion, centred in it
   assert.deepEqual(hbars([1], { left: 0, top: 0, width: 10 }, 0), []);
   assert.equal(hbars([-3], { left: 0, top: 0, width: 10 }, 5)[0]!.width, 0);
 });
+
+test('fillPeriods: unit hour keeps the server rows in their order (a window can cross midnight)', () => {
+  const rows = [{ period: '23:00', calls: 2 }, { period: '00:00', calls: 0 }, { period: '01:00', calls: 4 }];
+  assert.deepEqual(fillPeriods('hour', '2026-11-15', '2026-11-15', rows).map((p) => [p.period, p.calls]), [['23:00', 2], ['00:00', 0], ['01:00', 4]]);
+  assert.deepEqual(fillPeriods('hour', '2026-11-15', '2026-11-15', []), []);
+});

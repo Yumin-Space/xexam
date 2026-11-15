@@ -106,7 +106,7 @@ docker compose up -d
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |
 | 看现在是哪个版本、什么架构 | 浏览器打开 <http://localhost:8765/api/info> |
 
-> ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把两个数据卷一起删掉：`xexam_data`（题库、用户、学习记录和设置）和 `xexam_ai_data`（AI 设置、加密的密钥和解密用的密钥文件、对话和记忆）。
+> ⚠️ **不要运行 `docker compose down -v`**：`-v` 会把两个数据卷一起删掉：`xexam_backend_data`（题库、用户、学习记录和设置）和 `xexam_ai_data`（AI 设置、加密的密钥和解密用的密钥文件、对话和记忆）。
 
 - **从手机或另一台电脑访问**，或者**通过 Cloudflare Tunnel 从互联网访问**：见 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 4 节。
 - **从源码构建镜像**（改代码时用）：在克隆的仓库里运行 `docker compose -f docker/docker-compose.build.yml up -d --build`，见 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 2 节。
@@ -130,7 +130,7 @@ docker compose up -d
 | `XEXAM_LOG` | 不设（`info`） | 后端的日志过滤，例如 `debug`；为空 = `info` |
 | `TZ` | 不设（宿主机的时区） | Xexam 显示的时间、以及 AI 用量统计里的日期所用的时区，例如 `TZ=UTC` |
 | `XEXAM_AI_SECRET_KEY` | 不设（AI 卷里的一个密钥文件） | 加密已保存的 AI 服务商密钥所用的密钥：32 字节，写成 64 个十六进制数字或 base64，例如用 `openssl rand -base64 32` 生成。设置它可以让这个密钥和 AI 卷分开存放，这样只拿到那个卷的副本也解不开密钥。它改了或丢了，就要在 **AI 设置** 里重新输入 AI 密钥 |
-| `XEXAM_INTERNAL_TOKEN` | 不设（链接卷里的一个随机令牌） | 后端和 AI 服务共用的令牌；compose 文件把同一个值传给两者。至少 32 个可打印的 ASCII 字符，不能有空格，例如用 `openssl rand -hex 32` 生成。AI 服务自己对后端的调用（例如它的状态报告）也用它来认证。不符合这个规则的值会让 AI 对话无法使用：**AI 设置** 里会写明 ai-service 无法连接，原因写在一行日志里 |
+| `XEXAM_INTERNAL_TOKEN` | 不设（ai_auth 卷里的一个随机令牌） | 后端和 AI 服务共用的令牌；compose 文件把同一个值传给两者。至少 32 个可打印的 ASCII 字符，不能有空格，例如用 `openssl rand -hex 32` 生成。AI 服务自己对后端的调用（例如它的状态报告）也用它来认证。不符合这个规则的值会让 AI 对话无法使用：**AI 设置** 里会写明 ai-service 无法连接，原因写在一行日志里 |
 | `XEXAM_AI_LOG` | 不设（`info`） | AI 服务的日志过滤，和 `XEXAM_LOG` 一样 |
 | `XEXAM_AI_SQLITE_JOURNAL` | 不设（WAL） | `delete` 用于 AI 数据库，和 `XEXAM_SQLITE_JOURNAL` 一样 |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`（内网地址段） | Nginx 信任其 `CF-Connecting-IP` 和位置头的代理，这样限速、IP 列和所在地指的就是访客本人。默认值适合封闭的内网（宿主机或内网另一台机器上的 `cloudflared` 不用设置）。可以缩小范围（例如 `172.31.254.2`，只信任自带的 `cloudflared`），写 `none` = 谁都不信任；留空或空值就是默认值（见 [deployment](../docs/zh-CN/deployment.md) 的 3.5 节） |
@@ -143,7 +143,7 @@ docker compose up -d
 
 ## 升级
 
-每次升级端口和卷 `xexam_data` 都保持不变：先 `docker compose pull`，再 `docker compose up -d`。请先备份；各版本的步骤、备份副本和所有回滚方法见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
+每次升级端口都保持不变：先 `docker compose pull`，再 `docker compose up -d`。**从 v1.3 或更早升级到 v1.4 时卷会改名**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`），在把旧数据复制过去之前，Xexam 会以空数据库启动：1. `docker compose down`；2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`；3. `docker compose up -d`（Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`）。旧卷会一直保留，直到你手动删除。请先备份；各版本的步骤、备份副本和所有回滚方法见 [docs/zh-CN/migration.md](../docs/zh-CN/migration.md)。
 
 ---
 

@@ -49,7 +49,11 @@ export const setFeatureSwitches = (s: Partial<Record<AiFeatureKey, boolean>>): P
 
 export const fetchLimits = (): Promise<AiLimitsAnswer> => getJson<AiLimitsAnswer>('/api/ai/admin/limits');
 export const saveLimits = (l: Partial<AiLimits>): Promise<AiLimitsAnswer> => postJson<AiLimitsAnswer>('/api/ai/admin/limits', l);
-export const fetchUsage = (days: number): Promise<AiUsage> => getJson<AiUsage>(`/api/ai/admin/usage?days=${days}`);
+/** `7` | `30` | `90` | `365` days, or `12h` (last 12 hours) / `today` (since 0:00 of the server's time zone) */
+export type UsagePeriod = number | '12h' | 'today';
+
+export const fetchUsage = (period: UsagePeriod): Promise<AiUsage> =>
+  getJson<AiUsage>(typeof period === 'number' ? `/api/ai/admin/usage?days=${period}` : `/api/ai/admin/usage?period=${period}`);
 
 export type AiClearV13 = AiClear | { what: 'shared' };
 export const clearAiData = (c: AiClearV13): Promise<{ deleted: number }> => postJson<{ deleted: number }>('/api/ai/admin/clear', c);

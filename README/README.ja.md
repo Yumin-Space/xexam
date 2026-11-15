@@ -106,7 +106,7 @@ docker compose up -d
 | ログを見る | `docker compose logs -f backend` と `docker compose logs -f ai-service`（管理者はメニューの **システムログ** でも見られます。AI サービスの行も表示されます） |
 | 動いているバージョンとアーキテクチャを確認 | ブラウザで <http://localhost:8765/api/info> を開く |
 
-> ⚠️ **`docker compose down -v` は実行しないでください**：`-v` を付けると 2 つのデータボリュームも一緒に削除されます。`xexam_data`（問題集、ユーザー、学習記録、設定）と `xexam_ai_data`（AI 設定、暗号化したキーとそのキーファイル、チャットとメモ）です。
+> ⚠️ **`docker compose down -v` は実行しないでください**：`-v` を付けると 2 つのデータボリュームも一緒に削除されます。`xexam_backend_data`（問題集、ユーザー、学習記録、設定）と `xexam_ai_data`（AI 設定、暗号化したキーとそのキーファイル、チャットとメモ）です。
 
 - **スマートフォンや別のパソコンから**、または **Cloudflare Tunnel でインターネットから** 開く：[docs/ja/deployment.md](../docs/ja/deployment.md) の第 4 節。
 - **ソースからイメージをビルドする**（コードを変更するとき）：クローンしたリポジトリで `docker compose -f docker/docker-compose.build.yml up -d --build`。[docs/ja/deployment.md](../docs/ja/deployment.md) の第 2 節を参照してください。
@@ -130,7 +130,7 @@ docker compose up -d
 | `XEXAM_LOG` | 未設定（`info`） | バックエンドのログのフィルター。例：`debug`。空なら `info` |
 | `TZ` | 未設定（ホストのタイムゾーン） | Xexam が表示する日時と、AI の使用量の統計の日付のタイムゾーン。例：`TZ=UTC` |
 | `XEXAM_AI_SECRET_KEY` | 未設定（AI ボリューム内のキーファイル） | 保存した AI プロバイダーのキーを暗号化するキー。32 バイトを 16 進数 64 桁か base64 で書きます。例：`openssl rand -base64 32` の出力。設定するとキーを AI ボリュームから切り離せるので、そのボリュームのコピーだけではキーを復号できません。変更したり失ったりすると、AI のキーを **AI 設定** で入力し直す必要があります |
-| `XEXAM_INTERNAL_TOKEN` | 未設定（リンクボリューム内のランダムな Token） | バックエンドと AI サービスが共有する Token。compose ファイルは同じ値を両方に渡します。空白を含まない表示可能な ASCII 文字で 32 文字以上。例：`openssl rand -hex 32` の出力。AI サービス自身のバックエンドへの呼び出し（状態の報告など）の認証にも使われます。この規則に合わない値では AI チャットがオフになります：**AI 設定** には ai-service が接続できないと表示され、ログの行がその理由を伝えます |
+| `XEXAM_INTERNAL_TOKEN` | 未設定（ai_auth ボリューム内のランダムな Token） | バックエンドと AI サービスが共有する Token。compose ファイルは同じ値を両方に渡します。空白を含まない表示可能な ASCII 文字で 32 文字以上。例：`openssl rand -hex 32` の出力。AI サービス自身のバックエンドへの呼び出し（状態の報告など）の認証にも使われます。この規則に合わない値では AI チャットがオフになります：**AI 設定** には ai-service が接続できないと表示され、ログの行がその理由を伝えます |
 | `XEXAM_AI_LOG` | 未設定（`info`） | AI サービスのログのフィルター。`XEXAM_LOG` と同じです |
 | `XEXAM_AI_SQLITE_JOURNAL` | 未設定（WAL） | `delete` = AI のデータベースを従来の DELETE ジャーナルのままにします。`XEXAM_SQLITE_JOURNAL` と同じです |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`（プライベートネットワーク） | `CF-Connecting-IP` と位置ヘッダーを Nginx が信じるプロキシ。レート制限、IP 列、場所が訪問者のものになります。既定値は閉じたプライベートネットワーク向けで、ホストや別のプライベートなマシンの `cloudflared` に設定は要りません。範囲を狭める（例：`172.31.254.2` で同梱の `cloudflared` のみ）か、`none` と書くと誰も信頼しません。空欄や空の値は既定値になります（[deployment](../docs/ja/deployment.md) の 3.5 節） |
@@ -143,7 +143,7 @@ compose ファイルがホストの `/etc/localtime` をバックエンドと AI
 
 ## アップグレード
 
-どのアップグレードでも、ポートとボリューム `xexam_data` は同じままです。`docker compose pull` の後に `docker compose up -d`。先にバックアップを取ってください。各バージョンの手順、バックアップコピー、ロールバックは [docs/ja/migration.md](../docs/ja/migration.md) にあります。
+どのアップグレードでも、ポートは同じままです。`docker compose pull` の後に `docker compose up -d`。**v1.3 以前から v1.4 へのアップグレードでは、ボリュームの名前が変わり**（`xexam_data` → `xexam_backend_data`、`xexam_link` → `xexam_ai_auth`）、古いデータをコピーするまで Xexam は空のデータベースで起動します：1. `docker compose down`、2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`、3. `docker compose up -d`（Portainer では、`xexam_data` の中身を同じ方法で `xexam_backend_data` にコピーします）。古いボリュームは、手動で削除するまで残ります。先にバックアップを取ってください。各バージョンの手順、バックアップコピー、ロールバックは [docs/ja/migration.md](../docs/ja/migration.md) にあります。
 
 ---
 

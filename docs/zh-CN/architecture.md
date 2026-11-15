@@ -21,9 +21,9 @@ flowchart TB
     N -->|"/api/ai/*：先向后端做 auth_request"| B
     N -->|"/api/ai/*  只带 X-Xexam-Identity，不带 Cookie"| A
     A -->|"/internal/ai/*，带内部令牌<br/>（包括每 25 秒一次的心跳）"| B
-    B --> D[("SQLite（WAL）<br/>卷 xexam_data → /data/xexam.db")]
+    B --> D[("SQLite（WAL）<br/>卷 xexam_backend_data → /data/xexam.db")]
     A --> AD[("SQLite（WAL）+ 密钥文件<br/>卷 xexam_ai_data → /data")]
-    B -->|"写入"| L[("卷 xexam_link<br/>/link/internal.token")]
+    B -->|"写入"| L[("卷 xexam_ai_auth<br/>/link/internal.token")]
     L -->|"只读"| A
     A -->|"HTTPS，只经过 egress 网络"| P["AI 服务商或<br/>Cloudflare AI Gateway"]
     CF["Cloudflare Tunnel + Access<br/>（所有者自己配置）"] -.-> N
@@ -246,13 +246,13 @@ AI 对话、AI 记忆和 AI 设置由第三个容器 `ai-service`（镜像 `xexa
 
 所有者定下的规则，代码和 compose 文件都遵守它：
 
-- **没有任何 SQLite 文件会被两个容器同时打开。** `xexam_data`（里面是 `xexam.db`）只挂载到后端，`xexam_ai_data`（里面是 `xexam-ai.db` 和密钥文件 `secret.key`）只挂载到 `ai-service`。前端不挂载任何卷。
+- **没有任何 SQLite 文件会被两个容器同时打开。** `xexam_backend_data`（里面是 `xexam.db`）只挂载到后端，`xexam_ai_data`（里面是 `xexam-ai.db` 和密钥文件 `secret.key`）只挂载到 `ai-service`。前端不挂载任何卷。
 - **ai-service 只通过后端的 API 访问主程序的数据**：带令牌的路由 `/internal/ai/introspect`、`/internal/ai/users`、`/internal/ai/log` 和 `/internal/ai/heartbeat`（某个会话属于谁、有哪些用户、谁有 AI+ 功能，它要写进系统日志的行，以及它自己的状态），从 v0.9 起还有 `/internal/ai/question`、`/internal/ai/record` 和 `/internal/ai/record-info`。这三个路由交出的是**调用者能看到的一道题，或者调用者自己的一条记录，而且只在带着调用者的有效会话来问时才交**：后端把会话绑定到用户，对另一个用户的会话、用户看不到的题库里的题、或不是调用者自己的记录，一律不回答（这几种情况都是同一个「未找到」）。它仍然不会自己去读题库、记录或设置，也不会拿到这三种投影之外的东西（见下面的「AI+ 学习帮助」一节）。
 - **后端只通过 ai-service 的 API 访问 AI 数据**，而在 v0.8 里它从不这样做：它根本不调用 ai-service。心跳是反方向的（ai-service 告诉后端，见下文）；后端对 AI 所知的，只是它收到的最后一次报告，而且只保存在内存里。
 - **每个数据库只由它自己的服务迁移**：后端迁移 `xexam.db`（schema v6，v1.0 没有变化），ai-service 创建并打开 `xexam-ai.db`（v1.0 起是 schema v4，见 [database.md](database.md) 第 8 节）。
-- **唯一共用的卷 `xexam_link` 里只有一个文件 `internal.token`**，从不放数据库。后端写入它；ai-service 以只读方式挂载它。
+- **唯一共用的卷 `xexam_ai_auth` 里只有一个文件 `internal.token`**，从不放数据库。后端写入它；ai-service 以只读方式挂载它。
 
-所以 `xexam_data` 的备份里没有 AI 机密，也没有对话；`xexam_ai_data` 的备份里没有题库、密码或学习记录。
+所以 `xexam_backend_data` 的备份里没有 AI 机密，也没有对话；`xexam_ai_data` 的备份里没有题库、密码或学习记录。
 
 ### 谁在请求：认证步骤和身份声明
 
@@ -544,7 +544,7 @@ sequenceDiagram
 
 为了关于页面，`nginx/Dockerfile` 把 `docs/en/changelog.md`、`docs/ja/changelog.md` 和 `docs/zh-CN/changelog.md` 复制到前端源码的上一级文件夹，布局和仓库里一样（`COPY docs/en/changelog.md /docs/en/`，`ja` 和 `zh-CN` 也一样），`vite.config.ts` 就从那里读取它们。所以 `.dockerignore` 把 `docs/` 和 README 排除在构建上下文之外，只把这三个文件放回来（`!docs/en/changelog.md`，`ja` 和 `zh-CN` 也一样）。最终镜像里只有构建出的静态文件，没有更新日志文件。
 
-三个服务都用 `cap_drop: ALL`、`no-new-privileges`、`read_only: true` 和 `tmpfs: /tmp`，并且最多保留三个 10 MB 的容器日志文件。后端只能写 `/data`（数据卷）、`/link`（链接卷）和 `/tmp`；ai-service 只能写它自己的 `/data` 和 `/tmp`（它以只读方式挂载 `/link`）。两者都以只读方式挂载宿主机的 `/etc/localtime`，所以它们的时间跟随宿主机的时区（在 Docker Desktop 上是 Docker 自己的虚拟机的时区，通常是 UTC）。网络：`public`（Nginx 发布的端口）、`internal`（`internal: true`：Nginx、后端和 AI 服务）和 `egress`（只有 ai-service）。
+三个服务都用 `cap_drop: ALL`、`no-new-privileges`、`read_only: true` 和 `tmpfs: /tmp`，并且最多保留三个 10 MB 的容器日志文件。后端只能写 `/data`（数据卷）、`/link`（ai_auth 卷）和 `/tmp`；ai-service 只能写它自己的 `/data` 和 `/tmp`（它以只读方式挂载 `/link`）。两者都以只读方式挂载宿主机的 `/etc/localtime`，所以它们的时间跟随宿主机的时区（在 Docker Desktop 上是 Docker 自己的虚拟机的时区，通常是 UTC）。网络：`public`（Nginx 发布的端口）、`internal`（`internal: true`：Nginx、后端和 AI 服务）和 `egress`（只有 ai-service）。
 
 ## 9. 和旧版的对应关系
 

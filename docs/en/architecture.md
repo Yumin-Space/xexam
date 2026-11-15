@@ -21,9 +21,9 @@ flowchart TB
     N -->|"/api/ai/*: auth_request to the backend first"| B
     N -->|"/api/ai/*  only X-Xexam-Identity, no cookies"| A
     A -->|"/internal/ai/* with the internal token<br/>(incl. the heartbeat every 25 s)"| B
-    B --> D[("SQLite (WAL)<br/>volume xexam_data → /data/xexam.db")]
+    B --> D[("SQLite (WAL)<br/>volume xexam_backend_data → /data/xexam.db")]
     A --> AD[("SQLite (WAL) + key file<br/>volume xexam_ai_data → /data")]
-    B -->|"writes"| L[("volume xexam_link<br/>/link/internal.token")]
+    B -->|"writes"| L[("volume xexam_ai_auth<br/>/link/internal.token")]
     L -->|"read only"| A
     A -->|"HTTPS, network egress only"| P["AI provider or<br/>Cloudflare AI Gateway"]
     CF["Cloudflare Tunnel + Access<br/>(set up by the owner)"] -.-> N
@@ -247,13 +247,13 @@ AI Chat, AI Memory and the AI settings are answered by a third container, `ai-se
 
 The owner's rule, which the code and the compose files follow:
 
-- **No SQLite file is ever opened by both containers.** `xexam_data` (with `xexam.db`) is mounted only by the backend, `xexam_ai_data` (with `xexam-ai.db` and the key file `secret.key`) only by `ai-service`. The frontend mounts no volume.
+- **No SQLite file is ever opened by both containers.** `xexam_backend_data` (with `xexam.db`) is mounted only by the backend, `xexam_ai_data` (with `xexam-ai.db` and the key file `secret.key`) only by `ai-service`. The frontend mounts no volume.
 - **ai-service reaches main-app data only through the backend's API**: the token routes `/internal/ai/introspect`, `/internal/ai/users`, `/internal/ai/log` and `/internal/ai/heartbeat` (who a session belongs to, which users exist and who has the AI+ feature, its lines for the System log, its own state) and, since v0.9, `/internal/ai/question`, `/internal/ai/record` and `/internal/ai/record-info`. Those three hand over **one question the caller may see, or the caller's own record, only when asked with the caller's live session**: the backend binds the session to the user and answers nothing for another user's session, a question of a bank the user may not see, or a record that is not the caller's (one identical "not found" answer for all of them). It still never reads question banks, records or settings by itself, and it never gets more than the three projections (section "AI+ study help" below).
 - **The backend reaches AI data only through ai-service's API**, and in v0.8 it never does: it does not call ai-service at all. The heartbeat goes the other way (ai-service tells the backend, see below); what the backend knows about AI is the last report it received, kept in memory only.
 - **Each database is migrated only by its own service**: the backend migrates `xexam.db` (schema v6, unchanged in v1.0), ai-service creates and opens `xexam-ai.db` (schema v4 since v1.0, see section 8 of [database.md](database.md)).
-- **The only shared volume, `xexam_link`, holds one file, `internal.token`**, never a database. The backend writes it; ai-service mounts it read only.
+- **The only shared volume, `xexam_ai_auth`, holds one file, `internal.token`**, never a database. The backend writes it; ai-service mounts it read only.
 
-So a backup of `xexam_data` holds no AI secrets and no chats, and a backup of `xexam_ai_data` holds no question banks, passwords or study records.
+So a backup of `xexam_backend_data` holds no AI secrets and no chats, and a backup of `xexam_ai_data` holds no question banks, passwords or study records.
 
 ### Who is asking: the auth step and the identity statement
 
@@ -545,7 +545,7 @@ The backend answers an error with `{"error": "<Chinese message>"}`. `api/client.
 
 For the About page, `nginx/Dockerfile` copies `docs/en/changelog.md`, `docs/ja/changelog.md` and `docs/zh-CN/changelog.md` to the folder above the frontend sources, in the same layout as the repository (`COPY docs/en/changelog.md /docs/en/`, and the same for `ja` and `zh-CN`), where `vite.config.ts` reads them. That is why `.dockerignore`, which keeps `docs/` and the READMEs out of the build context, lets exactly these three files back in (`!docs/en/changelog.md`, and the same for `ja` and `zh-CN`). The final image holds only the built static files, not the changelogs.
 
-All three services use `cap_drop: ALL`, `no-new-privileges`, `read_only: true` and `tmpfs: /tmp`, and keep at most three container log files of 10 MB. The backend can write only `/data` (the data volume), `/link` (the link volume) and `/tmp`; ai-service only its own `/data` and `/tmp` (it mounts `/link` read only). Both mount the host's `/etc/localtime` read only, so their timestamps follow the host's time zone (on Docker Desktop, the zone of Docker's own virtual machine, usually UTC). Networks: `public` (Nginx's published port), `internal` (`internal: true`: Nginx, the backend and the AI service) and `egress` (ai-service only).
+All three services use `cap_drop: ALL`, `no-new-privileges`, `read_only: true` and `tmpfs: /tmp`, and keep at most three container log files of 10 MB. The backend can write only `/data` (the data volume), `/link` (the ai_auth volume) and `/tmp`; ai-service only its own `/data` and `/tmp` (it mounts `/link` read only). Both mount the host's `/etc/localtime` read only, so their timestamps follow the host's time zone (on Docker Desktop, the zone of Docker's own virtual machine, usually UTC). Networks: `public` (Nginx's published port), `internal` (`internal: true`: Nginx, the backend and the AI service) and `egress` (ai-service only).
 
 ## 9. Mapping to the old version
 

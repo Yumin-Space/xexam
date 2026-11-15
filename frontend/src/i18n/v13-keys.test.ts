@@ -180,9 +180,9 @@ test('the new error codes have texts (ApiError -> errorText)', () => {
 
 test('ai.gen.tooBig carries the size of the bank', () => {
   setUiLang('en');
-  assert.match(genCodeText('ai.gen.tooBig', { tokens: 1234567 }) ?? '', /about 1,234,567 tokens/);
+  assert.match(genCodeText('ai.gen.tooBig', { tokens: 1234567 }) ?? '', /about 1\.2M \(1,234,567\) tokens/);
   setUiLang('zh');
-  assert.match(genCodeText('ai.gen.tooBig', { tokens: 5000 }) ?? '', /5,000/);
+  assert.match(genCodeText('ai.gen.tooBig', { tokens: 5000 }) ?? '', /5K \(5,000\)/);
 });
 
 test('v1.3: one name for the analysis and one label for the hint + analysis switch, in every language', () => {

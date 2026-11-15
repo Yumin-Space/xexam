@@ -790,12 +790,16 @@ export interface AiUsageCounts {
   tokensCacheWrite?: number;
 }
 
-/** `GET /api/ai/admin/usage?days=N` */
+/** `GET /api/ai/admin/usage?days=N` or `?period=12h|today` */
 export interface AiUsage {
-  days: number;
+  /** null for the two short periods */
+  days: number | null;
+  /** `7d` | `30d` | `90d` | `365d` | `12h` | `today` */
+  period: string;
   from: string;
   to: string;
-  unit: 'day' | 'month';
+  /** `hour` for the short periods: `byPeriod[].period` is the local `HH:00`, oldest first, zeros included */
+  unit: 'day' | 'month' | 'hour';
   totals: AiUsageCounts;
   /** `userId: null` is the one row of deleted users */
   byUser: Array<AiUsageCounts & {

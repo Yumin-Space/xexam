@@ -4,7 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
-> - **v1.3 → v1.4**（0000 节）：主数据库升到 schema 9，AI 数据库升到 schema 8，各自在写好备份副本后自动完成（只增不改：最后活动的几列，以及外部所在地查询的表）。主数据库回退不需要恢复；AI 数据库需要把它的备份副本放回去（0000.4 节）。
+> - **v1.3 → v1.4**（0000 节）：主数据库升到 schema 9，AI 数据库升到 schema 8，各自在写好备份副本后自动完成（只增不改：最后活动的几列，以及外部所在地查询的表）。**Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`）：第一次启动 v1.4 之前，先把 `xexam_data` 复制到 `xexam_backend_data`，否则 Xexam 会以空数据库启动。回退到 v1.3 时重新使用 `xexam_data`；AI 数据库需要把它的备份副本放回去（0000.4 节）。
 > - **v1.2 → v1.3**（第 000 节）：建议使用新的 `docker-compose.yml`（为真实访客地址增加 `tunnel` 网络和可选的 `cloudflared` 服务）；主数据库升到 schema 8，AI 数据库升到 schema 7，各自在写好自己的备份副本之后自动进行。主数据库回退不需要恢复；AI 数据库需要把它的副本放回去（第 000.4 节）。
 > - **v0.9.1 → v1.0**（第 0 节）：不需要新的 `docker-compose.yml`；AI 数据库在写好备份副本 `backups/xexam-ai-schema3-<date-time>.db` 之后升级到 schema 4；主数据库不变。回退到 v0.9.1 需要恢复那份副本（第 0.4 节）。
 > - **v0.9 → v0.9.1**（没有单独的一节）：除了 `docker compose pull` 和 `docker compose up -d` 之外不用做什么；数据库没有变化，没有新设置，也不需要新的 `docker-compose.yml`。回退到 v0.9 只要把三个镜像的 `:latest` 改成 `:v0.9`，再 `docker compose up -d`；数据库保持原样。
@@ -16,7 +16,7 @@
 > - **Python v0.2.x → Rust + TypeScript + Nginx（v0.3）**（第 5–11 节）：当时数据库文件和 schema 都没变；那次切换是「换程序」，不是「搬数据」。决定的依据：[migration-plan.md](history/migration-plan.md)。风险：[risk-assessment.md](history/risk-assessment.md)。
 > - **v0.1 → 以后的版本**（第 12 节）：数据库的文件名。
 >
-> 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_data` 里的 `/data/backups/`）。回退就是**恢复那份副本**，然后运行较早的镜像，只有一个例外：v0.8 能原样打开 v0.9 的 schema 6 主数据库（第 0b.4 节）。AI 数据库有它自己的副本，在卷 `xexam_ai_data` 的 `/data/backups/` 里，名字是 `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`；v0.8 的 AI 服务打不开 v0.9 的 schema 3 数据库，所以回退到 v0.8 就要在那里恢复 schema 2 的副本。背景见 [database.md](database.md) 第 6 节。回退主数据库从不会碰到 AI 数据库，反过来也一样。
+> 每次改变 schema 的升级都会先写**一份**数据库副本，以它原来的 schema 命名：`xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db`（Docker 里：卷 `xexam_backend_data` 里的 `/data/backups/`；v1.4 之前是 `xexam_data`）。回退就是**恢复那份副本**，然后运行较早的镜像，只有一个例外：v0.8 能原样打开 v0.9 的 schema 6 主数据库（第 0b.4 节）。AI 数据库有它自己的副本，在卷 `xexam_ai_data` 的 `/data/backups/` 里，名字是 `xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`；v0.8 的 AI 服务打不开 v0.9 的 schema 3 数据库，所以回退到 v0.8 就要在那里恢复 schema 2 的副本。背景见 [database.md](database.md) 第 6 节。回退主数据库从不会碰到 AI 数据库，反过来也一样。
 >
 > **从更早的版本直接升级到 v1.0**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 4）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v1.0 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `1.0`，ai-service 创建的数据库是 schema 4。
 >
@@ -25,6 +25,14 @@
 ## 0000. 从 v1.3 升级到 v1.4
 
 这一节编号为 0000，因为它是最新的一节。旧的各节编号不变。
+
+**先做升级步骤：卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`）。更新后，在把旧数据复制过去之前，Xexam 会以空数据库启动：
+
+1. `docker compose down`
+2. `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`
+3. `docker compose up -d`
+
+Portainer 里用同样的方法，把 `xexam_data` 的内容复制到 `xexam_backend_data`。旧卷 `xexam_data` 和 `xexam_link` 原样保留，直到你手动删除（`docker volume rm`）；`xexam_link` 用不着，会新建一个令牌。
 
 ### 0000.1 有什么变化
 
@@ -36,7 +44,7 @@
 ### 0000.2 升级
 
 1. **备份两个数据卷**（先停止，做法同 [README](../../README.md#upgrading) 的升级一节）。
-2. 取用新的 `docker-compose.yml`（里面有 `XEXAM_TRUSTED_PROXIES` 的默认值），保留你的 `.env`，然后 `docker compose pull` 和 `docker compose up -d`。不要用 `down -v`。
+2. 取用新的 `docker-compose.yml`（里面有 `XEXAM_TRUSTED_PROXIES` 的默认值），保留你的 `.env`，然后依次执行 `docker compose pull`、`docker compose down`、复制命令 `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine cp -a /from/. /to/`（本节开头的步骤；在第一次启动 v1.4 **之前**），最后 `docker compose up -d`。不要用 `down -v`。
 3. 可选：没有 Cloudflare 时要显示所在地，见 [deployment.md](deployment.md) 的 3.5 节。
 
 ### 0000.3 升级后的检查
@@ -46,13 +54,13 @@
 
 ### 0000.4 回退到 v1.3
 
-- **主数据库**：不需要恢复。v1.3 的后端可以原样打开 schema 9 的文件（新列会被忽略）。恢复 `xexam-schema8-<date-time>.db` 是可选的，会丢失之后写入的内容。
+- **主数据库**：v1.3 重新使用卷 `xexam_data`，里面还是升级之前的状态（v1.4 期间没有往里写过）；v1.4 期间写入的内容在 `xexam_backend_data` 里（想保留就复制回 `xexam_data`：v1.3 的后端可以原样打开 schema 9 的文件，新列会被忽略）。恢复 `xexam-schema8-<date-time>.db` 是可选的。
 - **AI 数据库**：停止整个栈，把 `xexam-ai-schema7-<date-time>.db` 放回作为 AI 数据库（卷 `xexam_ai_data` 里的 `/data/xexam-ai.db`），把三个镜像改成 `:v1.3` 再启动。在 v1.4 期间写入 AI 数据库的内容（对话、用量、外部查询的设置和密钥）会丢失。v1.3 会拒绝 schema 8 的文件，所以不会悄悄损坏。
 - v1.4 不会删除迁移前的备份副本；不再需要旧的时请手动删除。
 
 ### 0000.5 测试了什么
 
-- 后端 583 个测试、前端 812 个、AI 服务 1108 个，全部通过，包括：带数据的文件从 schema 8 到 9 和 7 到 9（新旧文件表相同，一份备份，一行 `system.migrate`）、AI 的 schema 1 到 7 到 8（每条路径表相同）、来源规则（Cloudflare 模式忽略查询；外部模式忽略 Cloudflare 的所在地请求头）、眼睛关闭时不查询、**清除记录**清空最后活动各列和记忆、保留地址过滤，以及密钥不出现在应答、日志行和数据库文件里，只使用本地模拟的服务商（成功、超时、HTTP 500、不是 JSON、缺字段、拒绝重定向、过大）。
+- 后端 583 个测试、前端 819 个、AI 服务 1113 个，全部通过，包括：带数据的文件从 schema 8 到 9 和 7 到 9（新旧文件表相同，一份备份，一行 `system.migrate`）、AI 的 schema 1 到 7 到 8（每条路径表相同）、来源规则（Cloudflare 模式忽略查询；外部模式忽略 Cloudflare 的所在地请求头）、眼睛关闭时不查询、**清除记录**清空最后活动各列和记忆、保留地址过滤，以及密钥不出现在应答、日志行和数据库文件里，只使用本地模拟的服务商（成功、超时、HTTP 500、不是 JSON、缺字段、拒绝重定向、过大）。
 - 发布检查没有覆盖：真实互联网上的服务商（只有几次用公开示例地址 `8.8.8.8` 的手动**测试**），以及真机上的手机布局。
 
 ## 000. 从 v1.2 升级到 v1.3

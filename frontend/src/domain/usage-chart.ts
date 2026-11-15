@@ -80,12 +80,14 @@ export interface Point {
 
 /**
  * The x axis of the over-time line (UC-1): the periods of `from` .. `to` in order (full `YYYY-MM-DD` for unit day, `YYYY-MM`
- * for unit month), a period the server left out counts 0. A row outside the range is kept at its sorted place (the server's
+ * for unit month; unit hour keeps the server's `HH:00` rows in their order), a period the server left out counts 0. A row outside the range is kept at its sorted place (the server's
  * word wins over the clock), so no number is ever dropped.
  */
-export function fillPeriods(unit: 'day' | 'month', from: string, to: string, rows: ReadonlyArray<{ period: string; calls: number }>): Point[] {
+export function fillPeriods(unit: 'day' | 'month' | 'hour', from: string, to: string, rows: ReadonlyArray<{ period: string; calls: number }>): Point[] {
   const have = new Map<string, number>();
   for (const r of rows) have.set(r.period, (have.get(r.period) ?? 0) + r.calls);
+  // unit hour: the server sends every local hour (`HH:00`) in time order (a window can cross midnight, so no sorting here)
+  if (unit === 'hour') return [...have].map(([period, calls]) => ({ period, calls }));
   const keys = new Set<string>(unit === 'day' ? dayRange(from, to) : monthRange(from, to));
   for (const k of have.keys()) keys.add(k);
   return [...keys].sort().map((period) => ({ period, calls: have.get(period) ?? 0 }));
