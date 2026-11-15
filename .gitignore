@@ -43,3 +43,6 @@ Thumbs.db
 
 # The AI encryption key file, wherever it is (never commit it)
 **/secret.key
+
+# Crash dumps of the shell tools
+*.stackdump

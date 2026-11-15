@@ -53,15 +53,48 @@ export interface StudyTransport {
 }
 
 /**
+ * v1.3: the spec of one hint / explanation, plus `fresh` (the same request with `fresh: true`, used only by the Regenerate
+ * button, so the server writes a new shared answer) and `shared` (what the last `start` event said: true = the answer came
+ * from the shared store, false = a model call, null = no ask yet). A `StudyRunSpec` is a `RunSpec` everywhere.
+ */
+export type StudyRunSpec = RunSpec & { fresh: RunSpec; shared: boolean | null };
+
+/** A start event's `shared` flag: only a boolean counts */
+export const sharedOfStart = (data: unknown): boolean | null => {
+  if (typeof data !== 'object' || data === null) return null;
+  const v = (data as { shared?: unknown }).shared;
+  return typeof v === 'boolean' ? v : null;
+};
+
+/** The spec Regenerate runs: the `fresh` variant of a study spec, any other spec unchanged */
+export const freshSpec = (spec: RunSpec): RunSpec => (spec as Partial<StudyRunSpec>).fresh ?? spec;
+
+/** Whether a spec's last answer came from the shared store (false for any other spec) */
+export const isSharedSpec = (spec: RunSpec): boolean => (spec as Partial<StudyRunSpec>).shared === true;
+
+/**
  * The spec of one hint / explanation. `body` is read when the ask starts (the card's language may have changed since the
  * popover opened). `saved` null = nothing to look up (the engine then generates).
  */
-export function studySpec(tr: StudyTransport, saved: StudySavedQuery | null, body: () => StudyAskBody): RunSpec {
-  return {
+export function studySpec(tr: StudyTransport, saved: StudySavedQuery | null, body: () => StudyAskBody): StudyRunSpec {
+  const spec: StudyRunSpec = {
     loadSaved: () => (saved ? tr.savedStudy(saved) : Promise.resolve(null)),
-    ask: (signal, on) => tr.askStudy(body(), signal, on),
+    ask: (signal, on) => tr.askStudy(body(), signal, watch(on)),
     stopChat: (id) => tr.stopChat(id),
+    fresh: null as unknown as RunSpec,
+    shared: null,
   };
+  // The start event says whether the answer is shared; remember it before the engine sees the event
+  const watch = (on: (ev: StreamEvent) => void) => (ev: StreamEvent): void => {
+    if (ev.event === 'start') spec.shared = sharedOfStart(ev.data);
+    on(ev);
+  };
+  spec.fresh = {
+    loadSaved: spec.loadSaved,
+    ask: (signal, on) => tr.askStudy({ ...body(), fresh: true } as StudyAskBody, signal, watch(on)),
+    stopChat: spec.stopChat,
+  };
+  return spec;
 }
 
 /** The spec of one record summary; an `at` that does not match `YYYY-MM-DD HH:MM` has no lookup (the engine generates) */

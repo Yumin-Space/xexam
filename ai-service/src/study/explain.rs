@@ -1,8 +1,12 @@
-//! The explanation prompts: the practice page (`AI 解释`) and the result page (`AI 解析`, discusses the user's answer).
+//! The analysis prompts (`AI 解析`, feature `explain`): the practice page and the result page (which also discusses the user's answer).
 use crate::prompt::Lang;
 use crate::study::language_line;
 use crate::study::model::{Solution, StudyQuestion, UserEntry};
 use crate::study::render::{esc, format_key, format_user, question_block};
+
+/// Version of the explanation prompt, part of the shared-answer hash: bump it whenever [`EXPLAIN_SYSTEM`] (or the
+/// blocks it is sent with) changes, so stored explanations of the old text stop matching.
+pub const EXPLAIN_PROMPT_V: u32 = 1;
 
 /// System prompt template; `{MINE_RULE}` and `{LANG_LINE}` are filled in by [`explain_prompt`].
 pub const EXPLAIN_SYSTEM: &str = "You are the study assistant inside Xexam, a self-hosted exam practice app. The user asked for an EXPLANATION of one

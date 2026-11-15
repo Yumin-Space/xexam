@@ -55,7 +55,7 @@ async fn openai_stream_is_saved_with_usage() {
     assert_eq!(start["newChat"], json!(true));
     assert_eq!(start["retry"], json!(false));
     assert_eq!(start["chatTitle"], json!("What is a list?"));
-    assert_eq!(start["model"], json!("demo-chat-small"));
+    assert!(start.get("model").is_none(), "users never see the model");
     // the raw SSE text has the exact frame shape
     assert!(s.raw.starts_with("event: start\ndata: {\"chatId\":"));
     assert_eq!(text(&ev), ANSWER);
@@ -95,7 +95,7 @@ async fn openai_stream_is_saved_with_usage() {
     assert_eq!(msgs[0]["role"], json!("user"));
     assert_eq!(msgs[1]["status"], json!("done"));
     assert_eq!(msgs[1]["content"], json!(ANSWER));
-    assert_eq!(msgs[1]["model"], json!("demo-chat-small"));
+    assert!(msgs[1].get("model").is_none(), "users never see the model");
     assert_eq!(v["chat"]["running"], json!(false));
     assert_eq!(v["chat"]["messageCount"], json!(2));
     let (_, list) = t.get("/api/ai/chats", &sam).await;
@@ -134,19 +134,22 @@ async fn anthropic_stream_with_ping_and_usage() {
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic/v1", t.stub.url), "apiKey": KEY, "model": "demo-claude"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
-    assert_eq!(
-        v["baseUrl"],
-        json!(format!("{}/anthropic", t.stub.url)),
-        "the trailing /v1 is removed"
-    );
+    t.seed_route(Seed {
+        provider: "anthropic",
+        url: format!("{}/anthropic/v1", t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model: "demo-claude",
+    });
+    // the trailing /v1 of an Anthropic address is removed
+    let base: String = t
+        .db()
+        .query_row("SELECT base_url FROM connections WHERE id = 1", [], |r| {
+            r.get(0)
+        })
+        .expect("base url");
+    assert_eq!(base, format!("{}/anthropic", t.stub.url));
     t.verify_and_enable(&admin).await;
     let ev = t
         .send_all(&sam, json!({"text": "Explain sets"}))
@@ -183,14 +186,14 @@ async fn an_anthropic_stream_cut_before_message_stop_is_an_error_and_can_be_retr
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic", t.stub.url), "apiKey": KEY, "model": "demo-claude"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    t.seed_route(Seed {
+        provider: "anthropic",
+        url: format!("{}/anthropic", t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model: "demo-claude",
+    });
     t.verify_and_enable(&admin).await;
     // message_start and one text delta, then the body ends without message_stop
     t.stub.force(Some((
@@ -218,7 +221,7 @@ async fn an_anthropic_stream_cut_before_message_stop_is_an_error_and_can_be_retr
         )
         .expect("usage");
     assert_eq!(usage, ("error".to_string(), "protocol".to_string()));
-    // the cut answer can be retried
+    // the cut answer can be retried: it keeps its text, so the retry is a new version (only an empty failure is reset)
     t.stub.force(None);
     let ev = t
         .open_stream("/api/ai/retry", &sam, json!({"chatId": chat}))
@@ -226,7 +229,8 @@ async fn an_anthropic_stream_cut_before_message_stop_is_an_error_and_can_be_retr
         .expect("retry")
         .all()
         .await;
-    assert_eq!(ev[0].1["retry"], json!(true));
+    assert_eq!(ev[0].1["retry"], json!(false));
+    assert_eq!(ev[0].1["mode"], json!("regenerate"));
     assert_eq!(terminal(&ev).0, "done");
     assert_eq!(text(&ev), ANSWER);
 }
@@ -469,8 +473,6 @@ async fn busy_server_busy_and_a_resized_gate() {
     let sam = t.user("sam", false, true);
     let kim = t.user("kim", false, true);
     t.configure_openai(&admin, "demo-hold").await;
-    let (code, _) = t.post("/api/ai/admin/models", &admin, json!({})).await;
-    assert_eq!(code, 200);
     let mut a = t
         .open_stream("/api/ai/send", &sam, json!({"text": "one"}))
         .await
@@ -492,8 +494,6 @@ async fn busy_server_busy_and_a_resized_gate() {
     assert_eq!(code, 200);
     let (code, v) = t.post("/api/ai/send", &kim, json!({"text": "three"})).await;
     assert_eq!((code, v["code"].clone()), (503, json!("ai.serverBusy")));
-    let (code, v) = t.post("/api/ai/admin/models", &admin, json!({})).await;
-    assert_eq!(code, 200, "a cached list needs no place: {v}");
     // raised again: kim gets a place at once, nothing running was cancelled
     let (code, _) = t
         .post("/api/ai/admin/limits", &admin, json!({"globalRunning": 2}))
@@ -716,8 +716,15 @@ async fn retry_replaces_a_failed_answer() {
     );
     assert_eq!(v["messages"][1]["status"], json!("done"));
     assert_eq!(v["messages"][1]["error"], Value::Null);
-    let (code, v) = t.post("/api/ai/retry", &sam, json!({"chatId": chat})).await;
-    assert_eq!((code, v["code"].clone()), (409, json!("ai.notRetryable")));
+    // a finished answer is regenerated into a new version (v1.3); the old route is the leaf's regenerate
+    let ev = t
+        .open_stream("/api/ai/retry", &sam, json!({"chatId": chat}))
+        .await
+        .expect("retry of a done answer")
+        .all()
+        .await;
+    assert_eq!(ev[0].1["retry"], json!(false));
+    assert_eq!(ev[0].1["versions"].as_array().map(Vec::len), Some(2));
     let other = t.user("kim", false, true);
     let (code, v) = t
         .post("/api/ai/retry", &other, json!({"chatId": chat}))
@@ -876,13 +883,6 @@ async fn numeric_error_codes_inside_a_200_stream() {
         assert_eq!(terminal(&ev).1["code"], json!(code), "{n}");
         assert_eq!(text(&ev), "Part", "the text that arrived is kept");
     }
-    // the test call treats such an auth problem as a configuration error: AI off, no longer verified
-    let (s, v) = t.post("/api/ai/admin/verify", &admin, json!({})).await;
-    assert_eq!(s, 200);
-    assert_eq!(v["ok"], json!(false), "{v}");
-    assert_eq!(v["code"], json!("ai.up.auth"));
-    assert_eq!(v["switchedOff"], json!(true));
-    assert_eq!(v["verifiedAt"], Value::Null);
     t.stub.force(None);
 }
 
@@ -904,22 +904,7 @@ async fn time_limits() {
     assert_eq!(terminal(&ev).1["code"], json!("ai.up.timeout"));
     t.stub.st().head_delay_ms = 0;
     // idle limit: the provider sends headers and a comment, then nothing
-    let (code, _) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"model": "demo-silent"}),
-        )
-        .await;
-    assert_eq!(code, 200);
-    // verify would time out too; enable directly through the store for this check
-    let fp = t.app.0.snapshot().expect("snap").fp;
-    t.db()
-        .execute(
-            "UPDATE settings SET enabled = 1, verified_at = 1, verified_fp = ?1",
-            [fp],
-        )
-        .expect("update");
+    t.set_model(&admin, "demo-silent").await;
     let started = std::time::Instant::now();
     let ev = t.send_all(&sam, json!({"text": "x"})).await.expect("s");
     assert_eq!(terminal(&ev).1["code"], json!("ai.up.timeout"));
@@ -1005,12 +990,12 @@ async fn memories_and_the_model_suggestion() {
         .post(
             "/api/ai/memories/add",
             &sam,
-            json!({"content": "x".repeat(4001)}),
+            json!({"content": "x".repeat(801)}),
         )
         .await;
     assert_eq!(
         (code, v["code"].clone(), v["limit"].clone()),
-        (400, json!("ai.memoryTooLong"), json!(1000))
+        (400, json!("ai.memoryTooLong"), json!(200))
     );
     let (code, v) = t
         .post(
@@ -1021,8 +1006,8 @@ async fn memories_and_the_model_suggestion() {
         .await;
     assert_eq!((code, v["memory"]["source"].clone()), (200, json!("chat")));
     let (_, v) = t.get("/api/ai/memories", &sam).await;
-    assert_eq!(v["limit"], json!(50));
-    assert_eq!(v["maxTokens"], json!(1000));
+    assert_eq!(v["limit"], json!(30));
+    assert_eq!(v["maxTokens"], json!(200));
     assert_eq!(v["memories"].as_array().map(Vec::len), Some(2));
     // the memories go into the system prompt, newest first
     let ev = t

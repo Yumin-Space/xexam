@@ -132,7 +132,8 @@ async fn the_full_history_is_sent_and_the_prompt_names_the_mode() {
         [false, false, false, false, true, true, false, false]
     );
     let keys: Vec<&String> = v["messages"][0].as_object().expect("obj").keys().collect();
-    // `free` is followed by the seven keys of v0.9 (study messages)
+    // `free` is followed by the seven keys of v0.9 (study messages), then the two of v1.3 (`parentId`, and `connection`
+    // for an administrator), then the three of the v1.3 reasoning
     let pos = keys
         .iter()
         .position(|k| k.as_str() == "free")
@@ -147,7 +148,12 @@ async fn the_full_history_is_sent_and_the_prompt_names_the_mode() {
             "source",
             "lang",
             "recordId",
-            "sample"
+            "sample",
+            "parentId",
+            "connection",
+            "reasoning",
+            "reasoningMs",
+            "reasoningTruncated"
         ]
     );
 }

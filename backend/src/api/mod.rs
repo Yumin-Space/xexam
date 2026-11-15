@@ -46,6 +46,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub mod activity;
 pub mod attempt;
 pub mod auth;
 pub mod guard;
@@ -102,6 +103,10 @@ pub struct Inner {
     /// v0.8: the link with the AI service: the internal token once `serve` loaded it (none by default: the link is off) and
     /// the rate limit of the log line about refused internal requests (see [`internal::AiLink`])
     pub ai_link: internal::AiLink,
+    /// v1.3: the write side of the activity log (one queue, one writer task)
+    pub activity: crate::activity::Sink,
+    /// v1.3: in-memory gates that keep requests read-only (session touch, last-active minute, cookie re-send)
+    pub gates: crate::auth::SessionGates,
 }
 
 impl AppState {
@@ -122,6 +127,11 @@ impl AppState {
         shutdown: Option<tokio::sync::mpsc::Sender<()>>,
         logs: Arc<crate::logs::LogBuffer>,
     ) -> AppState {
+        let activity = crate::activity::Sink::new();
+        // The writer needs a runtime; a state built outside one (a few unit tests) simply has no writer
+        if tokio::runtime::Handle::try_current().is_ok() {
+            activity.start(store.clone());
+        }
         AppState(Arc::new(Inner {
             cfg,
             store,
@@ -139,6 +149,8 @@ impl AppState {
             name_locks: Default::default(),
             old_layouts: services::OldLayouts::Refuse,
             ai_link: Default::default(),
+            activity,
+            gates: Default::default(),
         }))
     }
 }
@@ -336,11 +348,18 @@ where
 fn note_rejection(st: &AppState, what: String) {
     if let Some(report) = st.0.rejections.note(std::time::Instant::now(), what) {
         guard::log_rejections(&report);
+        st.0.activity.record(crate::activity::guard_entry(&report));
     }
 }
 
 async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
-    let (parts, body) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
+    // v1.3: decide once whether X-Real-IP / X-Geo-* may be believed (see `activity::apply_peer_rule`)
+    let peer = parts
+        .extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0);
+    crate::activity::apply_peer_rule(&mut parts.headers, peer, st.0.cfg.behind_proxy);
     // v0.8: the internal routes of the AI link, before the Host guard (see `internal`)
     if parts.uri.path().starts_with("/internal/") {
         return internal::dispatch(&st, &parts.method, parts.uri.path(), &parts.headers, body)
@@ -375,17 +394,31 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
                     Ok(a) => a,
                     Err(e) => return error_response(e, head_only),
                 };
-            let mut resp =
-                match get_route(&st, &path, query.as_deref(), head_only, authed.as_ref()).await {
-                    Ok(r) => r,
-                    Err(e) => error_response(e, head_only),
-                };
+            let if_none_match = hdr(&parts.headers, &header::IF_NONE_MATCH);
+            let mut resp = match get_route(
+                &st,
+                &path,
+                query.as_deref(),
+                head_only,
+                authed.as_ref(),
+                if_none_match.as_deref(),
+            )
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => error_response(e, head_only),
+            };
             auth::finish(&mut resp, authed.as_ref());
             resp
         }
         Method::POST => {
+            let client = crate::activity::ClientInfo::from_headers(&parts.headers);
             let (mut resp, authed) =
                 post_route(&st, &parts.headers, host.as_deref(), &path, body).await;
+            if let Some(a) = authed.as_ref() {
+                // v1.3: the activity entry of the route (an administrator's POST always, a user's only the important ones)
+                crate::activity::after_post(&st.0.activity, &client, &path, &a.user, &mut resp);
+            }
             auth::finish(&mut resp, authed.as_ref());
             resp
         }
@@ -426,6 +459,7 @@ async fn get_route(
     query: Option<&str>,
     head_only: bool,
     authed: Option<&Authed>,
+    if_none_match: Option<&str>,
 ) -> Result<Response, AppError> {
     if auth::find_route("GET", path).is_none() {
         // Static files are served by Nginx; keep the old plain-text 404 here
@@ -450,6 +484,14 @@ async fn get_route(
         let value = serde_json::to_value(&page).map_err(|_| AppError::Internal)?;
         return Ok(json_resp(StatusCode::OK, &value, head_only));
     }
+    if path == "/api/activity" {
+        let value = activity::list(st, query).await?;
+        return Ok(json_resp(StatusCode::OK, &value, head_only));
+    }
+    if path == "/api/activity/settings" {
+        let value = activity::settings(st).await?;
+        return Ok(json_resp(StatusCode::OK, &value, head_only));
+    }
     if path == "/api/info" {
         // Public (before sign-in, and the container health check): only what the sign-in page needs. Since v0.7.5 it no longer
         // says how many questions exist (signed-in pages count them from GET /api/bank and GET /api/banks). The database is
@@ -466,17 +508,42 @@ async fn get_route(
     let user = user_of(authed)?;
     let eng = st.0.engine.clone();
     let value: Value = match path {
-        "/api/bank" => {
+        "/api/bank" | "/api/banks" => {
             let v = viewer_of(st, authed).await?;
-            blocking(move || eng.bank_as(&v)).await?
+            // v1.3 (A4): the stamp is read first, so a body that is newer than its ETag only costs one more download
+            let banks = path == "/api/banks";
+            let (e1, v1) = (eng.clone(), v.clone());
+            let stamp = blocking(move || {
+                if banks {
+                    e1.banks_stamp_as(&v1)
+                } else {
+                    e1.bank_stamp_as(&v1)
+                }
+            })
+            .await?;
+            let etag = stamp.map(|s| format!("\"{}-{}-{s}\"", st.0.cfg.version, v.user));
+            if let Some(tag) = &etag {
+                if response::etag_matches(if_none_match, tag) {
+                    return Ok(response::not_modified(tag));
+                }
+            }
+            let value = blocking(move || {
+                if banks {
+                    eng.banks_as(&v)
+                } else {
+                    eng.bank_as(&v)
+                }
+            })
+            .await?;
+            let resp = json_resp(StatusCode::OK, &value, head_only);
+            return Ok(match &etag {
+                Some(tag) => response::with_etag(resp, tag),
+                None => resp,
+            });
         }
         "/api/progress" => {
             let v = viewer_of(st, authed).await?;
             blocking(move || eng.progress_as(&v)).await?
-        }
-        "/api/banks" => {
-            let v = viewer_of(st, authed).await?;
-            blocking(move || eng.banks_as(&v)).await?
         }
         "/api/records" => blocking(move || eng.records(user)).await?,
         "/api/record" => {
@@ -628,6 +695,10 @@ async fn post_body(
         "/api/users/password" => auth::reset_password(st, a, &data).await,
         "/api/users/delete" => auth::delete(st, a, &data).await,
         "/api/users/unlock" => auth::unlock(st, a, &data).await,
+        "/api/users/signin-info" => activity::signin_info(st, a, &data).await,
+        "/api/users/signin-info/clear" => activity::signin_info_clear(st, a).await,
+        "/api/activity/settings" => activity::update_settings(st, a, &data).await,
+        "/api/activity/visit" => activity::visit(st, a, &data).await,
         "/api/import/confirm" => confirm(st, a, &data).await,
         "/api/import/cancel" => {
             // Only the caller's own staged upload: another user's preview is never touched
@@ -640,9 +711,19 @@ async fn post_body(
             let tag = attempt::clean_session_tag(&data);
             let v = auth::viewer(st, a).await?;
             let eng = st.0.engine.clone();
+            let note = json!({
+                "kind": attempt.kind.as_str(),
+                "total": attempt.results.len(),
+                "correct": attempt.results.iter().filter(|r| r.correct).count(),
+                "end": attempt.end.map(|e| e.as_str()),
+            });
             let progress =
                 blocking(move || eng.record_attempt_tagged(&v, &attempt, &answers, &tag)).await?;
-            Ok(json_resp(StatusCode::OK, &progress, false))
+            Ok(crate::activity::with_note(
+                json_resp(StatusCode::OK, &progress, false),
+                None,
+                Some(note),
+            ))
         }
         "/api/banks/delete" => delete_bank(st, a, &data).await,
         "/api/banks/sheets/delete" => delete_sheets(st, a, &data).await,
@@ -694,6 +775,8 @@ async fn upload(
     services::check_layout(&wb.questions, st.0.old_layouts, &filename)?;
     let (plan, wb) = services::plan_import_for(st.0.engine.clone(), target, wb).await?;
     let plan = plan.ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
+    let note = json!({ "sheets": wb.sheets.len(), "questions": wb.questions.len() });
+    let name = filename.clone();
     let payload = services::create_pending_import_named(
         &st.0.pending,
         v.user,
@@ -703,7 +786,11 @@ async fn upload(
         wb,
         plan,
     );
-    Ok(json_resp(StatusCode::OK, &payload, false))
+    Ok(crate::activity::with_note(
+        json_resp(StatusCode::OK, &payload, false),
+        Some(name),
+        Some(note),
+    ))
 }
 
 async fn confirm(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
@@ -715,6 +802,10 @@ async fn confirm(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, Ap
     // Read before the token is taken: a failure here leaves the staged upload in place
     let viewer = auth::viewer(st, a).await?;
     let item = services::confirm_pending_import_as(&st.0.pending, a.user.id, token)?;
+    let note = (
+        item.filename.clone(),
+        json!({ "sheets": item.sheets.len(), "questions": item.questions.len() }),
+    );
     // The upload route already refused an old layout; checked again so nothing of that layout can ever be written (the
     // token is consumed, nothing is written)
     services::check_layout(&item.questions, st.0.old_layouts, &item.filename)?;
@@ -731,7 +822,11 @@ async fn confirm(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, Ap
             } else {
                 json!({ "result": done.result, "bank": done.bank })
             };
-            Ok(json_resp(StatusCode::OK, &body, false))
+            Ok(crate::activity::with_note(
+                json_resp(StatusCode::OK, &body, false),
+                Some(note.0),
+                Some(note.1),
+            ))
         }
         // The target bank was deleted after the preview: nothing was written (the token is consumed)
         Ok(Ok(None)) => Err(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND)),
@@ -781,6 +876,7 @@ async fn delete_bank(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response
             deleted.name
         );
     }
+    let bank_name = deleted.name.clone();
     let eng = st.0.engine.clone();
     let body = blocking(move || {
         Ok(json!({
@@ -790,7 +886,11 @@ async fn delete_bank(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response
         }))
     })
     .await?;
-    Ok(json_resp(StatusCode::OK, &body, false))
+    Ok(crate::activity::with_note(
+        json_resp(StatusCode::OK, &body, false),
+        Some(bank_name),
+        None,
+    ))
 }
 
 /// `POST /api/banks/sheets/delete` (v1.1, C-B1) `{"id": <int>, "sheets": ["name", ...], "withRecords": <bool>}` (exactly these
@@ -823,6 +923,7 @@ async fn delete_sheets(st: &AppState, a: &Authed, data: &PyVal) -> Result<Respon
         }
     }
     let id = id.ok_or(AppError::NotFoundMsg(MSG_BANK_NOT_FOUND))?;
+    let sheet_count = names.len();
     let v = auth::viewer(st, a).await?;
     let eng = st.0.engine.clone();
     let actor = v.clone();
@@ -836,6 +937,7 @@ async fn delete_sheets(st: &AppState, a: &Authed, data: &PyVal) -> Result<Respon
             touched.id
         );
     }
+    let bank_name = touched.name.clone();
     let eng = st.0.engine.clone();
     let body = blocking(move || {
         Ok(json!({
@@ -845,7 +947,11 @@ async fn delete_sheets(st: &AppState, a: &Authed, data: &PyVal) -> Result<Respon
         }))
     })
     .await?;
-    Ok(json_resp(StatusCode::OK, &body, false))
+    Ok(crate::activity::with_note(
+        json_resp(StatusCode::OK, &body, false),
+        Some(bank_name),
+        Some(json!({ "sheets": sheet_count })),
+    ))
 }
 
 /// `POST /api/records/delete`: `{"id": <int>}` (that record and its detail; stats unchanged) or
@@ -854,6 +960,7 @@ async fn delete_sheets(st: &AppState, a: &Authed, data: &PyVal) -> Result<Respon
 async fn delete_records(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response, AppError> {
     let user = a.user.id;
     let eng = st.0.engine.clone();
+    let mut deleted = 1_usize;
     match (data.get("id"), data.get("all")) {
         (Some(id), None) => {
             if data.get("withStats").is_some() {
@@ -866,6 +973,13 @@ async fn delete_records(st: &AppState, a: &Authed, data: &PyVal) -> Result<Respo
         }
         (None, Some(PyVal::Bool(true))) => {
             let with_stats = body_flag(data.get("withStats"))?;
+            let eng2 = eng.clone();
+            deleted = blocking(move || {
+                let mut r = eng2.records(user)?;
+                Ok(take_key(&mut r, "records").as_array().map_or(0, Vec::len))
+            })
+            .await
+            .unwrap_or(0);
             blocking(move || eng.delete_all_records(user, with_stats)).await?;
         }
         _ => return Err(bad_request()),
@@ -881,7 +995,11 @@ async fn delete_records(st: &AppState, a: &Authed, data: &PyVal) -> Result<Respo
         }))
     })
     .await?;
-    Ok(json_resp(StatusCode::OK, &body, false))
+    Ok(crate::activity::with_note(
+        json_resp(StatusCode::OK, &body, false),
+        None,
+        Some(json!({ "count": deleted })),
+    ))
 }
 
 /// `POST /api/settings`: any subset of the known keys; unknown keys are ignored. One invalid value → 400, nothing written.
@@ -899,7 +1017,13 @@ async fn update_settings(st: &AppState, user: i64, data: &PyVal) -> Result<Respo
         }
         changes.push((key.to_string(), value));
     }
+    let keys: Vec<&str> = changes.iter().map(|(k, _)| k.as_str()).collect();
+    let note = json!({ "keys": keys });
     let eng = st.0.engine.clone();
     let settings = blocking(move || eng.update_settings(user, &changes)).await?;
-    Ok(json_resp(StatusCode::OK, &settings, false))
+    Ok(crate::activity::with_note(
+        json_resp(StatusCode::OK, &settings, false),
+        None,
+        Some(note),
+    ))
 }

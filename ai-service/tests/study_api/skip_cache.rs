@@ -7,16 +7,14 @@ const HEADER: &str = "cf-aig-skip-cache";
 
 /// Admin: a Cloudflare AI Gateway (OpenAI-compatible route of the stub) with the `cf-aig-authorization` scheme.
 async fn use_gateway(e: &Env) {
-    let (s, v) =
-        e.t.post(
-            "/api/ai/admin/settings",
-            &e.admin,
-            json!({"provider": "gateway", "baseUrl": format!("{}/gw/openai", e.t.stub.url),
-                   "gatewayAuth": "cf-aig-authorization", "gatewayKey": GW_KEY, "apiKey": null,
-                   "model": "demo-chat-small"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    e.t.seed_route(Seed {
+        provider: "gateway",
+        url: format!("{}/gw/openai", e.t.stub.url),
+        api_key: None,
+        gateway_key: Some(GW_KEY),
+        gateway_auth: "cf-aig-authorization",
+        model: "demo-chat-small",
+    });
     e.t.verify_and_enable(&e.admin).await;
 }
 
@@ -243,7 +241,7 @@ async fn an_ai_chat_retry_note_counts_the_attempts_and_is_never_stored() {
     assert_eq!(terminal_name(&ev), "error");
     let chat = ev[0].1["chatId"].as_i64().expect("chatId");
     // two retries that fail again, then one that works
-    for want in ["2", "3"] {
+    for want in ["2", "2"] {
         let mut s =
             e.t.open_stream("/api/ai/retry", &e.user, json!({"chatId": chat}))
                 .await
@@ -261,9 +259,11 @@ async fn an_ai_chat_retry_note_counts_the_attempts_and_is_never_stored() {
     let all = sent(&e);
     let all = &all[before..];
     let numbers: Vec<_> = all.iter().map(|(_, l)| note_number(l)).collect();
+    // v1.3: the attempt is the number of answer versions (from the database); an empty failed answer is reset in place
+    // (no new version), so each of these retries is "one more try" = 2
     assert_eq!(
         numbers,
-        [None, Some("2".into()), Some("3".into()), Some("4".into())]
+        [None, Some("2".into()), Some("2".into()), Some("2".into())]
     );
     assert!(all.iter().all(|(s, _)| *s == all[0].0));
     assert_eq!(stored_notes(&e), 0);

@@ -8,10 +8,14 @@ mod access;
 mod admin;
 #[path = "study_api/bounds.rs"]
 mod bounds;
+#[path = "study_api/hide_model.rs"]
+mod hide_model;
 #[path = "study_api/identity.rs"]
 mod identity;
 #[path = "study_api/logs.rs"]
 mod logs;
+#[path = "study_api/reasoning.rs"]
+mod reasoning;
 #[path = "study_api/saved.rs"]
 mod saved;
 #[path = "study_api/skip_cache.rs"]

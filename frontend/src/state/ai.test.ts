@@ -177,6 +177,27 @@ test('caps: statusOf reads calls (used, caps, blocked); a malformed field drops 
   assert.ok(absent.state === 'ready' && !('calls' in absent));
 });
 
+test('caps: an exempt administrator has no block even when the server sent one; the flag is kept', () => {
+  const st = statusOf(answer({ calls: callsOf({ exempt: true, blocked: blockOf() }) }));
+  assert.ok(st.state === 'ready' && st.calls);
+  assert.equal(st.calls.blocked, null);
+  assert.equal(st.calls.exempt, true);
+  const plain = statusOf(answer({ calls: callsOf({ blocked: blockOf() }) }));
+  assert.ok(plain.state === 'ready' && plain.calls?.blocked && plain.calls.exempt === undefined);
+});
+
+test('caps: a status of an exempt administrator clears a stale block at once', async () => {
+  try {
+    noteCallBlock(blockOf() as AiCallBlock, 9000);
+    assert.ok(callBlock());
+    await refreshAiStatus({ mustChangePassword: false, now: 2000, force: true, fetcher: async () => answer({ calls: callsOf({ exempt: true }) }) });
+    assert.equal(callBlock(), null);
+  } finally {
+    noteCallBlock(blockOf() as AiCallBlock, 0);
+    await refreshAiStatus({ mustChangePassword: false, now: 3000, force: true, fetcher: async () => answer({ calls: callsOf() }) });
+  }
+});
+
 test('caps: aiNeedsRender is true when calls.blocked changes, not when only the counts change', () => {
   const ready = (calls?: unknown): AiStatus => statusOf(answer(calls === undefined ? {} : { calls }));
   assert.equal(aiNeedsRender(ready(callsOf()), ready(callsOf({ used: { minute: 3, hour: 8, day: 38 } }))), false);
@@ -361,4 +382,12 @@ test('jobOf keeps the import counts the service sends (total / taken, approx) an
   assert.equal(j?.usage?.tokensCached, 80);
   assert.equal(jobOf({ id: 4, state: 'running', source: 'file', total: 69, uncertain: true })?.approx, true);
   assert.equal(jobOf({ id: 4, state: 'running', source: 'file' })?.total, null);
+});
+
+test('v1.3: the default model of an administrator survives the status reader (the model menu names it)', () => {
+  const base = { enabled: true, allowed: true, hasData: false, running: null, memoryLimit: 50 };
+  const st = statusOf({ ...base, chatDefault: { connectionId: 1, connectionName: 'Demo provider', model: 'demo-chat-small' } });
+  assert.deepEqual(st.state === 'ready' ? st.chatDefault : 'x', { connectionId: 1, connectionName: 'Demo provider', model: 'demo-chat-small' });
+  const none = statusOf({ ...base, chatDefault: null });
+  assert.equal(none.state === 'ready' ? none.chatDefault : 'x', undefined);
 });

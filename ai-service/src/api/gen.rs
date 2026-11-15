@@ -3,15 +3,15 @@
 use super::{body_id, ok, only_keys, query_id, query_text, require_ai_user, Answer, Ctx};
 use crate::codes::ApiError;
 use crate::features::Feature;
-use crate::gen::plan::{per_call, plan, replace_seeds, PlanError, PlanInput};
+use crate::gen::plan::{per_call, PlanError};
 use crate::gen::rng::Rng;
 use crate::gen::runner::{self, gen_status, GenJob, StopWhy};
+use crate::gen::whole;
 use crate::gen::wire::{self, Reason, WireError};
-use crate::gen::{bank_mode_name, check_name, Composition, NameError, SeedFull};
+use crate::gen::{bank_mode_name, check_name, Composition, NameError, SeedFull, Stratum, Tri};
 use crate::store::{data, jobs};
 use crate::util::{local_second, local_stamp, unix_now};
 use serde_json::{json, Map, Value};
-use std::collections::{HashMap, HashSet};
 
 /// The three modes of a start request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -120,6 +120,8 @@ fn wire_to_error(e: WireError, min: i64, what: &'static str) -> ApiError {
         WireError::Refused(Reason::NotFound) => ApiError::gen_not_found(),
         WireError::Refused(Reason::AiSource) => ApiError::gen_ai_source(),
         WireError::Refused(Reason::TooFew(have)) => ApiError::gen_too_few(have, min, what),
+        // more than the hard total of 20 000 questions: the same refusal as a source above `genMaxChunks`
+        WireError::Refused(Reason::TooMany) => ApiError::gen_too_big(20_000 * 400, i64::MAX, 0),
         WireError::Refused(Reason::User) | WireError::Unreadable => ApiError::backend_down(),
     }
 }
@@ -129,7 +131,7 @@ pub async fn start(ctx: Ctx) -> Answer {
     let app = ctx.app.clone();
     let who = ctx.who.clone();
     // 1. AI usable for this user
-    let snap = require_ai_user(&app, &who)?;
+    let route = require_ai_user(&app, &who, crate::route::Slot::Generate)?;
     // 2. the feature
     if !app.0.feature_allowed(&who, Feature::Generate) {
         return Err(ApiError::feature_off(Feature::Generate));
@@ -150,38 +152,16 @@ pub async fn start(ctx: Ctx) -> Answer {
     if q.exhausted() {
         return Err(ApiError::gen_quota(q.used, q.limit, q.day.next, now));
     }
-    // 6. the source questions (API-I1)
+    // 6. the source questions: every one, in all its languages, page by page (v1.3 corpus)
     let (min, what) = match body.source {
         Source::Wrong => (l.gen_min_wrong, "wrong"),
         _ => (l.gen_min_source, "source"),
     };
-    let mut req = Map::new();
-    req.insert("sid".into(), json!(who.sid));
-    req.insert("source".into(), json!(body.source.as_str()));
-    match body.source {
-        Source::Bank => {
-            req.insert("bank".into(), json!(body.bank));
-        }
-        _ => {
-            req.insert("sheets".into(), sheets_json(&body.sheets));
-        }
-    }
-    req.insert("min".into(), json!(min));
-    req.insert("max".into(), json!(2000));
-    let bytes = app
-        .0
-        .link
-        .data_call("/internal/ai/gen/source", Value::Object(req))
-        .await
-        .map_err(|_| ApiError::backend_down())?;
-    let src = wire::parse_source(&bytes).map_err(|e| wire_to_error(e, min, what))?;
-    if src.user.id != who.id {
-        return Err(ApiError::not_allowed());
-    }
-    // 7. the job key and the plan
+    let src = fetch_corpus(&app, &who, &body, min, what).await?;
+    // 7. the job key, the chunks and the plan
     let key = crate::util::hex(&runner::random_bytes::<16>());
     let want = l.gen_tokens();
-    let ceiling = app.token_ceiling(&snap, want);
+    let ceiling = app.token_ceiling(&route, want);
     let call_chars = crate::limits::Limits::usize_of(crate::limits::tokens_to_chars(want));
     let comp = match body.source {
         Source::Wrong => Composition {
@@ -193,61 +173,36 @@ pub async fn start(ctx: Ctx) -> Answer {
             multi: usize::try_from(l.gen_bank_multi).unwrap_or(0),
         },
     };
-    let input = PlanInput {
-        items: &src.items,
-        strata: &src.strata,
+    let sheet_of: Vec<usize> = whole::source_items(&src.corpus, &src.strata)
+        .iter()
+        .map(|i| i.stratum)
+        .collect();
+    let context = crate::gen::par::route_context(&route);
+    let ranges = whole::chunks(&src.corpus, &sheet_of, context, want);
+    if i64::try_from(ranges.len()).unwrap_or(i64::MAX) > l.gen_max_chunks {
+        return Err(ApiError::gen_too_big(
+            whole::total_tokens(&src.corpus),
+            i64::try_from(ranges.len()).unwrap_or(i64::MAX),
+            l.gen_max_chunks,
+        ));
+    }
+    let (the_plan, groups) = whole::plan_chunks(
+        &src.corpus,
+        &src.strata,
+        &ranges,
         comp,
-        per_call: per_call(call_chars, ceiling),
-        seed: Rng::seed_from_key(&key),
-    };
-    let mut the_plan = plan(&input).map_err(|e| match e {
+        per_call(call_chars, ceiling),
+        Rng::seed_from_key(&key),
+    )
+    .map_err(|e| match e {
         PlanError::NoSource | PlanError::BadComposition => {
             ApiError::gen_too_few(src.total, min, what)
         }
     })?;
-    // 8. the seeds (API-I2); missing ones are replaced, at most 3 rounds, never dropping a slot
-    let mut seeds: HashMap<String, SeedFull> = HashMap::new();
-    let mut missing: Vec<String> = Vec::new();
-    let mut to_fetch: Vec<String> = distinct_seeds(&the_plan);
-    for round in 0..=3 {
-        if to_fetch.is_empty() {
-            break;
-        }
-        let bytes = app
-            .0
-            .link
-            .data_call(
-                "/internal/ai/gen/seeds",
-                json!({"sid": who.sid, "ids": to_fetch}),
-            )
-            .await
-            .map_err(|_| ApiError::backend_down())?;
-        let got = wire::parse_seeds(&bytes).map_err(|e| wire_to_error(e, min, what))?;
-        let got_ids: HashSet<String> = got.iter().map(|s| s.id.clone()).collect();
-        for s in got {
-            seeds.insert(s.id.clone(), s);
-        }
-        let gone: Vec<String> = to_fetch
-            .iter()
-            .filter(|id| !got_ids.contains(*id))
-            .cloned()
-            .collect();
-        if gone.is_empty() {
-            break;
-        }
-        if round == 3 {
-            return Err(ApiError::gen_not_found());
-        }
-        missing.extend(gone);
-        to_fetch = replace_seeds(&mut the_plan, &input, &missing)
-            .map_err(|_| ApiError::gen_not_found())?
-            .into_iter()
-            .filter(|id| !seeds.contains_key(id))
-            .collect();
-    }
-    if the_plan.slots.iter().any(|s| !seeds.contains_key(&s.seed)) {
-        return Err(ApiError::gen_not_found());
-    }
+    let prefix_tokens: i64 = ranges
+        .iter()
+        .map(|r| whole::total_tokens(&src.corpus[r.clone()]))
+        .sum();
     // the name and the payload of the job
     let from_ids: Vec<i64> = src.banks.iter().map(|(id, _)| *id).collect();
     let name = match (&body.name, body.source) {
@@ -272,6 +227,8 @@ pub async fn start(ctx: Ctx) -> Answer {
         "comp": {"single": comp.single, "multi": comp.multi},
         "perCall": the_plan.per_call,
         "callTokens": l.gen_call_tokens,
+        "chunks": ranges.len(),
+        "prefixTokens": prefix_tokens,
     });
     // 9. one write transaction: the user's row, the quota again, the job
     let ins = app
@@ -316,7 +273,6 @@ pub async fn start(ctx: Ctx) -> Answer {
             ));
         }
     };
-    let source_stems: Vec<crate::gen::Tri> = src.items.iter().map(|i| i.stem.clone()).collect();
     runner::spawn_generation(
         &app,
         GenJob {
@@ -327,10 +283,12 @@ pub async fn start(ctx: Ctx) -> Answer {
             name,
             from_ids,
             plan: the_plan,
-            seeds,
-            source_stems,
+            groups,
+            corpus: src.corpus,
+            ranges,
             previous: src.previous,
             at: local_second(now),
+            client: ctx.client.clone(),
         },
     );
     let row = app
@@ -345,26 +303,172 @@ pub async fn start(ctx: Ctx) -> Answer {
     ))
 }
 
-fn distinct_seeds(p: &crate::gen::plan::Plan) -> Vec<String> {
-    let mut v: Vec<String> = Vec::new();
-    for s in &p.slots {
-        if !v.contains(&s.seed) {
-            v.push(s.seed.clone());
-        }
-    }
-    v
+/// What `start` needs from the backend: the whole corpus and the facts around it.
+struct Source3 {
+    total: i64,
+    banks: Vec<(i64, String)>,
+    strata: Vec<Stratum>,
+    corpus: Vec<SeedFull>,
+    previous: Vec<Tri>,
 }
 
-/// `GET /api/ai/gen/job?id=` (own job).
+/// Pages through `/internal/ai/gen/corpus` (200 questions a page) until `next` is null. The total must not change
+/// between pages (a bank edited meanwhile): the start is refused, the user tries again.
+async fn fetch_corpus(
+    app: &crate::app::AppState,
+    who: &crate::identity::Identity,
+    body: &StartBody,
+    min: i64,
+    what: &'static str,
+) -> Result<Source3, ApiError> {
+    let mut out = Source3 {
+        total: 0,
+        banks: Vec::new(),
+        strata: Vec::new(),
+        corpus: Vec::new(),
+        previous: Vec::new(),
+    };
+    let mut after = 0i64;
+    for page_no in 0..=(CORPUS_MAX_PAGES + 1) {
+        let mut req = Map::new();
+        req.insert("sid".into(), json!(who.sid));
+        req.insert("source".into(), json!(body.source.as_str()));
+        match body.source {
+            Source::Bank => {
+                req.insert("bank".into(), json!(body.bank));
+            }
+            _ => {
+                req.insert("sheets".into(), sheets_json(&body.sheets));
+            }
+        }
+        req.insert("min".into(), json!(min));
+        req.insert("after".into(), json!(after));
+        req.insert("limit".into(), json!(CORPUS_PAGE));
+        let bytes = app
+            .0
+            .link
+            .data_call("/internal/ai/gen/corpus", Value::Object(req))
+            .await
+            .map_err(|_| ApiError::backend_down())?;
+        let page = wire::parse_corpus(&bytes).map_err(|e| wire_to_error(e, min, what))?;
+        if page.user_id != who.id {
+            return Err(ApiError::not_allowed());
+        }
+        if page_no == 0 {
+            out.total = page.total;
+            out.banks = page.banks;
+            out.strata = page.strata;
+            out.previous = page.previous;
+        } else if page.total != out.total {
+            // the source changed while it was being read
+            return Err(ApiError::gen_not_found());
+        }
+        out.corpus.extend(page.items);
+        match page.next {
+            None => {
+                if i64::try_from(out.corpus.len()).ok() != Some(out.total) {
+                    return Err(ApiError::backend_down());
+                }
+                return Ok(out);
+            }
+            Some(n) if n > after => after = n,
+            Some(_) => return Err(ApiError::backend_down()),
+        }
+    }
+    Err(ApiError::backend_down())
+}
+
+/// Questions per page of the corpus route, and the most pages one job reads (20 000 questions / 200, with room).
+const CORPUS_PAGE: i64 = 200;
+const CORPUS_MAX_PAGES: usize = 120;
+/// Items per answer of the job route.
+const ITEMS_PER_ANSWER: i64 = 20;
+
+/// The language of a job route's item texts.
+fn parse_lang(v: Option<&str>) -> Result<&'static str, ApiError> {
+    match v {
+        None | Some("en") => Ok("en"),
+        Some("zh") => Ok("zh"),
+        Some("ja") => Ok("ja"),
+        Some(_) => Err(ApiError::bad_request()),
+    }
+}
+
+fn text_in(v: &Value, lang: &str) -> String {
+    let get = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("");
+    let t = get(lang);
+    if t.is_empty() { get("en") } else { t }.to_string()
+}
+
+/// One stored item as the job route shows it: texts in `lang` (English when the language is missing).
+pub fn item_view(no: i64, data: &str, lang: &str) -> Option<Value> {
+    let v: Value = serde_json::from_str(data).ok()?;
+    let options: Vec<Value> = v
+        .get("options")?
+        .as_array()?
+        .iter()
+        .map(|o| {
+            json!({"text": text_in(o, lang), "correct": o.get("correct").and_then(Value::as_bool).unwrap_or(false)})
+        })
+        .collect();
+    Some(json!({
+        "no": no,
+        "kind": v.get("kind").and_then(Value::as_str).unwrap_or("single"),
+        "stem": text_in(v.get("stem")?, lang),
+        "options": options,
+        "explanation": v.get("explanation").map_or(String::new(), |e| text_in(e, lang)),
+    }))
+}
+
+/// `GET /api/ai/gen/job?id=` (own job). With `after=<no>` (and `lang`) the answer also carries the questions written so
+/// far, at most 20 after `no`, the highest number sent as `last`, and the numbers that were dropped as `gone`.
 pub async fn job(ctx: Ctx) -> Answer {
     let id = query_id(ctx.query.as_deref(), "id")?;
+    let after = match query_text(ctx.query.as_deref(), "after")? {
+        None => None,
+        Some(t) => {
+            if t.is_empty() || t.len() > 18 || !t.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(ApiError::bad_request());
+            }
+            Some(t.parse::<i64>().map_err(|_| ApiError::bad_request())?)
+        }
+    };
+    let lang = parse_lang(query_text(ctx.query.as_deref(), "lang")?)?;
     let row = ctx
         .app
         .0
         .store
         .read(|c| jobs::get_for_user(c, ctx.who.id, id))?
         .ok_or_else(ApiError::gen_not_found)?;
-    ok(json!({"job": row.to_json()}))
+    let Some(after) = after else {
+        return ok(json!({"job": row.to_json()}));
+    };
+    let (items, gone) = ctx.app.0.store.read(|c| {
+        let items = crate::store::items::items_after(c, id, after, ITEMS_PER_ANSWER)?;
+        let mut st =
+            c.prepare("SELECT no FROM gen_items WHERE task_id = ?1 AND data = '' ORDER BY no")?;
+        let gone: Vec<i64> = st
+            .query_map([id], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        Ok((items, gone))
+    })?;
+    let last = items.last().map_or(after, |i| i.no);
+    let shown: Vec<Value> = items
+        .iter()
+        .filter_map(|i| item_view(i.no, &i.data, lang))
+        .collect();
+    let mut job = row.to_json();
+    if let Some(m) = job.as_object_mut() {
+        m.insert(
+            "chunks".into(),
+            row.payload.get("chunks").cloned().unwrap_or(json!(1)),
+        );
+        m.insert(
+            "prefixTokens".into(),
+            row.payload.get("prefixTokens").cloned().unwrap_or(json!(0)),
+        );
+    }
+    ok(json!({"job": job, "items": shown, "last": last, "gone": gone}))
 }
 
 /// What the cancel transaction found.

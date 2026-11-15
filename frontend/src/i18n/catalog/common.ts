@@ -116,6 +116,11 @@ export default defineCatalog({
     'act.submit.partialTitle': '{n} hotspot questions are only partly answered',
     'act.submit.partialTitle_one': '{n} hotspot question is only partly answered',
     'act.submit.partialBody': 'Partly answered hotspot questions count as wrong. Submit now?',
+
+    'app.fatal.retry': 'Try again',
+    'app.fatal.retrying': 'Reconnecting…',
+    'err.tooLarge': 'The file is too large to upload.',
+    'err.backendDown': 'The service cannot be reached right now. Please try again shortly.',
   },
   zh: {
     'app.name': 'Xexam',
@@ -224,6 +229,11 @@ export default defineCatalog({
     'act.submit.partialMore': '另有 {n} 道热点题只答了一部分，按答错计算。',
     'act.submit.partialTitle': '有 {n} 道热点题只答了一部分',
     'act.submit.partialBody': '只答了一部分的热点题按答错计算。现在交卷吗？',
+
+    'app.fatal.retry': '重试',
+    'app.fatal.retrying': '正在重新连接…',
+    'err.tooLarge': '文件太大，无法上传。',
+    'err.backendDown': '服务暂时无法连接，请稍后再试。',
   },
   ja: {
     'app.name': 'Xexam',
@@ -332,5 +342,10 @@ export default defineCatalog({
     'act.submit.partialMore': 'ほかに一部だけ回答したホットスポット問題が {n} 問あり、不正解になります。',
     'act.submit.partialTitle': '一部だけ回答したホットスポット問題が {n} 問あります',
     'act.submit.partialBody': '一部だけ回答したホットスポット問題は不正解になります。提出しますか？',
+
+    'app.fatal.retry': 'もう一度試す',
+    'app.fatal.retrying': '再接続しています…',
+    'err.tooLarge': 'ファイルが大きすぎてアップロードできません。',
+    'err.backendDown': 'サービスに接続できません。しばらくしてからもう一度お試しください。',
   },
 });

@@ -138,6 +138,56 @@ fn app() -> App {
     }
 }
 
+/// The logical content of every table except `activity_log`, as text. The activity writer of the app runs in the background
+/// and stores the sign-in and request entries of the test whenever its batch lands, so a byte compare of the database file
+/// (or its WAL) is racy; what these tests prove is that no QUESTION data was written, which this compares. The touch times
+/// of users and sessions (`users.last_active_at`, `sessions.last_seen_at / expires_at / started_at`) are left out: any
+/// request rewrites them when a minute boundary falls in between.
+fn content_dump(p: &Path) -> Vec<String> {
+    let c = raw(p);
+    let mut st = c
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name <> 'activity_log' ORDER BY name")
+        .expect("tables");
+    let names: Vec<String> = st
+        .query_map([], |r| r.get(0))
+        .expect("names")
+        .map(|r| r.expect("name"))
+        .collect();
+    let mut out = Vec::new();
+    for t in names {
+        let mut q = c
+            .prepare(&format!("SELECT * FROM \"{t}\""))
+            .expect("select");
+        let n = q.column_count();
+        // Columns the session gates rewrite on any request when a minute boundary passes (activity touch)
+        let skip: Vec<bool> = (0..n)
+            .map(|i| {
+                let col = q.column_name(i).expect("column");
+                matches!(
+                    (t.as_str(), col),
+                    ("users", "last_active_at")
+                        | ("sessions", "last_seen_at" | "expires_at" | "started_at")
+                )
+            })
+            .collect();
+        let rows = q
+            .query_map([], |r| {
+                let mut v = Vec::new();
+                for (i, skipped) in skip.iter().enumerate() {
+                    if !skipped {
+                        v.push(format!("{:?}", r.get_ref(i)?));
+                    }
+                }
+                Ok(v.join("|"))
+            })
+            .expect("rows");
+        for row in rows {
+            out.push(format!("{t}: {}", row.expect("row")));
+        }
+    }
+    out
+}
+
 fn raw(p: &Path) -> Connection {
     Connection::open(p).expect("raw open")
 }
@@ -396,7 +446,7 @@ fn a_prerelease_v4_database_is_converted_on_open_after_a_backup() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "7");
+    assert_eq!(schema, "8");
     assert_eq!(
         count(
             &c,
@@ -680,7 +730,7 @@ async fn uploads_of_the_old_layouts_are_refused_before_anything_is_staged_or_wri
     let r = upload(&a, &c, "new", "Staged.xlsx", &six_columns(1, "staged")).await;
     assert_eq!(r.status, 200, "{}", r.text());
     let token = r.json()["token"].as_str().expect("token").to_string();
-    let before = dbc::db_bytes(&a.db);
+    let before = content_dump(&a.db);
     let update = bank.to_string();
     for (target, name, data) in [
         ("new", "three.xlsx", three_columns()),
@@ -695,7 +745,7 @@ async fn uploads_of_the_old_layouts_are_refused_before_anything_is_staged_or_wri
             "{target} {name}"
         );
     }
-    assert_eq!(dbc::db_bytes(&a.db), before, "nothing was written");
+    assert_eq!(content_dump(&a.db), before, "nothing was written");
     // the staged upload is still the six-column one
     let r = post(&a, "/api/import/confirm", &c, json!({ "token": token })).await;
     assert_eq!(r.status, 200, "{}", r.text());
@@ -724,7 +774,7 @@ async fn uploads_of_the_old_layouts_are_refused_before_anything_is_staged_or_wri
 async fn the_import_confirm_refuses_an_old_layout_too() {
     let a = app();
     let c = admin(&a).await;
-    let before = dbc::db_bytes(&a.db);
+    let before = content_dump(&a.db);
     // an old-layout workbook can only be staged by bypassing the upload route (production never does): the confirm still
     // refuses it and writes nothing
     let wb = xexam_backend::parser::parse_workbook(&three_columns()).expect("parse");
@@ -742,7 +792,7 @@ async fn the_import_confirm_refuses_an_old_layout_too() {
         (r.status.as_u16(), r.error()),
         (400, MSG_OLD_LAYOUT.to_string())
     );
-    assert_eq!(dbc::db_bytes(&a.db), before);
+    assert_eq!(content_dump(&a.db), before);
     assert_eq!(a.store.bank_count().expect("count"), 0);
 }
 

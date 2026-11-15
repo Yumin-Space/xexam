@@ -128,7 +128,7 @@ insets are then reported as skipped.
 | W-IM-2 | Bank management (sam) at 360 / 390 / 412: a made-up file with 130 numbered lines fails locally (no AI call); the failed import card has a close button in its top-right corner, 44 px on a phone, and tapping it removes the card |
 | W-GB-1 | Home (sam): the AI generation button sits in the start panel header inside the screen, no sideways scroll |
 | W-BT-1 | every AI+ badge (header, menu, Settings, User management, AI settings rows, Home) has a non-empty tip; the account button has no native `title` |
-| W-FP-1 | AI settings > AI+ users: six checkboxes in two groups per row, each group on one row in zh / ja; administrators' boxes disabled |
+| W-FP-1 | AI settings > AI+ users: five checkboxes in two groups per row (AI hint and AI analysis are one box), each group on one row in zh / ja; administrators' boxes disabled |
 | W-UC-1 | AI settings > AI usage at 360 / 390 / 412: three charts with an `aria-label`, every bar labelled, the calls / tokens switch on both bar charts (the title follows, tokens are stacked), a tip on a tapped bar and 10 px beside the line (none 90 px away), the line 3 px, labels never overlap, they fit the card |
 | W-AB-1 | one AI bank is generated (admin), practised and deleted again: the AI+题集 badge with its tip and caution line is on the question card and on the result (skipped when no AI bank can be made on the stack) |
 | W-AS-1v | practice and exam at 360 / 390 / 768: no finish button in the answer sheet (folded or open), the top row has "已答 x/n" and a 完成考试 (green) / 完成练习 (orange) button, white text, left of the clock (44 px on touch, no overlap, inside the screen); at 1280 the rail keeps its button and the top row has neither |
@@ -152,3 +152,24 @@ one-line token check W-TK-1 is retired (its group `g_tk` stays in `checks.py` bu
 | W-CH-88 | with the keyboard open the messages do not move (open, typing, close; list at its end, middle and top), a send still ends at the bottom |
 | W-TK-2 | `checks_v12_tokens.py`: the live token text of a running generation / import card is a grid of two aligned lines (calls + Input/output, Cache write/read), no wrap, no sideways scroll; the import card says Cancel import |
 | W-UC-3 | `checks_v12_charts.py`: AI usage charts have no slanted label; By feature / By model are horizontal bars on a phone, By time has short horizontal dates, nothing outside the card |
+
+## v1.3 checks
+
+`checks_v13.py` (group `g_v13`, registered at the end of `checks.py`; run alone with `--only 'W-V13-*'`), zh / en / ja at
+393x852, 360x740, 320x640 and 1280x800. Every case runs the shared measures (no sideways overflow, touch hit areas, nothing
+covers a control) next to what the screen must show:
+
+| Check | What |
+|---|---|
+| W-V13-CV | AI Chat: a message with 2 versions shows `‹ 2/2 ›`, the left arrow goes to 1/2 and back, a regenerate button is there |
+| W-V13-ED | AI Chat: Edit on the last question opens the edit banner inside the screen, Cancel closes it |
+| W-V13-MM | AI Chat, administrator in free mode: the model menu is one select inside the screen with groups, laid over the round brain button; the composer is one box (input above one bar: brain button left, Send right; empty box at most 120 px high at 393 px wide) |
+| W-V13-AC | AI settings, Connections and models: status cards, connection cards, slot rows, switches card, the Add form |
+| W-V13-AT | AI settings, the other four tabs open and nothing sticks out (the sort buttons of the long tables are not judged) |
+| W-V13-US | User management: the sign-in info eye closed and open (the server value is shown), the last-active line on every row |
+| W-V13-LG | Logs: the Activity tab (rows, an open row, the settings popover) and the Service tab |
+| W-V13-SI | Sign-in page: "keep me signed in" checkbox and its hint under it |
+| W-V13-RS | Result page: when saving the attempt fails, the retry-save banner and its button |
+
+The stack's AI is set up the v1.3 way by `tools/screenshots/seed.py`: a connection with the made-up provider and key, a second
+connection that reuses its key, the default model picked and AI+ switched on.

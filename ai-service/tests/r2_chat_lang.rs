@@ -108,14 +108,14 @@ async fn the_anthropic_format_carries_the_language_in_system() {
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic", t.stub.url), "apiKey": KEY, "model": "demo-claude"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    t.seed_route(Seed {
+        provider: "anthropic",
+        url: format!("{}/anthropic", t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model: "demo-claude",
+    });
     t.verify_and_enable(&admin).await;
     let ev = t
         .send_all(&sam, json!({"text": "Explain sets", "lang": "zh"}))
@@ -274,10 +274,6 @@ async fn memory_suggestions_are_written_in_the_settings_language() {
             json!({"role": "user", "content": "Please remember that I like short answers"})
         );
     }
-    // the test call keeps its own prompt, without a language line
-    let (code, v) = t.post("/api/ai/admin/verify", &admin, json!({})).await;
-    assert_eq!(code, 200, "{v}");
-    assert_eq!(system_of(&t.stub.last()), "Reply with the single word OK.");
 }
 
 #[tokio::test]

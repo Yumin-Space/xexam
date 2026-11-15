@@ -8,9 +8,14 @@ use serde_json::{json, Value};
 
 const ALL_ON: fn() -> Value = || json!({"chat": true, "hint": true, "explain": true, "summary": true, "generate": true, "import": true});
 
+/// Everything on except `key`; AI hint and AI analysis (`explain`) are one switch (v1.3), so the two go off together.
 fn only_off(key: &str) -> Value {
     let mut v = ALL_ON();
     v[key] = json!(false);
+    if key == "hint" || key == "explain" {
+        v["hint"] = json!(false);
+        v["explain"] = json!(false);
+    }
     v
 }
 
@@ -344,6 +349,7 @@ async fn the_admin_route_audits_creates_rows_and_refuses_bad_requests() {
     assert_eq!(rows, 0);
     let mut f = ALL_ON();
     f["hint"] = json!(false);
+    f["explain"] = json!(false);
     f["generate"] = json!(false);
     let (s, v) = set_features(&e, &fresh, f.clone()).await;
     assert_eq!(s, 200, "{v}");
@@ -358,7 +364,7 @@ async fn the_admin_route_audits_creates_rows_and_refuses_bad_requests() {
     // the audit line names the changes only; the same call again writes nothing new
     assert!(
         e.t.backend.log_contains(
-            "admin \"root\" changed the AI features of \"fresh\": hint off, generate off"
+            "admin \"root\" changed the AI features of \"fresh\": hint off, explain off, generate off"
         ),
         "{:?}",
         e.t.backend.logs()
@@ -386,6 +392,29 @@ async fn the_admin_route_audits_creates_rows_and_refuses_bad_requests() {
         .expect("row")
         .clone();
     assert_eq!(admin_row["features"], ALL_ON());
+    // v1.3: hint and explain are one switch. A request that changes only one of the two moves both (an older client).
+    let mut one = f.clone();
+    one["explain"] = json!(true);
+    let (s, v) = set_features(&e, &fresh, one).await;
+    assert_eq!(s, 200, "{v}");
+    let mut both_on = f.clone();
+    both_on["hint"] = json!(true);
+    both_on["explain"] = json!(true);
+    assert_eq!(v["user"]["features"], both_on);
+    let mut one = both_on.clone();
+    one["hint"] = json!(false);
+    let (s, v) = set_features(&e, &fresh, one).await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["user"]["features"], f);
+    let bits: i64 =
+        e.t.db()
+            .query_row(
+                "SELECT features_off FROM users WHERE id = ?1",
+                [fresh.id],
+                |r| r.get(0),
+            )
+            .expect("bits");
+    assert_eq!(bits, 2 | 4 | 16);
     // refusals
     let (s, v) = set_features(&e, &e.admin, ALL_ON()).await;
     assert_eq!((s, &v["code"]), (409, &json!("ai.adminAlways")));

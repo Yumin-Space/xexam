@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  AI_SERVICE_OFF_CODE, MSG_AI_SERVICE_OFF, SEARCH_FROM, aiLineKind, aiSwitchShown, createAi, filterUsers, isServiceOff, lockUntilLabel, shortAt,
+  AI_SERVICE_OFF_CODE, MSG_AI_SERVICE_OFF, SEARCH_FROM, aiLineKind, aiSwitchShown, createAi, filterUsers, isServiceOff, lockUntilLabel, fullAt,
 } from './user-admin.ts';
 
 test('aiSwitchShown: only for a plain user while AI+ is available', () => {
@@ -53,9 +53,9 @@ test('lockUntilLabel: the time of day, with the date only when the lock ends on 
   assert.equal(lockUntilLabel('garbage', 5), 'garbage');
 });
 
-test('shortAt: no year and no seconds', () => {
-  assert.equal(shortAt('2026-11-12 01:46:09'), '11-12 01:46');
-  assert.equal(shortAt('2026-11-12 01:46'), '11-12 01:46');
+test('fullAt: always the full year, no seconds', () => {
+  assert.equal(fullAt('2026-11-12 01:46:09'), '2026-11-12 01:46');
+  assert.equal(fullAt('2026-11-12 01:46'), '2026-11-12 01:46');
 });
 
 test('filterUsers: case-insensitive part of the name; empty query keeps everyone', () => {

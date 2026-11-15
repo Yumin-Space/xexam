@@ -147,7 +147,7 @@ python -I tests/integration/stack_check.py 18090                      # 314 chec
                                                                       # made-up AI provider: sign-in, import, attempts, AI settings,
                                                                       # streamed answers, the AI+ feature and its pause, the
                                                                       # heartbeat and docker stop, reply language, free mode (per user),
-                                                                      # the AI+ study features (hints, explanations, summaries, the chats and
+                                                                      # the AI+ study features (hints, analyses, summaries, the chats and
                                                                       # their titles, saved answers, the busy flow, nothing logged),
                                                                       # persistence, WAL, the System log,
                                                                       # reset-password, docker stop, what each volume holds

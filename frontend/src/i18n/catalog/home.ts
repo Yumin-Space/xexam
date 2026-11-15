@@ -244,7 +244,7 @@ export default defineCatalog({
     'home.pick.sheetRetired': 'このシートの問題はすべて出題停止中です',
     'home.pick.notebook': '要復習 {n}',
     'home.pick.notebookTitle': '間違いノートに入っている問題の数',
-    'home.pick.hiddenBanks': '有効な問題がない問題集がほかに {n} 個あります（一覧には表示していません）。',
+    'home.pick.hiddenBanks': '利用できる問題がない問題集がほかに {n} 個あります（一覧には表示していません）。',
 
     'home.mode.legend': '出題範囲',
     'home.mode.allShort': 'すべて',
@@ -268,11 +268,11 @@ export default defineCatalog({
     'home.scopeEmpty': '現在の範囲に問題がありません',
 
     'home.empty.noBanks': 'まだ問題集がありません。「問題集の管理」で Excel ファイルをインポートしてから、ここで試験を始めてください。',
-    'home.empty.noQuestions': '問題集に現在有効な問題がありません（古い Excel 形式の問題だったなどの理由で、すべて出題停止中です）。「問題集の管理」で 6 列形式のファイルを使って更新してください。',
+    'home.empty.noQuestions': '問題集に現在利用できる問題がありません（古い Excel 形式の問題だったなどの理由で、すべて出題停止中です）。「問題集の管理」で 6 列形式のファイルを使って更新してください。',
     'home.empty.go': '問題集の管理へ',
-    'home.empty.noQuestionsUser': '問題集に現在有効な問題がありません（すべて出題停止中です）。管理者に 6 列形式の Excel ファイルでの更新を依頼してください。',
+    'home.empty.noQuestionsUser': '問題集に現在利用できる問題がありません（すべて出題停止中です）。管理者に 6 列形式の Excel ファイルでの更新を依頼してください。',
     'home.empty.noAccess': 'まだ管理者から問題集が割り当てられていません。管理者に問題集の利用を依頼してください。割り当てられると、ここに表示されます。',
-    'home.empty.noQuestionsManager': '問題集に現在有効な問題がありません（すべて出題停止中です）。「問題集の管理」で、自分の問題集を 6 列形式の Excel ファイルで更新するか、新しい問題集をインポートしてください。ほかの問題集は管理者に更新を依頼してください。',
+    'home.empty.noQuestionsManager': '問題集に現在利用できる問題がありません（すべて出題停止中です）。「問題集の管理」で、自分の問題集を 6 列形式の Excel ファイルで更新するか、新しい問題集をインポートしてください。ほかの問題集は管理者に更新を依頼してください。',
     'home.empty.noBanksManager': 'まだ問題集がありません。「問題集の管理」で Excel ファイルをインポートする（インポートした問題集はあなたが管理します）か、管理者に問題集の割り当てを依頼してください。',
 
     'home.latest.title': '直近の結果',
@@ -285,8 +285,8 @@ export default defineCatalog({
 
     'home.overview.title': '概要',
     'home.overview.banks': '問題集',
-    'home.overview.sheets': '使えるシート',
-    'home.overview.questions': '有効な問題',
+    'home.overview.sheets': '利用できるシート',
+    'home.overview.questions': '利用できる問題',
     'home.overview.notebook': '間違いノート',
     'home.overview.retired': 'ほかに出題停止中の問題が {n} 問あります（上の数には含みません）。',
     'home.overview.review': '間違えた問題を復習',

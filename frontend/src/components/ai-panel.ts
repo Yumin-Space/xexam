@@ -1,6 +1,6 @@
 // The AI+ panel (v1.0, spec section 2): one panel element for the whole app, docked INSIDE the page under the practice question
 // card (`[data-aip-dock="practice"]`) or under the answer line of a result / record-detail card (`[data-aip-dock="rv-<n>"]`).
-// It is collapsed by default; AI 提示 / AI 解释 / a card's AI 解析 expand it and show that answer; the chevron collapses it. On
+// It is collapsed by default; AI 提示 / AI 解析 / a card's AI 解析 expand it and show that answer; the chevron collapses it. On
 // result / detail pages every card whose dock does not hold the live panel shows a collapsed bar of its own (a stub).
 // Changing question on the practice page keeps the panel as it is and follows the same kind on the new question (the saved
 // answer, or a short "not asked yet" text): a question change never sends a request.
@@ -8,12 +8,13 @@
 // the cap callout shows) are pure (domain/ai-panel.ts); the engine (domain/ai-run.ts) owns the entries, the stream and the
 // polling; this file only builds the DOM, paints the shown entry and wires the handlers.
 //   · installAiPanel(deps)   once, from main.ts (hashchange closes; sign-out clears);
-//   · openAiPanel(args)      from the AI 提示 / AI 解释 / AI 解析 buttons;
+//   · openAiPanel(args)      from the AI 提示 / AI 解析 / AI 解析 buttons;
 //   · reanchorAiPanel()      from main.ts right after every redraw: moves the panel into the new dock, follows a question change;
 //   · closeAiPanel(), clearAiPanelData(), forgetStudyChats()
 import { t } from '../i18n/index.ts';
 import { entryView, emptyEntry, CALL_LIMIT, type EntryView } from '../domain/ai-study.ts';
 import { createRunner, type Runner, type RunSpec } from '../domain/ai-run.ts';
+import { freshSpec, isSharedSpec } from '../domain/ai-spec.ts';
 import { busyView, chatNameOf, popTitleKey, replyLang, type RunningInfo, type StudyKind, type StudySource } from '../domain/ai-plus.ts';
 import {
   capNote, cardAnchorPlan, chevronPlan, createAlertGate, focusAfterPress, followsText, footerSlots, headVisible, isNotAsked, pairOf, pressPlan,
@@ -114,7 +115,7 @@ const sessionChat = (): number | null => (cur && runner ? runner.chatIdWhere(cur
 const stateNow = (): PanelState => ({ pair: cur ? pairOf(cur) : null, dock: cur ? cur.dock : mountedKey, collapsed });
 const isCardKey = (k: string | null): boolean => k != null && k !== 'practice';
 const dockEl = (key: string): AipDockEl | null => document.querySelector<AipDockEl>(`[data-aip-dock="${key}"]`);
-/** The label of the shown kind (AI 提示 / AI 解释 / AI 解析) */
+/** The label of the shown kind (AI 提示 / AI 解析 / AI 解析) */
 const labelOf = (a: PanelOpenArgs): string => t(a.kind === 'hint' ? 'aiplus.hint' : a.source === 'practice' ? 'aiplus.explain' : 'aiplus.analyze');
 /** The text the cap refusal says now (the callout and Regenerate's tip) */
 const capText = (): string => {
@@ -156,7 +157,7 @@ export function installAiPanel(d: StudyUiDeps): void {
 }
 
 /**
- * A button was pressed (AI 提示, AI 解释, a card's AI 解析). The plan (domain/ai-panel.ts pressPlan): another answer → switch,
+ * A button was pressed (AI 提示, AI 解析, a card's AI 解析). The plan (domain/ai-panel.ts pressPlan): another answer → switch,
  * expand, show it; the answer already shown → ask only when its entry is empty, else just expand and bring the panel into view.
  */
 export function openAiPanel(args: PanelOpenArgs): void {
@@ -566,6 +567,9 @@ function paintNote(v: EntryView | null): void {
       alertish = noteIsAlert(v.note);
     } else if (v.truncated) {
       text = truncatedText();
+    } else if (cur && isSharedSpec(cur.spec) && (v.phase === 'done' || v.phase === 'streaming') && v.text.trim() !== '') {
+      // v1.3: the answer came from the shared store (a muted line, no dialog)
+      text = t(cur.kind === 'hint' ? 'ai.panel.shared.hint' : 'ai.panel.shared.explain');
     }
   }
   const sig = `${cap ? 'cap' : 'note'}|${text}`;
@@ -628,6 +632,11 @@ function slotButton(o: { icon: MiniIcon; label: string; slot: string; disabled?:
     onclick: o.onClick,
   }, miniIcon(o.icon, 'ibtn-ic'), h('span', { class: 'lbl', 'aria-hidden': 'true' }, o.kids ?? o.label));
   tipFor(btn, o.label);
+  if (o.slot === 'regenerate' && !o.disabled) {
+    // v1.3: a regenerate replaces what everybody sees and counts as an AI request
+    btn.title = t('ai.panel.regenerate.tip');
+    btn.setAttribute('aria-description', t('ai.panel.regenerate.tip'));
+  }
   return btn;
 }
 
@@ -666,7 +675,7 @@ function runRegenerate(): void {
   const a = cur;
   if (!a || !runner || !regenerateAllowed(runner.entry(a.cacheKey))) return;
   if (ui.body) ui.body.scrollTop = 0;
-  void runner.regenerate(a.cacheKey, a.spec);
+  void runner.regenerate(a.cacheKey, freshSpec(a.spec));
 }
 
 /**

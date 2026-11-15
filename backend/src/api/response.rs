@@ -77,6 +77,39 @@ pub fn make(status: StatusCode, ctype: &'static str, body: Vec<u8>, head_only: b
     resp
 }
 
+/// v1.3 (A4): `ETag` + `Cache-Control: private, no-cache` on a signed-in, per-user answer, so the browser revalidates every time
+/// and a matching `If-None-Match` is answered by [`not_modified`].
+pub fn with_etag(mut resp: Response, etag: &str) -> Response {
+    if let Ok(v) = HeaderValue::from_str(etag) {
+        let h = resp.headers_mut();
+        h.insert(header::ETAG, v);
+        h.insert(
+            header::CACHE_CONTROL,
+            HeaderValue::from_static("private, no-cache"),
+        );
+    }
+    resp
+}
+
+/// v1.3 (A4): `304 Not Modified`, no body, with the same ETag and cache headers.
+pub fn not_modified(etag: &str) -> Response {
+    let mut resp = Response::new(Body::empty());
+    *resp.status_mut() = StatusCode::NOT_MODIFIED;
+    let h = resp.headers_mut();
+    h.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    with_etag(resp, etag)
+}
+
+/// Whether an `If-None-Match` value names `etag` (weak comparison: a `W/` prefix on either side is ignored, `*` matches).
+pub fn etag_matches(if_none_match: Option<&str>, etag: &str) -> bool {
+    let bare = |t: &str| t.trim().trim_start_matches("W/").to_string();
+    let ours = bare(etag);
+    if_none_match.is_some_and(|v| v.split(',').any(|t| t.trim() == "*" || bare(t) == ours))
+}
+
 pub fn json_resp(status: StatusCode, v: &Value, head_only: bool) -> Response {
     make(status, JSON_CT, py_json(v), head_only)
 }
@@ -134,6 +167,11 @@ pub fn error_response(e: AppError, head_only: bool) -> Response {
             &json!({ "error": MSG_AI_SERVICE_OFF, "code": CODE_AI_SERVICE_OFF }),
             head_only,
         ),
+        AppError::SessionExpired => json_resp(
+            StatusCode::UNAUTHORIZED,
+            &json!({ "error": super::auth::MSG_SESSION_EXPIRED, "code": "auth.expired" }),
+            head_only,
+        ),
         AppError::TooManyLogins { retry_after } => {
             let mut r = json_resp(
                 StatusCode::TOO_MANY_REQUESTS,
@@ -174,4 +212,32 @@ pub fn method_not_allowed(allow: &'static str) -> Response {
     r.headers_mut()
         .insert(header::ALLOW, HeaderValue::from_static(allow));
     r
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use super::*;
+
+    #[test]
+    fn if_none_match_uses_weak_comparison() {
+        let tag = "\"1.3.0-7-abc\"";
+        assert!(etag_matches(Some(tag), tag));
+        assert!(etag_matches(Some("W/\"1.3.0-7-abc\""), tag));
+        assert!(etag_matches(Some("\"x\", W/\"1.3.0-7-abc\" ,\"y\""), tag));
+        assert!(etag_matches(Some("*"), tag));
+        assert!(!etag_matches(Some("\"1.3.0-8-abc\""), tag));
+        assert!(!etag_matches(Some(""), tag));
+        assert!(!etag_matches(None, tag));
+    }
+
+    #[test]
+    fn a_304_has_no_body_and_the_cache_headers() {
+        let r = not_modified("\"t\"");
+        assert_eq!(r.status(), StatusCode::NOT_MODIFIED);
+        assert_eq!(r.headers()[header::ETAG], "\"t\"");
+        assert_eq!(r.headers()[header::CACHE_CONTROL], "private, no-cache");
+        assert!(r.headers().get(header::CONTENT_LENGTH).is_none());
+        let ok = with_etag(json_resp(StatusCode::OK, &json!({}), false), "\"t\"");
+        assert_eq!(ok.headers()[header::CACHE_CONTROL], "private, no-cache");
+    }
 }

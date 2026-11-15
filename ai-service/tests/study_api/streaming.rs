@@ -51,7 +51,6 @@ async fn a_hint_streams_and_is_saved_with_its_place() {
             "chatTitle",
             "userMessageId",
             "assistantMessageId",
-            "model",
             "newChat",
             "retry",
             "free",
@@ -62,7 +61,8 @@ async fn a_hint_streams_and_is_saved_with_its_place() {
             "source",
             "recordId",
             "sample",
-            "lang"
+            "lang",
+            "shared"
         ]
     );
     let chat = s["chatId"].as_i64().expect("chat id");

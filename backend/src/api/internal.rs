@@ -90,6 +90,11 @@ pub const MAX_LOG_CHARS: usize = 2000;
 /// (`serde_json`) gives it (6 bytes, a `\u0001` escape; 4 bytes for a character outside the BMP, written as UTF-8), plus
 /// the JSON around each line. About 590 KiB; a batch the AI service sends is never refused for its size.
 pub const MAX_LOG_BODY: usize = MAX_LOG_LINES * (MAX_LOG_CHARS * 6 + 64) + 1024;
+/// Most events in one `POST /internal/ai/activity`.
+pub const MAX_AI_EVENTS: usize = 50;
+/// Largest body of `POST /internal/ai/activity`: [`MAX_AI_EVENTS`] events whose detail (2000 characters), object and
+/// agent take the longest JSON form, plus the fields around them.
+pub const MAX_ACTIVITY_BODY: usize = MAX_AI_EVENTS * ((2000 + 256 + 200) * 6 + 512) + 1024;
 /// Most ids in one `POST /internal/ai/users`.
 pub const MAX_USER_IDS: usize = 10_000;
 /// Prefix of the signed message (domain separation from every other HMAC this program computes).
@@ -555,12 +560,14 @@ pub(super) async fn dispatch(
             "/internal/ai/introspect"
             | "/internal/ai/users"
             | "/internal/ai/log"
+            | "/internal/ai/activity"
             | "/internal/ai/heartbeat"
             | "/internal/ai/question"
             | "/internal/ai/record"
             | "/internal/ai/record-info"
             | "/internal/ai/gen/source"
             | "/internal/ai/gen/seeds"
+            | "/internal/ai/gen/corpus"
             | "/internal/ai/gen/create"
             | "/internal/ai/gen/lookup"
             | "/internal/ai/import/check",
@@ -579,6 +586,7 @@ pub(super) async fn dispatch(
             }
             let max = match path {
                 "/internal/ai/log" => MAX_LOG_BODY,
+                "/internal/ai/activity" => MAX_ACTIVITY_BODY,
                 "/internal/ai/gen/create" => MAX_GEN_BODY,
                 _ => MAX_BODY,
             };
@@ -590,11 +598,13 @@ pub(super) async fn dispatch(
                 "/internal/ai/introspect" => introspect_session(st, &data).await,
                 "/internal/ai/users" => users(st, &data).await,
                 "/internal/ai/heartbeat" => heartbeat(st, &data),
+                "/internal/ai/activity" => ai_activity(st, &data).await,
                 "/internal/ai/question" => super::internal_study::question(st, &data).await,
                 "/internal/ai/record" => super::internal_study::record(st, &data).await,
                 "/internal/ai/record-info" => super::internal_study::record_info(st, &data).await,
                 "/internal/ai/gen/source" => super::internal_gen::source(st, &data).await,
                 "/internal/ai/gen/seeds" => super::internal_gen::seeds(st, &data).await,
+                "/internal/ai/gen/corpus" => super::internal_gen::corpus(st, &data).await,
                 "/internal/ai/gen/create" => super::internal_gen::create(st, &data).await,
                 "/internal/ai/gen/lookup" => super::internal_gen::lookup(st, &data).await,
                 "/internal/ai/import/check" => super::internal_gen::import_check(st, &data).await,
@@ -733,11 +743,9 @@ async fn introspect_session(
         Some(i) if i > 0 => i,
         _ => return Err(bad_request()),
     };
-    let store = st.0.store.clone();
-    let now = crate::auth::unix_now();
-    let found = super::blocking(move || store.session_user(&sid, now, false)).await?;
+    let found = super::auth::session_user_checked(st, &sid).await?;
     Ok(match found {
-        Some((u, _)) if u.id == id && !u.must_change_password => json!({
+        Some(u) if u.id == id && !u.must_change_password => json!({
             "ok": true,
             "user": {
                 "id": u.id,
@@ -845,6 +853,357 @@ fn log_lines(st: &AppState, data: &serde_json::Map<String, Value>) -> Result<Val
             .push(level, "xexam_ai_service", format!("AI: {text}"));
     }
     Ok(json!({ "ok": true }))
+}
+
+/// One validated event of `POST /internal/ai/activity`.
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct AiEvent {
+    id: String,
+    at: i64,
+    user_id: Option<i64>,
+    stamp: Option<String>,
+    username: Option<String>,
+    action: String,
+    object: Option<String>,
+    detail: Option<String>,
+    ok: bool,
+    reason: Option<String>,
+    ip: Option<String>,
+    ua: Option<String>,
+}
+
+/// Control characters removed, cut to `max` characters.
+fn clean_text(s: &str, max: usize) -> String {
+    let clean: String = s.chars().filter(|c| !c.is_control()).collect();
+    truncate_chars(&clean, max)
+}
+
+/// `ai.` plus 1 to 60 characters of `A-Z a-z 0-9 .` (the AI service can never write `auth.*` or `users.*`).
+fn ai_action_ok(a: &str) -> bool {
+    match a.strip_prefix("ai.") {
+        Some(rest) => {
+            (1..=60).contains(&rest.len())
+                && rest.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
+        }
+        None => false,
+    }
+}
+
+fn opt_text(v: Option<&Value>, max: usize) -> Result<Option<String>, AppError> {
+    match v {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => {
+            let t = clean_text(s, max);
+            Ok((!t.is_empty()).then_some(t))
+        }
+        Some(_) => Err(bad_request()),
+    }
+}
+
+/// Checks one event (any problem is a 400 for the whole batch).
+fn parse_event(v: &Value, now: i64) -> Result<AiEvent, AppError> {
+    let Value::Object(m) = v else {
+        return Err(bad_request());
+    };
+    let id = match m.get("id") {
+        Some(Value::String(s)) if is_lower_hex(s, 32) => s.clone(),
+        _ => return Err(bad_request()),
+    };
+    let at = match m.get("at").and_then(Value::as_i64) {
+        Some(t) if t >= now - 7 * 86_400 && t <= now + 300 => t,
+        _ => return Err(bad_request()),
+    };
+    let user_id = match m.get("userId") {
+        None | Some(Value::Null) => None,
+        Some(x) => match x.as_i64() {
+            Some(i) if i > 0 => Some(i),
+            _ => return Err(bad_request()),
+        },
+    };
+    let action = match m.get("action") {
+        Some(Value::String(a)) if ai_action_ok(a) => a.clone(),
+        _ => return Err(bad_request()),
+    };
+    let ok = match m.get("result") {
+        Some(Value::String(r)) if r == "ok" => true,
+        Some(Value::String(r)) if r == "fail" => false,
+        _ => return Err(bad_request()),
+    };
+    let detail = match m.get("detail") {
+        None | Some(Value::Null) => None,
+        Some(d @ Value::Object(_)) => Some(d.to_string()),
+        Some(_) => return Err(bad_request()),
+    };
+    let ip = match m.get("ip") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(
+            s.trim()
+                .parse::<std::net::IpAddr>()
+                .map_err(|_| bad_request())?
+                .to_string(),
+        ),
+        Some(_) => return Err(bad_request()),
+    };
+    Ok(AiEvent {
+        id,
+        at,
+        user_id,
+        stamp: match m.get("stamp") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) => Some(s.clone()),
+            Some(_) => return Err(bad_request()),
+        },
+        username: opt_text(m.get("username"), 64)?,
+        action,
+        object: opt_text(m.get("object"), 200)?,
+        detail,
+        ok,
+        reason: opt_text(m.get("reason"), 80)?,
+        ip,
+        ua: opt_text(m.get("ua"), 256)?,
+    })
+}
+
+/// `(stamp, username, role)` of the accounts the events name, by id.
+type Known = std::collections::HashMap<i64, (String, String, crate::auth::Role)>;
+
+/// The rows of validated events: the actor is the backend's own account when `userId` and `stamp` match, else the sent name
+/// (cleaned) of an account that is gone, else the service itself. Location is never set for AI events; the address is kept
+/// only while the sign-in info switch is open (`with_ip`).
+fn ai_rows(
+    events: Vec<AiEvent>,
+    known: &Known,
+    with_ip: bool,
+) -> Vec<crate::database::ActivityRow> {
+    use crate::database::{ActivityRow, ActivitySource, Merge};
+    events
+        .into_iter()
+        .map(|e| {
+            let (actor, user_id, username, role) = match e.user_id {
+                None => ("system", None, None, None),
+                Some(id) => match known.get(&id) {
+                    Some((uid, name, role))
+                        if !uid.is_empty() && e.stamp.as_deref() == Some(uid.as_str()) =>
+                    {
+                        (
+                            "user",
+                            Some(id),
+                            Some(name.clone()),
+                            Some(role.as_str().to_string()),
+                        )
+                    }
+                    other => match e.username.as_deref().and_then(crate::auth::clean_username) {
+                        // The id is not an account any more: the entry keeps the id, so the page shows it as deleted
+                        Some(name) => ("user", other.is_none().then_some(id), Some(name), None),
+                        None => ("anon", None, None, None),
+                    },
+                },
+            };
+            ActivityRow {
+                ts: e.at,
+                actor: actor.to_string(),
+                user_id,
+                username,
+                role,
+                action: e.action,
+                object: e.object,
+                detail: e.detail,
+                ok: e.ok,
+                reason: e.reason,
+                ip: e.ip.filter(|_| with_ip),
+                country: None,
+                region: None,
+                city: None,
+                ua: e.ua,
+                source: ActivitySource::Ai,
+                src_id: Some(e.id),
+                merge: Merge::None,
+            }
+        })
+        .collect()
+}
+
+/// `POST /internal/ai/activity` `{"events": [...]}` (at most 50) → `{"ok": true}`. The whole batch is refused (400) on the
+/// first bad event. Stored before the answer, so the AI service may drop its outbox row on `ok`; a re-sent batch adds nothing
+/// (`INSERT OR IGNORE` on the event id). The address is stored only while the sign-in info switch is open; while it is closed it is dropped.
+async fn ai_activity(
+    st: &AppState,
+    data: &serde_json::Map<String, Value>,
+) -> Result<Value, AppError> {
+    let Some(Value::Array(list)) = data.get("events") else {
+        return Err(bad_request());
+    };
+    if list.len() > MAX_AI_EVENTS {
+        return Err(bad_request());
+    }
+    let now = crate::auth::unix_now();
+    let events = list
+        .iter()
+        .map(|v| parse_event(v, now))
+        .collect::<Result<Vec<_>, _>>()?;
+    let ids: BTreeSet<i64> = events.iter().filter_map(|e| e.user_id).collect();
+    let store = st.0.store.clone();
+    let known: Known = super::blocking(move || {
+        let mut k = Known::new();
+        for id in ids {
+            if let Some(u) = store.user_by_id(id)? {
+                k.insert(id, (u.uid, u.username, u.role));
+            }
+        }
+        Ok(k)
+    })
+    .await?;
+    let rows = ai_rows(events, &known, st.0.activity.signin_info());
+    st.0.activity
+        .write_now(&st.0.store, rows)
+        .await
+        .map_err(|e| {
+            tracing::warn!("could not store AI activity events: {e}");
+            AppError::Db(e)
+        })?;
+    Ok(json!({ "ok": true }))
+}
+
+#[cfg(test)]
+mod ai_activity_tests {
+    use super::*;
+
+    fn ev(extra: Value) -> Value {
+        let mut base = json!({
+            "id": "0123456789abcdef0123456789abcdef",
+            "at": crate::auth::unix_now(),
+            "userId": 3,
+            "stamp": "aa",
+            "username": "alice",
+            "action": "ai.settings.keyReuse",
+            "object": "main",
+            "detail": {"oldHost": "old.example.com"},
+            "result": "ok",
+            "reason": null,
+            "ip": "203.0.113.7",
+            "ua": "Agent/1.0"
+        });
+        if let (Some(b), Value::Object(x)) = (base.as_object_mut(), extra) {
+            for (k, v) in x {
+                b.insert(k, v);
+            }
+        }
+        base
+    }
+
+    #[test]
+    fn ai_events_are_validated() {
+        let now = crate::auth::unix_now();
+        assert!(parse_event(&ev(json!({})), now).is_ok());
+        for bad in [
+            json!({"id": "XYZ"}),
+            json!({"id": "0123456789ABCDEF0123456789ABCDEF"}),
+            json!({"action": "auth.signin"}),
+            json!({"action": "users.create"}),
+            json!({"action": "ai."}),
+            json!({"action": "ai.a b"}),
+            json!({"action": "ai.x?"}),
+            json!({"action": format!("ai.{}", "a".repeat(61))}),
+            json!({"result": "maybe"}),
+            json!({"result": true}),
+            json!({"at": now - 8 * 86_400}),
+            json!({"at": now + 600}),
+            json!({"at": "soon"}),
+            json!({"ip": "not-an-ip"}),
+            json!({"ip": 7}),
+            json!({"userId": 0}),
+            json!({"userId": "3"}),
+            json!({"detail": "text"}),
+            json!({"object": 5}),
+        ] {
+            assert!(parse_event(&ev(bad.clone()), now).is_err(), "{bad}");
+        }
+        for good in [
+            json!({"action": format!("ai.{}", "a".repeat(60))}),
+            json!({"at": now - 7 * 86_400 + 5}),
+            json!({"at": now + 299}),
+            json!({"ip": "2001:db8::1"}),
+            json!({"ip": null, "userId": null, "stamp": null, "detail": null}),
+        ] {
+            assert!(parse_event(&ev(good.clone()), now).is_ok(), "{good}");
+        }
+    }
+
+    #[test]
+    fn ai_event_strings_are_cleaned_and_cut() {
+        let now = crate::auth::unix_now();
+        let long = format!("a\u{7}{}", "b".repeat(300));
+        let e = parse_event(
+            &ev(json!({"object": long, "ua": "x\ny", "reason": "r\u{0}s"})),
+            now,
+        )
+        .expect("ok");
+        let object = e.object.unwrap_or_default();
+        assert_eq!(object.chars().count(), 200);
+        assert!(!object.contains('\u{7}'));
+        assert_eq!(e.ua.as_deref(), Some("xy"));
+        assert_eq!(e.reason.as_deref(), Some("rs"));
+    }
+
+    #[test]
+    fn ai_actor_follows_id_and_stamp() {
+        use crate::auth::Role;
+        let now = crate::auth::unix_now();
+        let mut known = Known::new();
+        known.insert(3, ("aa".to_string(), "alice-now".to_string(), Role::Admin));
+        known.insert(4, ("bb".to_string(), "bob".to_string(), Role::User));
+        let rows = ai_rows(
+            vec![
+                parse_event(&ev(json!({})), now).expect("match"),
+                // the stamp differs for an existing id: the sent name, not attributed to the account
+                parse_event(
+                    &ev(json!({"userId": 4, "stamp": "zz", "username": "mallory"})),
+                    now,
+                )
+                .expect("mismatch"),
+                // the account is gone: the id is kept (shown as deleted) with the sent name
+                parse_event(&ev(json!({"userId": 9, "username": "gone"})), now).expect("gone"),
+                // no usable name
+                parse_event(&ev(json!({"userId": 9, "username": null})), now).expect("anon"),
+                // no user: the service itself
+                parse_event(&ev(json!({"userId": null})), now).expect("system"),
+            ],
+            &known,
+            true,
+        );
+        let got = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.actor.as_str(),
+                    r.user_id,
+                    r.username.as_deref(),
+                    r.role.as_deref(),
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            got,
+            vec![
+                ("user", Some(3), Some("alice-now"), Some("admin")),
+                ("user", None, Some("mallory"), None),
+                ("user", Some(9), Some("gone"), None),
+                ("anon", None, None, None),
+                ("system", None, None, None),
+            ]
+        );
+        assert!(rows
+            .iter()
+            .all(|r| r.country.is_none() && r.src_id.is_some()));
+        assert_eq!(rows[0].ip.as_deref(), Some("203.0.113.7"));
+        // eye closed: the address is not stored
+        let closed = ai_rows(
+            vec![parse_event(&ev(json!({})), now).expect("closed")],
+            &known,
+            false,
+        );
+        assert_eq!(closed[0].ip, None);
+    }
 }
 
 #[cfg(test)]

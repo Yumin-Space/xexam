@@ -61,6 +61,29 @@ impl Feature {
     }
 }
 
+/// AI hint and AI analysis (`explain`) are one switch in the UI (v1.3): the two bits always change together.
+pub const STUDY_PAIR: i64 = 2 | 4;
+
+/// `after` with the hint and explain bits made equal. When a request changed only one of the two, that one decides
+/// (an older client that still sends them separately); when that cannot be told, both are on (nobody loses access).
+pub fn paired(before: i64, after: i64) -> i64 {
+    let a = after & STUDY_PAIR;
+    if a == 0 || a == STUDY_PAIR {
+        return after;
+    }
+    let changed = a ^ (before & STUDY_PAIR);
+    let off = if changed == Feature::Hint.bit() || changed == Feature::Explain.bit() {
+        a & changed != 0
+    } else {
+        false
+    };
+    if off {
+        after | STUDY_PAIR
+    } else {
+        after & !STUDY_PAIR
+    }
+}
+
 /// `true` when `f` is allowed for a user whose `features_off` is `off`.
 pub fn allowed(off: i64, f: Feature) -> bool {
     off & f.bit() == 0
@@ -147,6 +170,31 @@ mod tests {
         assert!(allowed(32, Feature::Generate));
         assert!(!allowed(16, Feature::Generate));
         assert!(allowed(16, Feature::Import));
+    }
+
+    #[test]
+    fn hint_and_explain_change_together() {
+        // already equal: untouched, the other bits too
+        for other in [0, 1, 8, 16 | 32] {
+            assert_eq!(paired(0, other), other);
+            assert_eq!(paired(6, other | 6), other | 6);
+        }
+        // one of the two switched off from "both on": both go off
+        assert_eq!(paired(0, 2), 6);
+        assert_eq!(paired(1, 4 | 1), 6 | 1);
+        // one of the two switched on from "both off": both go on
+        assert_eq!(paired(6, 4), 0);
+        assert_eq!(paired(6 | 8, 2 | 8), 8);
+        // a stored mismatch that the request repeats, or flips both ways: both on
+        assert_eq!(paired(2, 2), 0);
+        assert_eq!(paired(2, 4), 0);
+        for before in 0..=KNOWN_BITS {
+            for after in 0..=KNOWN_BITS {
+                let p = paired(before, after);
+                assert!(p & STUDY_PAIR == 0 || p & STUDY_PAIR == STUDY_PAIR);
+                assert_eq!(p & !STUDY_PAIR, after & !STUDY_PAIR);
+            }
+        }
     }
 
     #[test]

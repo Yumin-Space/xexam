@@ -11,8 +11,10 @@
 //!   the link with the AI service, ai-service (the auth step of `/api/ai/*`, the token routes under `/internal/` and its
 //!   heartbeat, which says whether AI+ is available)
 //! - `auth`      accounts (v0.6): password hashing, session tokens and cookie, login throttle, input rules
+//! - `activity`  activity log (v1.3): who did what, written by one queue + writer task, read by the administrators
 //! - `logs`      system log (v0.7): a `tracing` layer keeping the most recent log lines in memory for `GET /api/logs`
 
+pub mod activity;
 pub mod api;
 pub mod auth;
 pub mod config;

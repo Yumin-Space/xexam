@@ -17,6 +17,7 @@ import logs from './catalog/logs.ts';
 import ai from './catalog/ai.ts';
 import aiplus from './catalog/aiplus.ts';
 import aigen from './catalog/aigen.ts';
+import act from './catalog/act.ts';
 
 export type MsgKey =
   | keyof typeof common.en
@@ -32,11 +33,12 @@ export type MsgKey =
   | keyof typeof logs.en
   | keyof typeof ai.en
   | keyof typeof aiplus.en
-  | keyof typeof aigen.en;
+  | keyof typeof aigen.en
+  | keyof typeof act.en;
 
 export type Params = Record<string, string | number>;
 
-const ALL = [common, home, banks, records, settings, quiz, result, about, auth, users, logs, ai, aiplus, aigen];
+const ALL = [common, home, banks, records, settings, quiz, result, about, auth, users, logs, ai, aiplus, aigen, act];
 
 const tables: Record<UiLang, Dict> = {
   en: Object.assign({}, ...ALL.map((c) => c.en)) as Dict,

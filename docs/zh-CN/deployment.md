@@ -72,6 +72,10 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_INTERNAL_TOKEN` | （不设：链接卷里的一个随机令牌） | 后端和 ai-service 共用的令牌，两者用同一个值：至少 32 个可打印的 ASCII 字符，不能有空格（`openssl rand -hex 32`）。见第 3.3 节 |
 | `XEXAM_AI_LOG` | （不设：`info`） | ai-service 的日志过滤，`docker compose logs ai-service` 和它发到系统日志的行都用它；规则和 `XEXAM_LOG` 一样（为空 = `info`，无效的值退回 `info` 并记一条警告） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （不设：WAL） | `delete` = AI 数据库用回滚日志，用于和 `XEXAM_SQLITE_JOURNAL` 一样的特殊存储 |
+| `XEXAM_TRUSTED_PROXIES` | `172.31.254.2`（自带的 `cloudflared`） | *（v1.3，frontend 容器）* Nginx 信任其 `CF-Connecting-IP` 和位置头的代理地址或地址段（逗号或空格分隔）。留空 = 谁都不信任。见 3.5 节 |
+| `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | *（v1.3）* 带访客地址的头：`CF-Connecting-IP`、`X-Forwarded-For` 或 `X-Real-IP` |
+| `XEXAM_BEHIND_PROXY` | 后端镜像里是 `1` | *（v1.3）* 告诉后端它在自带的 Nginx 后面，因此相信 `X-Real-IP` 和 `X-Geo-*`。已在镜像里设好，不要改。单独运行（不用 Docker、没有 Nginx）时不设它，改为记录连接地址（3.5 节） |
+| `TUNNEL_TOKEN` | 不设 | *（v1.3）* 可选 `cloudflared` 服务的令牌（`docker compose --profile tunnel up -d`） |
 
 v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG` 和 `XEXAM_AI_SQLITE_JOURNAL` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
 
@@ -79,7 +83,7 @@ v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` �
 
 | 镜像 | 变量 |
 |---|---|
-| `xexam-backend` | `XEXAM_DATA=/data`、`XEXAM_HOST=0.0.0.0`、`XEXAM_PORT=8765`、`XEXAM_VERSION_FILE=/VERSION`、`XEXAM_LINK_DIR=/link`（写入 `internal.token` 的地方；不用 Docker 时默认是数据目录里的 `link`） |
+| `xexam-backend` | `XEXAM_DATA=/data`、`XEXAM_HOST=0.0.0.0`、`XEXAM_PORT=8765`、`XEXAM_VERSION_FILE=/VERSION`、`XEXAM_BEHIND_PROXY=1`、`XEXAM_LINK_DIR=/link`（写入 `internal.token` 的地方；不用 Docker 时默认是数据目录里的 `link`） |
 | `ai-service` | `XEXAM_AI_DATA=/data`、`XEXAM_AI_HOST=0.0.0.0`、`XEXAM_AI_PORT=8766`、`XEXAM_AI_BACKEND_URL=http://backend:8765`（只能是普通的 http）、`XEXAM_LINK_DIR=/link`、`XEXAM_VERSION_FILE=/VERSION` |
 
 ### 3.1 时区
@@ -142,9 +146,22 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 
 - **自带密钥（BYOK）**：网关自己保存了服务商的密钥时，**服务商密钥** 留空。两个密钥都需要时，请选认证方式 `cf-aig-authorization`：用 `bearer`（OpenAI 格式）或 `x-api-key`（Anthropic 格式）时，两个密钥要用同一个请求头，AI 设置会拒绝这种组合。
 - **发送什么**：模型、系统提示词（英语：回答要清楚，用用户写的语言回答，再加上日期和用户的记忆笔记）、对话里以前的消息（从最新的开始，默认最多大约 24 000 个字符）和新消息。不设置 temperature 或其他采样参数。OpenAI 格式用 `stream_options.include_usage` 请求返回 Token 数；Anthropic 格式的 `max_tokens` 是 8192。如果服务商在 **测试** 时拒绝了其中任何一项，测试会不带它（或者改用 4096）再试一次，并保留行得通的那种。
-- **时间限制**：连接 10 秒，回答的第一个字节 120 秒，最多 120 秒没有任何数据，整个回答 10 分钟（已经生成的文字保留）；模型列表 30 秒；测试每次最多 2 分钟。
+- **时间限制**：连接 10 秒，回答的第一个字节 120 秒，最多 120 秒没有任何数据，整个回答 10 分钟（已经生成的文字保留）；模型列表 30 秒；测试一共最多 90 秒。
 - 服务商的**错误** 从不以它自己的文字显示：它们变成固定的错误码（`ai.up.auth`、`ai.up.quota`、`ai.up.rateLimit` 等，见 [api.md](api.md) 第 5 节），由页面翻译。因为设置而失败的测试（密钥、额度、模型、请求被拒绝、回应无法读取）会关闭 AI；临时的失败不会。
 - **你自己网络里的服务商**（例如本地的模型服务器）可以用 `http://`；ai-service 容器必须能连到它的地址。除非主机是 `localhost`、`127.0.0.1`、`[::1]` 或不带点的名字，AI 设置都会警告密钥以明文传输。
+
+### 3.5 真实访客地址和所在地（v1.3）
+
+在代理后面，每个连接都来自代理，所以限速、登录记录和 **IP 列**都只会显示一个地址。因此 Nginx 从请求头读访客地址，但**只在连接来自你信任的代理时**才这样做；来自其他任何人时，这个头被忽略，使用连接地址。后端和 AI 服务只读 Nginx 设置的 `X-Real-IP` 和 `X-Geo-*` 头，而 Nginx 每个请求都会覆盖它们，所以客户端无法伪造。单独启动的后端（`xexam-backend serve`，不用 Docker 和 Nginx，例如在局域网里）前面没有 Nginx：除非连接来自本机（回环地址），否则忽略这些头，记录**连接地址**（局域网访客显示它的局域网地址），也不显示所在地，因为只有经过 Nginx 的 Cloudflare 才提供所在地。镜像里设置了 `XEXAM_BEHIND_PROXY=1`，所以上面的行为保持不变。
+
+- **使用自带的隧道**（`docker compose --profile tunnel up -d`）：`cloudflared` 和 frontend 在同一个专用 Docker 网络 `tunnel` 里，固定地址 `172.31.254.2`，frontend 只信任这一个地址。除了 `TUNNEL_TOKEN` 和隧道的公共主机名 `http://frontend:8080`，不用配置别的。
+- **直接访问或局域网访问**：连接从 `public` 网络进来，谁都不信任，地址就是连接地址。什么都不用设。
+- **`cloudflared` 跑在宿主机或另一台机器上**：在 `.env` 里写 `XEXAM_TRUSTED_PROXIES=<地址>`（`public` 网络有固定网关 `172.31.255.1`，来自宿主机的连接看起来就是这个地址）。⚠️ 经过 Docker 的地址转换，直接访问发布端口的客户端也会显示为这个网关；如果你信任它，该客户端就能伪造自己的地址和所在地（这只会改变被记录的内容和按地址的限速，别的不受影响）。这种情况下请让 `XEXAM_BIND` 保持 `127.0.0.1`，或者改用自带的服务。
+- 值无效或是 `0.0.0.0/0` 时，Nginx 谁都不信任，并在容器日志里打印警告。
+
+**所在地。** 所在地来自 Cloudflare 添加的请求头。国家（`CF-IPCountry`）默认开启；地区和城市需要 Cloudflare 的 **Managed Transform > Add visitor location headers**。没有 Cloudflare 就没有所在地，Xexam 只显示地址。纬度、经度和邮编的头永远不会转发。所在地是大致的（访客所在网络的所在地，往往是运营商的，而不是本人的）。
+
+**眼睛按钮。** 地址和所在地只在**用户**页的眼睛按钮打开时才记录（默认隐藏）。隐藏期间不再记录新的内容，任何路由也不返回已保存的（数据库里仍然保存），打开眼睛即可再次看到。旁边的红色**清除记录**按钮会清除已存的内容。见 [security.md](security.md) 的 5.1 节。
 
 ## 4. 从手机、另一台电脑或互联网打开 Xexam
 
@@ -215,9 +232,9 @@ sequenceDiagram
 
 Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并清掉 `X-Forwarded-*`；后端只读真实的 `Host`。
 
-**隧道后面的所有人共用一个限流额度。** Nginx 按客户端地址限制请求数：`/api/` 每秒 30 个请求，突发 120；`/api/upload` 每秒 1 个，突发 5；`/api/ai/` 每秒 30 个，突发 120（见 [security.md](security.md) 第 9 节）。通过隧道时，所有用户都来自 cloudflared 的地址，所以都算在同一个额度里。打开一个页面大约发十个请求，开着的系统日志页每秒两个，远低于这个额度；万一还是达到了，页面会重试它的读取，然后显示 **请求太频繁**（见 [usage.md](usage.md) 第 19 节）。开始生成 AI 回答则改为按会话限制（每分钟 20 个，突发 10，AI 对话的发送和重试，以及从 v0.9 起的 AI 提示、解释和总结一起计数），所以同一个隧道后面的用户不共用这个额度。连续快速地点许多题的 **AI 解析** 可能会达到它；弹出框这时会说请等几秒。
+**隧道后面的所有人共用一个限流额度。** Nginx 按客户端地址限制请求数：`/api/` 每秒 30 个请求，突发 120；`/api/upload` 每秒 1 个，突发 5；`/api/ai/` 每秒 30 个，突发 120（见 [security.md](security.md) 第 9 节）。通过隧道时，所有用户都来自 cloudflared 的地址，所以都算在同一个额度里。打开一个页面大约发十个请求，开着的系统日志页每秒两个，远低于这个额度；万一还是达到了，页面会重试它的读取，然后显示 **请求太频繁**（见 [usage.md](usage.md) 第 19 节）。开始生成 AI 回答则改为按会话限制（每分钟 20 个，突发 10，AI 对话的发送和重试，以及从 v0.9 起的 AI 提示、解析和总结一起计数），所以同一个隧道后面的用户不共用这个额度。连续快速地点许多题的 **AI 解析** 可能会达到它；弹出框这时会说请等几秒。
 
-**通过隧道使用 AI 对话和学习帮助。** AI 对话和 AI+ 学习帮助（提示、解释、总结）的回答以 server-sent events 流（`text/event-stream`）送来。Nginx 不缓冲地转发它们，cloudflared 对这种内容类型也不缓冲，服务商没有动静时，ai-service 每 15 秒发一条 keep-alive 注释，远低于 Cloudflare 大约 100 秒的空闲上限；所以在你的网络之外，文字也会一段一段地出现。万一连接还是断了（手机休眠、隧道重新连接），回答仍然会生成并保存，页面能再连到 Xexam 时就会接上它。AI 设置里有一个请求可能很久：**测试** 要等模型的一个回答（每次最多 2 分钟，Nginx 最多等 5 分钟）；Cloudflare 可能在大约 100 秒后用它自己的错误页结束这样的请求。测试在 ai-service 里仍然会完成；刷新 AI 设置就能看到结果。
+**通过隧道使用 AI 对话和学习帮助。** AI 对话和 AI+ 学习帮助（提示、解析、总结）的回答以 server-sent events 流（`text/event-stream`）送来。Nginx 不缓冲地转发它们，cloudflared 对这种内容类型也不缓冲，服务商没有动静时，ai-service 每 15 秒发一条 keep-alive 注释，远低于 Cloudflare 大约 100 秒的空闲上限；所以在你的网络之外，文字也会一段一段地出现。万一连接还是断了（手机休眠、隧道重新连接），回答仍然会生成并保存，页面能再连到 Xexam 时就会接上它。AI 设置里有一个请求可能很久：**测试** 要等模型的一个回答（AI 服务在 90 秒内答复，Nginx 最多等 100 秒）；Cloudflare 可能在大约 100 秒后用它自己的错误页结束这样的请求。测试在 ai-service 里仍然会完成；刷新 AI 设置就能看到结果。
 
 不要忘记的事：
 
@@ -251,6 +268,7 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 
 逐步的检查清单、升级后的检查和回退见 [migration.md](migration.md)：
 
+- **从 v1.2 到 v1.3**（migration.md 的第 000 节）：建议使用新的 `docker-compose.yml`（真实访客地址、可选的 `cloudflared` 服务）。主数据库从 schema 7 升到 8（备份 `xexam-schema7-<日期-时间>.db`），AI 数据库从 schema 6 升到 7（备份 `xexam-ai-schema6-<日期-时间>.db`）。空闲超过 24 小时的管理员需要重新登录。
 - **从 v1.0 升级到 v1.1**（见 migration.md 的第 00 节）：`docker compose pull && docker compose up -d`，compose 文件、卷和变量都不用改。主数据库从 schema 6 升到 7（备份 `xexam-schema6-<日期时间>.db`，在 `xexam_data` 中）；AI 数据库从 schema 4 升到 6（备份 `xexam-ai-schema4-<日期时间>.db`，在 `xexam_ai_data` 中）。新的 Token 长度默认值（回答 3000、记忆 1000、每次调用 20000）和新的调用上限在升级后立即生效。回退：两个数据库都恢复副本，然后运行 v1.0 镜像。
 - **从 v0.9.1 到 v1.0**（见 migration.md 第 0 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库不变（schema 6）。AI 数据库从 schema 3 升到 4（备份 `xexam-ai-schema3-<日期时间>.db`，在 `xexam_ai_data` 里，写在变更之前；副本要放得下剩余磁盘空间）。新的每用户 AI 请求上限（每分钟 5 次、每小时 20 次、每天 100 次）和回答长度（1000 字符）马上生效，管理员也一样。回退：恢复 AI 副本并运行 v0.9.1 的镜像；主数据库不需要恢复。
 - **从 v0.8**（migration.md 第 0b 节）：`docker compose pull && docker compose up -d`，不需要改 compose，也没有新变量。主数据库从 schema 5 升到 6（备份 `xexam-schema5-<日期时间>.db`，在 `xexam_data` 里），AI 数据库从 schema 2 升到 3（备份 `xexam-ai-schema2-<日期时间>.db`，在 `xexam_ai_data` 里）。别的都保持原样；AI+ 学习功能对有 AI+ 功能的账户马上出现，没有什么要设置的。回退：主数据库不需要恢复，AI 数据库需要（见下）。
@@ -294,7 +312,7 @@ ai-service 对自己的数据库也这样做：v0.9 的 ai-service 第一次启�
 
 | | **系统日志**（菜单里，只有管理员） | `docker compose logs backend` |
 |---|---|---|
-| 在哪里 | 程序里的 `#/logs` 页面，打开时每 0.5 秒读取一次（读取失败后间隔更长，最长每 10 秒一次） | 在服务器上 |
+| 在哪里 | 程序里的 `#/logs` 页面，打开时每 2 秒读取一次（读取失败后间隔更长，最长每 10 秒一次） | 在服务器上 |
 | 有多少 | 后端上次启动以来的最后 **2000** 行 | Docker 还保留着的全部：最多 3 个 10 MB 的文件，跨重启保留 |
 | 重启之后 | 又是空的（只在内存里，从不写进数据库） | 保留 |
 | 另外 | 级别筛选、搜索、**暂停** / **继续**、**跳到最新** | Nginx 的访问日志和错误日志：`docker compose logs frontend`（从 v0.9 起，访问日志里每个请求只显示不含查询字符串的路径） |

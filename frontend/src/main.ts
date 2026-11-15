@@ -27,7 +27,7 @@ import { renderRecords } from './pages/records.ts';
 import { renderResult } from './pages/result.ts';
 import { renderSettings } from './pages/settings.ts';
 import { renderUsers } from './pages/users.ts';
-import { boot, refreshAi, setRenderer } from './state/actions.ts';
+import { boot, isRetryingStart, refreshAi, retryStartup, setRenderer } from './state/actions.ts';
 import { aiStatus, onCallBlockChange } from './state/ai.ts';
 import { installAiGen } from './state/ai-gen.ts';
 import { applySettings, watchSystemTheme } from './state/preferences.ts';
@@ -159,7 +159,13 @@ function draw(): void {
       h('h2', null, t(tooMany ? 'app.tooMany.title' : 'app.fatal.title')),
       h('p', null, tooMany ? t('app.tooMany.body') : S.fatal ? errorText(S.fatal) : t('app.fatal.body')),
       tooMany ? null : h('p', { class: 'dim' }, t('app.fatal.body')),
-      h('div', { class: 'acts' }, h('button', { class: 'btn primary', type: 'button', onclick: () => window.location.reload() }, t('app.reload')))),
+      h('div', { class: 'acts' },
+        // v1.3 (A6): try again without a full reload; the reload stays for a page that is really stale
+        h('button', {
+          class: 'btn primary', type: 'button', disabled: isRetryingStart(), 'aria-busy': isRetryingStart() ? 'true' : null,
+          onclick: () => void retryStartup(),
+        }, t(isRetryingStart() ? 'app.fatal.retrying' : 'app.fatal.retry')),
+        h('button', { class: 'btn', type: 'button', onclick: () => window.location.reload() }, t('app.reload')))),
       // The page's last line, as on every page (the version part only when /api/info was read)
       githubLine()));
     document.title = t('app.name');

@@ -70,6 +70,24 @@ pub(super) fn bank_snapshot(c: &Connection, results: &[AttemptResult]) -> Result
 }
 
 /// Keeps only the newest `keep` exams of `user`; the detail rows of the pruned ones go with them. Other users are not touched.
+/// v1.3: the id of the record of `user` saved from the session `key` that started at `started_at` (unix seconds as text) with
+/// the given kind, if one exists. The idempotent save of `POST /api/attempt` looks here inside its transaction, so a retry
+/// after a lost answer writes nothing. Served by `idx_attempts_session`.
+pub(super) fn find_attempt(
+    c: &Connection,
+    user: i64,
+    key: &str,
+    started_at: &str,
+    kind: &str,
+) -> Result<Option<i64>, DbError> {
+    Ok(c.query_row(
+        "SELECT id FROM attempts WHERE user_id=?1 AND session_key=?2 AND started_at=?3 AND kind=?4 ORDER BY id LIMIT 1",
+        params![user, key, started_at, kind],
+        |r| r.get(0),
+    )
+    .optional()?)
+}
+
 pub(super) fn prune(c: &Connection, user: i64, keep: i64) -> Result<(), DbError> {
     let cutoff: Option<i64> = c
         .query_row(

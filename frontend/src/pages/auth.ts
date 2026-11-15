@@ -14,6 +14,7 @@ import { errorText } from '../i18n/errors.ts';
 import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { authEpoch, render, saveNewPassword, signIn, signOut } from '../state/actions.ts';
 import { applySettings } from '../state/preferences.ts';
+import { paths } from '../state/storage-keys.ts';
 import { S } from '../state/store.ts';
 import type { UiLang } from '../types/api.ts';
 import { h, keepInView, type Child } from '../utils/dom.ts';
@@ -26,7 +27,24 @@ const LANG_NATIVE: Record<UiLang, MsgKey> = {
 
 // ---------------------------------------------------------------- page-local state (survives re-renders)
 
-const signin = { username: '', password: '', shown: false, busy: false, error: null as Child | null };
+const signin = { username: '', password: '', shown: false, busy: false, error: null as Child | null, remember: rememberChoice() };
+
+/** The "Keep me signed in" tick of this browser (ticked when nothing was saved; private windows may refuse storage) */
+function rememberChoice(): boolean {
+  try {
+    return window.localStorage.getItem(paths.remember) !== '0';
+  } catch {
+    return true;
+  }
+}
+
+function saveRemember(on: boolean): void {
+  try {
+    window.localStorage.setItem(paths.remember, on ? '1' : '0');
+  } catch {
+    // not remembered: the box is ticked again next time
+  }
+}
 /** "Choose a new password": each field remembers its own show / hide state */
 const choose = { password: '', repeat: '', shownNew: false, shownRepeat: false, busy: false, error: null as Child | null };
 /** The field that gets the focus after the next render (an error points at the field to fix) */
@@ -105,7 +123,7 @@ async function submitSignIn(): Promise<void> {
   signin.error = null;
   render();
   try {
-    await signIn(name, signin.password);
+    await signIn(name, signin.password, signin.remember);
     // Signed in: forget what was typed
     signin.password = '';
     signin.shown = false;
@@ -150,13 +168,23 @@ export function renderSignIn(): HTMLElement {
       signin.shown = v;
     },
   });
-  const note = S.authNote === 'signedOut' ? 'auth.note.signedOut' : S.authNote === 'expired' ? 'auth.note.expired' : null;
+  const note = S.authNote === 'signedOut' ? 'auth.note.signedOut' : S.authNote === 'expired' ? 'auth.expired' : null;
   // First start (an administrator still has the default password): say how to sign in instead of "ask an administrator",
   // with the account's real name (it may have been renamed). It always shows, also under an error (a mistyped password, a
   // lock): whoever got it wrong needs the instruction most. Only the "signed out" / "session ended" note gives way to an error.
   const firstRun = S.defaultAdmin
     ? h('div', { class: 'callout info auth-msg', role: 'note' }, h('p', null, t('auth.firstRun', { name: S.defaultAdmin })))
     : null;
+  const rememberBox = h('input', {
+    id: 'auth-remember', type: 'checkbox', checked: signin.remember, 'aria-describedby': 'auth-remember-h',
+    onchange: () => {
+      signin.remember = rememberBox.checked;
+      saveRemember(signin.remember);
+    },
+  });
+  const rememberRow = h('div', { class: 'auth-remember' },
+    h('label', { class: 'auth-remember-l', for: 'auth-remember' }, rememberBox, h('span', null, t('auth.remember'))),
+    h('p', { class: 'auth-remember-h', id: 'auth-remember-h' }, t('auth.remember.hint')));
   const submit = h('button', { class: 'btn primary big auth-submit', type: 'submit', disabled: signin.busy }, t(signin.busy ? 'auth.signin.busy' : 'auth.signin.submit'));
   keepInView(user.input, submit);
   keepInView(pass.input, submit);
@@ -167,7 +195,7 @@ export function renderSignIn(): HTMLElement {
       void submitSignIn();
     },
   },
-  user.el, pass.el, submit);
+  user.el, pass.el, rememberRow, submit);
 
   const root = card(t('auth.signin.title'), t('auth.signin.lead'),
     note && !signin.error ? h('div', { class: 'callout ' + (S.authNote === 'expired' ? 'warn' : 'info') + ' auth-msg', role: 'status' }, h('p', null, t(note))) : null,

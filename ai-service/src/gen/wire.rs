@@ -15,6 +15,8 @@ pub enum Reason {
     TooFew(i64),
     /// `create` only: no such user (or stamp), or disabled
     User,
+    /// `corpus` only: more questions than the hard total of 20 000
+    TooMany,
 }
 
 /// A good answer is parsed; a refusal is a `Reason`; the rest is unreadable.
@@ -35,6 +37,7 @@ fn refusal(v: &Value) -> Option<Reason> {
         "notFound" => Some(Reason::NotFound),
         "aiSource" => Some(Reason::AiSource),
         "user" => Some(Reason::User),
+        "tooMany" => Some(Reason::TooMany),
         "tooFew" => Some(Reason::TooFew(o.get("have")?.as_i64()?)),
         _ => None,
     }
@@ -205,6 +208,139 @@ pub fn parse_source(bytes: &[u8]) -> Result<SourceReply, WireError> {
     })
 }
 
+/// One page of `/internal/ai/gen/corpus` (v1.3): every active single / multiple-choice question of the source, in source
+/// order, in all the languages each has. `banks`, `strata` and `previous` are only on the first page.
+#[derive(Debug, Clone)]
+pub struct CorpusPage {
+    pub user_id: i64,
+    pub total: i64,
+    /// The offset of the next page, `None` on the last
+    pub next: Option<i64>,
+    pub banks: Vec<(i64, String)>,
+    pub strata: Vec<Stratum>,
+    pub previous: Vec<Tri>,
+    pub items: Vec<SeedFull>,
+}
+
+/// The correct options of a corpus item: letters (`"A"`) as in the seeds answer, or 0-based positions.
+fn corpus_answer(v: &Value, n_options: usize) -> Option<Vec<u8>> {
+    let mut pos: Vec<u8> = Vec::new();
+    for a in v.as_array()? {
+        let p = match a {
+            Value::String(s) if s.len() == 1 && s.as_bytes()[0].is_ascii_uppercase() => {
+                s.as_bytes()[0] - b'A'
+            }
+            Value::Number(n) => u8::try_from(n.as_u64()?).ok()?,
+            _ => return None,
+        };
+        if usize::from(p) >= n_options || pos.contains(&p) {
+            return None;
+        }
+        pos.push(p);
+    }
+    pos.sort_unstable();
+    Some(pos)
+}
+
+pub fn parse_corpus(bytes: &[u8]) -> Result<CorpusPage, WireError> {
+    let m = ok_object(bytes)?;
+    let user_id = m
+        .get("user")
+        .and_then(|u| u.get("id"))
+        .and_then(Value::as_i64)
+        .filter(|n| *n > 0)
+        .ok_or(WireError::Unreadable)?;
+    let total = m
+        .get("total")
+        .and_then(Value::as_i64)
+        .filter(|n| *n >= 0)
+        .ok_or(WireError::Unreadable)?;
+    let next = match m.get("next") {
+        Some(Value::Null) | None => None,
+        Some(v) => Some(v.as_i64().filter(|n| *n > 0).ok_or(WireError::Unreadable)?),
+    };
+    let mut banks = Vec::new();
+    for b in m
+        .get("banks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match (
+            b.get("id").and_then(Value::as_i64),
+            b.get("name").and_then(Value::as_str),
+        ) {
+            (Some(id), Some(n)) => banks.push((id, n.to_string())),
+            _ => return Err(WireError::Unreadable),
+        }
+    }
+    let mut strata = Vec::new();
+    for s in m
+        .get("strata")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        match (
+            s.get("bank").and_then(Value::as_i64),
+            s.get("sheet").and_then(Value::as_str),
+            s.get("n").and_then(Value::as_u64),
+            s.get("multi").and_then(Value::as_u64),
+        ) {
+            (Some(bank), Some(sheet), Some(n), Some(multi)) => strata.push(Stratum {
+                bank,
+                sheet: sheet.to_string(),
+                n: n as usize,
+                multi: multi as usize,
+            }),
+            _ => return Err(WireError::Unreadable),
+        }
+    }
+    let previous = m
+        .get("previous")
+        .and_then(Value::as_array)
+        .map(|a| a.iter().map(tri).collect())
+        .unwrap_or_default();
+    let mut items = Vec::new();
+    for i in m
+        .get("items")
+        .and_then(Value::as_array)
+        .ok_or(WireError::Unreadable)?
+    {
+        let id = i.get("id").and_then(Value::as_str);
+        let sheet = i.get("sheet").and_then(Value::as_str);
+        let kind = i.get("kind").and_then(Value::as_str).and_then(kind_of);
+        let opts = i.get("options").and_then(Value::as_array);
+        let (Some(id), Some(sheet), Some(kind), Some(opts)) = (id, sheet, kind, opts) else {
+            return Err(WireError::Unreadable);
+        };
+        let options: Vec<Tri> = opts.iter().map(tri).collect();
+        let answer = i
+            .get("answer")
+            .and_then(|a| corpus_answer(a, options.len()))
+            .ok_or(WireError::Unreadable)?;
+        items.push(SeedFull {
+            id: id.to_string(),
+            sheet: sheet.to_string(),
+            kind,
+            stem: tri(i.get("stem").unwrap_or(&Value::Null)),
+            options,
+            answer,
+            explanation: tri(i.get("explanation").unwrap_or(&Value::Null)),
+            diff: diff_of(i.get("diff")),
+        });
+    }
+    Ok(CorpusPage {
+        user_id,
+        total,
+        next,
+        banks,
+        strata,
+        previous,
+        items,
+    })
+}
+
 /// A good `/internal/ai/gen/seeds` answer (API-I2): the seeds by id.
 pub fn parse_seeds(bytes: &[u8]) -> Result<Vec<SeedFull>, WireError> {
     let m = ok_object(bytes)?;
@@ -324,6 +460,63 @@ mod tests {
             Err(WireError::Unreadable)
         );
         assert_eq!(parse_import_check(b"not json"), Err(WireError::Unreadable));
+    }
+
+    #[test]
+    fn a_corpus_page_keeps_absent_languages_empty_and_reads_both_answer_forms() {
+        let page = parse_corpus(&b(json!({
+            "ok": true, "user": {"id": 7}, "total": 3, "next": 2,
+            "banks": [{"id": 3, "name": "Kitchen basics"}],
+            "strata": [{"bank": 3, "sheet": "Ovens", "n": 3, "multi": 1}],
+            "previous": [{"en": "an old stem"}],
+            "items": [
+                {"id": "ab12", "sheet": "Ovens", "kind": "single",
+                 "stem": {"en": "Which tool?", "zh": "哪个工具？"},
+                 "options": [{"en": "a"}, {"en": "b"}], "answer": [1],
+                 "explanation": {"en": "because"}, "diff": null},
+                {"id": "cd34", "sheet": "Ovens", "kind": "multi",
+                 "stem": {"ja": "どれ？"},
+                 "options": [{"ja": "a"}, {"ja": "b"}, {"ja": "c"}], "answer": ["C", "A"],
+                 "explanation": {}, "diff": "hard"}
+            ]
+        })))
+        .expect("page");
+        assert_eq!((page.user_id, page.total, page.next), (7, 3, Some(2)));
+        assert_eq!(page.strata[0].n, 3);
+        assert_eq!(page.previous[0].en, "an old stem");
+        assert_eq!(page.items[0].answer, vec![1]);
+        assert_eq!(
+            page.items[0].stem.ja, "",
+            "an absent language is an empty text"
+        );
+        assert_eq!(page.items[1].answer, vec![0, 2]);
+        assert_eq!(page.items[1].diff, Some(Diff::Hard));
+        // a later page has no banks / strata
+        let last = parse_corpus(&b(json!({
+            "ok": true, "user": {"id": 7}, "total": 3, "next": null, "items": []
+        })))
+        .expect("last");
+        assert!(last.next.is_none() && last.banks.is_empty() && last.items.is_empty());
+    }
+
+    #[test]
+    fn a_corpus_page_with_a_bad_answer_or_the_too_many_refusal() {
+        for bad in [
+            json!([5]),
+            json!(["a"]),
+            json!([0, 0]),
+            json!("A"),
+            json!([1.5]),
+        ] {
+            let v = json!({"ok": true, "user": {"id": 7}, "total": 1, "next": null, "items": [
+                {"id": "x", "sheet": "S", "kind": "single", "stem": {}, "options": [{}, {}],
+                 "answer": bad, "explanation": {}}]});
+            assert_eq!(parse_corpus(&b(v)).map(|_| ()), Err(WireError::Unreadable));
+        }
+        assert_eq!(
+            parse_corpus(&b(json!({"ok": false, "reason": "tooMany"}))).map(|_| ()),
+            Err(WireError::Refused(Reason::TooMany))
+        );
     }
 
     #[test]

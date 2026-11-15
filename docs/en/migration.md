@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v1.2 → v1.3** (section 000): a new `docker-compose.yml` is recommended (a `tunnel` network and the optional `cloudflared` service, for real client addresses); the main database moves to schema 8 and the AI database to schema 7, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back (section 000.4).
 > - **v0.9.1 → v1.0** (section 0): no new `docker-compose.yml`; the AI database moves to schema 4 after its backup copy `backups/xexam-ai-schema3-<date-time>.db` is written; the main database does not change. Rolling back to v0.9.1 needs that copy restored (section 0.4).
 > - **v0.9 → v0.9.1** (no section of its own): nothing to do besides `docker compose pull` and `docker compose up -d`; no database change, no new setting and no new `docker-compose.yml`. Rolling back to v0.9 is changing `:latest` to `:v0.9` for the three images and running `docker compose up -d`; the databases stay as they are.
 > - **v0.8 → v0.9** (section 0b): no new `docker-compose.yml`; the main database moves to schema v6 and the AI database to schema 3, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back. (This section is numbered 0b so that the numbers of the others, which other documents link to, stay as they are.)
@@ -20,6 +21,44 @@
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
 
+## 000. Upgrading from v1.2 to v1.3
+
+This section is numbered 000 because it is the newest one. The older sections keep their numbers.
+
+### 000.1 What changes
+
+- **The main database** moves from schema 7 to **schema 8**, once, on the first start of the new backend, after the copy `backups/xexam-schema7-<date-time>.db`. The step is additive: sessions get a start time, a remember flag, an address and a device; users get `last_active_at` and the four sign-in info columns; the tables `activity_log` and `system_settings` are new. Every session is given the upgrade time as its start, so an administrator is signed out at the latest 7 days after the upgrade.
+- **The AI database** moves from schema 6 to **schema 7**, once, on the first start of the new AI service, after the copy `backups/xexam-ai-schema6-<date-time>.db` in the AI volume. It also adds three nullable columns to the messages for the thinking of AI Chat answers (`reasoning`, `reasoning_ms`, `reasoning_truncated`; older answers have none and show no thinking block). Your provider settings and keys become **connection 1** (named after the host of your address; the keys are copied, not moved), the model of the settings becomes the **default** model, and AI+ keeps its on / off state, so every feature keeps using the same model as before. **AI hint** and **AI analysis** become one permission (**AI hint + analysis**): a user who had only one of the two keeps both. Chats become trees (each message points to the one before it, the last message is the shown branch). The old settings columns and the `secrets` table stay in the file unused.
+- **Limits**: **import questions per file** stays as it was unless it was the old ceiling of 50, which becomes 100; **memory length** (1000 tokens) and **memories per user** (50) move to 200 and 30 only when they still have the old default values. Values you changed are never lowered. New limits start at their defaults (administrators exempt from request caps: on; sharing: on, 180 days; at most 8 generation parts; summary items 40; daily token budget: off).
+- **Sign-in**: sessions follow the new rules (section 5.1 of [security.md](security.md)). An administrator who was idle for more than 24 hours has to sign in again; users keep 30 days of use. Nobody is signed out by the upgrade itself.
+- **Real client address and location**: the new `docker-compose.yml` makes Nginx trust the bundled `cloudflared` container (default `XEXAM_TRUSTED_PROXIES=172.31.254.2`). With the old compose file nothing is trusted: everything works, but the IP column shows the address Nginx sees. If `cloudflared` runs on the host or on another machine, see section 3.5 of [deployment.md](deployment.md). The **sign-in IP and location eye** is closed (hidden) after the upgrade.
+- **Removed**: the AI settings routes `POST /api/ai/admin/verify` and `POST /api/ai/admin/models` (replaced by the connection and model routes) and the old settings screen. Open browser tabs of v1.2 show an error until they are reloaded.
+
+### 000.2 Upgrade
+
+1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)).
+2. **Get the new `docker-compose.yml`** (recommended; it adds the `tunnel` network, the pinned `public` subnet, the Nginx variables and the `cloudflared` profile), keep your `.env`, then `docker compose pull` and `docker compose up -d`. Do not use `down -v`.
+3. To use the bundled tunnel: put `TUNNEL_TOKEN` in `.env`, set the public hostname of the tunnel to `http://frontend:8080` in the Cloudflare dashboard, and start with `docker compose --profile tunnel up -d`. Stop any `cloudflared` that ran elsewhere.
+4. Optional, for regions and cities: in Cloudflare turn on **Add visitor location headers** (Rules > Managed Transforms); the country needs nothing.
+
+### 000.3 Checks after the upgrade
+
+- `/api/info` and the **About** page show `1.3`; the log has `Upgraded the database to schema 8` (backend) and `Upgraded the AI database to schema 7` (ai-service), each with the copy it wrote.
+- **AI settings** shows one connection with its models, the default model and the same features as before; AI Chat shows the old chats with their messages.
+- Sign in as an administrator: **Users** shows **Last active**; the **Activity** tab of the System log has a `system.migrate` entry.
+- Behind the tunnel, open the sign-in info eye in **Users** and sign in again: the entry shows your public address and, with the location headers, your country; without the tunnel it shows the connecting address.
+
+### 000.4 Rollback to v1.2
+
+- **Main database**: nothing to restore. A v1.2 backend opens the schema-8 file as it is (the new columns have defaults, the new tables are ignored). Restoring `xexam-schema7-<date-time>.db` is optional and loses what was written since.
+- **AI database**: stop the stack, put `xexam-ai-schema6-<date-time>.db` back as the AI database (`/data/xexam-ai.db` in the volume `xexam_ai_data`), change the three images to `:v1.2.1` and start. What was written under v1.3 in the AI database (chats and their branches, connections 2 and up, shared answers) is lost. v1.2 refuses a schema-7 file, so nothing is damaged silently; there is no way down from schema 7, because a branched chat cannot be flattened.
+- v1.3 does not delete the pre-migration copies; remove old ones by hand when you no longer need them.
+
+### 000.5 What has been tested
+
+- Backend 548 tests, frontend 784, AI service 1044, all green, including: schema 7 to 8 and 6 to 7 on files with data (the old and the new file have the same tables), a v1.2-style session on a schema-8 file, the sign-in info eye (hidden: nothing new is recorded and saved values are not returned; open: shown, from trusted headers only; the explicit **Clear records** empties users, sessions and the log), the real-address matrix of Nginx, and the keys-never-leave rule over both services.
+- Not covered by the release checks: a real provider, a real Cloudflare tunnel and the location headers; the phone layouts of the new pages were not walked on a real device.
+
 ## 00. Upgrading from v1.0 to v1.1
 
 This section is numbered 00 because it is the newest one. The older sections keep their numbers.
@@ -28,7 +67,7 @@ This section is numbered 00 because it is the newest one. The older sections kee
 
 - **The main database** moves from schema 6 to **schema 7**, once, on the first start of the new backend. It gets four columns: the **time limit** of an exam (`attempts.time_limit`, NULL for untimed exams and practice), how an exam ended (`attempts.ended`: submitted by hand, or by the countdown), and two JSON fields for AI-generated banks (`banks.ai_job`, `banks.ai_meta`). Every record saved before v1.1 stays as it is and is still scored the v1.0 way.
 - **The AI database** moves from schema 4 to **schema 6**, once, on the first start of the new AI service (the schema 5 and schema 6 steps run in one transaction). It gets the bookkeeping of generation and import jobs, the day on which a generation or import was charged to the quota, the per-user **feature permissions** (`users.features_off`, all six features allowed by default), and the new limits: **generation calls per job (15)**, **import calls per job (25)**, the **import size (20 MB)** and the **import question limit (50)**. Your AI chats, memories, keys, settings and usage rows stay.
-- **Features**: after the upgrade every user with the AI+ feature may use all six features (chat, hint, explanation, summary, AI generation and AI import), subject to the other rules (pause, the request limits, the daily generation quota). Use **AI settings › AI+ users** to switch any of them off for one user.
+- **Features**: after the upgrade every user with the AI+ feature may use all six features (chat, hint, analysis, summary, AI generation and AI import), subject to the other rules (pause, the request limits, the daily generation quota). Use **AI settings › AI+ users** to switch any of them off for one user.
 - **Lengths in tokens**: the answer length (`replyMaxTokens`, default 3000), the memory length (`memoryTokens`, default 1000) and the length of one generation or import call (`genCallTokens`, default 20000) are counted in tokens from v1.1 on. A value still at its old default moves to the new default; any other value you set is multiplied by 1.5 once, so the text you allow stays about the same.
 - **Exams**: every exam now records whether it was submitted by hand or ended by the countdown, and a question left unanswered counts as **not completed**, not wrong. The rule applies to every exam, timed or not. Practice is unchanged.
 - **Banks**: the bank management page has checkboxes, a toolbar for **Delete selected** and **AI generate**, and a separate **AI import** card. Nothing in your existing banks changes. AI-generated banks are shared like any new bank (`AI_BANKS_AUTO_SHARE`, default on).
@@ -100,7 +139,7 @@ This section is numbered 0b so that the numbers of sections 1 to 12, which other
 
 ### 0b.1 What changes
 
-v0.9 adds the AI help for studying (AI hint and AI explanation in practice, AI analysis on result pages, AI summary of a record; section 5.1, 6.1 and 7.1 of [usage.md](usage.md)). It needs **no new `docker-compose.yml`**: the same three images with the new tag, the same volumes and networks, no new setting.
+v0.9 adds the AI help for studying (AI hint and AI analysis in practice, AI analysis on result pages, AI summary of a record; section 5.1, 6.1 and 7.1 of [usage.md](usage.md)). It needs **no new `docker-compose.yml`**: the same three images with the new tag, the same volumes and networks, no new setting.
 
 | | v0.8 | v0.9 |
 |---|---|---|
@@ -124,7 +163,7 @@ What else you will notice:
 
 - With the **AI+ feature**: the AI buttons and icons in practice, **AI analysis** on result pages and on a record's detail page, **AI summary** on Study records and Home, and the new chats of practices, exams and summaries in AI Chat. Users without the feature see nothing new. Users whose AI is paused or unavailable see the controls greyed out. Nothing has to be set up: the AI+ feature, the provider settings and the users' switches are as they were.
 - **Records made before v0.9** have no session key. Their first AI analysis on the detail page starts a chat of its own for the record (usage.md, section 16.1); AI summaries work for them like for any record, except for records so old that they kept no per-question details.
-- AI usage statistics get a **By feature** table (AI Chat, AI hint, AI explanation, AI summary).
+- AI usage statistics get a **By feature** table (AI Chat, AI hint, AI analysis, AI summary).
 - **The chat limits count the new chats**: every practice, exam and summarised record is a chat, and a request is two messages, so a very long practice uses up the default 400 messages per chat after about 200 requests (usage.md, section 17).
 
 ### 0b.2 Upgrade
@@ -194,7 +233,7 @@ With synthetic data only (`backend/tests/v09_ai_study.rs`, `db_golden.rs`, `ai-s
 - A schema-5 database written by v0.8 migrates to schema 6 with exactly one `xexam-schema5-…` backup (`migrate_check.py`, case J); the old records have an empty key and start time; the result has the same `sqlite_master` as a new database; opening it again writes nothing. Older databases (schema 3 and 4) go to schema 6 in one step with one backup named after the schema they had.
 - An AI database of schema 1 or 2 migrates to schema 3 with one `xexam-ai-schema<N>-…` copy and ends with the same `sqlite_master` as a new one; the saved-answer lookups use their indexes (no temporary sort); old usage rows read as AI Chat; the retention sweep deletes in small batches so that other writers are let in between them.
 - The v0.8 backend opens and writes the schema-6 database, and the v0.8 ai-service refuses schema 3 and leaves the file unchanged (the rollback above).
-- The full stack with the three images and a made-up provider (`stack_check.py`): hints, explanations and analyses with their saved answers and `Regenerate`, a hint that gives the answer away being withheld, a summary of at most 70 wrong answers, the one-answer-at-a-time refusal with its running answer, the access rules for users without the AI+ feature and for paused users, the chats of sessions and records, and no question, answer, session key or record time in any container's log (Nginx's access log included). Headless browser walks check the controls, the windows and the phone layout.
+- The full stack with the three images and a made-up provider (`stack_check.py`): hints and analyses with their saved answers and `Regenerate`, a hint that gives the answer away being withheld, a summary of at most 70 wrong answers, the one-answer-at-a-time refusal with its running answer, the access rules for users without the AI+ feature and for paused users, the chats of sessions and records, and no question, answer, session key or record time in any container's log (Nginx's access log included). Headless browser walks check the controls, the windows and the phone layout.
 
 Not tested: a migration of **your own** databases, and real AI providers (CI uses a made-up one). Try the upgrade on a copy first if you want to be sure.
 

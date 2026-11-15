@@ -11,7 +11,7 @@
   stable code and their texts equal the backend's constants; the two answer routes stream without buffering; methods,
   body size and the per-session start limit; JSON 502 when the AI service is down; /internal/ (the auth step, the
   token routes and ai-service's heartbeat) and /_ai_auth are 404 from outside, also through a path with ".." in it;
-  the admin's Test (/api/ai/admin/verify) has its own location that is checked the same way and waits longer than the
+  the admin's Test (/api/ai/admin/connections/test) has its own location that is checked the same way and waits longer than the
   90 s of the other AI routes (an answer after 95 s still arrives); the three AI proxy locations carry the same auth,
   header and error lines and the upstream http://ai-service:8766 (read from nginx -T);
   AI (v1.0): a 429 JSON answer of ai-service (the per-user call cap, code ai.callLimit) reaches the browser unchanged on
@@ -23,6 +23,15 @@
   request; an unauthenticated 20 MiB POST is answered 401 by the auth step and its body never reaches the AI service; a
   good session reaches the AI service with the identity and without Cookie / Authorization / forwarding headers; a body of
   20 MiB + 1 is 413 JSON with the code ai.import.tooLarge; GET on the route is 403 or 405; other methods are refused.
+
+v1.3 (N1): the header blocks of the proxied locations live in /etc/nginx/snippets/{api,ai}-proxy.conf and every proxied
+  location includes one (checks follow the includes); the real client address (XEXAM_TRUSTED_PROXIES / XEXAM_REAL_IP_HEADER,
+  rendered at start by 15-xexam-realip.sh): an untrusted peer with a forged CF-Connecting-IP keeps its own address, a trusted
+  peer's header is believed, an invalid setting trusts nobody (and warns); X-Real-IP / X-Geo-Country / X-Geo-Region /
+  X-Geo-City always overwritten, location headers forwarded only from a trusted peer; the login rate-limit zone; the
+  streaming regex with regenerate and edit; the five admin connection / model routes with the 100 s read timeout and no
+  /api/ai/admin/connections/test location; gzip on JSON and not on the event stream; ETag / If-None-Match / 304 pass through; coded
+  error bodies (net.tooLarge, net.backendDown).
 
 Usage: python -I tests/integration/nginx_check.py <image, default xexam-frontend:test> [port, default 18080]
 Uses only Docker and the standard library; the containers and the network carry the prefix xexam-nginxcheck- plus a random
@@ -47,13 +56,16 @@ NET = 'xexam-nginxcheck-net-' + RUN
 BACK = 'xexam-nginxcheck-backend-' + RUN
 AI = 'xexam-nginxcheck-ai-' + RUN
 WEB = 'xexam-nginxcheck-web-' + RUN
+WEB2 = 'xexam-nginxcheck-webt-' + RUN      # trusts the test client's address (real-IP matrix)
+WEB3 = 'xexam-nginxcheck-webi-' + RUN      # invalid XEXAM_TRUSTED_PROXIES (fail closed)
 
 # One fake for both upstreams. ECHO_NAME / ECHO_PORT choose the role; every answer carries X-Echo-Name, every request is
 # printed (method and path) to stdout.
 #  backend: GET /internal/ai/auth answers by the session cookie (good... -> 204 + an identity built from the X-Original-*
 #           headers; pw / guard -> 403 + X-Xexam-Deny; down -> 502; anything else -> 401 + X-Xexam-Deny: signin)
-#  ai-service: POST /api/ai/send, /api/ai/retry, /api/ai/study/ask and /api/ai/summary/ask stream text/event-stream (an "echo" event with what arrived, then one
-#           "delta" event per second for 4 s); POST /api/ai/admin/verify?delay=N waits N seconds before its
+#           GET /api/etag answers 200 with ETag "v1" and 304 when If-None-Match is "v1"
+#  ai-service: POST /api/ai/send, retry, regenerate, edit, study/ask and summary/ask stream text/event-stream (an "echo" event with what arrived, then one
+#           "delta" event per second for 4 s); POST /api/ai/admin/connections/test?delay=N waits N seconds before its
 #           answer; a POST whose query holds capped=1 answers 429 JSON with Retry-After: 17 (v1.0 per-user caps);
 #           everything else answers a JSON echo of the request
 ECHO = r'''
@@ -67,10 +79,10 @@ class H(http.server.BaseHTTPRequestHandler):
         self.send_header("X-Echo-Name", NAME)
         for k, v in headers:
             self.send_header(k, v)
-        if status != 204:
+        if status not in (204, 304):
             self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        if body and status != 204:
+        if body and status not in (204, 304):
             self.wfile.write(body)
     def _do(self):
         print(self.command, self.path, flush=True)
@@ -95,7 +107,11 @@ class H(http.server.BaseHTTPRequestHandler):
             cap = json.dumps({"error": "made-up cap text", "code": "ai.callLimit", "limit": 5, "cap": "minute",
                               "retryAt": 1790000000, "retryAfter": 17})
             return self._send(429, cap.encode(), [("Content-Type", "application/json"), ("Retry-After", "17"), ("Cache-Control", "no-store")])
-        if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry", "/api/ai/study/ask", "/api/ai/summary/ask"):
+        if NAME == "backend" and self.command == "GET" and self.path.startswith("/api/etag"):
+            if self.headers.get("If-None-Match") == '"v1"':
+                return self._send(304, headers=[("ETag", '"v1"')])
+            return self._send(200, b'{"etag": "v1"}', [("ETag", '"v1"'), ("Content-Type", "application/json")])
+        if NAME == "ai-service" and self.command == "POST" and self.path in ("/api/ai/send", "/api/ai/retry", "/api/ai/regenerate", "/api/ai/edit", "/api/ai/study/ask", "/api/ai/summary/ask"):
             self.send_response(200)
             self.send_header("X-Echo-Name", NAME)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -117,7 +133,7 @@ class H(http.server.BaseHTTPRequestHandler):
             except OSError:
                 self.close_connection = True
             return
-        if NAME == "ai-service" and self.command == "POST" and self.path.startswith("/api/ai/admin/verify?"):
+        if NAME == "ai-service" and self.command == "POST" and self.path.startswith("/api/ai/admin/connections/test?"):
             delay = urllib.parse.parse_qs(self.path.split("?", 1)[1]).get("delay", ["0"])[0]
             time.sleep(float(delay))
         self._send(200, json.dumps(seen).encode(), [("Content-Type", "application/json")])
@@ -145,7 +161,7 @@ def sh(*a, check=True):
 
 
 def cleanup():
-    for c in (WEB, BACK, AI):
+    for c in (WEB, WEB2, WEB3, BACK, AI):
         sh('docker', 'rm', '-f', c, check=False)
     sh('docker', 'network', 'rm', NET, check=False)
 
@@ -200,6 +216,17 @@ def jbody(b):
         return None
 
 
+SNIPPETS = {}
+
+
+def snippet_map(conf):
+    """The files under /etc/nginx/snippets/ in an nginx -T dump: {'ai-proxy.conf': [lines]}."""
+    out = {}
+    for m in re.finditer(r'# configuration file /etc/nginx/snippets/([\w.\-]+):\n(.*?)(?=\n# configuration file |\Z)', conf, re.S):
+        out[m.group(1)] = [' '.join(line.split('#', 1)[0].split()) for line in m.group(2).splitlines()]
+    return {k: [x for x in v if x] for k, v in out.items()}
+
+
 def location_block(conf, spec):
     """The directives of `location <spec> { ... }` in an nginx -T dump, one whitespace-normalised line each, comments
     removed, sorted; None when the location is missing."""
@@ -215,7 +242,12 @@ def location_block(conf, spec):
             depth -= 1
             if depth == 0:
                 lines = (' '.join(line.split('#', 1)[0].split()) for line in conf[start + 1:k].splitlines())
-                return sorted(line for line in lines if line)
+                lines = [line for line in lines if line]
+                out = []
+                for line in lines:
+                    m = re.fullmatch(r'include snippets/([\w.\-]+);', line)
+                    out.extend(SNIPPETS[m.group(1)] if m else [line])
+                return sorted(out)
     return None
 
 
@@ -243,12 +275,39 @@ try:
     ok('--with-http_auth_request_module' in (r.stdout + r.stderr), 'nginx -V lists --with-http_auth_request_module')
 
     # -- The three AI proxy locations: the same auth step, header rules and error pages (from the image's nginx -T) --
-    r = sh('docker', 'run', '--rm', '--entrypoint', 'nginx', IMAGE, '-T', check=False)
+    # (the real-IP file /tmp/xexam-realip.conf is rendered by the start-up script, so run it before nginx -T)
+    r = sh('docker', 'run', '--rm', '--tmpfs', '/tmp', '--entrypoint', 'sh', IMAGE, '-c',
+           '/docker-entrypoint.d/15-xexam-realip.sh && nginx -T', check=False)
+    SNIPPETS.update(snippet_map(r.stdout))
+    ok(set(SNIPPETS) >= {'ai-proxy.conf', 'api-proxy.conf'}, 'nginx -T lists the snippets api-proxy.conf and ai-proxy.conf. Found %r' % sorted(SNIPPETS))
+    STREAM_SPEC = '~ ^/api/ai/(send|retry|regenerate|edit|study/ask|summary/ask)$'
+    ADMIN_SPEC = '~ ^/api/ai/admin/(connections/save|connections/test|models/pick|models/test|enable)$'
     ai_prefix = location_block(r.stdout, '/api/ai/')
-    ai_stream = location_block(r.stdout, '~ ^/api/ai/(send|retry|study/ask|summary/ask)$')
-    ai_verify = location_block(r.stdout, '= /api/ai/admin/verify')
+    ai_stream = location_block(r.stdout, STREAM_SPEC)
+    ai_verify = location_block(r.stdout, ADMIN_SPEC)
     ok(None not in (ai_prefix, ai_stream, ai_verify),
-       'nginx -T shows the locations /api/ai/, ~ ^/api/ai/(send|retry|study/ask|summary/ask)$ and = /api/ai/admin/verify')
+       'nginx -T shows the locations /api/ai/, %s and %s' % (STREAM_SPEC, ADMIN_SPEC))
+    ok('location = /api/ai/admin/@@verify' not in r.stdout, 'The old verify location is gone')
+    # every proxied location includes its snippet (the snippet files are the only place of the header block)
+    conf_text = r.stdout
+    for spec, snip in (('/api/ai/', 'ai-proxy.conf'), ('= /api/ai/import/upload', 'ai-proxy.conf'), (STREAM_SPEC, 'ai-proxy.conf'),
+                       (ADMIN_SPEC, 'ai-proxy.conf'), ('/api/', 'api-proxy.conf'), ('= /api/upload', 'api-proxy.conf'),
+                       ('= /api/auth/login', 'api-proxy.conf')):
+        i = conf_text.index('location %s {' % spec)
+        body = conf_text[i:conf_text.index('\n        }', i)]
+        ok('include snippets/%s;' % snip in body and 'proxy_set_header X-Real-IP' not in body,
+           'Location %s includes snippets/%s and carries no header lines of its own' % (spec, snip))
+    ok(all('proxy_set_header X-Real-IP $remote_addr;' in SNIPPETS[k] for k in SNIPPETS)
+       and all('proxy_set_header %s $xexam_geo_%s;' % (h, h.split('-')[-1].lower()) in SNIPPETS['api-proxy.conf'] for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City'))
+       and not any('X-Geo' in line and 'xexam_geo' in line for line in SNIPPETS['ai-proxy.conf'])
+       and all('proxy_set_header %s "";' % h in SNIPPETS['ai-proxy.conf'] for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City')),
+       'Snippets: X-Real-IP in both, X-Geo-* set only in api-proxy.conf and blanked in ai-proxy.conf (ai-service does not use the location)')
+    ai_auth = conf_text[conf_text.index('location = /_ai_auth {'):]
+    ai_auth = ai_auth[:ai_auth.index(chr(10) + ' ' * 8 + '}')]
+    ai_auth_words = [' '.join(line.split()) for line in ai_auth.splitlines()]
+    ok('proxy_set_header X-Real-IP $remote_addr;' in ai_auth_words
+       and all('proxy_set_header %s $xexam_geo_%s;' % (h, h.split('-')[-1].lower()) in ai_auth_words for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City')),
+       '/_ai_auth overwrites X-Real-IP and X-Geo-* (a client cannot forge them on the auth step)')
     shared = ('auth_request', 'set $ai_upstream', 'proxy_pass', 'proxy_http_version', 'proxy_set_header', 'client_max_body_size',
               'limit_req zone=ai ', 'proxy_connect_timeout', 'proxy_request_buffering', 'proxy_buffering', 'proxy_intercept_errors',
               'error_page')
@@ -274,8 +333,13 @@ try:
     no_read = lambda lines: [line for line in lines if not line.startswith('proxy_read_timeout ')]
     ok(no_read(ai_verify) == no_read(ai_prefix), 'The admin Test location equals /api/ai/ except for the read timeout')
     timeouts = [[line for line in b if line.startswith('proxy_read_timeout ')] for b in (ai_prefix, ai_stream, ai_verify)]
-    ok(timeouts == [['proxy_read_timeout 90s;'], ['proxy_read_timeout 600s;'], ['proxy_read_timeout 300s;']],
-       'Read timeouts: /api/ai/ 90 s, the streaming answers 600 s, the admin Test 300 s. Actual %r' % timeouts)
+    ok(timeouts == [['proxy_read_timeout 90s;'], ['proxy_read_timeout 600s;'], ['proxy_read_timeout 100s;']],
+       'Read timeouts: /api/ai/ 90 s, the streaming answers 600 s, the admin connection / model routes 100 s. Actual %r' % timeouts)
+    admin_re = ADMIN_SPEC[2:]
+    ok(all(re.fullmatch(admin_re, p) for p in ('/api/ai/admin/connections/save', '/api/ai/admin/connections/test',
+                                               '/api/ai/admin/models/pick', '/api/ai/admin/models/test', '/api/ai/admin/enable'))
+       and not any(re.fullmatch(admin_re, p) for p in ('/api/ai/admin/@@verify', '/api/ai/admin/settings', '/api/ai/admin/models/list')),
+       'The five admin routes (save, test, pick, models test, enable) match the long-timeout location; verify and the rest do not')
 
     st, h, b = req('GET', '/healthz', host='localhost:%d' % PORT)
     ok(st == 200 and b.strip() == b'ok', '/healthz returns 200 ok')
@@ -327,8 +391,10 @@ try:
     ok(st == 200 and hh.get('x-echo-name') == 'backend', 'GET /api/info is proxied to the backend. Actual %d %r' % (st, hh.get('x-echo-name')))
     seen = json.loads(b)['headers']
     ok(seen.get('host') == 'xexam.example.com', 'Host seen by the backend = Host sent by the browser. Actual %r' % seen.get('host'))
-    for k in ('x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded', 'x-real-ip'):
+    for k in ('x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded'):
         ok(k not in seen, 'Backend does not receive %s (Nginx cleared it)' % k)
+    ok(seen.get('x-real-ip') and seen.get('x-real-ip') != '7.7.7.7',
+       'Backend receives X-Real-IP = the connecting address, not the client-sent 7.7.7.7. Actual %r' % seen.get('x-real-ip'))
     st, _, b = req('GET', '/api/info', host='192.168.1.20:8765')
     ok(json.loads(b)['headers'].get('host') == '192.168.1.20:8765', 'Host with port is also passed through unchanged')
     st, _, b = req('POST', '/api/attempt', host='localhost', headers={'Content-Type': 'application/json', 'Origin': 'https://xexam.example.com'}, body=b'{"a":1}')
@@ -345,8 +411,9 @@ try:
     seen = json.loads(b)
     sh_ = seen['headers']
     for k in ('cookie', 'authorization', 'cf-access-jwt-assertion', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
-              'forwarded', 'x-real-ip'):
+              'forwarded', 'x-geo-country', 'x-geo-region', 'x-geo-city'):
         ok(k not in sh_, 'The AI service does not receive %s' % k)
+    ok(sh_.get('x-real-ip') and sh_.get('x-real-ip') != '203.0.113.9', 'The AI service receives X-Real-IP = the connecting address. Actual %r' % sh_.get('x-real-ip'))
     ok(sh_.get('x-xexam-identity') == 'id|GET|%s|-' % host,
        'The AI service receives only the identity of the auth step (client value and client X-Original-* ignored). Actual %r' % sh_.get('x-xexam-identity'))
     ok(sh_.get('host') == host and seen['path'] == '/api/ai/status', 'Host and path reach the AI service unchanged. Actual %r %r' % (sh_.get('host'), seen['path']))
@@ -355,16 +422,17 @@ try:
 
     # The admin's Test of the AI settings has its own location (a longer read timeout) with the same auth step and the
     # same header rules
-    st, hh, b = req('POST', '/api/ai/admin/verify', host=host, headers={
+    st, hh, b = req('POST', '/api/ai/admin/connections/test', host=host, headers={
         'Cookie': 'xexam_session=good; CF_Authorization=z', 'Authorization': 'Bearer x', 'Cf-Access-Jwt-Assertion': 'y',
         'X-Xexam-Identity': 'forged', 'X-Forwarded-For': '203.0.113.9', 'Forwarded': 'for=x', 'X-Real-IP': '203.0.113.9',
         'Origin': 'https://app.example.com', 'Content-Type': 'application/json'}, body=b'{}')
     ok(st == 200 and hh.get('x-echo-name') == 'ai-service',
-       'POST /api/ai/admin/verify with a good session is answered by the AI service. Actual %d %r' % (st, hh.get('x-echo-name')))
+       'POST /api/ai/admin/connections/test with a good session is answered by the AI service. Actual %d %r' % (st, hh.get('x-echo-name')))
     seen = json.loads(b)
     for k in ('cookie', 'authorization', 'cf-access-jwt-assertion', 'x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto',
-              'forwarded', 'x-real-ip'):
+              'forwarded'):
         ok(k not in seen['headers'], 'The AI service does not receive %s on the admin Test' % k)
+    ok(seen['headers'].get('x-real-ip') not in (None, '203.0.113.9'), 'The admin Test carries X-Real-IP = the connecting address')
     ok(seen['headers'].get('x-xexam-identity') == 'id|POST|%s|https://app.example.com' % host and seen['body_len'] == 2,
        'The admin Test carries the identity of the auth step and its body. Actual %r' % seen['headers'].get('x-xexam-identity'))
 
@@ -376,7 +444,7 @@ try:
     def slow_verify():
         t = time.time()
         try:
-            slow['r'] = req('POST', '/api/ai/admin/verify?delay=95', host=host, timeout=200,
+            slow['r'] = req('POST', '/api/ai/admin/connections/test?delay=95', host=host, timeout=200,
                             headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'}, body=b'{}')
         except Exception as e:
             slow['r'] = (0, {}, repr(e).encode())
@@ -437,7 +505,7 @@ try:
         hdrs = {'Content-Type': 'application/json'}
         if cookie:
             hdrs['Cookie'] = cookie
-        st, hh, b = req('POST', '/api/ai/admin/verify?probe=verify', host=host, headers=hdrs, body=b'{}')
+        st, hh, b = req('POST', '/api/ai/admin/connections/test?probe=verify', host=host, headers=hdrs, body=b'{}')
         ok(st == want_st and (jbody(b) or {}).get('code') == code,
            'The admin Test refuses the same way (%d %s). Actual %d %r' % (want_st, code, st, b[:120].decode('utf-8', 'replace')))
     time.sleep(0.5)
@@ -456,8 +524,8 @@ try:
     st, hh, b = req('POST', '/api/ai/send', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
                     body=b'x' * (300 * 1024))
     ok(st == 413 and (jbody(b) or {}).get('code') == 'ai.badRequest', '300 KiB to /api/ai/send -> 413 JSON ai.badRequest. Actual %d %r' % (st, b[:120].decode('utf-8', 'replace')))
-    # The study streams (hints / explanations, record summaries) use the streaming location too: no buffering, POST only
-    for path in ('/api/ai/study/ask', '/api/ai/summary/ask'):
+    # The regenerate / edit streams and the study streams (hints / explanations, record summaries) use the streaming location too: no buffering, POST only
+    for path in ('/api/ai/regenerate', '/api/ai/edit', '/api/ai/study/ask', '/api/ai/summary/ask'):
         t0 = time.time()
         c = http.client.HTTPConnection('127.0.0.1', PORT, timeout=15)
         c.putrequest('POST', path, skip_host=True, skip_accept_encoding=True)
@@ -485,6 +553,11 @@ try:
            'POST %s: the identity carries the method and the Origin, no cookie' % path)
         st, hh, b = req('GET', path, host=host, headers={'Cookie': 'xexam_session=good'})
         ok(st == 403, 'GET %s -> 403 (POST only). Actual %d' % (path, st))
+    # branch and the chat model pick: the plain /api/ai/ location (answered at once, JSON, not a stream)
+    for path in ('/api/ai/branch', '/api/ai/chat/model'):
+        st, hh, b = req('POST', path, host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'}, body=b'{}')
+        ok(st == 200 and 'application/json' in hh.get('content-type', '') and (jbody(b) or {}).get('path') == path,
+           'POST %s uses the plain /api/ai/ location (JSON echo, no stream). Actual %d %r' % (path, st, hh.get('content-type')))
     st, hh, b = req('GET', '/api/ai/study/saved?mode=practice&key=00000000000000000000000000000000&source=practice&question=q1&kind=hint',
                     host=host, headers={'Cookie': 'xexam_session=good'})
     seen = json.loads(b) if st == 200 else {}
@@ -494,12 +567,12 @@ try:
     st, hh, b = req('POST', '/api/ai/memories/add', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
                     body=b'{"content": "' + b'x' * (200 * 1024) + b'"}')
     ok(st == 200 and json.loads(b)['body_len'] > 200 * 1024, 'A 200 KiB body to another AI route passes. Actual %d' % st)
-    st, hh, b = req('DELETE', '/api/ai/admin/verify', host=host, headers={'Cookie': 'xexam_session=good'})
-    ok(st == 403 and (jbody(b) or {}).get('code') == 'ai.badRequest', 'DELETE /api/ai/admin/verify -> 403 JSON ai.badRequest. Actual %d' % st)
-    st, hh, b = req('POST', '/api/ai/admin/verify', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
+    st, hh, b = req('DELETE', '/api/ai/admin/connections/test', host=host, headers={'Cookie': 'xexam_session=good'})
+    ok(st == 403 and (jbody(b) or {}).get('code') == 'ai.badRequest', 'DELETE /api/ai/admin/connections/test -> 403 JSON ai.badRequest. Actual %d' % st)
+    st, hh, b = req('POST', '/api/ai/admin/connections/test', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
                     body=b'x' * (300 * 1024))
     ok(st == 413 and (jbody(b) or {}).get('code') == 'ai.badRequest',
-       '300 KiB to /api/ai/admin/verify -> 413 JSON ai.badRequest. Actual %d' % st)
+       '300 KiB to /api/ai/admin/connections/test -> 413 JSON ai.badRequest. Actual %d' % st)
 
     # Per-session start limit: one session floods, another one is not affected
     def send(cookie):
@@ -520,8 +593,8 @@ try:
 
     # v1.0 per-user call caps: ai-service answers 429 JSON with Retry-After; Nginx hands it on unchanged on every kind of AI
     # location (no error_page swap, no buffering of the refusal into HTML)
-    for path in ('/api/ai/send', '/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/memories/suggest',
-                 '/api/ai/admin/verify'):
+    for path in ('/api/ai/send', '/api/ai/regenerate', '/api/ai/study/ask', '/api/ai/summary/ask', '/api/ai/memories/suggest',
+                 '/api/ai/admin/connections/test'):
         st, hh, b = req('POST', path + '?capped=1', host=host,
                         headers={'Cookie': 'xexam_session=good-cap', 'Content-Type': 'application/json'}, body=b'{}')
         j = jbody(b) or {}
@@ -550,6 +623,105 @@ try:
     time.sleep(0.5)
     ok(internal_calls() == before, "None of these reached the backend's /internal/ routes (the auth step was not run either)")
 
+    # -- v1.3: gzip, ETag / 304, real client address, location headers --
+    big = '/api/info?pad=' + 'a' * 1500
+    st, hh, b = req('GET', big, host='localhost', headers={'Accept-Encoding': 'gzip'})
+    ok(st == 200 and hh.get('content-encoding') == 'gzip' and 'accept-encoding' in hh.get('vary', '').lower(),
+       'gzip: a JSON answer over 1 KiB is compressed and Vary: Accept-Encoding is set. Actual %d %r %r' % (st, hh.get('content-encoding'), hh.get('vary')))
+    st, hh, b = req('GET', '/api/info', host='localhost', headers={'Accept-Encoding': 'gzip'})
+    ok(st == 200 and 'content-encoding' not in hh, 'gzip: a JSON answer under 1 KiB stays plain')
+    t0 = time.time()
+    c = http.client.HTTPConnection('127.0.0.1', PORT, timeout=15)
+    c.putrequest('POST', '/api/ai/send', skip_host=True, skip_accept_encoding=True)
+    for k, v in (('Host', host), ('Cookie', 'xexam_session=good-gz'), ('Accept-Encoding', 'gzip'), ('Content-Type', 'application/json'), ('Content-Length', '2')):
+        c.putheader(k, v)
+    c.endheaders(b'{}')
+    r = c.getresponse()
+    first_chunk = r.read1(65536)
+    ok(r.status == 200 and r.getheader('Content-Encoding') is None and b'event: ' in first_chunk and time.time() - t0 < 1.5,
+       'gzip: the event stream is never compressed and is not held back. Actual %d %r' % (r.status, r.getheader('Content-Encoding')))
+    r.read()
+    c.close()
+    st, hh, b = req('GET', '/api/etag', host='localhost')
+    ok(st == 200 and hh.get('etag') == '"v1"', 'ETag from the backend passes through /api/. Actual %d %r' % (st, hh.get('etag')))
+    st, hh, b = req('GET', '/api/etag', host='localhost', headers={'If-None-Match': '"v1"'})
+    ok(st == 304 and hh.get('etag') == '"v1"' and b == b'', 'If-None-Match round trip: 304 with the ETag and no body. Actual %d %r' % (st, b[:40]))
+
+    # Real client address. The main container (no XEXAM_TRUSTED_PROXIES) trusts nobody: a forged CF-Connecting-IP and
+    # forged location headers never reach a service, X-Real-IP is the connecting address. Two more containers: one that
+    # trusts exactly that connecting address, one with an invalid setting (fails closed with a warning).
+    forged = {'CF-Connecting-IP': '198.51.100.7', 'CF-IPCountry': 'XX', 'CF-Region': 'Made-up Region', 'CF-IPCity': 'Made-up City',
+              'X-Geo-Country': 'ZZ', 'X-Geo-City': 'Forged City', 'X-Real-IP': '203.0.113.9', 'X-Forwarded-For': '203.0.113.8'}
+    st, hh, b = req('GET', '/api/info', host='localhost', headers=forged)
+    seen = json.loads(b)['headers']
+    peer = seen.get('x-real-ip')
+    ok(peer and peer not in ('198.51.100.7', '203.0.113.9', '203.0.113.8'),
+       'Untrusted peer with a forged CF-Connecting-IP / X-Real-IP: the backend sees the connecting address %r' % peer)
+    ok(not any(k in seen for k in ('x-geo-country', 'x-geo-region', 'x-geo-city', 'x-forwarded-for')),
+       'Untrusted peer: location headers (CF-* and X-Geo-*) are not forwarded as X-Geo-* to the backend')
+    st, hh, b = req('GET', '/api/ai/status', host=host, headers=dict(forged, Cookie='xexam_session=good'))
+    seen = json.loads(b)['headers']
+    ok(seen.get('x-real-ip') == peer and not any(k in seen for k in ('x-geo-country', 'x-geo-region', 'x-geo-city')),
+       'Untrusted peer: the AI service sees the connecting address and no location headers. Actual %d %r' % (st, {k: v for k, v in seen.items() if k.startswith(('x-geo', 'x-real'))}))
+    st, hh, b = req('GET', '/api/info', host='localhost', headers={'X-Geo-Country': 'ZZ', 'X-Geo-Region': 'R', 'X-Geo-City': 'C'})
+    ok(not any(k in json.loads(b)['headers'] for k in ('x-geo-country', 'x-geo-region', 'x-geo-city')), 'Client-sent X-Geo-* headers never reach the backend')
+
+    def start_web(name, port, env):
+        args = ['docker', 'run', '-d', '--name', name, '--network', NET, '-p', '127.0.0.1:%d:8080' % port,
+                '--read-only', '--tmpfs', '/tmp', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true']
+        for k, v in env.items():
+            args += ['-e', '%s=%s' % (k, v)]
+        sh(*args, IMAGE)
+        for _ in range(40):
+            try:
+                http.client.HTTPConnection('127.0.0.1', port, timeout=3).request('GET', '/healthz')
+                break
+            except Exception:
+                time.sleep(0.5)
+        time.sleep(1)
+
+    def req_port(port, path, headers):
+        c = http.client.HTTPConnection('127.0.0.1', port, timeout=15)
+        c.putrequest('GET', path, skip_host=True, skip_accept_encoding=True)
+        for k, v in dict(headers, Host='localhost').items():
+            c.putheader(k, v)
+        c.endheaders()
+        r = c.getresponse()
+        data = r.read()
+        c.close()
+        return r.status, json.loads(data)['headers'] if r.status == 200 else {}
+
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': peer})
+    st, seen = req_port(PORT + 1, '/api/info', forged)
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7', 'Trusted peer: X-Real-IP = the CF-Connecting-IP value. Actual %r' % seen.get('x-real-ip'))
+    ok(seen.get('x-geo-country') == 'XX' and seen.get('x-geo-region') == 'Made-up Region' and seen.get('x-geo-city') == 'Made-up City',
+       'Trusted peer: CF-IPCountry / CF-Region / CF-IPCity arrive as X-Geo-Country / X-Geo-Region / X-Geo-City. Actual %r' % {k: v for k, v in seen.items() if k.startswith('x-geo')})
+    ok('x-forwarded-for' not in seen, 'Trusted peer: X-Forwarded-For stays blanked')
+    st, seen = req_port(PORT + 1, '/api/info', {'X-Geo-City': 'Forged City', 'X-Geo-Country': 'ZZ'})
+    ok(st == 200 and seen.get('x-real-ip') == peer and 'x-geo-city' not in seen and 'x-geo-country' not in seen,
+       'Trusted peer without CF headers: a client-sent X-Geo-* is overwritten (empty), X-Real-IP = the peer. Actual %r' % {k: v for k, v in seen.items() if k.startswith('x-')})
+    st, seen = req_port(PORT + 1, '/api/ai/status', dict(forged, Cookie='xexam_session=good'))
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7' and not any(k in seen for k in ('x-geo-country', 'x-geo-region', 'x-geo-city')),
+       'Trusted peer: the AI service gets the real address and still no location headers')
+    sh('docker', 'rm', '-f', WEB2)
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': peer, 'XEXAM_REAL_IP_HEADER': 'X-Forwarded-For'})
+    st, seen = req_port(PORT + 1, '/api/info', {'X-Forwarded-For': '198.51.100.20, 198.51.100.21'})
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.21', 'XEXAM_REAL_IP_HEADER=X-Forwarded-For: the last untrusted hop. Actual %r' % seen.get('x-real-ip'))
+    sh('docker', 'rm', '-f', WEB2)
+    for bad in ('0.0.0.0/0', '::/0', 'not-an-address'):
+        sh('docker', 'rm', '-f', WEB3, check=False)
+        start_web(WEB3, PORT + 2, {'XEXAM_TRUSTED_PROXIES': bad})
+        st, seen = req_port(PORT + 2, '/api/info', forged)
+        warn = sh('docker', 'logs', WEB3, check=False)
+        ok(st == 200 and seen.get('x-real-ip') == peer and 'x-geo-country' not in seen,
+           'Invalid XEXAM_TRUSTED_PROXIES=%s: nobody is trusted (the forged address is ignored, no location headers). Actual %r' % (bad, seen.get('x-real-ip')))
+        ok('xexam-realip' in warn.stderr and 'trusting no proxy' in warn.stderr, 'Invalid XEXAM_TRUSTED_PROXIES=%s: an English warning on stderr' % bad)
+    sh('docker', 'rm', '-f', WEB3, check=False)
+    sh('docker', 'run', '--name', WEB3, '--network', NET, '-d', '-e', 'XEXAM_REAL_IP_HEADER=Made-Up', '--read-only', '--tmpfs', '/tmp', IMAGE)
+    time.sleep(2)
+    ok('XEXAM_REAL_IP_HEADER' in sh('docker', 'logs', WEB3, check=False).stderr, 'An invalid XEXAM_REAL_IP_HEADER also warns and trusts nobody')
+    sh('docker', 'rm', '-f', WEB3, check=False)
+
     # -- Upload size --
     st, hh, b = req('POST', '/api/upload', host='localhost', headers={'Content-Type': 'application/octet-stream', 'X-Filename': 'a.xlsx'}, body=b'x' * (5 * 1024 * 1024))
     ok(st == 200 and json.loads(b)['body_len'] == 5 * 1024 * 1024, '5 MB upload passes (and arrives at the backend intact). Actual %d' % st)
@@ -557,11 +729,18 @@ try:
     ok(st == 413, 'Over 20 MB is rejected by Nginx (413). Actual %d' % st)
     ok('json' in hh.get('content-type', ''), '413 is JSON, not HTML. Actual %r' % hh.get('content-type'))
     ok('文件太大了' in json.loads(b)['error'], '413 carries the same Chinese message as the backend')
+    ok(json.loads(b).get('code') == 'net.tooLarge', '413 carries the code net.tooLarge. Actual %r' % json.loads(b).get('code'))
 
     # -- Rate limiting --
     codes = [req('POST', '/api/upload', host='localhost', headers={'Content-Type': 'application/octet-stream', 'X-Filename': 'a.xlsx'}, body=b'x')[0] for _ in range(12)]
     ok(429 in codes, 'Upload rate limit: 429 appears after 12 rapid requests. Actual %r' % sorted(set(codes)))
     time.sleep(6)
+    # Sign-in: 20 requests a minute per address with a burst of 20 (the bucket empties slowly, nothing else uses it)
+    codes = [req('POST', '/api/auth/login', host='localhost', headers={'Content-Type': 'application/json'}, body=b'{}')[0] for _ in range(40)]
+    ok(codes[:20].count(200) == 20 and 429 in codes and set(codes) <= {200, 429},
+       'Login zone: the burst of 20 passes, then 429. Actual %d x 200, %d x 429' % (codes.count(200), codes.count(429)))
+    st, hh, b = req('GET', '/api/info', host='localhost')
+    ok(st == 200, 'The login zone does not limit other API routes. Actual %d' % st)
     # /api/ allows 30 requests per second with a burst of 120 (users behind a tunnel share one address). A burst of normal
     # size - ten quick page loads of about ten requests each - passes in full; a flood far beyond the burst gets 429.
     codes = [req('GET', '/api/info', host='localhost')[0] for _ in range(100)]
@@ -581,7 +760,7 @@ try:
     slow_thread.join(timeout=200)
     st, hh, b = slow.get('r', (0, {}, b'still running'))
     ok(st == 200 and hh.get('x-echo-name') == 'ai-service' and slow.get('t', 0) >= 95,
-       'An admin Test answered after %.0f s (more than the 90 s of /api/ai/) reaches the admin. Actual %d %r' % (slow.get('t', 0), st, b[:120]))
+       'An admin Test answered after %.0f s (more than the 90 s of /api/ai/, under the 100 s limit) reaches the admin. Actual %d %r' % (slow.get('t', 0), st, b[:120]))
 
     # -- AI service down: JSON 502, the rest of the app unaffected --
     sh('docker', 'stop', AI)
@@ -592,10 +771,10 @@ try:
     ok(st == 502 and (jbody(b) or {}).get('code') == 'ai.unavailable', 'AI service stopped: POST /api/ai/send -> 502 JSON ai.unavailable. Actual %d' % st)
     st, hh, b = req('GET', '/api/info', host='localhost')
     ok(st == 200 and hh.get('x-echo-name') == 'backend', 'AI service stopped: GET /api/info still 200 from the backend. Actual %d' % st)
-    st, hh, b = req('POST', '/api/ai/admin/verify', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
+    st, hh, b = req('POST', '/api/ai/admin/connections/test', host=host, headers={'Cookie': 'xexam_session=good', 'Content-Type': 'application/json'},
                     body=b'{}')
     ok(st == 502 and (jbody(b) or {}).get('code') == 'ai.unavailable',
-       'AI service stopped: POST /api/ai/admin/verify -> 502 JSON ai.unavailable. Actual %d' % st)
+       'AI service stopped: POST /api/ai/admin/connections/test -> 502 JSON ai.unavailable. Actual %d' % st)
 
     # -- AI import upload (v1.1, IX-7 / SEC-1); the fake AI service was stopped by the section above: start it again --
     sh('docker', 'start', AI)
@@ -613,8 +792,9 @@ try:
     seen = jbody(b) or {}
     ok(st == 200 and hh.get('x-echo-name') == 'ai-service' and seen.get('path') == '/api/ai/import/upload',
        'A good session reaches the AI service on the upload route. Actual %d %r' % (st, hh.get('x-echo-name')))
-    for k in ('cookie', 'authorization', 'x-forwarded-for', 'forwarded', 'x-real-ip'):
+    for k in ('cookie', 'authorization', 'x-forwarded-for', 'forwarded'):
         ok(k not in (seen.get('headers') or {}), 'The AI service does not receive %s on the upload route' % k)
+    ok((seen.get('headers') or {}).get('x-real-ip') not in (None, '203.0.113.9'), 'The upload route carries X-Real-IP = the connecting address')
     ok((seen.get('headers') or {}).get('x-xexam-identity', 'forged') != 'forged' and seen.get('body_len') == 10,
        'The upload carries the identity of the auth step (a client value is overwritten) and its body')
     ok((seen.get('headers') or {}).get('x-filename') == 'Kitchen%20notes.pdf', 'X-Filename reaches the AI service unchanged')
@@ -632,6 +812,7 @@ try:
     st, hh, b = req('GET', '/api/info', host='localhost')
     ok(st == 502 and 'json' in hh.get('content-type', ''), 'JSON 502 when the backend is unreachable. Actual %d %r' % (st, hh.get('content-type')))
     ok('后端暂时连不上' in json.loads(b)['error'], '502 carries a readable Chinese explanation')
+    ok(json.loads(b).get('code') == 'net.backendDown', '502 carries the code net.backendDown. Actual %r' % json.loads(b).get('code'))
     st, hh, b = req('GET', '/api/ai/status', host=host, headers={'Cookie': 'xexam_session=good'})
     ok(st == 503 and (jbody(b) or {}).get('code') == 'ai.backendDown', 'Backend down: the AI auth step fails -> 503 JSON ai.backendDown. Actual %d %r' % (st, b[:120].decode('utf-8', 'replace')))
 

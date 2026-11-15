@@ -147,6 +147,35 @@ pub fn sign(payload_json: &str, token: &[u8]) -> String {
     format!("{p64}.{}", URL_SAFE_NO_PAD.encode(tag.as_ref()))
 }
 
+/// What the proxy told us about the caller (v1.3): the connecting address and the browser, as Nginx set them. Used only
+/// for the activity entries of administrator actions; never for access decisions.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ClientInfo {
+    /// `X-Real-IP`, only when it parses as an address
+    pub ip: Option<String>,
+    /// `User-Agent` without control characters, at most 256 characters
+    pub ua: Option<String>,
+}
+
+impl ClientInfo {
+    pub fn from_headers(h: &axum::http::HeaderMap) -> ClientInfo {
+        let ip = h
+            .get("x-real-ip")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.trim().parse::<std::net::IpAddr>().ok())
+            .map(|ip| ip.to_string());
+        let ua = h
+            .get(axum::http::header::USER_AGENT)
+            .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+            .map(|v| {
+                let clean: String = v.chars().filter(|c| !c.is_control()).collect();
+                crate::util::cut_chars(clean.trim(), 256)
+            })
+            .filter(|v| !v.is_empty());
+        ClientInfo { ip, ua }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,5 +255,46 @@ mod tests {
             verify(Some(long.as_bytes()), TOKEN, now),
             Err(VerifyError::Invalid)
         );
+    }
+    #[test]
+    fn client_info_reads_only_a_valid_address_and_a_clean_agent() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let mut h = HeaderMap::new();
+        assert_eq!(ClientInfo::from_headers(&h), ClientInfo::default());
+        h.insert("x-real-ip", HeaderValue::from_static("203.0.113.7"));
+        h.insert("user-agent", HeaderValue::from_static("Demo/1.0 (made up)"));
+        let c = ClientInfo::from_headers(&h);
+        assert_eq!(c.ip.as_deref(), Some("203.0.113.7"));
+        assert_eq!(c.ua.as_deref(), Some("Demo/1.0 (made up)"));
+        h.insert("x-real-ip", HeaderValue::from_static("2001:db8::1"));
+        assert_eq!(
+            ClientInfo::from_headers(&h).ip.as_deref(),
+            Some("2001:db8::1")
+        );
+        for bad in [
+            "not an address",
+            "203.0.113.7, 198.51.100.1",
+            "203.0.113.7:80",
+            "",
+        ] {
+            h.insert("x-real-ip", HeaderValue::from_str(bad).expect("value"));
+            assert_eq!(ClientInfo::from_headers(&h).ip, None, "{bad:?}");
+        }
+        // control characters are removed, the agent is cut at 256 characters, an empty agent is none
+        h.insert(
+            "user-agent",
+            HeaderValue::from_bytes(b"A	B	C").expect("value"),
+        );
+        assert_eq!(ClientInfo::from_headers(&h).ua.as_deref(), Some("ABC"));
+        h.insert(
+            "user-agent",
+            HeaderValue::from_str(&"u".repeat(400)).expect("value"),
+        );
+        assert_eq!(
+            ClientInfo::from_headers(&h).ua.map(|u| u.chars().count()),
+            Some(256)
+        );
+        h.insert("user-agent", HeaderValue::from_static("  "));
+        assert_eq!(ClientInfo::from_headers(&h).ua, None);
     }
 }

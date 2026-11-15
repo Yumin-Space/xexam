@@ -27,7 +27,12 @@
 //!   not-answered rule, whose unanswered questions are derived, never stored as a column), and the job key and the JSON
 //!   facts of an AI-generated bank (`banks.ai_job`, `banks.ai_meta`). Older rows keep NULL.
 
-pub const SCHEMA_VERSION: &str = "7";
+//! - Schema v8 (v1.3) is additive: the session facts (`sessions.started_at / remember / ip / ua`), the last activity and
+//!   sign-in info of a user (`users.last_active_at / last_login_ip / _country / _region / _city`), the activity log and the
+//!   small `system_settings` table, and an index for the idempotent attempt save (`V8_COLUMNS`, `MIGRATE_V8_TABLES`). IP and
+//!   location are written only while the single sign-in info switch is on. A v1.2 binary opens a v8 file unchanged.
+
+pub const SCHEMA_VERSION: &str = "8";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -251,3 +256,65 @@ pub const V7_COLUMNS: [(&str, &str, &str); 4] = [
 pub const MIGRATE_V7_INDEXES: &str = "
 CREATE UNIQUE INDEX IF NOT EXISTS idx_banks_ai_job ON banks(ai_job) WHERE ai_job IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_questions_layout ON questions(bank_id, sheet, active, seq);";
+
+/// Columns added by schema v8 (same rules as [`V2_COLUMNS`]).
+pub const V8_COLUMNS: [(&str, &str, &str); 9] = [
+    // 'YYYY-MM-DD HH:MM:SS': the last time the user did something (touched at most once a minute; a migrated row may hold 'YYYY-MM-DD HH:MM:00')
+    ("users", "last_active_at", "last_active_at TEXT"),
+    // Sign-in info: written and shown only while the `users.signin_info` switch is open (stored values stay when it closes)
+    ("users", "last_login_ip", "last_login_ip TEXT"),
+    ("users", "last_login_country", "last_login_country TEXT"),
+    ("users", "last_login_region", "last_login_region TEXT"),
+    ("users", "last_login_city", "last_login_city TEXT"),
+    // Unix seconds of the sign-in; NULL = unknown (a session a v1.2 binary created; fixed at the first touch)
+    ("sessions", "started_at", "started_at INTEGER"),
+    (
+        "sessions",
+        "remember",
+        "remember INTEGER NOT NULL DEFAULT 1",
+    ),
+    // ONLY while the switch is on
+    ("sessions", "ip", "ip TEXT"),
+    // User-Agent, cleaned, at most 256 characters
+    ("sessions", "ua", "ua TEXT"),
+];
+
+/// Tables and indexes added by schema v8 (all `IF NOT EXISTS`). The attempts index is for the idempotent save: it is NOT
+/// unique on purpose (rows written before v1.3 are not checked for duplicates).
+pub const MIGRATE_V8_TABLES: &str = r#"
+CREATE TABLE IF NOT EXISTS activity_log (
+  id        INTEGER PRIMARY KEY AUTOINCREMENT,
+  ts        INTEGER NOT NULL,
+  last_ts   INTEGER NOT NULL,
+  count     INTEGER NOT NULL DEFAULT 1,
+  actor     TEXT NOT NULL CHECK (actor IN ('user', 'anon', 'system')),
+  user_id   INTEGER,
+  username  TEXT,
+  role      TEXT,
+  action    TEXT NOT NULL,
+  object    TEXT,
+  detail    TEXT,
+  result    TEXT NOT NULL CHECK (result IN ('ok', 'fail')),
+  reason    TEXT,
+  ip        TEXT,
+  country   TEXT,
+  region    TEXT,
+  city      TEXT,
+  ua        TEXT,
+  source    TEXT NOT NULL DEFAULT 'backend' CHECK (source IN ('backend', 'ai')),
+  src_id    TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_activity_ts     ON activity_log(ts);
+CREATE INDEX IF NOT EXISTS idx_activity_user   ON activity_log(user_id, id);
+CREATE INDEX IF NOT EXISTS idx_activity_action ON activity_log(action, id);
+-- retention skips the sign-in rows: its age scan and count read only the other rows
+CREATE INDEX IF NOT EXISTS idx_activity_prune  ON activity_log(ts) WHERE action <> 'auth.signin';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activity_src ON activity_log(src_id) WHERE src_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS system_settings (
+  key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL, updated_at TEXT NOT NULL, updated_by INTEGER
+);
+"#;
+
+/// Index that needs `attempts.session_key` / `attempts.started_at` (schema v6): the lookup of the idempotent attempt save.
+pub const MIGRATE_V8_INDEXES: &str = "
+CREATE INDEX IF NOT EXISTS idx_attempts_session ON attempts(user_id, session_key) WHERE session_key IS NOT NULL;";

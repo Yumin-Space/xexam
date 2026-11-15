@@ -166,7 +166,6 @@ test('owner decisions of 2026-11-12: pause / resume everywhere, one name, no con
 });
 
 test('UX findings: saving turns the AI+ feature off and says what to do; test lines and keep-on name the feature', () => {
-  assert.equal(ai.zh['ai.set.saveOffAsk'], '保存后，AI+ 功能会对所有人关闭。新设置测试成功后，请重新开启 AI+ 功能。要保存吗？');
   assert.equal(ai.en['ai.set.savedOff'], 'The AI settings were saved. The AI+ feature is now off for everyone: test the new settings, then turn the AI+ feature on again.');
   assert.equal(ai.en['ai.set.testOk'], 'The test worked ({ms} ms). You can turn on the AI+ feature now.');
   assert.equal(ai.zh['ai.err.notVerified'], '请先保存设置并测试成功，再开启 AI+ 功能。');
@@ -180,7 +179,7 @@ test('UX findings: saving turns the AI+ feature off and says what to do; test li
 test('v0.9: the owner\'s exact Chinese words of the AI+ study features, and the unchanged AI+ feature wording', () => {
   const zh = aiplus.zh;
   assert.equal(zh['aiplus.hint'], 'AI 提示');
-  assert.equal(zh['aiplus.explain'], 'AI 解释');
+  assert.equal(zh['aiplus.explain'], 'AI 解析');
   assert.equal(zh['aiplus.analyze'], 'AI 解析');
   assert.equal(zh['aiplus.summary'], 'AI 总结');
   assert.equal(zh['aiplus.regenerate'], '重新生成');

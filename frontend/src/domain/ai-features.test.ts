@@ -2,7 +2,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { AiStatus } from '../state/ai.ts';
-import { ALL_ON, FEATURE_GROUPS, FEATURE_KEYS, aiControlView, offList, readFeatures, sameFeatures, type ControlContext } from './ai-features.ts';
+import {
+  ALL_ON, FEATURE_GROUPS, FEATURE_KEYS, aiControlView, featureLabelKey, itemOn, offLabelKeys, offList, pairedKeys, readFeatures, sameFeatures,
+  withItem, type ControlContext,
+} from './ai-features.ts';
 
 const ready = (o: Record<string, unknown> = {}): AiStatus => ({
   state: 'ready', enabled: true, allowed: true, suspended: false, hasData: false, running: null, retentionDays: 90, memoryLimit: 50,
@@ -13,7 +16,32 @@ const ctx = (o: Partial<ControlContext> = {}): ControlContext => ({ role: 'user'
 
 test('six keys in FP-1 order, grouped as the table shows them', () => {
   assert.deepEqual([...FEATURE_KEYS], ['chat', 'hint', 'explain', 'summary', 'generate', 'import']);
-  assert.deepEqual([...FEATURE_GROUPS.main, ...FEATURE_GROUPS.banks], [...FEATURE_KEYS]);
+  // one box / switch per entry: hint + analysis is one item (under `hint`) that writes both keys
+  assert.deepEqual([...FEATURE_GROUPS.main, ...FEATURE_GROUPS.banks], ['chat', 'hint', 'summary', 'generate', 'import']);
+  assert.deepEqual([...FEATURE_GROUPS.main, ...FEATURE_GROUPS.banks].flatMap((k) => [...pairedKeys(k)]), [...FEATURE_KEYS]);
+});
+
+test('hint and analysis are one item: one label, both keys written together', () => {
+  assert.deepEqual([...pairedKeys('hint')], ['hint', 'explain']);
+  assert.deepEqual([...pairedKeys('explain')], ['hint', 'explain']);
+  assert.deepEqual([...pairedKeys('chat')], ['chat']);
+  assert.deepEqual(withItem(ALL_ON, 'hint', false), { ...ALL_ON, hint: false, explain: false });
+  assert.deepEqual(withItem({ ...ALL_ON, hint: false, explain: false }, 'hint', true), ALL_ON);
+  assert.deepEqual(withItem(ALL_ON, 'summary', false), { ...ALL_ON, summary: false });
+  assert.deepEqual(withItem({}, 'hint', false), { hint: false, explain: false });
+  // on when either key is on (a mismatch cannot be stored any more; nobody loses access)
+  assert.equal(itemOn(ALL_ON, 'hint'), true);
+  assert.equal(itemOn({ ...ALL_ON, hint: false }, 'hint'), true);
+  assert.equal(itemOn({ ...ALL_ON, hint: false, explain: false }, 'hint'), false);
+  assert.equal(itemOn({ ...ALL_ON, chat: false }, 'chat'), false);
+  assert.equal(featureLabelKey('hint'), 'ai.feature.study');
+  assert.equal(featureLabelKey('hint', true), 'ai.feature.study.short');
+  assert.equal(featureLabelKey('summary'), 'ai.feature.summary');
+  assert.equal(featureLabelKey('import', true), 'ai.feature.import.short');
+  assert.deepEqual(offLabelKeys(['chat', 'hint', 'explain', 'import']), ['ai.feature.chat', 'ai.feature.study', 'ai.feature.import']);
+  assert.deepEqual(offLabelKeys(['hint']), ['ai.feature.hint']);
+  assert.deepEqual(offLabelKeys(['explain', 'summary']), ['ai.feature.explain', 'ai.feature.summary']);
+  assert.deepEqual(offLabelKeys([]), []);
 });
 
 test('readFeatures: missing or malformed is all on, a missing import key is on, only false switches off', () => {

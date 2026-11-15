@@ -80,8 +80,21 @@ pub enum LinkError {
     NoToken,
     /// The backend answered 404: the token was refused
     Rejected,
+    /// The backend answered 400 to a soft route (`Link::activity`): it refused the content, the link is fine
+    Refused,
     /// Unreachable, timeout, other status, or an answer that does not match its schema
     Failed,
+}
+
+/// How a status other than 200 counts for the link.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// 404 means the token was refused (re-read it, mark the link lost); anything else not 200 is a failed link
+    Control,
+    /// 404 only fails this call (a data route the backend does not have yet)
+    Data,
+    /// Like `Data`, and a 400 only fails this call too (the activity batch)
+    Soft,
 }
 
 #[derive(Default)]
@@ -294,7 +307,7 @@ impl Link {
     }
 
     async fn call(&self, path: &str, body: serde_json::Value) -> Result<Vec<u8>, LinkError> {
-        self.send(path, body, false).await
+        self.send(path, body, Mode::Control).await
     }
 
     /// A call of the study data routes (`/internal/ai/question`, `record`, `record-info`). The same request as
@@ -308,14 +321,14 @@ impl Link {
         path: &str,
         body: serde_json::Value,
     ) -> Result<Vec<u8>, LinkError> {
-        self.send(path, body, true).await
+        self.send(path, body, Mode::Data).await
     }
 
     async fn send(
         &self,
         path: &str,
         body: serde_json::Value,
-        data: bool,
+        mode: Mode,
     ) -> Result<Vec<u8>, LinkError> {
         let Some(token) = self.token() else {
             return Err(LinkError::NoToken);
@@ -343,11 +356,13 @@ impl Link {
         match resp.status().as_u16() {
             200 => {}
             404 => {
-                if !data {
+                if mode == Mode::Control {
                     self.note_rejected();
                 }
                 return Err(LinkError::Rejected);
             }
+            // A refused activity batch says something about its content, not about the link
+            400 if mode == Mode::Soft => return Err(LinkError::Refused),
             _ => {
                 self.note_failed();
                 return Err(LinkError::Failed);
@@ -442,6 +457,25 @@ impl Link {
             .collect();
         let body = self
             .call("/internal/ai/log", serde_json::json!({ "lines": items }))
+            .await?;
+        let a: OkAnswer = self.parsed(&body)?;
+        if !a.ok {
+            self.note_failed();
+            return Err(LinkError::Failed);
+        }
+        self.note_ok();
+        Ok(())
+    }
+
+    /// Delivers a batch of activity events (`POST /internal/ai/activity`, at most 50). `Rejected` = the backend does not
+    /// have the route (yet), `Refused` = it refused the batch; neither touches the link state.
+    pub async fn activity(&self, events: &[serde_json::Value]) -> Result<(), LinkError> {
+        let body = self
+            .send(
+                "/internal/ai/activity",
+                serde_json::json!({ "events": events }),
+                Mode::Soft,
+            )
             .await?;
         let a: OkAnswer = self.parsed(&body)?;
         if !a.ok {

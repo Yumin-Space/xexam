@@ -10,29 +10,16 @@ use super::material::Excerpt;
 use super::segment::{self, Seg};
 use crate::gen::plan::Slot;
 use crate::gen::prompt::clean;
-use crate::gen::run::{Next, Run};
-use crate::gen::runner::{log_failed_slots, CallResult, Ctx, Stop, StopWhy};
 use crate::gen::WRITTEN_CHARS;
 use crate::gen::WRITTEN_MAX;
-use futures_util::stream::{FuturesUnordered, StreamExt};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
-use std::future::Future;
-use std::pin::Pin;
-use std::time::Duration;
-use tokio::time::Instant;
 
-/// The context size assumed when the provider's model listing names none.
-pub const DEFAULT_CONTEXT_TOKENS: usize = 128_000;
-/// The most output tokens kept back for an answer when the fit is checked, whatever the answer setting says.
-pub const ANSWER_RESERVE_MAX: i64 = 16_000;
-/// Tokens kept back for the task text after the prefix.
-pub const TASK_SLACK_TOKENS: i64 = 2_000;
-/// Writing calls in flight together once recognition has returned.
-pub const WIDTH: usize = 4;
-/// Seconds after which the provider's prompt cache is taken as gone (it lives 5 minutes): the first writing call then goes
-/// alone and the others follow when it has rewritten the cache.
-pub const CACHE_WARM_SECS: u64 = 240;
+// The driver, the fit rule and the shared constants live in `gen::par` since v1.3 (generation uses them too).
+pub use crate::gen::par::TASK_SLACK_TOKENS;
+pub use crate::gen::par::{
+    cold, model_context, Whole, ANSWER_RESERVE_MAX, CACHE_WARM_SECS, DEFAULT_CONTEXT_TOKENS, WIDTH,
+};
 /// Longest line of the file text as the model sees it (as in the windowed prompts).
 const LINE_CAP: usize = 2_000;
 
@@ -71,17 +58,6 @@ Rules:
 {"questions":[{"slot":1,"stem":{"en":"...","zh":"...","ja":"..."},"options":[{"en":"...","zh":"...","ja":"...","correct":true}],"explanation":{"en":"...","zh":"...","ja":"..."}}]}
 Lengths: a stem at most 600 characters per language, an option at most 200, an explanation at most 800."##;
 
-/// What every call of the job starts with.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Whole {
-    /// The rules (the system text)
-    pub system: String,
-    /// The numbered lines inside the nonce fence (the first part of the user turn); the cache breakpoint sits after it
-    pub prefix: String,
-    /// The estimated tokens of both
-    pub tokens: i64,
-}
-
 /// The prefix of a file: every line numbered `L<n>: <text>` (cleaned like the windowed prompts), inside a fence carrying
 /// the job's nonce. The same lines and nonce always give the same bytes.
 pub fn build(lines: &[String], nonce: &str) -> Whole {
@@ -102,9 +78,7 @@ pub fn build(lines: &[String], nonce: &str) -> Whole {
 /// Does the prefix fit the model with the answer and the task text? `context` = the model's context in tokens (the model
 /// listing's figure, else [`DEFAULT_CONTEXT_TOKENS`]); `answer` = the answer setting of the import in tokens.
 pub fn fits(whole: &Whole, context: usize, answer: i64) -> bool {
-    let reserve = answer.clamp(1, ANSWER_RESERVE_MAX) + TASK_SLACK_TOKENS;
-    let context = i64::try_from(context).unwrap_or(i64::MAX);
-    whole.tokens.saturating_add(reserve) <= context
+    crate::gen::par::fits_tokens(whole.tokens, context, answer)
 }
 
 /// The line range of a segment, as the model reads it: `L12-L18`.
@@ -228,174 +202,6 @@ pub fn write_user(
     )
 }
 
-/// How a writing call's user text and answer size come about (`None` = the default of the limits).
-pub type UserFn<'a> = dyn FnMut(&Run, &[usize]) -> (String, Option<i64>) + Send + 'a;
-
-type Flight<'a> = Pin<Box<dyn Future<Output = (Vec<usize>, Result<CallResult, Stop>)> + Send + 'a>>;
-
-/// The writing loop of the whole-file path: like `runner::drive`, but up to `width` calls are in flight together. With
-/// `cold` (the cache has probably expired while the user confirmed) the first call goes alone. The safety stops of the
-/// run (call ceiling, errors in a row) are honoured with the calls in flight counted.
-pub async fn drive(
-    ctx: &Ctx,
-    whole: &Whole,
-    run: &mut Run,
-    cap_batches: bool,
-    width: usize,
-    cold: bool,
-    user_for: &mut UserFn<'_>,
-) -> Result<(), Stop> {
-    let mut flying: FuturesUnordered<Flight<'_>> = FuturesUnordered::new();
-    let r = drive_inner(
-        ctx,
-        whole,
-        run,
-        cap_batches,
-        width,
-        cold,
-        user_for,
-        &mut flying,
-    )
-    .await;
-    if matches!(r, Err(Stop::Cancelled(_)) | Err(Stop::Shutdown)) {
-        // the calls still in flight see the same signal and write their stopped rows
-        let _ = tokio::time::timeout(Duration::from_secs(3), async {
-            while flying.next().await.is_some() {}
-        })
-        .await;
-    }
-    r
-}
-
-#[allow(clippy::too_many_arguments)]
-async fn drive_inner<'a>(
-    ctx: &'a Ctx,
-    whole: &'a Whole,
-    run: &mut Run,
-    cap_batches: bool,
-    width: usize,
-    cold: bool,
-    user_for: &mut UserFn<'_>,
-    flying: &mut FuturesUnordered<Flight<'a>>,
-) -> Result<(), Stop> {
-    let app = &ctx.app;
-    let mut finished = 0usize;
-    let mut fp: Option<String> = None;
-    loop {
-        ctx.check()?;
-        // fill the places
-        loop {
-            let limit = if cold && finished == 0 {
-                1
-            } else {
-                width.max(1)
-            };
-            if flying.len() >= limit {
-                break;
-            }
-            if !flying.is_empty() && (run.room() <= flying.len() || run.backoff_secs() > 0) {
-                break;
-            }
-            ctx.recheck().await?;
-            let l = app.0.limits();
-            let default_want = l.import_tokens();
-            if cap_batches {
-                let call_chars =
-                    crate::limits::Limits::usize_of(crate::limits::tokens_to_chars(default_want));
-                if let Ok(snap) = app.0.snapshot() {
-                    let ceiling = app.token_ceiling(&snap, default_want);
-                    let mut n = crate::gen::plan::per_call(call_chars, ceiling);
-                    if let Some(m) = app.0.gen_per_call_cap(&snap.fp) {
-                        n = n.min(m);
-                    }
-                    run.cap_per_call(n);
-                    fp = Some(snap.fp.clone());
-                }
-            }
-            let batch = match run.next() {
-                Next::Finish => break,
-                Next::Ask(b) => b,
-            };
-            if flying.is_empty() {
-                let secs = run.backoff_secs() as f64
-                    * crate::app::Knobs::get(&app.0.knobs.backoff_scale) as f64
-                    / 100.0;
-                ctx.sleep_checked(secs).await?;
-            }
-            let (user, want) = user_for(run, &batch);
-            let want = want.unwrap_or(default_want);
-            let asked = batch.len();
-            flying.push(Box::pin(async move {
-                let r = async {
-                    let permit = ctx.place().await?;
-                    let r = ctx
-                        .call_with(&whole.system, Some(&whole.prefix), &user, want, asked)
-                        .await;
-                    drop(permit);
-                    r
-                }
-                .await;
-                (batch, r)
-            }));
-        }
-        let Some((batch, result)) = flying.next().await else {
-            return Ok(());
-        };
-        finished += 1;
-        match result? {
-            CallResult::Answer {
-                text,
-                truncated,
-                mut row,
-            } => {
-                let before = run.per_call();
-                let report = run.on_answer(&batch, &text, truncated);
-                if let Some(fp) = &fp {
-                    if run.per_call() < before {
-                        app.0.note_gen_per_call(fp, run.per_call());
-                    }
-                }
-                row.accepted = i64::try_from(report.accepted).unwrap_or(0);
-                log_failed_slots(ctx.task, run.calls(), &report);
-                let made = i64::try_from(run.made()).unwrap_or(0);
-                if !ctx.write_call(&row, Some(made), Some("writing")) {
-                    return Err(Stop::Cancelled(StopWhy::Purged));
-                }
-            }
-            CallResult::Error { code, row } => {
-                run.on_provider_error(&batch, code.code());
-                let made = i64::try_from(run.made()).unwrap_or(0);
-                if !ctx.write_call(&row, Some(made), Some("writing")) {
-                    return Err(Stop::Cancelled(StopWhy::Purged));
-                }
-            }
-        }
-    }
-}
-
-/// The model's context in tokens: the listing's figure for the configured model when the cached listing has one, else
-/// [`DEFAULT_CONTEXT_TOKENS`]. A test hook can force a figure.
-pub fn model_context(app: &crate::app::AppState) -> usize {
-    let forced = crate::app::Knobs::get(&app.0.knobs.import_context_tokens);
-    if forced > 0 {
-        return usize::try_from(forced).unwrap_or(usize::MAX);
-    }
-    let Ok(snap) = app.0.snapshot() else {
-        return DEFAULT_CONTEXT_TOKENS;
-    };
-    let cache = app.0.models_cache.lock().unwrap_or_else(|e| e.into_inner());
-    cache
-        .as_ref()
-        .filter(|c| c.fp == snap.fp)
-        .and_then(|c| c.list.contexts.get(&snap.settings.model).copied())
-        .unwrap_or(DEFAULT_CONTEXT_TOKENS)
-}
-
-/// `true` when the prompt cache the first call made has probably expired by `now`.
-pub fn cold(recognised: Instant, now: Instant) -> bool {
-    now.saturating_duration_since(recognised) > Duration::from_secs(CACHE_WARM_SECS)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,12 +322,5 @@ mod tests {
             "the text stays in the prefix"
         );
         assert!(w.contains("<<<WRITTEN 0123456789abcdef>>>") && w.contains("an earlier stem"));
-    }
-
-    #[test]
-    fn the_cache_is_warm_for_four_minutes() {
-        let t0 = Instant::now();
-        assert!(!cold(t0, t0 + Duration::from_secs(239)));
-        assert!(cold(t0, t0 + Duration::from_secs(241)));
     }
 }

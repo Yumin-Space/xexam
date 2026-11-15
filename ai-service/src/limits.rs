@@ -50,8 +50,20 @@ pub struct Limits {
     pub gen_running: i64,
     /// Largest uploaded file of an AI import, in MiB
     pub import_max_mb: i64,
-    /// Most questions one import may convert
+    /// Most questions one import may convert (column `import_file_questions`)
     pub import_max_questions: i64,
+    /// 1 = administrators are not limited by the per-user call caps
+    pub calls_admins_exempt: i64,
+    /// 1 = hints and explanations are shared between users (`study_shared`)
+    pub study_share: i64,
+    /// Shared answers unused for this many days are deleted
+    pub study_share_days: i64,
+    /// Most chunks a generation source is split into
+    pub gen_max_chunks: i64,
+    /// Most wrong answers one summary may list
+    pub summary_max_items: i64,
+    /// Site-wide tokens per day for non-administrators (input + output); 0 = off
+    pub daily_token_budget: i64,
 }
 
 /// One limit: JSON key, database column, default, minimum, maximum.
@@ -63,9 +75,10 @@ pub struct LimitDef {
     pub max: i64,
 }
 
-/// The 27 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones).
+/// The 33 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones,
+/// then the six of v1.3).
 /// The retired `limits.message_chars` column is not listed: nothing reads or writes it any more.
-pub const DEFS: [LimitDef; 27] = [
+pub const DEFS: [LimitDef; 33] = [
     LimitDef {
         key: "perUserRunning",
         column: "per_user_running",
@@ -97,14 +110,14 @@ pub const DEFS: [LimitDef; 27] = [
     LimitDef {
         key: "memoriesPerUser",
         column: "memories_per_user",
-        default: 50,
+        default: 30,
         min: 1,
         max: 1000,
     },
     LimitDef {
         key: "memoryTokens",
         column: "memory_tokens",
-        default: 1000,
+        default: 200,
         min: 50,
         max: 250_000,
     },
@@ -250,10 +263,52 @@ pub const DEFS: [LimitDef; 27] = [
     },
     LimitDef {
         key: "importMaxQuestions",
-        column: "import_max_questions",
-        default: 50,
+        column: "import_file_questions",
+        default: 100,
+        min: 1,
+        max: 300,
+    },
+    LimitDef {
+        key: "callsAdminsExempt",
+        column: "calls_admins_exempt",
+        default: 1,
+        min: 0,
+        max: 1,
+    },
+    LimitDef {
+        key: "studyShare",
+        column: "study_share",
+        default: 1,
+        min: 0,
+        max: 1,
+    },
+    LimitDef {
+        key: "studyShareDays",
+        column: "study_share_days",
+        default: 180,
+        min: 7,
+        max: 3650,
+    },
+    LimitDef {
+        key: "genMaxChunks",
+        column: "gen_max_chunks",
+        default: 8,
         min: 1,
         max: 50,
+    },
+    LimitDef {
+        key: "summaryMaxItems",
+        column: "summary_max_items",
+        default: 40,
+        min: 10,
+        max: 70,
+    },
+    LimitDef {
+        key: "dailyTokenBudget",
+        column: "daily_token_budget",
+        default: 0,
+        min: 0,
+        max: 100_000_000,
     },
 ];
 
@@ -297,8 +352,8 @@ pub fn cut_to_tokens(s: &str, max: i64) -> String {
 
 /// Characters of memories put into the system prompt (whole notes only).
 pub const MEMORY_PROMPT_CHARS: usize = 4000;
-/// History budget floor (4.5); the budget is `max(24000, MESSAGE_CHARS + 8000)`, which is this floor.
-pub const HISTORY_FLOOR: usize = 24_000;
+/// History budget floor (4.5); the budget is `max(32000, MESSAGE_CHARS + 8000)`, which is this floor.
+pub const HISTORY_FLOOR: usize = 32_000;
 /// The fixed internal cap of one user message (characters). Not an administrator's setting: it only protects the
 /// server (v1.0: the per-message limit is expressed by the answer length, not by an admin field).
 pub const MESSAGE_CHARS: usize = 16_000;
@@ -308,7 +363,10 @@ pub const MAX_ANSWER_CHARS: usize = 1_000_000;
 pub const MAX_BODY: usize = 128 * 1024;
 /// A hint is cut after this many characters (the guard enforces it; the run ends as `done`, truncated).
 pub const HINT_MAX_CHARS: usize = 6_000;
-/// A summary prompt never carries more than this many characters of items (not adjustable).
+/// Characters of items one wrong answer may add to a summary prompt (v1.3: the budget is this times `summaryMaxItems`).
+pub const SUMMARY_CHARS_PER_ITEM: usize = 750;
+/// The summary prompt budget at the largest `summaryMaxItems` (70) rounded up: a ceiling for callers that have no
+/// [`Limits`] at hand. Prefer [`Limits::summary_prompt_chars`].
 pub const SUMMARY_PROMPT_CHARS: usize = 60_000;
 
 impl Default for Limits {
@@ -341,6 +399,12 @@ impl Default for Limits {
             gen_running: 0,
             import_max_mb: 0,
             import_max_questions: 0,
+            calls_admins_exempt: 0,
+            study_share: 0,
+            study_share_days: 0,
+            gen_max_chunks: 0,
+            summary_max_items: 0,
+            daily_token_budget: 0,
         };
         for d in &DEFS {
             l.set(d.key, d.default);
@@ -407,6 +471,12 @@ impl Limits {
             "genRunning" => self.gen_running,
             "importMaxMb" => self.import_max_mb,
             "importMaxQuestions" => self.import_max_questions,
+            "callsAdminsExempt" => self.calls_admins_exempt,
+            "studyShare" => self.study_share,
+            "studyShareDays" => self.study_share_days,
+            "genMaxChunks" => self.gen_max_chunks,
+            "summaryMaxItems" => self.summary_max_items,
+            "dailyTokenBudget" => self.daily_token_budget,
             _ => 0,
         }
     }
@@ -440,11 +510,22 @@ impl Limits {
             "genRunning" => self.gen_running = v,
             "importMaxMb" => self.import_max_mb = v,
             "importMaxQuestions" => self.import_max_questions = v,
+            "callsAdminsExempt" => self.calls_admins_exempt = v,
+            "studyShare" => self.study_share = v,
+            "studyShareDays" => self.study_share_days = v,
+            "genMaxChunks" => self.gen_max_chunks = v,
+            "summaryMaxItems" => self.summary_max_items = v,
+            "dailyTokenBudget" => self.daily_token_budget = v,
             _ => {}
         }
     }
 
-    /// The history budget in characters: `max(24000, MESSAGE_CHARS + 8000)`, a constant since the per-message limit is
+    /// A summary prompt never carries more than this many characters of items: `750 * summaryMaxItems`.
+    pub fn summary_prompt_chars(&self) -> usize {
+        SUMMARY_CHARS_PER_ITEM.saturating_mul(Limits::usize_of(self.summary_max_items))
+    }
+
+    /// The history budget in characters: `max(32000, MESSAGE_CHARS + 8000)`, a constant since the per-message limit is
     /// fixed.
     pub fn history_budget(&self) -> usize {
         HISTORY_FLOOR.max(MESSAGE_CHARS.saturating_add(8000))
@@ -485,7 +566,7 @@ impl Limits {
         }
     }
 
-    /// Applies an update (any subset of the 27 keys, integers only), all or nothing.
+    /// Applies an update (any subset of the 33 keys, integers only), all or nothing.
     pub fn apply_update(&self, body: &Map<String, Value>) -> Result<Limits, LimitError> {
         for k in body.keys() {
             if !DEFS.iter().any(|d| d.key == k) {
@@ -564,14 +645,14 @@ mod tests {
         assert_eq!(l.global_running, 16);
         assert_eq!(l.chats_per_user, 1000);
         assert_eq!(l.messages_per_chat, 400);
-        assert_eq!(l.memories_per_user, 50);
-        assert_eq!(l.memory_tokens, 1000);
+        assert_eq!(l.memories_per_user, 30);
+        assert_eq!(l.memory_tokens, 200);
         assert_eq!(l.reply_max_tokens, 3000);
         assert_eq!(
             (l.calls_per_minute, l.calls_per_hour, l.calls_per_day),
             (5, 20, 100)
         );
-        assert_eq!(l.history_budget(), 24000);
+        assert_eq!(l.history_budget(), 32000);
         assert_eq!(MESSAGE_CHARS, 16_000);
     }
 
@@ -637,9 +718,9 @@ mod tests {
         let s = serde_json::to_string(&a).expect("json");
         assert!(s.starts_with("{\"limits\":{\"perUserRunning\":1,\"globalRunning\":16,"));
         assert!(s.contains("\"ranges\":{\"perUserRunning\":[1,4]"));
-        // 27 keys: v1.0's ten (the call caps, then the answer length), then generation, then import
+        // 33 keys: v1.0's ten (the call caps, then the answer length), then generation, import, then the six of v1.3
         let keys: Vec<&String> = a["limits"].as_object().expect("object").keys().collect();
-        assert_eq!(keys.len(), 27);
+        assert_eq!(keys.len(), 33);
         assert_eq!(
             &keys[5..],
             &[
@@ -664,12 +745,18 @@ mod tests {
                 "importUnlimited",
                 "genRunning",
                 "importMaxMb",
-                "importMaxQuestions"
+                "importMaxQuestions",
+                "callsAdminsExempt",
+                "studyShare",
+                "studyShareDays",
+                "genMaxChunks",
+                "summaryMaxItems",
+                "dailyTokenBudget"
             ]
         );
         assert_eq!(a["defaults"], a["limits"]);
         assert_eq!(a["limits"]["replyMaxTokens"], json!(3000));
-        assert_eq!(a["limits"]["memoryTokens"], json!(1000));
+        assert_eq!(a["limits"]["memoryTokens"], json!(200));
         assert_eq!(a["ranges"]["replyMaxTokens"], json!([1, 250000]));
         assert_eq!(a["ranges"]["callsPerMinute"], json!([1, 100]));
         assert_eq!(a["ranges"]["callsPerHour"], json!([1, 2000]));
@@ -754,7 +841,7 @@ mod tests {
         assert_eq!((l.gen_max_calls, l.import_max_calls), (15, 25));
         assert_eq!(l.recognize_max_calls, 20);
         assert_eq!((l.gen_unlimited, l.import_unlimited), (1, 1));
-        assert_eq!((l.import_max_mb, l.import_max_questions), (20, 50));
+        assert_eq!((l.import_max_mb, l.import_max_questions), (20, 100));
         for (k, bad) in [
             ("genPerDay", 101),
             ("genMinSource", 4),
@@ -771,7 +858,8 @@ mod tests {
             ("importUnlimited", -1),
             ("importMaxMb", 21),
             ("importMaxMb", 0),
-            ("importMaxQuestions", 51),
+            ("importMaxQuestions", 301),
+            ("importMaxQuestions", 0),
         ] {
             let want = DEFS
                 .iter()
@@ -783,6 +871,62 @@ mod tests {
                 Err(LimitError::Range(want))
             );
         }
+    }
+
+    #[test]
+    fn the_v13_limits_have_their_defaults_and_ranges() {
+        let l = Limits::default();
+        assert_eq!(
+            (
+                l.calls_admins_exempt,
+                l.study_share,
+                l.study_share_days,
+                l.gen_max_chunks,
+                l.summary_max_items,
+                l.daily_token_budget
+            ),
+            (1, 1, 180, 8, 40, 0)
+        );
+        for (k, ok, bad) in [
+            ("callsAdminsExempt", 0, 2),
+            ("studyShare", 0, -1),
+            ("studyShareDays", 7, 6),
+            ("studyShareDays", 3650, 3651),
+            ("genMaxChunks", 50, 51),
+            ("genMaxChunks", 1, 0),
+            ("summaryMaxItems", 10, 9),
+            ("summaryMaxItems", 70, 71),
+            ("dailyTokenBudget", 100_000_000, 100_000_001),
+            ("dailyTokenBudget", 0, -1),
+            ("importMaxQuestions", 300, 301),
+            ("importMaxQuestions", 1, 0),
+        ] {
+            assert!(l.apply_update(&obj(json!({ k: ok }))).is_ok(), "{k} {ok}");
+            assert!(
+                matches!(
+                    l.apply_update(&obj(json!({ k: bad }))),
+                    Err(LimitError::Range(f)) if f == k
+                ),
+                "{k} {bad}"
+            );
+        }
+        // the column of the import ceiling is the v1.3 one, the old column stays unread
+        let col = DEFS
+            .iter()
+            .find(|d| d.key == "importMaxQuestions")
+            .map(|d| d.column);
+        assert_eq!(col, Some("import_file_questions"));
+    }
+
+    #[test]
+    fn the_summary_prompt_budget_follows_the_item_limit() {
+        let l = Limits::default();
+        assert_eq!(l.summary_prompt_chars(), 30_000);
+        let n = l
+            .apply_update(&obj(json!({"summaryMaxItems": 70})))
+            .expect("ok");
+        assert_eq!(n.summary_prompt_chars(), 52_500);
+        assert!(n.summary_prompt_chars() <= SUMMARY_PROMPT_CHARS);
     }
 
     #[test]

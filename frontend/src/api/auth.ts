@@ -1,10 +1,16 @@
 // Sign-in (v0.6): who is signed in, sign in / out, and changing one's own password.
-import type { AuthState, AuthUser, AuthUserResponse } from '../types/api.ts';
+import type { AuthState, AuthUser, AuthUserResponse, LoginRequest, LoginResponse, SessionInfo } from '../types/api.ts';
 import { getJson, postJson } from './client.ts';
 
 export const fetchAuthState = (): Promise<AuthState> => getJson<AuthState>('/api/auth/state');
-export const login = async (username: string, password: string): Promise<AuthUser> =>
-  (await postJson<AuthUserResponse>('/api/auth/login', { username, password })).user;
+/** v1.3: `remember` keeps the sign-in for 30 days (administrators: fixed rule); the answer carries the session rule */
+export const loginSession = async (username: string, password: string, remember = false): Promise<{ user: AuthUser; session: SessionInfo | null }> => {
+  const body: LoginRequest = { username, password, remember };
+  const a = await postJson<LoginResponse>('/api/auth/login', body);
+  return { user: a.user, session: a.session ?? null };
+};
+export const login = async (username: string, password: string, remember = false): Promise<AuthUser> =>
+  (await loginSession(username, password, remember)).user;
 export const logout = (): Promise<{ ok: boolean }> => postJson<{ ok: boolean }>('/api/auth/logout');
 /**
  * Sets a new password for the signed-in user. `current` is required unless the user must change the password (then the

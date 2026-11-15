@@ -147,6 +147,9 @@ pub enum AppError {
     /// is not available (ai-service not connected, or its AI+ service off); nothing was written
     #[error("AI+ is not available")]
     AiServiceOff,
+    /// v1.3: 401 `{"error": MSG_SESSION_EXPIRED, "code": "auth.expired"}`: the session of the request ended
+    #[error("session ended")]
+    SessionExpired,
     #[error("db error")]
     Db(#[from] DbError),
     #[error("internal")]

@@ -1,4 +1,4 @@
-// The AI+ study controls of every page: the practice bar's AI 提示 / AI 解释 buttons, the docks the panel lives in (also the
+// The AI+ study controls of every page: the practice bar's AI 提示 / AI 解析 buttons, the docks the panel lives in (also the
 // greyed bar of a paused / unavailable AI+), the AI 总结 button of a record, the 无法使用 tag and the note above the records
 // table. ONE component builds them all, so every page greys, tags, explains and opens them the same way (the panel / overlay
 // themselves are components/ai-panel.ts and ai-summary.ts). A control a user may not see is never built (null): without the
@@ -133,7 +133,7 @@ function greyText(state: ControlState, label: string): string {
 const AI_MARK = 'AI';
 
 /**
- * The practice bar's AI 提示 / AI 解释 button: `button.ibtn.aip-bar-btn[data-slot]` = icon + `span.aip-ai-mark` + `span.lbl`.
+ * The practice bar's AI 提示 / AI 解析 button: `button.ibtn.aip-bar-btn[data-slot]` = icon + `span.aip-ai-mark` + `span.lbl`.
  * The same DOM at every width; ai-plus.css shows the label (wide) or the mark (up to 880 px / a phone turned sideways).
  * Usable: opens the panel with this kind (`__aipArgs` lets the panel follow a question change). Greyed (P-20): the same
  * button with aria-disabled and the reason (`withReason`, never `disabled`). `bar` = the button sits in the action bar.

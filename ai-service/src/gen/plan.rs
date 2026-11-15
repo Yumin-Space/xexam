@@ -56,7 +56,11 @@ pub enum PlanError {
 }
 
 /// Largest-remainder apportionment of `total` over `weights`; remainder ties are broken by `tie` (Less = first).
-fn hamilton(total: usize, weights: &[u64], tie: &dyn Fn(usize, usize) -> Ordering) -> Vec<usize> {
+pub(crate) fn hamilton(
+    total: usize,
+    weights: &[u64],
+    tie: &dyn Fn(usize, usize) -> Ordering,
+) -> Vec<usize> {
     let sum: u64 = weights.iter().sum();
     let mut out = vec![0usize; weights.len()];
     if sum == 0 || total == 0 {
@@ -569,9 +573,10 @@ mod tests {
             })
         };
         assert_eq!(mk(0, 0, &items).unwrap_err(), PlanError::BadComposition);
-        assert_eq!(mk(100, 1, &items).unwrap_err(), PlanError::BadComposition);
+        // the goal is at most MAX_GOAL (300 since v1.3)
+        assert_eq!(mk(300, 1, &items).unwrap_err(), PlanError::BadComposition);
         assert_eq!(mk(14, 6, &[]).unwrap_err(), PlanError::NoSource);
-        assert!(mk(100, 0, &items).is_ok());
+        assert!(mk(300, 0, &items).is_ok());
         assert!(mk(0, 5, &items).is_ok());
     }
 

@@ -1,13 +1,16 @@
-//! Reasoning models (round 2, item 25): reasoning deltas (OpenAI `reasoning_content` / `reasoning`, Anthropic thinking
-//! blocks) become one `thinking` SSE frame before the first `delta`; the reasoning text is never stored, sent, logged or
-//! counted towards the answer cap. The test call and the memory suggestion ignore it.
+//! Reasoning models (round 2, item 25; v1.3): reasoning deltas (OpenAI `reasoning_content` / `reasoning`, Anthropic
+//! thinking blocks) give one `thinking` SSE frame before the first `delta`. Since v1.3 AI Chat also streams the text
+//! (`reasoning` frames, one `reasoningDone`) and stores it per answer; it never counts towards the answer cap and is never
+//! logged. Reasoning after the first answer text is dropped. The test call and the memory suggestion ignore it.
 mod common;
 
 use common::*;
 use serde_json::{json, Value};
 
-/// Made-up reasoning words that must never show up anywhere.
+/// Made-up reasoning words (AI Chat keeps them, nothing may log them).
 const SECRET: &str = "zebra-thought-7781";
+/// Made-up words that arrive after the first answer text or in a redacted block: never kept anywhere.
+const LATE: &str = "quail-late-5521";
 
 fn openai_sse(deltas: &[Value]) -> String {
     let mut s = String::new();
@@ -56,16 +59,14 @@ async fn stream_raw(t: &TestApp, who: &Who, body: Value) -> (Vec<(String, Value)
 }
 
 fn assert_never_kept(t: &TestApp, raw: &str) {
-    assert!(
-        !raw.contains(SECRET),
-        "the SSE body carries reasoning: {raw}"
-    );
-    assert!(!disk_text(t).contains(SECRET), "reasoning was stored");
+    assert!(!raw.contains(LATE), "the SSE body carries dropped text");
+    assert!(!disk_text(t).contains(LATE), "dropped text was stored");
+    assert!(!captured_contains(LATE), "dropped text was logged");
     assert!(!captured_contains(SECRET), "reasoning was logged");
 }
 
 #[tokio::test]
-async fn openai_reasoning_gives_one_thinking_frame_before_the_text() {
+async fn openai_reasoning_streams_as_frames_before_the_text() {
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
@@ -76,17 +77,30 @@ async fn openai_reasoning_gives_one_thinking_frame_before_the_text() {
         json!({"reasoning_content": format!("{SECRET} step two")}),
         json!({"reasoning": format!("{SECRET} step three")}),
         json!({"content": "Visible "}),
-        json!({"reasoning_content": format!("{SECRET} late")}),
+        json!({"reasoning_content": format!("{LATE} late")}),
         json!({"content": "answer."}),
     ]);
     t.stub.force(Some((200, &body)));
     let (ev, raw) = stream_raw(&t, &sam, json!({"text": "Think first"})).await;
     assert_eq!(
         names(&ev),
-        vec!["start", "thinking", "delta", "delta", "done"],
+        vec![
+            "start",
+            "thinking",
+            "reasoning",
+            "reasoning",
+            "reasoning",
+            "reasoningDone",
+            "delta",
+            "delta",
+            "done"
+        ],
         "{ev:?}"
     );
     assert_eq!(ev[1].1, json!({}));
+    assert_eq!(ev[2].1, json!({"text": format!("{SECRET} step one")}));
+    assert_eq!(ev[5].1["truncated"], json!(false));
+    assert!(ev[5].1["ms"].as_i64().is_some_and(|m| m >= 0), "{ev:?}");
     assert!(raw.contains("event: thinking\ndata: {}\n\n"), "{raw}");
     assert_eq!(text(&ev), "Visible answer.");
     assert_eq!(
@@ -97,6 +111,14 @@ async fn openai_reasoning_gives_one_thinking_frame_before_the_text() {
     let (_, v) = t.get(&format!("/api/ai/chat?id={chat}"), &sam).await;
     assert_eq!(v["messages"][1]["content"], json!("Visible answer."));
     assert_eq!(v["messages"][1]["status"], json!("done"));
+    assert_eq!(
+        v["messages"][1]["reasoning"],
+        json!(format!(
+            "{SECRET} step one{SECRET} step two{SECRET} step three"
+        ))
+    );
+    assert_eq!(v["messages"][1]["reasoningMs"], ev[5].1["ms"]);
+    assert_eq!(v["messages"][1]["reasoningTruncated"], json!(false));
     let (status, first): (String, Option<i64>) = t
         .db()
         .query_row(
@@ -118,8 +140,8 @@ async fn reasoning_after_the_first_text_gives_no_frame() {
     t.configure_openai(&admin, "demo-reasoning").await;
     let body = openai_sse(&[
         json!({"content": "Straight "}),
-        json!({"reasoning_content": format!("{SECRET} afterthought")}),
-        json!({"reasoning": format!("{SECRET} more")}),
+        json!({"reasoning_content": format!("{LATE} afterthought")}),
+        json!({"reasoning": format!("{LATE} more")}),
         json!({"content": "to the point."}),
     ]);
     t.stub.force(Some((200, &body)));
@@ -157,25 +179,41 @@ async fn reasoning_does_not_count_towards_the_answer_cap() {
     ]);
     t.stub.force(Some((200, &body)));
     let (ev, raw) = stream_raw(&t, &sam, json!({"text": "Long think"})).await;
-    assert_eq!(names(&ev), vec!["start", "thinking", "delta", "done"]);
+    assert_eq!(
+        names(&ev),
+        vec![
+            "start",
+            "thinking",
+            "reasoning",
+            "reasoningDone",
+            "delta",
+            "done"
+        ],
+        "{ev:?}"
+    );
+    assert_eq!(ev[3].1["truncated"], json!(true), "the storage cap");
     assert_eq!(terminal(&ev).1["truncated"], json!(false));
     assert_eq!(text(&ev), "Short.");
+    let chat = ev[0].1["chatId"].as_i64().expect("chat");
+    let (_, v) = t.get(&format!("/api/ai/chat?id={chat}"), &sam).await;
+    assert_eq!(v["messages"][1]["reasoningTruncated"], json!(true));
+    assert_eq!(v["messages"][1]["content"], json!("Short."));
     assert_never_kept(&t, &raw);
 }
 
 #[tokio::test]
-async fn anthropic_thinking_blocks_give_one_thinking_frame() {
+async fn anthropic_thinking_blocks_give_reasoning_and_redacted_ones_nothing() {
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic", t.stub.url), "apiKey": KEY, "model": "demo-claude"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    t.seed_route(Seed {
+        provider: "anthropic",
+        url: format!("{}/anthropic", t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model: "demo-claude",
+    });
     t.verify_and_enable(&admin).await;
     let body = anthropic_sse(&[
         json!({"type": "message_start", "message": {"usage": {"input_tokens": 6}}}),
@@ -183,7 +221,7 @@ async fn anthropic_thinking_blocks_give_one_thinking_frame() {
         json!({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": format!("{SECRET} idea")}}),
         json!({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "c2lnbmF0dXJlLWRlbW8="}}),
         json!({"type": "content_block_stop", "index": 0}),
-        json!({"type": "content_block_start", "index": 1, "content_block": {"type": "redacted_thinking", "data": format!("{SECRET}-redacted")}}),
+        json!({"type": "content_block_start", "index": 1, "content_block": {"type": "redacted_thinking", "data": format!("{LATE}-redacted")}}),
         json!({"type": "content_block_stop", "index": 1}),
         json!({"type": "content_block_start", "index": 2, "content_block": {"type": "text", "text": ""}}),
         json!({"type": "content_block_delta", "index": 2, "delta": {"type": "text_delta", "text": "Claude-style answer."}}),
@@ -195,9 +233,17 @@ async fn anthropic_thinking_blocks_give_one_thinking_frame() {
     let (ev, raw) = stream_raw(&t, &sam, json!({"text": "Think, Claude"})).await;
     assert_eq!(
         names(&ev),
-        vec!["start", "thinking", "delta", "done"],
+        vec![
+            "start",
+            "thinking",
+            "reasoning",
+            "reasoningDone",
+            "delta",
+            "done"
+        ],
         "{ev:?}"
     );
+    assert_eq!(ev[2].1, json!({"text": format!("{SECRET} idea")}));
     assert_eq!(text(&ev), "Claude-style answer.");
     assert_eq!(
         terminal(&ev).1,
@@ -206,7 +252,7 @@ async fn anthropic_thinking_blocks_give_one_thinking_frame() {
     // a redacted block alone (no thinking delta) also counts
     let body = anthropic_sse(&[
         json!({"type": "message_start", "message": {"usage": {"input_tokens": 2}}}),
-        json!({"type": "content_block_start", "index": 0, "content_block": {"type": "redacted_thinking", "data": SECRET}}),
+        json!({"type": "content_block_start", "index": 0, "content_block": {"type": "redacted_thinking", "data": LATE}}),
         json!({"type": "content_block_stop", "index": 0}),
         json!({"type": "content_block_delta", "index": 1, "delta": {"type": "text_delta", "text": "Done."}}),
         json!({"type": "message_stop"}),
@@ -218,6 +264,9 @@ async fn anthropic_thinking_blocks_give_one_thinking_frame() {
         vec!["start", "thinking", "delta", "done"],
         "{ev:?}"
     );
+    let chat = ev[0].1["chatId"].as_i64().expect("chat");
+    let (_, v) = t.get(&format!("/api/ai/chat?id={chat}"), &sam).await;
+    assert_eq!(v["messages"][1]["reasoning"], Value::Null);
     assert_never_kept(&t, &raw);
     assert_never_kept(&t, &raw2);
 }
@@ -247,10 +296,6 @@ async fn the_test_call_and_the_memory_suggestion_ignore_reasoning() {
         .await;
     assert_eq!(code, 200, "{v}");
     assert_eq!(v, json!({"suggestion": "Likes tables."}));
-    let (code, v) = t.post("/api/ai/admin/verify", &admin, json!({})).await;
-    assert_eq!(code, 200, "{v}");
-    assert_eq!(v["ok"], json!(true), "{v}");
-    assert!(!v.to_string().contains(SECRET));
     // reasoning without any text is no suggestion
     let body = openai_sse(&[json!({"reasoning": format!("{SECRET} only")})]);
     t.stub.force(Some((200, &body)));
@@ -263,5 +308,6 @@ async fn the_test_call_and_the_memory_suggestion_ignore_reasoning() {
         .await;
     assert_eq!(code, 502, "{v}");
     assert_eq!(v["code"], json!("ai.up.protocol"));
+    assert!(!disk_text(&t).contains(SECRET), "reasoning was stored");
     assert_never_kept(&t, "");
 }

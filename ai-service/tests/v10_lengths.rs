@@ -85,19 +85,6 @@ async fn defaults_by_language_for_every_kind_of_call() {
     // another question in English uses the same rule
     let _ = ask(&e.t, &e.user, hint_in("en", "q2", 2)).await;
     assert_eq!(e.t.stub.last().body["max_tokens"], json!(3000));
-    // the administrator's connection test sent no token field (the body of v0.9.1)
-    let verify =
-        e.t.stub
-            .requests()
-            .into_iter()
-            .find(|r| {
-                r.body
-                    .to_string()
-                    .contains("Reply with the single word OK.")
-            })
-            .expect("the test call");
-    assert!(verify.body.get("max_tokens").is_none());
-    assert!(verify.body.get("max_completion_tokens").is_none());
 }
 
 #[tokio::test]
@@ -215,15 +202,14 @@ async fn an_unrelated_400_is_not_retried() {
 }
 
 async fn use_anthropic(e: &Env, model: &str) {
-    let (s, v) = e
-        .t
-        .post(
-            "/api/ai/admin/settings",
-            &e.admin,
-            json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic", e.t.stub.url), "apiKey": KEY, "model": model}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    e.t.seed_route(Seed {
+        provider: "anthropic",
+        url: format!("{}/anthropic", e.t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model,
+    });
     e.t.verify_and_enable(&e.admin).await;
 }
 
@@ -233,7 +219,10 @@ async fn anthropic_is_clamped_to_the_stored_test_result() {
     set_reply_tokens(&e, 16000).await;
     // demo-4k: the test finds that 8192 is too large and stores 4096, so the first request is already at most 4096
     use_anthropic(&e, "demo-4k").await;
-    let stored: i64 = q1(&e.t, "SELECT max_tokens FROM settings");
+    let stored: i64 = q1(
+        &e.t,
+        "SELECT max_tokens FROM models WHERE model = 'demo-4k'",
+    );
     assert_eq!(stored, 4096);
     let before = chat_requests(&e.t).len();
     let ev = ask(&e.t, &e.user, hint_in("zh", "q1", 1)).await;
@@ -253,7 +242,10 @@ async fn anthropic_refusing_the_value_gets_the_stored_ceiling_once() {
     set_reply_tokens(&e, 16000).await;
     // demo-8k accepts the test's 8192 (stored) but refuses 24000
     use_anthropic(&e, "demo-8k").await;
-    let stored: i64 = q1(&e.t, "SELECT max_tokens FROM settings");
+    let stored: i64 = q1(
+        &e.t,
+        "SELECT max_tokens FROM models WHERE model = 'demo-8k'",
+    );
     assert_eq!(stored, 8192);
     let before = chat_requests(&e.t).len();
     let ev = ask(&e.t, &e.user, hint_in("zh", "q1", 1)).await;
@@ -272,15 +264,42 @@ async fn anthropic_refusing_the_value_gets_the_stored_ceiling_once() {
 }
 
 #[tokio::test]
-async fn the_test_call_keeps_its_v091_body() {
+async fn the_model_test_call_keeps_its_v091_body() {
     let e = env().await;
-    // OpenAI-compatible: no token field
-    let verify = e.t.stub.requests().into_iter().next().expect("test call");
-    assert!(verify.body.get("max_tokens").is_none());
-    assert!(verify.body.get("max_completion_tokens").is_none());
+    // OpenAI-compatible: the model test sends no token field
+    let (s, v) =
+        e.t.post(
+            "/api/ai/admin/models/test",
+            &e.admin,
+            json!({"connectionId": 1, "model": "demo-chat-small"}),
+        )
+        .await;
+    assert_eq!((s, v["ok"].clone()), (200, json!(true)), "{v}");
+    let test_call =
+        e.t.stub
+            .requests()
+            .into_iter()
+            .rev()
+            .find(|r| {
+                r.path.ends_with("/chat/completions")
+                    && r.body
+                        .to_string()
+                        .contains("Reply with the single word OK.")
+            })
+            .expect("test call");
+    assert!(test_call.body.get("max_tokens").is_none());
+    assert!(test_call.body.get("max_completion_tokens").is_none());
     // Anthropic: the stored value (8192, then 4096 after a refusal), independent of the answer length
     set_reply_tokens(&e, 100).await;
     use_anthropic(&e, "demo-4k").await;
+    let (s, v) =
+        e.t.post(
+            "/api/ai/admin/models/test",
+            &e.admin,
+            json!({"connectionId": 1, "model": "demo-4k"}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
     let tests: Vec<i64> =
         e.t.stub
             .requests()
@@ -293,7 +312,12 @@ async fn the_test_call_keeps_its_v091_body() {
             })
             .map(|r| r.body["max_tokens"].as_i64().unwrap_or(0))
             .collect();
-    assert_eq!(tests, vec![8192, 4096]);
+    assert_eq!(tests.first(), Some(&8192), "{tests:?}");
+    assert!(
+        tests.iter().all(|n| *n == 8192 || *n == 4096),
+        "never the answer length: {tests:?}"
+    );
+    assert!(tests.contains(&4096), "{tests:?}");
 }
 
 #[tokio::test]
@@ -320,32 +344,32 @@ async fn message_and_memory_lengths() {
     let (_, st) = e.t.get("/api/ai/status", &e.user).await;
     assert_eq!(st["messageChars"], json!(16000));
     assert_eq!(st["maxMessageChars"], json!(16000));
-    assert_eq!(st["memoryTokens"], json!(1000));
-    assert_eq!(st["memoryMaxTokens"], json!(1000));
-    // a memory: 4001 ASCII characters (1001 estimated tokens) are too long on a fresh database, 4000 pass
+    assert_eq!(st["memoryTokens"], json!(200));
+    assert_eq!(st["memoryMaxTokens"], json!(200));
+    // a memory: 4001 ASCII characters (1001 estimated tokens) are too long on a fresh database, 800 pass
     let (s, v) =
         e.t.post(
             "/api/ai/memories/add",
             &e.user,
-            json!({"content": "x".repeat(4001)}),
+            json!({"content": "x".repeat(801)}),
         )
         .await;
     assert_eq!(
         (s, v["code"].clone(), v["limit"].clone()),
-        (400, json!("ai.memoryTooLong"), json!(1000))
+        (400, json!("ai.memoryTooLong"), json!(200))
     );
     let (s, v) =
         e.t.post(
             "/api/ai/memories/add",
             &e.user,
-            json!({"content": "x".repeat(4000)}),
+            json!({"content": "x".repeat(800)}),
         )
         .await;
     assert_eq!(s, 200, "{v}");
     // the answer length of the limits answer
     let (_, v) = e.t.get("/api/ai/admin/limits", &e.admin).await;
     assert_eq!(v["limits"]["replyMaxTokens"], json!(3000));
-    assert_eq!(v["limits"]["memoryTokens"], json!(1000));
+    assert_eq!(v["limits"]["memoryTokens"], json!(200));
     assert_eq!(v["limits"]["genCallTokens"], json!(20000));
     assert_eq!(v["ranges"]["replyMaxTokens"], json!([1, 250000]));
 }

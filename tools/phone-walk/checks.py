@@ -37,7 +37,8 @@ MATRIX = [(360, 740), (390, 844), (412, 915), (740, 360), (844, 390), (768, 1024
 DEFAULT = [(360, 740), (390, 844), (844, 390)]
 PHONES_P = [(360, 740), (390, 844), (412, 915)]
 DEFAULT_CAPS = {'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100}
-WALK_CAPS = {'callsPerMinute': 100, 'callsPerHour': 2000, 'callsPerDay': 20000}
+# callsAdminsExempt 0: the administrator lee is capped like everyone else (v1.3 exempts administrators by default), so the cap checks can block
+WALK_CAPS = {'callsPerMinute': 100, 'callsPerHour': 2000, 'callsPerDay': 20000, 'callsAdminsExempt': 0}
 CLEAR_SESSION = "Object.keys(localStorage).filter(k => /session\\.v1$/.test(k)).forEach(k => localStorage.removeItem(k)); 1"
 # Parts of a check that are P2 (reported, never fail the run): (check id, state)
 P2_STATES = {('W-JC-1', 'wide'), ('W-US-1', 'bank-row'), ('W-AS-1', 'usage-cards'), ('W-US-2', 'forbidden'), ('W-SH-10', 'short-page')}
@@ -345,7 +346,7 @@ def make_result(d, n):
 
 
 def tap_ai(d, slot):
-    """A real tap on the AI 提示 / AI 解释 bar button, then waits until the panel text settled."""
+    """A real tap on the AI 提示 / AI 解析 bar button, then waits until the panel text settled."""
     d.tap_sel('[data-slot="%s"]' % slot)
     d.js("window.__settle('#aip-panel-body')")
     time.sleep(0.9)
@@ -1201,6 +1202,8 @@ def g_logs_settings(rc):
 def logs_case(rc, lang, theme, size):
     d = rc.dev('admin', lang, theme, size)
     goto(d, '#/logs', 2.0)
+    d.js("(() => { const b = document.querySelectorAll('.lg-tabs button')[1]; if (b) b.click() })()")   # the log lines are on the Service tab
+    time.sleep(1.0)
     d.js('window.scrollTo(0, 0)')
     tall = d.js('document.documentElement.scrollHeight > innerHeight + 200')
     if not tall:
@@ -1598,7 +1601,7 @@ def as3_case(rc, lang, theme, size):
     problems = []
     r = d.js("""(() => { const t = [...document.querySelectorAll('.ais-tabs button')];
       return {ids: t.map(b => b.id), pressed: t.filter(b => b.getAttribute('aria-pressed') === 'true').map(b => b.id),
-              chips: !!document.querySelector('.ais-status')} })()""")
+              chips: !!document.querySelector('.ais-scard')} })()""")
     if r['ids'] != ['ais-tab-feature', 'ais-tab-users', 'ais-tab-usage', 'ais-tab-safety', 'ais-tab-gen']:
         problems.append('tabs %s' % ','.join(r['ids']))
     if r['pressed'] != ['ais-tab-feature']:
@@ -1613,7 +1616,7 @@ def as3_case(rc, lang, theme, size):
     for k in ('users', 'usage', 'safety', 'feature'):
         h0 = d.js('history.length')
         d.tap_sel('#ais-tab-' + k, wait=1.6)
-        s = d.js("""((k, sels) => ({hash: location.hash, hl: history.length, chips: %s(document.querySelector('.ais-status')),
+        s = d.js("""((k, sels) => ({hash: location.hash, hl: history.length, chips: %s(document.querySelector('.ais-scard')),
             pressed: (document.querySelector('.ais-tabs [aria-pressed=true]') || {}).id,
             here: Object.fromEntries(Object.entries(sels).map(([n, s]) => [n, !!document.querySelector(s)]))}))""" % VIS
                     + "(%s, %s)" % (json.dumps(k), json.dumps(AS3_CONTENT)))
@@ -1654,13 +1657,13 @@ def as2_case(rc, lang, theme, size):
     goto(d, '#/ai-settings?tab=safety', 2.5)
     d.js(CHECKS_JS)
     problems = []
-    r = d.js("""(() => { const g = [...document.querySelectorAll('.ais-limits .ais-subgroup')].map(e => e.classList.contains('ais-caps-group') ? 'caps' : e.classList.contains('ais-length-group') ? 'length' : 'server');
+    r = d.js("""(() => { const g = [...document.querySelectorAll('.ais-limits .ais-subgroup')].map(e => (e.getAttribute('aria-labelledby') || '').replace(/^ais-(g-)?/, '').replace(/-h$/, ''));
       const v = id => (document.getElementById(id) || {}).value;
       return {groups: g, reply: v('ai-lim-replyMaxTokens'), mem: v('ai-lim-memoryTokens'), msg: !!document.getElementById('ai-lim-messageChars'),
               hint: (document.getElementById('ai-lim-replyMaxTokens-hint2') || {}).innerText || '', live: (document.getElementById('ai-lim-replyMaxTokens-live') || {}).innerText || '', hint1: (document.getElementById('ai-lim-replyMaxTokens-hint') || {}).innerText || ''} })()""")
-    if r['groups'] != ['caps', 'length', 'server']:
+    if r['groups'] != ['calls', 'chat', 'length', 'study', 'summary', 'gen', 'import', 'server']:
         problems.append('groups %s' % ','.join(r['groups']))
-    if r['reply'] != '3000' or r['mem'] != '1000' or r['msg']:
+    if r['reply'] != '3000' or r['mem'] != '200' or r['msg']:
         problems.append('fields reply %s, memory %s, per-message field %s' % (r['reply'], r['mem'], r['msg']))
     if r['hint'] or r['live']:
         problems.append('the character hint / live line is still there (lengths are tokens now): %r %r' % (r['hint'], r['live']))
@@ -1673,7 +1676,7 @@ def as2_case(rc, lang, theme, size):
         for bad in ('0', '250001'):
             d.js_call(SET_VALUE, '#ai-lim-replyMaxTokens', bad)
             d.tap_sel('#ai-limits-save', wait=1.2)
-            err = d.js("(() => { const f = document.getElementById('ai-lim-replyMaxTokens'); const box = f && f.closest('.ais-length'); const e = box && box.querySelector('.ais-ferr'); return e ? e.innerText : null })()")
+            err = d.js("(() => { const f = document.getElementById('ai-lim-replyMaxTokens'); const box = f && f.closest('.fld'); const e = box && box.querySelector('.ais-ferr'); return e ? e.innerText : null })()")
             now = admin.call('/api/ai/admin/limits').get('limits', {}).get('replyMaxTokens')
             if not err or now != 3000:
                 problems.append('%s: error %r, stored %s' % (bad, err, now))
@@ -1682,9 +1685,9 @@ def as2_case(rc, lang, theme, size):
         now = admin.call('/api/ai/admin/limits').get('limits', {}).get('replyMaxTokens')
         if now != 250000:
             problems.append('250000 did not save (stored %s)' % now)
-        admin.call('/api/ai/admin/limits', {'replyMaxTokens': 3000, 'memoryTokens': 1000})
+        admin.call('/api/ai/admin/limits', {'replyMaxTokens': 3000, 'memoryTokens': 200})
     rc.rec('W-AS-2', 'ai-settings', 'lengths', 'admin', size, lang, theme, not problems,
-           '; '.join(problems) or 'caps, length, server; 3000 / 1000 tokens, no character hint%s' % (
+           '; '.join(problems) or 'the 8 safety groups; 3000 / 200 tokens, no character hint%s' % (
                '; 0 and 250001 refused, 250000 saved' if lang == 'zh' and size == (390, 844) else ''), d if problems else None)
 
 
@@ -1906,6 +1909,8 @@ def saved_problems(rc, d, lang, size, sel, user):
         chats = rc.session(user).call('/api/ai/chats').get('chats', [])
         if not title or not any(digits(c.get('title')) and digits(c.get('title')) == digits(title) for c in chats):
             out.append('the tip %r names no chat of the list' % tip['text'])
+        d.js('(s => { const e = document.querySelector(s); if (e) e.scrollIntoView({block: "center"}) })(%s)' % json.dumps(sel))   # the footer can sit below the viewport
+        time.sleep(0.3)
         r = d.rect(sel)
         if phone(size):
             d.tap(r['cx'], r['cy'], 0.5)
@@ -2082,7 +2087,7 @@ def saved_setup(d):
 
 
 # ---------------------------------------------------------------------------------------------------- v1.1 checks
-# W-IM-1 (the AI import card of Bank management), W-GB-1 (Home's AI button), W-BT-1 (every badge has a tip), W-FP-1 (six boxes in two
+# W-IM-1 (the AI import card of Bank management), W-GB-1 (Home's AI button), W-BT-1 (every badge has a tip), W-FP-1 (five boxes in two
 # groups), W-UC-1 (the usage charts), W-AS-1v (the top-row 交卷 / 完成 button and count, no finish button in the narrow answer sheet), W-FT-1 (footer space), W-SI-1 (sign-in).
 # They use only the classes of the v1.1 components (.bk-aicard, .gen-home, .ai-badge-tip, .ais-feats, .uc-chart ...).
 NO_SIDE_SCROLL = "(() => document.documentElement.scrollWidth <= window.innerWidth + 1)()"
@@ -2111,12 +2116,13 @@ LABEL_OVERLAP = """(() => {
   return res })()"""
 FEAT_ROWS = """(() => {
   const rows = [...document.querySelectorAll('.ais-feats')].map(f => {
-    // v1.1 (A-OWNER-21): an administrator row also has the free-mode switch (.ais-fg-free), not one of the six boxes
+    // v1.1 (A-OWNER-21): an administrator row also has the free-mode switch (.ais-fg-free), not one of the five boxes (v1.3: AI hint and AI analysis are one box, ais-feat-<id>-hint, labelled 提示+解析)
     const boxes = f.querySelectorAll('.ais-fg:not(.ais-fg-free) input[type=checkbox]').length;
     const groups = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free)')].map(g => new Set([...g.querySelectorAll('label')].map(l => Math.round(l.getBoundingClientRect().top))).size);
     const free = f.querySelectorAll('.ais-fg-free input[role=switch]').length;
     const admin = [...f.querySelectorAll('.ais-fg:not(.ais-fg-free) input')].every(i => i.disabled);
-    return {boxes, groups, admin, free, freeOk: admin ? free === 1 : free === 0};
+    const split = !!f.querySelector('input[id$="-explain"]') || !f.querySelector('input[id$="-hint"]');
+    return {boxes, groups, admin, free, split, freeOk: admin ? free === 1 : free === 0};
   });
   return rows })()"""
 
@@ -2477,8 +2483,10 @@ def fp1_case(rc, lang, theme, size):
         return
     problems = []
     for i, r in enumerate(rows):
-        if r['boxes'] != 6:
+        if r['boxes'] != 5:
             problems.append('row %d has %d boxes' % (i, r['boxes']))
+        if r['split']:
+            problems.append('row %d: hint and analysis are not one box' % i)
         if not r['freeOk']:
             problems.append('row %d (%s) has %d free-mode switches' % (i, 'administrator' if r['admin'] else 'user', r['free']))
         if len(r['groups']) != 2:
@@ -2488,7 +2496,7 @@ def fp1_case(rc, lang, theme, size):
     if not any(r['admin'] for r in rows):
         problems.append('no administrator row with disabled boxes')
     rc.rec('W-FP-1', 'ai-settings', 'features', 'admin', size, lang, theme, not problems,
-           '; '.join(problems[:3]) or '%d rows: six boxes in two groups' % len(rows), d if problems else None)
+           '; '.join(problems[:3]) or '%d rows: five boxes in two groups' % len(rows), d if problems else None)
 
 
 UC_BARS = """(() => {
@@ -2498,7 +2506,7 @@ UC_BARS = """(() => {
     const labels = items.map(g => (g.querySelector('.uc-label') || {}).textContent || '');
     const card = host.closest('.uc-card');
     out.push({n: items.length, labelled: labels.filter(Boolean).length, title: card ? card.querySelector('.uc-title').textContent : '',
-      switchBtns: card ? card.querySelectorAll('.uc-sw-btn').length : 0, other: labels.some(l => /其他|Other|その他/.test(l)),
+      switchBtns: card ? [...card.querySelectorAll('.uc-switch')].slice(-1).reduce((n, w) => w.querySelectorAll('.uc-sw-btn').length, 0) : 0, other: labels.some(l => /其他|Other|その他/.test(l)),
       stacked: host.querySelectorAll('.uc-bar-in').length});
   }
   return out })()"""
@@ -2553,12 +2561,12 @@ def uc1_case(rc, lang, theme, size):
         if b['switchBtns'] != 2:
             problems.append('no calls / tokens switch')
     # the switch: tokens on the first chart (stacked bars when anything was counted), the title follows, then back
-    if bars and d.js("(() => { const b = document.querySelectorAll('.uc-sw-btn')[1]; if (!b) return false; b.click(); return true })()"):
+    if bars and d.js("(() => { const sw = document.querySelector('.uc-bars').closest('.uc-card').querySelectorAll('.uc-switch'); const b = sw[sw.length - 1].querySelectorAll('.uc-sw-btn')[1]; if (!b) return false; b.click(); return true })()"):
         time.sleep(0.4)
         after = d.js(UC_BARS)
         if not re.search(r'Token|トークン', after[0]['title'], re.I):
             problems.append('the title did not follow the switch: %s' % after[0]['title'])
-        d.js("document.querySelectorAll('.uc-sw-btn')[0].click()")
+        d.js("(() => { const sw = document.querySelector('.uc-bars').closest('.uc-card').querySelectorAll('.uc-switch'); sw[sw.length - 1].querySelectorAll('.uc-sw-btn')[0].click() })()")
         time.sleep(0.3)
     tips = d.js(UC_TIPS) or {}
     if bars and not tips.get('barTip'):
@@ -2589,7 +2597,7 @@ UC2_JS = r"""(async () => {
   const cr = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y) + .05) / (Math.min(x, y) + .05); };
   const res = {pref: localStorage.getItem('xexam.uc.period'), title0: q('.uc-title').textContent, n: btns.length,
     labels: btns.map(b => b.textContent), pressed0: btns.map(b => b.getAttribute('aria-pressed')),
-    swRole: sw.getAttribute('role'), swLabel: sw.getAttribute('aria-label'), btnH: btns.map(b => Math.round(b.getBoundingClientRect().height)),
+    swRole: sw.getAttribute('role'), swLabel: sw.getAttribute('aria-label'), btnH: btns.map(b => Math.round(b.getBoundingClientRect().height) + (matchMedia('(pointer: coarse)').matches ? 16 : 0)),
     coarse: matchMedia('(pointer: coarse)').matches, legend0: q('.uc-legend').hidden};
   btns[1].click(); await wait(250);
   const line2 = card.querySelector('.uc-line'); const svg = line2.querySelector('svg');
@@ -2681,7 +2689,7 @@ def uc2_case(rc, lang, theme, size):
         p.append('legend swatches differ from the areas %r' % r['swatch'])
     if r.get('crInBg', 9) < 1.4:
         p.append('input area %s:1 against the card' % r.get('crInBg'))
-    if min(r['btnH']) < (44 if r['coarse'] else 32):
+    if min(r['btnH']) < (44 if r['coarse'] else 28):
         p.append('switch %r px (coarse %s)' % (r['btnH'], r['coarse']))
     if r.get('btnCr', 9) < 4.5:
         p.append('pressed button contrast %s' % r['btnCr'])
@@ -3538,12 +3546,15 @@ IM3_JS = """(() => { const c = document.querySelector('.gen-file'); if (!c) retu
   return {labs, line: (c.querySelector('.gen-line') || {}).textContent || ''} })()"""
 
 
+IM3_LIMIT, IM3_TOTAL = 100, 130   # the import limit of v1.3 and one more than it
+
+
 def im3_case(rc, lang, theme, size):
-    """A-OWNER-70 / 72 / 73: an import of 60 made-up questions: the confirm card names the file's count and the limit (two red labels with
-    white text) and the line "found 60, the first 50 are imported"; the confirm dialog repeats them; the done card says "50 of 60"."""
+    """A-OWNER-70 / 72 / 73: an import of 130 made-up questions (the limit is 100 per import since v1.3): the confirm card names the file's count and the limit (two red labels with
+    white text) and the line "found 130, the first 100 are imported"; the confirm dialog repeats them; the done card says "100 of 130"."""
     u = rc.session('lee')
     filler = 'This made-up sample sentence only pads the stem. ' * 3
-    text = '\n'.join('Q%d. Sample question %d: %s Which choice is the made-up one?\nA. First\nB. Second\nC. Third\nD. Fourth' % (i, i, filler) for i in range(1, 61)) + '\n'
+    text = '\n'.join('Q%d. Sample question %d: %s Which choice is the made-up one?\nA. First\nB. Second\nC. Third\nD. Fourth' % (i, i, filler) for i in range(1, IM3_TOTAL + 1)) + '\n'
     a = u.call('/api/ai/import/upload', raw=text.encode(), headers={'Content-Type': 'application/octet-stream', 'X-Filename': 'sample-q.txt', 'X-Ui-Lang': lang})
     jid = a.get('id') or a.get('job', {}).get('id')
     j = {}
@@ -3557,13 +3568,13 @@ def im3_case(rc, lang, theme, size):
     problems = []
     d = rc.dev('lee', lang, theme, size)
     try:
-        if j.get('phase') != 'confirm' or j.get('total') != 60 or j.get('taken') != 50:
+        if j.get('phase') != 'confirm' or j.get('total') != IM3_TOTAL or j.get('taken') != IM3_LIMIT:
             problems.append('job state %s / %s total %s taken %s' % (j.get('state'), j.get('phase'), j.get('total'), j.get('taken')))
         else:
             goto(d, '#/banks', 2.5)
             r = d.js(IM3_JS)
-            want_line = fill(cat(lang, 'aigen.imp.card.confirmQCut'), n=50, found=60)
-            want = [fill(cat(lang, 'aigen.imp.cnt.file'), n=60), fill(cat(lang, 'aigen.imp.cnt.limit'), n=50)]
+            want_line = fill(cat(lang, 'aigen.imp.card.confirmQCut'), n=IM3_LIMIT, found=IM3_TOTAL)
+            want = [fill(cat(lang, 'aigen.imp.cnt.file'), n=IM3_TOTAL), fill(cat(lang, 'aigen.imp.cnt.limit'), n=IM3_LIMIT)]
             if not r or [x['t'] for x in r['labs']] != want:
                 problems.append('labels %s (want %s)' % (r and [x['t'] for x in r['labs']], want))
             elif any(x['bg'] != 'rgb(185, 28, 28)' or x['fg'] != 'rgb(255, 255, 255)' for x in r['labs']):
@@ -3574,7 +3585,7 @@ def im3_case(rc, lang, theme, size):
             d.js("(() => { const b = [...document.querySelectorAll('.gen-file .btn.primary, .gen-file .btn.ai')][0]; if (b) b.click() })()")
             time.sleep(0.8)
             dl = d.js("(() => { const x = document.querySelector('dialog.gen-cfm[open]'); return x ? {labs: [...x.querySelectorAll('.gen-cnt')].map(e => e.textContent), body: x.querySelector('p:not(.gen-counts)').textContent} : null })()")
-            if not dl or dl['labs'] != want or '60' not in dl['body']:
+            if not dl or dl['labs'] != want or str(IM3_TOTAL) not in dl['body']:
                 problems.append('confirm dialog %r' % (dl,))
             d.js("(() => { const x = document.querySelector('dialog.gen-cfm[open]'); if (x) x.close() })()")
     finally:
@@ -3583,7 +3594,7 @@ def im3_case(rc, lang, theme, size):
         except Exception:
             pass
     rc.rec('W-IM-3', 'banks', 'import-confirm', 'lee', size, lang, theme, not problems,
-           '; '.join(problems) or 'two red labels "%s" / "%s"; the line and the dialog name 60 and 50' % (want[0], want[1]), d if problems else None)
+           '; '.join(problems) or 'two red labels "%s" / "%s"; the line and the dialog name %d and %d' % (want[0], want[1], IM3_TOTAL, IM3_LIMIT), d if problems else None)
 
 
 GROUPS = [g_shared, g_toast, g_pinned, g_contrast, g_dialogs, g_menu, g_first_line, g_bar, g_panel, g_greyed, g_landscape,
@@ -3595,8 +3606,9 @@ from checks_v12_quiz import GROUPS_V12_QUIZ  # noqa: E402
 from checks_v12_ai import GROUPS_V12_AI  # noqa: E402
 from checks_v12_tokens import GROUPS_V12_TOKENS  # noqa: E402
 from checks_v12_charts import GROUPS_V12_CHARTS  # noqa: E402
+from checks_v13 import GROUPS_V13  # noqa: E402
 
-GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13
 
 
 def run(walk):

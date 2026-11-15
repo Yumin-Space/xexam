@@ -3,11 +3,11 @@
 // The pure rules (what a card shows, how fast to poll) live in domain/ai-gen.ts and domain/ai-import.ts.
 import { cancelGen, dismissGen, fetchGenJob, jobOfError, startGen, type StartBody } from '../api/ai-gen.ts';
 import { confirmImport as confirmImportRequest, uploadImport } from '../api/ai-import.ts';
-import { activeJob, finishedBetween, pollInterval } from '../domain/ai-gen.ts';
+import { activeJob, applyItems, emptyItems, finishedBetween, pollInterval, wantsItems, type ItemsState } from '../domain/ai-gen.ts';
 import { awaitsConfirm, type UploadState } from '../domain/ai-import.ts';
 import { errorText } from '../i18n/errors.ts';
 import { t, uiLang } from '../i18n/index.ts';
-import type { GenJob, ImportFileType } from '../types/api.ts';
+import type { GenItem, GenJob, ImportFileType } from '../types/api.ts';
 import { toast } from '../utils/toast.ts';
 import { onRouteChange, refreshAi, refreshLibrary, render } from './actions.ts';
 import { aiGenStatus, aiStatus, onAiStatusChange, refreshAiStatus, setAiGenJob } from './ai.ts';
@@ -152,6 +152,22 @@ export function scrollToCard(): void {
   setTimeout(go, 50);
 }
 
+// ---------------------------------------------------------------- the questions written so far (v1.3, memory only)
+
+/** The items of the job being polled; never stored in the browser, dropped when the job ends or the user signs out */
+let itemsOf: { jobId: number; state: ItemsState } | null = null;
+
+/** The questions written so far of job `id` (empty when none are held) */
+export function jobItems(id: number): readonly GenItem[] {
+  return itemsOf?.jobId === id ? itemsOf.state.items : [];
+}
+
+/** Keeps the cursor and the list of the polled job in line with one answer; another job's items are dropped */
+export function noteItems(jobId: number, a: Parameters<typeof applyItems>[1]): void {
+  const base = itemsOf?.jobId === jobId ? itemsOf.state : emptyItems();
+  itemsOf = { jobId, state: applyItems(base, a) };
+}
+
 // ---------------------------------------------------------------- polling and the moments after a job
 
 const confirmDialogShown = new Set<number>();
@@ -215,7 +231,15 @@ async function tick(): Promise<void> {
   const job = activeJob(aiGenStatus());
   if (!job) return;
   try {
-    const j = await fetchGenJob(job.id);
+    let j: GenJob;
+    if (wantsItems(route(), !document.hidden, job)) {
+      // v1.3: ask for the questions written since the last poll as well
+      const a = await fetchGenJob(job.id, itemsOf?.jobId === job.id ? itemsOf.state.last : 0, uiLang());
+      noteItems(job.id, a);
+      j = a.job;
+    } else {
+      j = await fetchGenJob(job.id);
+    }
     const finished = j.state === 'done' || j.state === 'failed';
     setAiGenJob(j);
     // the exact list of unseen jobs and the quota come from the status
@@ -231,6 +255,8 @@ function onStatus(): void {
   const done = finishedBetween(lastActive, gen);
   lastActive = activeJob(gen);
   if (done) finish(done);
+  // the list belongs to the running job only
+  if (itemsOf && itemsOf.jobId !== lastActive?.id) itemsOf = null;
   checkConfirm();
   schedule();
   notify();
@@ -256,6 +282,7 @@ export function installAiGen(): void {
     upload?.abort();
     upload = null;
     lastActive = null;
+    itemsOf = null;
     libraryPending = false;
     confirmDialogShown.clear();
     recognisedToastShown.clear();

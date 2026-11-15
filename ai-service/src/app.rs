@@ -1,16 +1,20 @@
 //! The service state shared by the routes and the background tasks.
+use crate::activity::Event;
 use crate::chat::{Gate, Kind, Registry, StopReason};
 use crate::codes::ApiError;
 use crate::config::{Config, Timeouts};
-use crate::identity::Identity;
+use crate::features::Feature;
+use crate::identity::{ClientInfo, Identity};
 use crate::limits::Limits;
 use crate::link::{Link, LogLine};
 use crate::logs::{FailureLog, Throttle};
-use crate::provider::{ModelList, Target};
-use crate::secret::{self, KeySource, LoadError, MasterKey, SecretName};
-use crate::settings::{fingerprint, KeyRevs, Provider, Settings};
+use crate::provider::{ModelList, Target, UpCode};
+use crate::quota;
+use crate::route::{KeyState, Pick, Route, Slot, View};
+use crate::secret::{self, KeySource, LoadError, MasterKey, SecretName, SecretRef};
+use crate::settings::Provider;
 use crate::store::tables::{self, SecretRow};
-use crate::store::{data, stats, Store};
+use crate::store::{conn, data, stats, Store};
 use crate::study::cache::RecordCache;
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -43,47 +47,37 @@ impl KeyProblem {
     }
 }
 
-/// The settings with what is known about the keys, and the fingerprint.
+/// The global AI state: what an administrator switched, and whether the keys can be used. Which model serves a call is
+/// not part of it (see [`App::route`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Snapshot {
-    pub settings: Settings,
-    pub secrets: Vec<SecretRow>,
-    pub revs: KeyRevs,
-    pub fp: String,
+    /// The administrators' AI+ switch
+    pub enabled: bool,
+    /// Global feature switches (bits of `features.rs`): a set bit = off for every normal user
+    pub features_off: i64,
+    pub retention_days: i64,
     pub key_problem: Option<KeyProblem>,
 }
 
-impl Snapshot {
-    /// Effective AI state (2.3 rule 4).
-    pub fn effective(&self) -> bool {
-        self.settings.enabled
-            && self.settings.verified_fp.as_deref() == Some(self.fp.as_str())
-            && self.key_problem.is_none()
-    }
-
-    pub fn verified(&self) -> bool {
-        self.settings.verified_at.is_some()
-            && self.settings.verified_fp.as_deref() == Some(self.fp.as_str())
-    }
-
-    /// A model and the keys the provider needs are saved.
-    pub fn configured(&self) -> bool {
-        !self.settings.model.is_empty() && self.missing_key().is_none()
-    }
-
-    /// The first required key that is not saved.
-    pub fn missing_key(&self) -> Option<SecretName> {
-        self.settings
-            .provider
-            .required_key()
-            .filter(|k| self.revs.get(*k).is_none())
-    }
-}
-
-/// Models listed recently (10 minutes per fingerprint, in memory only).
+/// Models of one connection listed recently (10 minutes per connection id and revision, in memory only).
 pub struct ModelsCache {
-    pub fp: String,
     pub at: Instant,
     pub list: ModelList,
+}
+
+/// The cache key of [`ModelsCache`]: (connection id, connection revision).
+pub type ModelsKey = (i64, i64);
+
+/// How many entries the in-memory memos keep (token ladder, questions per call, model lists).
+const MEMO_CAP: usize = 64;
+
+/// Consecutive live `ai.up.auth` answers that mark a connection broken.
+const AUTH_STRIKES: u32 = 3;
+
+/// The places of one model call: the registry slot and the instance-wide gate permit.
+pub struct Places {
+    pub slot: crate::chat::Slot,
+    pub permit: crate::chat::GatePermit,
 }
 
 /// The service. No `Debug`.
@@ -100,7 +94,7 @@ pub struct App {
     pub registry: Arc<Registry>,
     pub gate: Arc<Gate>,
     limits: RwLock<Limits>,
-    pub models_cache: Mutex<Option<ModelsCache>>,
+    pub models_cache: Mutex<std::collections::HashMap<ModelsKey, ModelsCache>>,
     pub shutdown: watch::Receiver<bool>,
     shutdown_tx: watch::Sender<bool>,
     pub identity_log: Throttle,
@@ -111,9 +105,6 @@ pub struct App {
     pub unreadable_log: Throttle,
     /// Test hook of the study asks (see [`StudyHold`]); `None` in production
     study_hold: Mutex<Option<StudyHold>>,
-    /// AI Chat retries per answer message: a retry rewrites the failed answer in place, so the database holds no count
-    /// of the attempts (see [`App::next_retry_attempt`])
-    retries: Mutex<std::collections::HashMap<i64, u32>>,
     /// Per-user call caps that were reached and have not freed yet: (user id, cap key) -> when it frees (unix s). One log
     /// line per entry (see [`App::note_call_cap`]); expired entries are pruned on every use.
     cap_episodes: Mutex<std::collections::HashMap<(i64, &'static str), i64>>,
@@ -131,12 +122,20 @@ pub struct App {
     exe: PathBuf,
     /// Timers of the jobs (tests lower them)
     pub knobs: Knobs,
-    /// What the provider taught about the token limit for one settings fingerprint (the field it accepts, the ceiling
-    /// of an Anthropic model); a changed fingerprint starts again, a restart forgets it
-    token_memo: Mutex<Option<(String, crate::provider::TokenMemo)>>,
-    /// The most questions per call a provider really delivered for one settings fingerprint (L-44: answers were cut
-    /// below the token setting); memory only, forgotten with the token memo
-    gen_per_call: Mutex<Option<(String, usize)>>,
+    /// What the provider taught about the token limit per route key (the field it accepts, the ceiling of an Anthropic
+    /// model); a changed connection revision starts again, a restart forgets it
+    token_memo: Mutex<std::collections::HashMap<String, crate::provider::TokenMemo>>,
+    /// Route keys whose OpenAI-compatible server refused cache markers (content parts with `cache_control`); memory only
+    no_markers: Mutex<std::collections::HashSet<String>>,
+    /// The most questions per call a provider really delivered per route key (L-44: answers were cut below the token
+    /// setting); memory only, forgotten with the token memo
+    gen_per_call: Mutex<std::collections::HashMap<String, usize>>,
+    /// Consecutive live `ai.up.auth` answers per connection id (reset by any success); memory only
+    auth_strikes: Mutex<std::collections::HashMap<i64, u32>>,
+    /// Wakes the activity delivery task when an event line was written
+    outbox_wake: Arc<Notify>,
+    /// Whether the last state report said "paused" (enabled but not effective); `None` before the first report
+    last_paused: Mutex<Option<bool>>,
     /// Held for a whole outbox delivery, so two never overlap (each would send the same audit lines)
     outbox: tokio::sync::Mutex<()>,
     /// Held while one state report is read and sent, so an older state never arrives after a newer one
@@ -210,35 +209,30 @@ pub struct AppState(pub Arc<App>);
 
 impl AppState {
     /// The requests of one counted model call (chat, study ask, memory suggestion): the answer length of the limits
-    /// as `max_tokens`, in the field this settings fingerprint is known to accept,
-    /// plus the fallbacks of the ladder (spec 3.10 C-8). The limits are read now, when the call starts.
+    /// as `max_tokens`, in the field this route is known to accept, plus the fallbacks of the ladder (spec 3.10 C-8).
+    /// The limits are read now, when the call starts.
     pub fn chat_plan(
         &self,
-        snap: &Snapshot,
+        route: &Route,
         target: &Target,
         spec: &crate::provider::ChatSpec<'_>,
     ) -> Result<crate::provider::Plan, crate::provider::UpError> {
         let want = self.0.limits().reply_max_tokens;
-        self.token_plan(snap, target, spec, want)
+        self.token_plan(route, target, spec, want)
             .map(|(plan, _)| plan)
     }
 
-    /// The first token limit a call of `want` tokens starts with (from the settings and what the provider taught), the
+    /// The first token limit a call of `want` tokens starts with (from the route and what the provider taught), the
     /// same inputs `token_plan` uses. A generation takes its batch size from it.
-    pub fn first_token_limit(&self, snap: &Snapshot, want: i64) -> crate::provider::TokenLimit {
-        let format = snap.settings.wire_format();
-        let stored_max = snap.settings.max_tokens;
-        let memo = {
-            let m = self.0.token_memo.lock().unwrap_or_else(|e| e.into_inner());
-            m.as_ref().filter(|(fp, _)| *fp == snap.fp).map(|(_, m)| *m)
-        };
-        crate::provider::first_token_limit(format, want, stored_max, memo)
+    pub fn first_token_limit(&self, route: &Route, want: i64) -> crate::provider::TokenLimit {
+        let memo = self.0.token_memo_of(&route.key);
+        crate::provider::first_token_limit(route.format, want, route.max_tokens, memo)
     }
 
     /// The batch ceiling of a generation: `Some(first.value)` when the first step has a token field and a value below
     /// `want` (Anthropic with a learned cap), else `None` (GP-1).
-    pub fn token_ceiling(&self, snap: &Snapshot, want: i64) -> Option<usize> {
-        let first = self.first_token_limit(snap, want);
+    pub fn token_ceiling(&self, route: &Route, want: i64) -> Option<usize> {
+        let first = self.first_token_limit(route, want);
         (first.field != crate::provider::TokenField::Omit && first.value < want)
             .then(|| usize::try_from(first.value).unwrap_or(0))
     }
@@ -247,24 +241,25 @@ impl AppState {
     /// the answer length of the limits).
     pub fn token_plan(
         &self,
-        snap: &Snapshot,
+        route: &Route,
         target: &Target,
         spec: &crate::provider::ChatSpec<'_>,
         want: i64,
     ) -> Result<(crate::provider::Plan, crate::provider::TokenLimit), crate::provider::UpError>
     {
-        let format = snap.settings.wire_format();
-        let stored_max = snap.settings.max_tokens;
-        let memo = {
-            let m = self.0.token_memo.lock().unwrap_or_else(|e| e.into_inner());
-            m.as_ref().filter(|(fp, _)| *fp == snap.fp).map(|(_, m)| *m)
-        };
-        let first = crate::provider::first_token_limit(format, want, stored_max, memo);
+        let format = route.format;
+        let stored_max = route.max_tokens;
+        let first = self.first_token_limit(route, want);
         let app = self.clone();
-        let fp = snap.fp.clone();
+        let key = route.key.clone();
         let remember: crate::provider::Remember = Arc::new(move |step| {
-            app.0.remember_token_step(&fp, format, step);
+            app.0.remember_token_step(&key, format, step);
         });
+        let no_markers = self.0.no_markers_of(&route.key);
+        let app = self.clone();
+        let key = route.key.clone();
+        let on_no_markers: Arc<dyn Fn() + Send + Sync> =
+            Arc::new(move || app.0.remember_no_markers(&key));
         let plan = crate::provider::build_plan(
             target,
             &self.0.client,
@@ -272,17 +267,45 @@ impl AppState {
             first,
             stored_max,
             Some(remember),
+            no_markers,
+            Some(on_no_markers),
         )?;
         Ok((plan, first))
     }
 }
 
 impl App {
-    /// Remembers the token-limit step a provider accepted after refusing the earlier one, once per fingerprint and step
-    /// (one INFO line, English, no key, URL or content).
+    /// The token-limit memo of a route key.
+    fn token_memo_of(&self, key: &str) -> Option<crate::provider::TokenMemo> {
+        let m = self.token_memo.lock().unwrap_or_else(|e| e.into_inner());
+        m.get(key).copied()
+    }
+
+    /// `true` when this route's server refused cache markers earlier (the requests go out without them).
+    fn no_markers_of(&self, key: &str) -> bool {
+        let m = self.no_markers.lock().unwrap_or_else(|e| e.into_inner());
+        m.contains(key)
+    }
+
+    /// Remembers that the server of this route key accepted a request only without cache markers (one INFO line,
+    /// English, no key, URL or content). At most [`MEMO_CAP`] keys are kept.
+    fn remember_no_markers(&self, key: &str) {
+        let mut m = self.no_markers.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() >= MEMO_CAP && !m.contains(key) {
+            m.clear();
+        }
+        if m.insert(key.to_string()) {
+            tracing::info!(
+                "the AI provider refused cache markers; sending none to this connection"
+            );
+        }
+    }
+
+    /// Remembers the token-limit step a provider accepted after refusing the earlier one, once per route key and step
+    /// (one INFO line, English, no key, URL or content). At most [`MEMO_CAP`] keys are kept.
     fn remember_token_step(
         &self,
-        fp: &str,
+        key: &str,
         format: crate::settings::Format,
         step: &crate::provider::TokenLimit,
     ) {
@@ -315,26 +338,34 @@ impl App {
             (_, TokenField::MaxTokens) => return,
         };
         let mut m = self.token_memo.lock().unwrap_or_else(|e| e.into_inner());
-        let same = m.as_ref().is_some_and(|(f, old)| f == fp && *old == memo);
-        if !same {
-            *m = Some((fp.to_string(), memo));
+        if m.get(key) != Some(&memo) {
+            if m.len() >= MEMO_CAP && !m.contains_key(key) {
+                m.clear();
+            }
+            m.insert(key.to_string(), memo);
             tracing::info!("{line}");
         }
     }
 
-    /// Forgets what a settings fingerprint learned about the token limit, so the next call starts again from the first step
-    /// (used when the admin changes the answer length: the earlier refusal may have been about the old value).
+    /// Forgets what the routes learned about the token limit, so the next call starts again from the first step (used
+    /// when the admin changes the answer length: the earlier refusal may have been about the old value).
     pub fn forget_token_memo(&self) {
-        *self.token_memo.lock().unwrap_or_else(|e| e.into_inner()) = None;
-        *self.gen_per_call.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        self.token_memo
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.gen_per_call
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
-    /// Remembers that this settings fingerprint delivers at most `n` questions per call (keeps the smaller value).
-    pub fn note_gen_per_call(&self, fp: &str, n: usize) {
+    /// Remembers that this route delivers at most `n` questions per call (keeps the smaller value).
+    pub fn note_gen_per_call(&self, key: &str, n: usize) {
         let mut m = self.gen_per_call.lock().unwrap_or_else(|e| e.into_inner());
         let n = n.max(1);
-        match m.as_mut() {
-            Some((f, old)) if f == fp => {
+        match m.get_mut(key) {
+            Some(old) => {
                 if n < *old {
                     *old = n;
                     tracing::info!(
@@ -342,29 +373,20 @@ impl App {
                     );
                 }
             }
-            _ => {
-                *m = Some((fp.to_string(), n));
+            None => {
+                if m.len() >= MEMO_CAP {
+                    m.clear();
+                }
+                m.insert(key.to_string(), n);
                 tracing::info!("the AI provider cuts long answers; asking {n} questions per call");
             }
         }
     }
 
-    /// The remembered questions per call of this fingerprint, if any.
-    pub fn gen_per_call_cap(&self, fp: &str) -> Option<usize> {
+    /// The remembered questions per call of this route key, if any.
+    pub fn gen_per_call_cap(&self, key: &str) -> Option<usize> {
         let m = self.gen_per_call.lock().unwrap_or_else(|e| e.into_inner());
-        m.as_ref().filter(|(f, _)| f == fp).map(|(_, n)| *n)
-    }
-
-    /// The attempt number of the next retry of this answer: 2 for the first retry, 3 for the second, and so on (kept in
-    /// memory only; a restart starts counting again, and the table is cleared when it grows large).
-    pub fn next_retry_attempt(&self, answer: i64) -> u32 {
-        let mut m = self.retries.lock().unwrap_or_else(|e| e.into_inner());
-        if m.len() >= 10_000 && !m.contains_key(&answer) {
-            m.clear();
-        }
-        let n = m.entry(answer).or_insert(1);
-        *n = n.saturating_add(1);
-        *n
+        m.get(key).copied()
     }
 
     /// Opens the service: key, database, link, limits, key state. Logs the startup lines of section 6.3.
@@ -428,7 +450,7 @@ impl App {
             exe: std::env::current_exe().unwrap_or_else(|_| PathBuf::from("xexam-ai-service")),
             knobs: Knobs::default(),
             limits: RwLock::new(limits),
-            models_cache: Mutex::new(None),
+            models_cache: Mutex::new(std::collections::HashMap::new()),
             shutdown,
             shutdown_tx,
             identity_log: Throttle::new(Duration::from_secs(60)),
@@ -436,10 +458,13 @@ impl App {
             records: RecordCache::default(),
             unreadable_log: Throttle::new(Duration::from_secs(60)),
             study_hold: Mutex::new(None),
-            retries: Mutex::new(std::collections::HashMap::new()),
             cap_episodes: Mutex::new(std::collections::HashMap::new()),
-            token_memo: Mutex::new(None),
-            gen_per_call: Mutex::new(None),
+            token_memo: Mutex::new(std::collections::HashMap::new()),
+            no_markers: Mutex::new(std::collections::HashSet::new()),
+            gen_per_call: Mutex::new(std::collections::HashMap::new()),
+            auth_strikes: Mutex::new(std::collections::HashMap::new()),
+            outbox_wake: Arc::new(Notify::new()),
+            last_paused: Mutex::new(None),
             outbox: tokio::sync::Mutex::new(()),
             heartbeat: tokio::sync::Mutex::new(()),
             heartbeat_signal: Arc::new(Notify::new()),
@@ -451,29 +476,19 @@ impl App {
         Ok(app)
     }
 
-    /// Key state at start (3.4) and rule 4 of 2.3: a stored `enabled = 1` that is not effective is written as 0 once.
+    /// Key state at start (3.4): every saved key must open with the current encryption key, else AI stays off with a key
+    /// problem (nothing is rewritten: the switch the administrators set stays as it is).
     fn check_keys_at_start(&self) -> Result<(), String> {
-        let rows = self
-            .store
-            .read(tables::load_secrets)
-            .map_err(|e| format!("cannot read the AI database: {e}"))?;
-        if self.master.is_some() && !self.rows_open(&rows) {
+        if self.master.is_some()
+            && !self
+                .secrets_open()
+                .map_err(|e| format!("cannot read the AI database: {e}"))?
+        {
             *self.lock_mismatch() = true;
-            self.write_mismatch_off();
+            self.log_mismatch();
         }
-        let snap = self
-            .snapshot()
+        self.snapshot()
             .map_err(|e| format!("cannot read the AI database: {e}"))?;
-        if snap.settings.enabled && !snap.effective() {
-            let r = self.store.write(|tx| {
-                let mut s = tables::load_settings(tx)?;
-                s.enabled = false;
-                tables::save_settings(tx, &s)
-            });
-            if let Err(e) = r {
-                tracing::warn!("could not switch AI off at start: {e}");
-            }
-        }
         Ok(())
     }
 
@@ -481,33 +496,30 @@ impl App {
         self.mismatch.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    fn rows_open(&self, rows: &[SecretRow]) -> bool {
+    /// Every sealed key of every connection opens with the current encryption key (`true` without a key row).
+    fn secrets_open(&self) -> rusqlite::Result<bool> {
+        let rows = self.store.read(all_secrets)?;
         let Some(m) = &self.master else {
-            return rows.is_empty();
+            return Ok(rows.is_empty());
         };
-        rows.iter()
-            .all(|r| r.key_id == m.key_id() && m.open(r.name, &r.nonce, &r.ciphertext).is_ok())
+        Ok(rows
+            .iter()
+            .all(|(id, r)| m.open(&SecretRef::of_row(*id, r), r).is_ok()))
     }
 
-    /// Writes `enabled = 0` and clears the verified state, logs the mismatch line once.
-    fn write_mismatch_off(&self) {
-        let r = self.store.write(|tx| {
-            let mut s = tables::load_settings(tx)?;
-            let was = s.enabled;
-            s.enabled = false;
-            s.verified_at = None;
-            s.verified_fp = None;
-            tables::save_settings(tx, &s)?;
-            Ok::<bool, rusqlite::Error>(was)
-        });
+    fn log_mismatch(&self) {
         tracing::error!("The saved AI keys cannot be decrypted: the AI encryption key was changed or lost. AI is off until an administrator enters the keys again");
-        match r {
-            Ok(true) => self.cancel_everything(StopReason::Disabled),
-            Ok(false) => {}
-            Err(e) => tracing::warn!("could not switch AI off: {e}"),
+    }
+
+    /// A key that does not open was found while serving a call: the key state turns to a mismatch once, the running calls
+    /// stop, and the state is reported soon.
+    fn note_unreadable(&self) {
+        let first = !std::mem::replace(&mut *self.lock_mismatch(), true);
+        if first {
+            self.log_mismatch();
+            self.cancel_everything(StopReason::Disabled);
+            self.notify_heartbeat();
         }
-        // The effective state changed (a key problem): report it soon, without waiting here
-        self.notify_heartbeat();
     }
 
     /// The key state now.
@@ -518,10 +530,13 @@ impl App {
         (*self.lock_mismatch()).then_some(KeyProblem::Mismatch)
     }
 
-    /// Recomputes the key state after a secret write.
-    pub fn recheck_keys(&self, rows: &[SecretRow]) {
+    /// Recomputes the key state after a secret write (the administrators' connection routes call it).
+    pub fn recheck_keys(&self) {
         if self.master.is_some() {
-            *self.lock_mismatch() = !self.rows_open(rows);
+            match self.secrets_open() {
+                Ok(open) => *self.lock_mismatch() = !open,
+                Err(e) => tracing::warn!("could not check the saved AI keys: {e}"),
+            }
         }
     }
 
@@ -534,18 +549,15 @@ impl App {
         self.master.as_ref()
     }
 
-    /// Settings, keys and fingerprint, read now.
+    /// The global switches, read now.
     pub fn snapshot(&self) -> rusqlite::Result<Snapshot> {
-        let (settings, secrets) = self
+        let (settings, off) = self
             .store
-            .read(|c| Ok((tables::load_settings(c)?, tables::load_secrets(c)?)))?;
-        let revs = tables::key_revs(&secrets);
-        let fp = fingerprint(&settings, revs, self.key_id());
+            .read(|c| Ok((tables::load_settings(c)?, conn::global_features_off(c)?)))?;
         Ok(Snapshot {
-            settings,
-            secrets,
-            revs,
-            fp,
+            enabled: settings.enabled,
+            features_off: off,
+            retention_days: settings.retention_days,
             key_problem: self.key_problem(),
         })
     }
@@ -562,47 +574,205 @@ impl App {
         self.gen_gate.resize(Limits::usize_of(l.gen_running));
     }
 
-    /// Decrypts the saved keys into a request target. A key that does not open switches AI off (`ai.keyProblem`).
-    pub fn target(&self, snap: &Snapshot) -> Result<Target, ApiError> {
-        if snap.key_problem.is_some() {
+    // —— model routing ————————————————————————————————————————————————————————————————————————————————————————————
+
+    /// The routing tables as they are now: connections, pool, slots and what is known about each connection's keys.
+    pub fn routes(&self) -> rusqlite::Result<View> {
+        let key_id = self.master.as_ref().map(|m| m.key_id().to_string());
+        self.store.read(|c| {
+            let conns = conn::connections(c)?;
+            let pool = conn::pool(c)?;
+            let slots = conn::slots(c)?;
+            let mut keys = std::collections::HashMap::new();
+            for k in &conns {
+                let rows = conn::conn_secrets(c, k.id)?;
+                keys.insert(
+                    k.id,
+                    KeyState {
+                        api: rows.iter().any(|r| r.name == SecretName::ApiKey),
+                        gateway: rows.iter().any(|r| r.name == SecretName::GatewayKey),
+                        readable: key_id
+                            .as_deref()
+                            .is_some_and(|id| rows.iter().all(|r| r.key_id == id)),
+                    },
+                );
+            }
+            Ok(View {
+                conns,
+                pool,
+                slots,
+                keys,
+            })
+        })
+    }
+
+    /// pick (an administrator's chat menu) -> the slot's model -> the default slot's model -> `ai.disabled`. Never any
+    /// other pool model (owner: a warning only, no automatic switch).
+    pub fn route(&self, slot: Slot, pick: Option<&Pick>) -> Result<Route, ApiError> {
+        self.routes()?.resolve(slot, pick)
+    }
+
+    /// `route(slot, None)` succeeds.
+    pub fn route_exists(&self, slot: Slot) -> bool {
+        match self.routes() {
+            Ok(v) => v.exists(slot),
+            Err(e) => {
+                tracing::warn!("could not read the AI routes: {e}");
+                false
+            }
+        }
+    }
+
+    /// The default slot has a model (the admin's "configured").
+    pub fn configured(&self) -> bool {
+        self.store
+            .read(conn::slots)
+            .is_ok_and(|s| s[Slot::Default.index()].is_some())
+    }
+
+    /// AI+ is on: the switch is on, the keys are usable and at least one of the six slots resolves.
+    pub fn effective(&self) -> rusqlite::Result<bool> {
+        let snap = self.snapshot()?;
+        if !snap.enabled || snap.key_problem.is_some() {
+            return Ok(false);
+        }
+        Ok(self.routes()?.any())
+    }
+
+    /// Decrypts the keys of the route's connection into a request target. A key that does not open turns the key state to
+    /// a mismatch (`ai.keyProblem`).
+    pub fn target(&self, route: &Route) -> Result<Target, ApiError> {
+        if self.key_problem().is_some() {
             return Err(ApiError::key_problem());
         }
-        if let Some(k) = snap.missing_key() {
-            return Err(ApiError::key_missing(k));
-        }
+        let (row, secrets) = self
+            .store
+            .read(|c| {
+                let Some(row) = conn::connection(c, route.connection_id)? else {
+                    return Ok(None);
+                };
+                let secrets = conn::conn_secrets(c, row.id)?;
+                Ok(Some((row, secrets)))
+            })?
+            .ok_or_else(ApiError::disabled)?;
+        let provider = Provider::parse(&row.provider).ok_or_else(ApiError::internal)?;
+        let gateway_auth = crate::settings::GatewayAuth::parse(&row.gateway_auth)
+            .ok_or_else(ApiError::internal)?;
         let mut api_key: Option<Zeroizing<String>> = None;
         let mut gateway_key: Option<Zeroizing<String>> = None;
-        let uses_gateway = snap.settings.provider == Provider::Gateway;
-        for row in &snap.secrets {
-            if row.name == SecretName::GatewayKey && !uses_gateway {
+        for r in &secrets {
+            if r.name == SecretName::GatewayKey && provider != Provider::Gateway {
                 continue;
             }
-            let opened = match &self.master {
-                Some(m) if row.key_id == m.key_id() => {
-                    m.open(row.name, &row.nonce, &row.ciphertext).ok()
-                }
-                _ => None,
-            };
+            let opened = self
+                .master
+                .as_ref()
+                .and_then(|m| m.open_text(&SecretRef::of_row(row.id, r), r).ok());
             let Some(plain) = opened else {
-                let was_ok = !std::mem::replace(&mut *self.lock_mismatch(), true);
-                if was_ok {
-                    self.write_mismatch_off();
-                }
+                self.note_unreadable();
                 return Err(ApiError::key_problem());
             };
-            match row.name {
+            match r.name {
                 SecretName::ApiKey => api_key = Some(plain),
                 SecretName::GatewayKey => gateway_key = Some(plain),
             }
         }
+        if let Some(k) = provider.required_key() {
+            let have = match k {
+                SecretName::ApiKey => api_key.is_some(),
+                SecretName::GatewayKey => gateway_key.is_some(),
+            };
+            if !have {
+                return Err(ApiError::key_missing(k));
+            }
+        }
         Ok(Target {
-            provider: snap.settings.provider,
-            format: snap.settings.wire_format(),
-            base: snap.settings.base_url.clone(),
-            gateway_auth: snap.settings.gateway_auth,
+            provider,
+            format: route.format,
+            base: row.base_url,
+            gateway_auth,
             api_key,
             gateway_key,
         })
+    }
+
+    /// What a finished live call tells about its connection: three `ai.up.auth` answers in a row mark it broken, any
+    /// success resets the count, other errors change nothing (a rate limit or a timeout never marks anything).
+    pub fn note_outcome(&self, route: &Route, code: Option<UpCode>) {
+        let broke = {
+            let mut m = self.auth_strikes.lock().unwrap_or_else(|e| e.into_inner());
+            match code {
+                None => {
+                    m.remove(&route.connection_id);
+                    false
+                }
+                Some(UpCode::Auth) => {
+                    let n = m.entry(route.connection_id).or_insert(0);
+                    *n += 1;
+                    if *n >= AUTH_STRIKES {
+                        m.remove(&route.connection_id);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                Some(_) => false,
+            }
+        };
+        if broke {
+            self.mark_broken(
+                route.connection_id,
+                &route.connection_name,
+                UpCode::Auth.code(),
+            );
+        }
+    }
+
+    /// Marks a connection broken (the status column) and tells everyone: one log line, one `ai.system.connection` event,
+    /// a state report soon. Back to `ok` only through a passing test (the admin routes).
+    pub fn mark_broken(&self, id: i64, name: &str, code: &str) {
+        let now = crate::util::unix_now();
+        let was = self.store.write(|tx| {
+            let was = conn::connection(tx, id)?.map(|c| c.status);
+            conn::set_connection_status(tx, id, "broken", Some(code), Some(now))?;
+            Ok::<_, rusqlite::Error>(was)
+        });
+        match was {
+            Ok(Some(w)) if w == "broken" => {}
+            Ok(Some(_)) => self.connection_changed(name, true, Some(code)),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("could not mark an AI connection as broken: {e}"),
+        }
+    }
+
+    /// A connection turned `broken` or back to `ok`: forget its auth strikes, write the log line, emit the
+    /// `ai.system.connection` event (`broken` as a failed event with the code, `restored` as an ok one) and wake the
+    /// heartbeat. The caller has already written the status.
+    pub fn connection_changed(&self, name: &str, broken: bool, code: Option<&str>) {
+        if broken {
+            tracing::warn!(
+                "AI connection {name:?} is marked broken ({})",
+                code.unwrap_or("error")
+            );
+        } else {
+            tracing::info!("AI connection {name:?} works again");
+        }
+        let mut ev = Event::new(None, "ai.system.connection", &ClientInfo::default()).object(name);
+        if broken {
+            ev = ev
+                .failed(code.unwrap_or("ai.up.auth"))
+                .detail(json!({"code": code.unwrap_or("ai.up.auth")}));
+        }
+        self.activity(ev);
+        self.notify_heartbeat();
+    }
+
+    /// Clears the auth strikes of a connection (an admin test passed).
+    pub fn reset_strikes(&self, connection_id: i64) {
+        self.auth_strikes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&connection_id);
     }
 
     /// Stops every running call at once (global switch-off; 2.3 rule 6). Logs the count when there were any.
@@ -681,8 +851,8 @@ impl App {
     }
 
     /// AI+ is available: the AI+ service is effectively on and the main backend accepted a report less than 60 s ago.
-    pub fn available(&self, snap: &Snapshot) -> bool {
-        snap.effective() && self.link_fresh()
+    pub fn available(&self) -> bool {
+        self.effective().unwrap_or(false) && self.link_fresh()
     }
 
     /// `true` when an administrator suspended the caller's AI+ function (never for administrators). A database error
@@ -700,32 +870,138 @@ impl App {
         }
     }
 
-    /// `false` when the feature is switched off for the user (administrators always have every feature). A database error
-    /// counts as off (no AI use without a known state), like [`App::suspended`].
-    pub fn feature_allowed(&self, who: &Identity, f: crate::features::Feature) -> bool {
+    /// `false` when the feature is switched off for the user. Administrators always have every feature: neither the
+    /// global switch nor a per-user bit applies to them. For everyone else the global bit AND the user's own bit must be
+    /// clear. A database error counts as off (no AI use without a known state), like [`App::suspended`].
+    pub fn feature_allowed(&self, who: &Identity, f: Feature) -> bool {
         if who.is_admin() {
             return true;
         }
-        match self.store.read(|c| data::features_off(c, who.id)) {
-            Ok(off) => crate::features::allowed(off, f),
+        let read = self.store.read(|c| {
+            Ok((
+                conn::global_features_off(c)?,
+                data::features_off(c, who.id)?,
+            ))
+        });
+        match read {
+            Ok((global, user)) => {
+                crate::features::allowed(global, f) && crate::features::allowed(user, f)
+            }
             Err(e) => {
-                tracing::warn!("could not read the AI features of a user: {e}");
+                tracing::warn!("could not read the AI features: {e}");
                 false
             }
         }
     }
 
+    /// AI effective, the user not suspended, the feature allowed and its slot resolves. No place, no quota.
+    pub fn admit(&self, who: &Identity, feature: Feature) -> Result<(), ApiError> {
+        if !self.effective()? {
+            return Err(ApiError::disabled());
+        }
+        if self.suspended(who) {
+            return Err(ApiError::suspended());
+        }
+        if !self.feature_allowed(who, feature) {
+            return Err(ApiError::feature_off(feature));
+        }
+        if !self.route_exists(feature.slot()) {
+            return Err(ApiError::disabled());
+        }
+        Ok(())
+    }
+
+    /// Takes the caller's place and a global place, then checks again that AI is still on, the caller is not suspended
+    /// and the feature is allowed (a switch-off or a suspension in between would otherwise miss this call: both stop only
+    /// the calls that already hold a place), then the per-user caps (not for an administrator while `callsAdminsExempt`
+    /// is 1) and the site-wide daily token budget (not for administrators). Usage rows are written for everyone.
+    pub fn take_places(
+        &self,
+        who: &Identity,
+        kind: Kind,
+        chat: Option<i64>,
+        feature: Feature,
+    ) -> Result<Places, ApiError> {
+        let l = self.limits();
+        let slot = self
+            .registry
+            .reserve(
+                who.id,
+                kind,
+                chat,
+                crate::limits::Limits::usize_of(l.per_user_running),
+            )
+            .ok_or_else(ApiError::busy)?;
+        slot.set_feature(feature.bit(), who.is_admin());
+        let permit = self.gate.try_acquire().ok_or_else(ApiError::server_busy)?;
+        self.admit(who, feature)?;
+        let now = crate::util::unix_now();
+        // The per-user caps on model calls. The registry is read inside the same store read as the usage rows (lock order
+        // store -> registry), and only the entries reserved before this one count.
+        if !(who.is_admin() && l.calls_admins_exempt == 1) {
+            let hit = self.store.read(|c| {
+                let running = self.registry.starts_of(who.id, Some(&slot));
+                let day = crate::util::day_bounds(now);
+                let mut starts = stats::recent_starts(c, who.id, now, day.start)?;
+                starts.extend(running);
+                Ok(quota::check(&starts, now, day, l.caps()).err())
+            })?;
+            if let Some(hit) = hit {
+                self.note_call_cap(&who.username, who.id, &hit, now);
+                return Err(ApiError::call_limit(&hit, now));
+            }
+        }
+        if !who.is_admin() && l.daily_token_budget > 0 {
+            let day = crate::util::local_today().to_string();
+            let used = self.store.read(|c| stats::tokens_today(c, &day))?;
+            if used >= l.daily_token_budget {
+                return Err(ApiError::budget());
+            }
+        }
+        Ok(Places { slot, permit })
+    }
+
     /// The state report for the main backend (`POST /internal/ai/heartbeat`, contracts 2.2): keys in this order. When
     /// the database cannot be read, the report says the AI+ service is off.
     pub fn report(&self, stopping: bool) -> Value {
-        let state = self.snapshot().and_then(|s| {
+        let state = self.snapshot().and_then(|snap| {
+            let eff = self.effective()?;
             let ids = self
                 .store
                 .read(|c| data::suspended_ids(c, crate::link::MAX_IDS))?;
-            Ok((s.effective(), ids))
+            Ok((snap.enabled, eff, ids))
         });
-        let (enabled, suspended) = state.unwrap_or((false, Vec::new()));
-        json!({"version": self.version, "enabled": enabled, "suspended": suspended, "stopping": stopping})
+        let (enabled, eff, suspended) = state.unwrap_or((false, false, Vec::new()));
+        if !stopping {
+            self.note_paused(enabled && !eff);
+        }
+        json!({"version": self.version, "enabled": eff, "suspended": suspended, "stopping": stopping})
+    }
+
+    /// One `ai.system.paused` / `ai.system.resumed` event per change of the paused state (switched on, but no route or no
+    /// usable key); the first report after the start only records the state.
+    fn note_paused(&self, paused: bool) {
+        let prev = self
+            .last_paused
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .replace(paused);
+        if prev.is_some_and(|p| p != paused) {
+            let action = if paused {
+                "ai.system.paused"
+            } else {
+                "ai.system.resumed"
+            };
+            tracing::info!(
+                "AI+ {}",
+                if paused {
+                    "is paused: no usable model or key"
+                } else {
+                    "resumed"
+                }
+            );
+            self.activity(Event::new(None, action, &ClientInfo::default()));
+        }
     }
 
     /// Sends one state report now and returns whether the backend accepted it. One report at a time: the state is
@@ -785,38 +1061,140 @@ impl App {
             .is_ok()
     }
 
-    /// Delivers undelivered audit lines (oldest first) until the outbox is empty or the backend refuses. One delivery
+    /// The signal the activity delivery task waits for (set whenever an event line was written).
+    pub fn outbox_signal(&self) -> Arc<Notify> {
+        self.outbox_wake.clone()
+    }
+
+    /// Writes one activity event into the outbox and wakes the delivery. Never waits for the backend; a database error
+    /// drops the event with one warning (an event that cannot be written must not break the action).
+    pub fn activity(&self, ev: Event) {
+        if !crate::activity::valid_action(ev.action) {
+            tracing::warn!("an AI activity event has an invalid action name and was dropped");
+            return;
+        }
+        let at = crate::util::unix_now();
+        let line = crate::activity::line_of(&ev, at);
+        match self.store.write(|tx| stats::outbox_add(tx, at, &line)) {
+            Ok(_) => self.outbox_wake.notify_one(),
+            Err(e) => tracing::warn!("could not queue an AI activity event: {e}"),
+        }
+    }
+
+    /// Sends one event now (an administrator reading a user's chats): `true` when the backend accepted it. Nothing is
+    /// queued: a refused event means the action must not happen.
+    pub async fn activity_now(&self, ev: Event) -> bool {
+        if !crate::activity::valid_action(ev.action) {
+            return false;
+        }
+        let payload =
+            crate::activity::payload(&ev, &crate::activity::new_id(), crate::util::unix_now());
+        let send = self.link.activity(std::slice::from_ref(&payload));
+        matches!(
+            tokio::time::timeout(self.timeouts.backend_total, send).await,
+            Ok(Ok(()))
+        )
+    }
+
+    /// Delivers undelivered outbox lines (oldest first) until the outbox is empty or the backend refuses. One delivery
     /// at a time (the admin routes and the background loop both call this): a second caller waits, then finds only the
-    /// lines that are still undelivered.
+    /// lines that are still undelivered. Event lines go to `/internal/ai/activity` (at most 50 per call), plain audit
+    /// lines to `/internal/ai/log`.
     pub async fn deliver_outbox(&self) -> usize {
         let _one = self.outbox.lock().await;
         let mut sent = 0;
         loop {
-            let Ok(rows) = self.store.read(|c| stats::outbox_pending(c, 50)) else {
+            let Ok(rows) = self
+                .store
+                .read(|c| stats::outbox_pending(c, crate::activity::BATCH as i64))
+            else {
                 return sent;
             };
             if rows.is_empty() {
                 return sent;
             }
-            let lines: Vec<LogLine> = rows
-                .iter()
-                .map(|(_, m)| LogLine {
-                    level: "INFO",
-                    message: m.clone(),
-                })
-                .collect();
-            if self.link.log(&lines).await.is_err() {
+            let mut plain: Vec<(i64, String)> = Vec::new();
+            let mut events: Vec<(i64, Value)> = Vec::new();
+            for (id, m) in rows {
+                match crate::activity::parse_line(&m) {
+                    Some(v) => events.push((id, v)),
+                    None => plain.push((id, m)),
+                }
+            }
+            let mut done: Vec<i64> = Vec::new();
+            if !plain.is_empty() {
+                let lines: Vec<LogLine> = plain
+                    .iter()
+                    .map(|(_, m)| LogLine {
+                        level: "INFO",
+                        message: m.clone(),
+                    })
+                    .collect();
+                if self.link.log(&lines).await.is_err() {
+                    return sent;
+                }
+                done.extend(plain.iter().map(|(id, _)| *id));
+            }
+            if !events.is_empty() {
+                let now = crate::util::unix_now();
+                // An event the backend would refuse as too old is dropped here, so it cannot block the ones behind it
+                let (live, stale): (Vec<_>, Vec<_>) = events.into_iter().partition(|(_, v)| {
+                    v.get("at")
+                        .and_then(Value::as_i64)
+                        .is_some_and(|at| crate::activity::fresh_enough(at, now))
+                });
+                if !stale.is_empty() {
+                    tracing::warn!(
+                        "{} AI activity events were too old to deliver and were dropped",
+                        stale.len()
+                    );
+                    done.extend(stale.iter().map(|(id, _)| *id));
+                }
+                if !live.is_empty() {
+                    let values: Vec<Value> = live.iter().map(|(_, v)| v.clone()).collect();
+                    match self.link.activity(&values).await {
+                        Ok(()) => done.extend(live.iter().map(|(id, _)| *id)),
+                        Err(crate::link::LinkError::Refused) => {
+                            // One bad event refuses the whole batch: send them one by one, drop the refused one
+                            for (id, v) in &live {
+                                match self.link.activity(std::slice::from_ref(v)).await {
+                                    Ok(()) => done.push(*id),
+                                    Err(crate::link::LinkError::Refused) => {
+                                        let action = v
+                                            .get("action")
+                                            .and_then(serde_json::Value::as_str)
+                                            .unwrap_or("?");
+                                        tracing::warn!(
+                                            "the main backend refused an AI activity event ({action}); it was dropped"
+                                        );
+                                        done.push(*id);
+                                    }
+                                    Err(_) => break,
+                                }
+                            }
+                            if done.is_empty() {
+                                return sent;
+                            }
+                        }
+                        Err(_) => {
+                            if done.is_empty() {
+                                return sent;
+                            }
+                        }
+                    }
+                }
+            }
+            if done.is_empty() {
                 return sent;
             }
-            let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
             if self
                 .store
-                .write(|tx| stats::outbox_remove(tx, &ids))
+                .write(|tx| stats::outbox_remove(tx, &done))
                 .is_err()
             {
                 return sent;
             }
-            sent += ids.len();
+            sent += done.len();
         }
     }
 
@@ -891,4 +1269,15 @@ impl App {
             })
             .await;
     }
+}
+
+/// Every sealed key with the id of its connection.
+fn all_secrets(c: &rusqlite::Connection) -> rusqlite::Result<Vec<(i64, SecretRow)>> {
+    let mut out = Vec::new();
+    for k in conn::connections(c)? {
+        for r in conn::conn_secrets(c, k.id)? {
+            out.push((k.id, r));
+        }
+    }
+    Ok(out)
 }

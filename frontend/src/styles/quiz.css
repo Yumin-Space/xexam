@@ -80,7 +80,7 @@
 .phead-sheet { min-width: 0; overflow-wrap: anywhere; }
 
 /* ---------- Action bar (QZ-3) ----------
-   Wide (> 880 px), inside the card: [‹ Previous] [Check answer] [Next ›] [AI hint] [AI explanation] … [⚑ Mark to revisit].
+   Wide (> 880 px), inside the card: [‹ Previous] [Check answer] [Next ›] [AI hint] [AI analysis] … [⚑ Mark to revisit].
    Check answer and Next are two separate buttons in fixed places (an exam has only Next). */
 .pfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 .pfoot .bar-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }

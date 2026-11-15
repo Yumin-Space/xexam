@@ -12,8 +12,9 @@ use crate::features::Feature;
 use crate::gen::assemble;
 use crate::gen::dedup::Deduper;
 use crate::gen::plan::{per_call, Plan};
-use crate::gen::prompt::{build_prompt, Prompt};
+use crate::gen::prompt::Prompt;
 use crate::gen::run::{FailCode, JobLimits, Next, Outcome, Run};
+use crate::gen::whole as whole_gen;
 use crate::gen::{SeedFull, Tri};
 use crate::identity::Identity;
 use crate::provider::{self, Role, UpCode};
@@ -278,10 +279,33 @@ pub struct Ctx {
     pub feature: Feature,
     /// `generate`, `recognise` or `import` (the `gen_calls.purpose`)
     pub purpose: &'static str,
+    /// Where the job's calls go: resolved once at the start of the job and kept (the prompt cache is per provider)
+    pub route: crate::route::Route,
     pub cancel: watch::Receiver<Option<StopWhy>>,
     pub deadline: Instant,
     /// The failure code when the deadline passes (`ai.gen.timeout` or `ai.import.readTimeout`)
     pub timeout_code: &'static str,
+}
+
+/// Options of one model call of a job (all default: today's behaviour).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CallOpts {
+    /// Ask the Cloudflare AI Gateway to bypass its response cache (a repeated send)
+    pub skip_cache: bool,
+    /// `Some(false)` = no cache markers; `None` = markers when a prefix is long enough for the model's cache
+    pub cache: Option<bool>,
+    /// The `gen_calls.purpose` of this call when it is not the job's (`plan`)
+    pub purpose: Option<&'static str>,
+}
+
+impl CallOpts {
+    /// The options of the `attempt`-th send of a batch (1 = the first).
+    pub fn for_attempt(attempt: u32) -> CallOpts {
+        CallOpts {
+            skip_cache: attempt >= 2,
+            ..CallOpts::default()
+        }
+    }
 }
 
 /// The answer of one model call.
@@ -329,8 +353,16 @@ impl Ctx {
     /// that fails does not stop the job (the create step decides).
     pub async fn recheck(&self) -> Result<(), Stop> {
         let app = &self.app;
-        let on = app.0.snapshot().map(|s| s.effective()).unwrap_or(false);
+        let on = app.0.effective().unwrap_or(false);
         if !on || app.0.suspended(&self.who) || !app.0.feature_allowed(&self.who, self.feature) {
+            return Err(Stop::Fail("ai.gen.stopped"));
+        }
+        // The job keeps its route; when that connection turned broken or was removed the job stops (no mid-job switch)
+        let route_ok = app.0.routes().is_ok_and(|v| {
+            v.conn(self.route.connection_id)
+                .is_some_and(|c| v.conn_usable(c))
+        });
+        if !route_ok {
             return Err(Stop::Fail("ai.gen.stopped"));
         }
         if let Ok(list) = app.0.link.users(&[self.who.id], false).await {
@@ -372,6 +404,35 @@ impl Ctx {
         }
     }
 
+    /// Like [`Ctx::write_call`], and the accepted questions of the call (`(slot number, data)`) go to `gen_items` in the
+    /// same transaction, so the job's owner can read them while the job runs.
+    pub fn write_call_items(
+        &self,
+        row: &GenCallRow,
+        made: Option<i64>,
+        phase: Option<&str>,
+        items: &[(i64, String)],
+    ) -> bool {
+        let now = unix_now();
+        let r = self.app.0.store.write(|tx| -> rusqlite::Result<usize> {
+            stats::insert_gen_call(tx, row)?;
+            let n = jobs::after_call(tx, self.task, made, phase, now)?;
+            if n > 0 {
+                for (slot, data) in items {
+                    crate::store::items::items_add(tx, self.task, *slot, data, now)?;
+                }
+            }
+            Ok(n)
+        });
+        match r {
+            Ok(n) => n > 0,
+            Err(e) => {
+                tracing::warn!("could not write an AI job call row: {e}");
+                true
+            }
+        }
+    }
+
     /// Sends one model call: `system` / `user` text and `want` output tokens; asks `asked` questions. A stop while the
     /// call is in flight drops the request and writes its `stopped` row.
     pub async fn call(
@@ -385,7 +446,7 @@ impl Ctx {
     }
 
     /// `call` with a cached prefix: a text that opens the user turn and is the same for every call of the job (the
-    /// whole file of an AI import).
+    /// whole file of an AI import, the whole source of a generation).
     pub async fn call_with(
         &self,
         system: &str,
@@ -394,34 +455,54 @@ impl Ctx {
         want: i64,
         asked: usize,
     ) -> Result<CallResult, Stop> {
+        self.call_opts(system, prefix, user, want, asked, CallOpts::default())
+            .await
+    }
+
+    /// `call_with` and the v1.3 options: a send that repeats an earlier one bypasses the gateway's response cache, a
+    /// prefix below the model's cache minimum goes out without cache markers, a plan call writes its own purpose.
+    pub async fn call_opts(
+        &self,
+        system: &str,
+        prefix: Option<&str>,
+        user: &str,
+        want: i64,
+        asked: usize,
+        opts: CallOpts,
+    ) -> Result<CallResult, Stop> {
         let app = &self.app;
-        let snap = app.0.snapshot().map_err(|_| Stop::Fail("ai.gen.stopped"))?;
+        let route = &self.route;
         let target = app
             .0
-            .target(&snap)
+            .target(route)
             .map_err(|_| Stop::Fail("ai.gen.stopped"))?;
-        let s = &snap.settings;
         let turns = [provider::Turn {
             role: Role::User,
             content: user.to_string(),
         }];
         let spec = provider::ChatSpec {
-            model: &s.model,
+            model: &route.model,
             system,
             turns: &turns,
-            usage_option: s.usage_option,
-            skip_cache: false,
+            usage_option: route.usage_option != 0,
+            skip_cache: opts.skip_cache,
             prefix,
+            cache: opts.cache.unwrap_or_else(|| {
+                prefix.is_none()
+                    || provider::cache_floor_ok(route.format, &route.model, system, prefix)
+            }),
         };
-        let planned = app.token_plan(&snap, &target, &spec, want);
+        let planned = app.token_plan(route, &target, &spec, want);
         drop(target);
-        let provider_name = s.provider.as_str();
-        let model = s.model.clone();
+        let provider_name = route.provider.as_str();
+        let model = route.model.clone();
         let started = std::time::Instant::now();
         let base_row = |status: &'static str| GenCallRow {
+            connection_id: Some(route.connection_id),
+            connection: Some(route.connection_name.clone()),
             task_id: self.task,
             user_id: self.who.id,
-            purpose: self.purpose,
+            purpose: opts.purpose.unwrap_or(self.purpose),
             at: unix_now(),
             provider: provider_name,
             model: model.clone(),
@@ -530,15 +611,15 @@ pub async fn drive(
         let default_want = want_tokens;
         let mut fp: Option<String> = None;
         if cap_batches {
-            if let Ok(snap) = app.0.snapshot() {
-                let ceiling = app.token_ceiling(&snap, default_want);
+            {
+                let ceiling = app.token_ceiling(&ctx.route, default_want);
                 let mut n = per_call(call_chars, ceiling);
                 // what an earlier job learned about this provider's real output limit (L-44)
-                if let Some(m) = app.0.gen_per_call_cap(&snap.fp) {
+                if let Some(m) = app.0.gen_per_call_cap(&ctx.route.key) {
                     n = n.min(m);
                 }
                 run.cap_per_call(n);
-                fp = Some(snap.fp.clone());
+                fp = Some(ctx.route.key.clone());
             }
         }
         let batch = match run.next() {
@@ -548,12 +629,22 @@ pub async fn drive(
         ctx.sleep_checked(backoff(app, run.backoff_secs())).await?;
         let permit = ctx.place().await?;
         let (prompt, want) = prompt_for(run, &batch);
+        let attempt = run.attempt_of(&batch);
+        let mut user = prompt.user;
+        if attempt >= 2 {
+            user.push_str(&crate::gen::run::attempt_line(
+                attempt,
+                &crate::util::hex(&random_bytes::<4>()),
+            ));
+        }
         let result = ctx
-            .call(
+            .call_opts(
                 &prompt.system,
-                &prompt.user,
+                None,
+                &user,
                 want.unwrap_or(default_want),
                 batch.len(),
+                CallOpts::for_attempt(attempt),
             )
             .await;
         drop(permit);
@@ -711,11 +802,17 @@ pub struct GenJob {
     pub name: String,
     pub from_ids: Vec<i64>,
     pub plan: Plan,
-    pub seeds: HashMap<String, SeedFull>,
-    pub source_stems: Vec<Tri>,
+    /// The chunk (index into `ranges`) of each slot of the plan
+    pub groups: Vec<usize>,
+    /// Every question of the source, in source order (dropped when the job ends)
+    pub corpus: Vec<SeedFull>,
+    /// The corpus range of each chunk (one chunk in the normal case)
+    pub ranges: Vec<std::ops::Range<usize>>,
     pub previous: Vec<Tri>,
     /// `YYYY-MM-DD HH:MM:SS` of the job's start (the create route's `at`)
     pub at: String,
+    /// The caller's address and browser (for the activity event only)
+    pub client: crate::identity::ClientInfo,
 }
 
 /// Starts the runner of a generation job (the row is queued and registered here).
@@ -724,8 +821,100 @@ pub fn spawn_generation(app: &AppState, job: GenJob) {
     let app = app.clone();
     tokio::spawn(async move {
         let _reg = reg;
-        run_generation(app, job, cancel).await;
+        let task = job.task;
+        run_generation(app.clone(), job, cancel).await;
+        // the questions shown while the job ran go with it (a process that is shutting down leaves them to the repair)
+        if !*app.0.shutdown.borrow() {
+            let _ = app
+                .0
+                .store
+                .write(|tx| crate::store::items::items_clear(tx, task));
+        }
     });
+}
+
+/// A job that ends in failure: the row, the System log line and the activity event.
+fn gen_failed(app: &AppState, job: &GenJob, code: &'static str, calls: usize, detail: &str) {
+    if fail_job(app, job.task, code, None) {
+        log_failed(app, &job.who, code, calls, detail);
+        app.0.activity(
+            crate::activity::Event::new(Some(&job.who), "ai.gen.create", &job.client)
+                .object(job.name.clone())
+                .failed(code),
+        );
+    }
+}
+
+/// One plan-type call (a plan call, or the global plan): `Ok(Some(text))` for an answer, `Ok(None)` for a provider error
+/// (a plan failure never fails the job), `Err` only for a stop. The row is written with the purpose `plan`. From the
+/// second send on the text differs and the gateway's response cache is bypassed.
+async fn plan_call(
+    ctx: &Ctx,
+    system: &str,
+    prefix: Option<&str>,
+    user: &str,
+    want: i64,
+    cache: Option<bool>,
+    attempt: u32,
+) -> Result<Option<String>, Stop> {
+    ctx.check()?;
+    ctx.recheck().await?;
+    let permit = ctx.place().await?;
+    let user = if attempt >= 2 {
+        format!(
+            "{user}{}",
+            crate::gen::run::attempt_line(attempt, &crate::util::hex(&random_bytes::<4>()))
+        )
+    } else {
+        user.to_string()
+    };
+    let opts = CallOpts {
+        skip_cache: attempt >= 2,
+        cache,
+        purpose: Some("plan"),
+    };
+    let r = ctx.call_opts(system, prefix, &user, want, 0, opts).await;
+    drop(permit);
+    let (row, text) = match r? {
+        CallResult::Answer { text, row, .. } => (row, Some(text)),
+        CallResult::Error { row, .. } => (row, None),
+    };
+    if !ctx.write_call(&row, None, Some("planning")) {
+        return Err(Stop::Cancelled(StopWhy::Purged));
+    }
+    Ok(text)
+}
+
+/// The plan call of one chunk: the first request with the chunk's prefix (it writes the cache). One differing retry,
+/// then `None`: the job goes on with the local plan.
+async fn plan_chunk(
+    ctx: &Ctx,
+    whole: &crate::gen::par::Whole,
+    slots: &[&crate::gen::plan::Slot],
+    valid: &std::ops::Range<usize>,
+    note: Option<&whole_gen::ChunkNote>,
+) -> Result<Option<whole_gen::ModelPlan>, Stop> {
+    let user = whole_gen::plan_user(slots, note);
+    let want = whole_gen::plan_want(slots.len());
+    let nos: Vec<usize> = slots.iter().map(|s| s.no).collect();
+    for attempt in 1..=2u32 {
+        if let Some(text) = plan_call(
+            ctx,
+            &whole.system,
+            Some(&whole.prefix),
+            &user,
+            want,
+            None,
+            attempt,
+        )
+        .await?
+        {
+            if let Some(p) = whole_gen::parse_plan(&text, &nos, valid) {
+                return Ok(Some(p));
+            }
+        }
+    }
+    Ok(None)
 }
 
 async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<Option<StopWhy>>) {
@@ -738,7 +927,13 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
     let changed = app
         .0
         .store
-        .write(|tx| jobs::mark_running(tx, job.task, now, true))
+        .write(|tx| -> rusqlite::Result<usize> {
+            let n = jobs::mark_running(tx, job.task, now, true)?;
+            if n > 0 {
+                jobs::set_phase(tx, job.task, "planning", now)?;
+            }
+            Ok(n)
+        })
         .unwrap_or(0);
     if changed == 0 {
         return;
@@ -749,6 +944,13 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
         job.source,
         job.plan.slots.len()
     );
+    if job.ranges.len() > 1 {
+        tracing::info!(
+            "AI bank generation of user {:?} is cut into {} chunks",
+            job.who.username,
+            job.ranges.len()
+        );
+    }
     let writing = Knobs::get(&app.0.knobs.writing_secs);
     let (hard_cap, unlimited) = {
         let l = app.0.limits();
@@ -757,12 +959,22 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
             l.gen_unlimited == 1,
         )
     };
+    // the route is resolved once, here, and kept for the whole job (the prompt cache is per connection)
+    let route = match app.0.route(crate::route::Slot::Generate, None) {
+        Ok(r) => r,
+        Err(_) => {
+            drop(place);
+            fail_job(&app, job.task, "ai.gen.stopped", None);
+            return;
+        }
+    };
     let ctx = Ctx {
         app: app.clone(),
         task: job.task,
         who: job.who.clone(),
         feature: Feature::Generate,
         purpose: "generate",
+        route,
         cancel,
         deadline: if unlimited {
             no_deadline()
@@ -774,23 +986,17 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
     let limits = JobLimits::for_plan(&job.plan);
     let mut run = Run::new(
         job.plan.clone(),
-        Deduper::new(job.source_stems.clone(), job.previous.clone())
-            .relaxed(job.source_stems.len() < job.plan.slots.len()),
+        Deduper::new(
+            job.corpus.iter().map(|c| c.stem.clone()).collect(),
+            job.previous.clone(),
+        )
+        .relaxed(job.corpus.len() < job.plan.slots.len()),
         limits,
     )
     .with_hard_cap(hard_cap)
-    .with_unlimited(unlimited);
-    let seeds = &job.seeds;
-    let driven = {
-        let mut prompt_for = |run: &Run, batch: &[usize]| -> (Prompt, Option<i64>) {
-            let slots = run.slots(batch);
-            let nonce = crate::util::hex(&random_bytes::<8>());
-            let mut prompt = build_prompt(&slots, seeds, &run.written(), &nonce);
-            prompt.user.push_str(&run.retry_note(batch));
-            (prompt, None)
-        };
-        drive(&ctx, &mut run, true, &mut prompt_for).await
-    };
+    .with_unlimited(unlimited)
+    .with_groups(job.groups.clone());
+    let driven = drive_generation(&ctx, &job, &mut run).await;
     drop(place);
     let calls = run.calls();
     tracing::info!(
@@ -803,23 +1009,14 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
     );
     match driven {
         Err(Stop::Cancelled(_)) | Err(Stop::Shutdown) => {}
-        Err(Stop::Fail(code)) => {
-            if fail_job(&app, job.task, code, None) {
-                log_failed(&app, &job.who, code, calls, &run_detail(&run));
-            }
-        }
+        Err(Stop::Fail(code)) => gen_failed(&app, &job, code, calls, &run_detail(&run)),
         Ok(()) => match run.outcome() {
             // a generation never ends partial (A-OWNER-13c); the arm only keeps the match total
             Outcome::Failed(FailCode::Quality) | Outcome::Partial { .. } => {
-                if fail_job(&app, job.task, "ai.gen.quality", None) {
-                    log_failed(&app, &job.who, "ai.gen.quality", calls, &run_detail(&run));
-                }
+                gen_failed(&app, &job, "ai.gen.quality", calls, &run_detail(&run))
             }
             Outcome::Failed(FailCode::Provider(code)) => {
-                let code = static_up_code(&code);
-                if fail_job(&app, job.task, code, None) {
-                    log_failed(&app, &job.who, code, calls, &run_detail(&run));
-                }
+                gen_failed(&app, &job, static_up_code(&code), calls, &run_detail(&run))
             }
             Outcome::Full => {
                 // saving: the compare-and-set on the phase decides against a cancel that came first
@@ -871,6 +1068,15 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
                             })
                             .unwrap_or(0);
                         if n > 0 {
+                            app.0.activity(
+                                crate::activity::Event::new(
+                                    Some(&job.who),
+                                    "ai.gen.create",
+                                    &job.client,
+                                )
+                                .object(reply.name.clone())
+                                .detail(json!({"questions": run.goal()})),
+                            );
                             tracing::info!(
                                 "user {:?} finished an AI bank generation ({} questions, {} model calls)",
                                 job.who.username,
@@ -879,15 +1085,156 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
                             );
                         }
                     }
-                    Err(code) => {
-                        if fail_job(&app, job.task, code, None) {
-                            log_failed(&app, &job.who, code, calls, &run_detail(&run));
-                        }
-                    }
+                    Err(code) => gen_failed(&app, &job, code, calls, &run_detail(&run)),
                 }
             }
         },
     }
+}
+
+/// Planning and writing of a generation: the prefix of every chunk, the global plan of a chunked job, the plan call of
+/// each chunk (the chunks at the same time, up to the job's width), then the writing calls of the whole job.
+async fn drive_generation(ctx: &Ctx, job: &GenJob, run: &mut Run) -> Result<(), Stop> {
+    use crate::gen::par::{self, Par, Step, WIDTH};
+    let app = &ctx.app;
+    // the chunks that have slots, each with its prefix (a nonce per chunk)
+    let mut chunk_ids: Vec<usize> = job.groups.clone();
+    chunk_ids.sort_unstable();
+    chunk_ids.dedup();
+    let mut whole_of: HashMap<usize, usize> = HashMap::new();
+    let mut wholes: Vec<par::Whole> = Vec::new();
+    for &c in &chunk_ids {
+        let Some(r) = job.ranges.get(c) else {
+            return Err(Stop::Fail("ai.gen.stopped"));
+        };
+        let nonce = crate::util::hex(&random_bytes::<8>());
+        whole_of.insert(c, wholes.len());
+        wholes.push(whole_gen::build(
+            &job.corpus[r.clone()],
+            r.start + 1,
+            &nonce,
+        ));
+    }
+    let number_of: HashMap<String, usize> = job
+        .corpus
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.id.clone(), i + 1))
+        .collect();
+    let slots_of = |c: usize| -> Vec<&crate::gen::plan::Slot> {
+        job.plan
+            .slots
+            .iter()
+            .zip(&job.groups)
+            .filter(|(_, g)| **g == c)
+            .map(|(s, _)| s)
+            .collect()
+    };
+    // 1. the global plan of a chunked job (no cached prefix); a failure only means the chunks plan on their own
+    let notes: Vec<whole_gen::ChunkNote> = if chunk_ids.len() > 1 {
+        let l = app.0.limits();
+        let context = par::route_context(&ctx.route);
+        let room = i64::try_from(context).unwrap_or(i64::MAX)
+            - par::reserve(l.gen_tokens())
+            - crate::limits::estimate_tokens(whole_gen::GEN_WHOLE_SYSTEM_PROMPT);
+        let index = whole_gen::index(&job.corpus, &job.ranges, room.max(1000));
+        let per_chunk: Vec<usize> = (0..job.ranges.len()).map(|c| slots_of(c).len()).collect();
+        let nonce = crate::util::hex(&random_bytes::<8>());
+        let user = whole_gen::global_user(&index, &per_chunk, &nonce);
+        let mut got: Option<Vec<whole_gen::ChunkNote>> = None;
+        for attempt in 1..=2u32 {
+            if let Some(text) = plan_call(
+                ctx,
+                whole_gen::GEN_WHOLE_SYSTEM_PROMPT,
+                None,
+                &user,
+                4_000,
+                Some(false),
+                attempt,
+            )
+            .await?
+            {
+                got = whole_gen::parse_global(&text, job.ranges.len());
+                if got.is_some() {
+                    break;
+                }
+            }
+        }
+        got.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    // 2. the plan call of every chunk, up to WIDTH at the same time
+    let plans: Vec<Option<(whole_gen::ModelPlan, Instant)>> = {
+        use futures_util::stream::{self, StreamExt};
+        let mut out: Vec<Option<(whole_gen::ModelPlan, Instant)>> =
+            (0..job.ranges.len()).map(|_| None).collect();
+        let mut results = stream::iter(chunk_ids.iter().copied().map(|c| {
+            let slots = slots_of(c);
+            let whole = &wholes[whole_of[&c]];
+            let valid = job.ranges[c].start + 1..job.ranges[c].end + 1;
+            let note = notes.get(c);
+            async move {
+                let r = plan_chunk(ctx, whole, &slots, &valid, note).await;
+                (c, r.map(|p| p.map(|p| (p, Instant::now()))))
+            }
+        }))
+        .buffer_unordered(WIDTH);
+        while let Some((c, r)) = results.next().await {
+            out[c] = r?;
+        }
+        out
+    };
+    // 3. writing
+    let now = unix_now();
+    let set = app
+        .0
+        .store
+        .write(|tx| jobs::set_phase(tx, job.task, "writing", now))
+        .unwrap_or(0);
+    if set == 0 {
+        return Err(Stop::Cancelled(StopWhy::Purged));
+    }
+    let first = wholes.first().ok_or(Stop::Fail("ai.gen.stopped"))?;
+    let cache_on = crate::provider::cache_floor_ok(
+        ctx.route.format,
+        &ctx.route.model,
+        &first.system,
+        Some(&first.prefix),
+    );
+    // the cache is probably gone when a plan is missing (its call did not write it) or the oldest one is too old
+    let cold = cache_on
+        && (chunk_ids.iter().any(|&c| plans[c].is_none())
+            || plans
+                .iter()
+                .flatten()
+                .any(|(_, at)| par::cold(*at, Instant::now())));
+    let models: Vec<Option<&whole_gen::ModelPlan>> =
+        plans.iter().map(|p| p.as_ref().map(|(m, _)| m)).collect();
+    let mut step_for = |run: &Run, batch: &[usize]| -> Step {
+        let slots = run.slots(batch);
+        let c = batch.first().map_or(0, |&i| run.group_of(i));
+        let planned = whole_gen::Planned {
+            model: models.get(c).copied().flatten(),
+            number_of: &number_of,
+        };
+        let nonce = crate::util::hex(&random_bytes::<8>());
+        Step {
+            whole: whole_of.get(&c).copied().unwrap_or(0),
+            user: whole_gen::write_user(&slots, &planned, &run.written(), &nonce)
+                + &run.retry_note(batch),
+            want: None,
+        }
+    };
+    let par = Par {
+        wholes: &wholes,
+        cap_batches: true,
+        width: WIDTH,
+        cold,
+        generation: true,
+        items: true,
+    };
+    par::drive(ctx, &par, run, &mut step_for).await
 }
 
 /// One-line facts of a run for the failure log: `made/goal`, the model calls and the rejection counts by reason code
@@ -957,11 +1304,12 @@ pub fn random_bytes<const N: usize>() -> [u8; N] {
 /// failed `ai.gen.interrupted`, not charged. Returns the number repaired.
 pub fn repair_at_start(app: &AppState) -> usize {
     let now = unix_now();
-    match app
-        .0
-        .store
-        .write(|tx| jobs::repair_interrupted(tx, now, true))
-    {
+    match app.0.store.write(|tx| -> rusqlite::Result<usize> {
+        let n = jobs::repair_interrupted(tx, now, true)?;
+        // the questions a cut-off job showed go with it
+        crate::store::items::items_sweep(tx)?;
+        Ok(n)
+    }) {
         Ok(n) => {
             if n > 0 {
                 tracing::info!("marked {n} AI bank jobs cut off by a restart as interrupted");

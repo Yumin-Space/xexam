@@ -42,6 +42,11 @@ export default defineCatalog({
     'auth.check.mismatch': 'The two new passwords are not the same.',
     'auth.check.same': 'The new password must be different from the current one.',
     'auth.signOut.failed': 'Could not sign out: {reason}',
+
+    'auth.remember': 'Keep me signed in',
+    'auth.remember.hint': 'When ticked, you stay signed in for 30 days. When not ticked, you sign in again after closing the browser or after 12 hours without activity. Administrator accounts always follow a fixed rule: signed out after 24 hours without activity, and a new sign-in is needed after 7 days. Do not tick this on a shared device.',
+    'auth.expired': 'Your sign-in has expired. Please sign in again.',
+    'auth.hardSoon': 'Your administrator sign-in ends in {n} minutes. Please save what you are doing.',
   },
   zh: {
     'auth.signin.title': '登录',
@@ -79,6 +84,11 @@ export default defineCatalog({
     'auth.check.mismatch': '两次输入的新密码不一样。',
     'auth.check.same': '新密码不能和当前密码一样。',
     'auth.signOut.failed': '退出登录失败：{reason}',
+
+    'auth.remember': '保持登录',
+    'auth.remember.hint': '勾选后 30 天内不用再登录。不勾选时，关闭浏览器或 12 小时没有操作后需要重新登录。管理员账号固定为：24 小时没有操作自动退出，登录满 7 天需要重新登录。请不要在公用设备上勾选。',
+    'auth.expired': '登录已过期，请重新登录。',
+    'auth.hardSoon': '管理员登录将在 {n} 分钟后到期，请保存当前操作。',
   },
   ja: {
     'auth.signin.title': 'ログイン',
@@ -116,5 +126,10 @@ export default defineCatalog({
     'auth.check.mismatch': '2 回入力した新しいパスワードが一致しません。',
     'auth.check.same': '新しいパスワードは現在のパスワードと別のものにしてください。',
     'auth.signOut.failed': 'ログアウトできませんでした：{reason}',
+
+    'auth.remember': 'ログイン状態を保持する',
+    'auth.remember.hint': 'オンにすると 30 日間はログインし直す必要がありません。オフの場合は、ブラウザを閉じたとき、または 12 時間操作がなかったときに再ログインが必要です。管理者アカウントは固定のルールで、24 時間操作がないとログアウトされ、ログインから 7 日たつと再ログインが必要です。共用の端末ではオンにしないでください。',
+    'auth.expired': 'ログインの有効期限が切れました。もう一度ログインしてください。',
+    'auth.hardSoon': '管理者のログインは {n} 分後に期限切れになります。作業内容を保存してください。',
   },
 });

@@ -4,486 +4,240 @@
 //! Every handler that changes the effective AI+ service state or a user's AI+ function sends a state report to the
 //! main backend before it answers (round-2 contracts 2.6; best effort, the answer does not depend on it).
 use super::{body_id, ok, only_keys, query_id, query_text, Answer, Ctx};
-use crate::app::{AppState, ModelsCache, Snapshot};
+use crate::app::AppState;
 use crate::chat::StopReason;
 use crate::codes::ApiError;
 use crate::limits::{LimitError, DEFS};
 use crate::link::BackendUser;
-use crate::prompt;
-use crate::provider::{self, Role, Turn, UpCode, UpError};
 use crate::retention;
-use crate::secret::{self, SecretName};
-use crate::settings::{
-    fingerprint, plan_update, Format, KeyChange, UpdateError, DEFAULT_ANTHROPIC, DEFAULT_OPENAI,
-};
 use crate::store::{data, stats, tables};
 use crate::util::unix_now;
 use serde_json::{json, Map, Value};
-use std::time::{Duration, Instant};
 
-const MODELS_TTL: Duration = Duration::from_secs(600);
+use super::admin_conn::{host_of, slots_using, MAX_CONNECTIONS};
+use crate::activity::Event;
+use crate::route::Slot;
+use crate::store::conn;
 
-fn key_info(app: &AppState, snap: &Snapshot, name: SecretName) -> Value {
-    let row = snap.secrets.iter().find(|r| r.name == name);
+/// The state of one secret of a connection as the settings object shows it (never the key).
+fn key_json(row: Option<&crate::store::tables::SecretRow>, key_id: &str) -> Value {
     match row {
+        Some(r) => json!({"set": true, "hint": r.hint, "unreadable": r.key_id != key_id}),
         None => json!({"set": false, "hint": "", "unreadable": false}),
-        Some(r) => {
-            let readable = match app.0.master() {
-                Some(m) => {
-                    r.key_id == m.key_id() && m.open(r.name, &r.nonce, &r.ciphertext).is_ok()
-                }
-                None => false,
-            };
-            json!({"set": true, "hint": r.hint, "unreadable": !readable})
-        }
     }
 }
 
-/// The `Settings` answer (5.3).
-fn settings_json(app: &AppState, snap: &Snapshot) -> Map<String, Value> {
-    let s = &snap.settings;
-    let v = json!({
-        "provider": s.provider.as_str(),
-        "baseUrl": s.base_url,
-        "format": s.wire_format().as_str(),
-        "gatewayAuth": s.gateway_auth.as_str(),
-        "model": s.model,
-        "manualModel": s.manual_model,
-        "enabled": snap.effective(),
-        "verified": snap.verified(),
-        "verifiedAt": s.verified_at,
-        "retentionDays": s.retention_days,
-        "keys": {
-            "apiKey": key_info(app, snap, SecretName::ApiKey),
-            "gatewayKey": key_info(app, snap, SecretName::GatewayKey),
-        },
-        "keyProblem": snap.key_problem.map(|p| p.as_str()),
-        "updatedAt": s.updated_at,
-        "updatedBy": s.updated_by,
-        "defaults": {"openai": DEFAULT_OPENAI, "anthropic": DEFAULT_ANTHROPIC},
-    });
-    match v {
-        Value::Object(m) => m,
-        _ => Map::new(),
-    }
-}
-
-pub async fn settings_get(ctx: Ctx) -> Answer {
-    let snap = ctx.app.0.snapshot()?;
-    ok(Value::Object(settings_json(&ctx.app, &snap)))
-}
-
-fn update_error(e: UpdateError) -> ApiError {
-    match e {
-        UpdateError::BadRequest => ApiError::bad_request(),
-        UpdateError::BadUrl => ApiError::bad_url(),
-        UpdateError::BadKey(n) => ApiError::bad_key(n),
-        UpdateError::KeyReenter(n) => ApiError::key_reenter(n),
-        UpdateError::HeaderClash => ApiError::header_clash(),
-        UpdateError::BadRetention => ApiError::bad_retention(),
-    }
-}
-
-/// What a settings save changed (for the log line).
-struct Saved {
-    switched_off: bool,
-    fp_changed: bool,
-    keys_changed: bool,
-    connection: bool,
-    retention: Option<i64>,
-    parts: Vec<&'static str>,
-}
-
-pub async fn settings_post(ctx: Ctx) -> Answer {
-    let app = &ctx.app;
-    let who = &ctx.who;
-    let now = unix_now();
-    let key_id = app.0.key_id().to_string();
-    let saved = app.0.store.write(|tx| -> Result<Saved, ApiError> {
-        let cur = tables::load_settings(tx)?;
-        let secrets = tables::load_secrets(tx)?;
-        let revs = tables::key_revs(&secrets);
-        let plan = plan_update(&cur, revs, &ctx.body).map_err(update_error)?;
-        let mut parts: Vec<&'static str> = Vec::new();
-        for (name, change) in [
-            (SecretName::ApiKey, &plan.api_key),
-            (SecretName::GatewayKey, &plan.gateway_key),
-        ] {
-            match change {
-                KeyChange::Keep => {}
-                KeyChange::Remove => {
-                    if tables::delete_secret(tx, name)? {
-                        parts.push(match name {
-                            SecretName::ApiKey => "the API key was removed",
-                            SecretName::GatewayKey => "the gateway key was removed",
-                        });
-                    }
-                }
-                KeyChange::Set(k) => {
-                    let master = app.0.master().ok_or_else(ApiError::key_problem)?;
-                    let sealed = master
-                        .seal(name, k.as_bytes())
-                        .ok_or_else(ApiError::internal)?;
-                    tables::put_secret(tx, name, &key_id, &sealed, &secret::hint(k), now)?;
-                    parts.push(match name {
-                        SecretName::ApiKey => "the API key was replaced",
-                        SecretName::GatewayKey => "the gateway key was replaced",
-                    });
-                }
-            }
-        }
-        if plan.url_changed {
-            parts.push("the base URL was changed");
-        }
-        let new_revs = tables::key_revs(&tables::load_secrets(tx)?);
-        let mut next = plan.next;
-        let fp_changed = fingerprint(&cur, revs, &key_id) != fingerprint(&next, new_revs, &key_id);
-        let mut switched_off = false;
-        if fp_changed {
-            switched_off = next.enabled;
-            next.enabled = false;
-            next.verified_at = None;
-            next.verified_fp = None;
-            next.usage_option = true;
-            next.max_tokens = 8192;
-        }
-        let retention = (plan.retention_sent && next.retention_days != cur.retention_days)
-            .then_some(next.retention_days);
-        next.updated_at = now;
-        next.updated_by = who.username.clone();
-        tables::save_settings(tx, &next)?;
-        Ok(Saved {
-            switched_off,
-            fp_changed,
-            keys_changed: !(plan.api_key.is_keep() && plan.gateway_key.is_keep()),
-            connection: plan.connection_fields,
-            retention,
-            parts,
-        })
-    })?;
+/// The v1.3 settings object (routes 5.1): switch, state, connections, pool, slots and the global feature switches.
+pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
     let snap = app.0.snapshot()?;
-    if saved.keys_changed {
-        app.0.recheck_keys(&snap.secrets);
-    }
-    if saved.fp_changed {
-        *app.0.models_cache.lock().unwrap_or_else(|e| e.into_inner()) = None;
-    }
-    if saved.connection {
-        let model = if snap.settings.model.is_empty() {
-            "none"
-        } else {
-            snap.settings.model.as_str()
-        };
-        let mut extra = String::new();
-        for p in &saved.parts {
-            extra.push_str("; ");
-            extra.push_str(p);
-        }
-        tracing::info!(
-            "user {:?} saved the AI settings (provider: {}, model: {model}{extra})",
-            who.username,
-            snap.settings.provider.display()
-        );
-    }
-    if let Some(n) = saved.retention {
-        tracing::info!(
-            "user {:?} set the AI chat retention to {n} days",
-            who.username
-        );
-    }
-    if saved.switched_off {
-        tracing::info!(
-            "AI was switched off: its settings changed and need a new test (by user {:?})",
-            who.username
-        );
-        app.0.cancel_everything(StopReason::Disabled);
-        app.0.heartbeat_now().await;
-    }
-    let snap = app.0.snapshot()?;
-    let mut m = settings_json(app, &snap);
-    m.insert("switchedOff".into(), Value::Bool(saved.switched_off));
-    ok(Value::Object(m))
-}
-
-/// Writes a usage row for an administrator's call (the administrator's AI user row is ensured).
-fn admin_usage(app: &AppState, who: &crate::identity::Identity, u: stats::UsageRow) {
-    let now = u.at;
-    let r = app.0.store.write(|tx| {
-        data::ensure_user(tx, who, now)?;
-        stats::insert_usage(tx, &u)
-    });
-    if let Err(e) = r {
-        tracing::warn!("could not record AI usage: {e}");
-    }
-}
-
-pub async fn models(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &[])?;
-    let app = &ctx.app;
-    let who = &ctx.who;
-    let snap = app.0.snapshot()?;
-    if let Some(k) = snap.missing_key() {
-        return Err(ApiError::key_missing(k));
-    }
-    {
-        let cache = app.0.models_cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(c) = cache.as_ref() {
-            if c.fp == snap.fp && c.at.elapsed() < MODELS_TTL {
-                return ok(json!({"models": c.list.models, "listed": c.list.listed}));
-            }
-        }
-    }
-    let target = app.0.target(&snap)?;
-    let permit = app.0.gate.try_acquire().ok_or_else(ApiError::server_busy)?;
-    let started = Instant::now();
-    let result = provider::list_models(&app.0.client, &target, app.0.timeouts).await;
-    drop(target);
-    drop(permit);
-    let (status, code) = match &result {
-        Ok(_) => ("ok", None),
-        Err(e) => ("error", Some(e.code.short().to_string())),
-    };
-    admin_usage(
-        app,
-        who,
-        stats::UsageRow {
-            user_id: Some(who.id),
-            at: unix_now(),
-            kind: "models",
-            provider: snap.settings.provider.as_str(),
-            // Listing the models uses no model: always the '' row (the "Model list" row of AI settings › Usage)
-            model: String::new(),
-            tokens_in: None,
-            tokens_out: None,
-            tokens_cached: None,
-            tokens_cache_write: None,
-            latency_ms: provider::ms(started.elapsed()),
-            first_byte_ms: None,
-            status,
-            error_code: code,
-        },
-    );
-    let list = result.map_err(|e| ApiError::upstream(e.code))?;
-    if list.listed {
-        tracing::info!(
-            "user {:?} listed the AI models: {} found",
-            who.username,
-            list.models.len()
-        );
+    let view = app.0.routes()?;
+    let effective = snap.enabled && snap.key_problem.is_none() && view.any();
+    let configured = view.slots[Slot::Default.index()].is_some();
+    let (state, reason) = if !configured && !snap.enabled {
+        ("setup", Value::Null)
+    } else if !snap.enabled {
+        ("off", Value::Null)
+    } else if effective {
+        ("on", Value::Null)
+    } else if snap.key_problem.is_some() {
+        ("paused", Value::from("keyProblem"))
     } else {
-        tracing::info!(
-            "user {:?} listed the AI models: the service does not list models",
-            who.username
+        ("paused", Value::from("noRoute"))
+    };
+    let row = app.0.store.read(tables::load_settings)?;
+    let key_id = app
+        .0
+        .master()
+        .map_or(String::new(), |m| m.key_id().to_string());
+    let secrets = app.0.store.read(|c| {
+        let mut all = Vec::new();
+        for k in &view.conns {
+            all.push((k.id, conn::conn_secrets(c, k.id)?));
+        }
+        Ok(all)
+    })?;
+    let connections: Vec<Value> = view
+        .conns
+        .iter()
+        .map(|c| {
+            let rows = secrets
+                .iter()
+                .find(|(id, _)| *id == c.id)
+                .map(|(_, r)| r.as_slice())
+                .unwrap_or(&[]);
+            let find = |n: crate::secret::SecretName| rows.iter().find(|r| r.name == n);
+            json!({
+                "id": c.id,
+                "rev": c.rev,
+                "name": c.name,
+                "provider": c.provider,
+                "baseUrl": c.base_url,
+                "host": host_of(&c.base_url),
+                "format": c.format,
+                "gatewayAuth": c.gateway_auth,
+                "keys": {
+                    "apiKey": key_json(find(crate::secret::SecretName::ApiKey), &key_id),
+                    "gatewayKey": key_json(find(crate::secret::SecretName::GatewayKey), &key_id),
+                },
+                "status": c.status,
+                "errorCode": c.error_code,
+                "testedAt": c.tested_at,
+                "listsModels": c.lists_models,
+                "insecureHttp": crate::settings::insecure_http(&c.base_url),
+                "usedBy": slots_using(&view, c.id),
+            })
+        })
+        .collect();
+    let pool: Vec<Value> = view
+        .pool
+        .iter()
+        .map(|m| {
+            let used: Vec<&'static str> = Slot::ALL
+                .iter()
+                .filter(|s| view.slots[s.index()] == Some(m.id))
+                .map(|s| s.as_str())
+                .collect();
+            json!({
+                "id": m.id,
+                "connectionId": m.connection_id,
+                "connectionName": view.conn(m.connection_id).map_or("", |c| c.name.as_str()),
+                "model": m.model,
+                "manual": m.manual,
+                "status": m.status,
+                "errorCode": m.error_code,
+                "testedAt": m.tested_at,
+                "latencyMs": m.latency_ms,
+                "context": m.context,
+                "usedBy": used,
+            })
+        })
+        .collect();
+    let mut slots = Map::new();
+    for s in Slot::ALL {
+        let using = view
+            .resolve(s, None)
+            .ok()
+            .map(|r| json!({"modelId": r.pool_id, "fallback": r.fallback.as_str()}));
+        slots.insert(
+            s.as_str().to_string(),
+            json!({"modelId": view.slots[s.index()], "using": using}),
         );
     }
-    *app.0.models_cache.lock().unwrap_or_else(|e| e.into_inner()) = Some(ModelsCache {
-        fp: snap.fp.clone(),
-        at: Instant::now(),
-        list: list.clone(),
-    });
-    ok(json!({"models": list.models, "listed": list.listed}))
-}
-
-/// One test call: `Ok(latency)` or the upstream error.
-async fn verify_attempt(
-    ctx: &Ctx,
-    snap: &Snapshot,
-    usage_option: bool,
-    max_tokens: i64,
-) -> (Result<(), UpError>, i64) {
-    let app = &ctx.app;
-    let s = &snap.settings;
-    let started = Instant::now();
-    let turns = [Turn {
-        role: Role::User,
-        content: prompt::VERIFY_MESSAGE.to_string(),
-    }];
-    // The test keeps its v0.9.1 body: no token field for OpenAI-compatible services, the stored value for Anthropic
-    let token = match s.wire_format() {
-        Format::OpenAi => provider::TokenLimit::omit(),
-        Format::Anthropic => provider::TokenLimit::max_tokens(max_tokens),
-    };
-    let body = provider::chat_body(
-        s.wire_format(),
-        &s.model,
-        prompt::VERIFY_PROMPT,
-        &turns,
-        usage_option,
-        token,
-    );
-    let result = match app.0.target(snap) {
-        Err(_) => Err(UpError::new(UpCode::BadRequest, None)),
-        Ok(target) => match target.chat_request(&app.0.client, &body, false) {
-            Err(e) => Err(e),
-            Ok(req) => {
-                drop(target);
-                let t = app.0.timeouts;
-                provider::collect_chat(
-                    &app.0.client,
-                    provider::Plan::single(s.wire_format(), req),
-                    t,
-                    t.verify_total,
-                )
-                .await
-            }
+    Ok(json!({
+        "enabled": snap.enabled,
+        "effective": effective,
+        "state": state,
+        "pauseReason": reason,
+        "keyProblem": snap.key_problem.map(|p| p.as_str()),
+        "retentionDays": snap.retention_days,
+        "updatedAt": row.updated_at,
+        "updatedBy": row.updated_by,
+        "defaults": {
+            "openai": crate::settings::DEFAULT_OPENAI,
+            "anthropic": crate::settings::DEFAULT_ANTHROPIC,
         },
-    };
-    let latency = provider::ms(started.elapsed());
-    let outcome = match &result {
-        Ok(c) if !c.text.is_empty() || c.tokens_in.is_some() || c.tokens_out.is_some() => Ok(()),
-        Ok(_) => Err(UpError::new(UpCode::Protocol, Some(200))),
-        Err(e) => Err(*e),
-    };
-    let (tin, tout) = match &result {
-        Ok(c) => (c.tokens_in, c.tokens_out),
-        Err(_) => (None, None),
-    };
-    admin_usage(
-        app,
-        &ctx.who,
-        stats::UsageRow {
-            user_id: Some(ctx.who.id),
-            at: unix_now(),
-            kind: "verify",
-            provider: s.provider.as_str(),
-            model: s.model.clone(),
-            tokens_in: tin,
-            tokens_out: tout,
-            tokens_cached: None,
-            tokens_cache_write: None,
-            latency_ms: latency,
-            // time to the first text is recorded for chat answers only
-            first_byte_ms: None,
-            status: if outcome.is_ok() { "ok" } else { "error" },
-            error_code: outcome.as_ref().err().map(|e| e.code.short().to_string()),
-        },
-    );
-    (outcome, latency)
-}
-
-pub async fn verify(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &[])?;
-    let app = &ctx.app;
-    let who = &ctx.who;
-    let snap = app.0.snapshot()?;
-    if snap.settings.model.is_empty() {
-        return Err(ApiError::model_missing());
-    }
-    if let Some(k) = snap.missing_key() {
-        return Err(ApiError::key_missing(k));
-    }
-    // Decrypts once to find a key problem before anything is sent
-    drop(app.0.target(&snap)?);
-    let permit = app.0.gate.try_acquire().ok_or_else(ApiError::server_busy)?;
-    let s = &snap.settings;
-    let format = s.wire_format();
-    let mut usage_option = s.usage_option;
-    let mut max_tokens = s.max_tokens;
-    let (mut result, mut latency) = verify_attempt(&ctx, &snap, usage_option, max_tokens).await;
-    if let Err(e) = result {
-        if e.code == UpCode::BadRequest {
-            if format == Format::OpenAi && usage_option {
-                usage_option = false;
-                (result, latency) = verify_attempt(&ctx, &snap, usage_option, max_tokens).await;
-            } else if format == Format::Anthropic && max_tokens == 8192 {
-                max_tokens = 4096;
-                (result, latency) = verify_attempt(&ctx, &snap, usage_option, max_tokens).await;
-            }
-        }
-    }
-    drop(permit);
-    let now = unix_now();
-    let fp0 = snap.fp.clone();
-    let key_id = app.0.key_id().to_string();
-    let mut switched_off = false;
-    match result {
-        Ok(()) => {
-            app.0.store.write(|tx| -> rusqlite::Result<()> {
-                let mut cur = tables::load_settings(tx)?;
-                let revs = tables::key_revs(&tables::load_secrets(tx)?);
-                if fingerprint(&cur, revs, &key_id) == fp0 {
-                    cur.verified_at = Some(now);
-                    cur.verified_fp = Some(fp0.clone());
-                    cur.usage_option = usage_option;
-                    cur.max_tokens = max_tokens;
-                    tables::save_settings(tx, &cur)?;
-                }
-                Ok(())
-            })?;
-            tracing::info!(
-                "user {:?} tested the AI settings: OK (model {}, {latency} ms)",
-                who.username,
-                s.model
-            );
-        }
-        Err(e) => {
-            if e.code.is_config() {
-                switched_off = app.0.store.write(|tx| -> rusqlite::Result<bool> {
-                    let mut cur = tables::load_settings(tx)?;
-                    let revs = tables::key_revs(&tables::load_secrets(tx)?);
-                    if fingerprint(&cur, revs, &key_id) != fp0 {
-                        return Ok(false);
-                    }
-                    let was = cur.enabled;
-                    cur.enabled = false;
-                    cur.verified_at = None;
-                    cur.verified_fp = None;
-                    tables::save_settings(tx, &cur)?;
-                    Ok(was)
-                })?;
-            }
-            let status = e.http.map_or_else(|| "-".to_string(), |s| s.to_string());
-            tracing::info!(
-                "user {:?} tested the AI settings: failed ({}, HTTP {status})",
-                who.username,
-                e.code.code()
-            );
-            if switched_off {
-                tracing::info!(
-                    "AI was switched off: the test failed ({}) (by user {:?})",
-                    e.code.code(),
-                    who.username
-                );
-                app.0.cancel_everything(StopReason::Disabled);
-                app.0.heartbeat_now().await;
-            }
-        }
-    }
-    let after = app.0.snapshot()?;
-    let (ok_flag, code, http) = match result {
-        Ok(()) => (true, Value::Null, Value::Null),
-        Err(e) => (
-            false,
-            Value::from(e.code.code()),
-            e.http.map_or(Value::Null, Value::from),
-        ),
-    };
-    ok(json!({
-        "ok": ok_flag,
-        "code": code,
-        "httpStatus": http,
-        "latencyMs": latency,
-        "model": s.model,
-        "verifiedAt": if after.verified() { after.settings.verified_at } else { None },
-        "enabled": after.effective(),
-        "switchedOff": switched_off,
+        "maxConnections": MAX_CONNECTIONS,
+        "connections": connections,
+        "pool": pool,
+        "slots": Value::Object(slots),
+        "featureSwitches": crate::features::to_json(snap.features_off),
     }))
 }
 
+pub async fn settings_get(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &[])?;
+    ok(settings_value(&ctx.app)?)
+}
+
+/// `POST /api/ai/admin/settings` accepts only `{"retentionDays": 1..3650}` in v1.3.
+pub async fn settings_post(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["retentionDays"])?;
+    let days = match ctx.body.get("retentionDays") {
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .filter(|d| (1..=3650).contains(d))
+            .ok_or_else(ApiError::bad_retention)?,
+        Some(_) => return Err(ApiError::bad_request()),
+        None => return ok(settings_value(&ctx.app)?),
+    };
+    let now = unix_now();
+    let by = ctx.who.username.clone();
+    let changed = ctx.app.0.store.write(|tx| -> rusqlite::Result<bool> {
+        let mut cur = tables::load_settings(tx)?;
+        if cur.retention_days == days {
+            return Ok(false);
+        }
+        cur.retention_days = days;
+        cur.updated_at = now;
+        cur.updated_by = by.clone();
+        tables::save_settings(tx, &cur)?;
+        Ok(true)
+    })?;
+    if changed {
+        tracing::info!(
+            "user {:?} set the AI data retention to {days} days",
+            ctx.who.username
+        );
+    }
+    ctx.app.0.activity(
+        Event::new(Some(&ctx.who), "ai.settings.retention", &ctx.client)
+            .detail(json!({"keys": ["retentionDays"]})),
+    );
+    ok(settings_value(&ctx.app)?)
+}
+
+/// `POST /api/ai/admin/enable` `{"enabled": bool, "default": ModelRef?}`. Turning on needs usable keys, a default model
+/// (`default` is required while the default slot is empty and is tested like a pick: a failing test leaves AI+ off) and a
+/// slot that resolves. Turning off stops every running call.
 pub async fn enable(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["enabled"])?;
+    only_keys(&ctx.body, &["enabled", "default"])?;
     let on = match ctx.body.get("enabled") {
         Some(Value::Bool(b)) => *b,
         _ => return Err(ApiError::bad_request()),
     };
     let app = &ctx.app;
     let who = &ctx.who;
-    let snap = app.0.snapshot()?;
+    let mut latency: Option<i64> = None;
     if on {
-        if snap.key_problem.is_some() {
+        if app.0.key_problem().is_some() {
             return Err(ApiError::key_problem());
         }
-        if !snap.verified() {
+        let default = match ctx.body.get("default") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(crate::route::Pick::from_json(v)?.ok_or_else(ApiError::bad_model)?),
+        };
+        let view = app.0.routes()?;
+        if default.is_none() && view.slots[Slot::Default.index()].is_none() {
+            return Err(ApiError::model_missing());
+        }
+        if let Some(p) = &default {
+            let picked = super::admin_models::pick_into(
+                app,
+                who,
+                Slot::Default,
+                p.connection_id,
+                &p.model,
+                false,
+            )
+            .await?;
+            latency = picked.latency_ms;
+            if !picked.ok {
+                let code = picked.error.map(|e| e.code.code());
+                app.0.activity(
+                    Event::new(Some(who), "ai.settings.enable", &ctx.client)
+                        .detail(json!({"model": p.model}))
+                        .failed(code.unwrap_or("ai.up.protocol")),
+                );
+                return ok(json!({
+                    "ok": false,
+                    "code": code,
+                    "httpStatus": picked.error.and_then(|e| e.http),
+                    "latencyMs": picked.latency_ms,
+                    "enabled": false,
+                    "settings": settings_value(app)?,
+                }));
+            }
+        } else if !view.any() {
             return Err(ApiError::not_verified());
         }
     }
@@ -497,18 +251,99 @@ pub async fn enable(ctx: Ctx) -> Answer {
         Ok(true)
     })?;
     if changed {
-        if on {
-            tracing::info!("user {:?} enabled AI", who.username);
-        } else {
-            tracing::info!("user {:?} disabled AI", who.username);
-        }
+        tracing::info!(
+            "user {:?} {} AI",
+            who.username,
+            if on { "enabled" } else { "disabled" }
+        );
     }
     if !on {
         app.0.cancel_everything(StopReason::Disabled);
     }
+    // the connection and model of the default slot, for the event (names only)
+    let view = app.0.routes()?;
+    let route = view.resolve(Slot::Default, None).ok();
+    let detail = json!({
+        "connection": route.as_ref().map(|r| r.connection_name.clone()),
+        "model": route.as_ref().map(|r| r.model.clone()),
+    });
+    app.0.activity(
+        Event::new(
+            Some(who),
+            if on {
+                "ai.settings.enable"
+            } else {
+                "ai.settings.disable"
+            },
+            &ctx.client,
+        )
+        .detail(detail),
+    );
     app.0.heartbeat_now().await;
-    let snap = app.0.snapshot()?;
-    ok(Value::Object(settings_json(app, &snap)))
+    let settings = settings_value(app)?;
+    ok(json!({
+        "ok": true,
+        "code": null,
+        "httpStatus": null,
+        "latencyMs": latency,
+        "enabled": settings["effective"],
+        "settings": settings,
+    }))
+}
+
+/// `POST /api/ai/admin/feature-switches` (any subset of the six keys, booleans: `true` = on): the global switches. They
+/// apply to normal users only; administrators keep every feature. Running calls of normal users stop at their next
+/// access re-check.
+pub async fn feature_switches(ctx: Ctx) -> Answer {
+    let mut set: Vec<(crate::features::Feature, bool)> = Vec::new();
+    for (k, v) in &ctx.body {
+        let f = crate::features::Feature::parse(k).ok_or_else(ApiError::bad_request)?;
+        let Value::Bool(b) = v else {
+            return Err(ApiError::bad_request());
+        };
+        set.push((f, *b));
+    }
+    let app = &ctx.app;
+    let before = app.0.store.read(conn::global_features_off)?;
+    let mut after = before;
+    for (f, on) in &set {
+        if *on {
+            after &= !f.bit();
+        } else {
+            after |= f.bit();
+        }
+    }
+    // AI hint and AI analysis are one switch: the two bits change together
+    let after = crate::features::paired(before, after);
+    if after != before {
+        app.0.store.write(|tx| conn::set_features_off(tx, after))?;
+        // Normal users' running calls of a feature that was just switched off stop; administrators' calls go on.
+        let newly_off = after & !before;
+        if newly_off != 0 {
+            app.0.registry.cancel_features(newly_off);
+        }
+        tracing::info!(
+            "user {:?} changed the global AI features: {}",
+            ctx.who.username,
+            crate::features::describe_change(before, after).unwrap_or_default()
+        );
+    }
+    let list = |want_on: bool| -> Vec<&'static str> {
+        crate::features::ALL
+            .iter()
+            .filter(|f| {
+                crate::features::allowed(before, **f) != crate::features::allowed(after, **f)
+                    && crate::features::allowed(after, **f) == want_on
+            })
+            .map(|f| f.key())
+            .collect()
+    };
+    app.0.activity(
+        Event::new(Some(&ctx.who), "ai.settings.features", &ctx.client)
+            .detail(json!({"on": list(true), "off": list(false)})),
+    );
+    app.0.heartbeat_now().await;
+    ok(settings_value(app)?)
 }
 
 fn sums_json(s: &stats::Sums) -> Map<String, Value> {
@@ -536,15 +371,21 @@ pub async fn usage(ctx: Ctx) -> Answer {
     let monthly = days >= 90;
     let (from_s, to_s) = (from.to_string(), to.to_string());
     let app = &ctx.app.0;
-    let (totals, users, models, periods, purposes) = app.store.read(|c| {
-        Ok((
-            stats::totals(c, &from_s, &to_s)?,
-            stats::by_user(c, &from_s, &to_s)?,
-            stats::by_model(c, &from_s, &to_s)?,
-            stats::by_period(c, &from_s, &to_s, if monthly { 7 } else { 10 })?,
-            stats::by_purpose(c, &from_s, &to_s)?,
-        ))
-    })?;
+    let now = unix_now();
+    let today_s = to_s.clone();
+    let (totals, users, models, periods, purposes, conns, shared, used_today) =
+        app.store.read(|c| {
+            Ok((
+                stats::totals(c, &from_s, &to_s)?,
+                stats::by_user(c, &from_s, &to_s)?,
+                stats::by_model_connection(c, &from_s, &to_s)?,
+                stats::by_period(c, &from_s, &to_s, if monthly { 7 } else { 10 })?,
+                stats::by_purpose(c, &from_s, &to_s)?,
+                stats::by_connection(c, &from_s, &to_s)?,
+                crate::store::shared::shared_stats(c, crate::util::day_bounds(now).start)?,
+                stats::tokens_today(c, &today_s)?,
+            ))
+        })?;
     // Each listed user's counted calls since today's 0:00 (the number the day cap compares), independent of the period
     let ids: Vec<i64> = users.iter().filter_map(|(id, ..)| *id).collect();
     let today = super::user::call_states(app, &ids, unix_now())?;
@@ -572,9 +413,12 @@ pub async fn usage(ctx: Ctx) -> Answer {
         .collect();
     let by_model: Vec<Value> = models
         .iter()
-        .map(|(model, s)| {
+        .map(|u| {
+            let (model, s) = (&u.model, &u.sums);
             let mut m = Map::new();
             m.insert("model".into(), Value::from(model.clone()));
+            m.insert("connectionId".into(), json!(u.connection_id));
+            m.insert("connection".into(), json!(u.connection));
             // the empty name is the "other" row: the model list and the connection tests, which use no feature
             m.insert("other".into(), Value::Bool(model.is_empty()));
             m.extend(sums_json(s));
@@ -638,6 +482,21 @@ pub async fn usage(ctx: Ctx) -> Answer {
         "tokensCacheWrite".into(),
         Value::from(totals.tokens_cache_write),
     );
+    let by_connection: Vec<Value> = conns
+        .iter()
+        .map(|u| {
+            let mut m = Map::new();
+            m.insert("connectionId".into(), json!(u.connection_id));
+            m.insert("connection".into(), json!(u.connection));
+            m.extend(sums_json(&u.sums));
+            m.insert("tokensCached".into(), Value::from(u.sums.tokens_cached));
+            m.insert(
+                "tokensCacheWrite".into(),
+                Value::from(u.sums.tokens_cache_write),
+            );
+            Value::Object(m)
+        })
+        .collect();
     ok(json!({
         "days": days,
         "from": from_s,
@@ -648,7 +507,26 @@ pub async fn usage(ctx: Ctx) -> Answer {
         "byModel": by_model,
         "byPeriod": by_period,
         "byPurpose": by_purpose,
+        "byConnection": by_connection,
+        "shared": {"rows": shared.0, "hits": shared.1, "hitsToday": shared.2},
+        "budget": {"limit": app.limits().daily_token_budget, "usedToday": used_today},
     }))
+}
+
+/// An administrator who is exempt from the caps is never refused, so no block is listed for one.
+fn clear_exempt_blocks(
+    app: &AppState,
+    users: &[&BackendUser],
+    calls: &mut std::collections::HashMap<i64, super::user::CallState>,
+) {
+    if app.0.limits().calls_admins_exempt != 1 {
+        return;
+    }
+    for u in users.iter().filter(|u| u.role == "admin") {
+        if let Some(st) = calls.get_mut(&u.id) {
+            st.blocked = None;
+        }
+    }
 }
 
 /// One row of "Users with AI+" (`AdminUserRow`, round-2 contracts 3.5). `exists` is always true (kept for the shape).
@@ -720,7 +598,8 @@ pub async fn users(ctx: Ctx) -> Answer {
         .collect();
     // One read for every listed user's call counts (finished calls grouped in Rust, plus the running ones)
     let ids: Vec<i64> = listed.iter().map(|u| u.id).collect();
-    let calls = super::user::call_states(&app.0, &ids, unix_now())?;
+    let mut calls = super::user::call_states(&app.0, &ids, unix_now())?;
+    clear_exempt_blocks(app, &listed, &mut calls);
     let mut rows: Vec<(String, Value)> = Vec::new();
     for u in listed {
         let (c, suspended, off, free) = counts_and_suspended(app, u)?;
@@ -744,7 +623,8 @@ pub async fn user(ctx: Ctx) -> Answer {
         return Err(ApiError::not_found());
     };
     let (counts, suspended, off, free) = counts_and_suspended(app, u)?;
-    let calls = super::user::call_states(&app.0, &[id], unix_now())?;
+    let mut calls = super::user::call_states(&app.0, &[id], unix_now())?;
+    clear_exempt_blocks(app, &[u], &mut calls);
     let (chats, memories) = app
         .0
         .store
@@ -823,8 +703,13 @@ pub async fn set_function(ctx: Ctx, enabled: bool) -> Answer {
     }
     if changed {
         tracing::info!(target: "audit", "{line}");
-        app.0.deliver_outbox().await;
     }
+    app.0.activity(
+        Event::new(Some(&ctx.who), "ai.users.features", &ctx.client)
+            .object(u.username.clone())
+            .detail(json!({"suspended": !enabled})),
+    );
+    app.0.deliver_outbox().await;
     app.0.heartbeat_now().await;
     let (counts, suspended, off, free) = counts_and_suspended(app, &u)?;
     // The Suspend / Resume answer keeps the row without `calls` (the spec adds them to the two list routes only)
@@ -837,7 +722,7 @@ pub async fn set_function(ctx: Ctx, enabled: bool) -> Answer {
 pub async fn set_features(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["userId", "features"])?;
     let id = body_id(&ctx.body, "userId")?.ok_or_else(ApiError::bad_request)?;
-    let off = match ctx.body.get("features") {
+    let asked = match ctx.body.get("features") {
         Some(Value::Object(m)) => {
             crate::features::from_json(m).map_err(|_| ApiError::bad_request())?
         }
@@ -866,11 +751,16 @@ pub async fn set_features(ctx: Ctx) -> Answer {
     }
     let admin = &ctx.who.username;
     let now = unix_now();
+    let mut was_bits = asked;
+    let mut off = asked;
     let line = app
         .0
         .store
         .write(|tx| -> rusqlite::Result<Option<String>> {
+            // AI hint and AI analysis are one switch: the two bits change together
+            off = crate::features::paired(data::features_off(tx, id)?, asked);
             let was = data::set_features_off(tx, id, &u.stamp, &u.username, off, now)?;
+            was_bits = was;
             let Some(change) = crate::features::describe_change(was, off) else {
                 return Ok(None);
             };
@@ -883,8 +773,23 @@ pub async fn set_features(ctx: Ctx) -> Answer {
         })?;
     if let Some(line) = line {
         tracing::info!(target: "audit", "{line}");
-        app.0.deliver_outbox().await;
     }
+    let flips = |want_on: bool| -> Vec<&'static str> {
+        crate::features::ALL
+            .iter()
+            .filter(|f| {
+                crate::features::allowed(was_bits, **f) != crate::features::allowed(off, **f)
+                    && crate::features::allowed(off, **f) == want_on
+            })
+            .map(|f| f.key())
+            .collect()
+    };
+    app.0.activity(
+        Event::new(Some(&ctx.who), "ai.users.features", &ctx.client)
+            .object(u.username.clone())
+            .detail(json!({"on": flips(true), "off": flips(false)})),
+    );
+    app.0.deliver_outbox().await;
     let (counts, suspended, off, free) = counts_and_suspended(app, &u)?;
     ok(json!({ "user": admin_row(&u, &counts, suspended, off, free, None) }))
 }
@@ -940,36 +845,93 @@ pub async fn set_free(ctx: Ctx) -> Answer {
         })?;
     if let Some(line) = line {
         tracing::info!(target: "audit", "{line}");
-        app.0.deliver_outbox().await;
     }
+    app.0.activity(
+        Event::new(Some(&ctx.who), "ai.users.features", &ctx.client)
+            .object(u.username.clone())
+            .detail(json!({"free": free})),
+    );
+    app.0.deliver_outbox().await;
     let (counts, suspended, off, free) = counts_and_suspended(app, &u)?;
     ok(json!({ "user": admin_row(&u, &counts, suspended, off, free, None) }))
 }
 
+/// `GET /api/ai/admin/chat?user=&id=[&at=]`: the user's current branch, or (`at`) the read-only branch that runs through
+/// message `at` down to the newest answer. Never writes the leaf. The reading is an activity event that must be delivered
+/// (and the old audit line is kept), or the view is refused.
 pub async fn chat(ctx: Ctx) -> Answer {
     let app = &ctx.app;
     let user = query_id(ctx.query.as_deref(), "user")?;
     let id = query_id(ctx.query.as_deref(), "id")?;
-    let found = app.0.store.read(|c| {
+    let at = match query_text(ctx.query.as_deref(), "at")? {
+        None => None,
+        Some(t) => Some(query_id(Some(&format!("at={t}")), "at")?),
+    };
+    type Found = (
+        data::ChatRow,
+        Vec<data::MessageRow>,
+        std::collections::HashMap<i64, Vec<i64>>,
+        String,
+    );
+    let found: Option<Found> = app.0.store.read(|c| {
         let Some(chat) = data::chat(c, user, id)? else {
             return Ok(None);
         };
+        let leaf = match at {
+            Some(m) => {
+                if !data::messages(c, id)?.iter().any(|x| x.id == m) {
+                    return Ok(None);
+                }
+                Some(data::line_end(c, id, m)?)
+            }
+            None => None,
+        };
+        let path = data::path(c, id, leaf)?;
+        let versions = data::versions(c, id, &path)?;
         let name = data::user_row(c, user)?.map(|(_, n)| n).unwrap_or_default();
-        Ok(Some((chat, data::messages(c, id)?, name)))
+        Ok(Some((chat, path, versions, name)))
     })?;
-    let Some((chat, msgs, owner)) = found else {
+    let Some((chat, path, versions, owner)) = found else {
         return Err(ApiError::not_found());
     };
     let line = format!(
         "user {:?} viewed an AI chat of user {owner:?} ({} messages)",
         ctx.who.username,
-        msgs.len()
+        path.len()
     );
-    if !app.0.audit_now(&line).await {
+    let event = Event::new(Some(&ctx.who), "ai.admin.viewChats", &ctx.client)
+        .object(owner.clone())
+        .detail(json!({"messages": path.len(), "stored": chat.message_count}));
+    if !app.0.activity_now(event).await || !app.0.audit_now(&line).await {
         return Err(ApiError::backend_down());
     }
-    let messages: Vec<Value> = msgs.iter().map(data::MessageRow::to_json).collect();
-    ok(json!({"chat": chat.to_json(app.0.chat_running(id)), "messages": messages}))
+    let mut chat_v = chat.to_json(app.0.chat_running(id));
+    if let Some(m) = chat_v.as_object_mut() {
+        m.insert("leafId".into(), json!(path.last().map(|x| x.id)));
+        m.insert(
+            "pick".into(),
+            chat.pick.as_ref().map_or(
+                Value::Null,
+                |(c, model)| json!({"connectionId": c, "model": model}),
+            ),
+        );
+    }
+    let messages: Vec<Value> = path
+        .iter()
+        .map(|m| {
+            let mut v = m.to_json();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("parentId".into(), json!(m.parent_id));
+                if let Some(vs) = versions.get(&m.id) {
+                    o.insert("versions".into(), json!(vs));
+                }
+                o.insert("connection".into(), json!(m.connection));
+                super::user::put_reasoning(o, m);
+            }
+            v
+        })
+        .collect();
+    ok(json!({"chat": chat_v, "messages": messages}))
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -981,8 +943,30 @@ enum ClearWhat {
 
 pub async fn clear(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["userId", "what", "chatId"])?;
-    let user = body_id(&ctx.body, "userId")?.ok_or_else(ApiError::bad_request)?;
     let chat_id = body_id(&ctx.body, "chatId")?;
+    if ctx.body.get("what").and_then(Value::as_str) == Some("shared") {
+        // the shared hints / explanations belong to no user: `{"what": "shared"}` alone
+        if ctx.body.len() != 1 {
+            return Err(ApiError::bad_request());
+        }
+        let n = ctx
+            .app
+            .0
+            .store
+            .write(|tx| -> rusqlite::Result<i64> { crate::store::shared::shared_clear(tx) })?;
+        ctx.app.0.store.schedule_checkpoint();
+        tracing::info!(
+            "user {:?} cleared the {n} shared AI study answers",
+            ctx.who.username
+        );
+        ctx.app.0.activity(
+            Event::new(Some(&ctx.who), "ai.admin.clear", &ctx.client)
+                .object("shared")
+                .detail(json!({"count": n})),
+        );
+        return ok(json!({ "deleted": n }));
+    }
+    let user = body_id(&ctx.body, "userId")?.ok_or_else(ApiError::bad_request)?;
     let what = match (ctx.body.get("what").and_then(Value::as_str), chat_id) {
         (Some("chat"), Some(c)) => ClearWhat::Chat(c),
         (Some("chats"), None) => ClearWhat::Chats,
@@ -1040,6 +1024,16 @@ pub async fn clear(ctx: Ctx) -> Answer {
         })?;
     app.0.store.schedule_checkpoint();
     tracing::info!(target: "audit", "{line}");
+    let scope = match what {
+        ClearWhat::Chat(_) => "chat",
+        ClearWhat::Chats => "chats",
+        ClearWhat::Memories => "memories",
+    };
+    app.0.activity(
+        Event::new(Some(&ctx.who), "ai.admin.clear", &ctx.client)
+            .object(scope)
+            .detail(json!({"count": n})),
+    );
     app.0.deliver_outbox().await;
     ok(json!({ "deleted": n }))
 }
@@ -1082,5 +1076,13 @@ pub async fn limits_post(ctx: Ctx) -> Answer {
     if let Some(change) = cur.describe_change(&next) {
         tracing::info!("AI limits changed by admin {by:?}: {change}");
     }
+    let keys: Vec<&str> = DEFS
+        .iter()
+        .filter(|d| cur.get(d.key) != next.get(d.key))
+        .map(|d| d.key)
+        .collect();
+    app.0.activity(
+        Event::new(Some(&ctx.who), "ai.settings.limits", &ctx.client).detail(json!({"keys": keys})),
+    );
     ok(next.answer())
 }

@@ -142,7 +142,7 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     let c = raw(&db);
     // intended difference (v0.6, v0.6.5, v0.8): a new database goes straight to the current schema (tests/v06_users_and_sign_in.rs,
     // tests/v065_bank_access_and_practice.rs, tests/v08_ai_link.rs)
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 0);
     for t in ["banks", "attempt_items", "settings"] {
         assert_eq!(
@@ -279,7 +279,7 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
     );
     // intended difference (v0.6, v0.6.5, v0.8): v1 → v2 → v3 → v4 → v5 in one go (one schema-1 backup); v3 / v4 / v5 are
     // covered in tests/v06_users_and_sign_in.rs, tests/v065_bank_access_and_practice.rs and tests/v08_ai_link.rs
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempt_items"),
         0,
@@ -1982,7 +1982,13 @@ async fn new_routes_go_through_the_same_guards() {
             r.header("content-type").as_deref(),
             Some("application/json; charset=utf-8")
         );
-        assert_eq!(r.header("cache-control").as_deref(), Some("no-store"));
+        // v1.3 (A4): the two library routes revalidate with an ETag; every other answer is `no-store`
+        let want = if r.status == 200 && (path == "/api/bank" || path == "/api/banks") {
+            "private, no-cache"
+        } else {
+            "no-store"
+        };
+        assert_eq!(r.header("cache-control").as_deref(), Some(want));
         // POSTing to a GET-only path is still 404
         let r = post_json(&a.app, path.split('?').next().unwrap_or(path), "{}").await;
         if !NEW_POSTS.contains(&path) {

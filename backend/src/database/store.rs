@@ -48,23 +48,36 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod activity;
 mod ai_gen;
 mod banks;
 mod migrate;
 mod records;
 mod settings;
 mod study;
+mod system_settings;
 mod users;
 
+pub use activity::{
+    ActivityEntry, ActivityFilter, ActivityPage, ActivityRow, ActivitySource, FacetUser, Merge,
+    UserFilter,
+};
 pub use ai_gen::{
     ai_question_id, build_question, id_seed, AiBankInfo, AiBankOutcome, AiBankReq, AiFile, AiMode,
-    AiQuestion, GenFound, GenItem, GenKind, GenSeeds, GenSource, GenSourceReq, GenStratum, Tri,
-    AI_BANKS_AUTO_SHARE, AI_SHEET,
+    AiQuestion, GenCorpus, GenCorpusReq, GenFound, GenItem, GenKind, GenSeeds, GenSource,
+    GenSourceReq, GenStratum, Tri, AI_BANKS_AUTO_SHARE, AI_SHEET,
 };
 pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
 pub use study::{QuestionAsk, StudyLang, MAX_SAMPLE, TEXT_BUDGET};
-pub use users::{AiUserRow, SessionUser, UpdatedUser, UserChange, UserRow, UserUpdate};
+pub use system_settings::{
+    ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS,
+    MIN_RETENTION_DAYS, SIGNIN_INFO,
+};
+pub use users::{
+    AiUserRow, EndedSession, NewSession, SessionRow, SessionUser, SigninInfo, Touch, UpdatedUser,
+    UserChange, UserRow, UserUpdate,
+};
 
 /// One bank whose old-layout questions [`Store::retire_old_layout_questions`] retired.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -192,6 +205,20 @@ fn stored_question(r: &rusqlite::Row<'_>) -> rusqlite::Result<StoredQuestion> {
         active: r.get::<_, i64>(4)? != 0,
         bank_id: r.get(5)?,
     })
+}
+
+/// (sheet, active, retired) per (bank, sheet) group in (bank, first seq) order, banks without an id first; `filter` is an
+/// optional `WHERE` clause. Covered by `idx_questions_layout`.
+fn sheet_groups<P: rusqlite::Params>(
+    conn: &Connection,
+    filter: &str,
+    p: P,
+) -> Result<Vec<(String, i64, i64)>, DbError> {
+    let mut st = conn.prepare(&format!(
+        "SELECT sheet, COALESCE(SUM(active=1), 0), COALESCE(SUM(active=0), 0) FROM questions {filter}          GROUP BY bank_id, sheet ORDER BY bank_id, MIN(seq)"
+    ))?;
+    let rows = st.query_map(p, |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    Ok(rows.collect::<Result<Vec<_>, _>>()?)
 }
 
 /// `sql` must select [`QUESTION_COLUMNS`] in that order.
@@ -852,53 +879,62 @@ impl Store {
     /// `/api/bank` limited to the banks in `scope` (see [`Store::bank`]): their questions and sheets only, and `file` /
     /// `mtime` of the latest import of one of those banks.
     pub fn bank_as(&self, scope: &BankScope) -> Result<Value, DbError> {
-        let (mut rows, last) = {
+        // v1.3 (B8): only the active rows are read and parsed; the retired ones are counted by one grouped query, which also
+        // gives the sheets their order (first appearance in (bank, seq) order, retired rows included, like before).
+        let (mut rows, groups, last) = {
             let g = self.lock();
-            let rows = match scope {
-                BankScope::All => load_questions(
-                    &g,
-                    &format!("SELECT {QUESTION_COLUMNS} FROM questions ORDER BY seq"),
-                    [],
-                )?,
+            let (rows, groups) = match scope {
+                BankScope::All => (
+                    load_questions(
+                        &g,
+                        &format!(
+                            "SELECT {QUESTION_COLUMNS} FROM questions WHERE active=1 ORDER BY seq"
+                        ),
+                        [],
+                    )?,
+                    sheet_groups(&g, "", [])?,
+                ),
                 // v1.1: a limited viewer reads only their own banks (the ids as one JSON array), not the whole library
                 // filtered in Rust. `seq` is unique inside a bank, so the order is the one the Rust filter produced.
                 BankScope::Only(ids) => {
                     let ids_json = serde_json::to_string(&ids.iter().collect::<Vec<_>>())?;
-                    load_questions(
-                        &g,
-                        &format!(
-                            "SELECT {QUESTION_COLUMNS} FROM questions WHERE bank_id IN (SELECT value FROM json_each(?1)) ORDER BY bank_id, seq"
-                        ),
-                        params![ids_json],
-                    )?
+                    (
+                        load_questions(
+                            &g,
+                            &format!(
+                                "SELECT {QUESTION_COLUMNS} FROM questions WHERE active=1 AND bank_id IN (SELECT value FROM json_each(?1)) ORDER BY bank_id, seq"
+                            ),
+                            params![ids_json],
+                        )?,
+                        sheet_groups(
+                            &g,
+                            "WHERE bank_id IN (SELECT value FROM json_each(?1))",
+                            params![ids_json],
+                        )?,
+                    )
                 }
             };
-            (rows, last_import(&g, scope)?)
+            (rows, groups, last_import(&g, scope)?)
         };
         // Stable: with a single bank this is exactly the old `ORDER BY seq` order (ties included)
         rows.sort_by_key(|r| r.bank_id);
         let mut order: Vec<(String, i64, i64)> = Vec::new();
         let mut pos: HashMap<String, usize> = HashMap::new();
-        let mut questions = Vec::new();
-        for r in &rows {
-            let i = match pos.get(&r.sheet).copied() {
-                Some(i) => i,
+        for (sheet, usable, inactive) in groups {
+            match pos.get(&sheet).copied().and_then(|i| order.get_mut(i)) {
+                Some(entry) => {
+                    entry.1 += usable;
+                    entry.2 += inactive;
+                }
                 None => {
-                    order.push((r.sheet.clone(), 0, 0));
-                    pos.insert(r.sheet.clone(), order.len() - 1);
-                    order.len() - 1
-                }
-            };
-            if let Some(entry) = order.get_mut(i) {
-                if r.active {
-                    entry.1 += 1;
-                } else {
-                    entry.2 += 1;
+                    pos.insert(sheet.clone(), order.len());
+                    order.push((sheet, usable, inactive));
                 }
             }
-            if r.active {
-                questions.push(Value::Object(question_object(r)?));
-            }
+        }
+        let mut questions = Vec::with_capacity(rows.len());
+        for r in &rows {
+            questions.push(Value::Object(question_object(r)?));
         }
         let sheets: Vec<Value> = order
             .iter()
@@ -1103,8 +1139,9 @@ impl Store {
     }
 
     /// [`Store::record_attempt_as`] that also stores the session key and start time of `tag` in the record (v0.9; NULL for
-    /// what is `None`). The answer is `/api/progress` plus, when there are any, `"notCounted"`, plus the new record's
-    /// `"recordId"` (the `attempts.id`), always last.
+    /// what is `None`). The answer is `/api/progress` plus, when there are any, `"notCounted"`, plus `"duplicate": true` when
+    /// the save was a repeat of an existing record (v1.3; nothing was written), plus the record's `"recordId"` (the
+    /// `attempts.id`), always last.
     ///
     /// v1.1, the not-answered rule: for an exam with `attempt.end` set (every exam the v1.1 page saves, timed or not, handed
     /// in by hand or at time-up) a result that is not correct AND has an empty answer ([`is_empty_answer`]: missing, null,
@@ -1148,8 +1185,21 @@ impl Store {
         });
         let t = self.clock.now();
         let g = self.lock();
-        let (not_counted, record_id) = run_tx(&g, |c| {
+        let (not_counted, record_id, duplicate) = run_tx(&g, |c| {
             users::ensure_active(c, user)?;
+            // v1.3, idempotent save: a record of this session (same key, start time and kind) already exists, so a retry
+            // after a lost answer writes nothing and gets the same record id back
+            if let (Some(key), Some(started)) = (tag.key.as_deref(), tag.started_at) {
+                if let Some(id) = records::find_attempt(
+                    c,
+                    user,
+                    key,
+                    &started.to_string(),
+                    attempt.kind.as_str(),
+                )? {
+                    return Ok((Vec::new(), id, true));
+                }
+            }
             // Split the results into the questions that still exist and those that are gone (checked inside the transaction,
             // so a bank deleted at the same moment is either fully counted before or fully left out after)
             let mut kept = Vec::new();
@@ -1231,7 +1281,7 @@ impl Store {
             }
             // Keep only the most recent RECORD_RETENTION sessions (and their detail); `/api/progress` still shows HISTORY_LIMIT
             records::prune(c, user, RECORD_RETENTION)?;
-            Ok((gone, attempt_id))
+            Ok((gone, attempt_id, false))
         })?;
         let mut progress = progress_from(&g, user, scope)?;
         if !not_counted.is_empty() {
@@ -1240,6 +1290,9 @@ impl Store {
             }
         }
         if let Some(obj) = progress.as_object_mut() {
+            if duplicate {
+                obj.insert("duplicate".to_string(), json!(true));
+            }
             obj.insert("recordId".to_string(), json!(record_id));
         }
         Ok(progress)

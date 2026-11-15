@@ -160,6 +160,14 @@ pub struct BackendState {
     pub mode: Mode,
     pub log_fail: bool,
     pub logs: Vec<(String, String)>,
+    /// The events of the accepted `/internal/ai/activity` batches, oldest first
+    pub activity: Vec<Value>,
+    /// Batches received on that route (accepted or not)
+    pub activity_batches: usize,
+    /// Status the activity route answers with (200 accepts); 400 / 404 / 500 refuse the whole batch
+    pub activity_status: u16,
+    /// A batch that holds an event with this `action` is refused with 400 (a "bad event")
+    pub activity_bad_action: Option<String>,
     pub calls: Vec<String>,
     pub token: String,
     /// Bodies of the accepted heartbeats (`POST /internal/ai/heartbeat`), oldest first
@@ -375,6 +383,27 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
                 .map(FakeUser::json)
                 .collect();
             json!({ "users": rows })
+        }
+        "/internal/ai/activity" => {
+            s.activity_batches += 1;
+            let events = body
+                .get("events")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if s.activity_status != 200 {
+                return text_answer(s.activity_status, "refused");
+            }
+            if let Some(bad) = &s.activity_bad_action {
+                if events
+                    .iter()
+                    .any(|e| e.get("action").and_then(Value::as_str) == Some(bad.as_str()))
+                {
+                    return text_answer(400, "bad event");
+                }
+            }
+            s.activity.extend(events);
+            json!({"ok": true})
         }
         "/internal/ai/log" => {
             if s.log_fail {
@@ -615,6 +644,10 @@ pub async fn fake_backend() -> FakeBackend {
         mode: Mode::Normal,
         log_fail: false,
         logs: Vec::new(),
+        activity: Vec::new(),
+        activity_batches: 0,
+        activity_status: 200,
+        activity_bad_action: None,
         calls: Vec::new(),
         token: TOKEN.to_string(),
         heartbeats: Vec::new(),
@@ -668,6 +701,12 @@ pub struct StubState {
     pub cached_tokens: Option<i64>,
     /// Anthropic stub: cache-write tokens every answer reports
     pub cache_write_tokens: Option<i64>,
+    /// v1.3: reasoning text every normal, study and scripted answer sends before its text (OpenAI: one
+    /// `reasoning_content` delta, or an inline span with `reasoning_tag`; Anthropic: a thinking block)
+    pub reasoning: Option<String>,
+    /// v1.3: `"think"`, `"thinking"` or `"thought"`: with `reasoning`, the OpenAI content starts with
+    /// `<tag>{reasoning}</tag>\n\n` instead of a reasoning field
+    pub reasoning_tag: Option<&'static str>,
 }
 
 pub struct Stub {
@@ -734,6 +773,22 @@ fn chunks_of(text: &str, n: usize) -> Vec<String> {
     let chars: Vec<char> = text.chars().collect();
     let size = chars.len().div_ceil(n).max(1);
     chars.chunks(size).map(|c| c.iter().collect()).collect()
+}
+
+/// The configured reasoning of the stub as OpenAI chunks (none when no reasoning is set).
+fn reasoning_chunks(sh: &StubShared) -> Vec<Bytes> {
+    let (r, tag) = {
+        let st = sh.state.lock().unwrap_or_else(|e| e.into_inner());
+        (st.reasoning.clone(), st.reasoning_tag)
+    };
+    match (r, tag) {
+        (None, _) => vec![],
+        (Some(r), Some(tag)) => vec![openai_chunk(&format!("<{tag}>{r}</{tag}>\n\n"))],
+        (Some(r), None) => vec![Bytes::from(format!(
+            "data: {}\n\n",
+            json!({"choices": [{"index": 0, "delta": {"reasoning_content": r}}]})
+        ))],
+    }
 }
 
 fn openai_chunk(content: &str) -> Bytes {
@@ -995,6 +1050,9 @@ fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Respo
             "data: {}\n\n",
             json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]})
         )));
+        for c in reasoning_chunks(&sh) {
+            let _ = tx.send(c);
+        }
         let chars: Vec<char> = text.chars().collect();
         let size = if chars.len() > 1000 { 200 } else { 8 };
         for c in chars.chunks(size) {
@@ -1029,8 +1087,17 @@ fn study_openai(sh: StubShared, kind: Study, user: String, usage: bool) -> Respo
 }
 
 /// A scripted answer as an OpenAI-compatible stream (usage included).
-fn scripted_stream(text: &str, cut: bool, cached: Option<i64>, written: Option<i64>) -> Response {
+fn scripted_stream(
+    sh: &StubShared,
+    text: &str,
+    cut: bool,
+    cached: Option<i64>,
+    written: Option<i64>,
+) -> Response {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    for c in reasoning_chunks(sh) {
+        let _ = tx.send(c);
+    }
     let _ = tx.send(openai_chunk(text));
     let reason = if cut { "length" } else { "stop" };
     let _ = tx.send(Bytes::from(format!(
@@ -1061,8 +1128,8 @@ fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
     };
     if let (Some(f), false) = (script, is_verify(body)) {
         match f(&system_text(body), &user_turn(body)) {
-            genkit::Reply::Text(t) => return scripted_stream(&t, false, cached, written),
-            genkit::Reply::Cut(t) => return scripted_stream(&t, true, cached, written),
+            genkit::Reply::Text(t) => return scripted_stream(&sh, &t, false, cached, written),
+            genkit::Reply::Cut(t) => return scripted_stream(&sh, &t, true, cached, written),
             genkit::Reply::Status(code, b) => return text_answer(code, &b),
             genkit::Reply::Fall => {}
         }
@@ -1193,6 +1260,9 @@ fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
             "data: {}\n\n",
             json!({"choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}}]})
         )));
+        for c in reasoning_chunks(&sh) {
+            let _ = tx.send(c);
+        }
         for c in chunks_of(ANSWER, 6) {
             if tx.send(openai_chunk(&c)).is_err() {
                 return;
@@ -1214,6 +1284,37 @@ fn openai_stream(sh: StubShared, model: &str, body: &Value) -> Response {
 
 fn anthropic_event(name: &str, data: Value) -> Bytes {
     Bytes::from(format!("event: {name}\ndata: {data}\n\n"))
+}
+
+/// The configured reasoning of the stub as an Anthropic thinking block at index 0 (none when no reasoning is set); the
+/// text block then uses index 1. Returns the text block's index.
+fn anthropic_reasoning(sh: &StubShared, tx: &tokio::sync::mpsc::UnboundedSender<Bytes>) -> u64 {
+    let Some(r) = sh
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .reasoning
+        .clone()
+    else {
+        return 0;
+    };
+    let _ = tx.send(anthropic_event(
+        "content_block_start",
+        json!({"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}}),
+    ));
+    let _ = tx.send(anthropic_event(
+        "content_block_delta",
+        json!({"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": r}}),
+    ));
+    let _ = tx.send(anthropic_event(
+        "content_block_delta",
+        json!({"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "c2ln"}}),
+    ));
+    let _ = tx.send(anthropic_event(
+        "content_block_stop",
+        json!({"type": "content_block_stop", "index": 0}),
+    ));
+    1
 }
 
 fn anthropic_stream(sh: StubShared, model: &str, body: &Value) -> Response {
@@ -1241,13 +1342,14 @@ fn anthropic_stream(sh: StubShared, model: &str, body: &Value) -> Response {
                 "message_start",
                 json!({"type": "message_start", "message": {"usage": {"input_tokens": 21, "cache_read_input_tokens": cached.unwrap_or(0), "cache_creation_input_tokens": written.unwrap_or(0), "output_tokens": 1}}}),
             ));
+            let idx = anthropic_reasoning(&sh, &tx);
             let _ = tx.send(anthropic_event(
                 "content_block_start",
-                json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+                json!({"type": "content_block_start", "index": idx, "content_block": {"type": "text", "text": ""}}),
             ));
             let _ = tx.send(anthropic_event(
                 "content_block_delta",
-                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": t}}),
+                json!({"type": "content_block_delta", "index": idx, "delta": {"type": "text_delta", "text": t}}),
             ));
             let _ = tx.send(anthropic_event(
                 "message_delta",
@@ -1271,14 +1373,15 @@ fn anthropic_stream(sh: StubShared, model: &str, body: &Value) -> Response {
             json!({"type": "message_start", "message": {"usage": {"input_tokens": 30, "cache_read_input_tokens": 2, "output_tokens": 1}}}),
         ));
         let _ = tx.send(anthropic_event("ping", json!({"type": "ping"})));
+        let idx = anthropic_reasoning(&sh, &tx);
         let _ = tx.send(anthropic_event(
             "content_block_start",
-            json!({"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}}),
+            json!({"type": "content_block_start", "index": idx, "content_block": {"type": "text", "text": ""}}),
         ));
         let delta = |t: &str| {
             anthropic_event(
                 "content_block_delta",
-                json!({"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": t}}),
+                json!({"type": "content_block_delta", "index": idx, "delta": {"type": "text_delta", "text": t}}),
             )
         };
         if model == "demo-hold" {
@@ -1298,7 +1401,7 @@ fn anthropic_stream(sh: StubShared, model: &str, body: &Value) -> Response {
         }
         let _ = tx.send(anthropic_event(
             "content_block_stop",
-            json!({"type": "content_block_stop", "index": 0}),
+            json!({"type": "content_block_stop", "index": idx}),
         ));
         let _ = tx.send(anthropic_event(
             "message_delta",
@@ -1375,6 +1478,16 @@ impl Default for Opts {
             token_env: true,
         }
     }
+}
+
+/// What `TestApp::seed_route` writes for connection 1.
+pub struct Seed<'a> {
+    pub provider: &'a str,
+    pub url: String,
+    pub api_key: Option<&'a str>,
+    pub gateway_key: Option<&'a str>,
+    pub gateway_auth: &'a str,
+    pub model: &'a str,
 }
 
 pub struct TestApp {
@@ -1628,50 +1741,173 @@ impl TestApp {
         Ok(s.all().await)
     }
 
-    /// Admin: OpenAI-compatible settings against the stub, a model, test, enable.
-    pub async fn configure_openai(&self, admin: &Who, model: &str) {
-        let (s, v) = self
-            .post(
-                "/api/ai/admin/settings",
-                admin,
-                json!({"provider": "openai", "baseUrl": format!("{}/v1", self.stub.url), "apiKey": KEY, "model": model}),
-            )
-            .await;
-        assert_eq!(s, 200, "{v}");
-        self.verify_and_enable(admin).await;
+    /// Writes connection 1 (the one connection of the tests), its sealed keys, the pool model and the default slot straight
+    /// into the AI database and turns AI+ on. v1.3 has no single-settings route any more; the connection routes have
+    /// their own tests. `url` is normalised like an administrator's input (an Anthropic address loses a trailing `/v1`).
+    pub fn seed_route(&self, seed: Seed<'_>) {
+        use xexam_ai_service::secret::{SecretName, SecretRef};
+        use xexam_ai_service::settings::{infer_format, normalize_url, strip_v1, Provider};
+        use xexam_ai_service::store::conn::{self, ConnChange, NewConn, NewConnSecret, NewPool};
+        let app = &self.app.0;
+        let master = app.master().expect("the tests run with an encryption key");
+        let mut url = normalize_url(&seed.url).expect("a valid address");
+        let provider = Provider::parse(seed.provider).expect("provider");
+        if provider == Provider::Anthropic {
+            url = strip_v1(&url);
+        }
+        let format = match provider {
+            Provider::OpenAi => "openai",
+            Provider::Anthropic => "anthropic",
+            Provider::Gateway => infer_format(&url).as_str(),
+        };
+        let now = xexam_ai_service::util::unix_now();
+        app.store
+            .write(|tx| -> rusqlite::Result<()> {
+                let id = match conn::connection(tx, 1)? {
+                    Some(c) => {
+                        conn::update_connection(
+                            tx,
+                            1,
+                            c.rev,
+                            &ConnChange {
+                                name: &c.name,
+                                provider: seed.provider,
+                                base_url: &url,
+                                format,
+                                gateway_auth: seed.gateway_auth,
+                                lists_models: true,
+                                by: "test",
+                                now,
+                            },
+                        )?;
+                        conn::set_connection_status(tx, 1, "ok", None, Some(now))?;
+                        1
+                    }
+                    None => conn::insert_connection(
+                        tx,
+                        &NewConn {
+                            name: "main",
+                            provider: seed.provider,
+                            base_url: &url,
+                            format,
+                            gateway_auth: seed.gateway_auth,
+                            lists_models: true,
+                            by: "test",
+                            now,
+                        },
+                    )?,
+                };
+                for (name, value) in [
+                    (SecretName::ApiKey, seed.api_key),
+                    (SecretName::GatewayKey, seed.gateway_key),
+                ] {
+                    match value {
+                        Some(v) => {
+                            let sealed = master.seal(&SecretRef::new(id, name), v.as_bytes());
+                            conn::put_conn_secret(
+                                tx,
+                                id,
+                                &NewConnSecret {
+                                    name,
+                                    key_id: master.key_id(),
+                                    sealed: &sealed,
+                                    hint: &xexam_ai_service::secret::hint(v),
+                                    aad_ver: 2,
+                                    now,
+                                },
+                            )?;
+                        }
+                        None => {
+                            conn::delete_conn_secret(tx, id, name)?;
+                        }
+                    }
+                }
+                let pool = conn::upsert_pool(
+                    tx,
+                    &NewPool {
+                        connection_id: id,
+                        model: seed.model,
+                        manual: false,
+                        status: "ok",
+                        error_code: None,
+                        usage_option: true,
+                        // the stub's models that cap their answers at 4096 are named `*-4k` (the ladder ceiling a
+                        // connection test would have found)
+                        max_tokens: if seed.model.ends_with("-4k") {
+                            4096
+                        } else {
+                            8192
+                        },
+                        context: None,
+                        latency_ms: Some(10),
+                        tested_at: Some(now),
+                    },
+                )?;
+                conn::set_slot(tx, "default", Some(pool), "test")?;
+                tx.execute("UPDATE settings SET enabled = 1 WHERE id = 1", [])?;
+                Ok(())
+            })
+            .expect("seed the route");
     }
 
-    pub async fn verify_and_enable(&self, admin: &Who) {
-        let (s, v) = self.post("/api/ai/admin/verify", admin, json!({})).await;
-        assert_eq!(s, 200, "{v}");
-        assert_eq!(v["ok"], json!(true), "{v}");
-        let (s, v) = self
-            .post("/api/ai/admin/enable", admin, json!({"enabled": true}))
-            .await;
-        assert_eq!(s, 200, "{v}");
-        assert_eq!(v["enabled"], json!(true), "{v}");
+    /// Admin: OpenAI-compatible connection against the stub, a model, AI+ on (seeded; the report goes out at once).
+    pub async fn configure_openai(&self, _admin: &Who, model: &str) {
+        self.seed_route(Seed {
+            provider: "openai",
+            url: format!("{}/v1", self.stub.url),
+            api_key: Some(KEY),
+            gateway_key: None,
+            gateway_auth: "bearer",
+            model,
+        });
+        self.app.0.heartbeat_now().await;
     }
 
-    /// Admin: Anthropic-format settings against the stub, a model, test, enable.
-    pub async fn configure_anthropic(&self, admin: &Who, model: &str) {
-        let (s, v) = self
-            .post(
-                "/api/ai/admin/settings",
-                admin,
-                json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic/v1", self.stub.url), "apiKey": KEY, "model": model}),
-            )
-            .await;
-        assert_eq!(s, 200, "{v}");
-        self.verify_and_enable(admin).await;
+    /// Kept for the callers of v1.2: the connection is already seeded and enabled, so this only reports.
+    pub async fn verify_and_enable(&self, _admin: &Who) {
+        self.app.0.heartbeat_now().await;
     }
 
-    /// Admin: only the model (fingerprint change: test and enable again).
-    pub async fn set_model(&self, admin: &Who, model: &str) {
-        let (s, v) = self
-            .post("/api/ai/admin/settings", admin, json!({"model": model}))
-            .await;
-        assert_eq!(s, 200, "{v}");
-        self.verify_and_enable(admin).await;
+    /// Admin: Anthropic-format connection against the stub, a model, AI+ on.
+    pub async fn configure_anthropic(&self, _admin: &Who, model: &str) {
+        self.seed_route(Seed {
+            provider: "anthropic",
+            url: format!("{}/anthropic/v1", self.stub.url),
+            api_key: Some(KEY),
+            gateway_key: None,
+            gateway_auth: "bearer",
+            model,
+        });
+        self.app.0.heartbeat_now().await;
+    }
+
+    /// Admin: only the default model (the same connection; the pool gets the model, the default slot points at it).
+    pub async fn set_model(&self, _admin: &Who, model: &str) {
+        use xexam_ai_service::store::conn::{self, NewPool};
+        let now = xexam_ai_service::util::unix_now();
+        self.app
+            .0
+            .store
+            .write(|tx| -> rusqlite::Result<()> {
+                let pool = conn::upsert_pool(
+                    tx,
+                    &NewPool {
+                        connection_id: 1,
+                        model,
+                        manual: false,
+                        status: "ok",
+                        error_code: None,
+                        usage_option: true,
+                        max_tokens: if model.ends_with("-4k") { 4096 } else { 8192 },
+                        context: None,
+                        latency_ms: Some(10),
+                        tested_at: Some(now),
+                    },
+                )?;
+                conn::set_slot(tx, "default", Some(pool), "test")
+            })
+            .expect("set the default model");
+        self.app.0.heartbeat_now().await;
     }
 
     /// Adds a made-up question to the fake backend.

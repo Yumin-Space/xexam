@@ -1,4 +1,4 @@
-/* AI+ study controls (components/ai-plus-controls.ts): the practice bar's AI 提示 / AI 解释 buttons, the docks, the greyed
+/* AI+ study controls (components/ai-plus-controls.ts): the practice bar's AI 提示 / AI 解析 buttons, the docks, the greyed
    bar of a paused / unavailable AI+, the AI 总结 button, the 无法使用 tag and the note above the records table. The panel and
    the overlay are in ai-panel.css and ai-summary.css; the icon-button base is icon-button.css.
    Colour tokens only. Usable controls are outlined with the orange of the AI+ badge (--ai-3); greyed ones are flat, --ink3
@@ -17,7 +17,7 @@
 .aip-dock-na { margin-top: 12px; }
 .aip-dock-na > .has-tip { display: block; }
 
-/* ---------- Practice bar buttons (AI 提示 / AI 解释) ----------
+/* ---------- Practice bar buttons (AI 提示 / AI 解析) ----------
    The same DOM at every width: icon + .aip-ai-mark + .lbl. Wider than 880 px: icon + label, no mark. Up to 880 px and in
    short landscape (BAR_MQ): icon only, with the small "AI" corner mark (the name stays the aria-label, the tip is a hold tip). */
 .aip-bar-btn { color: var(--ai-3); border: 1px solid var(--line); background: var(--card); }

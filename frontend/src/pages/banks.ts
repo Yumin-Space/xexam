@@ -17,7 +17,7 @@ import { deleteBank, deleteSheets, fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
 import { cancelImport, confirmImport, fetchImports, uploadWorkbook } from '../api/import.ts';
 import { aiSetBadge } from '../components/ai-badge.ts';
-import { genCardHost, selectedGenButton } from '../components/ai-gen.ts';
+import { genCardHost, placeholderRow, selectedGenButton } from '../components/ai-gen.ts';
 import { importCard } from '../components/ai-import.ts';
 import { pageHead } from '../components/common.ts';
 import { iconButton } from '../components/icon-button.ts';
@@ -1065,6 +1065,8 @@ function banksPanel(): HTMLElement {
     h('h2', { id: 'bk-list-h', tabindex: '-1' }, t(admin ? 'banks.list.title' : 'banks.list.titleMine')),
     // v1.1 (GB-7): the progress card of a generation / import at the top of the list
     genCardHost('banks'),
+    // v1.3: the coming bank of a running generation (not selectable, no menu)
+    placeholderRow('banks'),
     // A bank manager may also study banks an administrator gave them: say why those are not listed here
     !admin && list.length ? h('p', { class: 'bk-hint bk-mgr-note' }, t('banks.list.managerNote')) : null,
     listError ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('banks.delete.failed', { reason: errorText(listError) }))) : null,

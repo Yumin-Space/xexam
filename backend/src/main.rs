@@ -40,7 +40,7 @@ const USAGE: &str = "Usage:
   xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
   xexam-backend reset-password <username> [--data DIR]      (see: xexam-backend reset-password --help)
-Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN";
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN XEXAM_BEHIND_PROXY";
 
 const RESET_PASSWORD_USAGE: &str = "Usage:
   xexam-backend reset-password <username> [--data DIR]
@@ -595,11 +595,6 @@ async fn serve(cfg: Config) -> i32 {
     // Computed once now, so the first failed sign-in of an unknown user does not take longer than later ones
     let _ = xexam_backend::auth::dummy_hash();
     let now = xexam_backend::auth::unix_now();
-    match store.purge_expired_sessions(now) {
-        Ok(0) => {}
-        Ok(n) => tracing::info!("purged {n} expired sessions"),
-        Err(e) => tracing::warn!("could not purge expired sessions: {e}"),
-    }
     // An administrator who still has the default password: remind the owner at every start (the line printed when the account
     // was created appears only once), and let the sign-in page say how to sign in for the first time
     let default_admin = match xexam_backend::api::auth::find_default_admin_hashes(&store) {
@@ -619,6 +614,19 @@ async fn serve(cfg: Config) -> i32 {
     }
     let state = AppState::new(cfg, store.clone(), engine, shutdown_tx);
     let _ = state.0.default_admin_hashes.set(default_admin);
+    // v1.3: the activity log. The writer started with the state; these are the service's own rows
+    let activity = state.0.activity.clone();
+    activity.record(xexam_backend::activity::Entry::system(
+        "system.start",
+        Some(serde_json::json!({ "version": state.0.cfg.version })),
+    ));
+    // Sessions that ended while the service was off: one `auth.expired` entry each, plus `system.sessionsPurged`
+    match xexam_backend::api::auth::purge_ended_sessions(&state, now) {
+        Ok(0) => {}
+        Ok(n) => tracing::info!("purged {n} expired sessions"),
+        Err(e) => tracing::warn!("could not purge expired sessions: {e}"),
+    }
+    let monitors = xexam_backend::activity::spawn_monitors(&state);
     if let Some(token) = link.into_token() {
         state.0.ai_link.set_token(token);
     }
@@ -633,9 +641,12 @@ async fn serve(cfg: Config) -> i32 {
     let notify = Arc::new(tokio::sync::Notify::new());
     let n2 = notify.clone();
     let mut server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move { n2.notified().await })
-            .await
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { n2.notified().await })
+        .await
     });
     let mut code = 0;
     tokio::select! {
@@ -646,6 +657,7 @@ async fn serve(cfg: Config) -> i32 {
             code = 1;
         }
     }
+    activity.record(xexam_backend::activity::Entry::system("system.stop", None));
     notify.notify_one();
     if !server.is_finished() {
         match tokio::time::timeout(Duration::from_secs(8), &mut server).await {
@@ -657,6 +669,12 @@ async fn serve(cfg: Config) -> i32 {
         }
     }
     refusal_reports.abort();
+    for m in monitors {
+        m.abort();
+    }
+    // Everything queued is written before the store closes (the writer then lets go of its store handle)
+    activity.stop().await;
+    drop(activity);
     drop(state);
     // WAL: copy everything into xexam.db and empty xexam.db-wal, so the volume holds just the database file at rest
     // (closing the last connection below also removes the -wal and -shm files when no other process has the database open)

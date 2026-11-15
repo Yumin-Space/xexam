@@ -26,7 +26,7 @@ const json = (status: number, body: unknown) => (): Response =>
 const row = (o: Partial<UserRow> = {}): UserRow => ({
   id: 2, username: 'demo-user', role: 'user', disabled: false, createdAt: '2026-01-01 10:00:00', lastLoginAt: null,
   mustChangePassword: false, records: 0, banks: [], newBanks: false, canManageBanks: false, ai: false, ownedBanks: [], lock: null,
-  aiSuspended: false, ...o,
+  aiSuspended: false, lastActiveAt: null, lastLoginIp: null, lastLoginLocation: null, ...o,
 });
 
 beforeEach(() => {
@@ -47,7 +47,7 @@ afterEach(() => {
 });
 
 test('usersListOf: aiAvailable and aiSuspended count only when exactly true', () => {
-  assert.deepEqual(usersListOf({ users: [row()], aiAvailable: true }), { users: [row()], aiAvailable: true });
+  assert.deepEqual(usersListOf({ users: [row()], aiAvailable: true }), { users: [row()], aiAvailable: true, signinInfo: false });
   // An answer without the round-2 fields (an older main service): no AI+ switches, nobody suspended
   const old = usersListOf(JSON.parse('{"users":[{"id":2,"username":"demo-user","role":"user","ai":true}]}'));
   assert.equal(old.aiAvailable, false);

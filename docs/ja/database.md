@@ -3,7 +3,7 @@
 # データベース
 
 > データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースを引き継いでいます。元のテーブル定義（スキーマ v1）は**1 文字も変えずに**残し、その後のスキーマはどれも加えるだけです（新しいテーブルと新しい列。作り直しや書き換えは一切しません）：**スキーマ v2**（v0.5：問題集、試験の詳細、設定）、**スキーマ v3**（v0.6：ユーザーとログイン）、**スキーマ v4**（v0.7：ユーザーごとの問題集、問題集の所有者、練習の記録）、**スキーマ v5**（v0.8：ユーザーごとの AI+ 機能の付与と識別用のスタンプ）、**スキーマ v6**（v0.9：記録を保存した練習または試験のセッションのキーと開始時刻）。既存のデータベースは、新しいバージョンを初めて起動したときに、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード** で動きます（第 2 節）。
-> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v1.1 から **6**（v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
+> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v1.3 から **7**（v1.1 は 6、v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
 > 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集へのアクセス、リリース前のデータベースの変換、古い形式の問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習用ルート）でテストしています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`）と `ai-service/src/store/` の単体テストでテストしています。
 
 ## 1. ファイルの場所
@@ -374,6 +374,22 @@ v0.7.5 はスキーマ 5 のファイルそのものも開けます（スキー�
 新しい索引は、ジョブキー（ジョブごとに問題集は 1 つ）と、v1.1 の範囲指定の問い合わせを対象にします。v1.0 の問題集と記録は変わりません。
 
 
+### 6.13 スキーマ v8（v1.3）
+
+メインデータベースはスキーマ 7 から**スキーマ 8** へ、v1.3 のバックエンドの最初の起動時に一度だけ移行します。先にバックアップコピー `backups/xexam-schema7-<日時>.db` が 1 つ書き込まれます。追加のみの変更です。
+
+- `users`：`last_active_at`（TEXT、`YYYY-MM-DD HH:MM:SS`。アップグレード時に `last_login_at` から設定）、`last_login_ip`、`last_login_country`、`last_login_region`、`last_login_city`（TEXT）。後ろの 4 つは、目が開いている間のログインでだけ書かれ（閉じている間はそのままで、応答には出ません）、**記録を消去**で NULL になります。
+- `sessions`：`started_at`（INTEGER、UNIX 秒。既存のセッションはアップグレード時刻）、`remember`（INTEGER、既定 1）、`ip`（TEXT、目が開いている間だけ書かれる。閉じている間は非表示）、`ua`（TEXT、ブラウザ、256 文字まで）。
+- `activity_log`（新規）：操作履歴の項目ごとに 1 行：`ts`、`last_ts`、`count`（まとめたページ閲覧と拒否されたログイン）、`actor`（`user`、`anon`、`system`）、`user_id`（外部キーなし：項目はアカウントより長く残る）、`username` と `role`（その時点のコピー）、`action`、`object`、`detail`（許可されたキーだけの小さな JSON オブジェクト）、`result`（`ok` か `fail`）、`reason`、`ip`、`country`、`region`、`city`（ログイン情報の目が開いている間だけ書かれる。目が閉じている間は応答に出ない）、`ua`、`source`（`backend` か `ai`）、`src_id`（AI サービスのイベント id。一意なので、重複して届いても無視される）。時刻、ユーザー、操作、`src_id` にインデックスがあります。保存期間は既定 90 日、最大 50 万行ですが、ログインの行（`action = 'auth.signin'`）は削除されず、上限にも数えません（保存期間のクエリは `ts` の部分インデックス `idx_activity_prune` を使います）。
+- `system_settings`（新規）：`key`、`value`、`updated_at`、`updated_by`。キー：`activity.retention_days`（90）、`activity.user_visits`（0）、`users.signin_info`（0。0 の間は新しい記録を作らず、保存済みの IP と所在地は非表示。何も削除しません）。
+- 結果の再保存のために `attempts(user_id, session_key)` にインデックス `idx_attempts_session`。
+
+ログの最初の行は `system.migrate` です。v1.2 のバックエンドはスキーマ 8 のファイルをそのまま開きます。新しい列には既定値があり、新しいテーブルは無視され、そのセッションは v1.3 での最初の更新で開始時刻が入ります。
+
+### 6.14 v1.2 へ戻す
+
+復元は不要です（上記参照）。スキーマ 7 のコピーの復元は任意で、それ以降に書き込まれたものは失われ、セッションと操作履歴も失われます。
+
 ## 7. 旧 `progress.json`
 
 さらに古いバージョンでは、成績を `progress.json` に保存していました。旧 Python 版と同じく、**起動のたびに**データディレクトリにそのファイルがあるかを確認します。ファイルがあり、かつデータベースにまだ学習記録がなく、移行も行われていない場合に、それをデータベースへ（最初の管理者の記録として）移行します。`meta` の `legacy_migrated` マークによって移行は一度だけになり、すでにある学習記録が上書きされることはありません。
@@ -490,6 +506,9 @@ erDiagram
         INTEGER sample_used "summary：送った間違いの数（v3）"
         INTEGER sample_usable "summary：まだ使える間違いの数（v3）"
         INTEGER sample_wrong "summary：記録にある間違いの数（v3）"
+        TEXT reasoning "AI チャットの回答：モデルの思考。前後の空白を除き最大 32 KiB、NULL = なし（v7）"
+        INTEGER reasoning_ms "最初の推論から最初の回答テキストまでのミリ秒、NULL = なし（v7）"
+        INTEGER reasoning_truncated "1 = 上限で切った（v7）"
     }
     memories {
         INTEGER id PK "自動採番"
@@ -562,7 +581,7 @@ AI データベースは、新しい ai-service の最初の起動時に、ス�
 
 - 生成とインポートのジョブの管理（`tasks`、種類 `bank_gen`）：`charged` と `charged_at`。ジョブは、利用枠に計上された日に数えられます（生成は開始時、インポートは確定時）。
 - `gen_calls.purpose`：生成の呼び出しと、インポートの呼び出し・認識の呼び出しを区別します。
-- `users.features_off`（INTEGER、既定 0）：立っているビットは、そのユーザーの機能がオフであることを示します。6 つの機能は、チャット、ヒント、解説、まとめ、生成、インポートです。
+- `users.features_off`（INTEGER、既定 0）：立っているビットは、そのユーザーの機能がオフであることを示します。6 つの機能は、チャット、ヒント、解説、まとめ、生成、インポートです（v1.3 から、ヒントと解説のビットは常に同じ値です：1 つのスイッチです）。
 - 生成とインポートの上限（`gen_max_calls` 15、`import_max_calls` 25、`recognize_max_calls` 20（8〜40）、`gen_call_tokens` 20000、`import_max_mb` 20、`import_max_questions` 50（1〜50））。v1.0 の上限の隣に置かれます。
 
 以前の v1.1 開発ビルドで作られ `limits.recognize_max_calls` のないスキーマ 5 のファイルは、開くときにその列が追加されます（冪等な手順で、バージョンは変わらず、バックアップも取りません）。
@@ -573,6 +592,23 @@ AI データベースは、新しい ai-service の最初の起動時に、ス�
 
 **作成者。** AI 問題集の名前には作成者のユーザー名の先頭 8 文字が入り、ヒントに作成者が表示されます（DR1-13 による例外）。`authorId` がサーバーの外に出ることはありません。
 
+
+### 8.2b スキーマ v7（v1.3）
+
+AI データベースはスキーマ 6 から**スキーマ 7** へ、v1.3 の ai-service の最初の起動時に一度だけ移行します（1 つのトランザクション、コピーは `backups/xexam-ai-schema6-<日時>.db` の 1 つ）。
+
+- **`connections`**（新規）：`id`、`name`（一意、1〜40 文字）、`provider`（`openai`、`anthropic`、`gateway`）、`base_url`、`format`、`gateway_auth`、`status`（`ok` か `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（保存のたびに +1。キャッシュのキーでありロックでもある）、`sort`、作成と更新の情報。最大 8 行。
+- **`connection_secrets`**（新規）：接続の暗号化された `api_key` と `gateway_key`（キー id、24 バイトの nonce、暗号文、末尾数文字のヒント、`aad_ver`。2 は暗号文を接続に結び付けます。移行された行は次の更新まで 1 のままです）。古い `secrets` テーブルは使われないまま残ります。
+- **`models`**（新規）：プール。テスト済みの（接続、モデル）ごとに 1 行で、`status`、`error_code`、`context`、`latency_ms`、`tested_at`、`manual`、呼び出しの設定を持ちます。**`model_slots`**（新規）：6 行（`default`、`chat`、`study`、`summary`、`generate`、`import`）。それぞれプールのモデルか空を指します（空の機能スロットは既定を使います）。
+- **`study_shared`**（新規）：共有されるヒントと解説。**ユーザー id なし**：`question_id`、`content_hash`、`kind`（`hint` か `explain`）、`lang`、`content`、`model`、`connection`、Token 数、`gen`（1 + 置き換え回数）、`hits`、時刻。（`question_id`、`content_hash`、`kind`、`lang`）で一意。最大 5 万行で、使われないものは `study_share_days` の後に削除されます。
+- **`gen_items`**（新規）：**実行中**の生成ジョブで採用された問題（`task_id`、`no`、`data`）。ジョブが終わると削除されます。削除された問題の番号は再利用されません。
+- `messages`：`reasoning`、`reasoning_ms`、`reasoning_truncated`（下記）、`parent_id` と `connection`（呼び出し時の接続名）。`chats`：`leaf_id`（表示中のブランチ）と `pick_conn`、`pick_model`（フリーモードのチャットの管理者のモデル。外部キーはなく、接続を削除するとそれを指す選択は消去され、存在しない接続を指す選択は起動時に消去されます）。インデックス `idx_messages_parent`。チャットは `parent_id` によるツリーで、表示やモデルへの送信に使われるのは葉から根までの道筋であり、`messages_per_chat` はすべての版を数えます。
+- `settings.features_off`（6 つの全体スイッチのビットマスク。ヒントと解説のビットは常に同じ値です）。`usage` と `gen_calls` に `connection_id` と `connection`。
+- `limits`：`calls_admins_exempt`（1）、`study_share`（1）、`study_share_days`（180）、`gen_max_chunks`（8）、`summary_max_items`（40）、`import_file_questions`（1〜300。上限 50 だった古い `import_max_questions` は使われないまま残る）、`daily_token_budget`（0 = オフ）。
+
+一度だけ実行される文が、6 つのスロット、チャットのツリー（`parent_id` = 1 つ前のメッセージ、`leaf_id` = 最後のメッセージ）、キー付きの接続 1 と既定スロット、`users.features_off` のヒントと解説のビット（片方だけがオフだったユーザーは両方オンになります）、そして [migration.md](migration.md) の 000.1 節のとおりの上限を設定します。新しいファイルとアップグレードしたファイルは同じテーブルで終わります。v1.2 の ai-service はスキーマ 7 のファイルを拒否します。戻すにはスキーマ 6 のコピーを復元してください。
+
+**推論の列（v1.3）。** 回答のバージョンごとに 1 行を持つ `messages` の、NULL を許す 3 つの列が、AI チャットの回答の思考を保存します：`reasoning`（テキスト。前後の空白を除き、最大 32 KiB = 32 768 バイト。先頭を残し、文字の境界で切ります）、`reasoning_ms`（最初の推論から最初の回答テキスト、または終わりまでのミリ秒。推論がなければ NULL）、`reasoning_truncated`（`0` / `1`、既定 0。1 = 上限でテキストを切った）。これらはスキーマ 7 のステップに含まれるので、スキーマ 8 も追加のバックアップもありません：スキーマ 7 は v1.3 より前には出ていません。スキーマ 1〜6 からアップグレードしたデータベースは同じトランザクションでこれらを得て、v1.3 の以前のビルドが書いたスキーマ 7 のファイルは、次の起動で得ます。書き込まれるのは AI チャットの回答だけで（ヒント、解説、まとめは推論を破棄します）、モデルに送るコンテキストには決して入らず、メッセージと一緒に削除されます：チャットの削除、**すべてのチャットを削除**、管理者による消去、ユーザーの削除、保存期間の掃除が、その行と一緒にこれらを消します（`secure_delete=ON` が解放されたページを上書きします）。古い回答は NULL で、ブロックは表示されません。`messages.model` と `messages.connection` はすべての回答に保存されたままです（管理者と使用量の統計のため）。管理者以外への応答だけが、それらを省きます。
 
 ### 8.3 サービスがこれをどう扱うか
 

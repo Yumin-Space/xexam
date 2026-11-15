@@ -148,6 +148,10 @@ pub struct Run {
     rng: Rng,
     /// Set by `new_convert`: the questions of a file are converted as they are (IA-6)
     convert: Option<Conv>,
+    /// How often each slot was handed out in a batch (v1.3: a second send of a batch must differ from the first)
+    sends: Vec<u32>,
+    /// Group of each slot (the chunk of a chunked generation): a batch never mixes groups
+    groups: Option<Vec<usize>>,
 }
 
 /// The convert policy's state: the regions, the size budget, which slots were given up, and the output sizes asked for.
@@ -207,7 +211,47 @@ impl Run {
             written: Vec::new(),
             rng,
             convert: None,
+            sends: vec![0; n],
+            groups: None,
         }
+    }
+
+    /// Gives every slot a group (the chunk it belongs to; one entry per slot): a batch only holds slots of one group,
+    /// because the calls of a chunk share that chunk's cached prefix.
+    pub fn with_groups(mut self, groups: Vec<usize>) -> Run {
+        if groups.len() == self.plan.slots.len() {
+            self.groups = Some(groups);
+        }
+        self
+    }
+
+    /// The group of slot `i` (0 when the run has no groups).
+    pub fn group_of(&self, i: usize) -> usize {
+        self.groups
+            .as_ref()
+            .and_then(|g| g.get(i).copied())
+            .unwrap_or(0)
+    }
+
+    /// The send number of a batch: the highest number of times any of its slots was handed out (1 = the first send).
+    /// From 2 on the request must differ from the earlier one (see `attempt_line`).
+    pub fn attempt_of(&self, batch: &[usize]) -> u32 {
+        batch
+            .iter()
+            .filter_map(|&i| self.sends.get(i).copied())
+            .max()
+            .unwrap_or(1)
+            .max(1)
+    }
+
+    /// `true` when slot `i` holds a valid question.
+    pub fn is_filled(&self, i: usize) -> bool {
+        self.filled.get(i).is_some_and(|f| f.is_some())
+    }
+
+    /// The valid question of slot `i`.
+    pub fn question_of(&self, i: usize) -> Option<&FinalQuestion> {
+        self.filled.get(i).and_then(|f| f.as_ref())
     }
 
     /// Sets the hard ceiling on answered calls of this job (the AI-settings value, the same for everyone); the
@@ -342,16 +386,40 @@ impl Run {
     /// queue, chunked by `redo_per_call()`. `Finish` when every slot is valid or the safety stop is reached.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Next {
+        let n = self.next_batch();
+        if let Next::Ask(b) = &n {
+            for &i in b {
+                if let Some(c) = self.sends.get_mut(i) {
+                    *c += 1;
+                }
+            }
+        }
+        n
+    }
+
+    fn next_batch(&mut self) -> Next {
         if self.stopped() {
             return Next::Finish;
         }
         if self.convert.is_some() {
             return self.next_convert();
         }
-        let fresh: Vec<usize> = (0..self.plan.slots.len())
-            .filter(|&i| !self.asked[i] && self.filled[i].is_none())
-            .take(self.per_call)
-            .collect();
+        let mut fresh: Vec<usize> = Vec::new();
+        for i in 0..self.plan.slots.len() {
+            if fresh.len() >= self.per_call {
+                break;
+            }
+            if self.asked[i] || self.filled[i].is_some() {
+                continue;
+            }
+            if fresh
+                .first()
+                .is_some_and(|&f| self.group_of(f) != self.group_of(i))
+            {
+                break;
+            }
+            fresh.push(i);
+        }
         if !fresh.is_empty() {
             for &i in &fresh {
                 self.asked[i] = true;
@@ -359,15 +427,29 @@ impl Run {
             return Next::Ask(fresh);
         }
         let take = self.redo_per_call();
-        let mut batch = Vec::new();
+        let mut batch: Vec<usize> = Vec::new();
+        let mut keep: VecDeque<usize> = VecDeque::new();
         while batch.len() < take {
             let Some(i) = self.queue.pop_front() else {
                 break;
             };
-            self.in_queue[i] = false;
-            if self.filled[i].is_none() {
-                batch.push(i);
+            if self.filled[i].is_some() {
+                self.in_queue[i] = false;
+                continue;
             }
+            if batch
+                .first()
+                .is_some_and(|&f| self.group_of(f) != self.group_of(i))
+            {
+                // another chunk: it waits for its own batch
+                keep.push_back(i);
+                continue;
+            }
+            self.in_queue[i] = false;
+            batch.push(i);
+        }
+        while let Some(i) = keep.pop_back() {
+            self.queue.push_front(i);
         }
         if batch.is_empty() {
             Next::Finish
@@ -811,6 +893,16 @@ impl Run {
     pub fn questions(&self) -> Vec<FinalQuestion> {
         self.filled.iter().flatten().cloned().collect()
     }
+}
+
+/// The last line of a request that is a second or later send of its batch: `attempt <k> <hex>`. It goes after the cached
+/// prefix, so the provider's prompt cache still hits, while the request differs from the earlier one (a gateway's
+/// response cache must not answer it with the rejected answer again).
+pub fn attempt_line(attempt: u32, hex: &str) -> String {
+    format!(
+        "
+attempt {attempt} {hex}"
+    )
 }
 
 /// A batch holding a slot that missed in a bigger call shrinks to that one slot (A-OWNER-66.2).
@@ -1311,6 +1403,87 @@ RETRY
         run.cap_per_call(0);
         let Next::Ask(b3) = run.next() else { panic!() };
         assert_eq!(b3.len(), 1);
+    }
+
+    #[test]
+    fn a_batch_counts_its_sends_and_a_redo_is_a_later_send() {
+        let mut run = make_run(14, 6, 5);
+        let Next::Ask(first) = run.next() else {
+            panic!("a first batch")
+        };
+        assert_eq!(run.attempt_of(&first), 1);
+        // the whole answer is unusable: the slots go round again as another send
+        run.on_answer(&first, "not json", false);
+        let mut again = None;
+        for _ in 0..40 {
+            let Next::Ask(b) = run.next() else { break };
+            if b.iter().any(|i| first.contains(i)) {
+                again = Some(b);
+                break;
+            }
+            let t = good(&run, &b);
+            run.on_answer(&b, &t, false);
+        }
+        let again = again.expect("the slots came back");
+        assert_eq!(run.attempt_of(&again), 2, "a repeat is the second send");
+        assert!(attempt_line(2, "0a1b2c3d").ends_with("attempt 2 0a1b2c3d"));
+        assert!(attempt_line(2, "0a1b2c3d").starts_with('\n'));
+    }
+
+    #[test]
+    fn a_batch_never_mixes_groups_fresh_or_redone() {
+        let p = make_plan(14, 6, 5, 17);
+        let n = p.slots.len();
+        // three chunks of unequal size, not aligned with the batch size
+        let groups: Vec<usize> = (0..n)
+            .map(|i| {
+                if i < 7 {
+                    0
+                } else if i < 13 {
+                    1
+                } else {
+                    2
+                }
+            })
+            .collect();
+        let source: Vec<Tri> = items3().into_iter().map(|i| i.stem).collect();
+        let limits = JobLimits::for_plan(&p);
+        let mut run = Run::new(p, Deduper::new(source, vec![]), limits).with_groups(groups.clone());
+        let mut garbage_once = true;
+        let mut guard = 0;
+        while let Next::Ask(b) = run.next() {
+            guard += 1;
+            assert!(guard < 100);
+            let g = groups[b[0]];
+            assert!(b.iter().all(|&i| groups[i] == g), "{b:?}");
+            assert_eq!(run.group_of(b[0]), g);
+            if garbage_once && b.len() > 1 {
+                garbage_once = false;
+                run.on_answer(&b, "nope", false);
+                continue;
+            }
+            let t = good(&run, &b);
+            run.on_answer(&b, &t, false);
+        }
+        assert_eq!(run.made(), 20, "every slot is filled in the end");
+    }
+
+    #[test]
+    fn a_dropped_stem_far_beyond_two_thousand_source_questions_is_still_caught() {
+        // the old planner saw the 2000 first stems only; the corpus gives the deduper every stem
+        let source: Vec<Tri> = (0..2500).map(|n| tri(10_000 + n, 10)).collect();
+        let p = make_plan(1, 0, 1, 3);
+        let limits = JobLimits::for_plan(&p);
+        let mut run = Run::new(p, Deduper::new(source.clone(), vec![]), limits);
+        let Next::Ask(b) = run.next() else {
+            panic!("a batch")
+        };
+        let slot = run.plan().slots[b[0]].clone();
+        let mut raw = raw_for(&slot, 1);
+        raw.stem = source[2400].clone();
+        let report = run.on_answer(&b, &answer_json(&[raw]), false);
+        assert_eq!(report.accepted, 0);
+        assert_eq!(report.rejected.len(), 1, "{report:?}");
     }
 
     #[test]

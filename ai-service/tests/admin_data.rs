@@ -220,7 +220,12 @@ async fn clear_writes_its_audit_line_through_the_outbox() {
             .prepare("SELECT message FROM audit_outbox ORDER BY id")
             .expect("prep");
         let rows = st.query_map([], |r| r.get(0)).expect("q");
-        rows.collect::<Result<Vec<String>, _>>().expect("rows")
+        // the activity events (one JSON line each) wait in the same outbox; this test is about the plain audit lines
+        rows.collect::<Result<Vec<String>, _>>()
+            .expect("rows")
+            .into_iter()
+            .filter(|m| !m.starts_with('{'))
+            .collect()
     };
     assert_eq!(
         queued,
@@ -231,7 +236,11 @@ async fn clear_writes_its_audit_line_through_the_outbox() {
     );
     assert!(!t.backend.log_contains("cleared all 2 AI chats"));
     t.backend.st().log_fail = false;
-    assert_eq!(t.app.0.deliver_outbox().await, 2);
+    assert_eq!(
+        t.app.0.deliver_outbox().await,
+        4,
+        "two audit lines and their two activity events"
+    );
     let logs = t.backend.logs();
     let a = logs
         .iter()
@@ -509,6 +518,12 @@ async fn crash_fixup_of_streaming_rows() {
     let chat = db.last_insert_rowid();
     db.execute("INSERT INTO messages (chat_id, role, content, status, created_at) VALUES (?1, 'assistant', 'half', 'streaming', 1)", [chat])
         .expect("msg");
+    let msg = db.last_insert_rowid();
+    db.execute(
+        "UPDATE chats SET leaf_id = ?1 WHERE id = ?2",
+        rusqlite::params![msg, chat],
+    )
+    .expect("leaf");
     drop(db);
     t.restart(Opts::default()).await;
     let (_, v) = t.get(&format!("/api/ai/chat?id={chat}"), &sam).await;
@@ -601,7 +616,10 @@ async fn usage_statistics() {
             "byUser",
             "byModel",
             "byPeriod",
-            "byPurpose"
+            "byPurpose",
+            "byConnection",
+            "shared",
+            "budget"
         ]
     );
     assert_eq!(
@@ -611,17 +629,17 @@ async fn usage_statistics() {
     assert_eq!(v["byPeriod"].as_array().map(Vec::len), Some(7));
     assert_eq!(v["byPeriod"][6]["period"], v["to"]);
     assert_eq!(v["byPeriod"][0]["period"], v["from"]);
-    // 1 verify (admin) + 3 chats (sam)
+    // 3 chats (sam); the connection was seeded, so there is no test call in the statistics
     assert_eq!(
         v["totals"],
-        json!({"calls": 4, "tokensIn": 21 * 3, "tokensOut": 13 * 3, "errors": 1, "tokensCached": 0, "tokensCacheWrite": 0})
+        json!({"calls": 3, "tokensIn": 21 * 2, "tokensOut": 13 * 2, "errors": 1, "tokensCached": 0, "tokensCacheWrite": 0})
     );
     assert_eq!(v["byUser"][0]["username"], json!("sam"));
     assert_eq!(v["byUser"][0]["calls"], json!(3));
     assert_eq!(v["byUser"][0]["errors"], json!(1));
     assert!(v["byUser"][0]["lastAt"].is_i64());
     assert_eq!(v["byModel"][0]["model"], json!("demo-chat-small"));
-    assert_eq!(v["byPeriod"][6]["calls"], json!(4));
+    assert_eq!(v["byPeriod"][6]["calls"], json!(3));
     let (_, d) = t.get("/api/ai/admin/usage", &admin).await;
     assert_eq!(
         (d["days"].clone(), d["byPeriod"].as_array().map(Vec::len)),
@@ -631,7 +649,7 @@ async fn usage_statistics() {
     assert_eq!(m["unit"], json!("month"));
     let periods = m["byPeriod"].as_array().expect("p");
     assert!((12..=13).contains(&periods.len()));
-    assert_eq!(periods.last().map(|p| p["calls"].clone()), Some(json!(4)));
+    assert_eq!(periods.last().map(|p| p["calls"].clone()), Some(json!(3)));
     assert_eq!(periods[0]["period"].as_str().map(str::len), Some(7));
     let (_, m) = t.get("/api/ai/admin/usage?days=90", &admin).await;
     assert_eq!(m["unit"], json!("month"));
@@ -641,9 +659,15 @@ async fn usage_statistics() {
             .await;
         assert_eq!(s, 400, "{bad}");
     }
-    // The connection test and a model listing use no feature and no chosen model: both are the "other" row ('' model,
-    // `other` true, purpose `other`), so the model bars and the feature bars each add up to the total (A-OWNER-39)
-    let (s, l) = t.post("/api/ai/admin/models", &admin, json!({})).await;
+    // A model test call uses no feature and no chosen model: it is the "other" row ('' model, `other` true, purpose
+    // `other`), so the model bars and the feature bars each add up to the total (A-OWNER-39)
+    let (s, l) = t
+        .post(
+            "/api/ai/admin/models/test",
+            &admin,
+            json!({"connectionId": 1, "model": "demo-chat-small"}),
+        )
+        .await;
     assert_eq!(s, 200, "{l}");
     let (_, v) = t.get("/api/ai/admin/usage?days=7", &admin).await;
     let rows = v["byModel"].as_array().expect("byModel");
@@ -654,7 +678,7 @@ async fn usage_statistics() {
     };
     assert_eq!(
         (calls("demo-chat-small"), calls("")),
-        (Some(json!(3)), Some(json!(2)))
+        (Some(json!(3)), Some(json!(1)))
     );
     let other = rows
         .iter()
@@ -679,7 +703,7 @@ async fn usage_statistics() {
         assert_eq!(sum("byModel", key), total, "byModel {key}");
         assert_eq!(sum("byPurpose", key), total, "byPurpose {key}");
     }
-    assert_eq!(v["totals"]["calls"], json!(5));
+    assert_eq!(v["totals"]["calls"], json!(4));
     let small = rows
         .iter()
         .find(|r| r["model"] == json!("demo-chat-small"))
@@ -713,7 +737,7 @@ async fn usage_statistics() {
             ("summary", 0),
             ("generate", 0),
             ("import", 0),
-            ("other", 2)
+            ("other", 1)
         ]
     );
 }

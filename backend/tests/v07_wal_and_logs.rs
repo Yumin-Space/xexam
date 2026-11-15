@@ -333,6 +333,8 @@ fn app() -> App {
         name_locks: Default::default(),
         old_layouts: Default::default(),
         ai_link: Default::default(),
+        activity: Default::default(),
+        gates: Default::default(),
     }));
     App {
         router: build_router(state),

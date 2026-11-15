@@ -10,7 +10,7 @@
 //!   `MSG_BAD_REQUEST`). The create route validates with the generator's own limits (stem ≤ 800, option ≤ 300, explanation
 //!   ≤ 1 200 characters per language; 3 … 6 options; `answer` sorted letters among the options; exactly `goal` questions, no
 //!   partial banks), so a payload the AI service's checks accepted is never refused here.
-//! - Session binding (source, seeds): `store.session_user(sid, now, false)` like `internal_study.rs` (no refresh): no valid
+//! - Session binding (source, seeds): `auth::session_user_untouched` like `internal_study.rs` (no refresh): no valid
 //!   session or a pending password change answers `{"ok": false, "reason": "session"}`. The rights (administrator, or AI+ on
 //!   and may manage banks) are checked by the store: `{"ok": false, "reason": "notAllowed"}`.
 //! - The create route has no session (the job may outlive it): the AI service names the user and the identity stamp, the
@@ -21,8 +21,8 @@
 use super::internal_study::{bad_request, check_keys, is_lower_hex, positive, refused};
 use super::{blocking, AppState};
 use crate::database::store::{
-    AiBankOutcome, AiBankReq, AiFile, AiMode, AiQuestion, GenKind, GenSeeds, GenSource,
-    GenSourceReq, Tri,
+    AiBankOutcome, AiBankReq, AiFile, AiMode, AiQuestion, GenCorpusReq, GenKind, GenSeeds,
+    GenSource, GenSourceReq, Tri,
 };
 use crate::error::AppError;
 use crate::parser::make_id;
@@ -40,7 +40,7 @@ const MAX_SEED_IDS: usize = 100;
 const MAX_NAME_CHARS: usize = 120;
 const MAX_AI_SHEET_CHARS: usize = 60;
 /// The most questions of one bank and source banks of one create request.
-const MAX_GOAL: i64 = 100;
+const MAX_GOAL: i64 = 300;
 const MAX_FROM: usize = 200;
 /// The generator's text limits (characters per language; GP-4).
 const MAX_STEM_CHARS: usize = 800;
@@ -127,11 +127,9 @@ fn int_in(data: &Map<String, Value>, key: &str, lo: i64, hi: i64) -> Result<i64,
 
 /// The user of the session `sid` (no refresh), or the refusal to send as it is.
 async fn session_user(st: &AppState, sid: String) -> Result<Result<i64, Value>, AppError> {
-    let store = st.0.store.clone();
-    let now = crate::auth::unix_now();
-    let found = blocking(move || store.session_user(&sid, now, false)).await?;
+    let found = super::auth::session_user_untouched(st, &sid).await?;
     Ok(match found {
-        Some((u, _)) if !u.must_change_password => Ok(u.id),
+        Some(u) if !u.must_change_password => Ok(u.id),
         _ => Err(refused("session")),
     })
 }
@@ -166,28 +164,7 @@ fn source_request(data: &Map<String, Value>) -> Result<GenSourceReq, AppError> {
         }
         GenKind::Scope | GenKind::Wrong => {
             check_keys(data, &["sid", "source", "sheets", "min", "max"], &[])?;
-            let Some(Value::Array(items)) = data.get("sheets") else {
-                return Err(bad_request());
-            };
-            if items.is_empty() || items.len() > MAX_SHEETS {
-                return Err(bad_request());
-            }
-            let mut sheets = Vec::with_capacity(items.len());
-            for item in items {
-                let Value::Object(m) = item else {
-                    return Err(bad_request());
-                };
-                check_keys(m, &["bank", "sheet"], &[])?;
-                let sheet = match m.get("sheet") {
-                    Some(Value::String(s))
-                        if (1..=MAX_SHEET_CHARS).contains(&s.chars().count()) =>
-                    {
-                        s.clone()
-                    }
-                    _ => return Err(bad_request()),
-                };
-                sheets.push((positive(m, "bank")?, sheet));
-            }
+            let sheets = sheet_pairs(data)?;
             Ok(GenSourceReq {
                 kind,
                 bank: None,
@@ -209,6 +186,89 @@ pub(super) async fn source(st: &AppState, data: &Map<String, Value>) -> Result<V
     };
     let store = st.0.store.clone();
     let found: GenSource = blocking(move || store.gen_source(user, &req)).await?;
+    Ok(found.to_json())
+}
+
+// ---------------------------------------------------------------- corpus
+
+/// The largest page of the corpus route (questions).
+const MAX_CORPUS_PAGE: i64 = 200;
+/// The largest offset of the corpus route (the corpus holds at most 20 000 questions).
+const MAX_CORPUS_AFTER: i64 = 20_000;
+
+/// The (bank, sheet) pairs of a `scope` / `wrong` request: 1 ..= [`MAX_SHEETS`] objects of exactly `bank` and `sheet`.
+fn sheet_pairs(data: &Map<String, Value>) -> Result<Vec<(i64, String)>, AppError> {
+    let Some(Value::Array(items)) = data.get("sheets") else {
+        return Err(bad_request());
+    };
+    if items.is_empty() || items.len() > MAX_SHEETS {
+        return Err(bad_request());
+    }
+    let mut sheets = Vec::with_capacity(items.len());
+    for item in items {
+        let Value::Object(m) = item else {
+            return Err(bad_request());
+        };
+        check_keys(m, &["bank", "sheet"], &[])?;
+        let sheet = match m.get("sheet") {
+            Some(Value::String(s)) if (1..=MAX_SHEET_CHARS).contains(&s.chars().count()) => {
+                s.clone()
+            }
+            _ => return Err(bad_request()),
+        };
+        sheets.push((positive(m, "bank")?, sheet));
+    }
+    Ok(sheets)
+}
+
+fn corpus_request(data: &Map<String, Value>) -> Result<GenCorpusReq, AppError> {
+    let kind = data
+        .get("source")
+        .and_then(Value::as_str)
+        .and_then(GenKind::parse)
+        .filter(|k| *k != GenKind::File)
+        .ok_or_else(bad_request)?;
+    let min = usize::try_from(int_in(data, "min", 1, MAX_ITEMS)?).map_err(|_| bad_request())?;
+    let optional = ["after", "limit"];
+    let after = match data.get("after") {
+        None => 0,
+        Some(_) => int_in(data, "after", 0, MAX_CORPUS_AFTER)?,
+    };
+    let limit = match data.get("limit") {
+        None => MAX_CORPUS_PAGE,
+        Some(_) => int_in(data, "limit", 1, MAX_CORPUS_PAGE)?,
+    };
+    let (bank, sheets) = if kind == GenKind::Bank {
+        check_keys(data, &["sid", "source", "bank", "min"], &optional)?;
+        (Some(positive(data, "bank")?), Vec::new())
+    } else {
+        check_keys(data, &["sid", "source", "sheets", "min"], &optional)?;
+        (None, sheet_pairs(data)?)
+    };
+    Ok(GenCorpusReq {
+        source: GenSourceReq {
+            kind,
+            bank,
+            sheets,
+            min,
+            max: 0,
+        },
+        after: usize::try_from(after).map_err(|_| bad_request())?,
+        limit: usize::try_from(limit).map_err(|_| bad_request())?,
+    })
+}
+
+/// `POST /internal/ai/gen/corpus` (v1.3): one page of EVERY eligible source question in the three languages. Read-only;
+/// the same session binding, rights and access checks as the source route.
+pub(super) async fn corpus(st: &AppState, data: &Map<String, Value>) -> Result<Value, AppError> {
+    let sid = sid(data)?;
+    let req = corpus_request(data)?;
+    let user = match session_user(st, sid).await? {
+        Ok(user) => user,
+        Err(answer) => return Ok(answer),
+    };
+    let store = st.0.store.clone();
+    let found = blocking(move || store.gen_corpus(user, &req)).await?;
     Ok(found.to_json())
 }
 
@@ -698,6 +758,19 @@ mod tests {
         assert!(has_control_or_format("a\nb"));
         assert!(has_control_or_format("evil\u{202E}name"));
         assert!(!has_control_or_format("😀\u{200D}😀 ok"));
+    }
+
+    #[test]
+    fn a_bank_may_hold_up_to_three_hundred_questions() {
+        let make = |n: usize| {
+            body(
+                (0..n)
+                    .map(|i| q(&format!("Stem number {i}"), json!(["B"]), "single", 3))
+                    .collect(),
+            )
+        };
+        assert!(create_request(&obj(make(300))).is_ok());
+        assert!(create_request(&obj(make(301))).is_err());
     }
 
     #[test]

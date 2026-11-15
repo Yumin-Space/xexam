@@ -1,6 +1,6 @@
 // System log page (#/logs, v0.7, administrators only; main.ts shows the "Not allowed" page to everyone else). It shows the
 // recent log lines the backend keeps in memory (GET /api/logs, at most 2000, gone after a restart) in a monospace list:
-//   · it reads new lines every 0.5 seconds while it is open and the browser tab is visible, one request at a time (the poll
+//   · it reads new lines every 2 seconds while it is open and the browser tab is visible, one request at a time (the poll
 //     loop of domain/logs.ts: the next request only after the previous answer; longer waits after failed reads), and stops
 //     when the page is left or the tab hidden; Pause / Resume stop and restart it;
 //   · new lines are appended at the bottom; the list follows them while it is scrolled to the end, and stays where it is
@@ -18,6 +18,7 @@
 import '../styles/logs.css';
 import { ApiError } from '../api/client.ts';
 import { fetchLogs } from '../api/logs.ts';
+import { activityLog, type ActivityView } from '../components/activity-log.ts';
 import { iconButton } from '../components/icon-button.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { pageHead } from '../components/common.ts';
@@ -110,6 +111,8 @@ function installOnce(): void {
 onRouteChange((from, to) => {
   if (from.name === 'logs' && to.name !== 'logs') {
     poller.stop();
+    activity?.stop();
+    activity = null;
     view = null;
     // Next time the page opens at the newest lines
     stick = true;
@@ -332,7 +335,7 @@ function tipText(): string {
 
 // ---------------------------------------------------------------- page
 
-export function renderLogs(): HTMLElement {
+function renderServiceLog(): HTMLElement {
   installOnce();
   phone = matches(PHONE_MQ);
   if (query.trim()) searchOpen = true;
@@ -451,4 +454,37 @@ export function renderLogs(): HTMLElement {
   });
   poller.start();
   return root;
+}
+
+// ---------------------------------------------------------------- tabs (v1.3): Activity | Service log
+
+type Tab = 'activity' | 'service';
+let tab: Tab = 'activity';
+let activity: ActivityView | null = null;
+
+function tabBar(): HTMLElement {
+  const one = (id: Tab, key: MsgKey): HTMLElement => h('button', {
+    type: 'button', 'aria-pressed': String(tab === id),
+    onclick: () => {
+      if (tab === id) return;
+      tab = id;
+      render();
+    },
+  }, t(key));
+  return h('div', { class: 'seg lg-tabs', role: 'group', 'aria-label': t('logs.title') }, one('activity', 'logs.tab.activity'), one('service', 'logs.tab.service'));
+}
+
+export function renderLogs(): HTMLElement {
+  activity?.stop();
+  activity = null;
+  if (tab === 'service') {
+    const page = renderServiceLog();
+    page.children[0]?.after(tabBar());
+    return page;
+  }
+  // The service log's poll belongs to its own tab
+  poller.stop();
+  view = null;
+  activity = activityLog();
+  return h('div', { class: 'page page-logs' }, pageHead(t('logs.title')), tabBar(), activity.el);
 }

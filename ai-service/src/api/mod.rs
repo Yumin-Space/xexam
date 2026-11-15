@@ -8,10 +8,11 @@
 //! The identity is the only source of "who": user routes take the user id from it and every query filters by it; a
 //! foreign id answers exactly like a missing one (404 `ai.notFound`). Only `/api/ai/admin/*` reads or deletes other
 //! users' data, and every such read or delete is audited (also every Suspend / Resume of a user's AI+ function).
-use crate::app::{AppState, Snapshot};
+use crate::app::AppState;
 use crate::codes::ApiError;
-use crate::identity::{self, Identity, VerifyError};
+use crate::identity::{self, ClientInfo, Identity, VerifyError};
 use crate::limits::MAX_BODY;
+use crate::route::Slot;
 use axum::body::{Body, Bytes};
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
@@ -21,7 +22,10 @@ use serde_json::{json, Map, Value};
 use std::any::Any;
 
 pub mod admin;
+pub mod admin_conn;
+pub mod admin_models;
 pub mod gen;
+pub mod hide;
 pub mod import;
 pub mod study;
 pub mod user;
@@ -39,7 +43,11 @@ enum Route {
     Chats,
     Chat,
     Send,
+    Regenerate,
+    Edit,
     Retry,
+    Branch,
+    ChatModel,
     Stop,
     ChatsDelete,
     Free,
@@ -51,7 +59,14 @@ enum Route {
     SettingsGet,
     SettingsPost,
     Models,
-    Verify,
+    ConnectionsSave,
+    ConnectionsTest,
+    ConnectionsDelete,
+    ConnectionsOrder,
+    ModelsPick,
+    ModelsTest,
+    ModelsRemove,
+    FeatureSwitches,
     Enable,
     Usage,
     Users,
@@ -83,7 +98,11 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
     ("/api/ai/chats", Some(Route::Chats), None),
     ("/api/ai/chat", Some(Route::Chat), None),
     ("/api/ai/send", None, Some(Route::Send)),
+    ("/api/ai/regenerate", None, Some(Route::Regenerate)),
+    ("/api/ai/edit", None, Some(Route::Edit)),
     ("/api/ai/retry", None, Some(Route::Retry)),
+    ("/api/ai/branch", None, Some(Route::Branch)),
+    ("/api/ai/chat/model", None, Some(Route::ChatModel)),
     ("/api/ai/stop", None, Some(Route::Stop)),
     ("/api/ai/chats/delete", None, Some(Route::ChatsDelete)),
     ("/api/ai/free", None, Some(Route::Free)),
@@ -101,8 +120,39 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
         Some(Route::SettingsGet),
         Some(Route::SettingsPost),
     ),
-    ("/api/ai/admin/models", None, Some(Route::Models)),
-    ("/api/ai/admin/verify", None, Some(Route::Verify)),
+    ("/api/ai/admin/models", Some(Route::Models), None),
+    (
+        "/api/ai/admin/connections/save",
+        None,
+        Some(Route::ConnectionsSave),
+    ),
+    (
+        "/api/ai/admin/connections/test",
+        None,
+        Some(Route::ConnectionsTest),
+    ),
+    (
+        "/api/ai/admin/connections/delete",
+        None,
+        Some(Route::ConnectionsDelete),
+    ),
+    (
+        "/api/ai/admin/connections/order",
+        None,
+        Some(Route::ConnectionsOrder),
+    ),
+    ("/api/ai/admin/models/pick", None, Some(Route::ModelsPick)),
+    ("/api/ai/admin/models/test", None, Some(Route::ModelsTest)),
+    (
+        "/api/ai/admin/models/remove",
+        None,
+        Some(Route::ModelsRemove),
+    ),
+    (
+        "/api/ai/admin/feature-switches",
+        None,
+        Some(Route::FeatureSwitches),
+    ),
     ("/api/ai/admin/enable", None, Some(Route::Enable)),
     ("/api/ai/admin/usage", Some(Route::Usage), None),
     ("/api/ai/admin/users", Some(Route::Users), None),
@@ -137,7 +187,14 @@ impl Route {
             Route::SettingsGet
             | Route::SettingsPost
             | Route::Models
-            | Route::Verify
+            | Route::ConnectionsSave
+            | Route::ConnectionsTest
+            | Route::ConnectionsDelete
+            | Route::ConnectionsOrder
+            | Route::ModelsPick
+            | Route::ModelsTest
+            | Route::ModelsRemove
+            | Route::FeatureSwitches
             | Route::Enable
             | Route::Usage
             | Route::Users
@@ -157,12 +214,55 @@ impl Route {
     }
 }
 
+/// The activity events every `/api/ai/admin/*` POST emits (rust-contracts 5.2): path -> the action codes it may emit.
+/// A handler emits at least one of them per request; a unit test checks that no admin POST is missing from this table.
+pub const ADMIN_EVENTS: &[(&str, &[&str])] = &[
+    ("/api/ai/admin/settings", &["ai.settings.retention"]),
+    (
+        "/api/ai/admin/connections/save",
+        &[
+            "ai.settings.connectionAdd",
+            "ai.settings.connectionUpdate",
+            "ai.settings.key",
+            "ai.settings.keyReuse",
+        ],
+    ),
+    (
+        "/api/ai/admin/connections/test",
+        &["ai.settings.connectionTest"],
+    ),
+    (
+        "/api/ai/admin/connections/delete",
+        &["ai.settings.connectionRemove"],
+    ),
+    (
+        "/api/ai/admin/connections/order",
+        &["ai.settings.connectionOrder"],
+    ),
+    ("/api/ai/admin/models/pick", &["ai.settings.model"]),
+    ("/api/ai/admin/models/test", &["ai.settings.modelTest"]),
+    ("/api/ai/admin/models/remove", &["ai.settings.modelRemove"]),
+    (
+        "/api/ai/admin/enable",
+        &["ai.settings.enable", "ai.settings.disable"],
+    ),
+    ("/api/ai/admin/feature-switches", &["ai.settings.features"]),
+    ("/api/ai/admin/limits", &["ai.settings.limits"]),
+    ("/api/ai/admin/clear", &["ai.admin.clear"]),
+    ("/api/ai/admin/suspend", &["ai.users.features"]),
+    ("/api/ai/admin/resume", &["ai.users.features"]),
+    ("/api/ai/admin/features", &["ai.users.features"]),
+    ("/api/ai/admin/free", &["ai.users.features"]),
+];
+
 /// What a handler gets.
 pub struct Ctx {
     pub app: AppState,
     pub who: Identity,
     pub body: Map<String, Value>,
     pub query: Option<String>,
+    /// The caller's address and browser as the proxy reported them (for activity events only)
+    pub client: ClientInfo,
 }
 
 pub type Answer = Result<Response, ApiError>;
@@ -334,6 +434,7 @@ async fn handle(app: AppState, req: Request) -> Answer {
         return import::upload(app, who, req).await;
     }
     let query = req.uri().query().map(str::to_string);
+    let client = ClientInfo::from_headers(req.headers());
     let body = if method == Method::POST {
         if !json_content_type(req.headers()) {
             return Err(ApiError::bad_media_type());
@@ -351,12 +452,17 @@ async fn handle(app: AppState, req: Request) -> Answer {
         who,
         body,
         query,
+        client,
     };
     match route {
         Route::Status => user::status(ctx).await,
         Route::Chats => user::chats(ctx).await,
         Route::Chat => user::chat(ctx).await,
         Route::Send => user::send(ctx).await,
+        Route::Regenerate => user::regenerate(ctx).await,
+        Route::Edit => user::edit(ctx).await,
+        Route::Branch => user::branch(ctx).await,
+        Route::ChatModel => user::chat_model(ctx).await,
         Route::Retry => user::retry(ctx).await,
         Route::Stop => user::stop(ctx).await,
         Route::ChatsDelete => user::delete_chats(ctx).await,
@@ -368,8 +474,15 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::MemoriesSuggest => user::memory_suggest(ctx).await,
         Route::SettingsGet => admin::settings_get(ctx).await,
         Route::SettingsPost => admin::settings_post(ctx).await,
-        Route::Models => admin::models(ctx).await,
-        Route::Verify => admin::verify(ctx).await,
+        Route::Models => admin_models::list(ctx).await,
+        Route::ConnectionsSave => admin_conn::save(ctx).await,
+        Route::ConnectionsTest => admin_conn::test(ctx).await,
+        Route::ConnectionsDelete => admin_conn::delete(ctx).await,
+        Route::ConnectionsOrder => admin_conn::order(ctx).await,
+        Route::ModelsPick => admin_models::pick(ctx).await,
+        Route::ModelsTest => admin_models::test(ctx).await,
+        Route::ModelsRemove => admin_models::remove(ctx).await,
+        Route::FeatureSwitches => admin::feature_switches(ctx).await,
         Route::Enable => admin::enable(ctx).await,
         Route::Usage => admin::usage(ctx).await,
         Route::Users => admin::users(ctx).await,
@@ -399,10 +512,13 @@ async fn handle(app: AppState, req: Request) -> Answer {
 /// `AiUser` (5.1, round-2 contracts 0.3 / 2.7), checked in this order: the AI+ service effectively on (else 403
 /// `ai.disabled`); the main backend accepted a state report less than 60 s ago (else 503 `ai.backendDown`); the
 /// caller's AI+ service (else 403 `ai.notAllowed`); for a plain user, the AI+ function not suspended (else 403
-/// `ai.suspended`).
-pub fn require_ai_user(app: &AppState, who: &Identity) -> Result<Snapshot, ApiError> {
-    let snap = app.0.snapshot()?;
-    if !snap.effective() {
+/// `ai.suspended`); then the route of `slot` (the model the call goes to, else 403 `ai.disabled`).
+pub fn require_ai_user(
+    app: &AppState,
+    who: &Identity,
+    slot: Slot,
+) -> Result<crate::route::Route, ApiError> {
+    if !app.0.effective()? {
         return Err(ApiError::disabled());
     }
     if !app.0.link_fresh() {
@@ -414,7 +530,7 @@ pub fn require_ai_user(app: &AppState, who: &Identity) -> Result<Snapshot, ApiEr
     if app.0.suspended(who) {
         return Err(ApiError::suspended());
     }
-    Ok(snap)
+    app.0.route(slot, None)
 }
 
 fn positive_id(text: &str) -> Option<i64> {
@@ -489,6 +605,63 @@ pub fn id_or_all(body: &Map<String, Value>) -> Result<Option<i64>, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_admin_post_has_an_event_row() {
+        let mut posts = 0;
+        for (path, _, post) in ROUTES {
+            if post.is_some() && path.starts_with("/api/ai/admin/") {
+                posts += 1;
+                let row = ADMIN_EVENTS.iter().find(|(p, _)| p == path);
+                let (_, actions) = row.unwrap_or_else(|| panic!("no event row for {path}"));
+                assert!(!actions.is_empty(), "{path}");
+                for a in *actions {
+                    assert!(crate::activity::valid_action(a), "{a}");
+                }
+            }
+        }
+        // the table has nothing extra either
+        assert_eq!(ADMIN_EVENTS.len(), posts);
+        for (path, _) in ADMIN_EVENTS {
+            let known = ROUTES
+                .iter()
+                .any(|(p, _, post)| p == path && post.is_some());
+            assert!(known, "{path} is not a POST route");
+        }
+    }
+
+    #[test]
+    fn the_v13_routes_exist_and_the_removed_ones_do_not() {
+        let post = |p: &str| ROUTES.iter().any(|(q, _, post)| *q == p && post.is_some());
+        let get = |p: &str| ROUTES.iter().any(|(q, get, _)| *q == p && get.is_some());
+        for p in [
+            "/api/ai/regenerate",
+            "/api/ai/edit",
+            "/api/ai/branch",
+            "/api/ai/chat/model",
+            "/api/ai/admin/connections/save",
+            "/api/ai/admin/connections/test",
+            "/api/ai/admin/connections/delete",
+            "/api/ai/admin/connections/order",
+            "/api/ai/admin/models/pick",
+            "/api/ai/admin/models/test",
+            "/api/ai/admin/models/remove",
+            "/api/ai/admin/feature-switches",
+        ] {
+            assert!(post(p), "{p}");
+        }
+        assert!(get("/api/ai/admin/models"));
+        assert!(!post("/api/ai/admin/models"), "the old POST models is gone");
+        assert!(!post("/api/ai/admin/verify") && !get("/api/ai/admin/verify"));
+        // every admin route needs an administrator
+        for (path, g, p) in ROUTES {
+            if path.starts_with("/api/ai/admin/") {
+                for r in [g, p].into_iter().flatten() {
+                    assert_eq!(r.access(), Access::Admin, "{path}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn content_types() {

@@ -411,8 +411,8 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none());
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
-    // the v5 columns come after the v4 ones
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
+    // the v5 columns come after the v4 ones, the v8 ones (five) after them
     let columns: Vec<String> = c
         .prepare("SELECT name FROM pragma_table_info('users') ORDER BY cid")
         .expect("prepare")
@@ -421,7 +421,7 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
         .map(|r| r.expect("row"))
         .collect();
     assert_eq!(
-        columns[columns.len() - 4..],
+        columns[columns.len() - 9..columns.len() - 5],
         ["new_banks", "can_manage_banks", "ai_enabled", "uid"]
     );
     // the default administrator (created by the v3 step, before the column existed) has a stamp and AI+ off
@@ -485,7 +485,13 @@ fn write_v4_database(db: &Path) {
     drop(s);
     raw(db)
         .execute_batch(
-            "ALTER TABLE users DROP COLUMN ai_enabled; ALTER TABLE users DROP COLUMN uid; \
+            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; \
+             ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
+             ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
+             ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
+             ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
+             ALTER TABLE sessions DROP COLUMN ua; \
+             ALTER TABLE users DROP COLUMN ai_enabled; ALTER TABLE users DROP COLUMN uid; \
              UPDATE meta SET value = '4' WHERE key = 'schema';",
         )
         .expect("back to schema 4");
@@ -527,7 +533,7 @@ fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
         );
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
     // every user: AI+ off (also ben, whose earlier switch went with the dropped column), a unique 32-hex stamp
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM users WHERE ai_enabled = 0"),
@@ -618,6 +624,8 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
             .lines
             .into_iter()
             .map(|l| l.message)
+            // v1.3: the activity log adds one `activity ...` line per entry; these tests look at the older lines
+            .filter(|m| !m.starts_with("activity "))
             .collect()
     };
     let a = app();
@@ -693,6 +701,10 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
             "canManageBanks",
             "ai",
             "ownedBanks",
+            // v1.3 (tests/v13_db.rs)
+            "lastActiveAt",
+            "lastLoginIp",
+            "lastLoginLocation",
             "lock",
             "aiSuspended"
         ]
@@ -947,8 +959,8 @@ async fn the_auth_step_refuses_like_the_api() {
     raw(&a.db)
         .execute_batch(&format!(
             "UPDATE users SET disabled = 0 WHERE id = {dan}; \
-             UPDATE sessions SET expires_at = {} WHERE token_hash = '{dsid}'",
-            auth::unix_now() - 1
+             UPDATE sessions SET last_seen_at = {0}, expires_at = {0} WHERE token_hash = '{dsid}'",
+            auth::unix_now() - 31 * 24 * 3600
         ))
         .expect("expire");
     assert_denied(
@@ -1134,7 +1146,7 @@ async fn the_auth_step_runs_the_host_and_origin_guard_on_the_original_request_on
 }
 
 #[tokio::test]
-async fn the_auth_step_never_refreshes_a_session() {
+async fn the_auth_step_touches_a_session_but_never_sets_a_cookie() {
     let _serial = SERIAL.lock().await;
     let a = app();
     let (ac, asid) = admin(&a);
@@ -1150,16 +1162,20 @@ async fn the_auth_step_never_refreshes_a_session() {
     };
     raw(&a.db)
         .execute(
-            "UPDATE sessions SET last_seen_at = ?1, expires_at = ?2 WHERE token_hash = ?3",
+            "UPDATE sessions SET last_seen_at = ?1, expires_at = ?2, started_at = ?1 WHERE token_hash = ?3",
             rusqlite::params![old, old + 10 * 24 * 3600, asid],
         )
         .expect("age the session");
     let before = stamps(&a);
-    // past the refresh window, with an Origin (which lets /api/* refresh the cookie): nothing is written
+    // v1.3: somebody who only talks to the AI is active, so the auth step touches the session (last seen = now, the end
+    // follows the administrator rule)... but `statement_of` also checks that no cookie is ever set on this path
     statement_of(&auth_step(&a, Some(&ac), Some("POST"), Some(HOST), Some(ORIGIN)).await);
+    let (last, expires) = stamps(&a);
+    assert!(last >= auth::unix_now() - 5 && last > before.0, "{last}");
+    assert_eq!(expires, last + auth::ADMIN_IDLE_SECS);
+    // the next requests of the same minute write nothing
+    let touched = stamps(&a);
     statement_of(&auth_get(&a, &ac).await);
-    assert_eq!(stamps(&a), before);
-    // the token route that re-checks a session does not refresh it either
     let r = internal(
         &a,
         "/internal/ai/introspect",
@@ -1168,12 +1184,11 @@ async fn the_auth_step_never_refreshes_a_session() {
     )
     .await;
     assert_eq!(r.json()["ok"], true, "{}", r.text());
-    assert_eq!(stamps(&a), before);
-    // while an ordinary API request with an Origin does (the window really was open)
+    assert_eq!(stamps(&a), touched);
+    // an administrator's cookie is set once at sign-in, never re-sent
     let r = api(&a, "POST", "/api/settings", &ac, Some("{}")).await;
     assert_eq!(r.status, 200, "{}", r.text());
-    assert!(r.header("set-cookie").is_some());
-    assert_ne!(stamps(&a), before);
+    assert!(r.header("set-cookie").is_none());
 }
 
 #[tokio::test]
@@ -1435,8 +1450,8 @@ async fn introspect_rechecks_a_session_without_refreshing_it() {
     );
     raw(&a.db)
         .execute_batch(&format!(
-            "UPDATE users SET disabled = 0 WHERE id = {sam}; UPDATE sessions SET expires_at = {} WHERE token_hash = '{ssid}'",
-            auth::unix_now() - 1
+            "UPDATE users SET disabled = 0 WHERE id = {sam}; UPDATE sessions SET last_seen_at = {0}, expires_at = {0} WHERE token_hash = '{ssid}'",
+            auth::unix_now() - 31 * 24 * 3600
         ))
         .expect("expired");
     not_ok(
@@ -1721,6 +1736,7 @@ fn messages_after(lines: &LogBuffer, mark: u64) -> Vec<String> {
         .lines
         .into_iter()
         .map(|l| l.message)
+        .filter(|m| !m.starts_with("activity "))
         .collect()
 }
 
@@ -1909,14 +1925,25 @@ async fn the_state_route_says_whether_ai_plus_is_available() {
         async move {
             for c in [sc, kc] {
                 let v = state(c).await;
-                assert_eq!(keys(&v), ["user", "library", "aiAvailable"], "{label}");
+                assert_eq!(
+                    keys(&v),
+                    ["user", "library", "aiAvailable", "session", "logVisits"],
+                    "{label}"
+                );
                 assert_eq!(v["aiAvailable"], available, "{label}");
             }
             for c in [ac, bc] {
                 let v = state(c).await;
                 assert_eq!(
                     keys(&v),
-                    ["user", "library", "aiAvailable", "aiService"],
+                    [
+                        "user",
+                        "library",
+                        "aiAvailable",
+                        "session",
+                        "logVisits",
+                        "aiService"
+                    ],
                     "{label}"
                 );
                 assert_eq!(v["aiAvailable"], available, "{label}");
@@ -2020,7 +2047,10 @@ async fn the_state_route_says_whether_ai_plus_is_available() {
     assert_eq!(r.status, 200, "{}", r.text());
     let (bc, _) = session(&a, boss);
     let v = state(bc).await;
-    assert_eq!(keys(&v), ["user", "library", "aiAvailable"]);
+    assert_eq!(
+        keys(&v),
+        ["user", "library", "aiAvailable", "session", "logVisits"]
+    );
 }
 
 #[tokio::test]
@@ -2060,7 +2090,7 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     ];
     // no report: not available, nobody suspended
     let v = list().await;
-    assert_eq!(keys(&v), ["users", "aiAvailable"]);
+    assert_eq!(keys(&v), ["users", "signinInfo", "aiAvailable"]);
     assert_eq!(v["aiAvailable"], false);
     assert_eq!(suspended_of(&v), none);
     for u in v["users"].as_array().expect("users") {
@@ -2105,7 +2135,7 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
         let r = api(&a, "POST", path, &ac, Some(&body)).await;
         assert_eq!(r.status, 200, "{path}: {}", r.text());
         let v = r.json();
-        assert_eq!(keys(&v), ["users", "aiAvailable"], "{path}");
+        assert_eq!(keys(&v), ["users", "signinInfo", "aiAvailable"], "{path}");
         assert_eq!(v["aiAvailable"], true, "{path}");
         assert_eq!(suspended_of(&v), with_kim, "{path}");
     }
@@ -2118,7 +2148,7 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
-    assert_eq!(keys(&r.json()), ["users", "aiAvailable"]);
+    assert_eq!(keys(&r.json()), ["users", "signinInfo", "aiAvailable"]);
     let lee = r.json()["users"][4]["id"].as_i64().expect("lee");
     let r = api(
         &a,
@@ -2129,7 +2159,7 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
-    assert_eq!(keys(&r.json()), ["users", "aiAvailable"]);
+    assert_eq!(keys(&r.json()), ["users", "signinInfo", "aiAvailable"]);
     assert_eq!(suspended_of(&r.json()), with_kim);
     // the login and password-change answers are unchanged
     let r = api(

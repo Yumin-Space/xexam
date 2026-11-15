@@ -14,6 +14,10 @@ RUN npm run build
 
 FROM nginxinc/nginx-unprivileged:1.27-alpine
 COPY nginx/nginx.conf /etc/nginx/nginx.conf
+# The header blocks of the proxied locations, and the start-up script that renders /tmp/xexam-realip.conf (the trusted
+# proxies and the real-IP header) from the environment; the entrypoint runs executable *.sh files of docker-entrypoint.d
+COPY nginx/snippets/ /etc/nginx/snippets/
+COPY --chmod=755 nginx/docker-entrypoint.d/15-xexam-realip.sh /docker-entrypoint.d/15-xexam-realip.sh
 COPY --from=frontend /build/dist /usr/share/nginx/html
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \

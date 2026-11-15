@@ -35,6 +35,15 @@ pub trait Engine: Send + Sync + 'static {
         self.check_and_parse(data)
     }
     fn count_active(&self) -> Result<i64, DbError>;
+    /// v1.3 (A4): the stamp behind the ETag of `GET /api/bank` for `v` (see `Store::library_stamp_as`). `None` = no ETag (fake
+    /// engines of older tests).
+    fn bank_stamp_as(&self, _v: &Viewer) -> Result<Option<String>, DbError> {
+        Ok(None)
+    }
+    /// v1.3 (A4): the stamp behind the ETag of `GET /api/banks` for `v` (see `Store::banks_stamp_as`). `None` = no ETag.
+    fn banks_stamp_as(&self, _v: &Viewer) -> Result<Option<String>, DbError> {
+        Ok(None)
+    }
     fn bank(&self) -> Result<Value, DbError>;
     fn progress(&self, user: i64) -> Result<Value, DbError>;
     fn import_history(&self, limit: i64) -> Result<Vec<ImportRecord>, DbError>;
@@ -272,6 +281,12 @@ impl Engine for RealEngine {
     }
     fn count_active(&self) -> Result<i64, DbError> {
         self.store.count_active()
+    }
+    fn bank_stamp_as(&self, v: &Viewer) -> Result<Option<String>, DbError> {
+        self.store.library_stamp_as(v).map(Some)
+    }
+    fn banks_stamp_as(&self, v: &Viewer) -> Result<Option<String>, DbError> {
+        self.store.banks_stamp_as(v).map(Some)
     }
     fn bank(&self) -> Result<Value, DbError> {
         self.store.bank()

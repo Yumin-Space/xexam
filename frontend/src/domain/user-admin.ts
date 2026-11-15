@@ -47,8 +47,8 @@ export function lockUntilLabel(until: string, retryAfter: number): string {
   return sameDay ? `${m[4]}:${m[5]}` : `${m[2]}-${m[3]} ${m[4]}:${m[5]}`;
 }
 
-/** `YYYY-MM-DD HH:MM[:SS]` without the year and the seconds ("11-12 01:46"), for the one-line facts of a row (US-2) */
-export const shortAt = (at: string): string => (/^\d{4}-/.test(at) ? at.slice(5, 16) : at.slice(0, 16));
+/** `YYYY-MM-DD HH:MM[:SS]` with the full year and without the seconds ("2026-11-12 01:46"), for the one-line facts of a row */
+export const fullAt = (at: string): string => at.slice(0, 16);
 
 /** More users than this get a search field (US-11) */
 export const SEARCH_FROM = 10;

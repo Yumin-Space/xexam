@@ -30,16 +30,20 @@ async fn every_state_change_is_reported_before_the_answer() {
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "openai", "baseUrl": format!("{}/v1", t.stub.url), "apiKey": KEY, "model": "demo-chat-small"}),
-        )
+    t.seed_route(Seed {
+        provider: "openai",
+        url: format!("{}/v1", t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model: "demo-chat-small",
+    });
+    // (seeded as enabled; the connection test and the settings changes that switch AI off belong to the connection routes)
+    t.app.0.heartbeat_now().await;
+    let (s, _) = t
+        .post("/api/ai/admin/enable", &admin, json!({"enabled": false}))
         .await;
-    assert_eq!(s, 200, "{v}");
-    let (s, v) = t.post("/api/ai/admin/verify", &admin, json!({})).await;
-    assert_eq!((s, v["ok"].clone()), (200, json!(true)), "{v}");
+    assert_eq!(s, 200);
 
     // enable: reported at once with the new state
     let n = count(&t);
@@ -58,20 +62,10 @@ async fn every_state_change_is_reported_before_the_answer() {
     assert_eq!(count(&t), n + 2);
     assert_eq!(t.backend.last_heartbeat()["enabled"], json!(false));
     t.verify_and_enable(&admin).await;
+    t.post("/api/ai/admin/enable", &admin, json!({"enabled": true}))
+        .await;
     assert_eq!(t.backend.last_heartbeat()["enabled"], json!(true));
 
-    // a settings change that switches AI off (a new test is needed)
-    let n = count(&t);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"model": "demo-chat-large"}),
-        )
-        .await;
-    assert_eq!((s, v["switchedOff"].clone()), (200, json!(true)), "{v}");
-    assert_eq!(count(&t), n + 1);
-    assert_eq!(t.backend.last_heartbeat()["enabled"], json!(false));
     // a settings change that does not switch anything off sends no report
     let n = count(&t);
     let (s, v) = t
@@ -81,22 +75,20 @@ async fn every_state_change_is_reported_before_the_answer() {
             json!({"retentionDays": 30}),
         )
         .await;
-    assert_eq!((s, v["switchedOff"].clone()), (200, json!(false)), "{v}");
+    assert_eq!((s, v["retentionDays"].clone()), (200, json!(30)), "{v}");
     assert_eq!(count(&t), n);
 
-    // a failed test that switches AI off (the provider refuses the key)
-    t.verify_and_enable(&admin).await;
-    assert_eq!(t.backend.last_heartbeat()["enabled"], json!(true));
-    t.stub.force(Some((
-        401,
-        r#"{"error":{"message":"bad key","type":"invalid_request_error","code":"invalid_api_key"}}"#,
-    )));
-    let n = count(&t);
-    let (s, v) = t.post("/api/ai/admin/verify", &admin, json!({})).await;
-    assert_eq!((s, v["switchedOff"].clone()), (200, json!(true)), "{v}");
-    assert_eq!(count(&t), n + 1);
+    // the only usable model goes away: AI is not effective any more and the next report says so
+    t.db()
+        .execute("UPDATE models SET status = 'failed'", [])
+        .expect("update");
+    t.app.0.heartbeat_now().await;
     assert_eq!(t.backend.last_heartbeat()["enabled"], json!(false));
-    t.stub.force(None);
+    t.db()
+        .execute("UPDATE models SET status = 'ok'", [])
+        .expect("update");
+    t.app.0.heartbeat_now().await;
+    assert_eq!(t.backend.last_heartbeat()["enabled"], json!(true));
 
     // suspend and resume carry the user's id
     t.verify_and_enable(&admin).await;

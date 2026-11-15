@@ -27,7 +27,7 @@
 
 # Xexam
 
-Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问，并在学习时得到 AI 帮助：练习中的提示和解释、成绩页上对每道题的 AI 解析，以及对答错题目的 AI 总结。电脑和手机（iPhone）都能用。
+Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问，并在学习时得到 AI 帮助：练习中的 AI 提示、练习中和成绩页上对每道题的 AI 解析，以及对答错题目的 AI 总结。电脑和手机（iPhone）都能用。
 
 ![答题页：一道显示成中文的热点题、English / 中文 / 日本語 切换按钮，以及带「完成考试」按钮的答题卡](../docs/zh-CN/screenshots/desktop-2-quiz.png)
 
@@ -35,8 +35,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v1.2.1**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v1.2.1**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v1.2.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v1.3**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v1.3**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v1.3` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -64,7 +64,7 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 - **学习记录和错题本**：每场考试和每次练习都连同作答保存下来；答错的题留在错题本里，直到连续答对两次。
 - **多人共用一个 Xexam**：每个人都登录使用，有自己的学习记录和设置。管理员决定谁能看到哪些题库、谁可以导入题库（可管理题库的用户），还可以查看 **系统日志**。
 - **AI 对话**（可选，管理员设置好之前是关闭的）：管理员在 **AI 设置** 里接入 OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway，测试后开启 **AI+ 功能**，再在 **用户管理** 里为每个可以使用的用户开通 **AI+ 功能**。在 **AI 设置** 里，他们可以 **暂停** 和 **恢复** 某个用户的 **AI+ 功能**，而不用收回它。回答边生成边显示（推理模型工作时显示 **正在思考…**），关掉页面也会继续生成；AI 用 **设置** 里选的语言回答；对话会保存下来（默认在 90 天后自动删除）；**记忆** 保存一些简短的笔记，AI 会在以后的对话里参考；管理员可以在 **设置** 的 **AI 对话模式** 里选 **自由模式**，不带学习助手的指示、直接和模型对话。管理员能看到用量统计，也能查看和删除拥有 AI+ 功能的用户的对话和记忆，AI 对话页面会把这一点告诉每个用户。AI 在自己的容器 `ai-service` 里运行，有自己的数据库；服务商的密钥加密保存。
-- **学习时的 AI 帮助**（给有 **AI+ 功能** 的用户；考试进行中没有）：练习时，**AI 提示** 和 **AI 解释** 都在题目下面的一个面板里；成绩页和学习记录的详情页上，每道题都有 **AI 解析**，在 **学习记录** 和 **主页** 上，可以对一条记录里答错的题生成 **AI 总结**。每个回答都保存在 **AI 对话** 里，面板里的任何东西都不会离开页面。每个用户对 AI 的请求都有每分钟、每小时和每天的上限，由管理员设置。
+- **学习时的 AI 帮助**（给有 **AI+ 功能** 的用户；考试进行中没有）：练习时，**AI 提示** 和 **AI 解析** 都在题目下面的一个面板里；成绩页和学习记录的详情页上，每道题都有 **AI 解析**，在 **学习记录** 和 **主页** 上，可以对一条记录里答错的题生成 **AI 总结**。每个回答都保存在 **AI 对话** 里，面板里的任何东西都不会离开页面。每个用户对 AI 的请求都有每分钟、每小时和每天的上限，由管理员设置。
 - **手机优先**：每个页面在手机宽度下都不会横向滚动；只有图标的按钮按住就能看到名字，触控区域至少 44 px；每个页面末尾有一行居中的、带项目链接的小字，问题和回答获得大部分空间。宽屏上页面居中显示。
 
 每个页面怎么用、练习和成绩里的 AI 帮助、AI 对话和 AI 设置、Excel 格式和导入规则：见 [docs/zh-CN/usage.md](../docs/zh-CN/usage.md)。
@@ -100,7 +100,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v1.2.1`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v1.3`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |
@@ -133,6 +133,9 @@ docker compose up -d
 | `XEXAM_INTERNAL_TOKEN` | 不设（链接卷里的一个随机令牌） | 后端和 AI 服务共用的令牌；compose 文件把同一个值传给两者。至少 32 个可打印的 ASCII 字符，不能有空格，例如用 `openssl rand -hex 32` 生成。AI 服务自己对后端的调用（例如它的状态报告）也用它来认证。不符合这个规则的值会让 AI 对话无法使用：**AI 设置** 里会写明 ai-service 无法连接，原因写在一行日志里 |
 | `XEXAM_AI_LOG` | 不设（`info`） | AI 服务的日志过滤，和 `XEXAM_LOG` 一样 |
 | `XEXAM_AI_SQLITE_JOURNAL` | 不设（WAL） | `delete` 用于 AI 数据库，和 `XEXAM_SQLITE_JOURNAL` 一样 |
+| `XEXAM_TRUSTED_PROXIES` | `172.31.254.2`（自带的 `cloudflared`） | Nginx 信任其 `CF-Connecting-IP` 和位置头的代理，这样限速、IP 列和位置指的就是访客本人。留空 = 谁都不信任；`cloudflared` 在宿主机上时用 `172.31.255.1`（见 [deployment](../docs/zh-CN/deployment.md) 的 3.5 节） |
+| `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | 带访客地址的头：`CF-Connecting-IP`、`X-Forwarded-For` 或 `X-Real-IP` |
+| `TUNNEL_TOKEN` | 不设 | 可选的自带 `cloudflared` 服务的令牌（`docker compose --profile tunnel up -d`） |
 
 时间跟随宿主机的时区，因为 compose 文件把宿主机的 `/etc/localtime` 挂载进了后端和 AI 服务。宿主机上没有这个文件时，以及在 Docker Desktop（Windows、macOS）上（它的虚拟机通常用的是 UTC），请看 [docs/zh-CN/deployment.md](../docs/zh-CN/deployment.md) 第 3.1 节。每个选项的说明都在那份文档的第 3 节。AI 服务商、它的地址、密钥和模型不在这里设置，而是在程序的 **AI 设置** 里设置。
 

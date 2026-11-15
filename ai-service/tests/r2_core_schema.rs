@@ -36,7 +36,15 @@ fn write_v1_fixture(data_dir: &Path) -> PathBuf {
     c.execute("INSERT INTO meta (key, value) VALUES ('schema', '1')", [])
         .expect("meta");
     let m = MasterKey::from_master(&MASTER);
-    let sealed = m.seal(SecretName::ApiKey, KEY.as_bytes()).expect("seal");
+    // a v1.2 key: sealed with the AAD that has no connection id
+    let sealed = m.seal(
+        &secret::SecretRef {
+            connection_id: 1,
+            name: SecretName::ApiKey,
+            aad_ver: 1,
+        },
+        KEY.as_bytes(),
+    );
     tables::put_secret(
         &c,
         SecretName::ApiKey,
@@ -163,7 +171,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
     assert_eq!(n, 2);
     drop(copy);
     assert!(captured_contains(&format!(
-        "Upgraded the AI database to schema 6. A copy of the previous version was saved first: {}.",
+        "Upgraded the AI database to schema 7. A copy of the previous version was saved first: {}.",
         copies[0].display()
     )));
 
@@ -174,7 +182,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "6");
+    assert_eq!(v, "7");
     for col in ["calls_per_minute", "calls_per_hour", "calls_per_day"] {
         assert!(has_column(&c, "limits", col), "{col}");
     }
@@ -209,10 +217,38 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
     let (s, v) = t.get("/api/ai/admin/settings", &admin).await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["keyProblem"], json!(null));
+    // the key moved to connection 1, still sealed with the v1.2 AAD, and it opens
+    let c = Connection::open(t.db_path()).expect("open");
+    let (conn_rows, key_rows, hint, aad): (i64, i64, String, i64) = c
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM connections), (SELECT COUNT(*) FROM connection_secrets),
+                    (SELECT hint FROM connection_secrets WHERE connection_id = 1), (SELECT aad_ver FROM connection_secrets)",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .expect("rows");
     assert_eq!(
-        v["keys"]["apiKey"],
-        json!({"set": true, "hint": secret::hint(KEY), "unreadable": false})
+        (conn_rows, key_rows, hint, aad),
+        (1, 1, secret::hint(KEY), 1)
     );
+    drop(c);
+    // (the model of an unverified v1.2 setup is `untested`, so no slot resolves until an administrator tests it)
+    let rows = t
+        .app
+        .0
+        .store
+        .read(|c| xexam_ai_service::store::conn::conn_secrets(c, 1))
+        .expect("secrets");
+    let master = t.app.0.master().expect("key");
+    let plain = master
+        .open_text(&secret::SecretRef::of_row(1, &rows[0]), &rows[0])
+        .expect("the migrated key opens");
+    assert_eq!(plain.as_str(), KEY);
+    assert!(t
+        .app
+        .0
+        .route(xexam_ai_service::route::Slot::Chat, None)
+        .is_err());
     let sam = t.user_with_id(5, "sam", false, true);
     let (s, v) = t.get("/api/ai/chats", &sam).await;
     assert_eq!(s, 200, "{v}");
@@ -317,18 +353,18 @@ async fn a_newer_schema_is_refused() {
     t.app.0.store.release_file();
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '7' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '8' WHERE key = 'schema'", [])
             .expect("set");
     }
     let cfg = test_config(t.dir.path(), &t.backend.url, &Opts::default());
     let err = match xexam_ai_service::app::App::open(cfg) {
-        Ok(_) => panic!("a schema-7 database must be refused"),
+        Ok(_) => panic!("a schema-8 database must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 7, written by a newer ai-service; this version (schema 6) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 8, written by a newer ai-service; this version (schema 7) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

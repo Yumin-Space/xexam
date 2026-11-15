@@ -137,20 +137,31 @@ def prepare(base, banks, stub_base):
 
 
 def setup_ai(admin, stub_base):
-    """AI settings as an administrator would fill them in: provider and key, the models listed, the model saved, the test,
+    """AI settings as an administrator would fill them in (v1.3): one connection with the made-up provider and key (the
+    save lists the models and tests one), a second connection that reuses the first one's key, the default model picked,
     the AI+ feature switched on; then two memories of the administrator."""
-    admin.call('/api/ai/admin/settings', {'provider': 'openai', 'baseUrl': stub_base, 'apiKey': AI_KEY})
-    models = admin.call('/api/ai/admin/models', {})
-    if AI_MODEL not in models.get('models', []):
-        raise RuntimeError('the made-up AI provider did not list %s: %r' % (AI_MODEL, models))
-    admin.call('/api/ai/admin/settings', {'model': AI_MODEL})
-    test = admin.call('/api/ai/admin/verify', {})
-    if not test.get('ok'):
-        raise RuntimeError('the AI test call failed: %r' % test)
-    admin.call('/api/ai/admin/enable', {'enabled': True})
+    saved = admin.call('/api/ai/admin/connections/save', {
+        'name': 'Demo provider', 'provider': 'openai', 'baseUrl': stub_base, 'format': 'openai', 'gatewayAuth': 'bearer',
+        'apiKey': AI_KEY})
+    if not saved.get('ok'):
+        raise RuntimeError('the made-up AI provider was refused: %r' % saved)
+    conn = saved['connectionId']
+    listing = admin.call('/api/ai/admin/models?refresh=1')
+    ids = [m['id'] for c in listing.get('connections', []) if c['id'] == conn for m in c.get('models', [])]
+    if AI_MODEL not in ids:
+        raise RuntimeError('the made-up AI provider did not list %s: %r' % (AI_MODEL, listing))
+    host = stub_base.split('//', 1)[1].split('/', 1)[0]
+    second = admin.call('/api/ai/admin/connections/save', {
+        'name': 'Demo backup', 'provider': 'openai', 'baseUrl': stub_base, 'format': 'openai', 'gatewayAuth': 'bearer',
+        'reuseKeysFrom': conn, 'confirmHost': host})
+    if not second.get('ok'):
+        print('  warning: the second made-up connection was not saved: %r' % second)
+    en = admin.call('/api/ai/admin/enable', {'enabled': True, 'default': {'connectionId': conn, 'model': AI_MODEL}})
+    if not en.get('ok', True):
+        raise RuntimeError('AI+ could not be switched on: %r' % en)
     for text in MEMORIES:
         admin.call('/api/ai/memories/add', {'content': text, 'source': 'manual'})
-    print('  AI: enabled with %s (test %s ms), %d memories' % (AI_MODEL, test.get('latencyMs'), len(MEMORIES)))
+    print('  AI: enabled with %s (connection %s), %d memories' % (AI_MODEL, conn, len(MEMORIES)))
 
 
 def ai_chat(base, cookie, text, lang):

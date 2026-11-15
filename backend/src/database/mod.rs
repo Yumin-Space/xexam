@@ -23,8 +23,11 @@ pub mod timefmt;
 
 pub use journal::{Checkpoint, JournalMode};
 pub use store::{
-    percent_round_half_even, scoped_id, AiUserRow, LegacyMigration, RetiredBank, SessionUser,
-    Store, UpdatedUser, UserChange, UserRow, UserUpdate, BACKUP_DIR,
+    percent_round_half_even, scoped_id, ActivityEntry, ActivityFilter, ActivityPage, ActivityRow,
+    ActivitySource, AiUserRow, EndedSession, FacetUser, LegacyMigration, Merge, NewSession,
+    RetiredBank, SessionRow, SessionUser, SigninInfo, Store, Touch, UpdatedUser, UserChange,
+    UserFilter, UserRow, UserUpdate, ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS, BACKUP_DIR,
+    DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, SIGNIN_INFO,
 };
 pub use timefmt::{Clock, FixedClock, FnClock, SystemClock};
 

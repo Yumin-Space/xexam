@@ -5,7 +5,7 @@ import { defineCatalog } from '../define.ts';
 export default defineCatalog({
   en: {
     'logs.title': 'System log',
-    'logs.lead': 'What the backend has logged since it last started, newest at the bottom. The page reads new lines every 0.5 seconds while it is open.',
+    'logs.lead': 'What the backend has logged since it last started, newest at the bottom. The page reads new lines every 2 seconds while it is open.',
     'logs.note': 'Only the last {n} lines since the backend started are kept here. For older lines, run `docker compose logs backend` on the server, in the folder of the compose file (without Compose: `docker logs xexam-backend`).',
     'logs.filter': 'Level',
     'logs.filter.all': 'All',
@@ -32,10 +32,13 @@ export default defineCatalog({
     'logs.filter.named': '{name}: {n}',
     'logs.search.close': 'Close the search',
     'logs.tip.aria': 'About the system log',
+
+    'logs.tab.activity': 'Activity',
+    'logs.tab.service': 'Service log',
   },
   zh: {
     'logs.title': '系统日志',
-    'logs.lead': '后端自上次启动以来记录的日志，最新的在最下面。页面打开时每 0.5 秒读取一次新内容。',
+    'logs.lead': '后端自上次启动以来记录的日志，最新的在最下面。页面打开时每 2 秒读取一次新内容。',
     'logs.note': '这里只保留后端启动以来的最后 {n} 行。更早的日志请在服务器上 compose 文件所在的文件夹里运行 `docker compose logs backend` 查看（不用 Compose 时运行 `docker logs xexam-backend`）。',
     'logs.filter': '级别',
     'logs.filter.all': '全部',
@@ -61,10 +64,13 @@ export default defineCatalog({
     'logs.filter.named': '{name}：{n}',
     'logs.search.close': '关闭搜索',
     'logs.tip.aria': '关于系统日志',
+
+    'logs.tab.activity': '活动记录',
+    'logs.tab.service': '运行日志',
   },
   ja: {
     'logs.title': 'システムログ',
-    'logs.lead': 'バックエンドが前回の起動以降に記録したログです。新しいものが一番下に表示されます。このページを開いている間、0.5 秒ごとに新しい行を読み込みます。',
+    'logs.lead': 'バックエンドが前回の起動以降に記録したログです。新しいものが一番下に表示されます。このページを開いている間、2 秒ごとに新しい行を読み込みます。',
     'logs.note': 'ここには、バックエンドの起動以降の最新 {n} 行だけが保持されます。それより前のログは、サーバーの compose ファイルがあるフォルダーで `docker compose logs backend` を実行して確認してください（Compose を使わない場合は `docker logs xexam-backend`）。',
     'logs.filter': 'レベル',
     'logs.filter.all': 'すべて',
@@ -90,5 +96,8 @@ export default defineCatalog({
     'logs.filter.named': '{name}：{n}',
     'logs.search.close': '検索を閉じる',
     'logs.tip.aria': 'システムログについて',
+
+    'logs.tab.activity': '操作履歴',
+    'logs.tab.service': 'サービスログ',
   },
 });

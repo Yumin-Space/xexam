@@ -8,13 +8,22 @@ export interface UsersList {
   users: UserRow[];
   /** ai-service is connected and the AI+ service is on in AI settings: only then are the AI+ switches shown */
   aiAvailable: boolean;
+  /** v1.3: the sign-in info eye (IP + approximate location); false on an older answer */
+  signinInfo: boolean;
 }
 
 /** An answer as the page uses it: `aiAvailable` and each row's `aiSuspended` count only when they are exactly true */
 export function usersListOf(a: UsersResponse): UsersList {
   return {
-    users: a.users.map((u) => ({ ...u, aiSuspended: u.aiSuspended === true })),
+    users: a.users.map((u) => ({
+      ...u,
+      aiSuspended: u.aiSuspended === true,
+      lastActiveAt: typeof u.lastActiveAt === 'string' ? u.lastActiveAt : null,
+      lastLoginIp: typeof u.lastLoginIp === 'string' ? u.lastLoginIp : null,
+      lastLoginLocation: u.lastLoginLocation ?? null,
+    })),
     aiAvailable: a.aiAvailable === true,
+    signinInfo: a.signinInfo === true,
   };
 }
 
@@ -37,3 +46,8 @@ export const resetUserPassword = (id: number, password: string): Promise<UsersLi
 export const unlockUser = (id: number): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/unlock', { id }));
 /** Deletes the user with their study records, wrong-answer notebook and settings */
 export const deleteUser = (id: number): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/delete', { id }));
+
+/** v1.3: shows or hides the recorded sign-in IP + approximate location (closed: nothing new is recorded and saved values are hidden; nothing is deleted) */
+export const setSigninInfo = (enabled: boolean): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/signin-info', { enabled }));
+/** v1.3: clears every saved sign-in IP and location (users, sessions, the activity log); cannot be undone */
+export const clearSigninInfo = (): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/signin-info/clear', {}));

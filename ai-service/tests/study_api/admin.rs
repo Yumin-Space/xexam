@@ -145,7 +145,7 @@ async fn usage_by_purpose_counts_the_kinds_in_a_fixed_order() {
             )
         })
         .collect();
-    // the administrator's own connection test is the one "other" row, not a chat row; the user's: 1 chat, 2 hints (one withheld), 1 explanation, 1 summary
+    // the connection is seeded here, so no administrator test call exists (the "other" row is 0); the user's: 1 chat, 2 hints (one withheld), 1 explanation, 1 summary
     assert_eq!(
         by,
         vec![
@@ -155,7 +155,7 @@ async fn usage_by_purpose_counts_the_kinds_in_a_fixed_order() {
             ("summary".to_string(), 1, 0),
             ("generate".to_string(), 0, 0),
             ("import".to_string(), 0, 0),
-            ("other".to_string(), 1, 0)
+            ("other".to_string(), 0, 0)
         ]
     );
     for r in rows {

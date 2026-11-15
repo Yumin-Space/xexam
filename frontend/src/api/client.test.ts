@@ -161,23 +161,27 @@ test('the sign-in lock (429 with JSON "retryAfter") keeps its own handling and i
   assert.ok(g instanceof ApiError && g.kind === 'http' && g.retryAfter === 60);
 });
 
-test('other failures are unchanged: no retry for a 502 or a lost connection', async () => {
-  reply(json(502, { error: '后端暂时连不上，请稍后刷新页面再试。' }));
+test('v1.3: a GET retries a 502 or a lost connection (3 tries, 1 s then 2 s) and then fails with the last error', async () => {
+  const gone = json(502, { error: '后端暂时连不上，请稍后刷新页面再试。' });
+  reply(gone, gone, gone);
   const bad = await getJson('/api/bank').then(
     () => assert.fail('should fail'),
     (err: unknown) => err,
   );
   assert.ok(bad instanceof ApiError && bad.kind === 'http' && bad.status === 502);
-  assert.equal(calls.length, 1);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(pauses, [1000, 2000]);
 
+  calls = [];
+  pauses = [];
   reply();
   const down = await getJson('/api/bank').then(
     () => assert.fail('should fail'),
     (err: unknown) => err,
   );
   assert.ok(down instanceof ApiError && down.kind === 'network');
-  assert.equal(calls.length, 2);
-  assert.deepEqual(pauses, []);
+  assert.equal(calls.length, 3);
+  assert.deepEqual(pauses, [1000, 2000]);
 });
 
 // A time limit per try (v0.7.5, the System log's poll reads): a read that hangs fails like a lost connection, so the page
@@ -200,8 +204,8 @@ test('a GET with a time limit and no answer fails with kind "network"', async ()
   );
   assert.ok(e instanceof ApiError && e.kind === 'network', String(e));
   assert.ok(Date.now() - started < 5000);
-  assert.equal(calls.length, 1, 'a cut-off read is not retried by the client');
-  assert.deepEqual(pauses, []);
+  assert.equal(calls.length, 3, 'v1.3: a cut-off read is tried again (3 tries in all)');
+  assert.deepEqual(pauses, [1000, 2000]);
 });
 
 test('a body that stalls past the time limit is a lost connection too, not "unexpected"', async () => {
@@ -347,7 +351,8 @@ test('JSON errors of the AI routes: code and field; the guard and the texts in t
 });
 
 test('a 5xx without JSON on /api/ai/ is "ai.unavailable"; elsewhere it stays a plain status error', async () => {
-  reply(() => new Response('<html>502 Bad Gateway</html>', { status: 502, headers: { 'Content-Type': 'text/html' } }));
+  const bad502 = (): Response => new Response('<html>502 Bad Gateway</html>', { status: 502, headers: { 'Content-Type': 'text/html' } });
+  reply(bad502, bad502, bad502);
   const e = await getJson('/api/ai/status').then(() => assert.fail('should fail'), (err: unknown) => err);
   assert.ok(e instanceof ApiError && e.kind === 'status' && e.status === 502 && e.code === 'ai.unavailable');
   assert.equal(errorText(e), 'AI is not available right now. Try again later or ask an administrator.');
@@ -356,7 +361,7 @@ test('a 5xx without JSON on /api/ai/ is "ai.unavailable"; elsewhere it stays a p
   const s = await collect('/api/ai/send', { chatId: null, text: 'x' });
   assert.ok(s.error instanceof ApiError && s.error.code === 'ai.unavailable');
 
-  reply(() => new Response('<html>502</html>', { status: 502, headers: { 'Content-Type': 'text/html' } }));
+  reply(bad502, bad502, bad502);
   const other = await getJson('/api/bank').then(() => assert.fail('should fail'), (err: unknown) => err);
   assert.ok(other instanceof ApiError && other.code === undefined);
 });
@@ -504,4 +509,76 @@ test('quota is only parsed for ai.callLimit and only when cap, limit and retryAt
     assert.ok(e instanceof ApiError);
     assert.equal(e.quota !== undefined, ok, JSON.stringify(b));
   }
+});
+
+// ---------------------------------------------------------------- v1.3: transient failures (IMPROVE A1 / A6)
+
+import { isTransient, retryPlan } from './client.ts';
+import { submitAttempt } from './progress.ts';
+
+const gateway = (status: number, body?: unknown) => (): Response =>
+  body === undefined
+    ? new Response('<html>bad gateway</html>', { status, headers: { 'Content-Type': 'text/html' } })
+    : new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+const lost = () => (): Response => { throw new TypeError('Failed to fetch'); };
+
+test('retryPlan: GET / HEAD 1 s then 2 s, POST /api/attempt 1 s then 3 s, any other POST once', () => {
+  assert.deepEqual(retryPlan('GET', '/api/bank'), { tries: 3, waits: [1, 2] });
+  assert.deepEqual(retryPlan('head', '/api/bank'), { tries: 3, waits: [1, 2] });
+  assert.deepEqual(retryPlan('POST', '/api/attempt'), { tries: 3, waits: [1, 3] });
+  assert.deepEqual(retryPlan('POST', '/api/ai/send'), { tries: 1, waits: [] });
+  assert.deepEqual(retryPlan('POST', '/api/attempt/x'), { tries: 1, waits: [] });
+});
+
+test('isTransient: connection loss and 502 / 503 / 504 only; a coded backend answer is final', () => {
+  assert.equal(isTransient(new ApiError('network')), true);
+  assert.equal(isTransient(new ApiError('status', 502)), true);
+  assert.equal(isTransient(new ApiError('status', 504)), true);
+  assert.equal(isTransient(new ApiError('status', 500)), false);
+  assert.equal(isTransient(new ApiError('status', 404)), false);
+  assert.equal(isTransient(new ApiError('http', 503, 'x', null, { code: 'net.backendDown' })), true);
+  assert.equal(isTransient(new ApiError('http', 503, 'x', null, { code: 'ai.serviceOff' })), false);
+  assert.equal(isTransient(new Error('plain')), false);
+});
+
+test('a GET retries a lost connection and a 502 / 503 / 504 (waits 1 s, 2 s) and then succeeds', async () => {
+  reply(lost(), gateway(502), json(200, { ok: 1 }));
+  assert.deepEqual(await getJson('/api/bank'), { ok: 1 });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(pauses, [1000, 2000]);
+});
+
+test('a GET that keeps failing gives up after 3 tries with the last error', async () => {
+  reply(gateway(503), gateway(503), gateway(503), json(200, {}));
+  await assert.rejects(() => getJson('/api/bank'), (e: unknown) => e instanceof ApiError && e.status === 503);
+  assert.equal(calls.length, 3);
+});
+
+test('a GET does not retry a 500, a 404 or a 401', async () => {
+  reply(gateway(500), json(200, {}));
+  await assert.rejects(() => getJson('/api/bank'));
+  assert.equal(calls.length, 1);
+});
+
+test('a POST is never retried, except /api/attempt (1 s, 3 s)', async () => {
+  reply(lost(), json(200, {}));
+  await assert.rejects(() => postJson('/api/records/delete', { id: 1 }));
+  assert.equal(calls.length, 1);
+  calls = [];
+  pauses = [];
+  reply(lost(), gateway(504), json(200, { history: [] }));
+  await submitAttempt({ results: [], sheets: [], mode: 'all', seconds: 1 });
+  assert.equal(calls.length, 3);
+  assert.deepEqual(pauses, [1000, 3000]);
+});
+
+test('a 401 with code auth.expired reports "expired", any other 401 "signin"', async () => {
+  const seen: AuthProblem[] = [];
+  setAuthHandler((p) => seen.push(p));
+  reply(json(401, { error: 'x', code: 'auth.expired' }));
+  await assert.rejects(() => getJson('/api/progress'));
+  reply(json(401, { error: 'x' }));
+  await assert.rejects(() => getJson('/api/progress'));
+  assert.deepEqual(seen, ['expired', 'signin']);
 });

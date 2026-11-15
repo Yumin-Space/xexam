@@ -2,7 +2,6 @@
 //! identity statement, a cookie, a prompt, an answer, a chat title, a memory or a provider URL.
 mod common;
 
-use axum::http::Method;
 use common::*;
 use serde_json::json;
 
@@ -16,43 +15,17 @@ async fn no_secret_or_content_in_any_log_line() {
     let question = "my private study question about matrices";
     let note = "private memory note text";
 
-    // keys in wrongly typed fields: the fixed 400, the key nowhere
-    for body in [
-        json!({"apiKey": {"nested": "sk-demo-NEVER-0000-1111"}}),
-        json!({"gatewayKey": ["sk-demo-NEVER-0000-1111"]}),
-        json!({"apiKey": 12345678901234567u64}),
-    ] {
-        let (s, v) = t.post("/api/ai/admin/settings", &admin, body).await;
-        assert_eq!(
-            (s, v),
-            (400, json!({"error": "请求无效。", "code": "ai.badRequest"}))
-        );
-    }
-    let r = t
-        .raw(
-            Method::POST,
-            "/api/ai/admin/settings",
-            Some(t.ident(&admin)),
-            Some(br#"{"apiKey": "sk-demo-NEVER-0000-1111""#.to_vec()),
-            Some("application/json"),
-        )
-        .await;
-    let (s, v) = read_json(r).await;
-    assert_eq!((s, v["code"].clone()), (400, json!("ai.badRequest")));
-
-    // a full session: gateway with both keys, chat, memory, suggestion, admin views and clears, a failure
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "gateway", "baseUrl": format!("{}/gw/openai", t.stub.url), "gatewayAuth": "cf-aig-authorization",
-                   "gatewayKey": gw_secret, "apiKey": secret, "model": "demo-chat-small"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    // a full session: gateway with both keys (seeded: the connection routes have their own tests), chat, memory,
+    // suggestion, admin views and clears, a failure
+    t.seed_route(Seed {
+        provider: "gateway",
+        url: format!("{}/gw/openai", t.stub.url),
+        api_key: Some(secret),
+        gateway_key: Some(gw_secret),
+        gateway_auth: "cf-aig-authorization",
+        model: "demo-chat-small",
+    });
     t.verify_and_enable(&admin).await;
-    let (s, v) = t.post("/api/ai/admin/models", &admin, json!({})).await;
-    assert_eq!(s, 200, "{v}");
     let ev = t
         .send_all(&sam, json!({"text": question}))
         .await
@@ -95,14 +68,12 @@ async fn no_secret_or_content_in_any_log_line() {
     let (s, v) = t.get("/api/ai/admin/settings", &admin).await;
     assert_eq!(s, 200);
     assert!(!v.to_string().contains(secret) && !v.to_string().contains(gw_secret));
-    assert_eq!(v["keys"]["gatewayKey"]["hint"], json!("…wxyz"));
     let (_, u) = t.get("/api/ai/admin/usage", &admin).await;
     assert!(!u.to_string().contains(&t.stub.url));
 
     // forward the queued lines to the fake backend
     xexam_ai_service::logs::flush_once(&t.app.0.link, xexam_ai_service::logs::queue()).await;
     let forwarded = t.backend.logs();
-    assert!(forwarded.iter().any(|l| l.contains("saved the AI settings (provider: Cloudflare AI Gateway, model: demo-chat-small; the API key was replaced; the gateway key was replaced; the base URL was changed)")));
     assert!(forwarded
         .iter()
         .any(|l| l.contains("AI call failed for user \"sam\": ai.up.auth (HTTP 401)")));

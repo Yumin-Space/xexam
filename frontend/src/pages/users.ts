@@ -24,13 +24,13 @@
 // banks imported later" as the first entry of the list, the explanations as tooltips (hover and keyboard focus).
 // v1.0 (phones first): every row action is an icon button on every width (named with the user, the reason it is greyed as tip /
 // toast), the row is compact (no default tags, no per-row sentences: the own-account / last-administrator reason and the lock
-// explanation are (i) tips, the facts are one line), the AI+ switch sits in the action row (never under a button), the bank line
+// explanation are (i) tips, the facts are one per line), the AI+ switch sits in the action row (never under a button), the bank line
 // is one 44 px row that opens the bank dialog, a new user's row is scrolled into view and highlighted, and a paused AI+ tag links
 // to AI settings.
 import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
-import { createUser, deleteUser, fetchUsers, resetUserPassword, unlockUser, updateUser, type UsersList } from '../api/users.ts';
+import { clearSigninInfo, createUser, deleteUser, fetchUsers, resetUserPassword, setSigninInfo, unlockUser, updateUser, type UsersList } from '../api/users.ts';
 import { aiBadge, aiSetBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
@@ -40,8 +40,10 @@ import { miniSwitch } from '../components/mini-switch.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
 import { holdTip, infoTip, tipEl, withTip } from '../components/tooltip.ts';
 import { badgeState, serviceReason } from '../domain/badge-state.ts';
+import { countryNameIn, placeText } from '../domain/geo.ts';
+import { USER_SORTS, isOnline, sortUsers, type UserSort } from '../domain/users-sort.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
-import { SEARCH_FROM, aiLineKind, createAi, filterUsers, isServiceOff, lockUntilLabel, shortAt } from '../domain/user-admin.ts';
+import { SEARCH_FROM, aiLineKind, createAi, filterUsers, isServiceOff, lockUntilLabel, fullAt } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
 import { t, tn, uiLang } from '../i18n/index.ts';
@@ -66,6 +68,12 @@ const ROLE_DESC: Record<Role, 'users.role.userDesc' | 'users.role.adminDesc'> = 
 let users: UserRow[] | null = null;
 /** v0.8 round 2: AI+ is available, from the newest list answer (false until the first one) */
 let aiAvailable = false;
+/** v1.3: the sign-in info eye (IP + approximate location), from the newest list answer */
+let signinInfo = false;
+/** v1.3: the list order (sort select) */
+let sortBy: UserSort = 'name';
+/** The sign-in info eye request runs */
+let signinBusy = false;
 let loading = false;
 let loadError: unknown = null;
 /** Read the list again on the next render (set whenever the page is opened) */
@@ -232,6 +240,7 @@ async function load(): Promise<void> {
 function take(answer: UsersList): void {
   users = answer.users;
   aiAvailable = answer.aiAvailable;
+  signinInfo = answer.signinInfo;
   noteLocks(answer.users);
 }
 
@@ -816,6 +825,89 @@ function chooseBanks(u: UserRow): Promise<void> {
   });
 }
 
+/**
+ * v1.3: the sign-in info eye toggle (IP + approximate location, administrators only). Closing it hides the saved values and the
+ * server records nothing new; nothing is deleted, so there is nothing to confirm. The answer is the whole list,
+ * which carries the new state.
+ */
+async function setSignin(on: boolean): Promise<void> {
+  if (asking || signinBusy || busyId != null) return;
+  signinBusy = true;
+  actionError = null;
+  render();
+  try {
+    adopt(await setSigninInfo(on));
+  } catch (e) {
+    actionError = e;
+  } finally {
+    signinBusy = false;
+  }
+  if (onUsersPage()) render();
+  document.getElementById('us-signin')?.focus({ preventScroll: true });
+}
+
+/** v1.3: clears every saved sign-in IP and location after a confirmation (it cannot be undone); works with the eye open or closed */
+async function clearSignin(): Promise<void> {
+  if (asking || signinBusy || busyId != null) return;
+  asking = true;
+  let done = false;
+  try {
+    const yes = await ask({ title: t('users.signinInfo.clear'), body: t('users.signinInfo.clear.ask'), ok: t('users.signinInfo.clear.ok'), danger: true });
+    if (!yes) return;
+    signinBusy = true;
+    actionError = null;
+    render();
+    try {
+      adopt(await clearSigninInfo());
+      done = true;
+    } catch (e) {
+      actionError = e;
+    }
+  } finally {
+    asking = false;
+    signinBusy = false;
+  }
+  if (done) toast(t('users.signinInfo.clear.done'));
+  if (onUsersPage()) render();
+  document.getElementById('us-signin-clear')?.focus({ preventScroll: true });
+}
+
+function signinPanel(): HTMLElement | null {
+  if (!users || loadError) return null;
+  const state = signinInfo ? t('users.signinInfo') : t('users.signinInfo.hidden');
+  return h('section', { class: 'us-signin-box', 'aria-labelledby': 'us-signin-t' },
+    h('h2', { id: 'us-signin-t' }, t('users.signinInfo.title')),
+    h('p', { class: 'us-signin-desc', id: 'us-signin-d' }, t('users.signinInfo.desc')),
+    h('div', { class: 'us-signin-row' },
+      // The eye is a persistent setting (aria-pressed): open eye = shown, slashed eye = hidden
+      h('button', {
+        class: 'us-eye' + (signinInfo ? ' on' : ''), id: 'us-signin', type: 'button', 'aria-pressed': String(signinInfo),
+        'aria-describedby': 'us-signin-d', title: state, disabled: signinBusy, onclick: () => void setSignin(!signinInfo),
+      },
+      h('span', { class: 'us-eye-ico' }, miniIcon(signinInfo ? 'eye' : 'eyeOff', 'us-eye-svg')),
+      // Visible status text (part of the button, hidden from assistive tech): the accessible name stays fixed, the state is aria-pressed
+      h('span', { class: 'us-eye-txt', 'aria-hidden': 'true' },
+        h('span', { class: 'us-eye-lbl' }, t('users.signinInfo.state.label')),
+        h('span', { class: 'us-eye-val' }, signinInfo ? t('users.signinInfo.state.on') : t('users.signinInfo.state.off'))),
+      h('span', { class: 'sr-only', id: 'us-signin-l' }, t('users.signinInfo.name'))),
+      h('button', {
+        class: 'btn danger solid us-signin-clear', id: 'us-signin-clear', type: 'button', disabled: signinBusy,
+        'aria-label': t('users.signinInfo.clear.name'), title: t('users.signinInfo.clear.tip'), onclick: () => void clearSignin(),
+      }, miniIcon('trash', 'us-del-svg'), h('span', null, t('users.signinInfo.clear')))));
+}
+
+function sortSelect(): HTMLElement {
+  return h('label', { class: 'us-sort' },
+    h('span', null, t('users.sort')),
+    h('select', {
+      id: 'us-sort', onchange: (e: Event) => {
+        sortBy = (e.target as HTMLSelectElement).value as UserSort;
+        render();
+        document.getElementById('us-sort')?.focus({ preventScroll: true });
+      },
+    }, USER_SORTS.map((k) => h('option', { value: k, selected: k === sortBy }, t(`users.sort.${k}`)))));
+}
+
 function toggleDisabled(u: UserRow): Promise<void> {
   return guarded(async () => {
     if (!u.disabled && !(await ask({
@@ -938,6 +1030,27 @@ function rowBadge(u: UserRow): HTMLElement | null {
   }), { admin: true });
 }
 
+/**
+ * The facts of a row, one per line (phones and desktop alike): last sign-in, last active, then (v1.3) the last sign-in IP
+ * and the place, only while the switch is on and the answer has an IP (never invented; an IP without a place says the
+ * place is unknown), and last the number of saved exam / practice records.
+ */
+function factLines(u: UserRow): HTMLElement {
+  const line = (...parts: Array<string | HTMLElement>): HTMLElement => h('p', { class: 'us-meta' }, parts);
+  const lines = [
+    line(u.lastLoginAt ? t('users.meta.lastLogin', { at: fullAt(u.lastLoginAt) }) : t('users.meta.never')),
+    line(u.lastActiveAt ? t('users.fact.lastActive', { at: fullAt(u.lastActiveAt) }) : t('users.fact.neverActive')),
+  ];
+  if (signinInfo && u.lastLoginIp) {
+    const place = placeText(u.lastLoginLocation, countryNameIn(uiLang()));
+    lines.push(
+      line(t('users.fact.loginIp'), h('span', { class: 'us-ip' }, u.lastLoginIp)),
+      line(t('users.fact.loginPlace'), place ?? t('users.fact.placeUnknown')));
+  }
+  lines.push(line(t('users.fact.records', { n: u.records })));
+  return h('div', { class: 'us-facts' }, lines);
+}
+
 function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
   const lim = limitsOf(u, list);
   const busy = busyId === u.id;
@@ -967,17 +1080,13 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
     !u.disabled && u.mustChangePassword ? h('span', { class: 'tag k' }, t('users.status.mustChange')) : null,
     // v0.6.5: a plain user who may import and manage their own question banks (administrators always may)
     u.role === 'user' && u.canManageBanks ? h('span', { class: 'tag b' }, t('users.tag.manager')) : null,
+    isOnline(u.lastActiveAt, Date.now()) ? h('span', { class: 'tag g us-online' }, t('users.online')) : null,
     rowBadge(u),
     // US-9: a paused AI+ function links to the users tab of AI settings (the two-switch model stays)
     aiAvailable && u.role === 'user' && u.ai && u.aiSuspended
       ? h('a', { class: 'tag k us-ai-paused', id: `us-ai-paused-${u.id}`, href: `#/ai-settings?tab=users&user=${u.id}` }, t('users.ai.pausedGo'))
       : null,
     whyTip?.el ?? null,
-  ];
-  // The facts in one line (US-2): the last sign-in and the number of study records
-  const facts = [
-    u.lastLoginAt ? t('users.meta.lastLogin', { at: shortAt(u.lastLoginAt) }) : t('users.meta.never'),
-    tn('users.meta.recordsShort', u.records),
   ];
   const unlockBtn = lock.unlock
     ? iconButton({
@@ -999,10 +1108,7 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
     h('div', { class: 'us-line' },
       h('h3', { class: 'us-name', id: `us-name-${u.id}`, tabindex: '-1', title: u.username }, u.username),
       h('span', { class: 'us-tags' }, tags)),
-    h('p', { class: 'us-meta' }, facts.map((m, i) => [
-      i ? ' ' : null,
-      h('span', { class: 'us-nw' }, m, i < facts.length - 1 ? h('span', { class: 'us-dot', 'aria-hidden': 'true' }, '·') : null),
-    ])),
+    factLines(u),
     bankLine(u, blocked)),
   h('div', { class: 'us-acts' },
     aiSwitch(u, blocked),
@@ -1036,6 +1142,7 @@ function listPanel(): HTMLElement {
   const lead = infoTip('us-lead-tip', t('users.lead.aria'), t('users.lead'), 'us-tip');
   const head = h('div', { class: 'us-head' },
     h('h2', { id: 'us-list-h', tabindex: '-1' }, t('users.list.title'), list ? h('span', { class: 'us-count' }, tn('users.count', list.length)) : null, lead.el),
+    list && list.length > 1 ? sortSelect() : null,
     add.open ? null : addButton(list));
 
   let body: Child;
@@ -1046,7 +1153,7 @@ function listPanel(): HTMLElement {
         h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => void load() }, t('common.retry'))))
       : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   } else {
-    const rows = h('ul', { class: 'us-rows' }, list.map((u) => userRow(u, list)));
+    const rows = h('ul', { class: 'us-rows' }, sortUsers(list, sortBy).map((u) => userRow(u, list)));
     const none = h('p', { class: 'dim us-nomatch', role: 'status', hidden: true }, t('users.search.none'));
     // US-11: a search field above a long list; it hides rows in place (no redraw, the field keeps its focus)
     const apply = (): void => {
@@ -1115,6 +1222,7 @@ export function renderUsers(): HTMLElement {
   const root = h('div', { class: 'page page-users' },
     pageHead(t('users.title')),
     aiHiddenNote(),
+    signinPanel(),
     listPanel());
   focusAfter(root);
   showNewRow(root);

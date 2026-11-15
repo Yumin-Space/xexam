@@ -368,14 +368,83 @@ impl ApiError {
         .with_field(SecretName::ApiKey.json())
     }
     pub fn key_missing(f: SecretName) -> ApiError {
-        ApiError::new(400, "ai.keyMissing", "请先填写密钥。").with_field(f.json())
-    }
-    pub fn key_reenter(f: SecretName) -> ApiError {
-        ApiError::new(400, "ai.keyReenter", "地址或服务商变了，请重新输入密钥。")
-            .with_field(f.json())
+        ApiError::new(422, "ai.keyMissing", "请先填写密钥。").with_field(f.json())
     }
     pub fn model_missing() -> ApiError {
-        ApiError::new(400, "ai.modelMissing", "请先选择模型。")
+        ApiError::new(422, "ai.modelMissing", "请先选择默认模型。")
+    }
+    // —— v1.3: connections, model picks, the daily budget ——————————————————————————————————————————————————————————
+    /// A model pick that is not usable (400 `ai.badModel`).
+    pub fn bad_model() -> ApiError {
+        ApiError::new(400, "ai.badModel", "这个模型不可用，请重新选择。")
+    }
+    /// The branch the request named is not the viewed one any more (409 `ai.branchMoved`).
+    pub fn branch_moved() -> ApiError {
+        ApiError::new(409, "ai.branchMoved", "对话已在别处更新，已刷新。")
+    }
+    pub fn name_taken() -> ApiError {
+        ApiError::new(409, "ai.nameTaken", "已有同名的连接。").with_field("name")
+    }
+    pub fn bad_name() -> ApiError {
+        ApiError::new(400, "ai.badName", "连接名称需要 1 到 40 个字。").with_field("name")
+    }
+    /// Another administrator saved the connection first (409 `ai.conflict`).
+    pub fn conflict() -> ApiError {
+        ApiError::new(409, "ai.conflict", "设置已被其他人修改，请刷新后重试。")
+    }
+    pub fn connection_limit(n: i64) -> ApiError {
+        ApiError::new(
+            409,
+            "ai.connectionLimit",
+            &format!("最多只能添加 {n} 个连接。"),
+        )
+        .with_limit(n)
+    }
+    /// A feature still uses the connection; `used_by` = slot names.
+    pub fn connection_in_use(used_by: Value) -> ApiError {
+        ApiError::new(409, "ai.connectionInUse", "有功能正在使用这个连接。")
+            .with_extra("usedBy", used_by)
+    }
+    pub fn default_needed() -> ApiError {
+        ApiError::new(409, "ai.defaultNeeded", "请先选择新的默认模型。")
+    }
+    pub fn model_in_use(used_by: Value) -> ApiError {
+        ApiError::new(409, "ai.modelInUse", "有功能正在使用这个模型。")
+            .with_extra("usedBy", used_by)
+    }
+    /// A saved key would be sent to another address: the request must repeat it with `confirmHost`.
+    pub fn key_reuse_confirm(host: &str, old_host: &str, slots: Value) -> ApiError {
+        ApiError::new(
+            409,
+            "ai.keyReuseConfirm",
+            "已保存的密钥将发送到新的地址，请确认这是你信任的服务器。",
+        )
+        .with_extra("host", Value::from(host))
+        .with_extra("oldHost", Value::from(old_host))
+        .with_extra("slots", slots)
+    }
+    /// A generation source above `genMaxChunks` (409 `ai.gen.tooBig`).
+    pub fn gen_too_big(tokens: i64, chunks: i64, limit: i64) -> ApiError {
+        ApiError::new(
+            409,
+            "ai.gen.tooBig",
+            &format!("题库太大（约 {tokens} tokens），请减少勾选的范围后再生成。"),
+        )
+        .with_extra("tokens", Value::from(tokens))
+        .with_extra("chunks", Value::from(chunks))
+        .with_extra("limit", Value::from(limit))
+    }
+    /// The site-wide daily token budget is reached (429 `ai.budget`); never for administrators.
+    pub fn budget() -> ApiError {
+        ApiError::new(
+            429,
+            "ai.budget",
+            "今天的 AI 总额度已用完，明天会自动恢复。请联系管理员。",
+        )
+    }
+    /// An admin test is already running for this connection (409 `ai.busy`).
+    pub fn test_busy() -> ApiError {
+        ApiError::busy()
     }
     pub fn bad_retention() -> ApiError {
         ApiError::new(400, "ai.badRetention", "保留天数必须在 1 到 3650 之间。")
@@ -415,6 +484,17 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.notFound" => "找不到了，可能已被删除。",
         "ai.interrupted" => "服务重启，回答被中断了。",
         "ai.keyProblem" => "已保存的密钥无法解密，请在 AI 设置里重新输入。",
+        "ai.badModel" => "这个模型不可用，请重新选择。",
+        "ai.branchMoved" => "对话已在别处更新，已刷新。",
+        "ai.nameTaken" => "已有同名的连接。",
+        "ai.badName" => "连接名称需要 1 到 40 个字。",
+        "ai.conflict" => "设置已被其他人修改，请刷新后重试。",
+        "ai.connectionInUse" => "有功能正在使用这个连接。",
+        "ai.defaultNeeded" => "请先选择新的默认模型。",
+        "ai.modelInUse" => "有功能正在使用这个模型。",
+        "ai.keyReuseConfirm" => "已保存的密钥将发送到新的地址，请确认这是你信任的服务器。",
+        "ai.budget" => "今天的 AI 总额度已用完，明天会自动恢复。请联系管理员。",
+        "ai.gen.tooBig" => "题库太大，请减少勾选的范围后再生成。",
         "ai.up.auth" => "AI 服务商拒绝了这个密钥。",
         "ai.up.quota" => "AI 服务商账号的额度或余额不足。",
         "ai.up.notFound" => "AI 服务商找不到这个模型或地址。",
@@ -476,14 +556,68 @@ mod tests {
     use super::*;
 
     #[test]
+    fn v13_codes_have_their_status_text_and_extras() {
+        for (e, status) in [
+            (ApiError::bad_model(), 400),
+            (ApiError::branch_moved(), 409),
+            (ApiError::name_taken(), 409),
+            (ApiError::bad_name(), 400),
+            (ApiError::conflict(), 409),
+            (ApiError::connection_limit(8), 409),
+            (
+                ApiError::connection_in_use(serde_json::json!(["chat"])),
+                409,
+            ),
+            (ApiError::default_needed(), 409),
+            (ApiError::model_in_use(serde_json::json!(["default"])), 409),
+            (
+                ApiError::key_reuse_confirm(
+                    "a.example.com",
+                    "b.example.com",
+                    serde_json::json!(["apiKey"]),
+                ),
+                409,
+            ),
+            (ApiError::gen_too_big(90_000, 9, 8), 409),
+            (ApiError::budget(), 429),
+        ] {
+            assert_eq!(e.status.as_u16(), status, "{}", e.code);
+            // two texts carry a number; the others are the code's own text
+            if !["ai.connectionLimit", "ai.gen.tooBig"].contains(&e.code) {
+                assert_eq!(text_of(e.code), e.text, "{}", e.code);
+            }
+        }
+        let j = ApiError::key_reuse_confirm(
+            "a.example.com",
+            "b.example.com",
+            serde_json::json!(["apiKey"]),
+        )
+        .to_json();
+        assert_eq!(j["host"], "a.example.com");
+        assert_eq!(j["oldHost"], "b.example.com");
+        assert_eq!(j["slots"], serde_json::json!(["apiKey"]));
+        assert_eq!(ApiError::connection_limit(8).to_json()["limit"], 8);
+        assert_eq!(ApiError::model_missing().status.as_u16(), 422);
+        assert_eq!(
+            ApiError::key_missing(SecretName::ApiKey).status.as_u16(),
+            422
+        );
+        let j = ApiError::gen_too_big(90_000, 9, 8).to_json();
+        assert_eq!(
+            (j["tokens"].clone(), j["chunks"].clone(), j["limit"].clone()),
+            (90_000.into(), 9.into(), 8.into())
+        );
+    }
+
+    #[test]
     fn json_shape() {
         let e = ApiError::too_long(16000);
         assert_eq!(
             serde_json::to_string(&e.to_json()).expect("json"),
             r#"{"error":"消息太长了（最多 16000 个字符）。","code":"ai.tooLong","limit":16000}"#
         );
-        let e = ApiError::key_reenter(SecretName::GatewayKey);
-        assert_eq!(e.status, StatusCode::BAD_REQUEST);
+        let e = ApiError::key_missing(SecretName::GatewayKey);
+        assert_eq!(e.status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(e.field, Some("gatewayKey"));
         assert_eq!(ApiError::upstream(UpCode::Timeout).status.as_u16(), 504);
         assert_eq!(ApiError::upstream(UpCode::Auth).status.as_u16(), 502);

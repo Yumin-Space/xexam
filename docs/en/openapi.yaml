@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "1.2.1"
+  version: "1.3"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -45,7 +45,7 @@ info:
     `aiAvailable`; while it is false, `POST /api/users/update` with an `ai` key and `POST /api/users/create` with `ai: true`
     answer 409 `ai.serviceOff` (the only error of the backend's own routes with a `code`).
 
-    **(v0.9) The AI+ feature in practice** (`/api/ai/study/*` and `/api/ai/summary/*`, tag `ai`): AI hints and explanations of one
+    **(v0.9) The AI+ feature in practice** (`/api/ai/study/*` and `/api/ai/summary/*`, tag `ai`): AI hints and analyses of one
     question, and the AI summary of a study record. The two `ask` routes are `AiUser` routes that answer with the event stream
     of `send`; the two `saved` routes need only `AiSigned`. Every answer is saved in a study chat (`AiChatSummary.kind`
     `practice`, `exam` or `summary`). The question and the record are read by ai-service from the backend with the caller's own
@@ -132,6 +132,10 @@ paths:
         Failed sign-ins escalate a lock in rounds (5 failures within 15 minutes → 1 minute; then 3 failures per round → 5 min,
         15 min, 30 min, 1 h, then 1 day), per account and separately for browsers that carry the account's `xexam_device`
         cookie. During a lock every attempt gets 429, even with the right password; 429 answers are not counted.
+
+        (v1.3) The answer also has `session`: `{"rule": "admin" | "remember" | "browser", "idleSecs": 86400, "hardEndsAt": "2026-11-21 07:20:00" | null}`. The cookie is
+        `Max-Age=604800` once for an administrator, `Max-Age=2592000` for a user with `remember` (re-sent at most hourly), and a
+        browser-session cookie otherwise. An ended session answers every signed-in route with 401 and `code` `auth.expired`.
       requestBody:
         required: true
         content:
@@ -950,7 +954,7 @@ paths:
         Failures before the answer starts are JSON errors: 403 `ai.disabled` / `ai.notAllowed` / `ai.suspended` / `ai.adminOnly`; 400 `ai.tooLong` (with `limit`)
         / `ai.badRequest`; 404 `ai.notFound` (not your chat); 409 `ai.busy`, `ai.messageLimit`, `ai.chatLimit` (with `limit`),
         `ai.keyProblem`; 503 `ai.backendDown` / `ai.serverBusy`. Otherwise 200 with `text/event-stream`: the event `start`,
-        then (round 2) at most one `thinking` event (only before the first `delta`), then `delta` events, then exactly one of `done`, `stopped` or `error`; a comment `: keep-alive` every 15 s while nothing
+        then (round 2) at most one `thinking` event (only before the first `delta`), then (v1.3, AI Chat only) `reasoning` events and one `reasoningDone`, then `delta` events, then exactly one of `done`, `stopped` or `error`; a comment `: keep-alive` every 15 s while nothing
         else was sent. The answer goes on, and is saved, when the client disconnects. Nginx: 20 starts a minute per session
         (burst 10), read timeout 600 s, no buffering.
 
@@ -1005,7 +1009,7 @@ paths:
       description: |
         The chat's last message must be an assistant message with status `error` or `stopped` after a user message (else 409
         `ai.notRetryable`). It is reset and written again in place; `start.retry` is true. Errors and events as for /api/ai/send.
-        (v0.9) A study answer (a hint, an explanation or a summary) is never retried this way: 409 `ai.notRetryable`, text unchanged.
+        (v0.9) A study answer (a hint, an analysis or a summary) is never retried this way: 409 `ai.notRetryable`, text unchanged.
         It is asked again through /api/ai/study/ask or /api/ai/summary/ask.
       requestBody:
         required: true
@@ -1078,7 +1082,7 @@ paths:
       tags: [ai]
       summary: "(v0.8) Stop your answers being written ({} = all of them, {chatId} = the one of that chat)"
       x-access: AiSigned
-      description: Waits up to 5 s until the stopped answers are saved. The stream ends with the event `stopped`; the text so far is kept. (v0.9) Also stops hints, explanations and summaries (the `chatId` of their study chat, or {}).
+      description: Waits up to 5 s until the stopped answers are saved. The stream ends with the event `stopped`; the text so far is kept. (v0.9) Also stops hints, analyses and summaries (the `chatId` of their study chat, or {}).
       requestBody:
         required: false
         content:
@@ -1119,7 +1123,7 @@ paths:
   /api/ai/study/ask:
     post:
       tags: [ai]
-      summary: "(v0.9) Ask for an AI hint or explanation of one question; the answer arrives as an event stream and is saved in the study chat"
+      summary: "(v0.9) Ask for an AI hint or analysis of one question; the answer arrives as an event stream and is saved in the study chat"
       x-access: AiUser
       description: |
         Body keys other than the ones listed, a value of the wrong type or an impossible combination are 400 `ai.badRequest`,
@@ -1135,7 +1139,7 @@ paths:
         The chat is the practice or exam session's study chat (`kind` practice or exam, found by the session key; a record saved
         before v0.9 has no key and gets a chat of its own, of the record's kind, titled with the record's time). It is created by
         the first ask; its stored title is `YYYY-MM-DD HH:MM`, the start of the session. A hint is given the question without its
-        answer key; an explanation is given the question, the answer key and the stored explanation, and on a result page also
+        answer key; an analysis is given the question, the answer key and the stored explanation, and on a result page also
         what the user answered. No memories, no earlier messages, no free mode. The reply language is `lang`, else the user's
         Settings language.
 
@@ -1178,7 +1182,7 @@ paths:
   /api/ai/study/saved:
     get:
       tags: [ai]
-      summary: "(v0.9) The saved AI hint or explanation of one question in one place"
+      summary: "(v0.9) The saved AI hint or analysis of one question in one place"
       x-access: AiSigned
       description: |
         Needs no AI+ feature, so saved answers stay readable while AI is off or the user is paused. The query is read as it is (no
@@ -1279,8 +1283,8 @@ paths:
                 required: [memories, limit, maxTokens]
                 properties:
                   memories: { type: array, items: { $ref: "#/components/schemas/AiMemory" } }
-                  limit: { type: integer, example: 50, description: "memoriesPerUser" }
-                  maxTokens: { type: integer, example: 200, description: "memoryTokens (1000 by default since v1.1, estimated tokens)" }
+                  limit: { type: integer, example: 30, description: "memoriesPerUser" }
+                  maxTokens: { type: integer, example: 200, description: "memoryTokens (200 by default since v1.3, estimated tokens)" }
         "401": { $ref: "#/components/responses/AiSignIn" }
   /api/ai/memories/add:
     post:
@@ -1433,65 +1437,18 @@ paths:
         "403": { $ref: "#/components/responses/AiForbidden" }
         "409": { $ref: "#/components/responses/AiError" }
   /api/ai/admin/models:
-    post:
+    get:
       tags: [ai-admin]
-      summary: "(v0.8) List the provider's models with the saved settings"
+      summary: "(v1.3) The models of every usable connection (also read by the AI Chat page for its free-mode menu)"
       x-access: AiAdmin
       description: |
-        400 `ai.keyMissing` (with `field`) when a needed key is not saved. A provider that does not list models answers
-        `{"models": [], "listed": false}`. Key, connection, quota and time-out problems: 502 / 504 with their `ai.up.*` code.
-        Kept 10 minutes per settings fingerprint.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: false }
+        Query `refresh=0|1`. Answer `{"connections": [{"id", "name", "provider", "status", "listed", "error", "models": [{"id", "context", "poolId", "status"}]}]}`. Cached per connection and revision for 10 minutes; refresh=1 lists again. Replaces the v1.2 POST of this path and POST /api/ai/admin/verify, which are gone.
+      parameters:
+        - { name: refresh, in: query, required: false, schema: { type: integer, enum: [0, 1] } }
       responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [models, listed]
-                properties:
-                  models: { type: array, items: { type: string } }
-                  listed: { type: boolean }
-        "400": { $ref: "#/components/responses/AiError" }
+        "200": { description: "The model lists" }
         "401": { $ref: "#/components/responses/AiSignIn" }
         "403": { $ref: "#/components/responses/AiForbidden" }
-        "409": { $ref: "#/components/responses/AiError" }
-        "502": { $ref: "#/components/responses/AiUpstream" }
-        "503": { $ref: "#/components/responses/AiBackendDown" }
-        "504": { $ref: "#/components/responses/AiUpstream" }
-  /api/ai/admin/verify:
-    post:
-      tags: [ai-admin]
-      summary: "(v0.8) Test the saved settings with one real request to the model"
-      x-access: AiAdmin
-      description: |
-        400 `ai.modelMissing` / `ai.keyMissing`, 409 `ai.keyProblem`, 503 `ai.serverBusy` before anything is sent. One
-        streaming request like a chat ("Reply with the single word OK." / "Test"), up to 2 min; on `ai.up.badRequest` a second
-        try without stream_options (OpenAI format) or with max_tokens 4096 (Anthropic format). A failure is a 200 with
-        `ok: false`: a settings-class code (auth, quota, notFound, badRequest, protocol, refused) clears the passed test and
-        switches AI off; a temporary one (rateLimit, overloaded, server, timeout, connect) changes nothing. Nginx waits up to
-        300 s for this route.
-      requestBody:
-        required: false
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: false }
-      responses:
-        "200":
-          description: The result of the test
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/AiVerify" }
-        "400": { $ref: "#/components/responses/AiError" }
-        "401": { $ref: "#/components/responses/AiSignIn" }
-        "403": { $ref: "#/components/responses/AiForbidden" }
-        "409": { $ref: "#/components/responses/AiError" }
-        "503": { $ref: "#/components/responses/AiBackendDown" }
   /api/ai/admin/enable:
     post:
       tags: [ai-admin]
@@ -2157,6 +2114,473 @@ paths:
         "404": { description: "Missing or wrong token (answered like an unknown path: text/plain `not found`)" }
         "413": { description: Body too large }
         "415": { description: Content-Type is not application/json }
+  /api/users/signin-info:
+    post:
+      tags: [users]
+      summary: "(v1.3) Show or hide the sign-in IP and approximate location (administrators)"
+      x-access: Admin
+      description: |
+        Writes `system_settings` `users.signin_info`. Closed: nothing new is recorded (no address or location in sign-ins, sessions or activity
+        entries) and stored ones are hidden; open: they show again and recording resumes. Nothing stored is changed or deleted. Answers like GET /api/users (with `signinInfo`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200": { description: "The users answer, with `signinInfo`" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/users/signin-info/clear:
+    post:
+      tags: [users]
+      summary: "(v1.3) Clear every saved sign-in IP address and location (administrators)"
+      x-access: Admin
+      description: |
+        Sets `users.last_login_ip` / `_country` / `_region` / `_city`, `sessions.ip` and `ip` / `country` / `region` / `city` of the
+        activity log to NULL (the log in batches of 5000), whether the eye is open or closed. Cannot be undone; what is recorded
+        afterwards stays. Activity entry `users.signinInfoClear` with `{rows}`. Answers like GET /api/users (with `signinInfo`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200": { description: "The users answer, with `signinInfo`" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/activity:
+    get:
+      tags: [logs]
+      summary: "(v1.3) The activity log (administrators)"
+      x-access: Admin
+      description: |
+        Entries newest first, keyset paging: `next` is passed as `before`, `newest` as `after`. `ip` and `location` are null while the
+        sign-in info eye is closed (hidden, not deleted). Not logged and does not keep a session alive. `page.view` rows only with `group=visit` or
+        `action=page.view`.
+      parameters:
+        - { name: before, in: query, schema: { type: integer } }
+        - { name: after, in: query, schema: { type: integer } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200, default: 100 } }
+        - { name: user, in: query, schema: { type: string }, description: "a user id, `system` or `anon`" }
+        - { name: group, in: query, schema: { type: string, enum: [auth, users, banks, study, settings, visit, ai, system] } }
+        - { name: action, in: query, schema: { type: string } }
+        - { name: result, in: query, schema: { type: string, enum: [ok, fail] } }
+        - { name: facets, in: query, schema: { type: integer, enum: [0, 1] } }
+      responses:
+        "200": { description: "`{entries: [{id, time, lastTime, count, actor, userId, username, role, deleted, action, object, detail, result, reason, ip, location, ua, source}], next, newest, facets, settings}`" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/activity/settings:
+    get:
+      tags: [logs]
+      summary: "(v1.3) The activity log settings (administrators)"
+      x-access: Admin
+      responses:
+        "200": { description: "`{retentionDays: 90, userVisits: false, signinInfo: true}`" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+    post:
+      tags: [logs]
+      summary: "(v1.3) Change the retention and the recording of normal users' page visits (administrators)"
+      x-access: Admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                retentionDays: { type: integer, minimum: 7, maximum: 3650 }
+                userVisits: { type: boolean }
+      responses:
+        "200": { description: "The settings object" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+  /api/activity/visit:
+    post:
+      tags: [logs]
+      summary: "(v1.3) The browser reports a page change"
+      x-access: SignedIn
+      description: |
+        Administrators are logged; users only while the setting is on, otherwise 200 and nothing is written. At most 30 writes per
+        user per minute; the same user and page within 30 minutes merge into one entry.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [page]
+              additionalProperties: false
+              properties:
+                page: { type: string, enum: [home, banks, users, logs, records, record, wrong, settings, about, quiz, result, ai, aiSettings] }
+      responses:
+        "200": { description: "`{\"ok\": true}`" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+  /api/ai/regenerate:
+    post:
+      tags: [ai]
+      summary: "(v1.3) Write a new version of an answer, as an event stream"
+      x-access: AiUser
+      description: |
+        The target is an assistant message of the shown branch whose parent is a chat question (409 `ai.notRetryable` otherwise; 409 `ai.branchMoved` when it is not on the shown branch). A failed answer with no text is reset in place (`start.retry`). One AI request. Events as for /api/ai/send; `start` also has `mode`, `parentId`, `versions`, `connection` (administrators) and `modelFallback`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId, messageId]
+              properties:
+                chatId: { type: integer, minimum: 1 }
+                messageId: { type: integer, minimum: 1 }
+                lang: { type: string, enum: [en, zh, ja, zh-CN] }
+                model: { type: object, nullable: true, description: "ModelRef `{connectionId, model}`; administrators in free mode only" }
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/edit:
+    post:
+      tags: [ai]
+      summary: "(v1.3) Edit a question: a new version with its answer, as an event stream"
+      x-access: AiUser
+      description: |
+        The target is a user message of the shown branch (chat kind). `text` is trimmed, 1 to the message limit. One AI request; needs 2 free message rows (every version counts toward `messagesPerChat`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId, messageId, text]
+              properties:
+                chatId: { type: integer, minimum: 1 }
+                messageId: { type: integer, minimum: 1 }
+                text: { type: string }
+                lang: { type: string, enum: [en, zh, ja, zh-CN] }
+                model: { type: object, nullable: true, description: "ModelRef `{connectionId, model}`; administrators in free mode only" }
+      responses:
+        "200": { $ref: "#/components/responses/AiStream" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/branch:
+    post:
+      tags: [ai]
+      summary: "(v1.3) Show the branch of another version"
+      x-access: AiUser
+      description: |
+        Moves the chat's leaf to the end of the line of that version. No AI call, no request count, `updated_at` unchanged; allowed in read-only mode; 409 `ai.busy` while an answer is being written. Answers the chat as GET /api/ai/chat does.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId, messageId]
+              properties:
+                chatId: { type: integer, minimum: 1 }
+                messageId: { type: integer, minimum: 1 }
+      responses:
+        "200": { description: "The chat with the path of the new branch" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/chat/model:
+    post:
+      tags: [ai]
+      summary: "(v1.3) Store or clear an administrator's model for a free-mode chat"
+      x-access: AiAdmin
+      description: |
+        Administrators only (403 `ai.notAllowed`); a non-null model outside free mode is 400 `ai.badModel`. No request count, no usage row.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [chatId, model]
+              properties:
+                chatId: { type: integer, minimum: 1 }
+                model: { type: object, nullable: true, description: "ModelRef or null" }
+      responses:
+        "200": { description: "`{\"chat\": …}`" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/connections/save:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Create or change a connection (tested first)"
+      x-access: AiAdmin
+      description: |
+        Test before save on an in-memory candidate: a failed test answers `{"ok": false, "saved": false, "code", "httpStatus", "failedModel"}` and saves nothing (a failed key change keeps the old key). A pass answers `{"ok": true, "saved": true, "connectionId", "latencyMs", "listed", "modelCount", "tests"}`. Whole request within 90 seconds (models still running: `ai.up.timeout`). Errors: 400 `ai.badUrl`, `ai.badKey`, `ai.headerClash`, `ai.badName`; 409 `ai.nameTaken`, `ai.conflict` (stale `rev`), `ai.connectionLimit` (8), `ai.busy`, `ai.keyReuseConfirm` (`host`, `oldHost`, `slots`: a saved key would go to another origin; any scheme and host are allowed once `confirmHost` names it); 422 `ai.keyMissing`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, provider, baseUrl]
+              properties:
+                id: { type: integer }
+                rev: { type: integer }
+                name: { type: string, minLength: 1, maxLength: 40 }
+                provider: { type: string, enum: [openai, anthropic, gateway] }
+                baseUrl: { type: string }
+                format: { type: string, enum: [openai, anthropic] }
+                gatewayAuth: { type: string, enum: [bearer, x-api-key, cf-aig-authorization] }
+                apiKey: { type: string, nullable: true, description: "absent = keep, null = remove, string = set" }
+                gatewayKey: { type: string, nullable: true }
+                reuseKeysFrom: { type: integer, description: "new connections only" }
+                confirmHost: { type: string, description: "The new host[:port], typed by the administrator; required for a key reuse" }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/connections/test:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Test a saved connection"
+      x-access: AiAdmin
+      description: |
+        The model list plus one call per in-use pool model; sets the connection `ok` or `broken` (configuration-type codes only). 90-second deadline; 409 `ai.busy` while another test of the same connection runs.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: integer }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/connections/delete:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Delete a connection"
+      x-access: AiAdmin
+      description: |
+        409 `ai.connectionInUse` (with `usedBy`) or `ai.defaultNeeded` unless `force` and, for the default slot, a `newDefault` ModelRef. Feature slots that used it become empty; deleting the last connection turns AI+ off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id: { type: integer }
+                force: { type: boolean }
+                newDefault: { type: object, nullable: true }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/connections/order:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Reorder the connections"
+      x-access: AiAdmin
+      description: |
+        `ids` lists every connection id in the new order.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: integer } }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/models/pick:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Assign a model to a slot (tested first unless it passed within 10 minutes)"
+      x-access: AiAdmin
+      description: |
+        `{slot, connectionId, model, manual}` or `{slot, clear: true}` (the default slot cannot be cleared: 400). A failed test changes no slot and answers `{"ok": false, "code", …}`. Never switches AI+ off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [slot]
+              properties:
+                slot: { type: string, enum: [default, chat, study, summary, generate, import] }
+                connectionId: { type: integer }
+                model: { type: string }
+                manual: { type: boolean }
+                clear: { type: boolean }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/models/test:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Test one model of a connection"
+      x-access: AiAdmin
+      description: |
+        Within the 90-second deadline; a timeout or rate limit never marks the model failed.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [connectionId, model]
+              properties:
+                connectionId: { type: integer }
+                model: { type: string }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/models/remove:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Remove a model from the pool"
+      x-access: AiAdmin
+      description: |
+        409 `ai.modelInUse` (with `usedBy`) while a slot uses it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [poolId]
+              properties:
+                poolId: { type: integer }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/feature-switches:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.3) Switch features on or off for everyone (normal users only)"
+      x-access: AiAdmin
+      description: |
+        Any subset of the six keys. Administrators are not affected; running calls of the feature by normal users are cancelled.
+        `hint` and `explain` are one switch (AI hint + analysis): they always change together.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                chat: { type: boolean }
+                hint: { type: boolean }
+                explain: { type: boolean }
+                summary: { type: boolean }
+                generate: { type: boolean }
+                import: { type: boolean }
+      responses:
+        "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "409": { $ref: "#/components/responses/AiError" }
+  /internal/ai/activity:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.3) The AI service sends the events of its administrator actions"
+      x-access: InternalToken
+      description: |
+        Up to 50 events `{id (32 hex), at, userId, stamp, username, action (^ai\\.[A-Za-z0-9.]{1,60}$), object, detail, result, reason, ip, ua}`.
+        The whole batch is refused with 400 on the first bad event. Idempotent by `id`. The backend cleans and cuts the strings, stores
+        `ip` only while sign-in info is on (dropped while it is closed), takes the username and role from its own user when `userId` and `stamp` match, and never
+        sets a location. Nginx has no location for /internal/: from outside this path is 404.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [events]
+              properties:
+                events: { type: array, maxItems: 50, items: { type: object } }
+      responses:
+        "200": { description: "`{\"ok\": true}`" }
+        "400": { description: "A bad event" }
+        "404": { description: "Missing or wrong token (answered like an unknown path)" }
+  /internal/ai/gen/corpus:
+    post:
+      tags: [internal]
+      x-internal: true
+      summary: "(v1.3) The whole source of a generation, paged, in all three languages"
+      x-access: InternalToken
+      description: |
+        Same source selection and checks as /internal/ai/gen/source, without `lang`; read only. Every active single or multiple-choice
+        question of the source (all wrong questions for `source: wrong`), in source order, never sampled: `{id, sheet, kind, stem, options,
+        answer, explanation, diff}` with `stem`, `explanation` and each option as an object with the keys `en`, `zh`, `ja` (an absent
+        language is an absent key; caps per language: stem 600, option 150, explanation 400) and `answer` = zero-based positions of the
+        correct options. Paged by `after` (offset) and `limit` (1 to 200, default 200); `next` is null on the last page; `banks`,
+        `strata` and `previous` only on the first page; about 4 MB per page; more than 20 000 questions: `reason` `tooMany`. Other
+        refusals: `session`, `notFound`, `tooFew`, `notAllowed`, `aiSource`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sid, source]
+              properties:
+                sid: { type: string }
+                source: { type: string, enum: [bank, scope, wrong] }
+                bank: { type: integer }
+                sheets: { type: array, items: { type: object } }
+                min: { type: integer }
+                after: { type: integer }
+                limit: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        "200": { description: "`{ok: true, user, banks, total, next, strata, previous, items}` or `{ok: false, reason}`" }
+        "400": { description: "Malformed body" }
+        "404": { description: "Missing or wrong token" }
 
 components:
   securitySchemes:
@@ -2357,7 +2781,7 @@ components:
       description: |
         (v0.8) A stream of server-sent events (`Cache-Control: no-store`, `X-Accel-Buffering: no`, no Content-Length). Each event
         is `event: <name>` + `data: <one line of compact JSON>` + a blank line: `start` (AiStreamStart) first, then (round 2) at
-        most one `thinking` (AiStreamThinking, only before the first delta), then `delta` (AiStreamDelta) pieces, then exactly one of `done` (AiStreamDone), `stopped` (AiStreamStopped) or `error`
+        most one `thinking` (AiStreamThinking, only before the first delta), then (v1.3, AI Chat only) `reasoning` (AiStreamReasoning) pieces and one `reasoningDone` (AiStreamReasoningDone), then `delta` (AiStreamDelta) pieces, then exactly one of `done` (AiStreamDone), `stopped` (AiStreamStopped) or `error`
         (AiStreamError). A comment line `: keep-alive` every 15 s while nothing else was sent. (v0.9) The study routes
         (`/api/ai/study/ask`, `/api/ai/summary/ask`) stream the same way.
       content:
@@ -2460,6 +2884,7 @@ components:
       properties:
         username: { type: string }
         password: { type: string }
+        remember: { type: boolean, default: true, description: "(v1.3) Keep me signed in: a user is signed in for 30 days of use (true) or until the browser closes and 12 idle hours (false). Administrators follow the admin rule (24 idle hours, 7 days) whatever it says. Not a boolean: 400" }
     PasswordChange:
       type: object
       required: [password]
@@ -2942,11 +3367,11 @@ components:
             chatId: { type: integer }
             messageId: { type: integer }
         retentionDays: { type: integer, example: 90 }
-        memoryLimit: { type: integer, example: 50, description: "memoriesPerUser" }
+        memoryLimit: { type: integer, example: 30, description: "memoriesPerUser" }
         memoryMaxTokens: { type: integer, example: 200, description: "The limit of one memory in tokens (the same value as memoryTokens)" }
         maxMessageChars: { type: integer, example: 16000, description: "messageChars (same value as messageChars)" }
         messageChars: { type: integer, example: 16000, description: "(v1.0) The fixed cap of one message; always 16000, not a setting" }
-        memoryTokens: { type: integer, example: 200, description: "(v1.1) Estimated tokens per memory; 1000 by default (200 characters in v1.0)" }
+        memoryTokens: { type: integer, example: 200, description: "(v1.1) Estimated tokens per memory; 200 by default since v1.3 (1000 in v1.1 and v1.2, 200 characters in v1.0)" }
         keyProblem: { type: boolean, description: "Administrators only: the saved keys cannot be used (false for others)" }
         configured: { type: boolean, description: "Administrators only: a model and the needed keys are saved (false for others)" }
         freeMode: { type: boolean, description: "(v0.8, round 2) Administrators only: your free mode is on (always false for a plain user, whatever is stored). Set with POST /api/ai/free; it applies to every message in any chat from the next one" }
@@ -2992,7 +3417,7 @@ components:
         recordId: { type: integer, nullable: true, description: "(v0.9) The main-app record a study chat belongs to (display only, never used to look a chat up); null for AI Chat" }
     AiMessage:
       type: object
-      required: [id, role, content, status, error, truncated, model, createdAt, free, kind, questionId, questionNo, source, lang, recordId, sample]
+      required: [id, role, content, status, error, truncated, createdAt, reasoning, reasoningMs, reasoningTruncated, free, kind, questionId, questionNo, source, lang, recordId, sample]
       properties:
         id: { type: integer }
         role: { type: string, enum: [user, assistant] }
@@ -3000,13 +3425,16 @@ components:
         status: { type: string, enum: [streaming, done, stopped, error] }
         error: { type: string, nullable: true, description: "An ai.* code when status is error" }
         truncated: { type: boolean, description: "The model stopped at its length limit" }
-        model: { type: string, nullable: true }
+        model: { type: string, nullable: true, description: "(v1.3) Administrators only: the key is absent for everyone else (a non-administrator never learns which AI answers; the same holds for `connection`)" }
         createdAt: { type: integer, description: Unix seconds }
+        reasoning: { type: string, nullable: true, description: "(v1.3) The model's reasoning of an AI Chat answer (plain text, trimmed, at most 32 KiB, the head kept; never HTML). null for user messages, study answers and answers written before v1.3. While an answer is written: the part flushed so far. Never sent back to the model" }
+        reasoningMs: { type: integer, nullable: true, description: "(v1.3) Milliseconds from the first reasoning to the first answer text (or the end); null without reasoning and while it still runs" }
+        reasoningTruncated: { type: boolean, description: "(v1.3) The reasoning was cut at the 32 KiB cap" }
         free: { type: boolean, description: "(v0.8, round 2) The mode this message was written (or, for an answer, generated) in: true = the administrator's free mode. Every message records its mode; the chat itself has none" }
         kind: { type: string, enum: [chat, hint, explain, summary], description: "(v0.9) 'chat' for AI Chat; both messages of a study pair carry the kind of the pair" }
-        questionId: { type: string, nullable: true, description: "(v0.9) Hints and explanations; null otherwise" }
+        questionId: { type: string, nullable: true, description: "(v0.9) Hints and analyses; null otherwise" }
         questionNo: { type: integer, nullable: true, description: "(v0.9) The question number the user saw" }
-        source: { type: string, enum: [practice, result], nullable: true, description: "(v0.9) Where a hint or explanation was asked" }
+        source: { type: string, enum: [practice, result], nullable: true, description: "(v0.9) Where a hint or analysis was asked" }
         lang: { type: string, enum: [en, zh-CN, ja], nullable: true, description: "(v0.9) The reply language of a study answer" }
         recordId: { type: integer, nullable: true, description: "(v0.9) The chat's record, only for source result and kind summary" }
         sample: { allOf: [{ $ref: "#/components/schemas/AiStudySample" }], nullable: true, description: "(v0.9) Summaries only; null otherwise" }
@@ -3199,7 +3627,7 @@ components:
     AiLimits:
       type: object
       additionalProperties: false
-      description: "The safety limits (all integers). POST: any subset; GET: all 25 keys (v1.0 ten, v1.1 fifteen more: the generation and import settings, with defaults as in section 5.7 of api.md). messageChars is not a key any more."
+      description: "The safety limits (all integers). POST: any subset; GET: all 33 keys (v1.0 ten, v1.1 and v1.2 seventeen more: the generation and import settings, with defaults as in section 5.7 of api.md, and v1.3 six more: callsAdminsExempt, studyShare, studyShareDays, genMaxChunks, summaryMaxItems and dailyTokenBudget). messageChars is not a key any more."
       properties:
         perUserRunning: { type: integer, minimum: 1, maximum: 4, default: 1 }
         globalRunning: { type: integer, minimum: 1, maximum: 64, default: 16 }
@@ -3219,14 +3647,20 @@ components:
         recognizeMaxCalls: { type: integer, minimum: 8, maximum: 40, default: 20, description: "(v1.1) Most AI calls the recognition step of one imported file may make, for everyone" }
         genRunning: { type: integer, default: 2, description: "(v1.1) Generation and import jobs running at once, server-wide" }
         importMaxMb: { type: integer, default: 20, description: "(v1.1) Largest file of an AI import, in MiB" }
-        importMaxQuestions: { type: integer, default: 50, minimum: 1, maximum: 50, description: "(v1.1) Most questions one import may take from a file" }
+        importMaxQuestions: { type: integer, default: 100, minimum: 1, maximum: 300, description: "(v1.1) Most questions one import may take from a file" }
 
-        memoriesPerUser: { type: integer, minimum: 1, maximum: 1000, default: 50 }
-        memoryTokens: { type: integer, minimum: 50, maximum: 250000, default: 1000, description: "Estimated tokens per memory" }
+        memoriesPerUser: { type: integer, minimum: 1, maximum: 1000, default: 30 }
+        memoryTokens: { type: integer, minimum: 50, maximum: 250000, default: 200, description: "Estimated tokens per memory" }
         callsPerMinute: { type: integer, minimum: 1, maximum: 100, default: 5, description: "(v1.0) Calls per rolling 60 s" }
         callsPerHour: { type: integer, minimum: 1, maximum: 2000, default: 20, description: "(v1.0) Calls per rolling hour; at least callsPerMinute" }
         callsPerDay: { type: integer, minimum: 1, maximum: 20000, default: 100, description: "(v1.0) Calls since 0:00 in the server time zone; at least callsPerHour" }
         replyMaxTokens: { type: integer, minimum: 1, maximum: 250000, default: 3000, description: "(v1.1) Longest answer in tokens, sent unchanged as max_tokens (section 5.6)" }
+        callsAdminsExempt: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.3) 1 = administrators are not limited by the per-user call caps; their calls are still recorded" }
+        studyShare: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.3) 1 = a finished hint or analysis is stored once and shared between users" }
+        studyShareDays: { type: integer, minimum: 7, maximum: 3650, default: 180, description: "(v1.3) Days an unused shared answer is kept" }
+        genMaxChunks: { type: integer, minimum: 1, maximum: 50, default: 8, description: "(v1.3) Most parts a source too big for one prompt may be split into" }
+        summaryMaxItems: { type: integer, minimum: 10, maximum: 70, default: 40, description: "(v1.3) Most wrong answers one AI summary reads" }
+        dailyTokenBudget: { type: integer, minimum: 0, maximum: 100000000, default: 0, description: "(v1.3) Site-wide tokens per day for normal users (input plus output); 0 = off" }
     AiLimitsAnswer:
       type: object
       required: [limits, defaults, ranges]
@@ -3235,7 +3669,7 @@ components:
         defaults: { $ref: "#/components/schemas/AiLimits" }
         ranges:
           type: object
-          description: "\"<key>\": [min, max] for each of the ten keys"
+          description: "\"<key>\": [min, max] for each of the keys"
           additionalProperties:
             type: array
             items: { type: integer }
@@ -3244,13 +3678,13 @@ components:
     AiStreamStart:
       type: object
       description: "data of the event start"
-      required: [chatId, chatTitle, userMessageId, assistantMessageId, model, newChat, retry, free, chatKind]
+      required: [chatId, chatTitle, userMessageId, assistantMessageId, newChat, retry, free, chatKind]
       properties:
         chatId: { type: integer }
         chatTitle: { type: string }
         userMessageId: { type: integer }
         assistantMessageId: { type: integer }
-        model: { type: string }
+        model: { type: string, description: "(v1.3) Administrators only: absent for everyone else, like `connection` and `modelFallback`" }
         newChat: { type: boolean }
         retry: { type: boolean }
         free: { type: boolean, description: "(v0.8, round 2) The mode this answer is written in: the administrator's free mode when the question was sent (a retry: when it was retried). A chat has no mode. Always false on the study routes" }
@@ -3264,7 +3698,20 @@ components:
         lang: { type: string, enum: [en, zh-CN, ja], description: "(v0.9) Study routes only: the reply language" }
     AiStreamThinking:
       type: object
-      description: "(v0.8, round 2) data of the event thinking: always `{}`. Sent at most once, only before the first delta, when the model starts to send its reasoning (which is never stored, sent on or logged)"
+      description: "(v0.8, round 2) data of the event thinking: always `{}`. Sent at most once, only before the first delta, when the model starts to send its reasoning (which is never logged; its text, if any, follows in `reasoning` events, AI Chat only)"
+    AiStreamReasoning:
+      type: object
+      description: "(v1.3) data of the event reasoning: the next piece of the model's reasoning. AI Chat answers only (never hint, analysis or summary), only before the first delta, never empty; all pieces together are at most 32768 bytes. Clients that do not know the event ignore it"
+      required: [text]
+      properties:
+        text: { type: string }
+    AiStreamReasoningDone:
+      type: object
+      description: "(v1.3) data of the event reasoningDone: sent exactly once, and only when at least one reasoning event was sent; always before the first delta and before the terminal event"
+      required: [ms, truncated]
+      properties:
+        ms: { type: integer, description: "Milliseconds from the first reasoning to the first answer text (or to the end of the stream)" }
+        truncated: { type: boolean, description: "The reasoning was cut at the cap" }
     AiStreamDelta:
       type: object
       description: "data of the event delta"
@@ -3318,8 +3765,8 @@ components:
         recordId: { type: integer, nullable: true, description: "The chat's record, only for source result and kind summary" }
     AiStudyAnswer:
       type: object
-      description: "(v0.9) A saved hint or explanation"
-      required: [messageId, kind, questionId, questionNo, source, status, error, truncated, content, lang, model, createdAt, finishedAt]
+      description: "(v0.9) A saved hint or analysis"
+      required: [messageId, kind, questionId, questionNo, source, status, error, truncated, content, lang, createdAt, finishedAt]
       properties:
         messageId: { type: integer }
         kind: { type: string, enum: [hint, explain] }
@@ -3331,13 +3778,13 @@ components:
         truncated: { type: boolean }
         content: { type: string }
         lang: { type: string, enum: [en, zh-CN, ja], nullable: true }
-        model: { type: string, nullable: true }
+        model: { type: string, nullable: true, description: "(v1.3) Administrators only: absent for everyone else" }
         createdAt: { type: integer, description: Unix seconds }
         finishedAt: { type: integer, nullable: true, description: "Unix seconds; null while it is being written" }
     AiSummaryAnswer:
       type: object
       description: "(v0.9) A saved summary"
-      required: [messageId, recordId, status, error, truncated, content, lang, model, createdAt, finishedAt, sample]
+      required: [messageId, recordId, status, error, truncated, content, lang, createdAt, finishedAt, sample]
       properties:
         messageId: { type: integer }
         recordId: { type: integer, nullable: true }
@@ -3346,7 +3793,7 @@ components:
         truncated: { type: boolean }
         content: { type: string }
         lang: { type: string, enum: [en, zh-CN, ja], nullable: true }
-        model: { type: string, nullable: true }
+        model: { type: string, nullable: true, description: "(v1.3) Administrators only: absent for everyone else" }
         createdAt: { type: integer }
         finishedAt: { type: integer, nullable: true }
         sample: { allOf: [{ $ref: "#/components/schemas/AiStudySample" }], nullable: true }

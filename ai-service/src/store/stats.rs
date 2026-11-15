@@ -18,6 +18,10 @@ pub struct UsageRow {
     pub status: &'static str,
     /// `ai.up.*` code without the prefix
     pub error_code: Option<String>,
+    /// The connection the call went through (no foreign key: history survives a removal); None for calls that use none
+    pub connection_id: Option<i64>,
+    /// Its name at call time
+    pub connection: Option<String>,
 }
 
 /// Inserts a usage row. A user id that no longer exists (deleted meanwhile) is stored as NULL.
@@ -34,8 +38,9 @@ pub fn insert_usage_purpose(
 ) -> rusqlite::Result<()> {
     c.execute(
         "INSERT INTO usage (user_id, at, day, kind, provider, model, tokens_in, tokens_out, latency_ms, first_byte_ms,
-                            status, error_code, tokens_cached, purpose, tokens_cache_write)
-         VALUES ((SELECT id FROM users WHERE id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+                            status, error_code, tokens_cached, purpose, tokens_cache_write, connection_id, connection)
+         VALUES ((SELECT id FROM users WHERE id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+                 ?16, ?17)",
         params![
             u.user_id,
             u.at,
@@ -52,6 +57,8 @@ pub fn insert_usage_purpose(
             u.tokens_cached,
             purpose,
             u.tokens_cache_write,
+            u.connection_id,
+            u.connection,
         ],
     )?;
     Ok(())
@@ -130,6 +137,95 @@ pub fn by_model(c: &Connection, from: &str, to: &str) -> rusqlite::Result<Vec<(S
     rows.collect()
 }
 
+/// One row of the per-model statistics with its connection (v1.3): the key is (connection, model).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelUsage {
+    /// None for calls before v1.3 and for calls that used no connection
+    pub connection_id: Option<i64>,
+    /// The connection name at call time
+    pub connection: Option<String>,
+    /// Empty = the "other" row (model list and connection tests)
+    pub model: String,
+    pub sums: Sums,
+}
+
+/// One row of the per-connection statistics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectionUsage {
+    pub connection_id: Option<i64>,
+    pub connection: Option<String>,
+    pub sums: Sums,
+}
+
+/// `by_model` with the connection in the key: the same rows split by (connection id, connection name). The model list
+/// and connection tests stay the one "other" row per connection.
+pub fn by_model_connection(
+    c: &Connection,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<Vec<ModelUsage>> {
+    let mut st = c.prepare(&format!(
+        "SELECT cid, cname, m, {SUMS} FROM (
+           SELECT connection_id AS cid, connection AS cname,
+                  CASE WHEN kind IN ('verify', 'models') THEN '' ELSE model END AS m,
+                  day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write FROM usage
+           UNION ALL
+           SELECT connection_id, connection, model, day, tokens_in, tokens_out, tokens_cached, status,
+                  tokens_cache_write FROM gen_calls)
+         WHERE day BETWEEN ?1 AND ?2 GROUP BY cid, cname, m ORDER BY COUNT(*) DESC, cname, m"
+    ))?;
+    let rows = st.query_map([from, to], |r| {
+        Ok(ModelUsage {
+            connection_id: r.get(0)?,
+            connection: r.get(1)?,
+            model: r.get(2)?,
+            sums: sums_at(r, 3)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Calls of the period per connection (`byConnection`), most calls first; the row with no connection (calls before v1.3)
+/// comes last.
+pub fn by_connection(
+    c: &Connection,
+    from: &str,
+    to: &str,
+) -> rusqlite::Result<Vec<ConnectionUsage>> {
+    let mut st = c.prepare(&format!(
+        "SELECT connection_id, connection, {SUMS} FROM (
+           SELECT connection_id, connection, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write
+           FROM usage
+           UNION ALL
+           SELECT connection_id, connection, day, tokens_in, tokens_out, tokens_cached, status, tokens_cache_write
+           FROM gen_calls)
+         WHERE day BETWEEN ?1 AND ?2 GROUP BY connection_id, connection
+         ORDER BY connection_id IS NULL, COUNT(*) DESC, connection"
+    ))?;
+    let rows = st.query_map([from, to], |r| {
+        Ok(ConnectionUsage {
+            connection_id: r.get(0)?,
+            connection: r.get(1)?,
+            sums: sums_at(r, 2)?,
+        })
+    })?;
+    rows.collect()
+}
+
+/// Input plus output tokens of every model call (`usage` and `gen_calls`) of one `day` (`YYYY-MM-DD`, the server's
+/// local date like `usage.day`): the figure the site-wide daily token budget is checked against.
+pub fn tokens_today(c: &Connection, day: &str) -> rusqlite::Result<i64> {
+    c.query_row(
+        "SELECT COALESCE(SUM(COALESCE(tokens_in, 0) + COALESCE(tokens_out, 0)), 0) FROM (
+           SELECT day, tokens_in, tokens_out FROM usage
+           UNION ALL
+           SELECT day, tokens_in, tokens_out FROM gen_calls)
+         WHERE day = ?1",
+        [day],
+        |r| r.get(0),
+    )
+}
+
 /// The features, in the order `by_purpose` returns them. `generate` = AI bank generation calls; `import` = the AI file
 /// import's calls (`gen_calls` purposes `import` and `recognise`); `other` = the calls that belong to no feature (the
 /// administrators' model list and connection tests).
@@ -152,7 +248,7 @@ pub fn by_purpose(
     let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
     let mut found: Vec<(String, Sums)> = rows.collect::<rusqlite::Result<_>>()?;
     let mut st = c.prepare(&format!(
-        "SELECT CASE WHEN purpose = 'generate' THEN 'generate' ELSE 'import' END AS p, {SUMS} FROM gen_calls
+        "SELECT CASE WHEN purpose IN ('generate', 'plan') THEN 'generate' ELSE 'import' END AS p, {SUMS} FROM gen_calls
          WHERE day BETWEEN ?1 AND ?2 GROUP BY p"
     ))?;
     let rows = st.query_map([from, to], |r| Ok((r.get::<_, String>(0)?, sums_at(r, 1)?)))?;
@@ -334,6 +430,10 @@ pub struct GenCallRow {
     pub asked: i64,
     pub accepted: i64,
     pub truncated: bool,
+    /// The connection the call went through (None before v1.3 / when none)
+    pub connection_id: Option<i64>,
+    /// Its name at call time
+    pub connection: Option<String>,
 }
 
 /// Inserts a `gen_calls` row (FK-safe: a task or user purged meanwhile is stored as NULL).
@@ -341,9 +441,9 @@ pub fn insert_gen_call(c: &Connection, g: &GenCallRow) -> rusqlite::Result<()> {
     c.execute(
         "INSERT INTO gen_calls (task_id, user_id, purpose, at, day, provider, model, tokens_in, tokens_out,
                                 tokens_cached, latency_ms, first_byte_ms, status, error_code, asked, accepted, truncated,
-                                tokens_cache_write)
+                                tokens_cache_write, connection_id, connection)
          VALUES ((SELECT id FROM tasks WHERE id = ?1), (SELECT id FROM users WHERE id = ?2), ?3, ?4, ?5, ?6, ?7, ?8, ?9,
-                 ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
+                 ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20)",
         params![
             g.task_id,
             g.user_id,
@@ -363,6 +463,8 @@ pub fn insert_gen_call(c: &Connection, g: &GenCallRow) -> rusqlite::Result<()> {
             g.accepted,
             i64::from(g.truncated),
             g.tokens_cache_write,
+            g.connection_id,
+            g.connection,
         ],
     )?;
     Ok(())
@@ -415,6 +517,8 @@ mod tests {
         insert_usage(
             c,
             &UsageRow {
+                connection_id: None,
+                connection: None,
                 user_id: user,
                 at: start + latency_s,
                 kind,

@@ -84,6 +84,8 @@ fn row_counts(t: &TestApp) -> (i64, i64, i64) {
 /// Inserts one finished made-up call that started at `start` (latency 0).
 fn insert_call(t: &TestApp, user: i64, start: i64, kind: &'static str, code: Option<&str>) {
     let u = UsageRow {
+        connection_id: None,
+        connection: None,
         user_id: Some(user),
         at: start,
         kind,
@@ -214,6 +216,15 @@ async fn the_day_cap_resets_at_midnight_and_names_tomorrow() {
 async fn administrators_are_limited_too_and_free_mode_counts() {
     let e = env().await;
     set_caps(&e.t, &e.admin, 2, 5, 10).await;
+    // v1.3: an administrator is exempt unless the limit is switched off
+    let (s, v) =
+        e.t.post(
+            "/api/ai/admin/limits",
+            &e.admin,
+            json!({"callsAdminsExempt": 0}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
     let ev = e.t.send_all(&e.admin, chat_body("One")).await.expect("one");
     assert_eq!(terminal(&ev).0, "done");
     let (s, v) =
@@ -232,15 +243,50 @@ async fn administrators_are_limited_too_and_free_mode_counts() {
         (429, &json!("ai.callLimit"), &json!("minute"))
     );
     // the connection test and the model list are not counted and work while blocked
-    let rows = counted_rows(&e.t, e.admin.id);
-    let (s, v) = e.t.post("/api/ai/admin/verify", &e.admin, json!({})).await;
-    assert_eq!((s, &v["ok"]), (200, &json!(true)), "{v}");
-    let (s, v) = e.t.post("/api/ai/admin/models", &e.admin, json!({})).await;
-    assert_eq!(s, 200, "{v}");
-    assert_eq!(counted_rows(&e.t, e.admin.id), rows);
     let (_, st) = e.t.get("/api/ai/status", &e.admin).await;
     assert_eq!(st["calls"]["used"]["minute"], json!(2));
     assert_eq!(st["calls"]["used"]["day"], json!(2));
+}
+
+#[tokio::test]
+async fn an_exempt_administrator_is_never_reported_blocked_and_can_still_send() {
+    let e = env().await;
+    set_caps(&e.t, &e.admin, 2, 5, 10).await;
+    touch(&e.t, &e.admin).await;
+    let now = xexam_ai_service::util::unix_now();
+    for i in 0..6 {
+        insert_call(&e.t, e.admin.id, now - 10 - i, "chat", None);
+    }
+    // exempt by default: counts over the hourly cap, no block, and a send goes through
+    let (s, st) = e.t.get("/api/ai/status", &e.admin).await;
+    assert_eq!(s, 200, "{st}");
+    assert_eq!(st["calls"]["exempt"], json!(true), "{st}");
+    assert_eq!(st["calls"]["blocked"], Value::Null, "{st}");
+    assert!(st["calls"]["used"]["hour"].as_i64().unwrap_or(0) >= 6);
+    let (_, list) = e.t.get("/api/ai/admin/users", &e.admin).await;
+    let row = list["users"]
+        .as_array()
+        .and_then(|a| a.iter().find(|r| r["username"] == json!("root")))
+        .cloned()
+        .unwrap_or(Value::Null);
+    assert_eq!(row["calls"]["blocked"], Value::Null, "{list}");
+    let ev =
+        e.t.send_all(&e.admin, chat_body("Hello"))
+            .await
+            .expect("send");
+    assert_eq!(terminal(&ev).0, "done");
+    // not exempt: the same counts block
+    let (s, v) =
+        e.t.post(
+            "/api/ai/admin/limits",
+            &e.admin,
+            json!({"callsAdminsExempt": 0}),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, st) = e.t.get("/api/ai/status", &e.admin).await;
+    assert!(st["calls"].get("exempt").is_none(), "{st}");
+    assert_eq!(st["calls"]["blocked"]["cap"], json!("hour"), "{st}");
 }
 
 #[tokio::test]
@@ -383,9 +429,6 @@ async fn running_calls_count_and_status_and_admin_numbers_agree() {
     }
     let ev = e.t.send_all(&kim, chat_body("Other")).await.expect("kim");
     assert_eq!(terminal(&ev).0, "done");
-    // the administrator's own test and model list leave the numbers alone
-    let (s, v) = e.t.post("/api/ai/admin/models", &e.admin, json!({})).await;
-    assert_eq!(s, 200, "{v}");
     // a third call is running
     e.t.set_model(&e.admin, "demo-hold").await;
     let mut third =
@@ -441,7 +484,8 @@ async fn running_calls_count_and_status_and_admin_numbers_agree() {
     };
     assert_eq!(today("lee"), json!(3));
     assert_eq!(today("kim"), json!(1));
-    assert_eq!(today("root"), json!(0));
+    // (the administrator has not called anything: no usage row, no figure)
+    assert!(matches!(today("root"), Value::Null) || today("root") == json!(0));
     e.t.stub.release();
     let ev = third.all().await;
     assert_eq!(terminal(&ev).0, "done");

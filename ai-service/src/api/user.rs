@@ -2,7 +2,7 @@
 //! (`Signed`), so users whose AI+ service or function, or AI as a whole, was switched off can still read and delete
 //! their own data; writing needs `AiUser`.
 //!
-//! send / retry / suggest carry the reply language (`lang`, the Settings language). Free mode is a state of the
+//! send / regenerate / edit / retry / suggest carry the reply language (`lang`, the Settings language). Free mode is a state of the
 //! administrator (`POST /api/ai/free`, `freeMode` in the status): while it is on, every send / retry in any chat uses the
 //! language line alone as its system prompt and no memories.
 use super::{body_id, id_or_all, ok, only_keys, query_id, require_ai_user, Answer, Ctx};
@@ -13,12 +13,14 @@ use crate::identity::Identity;
 use crate::prompt::{self, Lang};
 use crate::provider::{self, Role, UpCode};
 use crate::quota;
+use crate::route::{Pick, Slot};
 use crate::store::{data, stats};
 use crate::util::{char_len, chat_title, collapse_ws, cut_chars, unix_now};
 use axum::body::{Body, Bytes};
 use axum::http::{header, HeaderValue, StatusCode};
 use axum::response::Response;
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -27,8 +29,9 @@ pub async fn status(ctx: Ctx) -> Answer {
     let app = &ctx.app.0;
     let who = &ctx.who;
     let snap = app.snapshot()?;
+    let effective = app.effective()?;
     // Available: the effective AI+ service, and the main service accepted a report less than 60 s ago
-    let eff = app.available(&snap);
+    let eff = effective && app.link_fresh();
     let suspended = app.suspended(who);
     let has = app.store.read(|c| data::has_data(c, who.id))?;
     let running = app
@@ -39,7 +42,13 @@ pub async fn status(ctx: Ctx) -> Answer {
     // The per-user call counts: only for a user who has the AI+ service while AI is on (paused or not)
     let calls = if eff && who.ai_allowed {
         let st = call_states(app, &[who.id], unix_now())?.remove(&who.id);
-        st.map(|st| calls_json(&st, Some(l.caps())))
+        st.map(|mut st| {
+            // An exempt administrator is never refused, so the status never reports a block for one
+            if admin && l.calls_admins_exempt == 1 {
+                st.blocked = None;
+            }
+            calls_json(&st, Some(l.caps()))
+        })
     } else {
         None
     };
@@ -49,17 +58,23 @@ pub async fn status(ctx: Ctx) -> Answer {
         "suspended": suspended,
         "hasData": has,
         "running": running,
-        "retentionDays": snap.settings.retention_days,
+        "retentionDays": snap.retention_days,
         "memoryLimit": l.memories_per_user,
         "memoryMaxTokens": l.memory_tokens,
         "maxMessageChars": crate::limits::MESSAGE_CHARS,
         "messageChars": crate::limits::MESSAGE_CHARS,
         "memoryTokens": l.memory_tokens,
         "keyProblem": admin && snap.key_problem.is_some(),
-        "configured": admin && snap.configured(),
+        "configured": admin && app.configured(),
         "freeMode": admin && free_mode_of(app, who)?,
     });
-    if let (Some(c), Some(m)) = (calls, answer.as_object_mut()) {
+    if let (Some(mut c), Some(m)) = (calls, answer.as_object_mut()) {
+        // An administrator is exempt from the per-user caps while `callsAdminsExempt` is 1 (counts are still sent)
+        if admin && l.calls_admins_exempt == 1 {
+            if let Some(o) = c.as_object_mut() {
+                o.insert("exempt".into(), Value::Bool(true));
+            }
+        }
         m.insert("calls".into(), c);
     }
     if let Some(m) = answer.as_object_mut() {
@@ -67,7 +82,7 @@ pub async fn status(ctx: Ctx) -> Answer {
         // main service has not accepted a report for 60 s
         let why = if eff {
             Value::Null
-        } else if !snap.effective() {
+        } else if !effective {
             Value::from("off")
         } else {
             Value::from("link")
@@ -75,18 +90,44 @@ pub async fn status(ctx: Ctx) -> Answer {
         m.insert("why".into(), why);
         // `features` and `gen` exactly when the user has the AI+ service, whether AI is enabled or not
         if who.ai_allowed {
-            let off = if admin {
-                0
+            // A feature is usable when its slot resolves; a normal user also needs the global switch and the own bit
+            // (administrators are not affected by either)
+            let (global, own) = if admin {
+                (0, 0)
             } else {
-                app.store.read(|c| data::features_off(c, who.id))?
+                app.store.read(|c| {
+                    Ok((
+                        crate::store::conn::global_features_off(c)?,
+                        data::features_off(c, who.id)?,
+                    ))
+                })?
             };
-            m.insert("features".into(), crate::features::to_json(off));
+            let view = app.routes()?;
+            let mut feats = Map::new();
+            for f in crate::features::ALL {
+                let on = crate::features::allowed(global, f)
+                    && crate::features::allowed(own, f)
+                    && view.exists(f.slot());
+                feats.insert(f.key().to_string(), Value::Bool(on));
+            }
+            m.insert("features".into(), Value::Object(feats));
+            if admin {
+                let default = view.resolve(Slot::Chat, None).ok().map(|r| {
+                    json!({
+                        "connectionId": r.connection_id,
+                        "connectionName": r.connection_name,
+                        "model": r.model,
+                    })
+                });
+                m.insert("chatDefault".into(), default.unwrap_or(Value::Null));
+            }
             m.insert(
                 "gen".into(),
                 crate::gen::runner::gen_status(&ctx.app, who, unix_now())?,
             );
         }
     }
+    super::hide::for_viewer(admin, &mut answer);
     ok(answer)
 }
 
@@ -170,20 +211,92 @@ pub async fn chats(ctx: Ctx) -> Answer {
     ok(json!({ "chats": list }))
 }
 
+/// The chat as the v1.3 read shows it: today's fields, `leafId`, and for administrators `pick` (`null` = the default;
+/// a stored pick whose connection is gone is read as none, `data::CHAT_COLS`).
+pub(super) fn chat_json(app: &crate::app::App, admin: bool, chat: &data::ChatRow) -> Value {
+    let mut v = chat.to_json(app.chat_running(chat.id));
+    if let Some(m) = v.as_object_mut() {
+        m.insert("leafId".into(), json!(chat.leaf_id));
+        if admin {
+            m.insert(
+                "pick".into(),
+                chat.pick.as_ref().map_or(
+                    Value::Null,
+                    |(c, model)| json!({"connectionId": c, "model": model}),
+                ),
+            );
+        }
+    }
+    v
+}
+
+/// The messages of a path: today's fields, `parentId`, `versions` (only when there are 2 or more) and, for administrators,
+/// `connection` (the name; `null` before v1.3). Non-administrators get neither `model` nor `connection`
+/// (`hide::for_viewer` in `chat_view`).
+pub(super) fn messages_json(
+    msgs: &[data::MessageRow],
+    versions: &HashMap<i64, Vec<i64>>,
+    admin: bool,
+) -> Vec<Value> {
+    msgs.iter()
+        .map(|m| {
+            let mut v = m.to_json();
+            if let Some(o) = v.as_object_mut() {
+                o.insert("parentId".into(), json!(m.parent_id));
+                if let Some(vs) = versions.get(&m.id) {
+                    o.insert("versions".into(), json!(vs));
+                }
+                if admin {
+                    o.insert("connection".into(), json!(m.connection));
+                }
+                put_reasoning(o, m);
+            }
+            v
+        })
+        .collect()
+}
+
+/// v1.3: the reasoning of a message (null / null / false for user messages and older answers).
+pub(super) fn put_reasoning(o: &mut serde_json::Map<String, Value>, m: &data::MessageRow) {
+    o.insert("reasoning".into(), json!(m.reasoning));
+    o.insert("reasoningMs".into(), json!(m.reasoning_ms));
+    o.insert("reasoningTruncated".into(), json!(m.reasoning_truncated));
+}
+
+/// `{"chat": …, "messages": […]}` of a path (the chat read and the branch switch).
+fn chat_view(
+    app: &crate::app::App,
+    admin: bool,
+    chat: &data::ChatRow,
+    path: &[data::MessageRow],
+    versions: &HashMap<i64, Vec<i64>>,
+) -> Value {
+    let mut v = json!({
+        "chat": chat_json(app, admin, chat),
+        "messages": messages_json(path, versions, admin),
+    });
+    super::hide::for_viewer(admin, &mut v);
+    v
+}
+
+/// A chat of the caller with its viewed path and the versions on it, read in one transaction.
+type ChatPath = (data::ChatRow, Vec<data::MessageRow>, HashMap<i64, Vec<i64>>);
+
 pub async fn chat(ctx: Ctx) -> Answer {
     let app = &ctx.app.0;
     let id = query_id(ctx.query.as_deref(), "id")?;
-    let found = app.store.read(|c| {
+    let found: Option<ChatPath> = app.store.read(|c| {
         let Some(chat) = data::chat(c, ctx.who.id, id)? else {
             return Ok(None);
         };
-        Ok(Some((chat, data::messages(c, id)?)))
+        let path = data::path(c, id, None)?;
+        let versions = data::versions(c, id, &path)?;
+        Ok(Some((chat, path, versions)))
     })?;
-    let Some((chat, msgs)) = found else {
+    let Some((chat, path, versions)) = found else {
         return Err(ApiError::not_found());
     };
-    let messages: Vec<Value> = msgs.iter().map(data::MessageRow::to_json).collect();
-    ok(json!({"chat": chat.to_json(app.chat_running(id)), "messages": messages}))
+    ok(chat_view(app, ctx.who.is_admin(), &chat, &path, &versions))
 }
 
 /// The SSE body: frames from the generation, a `: keep-alive` comment when nothing was sent for a while.
@@ -213,8 +326,9 @@ pub(super) fn sse_response(rx: UnboundedReceiver<Frame>, keep_alive: Duration) -
     r
 }
 
-/// What the transaction of a send / retry prepared.
+/// What the transaction of a send / regenerate / edit prepared.
 struct Prepared {
+    mode: Mode,
     chat: i64,
     title: String,
     new_chat: bool,
@@ -222,13 +336,56 @@ struct Prepared {
     chat_kind: String,
     /// The administrator's free mode was on when the message was sent (no study-assistant prompt, no memories)
     free: bool,
+    /// The user message the answer follows (the new one for send / edit, the question for a regenerate)
     user_msg: i64,
+    /// Parent of the user message; None = a root
+    user_parent: Option<i64>,
     answer: i64,
+    /// The answer reset an empty failed answer in place (no new row)
+    in_place: bool,
+    /// 1 for a first answer; above 1 a regenerate (the gateway cache is bypassed, a note ends the question)
+    attempt: u32,
+    /// Ids of the answer's versions / of the user message's versions (edit), sent only when there are 2 or more
+    versions: Vec<i64>,
+    user_versions: Vec<i64>,
+    /// A stored model pick no longer resolved and was cleared (an administrator's chat)
+    fallback: bool,
     history: Vec<provider::Turn>,
     /// The history sent holds messages of the other mode (a mode block goes into the system prompt)
     switched: bool,
     /// Empty in free mode (not even read)
     memories: Vec<String>,
+}
+
+/// Which generating route a request came through.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    Send,
+    Regenerate,
+    Edit,
+}
+
+impl Mode {
+    fn as_str(self) -> &'static str {
+        match self {
+            Mode::Send => "send",
+            Mode::Regenerate => "regenerate",
+            Mode::Edit => "edit",
+        }
+    }
+}
+
+/// What the body of a generating route said.
+struct Req {
+    mode: Mode,
+    chat: Option<i64>,
+    /// regenerate / edit: the message; None for send and for the old retry route (which means the leaf)
+    target: Option<i64>,
+    /// send / edit: the trimmed text
+    text: String,
+    lang: Lang,
+    /// Outer None: no `model` key (use the stored pick); `Some(None)`: `null` (clear it); `Some(Some(p))`: set it
+    pick: Option<Option<Pick>>,
 }
 
 /// The reply language of a send / retry / suggest body (round 2, 5.1): `"en"`, `"zh"` (alias `"zh-CN"`), `"ja"`;
@@ -238,6 +395,44 @@ fn lang_of(body: &Map<String, Value>) -> Result<Lang, ApiError> {
         None => Ok(Lang::En),
         Some(Value::String(s)) => Lang::parse(s).ok_or_else(ApiError::bad_request),
         Some(_) => Err(ApiError::bad_request()),
+    }
+}
+
+/// The text of a send / edit: trimmed, 1 to `MESSAGE_CHARS` characters.
+fn text_of(body: &Map<String, Value>) -> Result<String, ApiError> {
+    let text = match body.get("text") {
+        Some(Value::String(s)) => s.trim().to_string(),
+        _ => return Err(ApiError::bad_request()),
+    };
+    if text.is_empty() {
+        return Err(ApiError::bad_request());
+    }
+    if char_len(&text) > crate::limits::MESSAGE_CHARS {
+        return Err(ApiError::too_long(crate::limits::MESSAGE_CHARS as i64));
+    }
+    Ok(text)
+}
+
+/// The `model` of a body (routes.md 3.3): a plain user may not name one (403), `null` always means "the default".
+fn pick_of(body: &Map<String, Value>, admin: bool) -> Result<Option<Option<Pick>>, ApiError> {
+    match body.get("model") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(_) if !admin => Err(ApiError::not_allowed()),
+        Some(v) => Ok(Some(Pick::from_json(v)?)),
+    }
+}
+
+/// The connection of a pick exists and can serve calls, else 400 `ai.badModel`. A model outside the pool is allowed.
+fn ensure_usable(app: &crate::app::App, p: &Pick) -> Result<(), ApiError> {
+    let view = app.routes()?;
+    if view
+        .conn(p.connection_id)
+        .is_some_and(|c| view.conn_usable(c))
+    {
+        Ok(())
+    } else {
+        Err(ApiError::bad_model())
     }
 }
 
@@ -282,13 +477,6 @@ fn prev_turns(
     prompt::history(&prev, new_text, budget, free)
 }
 
-/// What a send / retry streams: the prepared answer, the reply language, and whether it is a retry.
-struct Stream {
-    p: Prepared,
-    lang: Lang,
-    retry: bool,
-}
-
 /// What a generation needs besides its places: the whole `start` frame, the system prompt, the turns sent, and the
 /// study extras.
 pub(super) struct Launch {
@@ -327,24 +515,24 @@ fn with_regenerate_note(history: &[provider::Turn], attempt: u32) -> Vec<provide
 /// Starts the generation of a prepared answer and returns the SSE response.
 pub(super) fn launch(
     ctx: &Ctx,
-    snap: &crate::app::Snapshot,
+    route: &crate::route::Route,
     target: crate::provider::Target,
     slot: chat::Slot,
     permit: chat::GatePermit,
     l: Launch,
 ) -> Answer {
     let app = &ctx.app;
-    let s = &snap.settings;
     let history = with_regenerate_note(&l.history, l.attempt);
     let spec = provider::ChatSpec {
-        model: &s.model,
+        model: &route.model,
         system: &l.system,
         turns: &history,
-        usage_option: s.usage_option,
+        usage_option: route.usage_option != 0,
         skip_cache: l.attempt > 1,
         prefix: None,
+        cache: true,
     };
-    let plan = match app.chat_plan(snap, &target, &spec) {
+    let plan = match app.chat_plan(route, &target, &spec) {
         Ok(r) => r,
         Err(e) => {
             let now = unix_now();
@@ -357,9 +545,11 @@ pub(super) fn launch(
     drop(target);
     slot.set_target(l.chat, l.answer);
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut start = l.start;
+    super::hide::for_viewer(ctx.who.is_admin(), &mut start);
     let _ = tx.send(Frame {
         event: "start",
-        data: l.start,
+        data: start,
     });
     let g = Generation {
         app: app.clone(),
@@ -368,8 +558,7 @@ pub(super) fn launch(
         who: ctx.who.clone(),
         chat: l.chat,
         message: l.answer,
-        model: s.model.clone(),
-        provider: s.provider,
+        route: route.clone(),
         plan,
         frames: tx,
         guard: l.guard,
@@ -379,39 +568,50 @@ pub(super) fn launch(
     Ok(sse_response(rx, app.0.timeouts.keep_alive))
 }
 
-/// Starts the generation of a prepared send / retry answer.
+/// Starts the generation of a prepared answer.
 fn start_stream(
     ctx: &Ctx,
-    snap: &crate::app::Snapshot,
+    route: &crate::route::Route,
     target: crate::provider::Target,
     slot: chat::Slot,
     permit: chat::GatePermit,
-    stream: Stream,
+    p: Prepared,
+    lang: Lang,
 ) -> Answer {
-    let Stream { p, lang, retry } = stream;
-    let s = &snap.settings;
-    let attempt = if retry {
-        ctx.app.0.next_retry_attempt(p.answer)
-    } else {
-        1
-    };
     let system = if p.free {
         prompt::free_prompt(lang, p.switched)
     } else {
         let today = crate::util::local_today().to_string();
         prompt::system_prompt(lang, &today, &p.memories, p.switched)
     };
-    let start = json!({
+    let mut start = json!({
         "chatId": p.chat,
         "chatTitle": p.title,
         "userMessageId": p.user_msg,
         "assistantMessageId": p.answer,
-        "model": s.model,
+        "model": route.model,
         "newChat": p.new_chat,
-        "retry": retry,
+        "retry": p.in_place,
         "free": p.free,
         "chatKind": p.chat_kind,
+        "mode": p.mode.as_str(),
+        "parentId": p.user_msg,
+        "userParentId": p.user_parent,
     });
+    if let Some(m) = start.as_object_mut() {
+        if p.versions.len() > 1 {
+            m.insert("versions".into(), json!(p.versions));
+        }
+        if p.user_versions.len() > 1 {
+            m.insert("userVersions".into(), json!(p.user_versions));
+        }
+        if ctx.who.is_admin() {
+            m.insert("connection".into(), json!(route.connection_name));
+        }
+        if p.fallback {
+            m.insert("modelFallback".into(), json!(true));
+        }
+    }
     let l = Launch {
         chat: p.chat,
         answer: p.answer,
@@ -420,211 +620,408 @@ fn start_stream(
         history: p.history,
         guard: None,
         purpose: None,
-        attempt,
+        attempt: p.attempt,
     };
-    launch(ctx, snap, target, slot, permit, l)
+    launch(ctx, route, target, slot, permit, l)
 }
 
-/// Takes the caller's place and a global place, then checks again that AI is still on and the caller's AI+ function is
-/// not suspended (a switch-off or a suspension in between would otherwise miss this call: both stop only the calls that
-/// already hold a place).
+/// Takes the caller's places (`App::take_places`) as the registry slot and the gate permit.
 pub(super) fn take_places(
     ctx: &Ctx,
     kind: Kind,
     chat: Option<i64>,
     feature: crate::features::Feature,
 ) -> Result<(chat::Slot, chat::GatePermit), ApiError> {
+    let p = ctx.app.0.take_places(&ctx.who, kind, chat, feature)?;
+    Ok((p.slot, p.permit))
+}
+
+/// `true` when `message` is a message of `chat` (on the viewed path or not).
+fn message_in_chat(tx: &rusqlite::Connection, chat: i64, message: i64) -> rusqlite::Result<bool> {
+    tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1 AND chat_id = ?2)",
+        [message, chat],
+        |r| r.get(0),
+    )
+}
+
+/// The viewed path and the position of the target in it. A target outside the chat is 404 `ai.notFound`, one off the
+/// viewed path 409 `ai.branchMoved`. No target (the old retry route) means the leaf.
+fn locate(
+    tx: &rusqlite::Connection,
+    chat: i64,
+    target: Option<i64>,
+) -> Result<(Vec<data::MessageRow>, usize), ApiError> {
+    if let Some(id) = target {
+        if !message_in_chat(tx, chat, id)? {
+            return Err(ApiError::not_found());
+        }
+        if !data::on_path(tx, chat, id)? {
+            return Err(ApiError::branch_moved());
+        }
+    }
+    let path = data::path(tx, chat, None)?;
+    let idx = match target {
+        Some(id) => path.iter().position(|m| m.id == id),
+        None => path.len().checked_sub(1),
+    };
+    match idx {
+        Some(i) => Ok((path, i)),
+        None if target.is_some() => Err(ApiError::branch_moved()),
+        None => Err(ApiError::not_retryable()),
+    }
+}
+
+/// The state a send / regenerate / edit hands to the stream, besides the places.
+struct Core {
+    user_msg: i64,
+    user_parent: Option<i64>,
+    answer: i64,
+    in_place: bool,
+    attempt: u32,
+    history: Vec<provider::Turn>,
+    switched: bool,
+}
+
+/// Everything one write transaction of send / regenerate / edit does (rules of routes.md 3.2).
+fn prepare(
+    tx: &rusqlite::Connection,
+    who: &Identity,
+    req: &Req,
+    route: &crate::route::Route,
+    limits: &crate::limits::Limits,
+    now: i64,
+) -> Result<Prepared, ApiError> {
+    let budget = limits.history_budget();
+    data::ensure_user(tx, who, now)?;
+    let free = who.is_admin() && data::free_mode(tx, who.id)?;
+    let model = route.model.as_str();
+    let connection = route.connection_name.as_str();
+    let (chat, title, new_chat, chat_kind, stored) = match req.chat {
+        Some(id) => {
+            let c = data::chat(tx, who.id, id)?.ok_or_else(ApiError::not_found)?;
+            (id, c.title, false, c.kind, c.message_count)
+        }
+        None if req.mode == Mode::Send => {
+            if data::count_chats(tx, who.id)? >= limits.chats_per_user {
+                return Err(ApiError::chat_limit(limits.chats_per_user));
+            }
+            let title = chat_title(&req.text);
+            let id = data::create_chat(tx, who.id, &title, now)?;
+            (id, title, true, "chat".to_string(), 0)
+        }
+        None => return Err(ApiError::bad_request()),
+    };
+    // The administrator's pick of this chat: a body value is stored (null clears it); a stored pick that did not resolve
+    // is cleared and the chat default answers
+    let mut fallback = false;
+    if who.is_admin() {
+        if route.pick_dropped {
+            data::set_chat_pick(tx, chat, None)?;
+            fallback = true;
+        } else if let Some(p) = &req.pick {
+            let value = p.as_ref().map(|p| (p.connection_id, p.model.as_str()));
+            data::set_chat_pick(tx, chat, value)?;
+        }
+    }
+    let answer_row = |parent: i64| data::NewMessage {
+        parent: Some(parent),
+        connection: Some(connection),
+        chat,
+        role: "assistant",
+        content: "",
+        status: "streaming",
+        model: Some(model),
+        free,
+        now,
+    };
+    let user_row = |parent: Option<i64>| data::NewMessage {
+        parent,
+        connection: None,
+        chat,
+        role: "user",
+        content: &req.text,
+        status: "done",
+        model: None,
+        free,
+        now,
+    };
+    let core = match req.mode {
+        Mode::Send => {
+            if stored + 2 > limits.messages_per_chat {
+                return Err(ApiError::message_limit(limits.messages_per_chat));
+            }
+            let prev = data::path(tx, chat, None)?;
+            let user_msg = data::insert_message(tx, &user_row(None))?;
+            let answer = data::insert_message(tx, &answer_row(user_msg))?;
+            let h = prev_turns(&prev, &req.text, budget, free);
+            Core {
+                user_msg,
+                user_parent: prev.last().map(|m| m.id),
+                answer,
+                in_place: false,
+                attempt: 1,
+                history: h.turns,
+                switched: h.other_mode,
+            }
+        }
+        Mode::Edit => {
+            if stored + 2 > limits.messages_per_chat {
+                return Err(ApiError::message_limit(limits.messages_per_chat));
+            }
+            let (path, idx) = locate(tx, chat, req.target)?;
+            let t = &path[idx];
+            if t.role != "user" || t.kind != "chat" {
+                return Err(ApiError::not_retryable());
+            }
+            let user_msg = data::insert_message(tx, &user_row(t.parent_id))?;
+            if t.parent_id.is_none() {
+                // `parent: None` means "after the leaf" for the store; an edited first message is a new root
+                tx.execute(
+                    "UPDATE messages SET parent_id = NULL WHERE id = ?1",
+                    [user_msg],
+                )?;
+            }
+            let answer = data::insert_message(tx, &answer_row(user_msg))?;
+            let h = prev_turns(path.get(..idx).unwrap_or(&[]), &req.text, budget, free);
+            Core {
+                user_msg,
+                user_parent: t.parent_id,
+                answer,
+                in_place: false,
+                attempt: 1,
+                history: h.turns,
+                switched: h.other_mode,
+            }
+        }
+        Mode::Regenerate => {
+            let (path, idx) = locate(tx, chat, req.target)?;
+            let t = &path[idx];
+            let question = idx.checked_sub(1).and_then(|i| path.get(i));
+            let Some(q) = question.filter(|q| {
+                t.role == "assistant" && t.kind == "chat" && q.role == "user" && q.kind == "chat"
+            }) else {
+                return Err(ApiError::not_retryable());
+            };
+            if t.status == "streaming" {
+                return Err(ApiError::busy());
+            }
+            let in_place = t.status == "error" && t.content.is_empty();
+            let answer = if in_place {
+                data::reset_answer(tx, t.id, model, free)?;
+                tx.execute(
+                    "UPDATE messages SET connection = ?2 WHERE id = ?1",
+                    rusqlite::params![t.id, connection],
+                )?;
+                t.id
+            } else {
+                if stored + 1 > limits.messages_per_chat {
+                    return Err(ApiError::message_limit(limits.messages_per_chat));
+                }
+                data::insert_message(tx, &answer_row(q.id))?
+            };
+            data::set_message_free(tx, q.id, free)?;
+            let n = data::answer_versions(tx, chat, q.id)?;
+            let h = prev_turns(path.get(..idx - 1).unwrap_or(&[]), &q.content, budget, free);
+            Core {
+                user_msg: q.id,
+                user_parent: q.parent_id,
+                answer,
+                in_place,
+                // A new version is already counted in `n`; an in-place reset of a failed answer is one more try on top of
+                // the existing versions, so it too carries the regenerate note and skips the gateway cache
+                attempt: u32::try_from(n)
+                    .unwrap_or(u32::MAX)
+                    .saturating_add(u32::from(in_place))
+                    .max(1),
+                history: h.turns,
+                switched: h.other_mode,
+            }
+        }
+    };
+    data::touch_chat(tx, chat, now)?;
+    let (mut versions, mut user_versions) = (Vec::new(), Vec::new());
+    if req.mode != Mode::Send {
+        let path = data::path(tx, chat, None)?;
+        let all = data::versions(tx, chat, &path)?;
+        versions = all.get(&core.answer).cloned().unwrap_or_default();
+        if req.mode == Mode::Edit {
+            user_versions = all.get(&core.user_msg).cloned().unwrap_or_default();
+        }
+    }
+    Ok(Prepared {
+        mode: req.mode,
+        chat,
+        title,
+        new_chat,
+        chat_kind,
+        free,
+        user_msg: core.user_msg,
+        user_parent: core.user_parent,
+        answer: core.answer,
+        in_place: core.in_place,
+        attempt: core.attempt,
+        versions,
+        user_versions,
+        fallback,
+        history: core.history,
+        switched: core.switched,
+        memories: prompt_memories(tx, who, free)?,
+    })
+}
+
+/// Send, regenerate and edit: one place, one cap count, one usage row each (routes.md 3.2).
+async fn generate(ctx: Ctx, req: Req) -> Answer {
     let app = &ctx.app.0;
-    let l = app.limits();
-    let slot = app
-        .registry
-        .reserve(
-            ctx.who.id,
-            kind,
-            chat,
-            crate::limits::Limits::usize_of(l.per_user_running),
-        )
-        .ok_or_else(ApiError::busy)?;
-    let permit = app.gate.try_acquire().ok_or_else(ApiError::server_busy)?;
-    if !app.snapshot()?.effective() {
-        return Err(ApiError::disabled());
+    let who = &ctx.who;
+    let default = require_ai_user(&ctx.app, who, Slot::Chat)?;
+    // The chat must be the caller's (404 before anything is taken); an administrator's stored pick comes from it
+    let stored = match req.chat {
+        Some(id) => {
+            app.store
+                .read(|c| data::chat(c, who.id, id))?
+                .ok_or_else(ApiError::not_found)?
+                .pick
+        }
+        None => None,
+    };
+    // The model menu exists in free mode only: outside it a named model is refused and a stored pick is not used
+    let free = free_mode_of(app, who)?;
+    if matches!(&req.pick, Some(Some(_))) && !free {
+        return Err(ApiError::bad_model());
     }
-    if app.suspended(&ctx.who) {
-        return Err(ApiError::suspended());
+    let wanted: Option<Pick> = match &req.pick {
+        Some(p) => p.clone(),
+        None if free => stored.map(|(connection_id, model)| Pick {
+            connection_id,
+            model,
+        }),
+        None => None,
+    };
+    if let Some(Some(p)) = &req.pick {
+        ensure_usable(app, p)?;
     }
-    // The feature the administrator may have switched off for this user (never for administrators); before the caps, so
-    // a refusal counts nothing
-    if !app.feature_allowed(&ctx.who, feature) {
-        return Err(ApiError::feature_off(feature));
-    }
-    // The per-user caps on model calls, everyone included. The registry is read inside the same store read as the
-    // usage rows (lock order store -> registry), and only the entries reserved before this one count.
+    let route = match &wanted {
+        Some(p) => app.route(Slot::Chat, Some(p))?,
+        None => default,
+    };
+    let target = app.target(&route)?;
+    let (slot, permit) = take_places(&ctx, Kind::Chat, req.chat, Feature::Chat)?;
+    let limits = app.limits();
     let now = unix_now();
-    let hit = app.store.read(|c| {
-        let running = app.registry.starts_of(ctx.who.id, Some(&slot));
-        let day = crate::util::day_bounds(now);
-        let mut starts = stats::recent_starts(c, ctx.who.id, now, day.start)?;
-        starts.extend(running);
-        Ok(quota::check(&starts, now, day, l.caps()).err())
-    })?;
-    if let Some(hit) = hit {
-        app.note_call_cap(&ctx.who.username, ctx.who.id, &hit, now);
-        return Err(ApiError::call_limit(&hit, now));
-    }
-    Ok((slot, permit))
+    let p = app
+        .store
+        .write(|tx| prepare(tx, who, &req, &route, &limits, now))?;
+    start_stream(&ctx, &route, target, slot, permit, p, req.lang)
 }
 
 pub async fn send(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["chatId", "text", "lang", "free"])?;
-    let snap = require_ai_user(&ctx.app, &ctx.who)?;
-    let chat_id = match ctx.body.get("chatId") {
+    only_keys(&ctx.body, &["chatId", "text", "lang", "free", "model"])?;
+    let chat = match ctx.body.get("chatId") {
         None | Some(Value::Null) => None,
         Some(_) => body_id(&ctx.body, "chatId")?,
     };
-    let text = match ctx.body.get("text") {
-        Some(Value::String(s)) => s.trim().to_string(),
-        _ => return Err(ApiError::bad_request()),
+    // A `free` in the body is ignored: free mode is a state of the user (`POST /api/ai/free`), read in `prepare`
+    let req = Req {
+        mode: Mode::Send,
+        chat,
+        target: None,
+        text: text_of(&ctx.body)?,
+        lang: lang_of(&ctx.body)?,
+        pick: pick_of(&ctx.body, ctx.who.is_admin())?,
     };
-    let lang = lang_of(&ctx.body)?;
-    // A `free` in the body is ignored: free mode is a state of the user (`POST /api/ai/free`), read below
-    let limits = ctx.app.0.limits();
-    if text.is_empty() {
-        return Err(ApiError::bad_request());
-    }
-    if char_len(&text) > crate::limits::MESSAGE_CHARS {
-        return Err(ApiError::too_long(crate::limits::MESSAGE_CHARS as i64));
-    }
-    let target = ctx.app.0.target(&snap)?;
-    let (slot, permit) = take_places(&ctx, Kind::Chat, chat_id, Feature::Chat)?;
-    let who = &ctx.who;
-    let model = snap.settings.model.clone();
-    let now = unix_now();
-    let budget = limits.history_budget();
-    let p = ctx.app.0.store.write(|tx| -> Result<Prepared, ApiError> {
-        data::ensure_user(tx, who, now)?;
-        let free = who.is_admin() && data::free_mode(tx, who.id)?;
-        let (chat, title, new_chat, chat_kind) = match chat_id {
-            Some(id) => {
-                let c = data::chat(tx, who.id, id)?.ok_or_else(ApiError::not_found)?;
-                if c.message_count + 2 > limits.messages_per_chat {
-                    return Err(ApiError::message_limit(limits.messages_per_chat));
-                }
-                (id, c.title, false, c.kind)
-            }
-            None => {
-                if data::count_chats(tx, who.id)? >= limits.chats_per_user {
-                    return Err(ApiError::chat_limit(limits.chats_per_user));
-                }
-                let title = chat_title(&text);
-                let id = data::create_chat(tx, who.id, &title, now)?;
-                (id, title, true, "chat".to_string())
-            }
-        };
-        let prev = data::messages(tx, chat)?;
-        let user_msg = data::insert_message(
-            tx,
-            &data::NewMessage {
-                chat,
-                role: "user",
-                content: &text,
-                status: "done",
-                model: None,
-                free,
-                now,
-            },
-        )?;
-        let answer = data::insert_message(
-            tx,
-            &data::NewMessage {
-                chat,
-                role: "assistant",
-                content: "",
-                status: "streaming",
-                model: Some(&model),
-                free,
-                now,
-            },
-        )?;
-        data::touch_chat(tx, chat, now)?;
-        let h = prev_turns(&prev, &text, budget, free);
-        Ok(Prepared {
-            chat,
-            title,
-            new_chat,
-            chat_kind,
-            free,
-            user_msg,
-            answer,
-            history: h.turns,
-            switched: h.other_mode,
-            memories: prompt_memories(tx, who, free)?,
-        })
-    })?;
-    let stream = Stream {
-        p,
-        lang,
-        retry: false,
-    };
-    start_stream(&ctx, &snap, target, slot, permit, stream)
+    generate(ctx, req).await
 }
 
+pub async fn regenerate(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["chatId", "messageId", "lang", "model"])?;
+    let req = Req {
+        mode: Mode::Regenerate,
+        chat: Some(body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?),
+        target: Some(body_id(&ctx.body, "messageId")?.ok_or_else(ApiError::bad_request)?),
+        text: String::new(),
+        lang: lang_of(&ctx.body)?,
+        pick: pick_of(&ctx.body, ctx.who.is_admin())?,
+    };
+    generate(ctx, req).await
+}
+
+pub async fn edit(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["chatId", "messageId", "text", "lang", "model"])?;
+    let req = Req {
+        mode: Mode::Edit,
+        chat: Some(body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?),
+        target: Some(body_id(&ctx.body, "messageId")?.ok_or_else(ApiError::bad_request)?),
+        text: text_of(&ctx.body)?,
+        lang: lang_of(&ctx.body)?,
+        pick: pick_of(&ctx.body, ctx.who.is_admin())?,
+    };
+    generate(ctx, req).await
+}
+
+/// The old retry route, kept one release for open tabs: a regenerate of the leaf.
 pub async fn retry(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["chatId", "lang"])?;
-    let snap = require_ai_user(&ctx.app, &ctx.who)?;
-    let chat_id = body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?;
-    let lang = lang_of(&ctx.body)?;
-    let target = ctx.app.0.target(&snap)?;
-    let (slot, permit) = take_places(&ctx, Kind::Chat, Some(chat_id), Feature::Chat)?;
-    let who = &ctx.who;
-    let model = snap.settings.model.clone();
-    let now = unix_now();
-    let budget = ctx.app.0.limits().history_budget();
-    let p = ctx.app.0.store.write(|tx| -> Result<Prepared, ApiError> {
-        let c = data::chat(tx, who.id, chat_id)?.ok_or_else(ApiError::not_found)?;
-        data::ensure_user(tx, who, now)?;
-        let free = who.is_admin() && data::free_mode(tx, who.id)?;
-        let msgs = data::messages(tx, chat_id)?;
-        let n = msgs.len();
-        let (Some(last), Some(question)) =
-            (msgs.last(), n.checked_sub(2).and_then(|i| msgs.get(i)))
-        else {
-            return Err(ApiError::not_retryable());
-        };
-        let retryable = last.role == "assistant"
-            && (last.status == "error" || last.status == "stopped")
-            && question.role == "user";
-        // A study answer is regenerated by its own ask route (with its own prompt and guard), never by the chat prompt
-        if !retryable || last.kind != "chat" || question.kind != "chat" {
-            return Err(ApiError::not_retryable());
-        }
-        data::reset_answer(tx, last.id, &model, free)?;
-        data::set_message_free(tx, question.id, free)?;
-        data::touch_chat(tx, chat_id, now)?;
-        let h = prev_turns(
-            msgs.get(..n - 2).unwrap_or(&[]),
-            &question.content,
-            budget,
-            free,
-        );
-        Ok(Prepared {
-            chat: chat_id,
-            title: c.title,
-            new_chat: false,
-            chat_kind: c.kind,
-            free,
-            user_msg: question.id,
-            answer: last.id,
-            history: h.turns,
-            switched: h.other_mode,
-            memories: prompt_memories(tx, who, free)?,
-        })
-    })?;
-    let stream = Stream {
-        p,
-        lang,
-        retry: true,
+    let req = Req {
+        mode: Mode::Regenerate,
+        chat: Some(body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?),
+        target: None,
+        text: String::new(),
+        lang: lang_of(&ctx.body)?,
+        pick: None,
     };
-    start_stream(&ctx, &snap, target, slot, permit, stream)
+    generate(ctx, req).await
+}
+
+/// Switches to another version: the viewed end becomes the end of that version's line. No model call, no cap, no usage,
+/// `updated_at` untouched; allowed in read-only mode; refused while an answer is being written in the chat.
+pub async fn branch(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["chatId", "messageId"])?;
+    let chat_id = body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?;
+    let msg = body_id(&ctx.body, "messageId")?.ok_or_else(ApiError::bad_request)?;
+    let app = &ctx.app.0;
+    let user = ctx.who.id;
+    let (chat, path, versions) = app.store.write(|tx| -> Result<ChatPath, ApiError> {
+        data::chat(tx, user, chat_id)?.ok_or_else(ApiError::not_found)?;
+        if !message_in_chat(tx, chat_id, msg)? {
+            return Err(ApiError::not_found());
+        }
+        if app.chat_running(chat_id) {
+            return Err(ApiError::busy());
+        }
+        let end = data::line_end(tx, chat_id, msg)?;
+        data::set_leaf(tx, chat_id, end)?;
+        let chat = data::chat(tx, user, chat_id)?.ok_or_else(ApiError::not_found)?;
+        let path = data::path(tx, chat_id, None)?;
+        let versions = data::versions(tx, chat_id, &path)?;
+        Ok((chat, path, versions))
+    })?;
+    ok(chat_view(app, ctx.who.is_admin(), &chat, &path, &versions))
+}
+
+/// `{chatId, model: {connectionId, model} | null}`: an administrator's model pick of one chat. No cap, no usage.
+pub async fn chat_model(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["chatId", "model"])?;
+    if !ctx.who.is_admin() {
+        return Err(ApiError::not_allowed());
+    }
+    let chat_id = body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?;
+    let pick = Pick::from_json(ctx.body.get("model").ok_or_else(ApiError::bad_request)?)?;
+    let app = &ctx.app.0;
+    if let Some(p) = &pick {
+        if !free_mode_of(app, &ctx.who)? {
+            return Err(ApiError::bad_model());
+        }
+        ensure_usable(app, p)?;
+    }
+    let user = ctx.who.id;
+    let chat = app.store.write(|tx| -> Result<data::ChatRow, ApiError> {
+        data::chat(tx, user, chat_id)?.ok_or_else(ApiError::not_found)?;
+        let value = pick.as_ref().map(|p| (p.connection_id, p.model.as_str()));
+        data::set_chat_pick(tx, chat_id, value)?;
+        data::chat(tx, user, chat_id)?.ok_or_else(ApiError::not_found)
+    })?;
+    ok(json!({"chat": chat_json(app, true, &chat)}))
 }
 
 pub async fn stop(ctx: Ctx) -> Answer {
@@ -711,7 +1108,7 @@ fn memory_text(ctx: &Ctx) -> Result<String, ApiError> {
 
 pub async fn memory_add(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["content", "source"])?;
-    require_ai_user(&ctx.app, &ctx.who)?;
+    require_ai_user(&ctx.app, &ctx.who, Slot::Chat)?;
     let source = match ctx.body.get("source") {
         None => "manual",
         Some(Value::String(s)) if s == "manual" => "manual",
@@ -736,7 +1133,7 @@ pub async fn memory_add(ctx: Ctx) -> Answer {
 
 pub async fn memory_update(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["id", "content"])?;
-    require_ai_user(&ctx.app, &ctx.who)?;
+    require_ai_user(&ctx.app, &ctx.who, Slot::Chat)?;
     let id = body_id(&ctx.body, "id")?.ok_or_else(ApiError::bad_request)?;
     let text = memory_text(&ctx)?;
     let app = &ctx.app.0;
@@ -771,7 +1168,7 @@ pub async fn memory_delete(ctx: Ctx) -> Answer {
 
 pub async fn memory_suggest(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["messageId", "lang"])?;
-    let snap = require_ai_user(&ctx.app, &ctx.who)?;
+    let route = require_ai_user(&ctx.app, &ctx.who, Slot::Chat)?;
     let msg = body_id(&ctx.body, "messageId")?.ok_or_else(ApiError::bad_request)?;
     let lang = lang_of(&ctx.body)?;
     let app = &ctx.app.0;
@@ -779,25 +1176,25 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
     let Some((_, text)) = app.store.read(|c| data::user_message(c, who.id, msg))? else {
         return Err(ApiError::not_found());
     };
-    let target = app.target(&snap)?;
+    let target = app.target(&route)?;
     let (slot, permit) = take_places(&ctx, Kind::Suggest, None, Feature::Chat)?;
-    let s = &snap.settings;
     let turns = [provider::Turn {
         role: Role::User,
         content: cut_chars(&text, prompt::SUGGEST_INPUT_CHARS),
     }];
     let system = prompt::suggest_prompt(lang);
     let spec = provider::ChatSpec {
-        model: &s.model,
+        model: &route.model,
         system: &system,
         turns: &turns,
-        usage_option: s.usage_option,
+        usage_option: route.usage_option != 0,
         skip_cache: false,
         prefix: None,
+        cache: true,
     };
     let plan = ctx
         .app
-        .chat_plan(&snap, &target, &spec)
+        .chat_plan(&route, &target, &spec)
         .map_err(|e| ApiError::upstream(e.code))?;
     drop(target);
     // The provider call and its usage row run in one spawned task that owns the slot and the permit: a browser that
@@ -805,7 +1202,7 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
     let task = {
         let app = ctx.app.clone();
         let who = who.clone();
-        let (provider_name, model) = (s.provider.as_str(), s.model.clone());
+        let route = route.clone();
         tokio::spawn(async move {
             let started = std::time::Instant::now();
             let t = app.0.timeouts;
@@ -837,11 +1234,13 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
                 Err(_) => ("stopped", None, None, None, None, None),
             };
             let usage = stats::UsageRow {
+                connection_id: Some(route.connection_id),
+                connection: Some(route.connection_name.clone()),
                 user_id: Some(who.id),
                 at: now,
                 kind: "memory",
-                provider: provider_name,
-                model,
+                provider: route.provider.as_str(),
+                model: route.model.clone(),
                 tokens_in: tin,
                 tokens_out: tout,
                 tokens_cached: tcached,
@@ -858,6 +1257,11 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
             // The row is committed before the places are given back (the caps count both the registry and the rows)
             drop(permit);
             drop(slot);
+            match &result {
+                Ok(Ok(_)) => app.0.note_outcome(&route, None),
+                Ok(Err(e)) => app.0.note_outcome(&route, Some(e.code)),
+                Err(_) => {}
+            }
             written.map(|()| result)
         })
     };
@@ -885,5 +1289,6 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         Err(StopReason::ChatDeleted) => Err(ApiError::not_found()),
         Err(StopReason::NotAllowed | StopReason::UserRemoved) => Err(ApiError::not_allowed()),
         Err(StopReason::Suspended) => Err(ApiError::suspended()),
+        Err(StopReason::FeatureOff) => Err(ApiError::feature_off(Feature::Chat)),
     }
 }

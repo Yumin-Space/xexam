@@ -248,6 +248,8 @@ pub fn app_with(cfg: Config, ttl: Option<Duration>) -> TestApp {
         // imports; production code always refuses the old layouts
         old_layouts: xexam_backend::services::OldLayouts::AllowForTests,
         ai_link: Default::default(),
+        activity: Default::default(),
+        gates: Default::default(),
     }));
     TestApp {
         router: signed_in_router(&state),

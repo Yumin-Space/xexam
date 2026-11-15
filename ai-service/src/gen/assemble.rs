@@ -16,6 +16,25 @@ pub struct FinalQuestion {
     pub explanation: Tri,
 }
 
+/// A question as the job card shows it while the job runs (`gen_items.data`): the kind, the three-language texts and the
+/// options in their final positions with `correct`.
+pub fn item_json(q: &FinalQuestion) -> Value {
+    let options: Vec<Value> = q
+        .options
+        .iter()
+        .enumerate()
+        .map(|(k, o)| {
+            json!({"en": o.en, "zh": o.zh, "ja": o.ja, "correct": q.answer.contains(&letter(k))})
+        })
+        .collect();
+    json!({
+        "kind": q.kind.as_str(),
+        "stem": {"en": q.stem.en, "zh": q.stem.zh, "ja": q.stem.ja},
+        "options": options,
+        "explanation": {"en": q.explanation.en, "zh": q.explanation.zh, "ja": q.explanation.ja},
+    })
+}
+
 fn trim_tri(t: &Tri) -> Tri {
     Tri {
         en: t.en.trim().to_string(),
@@ -182,6 +201,24 @@ mod tests {
                 .collect(),
             explanation: Tri::new("e ", "解", "説"),
         }
+    }
+
+    #[test]
+    fn the_listed_item_has_the_kind_three_languages_and_the_correct_flags_in_position_order() {
+        let sl = slot(Kind::Multi, 5, vec![1, 3]);
+        let q = place(&raw_for(&sl, 7), &sl);
+        let v = item_json(&q);
+        assert_eq!(v["kind"], "multi");
+        assert_eq!(v["stem"]["en"], q.stem.en);
+        assert_eq!(v["explanation"]["ja"], q.explanation.ja);
+        let flags: Vec<bool> = v["options"]
+            .as_array()
+            .expect("options")
+            .iter()
+            .map(|o| o["correct"].as_bool().unwrap_or(false))
+            .collect();
+        assert_eq!(flags, vec![false, true, false, true, false]);
+        assert_eq!(v["options"][1]["zh"], q.options[1].zh);
     }
 
     #[test]

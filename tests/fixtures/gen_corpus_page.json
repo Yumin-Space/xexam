@@ -1,0 +1,267 @@
+{
+  "ok": true,
+  "user": {
+    "id": 2
+  },
+  "banks": [
+    {
+      "id": 1,
+      "name": "Kitchen basics"
+    }
+  ],
+  "total": 7,
+  "next": null,
+  "strata": [
+    {
+      "bank": 1,
+      "sheet": "Ovens",
+      "n": 7,
+      "multi": 1
+    }
+  ],
+  "previous": [],
+  "items": [
+    {
+      "id": "ov001",
+      "sheet": "Ovens",
+      "kind": "single",
+      "stem": {
+        "en": "Which oven is number 1?",
+        "zh": "Which oven is number 1? 中文",
+        "ja": "Which oven is number 1? 日本語"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器",
+          "ja": "泡立て器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺",
+          "ja": "おたま"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器",
+          "ja": "ピーラー"
+        }
+      ],
+      "answer": [
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    },
+    {
+      "id": "ov002",
+      "sheet": "Ovens",
+      "kind": "single",
+      "stem": {
+        "en": "Which oven is number 2?",
+        "zh": "Which oven is number 2? 中文",
+        "ja": "Which oven is number 2? 日本語"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器",
+          "ja": "泡立て器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺",
+          "ja": "おたま"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器",
+          "ja": "ピーラー"
+        }
+      ],
+      "answer": [
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    },
+    {
+      "id": "ov003",
+      "sheet": "Ovens",
+      "kind": "single",
+      "stem": {
+        "en": "Which oven is number 3?",
+        "zh": "Which oven is number 3? 中文",
+        "ja": "Which oven is number 3? 日本語"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器",
+          "ja": "泡立て器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺",
+          "ja": "おたま"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器",
+          "ja": "ピーラー"
+        }
+      ],
+      "answer": [
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    },
+    {
+      "id": "ov004",
+      "sheet": "Ovens",
+      "kind": "multi",
+      "stem": {
+        "en": "Which oven is number 4?",
+        "zh": "Which oven is number 4? 中文",
+        "ja": "Which oven is number 4? 日本語"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器",
+          "ja": "泡立て器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺",
+          "ja": "おたま"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器",
+          "ja": "ピーラー"
+        }
+      ],
+      "answer": [
+        0,
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    },
+    {
+      "id": "ov005",
+      "sheet": "Ovens",
+      "kind": "single",
+      "stem": {
+        "en": "Which oven is number 5?",
+        "zh": "Which oven is number 5? 中文",
+        "ja": "Which oven is number 5? 日本語"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器",
+          "ja": "泡立て器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺",
+          "ja": "おたま"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器",
+          "ja": "ピーラー"
+        }
+      ],
+      "answer": [
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    },
+    {
+      "id": "ov006",
+      "sheet": "Ovens",
+      "kind": "single",
+      "stem": {
+        "en": "Which oven is number 6?",
+        "zh": "Which oven is number 6? 中文",
+        "ja": "Which oven is number 6? 日本語"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器",
+          "ja": "泡立て器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺",
+          "ja": "おたま"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器",
+          "ja": "ピーラー"
+        }
+      ],
+      "answer": [
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    },
+    {
+      "id": "noja1",
+      "sheet": "Ovens",
+      "kind": "single",
+      "stem": {
+        "en": "A plain question",
+        "zh": "A plain question 中文"
+      },
+      "options": [
+        {
+          "en": "Whisk",
+          "zh": "打蛋器"
+        },
+        {
+          "en": "Ladle",
+          "zh": "汤勺"
+        },
+        {
+          "en": "Peeler",
+          "zh": "削皮器"
+        }
+      ],
+      "answer": [
+        1
+      ],
+      "explanation": {
+        "en": "A ladle serves soup.",
+        "zh": "汤勺用来盛汤。"
+      },
+      "diff": null
+    }
+  ]
+}

@@ -109,3 +109,35 @@
   .gen-confirm-acts .btn { flex: 1 1 0; min-width: 0; padding-inline: 6px; }
 }
 @media (max-width: 340px) { .gen-confirm-acts { flex-wrap: wrap; } }
+
+/* ---------- v1.3: the questions written so far ---------- */
+.gen-list { margin: 6px 0 8px; min-width: 0; }
+.gen-list-sum { cursor: pointer; font-size: 13.5px; font-weight: 600; min-height: 32px; display: flex; align-items: center; }
+.gen-items { max-height: 260px; overflow-y: auto; margin: 4px 0 6px; border: 1px solid var(--line-soft); border-radius: 8px; overscroll-behavior: contain; }
+.gen-item + .gen-item { border-top: 1px solid var(--line-soft); }
+.gen-item.fresh { animation: gen-fade .4s ease both; }
+@keyframes gen-fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .gen-item.fresh { animation: none; } }
+.gen-item-head {
+  display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 8px 10px; border: 0; background: transparent; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; min-height: 40px;
+}
+@media (pointer: coarse) { .gen-item-head { min-height: 44px; } }
+.gen-item-no { flex: none; min-width: 1.6em; color: var(--ink3); font-size: 13px; line-height: 1.5; }
+.gen-item-kind { flex: none; padding: 0 6px; border-radius: 4px; background: var(--hover-strong); color: var(--ink2); font-size: 11px; line-height: 1.7; }
+.gen-item-stem {
+  flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.5; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.gen-item-head[aria-expanded="true"] .gen-item-stem { display: block; -webkit-line-clamp: unset; line-clamp: unset; }
+.gen-item-body { padding: 0 10px 10px 36px; font-size: 13px; line-height: 1.55; overflow-wrap: anywhere; }
+.gen-item-body[hidden] { display: none; }
+.gen-opts { margin: 0 0 6px; padding: 0; list-style: none; }
+.gen-opt { padding: 2px 0; }
+.gen-opt.right { color: var(--answer-right); font-weight: 600; }
+.gen-expl { margin: 0; }
+
+/* ---------- v1.3: the placeholder bank row (Home / Bank management) ---------- */
+.gen-ph { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 10px; color: var(--ink2); min-width: 0; }
+.gen-ph-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; color: var(--ink); }
+.gen-ph-state { font-size: 13px; color: var(--ink3); }

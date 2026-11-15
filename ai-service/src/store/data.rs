@@ -2,6 +2,10 @@
 use crate::identity::Identity;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
+use std::collections::HashMap;
+
+/// Most messages `path` walks up (a cycle guard; `messagesPerChat` is at most 5000).
+pub const PATH_LIMIT: i64 = 5001;
 
 /// The three counts of a summary (`messages.sample_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +35,11 @@ pub struct ChatRow {
     /// 'chat' | 'practice' | 'exam' | 'summary'
     pub kind: String,
     pub record_id: Option<i64>,
+    /// Last message of the viewed branch (`chats.leaf_id`); None = no message yet
+    pub leaf_id: Option<i64>,
+    /// The administrator's model pick (connection id, model id); None = the chat default (also for a stored pick whose
+    /// connection no longer exists)
+    pub pick: Option<(i64, String)>,
 }
 
 impl ChatRow {
@@ -72,6 +81,17 @@ pub struct MessageRow {
     pub record_id: Option<i64>,
     /// Some only when all three `sample_*` columns are set
     pub sample: Option<StudySample>,
+    /// The message this one follows; None = a root
+    pub parent_id: Option<i64>,
+    /// Name of the connection that wrote an assistant answer; None before v1.3 and for user messages
+    pub connection: Option<String>,
+    /// v1.3: the model's reasoning of an AI Chat answer (trimmed, capped); None = none / an older answer. Never sent
+    /// to the model.
+    pub reasoning: Option<String>,
+    /// Milliseconds from the first reasoning to the first answer text (or the end); None while it still runs
+    pub reasoning_ms: Option<i64>,
+    /// `reasoning` was cut at [`MAX_REASONING_BYTES`]
+    pub reasoning_truncated: bool,
 }
 
 impl MessageRow {
@@ -232,8 +252,10 @@ pub fn suspended_ids(c: &Connection, limit: usize) -> rusqlite::Result<Vec<i64>>
     rows.collect()
 }
 
+/// The pick is read through `connections`: a pick whose connection is gone reads as no pick (the chat default).
 const CHAT_COLS: &str = "c.id, c.title, c.created_at, c.updated_at,
-     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id), c.kind, c.record_id";
+     (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id), c.kind, c.record_id, c.leaf_id,
+     (SELECT k.id FROM connections k WHERE k.id = c.pick_conn), c.pick_model";
 
 fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
     Ok(ChatRow {
@@ -244,6 +266,11 @@ fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
         message_count: r.get(4)?,
         kind: r.get(5)?,
         record_id: r.get(6)?,
+        leaf_id: r.get(7)?,
+        pick: match (r.get::<_, Option<i64>>(8)?, r.get::<_, Option<String>>(9)?) {
+            (Some(conn), Some(model)) => Some((conn, model)),
+            _ => None,
+        },
     })
 }
 
@@ -275,37 +302,199 @@ fn sample_of(used: Option<i64>, usable: Option<i64>, wrong: Option<i64>) -> Opti
     }
 }
 
-/// The messages of a chat, oldest first. The caller has checked that the chat is the user's. `record_id` is the
-/// chat's, shown only for result-page answers and summaries.
-pub fn messages(c: &Connection, chat: i64) -> rusqlite::Result<Vec<MessageRow>> {
-    let mut st = c.prepare(
-        "SELECT m.id, m.role, m.content, m.status, m.error_code, m.truncated, m.model, m.created_at, m.free,
+/// Columns of a message as [`MessageRow`] reads them (the query joins `chats c`).
+const MSG_COLS: &str =
+    "m.id, m.role, m.content, m.status, m.error_code, m.truncated, m.model, m.created_at, m.free,
                 m.kind, m.question_id, m.question_no, m.source, m.lang,
                 CASE WHEN m.source = 'result' OR m.kind = 'summary' THEN c.record_id END,
-                m.sample_used, m.sample_usable, m.sample_wrong
-         FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.chat_id = ?1 ORDER BY m.id",
-    )?;
-    let rows = st.query_map([chat], |r| {
-        Ok(MessageRow {
-            id: r.get(0)?,
-            role: r.get(1)?,
-            content: r.get(2)?,
-            status: r.get(3)?,
-            error_code: r.get(4)?,
-            truncated: r.get::<_, i64>(5)? != 0,
-            model: r.get(6)?,
-            created_at: r.get(7)?,
-            free: r.get::<_, i64>(8)? != 0,
-            kind: r.get(9)?,
-            question_id: r.get(10)?,
-            question_no: r.get(11)?,
-            source: r.get(12)?,
-            lang: r.get(13)?,
-            record_id: r.get(14)?,
-            sample: sample_of(r.get(15)?, r.get(16)?, r.get(17)?),
-        })
-    })?;
+                m.sample_used, m.sample_usable, m.sample_wrong, m.parent_id, m.connection,
+                m.reasoning, m.reasoning_ms, m.reasoning_truncated";
+
+fn message_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<MessageRow> {
+    Ok(MessageRow {
+        id: r.get(0)?,
+        role: r.get(1)?,
+        content: r.get(2)?,
+        status: r.get(3)?,
+        error_code: r.get(4)?,
+        truncated: r.get::<_, i64>(5)? != 0,
+        model: r.get(6)?,
+        created_at: r.get(7)?,
+        free: r.get::<_, i64>(8)? != 0,
+        kind: r.get(9)?,
+        question_id: r.get(10)?,
+        question_no: r.get(11)?,
+        source: r.get(12)?,
+        lang: r.get(13)?,
+        record_id: r.get(14)?,
+        sample: sample_of(r.get(15)?, r.get(16)?, r.get(17)?),
+        parent_id: r.get(18)?,
+        connection: r.get(19)?,
+        reasoning: r.get(20)?,
+        reasoning_ms: r.get(21)?,
+        reasoning_truncated: r.get::<_, i64>(22)? != 0,
+    })
+}
+
+/// ALL messages of a chat, oldest first, every version included (tests and tools; no route uses it since v1.3, they use
+/// [`path`]). The caller has checked that the chat is the user's. `record_id` is the chat's, shown only for result-page
+/// answers and summaries.
+pub fn messages(c: &Connection, chat: i64) -> rusqlite::Result<Vec<MessageRow>> {
+    let mut st = c.prepare(&format!(
+        "SELECT {MSG_COLS} FROM messages m JOIN chats c ON c.id = m.chat_id WHERE m.chat_id = ?1 ORDER BY m.id"
+    ))?;
+    let rows = st.query_map([chat], message_from)?;
     rows.collect()
+}
+
+/// The viewed line of a chat, oldest first: from `leaf` (default `chats.leaf_id`) up the `parent_id` chain, every step
+/// inside the chat, at most [`PATH_LIMIT`] messages (cycle guard). Empty for a chat without messages. The caller has
+/// checked that the chat is the user's.
+pub fn path(c: &Connection, chat: i64, leaf: Option<i64>) -> rusqlite::Result<Vec<MessageRow>> {
+    let leaf = match leaf {
+        Some(l) => Some(l),
+        None => c
+            .query_row("SELECT leaf_id FROM chats WHERE id = ?1", [chat], |r| {
+                r.get::<_, Option<i64>>(0)
+            })
+            .optional()?
+            .flatten(),
+    };
+    let Some(leaf) = leaf else {
+        return Ok(Vec::new());
+    };
+    let mut st = c.prepare(&format!(
+        "WITH RECURSIVE line(id, parent, depth) AS (
+           SELECT id, parent_id, 1 FROM messages WHERE id = ?2 AND chat_id = ?1
+           UNION ALL
+           SELECT p.id, p.parent_id, line.depth + 1
+           FROM line JOIN messages p ON p.id = line.parent AND p.chat_id = ?1
+           WHERE line.depth < ?3)
+         SELECT {MSG_COLS} FROM line JOIN messages m ON m.id = line.id JOIN chats c ON c.id = m.chat_id
+         ORDER BY line.depth DESC LIMIT ?3"
+    ))?;
+    let rows = st.query_map(params![chat, leaf, PATH_LIMIT], message_from)?;
+    rows.collect()
+}
+
+/// The versions of the messages of a path: message id -> the ids of all messages with the same parent and the same role
+/// in the chat (the message itself included), ordered by id. Only groups of two or more are returned.
+pub fn versions(
+    c: &Connection,
+    chat: i64,
+    path: &[MessageRow],
+) -> rusqlite::Result<HashMap<i64, Vec<i64>>> {
+    let mut out = HashMap::new();
+    if path.is_empty() {
+        return Ok(out);
+    }
+    let mut parents: Vec<i64> = path.iter().filter_map(|m| m.parent_id).collect();
+    parents.sort_unstable();
+    parents.dedup();
+    let mut cond = String::from("parent_id IS NULL");
+    if !parents.is_empty() {
+        let list: Vec<String> = parents.iter().map(i64::to_string).collect();
+        cond = format!("{cond} OR parent_id IN ({})", list.join(","));
+    }
+    let mut st = c.prepare(&format!(
+        "SELECT id, parent_id, role FROM messages WHERE chat_id = ?1 AND ({cond}) ORDER BY id"
+    ))?;
+    let rows = st.query_map([chat], |r| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, Option<i64>>(1)?,
+            r.get::<_, String>(2)?,
+        ))
+    })?;
+    let mut groups: HashMap<(Option<i64>, String), Vec<i64>> = HashMap::new();
+    for row in rows {
+        let (id, parent, role) = row?;
+        groups.entry((parent, role)).or_default().push(id);
+    }
+    for m in path {
+        if let Some(g) = groups.get(&(m.parent_id, m.role.clone())) {
+            if g.len() > 1 {
+                out.insert(m.id, g.clone());
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// The end of the line that runs through `from`: repeat "newest child (highest id)" until a message has none.
+pub fn line_end(c: &Connection, chat: i64, from: i64) -> rusqlite::Result<i64> {
+    let mut cur = from;
+    for _ in 0..PATH_LIMIT {
+        let next: Option<i64> = c.query_row(
+            "SELECT MAX(id) FROM messages WHERE chat_id = ?1 AND parent_id = ?2",
+            [chat, cur],
+            |r| r.get(0),
+        )?;
+        match next {
+            Some(n) => cur = n,
+            None => break,
+        }
+    }
+    Ok(cur)
+}
+
+/// Makes `leaf` the viewed end of the chat. `chats.updated_at` is untouched. Fails with `QueryReturnedNoRows` when
+/// `leaf` is not a message of this chat (the leaf is always a message of its chat).
+pub fn set_leaf(c: &Connection, chat: i64, leaf: i64) -> rusqlite::Result<()> {
+    let n = c.execute(
+        "UPDATE chats SET leaf_id = ?2
+         WHERE id = ?1 AND EXISTS (SELECT 1 FROM messages WHERE id = ?2 AND chat_id = ?1)",
+        [chat, leaf],
+    )?;
+    if n == 0 {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    Ok(())
+}
+
+/// Stores (or clears, with None) the administrator's model pick of a chat. `updated_at` is untouched.
+pub fn set_chat_pick(c: &Connection, chat: i64, pick: Option<(i64, &str)>) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE chats SET pick_conn = ?2, pick_model = ?3 WHERE id = ?1",
+        params![chat, pick.map(|p| p.0), pick.map(|p| p.1)],
+    )?;
+    Ok(())
+}
+
+/// `true` when `message` is on the viewed line (the path of `chats.leaf_id`).
+pub fn on_path(c: &Connection, chat: i64, message: i64) -> rusqlite::Result<bool> {
+    c.query_row(
+        "WITH RECURSIVE line(id, parent, depth) AS (
+           SELECT m.id, m.parent_id, 1 FROM chats c JOIN messages m ON m.id = c.leaf_id AND m.chat_id = c.id
+           WHERE c.id = ?1
+           UNION ALL
+           SELECT p.id, p.parent_id, line.depth + 1
+           FROM line JOIN messages p ON p.id = line.parent AND p.chat_id = ?1
+           WHERE line.depth < ?3)
+         SELECT EXISTS(SELECT 1 FROM line WHERE id = ?2)",
+        params![chat, message, PATH_LIMIT],
+        |r| r.get(0),
+    )
+}
+
+/// Number of assistant answers (versions) that follow the user message `question`.
+pub fn answer_versions(c: &Connection, chat: i64, question: i64) -> rusqlite::Result<i64> {
+    c.query_row(
+        "SELECT COUNT(*) FROM messages WHERE chat_id = ?1 AND parent_id = ?2 AND role = 'assistant'",
+        [chat, question],
+        |r| r.get(0),
+    )
+}
+
+/// The viewed end of a chat (`chats.leaf_id`); None for no message yet.
+pub fn leaf_of(c: &Connection, chat: i64) -> rusqlite::Result<Option<i64>> {
+    Ok(
+        c.query_row("SELECT leaf_id FROM chats WHERE id = ?1", [chat], |r| {
+            r.get::<_, Option<i64>>(0)
+        })
+        .optional()?
+        .flatten(),
+    )
 }
 
 pub fn count_chats(c: &Connection, user: i64) -> rusqlite::Result<i64> {
@@ -405,13 +594,34 @@ pub struct NewMessage<'a> {
     pub model: Option<&'a str>,
     pub free: bool,
     pub now: i64,
+    /// The message this one follows. `None` = the chat's current leaf (v1.2 behaviour: the line grows at its end), which
+    /// is a root while the chat is empty. A `Some` must be a message of the same chat (else `QueryReturnedNoRows`).
+    pub parent: Option<i64>,
+    /// Connection NAME that writes an assistant answer
+    pub connection: Option<&'a str>,
 }
 
-/// Inserts a message; returns its id.
+/// Inserts a message after `m.parent` (default: the current leaf) and makes it the leaf of the chat; returns its id. A
+/// pair insert (question, then answer with `parent: Some(question)` or `None`) therefore ends with the answer as the leaf.
 pub fn insert_message(c: &Connection, m: &NewMessage<'_>) -> rusqlite::Result<i64> {
+    let parent = match m.parent {
+        Some(p) => {
+            let ok: bool = c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1 AND chat_id = ?2)",
+                [p, m.chat],
+                |r| r.get(0),
+            )?;
+            if !ok {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            Some(p)
+        }
+        None => leaf_of(c, m.chat)?,
+    };
     c.execute(
-        "INSERT INTO messages (chat_id, role, content, status, model, created_at, finished_at, free)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?4 = 'streaming' THEN NULL ELSE ?6 END, ?7)",
+        "INSERT INTO messages (chat_id, role, content, status, model, created_at, finished_at, free, parent_id,
+                               connection)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?4 = 'streaming' THEN NULL ELSE ?6 END, ?7, ?8, ?9)",
         params![
             m.chat,
             m.role,
@@ -419,10 +629,14 @@ pub fn insert_message(c: &Connection, m: &NewMessage<'_>) -> rusqlite::Result<i6
             m.status,
             m.model,
             m.now,
-            i64::from(m.free)
+            i64::from(m.free),
+            parent,
+            m.connection
         ],
     )?;
-    Ok(c.last_insert_rowid())
+    let id = c.last_insert_rowid();
+    set_leaf(c, m.chat, id)?;
+    Ok(id)
 }
 
 pub fn touch_chat(c: &Connection, chat: i64, now: i64) -> rusqlite::Result<()> {
@@ -437,7 +651,7 @@ pub fn touch_chat(c: &Connection, chat: i64, now: i64) -> rusqlite::Result<()> {
 pub fn reset_answer(c: &Connection, msg: i64, model: &str, free: bool) -> rusqlite::Result<()> {
     c.execute(
         "UPDATE messages SET content = '', status = 'streaming', error_code = NULL, truncated = 0, model = ?2,
-                finished_at = NULL, free = ?3
+                finished_at = NULL, free = ?3, reasoning = NULL, reasoning_ms = NULL, reasoning_truncated = 0
          WHERE id = ?1",
         params![msg, model, i64::from(free)],
     )?;
@@ -449,6 +663,44 @@ pub fn set_message_free(c: &Connection, msg: i64, free: bool) -> rusqlite::Resul
     c.execute(
         "UPDATE messages SET free = ?2 WHERE id = ?1",
         params![msg, i64::from(free)],
+    )?;
+    Ok(())
+}
+
+/// Most bytes (UTF-8) of stored reasoning per answer; the head is kept, cut at a char boundary.
+pub const MAX_REASONING_BYTES: usize = 32 * 1024;
+
+/// The head of `s` of at most `max` bytes (cut at a char boundary) and whether it was cut.
+pub fn cap_head(s: &str, max: usize) -> (&str, bool) {
+    if s.len() <= max {
+        return (s, false);
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    (&s[..end], true)
+}
+
+/// Reasoning of an AI Chat answer. `text` is trimmed (both ends) and capped; empty after trimming clears all three
+/// columns (NULL, NULL, 0). `truncated` is OR-ed with the cap's own cut. No status guard (written by the running
+/// generation's flush and by its final transaction only).
+pub fn set_reasoning(
+    c: &Connection,
+    msg: i64,
+    text: &str,
+    ms: Option<i64>,
+    truncated: bool,
+) -> rusqlite::Result<()> {
+    let (head, cut) = cap_head(text.trim(), MAX_REASONING_BYTES);
+    let (value, ms, truncated) = if head.is_empty() {
+        (None, None, false)
+    } else {
+        (Some(head), ms, truncated || cut)
+    };
+    c.execute(
+        "UPDATE messages SET reasoning = ?2, reasoning_ms = ?3, reasoning_truncated = ?4 WHERE id = ?1",
+        params![msg, value, ms, i64::from(truncated)],
     )?;
     Ok(())
 }
@@ -694,11 +946,14 @@ fn insert_study_message(
     model: Option<&str>,
     s: &StudyInsert<'_>,
 ) -> rusqlite::Result<i64> {
+    // appended at the viewed end of the chat, which then moves to the new message
+    let parent = leaf_of(c, chat)?;
     c.execute(
         "INSERT INTO messages (chat_id, role, content, status, model, created_at, finished_at, free, kind,
-                               question_id, question_no, source, lang, sample_used, sample_usable, sample_wrong)
+                               question_id, question_no, source, lang, sample_used, sample_usable, sample_wrong,
+                               parent_id)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, CASE WHEN ?4 = 'streaming' THEN NULL ELSE ?6 END, 0, ?7,
-                 ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                 ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         params![
             chat,
             role,
@@ -714,9 +969,12 @@ fn insert_study_message(
             s.sample.map(|x| x.used),
             s.sample.map(|x| x.usable),
             s.sample.map(|x| x.wrong),
+            parent,
         ],
     )?;
-    Ok(c.last_insert_rowid())
+    let id = c.last_insert_rowid();
+    set_leaf(c, chat, id)?;
+    Ok(id)
 }
 
 /// The write transaction of a hint / explanation / summary ask (run it inside `Store::write`; an `Err` rolls

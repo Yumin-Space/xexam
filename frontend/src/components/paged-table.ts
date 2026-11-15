@@ -25,6 +25,8 @@ export interface PtColumn {
   plain?: boolean;
   /** A header only for screen readers (no visible text) */
   srOnly?: boolean;
+  /** A short header shown instead of the label in the phone mini table (owner, v1.3); the label stays for screen readers */
+  short?: string;
 }
 
 export interface PagedTableOptions<T> {
@@ -98,14 +100,17 @@ export function pagedTable<T>(o: PagedTableOptions<T>): HTMLElement {
   // Table: the header buttons are built once and only re-marked
   const arrows = new Map<string, HTMLElement>();
   const ths = new Map<string, HTMLElement>();
+  const headText = (c: PtColumn): Child[] => (c.short
+    ? [h('span', { class: 'ptb-full' }, c.label), h('span', { class: 'ptb-short', 'aria-hidden': 'true' }, c.short)]
+    : [c.label]);
   const headCells = o.columns.map((c) => {
     if (c.plain) {
-      return h('th', { scope: 'col', ...role('columnheader'), class: c.cls ?? null }, c.srOnly ? h('span', { class: 'sr-only' }, c.label) : c.label);
+      return h('th', { scope: 'col', ...role('columnheader'), class: c.cls ?? null }, c.srOnly ? h('span', { class: 'sr-only' }, c.label) : headText(c));
     }
     const arrow = h('span', { class: 'ptb-arrow', 'aria-hidden': 'true' });
     arrows.set(c.key, arrow);
     const btn = h('button', { type: 'button', class: 'ptb-sort', onclick: () => set(clickSort(stateOf(), c.key, !!c.text)) },
-      h('span', { class: 'ptb-lbl' }, c.label), arrow);
+      h('span', { class: 'ptb-lbl' }, ...headText(c)), arrow);
     const th = h('th', { scope: 'col', ...role('columnheader'), class: ((c.cls ?? '') + ' ptb-th').trim(), 'aria-sort': 'none' }, btn);
     ths.set(c.key, th);
     return th;

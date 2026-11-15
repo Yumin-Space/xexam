@@ -7,6 +7,7 @@ pub mod guard;
 pub mod hint;
 pub mod model;
 pub mod render;
+pub mod share;
 pub mod summary;
 pub mod title;
 pub mod wire;
@@ -41,6 +42,7 @@ pub use explain::{explain_prompt, practice_explain_prompt, result_explain_prompt
 pub use hint::{hint_prompt, study_user_message};
 pub use model::{HotspotItem, KeyAnswer, OptionText, QKind, Solution, StudyQuestion, UserEntry};
 pub use summary::{
-    summary_prompt, summary_user_message, BasedOn, RecordInfo, RecordKind, Sample, SummaryItem,
+    summary_prompt, summary_prompt_with, summary_user_message, BasedOn, RecordInfo, RecordKind,
+    Sample, SummaryItem,
 };
 pub use title::{at_digits_to_at, clamp_started_at, suffix_key, summary_ref, ChatKind};

@@ -82,14 +82,14 @@ async fn the_anthropic_request_carries_two_cache_breakpoints() {
     let t = start().await;
     let admin = t.user("admin", true, false);
     let sam = t.user("sam", false, true);
-    let (s, v) = t
-        .post(
-            "/api/ai/admin/settings",
-            &admin,
-            json!({"provider": "anthropic", "baseUrl": format!("{}/anthropic/v1", t.stub.url), "apiKey": KEY, "model": "demo-claude"}),
-        )
-        .await;
-    assert_eq!(s, 200, "{v}");
+    t.seed_route(Seed {
+        provider: "anthropic",
+        url: format!("{}/anthropic/v1", t.stub.url),
+        api_key: Some(KEY),
+        gateway_key: None,
+        gateway_auth: "bearer",
+        model: "demo-claude",
+    });
     t.verify_and_enable(&admin).await;
     let ev = t
         .send_all(
@@ -128,7 +128,9 @@ async fn the_anthropic_request_carries_two_cache_breakpoints() {
 }
 
 #[tokio::test]
-async fn old_messages_are_cut_the_same_way_on_every_request() {
+async fn the_history_only_grows_between_two_moves_of_the_shortening_line() {
+    // A2: the shortening line moves once per 8 messages (and starts after 12), so a short chat is sent in full and every
+    // request is the previous request plus the new messages: the provider's prompt cache keeps hitting
     let t = start().await;
     t.relax_caps();
     let admin = t.user("admin", true, false);
@@ -157,25 +159,15 @@ async fn old_messages_are_cut_the_same_way_on_every_request() {
         );
         assert_eq!(msgs.len(), 2 + 2 * i);
     }
-    // request 6: history = a b c d e (questions) with 5 short answers; the newest 4 messages are full
+    // request 6: five questions and five short answers, all in full (fewer than 12 earlier messages)
     let last = &seen[5];
     assert_eq!(last.len(), 11);
-    // newest four of the history: answer, question 'e', answer, question 'd'; the older user messages are cut
-    assert_eq!(last[10], long('f'));
-    assert_eq!(last[8], long('e'));
-    assert_eq!(last[6], long('d'));
-    assert_eq!(last[4], format!("{}…", "c".repeat(2000)));
-    assert_eq!(last[2], format!("{}…", "b".repeat(2000)));
-    assert_eq!(last[0], format!("{}…", "a".repeat(2000)));
-    // the same message gives the same text on the next request: question 'c' was cut in request 5 already
-    assert_eq!(
-        seen[4][4],
-        long('c'),
-        "still one of the newest four in request 5"
-    );
-    assert_eq!(seen[4][2], last[2]);
-    assert_eq!(seen[4][0], last[0]);
-    // and a message that was still in full in request 4 is cut from request 5 on, identically afterwards
-    assert_eq!(seen[3][2], long('b'));
-    assert_eq!(seen[4][2], format!("{}…", "b".repeat(2000)));
+    for (k, c) in ['a', 'b', 'c', 'd', 'e', 'f'].into_iter().enumerate() {
+        assert_eq!(last[2 * k], long(c), "question {c}");
+    }
+    // every request, without its new question, is the start of the next one
+    for w in seen.windows(2) {
+        let old = &w[0][..w[0].len() - 1];
+        assert_eq!(&w[1][..old.len()], old);
+    }
 }

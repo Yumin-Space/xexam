@@ -41,7 +41,7 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   desktop-17-ai-hint    a practice question of the made-up demo bank with the AI+ panel expanded on the AI hint (the
                         screenshot user has the AI+ feature); the stub's hint, in the UI language, and the muted "Saved in
                         AI Chat" text (no Open in AI Chat control: nothing in the panel navigates away)
-  desktop-18-ai-result  the result of the exam: card 1 with the AI+ panel expanded on the AI analysis (AI 分析), card 2's
+  desktop-18-ai-result  the result of the exam: card 1 with the AI+ panel expanded on the AI analysis (AI 解説), card 2's
                         collapsed AI+ bar below it
   desktop-19-ai-summary Study records with the AI summary window open: the "based on" line, the stub's four headings and the
                         "Saved in AI Chat" text
@@ -351,8 +351,8 @@ JS_USERS_STATE = r"""(() => {
 })()"""
 
 # AI settings: the AI+ feature cells of the users with the AI+ feature (for the log of the run)
-JS_AI_FUNCTIONS = r"""(() => [...document.querySelectorAll('[id^="ais-fn-"]')].map(b => b.closest('tr')?.innerText
-  .replace(/\s+/g, ' ').trim().slice(0, 60)).join(' | ') || 'no Pause / Resume button')()"""
+JS_AI_FUNCTIONS = r"""(() => [...new Set([...document.querySelectorAll('[id^="ais-feat-"]')].map(b => b.closest('tr, li')?.innerText
+  .replace(/\s+/g, ' ').trim().slice(0, 60)))].join(' | ') || 'no feature boxes')()"""
 
 # AI Chat: open the chat whose title starts like `title` in the chat list
 JS_AI_OPEN = r"""(async (title) => {
@@ -409,29 +409,17 @@ JS_AI_PANES_BOTTOM = r"""(() => {
 # AI settings: press Refresh list (the line "N models found" appears under the model), then Test, and wait for each
 # result (the page reads the usage again after both, so the Usage card counts these calls too)
 JS_AI_TEST = r"""(async () => {
+  // v1.3: the connections and the default model were saved and tested when the stack was set up (the save tests the
+  // connection); the page only has to show them
   const wait = window.__wait, q = s => document.querySelector(s);
-  const inCard = (heading, s) => document.getElementById(heading)?.closest('section')?.querySelector(s);
-  const until = async (ok, ms) => {
-    for (let t = 0; t < ms; t += 100) { await wait(100); if (ok()) return true; }
-    return false;
-  };
-  await until(() => q('#ai-test-btn'), 10000);                  // the page reads its settings first
-  // a saved and tested model is one line with a pencil (v1.0): open it to get the model field with Refresh list
-  if (!q('#ai-models-btn') && q('#ai-model-edit')) { q('#ai-model-edit').click(); await until(() => q('#ai-models-btn'), 3000); }
-  if (!q('#ai-models-btn') || !q('#ai-test-btn')) {
-    return 'no Refresh list / Test button (page: ' + document.querySelector('#app, main, body').innerText.replace(/\s+/g, ' ').slice(0, 300) + ')';
-  }
-  q('#ai-models-btn').click();
-  const listed = await until(() => !q('#ai-models-btn')?.disabled && inCard('ais-model-h', '.ais-note[role="status"]'), 8000);
-  const note = inCard('ais-model-h', '.ais-note[role="status"]')?.innerText || '';
-  q('#ai-test-btn').click();
-  const tested = await until(() => !q('#ai-test-btn')?.disabled && inCard('ais-test-h', '.ais-ok, .ais-fail, .ais-ferr'), 15000);
-  const result = inCard('ais-test-h', '.ais-ok')?.innerText || 'TEST FAILED';
-  await wait(1200);                                    // the usage tables are read again after the test
+  for (let t = 0; t < 10000 && !q('li.ais-conn:not(.ais-conn-add)'); t += 100) await wait(100);
+  await wait(800);
   document.activeElement?.blur?.();
   window.scrollTo(0, 0);
-  return (listed ? note : 'NO MODEL LIST') + '; ' + (tested ? result : 'NO TEST RESULT');
-})()"""
+  const n = document.querySelectorAll('li.ais-conn:not(.ais-conn-add)').length;
+  const bad = document.querySelectorAll('.ais-chip.fail').length;
+  return n + ' connection(s), ' + document.querySelectorAll('.ais-slot').length + ' model slots, ' + bad + ' failed chip(s)';
+})"""
 
 # AI settings: [top, bottom] (page coordinates) of the card whose heading has the id `first`, through the card whose
 # heading has the id `last`
@@ -589,7 +577,7 @@ JS_BAR_CHECK = r"""(async (expectAi) => {
   if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally by ' + (de.scrollWidth - de.clientWidth) + ' px');
   const hint = q('[data-focus="q-aihint"]'), explain = q('[data-focus="q-aiexplain"]');
   if (expectAi) {
-    if (!hint || !explain) bad.push('the AI hint / AI explanation buttons are missing');
+    if (!hint || !explain) bad.push('the AI hint / AI analysis buttons are missing');
     else if (greyed(hint) || greyed(explain)) bad.push('the AI buttons are greyed for an AI+ user');
   } else {
     if (!hint) bad.push('no AI hint button (greyed expected)');
@@ -652,9 +640,9 @@ JS_AI_TABS = r"""((expected) => {
 JS_AI_SAFETY = r"""(() => {
   const bad = [];
   const groups = window.__qa('.ais-subgroup').map(g => (g.querySelector('.ais-h3')?.innerText || '').replace(/\s+/g, ' ').trim());
-  if (groups.length < 3) bad.push(groups.length + ' limit sub-groups (the caps, the answer / memory length, the server protection expected)');
-  if (!document.getElementById('ais-caps-h')) bad.push('no request caps group');
-  if (!document.getElementById('ais-srv-h')) bad.push('no server protection group');
+  if (groups.length < 5) bad.push(groups.length + ' limit sub-groups (v1.3: the caps, chat, study, summary, generation, import, the server protection expected)');
+  if (!document.getElementById('ais-g-calls')) bad.push('no request caps group');
+  if (!document.getElementById('ais-g-server')) bad.push('no server protection group');
   return [bad, groups];
 })()"""
 
@@ -681,7 +669,7 @@ JS_BAR_ROWS = r"""(() => {
   return tops.length;
 })()"""
 
-# Result page of the exam: open the AI+ panel of the first answer card on its AI analysis (AI 分析), wait for the text and the
+# Result page of the exam: open the AI+ panel of the first answer card on its AI analysis (AI 解説), wait for the text and the
 # Saved text; returns [text length or a message, the lowest bottom (page coordinates) of that card's panel and the collapsed
 # bar of card 2 under it]
 JS_AI_RESULT = r"""(async () => {
@@ -1012,6 +1000,9 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
         s.js("document.querySelector('dialog[open]')?.close(); 'closed'")
     if with_log and s.wanted('desktop-13-logs.png'):
         s.nav('#/logs', settle=2.5)
+        # v1.3: the page opens on the Activity tab; this image is the Service log (the second tab)
+        s.js("document.querySelectorAll('.lg-tabs button')[1].click(); 1")
+        time.sleep(1.5)
         # the log box is min(64vh, 720px) tall: find the viewport height whose card ends 24 px above the bottom edge
         h = 1000
         for _ in range(30):
@@ -1143,7 +1134,7 @@ def _ai_scenes(s, base, cookie, code):
         bad, groups = s.js(JS_AI_SAFETY)
         _expect(bad, 'AI safety tab')
         print('  AI safety groups: ' + ' | '.join(groups))
-        _tab_image(s, 'desktop-20-ai-safety.png', 'ais-lim-h', 2100)
+        _tab_image(s, 'desktop-20-ai-safety.png', 'ais-lim-h', 4200)   # v1.3: the whole limits card (about twice as tall as in v1.2)
 
 
 def _v11_scenes(s, base, cookie, code):

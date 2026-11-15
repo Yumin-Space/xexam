@@ -6,6 +6,10 @@ use crate::study::language_line;
 use crate::study::model::StudyQuestion;
 use crate::study::render::question_block;
 
+/// Version of the hint prompt, part of the shared-answer hash: bump it whenever [`HINT_SYSTEM`] (or the question
+/// block it is sent with) changes, so stored hints of the old text stop matching.
+pub const HINT_PROMPT_V: u32 = 1;
+
 /// System prompt template; `{LANG_LINE}` is [`language_line`].
 pub const HINT_SYSTEM: &str = "You are the study assistant inside Xexam, a self-hosted exam practice app. The user is practising and asked for a HINT
 for one question. Help them find the answer themselves.

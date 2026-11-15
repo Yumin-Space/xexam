@@ -8,12 +8,13 @@ use crate::extract::{Doc, ExtractError, LangHint};
 use crate::features::Feature;
 use crate::gen::assemble;
 use crate::gen::dedup::Deduper;
+use crate::gen::par::{self, Par, Step};
 use crate::gen::plan::per_call;
 use crate::gen::prompt::Prompt;
 use crate::gen::run::{FailCode, JobLimits, Outcome, Run};
 use crate::gen::runner::{
     create_bank, drive, fail_job, log_failed, random_bytes, run_detail, static_up_code,
-    wait_for_place, CallResult, Ctx, Stop, StopWhy,
+    wait_for_place, CallOpts, CallResult, Ctx, Stop, StopWhy,
 };
 use crate::gen::Composition;
 use crate::identity::Identity;
@@ -57,6 +58,8 @@ pub struct ImportJob {
     pub at: String,
     /// The permit of `IMPORT_PENDING_MAX`, released when the extraction is over
     pub pending: Option<OwnedSemaphorePermit>,
+    /// The caller's address and browser (for the activity event only)
+    pub client: crate::identity::ClientInfo,
 }
 
 /// Starts the runner (the row is queued, phase reading).
@@ -194,6 +197,7 @@ async fn run_import(
         approx,
         whole,
         at: recognised_at,
+        route: recognised_route,
     } = recognised;
     // 3. the confirm wait
     let goal = match mode {
@@ -311,12 +315,16 @@ async fn run_import(
     } else {
         confirmed_at + Duration::from_secs(Knobs::get(&app.0.knobs.writing_secs))
     };
+    // the job keeps the route it was recognised on (the prompt cache is per connection); a connection that broke or was
+    // removed meanwhile stops the job at the next `recheck`
+    let route = recognised_route;
     let ctx = Ctx {
         app: app.clone(),
         task: job.task,
         who: job.who.clone(),
         feature: Feature::Import,
         purpose: "import",
+        route,
         cancel,
         deadline: writing_deadline,
         timeout_code: "ai.gen.timeout",
@@ -343,11 +351,7 @@ async fn run_import(
         Mode::Material => {
             let ex = material::excerpts(&lines);
             let want = crate::limits::chars_to_tokens(job.call_chars as i64);
-            let ceiling = app
-                .0
-                .snapshot()
-                .ok()
-                .and_then(|s| app.token_ceiling(&s, want));
+            let ceiling = app.token_ceiling(&ctx.route, want);
             let plan =
                 match material::make_plan(&ex, job.comp, per_call(job.call_chars, ceiling), seed) {
                     Ok(p) => p,
@@ -371,32 +375,41 @@ async fn run_import(
     let driven = if let Some(w) = &whole {
         // A-OWNER-71: the writing calls start with the cached prefix and run up to four at a time
         let nonce = crate::util::hex(&random_bytes::<8>());
-        let mut user_for = |run: &Run, batch: &[usize]| -> (String, Option<i64>) {
+        let mut step_for = |run: &Run, batch: &[usize]| -> Step {
             let slots = run.slots(batch);
             match mode {
-                Mode::Questions => (
-                    whole::convert_user(&slots, &specs, &segs) + &run.retry_note(batch),
-                    run.want_chars(batch)
+                Mode::Questions => Step {
+                    whole: 0,
+                    user: whole::convert_user(&slots, &specs, &segs) + &run.retry_note(batch),
+                    want: run
+                        .want_chars(batch)
                         .map(|c| crate::limits::chars_to_tokens(c as i64)),
-                ),
-                Mode::Material => (
-                    whole::write_user(&slots, &by_id, &run.written(), &nonce)
+                },
+                Mode::Material => Step {
+                    whole: 0,
+                    user: whole::write_user(&slots, &by_id, &run.written(), &nonce)
                         + &run.retry_note(batch),
-                    None,
-                ),
+                    want: None,
+                },
             }
         };
-        let cold = whole::cold(recognised_at, Instant::now());
-        whole::drive(
-            &ctx,
-            w,
-            &mut run,
-            mode == Mode::Material,
-            whole::WIDTH,
+        // a prefix below the model's cache minimum goes out without markers: no cache, no alone-first wait
+        let cache_on = crate::provider::cache_floor_ok(
+            ctx.route.format,
+            &ctx.route.model,
+            &w.system,
+            Some(&w.prefix),
+        );
+        let cold = cache_on && whole::cold(recognised_at, Instant::now());
+        let par = Par {
+            wholes: std::slice::from_ref(w),
+            cap_batches: mode == Mode::Material,
+            width: whole::WIDTH,
             cold,
-            &mut user_for,
-        )
-        .await
+            generation: false,
+            items: false,
+        };
+        par::drive(&ctx, &par, &mut run, &mut step_for).await
     } else {
         let mut prompt_for = |run: &Run, batch: &[usize]| -> (Prompt, Option<i64>) {
             let slots = run.slots(batch);
@@ -543,6 +556,11 @@ async fn run_import(
                 })
                 .unwrap_or(0);
             if n > 0 {
+                app.0.activity(
+                    crate::activity::Event::new(Some(&job.who), "ai.import.create", &job.client)
+                        .object(reply.name.clone())
+                        .detail(json!({"questions": questions.len()})),
+                );
                 tracing::info!(
                     "user {:?} finished an AI file import ({} of {} questions, {} model calls)",
                     job.who.username,
@@ -596,6 +614,11 @@ fn finish_failed_with(
             usize::try_from(calls).unwrap_or(0),
             detail,
         );
+        app.0.activity(
+            crate::activity::Event::new(Some(&job.who), "ai.import.create", &job.client)
+                .object(job.name.clone())
+                .failed(code),
+        );
     }
 }
 
@@ -612,6 +635,8 @@ struct Recognised {
     whole: Option<Whole>,
     /// When recognising ended (the prompt cache of the prefix is that young)
     at: Instant,
+    /// The route the job started on, kept for the writing
+    route: crate::route::Route,
 }
 
 /// Windows asked at the same time once the type is known (A-OWNER-38 item 2c).
@@ -673,7 +698,7 @@ impl<'a> Rec<'a> {
     /// One recognising call with the provider-error rules: three errors in a row fail the job with the provider's code,
     /// the backoff grows by 15 s per error.
     async fn call(&self, prompt: &Prompt, want: i64) -> Result<String, Stop> {
-        self.call_with(&prompt.system, None, &prompt.user, want)
+        self.call_with(&prompt.system, None, &prompt.user, want, 1)
             .await
     }
 
@@ -684,8 +709,11 @@ impl<'a> Rec<'a> {
         prefix: Option<&str>,
         user: &str,
         want: i64,
+        attempt: u32,
     ) -> Result<String, Stop> {
         let ctx = self.ctx;
+        // the send number: a second send (a later try, or a repeat after a provider error) must differ from the first
+        let mut attempt = attempt.max(1);
         loop {
             ctx.check()?;
             if self.abort.load(Ordering::SeqCst) {
@@ -701,7 +729,23 @@ impl<'a> Rec<'a> {
             }
             let permit = ctx.place().await?;
             self.take()?;
-            let r = ctx.call_with(system, prefix, user, want, 0).await;
+            let r = if attempt >= 2 {
+                let user = format!(
+                    "{user}{}",
+                    crate::gen::run::attempt_line(attempt, &crate::util::hex(&random_bytes::<4>()))
+                );
+                ctx.call_opts(
+                    system,
+                    prefix,
+                    &user,
+                    want,
+                    0,
+                    CallOpts::for_attempt(attempt),
+                )
+                .await
+            } else {
+                ctx.call_with(system, prefix, user, want, 0).await
+            };
             drop(permit);
             let r = r?;
             let (row, outcome) = match r {
@@ -710,6 +754,7 @@ impl<'a> Rec<'a> {
                     (row, Ok(text))
                 }
                 CallResult::Error { code, row } => {
+                    attempt += 1;
                     let n = self.fails.fetch_add(1, Ordering::SeqCst) + 1;
                     let c: UpCode = code;
                     (
@@ -812,9 +857,9 @@ async fn recognise_whole(
     let user = whole::recognise_user();
     let mut want = whole::recognise_want(lines.len());
     let mut best: Option<whole::Recognition> = None;
-    for _ in 0..2 {
+    for try_no in 1..=2u32 {
         let text = rec
-            .call_with(&whole.system, Some(&whole.prefix), &user, want)
+            .call_with(&whole.system, Some(&whole.prefix), &user, want, try_no)
             .await?;
         match whole::parse_recognition(&text, lines.len()) {
             Some(r) if !r.overlaps => {
@@ -840,6 +885,7 @@ async fn recognise_whole(
         approx: false,
         whole: Some(whole.clone()),
         at,
+        route: rec.ctx.route.clone(),
     };
     match r.class.verdict {
         Verdict::None => return Err(Stop::Fail("ai.import.noContent")),
@@ -870,6 +916,7 @@ async fn recognise_whole(
         approx: count::uncertain(total, lines),
         whole: Some(whole.clone()),
         at,
+        route: rec.ctx.route.clone(),
     }))
 }
 
@@ -881,6 +928,10 @@ async fn recognise(
     deadline: Instant,
     error_arg: &mut Option<Value>,
 ) -> Result<Recognised, Stop> {
+    let route = app
+        .0
+        .route(crate::route::Slot::Import, None)
+        .map_err(|_| Stop::Fail("ai.gen.stopped"))?;
     let mut full = lines(doc);
     let local = count::count(&full);
     // The whole file as the cached prefix of every call, when it fits the model (A-OWNER-71)
@@ -889,7 +940,7 @@ async fn recognise(
         let w = whole::build(&full, &nonce);
         whole::fits(
             &w,
-            whole::model_context(app),
+            whole::model_context(app, &route),
             app.0.limits().import_tokens(),
         )
         .then_some(w)
@@ -940,6 +991,7 @@ async fn recognise(
         who: job.who.clone(),
         feature: Feature::Import,
         purpose: "recognise",
+        route: route.clone(),
         cancel: cancel.clone(),
         deadline,
         timeout_code: "ai.import.readTimeout",
@@ -1012,6 +1064,7 @@ async fn recognise(
                     approx: false,
                     whole: None,
                     at: Instant::now(),
+                    route: route.clone(),
                 });
             }
             Verdict::Questions => {}
@@ -1052,6 +1105,7 @@ async fn recognise(
             approx: false,
             whole: None,
             at: Instant::now(),
+            route: route.clone(),
         });
     }
     if let Some(n) = segment::too_long(&full, &found, MAX_QUESTION_CHARS) {
@@ -1073,6 +1127,7 @@ async fn recognise(
         approx,
         whole: None,
         at: Instant::now(),
+        route,
     })
 }
 

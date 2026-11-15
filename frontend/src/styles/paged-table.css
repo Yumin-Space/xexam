@@ -72,5 +72,15 @@ th.n .ptb-sort { justify-content: flex-end; }
     box-shadow: 1px 0 0 var(--line-soft);
   }
   .ptb-mini .ais-x { display: none; }
+  /* owner (v1.3): the mini table shows its short heads, each on one line, so the header row is even (the full label stays
+     for screen readers) */
+  .ptb-mini .ptb-short { display: inline; }
+  .ptb-mini .ptb-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .ptb-mini .ptb-table thead th:has(.ptb-short), .ptb-mini .ptb-table thead th:has(.ptb-short) .ptb-sort { white-space: nowrap; }
+  .ptb-mini .ptb-table thead th:has(.ptb-short) { vertical-align: middle; }
+  /* owner (v1.3): a little smaller and tighter so the eight columns fit a 393 px phone without sideways scrolling */
+  .ptb-mini .ptb-table:has(.ptb-short) { font-size: 10.5px; }
+  .ptb-mini .ptb-table:has(.ptb-short) th, .ptb-mini .ptb-table:has(.ptb-short) td { padding: 5px 2px; }
 }
+.ptb-short { display: none; }
 @media (min-width: 561px) { .ptb-mini .ais-k { display: none; } }

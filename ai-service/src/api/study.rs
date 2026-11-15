@@ -6,24 +6,28 @@
 //! `practice` / `exam` / `summary`). The backend decides which chat: the question and the record come from its data
 //! routes (`Link::data_call`), never from the browser. Nothing of a question, an answer, a chat title, a session key or
 //! a record time is ever logged.
-use super::user::{launch, take_places, Launch};
+use super::user::{launch, Launch};
 use super::{ok, only_keys, query_text, require_ai_user, Answer, Ctx};
 use crate::chat::Kind;
 use crate::codes::ApiError;
 use crate::link::LinkError;
 use crate::prompt::Lang;
 use crate::provider::{Role, Turn};
-use crate::store::data::{self, StudyError, StudyInsert, StudySample};
+use crate::store::data::{self, StudyError, StudyIds, StudyInsert, StudySample};
+use crate::store::shared::{self, NewShared, SharedKey, SharedRow};
 use crate::study::guard::HintGuard;
+use crate::study::share::content_hash;
 use crate::study::summary::{RecordInfo, Sample};
 use crate::study::wire::{self, RecordIdent, Refusal, WireError};
 use crate::study::{
     self, at_digits_to_at, clamp_started_at, hint_prompt, lang_code, practice_explain_prompt,
-    result_explain_prompt, study_user_message, summary_prompt, summary_ref, summary_user_message,
-    MAX_SUMMARY_ITEMS,
+    result_explain_prompt, study_user_message, summary_prompt_with, summary_ref,
+    summary_user_message,
 };
 use crate::util::{is_lower_hex, local_minute, unix_now};
+use rusqlite::OptionalExtension;
 use serde_json::{json, Map, Value};
+use std::time::Duration;
 
 // —— shared helpers ——————————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -127,13 +131,17 @@ fn places(
     chat: Option<i64>,
     feature: crate::features::Feature,
 ) -> Result<(crate::chat::Slot, crate::chat::GatePermit), ApiError> {
-    take_places(ctx, Kind::Chat, chat, feature).map_err(|e| {
-        if e.code == "ai.busy" {
-            chat_busy(ctx, chat)
-        } else {
-            e
-        }
-    })
+    ctx.app
+        .0
+        .take_places(&ctx.who, Kind::Chat, chat, feature)
+        .map(|p| (p.slot, p.permit))
+        .map_err(|e| {
+            if e.code == "ai.busy" {
+                chat_busy(ctx, chat)
+            } else {
+                e
+            }
+        })
 }
 
 /// Maps the errors of the ask transaction.
@@ -212,6 +220,8 @@ struct Ask {
     source: Source,
     record_id: Option<i64>,
     lang: Option<Lang>,
+    /// Regenerate: always a new model call; a finished answer replaces the shared one
+    fresh: bool,
 }
 
 fn parse_ask(body: &Map<String, Value>) -> Result<Ask, ApiError> {
@@ -228,8 +238,14 @@ fn parse_ask(body: &Map<String, Value>) -> Result<Ask, ApiError> {
             "lang",
             "source",
             "recordId",
+            "fresh",
         ],
     )?;
+    let fresh = match body.get("fresh") {
+        None => false,
+        Some(Value::Bool(b)) => *b,
+        Some(_) => return Err(ApiError::bad_request()),
+    };
     let kind = match body_str(body, "kind")? {
         Some("hint") => AskKind::Hint,
         Some("explain") => AskKind::Explain,
@@ -282,6 +298,7 @@ fn parse_ask(body: &Map<String, Value>) -> Result<Ask, ApiError> {
         source,
         record_id,
         lang,
+        fresh,
     })
 }
 
@@ -339,10 +356,24 @@ fn identity_of(ask: &Ask, record: Option<&RecordIdent>, now: i64) -> Result<Chat
 
 pub async fn ask(ctx: Ctx) -> Answer {
     let a = parse_ask(&ctx.body)?;
-    let snap = require_ai_user(&ctx.app, &ctx.who)?;
-    let target = ctx.app.0.target(&snap)?;
     let app = &ctx.app.0;
     let who = &ctx.who;
+    let feature = match a.kind {
+        AskKind::Hint => crate::features::Feature::Hint,
+        AskKind::Explain => crate::features::Feature::Explain,
+    };
+    // The gates come before the lookup: a shared answer is refused exactly when a new one would be (AI off or paused,
+    // user suspended, feature switched off for a normal user). Administrators pass the feature switches.
+    if !app.effective()? {
+        return Err(ApiError::disabled());
+    }
+    if !app.link_fresh() {
+        return Err(ApiError::backend_down());
+    }
+    if !who.ai_allowed {
+        return Err(ApiError::not_allowed());
+    }
+    app.admit(who, feature)?;
 
     // The question (and the saved item of the record) from the backend
     let elang = a.lang.map_or("en", wire_lang);
@@ -369,9 +400,33 @@ pub async fn ask(ctx: Ctx) -> Answer {
         app.records.put(who.id, &who.stamp, r);
     }
 
-    // The prompt (a hint never receives the solution; only the guard does)
     let q = &reply.question;
     let sol = &reply.solution;
+    let user_content = study_user_message(q);
+
+    // The shared answer of this question content (nothing is read or written while the switch is off)
+    let share = app.limits().study_share == 1;
+    let shared_kind: &'static str = match a.kind {
+        AskKind::Hint => "hint",
+        AskKind::Explain => "explain",
+    };
+    let hash =
+        share.then(|| content_hash(shared_kind, q, (a.kind == AskKind::Explain).then_some(sol)));
+    if let (Some(h), false) = (&hash, a.fresh) {
+        let key = SharedKey {
+            question_id: &a.question_id,
+            content_hash: h,
+            kind: shared_kind,
+            lang: wire_lang(lang),
+        };
+        if let Some(row) = app.store.read(|c| shared::shared_get(c, &key))? {
+            return serve_shared(&ctx, &a, &ident, lang, &user_content, &row, now);
+        }
+    }
+
+    // A new answer needs a route; the prompt (a hint never receives the solution; only the guard does)
+    let route = app.route(feature.slot(), None)?;
+    let target = app.target(&route)?;
     let no = u32::try_from(a.no).map_err(|_| ApiError::bad_request())?;
     let (system, user, guard, purpose, kind) = match a.kind {
         AskKind::Hint => {
@@ -379,8 +434,9 @@ pub async fn ask(ctx: Ctx) -> Answer {
             (s, u, Some(HintGuard::new(q, sol)), "hint", "hint")
         }
         AskKind::Explain => {
+            // A shared explanation is the same for everyone: it never discusses the asker's own answer
             let (s, u) = match (&a.source, &reply.item) {
-                (Source::Result, Some(item)) => {
+                (Source::Result, Some(item)) if !share => {
                     result_explain_prompt(q, sol, item.answer.as_deref(), no, lang)
                 }
                 _ => practice_explain_prompt(q, sol, no, lang),
@@ -388,20 +444,15 @@ pub async fn ask(ctx: Ctx) -> Answer {
             (s, u, None, "explain", "explain")
         }
     };
-    let user_content = study_user_message(q);
 
     // The places, then the write transaction (which binds the chat to the place before anything is written)
     let chat_opt = app
         .store
         .read(|c| data::chat_by_ref(c, who.id, ident.kind, &ident.chat_ref))?;
-    let feature = match a.kind {
-        AskKind::Hint => crate::features::Feature::Hint,
-        AskKind::Explain => crate::features::Feature::Explain,
-    };
     let (slot, permit) = places(&ctx, chat_opt, feature)?;
     app.study_hold_point().await;
     let limits = app.limits();
-    let model = snap.settings.model.clone();
+    let model = route.model.clone();
     let insert = StudyInsert {
         chat_kind: ident.kind,
         chat_ref: &ident.chat_ref,
@@ -441,7 +492,9 @@ pub async fn ask(ctx: Ctx) -> Answer {
         "recordId": if a.source == Source::Result { json!(ids.record_id) } else { Value::Null },
         "sample": Value::Null,
         "lang": lang_code(lang),
+        "shared": false,
     });
+    let answer_id = ids.answer;
     let l = Launch {
         chat: ids.chat,
         answer: ids.answer,
@@ -455,7 +508,210 @@ pub async fn ask(ctx: Ctx) -> Answer {
         purpose: Some(purpose),
         attempt: ids.attempt,
     };
-    launch(&ctx, &snap, target, slot, permit, l)
+    let out = launch(&ctx, &route, target, slot, permit, l);
+    if let (Ok(_), Some(h)) = (&out, hash) {
+        tokio::spawn(share_when_done(
+            ctx.app.clone(),
+            OwnedKey {
+                question_id: a.question_id.clone(),
+                content_hash: h,
+                kind: shared_kind,
+                lang: wire_lang(lang),
+            },
+            answer_id,
+            route.model.clone(),
+            route.connection_name.clone(),
+            a.fresh,
+        ));
+    }
+    out
+}
+
+/// The hit path of an ask: the stored answer is copied into the caller's session chat as an ordinary finished pair and
+/// streamed in one piece (`start` with `shared: true`, one `delta`, `done`). No place, no cap count, no usage row, no
+/// budget check: nothing was generated.
+fn serve_shared(
+    ctx: &Ctx,
+    a: &Ask,
+    ident: &ChatIdent,
+    lang: Lang,
+    user_content: &str,
+    row: &SharedRow,
+    now: i64,
+) -> Answer {
+    let app = &ctx.app.0;
+    let who = &ctx.who;
+    let chat_opt = app
+        .store
+        .read(|c| data::chat_by_ref(c, who.id, ident.kind, &ident.chat_ref))?;
+    // An answer of the user is still streaming into this chat: the copy would land in the middle of it
+    if let Some(chat) = chat_opt {
+        if app
+            .registry
+            .running_in(who.id, Some(chat))
+            .is_some_and(|(c, _)| c == chat)
+        {
+            return Err(chat_busy(ctx, chat_opt));
+        }
+    }
+    let limits = app.limits();
+    let kind = match a.kind {
+        AskKind::Hint => "hint",
+        AskKind::Explain => "explain",
+    };
+    let insert = StudyInsert {
+        chat_kind: ident.kind,
+        chat_ref: &ident.chat_ref,
+        title: &ident.title,
+        record_id: ident.record_id,
+        kind,
+        question_id: Some(&a.question_id),
+        question_no: Some(a.no),
+        source: Some(a.source.as_str()),
+        lang: lang_code(lang),
+        sample: None,
+        user_content,
+        model: &row.model,
+        now,
+        chats_per_user: limits.chats_per_user,
+        messages_per_chat: limits.messages_per_chat,
+    };
+    let ids = app
+        .store
+        .write(|tx| -> Result<StudyIds, StudyError> {
+            let ids = data::prepare_study(tx, who, &insert, &mut |_| true)?;
+            data::finish_answer(tx, ids.answer, &row.content, "done", None, false, now)?;
+            Ok(ids)
+        })
+        .map_err(|e| study_error(ctx, chat_opt, e))?;
+    // Best effort: a failed counter never fails the answer
+    let _ = app
+        .store
+        .write(|tx| -> rusqlite::Result<()> { shared::shared_hit(tx, row.id, now) });
+    let mut start = json!({
+        "chatId": ids.chat,
+        "chatTitle": ids.title,
+        "userMessageId": ids.user_msg,
+        "assistantMessageId": ids.answer,
+        "model": row.model,
+        "newChat": ids.new_chat,
+        "retry": false,
+        "free": false,
+        "chatKind": ident.kind,
+        "kind": kind,
+        "questionId": a.question_id,
+        "questionNo": a.no,
+        "source": a.source.as_str(),
+        "recordId": if a.source == Source::Result { json!(ids.record_id) } else { Value::Null },
+        "sample": Value::Null,
+        "lang": lang_code(lang),
+        "shared": true,
+    });
+    super::hide::for_viewer(who.is_admin(), &mut start);
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    for (event, data) in [
+        ("start", start),
+        ("delta", json!({ "text": row.content })),
+        (
+            "done",
+            json!({"status": "done", "tokensIn": Value::Null, "tokensOut": Value::Null, "truncated": false}),
+        ),
+    ] {
+        let _ = tx.send(crate::chat::Frame { event, data });
+    }
+    drop(tx);
+    Ok(super::user::sse_response(rx, app.timeouts.keep_alive))
+}
+
+/// The key of a shared answer that is being generated.
+struct OwnedKey {
+    question_id: String,
+    content_hash: String,
+    kind: &'static str,
+    lang: &'static str,
+}
+
+/// How long a generation may run before its answer is no longer waited for.
+const SHARE_WAIT_MAX: Duration = Duration::from_secs(30 * 60);
+
+/// Waits until the answer `message` has ended and stores it as the shared answer when it is complete: status `done`,
+/// not truncated (so not cut by the hint guard either), not empty. A miss never replaces an existing row (first
+/// finished answer wins); a regenerate replaces it. A stopped, failed or withdrawn answer never touches the row.
+async fn share_when_done(
+    app: crate::app::AppState,
+    key: OwnedKey,
+    message: i64,
+    model: String,
+    connection: String,
+    fresh: bool,
+) {
+    let started = std::time::Instant::now();
+    let done = loop {
+        let step = if started.elapsed() < Duration::from_secs(20) {
+            50
+        } else {
+            500
+        };
+        tokio::time::sleep(Duration::from_millis(step)).await;
+        let row = app.0.store.read(|c| {
+            c.query_row(
+                "SELECT status, content, truncated FROM messages WHERE id = ?1",
+                [message],
+                |r| {
+                    Ok((
+                        r.get::<_, String>(0)?,
+                        r.get::<_, String>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()
+        });
+        match row {
+            Ok(Some((status, content, truncated))) => {
+                if status != "streaming" {
+                    break (status == "done" && truncated == 0 && !content.trim().is_empty())
+                        .then_some(content);
+                }
+            }
+            // The chat was deleted, or the database is unreadable
+            _ => return,
+        }
+        if started.elapsed() > SHARE_WAIT_MAX {
+            return;
+        }
+    };
+    let Some(content) = done else {
+        return;
+    };
+    // The switch may have been turned off while the answer was written
+    if app.0.limits().study_share != 1 {
+        return;
+    }
+    let k = SharedKey {
+        question_id: &key.question_id,
+        content_hash: &key.content_hash,
+        kind: key.kind,
+        lang: key.lang,
+    };
+    let n = NewShared {
+        content: &content,
+        model: &model,
+        connection: &connection,
+        tokens_in: None,
+        tokens_out: None,
+        now: unix_now(),
+    };
+    let saved = app.0.store.write(|tx| -> rusqlite::Result<()> {
+        if fresh {
+            shared::shared_replace(tx, &k, &n)
+        } else {
+            shared::shared_put_first(tx, &k, &n).map(|_| ())
+        }
+    });
+    if let Err(e) = saved {
+        tracing::warn!("could not store a shared AI answer: {e}");
+    }
 }
 
 // —— GET /api/ai/study/saved —————————————————————————————————————————————————————————————————————————————————————————
@@ -551,7 +807,9 @@ pub async fn saved(ctx: Ctx) -> Answer {
             source.as_str(),
         )
     })?;
-    ok(found.to_json(false))
+    let mut v = found.to_json(false);
+    super::hide::for_viewer(who.is_admin(), &mut v);
+    ok(v)
 }
 
 // —— POST /api/ai/summary/ask ————————————————————————————————————————————————————————————————————————————————————————
@@ -560,22 +818,26 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["recordId", "lang"])?;
     let record_id = body_int(&ctx.body, "recordId", 1)?.ok_or_else(ApiError::bad_request)?;
     let lang_opt = body_lang(&ctx.body)?;
-    let snap = require_ai_user(&ctx.app, &ctx.who)?;
-    let target = ctx.app.0.target(&snap)?;
+    let route = require_ai_user(&ctx.app, &ctx.who, crate::route::Slot::Summary)?;
+    let target = ctx.app.0.target(&route)?;
     let app = &ctx.app.0;
     let who = &ctx.who;
+    // The most wrong answers one summary lists (`summaryMaxItems`), and the prompt budget that scales with it
+    let max_items = usize::try_from(app.limits().summary_max_items)
+        .unwrap_or(40)
+        .clamp(1, 70);
+    let prompt_budget = app.limits().summary_prompt_chars();
 
     const PATH: &str = "/internal/ai/record";
     let req = json!({
         "sid": who.sid,
         "id": who.id,
         "recordId": record_id,
-        "max": MAX_SUMMARY_ITEMS,
+        "max": max_items,
         "elang": lang_opt.map_or("en", wire_lang),
     });
     let bytes = backend(&ctx, PATH, req).await?;
-    let reply =
-        wire::parse_record(&bytes, MAX_SUMMARY_ITEMS).map_err(|e| wire_error(&ctx, PATH, e))?;
+    let reply = wire::parse_record(&bytes, max_items).map_err(|e| wire_error(&ctx, PATH, e))?;
     app.records.put(who.id, &who.stamp, &reply.record);
     if !reply.detail {
         return Err(ApiError::no_detail());
@@ -602,7 +864,7 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
         usize::try_from(reply.usable).unwrap_or(usize::MAX),
         usize::try_from(reply.wrong).unwrap_or(usize::MAX),
     );
-    let (system, user) = summary_prompt(&info, &reply.items, psample, lang);
+    let (system, user) = summary_prompt_with(&info, &reply.items, psample, lang, prompt_budget);
     let user_content = summary_user_message(&info, psample);
     let chat_ref = summary_ref(reply.record.id, &reply.record.at);
 
@@ -612,7 +874,7 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
     let (slot, permit) = places(&ctx, chat_opt, crate::features::Feature::Summary)?;
     app.study_hold_point().await;
     let limits = app.limits();
-    let model = snap.settings.model.clone();
+    let model = route.model.clone();
     let insert = StudyInsert {
         chat_kind: "summary",
         chat_ref: &chat_ref,
@@ -666,7 +928,7 @@ pub async fn summary_ask(ctx: Ctx) -> Answer {
         purpose: Some("summary"),
         attempt: ids.attempt,
     };
-    launch(&ctx, &snap, target, slot, permit, l)
+    launch(&ctx, &route, target, slot, permit, l)
 }
 
 // —— GET /api/ai/summary/saved ———————————————————————————————————————————————————————————————————————————————————————
@@ -686,5 +948,7 @@ pub async fn summary_saved(ctx: Ctx) -> Answer {
         .0
         .store
         .read(|c| data::summary_saved(c, who.id, &chat_ref))?;
-    ok(found.to_json(true))
+    let mut v = found.to_json(true);
+    super::hide::for_viewer(who.is_admin(), &mut v);
+    ok(v)
 }

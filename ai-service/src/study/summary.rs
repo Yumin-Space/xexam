@@ -144,6 +144,18 @@ pub fn summary_prompt(
     sample: Sample,
     lang: Lang,
 ) -> (String, String) {
+    summary_prompt_with(record, items, sample, lang, SUMMARY_PROMPT_CHARS)
+}
+
+/// [`summary_prompt`] with the prompt budget of the current limits (`Limits::summary_prompt_chars`, 750 characters per
+/// allowed item): above it every item's content is cut to `floor(budget / n)` characters.
+pub fn summary_prompt_with(
+    record: &RecordInfo,
+    items: &[SummaryItem],
+    sample: Sample,
+    lang: Lang,
+    budget: usize,
+) -> (String, String) {
     let kind = match record.kind {
         RecordKind::Practice => "practice session",
         RecordKind::Exam => "exam",
@@ -173,8 +185,8 @@ pub fn summary_prompt(
         .map(|(it, c)| wrap(it, c))
         .collect();
     let total: usize = rendered.iter().map(|r| r.chars().count() + 2).sum();
-    let user = if total > SUMMARY_PROMPT_CHARS && !items.is_empty() {
-        let each = SUMMARY_PROMPT_CHARS / items.len();
+    let user = if total > budget && !items.is_empty() {
+        let each = budget / items.len();
         items
             .iter()
             .zip(&contents)

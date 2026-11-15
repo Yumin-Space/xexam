@@ -179,6 +179,12 @@ export default defineCatalog({
     'aigen.badge.tipFileMaterialNoAuthor': 'Generated with AI from “{file}” · {time}',
     'aigen.bank.metaFile': 'AI import · from the file “{file}”',
     'aigen.bank.metaFileMaterial': 'AI-generated · from the file “{file}”',
+
+    'aigen.phase.planning': 'Planning the questions…',
+    'aigen.items.title': 'Questions written so far ({n})',
+    'aigen.items.note': 'The bank is saved only after every question is written and has passed the checks.',
+    'aigen.placeholder': 'Generating {made} / {goal}',
+    'aigen.tooBig': 'This bank is too large (about {tokens} tokens). Select fewer sheets and try again.',
   },
   zh: {
     'aigen.bank.metaBank': 'AI 生成 · 来自「{from}」',
@@ -350,6 +356,12 @@ export default defineCatalog({
     'aigen.badge.tipFileMaterialNoAuthor': 'AI 根据「{file}」生成 · {time}',
     'aigen.bank.metaFile': 'AI 导入 · 来自文件「{file}」',
     'aigen.bank.metaFileMaterial': 'AI 生成 · 根据文件「{file}」',
+
+    'aigen.phase.planning': '正在规划题目…',
+    'aigen.items.title': '已写好的题目（{n}）',
+    'aigen.items.note': '全部写完并通过检查后才会保存为题库。',
+    'aigen.placeholder': '生成中 {made} / {goal}',
+    'aigen.tooBig': '题库太大（约 {tokens} tokens），请减少勾选的范围后再生成。',
   },
   ja: {
     'aigen.bank.metaBank': 'AI 作成 ·「{from}」から',
@@ -521,5 +533,11 @@ export default defineCatalog({
     'aigen.badge.tipFileMaterialNoAuthor': 'AI で「{file}」から作成 · {time}',
     'aigen.bank.metaFile': 'AI インポート · ファイル「{file}」から',
     'aigen.bank.metaFileMaterial': 'AI 作成 · ファイル「{file}」から',
+
+    'aigen.phase.planning': '問題を計画しています…',
+    'aigen.items.title': '作成済みの問題（{n}）',
+    'aigen.items.note': 'すべての問題が作成され、チェックを通過してから問題集として保存されます。',
+    'aigen.placeholder': '作成中 {made} / {goal}',
+    'aigen.tooBig': '問題集が大きすぎます（約 {tokens} トークン）。選択範囲を減らしてからもう一度お試しください。',
   },
 });

@@ -1,7 +1,7 @@
 // The rows of the usage bar charts: the "other" bar, the 万 / K format, the metric.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { cachePair, formatBig, modelRows, purposeRows, tokenFigures, valueOf } from './usage-bars.ts';
+import { cachePair, formatBig, modelRows, purposeRows, sortRows, tokenFigures, valueOf } from './usage-bars.ts';
 
 const c = (calls: number, tokensIn = 0, tokensOut = 0, errors = 0) => ({ calls, tokensIn, tokensOut, errors });
 
@@ -57,4 +57,23 @@ test('A-OWNER-84 tokenFigures: input/output pair, cache write/read pair, row 2 h
   assert.equal(tokenFigures({ tokensIn: 1, tokensOut: 2, tokensCacheWrite: 1_234_567 }).cache, '1.2M/0');
   assert.equal(cachePair(6934, 76345), '6.9K/76.3K');
   assert.equal(cachePair(1, 2, (n) => String(n * 10)), '10/20');
+});
+
+test('sortRows: by amount high to low with stable ties, by name with CJK and natural numbers, input untouched', () => {
+  const r = (label: string, calls: number, tokens = 0, other = false) => ({ key: label, label, other, ...c(calls, tokens, 0) });
+  const rows = [r('b', 5), r('a', 5), r('c', 9), r('其他', 20, 0, true), r('m10', 1), r('m2', 1)];
+  assert.deepEqual(sortRows(rows, 'amount', 'calls').map((x) => x.label), ['其他', 'c', 'b', 'a', 'm10', 'm2']);
+  assert.deepEqual(sortRows(rows, 'name', 'calls', 'en').map((x) => x.label), ['a', 'b', 'c', 'm2', 'm10', '其他']);
+  assert.deepEqual(sortRows([r('模型', 1), r('功能', 1)], 'name', 'calls', 'zh-CN').map((x) => x.label), ['功能', '模型']);
+  // owner's name order: digit, Latin A-Z (case-insensitive, natural numbers), then other scripts; "other" last; same in every locale
+  const mixed = [r('其他', 1, 0, true), r('モデル', 1), r('对话', 1), r('beta-10', 1), r('beta-2', 1), r('alpha', 1), r('Zeta', 1), r('9x', 1)];
+  const want = ['9x', 'alpha', 'beta-2', 'beta-10', 'Zeta'];
+  for (const loc of ['en', 'zh-CN', 'ja']) {
+    const got = sortRows(mixed, 'name', 'calls', loc).map((x) => x.label);
+    assert.deepEqual(got.slice(0, 5), want);
+    assert.deepEqual(new Set(got.slice(5, 7)), new Set(['对话', 'モデル']));
+    assert.equal(got[7], '其他');
+  }
+  assert.deepEqual(sortRows([r('x', 1, 50), r('y', 9, 10)], 'amount', 'tokens').map((x) => x.label), ['x', 'y']);
+  assert.equal(rows[0]!.label, 'b');
 });

@@ -223,7 +223,8 @@ async fn the_audit_line_is_kept_in_the_outbox_when_the_log_is_down() {
     assert_eq!((flag, line.as_str()), (0, OFF_LINE));
     assert!(!t.backend.log_contains(OFF_LINE));
     t.backend.st().log_fail = false;
-    assert_eq!(t.app.0.deliver_outbox().await, 1);
+    // the audit line and its activity event
+    assert_eq!(t.app.0.deliver_outbox().await, 2);
     assert!(t.backend.log_contains(OFF_LINE));
 }
 

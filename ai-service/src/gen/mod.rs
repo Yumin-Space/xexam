@@ -7,6 +7,7 @@
 pub mod assemble;
 pub mod check;
 pub mod dedup;
+pub mod par;
 pub mod parse;
 pub mod plan;
 pub mod prompt;
@@ -14,6 +15,7 @@ pub mod rng;
 pub mod run;
 pub mod runner;
 pub mod text;
+pub mod whole;
 pub mod wire;
 
 use serde::{Deserialize, Serialize};
@@ -127,7 +129,8 @@ pub struct SeedFull {
 
 /// Name of the one sheet of a generated bank.
 pub const SHEET: &str = "AI";
-pub const MAX_GOAL: usize = 100;
+/// Most questions of one generation or one file import (v1.3: 300, was 100).
+pub const MAX_GOAL: usize = 300;
 /// One trilingual question with explanation, as JSON.
 pub const EST_CHARS_PER_QUESTION: usize = 1600;
 pub const MAX_PER_CALL: usize = 5;

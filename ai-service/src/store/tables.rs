@@ -74,6 +74,8 @@ pub struct SecretRow {
     pub ciphertext: Vec<u8>,
     pub hint: String,
     pub rev: i64,
+    /// 1 = sealed with the AAD of the old single connection (`...-v1:<name>`), 2 = with the connection id
+    pub aad_ver: i64,
 }
 
 pub fn load_secrets(c: &Connection) -> rusqlite::Result<Vec<SecretRow>> {
@@ -88,6 +90,7 @@ pub fn load_secrets(c: &Connection) -> rusqlite::Result<Vec<SecretRow>> {
             ciphertext: r.get(3)?,
             hint: r.get(4)?,
             rev: r.get(5)?,
+            aad_ver: 1,
         })
     })?;
     rows.collect()

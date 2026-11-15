@@ -28,10 +28,23 @@ pub const SESSION_COOKIE: &str = "xexam_session";
 pub const DEVICE_COOKIE: &str = "xexam_device";
 /// Lifetime of the known-browser cookie: 400 days (the longest browsers keep a cookie).
 pub const DEVICE_TTL_SECS: i64 = 400 * 24 * 3600;
-/// Session lifetime (sliding): 30 days.
+/// Legacy (v1.2): session lifetime, 30 days. Still used by the old `Store::session_user` / `start_session`, which the v1.3
+/// auth layer no longer calls; the store owner removes them together with this constant. Use [`USER_REMEMBER_SECS`].
 pub const SESSION_TTL_SECS: i64 = 30 * 24 * 3600;
-/// `last_seen_at` / `expires_at` of a session are written at most once per this many seconds.
+/// Legacy (v1.2), see [`SESSION_TTL_SECS`]. Use [`SESSION_COOKIE_RESEND_SECS`].
 pub const SESSION_REFRESH_SECS: i64 = 3600;
+/// v1.3: an administrator session ends after this long without activity (24 h)...
+pub const ADMIN_IDLE_SECS: i64 = 86_400;
+/// ...and this long after sign-in whatever the activity (7 days).
+pub const ADMIN_HARD_SECS: i64 = 604_800;
+/// v1.3: a user session with "keep me signed in": sliding idle limit, 30 days (also the cookie `Max-Age`).
+pub const USER_REMEMBER_SECS: i64 = 2_592_000;
+/// v1.3: a user session without it: idle limit, 12 h (the cookie is a browser-session cookie).
+pub const USER_SESSION_IDLE_SECS: i64 = 43_200;
+/// v1.3: a session row (and `users.last_active_at`) is written at most once per this many seconds per session.
+pub const SESSION_TOUCH_SECS: i64 = 60;
+/// v1.3: the session cookie of a "remember" session is re-sent at most this often.
+pub const SESSION_COOKIE_RESEND_SECS: i64 = 3600;
 /// Expired sessions are purged at startup and then at most once per this many seconds.
 pub const SESSION_PURGE_SECS: i64 = 3600;
 /// At most this many sessions per user; a new sign-in beyond it ends the sessions that would expire first.
@@ -73,6 +86,190 @@ impl Role {
             ROLE_USER => Some(Role::User),
             _ => None,
         }
+    }
+}
+
+// ---------------------------------------------------------------- session lifetime (v1.3)
+
+/// The stored times of a session, unix seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionTimes {
+    /// The sign-in; a session without one (made by a v1.2 binary) passes its `last_seen_at`
+    pub started_at: i64,
+    pub last_seen_at: i64,
+    pub remember: bool,
+}
+
+/// Why a session ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ended {
+    Idle,
+    Hard,
+}
+
+impl Ended {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Ended::Idle => "idle",
+            Ended::Hard => "hard",
+        }
+    }
+}
+
+/// Which lifetime rule a session follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rule {
+    Admin,
+    Remember,
+    Browser,
+}
+
+impl Rule {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Rule::Admin => "admin",
+            Rule::Remember => "remember",
+            Rule::Browser => "browser",
+        }
+    }
+    /// The idle limit of the rule, seconds (`session.idleSecs`).
+    pub fn idle_secs(self) -> i64 {
+        match self {
+            Rule::Admin => ADMIN_IDLE_SECS,
+            Rule::Remember => USER_REMEMBER_SECS,
+            Rule::Browser => USER_SESSION_IDLE_SECS,
+        }
+    }
+}
+
+/// The rule for a user of `role`; `remember` is the box ticked at sign-in (ignored for administrators).
+pub fn session_rule(role: Role, remember: bool) -> Rule {
+    match (role, remember) {
+        (Role::Admin, _) => Rule::Admin,
+        (Role::User, true) => Rule::Remember,
+        (Role::User, false) => Rule::Browser,
+    }
+}
+
+/// The only place that knows how long a session lives. The first second (unix) at which the session at its current
+/// `last_seen_at` counts as ended, and why. Follows the user's CURRENT role, so a promotion or demotion applies at the next
+/// request. An administrator's hard limit wins a tie with the idle limit.
+pub fn session_deadline(role: Role, t: &SessionTimes) -> (i64, Ended) {
+    let idle = t
+        .last_seen_at
+        .saturating_add(session_rule(role, t.remember).idle_secs());
+    if role == Role::Admin {
+        let hard = t.started_at.saturating_add(ADMIN_HARD_SECS);
+        if hard <= idle {
+            return (hard, Ended::Hard);
+        }
+    }
+    (idle, Ended::Idle)
+}
+
+/// The rule and the end of the hard limit (unix seconds; administrators only) of a session, as `session` in the answers.
+pub fn session_info(role: Role, t: &SessionTimes) -> (Rule, Option<i64>) {
+    let rule = session_rule(role, t.remember);
+    let hard = (rule == Rule::Admin).then(|| t.started_at.saturating_add(ADMIN_HARD_SECS));
+    (rule, hard)
+}
+
+/// What one request should write ([`SessionGates::plan`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TouchPlan {
+    pub session: bool,
+    pub active: bool,
+}
+
+#[derive(Default)]
+struct GateInner {
+    /// session token hash -> (last touch, last cookie send); `i64::MIN` = never
+    sessions: std::collections::HashMap<String, (i64, i64)>,
+    /// user id -> the minute (`now / 60`) of the last `last_active_at` write
+    users: std::collections::HashMap<i64, i64>,
+    /// session token hash -> when its end was claimed (so two requests that find it ended record it once)
+    ending: std::collections::HashMap<String, i64>,
+}
+
+/// In-memory gates that keep an untouched request read-only: at most one session write per session per
+/// [`SESSION_TOUCH_SECS`], one `last_active_at` write per user per minute, one cookie re-send per session per
+/// [`SESSION_COOKIE_RESEND_SECS`]. Empty after a restart (the first request then writes once, which is harmless).
+#[derive(Default)]
+pub struct SessionGates(std::sync::Mutex<GateInner>);
+
+impl SessionGates {
+    fn lock(&self) -> std::sync::MutexGuard<'_, GateInner> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Claims the writes of a request that counts as activity: what to write now (both false = stay read-only).
+    pub fn plan(&self, token_hash: &str, user_id: i64, now: i64) -> TouchPlan {
+        let mut g = self.lock();
+        let e = g
+            .sessions
+            .entry(token_hash.to_string())
+            .or_insert((i64::MIN, i64::MIN));
+        let session = e.0 == i64::MIN || now.saturating_sub(e.0) >= SESSION_TOUCH_SECS;
+        if session {
+            e.0 = now;
+        }
+        let minute = now.div_euclid(60);
+        let active = g.users.get(&user_id) != Some(&minute);
+        if active {
+            g.users.insert(user_id, minute);
+        }
+        TouchPlan { session, active }
+    }
+
+    /// Claims the cookie re-send of a "remember" session: true when none was sent in the last hour (or since the restart).
+    pub fn cookie_due(&self, token_hash: &str, now: i64) -> bool {
+        let mut g = self.lock();
+        let e = g
+            .sessions
+            .entry(token_hash.to_string())
+            .or_insert((i64::MIN, i64::MIN));
+        let due = e.1 == i64::MIN || now.saturating_sub(e.1) >= SESSION_COOKIE_RESEND_SECS;
+        if due {
+            e.1 = now;
+        }
+        due
+    }
+
+    /// A session was just created: its touch and cookie are fresh.
+    pub fn started(&self, token_hash: &str, user_id: i64, now: i64) {
+        let mut g = self.lock();
+        g.sessions.insert(token_hash.to_string(), (now, now));
+        g.users.insert(user_id, now.div_euclid(60));
+    }
+
+    /// Claims the deletion and the log entry of an ended session: true for the first caller only.
+    pub fn claim_end(&self, token_hash: &str, now: i64) -> bool {
+        let mut g = self.lock();
+        g.ending.retain(|_, t| now.saturating_sub(*t) < 120);
+        g.ending.insert(token_hash.to_string(), now).is_none()
+    }
+
+    /// The session ended (sign-out, expiry, rotation).
+    pub fn forget(&self, token_hash: &str) {
+        self.lock().sessions.remove(token_hash);
+    }
+
+    /// Drops entries nobody needs any more: sessions untouched for 2 h (past the cookie gate), users older than 2 minutes.
+    pub fn prune(&self, now: i64) {
+        let mut g = self.lock();
+        g.sessions
+            .retain(|_, (t, c)| now.saturating_sub((*t).max(*c)) < 2 * SESSION_COOKIE_RESEND_SECS);
+        let minute = now.div_euclid(60);
+        g.users.retain(|_, m| minute.saturating_sub(*m) < 2);
+    }
+
+    /// Number of remembered sessions.
+    pub fn len(&self) -> usize {
+        self.lock().sessions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 }
 
@@ -317,10 +514,21 @@ pub fn cookie_secure(force: bool, origin: Option<&str>) -> bool {
         })
 }
 
-/// `Set-Cookie` value for a session token.
+/// `Set-Cookie` value for a session token of a "remember" session (30 days). See [`session_cookie_for`].
 pub fn session_cookie(token: &str, secure: bool) -> String {
+    session_cookie_for(token, secure, Rule::Remember)
+}
+
+/// `Set-Cookie` value for a session token under `rule`: administrator `Max-Age=604800` (set once at sign-in), remember
+/// `Max-Age=2592000`, browser session: neither `Max-Age` nor `Expires`.
+pub fn session_cookie_for(token: &str, secure: bool, rule: Rule) -> String {
+    let age = match rule {
+        Rule::Admin => format!("; Max-Age={ADMIN_HARD_SECS}"),
+        Rule::Remember => format!("; Max-Age={USER_REMEMBER_SECS}"),
+        Rule::Browser => String::new(),
+    };
     format!(
-        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/; Max-Age={SESSION_TTL_SECS}{}",
+        "{SESSION_COOKIE}={token}; HttpOnly; SameSite=Strict; Path=/{age}{}",
         if secure { "; Secure" } else { "" }
     )
 }
@@ -548,5 +756,160 @@ mod tests {
         assert!(!device_known(&HeaderMap::new(), 7, "$argon2id$one"));
         assert!(device_cookie(&tag, false).contains("; Path=/api/auth; "));
         assert!(device_cookie(&tag, true).ends_with("; Secure"));
+    }
+
+    fn times(started: i64, last: i64, remember: bool) -> SessionTimes {
+        SessionTimes {
+            started_at: started,
+            last_seen_at: last,
+            remember,
+        }
+    }
+
+    #[test]
+    fn deadline_rule_matrix() {
+        // administrator: 24 h idle, 7 days hard, whatever `remember` says
+        for remember in [true, false] {
+            let t = times(1_000, 1_000, remember);
+            assert_eq!(
+                session_deadline(Role::Admin, &t),
+                (1_000 + ADMIN_IDLE_SECS, Ended::Idle)
+            );
+            // active every minute for 7 days: the hard limit still wins
+            let t = times(1_000, 1_000 + ADMIN_HARD_SECS - 60, remember);
+            assert_eq!(
+                session_deadline(Role::Admin, &t),
+                (1_000 + ADMIN_HARD_SECS, Ended::Hard)
+            );
+        }
+        // a tie goes to the hard limit
+        let t = times(0, ADMIN_HARD_SECS - ADMIN_IDLE_SECS, true);
+        assert_eq!(
+            session_deadline(Role::Admin, &t),
+            (ADMIN_HARD_SECS, Ended::Hard)
+        );
+        // user, remember: 30 days sliding, no hard limit
+        let t = times(0, 100 * 86_400, true);
+        assert_eq!(
+            session_deadline(Role::User, &t),
+            (100 * 86_400 + USER_REMEMBER_SECS, Ended::Idle)
+        );
+        // user, browser session: 12 h
+        let t = times(0, 500, false);
+        assert_eq!(
+            session_deadline(Role::User, &t),
+            (500 + USER_SESSION_IDLE_SECS, Ended::Idle)
+        );
+    }
+
+    #[test]
+    fn role_change_applies_at_the_next_lookup() {
+        // a remember user active for 10 days, promoted to admin: 24 h idle and 7 days hard from the sign-in
+        let t = times(0, 10 * 86_400, true);
+        assert_eq!(session_deadline(Role::User, &t).1, Ended::Idle);
+        assert_eq!(
+            session_deadline(Role::Admin, &t),
+            (ADMIN_HARD_SECS, Ended::Hard)
+        );
+        // a demoted administrator gets the user rule with the stored `remember`
+        let t = times(0, 1_000, false);
+        assert_eq!(
+            session_deadline(Role::User, &t).0,
+            1_000 + USER_SESSION_IDLE_SECS
+        );
+    }
+
+    #[test]
+    fn rule_info_and_names() {
+        assert_eq!(session_rule(Role::Admin, false), Rule::Admin);
+        assert_eq!(session_rule(Role::User, true), Rule::Remember);
+        assert_eq!(session_rule(Role::User, false), Rule::Browser);
+        let t = times(50, 60, true);
+        assert_eq!(
+            session_info(Role::Admin, &t),
+            (Rule::Admin, Some(50 + ADMIN_HARD_SECS))
+        );
+        assert_eq!(session_info(Role::User, &t), (Rule::Remember, None));
+        assert_eq!(Rule::Browser.idle_secs(), 43_200);
+        assert_eq!(
+            [
+                Rule::Admin.as_str(),
+                Rule::Remember.as_str(),
+                Rule::Browser.as_str()
+            ],
+            ["admin", "remember", "browser"]
+        );
+        assert_eq!(
+            [Ended::Idle.as_str(), Ended::Hard.as_str()],
+            ["idle", "hard"]
+        );
+    }
+
+    #[test]
+    fn cookie_attributes_per_rule() {
+        let c = session_cookie_for("tok", false, Rule::Admin);
+        assert!(
+            c.contains("; Max-Age=604800") && !c.contains("Secure"),
+            "{c}"
+        );
+        let c = session_cookie_for("tok", true, Rule::Remember);
+        assert!(
+            c.contains("; Max-Age=2592000") && c.ends_with("; Secure"),
+            "{c}"
+        );
+        let c = session_cookie_for("tok", false, Rule::Browser);
+        assert!(!c.contains("Max-Age") && !c.contains("Expires"), "{c}");
+        assert_eq!(
+            session_cookie("tok", false),
+            session_cookie_for("tok", false, Rule::Remember)
+        );
+    }
+
+    #[test]
+    fn gates_allow_one_write_per_minute() {
+        let g = SessionGates::default();
+        let mut sessions = 0;
+        let mut actives = 0;
+        for i in 0..100 {
+            let p = g.plan("a", 1, 6_000 + i % 60);
+            sessions += usize::from(p.session);
+            actives += usize::from(p.active);
+        }
+        assert_eq!((sessions, actives), (1, 1), "100 requests in one minute");
+        // the next minute writes again, once
+        let p = g.plan("a", 1, 6_060);
+        assert_eq!((p.session, p.active), (true, true));
+        let p = g.plan("a", 1, 6_061);
+        assert_eq!((p.session, p.active), (false, false));
+        // two browsers of one user: two session writes, one user write
+        let g = SessionGates::default();
+        let a = g.plan("a", 7, 120);
+        let b = g.plan("b", 7, 121);
+        assert_eq!((a.session, a.active), (true, true));
+        assert_eq!((b.session, b.active), (true, false));
+        // a session is written again 60 s after its last write, not before
+        assert!(g.plan("a", 7, 180).session);
+        assert!(!g.plan("a", 7, 239).session);
+        assert!(g.plan("a", 7, 240).session);
+    }
+
+    #[test]
+    fn gates_cookie_resend_hourly_and_prune() {
+        let g = SessionGates::default();
+        assert!(g.cookie_due("a", 10_000), "once after a restart");
+        assert!(!g.cookie_due("a", 10_000 + SESSION_COOKIE_RESEND_SECS - 1));
+        assert!(g.cookie_due("a", 10_000 + SESSION_COOKIE_RESEND_SECS));
+        g.started("b", 2, 20_000);
+        assert!(
+            !g.cookie_due("b", 20_100),
+            "a fresh sign-in just sent its cookie"
+        );
+        g.forget("b");
+        assert!(g.cookie_due("b", 20_200));
+        g.prune(100_000);
+        assert!(g.is_empty(), "idle entries are pruned");
+        g.plan("c", 3, 200_000);
+        g.prune(200_010);
+        assert_eq!(g.len(), 1);
     }
 }

@@ -60,6 +60,11 @@ pub async fn env_with(opts: Opts) -> Env {
     let mut hl = hotspot_question("qh-leak");
     hl.question["stem"] = json!("[leak] Review the made-up statements.");
     t.add_question(hl);
+    // The v1.2 study tests ask the same question again and expect a model call each time; v1.3 sharing (on by
+    // default) has its own tests in `v13_study.rs`
+    let mut l = t.app.0.limits();
+    l.study_share = 0;
+    t.app.0.set_limits(l);
     Env { t, admin, user }
 }
 

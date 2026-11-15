@@ -3,7 +3,7 @@
 # 数据库
 
 > 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端沿用旧 Python 版的数据库：原来的建表语句（schema v1）**一字不差**地保留，之后的每个 schema 都只是往上加东西（新表和新列；不重建、不改写任何东西）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.1 起它的 schema 是 **6**（v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.3 起它的 schema 是 **7**（v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
 > 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）和 `v09_ai_study.rs`（v6，后端的学习路由）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
@@ -374,6 +374,22 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 新索引覆盖任务键（每个任务只对应一个题库）以及 v1.1 的范围查询。v1.0 的题库和记录不变。
 
 
+### 6.13 schema v8（v1.3）
+
+主数据库从 schema 7 升到 **schema 8**，只在 v1.3 后端第一次启动时进行一次，之前先写一份备份副本 `backups/xexam-schema7-<日期-时间>.db`。这一步只增不改。
+
+- `users`：`last_active_at`（TEXT，`YYYY-MM-DD HH:MM:SS`；升级时由 `last_login_at` 填入），以及 `last_login_ip`、`last_login_country`、`last_login_region`、`last_login_city`（TEXT）。后四个只在眼睛打开时的登录才会写入（关闭时保持原样，响应里不显示），由**清除记录**置为 NULL。
+- `sessions`：`started_at`（INTEGER，Unix 秒；已有会话为升级时刻）、`remember`（INTEGER，默认 1）、`ip`（TEXT，只在眼睛打开时写入；关闭时不显示）和 `ua`（TEXT，浏览器，最多 256 个字符）。
+- `activity_log`（新）：每条活动记录一行：`ts`、`last_ts`、`count`（合并的页面访问和被拒绝的登录）、`actor`（`user`、`anon` 或 `system`）、`user_id`（没有外键：记录比账号活得久）、`username` 和 `role`（当时的快照）、`action`、`object`、`detail`（只含允许的键的小 JSON 对象）、`result`（`ok` 或 `fail`）、`reason`、`ip`、`country`、`region`、`city`（只在登录信息的眼睛打开时写入；眼睛关闭时响应里不显示）、`ua`、`source`（`backend` 或 `ai`）和 `src_id`（AI 服务的事件 id，唯一，所以重复投递会被忽略）。时间、用户、操作和 `src_id` 上有索引。保留期默认 90 天，最多 50 万行，但登录行（`action = 'auth.signin'`）永不删除，也不计入上限（保留期的查询使用 `ts` 上的部分索引 `idx_activity_prune`）。
+- `system_settings`（新）：`key`、`value`、`updated_at`、`updated_by`。键：`activity.retention_days`（90）、`activity.user_visits`（0）和 `users.signin_info`（0：为 0 时不再记录新的内容，已存的 IP 和所在地不显示；不删除任何东西）。
+- 为重复保存成绩，在 `attempts(user_id, session_key)` 上有索引 `idx_attempts_session`。
+
+日志的第一行是 `system.migrate`。v1.2 后端会照原样打开 schema 8 的文件：新列有默认值，新表被忽略，它的会话在 v1.3 第一次更新时得到开始时间。
+
+### 6.14 回到 v1.2
+
+不用恢复（见上）。恢复 schema 7 的副本是可选的，会丢掉此后写入的内容，会话和活动记录也一并丢掉。
+
 ## 7. 旧的 `progress.json`
 
 更早的版本把成绩保存在 `progress.json` 里。和旧的 Python 版一样，程序**每次启动时**都会检查数据目录里有没有它：如果有，而且数据库里还没有学习记录、以前也没有迁移过，就把它迁移进数据库（迁到第一个管理员的记录里）。`meta` 里的 `legacy_migrated` 标记保证它只迁移一次，已有的学习记录永远不会被覆盖。
@@ -483,13 +499,16 @@ erDiagram
         INTEGER finished_at "Unix 秒"
         INTEGER free "1 = 在自由模式下写的（v2）"
         TEXT kind "chat · hint · explain · summary（v3）"
-        TEXT question_id "提示 / 解释，其余为 NULL（v3）"
+        TEXT question_id "提示 / 解析，其余为 NULL（v3）"
         INTEGER question_no "用户看到的题号（v3）"
         TEXT source "practice · result（v3）"
         TEXT lang "回复语言：en · zh-CN · ja（v3）"
         INTEGER sample_used "总结：发出的答错的题数（v3）"
         INTEGER sample_usable "总结：仍可用的答错的题数（v3）"
         INTEGER sample_wrong "总结：记录里答错的题数（v3）"
+        TEXT reasoning "AI 对话的回答：模型的思考，去掉首尾空白，最多 32 KiB，NULL = 没有（v7）"
+        INTEGER reasoning_ms "从第一段推理到第一段回答文字的毫秒数，NULL = 没有（v7）"
+        INTEGER reasoning_truncated "1 = 在上限处被截断（v7）"
     }
     memories {
         INTEGER id PK "自增"
@@ -542,17 +561,17 @@ erDiagram
 - **指纹** 是对服务商、地址、格式和认证方式（网关时）、模型、密钥的版本号和当前加密密钥 id 计算的 SHA-256，从不包含密钥本身。只有 `enabled = 1`、`verified_fp` 等于当前指纹而且密钥能解密时，AI 才算开启。改变指纹的设置修改会在同一个事务里清除 `enabled` 和 `verified_*`。
 - **`users`** 只保存 ai-service 见过的用户（他们在主数据库里的 id 和身份标记，以及最后知道的名字）；这个用户第一次对话、写记忆或调用时才写入一行，只是看看不会写入。**`function_enabled`**（v2，默认 1）是每个用户 AI+ 功能的**暂停**：0 表示管理员暂停了这个用户（AI 设置里的 **暂停**），1 表示使用中；没有行的用户是使用中的，管理员永远不会被设为 0。它和 AI+ 功能的授权（主数据库里的 `users.ai_enabled`）是分开的：把功能关掉再打开，不会清除暂停，只有 **恢复** 才会。值为 0 的 id 就是心跳向后端报告的内容（见 [architecture.md](architecture.md) 第 5 节）。**`free_mode`**（v2，默认 0）是管理员的**自由模式**：是用户的状态，不是对话的状态。它在设置里的 **AI 对话模式** 下设置（`POST /api/ai/free`，只有管理员），并且只对管理员读取，所以留在以前的管理员身上的值不起作用。
 - **`chats`**、**`messages`** 和 **`memories`** 是用户的内容。对话没有模式：管理员的自由模式开启期间，任何对话（旧的或新的）里的每条消息都以自由模式回答。每条消息都记录它是在哪种模式下写的（**`messages.free`**，v2，默认 0），所以历史可以在模式改变时告诉模型（见 [architecture.md](architecture.md) 第 5 节）。删除一个用户的行会删除他的对话、消息、记忆和任务（`ON DELETE CASCADE`）；他的 **`usage`** 行保留，`user_id` 变成 NULL，所以按模型和按天的合计仍然正确。`memories.content` 自 v1.1 起最多允许 2000000 个字符（记忆上限能设的最大值，250000 个 Token）；当前的上限由服务检查。学习消息（见下）以 `free = 0` 写入。
-- **`usage`** 每次模型调用一行（对话、测试、模型列表、记忆笔记，从 v0.9 起还有学习回答），带 Token、时间和状态，从不包含任何内容、密钥或地址。**`tokens_cached`**（v2）是服务商从它的提示词缓存里提供的那部分输入 token（AI 设置里用量的 **缓存命中** 一列）；NULL 表示服务商没有报告。**`purpose`**（v3）对学习功能的模型调用是 `hint`、`explain` 或 `summary`，对 AI 对话和没有对话的调用是 NULL；AI 设置里用量的 **按功能** 表按它给对话的行分组（AI 对话、提示、解释、总结；这四行始终都在，零也列出；`GET /api/ai/admin/usage` 把它们作为 `byPurpose` 返回）。它的行一直保留（没有保留期）；它们很小。 **每用户请求上限（v1.0）** 读取这张表，而不是自己的计数器：用户在最近一分钟、最近一小时以及服务器时区 0:00 以来的调用，是该用户的 `chat` 和 `memory` 行（每种状态都计入），加上内存里仍在运行的调用。计数用的是现有的 `idx_usage_user` 索引，没有新增索引或表。
+- **`usage`** 每次模型调用一行（对话、测试、模型列表、记忆笔记，从 v0.9 起还有学习回答），带 Token、时间和状态，从不包含任何内容、密钥或地址。**`tokens_cached`**（v2）是服务商从它的提示词缓存里提供的那部分输入 token（AI 设置里用量的 **缓存命中** 一列）；NULL 表示服务商没有报告。**`purpose`**（v3）对学习功能的模型调用是 `hint`、`explain` 或 `summary`，对 AI 对话和没有对话的调用是 NULL；AI 设置里用量的 **按功能** 表按它给对话的行分组（AI 对话、提示、解析、总结；这四行始终都在，零也列出；`GET /api/ai/admin/usage` 把它们作为 `byPurpose` 返回）。它的行一直保留（没有保留期）；它们很小。 **每用户请求上限（v1.0）** 读取这张表，而不是自己的计数器：用户在最近一分钟、最近一小时以及服务器时区 0:00 以来的调用，是该用户的 `chat` 和 `memory` 行（每种状态都计入），加上内存里仍在运行的调用。计数用的是现有的 `idx_usage_user` 索引，没有新增索引或表。
 - **`tasks`** 是为以后的功能准备的；v0.8 里没有使用它的路由或后台任务（已结束的任务在 30 天后删除）。
 - **`audit_outbox`** 保存管理员清除操作的审计日志，直到后端把它们取走放进系统日志（见 [security.md](security.md) 第 11 节）。
-- 索引：`idx_chats_user (user_id, updated_at)`、`idx_chats_updated (updated_at)`、`idx_messages_chat (chat_id, id)`、`idx_memories_user (user_id, id)`、`idx_tasks_state (state, run_after)`、`idx_usage_day (day)`、`idx_usage_user (user_id, day)`、`idx_usage_model (model, day)`，从 v3 起还有三个部分索引：`idx_chats_ref`，在 `(user_id, kind, ref) WHERE ref IS NOT NULL` 上唯一（每次会话或每条记录一个对话，不用扫描就能找到）；`idx_messages_study`，在 `(chat_id, question_id, kind, source, role, id) WHERE question_id IS NOT NULL` 上（一道题已保存的提示或解释）；`idx_messages_streaming`，在 `(status) WHERE status = 'streaming'` 上（启动时的修复）。`tests/v09_store.rs` 用 `EXPLAIN QUERY PLAN` 检查已保存回答的查询、按引用查对话和修复的计数都用到了它们，没有临时排序。
+- 索引：`idx_chats_user (user_id, updated_at)`、`idx_chats_updated (updated_at)`、`idx_messages_chat (chat_id, id)`、`idx_memories_user (user_id, id)`、`idx_tasks_state (state, run_after)`、`idx_usage_day (day)`、`idx_usage_user (user_id, day)`、`idx_usage_model (model, day)`，从 v3 起还有三个部分索引：`idx_chats_ref`，在 `(user_id, kind, ref) WHERE ref IS NOT NULL` 上唯一（每次会话或每条记录一个对话，不用扫描就能找到）；`idx_messages_study`，在 `(chat_id, question_id, kind, source, role, id) WHERE question_id IS NOT NULL` 上（一道题已保存的提示或解析）；`idx_messages_streaming`，在 `(status) WHERE status = 'streaming'` 上（启动时的修复）。`tests/v09_store.rs` 用 `EXPLAIN QUERY PLAN` 检查已保存回答的查询、按引用查对话和修复的计数都用到了它们，没有临时排序。
 - 时间都是 Unix 秒；只有 `usage.day` 是本地日期（容器时区 `TZ` 下的 `YYYY-MM-DD`），用于统计。
 
 **学习对话和消息（v0.9）。** AI+ 学习功能把它们的回答写进和 AI 对话相同的表，所以遵循同样的规则：用户可以在 AI 对话里读取和删除它们，管理员可以读取和删除它们（只读，有审计），保留期会清除它们。
 
-- **每次会话或每条记录一个对话。** `chats.kind` 对 AI 对话是 `chat`（v0.8 及更早的每个对话，由列的默认值得到），一次练习或一场考试的提示和解释是 `practice` 或 `exam`，一条记录的 AI 总结是 `summary`。`chats.ref` 给它命名：练习或考试的会话 key（32 位小写十六进制数字），或者总结，以及没有会话 key 就保存的记录（v0.9 之前的每条记录）的对话用 `r<recordId>@<记录时间>`（例如 `r42@2026-11-11 21:58`）；`chat` 的 `ref` 为 NULL。`idx_chats_ref` 让 `(user_id, kind, ref)` 唯一，所以同一次会话的两次提问永远不会产生两个对话。`chats.record_id` 是主程序里那条记录的 id，只用于显示，从不当作查找的键（主数据库恢复之后记录 id 可能会再次出现，总结也比它的记录活得久）；它只设置一次，从不覆盖。
+- **每次会话或每条记录一个对话。** `chats.kind` 对 AI 对话是 `chat`（v0.8 及更早的每个对话，由列的默认值得到），一次练习或一场考试的提示和解析是 `practice` 或 `exam`，一条记录的 AI 总结是 `summary`。`chats.ref` 给它命名：练习或考试的会话 key（32 位小写十六进制数字），或者总结，以及没有会话 key 就保存的记录（v0.9 之前的每条记录）的对话用 `r<recordId>@<记录时间>`（例如 `r42@2026-11-11 21:58`）；`chat` 的 `ref` 为 NULL。`idx_chats_ref` 让 `(user_id, kind, ref)` 唯一，所以同一次会话的两次提问永远不会产生两个对话。`chats.record_id` 是主程序里那条记录的 id，只用于显示，从不当作查找的键（主数据库恢复之后记录 id 可能会再次出现，总结也比它的记录活得久）；它只设置一次，从不覆盖。
 - **标题。** 学习对话存下来的标题只是一个时间，`YYYY-MM-DD HH:MM`，按 ai-service 容器的时区：练习或考试是会话的开始时间（浏览器的时钟，经过校验），不知道开始时间时是记录自己的时间，总结则是记录的时间。页面按界面语言加上后缀（英语是 `-Practice`、`-Exam`、`-AI summary`；中文是 `-练习`、`-考试`、`-AI总结`；日语是 `-練習`、`-試験`、`-AIまとめ`），所以标题不是用某种语言存的。没有会话 key 就保存的记录（v0.8 及更早的每条记录）有它自己的对话，标题是记录的时间，和它所在的练习页的对话分开。
-- **消息。** 每次提问加一对消息，一条用户消息和一条助手消息，两者的 `kind` 相同：`hint`、`explain` 或 `summary`（AI 对话是 `chat`）。`question_id`、`question_no`（用户看到的题号）和 `source`（练习页是 `practice`，成绩页和记录详情页是 `result`）只为提示和解释设置；`lang` 是回复语言（`en`、`zh-CN` 或 `ja`）；`sample_used`、`sample_usable` 和 `sample_wrong` 只为总结设置。提示或解释的用户消息保存的是交给模型的那道题（题干、选项、陈述；最多 4000 个字符），**没有**答案、解析，也没有用户的作答；总结的用户消息是一行机器可读的文字（`[AI summary] <记录时间> <类型> <used>/<usable>/<wrong>`），总结里的题目文字只存在于发给服务商的请求里，从不在这个文件里。助手消息保存 AI 的文字。**所以题目文字和 AI 的文字都复制进了这个数据库**：管理员可以读取它们，在用户的题库权限被撤销或记录被删除之后，它们仍然留着，直到保留期或一次删除把这个对话清除。
+- **消息。** 每次提问加一对消息，一条用户消息和一条助手消息，两者的 `kind` 相同：`hint`、`explain` 或 `summary`（AI 对话是 `chat`）。`question_id`、`question_no`（用户看到的题号）和 `source`（练习页是 `practice`，成绩页和记录详情页是 `result`）只为提示和解析设置；`lang` 是回复语言（`en`、`zh-CN` 或 `ja`）；`sample_used`、`sample_usable` 和 `sample_wrong` 只为总结设置。提示或解析的用户消息保存的是交给模型的那道题（题干、选项、陈述；最多 4000 个字符），**没有**答案、解析，也没有用户的作答；总结的用户消息是一行机器可读的文字（`[AI summary] <记录时间> <类型> <used>/<usable>/<wrong>`），总结里的题目文字只存在于发给服务商的请求里，从不在这个文件里。助手消息保存 AI 的文字。**所以题目文字和 AI 的文字都复制进了这个数据库**：管理员可以读取它们，在用户的题库权限被撤销或记录被删除之后，它们仍然留着，直到保留期或一次删除把这个对话清除。
 - **已保存的回答。** 一个（对话、题目、种类、来源）里最新的助手消息就是页面显示的回答。失败、被停止或被扣下的重新生成作为它自己的一条消息保存，页面继续在一条说明下显示最后一个好回答（`GET /api/ai/study/saved` 里的 `lastGood`）。
 - **额度会计入它们。** 每次练习、每场考试和每份记录总结都是一个对话，所以学习对话计入 `chats_per_user`（超出之后的新会话被 409 `ai.chatLimit` 拒绝；已经打开的对话照常工作），每次提问加两条消息，所以 `messages_per_chat` 的 400 允许一次会话里提问 200 次：下一次回答 409 `ai.messageLimit`，直到管理员在 **安全上限** 里调高上限。在 AI 对话里删除学习对话会释放额度。
 
@@ -562,7 +581,7 @@ AI 数据库在 v1.1 的 ai-service 第一次启动时，从 schema 4 **升级�
 
 - 生成和导入任务的记录（`tasks`，类型 `bank_gen`）：`charged` 与 `charged_at`。任务在计入配额的当天计数（生成在开始时，导入在确认时）。
 - `gen_calls.purpose`：区分生成调用、导入调用和识别调用。
-- `users.features_off`（INTEGER，默认 0）：置位的位表示该用户的某项功能已关闭。六项功能是对话、提示、解释、总结、生成和导入。
+- `users.features_off`（INTEGER，默认 0）：置位的位表示该用户的某项功能已关闭。六项功能是对话、提示、解析、总结、生成和导入（从 v1.3 起，提示和解析两个位总是相同：它们是同一个开关）。
 - 生成与导入的上限（`gen_max_calls` 15、`import_max_calls` 25、`recognize_max_calls` 20（8 到 40）、`gen_call_tokens` 20000、`import_max_mb` 20、`import_max_questions` 50（1 到 50）），与 v1.0 的上限并列。
 
 早期 v1.1 开发版本创建、缺少 `limits.recognize_max_calls` 的架构 5 文件，在打开时会补上这一列（幂等的一步，版本号不变，也不做备份）。
@@ -573,6 +592,23 @@ AI 数据库在 v1.1 的 ai-service 第一次启动时，从 schema 4 **升级�
 
 **作者。** AI 题库的名称包含作者用户名的前 8 个字符，提示中显示作者（DR1-13 的特例）。`authorId` 不会离开服务器。
 
+
+### 8.2b schema v7（v1.3）
+
+AI 数据库从 schema 6 升到 **schema 7**，只在 v1.3 ai-service 第一次启动时进行一次（一个事务，一份副本 `backups/xexam-ai-schema6-<日期-时间>.db`）。
+
+- **`connections`**（新）：`id`、`name`（唯一，1 到 40 个字符）、`provider`（`openai`、`anthropic` 或 `gateway`）、`base_url`、`format`、`gateway_auth`、`status`（`ok` 或 `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（每次保存 +1，是缓存键也是锁）、`sort`，以及创建和更新信息。最多 8 行。
+- **`connection_secrets`**（新）：连接的加密 `api_key` 和 `gateway_key`（密钥 id、24 字节 nonce、密文、末几位提示，以及 `aad_ver`；2 把密文绑定到连接，迁移来的行在下次更换前保持 1）。旧的 `secrets` 表保留，不再使用。
+- **`models`**（新）：模型池：每个测试过的（连接，模型）一行，带 `status`、`error_code`、`context`、`latency_ms`、`tested_at`、`manual` 和调用设置。**`model_slots`**（新）：六行（`default`、`chat`、`study`、`summary`、`generate`、`import`），各自指向池里的一个模型或为空（空的功能槽位用默认）。
+- **`study_shared`**（新）：共享的提示和解析，**不带用户 id**：`question_id`、`content_hash`、`kind`（`hint` 或 `explain`）、`lang`、`content`、`model`、`connection`、Token 数、`gen`（1 + 替换次数）、`hits` 和时间。（`question_id`、`content_hash`、`kind`、`lang`）唯一；最多 5 万行，没人用的在 `study_share_days` 之后删除。
+- **`gen_items`**（新）：**正在运行**的出题任务已采纳的题（`task_id`、`no`、`data`），任务结束时删除。被删掉的题保留它的编号。
+- `messages`：`reasoning`、`reasoning_ms` 和 `reasoning_truncated`（见下），`parent_id` 和 `connection`（调用时的连接名）；`chats`：`leaf_id`（当前显示的分支）以及 `pick_conn`、`pick_model`（管理员在自由模式对话里选的模型；没有外键：删除连接时清除指向它的选择，启动时清除指向不存在连接的选择）。索引 `idx_messages_parent`。对话按 `parent_id` 成树；显示或发给模型的是从叶子到根的那条路径，`messages_per_chat` 统计每个版本。
+- `settings.features_off`（六个全局开关的位掩码；提示和解析两个位总是相同）；`usage` 和 `gen_calls` 增加 `connection_id` 和 `connection`。
+- `limits`：`calls_admins_exempt`（1）、`study_share`（1）、`study_share_days`（180）、`gen_max_chunks`（8）、`summary_max_items`（40）、`import_file_questions`（1 到 300；旧的上限为 50 的 `import_max_questions` 保留不用）和 `daily_token_budget`（0 = 关）。
+
+一次性语句填入六个槽位、对话树（`parent_id` = 前一条消息，`leaf_id` = 最后一条）、带密钥的连接 1 和默认槽位、`users.features_off` 里的提示和解析两个位（只关了其中一个的用户，两个都变成开启），以及 [migration.md](migration.md) 的 000.1 节所述的上限。新文件和升级后的文件最终有相同的表。v1.2 的 ai-service 会拒绝 schema 7 的文件；要回退，恢复 schema 6 的副本。
+
+**推理列（v1.3）。** `messages` 每个回答版本一行，它的三个可为 NULL 的列保存 AI 对话回答的思考：`reasoning`（文字；去掉首尾空白；最多 32 KiB = 32 768 字节，保留开头，在字符边界处截断）、`reasoning_ms`（从第一段推理到第一段回答文字、或到结束的毫秒数；没有推理时为 NULL）和 `reasoning_truncated`（`0` / `1`，默认 0；1 = 文字在上限处被截断）。它们属于 schema 7 这一步，所以没有 schema 8，也没有额外的备份：schema 7 在 v1.3 之前没有发布过；从 1 到 6 升级的数据库在同一个事务里得到它们，v1.3 较早构建写的 schema 7 文件在下次启动时得到它们。只有 AI 对话的回答会写入（提示、解析和总结会丢弃推理），它们从不属于发给模型的上下文，并随消息一起删除：删除一个对话、**删除所有对话**、管理员的清除、删除用户和保留期清理，都会连同这一行一起删掉它们（`secure_delete=ON` 会覆盖释放的页）。旧回答是 NULL，不显示这个块。`messages.model` 和 `messages.connection` 仍然为每个回答保存（供管理员和用量统计使用）；只有发给非管理员的响应会省掉它们。
 
 ### 8.3 服务怎样使用它
 

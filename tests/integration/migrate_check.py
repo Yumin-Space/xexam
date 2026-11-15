@@ -12,22 +12,33 @@ Steps:
   F. SQLite journal mode (v0.7): the database runs in WAL mode and the log says so once; XEXAM_SQLITE_JOURNAL=delete switches it back to
      DELETE (what an older version does on a rollback) with every record kept, and the next start without it is in WAL mode again.
   G. Only the six-column layout (v0.7): a schema-3 database (as v0.6 wrote it) whose bank holds questions of the old 3-column
-     layout is upgraded (now straight to schema 7) with one backup, and its old-layout questions are retired (records,
+     layout is upgraded (now straight to schema 8) with one backup, and its old-layout questions are retired (records,
      statistics and the bank stay; the log names the bank); the next start retires nothing more. The `import` command refuses
      a 3-column workbook (English message, exit code 1, nothing written) and imports a six-column one into that bank. The
      workbooks are made-up and written by this script (a minimal .xlsx built with zipfile).
-  H. Schema 4 to 7 in one step (v0.8 + v0.9 + v1.1): a schema-4 database (as v0.7.5 wrote it: the G database with a second
-     user, the two v0.8, the two v0.9 and the four v1.1 columns dropped again and meta.schema set back to 4) is upgraded to schema 7
+  H. Schema 4 to 8 in one step (v0.8 + v0.9 + v1.1 + v1.3): a schema-4 database (as v0.7.5 wrote it: the G database with a second
+     user, the two v0.8, the two v0.9 and the four v1.1 columns dropped again and meta.schema set back to 4) is upgraded to schema 8
      with a backup named xexam-schema4-*; every user then has ai_enabled = 0 and its own 32-hex uid; the next start
      writes nothing (no second backup, the same uids).
   I. The AI link (v0.8): `serve` creates <data>/link/internal.token (43 base64url characters; mode 600 and a folder of
      mode 700 on POSIX systems) and reads the same token again on the next start; with XEXAM_INTERNAL_TOKEN set no file
      is created; a token shorter than 32 characters turns the link off with a log line and the app still runs.
-  J. Schema 5 to 7 (v0.9 + v1.1): a v0.8 database with study records (the H database with the two v0.9 attempts columns and
-     the four v1.1 columns dropped again and meta.schema set back to 5) is upgraded to schema 7 with exactly one backup named
+  J. Schema 5 to 8 (v0.9 + v1.1 + v1.3): a v0.8 database with study records (the H database with the two v0.9 attempts columns and
+     the four v1.1 columns dropped again and meta.schema set back to 5) is upgraded to schema 8 with exactly one backup named
      xexam-schema5-*; attempts.session_key, attempts.started_at, attempts.time_limit and attempts.ended exist and are NULL
      for the old records, every record is unchanged, and
      the next start writes nothing (no new backup, no upgrade line, the same rows).
+  K. Schema 7 to 8 (v1.3): the J database turned back into what v1.2 wrote (no v1.3 columns, tables or index, a session row with
+     only the v1.2 columns) is upgraded with exactly one backup named xexam-schema7-*; users.last_active_at is backfilled with
+     seconds, sessions.started_at is filled, the first activity row is system.migrate {"from": 7, "to": 8}, the sign-in switch
+     stays off, the next start writes nothing; a fresh database has the same columns and index names as the migrated one; a
+     v1.2-style session row (no started_at) still works on v1.3.
+  L. Sign-in info matrix (v1.3, one switch, the eye): closed (default) -> NOTHING is recorded (no IP or location in users,
+     sessions or activity_log), every API answers null, the device (User-Agent) is stored; open -> recording starts and is shown
+     (the sign-in made while closed has none); a malformed address falls back to the connecting address, a malformed country is
+     ignored; closed again -> hidden, nothing is deleted, a new sign-in neither records nor overwrites the stored values;
+     POST /api/users/signin-info/clear (needs an administrator's session, works while closed) -> no user, session or earlier log
+     row holds an IP or location, one activity entry users.signinInfoClear with a row count; open again -> recording resumes.
 Since v0.6 every route except /api/info needs a session: each run signs in as the default administrator (admin / admin the first
 time, then the password this script sets) and reads the administrator's /api/progress, which is where the old records go.
 """
@@ -348,7 +359,7 @@ try:
     os.makedirs(g)
     write_v3_database(os.path.join(g, 'xexam.db'), admin_hash)
     prog, log = run_once(g, 'g1.log')
-    ok('Upgraded the database to schema 7' in log, 'G. the schema-3 database is upgraded to schema 7')
+    ok('Upgraded the database to schema 8' in log, 'G. the schema-3 database is upgraded to schema 8')
     names = [n for n in os.listdir(os.path.join(g, 'backups')) if n.startswith('xexam-schema')]
     ok(len(names) == 1 and names[0].startswith('xexam-schema3-'),
        'G. one backup of the schema-3 database was written first (xexam-schema3-*). Actual %r' % names)
@@ -383,7 +394,7 @@ try:
     ok(b is not None and b['total'] == 3 and b['inactive'] == 2, 'G. the bank now has the 3 six-column questions in use and the 2 retired ones. Actual %r' % b)
     ok('retired' not in log, 'G. six-column questions are never retired')
 
-    # H: schema 4 -> 7. A second user first, then the database is turned back into what v0.7.5 wrote
+    # H: schema 4 -> 8. A second user first, then the database is turned back into what v0.7.5 wrote
     def add_user(cookie):
         st, _, j = api('POST', '/api/users/create', {'username': 'robin', 'password': 'robin-initial-2026', 'role': 'user',
                                                      'banks': 'all'}, cookie)
@@ -393,9 +404,10 @@ try:
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         cols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
         ok('ai_enabled' in cols and 'uid' in cols, 'H. a v0.8 database has users.ai_enabled and users.uid. Actual %r' % cols)
-        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '7', 'H. a v1.1 database is schema 7')
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '8', 'H. a v1.3 database is schema 8')
         c.execute('ALTER TABLE users DROP COLUMN ai_enabled')
         c.execute('ALTER TABLE users DROP COLUMN uid')
+        c.execute('DROP INDEX IF EXISTS idx_attempts_session')  # v1.3 index on session_key
         c.execute('ALTER TABLE attempts DROP COLUMN session_key')
         c.execute('ALTER TABLE attempts DROP COLUMN started_at')
         # the v1.1 (schema 7) columns and indexes go too (in the order SQLite allows: CHECKs refer to the earlier column)
@@ -407,13 +419,13 @@ try:
         c.commit()
     before = set(os.listdir(backups))
     prog, log = run_once(g, 'h2.log')
-    ok('Upgraded the database to schema 7' in log, 'H. the schema-4 database is upgraded to schema 7')
+    ok('Upgraded the database to schema 8' in log, 'H. the schema-4 database is upgraded to schema 8')
     added = set(os.listdir(backups)) - before
     ok(len(added) == 1 and next(iter(added)).startswith('xexam-schema4-'), 'H. one backup named xexam-schema4-* was written first. Actual %r' % sorted(added))
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         users = c.execute('SELECT username, ai_enabled, uid FROM users ORDER BY id').fetchall()
         schema = c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0]
-    ok(schema == '7' and len(users) == 2, 'H. schema 7 with both users. Actual %r, %d users' % (schema, len(users)))
+    ok(schema == '8' and len(users) == 2, 'H. schema 8 with both users. Actual %r, %d users' % (schema, len(users)))
     ok(all(u[1] == 0 for u in users), 'H. every user starts with AI+ off (ai_enabled = 0)')
     ok(all(re.fullmatch(r'[0-9a-f]{32}', u[2] or '') for u in users) and len({u[2] for u in users}) == len(users),
        'H. every user has its own 32-hex uid')
@@ -424,7 +436,7 @@ try:
     ok('Upgraded the database' not in log and set(os.listdir(backups)) == before | added and again == users,
        'H. the next start writes nothing: no new backup, the same uids')
 
-    # J: schema 5 -> 7. The H database is turned back into what v0.8 wrote (no session columns), then upgraded
+    # J: schema 5 -> 8. The H database is turned back into what v0.8 wrote (no session columns), then upgraded
     def attempts_state():
         with contextlib.closing(sqlite3.connect(gdb)) as c:
             return (c.execute('SELECT id, user_id, at, kind, total, correct FROM attempts ORDER BY id').fetchall(),
@@ -432,9 +444,10 @@ try:
                     [r[1] for r in c.execute('PRAGMA table_info(attempts)')])
 
     rows_before, schema, cols = attempts_state()
-    ok(schema == '7' and 'session_key' in cols and 'started_at' in cols and len(rows_before) >= 1,
-       'J. the upgraded database is schema 7 with attempts.session_key and attempts.started_at and holds records. Actual %r %r' % (schema, cols))
+    ok(schema == '8' and 'session_key' in cols and 'started_at' in cols and len(rows_before) >= 1,
+       'J. the upgraded database is schema 8 with attempts.session_key and attempts.started_at and holds records. Actual %r %r' % (schema, cols))
     with contextlib.closing(sqlite3.connect(gdb)) as c:
+        c.execute('DROP INDEX IF EXISTS idx_attempts_session')  # v1.3 index on session_key
         c.execute('ALTER TABLE attempts DROP COLUMN session_key')
         c.execute('ALTER TABLE attempts DROP COLUMN started_at')
         # the v1.1 (schema 7) columns and indexes go too (in the order SQLite allows: CHECKs refer to the earlier column)
@@ -446,20 +459,210 @@ try:
         c.commit()
     before5 = set(os.listdir(backups))
     prog, log = run_once(g, 'j1.log')
-    ok('Upgraded the database to schema 7' in log, 'J. the schema-5 database is upgraded to schema 7')
+    ok('Upgraded the database to schema 8' in log, 'J. the schema-5 database is upgraded to schema 8')
     added5 = set(os.listdir(backups)) - before5
     ok(len(added5) == 1 and next(iter(added5)).startswith('xexam-schema5-'), 'J. exactly one backup named xexam-schema5-* was written first. Actual %r' % sorted(added5))
     rows_after, schema, cols = attempts_state()
-    ok(schema == '7' and all(k in cols for k in ('session_key', 'started_at', 'time_limit', 'ended')),
-       'J. meta.schema is 7 and the v0.9 and v1.1 attempts columns exist. Actual %r %r' % (schema, cols))
+    ok(schema == '8' and all(k in cols for k in ('session_key', 'started_at', 'time_limit', 'ended')),
+       'J. meta.schema is 8 and the v0.9 and v1.1 attempts columns exist. Actual %r %r' % (schema, cols))
     ok(rows_after == rows_before, 'J. every record is unchanged by the upgrade')
     with contextlib.closing(sqlite3.connect(gdb)) as c:
         tags = c.execute('SELECT COUNT(*), COUNT(session_key), COUNT(started_at), COUNT(time_limit), COUNT(ended) FROM attempts').fetchone()
     ok(tags[0] >= 1 and tags[1:] == (0, 0, 0, 0), 'J. session_key, started_at, time_limit and ended are NULL for the old records. Actual %r' % (tags,))
     ok(prog is not None and len(prog['history']) == 1, 'J. the records are still served')
     prog, log = run_once(g, 'j2.log')
-    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before5 | added5 and attempts_state() == (rows_after, '7', cols),
+    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before5 | added5 and attempts_state() == (rows_after, '8', cols),
        'J. the next start writes nothing: no upgrade line, no new backup, the same rows')
+
+    # K: schema 7 -> 8. The J database is turned back into what v1.2 wrote, then upgraded
+    V8_USER_COLS = ('last_active_at', 'last_login_ip', 'last_login_country', 'last_login_region', 'last_login_city')
+    V8_SESSION_COLS = ('started_at', 'remember', 'ip', 'ua')
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        c.execute("UPDATE users SET last_login_at = '2026-11-01 08:00' WHERE username = 'robin'")
+        c.execute('DROP INDEX IF EXISTS idx_attempts_session')
+        c.execute('DROP TABLE IF EXISTS activity_log')
+        c.execute('DROP TABLE IF EXISTS system_settings')
+        for col in V8_USER_COLS:
+            c.execute('ALTER TABLE users DROP COLUMN %s' % col)
+        for col in V8_SESSION_COLS:
+            c.execute('ALTER TABLE sessions DROP COLUMN %s' % col)
+        c.execute('DELETE FROM sessions')
+        c.execute("INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at) "
+                  "VALUES (?, 1, '2026-11-01 08:00', ?, ?)", ('b' * 64, int(time.time()), int(time.time()) + 3600))
+        c.execute("UPDATE meta SET value = '7' WHERE key = 'schema'")
+        c.commit()
+    before7 = set(os.listdir(backups))
+    prog, log = run_once(g, 'k1.log')
+    ok('Upgraded the database to schema 8' in log, 'K. the schema-7 database is upgraded to schema 8')
+    added7 = set(os.listdir(backups)) - before7
+    ok(len(added7) == 1 and next(iter(added7)).startswith('xexam-schema7-'), 'K. exactly one backup named xexam-schema7-* was written first. Actual %r' % sorted(added7))
+    with contextlib.closing(sqlite3.connect(os.path.join(backups, next(iter(added7))))) as c:
+        ok(c.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone()[0] == '7'
+           and 'last_active_at' not in [r[1] for r in c.execute('PRAGMA table_info(users)')],
+           'K. the backup copy is the schema-7 database (opens under v1.2 code: no v1.3 column)')
+    with contextlib.closing(sqlite3.connect(gdb)) as c:
+        ucols = [r[1] for r in c.execute('PRAGMA table_info(users)')]
+        scols = [r[1] for r in c.execute('PRAGMA table_info(sessions)')]
+        ok(all(k in ucols for k in V8_USER_COLS) and all(k in scols for k in V8_SESSION_COLS), 'K. the v1.3 columns exist. Actual %r %r' % (ucols, scols))
+        first = c.execute("SELECT last_active_at FROM users WHERE username = 'robin'").fetchone()[0]
+        ok(first == '2026-11-01 08:00:00', 'K. last_active_at is backfilled from last_login_at with seconds. Actual %r' % (first,))
+        ok(c.execute('SELECT COUNT(*) FROM sessions WHERE started_at IS NULL').fetchone()[0] == 0, 'K. sessions.started_at is filled by the backfill')
+        ok(c.execute('SELECT remember FROM sessions').fetchone()[0] == 1, 'K. an old session row reads remember = 1')
+        mig = c.execute("SELECT actor, result, detail FROM activity_log WHERE action = 'system.migrate'").fetchall()
+        ok(len(mig) == 1 and mig[0][0] == 'system' and json.loads(mig[0][2]) == {'from': 7, 'to': 8}, 'K. the first log row is system.migrate from 7 to 8. Actual %r' % (mig,))
+        ok(c.execute("SELECT COUNT(*) FROM system_settings WHERE key = 'users.signin_info' AND value <> '0'").fetchone()[0] == 0, 'K. the sign-in info switch is off after the upgrade')
+        ok(c.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_attempts_session'").fetchone() is not None, 'K. the idempotent-save index exists')
+    prog, log = run_once(g, 'k2.log')
+    ok('Upgraded the database' not in log and set(os.listdir(backups)) == before7 | added7, 'K. the next start writes no upgrade line and no new backup')
+    # the migrated file and a fresh one have the same columns and index names
+    kf = os.path.join(root, 'kf')
+    os.makedirs(kf)
+    run_once(kf, 'kf.log')
+
+    def shape(path):
+        with contextlib.closing(sqlite3.connect(path)) as c:
+            tabs = {t: [r[1] for r in c.execute('PRAGMA table_info(%s)' % t)]
+                    for (t,) in c.execute("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")}
+            idx = sorted(n for (n,) in c.execute("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'"))
+        return tabs, idx
+    tm, im = shape(gdb)
+    tf, i_f = shape(os.path.join(kf, 'xexam.db'))
+    diff = [t for t, cols_ in tf.items() if sorted(tm.get(t, [])) != sorted(cols_)]
+    ok(not diff, 'K. every table of a fresh database has the same columns in the migrated one. Different: %r' % diff)
+    ok(set(i_f) <= set(im), 'K. every index of a fresh database exists in the migrated one. Missing %r' % sorted(set(i_f) - set(im)))
+
+    # forward / back: a v1.2-style row (no started_at, no remember) on a v1.3 file is still a working session
+    def old_row_works(cookie):
+        with contextlib.closing(sqlite3.connect(gdb, timeout=5)) as c:
+            c.execute('UPDATE sessions SET started_at = NULL, remember = 1, ip = NULL, ua = NULL')
+            c.commit()
+        st, _, j = api('GET', '/api/auth/state', cookie=cookie)
+        ok(st == 200 and 'user' in j, 'K. a v1.2-style session row (no started_at) is still signed in on v1.3. Actual %d %r' % (st, j))
+    run_once(g, 'k3.log', check=old_row_works)
+
+    # L: the sign-in info matrix on a fresh database
+    l = os.path.join(root, 'l')
+    os.makedirs(l)
+    ldb = os.path.join(l, 'xexam.db')
+    UA = 'Mozilla/5.0 (X11; Linux x86_64) MigrateCheck/1.0'
+    PLACE = {'X-Real-IP': '203.0.113.7', 'X-Geo-Country': 'ZZ', 'X-Geo-Region': 'Example Region', 'X-Geo-City': 'Example City'}
+
+    def hapi(method, path, body=None, cookie=None, extra=None):
+        """api() with extra request headers (the ones nginx sets); returns (status, headers, body)."""
+        headers = {'Host': 'localhost:%d' % PORT, 'User-Agent': UA}
+        headers.update(extra or {})
+        data = None
+        if body is not None:
+            data = json.dumps(body).encode('utf-8')
+            headers.update({'Content-Type': 'application/json', 'Origin': 'http://localhost:%d' % PORT})
+        if cookie:
+            headers['Cookie'] = cookie
+        r = urllib.request.Request('http://127.0.0.1:%d%s' % (PORT, path), data=data, headers=headers, method=method)
+        try:
+            with urllib.request.urlopen(r, timeout=5) as resp:
+                return resp.status, resp.headers, json.loads(resp.read().decode('utf-8'))
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers, json.loads(e.read().decode('utf-8') or 'null')
+
+    def login(extra):
+        st, h, j = hapi('POST', '/api/auth/login', {'username': 'admin', 'password': NEW_PASSWORD}, extra=extra)
+        ok(st == 200, 'L. admin signs in. Actual %d %r' % (st, j))
+        return h.get('Set-Cookie', '').split(';')[0]
+
+    def wait_for(fn, secs=8):
+        end = time.time() + secs
+        while time.time() < end:
+            if fn():
+                return True
+            time.sleep(0.25)
+        return fn()
+
+    def dbq(sql):
+        with contextlib.closing(sqlite3.connect(ldb, timeout=5)) as c:
+            return c.execute(sql).fetchall()
+
+    def stored_places():
+        return (dbq('SELECT COUNT(*) FROM users WHERE last_login_ip IS NOT NULL OR last_login_country IS NOT NULL OR last_login_region IS NOT NULL OR last_login_city IS NOT NULL')[0][0],
+                dbq('SELECT COUNT(*) FROM sessions WHERE ip IS NOT NULL')[0][0],
+                dbq('SELECT COUNT(*) FROM activity_log WHERE ip IS NOT NULL OR country IS NOT NULL OR region IS NOT NULL OR city IS NOT NULL')[0][0])
+
+    def matrix(cookie):
+        # the first sign-in of this database (run_once) chose the password; below, fresh sign-ins carry the headers nginx sets
+        c1 = login(PLACE)
+        ok(wait_for(lambda: dbq("SELECT COUNT(*) FROM activity_log WHERE action = 'auth.signin' AND ua = '%s'" % UA)[0][0] >= 1), 'L. the sign-in reaches the activity log with its device')
+        time.sleep(1.0)
+        ok(stored_places() == (0, 0, 0),
+           'L. eye closed (default): no IP and no location is recorded (user, session, log). Actual %r' % (stored_places(),))
+        ok(dbq("SELECT last_login_ip, last_login_country, last_login_region, last_login_city FROM users WHERE username = 'admin'")[0]
+           == (None, None, None, None), 'L. eye closed: the user row stores no IP and no location')
+        ok(dbq("SELECT COUNT(*) FROM sessions WHERE ua = '%s'" % UA)[0][0] >= 1, 'L. the device (User-Agent) is stored while the eye is closed')
+        st, _, j = hapi('GET', '/api/users', cookie=c1, extra=PLACE)
+        ok(st == 200 and j['signinInfo'] is False and all(u.get('lastLoginIp') is None and u.get('lastLoginLocation') is None for u in j['users']),
+           'L. eye closed: the users answer carries signinInfo false and null IP / location. Actual %r' % (j,))
+        st, _, j = hapi('GET', '/api/activity?limit=50', cookie=c1)
+        ok(st == 200 and all(e['ip'] is None and e['location'] is None for e in j['entries']), 'L. eye closed: the activity answer has null ip / location')
+        # open
+        st, _, j = hapi('POST', '/api/users/signin-info', {'enabled': True}, c1)
+        ok(st == 200 and j['signinInfo'] is True, 'L. the admin opens the eye. Actual %d %r' % (st, j))
+        me = [u for u in j['users'] if u['username'] == 'admin'][0]
+        ok(me['lastLoginIp'] is None and me['lastLoginLocation'] is None,
+           'L. eye open: the sign-in made while it was closed has no IP / location. Actual %r' % (me,))
+        c2 = login(PLACE)
+        st, _, j = hapi('GET', '/api/users', cookie=c2)
+        me = [u for u in j['users'] if u['username'] == 'admin'][0]
+        ok(me['lastLoginIp'] == '203.0.113.7' and me['lastLoginLocation'] == {'country': 'ZZ', 'region': 'Example Region', 'city': 'Example City'},
+           'L. eye open: the users answer shows the IP and the location. Actual %r' % (me,))
+        ok(dbq("SELECT last_login_ip, last_login_country, last_login_region, last_login_city FROM users WHERE username = 'admin'")[0]
+           == ('203.0.113.7', 'ZZ', 'Example Region', 'Example City'), 'L. eye open: the user row stores the IP and the location')
+        ok(dbq("SELECT COUNT(*) FROM sessions WHERE ip = '203.0.113.7'")[0][0] >= 1, 'L. eye open: the session stores the IP')
+        ok(wait_for(lambda: dbq("SELECT COUNT(*) FROM activity_log WHERE action = 'auth.signin' AND ip = '203.0.113.7' AND country = 'ZZ'")[0][0] >= 1),
+           'L. eye open: the sign-in entry stores the IP and the country')
+        st, _, j = hapi('GET', '/api/activity?limit=50', cookie=c2)
+        top = [e for e in j['entries'] if e['action'] == 'auth.signin' and e['ip']]
+        ok(st == 200 and top and top[0]['location']['city'] == 'Example City', 'L. eye open: the activity answer shows IP and location. Actual %r' % (top[:1],))
+        ok(any(e['action'] == 'auth.signin' and e['ip'] is None for e in j['entries']), 'L. eye open: the entry written while closed shows no IP')
+        # malformed header values are ignored
+        before = dbq('SELECT COUNT(*) FROM activity_log')[0][0]
+        login({'X-Real-IP': 'not-an-ip', 'X-Geo-Country': 'zzz', 'X-Geo-City': '   '})
+        ok(wait_for(lambda: dbq('SELECT COUNT(*) FROM activity_log')[0][0] > before), 'L. the next sign-in is logged')
+        row = dbq("SELECT ip, country, city FROM activity_log WHERE action = 'auth.signin' ORDER BY id DESC LIMIT 1")[0]
+        ok(row == ('127.0.0.1', None, None), 'L. a malformed address falls back to the connecting address; a malformed country and city are not stored. Actual %r' % (row,))
+        # closed again: hidden, nothing is deleted, nothing new is recorded
+        c3 = login(PLACE)
+        time.sleep(1.0)
+        kept = stored_places()
+        st, _, j = hapi('POST', '/api/users/signin-info', {'enabled': False}, c3)
+        ok(st == 200 and j['signinInfo'] is False and all(u.get('lastLoginIp') is None and u.get('lastLoginLocation') is None for u in j['users']),
+           'L. the admin closes the eye again: the users answer hides IP / location')
+        login({'X-Real-IP': '198.51.100.9', 'X-Geo-Country': 'YY'})
+        time.sleep(1.0)
+        now = stored_places()
+        ok(all(n >= 1 for n in now) and now == kept,
+           'L. eye closed again: every stored IP and location is kept and nothing new is recorded. Before %r, after %r' % (kept, now))
+        ok(dbq("SELECT last_login_ip, last_login_country FROM users WHERE username = 'admin'")[0] == ('203.0.113.7', 'ZZ'),
+           'L. eye closed: a new sign-in does not overwrite the last IP / location')
+        st, _, j = hapi('GET', '/api/activity?limit=100', cookie=c3)
+        ok(st == 200 and all(e['ip'] is None and e['location'] is None for e in j['entries']), 'L. eye closed again: the activity answer has null ip / location')
+        ok(wait_for(lambda: dbq("SELECT COUNT(*) FROM activity_log WHERE action = 'users.signinInfo'")[0][0] >= 2), 'L. both switch changes are in the activity log')
+        # the explicit clear (works while the eye is closed; guarded like every admin POST)
+        st, _, _ = hapi('POST', '/api/users/signin-info/clear', {})
+        ok(st == 401, 'L. the clear needs a session. Actual %d' % st)
+        st, _, j = hapi('POST', '/api/users/signin-info/clear', {}, c3)
+        ok(st == 200 and j['signinInfo'] is False and isinstance(j.get('users'), list), 'L. the admin clears the saved IP and location. Actual %d %r' % (st, j))
+        ok(wait_for(lambda: dbq("SELECT COUNT(*) FROM activity_log WHERE action = 'users.signinInfoClear'")[0][0] == 1), 'L. the clear is in the activity log')
+        older = dbq("SELECT COUNT(*) FROM activity_log WHERE (ip IS NOT NULL OR country IS NOT NULL OR region IS NOT NULL OR city IS NOT NULL) "
+                    "AND id < (SELECT id FROM activity_log WHERE action = 'users.signinInfoClear')")[0][0]
+        ok(stored_places()[:2] == (0, 0) and older == 0,
+           'L. after the clear no user, session or earlier log row holds an IP or location (the entry of the clear itself is recorded as usual). Actual %r, %d' % (stored_places(), older))
+        ok(dbq("SELECT COUNT(*) FROM sessions WHERE ua = '%s'" % UA)[0][0] >= 1, 'L. the clear keeps the sessions and their device')
+        ok(wait_for(lambda: dbq("SELECT COUNT(*) FROM activity_log WHERE action = 'users.signinInfoClear' AND result = 'ok' AND detail LIKE '%\"rows\":%'")[0][0] == 1),
+           'L. the clear is one activity entry with a row count')
+        st, _, j = hapi('POST', '/api/users/signin-info', {'enabled': True}, c3)
+        ok(st == 200 and j['signinInfo'] is True and all(u.get('lastLoginIp') is None for u in j['users']), 'L. eye open after the clear: nothing old comes back')
+        login(PLACE)
+        ok(dbq("SELECT last_login_ip FROM users WHERE username = 'admin'")[0][0] == '203.0.113.7', 'L. eye open after the clear: recording resumes')
+        hapi('POST', '/api/users/signin-info', {'enabled': False}, c3)
+    run_once(l, 'l1.log', check=matrix)
 
     # I: XEXAM_INTERNAL_TOKEN instead of the file; a token that is too short
     i = os.path.join(root, 'i')

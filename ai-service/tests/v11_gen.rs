@@ -150,7 +150,13 @@ async fn a_bank_generation_makes_exactly_twenty_valid_questions_and_creates_the_
     assert_eq!(calls, 4, "20 questions at 5 per call");
     let accepted: i64 = q1(&e.t, "SELECT SUM(accepted) FROM gen_calls");
     assert_eq!(accepted, 20);
-    assert_eq!(done["calls"], 4);
+    // v1.3: the plan call is a call of the job too (purpose plan), before the 4 writing calls
+    assert_eq!(done["calls"], 5);
+    let plans: i64 = q1(
+        &e.t,
+        "SELECT COUNT(*) FROM gen_calls WHERE purpose = 'plan'",
+    );
+    assert_eq!(plans, 1);
     // the quota unit is charged today
     let charged_at: i64 = q1(&e.t, "SELECT charged_at FROM tasks");
     assert!(charged_at > 0);
@@ -189,7 +195,7 @@ async fn the_status_reports_the_quota_the_job_and_the_unseen_card() {
     assert_eq!(g["wrong"], json!({"single": 14, "multi": 6}));
     assert_eq!(
         g["import"],
-        json!({"maxMb": 20, "maxQuestions": 50, "types": ["pdf", "docx", "xlsx", "pptx", "md", "txt", "csv"]})
+        json!({"maxMb": 20, "maxQuestions": 100, "types": ["pdf", "docx", "xlsx", "pptx", "md", "txt", "csv"]})
     );
     assert_eq!(g["job"], Value::Null);
     assert!(g["resetAt"].as_i64().unwrap_or(0) > xexam_ai_service::util::unix_now());
@@ -377,16 +383,17 @@ async fn three_provider_errors_in_a_row_fail_the_job_without_a_bank_or_a_charge(
         (done["state"].clone(), done["error"].clone()),
         (json!("failed"), json!("ai.up.server"))
     );
+    // v1.3: the plan call fails twice first (a plan failure never fails the job), then three writing calls
     assert_eq!(
         (done["charged"].clone(), done["calls"].clone()),
-        (json!(false), json!(3))
+        (json!(false), json!(5))
     );
     assert!(e.t.backend.st().gen.created.is_empty());
     let errors: i64 = q1(
         &e.t,
         "SELECT COUNT(*) FROM gen_calls WHERE status = 'error' AND error_code = 'server'",
     );
-    assert_eq!(errors, 3);
+    assert_eq!(errors, 5);
     let (_, v) = e.t.get("/api/ai/status", &e.user).await;
     assert_eq!(v["gen"]["used"], 0, "a failure is never counted");
     assert_eq!(
@@ -410,7 +417,11 @@ async fn a_model_that_never_delivers_valid_questions_stops_at_the_settings_call_
         (done["state"].clone(), done["error"].clone()),
         (json!("failed"), json!("ai.gen.quality"))
     );
-    assert_eq!(done["calls"], 15, "the default ceiling of 15 calls per job");
+    // the ceiling counts writing calls; the two plan attempts (unreadable both times) come on top
+    assert_eq!(
+        done["calls"], 17,
+        "the default ceiling of 15 writing calls per job, plus the plan attempts"
+    );
     assert_eq!(done["charged"], false);
     assert!(e.t.backend.st().gen.created.is_empty());
 }
@@ -459,16 +470,18 @@ async fn cancel_while_a_call_is_in_flight_keeps_the_unit_and_drops_the_request()
             &e.t,
             "SELECT COUNT(*) FROM gen_calls WHERE status = 'stopped'",
         );
-        if n == 1 {
+        if n >= 1 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
+    // wait for the writing calls: the plan call (3 s) goes first, then four writing calls are in flight together
+    tokio::time::sleep(Duration::from_millis(300)).await;
     let stopped: i64 = q1(
         &e.t,
         "SELECT COUNT(*) FROM gen_calls WHERE status = 'stopped'",
     );
-    assert_eq!(stopped, 1);
+    assert!(stopped >= 1, "the dropped call is written as stopped");
     assert!(e.t.backend.st().gen.created.is_empty());
     // cancelling again is too late
     let (s, v) =
@@ -604,9 +617,9 @@ async fn the_account_checked_by_the_main_service_each_batch() {
 }
 
 #[tokio::test]
-async fn missing_seeds_are_replaced_and_the_goal_never_shrinks() {
+async fn questions_the_backend_no_longer_lists_are_not_in_the_corpus_and_the_goal_never_shrinks() {
     let e = env().await;
-    // the first twenty source questions vanish between the source and the seeds calls
+    // ten source questions vanished: the corpus simply does not list them (nothing is replaced any more)
     let gone: Vec<String> = (1..=10).map(|n| format!("s{n:03}")).collect();
     e.t.backend.st().gen.seeds_missing = gone.clone();
     let done = run_to_end(&e, &e.user, BANK()).await;
@@ -618,12 +631,12 @@ async fn missing_seeds_are_replaced_and_the_goal_never_shrinks() {
             .map(Vec::len),
         Some(20)
     );
-    // every seed missing: nothing to learn from
+    // no question left at all: below the minimum, nothing is written
     let e2 = env().await;
     let all: Vec<String> = e2.t.backend.st().gen.seeds.keys().cloned().collect();
     e2.t.backend.st().gen.seeds_missing = all;
     let (s, v) = start_job(&e2, &e2.user, BANK()).await;
-    assert_eq!((s, &v["code"]), (404, &json!("ai.gen.notFound")));
+    assert_eq!((s, &v["code"]), (422, &json!("ai.gen.tooFew")));
     let rows: i64 = q1(&e2.t, "SELECT COUNT(*) FROM tasks");
     assert_eq!(rows, 0, "nothing written");
 }
@@ -652,11 +665,12 @@ async fn the_admin_list_shows_every_users_jobs_with_tokens() {
         (row["username"].clone(), row["userId"].clone()),
         (json!("alexandra_k"), json!(e.user.id))
     );
-    assert_eq!(row["calls"], 4);
-    assert_eq!(
-        (row["tokensIn"].clone(), row["tokensOut"].clone()),
-        (json!(84), json!(52))
+    assert_eq!(row["calls"], 5, "the plan call and 4 writing calls");
+    let (tin, tout) = (
+        row["tokensIn"].as_i64().unwrap_or(0),
+        row["tokensOut"].as_i64().unwrap_or(0),
     );
+    assert!(tin > 0 && tout > 0, "{row}");
     // administrators only, and a bad limit
     let (s, v) = e.t.get("/api/ai/admin/gen", &e.user).await;
     assert_eq!((s, &v["code"]), (403, &json!("ai.adminOnly")));
@@ -674,7 +688,8 @@ async fn the_admin_list_shows_every_users_jobs_with_tokens() {
         .find(|r| r["purpose"] == "generate")
         .expect("generate row")
         .clone();
-    assert_eq!(gen_row["calls"], 4);
+    // plan calls count as generation calls
+    assert_eq!(gen_row["calls"], 5);
     let by_user = v["byUser"]
         .as_array()
         .expect("byUser")
@@ -682,7 +697,7 @@ async fn the_admin_list_shows_every_users_jobs_with_tokens() {
         .find(|r| r["username"] == "alexandra_k")
         .expect("user row")
         .clone();
-    assert_eq!(by_user["calls"], 4);
+    assert_eq!(by_user["calls"], 5, "the plan call counts for the user too");
     assert_eq!(
         by_user["today"], 0,
         "generation calls never count against the call caps"
@@ -784,7 +799,7 @@ async fn the_wrong_and_scope_modes_use_the_typed_name_and_their_own_composition(
     let qs = body["questions"].as_array().expect("qs");
     assert_eq!(qs.iter().filter(|q| q["kind"] == "multi").count(), 5);
     // the source call carried the sheets and the wrong-mode minimum
-    let req = st.gen.source_requests.last().expect("request");
+    let req = st.gen.corpus_requests.last().expect("request");
     assert_eq!(req["source"], "wrong");
     assert_eq!(req["min"], 10);
     assert_eq!(

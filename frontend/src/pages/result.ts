@@ -9,7 +9,7 @@ import { reviewBlock, reviewItem } from '../components/review.ts';
 import { resultCounts } from '../domain/exam-timer.ts';
 import { percentOf, shuffle } from '../domain/grading.ts';
 import { t, tn } from '../i18n/index.ts';
-import { navigate, startExam } from '../state/actions.ts';
+import { navigate, retryUnsavedResult, startExam } from '../state/actions.ts';
 import { S } from '../state/store.ts';
 import { h } from '../utils/dom.ts';
 import { fmtTime } from '../utils/format.ts';
@@ -49,6 +49,20 @@ export function renderResult(): HTMLElement {
       h('p', null, recordId == null ? t('result.timeUp.notSaved') : open > 0 ? tn('result.timeUp.body', open) : t('result.timeUp.bodyNone')))
     : null;
 
+  // v1.3 (A1): a result that is not saved yet: a fixed banner with a retry button (the answers are still on this device)
+  const unsaved = R.unsaved;
+  const unsavedBanner = unsaved
+    ? unsaved.state === 'saved'
+      ? h('div', { class: 'callout res-unsaved', role: 'status' }, h('p', null, t('result.unsaved.done')))
+      : h('div', { class: 'callout warn res-unsaved', role: 'status' },
+        h('p', null, t('result.unsaved')),
+        h('div', { class: 'acts' },
+          h('button', {
+            class: 'btn primary', type: 'button', disabled: unsaved.state === 'saving', 'aria-busy': unsaved.state === 'saving' ? 'true' : null,
+            onclick: () => void retryUnsavedResult(),
+          }, t(unsaved.state === 'saving' ? 'result.unsaved.saving' : 'result.unsaved.retry'))))
+    : null;
+
   const rows = R.results.map((r, i) => ({
     correct: r.correct,
     unanswered: r.unanswered,
@@ -68,6 +82,7 @@ export function renderResult(): HTMLElement {
 
   return h('div', { class: 'page page-result' },
     pageHead(t(practice ? 'result.titlePractice' : 'result.title')),
+    unsavedBanner,
     h('section', { class: 'score' },
       h('div', { class: 'big num', role: 'img', 'aria-label': t('result.scoreLabel', { pct }) }, String(pct), h('small', null, '%')),
       h('div', { class: 'says' },

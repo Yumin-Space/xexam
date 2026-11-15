@@ -131,3 +131,53 @@
   /* The (i) tip's 44 px tap area stays inside its own row */
   .lg-meta { min-height: 44px; margin: 0; }
 }
+
+/* ---------- Activity tab (v1.3) ---------- */
+.lg-tabs { margin: 0 0 12px; }
+.lg-tabs button { min-height: 40px; }
+.act-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.act-sel { min-height: 38px; max-width: 100%; font-size: 15px; }
+.act-seg button { min-height: 38px; }
+.act-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
+.act-body { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+.act-body > * { min-width: 0; }
+.act-note, .act-ipoff { margin: 0; color: var(--ink3); font-size: 13px; overflow-wrap: anywhere; }
+.act-empty { margin: 12px 0; color: var(--ink2); }
+.act-err { display: grid; gap: 8px; justify-items: start; }
+.act-pop { display: grid; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
+.act-pop-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.act-days { width: 6em; min-height: 38px; font-size: 16px; }
+.act-head, .act-main { display: grid; grid-template-columns: 11em 7em 9em minmax(0, 1fr) 9em 14em; gap: 4px 12px; align-items: baseline; }
+.act-head, .act-main { min-width: 0; }
+@media (min-width: 601px) and (max-width: 900px) {
+  .act-head, .act-main { grid-template-columns: 8em 5em 7em minmax(0, 1fr) 6em 8em; gap: 4px 8px; }
+}
+.act-head { padding: 6px 10px; font-size: 12.5px; font-weight: 600; color: var(--ink3); border-bottom: 1px solid var(--line-soft); }
+.act-list { list-style: none; margin: 0; padding: 0; }
+.act-row { border-bottom: 1px solid var(--line-soft); }
+.act-main { width: 100%; padding: 8px 10px; text-align: left; font: inherit; color: var(--ink); background: none; border: 0; cursor: pointer; min-height: 44px; }
+@media (hover: hover) { .act-main:hover { background: var(--hover); } }
+.act-c { min-width: 0; overflow-wrap: anywhere; font-size: 14px; }
+.act-time { font-variant-numeric: tabular-nums; color: var(--ink2); }
+.act-n { margin-left: 6px; color: var(--ink3); }
+.act-user { font-weight: 600; }
+.act-tag { display: inline-block; padding: 1px 8px; border-radius: 10px; font-size: 12.5px; font-weight: 600; }
+.act-tag.ok { color: var(--answer-right); background: var(--answer-right-soft); }
+.act-tag.fail { color: var(--danger); background: var(--danger-soft); }
+.act-why { margin-left: 6px; color: var(--ink2); font-size: 13px; }
+.act-detail { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; padding: 4px 10px 10px; font-size: 13.5px; }
+.act-detail dt { color: var(--ink3); }
+.act-detail dd { margin: 0; overflow-wrap: anywhere; }
+.act-more { justify-self: start; min-height: 44px; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE: one card per entry */
+  .act-head { display: none; }
+  .act-main { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "time time res" "user act act" "obj obj obj" "dev dev dev"; padding: 10px 8px; }
+  .act-time { grid-area: time; font-size: 13px; }
+  .act-res { grid-area: res; justify-self: end; text-align: right; }
+  .act-user { grid-area: user; }
+  .act-act { grid-area: act; }
+  .act-obj { grid-area: obj; color: var(--ink2); }
+  .act-dev { grid-area: dev; color: var(--ink3); font-size: 13px; }
+  .act-sel { flex: 1 1 40%; min-height: 44px; }
+  .act-seg button { min-height: 44px; min-width: 44px; }
+}

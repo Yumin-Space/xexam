@@ -3,7 +3,7 @@
 //! backend (round-2 contracts 2.6).
 use crate::app::AppState;
 use crate::link::{BackendUser, LinkError};
-use crate::store::{data, stats, tables};
+use crate::store::{data, items, shared, stats, tables};
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::watch;
@@ -15,6 +15,21 @@ pub const SWEEP_BATCH: i64 = 20;
 /// Pause between two full batches: the store mutex is not fair, so without it a burst sweep would keep every other
 /// writer (answer flushes, asks, finishes) waiting for the whole sweep.
 pub const SWEEP_PAUSE: Duration = Duration::from_millis(20);
+
+/// Most shared study answers kept (the least recently used ones go first beyond it).
+pub const SHARED_CAP: i64 = 50_000;
+
+/// Retention of the v1.3 tables in one write transaction: shared study answers unused for `study_share_days` (by
+/// `COALESCE(last_hit_at, updated_at)`), then the oldest-used beyond [`SHARED_CAP`]; items of generation jobs that are no
+/// longer running. Returns (shared answers deleted, items deleted). Blocking.
+pub fn sweep_v13(store: &crate::store::Store, now: i64) -> rusqlite::Result<(i64, usize)> {
+    let days = store.read(tables::load_limits)?.study_share_days;
+    store.write(|tx| {
+        let rows = shared::shared_prune(tx, now - days * 86_400, SHARED_CAP)?;
+        let it = items::items_sweep(tx)?;
+        Ok::<_, rusqlite::Error>((rows, it))
+    })
+}
 
 /// Deletes the chats last updated before `cutoff` (except the running ones) in batches of [`SWEEP_BATCH`], releasing the
 /// store and sleeping `pause` after each full batch; returns the number deleted. Blocking: call it off the async
@@ -70,10 +85,20 @@ pub fn sweep_once(app: &AppState) -> usize {
             0
         }
     };
+    let (shared_rows, item_rows) = match sweep_v13(&app.0.store, now) {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("AI retention failed: {e}");
+            (0, 0)
+        }
+    };
     if chats > 0 {
         tracing::info!("AI retention: deleted {chats} chats older than {days} days");
     }
-    if chats > 0 || tasks > 0 {
+    if shared_rows > 0 {
+        tracing::info!("AI retention: deleted {shared_rows} unused shared answers");
+    }
+    if chats > 0 || tasks > 0 || shared_rows > 0 || item_rows > 0 {
         app.0.store.schedule_checkpoint();
     }
     chats

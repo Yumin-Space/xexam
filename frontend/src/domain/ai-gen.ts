@@ -1,7 +1,7 @@
 // AI-generated banks (v1.1, section 5): who sees which control and in which state (GB-1), the names (GB-4 / GP-9 twins of
 // the Rust helpers), the progress card model (GB-7), the AI+题集 tip choice (GB-6 / IM-8). Pure: no DOM, no i18n calls
 // (it runs under `node --test`); message keys are returned as strings and the components translate them.
-import type { BankAi, GenJob, GenStatus } from '../types/api.ts';
+import type { BankAi, GenItem, GenJob, GenJobAnswer, GenStatus } from '../types/api.ts';
 import type { ControlView, UnavailableReason } from './ai-features.ts';
 
 // ---------------------------------------------------------------- names (GP-9 twins)
@@ -175,9 +175,10 @@ export function aiMetaLine(ai: BankAi): { key: string; params: Record<string, st
 export type CardPhase = 'queued' | 'writing' | 'saving';
 
 /** What the progress card of a running job shows: the status line key and whether the bar is determinate */
-export function runningLine(job: GenJob): { key: 'aigen.card.queued' | 'aigen.card.writing' | 'aigen.card.saving'; pct: number } {
+export function runningLine(job: GenJob): { key: 'aigen.card.queued' | 'aigen.phase.planning' | 'aigen.card.writing' | 'aigen.card.saving'; pct: number } {
   const pct = job.goal > 0 ? Math.min(100, Math.max(0, Math.round((job.made / job.goal) * 100))) : 0;
   if (job.state === 'queued') return { key: 'aigen.card.queued', pct: 0 };
+  if (job.phase === 'planning') return { key: 'aigen.phase.planning', pct: 0 };
   if (job.phase === 'saving') return { key: 'aigen.card.saving', pct: 100 };
   return { key: 'aigen.card.writing', pct };
 }
@@ -234,4 +235,48 @@ export function aiOfBank(banks: ReadonlyArray<{ id: number; ai?: BankAi }>, id: 
 /** A-OWNER-53d: the catalog key of the word after "AI+" by origin: 错题本 mode, AI file import, or original banks (scope / Bank management) */
 export function aiSetWordKey(ai: BankAi): 'aigen.badge.wordWrong' | 'aigen.badge.wordImport' | 'aigen.badge.wordPractice' {
   return ai.source === 'wrong' ? 'aigen.badge.wordWrong' : ai.source === 'file' ? 'aigen.badge.wordImport' : 'aigen.badge.wordPractice';
+}
+
+// ---------------------------------------------------------------- the questions written so far (v1.3, COST 3.5)
+
+/** The questions of one running job as the client holds them (memory only): the list in arrival order and the cursor */
+export interface ItemsState {
+  items: GenItem[];
+  /** The highest number seen: the next poll asks for `after=last` */
+  last: number;
+}
+
+export const emptyItems = (): ItemsState => ({ items: [], last: 0 });
+
+/**
+ * Applies one `GET /api/ai/gen/job?after=` answer: new items are appended (a number already held is replaced, never doubled),
+ * numbers in `gone` are removed, `last` only grows. An answer without items keeps the state as it is.
+ */
+export function applyItems(state: ItemsState, a: Pick<GenJobAnswer, 'items' | 'last' | 'gone'>): ItemsState {
+  const gone = new Set(a.gone ?? []);
+  const byNo = new Map<number, GenItem>();
+  for (const it of state.items) byNo.set(it.no, it);
+  for (const it of a.items ?? []) byNo.set(it.no, it);
+  for (const no of gone) byNo.delete(no);
+  const items = [...byNo.values()].sort((x, y) => x.no - y.no);
+  const top = Math.max(state.last, a.last ?? 0, ...(a.items ?? []).map((i) => i.no));
+  return { items, last: top };
+}
+
+/**
+ * Whether a poll asks for the items: only while the job's list or the placeholder bank row can be seen (Home or Bank
+ * management, page visible) and only for a generation (an import job has no list). Never on the quiz route.
+ */
+export function wantsItems(route: string, visible: boolean, job: GenJob | null): boolean {
+  if (!job || !visible || job.source === 'file') return false;
+  if (job.state !== 'queued' && job.state !== 'running') return false;
+  return route === 'home' || route === 'banks';
+}
+
+/** The placeholder bank row of a running generation, or null (no row for an import, a finished job or the quiz route) */
+export function placeholderOf(gen: GenStatus | null, route: string): { id: number; name: string; made: number; goal: number } | null {
+  if (route === 'quiz') return null;
+  const job = activeJob(gen);
+  if (!job || job.source === 'file') return null;
+  return { id: job.id, name: job.name, made: job.made, goal: job.goal };
 }

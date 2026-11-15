@@ -1,7 +1,7 @@
 // The AI bank generation routes (v1.1, API-U2 .. U5, API-A1): start, poll one job, cancel, dismiss, and the administrators'
 // list. Answers are parsed with the tolerant readers of state/ai.ts (a missing key falls back, never throws).
 import { genStatusOf, jobOf } from '../state/ai.ts';
-import type { GenAdminJob, GenJob, GenStatus } from '../types/api.ts';
+import type { GenAdminJob, GenItem, GenJob, GenJobAnswer, GenStatus } from '../types/api.ts';
 import { ApiError, getJson, postJson } from './client.ts';
 
 export type StartBody =
@@ -21,8 +21,24 @@ export async function startGen(body: StartBody): Promise<StartAnswer> {
   return { job, gen: genStatusOf(a['gen']) };
 }
 
-/** `GET /api/ai/gen/job?id=` */
-export async function fetchGenJob(id: number): Promise<GenJob> {
+/**
+ * `GET /api/ai/gen/job?id=[&after=<no>&lang=]`. Without `after`: the job alone (as before). With it (v1.3): the job and the
+ * finished items after number `after` in `lang` (owner only; at most 20 per answer; `gone` = numbers dropped by the checks).
+ */
+export async function fetchGenJob(id: number): Promise<GenJob>;
+export async function fetchGenJob(id: number, after: number, lang?: string): Promise<GenJobAnswer>;
+export async function fetchGenJob(id: number, after?: number, lang?: string): Promise<GenJob | GenJobAnswer> {
+  if (after !== undefined) {
+    const q = `id=${id}&after=${after}${lang ? `&lang=${lang}` : ''}`;
+    const r = await getJson<Record<string, unknown>>(`/api/ai/gen/job?${q}`, { timeoutMs: 10_000 });
+    const j = jobOf(r['job']);
+    if (!j) throw new ApiError('unexpected', 200);
+    const out: GenJobAnswer = { job: j };
+    if (Array.isArray(r['items'])) out.items = r['items'] as GenItem[];
+    if (typeof r['last'] === 'number') out.last = r['last'];
+    if (Array.isArray(r['gone'])) out.gone = (r['gone'] as unknown[]).filter((n): n is number => typeof n === 'number');
+    return out;
+  }
   const a = await getJson<Record<string, unknown>>(`/api/ai/gen/job?id=${id}`, { timeoutMs: 10_000 });
   const job = jobOf(a['job']);
   if (!job) throw new ApiError('unexpected', 200);

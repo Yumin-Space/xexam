@@ -5,15 +5,18 @@
 //! `PRAGMA wal_checkpoint(TRUNCATE)` (coalesced, at most one run per 10 s, see `app::spawn_checkpointer`) so the old page
 //! images do not stay in `xexam-ai.db-wal`. Backups and volume snapshots keep deleted content (documented).
 use crate::config::JournalMode;
-use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior};
+use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 use tokio::sync::Notify;
 
+pub mod conn;
 pub mod data;
+pub mod items;
 pub mod jobs;
 pub mod schema;
+pub mod shared;
 pub mod stats;
 pub mod tables;
 
@@ -145,6 +148,115 @@ fn backup_copy(conn: &Connection, backups: &Path, from: &str) -> Result<PathBuf,
     Ok(target)
 }
 
+/// Host part of a base URL, cut to 40 characters; `connection-1` when there is none.
+fn connection_name_of(base_url: &str) -> String {
+    let rest = base_url.split_once("://").map_or(base_url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host_port = authority.rsplit('@').next().unwrap_or("");
+    let host = if let Some(inner) = host_port.strip_prefix('[') {
+        inner.split(']').next().unwrap_or("")
+    } else {
+        host_port.split(':').next().unwrap_or("")
+    };
+    let name: String = host.trim().chars().take(40).collect();
+    if name.is_empty() {
+        "connection-1".to_string()
+    } else {
+        name
+    }
+}
+
+/// The old `settings` row as far as the migration needs it.
+struct OldSettings {
+    provider: String,
+    base_url: String,
+    format: String,
+    gateway_auth: String,
+    model: String,
+    manual: i64,
+    usage_option: i64,
+    max_tokens: i64,
+    verified_at: Option<i64>,
+    verified_fp: Option<String>,
+    updated_by: String,
+}
+
+/// Steps 2 - 5 of the 6 -> 7 migration (inside the upgrade transaction): connection 1 from the old `settings` row, only
+/// when it was ever configured; its keys copied as they are (`aad_ver` 1, no master key needed); the model and the
+/// `default` slot. `settings.enabled` stays as it is; `usage` / `gen_calls` rows keep a NULL connection.
+fn connect_old_settings(tx: &Transaction, now: i64) -> rusqlite::Result<()> {
+    let configured: Option<bool> = tx
+        .query_row(
+            "SELECT updated_by <> '' OR model <> '' OR EXISTS(SELECT 1 FROM secrets) FROM settings WHERE id = 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()?;
+    if configured != Some(true) {
+        return Ok(());
+    }
+    let o = tx.query_row(
+        "SELECT provider, base_url, format, gateway_auth, model, manual_model, usage_option, max_tokens,
+                verified_at, verified_fp, updated_by FROM settings WHERE id = 1",
+        [],
+        |r| {
+            Ok(OldSettings {
+                provider: r.get(0)?,
+                base_url: r.get(1)?,
+                format: r.get(2)?,
+                gateway_auth: r.get(3)?,
+                model: r.get(4)?,
+                manual: r.get(5)?,
+                usage_option: r.get(6)?,
+                max_tokens: r.get(7)?,
+                verified_at: r.get(8)?,
+                verified_fp: r.get(9)?,
+                updated_by: r.get(10)?,
+            })
+        },
+    )?;
+    tx.execute(
+        "INSERT INTO connections (id, name, provider, base_url, format, gateway_auth, status, tested_at, rev, sort,
+                                  created_at, updated_at, updated_by)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, 'ok', ?6, 1, 0, ?7, ?7, ?8)",
+        params![
+            connection_name_of(&o.base_url),
+            o.provider,
+            o.base_url,
+            o.format,
+            o.gateway_auth,
+            o.verified_at,
+            now,
+            o.updated_by
+        ],
+    )?;
+    tx.execute(
+        "INSERT INTO connection_secrets (connection_id, name, key_id, nonce, ciphertext, hint, rev, aad_ver, updated_at)
+         SELECT 1, name, key_id, nonce, ciphertext, hint, rev, 1, updated_at FROM secrets",
+        [],
+    )?;
+    if !o.model.is_empty() {
+        tx.execute(
+            "INSERT INTO models (connection_id, model, manual, status, usage_option, max_tokens, tested_at)
+             VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                o.model,
+                o.manual,
+                if o.verified_fp.is_some() { "ok" } else { "untested" },
+                o.usage_option,
+                o.max_tokens,
+                o.verified_at
+            ],
+        )?;
+        let id = tx.last_insert_rowid();
+        tx.execute(
+            "UPDATE model_slots SET model_id = ?1, updated_at = ?2 WHERE slot = 'default'",
+            params![id, now],
+        )?;
+    }
+    Ok(())
+}
+
 impl Store {
     /// Opens (and creates) the AI database in `dir`. A database written by a newer AI service is refused.
     pub fn open(dir: &Path, journal: JournalMode) -> Result<Store, String> {
@@ -182,7 +294,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1 … 5 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1 … 6 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -205,18 +317,19 @@ impl Store {
                     add_columns(tx, &schema::V4_COLUMNS)?;
                     add_columns(tx, &schema::V5_COLUMNS)?;
                     add_columns(tx, &schema::V6_COLUMNS)?;
+                    add_columns(tx, &schema::V7_COLUMNS)?;
                     relax_memory_check(tx)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
                     tx.execute_batch(schema::V5_TABLES)?;
                     add_columns(tx, &schema::LATE_COLUMNS)?;
+                    tx.execute_batch(schema::V7_TABLES)?;
+                    tx.execute_batch(schema::V7_INDEXES)?;
+                    tx.execute(schema::V7_SEED, [now])?;
                     tx.execute(
                         "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
                         [now],
                     )?;
-                    tx.execute(
-                        "INSERT OR IGNORE INTO limits (id, updated_at) VALUES (1, ?1)",
-                        [now],
-                    )?;
+                    tx.execute(schema::V7_NEW_LIMITS, [now])?;
                     tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?1)",
@@ -228,12 +341,13 @@ impl Store {
                 tx.commit()
                     .map_err(|e| format!("cannot create the AI database {{path}}: {e}"))?;
             }
-            // The current schema: nothing to do, nothing written, except that a schema-6 file may lack a column added later: add it (idempotent, no version change)
+            // The current schema: nothing to do, nothing written, except that a file may lack a column added later: add it (idempotent, no version change)
             Some(v) if v == schema::SCHEMA_VERSION => {
                 let missing = |c: &Connection| -> rusqlite::Result<bool> {
                     for (table, column, _) in schema::V5_COLUMNS
                         .iter()
                         .chain(schema::V6_COLUMNS.iter())
+                        .chain(schema::V7_COLUMNS.iter())
                         .chain(schema::LATE_COLUMNS.iter())
                     {
                         let present: bool = c.query_row(
@@ -253,9 +367,38 @@ impl Store {
                         .map_err(|e| format!("cannot open the AI database {{path}}: {e}"))?;
                     add_columns(&tx, &schema::V5_COLUMNS)
                         .and_then(|()| add_columns(&tx, &schema::V6_COLUMNS))
+                        .and_then(|()| add_columns(&tx, &schema::V7_COLUMNS))
                         .and_then(|()| add_columns(&tx, &schema::LATE_COLUMNS))
+                        .and_then(|()| tx.execute_batch(schema::V7_TABLES))
+                        .and_then(|()| tx.execute_batch(schema::V7_INDEXES))
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                     tx.commit()
+                        .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                }
+                // a schema-7 file written by a v1.3 build from before the hint + analysis switch became one
+                let split: bool = conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM users WHERE (features_off & 6) IN (2, 4))
+                             OR EXISTS(SELECT 1 FROM settings WHERE (features_off & 6) IN (2, 4))",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+                if split {
+                    conn.execute_batch(schema::PAIR_STUDY_BITS)
+                        .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                }
+                // a schema-7 file written by a v1.3 build that kept the chat picks of a removed connection
+                let stale: bool = conn
+                    .query_row(
+                        "SELECT EXISTS(SELECT 1 FROM chats WHERE pick_conn IS NOT NULL
+                             AND NOT EXISTS (SELECT 1 FROM connections k WHERE k.id = chats.pick_conn))",
+                        [],
+                        |r| r.get(0),
+                    )
+                    .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+                if stale {
+                    conn.execute_batch(schema::CLEAR_STALE_PICKS)
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 }
             }
@@ -273,12 +416,23 @@ impl Store {
                     add_columns(tx, &schema::V4_COLUMNS)?;
                     add_columns(tx, &schema::V5_COLUMNS)?;
                     add_columns(tx, &schema::V6_COLUMNS)?;
+                    add_columns(tx, &schema::V7_COLUMNS)?;
                     relax_memory_check(tx)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
                     tx.execute_batch(schema::V5_TABLES)?;
                     add_columns(tx, &schema::LATE_COLUMNS)?;
-                    tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
-                    tx.execute_batch(schema::V6_MIGRATE)?;
+                    tx.execute_batch(schema::V7_TABLES)?;
+                    tx.execute_batch(schema::V7_INDEXES)?;
+                    tx.execute(schema::V7_SEED, [now])?;
+                    // the character -> token conversion belongs to the 1 .. 5 -> 6 step only (a schema-6 file holds tokens)
+                    if v != "6" {
+                        tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
+                        tx.execute_batch(schema::V6_MIGRATE)?;
+                    }
+                    tx.execute_batch(schema::V7_MIGRATE)?;
+                    tx.execute_batch(schema::PAIR_STUDY_BITS)?;
+                    tx.execute_batch(schema::CLEAR_STALE_PICKS)?;
+                    connect_old_settings(tx, now)?;
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
@@ -504,7 +658,7 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "6");
+            assert_eq!(v, "7");
         }
         let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
             .expect("backups")

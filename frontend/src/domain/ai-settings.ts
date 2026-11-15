@@ -1,16 +1,14 @@
-// AI settings (v0.8, administrators): the rules of the settings form as pure functions the page and the tests share. They
-// mirror what the AI service checks (it enforces everything; this only decides what the form shows and sends):
-//   · which fields each provider has, its default address, and when switching the provider replaces the address;
-//   · the API format a gateway address suggests (its last path segment);
-//   · key re-entry: when the provider or the address's origin changes, every saved key must be typed again (an empty field
-//     then removes it), so a saved key is never sent to a new place;
-//   · the header clash of a gateway (its key and the provider key would use the same header), against the typed AND the
-//     saved keys; the http:// warning; whether the form differs from the saved settings; whether AI can be enabled;
-//   · which error codes a user who is not an administrator sees as "AI is not set up correctly";
-//   · the safety limits form (v0.8 spec 14.1) and the retention days;
-//   · round 2: why ai-service is not connected (the status panel), and which listed models are probably not chat models.
+// AI settings (administrators): the rules of the AI settings page as pure functions the page and the tests share. The AI
+// service enforces everything; this only decides what the page shows and sends. v1.3:
+//   · connections: the form of one connection (name, provider, address, keys), its save body (key fields: absent = keep,
+//     null = remove, string = set), the host a key reuse must be confirmed for, the result line of a save or a test;
+//   · the status cards, the six model slots (the model each uses, the "unusable" warning: nothing is switched on its own),
+//     the merged model list grouped by connection;
+//   · the safety limits form and the retention days; why ai-service is not connected (the status panel);
+//   · which listed models are probably not chat models; the category tabs; the per-user request counts.
 import type {
-  AiFormat, AiGatewayAuth, AiKeySlot, AiProvider, AiService, AiSettings, AiSettingsUpdate, AiVerify,
+  AiConnection, AiConnectionSave, AiFeatureKey, AiFormat, AiGatewayAuth, AiKeySlot, AiModelList, AiPoolModel, AiProvider, AiService,
+  AiSettings, AiSlot, AiTestAnswer, ModelRef,
 } from '../types/api.ts';
 
 export const PROVIDERS: readonly AiProvider[] = ['openai', 'anthropic', 'gateway'];
@@ -19,26 +17,6 @@ export const GATEWAY_AUTHS: readonly AiGatewayAuth[] = ['bearer', 'x-api-key', '
 export const KEY_SLOTS: readonly AiKeySlot[] = ['apiKey', 'gatewayKey'];
 /** The example address of a Cloudflare AI Gateway (a placeholder only; never a real address) */
 export const GATEWAY_PLACEHOLDER = 'https://ai-gateway.example.com/openai';
-
-/** The connection part of the form: what is typed or chosen, before it is saved */
-export interface ConnForm {
-  provider: AiProvider;
-  baseUrl: string;
-  format: AiFormat;
-  gatewayAuth: AiGatewayAuth;
-  /** Typed keys (empty = keep the saved one; never prefilled) */
-  keys: Record<AiKeySlot, string>;
-  /** "Remove this key" ticked */
-  remove: Record<AiKeySlot, boolean>;
-}
-
-/** The form for saved settings: nothing typed, nothing ticked */
-export function formOf(s: Pick<AiSettings, 'provider' | 'baseUrl' | 'format' | 'gatewayAuth'>): ConnForm {
-  return {
-    provider: s.provider, baseUrl: s.baseUrl, format: s.format, gatewayAuth: s.gatewayAuth,
-    keys: { apiKey: '', gatewayKey: '' }, remove: { apiKey: false, gatewayKey: false },
-  };
-}
 
 export interface ProviderFields {
   /** The gateway's API format and auth scheme */
@@ -104,24 +82,6 @@ export function originOf(url: string): string | null {
   return `${u.protocol.slice(0, -1)}://${u.hostname.toLowerCase()}:${port}`;
 }
 
-/** Whether saving the form needs the saved keys typed again: the provider or the address's origin changes */
-export function needsReentry(saved: Pick<AiSettings, 'provider' | 'baseUrl'>, form: Pick<ConnForm, 'provider' | 'baseUrl'>): boolean {
-  if (saved.provider !== form.provider) return true;
-  const a = originOf(saved.baseUrl);
-  const b = originOf(form.baseUrl);
-  if (a == null && b == null) return normalizeUrl(saved.baseUrl) !== normalizeUrl(form.baseUrl);
-  return a !== b;
-}
-
-/** Whether a key slot holds a key after the form is saved */
-export function keyAfter(saved: Pick<AiSettings, 'provider' | 'baseUrl' | 'keys'>, form: ConnForm, slot: AiKeySlot): boolean {
-  if (form.keys[slot].trim()) return true;
-  if (!fieldsOf(form.provider).slots.includes(slot)) return false;
-  if (form.remove[slot]) return false;
-  if (needsReentry(saved, form)) return false;
-  return saved.keys[slot].set;
-}
-
 /**
  * A gateway's key and the provider key would go in the same header: the bearer scheme with the OpenAI format, or x-api-key
  * with the Anthropic format, while a provider key is set (typed or saved). Only cf-aig-authorization leaves both free.
@@ -129,67 +89,6 @@ export function keyAfter(saved: Pick<AiSettings, 'provider' | 'baseUrl' | 'keys'
 export function headerClash(form: Pick<ConnForm, 'provider' | 'format' | 'gatewayAuth'>, providerKeySet: boolean): boolean {
   if (form.provider !== 'gateway' || !providerKeySet) return false;
   return (form.gatewayAuth === 'bearer' && form.format === 'openai') || (form.gatewayAuth === 'x-api-key' && form.format === 'anthropic');
-}
-
-/** Whether the connection form differs from the saved settings (then listing the models and the test wait for Save) */
-export function isDirty(saved: Pick<AiSettings, 'provider' | 'baseUrl' | 'format' | 'gatewayAuth'>, form: ConnForm): boolean {
-  if (form.provider !== saved.provider || normalizeUrl(form.baseUrl) !== normalizeUrl(saved.baseUrl)) return true;
-  if (form.provider === 'gateway' && (form.format !== saved.format || form.gatewayAuth !== saved.gatewayAuth)) return true;
-  return KEY_SLOTS.some((k) => form.keys[k].trim() !== '' || form.remove[k]);
-}
-
-/**
- * The body of a Save of the connection: only what changed. A typed key replaces the saved one; "Remove this key", a key the
- * new provider does not use, and (key re-entry) an empty field of a saved key after a provider or origin change remove it.
- */
-export function connUpdate(saved: Pick<AiSettings, 'provider' | 'baseUrl' | 'format' | 'gatewayAuth' | 'keys'>, form: ConnForm): AiSettingsUpdate {
-  const u: AiSettingsUpdate = {};
-  if (form.provider !== saved.provider) u.provider = form.provider;
-  if (normalizeUrl(form.baseUrl) !== normalizeUrl(saved.baseUrl)) u.baseUrl = normalizeUrl(form.baseUrl);
-  if (form.provider === 'gateway') {
-    if (form.format !== saved.format || u.provider) u.format = form.format;
-    if (form.gatewayAuth !== saved.gatewayAuth || u.provider) u.gatewayAuth = form.gatewayAuth;
-  }
-  const reentry = needsReentry(saved, form);
-  const used = fieldsOf(form.provider).slots;
-  for (const slot of KEY_SLOTS) {
-    const typed = form.keys[slot].trim();
-    const set = saved.keys[slot].set;
-    if (!used.includes(slot)) {
-      if (set) u[slot] = null;
-      continue;
-    }
-    if (typed) u[slot] = typed;
-    else if (set && (form.remove[slot] || reentry)) u[slot] = null;
-  }
-  return u;
-}
-
-/** Whether a Save switches AI off (its settings then need a new test): it changes what the test checked */
-export function changesFingerprint(u: AiSettingsUpdate, providerAfter: AiProvider): boolean {
-  if (u.provider !== undefined || u.baseUrl !== undefined || u.format !== undefined || u.gatewayAuth !== undefined) return true;
-  if (u.model !== undefined || u.apiKey !== undefined) return true;
-  return u.gatewayKey !== undefined && providerAfter === 'gateway';
-}
-
-/** The toast after a save: a save that switched the AI+ feature off says so (and what to do next) */
-export const savedToastKey = (switchedOff: boolean): 'ai.set.savedOff' | 'ai.set.saved' => (switchedOff ? 'ai.set.savedOff' : 'ai.set.saved');
-
-/**
- * The result line under the Test button. `on`: whether the AI+ feature is on NOW (the settings the page holds), not what it
- * was when the test ran: after the administrator turns the feature on or off, the line follows (it never keeps telling
- * "you can turn it on" next to a switch that is on). `none`: nothing to show.
- */
-export type TestLine =
-  | { kind: 'none' }
-  | { kind: 'ok'; key: 'ai.set.testOk' | 'ai.set.testOkOn'; ms: number }
-  | { kind: 'fail'; code: string | null; hint: ReturnType<typeof testHint>; keepOn: boolean };
-
-export function testLineOf(r: Pick<AiVerify, 'ok' | 'code' | 'latencyMs'> | null, on: boolean): TestLine {
-  if (!r) return { kind: 'none' };
-  if (r.ok) return { kind: 'ok', key: on ? 'ai.set.testOkOn' : 'ai.set.testOk', ms: r.latencyMs };
-  // "stays on" is only true while it is on
-  return { kind: 'fail', code: r.code, hint: testHint(r.code), keepOn: on };
 }
 
 /**
@@ -200,53 +99,6 @@ export function testLineOf(r: Pick<AiVerify, 'ok' | 'code' | 'latencyMs'> | null
 export function focusAfterClear(what: 'chat' | 'chats' | 'memories', chatIds: readonly number[]): string {
   if (what !== 'memories') return chatIds.length ? `vw-c-${chatIds[0]}` : 'vw-tab-chats';
   return 'vw-tab-memories';
-}
-
-/** The keys that listing the models and the test need are saved and readable */
-export function requiredKeysSaved(s: Pick<AiSettings, 'provider' | 'keys'>): boolean {
-  return fieldsOf(s.provider).required.every((k) => s.keys[k].set && !s.keys[k].unreadable);
-}
-
-/** An administrator has saved the connection (a saved key counts; so does a save that records who did it, unless the
- *  connection is still the factory one). The untouched defaults of a fresh instance are not a saved connection, and neither
- *  are they after a save of the chat retention alone (that save records who did it too): the OpenAI-compatible provider at
- *  its default address without a key is never listed or tested on its own. */
-export function connectionSaved(s: Pick<AiSettings, 'keys' | 'updatedBy' | 'provider' | 'baseUrl' | 'defaults'>): boolean {
-  if (KEY_SLOTS.some((k) => s.keys[k].set)) return true;
-  const factory = s.provider === 'openai' && normalizeUrl(s.baseUrl) === normalizeUrl(s.defaults.openai);
-  return s.updatedBy.trim() !== '' && !factory;
-}
-
-/** AI can be switched on: the saved settings passed a test and the keys can be read */
-export const canEnable = (s: Pick<AiSettings, 'verified' | 'keyProblem'>): boolean => s.verified && !s.keyProblem;
-
-export type StateChip = 'on' | 'off' | 'unverified';
-
-/** The status line of AI settings (owner's request): connection, model and test each with its own chip, then AI on / off.
- *  `lastTestFailed`: the latest test on this page failed (the server keeps only whether the saved settings passed). */
-export interface StatusChips {
-  conn: 'ok' | 'none';
-  model: 'ok' | 'none';
-  test: 'ok' | 'fail' | 'none';
-  ai: 'on' | 'off';
-}
-
-export function statusChips(
-  s: Pick<AiSettings, 'provider' | 'keys' | 'baseUrl' | 'model' | 'verified' | 'enabled' | 'updatedBy' | 'defaults'>, lastTestFailed: boolean,
-): StatusChips {
-  return {
-    conn: s.baseUrl.trim() !== '' && connectionSaved(s) && requiredKeysSaved(s) ? 'ok' : 'none',
-    model: s.model.trim() !== '' ? 'ok' : 'none',
-    test: s.verified ? 'ok' : lastTestFailed ? 'fail' : 'none',
-    ai: s.enabled ? 'on' : 'off',
-  };
-}
-
-/** On; saved but not tested (something is saved and the test has not passed); else off */
-export function stateChip(s: Pick<AiSettings, 'enabled' | 'verified' | 'model' | 'keys'>): StateChip {
-  if (s.enabled) return 'on';
-  const saved = s.model !== '' || KEY_SLOTS.some((k) => s.keys[k].set);
-  return !s.verified && saved ? 'unverified' : 'off';
 }
 
 /** An http:// address sends the key unencrypted, except to this computer or a single-label name (a container nearby) */
@@ -376,13 +228,16 @@ export function aiServiceOf(state: unknown): AiService | null {
 }
 
 /** The form field a refused Save is about (the key named by the answer, the address, the model, the retention days) */
-export type SettingsField = AiKeySlot | 'baseUrl' | 'model' | 'retention';
+export type SettingsField = AiKeySlot | 'baseUrl' | 'name' | 'model' | 'retention';
 
 export function fieldOfError(e: { code?: string | undefined; field?: string | undefined }): SettingsField | null {
   if (e.field === 'apiKey' || e.field === 'gatewayKey') return e.field;
   switch (e.code) {
     case 'ai.badUrl':
       return 'baseUrl';
+    case 'ai.badName':
+    case 'ai.nameTaken':
+      return 'name';
     case 'ai.modelMissing':
       return 'model';
     case 'ai.badRetention':
@@ -407,58 +262,63 @@ export function retentionOf(text: string): number | null {
 
 // ---------------------------------------------------------------- safety limits (v0.8 spec 14.1, v1.0 spec 3.2 / 3.10)
 
-/** The ten limits of the AI service (v1.0): the three per-user caps, the two lengths, the five that protect the server */
+/** The limits of the AI service (v1.3: 6 more than v1.2) */
 export type LimitKey =
-  | 'callsPerMinute' | 'callsPerHour' | 'callsPerDay' | 'replyMaxTokens' | 'memoryTokens'
+  | 'callsPerMinute' | 'callsPerHour' | 'callsPerDay' | 'callsAdminsExempt' | 'replyMaxTokens' | 'memoryTokens'
   | 'perUserRunning' | 'globalRunning' | 'chatsPerUser' | 'messagesPerChat' | 'memoriesPerUser'
-  // v1.1 (GS-1, IS-1): the AI banks tab
   | 'genPerDay' | 'genAdminsExempt' | 'genMinSource' | 'genMinWrong' | 'genBankSingle' | 'genBankMulti' | 'genWrongSingle'
   | 'genWrongMulti' | 'genCallTokens' | 'genRunning' | 'importMaxMb' | 'importMaxQuestions'
-  // A-OWNER-31b / 36 / 36b: the per-job call ceilings (generation, file import), the same for everyone
-  | 'genMaxCalls' | 'importMaxCalls'
-  // A-OWNER-38: the ceiling of the recognition step of an import (before the confirm)
-  | 'recognizeMaxCalls'
-  // A-OWNER-45: the "no ceiling" switches of the two call ceilings (0 / 1)
-  | 'genUnlimited' | 'importUnlimited';
+  | 'genMaxCalls' | 'importMaxCalls' | 'recognizeMaxCalls' | 'genUnlimited' | 'importUnlimited'
+  // v1.3: sharing of hints / explanations, the chunks of a big bank, the summary size, the site-wide daily budget
+  | 'studyShare' | 'studyShareDays' | 'genMaxChunks' | 'summaryMaxItems' | 'dailyTokenBudget';
 /** The values of the limits; a key the service did not send falls back to its default where it is read */
 export type LimitValues = Partial<Record<LimitKey, number>>;
 export type LimitRanges = Partial<Record<LimitKey, [number, number]>>;
 
-/** v1.0: the per-user caps on AI model calls (spec 3.7), shown first, in this order */
+/** The per-user caps on AI model calls, shown first, in this order */
 export const CAP_KEYS: readonly LimitKey[] = ['callsPerMinute', 'callsPerHour', 'callsPerDay'];
-/** v1.0 (FB-5 revised): the length of one answer and of one memory, in tokens (v1.1, A-OWNER-43), second sub-group */
-export const LENGTH_KEYS: readonly LimitKey[] = ['replyMaxTokens', 'memoryTokens'];
-/** The limits that protect the server (the five of v0.8 that are left) */
-export const SERVER_KEYS: readonly LimitKey[] = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser'];
-/** v1.0's ten limits (the AI safety tab) */
-export const AS_KEYS: readonly LimitKey[] = [...CAP_KEYS, ...LENGTH_KEYS, ...SERVER_KEYS];
-/** v1.1 (GS-1): the eleven settings of AI bank generation (the call ceiling last, A-OWNER-31b) */
-export const GEN_KEYS: readonly LimitKey[] = [
-  'genPerDay', 'genAdminsExempt', 'genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti',
-  'genCallTokens', 'genRunning', 'genMaxCalls', 'genUnlimited',
-];
-/** v1.1 (IS-1): the settings of the AI file import (the call ceilings last, A-OWNER-36b / 38) */
+/** The group "AI requests": the three caps and the switch for administrators */
+export const CALLS_KEYS: readonly LimitKey[] = [...CAP_KEYS, 'callsAdminsExempt'];
+/** The group "Chat" */
+export const CHAT_KEYS: readonly LimitKey[] = ['chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryTokens'];
+/** The one answer length of chat, hint, explanation and summary */
+export const LENGTH_KEYS: readonly LimitKey[] = ['replyMaxTokens'];
+/** The group "Shared hints and explanations" and the site budget */
+export const SHARE_KEYS: readonly LimitKey[] = ['studyShare', 'studyShareDays'];
+export const SUMMARY_KEYS: readonly LimitKey[] = ['summaryMaxItems'];
+/** The group "AI banks": generation and import */
+export const GEN_KEYS: readonly LimitKey[] = ['genPerDay', 'genAdminsExempt', 'genCallTokens', 'genMaxCalls', 'genUnlimited', 'genMaxChunks'];
 export const IMPORT_KEYS: readonly LimitKey[] = ['importMaxMb', 'importMaxQuestions', 'importMaxCalls', 'recognizeMaxCalls', 'importUnlimited'];
-/** The 27 keys of the limits row */
-export const LIMIT_KEYS: readonly LimitKey[] = [...AS_KEYS, ...GEN_KEYS, ...IMPORT_KEYS];
-/** The AI banks tab saves these fourteen */
-export const BANK_KEYS: readonly LimitKey[] = [...GEN_KEYS, ...IMPORT_KEYS];
+/** The group "Server" */
+export const SERVER_KEYS: readonly LimitKey[] = ['perUserRunning', 'globalRunning', 'genRunning'];
+/** The "AI banks" tab keeps the content rules only */
+export const CONTENT_KEYS: readonly LimitKey[] = ['genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti'];
+/** What the safety tab shows (its Reset fills these defaults) */
+export const AS_KEYS: readonly LimitKey[] = [
+  ...CALLS_KEYS, ...CHAT_KEYS, ...LENGTH_KEYS, ...SHARE_KEYS, ...SUMMARY_KEYS, 'dailyTokenBudget', ...GEN_KEYS, ...IMPORT_KEYS, ...SERVER_KEYS,
+];
+/** Every key of the limits row */
+export const LIMIT_KEYS: readonly LimitKey[] = [...AS_KEYS, ...CONTENT_KEYS];
+/** The AI banks tab saves and resets these */
+export const BANK_KEYS: readonly LimitKey[] = CONTENT_KEYS;
 
 /** The defaults and ranges of the spec (the service sends its own; these are used only until it answers) */
 export const DEFAULT_LIMITS: Record<LimitKey, number> = {
-  callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, replyMaxTokens: 3000, memoryTokens: 1000,
-  perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 50,
+  callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100, callsAdminsExempt: 1, replyMaxTokens: 3000, memoryTokens: 200,
+  perUserRunning: 1, globalRunning: 16, chatsPerUser: 1000, messagesPerChat: 400, memoriesPerUser: 30,
   genPerDay: 3, genAdminsExempt: 1, genMinSource: 30, genMinWrong: 10, genBankSingle: 14, genBankMulti: 6, genWrongSingle: 14,
-  genWrongMulti: 6, genCallTokens: 20000, genRunning: 2, importMaxMb: 20, importMaxQuestions: 50, genMaxCalls: 15, importMaxCalls: 25, recognizeMaxCalls: 20,
+  genWrongMulti: 6, genCallTokens: 20000, genRunning: 2, importMaxMb: 20, importMaxQuestions: 100, genMaxCalls: 15, importMaxCalls: 25, recognizeMaxCalls: 20,
   genUnlimited: 1, importUnlimited: 1,
+  studyShare: 1, studyShareDays: 180, genMaxChunks: 8, summaryMaxItems: 40, dailyTokenBudget: 0,
 };
 export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
-  callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
+  callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], callsAdminsExempt: [0, 1], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
   perUserRunning: [1, 4], globalRunning: [1, 64], chatsPerUser: [10, 100000], messagesPerChat: [20, 5000], memoriesPerUser: [1, 1000],
   genPerDay: [0, 100], genAdminsExempt: [0, 1], genMinSource: [5, 2000], genMinWrong: [1, 500], genBankSingle: [0, 100],
   genBankMulti: [0, 100], genWrongSingle: [0, 100], genWrongMulti: [0, 100], genCallTokens: [1000, 250000], genRunning: [1, 8],
-  importMaxMb: [1, 20], importMaxQuestions: [1, 50], genMaxCalls: [8, 40], importMaxCalls: [8, 40], recognizeMaxCalls: [8, 40],
+  importMaxMb: [1, 20], importMaxQuestions: [1, 300], genMaxCalls: [8, 40], importMaxCalls: [8, 40], recognizeMaxCalls: [8, 40],
   genUnlimited: [0, 1], importUnlimited: [0, 1],
+  studyShare: [0, 1], studyShareDays: [7, 3650], genMaxChunks: [1, 50], summaryMaxItems: [10, 70], dailyTokenBudget: [0, 100000000],
 };
 
 export type LimitsForm = Record<LimitKey, string>;
@@ -552,6 +412,7 @@ export function limitsUpdate(saved: LimitValues, form: LimitsForm): LimitValues 
 
 /** The five categories of AI settings, in the order of the tab row (v1.1: the fifth, `gen`, is "AI 题库" / AI banks) */
 export const AI_TABS = ['feature', 'users', 'usage', 'safety', 'gen'] as const;
+/* the id 'feature' stays (old links); its label is "Connections and models" */
 export type AiTab = (typeof AI_TABS)[number];
 
 /** The tab a location hash names (`#/ai-settings?tab=users`); a missing or unknown value is the first tab */
@@ -610,22 +471,6 @@ export function hostOf(url: string): string {
   }
 }
 
-/** The connection shows as a one-line summary (with an edit button): saved, tested, nothing typed and no key problem */
-export function connCollapsed(
-  s: Pick<AiSettings, 'verified' | 'keyProblem' | 'keys' | 'provider' | 'baseUrl' | 'updatedBy' | 'defaults'>, dirty: boolean, editing: boolean,
-): boolean {
-  return !editing && !dirty && s.verified && !s.keyProblem && s.baseUrl.trim() !== '' && connectionSaved(s) && requiredKeysSaved(s);
-}
-
-/** The model shows as a one-line summary: a model is saved, the test passed and the field still holds the saved one */
-export function modelCollapsed(s: Pick<AiSettings, 'verified' | 'model'>, typedModel: string, editing: boolean): boolean {
-  return !editing && s.verified && s.model.trim() !== '' && (typedModel.trim() === '' || typedModel.trim() === s.model);
-}
-
-/** All fine: connection, model and test are OK and AI+ is on (the status line is then one sentence instead of four chips) */
-export const allFine = (c: StatusChips, keyProblem: boolean): boolean =>
-  c.conn === 'ok' && c.model === 'ok' && c.test === 'ok' && c.ai === 'on' && !keyProblem;
-
 /** The conversation figures shown with the usage: the sums over the listed users */
 export function convTotals(rows: ReadonlyArray<{ chats: number; messages: number; memories: number }>): { chats: number; messages: number; memories: number } {
   const t = { chats: 0, messages: 0, memories: 0 };
@@ -649,3 +494,273 @@ export function jobTime(sec: number): string {
   const p = (n: number): string => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+
+// ---------------------------------------------------------------- the form of one connection (v1.3)
+
+/** The form of one connection: what is typed or chosen, before it is saved */
+export interface ConnForm {
+  name: string;
+  provider: AiProvider;
+  baseUrl: string;
+  format: AiFormat;
+  gatewayAuth: AiGatewayAuth;
+  /** Typed keys (empty = keep the saved one; never prefilled) */
+  keys: Record<AiKeySlot, string>;
+  /** "Remove this key" ticked */
+  remove: Record<AiKeySlot, boolean>;
+  /** New connection only: the id of the connection whose saved keys are used (null = none) */
+  reuseFrom: number | null;
+}
+
+/** The form of a saved connection: nothing typed, nothing ticked */
+export function formOf(c: Pick<AiConnection, 'name' | 'provider' | 'baseUrl' | 'format' | 'gatewayAuth'>): ConnForm {
+  return {
+    name: c.name, provider: c.provider, baseUrl: c.baseUrl, format: c.format, gatewayAuth: c.gatewayAuth,
+    keys: { apiKey: '', gatewayKey: '' }, remove: { apiKey: false, gatewayKey: false }, reuseFrom: null,
+  };
+}
+
+/** The name a new connection starts with: the host of its address without the port (at most 40 characters) */
+export function suggestName(url: string): string {
+  try {
+    return new URL(normalizeUrl(url)).hostname.slice(0, 40);
+  } catch {
+    return '';
+  }
+}
+
+/** The form of a new connection: the OpenAI-compatible provider at its default address, the name follows the host */
+export function blankForm(defaults: AiSettings['defaults']): ConnForm {
+  const baseUrl = defaults.openai;
+  return {
+    name: suggestName(baseUrl), provider: 'openai', baseUrl, format: 'openai', gatewayAuth: 'bearer',
+    keys: { apiKey: '', gatewayKey: '' }, remove: { apiKey: false, gatewayKey: false }, reuseFrom: null,
+  };
+}
+
+export const NAME_MAX = 40;
+
+/** The name is wrong the way the server checks it: not 1 to 40 characters, or a control character in it */
+export function nameProblem(name: string): boolean {
+  const n = name.trim();
+  // eslint-disable-next-line no-control-regex
+  return n.length < 1 || [...n].length > NAME_MAX || /[\u0000-\u001f\u007f]/.test(n);
+}
+
+/** What is wrong with the form before it is sent: only the name (the server checks the rest) */
+export const formProblem = (form: Pick<ConnForm, 'name'>): 'name' | null => (nameProblem(form.name) ? 'name' : null);
+
+/** The host a key reuse is confirmed for: `host[:port]` of the address, the port only when it is not the scheme's default */
+export function confirmHostOf(url: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(normalizeUrl(url));
+  } catch {
+    return null;
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+  return u.host.toLowerCase();
+}
+
+/** Whether saving moves the saved keys to another provider or origin (then the server asks for a confirmation) */
+export function movesKeys(saved: Pick<AiConnection, 'provider' | 'baseUrl'>, form: Pick<ConnForm, 'provider' | 'baseUrl'>): boolean {
+  if (saved.provider !== form.provider) return true;
+  const a = originOf(saved.baseUrl);
+  const b = originOf(form.baseUrl);
+  if (a == null && b == null) return normalizeUrl(saved.baseUrl) !== normalizeUrl(form.baseUrl);
+  return a !== b;
+}
+
+/** Whether a key slot holds a key after the form is saved (a saved key stays unless it is replaced or removed) */
+export function keyAfter(saved: Pick<AiConnection, 'keys'> | null, form: ConnForm, slot: AiKeySlot): boolean {
+  if (form.keys[slot].trim()) return true;
+  if (!fieldsOf(form.provider).slots.includes(slot)) return false;
+  if (form.remove[slot]) return false;
+  return saved ? saved.keys[slot].set : false;
+}
+
+/** Whether the form differs from the saved connection (a new connection always does) */
+export function isDirty(saved: AiConnection | null, form: ConnForm): boolean {
+  if (!saved) return true;
+  if (form.name.trim() !== saved.name || form.provider !== saved.provider || normalizeUrl(form.baseUrl) !== normalizeUrl(saved.baseUrl)) return true;
+  if (form.provider === 'gateway' && (form.format !== saved.format || form.gatewayAuth !== saved.gatewayAuth)) return true;
+  return KEY_SLOTS.some((k) => form.keys[k].trim() !== '' || form.remove[k]);
+}
+
+/**
+ * The body of a save: a new connection (`saved` null) sends what is typed; a saved one sends its id and `rev`. The key fields
+ * are read as the server reads them: absent = keep, a string = set, `null` = remove (also a slot the provider does not use).
+ */
+export function connPayload(saved: AiConnection | null, form: ConnForm, confirmHost?: string): AiConnectionSave {
+  const body: AiConnectionSave = { name: form.name.trim(), provider: form.provider, baseUrl: normalizeUrl(form.baseUrl) };
+  if (form.provider === 'gateway') {
+    body.format = form.format;
+    body.gatewayAuth = form.gatewayAuth;
+  }
+  if (saved) {
+    body.id = saved.id;
+    body.rev = saved.rev;
+  }
+  const used = fieldsOf(form.provider).slots;
+  for (const slot of KEY_SLOTS) {
+    const typed = form.keys[slot].trim();
+    if (!used.includes(slot)) {
+      if (saved?.keys[slot].set) body[slot] = null;
+      continue;
+    }
+    if (typed) body[slot] = typed;
+    else if (saved?.keys[slot].set && form.remove[slot]) body[slot] = null;
+  }
+  if (!saved && form.reuseFrom != null) body.reuseKeysFrom = form.reuseFrom;
+  if (confirmHost) body.confirmHost = confirmHost;
+  return body;
+}
+
+/** The save replaces a saved key: a rotation (the new key is tested before it replaces the old one) */
+export function isRotation(saved: AiConnection | null, form: ConnForm): boolean {
+  if (!saved) return false;
+  return fieldsOf(form.provider).slots.some((k) => form.keys[k].trim() !== '' && saved.keys[k].set);
+}
+
+export type ConnResult =
+  | { ok: true; key: 'ai.set.conn.ok' | 'ai.set.conn.okNoList' | 'ai.set.conn.rotated'; n: number }
+  | { ok: false; key: 'ai.set.conn.fail' | 'ai.set.conn.rotateFail'; code: string };
+
+/** The result line of a save or a retest: what was found, or why nothing was saved */
+export function connResult(a: Pick<AiTestAnswer, 'ok' | 'listed' | 'modelCount' | 'code'>, rotation: boolean): ConnResult {
+  if (a.ok) {
+    if (rotation) return { ok: true, key: 'ai.set.conn.rotated', n: a.modelCount ?? 0 };
+    return a.listed === false ? { ok: true, key: 'ai.set.conn.okNoList', n: 0 } : { ok: true, key: 'ai.set.conn.ok', n: a.modelCount ?? 0 };
+  }
+  return { ok: false, key: rotation ? 'ai.set.conn.rotateFail' : 'ai.set.conn.fail', code: a.code ?? 'ai.internal' };
+}
+
+/** The key state of each key slot the provider uses (for the card) */
+export function keyLine(c: Pick<AiConnection, 'provider' | 'keys'>): Array<{ slot: AiKeySlot; state: 'none' | 'unreadable' | 'saved'; hint: string }> {
+  return fieldsOf(c.provider).slots.map((slot) => {
+    const k = c.keys[slot];
+    return { slot, state: !k.set ? 'none' : k.unreadable ? 'unreadable' : 'saved', hint: k.hint };
+  });
+}
+
+// ---------------------------------------------------------------- status cards, slots and the merged model list (v1.3)
+
+export const SLOTS: readonly AiSlot[] = ['default', 'chat', 'study', 'summary', 'generate', 'import'];
+
+export interface StatusCard {
+  id: 'main' | 'conn' | 'model' | 'features';
+  tone: 'ok' | 'warn' | 'off' | 'error';
+  /** Message key and its parameters (the page adds the names of the features that are off) */
+  key: string;
+  params: Record<string, string | number>;
+  offFeatures: AiFeatureKey[];
+}
+
+const poolById = (s: Pick<AiSettings, 'pool'>, id: number | null): AiPoolModel | null => (id == null ? null : s.pool.find((m) => m.id === id) ?? null);
+
+/** The pool model a slot holds itself (null: empty, it follows the default) */
+export const slotModel = (s: Pick<AiSettings, 'pool' | 'slots'>, slot: AiSlot): AiPoolModel | null => poolById(s, s.slots[slot].modelId);
+/** The pool model a slot really uses now (its own, else the default; null: none is usable) */
+export const slotUsing = (s: Pick<AiSettings, 'pool' | 'slots'>, slot: AiSlot): AiPoolModel | null => poolById(s, s.slots[slot].using?.modelId ?? null);
+
+/** The default model holds a model that cannot be used: a WARNING only, nothing is switched to another model */
+export const defaultUnusable = (s: Pick<AiSettings, 'pool' | 'slots'>): boolean => s.slots.default.modelId != null && s.slots.default.using == null;
+
+const card = (id: StatusCard['id'], tone: StatusCard['tone'], key: string, params: StatusCard['params'] = {}, offFeatures: AiFeatureKey[] = []): StatusCard =>
+  ({ id, tone, key, params, offFeatures });
+
+/** The four status cards: AI+ switch, connections, default model, features */
+export function statusCards(s: AiSettings): StatusCard[] {
+  const main = s.state === 'on' ? card('main', 'ok', 'ai.set.card.main.on')
+    : s.state === 'paused'
+      ? (s.pauseReason === 'keyProblem' ? card('main', 'error', 'ai.set.card.main.pausedKey') : card('main', 'warn', 'ai.set.card.main.pausedNoRoute'))
+      : s.state === 'setup' ? card('main', 'off', 'ai.set.card.main.setup') : card('main', 'off', 'ai.set.card.main.off');
+  const bad = s.connections.filter((c) => c.status === 'broken' || c.keys.apiKey.unreadable || c.keys.gatewayKey.unreadable).length;
+  const conn = !s.connections.length ? card('conn', 'off', 'ai.set.card.conn.none')
+    : bad ? card('conn', 'warn', 'ai.set.card.conn.someBad', { n: s.connections.length, bad })
+      : card('conn', 'ok', 'ai.set.card.conn.allOk', { n: s.connections.length });
+  const def = slotModel(s, 'default');
+  const model = !def ? card('model', 'off', 'ai.set.card.model.none')
+    : defaultUnusable(s) ? card('model', 'warn', 'ai.set.card.model.bad', { conn: def.connectionName, model: def.model })
+      : card('model', 'ok', 'ai.set.card.model.value', { conn: def.connectionName, model: def.model });
+  const off = (Object.keys(s.featureSwitches) as AiFeatureKey[]).filter((k) => !s.featureSwitches[k]);
+  const features = off.length ? card('features', 'warn', 'ai.set.card.features.someOff', {}, off) : card('features', 'ok', 'ai.set.card.features.allOn');
+  return [main, conn, model, features];
+}
+
+/** The line under a slot row: its own model is unusable and the default stands in, or nothing can be used at all */
+export type SlotNote = { kind: 'fallback'; conn: string } | { kind: 'noRoute' } | null;
+
+export function slotNote(s: AiSettings, slot: AiSlot): SlotNote {
+  const own = slotModel(s, slot);
+  const st = s.slots[slot];
+  if (st.using == null) {
+    // The default slot with nothing chosen yet is "not set up", not a problem
+    if (slot === 'default' && !own) return null;
+    return s.state === 'setup' ? null : { kind: 'noRoute' };
+  }
+  if (own && st.using.fallback === 'default') return { kind: 'fallback', conn: own.connectionName };
+  return null;
+}
+
+/** The key of a model reference (the value of a select or an option) and back */
+export const refKey = (r: ModelRef): string => `${r.connectionId}|${r.model}`;
+export function parseRefKey(k: string): ModelRef | null {
+  const i = k.indexOf('|');
+  const id = Number(k.slice(0, i));
+  return i > 0 && Number.isInteger(id) && id > 0 && k.length > i + 1 ? { connectionId: id, model: k.slice(i + 1) } : null;
+}
+export const refOf = (m: Pick<AiPoolModel, 'connectionId' | 'model'>): ModelRef => ({ connectionId: m.connectionId, model: m.model });
+
+export interface ModelGroup {
+  connectionId: number;
+  name: string;
+  status: 'ok' | 'broken';
+  models: Array<{ id: string; context: number | null; inPool: boolean }>;
+}
+
+/**
+ * The merged model list: one group per connection (in the connections' order), each with its listed models (likely chat
+ * models first) and the pool models the listing does not show. `query` filters by substring; a group without a match is left out.
+ */
+export function modelGroups(list: AiModelList | null, s: Pick<AiSettings, 'pool' | 'connections'>, query: string): ModelGroup[] {
+  const out: ModelGroup[] = [];
+  for (const c of s.connections) {
+    const listed = list?.connections.find((x) => x.id === c.id);
+    const byId = new Map<string, { id: string; context: number | null; inPool: boolean }>();
+    for (const m of listed?.models ?? []) byId.set(m.id, { id: m.id, context: m.context, inPool: m.poolId != null && m.status === 'ok' });
+    for (const m of s.pool) {
+      if (m.connectionId !== c.id) continue;
+      const have = byId.get(m.model);
+      if (have) have.inPool = have.inPool || m.status === 'ok';
+      else byId.set(m.model, { id: m.model, context: m.context, inPool: m.status === 'ok' });
+    }
+    const ids = filterModels(orderModels([...byId.keys()]), query);
+    if (!ids.length && query.trim()) continue;
+    out.push({ connectionId: c.id, name: c.name, status: c.status, models: ids.flatMap((id) => byId.get(id) ?? []) });
+  }
+  return out;
+}
+
+/** The model preselected for the first AI+ switch-on: the first likely chat model of the first working connection */
+export function firstChoice(list: AiModelList | null, s: Pick<AiSettings, 'pool' | 'connections'>): ModelRef | null {
+  for (const g of modelGroups(list, s, '')) {
+    if (g.status !== 'ok' || !g.models.length) continue;
+    const m = g.models.find((x) => !modelKind(x.id)) ?? g.models[0];
+    if (m) return { connectionId: g.connectionId, model: m.id };
+  }
+  return null;
+}
+
+/** The pool models a deleted connection's default can move to: tested models of the other working connections */
+export function newDefaultChoices(s: Pick<AiSettings, 'pool' | 'connections'>, deleting: number): AiPoolModel[] {
+  const ok = new Set(s.connections.filter((c) => c.id !== deleting && c.status === 'ok').map((c) => c.id));
+  return s.pool.filter((m) => ok.has(m.connectionId) && m.status === 'ok');
+}
+
+/** Connections whose saved keys a new connection may reuse (a key is saved and can be read) */
+export const reusableFrom = (s: Pick<AiSettings, 'connections'>): AiConnection[] =>
+  s.connections.filter((c) => KEY_SLOTS.some((k) => c.keys[k].set && !c.keys[k].unreadable));
+
+/** One usage row by connection or by model: the label (a dash before v1.3, when rows had no connection) */
+export const connLabel = (name: string | null | undefined, dash: string): string => (name && name.trim() ? name : dash);

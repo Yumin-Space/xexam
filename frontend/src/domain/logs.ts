@@ -7,7 +7,7 @@
 //   · "dropped": events between the last one the page has and the oldest one the backend still keeps were lost (the page was
 //     paused or hidden for long); the page marks the gap;
 //   · the level filter (All / Warnings / Errors) and the text search only change what is shown, never what is kept;
-//   · the poll loop asks every 0.5 seconds while the page is open, visible and not paused, one request at a time (the next one
+//   · the poll loop asks every 2 seconds while the page is open, visible and not paused, one request at a time (the next one
 //     is scheduled only after the previous answer arrived, so a slow answer never stacks requests); after a failed read it
 //     waits longer each time (1, 2, 4, 8, then every 10 seconds), so a backend that is down or refusing is not asked twice a
 //     second. On the backend each request reads the session and the in-memory buffer; the only database writes on that path
@@ -31,14 +31,14 @@ export interface LogLine {
 
 /** As many lines as the backend keeps */
 export const LOG_CAP = 2000;
-/** How often the page asks for new lines while it is visible (v0.7: every 0.5 seconds) */
-export const POLL_MS = 500;
+/** How often the page asks for new lines while it is visible (v1.3: every 2 seconds) */
+export const POLL_MS = 2000;
 /** The longest wait between two reads while they keep failing */
 export const POLL_MAX_MS = 10_000;
 
 /**
  * The wait before the next read: `ms` after a good one; after `failures` failed reads in a row, twice as long for each one
- * (1, 2, 4 and 8 seconds at 0.5 s), at most `max` (and never less than `ms`).
+ * (4, 8 and then 10 seconds at 2 s), at most `max` (and never less than `ms`).
  */
 export function pollDelay(failures: number, ms = POLL_MS, max = POLL_MAX_MS): number {
   if (!(failures > 0)) return ms;

@@ -46,3 +46,9 @@
   .auth-lead { margin-bottom: 12px; font-size: 14px; }
   .auth-form { gap: 12px; }
 }
+
+/* "Keep me signed in" (v1.3): a tick row with its hint under it; the tick row is a 44 px tap target */
+.auth-remember { display: grid; gap: 4px; }
+.auth-remember-l { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 15px; color: var(--ink); cursor: pointer; }
+.auth-remember-l input { width: 20px; height: 20px; flex: none; margin: 0; }
+.auth-remember-h { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink3); }

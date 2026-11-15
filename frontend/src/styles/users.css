@@ -38,10 +38,10 @@
 .us-ai-paused { position: relative; text-decoration: none; }
 .us-ai-paused:hover { color: var(--ink); }
 .us-ai-paused:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
-.us-meta { margin-top: 1px; font-size: 13px; line-height: 1.5; color: var(--ink3); }
-/* Each fact stays on one line; the line breaks between facts (after the dot), never inside one */
-.us-dot { margin-left: 6px; }
-.us-nw { white-space: nowrap; }
+/* The facts, one per line on every screen; a long value (IPv6, a long place) wraps */
+.us-facts { margin-top: 1px; }
+.us-meta { font-size: 13px; line-height: 1.5; color: var(--ink3); overflow-wrap: anywhere; }
+.us-ip { font-variant-numeric: tabular-nums; }
 
 /* The bank line (plain users): one tappable row, the summary and a chevron (US-4). Names are written out, so they can be read on a phone. */
 .us-bankrow {
@@ -209,6 +209,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-tool::after { content: ""; position: absolute; inset: -2px -2px; }
   .us-ai-paused::after { content: ""; position: absolute; inset: -12px -2px; }
   .us-search { min-height: 40px; font-size: 16px; }
+  .us-sort select { min-height: 44px; }
 }
 
 /* Short landscape: the tinted add form stays small */
@@ -225,3 +226,39 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .us-bank-li { display: flex; align-items: center; gap: 8px; }
 .us-bank-li > .us-bank { flex: 1 1 auto; min-width: 0; }
 .us-bank-li > .has-tip { flex: none; }
+
+/* v1.3: the sign-in info eye, the sort select and the "active now" tag */
+.us-signin-box { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--hover); }
+.us-signin-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.us-signin-box h2 { margin: 0 0 6px; font-size: 16.5px; font-weight: 600; overflow-wrap: anywhere; }
+.us-signin-desc { margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
+.us-eye-txt { display: flex; flex-direction: column; margin-inline-start: 10px; padding-inline-end: 6px; color: var(--ink3); min-width: 0; white-space: nowrap; line-height: 1.25; }
+.us-eye-lbl { display: block; white-space: nowrap; font-size: 12px; font-weight: 400; color: var(--ink2); }
+.us-eye-val { display: block; white-space: nowrap; font-size: 15px; font-weight: 700; }
+.us-eye.on .us-eye-txt { color: var(--answer-right); }
+@media (max-width: 380px) { .us-eye-txt { margin-inline-start: 6px; padding-inline-end: 2px; } .us-eye-lbl { font-size: 11px; } .us-eye-val { font-size: 14px; } .btn.us-signin-clear { padding-inline: 10px; } }
+/* v1.3: the eye toggle (persistent setting) and the red Clear records button; 44 px targets */
+.us-eye { display: inline-flex; align-items: center; gap: 0; min-height: 44px; padding: 0; border: 0; border-radius: 22px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; text-align: start; cursor: pointer; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+/* Eye colours. Light: a solid circle (green shown, grey hidden) with a white eye. Dark: no fill, a green or grey outline eye. */
+.us-eye { --eye-bg: var(--field-line); --eye-bg-hover: var(--ink3); --eye-fg: #FFFFFF; }
+.us-eye.on { --eye-bg: var(--answer-right-solid); --eye-bg-hover: var(--answer-right-solid-hover); }
+.us-eye-ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid transparent; background: var(--eye-bg); color: var(--eye-fg); }
+.us-eye-svg { width: 26px; height: 26px; }
+.us-eye:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.us-eye:disabled { opacity: .6; cursor: default; }
+@media (hover: hover) { .us-eye:not(:disabled):hover .us-eye-ico { background: var(--eye-bg-hover); } }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .us-eye { --eye-bg: transparent; --eye-bg-hover: var(--hover); --eye-fg: var(--ink3); }
+  :root:not([data-theme="light"]) .us-eye.on { --eye-bg: transparent; --eye-bg-hover: var(--answer-right-soft); --eye-fg: var(--answer-right); }
+}
+:root[data-theme="dark"] .us-eye { --eye-bg: transparent; --eye-bg-hover: var(--hover); --eye-fg: var(--ink3); }
+:root[data-theme="dark"] .us-eye.on { --eye-bg: transparent; --eye-bg-hover: var(--answer-right-soft); --eye-fg: var(--answer-right); }
+@media (forced-colors: active) {
+  .us-eye-ico { forced-color-adjust: none; background: Canvas; color: ButtonText; border-color: ButtonText; }
+  .us-eye.on .us-eye-ico { color: Highlight; border-color: Highlight; }
+}
+.btn.us-signin-clear { flex: none; margin-inline-start: auto; min-height: 44px; min-width: 44px; padding-inline: 14px; gap: 6px; font-size: 14px; }
+.btn.us-signin-clear:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.us-del-svg { width: 18px; height: 18px; flex: none; }
+.us-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink3); margin-left: auto; }
+.us-sort select { font: inherit; color: var(--ink); background: var(--card, transparent); border: 1px solid var(--line, currentColor); border-radius: 6px; padding: 4px 6px; max-width: 150px; }

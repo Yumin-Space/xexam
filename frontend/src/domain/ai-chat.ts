@@ -4,7 +4,12 @@
 // (which answer can be retried, the status line under an answer, the time of a chat). No DOM, no i18n.
 // Round 2: the request bodies (the reply language of Settings with send / retry / suggest, free mode is the server's state),
 // the free-mode switch, and the "thinking" event of reasoning models (shown as "Thinking…" until the first text).
-import type { AiChatDetail, AiChatKind, AiMessage, UiLang } from '../types/api.ts';
+// v1.3: the conversation is the PATH of a branch tree (every message may have sibling versions: `versions`), Regenerate and Edit
+// add a version, the version switcher moves between them, and administrators pick a model per chat. The model's reasoning
+// (frames `reasoning` / `reasoningDone`, fields `reasoning*` of a message) is shown as a collapsible block above the answer:
+// `reasoningView` decides whether it is there, live (open while it streams) and open.
+import { modelRefText } from '../api/model-ref.ts';
+import type { AiChatDetail, AiChatKind, AiMessage, AiModelList, ModelRef, UiLang } from '../types/api.ts';
 
 /** A message as the page shows it: `thinking` (view only, never from the server) = a reasoning model thinks, no text yet */
 export type ViewMessage = AiMessage & { thinking?: boolean };
@@ -18,13 +23,19 @@ export interface ChatView {
   messages: ViewMessage[];
   /** The assistant message being written (by this page's stream, or seen running by a poll); null = none */
   streamingId: number | null;
-  /** A send or retry that has not started yet: the text stays in the composer until the start event */
-  pending: { text: string; retry: boolean } | null;
+  /**
+   * A send, regenerate or edit that has not started yet: the text stays in the composer until the start event. `prev`: the
+   * messages before an optimistic cut (regenerate / edit), restored when the request fails before it starts. `model`: the
+   * administrator's pick sent with it (undefined = unchanged, null = back to the default), kept as the chat's pick at the start.
+   */
+  pending: { text: string; retry: boolean; prev?: ViewMessage[]; model?: ModelRef | null } | null;
+  /** v1.3, administrators: the model picked for this chat (null = the default) */
+  pick: ModelRef | null;
   /** The server is still writing an answer of this chat */
   running: boolean;
 }
 
-export const emptyChat = (): ChatView => ({ chatId: null, title: '', kind: 'chat', messages: [], streamingId: null, pending: null, running: false });
+export const emptyChat = (): ChatView => ({ chatId: null, title: '', kind: 'chat', messages: [], streamingId: null, pending: null, pick: null, running: false });
 
 function lastWhere<T>(list: readonly T[], test: (v: T) => boolean): T | undefined {
   for (let i = list.length - 1; i >= 0; i--) {
@@ -40,18 +51,45 @@ export function chatOf(d: AiChatDetail): ChatView {
   const writing = d.chat.running ? lastWhere(messages, (m) => m.status === 'streaming') : undefined;
   return {
     chatId: d.chat.id, title: d.chat.title, kind: d.chat.kind ?? 'chat', messages, streamingId: writing?.id ?? null,
-    pending: null, running: d.chat.running,
+    pending: null, pick: d.chat.pick ?? null, running: d.chat.running,
   };
 }
 
 /** The page sends a message (or retries an answer): remembered until the stream starts */
-export function localSend(s: ChatView, text: string, retry = false): ChatView {
-  return { ...s, pending: { text, retry } };
+export function localSend(s: ChatView, text: string, retry = false, model?: ModelRef | null): ChatView {
+  return { ...s, pending: model === undefined ? { text, retry } : { text, retry, model } };
+}
+
+/** The id of the temporary question an edit shows until the server's start event (never a real message id) */
+export const TEMP_ID = -1;
+
+function withPrev(s: ChatView, text: string, retry: boolean, model: ModelRef | null | undefined, messages: ViewMessage[]): ChatView {
+  const p = localSend(s, text, retry, model).pending as NonNullable<ChatView['pending']>;
+  return { ...s, messages, pending: { ...p, prev: s.messages } };
+}
+
+/** Regenerate: the answer and everything after it leave the view at once (the new version streams in its place) */
+export function localRegenerate(s: ChatView, assistantId: number, model?: ModelRef | null): ChatView {
+  const i = s.messages.findIndex((m) => m.id === assistantId);
+  if (i < 0) return localSend(s, '', true, model);
+  return withPrev(s, '', true, model, s.messages.slice(0, i));
+}
+
+/** Edit: the edited question and everything after it leave the view; the new text stands in until the start event */
+export function localEdit(s: ChatView, messageId: number, text: string, model?: ModelRef | null, now = Math.floor(Date.now() / 1000)): ChatView {
+  const i = s.messages.findIndex((m) => m.id === messageId);
+  if (i < 0) return localSend(s, text, false, model);
+  const old = s.messages[i] as ViewMessage;
+  const temp: ViewMessage = {
+    id: TEMP_ID, role: 'user', content: text, status: 'done', error: null, truncated: false, model: null, createdAt: now, free: old.free,
+    parentId: old.parentId ?? null,
+  };
+  return withPrev(s, text, false, model, [...s.messages.slice(0, i), temp]);
 }
 
 /** The request failed before the stream started (busy, refused, offline): nothing changed in the chat */
 export function localFail(s: ChatView): ChatView {
-  return { ...s, pending: null };
+  return { ...s, messages: s.pending?.prev ?? s.messages, pending: null };
 }
 
 // ---------------------------------------------------------------- the events of a streamed answer
@@ -61,6 +99,7 @@ export interface StartData {
   chatTitle: string;
   userMessageId: number;
   assistantMessageId: number;
+  /** `''` when the server sent none (every non-administrator, v1.3 sprint 2) */
   model: string;
   newChat: boolean;
   retry: boolean;
@@ -68,6 +107,18 @@ export interface StartData {
   free: boolean;
   /** v0.9: the kind of the chat the answer belongs to (null when the server sent none or an unknown one) */
   chatKind: AiChatKind | null;
+  /** v1.3: what the turn is (a frame without it is a send) */
+  mode: 'send' | 'regenerate' | 'edit';
+  /** v1.3: the parent of the answer (the question), and of the new question (edit; null = a first message) */
+  parentId: number | null;
+  userParentId: number | null;
+  /** v1.3: the sibling versions of the answer / of the new question (2+ only) */
+  versions: number[] | undefined;
+  userVersions: number[] | undefined;
+  /** v1.3, administrators: the connection that answers */
+  connection: string | undefined;
+  /** v1.3: the chat's picked model was unavailable and the default is used */
+  modelFallback: boolean;
 }
 
 const obj = (v: unknown): Record<string, unknown> => (typeof v === 'object' && v !== null ? (v as Record<string, unknown>) : {});
@@ -75,6 +126,12 @@ const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFi
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 const KINDS: readonly string[] = ['chat', 'practice', 'exam', 'summary'];
+const idList = (v: unknown): number[] | undefined => {
+  if (!Array.isArray(v)) return undefined;
+  const ids = v.filter((x): x is number => typeof x === 'number' && Number.isFinite(x));
+  return ids.length >= 2 ? ids : undefined;
+};
+const modeOf = (v: unknown): StartData['mode'] => (v === 'regenerate' || v === 'edit' ? v : 'send');
 const chatKindOf = (v: unknown): AiChatKind | null => (typeof v === 'string' && KINDS.includes(v) ? (v as AiChatKind) : null);
 
 /** The start event's data, or null when it is not one */
@@ -87,7 +144,15 @@ export function startOf(data: unknown): StartData | null {
   return {
     chatId, chatTitle: str(d.chatTitle), userMessageId: userMessageId ?? 0, assistantMessageId, model: str(d.model),
     newChat: d.newChat === true, retry: d.retry === true, free: d.free === true, chatKind: chatKindOf(d.chatKind),
+    mode: modeOf(d.mode), parentId: num(d.parentId), userParentId: num(d.userParentId), versions: idList(d.versions),
+    userVersions: idList(d.userVersions), connection: str(d.connection) || undefined, modelFallback: d.modelFallback === true,
   };
+}
+
+/** The messages up to and including `id` (all of them when `id` is not in the list) */
+function cutAfter<T extends { id: number }>(list: readonly T[], id: number | null): T[] {
+  const i = id == null ? -1 : list.findIndex((m) => m.id === id);
+  return i < 0 ? [...list] : list.slice(0, i + 1);
 }
 
 function finish(s: ChatView, patch: Partial<AiMessage>): ChatView {
@@ -109,26 +174,36 @@ export function applyEvent(s: ChatView, ev: { event: string; data: unknown }, no
       if (!d) return s;
       const assistant: AiMessage = {
         id: d.assistantMessageId, role: 'assistant', content: '', status: 'streaming', error: null, truncated: false,
-        model: d.model || null, createdAt: now, free: d.free,
+        model: d.model || null, createdAt: now, free: d.free, parentId: d.userMessageId || d.parentId,
+        ...(d.versions ? { versions: d.versions } : {}), ...(d.connection ? { connection: d.connection } : {}),
       };
       let messages: AiMessage[];
       if (d.retry) {
-        // Retry resets the failed answer in place: no new message
+        // An empty failed answer is reset in place: no new message
         const found = s.messages.some((m) => m.id === d.assistantMessageId);
         messages = found
           ? s.messages.map((m) => (m.id === d.assistantMessageId
-            ? { ...m, content: '', status: 'streaming', error: null, truncated: false, model: d.model || m.model, thinking: false, free: d.free }
+            ? { ...m, content: '', status: 'streaming', error: null, truncated: false, model: d.model || m.model, thinking: false, free: d.free,
+              reasoning: null, reasoningMs: null, reasoningTruncated: false }
             : m.id === d.userMessageId ? { ...m, free: d.free } : m))
           : [...s.messages, assistant];
+      } else if (d.mode === 'regenerate') {
+        // A new version of the answer: everything after its question leaves, the new answer follows the question
+        messages = [...cutAfter(s.messages, d.parentId).filter((m) => m.id !== d.assistantMessageId), assistant];
       } else {
+        const last = s.messages[s.messages.length - 1];
+        const base = d.mode === 'edit' ? (d.userParentId == null ? [] : cutAfter(s.messages, d.userParentId)) : s.messages;
+        const parent = d.mode === 'edit' ? d.userParentId : (last && last.id > 0 ? last.id : null);
         const user: AiMessage = {
-          id: d.userMessageId, role: 'user', content: s.pending?.text ?? '', status: 'done', error: null, truncated: false, model: null, createdAt: now, free: d.free,
+          id: d.userMessageId, role: 'user', content: s.pending?.text ?? '', status: 'done', error: null, truncated: false, model: null, createdAt: now,
+          free: d.free, parentId: parent, ...(d.userVersions ? { versions: d.userVersions } : {}),
         };
-        messages = [...s.messages.filter((m) => m.id !== d.userMessageId && m.id !== d.assistantMessageId), user, assistant];
+        messages = [...base.filter((m) => m.id !== d.userMessageId && m.id !== d.assistantMessageId && m.id !== TEMP_ID), user, assistant];
       }
+      const picked = s.pending?.model;
       return {
         chatId: d.chatId, title: d.chatTitle || s.title, kind: d.chatKind ?? s.kind, messages, streamingId: d.assistantMessageId, pending: null,
-        running: true,
+        pick: d.modelFallback ? null : picked !== undefined ? picked : s.pick, running: true,
       };
     }
     case 'thinking': {
@@ -138,6 +213,24 @@ export function applyEvent(s: ChatView, ev: { event: string; data: unknown }, no
       const m = s.messages.find((x) => x.id === id);
       if (!m || m.status !== 'streaming' || m.content !== '' || m.thinking) return s;
       return { ...s, messages: s.messages.map((x) => (x.id === id ? { ...x, thinking: true } : x)) };
+    }
+    case 'reasoning': {
+      // The model's reasoning text, before the first answer text (a late one is ignored)
+      const text = str(obj(ev.data).text);
+      const id = s.streamingId;
+      if (id == null || !text) return s;
+      const m = s.messages.find((x) => x.id === id);
+      if (!m || m.status !== 'streaming' || m.content !== '') return s;
+      return { ...s, messages: s.messages.map((x) => (x.id === id ? { ...x, reasoning: (x.reasoning ?? '') + text } : x)) };
+    }
+    case 'reasoningDone': {
+      // The reasoning ended (the answer starts or the stream ends): its duration is known
+      const id = s.streamingId;
+      if (id == null) return s;
+      const d = obj(ev.data);
+      const ms = typeof d.ms === 'number' && Number.isFinite(d.ms) && d.ms >= 0 ? d.ms : undefined;
+      const truncated = d.truncated === true;
+      return { ...s, messages: s.messages.map((x) => (x.id === id ? { ...x, ...(ms !== undefined ? { reasoningMs: ms } : {}), reasoningTruncated: truncated } : x)) };
     }
     case 'delta': {
       const text = str(obj(ev.data).text);
@@ -202,27 +295,132 @@ export function pollResult(s: ChatView, d: AiChatDetail): ChatView {
   const writing = d.chat.running ? lastWhere(messages, (m) => m.status === 'streaming') : undefined;
   return {
     chatId: d.chat.id, title: d.chat.title, kind: d.chat.kind ?? 'chat', messages, streamingId: writing?.id ?? null,
-    pending: s.pending, running: d.chat.running,
+    pending: s.pending, pick: d.chat.pick !== undefined ? d.chat.pick : s.pick, running: d.chat.running,
   };
 }
 
-/** The answer that Retry would write again: the last message, an assistant answer that failed or was stopped, after a question */
-export function retryTarget(s: ChatView): number | null {
-  if (s.pending || s.streamingId != null || s.running) return null;
-  const n = s.messages.length;
-  const last = s.messages[n - 1];
-  const before = s.messages[n - 2];
-  if (!last || !before || last.role !== 'assistant' || before.role !== 'user') return null;
-  // v0.9: only an AI Chat answer is retried; the answers of hints, explanations and summaries are asked again from their windows
-  if ((last.kind ?? 'chat') !== 'chat' || (before.kind ?? 'chat') !== 'chat') return null;
-  return last.status === 'error' || last.status === 'stopped' ? last.id : null;
+/**
+ * Whether an answer can get a new version: an AI Chat answer that is not being written, right under an AI Chat question, while
+ * nothing is running or about to start (one answer per chat at a time).
+ */
+export function canRegenerate(s: ChatView, m: ViewMessage): boolean {
+  if (s.pending || s.streamingId != null || s.running) return false;
+  if (m.role !== 'assistant' || (m.kind ?? 'chat') !== 'chat' || m.status === 'streaming' || m.id <= 0) return false;
+  const q = questionOf(s, m.id);
+  return q != null && (q.kind ?? 'chat') === 'chat';
 }
 
-/** The question an answer replies to (the user message right before it), or null */
+/** Whether a question can be edited and sent again as a new branch: an AI Chat question while nothing is running */
+export function canEdit(s: ChatView, m: ViewMessage): boolean {
+  if (s.pending || s.streamingId != null || s.running) return false;
+  return m.role === 'user' && (m.kind ?? 'chat') === 'chat' && m.id > 0;
+}
+
+/** The text of the Regenerate button: a failed or stopped LAST answer keeps the old name "Retry", every other answer says Regenerate */
+export function regenerateLabelKey(s: Pick<ChatView, 'messages'>, m: Pick<ViewMessage, 'id' | 'status'>): 'ai.retry' | 'ai.regenerate' {
+  const last = s.messages[s.messages.length - 1];
+  return last?.id === m.id && (m.status === 'error' || m.status === 'stopped') ? 'ai.retry' : 'ai.regenerate';
+}
+
+/** The question an answer replies to: its parent when the server names one, else (an older answer) the message right before it */
 export function questionOf(s: Pick<ChatView, 'messages'>, assistantId: number): AiMessage | null {
   const i = s.messages.findIndex((m) => m.id === assistantId);
+  if (i < 0) return null;
+  const a = s.messages[i] as AiMessage;
+  if (a.role !== 'assistant') return null;
+  if (a.parentId != null) {
+    const p = s.messages.find((m) => m.id === a.parentId);
+    return p && p.role === 'user' ? p : null;
+  }
+  if (a.parentId === null) return null;
   const q = i > 0 ? s.messages[i - 1] : undefined;
   return q && q.role === 'user' ? q : null;
+}
+
+// ---------------------------------------------------------------- versions (v1.3)
+
+export interface VersionInfo {
+  /** 1-based position and the number of versions */
+  index: number;
+  total: number;
+  /** The neighbouring version ids (null at the ends) */
+  prev: number | null;
+  next: number | null;
+}
+
+/** The switcher `<  n/total  >` of a message with 2+ versions, or null */
+export function versionInfo(m: Pick<AiMessage, 'id' | 'versions'>): VersionInfo | null {
+  const v = m.versions;
+  if (!v || v.length < 2) return null;
+  const i = v.indexOf(m.id);
+  if (i < 0) return null;
+  return { index: i + 1, total: v.length, prev: i > 0 ? (v[i - 1] as number) : null, next: i < v.length - 1 ? (v[i + 1] as number) : null };
+}
+
+// ---------------------------------------------------------------- editing a question (v1.3)
+
+/** The question being edited in the composer, and the draft the composer held before (restored on cancel) */
+export interface EditState {
+  messageId: number;
+  draft: string;
+}
+
+/** Starts editing `m`: null when it cannot be edited now */
+export function beginEdit(s: ChatView, m: ViewMessage, composerText: string): EditState | null {
+  return canEdit(s, m) ? { messageId: m.id, draft: composerText } : null;
+}
+
+/** The edit still makes sense: its question is on the path (a poll or another tab may have changed the chat) */
+export function editValid(s: ChatView, e: EditState): boolean {
+  const m = s.messages.find((x) => x.id === e.messageId);
+  return m != null && m.role === 'user' && (m.kind ?? 'chat') === 'chat' && m.id > 0;
+}
+
+// ---------------------------------------------------------------- the administrators' model menu (v1.3)
+
+export interface ModelChoice { value: string; label: string }
+export interface ModelGroup { connectionId: number; name: string; options: ModelChoice[] }
+
+/**
+ * The menu's models: every model a working connection's model listing returns, grouped by connection and in the listing's
+ * order: the pool models (the ones added to the connection in AI settings) and the models the provider's catalogue names
+ * that were not added (`poolId` null, `status` null) alike. Left out: a pool model that failed its test, a broken connection
+ * and a connection with nothing left. An untested pool model stays (the server routes a pick by its connection, not by the
+ * model's status). A chat shows exactly one current model: its own pick while that is usable, else the default. So a stored
+ * pick that is not in the menu is added on top (`extra`) only when its connection is listed and working (a model the
+ * connection no longer lists, or one whose test failed); a pick of a removed or broken connection is not shown, and the
+ * select shows the default (the server answers with it as well). While the list is not loaded yet (`null`) the pick is kept,
+ * so a valid one does not flash as the default.
+ */
+export function modelMenu(list: AiModelList | null, pick: ModelRef | null): { groups: ModelGroup[]; extra: ModelChoice | null } {
+  const groups: ModelGroup[] = [];
+  for (const c of list?.connections ?? []) {
+    if (c.status !== 'ok') continue;
+    const options = c.models.filter((m) => m.status !== 'failed').map((m) => ({ value: modelRefText({ connectionId: c.id, model: m.id }), label: m.id }));
+    if (options.length) groups.push({ connectionId: c.id, name: c.name, options });
+  }
+  const text = pick ? modelRefText(pick) : null;
+  const known = text != null && groups.some((g) => g.options.some((o) => o.value === text));
+  const usable = !list || list.connections.some((c) => c.id === pick?.connectionId && c.status === 'ok');
+  return { groups, extra: pick && text != null && !known && usable ? { value: text, label: pick.model } : null };
+}
+
+/**
+ * The value the select shows for `selected` (the unsent choice, at first the stored pick): itself while the menu offers it,
+ * else '' (the default). A stored pick the menu does not offer (its connection is broken, or was removed while the chat was
+ * open) shows as the default; the request still carries "unchanged" (`modelArg`), so the server falls back and clears it.
+ */
+export function modelShown(selected: string, menu: { groups: ModelGroup[]; extra: ModelChoice | null }): string {
+  if (selected === '' || menu.extra?.value === selected) return selected;
+  return menu.groups.some((g) => g.options.some((o) => o.value === selected)) ? selected : '';
+}
+
+/** The model a request carries: undefined = nothing changed (the server uses the stored pick), null = back to the default */
+export function modelArg(selected: string, stored: ModelRef | null, parse: (text: string) => ModelRef | null): ModelRef | null | undefined {
+  const was = stored ? modelRefText(stored) : '';
+  if (selected === was) return undefined;
+  if (selected === '') return null;
+  return parse(selected) ?? undefined;
 }
 
 /** The line under an answer: thinking (a reasoning model, no text yet), writing, stopped, interrupted (with text) / no answer
@@ -236,10 +434,23 @@ export type Footer =
   | { kind: 'truncated' }
   | null;
 
-export function footerOf(m: Pick<ViewMessage, 'role' | 'status' | 'content' | 'error' | 'truncated' | 'thinking'>): Footer {
+/** v1.3 sprint 2 (owner): what the line above a message names. A question: "You". An answer: "connection · model" for an
+ *  administrator when the server sent a model (the connection when known); otherwise, and for everyone else always, the
+ *  neutral "AI" mark. The server never sends a model or connection to a non-administrator; `admin` keeps stale data from
+ *  showing one. */
+export interface WhoParts { mark: 'you' | 'ai' | null; connection: string | null; model: string | null }
+export function whoParts(m: Pick<AiMessage, 'role' | 'model' | 'connection'>, admin: boolean): WhoParts {
+  if (m.role === 'user') return { mark: 'you', connection: null, model: null };
+  if (admin && typeof m.model === 'string' && m.model !== '') return { mark: null, connection: m.connection || null, model: m.model };
+  return { mark: 'ai', connection: null, model: null };
+}
+
+export function footerOf(m: Pick<ViewMessage, 'role' | 'status' | 'content' | 'error' | 'truncated' | 'thinking' | 'reasoning'>): Footer {
   if (m.role !== 'assistant') return null;
   switch (m.status) {
     case 'streaming':
+      // While reasoning text streams, the block's own header says "Thinking…"
+      if (m.content === '' && (m.reasoning ?? '').trim() !== '') return null;
       return m.thinking && m.content === '' ? { kind: 'thinking' } : { kind: 'writing' };
     case 'stopped':
       return { kind: 'stopped' };
@@ -248,6 +459,29 @@ export function footerOf(m: Pick<ViewMessage, 'role' | 'status' | 'content' | 'e
     default:
       return m.truncated ? { kind: 'truncated' } : null;
   }
+}
+
+// ---------------------------------------------------------------- the reasoning block (v1.3)
+
+export interface ReasoningView { text: string; live: boolean; open: boolean; seconds: number | null; truncated: boolean }
+
+/** Seconds shown in "Thought for N s": rounded, at least 1 */
+export const reasoningSeconds = (ms: number): number => Math.max(1, Math.round(ms / 1000));
+
+/** The reasoning block of a message, or null (no block). `userOpen`: the reader's own toggle (undefined = none). Live =
+ *  the answer is being written, has no text yet and its reasoning has not ended: open unless the reader closed it;
+ *  otherwise closed unless the reader opened it. `text` is trimStart-ed while live, trimmed otherwise. */
+export function reasoningView(
+  m: Pick<ViewMessage, 'role' | 'status' | 'content' | 'reasoning' | 'reasoningMs' | 'reasoningTruncated'>, userOpen?: boolean,
+): ReasoningView | null {
+  if (m.role !== 'assistant') return null;
+  const raw = m.reasoning ?? '';
+  if (raw.trim() === '') return null;
+  const live = m.status === 'streaming' && m.content === '' && m.reasoningMs == null;
+  return {
+    text: live ? raw.trimStart() : raw.trim(), live, open: live ? userOpen !== false : userOpen === true,
+    seconds: m.reasoningMs == null ? null : reasoningSeconds(m.reasoningMs), truncated: m.reasoningTruncated === true,
+  };
 }
 
 // ---------------------------------------------------------------- the request bodies and free mode (round 2)
@@ -259,14 +493,16 @@ export interface SendBody {
   chatId: number | null;
   text: string;
   lang: AiLang;
+  /** v1.3, administrators: the picked model (null = back to the default); absent = the stored pick */
+  model?: ModelRef | null;
 }
 
 /**
  * The body of `POST /api/ai/send`: the chat (null starts one), the text and the reply language. Free mode is a state of the
  * administrator on the server (`POST /api/ai/free`), so the body never carries it.
  */
-export function sendBody(o: { chatId: number | null; text: string; lang: AiLang }): SendBody {
-  return { chatId: o.chatId, text: o.text, lang: o.lang };
+export function sendBody(o: { chatId: number | null; text: string; lang: AiLang; model?: ModelRef | null }): SendBody {
+  return o.model === undefined ? { chatId: o.chatId, text: o.text, lang: o.lang } : { chatId: o.chatId, text: o.text, lang: o.lang, model: o.model };
 }
 
 /** The body of `POST /api/ai/retry` */

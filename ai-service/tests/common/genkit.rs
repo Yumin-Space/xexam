@@ -48,8 +48,16 @@ pub struct GenBackend {
     pub check_requests: Vec<Value>,
     /// Bodies of the source calls (to see what the service asked)
     pub source_requests: Vec<Value>,
-    /// Ids the seeds route leaves out (deleted meanwhile)
+    /// Ids the seeds route leaves out (deleted meanwhile); the corpus route leaves them out too
     pub seeds_missing: Vec<String>,
+    /// Bodies of the corpus calls (v1.3), one per page
+    pub corpus_requests: Vec<Value>,
+    /// A refusal reason of the corpus route (`tooMany`, ...)
+    pub corpus_refusal: Option<String>,
+    /// The corpus total changes after the first page (a bank edited meanwhile)
+    pub corpus_drift: bool,
+    /// Questions per corpus page, at most (0 = the request's limit)
+    pub corpus_page: usize,
 }
 
 // —— made-up words ———————————————————————————————————————————————————————————————————————————————————————————————————
@@ -193,6 +201,81 @@ pub fn answer(s: &mut BackendState, path: &str, body: &Value) -> Result<Value, u
                 "strata": s.gen.strata, "items": s.gen.items, "previous": s.gen.previous,
             }))
         }
+        "/internal/ai/gen/corpus" => {
+            s.gen.corpus_requests.push(body.clone());
+            let Some(user) = session_user(s, body) else {
+                return Ok(refusal("session"));
+            };
+            if let Some(r) = s
+                .gen
+                .corpus_refusal
+                .clone()
+                .or(s.gen.source_refusal.clone())
+            {
+                return Ok(refusal(&r));
+            }
+            let all: Vec<&Value> = s
+                .gen
+                .items
+                .iter()
+                .filter(|i| {
+                    i.get("id")
+                        .and_then(Value::as_str)
+                        .is_some_and(|id| !s.gen.seeds_missing.iter().any(|m| m == id))
+                })
+                .collect();
+            let min = body.get("min").and_then(Value::as_i64).unwrap_or(0);
+            let total = all.len() as i64;
+            if total < min {
+                return Ok(json!({"ok": false, "reason": "tooFew", "have": total}));
+            }
+            let after = body.get("after").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let mut limit = body.get("limit").and_then(Value::as_u64).unwrap_or(200) as usize;
+            if s.gen.corpus_page > 0 {
+                limit = limit.min(s.gen.corpus_page);
+            }
+            let end = (after + limit).min(all.len());
+            let items: Vec<Value> = all[after.min(end)..end]
+                .iter()
+                .filter_map(|i| {
+                    let id = i.get("id")?.as_str()?;
+                    let seed = s.gen.seeds.get(id)?;
+                    let answer: Vec<Value> = seed["answer"]
+                        .as_array()?
+                        .iter()
+                        .map(|a| json!(a.as_str().unwrap_or("A").as_bytes()[0] - b'A'))
+                        .collect();
+                    Some(json!({
+                        "id": id, "sheet": seed["sheet"], "kind": seed["kind"],
+                        "stem": seed["stem"],
+                        "options": seed["options"].as_array()?.iter()
+                            .map(|o| json!({"en": o["en"], "zh": o["zh"], "ja": o["ja"]})).collect::<Vec<_>>(),
+                        "answer": answer, "explanation": seed["explanation"], "diff": seed["diff"],
+                    }))
+                })
+                .collect();
+            let drift = if s.gen.corpus_drift && after > 0 {
+                1
+            } else {
+                0
+            };
+            let mut out = json!({
+                "ok": true, "user": {"id": user["id"]}, "total": total + drift,
+                "next": if end < all.len() { json!(end) } else { Value::Null },
+                "items": items,
+            });
+            if after == 0 {
+                out["banks"] = json!(s
+                    .gen
+                    .banks
+                    .iter()
+                    .map(|(id, n)| json!({"id": id, "name": n}))
+                    .collect::<Vec<_>>());
+                out["strata"] = json!(s.gen.strata);
+                out["previous"] = json!(s.gen.previous);
+            }
+            Ok(out)
+        }
         "/internal/ai/gen/seeds" => {
             if session_user(s, body).is_none() {
                 return Ok(refusal("session"));
@@ -298,6 +381,51 @@ pub fn generation_answer(user: &str) -> String {
         })
         .collect();
     json!({"questions": qs}).to_string()
+}
+
+/// The `Q<n>` numbers of a whole-source prefix, in order.
+fn source_numbers(user: &str) -> Vec<usize> {
+    user.lines()
+        .filter_map(|l| {
+            let rest = l.strip_prefix('Q')?;
+            let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if digits.is_empty() || !rest[digits.len()..].starts_with(" {") {
+                return None;
+            }
+            digits.parse().ok()
+        })
+        .collect()
+}
+
+/// A good plan for the slots of a plan call: three topics, every slot on one topic, a ref inside the prefix.
+pub fn plan_answer(user: &str) -> String {
+    let nums = source_numbers(user);
+    let slots: Vec<Value> = slots_of(user)
+        .iter()
+        .map(|s| {
+            let no = s["slot"].as_u64().unwrap_or(1) as usize;
+            let r = nums.get((no - 1) % nums.len().max(1)).copied().unwrap_or(1);
+            json!({"slot": no, "topic": (no - 1) % 3 + 1, "refs": [format!("Q{r}")],
+                   "angle": "a fresh scenario", "diff": "medium"})
+        })
+        .collect();
+    json!({"topics": [{"t":1,"name":"first topic"},{"t":2,"name":"second topic"},{"t":3,"name":"third topic"}],
+           "slots": slots})
+    .to_string()
+}
+
+/// A good global plan: one note per chunk of the "SLOTS PER CHUNK" table.
+pub fn global_answer(user: &str) -> String {
+    let table = user
+        .split_once("SLOTS PER CHUNK\n")
+        .and_then(|(_, t)| t.lines().next())
+        .and_then(|l| serde_json::from_str::<Vec<Value>>(l).ok())
+        .unwrap_or_default();
+    let chunks: Vec<Value> = table
+        .iter()
+        .map(|c| json!({"chunk": c["chunk"], "topics": ["a topic"], "avoid": ["another topic"]}))
+        .collect();
+    json!({"chunks": chunks}).to_string()
 }
 
 /// The regions of a conversion prompt: `(Q label, text)` in order.
@@ -591,9 +719,16 @@ pub fn good_model() -> Script {
             segment_answer(user)
         } else if system.starts_with("You convert exam questions") {
             convert_answer(user)
-        } else if system.starts_with("You write new multiple-choice exam questions")
-            || system.starts_with("You write exam questions from a user's study material")
-        {
+        } else if system.starts_with("You write new multiple-choice exam questions") {
+            let task = user.rsplit_once("<<<END SOURCE").map_or(user, |(_, t)| t);
+            if task.contains("TASK PLAN") {
+                plan_answer(user)
+            } else if user.contains("TASK GLOBAL") {
+                global_answer(user)
+            } else {
+                generation_answer(user)
+            }
+        } else if system.starts_with("You write exam questions from a user's study material") {
             generation_answer(user)
         } else {
             return Reply::Fall;

@@ -149,9 +149,14 @@ pub const ASSISTANT_CUT_MARK: &str = "…(shortened)";
 pub const OLD_USER_CHARS: usize = 2000;
 pub const USER_CUT_MARK: &str = "…";
 
+/// The shortening line and the window start move in steps of this many messages (4 turns), so the request between two
+/// moves is the previous request plus the new messages: the provider's prompt cache keeps hitting.
+pub const STEP: usize = 8;
+
 /// The text of a history message as sent: the newest [`FULL_RECENT`] messages (`rank` 0 = newest) in full, older ones
 /// cut to a fixed prefix. The cut depends only on the message and on being old, so the same message always gives the
-/// same text and the start of the request stays identical between requests (prompt caching).
+/// same text. (`history` decides what counts as old with the stepped line `B`, not with the rank, and passes
+/// [`FULL_RECENT`] for a message below the line.)
 pub fn shortened(role: Role, content: &str, rank: usize) -> String {
     if rank < FULL_RECENT {
         return content.to_string();
@@ -166,33 +171,67 @@ pub fn shortened(role: Role, content: &str, rank: usize) -> String {
     }
 }
 
-/// The messages sent upstream: earlier `done` / `stopped` messages with text, the older ones shortened
-/// ([`shortened`]), newest first while the running total (the new message included, the shortened length counted)
-/// stays within `budget` characters, then in order, ending with the new user message. A message that does not fit
-/// ends the history (never cut in half); a leading assistant message is dropped.
+/// The shortening line for `n` usable earlier messages: `floor(max(0, n - FULL_RECENT) / STEP) * STEP`. Messages with an
+/// index below it (oldest first) are sent shortened, the others in full.
+pub fn shortening_line(n: usize) -> usize {
+    n.saturating_sub(FULL_RECENT) / STEP * STEP
+}
+
+/// The messages sent upstream (A2, stateless): the earlier `done` / `stopped` messages with text, oldest first, those
+/// below the shortening line [`shortening_line`] cut ([`shortened`]), starting at the smallest multiple of [`STEP`] at
+/// which the history and the new message fit `budget` characters (shortened lengths counted); when no multiple fits,
+/// newest first while it fits (never half a message). A leading assistant message is dropped. `prev` is the path of the
+/// viewed branch, oldest first.
 pub fn history(prev: &[Prev<'_>], new_message: &str, budget: usize, free: bool) -> History {
-    let mut total = char_len(new_message);
-    let mut picked: Vec<(Turn, bool)> = Vec::new();
-    let usable = prev
+    let usable: Vec<&Prev<'_>> = prev
         .iter()
-        .rev()
-        .filter(|p| (p.status == "done" || p.status == "stopped") && !p.content.is_empty());
-    for (rank, p) in usable.enumerate() {
-        let content = shortened(p.role, p.content, rank);
-        let n = char_len(&content);
-        if total + n > budget {
-            break;
-        }
-        total += n;
-        picked.push((
-            Turn {
-                role: p.role,
-                content,
-            },
-            p.free,
-        ));
+        .filter(|p| (p.status == "done" || p.status == "stopped") && !p.content.is_empty())
+        .collect();
+    let n = usable.len();
+    let line = shortening_line(n);
+    let shown: Vec<String> = usable
+        .iter()
+        .enumerate()
+        .map(|(i, p)| shortened(p.role, p.content, if i < line { FULL_RECENT } else { 0 }))
+        .collect();
+    let lens: Vec<usize> = shown.iter().map(|t| char_len(t)).collect();
+    let new_len = char_len(new_message);
+    // suffix[i] = characters of messages i..n
+    let mut suffix = vec![0usize; n + 1];
+    for i in (0..n).rev() {
+        suffix[i] = suffix[i + 1] + lens.get(i).copied().unwrap_or(0);
     }
-    picked.reverse();
+    let start = (0..n)
+        .step_by(STEP)
+        .find(|s| suffix.get(*s).is_some_and(|c| c + new_len <= budget))
+        .unwrap_or_else(|| {
+            // today's rule: newest first while the total fits
+            let mut total = new_len;
+            let mut first = n;
+            for i in (0..n).rev() {
+                let l = lens.get(i).copied().unwrap_or(0);
+                if total + l > budget {
+                    break;
+                }
+                total += l;
+                first = i;
+            }
+            first
+        });
+    let mut picked: Vec<(Turn, bool)> = usable
+        .iter()
+        .zip(shown)
+        .skip(start)
+        .map(|(p, content)| {
+            (
+                Turn {
+                    role: p.role,
+                    content,
+                },
+                p.free,
+            )
+        })
+        .collect();
     while picked.first().is_some_and(|t| t.0.role == Role::Assistant) {
         picked.remove(0);
     }
@@ -380,10 +419,10 @@ briefly; the app offers to save it to the user's memory. Today is {date}.";
     }
 
     #[test]
-    fn old_messages_are_cut_deterministically() {
+    fn a_cut_depends_only_on_the_message_and_being_old() {
         let long_a = "a".repeat(900);
         let long_u = "u".repeat(2100);
-        // the newest FULL_RECENT messages are sent in full
+        // the newest FULL_RECENT ranks are sent in full
         for rank in 0..FULL_RECENT {
             assert_eq!(shortened(Role::Assistant, &long_a, rank), long_a);
             assert_eq!(shortened(Role::User, &long_u, rank), long_u);
@@ -406,49 +445,25 @@ briefly; the app offers to save it to the user's memory. Today is {date}.";
             shortened(Role::Assistant, &jp, 5),
             format!("{}…(shortened)", "あ".repeat(800))
         );
-        // in a history: 6 long messages, the two oldest are cut; the same cut on the next request
-        let mk = |n: usize| -> Vec<(Role, String)> {
-            (0..n)
-                .map(|i| {
-                    if i % 2 == 0 {
-                        (Role::User, long_u.clone())
-                    } else {
-                        (Role::Assistant, long_a.clone())
-                    }
-                })
-                .collect()
-        };
-        let run = |msgs: &[(Role, String)]| {
-            let prev: Vec<Prev<'_>> = msgs
-                .iter()
-                .map(|(role, c)| Prev {
-                    role: *role,
-                    content: c,
-                    status: "done",
-                    free: false,
-                })
-                .collect();
-            history(&prev, "q", 1_000_000, false).turns
-        };
-        let first = run(&mk(6));
-        assert_eq!(first[0].content.chars().count(), 2001);
-        assert!(first[0].content.ends_with('…'));
-        assert_eq!(
-            first[1].content.chars().count(),
-            800 + "…(shortened)".chars().count()
-        );
-        assert_eq!(
-            first[2].content.chars().count(),
-            2100,
-            "the newest four are in full"
-        );
-        // two more messages arrive (a new question and its answer): the cut of the old ones does not change
-        let second = run(&mk(8));
-        assert_eq!(second[2].content, first[0].content);
-        assert_eq!(second[3].content, first[1].content);
-        // the budget counts the shortened length and drops the oldest first: 6001 (the newest four and "q") + 812
-        // (the shortened answer) fit, the shortened 2001-character question does not
-        let msgs = mk(6);
+    }
+
+    #[test]
+    fn the_shortening_line_moves_in_steps_of_eight() {
+        assert_eq!(STEP, 8);
+        let lines: Vec<usize> = (0..=30).map(shortening_line).collect();
+        // nothing is shortened up to 11 messages, then the line jumps by 8 every 8 messages
+        assert!(lines[..=11].iter().all(|l| *l == 0));
+        assert_eq!(lines[12], 8);
+        assert_eq!(lines[19], 8);
+        assert_eq!(lines[20], 16);
+        assert_eq!(lines[28], 24);
+        // never more than one move in 8 consecutive sizes
+        for w in lines.windows(9) {
+            assert!(w[8] - w[0] <= STEP);
+        }
+    }
+
+    fn render(msgs: &[(Role, String)], budget: usize) -> Vec<(Role, String)> {
         let prev: Vec<Prev<'_>> = msgs
             .iter()
             .map(|(role, c)| Prev {
@@ -458,9 +473,102 @@ briefly; the app offers to save it to the user's memory. Today is {date}.";
                 free: false,
             })
             .collect();
-        let h = history(&prev, "q", 6900, false);
-        // the shortened answer fits but would lead the history: dropped
-        assert_eq!(h.turns.len(), 5);
-        assert_eq!(h.turns[0].content.chars().count(), 2100);
+        history(&prev, "NEW", budget, false)
+            .turns
+            .into_iter()
+            .map(|t| (t.role, t.content))
+            .collect()
+    }
+
+    /// Message `i` of a made-up chat: alternating roles, mixed lengths.
+    fn chat(n: usize) -> Vec<(Role, String)> {
+        (0..n)
+            .map(|i| {
+                let len = 40 + (i * 37) % 300;
+                if i % 2 == 0 {
+                    (Role::User, format!("q{i}:{}", "u".repeat(len * 7)))
+                } else {
+                    (Role::Assistant, format!("a{i}:{}", "a".repeat(len * 3)))
+                }
+            })
+            .collect()
+    }
+
+    #[test]
+    fn requests_extend_the_previous_one_between_two_moves() {
+        let budget = 6_000;
+        let mut prev_req: Option<Vec<(Role, String)>> = None;
+        let mut moves = Vec::new();
+        for n in 1..=60usize {
+            let req = render(&chat(n), budget);
+            // never over budget; the first turn is a user message
+            let chars: usize = req.iter().map(|t| char_len(&t.1)).sum();
+            assert!(chars <= budget || req.len() == 1, "n={n}: {chars}");
+            assert_eq!(req[0].0, Role::User, "n={n}");
+            assert_eq!(req.last().map(|t| t.1.as_str()), Some("NEW"));
+            if let Some(p) = &prev_req {
+                // the previous request without its new message is a prefix of this request
+                let old = &p[..p.len() - 1];
+                let is_prefix = req.len() > old.len() && req[..old.len()] == *old;
+                if !is_prefix {
+                    moves.push(n);
+                }
+            }
+            prev_req = Some(req);
+        }
+        // the shortening line B and the window start S each move once per 8 messages (4 turns): so at most two moves in
+        // any 8 consecutive sizes, and each of the two kinds alone moves at most once
+        // (the first sizes are the start-up of the window: no multiple of 8 fits yet, so today's rule applies)
+        let steady: Vec<usize> = moves.iter().copied().filter(|n| *n >= 16).collect();
+        for w in steady.windows(3) {
+            assert!(
+                w[2] - w[0] >= STEP,
+                "three moves within 8 messages: {moves:?}"
+            );
+        }
+        assert!(
+            steady.len() >= 4,
+            "the window and the line do move: {moves:?}"
+        );
+        assert!(
+            moves.len() <= 2 * (60 / STEP) + 2,
+            "too many moves: {moves:?}"
+        );
+    }
+
+    #[test]
+    fn the_window_start_is_a_multiple_of_eight_and_the_history_is_stable() {
+        // 30 messages of 1000 characters, budget for about 12 of them: the start is the smallest multiple of 8 that fits
+        let msgs: Vec<(Role, String)> = (0..30)
+            .map(|i| {
+                (
+                    if i % 2 == 0 {
+                        Role::User
+                    } else {
+                        Role::Assistant
+                    },
+                    format!("{i:02}{}", "x".repeat(998)),
+                )
+            })
+            .collect();
+        let req = render(&msgs[..24], 14_000);
+        // line = floor(20/8)*8 = 16: messages 0..16 are cut; the window starts where the rest fits
+        let first = &req[0].1;
+        let start: usize = first[..2].parse().expect("index");
+        assert_eq!(start % STEP, 0, "window start {start}");
+        // the same chat with 3 more messages: same start (no move), the request only grew
+        let longer = render(&msgs[..27], 14_000);
+        assert_eq!(longer[0].1, req[0].1);
+        // the shortening line is 16 for 24 messages: message 15 is cut, message 16 is in full
+        let cut: Vec<&(Role, String)> = req.iter().filter(|t| t.1.starts_with("15")).collect();
+        if let Some(t) = cut.first() {
+            assert!(t.1.ends_with("…(shortened)") || t.1.ends_with('…') || char_len(&t.1) <= 800);
+        }
+        let full = req.iter().find(|t| t.1.starts_with("16")).expect("m16");
+        assert_eq!(char_len(&full.1), 1000);
+        // nothing fits any multiple: today's rule, newest first
+        let tiny = render(&msgs[..24], 2_300);
+        assert!(tiny.len() <= 3);
+        assert_eq!(tiny.last().map(|t| t.1.as_str()), Some("NEW"));
     }
 }

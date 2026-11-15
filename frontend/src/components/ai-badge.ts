@@ -9,7 +9,7 @@
 // gets the tip through holdTip on touch); a badge inside an interactive head or a greyed bar stays decorative for screen
 // readers and gets hover + tap-and-hold. The AI+题集 marker of AI-generated banks is `aiSetBadge` (GB-6).
 import { aiSetTip, aiSetWordKey, minuteText } from '../domain/ai-gen.ts';
-import type { FeatureKey } from '../domain/ai-features.ts';
+import { offLabelKeys, type FeatureKey } from '../domain/ai-features.ts';
 import { badgeTip, type BadgeReason, type BadgeState, type BadgeViewer } from '../domain/badge-state.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import type { BankAi } from '../types/api.ts';
@@ -27,7 +27,7 @@ function badgeText(word?: string): HTMLElement {
 
 /** The names of the features that are off, joined like any list of the UI language */
 function offNames(off: readonly FeatureKey[]): string {
-  return off.map((k) => t(`ai.feature.${k}` as MsgKey)).join(t('common.listSep'));
+  return offLabelKeys(off).map((k) => t(k as MsgKey)).join(t('common.listSep'));
 }
 
 /** The tip text of a badge state for a viewer (BT-2); null when the state has no badge */

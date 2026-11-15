@@ -148,7 +148,7 @@ python -I tests/integration/stack_check.py 18090                      # 314 项�
                                                                       # AI 服务商：登录、导入、交卷、AI 设置、
                                                                       # 流式回答、AI+ 功能及其暂停、
                                                                       # 心跳和 docker stop、回复语言、自由模式（按用户）、
-                                                                      # AI+ 学习功能（提示、解释、总结、对话
+                                                                      # AI+ 学习功能（提示、解析、总结、对话
                                                                       # 和它们的标题、已保存的回答、应用忙时的流程、什么都不记录）、
                                                                       # 持久化、WAL、系统日志、
                                                                       # reset-password、docker stop、每个卷里有什么

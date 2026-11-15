@@ -10,8 +10,8 @@ import {
   areaPath, axisMax, bars, fillPeriods, fitText, hbars, horizontalBars, labelStep, monotonePath, nameColumn, newestIndexes, shortPeriod,
   textWidth, wrapLabel, xs, yOf, yTicks,
 } from '../domain/usage-chart.ts';
-import { formatBig, valueOf, type UsageMetric, type UsageRow } from '../domain/usage-bars.ts';
-import { t, type MsgKey } from '../i18n/index.ts';
+import { formatBig, sortRows, valueOf, type UsageMetric, type UsageRow, type UsageSort } from '../domain/usage-bars.ts';
+import { localeTag, t, type MsgKey } from '../i18n/index.ts';
 import { h } from '../utils/dom.ts';
 
 const NS = 'http://www.w3.org/2000/svg';
@@ -217,6 +217,23 @@ function writeMetric(pref: string, m: UsageMetric): void {
   }
 }
 
+/** The remembered order of a category chart, per chart (per browser; default: by amount, high to low) */
+function readSort(pref: string): UsageSort {
+  try {
+    return localStorage.getItem(`xexam.uc.${pref}.sort`) === 'name' ? 'name' : 'amount';
+  } catch {
+    return 'amount';
+  }
+}
+
+function writeSort(pref: string, s: UsageSort): void {
+  try {
+    localStorage.setItem(`xexam.uc.${pref}.sort`, s);
+  } catch {
+    // not remembered
+  }
+}
+
 /** The tip lines of one row (exact numbers) */
 function rowTip(r: UsageRow, metric: UsageMetric, exact: (n: number) => string): string[] {
   const lines = [r.label, t('ai.set.uc.tip.calls', { n: exact(r.calls) }), t('ai.set.uc.tip.in', { n: exact(r.tokensIn) }), t('ai.set.uc.tip.out', { n: exact(r.tokensOut) })];
@@ -231,8 +248,9 @@ function rowTip(r: UsageRow, metric: UsageMetric, exact: (n: number) => string):
  * A chart card: its title and the 调用次数 | Token 数 switch at the top right (A-OWNER-40 / 40b / 63), the legend 输入 / 输出 in
  * token mode, and the chart `draw` makes for the chosen metric. `pref` names the remembered choice, `titleKey` the title.
  */
-function metricCard(o: { line?: boolean; pref: string; titleKey: (m: UsageMetric) => MsgKey; draw: (m: UsageMetric) => HTMLElement }): HTMLElement {
+function metricCard(o: { line?: boolean; pref: string; sortable?: boolean; titleKey: (m: UsageMetric) => MsgKey; draw: (m: UsageMetric, sort: UsageSort) => HTMLElement }): HTMLElement {
   let metric = readMetric(o.pref);
+  let sort = readSort(o.pref);
   const metrics = ['calls', 'tokens'] as const;
   const title = h('h3', { class: 'ais-h3 uc-title' }, t(o.titleKey(metric)));
   const slot = h('div', { class: 'uc-slot' });
@@ -247,7 +265,7 @@ function metricCard(o: { line?: boolean; pref: string; titleKey: (m: UsageMetric
       slot.style.minHeight = `${slot.offsetHeight}px`;
       window.setTimeout(() => { slot.style.minHeight = ''; }, 300);
     }
-    slot.replaceChildren(o.draw(metric));
+    slot.replaceChildren(o.draw(metric, sort));
   };
   const btns = metrics.map((m) => h('button', {
     type: 'button', class: 'uc-sw-btn', 'aria-pressed': String(m === metric),
@@ -259,8 +277,22 @@ function metricCard(o: { line?: boolean; pref: string; titleKey: (m: UsageMetric
       draw();
     },
   }, t(m === 'calls' ? 'ai.set.uc.calls' : 'ai.set.uc.tokens')));
+  // the sort control (category charts only): the same neutral segmented recipe as the calls / tokens switch
+  const sorts = ['amount', 'name'] as const;
+  const sortBtns = sorts.map((s) => h('button', {
+    type: 'button', class: 'uc-sw-btn', 'aria-pressed': String(s === sort), title: t(s === 'amount' ? 'ai.set.uc.sortAmountTip' : 'ai.set.uc.sortNameTip'),
+    onclick: () => {
+      if (sort === s) return;
+      sort = s;
+      writeSort(o.pref, s);
+      sortBtns.forEach((b, i) => b.setAttribute('aria-pressed', String(sorts[i] === sort)));
+      draw();
+    },
+  }, t(s === 'amount' ? 'ai.set.uc.sortAmount' : 'ai.set.uc.sortName')));
   const card = h('div', { class: 'uc-card' },
-    h('div', { class: 'uc-head' }, title, h('div', { class: 'uc-switch', role: 'group', 'aria-label': t('ai.set.uc.switchLabel') }, ...btns)),
+    h('div', { class: 'uc-head' }, title, h('div', { class: 'uc-ctrls' },
+      o.sortable ? h('div', { class: 'uc-switch', role: 'group', 'aria-label': t('ai.set.uc.sortLabel') }, ...sortBtns) : null,
+      h('div', { class: 'uc-switch', role: 'group', 'aria-label': t('ai.set.uc.switchLabel') }, ...btns))),
     legend, slot);
   draw();
   return card;
@@ -273,10 +305,10 @@ function metricCard(o: { line?: boolean; pref: string; titleKey: (m: UsageMetric
 export function usageBarCard(o: { pref: string; kind: 'model' | 'purpose'; rows: readonly UsageRow[]; exact: (n: number) => string }): HTMLElement {
   const titleKey = (m: UsageMetric): MsgKey => `ai.set.uc.${o.kind}.${m}` as MsgKey;
   return metricCard({
-    pref: o.pref, titleKey,
-    draw: (metric) => barChart({
+    pref: o.pref, titleKey, sortable: true,
+    draw: (metric, sort) => barChart({
       ariaLabel: t(titleKey(metric)), format: (n) => formatBig(n),
-      items: o.rows.map((r) => ({
+      items: sortRows(o.rows, sort, metric, localeTag()).map((r) => ({
         label: r.label, value: valueOf(r, metric), tip: rowTip(r, metric, o.exact),
         ...(metric === 'tokens' ? { parts: [r.tokensIn, r.tokensOut] as const } : {}),
       })),

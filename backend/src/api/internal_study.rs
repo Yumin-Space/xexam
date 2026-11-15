@@ -10,7 +10,7 @@
 //!   `MSG_BAD_REQUEST`). `sid` is 64 lower-case hex digits, `id` / `recordId` positive integers, `questionId`
 //!   `^[0-9A-Za-z_-]{1,64}$` (so it is safe in a URL query without encoding), `qlang` / `elang` one of `en`, `zh`, `ja`, `max`
 //!   1..=70, `record` (optional, `null` counts as absent) exactly `{"id": n, "kind": "practice" | "exam"}`.
-//! - Session binding: `store.session_user(sid, now, false)` (no refresh, like `introspect`). No valid session, another user's
+//! - Session binding: `auth::session_user_untouched` (no cookie, like `introspect`). No valid session, another user's
 //!   session or a pending password change answers `{"ok": false, "reason": "session"}`; a user without the AI+ feature
 //!   (administrators always have it) answers `{"ok": false, "reason": "notAllowed"}` (not on `record-info`: it only names the
 //!   caller's own record, for the AI service's read-only `saved` routes, which stay readable when AI is off).
@@ -86,11 +86,9 @@ async fn bind_session(
     id: i64,
     needs_ai: bool,
 ) -> Result<Result<i64, Value>, AppError> {
-    let store = st.0.store.clone();
-    let now = crate::auth::unix_now();
-    let found = blocking(move || store.session_user(&sid, now, false)).await?;
+    let found = super::auth::session_user_untouched(st, &sid).await?;
     Ok(match found {
-        Some((u, _)) if u.id == id && !u.must_change_password => {
+        Some(u) if u.id == id && !u.must_change_password => {
             if u.ai_allowed || !needs_ai {
                 Ok(u.id)
             } else {

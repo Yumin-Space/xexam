@@ -473,8 +473,9 @@ async fn access_matrix_and_scoping() {
     for (m, path) in [
         (Method::GET, "/api/ai/admin/settings"),
         (Method::POST, "/api/ai/admin/settings"),
-        (Method::POST, "/api/ai/admin/models"),
-        (Method::POST, "/api/ai/admin/verify"),
+        (Method::GET, "/api/ai/admin/models"),
+        (Method::POST, "/api/ai/admin/connections/save"),
+        (Method::POST, "/api/ai/admin/feature-switches"),
         (Method::POST, "/api/ai/admin/enable"),
         (Method::GET, "/api/ai/admin/usage"),
         (Method::GET, "/api/ai/admin/users"),

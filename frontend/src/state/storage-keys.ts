@@ -15,6 +15,8 @@ export const paths = {
    * someone else's sign-out (read and removed once at startup)
    */
   pendingLang: 'xexam.pendingLang.v1',
+  /** The sign-in page's "Keep me signed in" tick, per browser ('1' / '0'; ticked when missing) */
+  remember: 'xexam.remember',
 } as const;
 
 /** The unfinished exam of one user */

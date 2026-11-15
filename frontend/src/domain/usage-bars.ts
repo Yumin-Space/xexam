@@ -103,3 +103,32 @@ export function purposeRows<K extends string>(
   if (used(rest)) out.push({ key: '', label: otherLabel, other: true, ...rest });
   return out;
 }
+
+export type UsageSort = 'amount' | 'name';
+
+/** Name groups (owner, v1.3): 0 = starts with a digit, 1 = starts with a Latin letter, 2 = any other script */
+const nameGroup = (s: string): number => (/^[0-9]/.test(s) ? 0 : /^[A-Za-z]/.test(s) ? 1 : 2);
+
+/**
+ * The order of the bars (owner, v1.3): 'amount' = high to low by the metric shown; 'name' = names starting with a digit first,
+ * then names starting with a Latin letter (A-Z by the first letter, case-insensitive, then the rest with natural numbers:
+ * "m2" before "m10"), then every other script (Chinese, Japanese, ...) among themselves with the UI-locale collator. The same
+ * rule in every UI language. Ties keep the incoming order (stable). In name order the "other" bar stays last; in amount order
+ * it ranks by its value like any bar. Returns a new array.
+ */
+export function sortRows(rows: readonly UsageRow[], sort: UsageSort, metric: UsageMetric, locale?: string): UsageRow[] {
+  const coll = new Intl.Collator(locale, { numeric: true, sensitivity: 'base' });
+  const latin = new Intl.Collator('en', { numeric: true, sensitivity: 'base' });
+  const idx = new Map(rows.map((r, i) => [r, i]));
+  const byName = (a: string, b: string): number => {
+    const ga = nameGroup(a);
+    const gb = nameGroup(b);
+    if (ga !== gb) return ga - gb;
+    if (ga === 1) return a[0]!.toLowerCase().localeCompare(b[0]!.toLowerCase(), 'en') || latin.compare(a.slice(1), b.slice(1));
+    return (ga === 0 ? latin : coll).compare(a, b);
+  };
+  const cmp = sort === 'name'
+    ? (a: UsageRow, b: UsageRow): number => Number(!!a.other) - Number(!!b.other) || byName(a.label, b.label)
+    : (a: UsageRow, b: UsageRow): number => valueOf(b, metric) - valueOf(a, metric);
+  return [...rows].sort((a, b) => cmp(a, b) || idx.get(a)! - idx.get(b)!);
+}

@@ -504,6 +504,9 @@ fn ai_meta_json(
     Ok(serde_json::to_string(&Value::Object(meta))?)
 }
 
+/// What [`Store::gen_targets`] finds: the viewer, the account, the (bank, sheet) pairs and the bank names.
+type Targets = (Viewer, Who, Vec<(i64, String)>, BTreeMap<i64, String>);
+
 /// One stored source question as the generation reads it.
 struct Src {
     id: String,
@@ -658,6 +661,18 @@ fn previous_stems(
     viewer: &Viewer,
     sources: &BTreeSet<i64>,
 ) -> Result<Vec<(String, String)>, DbError> {
+    Ok(previous_tris(c, viewer, sources)?
+        .into_iter()
+        .map(|t| (t.en, t.zh))
+        .collect())
+}
+
+/// [`previous_stems`] with the Japanese stem too (the corpus route).
+fn previous_tris(
+    c: &Connection,
+    viewer: &Viewer,
+    sources: &BTreeSet<i64>,
+) -> Result<Vec<Tri>, DbError> {
     let metas: Vec<(i64, String)> = {
         let mut st = c.prepare(
             "SELECT id, ai_meta FROM banks WHERE ai_job IS NOT NULL AND ai_meta IS NOT NULL ORDER BY id DESC",
@@ -694,7 +709,12 @@ fn previous_stems(
                 continue;
             };
             let zh = q.zh.as_ref().map(|z| z.stem.as_str()).unwrap_or("");
-            out.push((cut(&q.stem, SOURCE_STEM_CHARS), cut(zh, SOURCE_STEM_CHARS)));
+            let ja = q.ja.as_ref().map(|z| z.stem.as_str()).unwrap_or("");
+            out.push(Tri {
+                en: cut(&q.stem, SOURCE_STEM_CHARS),
+                zh: cut(zh, SOURCE_STEM_CHARS),
+                ja: cut(ja, SOURCE_STEM_CHARS),
+            });
         }
     }
     Ok(out)
@@ -707,72 +727,9 @@ impl Store {
     /// Never writes.
     pub fn gen_source(&self, user: i64, req: &GenSourceReq) -> Result<GenSource, DbError> {
         // Step 1, under one lock: rights, the visible (bank, sheet) pairs that count, the bank names
-        let (viewer, who, targets, bank_names) = {
-            let g = self.lock();
-            let Some(who) = account(&g, user)? else {
-                return Ok(GenSource::NotAllowed);
-            };
-            if !who.allowed {
-                return Ok(GenSource::NotAllowed);
-            }
-            let viewer = viewer_of(&g, user)?;
-            let mut targets: Vec<(i64, String)> = Vec::new();
-            match req.kind {
-                GenKind::Bank => {
-                    let Some(bank) = req.bank else {
-                        return Ok(GenSource::NotFound);
-                    };
-                    let visible = viewer.scope.allows(Some(bank));
-                    let exists = bank_name(&g, bank)?.is_some();
-                    if !exists || !visible || !viewer.manages(bank_owner(&g, bank)?) {
-                        return Ok(GenSource::NotFound);
-                    }
-                    if is_ai_bank(&g, bank)? {
-                        return Ok(GenSource::AiSource);
-                    }
-                    for sheet in bank_sheets(&g, bank)? {
-                        targets.push((bank, sheet));
-                    }
-                }
-                // The route never lets a file reach the source step
-                GenKind::File => return Ok(GenSource::NotFound),
-                GenKind::Scope | GenKind::Wrong => {
-                    let mut seen: HashSet<(i64, &str)> = HashSet::new();
-                    let mut ai: HashMap<i64, bool> = HashMap::new();
-                    let mut has_ai = false;
-                    for (bank, sheet) in &req.sheets {
-                        if !seen.insert((*bank, sheet.as_str())) {
-                            continue;
-                        }
-                        if !viewer.scope.allows(Some(*bank)) || !sheet_exists(&g, *bank, sheet)? {
-                            return Ok(GenSource::NotFound);
-                        }
-                        let is_ai = match ai.get(bank) {
-                            Some(v) => *v,
-                            None => {
-                                let v = is_ai_bank(&g, *bank)?;
-                                ai.insert(*bank, v);
-                                v
-                            }
-                        };
-                        // A scope holding any AI bank is refused (A-OWNER-52b), after every sheet was checked visible
-                        has_ai |= is_ai;
-                        targets.push((*bank, sheet.clone()));
-                    }
-                    if has_ai {
-                        return Ok(GenSource::AiSource);
-                    }
-                }
-            }
-            let mut names = BTreeMap::new();
-            for (bank, _) in &targets {
-                if let std::collections::btree_map::Entry::Vacant(e) = names.entry(*bank) {
-                    if let Some(n) = bank_name(&g, *bank)? {
-                        e.insert(n);
-                    }
-                }
-            }
-            (viewer, who, targets, names)
+        let (viewer, who, targets, bank_names) = match self.gen_targets(user, req)? {
+            Ok(found) => *found,
+            Err(refusal) => return Ok(refusal),
         };
         // Step 2: one short read per sheet, the lock taken per sheet
         let wrong_of = (req.kind == GenKind::Wrong).then_some(user);
@@ -857,6 +814,80 @@ impl Store {
             items,
             previous,
         })))
+    }
+
+    /// Step 1 of a source read, shared by `gen_source` and `gen_corpus`: the caller's rights, the visible (bank, sheet)
+    /// pairs that count and the bank names, or the refusal to answer.
+    fn gen_targets(
+        &self,
+        user: i64,
+        req: &GenSourceReq,
+    ) -> Result<Result<Box<Targets>, GenSource>, DbError> {
+        let g = self.lock();
+        let Some(who) = account(&g, user)? else {
+            return Ok(Err(GenSource::NotAllowed));
+        };
+        if !who.allowed {
+            return Ok(Err(GenSource::NotAllowed));
+        }
+        let viewer = viewer_of(&g, user)?;
+        let mut targets: Vec<(i64, String)> = Vec::new();
+        match req.kind {
+            GenKind::Bank => {
+                let Some(bank) = req.bank else {
+                    return Ok(Err(GenSource::NotFound));
+                };
+                let visible = viewer.scope.allows(Some(bank));
+                let exists = bank_name(&g, bank)?.is_some();
+                if !exists || !visible || !viewer.manages(bank_owner(&g, bank)?) {
+                    return Ok(Err(GenSource::NotFound));
+                }
+                if is_ai_bank(&g, bank)? {
+                    return Ok(Err(GenSource::AiSource));
+                }
+                for sheet in bank_sheets(&g, bank)? {
+                    targets.push((bank, sheet));
+                }
+            }
+            // The route never lets a file reach the source step
+            GenKind::File => return Ok(Err(GenSource::NotFound)),
+            GenKind::Scope | GenKind::Wrong => {
+                let mut seen: HashSet<(i64, &str)> = HashSet::new();
+                let mut ai: HashMap<i64, bool> = HashMap::new();
+                let mut has_ai = false;
+                for (bank, sheet) in &req.sheets {
+                    if !seen.insert((*bank, sheet.as_str())) {
+                        continue;
+                    }
+                    if !viewer.scope.allows(Some(*bank)) || !sheet_exists(&g, *bank, sheet)? {
+                        return Ok(Err(GenSource::NotFound));
+                    }
+                    let is_ai = match ai.get(bank) {
+                        Some(v) => *v,
+                        None => {
+                            let v = is_ai_bank(&g, *bank)?;
+                            ai.insert(*bank, v);
+                            v
+                        }
+                    };
+                    // A scope holding any AI bank is refused (A-OWNER-52b), after every sheet was checked visible
+                    has_ai |= is_ai;
+                    targets.push((*bank, sheet.clone()));
+                }
+                if has_ai {
+                    return Ok(Err(GenSource::AiSource));
+                }
+            }
+        }
+        let mut names = BTreeMap::new();
+        for (bank, _) in &targets {
+            if let std::collections::btree_map::Entry::Vacant(e) = names.entry(*bank) {
+                if let Some(n) = bank_name(&g, *bank)? {
+                    e.insert(n);
+                }
+            }
+        }
+        Ok(Ok(Box::new((viewer, who, targets, names))))
     }
 
     /// `POST /internal/ai/gen/seeds` for `user`: the full texts (capped per language) of the questions `ids` the caller may
@@ -1067,6 +1098,274 @@ impl AiBankReq {
                     .iter()
                     .any(|a| !(0..q.options.len()).any(|i| letter(i) == *a))
         })
+    }
+}
+
+// ---------------------------------------------------------------- corpus (v1.3)
+
+/// Most questions one corpus may hold (`tooMany` above), the largest page body, and the text caps per language.
+pub const CORPUS_MAX_TOTAL: usize = 20_000;
+const CORPUS_PAGE_BYTES: usize = 3_500_000;
+const CORPUS_STEM_CHARS: usize = 600;
+const CORPUS_OPTION_CHARS: usize = 150;
+const CORPUS_EXPL_CHARS: usize = 400;
+
+/// What `POST /internal/ai/gen/corpus` asks (after validation): the source selection of [`GenSourceReq`] (its `max` is
+/// not used), the offset and the page size (1 ..= 200).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenCorpusReq {
+    pub source: GenSourceReq,
+    pub after: usize,
+    pub limit: usize,
+}
+
+/// The first-page extras of a corpus answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CorpusHead {
+    pub banks: Vec<(i64, String)>,
+    pub strata: Vec<GenStratum>,
+    pub previous: Vec<Tri>,
+}
+
+/// A page of the corpus.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CorpusPage {
+    pub user_id: i64,
+    pub total: usize,
+    /// The offset of the next page, `None` on the last one
+    pub next: Option<usize>,
+    pub head: Option<CorpusHead>,
+    pub items: Vec<Value>,
+}
+
+/// The answer of [`Store::gen_corpus`].
+#[derive(Debug, Clone, PartialEq)]
+pub enum GenCorpus {
+    /// The refusals of the source read: `notAllowed`, `notFound`, `aiSource`
+    Refused(GenSource),
+    TooFew {
+        have: usize,
+    },
+    TooMany,
+    Page(Box<CorpusPage>),
+}
+
+impl GenCorpus {
+    /// The route's answer (HTTP 200 in every case).
+    pub fn to_json(&self) -> Value {
+        match self {
+            GenCorpus::Refused(r) => r.to_json(),
+            GenCorpus::TooFew { have } => json!({"ok": false, "reason": "tooFew", "have": have}),
+            GenCorpus::TooMany => {
+                json!({"ok": false, "reason": "tooMany", "max": CORPUS_MAX_TOTAL})
+            }
+            GenCorpus::Page(p) => {
+                let mut m = serde_json::Map::new();
+                m.insert("ok".into(), json!(true));
+                m.insert("user".into(), json!({"id": p.user_id}));
+                if let Some(h) = &p.head {
+                    let banks: Vec<Value> = h
+                        .banks
+                        .iter()
+                        .map(|(id, name)| json!({"id": id, "name": name}))
+                        .collect();
+                    m.insert("banks".into(), Value::Array(banks));
+                }
+                m.insert("total".into(), json!(p.total));
+                m.insert("next".into(), json!(p.next));
+                if let Some(h) = &p.head {
+                    let strata: Vec<Value> = h
+                        .strata
+                        .iter()
+                        .map(|s| json!({"bank": s.bank, "sheet": s.sheet, "n": s.n, "multi": s.multi}))
+                        .collect();
+                    m.insert("strata".into(), Value::Array(strata));
+                    let previous: Vec<Value> = h.previous.iter().map(tri_present).collect();
+                    m.insert("previous".into(), Value::Array(previous));
+                }
+                m.insert("items".into(), Value::Array(p.items.clone()));
+                Value::Object(m)
+            }
+        }
+    }
+}
+
+/// `{en, zh, ja}` of the non-empty texts only: a language a question does not have is an absent key.
+fn tri_present(t: &Tri) -> Value {
+    let mut m = serde_json::Map::new();
+    for (k, v) in [("en", &t.en), ("zh", &t.zh), ("ja", &t.ja)] {
+        if !v.is_empty() {
+            m.insert(k.into(), json!(v));
+        }
+    }
+    Value::Object(m)
+}
+
+/// One corpus item: the whole question in the three languages (caps per language), the correct option positions.
+fn corpus_item(id: &str, sheet: &str, q: &Question, diff: Option<&'static str>) -> Value {
+    let lang_opt = |z: &Option<Zh>, i: usize| -> String {
+        z.as_ref()
+            .and_then(|z| z.options.as_ref())
+            .and_then(|o| o.get(i))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let zh_stem = q.zh.as_ref().map(|z| z.stem.as_str()).unwrap_or("");
+    let ja_stem = q.ja.as_ref().map(|z| z.stem.as_str()).unwrap_or("");
+    let stem = Tri {
+        en: cut(&q.stem, CORPUS_STEM_CHARS),
+        zh: cut(zh_stem, CORPUS_STEM_CHARS),
+        ja: cut(ja_stem, CORPUS_STEM_CHARS),
+    };
+    let options: Vec<Value> = q
+        .options
+        .iter()
+        .enumerate()
+        .map(|(i, o)| {
+            tri_present(&Tri {
+                en: cut(&o.text, CORPUS_OPTION_CHARS),
+                zh: cut(&lang_opt(&q.zh, i), CORPUS_OPTION_CHARS),
+                ja: cut(&lang_opt(&q.ja, i), CORPUS_OPTION_CHARS),
+            })
+        })
+        .collect();
+    let expl = |pick: fn(&Explain) -> &Option<ExplainText>| -> String {
+        q.explain
+            .as_ref()
+            .and_then(|e| pick(e).as_ref())
+            .map(|t| cut(&t.explanation, CORPUS_EXPL_CHARS))
+            .unwrap_or_default()
+    };
+    let explanation = Tri {
+        en: expl(|e| &e.en),
+        zh: expl(|e| &e.zh),
+        ja: expl(|e| &e.ja),
+    };
+    let answer: Vec<usize> = match &q.answer {
+        Answer::Letters(l) => q
+            .options
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| l.contains(&o.key))
+            .map(|(i, _)| i)
+            .collect(),
+        Answer::Indexes(_) => Vec::new(),
+    };
+    json!({
+        "id": id,
+        "sheet": sheet,
+        "kind": if q.kind == Kind::Multi { "multi" } else { "single" },
+        "stem": tri_present(&stem),
+        "options": options,
+        "answer": answer,
+        "explanation": tri_present(&explanation),
+        "diff": diff,
+    })
+}
+
+impl Store {
+    /// `POST /internal/ai/gen/corpus` for `user`: EVERY eligible question of the source (`wrong`: all the caller's wrong
+    /// questions of the checked sheets) in source order, never sampled, as one page from offset `after`. Same rights and
+    /// access checks as [`Store::gen_source`]; more than [`CORPUS_MAX_TOTAL`] questions is `TooMany`. Never writes.
+    pub fn gen_corpus(&self, user: i64, req: &GenCorpusReq) -> Result<GenCorpus, DbError> {
+        let (viewer, _who, targets, bank_names) = match self.gen_targets(user, &req.source)? {
+            Ok(found) => *found,
+            Err(refusal) => return Ok(GenCorpus::Refused(refusal)),
+        };
+        let wrong_of = (req.source.kind == GenKind::Wrong).then_some(user);
+        // (bank, first seq, sheet, questions as (id, question, multi))
+        type SheetRead = (i64, i64, String, Vec<(String, Question, bool)>);
+        let mut read: Vec<SheetRead> = Vec::new();
+        let mut total = 0usize;
+        for (bank, sheet) in &targets {
+            let rows = {
+                let g = self.lock();
+                sheet_rows(&g, *bank, sheet, wrong_of)?
+            };
+            let mut first = i64::MAX;
+            let mut qs = Vec::new();
+            for (id, seq, data) in rows {
+                if let Some((src, q)) = parse_source(id.clone(), &data) {
+                    first = first.min(seq);
+                    qs.push((id, q, src.multi));
+                    total += 1;
+                    if total > CORPUS_MAX_TOTAL {
+                        return Ok(GenCorpus::TooMany);
+                    }
+                }
+            }
+            // A sheet gone between the steps, or without a usable question, is skipped
+            if !qs.is_empty() {
+                read.push((*bank, first, sheet.clone(), qs));
+            }
+        }
+        read.sort_by_key(|(bank, first, _, _)| (*bank, *first));
+        if total < req.source.min {
+            return Ok(GenCorpus::TooFew { have: total });
+        }
+        // The page: items from offset `after`, at most `limit`, stopping before the body cap (at least one item)
+        let mut picked: Vec<(&str, &str, &Question)> = Vec::new();
+        let mut pos = 0usize;
+        for (_, _, sheet, qs) in &read {
+            for (id, q, _) in qs {
+                if pos >= req.after && picked.len() < req.limit {
+                    picked.push((id.as_str(), sheet.as_str(), q));
+                }
+                pos += 1;
+            }
+        }
+        let labels = {
+            let ids: Vec<&str> = picked.iter().map(|(id, _, _)| *id).collect();
+            let g = self.lock();
+            difficulties(&g, &ids)?
+        };
+        let mut items = Vec::with_capacity(picked.len());
+        let mut bytes = 0usize;
+        for (id, sheet, q) in picked {
+            let item = corpus_item(id, sheet, q, labels.get(id).copied());
+            let size = item.to_string().len();
+            if !items.is_empty() && bytes + size > CORPUS_PAGE_BYTES {
+                break;
+            }
+            bytes += size;
+            items.push(item);
+        }
+        let end = req.after + items.len();
+        let next = (end < total).then_some(end);
+        let head = if req.after == 0 {
+            let strata: Vec<GenStratum> = read
+                .iter()
+                .map(|(bank, _, sheet, s)| GenStratum {
+                    bank: *bank,
+                    sheet: sheet.clone(),
+                    n: s.len(),
+                    multi: s.iter().filter(|x| x.2).count(),
+                })
+                .collect();
+            let source_banks: BTreeSet<i64> = strata.iter().map(|s| s.bank).collect();
+            let previous = {
+                let g = self.lock();
+                previous_tris(&g, &viewer, &source_banks)?
+            };
+            let banks = source_banks
+                .iter()
+                .filter_map(|b| bank_names_get(&bank_names, *b))
+                .collect();
+            Some(CorpusHead {
+                banks,
+                strata,
+                previous,
+            })
+        } else {
+            None
+        };
+        Ok(GenCorpus::Page(Box::new(CorpusPage {
+            user_id: user,
+            total,
+            next,
+            head,
+            items,
+        })))
     }
 }
 

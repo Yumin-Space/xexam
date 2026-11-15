@@ -33,7 +33,7 @@ const busyPhase = (v: Pick<EntryView, 'phase'>): boolean => v.phase === 'loading
 export const isNotAsked = (v: Pick<EntryView, 'text' | 'phase' | 'note'> | null): boolean =>
   v == null || (v.text.trim() === '' && !busyPhase(v) && v.note == null);
 
-// ---------------------------------------------------------------- the press (AI 提示 / AI 解释 / a card's AI 解析)
+// ---------------------------------------------------------------- the press (AI 提示 / AI 解析 / a card's AI 解析)
 
 /**
  * `open` = `runner.open` (memory, else the saved answer, else one new ask); `ask` = `runner.regenerate` (the entry is

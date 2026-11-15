@@ -138,7 +138,7 @@ fn a_fresh_database_is_schema_5_with_every_column_and_index() {
     let store = open(dir.path());
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "6");
+            assert_eq!(schema_of(c), "7");
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
@@ -193,7 +193,7 @@ fn upgraded_from(version: &str, with_rows: bool) {
     drop(copy);
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "6");
+            assert_eq!(schema_of(c), "7");
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
@@ -295,7 +295,7 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
         .starts_with("xexam-ai-schema3-"));
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "6");
+            assert_eq!(schema_of(c), "7");
             let l = xexam_ai_service::store::tables::load_limits(c)?;
             assert_eq!(
                 (
@@ -356,21 +356,21 @@ fn memory_tokens_after_upgrade(from: &str, before: i64) -> i64 {
 
 #[test]
 fn the_memory_length_moves_to_tokens_once() {
-    // the old defaults (300 of v0.8 / v0.9, 200 of v1.0) -> the new default 1000 tokens, from every upgradable schema
+    // the old defaults (300 of v0.8 / v0.9, 200 of v1.0) -> 1000 tokens (schema 6), then 200 (schema 7: untouched default), from every upgradable schema
     for from in ["1", "2", "3"] {
-        assert_eq!(memory_tokens_after_upgrade(from, 300), 1000, "from {from}");
-        assert_eq!(memory_tokens_after_upgrade(from, 200), 1000, "from {from}");
+        assert_eq!(memory_tokens_after_upgrade(from, 300), 200, "from {from}");
+        assert_eq!(memory_tokens_after_upgrade(from, 200), 200, "from {from}");
     }
     // a value an administrator chose is multiplied by 1.5
     assert_eq!(memory_tokens_after_upgrade("3", 500), 750);
     assert_eq!(memory_tokens_after_upgrade("3", 50), 75);
-    // a fresh database reads 1000
+    // a fresh database reads 200
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     let v = store
         .read(|c| Ok(xexam_ai_service::store::tables::load_limits(c)?.memory_tokens))
         .expect("read");
-    assert_eq!(v, 1000);
+    assert_eq!(v, 200);
     drop(store);
     // a value set after the upgrade survives the next start (the move runs only while upgrading)
     {
@@ -408,7 +408,7 @@ fn a_schema_5_file_gets_its_three_lengths_in_tokens_with_a_backup() {
         (l.reply_max_tokens, l.gen_call_tokens, l.memory_tokens)
     };
     // the old defaults become the new defaults
-    assert_eq!(tokens_after(1000, 10000, 200), (3000, 20000, 1000));
+    assert_eq!(tokens_after(1000, 10000, 200), (3000, 20000, 200));
     // other values: x 1.5
     assert_eq!(tokens_after(2000, 20000, 600), (3000, 30000, 900));
     assert_eq!(tokens_after(1, 1000, 50), (1, 1500, 75));
@@ -516,17 +516,17 @@ fn a_newer_schema_is_refused_with_the_schema_5_line() {
     let path = dir.path().join(DB_FILE);
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '7' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '8' WHERE key = 'schema'", [])
             .expect("set");
     }
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 7 must be refused"),
+        Ok(_) => panic!("schema 8 must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 7, written by a newer ai-service; this version (schema 6) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 8, written by a newer ai-service; this version (schema 7) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );
@@ -544,6 +544,8 @@ fn the_start_up_repair_marks_streaming_answers_as_interrupted() {
                 data::insert_message(
                     tx,
                     &data::NewMessage {
+                        parent: None,
+                        connection: None,
                         chat,
                         role: "assistant",
                         content: "",
@@ -1380,6 +1382,8 @@ fn chat_and_message_json_carry_the_v09_keys() {
             let msg = data::insert_message(
                 tx,
                 &data::NewMessage {
+                    parent: None,
+                    connection: None,
                     chat,
                     role: "user",
                     content: "hi",
@@ -1420,6 +1424,8 @@ fn chat_and_message_json_carry_the_v09_keys() {
 
 fn usage(user: i64, status: &'static str, tin: i64, tout: i64) -> UsageRow {
     UsageRow {
+        connection_id: None,
+        connection: None,
         user_id: Some(user),
         at: NOW,
         kind: "chat",
@@ -1517,6 +1523,8 @@ fn the_retention_sweep_works_in_batches_and_keeps_running_chats() {
                 data::insert_message(
                     tx,
                     &data::NewMessage {
+                        parent: None,
+                        connection: None,
                         chat,
                         role: "user",
                         content: "x",

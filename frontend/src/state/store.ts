@@ -1,8 +1,9 @@
 // Application state: one typed module-level object. Page-local UI state (filters, open panels, a pending upload preview)
 // lives in module-level variables of the page file itself; only state shared between pages lives here.
 import type {
-  AiService, AttemptKind, AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
+  AiService, AttemptKind, AttemptRequest, AuthUser, Bank, BankSummary, HistoryEntry, Info, Mode, Progress, Question, RecordDetail, RecordSummary, Settings,
 } from '../types/api.ts';
+import type { UnsavedState } from './unsaved.ts';
 import { poolOf, type Answer } from '../domain/grading.ts';
 import { type Route } from '../router.ts';
 import { firstPaintSettings } from './settings-cache.ts';
@@ -73,6 +74,8 @@ export interface ResultState {
   limit: number | null;
   /** v1.1: how the exam ended; null for a practice */
   ended: 'submit' | 'timeUp' | null;
+  /** v1.3 (A1): set while the result is not saved (the request kept for the banner's retry); gone once it is saved and the "saved" line has shown */
+  unsaved?: { body: AttemptRequest; state: UnsavedState };
 }
 
 export interface SetupConfig {

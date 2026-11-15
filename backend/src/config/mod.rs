@@ -23,6 +23,10 @@ pub struct Config {
     /// `api::internal`). `None` = `<data dir>/link`, resolved by [`Config::link_dir_or_default`] when `serve` starts, after
     /// the command-line options (so `serve --data X` uses `X/link`). The token itself is never part of the config.
     pub link_dir: Option<PathBuf>,
+    /// `XEXAM_BEHIND_PROXY=1` (v1.3, set in the image): the backend sits behind the bundled Nginx, which always overwrites
+    /// `X-Real-IP` and `X-Geo-*`, so they are trusted from any peer. Without it they are trusted only from a loopback peer
+    /// (see `activity::trusts_forwarded`); a standalone run records the connecting address.
+    pub behind_proxy: bool,
 }
 
 pub const MAX_UPLOAD: usize = 20 * 1024 * 1024;
@@ -136,6 +140,7 @@ impl Config {
             link_dir: get("XEXAM_LINK_DIR")
                 .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from),
+            behind_proxy: flag("XEXAM_BEHIND_PROXY"),
         }
     }
 
@@ -162,6 +167,13 @@ mod link_dir_tests {
             },
             "0.0.0".to_string(),
         )
+    }
+
+    #[test]
+    fn behind_proxy_is_off_unless_set() {
+        assert!(!cfg(&[]).behind_proxy);
+        assert!(!cfg(&[("XEXAM_BEHIND_PROXY", "0")]).behind_proxy);
+        assert!(cfg(&[("XEXAM_BEHIND_PROXY", "1")]).behind_proxy);
     }
 
     #[test]

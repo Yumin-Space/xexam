@@ -171,7 +171,8 @@ export const MSG_PASSWORD_CHANGE_REQUIRED = '请先设置新密码。';
 /** The route of the sign-in itself: its 401 is a wrong username or password, not a lost session */
 const LOGIN_PATH = '/api/auth/login';
 
-export type AuthProblem = 'signin' | 'password';
+/** `expired` (v1.3): a 401 with code `auth.expired` (the session ended by its time rule); handled like `signin`, but the page says so */
+export type AuthProblem = 'signin' | 'password' | 'expired';
 
 let authHandler: (problem: AuthProblem) => void = () => {};
 
@@ -186,7 +187,7 @@ export function isSignInError(e: unknown): boolean {
 }
 
 function authProblem(path: string, e: ApiError): AuthProblem | null {
-  if (e.status === 401 && path !== LOGIN_PATH) return 'signin';
+  if (e.status === 401 && path !== LOGIN_PATH) return e.code === 'auth.expired' ? 'expired' : 'signin';
   if (e.status === 403 && e.kind === 'http' && (e.serverMessage === MSG_PASSWORD_CHANGE_REQUIRED || e.code === 'auth.password')) return 'password';
   return null;
 }
@@ -227,6 +228,33 @@ function retryWait(r: Response, retry: number): number {
   const header = r.headers.get('Retry-After')?.trim() ?? '';
   if (/^\d{1,9}$/.test(header)) return Math.min(Number(header), RETRY_MAX_WAIT);
   return RETRY_WAITS[Math.min(retry, RETRY_WAITS.length) - 1] ?? 1;
+}
+
+/**
+ * v1.3 (A1 / A6): the automatic retries of a request that failed for a transient reason (no connection, a try that timed out,
+ * 502 / 503 / 504). Every GET / HEAD: 3 tries, 1 s then 2 s. POST /api/attempt (the save is idempotent): 3 tries, 1 s then 3 s.
+ * Every other POST: one try.
+ */
+export interface RetryPlan {
+  tries: number;
+  /** Seconds to wait before the 2nd and the 3rd try */
+  waits: readonly number[];
+}
+
+export function retryPlan(method: string, path: string): RetryPlan {
+  const m = method.toUpperCase();
+  if (m === 'GET' || m === 'HEAD') return { tries: 3, waits: [1, 2] };
+  if (m === 'POST' && path === '/api/attempt') return { tries: 3, waits: [1, 3] };
+  return { tries: 1, waits: [] };
+}
+
+/** Whether a failure is worth another try: the connection or the time limit failed, or a gateway answered 502 / 503 / 504 */
+export function isTransient(e: unknown): boolean {
+  if (!(e instanceof ApiError)) return false;
+  if (e.kind === 'network') return true;
+  // A coded answer of the backend itself (a deliberate 503 such as `ai.serviceOff`) is final; the proxy's own are not
+  if (e.code !== undefined && e.code !== 'net.backendDown' && e.code !== 'ai.unavailable') return false;
+  return e.status === 502 || e.status === 503 || e.status === 504;
 }
 
 export interface GetOptions {
@@ -336,12 +364,25 @@ async function attemptOnce<T>(
 async function send<T>(input: string, init?: RequestInit, timeoutMs?: number): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const retries = method === 'GET' || method === 'HEAD';
+  const plan = retryPlan(method, input.split('?')[0] ?? input);
+  // `attempt` counts the tries of the proxy's 429 (GET / HEAD only); `failures` the transient failures
+  let failures = 0;
   for (let attempt = 1; ; attempt += 1) {
     const ctrl = timeoutMs != null && timeoutMs > 0 ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : null;
     let res: Try<T>;
     try {
       res = await attemptOnce<T>(input, init, retries && attempt < RATE_LIMIT_TRIES ? attempt : null, ctrl?.signal);
+    } catch (e) {
+      if (timer != null) clearTimeout(timer);
+      if (failures + 1 < plan.tries && isTransient(e)) {
+        const wait = plan.waits[failures] ?? 1;
+        failures += 1;
+        // the wait between tries is outside the time limit of a try
+        await pause(wait * 1000);
+        continue;
+      }
+      throw e;
     } finally {
       if (timer != null) clearTimeout(timer);
     }

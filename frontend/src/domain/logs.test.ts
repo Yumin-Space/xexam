@@ -1,5 +1,5 @@
 // System log page: the answer parsing, merging (cap, repeats, gaps, a backend restart), the level filter and the search, the
-// "at the bottom" test and the poll loop (fake timers: every 0.5 s, one request at a time, longer waits after failed reads,
+// "at the bottom" test and the poll loop (fake timers: every 2 s, one request at a time, longer waits after failed reads,
 // none while hidden, paused or left, no timer left behind).
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -183,12 +183,12 @@ function fakeHost(): FakeHost {
   };
 }
 
-test('poll interval: every 0.5 seconds; after failed reads 1, 2, 4, 8, then every 10 seconds', () => {
-  assert.equal(POLL_MS, 500);
+test('poll interval: every 2 seconds; after failed reads 4, 8, then every 10 seconds', () => {
+  assert.equal(POLL_MS, 2000);
   assert.equal(POLL_MAX_MS, 10_000);
-  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 50, 5000].map((n) => pollDelay(n)), [500, 1000, 2000, 4000, 8000, 10_000, 10_000, 10_000, 10_000]);
+  assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 50, 5000].map((n) => pollDelay(n)), [2000, 4000, 8000, 10_000, 10_000, 10_000, 10_000, 10_000, 10_000]);
   // nonsense counts are no failures; the wait is never shorter than the interval, even with a cap under it
-  assert.deepEqual([-1, Number.NaN].map((n) => pollDelay(n)), [500, 500]);
+  assert.deepEqual([-1, Number.NaN].map((n) => pollDelay(n)), [2000, 2000]);
   assert.equal(pollDelay(3, 1500, 1000), 1500);
 });
 
@@ -241,7 +241,7 @@ test('poller: failed reads wait longer each time; a good read goes back to POLL_
     await f.fire();
   }
   assert.equal(p.failures, 6);
-  assert.deepEqual(f.delays, [1000, 2000, 4000, 8000, 10_000, 10_000]);
+  assert.deepEqual(f.delays, [4000, 8000, 10_000, 10_000, 10_000, 10_000]);
   await f.settle(true);
   assert.equal(p.failures, 0);
   assert.equal(f.delays.at(-1), POLL_MS);
@@ -255,13 +255,13 @@ test('poller: Resume asks at once even while backing off; opening the page again
   await f.settle(false);
   await f.fire();
   await f.settle(false);
-  assert.deepEqual(f.delays, [1000, 2000]);
+  assert.deepEqual(f.delays, [4000, 8000]);
   p.setPaused(true);
   assert.equal(f.timers(), 0, 'paused: the backed-off timer is cleared');
   p.setPaused(false);
   assert.equal(f.calls(), 3, 'Resume asks at once');
   await f.settle(false);
-  assert.equal(f.delays.at(-1), 4000, 'and keeps the failure count');
+  assert.equal(f.delays.at(-1), 10_000, 'and keeps the failure count');
   p.stop();
   assert.equal(f.timers(), 0);
   p.start();

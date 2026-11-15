@@ -1673,6 +1673,20 @@ async fn env_whole() -> E {
     e
 }
 
+/// The text of a message content: a string, or the text parts of a content-part array joined like the plain form.
+fn content_text(c: &Value) -> Option<String> {
+    match c {
+        Value::String(s) => Some(s.clone()),
+        Value::Array(a) => Some(
+            a.iter()
+                .filter_map(|b| b["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        ),
+        _ => None,
+    }
+}
+
 /// (system, user) of every whole-file call the stub got (OpenAI-compatible form), in order.
 fn whole_calls(t: &TestApp) -> Vec<(String, String)> {
     t.stub
@@ -1680,12 +1694,12 @@ fn whole_calls(t: &TestApp) -> Vec<(String, String)> {
         .iter()
         .filter_map(|r| {
             let m = r.body["messages"].as_array()?;
-            let sys = m.first()?["content"].as_str()?;
+            let sys = content_text(&m.first()?["content"])?;
             if !sys.starts_with("You work on one file of a user of Xexam") {
                 return None;
             }
-            let user = m.iter().rev().find(|x| x["role"] == "user")?["content"].as_str()?;
-            Some((sys.to_string(), user.to_string()))
+            let user = content_text(&m.iter().rev().find(|x| x["role"] == "user")?["content"])?;
+            Some((sys, user))
         })
         .collect()
 }
@@ -1718,6 +1732,12 @@ fn windowed_calls(t: &TestApp) -> usize {
 #[tokio::test]
 async fn a_file_of_seventy_unnumbered_questions_is_counted_seventy_in_one_call_and_cut_to_fifty() {
     let e = env_whole().await;
+    e.t.post(
+        "/api/ai/admin/limits",
+        &e.admin,
+        json!({"importMaxQuestions": 50}),
+    )
+    .await;
     let id = upload_ok(&e, &e.user, "workbook.docx", docx_of(&unnumbered_lines())).await;
     let j = wait_for(&e.t, &e.user, id, Some("confirm"), &["failed", "cancelled"]).await;
     assert_eq!(j["phase"], "confirm", "{j}");
@@ -1832,8 +1852,15 @@ async fn every_call_of_a_job_starts_with_the_same_bytes_and_writing_waits_for_ca
 #[tokio::test]
 async fn an_anthropic_request_carries_the_breakpoint_on_the_prefix_and_the_task_follows() {
     let e = env_whole().await;
-    e.t.configure_anthropic(&e.admin, "demo-claude").await;
-    let id = upload_ok(&e, &e.user, "Kitchen notes.docx", docx_of(&six())).await;
+    // a Sonnet model caches from 1024 tokens: the file is padded with notes so the prefix reaches that size
+    e.t.configure_anthropic(&e.admin, "demo-sonnet").await;
+    let mut lines = six();
+    // the notes sit before the first question, so no question range runs through them
+    lines.splice(
+        1..1,
+        (0..60).map(|i| format!("Note {i}: {}", en_text(900 + i, 14))),
+    );
+    let id = upload_ok(&e, &e.user, "Kitchen notes.docx", docx_of(&lines)).await;
     wait_for(&e.t, &e.user, id, Some("confirm"), &["failed", "cancelled"]).await;
     let (s, v) = confirm(&e, &e.user, id).await;
     assert_eq!(s, 200, "{v}");
@@ -1870,6 +1897,57 @@ async fn an_anthropic_request_carries_the_breakpoint_on_the_prefix_and_the_task_
         assert_eq!(c[0]["text"], bodies[0]["messages"][0]["content"][0]["text"]);
         assert_eq!(b["system"], bodies[0]["system"]);
     }
+}
+
+#[tokio::test]
+async fn a_prefix_below_the_models_cache_minimum_goes_out_without_markers() {
+    let e = env_whole().await;
+    // an unknown model gets the largest minimum (4096 tokens): the small file's prefix is far below it
+    e.t.configure_anthropic(&e.admin, "demo-claude").await;
+    let id = upload_ok(&e, &e.user, "Kitchen notes.docx", docx_of(&six())).await;
+    wait_for(&e.t, &e.user, id, Some("confirm"), &["failed", "cancelled"]).await;
+    let (s, v) = confirm(&e, &e.user, id).await;
+    assert_eq!(s, 200, "{v}");
+    let done = wait_for(&e.t, &e.user, id, None, &["done", "failed"]).await;
+    assert_eq!(done["state"], "done", "{done}");
+    let bodies: Vec<Value> =
+        e.t.stub
+            .requests()
+            .iter()
+            .filter(|r| r.path.contains("/anthropic/"))
+            .map(|r| r.body.clone())
+            .collect();
+    assert!(bodies.len() >= 2, "{}", bodies.len());
+    for b in &bodies {
+        assert!(
+            !b.to_string().contains("cache_control"),
+            "no marker on a prefix the provider cannot cache"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_finished_import_leaves_one_activity_event_with_the_bank_name_and_the_count() {
+    let e = env_whole().await;
+    let id = upload_ok(&e, &e.user, "Kitchen notes.docx", docx_of(&six())).await;
+    wait_for(&e.t, &e.user, id, Some("confirm"), &["failed", "cancelled"]).await;
+    let (s, v) = confirm(&e, &e.user, id).await;
+    assert_eq!(s, 200, "{v}");
+    let done = wait_for(&e.t, &e.user, id, None, &["done", "failed"]).await;
+    assert_eq!(done["state"], "done", "{done}");
+    assert!(e.t.app.0.deliver_outbox().await >= 1);
+    let st = e.t.backend.st();
+    let ev: Vec<&Value> = st
+        .activity
+        .iter()
+        .filter(|a| a["action"] == "ai.import.create")
+        .collect();
+    assert_eq!(ev.len(), 1, "{:?}", st.activity);
+    assert_eq!(ev[0]["object"], done["name"]);
+    assert_eq!(ev[0]["detail"]["questions"], done["made"]);
+    assert_eq!(ev[0]["username"], "alexandra_k");
+    // neither the file name nor any question text travels in the event
+    assert!(!ev[0].to_string().contains("Kitchen notes.docx"));
 }
 
 #[tokio::test]
@@ -1914,6 +1992,12 @@ async fn cached_tokens_of_the_import_calls_are_recorded_and_shown_in_the_job() {
 #[tokio::test]
 async fn a_model_that_misses_questions_makes_the_count_about_n() {
     let e = env_whole().await;
+    e.t.post(
+        "/api/ai/admin/limits",
+        &e.admin,
+        json!({"importMaxQuestions": 50}),
+    )
+    .await;
     // a model that skips every ninth question: 63 of 70; the local count of "A." lines says 70
     let inner = good_model();
     e.t.stub.st().script = Some(Arc::new(move |system: &str, user: &str| {

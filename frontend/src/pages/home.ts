@@ -3,7 +3,7 @@
 import '../styles/home.css';
 import { bankName, modeName, pageHead, recordBankNames } from '../components/common.ts';
 import { aiSetBadge } from '../components/ai-badge.ts';
-import { genCardHost, homeGenButton } from '../components/ai-gen.ts';
+import { genCardHost, homeGenButton, placeholderRow } from '../components/ai-gen.ts';
 import { aiPlusNow, naTag, summaryButton } from '../components/ai-plus-controls.ts';
 import { kindTag } from '../components/kind-tag.ts';
 import { holdTip } from '../components/tooltip.ts';
@@ -220,7 +220,7 @@ function startPanel(nb: Notebook): HTMLElement {
     const info = h('span', { class: 'sub home-selinfo' });
     const label = h('label', { class: 'home-bankrow' }, box,
       h('span', { class: 'grow' },
-        h('span', { class: 'name' }, bank.name),
+        h('span', { class: 'name', title: bank.name }, bank.name),
         subLine(t('home.pick.bankSub', { questions: tn('common.questions', bank.total), sheets: tn('common.sheets', usable.length) }),
           keys.reduce((n, k) => n + (nb.byKey.get(k) ?? 0), 0)),
         info));
@@ -276,7 +276,7 @@ function startPanel(nb: Notebook): HTMLElement {
       allKeys.length > 1 ? h('div', { class: 'home-pickacts' },
         h('button', { class: 'btn quiet', type: 'button', onclick: () => toggle(allKeys, true) }, t('home.pick.all')),
         h('button', { class: 'btn quiet', type: 'button', onclick: () => toggle(allKeys, false) }, t('home.pick.none'))) : null),
-    h('div', { class: 'home-picklist' }, groups),
+    h('div', { class: 'home-picklist' }, placeholderRow('home'), groups),
     hidden ? h('p', { class: 'dim home-note' }, tn('home.pick.hiddenBanks', hidden)) : null);
 
   // Range (mode)

@@ -6,11 +6,12 @@
 // page comes back (the address keeps the route, which opens again after signing in); a 403 "choose a new password first"
 // brings that page. A different user signing in on a page that still holds someone's data reloads the page, so nothing of
 // the previous user (data, page state, unfinished exam) survives in memory.
-import { changePassword, fetchAuthState, login, logout } from '../api/auth.ts';
+import { changePassword, fetchAuthState, loginSession, logout } from '../api/auth.ts';
 import { ApiError, isSignInError, setAuthHandler, type AuthProblem } from '../api/client.ts';
 import { submitAttempt } from '../api/progress.ts';
 import { fetchBank, fetchBanks, fetchInfo } from '../api/bank.ts';
 import { fetchProgress, fetchRecord, fetchRecords } from '../api/progress.ts';
+import { hardSoonMinutes } from '../domain/activity.ts';
 import { countedResults, kindOf } from '../domain/attempt.ts';
 import { aiServiceOf } from '../domain/ai-settings.ts';
 import {
@@ -22,7 +23,7 @@ import { finalResults, isLocked, listNumbers, openCount, openNumbers } from '../
 import { t, tn } from '../i18n/index.ts';
 import { errorText } from '../i18n/errors.ts';
 import { parseHash, routeHash, sameRoute, type Route } from '../router.ts';
-import type { AttemptKind, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
+import type { AttemptKind, AttemptRequest, AttemptResponse, AuthUser, BankDeleted, Mode, Question, QuestionLang, RecordDetail, RecordsDeleted, UiLang } from '../types/api.ts';
 import { dropAiSummary } from '../components/ai-summary.ts';
 import { ask, closeAllDialogs } from '../utils/dialog.ts';
 import { toast } from '../utils/toast.ts';
@@ -31,6 +32,9 @@ import { loadSettings, migrateBrowserQuestionLang, showCachedSettings, updateSet
 import { adoptLegacySession, clearSaved, loadSaved, newSessionKey, saveSession as persist, type SavedSession } from './session-storage.ts';
 import { DEFAULT_SETTINGS, cachedSettingsOf, carryLanguage, rememberUser } from './settings-cache.ts';
 import { paths, setStorageOwner } from './storage-keys.ts';
+import { nextUnsaved } from './unsaved.ts';
+import { visitToReport } from './visits.ts';
+import { reportVisit } from '../api/activity.ts';
 import { S, clearUserData, setBankData, type ResultRow, type Session } from './store.ts';
 
 let renderer: () => void = () => {};
@@ -118,6 +122,41 @@ function settle(r: Route): Route {
   return r;
 }
 
+/** v1.3: whether the server wants page visits of this user (`logVisits` of the auth state); set after sign-in and at every check */
+let logVisits = false;
+
+/** v1.3: the end of an administrator's sign-in (a hard cut, no extension); one toast when it is under 10 minutes away */
+let hardEndsAt: string | null = null;
+let hardWarned = false;
+let hardTimer: number | undefined;
+
+function warnHardEnd(): void {
+  if (hardWarned || !S.user || S.authView) return;
+  const n = hardSoonMinutes(hardEndsAt, Date.now());
+  if (n == null) return;
+  hardWarned = true;
+  toast(t('auth.hardSoon', { n }), 8000);
+}
+
+/** Remembers the session rule of the last answer (login or auth state); a new end time allows a new warning */
+function noteSession(info: { hardEndsAt: string | null } | null | undefined): void {
+  const end = info?.hardEndsAt ?? null;
+  if (end !== hardEndsAt) hardWarned = false;
+  hardEndsAt = end;
+  window.clearInterval(hardTimer);
+  if (end) {
+    hardTimer = window.setInterval(warnHardEnd, 60_000);
+    warnHardEnd();
+  }
+}
+
+/** Reports a page visit when the server asked for it (a route-name change); never disturbs the page */
+function noteVisit(from: string | null, to: string): void {
+  if (S.authView || !S.user) return;
+  const page = visitToReport(logVisits, from, to);
+  if (page) void reportVisit(page);
+}
+
 function switchTo(next: Route): void {
   const from = S.route;
   if (from.name === 'quiz' && next.name !== 'quiz' && S.session) {
@@ -129,6 +168,7 @@ function switchTo(next: Route): void {
   S.route = next;
   S.navOpen = false;
   for (const fn of routeHooks) fn(from, next);
+  noteVisit(from.name, next.name);
   checkSession();
 }
 
@@ -257,11 +297,13 @@ function refreshSignInHint(): void {
 
 /** A request showed that the user must sign in again (401) or choose a new password first (403). */
 function onAuthProblem(problem: AuthProblem): void {
-  if (problem === 'signin') {
+  noteSession(null);
+  if (problem === 'signin' || problem === 'expired') {
     if (S.authView === 'signin') return;
     // Keep the answers of an exam in progress: after signing in again it can be continued
     if (S.route.name === 'quiz' && S.session) persistSession();
-    S.authNote = S.user ? 'expired' : null;
+    // v1.3: a 401 with code auth.expired says so even before the user was known (a reload with an ended session)
+    S.authNote = S.user || problem === 'expired' ? 'expired' : null;
     S.authView = 'signin';
     epoch += 1;
     refreshSignInHint();
@@ -292,12 +334,15 @@ async function enterApp(): Promise<void> {
     // The stamp first: a bank imported while the rest loads makes the next check read the banks once more, never less
     const st = await fetchAuthState();
     libraryStamp = st.library ?? null;
+    logVisits = st.logVisits === true;
+    noteSession(st.session);
     noteAiService(st);
     await loadAll();
     await keepFirstVisitLang();
     dataOwner = S.user?.id ?? null;
     for (const fn of signedInHooks) fn();
     S.phase = 'ready';
+    noteVisit(null, S.route.name);
     void migrateBrowserQuestionLang().then(render);
   } catch (e) {
     // A sign-in problem shows its own page (set by onAuthProblem); anything else is the fatal page
@@ -334,6 +379,8 @@ function checkSession(): void {
   fetchAuthState().then((st) => {
     const me = S.user;
     if (!me || S.authView) return;
+    logVisits = st.logVisits === true;
+    noteSession(st.session);
     if (!st.user) onAuthProblem('signin');
     else if (st.user.id !== me.id) window.location.reload();
     else if (st.user.mustChangePassword) onAuthProblem('password');
@@ -405,6 +452,11 @@ export async function boot(): Promise<void> {
   S.phase = 'loading';
   S.route = parseHash(location.hash);
   render();
+  await start();
+}
+
+/** The start-up proper (also the fatal page's retry): who is signed in, then the app, the sign-in page or the new-password page */
+async function start(): Promise<void> {
   let user: AuthUser | null;
   let state: Awaited<ReturnType<typeof fetchAuthState>>;
   try {
@@ -434,6 +486,32 @@ export async function boot(): Promise<void> {
   await enterApp();
 }
 
+let retryingStart = false;
+
+/** Whether the fatal page's retry is running (its button says 正在重新连接… and waits) */
+export const isRetryingStart = (): boolean => retryingStart;
+
+/**
+ * v1.3 (A6): the fatal page's 重试 button: runs the start-up again without a full reload (the script is loaded). A signed-in
+ * user loads everything again (the banks come back as a 304 when nothing changed); otherwise the whole start-up runs. A
+ * second press while it runs does nothing.
+ */
+export async function retryStartup(): Promise<void> {
+  if (retryingStart) return;
+  retryingStart = true;
+  render();
+  try {
+    if (S.user) await enterApp();
+    else {
+      S.phase = 'loading';
+      await start();
+    }
+  } finally {
+    retryingStart = false;
+    if (S.phase === 'fatal') render();
+  }
+}
+
 /** `user` is signed in now (this page, or another tab with the same cookie): show their password page or the app. */
 async function afterSignIn(user: AuthUser): Promise<void> {
   if (freshStart || (dataOwner != null && dataOwner !== user.id)) {
@@ -455,10 +533,12 @@ async function afterSignIn(user: AuthUser): Promise<void> {
 }
 
 /** The sign-in page: throws the ApiError of a failed sign-in (wrong name or password, too many attempts, ...). */
-export async function signIn(username: string, password: string): Promise<void> {
+export async function signIn(username: string, password: string, remember = true): Promise<void> {
   authBusy = true;
   try {
-    await afterSignIn(await login(username, password));
+    const a = await loginSession(username, password, remember);
+    noteSession(a.session);
+    await afterSignIn(a.user);
   } finally {
     authBusy = false;
   }
@@ -525,6 +605,7 @@ export async function signOut(): Promise<void> {
   closeDialogs();
   epoch += 1;
   freshStart = freshStart || dataOwner != null;
+  noteSession(null);
   clearUserData();
   setStorageOwner(null);
   S.authView = 'signin';
@@ -930,14 +1011,19 @@ export async function submit(opts: SubmitOptions = {}): Promise<void> {
     let counted = results;
     let notCounted = 0;
     let recordId: number | null = null;
+    let unsavedBody: AttemptRequest | null = null;
     try {
-      const { notCounted: gone, recordId: savedId, ...progress } = await submitAttempt({
+      const body: AttemptRequest = {
         results: results.map((r) => {
           const a = exam ? examAnswer(r.ans, r.correct) : r.ans;
           return { id: r.q.id, correct: r.correct, answer: Array.isArray(a) ? a : null };
         }),
         sheets: se.sheets, mode: se.mode, seconds, kind: se.kind, key: se.key, startedAt: se.startedAt, ...attemptTail(se.kind, timed, end),
-      });
+      };
+      unsavedBody = body;
+      // the client retries a lost connection or a 502 / 503 / 504 by itself (api/client.ts retryPlan): the save is idempotent
+      const { notCounted: gone, recordId: savedId, ...progress } = await submitAttempt(body);
+      unsavedBody = null;
       recordId = savedId ?? null;
       S.progress = progress;
       saved = true;
@@ -959,12 +1045,13 @@ export async function submit(opts: SubmitOptions = {}): Promise<void> {
         refreshLibrary().then(render, () => {});
         return;
       }
-      toast(`${t('act.submit.saveFailed')} (${errorText(e)})`, 9000);
+      // v1.3 (A1): no toast; the result page carries a banner with a retry button (the answers stay on this device)
     }
     S.session = null;
     S.result = {
       results: counted, seconds, mode: se.mode, prev, recordId, notCounted, kind: se.kind, key: se.key, startedAt: se.startedAt,
       limit: exam ? se.limit : null, ended: exam ? end : null,
+      ...(unsavedBody ? { unsaved: { body: unsavedBody, state: 'unsaved' as const } } : {}),
     };
     S.rvFilter = defaultFilter(resultCounts(counted));
     navigate({ name: 'result' });
@@ -974,6 +1061,55 @@ export async function submit(opts: SubmitOptions = {}): Promise<void> {
     if (saved) refreshRecords().then(render, () => {});
   } finally {
     submitting = false;
+  }
+}
+
+/**
+ * v1.3 (A1): the banner's retry. Sends the kept request again (the server answers a repeat with the first answer plus
+ * `duplicate`), then fills the result page like a normal save. A failure leaves the banner for another try; a 409 (the
+ * questions are gone) drops the kept result like a normal save does.
+ */
+export async function retryUnsavedResult(): Promise<void> {
+  const R = S.result;
+  const u = R?.unsaved;
+  if (!R || !u || u.state !== 'unsaved') return;
+  u.state = nextUnsaved(u.state, 'retry');
+  render();
+  try {
+    const answer: AttemptResponse = await submitAttempt(u.body);
+    if (S.result !== R) return;
+    const { notCounted: gone, recordId, ...progress } = answer;
+    S.progress = progress;
+    clearSaved();
+    const { counted, left } = countedResults(R.results, gone);
+    R.results = counted;
+    R.notCounted = left;
+    R.recordId = recordId ?? null;
+    const second = S.progress.history[1];
+    if (second && second.mode === R.mode && kindOf(second) === R.kind) R.prev = second;
+    u.state = nextUnsaved(u.state, 'ok');
+    S.rvFilter = defaultFilter(resultCounts(counted));
+    render();
+    setTimeout(() => {
+      if (S.result === R && R.unsaved === u) {
+        delete R.unsaved;
+        render();
+      }
+    }, 3500);
+    if (left) refreshLibrary().then(render, () => {});
+    refreshRecords().then(render, () => {});
+  } catch (e) {
+    if (S.authView || S.result !== R) return;
+    if (e instanceof ApiError && e.status === 409) {
+      clearSaved();
+      delete R.unsaved;
+      toast(errorText(e), 9000);
+      refreshLibrary().then(render, () => {});
+    } else {
+      u.state = nextUnsaved(u.state, 'fail');
+      toast(errorText(e), 6000);
+    }
+    render();
   }
 }
 

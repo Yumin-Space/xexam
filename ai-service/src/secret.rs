@@ -3,7 +3,9 @@
 //! The master key comes from `XEXAM_AI_SECRET_KEY` or the key file `<XEXAM_AI_DATA>/secret.key` (created on first start).
 //! From it two values are derived: the AEAD key (`SHA-256("xexam-ai aead v1" || master)`) and the key id (the first 16 hex
 //! digits of `SHA-256("xexam-ai key id v1" || master)`). Secrets are sealed with XChaCha20-Poly1305, a random 24-byte
-//! nonce each, and the AAD `"xexam-ai-secret-v1:" + name`, so a value cannot be moved to another row.
+//! nonce each. The AAD binds a value to its row: v2 (every new seal) is `"xexam-ai-secret-v2:<connection id>:<name>"`, v1
+//! (rows migrated from the single-connection settings of v1.2) is `"xexam-ai-secret-v1:<name>"`; a v1 row opens as it
+//! is and is sealed again as v2 at the next rotation or copy.
 //!
 //! The three domain strings above are protocol constants and keep the service's former name on purpose: they must stay
 //! byte-identical, because changing them changes the key id and the AAD, and every saved key would become unreadable.
@@ -59,9 +61,47 @@ impl SecretName {
             _ => None,
         }
     }
+}
 
-    fn aad(self) -> Vec<u8> {
-        format!("xexam-ai-secret-v1:{}", self.db()).into_bytes()
+/// Which row a secret belongs to: the connection, the slot and the AAD version the value was (or is to be) sealed with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SecretRef {
+    pub connection_id: i64,
+    pub name: SecretName,
+    /// 2 = AAD with the connection id (every new seal); 1 = the migrated v1.2 rows
+    pub aad_ver: u8,
+}
+
+impl SecretRef {
+    /// The reference for a new seal (AAD v2).
+    pub fn new(connection_id: i64, name: SecretName) -> SecretRef {
+        SecretRef {
+            connection_id,
+            name,
+            aad_ver: 2,
+        }
+    }
+
+    /// The reference of a stored row (its own `aad_ver`; anything but 1 is v2).
+    pub fn of_row(connection_id: i64, row: &crate::store::tables::SecretRow) -> SecretRef {
+        SecretRef {
+            connection_id,
+            name: row.name,
+            aad_ver: if row.aad_ver == 1 { 1 } else { 2 },
+        }
+    }
+
+    fn aad(&self) -> Vec<u8> {
+        if self.aad_ver == 1 {
+            format!("xexam-ai-secret-v1:{}", self.name.db()).into_bytes()
+        } else {
+            format!(
+                "xexam-ai-secret-v2:{}:{}",
+                self.connection_id,
+                self.name.db()
+            )
+            .into_bytes()
+        }
     }
 }
 
@@ -79,7 +119,7 @@ pub struct Sealed {
 
 /// Why a secret could not be opened.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct DecryptError;
+pub struct SecretError;
 
 impl MasterKey {
     /// Derives the AEAD key and the key id from 32 master-key bytes.
@@ -110,12 +150,13 @@ impl MasterKey {
             .unwrap_or_else(|_| XChaCha20Poly1305::new(&Default::default()))
     }
 
-    /// Seals `plain` for the slot `name` with a fresh random nonce.
-    pub fn seal(&self, name: SecretName, plain: &[u8]) -> Option<Sealed> {
+    /// Seals `plain` for the row `r` with a fresh random nonce. Only the operating system's random source can make this
+    /// fail; a nonce is never reused, so that is a panic (answered as `ai.internal`).
+    pub fn seal(&self, r: &SecretRef, plain: &[u8]) -> Sealed {
         let mut nonce = [0u8; NONCE_LEN];
-        getrandom::fill(&mut nonce).ok()?;
-        let n = XNonce::try_from(&nonce[..]).ok()?;
-        let aad = name.aad();
+        getrandom::fill(&mut nonce).expect("the operating system's random source failed");
+        let n = XNonce::from(nonce);
+        let aad = r.aad();
         let ciphertext = self
             .cipher()
             .encrypt(
@@ -125,31 +166,43 @@ impl MasterKey {
                     aad: &aad,
                 },
             )
-            .ok()?;
-        Some(Sealed { nonce, ciphertext })
+            .expect("sealing an in-memory value cannot fail");
+        Sealed { nonce, ciphertext }
     }
 
-    /// Opens a sealed secret of the slot `name`. Never panics; any failure is a [`DecryptError`].
+    /// Opens a stored secret as the row `r` describes it. Never panics; a row sealed with another encryption key, another
+    /// AAD, or damaged is a [`SecretError`].
     pub fn open(
         &self,
-        name: SecretName,
-        nonce: &[u8],
-        ciphertext: &[u8],
-    ) -> Result<Zeroizing<String>, DecryptError> {
-        let n = XNonce::try_from(nonce).map_err(|_| DecryptError)?;
-        let aad = name.aad();
-        let plain = Zeroizing::new(
-            self.cipher()
-                .decrypt(
-                    &n,
-                    Payload {
-                        msg: ciphertext,
-                        aad: &aad,
-                    },
-                )
-                .map_err(|_| DecryptError)?,
-        );
-        let text = std::str::from_utf8(&plain).map_err(|_| DecryptError)?;
+        r: &SecretRef,
+        row: &crate::store::tables::SecretRow,
+    ) -> Result<Zeroizing<Vec<u8>>, SecretError> {
+        if row.key_id != self.key_id {
+            return Err(SecretError);
+        }
+        let n = XNonce::try_from(row.nonce.as_slice()).map_err(|_| SecretError)?;
+        let aad = r.aad();
+        let plain = self
+            .cipher()
+            .decrypt(
+                &n,
+                Payload {
+                    msg: &row.ciphertext,
+                    aad: &aad,
+                },
+            )
+            .map_err(|_| SecretError)?;
+        Ok(Zeroizing::new(plain))
+    }
+
+    /// [`MasterKey::open`] for a key that is text (every provider and gateway key is).
+    pub fn open_text(
+        &self,
+        r: &SecretRef,
+        row: &crate::store::tables::SecretRow,
+    ) -> Result<Zeroizing<String>, SecretError> {
+        let plain = self.open(r, row)?;
+        let text = std::str::from_utf8(&plain).map_err(|_| SecretError)?;
         Ok(Zeroizing::new(text.to_string()))
     }
 }
@@ -356,34 +409,88 @@ mod tests {
         MasterKey::from_master(&[b; 32])
     }
 
+    fn row(k: &MasterKey, r: &SecretRef, plain: &[u8]) -> crate::store::tables::SecretRow {
+        let s = k.seal(r, plain);
+        crate::store::tables::SecretRow {
+            name: r.name,
+            key_id: k.key_id().to_string(),
+            nonce: s.nonce.to_vec(),
+            ciphertext: s.ciphertext,
+            hint: String::new(),
+            rev: 1,
+            aad_ver: i64::from(r.aad_ver),
+        }
+    }
+
     #[test]
     fn round_trip_and_aad_binding() {
         let k = key(7);
-        let s = k
-            .seal(SecretName::ApiKey, b"sk-test-fake-0000")
-            .expect("seal");
-        assert_eq!(s.ciphertext.len(), 17 + 16);
-        let p = k
-            .open(SecretName::ApiKey, &s.nonce, &s.ciphertext)
-            .expect("open");
+        let r = SecretRef::new(3, SecretName::ApiKey);
+        assert_eq!(r.aad_ver, 2);
+        let stored = row(&k, &r, b"sk-test-fake-0000");
+        assert_eq!(stored.ciphertext.len(), 17 + 16);
+        let p = k.open_text(&r, &stored).expect("open");
         assert_eq!(p.as_str(), "sk-test-fake-0000");
-        // The same value presented as the other slot does not open
+        assert_eq!(&**k.open(&r, &stored).expect("bytes"), b"sk-test-fake-0000");
+        // the row's own reference opens it too (aad_ver 2)
+        assert!(k.open(&SecretRef::of_row(3, &stored), &stored).is_ok());
+        // the same value presented as the other slot, or as another connection, does not open
+        let other_slot = SecretRef::new(3, SecretName::GatewayKey);
+        assert_eq!(k.open(&other_slot, &stored).map(|_| ()), Err(SecretError));
+        let other_conn = SecretRef::new(4, SecretName::ApiKey);
+        assert_eq!(k.open(&other_conn, &stored).map(|_| ()), Err(SecretError));
+        // v2 does not open as v1
+        let as_v1 = SecretRef { aad_ver: 1, ..r };
+        assert!(k.open(&as_v1, &stored).is_err());
+        // another master key does not open it either, and nothing panics on garbage
+        assert!(key(8).open(&r, &stored).is_err());
+        let mut bad = row(&k, &r, b"x");
+        bad.nonce = vec![0u8; 3];
+        assert!(k.open(&r, &bad).is_err());
+        let mut bad = row(&k, &r, b"x");
+        bad.ciphertext.clear();
+        assert!(k.open(&r, &bad).is_err());
+        // a row that names another key id is refused before any decryption
+        let mut foreign = row(&k, &r, b"x");
+        foreign.key_id = "0000000000000000".into();
+        assert!(k.open(&r, &foreign).is_err());
+        // two seals of the same value use different nonces
+        let again = row(&k, &r, b"sk-test-fake-0000");
+        assert_ne!(stored.nonce, again.nonce);
+    }
+
+    #[test]
+    fn v1_rows_open_as_they_are_and_reseal_as_v2() {
+        let k = key(7);
+        // a migrated v1.2 row: AAD without the connection id, whatever connection it now belongs to
+        let v1 = SecretRef {
+            connection_id: 1,
+            name: SecretName::GatewayKey,
+            aad_ver: 1,
+        };
+        let stored = row(&k, &v1, b"gw-test-fake-1111");
+        assert_eq!(stored.aad_ver, 1);
+        let by_row = SecretRef::of_row(1, &stored);
+        assert_eq!(by_row.aad_ver, 1);
         assert_eq!(
-            k.open(SecretName::GatewayKey, &s.nonce, &s.ciphertext)
-                .map(|_| ()),
-            Err(DecryptError)
+            k.open_text(&by_row, &stored).expect("v1").as_str(),
+            "gw-test-fake-1111"
         );
-        // Another master key does not open it either, and nothing panics on garbage
-        assert!(key(8)
-            .open(SecretName::ApiKey, &s.nonce, &s.ciphertext)
+        // the connection id is not part of a v1 AAD
+        assert!(k.open(&SecretRef::of_row(9, &stored), &stored).is_ok());
+        // an AAD v2 reference does not open a v1 row, so a copy must re-seal
+        assert!(k
+            .open(&SecretRef::new(1, SecretName::GatewayKey), &stored)
             .is_err());
-        assert!(k.open(SecretName::ApiKey, &[0u8; 3], b"x").is_err());
-        assert!(k.open(SecretName::ApiKey, &s.nonce, b"").is_err());
-        // Two seals of the same value use different nonces
-        let s2 = k
-            .seal(SecretName::ApiKey, b"sk-test-fake-0000")
-            .expect("seal");
-        assert_ne!(s.nonce, s2.nonce);
+        let plain = k.open_text(&by_row, &stored).expect("v1");
+        let resealed = row(
+            &k,
+            &SecretRef::new(5, SecretName::GatewayKey),
+            plain.as_bytes(),
+        );
+        assert_eq!(resealed.aad_ver, 2);
+        assert!(k.open(&SecretRef::of_row(5, &resealed), &resealed).is_ok());
+        assert!(k.open(&by_row, &resealed).is_err());
     }
 
     #[test]

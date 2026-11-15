@@ -53,6 +53,7 @@ const LIMIT_OF: Record<string, number> = {
   'ai.memoryFull': DEFAULT_LIMITS.memoriesPerUser,
   'ai.memoryLimit': DEFAULT_LIMITS.memoriesPerUser,
   'ai.memoryTooLong': DEFAULT_LIMITS.memoryTokens,
+  'ai.connectionLimit': 8,
 };
 
 /** The numbers a text of an AI bank code may need (from the error body, or from a job's `errorArg`) */
@@ -65,6 +66,8 @@ export interface GenCodeArgs {
   maxMb?: number;
   ext?: string;
   arg?: number | null;
+  /** v1.3: the size of a bank that is too big for one generation (`ai.gen.tooBig`) */
+  tokens?: number;
 }
 
 const num = (v: unknown): number | undefined => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
@@ -80,6 +83,7 @@ export function genArgsOf(body: Record<string, unknown> | undefined): GenCodeArg
   set('have', num(body['have']));
   set('limit', num(body['limit']));
   set('max', num(body['max']));
+  set('tokens', num(body['tokens']));
   set('maxMb', num(body['maxMb']));
   if (typeof body['what'] === 'string') out.what = body['what'];
   if (typeof body['ext'] === 'string') out.ext = body['ext'];
@@ -94,6 +98,7 @@ export function genCodeText(code: string, args: GenCodeArgs = {}): string | null
   const grouped = (n: number): string => n.toLocaleString(localeTag());
   switch (code) {
     case 'ai.genCount': return t('ai.set.gen.totalBad');
+    case 'ai.gen.tooBig': return t('aigen.tooBig', { tokens: grouped(args.tokens ?? 0) });
     case 'ai.gen.badName': return t('aigen.dlg.nameBad');
     case 'ai.import.nameTaken': return t('aigen.imp.cfm.nameTaken');
     case 'ai.import.nameEmpty': return t('aigen.imp.cfm.nameNeed');
@@ -129,6 +134,19 @@ export function genCodeText(code: string, args: GenCodeArgs = {}): string | null
     case 'ai.import.tooLongQuestion': return t('aigen.imp.err.tooLongQuestion', { no: args.arg ?? 0, max: grouped(3000) });
     case 'ai.import.callLimit': return t('aigen.imp.err.callLimit');
     case 'ai.import.expired': return t('aigen.imp.card.expired');
+    default: return null;
+  }
+}
+
+/**
+ * v1.3: codes outside the `ai.` family that have a text of their own: the ended session (`auth.expired`) and the proxy's own
+ * answers (`net.tooLarge`, `net.backendDown`). Null for any other code.
+ */
+export function plainCodeText(code: string | undefined): string | null {
+  switch (code) {
+    case 'auth.expired': return t('auth.expired');
+    case 'net.tooLarge': return t('err.tooLarge');
+    case 'net.backendDown': return t('err.backendDown');
     default: return null;
   }
 }
@@ -180,7 +198,7 @@ export function errorText(e: unknown, fallback: MsgKey = 'err.generic'): string 
     // before the sign-in lock's 429 branch below: the cap refusal is a 429 with retryAfter too
     if (e.code === 'ai.callLimit' && e.quota) return callLimitText(e.quota, isAdminForTexts(), nowSeconds());
     if (e.code) {
-      const g = genCodeText(e.code, genArgsOf(e.body));
+      const g = genCodeText(e.code, genArgsOf(e.body)) ?? plainCodeText(e.code);
       if (g != null) return g;
     }
     if (e.code && aiKey(e.code)) return aiCodeText(e.code, e.limit);

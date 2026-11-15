@@ -141,12 +141,14 @@ function callsOf(v: unknown): AiCalls | undefined {
   const o = v as Record<string, unknown>;
   const used = counts(o.used);
   const caps = counts(o.caps);
-  const blocked = blockOf(o.blocked);
-  return used && caps && blocked !== undefined ? { used, caps, blocked } : undefined;
+  const exempt = o.exempt === true;
+  // An exempt administrator is never refused: whatever "blocked" says, it counts as no block
+  const blocked = exempt ? (blockOf(o.blocked) === undefined ? undefined : null) : blockOf(o.blocked);
+  return used && caps && blocked !== undefined ? { used, caps, blocked, ...(exempt ? { exempt: true as const } : {}) } : undefined;
 }
 
 const GEN_STATES: readonly string[] = ['queued', 'running', 'done', 'failed', 'cancelled'];
-const GEN_PHASES: readonly string[] = ['reading', 'confirm', 'writing', 'saving'];
+const GEN_PHASES: readonly string[] = ['planning', 'reading', 'confirm', 'writing', 'saving'];
 const GEN_SOURCES: readonly string[] = ['bank', 'scope', 'wrong', 'file'];
 const FILE_TYPES: readonly string[] = ['pdf', 'docx', 'xlsx', 'pptx', 'md', 'txt', 'csv'];
 
@@ -257,6 +259,11 @@ export function statusOf(json: unknown): AiStatus {
   const memoryTokens = count(j.memoryTokens ?? j.memoryMaxTokens, 1000);
   const calls = callsOf(j.calls);
   const gen = genStatusOf(j.gen);
+  // v1.3, administrators: the default model the AI Chat model menu names (dropped before, so the menu said "Default ()")
+  const cd = j.chatDefault as { connectionId?: unknown; connectionName?: unknown; model?: unknown } | null | undefined;
+  const chatDefault = cd && typeof cd.model === 'string' && cd.model
+    ? { connectionId: typeof cd.connectionId === 'number' ? cd.connectionId : 0, connectionName: typeof cd.connectionName === 'string' ? cd.connectionName : '', model: cd.model }
+    : null;
   return {
     state: 'ready',
     enabled: j.enabled,
@@ -277,6 +284,7 @@ export function statusOf(json: unknown): AiStatus {
     why: j.why === 'off' || j.why === 'link' ? j.why : null,
     ...(typeof j.features === 'object' && j.features !== null ? { features: readFeatures(j.features) } : {}),
     ...(gen ? { gen } : {}),
+    ...(chatDefault ? { chatDefault } : {}),
   };
 }
 
@@ -377,11 +385,11 @@ export function refreshAiStatus(o: RefreshOptions): Promise<boolean> {
     readAt = o.now ?? Date.now();
     statusChanged();
     if (next.state === 'ready') {
-      const blocked = next.calls?.blocked ?? null;
+      const blocked = next.calls?.exempt ? null : next.calls?.blocked ?? null;
       // The server's block wins at once; "no block" only counts when the read started after the last refusal we noted
       // (an answer that was already on its way when a refusal came in must not undo it)
       if (blocked) setBlock(blocked);
-      else if (startedAt > lastNoteAt) setBlock(null);
+      else if (next.calls?.exempt || startedAt > lastNoteAt) setBlock(null); // an exempt administrator never has a stale block
     }
     return aiNeedsRender(prev, next);
   })();

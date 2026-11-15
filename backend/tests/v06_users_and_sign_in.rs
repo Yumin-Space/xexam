@@ -98,6 +98,8 @@ fn app_with_throttle(
         name_locks: Default::default(),
         old_layouts: Default::default(),
         ai_link: Default::default(),
+        activity: Default::default(),
+        gates: Default::default(),
     }));
     App {
         router: build_router(state.clone()),
@@ -407,7 +409,7 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
             .get::<_, String>(0))
             .expect("schema"),
         // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well; v0.9: → v6; v1.1: → v7
-        "7"
+        "8"
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");
@@ -527,9 +529,11 @@ async fn login_ok_wrong_password_unknown_and_disabled_users() {
     let r = login(&a, " Admin ", "admin").await;
     assert_eq!(r.status, 200, "{}", r.text());
     assert_eq!(
-        r.json(),
-        json!({"user": {"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true, "aiAllowed": true}})
+        r.json()["user"],
+        json!({"id": 1, "username": "admin", "role": "admin", "mustChangePassword": true, "canManageBanks": true, "aiAllowed": true})
     );
+    // v1.3: the answer also says which lifetime rule the session follows
+    assert_eq!(r.json()["session"]["rule"], "admin");
     assert!(a
         .store
         .user_by_id(1)
@@ -644,11 +648,11 @@ async fn cookie_attributes_over_http_and_https() {
                         "HttpOnly",
                         "SameSite=Strict",
                         "Path=/",
-                        "Max-Age=2592000",
+                        "Max-Age=604800",
                         "Secure",
                     ][..]
                 } else {
-                    &["HttpOnly", "SameSite=Strict", "Path=/", "Max-Age=2592000"][..]
+                    &["HttpOnly", "SameSite=Strict", "Path=/", "Max-Age=604800"][..]
                 },
                 "{sc}"
             );
@@ -819,8 +823,8 @@ async fn a_plain_user_gets_403_on_every_admin_route() {
         .filter(|r| r.access == Access::Admin)
         .collect();
     // v0.6.5: the five bank management routes moved to `Access::BankManager` (403 `MSG_NO_BANK_PERMISSION` for this user,
-    // see tests/v065_bank_access_and_practice.rs); v0.7 adds `GET /api/logs`
-    assert_eq!(admin_routes.len(), 8);
+    // see tests/v065_bank_access_and_practice.rs); v0.7 adds `GET /api/logs`; v1.3 `POST /api/users/signin-info/clear`
+    assert_eq!(admin_routes.len(), 13);
     for r in admin_routes {
         let resp = if r.method == "GET" {
             get(&a, r.path, Some(&uc)).await
@@ -1010,6 +1014,10 @@ async fn users_crud_and_validation() {
             // v0.8 (tests/v08_ai_link.rs)
             "ai",
             "ownedBanks",
+            // v1.3 (tests/v13_db.rs)
+            "lastActiveAt",
+            "lastLoginIp",
+            "lastLoginLocation",
             "lock",
             "aiSuspended"
         ]
@@ -1695,52 +1703,35 @@ async fn sessions_expire_refresh_and_are_purged() {
         .expect("session")
     };
     let (last, exp) = seen(&db);
-    assert!((last - now).abs() < 5 && exp - last == auth::SESSION_TTL_SECS);
-    // within the hour: no refresh, no cookie
+    // (the helper rotated the session through the password change, which still stores a 30-day `expires_at`; the lookup
+    // follows the role anyway and the first touch below rewrites it)
+    assert!((last - now).abs() < 5);
+    // within the minute: nothing is written, no cookie
     let r = post(&a, "/api/settings", Some(&c), "{}").await;
     assert!(r.header("set-cookie").is_none());
-    // two hours later: a GET (no Origin) does not refresh, a POST (with Origin) does and re-sends the cookie
+    assert_eq!(seen(&db), (last, exp));
+    // two hours later the next request touches the session (the end follows); an administrator's cookie is never re-sent
     db.execute(
         "UPDATE sessions SET last_seen_at=last_seen_at-7200, expires_at=expires_at-7200 WHERE token_hash=?1",
         [&hash],
     )
     .expect("backdate");
+    a.state.0.gates.forget(&hash); // (the in-memory once-a-minute gate)
     let r = get(&a, "/api/settings", Some(&c)).await;
     assert_eq!(r.status, 200);
     assert!(r.header("set-cookie").is_none());
-    assert_eq!(seen(&db).0, last - 7200);
-    let r = post(&a, "/api/settings", Some(&c), "{}").await;
-    assert_eq!(r.status, 200);
-    assert_eq!(
-        r.header("set-cookie").as_deref(),
-        Some(auth::session_cookie(c.trim_start_matches("xexam_session="), false).as_str())
-    );
     let (last2, exp2) = seen(&db);
-    assert!(last2 >= now && exp2 == last2 + auth::SESSION_TTL_SECS);
-    // with XEXAM_COOKIE_SECURE=1 a GET refreshes too (the scheme is known), with a Secure cookie
-    let forced = app_with(
-        apic::config_with(&[("XEXAM_COOKIE_SECURE", "1")]),
-        ThrottleLimits::default(),
-    );
-    let fc = admin(&forced).await;
-    raw(&forced.db)
-        .execute("UPDATE sessions SET last_seen_at=last_seen_at-7200", [])
-        .expect("backdate");
-    let r = get(&forced, "/api/bank", Some(&fc)).await;
-    assert!(r
-        .header("set-cookie")
-        .expect("cookie")
-        .ends_with("; Secure"));
-    // expired: 401, and the row is gone
+    assert!(last2 >= now && exp2 == last2 + auth::ADMIN_IDLE_SECS);
+    // idle for more than 24 h: 401 `auth.expired`, and the row is gone
     db.execute(
-        "UPDATE sessions SET expires_at=?1 WHERE token_hash=?2",
-        rusqlite::params![now - 1, hash],
+        "UPDATE sessions SET last_seen_at=?1 WHERE token_hash=?2",
+        rusqlite::params![now - 2 * 86_400, hash],
     )
     .expect("expire");
     let r = get(&a, "/api/bank", Some(&c)).await;
     assert_eq!(
         (r.status.as_u16(), r.error()),
-        (401, MSG_SIGN_IN_REQUIRED.to_string())
+        (401, "登录已过期，请重新登录。".to_string())
     );
     assert_eq!(
         db.query_row(

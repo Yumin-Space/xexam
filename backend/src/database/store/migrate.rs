@@ -63,11 +63,17 @@
 //! existing row), then the two indexes `idx_banks_ai_job` and `idx_questions_layout`, and stamps the schema `"7"`. A v1.0
 //! binary opens a v7 file unchanged (it never reads the new columns; its own inserts leave them NULL, which the CHECKs
 //! accept), so a rollback needs no restore, but an AI bank then looks like an imported one.
+//!
+//! Schema v7 → v8 (v1.3), in the same way once more (`backups/xexam-schema7-<YYYYmmdd-HHMMSS>.db` for a v7 database): the
+//! v8 step adds the session and sign-in columns, `activity_log`, `system_settings` and the attempts index, sets
+//! `sessions.started_at` to the upgrade time and `users.last_active_at` to `last_login_at`, writes the first activity row
+//! (`system.migrate`) when the file held data, and stamps the schema `"8"`. A v1.2 binary opens a v8 file unchanged.
 use super::super::pyjson;
 use super::super::schema::{
     MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
-    MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, SCHEMA_VERSION, V2_COLUMNS,
-    V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS,
+    MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES,
+    MIGRATE_V8_TABLES, SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS,
+    V7_COLUMNS, V8_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -90,7 +96,7 @@ pub(super) struct Upgrade {
     pub converted_prerelease: bool,
 }
 
-/// Brings the database opened at `db_path` up to schema v7.
+/// Brings the database opened at `db_path` up to schema v8.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -104,14 +110,16 @@ pub(super) fn upgrade(
         Some("4") => 4,
         Some("5") => 5,
         Some("6") => 6,
-        // "7", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 7,
+        Some("7") => 7,
+        // "8", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 8,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 7 || pre {
+    if from < 8 || pre {
         // ONE backup of the state before this open, named after the schema the file had
-        if has_any_data(conn)? {
+        let had_data = has_any_data(conn)?;
+        if had_data {
             out.backup = Some(write_backup(conn, db_path, from)?);
         }
         let now = clock.now();
@@ -137,6 +145,7 @@ pub(super) fn upgrade(
                 migrate_v6(c)?;
             }
             migrate_v7(c)?;
+            migrate_v8(c, from, had_data)?;
             Ok(created)
         })?;
         out.converted_prerelease = pre;
@@ -363,6 +372,36 @@ fn migrate_v7(c: &Connection) -> Result<(), DbError> {
         }
     }
     c.execute_batch(MIGRATE_V7_INDEXES)?;
+    set_schema(c, "7")
+}
+
+/// The v8 DDL and its backfill (inside the caller's transaction): the columns, the activity log and `system_settings`, the
+/// attempts index, `sessions.started_at` = now and `users.last_active_at` = `last_login_at` for the rows that exist, the first
+/// row of the activity log (`system.migrate`, only when the file held data), then the schema version. No IP or location is
+/// written here: the sign-in info switch starts off.
+fn migrate_v8(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> {
+    for (table, column, definition) in V8_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    c.execute_batch(MIGRATE_V8_TABLES)?;
+    c.execute_batch(MIGRATE_V8_INDEXES)?;
+    let unix = jiff::Timestamp::now().as_second();
+    c.execute(
+        "UPDATE sessions SET started_at=?1 WHERE started_at IS NULL",
+        params![unix],
+    )?;
+    c.execute(
+        "UPDATE users SET last_active_at=CASE WHEN length(last_login_at)=16 THEN last_login_at || ':00' ELSE last_login_at END \n         WHERE last_active_at IS NULL",
+        [],
+    )?;
+    if had_data {
+        c.execute(
+            "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result)              VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
+            params![unix, json!({ "from": from, "to": 8 }).to_string()],
+        )?;
+    }
     set_schema(c, SCHEMA_VERSION)
 }
 

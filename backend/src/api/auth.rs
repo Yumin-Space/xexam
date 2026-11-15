@@ -10,9 +10,13 @@
 //! - Bank management routes (v0.6.5: upload, import confirm / cancel, import history, bank delete) answer 403
 //!   `MSG_NO_BANK_PERMISSION` to plain users without the "can manage question banks" permission. Which banks a bank manager may
 //!   update or delete (only their own) is checked by the handlers, against the database, inside the write.
-//! - The session is read from the `xexam_session` cookie only. Its sliding refresh (at most once per hour) re-sends the cookie,
-//!   so it happens only on requests whose scheme is known: with `XEXAM_COOKIE_SECURE=1`, or when the request has an `Origin`
-//!   (every browser POST does). That way a refresh never drops `Secure` from a cookie issued over HTTPS.
+//! - The session is read from the `xexam_session` cookie only. v1.3: how long a session lives depends on the user's current
+//!   role and the "keep me signed in" box ([`auth::session_deadline`]): administrators 24 h idle / 7 days hard, users 30 days
+//!   sliding or 12 h. A request that counts as activity (every route but the ones with `activity: false`) touches the session
+//!   in the database at most once a minute ([`auth::SessionGates`]); the cookie of a "remember" session is re-sent at most
+//!   hourly, only on requests whose scheme is known (`XEXAM_COOKIE_SECURE=1`, or an `Origin`, which every browser POST has),
+//!   so a re-send never drops `Secure`. An ended session is deleted, recorded (`auth.expired`) and answered with 401
+//!   `auth.expired`.
 //! - v0.7: the System log names users by their username, never by id (`user "admin" updated user "alex"`); the names come
 //!   from the request's session (the actor) and from the same transaction as the change (the user changed).
 //! - v0.8: [`introspect`] is the auth step of the AI routes (`GET /internal/ai/auth`, see `api::internal`): the same guard and
@@ -29,9 +33,12 @@ use super::response::{
     MSG_USER_NOT_FOUND, MSG_WRONG_PASSWORD,
 };
 use super::{blocking, body_flag, body_id, AppState, PyVal};
+use crate::activity::{Actor, ClientInfo, Entry};
 use crate::auth::throttle::{retry_after_secs, Begun, StartedLock};
-use crate::auth::{self, LockStatus, Role, Target, SESSION_PURGE_SECS};
-use crate::database::{SessionUser, UserChange, UserUpdate};
+use crate::auth::{self, Ended, LockStatus, Role, Rule, SessionTimes, Target, SESSION_PURGE_SECS};
+use crate::database::{
+    EndedSession, NewSession, SessionUser, SigninInfo, Touch, UserChange, UserUpdate,
+};
 use crate::error::{AppError, DbError};
 use crate::logs::BurstReport;
 use crate::models::{BankAccess, Viewer};
@@ -39,6 +46,9 @@ use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use serde_json::{json, Value};
 use std::sync::atomic::Ordering;
+
+/// The 401 body text of an ended session (v1.3). The answer should carry `"code": "auth.expired"`, see [`expired`].
+pub const MSG_SESSION_EXPIRED: &str = "登录已过期，请重新登录。";
 
 /// Who may use a route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,6 +72,9 @@ pub struct Route {
     pub access: Access,
     /// Reachable while the user must still choose a new password
     pub during_password_change: bool,
+    /// v1.3: whether a request counts as activity (touches the session and `users.last_active_at`). `false` for polls and
+    /// state reads, so a page that only polls never keeps a session alive. Such a route still authenticates.
+    pub activity: bool,
 }
 
 const fn route(method: &'static str, path: &'static str, access: Access) -> Route {
@@ -70,13 +83,22 @@ const fn route(method: &'static str, path: &'static str, access: Access) -> Rout
         path,
         access,
         during_password_change: false,
+        activity: true,
+    }
+}
+
+/// A route that does not count as activity.
+const fn quiet(method: &'static str, path: &'static str, access: Access) -> Route {
+    Route {
+        activity: false,
+        ..route(method, path, access)
     }
 }
 
 /// Every route the backend serves, with its access rule. The dispatch function answers 404 for anything else.
 pub const ROUTES: &[Route] = &[
-    route("GET", "/api/info", Access::Public),
-    route("GET", "/api/auth/state", Access::Public),
+    quiet("GET", "/api/info", Access::Public),
+    quiet("GET", "/api/auth/state", Access::Public),
     route("GET", "/api/bank", Access::SignedIn),
     route("GET", "/api/banks", Access::SignedIn),
     route("GET", "/api/progress", Access::SignedIn),
@@ -85,7 +107,9 @@ pub const ROUTES: &[Route] = &[
     route("GET", "/api/record", Access::SignedIn),
     route("GET", "/api/settings", Access::SignedIn),
     route("GET", "/api/users", Access::Admin),
-    route("GET", "/api/logs", Access::Admin),
+    quiet("GET", "/api/logs", Access::Admin),
+    quiet("GET", "/api/activity", Access::Admin),
+    quiet("GET", "/api/activity/settings", Access::Admin),
     route("POST", "/api/auth/login", Access::Public),
     Route {
         during_password_change: true,
@@ -111,6 +135,10 @@ pub const ROUTES: &[Route] = &[
     route("POST", "/api/users/password", Access::Admin),
     route("POST", "/api/users/delete", Access::Admin),
     route("POST", "/api/users/unlock", Access::Admin),
+    route("POST", "/api/users/signin-info", Access::Admin),
+    route("POST", "/api/users/signin-info/clear", Access::Admin),
+    route("POST", "/api/activity/settings", Access::Admin),
+    route("POST", "/api/activity/visit", Access::SignedIn),
 ];
 
 /// The route for `method` (`GET` or `POST`) and `path`, if the backend serves it.
@@ -125,10 +153,18 @@ pub struct Authed {
     /// SHA-256 of the cookie token (the key of the `sessions` row)
     pub token_hash: String,
     token: String,
-    /// The session expiry was just refreshed: the response re-sends the cookie
+    /// The cookie of this "remember" session is due for a re-send: the response carries it again
     refreshed: bool,
     /// Whether a re-sent cookie gets `Secure`
     secure: bool,
+    /// v1.3: the lifetime rule of the session (by the user's current role and the stored "keep me signed in")
+    pub rule: Rule,
+    /// v1.3: the end of an administrator's hard limit, unix seconds (`None` for users)
+    pub hard_ends_at: Option<i64>,
+    /// v1.3: the stored "keep me signed in" of the session
+    pub remember: bool,
+    /// v1.3: the address, device and visitor location of this request (from the Nginx headers)
+    pub client: ClientInfo,
 }
 
 fn status(code: StatusCode, msg: &'static str) -> AppError {
@@ -139,14 +175,140 @@ fn bad_request() -> AppError {
     AppError::BadRequest(MSG_BAD_REQUEST.to_string())
 }
 
-/// The session `token_hash` at `now` ([`crate::database::Store::session_user`], refreshed only with `may_refresh`). Also
-/// purges expired sessions, at most once an hour (whichever request comes first claims the purge).
+/// The error of a request whose session ended: 401, [`MSG_SESSION_EXPIRED`].
+pub fn expired() -> AppError {
+    AppError::SessionExpired
+}
+
+/// Unix seconds as `YYYY-MM-DD HH:MM:SS` in the local time zone (the format of the other times of the API).
+pub fn local_second(secs: i64) -> String {
+    jiff::Timestamp::from_second(secs)
+        .map(|t| crate::database::timefmt::format_second(&t.to_zoned(jiff::tz::TimeZone::system())))
+        .unwrap_or_default()
+}
+
+/// `{"rule", "idleSecs", "hardEndsAt"}`: what a session answers about itself (`POST /api/auth/login`, `GET /api/auth/state`).
+fn session_json(rule: Rule, hard_ends_at: Option<i64>) -> Value {
+    json!({
+        "rule": rule.as_str(),
+        "idleSecs": rule.idle_secs(),
+        "hardEndsAt": hard_ends_at.map(local_second),
+    })
+}
+
+fn client_of_row(ip: Option<&str>, ua: Option<&str>) -> ClientInfo {
+    ClientInfo {
+        ip: ip.and_then(|i| i.parse().ok()),
+        ua: ua.map(str::to_string),
+        ..ClientInfo::default()
+    }
+}
+
+/// The `auth.expired` entry of a session that ended: the session's stored address and device, at the time it ended.
+fn expired_entry(
+    actor: Actor,
+    rule: Rule,
+    ended: Ended,
+    deadline: i64,
+    client: &ClientInfo,
+) -> Entry {
+    let e = Entry::new(actor, "auth.expired")
+        .fail(ended.as_str())
+        .detail(json!({ "rule": rule.as_str() }))
+        .client(client);
+    Entry {
+        at: Some(deadline),
+        ..e
+    }
+}
+
+/// What the lookup of a session found.
+enum Looked {
+    /// No such session (or its user is disabled)
+    None,
+    /// The session ended: its row is deleted, the entry is recorded
+    Ended,
+    Found(Found),
+}
+
+struct Found {
+    user: SessionUser,
+    rule: Rule,
+    hard_ends_at: Option<i64>,
+    remember: bool,
+    resend: bool,
+}
+
+/// Deletes every session that ended before `now` and records one `auth.expired` entry for each, at its deadline (the
+/// entry names the session's stored address and device), plus one `system.sessionsPurged` row with the count. Returns how
+/// many were deleted. Blocking (database).
+pub fn purge_ended_sessions(st: &AppState, now: i64) -> Result<usize, DbError> {
+    let store = &st.0.store;
+    let ended = store.purge_expired_sessions_ended(now)?;
+    let n = ended.len();
+    let mut users: std::collections::HashMap<i64, Option<(String, Role)>> =
+        std::collections::HashMap::new();
+    for e in &ended {
+        record_purged(st, e, &mut users);
+    }
+    if n > 0 {
+        st.0.activity.record(Entry::system(
+            "system.sessionsPurged",
+            Some(json!({ "count": n })),
+        ));
+    }
+    st.0.gates.prune(now);
+    Ok(n)
+}
+
+fn record_purged(
+    st: &AppState,
+    e: &EndedSession,
+    users: &mut std::collections::HashMap<i64, Option<(String, Role)>>,
+) {
+    let who = users
+        .entry(e.user_id)
+        .or_insert_with(|| {
+            st.0.store
+                .user_by_id(e.user_id)
+                .ok()
+                .flatten()
+                .map(|u| (u.username, u.role))
+        })
+        .clone();
+    let Some((username, role)) = who else { return };
+    let times = SessionTimes {
+        started_at: e.started_at.unwrap_or(e.last_seen_at),
+        last_seen_at: e.last_seen_at,
+        remember: e.remember,
+    };
+    let (deadline, ended) = auth::session_deadline(role, &times);
+    let rule = auth::session_rule(role, e.remember);
+    let client = client_of_row(e.ip.as_deref(), e.ua.as_deref());
+    st.0.activity.record(expired_entry(
+        Actor::User {
+            id: e.user_id,
+            username,
+            role,
+        },
+        rule,
+        ended,
+        deadline,
+        &client,
+    ));
+}
+
+/// The session `token_hash` at `now` (v1.3). Purges ended sessions at most once an hour (whichever request comes first claims
+/// it). An ended session (by the user's current role) is deleted, recorded and answered [`Looked::Ended`]. With `counts` the
+/// request is activity: the session row and `users.last_active_at` are written at most once a minute per session / user
+/// ([`auth::SessionGates`]); `may_resend` additionally allows the cookie re-send of a "remember" session (at most hourly).
 async fn session_lookup(
     st: &AppState,
     token_hash: String,
     now: i64,
-    may_refresh: bool,
-) -> Result<Option<(SessionUser, bool)>, AppError> {
+    counts: bool,
+    may_resend: bool,
+) -> Result<Looked, AppError> {
     let last = st.0.last_session_purge.load(Ordering::Relaxed);
     let purge = now.saturating_sub(last) >= SESSION_PURGE_SECS
         && st
@@ -154,41 +316,132 @@ async fn session_lookup(
             .last_session_purge
             .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok();
-    let store = st.0.store.clone();
+    let st = st.clone();
     blocking(move || {
+        let store = &st.0.store;
         if purge {
-            let n = store.purge_expired_sessions(now)?;
+            let n = purge_ended_sessions(&st, now)?;
             if n > 0 {
                 tracing::info!("purged {n} expired sessions");
             }
         }
-        store.session_user(&token_hash, now, may_refresh)
+        let Some((user, row)) = store.session_user_ro(&token_hash)? else {
+            return Ok(Looked::None);
+        };
+        let times = SessionTimes {
+            started_at: row.started_at.unwrap_or(row.last_seen_at),
+            last_seen_at: row.last_seen_at,
+            remember: row.remember,
+        };
+        let (deadline, ended) = auth::session_deadline(user.role, &times);
+        let (rule, hard_ends_at) = auth::session_info(user.role, &times);
+        if now >= deadline {
+            // Whoever finds it first deletes it and writes the one entry
+            if st.0.gates.claim_end(&token_hash, now) {
+                store.delete_session(&token_hash)?;
+                st.0.gates.forget(&token_hash);
+                st.0.activity.record(expired_entry(
+                    Actor::of(&user),
+                    rule,
+                    ended,
+                    deadline,
+                    &client_of_row(row.ip.as_deref(), row.ua.as_deref()),
+                ));
+            }
+            return Ok(Looked::Ended);
+        }
+        let mut resend = false;
+        if counts {
+            let plan = st.0.gates.plan(&token_hash, user.id, now);
+            if plan.session || plan.active {
+                let fresh = SessionTimes {
+                    last_seen_at: now,
+                    ..times
+                };
+                let touch = Touch {
+                    session: plan.session,
+                    active: plan.active,
+                    expires_at: auth::session_deadline(user.role, &fresh).0,
+                };
+                // A failed touch must not fail the request that was only about to read something
+                if let Err(e) = store.touch_session(&token_hash, user.id, now, &touch) {
+                    tracing::warn!("could not record the session activity: {e}");
+                }
+            }
+            resend =
+                may_resend && rule == Rule::Remember && st.0.gates.cookie_due(&token_hash, now);
+        }
+        Ok(Looked::Found(Found {
+            user,
+            rule,
+            hard_ends_at,
+            remember: row.remember,
+            resend,
+        }))
     })
     .await
 }
 
-/// Looks up the session of the request (if it carries a token-shaped cookie). Also purges expired sessions, at most once an hour.
+/// The user of the session `token_hash` for the internal routes of the AI link (the answer being written re-checks it):
+/// the same deadline rule, the same touch (an AI conversation keeps the session alive), never a cookie. `None` = no valid
+/// session, an ended one included (deleted and recorded like any other).
+pub async fn session_user_checked(
+    st: &AppState,
+    token_hash: &str,
+) -> Result<Option<SessionUser>, AppError> {
+    let found = session_lookup(st, token_hash.to_string(), auth::unix_now(), true, false).await?;
+    Ok(match found {
+        Looked::Found(f) => Some(f.user),
+        _ => None,
+    })
+}
+
+/// [`session_user_checked`] for the study and generation calls: the same deadline rule (an ended session is deleted and
+/// recorded), but nothing is written for a live one (no touch, no refresh).
+pub async fn session_user_untouched(
+    st: &AppState,
+    token_hash: &str,
+) -> Result<Option<SessionUser>, AppError> {
+    let found = session_lookup(st, token_hash.to_string(), auth::unix_now(), false, false).await?;
+    Ok(match found {
+        Looked::Found(f) => Some(f.user),
+        _ => None,
+    })
+}
+
+/// Looks up the session of the request (if it carries a token-shaped cookie). `counts`: the route counts as activity.
+/// `Err` with [`expired`] when the session ended.
 async fn session(
     st: &AppState,
     headers: &HeaderMap,
     origin: Option<&str>,
+    counts: bool,
 ) -> Result<Option<Authed>, AppError> {
     let Some(token) = auth::session_token(headers) else {
         return Ok(None);
     };
     let force_secure = st.0.cfg.cookie_secure;
-    let may_refresh = force_secure || origin.is_some();
+    let may_resend = force_secure || origin.is_some();
     let secure = auth::cookie_secure(force_secure, origin);
     let now = auth::unix_now();
     let token_hash = auth::token_hash(&token);
-    let found = session_lookup(st, token_hash.clone(), now, may_refresh).await?;
-    Ok(found.map(|(user, refreshed)| Authed {
-        user,
-        token_hash,
-        token,
-        refreshed,
-        secure,
-    }))
+    let client = ClientInfo::from_headers(headers);
+    let looked = session_lookup(st, token_hash.clone(), now, counts, may_resend).await?;
+    match looked {
+        Looked::None => Ok(None),
+        Looked::Ended => Err(expired()),
+        Looked::Found(f) => Ok(Some(Authed {
+            user: f.user,
+            token_hash,
+            token,
+            refreshed: f.resend,
+            secure,
+            rule: f.rule,
+            hard_ends_at: f.hard_ends_at,
+            remember: f.remember,
+            client,
+        })),
+    }
 }
 
 /// The single enforcement point, run after the Host guard (GET) or the Host and Origin guards (POST) and before the body is read.
@@ -206,7 +459,8 @@ pub async fn authorize(
     if access == Access::Public && path != "/api/auth/state" {
         return Ok(None);
     }
-    let authed = session(st, headers, origin).await?;
+    let counts = route.is_none_or(|r| r.activity);
+    let authed = session(st, headers, origin, counts).await?;
     if access == Access::Public {
         return Ok(authed);
     }
@@ -280,13 +534,15 @@ pub async fn introspect(st: &AppState, headers: &HeaderMap) -> IntrospectOutcome
     };
     let now = auth::unix_now();
     let sid = auth::token_hash(&token);
-    match session_lookup(st, sid.clone(), now, false).await {
+    // The same lookup as every other request: the same deadline rule, and the same touch (somebody who only talks to the AI
+    // is active), but never a cookie (it could not reach the browser through this path)
+    match session_lookup(st, sid.clone(), now, true, false).await {
         Err(_) => IntrospectOutcome::Failed,
-        Ok(None) => IntrospectOutcome::SignIn,
-        Ok(Some((user, _))) if user.must_change_password => IntrospectOutcome::Password,
-        Ok(Some((user, _))) => IntrospectOutcome::Allowed(super::internal::identity_statement(
+        Ok(Looked::None | Looked::Ended) => IntrospectOutcome::SignIn,
+        Ok(Looked::Found(f)) if f.user.must_change_password => IntrospectOutcome::Password,
+        Ok(Looked::Found(f)) => IntrospectOutcome::Allowed(super::internal::identity_statement(
             &link_token,
-            &user,
+            &f.user,
             &sid,
             now,
         )),
@@ -314,7 +570,10 @@ pub fn finish(resp: &mut Response, authed: Option<&Authed>) {
     if let Some(a) = authed.filter(|a| a.refreshed) {
         // A response that already sets the cookie (logout) keeps its own
         if !resp.headers().contains_key(header::SET_COOKIE) {
-            set_cookie(resp, &auth::session_cookie(&a.token, a.secure));
+            set_cookie(
+                resp,
+                &auth::session_cookie_for(&a.token, a.secure, Rule::Remember),
+            );
         }
     }
 }
@@ -391,6 +650,9 @@ pub async fn state(st: &AppState, authed: Option<&Authed>) -> Result<Value, AppE
                 "user": a.user.to_json(),
                 "library": library,
                 "aiAvailable": service.ai_available(),
+                "session": session_json(a.rule, a.hard_ends_at),
+                // Whether the page reports the pages a user opens: always for administrators, else the switch in the log settings
+                "logVisits": a.user.is_admin() || st.0.activity.user_visits(),
             });
             if a.user.is_admin() {
                 if let Some(o) = out.as_object_mut() {
@@ -459,6 +721,7 @@ pub fn spawn_refusal_reports(st: AppState) -> tokio::task::JoinHandle<()> {
             let now = std::time::Instant::now();
             if let Some(report) = st.0.rejections.flush(now) {
                 super::guard::log_rejections(&report);
+                st.0.activity.record(crate::activity::guard_entry(&report));
             }
             if let Some(report) = st.0.failed_sign_ins.flush(now) {
                 log_failed_sign_ins(&report);
@@ -526,7 +789,17 @@ fn log_lock(
         )
     };
     match target {
-        Target::Account(_) => tracing::warn!("{}", line(&format!("user {username:?}"))),
+        Target::Account(_) => {
+            tracing::warn!("{}", line(&format!("user {username:?}")));
+            // Locks of accounts are bounded by the accounts; locks of made-up names are not recorded one by one
+            st.0.activity.record(
+                Entry::system(
+                    "auth.lock",
+                    Some(json!({ "round": l.round, "minutes": l.length.as_secs().div_ceil(60) })),
+                )
+                .object(username),
+            );
+        }
         Target::Name(_) => {
             let what = line("a username without an account");
             if let Some(report) = st.0.name_locks.note(std::time::Instant::now(), what) {
@@ -543,7 +816,9 @@ fn set_device_cookie(resp: &mut Response, user_id: i64, password_hash: &str, sec
     );
 }
 
-/// `POST /api/auth/login` `{"username", "password"}` → `{"user": {...}}`, a new session cookie and the known-browser cookie.
+/// `POST /api/auth/login` `{"username", "password", "remember"?}` → `{"user": {...}, "session": {...}}`, a new session cookie
+/// (administrator: 7 days once; user with `remember` (default): 30 days; else a browser-session cookie) and the known-browser
+/// cookie.
 /// A wrong password, an unknown user and a disabled user all get the same 401 after the same amount of work.
 pub async fn login(
     st: &AppState,
@@ -556,6 +831,13 @@ pub async fn login(
     else {
         return Err(bad_request());
     };
+    // "Keep me signed in": missing = true (an older client keeps the 30 days), anything but a boolean is a bad request
+    let remember = match data.get("remember") {
+        None => true,
+        Some(PyVal::Bool(b)) => *b,
+        Some(_) => return Err(bad_request()),
+    };
+    let client = ClientInfo::from_headers(headers);
     let name = raw_name.trim().to_string();
     // A plain lookup (no hashing) comes first: a browser where this user signed in before is throttled in its own bucket
     let store = st.0.store.clone();
@@ -573,7 +855,23 @@ pub async fn login(
     let target = user
         .as_ref()
         .map_or(Target::Name(&name), |u| Target::Account(u.id));
-    let begun = throttle_begin(st, target, known)?;
+    let begun = match throttle_begin(st, target, known) {
+        Ok(b) => b,
+        Err(e) => {
+            // Refused while locked: the account when it exists (never the typed name of an unknown one)
+            let actor = user.as_ref().map_or(Actor::Anon, |u| Actor::User {
+                id: u.id,
+                username: u.username.clone(),
+                role: u.role,
+            });
+            st.0.activity.record(
+                Entry::new(actor, "auth.signin")
+                    .fail("locked")
+                    .client(&client),
+            );
+            return Err(e);
+        }
+    };
     let phc = user
         .as_ref()
         .map(|u| u.password_hash.clone())
@@ -593,12 +891,22 @@ pub async fn login(
                 format!("failed sign-in of user {:?}", u.username)
             };
             note_failed_sign_in(st, &what);
+            st.0.activity.record(
+                Entry::new(Actor::of(&SessionUser::from(&u)), "auth.signin")
+                    .fail(if matches { "disabled" } else { "badPassword" })
+                    .client(&client),
+            );
             log_lock(st, begun.lock, target, known, &u.username);
             return Err(status(StatusCode::UNAUTHORIZED, MSG_BAD_LOGIN));
         }
         None => {
             // Never the typed name: it may be a password typed into the wrong field
             note_failed_sign_in(st, "failed sign-in with a username that has no account");
+            st.0.activity.record(
+                Entry::new(Actor::Anon, "auth.signin")
+                    .fail("unknownUser")
+                    .client(&client),
+            );
             log_lock(st, begun.lock, target, known, "");
             return Err(status(StatusCode::UNAUTHORIZED, MSG_BAD_LOGIN));
         }
@@ -608,12 +916,63 @@ pub async fn login(
     let store = st.0.store.clone();
     let id = user.id;
     let now = auth::unix_now();
-    // start_session re-checks that the password verified above is still the user's password
+    let times = SessionTimes {
+        started_at: now,
+        last_seen_at: now,
+        remember,
+    };
+    let (deadline, _) = auth::session_deadline(user.role, &times);
+    let rule = auth::session_rule(user.role, remember);
+    // The address and the visitor location are stored only while the eye in User management is open; while it is closed
+    // nothing new is recorded (the stored values stay, hidden)
+    let keep = st.0.activity.signin_info();
+    let ip = client.ip.filter(|_| keep).map(|i| i.to_string());
+    let (ua, country, region, city) = (
+        client.ua.clone(),
+        client.country.clone().filter(|_| keep),
+        client.region.clone().filter(|_| keep),
+        client.city.clone().filter(|_| keep),
+    );
     let verified = phc.clone();
-    let Some(signed_in) =
-        blocking(move || store.start_session(id, &token_hash, &verified, now)).await?
-    else {
-        // Disabled, deleted or given a new password while the password was being verified
+    let hash_for_row = token_hash.clone();
+    let stamp = local_second(now);
+    let signed_in = blocking(move || {
+        let created = store.create_session(&NewSession {
+            token_hash: &hash_for_row,
+            user_id: id,
+            now,
+            expires_at: deadline,
+            remember,
+            ip: ip.as_deref(),
+            ua: ua.as_deref(),
+        });
+        match created {
+            Ok(()) => {}
+            // Deleted or disabled while the password was being verified
+            Err(DbError::NoUser) => return Ok(None),
+            Err(e) => return Err(e),
+        }
+        // The password verified above must still be the user's: a password changed or reset while the (slow) verify ran
+        // must not leave a session signed in with the old password. (A change after this check ends every session.)
+        let Some(u) = store
+            .user_by_id(id)?
+            .filter(|u| !u.disabled && u.password_hash == verified)
+        else {
+            store.delete_session(&hash_for_row)?;
+            return Ok(None);
+        };
+        // Closed eye: `None` leaves the stored sign-in info untouched (only the times move)
+        let info = keep.then_some(SigninInfo {
+            ip: ip.as_deref(),
+            country: country.as_deref(),
+            region: region.as_deref(),
+            city: city.as_deref(),
+        });
+        store.note_signin(id, &stamp, info.as_ref())?;
+        Ok(Some(SessionUser::from(&u)))
+    })
+    .await?;
+    let Some(signed_in) = signed_in else {
         note_failed_sign_in(
             st,
             &format!(
@@ -621,13 +980,28 @@ pub async fn login(
                 user.username
             ),
         );
+        st.0.activity.record(
+            Entry::new(Actor::of(&SessionUser::from(&user)), "auth.signin")
+                .fail("changed")
+                .client(&client),
+        );
         return Err(status(StatusCode::UNAUTHORIZED, MSG_BAD_LOGIN));
     };
     st.0.throttle.succeeded(id, known);
+    st.0.gates.started(&token_hash, id, now);
     tracing::info!("user {:?} signed in", signed_in.username);
+    st.0.activity.record(
+        Entry::new(Actor::of(&signed_in), "auth.signin")
+            .detail(json!({ "rule": rule.as_str() }))
+            .client(&client),
+    );
+    let hard = (rule == Rule::Admin).then(|| now.saturating_add(auth::ADMIN_HARD_SECS));
     let secure = auth::cookie_secure(st.0.cfg.cookie_secure, origin);
-    let mut resp = ok_json(&json!({ "user": signed_in.to_json() }));
-    set_cookie(&mut resp, &auth::session_cookie(&token, secure));
+    let mut resp = ok_json(&json!({
+        "user": signed_in.to_json(),
+        "session": session_json(rule, hard),
+    }));
+    set_cookie(&mut resp, &auth::session_cookie_for(&token, secure, rule));
     set_device_cookie(&mut resp, signed_in.id, &phc, secure);
     Ok(resp)
 }
@@ -636,7 +1010,10 @@ pub async fn login(
 pub async fn logout(st: &AppState, a: &Authed, origin: Option<&str>) -> Result<Response, AppError> {
     let store = st.0.store.clone();
     let hash = a.token_hash.clone();
-    blocking(move || store.end_session(&hash)).await?;
+    blocking(move || store.delete_session(&hash)).await?;
+    st.0.gates.forget(&a.token_hash);
+    st.0.activity
+        .record(Entry::new(Actor::of(&a.user), "auth.signout").client(&a.client));
     let mut resp = ok_json(&json!({ "ok": true }));
     set_cookie(
         &mut resp,
@@ -693,14 +1070,46 @@ pub async fn change_password(
     let token_hash = auth::token_hash(&token);
     let now = auth::unix_now();
     // Refused (401) when the password was reset or changed elsewhere while this request ran: never overwrite that silently
-    let updated =
-        blocking(move || store.change_own_password(id, &expected, &stored, &token_hash, now))
-            .await?
-            .ok_or(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED))?;
+    let new_hash_of_token = token_hash.clone();
+    // The new session keeps `remember`, gets the deadline of the user's role and the address / device of this request
+    let remember = a.remember;
+    let times = SessionTimes {
+        started_at: now,
+        last_seen_at: now,
+        remember,
+    };
+    let (deadline, _) = auth::session_deadline(a.user.role, &times);
+    let ip = a
+        .client
+        .ip
+        .filter(|_| st.0.activity.signin_info())
+        .map(|i| i.to_string());
+    let ua = a.client.ua.clone();
+    let updated = blocking(move || {
+        store.change_own_password_as(
+            id,
+            &expected,
+            &stored,
+            &NewSession {
+                token_hash: &token_hash,
+                user_id: id,
+                now,
+                expires_at: deadline,
+                remember,
+                ip: ip.as_deref(),
+                ua: ua.as_deref(),
+            },
+        )
+    })
+    .await?
+    .ok_or(status(StatusCode::UNAUTHORIZED, MSG_SIGN_IN_REQUIRED))?;
+    st.0.gates.forget(&a.token_hash);
+    st.0.gates.started(&new_hash_of_token, id, now);
     tracing::info!("user {:?} changed their password", updated.username);
     let secure = auth::cookie_secure(st.0.cfg.cookie_secure, origin);
     let mut resp = ok_json(&json!({ "user": updated.to_json() }));
-    set_cookie(&mut resp, &auth::session_cookie(&token, secure));
+    // The new session keeps the rule of the old one (administrator / remember / browser)
+    set_cookie(&mut resp, &auth::session_cookie_for(&token, secure, a.rule));
     set_device_cookie(&mut resp, id, &new_hash, secure);
     Ok(resp)
 }
@@ -773,6 +1182,20 @@ fn require_ai_available(st: &AppState) -> Result<(), AppError> {
 
 async fn users_body(st: &AppState) -> Result<Response, AppError> {
     Ok(ok_json(&users_json(st).await?))
+}
+
+/// [`users_body`] with the activity note of the route: `object` = the target username, `detail` as the contract says.
+async fn users_body_noted(
+    st: &AppState,
+    object: &str,
+    detail: Value,
+) -> Result<Response, AppError> {
+    let resp = users_body(st).await?;
+    Ok(crate::activity::with_note(
+        resp,
+        Some(object.to_string()),
+        Some(detail),
+    ))
 }
 
 /// `GET /api/users`
@@ -911,11 +1334,12 @@ pub async fn create(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
         })
         .await?,
     )?;
+    let note = json!({ "role": role.as_str() });
     tracing::info!("user {:?} created user {:?}", a.user.username, username);
     if ai {
         log_ai_switch(&a.user.username, true, &username);
     }
-    users_body(st).await
+    users_body_noted(st, &username, note).await
 }
 
 /// `POST /api/users/update` `{"id", "username"?, "role"?, "disabled"?, "banks"?, "newBanks"?, "canManageBanks"?, "ai"?}`
@@ -948,6 +1372,29 @@ pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
             ai: None,
             ..change.clone()
         } == UserUpdate::default();
+    let mut changed: Vec<&str> = Vec::new();
+    if change.username.is_some() {
+        changed.push("username");
+    }
+    if change.role.is_some() {
+        changed.push("role");
+    }
+    if change.disabled.is_some() {
+        changed.push("disabled");
+    }
+    if change.banks.is_some() {
+        changed.push("banks");
+    }
+    if change.new_banks.is_some() {
+        changed.push("newBanks");
+    }
+    if change.can_manage_banks.is_some() {
+        changed.push("canManageBanks");
+    }
+    if change.ai.is_some() {
+        changed.push("ai");
+    }
+    let role_after = change.role;
     let store = st.0.store.clone();
     let actor = a.user.id;
     let done = refused(blocking(move || store.update_user(actor, id, &change)).await?)?;
@@ -969,7 +1416,14 @@ pub async fn update(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     if let Some(on) = done.ai_changed {
         log_ai_switch(&a.user.username, on, &done.username);
     }
-    users_body(st).await
+    let mut note = json!({ "changed": changed });
+    if let Some(r) = role_after {
+        note["role"] = json!(r.as_str());
+    }
+    if let Some(old) = &done.renamed_from {
+        note["oldName"] = json!(old);
+    }
+    users_body_noted(st, &done.username, note).await
 }
 
 /// `POST /api/users/password` `{"id", "password"}` → `{"users": [...]}`: sets a new initial password for another user.
@@ -991,7 +1445,7 @@ pub async fn reset_password(st: &AppState, a: &Authed, data: &PyVal) -> Result<R
         a.user.username,
         name
     );
-    users_body(st).await
+    users_body_noted(st, &name, json!({})).await
 }
 
 /// `POST /api/users/unlock` `{"id"}` → `{"users": [...]}`: clears the login throttle of that account completely (every bucket:
@@ -1009,7 +1463,7 @@ pub async fn unlock(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
         a.user.username,
         user.username
     );
-    users_body(st).await
+    users_body_noted(st, &user.username, json!({})).await
 }
 
 /// `POST /api/users/delete` `{"id"}` → `{"users": [...]}`. The banks the deleted user owned now belong to the administrator
@@ -1022,5 +1476,5 @@ pub async fn delete(st: &AppState, a: &Authed, data: &PyVal) -> Result<Response,
     // Ids are never reused (AUTOINCREMENT); this frees the memory of the deleted account's buckets
     st.0.throttle.forget(id);
     tracing::info!("user {:?} deleted user {:?}", a.user.username, name);
-    users_body(st).await
+    users_body_noted(st, &name, json!({})).await
 }

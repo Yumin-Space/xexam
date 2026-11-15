@@ -868,7 +868,7 @@ fn a_fresh_database_is_schema_7_with_four_columns_and_two_indexes() {
     let db = dir.path().join("xexam.db");
     drop(Store::open(&db).expect("open"));
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
     let cols = |t: &str| -> Vec<String> {
         let mut st = c
             .prepare(&format!("SELECT name FROM pragma_table_info('{t}')"))
@@ -970,7 +970,13 @@ fn a_schema_6_database_is_upgraded_after_one_backup_and_keeps_every_record() {
         .expect("item");
         // a v6 database: a fresh one minus the v7 objects (the CHECK of `ended` names `time_limit`, so it goes first)
         c.execute_batch(
-            "DROP INDEX idx_banks_ai_job; DROP INDEX idx_questions_layout; \
+            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; \
+             ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
+             ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
+             ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
+             ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
+             ALTER TABLE sessions DROP COLUMN ua; \
+             DROP INDEX idx_banks_ai_job; DROP INDEX idx_questions_layout; \
              ALTER TABLE attempts DROP COLUMN ended; ALTER TABLE attempts DROP COLUMN time_limit; \
              ALTER TABLE banks DROP COLUMN ai_meta; ALTER TABLE banks DROP COLUMN ai_job; \
              UPDATE meta SET value = '6' WHERE key = 'schema';",
@@ -1004,7 +1010,7 @@ fn a_schema_6_database_is_upgraded_after_one_backup_and_keeps_every_record() {
         ),
         2
     );
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "7");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
     // the old record is intact: untimed, no `ended` (v1.0 rule), and the views show no new keys
     assert_eq!(
         count(

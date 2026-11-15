@@ -496,6 +496,16 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
             // v1.1 (schema 7): the AI-bank job key and the covering index of the bank list
             ("index", "idx_banks_ai_job"),
             ("index", "idx_questions_layout"),
+            // v1.3 (schema 8): the activity log, the system settings and the idempotent-save index
+            ("table", "activity_log"),
+            ("index", "idx_activity_ts"),
+            ("index", "idx_activity_user"),
+            ("index", "idx_activity_action"),
+            ("index", "idx_activity_prune"),
+            ("index", "idx_activity_src"),
+            ("table", "system_settings"),
+            ("index", "sqlite_autoindex_system_settings_1"),
+            ("index", "idx_attempts_session"),
         ]
     );
     // Intended difference (v0.7): the backend switches the database to WAL, which is stored in the file (the Python-written
@@ -517,7 +527,7 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         meta,
         vec![
             ("banks_known".to_string(), "0".to_string()),
-            ("schema".to_string(), "7".to_string()),
+            ("schema".to_string(), "8".to_string()),
             ("users_known".to_string(), "1".to_string())
         ]
     );

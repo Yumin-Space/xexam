@@ -143,7 +143,16 @@ services:
     ports:
       # By default it binds to localhost only. Set XEXAM_BIND=0.0.0.0:8765 in .env to let other machines on the LAN connect.
       - "${XEXAM_BIND:-127.0.0.1:8765}:8080"
-    networks: [internal, public]
+    # tunnel: only this service and cloudflared live there, so the frontend trusts that subnet for the real client address
+    networks: [internal, public, tunnel]
+    environment:
+      # The peers whose forwarded client address and location headers Nginx believes: by default the cloudflared service
+      # below (its own network, tunnel). A value set in .env, even an empty one, wins: empty = trust nobody; for cloudflared
+      # on the host or on another machine put its address here (for the host: the gateway of the public network,
+      # 172.31.255.1). Never trust an address that untrusted clients can reach: they could forge their address.
+      XEXAM_TRUSTED_PROXIES: "${XEXAM_TRUSTED_PROXIES-172.31.254.2}"
+      # Which header carries the client address: CF-Connecting-IP (Cloudflare, default), X-Forwarded-For or X-Real-IP
+      XEXAM_REAL_IP_HEADER: "${XEXAM_REAL_IP_HEADER:-CF-Connecting-IP}"
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
     read_only: true
@@ -153,11 +162,48 @@ services:
       driver: json-file
       options: { max-size: "10m", max-file: "3" }
 
+  # Optional Cloudflare Tunnel connector. Start it with the profile:   docker compose --profile tunnel up -d
+  # Put TUNNEL_TOKEN (from the Cloudflare dashboard) in .env, and set the tunnel's public hostname service to
+  # http://frontend:8080. It reaches the frontend over the tunnel network, so Nginx sees the real visitor address
+  # (CF-Connecting-IP) and Cloudflare's location headers with no setting. Without the profile it is never created.
+  cloudflared:
+    image: docker.io/cloudflare/cloudflared:2025.11.1
+    container_name: xexam-cloudflared
+    profiles: [tunnel]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}"
+    depends_on: [frontend]
+    # tunnel: to the frontend; egress: outbound internet to Cloudflare
+    networks:
+      tunnel:
+        ipv4_address: 172.31.254.2   # fixed, so the default trust below names this one service and not the whole subnet
+      egress:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
 networks:
   # Private network for the backend: it cannot reach external networks, and external hosts cannot get in
   internal:
     internal: true
-  public: {}
+  # Direct and LAN connections arrive here. The subnet is pinned so the gateway address (172.31.255.1, what a cloudflared
+  # on the host appears as) is stable and can be written in .env as XEXAM_TRUSTED_PROXIES.
+  public:
+    ipam:
+      config:
+        - subnet: 172.31.255.0/28
+          gateway: 172.31.255.1
+  # Only the frontend and cloudflared: Nginx trusts this subnet (XEXAM_TRUSTED_PROXIES) by default
+  tunnel:
+    ipam:
+      config:
+        - subnet: 172.31.254.0/28
   # Outbound internet for ai-service only (to reach the AI provider)
   egress: {}
 

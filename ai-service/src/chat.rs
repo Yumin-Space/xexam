@@ -4,13 +4,12 @@
 //! re-attaches by polling). It ends on the upstream's end, Stop, server shutdown, the 2-s access re-check, a global
 //! switch-off, a suspension of the user's AI+ function or a deletion; the text so far is always kept. Exactly one usage
 //! row is written per generation, in the same final transaction as the answer; the slots are released after that
-//! transaction. Reasoning of the model is never kept: before the first text it only produces one `thinking` frame.
+//! transaction. Reasoning of the model is kept only for AI Chat (frames `reasoning` / `reasoningDone`, columns `messages.reasoning*`); study answers only get the `thinking` frame.
 use crate::app::AppState;
 use crate::codes::text_of;
 use crate::identity::Identity;
 use crate::link::{LinkError, SessionUser};
 use crate::provider::{self, ms, Up, UpCode, UpError};
-use crate::settings::Provider;
 use crate::store::{data, stats};
 use crate::study::guard::{HintGuard, Verdict};
 use serde_json::{json, Value};
@@ -154,6 +153,8 @@ pub enum StopReason {
     UserRemoved,
     /// An administrator suspended the user's AI+ function (AI settings)
     Suspended,
+    /// An administrator switched the feature off for everyone (never stops an administrator's call)
+    FeatureOff,
 }
 
 impl StopReason {
@@ -166,6 +167,7 @@ impl StopReason {
             StopReason::Disabled => Some("ai.disabled"),
             StopReason::ChatDeleted => Some("ai.notFound"),
             StopReason::Suspended => Some("ai.suspended"),
+            StopReason::FeatureOff => Some("ai.featureOff"),
         }
     }
 }
@@ -182,6 +184,10 @@ struct Entry {
     kind: Kind,
     chat: Option<i64>,
     message: i64,
+    /// The feature bit of the call (0 until named) and whether the caller is an administrator: a global feature
+    /// switch-off stops the matching calls of normal users only
+    feature_bit: i64,
+    admin: bool,
     seq: u64,
     /// When the call was reserved (unix seconds): its start for the per-user call caps
     started: i64,
@@ -225,6 +231,14 @@ impl Slot {
         }
     }
 
+    /// Names the feature of the call and whether its caller is an administrator.
+    pub fn set_feature(&self, feature_bit: i64, admin: bool) {
+        if let Some(e) = self.reg.lock().entries.get_mut(&self.id) {
+            e.feature_bit = feature_bit;
+            e.admin = admin;
+        }
+    }
+
     /// The stop reason, if one was given.
     pub fn stopped(&self) -> Option<StopReason> {
         *self.cancel.borrow()
@@ -265,6 +279,8 @@ impl Registry {
                 kind,
                 chat,
                 message: 0,
+                feature_bit: 0,
+                admin: false,
                 seq: id,
                 started: crate::util::unix_now(),
                 cancel: cancel_tx,
@@ -386,6 +402,27 @@ impl Registry {
         waits
     }
 
+    /// Asks the running calls of normal users whose feature is in `bits` to stop (a global feature switch-off);
+    /// administrators' calls are never touched. Returns how many were asked.
+    pub fn cancel_features(&self, bits: i64) -> usize {
+        let inner = self.lock();
+        let mut n = 0;
+        for e in inner.entries.values() {
+            if !e.admin && e.feature_bit & bits != 0 {
+                e.cancel.send_if_modified(|v| {
+                    if v.is_none() {
+                        *v = Some(StopReason::FeatureOff);
+                        true
+                    } else {
+                        false
+                    }
+                });
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// Stops the matching calls and waits until each has written its final state and released its place.
     pub async fn cancel_and_wait(
         &self,
@@ -418,8 +455,8 @@ pub struct Generation {
     pub who: Identity,
     pub chat: i64,
     pub message: i64,
-    pub model: String,
-    pub provider: Provider,
+    /// Where the call goes (connection and model); the usage row and the connection's health come from it
+    pub route: crate::route::Route,
     /// The requests of this one call (the first and the token-limit fallbacks)
     pub plan: provider::Plan,
     pub frames: UnboundedSender<Frame>,
@@ -457,6 +494,30 @@ fn suspended_now(app: &AppState, user: i64) -> bool {
     )
 }
 
+/// Ends the reasoning phase: fixes its duration (first call only) and, when `reasoning` frames were sent, sends the one
+/// `reasoningDone` frame. Called before the first `delta` and again after the loop; the second call is a no-op once the
+/// first one has set `ms`.
+fn close_reasoning(
+    frames: &UnboundedSender<Frame>,
+    from: Option<Instant>,
+    reasoning_ms: &mut Option<i64>,
+    sent: bool,
+    cut: bool,
+) {
+    if reasoning_ms.is_some() {
+        return;
+    }
+    if let Some(f) = from {
+        *reasoning_ms = Some(ms(f.elapsed()));
+    }
+    if sent {
+        let _ = frames.send(Frame {
+            event: "reasoningDone",
+            data: json!({ "ms": reasoning_ms, "truncated": cut }),
+        });
+    }
+}
+
 /// Runs a generation to its end and persists it.
 pub async fn run(g: Generation) {
     let Generation {
@@ -466,8 +527,7 @@ pub async fn run(g: Generation) {
         who,
         chat,
         message,
-        model,
-        provider,
+        route,
         plan,
         frames,
         mut guard,
@@ -489,6 +549,15 @@ pub async fn run(g: Generation) {
     let mut truncated = false;
     let mut first_byte_ms = None;
     let mut thinking = false;
+    // AI Chat only: the model's reasoning text, its duration and the SSE bookkeeping (spec 3)
+    let keep_reasoning = purpose.is_none();
+    let mut reasoning = String::new();
+    let mut reasoning_cut = false;
+    let mut reasoning_from: Option<Instant> = None;
+    let mut reasoning_ms: Option<i64> = None;
+    let mut reasoning_frames = false;
+    let mut answered = false;
+    let mut flushed_reasoning = (0usize, None::<i64>);
     let mut cancel = slot.cancel.clone();
     let mut shutdown = app.0.shutdown.clone();
     let deadline = tokio::time::sleep(t.total);
@@ -523,6 +592,16 @@ pub async fn run(g: Generation) {
             _ = &mut deadline => break Outcome::Failed(UpError::new(UpCode::Timeout, None)),
             item = rx.recv() => match item {
                 Some(Up::Text(s)) => {
+                    if !answered {
+                        answered = true;
+                        close_reasoning(
+                            &frames,
+                            reasoning_from,
+                            &mut reasoning_ms,
+                            reasoning_frames,
+                            reasoning_cut,
+                        );
+                    }
                     if first_byte_ms.is_none() {
                         first_byte_ms = Some(ms(started.elapsed()));
                     }
@@ -547,11 +626,29 @@ pub async fn run(g: Generation) {
                         },
                     }
                 }
-                // Reasoning before the first text: one `thinking` frame, so the page can say "Thinking…"
-                Some(Up::Thinking) => {
+                // Reasoning before the first text: one `thinking` frame, so the page can say "Thinking…"; AI Chat also
+                // keeps and streams the text
+                Some(up @ (Up::Thinking | Up::Reasoning(_))) => {
                     if !thinking && text.is_empty() {
                         thinking = true;
                         let _ = frames.send(Frame { event: "thinking", data: json!({}) });
+                    }
+                    if !answered && reasoning_from.is_none() {
+                        reasoning_from = Some(Instant::now());
+                    }
+                    if let Up::Reasoning(s) = up {
+                        if keep_reasoning && !answered && !reasoning_cut {
+                            let room = data::MAX_REASONING_BYTES.saturating_sub(reasoning.len());
+                            let (head, cut) = data::cap_head(&s, room);
+                            reasoning.push_str(head);
+                            if cut {
+                                reasoning_cut = true;
+                            }
+                            if !head.is_empty() {
+                                let _ = frames.send(Frame { event: "reasoning", data: json!({ "text": head }) });
+                                reasoning_frames = true;
+                            }
+                        }
                     }
                 }
                 Some(Up::Usage { input, output }) => {
@@ -594,12 +691,19 @@ pub async fn run(g: Generation) {
                 }
             }
             _ = flush.tick() => {
-                if text.len() != flushed {
-                    let r = app.0.store.write(|tx| data::flush_answer(tx, message, &text));
+                if text.len() != flushed || (reasoning.len(), reasoning_ms) != flushed_reasoning {
+                    let r = app.0.store.write(|tx| {
+                        data::flush_answer(tx, message, &text)?;
+                        if keep_reasoning && !reasoning.is_empty() {
+                            data::set_reasoning(tx, message, &reasoning, reasoning_ms, reasoning_cut)?;
+                        }
+                        Ok::<(), rusqlite::Error>(())
+                    });
                     if let Err(e) = r {
                         tracing::warn!("could not save a running AI answer: {e}");
                     } else {
                         flushed = text.len();
+                        flushed_reasoning = (reasoning.len(), reasoning_ms);
                     }
                 }
             }
@@ -610,6 +714,14 @@ pub async fn run(g: Generation) {
         h.abort();
     }
     let mut outcome = outcome;
+    // The reasoning ends with the stream when no answer text ever closed it
+    close_reasoning(
+        &frames,
+        reasoning_from,
+        &mut reasoning_ms,
+        reasoning_frames,
+        reasoning_cut,
+    );
     // The final check of a guarded hint runs on every outcome, before anything is stored
     if let Some(gd) = guard.as_mut() {
         if !matches!(outcome, Outcome::Leaked) {
@@ -654,11 +766,13 @@ pub async fn run(g: Generation) {
         };
     let now = crate::util::unix_now();
     let usage = stats::UsageRow {
+        connection_id: Some(route.connection_id),
+        connection: Some(route.connection_name.clone()),
         user_id: Some(who.id),
         at: now,
         kind: "chat",
-        provider: provider.as_str(),
-        model: model.clone(),
+        provider: route.provider.as_str(),
+        model: route.model.clone(),
         tokens_in,
         tokens_out,
         tokens_cached,
@@ -670,11 +784,20 @@ pub async fn run(g: Generation) {
     };
     let saved = app.0.store.write(|tx| {
         data::finish_answer(tx, message, &text, status, code, truncated, now)?;
+        if keep_reasoning {
+            data::set_reasoning(tx, message, &reasoning, reasoning_ms, reasoning_cut)?;
+        }
         data::touch_chat(tx, chat, now)?;
         stats::insert_usage_purpose(tx, &usage, purpose)
     });
     if let Err(e) = saved {
         tracing::error!("could not save the end of an AI answer: {e}");
+    }
+    // What the call says about its connection: three `ai.up.auth` answers in a row mark it broken
+    match &outcome {
+        Outcome::Done | Outcome::Leaked => app.0.note_outcome(&route, None),
+        Outcome::Failed(e) => app.0.note_outcome(&route, Some(e.code)),
+        Outcome::Cancelled(_) => {}
     }
     match &outcome {
         Outcome::Failed(e) => app.0.failures.note(&who.username, e.code.code(), e.http),
@@ -811,5 +934,6 @@ mod tests {
         assert!(!reg.chat_running(10));
         assert_eq!(StopReason::Stop.code(), None);
         assert_eq!(StopReason::Disabled.code(), Some("ai.disabled"));
+        assert_eq!(StopReason::FeatureOff.code(), Some("ai.featureOff"));
     }
 }

@@ -56,8 +56,12 @@ pub struct Turn {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Item {
     Text(String),
-    /// The model is reasoning before (or while) it answers. The reasoning text itself is dropped by the parsers at
-    /// once: it is never stored, sent to the browser or logged, and does not count towards the answer cap.
+    /// Reasoning text of the model: OpenAI-format `reasoning_content` / `reasoning`, a leading `<think>` /
+    /// `<thinking>` / `<thought>` span of the content, Anthropic `thinking_delta`. Never empty. Only AI Chat keeps it
+    /// (chat.rs, purpose None); every other consumer drops it. Never counts towards the answer cap, never logged.
+    Reasoning(String),
+    /// Reasoning happened but carries no text here (Anthropic thinking / redacted_thinking block start, entering an
+    /// inline span).
     Thinking,
     Usage {
         input: Option<i64>,
@@ -76,7 +80,9 @@ pub enum Item {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Up {
     Text(String),
-    /// Reasoning arrived (no text; see [`Item::Thinking`])
+    /// See [`Item::Reasoning`]
+    Reasoning(String),
+    /// Reasoning happened without text (see [`Item::Thinking`])
     Thinking,
     Usage {
         input: Option<i64>,
@@ -323,6 +329,49 @@ pub fn put_prefix(format: Format, body: &mut Value, prefix: &str) {
     };
 }
 
+/// Like [`put_prefix`], with cache markers for the OpenAI-compatible format too (content-part shape, which LiteLLM and
+/// other Anthropic-backed gateways pass through): the first user message becomes `[{prefix + cache_control}, {own}]` and
+/// the system message `[{system + cache_control}]`, two breakpoints in all. Anthropic: the same as `put_prefix`.
+pub fn put_prefix_marked(format: Format, body: &mut Value, prefix: &str) {
+    put_prefix(format, body, prefix);
+    if format != Format::OpenAi {
+        return;
+    }
+    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    if let Some(sys) = messages
+        .iter_mut()
+        .find(|m| m.get("role").and_then(Value::as_str) == Some("system"))
+    {
+        if let Some(Value::String(text)) = sys.get("content").cloned() {
+            sys["content"] = json!([
+                {"type": "text", "text": text, "cache_control": {"type": "ephemeral"}}
+            ]);
+        }
+    }
+    let Some(first) = messages
+        .iter_mut()
+        .find(|m| m.get("role").and_then(Value::as_str) == Some("user"))
+    else {
+        return;
+    };
+    // `put_prefix` joined "{prefix}\n\n{own}": split it again at the known prefix length
+    let Some(Value::String(joined)) = first.get("content").cloned() else {
+        return;
+    };
+    let Some(own) = joined
+        .strip_prefix(prefix)
+        .and_then(|r| r.strip_prefix("\n\n"))
+    else {
+        return;
+    };
+    first["content"] = json!([
+        {"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": own}
+    ]);
+}
+
 /// What a settings fingerprint learned about the token limit (kept in memory only, see `App`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenMemo {
@@ -429,6 +478,11 @@ pub struct Plan {
     pub steps: Vec<(TokenLimit, reqwest::Request)>,
     /// The app remembers the accepted step per settings fingerprint
     pub remember: Option<Remember>,
+    /// OpenAI-compatible request with cache markers: the same ladder without markers (empty when the steps carry none).
+    /// Used once when a 400 / 422 refuses the marked request for another reason than the token field.
+    pub plain: Vec<(TokenLimit, reqwest::Request)>,
+    /// Called when the unmarked retry succeeded: the connection must not get markers
+    pub remember_plain: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Plan {
@@ -439,6 +493,8 @@ impl Plan {
             stored_max: 0,
             steps: vec![(TokenLimit::omit(), req)],
             remember: None,
+            plain: Vec::new(),
+            remember_plain: None,
         }
     }
 }
@@ -454,9 +510,78 @@ pub struct ChatSpec<'a> {
     /// import, A-OWNER-71): Anthropic gets it as its own text block with a `cache_control` breakpoint, an
     /// OpenAI-compatible service gets the same text first in the user message (providers that cache automatically hit it)
     pub prefix: Option<&'a str>,
+    /// `false`: no cache markers in the request (a call that cannot profit from a cache, or whose prefix is below the
+    /// model's cache minimum, see [`cache_floor_ok`])
+    pub cache: bool,
 }
 
-/// Builds the plan: the request with `first`, then one request per later step of the ladder.
+/// Admin connection tests (90-second rule): one model listing, one test attempt, the attempts of one model, and the
+/// deadline of a whole test request, in seconds.
+pub const TEST_LIST_SECS: u64 = 15;
+pub const TEST_ATTEMPT_SECS: u64 = 30;
+pub const TEST_ATTEMPTS: u32 = 2;
+pub const TEST_TOTAL_SECS: u64 = 90;
+
+/// The fewest input tokens a provider caches for `model` (the caching starts at this prompt size). An unknown model gets
+/// the largest figure, so a marker is never sent where it cannot work.
+pub fn cache_min_tokens(format: Format, model: &str) -> i64 {
+    let m = model.to_ascii_lowercase();
+    match format {
+        Format::Anthropic => {
+            if m.contains("haiku-4-5")
+                || m.contains("haiku-4.5")
+                || m.contains("opus-4-5")
+                || m.contains("opus-4.5")
+            {
+                4096
+            } else if m.contains("haiku") {
+                2048
+            } else if m.contains("sonnet") || m.contains("opus") {
+                1024
+            } else {
+                4096
+            }
+        }
+        Format::OpenAi => {
+            if m.starts_with("gpt-")
+                || m.starts_with("o1")
+                || m.starts_with("o3")
+                || m.starts_with("o4")
+            {
+                1024
+            } else {
+                4096
+            }
+        }
+    }
+}
+
+/// `true` when a request whose cached part is `system` + `prefix` is long enough for the model's cache: the estimate of
+/// its tokens, with a 30 % margin, reaches [`cache_min_tokens`]. A caller sets `ChatSpec.cache` from this.
+pub fn cache_floor_ok(format: Format, model: &str, system: &str, prefix: Option<&str>) -> bool {
+    let tokens =
+        crate::limits::estimate_tokens(system) + prefix.map_or(0, crate::limits::estimate_tokens);
+    tokens.saturating_mul(13) / 10 >= cache_min_tokens(format, model)
+}
+
+/// Removes every `cache_control` marker of a request body.
+pub fn strip_cache_markers(v: &mut Value) {
+    match v {
+        Value::Object(m) => {
+            m.remove("cache_control");
+            for x in m.values_mut() {
+                strip_cache_markers(x);
+            }
+        }
+        Value::Array(a) => a.iter_mut().for_each(strip_cache_markers),
+        _ => {}
+    }
+}
+
+/// Builds the plan: the request with `first`, then one request per later step of the ladder. OpenAI-compatible with a
+/// prefix and `spec.cache` (and `no_markers` false): the requests carry cache markers ([`put_prefix_marked`]) and the
+/// plan also holds the unmarked ladder for the one fallback; `on_no_markers` is called when that fallback worked.
+#[allow(clippy::too_many_arguments)]
 pub fn build_plan(
     target: &Target,
     client: &reqwest::Client,
@@ -464,8 +589,13 @@ pub fn build_plan(
     first: TokenLimit,
     stored_max: i64,
     remember: Option<Remember>,
+    no_markers: bool,
+    on_no_markers: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<Plan, UpError> {
+    let marked =
+        target.format == Format::OpenAi && spec.prefix.is_some() && spec.cache && !no_markers;
     let mut steps = Vec::new();
+    let mut plain = Vec::new();
     let mut limit = Some(first);
     while let Some(l) = limit {
         let mut body = chat_body(
@@ -476,11 +606,24 @@ pub fn build_plan(
             spec.usage_option,
             l,
         );
+        let mut fallback = None;
         if let Some(p) = spec.prefix {
-            put_prefix(target.format, &mut body, p);
+            if marked {
+                let mut plain_body = body.clone();
+                put_prefix(target.format, &mut plain_body, p);
+                fallback = Some(plain_body);
+                put_prefix_marked(target.format, &mut body, p);
+            } else {
+                put_prefix(target.format, &mut body, p);
+            }
         }
-        let req = target.chat_request(client, &body, spec.skip_cache)?;
-        steps.push((l, req));
+        if !spec.cache {
+            strip_cache_markers(&mut body);
+        }
+        steps.push((l, target.chat_request(client, &body, spec.skip_cache)?));
+        if let Some(b) = fallback {
+            plain.push((l, target.chat_request(client, &b, spec.skip_cache)?));
+        }
         limit = ladder_after(target.format, &l, stored_max);
     }
     Ok(Plan {
@@ -488,6 +631,8 @@ pub fn build_plan(
         stored_max,
         steps,
         remember,
+        plain,
+        remember_plain: on_no_markers,
     })
 }
 
@@ -538,8 +683,14 @@ impl Handler {
 /// What one request ended in: it ran (its result went to the channel), or the service refused it by HTTP status before
 /// any stream event (nothing was sent to the channel yet).
 enum Attempt {
-    Ran,
-    Refused { status: u16, body: Vec<u8> },
+    /// `ok`: a 2xx response whose stream ended in `Done`
+    Ran {
+        ok: bool,
+    },
+    Refused {
+        status: u16,
+        body: Vec<u8>,
+    },
 }
 
 /// Sends a streaming chat request and reports what arrives on `tx`, ending with exactly one `Done` or `Fail`.
@@ -560,8 +711,9 @@ pub async fn stream_chat(
 }
 
 /// Runs a plan: the first request, and after an HTTP 400 / 422 that names the token field it sent (before any stream
-/// event) the next step of the ladder. Several requests, but one call: the caller counts, times and records it once.
-/// Ends with exactly one `Done` or `Fail` on `tx`.
+/// event) the next step of the ladder. A marked OpenAI-compatible request that is refused with 400 / 422 for any other
+/// reason is retried once, unmarked (same token step), and a success is remembered (`remember_plain`). Several requests,
+/// but one call: the caller counts, times and records it once. Ends with exactly one `Done` or `Fail` on `tx`.
 pub async fn stream_plan(
     client: &reqwest::Client,
     plan: Plan,
@@ -573,32 +725,73 @@ pub async fn stream_plan(
         stored_max,
         steps,
         remember,
+        plain,
+        remember_plain,
     } = plan;
-    let total = steps.len();
-    for (i, (sent, req)) in steps.into_iter().enumerate() {
-        match stream_once(client, req, format, t, &tx).await {
-            Attempt::Ran => {
-                if i > 0 {
-                    if let Some(r) = &remember {
-                        r(&sent);
+    let args = (client, format, stored_max, t, &tx, &remember);
+    let (mut status, mut body, at) = match run_ladder(args, steps, 0).await {
+        Ok(_) => return,
+        Err(r) => r,
+    };
+    if !plain.is_empty() && matches!(status, 400 | 422) {
+        match run_ladder(args, plain, at).await {
+            Ok(ok) => {
+                // Only a clean 2xx answer proves the unmarked form works; a timeout or a broken stream proves nothing
+                if ok {
+                    if let Some(r) = &remember_plain {
+                        r();
                     }
                 }
                 return;
+            }
+            Err((s, b, _)) => (status, body) = (s, b),
+        }
+    }
+    let _ = tx.send(Up::Fail(UpError::new(
+        errors::from_body(status, &body),
+        Some(status),
+    )));
+}
+
+type LadderArgs<'a> = (
+    &'a reqwest::Client,
+    Format,
+    i64,
+    Timeouts,
+    &'a UnboundedSender<Up>,
+    &'a Option<Remember>,
+);
+
+/// Runs the steps of a ladder from index `skip`; `Ok(clean)` when a request ran (its result went to the channel;
+/// `clean` = 2xx and finished with `Done`), else the
+/// final refusal (status, body, index of the step).
+async fn run_ladder(
+    (client, format, stored_max, t, tx, remember): LadderArgs<'_>,
+    steps: Vec<(TokenLimit, reqwest::Request)>,
+    skip: usize,
+) -> Result<bool, (u16, Vec<u8>, usize)> {
+    let total = steps.len();
+    for (i, (sent, req)) in steps.into_iter().enumerate().skip(skip) {
+        match stream_once(client, req, format, t, tx).await {
+            Attempt::Ran { ok } => {
+                if i > 0 {
+                    if let Some(r) = remember {
+                        r(&sent);
+                    }
+                }
+                return Ok(ok);
             }
             Attempt::Refused { status, body } => {
                 let text = String::from_utf8_lossy(&body);
                 let retry = i + 1 < total
                     && next_token_limit(format, &sent, status, &text, stored_max).is_some();
                 if !retry {
-                    let _ = tx.send(Up::Fail(UpError::new(
-                        errors::from_body(status, &body),
-                        Some(status),
-                    )));
-                    return;
+                    return Err((status, body, i));
                 }
             }
         }
     }
+    Err((500, Vec::new(), total))
 }
 
 async fn stream_once(
@@ -612,11 +805,11 @@ async fn stream_once(
     let mut resp = match tokio::time::timeout(t.first_byte, client.execute(req)).await {
         Err(_) => {
             let _ = tx.send(fail(UpCode::Timeout, None));
-            return Attempt::Ran;
+            return Attempt::Ran { ok: false };
         }
         Ok(Err(e)) => {
             let _ = tx.send(fail(errors::from_reqwest(&e), None));
-            return Attempt::Ran;
+            return Attempt::Ran { ok: false };
         }
         Ok(Ok(r)) => r,
     };
@@ -641,11 +834,11 @@ async fn stream_once(
         let chunk = match tokio::time::timeout(t.idle, resp.chunk()).await {
             Err(_) => {
                 let _ = tx.send(fail(UpCode::Timeout, Some(status)));
-                return Attempt::Ran;
+                return Attempt::Ran { ok: false };
             }
             Ok(Err(e)) => {
                 let _ = tx.send(fail(errors::from_reqwest(&e), Some(status)));
-                return Attempt::Ran;
+                return Attempt::Ran { ok: false };
             }
             Ok(Ok(c)) => c,
         };
@@ -657,7 +850,7 @@ async fn stream_once(
             Ok(e) => e,
             Err(sse::TooLarge) => {
                 let _ = tx.send(fail(UpCode::Protocol, Some(status)));
-                return Attempt::Ran;
+                return Attempt::Ran { ok: false };
             }
         };
         let mut items = Vec::new();
@@ -677,10 +870,11 @@ async fn stream_once(
                     chars += s.chars().count();
                     if chars > MAX_ANSWER_CHARS {
                         let _ = tx.send(fail(UpCode::TooLong, Some(status)));
-                        return Attempt::Ran;
+                        return Attempt::Ran { ok: false };
                     }
                     Up::Text(s)
                 }
+                Item::Reasoning(s) => Up::Reasoning(s),
                 Item::Thinking => Up::Thinking,
                 Item::Usage { input, output } => Up::Usage { input, output },
                 Item::Cached(n) => Up::Cached(n),
@@ -688,17 +882,17 @@ async fn stream_once(
                 Item::Truncated => Up::Truncated,
                 Item::Done => {
                     let _ = tx.send(Up::Done);
-                    return Attempt::Ran;
+                    return Attempt::Ran { ok: true };
                 }
                 Item::Fail(code) => {
                     let _ = tx.send(fail(code, Some(status)));
-                    return Attempt::Ran;
+                    return Attempt::Ran { ok: false };
                 }
             };
             let _ = tx.send(up);
         }
         if chunk.is_none() {
-            return Attempt::Ran;
+            return Attempt::Ran { ok: false };
         }
     }
 }
@@ -753,6 +947,7 @@ pub async fn collect_chat(
                     out.text.push_str(&s);
                 }
                 // the test call and the memory suggestion wait for the text only
+                Some(Up::Reasoning(_)) => {}
                 Some(Up::Thinking) => {}
                 Some(Up::Usage { input, output }) => {
                     if input.is_some() { out.tokens_in = input; }
@@ -1278,5 +1473,427 @@ mod tests {
         assert_eq!(l.contexts.get("demo-a"), Some(&200_000));
         assert_eq!(l.contexts.get("demo-b"), Some(&32_000));
         assert!(!l.contexts.contains_key("demo-c"));
+    }
+    #[test]
+    fn cache_minimums_and_the_floor() {
+        assert_eq!(cache_min_tokens(Format::Anthropic, "demo-sonnet-9"), 1024);
+        assert_eq!(cache_min_tokens(Format::Anthropic, "Demo-Haiku-3"), 2048);
+        assert_eq!(cache_min_tokens(Format::Anthropic, "demo-haiku-4-5"), 4096);
+        assert_eq!(cache_min_tokens(Format::Anthropic, "demo-unknown"), 4096);
+        assert_eq!(cache_min_tokens(Format::OpenAi, "gpt-demo"), 1024);
+        assert_eq!(cache_min_tokens(Format::OpenAi, "vendor/demo"), 4096);
+        // a short prompt is below every minimum, a long one reaches the 1024 of a known model but not the unknown 4096
+        assert!(!cache_floor_ok(
+            Format::Anthropic,
+            "demo-sonnet-9",
+            "rules",
+            Some("short")
+        ));
+        let long = "word ".repeat(1000);
+        assert!(cache_floor_ok(
+            Format::Anthropic,
+            "demo-sonnet-9",
+            "rules",
+            Some(&long)
+        ));
+        assert!(!cache_floor_ok(
+            Format::Anthropic,
+            "demo-unknown",
+            "rules",
+            Some(&long)
+        ));
+        // the margin: 800 estimated tokens x 1.3 = 1040 reaches 1024
+        let eight = "a".repeat(3200);
+        assert!(cache_floor_ok(
+            Format::Anthropic,
+            "demo-sonnet-9",
+            &eight,
+            None
+        ));
+        assert!(!cache_floor_ok(
+            Format::Anthropic,
+            "demo-sonnet-9",
+            &"a".repeat(3000),
+            None
+        ));
+    }
+
+    #[test]
+    fn no_cache_means_no_markers_anywhere() {
+        let mut turns = one_turn("first question");
+        turns.push(Turn {
+            role: Role::Assistant,
+            content: "an answer".into(),
+        });
+        turns.push(Turn {
+            role: Role::User,
+            content: "second question".into(),
+        });
+        let mut body = chat_body(
+            Format::Anthropic,
+            "m",
+            "rules",
+            &turns,
+            true,
+            TokenLimit::max_tokens(900),
+        );
+        put_prefix(Format::Anthropic, &mut body, "PREFIX-BYTES");
+        assert!(body.to_string().matches("cache_control").count() >= 2);
+        strip_cache_markers(&mut body);
+        assert!(!body.to_string().contains("cache_control"));
+        // the text itself is untouched
+        assert_eq!(body["system"][0]["text"], "rules");
+        assert_eq!(body["messages"][0]["content"][0]["text"], "PREFIX-BYTES");
+    }
+
+    #[test]
+    fn the_test_budget_constants() {
+        assert_eq!(
+            (
+                TEST_LIST_SECS,
+                TEST_ATTEMPT_SECS,
+                TEST_ATTEMPTS,
+                TEST_TOTAL_SECS
+            ),
+            (15, 30, 2, 90)
+        );
+    }
+
+    fn spec<'a>(turns: &'a [Turn], prefix: Option<&'a str>, cache: bool) -> ChatSpec<'a> {
+        ChatSpec {
+            model: "m",
+            system: "rules",
+            turns,
+            usage_option: true,
+            skip_cache: false,
+            prefix,
+            cache,
+        }
+    }
+
+    fn body_of(req: &reqwest::Request) -> Value {
+        serde_json::from_slice(req.body().and_then(|b| b.as_bytes()).expect("bytes")).expect("json")
+    }
+
+    fn openai_target(base: &str) -> Target {
+        let mut t = target(
+            Provider::OpenAi,
+            Format::OpenAi,
+            GatewayAuth::Bearer,
+            true,
+            false,
+        );
+        t.base = base.to_string();
+        t
+    }
+
+    #[test]
+    fn an_openai_prefix_with_cache_is_a_content_part_array_with_two_breakpoints() {
+        let turns = one_turn("TASK now");
+        let mut body = chat_body(
+            Format::OpenAi,
+            "m",
+            "rules",
+            &turns,
+            true,
+            TokenLimit::omit(),
+        );
+        put_prefix_marked(Format::OpenAi, &mut body, "FILE\nL1: made-up line");
+        assert_eq!(
+            body["messages"][0]["content"],
+            json!([{"type": "text", "text": "rules", "cache_control": {"type": "ephemeral"}}])
+        );
+        assert_eq!(
+            body["messages"][1]["content"],
+            json!([
+                {"type": "text", "text": "FILE\nL1: made-up line", "cache_control": {"type": "ephemeral"}},
+                {"type": "text", "text": "TASK now"}
+            ])
+        );
+        assert_eq!(body.to_string().matches("cache_control").count(), 2);
+        strip_cache_markers(&mut body);
+        assert!(!body.to_string().contains("cache_control"));
+    }
+
+    #[tokio::test]
+    async fn build_plan_marks_only_openai_with_prefix_and_cache() {
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let turns = one_turn("TASK now");
+        let t = openai_target("http://127.0.0.1:9/v1");
+        let first = TokenLimit::omit();
+        let plan = |t: &Target, sp: &ChatSpec<'_>, no: bool| {
+            build_plan(t, &client, sp, first, 8192, None, no, None).expect("plan")
+        };
+        // prefix + cache: marked steps and the plain ladder
+        let p = plan(&t, &spec(&turns, Some("PFX"), true), false);
+        let b = body_of(&p.steps[0].1);
+        assert!(b["messages"][1]["content"].is_array());
+        assert_eq!(p.plain.len(), p.steps.len());
+        let pb = body_of(&p.plain[0].1);
+        assert_eq!(pb["messages"][0]["content"], json!("rules"));
+        assert_eq!(pb["messages"][1]["content"], json!("PFX\n\nTASK now"));
+        // cache off or a memo: plain strings, the same as put_prefix, no fallback ladder
+        for (sp, no) in [
+            (spec(&turns, Some("PFX"), false), false),
+            (spec(&turns, Some("PFX"), true), true),
+        ] {
+            let p = plan(&t, &sp, no);
+            assert!(p.plain.is_empty());
+            assert_eq!(body_of(&p.steps[0].1), pb);
+        }
+        // no prefix: the plain chat body, byte-identical to today
+        let p = plan(&t, &spec(&turns, None, true), false);
+        assert!(p.plain.is_empty());
+        let golden = chat_body(Format::OpenAi, "m", "rules", &turns, true, first);
+        assert_eq!(body_of(&p.steps[0].1), golden);
+        // Anthropic is unchanged: its own breakpoints, no plain ladder
+        let mut a = openai_target("http://127.0.0.1:9/v1");
+        a.format = Format::Anthropic;
+        a.provider = Provider::Anthropic;
+        let p = plan(&a, &spec(&turns, Some("PFX"), true), false);
+        assert!(p.plain.is_empty());
+        let mut want = chat_body(Format::Anthropic, "m", "rules", &turns, true, first);
+        put_prefix(Format::Anthropic, &mut want, "PFX");
+        assert_eq!(body_of(&p.steps[0].1), want);
+    }
+
+    type Seen = std::sync::Arc<std::sync::Mutex<Vec<Value>>>;
+
+    /// A stub server: refuses a body that holds `cache_control` with 400 (when `refuse`) and answers everything else
+    /// with a one-event stream; returns its base URL and the bodies it saw.
+    async fn marker_stub(refuse: bool) -> (String, Seen) {
+        marker_stub_with(refuse, false).await
+    }
+
+    /// Like `marker_stub`; with `broken_plain` the unmarked retry answers 200 but the stream carries an error event.
+    async fn marker_stub_with(refuse: bool, broken_plain: bool) -> (String, Seen) {
+        use axum::{body::Bytes, http::StatusCode, response::IntoResponse, Router};
+        let seen: Seen = Default::default();
+        let log = seen.clone();
+        let app = Router::new().fallback(move |body: Bytes| {
+            let log = log.clone();
+            async move {
+                let v: Value = serde_json::from_slice(&body).expect("json");
+                let marked = v.to_string().contains("cache_control");
+                log.lock().expect("log").push(v);
+                if marked && refuse {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":{"message":"unknown field cache_control"}}"#,
+                    )
+                        .into_response();
+                }
+                if broken_plain {
+                    return (
+                        [("content-type", "text/event-stream")],
+                        "data: {\"error\":{\"message\":\"upstream broke\"}}
+
+",
+                    )
+                        .into_response();
+                }
+                (
+                    [("content-type", "text/event-stream")],
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                    .into_response()
+            }
+        });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = l.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(l, app).await;
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    async fn run(plan: Plan) -> Vec<Up> {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        stream_plan(&client, plan, Timeouts::default(), tx).await;
+        let mut out = Vec::new();
+        while let Ok(u) = rx.try_recv() {
+            out.push(u);
+        }
+        out
+    }
+
+    #[tokio::test]
+    async fn a_server_that_refuses_markers_gets_one_unmarked_retry_and_is_remembered() {
+        let (base, seen) = marker_stub(true).await;
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let turns = one_turn("TASK now");
+        let t = openai_target(&format!("{base}/v1"));
+        let memo = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let build = |no: bool| {
+            let m = memo.clone();
+            let cb: Arc<dyn Fn() + Send + Sync> =
+                Arc::new(move || m.store(true, std::sync::atomic::Ordering::SeqCst));
+            build_plan(
+                &t,
+                &client,
+                &spec(&turns, Some("PFX"), true),
+                TokenLimit::omit(),
+                8192,
+                None,
+                no,
+                Some(cb),
+            )
+            .expect("plan")
+        };
+        let ups = run(build(false)).await;
+        assert!(matches!(ups.last(), Some(Up::Done)), "{ups:?}");
+        assert!(ups.iter().any(|u| matches!(u, Up::Text(s) if s == "ok")));
+        assert!(memo.load(std::sync::atomic::Ordering::SeqCst));
+        {
+            let s = seen.lock().expect("seen");
+            assert_eq!(s.len(), 2, "one marked request, one retry");
+            assert!(s[0].to_string().contains("cache_control"));
+            assert!(!s[1].to_string().contains("cache_control"));
+            assert_eq!(s[1]["messages"][1]["content"], json!("PFX\n\nTASK now"));
+        }
+        // the next call is built with the memo: no markers at all, one request
+        let ups = run(build(true)).await;
+        assert!(matches!(ups.last(), Some(Up::Done)), "{ups:?}");
+        let s = seen.lock().expect("seen");
+        assert_eq!(s.len(), 3);
+        assert!(!s[2].to_string().contains("cache_control"));
+    }
+
+    #[tokio::test]
+    async fn a_server_that_accepts_markers_is_asked_once_and_never_flagged() {
+        let (base, seen) = marker_stub(false).await;
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let turns = one_turn("TASK now");
+        let t = openai_target(&format!("{base}/v1"));
+        let plan = build_plan(
+            &t,
+            &client,
+            &spec(&turns, Some("PFX"), true),
+            TokenLimit::omit(),
+            8192,
+            None,
+            false,
+            Some(Arc::new(|| panic!("must not be remembered"))),
+        )
+        .expect("plan");
+        let ups = run(plan).await;
+        assert!(matches!(ups.last(), Some(Up::Done)), "{ups:?}");
+        assert_eq!(seen.lock().expect("seen").len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_broken_unmarked_retry_is_not_remembered() {
+        // marked request: 400; unmarked retry: 200 with an in-stream error, so nothing proves the plain form works
+        let (base, seen) = marker_stub_with(true, true).await;
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let turns = one_turn("TASK now");
+        let t = openai_target(&format!("{base}/v1"));
+        let plan = build_plan(
+            &t,
+            &client,
+            &spec(&turns, Some("PFX"), true),
+            TokenLimit::omit(),
+            8192,
+            None,
+            false,
+            Some(Arc::new(|| panic!("must not be remembered"))),
+        )
+        .expect("plan");
+        let ups = run(plan).await;
+        assert!(matches!(ups.last(), Some(Up::Fail(_))), "{ups:?}");
+        assert_eq!(seen.lock().expect("seen").len(), 2);
+    }
+
+    /// A stub server that answers every request with the given event stream body.
+    async fn fixed_stub(body: String) -> String {
+        use axum::{response::IntoResponse, Router};
+        let app = Router::new().fallback(move || {
+            let body = body.clone();
+            async move { ([("content-type", "text/event-stream")], body).into_response() }
+        });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = l.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(l, app).await;
+        });
+        format!("http://{addr}/v1")
+    }
+
+    fn sse_of(deltas: &[Value]) -> String {
+        let mut out = String::new();
+        for d in deltas {
+            out.push_str(&format!("data: {}\n\n", json!({"choices": [{"delta": d}]})));
+        }
+        out.push_str("data: [DONE]\n\n");
+        out
+    }
+
+    async fn plan_for(base: &str) -> (reqwest::Client, Plan) {
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let turns = one_turn("TASK now");
+        let t = openai_target(base);
+        let plan = build_plan(
+            &t,
+            &client,
+            &spec(&turns, None, false),
+            TokenLimit::omit(),
+            8192,
+            None,
+            false,
+            None,
+        )
+        .expect("plan");
+        (client, plan)
+    }
+
+    #[tokio::test]
+    async fn reasoning_is_forwarded_and_not_counted_towards_the_answer_cap() {
+        let mut deltas: Vec<Value> = (0..150)
+            .map(|_| json!({"reasoning_content": "r".repeat(1000)}))
+            .collect();
+        deltas.push(json!({"content": "Short."}));
+        let base = fixed_stub(sse_of(&deltas)).await;
+        let (_client, plan) = plan_for(&base).await;
+        let ups = run(plan).await;
+        let reasoning: usize = ups
+            .iter()
+            .map(|u| match u {
+                Up::Reasoning(s) => s.chars().count(),
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(reasoning, 150_000);
+        assert!(ups.contains(&Up::Text("Short.".into())), "{ups:?}");
+        assert!(matches!(ups.last(), Some(Up::Done)), "{ups:?}");
+        assert!(!ups.iter().any(|u| matches!(u, Up::Fail(_))), "{ups:?}");
+    }
+
+    #[tokio::test]
+    async fn collect_chat_drops_reasoning() {
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let base = fixed_stub(sse_of(&[
+            json!({"reasoning_content": "zebra-secret-1 "}),
+            json!({"content": "<thought>zebra-secret-2</thought>\n\nThe answer."}),
+        ]))
+        .await;
+        let (_c, plan) = plan_for(&base).await;
+        let got = collect_chat(&client, plan, Timeouts::default(), Duration::from_secs(10))
+            .await
+            .expect("collected");
+        assert_eq!(got.text, "The answer.");
+        assert!(got.first_byte_ms.is_some());
+        // reasoning only: no text, no first byte
+        let base = fixed_stub(sse_of(&[json!({"reasoning": "zebra-secret-3"})])).await;
+        let (_c, plan) = plan_for(&base).await;
+        let got = collect_chat(&client, plan, Timeouts::default(), Duration::from_secs(10))
+            .await
+            .expect("collected");
+        assert_eq!(got.text, "");
+        assert!(got.first_byte_ms.is_none());
     }
 }

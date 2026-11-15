@@ -142,6 +142,8 @@ export interface AttemptResponse extends Progress {
   notCounted?: string[];
   /** v0.9: the id of the record this save created (always last in the answer) */
   recordId?: number;
+  /** v1.3 (IMPROVE A1): the same attempt was already saved (a retry after a lost answer); nothing was written again */
+  duplicate?: true;
 }
 
 export interface ImportRecord {
@@ -413,10 +415,26 @@ export interface AuthState {
   aiAvailable?: boolean;
   /** v0.8 round 2, administrators only: the state of ai-service from its reports (AI settings shows it) */
   aiService?: AiService;
+  /** v1.3, signed in: the session rule and its limits */
+  session?: SessionInfo;
+  /** v1.3, signed in: the page reports its visits (`POST /api/activity/visit`) */
+  logVisits?: boolean;
 }
 
 export interface AuthUserResponse {
   user: AuthUser;
+}
+
+/** v1.3: `POST /api/auth/login` body */
+export interface LoginRequest {
+  username: string;
+  password: string;
+  remember?: boolean;
+}
+
+/** v1.3: `POST /api/auth/login` answer */
+export interface LoginResponse extends AuthUserResponse {
+  session: SessionInfo;
 }
 
 /** One row of `GET /api/users` (administrators only) */
@@ -453,6 +471,11 @@ export interface UserRow {
    * main service; always false for administrators). The row then shows the dark badge.
    */
   aiSuspended: boolean;
+  /** v1.3: the last request of this user (minute precision); null = never active */
+  lastActiveAt?: string | null;
+  /** v1.3: the last sign-in IP; null while the sign-in info eye is closed or nothing was recorded */
+  lastLoginIp?: string | null;
+  lastLoginLocation?: GeoLocation | null;
 }
 
 /**
@@ -481,6 +504,8 @@ export interface UsersResponse {
    * AI settings). Only then can a user's AI+ service be switched on or off (else 409 `ai.serviceOff`).
    */
   aiAvailable: boolean;
+  /** v1.3: the sign-in info eye (IP + approximate location) of User management */
+  signinInfo?: boolean;
 }
 
 /** `POST /api/users/update`: only the fields that change */
@@ -555,6 +580,8 @@ export interface AiCalls {
   used: AiCallCounts;
   caps: AiCallCounts;
   blocked: AiCallBlock | null;
+  /** v1.3: an administrator while "administrators are exempt" is on (counts still sent, no limits) */
+  exempt?: true;
 }
 
 /** `GET /api/ai/status`: what the signed-in user may do with AI right now */
@@ -590,13 +617,15 @@ export interface AiStatusJson {
   features?: Partial<Record<AiFeatureKey, boolean>>;
   /** v1.1 (API-U1): present exactly when the user has the AI+ service, also while AI is off */
   gen?: GenStatus;
+  /** v1.3, administrators: the default model (the model of AI Chat when nothing is picked); null = none */
+  chatDefault?: { connectionId: number; connectionName: string; model: string } | null;
 }
 
 export type AiFeatureKey = 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import';
 
 export type GenSource = 'bank' | 'scope' | 'wrong' | 'file';
 export type GenState = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
-export type GenPhase = 'reading' | 'confirm' | 'writing' | 'saving';
+export type GenPhase = 'planning' | 'reading' | 'confirm' | 'writing' | 'saving';
 export type ImportFileType = 'pdf' | 'docx' | 'xlsx' | 'pptx' | 'md' | 'txt' | 'csv';
 
 /** v1.1 (API-U1, P-30): one generation / import job */
@@ -632,6 +661,9 @@ export interface GenJob {
   charged: boolean;
   /** A-OWNER-67: exact sums of the job's own model calls (recognition included) */
   usage?: { calls: number; tokensIn: number; tokensOut: number; tokensCached?: number; tokensCacheWrite?: number };
+  /** v1.3 (COST 3): chunks of the planned source and tokens of the shared prefix; set once planning is done */
+  chunks?: number;
+  prefixTokens?: number;
 }
 
 /** v1.1 (API-U1): `gen` of the status */
@@ -665,6 +697,10 @@ export interface AiChatSummary {
   kind?: AiChatKind;
   /** v0.9: the record a study chat belongs to, when known */
   recordId?: number | null;
+  /** v1.3 (CHAT 3): the leaf of the viewed branch (null = empty chat) */
+  leafId?: number | null;
+  /** v1.3, administrators only: the picked model (null = default) */
+  pick?: ModelRef | null;
 }
 
 export type AiChatKind = 'chat' | 'practice' | 'exam' | 'summary';
@@ -681,7 +717,8 @@ export interface AiMessage {
   error: string | null;
   /** The answer reached the model's length limit */
   truncated: boolean;
-  model: string | null;
+  /** administrators only (v1.3 sprint 2): absent for everyone else */
+  model?: string | null;
   createdAt: number;
   /** Written in the administrator's free mode (the chat draws a divider where it changes) */
   free: boolean;
@@ -693,6 +730,17 @@ export interface AiMessage {
   lang?: 'en' | 'zh-CN' | 'ja' | null;
   recordId?: number | null;
   sample?: { used: number; usable: number; wrong: number } | null;
+  /** v1.3 (CHAT 3): the previous message of the branch tree (null = first); sibling versions in `versions` (2+ only) */
+  parentId?: number | null;
+  versions?: number[];
+  /** v1.3, administrators only: the name of the connection that answered */
+  connection?: string | null;
+  /** v1.3: the model's reasoning (AI Chat answers only; plain text, trimmed, <= 32 KiB); null / absent = none */
+  reasoning?: string | null;
+  /** v1.3: milliseconds the model reasoned before its first answer text; null while it still reasons or unknown */
+  reasoningMs?: number | null;
+  /** v1.3: the reasoning was cut at the server's cap (only its head is kept) */
+  reasoningTruncated?: boolean;
 }
 
 /** `GET /api/ai/chat?id=N` (and the administrators' `GET /api/ai/admin/chat`) */
@@ -722,70 +770,6 @@ export type AiGatewayAuth = 'bearer' | 'x-api-key' | 'cf-aig-authorization';
 /** The two key slots of the AI settings */
 export type AiKeySlot = 'apiKey' | 'gatewayKey';
 
-/** A saved key as the settings show it: never the key itself */
-export interface AiKeyInfo {
-  set: boolean;
-  /** "…1234" for keys of 12 characters or more, else "" */
-  hint: string;
-  /** Saved, but it cannot be decrypted with the current encryption key */
-  unreadable: boolean;
-}
-
-export type AiKeyProblem = null | 'mismatch' | 'invalidEnv' | 'invalidFile';
-
-/** `GET /api/ai/admin/settings` (administrators) */
-export interface AiSettings {
-  provider: AiProvider;
-  baseUrl: string;
-  format: AiFormat;
-  gatewayAuth: AiGatewayAuth;
-  model: string;
-  manualModel: boolean;
-  enabled: boolean;
-  verified: boolean;
-  verifiedAt: number | null;
-  retentionDays: number;
-  keys: Record<AiKeySlot, AiKeyInfo>;
-  keyProblem: AiKeyProblem;
-  updatedAt: number;
-  updatedBy: string;
-  defaults: { openai: string; anthropic: string };
-  /** The answer of a save only: the change switched AI off until the new settings pass a test */
-  switchedOff?: boolean;
-}
-
-/** `POST /api/ai/admin/settings`: every field optional (absent = keep); a key: string = replace, null = remove */
-export interface AiSettingsUpdate {
-  provider?: AiProvider;
-  baseUrl?: string;
-  format?: AiFormat;
-  gatewayAuth?: AiGatewayAuth;
-  apiKey?: string | null;
-  gatewayKey?: string | null;
-  model?: string;
-  manualModel?: boolean;
-  retentionDays?: number;
-}
-
-/** `POST /api/ai/admin/models` */
-export interface AiModels {
-  models: string[];
-  /** false: the service does not list its models (the model id is entered by hand) */
-  listed: boolean;
-}
-
-/** `POST /api/ai/admin/verify` */
-export interface AiVerify {
-  ok: boolean;
-  code: string | null;
-  httpStatus: number | null;
-  latencyMs: number;
-  model: string;
-  verifiedAt: number | null;
-  enabled: boolean;
-  switchedOff: boolean;
-}
-
 export interface AiUsageCounts {
   calls: number;
   tokensIn: number;
@@ -812,7 +796,13 @@ export interface AiUsage {
     /** v1.0: this user's counted calls since today's 0:00 of the server's time zone (the number the day cap compares) */
     today?: number;
   }>;
-  byModel: Array<AiUsageCounts & { model: string }>;
+  byModel: Array<AiUsageCounts & { model: string; connectionId?: number | null; connection?: string | null }>;
+  /** v1.3: usage by connection */
+  byConnection?: Array<AiUsageCounts & { connectionId: number | null; connection: string | null }>;
+  /** v1.3: the shared hint / explanation store */
+  shared?: { rows: number; hits: number; hitsToday: number };
+  /** v1.3: the site-wide daily budget (`limit` 0 = off) */
+  budget?: { limit: number; usedToday: number };
   byPeriod: Array<AiUsageCounts & { period: string }>;
   /** v0.9: chat, hint, explain, summary in server order */
   byPurpose?: Array<AiUsageCounts & { purpose: 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import' }>;
@@ -883,7 +873,15 @@ export interface AiLimits {
   genCallTokens?: number;
   genRunning?: number;
   importMaxMb?: number;
+  /** v1.3: 1..300 (stored as `import_file_questions`) */
   importMaxQuestions?: number;
+  /** v1.3: optional until the pages read them; hintMaxTokens / explainMaxTokens / summaryMaxTokens are gone */
+  callsAdminsExempt?: number;
+  studyShare?: number;
+  studyShareDays?: number;
+  genMaxChunks?: number;
+  summaryMaxItems?: number;
+  dailyTokenBudget?: number;
 }
 
 /** `GET` / `POST /api/ai/admin/limits` */
@@ -892,3 +890,71 @@ export interface AiLimitsAnswer {
   defaults: AiLimits;
   ranges: Record<keyof AiLimits, [number, number]>;
 }
+
+// ---------------------------------------------------------------- v1.3 additions (frozen contract: frontend-types.md)
+
+export interface ModelRef { connectionId: number; model: string }
+export type SessionRule = 'admin' | 'remember' | 'browser';
+export interface SessionInfo { rule: SessionRule; idleSecs: number; hardEndsAt: string | null }
+export interface GeoLocation { country: string; region: string | null; city: string | null }
+
+export type ActivityActor = 'user' | 'anon' | 'system';
+export type ActivityGroup = 'auth' | 'users' | 'banks' | 'study' | 'settings' | 'visit' | 'ai' | 'system';
+export interface ActivityEntry {
+  id: number; time: string; lastTime: string; count: number;
+  actor: ActivityActor; userId: number | null; username: string | null; role: 'admin' | 'user' | null; deleted: boolean;
+  action: string; object: string | null; detail: Record<string, unknown> | null;
+  result: 'ok' | 'fail'; reason: string | null;
+  ip: string | null; location: GeoLocation | null; ua: string | null; source: 'backend' | 'ai';
+}
+export interface ActivitySettings { retentionDays: number; userVisits: boolean; signinInfo: boolean }
+export interface ActivityPage {
+  entries: ActivityEntry[]; next: number | null; newest: number | null;
+  facets?: { users: { id: number; username: string; deleted: boolean }[] };
+  settings: ActivitySettings;
+}
+export type VisitPage = 'home' | 'banks' | 'users' | 'logs' | 'records' | 'record' | 'wrong' | 'settings' | 'about'
+  | 'quiz' | 'result' | 'ai' | 'aiSettings';
+
+export type AiSendMode = 'send' | 'regenerate' | 'edit';
+
+export type AiSlot = 'default' | 'chat' | 'study' | 'summary' | 'generate' | 'import';
+export type AiState = 'setup' | 'off' | 'on' | 'paused';
+export interface AiKeyState { set: boolean; hint: string; unreadable: boolean }
+export interface AiConnection {
+  id: number; rev: number; name: string; provider: 'openai' | 'anthropic' | 'gateway'; baseUrl: string; host: string;
+  format: 'openai' | 'anthropic'; gatewayAuth: 'bearer' | 'x-api-key' | 'cf-aig-authorization';
+  keys: { apiKey: AiKeyState; gatewayKey: AiKeyState };
+  status: 'ok' | 'broken'; errorCode: string | null; testedAt: number | null; listsModels: boolean;
+  insecureHttp: boolean; usedBy: AiSlot[];
+}
+export interface AiPoolModel {
+  id: number; connectionId: number; connectionName: string; model: string; manual: boolean;
+  status: 'ok' | 'untested' | 'failed'; errorCode: string | null; testedAt: number | null;
+  latencyMs: number | null; context: number | null; usedBy: AiSlot[];
+}
+export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null }
+/** `GET /api/ai/admin/settings` (administrators; v1.3: connections, the model pool, six slots, global feature switches) */
+export interface AiSettings {
+  enabled: boolean; effective: boolean; state: AiState; pauseReason: 'keyProblem' | 'noRoute' | null;
+  keyProblem: string | null; retentionDays: number; updatedAt: number; updatedBy: string;
+  defaults: { openai: string; anthropic: string }; maxConnections: number;
+  connections: AiConnection[]; pool: AiPoolModel[]; slots: Record<AiSlot, AiSlotState>;
+  featureSwitches: Record<AiFeatureKey, boolean>;
+}
+export interface AiConnectionSave {
+  id?: number; rev?: number; name: string; provider: string; baseUrl: string; format?: string; gatewayAuth?: string;
+  apiKey?: string | null; gatewayKey?: string | null; reuseKeysFrom?: number; confirmHost?: string;
+}
+export interface AiTestAnswer {
+  ok: boolean; saved?: boolean; connectionId?: number; latencyMs?: number | null; listed?: boolean; modelCount?: number;
+  tests?: { model: string; ok: boolean; latencyMs?: number; code?: string }[];
+  code?: string | null; httpStatus?: number | null; failedModel?: string | null; settings: AiSettings;
+}
+export interface AiModelList {
+  connections: { id: number; name: string; provider: string; status: 'ok' | 'broken'; listed: boolean;
+    error: string | null; models: { id: string; context: number | null; poolId: number | null; status: string | null }[] }[];
+}
+export interface GenItem { no: number; kind: 'single' | 'multiple'; stem: string;
+  options: { text: string; correct: boolean }[]; explanation: string }
+export interface GenJobAnswer { job: GenJob; items?: GenItem[]; last?: number; gone?: number[] }

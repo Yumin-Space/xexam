@@ -12,11 +12,42 @@ export type Features = Record<FeatureKey, boolean>;
 
 export const ALL_ON: Features = { chat: true, hint: true, explain: true, summary: true, generate: true, import: true };
 
-/** The two groups of the AI+ users table (P-12): line 1 and the "AI 题库：" line */
+/**
+ * The two groups of the AI+ users table (P-12) and of the global switches: line 1 and the "AI 题库：" line. One entry is one
+ * box / switch. From v1.3 AI hint and AI analysis (`explain`) are ONE item, shown under `hint`: it writes both keys.
+ */
 export const FEATURE_GROUPS: { main: readonly FeatureKey[]; banks: readonly FeatureKey[] } = {
-  main: ['chat', 'hint', 'explain', 'summary'],
+  main: ['chat', 'hint', 'summary'],
   banks: ['generate', 'import'],
 };
+
+/** The keys one box / switch writes: `hint` and `explain` always together, every other key alone */
+export function pairedKeys(k: FeatureKey): readonly FeatureKey[] {
+  return k === 'hint' || k === 'explain' ? ['hint', 'explain'] : [k];
+}
+
+/** The state of one box / switch: the hint + analysis item is on when either key is on (the server keeps them equal) */
+export function itemOn(f: Partial<Record<FeatureKey, boolean>>, k: FeatureKey): boolean {
+  return pairedKeys(k).some((x) => f[x] !== false);
+}
+
+/** `f` with one box / switch set: both keys of the hint + analysis item change together */
+export function withItem<T extends Partial<Record<FeatureKey, boolean>>>(f: T, k: FeatureKey, on: boolean): T {
+  const out = { ...f };
+  for (const x of pairedKeys(k)) (out as Partial<Record<FeatureKey, boolean>>)[x] = on;
+  return out;
+}
+
+/** The catalog key of a box / switch label: `ai.feature.study` ("AI 提示+解析") for the hint + analysis item */
+export function featureLabelKey(k: FeatureKey, short = false): string {
+  return `ai.feature.${k === 'hint' ? 'study' : k}${short ? '.short' : ''}`;
+}
+
+/** The label keys of a list of switched-off features: hint and analysis, both off, are named once as the one item */
+export function offLabelKeys(off: readonly FeatureKey[]): string[] {
+  const both = off.includes('hint') && off.includes('explain');
+  return off.filter((k) => !(both && k === 'explain')).map((k) => (both && k === 'hint' ? featureLabelKey('hint') : `ai.feature.${k}`));
+}
 
 /** The features that are off, in FP-1 order */
 export function offList(f: Features): FeatureKey[] {

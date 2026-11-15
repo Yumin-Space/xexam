@@ -44,6 +44,85 @@ pub struct UserRow {
     pub uid: String,
 }
 
+/// A session to store ([`Store::create_session`]).
+#[derive(Debug, Clone, Copy)]
+pub struct NewSession<'a> {
+    pub token_hash: &'a str,
+    pub user_id: i64,
+    /// Unix seconds: the sign-in (`started_at` and `last_seen_at`)
+    pub now: i64,
+    pub expires_at: i64,
+    pub remember: bool,
+    /// `None` while the sign-in info switch is off
+    pub ip: Option<&'a str>,
+    pub ua: Option<&'a str>,
+}
+
+/// The stored facts of a session ([`Store::session_user_ro`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRow {
+    pub user_id: i64,
+    /// `None` = unknown (a session a v1.2 binary created, fixed at the first touch)
+    pub started_at: Option<i64>,
+    pub last_seen_at: i64,
+    pub expires_at: i64,
+    pub remember: bool,
+    pub ip: Option<String>,
+    pub ua: Option<String>,
+}
+
+/// What [`Store::touch_session`] writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Touch {
+    /// Refresh the session row (`last_seen_at`, `expires_at`)
+    pub session: bool,
+    /// Set `users.last_active_at`
+    pub active: bool,
+    /// The new deadline (unix seconds) when `session`
+    pub expires_at: i64,
+}
+
+/// A session deleted by [`Store::purge_expired_sessions_ended`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EndedSession {
+    pub user_id: i64,
+    pub ip: Option<String>,
+    pub ua: Option<String>,
+    pub expires_at: i64,
+    pub started_at: Option<i64>,
+    pub last_seen_at: i64,
+    pub remember: bool,
+}
+
+/// The sign-in info of one accepted sign-in ([`Store::note_signin`]); the caller passes it only while the sign-in info switch is open.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SigninInfo<'a> {
+    pub ip: Option<&'a str>,
+    pub country: Option<&'a str>,
+    pub region: Option<&'a str>,
+    pub city: Option<&'a str>,
+}
+
+/// `UPDATE`s that clear the stored sign-in IP and location of users and sessions (inside the caller's transaction);
+/// returns the rows changed.
+fn clear_signin_rows(c: &Connection) -> Result<i64, DbError> {
+    let users = c.execute(
+        "UPDATE users SET last_login_ip=NULL, last_login_country=NULL, last_login_region=NULL, last_login_city=NULL \
+         WHERE last_login_ip IS NOT NULL OR last_login_country IS NOT NULL OR last_login_region IS NOT NULL \
+         OR last_login_city IS NOT NULL",
+        [],
+    )?;
+    let sessions = c.execute("UPDATE sessions SET ip=NULL WHERE ip IS NOT NULL", [])?;
+    Ok(i64::try_from(users + sessions).unwrap_or(i64::MAX))
+}
+
+/// Unix seconds as `YYYY-MM-DD HH:MM:SS` in the local time zone (the format of `last_login_at`, with seconds).
+pub(super) fn format_unix_second(secs: i64) -> String {
+    jiff::Timestamp::from_second(secs)
+        .map(|t| super::super::timefmt::format_second(&t.to_zoned(jiff::tz::TimeZone::system())))
+        .unwrap_or_default()
+}
+
 /// The signed-in user of a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionUser {
@@ -266,7 +345,7 @@ fn insert_session(
     now: i64,
 ) -> Result<(), DbError> {
     c.execute(
-        "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at) VALUES(?1,?2,?3,?4,?5)",
+        "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at) VALUES(?1,?2,?3,?4,?5,?4)",
         params![token_hash, user_id, created_at, now, now.saturating_add(SESSION_TTL_SECS)],
     )?;
     Ok(())
@@ -345,7 +424,20 @@ pub(super) fn note_known_users(c: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-/// `{"users": [...]}` for `GET /api/users`, ordered by id.
+/// `{"country", "region", "city"}` of a stored sign-in location; `null` without a country (the visitor-location headers
+/// are only ever sent together with the country header).
+pub(super) fn location_json(
+    country: Option<String>,
+    region: Option<String>,
+    city: Option<String>,
+) -> Value {
+    match country {
+        Some(c) => json!({ "country": c, "region": region, "city": city }),
+        None => Value::Null,
+    }
+}
+
+/// `{"users": [...], "signinInfo": bool}` for `GET /api/users`, ordered by id.
 fn users_json(c: &Connection) -> Result<Value, DbError> {
     // user id -> its assigned banks / the banks it owns (ascending ids)
     let mut assigned: std::collections::HashMap<i64, Vec<i64>> = Default::default();
@@ -370,15 +462,34 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
             owned.entry(user).or_default().push(bank);
         }
     }
+    // v1.3: IP and location are shown only while the sign-in info switch is on (while it is off nothing new is stored)
+    let signin_info = super::system_settings::flag(c, super::system_settings::SIGNIN_INFO)?;
     let mut st = c.prepare(&format!(
-        "SELECT {USER_COLUMNS}, (SELECT COUNT(*) FROM attempts a WHERE a.user_id = users.id) FROM users ORDER BY id"
+        "SELECT {USER_COLUMNS}, (SELECT COUNT(*) FROM attempts a WHERE a.user_id = users.id), \
+         last_active_at, last_login_ip, last_login_country, last_login_region, last_login_city FROM users ORDER BY id"
     ))?;
     let rows = st.query_map([], |r| {
-        Ok((user_row(r)?, r.get::<_, i64>(USER_COLUMN_COUNT)?))
+        let geo = (
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 2)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 3)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 4)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 5)?,
+        );
+        Ok((
+            user_row(r)?,
+            r.get::<_, i64>(USER_COLUMN_COUNT)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 1)?,
+            geo,
+        ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (u, records) = row?;
+        let (u, records, last_active, (ip, country, region, city)) = row?;
+        let (ip, location) = if signin_info {
+            (ip, location_json(country, region, city))
+        } else {
+            (None, Value::Null)
+        };
         out.push(json!({
             "id": u.id,
             "username": u.username,
@@ -393,9 +504,12 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
             "canManageBanks": u.can_manage_banks,
             "ai": u.ai_enabled,
             "ownedBanks": owned.remove(&u.id).unwrap_or_default(),
+            "lastActiveAt": last_active,
+            "lastLoginIp": ip,
+            "lastLoginLocation": location,
         }));
     }
-    Ok(json!({ "users": out }))
+    Ok(json!({ "users": out, "signinInfo": signin_info }))
 }
 
 /// Deletes a user's own rows: sessions, exam records (with their detail), wrong-answer statistics, settings, which banks they
@@ -560,6 +674,180 @@ impl Store {
         Ok(Some((SessionUser::from(&user), refresh)))
     }
 
+    /// v1.3, read only: the session `token_hash` with its user (the user must be enabled). Nothing is written and an
+    /// expired row is returned like any other (the caller applies the role-based deadline, see `SessionRow::expires_at`,
+    /// then calls [`Store::touch_session`], [`Store::delete_session`] or lets the purge take it). Replaces
+    /// [`Store::session_user`] once the auth layer switched.
+    pub fn session_user_ro(
+        &self,
+        token_hash: &str,
+    ) -> Result<Option<(SessionUser, SessionRow)>, DbError> {
+        let g = self.lock();
+        let found = g
+            .query_row(
+                "SELECT s.user_id, s.started_at, s.last_seen_at, s.expires_at, s.remember, s.ip, s.ua, \
+                 u.id, u.username, u.password_hash, u.role, u.disabled, u.created_at, u.last_login_at, \
+                 u.must_change_password, u.new_banks, u.can_manage_banks, u.ai_enabled, u.uid \
+                 FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash=?1",
+                params![token_hash],
+                |r| {
+                    let row = SessionRow {
+                        user_id: r.get(0)?,
+                        started_at: r.get(1)?,
+                        last_seen_at: r.get(2)?,
+                        expires_at: r.get(3)?,
+                        remember: r.get::<_, i64>(4)? != 0,
+                        ip: r.get(5)?,
+                        ua: r.get(6)?,
+                    };
+                    let user = UserRow {
+                        id: r.get(7)?,
+                        username: r.get(8)?,
+                        password_hash: r.get(9)?,
+                        role: Role::parse(&r.get::<_, String>(10)?).unwrap_or(Role::User),
+                        disabled: r.get::<_, i64>(11)? != 0,
+                        created_at: r.get(12)?,
+                        last_login_at: r.get(13)?,
+                        must_change_password: r.get::<_, i64>(14)? != 0,
+                        new_banks: r.get::<_, i64>(15)? != 0,
+                        can_manage_banks: r.get::<_, i64>(16)? != 0,
+                        ai_enabled: r.get::<_, i64>(17)? != 0,
+                        uid: r.get(18)?,
+                    };
+                    Ok((user, row))
+                },
+            )
+            .optional()?;
+        Ok(found
+            .filter(|(u, _)| !u.disabled)
+            .map(|(u, row)| (SessionUser::from(&u), row)))
+    }
+
+    /// v1.3: stores a new session and keeps at most [`MAX_SESSIONS_PER_USER`] of the user (the ones that expire first are
+    /// deleted). `started_at` and `last_seen_at` are `now`. The caller verified the password and decides the deadline;
+    /// `ip` is stored as given; the caller passes `None` while the sign-in info switch is closed.
+    pub fn create_session(&self, s: &NewSession<'_>) -> Result<(), DbError> {
+        let at = self.clock.now();
+        let g = self.lock();
+        run_tx(&g, |c| {
+            ensure_active(c, s.user_id)?;
+            c.execute(
+                "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua) \
+                 VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8)",
+                params![
+                    s.token_hash,
+                    s.user_id,
+                    at,
+                    s.now,
+                    s.expires_at,
+                    s.remember,
+                    s.ip,
+                    s.ua
+                ],
+            )?;
+            c.execute(
+                "DELETE FROM sessions WHERE user_id=?1 AND token_hash NOT IN \
+                 (SELECT token_hash FROM sessions WHERE user_id=?1 ORDER BY expires_at DESC, rowid DESC LIMIT ?2)",
+                params![s.user_id, MAX_SESSIONS_PER_USER],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// v1.3: what the auth layer decided to write for one request, in one lock and one transaction: with `t.session` the
+    /// session gets `last_seen_at = now` and `expires_at = t.expires_at` (and `started_at = its old last_seen_at` when it
+    /// had none, a session a v1.2 binary created); with `t.active` `users.last_active_at` = `now`. Nothing is written when
+    /// both are false.
+    pub fn touch_session(
+        &self,
+        token_hash: &str,
+        user_id: i64,
+        now: i64,
+        t: &Touch,
+    ) -> Result<(), DbError> {
+        if !t.session && !t.active {
+            return Ok(());
+        }
+        let g = self.lock();
+        run_tx(&g, |c| {
+            if t.session {
+                c.execute(
+                    "UPDATE sessions SET started_at=COALESCE(started_at, last_seen_at), last_seen_at=?1, expires_at=?2 \
+                     WHERE token_hash=?3",
+                    params![now, t.expires_at, token_hash],
+                )?;
+            }
+            if t.active {
+                c.execute(
+                    "UPDATE users SET last_active_at=?1 WHERE id=?2",
+                    params![format_unix_second(now), user_id],
+                )?;
+            }
+            Ok(())
+        })
+    }
+
+    /// v1.3: deletes one session (sign-out, or an ended one found by the lookup).
+    pub fn delete_session(&self, token_hash: &str) -> Result<(), DbError> {
+        self.end_session(token_hash)
+    }
+
+    /// v1.3: deletes every session that expired before `now` and returns what was deleted (for the activity log). Replaces
+    /// [`Store::purge_expired_sessions`] once the auth layer switched.
+    pub fn purge_expired_sessions_ended(&self, now: i64) -> Result<Vec<EndedSession>, DbError> {
+        let g = self.lock();
+        let mut st = g.prepare(
+            "DELETE FROM sessions WHERE expires_at < ?1 \
+             RETURNING user_id, ip, ua, expires_at, started_at, last_seen_at, remember",
+        )?;
+        let rows = st.query_map(params![now], |r| {
+            Ok(EndedSession {
+                user_id: r.get(0)?,
+                ip: r.get(1)?,
+                ua: r.get(2)?,
+                expires_at: r.get(3)?,
+                started_at: r.get(4)?,
+                last_seen_at: r.get(5)?,
+                remember: r.get::<_, i64>(6)? != 0,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// v1.3: a sign-in of `user_id` was accepted: `last_login_at` and `last_active_at` = `now`, and the sign-in info:
+    /// `Some` = store it (a field the request lacked becomes NULL, so the record never mixes two sign-ins), `None` = the
+    /// caller has none (the eye is closed: nothing new is recorded), the stored one is kept. The switch itself is read by the caller.
+    pub fn note_signin(
+        &self,
+        user_id: i64,
+        now: &str,
+        info: Option<&SigninInfo<'_>>,
+    ) -> Result<(), DbError> {
+        let g = self.lock();
+        run_tx(&g, |c| {
+            match info {
+                Some(i) => c.execute(
+                    "UPDATE users SET last_login_at=?1, last_active_at=?1, last_login_ip=?2, last_login_country=?3, \
+                     last_login_region=?4, last_login_city=?5 WHERE id=?6",
+                    params![now, i.ip, i.country, i.region, i.city, user_id],
+                )?,
+                None => c.execute(
+                    "UPDATE users SET last_login_at=?1, last_active_at=?1 WHERE id=?2",
+                    params![now, user_id],
+                )?,
+            };
+            Ok(())
+        })
+    }
+
+    /// v1.3: clears every stored sign-in IP and location of the users and sessions (the administrators' explicit
+    /// "clear saved IP addresses and locations"; the activity log follows in batches, [`Store::clear_activity_ip`]).
+    /// Returns the rows changed.
+    pub fn clear_signin_info(&self) -> Result<i64, DbError> {
+        let g = self.lock();
+        run_tx(&g, clear_signin_rows)
+    }
+
     /// Sign-out: deletes that one session.
     pub fn end_session(&self, token_hash: &str) -> Result<(), DbError> {
         let g = self.lock();
@@ -590,19 +878,47 @@ impl Store {
         new_token_hash: &str,
         now: i64,
     ) -> Result<Option<SessionUser>, DbError> {
+        self.change_own_password_as(
+            user_id,
+            expected_hash,
+            new_hash,
+            &NewSession {
+                token_hash: new_token_hash,
+                user_id,
+                now,
+                expires_at: now.saturating_add(SESSION_TTL_SECS),
+                remember: true,
+                ip: None,
+                ua: None,
+            },
+        )
+    }
+
+    /// [`Store::change_own_password`] with the full new session (`s.user_id` is the user): the caller passes the old
+    /// session's `remember`, the deadline of the user's role and the address / device, so a password change does not turn
+    /// a browser session into a remember session.
+    pub fn change_own_password_as(
+        &self,
+        user_id: i64,
+        expected_hash: &str,
+        new_hash: &str,
+        s: &NewSession<'_>,
+    ) -> Result<Option<SessionUser>, DbError> {
         let at = self.clock.now();
         let g = self.lock();
         run_tx(&g, |c| {
             let n = c.execute(
-                "UPDATE users SET password_hash=?1, password_changed_at=?2, must_change_password=0 \
-                 WHERE id=?3 AND password_hash=?4 AND disabled=0",
+                "UPDATE users SET password_hash=?1, password_changed_at=?2, must_change_password=0                  WHERE id=?3 AND password_hash=?4 AND disabled=0",
                 params![new_hash, at, user_id, expected_hash],
             )?;
             if n == 0 {
                 return Ok(None);
             }
             delete_sessions_of(c, user_id)?;
-            insert_session(c, new_token_hash, user_id, &at, now)?;
+            c.execute(
+                "INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua)                  VALUES(?1,?2,?3,?4,?5,?4,?6,?7,?8)",
+                params![s.token_hash, user_id, at, s.now, s.expires_at, s.remember, s.ip, s.ua],
+            )?;
             Ok(user_by_id(c, user_id)?.as_ref().map(SessionUser::from))
         })
     }

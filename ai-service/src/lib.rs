@@ -4,6 +4,7 @@
 //! The service never sees a session cookie: every request carries only `X-Xexam-Identity`, a short-lived statement
 //! signed by the main backend (`identity`). It reaches main-app data only through the backend's `/internal/ai/*`
 //! routes (`link`); the backend never opens this service's database.
+pub mod activity;
 pub mod api;
 pub mod app;
 pub mod chat;
@@ -21,6 +22,7 @@ pub mod prompt;
 pub mod provider;
 pub mod quota;
 pub mod retention;
+pub mod route;
 pub mod secret;
 pub mod settings;
 pub mod store;

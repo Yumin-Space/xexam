@@ -498,7 +498,7 @@ export default defineCatalog({
     'banks.preview.titleUpdate': '{file} で「{name}」を更新',
     'banks.preview.lead': 'まだ何も保存されていません。確定したときに反映されます。',
     'banks.preview.summary': '変更の概要',
-    'banks.preview.nothing': 'このファイルから使える問題を 1 問も読み取れなかったため、インポートできません。',
+    'banks.preview.nothing': 'このファイルから利用できる問題を 1 問も読み取れなかったため、インポートできません。',
     'banks.preview.nothingSkipped': '理由は下の各シートに表示されています。',
     'banks.preview.nothingHint': 'ファイルが 6 列形式か確認してください。A 列に英語の問題文、D 列に「【Answer】」で始まる英語の解答が必要です（このページの Excel の書き方の説明を参照）。',
     'banks.preview.sameFile': '同じ名前のファイルからインポートした問題集「{name}」がすでにあります。このままインポートすると、別の新しい問題集が作られます。「{name}」を更新したい場合は「{update}」を選んでください。',
@@ -520,7 +520,7 @@ export default defineCatalog({
     'banks.pill.unchanged': '変更なし',
     'banks.pill.unreadable': '読取不可',
 
-    'banks.sheet.usable': '使える問題 {n} 問',
+    'banks.sheet.usable': '利用できる問題 {n} 問',
     'banks.sheet.added': '追加 {n}',
     'banks.sheet.updated': '更新 {n}',
     'banks.sheet.restored': '出題再開 {n}',

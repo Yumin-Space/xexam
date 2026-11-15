@@ -75,9 +75,9 @@ pub async fn upload(app: AppState, who: Identity, req: Request) -> Answer {
     if !octet_stream(req.headers()) {
         return Err(ApiError::bad_media_type());
     }
+    let client = crate::identity::ClientInfo::from_headers(req.headers());
     // 1. AI usable for this user, 2. the feature
-    let snap = require_ai_user(&app, &who)?;
-    drop(snap);
+    require_ai_user(&app, &who, crate::route::Slot::Import)?;
     if !app.0.feature_allowed(&who, Feature::Import) {
         return Err(ApiError::feature_off(Feature::Import));
     }
@@ -272,6 +272,7 @@ pub async fn upload(app: AppState, who: Identity, req: Request) -> Answer {
             max_questions: usize::try_from(l.import_max_questions).unwrap_or(50),
             at: local_second(now),
             pending: Some(pending),
+            client,
         },
     );
     drop(guard);
@@ -304,7 +305,7 @@ pub async fn confirm(ctx: Ctx) -> Answer {
     };
     let app = ctx.app.clone();
     let who = ctx.who.clone();
-    require_ai_user(&app, &who)?;
+    require_ai_user(&app, &who, crate::route::Slot::Import)?;
     if !app.0.feature_allowed(&who, Feature::Import) {
         return Err(ApiError::feature_off(Feature::Import));
     }

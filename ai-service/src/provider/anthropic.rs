@@ -82,8 +82,8 @@ impl State {
                     out.push(Item::CacheWrite(n));
                 }
             }
-            // Extended thinking (a model or gateway may enable it on its own): only the fact is kept, the thinking
-            // text, its signature and redacted blocks are dropped here
+            // Extended thinking (a model or gateway may enable it on its own): the thinking text is reported as
+            // `Reasoning`; signatures and the data of redacted blocks are never read
             "content_block_start" => {
                 let t = v
                     .get("content_block")
@@ -91,6 +91,16 @@ impl State {
                     .and_then(Value::as_str);
                 if matches!(t, Some("thinking" | "redacted_thinking")) {
                     out.push(Item::Thinking);
+                }
+                if t == Some("thinking") {
+                    if let Some(r) = v
+                        .get("content_block")
+                        .and_then(|b| b.get("thinking"))
+                        .and_then(Value::as_str)
+                        .filter(|r| !r.is_empty())
+                    {
+                        out.push(Item::Reasoning(r.to_string()));
+                    }
                 }
             }
             "content_block_delta" => {
@@ -104,7 +114,16 @@ impl State {
                             }
                         }
                     }
-                    Some("thinking_delta") => out.push(Item::Thinking),
+                    Some("thinking_delta") => {
+                        match d
+                            .and_then(|d| d.get("thinking"))
+                            .and_then(Value::as_str)
+                            .filter(|r| !r.is_empty())
+                        {
+                            Some(r) => out.push(Item::Reasoning(r.to_string())),
+                            None => out.push(Item::Thinking),
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -270,7 +289,7 @@ mod tests {
                 },
                 Item::Cached(2),
                 Item::Text("Hi".into()),
-                Item::Thinking,
+                Item::Reasoning("x".into()),
                 Item::Usage {
                     input: None,
                     output: Some(3)
@@ -298,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    fn thinking_blocks_are_reported_without_their_text() {
+    fn thinking_deltas_become_reasoning_and_redacted_blocks_stay_facts() {
         let out = run(&[
             (
                 "message_start",
@@ -342,13 +361,42 @@ mod tests {
                     output: None
                 },
                 Item::Thinking,
-                Item::Thinking,
+                Item::Reasoning("made-up idea".into()),
                 Item::Thinking,
                 Item::Text("Answer".into()),
                 Item::Done
             ]
         );
-        assert!(!format!("{out:?}").contains("made-up"));
+        let dump = format!("{out:?}");
+        assert!(!dump.contains("c2lnbmF0dXJl"));
+        assert!(!dump.contains("bWFkZS11cA=="));
+    }
+
+    #[test]
+    fn thinking_delta_without_text_is_only_a_fact() {
+        for d in [
+            r#"{"type":"thinking_delta","thinking":""}"#,
+            r#"{"type":"thinking_delta"}"#,
+            r#"{"type":"thinking_delta","thinking":5}"#,
+        ] {
+            let ev = format!(r#"{{"type":"content_block_delta","index":0,"delta":{d}}}"#);
+            let out = run(&[
+                ("content_block_delta", ev.as_str()),
+                ("message_stop", r#"{"type":"message_stop"}"#),
+            ]);
+            assert_eq!(out, vec![Item::Thinking, Item::Done], "{d}");
+        }
+        let out = run(&[
+            (
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"abc"}}"#,
+            ),
+            ("message_stop", r#"{"type":"message_stop"}"#),
+        ]);
+        assert_eq!(
+            out,
+            vec![Item::Thinking, Item::Reasoning("abc".into()), Item::Done]
+        );
     }
 
     #[test]

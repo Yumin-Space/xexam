@@ -19,8 +19,10 @@ so a check can prove such a body is never shown or logged.
 Models: demo-chat-small, demo-chat-large (normal answers); demo-nousage (OpenAI: 400 when the body has stream_options);
 demo-error (200, then an in-band error); demo-length (stops at the length limit); demo-4k (Anthropic: 400 when
 max_tokens > 4096); demo-reasoning (OpenAI: first 6 chunks that carry only choices[0].delta.reasoning_content, made-up
-English words 150 ms apart, then the normal answer); demo-embedding (OpenAI: listed by /models, but a chat request
-answers 404 model_not_found, like an embedding model of a real gateway). The OpenAI model list has 7 ids.
+English words 150 ms apart, then the normal answer; AI Chat shows them in a grey, collapsible block above the answer);
+demo-thought (OpenAI: the content starts with a <thought>...</thought> span of the same words, like Google's
+OpenAI-compatible endpoint, then the normal answer; AI Chat shows the span as reasoning); demo-embedding (OpenAI: listed by /models, but a chat request
+answers 404 model_not_found, like an embedding model of a real gateway). The OpenAI model list has 8 ids.
 
 Answer language: the one the system text names (OpenAI: the system message; Anthropic: "system"), in the line
 "Always reply in <English|Simplified Chinese|Japanese> (" of the study assistant / free mode, or "Write the note in
@@ -31,6 +33,10 @@ asks for a plan or a week. Both are self-made Markdown with one bold phrase, a 3
 message "Test" is answered "OK". A last user message containing [slow] waits 20 s before the first piece, then sends
 one piece every 0.5 s for 10 s (keep-alive and revocation checks). The usage chunk comes when
 stream_options.include_usage is set (OpenAI) and always in message_start / message_delta (Anthropic).
+
+Generation over the whole bank (v1.3; system text "You write new multiple-choice exam questions for Xexam"): TASK PLAN answers three
+topics and one plan row per slot (refs name Q numbers found in the SOURCE section), TASK GLOBAL one note per chunk, TASK WRITE one
+made-up three-language question per slot; the cache usage (read / write tokens) follows the whole prefix like an import call.
 
 Study answers (v0.9; the system text decides): "asked for a HINT" answers a short self-made hint without option letters
 and a knowledge-points list; when the user turn contains [leak] the hint ends with a leak ("The answer is B." in English,
@@ -60,7 +66,7 @@ import signal
 import sys
 import time
 
-MODELS_OPENAI = ['demo-chat-small', 'demo-chat-large', 'demo-nousage', 'demo-error', 'demo-length', 'demo-reasoning',
+MODELS_OPENAI = ['demo-chat-small', 'demo-chat-large', 'demo-nousage', 'demo-error', 'demo-length', 'demo-reasoning', 'demo-thought',
                  'demo-embedding']
 # Listed, but not chat models: a chat request answers 404 model_not_found
 NOT_CHAT = ('demo-embedding',)
@@ -171,6 +177,7 @@ def made_up(slot, seq):
 
 
 WHOLE_SYSTEM = 'You work on one file of a user of Xexam'
+GEN_WHOLE_SYSTEM = 'You write new multiple-choice exam questions for Xexam'  # v1.3: generation from the whole bank (SOURCE prefix)
 SEEN_PREFIXES = set()
 
 
@@ -213,9 +220,30 @@ def whole_answer(last):
     return json.dumps({'questions': [made_up(sl, i) for i, sl in enumerate(slots)]}, ensure_ascii=False)
 
 
+def gen_whole_answer(last):
+    """The reply of a v1.3 generation call over the whole bank: TASK PLAN / TASK GLOBAL / TASK WRITE (the last TASK line wins)."""
+    cut = last.rfind('TASK ')
+    task = last[cut:] if cut >= 0 else ''
+    nums = [int(n) for n in re.findall(r'^Q(\d+)\b', last[:cut] if cut >= 0 else last, re.M)] or [1]
+    if task.startswith('TASK GLOBAL'):
+        m = re.search(r'SLOTS PER CHUNK\n(\[.*?\])\n', task, re.S)
+        try:
+            table = json.loads(m.group(1)) if m else []
+        except ValueError:
+            table = []
+        return json.dumps({'chunks': [{'chunk': c.get('chunk'), 'topics': ['a topic'], 'avoid': ['another topic']} for c in table]})
+    slots = slot_list(task)
+    if task.startswith('TASK PLAN'):
+        return json.dumps({'topics': [{'t': 1, 'name': 'first topic'}, {'t': 2, 'name': 'second topic'}, {'t': 3, 'name': 'third topic'}],
+                           'slots': [{'slot': sl.get('slot'), 'topic': (int(sl.get('slot') or 1) - 1) % 3 + 1,
+                                      'refs': ['Q%d' % nums[(int(sl.get('slot') or 1) - 1) % len(nums)]], 'angle': 'a fresh scenario',
+                                      'diff': 'medium'} for sl in slots]})
+    return json.dumps({'questions': [made_up(sl, i) for i, sl in enumerate(slots)]}, ensure_ascii=False)
+
+
 def cache_usage(system, last):
     """(cache read, cache write) tokens of a whole-file call: the first call of a prefix writes it, later ones read it."""
-    if not system.startswith(WHOLE_SYSTEM) or 'TASK ' not in last:
+    if not system.startswith((WHOLE_SYSTEM, GEN_WHOLE_SYSTEM)) or 'TASK ' not in last:
         return 0, 0
     prefix = last[:last.rfind('TASK ')]
     n = len(prefix) // 4 + 1
@@ -258,6 +286,8 @@ def import_answer(system, last):
     """The reply of an import / generation request by the first words of its system text, or None for any other request."""
     if system.startswith(WHOLE_SYSTEM):
         return whole_answer(last)
+    if system.startswith(GEN_WHOLE_SYSTEM):
+        return gen_whole_answer(last)
     if system.startswith("You sort a user's file"):
         kind = 'questions' if 'STUBQ' in last else 'none' if 'STUBN' in last else 'material'
         return json.dumps({'kind': kind, 'language': 'en'})
@@ -317,7 +347,8 @@ SUMMARY_HEADS = {
     'ja': ('## 弱い知識ポイント', '## 注意すること', '## これからの取り組み方', '## 知識ポイントのまとめ'),
 }
 ANSWER_KEY = re.compile(r'<answer_key>(.*?)</answer_key>', re.S)
-# What demo-reasoning "thinks" before it answers: made-up words, never shown to anyone
+# What demo-reasoning / demo-thought "think" before they answer: made-up words (AI Chat shows them as reasoning; no other
+# feature ever does)
 REASONING = ['Thinking about', ' the question:', ' review timing,', ' short notes,', ' one example.', ' Writing now.']
 
 
@@ -528,6 +559,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             for words in REASONING:
                 time.sleep(0.15)
                 self._chunk(chunk({'reasoning_content': words}))
+        if model == 'demo-thought':
+            # the reasoning rides in the content, wrapped in one leading span, like Google's OpenAI-compatible endpoint
+            for piece in ['<thought>'] + REASONING + ['</thought>\n\n']:
+                time.sleep(0.15)
+                self._chunk(chunk({'content': piece}))
         parts, gap = self._timing(answer, slow)
         for i, piece in enumerate(parts):
             time.sleep(gap if i or not slow else 20)

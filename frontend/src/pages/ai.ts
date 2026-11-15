@@ -18,12 +18,19 @@
 //   · Round 2: every send, retry and memory suggestion carries the interface language of Settings (the AI replies in it);
 //     a reasoning model's thinking shows "Thinking…" until its first text
 //     (the free mode is a Settings choice for administrators); a suspended AI+ function makes the page read only.
+//   · v1.3: the conversation is the path of a branch tree. Under an answer: Copy, Regenerate (a new version, still named Retry
+//     for a failed or stopped last answer) and the switcher `< n/total >`; under a question: Copy, Remember, Edit (the text goes
+//     into the composer under a banner, Send starts a new branch) and the switcher. Switching versions calls no model, so it also
+//     works read only. Administrators get a model menu in the composer (stored per chat) and see the connection of each answer;
+//     everyone else sees only "AI" and the time, never a model or connection (v1.3 sprint 2).
 import { githubLine } from '../components/github-line.ts';
 import '../styles/ai.css';
 import {
-  addMemory, deleteAllChats, deleteAllMemories, deleteChat, deleteMemory, fetchChat, fetchChats, fetchMemories, retryAnswer,
-  sendMessage, stopAnswer, suggestMemory, updateMemory,
+  addMemory, deleteAllChats, deleteAllMemories, deleteChat, deleteMemory, editMessage, fetchChat, fetchChats, fetchMemories, regenerate,
+  sendMessage, setChatModel, stopAnswer, suggestMemory, switchBranch, updateMemory,
 } from '../api/ai.ts';
+import { fetchModels } from '../api/ai-admin.ts';
+import { modelRefText, parseModelRef } from '../api/model-ref.ts';
 import { ApiError, isAbortError, type StreamEvent, type StreamOptions } from '../api/client.ts';
 import { badgeReasonText } from '../components/ai-badge.ts';
 import { fillMarkdown, markdownEl } from '../components/ai-render.ts';
@@ -31,9 +38,10 @@ import { iconButton } from '../components/icon-button.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
 import {
-  applyEvent, atEnd, chatOf, clearsComposer, composerLines, composerStatus, emptyChat, END_PX, fmtAiTime, footerOf, ignoreSendClick, isTerminal, localFail,
+  applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerStatus, editValid, emptyChat, END_PX, fmtAiTime,
+  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, modelArg, modelMenu, modelShown, regenerateLabelKey, startOf, versionInfo, whoParts,
   isBusyElsewhere, isThinking, localSend, localStop, LOCK_MAX_WIDTH, locksDocument, MIN_MSGS_PX, noAccessKey, pollResult, readOnlyReason, questionOf,
-  retryTarget, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatView, type ViewMessage,
+  sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatView, type EditState, type ViewMessage,
 } from '../domain/ai-chat.ts';
 import { chatDisplayTitle, popTitleKey } from '../domain/ai-plus.ts';
 import { memoryBoxChars, memoryLength, memoryTokenCount, wantsMemory } from '../domain/ai-memory.ts';
@@ -45,7 +53,7 @@ import { parseHash } from '../router.ts';
 import { onRouteChange, onSignedIn, refreshAi, render } from '../state/actions.ts';
 import { aiFreeMode, aiStatus, callBlock, noteCallBlock, onCallBlockChange, recheckCallBlock } from '../state/ai.ts';
 import { S, isAdmin, onClearUserData } from '../state/store.ts';
-import type { AiCallBlock, AiChatKind, AiChatSummary, AiMemory, AiMessage } from '../types/api.ts';
+import type { AiCallBlock, AiChatKind, AiChatSummary, AiMemory, AiMessage, AiModelList, ModelRef } from '../types/api.ts';
 import { forgetStudyChats as forgetPanelChats } from '../components/ai-panel.ts';
 import { forgetStudyChats as forgetSummaryChats } from '../components/ai-summary.ts';
 import { copyText } from '../utils/clipboard.ts';
@@ -92,6 +100,14 @@ let stick = true;
 let composing = false;
 /** When the Send button last turned into Stop (Date.now()): a click right after it is part of the click that sent */
 let stopSince = 0;
+/** v1.3: the question being edited in the composer (the draft the composer held is kept for Cancel) */
+let edit: EditState | null = null;
+/** v1.3, administrators: the models of the working connections (the composer's menu), and the menu's value (`<conn>:<model>`, '' = default) */
+let modelList: AiModelList | null = null;
+let modelsLoading = false;
+let modelSel = '';
+/** A version switch is under way */
+let switching = false;
 /** The administrator notice (CH-3) shows its full text instead of one line */
 let noticeOpen = false;
 /** The "more" menu of the chat list (CH-6) is open */
@@ -107,6 +123,14 @@ interface Composer {
   status: HTMLElement;
   latest: HTMLButtonElement;
   latestText: HTMLElement;
+  /** v1.3: the banner above the box while a question is edited */
+  banner: HTMLElement;
+  /** The one rounded box: the input on top, one bar under it (the model button on the left; the counter and Send on the right) */
+  box: HTMLElement;
+  /** The administrators' model button (hidden for everyone else): the brain icon with the native select laid invisibly over it */
+  models: HTMLElement;
+  /** The dot on the model button: a model other than the default is chosen */
+  modelDot: HTMLElement;
   /** The fixed footer (CH-13): the form, and the administrator notice line under it */
   dock: HTMLElement;
   notice: HTMLElement;
@@ -117,6 +141,8 @@ let composer: Composer | null = null;
 let statusSig = '';
 /** Copy feedback on the icon (CH-5): message id -> 'ok' | 'fail' for 1.5 s */
 const copyState = new Map<number, 'ok' | 'fail'>();
+/** v1.3: the reader's own open / closed choice of each reasoning block (by message id); cleared on a chat switch */
+const reasoningOpen = new Map<number, boolean>();
 const COPY_MS = 1500;
 
 let memories: AiMemory[] | null = null;
@@ -213,7 +239,14 @@ function resetAll(): void {
   stick = true;
   composer = null;
   statusSig = '';
+  edit = null;
+  modelList = null;
+  modelsLoading = false;
+  modelSel = '';
+  switching = false;
+  modelSig = '';
   copyState.clear();
+  reasoningOpen.clear();
   dockObserver?.disconnect();
   dockObserver = null;
   lockDocument(false);
@@ -551,6 +584,7 @@ async function loadMemories(): Promise<void> {
 function enter(): void {
   entered = true;
   if (!chatsLoading) void loadChats();
+  void loadModels();
   memWanted = true;
   const st = aiStatus();
   const running = st.state === 'ready' ? st.running : null;
@@ -652,9 +686,25 @@ async function checkAttached(): Promise<void> {
   }
 }
 
+const pickText = (p: ModelRef | null): string => (p ? modelRefText(p) : '');
+
+/** Ends an edit: the composer gets its earlier draft back (not when the edited message was sent) */
+function cancelEdit(restore = true): void {
+  const e = edit;
+  if (!e) return;
+  edit = null;
+  if (restore && composer) {
+    composer.input.value = e.draft;
+    autoGrow(composer.input);
+  }
+  if (onPage()) paintMsgs();
+  syncComposer();
+}
+
 async function openChat(id: number): Promise<void> {
   detachStream();
   stopPolling();
+  cancelEdit();
   suggestion = null;
   sendError = null;
   openError = null;
@@ -671,6 +721,7 @@ async function openChat(id: number): Promise<void> {
     const d = await fetchChat(id);
     if (view.chatId !== id) return;
     view = chatOf(d);
+    modelSel = pickText(view.pick);
     if (view.running) startPolling();
   } catch (e) {
     if (view.chatId !== id) return;
@@ -693,7 +744,9 @@ function newChat(): void {
   detachStream();
   stopPolling();
   const fromList = onePane() && panesClass() === 'ai-panes on-list';
+  cancelEdit();
   view = emptyChat();
+  modelSel = '';
   setChatInUrl('new', fromList);
   opening = false;
   openError = null;
@@ -736,6 +789,11 @@ function onStreamEvent(ev: StreamEvent): void {
       // The message is saved: only now the composer is cleared. Not for a retry: its question is already in the chat, and
       // the composer may hold the next question the user is writing
       if (clearsComposer(before, ev)) clearComposer();
+      const sd = startOf(ev.data);
+      // A sent edit is done with its banner (the earlier draft is dropped with the text that replaced it)
+      if (sd?.mode === 'edit') cancelEdit(false);
+      modelSel = pickText(view.pick);
+      if (sd?.modelFallback) toast(t('ai.model.fallback'));
       sendError = null;
       pane = 'conv';
       // A new chat now has its id: put it in the address, so a reload keeps it open
@@ -750,6 +808,14 @@ function onStreamEvent(ev: StreamEvent): void {
     }
     case 'delta':
       schedulePaint();
+      return;
+    case 'reasoning':
+      schedulePaint();
+      return;
+    case 'reasoningDone':
+      // The block collapses as the answer starts (the reader's own toggle of the live block is dropped)
+      if (view.streamingId != null) reasoningOpen.delete(view.streamingId);
+      paintStreaming();
       return;
     case 'thinking': {
       // Once per answer, before its first text: "Thinking…" under it (and for screen readers)
@@ -781,11 +847,11 @@ function onStreamEvent(ev: StreamEvent): void {
   void refreshAi(true);
 }
 
-async function runStream(call: (o: StreamOptions) => Promise<void>, text: string, retry: boolean): Promise<void> {
+async function runStream(call: (o: StreamOptions) => Promise<void>, begin: (v: ChatView) => ChatView): Promise<void> {
   if (sending()) return;
   sendError = null;
-  if (suggestion && !retry) suggestion = null;
-  view = localSend(view, text, retry);
+  view = begin(view);
+  if (suggestion && view.pending?.retry !== true) suggestion = null;
   const ctrl = new AbortController();
   stream = ctrl;
   let started = false;
@@ -832,6 +898,12 @@ async function runStream(call: (o: StreamOptions) => Promise<void>, text: string
         sendError = errorText(e);
       }
       if (e instanceof ApiError && e.code != null && ACCESS_CODES.includes(e.code)) void refreshAi(true);
+      if (e instanceof ApiError && e.code === 'ai.branchMoved') {
+        // Another tab switched the branch: this page shows the chat as the server has it now
+        sendError = null;
+        void reloadChat(true);
+      }
+      if (e instanceof ApiError && e.code === 'ai.badModel') void loadModels(true);
       if (e instanceof ApiError && e.code === 'ai.notFound' && view.chatId != null) {
         view = emptyChat();
         void loadChats();
@@ -902,17 +974,128 @@ function send(): void {
     return;
   }
   // The reply language is the interface language of Settings; free mode is the administrator's state on the server
-  const body = sendBody({ chatId: view.chatId, text, lang: uiLang() });
-  void runStream((o) => sendMessage(body, o), text, false);
+  const lang = uiLang();
+  const chatId = view.chatId;
+  const model = modelToSend();
+  const ed = edit;
+  if (ed && chatId != null && editValid(view, ed)) {
+    void runStream((o) => withModel(chatId, model, (m) => editMessage(chatId, ed.messageId, text, lang, o, m)), (v) => localEdit(v, ed.messageId, text, model));
+    return;
+  }
+  const body = sendBody({ chatId, text, lang, model });
+  void runStream((o) => sendMessage(body, o), (v) => localSend(v, text, false, model));
 }
 
-function retry(): void {
+/** The model this request carries (administrators only): undefined = unchanged, null = back to the default */
+function modelToSend(): ModelRef | null | undefined {
+  return isAdmin() && full() && aiFreeMode() ? modelArg(modelSel, view.pick, parseModelRef) : undefined;
+}
+
+/** Runs a call that carries the model; going back to the default is a call of its own first (the regenerate / edit bodies
+ *  only carry a model reference) */
+async function withModel(chatId: number, model: ModelRef | null | undefined, go: (m?: ModelRef) => Promise<void>): Promise<void> {
+  if (model === null) await setChatModel(chatId, null);
+  return go(model ?? undefined);
+}
+
+/** Regenerate: a new version of this answer (a failed or stopped last answer is the old Retry) */
+function regen(m: ViewMessage): void {
   const chatId = view.chatId;
-  if (!full() || chatId == null || retryTarget(view) == null) return;
+  if (!full() || chatId == null || !canRegenerate(view, m)) return;
   const lang = uiLang();
-  // The Retry button goes away when the answer starts: keep the focus on the composer (it stays focused while an answer streams)
-  if (document.activeElement?.id === 'ai-retry') composer?.input.focus();
-  void runStream((o) => retryAnswer(chatId, lang, o), '', true);
+  const model = modelToSend();
+  // The button goes away when the answer starts: keep the focus on the composer (it stays focused while an answer streams)
+  if (document.activeElement instanceof HTMLElement && document.activeElement.classList.contains('ai-regen')) composer?.input.focus({ preventScroll: true });
+  cancelEdit();
+  void runStream((o) => withModel(chatId, model, (mm) => regenerate(chatId, m.id, lang, o, mm)), (v) => localRegenerate(v, m.id, model));
+}
+
+/** Edit: the question goes into the composer under a banner; Send then starts a new branch from it */
+function startEdit(m: ViewMessage): void {
+  if (!full() || !composer || sending()) return;
+  const e = beginEdit(view, m, edit ? edit.draft : composer.input.value);
+  if (!e) return;
+  edit = e;
+  sendError = null;
+  composer.input.value = m.content;
+  autoGrow(composer.input);
+  paintMsgs();
+  syncComposer();
+  composer.input.focus();
+  const end = composer.input.value.length;
+  try {
+    composer.input.setSelectionRange(end, end);
+  } catch {
+    // no caret to move
+  }
+}
+
+/** Reads the chat again (another tab changed the branch) and says so */
+async function reloadChat(said: boolean): Promise<void> {
+  const id = view.chatId;
+  if (id == null) return;
+  try {
+    const d = await fetchChat(id);
+    if (view.chatId !== id || sending()) return;
+    cancelEdit();
+    view = chatOf(d);
+    modelSel = pickText(view.pick);
+    stick = true;
+    paint();
+    toBottom();
+    if (view.running) startPolling();
+    if (said) toast(t('ai.branch.moved'));
+  } catch {
+    // the page keeps what it shows; the next poll or open reads again
+  }
+}
+
+/** The version switcher: shows the branch that ends at version `toId`; no model call; the message stays where it was on screen */
+async function switchTo(fromId: number, toId: number): Promise<void> {
+  const chatId = view.chatId;
+  if (chatId == null || sending() || switching) return;
+  switching = true;
+  const sc = scroller();
+  const el = document.getElementById(`ai-m-${fromId}`);
+  const anchor = el && sc ? el.getBoundingClientRect().top - sc.getBoundingClientRect().top : null;
+  try {
+    const d = await switchBranch(chatId, toId);
+    if (view.chatId !== chatId || sending()) return;
+    cancelEdit();
+    suggestion = null;
+    view = chatOf(d);
+    modelSel = pickText(view.pick);
+    stick = false;
+    paint();
+    const sc2 = scroller();
+    const el2 = document.getElementById(`ai-m-${toId}`);
+    if (anchor != null && sc2 && el2) sc2.scrollTop += el2.getBoundingClientRect().top - sc2.getBoundingClientRect().top - anchor;
+    syncLatest();
+    void loadChats();
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 404) {
+      void reloadChat(false);
+    } else {
+      toast(errorText(e), 5000);
+    }
+  } finally {
+    switching = false;
+    if (onPage() && tab === 'chats') paintMsgs();
+  }
+}
+
+/** The models of the working connections for the administrators' menu (read from the settings; the page shows none for others) */
+async function loadModels(force = false): Promise<void> {
+  if (!isAdmin() || !full() || !aiFreeMode() || modelsLoading || (modelList && !force)) return;
+  modelsLoading = true;
+  try {
+    modelList = await fetchModels(false);
+  } catch {
+    modelList = null;
+  } finally {
+    modelsLoading = false;
+    if (onPage()) syncComposer();
+  }
 }
 
 async function stop(): Promise<void> {
@@ -1219,10 +1402,37 @@ function paintStreaming(): void {
     paintMsgs();
     return;
   }
+  const rv = reasoningView(m, reasoningOpen.get(m.id));
+  const rs = document.getElementById(`ai-rs-${m.id}`);
+  if (rv && !rs) {
+    paintMsgs();
+    return;
+  }
+  if (rs && !rv) {
+    rs.remove();
+  } else if (rs && rv) {
+    const tog = rs.querySelector('.ai-rs-tog');
+    const body = rs.querySelector<HTMLElement>('.ai-rs-body');
+    const same = rs.dataset.live === String(rv.live) && tog?.getAttribute('aria-expanded') === String(rv.open)
+      && (rs.querySelector('.ai-rs-cut') != null) === rv.truncated
+      && rs.querySelector('.ai-rs-label')?.textContent === reasoningLabel(rv);
+    if (!same) {
+      const fresh = reasoningEl(m, reasoningOpts(m));
+      if (fresh) keepFocus(() => rs.replaceWith(fresh));
+    } else {
+      const box = document.getElementById(`ai-rs-${m.id}-text`);
+      if (box && body && box.textContent !== rv.text) {
+        const wasAtEnd = atEnd(body);
+        box.textContent = rv.text;
+        if (wasAtEnd) body.scrollTop = body.scrollHeight;
+      }
+    }
+  }
   fillMarkdown(md, m.content);
   // "Thinking…" turns into "Writing…" with the first text
   const text = footerText(m);
   if (text != null && foot.textContent !== text) foot.textContent = text;
+  if (foot.hidden !== (text == null)) foot.hidden = text == null;
   paintListRunning();
   if (follow) toBottom();
 }
@@ -1460,19 +1670,63 @@ function copySource(m: AiMessage): string {
   return sm ? t('aiplus.chat.label.summary', { used: sm.used, wrong: sm.wrong }) : '';
 }
 
-/** The line right above a message (owner's request): "You" or "AI" (with the model) and the time; right-aligned over a sent
+/** The line right above a message (owner's request): "You" or "AI" and the time; administrators see "connection · model", everyone
+ *  else only "AI" and the time (owner, v1.3 sprint 2); right-aligned over a sent
  *  message's bubble. The buttons go on one line right under the message (`actsRow`). */
-export function whoLine(m: AiMessage): HTMLElement {
-  const user = m.role === 'user';
-  return h('div', { class: 'ai-who' }, user ? t('ai.you') : t('ai.assistant'), !user && m.model ? h('span', { class: 'ai-model' }, m.model) : null,
+export function whoLine(m: AiMessage, admin: boolean): HTMLElement {
+  const who = whoParts(m, admin);
+  // One line, always: the connection and the time keep their width; only the model name gives way and is cut at its end
+  // with an ellipsis (CSS). The full "connection · model" stays in the text (screen readers) and in `title`.
+  const modelText = who.model ? (who.connection ? `${who.connection} · ${who.model}` : who.model) : null;
+  const model = modelText && who.model
+    ? h('span', { class: 'ai-model', title: modelText },
+      // The dot is its own item: its spaces stay in the text (screen readers) but take no width (CSS), so it sits close
+      ...(who.connection ? [h('span', { class: 'ai-model-conn' }, who.connection), h('span', { class: 'ai-model-sep' }, ' · ')] : []),
+      h('span', { class: 'ai-model-name' }, who.model))
+    : null;
+  const mark = who.mark === 'you' ? t('ai.you') : who.mark === 'ai' ? t('ai.assistant') : null;
+  return h('div', { class: 'ai-who' }, mark ? h('span', { class: 'ai-who-mark' }, mark) : null, model,
     h('time', { class: 'ai-time', datetime: new Date(m.createdAt * 1000).toISOString() }, fmtAiTime(m.createdAt, localeTag())));
+}
+
+function reasoningLabel(v: { live: boolean; seconds: number | null }): string {
+  return v.live ? t('ai.reasoning.live') : v.seconds != null ? t('ai.reasoning.done', { n: v.seconds }) : t('ai.reasoning.label');
+}
+
+function reasoningOpts(m: AiMessage): { idBase: string; userOpen: boolean | undefined; onToggle: (open: boolean) => void } {
+  return { idBase: 'ai-rs', userOpen: reasoningOpen.get(m.id), onToggle: (o) => reasoningOpen.set(m.id, o) };
+}
+
+/**
+ * v1.3: the model's reasoning above an answer (the page and the administrators' viewer share it): a grey toggle row and a
+ * box of plain text (never HTML or markdown). Opening and closing flips `aria-expanded` and `hidden` in place; `onToggle`
+ * keeps the reader's choice. null = no block (no reasoning, user messages, older answers).
+ */
+export function reasoningEl(
+  m: ViewMessage, o: { idBase: string; userOpen: boolean | undefined; onToggle: (open: boolean) => void },
+): HTMLElement | null {
+  const v = reasoningView(m, o.userOpen);
+  if (!v) return null;
+  const id = `${o.idBase}-${m.id}`;
+  const body = h('div', { class: 'ai-rs-body', id: `${id}-body`, role: 'region', 'aria-labelledby': `${id}-tog`, tabindex: '0', hidden: !v.open },
+    h('p', { class: 'ai-rs-text', id: `${id}-text` }, v.text),
+    v.truncated ? h('p', { class: 'ai-rs-cut' }, t('ai.reasoning.truncated')) : null);
+  const tog = h('button', { type: 'button', class: 'ai-rs-tog', id: `${id}-tog`, 'aria-expanded': String(v.open), 'aria-controls': `${id}-body` },
+    h('span', { class: 'ai-rs-label' }, reasoningLabel(v)), h('span', { class: 'ai-rs-chev', 'aria-hidden': 'true' }, '▸'));
+  tog.addEventListener('click', () => {
+    const open = tog.getAttribute('aria-expanded') !== 'true';
+    tog.setAttribute('aria-expanded', String(open));
+    body.hidden = !open;
+    o.onToggle(open);
+  });
+  return h('div', { class: 'ai-rs', id, 'data-live': String(v.live) }, tog, body);
 }
 
 function actsRow(buttons: Child[]): HTMLElement | null {
   return buttons.some((b) => b != null && b !== false) ? h('div', { class: 'ai-meta' }, buttons) : null;
 }
 
-function messageEl(m: ViewMessage, retryId: number | null): HTMLElement {
+function messageEl(m: ViewMessage, pos: number): HTMLElement {
   const user = m.role === 'user';
   const busy = m.status === 'streaming';
   const foot = user ? null : footerText(m);
@@ -1485,13 +1739,18 @@ function messageEl(m: ViewMessage, retryId: number | null): HTMLElement {
   const chatKind = (m.kind ?? 'chat') === 'chat';
   const buttons: Child[] = [
     busy || copySource(m).trim() === '' ? null : copyButton(m, copySource(m)),
-    user && full() && chatKind ? rememberButton(m) : null,
-    !user && retryId === m.id && full() && chatKind ? retryButton() : null,
+    user && full() && chatKind && m.id > 0 ? rememberButton(m) : null,
+    user && full() && chatKind && m.id > 0 ? editButton(m) : null,
+    !user && full() && chatKind && m.status !== 'streaming' ? regenerateButton(m) : null,
+    versionSwitch(m, pos),
   ];
-  return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant'), id: `ai-m-${m.id}`, 'aria-busy': busy ? 'true' : null },
-    whoLine(m),
+  const editing = edit != null && edit.messageId === m.id;
+  return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant') + (editing ? ' editing' : ''), id: `ai-m-${m.id}`, 'aria-busy': busy ? 'true' : null },
+    whoLine(m, isAdmin()),
+    user ? null : reasoningEl(m, reasoningOpts(m)),
     ...(user ? userBody(m) : [markdownEl(m.content, `ai-md-${m.id}`)]),
-    foot ? h('p', { class: 'ai-foot' + (bad ? ' bad' : ''), id: `ai-foot-${m.id}` }, foot) : null,
+    // A streaming answer always has its foot (empty and hidden while there is no text), so paintStreaming need not repaint the list
+    foot || (!user && busy) ? h('p', { class: 'ai-foot' + (bad ? ' bad' : ''), id: `ai-foot-${m.id}`, hidden: !foot }, foot ?? '') : null,
     actsRow(buttons),
     showSuggest ? suggestionBar() : null);
 }
@@ -1506,13 +1765,41 @@ function rememberButton(m: AiMessage): HTMLElement {
   return btn;
 }
 
-/** Retry (a failed answer): another model call, so it follows the request cap (C-6) */
-function retryButton(): HTMLElement {
-  const btn = iconButton({ icon: 'refresh', label: t('ai.retry'), onClick: guarded(retry) });
-  btn.id = 'ai-retry';
-  btn.classList.add('ai-retry');
+/** Regenerate: another model call, so it follows the request cap (C-6); the last answer of a failure keeps the name Retry */
+function regenerateButton(m: ViewMessage): HTMLElement {
+  const key = regenerateLabelKey(view, m);
+  const btn = iconButton({ icon: 'refresh', label: t(key), onClick: guarded(() => regen(m)) });
+  btn.id = key === 'ai.retry' ? 'ai-retry' : `ai-regen-${m.id}`;
+  btn.classList.add('ai-regen', 'ai-retry');
+  if (!canRegenerate(view, m)) btn.disabled = true;
   applyCap(btn);
   return btn;
+}
+
+/** Edit (a question): puts it into the composer; the model is called only when the edited text is sent */
+function editButton(m: ViewMessage): HTMLElement {
+  const btn = iconButton({ icon: 'pencil', label: t('ai.edit'), onClick: () => startEdit(m) });
+  btn.id = `ai-edit-${m.id}`;
+  btn.classList.add('ai-edit');
+  btn.disabled = !canEdit(view, m);
+  return btn;
+}
+
+/** `< n/total >` under a message with 2+ versions: no model call, so it is there in read-only mode too. The ids carry the
+ *  position in the list (not the message id), so the focus stays on the same arrow after a switch. */
+function versionSwitch(m: ViewMessage, pos: number): HTMLElement | null {
+  const v = versionInfo(m);
+  if (!v) return null;
+  const off = sending() || switching;
+  const arrow = (dir: 'prev' | 'next', to: number | null): HTMLElement => h('button', {
+    type: 'button', class: 'ai-ver-btn', id: `ai-ver-${dir}-${pos}`, disabled: off || to == null,
+    'aria-label': t(dir === 'prev' ? 'ai.version.prev' : 'ai.version.next'),
+    onclick: () => {
+      if (to != null) void switchTo(m.id, to);
+    },
+  }, dir === 'prev' ? '\u2039' : '\u203a');
+  return h('span', { class: 'ai-ver', role: 'group', 'aria-label': t('ai.version.of', { n: v.index, total: v.total }) },
+    arrow('prev', v.prev), h('span', { class: 'ai-ver-n', 'aria-hidden': 'true' }, `${v.index}/${v.total}`), arrow('next', v.next));
 }
 
 function msgsBody(): Child[] {
@@ -1526,8 +1813,7 @@ function msgsBody(): Child[] {
   if (full() && showsEmptyHint(view)) {
     out.push(h('p', { class: 'ai-empty-hint', id: 'ai-empty-hint' }, t('ai.emptyChat', { lang: t(LANG_NAME[uiLang()]) })));
   }
-  const retryId = retryTarget(view);
-  out.push(h('ol', { class: 'ai-msgs', id: 'ai-msgs' }, view.messages.map((m) => messageEl(m, retryId))));
+  out.push(h('ol', { class: 'ai-msgs', id: 'ai-msgs' }, view.messages.map((m, i) => messageEl(m, i))));
   return out;
 }
 
@@ -1589,6 +1875,12 @@ function makeComposer(): Composer {
       }, 0);
     },
     onkeydown: (e: KeyboardEvent) => {
+      // Escape ends an edit (the earlier draft comes back); not while an input method composes
+      if (e.key === 'Escape' && edit && !composing && !e.isComposing) {
+        e.preventDefault();
+        cancelEdit();
+        return;
+      }
       const fine = window.matchMedia('(pointer: fine)').matches;
       if (!shouldSend(e, { composing, finePointer: fine })) return;
       e.preventDefault();
@@ -1631,6 +1923,21 @@ function makeComposer(): Composer {
   btn.classList.add('ai-send');
   btn.type = 'submit';
   const status = h('div', { class: 'ai-status', id: 'ai-status', hidden: true });
+  const banner = h('div', { class: 'ai-edit-banner', id: 'ai-edit-banner', hidden: true });
+  // The model button: a round brain icon (decoration) under the real <select>, which syncModels lays over it with opacity 0,
+  // so a phone opens its own picker; no model name is shown, a dot marks a choice other than the default
+  const modelDot = h('span', { class: 'ai-model-dot', hidden: true });
+  const models = h('span', { class: 'ai-model-btn', id: 'ai-model-pick', hidden: true },
+    h('span', { class: 'ibtn ai-model-face', 'aria-hidden': 'true' }, ico('brain', 'ibtn-ic'), modelDot));
+  // One rounded box: the input on top; under it one bar with the model button (left) and the counter + Send (right)
+  const box = h('div', {
+    class: 'ai-box',
+    // A click on the box's own padding or on the empty part of the bar goes to the input
+    onclick: (e: MouseEvent) => {
+      const at = e.target as Element | null;
+      if (at === box || at?.classList.contains('ai-bar') || at?.classList.contains('ai-bar-r')) input.focus({ preventScroll: true });
+    },
+  }, input, h('div', { class: 'ai-bar' }, models, h('div', { class: 'ai-bar-r' }, count, btn)));
   const latestText = h('span', null);
   const latest = h('button', {
     class: 'btn ai-latest', id: 'ai-latest', type: 'button', hidden: true,
@@ -1646,7 +1953,7 @@ function makeComposer(): Composer {
       if (sending()) return;
       send();
     },
-  }, latest, status, label, input, h('div', { class: 'ai-composer-side' }, count, btn));
+  }, latest, status, banner, label, box);
   // The fixed footer of CH-13: the form (full mode only) and the administrator notice line under it (CH-3)
   const notice = noticeButton('ai-notice-dock');
   const dock = h('div', { class: 'ai-composer', id: 'ai-composer' }, form, notice);
@@ -1657,7 +1964,7 @@ function makeComposer(): Composer {
     // The border box: html.kb-open changes only the footer's bottom padding (safe area -> 8 px), which the content box misses
     dockObserver.observe(dock, { box: 'border-box' });
   }
-  return { form, input, label, count, btn, status, latest, latestText, dock, notice };
+  return { form, input, label, count, btn, status, banner, box, models, modelDot, latest, latestText, dock, notice };
 }
 
 function toggleNotice(): void {
@@ -1742,10 +2049,84 @@ function syncStatus(c: Composer): void {
   }
 }
 
+/** What the model menu shows now (it is redrawn only when this changes, so an open list is not closed under a finger) */
+let modelSig = '';
+
+/** The model button's dot, tip and name follow the select: "Model: <name>"; the dot only for a choice other than the default */
+function markModel(c: Composer, sel: HTMLSelectElement): void {
+  c.modelDot.hidden = sel.value === '';
+  const tip = t('ai.model.chosen', { name: sel.selectedOptions[0]?.textContent ?? '' });
+  sel.title = tip;
+  sel.setAttribute('aria-label', tip);
+}
+
+/** The administrators' model menu: the default first, then the models grouped by connection; hidden for everyone else and read only */
+function syncModels(c: Composer): void {
+  const show = isAdmin() && full() && aiFreeMode();
+  if (show && !modelList) void loadModels();
+  const st = aiStatus();
+  const def = st.state === 'ready' ? st.chatDefault ?? null : null;
+  const menu = modelMenu(modelList, view.pick);
+  // An unsent change stays in the select; a value that is neither the default nor offered falls back to the stored pick
+  if (modelShown(modelSel, menu) !== modelSel) modelSel = pickText(view.pick);
+  // A stored pick the menu does not offer (a broken or removed connection) shows as the default; modelSel keeps the pick,
+  // so the request says "unchanged" and the server falls back and clears it
+  const shown = modelShown(modelSel, menu);
+  const busy = sending();
+  const sig = JSON.stringify([show, uiLang(), def?.model ?? null, menu, shown, busy]);
+  if (sig === modelSig) return;
+  modelSig = sig;
+  c.models.hidden = !show;
+  if (!show) {
+    c.models.querySelector('select')?.remove();
+    return;
+  }
+  const sel = h('select', {
+    class: 'ai-model-sel', id: 'ai-model', 'aria-label': t('ai.model.label'), disabled: busy,
+    onchange: () => {
+      modelSel = sel.value;
+      markModel(c, sel);
+    },
+  },
+  h('option', { value: '' }, t('ai.model.default', { model: def?.model ?? '' })),
+  menu.extra ? h('option', { value: menu.extra.value }, menu.extra.label) : null,
+  ...menu.groups.map((g) => h('optgroup', { label: g.name }, ...g.options.map((o) => h('option', { value: o.value }, o.label)))));
+  sel.value = shown;
+  markModel(c, sel);
+  // Only the select is redrawn: the icon under it stays
+  c.models.querySelector('select')?.remove();
+  c.models.append(sel);
+}
+
+/** The banner above the input while a question is edited: what it means and Cancel */
+function syncBanner(c: Composer): void {
+  if (edit && !editValid(view, edit)) {
+    // The edited question left the branch (another tab, a poll): the edit ends, the earlier draft returns
+    const e = edit;
+    edit = null;
+    c.input.value = e.draft;
+    autoGrow(c.input);
+  }
+  const on = edit != null;
+  const sig = `${on}|${uiLang()}`;
+  if (c.banner.dataset.sig === sig) return;
+  c.banner.dataset.sig = sig;
+  c.banner.hidden = !on;
+  if (!on) {
+    c.banner.replaceChildren();
+    return;
+  }
+  c.banner.replaceChildren(
+    h('span', { class: 'ai-edit-t', role: 'status' }, ico('pencil'), h('span', null, t('ai.edit.banner'))),
+    h('button', { class: 'btn quiet ai-mini', id: 'ai-edit-cancel', type: 'button', onclick: () => cancelEdit() }, t('ai.edit.cancel')));
+}
+
 /** Brings the composer in line with the state: the language, Send or Stop, the counter, the status slot */
 function syncComposer(): void {
   const c = composer;
   if (!c) return;
+  syncBanner(c);
+  syncModels(c);
   c.label.textContent = t('ai.input.label');
   c.input.placeholder = t('ai.input.placeholder');
   const busy = sending();
@@ -1960,9 +2341,7 @@ function memoryView(): HTMLElement {
     h('p', { class: 'ai-mem-intro' }, t('ai.mem.intro')),
     form,
     memFormError ? h('div', { class: 'err', role: 'alert' }, h('p', null, memFormError)) : null,
-    body,
-    // The last item of the memory scroller
-    githubLine());
+    body);
 }
 
 // ---------------------------------------------------------------- the page
@@ -2073,7 +2452,9 @@ export function renderAiChat(m: ChatMode): HTMLElement {
       tabs()),
     // Wide screens: the line under the title; up to 900 px it sits under the composer / the lists instead (CH-3)
     h('p', { class: 'ai-notice ai-notice-top' }, miniIcon('info', 'ai-mi'), h('span', null, t('ai.adminNotice'))),
-    tab === 'chats' ? chatsView() : h('div', { class: 'ai-memwrap' }, tabs('ai-mtab', 'ai-ltabs ai-mtabs'), memoryView(), noticeButton('ai-notice-flow')),
+    tab === 'chats' ? chatsView() : h('div', { class: 'ai-memwrap' }, tabs('ai-mtab', 'ai-ltabs ai-mtabs'), memoryView(),
+      // owner (v1.3): on phones the GitHub line sits under the memory box, right above the notice line, not inside the box
+      githubLine(), noticeButton('ai-notice-flow')),
     h('div', { class: 'sr-only', id: 'ai-sr', role: 'status', 'aria-live': 'polite' }));
   // CH-13: every other text field (suggestion, memory edits) also undoes iOS's page pan while it has the focus
   const otherField = (e: Event): boolean => {

@@ -32,7 +32,7 @@ export const MINI = {
   copy: [{ x: 5.5, y: 5.5, w: 8, h: 8, rx: 1.6 }, { d: 'M10.5 3.2V3a1.5 1.5 0 0 0-1.5-1.5H3A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h.2' }],
   /** A light bulb: AI hint */
   bulb: [{ d: 'M8 1.8a4.3 4.3 0 0 0-2.6 7.7c.5.4.8.9.8 1.5v.5h3.6V11c0-.6.3-1.1.8-1.5A4.3 4.3 0 0 0 8 1.8Z' }, { d: 'M6.3 13.1h3.4' }, { d: 'M6.9 14.6h2.2' }],
-  /** An open book: AI explanation */
+  /** An open book: AI analysis */
   book: [{ d: 'M8 4.3C6.6 3.2 4.6 2.8 2 2.9v9.5c2.6-.1 4.6.3 6 1.3 1.4-1 3.4-1.4 6-1.3V2.9c-2.6-.1-4.6.3-6 1.3Z' }, { d: 'M8 4.3v9.4' }],
   /** A chevron right: Next, "more on the next page" */
   fwd: [{ d: 'M6.2 3.5 10.7 8l-4.5 4.5' }],
@@ -60,8 +60,14 @@ export const MINI = {
   retake: [{ d: 'M13 8a5 5 0 1 1-1.6-3.7' }, { d: 'M13 2.5V5h-2.5' }, { d: 'M6.8 6.2v3.6L10 8Z' }],
   /** A rounded square: Stop */
   stop: [{ x: 4, y: 4, w: 8, h: 8, rx: 1.8 }],
-  /** A paper plane: Send */
-  send: [{ d: 'M14 2.2 2.2 6.9l4.5 1.9 1.9 4.5Z' }, { d: 'M6.7 8.8 14 2.2' }],
+  /** An arrow up with a wide head: Send (the round button of the AI Chat composer) */
+  send: [{ d: 'M8 13V3.2' }, { d: 'M3.8 7.4 8 3.2l4.2 4.2' }],
+  /** A brain (two lobes and two folds): choose the model in the AI Chat composer */
+  brain: [
+    { d: 'M8 3.7a1.9 1.9 0 0 0-3.5-.8 2 2 0 0 0-1.5 2.9 2.2 2.2 0 0 0-.3 3.6 2.1 2.1 0 0 0 1.7 2.7A1.9 1.9 0 0 0 8 12.3Z' },
+    { d: 'M8 3.7a1.9 1.9 0 0 1 3.5-.8 2 2 0 0 1 1.5 2.9 2.2 2.2 0 0 1 .3 3.6 2.1 2.1 0 0 1-1.7 2.7A1.9 1.9 0 0 1 8 12.3' },
+    { d: 'M8 6.3a1.7 1.7 0 0 1-1.7 1.7' }, { d: 'M8 8.4a1.7 1.7 0 0 0 1.7 1.7' },
+  ],
   /** A bookmark: memories */
   memory: [{ d: 'M4.5 2.5h7v11L8 10.8 4.5 13.5Z' }],
   /** Three dots: more actions */
@@ -80,6 +86,8 @@ export const MINI = {
   unlock: [{ x: 3, y: 7.2, w: 10, h: 6.6, rx: 1.6 }, { d: 'M5.5 7.2V5a2.5 2.5 0 0 1 4.8-1' }],
   /** An eye: view */
   eye: [{ d: 'M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z' }, { cx: 8, cy: 8, r: 2.1 }],
+  /** An eye with a slash: hidden */
+  eyeOff: [{ d: 'M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z' }, { cx: 8, cy: 8, r: 2.1 }, { d: 'M2.5 2.5l11 11' }],
   /** A tray with an arrow up: upload */
   upload: [{ d: 'M2.5 10v3h11v-3' }, { d: 'M8 10.5V2.8' }, { d: 'M4.8 5.8 8 2.6l3.2 3.2' }],
   /** A triangle with an exclamation mark: warnings */

@@ -1,13 +1,13 @@
-//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 6: the tables of
-//! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` … `V6_COLUMNS`, the indexes of `V3_INDEXES` and the
-//! table and indexes of `V5_TABLES`, added by the same additive steps on every path (new file, upgrade from 1 … 5), so
-//! `sqlite_master` is the same either way.
+//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 7: the tables of
+//! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` … `V7_COLUMNS`, the indexes of `V3_INDEXES` and
+//! `V7_INDEXES` and the tables of `V5_TABLES` and `V7_TABLES`, added by the same additive steps on every path (new file,
+//! upgrade from 1 … 6), so `sqlite_master` is the same either way.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "6";
+pub const SCHEMA_VERSION: &str = "7";
 
 /// The schema versions upgraded by this version (after a backup copy).
-pub const UPGRADABLE: [&str; 5] = ["1", "2", "3", "4", "5"];
+pub const UPGRADABLE: [&str; 6] = ["1", "2", "3", "4", "5", "6"];
 
 /// Columns added by schema v2 (each only when `pragma_table_info` lacks it): (table, column, column definition).
 pub const V2_COLUMNS: [(&str, &str, &str); 4] = [
@@ -237,12 +237,215 @@ pub const V6_COLUMNS: [(&str, &str, &str); 4] = [
     ),
 ];
 
-/// Column of a table that `V5_TABLES` creates, so it is added after them (v1.1): cache-write tokens of a model call.
-pub const LATE_COLUMNS: [(&str, &str, &str); 1] = [(
-    "gen_calls",
-    "tokens_cache_write",
-    "tokens_cache_write INTEGER",
-)];
+/// Columns added by AI schema 7 (v1.3; the limits' CHECK ranges equal `limits::DEFS`). The `gen_calls` columns of this
+/// step are in `LATE_COLUMNS`. No FOREIGN KEY on `parent_id`, `leaf_id` and `pick_conn`: the store functions keep them
+/// consistent (a parent is a message of the same chat, a leaf a message of that chat, a pick is cleared with its
+/// connection: `conn::delete_connection`, `CLEAR_STALE_PICKS`). `ON DELETE SET NULL` would empty `pick_conn` only (not
+/// `pick_model`), and a schema-7 file that already has the column could not get it. The `messages.reasoning*` columns
+/// (AI Chat reasoning per answer version) reach a schema-7 file of an earlier v1.3 build through the same-version repair.
+pub const V7_COLUMNS: [(&str, &str, &str); 18] = [
+    // NULL = a root (first message of a line)
+    ("messages", "parent_id", "parent_id INTEGER"),
+    // connection NAME that wrote an assistant answer; NULL before v1.3
+    ("messages", "connection", "connection TEXT"),
+    // last message of the viewed branch; NULL = no message yet
+    ("chats", "leaf_id", "leaf_id INTEGER"),
+    // administrator's model pick: connection id and model id (both NULL = the chat default)
+    ("chats", "pick_conn", "pick_conn INTEGER"),
+    ("chats", "pick_model", "pick_model TEXT"),
+    // global feature switches (bits of features.rs, 0..63)
+    (
+        "settings",
+        "features_off",
+        "features_off INTEGER NOT NULL DEFAULT 0 CHECK (features_off >= 0)",
+    ),
+    ("usage", "connection_id", "connection_id INTEGER"),
+    ("usage", "connection", "connection TEXT"),
+    (
+        "limits",
+        "calls_admins_exempt",
+        "calls_admins_exempt INTEGER NOT NULL DEFAULT 1 CHECK (calls_admins_exempt BETWEEN 0 AND 1)",
+    ),
+    (
+        "limits",
+        "study_share",
+        "study_share INTEGER NOT NULL DEFAULT 1 CHECK (study_share BETWEEN 0 AND 1)",
+    ),
+    (
+        "limits",
+        "study_share_days",
+        "study_share_days INTEGER NOT NULL DEFAULT 180 CHECK (study_share_days BETWEEN 7 AND 3650)",
+    ),
+    (
+        "limits",
+        "gen_max_chunks",
+        "gen_max_chunks INTEGER NOT NULL DEFAULT 8 CHECK (gen_max_chunks BETWEEN 1 AND 50)",
+    ),
+    (
+        "limits",
+        "summary_max_items",
+        "summary_max_items INTEGER NOT NULL DEFAULT 40 CHECK (summary_max_items BETWEEN 10 AND 70)",
+    ),
+    (
+        "limits",
+        "import_file_questions",
+        "import_file_questions INTEGER NOT NULL DEFAULT 100 CHECK (import_file_questions BETWEEN 1 AND 300)",
+    ),
+    // 0 = off
+    (
+        "limits",
+        "daily_token_budget",
+        "daily_token_budget INTEGER NOT NULL DEFAULT 0 CHECK (daily_token_budget BETWEEN 0 AND 100000000)",
+    ),
+    // v1.3 AI Chat reasoning of an assistant answer (one row per version); NULL = none / older answer. Capped at
+    // `data::MAX_REASONING_BYTES` (UTF-8 bytes, head kept); never sent to the model.
+    ("messages", "reasoning", "reasoning TEXT"),
+    // milliseconds from the first reasoning to the first answer text (or the end); NULL when `reasoning` is NULL
+    ("messages", "reasoning_ms", "reasoning_ms INTEGER"),
+    // 1 = `reasoning` was cut at the cap
+    (
+        "messages",
+        "reasoning_truncated",
+        "reasoning_truncated INTEGER NOT NULL DEFAULT 0",
+    ),
+];
+
+/// Columns of a table that `V5_TABLES` creates, so they are added after them: cache-write tokens of a model call (v1.1)
+/// and the connection of a call (v1.3, no FK: history survives a removal; NULL for rows before v1.3).
+pub const LATE_COLUMNS: [(&str, &str, &str); 3] = [
+    (
+        "gen_calls",
+        "tokens_cache_write",
+        "tokens_cache_write INTEGER",
+    ),
+    ("gen_calls", "connection_id", "connection_id INTEGER"),
+    ("gen_calls", "connection", "connection TEXT"),
+];
+
+/// Tables of AI schema 7 (all `IF NOT EXISTS`; run after `V5_TABLES` and the late columns).
+pub const V7_TABLES: &str = "
+CREATE TABLE IF NOT EXISTS connections (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  name          TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 40),
+  provider      TEXT NOT NULL CHECK (provider IN ('openai', 'anthropic', 'gateway')),
+  base_url      TEXT NOT NULL,
+  format        TEXT NOT NULL DEFAULT 'openai' CHECK (format IN ('openai', 'anthropic')),
+  gateway_auth  TEXT NOT NULL DEFAULT 'bearer' CHECK (gateway_auth IN ('bearer', 'x-api-key', 'cf-aig-authorization')),
+  status        TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'broken')),
+  error_code    TEXT,
+  lists_models  INTEGER NOT NULL DEFAULT 1,
+  tested_at     INTEGER,
+  rev           INTEGER NOT NULL DEFAULT 1,
+  sort          INTEGER NOT NULL DEFAULT 0,
+  created_at    INTEGER NOT NULL,
+  updated_at    INTEGER NOT NULL,
+  updated_by    TEXT NOT NULL DEFAULT ''
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_connections_name ON connections(name COLLATE NOCASE);
+
+CREATE TABLE IF NOT EXISTS connection_secrets (
+  connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+  name          TEXT NOT NULL CHECK (name IN ('api_key', 'gateway_key')),
+  key_id        TEXT NOT NULL,
+  nonce         BLOB NOT NULL CHECK (length(nonce) = 24),
+  ciphertext    BLOB NOT NULL,
+  hint          TEXT NOT NULL DEFAULT '',
+  rev           INTEGER NOT NULL,
+  aad_ver       INTEGER NOT NULL DEFAULT 2 CHECK (aad_ver IN (1, 2)),
+  updated_at    INTEGER NOT NULL,
+  PRIMARY KEY (connection_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS models (
+  id            INTEGER PRIMARY KEY AUTOINCREMENT,
+  connection_id INTEGER NOT NULL REFERENCES connections(id) ON DELETE CASCADE,
+  model         TEXT NOT NULL,
+  manual        INTEGER NOT NULL DEFAULT 0,
+  status        TEXT NOT NULL DEFAULT 'ok' CHECK (status IN ('ok', 'untested', 'failed')),
+  error_code    TEXT,
+  usage_option  INTEGER NOT NULL DEFAULT 1,
+  max_tokens    INTEGER NOT NULL DEFAULT 8192 CHECK (max_tokens IN (4096, 8192)),
+  context       INTEGER,
+  latency_ms    INTEGER,
+  tested_at     INTEGER,
+  UNIQUE (connection_id, model)
+);
+
+CREATE TABLE IF NOT EXISTS model_slots (
+  slot       TEXT PRIMARY KEY NOT NULL CHECK (slot IN ('default', 'chat', 'study', 'summary', 'generate', 'import')),
+  model_id   INTEGER REFERENCES models(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS study_shared (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  question_id  TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  kind         TEXT NOT NULL CHECK (kind IN ('hint', 'explain')),
+  lang         TEXT NOT NULL CHECK (lang IN ('en', 'zh', 'ja')),
+  content      TEXT NOT NULL,
+  model        TEXT NOT NULL DEFAULT '',
+  connection   TEXT NOT NULL DEFAULT '',
+  tokens_in    INTEGER,
+  tokens_out   INTEGER,
+  gen          INTEGER NOT NULL DEFAULT 1,
+  hits         INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  updated_at   INTEGER NOT NULL,
+  last_hit_at  INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_study_shared_key ON study_shared(question_id, content_hash, kind, lang);
+CREATE INDEX IF NOT EXISTS idx_study_shared_used ON study_shared(COALESCE(last_hit_at, updated_at));
+
+CREATE TABLE IF NOT EXISTS gen_items (
+  task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+  no      INTEGER NOT NULL,
+  slot    INTEGER NOT NULL,
+  data    TEXT NOT NULL,
+  at      INTEGER NOT NULL,
+  PRIMARY KEY (task_id, no)
+) WITHOUT ROWID;";
+
+/// Indexes of AI schema 7 (need `messages.parent_id`).
+pub const V7_INDEXES: &str =
+    "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(chat_id, parent_id, id);";
+
+/// The six model slots, `model_id` NULL (every file, new or upgraded; idempotent). Bind `?1` = now.
+pub const V7_SEED: &str = "INSERT OR IGNORE INTO model_slots (slot, model_id, updated_at) VALUES
+  ('default', NULL, ?1), ('chat', NULL, ?1), ('study', NULL, ?1),
+  ('summary', NULL, ?1), ('generate', NULL, ?1), ('import', NULL, ?1)";
+
+/// Run once in the upgrade transaction to schema 7 (never on a later start), steps 1 and 6 of the contract: every
+/// existing chat becomes one line, and the limits that were never changed move to the v1.3 defaults. Steps 2 - 5 (the
+/// first connection from the old settings) are Rust: `store::connect_old_settings`.
+pub const V7_MIGRATE: &str = "
+UPDATE messages SET parent_id =
+  (SELECT MAX(p.id) FROM messages p WHERE p.chat_id = messages.chat_id AND p.id < messages.id);
+UPDATE chats SET leaf_id = (SELECT MAX(m.id) FROM messages m WHERE m.chat_id = chats.id);
+UPDATE limits SET
+  import_file_questions = CASE WHEN import_max_questions = 50 THEN 100 ELSE import_max_questions END,
+  memory_tokens         = CASE WHEN memory_tokens = 1000 THEN 200 ELSE memory_tokens END,
+  memories_per_user     = CASE WHEN memories_per_user = 50 THEN 30 ELSE memories_per_user END
+WHERE id = 1;";
+
+/// AI hint and AI analysis are one switch from v1.3 (`features::STUDY_PAIR` = bits 2 and 4 of `features_off`, a set bit
+/// = off): a row where only one of the two is off gets both on, so nobody loses access. Run in the upgrade to schema 7
+/// and on every start of a schema-7 file (it changes nothing once the bits are equal).
+pub const PAIR_STUDY_BITS: &str = "
+UPDATE users SET features_off = features_off & ~6 WHERE (features_off & 6) IN (2, 4);
+UPDATE settings SET features_off = features_off & ~6 WHERE (features_off & 6) IN (2, 4);";
+
+/// A chat pick whose connection no longer exists is cleared (the chat is back on its default). Run in the upgrade to
+/// schema 7 and on every start of a schema-7 file (it changes nothing once no such pick is left).
+pub const CLEAR_STALE_PICKS: &str = "
+UPDATE chats SET pick_conn = NULL, pick_model = NULL
+WHERE pick_conn IS NOT NULL AND NOT EXISTS (SELECT 1 FROM connections k WHERE k.id = chats.pick_conn);";
+
+/// The limits row of a NEW file: the v1.3 defaults of the three values the upgrade moves (the old column defaults stay in
+/// the version-1 DDL). Bind `?1` = now.
+pub const V7_NEW_LIMITS: &str = "INSERT OR IGNORE INTO limits
+  (id, updated_at, memory_tokens, memories_per_user, import_file_questions) VALUES (1, ?1, 200, 30, 100)";
 
 /// `meta` key of the one-time move of the two "unlimited" switches to their v1.1 default (on, A-OWNER-48).
 pub const UNLIMITED_DEFAULT_KEY: &str = "unlimited_default";

@@ -18,6 +18,11 @@ const XLSX_JA = '「Excel ブック (*.xlsx)」';
 
 /** Whole messages. Keys are the backend texts exactly (see the Rust constant named in each comment). */
 const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
+  // ---- api/auth.rs: MSG_SESSION_EXPIRED
+  ['登录已过期，请重新登录。', {
+    en: 'Your sign-in has expired. Please sign in again.',
+    ja: 'ログインの有効期限が切れました。もう一度ログインしてください。',
+  }],
   // ---- error.rs: ImportError (upload checks); MSG_UPLOAD_INCOMPLETE in api/response.rs has the same text as Empty
   ['文件是空的，或者没有上传完整。', {
     en: 'The file is empty, or it was not uploaded completely.',
@@ -197,7 +202,7 @@ const EXACT: ReadonlyMap<string, Texts> = new Map<string, Texts>([
   // ---- services/mod.rs
   ['这份文件里没有读到任何可用的题，没有导入。', {
     en: 'No usable questions were found in this file, so nothing was imported.',
-    ja: 'このファイルから使える問題を 1 問も読み取れなかったため、インポートしていません。',
+    ja: 'このファイルから利用できる問題を 1 問も読み取れなかったため、インポートしていません。',
   }],
   ['写入数据库失败，题库没有任何改动。', {
     en: 'Writing to the database failed. The question bank was not changed.',

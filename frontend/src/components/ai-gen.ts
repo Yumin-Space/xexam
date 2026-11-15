@@ -4,18 +4,19 @@
 import '../styles/ai-gen.css';
 import { aiControlView, type ControlContext, type ControlView } from '../domain/ai-features.ts';
 import {
-  checkName, cardJobs, genCount, genView, NAME_MAX_HOME, runningLine, stampText, type GenMode, type GenViewState,
+  checkName, cardJobs, genCount, genView, NAME_MAX_HOME, placeholderOf, runningLine, stampText, type GenMode, type GenViewState,
 } from '../domain/ai-gen.ts';
 import { masterStreakOf, inNotebook } from '../domain/grading.ts';
 import { jobReasonText } from '../i18n/errors.ts';
 import { localeTag, t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
 import { navigate } from '../state/actions.ts';
 import { aiGenStatus, aiStatus } from '../state/ai.ts';
-import { cancelJob, currentUpload, dismissJob, startGeneration, subscribeGen } from '../state/ai-gen.ts';
+import { cancelJob, currentUpload, dismissJob, jobItems, scrollToCard, startGeneration, subscribeGen } from '../state/ai-gen.ts';
 import { canManageBanks, S, sheetKey } from '../state/store.ts';
-import type { GenJob, GenStatus } from '../types/api.ts';
+import type { GenItem, GenJob, GenStatus } from '../types/api.ts';
 import { ask, formDialog } from '../utils/dialog.ts';
 import { h } from '../utils/dom.ts';
+import { PHONE_MQ, matches } from '../utils/media.ts';
 import { toast } from '../utils/toast.ts';
 import { fileCard } from './ai-import.ts';
 import { tokenFigures } from '../domain/usage-bars.ts';
@@ -249,6 +250,62 @@ export async function whileSending(btn: HTMLButtonElement, run: () => Promise<st
   if (problem) toast(problem, 4000);
 }
 
+// ---------------------------------------------------------------- the questions written so far (v1.3, COST 3.5)
+
+/** The list's own state across redraws (the card is rebuilt on every poll): open / closed, expanded rows, scroll, rows already drawn */
+const listUi = { open: null as boolean | null, expanded: new Set<number>(), scroll: 0, drawn: new Set<number>(), jobId: -1 };
+
+/**
+ * The collapsible list of the questions the job has written so far: collapsed on phones, open on wide screens until the
+ * reader chooses. Each row = number, type chip, stem (2 lines); a tap expands options and explanation, and only then the
+ * correct option(s) show in green. New rows fade in; the scroll position is kept across redraws. Nothing for an empty list.
+ */
+function itemsList(job: GenJob): HTMLElement[] {
+  if (listUi.jobId !== job.id) {
+    Object.assign(listUi, { open: null, scroll: 0, jobId: job.id });
+    listUi.expanded.clear();
+    listUi.drawn.clear();
+  }
+  const items = jobItems(job.id);
+  if (items.length === 0 || job.source === 'file') return [];
+  const rows = h('div', { class: 'gen-items', role: 'list' });
+  for (const it of items) rows.append(itemRow(it, !listUi.drawn.has(it.no)));
+  for (const it of items) listUi.drawn.add(it.no);
+  rows.addEventListener('scroll', () => { listUi.scroll = rows.scrollTop; }, { passive: true });
+  const det = h('details', { class: 'gen-list' },
+    h('summary', { class: 'gen-list-sum' }, t('aigen.items.title', { n: items.length })),
+    rows,
+    h('p', { class: 'dim gen-note' }, t('aigen.items.note')));
+  det.open = listUi.open ?? !matches(PHONE_MQ);
+  det.addEventListener('toggle', () => { listUi.open = det.open; });
+  queueMicrotask(() => { rows.scrollTop = listUi.scroll; });
+  return [det];
+}
+
+function itemRow(it: GenItem, fresh: boolean): HTMLElement {
+  const open = listUi.expanded.has(it.no);
+  const detail = h('div', { class: 'gen-item-body' },
+    h('ul', { class: 'gen-opts' }, ...it.options.map((o, i) =>
+      h('li', { class: o.correct ? 'gen-opt right' : 'gen-opt' }, h('b', null, `${String.fromCharCode(65 + i)}. `), o.text))),
+    it.explanation ? h('p', { class: 'dim gen-expl' }, it.explanation) : null);
+  const row = h('div', { class: `gen-item${fresh ? ' fresh' : ''}`, role: 'listitem' },
+    h('button', {
+      type: 'button', class: 'gen-item-head', 'aria-expanded': String(open),
+      onclick: () => {
+        const now = row.querySelector('.gen-item-head')!.getAttribute('aria-expanded') !== 'true';
+        if (now) listUi.expanded.add(it.no); else listUi.expanded.delete(it.no);
+        row.querySelector('.gen-item-head')!.setAttribute('aria-expanded', String(now));
+        detail.hidden = !now;
+      },
+    },
+    h('span', { class: 'gen-item-no num' }, String(it.no)),
+    h('span', { class: 'gen-item-kind' }, t(it.kind === 'multiple' ? 'banks.guide.exMulti' : 'banks.guide.exSingle')),
+    h('span', { class: 'gen-item-stem' }, it.stem)),
+    detail);
+  detail.hidden = !open;
+  return row;
+}
+
 /** The card of a generation job (running, done, failed) */
 function genCard(job: GenJob): HTMLElement {
   const active = job.state === 'queued' || job.state === 'running';
@@ -260,6 +317,7 @@ function genCard(job: GenJob): HTMLElement {
       bar(job.state === 'queued' ? 0 : line.pct, t('aigen.card.progressLabel')),
       h('p', { class: 'gen-line', 'aria-live': 'polite' }, t(line.key, { made: job.made, goal: job.goal })),
       h('p', { class: 'dim gen-note' }, t('aigen.card.leave')),
+      ...itemsList(job),
       ...usageNote(job),
       job.phase === 'saving'
         ? withReason(cancelButton(t('aigen.card.cancel'), () => undefined), t('aigen.err.tooLate'))
@@ -281,6 +339,40 @@ function genCard(job: GenJob): HTMLElement {
       ...usageNote(job));
   }
   return card;
+}
+
+/**
+ * v1.3: the placeholder row of the bank a running generation will create (Home and Bank management): name, AI+ badge and
+ * 「生成中 made / goal」. It is drawn from the job (no bank exists yet): no checkbox, no menu, never selectable for practice or
+ * exam. A tap opens the list of written questions in the progress card. Gone when the job ends (the real bank replaces it)
+ * and on the quiz route. `where` only tells the two pages apart for styling.
+ */
+export function placeholderRow(where: 'home' | 'banks'): HTMLElement {
+  const host = h('div', { class: `gen-ph-host gen-ph-${where}` });
+  const draw = (): void => {
+    const ph = placeholderOf(aiGenStatus(), S.route.name);
+    if (!ph) {
+      host.replaceChildren();
+      host.hidden = true;
+      return;
+    }
+    const state = t('aigen.placeholder', { made: ph.made, goal: ph.goal });
+    host.hidden = false;
+    host.replaceChildren(h('button', {
+      type: 'button', class: 'gen-ph', 'data-gen-placeholder': String(ph.id), 'aria-label': `${ph.name} · ${state}`, title: ph.name,
+      onclick: () => {
+        const det = document.querySelector<HTMLDetailsElement>('[data-gen-card] details.gen-list');
+        if (det) det.open = true;
+        scrollToCard();
+      },
+    },
+    h('span', { class: 'gen-ph-name' }, ph.name),
+    h('span', { class: 'ai-badge ai-set', 'aria-hidden': 'true' }, 'AI+'),
+    h('span', { class: 'gen-ph-state num', 'aria-live': 'polite' }, state)));
+  };
+  draw();
+  subscribeGen(host, draw);
+  return host;
 }
 
 /** The close "x" of a finished job's card (A-OWNER-33): a rounded-square outline button in the card's top-right corner */

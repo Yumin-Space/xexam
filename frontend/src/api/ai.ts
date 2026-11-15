@@ -9,8 +9,7 @@ import type { StudyAskBody, ReplyLang } from '../domain/ai-plus.ts';
 import { parseSaved, type SavedPayload } from '../domain/ai-study.ts';
 import type { StudySavedQuery, StudyTransport } from '../domain/ai-spec.ts';
 import type {
-  AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiChatSummary, AiClear, AiLimits, AiLimitsAnswer, AiMemoriesAnswer,
-  AiMemory, AiModels, AiSettings, AiSettingsUpdate, AiStatusJson, AiUsage, AiVerify,
+  AiAdminUserDetail, AiAdminUserRow, AiChatDetail, AiChatSummary, AiMemoriesAnswer, AiMemory, AiStatusJson, ModelRef,
 } from '../types/api.ts';
 import { getJson, postJson, postStream, type StreamOptions } from './client.ts';
 
@@ -36,6 +35,26 @@ export const sendMessage = (body: SendBody, opts: StreamOptions): Promise<void> 
 /** Writes the failed or stopped last answer of a chat again (streamed like a send; its start event has retry: true) */
 export const retryAnswer = (chatId: number, lang: AiLang, opts: StreamOptions): Promise<void> =>
   postStream('/api/ai/retry', retryBody(chatId, lang), opts);
+
+/** v1.3: the body of a regenerate / edit (the optional `model` is the administrators' pick for this one answer) */
+export interface RegenerateBody { chatId: number; messageId: number; lang: AiLang; model?: ModelRef }
+export interface EditBody extends RegenerateBody { text: string }
+
+/** v1.3: a new version of an assistant message (streamed like a send; its start event has mode: 'regenerate') */
+export const regenerate = (chatId: number, messageId: number, lang: AiLang, opts: StreamOptions, model?: ModelRef): Promise<void> =>
+  postStream('/api/ai/regenerate', model ? { chatId, messageId, lang, model } : { chatId, messageId, lang }, opts);
+
+/** v1.3: a new version of a user message and its answer (a new branch; mode: 'edit') */
+export const editMessage = (chatId: number, messageId: number, text: string, lang: AiLang, opts: StreamOptions, model?: ModelRef): Promise<void> =>
+  postStream('/api/ai/edit', model ? { chatId, messageId, text, lang, model } : { chatId, messageId, text, lang }, opts);
+
+/** v1.3: shows another version (the branch that ends at `messageId`); no model call, no cap */
+export const switchBranch = (chatId: number, messageId: number): Promise<AiChatDetail> =>
+  postJson<AiChatDetail>('/api/ai/branch', { chatId, messageId });
+
+/** v1.3, administrators: the model of one chat (null = the default) */
+export const setChatModel = (chatId: number, model: ModelRef | null): Promise<{ chat: AiChatSummary }> =>
+  postJson<{ chat: AiChatSummary }>('/api/ai/chat/model', { chatId, model });
 
 /**
  * Stops the running answer of a chat. Administrators may allow several running answers per user (safety limits), so the
@@ -84,7 +103,11 @@ export const fetchStudySaved = async (q: StudySavedQuery): Promise<SavedPayload>
 };
 
 /** Asks for a hint / explanation; the answer streams in as events (start, delta…, done / stopped / error) */
-export const askStudyStream = (body: StudyAskBody, opts: StreamOptions): Promise<void> => postStream('/api/ai/study/ask', body, opts);
+export const askStudyStream = (body: StudyAskBody, opts: StreamOptions, fresh?: boolean): Promise<void> =>
+  postStream('/api/ai/study/ask', fresh === true ? { ...body, fresh: true } : body, opts);
+
+/** v1.3: asks again although a shared answer exists (it replaces what everybody sees; counts as a request) */
+export const askStudy = (body: StudyAskBody, opts: StreamOptions, fresh?: boolean): Promise<void> => askStudyStream(body, opts, fresh);
 
 /** The saved summary of a record (`at` = its time as 12 digits, YYYYMMDDHHMM) */
 export const fetchSummarySaved = async (q: { record: number; at: string }): Promise<SavedPayload> =>
@@ -108,12 +131,6 @@ export const studyTransport: StudyTransport = {
 
 // ---------------------------------------------------------------- administrators
 
-export const fetchAiSettings = (): Promise<AiSettings> => getJson<AiSettings>('/api/ai/admin/settings');
-export const saveAiSettings = (u: AiSettingsUpdate): Promise<AiSettings> => postJson<AiSettings>('/api/ai/admin/settings', u);
-export const listModels = (): Promise<AiModels> => postJson<AiModels>('/api/ai/admin/models', {});
-export const verifyAi = (): Promise<AiVerify> => postJson<AiVerify>('/api/ai/admin/verify', {});
-export const enableAi = (enabled: boolean): Promise<AiSettings> => postJson<AiSettings>('/api/ai/admin/enable', { enabled });
-export const fetchUsage = (days: number): Promise<AiUsage> => getJson<AiUsage>(`/api/ai/admin/usage?days=${days}`);
 /** Every administrator and every user with the AI+ service (suspended ones included), sorted by name */
 export const fetchAiUsers = async (): Promise<AiAdminUserRow[]> => (await getJson<{ users: AiAdminUserRow[] }>('/api/ai/admin/users')).users;
 /** Round 2: suspends a user's AI+ function (their running answer stops at once; written to the System log) */
@@ -124,11 +141,6 @@ export const resumeAiUser = async (userId: number): Promise<AiAdminUserRow> =>
   (await postJson<{ user: AiAdminUserRow }>('/api/ai/admin/resume', { userId })).user;
 /** A user's chats and memories (read only; every view is written to the System log) */
 export const fetchAiUser = (id: number): Promise<AiAdminUserDetail> => getJson<AiAdminUserDetail>(`/api/ai/admin/user?id=${id}`);
-export const fetchAiUserChat = (userId: number, chatId: number): Promise<AiChatDetail> =>
-  getJson<AiChatDetail>(`/api/ai/admin/chat?user=${userId}&id=${chatId}`);
-export const clearAiData = (c: AiClear): Promise<{ deleted: number }> => postJson('/api/ai/admin/clear', c);
-export const fetchLimits = (): Promise<AiLimitsAnswer> => getJson<AiLimitsAnswer>('/api/ai/admin/limits');
-export const saveLimits = (l: Partial<AiLimits>): Promise<AiLimitsAnswer> => postJson<AiLimitsAnswer>('/api/ai/admin/limits', l);
 
 /** v1.1 (A-OWNER-21): an administrator switches the AI Chat free mode of an administrator account; answers its row */
 export const setAiAdminFree = async (userId: number, free: boolean): Promise<AiAdminUserRow> =>

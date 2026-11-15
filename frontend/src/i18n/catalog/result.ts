@@ -77,6 +77,11 @@ export default defineCatalog({
     'result.timeUp.bodyNone': 'Time ran out and the exam was submitted.',
     'result.timeUp.notSaved': 'Time ran out, but the result could not be saved. Your answers are still in this browser: on the home page, press “Submit” to try again.',
     'result.openNote': 'Questions not completed are not counted as wrong and are not added to the wrong-answer notebook; the score counts every question.',
+
+    'result.unsaved': 'This result is not saved to your study records yet (unstable network). Your answers are still on this device.',
+    'result.unsaved.retry': 'Save again',
+    'result.unsaved.saving': 'Saving…',
+    'result.unsaved.done': 'Saved',
   },
   zh: {
     'result.title': '成绩',
@@ -142,6 +147,11 @@ export default defineCatalog({
     'result.timeUp.bodyNone': '时间到，已自动交卷。',
     'result.timeUp.notSaved': '时间到了，但成绩没能保存。答案还留在浏览器里：回到主页按「交卷」再试一次。',
     'result.openNote': '没有完成的题不算错题，也不进错题本；分数按全部题目计算。',
+
+    'result.unsaved': '成绩还没有保存到学习记录（网络不稳定）。答案还在这台设备上。',
+    'result.unsaved.retry': '重试保存',
+    'result.unsaved.saving': '正在保存…',
+    'result.unsaved.done': '已保存',
   },
   ja: {
     'result.title': '結果',
@@ -207,5 +217,10 @@ export default defineCatalog({
     'result.timeUp.bodyNone': '時間切れのため自動で提出しました。',
     'result.timeUp.notSaved': '時間切れになりましたが、結果を保存できませんでした。回答はこのブラウザに残っています。ホームの「提出する」でもう一度試してください。',
     'result.openNote': '未回答の問題は不正解に数えず、間違いノートにも追加しません。得点はすべての問題で計算します。',
+
+    'result.unsaved': 'この結果はまだ学習記録に保存されていません（通信が不安定です）。解答はこの端末に残っています。',
+    'result.unsaved.retry': 'もう一度保存',
+    'result.unsaved.saving': '保存中…',
+    'result.unsaved.done': '保存しました',
   },
 });

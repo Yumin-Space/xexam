@@ -134,6 +134,10 @@ async fn a_summary_streams_with_its_sample_and_lands_in_the_record_chat() {
 #[tokio::test]
 async fn a_summary_sends_at_most_seventy_and_says_it_was_random() {
     let e = env().await;
+    // the default `summaryMaxItems` is 40 since v1.3; 70 is its largest value
+    let mut l = e.t.app.0.limits();
+    l.summary_max_items = 70;
+    e.t.app.0.set_limits(l);
     e.t.add_record(wrong_record(&e.user, 43, 100));
     let ev = ask_to(&e.t, &e.user, SUMMARY_ASK, sum_body(43)).await;
     let s = start_of(&ev);

@@ -619,6 +619,42 @@ impl Store {
         Ok(stamp_digest(&library_stamp_of(&g)?))
     }
 
+    /// v1.3 (A4): the stamp behind the ETag of `GET /api/banks`. `GET /api/banks` also carries what the library stamp
+    /// leaves out on purpose (so `/api/bank` keeps its 304 after every study record): the bank names, files, owners (and
+    /// their user names, which only administrators see), the facts of AI banks, and the viewer's own `studied` / `records`
+    /// numbers (every user's for an administrator). Use this one, not [`Store::library_stamp_as`], for `/api/banks`.
+    pub fn banks_stamp_as(&self, viewer: &Viewer) -> Result<String, DbError> {
+        let base = self.library_stamp_as(viewer)?;
+        let g = self.lock();
+        let banks: String = g.query_row(
+            "SELECT COALESCE(group_concat(id || ':' || name || ':' || filename || ':' || created_at || ':' || \
+             COALESCE(owner_id, '') || ':' || COALESCE(ai_meta, ''), ';'), '') FROM (SELECT * FROM banks ORDER BY id)",
+            [],
+            |r| r.get(0),
+        )?;
+        let owners: String = g.query_row(
+            "SELECT COALESCE(group_concat(id || ':' || username, ';'), '') FROM \
+             (SELECT id, username FROM users WHERE id IN (SELECT owner_id FROM banks) ORDER BY id)",
+            [],
+            |r| r.get(0),
+        )?;
+        // `?1` NULL = every user (an administrator's numbers)
+        let user = (!viewer.admin).then_some(viewer.user);
+        let (attempts, last_attempt): (i64, i64) = g.query_row(
+            "SELECT COUNT(*), COALESCE(MAX(id), 0) FROM attempts WHERE ?1 IS NULL OR user_id=?1",
+            params![user],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let (stats, stat_attempts): (i64, i64) = g.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(attempts), 0) FROM user_stats WHERE ?1 IS NULL OR user_id=?1",
+            params![user],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok(stamp_digest(&format!(
+            "{base}|{banks}|{owners}|{attempts}.{last_attempt}.{stats}.{stat_attempts}"
+        )))
+    }
+
     /// [`Store::library_stamp`] for one viewer: it changes when one of the banks they may see changes, and when the banks they
     /// may see or manage change (an administrator assigned banks, gave or took the permission, a bank changed owner), so their
     /// open pages re-read the banks. A viewer limited to some banks gets a stamp made only of those banks: it neither reveals
@@ -663,11 +699,15 @@ fn library_stamp_of(g: &Connection) -> Result<String, DbError> {
     )?;
     let last_import: i64 =
         g.query_row("SELECT COALESCE(MAX(id), 0) FROM imports", [], |r| r.get(0))?;
-    let active: i64 = g.query_row("SELECT COUNT(*) FROM questions WHERE active=1", [], |r| {
-        r.get(0)
-    })?;
+    // v1.3 (A4 audit): active AND total rows, so removing a sheet that only has retired questions (the `inactive` counts
+    // of `/api/bank` change, the active count does not) changes the stamp too
+    let (active, total): (i64, i64) = g.query_row(
+        "SELECT COALESCE(SUM(active=1), 0), COUNT(*) FROM questions",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
     Ok(format!(
-        "{banks}.{last_bank}.{last_import}.{active}.{}",
+        "{banks}.{last_bank}.{last_import}.{active}.{total}.{}",
         updated.replace(['-', ':', ' '], "")
     ))
 }
@@ -678,17 +718,20 @@ fn visible_banks_stamp(g: &Connection, ids: &BTreeSet<i64>) -> Result<String, Db
     let mut st = g.prepare(
         "SELECT b.updated_at, \
          (SELECT COUNT(*) FROM questions q WHERE q.bank_id=b.id AND q.active=1), \
-         (SELECT COALESCE(MAX(i.id), 0) FROM imports i WHERE i.bank_id=b.id) \
+         (SELECT COALESCE(MAX(i.id), 0) FROM imports i WHERE i.bank_id=b.id), \
+         (SELECT COUNT(*) FROM questions q WHERE q.bank_id=b.id) \
          FROM banks b WHERE b.id=?1",
     )?;
     let mut out = String::new();
     for id in ids {
-        let row: Option<(String, i64, i64)> = st
-            .query_row(params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+        let row: Option<(String, i64, i64, i64)> = st
+            .query_row(params![id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+            })
             .optional()?;
         match row {
-            Some((updated, active, import)) => {
-                let _ = write!(out, "{id}:{updated}:{active}:{import};");
+            Some((updated, active, import, total)) => {
+                let _ = write!(out, "{id}:{updated}:{active}:{import}:{total};");
             }
             None => {
                 let _ = write!(out, "{id}:-;");

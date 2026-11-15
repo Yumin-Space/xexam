@@ -23,11 +23,13 @@ What is checked:
   A0. Before AI is set up: ai-service has reported to the backend (connected, AI+ service off), so AI+ is not available:
       /api/users says aiAvailable false, creating a user with the AI+ service and any change of a user's AI+ service
       are refused with 409 ai.serviceOff and change nothing
-  A1. AI settings: save the provider, a made-up key (only its hint comes back), enabling before a test is refused, models
-      listed, test, enable (at once AI+ is available: /api/auth/state of the administrator shows the connected
-      ai-service with its version; a plain user's state has no aiService); a changed address without the key typed
-      again is refused and changes nothing
-  A2. Users: sam with the AI+ service chats (start, delta, done with tokens), kim without it is refused; the reply
+  A1. AI settings (v1.3): save a connection with a made-up key (the save lists the models first; only the key's hint comes
+      back), enabling without a default model is refused, models listed, a model test, enable with the default model (at
+      once AI+ is available: /api/auth/state of the administrator shows the connected ai-service with its version; a
+      plain user's state has no aiService); a changed address that keeps the saved key asks for the host confirm
+      (409 ai.keyReuseConfirm, also for a plain-http address) and changes nothing
+  A2. Users: sam with the AI+ service chats (start, delta, done with tokens), kim without it is refused; a global
+      feature switch (v1.3) stops sam (403 ai.featureOff) and leaves the administrator's features untouched; the reply
       language follows "lang" (ja: kana, zh-CN: Chinese, missing: English, fr: 400), also for a memory suggestion; free
       mode only for the administrator; user routes are scoped to the caller, the administrator's views are audited in
       the System log; a foreign Origin is refused by the auth step
@@ -96,42 +98,49 @@ MSG_AI_SERVICE_OFF = '请先在 AI 设置里开启 AI+ 功能。'
 MSG_AI_SUSPENDED = '管理员已暂停你的 AI+ 功能。'
 # Key orders of the JSON answers checked here (contracts of v0.8)
 USER_ROW_KEYS = ['id', 'username', 'role', 'disabled', 'createdAt', 'lastLoginAt', 'mustChangePassword', 'records',
-                 'banks', 'newBanks', 'canManageBanks', 'ai', 'ownedBanks', 'lock', 'aiSuspended']
+                 'banks', 'newBanks', 'canManageBanks', 'ai', 'ownedBanks', 'lastActiveAt', 'lastLoginIp', 'lastLoginLocation',
+                 'lock', 'aiSuspended']
 AI_SERVICE_KEYS = ['connected', 'stopped', 'lastSeen', 'version', 'enabled', 'link']
 STATUS_KEYS = ['enabled', 'allowed', 'suspended', 'hasData', 'running', 'retentionDays', 'memoryLimit', 'memoryMaxTokens',
                'maxMessageChars', 'messageChars', 'memoryTokens', 'keyProblem', 'configured', 'freeMode']
-START_KEYS = ['chatId', 'chatTitle', 'userMessageId', 'assistantMessageId', 'model', 'newChat', 'retry', 'free', 'chatKind']
+START_KEYS = ['chatId', 'chatTitle', 'userMessageId', 'assistantMessageId', 'newChat', 'retry', 'free', 'chatKind']
+# v1.3: the start frame of an AI Chat answer goes on with the branch fields
+CHAT_START_KEYS = START_KEYS + ['mode', 'parentId', 'userParentId']
 CHAT_KEYS = ['id', 'title', 'createdAt', 'updatedAt', 'messageCount', 'running', 'kind', 'recordId']
 ADMIN_ROW_KEYS = ['id', 'username', 'role', 'ai', 'aiAllowed', 'disabled', 'exists', 'suspended', 'chats', 'messages',
                   'memories', 'lastUsedAt', 'tokensIn', 'tokensOut']
 # v1.0: the rows of GET /api/ai/admin/users and /api/ai/admin/user end with the user's AI call counts (the Suspend /
 # Resume answer's row does not carry them)
 ADMIN_LIST_ROW_KEYS = ADMIN_ROW_KEYS + ['calls']
-# v1.1: a status answer goes on with 'calls' (when the caps apply), 'why', and 'features' / 'gen' for AI+ users; an
+# v1.1: a status answer goes on with 'calls' (when the caps apply), 'why', and 'features' / 'gen' for AI+ users (v1.3:
+# 'chatDefault' between them for administrators); an
 # AdminUserRow with 'features' (FP-4) and, on administrator rows, 'freeMode' (A-OWNER-21), before 'calls'
 def status_keys_ok(keys, calls):
     want = STATUS_KEYS + (['calls'] if calls else []) + ['why']
-    return keys[:len(want)] == want and keys[len(want):] in ([], ['features', 'gen'])
+    return keys[:len(want)] == want and keys[len(want):] in ([], ['features', 'gen'], ['features', 'chatDefault', 'gen'])
 def admin_row_keys_ok(u, calls):
     want = ADMIN_ROW_KEYS + ['features'] + (['freeMode'] if u.get('role') == 'admin' else []) + (['calls'] if calls else [])
     return list(u.keys()) == want
 # v1.0: per-user caps on AI model calls (defaults 5 / 20 / 100). This check sends more calls per user than that, so the
 # administrator raises them to the maximum right after enabling AI; the caps themselves are covered by ai-service's tests
 CAPS_RELAXED = {'callsPerMinute': 100, 'callsPerHour': 2000, 'callsPerDay': 20000}
-# v1.0 (FB-5 revised): the safety limits answer has these 10 keys in this order; the per-message number is no longer a
+# v1.0 (FB-5 revised): the safety limits answer starts with these 10 keys in this order; the per-message number is no longer a
 # setting (messageChars is fixed at 16000 characters and only shows in the status answer)
 LIMIT_KEYS = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryTokens',
               'callsPerMinute', 'callsPerHour', 'callsPerDay', 'replyMaxTokens',
               # v1.1: the seventeen AI bank limits (27 keys); lengths are in tokens (A-OWNER-43)
               'genPerDay', 'genAdminsExempt', 'genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle',
               'genWrongMulti', 'genCallTokens', 'genMaxCalls', 'importMaxCalls', 'recognizeMaxCalls', 'genUnlimited',
-              'importUnlimited', 'genRunning', 'importMaxMb', 'importMaxQuestions']
-LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000, 'messagesPerChat': 400, 'memoriesPerUser': 50,
-                  'memoryTokens': 1000, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxTokens': 3000,
+              'importUnlimited', 'genRunning', 'importMaxMb', 'importMaxQuestions',
+              # v1.3: six more (33 keys); memoriesPerUser 30, memoryTokens 200 and importMaxQuestions 100 are the new defaults
+              'callsAdminsExempt', 'studyShare', 'studyShareDays', 'genMaxChunks', 'summaryMaxItems', 'dailyTokenBudget']
+LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000, 'messagesPerChat': 400, 'memoriesPerUser': 30,
+                  'memoryTokens': 200, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxTokens': 3000,
                   'genPerDay': 3, 'genAdminsExempt': 1, 'genMinSource': 30, 'genMinWrong': 10, 'genBankSingle': 14, 'genBankMulti': 6,
                   'genWrongSingle': 14, 'genWrongMulti': 6, 'genCallTokens': 20000, 'genMaxCalls': 15, 'importMaxCalls': 25,
                   'recognizeMaxCalls': 20, 'genUnlimited': 1, 'importUnlimited': 1, 'genRunning': 2, 'importMaxMb': 20,
-                  'importMaxQuestions': 50}
+                  'importMaxQuestions': 100, 'callsAdminsExempt': 1, 'studyShare': 1, 'studyShareDays': 180, 'genMaxChunks': 8,
+                  'summaryMaxItems': 40, 'dailyTokenBudget': 0}
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST', 'XEXAM_INTERNAL_TOKEN', 'XEXAM_AI_SECRET_KEY'):
@@ -605,17 +614,21 @@ try:
 
     state = until(lambda: svc_when(lambda a: a.get('connected')), 30) or admin_state()
     svc = state.get('aiService') or {}
-    ok(list(state.keys()) == ['user', 'library', 'aiAvailable', 'aiService'] and list(svc.keys()) == AI_SERVICE_KEYS,
-       'GET /api/auth/state (administrator): keys user, library, aiAvailable, aiService; aiService keys in order. Actual %r' % state)
+    ok(list(state.keys()) == ['user', 'library', 'aiAvailable', 'session', 'logVisits', 'aiService'] and list(svc.keys()) == AI_SERVICE_KEYS,
+       'GET /api/auth/state (administrator): keys user, library, aiAvailable, session, logVisits, aiService; aiService keys in order. Actual %r' % state)
+    ok(state['session'].get('rule') == 'admin' and state['session'].get('idleSecs') == 86400 and state['session'].get('hardEndsAt'),
+       'v1.3: the administrator session follows the admin rule (24 h idle, a hard end). Actual %r' % state.get('session'))
     ok(svc.get('connected') is True and svc.get('stopped') is False and svc.get('enabled') is False and svc.get('link') is True
        and svc.get('version') == code_version.group(1) and isinstance(svc.get('lastSeen'), int) and state['aiAvailable'] is False,
        'ai-service has reported to the backend (connected, link on, version %s, AI+ service off): aiAvailable false. Actual %r'
        % (code_version.group(1), svc))
     ul = users_list()
-    ok(list(ul.keys()) == ['users', 'aiAvailable'] and ul['aiAvailable'] is False,
-       'GET /api/users: top-level keys users, aiAvailable; aiAvailable false before AI is set up. Actual %r' % list(ul.keys()))
+    ok(list(ul.keys()) == ['users', 'signinInfo', 'aiAvailable'] and ul['aiAvailable'] is False and ul['signinInfo'] is False,
+       'GET /api/users: top-level keys users, signinInfo (v1.3, off by default), aiAvailable; aiAvailable false before AI is set up. Actual %r' % ul)
     ok(all(list(u.keys()) == USER_ROW_KEYS for u in ul['users']) and all(u['aiSuspended'] is False for u in ul['users']),
        'GET /api/users: row keys in order, aiSuspended appended after lock. Actual %r' % [list(u.keys()) for u in ul['users']][:1])
+    ok(all(u['lastLoginIp'] is None and u['lastLoginLocation'] is None for u in ul['users']),
+       'v1.3: with the sign-in info switch off no address and no location is returned. Actual %r' % ul['users'][:1])
     src = open(os.path.join(ROOT, 'backend', 'src', 'api', 'response.rs'), encoding='utf-8').read()
     m_off = re.search(r'pub const MSG_AI_SERVICE_OFF: &str = "([^"]*)";', src)
     ok(m_off is not None and m_off.group(1) == MSG_AI_SERVICE_OFF, 'backend/src/api/response.rs has MSG_AI_SERVICE_OFF = %r' % MSG_AI_SERVICE_OFF)
@@ -648,25 +661,34 @@ try:
        'GET /api/ai/status (administrator, nothing set up): enabled, allowed, suspended, hasData, configured all false. Actual %d %r' % (st, s0))
     ok(status_keys_ok(list(s0.keys()), False) and s0['freeMode'] is False,
        'GET /api/ai/status: keys in order (suspended after allowed, freeMode last and false). Actual %r' % s0)
-    st, _, cfg = jreq('POST', '/api/ai/admin/settings', {'provider': 'openai', 'baseUrl': 'http://ai-stub:9000/v1', 'apiKey': DEMO_KEY})
-    ok(st == 200 and cfg['keys']['apiKey'] == {'set': True, 'hint': '\u2026' + DEMO_KEY[-4:], 'unreadable': False},
-       'Saving the provider and a key: only {set, hint, unreadable} comes back. Actual %d %r' % (st, cfg.get('keys') if isinstance(cfg, dict) else cfg))
-    ok(cfg['provider'] == 'openai' and cfg['baseUrl'] == 'http://ai-stub:9000/v1' and cfg['enabled'] is False, 'The settings are saved; AI is still off')
+    st, _, cfg = jreq('POST', '/api/ai/admin/connections/save',
+                      {'name': 'Demo provider', 'provider': 'openai', 'baseUrl': 'http://ai-stub:9000/v1', 'apiKey': DEMO_KEY})
+    conns = ((cfg.get('settings') or {}).get('connections') or [{}]) if isinstance(cfg, dict) else [{}]
+    ok(st == 200 and cfg.get('ok') is True and cfg.get('saved') is True and cfg.get('listed') is True
+       and conns[0].get('keys', {}).get('apiKey') == {'set': True, 'hint': '\u2026' + DEMO_KEY[-4:], 'unreadable': False},
+       'v1.3: saving a connection with a key lists the models first; only {set, hint, unreadable} comes back. Actual %d %r' % (st, cfg))
+    CONN = cfg['connectionId']
+    ok(conns[0]['id'] == CONN and conns[0]['provider'] == 'openai' and conns[0]['baseUrl'] == 'http://ai-stub:9000/v1'
+       and conns[0]['insecureHttp'] is False and cfg['settings']['enabled'] is False and cfg['settings']['state'] == 'setup',
+       'The connection is saved (an internal http address is not flagged); AI is still off. Actual %r' % cfg['settings'])
     st, _, e = jreq('POST', '/api/ai/admin/enable', {'enabled': True})
-    ok(st == 409 and e.get('code') == 'ai.notVerified', 'Enabling AI before a successful test → 409 ai.notVerified. Actual %d %r' % (st, e))
-    st, _, m = jreq('POST', '/api/ai/admin/models', {})
-    ok(st == 200 and m['listed'] is True and 'demo-chat-small' in m['models'], 'The models are listed from the provider. Actual %d %r' % (st, m))
-    st, _, cfg = jreq('POST', '/api/ai/admin/settings', {'model': 'demo-chat-small'})
-    ok(st == 200 and cfg['model'] == 'demo-chat-small', 'The model is saved. Actual %d' % st)
-    st, _, v = jreq('POST', '/api/ai/admin/verify', {})
-    ok(st == 200 and v['ok'] is True and v['model'] == 'demo-chat-small', 'The test call succeeds. Actual %d %r' % (st, v))
-    st, _, cfg = jreq('POST', '/api/ai/admin/enable', {'enabled': True})
-    ok(st == 200 and cfg['enabled'] is True and cfg['verified'] is True, 'AI is enabled after the test. Actual %d' % st)
+    ok(st == 422 and e.get('code') == 'ai.modelMissing', 'Enabling AI without a default model -> 422 ai.modelMissing. Actual %d %r' % (st, e))
+    st, _, m = jreq('GET', '/api/ai/admin/models?refresh=1')
+    ok(st == 200 and any(c['id'] == CONN and c['listed'] is True and 'demo-chat-small' in [x['id'] for x in c['models']]
+                         for c in m.get('connections', [])),
+       'The models are listed from the provider. Actual %d %r' % (st, m))
+    st, _, v = jreq('POST', '/api/ai/admin/models/test', {'connectionId': CONN, 'model': 'demo-chat-small'})
+    ok(st == 200 and v['ok'] is True, 'The test call of a model succeeds. Actual %d %r' % (st, v))
+    st, _, cfg = jreq('POST', '/api/ai/admin/enable', {'enabled': True, 'default': {'connectionId': CONN, 'model': 'demo-chat-small'}})
+    cfg = cfg.get('settings', cfg) if isinstance(cfg, dict) else cfg
+    ok(st == 200 and cfg['enabled'] is True and cfg['state'] == 'on' and cfg['slots']['default']['using'] is not None
+       and [p['model'] for p in cfg['pool']] == ['demo-chat-small'],
+       'AI is enabled with demo-chat-small as the default model. Actual %d %r' % (st, cfg))
     # -- A1b v1.0: the safety limits answer, the per-user call caps through Nginx --
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
        and lim.get('defaults') == LIMIT_DEFAULTS,
-       'GET /api/ai/admin/limits: the 27 keys in order, replyMaxTokens 3000, memoryTokens 1000, calls 5 / 20 / 100, no messageChars. Actual %d %r' % (st, lim))
+       'GET /api/ai/admin/limits: the 33 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, no messageChars. Actual %d %r' % (st, lim))
     ok(lim['ranges']['replyMaxTokens'] == [1, 250000] and lim['ranges']['memoryTokens'] == [50, 250000]
        and lim['ranges']['callsPerMinute'] == [1, 100] and lim['ranges']['callsPerHour'] == [1, 2000]
        and lim['ranges']['callsPerDay'] == [1, 20000] and 'messageChars' not in lim['ranges'],
@@ -684,16 +706,20 @@ try:
        'callsPerMinute 30 above the hourly 20 -> 400 ai.limitOrder, field callsPerHour. Actual %d %r' % (st, e))
     st, _, sa = jreq('GET', '/api/ai/status')
     ok(st == 200 and status_keys_ok(list(sa.keys()), True) and sa['messageChars'] == 16000 and sa['maxMessageChars'] == 16000
-       and sa['memoryTokens'] == 1000 and sa['memoryMaxTokens'] == 1000,
-       'GET /api/ai/status (AI on): calls is the last key; messageChars 16000 (fixed), memoryTokens 1000. Actual %d %r' % (st, sa))
-    ok(sa['calls'] == {'used': {'minute': 0, 'hour': 0, 'day': 0}, 'caps': {'minute': 5, 'hour': 20, 'day': 100}, 'blocked': None},
-       'status.calls: used (the Test is not counted), caps 5 / 20 / 100, blocked null. Actual %r' % sa['calls'])
+       and sa['memoryTokens'] == 200 and sa['memoryMaxTokens'] == 200,
+       'GET /api/ai/status (AI on): calls follows freeMode; messageChars 16000 (fixed), memoryTokens 200. Actual %d %r' % (st, sa))
+    ok(sa['calls'] == {'used': {'minute': 0, 'hour': 0, 'day': 0}, 'caps': {'minute': 5, 'hour': 20, 'day': 100}, 'blocked': None,
+                       'exempt': True},
+       'status.calls: used (the Test is not counted), caps 5 / 20 / 100, blocked null, exempt true for an administrator (v1.3). Actual %r' % sa['calls'])
+    ok(sa['chatDefault'] == {'connectionId': CONN, 'connectionName': 'Demo provider', 'model': 'demo-chat-small'},
+       'v1.3: status.chatDefault names the connection and the model AI Chat uses. Actual %r' % sa.get('chatDefault'))
 
     def settled():
         return until(lambda: jreq('GET', '/api/ai/status')[2].get('running') is None, 10)
 
-    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 2})
-    ok(st == 200 and e['limits']['callsPerMinute'] == 2, 'The administrator sets the per-minute cap to 2. Actual %d' % st)
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 2, 'callsAdminsExempt': 0})
+    ok(st == 200 and e['limits']['callsPerMinute'] == 2 and e['limits']['callsAdminsExempt'] == 0,
+       "The administrator sets the per-minute cap to 2 and switches the administrators' exemption off (v1.3). Actual %d" % st)
     for i in (1, 2):
         sc = Stream('/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'}, COOKIE)
         sc.run()
@@ -711,9 +737,9 @@ try:
     ok(st == 200 and sb['calls']['used']['minute'] == 2 and sb['calls']['caps']['minute'] == 2
        and sb['calls']['blocked'] == {'cap': 'minute', 'limit': 2, 'retryAt': e['retryAt']},
        'GET /api/ai/status shows blocked {cap minute, limit 2, retryAt} and 2 calls in the minute. Actual %r' % sb.get('calls'))
-    st, _, v = jreq('POST', '/api/ai/admin/verify', {})
+    st, _, v = jreq('POST', '/api/ai/admin/models/test', {'connectionId': CONN, 'model': 'demo-chat-small'})
     ok(st == 200 and v['ok'] is True, 'The admin Test is not counted and still works while the cap is reached. Actual %d %r' % (st, v))
-    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100})
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'callsAdminsExempt': 1})
     ok(st == 200 and e['limits'] == LIMIT_DEFAULTS, 'The limits are reset to the defaults. Actual %d %r' % (st, e))
     st, _, e = jreq('POST', '/api/ai/chats/delete', {'all': True})
     ok(st == 200, "The administrator's cap-check chats are deleted again. Actual %d %r" % (st, e))
@@ -731,11 +757,15 @@ try:
     ok(st == 200 and s1['enabled'] is True and s1['allowed'] is True and s1['suspended'] is False and s1['configured'] is True,
        'GET /api/ai/status: enabled and allowed for the administrator. Actual %r' % s1)
     seen_by_stub = len(stub_requests())
-    st, _, e = jreq('POST', '/api/ai/admin/settings', {'baseUrl': 'http://ai-stub:9001/v1'})
-    ok(st == 400 and e.get('code') == 'ai.keyReenter' and e.get('field') == 'apiKey',
-       'A new address without the key typed again → 400 ai.keyReenter, field apiKey. Actual %d %r' % (st, e))
     st, _, cfg = jreq('GET', '/api/ai/admin/settings')
-    ok(st == 200 and cfg['baseUrl'] == 'http://ai-stub:9000/v1' and cfg['enabled'] is True and cfg['keys']['apiKey']['set'] is True,
+    c0 = cfg['connections'][0]
+    st, _, e = jreq('POST', '/api/ai/admin/connections/save',
+                    {'id': c0['id'], 'rev': c0['rev'], 'name': c0['name'], 'provider': 'openai', 'baseUrl': 'http://ai-stub:9001/v1'})
+    ok(st == 409 and e.get('code') == 'ai.keyReuseConfirm' and e.get('host') == 'ai-stub:9001',
+       'v1.3: a new address with the saved key kept -> 409 ai.keyReuseConfirm naming the new host (plain http is not refused). Actual %d %r' % (st, e))
+    st, _, cfg = jreq('GET', '/api/ai/admin/settings')
+    ok(st == 200 and cfg['connections'][0]['baseUrl'] == 'http://ai-stub:9000/v1' and cfg['connections'][0]['rev'] == c0['rev']
+       and cfg['enabled'] is True and cfg['connections'][0]['keys']['apiKey']['set'] is True,
        'The refused update changed nothing (same address, still enabled, key kept)')
     time.sleep(1)
     ok(len(stub_requests()) == seen_by_stub, 'The provider received no request because of the refused update')
@@ -750,8 +780,11 @@ try:
     SAM = sign_in_new_user('sam', 'sam-initial-2026', 'sam-stack-2026')
     KIM = sign_in_new_user('kim', 'kim-initial-2026', 'kim-stack-2026')
     st, _, j = jreq('GET', '/api/auth/state', headers={'Cookie': SAM})
-    ok(st == 200 and j['user']['aiAllowed'] is True and j.get('aiAvailable') is True and list(j.keys()) == ['user', 'library', 'aiAvailable'],
-       'sam: aiAllowed and aiAvailable in the sign-in state, no aiService (administrators only). Actual %d %r' % (st, j))
+    ok(st == 200 and j['user']['aiAllowed'] is True and j.get('aiAvailable') is True
+       and list(j.keys()) == ['user', 'library', 'aiAvailable', 'session', 'logVisits']
+       and j['session'] == {'rule': 'remember', 'idleSecs': 2592000, 'hardEndsAt': None} and j['logVisits'] is False,
+       'sam: aiAllowed and aiAvailable in the sign-in state, the remember session rule (30 days, no hard end), no aiService '
+       '(administrators only). Actual %d %r' % (st, j))
 
     s = Stream('/api/ai/send', {'chatId': None, 'text': QUESTION}, SAM)
     s.run()
@@ -762,10 +795,28 @@ try:
        'sam: events start, delta…, done. Actual %r %r' % (names, s.error))
     ok(isinstance(term[2].get('tokensIn'), int) and isinstance(term[2].get('tokensOut'), int), 'done carries the token counts. Actual %r' % term[2])
     start = s.events[0][2]
-    ok(list(start.keys()) == START_KEYS and start['free'] is False and start['newChat'] is True,
-       'start carries free (false for a normal chat) and then chatKind (v0.9) as its last keys. Actual %r' % start)
+    ok(list(start.keys()) == CHAT_START_KEYS and start['free'] is False and start['newChat'] is True and start['mode'] == 'send'
+       and start['parentId'] == start['userMessageId'] and start['userParentId'] is None,
+       'start carries free (false for a normal chat), chatKind (v0.9) and the branch fields mode / parentId / userParentId (v1.3). Actual %r' % start)
+    ok(b'demo-chat-small' not in s.raw and b'Demo provider' not in s.raw,
+       'sam: the start frame and the stream name no model and no connection (v1.3)')
     ok(ANSWER_WORDS in answer_of(s), "Without lang the answer is in English (the stub's made-up English answer)")
     chat_id = start['chatId']
+    # v1.3: a global feature switch applies to normal users only; administrators are not affected
+    st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'chat': False})
+    cfg = cfg.get('settings', cfg) if isinstance(cfg, dict) else {}
+    ok(st == 200 and cfg.get('featureSwitches', {}).get('chat') is False and cfg['featureSwitches']['hint'] is True,
+       'The administrator switches AI Chat off for everyone. Actual %d %r' % (st, cfg.get('featureSwitches')))
+    st, _, e = jreq('POST', '/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'}, headers={'Cookie': SAM})
+    ok(st == 403 and isinstance(e, dict) and e.get('code') == 'ai.featureOff' and e.get('feature') == 'chat',
+       'sam is refused with 403 ai.featureOff (feature chat) while the switch is off. Actual %d %r' % (st, e))
+    sam_f = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})[2].get('features', {})
+    adm_f = jreq('GET', '/api/ai/status')[2].get('features', {})
+    ok(sam_f.get('chat') is False and sam_f.get('hint') is True and adm_f.get('chat') is True,
+       "The status says chat off for sam and still on for the administrator (administrators are not affected). Actual %r %r" % (sam_f, adm_f))
+    st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'chat': True})
+    ok(st == 200 and jreq('GET', '/api/ai/status', headers={'Cookie': SAM})[2].get('features', {}).get('chat') is True,
+       'Switched on again, sam has AI Chat back. Actual %d' % st)
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
     ok(st == 200 and [c['id'] for c in chats['chats']] == [chat_id], 'sam: GET /api/ai/chats lists the one chat. Actual %r' % chats)
     ok(list(chats['chats'][0].keys()) == CHAT_KEYS,
@@ -955,10 +1006,10 @@ try:
     ok(h1.status == 200 and h1.names()[:1] == ['start'] and h1.names().count('delta') >= 1 and h1.terminal() is not None and h1.terminal()[1] == 'done',
        'sam: a hint streams start, delta…, done. Actual %r %r %r' % (h1.status, h1.names(), h1.raw[:200]))
     st1 = h1.events[0][2]
-    ok(list(st1.keys()) == START_KEYS + DONE_TAIL and st1['chatKind'] == 'practice' and st1['kind'] == 'hint' and st1['newChat'] is True
+    ok(list(st1.keys()) == START_KEYS + DONE_TAIL + ['shared'] and st1['shared'] is False and st1['chatKind'] == 'practice' and st1['kind'] == 'hint' and st1['newChat'] is True
        and st1['source'] == 'practice' and st1['questionId'] == caps[0]['id'] and st1['questionNo'] == 1 and st1['recordId'] is None
        and st1['sample'] is None and st1['lang'] == 'en' and st1['free'] is False and st1['retry'] is False,
-       'The hint start frame: the v0.8 keys, chatKind practice, then kind, questionId, questionNo, source, recordId, sample, lang. Actual %r' % st1)
+       'The hint start frame: the v0.8 keys, chatKind practice, then kind, questionId, questionNo, source, recordId, sample, lang, shared (v1.3). Actual %r' % st1)
     ok(re.fullmatch(r'\d{4}-\d\d-\d\d \d\d:\d\d', st1['chatTitle']) is not None,
        'The practice chat is titled with the start minute (no suffix stored). Actual %r' % st1['chatTitle'])
     hint_text = answer_of(h1)
@@ -969,7 +1020,7 @@ try:
        and sv['latest']['kind'] == 'hint' and sv['latest']['questionNo'] == 1 and sv['lastGood'] is None,
        'GET /api/ai/study/saved finds the hint (done, lastGood null). Actual %d %r' % (st, sv))
     ok(list(sv['latest'].keys()) == ['messageId', 'kind', 'questionId', 'questionNo', 'source', 'status', 'error', 'truncated', 'content',
-                                     'lang', 'model', 'createdAt', 'finishedAt'], 'The saved answer has the StudyAnswer keys in order. Actual %r' % list(sv['latest'].keys()))
+                                     'lang', 'createdAt', 'finishedAt'], 'The saved answer has the StudyAnswer keys in order. Actual %r' % list(sv['latest'].keys()))
     e1 = study(dict(hint_body(caps[0], 1), kind='explain'))
     ok(e1.status == 200 and e1.terminal()[1] == 'done' and e1.events[0][2]['chatId'] == STUDY_CHAT and e1.events[0][2]['newChat'] is False
        and e1.events[0][2]['kind'] == 'explain' and answer_of(e1).startswith('**Answer: A**'),
@@ -1065,7 +1116,7 @@ try:
     st, _, sv = jreq('GET', '/api/ai/summary/saved?record=%d&at=%s' % (R_PRACTICE, at_digits), headers={'Cookie': SAM})
     ok(st == 200 and sv['chatId'] == ss['chatId'] and sv['latest']['status'] == 'done' and sv['latest']['content'] == summary_text
        and sv['latest']['recordId'] == R_PRACTICE and sv['latest']['sample'] == {'used': 4, 'usable': 4, 'wrong': 4} and sv['lastGood'] is None
-       and list(sv['latest'].keys()) == ['messageId', 'recordId', 'status', 'error', 'truncated', 'content', 'lang', 'model', 'createdAt',
+       and list(sv['latest'].keys()) == ['messageId', 'recordId', 'status', 'error', 'truncated', 'content', 'lang', 'createdAt',
                                          'finishedAt', 'sample'],
        'GET /api/ai/summary/saved?record=&at= finds the summary. Actual %d %r' % (st, sv))
 
@@ -1081,8 +1132,8 @@ try:
     cs = Stream('/api/ai/summary/ask', {'recordId': R_CAP, 'lang': 'en'}, SAM)
     cs.run()
     ok(cs.status == 200 and cs.terminal() is not None and cs.terminal()[1] == 'done'
-       and cs.events[0][2]['sample'] == {'used': 70, 'usable': 75, 'wrong': 75} and 'Items: 70' in answer_of(cs),
-       'The summary of 75 wrong answers uses 70: sample {70, 75, 75}, the stub saw 70 items. Actual %r %r' % (cs.events[0][2].get('sample') if cs.events else None, answer_of(cs)[-20:]))
+       and cs.events[0][2]['sample'] == {'used': 40, 'usable': 75, 'wrong': 75} and 'Items: 40' in answer_of(cs),
+       'The summary of 75 wrong answers uses 40 (summaryMaxItems, v1.3): sample {40, 75, 75}, the stub saw 40 items. Actual %r %r' % (cs.events[0][2].get('sample') if cs.events else None, answer_of(cs)[-20:]))
 
     # 8. The record is deleted: its summary chat stays in AI Chat
     st, _, _ = jreq('POST', '/api/records/delete', {'id': R_CAP}, headers={'Cookie': SAM})
@@ -1286,9 +1337,9 @@ try:
     ok(st in (415, 429) and j.get('code') in ('ai.import.legacy', 'ai.gen.quota'), 'An old .doc is refused. Actual %d %r' % (st, j.get('code')))
     st, _, _ = req('GET', '/api/ai/import/upload', {'Cookie': SAM})
     ok(st in (403, 404, 405), 'GET on the upload route is not served. Actual %d' % st)
-    # Limits: 27 keys answer, the AI banks tab keys are validated (composition rule)
+    # Limits: 33 keys answer (v1.3), the AI banks tab keys are validated (composition rule)
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
-    ok(st == 200 and len(lim['limits']) == 27 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20, 'The limits answer has the 27 keys. Actual %d %d' % (st, len(lim.get('limits', {}))))
+    ok(st == 200 and len(lim['limits']) == 33 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20, 'The limits answer has the 33 keys. Actual %d %d' % (st, len(lim.get('limits', {}))))
     st, _, j = jreq('POST', '/api/ai/admin/limits', {'genBankSingle': 0, 'genBankMulti': 0})
     ok(st == 400 and j.get('code') == 'ai.genCount' and j.get('field') == 'genBankMulti', 'Single + multiple of 0 is refused (400 ai.genCount, field genBankMulti). Actual %d %r' % (st, j))
     st, _, u = jreq('GET', '/api/ai/admin/usage?days=7')
@@ -1427,7 +1478,8 @@ try:
     st, _, p = jreq('GET', '/api/progress')
     ok(len(p['history']) == 2, 'Result history still has 2 rounds after recreation (the session is in the volume too)')
     st, _, cfg = jreq('GET', '/api/ai/admin/settings')
-    ok(st == 200 and cfg['enabled'] is True and cfg['keyProblem'] is None and cfg['keys']['apiKey']['unreadable'] is False,
+    ok(st == 200 and cfg['enabled'] is True and cfg['state'] == 'on' and cfg['keyProblem'] is None
+       and cfg['connections'][0]['keys']['apiKey']['unreadable'] is False,
        'The AI settings survive too: still enabled, the saved key still readable (key file in the AI volume). Actual %d' % st)
     ok(until(lambda: users_list().get('aiAvailable') is True, 40),
        'After the recreation ai-service reports to the new backend: AI+ is available again (GET /api/users aiAvailable true)')
