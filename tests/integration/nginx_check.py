@@ -306,7 +306,7 @@ try:
     ok(all('proxy_set_header X-Real-IP $remote_addr;' in SNIPPETS[k] for k in SNIPPETS)
        and all('proxy_set_header %s $xexam_geo_%s;' % (h, h.split('-')[-1].lower()) in SNIPPETS[k]
                for k in ('api-proxy.conf', 'ai-proxy.conf') for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City'))
-       and not any('X-Geo' in line and '""' in line for k in SNIPPETS for line in SNIPPETS[k].splitlines() if not line.lstrip().startswith('#')),
+       and not any('X-Geo' in line and '""' in line for k in SNIPPETS for line in SNIPPETS[k]),
        'Snippets: X-Real-IP in both, X-Geo-* set from the trusted-peer maps in both api-proxy.conf and ai-proxy.conf (never a client value)')
     ai_auth = conf_text[conf_text.index('location = /_ai_auth {'):]
     ai_auth = ai_auth[:ai_auth.index(chr(10) + ' ' * 8 + '}')]

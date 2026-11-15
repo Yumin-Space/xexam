@@ -230,7 +230,66 @@ jobs:
   #     afterwards. Starts right after check, in parallel with the tests. Every leg writes its layers to the GitHub Actions cache
   #     under the scope "<component>-<arch>" (backend-x86, backend-arm64, ...), which the Nginx test, the end-to-end test and
   #     the publish jobs of the same run read, so nothing is compiled twice.
-  # Split by architecture: Nginx · test and end-to-end · test wait only for the x86 builds, not for the arm64 ones.
+  # Split by architecture: Nginx · test and end-to-end · test wait only for the x86 builds, not for the arm64 ones. The x86 builds
+  #     are two jobs: image-build-x86-frontend (the frontend, which Nginx · test needs, so it starts as soon as that image is built)
+  #     and image-build-x86 (backend and ai-service; end-to-end · test waits for both jobs).
+  image-build-x86-frontend:
+    name: ${{ matrix.component }} · image build (${{ matrix.arch }})
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [frontend]
+        arch: [x86]
+        include:
+          - component: frontend
+            dockerfile: nginx/Dockerfile
+          - arch: x86
+            runner: ubuntu-latest
+            platform: linux/amd64
+            machine: x86_64        # what the images report as their architecture
+    env:
+      CI_NAME: ci-${{ matrix.component }}-${{ matrix.arch }}
+      IMAGE_TAG: xexam-${{ matrix.component }}:ci-${{ matrix.arch }}
+      VERSION: ${{ needs.check.outputs.version }}     # CODE_VERSION, which /api/info and /healthz report
+      PLATFORM: ${{ matrix.platform }}
+      MACHINE: ${{ matrix.machine }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }},mode=max
+      - name: Start the frontend and check it
+        if: matrix.component == 'frontend'
+        run: |
+          set -eu
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 30); do
+            docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
+            [ "$i" = 30 ] && { docker logs "$CI_NAME"; echo "frontend did not answer /healthz"; exit 1; }
+            sleep 1
+          done
+          [ "$(docker exec "$CI_NAME" uname -m)" = "$MACHINE" ] || { echo "frontend is not $MACHINE"; exit 1; }
+          docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
+          echo "frontend ($PLATFORM): builds and starts"
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f "$CI_NAME" >/dev/null 2>&1 || true
+          docker volume rm "$CI_NAME-data" >/dev/null 2>&1 || true
+
   image-build-x86:
     name: ${{ matrix.component }} · image build (${{ matrix.arch }})
     needs: check
@@ -239,11 +298,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        component: [frontend, backend, ai-service]
+        component: [backend, ai-service]
         arch: [x86]
         include:
-          - component: frontend
-            dockerfile: nginx/Dockerfile
           - component: backend
             dockerfile: backend/Dockerfile
           - component: ai-service
@@ -289,19 +346,6 @@ jobs:
           echo "$info" | grep -q '"arch": "'"$MACHINE"'"' || { echo "backend is not running as $MACHINE"; exit 1; }
           echo "$info" | grep -q '"version": "'"$VERSION"'"' || { echo "version mismatch: /api/info should report CODE_VERSION $VERSION"; exit 1; }
           echo "backend ($PLATFORM): builds and starts"
-      - name: Start the frontend and check it
-        if: matrix.component == 'frontend'
-        run: |
-          set -eu
-          docker run -d --name "$CI_NAME" --platform "$PLATFORM" "$IMAGE_TAG" >/dev/null
-          for i in $(seq 1 30); do
-            docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
-            [ "$i" = 30 ] && { docker logs "$CI_NAME"; echo "frontend did not answer /healthz"; exit 1; }
-            sleep 1
-          done
-          [ "$(docker exec "$CI_NAME" uname -m)" = "$MACHINE" ] || { echo "frontend is not $MACHINE"; exit 1; }
-          docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
-          echo "frontend ($PLATFORM): builds and starts"
       - name: Start the ai-service and check it
         if: matrix.component == 'ai-service'
         run: |
@@ -427,11 +471,11 @@ jobs:
 
   # (2) Nginx behaviour checks (two fake upstreams: the backend and the AI service). The frontend image is built again from the
   #     cache the x86 image build wrote (scope frontend-x86, read only), so no npm work happens here. It waits only for the x86
-  #     image builds (image-build-x86), not for the arm64 ones.
+  #     frontend image build (image-build-x86-frontend), not for the other x86 builds or the arm64 ones.
 
   nginx-test:
     name: Nginx · test (x86)
-    needs: [check, image-build-x86]
+    needs: [check, image-build-x86-frontend]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -455,10 +499,10 @@ jobs:
   #     docker stop). "docker compose up -d --build" builds from the same gha cache scopes as the x86 image builds (read only):
   #     ghaction-github-runtime exposes the cache credentials to plain docker commands, the docker-container builder (the
   #     default one setup-buildx-action creates) reads type=gha, and compose loads what it builds into the Docker daemon
-  #     (single platform), so compose up finds the images. Like nginx-test it waits only for image-build-x86.
+  #     (single platform), so compose up finds the images. It waits for all three x86 image builds (image-build-x86-frontend and image-build-x86), not for the arm64 ones.
   end-to-end:
     name: end-to-end · test (x86)
-    needs: [check, image-build-x86]
+    needs: [check, image-build-x86-frontend, image-build-x86]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -504,10 +548,10 @@ jobs:
   #     token with Read & Write). The namespace is DOCKERHUB_USERNAME, or the repository variable DOCKERHUB_NAMESPACE if set.
   #     Two steps: "image publish" builds every image on the native runner of each architecture (x86: ubuntu-latest, arm64:
   #     ubuntu-24.04-arm) and pushes it by digest only (no tags); "image tags" then creates the multi-arch tags of each image.
-  #     The build cache scope is the one of the image-build-x86 / image-build-arm64 jobs of the same run ("<component>-<arch>"), so the layers are reused.
+  #     The build cache scope is the one of the image-build-x86-frontend / image-build-x86 / image-build-arm64 jobs of the same run ("<component>-<arch>"), so the layers are reused.
   publish:
     name: ${{ matrix.component }} · image publish (${{ matrix.arch }})
-    needs: [check, test-frontend, test-backend, test-ai-service, image-build-x86, image-build-arm64, nginx-test, end-to-end]
+    needs: [check, test-frontend, test-backend, test-ai-service, image-build-x86-frontend, image-build-x86, image-build-arm64, nginx-test, end-to-end]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
