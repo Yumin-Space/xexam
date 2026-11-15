@@ -58,3 +58,31 @@ export function filterUsers<T extends { username: string }>(list: readonly T[], 
   const q = query.trim().toLowerCase();
   return q ? list.filter((u) => u.username.toLowerCase().includes(q)) : [...list];
 }
+
+/** The kinds of a row's fact lines (v1.4), in the order they are drawn */
+export type FactKind = 'lastLogin' | 'loginIp' | 'loginPlace' | 'lastActive' | 'activeIp' | 'activePlace' | 'activeDevice' | 'records';
+
+/** The facts a row can show (a subset of `UserRow`) */
+export interface FactSource {
+  lastActiveAt?: string | null | undefined;
+  lastLoginIp?: string | null | undefined;
+  lastActiveIp?: string | null | undefined;
+  lastActiveUa?: string | null | undefined;
+}
+
+/**
+ * Which fact lines a user row draws, one fact per line: last sign-in, its IP and place, last active, its IP and place, the
+ * last active device, the record count. The IP / place lines need the eye open and a recorded IP; a never-active user has no
+ * activity lines; the device line ignores the eye (a device is not an address) and needs a user agent.
+ */
+export function factPlan(u: FactSource, eyeOpen: boolean): FactKind[] {
+  const plan: FactKind[] = ['lastLogin'];
+  if (eyeOpen && u.lastLoginIp) plan.push('loginIp', 'loginPlace');
+  plan.push('lastActive');
+  if (u.lastActiveAt) {
+    if (eyeOpen && u.lastActiveIp) plan.push('activeIp', 'activePlace');
+    if ((u.lastActiveUa ?? '').trim() !== '') plan.push('activeDevice');
+  }
+  plan.push('records');
+  return plan;
+}

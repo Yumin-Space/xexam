@@ -61,6 +61,8 @@ pub struct Timeouts {
     pub heartbeat_every: Duration,
     /// Time before the next state report after a failed one
     pub heartbeat_retry: Duration,
+    /// One external IP-location lookup, connect and answer in total (v1.4, default 3 s)
+    pub geo_total: Duration,
 }
 
 impl Default for Timeouts {
@@ -79,6 +81,7 @@ impl Default for Timeouts {
             keep_alive: Duration::from_secs(15),
             heartbeat_every: Duration::from_secs(25),
             heartbeat_retry: Duration::from_secs(5),
+            geo_total: Duration::from_secs(3),
         }
     }
 }

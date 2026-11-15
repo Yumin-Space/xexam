@@ -9,7 +9,7 @@ python tools/phone-walk/walk.py                      # default run: report + scr
 python tools/phone-walk/walk.py --full               # every check on the whole matrix (final gate)
 python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu
 python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1
-python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
+python tools/phone-walk/walk.py --langs zh --widths 393x852,360x740 --themes light
 python tools/phone-walk/walk.py --keep               # leave the stack running: prints the URL and the made-up accounts
 python tools/phone-walk/walk.py --keep --lan         # the same, reachable from a phone on the home network
 python tools/phone-walk/walk.py --out DIR --chrome PATH
@@ -80,10 +80,10 @@ is reported as `skipped` with the reason.
 | Other pages | W-RS-1 / 2 result, W-RC-1 records, W-HM-1 Home, W-CH-1 / 2 / 3 AI Chat (W-CH-3 = the keyboard, CH-13), W-US-1 users, W-LG-1 log swipe, W-ST-1 Settings, W-AS-1 AI settings, W-AS-2 answer and memory length in characters, W-AS-3 the four category tabs, W-CH-4 memory length (n / 200), W-CH-5 touch swipes on the history list / conversation head move no frame (A-OWNER-76), W-US-2 #/users without permission (P2) |
 | Caps | W-CAP-1 second ask (with `--slow`: the callout goes away after `retryAt`), W-CAP-2 AI Chat capped, W-CAP-3 stale block |
 
-Run dimensions (spec 5.4): the default run is zh / light at the sizes a check names (default 360x740, 390x844, 844x390); the
+Run dimensions (spec 5.4): the default run is zh / light at the sizes a check names (default 393x852, 440x956, 852x393); the
 text-fit checks (W-QZ-2, W-HM-1, W-CH-2, W-US-1, W-AS-1) run zh, en and ja; contrast runs light and dark; `--full` runs every
 check on the whole matrix (360x740, 390x844, 412x915, 740x360, 844x390, 768x1024, 1280x800) x 3 languages x 2 themes;
-`--langs`, `--widths`, `--themes`, `--pages` and `--only` narrow or override. The walk raises the administrator's AI request
+`--widths` takes WxH or the names iphone16 (393x852), iphone16pro (402x874), iphone16plus (430x932), iphone16promax (440x956), each with an optional `-land` suffix that swaps width and height; `--langs`, `--widths`, `--themes`, `--pages` and `--only` narrow or override. The walk raises the administrator's AI request
 caps while it runs (so the AI checks do not trip them by accident) and puts the defaults back at the end; W-CAP-* lower them
 on purpose. W-CH-3 (CH-13) uses Chrome's emulation only (the simulated keyboard and the iOS layout maths); it never replaces
 the check on a real iPhone.

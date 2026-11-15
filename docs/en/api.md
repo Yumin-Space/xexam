@@ -476,6 +476,8 @@ Like every backend message they are Chinese and stable (the frontend translates 
 - **`GET /api/users`** and the answers of the `POST /api/users/*` routes: every user has `lastActiveAt` (`null` or `YYYY-MM-DD HH:MM:SS`), `lastLoginIp` and `lastLoginLocation` (`{"country", "region", "city"}`, `region` and `city` may be `null`); both are `null` while `"signinInfo"` (new top-level key) is `false` (hidden, not deleted: nothing new is recorded while the eye is closed, and the saved values are shown again when it opens).
 - **`POST /api/users/signin-info`** (administrator) `{"enabled": true | false}` returns the users answer. Closed (the default): nothing new is recorded (no IP or location in sign-ins, sessions or activity entries, the service log line included; `last_login_ip` and the other three are not updated) and every answer hides what was stored. Open: the stored history shows again and recording resumes. Nothing stored is changed or deleted by switching.
 - **`POST /api/users/signin-info/clear`** (administrator; body `{}`) clears every stored sign-in address and location (`users.last_login_ip` / `_country` / `_region` / `_city`, `sessions.ip`, and `ip` / `country` / `region` / `city` of the activity log, the log in batches of 5000), whether the eye is open or closed, and returns the users answer. It cannot be undone; what is recorded afterwards stays. Activity entry `users.signinInfoClear` with `{"rows": <rows changed>}`.
+- *(v1.4)* **Last activity and the location source.** The users answer has two more top-level keys, `geoSource` (`"cloudflare"` or `"api"`) and `aiServiceUp` (`true` while ai-service is connected, whether or not AI+ is on), and every user has `lastActiveIp` (a string or `null`) and `lastActiveLocation` (`{"country", "region", "city"}`, each `null` when unknown; the whole value is `null` only when all three are unknown), both `null` while the eye is closed, and `lastActiveUa` (the cleaned User-Agent of the last activity, at most 256 characters; present also while the eye is closed). They are written together with `lastActiveAt`, at most once a minute, and only while the eye is open (the User-Agent always); never for anonymous requests. `lastLoginLocation` and `lastActiveLocation` hold a two-letter country code or a country name in `country`, and `country` itself may be `null`. The source decides the place: Cloudflare mode stores the request's `X-Geo-*` values, `api` mode the remembered lookup result of that IP (section 5.9). **`POST /api/users/signin-info/clear`** also clears `users.last_active_ip` / `_country` / `_region` / `_city` (not `last_active_ua`) and the lookup memory and queue; closing the eye (`POST /api/users/signin-info`) drops the waiting lookups.
+- **`POST /api/users/geo-source`** *(v1.4, administrator)* `{"source": "cloudflare"}` and nothing else (400 for `"api"` or any other key: switching to the external source goes through ai-service, `/api/ai/admin/geo/enable`, so that only a tested configuration can be enabled). Sets `system_settings` `geo.source`, clears the queue and returns the users answer. Activity entry `users.geoSource` with `{"source": "cloudflare"}`.
 - **`GET /api/activity`** (administrator) `?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` returns `{"entries": [...], "next", "newest", "facets", "settings"}`; newest first, keyset paging. `GET /api/activity/settings` and `POST /api/activity/settings` (`{"retentionDays": 7..3650, "userVisits": bool}`, either key optional). `ip` and `location` are `null` while sign-in info is off. These reads do not keep a session alive and are not logged.
 - **`POST /api/activity/visit`** `{"page": "home"}` (signed in; `page` is one of `home`, `banks`, `users`, `logs`, `records`, `record`, `wrong`, `settings`, `about`, `quiz`, `result`, `ai`, `aiSettings`, else 400): administrators are logged, users only when the setting is on; at most 30 writes per user per minute.
 - **`POST /api/attempt`**: a repeat of the same save (same `key`, `startedAt` and kind) writes nothing and answers the first answer plus `"duplicate": true`.
@@ -559,6 +561,8 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
 | POST | `/api/ai/admin/clear` | Admin | `{"userId": <id>, "what": "chat", "chatId": <id>}`, or `{"userId": <id>, "what": "chats" \| "memories"}`, or `{"what": "shared"}` alone (v1.3: the shared hints / analyses) | `{"deleted": <n>}`, **audited** |
 | GET | `/api/ai/admin/limits` | Admin | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
 | POST | `/api/ai/admin/limits` | Admin | any of the 33 limit keys (see `admin/limits` and **Feature keys and limits** below), integers | the same as GET |
+| GET | `/api/ai/admin/geo` | Admin | | the external location lookup settings (*v1.4*, section 5.9) |
+| POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | a draft, or `{}` | section 5.9 |
 
 `GET /healthz` of ai-service (`{"ok":true,"version":"0.9","arch":"x86_64"}`, no identity needed) is used by its container health check; Nginx has no location for it, so it is not reachable from outside.
 
@@ -911,6 +915,52 @@ The `start` frame of the stream also has `mode` (`send`, `regenerate`, `edit`), 
 
 Every test route answers within 90 seconds; models still running are reported as `ai.up.timeout` and nothing is saved.
 
+### 5.9 External location lookup *(v1.4)*
+
+An optional replacement for Cloudflare's location headers (section 3.5 of [deployment.md](deployment.md), section 14.2 of [usage.md](usage.md)). The provider settings and the sealed key live in ai-service (AI database, `geo_settings`); the source (`cloudflare`, the default, or `api`) lives in the backend (`system_settings` `geo.source`, see `POST /api/users/geo-source`). All routes are Admin-only, JSON in camelCase; a body with an unknown key is 400 `ai.badRequest`. The calls never count towards `admin/limits`, the AI usage or the quotas, and work with AI+ off and no AI connection.
+
+**Draft** (the body of `test` and `save`; all eight `mapping` keys are required strings, `""` = not used):
+
+```
+{
+  "preset": "ipinfo",                      // ipinfo | ipapi | ipapico | ipwhois | ipsb | custom (display only)
+  "urlTemplate": "https://ipinfo.io/{ip}/json?token={key}",
+  "keyHeaderName": "",                     // "" = the key is not sent in a header
+  "keyHeaderValue": "",                    // must contain {key} when the name is set
+  "key": "…",                              // absent = keep the saved key, null = no key, string = this key
+  "mapping": {"country": "", "countryCode": "country", "region": "region", "city": "city",
+              "okPath": "", "okValue": "", "errorPath": "error", "messagePath": "error.message"}
+}
+```
+
+**`GET /api/ai/admin/geo`**:
+
+```
+{"settings": {
+   "preset": "ipinfo", "urlTemplate": "…", "keyHeaderName": "", "keyHeaderValue": "",
+   "key": {"set": true, "hint": "…cdef", "unreadable": false},   // never the key itself
+   "mapping": { /* the 8 strings */ },
+   "host": "ipinfo.io", "insecureHttp": false, "testedAt": 1763200000, "updatedAt": 1763200000
+ } | null,
+ "testIp": "8.8.8.8", "perMinute": 30, "timeoutMs": 3000}
+```
+
+The key is never returned: `hint` is `…` and the last four characters, only for a key of 12 or more characters, else `""`; `unreadable` is true when the saved key cannot be decrypted. A row exists only after a passing save, so saved means tested.
+
+- **`POST /api/ai/admin/geo/test`** (draft) looks up the fixed public example address `8.8.8.8` through the draft and saves nothing. 200 `{"ok": true, "testIp", "place": {"country", "countryCode", "region", "city"}, "ms"}` or `{"ok": false, "testIp", "failure": {"code", "status", "message"}, "ms"}`: `status` only for `httpStatus`, `message` only for `providerFail` (provider text without control characters, at most 120 characters, the key text replaced by `***`). One test at a time (409 `ai.geo.busy`); it counts towards the per-minute cap of 30. Event `ai.geo.test`.
+- **`POST /api/ai/admin/geo/save`** (draft) runs the same test first and stores the settings only when it passes (`tested_at` = now; key `absent` = kept, `null` = removed, string = sealed): `{"ok": true, "settings", "place", "ms"}`; on failure nothing is stored: `{"ok": false, "failure", "ms"}`. Event `ai.geo.save`.
+- **`POST /api/ai/admin/geo/enable`** `{}` sets the source to `api` over the internal link: `{"source": "api"}`. 409 `ai.geo.testFirst` (nothing saved), 409 `ai.geo.keyProblem` (saved key unreadable), 503 `ai.geo.linkDown`. Event `ai.geo.enable`.
+- **`POST /api/ai/admin/geo/delete`** `{}` first sets the source back to `cloudflare` (503 `ai.geo.linkDown`: nothing is deleted), then deletes the settings and the key: `{"settings": null, "source": "cloudflare"}`. Event `ai.geo.delete`.
+
+Failure `code`s (also in the internal result route): `timeout`, `unreachable`, `redirect`, `httpStatus`, `notJson`, `tooLarge`, `providerFail`, `noFields`, `keyProblem`, `rateLimited`, `notConfigured`, `refused`. Errors of a draft (400, with `field`): `ai.geo.badUrl` (`urlTemplate`), `ai.geo.badHeader` (`keyHeaderName` / `keyHeaderValue`), `ai.geo.badKey` (`key`), `ai.geo.keyRequired` (`key`, when `{key}` is in the URL path or the header value and no key exists), `ai.geo.badMapping` (`mapping.<name>`).
+
+**Rules of a draft.** `urlTemplate`: 1 to 500 characters, no whitespace, starts with `http://` or `https://`, contains `{ip}`, no other placeholder than `{ip}` and `{key}`, none in the scheme or host, no `@` in the host, no `#`. `keyHeaderName`: `""` or 1 to 64 of `A-Z a-z 0-9 -`, not a reserved header (`host`, `cookie`, `content-length`, …); `keyHeaderValue` must contain `{key}` when the name is set. `key`: 1 to 400 visible ASCII characters without a space. `mapping.*`: `""` or a dot path of up to 8 segments of `A-Z a-z 0-9 _ -`; at least one of `country`, `countryCode`, `region`, `city`; `okValue` is required when `okPath` is set.
+
+**The request.** `{ip}` becomes the address (an IPv6 address without brackets), `{key}` the percent-encoded key; without a key a query parameter whose value is exactly `{key}` is left out. With a header name and a key the header `<name>: <value with {key}>` is added (and no header without a key). The call is a GET with `Accept: application/json`, a 3-second total timeout, no redirect (a 3xx is `redirect`), a body of at most 64 KiB (`tooLarge`) that must be a JSON object (`notJson`). An `errorPath` with a true value, or an `okPath` whose value differs from `okValue`, is `providerFail`; no country, region or city found is `noFields`. A non-2xx answer is `httpStatus`.
+
+**Never sent**: `0.0.0.0/8`, `10/8`, `100.64/10`, `127/8`, `169.254/16`, `172.16/12`, `192.0.0/24`, `192.0.2/24`, `192.168/16`, `198.18/15`, `198.51.100/24`, `203.0.113/24`, multicast and `240/4` for IPv4 (and `::ffff:` forms of them), and for IPv6 everything outside `2000::/3` plus `2001::/23`, `2001:db8::/32`, `2002::/16` and `3fff::/20` (code `refused`).
+
+
 ## 6. Internal routes (`/internal/*`, v0.8)
 
 These routes are the link between the backend and ai-service. They are **not reachable through Nginx** (there is no location for `/internal/`, so a request from outside gets 404) and are documented here only to explain the design. The backend answers them before the Host guard and without the session layer.
@@ -948,6 +998,16 @@ Anything else under `/internal/`, a wrong method, or a token route with a missin
 - `POST /internal/ai/activity`: the AI service sends up to 50 events of its administrator actions (`action` starts with `ai.`, a 32-hex `id` that makes delivery idempotent, `userId`, `object`, a small `detail`, `result`). The backend validates and cleans them, stores the address only while the sign-in info eye is open (dropped while it is closed), and never sets a location for them.
 - `POST /internal/ai/gen/corpus`: the read-only source of a generation, paged (`after`, `limit` up to 200, about 4 MB per page, at most 20 000 questions): every active question of the checked scope (or all wrong ones) in source order with stem, options, `answer` (zero-based positions) and explanation in `en`, `zh` and `ja` (an absent language is an absent key).
 - `/internal/ai/introspect` applies the same session rule as the public routes. `/internal/ai/gen/source` and `/gen/seeds` stay one release and are unused.
+
+### v1.4 internal routes *(v1.4)*
+
+The external location lookup uses three more token routes, so that the backend never calls ai-service and the backend container keeps no internet access: ai-service **pulls** the work.
+
+- `POST /internal/ai/geo/next` `{"waitMs": 0..20000}` → `{"lookups": [{"id": "<16 lower-case hex>", "ip": "<address>"}]}` (0 to 10 items). A long poll: it answers at once when a job can be handed out, otherwise after `waitMs` or when a job arrives. It hands out nothing while the source is `cloudflare` or the eye is closed, at most 30 jobs per minute, never a reserved address. A handed-out job is forgotten after 60 seconds without a result, a waiting one after 120.
+- `POST /internal/ai/geo/result` `{"results": [R, …]}` (1 to 10) → `{"ok": true}`, with `R` = `{"id", "ok": true, "place": {"country", "countryCode", "region", "city"}}` or `{"id", "ok": false, "code": "<failure code>"}`. An unknown or expired id is ignored; a bad shape or an unknown code is 400 for the whole batch. The backend cleans the place (control characters removed, 64 characters), caches it for 24 hours (a failure 15 minutes; `rateLimited` and `notConfigured` are not cached) and, only while the source is `api` and the eye is open, writes it to the sign-in row and the last-activity place of the user and to the activity rows of that address that still have no place. A result that arrives after **Clear records** or after the eye closed changes nothing.
+- `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` sets the source, `{}` reads it → `{"source": …}`. Used by `enable` and `delete` of section 5.9.
+
+Like every token route they answer 404 without the token, and the 24-hour memory, the queue and the per-minute cap of hand-outs are the backend's; ai-service applies the reserved-address filter and its own cap of 30 per minute again and keeps no memory.
 
 ## 7. Differences from the old version
 

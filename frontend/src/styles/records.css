@@ -93,6 +93,23 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .ibtn.rec-lblbtn.ibtn-danger { background: var(--card); }
 .ibtn.rec-lblbtn[aria-disabled="true"] { border-color: transparent; background: transparent; }
 .rec-lbl { font-size: 13px; font-weight: 500; }
+/* v1.4 (owner): the AI 总结 button uses the same flat amber as the other AI+ action buttons (AI 生成题, AI import; ai-gen.css):
+   #F59E0B, hover #D97706, pressed #B45309, white bold text; greyed it looks exactly like a greyed AI 生成题 button */
+.ibtn.rec-lblbtn.rec-ai-btn.ibtn-ai:not([aria-disabled="true"]) {
+  border-color: #F59E0B; background: #F59E0B; color: var(--ai-ink); font-weight: 700; text-shadow: 0 1px 0 rgba(110, 32, 0, .55);
+}
+.rec-ai-btn.ibtn-ai:not([aria-disabled="true"]) .ibtn-ic, .rec-ai-btn.ibtn-ai:not([aria-disabled="true"]) .rec-lbl { color: inherit; font-weight: inherit; }
+@media (hover: hover) {
+  .ibtn.rec-lblbtn.rec-ai-btn.ibtn-ai:hover:not([aria-disabled="true"]) { background: #D97706; border-color: #D97706; color: var(--ai-ink); }
+}
+.ibtn.rec-lblbtn.rec-ai-btn.ibtn-ai:active:not([aria-disabled="true"]) { background: #B45309; border-color: #B45309; color: var(--ai-ink); }
+/* Greyed: exactly like a greyed AI 生成题 button (ai-gen.css), not the transparent look of the other record buttons */
+.ibtn.rec-lblbtn.rec-ai-btn.ibtn-ai[aria-disabled="true"] {
+  border-color: var(--line); background: var(--hover-strong); color: var(--ink3); text-shadow: none; font-weight: 500; cursor: not-allowed; opacity: 1;
+}
+.rec-ai-btn.ibtn-ai[aria-disabled="true"] .ibtn-ic, .rec-ai-btn.ibtn-ai[aria-disabled="true"] .rec-lbl { color: var(--ink3); }
+/* the 无法使用 tag, as .gen-na in ai-gen.css (that sheet is not loaded on this page); hidden where only the icon fits */
+.rec-na { flex: none; margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--card); color: var(--ink3); font-size: 11px; font-weight: 600; line-height: 1.5; }
 @media (pointer: coarse) {
   .ibtn.rec-lblbtn { min-width: 40px; }
   /* Outlined like .ibtn-ai: the ::after is placed from inside the 1 px border, so one more pixel gives the 44 px tap area */
@@ -141,7 +158,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
   .rec-table td.rec-act { grid-column: 6; grid-row: 3; width: auto; display: flex; justify-content: flex-end; }
   /* Without AI+ the trash is the last item of the row: it takes the AI column's place at its right edge */
   /* The card is the tap target: its buttons are icons only */
-  .rec-table .rec-ai .rec-lbl { display: none; }
+  .rec-table .rec-ai .rec-lbl, .rec-table .rec-ai .rec-na { display: none; }
   .rec-table .rec-ai .ibtn.rec-lblbtn { width: 36px; padding: 0; }
 }
 @media (max-width: 900px) and (pointer: coarse) {
@@ -178,7 +195,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .rec-score .acts .rec-del:not(:first-child) { margin-inline-start: auto; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
   /* Icons only, except the primary text button */
-  .rec-acts .rec-lbl { display: none; }
+  .rec-acts .rec-lbl, .rec-acts .rec-na { display: none; }
   .rec-acts .ibtn.rec-lblbtn { width: 36px; padding: 0; }
 }
 @media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {

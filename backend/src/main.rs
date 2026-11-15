@@ -658,6 +658,8 @@ async fn serve(cfg: Config) -> i32 {
         }
     }
     activity.record(xexam_backend::activity::Entry::system("system.stop", None));
+    // v1.4: a waiting location poll of ai-service returns now, so the graceful shutdown does not wait for it
+    activity.geo().close();
     notify.notify_one();
     if !server.is_finished() {
         match tokio::time::timeout(Duration::from_secs(8), &mut server).await {

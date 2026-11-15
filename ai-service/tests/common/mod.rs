@@ -20,6 +20,7 @@ use xexam_ai_service::config::{Config, JournalMode, Timeouts};
 use zeroize::Zeroizing;
 
 pub mod genkit;
+pub mod geokit;
 
 /// The stub's answer (made-up text).
 pub const ANSWER: &str =
@@ -191,6 +192,8 @@ pub struct BackendState {
     pub ui_lang: String,
     /// The generation and import routes
     pub gen: genkit::GenBackend,
+    /// The external IP-location routes (v1.4)
+    pub geo: geokit::GeoBackend,
 }
 
 /// A made-up question and its solution, as JSON of the wire (backend contracts section 3).
@@ -346,6 +349,9 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
     if path == "/internal/ai/heartbeat" {
         return heartbeat_answer(&st, mode, &raw, body).await;
     }
+    if path == "/internal/ai/geo/next" && mode == Mode::Normal {
+        return geokit::next_answer(&st, &body).await;
+    }
     match mode {
         Mode::Status500 => return text_answer(500, "boom"),
         Mode::NonJson => return text_answer(200, "<html>nope</html>"),
@@ -443,6 +449,10 @@ async fn backend_handler(State(st): State<Arc<Mutex<BackendState>>>, req: Reques
             }
             a
         }
+        p if p.starts_with("/internal/ai/geo/") => match geokit::answer(&mut s, p, &body) {
+            Ok(v) => v,
+            Err(code) => return text_answer(code, "no"),
+        },
         p if p.starts_with("/internal/ai/gen/") || p == "/internal/ai/import/check" => {
             match genkit::answer(&mut s, p, &body) {
                 Ok(v) => v,
@@ -661,6 +671,7 @@ pub async fn fake_backend() -> FakeBackend {
         study_switch: StudySwitch::Normal,
         ui_lang: "en".to_string(),
         gen: genkit::GenBackend::default(),
+        geo: geokit::GeoBackend::default(),
     }));
     let router = Router::new()
         .fallback(backend_handler)
@@ -1460,6 +1471,7 @@ pub fn fast_timeouts() -> Timeouts {
         keep_alive: Duration::from_secs(15),
         heartbeat_every: Duration::from_secs(25),
         heartbeat_retry: Duration::from_millis(300),
+        geo_total: Duration::from_secs(3),
     }
 }
 

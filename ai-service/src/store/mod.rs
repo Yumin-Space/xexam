@@ -13,6 +13,7 @@ use tokio::sync::Notify;
 
 pub mod conn;
 pub mod data;
+pub mod geo;
 pub mod items;
 pub mod jobs;
 pub mod schema;
@@ -294,7 +295,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1 … 6 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1 … 7 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -324,6 +325,7 @@ impl Store {
                     add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
+                    tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;
                     tx.execute(
                         "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
@@ -371,6 +373,7 @@ impl Store {
                         .and_then(|()| add_columns(&tx, &schema::LATE_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_TABLES))
                         .and_then(|()| tx.execute_batch(schema::V7_INDEXES))
+                        .and_then(|()| tx.execute_batch(schema::V8_TABLES))
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                     tx.commit()
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
@@ -423,16 +426,20 @@ impl Store {
                     add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
+                    tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;
                     // the character -> token conversion belongs to the 1 .. 5 -> 6 step only (a schema-6 file holds tokens)
-                    if v != "6" {
+                    if v != "6" && v != "7" {
                         tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
                         tx.execute_batch(schema::V6_MIGRATE)?;
                     }
-                    tx.execute_batch(schema::V7_MIGRATE)?;
-                    tx.execute_batch(schema::PAIR_STUDY_BITS)?;
-                    tx.execute_batch(schema::CLEAR_STALE_PICKS)?;
-                    connect_old_settings(tx, now)?;
+                    // the 1 .. 6 -> 7 steps; a schema-7 file already has them (schema 8 only adds `geo_settings`)
+                    if v != "7" {
+                        tx.execute_batch(schema::V7_MIGRATE)?;
+                        tx.execute_batch(schema::PAIR_STUDY_BITS)?;
+                        tx.execute_batch(schema::CLEAR_STALE_PICKS)?;
+                        connect_old_settings(tx, now)?;
+                    }
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
@@ -465,7 +472,10 @@ impl Store {
             )
             .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
         if !flagged {
-            if existing.as_deref() == Some(schema::SCHEMA_VERSION) {
+            if matches!(
+                existing.as_deref(),
+                Some("7") | Some(schema::SCHEMA_VERSION)
+            ) {
                 let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
                     format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
                 })?;
@@ -658,7 +668,7 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "7");
+            assert_eq!(v, "8");
         }
         let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
             .expect("backups")

@@ -139,7 +139,26 @@
 .act-sel { min-height: 38px; max-width: 100%; font-size: 15px; }
 .act-seg button { min-height: 38px; }
 .act-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
-.act-body { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; }
+/* v1.4 (owner): the "show all details" eye, the same look as the sign-in eye of User management (users.css .us-eye):
+   light: a solid circle (green on, grey off) with a white eye; dark: no fill, a green or grey outline eye */
+.act-eye { display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; flex: none; }
+.act-eye { --eye-bg: var(--field-line); --eye-bg-hover: var(--ink3); --eye-fg: #FFFFFF; }
+.act-eye.on { --eye-bg: var(--answer-right-solid); --eye-bg-hover: var(--answer-right-solid-hover); }
+.act-eye-ico { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid transparent; background: var(--eye-bg); color: var(--eye-fg); }
+.act-eye-svg { width: 22px; height: 22px; }
+.act-eye:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+@media (hover: hover) { .act-eye:hover .act-eye-ico { background: var(--eye-bg-hover); } }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .act-eye { --eye-bg: transparent; --eye-bg-hover: var(--hover); --eye-fg: var(--ink3); }
+  :root:not([data-theme="light"]) .act-eye.on { --eye-bg: transparent; --eye-bg-hover: var(--answer-right-soft); --eye-fg: var(--answer-right); }
+}
+:root[data-theme="dark"] .act-eye { --eye-bg: transparent; --eye-bg-hover: var(--hover); --eye-fg: var(--ink3); }
+:root[data-theme="dark"] .act-eye.on { --eye-bg: transparent; --eye-bg-hover: var(--answer-right-soft); --eye-fg: var(--answer-right); }
+@media (forced-colors: active) {
+  .act-eye-ico { forced-color-adjust: none; background: Canvas; color: ButtonText; border-color: ButtonText; }
+  .act-eye.on .act-eye-ico { color: Highlight; border-color: Highlight; }
+}
+.act-body { margin-top: 12px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0; container-type: inline-size; }
 .act-body > * { min-width: 0; }
 .act-note, .act-ipoff { margin: 0; color: var(--ink3); font-size: 13px; overflow-wrap: anywhere; }
 .act-empty { margin: 12px 0; color: var(--ink2); }
@@ -147,11 +166,11 @@
 .act-pop { display: grid; gap: 8px; padding: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; }
 .act-pop-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .act-days { width: 6em; min-height: 38px; font-size: 16px; }
-.act-head, .act-main { display: grid; grid-template-columns: 11em 7em 9em minmax(0, 1fr) 9em 14em; gap: 4px 12px; align-items: baseline; }
+/* The table: rem, not em (the head has a smaller font than the rows, and em widths would differ, so the columns would not
+   line up). The object column never gets narrower than 8rem; when the log area itself is too narrow for that (a narrow
+   window, a side panel), the container query below turns every entry into a card like on phones. */
+.act-head, .act-main { display: grid; grid-template-columns: 10rem 6.5rem 8rem minmax(8rem, 1fr) 6rem minmax(10rem, 18rem); gap: 4px 12px; align-items: baseline; }
 .act-head, .act-main { min-width: 0; }
-@media (min-width: 601px) and (max-width: 900px) {
-  .act-head, .act-main { grid-template-columns: 8em 5em 7em minmax(0, 1fr) 6em 8em; gap: 4px 8px; }
-}
 .act-head { padding: 6px 10px; font-size: 12.5px; font-weight: 600; color: var(--ink3); border-bottom: 1px solid var(--line-soft); }
 .act-list { list-style: none; margin: 0; padding: 0; }
 .act-row { border-bottom: 1px solid var(--line-soft); }
@@ -169,6 +188,18 @@
 .act-detail dt { color: var(--ink3); }
 .act-detail dd { margin: 0; overflow-wrap: anywhere; }
 .act-more { justify-self: start; min-height: 44px; }
+/* NARROW LOG AREA (under 900px of its own width, also on wide windows): one card per entry, like on phones. The phone media
+   query below stays for browsers without container queries (Safari 15). */
+@container (max-width: 899px) {
+  .act-head { display: none; }
+  .act-main { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "time time res" "user act act" "obj obj obj" "dev dev dev"; padding: 10px 8px; }
+  .act-time { grid-area: time; font-size: 13px; }
+  .act-res { grid-area: res; justify-self: end; text-align: right; }
+  .act-user { grid-area: user; }
+  .act-act { grid-area: act; }
+  .act-obj { grid-area: obj; color: var(--ink2); }
+  .act-dev { grid-area: dev; color: var(--ink3); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
+}
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE: one card per entry */
   .act-head { display: none; }
   .act-main { grid-template-columns: auto minmax(0, 1fr) auto; grid-template-areas: "time time res" "user act act" "obj obj obj" "dev dev dev"; padding: 10px 8px; }
@@ -177,7 +208,8 @@
   .act-user { grid-area: user; }
   .act-act { grid-area: act; }
   .act-obj { grid-area: obj; color: var(--ink2); }
-  .act-dev { grid-area: dev; color: var(--ink3); font-size: 13px; }
+  /* v1.4: the address column (IP · place · device) sits under the action on the full row width and may wrap */
+  .act-dev { grid-area: dev; color: var(--ink3); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
   .act-sel { flex: 1 1 40%; min-height: 44px; }
   .act-seg button { min-height: 44px; min-width: 44px; }
 }

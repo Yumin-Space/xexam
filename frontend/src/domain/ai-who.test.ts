@@ -2,7 +2,7 @@
 // mark. Made-up names only. Run with `node --experimental-strip-types --test` (npm test).
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { applyEvent, emptyChat, startOf, whoParts } from './ai-chat.ts';
+import { applyEvent, chatShowsModel, emptyChat, startOf, whoParts } from './ai-chat.ts';
 
 const MODEL = 'demo-chat-small';
 const CONN = 'Demo link';
@@ -59,4 +59,14 @@ test('an administrator start frame names both', () => {
   const s = applyEvent(emptyChat(), { event: 'start', data }, NOW);
   const msg = s.messages[s.messages.length - 1]!;
   assert.deepEqual(whoParts(msg, true), { mark: null, connection: CONN, model: MODEL });
+});
+
+test('v1.4: the model is named only for an administrator in the free mode (where it can be chosen)', () => {
+  assert.equal(chatShowsModel(true, true), true);
+  assert.equal(chatShowsModel(true, false), false, 'an administrator in the normal mode sees only "AI"');
+  assert.equal(chatShowsModel(false, true), false);
+  assert.equal(chatShowsModel(false, false), false);
+  const answer = { role: 'assistant' as const, model: MODEL, connection: CONN };
+  assert.deepEqual(whoParts(answer, chatShowsModel(true, false)), { mark: 'ai', connection: null, model: null });
+  assert.deepEqual(whoParts(answer, chatShowsModel(true, true)), { mark: null, connection: CONN, model: MODEL });
 });

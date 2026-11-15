@@ -155,7 +155,8 @@ export function plainCodeText(code: string | undefined): string | null {
 function aiKey(code: string): MsgKey | null {
   if (code === 'auth.guard') return 'ai.err.guard';
   if (!code.startsWith('ai.')) return null;
-  const key = `ai.err.${code.slice(3)}`;
+  // v1.4: the codes of the external location lookup settings live in the users catalog
+  const key = code.startsWith('ai.geo.') ? `users.geo.code.${code.slice(7)}` : `ai.err.${code.slice(3)}`;
   return hasKey('en', key) ? (key as MsgKey) : null;
 }
 

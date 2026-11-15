@@ -6,7 +6,7 @@
     python tools/phone-walk/walk.py --full               # every check on the whole matrix (final gate)
     python tools/phone-walk/walk.py --pages home,quiz,result,ai,menu
     python tools/phone-walk/walk.py --only W-QZ-*,W-CH-1
-    python tools/phone-walk/walk.py --langs zh --widths 390x844,360x740 --themes light
+    python tools/phone-walk/walk.py --langs zh --widths 393x852,360x740 --themes light
     python tools/phone-walk/walk.py --keep               # leave the stack running: prints the URL and the made-up accounts
     python tools/phone-walk/walk.py --keep --lan         # the same, reachable from a phone on the home network
     python tools/phone-walk/walk.py --out DIR --chrome PATH
@@ -47,6 +47,7 @@ import demo_banks  # noqa: E402
 import retake  # noqa: E402
 import seed  # noqa: E402
 import seed_extra  # noqa: E402
+from device import NAMED_SIZES  # noqa: E402
 from browser import find_chrome, kill_tree, popen_group, remove_dir  # noqa: E402
 
 REPO = retake.REPO
@@ -54,7 +55,7 @@ PAGES = ['home', 'quiz', 'result', 'records', 'ai', 'ai-settings', 'users', 'log
          'signin', 'forbidden', 'menu']
 LANGS = ['zh', 'en', 'ja']
 THEMES = ['light', 'dark']
-DEFAULT_SIZES = ['360x740', '390x844', '844x390']
+DEFAULT_SIZES = ['393x852', '440x956', '852x393']
 # The owner's preview ports (their instances hold real credentials): the walk never uses one of them
 FORBIDDEN_PORTS = {5285, 5295, 8885, 8886, 8895, 8896, 9085, 8899}
 STOP_FILE = 'STOP'
@@ -74,9 +75,16 @@ CANNOT_SIGN_IN = ('kim', seed_extra.LOCKED_USER)
 # ---------------------------------------------------------------- command line
 
 def parse_size(text):
-    m = re.fullmatch(r'(\d{3,4})x(\d{3,4})', text.strip().lower())
+    t = text.strip().lower()
+    land = t.endswith('-land')
+    name = t[:-5] if land else t
+    if name in NAMED_SIZES:
+        w, h = NAMED_SIZES[name]
+        return (h, w) if land else (w, h)
+    m = re.fullmatch(r'(\d{3,4})x(\d{3,4})', t)
     if not m:
-        raise argparse.ArgumentTypeError('a size looks like 390x844, not %r' % text)
+        raise argparse.ArgumentTypeError('a size looks like 393x852 or a name (%s, optionally with -land), not %r'
+                                         % (', '.join(NAMED_SIZES), text))
     return int(m.group(1)), int(m.group(2))
 
 
@@ -90,7 +98,8 @@ def parse_args(argv=None):
     p.add_argument('--pages', help='only these pages: %s' % ', '.join(PAGES))
     p.add_argument('--only', help='only the checks matching these comma-separated patterns, e.g. W-QZ-*,W-CH-1')
     p.add_argument('--langs', help='languages, comma separated (zh, en, ja)')
-    p.add_argument('--widths', help='sizes WxH, comma separated, e.g. 390x844,360x740 (default %s)' % ','.join(DEFAULT_SIZES))
+    p.add_argument('--widths', help='sizes WxH or names (%s; add -land for landscape), comma separated, e.g. 393x852,iphone16pro-land '
+                                         '(default %s)' % (', '.join(NAMED_SIZES), ','.join(DEFAULT_SIZES)))
     p.add_argument('--themes', help='themes, comma separated (light, dark)')
     p.add_argument('--slow', action='store_true', help='also run the checks that wait for a time window (W-CAP-1 after retryAt)')
     p.add_argument('--keep', action='store_true',

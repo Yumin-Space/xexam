@@ -44,6 +44,8 @@ ANDROID_UA = ('Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTM
 IPHONE_UA = scenes.IPHONE_UA
 DESKTOP_UA = scenes.DESKTOP_UA
 PRELUDE = scenes.PRELUDE
+# Named sizes (portrait, CSS pixels): the iPhone 16 family; a '-land' suffix (walk.parse_size) swaps width and height
+NAMED_SIZES = {'iphone16': (393, 852), 'iphone16pro': (402, 874), 'iphone16plus': (430, 932), 'iphone16promax': (440, 956)}
 KEYBOARD_SHARE = 0.55          # the simulated on-screen keyboard leaves 55 % of the viewport height (spec 5.4)
 PORTRAIT_INSETS = {'top': 47, 'bottom': 34, 'left': 0, 'right': 0}
 LANDSCAPE_INSETS = {'top': 0, 'bottom': 21, 'left': 47, 'right': 47}

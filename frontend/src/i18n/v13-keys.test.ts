@@ -21,6 +21,7 @@ const ACTIONS = [
   'ai.settings.modelRemove', 'ai.settings.enable', 'ai.settings.disable', 'ai.settings.features', 'ai.settings.limits',
   'ai.settings.retention', 'ai.users.features', 'ai.admin.viewChats', 'ai.admin.clear', 'ai.gen.create', 'ai.import.create',
   'ai.system.connection', 'ai.system.paused', 'ai.system.resumed',
+  'users.geoSource', 'ai.geo.test', 'ai.geo.save', 'ai.geo.enable', 'ai.geo.delete',
 ];
 const REASONS = ['idle', 'hard', 'badPassword', 'disabled', 'locked', 'changed', 'unknownUser'];
 
@@ -37,7 +38,7 @@ const KEYS: string[] = [
   'act.filter.result.fail', 'act.result.ok', 'act.result.fail', 'act.refresh', 'act.pause', 'act.resume', 'act.more',
   'act.empty', 'act.noMatch', 'act.readError', 'act.merged', 'act.deleted', 'act.actor.system', 'act.actor.anon',
   'act.settings', 'act.settings.days', 'act.settings.days.hint', 'act.settings.visits', 'act.settings.visits.hint',
-  'act.settings.saved', 'act.note', 'act.ipHint', 'act.ipOff', 'act.detail.title', 'act.detail.ua', 'act.detail.place',
+  'act.settings.saved', 'act.note', 'act.ipHint', 'act.ipOff', 'act.detail.title', 'act.detail.ua', 'act.detail.place', 'act.detail.ip',
   ...ACTIONS.map((a) => `act.a.${a}`), ...REASONS.map((r) => `act.reason.${r}`),
   'ai.regenerate', 'ai.edit', 'ai.version.prev', 'ai.version.next', 'ai.version.of', 'ai.edit.banner', 'ai.edit.cancel',
   'ai.branch.moved', 'ai.model.label', 'ai.model.chosen', 'ai.model.default', 'ai.model.fallback', 'ai.set.viewer.branch',
@@ -82,10 +83,10 @@ test('binding zh texts of the contract are exact', () => {
   setUiLang('zh');
   const want: Array<[string, string]> = [
     ['auth.remember', '保持登录'], ['auth.expired', '登录已过期，请重新登录。'], ['users.online', '在线'],
-    ['users.fact.neverActive', '从未活动'], ['users.sort.active', '最后活动'], ['users.fact.loginIp', '最后登录 IP '], ['users.fact.loginPlace', '所在地 '],
+    ['users.fact.neverActive', '从未活动'], ['users.sort.active', '最后活动'], ['users.fact.loginIp', '最后登录 IP '], ['users.fact.loginPlace', '登录所在地 '],
     ['users.fact.placeUnknown', '未知'], ['users.fact.lastActive', '最后活动 {at}'], ['users.fact.records', '练习和考试记录 {n} 次'], ['users.signinInfo', '登录 IP 和所在地：显示中。点击隐藏；隐藏后不再记录新的，已保存的记录会保留。'], ['users.signinInfo.hidden', '登录 IP 和所在地：已隐藏。点击重新显示，并恢复记录。'], ['users.signinInfo.clear', '清除记录'], ['users.signinInfo.clear.name', '清除已保存的登录 IP 和所在地记录'],
     ['act.a.users.signinInfoClear', '清除登录 IP 和所在地记录'], ['logs.tab.activity', '活动记录'],
-    ['logs.tab.service', '运行日志'], ['act.col.ip', 'IP / 设备'], ['act.merged', '×{n}'], ['act.a.auth.signin', '登录'],
+    ['logs.tab.service', '运行日志'], ['act.col.ip', 'IP / 所在地 / 设备'], ['act.merged', '×{n}'], ['act.a.auth.signin', '登录'],
     ['act.a.ai.settings.keyReuse', '密钥用于新地址'], ['ai.regenerate', '重新生成'], ['ai.version.of', '第 {n} 个版本，共 {total} 个'],
     ['ai.set.slot.study', '提示 + 解析'], ['ai.feature.study', 'AI 提示+解析'], ['ai.feature.study.short', '提示+解析'],
     ['aiplus.explain', 'AI 解析'], ['aiplus.analyze', 'AI 解析'], ['ai.set.usage.purpose.hint', 'AI 提示'], ['ai.set.usage.purpose.explain', 'AI 解析'],
@@ -100,7 +101,7 @@ test('binding zh texts of the contract are exact', () => {
 test('the sign-in info and global switch texts say what the owner decided (en)', () => {
   assert.match(t('ai.set.switches.note'), /administrators are not affected/i);
   assert.equal(t('users.signinInfo.title'), 'Sign-in IP and location');
-  assert.match(t('users.signinInfo.desc'), /The location comes from Cloudflare; on the local network there is only an IP, no location\./);
+  assert.match(t('users.signinInfo.desc'), /sign-in and last activity\. The location source is set below\./);
   assert.equal(t('users.signinInfo.state.label'), 'Status');
   assert.equal(t('users.signinInfo.state.on'), 'On');
   assert.equal(t('users.signinInfo.state.off'), 'Off');
@@ -120,7 +121,7 @@ test('the sign-in info and global switch texts say what the owner decided (en)',
 test('the sign-in info eye stops recording, keeps what is saved, and the clear cannot be undone, in zh and ja too', () => {
   setUiLang('zh');
   assert.equal(t('users.signinInfo.title'), '登录 IP 和所在地');
-  assert.equal(t('users.signinInfo.desc'), '记录每位用户登录时的 IP 地址和大致所在地。所在地经 Cloudflare 判断；在局域网内访问时只有 IP，没有所在地。');
+  assert.equal(t('users.signinInfo.desc'), '记录每位用户登录和最后活动时的 IP 地址和大致所在地。所在地来源见下方设置。');
   assert.equal(t('users.signinInfo.state.label'), '当前状态');
   assert.equal(t('users.signinInfo.state.on'), '开启');
   assert.equal(t('users.signinInfo.state.off'), '关闭');
@@ -130,13 +131,13 @@ test('the sign-in info eye stops recording, keeps what is saved, and the clear c
   assert.match(t('users.signinInfo.clear.ask'), /无法撤销/);
   assert.equal(t('users.signinInfo.clear.ask').includes('删除'), false);
   assert.equal(t('act.ipOff').includes('未记录'), false);
-  assert.equal(t('act.note').includes('IP 和大致位置只在“用户管理”里的眼睛打开时才记录；隐藏期间不再记录新的内容，已保存的记录会保留。'), true);
+  assert.equal(t('act.note').includes('IP 和大致所在地只在“用户管理”里的眼睛打开时才记录；隐藏期间不再记录新的内容，已保存的记录会保留。'), true);
   setUiLang('ja');
   assert.equal(t('users.signinInfo.clear'), '記録を消去');
   assert.match(t('users.signinInfo.clear.ask'), /元に戻せません/);
   assert.equal(t('act.note').includes('「ユーザー管理」の目が開いている間だけ記録されます。非表示の間は新しい記録は作られず、保存済みの記録は残ります。'), true);
   assert.equal(t('users.signinInfo.title'), 'ログイン IP と所在地');
-  assert.equal(t('users.signinInfo.desc').includes('所在地は Cloudflare が判定します。ローカルネットワークからのアクセスでは IP のみで、所在地はありません。'), true);
+  assert.equal(t('users.signinInfo.desc').includes('所在地の取得元は下の設定で選びます。'), true);
   assert.equal(t('users.signinInfo.state.label'), '現在の状態');
   assert.equal(t('users.signinInfo.state.on'), 'オン');
   assert.equal(t('users.signinInfo.state.off'), 'オフ');

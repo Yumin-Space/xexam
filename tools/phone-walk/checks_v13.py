@@ -263,15 +263,30 @@ def us_case(rc, lang, theme, size):
         for on in (False, True):
             s.call('/api/users/signin-info', {'enabled': on})
             goto(d, '#/users', 2.2)
-            r = d.js("""(() => { const sw = document.getElementById('us-signin'); const rows = [...document.querySelectorAll('.us-row')];
+            # v1.4: two tabs; the list is the first, the eye and the Clear button are on the sign-in tab
+            r = d.js("""(() => ({order: [...document.querySelectorAll('.us-row')].map(r => [...r.querySelectorAll('.us-facts .us-meta')].map(m => m.textContent.trim())),
+                facts: document.querySelectorAll('.us-meta').length,
+                tabs: [...document.querySelectorAll('.us-tabs button')].map(b => [b.id, b.getAttribute('aria-pressed'), Math.round(b.getBoundingClientRect().height), b.getAttribute('aria-controls')]),
+                card: !!document.getElementById('us-card'), eyeHere: !!document.getElementById('us-signin')}))()""")
+            if [t[0] for t in r['tabs']] != ['us-tab-users', 'us-tab-signin'] or [t[1] for t in r['tabs']] != ['true', 'false']:
+                p.append('the users tab is not the first one shown: %s' % r['tabs'])
+            if not r['card'] or r['eyeHere']:
+                p.append('the users tab shows the sign-in panel or has no card')
+            if phone(size) and any(t[2] < 43.5 for t in r['tabs']):
+                p.append('a user management tab is under 44 px high')
+            p += ['users tab: ' + x for x in common(d, size)]
+            goto(d, '#/users?tab=signin', 2.2)
+            r.update(d.js("""(() => { const sw = document.getElementById('us-signin');
               const b = sw ? sw.getBoundingClientRect() : null;
               const cl = document.getElementById('us-signin-clear'); const cb = cl ? cl.getBoundingClientRect() : null;
               const big = !!(b && b.height >= 43.5 && cb && cb.height >= 43.5);
               return {sw: !!sw, on: sw ? (sw.getAttribute('aria-pressed') === 'true') : null, desc: !!document.getElementById('us-signin-d'), title: !!document.getElementById('us-signin-t'),
                 st: sw ? (sw.querySelector('.us-eye-txt') || {textContent: ''}).textContent.trim() : '', noHint: !document.querySelector('.us-signin-hint'),
-                order: [...document.querySelectorAll('.us-row')].map(r => [...r.querySelectorAll('.us-facts .us-meta')].map(m => m.textContent.trim())),
                 clear: !!cl, big: big, clearInside: !cb || (cb.left >= 0 && cb.right <= innerWidth),
-                inside: !b || (b.left >= 0 && b.right <= innerWidth), facts: document.querySelectorAll('.us-meta').length} })()""")
+                inside: !b || (b.left >= 0 && b.right <= innerWidth), listHere: !!document.querySelector('.us-rows'),
+                pressed: (document.getElementById('us-tab-signin') || {getAttribute: () => null}).getAttribute('aria-pressed')} })()"""))
+            if r['pressed'] != 'true' or r['listHere']:
+                p.append('the sign-in tab did not open alone')
             if not r['sw']:
                 p.append('eye %s: no sign-in info eye button' % ('open' if on else 'closed'))
             if not r['title'] or not r['desc']:
@@ -280,18 +295,24 @@ def us_case(rc, lang, theme, size):
                 p.append('eye %s: the old hint line is still there' % ('open' if on else 'closed'))
             if not re.search(r'(当前状态|Status|現在の状態)[:：]?\s*\S', r['st'] or ''):
                 p.append('eye %s: no visible status text on the eye button (%r)' % ('open' if on else 'closed', r['st']))
-            # fact lines: last sign-in, last active, [IP, place], records; every date has the full year
+            # fact lines (v1.4): last sign-in, [sign-in IP, sign-in place], last active, [active IP, active place, device], records;
+            # every date has the full year
             for lines in r['order']:
                 kinds = []
                 for ln in lines:
-                    if re.match(r'(最后登录 IP|最終ログイン IP|Last sign-in IP)', ln): kinds.append('ip')
-                    elif re.match(r'(所在地|Location)', ln): kinds.append('place')
-                    elif re.match(r'(最后登录|最終ログイン|Last sign-in|从未登录|ログイン履歴なし|Never signed in)', ln): kinds.append('login')
-                    elif re.match(r'(最后活动|最終アクティブ|Last active|从未活动|アクティブ履歴なし|Never active)', ln): kinds.append('active')
+                    if re.match(r'(最后登录 IP|最終ログイン IP|Last sign-in IP)', ln): kinds.append('loginIp')
+                    elif re.match(r'(登录所在地|ログイン場所|Sign-in location)', ln): kinds.append('loginPlace')
+                    elif re.match(r'(最后活动 IP|最終アクティブ IP|Last active IP)', ln): kinds.append('activeIp')
+                    elif re.match(r'(活动所在地|アクティブ場所|Active location)', ln): kinds.append('activePlace')
+                    elif re.match(r'(最后活动设备|最終アクティブ端末|Last active device)', ln): kinds.append('activeDevice')
+                    elif re.match(r'(最后登录|最終ログイン|Last sign-in|从未登录|ログイン履歴なし|Never signed in)', ln): kinds.append('lastLogin')
+                    elif re.match(r'(最后活动|最終アクティブ|Last active|从未活动|アクティブ履歴なし|Never active)', ln): kinds.append('lastActive')
                     else: kinds.append('records')
-                    if kinds[-1] in ('login', 'active') and re.search(r'\d', ln) and not re.search(r'\b20\d\d-\d\d-\d\d \d\d:\d\d', ln):
+                    if kinds[-1] in ('lastLogin', 'lastActive') and re.search(r'\d', ln) and not re.search(r'\b20\d\d-\d\d-\d\d \d\d:\d\d', ln):
                         p.append('a date without the full year: %s' % ln)
-                want = ['login', 'active'] + (['ip', 'place'] if on and 'ip' in kinds else []) + ['records']
+                active = 'lastActive' in kinds and not any(re.match(r'(从未活动|アクティブ履歴なし|Never active)', x) for x in lines)
+                want = ['lastLogin'] + (['loginIp', 'loginPlace'] if on and 'loginIp' in kinds else []) + ['lastActive']
+                want += (['activeIp', 'activePlace'] if on and 'activeIp' in kinds else []) + (['activeDevice'] if 'activeDevice' in kinds and active else []) + ['records']
                 if kinds != want:
                     p.append('fact lines out of order: %s' % kinds)
                     break

@@ -449,11 +449,11 @@ Who: users with the AI+ feature, the generation feature and bank management (adm
 
 ### 13.10 Making the Excel file with an outside AI
 
-This is the guide part **Use an outside AI to make the Excel file** (on the **Question banks** page, inside the Excel format guide). The prompt is shown in a box that scrolls inside itself, with a **Copy** button; replace the two placeholders in square brackets before you send it. Prompt text (English):
+This is the guide part **Use an outside AI to make the Excel file** (on the **Question banks** page, inside the Excel format guide). The prompt is shown in a box that scrolls inside itself, with a **Copy** button. Prompt text (English):
 
 1. Open the AI chat you already use outside Xexam.
 2. Attach or paste your own material: notes, a PDF, a list of questions or the text of a web page.
-3. Copy the prompt below, paste it into the chat, and replace [NUMBER OF QUESTIONS] and [TOPIC] with your own words.
+3. Copy the prompt below and paste it into the chat. There is nothing to change in it.
 4. Ask for the result as an .xlsx file to download. If the AI cannot make a file, ask for the table, paste it into Excel starting at cell A1 and save it as “Excel Workbook (.xlsx)”.
 5. Open the file and check a few rows: the options, the answer letters and the three languages.
 6. Import it here with “Import Excel file”, as a new bank or as an update of a bank.
@@ -461,10 +461,12 @@ This is the guide part **Use an outside AI to make the Excel file** (on the **Qu
 ```text
 I want to turn my own material into a question bank: one Excel file (.xlsx) that I will import into a study app. Use only the material I give you (attached or pasted); do not add facts that are not in it.
 
-Make [NUMBER OF QUESTIONS] questions about [TOPIC].
+WHICH QUESTIONS
+- If my material already contains questions (an exercise list, an exam, a question bank), convert every one of them: exactly as many questions as the material has, none added, removed or merged. Keep each question’s content and its correct answer (only translate into the three languages and put it into the format below). Where the material has no explanation or memory aid, write a short one from the material. A question that is not a choice question (for example fill in the blank or short answer) becomes a choice question with its correct answer among the options.
+- Otherwise (notes, a book chapter, a web page), make the questions yourself from the material: decide the number from the amount of material, so that every important point is covered by at least one question and no point is repeated.
 
 FILE
-- One workbook (.xlsx) with exactly one worksheet, named after the topic (short; none of the characters : \ / ? * [ ]).
+- One workbook (.xlsx) with exactly one worksheet, named after the topic of the material (short; none of the characters : \ / ? * [ ]).
 - If you cannot create a file, give me one table with the same six columns that I can paste into Excel starting at cell A1.
 - Plain text cells only: no merged cells, no images, no formulas, no extra worksheets, no extra columns, no comments.
 
@@ -484,6 +486,86 @@ COLUMNS D, E, F: the answer, in English, Chinese and Japanese
 - Then a new line with a short memory aid: 【Memory aid】 in English, 【记忆口诀】 in Chinese, 【覚え方】 in Japanese.
 - Use the brackets 【 】 exactly as written. The letters must be the same in D, E and F.
 
+EXAMPLE
+The two rows below only show the exact format of the cells. Their content must NOT go into the file.
+
+Example 1 (single choice):
+Column A:
+Which planet is known as the Red Planet?
+A. Venus
+B. Mars
+C. Jupiter
+D. Saturn
+
+Column B:
+哪颗行星被称为“红色星球”？
+A. 金星
+B. 火星
+C. 木星
+D. 土星
+
+Column C:
+「赤い惑星」と呼ばれる惑星はどれですか。
+A. 金星
+B. 火星
+C. 木星
+D. 土星
+
+Column D:
+【Answer】B
+【Explanation】Iron oxide (rust) in the dust on its surface makes Mars look red.
+【Memory aid】Mars rusts red.
+
+Column E:
+【答案】B
+【解析】火星表面的尘土含有氧化铁（铁锈），所以看起来是红色的。
+【记忆口诀】火星生锈红彤彤。
+
+Column F:
+【正解】B
+【解説】火星の表面の砂には酸化鉄（さび）が含まれているため、赤く見えます。
+【覚え方】火星はさびて赤い。
+
+Example 2 (multiple choice):
+Column A:
+Which two of the following are fruits?
+A. Carrot
+B. Potato
+C. Apple
+D. Onion
+E. Banana
+
+Column B:
+下面哪两个是水果？
+A. 胡萝卜
+B. 土豆
+C. 苹果
+D. 洋葱
+E. 香蕉
+
+Column C:
+次のうち果物はどれですか。2 つ選んでください。
+A. にんじん
+B. じゃがいも
+C. りんご
+D. たまねぎ
+E. バナナ
+
+Column D:
+【Answer】C, E
+【Explanation】Apples and bananas are fruits; the others are vegetables.
+【Memory aid】Sweet ones are fruit.
+
+Column E:
+【答案】C、E
+【解析】苹果和香蕉是水果，其他都是蔬菜。
+【记忆口诀】甜的是水果。
+
+Column F:
+【正解】C、E
+【解説】りんごとバナナは果物で、ほかは野菜です。
+【覚え方】甘いのが果物。
+
 Answer with the file (or the table) only, and no other text in the cells.
 ```
 
@@ -500,12 +582,16 @@ Since v0.6 everyone signs in. There are three kinds of account:
 
 Each user has their own study records, wrong-answer notebook, unfinished exam and settings. AI has one name, the **AI+ feature**, and three controls: the global switch in [AI settings](#17-ai-settings), the per-user switch in User management, and **Pause** / **Resume** per user in AI settings under **Users with AI+**.
 
-![User management: administrators, a bank manager with the AI+ feature who sees every question bank, including ones imported later, a user with one question bank whose AI+ feature is paused (dark badge, Paused chip) and a disabled user, each plain user with an AI+ feature switch](screenshots/desktop-10-users.png)
+![User management, tab Users: the users with their last sign-in, last active, IP, location and device lines](screenshots/desktop-10-users.png)
 
-User management with two administrators (admin and lee), sam (**Bank manager**, every question bank, including ones imported later, the **AI+ feature** on, with the bright badge), alex (one question bank, General knowledge, the **AI+ feature** on but **Paused**, so the badge is dark and a **Paused** chip sits next to the switch) and kim (disabled, no **AI+ feature**, no badge); every plain user has an **AI+ feature** switch under the bank line.
+User management, tab **Users** (made-up addresses and places, the eye on the other tab open): admin and alex, each with **Last sign-in**, **Last sign-in IP**, **Sign-in location**, **Last active**, **Last active IP**, **Active location**, **Last active device** (with the **Full device information** button) and the records line; alex's **AI+ feature** is on but **Paused**, so the badge is dark. Further down the list are sam, kim and lee.
+
+![User management, tab Sign-in IP and location: the eye open with its status, Clear records and the Location source setting (Cloudflare request headers, External lookup API)](screenshots/desktop-10-users-signin.png)
+
+The second tab, **Sign-in IP and location** (`#/users?tab=signin`): the eye with its **On** status, the red **Clear records** button, and the **Location source** setting with **Cloudflare request headers** selected, the privacy line of the **External lookup API** and its collapsed settings.
 
 - **First start** (a new install, or the first start after upgrading from v0.5 or older): sign in with `admin` / `admin` (the sign-in page reminds you of it). Xexam then asks for a new password (8–128 characters). The study records, notebook and settings from before v0.6 belong to this administrator.
-- **User management** (menu, administrators only): one row per user with role, status (**Normal**, **Disabled**, **Locked · … left**, **3 tries left**, **Must choose a new password**), **Bank manager** when the user has that permission, the **AI+** badge, created, last sign-in and the number of study records (exams and practice). Actions: **Edit**, **Reset password**, **Disable** / **Enable**, **Delete** and, when needed, **Unlock**. A user created or reset by an administrator chooses their own password at the next sign-in. You cannot disable, demote or delete yourself, and the last enabled administrator cannot be removed. The list refreshes itself while it is open, so a lock that starts shows up.
+- **User management** (menu, administrators only; two tabs, **Users** and **Sign-in IP and location**, see below): on the **Users** tab, one row per user with role, status (**Normal**, **Disabled**, **Locked · … left**, **3 tries left**, **Must choose a new password**), **Bank manager** when the user has that permission, the **AI+** badge, created, last sign-in and the number of study records (exams and practice). Actions: **Edit**, **Reset password**, **Disable** / **Enable**, **Delete** and, when needed, **Unlock**. A user created or reset by an administrator chooses their own password at the next sign-in. You cannot disable, demote or delete yourself, and the last enabled administrator cannot be removed. The list refreshes itself while it is open, so a lock that starts shows up.
 - **Which question banks a user sees** is two independent settings: the existing banks ticked for them, and **Include banks imported later**, which gives them every bank imported from then on (by anyone, also with the command-line `import`). It never adds an existing bank.
   - Each user's row says what they have: **Question banks: all, including ones imported later** (every bank ticked and the later ones included), **Question banks: 1 · General knowledge** (with **, and the ones imported later** when that is on), **Question banks: none yet, so this user sees no question bank**, or **Question banks: none for now; the ones imported later are added automatically**. A bank manager's own uploads are listed below it.
   - **Change** opens **Question banks of alex** (for example). One row of three boxes sits right on top of the bank list: **Manage banks** (the bank-manager permission), **Select all** and **Deselect all**. The list starts with **Include banks imported later**, set apart by its own icon and a thin line, followed by one box per bank with who uploaded it. **Select all** ticks every listed bank, or unticks them all when all are ticked; **Deselect all** unticks them; neither touches **Include banks imported later**. A tick means on. There are no explanations on the page: they appear as tooltips when you point at an option or reach it with the keyboard, and the small **i** button next to **Question banks** explains the list. **Save** says what changed, the banks or only **Manage banks**.
@@ -534,8 +620,33 @@ User management with two administrators (admin and lee), sam (**Bank manager**, 
 ### 14.1 Keep me signed in, last active and the sign-in IP (v1.3)
 
 - **Sign-in page**: the box **Keep me signed in** (ticked by default) lets a user stay signed in for 30 days of use. Without it the user is signed out when the browser closes and after 12 idle hours. Administrators are signed out after 24 idle hours or 7 days whatever the box says; a notice appears 10 minutes before. When a session has ended, the sign-in page says so.
-- **Users page**: each user shows its facts one per line: **Last sign-in**, **Last active** (both as `YYYY-MM-DD HH:mm` with the full year, in your time zone; **Never active** when there is none), then, while the eye below is open, **Last sign-in IP** and **Location**, and last **Exam and practice records** (the number of saved exams and practices); **Active now** marks users active in the last 5 minutes; a select sorts by name, last sign-in or last active.
-- **Sign-in IP and location**: a block above the list with this title and a short description (the IP and the approximate location of each sign-in; the location comes from Cloudflare, and on the local network there is only an IP). Its eye button carries a visible two-line status, a small muted "Status" above **On** (green) or **Off** (grey); clicking the eye or the text toggles it (open eye = shown, slashed eye = hidden; its tooltip says what a click does), off by default; it is a saved setting that stays as it is after you sign out. The IP and the location of each sign-in are recorded only while the eye is open. When on, each row shows two more lines under **Last active**: **Last sign-in IP** and **Location** (city, region, country, as far as Cloudflare provides them; **Location unknown** when there is none). While hidden, no new IP addresses or locations are recorded; saved records are kept and shown again when you open the eye (sign-ins made while it was hidden simply have none). The red **Clear records** button on the right of the same row clears everything saved so far (users, sign-in sessions and the activity log) after a confirmation (**All saved sign-in IP and location history will be cleared. This cannot be undone. Clear it?**); it works with the eye open or hidden, and later sign-ins are recorded again only while the eye is open. Setup: section 3.5 of [deployment.md](deployment.md).
+- **Users page**: each user shows its facts one per line, in this order: **Last sign-in**; **Last sign-in IP** and **Sign-in location** (only while the eye on the **Sign-in IP and location** tab is open; **Location unknown** when there is none); **Last active**; **Last active IP** and **Active location** (only while the eye is open and the user has been active); **Last active device**; and last **Exam and practice records** (the number of saved exams and practices). Dates are `YYYY-MM-DD HH:mm` with the full year, in your time zone; **Never active** replaces the last-active lines when there is none. The device line (v1.4) names the browser and system of the user's last activity, for example `Safari · iOS`, the same text as the device in the System log; it is shown also while the eye is closed, because a device is not an address, and is left out when unknown. Click or tap the small **Full device information** button next to it to read the full user agent text under the line, and again to hide it. **Active now** marks users active in the last 5 minutes; a select sorts by name, last sign-in or last active.
+- **Sign-in IP and location**: User management has two tabs, **Users** (the list, the default) and **Sign-in IP and location** (`#/users?tab=signin`); the second one holds this title and a short description (the IP address and the approximate location of each user's sign-in and last activity; the location source is set on the same tab, see [14.2](#142-the-location-source-cloudflare-or-an-external-lookup-v14)). Its eye button carries a visible two-line status, a small muted "Status" above **On** (green) or **Off** (grey); clicking the eye or the text toggles it (open eye = shown, slashed eye = hidden; its tooltip says what a click does), off by default; it is a saved setting that stays as it is after you sign out. The IP and the location of each sign-in and of each user's last activity are recorded only while the eye is open. When on, each row shows the IP and place lines described above (city, region, country, as far as the source provides them; **Location unknown** when there is none). While hidden, no new IP addresses or locations are recorded and no lookup is made; saved records are kept and shown again when you open the eye (sign-ins made while it was hidden simply have none). The red **Clear records** button on the right of the same row clears everything saved so far (users, including the last-active address and place, sign-in sessions, the activity log and the remembered places of the external lookup) after a confirmation (**All saved sign-in IP and location history will be cleared. This cannot be undone. Clear it?**); it works with the eye open or hidden, and later sign-ins are recorded again only while the eye is open. Setup: section 3.5 of [deployment.md](deployment.md).
+
+### 14.2 The location source: Cloudflare or an external lookup (v1.4)
+
+Below the eye row of the **Sign-in IP and location** tab (administrators only), **Location source** decides where the place under an address comes from:
+
+- **Cloudflare request headers** (default; recommended when Xexam is reached through Cloudflare: a Cloudflare Tunnel or the proxied Cloudflare CDN, with or without Cloudflare Access): the place comes only from the headers Cloudflare adds (section 3.5 of [deployment.md](deployment.md)). Nothing is sent anywhere. Not everyone uses Cloudflare: without it there is only the IP address and no place, so choose the external lookup API instead.
+- **External lookup API** (off by default): for a deployment that does not run behind Cloudflare. After a successful sign-in, and when a user's last-activity address changes, Xexam asks a location provider about the visitor IP. **The visitor's IP address is sent to the chosen provider**; the panel says so in one line. The call is made by the `ai-service` container, the only one with internet access, so ai-service must be running; the AI+ feature may be off and no AI provider needs to be set up. These lookups do not count towards the AI request limits or the AI usage.
+
+**The chosen source alone decides what is shown.** In Cloudflare mode the place comes only from Cloudflare's headers; in external-API mode only from the provider's answer, and Cloudflare's place headers are ignored (the visitor IP still follows the trusted-proxy rule). Switching the source affects new records only; places already stored stay as they were.
+
+Open **External lookup API settings** to set it up:
+
+- **Provider**: a drop-down with ipinfo.io, ip-api.com, ipapi.co, ipwho.is, ip.sb and **Custom**. A preset fills the URL and the field mapping (everything stays editable). The free tier of ip-api.com is http only and allows 45 requests a minute; its preset, and the ipwho.is preset (https, no key), ask for place names in the language of the page (`lang=zh-CN`, `ja` or `en`), which you can change in the URL.
+- **Lookup URL**: a template where `{ip}` is replaced by the visitor IP and `{key}` by the optional key, for example `https://provider.example/{ip}/json?token={key}`. `http://` is allowed because some free tiers offer nothing else; the form then warns that the IP is sent unencrypted. Without a key, a query parameter whose value is exactly `{key}` is left out.
+- **Key (optional)**: stored encrypted in ai-service's database and never shown again (the form shows only that it is set and, for a long key, its last 4 characters); never written to a log. Leave the field empty on a later save to keep it; **Remove key** deletes it. **Send the key in a request header** puts it in a header instead of the URL: a header name (for example `Authorization`) and a value (for example `Bearer {key}`).
+- **Field mapping**: dot paths into the provider's JSON answer for the country name, the country code, the region and the city (for example `data.city`; a number picks an item of a list). Optional: a **Success field** with its **Success value** (for example `status` = `success`) and an **Error flag field** and **Error message field**, so that a provider's "fail" answer is reported as a failure instead of an empty place. A two-letter country code is shown as the country name in the language of the page.
+- **Test** looks up the fixed public example address `8.8.8.8` through the settings in the form, saves nothing, and shows the parsed country, region and city, or the exact reason: timeout (3 seconds), HTTP status, the answer is not JSON, too large, redirect refused, the provider reported a failure, or no country, region or city found. **Test and save** runs the same test and stores the settings only when it passes. The external source can be switched on only with settings that were tested and saved (the same rule as the AI settings); **Delete settings** removes them and the key and goes back to Cloudflare.
+- When ai-service is not running the form is disabled and only the Cloudflare option works; with the external source on and ai-service not connected, the panel says no place is looked up for now.
+
+Rules of the lookup:
+
+- It happens only after a successful sign-in and when a user's last-activity address changes (checked about once a minute), never on every request. Later activity entries reuse the remembered place of that IP; no new call. A place is remembered for 24 hours per IP (a failure for 15 minutes), in a bounded memory.
+- Private, loopback, link-local, shared (CGNAT), documentation, reserved and multicast addresses are never sent.
+- While the eye is closed nothing is looked up or recorded.
+- It runs in the background and never delays or fails a sign-in: about 3 seconds timeout, the answer is capped, redirects are refused, only JSON is accepted. A failure leaves the place empty and writes one short line without the key to the service log. At most 30 lookups run per minute.
 
 ## 15. System log
 
@@ -554,7 +665,7 @@ The System log with lines from the startup (the last one names the AI link), sig
 
 ### 15.1 The Activity tab (v1.3)
 
-The System log page has two tabs. **Activity** is the record of who did what: sign-ins and sign-outs, refused sign-ins, expired sessions, user and bank management, settings, AI settings and administrator actions, and page visits. Each entry has time, user, action, object, result and, the device and, only while the sign-in info eye is open, the IP and the location. Filters: user, action group and result. A wide screen shows a table, a phone shows cards; **Load earlier** goes back; the list refreshes every 10 seconds (pause it with the button). The settings button sets the days to keep (90, from 7 to 3650; sign-in entries are never deleted) and whether normal users' page visits are recorded (off by default); the page visits of administrators are always recorded. If the entries show only private addresses, a hint says the proxy address is shown and points to `XEXAM_TRUSTED_PROXIES`. **Service log** is the technical log described above; it now reads every 2 seconds.
+The System log page has two tabs. **Activity** is the record of who did what: sign-ins and sign-outs, refused sign-ins, expired sessions, user and bank management, settings, AI settings and administrator actions, and page visits. Each entry has time, user, action, object, result and the address column: while the sign-in info eye is open it reads **IP · place · device** (the place short: city, else region, else country; the full text is in the tooltip and in the expanded detail), and while it is closed only the **device**. On a phone the address column wraps under the action. In the external lookup mode (section 14.2) the place of a row is the remembered result for its IP. Filters: user, action group and result. A wide screen shows a table, a phone shows cards; **Load earlier** goes back; the list refreshes every 10 seconds (pause it with the button). The settings button sets the days to keep (90, from 7 to 3650; sign-in entries are never deleted) and whether normal users' page visits are recorded (off by default); the page visits of administrators are always recorded. If the entries show only private addresses, a hint says the proxy address is shown and points to `XEXAM_TRUSTED_PROXIES`. **Service log** is the technical log described above; it now reads every 2 seconds.
 
 ## 16. AI Chat
 
@@ -567,7 +678,7 @@ The System log page has two tabs. **Activity** is the record of who did what: si
 - **Free mode** (administrators only): free mode is not a switch of AI Chat but a state of the administrator, chosen in **Settings** under **AI chat mode** ([section 9](#9-settings)). While it is on, a green **Free mode** tag sits to the right of the **AI Chat** title; in normal mode nothing is shown, and AI Chat has no switch and no dividers. Normally every answer follows Xexam's study-assistant instructions and the AI is given your memory notes and today's date. In free mode every message you send, in any chat, new or old, and every **Retry** goes to the model without those instructions, without the date and without memories: you talk to the model directly, and only the reply-language rule below stays. The provider's own safety rules always apply. The choice applies from your next message, is kept on the server (a reload or another device shows it), and is off by default. Every message records the mode it was sent in, and the model is told the current mode in one short line after a chat has gone from one mode to the other; chats themselves have no mode. The limits, the usage statistics, the retention, **Stop** and **Retry**, **Remember this**, the administrators' views and the System log work as usual; memories are simply not used in free mode, and only administrators can use it.
 - **The language of the answers** is the language chosen in **Settings** (English, Chinese or Japanese), whatever language you write in, unless you ask for another language in that message. Memory notes made with **Remember this** are written in it too. Each message uses the language set at the time, so switching the interface language changes the language of the next answer.
 - **The chat list**: **New chat**, then your chats, newest first, each with its title (the start of its first message, at most 60 characters), the time of its last message (while the open chat's answer is being written the row says **Writing…**, or **Thinking…**, instead) and a delete button; below them **Delete all chats** (a red-outlined button) and how long chats are kept, for example **Chats are deleted automatically 90 days after their last message.** A chat is created by its first message. A new chat with no message yet says **Ask a question to start. The AI answers in English, the language chosen in Settings.** (with your language's own name).
-- **Messages**: your messages as you wrote them; the answers with simple formatting (bold, italics, inline code, code blocks, lists; headings become bold lines, and links are shown as plain text, never as links). Above each message: **You** or **AI**, and the time. Administrators see the connection and the model after **AI** (`connection · model`); everyone else sees only **AI** and the time, because the server never sends them a model or a connection (v1.3). Under it: **Copy** (not shown on an empty message), and under your own messages **Remember this** (see Memory below).
+- **Messages**: your messages as you wrote them; the answers with simple formatting (bold, italics, inline code, code blocks, lists; headings become bold lines, and links are shown as plain text, never as links). Above each message: **You** or **AI**, and the time. Administrators in the free mode (**Settings** → **AI chat mode** → **Free**), who can also choose the model, see the connection and the model instead of **AI** (`connection · model`); in the normal mode, and for everyone else, an answer shows only **AI** and the time (v1.4). The server never sends a model or a connection to anyone who is not an administrator (v1.3), and the chat viewer in **AI settings** always shows them. Under it: **Copy** (not shown on an empty message), and under your own messages **Remember this** (see Memory below).
 - **Writing a message**: the box at the bottom (**Ask anything…**), one rounded frame with the input on top and one bar under it; the counter and **Send** are on the right of the bar (and, for administrators in **Free mode**, the model button on the left, see 16.2). On a computer **Enter** sends and **Shift+Enter** starts a new line; on a touch screen **Enter** starts a new line. **Ctrl+Enter** (**Cmd+Enter** on a Mac) sends everywhere. Nothing is sent while an input method is still composing a word (Chinese or Japanese input). A message can have up to 16 000 characters (a fixed limit that protects the server, not a setting); a counter appears near the limit.
 - **While the answer is written** it appears piece by piece, with **Writing…** under it (**Thinking…** while a reasoning model is still thinking before its first words; its thinking text is shown in the thinking block below); **Jump to latest** appears when you scroll up. You can already type your next question; you can send it once the answer has finished. The **Send** button becomes **Stop**: **Stop** ends the answer, keeps the text so far and marks it **Stopped**. (A double-click on **Send** only sends; a click on **Stop** in the first 0.4 seconds after sending is ignored, so a double-click cannot stop the answer it just started.)
 - **The thinking block (v1.3)**: when a reasoning model sends its thinking, AI Chat shows it as a small grey block above the answer. While the model is still thinking the block is open, says **Thinking…** and shows the text as it arrives in a box of limited height (about 320 px, at most 40 % of the screen) that scrolls by itself. As soon as the first words of the answer arrive (or the answer ends) it folds to one line, **Thought for 12 s ▸** (the time the model spent thinking, rounded, at least 1 s). Click, tap or press **Enter** or **Space** on that line to open or fold it again (it is a button; screen readers announce it as expanded or collapsed, and the row is at least 44 px high on a phone). The text is shown as plain text, never as formatting or links. A thinking text over 32 KiB keeps only its beginning and says so under it. The block is saved with the answer (every version of a regenerated answer has its own), is seen in the same way by an administrator who opens the chat, and is deleted with the chat. An answer with no thinking, and every answer written before v1.3, has no block. Models that send their thinking inside the answer are recognised too: a span at the very start wrapped in `<think>`, `<thinking>` or `<thought>`. **Only AI Chat shows it**: **AI hint**, **AI analysis**, **AI summary**, AI-generated banks and AI import discard it (the thinking of a hint often contains the answer). It is never sent back to the model (later questions, **Regenerate** and **Edit** use the written answers only), and **Copy** copies the answer only.

@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v1.3 → v1.4**（0000 节）：主数据库升到 schema 9，AI 数据库升到 schema 8，各自在写好备份副本后自动完成（只增不改：最后活动的几列，以及外部所在地查询的表）。主数据库回退不需要恢复；AI 数据库需要把它的备份副本放回去（0000.4 节）。
 > - **v1.2 → v1.3**（第 000 节）：建议使用新的 `docker-compose.yml`（为真实访客地址增加 `tunnel` 网络和可选的 `cloudflared` 服务）；主数据库升到 schema 8，AI 数据库升到 schema 7，各自在写好自己的备份副本之后自动进行。主数据库回退不需要恢复；AI 数据库需要把它的副本放回去（第 000.4 节）。
 > - **v0.9.1 → v1.0**（第 0 节）：不需要新的 `docker-compose.yml`；AI 数据库在写好备份副本 `backups/xexam-ai-schema3-<date-time>.db` 之后升级到 schema 4；主数据库不变。回退到 v0.9.1 需要恢复那份副本（第 0.4 节）。
 > - **v0.9 → v0.9.1**（没有单独的一节）：除了 `docker compose pull` 和 `docker compose up -d` 之外不用做什么；数据库没有变化，没有新设置，也不需要新的 `docker-compose.yml`。回退到 v0.9 只要把三个镜像的 `:latest` 改成 `:v0.9`，再 `docker compose up -d`；数据库保持原样。
@@ -20,6 +21,39 @@
 > **从更早的版本直接升级到 v1.0**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 4）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v1.0 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `1.0`，ai-service 创建的数据库是 schema 4。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
+
+## 0000. 从 v1.3 升级到 v1.4
+
+这一节编号为 0000，因为它是最新的一节。旧的各节编号不变。
+
+### 0000.1 有什么变化
+
+- **主数据库**在新后端第一次启动时，先写一份备份副本 `backups/xexam-schema8-<date-time>.db`，然后从 schema 8 升到 **schema 9**，只做一次。这一步只增不改：users 增加 `last_active_ip`、`last_active_country`、`last_active_region`、`last_active_city` 和 `last_active_ua`；不回填任何数据，所以**最后活动 IP / 活动所在地 / 最后活动设备**会在用户再次活动时逐步出现。日志行是 `system.migrate`，`from` 为 8，`to` 为 9。
+- **AI 数据库**在新 AI 服务第一次启动时，先在 AI 卷里写一份备份副本 `backups/xexam-ai-schema7-<date-time>.db`，然后从 schema 7 升到 **schema 8**，只做一次。新增空表 `geo_settings`（外部所在地查询）。
+- 升级后**所在地来源**是 **Cloudflare 请求头**：在管理员设置并启用外部查询 API 之前，不会查询任何东西，也不会向任何地方发送数据（见 [usage.md](usage.md) 的 14.2 节）。
+- **用户管理**多了一组行和**所在地来源**设置；**系统日志**每一行显示 **IP · 所在地 · 设备**。v1.4 的其余内容（AI 对话的模型名规则和默认信任内网代理）见[更新日志](changelog.md)。
+
+### 0000.2 升级
+
+1. **备份两个数据卷**（先停止，做法同 [README](../../README.md#upgrading) 的升级一节）。
+2. 取用新的 `docker-compose.yml`（里面有 `XEXAM_TRUSTED_PROXIES` 的默认值），保留你的 `.env`，然后 `docker compose pull` 和 `docker compose up -d`。不要用 `down -v`。
+3. 可选：没有 Cloudflare 时要显示所在地，见 [deployment.md](deployment.md) 的 3.5 节。
+
+### 0000.3 升级后的检查
+
+- `/api/info` 和**关于**页显示 `1.4`；日志里有 `Upgraded the database to schema 9`（后端）和 `Upgraded the AI database to schema 8`（ai-service），各自附上写出的备份副本。
+- 在**用户管理**里打开登录信息的眼睛：再次活动过的用户显示**最后活动 IP**、**活动所在地**和**最后活动设备**；**所在地来源**是 **Cloudflare 请求头**。
+
+### 0000.4 回退到 v1.3
+
+- **主数据库**：不需要恢复。v1.3 的后端可以原样打开 schema 9 的文件（新列会被忽略）。恢复 `xexam-schema8-<date-time>.db` 是可选的，会丢失之后写入的内容。
+- **AI 数据库**：停止整个栈，把 `xexam-ai-schema7-<date-time>.db` 放回作为 AI 数据库（卷 `xexam_ai_data` 里的 `/data/xexam-ai.db`），把三个镜像改成 `:v1.3` 再启动。在 v1.4 期间写入 AI 数据库的内容（对话、用量、外部查询的设置和密钥）会丢失。v1.3 会拒绝 schema 8 的文件，所以不会悄悄损坏。
+- v1.4 不会删除迁移前的备份副本；不再需要旧的时请手动删除。
+
+### 0000.5 测试了什么
+
+- 后端 583 个测试、前端 812 个、AI 服务 1108 个，全部通过，包括：带数据的文件从 schema 8 到 9 和 7 到 9（新旧文件表相同，一份备份，一行 `system.migrate`）、AI 的 schema 1 到 7 到 8（每条路径表相同）、来源规则（Cloudflare 模式忽略查询；外部模式忽略 Cloudflare 的所在地请求头）、眼睛关闭时不查询、**清除记录**清空最后活动各列和记忆、保留地址过滤，以及密钥不出现在应答、日志行和数据库文件里，只使用本地模拟的服务商（成功、超时、HTTP 500、不是 JSON、缺字段、拒绝重定向、过大）。
+- 发布检查没有覆盖：真实互联网上的服务商（只有几次用公开示例地址 `8.8.8.8` 的手动**测试**），以及真机上的手机布局。
 
 ## 000. 从 v1.2 升级到 v1.3
 

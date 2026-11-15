@@ -15,6 +15,9 @@ pub const ACTIVITY_USER_VISITS: &str = "activity.user_visits";
 /// `1` = the eye is open: the recorded IP and approximate location are shown and new ones are recorded; `0` = hidden and
 /// nothing new is recorded.
 pub const SIGNIN_INFO: &str = "users.signin_info";
+/// Where the place of a sign-in address comes from (v1.4): `cloudflare` (default; the request headers set by Nginx) or `api`
+/// (the external lookup run by ai-service). A missing row or any other value means `cloudflare`.
+pub const GEO_SOURCE: &str = "geo.source";
 
 pub const DEFAULT_RETENTION_DAYS: i64 = 90;
 pub const MIN_RETENTION_DAYS: i64 = 7;
@@ -77,6 +80,27 @@ impl Store {
         flag(&g, ACTIVITY_USER_VISITS)
     }
 
+    /// The stored place source: `true` = `api`, `false` = `cloudflare` (the default for a missing row or any other value).
+    pub fn geo_source_is_api(&self) -> Result<bool, DbError> {
+        let g = self.lock();
+        Ok(get(&g, GEO_SOURCE)?.as_deref() == Some("api"))
+    }
+
+    /// Stores the place source (`by` = the administrator, `None` = ai-service over the link).
+    pub fn set_geo_source(&self, api: bool, by: Option<i64>) -> Result<(), DbError> {
+        let at = self.clock.now();
+        let g = self.lock();
+        run_tx(&g, |c| {
+            put(
+                c,
+                GEO_SOURCE,
+                if api { "api" } else { "cloudflare" },
+                &at,
+                by,
+            )
+        })
+    }
+
     /// Whether the recorded sign-in IP and location are shown.
     pub fn signin_info_enabled(&self) -> Result<bool, DbError> {
         let g = self.lock();
@@ -117,6 +141,11 @@ mod tests {
         assert_eq!(s.activity_retention_days().expect("days"), 90);
         assert!(!s.activity_user_visits().expect("v"));
         assert!(!s.signin_info_enabled().expect("i"));
+        assert!(!s.geo_source_is_api().expect("g"));
+        s.set_geo_source(true, None).expect("set");
+        assert!(s.geo_source_is_api().expect("g"));
+        s.set_system_setting(GEO_SOURCE, "junk", None).expect("set");
+        assert!(!s.geo_source_is_api().expect("g"));
         s.set_system_setting(ACTIVITY_RETENTION_DAYS, "2", Some(1))
             .expect("set");
         assert_eq!(s.activity_retention_days().expect("days"), 7);

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
-  AI_SERVICE_OFF_CODE, MSG_AI_SERVICE_OFF, SEARCH_FROM, aiLineKind, aiSwitchShown, createAi, filterUsers, isServiceOff, lockUntilLabel, fullAt,
+  AI_SERVICE_OFF_CODE, MSG_AI_SERVICE_OFF, SEARCH_FROM, aiLineKind, aiSwitchShown, createAi, factPlan, filterUsers, isServiceOff, lockUntilLabel, fullAt,
 } from './user-admin.ts';
 
 test('aiSwitchShown: only for a plain user while AI+ is available', () => {
@@ -64,4 +64,22 @@ test('filterUsers: case-insensitive part of the name; empty query keeps everyone
   assert.equal(filterUsers(list, '').length, 3);
   assert.equal(filterUsers(list, 'zzz').length, 0);
   assert.equal(SEARCH_FROM, 10);
+});
+
+test('factPlan: the order of the fact lines, eye open', () => {
+  const u = { lastActiveAt: '2026-11-15 11:02', lastLoginIp: '203.0.113.5', lastActiveIp: '198.51.100.7', lastActiveUa: 'Example/1.0' };
+  assert.deepEqual(factPlan(u, true), ['lastLogin', 'loginIp', 'loginPlace', 'lastActive', 'activeIp', 'activePlace', 'activeDevice', 'records']);
+});
+
+test('factPlan: eye closed keeps the device line, drops every IP / place line', () => {
+  const u = { lastActiveAt: '2026-11-15 11:02', lastLoginIp: '203.0.113.5', lastActiveIp: '198.51.100.7', lastActiveUa: 'Example/1.0' };
+  assert.deepEqual(factPlan(u, false), ['lastLogin', 'lastActive', 'activeDevice', 'records']);
+  // the answer carries no IP while the eye is closed: the same plan
+  assert.deepEqual(factPlan({ lastActiveAt: u.lastActiveAt, lastLoginIp: null, lastActiveIp: null, lastActiveUa: 'Example/1.0' }, true), ['lastLogin', 'lastActive', 'activeDevice', 'records']);
+});
+
+test('factPlan: a never-active user has no activity lines; no device = no device line', () => {
+  assert.deepEqual(factPlan({ lastActiveAt: null, lastActiveIp: '198.51.100.7', lastActiveUa: 'Example/1.0' }, true), ['lastLogin', 'lastActive', 'records']);
+  assert.deepEqual(factPlan({ lastActiveAt: '2026-11-15 11:02', lastActiveIp: '198.51.100.7', lastActiveUa: ' ' }, true), ['lastLogin', 'lastActive', 'activeIp', 'activePlace', 'records']);
+  assert.deepEqual(factPlan({ lastActiveAt: '2026-11-15 11:02', lastLoginIp: '203.0.113.5' }, true), ['lastLogin', 'loginIp', 'loginPlace', 'lastActive', 'records']);
 });

@@ -169,14 +169,14 @@ fn a_schema_6_file_upgrades_to_7_keeping_every_row() {
         .expect("master");
     assert!(!has_conn);
     drop(b);
-    // schema 7; each chat is one line: the path equals the old ORDER BY id list
+    // schema 8 (7 plus the geo table); each chat is one line: the path equals the old ORDER BY id list
     store
         .read(|c| {
             let v: String =
                 c.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
                     r.get(0)
                 })?;
-            assert_eq!(v, "7");
+            assert_eq!(v, "8");
             for (chat, want) in [(1, vec![1, 2, 3, 4]), (2, vec![5, 6, 7, 8]), (3, vec![])] {
                 let all: Vec<i64> = data::messages(c, chat)?.iter().map(|m| m.id).collect();
                 let line: Vec<i64> = data::path(c, chat, None)?.iter().map(|m| m.id).collect();
@@ -1820,7 +1820,7 @@ fn a_schema_7_file_without_the_reasoning_columns_gets_them_on_open() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "7");
+    assert_eq!(v, "8");
 }
 
 #[test]

@@ -12,6 +12,7 @@
 //!   heartbeat, which says whether AI+ is available)
 //! - `auth`      accounts (v0.6): password hashing, session tokens and cookie, login throttle, input rules
 //! - `activity`  activity log (v1.3): who did what, written by one queue + writer task, read by the administrators
+//! - `geo`       place of a sign-in address (v1.4): the Cloudflare headers or an external lookup run by ai-service
 //! - `logs`      system log (v0.7): a `tracing` layer keeping the most recent log lines in memory for `GET /api/logs`
 
 pub mod activity;
@@ -20,6 +21,7 @@ pub mod auth;
 pub mod config;
 pub mod database;
 pub mod error;
+pub mod geo;
 pub mod logs;
 pub mod models;
 pub mod parser;

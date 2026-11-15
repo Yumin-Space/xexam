@@ -390,6 +390,16 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 
 不用恢复（见上）。恢复 schema 7 的副本是可选的，会丢掉此后写入的内容，会话和活动记录也一并丢掉。
 
+### 6.15 Schema v9（v1.4）
+
+主数据库在 v1.4 后端第一次启动时，先写一份备份副本 `backups/xexam-schema8-<date-time>.db`，然后从 schema 8 升到 **schema 9**，只做一次。这一步只增不改，不回填任何数据。
+
+- `users`：`last_active_ip`、`last_active_country`、`last_active_region`、`last_active_city`（TEXT；最后一次活动的 IP 和所在地，与 `last_active_at` 一起写入，最多每分钟一次，**只在登录信息的眼睛打开时写**；**清除记录**会把它们设为 NULL；眼睛关闭时应答里隐藏）和 `last_active_ua`（TEXT，最后一次活动清理后的 User-Agent，最多 256 个字符；眼睛关闭时也写，并且**不会**被**清除记录**清掉，与活动记录的 `ua` 一样）。所在地各列存两位国家代码或国家名称、地区和城市，任何一项都可能是 NULL。
+- `system_settings`：新键 `geo.source`（`cloudflare`，缺失时的默认值，或 `api`），表示记录的所在地从哪里来（见 [usage.md](usage.md) 的 14.2 节）。
+- 其他都不变：外部查询每个 IP 的记忆和队列只在内存里。
+
+日志行是 `system.migrate`，带 `{"from": 8, "to": 9}`（从 schema 7 升级时也只写一行）。v1.3 的后端可以原样打开 schema 9 的文件（新列会被忽略）。
+
 ## 7. 旧的 `progress.json`
 
 更早的版本把成绩保存在 `progress.json` 里。和旧的 Python 版一样，程序**每次启动时**都会检查数据目录里有没有它：如果有，而且数据库里还没有学习记录、以前也没有迁移过，就把它迁移进数据库（迁到第一个管理员的记录里）。`meta` 里的 `legacy_migrated` 标记保证它只迁移一次，已有的学习记录永远不会被覆盖。
@@ -609,6 +619,14 @@ AI 数据库从 schema 6 升到 **schema 7**，只在 v1.3 ai-service 第一次�
 一次性语句填入六个槽位、对话树（`parent_id` = 前一条消息，`leaf_id` = 最后一条）、带密钥的连接 1 和默认槽位、`users.features_off` 里的提示和解析两个位（只关了其中一个的用户，两个都变成开启），以及 [migration.md](migration.md) 的 000.1 节所述的上限。新文件和升级后的文件最终有相同的表。v1.2 的 ai-service 会拒绝 schema 7 的文件；要回退，恢复 schema 6 的副本。
 
 **推理列（v1.3）。** `messages` 每个回答版本一行，它的三个可为 NULL 的列保存 AI 对话回答的思考：`reasoning`（文字；去掉首尾空白；最多 32 KiB = 32 768 字节，保留开头，在字符边界处截断）、`reasoning_ms`（从第一段推理到第一段回答文字、或到结束的毫秒数；没有推理时为 NULL）和 `reasoning_truncated`（`0` / `1`，默认 0；1 = 文字在上限处被截断）。它们属于 schema 7 这一步，所以没有 schema 8，也没有额外的备份：schema 7 在 v1.3 之前没有发布过；从 1 到 6 升级的数据库在同一个事务里得到它们，v1.3 较早构建写的 schema 7 文件在下次启动时得到它们。只有 AI 对话的回答会写入（提示、解析和总结会丢弃推理），它们从不属于发给模型的上下文，并随消息一起删除：删除一个对话、**删除所有对话**、管理员的清除、删除用户和保留期清理，都会连同这一行一起删掉它们（`secure_delete=ON` 会覆盖释放的页）。旧回答是 NULL，不显示这个块。`messages.model` 和 `messages.connection` 仍然为每个回答保存（供管理员和用量统计使用）；只有发给非管理员的响应会省掉它们。
+
+### 8.2c Schema v8（v1.4）
+
+AI 数据库在 v1.4 ai-service 第一次启动时，从 schema 7 升到 **schema 8**，只做一次（一个事务，一份备份副本 `backups/xexam-ai-schema7-<date-time>.db`）。这一步只增不改。
+
+- **`geo_settings`**（新）：最多一行（`id = 1`），是外部所在地查询的设置：`preset`（`ipinfo`、`ipapi`、`ipapico`、`ipwhois`、`ipsb` 或 `custom`，仅用于显示）、`url_template`（含 `{ip}`，也可含 `{key}`）、`key_header_name` 和 `key_header_value`（可选的、用来带密钥的请求头）、字段映射（`map_country`、`map_country_code`、`map_region`、`map_city`、`ok_path`、`ok_value`、`error_path`、`message_path`；点号路径）、**加密后的密钥**（`key_id`、`key_nonce`、`key_ciphertext`、`key_hint`；没有密钥时为 NULL 或空；用主密钥和专用绑定加密，永不返回）以及 `tested_at`、`updated_at`、`updated_by`。只有“测试并保存”通过后才有这一行，所以已保存就是已测试；删除设置会删除这一行。升级后这张表是空的。
+
+新文件和升级后的文件得到相同的表。v1.3 的 ai-service 会拒绝 schema 8 的文件；要回退请恢复 schema 7 的备份副本。
 
 ### 8.3 服务怎样使用它
 

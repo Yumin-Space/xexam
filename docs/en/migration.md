@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v1.3 → v1.4** (section 0000): the main database moves to schema 9 and the AI database to schema 8, each automatically after its own backup copy is written (additive: last-activity columns, and the table of the external location lookup). The main database rolls back without a restore; the AI database needs its copy back (section 0000.4).
 > - **v1.2 → v1.3** (section 000): a new `docker-compose.yml` is recommended (a `tunnel` network and the optional `cloudflared` service, for real client addresses); the main database moves to schema 8 and the AI database to schema 7, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back (section 000.4).
 > - **v0.9.1 → v1.0** (section 0): no new `docker-compose.yml`; the AI database moves to schema 4 after its backup copy `backups/xexam-ai-schema3-<date-time>.db` is written; the main database does not change. Rolling back to v0.9.1 needs that copy restored (section 0.4).
 > - **v0.9 → v0.9.1** (no section of its own): nothing to do besides `docker compose pull` and `docker compose up -d`; no database change, no new setting and no new `docker-compose.yml`. Rolling back to v0.9 is changing `:latest` to `:v0.9` for the three images and running `docker compose up -d`; the databases stay as they are.
@@ -20,6 +21,39 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 0000. Upgrading from v1.3 to v1.4
+
+This section is numbered 0000 because it is the newest one. The older sections keep their numbers.
+
+### 0000.1 What changes
+
+- **The main database** moves from schema 8 to **schema 9**, once, on the first start of the new backend, after the copy `backups/xexam-schema8-<date-time>.db`. The step is additive: users get `last_active_ip`, `last_active_country`, `last_active_region`, `last_active_city` and `last_active_ua`; nothing is backfilled, so **Last active IP / Active location / Last active device** fill in as users are active again. The log row is `system.migrate` with `from` 8 and `to` 9.
+- **The AI database** moves from schema 7 to **schema 8**, once, on the first start of the new AI service, after the copy `backups/xexam-ai-schema7-<date-time>.db` in the AI volume. It adds the empty table `geo_settings` (the external location lookup).
+- **The location source** is **Cloudflare request headers** after the upgrade: nothing is looked up and nothing is sent anywhere until an administrator sets up and switches on the external lookup API (section 14.2 of [usage.md](usage.md)).
+- **User management** shows one more set of lines and the **Location source** setting; the **System log** rows show **IP · place · device**. The rest of v1.4 (the AI Chat model name rule and the trusted private-network proxy default) is described in the [changelog](changelog.md).
+
+### 0000.2 Upgrade
+
+1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)).
+2. Take the new `docker-compose.yml` (it carries the `XEXAM_TRUSTED_PROXIES` default), keep your `.env`, then `docker compose pull` and `docker compose up -d`. Do not use `down -v`.
+3. Optional: to show places without Cloudflare, see section 3.5 of [deployment.md](deployment.md).
+
+### 0000.3 Checks after the upgrade
+
+- `/api/info` and the **About** page show `1.4`; the log has `Upgraded the database to schema 9` (backend) and `Upgraded the AI database to schema 8` (ai-service), each with the copy it wrote.
+- Open the sign-in info eye in **User management**: users who are active again show **Last active IP**, **Active location** and **Last active device**; the **Location source** setting is on **Cloudflare request headers**.
+
+### 0000.4 Rollback to v1.3
+
+- **Main database**: nothing to restore. A v1.3 backend opens the schema-9 file as it is (the new columns are ignored). Restoring `xexam-schema8-<date-time>.db` is optional and loses what was written since.
+- **AI database**: stop the stack, put `xexam-ai-schema7-<date-time>.db` back as the AI database (`/data/xexam-ai.db` in the volume `xexam_ai_data`), change the three images to `:v1.3` and start. What was written under v1.4 in the AI database (chats, usage, the external lookup settings and key) is lost. v1.3 refuses a schema-8 file, so nothing is damaged silently.
+- v1.4 does not delete the pre-migration copies; remove old ones by hand when you no longer need them.
+
+### 0000.5 What has been tested
+
+- Backend 583 tests, frontend 812, AI service 1108, all green, including: schema 8 to 9 and 7 to 9 on files with data (the old and the new file have the same tables, one backup and one `system.migrate` row), AI schema 1 to 7 to 8 (same tables on every path), the source rule (Cloudflare mode ignores the lookup; external mode ignores Cloudflare's place headers), no lookup while the eye is closed, **Clear records** wiping the last-active columns and the memory, the reserved-address filter, and the key never appearing in an answer, a log line or the database file, with a local stub provider only (success, timeout, HTTP 500, not JSON, missing fields, redirect refused, oversized).
+- Not covered by the release checks: a provider on the real internet beyond a few manual **Test** calls with the public example address `8.8.8.8`, and the phone layouts on a real device.
 
 ## 000. Upgrading from v1.2 to v1.3
 

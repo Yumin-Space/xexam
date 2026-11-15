@@ -35,8 +35,8 @@ Xexam は、ブラウザで使うセルフホスト型の問題演習アプリ�
 
 | | |
 |---|---|
-| 現在のバージョン | **v1.3**（[更新履歴](../docs/ja/changelog.md)、またはリポジトリの [Releases](../../../releases) ページを参照。アプリでは：メニュー → **Xexam v1.3**） |
-| イメージ | 3 つ。Docker Hub（公開、ログイン不要）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend`、`docker.io/yuminspace/xexam-ai-service`。タグは `latest` / `v1.3` / `sha-<コミット>`（`sha-` のタグは問題の調査用）。ミラー：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend`、`ghcr.io/yumin-space/xexam-ai-service`（非公開、タグは同じ） |
+| 現在のバージョン | **v1.4**（[更新履歴](../docs/ja/changelog.md)、またはリポジトリの [Releases](../../../releases) ページを参照。アプリでは：メニュー → **Xexam v1.4**） |
+| イメージ | 3 つ。Docker Hub（公開、ログイン不要）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend`、`docker.io/yuminspace/xexam-ai-service`。タグは `latest` / `v1.4` / `sha-<コミット>`（`sha-` のタグは問題の調査用）。ミラー：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend`、`ghcr.io/yumin-space/xexam-ai-service`（非公開、タグは同じ） |
 | CPU アーキテクチャ | `linux/amd64`、`linux/arm64`（同じタグの中から自動的に適切なものが選ばれます） |
 | ポート | `8765`（既定ではローカルマシンのみにバインド） |
 | ライセンス | [MIT](../LICENSE) |
@@ -100,7 +100,7 @@ docker compose up -d
 | 操作 | コマンド |
 |---|---|
 | 最新バージョンに更新 | `docker compose pull` の後に `docker compose up -d`（先に [アップグレード](#アップグレード) を読んでください） |
-| 特定のバージョンに固定 | `docker-compose.yml` 内の 3 つのイメージの `:latest` をすべて `:v1.3` に変更してから、`docker compose up -d` を実行 |
+| 特定のバージョンに固定 | `docker-compose.yml` 内の 3 つのイメージの `:latest` をすべて `:v1.4` に変更してから、`docker compose up -d` を実行 |
 | 状態を確認 | `docker compose ps`（3 つのコンテナがすべて `healthy` になっていれば正常） |
 | 停止 / 再起動 | `docker compose stop` / `docker compose start` |
 | ログを見る | `docker compose logs -f backend` と `docker compose logs -f ai-service`（管理者はメニューの **システムログ** でも見られます。AI サービスの行も表示されます） |
@@ -133,7 +133,7 @@ docker compose up -d
 | `XEXAM_INTERNAL_TOKEN` | 未設定（リンクボリューム内のランダムな Token） | バックエンドと AI サービスが共有する Token。compose ファイルは同じ値を両方に渡します。空白を含まない表示可能な ASCII 文字で 32 文字以上。例：`openssl rand -hex 32` の出力。AI サービス自身のバックエンドへの呼び出し（状態の報告など）の認証にも使われます。この規則に合わない値では AI チャットがオフになります：**AI 設定** には ai-service が接続できないと表示され、ログの行がその理由を伝えます |
 | `XEXAM_AI_LOG` | 未設定（`info`） | AI サービスのログのフィルター。`XEXAM_LOG` と同じです |
 | `XEXAM_AI_SQLITE_JOURNAL` | 未設定（WAL） | `delete` = AI のデータベースを従来の DELETE ジャーナルのままにします。`XEXAM_SQLITE_JOURNAL` と同じです |
-| `XEXAM_TRUSTED_PROXIES` | `172.31.254.2`（同梱の `cloudflared`） | `CF-Connecting-IP` と位置ヘッダーを Nginx が信じるプロキシ。レート制限、IP 列、場所が訪問者のものになります。空 = 誰も信頼しない。ホスト上の `cloudflared` なら `172.31.255.1`（[deployment](../docs/ja/deployment.md) の 3.5 節） |
+| `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`（プライベートネットワーク） | `CF-Connecting-IP` と位置ヘッダーを Nginx が信じるプロキシ。レート制限、IP 列、場所が訪問者のものになります。既定値は閉じたプライベートネットワーク向けで、ホストや別のプライベートなマシンの `cloudflared` に設定は要りません。範囲を狭める（例：`172.31.254.2` で同梱の `cloudflared` のみ）か、`none` と書くと誰も信頼しません。空欄や空の値は既定値になります（[deployment](../docs/ja/deployment.md) の 3.5 節） |
 | `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | 訪問者のアドレスを持つヘッダー：`CF-Connecting-IP`、`X-Forwarded-For`、`X-Real-IP` |
 | `TUNNEL_TOKEN` | 未設定 | 任意の同梱 `cloudflared` サービスのトークン（`docker compose --profile tunnel up -d`） |
 

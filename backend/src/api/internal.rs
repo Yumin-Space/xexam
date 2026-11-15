@@ -9,7 +9,8 @@
 //! `POST /internal/ai/heartbeat` (its state, [`ServiceReport`]) and, since v0.9, the three study-data routes
 //! `POST /internal/ai/question`, `POST /internal/ai/record` and `POST /internal/ai/record-info` (see `internal_study`), and,
 //! since v1.1, the four AI-bank routes `POST /internal/ai/gen/source`, `/gen/seeds`, `/gen/create` and `/gen/lookup` (see
-//! `internal_gen`).
+//! `internal_gen`), and, since v1.4, the three place-lookup routes `POST /internal/ai/geo/next` (a long poll: which addresses
+//! need a place), `/geo/result` (the places, or why not) and `/geo/source` (set or read the place source), see [`crate::geo`].
 //!
 //! - The backend never calls the AI service. ai-service reports its state with the heartbeat (at its start, at once after a
 //!   change, every 25 s, and a last "stopping" report when it shuts down); the last report is kept in memory only
@@ -570,7 +571,10 @@ pub(super) async fn dispatch(
             | "/internal/ai/gen/corpus"
             | "/internal/ai/gen/create"
             | "/internal/ai/gen/lookup"
-            | "/internal/ai/import/check",
+            | "/internal/ai/import/check"
+            | "/internal/ai/geo/next"
+            | "/internal/ai/geo/result"
+            | "/internal/ai/geo/source",
         ) => {
             if !st.0.ai_link.accepts(headers) {
                 body::drain(&mut body, 0, MAX_BODY.saturating_mul(4)).await;
@@ -608,6 +612,9 @@ pub(super) async fn dispatch(
                 "/internal/ai/gen/create" => super::internal_gen::create(st, &data).await,
                 "/internal/ai/gen/lookup" => super::internal_gen::lookup(st, &data).await,
                 "/internal/ai/import/check" => super::internal_gen::import_check(st, &data).await,
+                "/internal/ai/geo/next" => geo_next(st, &data).await,
+                "/internal/ai/geo/result" => geo_result(st, &data).await,
+                "/internal/ai/geo/source" => geo_source(st, &data).await,
                 _ => log_lines(st, &data),
             };
             match answer {
@@ -968,12 +975,14 @@ fn parse_event(v: &Value, now: i64) -> Result<AiEvent, AppError> {
 type Known = std::collections::HashMap<i64, (String, String, crate::auth::Role)>;
 
 /// The rows of validated events: the actor is the backend's own account when `userId` and `stamp` match, else the sent name
-/// (cleaned) of an account that is gone, else the service itself. Location is never set for AI events; the address is kept
-/// only while the sign-in info switch is open (`with_ip`).
+/// (cleaned) of an account that is gone, else the service itself. The address is kept only while the sign-in info switch
+/// is open (`with_ip`); the place is the cached lookup of that address in API mode and never anything in Cloudflare mode
+/// (an AI event carries no Cloudflare headers); it never starts a lookup.
 fn ai_rows(
     events: Vec<AiEvent>,
     known: &Known,
     with_ip: bool,
+    geo: &crate::geo::Geo,
 ) -> Vec<crate::database::ActivityRow> {
     use crate::database::{ActivityRow, ActivitySource, Merge};
     events
@@ -999,6 +1008,12 @@ fn ai_rows(
                     },
                 },
             };
+            let ip = e.ip.filter(|_| with_ip);
+            let place = ip
+                .as_deref()
+                .and_then(|i| i.parse::<std::net::IpAddr>().ok())
+                .map(|i| geo.api_place_of(i))
+                .unwrap_or_default();
             ActivityRow {
                 ts: e.at,
                 actor: actor.to_string(),
@@ -1010,10 +1025,10 @@ fn ai_rows(
                 detail: e.detail,
                 ok: e.ok,
                 reason: e.reason,
-                ip: e.ip.filter(|_| with_ip),
-                country: None,
-                region: None,
-                city: None,
+                ip,
+                country: place.country,
+                region: place.region,
+                city: place.city,
                 ua: e.ua,
                 source: ActivitySource::Ai,
                 src_id: Some(e.id),
@@ -1021,6 +1036,155 @@ fn ai_rows(
             }
         })
         .collect()
+}
+
+/// An object with exactly the keys `keys` (every one required), else 400.
+fn exact_keys(m: &serde_json::Map<String, Value>, keys: &[&str]) -> Result<(), AppError> {
+    if m.len() == keys.len() && keys.iter().all(|k| m.contains_key(*k)) {
+        Ok(())
+    } else {
+        Err(bad_request())
+    }
+}
+
+/// `POST /internal/ai/geo/next` `{"waitMs": 0..=20000}` → `{"lookups": [{"id": "<16 hex>", "ip": "<address>"}]}` (0 to 10
+/// items). A long poll: the answer comes at once when a job can be handed out, else when one can, when `waitMs` has passed
+/// or when the backend shuts down (empty). Nothing is handed out while the place source is not `api` or the eye is closed,
+/// and at most 30 jobs a minute.
+async fn geo_next(st: &AppState, data: &serde_json::Map<String, Value>) -> Result<Value, AppError> {
+    exact_keys(data, &["waitMs"])?;
+    let wait = match data.get("waitMs").and_then(Value::as_u64) {
+        Some(w) if w <= crate::geo::POLL_WAIT_MAX_MS => w,
+        _ => return Err(bad_request()),
+    };
+    let jobs = st.0.activity.geo().next(wait).await;
+    Ok(json!({
+        "lookups": jobs
+            .into_iter()
+            .map(|(id, ip)| json!({ "id": id, "ip": ip.to_string() }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
+/// One validated entry of `POST /internal/ai/geo/result`.
+struct GeoResult {
+    id: String,
+    outcome: crate::geo::Outcome,
+}
+
+fn geo_text(m: &serde_json::Map<String, Value>, key: &str) -> Result<Option<String>, AppError> {
+    match m.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => Ok(Some(s.clone())),
+        Some(_) => Err(bad_request()),
+    }
+}
+
+fn parse_geo_result(v: &Value) -> Result<GeoResult, AppError> {
+    let Value::Object(m) = v else {
+        return Err(bad_request());
+    };
+    let id = match m.get("id") {
+        Some(Value::String(s)) if is_lower_hex(s, 16) => s.clone(),
+        _ => return Err(bad_request()),
+    };
+    let outcome = match m.get("ok") {
+        Some(Value::Bool(true)) => {
+            exact_keys(m, &["id", "ok", "place"])?;
+            let Some(Value::Object(p)) = m.get("place") else {
+                return Err(bad_request());
+            };
+            if p.keys()
+                .any(|k| !matches!(k.as_str(), "country" | "countryCode" | "region" | "city"))
+            {
+                return Err(bad_request());
+            }
+            let country = geo_text(p, "country")?;
+            let code = geo_text(p, "countryCode")?;
+            let region = geo_text(p, "region")?;
+            let city = geo_text(p, "city")?;
+            crate::geo::Outcome::Place(crate::geo::clean_place(
+                country.as_deref(),
+                code.as_deref(),
+                region.as_deref(),
+                city.as_deref(),
+            ))
+        }
+        Some(Value::Bool(false)) => {
+            exact_keys(m, &["id", "ok", "code"])?;
+            match m.get("code").and_then(Value::as_str) {
+                Some(c) => crate::geo::Outcome::Failed(
+                    crate::geo::FailCode::parse(c).ok_or_else(bad_request)?,
+                ),
+                None => return Err(bad_request()),
+            }
+        }
+        _ => return Err(bad_request()),
+    };
+    Ok(GeoResult { id, outcome })
+}
+
+/// `POST /internal/ai/geo/result` `{"results": [R, ...]}` (1 to 10) → `{"ok": true}`. `R` is
+/// `{"id", "ok": true, "place": {"country", "countryCode", "region", "city"}}` or `{"id", "ok": false, "code"}`. The whole
+/// batch is refused (400) on the first bad entry; an unknown or forgotten id is ignored. A place is written only where the
+/// record still has none and the address still matches (`Store::geo_apply`), only while the place source is `api` and the
+/// eye is open; a result of before a "clear records" changes nothing.
+async fn geo_result(
+    st: &AppState,
+    data: &serde_json::Map<String, Value>,
+) -> Result<Value, AppError> {
+    exact_keys(data, &["results"])?;
+    let Some(Value::Array(list)) = data.get("results") else {
+        return Err(bad_request());
+    };
+    if list.is_empty() || list.len() > crate::geo::BATCH_MAX {
+        return Err(bad_request());
+    }
+    let results = list
+        .iter()
+        .map(parse_geo_result)
+        .collect::<Result<Vec<_>, _>>()?;
+    let now = crate::auth::unix_now();
+    let done: Vec<crate::geo::Completed> = results
+        .into_iter()
+        .filter_map(|r| st.0.activity.geo().complete(&r.id, r.outcome, now))
+        .collect();
+    if !done.is_empty() {
+        // The rows of the sign-in and the activity are written first, so the place can be put on them
+        st.0.activity.flush().await;
+        let store = st.0.store.clone();
+        super::blocking(move || {
+            for c in &done {
+                store.geo_apply(&c.ip, &c.place, c.since, &c.signin_users, &c.active_users)?;
+            }
+            Ok(())
+        })
+        .await?;
+    }
+    Ok(json!({ "ok": true }))
+}
+
+/// `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` sets the place source, `{}` only reads it →
+/// `{"source": ...}`. ai-service calls it when an administrator turns the external lookup on or deletes its settings
+/// (nothing is recorded in the activity log here: ai-service writes its own event). Switching to `cloudflare` forgets the
+/// queue; to `api` wakes a waiting poll.
+async fn geo_source(
+    st: &AppState,
+    data: &serde_json::Map<String, Value>,
+) -> Result<Value, AppError> {
+    match data.get("source") {
+        None if data.is_empty() => {}
+        Some(Value::String(s)) if data.len() == 1 && matches!(s.as_str(), "api" | "cloudflare") => {
+            let api = s == "api";
+            let store = st.0.store.clone();
+            super::blocking(move || store.set_geo_source(api, None)).await?;
+            st.0.activity.reload_settings(&st.0.store);
+        }
+        _ => return Err(bad_request()),
+    }
+    Ok(json!({
+        "source": if st.0.activity.geo().is_api() { "api" } else { "cloudflare" },
+    }))
 }
 
 /// `POST /internal/ai/activity` `{"events": [...]}` (at most 50) → `{"ok": true}`. The whole batch is refused (400) on the
@@ -1053,7 +1217,12 @@ async fn ai_activity(
         Ok(k)
     })
     .await?;
-    let rows = ai_rows(events, &known, st.0.activity.signin_info());
+    let rows = ai_rows(
+        events,
+        &known,
+        st.0.activity.signin_info(),
+        st.0.activity.geo(),
+    );
     st.0.activity
         .write_now(&st.0.store, rows)
         .await
@@ -1170,6 +1339,7 @@ mod ai_activity_tests {
             ],
             &known,
             true,
+            &crate::geo::Geo::new(),
         );
         let got = rows
             .iter()
@@ -1201,6 +1371,7 @@ mod ai_activity_tests {
             vec![parse_event(&ev(json!({})), now).expect("closed")],
             &known,
             false,
+            &crate::geo::Geo::new(),
         );
         assert_eq!(closed[0].ip, None);
     }

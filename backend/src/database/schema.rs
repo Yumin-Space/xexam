@@ -31,8 +31,11 @@
 //!   sign-in info of a user (`users.last_active_at / last_login_ip / _country / _region / _city`), the activity log and the
 //!   small `system_settings` table, and an index for the idempotent attempt save (`V8_COLUMNS`, `MIGRATE_V8_TABLES`). IP and
 //!   location are written only while the single sign-in info switch is on. A v1.2 binary opens a v8 file unchanged.
+//! - Schema v9 (v1.4) is additive: the last activity IP, its place (three columns) and the cleaned user agent of the last
+//!   activity of a user (`V9_COLUMNS`). Nothing is backfilled, and a v1.3 binary opens a v9 file unchanged (`upgrade` treats
+//!   any newer schema as "nothing to migrate"). The IP and place are written only while the sign-in info switch is on.
 
-pub const SCHEMA_VERSION: &str = "8";
+pub const SCHEMA_VERSION: &str = "9";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -318,3 +321,15 @@ CREATE TABLE IF NOT EXISTS system_settings (
 /// Index that needs `attempts.session_key` / `attempts.started_at` (schema v6): the lookup of the idempotent attempt save.
 pub const MIGRATE_V8_INDEXES: &str = "
 CREATE INDEX IF NOT EXISTS idx_attempts_session ON attempts(user_id, session_key) WHERE session_key IS NOT NULL;";
+
+/// Columns added by schema v9 (same rules as [`V2_COLUMNS`]).
+pub const V9_COLUMNS: [(&str, &str, &str); 5] = [
+    // IP of the last activity write: written and shown only while the `users.signin_info` switch is open
+    ("users", "last_active_ip", "last_active_ip TEXT"),
+    // Place of that IP (country code or name); written and shown only while the switch is open
+    ("users", "last_active_country", "last_active_country TEXT"),
+    ("users", "last_active_region", "last_active_region TEXT"),
+    ("users", "last_active_city", "last_active_city TEXT"),
+    // Cleaned User-Agent (at most 256 characters) of the last activity write; written also while the switch is closed
+    ("users", "last_active_ua", "last_active_ua TEXT"),
+];

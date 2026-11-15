@@ -19,6 +19,9 @@ one-row practice bar, a collapsible AI+ panel under the card, a centered GitHub 
   desktop-9-signin      the sign-in page
   desktop-10-users      Users: the AI+ feature line of each user (shown while AI+ is available), the bright AI+ badge
                         of the administrators and sam, the dark one of alex (AI+ feature paused), none for kim
+                        (the "Users" tab of #/users)
+  desktop-10-users-signin  Users, tab "Sign-in IP and location" (#/users?tab=signin): the eye open, Clear records and the
+                        location source setting
   desktop-11-practice   practice: one question checked right, the next one checked wrong (orange) with the right ones green;
                         the bar shows BOTH Check answer (greyed once checked) and Next, and the collapsed AI+ panel is
                         under the card
@@ -90,6 +93,7 @@ import base64
 import json
 import os
 import time
+import urllib.request
 
 import seed
 from browser import Chrome, strip_png
@@ -101,6 +105,8 @@ SCENES = ['desktop-%d-%s.png' % kv for kv in enumerate(
     start=1)] + [
     'iphone-1-home.png', 'iphone-2-quiz.png', 'iphone-3-menu.png', 'iphone-4-records.png', 'iphone-5-ai-hint.png',
     'iphone-6-result.png', 'iphone-7-ai-chat.png', 'iphone-8-banks.png']
+
+SCENES.insert(SCENES.index('desktop-10-users.png') + 1, 'desktop-10-users-signin.png')
 
 BROWSER_LANG = {'en': 'en-US', 'zh-CN': 'zh-CN', 'ja': 'ja'}
 UI_LANG = {'en': 'en', 'zh-CN': 'zh', 'ja': 'ja'}          # the uiLang / questionLang setting
@@ -349,6 +355,16 @@ JS_USERS_STATE = r"""(() => {
   const n = s => document.querySelectorAll(s).length;
   return n('.ai-badge:not(.off)') + ' bright badge(s), ' + n('.ai-badge.off') + ' dark, ' + n('.us-ailine') + ' AI+ line(s)';
 })()"""
+
+# User management tabs: two, one selected, the selected one controls an element that exists
+JS_USER_TABS = r"""((expected) => {
+  const tabs = window.__qa('.us-tabs button').filter(b => window.__shown(b));
+  const on = tabs.filter(b => b.getAttribute('aria-pressed') === 'true');
+  const bad = [];
+  if (tabs.length !== 2) bad.push(tabs.length + ' tabs (two expected)');
+  if (on.length !== 1 || tabs.indexOf(on[0]) !== expected) bad.push('wrong tab selected');
+  return bad.join('; ') || ('ok: ' + tabs.map(b => (b.innerText || '').replace(/\s+/g, ' ').trim()).join(' | '));
+})"""
 
 # AI settings: the AI+ feature cells of the users with the AI+ feature (for the log of the run)
 JS_AI_FUNCTIONS = r"""(() => [...new Set([...document.querySelectorAll('[id^="ais-feat-"]')].map(b => b.closest('tr, li')?.innerText
@@ -911,6 +927,33 @@ def shoot_language(chrome_exe, base, cookie, lang, out, upload, only=(), with_lo
     return s.written
 
 
+# User management with the sign-in info eye open: the demo users sign in once more from made-up documentation addresses
+# (the backend image believes X-Real-IP / X-Geo-* because it is told it sits behind Nginx), so the last sign-in and last
+# active lines show an IP, a place and a device. Every value is made up; the eye is closed again after the image.
+DEMO_SEEN = (('admin', '203.0.113.10', 'Example City', 'Example Region', 'US'),
+             ('alex', '198.51.100.7', 'Example City', 'Example Region', 'US'),
+             ('sam', '192.0.2.44', 'Sample Town', 'Sample Region', 'US'))
+
+
+def _admin_session(base, cookie):
+    sess = seed.Session(base)
+    sess.cookie[seed.COOKIE] = cookie
+    return sess
+
+
+def _show_sign_in_places(base, cookie):
+    _admin_session(base, cookie).call('/api/users/signin-info', {'enabled': True})
+    for name, ip, city, region, country in DEMO_SEEN:
+        password = seed.DEMO_PASSWORD
+        req = urllib.request.Request(
+            base + '/api/auth/login', method='POST',
+            data=json.dumps({'username': name, 'password': password}).encode(),
+            headers={'Content-Type': 'application/json', 'Origin': base, 'X-Real-IP': ip, 'X-Geo-Country': country,
+                     'X-Geo-Region': region, 'X-Geo-City': city,
+                     'User-Agent': IPHONE_UA if name == 'alex' else DESKTOP_UA})
+        urllib.request.urlopen(req, timeout=60).read()
+
+
 def _desktop_scenes(s, base, cookie, code, upload, with_log):
     cdp = s.cdp
     s.desktop()
@@ -985,9 +1028,19 @@ def _desktop_scenes(s, base, cookie, code, upload, with_log):
         s.js("fetch('/api/import/cancel', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}).then(r => r.status)")
     s.nav('#/settings')
     s.page('desktop-6-settings.png', cap=1800)
-    s.nav('#/users', settle=2.2)
+    users_images = ('desktop-10-users.png', 'desktop-10-users-signin.png')
+    if any(s.wanted(n) for n in users_images):
+        _show_sign_in_places(base, cookie)       # the eye is open for these images: made-up addresses and places
+    s.nav('#/users?tab=users', settle=2.6)
     print('  users:', s.js(JS_USERS_STATE))
+    print('  users tabs:', s.js('(%s)(0)' % JS_USER_TABS))
     s.page('desktop-10-users.png', cap=1100)
+    if s.wanted('desktop-10-users-signin.png'):
+        s.nav('#/users?tab=signin', settle=2.6)
+        print('  sign-in tab:', s.js('(%s)(1)' % JS_USER_TABS))
+        s.page('desktop-10-users-signin.png', cap=1100)
+    if any(s.wanted(n) for n in users_images):
+        _admin_session(base, cookie).call('/api/users/signin-info', {'enabled': False})
     if s.wanted('desktop-12-user-banks.png'):
         admin = seed.Session(base)
         admin.cookie[seed.COOKIE] = cookie

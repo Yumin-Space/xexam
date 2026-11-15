@@ -60,7 +60,7 @@ fn user(s: &Store, name: &str, role: Role) -> i64 {
 
 /// Everything the schema-8 step added, removed again: a fresh database becomes a schema-7 one.
 const DOWNGRADE_TO_7: &str = "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; \
-    ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
+    ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
     ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
     ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
     ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
@@ -123,7 +123,7 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
     );
     drop(s);
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "9");
     // the backfill
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM sessions WHERE started_at IS NULL"),
@@ -147,7 +147,7 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
             &c,
             "SELECT actor || '|' || action || '|' || detail || '|' || result FROM activity_log"
         ),
-        "system|system.migrate|{\"from\":7,\"to\":8}|ok"
+        "system|system.migrate|{\"from\":7,\"to\":9}|ok"
     );
     // fresh == migrated
     assert_eq!(master(&db), master(&fresh));

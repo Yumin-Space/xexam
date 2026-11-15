@@ -142,6 +142,8 @@ pub struct App {
     heartbeat: tokio::sync::Mutex<()>,
     /// Wakes the heartbeat task for a report at once
     heartbeat_signal: Arc<Notify>,
+    /// The external IP-location lookup (v1.4): HTTP client, saved settings, per-minute count
+    pub geo: crate::geo::GeoState,
 }
 
 /// Uploads kept in memory at once (IX-1).
@@ -164,6 +166,10 @@ pub struct Knobs {
     /// Test hook: the model context (tokens) the whole-file import fits its prefix into; 0 = the model listing's figure,
     /// else 128 000 (A-OWNER-71)
     pub import_context_tokens: std::sync::atomic::AtomicU64,
+    /// Location lookups per wall-clock minute (`geo::GEO_PER_MIN` = 30; tests lower it)
+    pub geo_per_minute: std::sync::atomic::AtomicU64,
+    /// Milliseconds the location worker asks the backend to wait for work (15 000; tests lower it)
+    pub geo_wait_ms: std::sync::atomic::AtomicU64,
     /// Test hook: the extraction child hangs (debug builds only)
     pub hang_child: std::sync::atomic::AtomicBool,
     /// Test hook: the binary the extraction child is started from (integration tests pass the service's own binary)
@@ -181,6 +187,8 @@ impl Default for Knobs {
             backoff_scale: AtomicU64::new(100),
             place_poll_ms: AtomicU64::new(2000),
             import_context_tokens: AtomicU64::new(0),
+            geo_per_minute: AtomicU64::new(crate::geo::GEO_PER_MIN),
+            geo_wait_ms: AtomicU64::new(15_000),
             hang_child: AtomicBool::new(false),
             exe_override: Mutex::new(None),
         }
@@ -429,6 +437,12 @@ impl App {
             .read(tables::load_limits)
             .map_err(|e| format!("cannot read the AI limits: {e}"))?;
         let client = crate::provider::provider_client(&cfg.version, &cfg.timeouts)?;
+        let geo = crate::geo::GeoState::new(&cfg.version, &cfg.timeouts)?;
+        geo.set_config(
+            store
+                .read(crate::store::geo::load)
+                .map_err(|e| format!("cannot read the location lookup settings: {e}"))?,
+        );
         let (shutdown_tx, shutdown) = watch::channel(false);
         let app = App {
             version: cfg.version.clone(),
@@ -468,6 +482,7 @@ impl App {
             outbox: tokio::sync::Mutex::new(()),
             heartbeat: tokio::sync::Mutex::new(()),
             heartbeat_signal: Arc::new(Notify::new()),
+            geo,
         };
         app.check_keys_at_start()?;
         let app = AppState(Arc::new(app));
@@ -565,6 +580,13 @@ impl App {
     /// The current limits.
     pub fn limits(&self) -> Limits {
         *self.limits.read().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Reloads the saved location lookup settings from the database into memory (after a save or a delete).
+    pub fn reload_geo(&self) -> rusqlite::Result<()> {
+        self.geo
+            .set_config(self.store.read(crate::store::geo::load)?);
+        Ok(())
     }
 
     /// Replaces the limits in memory and resizes the gate (the database row is written by the caller).

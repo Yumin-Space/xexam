@@ -1,4 +1,4 @@
-// Activity log helpers (v1.3): the short device label, the one-line detail summary, the filter values and the
+// Activity log helpers (v1.3; v1.4 address column): the short device label, the one-line detail summary, the filter values and the
 // "administrator sign-in ends soon" check. Pure: no DOM, no network (tested in activity.test.ts).
 import type { ActivityGroup } from '../types/api.ts';
 import { serverMs } from './users-sort.ts';
@@ -29,6 +29,15 @@ export function deviceLabel(ua: string | null | undefined): string | null {
   else if (/Linux|X11/.test(s)) os = 'Linux';
   const parts = [browser, os].filter((p): p is string => p != null);
   return parts.length ? parts.join(' · ') : s.slice(0, 40);
+}
+
+/**
+ * The address column of an activity row (v1.4): eye open = `IP · place · device` (a missing IP or device shows "—", a missing
+ * place is left out); eye closed = the device alone (it is not an address), "—" when unknown
+ */
+export function addressText(ip: string | null, place: string | null, device: string | null, eyeOpen: boolean): string {
+  if (!eyeOpen) return device ?? '—';
+  return [ip ?? '—', place, device ?? '—'].filter((x): x is string => x != null && x !== '').join(' · ');
 }
 
 const scalar = (v: unknown): string | null =>

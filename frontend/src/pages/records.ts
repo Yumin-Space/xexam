@@ -210,7 +210,12 @@ function summaryControl(r: RecordSummary, state: ControlState): HTMLElement | nu
   });
   btn.classList.add('rec-lblbtn', 'rec-ai-btn');
   btn.append(h('span', { class: 'rec-lbl', 'aria-hidden': 'true' }, t('aiplus.summary')));
-  if (!state.usable) return withReason(btn, greyText(state, t('aiplus.summary')));
+  if (!state.usable) {
+    // v1.4 (owner): greyed exactly like a greyed AI 生成题 button, with the same 无法使用 tag when the AI+ feature itself is
+    // unavailable (SH-17); the reason stays in the tip
+    if (state.tag) btn.append(h('span', { class: 'rec-na', 'aria-hidden': 'true' }, t('aiplus.na')));
+    return withReason(btn, greyText(state, t('aiplus.summary')));
+  }
   btn.setAttribute('data-aip-opener', '');
   btn.setAttribute('aria-haspopup', 'dialog');
   return btn;

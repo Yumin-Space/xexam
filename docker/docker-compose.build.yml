@@ -30,24 +30,41 @@ services:
     container_name: xexam-backend
     restart: unless-stopped
     environment:
-      # Time zone of the timestamps: by default the host's (its /etc/localtime is mounted below). Only a TZ set in .env
-      # (for example TZ=UTC) overrides it; with no value here, Compose does not set TZ at all inside the container.
+      # Not set = the default, the host's time zone (/etc/localtime is mounted below):
+      # TZ:  (the host's)
+      # Or: TZ:  UTC
       TZ:
+      # Empty = the default, Xexam opens only as localhost / 127.0.0.1:
+      # XEXAM_ALLOWED_HOSTS:  (empty)
+      # Or: XEXAM_ALLOWED_HOSTS:  xexam.example.com / xexam.example.com,192.168.1.20
       XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"
+      # Empty = the default; needed only when a reverse proxy rewrites the Host to the origin server:
+      # XEXAM_ALLOWED_ORIGINS:  (empty)
+      # Or: XEXAM_ALLOWED_ORIGINS:  https://xexam.example.com
       XEXAM_ALLOWED_ORIGINS: "${XEXAM_ALLOWED_ORIGINS:-}"
+      # Empty = the default, the Host is checked:
+      # XEXAM_ALLOW_ANY_HOST:  0
+      # Or: XEXAM_ALLOW_ANY_HOST:  1 (only when authentication is already in front)
       XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
+      # Empty = the default, at most 30 seconds to read one Excel file:
+      # XEXAM_PARSE_TIMEOUT_SECS:  30
+      # Or: XEXAM_PARSE_TIMEOUT_SECS:  60
       XEXAM_PARSE_TIMEOUT_SECS: "${XEXAM_PARSE_TIMEOUT_SECS:-30}"
-      # SQLite journal: WAL by default. Only XEXAM_SQLITE_JOURNAL=delete set in .env (for unusual storage such as a network
-      # filesystem) keeps the old DELETE mode; with no value here, Compose does not set it at all inside the container.
+      # Not set = the default, the SQLite WAL journal:
+      # XEXAM_SQLITE_JOURNAL:  (WAL)
+      # Or: XEXAM_SQLITE_JOURNAL:  delete (only for a network filesystem or a Windows folder bind-mounted into Docker)
       XEXAM_SQLITE_JOURNAL:
-      # 1 = the session cookies always get Secure (behind an HTTPS proxy such as Cloudflare Tunnel). Only a value set in .env
-      # is passed in; with no value here, Compose does not set it inside the container (Secure then follows the request).
+      # Not set = the default, the cookie gets Secure when the request came over HTTPS:
+      # XEXAM_COOKIE_SECURE:  (follows the request)
+      # Or: XEXAM_COOKIE_SECURE:  1 (always Secure; only when Xexam is always reached over HTTPS)
       XEXAM_COOKIE_SECURE:
-      # The backend's log filter (default info, also when empty; for example XEXAM_LOG=debug). Only a value set in .env is passed in.
+      # Not set or empty = the default log filter:
+      # XEXAM_LOG:  info
+      # Or: XEXAM_LOG:  debug
       XEXAM_LOG:
-      # The token the backend and ai-service use between them. Leave it unset: the backend creates a random one in the link
-      # volume. Only a value set in .env (at least 32 printable ASCII characters without spaces, e.g. the output of
-      # openssl rand -hex 32; the same for both services) is passed in.
+      # Not set = the default, a random token in the link volume (the same value goes to ai-service):
+      # XEXAM_INTERNAL_TOKEN:  (random)
+      # Or: XEXAM_INTERNAL_TOKEN:  the output of openssl rand -hex 32 (at least 32 printable ASCII characters, no spaces)
       XEXAM_INTERNAL_TOKEN:
     volumes:
       - data:/data
@@ -85,16 +102,25 @@ services:
       backend:
         condition: service_healthy
     environment:
-      # Same rule as for the backend: the host's time zone unless TZ is set in .env
+      # Not set = the default, the host's time zone (the same as the backend):
+      # TZ:  (the host's)
+      # Or: TZ:  UTC
       TZ:
-      # The key that encrypts the saved AI provider keys. Leave it unset: a random key file is created in the AI data volume.
-      # Only a value set in .env (32 bytes as 64 hex digits or base64, for example from openssl rand -base64 32) is passed in.
+      # Not set = the default, a random key file in the AI data volume encrypts the saved AI keys:
+      # XEXAM_AI_SECRET_KEY:  (key file)
+      # Or: XEXAM_AI_SECRET_KEY:  the output of openssl rand -base64 32 (32 bytes as 64 hex digits or base64)
       XEXAM_AI_SECRET_KEY:
-      # Must be the same value as for the backend (or unset in both): at least 32 printable ASCII characters, no spaces
+      # Not set = the default; must be the backend's value (or unset in both):
+      # XEXAM_INTERNAL_TOKEN:  (random)
+      # Or: XEXAM_INTERNAL_TOKEN:  the same value as for the backend
       XEXAM_INTERNAL_TOKEN:
-      # The AI service's log filter (default info). Only a value set in .env is passed in.
+      # Not set = the default log filter of the AI service:
+      # XEXAM_AI_LOG:  info
+      # Or: XEXAM_AI_LOG:  debug
       XEXAM_AI_LOG:
-      # SQLite journal of the AI database: WAL by default; XEXAM_AI_SQLITE_JOURNAL=delete set in .env keeps the DELETE mode.
+      # Not set = the default, the SQLite WAL journal of the AI database:
+      # XEXAM_AI_SQLITE_JOURNAL:  (WAL)
+      # Or: XEXAM_AI_SQLITE_JOURNAL:  delete (as XEXAM_SQLITE_JOURNAL)
       XEXAM_AI_SQLITE_JOURNAL:
     volumes:
       - ai_data:/data
@@ -131,16 +157,19 @@ services:
       backend:
         condition: service_healthy
     ports:
+      # Empty = the default, only this machine can connect:
+      # XEXAM_BIND:  127.0.0.1:8765
+      # Or: XEXAM_BIND:  0.0.0.0:8765 (other machines on the network too)
       - "${XEXAM_BIND:-127.0.0.1:8765}:8080"
-    # tunnel: only this service and cloudflared live there, so the frontend trusts that subnet for the real client address
     networks: [internal, public, tunnel]
     environment:
-      # The peers whose forwarded client address and location headers Nginx believes: by default the cloudflared service
-      # below (its own network, tunnel). A value set in .env, even an empty one, wins: empty = trust nobody; for cloudflared
-      # on the host or on another machine put its address here (for the host: the gateway of the public network,
-      # 172.31.255.1). Never trust an address that untrusted clients can reach: they could forge their address.
-      XEXAM_TRUSTED_PROXIES: "${XEXAM_TRUSTED_PROXIES-172.31.254.2}"
-      # Which header carries the client address: CF-Connecting-IP (Cloudflare, default), X-Forwarded-For or X-Real-IP
+      # Empty = the default, every private network:
+      # XEXAM_TRUSTED_PROXIES:  10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # Or: XEXAM_TRUSTED_PROXIES:  10.1.1.1 / 10.0.0.0/8，10.1.1.1 / none
+      XEXAM_TRUSTED_PROXIES: "${XEXAM_TRUSTED_PROXIES:-}"
+      # Empty = the default, Cloudflare's header:
+      # XEXAM_REAL_IP_HEADER:  CF-Connecting-IP
+      # Or: XEXAM_REAL_IP_HEADER:  X-Forwarded-For / X-Real-IP
       XEXAM_REAL_IP_HEADER: "${XEXAM_REAL_IP_HEADER:-CF-Connecting-IP}"
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
@@ -162,12 +191,15 @@ services:
     restart: unless-stopped
     command: tunnel --no-autoupdate run
     environment:
+      # Empty = the default, no tunnel (this service runs only with --profile tunnel):
+      # TUNNEL_TOKEN:  (empty)
+      # Or: TUNNEL_TOKEN:  the token of your Cloudflare Tunnel
       TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}"
     depends_on: [frontend]
     # tunnel: to the frontend; egress: outbound internet to Cloudflare
     networks:
       tunnel:
-        ipv4_address: 172.31.254.2   # fixed, so the default trust below names this one service and not the whole subnet
+        ipv4_address: 172.31.254.2   # fixed, so the tunnel's address is stable (it is inside the default trusted range 172.16.0.0/12)
       egress:
     security_opt: ["no-new-privileges:true"]
     cap_drop: [ALL]
@@ -181,13 +213,13 @@ networks:
   internal:
     internal: true
   # Direct and LAN connections arrive here. The subnet is pinned so the gateway address (172.31.255.1, what a cloudflared
-  # on the host appears as) is stable and can be written in .env as XEXAM_TRUSTED_PROXIES.
+  # on the host appears as) is stable; the default XEXAM_TRUSTED_PROXIES (172.16.0.0/12) already covers it.
   public:
     ipam:
       config:
         - subnet: 172.31.255.0/28
           gateway: 172.31.255.1
-  # Only the frontend and cloudflared: Nginx trusts this subnet (XEXAM_TRUSTED_PROXIES) by default
+  # Only the frontend and cloudflared (inside the default XEXAM_TRUSTED_PROXIES range 172.16.0.0/12)
   tunnel:
     ipam:
       config:

@@ -25,6 +25,7 @@ pub mod admin;
 pub mod admin_conn;
 pub mod admin_models;
 pub mod gen;
+pub mod geo;
 pub mod hide;
 pub mod import;
 pub mod study;
@@ -90,6 +91,11 @@ enum Route {
     StudySaved,
     SummaryAsk,
     SummarySaved,
+    GeoGet,
+    GeoTest,
+    GeoSave,
+    GeoEnable,
+    GeoDelete,
 }
 
 /// (path, GET route, POST route)
@@ -179,6 +185,11 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
     ("/api/ai/study/saved", Some(Route::StudySaved), None),
     ("/api/ai/summary/ask", None, Some(Route::SummaryAsk)),
     ("/api/ai/summary/saved", Some(Route::SummarySaved), None),
+    ("/api/ai/admin/geo", Some(Route::GeoGet), None),
+    ("/api/ai/admin/geo/test", None, Some(Route::GeoTest)),
+    ("/api/ai/admin/geo/save", None, Some(Route::GeoSave)),
+    ("/api/ai/admin/geo/enable", None, Some(Route::GeoEnable)),
+    ("/api/ai/admin/geo/delete", None, Some(Route::GeoDelete)),
 ];
 
 impl Route {
@@ -208,6 +219,11 @@ impl Route {
             | Route::Features
             | Route::AdminFree
             | Route::AdminGen
+            | Route::GeoGet
+            | Route::GeoTest
+            | Route::GeoSave
+            | Route::GeoEnable
+            | Route::GeoDelete
             | Route::Free => Access::Admin,
             _ => Access::Signed,
         }
@@ -253,6 +269,10 @@ pub const ADMIN_EVENTS: &[(&str, &[&str])] = &[
     ("/api/ai/admin/resume", &["ai.users.features"]),
     ("/api/ai/admin/features", &["ai.users.features"]),
     ("/api/ai/admin/free", &["ai.users.features"]),
+    ("/api/ai/admin/geo/test", &["ai.geo.test"]),
+    ("/api/ai/admin/geo/save", &["ai.geo.save"]),
+    ("/api/ai/admin/geo/enable", &["ai.geo.enable"]),
+    ("/api/ai/admin/geo/delete", &["ai.geo.delete"]),
 ];
 
 /// What a handler gets.
@@ -506,6 +526,11 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::StudySaved => study::saved(ctx).await,
         Route::SummaryAsk => study::summary_ask(ctx).await,
         Route::SummarySaved => study::summary_saved(ctx).await,
+        Route::GeoGet => geo::get(ctx).await,
+        Route::GeoTest => geo::test(ctx).await,
+        Route::GeoSave => geo::save(ctx).await,
+        Route::GeoEnable => geo::enable(ctx).await,
+        Route::GeoDelete => geo::delete(ctx).await,
     }
 }
 
@@ -660,6 +685,30 @@ mod tests {
                     assert_eq!(r.access(), Access::Admin, "{path}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_v14_geo_routes_exist_and_need_an_administrator() {
+        let post = |p: &str| ROUTES.iter().any(|(q, _, post)| *q == p && post.is_some());
+        let get = |p: &str| ROUTES.iter().any(|(q, get, _)| *q == p && get.is_some());
+        assert!(get("/api/ai/admin/geo"));
+        assert!(!post("/api/ai/admin/geo"));
+        for p in [
+            "/api/ai/admin/geo/test",
+            "/api/ai/admin/geo/save",
+            "/api/ai/admin/geo/enable",
+            "/api/ai/admin/geo/delete",
+        ] {
+            assert!(post(p), "{p}");
+            assert!(!get(p), "{p}");
+            let events = ADMIN_EVENTS
+                .iter()
+                .find(|(q, _)| *q == p)
+                .map(|(_, a)| *a)
+                .unwrap_or(&[]);
+            let name = p.rsplit('/').next().unwrap_or("");
+            assert_eq!(events, [format!("ai.geo.{name}").as_str()], "{p}");
         }
     }
 

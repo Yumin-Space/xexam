@@ -6,6 +6,19 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.4 — 2026-11-15
+
+**AI 对话只在需要的地方显示模型名，Nginx 默认信任内网代理。升级：拉取镜像（并取用新的 `docker-compose.yml`）；主数据库自动升到 schema 9，AI 数据库升到 schema 8，两者都会先写一份备份副本。**
+
+- **用户管理分成两个标签页**：**用户**（列表）和**登录 IP 和所在地**（眼睛、**清除记录**和**所在地来源**设置），做法与 AI 设置的标签页相同；第二个是 `#/users?tab=signin`。
+- **AI 对话的模型名**：回答只有在管理员处于**自由模式**时才显示模型（“连接 · 模型”），他们在那里也可以选择模型。普通模式下以及对其他所有人，回答只显示“AI”。AI 设置里的对话查看器仍然显示模型。
+- **AI 总结按钮**：**学习记录**（列表和记录页）里的 **AI 总结**按钮改成和其他 AI+ 操作按钮（**AI 生成题**、AI 导入）一样的黄底白字；不能用时的灰色样子也和 AI 生成题按钮一样。
+- **不用配置就能看到真实访客地址**：Nginx 现在默认信任内网代理（`XEXAM_TRUSTED_PROXIES` 默认 `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16`，写在 `docker-compose.yml` 的注释里，变量本身留空），所以跑在宿主机上、或封闭内网另一台机器上的 `cloudflared`，不用配置就能显示访客的真实地址和所在地。要恢复 v1.3 的行为（只信任自带的隧道）请设 `XEXAM_TRUSTED_PROXIES=172.31.254.2`。空值或留空（例如部署时留空，或写成 `""`）现在也表示默认值；要谁都不信任请写 `none`。
+- **用户最后在哪里活动，以及没有 Cloudflare 时的所在地**：**用户管理**里除最后登录外，现在还显示每位用户的**最后活动 IP**、**活动所在地**和**最后活动设备**（IP 和所在地只在登录信息的眼睛打开时显示；点设备这一行可看完整的 User-Agent），**系统日志**每一行显示 **IP · 所在地 · 设备**。登录 IP 区块新增**所在地来源**设置：**Cloudflare 请求头**（默认），或给没有用 Cloudflare 的部署用的**外部查询 API**（有 ipinfo、ip-api、ipapi.co、ipwho.is、ip.sb 预设，也可自定义含 `{ip}` 和 `{key}` 的地址模板和字段映射；密钥加密保存、不再显示；必须测试通过才能启用）。查询由 ai-service 发出，AI+ 关闭时也能用，不会拖慢登录，从不发送内网或保留地址，每个 IP 的所在地记住 24 小时，每分钟最多查 30 次；显示什么只由所选来源决定。见 [usage.md](usage.md) 的 14.2 节和 [deployment.md](deployment.md) 的 3.5 节。
+- **系统日志：展开全部详情**：活动记录列表的工具栏新增绿色眼睛按钮，一点就展开每条记录的详情（完整设备信息、IP、所在地、完整对象），之后加载的记录也会展开；再点一下全部收起。另外，在 iPhone 上点记录时页面不再往上弹。
+- **没有占位符的提示词**：题库管理 → 指南 →“用外部 AI 制作要导入的 Excel”里的提示词现在可以直接使用：附上文件、粘贴提示词即可，不需要改任何内容。资料里已有题目时，它会让 AI 把每一道都转换过来（数量、内容和答案不变，非选择题改写成选择题），否则按资料的多少决定题数；工作表名用资料的主题。提示词末尾附有两行示例（一道单选题、一道多选题，六个单元格齐全），只用来说明格式。AI 生成和 AI 导入的提示词也附带了一道虚构的示例题，被拒绝后重新请求的回答会更少。
+- 测试：后端 548 → 583，前端 784 → 812，AI 服务 1044 → 1108
+
 ### v1.3 — 2026-11-15
 
 **带分支的 AI 对话、支持多个连接和模型池的 AI 设置、共享的提示和解析、更快的 AI 出题、保持更久的登录和活动记录，以及登录 IP 和大致所在地。升级：拉取镜像（要看真实访客地址，再拿新的 `docker-compose.yml`）；主数据库升到 schema 8，AI 数据库升到 schema 7，都会先写一份备份副本。**

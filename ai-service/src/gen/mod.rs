@@ -247,6 +247,34 @@ pub(crate) mod testkit {
     const CONS: &[u8] = b"bcdfghjklmprstvwz";
     const VOW: &[u8] = b"aeiou";
 
+    /// The line that introduces the worked example in every prompt that asks for question JSON.
+    pub const EXAMPLE_INTRO: &str = "Example of one complete question (made-up; only the format and style count, never copy its content):";
+
+    /// Every worked example of a prompt (the line after each intro line), each parsed by the service's own
+    /// `parse_answer`; panics when a line is missing, is not one question or does not parse.
+    pub fn prompt_examples(prompt: &str) -> Vec<RawQuestion> {
+        let lines: Vec<&str> = prompt.lines().collect();
+        let mut out = Vec::new();
+        for (i, l) in lines.iter().enumerate() {
+            if *l == EXAMPLE_INTRO {
+                let json = lines.get(i + 1).expect("an example line after the intro");
+                let mut parsed = crate::gen::parse::parse_answer(json).expect("the example parses");
+                assert_eq!(parsed.len(), 1, "exactly one question");
+                out.push(parsed.remove(0).expect("the example question is usable"));
+            }
+        }
+        out
+    }
+
+    /// The raw example lines of a prompt (to compare prompts with each other).
+    pub fn example_lines(prompt: &str) -> Vec<String> {
+        let lines: Vec<&str> = prompt.lines().collect();
+        (0..lines.len())
+            .filter(|&i| lines[i] == EXAMPLE_INTRO)
+            .map(|i| lines[i + 1].to_string())
+            .collect()
+    }
+
     /// A unique pseudo word (six letters, no real English word, never a keyword of the checks).
     pub fn pw(n: usize) -> String {
         let mut x = n;

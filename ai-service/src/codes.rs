@@ -136,6 +136,45 @@ impl ApiError {
         .with_field(field)
     }
 
+    // —— v1.4: external IP-location lookup (`ai.geo.*`) ——————————————————————————————————————————————————————————————
+    /// The lookup URL template is not valid (400 `ai.geo.badUrl`, field `urlTemplate`).
+    pub fn geo_bad_url() -> ApiError {
+        ApiError::new(400, "ai.geo.badUrl", text_of("ai.geo.badUrl")).with_field("urlTemplate")
+    }
+    /// The key header name or value is not valid (400 `ai.geo.badHeader`); `field` is `keyHeaderName` or `keyHeaderValue`.
+    pub fn geo_bad_header(field: &'static str) -> ApiError {
+        ApiError::new(400, "ai.geo.badHeader", text_of("ai.geo.badHeader")).with_field(field)
+    }
+    /// The key of the lookup has a bad format (400 `ai.geo.badKey`, field `key`).
+    pub fn geo_bad_key() -> ApiError {
+        ApiError::new(400, "ai.geo.badKey", text_of("ai.geo.badKey")).with_field("key")
+    }
+    /// `{key}` is used in the URL path or the header but there is no key (400 `ai.geo.keyRequired`, field `key`).
+    pub fn geo_key_required() -> ApiError {
+        ApiError::new(400, "ai.geo.keyRequired", text_of("ai.geo.keyRequired")).with_field("key")
+    }
+    /// A field mapping path is not valid, or no place field is mapped (400 `ai.geo.badMapping`); `field` is
+    /// `mapping.<name>`.
+    pub fn geo_bad_mapping(field: &'static str) -> ApiError {
+        ApiError::new(400, "ai.geo.badMapping", text_of("ai.geo.badMapping")).with_field(field)
+    }
+    /// Enabling without saved (= tested) settings (409 `ai.geo.testFirst`).
+    pub fn geo_test_first() -> ApiError {
+        ApiError::new(409, "ai.geo.testFirst", text_of("ai.geo.testFirst"))
+    }
+    /// The saved lookup key cannot be decrypted (409 `ai.geo.keyProblem`).
+    pub fn geo_key_problem() -> ApiError {
+        ApiError::new(409, "ai.geo.keyProblem", text_of("ai.geo.keyProblem"))
+    }
+    /// A test is running already (409 `ai.geo.busy`).
+    pub fn geo_busy() -> ApiError {
+        ApiError::new(409, "ai.geo.busy", text_of("ai.geo.busy"))
+    }
+    /// The main service cannot be reached to switch the location source (503 `ai.geo.linkDown`).
+    pub fn geo_link_down() -> ApiError {
+        ApiError::new(503, "ai.geo.linkDown", text_of("ai.geo.linkDown"))
+    }
+
     pub fn backend_down() -> ApiError {
         ApiError::new(
             503,
@@ -547,6 +586,19 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.import.tooLongQuestion" => "文件里有一道题太长，无法导入。",
         "ai.import.callLimit" => "AI 请求次数已达上限，请稍后再试。",
         "ai.import.expired" => "超过 30 分钟没有确认，导入已取消。",
+        "ai.geo.badUrl" => {
+            "查询地址无效：须以 http:// 或 https:// 开头，包含 {ip}，且只能使用 {ip} 和 {key}。"
+        }
+        "ai.geo.badHeader" => "请求头无效：名称只能使用字母、数字和 -，内容须包含 {key}。",
+        "ai.geo.badKey" => "密钥格式无效：1–400 个可见 ASCII 字符，不含空格。",
+        "ai.geo.keyRequired" => "查询地址的路径或请求头中使用了 {key}，但没有设置密钥。",
+        "ai.geo.badMapping" => {
+            "字段映射无效：请使用点号分隔的字母、数字、_ 或 -，并至少填写国家、地区或城市之一。"
+        }
+        "ai.geo.testFirst" => "请先测试并保存外部查询设置。",
+        "ai.geo.keyProblem" => "已保存的密钥无法解密，请重新输入并保存。",
+        "ai.geo.busy" => "正在测试，请稍候。",
+        "ai.geo.linkDown" => "无法连接主服务，请稍后再试。",
         _ => "AI 内部出错了，请稍后再试。",
     }
 }
@@ -554,6 +606,44 @@ pub fn text_of(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v14_geo_codes_have_their_status_field_and_text() {
+        for (e, status, field) in [
+            (ApiError::geo_bad_url(), 400, Some("urlTemplate")),
+            (
+                ApiError::geo_bad_header("keyHeaderName"),
+                400,
+                Some("keyHeaderName"),
+            ),
+            (
+                ApiError::geo_bad_header("keyHeaderValue"),
+                400,
+                Some("keyHeaderValue"),
+            ),
+            (ApiError::geo_bad_key(), 400, Some("key")),
+            (ApiError::geo_key_required(), 400, Some("key")),
+            (
+                ApiError::geo_bad_mapping("mapping.city"),
+                400,
+                Some("mapping.city"),
+            ),
+            (ApiError::geo_test_first(), 409, None),
+            (ApiError::geo_key_problem(), 409, None),
+            (ApiError::geo_busy(), 409, None),
+            (ApiError::geo_link_down(), 503, None),
+        ] {
+            assert_eq!(e.status.as_u16(), status, "{}", e.code);
+            assert_eq!(e.field, field, "{}", e.code);
+            assert_eq!(text_of(e.code), e.text, "{}", e.code);
+            assert_ne!(
+                e.text,
+                text_of("unknown.code"),
+                "{} has its own text",
+                e.code
+            );
+        }
+    }
 
     #[test]
     fn v13_codes_have_their_status_text_and_extras() {

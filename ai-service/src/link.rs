@@ -73,6 +73,71 @@ struct OkAnswer {
     ok: bool,
 }
 
+/// The longest wait of a `geo/next` long poll, in milliseconds (the backend bound).
+pub const GEO_POLL_MAX_MS: u64 = 20_000;
+/// Most jobs in one `geo/next` answer and results in one `geo/result` call.
+pub const GEO_BATCH_MAX: usize = 10;
+
+/// Where a place comes from (the main backend `geo.source`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GeoSource {
+    /// Cloudflare request headers (the default)
+    Cloudflare,
+    /// The external lookup of this service
+    Api,
+}
+
+impl GeoSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            GeoSource::Cloudflare => "cloudflare",
+            GeoSource::Api => "api",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<GeoSource> {
+        match s {
+            "cloudflare" => Some(GeoSource::Cloudflare),
+            "api" => Some(GeoSource::Api),
+            _ => None,
+        }
+    }
+}
+
+/// One address the backend wants a place for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeoJob {
+    /// 16 lower-case hex digits
+    pub id: String,
+    pub ip: std::net::IpAddr,
+}
+
+/// The outcome of one job: the place, or the failure code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeoOutcome {
+    pub id: String,
+    pub result: Result<crate::geo::GeoPlace, crate::geo::FailureCode>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeoJobWire {
+    id: String,
+    ip: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeoNextAnswer {
+    lookups: Vec<GeoJobWire>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct GeoSourceAnswer {
+    source: String,
+}
+
 /// Why a call to the backend failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LinkError {
@@ -118,6 +183,8 @@ pub struct Link {
     file: PathBuf,
     token: RwLock<Option<Zeroizing<String>>>,
     state: Mutex<LinkState>,
+    /// A whole ordinary call (the long poll of the location worker adds its wait to it)
+    backend_total: Duration,
 }
 
 /// The shortest internal token accepted (the same as the main backend's).
@@ -170,6 +237,7 @@ impl Link {
             file: cfg.link_dir.join(TOKEN_FILE),
             token: RwLock::new(None),
             state: Mutex::new(LinkState::default()),
+            backend_total: cfg.timeouts.backend_total,
         };
         link.load();
         Ok(link)
@@ -330,6 +398,17 @@ impl Link {
         body: serde_json::Value,
         mode: Mode,
     ) -> Result<Vec<u8>, LinkError> {
+        self.send_with(path, body, mode, None).await
+    }
+
+    /// [`Link::send`] with a time limit of its own instead of the client one (a long poll).
+    async fn send_with(
+        &self,
+        path: &str,
+        body: serde_json::Value,
+        mode: Mode,
+        limit: Option<Duration>,
+    ) -> Result<Vec<u8>, LinkError> {
         let Some(token) = self.token() else {
             return Err(LinkError::NoToken);
         };
@@ -338,14 +417,16 @@ impl Link {
         value.set_sensitive(true);
         drop(token);
         let bytes = serde_json::to_vec(&body).map_err(|_| LinkError::Failed)?;
-        let sent = self
+        let mut req = self
             .client
             .post(format!("{}{path}", self.base))
             .header("X-Xexam-Internal-Token", value)
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(bytes)
-            .send()
-            .await;
+            .body(bytes);
+        if let Some(limit) = limit {
+            req = req.timeout(limit);
+        }
+        let sent = req.send().await;
         let mut resp = match sent {
             Ok(r) => r,
             Err(_) => {
@@ -498,6 +579,83 @@ impl Link {
         self.state().last_report = Some(Instant::now());
         self.note_ok();
         Ok(())
+    }
+
+    // v1.4: the external IP-location lookup (`/internal/ai/geo/*`).
+    //
+    // Data-call semantics: a 404 only fails the call (an older backend without the routes must not switch AI off), and a
+    // good answer sets no "connected" state. An answer that does not match its schema is a failed call that leaves the
+    // link state alone.
+
+    /// Long poll: asks the backend which addresses need a place (`POST /internal/ai/geo/next`). The call may last up
+    /// to `wait_ms` (at most 20 000) plus the usual backend time limit. An answer holds 0 to 10 jobs.
+    pub async fn geo_next(&self, wait_ms: u64) -> Result<Vec<GeoJob>, LinkError> {
+        let wait = wait_ms.min(GEO_POLL_MAX_MS);
+        let body = self
+            .send_with(
+                "/internal/ai/geo/next",
+                serde_json::json!({ "waitMs": wait }),
+                Mode::Data,
+                Some(Duration::from_millis(wait) + self.backend_total),
+            )
+            .await?;
+        let a: GeoNextAnswer = serde_json::from_slice(&body).map_err(|_| LinkError::Failed)?;
+        if a.lookups.len() > GEO_BATCH_MAX {
+            return Err(LinkError::Failed);
+        }
+        let mut out = Vec::with_capacity(a.lookups.len());
+        for j in a.lookups {
+            let ip: std::net::IpAddr = j.ip.parse().map_err(|_| LinkError::Failed)?;
+            if !crate::util::is_lower_hex(&j.id, 16) {
+                return Err(LinkError::Failed);
+            }
+            out.push(GeoJob { id: j.id, ip });
+        }
+        Ok(out)
+    }
+
+    /// Posts the places and failures of a batch (`POST /internal/ai/geo/result`, 1 to 10 results).
+    pub async fn geo_result(&self, items: &[GeoOutcome]) -> Result<(), LinkError> {
+        let results: Vec<serde_json::Value> = items
+            .iter()
+            .map(|o| match &o.result {
+                Ok(place) => serde_json::json!({"id": o.id, "ok": true, "place": place.to_json()}),
+                Err(code) => serde_json::json!({"id": o.id, "ok": false, "code": code.as_str()}),
+            })
+            .collect();
+        let body = self
+            .send(
+                "/internal/ai/geo/result",
+                serde_json::json!({ "results": results }),
+                Mode::Data,
+            )
+            .await?;
+        let a: OkAnswer = serde_json::from_slice(&body).map_err(|_| LinkError::Failed)?;
+        if a.ok {
+            Ok(())
+        } else {
+            Err(LinkError::Failed)
+        }
+    }
+
+    /// Sets the location source in the main backend (`POST /internal/ai/geo/source`) and returns the source now in
+    /// effect.
+    pub async fn geo_source_set(&self, source: GeoSource) -> Result<GeoSource, LinkError> {
+        self.geo_source_call(serde_json::json!({ "source": source.as_str() }))
+            .await
+    }
+
+    /// Reads the location source of the main backend.
+    pub async fn geo_source_get(&self) -> Result<GeoSource, LinkError> {
+        self.geo_source_call(serde_json::json!({})).await
+    }
+
+    async fn geo_source_call(&self, body: serde_json::Value) -> Result<GeoSource, LinkError> {
+        let raw = self
+            .send("/internal/ai/geo/source", body, Mode::Data)
+            .await?;
+        let a: GeoSourceAnswer = serde_json::from_slice(&raw).map_err(|_| LinkError::Failed)?;
+        GeoSource::parse(&a.source).ok_or(LinkError::Failed)
     }
 
     /// `true` while the backend accepted a report less than [`REPORT_STALE`] ago.

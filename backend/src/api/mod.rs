@@ -697,6 +697,7 @@ async fn post_body(
         "/api/users/unlock" => auth::unlock(st, a, &data).await,
         "/api/users/signin-info" => activity::signin_info(st, a, &data).await,
         "/api/users/signin-info/clear" => activity::signin_info_clear(st, a).await,
+        "/api/users/geo-source" => activity::geo_source(st, a, &data).await,
         "/api/activity/settings" => activity::update_settings(st, a, &data).await,
         "/api/activity/visit" => activity::visit(st, a, &data).await,
         "/api/import/confirm" => confirm(st, a, &data).await,

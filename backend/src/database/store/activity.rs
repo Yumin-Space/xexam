@@ -13,7 +13,8 @@
 //!   explicit clearing blanks their IP / location (the rows stay), and deleting a user leaves them as they are.
 //! - Retention ([`Store::activity_retention`]) and the clearing of IP / location ([`Store::clear_activity_ip`]) run in batches
 //!   so the single connection is never held for long.
-use super::system_settings::{flag, SIGNIN_INFO};
+use super::system_settings::{flag, get, GEO_SOURCE, SIGNIN_INFO};
+use super::users::Place;
 use super::users::{format_unix_second, location_json};
 use super::{run_tx, Store};
 use crate::error::DbError;
@@ -477,6 +478,54 @@ impl Store {
             }
         }
         Ok(total)
+    }
+
+    /// v1.4: puts a looked-up place on what was recorded without one, in ONE transaction: `last_login_*` of every user in
+    /// `signin_users` (only while their `last_login_ip` is still `ip` and the three parts are still NULL), `last_active_*`
+    /// of every user in `active_users` (same rule), and the activity rows of `ip` written since `since` (unix seconds)
+    /// that have no place. Nothing is written when `place` is empty, when the eye is closed or when the place source is
+    /// not `api` (both read inside the transaction, so a late result can never record something the settings forbid).
+    /// Returns whether anything was written.
+    pub fn geo_apply(
+        &self,
+        ip: &str,
+        place: &Place,
+        since: i64,
+        signin_users: &[i64],
+        active_users: &[i64],
+    ) -> Result<bool, DbError> {
+        if place.is_empty() {
+            return Ok(false);
+        }
+        let g = self.lock();
+        run_tx(&g, |c| {
+            if !flag(c, SIGNIN_INFO)? || get(c, GEO_SOURCE)?.as_deref() != Some("api") {
+                return Ok(false);
+            }
+            let mut changed = 0usize;
+            for id in signin_users {
+                changed += c.execute(
+                    "UPDATE users SET last_login_country=?1, last_login_region=?2, last_login_city=?3 \
+                     WHERE id=?4 AND last_login_ip=?5 AND last_login_country IS NULL AND last_login_region IS NULL \
+                     AND last_login_city IS NULL",
+                    params![place.country, place.region, place.city, id, ip],
+                )?;
+            }
+            for id in active_users {
+                changed += c.execute(
+                    "UPDATE users SET last_active_country=?1, last_active_region=?2, last_active_city=?3 \
+                     WHERE id=?4 AND last_active_ip=?5 AND last_active_country IS NULL AND last_active_region IS NULL \
+                     AND last_active_city IS NULL",
+                    params![place.country, place.region, place.city, id, ip],
+                )?;
+            }
+            changed += c.execute(
+                "UPDATE activity_log SET country=?1, region=?2, city=?3 WHERE ip=?4 AND ts>=?5 AND country IS NULL \
+                 AND region IS NULL AND city IS NULL",
+                params![place.country, place.region, place.city, ip, since],
+            )?;
+            Ok(changed > 0)
+        })
     }
 
     /// Sets `ip`, `country`, `region` and `city` to NULL on up to `batch` rows that have any of them; returns the rows

@@ -476,6 +476,8 @@ flowchart LR
 - **`GET /api/users`** 和 `POST /api/users/*` 的响应：每个用户有 `lastActiveAt`（`null` 或 `YYYY-MM-DD HH:MM:SS`）、`lastLoginIp` 和 `lastLoginLocation`（`{"country", "region", "city"}`，`region` 和 `city` 可能为 `null`）；`"signinInfo"`（新的顶层键）为 `false` 时这两个都是 `null`（只是不显示，没有删除：眼睛关闭期间不再记录新的内容，打开后会再次显示已保存的值）。
 - **`POST /api/users/signin-info`**（管理员）`{"enabled": true | false}` 返回用户响应。关闭（默认）时不再记录任何新的内容（登录、会话和活动记录里都没有 IP 和所在地，运行日志行也没有；`last_login_ip` 等四列不更新），所有响应都隐藏已存的内容；打开后已存的历史重新显示，并恢复记录。切换不会改动或删除任何已存的内容。
 - **`POST /api/users/signin-info/clear`**（管理员；请求体 `{}`）清除所有已存的登录 IP 和所在地（`users.last_login_ip` / `_country` / `_region` / `_city`、`sessions.ip`，以及活动记录的 `ip` / `country` / `region` / `city`，活动记录每批 5000 行），眼睛睁开或关闭都可以用，返回用户响应。无法撤销；眼睛打开后记录的内容照常保留。活动记录条目 `users.signinInfoClear`，带 `{"rows": <改动的行数>}`。
+- *(v1.4)* **最后活动和所在地来源。** 用户应答多两个顶层键：`geoSource`（`"cloudflare"` 或 `"api"`）和 `aiServiceUp`（ai-service 已连接时为 `true`，与 AI+ 是否开启无关）；每个用户有 `lastActiveIp`（字符串或 `null`）和 `lastActiveLocation`（`{"country", "region", "city"}`，不知道的为 `null`；三者都不知道时整个值才是 `null`），两者在眼睛关闭时都是 `null`；还有 `lastActiveUa`（最后一次活动清理后的 User-Agent，最多 256 个字符；眼睛关闭时也有）。它们与 `lastActiveAt` 一起写入，最多每分钟一次，IP 和所在地只在眼睛打开时写（User-Agent 总是写），匿名请求从不写。`lastLoginLocation` 和 `lastActiveLocation` 的 `country` 是两位国家代码或国家名称，`country` 本身也可能是 `null`。所在地由来源决定：Cloudflare 模式存请求里的 `X-Geo-*`，`api` 模式存该 IP 已记住的查询结果（5.9 节）。**`POST /api/users/signin-info/clear`** 还会清除 `users.last_active_ip` / `_country` / `_region` / `_city`（不含 `last_active_ua`），以及查询的记忆和队列；关闭眼睛（`POST /api/users/signin-info`）会丢弃等待中的查询。
+- **`POST /api/users/geo-source`** *(v1.4，管理员)* 只接受 `{"source": "cloudflare"}`（`"api"` 或其他键是 400：切换到外部来源要经过 ai-service 的 `/api/ai/admin/geo/enable`，保证只有测试通过的配置才能启用）。写入 `system_settings` 的 `geo.source`，清空队列，返回用户应答。活动记录 `users.geoSource`，带 `{"source": "cloudflare"}`。
 - **`GET /api/activity`**（管理员）`?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` 返回 `{"entries": [...], "next", "newest", "facets", "settings"}`；最新的在前，按键集分页。`GET /api/activity/settings` 和 `POST /api/activity/settings`（`{"retentionDays": 7..3650, "userVisits": bool}`，两个键都可省略）。登录信息关闭时，`ip` 和 `location` 为 `null`。这些读取不会让会话续命，也不记录。
 - **`POST /api/activity/visit`** `{"page": "home"}`（已登录；`page` 是 `home`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` 之一，否则 400）：管理员会被记录，用户只在设置打开时记录；每个用户每分钟最多写 30 次。
 - **`POST /api/attempt`**：同一次保存的重复（相同的 `key`、`startedAt` 和种类）什么都不写，回答第一次的结果再加 `"duplicate": true`。
@@ -559,6 +561,8 @@ flowchart LR
 | POST | `/api/ai/admin/clear` | 管理员 | `{"userId": <id>, "what": "chat", "chatId": <id>}`，或 `{"userId": <id>, "what": "chats" \| "memories"}`，或只有 `{"what": "shared"}`（v1.3：共享的提示 / 解析） | `{"deleted": <n>}`，**记入审计** |
 | GET | `/api/ai/admin/limits` | 管理员 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<键>": [min, max], …}}` |
 | POST | `/api/ai/admin/limits` | 管理员 | 33 个上限键（见下面的 `admin/limits` 和 **功能键与上限**）中的任意几个，整数 | 和 GET 一样 |
+| GET | `/api/ai/admin/geo` | Admin | | 外部所在地查询的设置（*v1.4*，5.9 节） |
+| POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | 草稿，或 `{}` | 5.9 节 |
 
 ai-service的 `GET /healthz`（`{"ok":true,"version":"0.9","arch":"x86_64"}`，不需要身份）用于它的容器健康检查；Nginx 没有为它设置 location，所以从外面访问不到。
 
@@ -911,6 +915,52 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 每个测试路由都在 90 秒内回答；仍在运行的模型报告为 `ai.up.timeout`，且什么都不保存。
 
+### 5.9 外部所在地查询 *(v1.4)*
+
+可选，用来代替 Cloudflare 的所在地请求头（[deployment.md](deployment.md) 的 3.5 节，[usage.md](usage.md) 的 14.2 节）。服务商设置和加密后的密钥在 ai-service（AI 数据库的 `geo_settings`）；来源（默认 `cloudflare`，或 `api`）在后端（`system_settings` 的 `geo.source`，见 `POST /api/users/geo-source`）。所有路由仅管理员可用，JSON 为 camelCase；请求体里有未知键是 400 `ai.badRequest`。这些调用不计入 `admin/limits`、AI 用量和配额，AI+ 关闭、没有 AI 连接时也能用。
+
+**草稿**（`test` 和 `save` 的请求体；`mapping` 的 8 个键都必填，是字符串，`""` 表示不使用）：
+
+```
+{
+  "preset": "ipinfo",                      // ipinfo | ipapi | ipapico | ipwhois | ipsb | custom (display only)
+  "urlTemplate": "https://ipinfo.io/{ip}/json?token={key}",
+  "keyHeaderName": "",                     // "" = the key is not sent in a header
+  "keyHeaderValue": "",                    // must contain {key} when the name is set
+  "key": "…",                              // absent = keep the saved key, null = no key, string = this key
+  "mapping": {"country": "", "countryCode": "country", "region": "region", "city": "city",
+              "okPath": "", "okValue": "", "errorPath": "error", "messagePath": "error.message"}
+}
+```
+
+**`GET /api/ai/admin/geo`**：
+
+```
+{"settings": {
+   "preset": "ipinfo", "urlTemplate": "…", "keyHeaderName": "", "keyHeaderValue": "",
+   "key": {"set": true, "hint": "…cdef", "unreadable": false},   // never the key itself
+   "mapping": { /* the 8 strings */ },
+   "host": "ipinfo.io", "insecureHttp": false, "testedAt": 1763200000, "updatedAt": 1763200000
+ } | null,
+ "testIp": "8.8.8.8", "perMinute": 30, "timeoutMs": 3000}
+```
+
+密钥永远不返回：`hint` 是 `…` 加末 4 位，仅当密钥不少于 12 个字符，否则为 `""`；`unreadable` 为 true 表示已保存的密钥无法解密。只有测试通过并保存后才有这一行，所以“已保存”就是“已测试”。
+
+- **`POST /api/ai/admin/geo/test`**（草稿）用草稿查询固定的公开示例地址 `8.8.8.8`，不保存任何内容。200 `{"ok": true, "testIp", "place": {"country", "countryCode", "region", "city"}, "ms"}` 或 `{"ok": false, "testIp", "failure": {"code", "status", "message"}, "ms"}`：`status` 只在 `httpStatus` 时有，`message` 只在 `providerFail` 时有（服务商的文字，去掉控制字符，最多 120 个字符，密钥文字替换为 `***`）。同一时间只能测试一个（409 `ai.geo.busy`）；计入每分钟 30 次的上限。事件 `ai.geo.test`。
+- **`POST /api/ai/admin/geo/save`**（草稿）先做同样的测试，通过后才保存设置（`tested_at` = 现在；密钥 `absent` = 保留，`null` = 删除，字符串 = 加密保存）：`{"ok": true, "settings", "place", "ms"}`；失败时什么都不保存：`{"ok": false, "failure", "ms"}`。事件 `ai.geo.save`。
+- **`POST /api/ai/admin/geo/enable`** `{}` 通过内部链路把来源设为 `api`：`{"source": "api"}`。409 `ai.geo.testFirst`（没有保存的设置）、409 `ai.geo.keyProblem`（已保存的密钥无法解密）、503 `ai.geo.linkDown`。事件 `ai.geo.enable`。
+- **`POST /api/ai/admin/geo/delete`** `{}` 先把来源改回 `cloudflare`（503 `ai.geo.linkDown` 时什么都不删），再删除设置和密钥：`{"settings": null, "source": "cloudflare"}`。事件 `ai.geo.delete`。
+
+失败 `code`（内部的结果路由也用）：`timeout`、`unreachable`、`redirect`、`httpStatus`、`notJson`、`tooLarge`、`providerFail`、`noFields`、`keyProblem`、`rateLimited`、`notConfigured`、`refused`。草稿的错误（400，带 `field`）：`ai.geo.badUrl`（`urlTemplate`）、`ai.geo.badHeader`（`keyHeaderName` / `keyHeaderValue`）、`ai.geo.badKey`（`key`）、`ai.geo.keyRequired`（`key`；`{key}` 出现在地址路径或请求头内容里却没有密钥时）、`ai.geo.badMapping`（`mapping.<name>`）。
+
+**草稿的规则。** `urlTemplate`：1 到 500 个字符，无空白，以 `http://` 或 `https://` 开头，含 `{ip}`，除 `{ip}` 和 `{key}` 外没有别的占位符，协议和主机部分不含占位符，主机里没有 `@`，没有 `#`。`keyHeaderName`：`""` 或 1 到 64 个 `A-Z a-z 0-9 -`，不能是保留的请求头（`host`、`cookie`、`content-length` 等）；设置了名称时 `keyHeaderValue` 必须含 `{key}`。`key`：1 到 400 个可见 ASCII 字符，不含空格。`mapping.*`：`""` 或最多 8 段 `A-Z a-z 0-9 _ -` 的点号路径；`country`、`countryCode`、`region`、`city` 至少填一个；设置了 `okPath` 时必须有 `okValue`。
+
+**请求。** `{ip}` 换成地址（IPv6 不带方括号），`{key}` 换成百分号编码后的密钥；没有密钥时，值恰好是 `{key}` 的查询参数会被去掉。有请求头名称和密钥时，加上请求头 `<名称>: <含 {key} 的内容>`（没有密钥就不加）。调用是带 `Accept: application/json` 的 GET，总超时 3 秒，不跟随重定向（3xx 是 `redirect`），响应体最多 64 KiB（超过是 `tooLarge`），且必须是 JSON 对象（否则 `notJson`）。`errorPath` 的值为真，或 `okPath` 的值与 `okValue` 不同，是 `providerFail`；没找到国家、地区、城市是 `noFields`；非 2xx 是 `httpStatus`。
+
+**永远不会发送**：IPv4 的 `0.0.0.0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、`192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、`203.0.113/24`、组播和 `240/4`（以及它们的 `::ffff:` 形式）；IPv6 中 `2000::/3` 之外的全部，以及 `2001::/23`、`2001:db8::/32`、`2002::/16` 和 `3fff::/20`（代码 `refused`）。
+
+
 ## 6. 内部路由（`/internal/*`，v0.8）
 
 这些路由是后端和 ai-service 之间的连接。它们**经过 Nginx 访问不到**（`/internal/` 没有 location，所以从外面来的请求得到 404），这里写出来只是为了说明设计。后端在 Host 守卫之前、不经过会话层就回答它们。
@@ -948,6 +998,16 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - `POST /internal/ai/activity`：AI 服务发来它的管理员操作事件，每次最多 50 个（`action` 以 `ai.` 开头、使投递幂等的 32 位十六进制 `id`、`userId`、`object`、小的 `detail`、`result`）。后端校验并清理它们，只在登录信息的眼睛睁开时保存地址（关闭期间丢弃），也从不给它们设置所在地。
 - `POST /internal/ai/gen/corpus`：出题的只读来源，分页（`after`、最大 200 的 `limit`、每页约 4 MB、最多 2 万题）：勾选范围内每道有效的题（或全部错题），按来源顺序，给出题干、选项、`answer`（从 0 开始的位置）和解析，三种语言 `en`、`zh`、`ja` 都有（没有的语言就没有那个键）。
 - `/internal/ai/introspect` 使用与公开路由相同的会话规则。`/internal/ai/gen/source` 和 `/gen/seeds` 再保留一个版本，已不使用。
+
+### v1.4 内部路由 *(v1.4)*
+
+外部所在地查询再用三个带令牌的路由，这样后端从不调用 ai-service，后端容器也不需要访问互联网：由 ai-service **来取**任务。
+
+- `POST /internal/ai/geo/next` `{"waitMs": 0..20000}` → `{"lookups": [{"id": "<16 位小写十六进制>", "ip": "<地址>"}]}`（0 到 10 项）。长轮询：有任务可发时立即应答，否则在 `waitMs` 到期或来了任务时应答。来源为 `cloudflare` 或眼睛关闭时什么都不发，每分钟最多发 30 个，从不发保留地址。发出的任务 60 秒没有结果就被忘掉，排队中的 120 秒后被丢弃。
+- `POST /internal/ai/geo/result` `{"results": [R, …]}`（1 到 10 项）→ `{"ok": true}`，`R` 为 `{"id", "ok": true, "place": {"country", "countryCode", "region", "city"}}` 或 `{"id", "ok": false, "code": "<失败代码>"}`。未知或过期的 id 会被忽略；格式不对或代码未知，整批是 400。后端整理所在地（去掉控制字符，64 个字符），记住 24 小时（失败 15 分钟；`rateLimited` 和 `notConfigured` 不记），并且只在来源为 `api` 且眼睛打开时，才写入登录行、用户最后活动的所在地，以及该地址上还没有所在地的活动记录行。在**清除记录**之后或眼睛关闭之后才到的结果不会改变任何东西。
+- `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` 设置来源，`{}` 读取 → `{"source": …}`。5.9 节的 `enable` 和 `delete` 使用它。
+
+和所有带令牌的路由一样，没有令牌时返回 404。24 小时的记忆、队列和每分钟发出任务的上限在后端；ai-service 会再用一次保留地址过滤和它自己每分钟 30 次的上限，不保存记忆。
 
 ## 7. 与旧版的差异
 

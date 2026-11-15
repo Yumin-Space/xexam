@@ -71,12 +71,12 @@ pub use banks::scoped_id;
 pub use migrate::BACKUP_DIR;
 pub use study::{QuestionAsk, StudyLang, MAX_SAMPLE, TEXT_BUDGET};
 pub use system_settings::{
-    ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS, DEFAULT_RETENTION_DAYS, MAX_RETENTION_DAYS,
-    MIN_RETENTION_DAYS, SIGNIN_INFO,
+    ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS, DEFAULT_RETENTION_DAYS, GEO_SOURCE,
+    MAX_RETENTION_DAYS, MIN_RETENTION_DAYS, SIGNIN_INFO,
 };
 pub use users::{
-    AiUserRow, EndedSession, NewSession, SessionRow, SessionUser, SigninInfo, Touch, UpdatedUser,
-    UserChange, UserRow, UserUpdate,
+    ActiveFacts, AiUserRow, EndedSession, NewSession, Place, SessionRow, SessionUser, SigninInfo,
+    Touch, UpdatedUser, UserChange, UserRow, UserUpdate,
 };
 
 /// One bank whose old-layout questions [`Store::retire_old_layout_questions`] retired.

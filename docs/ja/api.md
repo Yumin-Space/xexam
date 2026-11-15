@@ -476,6 +476,8 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 - **`GET /api/users`** と `POST /api/users/*` の応答：各ユーザーに `lastActiveAt`（`null` か `YYYY-MM-DD HH:MM:SS`）、`lastLoginIp`、`lastLoginLocation`（`{"country", "region", "city"}`。`region` と `city` は `null` のことがあります）。`"signinInfo"`（新しいトップレベルのキー）が `false` の間は、この 2 つは `null` です（表示されないだけで削除はされません。目が閉じている間は新しい記録を作らず、開くと保存済みの値が再び表示されます）。
 - **`POST /api/users/signin-info`**（管理者）`{"enabled": true | false}` はユーザーの応答を返します。閉じている間（既定）は新しい記録を一切作らず（ログイン、セッション、操作履歴に IP も場所も入らず、実行ログの行にも出ません。`last_login_ip` などの 4 列も更新されません）、どの応答も保存済みの情報を隠します。開くと保存済みの履歴が再び表示され、記録が再開されます。切り替えで保存済みの情報が変更・削除されることはありません。
 - **`POST /api/users/signin-info/clear`**（管理者、本文 `{}`）は、保存済みのログインのアドレスと場所をすべて消去します（`users.last_login_ip` / `_country` / `_region` / `_city`、`sessions.ip`、操作履歴の `ip` / `country` / `region` / `city`。操作履歴は 5000 行ずつ）。目が開いていても閉じていても使え、ユーザーの応答を返します。元に戻せません。目が開いてから記録される情報はそのまま残ります。操作履歴の項目は `users.signinInfoClear` で、`{"rows": <変更した行数>}` が付きます。
+- *(v1.4)* **最終アクティブと所在地の取得元。** ユーザー応答にはトップレベルのキーが 2 つ増え、`geoSource`（`"cloudflare"` または `"api"`）と `aiServiceUp`（ai-service が接続されている間 `true`。AI+ のオン・オフに関係なし）があります。各ユーザーには `lastActiveIp`（文字列または `null`）と `lastActiveLocation`（`{"country", "region", "city"}`、不明なものは `null`。3 つとも不明のときだけ全体が `null`）があり、どちらも目が閉じている間は `null` です。さらに `lastActiveUa`（最後の操作のクリーニング済み User-Agent、最大 256 文字。目が閉じていても入る）があります。これらは `lastActiveAt` と同時に、最大で 1 分に 1 回、IP と場所は目が開いている間だけ（User-Agent は常に）書かれ、匿名のリクエストでは書かれません。`lastLoginLocation` と `lastActiveLocation` の `country` には 2 文字の国コードまたは国名が入り、`country` 自体が `null` のこともあります。場所は取得元が決めます。Cloudflare モードではリクエストの `X-Geo-*`、`api` モードではその IP について記憶した照会結果です（5.9 節）。**`POST /api/users/signin-info/clear`** は `users.last_active_ip` / `_country` / `_region` / `_city`（`last_active_ua` は除く）と照会の記憶とキューも消去します。目を閉じる（`POST /api/users/signin-info`）と待機中の照会は破棄されます。
+- **`POST /api/users/geo-source`** *(v1.4、管理者)* `{"source": "cloudflare"}` のみ（`"api"` や他のキーは 400。外部の取得元への切り替えは、テスト済みの設定だけを有効にできるよう ai-service の `/api/ai/admin/geo/enable` を通ります）。`system_settings` の `geo.source` を書き、キューを空にして、ユーザー応答を返します。操作履歴 `users.geoSource`、`{"source": "cloudflare"}`。
 - **`GET /api/activity`**（管理者）`?before=<id>&after=<id>&limit=<1..200>&user=<id|system|anon>&group=<auth|users|banks|study|settings|visit|ai|system>&action=<code>&result=<ok|fail>&facets=<0|1>` は `{"entries": [...], "next", "newest", "facets", "settings"}` を返します。新しい順、キーセットによるページ送りです。`GET /api/activity/settings` と `POST /api/activity/settings`（`{"retentionDays": 7..3650, "userVisits": bool}`、どちらのキーも省略可）。ログイン情報がオフの間、`ip` と `location` は `null` です。これらの読み込みはセッションを延ばさず、記録もされません。
 - **`POST /api/activity/visit`** `{"page": "home"}`（ログイン中。`page` は `home`、`banks`、`users`、`logs`、`records`、`record`、`wrong`、`settings`、`about`、`quiz`、`result`、`ai`、`aiSettings` のいずれか。それ以外は 400）：管理者は記録され、ユーザーは設定がオンのときだけ記録されます。ユーザーごとに 1 分あたり最大 30 回の書き込みです。
 - **`POST /api/attempt`**：同じ保存の繰り返し（同じ `key`、`startedAt`、種類）は何も書かず、最初の応答に `"duplicate": true` を加えて返します。
@@ -559,6 +561,8 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | POST | `/api/ai/admin/clear` | 管理者 | `{"userId": <id>, "what": "chat", "chatId": <id>}`、または `{"userId": <id>, "what": "chats" \| "memories"}`、または `{"what": "shared"}` のみ（v1.3：共有のヒント・解説） | `{"deleted": <n>}`、**監査あり** |
 | GET | `/api/ai/admin/limits` | 管理者 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
 | POST | `/api/ai/admin/limits` | 管理者 | 33 の上限のキーのどれか（下の `admin/limits` と **機能のキーと上限** を参照）、整数 | GET と同じ |
+| GET | `/api/ai/admin/geo` | Admin | | 外部所在地照会の設定（*v1.4*、5.9 節） |
+| POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | 下書き、または `{}` | 5.9 節 |
 
 ai-serviceの `GET /healthz`（`{"ok":true,"version":"0.9","arch":"x86_64"}`、本人確認は不要）は、そのコンテナのヘルスチェックが使います。Nginx にはこのための location がないので、外からは届きません。
 
@@ -911,6 +915,52 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 テストのルートはどれも 90 秒以内に答えます。まだ実行中のモデルは `ai.up.timeout` として報告され、何も保存されません。
 
+### 5.9 外部所在地照会 *(v1.4)*
+
+Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployment.md](deployment.md) の 3.5 節、[usage.md](usage.md) の 14.2 節）。サービスの設定と暗号化したキーは ai-service（AI データベースの `geo_settings`）に、取得元（既定は `cloudflare`、または `api`）はバックエンド（`system_settings` の `geo.source`。`POST /api/users/geo-source` を参照）にあります。すべてのルートは管理者専用で、JSON は camelCase です。未知のキーがある本文は 400 `ai.badRequest` です。呼び出しは `admin/limits`、AI 利用状況、クォータには数えられず、AI+ がオフで AI 接続がなくても動きます。
+
+**下書き**（`test` と `save` の本文。`mapping` の 8 つのキーはすべて必須の文字列で、`""` は使用しない意味）：
+
+```
+{
+  "preset": "ipinfo",                      // ipinfo | ipapi | ipapico | ipwhois | ipsb | custom (display only)
+  "urlTemplate": "https://ipinfo.io/{ip}/json?token={key}",
+  "keyHeaderName": "",                     // "" = the key is not sent in a header
+  "keyHeaderValue": "",                    // must contain {key} when the name is set
+  "key": "…",                              // absent = keep the saved key, null = no key, string = this key
+  "mapping": {"country": "", "countryCode": "country", "region": "region", "city": "city",
+              "okPath": "", "okValue": "", "errorPath": "error", "messagePath": "error.message"}
+}
+```
+
+**`GET /api/ai/admin/geo`**：
+
+```
+{"settings": {
+   "preset": "ipinfo", "urlTemplate": "…", "keyHeaderName": "", "keyHeaderValue": "",
+   "key": {"set": true, "hint": "…cdef", "unreadable": false},   // never the key itself
+   "mapping": { /* the 8 strings */ },
+   "host": "ipinfo.io", "insecureHttp": false, "testedAt": 1763200000, "updatedAt": 1763200000
+ } | null,
+ "testIp": "8.8.8.8", "perMinute": 30, "timeoutMs": 3000}
+```
+
+キーは返されません。`hint` は `…` と末尾 4 文字で、12 文字以上のキーのみ（それ以外は `""`）。`unreadable` は保存済みのキーを復号できないとき true です。行はテストに通った保存のあとにだけ存在するため、保存済み = テスト済みです。
+
+- **`POST /api/ai/admin/geo/test`**（下書き）は、固定の公開サンプルアドレス `8.8.8.8` を下書きの設定で照会し、何も保存しません。200 `{"ok": true, "testIp", "place": {"country", "countryCode", "region", "city"}, "ms"}` または `{"ok": false, "testIp", "failure": {"code", "status", "message"}, "ms"}`。`status` は `httpStatus` のときだけ、`message` は `providerFail` のときだけ（サービスの文字列から制御文字を除き最大 120 文字、キーの文字列は `***` に置換）。テストは同時に 1 つ（409 `ai.geo.busy`）。1 分 30 回の上限に数えられます。イベント `ai.geo.test`。
+- **`POST /api/ai/admin/geo/save`**（下書き）は先に同じテストを行い、通ったときだけ設定を保存します（`tested_at` = 現在。キーは `absent` = 保持、`null` = 削除、文字列 = 暗号化して保存）：`{"ok": true, "settings", "place", "ms"}`。失敗時は何も保存せず `{"ok": false, "failure", "ms"}`。イベント `ai.geo.save`。
+- **`POST /api/ai/admin/geo/enable`** `{}` は内部リンク経由で取得元を `api` にします：`{"source": "api"}`。409 `ai.geo.testFirst`（保存された設定がない）、409 `ai.geo.keyProblem`（保存済みのキーを復号できない）、503 `ai.geo.linkDown`。イベント `ai.geo.enable`。
+- **`POST /api/ai/admin/geo/delete`** `{}` は先に取得元を `cloudflare` に戻し（503 `ai.geo.linkDown` のときは何も削除しません）、そのあと設定とキーを削除します：`{"settings": null, "source": "cloudflare"}`。イベント `ai.geo.delete`。
+
+失敗の `code`（内部の結果ルートでも共通）：`timeout`、`unreachable`、`redirect`、`httpStatus`、`notJson`、`tooLarge`、`providerFail`、`noFields`、`keyProblem`、`rateLimited`、`notConfigured`、`refused`。下書きのエラー（400、`field` 付き）：`ai.geo.badUrl`（`urlTemplate`）、`ai.geo.badHeader`（`keyHeaderName` / `keyHeaderValue`）、`ai.geo.badKey`（`key`）、`ai.geo.keyRequired`（`key`。URL のパスまたはヘッダー値に `{key}` があるのにキーがない場合）、`ai.geo.badMapping`（`mapping.<name>`）。
+
+**下書きの規則。** `urlTemplate`：1〜500 文字、空白なし、`http://` または `https://` で始まり、`{ip}` を含み、`{ip}` と `{key}` 以外のプレースホルダーなし、スキームとホストの中になし、ホストに `@` なし、`#` なし。`keyHeaderName`：`""` または `A-Z a-z 0-9 -` の 1〜64 文字で、予約済みヘッダー（`host`、`cookie`、`content-length` など）は不可。名前を指定したら `keyHeaderValue` に `{key}` が必要です。`key`：空白を含まない 1〜400 文字の表示可能な ASCII。`mapping.*`：`""` または `A-Z a-z 0-9 _ -` の最大 8 セグメントのドット区切りパスで、`country`、`countryCode`、`region`、`city` のいずれかは必須、`okPath` を指定したら `okValue` が必要です。
+
+**リクエスト。** `{ip}` はアドレス（IPv6 は角括弧なし）に、`{key}` はパーセントエンコードしたキーになります。キーがない場合、値がちょうど `{key}` のクエリパラメーターは省かれます。ヘッダー名とキーがあれば `<名前>: <{key} を含む値>` のヘッダーを付け、キーがなければヘッダーは付けません。呼び出しは `Accept: application/json` 付きの GET で、全体のタイムアウトは 3 秒、リダイレクトはしません（3xx は `redirect`）。本文は最大 64 KiB（超過は `tooLarge`）で、JSON オブジェクトでなければなりません（`notJson`）。`errorPath` の値が真、または `okPath` の値が `okValue` と異なる場合は `providerFail`、国・地域・都市が見つからない場合は `noFields`、2xx 以外の応答は `httpStatus` です。
+
+**送信されないもの**：IPv4 では `0.0.0.0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、`192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、`203.0.113/24`、マルチキャスト、`240/4`（およびその `::ffff:` 形式）。IPv6 では `2000::/3` の外すべてと、`2001::/23`、`2001:db8::/32`、`2002::/16`、`3fff::/20`（コード `refused`）。
+
+
 ## 6. 内部ルート（`/internal/*`、v0.8）
 
 これらのルートは、バックエンドと ai-serviceの間の接続です。**Nginx 経由では届きません**（`/internal/` のための location がないので、外からのリクエストは 404 になります）。ここでは設計を説明するためだけに記載します。バックエンドは、Host ガードの前に、セッションのレイヤーを通さずにこれらに応えます。
@@ -948,6 +998,16 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - `POST /internal/ai/activity`：AI サービスが管理操作のイベントを最大 50 件送ります（`action` は `ai.` で始まる、配信を冪等にする 32 桁 16 進の `id`、`userId`、`object`、小さな `detail`、`result`）。バックエンドは検証して整え、ログイン情報の目が開いている間だけアドレスを保存し（閉じている間は捨てます）、これらに場所は設定しません。
 - `POST /internal/ai/gen/corpus`：生成の読み取り専用の元データ。ページ分割（`after`、最大 200 の `limit`、1 ページ約 4 MB、最大 2 万問）：チェックした範囲のすべての有効な問題（または間違えたものすべて）を元の順序で、問題文、選択肢、`answer`（0 始まりの位置）、解説を `en`、`zh`、`ja` で返します（ない言語はキーがありません）。
 - `/internal/ai/introspect` は公開ルートと同じセッション規則を適用します。`/internal/ai/gen/source` と `/gen/seeds` は 1 リリースだけ残り、使われません。
+
+### v1.4 の内部ルート *(v1.4)*
+
+外部所在地照会はトークンルートをさらに 3 つ使います。バックエンドが ai-service を呼ぶことはなく、バックエンドのコンテナにインターネットへの経路を与えないために、ai-service が作業を**取りに来ます**。
+
+- `POST /internal/ai/geo/next` `{"waitMs": 0..20000}` → `{"lookups": [{"id": "<小文字 16 桁の 16 進数>", "ip": "<アドレス>"}]}`（0〜10 件）。ロングポーリングで、渡せる作業があれば直ちに、なければ `waitMs` 経過後または作業が来た時点で応答します。取得元が `cloudflare` の間と目が閉じている間は何も渡さず、渡すのは 1 分に最大 30 件、予約済みアドレスは渡しません。渡した作業は結果がないまま 60 秒、待機中の作業は 120 秒で忘れられます。
+- `POST /internal/ai/geo/result` `{"results": [R, …]}`（1〜10 件）→ `{"ok": true}`。`R` は `{"id", "ok": true, "place": {"country", "countryCode", "region", "city"}}` または `{"id", "ok": false, "code": "<失敗コード>"}` です。未知または期限切れの id は無視され、形が不正または未知のコードがあるとバッチ全体が 400 です。バックエンドは場所を整形（制御文字の除去、64 文字）し、24 時間（失敗は 15 分。`rateLimited` と `notConfigured` は記憶しない）記憶し、取得元が `api` で目が開いている間だけ、ログイン行、ユーザーの最終アクティブの場所、まだ場所のないそのアドレスの操作履歴の行に書き込みます。**記録を消去**のあと、または目が閉じたあとに届いた結果は何も変えません。
+- `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` で取得元を設定、`{}` で読み取り → `{"source": …}`。5.9 節の `enable` と `delete` が使います。
+
+すべてのトークンルートと同様に、トークンがないと 404 を返します。24 時間の記憶、キュー、1 分あたりの受け渡し上限はバックエンド側にあり、ai-service は予約済みアドレスのフィルターと 1 分 30 回の自前の上限をもう一度適用し、記憶は持ちません。
 
 ## 7. 旧版との違い
 

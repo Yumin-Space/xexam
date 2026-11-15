@@ -476,6 +476,11 @@ export interface UserRow {
   /** v1.3: the last sign-in IP; null while the sign-in info eye is closed or nothing was recorded */
   lastLoginIp?: string | null;
   lastLoginLocation?: GeoLocation | null;
+  /** v1.4: IP of the last activity; null while the sign-in info eye is closed or nothing was recorded */
+  lastActiveIp?: string | null;
+  lastActiveLocation?: GeoLocation | null;
+  /** v1.4: User-Agent of the last activity (shown as a device label, also while the eye is closed) */
+  lastActiveUa?: string | null;
 }
 
 /**
@@ -506,6 +511,10 @@ export interface UsersResponse {
   aiAvailable: boolean;
   /** v1.3: the sign-in info eye (IP + approximate location) of User management */
   signinInfo?: boolean;
+  /** v1.4: where the place of a sign-in comes from (`cloudflare` when missing) */
+  geoSource?: GeoSource;
+  /** v1.4: ai-service is connected (fresh heartbeat), whether or not AI+ is on */
+  aiServiceUp?: boolean;
 }
 
 /** `POST /api/users/update`: only the fields that change */
@@ -896,7 +905,50 @@ export interface AiLimitsAnswer {
 export interface ModelRef { connectionId: number; model: string }
 export type SessionRule = 'admin' | 'remember' | 'browser';
 export interface SessionInfo { rule: SessionRule; idleSecs: number; hardEndsAt: string | null }
-export interface GeoLocation { country: string; region: string | null; city: string | null }
+export interface GeoLocation { country: string | null; region: string | null; city: string | null }
+
+// ---------------------------------------------------------------- v1.4: external IP-location lookup (admin routes of ai-service)
+
+export type GeoSource = 'cloudflare' | 'api';
+export type GeoPresetId = 'ipinfo' | 'ipapi' | 'ipapico' | 'ipwhois' | 'ipsb' | 'custom';
+export type GeoFailureCode =
+  | 'timeout' | 'unreachable' | 'redirect' | 'httpStatus' | 'notJson' | 'tooLarge' | 'providerFail' | 'noFields'
+  | 'keyProblem' | 'rateLimited' | 'notConfigured' | 'refused';
+/** The eight dot-path fields of the JSON mapping ("" = not used) */
+export interface GeoMapping {
+  country: string; countryCode: string; region: string; city: string;
+  okPath: string; okValue: string; errorPath: string; messagePath: string;
+}
+/** The body of test / save: `key` absent = keep the saved key, null = no key, a string = this key */
+export interface GeoDraft {
+  preset: GeoPresetId;
+  urlTemplate: string;
+  keyHeaderName: string;
+  keyHeaderValue: string;
+  key?: string | null;
+  mapping: GeoMapping;
+}
+export interface GeoSettings {
+  preset: GeoPresetId;
+  urlTemplate: string;
+  keyHeaderName: string;
+  keyHeaderValue: string;
+  key: { set: boolean; hint: string; unreadable: boolean };
+  mapping: GeoMapping;
+  host: string;
+  insecureHttp: boolean;
+  testedAt: number;
+  updatedAt: number;
+}
+export interface GeoState { settings: GeoSettings | null; testIp: string; perMinute: number; timeoutMs: number }
+export interface GeoPlace { country: string | null; countryCode: string | null; region: string | null; city: string | null }
+export interface GeoFailure { code: GeoFailureCode; status: number | null; message: string | null }
+export type GeoTestAnswer =
+  | { ok: true; testIp: string; place: GeoPlace; ms: number }
+  | { ok: false; testIp: string; failure: GeoFailure; ms: number };
+export type GeoSaveAnswer =
+  | { ok: true; settings: GeoSettings; place: GeoPlace; ms: number }
+  | { ok: false; failure: GeoFailure; ms: number };
 
 export type ActivityActor = 'user' | 'anon' | 'system';
 export type ActivityGroup = 'auth' | 'users' | 'banks' | 'study' | 'settings' | 'visit' | 'ai' | 'system';

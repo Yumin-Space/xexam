@@ -109,6 +109,11 @@ async fn serve(cfg: Config) -> i32 {
     );
     let mut tasks = xexam_ai_service::retention::spawn_all(&app);
     tasks.push(xexam_ai_service::activity::spawn_delivery(app.clone()));
+    // The external IP-location lookups of the main backend (runs with AI+ on or off)
+    tasks.push(xexam_ai_service::geo::worker::spawn(
+        app.clone(),
+        app.0.shutdown.clone(),
+    ));
     let router = xexam_ai_service::api::build_router(app.clone());
     let notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let n2 = notify.clone();

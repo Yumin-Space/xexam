@@ -315,6 +315,7 @@ struct Flood {
 
 /// State shared by the senders and the writer.
 struct Shared {
+    geo: crate::geo::Geo,
     signin_info: AtomicBool,
     user_visits: AtomicBool,
     dropped: AtomicU64,
@@ -344,6 +345,7 @@ impl Sink {
         Sink {
             tx,
             shared: Arc::new(Shared {
+                geo: crate::geo::Geo::new(),
                 signin_info: AtomicBool::new(false),
                 user_visits: AtomicBool::new(false),
                 dropped: AtomicU64::new(0),
@@ -365,11 +367,24 @@ impl Sink {
         self.shared.user_visits.load(Ordering::Relaxed)
     }
 
-    /// Reads both switches from the database into the cache (a failed read keeps the old values).
+    /// v1.4: the place source, the lookup cache and the queue of external location lookups ([`crate::geo`]). Cheap to clone.
+    pub fn geo(&self) -> &crate::geo::Geo {
+        &self.shared.geo
+    }
+
+    /// Reads the switches (the eye, the visit logging and the place source) from the database into the cache (a failed
+    /// read keeps the old values).
     pub fn reload_settings(&self, store: &Store) {
         match store.signin_info_enabled() {
-            Ok(v) => self.shared.signin_info.store(v, Ordering::Relaxed),
+            Ok(v) => {
+                self.shared.signin_info.store(v, Ordering::Relaxed);
+                self.shared.geo.set_eye(v);
+            }
             Err(e) => tracing::warn!("could not read the sign-in info switch: {e}"),
+        }
+        match store.geo_source_is_api() {
+            Ok(v) => self.shared.geo.set_api(v),
+            Err(e) => tracing::warn!("could not read the location source: {e}"),
         }
         match store.activity_user_visits() {
             Ok(v) => self.shared.user_visits.store(v, Ordering::Relaxed),
@@ -383,8 +398,15 @@ impl Sink {
     }
 
     /// Queues an entry. Never blocks; a full queue drops the entry and counts it. Also writes one English log line.
-    pub fn record(&self, e: Entry) {
+    pub fn record(&self, mut e: Entry) {
         let now = unix_now();
+        // v1.4: the place of the row follows the source rule (Cloudflare headers, or the cached lookup of the address)
+        if let Some(c) = e.client.as_mut() {
+            let p = self.shared.geo.place_for(c);
+            c.country = p.country;
+            c.region = p.region;
+            c.city = p.city;
+        }
         let anon_flood = matches!(e.actor, Actor::Anon) || (e.action == "auth.signin" && !e.ok);
         if anon_flood && !self.flood_admit(now) {
             return;
@@ -681,6 +703,7 @@ pub const ROUTE_ACTIONS: &[(&str, &str, bool)] = &[
         "users.signinInfoClear",
         false,
     ),
+    ("/api/users/geo-source", "users.geoSource", false),
     ("/api/activity/settings", "logs.settings", false),
     ("/api/activity/visit", "", false),
 ];

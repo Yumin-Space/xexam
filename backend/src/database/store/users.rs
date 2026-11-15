@@ -82,6 +82,31 @@ pub struct Touch {
     pub expires_at: i64,
 }
 
+/// v1.4: what a last-activity write also stores (see [`Store::touch_session_with`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ActiveFacts {
+    /// Cleaned User-Agent: set when present (written also while the eye is closed), else the stored one stays
+    pub ua: Option<String>,
+    /// `Some((ip, place))` only while the eye is open and the client address is known: the three place parts are
+    /// written as given (NULL when unknown, so a row never mixes two places); `None` leaves IP and place unchanged
+    pub ip_place: Option<(String, Place)>,
+}
+
+/// A place: country (code or name), region, city. Every part may be missing.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Place {
+    pub country: Option<String>,
+    pub region: Option<String>,
+    pub city: Option<String>,
+}
+
+impl Place {
+    /// Nothing known.
+    pub fn is_empty(&self) -> bool {
+        self.country.is_none() && self.region.is_none() && self.city.is_none()
+    }
+}
+
 /// A session deleted by [`Store::purge_expired_sessions_ended`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EndedSession {
@@ -106,10 +131,10 @@ pub struct SigninInfo<'a> {
 /// `UPDATE`s that clear the stored sign-in IP and location of users and sessions (inside the caller's transaction);
 /// returns the rows changed.
 fn clear_signin_rows(c: &Connection) -> Result<i64, DbError> {
+    // v1.4: the last-activity address and place go with the sign-in ones, in the same statement (so a user counts once);
+    // the device, `last_active_ua`, is not an address and stays
     let users = c.execute(
-        "UPDATE users SET last_login_ip=NULL, last_login_country=NULL, last_login_region=NULL, last_login_city=NULL \
-         WHERE last_login_ip IS NOT NULL OR last_login_country IS NOT NULL OR last_login_region IS NOT NULL \
-         OR last_login_city IS NOT NULL",
+        "UPDATE users SET last_login_ip=NULL, last_login_country=NULL, last_login_region=NULL, last_login_city=NULL,          last_active_ip=NULL, last_active_country=NULL, last_active_region=NULL, last_active_city=NULL          WHERE last_login_ip IS NOT NULL OR last_login_country IS NOT NULL OR last_login_region IS NOT NULL          OR last_login_city IS NOT NULL OR last_active_ip IS NOT NULL OR last_active_country IS NOT NULL          OR last_active_region IS NOT NULL OR last_active_city IS NOT NULL",
         [],
     )?;
     let sessions = c.execute("UPDATE sessions SET ip=NULL WHERE ip IS NOT NULL", [])?;
@@ -424,16 +449,17 @@ pub(super) fn note_known_users(c: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
-/// `{"country", "region", "city"}` of a stored sign-in location; `null` without a country (the visitor-location headers
-/// are only ever sent together with the country header).
+/// `{"country", "region", "city"}` of a stored place; `null` when all three parts are missing (an external provider may
+/// give no country, so a place without a country is still a place).
 pub(super) fn location_json(
     country: Option<String>,
     region: Option<String>,
     city: Option<String>,
 ) -> Value {
-    match country {
-        Some(c) => json!({ "country": c, "region": region, "city": city }),
-        None => Value::Null,
+    if country.is_none() && region.is_none() && city.is_none() {
+        Value::Null
+    } else {
+        json!({ "country": country, "region": region, "city": city })
     }
 }
 
@@ -466,7 +492,8 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
     let signin_info = super::system_settings::flag(c, super::system_settings::SIGNIN_INFO)?;
     let mut st = c.prepare(&format!(
         "SELECT {USER_COLUMNS}, (SELECT COUNT(*) FROM attempts a WHERE a.user_id = users.id), \
-         last_active_at, last_login_ip, last_login_country, last_login_region, last_login_city FROM users ORDER BY id"
+         last_active_at, last_login_ip, last_login_country, last_login_region, last_login_city, \
+         last_active_ip, last_active_country, last_active_region, last_active_city, last_active_ua FROM users ORDER BY id"
     ))?;
     let rows = st.query_map([], |r| {
         let geo = (
@@ -475,18 +502,32 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
             r.get::<_, Option<String>>(USER_COLUMN_COUNT + 4)?,
             r.get::<_, Option<String>>(USER_COLUMN_COUNT + 5)?,
         );
+        let active = (
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 6)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 7)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 8)?,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 9)?,
+        );
         Ok((
             user_row(r)?,
             r.get::<_, i64>(USER_COLUMN_COUNT)?,
             r.get::<_, Option<String>>(USER_COLUMN_COUNT + 1)?,
             geo,
+            active,
+            r.get::<_, Option<String>>(USER_COLUMN_COUNT + 10)?,
         ))
     })?;
     let mut out = Vec::new();
     for row in rows {
-        let (u, records, last_active, (ip, country, region, city)) = row?;
+        let (u, records, last_active, (ip, country, region, city), active, active_ua) = row?;
         let (ip, location) = if signin_info {
             (ip, location_json(country, region, city))
+        } else {
+            (None, Value::Null)
+        };
+        // v1.4: the last activity address and place follow the same eye; the device is not an address and is always shown
+        let (active_ip, active_location) = if signin_info {
+            (active.0, location_json(active.1, active.2, active.3))
         } else {
             (None, Value::Null)
         };
@@ -507,6 +548,9 @@ fn users_json(c: &Connection) -> Result<Value, DbError> {
             "lastActiveAt": last_active,
             "lastLoginIp": ip,
             "lastLoginLocation": location,
+            "lastActiveIp": active_ip,
+            "lastActiveLocation": active_location,
+            "lastActiveUa": active_ua,
         }));
     }
     Ok(json!({ "users": out, "signinInfo": signin_info }))
@@ -765,6 +809,19 @@ impl Store {
         now: i64,
         t: &Touch,
     ) -> Result<(), DbError> {
+        self.touch_session_with(token_hash, user_id, now, t, None)
+    }
+
+    /// [`Store::touch_session`] that also stores, in the same transaction and only with `t.active`, the facts of the
+    /// request (v1.4: `last_active_ua`, and `last_active_ip` with its place while the eye is open).
+    pub fn touch_session_with(
+        &self,
+        token_hash: &str,
+        user_id: i64,
+        now: i64,
+        t: &Touch,
+        facts: Option<&ActiveFacts>,
+    ) -> Result<(), DbError> {
         if !t.session && !t.active {
             return Ok(());
         }
@@ -782,6 +839,21 @@ impl Store {
                     "UPDATE users SET last_active_at=?1 WHERE id=?2",
                     params![format_unix_second(now), user_id],
                 )?;
+                if let Some(f) = facts {
+                    if let Some(ua) = &f.ua {
+                        c.execute(
+                            "UPDATE users SET last_active_ua=?1 WHERE id=?2",
+                            params![ua, user_id],
+                        )?;
+                    }
+                    if let Some((ip, p)) = &f.ip_place {
+                        c.execute(
+                            "UPDATE users SET last_active_ip=?1, last_active_country=?2, last_active_region=?3, \
+                             last_active_city=?4 WHERE id=?5",
+                            params![ip, p.country, p.region, p.city, user_id],
+                        )?;
+                    }
+                }
             }
             Ok(())
         })
@@ -823,12 +895,25 @@ impl Store {
         now: &str,
         info: Option<&SigninInfo<'_>>,
     ) -> Result<(), DbError> {
+        self.note_signin_with_ua(user_id, now, info, None)
+    }
+
+    /// [`Store::note_signin`] that also sets (v1.4) the last-activity facts from the sign-in: `last_active_ua` = `ua`
+    /// when given (always: the device is not an address), and with `info` the last-activity IP and place = the sign-in's.
+    pub fn note_signin_with_ua(
+        &self,
+        user_id: i64,
+        now: &str,
+        info: Option<&SigninInfo<'_>>,
+        ua: Option<&str>,
+    ) -> Result<(), DbError> {
         let g = self.lock();
         run_tx(&g, |c| {
             match info {
                 Some(i) => c.execute(
                     "UPDATE users SET last_login_at=?1, last_active_at=?1, last_login_ip=?2, last_login_country=?3, \
-                     last_login_region=?4, last_login_city=?5 WHERE id=?6",
+                     last_login_region=?4, last_login_city=?5, last_active_ip=?2, last_active_country=?3, \
+                     last_active_region=?4, last_active_city=?5 WHERE id=?6",
                     params![now, i.ip, i.country, i.region, i.city, user_id],
                 )?,
                 None => c.execute(
@@ -836,6 +921,12 @@ impl Store {
                     params![now, user_id],
                 )?,
             };
+            if let Some(ua) = ua {
+                c.execute(
+                    "UPDATE users SET last_active_ua=?1 WHERE id=?2",
+                    params![ua, user_id],
+                )?;
+            }
             Ok(())
         })
     }

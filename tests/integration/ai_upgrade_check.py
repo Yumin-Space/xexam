@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 7 (this version, v1.3), with Docker and made-up
+"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 8 (this version, v1.4), with Docker and made-up
 data only. Run by hand or at the final gate; it is not part of CI because it pulls a published image.
 
 Usage: python -I tests/integration/ai_upgrade_check.py [--old-image IMAGE] [--new-image IMAGE]
@@ -15,14 +15,14 @@ What is checked:
   1. v0.9.1 creates a schema-3 database on a fresh volume; the script then writes made-up rows into it (two users, a chat
      with a hint and a study chat of each kind, memories, usage rows, a changed set of limits; memory_chars left at the
      v0.9.1 default 300) and records every table's content
-  2. This version starts on the same volume: the log says the database was upgraded after a backup copy; schema 7; exactly
+  2. This version starts on the same volume: the log says the database was upgraded after a backup copy; schema 8; exactly
      one backups/xexam-ai-schema3-*.db that still holds schema 3 and the old rows; every made-up row unchanged; every old
      limit intact (the retired message_chars column keeps its value); memory_chars 300 reads 200 (3.10) and memoryTokens
      200 (schema 6: lengths in tokens, 1000; schema 7: the v1.3 default 200 because it was never changed); the v1.3 tables (connections, connection_secrets, models, model_slots, study_shared, gen_items)
      exist and every chat is a straight line (messages.parent_id = the message before, chats.leaf_id = the last message); the three call caps 5 / 20 / 100 and replyMaxTokens 3000 at their defaults; sqlite_master equals that of a database this version
      created from scratch
   3. A second start writes no second backup, no second upgrade line and changes no row
-  4. v0.9.1 refuses the schema-7 database (its newer-schema message) and changes nothing: the rollback is the backup copy
+  4. v0.9.1 refuses the schema-8 database (its newer-schema message) and changes nothing: the rollback is the backup copy
 """
 import argparse
 import hashlib
@@ -125,7 +125,7 @@ db = sqlite3.connect('file:%s?immutable=1' % path, uri=True)  # a cleanly stoppe
 out = {}
 out['schema'] = (db.execute("SELECT value FROM meta WHERE key = 'schema'").fetchone() or [None])[0]
 tables = ['users', 'chats', 'messages', 'memories', 'usage']
-# columns a later schema adds with a default (schema 5: users.features_off; schema 6: usage.tokens_cache_write; schema 7: the branch, connection and reasoning columns) are not part
+# columns a later schema adds with a default (schema 5: users.features_off; schema 6: usage.tokens_cache_write; schema 7: the branch, connection and reasoning columns; schema 8 adds only the geo_settings table) are not part
 # of the "unchanged" content
 ADDED = {'users': {'features_off'}, 'usage': {'tokens_cache_write', 'connection_id', 'connection'},
          'chats': {'leaf_id', 'pick_conn', 'pick_model'}, 'messages': {'parent_id', 'connection', 'reasoning', 'reasoning_ms', 'reasoning_truncated'}}
@@ -235,10 +235,10 @@ try:
     up = wait_up(c)
     code, logs1 = stop(c)
     ok(up and code == '0', 'This version starts on the schema-3 volume, answers its health check and stops cleanly. Exit code %s. Log:\n%s' % (code, logs1[-600:]))
-    ok(re.search(r'Upgraded the AI database to schema 7\. A copy of the previous version was saved first: \S*xexam-ai-schema3-', logs1) is not None,
-       'The log says the database was upgraded to schema 7 after a backup copy. Log:\n%s' % logs1[-600:])
+    ok(re.search(r'Upgraded the AI database to schema 8\. A copy of the previous version was saved first: \S*xexam-ai-schema3-', logs1) is not None,
+       'The log says the database was upgraded to schema 8 after a backup copy. Log:\n%s' % logs1[-600:])
     after = report(VOL)
-    ok(after['schema'] == '7', 'meta.schema is 7. Actual %r' % after['schema'])
+    ok(after['schema'] == '8', 'meta.schema is 8. Actual %r' % after['schema'])
     ok(len(after['backups']) == 1 and re.fullmatch(r'xexam-ai-schema3-\d{8}-\d{6}\.db', after['backups'][0]) is not None,
        'Exactly one backups/xexam-ai-schema3-<date-time>.db. Actual %r' % after['backups'])
     ok(after.get('v7_tables') == sorted(['connection_secrets', 'connections', 'gen_items', 'model_slots', 'models', 'study_shared']),
@@ -265,8 +265,8 @@ try:
     code, _ = stop(c)
     ok(up and code == '0', 'This version creates a fresh database on the second volume')
     fresh = report(VOL_FRESH)
-    ok(fresh['schema'] == '7' and fresh['backups'] == [] and fresh['limits']['memory_tokens'] == 200,
-       'A new database is schema 7 with no backup and memoryTokens 200. Actual %r' % {k: fresh[k] for k in ('schema', 'backups')})
+    ok(fresh['schema'] == '8' and fresh['backups'] == [] and fresh['limits']['memory_tokens'] == 200,
+       'A new database is schema 8 with no backup and memoryTokens 200. Actual %r' % {k: fresh[k] for k in ('schema', 'backups')})
     ok(fresh['master'] == after['master'], 'sqlite_master of the upgraded database equals that of a new one (%d objects)' % len(fresh['master']))
 
     # -- 3. the next start writes nothing --
@@ -280,15 +280,15 @@ try:
     ok(all(again[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and again['limits'] == after['limits']
        and again['master'] == after['master'], 'The next start changed no row, no limit and no table')
 
-    # -- 4. v0.9.1 refuses schema 7 --
+    # -- 4. v0.9.1 refuses schema 8 --
     c = start(OLD, VOL, 'old2')
     time.sleep(3)
     running = docker('inspect', '-f', '{{.State.Running}}', c).stdout.strip()
     code, logs3 = stop(c) if running == 'true' else (docker('inspect', '-f', '{{.State.ExitCode}}', c).stdout.strip(), (docker('logs', c).stdout + docker('logs', c).stderr))
-    ok(code != '0' and 'has schema 7' in logs3 and 'newer ai-service' in logs3,
-       'v0.9.1 refuses the schema-7 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs3[-400:]))
+    ok(code != '0' and 'has schema 8' in logs3 and 'newer ai-service' in logs3,
+       'v0.9.1 refuses the schema-8 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs3[-400:]))
     final = report(VOL)
-    ok(all(final[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and final['schema'] == '7'
+    ok(all(final[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and final['schema'] == '8'
        and final['backups'] == after['backups'], 'The refusal changed nothing; the rollback is the backup copy')
 finally:
     cleanup()

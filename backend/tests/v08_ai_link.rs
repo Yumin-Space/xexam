@@ -411,8 +411,8 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none());
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
-    // the v5 columns come after the v4 ones, the v8 ones (five) after them
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "9");
+    // the v5 columns come after the v4 ones, the v8 ones (five) and the v9 ones (five) after them
     let columns: Vec<String> = c
         .prepare("SELECT name FROM pragma_table_info('users') ORDER BY cid")
         .expect("prepare")
@@ -421,7 +421,7 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
         .map(|r| r.expect("row"))
         .collect();
     assert_eq!(
-        columns[columns.len() - 9..columns.len() - 5],
+        columns[columns.len() - 14..columns.len() - 10],
         ["new_banks", "can_manage_banks", "ai_enabled", "uid"]
     );
     // the default administrator (created by the v3 step, before the column existed) has a stamp and AI+ off
@@ -486,7 +486,7 @@ fn write_v4_database(db: &Path) {
     raw(db)
         .execute_batch(
             "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; \
-             ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
+             ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
              ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
              ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
              ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
@@ -533,7 +533,7 @@ fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
         );
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "8");
+    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "9");
     // every user: AI+ off (also ben, whose earlier switch went with the dropped column), a unique 32-hex stamp
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM users WHERE ai_enabled = 0"),
@@ -705,6 +705,10 @@ async fn ai_in_the_users_api_and_ai_allowed_in_the_signed_in_user() {
             "lastActiveAt",
             "lastLoginIp",
             "lastLoginLocation",
+            // v1.4 (tests/v14_geo.rs)
+            "lastActiveIp",
+            "lastActiveLocation",
+            "lastActiveUa",
             "lock",
             "aiSuspended"
         ]
@@ -2090,7 +2094,16 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     ];
     // no report: not available, nobody suspended
     let v = list().await;
-    assert_eq!(keys(&v), ["users", "signinInfo", "aiAvailable"]);
+    assert_eq!(
+        keys(&v),
+        [
+            "users",
+            "signinInfo",
+            "aiAvailable",
+            "geoSource",
+            "aiServiceUp"
+        ]
+    );
     assert_eq!(v["aiAvailable"], false);
     assert_eq!(suspended_of(&v), none);
     for u in v["users"].as_array().expect("users") {
@@ -2135,7 +2148,17 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
         let r = api(&a, "POST", path, &ac, Some(&body)).await;
         assert_eq!(r.status, 200, "{path}: {}", r.text());
         let v = r.json();
-        assert_eq!(keys(&v), ["users", "signinInfo", "aiAvailable"], "{path}");
+        assert_eq!(
+            keys(&v),
+            [
+                "users",
+                "signinInfo",
+                "aiAvailable",
+                "geoSource",
+                "aiServiceUp"
+            ],
+            "{path}"
+        );
         assert_eq!(v["aiAvailable"], true, "{path}");
         assert_eq!(suspended_of(&v), with_kim, "{path}");
     }
@@ -2148,7 +2171,16 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
-    assert_eq!(keys(&r.json()), ["users", "signinInfo", "aiAvailable"]);
+    assert_eq!(
+        keys(&r.json()),
+        [
+            "users",
+            "signinInfo",
+            "aiAvailable",
+            "geoSource",
+            "aiServiceUp"
+        ]
+    );
     let lee = r.json()["users"][4]["id"].as_i64().expect("lee");
     let r = api(
         &a,
@@ -2159,7 +2191,16 @@ async fn every_users_list_says_whether_ai_plus_is_available_and_who_is_suspended
     )
     .await;
     assert_eq!(r.status, 200, "{}", r.text());
-    assert_eq!(keys(&r.json()), ["users", "signinInfo", "aiAvailable"]);
+    assert_eq!(
+        keys(&r.json()),
+        [
+            "users",
+            "signinInfo",
+            "aiAvailable",
+            "geoSource",
+            "aiServiceUp"
+        ]
+    );
     assert_eq!(suspended_of(&r.json()), with_kim);
     // the login and password-change answers are unchanged
     let r = api(

@@ -370,6 +370,7 @@ sequenceDiagram
 - **共享回答。** `study_shared` 以题目文字、语言和种类为键存放提示和解析，不带用户 id。一次学习提问的顺序：解析、访问和功能检查（`App::admit`）、后端的题目调用（同时证明访问权限）、共享查找，只有未命中才占位、计数和调用模型。
 - **出题。** AI 服务通过分页的 `POST /internal/ai/gen/corpus` 读取整个来源，作为带缓存的前缀发送一次，执行一次规划调用和四个并行写题调用（`gen/par.rs`，与整文件导入共用），任务运行期间把采纳的题放在 `gen_items`；题库最后由后端保存一次。
 - **活动记录。** 归后端所有：写入主数据库的异步批量写入器、每个路由上的统一钩子，以及接收 AI 管理员操作事件的 `POST /internal/ai/activity`。AI 服务只发送事件（发件箱，按 id 幂等）。
+- **所在地查询（v1.4）。** 给没有 Cloudflare 的部署用的可选外部 IP 所在地查询（见 [usage.md](usage.md) 的 14.2 节）。后端保存来源（`system_settings` 的 `geo.source`）、每个 IP 24 小时的记忆、队列和保留地址过滤（`backend/src/geo.rs`），因为活动记录是立即写入的，要从这份记忆里读取所在地。ai-service 保存服务商设置和加密后的密钥（AI 数据库，schema 8），并作为唯一能访问互联网的容器发出调用。后端仍然从不调用 ai-service：由 ai-service 通过内部令牌链路用三个路由**来取**——`POST /internal/ai/geo/next`（长轮询，返回需要所在地的地址）、`/geo/result`（所在地或失败代码）和 `/geo/source`（启用 / 停用来源）；浏览器通过 `/api/ai/admin/geo*` 操作设置（见 [api.md](api.md) 的 5.9 节）。AI+ 关闭时也能用，不涉及 AI 请求额度。
 - **会话和真实地址。** `session_deadline` 按账号当前的角色计算有效期；更新（会话和 `last_active_at`）最多每分钟一次。Nginx 生成 `X-Real-IP` 和 `X-Geo-*` 头（`nginx/snippets/api-proxy.conf`、`ai-proxy.conf`；可信代理列表由 `docker-entrypoint.d/15-xexam-realip.sh` 在启动时生成），并总是覆盖，所以服务可以信任它们。后端只在 `XEXAM_BEHIND_PROXY=1`（镜像里已设）或对端是回环地址时才信任它们；否则忽略这些头，记录连接地址（`activity::apply_peer_rule`）。
 
 ## 6. 前端

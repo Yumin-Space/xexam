@@ -39,7 +39,7 @@ import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerStatus, editValid, emptyChat, END_PX, fmtAiTime,
-  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, modelArg, modelMenu, modelShown, regenerateLabelKey, startOf, versionInfo, whoParts,
+  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, modelArg, modelMenu, modelShown, regenerateLabelKey, startOf, versionInfo, whoParts,
   isBusyElsewhere, isThinking, localSend, localStop, LOCK_MAX_WIDTH, locksDocument, MIN_MSGS_PX, noAccessKey, pollResult, readOnlyReason, questionOf,
   sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatView, type EditState, type ViewMessage,
 } from '../domain/ai-chat.ts';
@@ -1670,11 +1670,12 @@ function copySource(m: AiMessage): string {
   return sm ? t('aiplus.chat.label.summary', { used: sm.used, wrong: sm.wrong }) : '';
 }
 
-/** The line right above a message (owner's request): "You" or "AI" and the time; administrators see "connection · model", everyone
- *  else only "AI" and the time (owner, v1.3 sprint 2); right-aligned over a sent
- *  message's bubble. The buttons go on one line right under the message (`actsRow`). */
-export function whoLine(m: AiMessage, admin: boolean): HTMLElement {
-  const who = whoParts(m, admin);
+/** The line right above a message (owner's request): "You" or "AI" and the time; "connection · model" only when `showModel`
+ *  (an administrator in the free mode, `chatShowsModel`, or the administrators' chat viewer), everyone else only "AI" and the
+ *  time (owner, v1.3 sprint 2 / v1.4); right-aligned over a sent message's bubble. The buttons go on one line right under
+ *  the message (`actsRow`). */
+export function whoLine(m: AiMessage, showModel: boolean): HTMLElement {
+  const who = whoParts(m, showModel);
   // One line, always: the connection and the time keep their width; only the model name gives way and is cut at its end
   // with an ellipsis (CSS). The full "connection · model" stays in the text (screen readers) and in `title`.
   const modelText = who.model ? (who.connection ? `${who.connection} · ${who.model}` : who.model) : null;
@@ -1746,7 +1747,7 @@ function messageEl(m: ViewMessage, pos: number): HTMLElement {
   ];
   const editing = edit != null && edit.messageId === m.id;
   return h('li', { class: 'ai-msg ' + (user ? 'user' : 'assistant') + (editing ? ' editing' : ''), id: `ai-m-${m.id}`, 'aria-busy': busy ? 'true' : null },
-    whoLine(m, isAdmin()),
+    whoLine(m, chatShowsModel(isAdmin(), aiFreeMode())),
     user ? null : reasoningEl(m, reasoningOpts(m)),
     ...(user ? userBody(m) : [markdownEl(m.content, `ai-md-${m.id}`)]),
     // A streaming answer always has its foot (empty and hidden while there is no text), so paintStreaming need not repaint the list

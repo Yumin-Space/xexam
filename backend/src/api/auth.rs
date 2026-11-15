@@ -37,7 +37,7 @@ use crate::activity::{Actor, ClientInfo, Entry};
 use crate::auth::throttle::{retry_after_secs, Begun, StartedLock};
 use crate::auth::{self, Ended, LockStatus, Role, Rule, SessionTimes, Target, SESSION_PURGE_SECS};
 use crate::database::{
-    EndedSession, NewSession, SessionUser, SigninInfo, Touch, UserChange, UserUpdate,
+    ActiveFacts, EndedSession, NewSession, SessionUser, SigninInfo, Touch, UserChange, UserUpdate,
 };
 use crate::error::{AppError, DbError};
 use crate::logs::BurstReport;
@@ -137,6 +137,7 @@ pub const ROUTES: &[Route] = &[
     route("POST", "/api/users/unlock", Access::Admin),
     route("POST", "/api/users/signin-info", Access::Admin),
     route("POST", "/api/users/signin-info/clear", Access::Admin),
+    route("POST", "/api/users/geo-source", Access::Admin),
     route("POST", "/api/activity/settings", Access::Admin),
     route("POST", "/api/activity/visit", Access::SignedIn),
 ];
@@ -298,6 +299,20 @@ fn record_purged(
     ));
 }
 
+/// v1.4: what a last-activity write stores about the request: the device (always) and, while the eye is open and the
+/// address is known, the address with its place under the source rule ([`crate::geo::Geo::place_for`]).
+fn active_facts(st: &AppState, c: &ClientInfo) -> ActiveFacts {
+    let ip_place = if st.0.activity.signin_info() {
+        c.ip.map(|ip| (ip.to_string(), st.0.activity.geo().place_for(c)))
+    } else {
+        None
+    };
+    ActiveFacts {
+        ua: c.ua.clone(),
+        ip_place,
+    }
+}
+
 /// The session `token_hash` at `now` (v1.3). Purges ended sessions at most once an hour (whichever request comes first claims
 /// it). An ended session (by the user's current role) is deleted, recorded and answered [`Looked::Ended`]. With `counts` the
 /// request is activity: the session row and `users.last_active_at` are written at most once a minute per session / user
@@ -308,6 +323,7 @@ async fn session_lookup(
     now: i64,
     counts: bool,
     may_resend: bool,
+    client: Option<ClientInfo>,
 ) -> Result<Looked, AppError> {
     let last = st.0.last_session_purge.load(Ordering::Relaxed);
     let purge = now.saturating_sub(last) >= SESSION_PURGE_SECS
@@ -363,9 +379,26 @@ async fn session_lookup(
                     active: plan.active,
                     expires_at: auth::session_deadline(user.role, &fresh).0,
                 };
+                // v1.4: the device always, the address and its place only while the eye is open
+                let facts = client.as_ref().map(|c| active_facts(&st, c));
                 // A failed touch must not fail the request that was only about to read something
-                if let Err(e) = store.touch_session(&token_hash, user.id, now, &touch) {
-                    tracing::warn!("could not record the session activity: {e}");
+                match store.touch_session_with(&token_hash, user.id, now, &touch, facts.as_ref()) {
+                    Ok(()) => {
+                        // A lookup is asked for only here (and at sign-in): later rows read the cache
+                        if let (true, Some((ip, _))) = (
+                            plan.active,
+                            facts.as_ref().and_then(|f| f.ip_place.as_ref()),
+                        ) {
+                            if let Ok(ip) = ip.parse() {
+                                st.0.activity.geo().request(
+                                    ip,
+                                    crate::geo::Target::Active(user.id),
+                                    now,
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => tracing::warn!("could not record the session activity: {e}"),
                 }
             }
             resend =
@@ -389,7 +422,15 @@ pub async fn session_user_checked(
     st: &AppState,
     token_hash: &str,
 ) -> Result<Option<SessionUser>, AppError> {
-    let found = session_lookup(st, token_hash.to_string(), auth::unix_now(), true, false).await?;
+    let found = session_lookup(
+        st,
+        token_hash.to_string(),
+        auth::unix_now(),
+        true,
+        false,
+        None,
+    )
+    .await?;
     Ok(match found {
         Looked::Found(f) => Some(f.user),
         _ => None,
@@ -402,7 +443,15 @@ pub async fn session_user_untouched(
     st: &AppState,
     token_hash: &str,
 ) -> Result<Option<SessionUser>, AppError> {
-    let found = session_lookup(st, token_hash.to_string(), auth::unix_now(), false, false).await?;
+    let found = session_lookup(
+        st,
+        token_hash.to_string(),
+        auth::unix_now(),
+        false,
+        false,
+        None,
+    )
+    .await?;
     Ok(match found {
         Looked::Found(f) => Some(f.user),
         _ => None,
@@ -426,7 +475,15 @@ async fn session(
     let now = auth::unix_now();
     let token_hash = auth::token_hash(&token);
     let client = ClientInfo::from_headers(headers);
-    let looked = session_lookup(st, token_hash.clone(), now, counts, may_resend).await?;
+    let looked = session_lookup(
+        st,
+        token_hash.clone(),
+        now,
+        counts,
+        may_resend,
+        Some(client.clone()),
+    )
+    .await?;
     match looked {
         Looked::None => Ok(None),
         Looked::Ended => Err(expired()),
@@ -536,7 +593,8 @@ pub async fn introspect(st: &AppState, headers: &HeaderMap) -> IntrospectOutcome
     let sid = auth::token_hash(&token);
     // The same lookup as every other request: the same deadline rule, and the same touch (somebody who only talks to the AI
     // is active), but never a cookie (it could not reach the browser through this path)
-    match session_lookup(st, sid.clone(), now, true, false).await {
+    let client = ClientInfo::from_headers(headers);
+    match session_lookup(st, sid.clone(), now, true, false, Some(client)).await {
         Err(_) => IntrospectOutcome::Failed,
         Ok(Looked::None | Looked::Ended) => IntrospectOutcome::SignIn,
         Ok(Looked::Found(f)) if f.user.must_change_password => IntrospectOutcome::Password,
@@ -927,12 +985,13 @@ pub async fn login(
     // nothing new is recorded (the stored values stay, hidden)
     let keep = st.0.activity.signin_info();
     let ip = client.ip.filter(|_| keep).map(|i| i.to_string());
-    let (ua, country, region, city) = (
-        client.ua.clone(),
-        client.country.clone().filter(|_| keep),
-        client.region.clone().filter(|_| keep),
-        client.city.clone().filter(|_| keep),
-    );
+    // v1.4: the place follows the source rule (Cloudflare headers, or the cached lookup of the address)
+    let place = if keep {
+        st.0.activity.geo().place_for(&client)
+    } else {
+        crate::database::Place::default()
+    };
+    let (ua, country, region, city) = (client.ua.clone(), place.country, place.region, place.city);
     let verified = phc.clone();
     let hash_for_row = token_hash.clone();
     let stamp = local_second(now);
@@ -968,7 +1027,7 @@ pub async fn login(
             region: region.as_deref(),
             city: city.as_deref(),
         });
-        store.note_signin(id, &stamp, info.as_ref())?;
+        store.note_signin_with_ua(id, &stamp, info.as_ref(), ua.as_deref())?;
         Ok(Some(SessionUser::from(&u)))
     })
     .await?;
@@ -989,6 +1048,15 @@ pub async fn login(
     };
     st.0.throttle.succeeded(id, known);
     st.0.gates.started(&token_hash, id, now);
+    // v1.4: a successful sign-in is one of the two moments an external lookup may be asked for (the address is new, or its
+    // cached place is gone); the answer fills the sign-in and last-activity place in the background
+    if keep {
+        if let Some(ip) = client.ip {
+            let geo = st.0.activity.geo();
+            geo.request(ip, crate::geo::Target::Signin(id), now);
+            geo.request(ip, crate::geo::Target::Active(id), now);
+        }
+    }
     tracing::info!("user {:?} signed in", signed_in.username);
     st.0.activity.record(
         Entry::new(Actor::of(&signed_in), "auth.signin")
@@ -1167,6 +1235,19 @@ async fn users_json(st: &AppState) -> Result<Value, AppError> {
             "aiAvailable".to_string(),
             Value::Bool(service.ai_available()),
         );
+        // v1.4: the place source, and whether ai-service is connected (independent of AI+ being on)
+        obj.insert(
+            "geoSource".to_string(),
+            Value::String(
+                if st.0.activity.geo().is_api() {
+                    "api"
+                } else {
+                    "cloudflare"
+                }
+                .to_string(),
+            ),
+        );
+        obj.insert("aiServiceUp".to_string(), Value::Bool(service.connected));
     }
     Ok(users)
 }

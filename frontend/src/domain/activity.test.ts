@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { actionFilter, deviceLabel, detailText, hardSoonMinutes, looksLikeProxy, mergeNewer, userFilter } from './activity.ts';
+import { actionFilter, addressText, deviceLabel, detailText, hardSoonMinutes, looksLikeProxy, mergeNewer, userFilter } from './activity.ts';
 
 test('deviceLabel: browser and system, unknown agents cut, none = null', () => {
   assert.equal(deviceLabel('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36'), 'Chrome · Windows');
@@ -49,4 +49,14 @@ test('looksLikeProxy: one private address on three or more entries', () => {
   assert.equal(looksLikeProxy(['172.18.0.2', '172.18.0.2']), false);
   assert.equal(looksLikeProxy(['203.0.113.7', '203.0.113.7', '203.0.113.7']), false);
   assert.equal(looksLikeProxy(['10.0.0.1', '10.0.0.2', '10.0.0.1']), false);
+});
+
+test('addressText: IP, place and device while the eye is open; the device alone while closed', () => {
+  assert.equal(addressText('203.0.113.5', 'Example City', 'Safari · iOS', true), '203.0.113.5 · Example City · Safari · iOS');
+  assert.equal(addressText('203.0.113.5', null, 'Edge · Windows', true), '203.0.113.5 · Edge · Windows');
+  assert.equal(addressText(null, null, null, true), '— · —');
+  assert.equal(addressText('203.0.113.5', 'Example City', null, true), '203.0.113.5 · Example City · —');
+  // eye closed: no IP and no place, whatever the row holds
+  assert.equal(addressText('203.0.113.5', 'Example City', 'Safari · macOS', false), 'Safari · macOS');
+  assert.equal(addressText(null, null, null, false), '—');
 });

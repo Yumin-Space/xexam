@@ -42,6 +42,15 @@
 .us-facts { margin-top: 1px; }
 .us-meta { font-size: 13px; line-height: 1.5; color: var(--ink3); overflow-wrap: anywhere; }
 .us-ip { font-variant-numeric: tabular-nums; }
+/* v1.4: last active device + the "full device information" toggle (hit area grown to 44 px without changing the line height) */
+.us-ua-btn { position: relative; margin-left: 6px; padding: 1px 8px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--ink2); font: inherit; font-size: 12px; line-height: 18px; cursor: pointer; }
+.us-ua-btn::after { content: ""; position: absolute; inset: -13px -6px; }
+.us-ua-btn[aria-expanded="true"] { color: var(--ink); border-color: var(--ink3); }
+.us-ua { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 4px 0 6px; padding: 6px 10px; font-size: 13px; line-height: 1.5; }
+.us-ua[hidden] { display: none; }
+.us-ua dt { color: var(--ink3); }
+.us-ua dd { margin: 0; overflow-wrap: anywhere; word-break: break-word; }
+@media (max-width: 600px) { .us-ua { grid-template-columns: minmax(0, 1fr); } }
 
 /* The bank line (plain users): one tappable row, the summary and a chevron (US-4). Names are written out, so they can be read on a phone. */
 .us-bankrow {
@@ -208,7 +217,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-tool { min-height: 40px; }
   .us-tool::after { content: ""; position: absolute; inset: -2px -2px; }
   .us-ai-paused::after { content: ""; position: absolute; inset: -12px -2px; }
-  .us-search { min-height: 40px; font-size: 16px; }
+  .us-search { min-height: 44px; font-size: 16px; }
   .us-sort select { min-height: 44px; }
 }
 
@@ -228,7 +237,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .us-bank-li > .has-tip { flex: none; }
 
 /* v1.3: the sign-in info eye, the sort select and the "active now" tag */
-.us-signin-box { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--hover); }
+.us-signin-box { min-width: 0; }
 .us-signin-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .us-signin-box h2 { margin: 0 0 6px; font-size: 16.5px; font-weight: 600; overflow-wrap: anywhere; }
 .us-signin-desc { margin: 0 0 8px; font-size: 13px; line-height: 1.6; color: var(--ink2); overflow-wrap: anywhere; }
@@ -262,3 +271,58 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .us-del-svg { width: 18px; height: 18px; flex: none; }
 .us-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink3); margin-left: auto; }
 .us-sort select { font: inherit; color: var(--ink); background: var(--card, transparent); border: 1px solid var(--line, currentColor); border-radius: 6px; padding: 4px 6px; max-width: 150px; }
+
+/* v1.4: the location source block inside the sign-in info panel (radio pair, optional external lookup form) */
+.us-geo { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); display: grid; gap: 8px; min-width: 0; }
+.us-geo-src { margin: 0; padding: 0; border: 0; min-width: 0; display: grid; gap: 2px; }
+.us-geo-src legend { padding: 0; margin-bottom: 4px; font-size: 14px; font-weight: 600; }
+.us-geo-opt { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14.5px; cursor: pointer; overflow-wrap: anywhere; }
+.us-geo-opt input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--print); }
+.us-geo-hint { margin: 0 0 4px 30px; font-size: 13px; line-height: 1.5; color: var(--ink2); overflow-wrap: anywhere; }
+.us-geo-note { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink2); overflow-wrap: anywhere; }
+.us-geo-cfg { min-width: 0; }
+.us-geo-cfg > summary, .us-geo-map > summary { min-height: 44px; display: flex; align-items: center; font-size: 14px; font-weight: 600; cursor: pointer; }
+.us-geo-cfg > summary::-webkit-details-marker, .us-geo-map > summary::-webkit-details-marker { display: none; }
+.us-geo-cfg > summary::before, .us-geo-map > summary::before { content: ''; flex: none; width: 8px; height: 8px; margin-right: 10px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
+.us-geo-cfg[open] > summary::before, .us-geo-map[open] > summary::before { transform: rotate(45deg); }
+@media (prefers-reduced-motion: reduce) { .us-geo-cfg > summary::before, .us-geo-map > summary::before { transition: none; } }
+.us-geo-cfg > summary:focus-visible, .us-geo-map > summary:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.us-geo-fld, .us-geo-keyrow, .us-geo-hdr { margin: 8px 0; min-width: 0; }
+.us-geo-fld input, .us-geo-fld select, .us-geo-preset { width: 100%; max-width: 100%; box-sizing: border-box; min-height: 44px; font-size: 16px; }
+.us-geo-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 14px; }
+.us-geo-fld input[aria-invalid="true"] { border-color: var(--danger); }
+.us-geo-http { margin: 0 0 8px; font-size: 13px; line-height: 1.5; color: var(--danger); overflow-wrap: anywhere; }
+.us-geo-http[hidden] { display: none; }
+.us-geo-keyrow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
+.us-geo-keyrow > .us-geo-fld { flex: 1 1 220px; margin: 0; }
+.btn.us-geo-keyclear { min-height: 44px; }
+.btn.us-geo-keyclear[aria-pressed="true"] { border-color: var(--danger); color: var(--danger); }
+.us-geo-check { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 14px; cursor: pointer; overflow-wrap: anywhere; }
+.us-geo-check input { flex: none; width: 20px; height: 20px; margin: 0; accent-color: var(--print); }
+.us-geo-map { margin: 4px 0 8px; }
+.us-geo-maps { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+.us-geo-acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.us-geo-acts .btn { min-height: 44px; }
+.us-geo-result { margin: 8px 0 0; min-height: 1.5em; font-size: 13.5px; line-height: 1.5; color: var(--ink2); overflow-wrap: anywhere; }
+.us-geo-result.ok { color: var(--answer-right); }
+.us-geo-result.fail { color: var(--danger); }
+@media (max-width: 600px) {
+  .us-geo-maps { grid-template-columns: minmax(0, 1fr); }
+  .us-geo-keyrow > .us-geo-fld { flex-basis: 100%; }
+  .us-geo-acts .btn { flex: 1 1 auto; }
+}
+
+/* v1.4: the two tabs (users / sign-in IP and location), like the AI settings tabs */
+.us-tabs { display: flex; width: fit-content; max-width: 100%; margin: 0 0 16px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
+.us-tabs::-webkit-scrollbar { display: none; }
+.us-tabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: 40px; padding-inline: 14px; }
+.us-tabs button:focus-visible { outline-offset: -2px; }
+.us-tab-ic { width: 16px; height: 16px; flex: none; }
+.us-tl-short { display: none; }
+.us-card { min-width: 0; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .us-tl-short { display: inline; }
+  .us-tl-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .us-tabs { width: 100%; margin-bottom: 12px; }
+  .us-tabs button { flex: 1 1 0; min-height: 44px; gap: 4px; padding-inline: 6px; font-size: 13px; }
+}

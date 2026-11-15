@@ -13,6 +13,7 @@ pub mod config;
 pub mod extract;
 pub mod features;
 pub mod gen;
+pub mod geo;
 pub mod identity;
 pub mod import;
 pub mod limits;

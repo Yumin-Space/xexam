@@ -1,13 +1,41 @@
-//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 7: the tables of
+//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 8: the tables of
 //! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` … `V7_COLUMNS`, the indexes of `V3_INDEXES` and
-//! `V7_INDEXES` and the tables of `V5_TABLES` and `V7_TABLES`, added by the same additive steps on every path (new file,
-//! upgrade from 1 … 6), so `sqlite_master` is the same either way.
+//! `V7_INDEXES` and the tables of `V5_TABLES`, `V7_TABLES` and `V8_TABLES`, added by the same additive steps on every
+//! path (new file, upgrade from 1 … 7), so `sqlite_master` is the same either way. Schema 8 (v1.4) only adds the
+//! `geo_settings` table (external IP-location lookup); nothing is backfilled.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "7";
+pub const SCHEMA_VERSION: &str = "8";
 
 /// The schema versions upgraded by this version (after a backup copy).
-pub const UPGRADABLE: [&str; 6] = ["1", "2", "3", "4", "5", "6"];
+pub const UPGRADABLE: [&str; 7] = ["1", "2", "3", "4", "5", "6", "7"];
+
+/// Table of AI schema 8 (v1.4, all `IF NOT EXISTS`): the settings of the external IP-location lookup. A row exists only
+/// after a passing "test and save", so "saved" means "tested". The key (when there is one) is sealed with the AI master
+/// key under its own AAD (`secret::GEO_KEY_AAD`); it is never returned and never logged.
+pub const V8_TABLES: &str = "
+CREATE TABLE IF NOT EXISTS geo_settings (
+  id               INTEGER PRIMARY KEY CHECK (id = 1),
+  preset           TEXT NOT NULL CHECK (preset IN ('ipinfo','ipapi','ipapico','ipwhois','ipsb','custom')),
+  url_template     TEXT NOT NULL,
+  key_header_name  TEXT NOT NULL DEFAULT '',
+  key_header_value TEXT NOT NULL DEFAULT '',
+  map_country      TEXT NOT NULL DEFAULT '',
+  map_country_code TEXT NOT NULL DEFAULT '',
+  map_region       TEXT NOT NULL DEFAULT '',
+  map_city         TEXT NOT NULL DEFAULT '',
+  ok_path          TEXT NOT NULL DEFAULT '',
+  ok_value         TEXT NOT NULL DEFAULT '',
+  error_path       TEXT NOT NULL DEFAULT '',
+  message_path     TEXT NOT NULL DEFAULT '',
+  key_id           TEXT,
+  key_nonce        BLOB,
+  key_ciphertext   BLOB,
+  key_hint         TEXT NOT NULL DEFAULT '',
+  tested_at        INTEGER NOT NULL,
+  updated_at       INTEGER NOT NULL,
+  updated_by       INTEGER
+);";
 
 /// Columns added by schema v2 (each only when `pragma_table_info` lacks it): (table, column, column definition).
 pub const V2_COLUMNS: [(&str, &str, &str); 4] = [

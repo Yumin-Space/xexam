@@ -1872,7 +1872,7 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
         // (v1.1: a fresh database also has the v7 columns and indexes, which go first: `ended`'s CHECK names `time_limit`)
         c.execute_batch(
             "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; \
-             ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
+             ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
              ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
              ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
              ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
@@ -1913,7 +1913,7 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "8");
+    assert_eq!(v, "9");
     // the existing record is intact and has no session
     assert_eq!(
         count(

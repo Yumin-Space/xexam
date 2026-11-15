@@ -1,14 +1,17 @@
 // Activity tab of the log page (v1.3, administrators): who did what, from where. Filters (user, action group, result), the
 // entries (a table-like grid on wide screens, one card per entry on phones, a tap opens the full entry), "load earlier",
 // auto-refresh every 10 s while the tab is visible (pausable), and a settings popover (days to keep, visits of normal users).
-// The IP column shows only while the sign-in info eye (User management) is open; the location is never made up.
+// The address column (v1.4: "IP · place · device") shows IP and place only while the sign-in info eye (User management) is open;
+// the device is not an address and always shows. The location is never made up.
 // The component keeps its filters and entries between redraws of the page and draws its own list, so a refresh never
 // redraws the toolbar (a select keeps its focus).
 import { fetchActivity, saveActivitySettings } from '../api/activity.ts';
 import { miniSwitch } from './mini-switch.ts';
 import { iconButton } from './icon-button.ts';
-import { ACTIVITY_GROUPS, ACTIVITY_REFRESH_MS, actionFilter, detailText, deviceLabel, looksLikeProxy, mergeNewer, userFilter } from '../domain/activity.ts';
-import { countryNameIn, placeText } from '../domain/geo.ts';
+import { miniIcon } from './mini-icons.ts';
+import { holdTip } from './tooltip.ts';
+import { ACTIVITY_GROUPS, ACTIVITY_REFRESH_MS, actionFilter, addressText, detailText, deviceLabel, looksLikeProxy, mergeNewer, userFilter } from '../domain/activity.ts';
+import { countryNameIn, placeText, shortPlace } from '../domain/geo.ts';
 import { errorText } from '../i18n/errors.ts';
 import { localizeServerMessage } from '../i18n/server-messages.ts';
 import { hasKey, t, uiLang, type MsgKey } from '../i18n/index.ts';
@@ -32,6 +35,11 @@ let settingsBusy = false;
 let proxyHint = false;
 const filters = { user: '', action: '', result: '' as '' | 'ok' | 'fail' };
 const openIds = new Set<number>();
+/** v1.4 (owner): the green eye in the toolbar opens every entry's details, also of entries loaded later; an entry closed by
+ *  hand while it is on stays closed (closedIds) */
+let allOpen = false;
+const closedIds = new Set<number>();
+const isOpen = (id: number): boolean => openIds.has(id) || (allOpen && !closedIds.has(id));
 /** Bumped by every first read (new filter, refresh button): the answer of an older read is dropped */
 let epoch = 0;
 /** Bumped by every new draw and by `stop()`: an older view stops refreshing */
@@ -144,16 +152,41 @@ function timeText(e: ActivityEntry): string {
   return e.count > 1 && e.lastTime && e.lastTime !== e.time ? `${e.time} → ${e.lastTime.slice(11)}` : e.time;
 }
 
-function row(e: ActivityEntry, redraw: () => void): HTMLElement {
-  const open = openIds.has(e.id);
+/** The detail lines under an opened entry (full device information, IP, place, the full object) */
+function detail(e: ActivityEntry): HTMLElement {
+  const place = placeOf(e);
+  return h('dl', { class: 'act-detail', 'aria-label': t('act.detail.title') },
+    h('dt', null, t('act.detail.ua')), h('dd', null, e.ua ?? '—'),
+    ipOn() ? h('dt', null, t('act.detail.ip')) : null, ipOn() ? h('dd', null, e.ip ?? '—') : null,
+    ipOn() ? h('dt', null, t('act.detail.place')) : null, ipOn() ? h('dd', null, place ?? t('users.fact.noPlace')) : null,
+    e.detail ? h('dt', null, t('act.col.object')) : null, e.detail ? h('dd', null, objectText(e)) : null);
+}
+
+function row(e: ActivityEntry): HTMLElement {
+  const open = isOpen(e.id);
   const dev = deviceLabel(e.ua);
-  const ipLine = ipOn() ? [e.ip ?? '—', dev ?? '—'].join(' · ') : (dev ?? '—');
+  // v1.4: "IP · place · device" while the eye is open (the place is left out when there is none), the device alone while closed
+  const short = ipOn() ? shortPlace(e.location, countryNameIn(uiLang())) : null;
+  const full = ipOn() ? placeOf(e) : null;
+  const ipLine = addressText(e.ip, short, dev, ipOn());
+  const li = h('li', { class: `act-row${open ? ' open' : ''}` });
+  // v1.4 (owner, iPhone): a tap opens / closes this entry IN PLACE. Redrawing the whole list replaced the tapped button, and
+  // iOS then scrolled the page away from it; now nothing else is touched and the button keeps its focus.
   const main = h('button', {
-    type: 'button', class: 'act-main', 'aria-expanded': String(open),
+    type: 'button', class: 'act-main', id: `act-row-${e.id}`, 'aria-expanded': String(open),
     onclick: () => {
-      if (openIds.has(e.id)) openIds.delete(e.id);
-      else openIds.add(e.id);
-      redraw();
+      const nowOpen = !isOpen(e.id);
+      if (nowOpen) {
+        openIds.add(e.id);
+        closedIds.delete(e.id);
+      } else {
+        openIds.delete(e.id);
+        closedIds.add(e.id);
+      }
+      main.setAttribute('aria-expanded', String(nowOpen));
+      li.classList.toggle('open', nowOpen);
+      li.querySelector(':scope > .act-detail')?.remove();
+      if (nowOpen) li.append(detail(e));
     },
   },
   h('span', { class: 'act-c act-time' }, timeText(e), e.count > 1 ? h('span', { class: 'act-n' }, t('act.merged', { n: e.count })) : null),
@@ -161,17 +194,20 @@ function row(e: ActivityEntry, redraw: () => void): HTMLElement {
   h('span', { class: 'act-c act-act' }, actionLabel(e.action)),
   h('span', { class: 'act-c act-obj' }, objectText(e)),
   h('span', { class: 'act-c act-res' }, tag(e), e.result === 'fail' && e.reason ? h('span', { class: 'act-why' }, reasonText(e.reason)) : null),
-  h('span', { class: 'act-c act-dev' }, ipLine));
-  const li = h('li', { class: `act-row${open ? ' open' : ''}` }, main);
-  if (open) {
-    const place = placeOf(e);
-    li.append(h('dl', { class: 'act-detail', 'aria-label': t('act.detail.title') },
-      h('dt', null, t('act.detail.ua')), h('dd', null, e.ua ?? '—'),
-      ipOn() ? h('dt', null, t('act.col.ip')) : null, ipOn() ? h('dd', null, e.ip ?? '—') : null,
-      ipOn() ? h('dt', null, t('act.detail.place')) : null, ipOn() ? h('dd', null, place ?? t('users.fact.noPlace')) : null,
-      e.detail ? h('dt', null, t('act.col.object')) : null, e.detail ? h('dd', null, objectText(e)) : null));
-  }
+  h('span', { class: 'act-c act-dev', ...(full ? { title: full } : {}) }, ipLine));
+  li.append(main);
+  if (open) li.append(detail(e));
   return li;
+}
+
+/** The green eye of the toolbar (the look of the sign-in eye in User management): pressed = every entry shows its details */
+function allDetailsEye(onClick: () => void): HTMLElement {
+  const b = h('button', {
+    type: 'button', class: 'act-eye' + (allOpen ? ' on' : ''), id: 'act-alleye', 'aria-pressed': String(allOpen),
+    'aria-label': t('act.allDetails'), onclick: onClick,
+  }, h('span', { class: 'act-eye-ico' }, miniIcon(allOpen ? 'eye' : 'eyeOff', 'act-eye-svg')));
+  holdTip(b, t(allOpen ? 'act.allDetails.on' : 'act.allDetails.off'));
+  return b;
 }
 
 function headRow(): HTMLElement {
@@ -269,6 +305,13 @@ export function activityLog(): ActivityView {
           },
         }, t(k)))),
       h('span', { class: 'act-tools' },
+        allDetailsEye(() => {
+          allOpen = !allOpen;
+          openIds.clear();
+          closedIds.clear();
+          redraw();
+          document.getElementById('act-alleye')?.focus({ preventScroll: true });
+        }),
         iconButton({ icon: 'refresh', label: t('act.refresh'), focusKey: 'act-refresh', onClick: () => void readFirst(redraw) }),
         iconButton({
           icon: paused ? 'play' : 'pause', label: t(paused ? 'act.resume' : 'act.pause'), focusKey: 'act-pause',
@@ -301,12 +344,18 @@ export function activityLog(): ActivityView {
       const filtered = filters.user !== '' || filters.action !== '' || filters.result !== '';
       kids.push(h('p', { class: 'act-empty' }, t(filtered ? 'act.noMatch' : 'act.empty')));
     } else {
-      kids.push(headRow(), h('ol', { class: 'act-list' }, entries.map((e) => row(e, redraw))));
+      kids.push(headRow(), h('ol', { class: 'act-list' }, entries.map((e) => row(e))));
       if (next != null) {
         kids.push(h('button', { type: 'button', class: 'btn act-more', disabled: loading, onclick: () => void readOlder(redraw) }, t('act.more')));
       }
     }
+    // A refresh (every few seconds, Older, a filter) redraws the list: keep the page where it is and the focus on the same
+    // entry, so nothing jumps on a phone (v1.4, owner)
+    const y = window.scrollY;
+    const focusId = body.contains(document.activeElement) ? document.activeElement?.id || null : null;
     body.replaceChildren(...kids.filter((k): k is HTMLElement => k != null));
+    if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+    if (window.scrollY !== y) window.scrollTo(0, y);
   };
 
   const redraw = (): void => {

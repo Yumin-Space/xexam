@@ -30,7 +30,8 @@
 import '../styles/users.css';
 import { fetchBanks } from '../api/bank.ts';
 import { ApiError } from '../api/client.ts';
-import { clearSigninInfo, createUser, deleteUser, fetchUsers, resetUserPassword, setSigninInfo, unlockUser, updateUser, type UsersList } from '../api/users.ts';
+import { deleteGeo, enableGeo, fetchGeo, saveGeo, testGeo } from '../api/geo.ts';
+import { clearSigninInfo, createUser, deleteUser, fetchUsers, resetUserPassword, setGeoSource, setSigninInfo, unlockUser, updateUser, type UsersList } from '../api/users.ts';
 import { aiBadge, aiSetBadge } from '../components/ai-badge.ts';
 import { pageHead } from '../components/common.ts';
 import { field, passwordLengthOk, usernameOk } from '../components/fields.ts';
@@ -40,13 +41,19 @@ import { miniSwitch } from '../components/mini-switch.ts';
 import { icon, ICONS, roleName } from '../components/shell.ts';
 import { holdTip, infoTip, tipEl, withTip } from '../components/tooltip.ts';
 import { badgeState, serviceReason } from '../domain/badge-state.ts';
+import { deviceLabel } from '../domain/activity.ts';
 import { countryNameIn, placeText } from '../domain/geo.ts';
+import {
+  GEO_PRESETS, MAPPING_FIELDS, blankForm, checkDraft, codeText, draftBody, failureText, formFromSettings, isInsecureHttp, isServiceDown,
+  placeLocation, presetDraft, type GeoForm, type GeoProblem,
+} from '../domain/geo-source.ts';
+import { USER_TABS, hashOfUserTab, userTabOfHash, type UserTab } from '../domain/users-tabs.ts';
 import { USER_SORTS, isOnline, sortUsers, type UserSort } from '../domain/users-sort.ts';
 import { lockNote, lockView } from '../domain/lock.ts';
-import { SEARCH_FROM, aiLineKind, createAi, filterUsers, isServiceOff, lockUntilLabel, fullAt } from '../domain/user-admin.ts';
+import { SEARCH_FROM, aiLineKind, createAi, factPlan, filterUsers, isServiceOff, lockUntilLabel, fullAt } from '../domain/user-admin.ts';
 import { secondsLeft } from '../domain/wait.ts';
 import { errorText } from '../i18n/errors.ts';
-import { t, tn, uiLang } from '../i18n/index.ts';
+import { t, tn, uiLang, type MsgKey } from '../i18n/index.ts';
 import { onRouteChange, onSignedIn, refreshAi, refreshLibrary, render } from '../state/actions.ts';
 import {
   accessChange, accessOf, accessView, deselectAllBanks, draftOf, editChange, isTicked, ownedBankNames, ownerView, toggleAll,
@@ -54,7 +61,7 @@ import {
 } from '../state/bank-access.ts';
 import { aiStatus } from '../state/ai.ts';
 import { S } from '../state/store.ts';
-import type { BankSummary, Role, UserRow } from '../types/api.ts';
+import type { BankSummary, GeoPlace, GeoPresetId, GeoSource, GeoState, Role, UserRow } from '../types/api.ts';
 import { ask, formDialog } from '../utils/dialog.ts';
 import { h, scrollToY, type Child } from '../utils/dom.ts';
 import { TOUCH_MQ, matches } from '../utils/media.ts';
@@ -70,6 +77,9 @@ let users: UserRow[] | null = null;
 let aiAvailable = false;
 /** v1.3: the sign-in info eye (IP + approximate location), from the newest list answer */
 let signinInfo = false;
+/** v1.4: where the place of a sign-in comes from, and whether ai-service is connected, from the newest list answer */
+let geoSource: GeoSource = 'cloudflare';
+let aiServiceUp = false;
 /** v1.3: the list order (sort select) */
 let sortBy: UserSort = 'name';
 /** The sign-in info eye request runs */
@@ -125,6 +135,7 @@ onRouteChange((from, to) => {
     resetAdd();
     actionError = null;
     searchText = '';
+    geoReset();
     stopTicker();
     stopPoller();
   }
@@ -241,6 +252,8 @@ function take(answer: UsersList): void {
   users = answer.users;
   aiAvailable = answer.aiAvailable;
   signinInfo = answer.signinInfo;
+  geoSource = answer.geoSource;
+  aiServiceUp = answer.aiServiceUp;
   noteLocks(answer.users);
 }
 
@@ -875,7 +888,7 @@ async function clearSignin(): Promise<void> {
 function signinPanel(): HTMLElement | null {
   if (!users || loadError) return null;
   const state = signinInfo ? t('users.signinInfo') : t('users.signinInfo.hidden');
-  return h('section', { class: 'us-signin-box', 'aria-labelledby': 'us-signin-t' },
+  return h('section', { class: 'panel us-signin-box', 'aria-labelledby': 'us-signin-t' },
     h('h2', { id: 'us-signin-t' }, t('users.signinInfo.title')),
     h('p', { class: 'us-signin-desc', id: 'us-signin-d' }, t('users.signinInfo.desc')),
     h('div', { class: 'us-signin-row' },
@@ -893,7 +906,418 @@ function signinPanel(): HTMLElement | null {
       h('button', {
         class: 'btn danger solid us-signin-clear', id: 'us-signin-clear', type: 'button', disabled: signinBusy,
         'aria-label': t('users.signinInfo.clear.name'), title: t('users.signinInfo.clear.tip'), onclick: () => void clearSignin(),
-      }, miniIcon('trash', 'us-del-svg'), h('span', null, t('users.signinInfo.clear')))));
+      }, miniIcon('trash', 'us-del-svg'), h('span', null, t('users.signinInfo.clear')))),
+    geoBlock());
+}
+
+// ---------------------------------------------------------------- v1.4: location source (Cloudflare headers / external lookup API)
+
+/**
+ * The state of the "Location source" block. The draft (form values, typed key, "remove key" flag, open states, last result)
+ * lives here, so it survives every redraw of the page and the quiet re-read of the list; the inputs are rebuilt from it and the
+ * focus is restored by id.
+ */
+const geo = {
+  loaded: false,
+  loading: false,
+  /** ai-service cannot be reached: the form and the API radio are disabled, the Cloudflare radio works */
+  noService: false,
+  state: null as GeoState | null,
+  form: null as GeoForm | null,
+  /** The form holds edits that are not saved (a reload of the saved settings leaves it alone) */
+  dirty: false,
+  keyInput: '',
+  keyCleared: false,
+  /** `null` = automatic (open while the source is the external API) */
+  cfgOpen: null as boolean | null,
+  mapOpen: false,
+  busy: null as null | 'test' | 'save' | 'enable' | 'cf' | 'delete',
+  result: null as { kind: 'ok' | 'fail' | 'info'; text: string } | null,
+  problem: null as GeoProblem | null,
+};
+
+const geoForm = (): GeoForm => (geo.form ??= blankForm(uiLang()));
+
+function geoReset(): void {
+  geo.loaded = false;
+  geo.loading = false;
+  geo.result = null;
+  geo.problem = null;
+  geo.busy = null;
+}
+
+/** The text of a refused or failed geo call: the `ai.geo.*` texts by code, else the generic error text */
+function geoErrorText(e: unknown): string {
+  const code = e instanceof ApiError ? e.code : undefined;
+  const k = codeText(code);
+  return k ? t(k) : errorText(e);
+}
+
+/** A server refusal that names a field: the field is marked (aria-invalid) and focused */
+function geoProblemOf(e: unknown): GeoProblem | null {
+  if (!(e instanceof ApiError) || !e.field) return null;
+  const k = codeText(e.code);
+  return k ? { field: e.field, i18nKey: k } : null;
+}
+
+function geoFieldId(field: string): string {
+  if (field === 'urlTemplate') return 'us-geo-url';
+  if (field === 'keyHeaderName') return 'us-geo-hname';
+  if (field === 'keyHeaderValue') return 'us-geo-hval';
+  if (field === 'key') return 'us-geo-key';
+  return `us-geo-m-${field.replace(/^mapping\./, '')}`;
+}
+
+async function loadGeo(): Promise<void> {
+  if (geo.loading) return;
+  geo.loading = true;
+  try {
+    const st = await fetchGeo();
+    geo.state = st;
+    geo.noService = false;
+    if (st.settings && !geo.dirty) {
+      geo.form = formFromSettings(st.settings);
+      geo.keyCleared = false;
+    }
+  } catch (e) {
+    geo.state = null;
+    geo.noService = isServiceDown(e instanceof ApiError ? e : null);
+    if (!geo.noService) geo.result = { kind: 'fail', text: geoErrorText(e) };
+  } finally {
+    geo.loading = false;
+    geo.loaded = true;
+  }
+  if (onUsersPage()) render();
+}
+
+/** A toggle by the person is remembered; the first automatic opening (source = API) is not */
+function keepOpen(open: boolean): void {
+  if (geo.cfgOpen !== null || open !== (geoSource === 'api')) geo.cfgOpen = open;
+}
+
+function geoPlaceText(p: GeoPlace): string {
+  return placeText(placeLocation(p), countryNameIn(uiLang())) ?? '—';
+}
+
+/** Test (`save` false) or test and save (`save` true) the draft */
+async function geoRun(save: boolean): Promise<void> {
+  if (geo.busy || asking) return;
+  const form = geoForm();
+  const problem = checkDraft(form, { typed: geo.keyInput, saved: geo.state?.settings?.key.set === true, cleared: geo.keyCleared });
+  if (problem) {
+    geo.problem = problem;
+    geo.result = { kind: 'fail', text: t(problem.i18nKey) };
+    geo.cfgOpen = true;
+    if (problem.field.startsWith('mapping.')) geo.mapOpen = true;
+    focusNext = geoFieldId(problem.field);
+    render();
+    return;
+  }
+  geo.problem = null;
+  geo.result = null;
+  geo.busy = save ? 'save' : 'test';
+  const body = draftBody(form, geo.keyInput, geo.keyCleared);
+  render();
+  try {
+    if (save) {
+      const a = await saveGeo(body);
+      if (a.ok) {
+        const st = geo.state;
+        geo.state = { settings: a.settings, testIp: st?.testIp ?? '8.8.8.8', perMinute: st?.perMinute ?? 30, timeoutMs: st?.timeoutMs ?? 3000 };
+        geo.form = formFromSettings(a.settings);
+        geo.keyInput = '';
+        geo.keyCleared = false;
+        geo.dirty = false;
+        geo.noService = false;
+        geo.result = { kind: 'ok', text: t('users.geo.test.ok', { ip: st?.testIp ?? '8.8.8.8', place: geoPlaceText(a.place) }) };
+        toast(t('users.geo.saved'));
+      } else {
+        const f = failureText(a.failure);
+        geo.result = { kind: 'fail', text: t('users.geo.test.fail', { reason: t(f.key, f.params) }) };
+      }
+    } else {
+      const a = await testGeo(body);
+      if (a.ok) {
+        geo.result = { kind: 'ok', text: t('users.geo.test.ok', { ip: a.testIp, place: geoPlaceText(a.place) }) };
+      } else {
+        const f = failureText(a.failure);
+        geo.result = { kind: 'fail', text: t('users.geo.test.fail', { reason: t(f.key, f.params) }) };
+      }
+    }
+  } catch (e) {
+    geo.problem = geoProblemOf(e);
+    geo.result = { kind: 'fail', text: geoErrorText(e) };
+    if (geo.problem) focusNext = geoFieldId(geo.problem.field);
+  } finally {
+    geo.busy = null;
+  }
+  if (!focusNext) focusNext = save ? 'us-geo-save' : 'us-geo-test';
+  if (onUsersPage()) render();
+}
+
+/** The API radio: switches to the saved external lookup; without saved settings it only points at the form */
+async function geoPickApi(): Promise<void> {
+  if (geo.busy || asking || geoSource === 'api') return;
+  if (!geo.state?.settings) {
+    geo.cfgOpen = true;
+    geo.result = { kind: 'info', text: t('users.geo.needSave') };
+    focusNext = 'us-geo-url';
+    render();
+    return;
+  }
+  geo.busy = 'enable';
+  geo.result = null;
+  render();
+  let done = false;
+  try {
+    await enableGeo();
+    adopt(await fetchUsers());
+    done = true;
+  } catch (e) {
+    geo.result = { kind: 'fail', text: geoErrorText(e) };
+  } finally {
+    geo.busy = null;
+  }
+  if (done) toast(t('users.geo.toApi'));
+  focusNext = 'us-geo-api';
+  if (onUsersPage()) render();
+}
+
+/** The Cloudflare radio while the source is the external API: goes to the main service, so it works without ai-service */
+async function geoPickCloudflare(): Promise<void> {
+  if (geo.busy || asking || geoSource === 'cloudflare') return;
+  geo.busy = 'cf';
+  geo.result = null;
+  render();
+  let done = false;
+  try {
+    adopt(await setGeoSource('cloudflare'));
+    done = true;
+  } catch (e) {
+    geo.result = { kind: 'fail', text: geoErrorText(e) };
+  } finally {
+    geo.busy = null;
+  }
+  if (done) toast(t('users.geo.toCf'));
+  focusNext = 'us-geo-cf';
+  if (onUsersPage()) render();
+}
+
+async function geoDelete(): Promise<void> {
+  if (geo.busy || asking) return;
+  asking = true;
+  let done = false;
+  try {
+    const yes = await ask({ title: t('users.geo.delete'), body: t('users.geo.delete.ask'), ok: t('users.geo.delete'), danger: true });
+    if (!yes) return;
+    geo.busy = 'delete';
+    geo.result = null;
+    render();
+    try {
+      await deleteGeo();
+      geo.state = geo.state ? { ...geo.state, settings: null } : null;
+      geo.form = blankForm(uiLang());
+      geo.keyInput = '';
+      geo.keyCleared = false;
+      geo.dirty = false;
+      adopt(await fetchUsers());
+      done = true;
+    } catch (e) {
+      geo.result = { kind: 'fail', text: geoErrorText(e) };
+    }
+  } finally {
+    asking = false;
+    geo.busy = null;
+  }
+  if (done) toast(t('users.geo.delete.done'));
+  focusNext = 'us-geo-cfg-sum';
+  if (onUsersPage()) render();
+}
+
+function geoText(
+  id: string, label: string, value: string, onInput: (v: string) => void,
+  o: { hint?: string; disabled?: boolean; type?: string; placeholder?: string; invalid?: boolean; describedBy?: string; mono?: boolean } = {},
+): HTMLElement {
+  const hintId = o.hint ? `${id}-hint` : null;
+  const input = h('input', {
+    id, name: id, type: o.type ?? 'text', value, autocomplete: 'off', autocapitalize: 'none', autocorrect: 'off', spellcheck: 'false',
+    placeholder: o.placeholder ?? null, disabled: !!o.disabled, class: o.mono ? 'us-geo-mono' : null,
+    'aria-invalid': o.invalid ? 'true' : null,
+    'aria-describedby': [hintId, o.describedBy].filter(Boolean).join(' ') || null,
+    oninput: () => {
+      geo.dirty = true;
+      geo.problem = null;
+      onInput(input.value);
+    },
+  });
+  return h('div', { class: 'fld us-geo-fld' }, h('label', { class: 'fld-l', for: id }, label), input, o.hint ? h('p', { class: 'fld-hint', id: hintId }, o.hint) : null);
+}
+
+function geoSourceBlock(): HTMLElement {
+  const disabledAll = geo.busy != null || signinBusy;
+  const radio = (id: string, value: GeoSource, label: string, on: () => void, disabled: boolean, hintId: string): HTMLElement =>
+    h('label', { class: 'us-geo-opt' },
+      h('input', {
+        type: 'radio', name: 'us-geo-src', id, value, checked: geoSource === value, disabled, 'aria-describedby': hintId,
+        onchange: (e: Event) => {
+          if ((e.target as HTMLInputElement).checked) on();
+        },
+      }),
+      h('span', null, label));
+  return h('fieldset', { class: 'us-geo-src', id: 'us-geo-src' },
+    h('legend', null, t('users.geo.title')),
+    radio('us-geo-cf', 'cloudflare', t('users.geo.cf'), () => void geoPickCloudflare(), disabledAll, 'us-geo-cf-hint'),
+    h('p', { class: 'us-geo-hint', id: 'us-geo-cf-hint' }, t('users.geo.cf.hint')),
+    radio('us-geo-api', 'api', t('users.geo.api'), () => void geoPickApi(), disabledAll || geo.noService, 'us-geo-privacy'),
+    h('p', { class: 'us-geo-hint', id: 'us-geo-privacy' }, t('users.geo.api.hint')));
+}
+
+function geoNote(): HTMLElement | null {
+  const text = geo.noService ? t('users.geo.noService')
+    : geoSource === 'api' && !aiServiceUp ? t('users.geo.paused')
+      : !signinInfo ? t('users.geo.eyeOff') : null;
+  return text ? h('p', { class: 'us-geo-note', role: 'note' }, text) : null;
+}
+
+/** scheme + host + port of a URL template (placeholders filled with dummies); null when it does not parse. */
+function geoOrigin(template: string): string | null {
+  try {
+    const u = new URL(template.split('{ip}').join('203.0.113.5').split('{key}').join('k'));
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+    return `${u.protocol}//${u.hostname}:${u.port || (u.protocol === 'https:' ? '443' : '80')}`;
+  } catch {
+    return null;
+  }
+}
+
+/** A saved key never follows the form to another origin: show it as removed instead of silently keeping it. */
+function geoKeyMoves(template: string): void {
+  const saved = geo.state?.settings;
+  if (!saved?.key.set || geo.keyInput !== '') return;
+  if (geoOrigin(template) !== geoOrigin(saved.urlTemplate)) geo.keyCleared = true;
+}
+
+function geoConfig(): HTMLElement {
+  const form = geoForm();
+  const saved = geo.state?.settings ?? null;
+  const frozen = geo.busy != null || geo.noService;
+  const bad = (field: string): boolean => geo.problem?.field === field;
+  const key = saved?.key;
+  const keyHolder = geo.keyCleared ? t('users.geo.key.cleared')
+    : key?.unreadable ? t('users.geo.key.unreadable')
+      : key?.set ? (key.hint ? t('users.geo.key.set', { hint: key.hint }) : t('users.geo.key.setNoHint')) : '';
+  const http = h('p', { class: 'us-geo-http', id: 'us-geo-http', role: 'note', hidden: !isInsecureHttp(form.urlTemplate) }, t('users.geo.http'));
+  const url = geoText('us-geo-url', t('users.geo.url'), form.urlTemplate, (v) => {
+    form.urlTemplate = v;
+    http.hidden = !isInsecureHttp(v);
+    geoKeyMoves(v);
+  }, { hint: t('users.geo.url.hint'), disabled: frozen, invalid: bad('urlTemplate'), describedBy: 'us-geo-http', mono: true });
+  const preset = h('select', {
+    id: 'us-geo-preset', class: 'us-geo-preset', disabled: frozen,
+    onchange: () => {
+      geo.dirty = true;
+      geo.problem = null;
+      geo.form = presetDraft(preset.value as GeoPresetId, uiLang(), form);
+      geoKeyMoves(geo.form.urlTemplate);
+      focusNext = 'us-geo-preset';
+      render();
+    },
+  }, GEO_PRESETS.map((p) => h('option', { value: p.id, selected: p.id === form.preset }, p.label ?? t('users.geo.preset.custom'))));
+  const keyField = geoText('us-geo-key', t('users.geo.key'), geo.keyInput, (v) => {
+    geo.keyInput = v;
+    if (v !== '') geo.keyCleared = false;
+  }, { type: 'password', placeholder: keyHolder, disabled: frozen, invalid: bad('key') });
+  const keyClear = key?.set || geo.keyCleared
+    ? h('button', {
+      class: 'btn quiet us-geo-keyclear', id: 'us-geo-key-clear', type: 'button', disabled: frozen, 'aria-pressed': String(geo.keyCleared),
+      onclick: () => {
+        geo.dirty = true;
+        geo.keyCleared = !geo.keyCleared;
+        geo.keyInput = '';
+        focusNext = 'us-geo-key-clear';
+        render();
+      },
+    }, t('users.geo.key.clear'))
+    : null;
+  const inHdr = h('label', { class: 'us-geo-check' },
+    h('input', {
+      type: 'checkbox', id: 'us-geo-inhdr', checked: form.inHeader, disabled: frozen,
+      onchange: (e: Event) => {
+        geo.dirty = true;
+        form.inHeader = (e.target as HTMLInputElement).checked;
+        focusNext = 'us-geo-inhdr';
+        render();
+      },
+    }),
+    h('span', null, t('users.geo.inHeader')));
+  const hdr = form.inHeader
+    ? h('div', { class: 'us-geo-hdr' },
+      geoText('us-geo-hname', t('users.geo.hname'), form.headerName, (v) => { form.headerName = v; }, { disabled: frozen, invalid: bad('keyHeaderName'), mono: true }),
+      geoText('us-geo-hval', t('users.geo.hval'), form.headerValue, (v) => { form.headerValue = v; }, { disabled: frozen, invalid: bad('keyHeaderValue'), mono: true }))
+    : null;
+  const mapInputs = MAPPING_FIELDS.map((f) =>
+    geoText(`us-geo-m-${f}`, t(`users.geo.map.${f}` as MsgKey), form.mapping[f], (v) => { form.mapping[f] = v; },
+      { disabled: frozen, invalid: bad(`mapping.${f}`), mono: true }));
+  const map = h('details', {
+    class: 'us-geo-map', id: 'us-geo-map', open: geo.mapOpen,
+    ontoggle: (e: Event) => { geo.mapOpen = (e.target as HTMLDetailsElement).open; },
+  },
+  h('summary', { id: 'us-geo-map-sum' }, t('users.geo.map')),
+  h('p', { class: 'us-geo-hint' }, t('users.geo.map.hint')),
+  h('div', { class: 'us-geo-maps' }, mapInputs));
+  const result = h('p', { class: `us-geo-result ${geo.result?.kind ?? ''}`, id: 'us-geo-result', role: 'status', 'aria-live': 'polite' },
+    geo.busy === 'test' || geo.busy === 'save' ? t('users.geo.testing') : (geo.result?.text ?? ''));
+  const open = geo.cfgOpen ?? geoSource === 'api';
+  return h('details', {
+    class: 'us-geo-cfg', id: 'us-geo-cfg', open,
+    ontoggle: (e: Event) => keepOpen((e.target as HTMLDetailsElement).open),
+  },
+  h('summary', { id: 'us-geo-cfg-sum' }, t('users.geo.cfg')),
+  h('div', { class: 'fld us-geo-fld' }, h('label', { class: 'fld-l', for: 'us-geo-preset' }, t('users.geo.preset')), preset),
+  url, http,
+  h('div', { class: 'us-geo-keyrow' }, keyField, keyClear),
+  inHdr, hdr, map,
+  h('div', { class: 'us-geo-acts' },
+    h('button', { class: 'btn', id: 'us-geo-test', type: 'button', disabled: frozen, onclick: () => void geoRun(false) }, t('users.geo.test')),
+    h('button', { class: 'btn primary', id: 'us-geo-save', type: 'button', disabled: frozen, onclick: () => void geoRun(true) }, t('users.geo.save')),
+    saved ? h('button', { class: 'btn danger', id: 'us-geo-del', type: 'button', disabled: frozen, onclick: () => void geoDelete() }, t('users.geo.delete')) : null),
+  result);
+}
+
+function geoBlock(): HTMLElement {
+  return h('div', { class: 'us-geo', id: 'us-geo' }, geoSourceBlock(), geoNote(), geoConfig());
+}
+
+/** The focused geo control (id and text selection), to give the focus back after the page is redrawn */
+function geoFocus(): { id: string; start: number | null; end: number | null } | null {
+  const el = document.activeElement;
+  if (!(el instanceof HTMLElement) || !el.id.startsWith('us-geo')) return null;
+  const input = el instanceof HTMLInputElement && el.type !== 'checkbox' && el.type !== 'radio' ? el : null;
+  let start: number | null = null;
+  let end: number | null = null;
+  try {
+    start = input?.selectionStart ?? null;
+    end = input?.selectionEnd ?? null;
+  } catch {
+    start = end = null;
+  }
+  return { id: el.id, start, end };
+}
+
+function geoRestoreFocus(root: HTMLElement, f: ReturnType<typeof geoFocus>): void {
+  if (!f) return;
+  queueMicrotask(() => {
+    const el = root.isConnected ? document.getElementById(f.id) : null;
+    if (!el || document.activeElement === el) return;
+    el.focus({ preventScroll: true });
+    if (el instanceof HTMLInputElement && f.start != null && f.end != null) {
+      try {
+        el.setSelectionRange(f.start, f.end);
+      } catch {
+        // checkbox / radio: no selection
+      }
+    }
+  });
 }
 
 function sortSelect(): HTMLElement {
@@ -1030,24 +1454,51 @@ function rowBadge(u: UserRow): HTMLElement | null {
   }), { admin: true });
 }
 
+/** The users whose full last-active user agent is shown (kept across re-renders and the poller) */
+const uaOpen = new Set<number>();
+
 /**
- * The facts of a row, one per line (phones and desktop alike): last sign-in, last active, then (v1.3) the last sign-in IP
- * and the place, only while the switch is on and the answer has an IP (never invented; an IP without a place says the
- * place is unknown), and last the number of saved exam / practice records.
+ * v1.4 (owner): the last active device line, the same deviceLabel() text as the System log, with a small toggle (the log's
+ * "full device information" wording) that shows the whole user agent under the line, like the log's expanded detail.
+ */
+function deviceFact(u: UserRow, line: (...parts: Array<string | HTMLElement>) => HTMLElement): HTMLElement {
+  const ua = u.lastActiveUa ?? '';
+  const id = `us-ua-${u.id}`;
+  const detail = h('dl', { class: 'us-ua', id, hidden: !uaOpen.has(u.id) },
+    h('dt', null, t('act.detail.ua')), h('dd', null, ua));
+  const btn = h('button', {
+    type: 'button', id: `us-ua-btn-${u.id}`, class: 'us-ua-btn', 'aria-expanded': String(uaOpen.has(u.id)), 'aria-controls': id,
+    onclick: () => {
+      const open = !uaOpen.has(u.id);
+      if (open) uaOpen.add(u.id);
+      else uaOpen.delete(u.id);
+      btn.setAttribute('aria-expanded', String(open));
+      detail.hidden = !open;
+    },
+  }, t('act.detail.ua'));
+  return h('div', { class: 'us-dev' }, line(t('users.fact.activeDevice'), deviceLabel(ua) ?? '', ' ', btn), detail);
+}
+
+/**
+ * The facts of a row, one per line (phones and desktop alike), in the order of domain/user-admin.ts factPlan: last sign-in, its
+ * IP and place (only while the switch is on and the answer has an IP; an IP without a place says the place is unknown), last
+ * active, its IP and place, the last active device (also while the switch is off) and the number of saved records.
  */
 function factLines(u: UserRow): HTMLElement {
   const line = (...parts: Array<string | HTMLElement>): HTMLElement => h('p', { class: 'us-meta' }, parts);
-  const lines = [
-    line(u.lastLoginAt ? t('users.meta.lastLogin', { at: fullAt(u.lastLoginAt) }) : t('users.meta.never')),
-    line(u.lastActiveAt ? t('users.fact.lastActive', { at: fullAt(u.lastActiveAt) }) : t('users.fact.neverActive')),
-  ];
-  if (signinInfo && u.lastLoginIp) {
-    const place = placeText(u.lastLoginLocation, countryNameIn(uiLang()));
-    lines.push(
-      line(t('users.fact.loginIp'), h('span', { class: 'us-ip' }, u.lastLoginIp)),
-      line(t('users.fact.loginPlace'), place ?? t('users.fact.placeUnknown')));
-  }
-  lines.push(line(t('users.fact.records', { n: u.records })));
+  const name = countryNameIn(uiLang());
+  const lines = factPlan(u, signinInfo).map((kind): HTMLElement => {
+    switch (kind) {
+      case 'lastLogin': return line(u.lastLoginAt ? t('users.meta.lastLogin', { at: fullAt(u.lastLoginAt) }) : t('users.meta.never'));
+      case 'loginIp': return line(t('users.fact.loginIp'), h('span', { class: 'us-ip' }, u.lastLoginIp ?? ''));
+      case 'loginPlace': return line(t('users.fact.loginPlace'), placeText(u.lastLoginLocation, name) ?? t('users.fact.placeUnknown'));
+      case 'lastActive': return line(u.lastActiveAt ? t('users.fact.lastActive', { at: fullAt(u.lastActiveAt) }) : t('users.fact.neverActive'));
+      case 'activeIp': return line(t('users.fact.activeIp'), h('span', { class: 'us-ip' }, u.lastActiveIp ?? ''));
+      case 'activePlace': return line(t('users.fact.activePlace'), placeText(u.lastActiveLocation, name) ?? t('users.fact.placeUnknown'));
+      case 'activeDevice': return deviceFact(u, line);
+      case 'records': return line(t('users.fact.records', { n: u.records }));
+    }
+  });
   return h('div', { class: 'us-facts' }, lines);
 }
 
@@ -1215,16 +1666,62 @@ function showNewRow(root: HTMLElement): void {
   });
 }
 
+/** v1.4: the tabs, icon + full label, short label under PHONE (like the AI settings tabs) */
+const TABS: Record<UserTab, { icon: MiniIcon; full: MsgKey; short: MsgKey }> = {
+  users: { icon: 'users', full: 'users.tab.users', short: 'users.tab.usersShort' },
+  signin: { icon: 'eye', full: 'users.tab.signin', short: 'users.tab.signinShort' },
+};
+
+function tabsRow(tab: UserTab): HTMLElement {
+  return h('div', { class: 'seg us-tabs', role: 'group', 'aria-label': t('users.tabs.aria') },
+    USER_TABS.map((k) => {
+      const d = TABS[k];
+      const b = h('button', {
+        type: 'button', id: `us-tab-${k}`, 'aria-pressed': String(k === tab), 'aria-controls': 'us-card', onclick: () => selectTab(k),
+      }, miniIcon(d.icon, 'us-tab-ic'), h('span', { class: 'us-tl-full' }, t(d.full)), h('span', { class: 'us-tl-short', 'aria-hidden': 'true' }, t(d.short)));
+      holdTip(b, t(d.full));
+      return b;
+    }));
+}
+
+/** Shows a tab: the hash keeps it (`#/users?tab=signin`), replaced in place, so Back does not walk through tabs */
+function selectTab(k: UserTab): void {
+  if (userTabOfHash(window.location.hash) === k && window.location.hash.includes('tab=')) return;
+  try {
+    window.history.replaceState(window.history.state, '', hashOfUserTab(k));
+  } catch {
+    window.location.hash = hashOfUserTab(k);
+  }
+  render();
+  document.getElementById(`us-tab-${k}`)?.focus();
+}
+
+/** The sign-in tab: the panel, or (until the list is read, or when that failed) the same loading / error line as the list */
+function signinTab(): Child {
+  const p = signinPanel();
+  if (p) return p;
+  return loadError
+    ? h('div', { class: 'err', role: 'alert' },
+      h('p', null, t('users.err.load', { reason: errorText(loadError) })),
+      h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => void load() }, t('common.retry'))))
+    : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
+}
+
 export function renderUsers(): HTMLElement {
   if (wanted && !loading) void load();
+  if (!geo.loaded && !geo.loading) void loadGeo();
+  const keepFocus = focusNext ? null : geoFocus();
   startTicker();
   startPoller();
+  const tab = userTabOfHash(window.location.hash);
+  // Only the shown tab is in the DOM; the geo draft lives in `geo` (module state), so a tab change or a redraw keeps it
   const root = h('div', { class: 'page page-users' },
     pageHead(t('users.title')),
     aiHiddenNote(),
-    signinPanel(),
-    listPanel());
+    tabsRow(tab),
+    h('div', { class: 'us-card', id: 'us-card', role: 'region', 'aria-labelledby': `us-tab-${tab}` }, tab === 'signin' ? signinTab() : listPanel()));
   focusAfter(root);
+  geoRestoreFocus(root, keepFocus);
   showNewRow(root);
   return root;
 }

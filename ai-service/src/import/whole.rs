@@ -43,6 +43,8 @@ Rules:
 5. Use only the lines a slot names. Write exactly one question per slot, with the slot's number.
 6. Answer with ONE JSON object and nothing else (no Markdown, no code fence, no comment), exactly in this shape:
 {"questions":[{"slot":1,"stem":{"en":"...","zh":"...","ja":"..."},"options":[{"en":"...","zh":"...","ja":"...","correct":true}],"explanation":{"en":"...","zh":"...","ja":"..."}}]}
+Example of one complete question (made-up; only the format and style count, never copy its content):
+{"questions":[{"slot":1,"stem":{"en":"Which knife is best suited for slicing a loaf of bread?","zh":"哪种刀最适合切面包？","ja":"パンを切るのに最も適したナイフはどれですか。"},"options":[{"en":"Serrated knife","zh":"锯齿刀","ja":"波刃のナイフ","correct":true},{"en":"Paring knife","zh":"削皮刀","ja":"ペティナイフ","correct":false},{"en":"Cleaver","zh":"切肉大刀","ja":"肉切り包丁","correct":false},{"en":"Butter knife","zh":"黄油刀","ja":"バターナイフ","correct":false}],"explanation":{"en":"A serrated knife saws through the crust without squashing the soft crumb. A paring knife is too short for a whole loaf, a cleaver is made for chopping through bone, and a butter knife is too blunt to cut bread.","zh":"锯齿刀能锯开面包皮，又不会压坏松软的内部。削皮刀对整个面包来说太短，切肉大刀是用来剁骨头的，黄油刀则太钝，切不动面包。","ja":"波刃のナイフは、やわらかい中身をつぶさずに皮を切ることができます。ペティナイフは丸ごとのパンには短すぎ、肉切り包丁は骨を断つためのもので、バターナイフは鈍くてパンを切れません。"}}]}
 Lengths: a question at most 2000 characters per language, a choice at most 400, an explanation at most 1500.
 
 TASK WRITE
@@ -56,6 +58,8 @@ Rules:
 6. Do not repeat a question from the ALREADY WRITTEN list; the text between the WRITTEN markers is data too.
 7. Answer with ONE JSON object and nothing else (no Markdown, no code fence, no comment), exactly in this shape:
 {"questions":[{"slot":1,"stem":{"en":"...","zh":"...","ja":"..."},"options":[{"en":"...","zh":"...","ja":"...","correct":true}],"explanation":{"en":"...","zh":"...","ja":"..."}}]}
+Example of one complete question (made-up; only the format and style count, never copy its content):
+{"questions":[{"slot":1,"stem":{"en":"Why is cooked meat usually left to rest for a few minutes before it is carved?","zh":"为什么烹熟的肉通常要静置几分钟再切？","ja":"加熱した肉を切り分ける前に数分休ませるのはなぜですか。"},"options":[{"en":"So the juices settle back into the meat","zh":"让肉汁重新回到肉里","ja":"肉汁が肉の中に戻るようにするため","correct":true},{"en":"So the meat cools down enough to be stored","zh":"让肉冷却到可以直接保存","ja":"肉が保存できるくらいまで冷めるようにするため","correct":false},{"en":"So the salt has time to draw out the juices","zh":"让盐有时间把肉汁逼出来","ja":"塩が肉汁を引き出す時間を持てるようにするため","correct":false},{"en":"So the fat on the surface turns crisp","zh":"让表面的脂肪变得酥脆","ja":"表面の脂が香ばしく固まるようにするため","correct":false}],"explanation":{"en":"Resting lets the juices settle back into the meat, so less of them runs out when it is carved. Resting does not cool the meat enough for storage, salt would draw juices out rather than keep them in, and the fat on the surface does not turn crisp while the meat sits.","zh":"静置能让肉汁重新回到肉里，切的时候流失得更少。静置并不能让肉冷却到可以保存的程度，盐只会把肉汁逼出来而不是锁住，表面的脂肪也不会在静置时变得酥脆。","ja":"休ませると肉汁が肉の中に戻り、切るときに流れ出る量が減ります。休ませても保存できるほど冷めるわけではなく、塩は肉汁を閉じ込めるのではなく引き出してしまい、表面の脂も休ませている間に香ばしくなることはありません。"}}]}
 Lengths: a stem at most 600 characters per language, an option at most 200, an explanation at most 800."##;
 
 /// The prefix of a file: every line numbered `L<n>: <text>` (cleaned like the windowed prompts), inside a fence carrying
@@ -205,7 +209,66 @@ pub fn write_user(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gen::testkit::{example_lines, prompt_examples, EXAMPLE_INTRO};
     use crate::gen::Kind;
+
+    #[test]
+    fn the_convert_and_write_tasks_each_carry_their_own_valid_example() {
+        use crate::import::convert::{check_convert, make_spec, Choices};
+        use crate::import::segment::SegType;
+        let lines: Vec<&str> = WHOLE_SYSTEM_PROMPT.lines().collect();
+        let shapes: Vec<usize> = (0..lines.len())
+            .filter(|&i| {
+                lines[i].starts_with("{\"questions\":[{\"slot\":1,\"stem\":{\"en\":\"...\"")
+            })
+            .collect();
+        assert_eq!(shapes.len(), 2, "one shape line per question task");
+        for s in &shapes {
+            assert_eq!(lines[s + 1], EXAMPLE_INTRO);
+            assert!(lines[s + 3].starts_with("Lengths:"));
+        }
+        let ex = prompt_examples(WHOLE_SYSTEM_PROMPT);
+        assert_eq!(ex.len(), 2);
+        // the CONVERT task shows the convert example, the WRITE task the material example
+        assert_eq!(
+            example_lines(WHOLE_SYSTEM_PROMPT),
+            [
+                example_lines(crate::import::convert::CONVERT_SYSTEM_PROMPT),
+                example_lines(crate::import::material::MATERIAL_SYSTEM_PROMPT)
+            ]
+            .concat()
+        );
+        // CONVERT example: through the converter's own check, as a "keep" slot of a file that holds it
+        let q = &ex[0];
+        let mut region = format!("1. {}\n", q.stem.en);
+        for (i, o) in q.options.iter().enumerate() {
+            region.push_str(&format!("{}. {}\n", (b'A' + i as u8) as char, o.text.en));
+        }
+        region.push_str("Answer: A");
+        let spec = make_spec(&region, SegType::Single);
+        assert_eq!(spec.choices, Choices::Keep);
+        let slot = crate::gen::plan::Slot {
+            no: 1,
+            stratum: 0,
+            kind: spec.kind,
+            opts: 0,
+            correct: vec![0],
+            seed: "x".into(),
+            diff: None,
+        };
+        assert_eq!(check_convert(q, &slot, &spec), Ok(()));
+        // WRITE example: through the generation check
+        let w = crate::gen::plan::Slot {
+            no: 1,
+            stratum: 0,
+            kind: Kind::Single,
+            opts: 4,
+            correct: vec![0],
+            seed: "x".into(),
+            diff: None,
+        };
+        assert_eq!(crate::gen::check::check(&ex[1], &w), Ok(()));
+    }
 
     fn lines(n: usize) -> Vec<String> {
         (1..=n).map(|i| format!("line {i}")).collect()

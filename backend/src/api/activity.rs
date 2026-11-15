@@ -223,6 +223,34 @@ pub(super) async fn signin_info(
     ))
 }
 
+/// `POST /api/users/geo-source` `{"source": "cloudflare"}` → the users answer (as `GET /api/users`). Only the way back to the
+/// Cloudflare request headers goes through here (it works without ai-service); switching to the external lookup is done by
+/// ai-service after it checked that tested settings are saved (`POST /api/ai/admin/geo/enable`). Stored places stay as
+/// they were. Entry `users.geoSource` with `{"source": "cloudflare"}`.
+pub(super) async fn geo_source(
+    st: &super::AppState,
+    a: &Authed,
+    data: &PyVal,
+) -> Result<Response, AppError> {
+    match data {
+        PyVal::Dict(items)
+            if items.len() == 1
+                && matches!(data.get("source"), Some(PyVal::Str(s)) if s == "cloudflare") => {}
+        _ => return Err(bad_request()),
+    }
+    let store = st.0.store.clone();
+    let admin = a.user.id;
+    blocking(move || store.set_geo_source(false, Some(admin))).await?;
+    st.0.activity.reload_settings(&st.0.store);
+    st.0.activity.geo().drop_pending();
+    let users = super::auth::list(st).await?;
+    Ok(with_note(
+        json_resp(StatusCode::OK, &users, false),
+        None,
+        Some(json!({ "source": "cloudflare" })),
+    ))
+}
+
 /// Rows of the activity log cleared per statement by `POST /api/users/signin-info/clear`.
 const CLEAR_BATCH: i64 = 5000;
 
@@ -235,6 +263,8 @@ pub(super) async fn signin_info_clear(
     st: &super::AppState,
     _a: &Authed,
 ) -> Result<Response, AppError> {
+    // The lookup cache, queue and jobs in flight go first: a result that arrives later is dropped (v1.4)
+    st.0.activity.geo().clear();
     // Rows still in the queue are written first, so they are cleared too
     st.0.activity.flush().await;
     let store = st.0.store.clone();

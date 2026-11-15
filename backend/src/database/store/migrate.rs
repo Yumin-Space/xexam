@@ -66,14 +66,19 @@
 //!
 //! Schema v7 → v8 (v1.3), in the same way once more (`backups/xexam-schema7-<YYYYmmdd-HHMMSS>.db` for a v7 database): the
 //! v8 step adds the session and sign-in columns, `activity_log`, `system_settings` and the attempts index, sets
-//! `sessions.started_at` to the upgrade time and `users.last_active_at` to `last_login_at`, writes the first activity row
-//! (`system.migrate`) when the file held data, and stamps the schema `"8"`. A v1.2 binary opens a v8 file unchanged.
+//! `sessions.started_at` to the upgrade time and `users.last_active_at` to `last_login_at`, stamps the schema `"8"` (the
+//! `system.migrate` row is written once per upgrade, by the last step). A v1.2 binary opens a v8 file unchanged.
+//!
+//! Schema v8 → v9 (v1.4), in the same way (`backups/xexam-schema8-<YYYYmmdd-HHMMSS>.db` for a v8 database): the v9 step adds
+//! the five `users.last_active_*` columns (NULL for every existing row), writes the ONE `system.migrate` activity row of the
+//! upgrade (`{"from": <old schema>, "to": 9}`, only when the file held data) and stamps the schema `"9"`. A v1.3 binary
+//! opens a v9 file unchanged.
 use super::super::pyjson;
 use super::super::schema::{
     MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
     MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES,
     MIGRATE_V8_TABLES, SCHEMA_VERSION, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS,
-    V7_COLUMNS, V8_COLUMNS,
+    V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -96,7 +101,7 @@ pub(super) struct Upgrade {
     pub converted_prerelease: bool,
 }
 
-/// Brings the database opened at `db_path` up to schema v8.
+/// Brings the database opened at `db_path` up to schema v9.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -111,12 +116,13 @@ pub(super) fn upgrade(
         Some("5") => 5,
         Some("6") => 6,
         Some("7") => 7,
-        // "8", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 8,
+        Some("8") => 8,
+        // "9", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 9,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 8 || pre {
+    if from < 9 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         let had_data = has_any_data(conn)?;
         if had_data {
@@ -145,7 +151,10 @@ pub(super) fn upgrade(
                 migrate_v6(c)?;
             }
             migrate_v7(c)?;
-            migrate_v8(c, from, had_data)?;
+            if from < 8 {
+                migrate_v8(c)?;
+            }
+            migrate_v9(c, from, had_data)?;
             Ok(created)
         })?;
         out.converted_prerelease = pre;
@@ -376,10 +385,10 @@ fn migrate_v7(c: &Connection) -> Result<(), DbError> {
 }
 
 /// The v8 DDL and its backfill (inside the caller's transaction): the columns, the activity log and `system_settings`, the
-/// attempts index, `sessions.started_at` = now and `users.last_active_at` = `last_login_at` for the rows that exist, the first
-/// row of the activity log (`system.migrate`, only when the file held data), then the schema version. No IP or location is
-/// written here: the sign-in info switch starts off.
-fn migrate_v8(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> {
+/// attempts index, `sessions.started_at` = now and `users.last_active_at` = `last_login_at` for the rows that exist. No IP
+/// or location is written here: the sign-in info switch starts off. The upgrade's activity row and the schema stamp are
+/// written by [`migrate_v9`] (one row per upgrade).
+fn migrate_v8(c: &Connection) -> Result<(), DbError> {
     for (table, column, definition) in V8_COLUMNS {
         if !has_column(c, table, column)? {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
@@ -393,13 +402,27 @@ fn migrate_v8(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> 
         params![unix],
     )?;
     c.execute(
-        "UPDATE users SET last_active_at=CASE WHEN length(last_login_at)=16 THEN last_login_at || ':00' ELSE last_login_at END \n         WHERE last_active_at IS NULL",
+        "UPDATE users SET last_active_at=CASE WHEN length(last_login_at)=16 THEN last_login_at || ':00' ELSE last_login_at END 
+         WHERE last_active_at IS NULL",
         [],
     )?;
-    if had_data {
+    set_schema(c, "8")
+}
+
+/// The v9 DDL (inside the caller's transaction): the five `users.last_active_*` columns (each only when missing), the one
+/// activity row of the upgrade (`system.migrate` `{"from": <old schema>, "to": 9}`, only when the file held data), then the
+/// schema version. Nothing is backfilled.
+fn migrate_v9(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> {
+    for (table, column, definition) in V9_COLUMNS {
+        if !has_column(c, table, column)? {
+            c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
+        }
+    }
+    if had_data && from < 9 {
+        let unix = jiff::Timestamp::now().as_second();
         c.execute(
             "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result)              VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
-            params![unix, json!({ "from": from, "to": 8 }).to_string()],
+            params![unix, json!({ "from": from, "to": 9 }).to_string()],
         )?;
     }
     set_schema(c, SCHEMA_VERSION)

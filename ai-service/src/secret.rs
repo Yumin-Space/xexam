@@ -27,6 +27,9 @@ use zeroize::Zeroizing;
 pub const KEY_FILE: &str = "secret.key";
 /// Length of a nonce.
 pub const NONCE_LEN: usize = 24;
+/// AAD of the key of the external IP-location lookup (v1.4, `geo_settings`): a protocol constant like the three domain
+/// strings above, so a stored key never opens as a provider key or the other way round.
+pub const GEO_KEY_AAD: &[u8] = b"xexam-ai-geo-key-v1";
 
 /// The two secret slots.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -153,21 +156,47 @@ impl MasterKey {
     /// Seals `plain` for the row `r` with a fresh random nonce. Only the operating system's random source can make this
     /// fail; a nonce is never reused, so that is a panic (answered as `ai.internal`).
     pub fn seal(&self, r: &SecretRef, plain: &[u8]) -> Sealed {
+        self.seal_aad(&r.aad(), plain)
+    }
+
+    /// [`MasterKey::seal`] with an explicit AAD (the geo key, `GEO_KEY_AAD`).
+    pub fn seal_aad(&self, aad: &[u8], plain: &[u8]) -> Sealed {
         let mut nonce = [0u8; NONCE_LEN];
         getrandom::fill(&mut nonce).expect("the operating system's random source failed");
         let n = XNonce::from(nonce);
-        let aad = r.aad();
         let ciphertext = self
             .cipher()
-            .encrypt(
-                &n,
-                Payload {
-                    msg: plain,
-                    aad: &aad,
-                },
-            )
+            .encrypt(&n, Payload { msg: plain, aad })
             .expect("sealing an in-memory value cannot fail");
         Sealed { nonce, ciphertext }
+    }
+
+    /// Opens a value sealed with [`MasterKey::seal_aad`]: the key id must be this key's, the AAD the same, and the
+    /// plain text UTF-8. Never panics.
+    pub fn open_aad(
+        &self,
+        aad: &[u8],
+        key_id: &str,
+        nonce: &[u8],
+        ciphertext: &[u8],
+    ) -> Result<Zeroizing<String>, SecretError> {
+        if key_id != self.key_id {
+            return Err(SecretError);
+        }
+        let n = XNonce::try_from(nonce).map_err(|_| SecretError)?;
+        let plain = Zeroizing::new(
+            self.cipher()
+                .decrypt(
+                    &n,
+                    Payload {
+                        msg: ciphertext,
+                        aad,
+                    },
+                )
+                .map_err(|_| SecretError)?,
+        );
+        let text = std::str::from_utf8(&plain).map_err(|_| SecretError)?;
+        Ok(Zeroizing::new(text.to_string()))
     }
 
     /// Opens a stored secret as the row `r` describes it. Never panics; a row sealed with another encryption key, another
@@ -593,5 +622,46 @@ mod tests {
         assert_eq!(hint("sk-demo-0000-1234"), "…1234");
         assert_eq!(hint("short-key"), "");
         assert_eq!(hint("123456789012"), "…9012");
+    }
+
+    #[test]
+    fn geo_key_seals_with_its_own_aad() {
+        let k = key(1);
+        let sealed = k.seal_aad(GEO_KEY_AAD, b"TESTKEY-geo-0123456789abcdef");
+        let open = k
+            .open_aad(GEO_KEY_AAD, k.key_id(), &sealed.nonce, &sealed.ciphertext)
+            .expect("opens");
+        assert_eq!(open.as_str(), "TESTKEY-geo-0123456789abcdef");
+        // another AAD, another master key, another key id and a damaged ciphertext all fail
+        assert!(k
+            .open_aad(b"other", k.key_id(), &sealed.nonce, &sealed.ciphertext)
+            .is_err());
+        assert!(key(2)
+            .open_aad(GEO_KEY_AAD, k.key_id(), &sealed.nonce, &sealed.ciphertext)
+            .is_err());
+        assert!(k
+            .open_aad(
+                GEO_KEY_AAD,
+                "0000000000000000",
+                &sealed.nonce,
+                &sealed.ciphertext
+            )
+            .is_err());
+        let mut bad = sealed.ciphertext.clone();
+        if let Some(b) = bad.first_mut() {
+            *b ^= 1;
+        }
+        assert!(k
+            .open_aad(GEO_KEY_AAD, k.key_id(), &sealed.nonce, &bad)
+            .is_err());
+        assert!(k
+            .open_aad(GEO_KEY_AAD, k.key_id(), &[0u8; 3], &sealed.ciphertext)
+            .is_err());
+        // the same plain text and a provider-key AAD do not open as a geo key
+        let r = SecretRef::new(1, SecretName::ApiKey);
+        let other = k.seal(&r, b"TESTKEY-geo-0123456789abcdef");
+        assert!(k
+            .open_aad(GEO_KEY_AAD, k.key_id(), &other.nonce, &other.ciphertext)
+            .is_err());
     }
 }

@@ -408,8 +408,8 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
         c.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r
             .get::<_, String>(0))
             .expect("schema"),
-        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well; v0.9: → v6; v1.1: → v7
-        "8"
+        // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well; v0.9: → v6; v1.1: → v7; v1.3: → v8; v1.4: → v9
+        "9"
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");
@@ -823,8 +823,8 @@ async fn a_plain_user_gets_403_on_every_admin_route() {
         .filter(|r| r.access == Access::Admin)
         .collect();
     // v0.6.5: the five bank management routes moved to `Access::BankManager` (403 `MSG_NO_BANK_PERMISSION` for this user,
-    // see tests/v065_bank_access_and_practice.rs); v0.7 adds `GET /api/logs`; v1.3 `POST /api/users/signin-info/clear`
-    assert_eq!(admin_routes.len(), 13);
+    // see tests/v065_bank_access_and_practice.rs); v0.7 adds `GET /api/logs`; v1.3 `POST /api/users/signin-info/clear`; v1.4 `POST /api/users/geo-source`
+    assert_eq!(admin_routes.len(), 14);
     for r in admin_routes {
         let resp = if r.method == "GET" {
             get(&a, r.path, Some(&uc)).await
@@ -1018,6 +1018,10 @@ async fn users_crud_and_validation() {
             "lastActiveAt",
             "lastLoginIp",
             "lastLoginLocation",
+            // v1.4 (tests/v14_geo.rs)
+            "lastActiveIp",
+            "lastActiveLocation",
+            "lastActiveUa",
             "lock",
             "aiSuspended"
         ]

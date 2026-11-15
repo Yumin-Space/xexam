@@ -1,6 +1,6 @@
 // User management (administrators only). Every change answers with the whole, current list and (v0.8 round 2) whether
 // AI+ is available, so the page always draws the AI+ switches from the newest answer.
-import type { UserCreate, UserRow, UsersResponse, UserUpdate } from '../types/api.ts';
+import type { GeoSource, UserCreate, UserRow, UsersResponse, UserUpdate } from '../types/api.ts';
 import { getJson, postJson } from './client.ts';
 
 /** The list and whether AI+ is available, from one answer of `GET /api/users` or `POST /api/users/*` */
@@ -10,6 +10,10 @@ export interface UsersList {
   aiAvailable: boolean;
   /** v1.3: the sign-in info eye (IP + approximate location); false on an older answer */
   signinInfo: boolean;
+  /** v1.4: where the place of a sign-in comes from; `cloudflare` on an older answer */
+  geoSource: GeoSource;
+  /** v1.4: ai-service is connected (exactly true), whether or not AI+ is on */
+  aiServiceUp: boolean;
 }
 
 /** An answer as the page uses it: `aiAvailable` and each row's `aiSuspended` count only when they are exactly true */
@@ -21,9 +25,14 @@ export function usersListOf(a: UsersResponse): UsersList {
       lastActiveAt: typeof u.lastActiveAt === 'string' ? u.lastActiveAt : null,
       lastLoginIp: typeof u.lastLoginIp === 'string' ? u.lastLoginIp : null,
       lastLoginLocation: u.lastLoginLocation ?? null,
+      lastActiveIp: typeof u.lastActiveIp === 'string' ? u.lastActiveIp : null,
+      lastActiveLocation: u.lastActiveLocation ?? null,
+      lastActiveUa: typeof u.lastActiveUa === 'string' ? u.lastActiveUa : null,
     })),
     aiAvailable: a.aiAvailable === true,
     signinInfo: a.signinInfo === true,
+    geoSource: a.geoSource === 'api' ? 'api' : 'cloudflare',
+    aiServiceUp: a.aiServiceUp === true,
   };
 }
 
@@ -51,3 +60,6 @@ export const deleteUser = (id: number): Promise<UsersList> => list(postJson<User
 export const setSigninInfo = (enabled: boolean): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/signin-info', { enabled }));
 /** v1.3: clears every saved sign-in IP and location (users, sessions, the activity log); cannot be undone */
 export const clearSigninInfo = (): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/signin-info/clear', {}));
+
+/** v1.4: sets the place source back to Cloudflare request headers (switching to the external API goes through `enableGeo`, api/geo.ts) */
+export const setGeoSource = (source: 'cloudflare'): Promise<UsersList> => list(postJson<UsersResponse>('/api/users/geo-source', { source }));

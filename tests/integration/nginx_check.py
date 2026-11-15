@@ -26,8 +26,10 @@
 
 v1.3 (N1): the header blocks of the proxied locations live in /etc/nginx/snippets/{api,ai}-proxy.conf and every proxied
   location includes one (checks follow the includes); the real client address (XEXAM_TRUSTED_PROXIES / XEXAM_REAL_IP_HEADER,
-  rendered at start by 15-xexam-realip.sh): an untrusted peer with a forged CF-Connecting-IP keeps its own address, a trusted
-  peer's header is believed, an invalid setting trusts nobody (and warns); X-Real-IP / X-Geo-Country / X-Geo-Region /
+  rendered at start by 15-xexam-realip.sh): the default (variable unset, empty, blank or only quotes) trusts 10/8, 172.16/12 and 192.168/16,
+  the word none trusts nobody, an explicit narrow value trusts only that; an untrusted peer with a forged CF-Connecting-IP keeps
+  its own address, a trusted peer's header is believed; the value parser (standard entries only, v1.4): separators, a bad
+  entry skipped with a warning next to a good one, a /0 refused, no valid entry left trusts nobody; X-Real-IP / X-Geo-Country / X-Geo-Region /
   X-Geo-City always overwritten, location headers forwarded only from a trusted peer; the login rate-limit zone; the
   streaming regex with regenerate and edit; the five admin connection / model routes with the 100 s read timeout and no
   /api/ai/admin/connections/test location; gzip on JSON and not on the event stream; ETag / If-None-Match / 304 pass through; coded
@@ -39,6 +41,7 @@ suffix and are removed at the end."""
 import concurrent.futures
 import http.client
 import json
+import ipaddress
 import os
 import re
 import socket
@@ -261,7 +264,10 @@ try:
        '-e', 'ECHO_NAME=ai-service', '-e', 'ECHO_PORT=8766', 'python:3.12-slim', 'python', '-u', '-c', ECHO)
     # nginx: same as in compose - read-only, non-root, all capabilities dropped
     sh('docker', 'run', '-d', '--name', WEB, '--network', NET, '-p', '127.0.0.1:%d:8080' % PORT,
-       '--read-only', '--tmpfs', '/tmp', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true', IMAGE)
+       '--read-only', '--tmpfs', '/tmp', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
+       # none = trust nobody on purpose: the default (unset or empty) trusts the private ranges, which include the test
+       # client's address (the Docker gateway), so every "untrusted peer" assertion below needs this
+       '-e', 'XEXAM_TRUSTED_PROXIES=none', IMAGE)
     for _ in range(40):
         try:
             req('GET', '/healthz', host='localhost')
@@ -647,9 +653,10 @@ try:
     st, hh, b = req('GET', '/api/etag', host='localhost', headers={'If-None-Match': '"v1"'})
     ok(st == 304 and hh.get('etag') == '"v1"' and b == b'', 'If-None-Match round trip: 304 with the ETag and no body. Actual %d %r' % (st, b[:40]))
 
-    # Real client address. The main container (no XEXAM_TRUSTED_PROXIES) trusts nobody: a forged CF-Connecting-IP and
-    # forged location headers never reach a service, X-Real-IP is the connecting address. Two more containers: one that
-    # trusts exactly that connecting address, one with an invalid setting (fails closed with a warning).
+    # Real client address. The main container (XEXAM_TRUSTED_PROXIES=none) trusts nobody: a forged CF-Connecting-IP
+    # and forged location headers never reach a service, X-Real-IP is the connecting address. More containers: the default
+    # (variable unset), one that trusts exactly that connecting address, a narrow value that does not contain it, and
+    # invalid settings (fail closed with a warning).
     forged = {'CF-Connecting-IP': '198.51.100.7', 'CF-IPCountry': 'XX', 'CF-Region': 'Made-up Region', 'CF-IPCity': 'Made-up City',
               'X-Geo-Country': 'ZZ', 'X-Geo-City': 'Forged City', 'X-Real-IP': '203.0.113.9', 'X-Forwarded-For': '203.0.113.8'}
     st, hh, b = req('GET', '/api/info', host='localhost', headers=forged)
@@ -704,18 +711,103 @@ try:
     ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7' and not any(k in seen for k in ('x-geo-country', 'x-geo-region', 'x-geo-city')),
        'Trusted peer: the AI service gets the real address and still no location headers')
     sh('docker', 'rm', '-f', WEB2)
+    # v1.4: the default (variable unset) trusts the private networks. The test client reaches the published port through the
+    # Docker gateway, a private address, so it is believed; a narrow explicit value that does not contain it is not.
+    ok(any(ipaddress.ip_address(peer) in ipaddress.ip_network(n) for n in ('10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16')),
+       'The test client reaches Nginx from a private address (%s), so the default-trust checks below are meaningful' % peer)
+    start_web(WEB2, PORT + 1, {})
+    st, seen = req_port(PORT + 1, '/api/info', forged)
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7' and seen.get('x-geo-country') == 'XX',
+       'Default (XEXAM_TRUSTED_PROXIES unset): a peer in a private range is believed (CF-Connecting-IP and location headers). Actual %r' % seen.get('x-real-ip'))
+    conf = sh('docker', 'exec', WEB2, 'cat', '/tmp/xexam-realip.conf').stdout
+    ok(re.findall(r'set_real_ip_from (\S+);', conf) == ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'],
+       'Default: exactly 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16 are trusted (public ranges are not). Actual %r' % re.findall(r'set_real_ip_from (\S+);', conf))
+    sh('docker', 'rm', '-f', WEB2)
+    # an empty value (a blank deployment-form field) is the default too, not "trust nobody"
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': ''})
+    st, seen = req_port(PORT + 1, '/api/info', forged)
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7' and seen.get('x-geo-country') == 'XX',
+       'Empty XEXAM_TRUSTED_PROXIES: the default applies (a private peer is believed). Actual %r' % seen.get('x-real-ip'))
+    sh('docker', 'rm', '-f', WEB2)
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': '203.0.113.1'})
+    st, seen = req_port(PORT + 1, '/api/info', forged)
+    ok(st == 200 and seen.get('x-real-ip') == peer and 'x-geo-country' not in seen,
+       'Explicit narrow value (203.0.113.1): a peer outside it is not believed even though it is private. Actual %r' % seen.get('x-real-ip'))
+    sh('docker', 'rm', '-f', WEB2)
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': '10.1.1.*，%s' % peer})
+    st, seen = req_port(PORT + 1, '/api/info', forged)
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7',
+       'A bad entry (10.1.1.*) next to a good one (the peer, after a full-width comma): the good one still works. Actual %r' % seen.get('x-real-ip'))
+    sh('docker', 'rm', '-f', WEB2)
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': '0.0.0.0/0,%s' % peer})
+    st, seen = req_port(PORT + 1, '/api/info', forged)
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7',
+       'A refused /0 next to a good entry (the peer): the good one still works. Actual %r' % seen.get('x-real-ip'))
+    sh('docker', 'rm', '-f', WEB2)
+
+    # The value parser itself, run in the real image (busybox sed / grep / tr): the rendered file lists the accepted
+    # entries; stderr names every skipped one.
+    def parse(value):
+        env = ['-e', 'XEXAM_TRUSTED_PROXIES=' + value] if value is not None else []
+        r = sh('docker', 'run', '--rm', *env, '-e', 'XEXAM_REALIP_OUT=/tmp/o.conf', '--entrypoint', 'sh', IMAGE, '-c',
+               '/docker-entrypoint.d/15-xexam-realip.sh; cat /tmp/o.conf')
+        return re.findall(r'set_real_ip_from (\S+);', r.stdout), r.stderr
+
+    def parses(label, value, want, skipped=()):
+        got, err = parse(value)
+        ok(got == want and all(("entry '%s' skipped" % x) in err for x in skipped) and err.count('skipped') == len(skipped),
+           'Parser, %s: trusts %r, skips %r with a warning. Actual %r, stderr %r' % (label, want, list(skipped), got, err.strip()))
+
+    dflt = ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16']
+    parses('unset', None, dflt)
+    parses('empty', '', dflt)
+    parses('empty ASCII quotes', '""', dflt)
+    parses('empty curly quotes', '“”', dflt)
+    parses('empty single quotes', "''", dflt)
+    parses('only spaces', '  ', dflt)
+    parses('none', 'none', [])
+    parses('NONE', 'NONE', [])
+    parses('quoted none', '"none"', [])
+    parses('none with spaces', '  None ', [])
+    parses('none mixed with an address: the word is skipped, the address works', 'none, 10.1.1.1', ['10.1.1.1/32'], ['none'])
+    parses('quotes around the whole value', '"10.1.1.1"', ['10.1.1.1/32'])
+    parses('quotes around entries', '"10.1.1.1","10.2.2.2"', ['10.1.1.1/32', '10.2.2.2/32'])
+    got, err = parse('none')
+    ok('trusting no proxy' in err and 'skipped' not in err, 'Parser: none trusts nobody with an info line, no warning. stderr %r' % err.strip())
+    got, err = parse('')
+    ok(err.strip() == '', 'Parser: an empty value gets the default without any message. stderr %r' % err.strip())
+    got, err = parse('""')
+    ok('quote characters were stripped' in err, 'Parser: stripped quotes give one info line. stderr %r' % err.strip())
+    parses('narrow', '172.31.254.2', ['172.31.254.2/32'])
+    parses('ASCII comma and spaces', '10.0.0.0/8, 10.1.1.1  192.0.2.5', ['10.0.0.0/8', '10.1.1.1/32', '192.0.2.5/32'])
+    parses('full-width comma', '10.0.0.0/8，10.1.1.1', ['10.0.0.0/8', '10.1.1.1/32'])
+    parses('ideographic comma', '10.0.0.0/8、10.1.1.1', ['10.0.0.0/8', '10.1.1.1/32'])
+    parses('semicolons (ASCII and full-width)', '10.0.0.0/8;10.1.1.1；192.0.2.5', ['10.0.0.0/8', '10.1.1.1/32', '192.0.2.5/32'])
+    parses('tabs and newlines', '10.0.0.0/8\t10.1.1.1\n192.0.2.5', ['10.0.0.0/8', '10.1.1.1/32', '192.0.2.5/32'])
+    parses('IPv6 address and CIDR', 'fd00::/8,2001:db8::1', ['fd00::/8', '2001:db8::1/128'])
+    parses('a bare 10.0.0.0 is that one address', '10.0.0.0', ['10.0.0.0/32'])
+    parses('host bits are zeroed', '10.1.1.1/8', ['10.0.0.0/8'])
+    parses('wildcard skipped, good kept', '10.1.1.*,10.0.0.0/8', ['10.0.0.0/8'], ['10.1.1.*'])
+    parses('short forms skipped', '1 10.1 10.1.1 10.0.0.0/8', ['10.0.0.0/8'], ['1', '10.1', '10.1.1'])
+    parses('out of range and text skipped', '300.1.1.1,text,10.0.0.0/33,10.0.0.0/8', ['10.0.0.0/8'], ['300.1.1.1', 'text', '10.0.0.0/33'])
+    parses('full-width digits skipped', '１０.0.0.1,10.0.0.0/8', ['10.0.0.0/8'], ['１０.0.0.1'])
+    parses('/0, 0.0.0.0 and :: refused', '0.0.0.0/0,::/0,0.0.0.0,::,10.0.0.0/8', ['10.0.0.0/8'], ['0.0.0.0/0', '::/0', '0.0.0.0', '::'])
+    parses('all entries bad', '1,10.1.*,0.0.0.0/0', [], ['1', '10.1.*', '0.0.0.0/0'])
+    got, err = parse('1,10.1.*')
+    ok('trusting no proxy' in err, 'Parser: no valid entry left warns that nobody is trusted. stderr %r' % err.strip())
+
     start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': peer, 'XEXAM_REAL_IP_HEADER': 'X-Forwarded-For'})
     st, seen = req_port(PORT + 1, '/api/info', {'X-Forwarded-For': '198.51.100.20, 198.51.100.21'})
     ok(st == 200 and seen.get('x-real-ip') == '198.51.100.21', 'XEXAM_REAL_IP_HEADER=X-Forwarded-For: the last untrusted hop. Actual %r' % seen.get('x-real-ip'))
     sh('docker', 'rm', '-f', WEB2)
-    for bad in ('0.0.0.0/0', '::/0', 'not-an-address'):
+    for bad in ('0.0.0.0/0', '::/0', 'not-an-address', '10.1.1.*'):
         sh('docker', 'rm', '-f', WEB3, check=False)
         start_web(WEB3, PORT + 2, {'XEXAM_TRUSTED_PROXIES': bad})
         st, seen = req_port(PORT + 2, '/api/info', forged)
         warn = sh('docker', 'logs', WEB3, check=False)
         ok(st == 200 and seen.get('x-real-ip') == peer and 'x-geo-country' not in seen,
-           'Invalid XEXAM_TRUSTED_PROXIES=%s: nobody is trusted (the forged address is ignored, no location headers). Actual %r' % (bad, seen.get('x-real-ip')))
-        ok('xexam-realip' in warn.stderr and 'trusting no proxy' in warn.stderr, 'Invalid XEXAM_TRUSTED_PROXIES=%s: an English warning on stderr' % bad)
+           'Only invalid entries in XEXAM_TRUSTED_PROXIES=%s: nobody is trusted (the forged address is ignored, no location headers). Actual %r' % (bad, seen.get('x-real-ip')))
+        ok('xexam-realip' in warn.stderr and 'trusting no proxy' in warn.stderr, 'Only invalid entries in XEXAM_TRUSTED_PROXIES=%s: an English warning on stderr' % bad)
     sh('docker', 'rm', '-f', WEB3, check=False)
     sh('docker', 'run', '--name', WEB3, '--network', NET, '-d', '-e', 'XEXAM_REAL_IP_HEADER=Made-Up', '--read-only', '--tmpfs', '/tmp', IMAGE)
     time.sleep(2)

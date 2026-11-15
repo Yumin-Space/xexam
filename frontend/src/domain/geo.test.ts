@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { countryNameIn, placeText } from './geo.ts';
+import { countryNameIn, placeText, shortPlace } from './geo.ts';
 
 const fake = (code: string): string | null => (code === 'XA' ? 'Examplia' : null);
 
@@ -21,4 +21,19 @@ test('countryNameIn never throws on a bad code', () => {
   const n = countryNameIn('en');
   assert.equal(typeof n('US') === 'string' || n('US') === null, true);
   assert.equal(n('not-a-code'), null);
+});
+
+test('placeText accepts a missing country (an API provider may give none)', () => {
+  assert.equal(placeText({ country: null, region: 'North', city: 'Example City' }, fake), 'Example City, North');
+  assert.equal(placeText({ country: null, region: null, city: null }, fake), null);
+});
+
+test('shortPlace: city, else region, else country name; raw country text kept', () => {
+  assert.equal(shortPlace({ country: 'XA', region: 'North', city: 'Example City' }, fake), 'Example City');
+  assert.equal(shortPlace({ country: 'XA', region: 'North', city: null }, fake), 'North');
+  assert.equal(shortPlace({ country: 'XA', region: null, city: ' ' }, fake), 'Examplia');
+  assert.equal(shortPlace({ country: 'ZZ', region: null, city: null }, fake), 'ZZ');
+  assert.equal(shortPlace({ country: 'Example Land', region: null, city: null }, fake), 'Example Land');
+  assert.equal(shortPlace({ country: null, region: null, city: null }, fake), null);
+  assert.equal(shortPlace(null, fake), null);
 });

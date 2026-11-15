@@ -390,6 +390,16 @@ The first log row is `system.migrate`. A v1.2 backend opens a schema-8 file as i
 
 No restore is needed (see above). Restoring the schema-7 copy is optional and loses what was written since; the sessions and the activity log are lost with it.
 
+### 6.15 Schema v9 (v1.4)
+
+The main database moves from schema 8 to **schema 9** once, on the first start of the v1.4 backend, after one backup copy `backups/xexam-schema8-<date-time>.db`. The step is additive and backfills nothing.
+
+- `users`: `last_active_ip`, `last_active_country`, `last_active_region`, `last_active_city` (TEXT; the IP and place of the last activity, written together with `last_active_at`, at most once a minute, **only while the sign-in info eye is open**; set to NULL by **Clear records**; hidden in the answers while the eye is closed) and `last_active_ua` (TEXT, the cleaned User-Agent of the last activity, at most 256 characters; written also while the eye is closed and **not** cleared by **Clear records**, like `ua` of the activity log). The place columns hold a two-letter country code or a country name, a region and a city, any of which may be NULL.
+- `system_settings`: a new key `geo.source` (`cloudflare`, the default when missing, or `api`): where the place of a record comes from (section 14.2 of [usage.md](usage.md)).
+- Nothing else changes: the per-IP memory and the queue of the external lookup are in memory only.
+
+The log row is `system.migrate` with `{"from": 8, "to": 9}` (one row, also when upgrading from schema 7). A v1.3 backend opens a schema-9 file as it is: the new columns are ignored.
+
 ## 7. The old `progress.json`
 
 Earlier versions kept scores in `progress.json`. As in the old Python version, **on every startup** the app checks whether the data directory contains it: if it does, and the database has no study records yet and has not been migrated before, it is migrated into the database (into the records of the first administrator). The `legacy_migrated` flag in `meta` guarantees it is migrated only once, and existing study records are never overwritten.
@@ -609,6 +619,14 @@ The AI database moves from schema 6 to **schema 7** once (one transaction, one c
 The one-time statements fill the six slots, the chat tree (`parent_id` = the message before, `leaf_id` = the last one), connection 1 with its keys and the default slot, the hint and explain bits of `users.features_off` (a user with only one of the two off gets both on), and the limits as described in section 000.1 of [migration.md](migration.md). A new file and an upgraded file end with the same tables. A v1.2 ai-service refuses a schema-7 file; restore the schema-6 copy to go back.
 
 **The reasoning columns (v1.3).** Three nullable columns of `messages`, which holds one row per answer version, store the thinking of an AI Chat answer: `reasoning` (text; trimmed; at most 32 KiB = 32 768 bytes, the head is kept and cut at a character boundary), `reasoning_ms` (milliseconds from the first reasoning to the first answer text, or to the end; NULL without reasoning) and `reasoning_truncated` (`0` / `1`, default 0; 1 = the text was cut at the cap). They join the schema-7 step, so there is no schema 8 and no extra backup: schema 7 had not shipped before v1.3; a database upgraded from 1 to 6 gets them in the same transaction, and a schema-7 file written by an earlier v1.3 build gets them at the next start. They are written only for AI Chat answers (never for a hint, an analysis or a summary, which discard reasoning), are never part of the context sent to the model, and are deleted with the message: deleting a chat, **Delete all chats**, an administrator's clearing, the removal of a user and the retention sweep remove them with the row (`secure_delete=ON` overwrites the freed pages). Older answers have NULL and show no block. `messages.model` and `messages.connection` stay stored for every answer (administrators and the usage statistics); only the responses to non-administrators leave them out.
+
+### 8.2c Schema v8 (v1.4)
+
+The AI database moves from schema 7 to **schema 8** once (one transaction, one copy `backups/xexam-ai-schema7-<date-time>.db`), on the first start of the v1.4 ai-service. The step is additive.
+
+- **`geo_settings`** (new): at most one row (`id = 1`), the settings of the external location lookup: `preset` (`ipinfo`, `ipapi`, `ipapico`, `ipwhois`, `ipsb` or `custom`, for display), `url_template` (with `{ip}` and optionally `{key}`), `key_header_name` and `key_header_value` (the optional header that carries the key), the field mapping (`map_country`, `map_country_code`, `map_region`, `map_city`, `ok_path`, `ok_value`, `error_path`, `message_path`; dot paths), the **sealed key** (`key_id`, `key_nonce`, `key_ciphertext`, `key_hint`; all NULL / empty without a key; sealed with the master key and its own binding, never returned) and `tested_at`, `updated_at`, `updated_by`. A row exists only after a passing "test and save", so saved means tested; deleting the settings deletes the row. The table is empty after the upgrade.
+
+A new file and an upgraded file end with the same tables. A v1.3 ai-service refuses a schema-8 file; restore the schema-7 copy to go back.
 
 ### 8.3 What the service does with it
 

@@ -434,14 +434,18 @@ export type Footer =
   | { kind: 'truncated' }
   | null;
 
-/** v1.3 sprint 2 (owner): what the line above a message names. A question: "You". An answer: "connection · model" for an
- *  administrator when the server sent a model (the connection when known); otherwise, and for everyone else always, the
- *  neutral "AI" mark. The server never sends a model or connection to a non-administrator; `admin` keeps stale data from
- *  showing one. */
+/** v1.4 (owner): AI Chat names the model only where the model can be chosen, i.e. for an administrator with the free mode
+ *  on (Settings → AI chat mode); in the normal mode, and for everyone else, an answer is just "AI". The administrators'
+ *  chat viewer in AI settings always shows it. */
+export const chatShowsModel = (admin: boolean, freeMode: boolean): boolean => admin && freeMode;
+
+/** v1.3 sprint 2 (owner): what the line above a message names. A question: "You". An answer: "connection · model" when
+ *  `show` is true and the server sent a model (the connection when known); otherwise the neutral "AI" mark. The server never
+ *  sends a model or connection to a non-administrator; `show` also keeps stale data from showing one. */
 export interface WhoParts { mark: 'you' | 'ai' | null; connection: string | null; model: string | null }
-export function whoParts(m: Pick<AiMessage, 'role' | 'model' | 'connection'>, admin: boolean): WhoParts {
+export function whoParts(m: Pick<AiMessage, 'role' | 'model' | 'connection'>, show: boolean): WhoParts {
   if (m.role === 'user') return { mark: 'you', connection: null, model: null };
-  if (admin && typeof m.model === 'string' && m.model !== '') return { mark: null, connection: m.connection || null, model: m.model };
+  if (show && typeof m.model === 'string' && m.model !== '') return { mark: null, connection: m.connection || null, model: m.model };
   return { mark: 'ai', connection: null, model: null };
 }
 

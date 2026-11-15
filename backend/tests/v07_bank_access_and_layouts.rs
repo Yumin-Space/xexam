@@ -446,7 +446,7 @@ fn a_prerelease_v4_database_is_converted_on_open_after_a_backup() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "8");
+    assert_eq!(schema, "9");
     assert_eq!(
         count(
             &c,
