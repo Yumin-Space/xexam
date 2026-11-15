@@ -14,6 +14,12 @@ const TABLE: Record<string, string> = {
   'gemini-2.5-flash-lite': 'none',
 };
 
+// DeepSeek thinking mode: effort high unless set (https://api-docs.deepseek.com/guides/thinking_mode/)
+const DEEPSEEK_DEFAULT = 'high';
+
+// Gemma thinks by default (observed live on Workers AI, 2026-11-16): enable_thinking true
+const GEMMA_DEFAULT = 'true';
+
 const ROUTING = /^(us|eu|apac|global|anthropic|google|openai)\./;
 
 /** The model id without routing prefixes, version suffixes and date stamps */
@@ -31,10 +37,14 @@ function normalize(model: string): string {
 export function knownDefault(model: string | null | undefined): string | null {
   if (!model) return null;
   const k = normalize(model);
+  if (k.includes('deepseek')) return DEEPSEEK_DEFAULT;
+  if (k.includes('gemma')) return GEMMA_DEFAULT;
   return Object.prototype.hasOwnProperty.call(TABLE, k) ? TABLE[k] ?? null : null;
 }
 
-/** The level after a family button: the current one when the new family has it, else "medium" (in all three lists) */
+/** The level after a family button: the current one when the new family has it, else "medium", or "high" when that is missing (DeepSeek has no "medium"), or the first level (Gemma: "true") */
 export function levelForFamily(current: string | null | undefined, levels: readonly string[]): string {
-  return current != null && levels.includes(current) ? current : 'medium';
+  if (current != null && levels.includes(current)) return current;
+  if (levels.includes('medium')) return 'medium';
+  return levels.includes('high') ? 'high' : levels[0] ?? 'high';
 }

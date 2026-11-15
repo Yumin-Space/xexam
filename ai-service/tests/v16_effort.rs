@@ -131,6 +131,8 @@ async fn effort_save_round_trip() {
             "anthropic": ["low", "medium", "high", "xhigh", "max"],
             "openai": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
             "google": ["none", "minimal", "low", "medium", "high", "xhigh"],
+            "deepseek": ["none", "low", "high", "max"],
+            "gemma": ["true", "false"],
         })
     );
     for slot in ["default", "chat", "study", "summary", "generate", "import"] {
@@ -177,6 +179,10 @@ async fn effort_save_rejects_bad_input() {
         json!({"slot": "chat", "effort": {"family": "mistral", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "anthropic", "level": "none"}}),
         json!({"slot": "chat", "effort": {"family": "google", "level": "max"}}),
+        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "medium"}}),
+        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "xhigh"}}),
+        json!({"slot": "chat", "effort": {"family": "gemma", "level": "high"}}),
+        json!({"slot": "chat", "effort": {"family": "gemma", "level": "True"}}),
         json!({"slot": "chat", "effort": {"family": "openai", "level": "High"}}),
         json!({"slot": "chat", "effort": {"family": "openai", "level": " high"}}),
         json!({"slot": "chat", "effort": {"family": "openai", "level": 3}}),
@@ -245,6 +251,82 @@ async fn effort_save_is_admin_only() {
     assert!(!v.to_string().contains("effort"), "{v}");
     let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
     assert_eq!(tag, "openai:high", "the refused save changed nothing");
+}
+
+#[tokio::test]
+async fn deepseek_effort_round_trip_and_wire() {
+    let e = env().await;
+    set(&e, "chat", "deepseek", "max").await;
+    let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
+    assert_eq!(tag, "deepseek:max");
+    let v = settings(&e.t, &e.admin).await;
+    assert_eq!(
+        v["slots"]["chat"]["effort"],
+        json!({"family": "deepseek", "level": "max"})
+    );
+    let from = n_requests(&e.t);
+    let ev =
+        e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
+            .await
+            .expect("send");
+    assert_eq!(terminal(&ev).0, "done", "{ev:?}");
+    let bodies = calls_from(&e.t, from);
+    all_carry(&bodies, "max");
+    for b in &bodies {
+        assert!(!b.to_string().contains("\"thinking\""), "{b}");
+    }
+}
+
+#[tokio::test]
+async fn gemma_effort_round_trip_and_wire() {
+    let e = env().await;
+    for (lvl, want) in [("true", true), ("false", false)] {
+        set(&e, "chat", "gemma", lvl).await;
+        let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
+        assert_eq!(tag, format!("gemma:{lvl}"));
+        let v = settings(&e.t, &e.admin).await;
+        assert_eq!(
+            v["slots"]["chat"]["effort"],
+            json!({"family": "gemma", "level": lvl})
+        );
+        let from = n_requests(&e.t);
+        let ev =
+            e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
+                .await
+                .expect("send");
+        assert_eq!(terminal(&ev).0, "done", "{ev:?}");
+        let bodies = calls_from(&e.t, from);
+        assert!(!bodies.is_empty());
+        for b in &bodies {
+            assert_eq!(
+                b["chat_template_kwargs"],
+                json!({"enable_thinking": want}),
+                "{b}"
+            );
+            assert!(b.get("reasoning_effort").is_none(), "{b}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn generic_workers_ai_refusal_retries_without_thinking_parameter() {
+    let e = env().await;
+    set(&e, "chat", "gemma", "false").await;
+    e.t.stub.refuse_if_body_has(Some((
+        "chat_template_kwargs",
+        400,
+        r#"{"errors":[{"message":"AiError: AiError: Invalid input (0b1f)","code":8001}]}"#,
+    )));
+    let from = n_requests(&e.t);
+    let ev =
+        e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
+            .await
+            .expect("send");
+    assert_eq!(terminal(&ev).0, "done", "{ev:?}");
+    let bodies = calls_from(&e.t, from);
+    assert_eq!(bodies.len(), 2, "the refused request and one retry");
+    assert!(bodies[0].get("chat_template_kwargs").is_some());
+    assert!(bodies[1].get("chat_template_kwargs").is_none());
 }
 
 #[tokio::test]
@@ -688,7 +770,7 @@ async fn effort_refusal_retries_once_without_and_remembers() {
 }
 
 #[tokio::test]
-async fn unnamed_refusal_is_not_retried_without_effort() {
+async fn unnamed_refusal_is_retried_without_effort() {
     let e = env().await;
     set(&e, "chat", "openai", "high").await;
     e.t.stub.refuse_if_body_has(Some((
@@ -701,8 +783,35 @@ async fn unnamed_refusal_is_not_retried_without_effort() {
         e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
             .await
             .expect("send");
-    assert_ne!(terminal(&ev).0, "done", "{ev:?}");
-    assert_eq!(calls_from(&e.t, from).len(), 1, "no retry");
+    assert_eq!(terminal(&ev).0, "done", "{ev:?}");
+    let bodies = calls_from(&e.t, from);
+    assert_eq!(bodies.len(), 2, "one retry without the parameter");
+    assert!(bodies[1].get("reasoning_effort").is_none());
+}
+
+#[tokio::test]
+async fn generic_schema_refusal_does_not_drop_thinking_strength() {
+    // a 400 that is about the structured output (not the thinking strength) is answered by the unformatted ladder; that
+    // success must not turn the thinking strength off for the route
+    let e = env().await;
+    set(&e, "generate", "openai", "high").await;
+    e.t.stub.refuse_if_body_has(Some((
+        "response_format",
+        400,
+        r#"{"errors":[{"message":"AiError: AiError: Invalid input (7c2e)","code":8001}]}"#,
+    )));
+    let done = run_generation(&e).await;
+    assert_eq!(done["state"], "done", "{done}");
+    // the next job: no schema any more (remembered), and the thinking strength still goes out
+    let from = n_requests(&e.t);
+    let done = run_generation(&e).await;
+    assert_eq!(done["state"], "done", "{done}");
+    let bodies = calls_from(&e.t, from);
+    assert!(!bodies.is_empty());
+    for b in &bodies {
+        assert!(b.get("response_format").is_none(), "{b}");
+    }
+    all_carry(&bodies, "high");
 }
 
 // —— the column ———————————————————————————————————————————————————————————————————————————————————————————————————————

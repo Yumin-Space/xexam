@@ -443,24 +443,11 @@ fn body_names(error_body: &str, field: &str) -> bool {
     candidates.iter().flatten().any(|text| text.contains(field))
 }
 
-/// `true` for a 400 / 422 whose error body is about the thinking-strength parameter: it names `effort` (this also
-/// matches `reasoning_effort`), `reasoning` or `thinking` (Google answers "Thinking level is not supported for this
-/// model." for a Gemma model), or `output_config` without `format` (a structured-output refusal stays with the schema
-/// ladder). Case does not matter, and a body that is a JSON array (Google's form) is read by its first element.
-pub fn effort_refused(status: u16, error_body: &str) -> bool {
-    if !matches!(status, 400 | 422) {
-        return false;
-    }
-    let lower = error_body.to_lowercase();
-    let first = match serde_json::from_str::<Value>(&lower) {
-        Ok(Value::Array(a)) => a.into_iter().next().map(|v| v.to_string()),
-        _ => None,
-    };
-    let body = first.as_deref().unwrap_or(&lower);
-    ["effort", "reasoning", "thinking"]
-        .iter()
-        .any(|w| body_names(body, w))
-        || (body_names(body, "output_config") && !body_names(body, "format"))
+/// `true` for any 400 / 422: when a thinking parameter was sent, every such refusal gets the one retry without it
+/// (a generic body such as Workers AI's "Invalid input" names no parameter). The caller only asks when a thinking
+/// parameter was sent; a structured-output refusal still reaches the schema ladders afterwards.
+pub fn effort_refused(status: u16, _error_body: &str) -> bool {
+    matches!(status, 400 | 422)
 }
 
 /// The next step of the ladder after an HTTP refusal answered before any stream event: only for status 400 or 422
@@ -510,12 +497,12 @@ pub struct Plan {
     pub unformatted: Vec<(TokenLimit, reqwest::Request)>,
     /// Called when the request without the structured output field succeeded: the connection must not get it
     pub remember_unformatted: Option<Arc<dyn Fn() + Send + Sync>>,
-    /// The same ladder without the thinking-strength parameter (empty when none is sent). Used once when a 400 / 422
-    /// names it (see [`effort_refused`]).
+    /// The same ladder without the thinking-strength parameter (empty when none is sent). Used once after any 400 / 422
+    /// (see [`effort_refused`]).
     pub uneffort: Vec<(TokenLimit, reqwest::Request)>,
     /// The plain (unmarked) ladder without the parameter; replaces `plain` after the parameter was refused in this call.
     pub plain_uneffort: Vec<(TokenLimit, reqwest::Request)>,
-    /// Called when a request without the parameter succeeded after it was refused: the route must not get it
+    /// Called when the retry without the parameter (the `uneffort` ladder) succeeded cleanly: the route must not get it
     pub remember_uneffort: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
@@ -571,15 +558,25 @@ fn output_config(body: &mut Value) -> &mut serde_json::Map<String, Value> {
 }
 
 /// Adds the thinking-strength parameter of `effort` to a body. Anthropic family: merges `"effort"` into
-/// `output_config` (next to a structured-output `format`); OpenAI / Google family: `"reasoning_effort": <level>`.
+/// `output_config` (next to a structured-output `format`); OpenAI / Google / DeepSeek family: `"reasoning_effort": <level>`;
+/// Gemma: `"chat_template_kwargs": {"enable_thinking": <bool>}` (merged into an existing object).
 /// The connection's wire format does not matter (owner: the choice only changes the parameter).
 pub fn put_effort(body: &mut Value, effort: Effort) {
     match effort.family() {
         EffortFamily::Anthropic => {
             output_config(body).insert("effort".into(), json!(effort.level()));
         }
-        EffortFamily::OpenAi | EffortFamily::Google => {
+        EffortFamily::OpenAi | EffortFamily::Google | EffortFamily::DeepSeek => {
             body["reasoning_effort"] = json!(effort.level());
+        }
+        EffortFamily::Gemma => {
+            let on = effort.level() == "true";
+            match body.get_mut("chat_template_kwargs") {
+                Some(Value::Object(o)) => {
+                    o.insert("enable_thinking".into(), json!(on));
+                }
+                _ => body["chat_template_kwargs"] = json!({"enable_thinking": on}),
+            }
         }
     }
 }
@@ -869,7 +866,9 @@ pub async fn stream_plan(
             r();
         }
     };
-    // a refusal that names the thinking strength: once without it, same token step
+    // any 400 / 422 while a thinking strength was sent: once without it, same token step. Only a clean answer of this
+    // retry is remembered: the plain / unformatted ladders below also leave the parameter out, so their success says
+    // nothing about it (a generic refusal may have been about the markers or the schema)
     let mut dropped = false;
     if !uneffort.is_empty() && effort_refused(status, &String::from_utf8_lossy(&body)) {
         match run_ladder(args, uneffort, at).await {
@@ -894,9 +893,6 @@ pub async fn stream_plan(
                     if let Some(r) = &remember_plain {
                         r();
                     }
-                    if dropped {
-                        remember_dropped();
-                    }
                 }
                 return;
             }
@@ -910,9 +906,6 @@ pub async fn stream_plan(
                 if ok {
                     if let Some(r) = &remember_unformatted {
                         r();
-                    }
-                    if dropped {
-                        remember_dropped();
                     }
                 }
                 return;
@@ -2277,6 +2270,19 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_family_puts_reasoning_effort_only() {
+        let mut b = plain_body(Format::OpenAi);
+        put_effort(&mut b, eff(EffortFamily::DeepSeek, "max"));
+        assert_eq!(b["reasoning_effort"], "max");
+        assert!(b.get("output_config").is_none());
+        // DeepSeek's extra_body "thinking" toggle is never sent
+        for k in ["thinking", "extra_body", "thinking_config"] {
+            assert!(b.get(k).is_none(), "{k}");
+        }
+        assert!(!b.to_string().contains("thinking"));
+    }
+
+    #[test]
     fn google_family_puts_reasoning_effort_only() {
         let mut b = plain_body(Format::OpenAi);
         put_effort(&mut b, eff(EffortFamily::Google, "none"));
@@ -2432,24 +2438,39 @@ mod tests {
     fn effort_refused_detection() {
         let param = r#"{"error":{"message":"Unknown parameter","param":"reasoning_effort"}}"#;
         assert!(effort_refused(400, param));
-        let oc = r#"{"error":{"message":"output_config: Extra inputs are not permitted"}}"#;
-        assert!(effort_refused(422, oc));
-        let ef = r#"{"error":{"message":"effort: invalid value"}}"#;
-        assert!(effort_refused(400, ef));
-        let fmt = r#"{"error":{"message":"output_config.format is not supported"}}"#;
-        assert!(!effort_refused(400, fmt));
-        assert!(!effort_refused(500, param));
-        let mt = r#"{"error":{"message":"max_tokens is too large","param":"max_tokens"}}"#;
-        assert!(!effort_refused(400, mt));
-        assert!(!effort_refused(400, "not json"));
-        // Google (OpenAI compatibility) answers a Gemma model with a JSON array and the words "Thinking level" / "budget"
-        let google = r#"[{ "error": { "code": 400, "message": "Thinking level is not supported for this model.", "status": "INVALID_ARGUMENT" } } ]"#;
+        assert!(effort_refused(422, "{}"));
+        // a generic Workers AI body names no parameter and still counts
+        let workers =
+            r#"{"errors":[{"message":"AiError: AiError: Invalid input (abc)","code":8001}]}"#;
+        assert!(effort_refused(400, workers));
+        assert!(effort_refused(400, "not json"));
+        let google = r#"[{"error":{"code":400,"message":"Unknown name chat_template_kwargs: Cannot find field."}}]"#;
         assert!(effort_refused(400, google));
-        let budget = r#"[{"error":{"code":400,"message":"Thinking budget is not supported for this model."}}]"#;
-        assert!(effort_refused(400, budget));
-        assert!(!effort_refused(500, google));
-        let other = r#"[{"error":{"code":400,"message":"Request contains an invalid argument."}}]"#;
-        assert!(!effort_refused(400, other));
+        for st in [200, 401, 404, 429, 500, 503] {
+            assert!(!effort_refused(st, param), "{st}");
+        }
+    }
+
+    #[test]
+    fn gemma_family_puts_chat_template_kwargs() {
+        for (lvl, want) in [("true", true), ("false", false)] {
+            for f in [Format::OpenAi, Format::Anthropic] {
+                let mut b = plain_body(f);
+                put_effort(&mut b, eff(EffortFamily::Gemma, lvl));
+                assert_eq!(b["chat_template_kwargs"], json!({"enable_thinking": want}));
+                assert!(b.get("reasoning_effort").is_none());
+                assert!(b.get("enable_thinking").is_none());
+                assert!(b.get("output_config").is_none());
+            }
+        }
+        // merged into an existing object
+        let mut b = plain_body(Format::OpenAi);
+        b["chat_template_kwargs"] = json!({"other": 1});
+        put_effort(&mut b, eff(EffortFamily::Gemma, "false"));
+        assert_eq!(
+            b["chat_template_kwargs"],
+            json!({"other": 1, "enable_thinking": false})
+        );
     }
 
     #[test]

@@ -8,7 +8,7 @@
 import { fetchModels, pickModel, setEffort, setEnabled as setEnabledApi } from '../../api/ai-admin.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { miniSwitch } from '../../components/mini-switch.ts';
-import { PROVIDER_NAME, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
+import { EFFORT_FAMILIES, PROVIDER_NAME, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
 import {
   defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotModel, slotNote, slotUsing, SLOTS,
   type ModelGroup,
@@ -361,8 +361,7 @@ export function enableSection(s: AiSettings): HTMLElement {
 
 // ---------------------------------------------------------------- thinking strength (v1.6)
 
-const FAMILIES: EffortFamily[] = ['anthropic', 'openai', 'google'];
-const LEVEL_KEYS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+const LEVEL_KEYS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'true', 'false']);
 
 /** Saves one slot's thinking strength at once (null = default, nothing sent); the row is busy meanwhile */
 async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string): Promise<void> {
@@ -381,7 +380,7 @@ async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string
   document.getElementById(focusId)?.focus();
 }
 
-/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] and the level list; hidden on an older ai-service */
+/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] [DeepSeek] [Gemma] and the level list; hidden on an older ai-service */
 function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string): HTMLElement | null {
   const lists = s.effortLevels;
   if (!lists) return null;
@@ -399,8 +398,8 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
   const buttons = [
     btn('default', fam === null, [t('ai.set.effort.default')], t('ai.set.effort.default'), t('ai.set.effort.defaultTip'),
       () => void saveEffort(slot, null, `${id}-default`)),
-    ...FAMILIES.map((f) => btn(f, fam === f,
-      f === 'openai' ? [providerIcon(f), h('span', { class: 'ais-eb-t' }, PROVIDER_NAME[f])] : [providerIcon(f)],
+    ...EFFORT_FAMILIES.map((f) => btn(f, fam === f,
+      [providerIcon(f)],
       PROVIDER_NAME[f], PROVIDER_NAME[f],
       () => void saveEffort(slot, { family: f, level: levelForFamily(cur?.level, lists[f] ?? []) }, `${id}-${f}`))),
   ];

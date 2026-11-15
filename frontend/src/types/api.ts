@@ -998,7 +998,7 @@ export interface AiPoolModel {
   latencyMs: number | null; context: number | null; usedBy: AiSlot[];
 }
 /** v1.6: the thinking-strength families and the choice of one slot (null / missing = default, nothing sent) */
-export type AiEffortFamily = 'anthropic' | 'openai' | 'google';
+export type AiEffortFamily = 'anthropic' | 'openai' | 'google' | 'deepseek' | 'gemma';
 export interface AiEffort { family: AiEffortFamily; level: string }
 /** `effort` is optional: an older ai-service does not send it */
 export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null; effort?: AiEffort | null }

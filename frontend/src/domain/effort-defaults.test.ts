@@ -39,3 +39,21 @@ test('a family change keeps a valid level and falls back to medium', () => {
   assert.equal(levelForFamily('none', anth), 'medium');
   assert.equal(levelForFamily(null, anth), 'medium');
 });
+
+test('DeepSeek models default to high; levels are none / low / high / max', () => {
+  for (const m of ['deepseek-v4', 'deepseek-reasoner', 'deepseek/deepseek-chat', 'us.deepseek.r1-v1:0']) assert.equal(knownDefault(m), 'high', m);
+  const ds = ['none', 'low', 'high', 'max'];
+  assert.equal(levelForFamily('none', ds), 'none');
+  assert.equal(levelForFamily('max', ds), 'max');
+  assert.equal(levelForFamily('medium', ds), 'high');
+  assert.equal(levelForFamily('xhigh', ds), 'high');
+});
+
+test('Gemma models default to True; the level list is true / false', () => {
+  for (const m of ['gemma-4-31b-it', '@cf/google/gemma-4-26b-a4b-it', 'google/gemma-3-27b']) assert.equal(knownDefault(m), 'true', m);
+  const g = ['true', 'false'];
+  assert.equal(levelForFamily('false', g), 'false');
+  assert.equal(levelForFamily('true', g), 'true');
+  assert.equal(levelForFamily('high', g), 'true');
+  assert.equal(levelForFamily(null, g), 'true');
+});

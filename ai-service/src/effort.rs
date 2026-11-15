@@ -10,22 +10,36 @@ pub enum EffortFamily {
     Anthropic,
     OpenAi,
     Google,
+    DeepSeek,
+    Gemma,
 }
 
 /// Levels per family (official docs, 2026-11-16). Order = UI order.
 pub const ANTHROPIC_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 pub const OPENAI_LEVELS: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 pub const GOOGLE_LEVELS: [&str; 6] = ["none", "minimal", "low", "medium", "high", "xhigh"];
+/// DeepSeek thinking mode (official docs): none / low / high / max. Thinking is on by default, effort high.
+pub const DEEPSEEK_LEVELS: [&str; 4] = ["none", "low", "high", "max"];
+/// Gemma: `chat_template_kwargs.enable_thinking`, a boolean; the levels are its two values.
+pub const GEMMA_LEVELS: [&str; 2] = ["true", "false"];
 
 impl EffortFamily {
-    pub const ALL: [EffortFamily; 3] = [Self::Anthropic, Self::OpenAi, Self::Google];
+    pub const ALL: [EffortFamily; 5] = [
+        Self::Anthropic,
+        Self::OpenAi,
+        Self::Google,
+        Self::DeepSeek,
+        Self::Gemma,
+    ];
 
-    /// `anthropic | openai | google`
+    /// `anthropic | openai | google | deepseek | gemma`
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Anthropic => "anthropic",
             Self::OpenAi => "openai",
             Self::Google => "google",
+            Self::DeepSeek => "deepseek",
+            Self::Gemma => "gemma",
         }
     }
 
@@ -39,6 +53,8 @@ impl EffortFamily {
             Self::Anthropic => &ANTHROPIC_LEVELS,
             Self::OpenAi => &OPENAI_LEVELS,
             Self::Google => &GOOGLE_LEVELS,
+            Self::DeepSeek => &DEEPSEEK_LEVELS,
+            Self::Gemma => &GEMMA_LEVELS,
         }
     }
 
@@ -46,7 +62,8 @@ impl EffortFamily {
     pub fn param(self) -> &'static str {
         match self {
             Self::Anthropic => "output_config.effort",
-            Self::OpenAi | Self::Google => "reasoning_effort",
+            Self::OpenAi | Self::Google | Self::DeepSeek => "reasoning_effort",
+            Self::Gemma => "chat_template_kwargs.enable_thinking",
         }
     }
 }
@@ -90,12 +107,14 @@ impl Effort {
     }
 }
 
-/// `{"anthropic": [...], "openai": [...], "google": [...]}`: the level lists for the settings answer.
+/// `{"anthropic": [...], "openai": [...], "google": [...], "deepseek": [...], "gemma": [...]}`: the level lists for the settings answer.
 pub fn levels_json() -> Value {
     json!({
         "anthropic": ANTHROPIC_LEVELS,
         "openai": OPENAI_LEVELS,
         "google": GOOGLE_LEVELS,
+        "deepseek": DEEPSEEK_LEVELS,
+        "gemma": GEMMA_LEVELS,
     })
 }
 
@@ -121,6 +140,12 @@ mod tests {
             (Anthropic, "none"),
             (Anthropic, "minimal"),
             (Google, "max"),
+            (DeepSeek, "xhigh"),
+            (DeepSeek, "medium"),
+            (Gemma, "high"),
+            (Gemma, "True"),
+            (Gemma, "none"),
+            (Google, "low "),
             (OpenAi, "High"),
             (OpenAi, " high"),
             (OpenAi, ""),
@@ -161,7 +186,21 @@ mod tests {
             GOOGLE_LEVELS,
             ["none", "minimal", "low", "medium", "high", "xhigh"]
         );
+        assert_eq!(DEEPSEEK_LEVELS, ["none", "low", "high", "max"]);
+        assert_eq!(GEMMA_LEVELS, ["true", "false"]);
+        assert_eq!(
+            Effort::parse_tag("deepseek:none").unwrap().tag(),
+            "deepseek:none"
+        );
+        // the removed DeepSeek level reads as the default (None)
+        assert!(Effort::parse_tag("deepseek:xhigh").is_none());
+        assert_eq!(
+            Effort::parse_tag("gemma:false").unwrap().tag(),
+            "gemma:false"
+        );
+        assert_eq!(levels_json()["gemma"].as_array().unwrap().len(), 2);
         let j = levels_json();
+        assert_eq!(j["deepseek"].as_array().unwrap().len(), 4);
         assert_eq!(j["openai"].as_array().unwrap().len(), 7);
         assert_eq!(
             Effort::new(EffortFamily::Google, "high").unwrap().to_json(),
