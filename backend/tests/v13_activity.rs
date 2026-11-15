@@ -24,6 +24,12 @@ use xexam_backend::logs::{BufferLayer, LogBuffer};
 use xexam_backend::models::BankAccess;
 use xexam_backend::services::RealEngine;
 
+/// Every test of this binary runs alone. Two of them capture log lines with a per-thread subscriber (`set_default`), and
+/// tracing's callsite interest cache races when other tests' subscribers and log lines come and go on other threads: the
+/// handler's line was not captured on CI (as in v08_ai_link.rs). A tokio Mutex has no poisoning (a failed test does not
+/// fail the others) and may be held across `.await`.
+static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 const HOST: &str = "127.0.0.1:8765";
 const ORIGIN: &str = "http://127.0.0.1:8765";
 const TOKEN: &str = "fake-internal-token-for-tests-0123456789";
@@ -233,6 +239,7 @@ const ID3: &str = "00000000000000000000000000000003";
 
 #[tokio::test]
 async fn admin_posts_are_recorded_users_only_when_important() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     let bob = add_user(&a, "bob", Role::User);
@@ -293,6 +300,7 @@ async fn admin_posts_are_recorded_users_only_when_important() {
 
 #[tokio::test]
 async fn user_management_entries_name_the_target_and_the_change() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     let r = post(
@@ -341,6 +349,7 @@ async fn user_management_entries_name_the_target_and_the_change() {
 
 #[tokio::test]
 async fn bank_and_study_entries_carry_their_object_and_counts() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     let r = post(
@@ -370,6 +379,7 @@ async fn bank_and_study_entries_carry_their_object_and_counts() {
 
 #[tokio::test]
 async fn visits_follow_role_switch_merge_and_guard() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     let bob = add_user(&a, "bob", Role::User);
@@ -464,6 +474,7 @@ async fn visits_follow_role_switch_merge_and_guard() {
 
 #[tokio::test]
 async fn activity_read_filters_pages_and_facets() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     let bob = add_user(&a, "bob", Role::User);
@@ -556,6 +567,7 @@ async fn activity_read_filters_pages_and_facets() {
 
 #[tokio::test]
 async fn reading_the_log_is_not_logged_and_settings_are_checked() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     get(&a, "/api/activity", &adm).await;
@@ -602,6 +614,7 @@ async fn reading_the_log_is_not_logged_and_settings_are_checked() {
 
 #[tokio::test]
 async fn sign_in_info_switch_stops_recording_hides_and_the_clear_wipes_them() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let adm = admin(&a);
     let geo: Vec<(&str, &[u8])> = vec![
@@ -850,6 +863,7 @@ async fn sign_in_info_switch_stops_recording_hides_and_the_clear_wipes_them() {
 
 #[tokio::test]
 async fn ai_events_are_checked_stored_once_and_attributed() {
+    let _serial = SERIAL.lock().await;
     let a = app();
     let uid = a.store.user_by_id(1).expect("u").expect("admin").uid;
     // the whole batch is refused on the first bad event: nothing is stored
@@ -940,6 +954,7 @@ async fn ai_events_are_checked_stored_once_and_attributed() {
 
 #[tokio::test]
 async fn anonymous_flood_writes_at_most_120_rows() {
+    let _serial = SERIAL.lock().await;
     let dir = dbc::tmp();
     let store = Arc::new(Store::open(&dir.path().join("x.db")).expect("store"));
     let sink = Sink::new();
@@ -966,6 +981,7 @@ async fn anonymous_flood_writes_at_most_120_rows() {
 
 #[tokio::test]
 async fn writer_applies_retention_and_reports_it() {
+    let _serial = SERIAL.lock().await;
     let dir = dbc::tmp();
     let store = Arc::new(Store::open(&dir.path().join("x.db")).expect("store"));
     let now = auth::unix_now();
@@ -1020,6 +1036,7 @@ async fn writer_applies_retention_and_reports_it() {
 
 #[test]
 fn retention_never_deletes_sign_in_rows_and_the_cap_converges() {
+    let _serial = SERIAL.blocking_lock();
     let dir = dbc::tmp();
     let store = Store::open(&dir.path().join("x.db")).expect("store");
     let now = auth::unix_now();
@@ -1085,6 +1102,7 @@ fn retention_never_deletes_sign_in_rows_and_the_cap_converges() {
 
 #[tokio::test]
 async fn secrets_never_reach_rows_or_log_lines() {
+    let _serial = SERIAL.lock().await;
     use tracing_subscriber::layer::SubscriberExt;
     let lines = Arc::new(LogBuffer::new(1000));
     let _guard = tracing::subscriber::set_default(
@@ -1169,6 +1187,7 @@ async fn secrets_never_reach_rows_or_log_lines() {
 
 #[tokio::test]
 async fn log_line_has_no_address_while_the_switch_is_off() {
+    let _serial = SERIAL.lock().await;
     use tracing_subscriber::layer::SubscriberExt;
     let lines = Arc::new(LogBuffer::new(1000));
     let _guard = tracing::subscriber::set_default(
