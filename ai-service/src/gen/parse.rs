@@ -63,10 +63,25 @@ fn element(v: &Value) -> Result<RawQuestion, usize> {
         .ok_or(unusable)?;
     let list = v.get("options").and_then(Value::as_array).ok_or(unusable)?;
     let mut options = Vec::with_capacity(list.len());
+    let mut any_true = false;
+    let mut any_missing = false;
     for o in list {
         let text = tri_of(o, false).ok_or(unusable)?;
-        let correct = o.get("correct").and_then(Value::as_bool).ok_or(unusable)?;
+        // A missing `correct` is decided below; a present one must be a boolean.
+        let correct = match o.get("correct") {
+            None => {
+                any_missing = true;
+                false
+            }
+            Some(c) => c.as_bool().ok_or(unusable)?,
+        };
+        any_true |= correct;
         options.push(RawOption { text, correct });
+    }
+    // Lenient: an option without `correct` counts as false when another option of the element is marked true;
+    // with no true option at all the element stays unusable.
+    if any_missing && !any_true {
+        return Err(unusable);
     }
     Ok(RawQuestion {
         slot,
@@ -175,6 +190,36 @@ mod tests {
         assert_eq!(v[3], Err(0));
         assert_eq!(v[4], Err(0));
         assert!(v[5].is_ok());
+    }
+
+    fn with_options(opts: &str) -> String {
+        format!(
+            r#"{{"questions":[{{"slot":4,"stem":{{"en":"E","zh":"Z","ja":"J"}},"options":[{opts}],"explanation":{{"en":"x","zh":"y","ja":"z"}}}}]}}"#
+        )
+    }
+
+    #[test]
+    fn a_missing_correct_is_false_when_another_option_is_true() {
+        let t = with_options(
+            r#"{"en":"a","zh":"b","ja":"c","correct":true},{"en":"d","zh":"e","ja":"f"},{"en":"g","zh":"h","ja":"i"}"#,
+        );
+        let q = parse_answer(&t).unwrap().remove(0).unwrap();
+        let flags: Vec<bool> = q.options.iter().map(|o| o.correct).collect();
+        assert_eq!(flags, vec![true, false, false]);
+    }
+
+    #[test]
+    fn all_correct_keys_missing_stays_unusable() {
+        let t = with_options(r#"{"en":"a","zh":"b","ja":"c"},{"en":"d","zh":"e","ja":"f"}"#);
+        assert_eq!(parse_answer(&t).unwrap()[0], Err(4));
+    }
+
+    #[test]
+    fn a_non_boolean_correct_stays_unusable() {
+        let t = with_options(
+            r#"{"en":"a","zh":"b","ja":"c","correct":true},{"en":"d","zh":"e","ja":"f","correct":"yes"}"#,
+        );
+        assert_eq!(parse_answer(&t).unwrap()[0], Err(4));
     }
 
     #[test]

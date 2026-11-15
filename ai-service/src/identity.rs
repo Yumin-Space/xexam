@@ -155,6 +155,13 @@ pub struct ClientInfo {
     pub ip: Option<String>,
     /// `User-Agent` without control characters, at most 256 characters
     pub ua: Option<String>,
+    /// `X-Geo-Country` (the Cloudflare place, set by Nginx for trusted peers only): exactly two letters, upper-case,
+    /// not `XX` / `T1`
+    pub country: Option<String>,
+    /// `X-Geo-Region` without control characters, at most 64 characters
+    pub region: Option<String>,
+    /// `X-Geo-City` without control characters, at most 64 characters
+    pub city: Option<String>,
 }
 
 impl ClientInfo {
@@ -172,7 +179,29 @@ impl ClientInfo {
                 crate::util::cut_chars(clean.trim(), 256)
             })
             .filter(|v| !v.is_empty());
-        ClientInfo { ip, ua }
+        let text = |name: &str| {
+            h.get(name)
+                .map(|v| String::from_utf8_lossy(v.as_bytes()).into_owned())
+                .map(|v| {
+                    let clean: String = v.chars().filter(|c| !c.is_control()).collect();
+                    crate::util::cut_chars(clean.trim(), 64)
+                })
+                .filter(|v| !v.is_empty())
+        };
+        let country = h
+            .get("x-geo-country")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| v.len() == 2 && v.bytes().all(|b| b.is_ascii_alphabetic()))
+            .map(str::to_ascii_uppercase)
+            .filter(|v| v != "XX" && v != "T1");
+        ClientInfo {
+            ip,
+            ua,
+            country,
+            region: text("x-geo-region"),
+            city: text("x-geo-city"),
+        }
     }
 }
 
@@ -296,5 +325,38 @@ mod tests {
         );
         h.insert("user-agent", HeaderValue::from_static("  "));
         assert_eq!(ClientInfo::from_headers(&h).ua, None);
+    }
+
+    #[test]
+    fn client_info_cleans_the_place_headers() {
+        use axum::http::{HeaderMap, HeaderValue};
+        let mut h = HeaderMap::new();
+        let c = ClientInfo::from_headers(&h);
+        assert_eq!((c.country, c.region, c.city), (None, None, None));
+        h.insert("x-geo-country", HeaderValue::from_static(" de "));
+        h.insert(
+            "x-geo-region",
+            HeaderValue::from_static("  Made-up Region "),
+        );
+        h.insert(
+            "x-geo-city",
+            HeaderValue::from_bytes(b"Made	up City").expect("value"),
+        );
+        let c = ClientInfo::from_headers(&h);
+        assert_eq!(c.country.as_deref(), Some("DE"));
+        assert_eq!(c.region.as_deref(), Some("Made-up Region"));
+        assert_eq!(c.city.as_deref(), Some("Madeup City"));
+        for bad in ["XX", "xx", "T1", "t1", "D", "DEU", "1A", ""] {
+            h.insert("x-geo-country", HeaderValue::from_str(bad).expect("value"));
+            assert_eq!(ClientInfo::from_headers(&h).country, None, "{bad:?}");
+        }
+        h.insert(
+            "x-geo-city",
+            HeaderValue::from_str(&"c".repeat(100)).expect("value"),
+        );
+        h.insert("x-geo-region", HeaderValue::from_static("   "));
+        let c = ClientInfo::from_headers(&h);
+        assert_eq!(c.city.map(|v| v.chars().count()), Some(64));
+        assert_eq!(c.region, None);
     }
 }

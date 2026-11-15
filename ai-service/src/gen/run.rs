@@ -611,7 +611,9 @@ impl Run {
     /// Feeds the model's answer for `batch` (slot indexes from `next()`). `truncated` = the provider cut the answer
     /// (`finish_reason: length` / `stop_reason: max_tokens`). Parses, checks, de-duplicates and places each question;
     /// rejected and missing slots go to the redo queue. A rejection counts toward the seed switch for any GP-4 / GP-5
-    /// reason or for a slot missing from a parsed answer; an unparsable answer and truncation do not count.
+    /// reason or for a slot missing from a parsed answer; an unparsable answer and truncation do not count. Only a real
+    /// cut shrinks the batch size: the provider said so (`truncated`), or the unreadable text does not end with `}`. A
+    /// complete JSON answer with unreadable or missing slots never shrinks it.
     pub fn on_answer(&mut self, batch: &[usize], text: &str, truncated: bool) -> BatchReport {
         self.calls += 1;
         self.answers += 1;
@@ -626,8 +628,8 @@ impl Run {
                 for &i in batch {
                     self.lack(i, "unreadable", batch.len() > 1, truncated, &mut report);
                 }
-                if !truncated && batch.len() > 1 {
-                    // nothing readable from a multi-slot call: most likely cut off without saying so (L-44)
+                if !truncated && looks_cut(text) {
+                    // no closing brace: the answer was cut off without the provider saying so, so the batch shrinks
                     self.shrink(batch);
                 }
                 return report;
@@ -647,8 +649,8 @@ impl Run {
                 && !self.in_queue[i]
                 && !report.rejected.iter().any(|(no, _)| *no == i + 1)
             {
-                // a slot of a bigger call never uses up a try (L-44): the answer was probably cut, one slot per call
-                // follows (A-OWNER-66)
+                // a slot of a bigger call never uses up a try: it goes to the redo queue, one slot per call follows
+                // (A-OWNER-66); a complete answer with a missing slot does not shrink the batch size
                 let why = if unreadable.contains(&self.plan.slots[i].no) {
                     "unreadable"
                 } else {
@@ -656,10 +658,6 @@ impl Run {
                 };
                 self.lack(i, why, batch.len() > 1, truncated, &mut report);
             }
-        }
-        if !truncated && batch.len() > 1 && !report.missing.is_empty() {
-            // fewer slots than asked counts as truncation (L-44)
-            self.shrink(batch);
         }
         report
     }
@@ -739,7 +737,7 @@ impl Run {
         }
     }
 
-    /// Truncation (a cut-off or short answer for a batch of more than one slot, or an explicit finish reason `length`):
+    /// Truncation (an explicit finish reason `length`, or an unreadable answer that was cut off without a closing brace):
     /// the generation's batch ladder steps 5 -> 3 -> 2 -> 1; a conversion halves its output budget.
     fn shrink(&mut self, batch: &[usize]) {
         if self.convert.is_some() {
@@ -905,6 +903,16 @@ attempt {attempt} {hex}"
     )
 }
 
+/// `true` when an unparsable answer looks cut off: after the trailing code fence line is removed, the text does not
+/// end with `}`.
+fn looks_cut(text: &str) -> bool {
+    let mut t = text.trim();
+    if let Some(rest) = t.strip_suffix("```") {
+        t = rest.trim_end();
+    }
+    !t.ends_with('}')
+}
+
 /// A batch holding a slot that missed in a bigger call shrinks to that one slot (A-OWNER-66.2).
 fn solo_only(batch: &mut Vec<usize>, conv: &Conv) {
     if batch.len() > 1 {
@@ -1053,34 +1061,30 @@ RETRY
         assert_eq!(run.redo_per_call(), 3);
         let Next::Ask(b1) = run.next() else { panic!() };
         assert_eq!(b1, vec![0, 1, 2, 3, 4]);
-        // Only slot 1 of the five is delivered: a short answer counts as truncation (L-44), so per_call goes 5 -> 3.
+        // Only slot 1 of the five is delivered: a complete answer with missing slots does not shrink per_call.
         let raws = vec![raw_for(&run.plan().slots[0].clone(), 1)];
         run.on_answer(&b1, &answer_json(&raws), false);
         assert_eq!(run.made(), 1);
-        assert_eq!((run.per_call(), run.redo_per_call()), (3, 2));
-        // The never-asked slots come first, 3 at a time.
-        for first in [5usize, 8, 11, 14] {
+        assert_eq!((run.per_call(), run.redo_per_call()), (5, 3));
+        // The never-asked slots come first, 5 at a time.
+        for first in [5usize, 10, 15] {
             let Next::Ask(b) = run.next() else { panic!() };
-            assert_eq!(b, vec![first, first + 1, first + 2]);
+            assert_eq!(b, (first..first + 5).collect::<Vec<_>>());
             let t = good(&run, &b);
             run.on_answer(&b, &t, false);
         }
-        let Next::Ask(b) = run.next() else { panic!() };
-        assert_eq!(b, vec![17, 18, 19]);
-        let t = good(&run, &b);
-        run.on_answer(&b, &t, false);
-        // Now the four missing slots of the first batch, 2 + 2.
+        // Now the four missing slots of the first batch, 3 + 1.
         let Next::Ask(r1) = run.next() else { panic!() };
-        assert_eq!(r1, vec![1, 2]);
+        assert_eq!(r1, vec![1, 2, 3]);
         let t = good(&run, &r1);
         run.on_answer(&r1, &t, false);
         let Next::Ask(r2) = run.next() else { panic!() };
-        assert_eq!(r2, vec![3, 4]);
+        assert_eq!(r2, vec![4]);
         let t = good(&run, &r2);
         run.on_answer(&r2, &t, false);
         assert_eq!(run.next(), Next::Finish);
         assert_eq!(run.outcome(), Outcome::Full);
-        assert_eq!(run.calls(), 8);
+        assert_eq!(run.calls(), 6);
     }
 
     #[test]
@@ -1114,7 +1118,7 @@ RETRY
             asked += 1;
         }
         assert_eq!(asked, run.calls());
-        // missing slots use no retries (L-44), so the batch ladder runs 5 -> 3 -> 2 -> 1 and the stop is 5 x 20 calls
+        // missing slots use no retries and a complete answer never shrinks the batch, so the stop is 5 x 4 calls
         assert!(asked <= 100);
         assert_eq!(run.made(), 0);
         assert_eq!(run.outcome(), Outcome::Failed(FailCode::Quality));
@@ -1127,7 +1131,7 @@ RETRY
             let mut run = make_run(14, 6, per_call);
             let mut calls = 0;
             while let Next::Ask(b) = run.next() {
-                // Valid for the first slot of every batch only; the ladder ends at one slot per call.
+                // Valid for the first slot of every batch only: one slot per call at the least.
                 let first = raw_for(&run.plan().slots[b[0]].clone(), run.plan().slots[b[0]].no);
                 run.on_answer(&b, &answer_json(&[first]), false);
                 calls += 1;
@@ -1306,8 +1310,8 @@ RETRY
         assert_eq!(run.outcome(), Outcome::Failed(FailCode::Quality));
     }
 
-    /// A stub provider that silently cuts every answer after `limit` questions (no finish reason): 20 valid questions
-    /// within 15 calls (L-44).
+    /// A stub provider that silently cuts every answer of more than 3 questions (no finish reason, no closing brace):
+    /// 20 valid questions within 15 calls.
     #[test]
     fn a_provider_that_cuts_answers_still_gives_every_question_within_the_call_ceiling() {
         let p = make_plan(14, 6, 5, 17);
@@ -1317,8 +1321,14 @@ RETRY
         let mut sizes = Vec::new();
         while let Next::Ask(b) = run.next() {
             sizes.push(b.len());
-            let kept: Vec<usize> = b.iter().copied().take(3).collect();
-            let t = good(&run, &kept);
+            let t = good(&run, &b);
+            let t = if b.len() > 3 {
+                let cut: String = t.chars().take(t.chars().count() / 2).collect();
+                assert!(looks_cut(&cut));
+                cut
+            } else {
+                t
+            };
             run.on_answer(&b, &t, false);
         }
         assert_eq!(run.outcome(), Outcome::Full, "{sizes:?}");
@@ -1330,12 +1340,83 @@ RETRY
     }
 
     #[test]
+    fn a_complete_answer_with_a_missing_slot_does_not_lower_per_call() {
+        let mut run = make_run(14, 6, 5);
+        let Next::Ask(b) = run.next() else { panic!() };
+        let raws = vec![raw_for(&run.plan().slots[0].clone(), 1)];
+        let rep = run.on_answer(&b, &answer_json(&raws), false);
+        assert_eq!(rep.missing, vec![2, 3, 4, 5]);
+        assert_eq!(run.per_call(), 5);
+        // a complete JSON answer with no readable question does not shrink either
+        let Next::Ask(b) = run.next() else { panic!() };
+        run.on_answer(&b, "{\"questions\":[]}", false);
+        assert_eq!(run.per_call(), 5);
+        // a fenced complete answer neither
+        let Next::Ask(b) = run.next() else { panic!() };
+        run.on_answer(
+            &b,
+            "```json
+{\"questions\":[]}
+```",
+            false,
+        );
+        assert_eq!(run.per_call(), 5);
+    }
+
+    #[test]
+    fn a_cut_text_lowers_per_call_and_so_does_the_truncated_flag() {
+        let mut run = make_run(14, 6, 5);
+        let Next::Ask(b) = run.next() else { panic!() };
+        run.on_answer(
+            &b,
+            "{\"questions\":[{\"slot\":1,\"stem\":{\"en\":\"cut",
+            false,
+        );
+        assert_eq!(run.per_call(), 3);
+        let Next::Ask(b) = run.next() else { panic!() };
+        run.on_answer(
+            &b,
+            "```json
+{\"questions\":[{\"slot\":1,
+```",
+            false,
+        );
+        assert_eq!(run.per_call(), 2);
+        let Next::Ask(b) = run.next() else { panic!() };
+        let t = good(&run, &b);
+        run.on_answer(&b, &t, true);
+        assert_eq!(run.per_call(), 1);
+    }
+
+    #[test]
+    fn looks_cut_ignores_a_trailing_fence_and_whitespace() {
+        assert!(!looks_cut("{\"a\":1}"));
+        assert!(!looks_cut(
+            "  {\"a\":1}
+"
+        ));
+        assert!(!looks_cut(
+            "```json
+{\"a\":1}
+```
+"
+        ));
+        assert!(looks_cut("{\"a\":[1,"));
+        assert!(looks_cut("Sorry, I cannot help."));
+        assert!(looks_cut(
+            "```json
+{\"a\":[1,
+```"
+        ));
+    }
+
+    #[test]
     fn the_ladder_is_five_three_two_one() {
         let mut run = make_run(14, 6, 5);
         let mut seen = vec![run.per_call()];
         for _ in 0..4 {
             let Next::Ask(b) = run.next() else { panic!() };
-            run.on_answer(&b, "{\"questions\":[]}", false);
+            run.on_answer(&b, "{\"questions\":[{\"slot\":", false);
             seen.push(run.per_call());
         }
         assert_eq!(seen, vec![5, 3, 2, 1, 1]);

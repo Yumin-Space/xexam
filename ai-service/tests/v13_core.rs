@@ -599,6 +599,7 @@ fn event(t: &TestApp, w: &Who, action: &'static str) -> Event {
         &ClientInfo {
             ip: Some("203.0.113.7".into()),
             ua: Some("Demo/1.0".into()),
+            ..ClientInfo::default()
         },
     )
     .object("main")

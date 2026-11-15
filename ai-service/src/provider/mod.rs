@@ -483,6 +483,12 @@ pub struct Plan {
     pub plain: Vec<(TokenLimit, reqwest::Request)>,
     /// Called when the unmarked retry succeeded: the connection must not get markers
     pub remember_plain: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Request with a structured output field: the same ladder without that field and without cache markers (empty when
+    /// the steps carry none). Used once when a 400 / 422 still refuses the request after the plain ladder (or without
+    /// one).
+    pub unformatted: Vec<(TokenLimit, reqwest::Request)>,
+    /// Called when the request without the structured output field succeeded: the connection must not get it
+    pub remember_unformatted: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Plan {
@@ -495,6 +501,8 @@ impl Plan {
             remember: None,
             plain: Vec::new(),
             remember_plain: None,
+            unformatted: Vec::new(),
+            remember_unformatted: None,
         }
     }
 }
@@ -513,6 +521,24 @@ pub struct ChatSpec<'a> {
     /// `false`: no cache markers in the request (a call that cannot profit from a cache, or whose prefix is below the
     /// model's cache minimum, see [`cache_floor_ok`])
     pub cache: bool,
+    /// A JSON schema the answer must follow (structured output); `None` = free text. Anthropic gets
+    /// `output_config.format`, an OpenAI-compatible service `response_format` (see [`put_schema`]).
+    pub schema: Option<&'a serde_json::Value>,
+}
+
+/// Adds the structured output field of `schema` to a request body.
+fn put_schema(format: Format, body: &mut Value, schema: &Value) {
+    match format {
+        Format::Anthropic => {
+            body["output_config"] = json!({"format": {"type": "json_schema", "schema": schema}});
+        }
+        Format::OpenAi => {
+            body["response_format"] = json!({
+                "type": "json_schema",
+                "json_schema": {"name": "xexam_answer", "strict": true, "schema": schema}
+            });
+        }
+    }
 }
 
 /// Admin connection tests (90-second rule): one model listing, one test attempt, the attempts of one model, and the
@@ -581,6 +607,8 @@ pub fn strip_cache_markers(v: &mut Value) {
 /// Builds the plan: the request with `first`, then one request per later step of the ladder. OpenAI-compatible with a
 /// prefix and `spec.cache` (and `no_markers` false): the requests carry cache markers ([`put_prefix_marked`]) and the
 /// plan also holds the unmarked ladder for the one fallback; `on_no_markers` is called when that fallback worked.
+/// With `spec.schema` (and `no_schema` false) every request carries the structured output field and the plan also holds
+/// the ladder without it (`unformatted`); `on_no_schema` is called when that last fallback worked.
 #[allow(clippy::too_many_arguments)]
 pub fn build_plan(
     target: &Target,
@@ -591,11 +619,15 @@ pub fn build_plan(
     remember: Option<Remember>,
     no_markers: bool,
     on_no_markers: Option<Arc<dyn Fn() + Send + Sync>>,
+    no_schema: bool,
+    on_no_schema: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<Plan, UpError> {
     let marked =
         target.format == Format::OpenAi && spec.prefix.is_some() && spec.cache && !no_markers;
     let mut steps = Vec::new();
     let mut plain = Vec::new();
+    let mut unformatted = Vec::new();
+    let schema = spec.schema.filter(|_| !no_schema);
     let mut limit = Some(first);
     while let Some(l) = limit {
         let mut body = chat_body(
@@ -620,9 +652,22 @@ pub fn build_plan(
         if !spec.cache {
             strip_cache_markers(&mut body);
         }
+        let mut bare = None;
+        if let Some(sc) = schema {
+            // the last fallback carries neither the structured output field nor cache markers, so a server that refuses
+            // both still answers once (the next call then finds its markers fallback by itself)
+            bare = Some(fallback.clone().unwrap_or_else(|| body.clone()));
+            put_schema(target.format, &mut body, sc);
+            if let Some(b) = fallback.as_mut() {
+                put_schema(target.format, b, sc);
+            }
+        }
         steps.push((l, target.chat_request(client, &body, spec.skip_cache)?));
         if let Some(b) = fallback {
             plain.push((l, target.chat_request(client, &b, spec.skip_cache)?));
+        }
+        if let Some(b) = bare {
+            unformatted.push((l, target.chat_request(client, &b, spec.skip_cache)?));
         }
         limit = ladder_after(target.format, &l, stored_max);
     }
@@ -633,6 +678,8 @@ pub fn build_plan(
         remember,
         plain,
         remember_plain: on_no_markers,
+        unformatted,
+        remember_unformatted: on_no_schema,
     })
 }
 
@@ -712,7 +759,8 @@ pub async fn stream_chat(
 
 /// Runs a plan: the first request, and after an HTTP 400 / 422 that names the token field it sent (before any stream
 /// event) the next step of the ladder. A marked OpenAI-compatible request that is refused with 400 / 422 for any other
-/// reason is retried once, unmarked (same token step), and a success is remembered (`remember_plain`). Several requests,
+/// reason is retried once, unmarked (same token step), and a success is remembered (`remember_plain`); a request with a structured output field that is still refused with
+/// 400 / 422 is retried without it (`remember_unformatted`). Several requests,
 /// but one call: the caller counts, times and records it once. Ends with exactly one `Done` or `Fail` on `tx`.
 pub async fn stream_plan(
     client: &reqwest::Client,
@@ -727,9 +775,11 @@ pub async fn stream_plan(
         remember,
         plain,
         remember_plain,
+        unformatted,
+        remember_unformatted,
     } = plan;
     let args = (client, format, stored_max, t, &tx, &remember);
-    let (mut status, mut body, at) = match run_ladder(args, steps, 0).await {
+    let (mut status, mut body, mut at) = match run_ladder(args, steps, 0).await {
         Ok(_) => return,
         Err(r) => r,
     };
@@ -739,6 +789,20 @@ pub async fn stream_plan(
                 // Only a clean 2xx answer proves the unmarked form works; a timeout or a broken stream proves nothing
                 if ok {
                     if let Some(r) = &remember_plain {
+                        r();
+                    }
+                }
+                return;
+            }
+            // the unformatted ladder starts at the token step the plain ladder reached
+            Err((s, b, i)) => (status, body, at) = (s, b, i),
+        }
+    }
+    if !unformatted.is_empty() && matches!(status, 400 | 422) {
+        match run_ladder(args, unformatted, at).await {
+            Ok(ok) => {
+                if ok {
+                    if let Some(r) = &remember_unformatted {
                         r();
                     }
                 }
@@ -1568,6 +1632,7 @@ mod tests {
             skip_cache: false,
             prefix,
             cache,
+            schema: None,
         }
     }
 
@@ -1616,13 +1681,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_schema_adds_the_structured_output_field_and_an_unformatted_ladder() {
+        let turns = one_turn("TASK");
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let schema = json!({"type": "object"});
+        let first = TokenLimit::omit();
+        let build = |t: &Target, with: bool, no: bool| {
+            let mut sp = spec(&turns, None, false);
+            sp.schema = with.then_some(&schema);
+            build_plan(t, &client, &sp, first, 8192, None, false, None, no, None).expect("plan")
+        };
+        let oa = openai_target("http://127.0.0.1:9");
+        let an = target(
+            Provider::Anthropic,
+            Format::Anthropic,
+            GatewayAuth::Bearer,
+            true,
+            false,
+        );
+        let p = build(&oa, true, false);
+        for (_, r) in &p.steps {
+            let b = body_of(r);
+            assert_eq!(b["response_format"]["type"], "json_schema");
+            assert_eq!(b["response_format"]["json_schema"]["name"], "xexam_answer");
+            assert_eq!(b["response_format"]["json_schema"]["strict"], true);
+            assert_eq!(b["response_format"]["json_schema"]["schema"], schema);
+        }
+        assert_eq!(p.unformatted.len(), p.steps.len());
+        assert!(body_of(&p.unformatted[0].1)
+            .get("response_format")
+            .is_none());
+        let p = build(&an, true, false);
+        let b = body_of(&p.steps[0].1);
+        assert_eq!(b["output_config"]["format"]["type"], "json_schema");
+        assert_eq!(b["output_config"]["format"]["schema"], schema);
+        assert_eq!(p.unformatted.len(), p.steps.len());
+        assert!(body_of(&p.unformatted[0].1).get("output_config").is_none());
+        // marked steps: the plain ladder keeps the field, the unformatted ladder has neither field nor markers
+        let mut sp = spec(&turns, Some("PFX"), true);
+        sp.schema = Some(&schema);
+        let p = build_plan(
+            &oa, &client, &sp, first, 8192, None, false, None, false, None,
+        )
+        .expect("plan");
+        let (s, pl, un) = (
+            body_of(&p.steps[0].1),
+            body_of(&p.plain[0].1),
+            body_of(&p.unformatted[0].1),
+        );
+        assert!(s.to_string().contains("cache_control") && s.get("response_format").is_some());
+        assert!(!pl.to_string().contains("cache_control") && pl.get("response_format").is_some());
+        assert!(!un.to_string().contains("cache_control") && un.get("response_format").is_none());
+        assert_eq!(p.unformatted.len(), p.steps.len());
+        for t in [&oa, &an] {
+            for (with, no) in [(false, false), (true, true)] {
+                let p = build(t, with, no);
+                let b = body_of(&p.steps[0].1);
+                assert!(b.get("output_config").is_none() && b.get("response_format").is_none());
+                assert!(p.unformatted.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn build_plan_marks_only_openai_with_prefix_and_cache() {
         let client = provider_client("test", &Timeouts::default()).expect("client");
         let turns = one_turn("TASK now");
         let t = openai_target("http://127.0.0.1:9/v1");
         let first = TokenLimit::omit();
         let plan = |t: &Target, sp: &ChatSpec<'_>, no: bool| {
-            build_plan(t, &client, sp, first, 8192, None, no, None).expect("plan")
+            build_plan(t, &client, sp, first, 8192, None, no, None, false, None).expect("plan")
         };
         // prefix + cache: marked steps and the plain ladder
         let p = plan(&t, &spec(&turns, Some("PFX"), true), false);
@@ -1740,6 +1868,8 @@ mod tests {
                 None,
                 no,
                 Some(cb),
+                false,
+                None,
             )
             .expect("plan")
         };
@@ -1777,6 +1907,8 @@ mod tests {
             None,
             false,
             Some(Arc::new(|| panic!("must not be remembered"))),
+            false,
+            None,
         )
         .expect("plan");
         let ups = run(plan).await;
@@ -1800,11 +1932,105 @@ mod tests {
             None,
             false,
             Some(Arc::new(|| panic!("must not be remembered"))),
+            false,
+            None,
         )
         .expect("plan");
         let ups = run(plan).await;
         assert!(matches!(ups.last(), Some(Up::Fail(_))), "{ups:?}");
         assert_eq!(seen.lock().expect("seen").len(), 2);
+    }
+
+    /// A stub server that refuses (400) a request with cache markers (`markers`) or with `response_format` (`schema`).
+    async fn refusing_stub(markers: bool, schema: bool) -> (String, Seen) {
+        use axum::{body::Bytes, http::StatusCode, response::IntoResponse, Router};
+        let seen: Seen = Default::default();
+        let log = seen.clone();
+        let app = Router::new().fallback(move |body: Bytes| {
+            let log = log.clone();
+            async move {
+                let v: Value = serde_json::from_slice(&body).expect("json");
+                let refuse = (markers && v.to_string().contains("cache_control"))
+                    || (schema && v.get("response_format").is_some());
+                log.lock().expect("log").push(v);
+                if refuse {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        r#"{"error":{"message":"unsupported field"}}"#,
+                    )
+                        .into_response();
+                }
+                (
+                    [("content-type", "text/event-stream")],
+                    "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+                )
+                    .into_response()
+            }
+        });
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = l.local_addr().expect("addr");
+        tokio::spawn(async move {
+            let _ = axum::serve(l, app).await;
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    #[tokio::test]
+    async fn a_server_that_refuses_structured_output_gets_one_unformatted_retry() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        let schema = json!({"type": "object"});
+        let turns = one_turn("TASK now");
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        // (refuse markers, refuse schema, requests of the first call, markers remembered)
+        for (markers, refuse_schema, sent, plain_memo) in
+            [(false, true, 3, false), (true, true, 3, false)]
+        {
+            let (base, seen) = refusing_stub(markers, refuse_schema).await;
+            let t = openai_target(&format!("{base}/v1"));
+            let no_markers = Arc::new(AtomicBool::new(false));
+            let no_schema = Arc::new(AtomicBool::new(false));
+            let build = |nm: bool, ns: bool| {
+                let (m, s) = (no_markers.clone(), no_schema.clone());
+                let mut sp = spec(&turns, Some("PFX"), true);
+                sp.schema = Some(&schema);
+                build_plan(
+                    &t,
+                    &client,
+                    &sp,
+                    TokenLimit::omit(),
+                    8192,
+                    None,
+                    nm,
+                    Some(Arc::new(move || m.store(true, SeqCst))),
+                    ns,
+                    Some(Arc::new(move || s.store(true, SeqCst))),
+                )
+                .expect("plan")
+            };
+            let ups = run(build(false, false)).await;
+            assert!(matches!(ups.last(), Some(Up::Done)), "{ups:?}");
+            assert_eq!(seen.lock().expect("seen").len(), sent);
+            assert!(no_schema.load(SeqCst));
+            assert_eq!(no_markers.load(SeqCst), plain_memo);
+            {
+                let s = seen.lock().expect("seen");
+                let last = s.last().expect("last");
+                assert!(last.get("response_format").is_none());
+                assert!(!last.to_string().contains("cache_control"));
+            }
+            // the next call goes out without the schema; markers are found out (or kept) by the markers fallback
+            let ups = run(build(false, true)).await;
+            assert!(matches!(ups.last(), Some(Up::Done)), "{ups:?}");
+            assert_eq!(no_markers.load(SeqCst), markers);
+            let s = seen.lock().expect("seen");
+            assert_eq!(s.len(), sent + if markers { 2 } else { 1 });
+            assert!(s
+                .iter()
+                .skip(sent)
+                .all(|v| v.get("response_format").is_none()));
+        }
     }
 
     /// A stub server that answers every request with the given event stream body.
@@ -1843,6 +2069,8 @@ mod tests {
             &spec(&turns, None, false),
             TokenLimit::omit(),
             8192,
+            None,
+            false,
             None,
             false,
             None,

@@ -408,6 +408,7 @@ async fn run_import(
             cold,
             generation: false,
             items: false,
+            schema: Some(crate::gen::schema::questions()),
         };
         par::drive(&ctx, &par, &mut run, &mut step_for).await
     } else {

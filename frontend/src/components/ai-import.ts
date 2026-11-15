@@ -298,7 +298,8 @@ export function importCard(): HTMLElement | null {
       h('div', { class: 'bk-droprow bk-aidrop', role: 'group', 'aria-label': t('banks.drop.label') },
         btn,
         st.usable ? h('span', { class: 'bk-or' }, t('banks.drop.or')) : null,
-        input),
+        input,
+        h('span', { class: 'bk-note', id: 'bk-aidrop-note' }, t('aigen.imp.dropNote', { mb: gen?.import?.maxMb ?? 20 }))),
       h('p', { class: 'bk-hint gen-imppriv' }, miniIcon('info', 'gen-ic'), t('aigen.imp.privacy')),
       errBox);
   };

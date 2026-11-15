@@ -14,6 +14,7 @@ pub mod prompt;
 pub mod rng;
 pub mod run;
 pub mod runner;
+pub mod schema;
 pub mod text;
 pub mod whole;
 pub mod wire;

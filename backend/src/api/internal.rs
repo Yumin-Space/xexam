@@ -877,6 +877,11 @@ pub(super) struct AiEvent {
     reason: Option<String>,
     ip: Option<String>,
     ua: Option<String>,
+    /// The Cloudflare place of the request the event belongs to (optional keys `country`, `region`, `city`); used only
+    /// while the place source is Cloudflare
+    country: Option<String>,
+    region: Option<String>,
+    city: Option<String>,
 }
 
 /// Control characters removed, cut to `max` characters.
@@ -901,6 +906,21 @@ fn opt_text(v: Option<&Value>, max: usize) -> Result<Option<String>, AppError> {
         None | Some(Value::Null) => Ok(None),
         Some(Value::String(s)) => {
             let t = clean_text(s, max);
+            Ok((!t.is_empty()).then_some(t))
+        }
+        Some(_) => Err(bad_request()),
+    }
+}
+
+/// An optional place part of an event, cleaned exactly like the `X-Geo-Region` / `X-Geo-City` headers: control characters
+/// removed, trimmed, at most 64 characters; blank = none. A non-string value is a 400.
+fn opt_place_text(v: Option<&Value>) -> Result<Option<String>, AppError> {
+    match v {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(s)) => {
+            let clean: String = s.chars().filter(|c| !c.is_control()).collect();
+            let t = truncate_chars(clean.trim(), 64);
+            let t = t.trim().to_string();
             Ok((!t.is_empty()).then_some(t))
         }
         Some(_) => Err(bad_request()),
@@ -944,13 +964,27 @@ fn parse_event(v: &Value, now: i64) -> Result<AiEvent, AppError> {
     let ip = match m.get("ip") {
         None | Some(Value::Null) => None,
         Some(Value::String(s)) => Some(
-            s.trim()
-                .parse::<std::net::IpAddr>()
-                .map_err(|_| bad_request())?
-                .to_string(),
+            crate::activity::normalize_ip(
+                s.trim()
+                    .parse::<std::net::IpAddr>()
+                    .map_err(|_| bad_request())?,
+            )
+            .to_string(),
         ),
         Some(_) => return Err(bad_request()),
     };
+    // Same cleaning as `ClientInfo::from_headers`: a country is exactly two letters (uppercased, not XX / T1), region and city
+    // lose control characters and are cut to 64 characters; anything else is simply no place
+    let country = match m.get("country") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.trim())
+            .filter(|s| s.len() == 2 && s.bytes().all(|b| b.is_ascii_alphabetic()))
+            .map(|s| s.to_ascii_uppercase())
+            .filter(|s| s != "XX" && s != "T1"),
+        Some(_) => return Err(bad_request()),
+    };
+    let region = opt_place_text(m.get("region"))?;
+    let city = opt_place_text(m.get("city"))?;
     Ok(AiEvent {
         id,
         at,
@@ -968,6 +1002,9 @@ fn parse_event(v: &Value, now: i64) -> Result<AiEvent, AppError> {
         reason: opt_text(m.get("reason"), 80)?,
         ip,
         ua: opt_text(m.get("ua"), 256)?,
+        country,
+        region,
+        city,
     })
 }
 
@@ -976,8 +1013,9 @@ type Known = std::collections::HashMap<i64, (String, String, crate::auth::Role)>
 
 /// The rows of validated events: the actor is the backend's own account when `userId` and `stamp` match, else the sent name
 /// (cleaned) of an account that is gone, else the service itself. The address is kept only while the sign-in info switch
-/// is open (`with_ip`); the place is the cached lookup of that address in API mode and never anything in Cloudflare mode
-/// (an AI event carries no Cloudflare headers); it never starts a lookup.
+/// is open (`with_ip`); the place goes with the address: in API mode the cached lookup of that address, in Cloudflare mode
+/// the place the event itself carries (captured by ai-service from the request's `X-Geo-*` headers); no address, no place.
+/// It never starts a lookup.
 fn ai_rows(
     events: Vec<AiEvent>,
     known: &Known,
@@ -1009,11 +1047,20 @@ fn ai_rows(
                 },
             };
             let ip = e.ip.filter(|_| with_ip);
-            let place = ip
-                .as_deref()
-                .and_then(|i| i.parse::<std::net::IpAddr>().ok())
-                .map(|i| geo.api_place_of(i))
-                .unwrap_or_default();
+            let place = if ip.is_none() {
+                crate::database::Place::default()
+            } else if geo.is_api() {
+                ip.as_deref()
+                    .and_then(|i| i.parse::<std::net::IpAddr>().ok())
+                    .map(|i| geo.api_place_of(i))
+                    .unwrap_or_default()
+            } else {
+                crate::database::Place {
+                    country: e.country,
+                    region: e.region,
+                    city: e.city,
+                }
+            };
             ActivityRow {
                 ts: e.at,
                 actor: actor.to_string(),
@@ -1128,7 +1175,8 @@ fn parse_geo_result(v: &Value) -> Result<GeoResult, AppError> {
 /// `{"id", "ok": true, "place": {"country", "countryCode", "region", "city"}}` or `{"id", "ok": false, "code"}`. The whole
 /// batch is refused (400) on the first bad entry; an unknown or forgotten id is ignored. A place is written only where the
 /// record still has none and the address still matches (`Store::geo_apply`), only while the place source is `api` and the
-/// eye is open; a result of before a "clear records" changes nothing.
+/// eye is open; a result of before a "clear records" changes nothing. The answer of a backfill lookup (v1.6) fills every
+/// placeless record of its address (`Store::geo_fill_all`: all users, all log rows, any age), never overwriting a place.
 async fn geo_result(
     st: &AppState,
     data: &serde_json::Map<String, Value>,
@@ -1155,7 +1203,11 @@ async fn geo_result(
         let store = st.0.store.clone();
         super::blocking(move || {
             for c in &done {
-                store.geo_apply(&c.ip, &c.place, c.since, &c.signin_users, &c.active_users)?;
+                if c.backfill {
+                    store.geo_fill_all(&c.ip, &c.place)?;
+                } else {
+                    store.geo_apply(&c.ip, &c.place, c.since, &c.signin_users, &c.active_users)?;
+                }
             }
             Ok(())
         })
@@ -1167,7 +1219,9 @@ async fn geo_result(
 /// `POST /internal/ai/geo/source` `{"source": "api" | "cloudflare"}` sets the place source, `{}` only reads it →
 /// `{"source": ...}`. ai-service calls it when an administrator turns the external lookup on or deletes its settings
 /// (nothing is recorded in the activity log here: ai-service writes its own event). Switching to `cloudflare` forgets the
-/// queue; to `api` wakes a waiting poll.
+/// queue and the backfill; to `api` wakes a waiting poll and (re)starts the backfill every time it is posted, also when the
+/// source already was `api` (ai-service posts it after new provider settings are saved): every stored public address that
+/// has a record without a place is looked up again, once per distinct address (`Geo::start_backfill`).
 async fn geo_source(
     st: &AppState,
     data: &serde_json::Map<String, Value>,
@@ -1177,8 +1231,27 @@ async fn geo_source(
         Some(Value::String(s)) if data.len() == 1 && matches!(s.as_str(), "api" | "cloudflare") => {
             let api = s == "api";
             let store = st.0.store.clone();
-            super::blocking(move || store.set_geo_source(api, None)).await?;
-            st.0.activity.reload_settings(&st.0.store);
+            let geo = st.0.activity.geo().clone();
+            let activity = st.0.activity.clone();
+            let store2 = st.0.store.clone();
+            super::blocking(move || {
+                store.set_geo_source(api, None)?;
+                activity.reload_settings(&store2);
+                if api {
+                    // Distinct public addresses, newest first; one text form each
+                    let mut seen = std::collections::HashSet::new();
+                    let list: Vec<std::net::IpAddr> = store
+                        .geo_missing_addresses()?
+                        .iter()
+                        .filter_map(|a| a.trim().parse::<std::net::IpAddr>().ok())
+                        .map(crate::activity::normalize_ip)
+                        .filter(|ip| crate::geo::is_public(*ip) && seen.insert(*ip))
+                        .collect();
+                    geo.start_backfill(&list);
+                }
+                Ok(())
+            })
+            .await?;
         }
         _ => return Err(bad_request()),
     }

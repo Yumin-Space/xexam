@@ -127,6 +127,8 @@ pub struct App {
     token_memo: Mutex<std::collections::HashMap<String, crate::provider::TokenMemo>>,
     /// Route keys whose OpenAI-compatible server refused cache markers (content parts with `cache_control`); memory only
     no_markers: Mutex<std::collections::HashSet<String>>,
+    /// Route keys whose provider refused structured output (`output_config` / `response_format`); memory only
+    no_schema: Mutex<std::collections::HashSet<String>>,
     /// The most questions per call a provider really delivered per route key (L-44: answers were cut below the token
     /// setting); memory only, forgotten with the token memo
     gen_per_call: Mutex<std::collections::HashMap<String, usize>>,
@@ -268,6 +270,11 @@ impl AppState {
         let key = route.key.clone();
         let on_no_markers: Arc<dyn Fn() + Send + Sync> =
             Arc::new(move || app.0.remember_no_markers(&key));
+        let no_schema = self.0.no_schema_of(&route.key);
+        let app = self.clone();
+        let key = route.key.clone();
+        let on_no_schema: Arc<dyn Fn() + Send + Sync> =
+            Arc::new(move || app.0.remember_no_schema(&key));
         let plan = crate::provider::build_plan(
             target,
             &self.0.client,
@@ -277,6 +284,8 @@ impl AppState {
             Some(remember),
             no_markers,
             Some(on_no_markers),
+            no_schema,
+            Some(on_no_schema),
         )?;
         Ok((plan, first))
     }
@@ -305,6 +314,26 @@ impl App {
         if m.insert(key.to_string()) {
             tracing::info!(
                 "the AI provider refused cache markers; sending none to this connection"
+            );
+        }
+    }
+
+    /// `true` when this route's provider refused structured output earlier (the requests go out without it).
+    fn no_schema_of(&self, key: &str) -> bool {
+        let m = self.no_schema.lock().unwrap_or_else(|e| e.into_inner());
+        m.contains(key)
+    }
+
+    /// Remembers that the provider of this route key accepted a request only without structured output (one INFO line,
+    /// English, no key, URL or content). At most [`MEMO_CAP`] keys are kept.
+    fn remember_no_schema(&self, key: &str) {
+        let mut m = self.no_schema.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() >= MEMO_CAP && !m.contains(key) {
+            m.clear();
+        }
+        if m.insert(key.to_string()) {
+            tracing::info!(
+                "the AI provider refused structured output; sending none to this connection"
             );
         }
     }
@@ -363,6 +392,10 @@ impl App {
             .unwrap_or_else(|e| e.into_inner())
             .clear();
         self.gen_per_call
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+        self.no_schema
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
@@ -475,6 +508,7 @@ impl App {
             cap_episodes: Mutex::new(std::collections::HashMap::new()),
             token_memo: Mutex::new(std::collections::HashMap::new()),
             no_markers: Mutex::new(std::collections::HashSet::new()),
+            no_schema: Mutex::new(std::collections::HashSet::new()),
             gen_per_call: Mutex::new(std::collections::HashMap::new()),
             auth_strikes: Mutex::new(std::collections::HashMap::new()),
             outbox_wake: Arc::new(Notify::new()),

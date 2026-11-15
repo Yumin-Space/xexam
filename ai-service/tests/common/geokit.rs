@@ -38,6 +38,8 @@ pub struct GeoBackend {
     pub source: String,
     /// Bodies of the `geo/source` calls
     pub source_calls: Vec<Value>,
+    /// Number of `geo/source` reads (empty body)
+    pub source_reads: u32,
     pub next_switch: NextSwitch,
     /// Answer `geo/source` with HTTP 500
     pub source_down: bool,
@@ -78,7 +80,11 @@ pub fn answer(s: &mut BackendState, path: &str, body: &Value) -> Result<Value, u
             if s.geo.source_down {
                 return Err(500);
             }
-            s.geo.source_calls.push(body.clone());
+            // a read ({}) is not a switch
+            if body.get("source").is_some() {
+                s.geo.source_calls.push(body.clone());
+            }
+            s.geo.source_reads += u32::from(body.get("source").is_none());
             if let Some(src) = body.get("source").and_then(Value::as_str) {
                 if src != "api" && src != "cloudflare" {
                     return Err(400);

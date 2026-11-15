@@ -1186,3 +1186,219 @@ fn a_fresh_database_is_schema_9_without_a_migrate_row() {
         ]
     );
 }
+
+// ---------------------------------------------------------------- the backfill (v1.6)
+
+/// Cloudflare mode, the eye open: kim and lee signed in from `IP_A`, then every place is wiped so the rows are placeless.
+/// Extra rows: an old placeless row and a mapped-form row of `IP_A`, a placeless and a placed row of `IP_B`, and a placed
+/// row of `IP_A` whose place must survive. Returns the administrator's cookie.
+async fn placeless_world(a: &App) -> String {
+    let adm = admin_cookie(a).await;
+    eye(a, &adm, true).await;
+    assert_eq!(login_from(a, "kim", IP_A, UA_PHONE).await.status, 200);
+    assert_eq!(login_from(a, "lee", IP_A, UA_PC).await.status, 200);
+    a.state.0.activity.flush().await;
+    let c = raw(&a.db);
+    c.execute_batch(
+        "UPDATE users SET last_login_country=NULL, last_login_region=NULL, last_login_city=NULL, \
+         last_active_country=NULL, last_active_region=NULL, last_active_city=NULL; \
+         UPDATE activity_log SET country=NULL, region=NULL, city=NULL;",
+    )
+    .expect("wipe");
+    let now = auth::unix_now();
+    let old = now - 90 * 86_400;
+    for (ts, ip, city) in [
+        (old, IP_A, None),
+        (old, "::ffff:8.8.8.8", None),
+        (now - 100, IP_B, None),
+        (old, IP_B, Some("Kept City")),
+        (old, IP_A, Some("Kept City")),
+        (old, "10.1.2.3", None),
+    ] {
+        c.execute(
+            "INSERT INTO activity_log (ts, last_ts, actor, action, result, ip, country, city) \
+             VALUES (?1, ?1, 'system', 'test.row', 'ok', ?2, ?3, ?4)",
+            rusqlite::params![ts, ip, city.map(|_| "ZZ"), city],
+        )
+        .expect("row");
+    }
+    adm
+}
+
+fn place_count(a: &App, where_: &str) -> i64 {
+    raw(&a.db)
+        .query_row(
+            &format!("SELECT COUNT(*) FROM activity_log WHERE {where_}"),
+            [],
+            |r| r.get(0),
+        )
+        .expect("count")
+}
+
+#[tokio::test]
+async fn backfill_looks_up_each_address_once_and_fills_every_placeless_row() {
+    let a = app();
+    let adm = placeless_world(&a).await;
+    set_source(&a, "api").await;
+    let g = a.state.0.activity.geo();
+    // IP_A (in log rows, mapped form, two users' sign-in and activity) and IP_B: two distinct public addresses
+    assert_eq!(g.backfill_left(), 2);
+    let jobs = next_jobs(&a, 0).await;
+    let mut ips: Vec<&str> = jobs.iter().map(|j| j.1.as_str()).collect();
+    ips.sort_unstable();
+    assert_eq!(ips, vec![IP_B, IP_A], "one lookup per distinct address");
+    assert!(
+        next_jobs(&a, 0).await.is_empty(),
+        "nothing is looked up twice"
+    );
+    let results: Vec<Value> = jobs
+        .iter()
+        .map(|(id, ip)| place_ok(id, if ip == IP_A { "City of A" } else { "City of B" }))
+        .collect();
+    let r = send_results(&a, results).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(g.backfill_left(), 0);
+    // every placeless row of IP_A (old, mapped form) and of IP_B has the place; placed rows keep theirs; private stays empty
+    assert_eq!(
+        place_count(
+            &a,
+            "ip IN ('8.8.8.8', '::ffff:8.8.8.8') AND city = 'City of A'"
+        ),
+        place_count(
+            &a,
+            "ip IN ('8.8.8.8', '::ffff:8.8.8.8') AND city IS NOT 'Kept City'"
+        )
+    );
+    assert!(
+        place_count(
+            &a,
+            "ip IN ('8.8.8.8', '::ffff:8.8.8.8') AND city = 'City of A'"
+        ) >= 4
+    );
+    assert_eq!(place_count(&a, "ip = '8.8.8.8' AND city = 'Kept City'"), 1);
+    assert_eq!(place_count(&a, "ip = '1.1.1.1' AND city = 'Kept City'"), 1);
+    assert_eq!(place_count(&a, "ip = '1.1.1.1' AND city = 'City of B'"), 1);
+    assert_eq!(place_count(&a, "ip = '10.1.2.3' AND city IS NOT NULL"), 0);
+    assert_eq!(
+        place_count(
+            &a,
+            "ts < strftime('%s','now') - 80*86400 AND city = 'City of A'"
+        ),
+        2,
+        "rows older than the live window are filled"
+    );
+    for name in ["kim", "lee"] {
+        let u = user_row(&a, &adm, name).await;
+        assert_eq!(u["lastLoginLocation"]["city"], "City of A", "{name}");
+        assert_eq!(u["lastActiveLocation"]["city"], "City of A", "{name}");
+        assert_eq!(u["lastLoginLocation"]["country"], "ZZ", "{name}");
+    }
+    assert!(next_jobs(&a, 0).await.is_empty());
+}
+
+#[tokio::test]
+async fn backfill_never_overwrites_a_place_and_live_jobs_go_first() {
+    let a = app();
+    let adm = placeless_world(&a).await;
+    // kim already has a place again before the lookups come back
+    raw(&a.db)
+        .execute(
+            "UPDATE users SET last_login_country='QQ', last_login_city='Own City' WHERE username='kim'",
+            [],
+        )
+        .expect("kim");
+    set_source(&a, "api").await;
+    // a sign-in now queues a live lookup for a new address: it is handed out before the backfill ones
+    assert_eq!(login_from(&a, "lee", "9.9.9.9", UA_PC).await.status, 200);
+    let jobs = next_jobs(&a, 0).await;
+    assert_eq!(jobs.len(), 3);
+    assert_eq!(jobs[0].1, "9.9.9.9", "live first");
+    let results: Vec<Value> = jobs
+        .iter()
+        .map(|(id, _)| place_ok(id, "Looked Up"))
+        .collect();
+    assert_eq!(send_results(&a, results).await.status, 200);
+    let kim = user_row(&a, &adm, "kim").await;
+    assert_eq!(
+        kim["lastLoginLocation"]["city"], "Own City",
+        "never overwritten"
+    );
+    assert_eq!(kim["lastActiveLocation"]["city"], "Looked Up");
+    assert_eq!(place_count(&a, "ip = '8.8.8.8' AND city = 'Kept City'"), 1);
+}
+
+#[tokio::test]
+async fn backfill_rate_limit_pauses_it_and_reposting_api_restarts_it() {
+    let a = app();
+    let _adm = placeless_world(&a).await;
+    set_source(&a, "api").await;
+    let g = a.state.0.activity.geo();
+    let jobs = next_jobs(&a, 0).await;
+    assert_eq!(jobs.len(), 2);
+    let (limited, other) = (&jobs[0], &jobs[1]);
+    let r = send_results(
+        &a,
+        vec![
+            json!({"id": limited.0, "ok": false, "code": "rateLimited"}),
+            place_ok(&other.0, "Other City"),
+        ],
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    // paused: the limited address waits, nothing is handed out, nothing is written for it
+    assert_eq!(g.backfill_left(), 1);
+    assert!(next_jobs(&a, 0).await.is_empty());
+    assert!(place_count(&a, &format!("ip = '{}' AND city IS NULL", limited.1)) > 0);
+    // posting "api" again (new provider settings saved) restarts it: the one address that is still missing comes back at once
+    set_source(&a, "api").await;
+    assert_eq!(g.backfill_left(), 1);
+    let again = next_jobs(&a, 0).await;
+    assert_eq!(again.len(), 1);
+    assert_eq!(again[0].1, limited.1);
+}
+
+#[tokio::test]
+async fn backfill_stops_when_the_eye_closes_the_source_goes_back_or_records_are_cleared() {
+    let a = app();
+    let adm = placeless_world(&a).await;
+    let g = a.state.0.activity.geo();
+    set_source(&a, "api").await;
+    assert_eq!(g.backfill_left(), 2);
+    eye(&a, &adm, false).await;
+    assert_eq!(g.backfill_left(), 0, "eye closed");
+    assert!(next_jobs(&a, 0).await.is_empty());
+    // eye closed: posting api starts nothing
+    set_source(&a, "api").await;
+    assert_eq!(g.backfill_left(), 0);
+    eye(&a, &adm, true).await;
+    set_source(&a, "api").await;
+    assert_eq!(g.backfill_left(), 2);
+    let r = post(
+        &a,
+        "/api/users/geo-source",
+        &adm,
+        json!({"source": "cloudflare"}),
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(g.backfill_left(), 0, "source back to Cloudflare");
+    assert!(next_jobs(&a, 0).await.is_empty());
+    set_source(&a, "api").await;
+    assert_eq!(g.backfill_left(), 2);
+    let r = post(&a, "/api/users/signin-info/clear", &adm, json!({})).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    assert_eq!(g.backfill_left(), 0, "clear records");
+    assert!(next_jobs(&a, 0).await.is_empty());
+    // nothing left to look up after the clear
+    set_source(&a, "api").await;
+    assert_eq!(g.backfill_left(), 0);
+}
+
+#[tokio::test]
+async fn cloudflare_mode_never_backfills() {
+    let a = app();
+    let _adm = placeless_world(&a).await;
+    set_source(&a, "cloudflare").await;
+    assert_eq!(a.state.0.activity.geo().backfill_left(), 0);
+    assert!(next_jobs(&a, 0).await.is_empty());
+}

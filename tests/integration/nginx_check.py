@@ -304,10 +304,10 @@ try:
         ok('include snippets/%s;' % snip in body and 'proxy_set_header X-Real-IP' not in body,
            'Location %s includes snippets/%s and carries no header lines of its own' % (spec, snip))
     ok(all('proxy_set_header X-Real-IP $remote_addr;' in SNIPPETS[k] for k in SNIPPETS)
-       and all('proxy_set_header %s $xexam_geo_%s;' % (h, h.split('-')[-1].lower()) in SNIPPETS['api-proxy.conf'] for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City'))
-       and not any('X-Geo' in line and 'xexam_geo' in line for line in SNIPPETS['ai-proxy.conf'])
-       and all('proxy_set_header %s "";' % h in SNIPPETS['ai-proxy.conf'] for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City')),
-       'Snippets: X-Real-IP in both, X-Geo-* set only in api-proxy.conf and blanked in ai-proxy.conf (ai-service does not use the location)')
+       and all('proxy_set_header %s $xexam_geo_%s;' % (h, h.split('-')[-1].lower()) in SNIPPETS[k]
+               for k in ('api-proxy.conf', 'ai-proxy.conf') for h in ('X-Geo-Country', 'X-Geo-Region', 'X-Geo-City'))
+       and not any('X-Geo' in line and '""' in line for k in SNIPPETS for line in SNIPPETS[k].splitlines() if not line.lstrip().startswith('#')),
+       'Snippets: X-Real-IP in both, X-Geo-* set from the trusted-peer maps in both api-proxy.conf and ai-proxy.conf (never a client value)')
     ai_auth = conf_text[conf_text.index('location = /_ai_auth {'):]
     ai_auth = ai_auth[:ai_auth.index(chr(10) + ' ' * 8 + '}')]
     ai_auth_words = [' '.join(line.split()) for line in ai_auth.splitlines()]
@@ -708,8 +708,12 @@ try:
     ok(st == 200 and seen.get('x-real-ip') == peer and 'x-geo-city' not in seen and 'x-geo-country' not in seen,
        'Trusted peer without CF headers: a client-sent X-Geo-* is overwritten (empty), X-Real-IP = the peer. Actual %r' % {k: v for k, v in seen.items() if k.startswith('x-')})
     st, seen = req_port(PORT + 1, '/api/ai/status', dict(forged, Cookie='xexam_session=good'))
-    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7' and not any(k in seen for k in ('x-geo-country', 'x-geo-region', 'x-geo-city')),
-       'Trusted peer: the AI service gets the real address and still no location headers')
+    ok(st == 200 and seen.get('x-real-ip') == '198.51.100.7' and seen.get('x-geo-country') == 'XX'
+       and seen.get('x-geo-region') == 'Made-up Region' and seen.get('x-geo-city') == 'Made-up City',
+       'Trusted peer: the AI service gets the real address and the Cloudflare place. Actual %r' % {k: v for k, v in seen.items() if k.startswith(('x-geo', 'x-real'))})
+    st, seen = req_port(PORT + 1, '/api/ai/status', {'X-Geo-City': 'Forged City', 'X-Geo-Country': 'ZZ', 'Cookie': 'xexam_session=good'})
+    ok(st == 200 and not any(k in seen for k in ('x-geo-country', 'x-geo-region', 'x-geo-city')),
+       'Trusted peer without CF headers: a client-sent X-Geo-* never reaches the AI service')
     sh('docker', 'rm', '-f', WEB2)
     # v1.4: the default (variable unset) trusts the private networks. The test client reaches the published port through the
     # Docker gateway, a private address, so it is believed; a narrow explicit value that does not contain it is not.

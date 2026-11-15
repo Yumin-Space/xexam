@@ -317,10 +317,25 @@ pub async fn save(ctx: Ctx) -> Answer {
     };
     app.store.write(|tx| crate::store::geo::save(tx, &row))?;
     app.reload_geo()?;
+    notify_backfill(&ctx).await;
     m.insert("ok".into(), Value::Bool(true));
     m.insert("settings".into(), settings_json(app, &row));
     t.fill(&mut m);
     ok(Value::Object(m))
+}
+
+/// After a save: when the backend already uses the external lookup, tell it again so it fills the places that are still
+/// missing with the new provider. Any failure is ignored (the save has been made); other sources need no call.
+async fn notify_backfill(ctx: &Ctx) {
+    let link = &ctx.app.0.link;
+    let failed = match link.geo_source_get().await {
+        Ok(GeoSource::Api) => link.geo_source_set(GeoSource::Api).await.is_err(),
+        Ok(_) => false,
+        Err(_) => true,
+    };
+    if failed {
+        tracing::warn!("geo: the backend could not be told about the saved settings");
+    }
 }
 
 /// `POST /api/ai/admin/geo/enable`: switches the main backend to the external lookup. Needs saved (= tested) settings.

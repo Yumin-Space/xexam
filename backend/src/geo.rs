@@ -17,6 +17,11 @@
 //!   lookup ([`Geo::request`]).
 //! - The job queue (at most [`QUEUE_MAX`], stale jobs dropped), the jobs in flight, the per-minute cap on hand-outs
 //!   ([`LOOKUPS_PER_MIN`]) and the generation counter that makes `clear` drop late results.
+//! - The backfill lane (v1.6): when the source is switched to the API (or its settings are saved again), every stored public
+//!   address that still has no place is looked up once ([`Geo::start_backfill`]), most recently seen first, after the live
+//!   jobs and within the same per-minute cap. The lane is not bounded by [`QUEUE_MAX`] and not dropped by the stale rule; a
+//!   `rateLimited` answer pauses it for [`BACKFILL_PAUSE_SECS`]; it lives in memory only and is emptied when the eye
+//!   closes, when the source goes back to Cloudflare and on "clear records".
 //!
 //! Nothing is queued, handed out or cached while the sign-in info switch (the eye) is closed. No address, key or provider
 //! text is ever written to the log by this module.
@@ -24,7 +29,7 @@ use crate::activity::ClientInfo;
 use crate::auth::{token_hash, unix_now};
 use crate::database::Place;
 use crate::security::{strip_ctrl, truncate_chars};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -47,6 +52,10 @@ pub const INFLIGHT_STALE_SECS: i64 = 60;
 pub const LOOKUPS_PER_MIN: u32 = 30;
 /// Jobs in one `next` answer.
 pub const BATCH_MAX: usize = 10;
+/// Seconds the whole backfill pauses after a `rateLimited` answer for one of its lookups.
+pub const BACKFILL_PAUSE_SECS: i64 = 900;
+/// Most attempts per backfill address (timeouts, unreachable answers and lost hand-outs are retried).
+pub const BACKFILL_MAX_ATTEMPTS: u8 = 3;
 /// Upper bound of `waitMs` of a `next` request.
 pub const POLL_WAIT_MAX_MS: u64 = 20_000;
 /// Longest part of a place (characters).
@@ -59,6 +68,8 @@ pub enum Target {
     Signin(i64),
     /// `users.last_active_*` of this user
     Active(i64),
+    /// Every record of the address that still has no place (the backfill lane, v1.6)
+    Backfill,
 }
 
 /// The failure vocabulary shared with ai-service (`/internal/ai/geo/result`).
@@ -134,6 +145,9 @@ pub struct Completed {
     pub since: i64,
     pub signin_users: Vec<i64>,
     pub active_users: Vec<i64>,
+    /// The lookup belongs to the backfill: fill EVERY placeless record of the address (`Store::geo_fill_all`), whatever
+    /// its age or owner, instead of only the recent rows and `signin_users` / `active_users`
+    pub backfill: bool,
 }
 
 // ---------------------------------------------------------------- the reserved-address filter
@@ -241,6 +255,8 @@ struct Job {
     gen: u64,
     queued_at: i64,
     targets: Vec<Target>,
+    /// Backfill jobs: hand-outs used so far, this one included
+    attempts: u8,
 }
 
 struct InFlight {
@@ -258,6 +274,12 @@ struct State {
     cache: HashMap<IpAddr, CacheEntry>,
     queue: VecDeque<Job>,
     inflight: HashMap<String, InFlight>,
+    /// The backfill lane: addresses (with the attempts used) still to be handed out, next one first
+    backfill: VecDeque<(IpAddr, u8)>,
+    /// Every address the running backfill has not finished (waiting, in flight or retried); dedupes the lane
+    backfill_set: HashSet<IpAddr>,
+    /// No backfill hand-out before this unix second (after a `rateLimited` answer)
+    backfill_paused_until: i64,
     gen: u64,
     /// The wall-clock minute `handed` counts for
     minute: i64,
@@ -329,11 +351,12 @@ impl Geo {
         }
     }
 
-    /// The queue and the jobs in flight are forgotten (late results are ignored). The cache stays.
+    /// The queue, the backfill lane and the jobs in flight are forgotten (late results are ignored). The cache stays.
     pub fn drop_pending(&self) {
         let mut st = self.lock();
         st.queue.clear();
         st.inflight.clear();
+        reset_backfill(&mut st);
     }
 
     /// The administrators' "clear records": the cache, the queue and the jobs in flight are emptied and the generation
@@ -343,6 +366,7 @@ impl Geo {
         st.cache.clear();
         st.queue.clear();
         st.inflight.clear();
+        reset_backfill(&mut st);
         st.gen = st.gen.wrapping_add(1);
     }
 
@@ -441,6 +465,7 @@ impl Geo {
             gen,
             queued_at: now,
             targets: vec![target],
+            attempts: 0,
         });
         drop(st);
         self.0.notify.notify_one();
@@ -464,16 +489,18 @@ impl Geo {
             st.minute = minute;
             st.handed = 0;
         }
-        if st.queue.is_empty() {
+        let backfill_ready = !st.backfill.is_empty() && now >= st.backfill_paused_until;
+        if st.queue.is_empty() && !backfill_ready {
             return (Vec::new(), false);
         }
         let room = LOOKUPS_PER_MIN.saturating_sub(st.handed) as usize;
         if room == 0 {
             return (Vec::new(), true);
         }
-        let n = room.min(BATCH_MAX).min(st.queue.len());
+        let n = room.min(BATCH_MAX);
         let mut out = Vec::with_capacity(n);
-        for _ in 0..n {
+        // Live jobs (sign-ins, last activity) first
+        while out.len() < n {
             let Some(job) = st.queue.pop_front() else {
                 break;
             };
@@ -485,6 +512,40 @@ impl Geo {
                     handed_at: now,
                 },
             );
+        }
+        // Then the backfill: most recently seen address first
+        if backfill_ready {
+            let mut deferred = Vec::new();
+            while out.len() < n {
+                let Some((ip, attempts)) = st.backfill.pop_front() else {
+                    break;
+                };
+                if !st.backfill_set.contains(&ip) {
+                    continue;
+                }
+                // A live job for the address is out already: its answer serves the backfill too; come back to it later
+                if st.inflight.values().any(|f| f.job.ip == ip) {
+                    deferred.push((ip, attempts));
+                    continue;
+                }
+                let job = Job {
+                    id: new_job_id(),
+                    ip,
+                    gen: st.gen,
+                    queued_at: now,
+                    targets: vec![Target::Backfill],
+                    attempts: attempts.saturating_add(1),
+                };
+                out.push((job.id.clone(), ip));
+                st.inflight.insert(
+                    job.id.clone(),
+                    InFlight {
+                        job,
+                        handed_at: now,
+                    },
+                );
+            }
+            st.backfill.extend(deferred);
         }
         st.handed = st
             .handed
@@ -535,8 +596,34 @@ impl Geo {
             return None;
         }
         let ip = f.job.ip;
+        let is_backfill = f.job.targets.contains(&Target::Backfill);
         match outcome {
             Outcome::Failed(code) => {
+                if is_backfill {
+                    let live = st.backfill_set.contains(&ip);
+                    match code {
+                        // The whole backfill waits; the address goes back to the front and this attempt does not count
+                        FailCode::RateLimited => {
+                            st.backfill_paused_until = now + BACKFILL_PAUSE_SECS;
+                            if live {
+                                st.backfill
+                                    .push_front((ip, f.job.attempts.saturating_sub(1)));
+                            }
+                            return None;
+                        }
+                        FailCode::Timeout | FailCode::Unreachable
+                            if f.job.attempts < BACKFILL_MAX_ATTEMPTS =>
+                        {
+                            if live {
+                                st.backfill.push_back((ip, f.job.attempts));
+                            }
+                            return None;
+                        }
+                        _ => {
+                            st.backfill_set.remove(&ip);
+                        }
+                    }
+                }
                 if !matches!(code, FailCode::RateLimited | FailCode::NotConfigured) {
                     cache_put(&mut st, ip, Place::default(), now + CACHE_FAIL_SECS, now);
                 }
@@ -544,6 +631,11 @@ impl Geo {
             }
             Outcome::Place(place) => {
                 cache_put(&mut st, ip, place.clone(), now + CACHE_TTL_SECS, now);
+                // A live job that answers first also finishes the backfill of its address
+                let in_backfill = st.backfill_set.remove(&ip);
+                if in_backfill && !is_backfill {
+                    st.backfill.retain(|(a, _)| *a != ip);
+                }
                 if place.is_empty() || !self.is_api() {
                     return None;
                 }
@@ -553,6 +645,7 @@ impl Geo {
                     match t {
                         Target::Signin(u) => signin_users.push(*u),
                         Target::Active(u) => active_users.push(*u),
+                        Target::Backfill => {}
                     }
                 }
                 Some(Completed {
@@ -561,9 +654,44 @@ impl Geo {
                     since: f.job.queued_at.saturating_sub(5),
                     signin_users,
                     active_users,
+                    backfill: is_backfill || in_backfill,
                 })
             }
         }
+    }
+
+    // ------------------------------------------------------------ backfill
+
+    /// Starts (or restarts) the backfill: `addresses` are the stored addresses that have no place, most recently seen
+    /// first. Replaces a running backfill (its lookups in flight are forgotten). Only in API mode with the eye open;
+    /// otherwise the lane just stays empty. Reserved addresses are skipped, an address counts once whatever its text form.
+    pub fn start_backfill(&self, addresses: &[IpAddr]) {
+        let mut st = self.lock();
+        reset_backfill(&mut st);
+        if !self.active() {
+            return;
+        }
+        for a in addresses {
+            let ip = crate::activity::normalize_ip(*a);
+            if is_public(ip) && st.backfill_set.insert(ip) {
+                st.backfill.push_back((ip, 0));
+            }
+        }
+        let any = !st.backfill.is_empty();
+        drop(st);
+        if any {
+            self.0.notify.notify_one();
+        }
+    }
+
+    /// Addresses the running backfill has not finished yet (waiting, in flight or paused).
+    pub fn backfill_left(&self) -> usize {
+        self.lock().backfill_set.len()
+    }
+
+    /// Addresses waiting in the backfill lane (not handed out).
+    pub fn backfill_queued(&self) -> usize {
+        self.lock().backfill.len()
     }
 
     // ------------------------------------------------------------ for tests and diagnostics
@@ -606,6 +734,12 @@ fn new_job_id() -> String {
     token_hash(&crate::auth::new_session_token())[..16].to_string()
 }
 
+fn reset_backfill(st: &mut State) {
+    st.backfill.clear();
+    st.backfill_set.clear();
+    st.backfill_paused_until = 0;
+}
+
 fn purge_stale(st: &mut State, now: i64) {
     let before = st.queue.len();
     st.queue
@@ -617,8 +751,28 @@ fn purge_stale(st: &mut State, now: i64) {
             .saturating_add(u32::try_from(dropped).unwrap_or(u32::MAX));
         log_skipped(st, now);
     }
-    st.inflight
-        .retain(|_, f| now.saturating_sub(f.handed_at) <= INFLIGHT_STALE_SECS);
+    let stale: Vec<String> = st
+        .inflight
+        .iter()
+        .filter(|(_, f)| now.saturating_sub(f.handed_at) > INFLIGHT_STALE_SECS)
+        .map(|(k, _)| k.clone())
+        .collect();
+    for k in stale {
+        let Some(f) = st.inflight.remove(&k) else {
+            continue;
+        };
+        // A backfill lookup that got no answer is tried again (at most BACKFILL_MAX_ATTEMPTS times in all)
+        if f.job.targets.contains(&Target::Backfill)
+            && f.job.gen == st.gen
+            && st.backfill_set.contains(&f.job.ip)
+        {
+            if f.job.attempts < BACKFILL_MAX_ATTEMPTS {
+                st.backfill.push_back((f.job.ip, f.job.attempts));
+            } else {
+                st.backfill_set.remove(&f.job.ip);
+            }
+        }
+    }
 }
 
 /// At most one English line a minute about dropped lookups (a count only, never an address).
@@ -1011,6 +1165,262 @@ mod tests {
         assert!(g.complete(&id, Outcome::Place(here()), 1001).is_none());
         assert_eq!(g.cache_len(), 0);
         assert!(g.take(1002).is_empty());
+    }
+
+    // ------------------------------------------------------------ backfill (v1.6)
+
+    fn addr(i: u32) -> IpAddr {
+        IpAddr::V4(Ipv4Addr::from(0x0800_0000u32 + i))
+    }
+
+    fn addrs(n: u32) -> Vec<IpAddr> {
+        (0..n).map(addr).collect()
+    }
+
+    #[test]
+    fn backfill_hands_out_newest_first_one_job_per_distinct_address() {
+        let g = open();
+        // The same address twice (one in mapped form) and a reserved one: counted once / skipped
+        g.start_backfill(&[
+            addr(1),
+            addr(2),
+            addr(1),
+            ip("::ffff:8.0.0.2"),
+            ip("10.0.0.1"),
+            addr(3),
+        ]);
+        assert_eq!(g.backfill_left(), 3);
+        let jobs = g.take(1000);
+        let got: Vec<IpAddr> = jobs.iter().map(|j| j.1).collect();
+        assert_eq!(got, vec![addr(1), addr(2), addr(3)], "most recent first");
+        assert_eq!(g.backfill_queued(), 0);
+        assert_eq!(g.backfill_left(), 3, "in flight is still unfinished");
+        for (id, a) in &jobs {
+            let done = g
+                .complete(id, Outcome::Place(here()), 1001)
+                .expect("applies");
+            assert!(done.backfill);
+            assert_eq!(done.ip, a.to_string());
+            assert!(done.signin_users.is_empty() && done.active_users.is_empty());
+        }
+        assert_eq!(g.backfill_left(), 0);
+        assert!(g.take(1002).is_empty());
+    }
+
+    #[test]
+    fn live_jobs_go_first_and_the_cap_holds_for_both() {
+        let g = open();
+        g.start_backfill(&addrs(50));
+        assert!(g.request(ip("9.9.9.9"), Target::Signin(1), 600));
+        let first = g.take(610);
+        assert_eq!(first.len(), BATCH_MAX);
+        assert_eq!(first[0].1, ip("9.9.9.9"), "the live job is first");
+        assert_eq!(first[1].1, addr(0));
+        // A live job asked for later still goes before the rest of the backfill
+        assert!(g.request(ip("9.9.9.8"), Target::Signin(2), 611));
+        let second = g.take(611);
+        assert_eq!(second[0].1, ip("9.9.9.8"));
+        let third = g.take(612);
+        assert_eq!(
+            first.len() + second.len() + third.len(),
+            LOOKUPS_PER_MIN as usize
+        );
+        assert!(g.take(659).is_empty(), "the cap of 30 a minute holds");
+        assert_eq!(g.take(660).len(), BATCH_MAX, "a new minute");
+    }
+
+    #[test]
+    fn a_full_live_queue_does_not_drop_backfill_addresses() {
+        let g = open();
+        g.start_backfill(&addrs(300));
+        assert_eq!(g.backfill_left(), 300, "not bounded by the queue limit");
+        for i in 0..QUEUE_MAX {
+            assert!(g.request(addr(10_000 + i as u32), Target::Signin(1), 1000));
+        }
+        assert!(
+            !g.request(ip("9.9.9.9"), Target::Signin(1), 1000),
+            "live queue full"
+        );
+        assert_eq!(g.backfill_left(), 300);
+        // Far past the stale time of live jobs: they go, the backfill stays
+        assert!(g.take(1000 + QUEUE_STALE_SECS + 1).len() <= BATCH_MAX);
+        assert_eq!(g.queue_len(), 0);
+        assert_eq!(g.backfill_left(), 300);
+    }
+
+    #[test]
+    fn rate_limited_pauses_the_backfill_and_the_address_goes_back_to_the_front() {
+        let g = open();
+        g.start_backfill(&addrs(3));
+        let jobs = g.take(1000);
+        assert_eq!(jobs.len(), 3);
+        assert!(g
+            .complete(&jobs[0].0, Outcome::Failed(FailCode::RateLimited), 1000)
+            .is_none());
+        for j in &jobs[1..] {
+            assert!(g.complete(&j.0, Outcome::Place(here()), 1000).is_some());
+        }
+        assert_eq!(g.backfill_queued(), 1);
+        // Paused: nothing for 15 minutes, live jobs still flow
+        assert!(g.take(1000 + BACKFILL_PAUSE_SECS - 1).is_empty());
+        assert!(g.request(ip("9.9.9.9"), Target::Signin(1), 1100));
+        assert_eq!(g.take(1100).len(), 1);
+        assert_eq!(
+            g.cache_len(),
+            2,
+            "rateLimited is not cached (only the two answers are)"
+        );
+        let again = g.take(1000 + BACKFILL_PAUSE_SECS + 1);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].1, jobs[0].1, "back at the front");
+        // The rate-limited attempt did not count: two timeouts are retried, the third attempt's failure drops it
+        let mut id = again[0].0.clone();
+        for round in 0..2i64 {
+            let t = 2000 + round * 100;
+            assert!(g
+                .complete(&id, Outcome::Failed(FailCode::Timeout), t)
+                .is_none());
+            let next = g.take(t + 1);
+            assert_eq!(next.len(), 1, "round {round}");
+            id = next[0].0.clone();
+        }
+        assert!(g
+            .complete(&id, Outcome::Failed(FailCode::Timeout), 3000)
+            .is_none());
+        assert!(g.take(3001).is_empty());
+    }
+
+    #[test]
+    fn timeouts_and_unreachable_retry_three_times_other_failures_drop() {
+        let g = open();
+        g.start_backfill(&[addr(1), addr(2)]);
+        let jobs = g.take(1000);
+        // addr(2): a hard failure drops it at once
+        assert!(g
+            .complete(&jobs[1].0, Outcome::Failed(FailCode::KeyProblem), 1001)
+            .is_none());
+        assert_eq!(g.backfill_left(), 1);
+        // addr(1): unreachable, timeout, then the third attempt fails and it is dropped
+        let mut id = jobs[0].0.clone();
+        for (n, code) in [FailCode::Unreachable, FailCode::Timeout]
+            .into_iter()
+            .enumerate()
+        {
+            assert!(g.complete(&id, Outcome::Failed(code), 1002).is_none());
+            assert_eq!(g.backfill_left(), 1, "attempt {n} is retried");
+            let again = g.take(1003);
+            assert_eq!(again.len(), 1);
+            id = again[0].0.clone();
+        }
+        assert!(g
+            .complete(&id, Outcome::Failed(FailCode::Timeout), 1004)
+            .is_none());
+        assert_eq!(g.backfill_left(), 0);
+        assert!(g.take(1005).is_empty());
+    }
+
+    #[test]
+    fn stale_inflight_backfill_jobs_are_retried_at_most_three_times() {
+        let g = open();
+        g.start_backfill(&[addr(1)]);
+        let mut now = 1000;
+        // Three hand-outs that nobody answers, a fourth never comes
+        for attempt in 1..=3 {
+            assert_eq!(g.take(now).len(), 1, "attempt {attempt}");
+            assert_eq!(g.backfill_left(), 1);
+            now += INFLIGHT_STALE_SECS + 1;
+        }
+        assert!(g.take(now).is_empty());
+        assert_eq!(g.inflight_len(), 0);
+        assert_eq!(g.backfill_left(), 0);
+    }
+
+    #[test]
+    fn eye_close_cloudflare_and_clear_stop_the_backfill() {
+        for stop in 0..3 {
+            let g = open();
+            g.start_backfill(&addrs(5));
+            let jobs = g.take(1000);
+            assert_eq!(jobs.len(), 5);
+            g.start_backfill(&addrs(15));
+            assert_eq!(g.backfill_left(), 15);
+            match stop {
+                0 => g.set_eye(false),
+                1 => g.set_api(false),
+                _ => g.clear(),
+            }
+            assert_eq!(g.backfill_left(), 0, "stop {stop}");
+            assert_eq!(g.backfill_queued(), 0, "stop {stop}");
+            assert!(g.take(1001).is_empty());
+            assert!(g
+                .complete(&jobs[0].0, Outcome::Place(here()), 1002)
+                .is_none());
+        }
+        // Not active (eye closed): nothing is started
+        let g = Geo::new();
+        g.set_api(true);
+        g.start_backfill(&addrs(3));
+        assert_eq!(g.backfill_left(), 0);
+    }
+
+    #[test]
+    fn restarting_replaces_the_lane() {
+        let g = open();
+        g.start_backfill(&addrs(10));
+        assert_eq!(g.take(1000).len(), 10);
+        g.start_backfill(&[addr(20), addr(21)]);
+        assert_eq!(g.backfill_left(), 2);
+        let jobs = g.take(1001);
+        assert_eq!(
+            jobs.iter().map(|j| j.1).collect::<Vec<_>>(),
+            vec![addr(20), addr(21)]
+        );
+    }
+
+    #[test]
+    fn a_live_answer_for_a_backfill_address_finishes_it() {
+        let g = open();
+        g.start_backfill(&[addr(1), addr(2)]);
+        assert!(g.request(addr(1), Target::Signin(7), 1000));
+        let jobs = g.take(1000);
+        // The live job for addr(1) goes first; the backfill does not look it up a second time
+        assert_eq!(
+            jobs.iter().map(|j| j.1).collect::<Vec<_>>(),
+            vec![addr(1), addr(2)]
+        );
+        let done = g
+            .complete(&jobs[0].0, Outcome::Place(here()), 1001)
+            .expect("applies");
+        assert!(done.backfill, "the handler fills every placeless row of it");
+        assert_eq!(done.signin_users, vec![7]);
+        assert_eq!(g.backfill_left(), 1);
+        assert_eq!(g.backfill_queued(), 0);
+        // A live job already out when the backfill reaches the address: the backfill waits for it
+        let g = open();
+        assert!(g.request(addr(1), Target::Signin(7), 1000));
+        let live = g.take(1000);
+        g.start_backfill(&[addr(1)]);
+        assert!(
+            g.take(1001).is_empty(),
+            "no second lookup of an address in flight"
+        );
+        let done = g
+            .complete(&live[0].0, Outcome::Place(here()), 1002)
+            .expect("applies");
+        assert!(done.backfill);
+        assert_eq!(g.backfill_left(), 0);
+        assert!(g.take(1003).is_empty());
+    }
+
+    #[test]
+    fn a_backfill_answer_without_fields_just_finishes_the_address() {
+        let g = open();
+        g.start_backfill(&[addr(1)]);
+        let jobs = g.take(1000);
+        assert!(g
+            .complete(&jobs[0].0, Outcome::Place(Place::default()), 1001)
+            .is_none());
+        assert_eq!(g.backfill_left(), 0);
     }
 
     #[tokio::test]

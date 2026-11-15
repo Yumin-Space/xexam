@@ -200,12 +200,12 @@ export function barChart(o: { ariaLabel: string; items: readonly BarItem[]; form
   return host;
 }
 
-/** The remembered metric of a chart (per browser; a blocked store just means the default) */
+/** The remembered metric of a chart (per browser; a blocked store just means the default, tokens) */
 function readMetric(pref: string): UsageMetric {
   try {
-    return localStorage.getItem(`xexam.uc.${pref}`) === 'tokens' ? 'tokens' : 'calls';
+    return localStorage.getItem(`xexam.uc.${pref}`) === 'calls' ? 'calls' : 'tokens';
   } catch {
-    return 'calls';
+    return 'tokens';
   }
 }
 

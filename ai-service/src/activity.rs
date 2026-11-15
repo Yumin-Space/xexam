@@ -133,7 +133,8 @@ pub fn clean_detail(detail: &Value) -> Value {
 }
 
 /// The event as the backend wants it, keys in this order: `id`, `at`, `userId`, `stamp`, `username`, `action`, `object`,
-/// `detail`, `result`, `reason`, `ip`, `ua`. `id` is 32 lower-case hex digits.
+/// `detail`, `result`, `reason`, `ip`, `ua`, then `country`, `region`, `city` (the Cloudflare place captured at request
+/// time, each only when present). `id` is 32 lower-case hex digits.
 pub fn payload(ev: &Event, id: &str, at: i64) -> Value {
     let (user_id, stamp, username) = match &ev.who {
         Some(w) => (
@@ -147,7 +148,7 @@ pub fn payload(ev: &Event, id: &str, at: i64) -> Value {
         let clean: String = o.chars().filter(|c| !c.is_control()).collect();
         cut_chars(&clean, 200)
     });
-    json!({
+    let mut v = json!({
         "id": id,
         "at": at,
         "userId": user_id,
@@ -160,7 +161,19 @@ pub fn payload(ev: &Event, id: &str, at: i64) -> Value {
         "reason": ev.reason.as_deref().map(|r| cut_chars(r, 100)),
         "ip": ev.client.ip,
         "ua": ev.client.ua,
-    })
+    });
+    if let Some(m) = v.as_object_mut() {
+        for (key, value) in [
+            ("country", &ev.client.country),
+            ("region", &ev.client.region),
+            ("city", &ev.client.city),
+        ] {
+            if let Some(s) = value {
+                m.insert(key.to_string(), Value::from(s.clone()));
+            }
+        }
+    }
+    v
 }
 
 /// A fresh event id: 16 random bytes as 32 hex digits.
@@ -241,6 +254,7 @@ mod tests {
         ClientInfo {
             ip: Some("203.0.113.7".into()),
             ua: Some("Demo/1.0".into()),
+            ..ClientInfo::default()
         }
     }
 
@@ -316,6 +330,26 @@ mod tests {
             (json!("fail"), json!("ai.up.auth"))
         );
         assert_eq!(v["ip"], Value::Null);
+        assert!(!v.as_object().expect("object").contains_key("country"));
+        // a captured place rides along, only the present parts
+        let placed = ClientInfo {
+            country: Some("DE".into()),
+            city: Some("Made-up City".into()),
+            ..ClientInfo::default()
+        };
+        let ev = Event::new(None, "ai.system.connection", &placed).object("main");
+        let v = payload(&ev, id, 5);
+        let keys: Vec<&str> = v
+            .as_object()
+            .expect("object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(&keys[12..], ["country", "city"]);
+        assert_eq!(
+            (v["country"].clone(), v["city"].clone()),
+            (json!("DE"), json!("Made-up City"))
+        );
     }
 
     #[test]

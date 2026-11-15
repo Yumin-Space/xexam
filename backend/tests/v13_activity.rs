@@ -673,7 +673,16 @@ async fn sign_in_info_switch_stops_recording_hides_and_the_clear_wipes_them() {
         "the row written while the switch was closed has none"
     );
     post_h(&a, "/api/settings", &adm, &json!({"theme": "light"}), &geo).await;
-    let r = internal(&a, &json!({"events": [ai_event(ID2, json!({}))]})).await;
+    // The event carries the Cloudflare place of its request, cleaned like the headers (XX = no country)
+    let ev = ai_event(
+        ID2,
+        json!({"country": "zz", "region": "Example Region", "city": "Example\u{7} City"}),
+    );
+    let bad = ai_event(
+        ID3,
+        json!({"country": "XX", "region": "  ", "ip": "::ffff:203.0.113.8"}),
+    );
+    let r = internal(&a, &json!({"events": [ev, bad]})).await;
     assert_eq!(r.status, 200);
     let _ = rows(&a).await;
     let c = raw(&a.db);
@@ -693,15 +702,37 @@ async fn sign_in_info_switch_stops_recording_hides_and_the_clear_wipes_them() {
         ),
         ("203.0.113.7", "ZZ", "Example Region", "Example City")
     );
-    // AI events carry the address but never a location
-    let (ip, country): (String, Option<String>) = c
+    // In Cloudflare mode an AI event gets the place it carries, with the same cleaning as the request headers
+    let (ip, country, region, city): (String, Option<String>, Option<String>, Option<String>) = c
         .query_row(
-            "SELECT ip, country FROM activity_log WHERE action='ai.settings.limits' AND src_id=?1",
+            "SELECT ip, country, region, city FROM activity_log WHERE action='ai.settings.limits' AND src_id=?1",
             [ID2],
-            |r| Ok((r.get(0)?, r.get(1)?)),
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .expect("ai row");
-    assert_eq!((ip.as_str(), country), ("203.0.113.7", None));
+    assert_eq!(
+        (
+            ip.as_str(),
+            country.as_deref(),
+            region.as_deref(),
+            city.as_deref()
+        ),
+        (
+            "203.0.113.7",
+            Some("ZZ"),
+            Some("Example Region"),
+            Some("Example City")
+        )
+    );
+    // a placeless event stays placeless; the address is stored in its plain IPv4 form
+    let (ip, country, region): (String, Option<String>, Option<String>) = c
+        .query_row(
+            "SELECT ip, country, region FROM activity_log WHERE action='ai.settings.limits' AND src_id=?1",
+            [ID3],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .expect("ai row 3");
+    assert_eq!((ip.as_str(), country, region), ("203.0.113.8", None, None));
     // the read answer shows them while on
     let j = get(&a, "/api/activity", &adm).await.json();
     assert_eq!(j["entries"][0]["ip"], json!("203.0.113.7"));

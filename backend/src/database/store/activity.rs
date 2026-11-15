@@ -528,6 +528,71 @@ impl Store {
         })
     }
 
+    /// v1.6: every distinct stored address that has at least one record without a place: `activity_log.ip` with
+    /// `country`, `region` and `city` all NULL, `users.last_login_ip` with the three `last_login_*` NULL and
+    /// `users.last_active_ip` with the three `last_active_*` NULL; the address seen most recently first (activity time,
+    /// `last_login_at`, `last_active_at`). The addresses are returned as stored: the caller parses, normalizes, keeps the
+    /// public ones and counts an address stored in two text forms once.
+    pub fn geo_missing_addresses(&self) -> Result<Vec<String>, DbError> {
+        let g = self.lock();
+        let mut st = g.prepare(
+            "SELECT ip FROM ( \
+                SELECT ip, MAX(ts) AS seen FROM activity_log \
+                  WHERE ip IS NOT NULL AND country IS NULL AND region IS NULL AND city IS NULL GROUP BY ip \
+                UNION ALL \
+                SELECT last_login_ip, MAX(COALESCE(CAST(strftime('%s', last_login_at, 'utc') AS INTEGER), 0)) FROM users \
+                  WHERE last_login_ip IS NOT NULL AND last_login_country IS NULL AND last_login_region IS NULL \
+                  AND last_login_city IS NULL GROUP BY last_login_ip \
+                UNION ALL \
+                SELECT last_active_ip, MAX(COALESCE(CAST(strftime('%s', last_active_at, 'utc') AS INTEGER), 0)) FROM users \
+                  WHERE last_active_ip IS NOT NULL AND last_active_country IS NULL AND last_active_region IS NULL \
+                  AND last_active_city IS NULL GROUP BY last_active_ip \
+             ) GROUP BY ip ORDER BY MAX(seen) DESC, ip",
+        )?;
+        let rows = st.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// v1.6: puts a looked-up place on EVERY record of `ip` that has none, in ONE transaction: `last_login_*` and
+    /// `last_active_*` of every user whose address is `ip` (parts still NULL) and every activity row of `ip` (parts still
+    /// NULL), whatever its age. An existing place is never overwritten. An IPv4 address also matches its IPv4-mapped IPv6
+    /// text form. Same guards as [`Store::geo_apply`]: nothing is written for an empty place, with the eye closed or when
+    /// the place source is not `api` (read inside the transaction). Returns whether anything was written.
+    pub fn geo_fill_all(&self, ip: &str, place: &Place) -> Result<bool, DbError> {
+        if place.is_empty() {
+            return Ok(false);
+        }
+        // The second spelling of the same address (IPv4-mapped IPv6), else the same text twice
+        let alt = match ip.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V4(v4)) => v4.to_ipv6_mapped().to_string(),
+            _ => ip.to_string(),
+        };
+        let g = self.lock();
+        run_tx(&g, |c| {
+            if !flag(c, SIGNIN_INFO)? || get(c, GEO_SOURCE)?.as_deref() != Some("api") {
+                return Ok(false);
+            }
+            let mut changed = c.execute(
+                "UPDATE users SET last_login_country=?1, last_login_region=?2, last_login_city=?3 \
+                 WHERE last_login_ip IN (?4, ?5) AND last_login_country IS NULL AND last_login_region IS NULL \
+                 AND last_login_city IS NULL",
+                params![place.country, place.region, place.city, ip, alt],
+            )?;
+            changed += c.execute(
+                "UPDATE users SET last_active_country=?1, last_active_region=?2, last_active_city=?3 \
+                 WHERE last_active_ip IN (?4, ?5) AND last_active_country IS NULL AND last_active_region IS NULL \
+                 AND last_active_city IS NULL",
+                params![place.country, place.region, place.city, ip, alt],
+            )?;
+            changed += c.execute(
+                "UPDATE activity_log SET country=?1, region=?2, city=?3 WHERE ip IN (?4, ?5) AND country IS NULL \
+                 AND region IS NULL AND city IS NULL",
+                params![place.country, place.region, place.city, ip, alt],
+            )?;
+            Ok(changed > 0)
+        })
+    }
+
     /// Sets `ip`, `country`, `region` and `city` to NULL on up to `batch` rows that have any of them; returns the rows
     /// changed. `POST /api/users/signin-info/clear` calls it until it returns 0 (the lock is released between batches).
     pub fn clear_activity_ip(&self, batch: i64) -> Result<i64, DbError> {

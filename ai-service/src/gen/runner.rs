@@ -296,6 +296,8 @@ pub struct CallOpts {
     pub cache: Option<bool>,
     /// The `gen_calls.purpose` of this call when it is not the job's (`plan`)
     pub purpose: Option<&'static str>,
+    /// The JSON Schema of the answer (structured output); `None` = free text
+    pub schema: Option<&'static Value>,
 }
 
 impl CallOpts {
@@ -303,6 +305,7 @@ impl CallOpts {
     pub fn for_attempt(attempt: u32) -> CallOpts {
         CallOpts {
             skip_cache: attempt >= 2,
+            schema: None,
             ..CallOpts::default()
         }
     }
@@ -491,6 +494,7 @@ impl Ctx {
                 prefix.is_none()
                     || provider::cache_floor_ok(route.format, &route.model, system, prefix)
             }),
+            schema: opts.schema,
         };
         let planned = app.token_plan(route, &target, &spec, want);
         drop(target);
@@ -644,7 +648,10 @@ pub async fn drive(
                 &user,
                 want.unwrap_or(default_want),
                 batch.len(),
-                CallOpts::for_attempt(attempt),
+                CallOpts {
+                    schema: Some(crate::gen::schema::questions()),
+                    ..CallOpts::for_attempt(attempt)
+                },
             )
             .await;
         drop(permit);
@@ -847,7 +854,8 @@ fn gen_failed(app: &AppState, job: &GenJob, code: &'static str, calls: usize, de
 
 /// One plan-type call (a plan call, or the global plan): `Ok(Some(text))` for an answer, `Ok(None)` for a provider error
 /// (a plan failure never fails the job), `Err` only for a stop. The row is written with the purpose `plan`. From the
-/// second send on the text differs and the gateway's response cache is bypassed.
+/// second send on the text differs and the gateway's response cache is bypassed. `schema` = the structured answer shape.
+#[allow(clippy::too_many_arguments)]
 async fn plan_call(
     ctx: &Ctx,
     system: &str,
@@ -856,6 +864,7 @@ async fn plan_call(
     want: i64,
     cache: Option<bool>,
     attempt: u32,
+    schema: &'static Value,
 ) -> Result<Option<String>, Stop> {
     ctx.check()?;
     ctx.recheck().await?;
@@ -872,6 +881,7 @@ async fn plan_call(
         skip_cache: attempt >= 2,
         cache,
         purpose: Some("plan"),
+        schema: Some(schema),
     };
     let r = ctx.call_opts(system, prefix, &user, want, 0, opts).await;
     drop(permit);
@@ -906,6 +916,7 @@ async fn plan_chunk(
             want,
             None,
             attempt,
+            crate::gen::schema::gen_plan(),
         )
         .await?
         {
@@ -1148,9 +1159,11 @@ async fn drive_generation(ctx: &Ctx, job: &GenJob, run: &mut Run) -> Result<(), 
                 whole_gen::GEN_WHOLE_SYSTEM_PROMPT,
                 None,
                 &user,
-                4_000,
+                // the answer (about 4 000 tokens at most) plus room for the model's own thinking (v1.6)
+                6_600,
                 Some(false),
                 attempt,
+                crate::gen::schema::global_plan(),
             )
             .await?
             {
@@ -1233,6 +1246,7 @@ async fn drive_generation(ctx: &Ctx, job: &GenJob, run: &mut Run) -> Result<(), 
         cold,
         generation: true,
         items: true,
+        schema: Some(crate::gen::schema::questions()),
     };
     par::drive(ctx, &par, run, &mut step_for).await
 }

@@ -840,11 +840,22 @@ function chooseBanks(u: UserRow): Promise<void> {
 
 /**
  * v1.3: the sign-in info eye toggle (IP + approximate location, administrators only). Closing it hides the saved values and the
- * server records nothing new; nothing is deleted, so there is nothing to confirm. The answer is the whole list,
- * which carries the new state.
+ * server records nothing new; nothing is deleted, but both directions ask first because they change what is recorded
+ * and shown. Cancel changes nothing. The answer is the whole list, which carries the new state.
  */
 async function setSignin(on: boolean): Promise<void> {
   if (asking || signinBusy || busyId != null) return;
+  asking = true;
+  try {
+    const k = on ? 'users.signinInfo.on.ask' : 'users.signinInfo.off.ask';
+    const yes = await ask({ title: t(`${k}.title` as MsgKey), body: t(`${k}.body` as MsgKey), ok: t(`${k}.ok` as MsgKey) });
+    if (!yes) {
+      document.getElementById('us-signin')?.focus({ preventScroll: true });
+      return;
+    }
+  } finally {
+    asking = false;
+  }
   signinBusy = true;
   actionError = null;
   render();

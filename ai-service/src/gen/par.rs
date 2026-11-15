@@ -90,6 +90,8 @@ pub struct Par<'a> {
     pub generation: bool,
     /// Write the accepted questions of every call to `gen_items`
     pub items: bool,
+    /// The JSON Schema every writing call asks the answer to follow (`None` = free text)
+    pub schema: Option<&'static serde_json::Value>,
 }
 
 /// One writing call: which prefix, the user text after it (the rejection note included) and the answer size.
@@ -196,6 +198,7 @@ async fn drive_inner<'a>(
             }
             let want = step.want.unwrap_or(default_want);
             let asked = batch.len();
+            let schema = par.schema;
             flying.push(Box::pin(async move {
                 let r = async {
                     let permit = ctx.place().await?;
@@ -206,7 +209,10 @@ async fn drive_inner<'a>(
                             &user,
                             want,
                             asked,
-                            CallOpts::for_attempt(attempt),
+                            CallOpts {
+                                schema,
+                                ..CallOpts::for_attempt(attempt)
+                            },
                         )
                         .await;
                     drop(permit);

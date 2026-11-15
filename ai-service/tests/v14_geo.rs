@@ -1408,3 +1408,42 @@ fn a_schema_7_file_is_backed_up_and_gets_only_the_geo_table() {
         1
     );
 }
+
+#[tokio::test]
+async fn a_save_tells_the_backend_only_while_the_source_is_api() {
+    let t = start().await;
+    let stub = geo_stub().await;
+    let admin = t.user("admin", true, false);
+    // cloudflare: the source is read, nothing is switched or sent
+    let (_, v) = t.post(SAVE, &admin, draft(&stub.template("ok"))).await;
+    assert_eq!(v["ok"], json!(true), "{v}");
+    assert!(t.backend.st().geo.source_calls.is_empty());
+    assert_eq!(t.backend.st().geo.source_reads, 1);
+    // api: exactly one {"source":"api"} call per save
+    let (s, _) = t.post(ENABLE, &admin, json!({})).await;
+    assert_eq!(s, 200);
+    t.backend.st().geo.source_calls.clear();
+    let (_, v) = t.post(SAVE, &admin, draft(&stub.template("ok"))).await;
+    assert_eq!(v["ok"], json!(true), "{v}");
+    assert_eq!(
+        t.backend.st().geo.source_calls,
+        vec![json!({"source": "api"})]
+    );
+    // a failed test saves nothing and tells nobody
+    t.backend.st().geo.source_calls.clear();
+    let (_, v) = t.post(SAVE, &admin, draft(&stub.template("s500"))).await;
+    assert_eq!(v["ok"], json!(false), "{v}");
+    assert!(t.backend.st().geo.source_calls.is_empty());
+}
+
+#[tokio::test]
+async fn a_save_succeeds_while_the_backend_link_is_down() {
+    let t = start().await;
+    let stub = geo_stub().await;
+    let admin = t.user("admin", true, false);
+    t.backend.st().geo.source_down = true;
+    let (s, v) = t.post(SAVE, &admin, draft(&stub.template("ok"))).await;
+    assert_eq!((s, v["ok"].clone()), (200, json!(true)), "{v}");
+    assert_eq!(geo_rows(&t), 1);
+    assert!(t.backend.st().geo.source_calls.is_empty());
+}

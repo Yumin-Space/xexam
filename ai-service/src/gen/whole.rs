@@ -441,13 +441,14 @@ pub fn slot_list(slots: &[&Slot]) -> Value {
     )
 }
 
-/// The output tokens of a plan call for `goal` slots: `min(16000, 600 + 90 * goal)`.
+/// The output tokens of a plan call for `goal` slots: `min(18600, 3200 + 90 * goal)` (the answer's budget plus 2600
+/// tokens of room for the model's thinking).
 pub fn plan_want(goal: usize) -> i64 {
     i64::try_from(goal)
         .unwrap_or(i64::MAX)
         .saturating_mul(90)
-        .saturating_add(600)
-        .min(16_000)
+        .saturating_add(3_200)
+        .min(18_600)
 }
 
 /// The user text of a plan call: the slot list of one chunk (and that chunk's notes of the global plan).
@@ -1167,8 +1168,8 @@ mod tests {
         assert!(u.starts_with("TASK PLAN\nSLOTS\n[{\"slot\":3"));
         assert!(u.contains("GLOBAL NOTES") && u.ends_with("Plan the 2 questions now."));
         assert!(!plan_user(&refs, None).contains("GLOBAL NOTES"));
-        assert_eq!(plan_want(20), 2_400);
-        assert_eq!(plan_want(300), 16_000);
+        assert_eq!(plan_want(20), 5_000);
+        assert_eq!(plan_want(300), 18_600);
     }
 
     #[test]
