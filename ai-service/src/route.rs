@@ -6,6 +6,7 @@
 //! saved and readable with the current encryption key. The resolver itself is pure (`View::resolve`), so the rules are
 //! tested without a database.
 use crate::codes::ApiError;
+use crate::effort::Effort;
 use crate::settings::{Format, Provider};
 use crate::store::conn::{ConnRow, PoolRow, SLOT_NAMES};
 use serde_json::{json, Value};
@@ -182,6 +183,8 @@ pub struct Route {
     pub fallback: Fallback,
     /// An administrator's pick was given but did not resolve (the chat sets `start.modelFallback`)
     pub pick_dropped: bool,
+    /// The thinking strength of the REQUESTED slot (not of the slot whose model is used); `None` = send nothing
+    pub effort: Option<Effort>,
 }
 
 /// What the resolver needs to know about the keys of one connection (never key material).
@@ -200,6 +203,8 @@ pub struct View {
     pub pool: Vec<PoolRow>,
     /// Pool id of each slot, in [`Slot::ALL`] order
     pub slots: [Option<i64>; 6],
+    /// Thinking strength of each slot, in [`Slot::ALL`] order
+    pub efforts: [Option<Effort>; 6],
     pub keys: HashMap<i64, KeyState>,
 }
 
@@ -263,6 +268,7 @@ impl View {
             key: format!("c{}r{}:{}", c.id, c.rev, model),
             fallback,
             pick_dropped: false,
+            effort: None,
         })
     }
 
@@ -289,9 +295,11 @@ impl View {
 
     /// pick -> the slot's model -> the default slot's model -> `ai.disabled`. Nothing else, ever.
     pub fn resolve(&self, slot: Slot, pick: Option<&Pick>) -> Result<Route, ApiError> {
+        let effort = self.efforts[slot.index()];
         let mut dropped = false;
         if let Some(p) = pick {
-            if let Some(r) = self.pick_route(p) {
+            if let Some(mut r) = self.pick_route(p) {
+                r.effort = effort;
                 return Ok(r);
             }
             dropped = true;
@@ -304,6 +312,7 @@ impl View {
         match found {
             Some(mut r) => {
                 r.pick_dropped = dropped;
+                r.effort = effort;
                 Ok(r)
             }
             None => Err(ApiError::disabled()),
@@ -387,11 +396,49 @@ mod tests {
                 model(20, 2, "demo-claude", "ok"),
             ],
             slots: [Some(10), None, Some(20), None, None, None],
+            efforts: [None; 6],
             keys: HashMap::new(),
         };
         v.keys.insert(1, keys(false, false, true));
         v.keys.insert(2, keys(true, false, true));
         v
+    }
+
+    #[test]
+    fn resolve_carries_requested_slot_effort() {
+        use crate::effort::{Effort, EffortFamily};
+        let hi = Effort::new(EffortFamily::OpenAi, "high");
+        let lo = Effort::new(EffortFamily::Anthropic, "low");
+        let md = Effort::new(EffortFamily::Google, "medium");
+        let mut v = view();
+        // default: md, chat: hi (falls back to the default model), study: lo (own model), summary: none
+        v.efforts = [md, hi, lo, None, None, None];
+        // own model: the slot's effort
+        let r = v.resolve(Slot::Study, None).expect("study");
+        assert_eq!((r.fallback, r.effort), (Fallback::None, lo));
+        // Default fallback: the requested slot's effort, not Default's
+        let r = v.resolve(Slot::Chat, None).expect("chat");
+        assert_eq!((r.fallback, r.effort), (Fallback::Default, hi));
+        // no effort row: nothing, although the Default slot has one
+        let r = v.resolve(Slot::Summary, None).expect("summary");
+        assert_eq!(r.effort, None);
+        // the Default slot itself
+        assert_eq!(v.resolve(Slot::Default, None).expect("d").effort, md);
+        // an administrator's pick carries the Chat effort
+        let pick = Pick {
+            connection_id: 2,
+            model: "demo-claude".into(),
+        };
+        let r = v.resolve(Slot::Chat, Some(&pick)).expect("pick");
+        assert_eq!(r.effort, hi);
+        // a dropped pick: still the slot's effort
+        let bad = Pick {
+            connection_id: 99,
+            model: "x".into(),
+        };
+        let r = v.resolve(Slot::Chat, Some(&bad)).expect("dropped");
+        assert!(r.pick_dropped);
+        assert_eq!(r.effort, hi);
     }
 
     #[test]

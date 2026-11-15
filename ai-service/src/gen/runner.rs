@@ -495,6 +495,7 @@ impl Ctx {
                     || provider::cache_floor_ok(route.format, &route.model, system, prefix)
             }),
             schema: opts.schema,
+            effort: route.effort,
         };
         let planned = app.token_plan(route, &target, &spec, want);
         drop(target);

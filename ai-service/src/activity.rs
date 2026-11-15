@@ -17,7 +17,7 @@ pub const MAX_AGE_SECS: i64 = 6 * 86_400;
 /// Most events in one delivery batch (the backend's limit).
 pub const BATCH: usize = 50;
 /// The keys an event's `detail` may have (rust-contracts 5.2). Anything else is dropped before the line is written.
-pub const DETAIL_KEYS: [&str; 22] = [
+pub const DETAIL_KEYS: [&str; 24] = [
     "provider",
     "host",
     "changed",
@@ -40,6 +40,8 @@ pub const DETAIL_KEYS: [&str; 22] = [
     "stored",
     "code",
     "questions",
+    "family",
+    "level",
 ];
 
 /// One activity event, before the id and the time are added.
@@ -383,7 +385,7 @@ mod tests {
             Some(20)
         );
         // the allow-list is exactly the contract's keys
-        assert_eq!(DETAIL_KEYS.len(), 22);
+        assert_eq!(DETAIL_KEYS.len(), 24);
     }
 
     #[test]

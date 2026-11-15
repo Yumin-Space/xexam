@@ -6,6 +6,7 @@ use super::{body_id, ok, only_keys, query_text, Answer, Ctx};
 use crate::activity::Event;
 use crate::app::{AppState, ModelsCache};
 use crate::codes::ApiError;
+use crate::effort::{Effort, EffortFamily};
 use crate::identity::Identity;
 use crate::provider::errors::UpError;
 use crate::provider::ModelList;
@@ -284,6 +285,47 @@ pub async fn pick(ctx: Ctx) -> Answer {
     app.0.activity(ev);
     app.0.heartbeat_now().await;
     ok(picked_answer(app, &picked)?)
+}
+
+/// `POST models/effort` `{"slot", "effort": null | {"family", "level"}}`: sets the thinking strength of a slot. The
+/// connection format is not checked (the choice only changes the request parameter); the slot's model is untouched.
+pub async fn effort(ctx: Ctx) -> Answer {
+    only_keys(&ctx.body, &["slot", "effort"])?;
+    let slot = match ctx.body.get("slot") {
+        Some(Value::String(s)) => Slot::parse(s).ok_or_else(ApiError::bad_request)?,
+        _ => return Err(ApiError::bad_request()),
+    };
+    let choice = match ctx.body.get("effort") {
+        Some(Value::Null) => None,
+        Some(Value::Object(o)) if o.len() == 2 => {
+            let family = match o.get("family") {
+                Some(Value::String(f)) => EffortFamily::parse(f),
+                _ => None,
+            };
+            let level = o.get("level").and_then(Value::as_str);
+            match (family, level) {
+                (Some(f), Some(l)) => Some(Effort::new(f, l).ok_or_else(ApiError::bad_request)?),
+                _ => return Err(ApiError::bad_request()),
+            }
+        }
+        _ => return Err(ApiError::bad_request()),
+    };
+    let app = &ctx.app;
+    let who = &ctx.who;
+    let by = who.username.clone();
+    app.0
+        .store
+        .write(|tx| conn::set_effort(tx, slot.as_str(), choice, &by))?;
+    app.0.forget_no_effort();
+    app.0.activity(
+        Event::new(Some(who), "ai.settings.effort", &ctx.client)
+            .object(slot.as_str())
+            .detail(json!({
+                "family": choice.map_or("default", |e| e.family().as_str()),
+                "level": choice.map(Effort::level),
+            })),
+    );
+    ok(json!({"settings": settings_value(app)?}))
 }
 
 /// `POST models/test` `{"connectionId", "model"}`: always tests, and stores the result in the pool.

@@ -10,6 +10,7 @@ pub mod app;
 pub mod chat;
 pub mod codes;
 pub mod config;
+pub mod effort;
 pub mod extract;
 pub mod features;
 pub mod gen;

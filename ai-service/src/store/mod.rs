@@ -324,6 +324,7 @@ impl Store {
                     tx.execute_batch(schema::V5_TABLES)?;
                     add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
+                    add_columns(tx, &schema::V16_COLUMNS)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
                     tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;
@@ -351,6 +352,7 @@ impl Store {
                         .chain(schema::V6_COLUMNS.iter())
                         .chain(schema::V7_COLUMNS.iter())
                         .chain(schema::LATE_COLUMNS.iter())
+                        .chain(schema::V16_COLUMNS.iter())
                     {
                         let present: bool = c.query_row(
                             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
@@ -372,6 +374,7 @@ impl Store {
                         .and_then(|()| add_columns(&tx, &schema::V7_COLUMNS))
                         .and_then(|()| add_columns(&tx, &schema::LATE_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_TABLES))
+                        .and_then(|()| add_columns(&tx, &schema::V16_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_INDEXES))
                         .and_then(|()| tx.execute_batch(schema::V8_TABLES))
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
@@ -425,6 +428,7 @@ impl Store {
                     tx.execute_batch(schema::V5_TABLES)?;
                     add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
+                    add_columns(tx, &schema::V16_COLUMNS)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
                     tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;

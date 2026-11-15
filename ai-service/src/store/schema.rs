@@ -350,6 +350,10 @@ pub const LATE_COLUMNS: [(&str, &str, &str); 3] = [
     ("gen_calls", "connection", "connection TEXT"),
 ];
 
+/// v1.6: thinking strength per slot (`"<family>:<level>"`, NULL = send nothing). Added after `V7_TABLES` creates
+/// `model_slots`; no schema version change.
+pub const V16_COLUMNS: [(&str, &str, &str); 1] = [("model_slots", "effort", "effort TEXT")];
+
 /// Tables of AI schema 7 (all `IF NOT EXISTS`; run after `V5_TABLES` and the late columns).
 pub const V7_TABLES: &str = "
 CREATE TABLE IF NOT EXISTS connections (

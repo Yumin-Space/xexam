@@ -4,9 +4,10 @@ use super::{Item, Turn};
 use serde_json::{json, Value};
 
 /// `{"model", "max_tokens", "system", "messages", "stream": true}`. Consecutive messages of the same role are merged
-/// with a blank line (the API requires alternation); no sampling parameters, no `thinking`. Prompt caching: `system` is
-/// one text block with a `cache_control` breakpoint, and so is the last message before the final one (the history up to
-/// the new question): two breakpoints, the incremental cache of the conversation.
+/// with a blank line (the API requires alternation); no sampling parameters, no `thinking`; the thinking strength
+/// (`output_config.effort`) is added by `put_effort`. Prompt caching: `system` is one text block with a
+/// `cache_control` breakpoint, and so is the last message before the final one (the history up to the new question):
+/// two breakpoints, the incremental cache of the conversation.
 pub fn body(model: &str, system: &str, turns: &[Turn], max_tokens: i64) -> Value {
     let mut merged: Vec<(&str, String)> = Vec::new();
     for t in turns {

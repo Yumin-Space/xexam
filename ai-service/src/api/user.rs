@@ -532,6 +532,7 @@ pub(super) fn launch(
         prefix: None,
         cache: true,
         schema: None,
+        effort: route.effort,
     };
     let plan = match app.chat_plan(route, &target, &spec) {
         Ok(r) => r,
@@ -1193,6 +1194,7 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         prefix: None,
         cache: true,
         schema: None,
+        effort: route.effort,
     };
     let plan = ctx
         .app

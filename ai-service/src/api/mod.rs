@@ -65,6 +65,7 @@ enum Route {
     ConnectionsDelete,
     ConnectionsOrder,
     ModelsPick,
+    ModelsEffort,
     ModelsTest,
     ModelsRemove,
     FeatureSwitches,
@@ -148,6 +149,11 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
         Some(Route::ConnectionsOrder),
     ),
     ("/api/ai/admin/models/pick", None, Some(Route::ModelsPick)),
+    (
+        "/api/ai/admin/models/effort",
+        None,
+        Some(Route::ModelsEffort),
+    ),
     ("/api/ai/admin/models/test", None, Some(Route::ModelsTest)),
     (
         "/api/ai/admin/models/remove",
@@ -203,6 +209,7 @@ impl Route {
             | Route::ConnectionsDelete
             | Route::ConnectionsOrder
             | Route::ModelsPick
+            | Route::ModelsEffort
             | Route::ModelsTest
             | Route::ModelsRemove
             | Route::FeatureSwitches
@@ -256,6 +263,7 @@ pub const ADMIN_EVENTS: &[(&str, &[&str])] = &[
         &["ai.settings.connectionOrder"],
     ),
     ("/api/ai/admin/models/pick", &["ai.settings.model"]),
+    ("/api/ai/admin/models/effort", &["ai.settings.effort"]),
     ("/api/ai/admin/models/test", &["ai.settings.modelTest"]),
     ("/api/ai/admin/models/remove", &["ai.settings.modelRemove"]),
     (
@@ -500,6 +508,7 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::ConnectionsDelete => admin_conn::delete(ctx).await,
         Route::ConnectionsOrder => admin_conn::order(ctx).await,
         Route::ModelsPick => admin_models::pick(ctx).await,
+        Route::ModelsEffort => admin_models::effort(ctx).await,
         Route::ModelsTest => admin_models::test(ctx).await,
         Route::ModelsRemove => admin_models::remove(ctx).await,
         Route::FeatureSwitches => admin::feature_switches(ctx).await,

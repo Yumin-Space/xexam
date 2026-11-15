@@ -3,6 +3,7 @@
 //!
 //! Keys are only ever stored sealed (`connection_secrets`); nothing here sees a plain key. Slot names are the lower-case
 //! strings of `route::Slot::as_str` (`default`, `chat`, `study`, `summary`, `generate`, `import`).
+use crate::effort::Effort;
 use crate::secret::{Sealed, SecretName};
 use crate::store::tables::SecretRow;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -473,6 +474,43 @@ pub fn set_features_off(c: &Connection, bits: i64) -> rusqlite::Result<()> {
     c.execute(
         "UPDATE settings SET features_off = ?1 WHERE id = 1",
         [bits.clamp(0, 63)],
+    )?;
+    Ok(())
+}
+
+/// The thinking strength of every slot, in [`SLOT_NAMES`] order; `None` = send nothing (also for an unreadable value).
+pub fn efforts(c: &Connection) -> rusqlite::Result<[Option<Effort>; 6]> {
+    let mut out = [None; 6];
+    let mut st = c.prepare("SELECT slot, effort FROM model_slots")?;
+    let rows = st.query_map([], |r| {
+        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+    })?;
+    for row in rows {
+        let (name, tag) = row?;
+        if let Some(i) = SLOT_NAMES.iter().position(|s| *s == name) {
+            out[i] = tag.as_deref().and_then(Effort::parse_tag);
+        }
+    }
+    Ok(out)
+}
+
+/// Sets a slot's thinking strength (`None` = default). An unknown slot name is refused (`QueryReturnedNoRows`, like
+/// [`set_slot`]); the slot's model is left alone.
+pub fn set_effort(
+    c: &Connection,
+    slot: &str,
+    effort: Option<Effort>,
+    by: &str,
+) -> rusqlite::Result<()> {
+    let now = crate::util::unix_now();
+    if !SLOT_NAMES.contains(&slot) {
+        return Err(rusqlite::Error::QueryReturnedNoRows);
+    }
+    c.execute(
+        "INSERT INTO model_slots (slot, model_id, effort, updated_at, updated_by) VALUES (?1, NULL, ?2, ?3, ?4)
+         ON CONFLICT(slot) DO UPDATE SET effort = excluded.effort, updated_at = excluded.updated_at,
+             updated_by = excluded.updated_by",
+        params![slot, effort.map(Effort::tag), now, by],
     )?;
     Ok(())
 }

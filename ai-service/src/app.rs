@@ -129,6 +129,8 @@ pub struct App {
     no_markers: Mutex<std::collections::HashSet<String>>,
     /// Route keys whose provider refused structured output (`output_config` / `response_format`); memory only
     no_schema: Mutex<std::collections::HashSet<String>>,
+    /// Route keys + thinking strength (`<key>|<family>:<level>`) the provider refused; memory only
+    no_effort: Mutex<std::collections::HashSet<String>>,
     /// The most questions per call a provider really delivered per route key (L-44: answers were cut below the token
     /// setting); memory only, forgotten with the token memo
     gen_per_call: Mutex<std::collections::HashMap<String, usize>>,
@@ -275,6 +277,18 @@ impl AppState {
         let key = route.key.clone();
         let on_no_schema: Arc<dyn Fn() + Send + Sync> =
             Arc::new(move || app.0.remember_no_schema(&key));
+        let (no_effort, on_no_effort) = match spec.effort {
+            Some(e) => {
+                let key = format!("{}|{}", route.key, e.tag());
+                let refused = self.0.no_effort_of(&key);
+                let app = self.clone();
+                let family = e.family();
+                let f: Arc<dyn Fn() + Send + Sync> =
+                    Arc::new(move || app.0.remember_no_effort(&key, family));
+                (refused, Some(f))
+            }
+            None => (false, None),
+        };
         let plan = crate::provider::build_plan(
             target,
             &self.0.client,
@@ -286,6 +300,8 @@ impl AppState {
             Some(on_no_markers),
             no_schema,
             Some(on_no_schema),
+            no_effort,
+            on_no_effort,
         )?;
         Ok((plan, first))
     }
@@ -316,6 +332,35 @@ impl App {
                 "the AI provider refused cache markers; sending none to this connection"
             );
         }
+    }
+
+    /// `true` when this route key + thinking strength was refused earlier (the requests go out without it).
+    fn no_effort_of(&self, key: &str) -> bool {
+        let m = self.no_effort.lock().unwrap_or_else(|e| e.into_inner());
+        m.contains(key)
+    }
+
+    /// Remembers that the provider accepted a request only without the thinking strength (one INFO line per key,
+    /// English, a static parameter name only: no key, URL, model or content). At most [`MEMO_CAP`] keys are kept.
+    fn remember_no_effort(&self, key: &str, family: crate::effort::EffortFamily) {
+        let mut m = self.no_effort.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() >= MEMO_CAP && !m.contains(key) {
+            m.clear();
+        }
+        if m.insert(key.to_string()) {
+            tracing::info!(
+                "the AI provider refused {}; sending no thinking strength to this model",
+                family.param()
+            );
+        }
+    }
+
+    /// Forgets the refused thinking strengths (a new choice is tried again).
+    pub fn forget_no_effort(&self) {
+        self.no_effort
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
     }
 
     /// `true` when this route's provider refused structured output earlier (the requests go out without it).
@@ -399,6 +444,7 @@ impl App {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clear();
+        self.forget_no_effort();
     }
 
     /// Remembers that this route delivers at most `n` questions per call (keeps the smaller value).
@@ -509,6 +555,7 @@ impl App {
             token_memo: Mutex::new(std::collections::HashMap::new()),
             no_markers: Mutex::new(std::collections::HashSet::new()),
             no_schema: Mutex::new(std::collections::HashSet::new()),
+            no_effort: Mutex::new(std::collections::HashSet::new()),
             gen_per_call: Mutex::new(std::collections::HashMap::new()),
             auth_strikes: Mutex::new(std::collections::HashMap::new()),
             outbox_wake: Arc::new(Notify::new()),
@@ -639,6 +686,7 @@ impl App {
             let conns = conn::connections(c)?;
             let pool = conn::pool(c)?;
             let slots = conn::slots(c)?;
+            let efforts = conn::efforts(c)?;
             let mut keys = std::collections::HashMap::new();
             for k in &conns {
                 let rows = conn::conn_secrets(c, k.id)?;
@@ -657,6 +705,7 @@ impl App {
                 conns,
                 pool,
                 slots,
+                efforts,
                 keys,
             })
         })

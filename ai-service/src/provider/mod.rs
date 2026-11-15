@@ -5,6 +5,7 @@
 //! a secret is marked sensitive. Upstream bodies are never logged or returned: only model ids, a success flag and the
 //! fixed codes of [`errors`].
 use crate::config::Timeouts;
+use crate::effort::{Effort, EffortFamily};
 use crate::limits::MAX_ANSWER_CHARS;
 use crate::settings::{Format, GatewayAuth, Provider, ANTHROPIC_VERSION};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYPE};
@@ -442,6 +443,14 @@ fn body_names(error_body: &str, field: &str) -> bool {
     candidates.iter().flatten().any(|text| text.contains(field))
 }
 
+/// `true` for a 400 / 422 whose error body names the thinking-strength parameter: `effort` (this also matches
+/// `reasoning_effort`), or `output_config` without `format` (a structured-output refusal stays with the schema ladder).
+pub fn effort_refused(status: u16, error_body: &str) -> bool {
+    matches!(status, 400 | 422)
+        && (body_names(error_body, "effort")
+            || (body_names(error_body, "output_config") && !body_names(error_body, "format")))
+}
+
 /// The next step of the ladder after an HTTP refusal answered before any stream event: only for status 400 or 422
 /// whose error body names the field that was sent; otherwise `None` (the refusal stays the ordinary upstream error).
 pub fn next_token_limit(
@@ -489,6 +498,13 @@ pub struct Plan {
     pub unformatted: Vec<(TokenLimit, reqwest::Request)>,
     /// Called when the request without the structured output field succeeded: the connection must not get it
     pub remember_unformatted: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// The same ladder without the thinking-strength parameter (empty when none is sent). Used once when a 400 / 422
+    /// names it (see [`effort_refused`]).
+    pub uneffort: Vec<(TokenLimit, reqwest::Request)>,
+    /// The plain (unmarked) ladder without the parameter; replaces `plain` after the parameter was refused in this call.
+    pub plain_uneffort: Vec<(TokenLimit, reqwest::Request)>,
+    /// Called when a request without the parameter succeeded after it was refused: the route must not get it
+    pub remember_uneffort: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl Plan {
@@ -503,6 +519,9 @@ impl Plan {
             remember_plain: None,
             unformatted: Vec::new(),
             remember_unformatted: None,
+            uneffort: Vec::new(),
+            plain_uneffort: Vec::new(),
+            remember_uneffort: None,
         }
     }
 }
@@ -524,13 +543,43 @@ pub struct ChatSpec<'a> {
     /// A JSON schema the answer must follow (structured output); `None` = free text. Anthropic gets
     /// `output_config.format`, an OpenAI-compatible service `response_format` (see [`put_schema`]).
     pub schema: Option<&'a serde_json::Value>,
+    /// Thinking strength to send (`None` = nothing). Put into the body by [`put_effort`] regardless of the wire format.
+    pub effort: Option<Effort>,
+}
+
+/// The `output_config` object of a body (created, or replaced when it is not an object).
+fn output_config(body: &mut Value) -> &mut serde_json::Map<String, Value> {
+    if !body.get("output_config").is_some_and(Value::is_object) {
+        body["output_config"] = json!({});
+    }
+    match body.get_mut("output_config").and_then(Value::as_object_mut) {
+        Some(m) => m,
+        None => unreachable!("output_config was just set to an object"),
+    }
+}
+
+/// Adds the thinking-strength parameter of `effort` to a body. Anthropic family: merges `"effort"` into
+/// `output_config` (next to a structured-output `format`); OpenAI / Google family: `"reasoning_effort": <level>`.
+/// The connection's wire format does not matter (owner: the choice only changes the parameter).
+pub fn put_effort(body: &mut Value, effort: Effort) {
+    match effort.family() {
+        EffortFamily::Anthropic => {
+            output_config(body).insert("effort".into(), json!(effort.level()));
+        }
+        EffortFamily::OpenAi | EffortFamily::Google => {
+            body["reasoning_effort"] = json!(effort.level());
+        }
+    }
 }
 
 /// Adds the structured output field of `schema` to a request body.
 fn put_schema(format: Format, body: &mut Value, schema: &Value) {
     match format {
         Format::Anthropic => {
-            body["output_config"] = json!({"format": {"type": "json_schema", "schema": schema}});
+            output_config(body).insert(
+                "format".into(),
+                json!({"type": "json_schema", "schema": schema}),
+            );
         }
         Format::OpenAi => {
             body["response_format"] = json!({
@@ -621,13 +670,18 @@ pub fn build_plan(
     on_no_markers: Option<Arc<dyn Fn() + Send + Sync>>,
     no_schema: bool,
     on_no_schema: Option<Arc<dyn Fn() + Send + Sync>>,
+    no_effort: bool,
+    on_no_effort: Option<Arc<dyn Fn() + Send + Sync>>,
 ) -> Result<Plan, UpError> {
     let marked =
         target.format == Format::OpenAi && spec.prefix.is_some() && spec.cache && !no_markers;
     let mut steps = Vec::new();
     let mut plain = Vec::new();
     let mut unformatted = Vec::new();
+    let mut uneffort = Vec::new();
+    let mut plain_uneffort = Vec::new();
     let schema = spec.schema.filter(|_| !no_schema);
+    let effort = spec.effort.filter(|_| !no_effort);
     let mut limit = Some(first);
     while let Some(l) = limit {
         let mut body = chat_body(
@@ -662,6 +716,15 @@ pub fn build_plan(
                 put_schema(target.format, b, sc);
             }
         }
+        // the ladders without the thinking strength are copies taken before it is put in; `bare` never carries it
+        if let Some(e) = effort {
+            uneffort.push((l, target.chat_request(client, &body, spec.skip_cache)?));
+            put_effort(&mut body, e);
+            if let Some(b) = fallback.as_mut() {
+                plain_uneffort.push((l, target.chat_request(client, b, spec.skip_cache)?));
+                put_effort(b, e);
+            }
+        }
         steps.push((l, target.chat_request(client, &body, spec.skip_cache)?));
         if let Some(b) = fallback {
             plain.push((l, target.chat_request(client, &b, spec.skip_cache)?));
@@ -680,6 +743,9 @@ pub fn build_plan(
         remember_plain: on_no_markers,
         unformatted,
         remember_unformatted: on_no_schema,
+        uneffort,
+        plain_uneffort,
+        remember_uneffort: on_no_effort,
     })
 }
 
@@ -777,12 +843,37 @@ pub async fn stream_plan(
         remember_plain,
         unformatted,
         remember_unformatted,
+        uneffort,
+        plain_uneffort,
+        remember_uneffort,
     } = plan;
     let args = (client, format, stored_max, t, &tx, &remember);
     let (mut status, mut body, mut at) = match run_ladder(args, steps, 0).await {
         Ok(_) => return,
         Err(r) => r,
     };
+    let remember_dropped = || {
+        if let Some(r) = &remember_uneffort {
+            r();
+        }
+    };
+    // a refusal that names the thinking strength: once without it, same token step
+    let mut dropped = false;
+    if !uneffort.is_empty() && effort_refused(status, &String::from_utf8_lossy(&body)) {
+        match run_ladder(args, uneffort, at).await {
+            Ok(ok) => {
+                if ok {
+                    remember_dropped();
+                }
+                return;
+            }
+            Err((s, b, i)) => {
+                (status, body, at) = (s, b, i);
+                dropped = true;
+            }
+        }
+    }
+    let plain = if dropped { plain_uneffort } else { plain };
     if !plain.is_empty() && matches!(status, 400 | 422) {
         match run_ladder(args, plain, at).await {
             Ok(ok) => {
@@ -790,6 +881,9 @@ pub async fn stream_plan(
                 if ok {
                     if let Some(r) = &remember_plain {
                         r();
+                    }
+                    if dropped {
+                        remember_dropped();
                     }
                 }
                 return;
@@ -804,6 +898,9 @@ pub async fn stream_plan(
                 if ok {
                     if let Some(r) = &remember_unformatted {
                         r();
+                    }
+                    if dropped {
+                        remember_dropped();
                     }
                 }
                 return;
@@ -1633,6 +1730,7 @@ mod tests {
             prefix,
             cache,
             schema: None,
+            effort: None,
         }
     }
 
@@ -1689,7 +1787,10 @@ mod tests {
         let build = |t: &Target, with: bool, no: bool| {
             let mut sp = spec(&turns, None, false);
             sp.schema = with.then_some(&schema);
-            build_plan(t, &client, &sp, first, 8192, None, false, None, no, None).expect("plan")
+            build_plan(
+                t, &client, &sp, first, 8192, None, false, None, no, None, false, None,
+            )
+            .expect("plan")
         };
         let oa = openai_target("http://127.0.0.1:9");
         let an = target(
@@ -1721,7 +1822,7 @@ mod tests {
         let mut sp = spec(&turns, Some("PFX"), true);
         sp.schema = Some(&schema);
         let p = build_plan(
-            &oa, &client, &sp, first, 8192, None, false, None, false, None,
+            &oa, &client, &sp, first, 8192, None, false, None, false, None, false, None,
         )
         .expect("plan");
         let (s, pl, un) = (
@@ -1750,7 +1851,10 @@ mod tests {
         let t = openai_target("http://127.0.0.1:9/v1");
         let first = TokenLimit::omit();
         let plan = |t: &Target, sp: &ChatSpec<'_>, no: bool| {
-            build_plan(t, &client, sp, first, 8192, None, no, None, false, None).expect("plan")
+            build_plan(
+                t, &client, sp, first, 8192, None, no, None, false, None, false, None,
+            )
+            .expect("plan")
         };
         // prefix + cache: marked steps and the plain ladder
         let p = plan(&t, &spec(&turns, Some("PFX"), true), false);
@@ -1870,6 +1974,8 @@ mod tests {
                 Some(cb),
                 false,
                 None,
+                false,
+                None,
             )
             .expect("plan")
         };
@@ -1909,6 +2015,8 @@ mod tests {
             Some(Arc::new(|| panic!("must not be remembered"))),
             false,
             None,
+            false,
+            None,
         )
         .expect("plan");
         let ups = run(plan).await;
@@ -1932,6 +2040,8 @@ mod tests {
             None,
             false,
             Some(Arc::new(|| panic!("must not be remembered"))),
+            false,
+            None,
             false,
             None,
         )
@@ -2006,6 +2116,8 @@ mod tests {
                     Some(Arc::new(move || m.store(true, SeqCst))),
                     ns,
                     Some(Arc::new(move || s.store(true, SeqCst))),
+                    false,
+                    None,
                 )
                 .expect("plan")
             };
@@ -2074,6 +2186,8 @@ mod tests {
             None,
             false,
             None,
+            false,
+            None,
         )
         .expect("plan");
         (client, plan)
@@ -2123,5 +2237,206 @@ mod tests {
             .expect("collected");
         assert_eq!(got.text, "");
         assert!(got.first_byte_ms.is_none());
+    }
+
+    fn eff(f: EffortFamily, l: &str) -> Effort {
+        Effort::new(f, l).expect("level")
+    }
+
+    fn plain_body(format: Format) -> Value {
+        let turns = one_turn("T");
+        chat_body(format, "m", "rules", &turns, true, TokenLimit::omit())
+    }
+
+    #[test]
+    fn anthropic_family_puts_output_config_effort() {
+        let mut b = plain_body(Format::Anthropic);
+        put_effort(&mut b, eff(EffortFamily::Anthropic, "xhigh"));
+        assert_eq!(b["output_config"], json!({"effort": "xhigh"}));
+        assert!(b.get("reasoning_effort").is_none());
+    }
+
+    #[test]
+    fn openai_family_puts_reasoning_effort() {
+        let mut b = plain_body(Format::OpenAi);
+        put_effort(&mut b, eff(EffortFamily::OpenAi, "minimal"));
+        assert_eq!(b["reasoning_effort"], "minimal");
+        assert!(b.get("output_config").is_none());
+    }
+
+    #[test]
+    fn google_family_puts_reasoning_effort_only() {
+        let mut b = plain_body(Format::OpenAi);
+        put_effort(&mut b, eff(EffortFamily::Google, "none"));
+        assert_eq!(b["reasoning_effort"], "none");
+        for k in [
+            "thinking_level",
+            "thinking_config",
+            "extra_body",
+            "thinking",
+        ] {
+            assert!(b.get(k).is_none(), "{k}");
+        }
+        assert!(!b.to_string().contains("thinking"));
+    }
+
+    #[test]
+    fn effort_merges_with_schema_format_in_output_config() {
+        let schema = json!({"type": "object"});
+        let e = eff(EffortFamily::Anthropic, "high");
+        let mut a = plain_body(Format::Anthropic);
+        put_schema(Format::Anthropic, &mut a, &schema);
+        put_effort(&mut a, e);
+        let mut b = plain_body(Format::Anthropic);
+        put_effort(&mut b, e);
+        put_schema(Format::Anthropic, &mut b, &schema);
+        for x in [a, b] {
+            assert_eq!(x["output_config"]["effort"], "high");
+            assert_eq!(x["output_config"]["format"]["type"], "json_schema");
+            assert_eq!(x["output_config"].as_object().expect("obj").len(), 2);
+        }
+    }
+
+    #[test]
+    fn no_effort_sends_no_parameter() {
+        let turns = one_turn("T");
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let sp = spec(&turns, None, false);
+        let oa = openai_target("http://127.0.0.1:9");
+        let p = build_plan(
+            &oa,
+            &client,
+            &sp,
+            TokenLimit::omit(),
+            8192,
+            None,
+            false,
+            None,
+            false,
+            None,
+            false,
+            None,
+        )
+        .expect("plan");
+        for (_, r) in &p.steps {
+            let b = body_of(r);
+            assert!(b.get("reasoning_effort").is_none() && b.get("output_config").is_none());
+        }
+        assert!(p.uneffort.is_empty() && p.plain_uneffort.is_empty());
+    }
+
+    #[test]
+    fn mismatched_family_still_sends_its_parameter() {
+        let mut oa = plain_body(Format::OpenAi);
+        put_effort(&mut oa, eff(EffortFamily::Anthropic, "low"));
+        assert_eq!(oa["output_config"]["effort"], "low");
+        let mut an = plain_body(Format::Anthropic);
+        put_effort(&mut an, eff(EffortFamily::OpenAi, "low"));
+        assert_eq!(an["reasoning_effort"], "low");
+    }
+
+    #[test]
+    fn build_plan_uneffort_ladders() {
+        let turns = one_turn("TASK");
+        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let schema = json!({"type": "object"});
+        let oa = openai_target("http://127.0.0.1:9");
+        let an = target(
+            Provider::Anthropic,
+            Format::Anthropic,
+            GatewayAuth::Bearer,
+            true,
+            false,
+        );
+        let build = |t: &Target, e: Option<Effort>, no: bool, marks: bool| {
+            let mut sp = spec(&turns, marks.then_some("PFX"), marks);
+            sp.schema = Some(&schema);
+            sp.effort = e;
+            // the 8192 ceiling gives the Anthropic ladder more than one step
+            build_plan(
+                t,
+                &client,
+                &sp,
+                TokenLimit::max_tokens(8192),
+                4096,
+                None,
+                false,
+                None,
+                false,
+                None,
+                no,
+                None,
+            )
+            .expect("plan")
+        };
+        let has = |r: &reqwest::Request| {
+            let s = body_of(r).to_string();
+            s.contains("reasoning_effort") || s.contains("\"effort\"")
+        };
+        // OpenAI with markers: steps and plain carry it; uneffort, plain_uneffort and unformatted do not
+        let e = eff(EffortFamily::OpenAi, "high");
+        let p = build(&oa, Some(e), false, true);
+        assert!(!p.steps.is_empty() && !p.plain.is_empty());
+        assert!(p.steps.iter().chain(&p.plain).all(|(_, r)| has(r)));
+        assert_eq!(p.uneffort.len(), p.steps.len());
+        assert_eq!(p.plain_uneffort.len(), p.plain.len());
+        assert!(!p.unformatted.is_empty());
+        assert!(p
+            .uneffort
+            .iter()
+            .chain(&p.plain_uneffort)
+            .chain(&p.unformatted)
+            .all(|(_, r)| !has(r)));
+        // the plain-uneffort ladder is unmarked, the uneffort one still marked
+        assert!(!body_of(&p.plain_uneffort[0].1)
+            .to_string()
+            .contains("cache_control"));
+        assert!(body_of(&p.uneffort[0].1)
+            .to_string()
+            .contains("cache_control"));
+        assert!(body_of(&p.uneffort[0].1).get("response_format").is_some());
+        // Anthropic: output_config holds format and effort; the uneffort copy keeps the format only
+        let e = eff(EffortFamily::Anthropic, "max");
+        let p = build(&an, Some(e), false, false);
+        let b = body_of(&p.steps[0].1);
+        assert_eq!(b["output_config"]["effort"], "max");
+        assert!(b["output_config"]["format"].is_object());
+        let u = body_of(&p.uneffort[0].1);
+        assert!(
+            u["output_config"].get("effort").is_none() && u["output_config"]["format"].is_object()
+        );
+        assert!(p.unformatted.iter().all(|(_, r)| !has(r)));
+        // none / no_effort: everything empty and nothing sent
+        for p in [
+            build(&oa, None, false, true),
+            build(&oa, Some(e), true, true),
+        ] {
+            assert!(p.uneffort.is_empty() && p.plain_uneffort.is_empty());
+            assert!(p.steps.iter().chain(&p.plain).all(|(_, r)| !has(r)));
+        }
+    }
+
+    #[test]
+    fn effort_refused_detection() {
+        let param = r#"{"error":{"message":"Unknown parameter","param":"reasoning_effort"}}"#;
+        assert!(effort_refused(400, param));
+        let oc = r#"{"error":{"message":"output_config: Extra inputs are not permitted"}}"#;
+        assert!(effort_refused(422, oc));
+        let ef = r#"{"error":{"message":"effort: invalid value"}}"#;
+        assert!(effort_refused(400, ef));
+        let fmt = r#"{"error":{"message":"output_config.format is not supported"}}"#;
+        assert!(!effort_refused(400, fmt));
+        assert!(!effort_refused(500, param));
+        let mt = r#"{"error":{"message":"max_tokens is too large","param":"max_tokens"}}"#;
+        assert!(!effort_refused(400, mt));
+        assert!(!effort_refused(400, "not json"));
+    }
+
+    #[test]
+    fn chat_body_has_no_effort() {
+        for f in [Format::OpenAi, Format::Anthropic] {
+            let b = plain_body(f);
+            assert!(b.get("reasoning_effort").is_none() && b.get("output_config").is_none());
+        }
     }
 }

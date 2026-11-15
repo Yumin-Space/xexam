@@ -120,7 +120,11 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
             .map(|r| json!({"modelId": r.pool_id, "fallback": r.fallback.as_str()}));
         slots.insert(
             s.as_str().to_string(),
-            json!({"modelId": view.slots[s.index()], "using": using}),
+            json!({
+                "modelId": view.slots[s.index()],
+                "using": using,
+                "effort": view.efforts[s.index()].map(crate::effort::Effort::to_json),
+            }),
         );
     }
     Ok(json!({
@@ -140,6 +144,7 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
         "connections": connections,
         "pool": pool,
         "slots": Value::Object(slots),
+        "effortLevels": crate::effort::levels_json(),
         "featureSwitches": crate::features::to_json(snap.features_off),
     }))
 }

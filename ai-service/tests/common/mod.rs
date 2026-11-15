@@ -704,6 +704,8 @@ pub struct StubState {
     pub requests: Vec<StubRequest>,
     /// Answer every chat request with this status and body
     pub force: Option<(u16, String)>,
+    /// Refuse a chat request whose JSON body text contains the needle, with this status and body (v1.6)
+    pub refuse_if_body_has: Option<(String, u16, String)>,
     /// Delay before the response headers (ms)
     pub head_delay_ms: u64,
     /// A scripted provider (generation and import tests): consulted before the stub's own behaviour
@@ -748,6 +750,11 @@ impl Stub {
 
     pub fn last(&self) -> StubRequest {
         self.st().requests.last().cloned().expect("a stub request")
+    }
+
+    /// Refuses every chat request whose body contains `needle` (`None` = stop refusing).
+    pub fn refuse_if_body_has(&self, r: Option<(&str, u16, &str)>) {
+        self.st().refuse_if_body_has = r.map(|(n, s, b)| (n.to_string(), s, b.to_string()));
     }
 
     pub fn force(&self, f: Option<(u16, &str)>) {
@@ -907,6 +914,17 @@ async fn stub_handler(State(sh): State<StubShared>, req: Request) -> Response {
     }
     if let Some((status, b)) = force {
         return text_answer(status, &b);
+    }
+    let refusal = sh
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .refuse_if_body_has
+        .clone();
+    if let Some((needle, status, b)) = refusal {
+        if body.to_string().contains(&needle) {
+            return text_answer(status, &b);
+        }
     }
     if delay > 0 {
         tokio::time::sleep(Duration::from_millis(delay)).await;
