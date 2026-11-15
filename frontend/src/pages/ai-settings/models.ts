@@ -5,18 +5,20 @@
 // cannot be used the default stands in (a note says so); when the default cannot be used either the row says it is paused.
 // Nothing is ever switched to another model automatically. Each row has two pickers: the connection on the left and, on the
 // right, the models of that connection only. Changing the connection does not switch the row; picking a model does.
-import { fetchModels, pickModel, setEnabled as setEnabledApi } from '../../api/ai-admin.ts';
+import { fetchModels, pickModel, setEffort, setEnabled as setEnabledApi } from '../../api/ai-admin.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { miniSwitch } from '../../components/mini-switch.ts';
+import { PROVIDER_NAME, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
 import {
   defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotModel, slotNote, slotUsing, SLOTS,
   type ModelGroup,
 } from '../../domain/ai-settings.ts';
+import { knownDefault, levelForFamily } from '../../domain/effort-defaults.ts';
 import { aiCodeText, errorText } from '../../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../../i18n/index.ts';
 import { onRouteChange, refreshAi } from '../../state/actions.ts';
 import { onClearUserData } from '../../state/store.ts';
-import type { AiSettings, AiSlot, ModelRef } from '../../types/api.ts';
+import type { AiEffort, AiSettings, AiSlot, ModelRef } from '../../types/api.ts';
 import { h, scrollToY, type Child } from '../../utils/dom.ts';
 import { matches, TOUCH_MQ } from '../../utils/media.ts';
 import { toast } from '../../utils/toast.ts';
@@ -357,6 +359,67 @@ export function enableSection(s: AiSettings): HTMLElement {
     h('h2', { id: 'ais-enable-h', tabindex: '-1' }, t('ai.set.card.main')), body, msg);
 }
 
+// ---------------------------------------------------------------- thinking strength (v1.6)
+
+const FAMILIES: EffortFamily[] = ['anthropic', 'openai', 'google'];
+const LEVEL_KEYS = new Set(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']);
+
+/** Saves one slot's thinking strength at once (null = default, nothing sent); the row is busy meanwhile */
+async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string): Promise<void> {
+  if (A.slotBusy[slot]) return;
+  A.slotBusy[slot] = true;
+  A.slotMsg[slot] = null;
+  redraw();
+  try {
+    const r = await setEffort({ slot, effort });
+    adopt(r.settings);
+  } catch (e) {
+    if (!aiDown(e)) A.slotMsg[slot] = { ok: false, text: errorText(e) };
+  }
+  A.slotBusy[slot] = false;
+  redraw();
+  document.getElementById(focusId)?.focus();
+}
+
+/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] and the level list; hidden on an older ai-service */
+function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string): HTMLElement | null {
+  const lists = s.effortLevels;
+  if (!lists) return null;
+  const cur = s.slots[slot].effort ?? null;
+  const fam = cur && lists[cur.family] ? cur.family : null;
+  const lvl = fam ? cur?.level ?? '' : '';
+  const lvlLabel = (x: string): string => (LEVEL_KEYS.has(x) ? t(`ai.set.effort.level.${x}` as MsgKey) : x);
+  const id = `ai-slot-${slot}-effort`;
+  const dflt = knownDefault(slotUsing(s, slot)?.model);
+  const btn = (key: EffortFamily | 'default', pressed: boolean, label: Child[], name: string, title: string, onClick: () => void): HTMLElement =>
+    h('button', {
+      type: 'button', id: `${id}-${key}`, class: 'ais-eb' + (pressed ? ' on' : ''), 'aria-pressed': pressed ? 'true' : 'false',
+      'aria-label': name, title, disabled: busy, onclick: onClick,
+    }, ...label);
+  const buttons = [
+    btn('default', fam === null, [t('ai.set.effort.default')], t('ai.set.effort.default'), t('ai.set.effort.defaultTip'),
+      () => void saveEffort(slot, null, `${id}-default`)),
+    ...FAMILIES.map((f) => btn(f, fam === f,
+      f === 'openai' ? [providerIcon(f), h('span', { class: 'ais-eb-t' }, PROVIDER_NAME[f])] : [providerIcon(f)],
+      PROVIDER_NAME[f], PROVIDER_NAME[f],
+      () => void saveEffort(slot, { family: f, level: levelForFamily(cur?.level, lists[f] ?? []) }, `${id}-${f}`))),
+  ];
+  const select = h('select', {
+    id: `${id}-level`, class: 'ais-select ais-effort-level', 'aria-label': t('ai.set.effort.levelOf', { slot: slotName }),
+    disabled: busy || fam === null,
+    onchange: (e: Event) => {
+      if (fam) void saveEffort(slot, { family: fam, level: (e.target as HTMLSelectElement).value }, `${id}-level`);
+    },
+  }, fam === null
+    ? h('option', { value: '' }, '')
+    : (lists[fam] ?? []).map((x) => h('option', { value: x, title: x }, lvlLabel(x))));
+  if (fam) (select as HTMLSelectElement).value = lvl;
+  return h('div', { class: 'ais-effort' },
+    h('div', { class: 'ais-effort-b', role: 'group', 'aria-label': t('ai.set.effort.label') }, buttons),
+    dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: lvlLabel(dflt) })) : null,
+    select);
+}
+
 // ---------------------------------------------------------------- step 3: the six model rows
 
 function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
@@ -427,6 +490,7 @@ function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
     }));
   return h('li', { class: 'ais-slot' + (note?.kind === 'noRoute' || bad ? ' warn' : ''), id: `ais-slot-${slot}` },
     h('span', { class: 'ais-slot-l', id: labelId }, name),
+    effortRow(s, slot, busy, name),
     h('div', { class: 'ais-slot-pick', role: 'group', 'aria-labelledby': labelId }, sel, picker),
     busy ? h('p', { class: 'ais-note ais-slot-s', role: 'status' }, t(pick === null ? 'ai.set.slot.switching' : 'ai.set.slot.testing')) : null,
     msg ? h('p', { class: (msg.ok ? 'ais-ok' : 'ais-ferr') + ' ais-slot-s', role: msg.ok ? 'status' : 'alert' }, msg.text) : null,

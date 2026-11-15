@@ -536,6 +536,17 @@ td.ais-usum { display: none; }
 .ais-slots { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
 .ais-slot { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr); align-items: center; gap: 4px 12px; min-width: 0; }
 .ais-slot-l { font-size: 14px; font-weight: 600; }
+/* v1.6 thinking strength: the buttons, the muted model default and the level list, wrapping on narrow screens */
+.ais-effort { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
+.ais-effort-b { display: flex; flex-wrap: wrap; gap: 6px; }
+.ais-eb { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; min-height: 32px; padding: 0 10px; font: inherit; font-size: 13px; color: var(--ink2); background: var(--fill); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.ais-eb:disabled { opacity: .55; cursor: default; }
+.ais-eb.on { color: var(--ink); border-color: var(--ink2); background: var(--card, var(--fill)); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .18); font-weight: 600; }
+.ais-pi { flex: none; width: 16px; height: 16px; }
+.ais-effort-hint { font-size: 12px; color: var(--ink3); }
+.ais-effort-level { margin-left: auto; width: auto; min-width: 110px; max-width: 100%; }
+.ais-effort-level:disabled { color: var(--ink3); background: var(--fill); }
+.ais-slot-pick { grid-column: 2; }
 /* Two pickers in one row: the connection (about 35%) and that connection's models (about 65%) */
 .ais-slot-pick { position: relative; min-width: 0; display: grid; grid-template-columns: minmax(0, 35fr) minmax(0, 65fr); gap: 8px; }
 .ais-slot-pick .ais-combo { min-width: 0; }
@@ -554,6 +565,9 @@ td.ais-usum { display: none; }
 @media (max-width: 600px) {
   .ais-slot { grid-template-columns: minmax(0, 1fr); }
   .ais-slot > :not(.ais-slot-l):not(.ais-slot-pick) { grid-column: 1; }
+  .ais-slot-pick { grid-column: 1; }
+  .ais-eb { min-height: 36px; }
+  .ais-effort-level { margin-left: 0; }
   /* Phones: the model list is as wide as both pickers (model names are long) */
   .ais-slot-pick { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
   .ais-slot-pick .ais-combo { position: static; }

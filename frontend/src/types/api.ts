@@ -997,7 +997,11 @@ export interface AiPoolModel {
   status: 'ok' | 'untested' | 'failed'; errorCode: string | null; testedAt: number | null;
   latencyMs: number | null; context: number | null; usedBy: AiSlot[];
 }
-export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null }
+/** v1.6: the thinking-strength families and the choice of one slot (null / missing = default, nothing sent) */
+export type AiEffortFamily = 'anthropic' | 'openai' | 'google';
+export interface AiEffort { family: AiEffortFamily; level: string }
+/** `effort` is optional: an older ai-service does not send it */
+export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null; effort?: AiEffort | null }
 /** `GET /api/ai/admin/settings` (administrators; v1.3: connections, the model pool, six slots, global feature switches) */
 export interface AiSettings {
   enabled: boolean; effective: boolean; state: AiState; pauseReason: 'keyProblem' | 'noRoute' | null;
@@ -1005,6 +1009,8 @@ export interface AiSettings {
   defaults: { openai: string; anthropic: string }; maxConnections: number;
   connections: AiConnection[]; pool: AiPoolModel[]; slots: Record<AiSlot, AiSlotState>;
   featureSwitches: Record<AiFeatureKey, boolean>;
+  /** v1.6: the levels per family; missing on an older ai-service (then the thinking-strength row is hidden) */
+  effortLevels?: Record<AiEffortFamily, string[]>;
 }
 export interface AiConnectionSave {
   id?: number; rev?: number; name: string; provider: string; baseUrl: string; format?: string; gatewayAuth?: string;

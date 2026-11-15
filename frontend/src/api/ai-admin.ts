@@ -3,7 +3,7 @@
 // settings object (`settings`). The tests run long (the server's whole-request deadline is 90 s), so those calls wait a
 // little longer than that.
 import type {
-  AiChatDetail, AiClear, AiConnectionSave, AiFeatureKey, AiLimits, AiLimitsAnswer, AiModelList, AiSettings, AiSlot,
+  AiChatDetail, AiEffort, AiClear, AiConnectionSave, AiFeatureKey, AiLimits, AiLimitsAnswer, AiModelList, AiSettings, AiSlot,
   AiTestAnswer, AiUsage, ModelRef,
 } from '../types/api.ts';
 import { getJson, postJson } from './client.ts';
@@ -25,6 +25,11 @@ export const orderConnections = (ids: number[]): Promise<{ settings: AiSettings 
 
 /** The models of every connection (cached 10 min; `refresh` lists again); also read by the AI Chat model picker */
 export const fetchModels = (refresh = false): Promise<AiModelList> => getJson<AiModelList>(`/api/ai/admin/models?refresh=${refresh ? 1 : 0}`);
+
+/** v1.6 `POST /api/ai/admin/models/effort`: the thinking strength of one slot (null = default, nothing sent) */
+export type EffortBody = { slot: AiSlot; effort: AiEffort | null };
+export const setEffort = (b: EffortBody): Promise<{ settings: AiSettings }> =>
+  postJson<{ settings: AiSettings }>('/api/ai/admin/models/effort', b);
 
 export type PickBody = { slot: AiSlot; connectionId: number; model: string; manual: boolean } | { slot: Exclude<AiSlot, 'default'>; clear: true };
 export interface PickAnswer {
