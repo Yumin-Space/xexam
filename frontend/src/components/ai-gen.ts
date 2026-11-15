@@ -299,7 +299,7 @@ function itemRow(it: GenItem, fresh: boolean): HTMLElement {
       },
     },
     h('span', { class: 'gen-item-no num' }, String(it.no)),
-    h('span', { class: 'gen-item-kind' }, t(it.kind === 'multiple' ? 'banks.guide.exMulti' : 'banks.guide.exSingle')),
+    h('span', { class: 'gen-item-kind' }, t(it.kind === 'multi' || it.kind === 'multiple' ? 'banks.guide.exMulti' : 'banks.guide.exSingle')),
     h('span', { class: 'gen-item-stem' }, it.stem)),
     detail);
   detail.hidden = !open;

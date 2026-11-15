@@ -1025,6 +1025,6 @@ export interface AiModelList {
   connections: { id: number; name: string; provider: string; status: 'ok' | 'broken'; listed: boolean;
     error: string | null; models: { id: string; context: number | null; poolId: number | null; status: string | null }[] }[];
 }
-export interface GenItem { no: number; kind: 'single' | 'multiple'; stem: string;
+export interface GenItem { no: number; kind: 'single' | 'multi' | 'multiple'; stem: string;
   options: { text: string; correct: boolean }[]; explanation: string }
 export interface GenJobAnswer { job: GenJob; items?: GenItem[]; last?: number; gone?: number[] }
