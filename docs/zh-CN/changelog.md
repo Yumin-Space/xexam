@@ -13,6 +13,7 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 - **原生 ARM 构建**：arm64 检查和发布的 arm64 镜像，现在改在 GitHub 自己的 ARM runner 上构建和启动，不再在 x86 上用 QEMU 模拟；amd64 镜像在各自的 runner 上并行构建，再按每个标签（`latest`、`v1.5`、`sha-<commit>`）在 Docker Hub 和 ghcr.io 上合并成一个多架构镜像。
 - **Rust 缓存每次刷新**：后端和 AI 服务的检查会恢复最新的构建缓存并保存自己的，不再是每个 `Cargo.lock` 只写一次缓存。
 - **检查更早开始**：整套容器检查和 arm64 检查在版本检查之后立即开始，与单元测试同时进行（它们不需要单元测试的结果）；发布仍然要等所有检查都通过。
+- **任务重新编排**：按组件分开的测试（`frontend · test`、`backend · test`、`ai-service · test`）、按组件和架构各一个的镜像构建（`<component> · image build (x86|arm64)`，与发布任务共用一个 GitHub Actions 构建缓存），以及独立的 `Nginx · test` 和 `end-to-end · test`，它们从这个缓存构建，不再重新编译。
 - **从 v1.4 升级**：对你没有任何变化（数据库、设置、compose 都没改）。
 - **文档：v1.4 的卷复制命令改成先清空新卷。** 如果 v1.4 已经启动过一次，`xexam_backend_data` 里会有一个新的空数据库（以及它的日志文件），直接把旧数据复制过去可能会混在一起。README、deployment.md 和 migration.md 里的命令现在是 `docker run --rm -v xexam_data:/from:ro -v xexam_backend_data:/to alpine sh -c 'find /to -mindepth 1 -delete && cp -a /from/. /to/'`（先停掉 Xexam 再执行）。
 

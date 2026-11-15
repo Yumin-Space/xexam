@@ -1,6 +1,6 @@
 name: Build, test and publish
 
-# Xexam pipeline: check -> test (frontend, backend, AI service, Nginx / full-stack checks of the three images) -> build amd64 + arm64 (each on its own native runner) -> publish the three images -> create the Release.
+# Xexam pipeline: check -> component tests (frontend, backend, ai-service) + image builds (three images x x86 / arm64, each on its own native runner, started and checked) -> Nginx test + end-to-end test (from the image-build cache) -> publish the three images -> create the Release.
 #   - Push to main: everything runs, the xexam-frontend, xexam-backend and xexam-ai-service images are published, and the GitHub Release is created (or updated).
 #   - Push to dev, pull requests and other branches: check and test only, **never publish** (publish and release require refs/heads/main).
 on:
@@ -132,8 +132,8 @@ jobs:
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
   # (2) Frontend: type check, unit tests, build
-  frontend:
-    name: frontend (tsc, unit tests, build)
+  test-frontend:
+    name: frontend · test (x86)
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -153,8 +153,8 @@ jobs:
       - run: npm run build
 
   # (2) Backend: format, clippy, all tests (against the committed legacy snapshots: 172 golden responses, 49 parser fixtures, 85 id vectors), and the progress.json migration check
-  backend:
-    name: backend (fmt, clippy, test)
+  test-backend:
+    name: backend · test (x86)
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -187,8 +187,8 @@ jobs:
 
   # (2) AI service: format, clippy, all tests, and the TLS guard: its dependency tree has no OpenSSL, aws-lc or native-tls
   #     (outbound TLS is rustls + ring with the Mozilla roots compiled in, so the runtime image needs no CA bundle)
-  ai-service:
-    name: ai-service (fmt, clippy, test, TLS guard)
+  test-ai-service:
+    name: ai-service · test (x86)
     needs: check
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -225,123 +225,289 @@ jobs:
           fi
           echo "TLS guard: no aws-lc, openssl-sys or native-tls in the dependency tree"
 
-  # (2) Build the three images on amd64, run the Nginx behaviour checks (two fake upstreams: the backend and the AI service) and the
-  #     full-stack end-to-end check (compose up, import, submit, AI with a made-up provider, data survives removing the containers, docker stop)
-  # Starts right after check, at the same time as the unit tests (it does not use their results); publish still waits for all of them.
-  stack:
-    name: stack (images, nginx checks, end to end)
+  # (2) Image build: the three images are really built and really started on the native runner of each architecture (x86:
+  #     ubuntu-latest, arm64: ubuntu-24.04-arm, free for public repositories), no emulation. Build only, no push; discarded
+  #     afterwards. Starts right after check, in parallel with the tests. Every leg writes its layers to the GitHub Actions cache
+  #     under the scope "<component>-<arch>" (backend-x86, backend-arm64, ...), which the Nginx test, the end-to-end test and
+  #     the publish jobs of the same run read, so nothing is compiled twice.
+  # Split by architecture: Nginx · test and end-to-end · test wait only for the x86 builds, not for the arm64 ones.
+  image-build-x86:
+    name: ${{ matrix.component }} · image build (${{ matrix.arch }})
     needs: check
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - uses: actions/checkout@v7
-      - name: Build the frontend image and run the proxy checks
-        run: |
-          docker build -f nginx/Dockerfile -t xexam-frontend:test .
-          python3 -I tests/integration/nginx_check.py xexam-frontend:test 18080
-      - name: End to end (compose up, import, attempts, AI, persistence, docker stop)
-        run: python3 -I tests/integration/stack_check.py 18090
-
-  # (2) arm64: the three images are really built and really started on GitHub's native ARM runner (ubuntu-24.04-arm, free for
-  #    public repositories), no emulation. The Rust stage of the backend and the AI service runs on the build machine's own
-  #    architecture (arm64 here) and compiles with zig. Build only, no push; discarded afterwards.
-  # Like stack: starts right after check, in parallel with the unit tests.
-  arm64:
-    name: arm64 (images build and start natively on ARM)
-    needs: check
-    runs-on: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [frontend, backend, ai-service]
+        arch: [x86]
+        include:
+          - component: frontend
+            dockerfile: nginx/Dockerfile
+          - component: backend
+            dockerfile: backend/Dockerfile
+          - component: ai-service
+            dockerfile: ai-service/Dockerfile
+          - arch: x86
+            runner: ubuntu-latest
+            platform: linux/amd64
+            machine: x86_64        # what the images report as their architecture
+    env:
+      CI_NAME: ci-${{ matrix.component }}-${{ matrix.arch }}
+      IMAGE_TAG: xexam-${{ matrix.component }}:ci-${{ matrix.arch }}
+      VERSION: ${{ needs.check.outputs.version }}     # CODE_VERSION, which /api/info and /healthz report
+      PLATFORM: ${{ matrix.platform }}
+      MACHINE: ${{ matrix.machine }}
     steps:
       - uses: actions/checkout@v7
       - uses: docker/setup-buildx-action@v4
-      - name: Build xexam-backend (arm64, not pushed)
+      - name: Build the image (not pushed)
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: backend/Dockerfile
-          platforms: linux/arm64
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
           load: true
+          push: false
           provenance: false
-          tags: xexam-backend:arm64
-          cache-from: type=gha,scope=backend-arm64-check
-          cache-to: type=gha,scope=backend-arm64-check,mode=max
-      - name: Build xexam-frontend (arm64, not pushed)
+          tags: ${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }},mode=max
+      - name: Start the backend and check it
+        if: matrix.component == 'backend'
+        run: |
+          set -eu
+          docker volume create "$CI_NAME-data" >/dev/null
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" -v "$CI_NAME-data":/data "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 60); do
+            docker exec "$CI_NAME" /usr/local/bin/xexam-backend healthcheck >/dev/null 2>&1 && break
+            [ "$i" = 60 ] && { docker logs "$CI_NAME"; echo "backend did not become healthy"; exit 1; }
+            sleep 2
+          done
+          info=$(docker exec "$CI_NAME" wget -qO- --header 'Host: localhost' http://127.0.0.1:8765/api/info)
+          echo "backend /api/info: $info"
+          echo "$info" | grep -q '"arch": "'"$MACHINE"'"' || { echo "backend is not running as $MACHINE"; exit 1; }
+          echo "$info" | grep -q '"version": "'"$VERSION"'"' || { echo "version mismatch: /api/info should report CODE_VERSION $VERSION"; exit 1; }
+          echo "backend ($PLATFORM): builds and starts"
+      - name: Start the frontend and check it
+        if: matrix.component == 'frontend'
+        run: |
+          set -eu
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 30); do
+            docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
+            [ "$i" = 30 ] && { docker logs "$CI_NAME"; echo "frontend did not answer /healthz"; exit 1; }
+            sleep 1
+          done
+          [ "$(docker exec "$CI_NAME" uname -m)" = "$MACHINE" ] || { echo "frontend is not $MACHINE"; exit 1; }
+          docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
+          echo "frontend ($PLATFORM): builds and starts"
+      - name: Start the ai-service and check it
+        if: matrix.component == 'ai-service'
+        run: |
+          set -eu
+          # The AI service alone (no backend): its own healthcheck and /healthz do not depend on the backend or a provider.
+          # The token only lets it start without the ai_auth volume; the value is a throw-away one for this check.
+          docker volume create "$CI_NAME-data" >/dev/null
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" -e XEXAM_INTERNAL_TOKEN=ci-check-0123456789abcdefghijklmnopqrstuvwxyz \
+            -v "$CI_NAME-data":/data "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 60); do
+            docker exec "$CI_NAME" xexam-ai-service healthcheck >/dev/null 2>&1 && break
+            [ "$i" = 60 ] && { docker logs "$CI_NAME"; echo "ai-service did not become healthy"; exit 1; }
+            sleep 2
+          done
+          health=$(docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8766/healthz)
+          echo "ai-service /healthz: $health"
+          # The AI service answers compact JSON: parse it, never grep it
+          printf '%s' "$health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["arch"]==sys.argv[2] and d["version"]==sys.argv[1], d' "$VERSION" "$MACHINE" \
+            || { echo "ai-service is not running as $MACHINE with version $VERSION"; exit 1; }
+          echo "ai-service ($PLATFORM): builds and starts"
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f "$CI_NAME" >/dev/null 2>&1 || true
+          docker volume rm "$CI_NAME-data" >/dev/null 2>&1 || true
+
+  image-build-arm64:
+    name: ${{ matrix.component }} · image build (${{ matrix.arch }})
+    needs: check
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [frontend, backend, ai-service]
+        arch: [arm64]
+        include:
+          - component: frontend
+            dockerfile: nginx/Dockerfile
+          - component: backend
+            dockerfile: backend/Dockerfile
+          - component: ai-service
+            dockerfile: ai-service/Dockerfile
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            platform: linux/arm64
+            machine: aarch64
+    env:
+      CI_NAME: ci-${{ matrix.component }}-${{ matrix.arch }}
+      IMAGE_TAG: xexam-${{ matrix.component }}:ci-${{ matrix.arch }}
+      VERSION: ${{ needs.check.outputs.version }}     # CODE_VERSION, which /api/info and /healthz report
+      PLATFORM: ${{ matrix.platform }}
+      MACHINE: ${{ matrix.machine }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the image (not pushed)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE_TAG }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }},mode=max
+      - name: Start the backend and check it
+        if: matrix.component == 'backend'
+        run: |
+          set -eu
+          docker volume create "$CI_NAME-data" >/dev/null
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" -v "$CI_NAME-data":/data "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 60); do
+            docker exec "$CI_NAME" /usr/local/bin/xexam-backend healthcheck >/dev/null 2>&1 && break
+            [ "$i" = 60 ] && { docker logs "$CI_NAME"; echo "backend did not become healthy"; exit 1; }
+            sleep 2
+          done
+          info=$(docker exec "$CI_NAME" wget -qO- --header 'Host: localhost' http://127.0.0.1:8765/api/info)
+          echo "backend /api/info: $info"
+          echo "$info" | grep -q '"arch": "'"$MACHINE"'"' || { echo "backend is not running as $MACHINE"; exit 1; }
+          echo "$info" | grep -q '"version": "'"$VERSION"'"' || { echo "version mismatch: /api/info should report CODE_VERSION $VERSION"; exit 1; }
+          echo "backend ($PLATFORM): builds and starts"
+      - name: Start the frontend and check it
+        if: matrix.component == 'frontend'
+        run: |
+          set -eu
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 30); do
+            docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
+            [ "$i" = 30 ] && { docker logs "$CI_NAME"; echo "frontend did not answer /healthz"; exit 1; }
+            sleep 1
+          done
+          [ "$(docker exec "$CI_NAME" uname -m)" = "$MACHINE" ] || { echo "frontend is not $MACHINE"; exit 1; }
+          docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
+          echo "frontend ($PLATFORM): builds and starts"
+      - name: Start the ai-service and check it
+        if: matrix.component == 'ai-service'
+        run: |
+          set -eu
+          # The AI service alone (no backend): its own healthcheck and /healthz do not depend on the backend or a provider.
+          # The token only lets it start without the ai_auth volume; the value is a throw-away one for this check.
+          docker volume create "$CI_NAME-data" >/dev/null
+          docker run -d --name "$CI_NAME" --platform "$PLATFORM" -e XEXAM_INTERNAL_TOKEN=ci-check-0123456789abcdefghijklmnopqrstuvwxyz \
+            -v "$CI_NAME-data":/data "$IMAGE_TAG" >/dev/null
+          for i in $(seq 1 60); do
+            docker exec "$CI_NAME" xexam-ai-service healthcheck >/dev/null 2>&1 && break
+            [ "$i" = 60 ] && { docker logs "$CI_NAME"; echo "ai-service did not become healthy"; exit 1; }
+            sleep 2
+          done
+          health=$(docker exec "$CI_NAME" wget -qO- http://127.0.0.1:8766/healthz)
+          echo "ai-service /healthz: $health"
+          # The AI service answers compact JSON: parse it, never grep it
+          printf '%s' "$health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["arch"]==sys.argv[2] and d["version"]==sys.argv[1], d' "$VERSION" "$MACHINE" \
+            || { echo "ai-service is not running as $MACHINE with version $VERSION"; exit 1; }
+          echo "ai-service ($PLATFORM): builds and starts"
+      - name: Clean up
+        if: always()
+        run: |
+          docker rm -f "$CI_NAME" >/dev/null 2>&1 || true
+          docker volume rm "$CI_NAME-data" >/dev/null 2>&1 || true
+
+  # (2) Nginx behaviour checks (two fake upstreams: the backend and the AI service). The frontend image is built again from the
+  #     cache the x86 image build wrote (scope frontend-x86, read only), so no npm work happens here. It waits only for the x86
+  #     image builds (image-build-x86), not for the arm64 ones.
+
+  nginx-test:
+    name: Nginx · test (x86)
+    needs: [check, image-build-x86]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the frontend image from the cache
         uses: docker/build-push-action@v7
         with:
           context: .
           file: nginx/Dockerfile
-          platforms: linux/arm64
+          platforms: linux/amd64
           load: true
+          push: false
           provenance: false
-          tags: xexam-frontend:arm64
-          cache-from: type=gha,scope=frontend-arm64-check
-          cache-to: type=gha,scope=frontend-arm64-check,mode=max
-      - name: Build xexam-ai-service (arm64, not pushed)
-        uses: docker/build-push-action@v7
+          tags: xexam-frontend:test
+          cache-from: type=gha,scope=frontend-x86
+      - name: Nginx checks
+        run: python3 -I tests/integration/nginx_check.py xexam-frontend:test 18080
+
+  # (2) Full-stack end-to-end check (compose up, import, submit, AI with a made-up provider, data survives removing the containers,
+  #     docker stop). "docker compose up -d --build" builds from the same gha cache scopes as the x86 image builds (read only):
+  #     ghaction-github-runtime exposes the cache credentials to plain docker commands, the docker-container builder (the
+  #     default one setup-buildx-action creates) reads type=gha, and compose loads what it builds into the Docker daemon
+  #     (single platform), so compose up finds the images. Like nginx-test it waits only for image-build-x86.
+  end-to-end:
+    name: end-to-end · test (x86)
+    needs: [check, image-build-x86]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v7
+      - uses: crazy-max/ghaction-github-runtime@v3
+      - uses: docker/setup-buildx-action@v4
         with:
-          context: .
-          file: ai-service/Dockerfile
-          platforms: linux/arm64
-          load: true
-          provenance: false
-          tags: xexam-ai-service:arm64
-          cache-from: type=gha,scope=ai-service-arm64-check
-          cache-to: type=gha,scope=ai-service-arm64-check,mode=max
-      - name: Start the three images and check them
-        env:
-          VERSION: ${{ needs.check.outputs.version }}     # CODE_VERSION, which /api/info reports
+          driver: docker-container
+      - name: Compose file that builds from the cache
         run: |
           set -eu
-          docker volume create arm64data >/dev/null
-          docker run -d --name arm64-backend --platform linux/arm64 -v arm64data:/data xexam-backend:arm64 >/dev/null
-          for i in $(seq 1 60); do
-            docker exec arm64-backend /usr/local/bin/xexam-backend healthcheck >/dev/null 2>&1 && break
-            [ "$i" = 60 ] && { docker logs arm64-backend; echo "backend did not become healthy"; exit 1; }
-            sleep 2
-          done
-          info=$(docker exec arm64-backend wget -qO- --header 'Host: localhost' http://127.0.0.1:8765/api/info)
-          echo "backend /api/info: $info"
-          echo "$info" | grep -q '"arch": "aarch64"' || { echo "backend is not running as aarch64"; exit 1; }
-          echo "$info" | grep -q '"version": "'"$VERSION"'"' || { echo "version mismatch: /api/info should report CODE_VERSION $VERSION"; exit 1; }
-          docker run -d --name arm64-frontend --platform linux/arm64 xexam-frontend:arm64 >/dev/null
-          for i in $(seq 1 30); do
-            docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/healthz 2>/dev/null | grep -q '^ok' && break
-            [ "$i" = 30 ] && { docker logs arm64-frontend; echo "frontend did not answer /healthz"; exit 1; }
-            sleep 1
-          done
-          [ "$(docker exec arm64-frontend uname -m)" = "aarch64" ] || { echo "frontend is not aarch64"; exit 1; }
-          docker exec arm64-frontend wget -qO- http://127.0.0.1:8080/index.html | grep -qi '<div id="app"\|<title>' || { echo "frontend does not serve index.html"; exit 1; }
-          # The AI service alone (no backend): its own healthcheck and /healthz do not depend on the backend or a provider.
-          # The token only lets it start without the ai_auth volume; the value is a throw-away one for this check.
-          docker volume create arm64aidata >/dev/null
-          docker run -d --name xexam-ai-service-arm64 --platform linux/arm64 -e XEXAM_INTERNAL_TOKEN=arm64-check-0123456789abcdefghijklmnopqrstuvwxyz \
-            -v arm64aidata:/data xexam-ai-service:arm64 >/dev/null
-          for i in $(seq 1 60); do
-            docker exec xexam-ai-service-arm64 xexam-ai-service healthcheck >/dev/null 2>&1 && break
-            [ "$i" = 60 ] && { docker logs xexam-ai-service-arm64; echo "ai-service did not become healthy"; exit 1; }
-            sleep 2
-          done
-          health=$(docker exec xexam-ai-service-arm64 wget -qO- http://127.0.0.1:8766/healthz)
-          echo "ai-service /healthz: $health"
-          # The AI service answers compact JSON: parse it, never grep it
-          printf '%s' "$health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["arch"]=="aarch64" and d["version"]==sys.argv[1], d' "$VERSION" \
-            || { echo "ai-service is not running as aarch64 with version $VERSION"; exit 1; }
-          echo "arm64: the three images build and start"
-      - name: Clean up
-        if: always()
-        run: |
-          docker rm -f arm64-backend arm64-frontend xexam-ai-service-arm64 >/dev/null 2>&1 || true
-          docker volume rm arm64data arm64aidata >/dev/null 2>&1 || true
+          cat > "$RUNNER_TEMP/cache-override.yml" <<'YML'
+          services:
+            backend:
+              build:
+                cache_from: ["type=gha,scope=backend-x86"]
+            ai-service:
+              build:
+                cache_from: ["type=gha,scope=ai-service-x86"]
+            frontend:
+              build:
+                cache_from: ["type=gha,scope=frontend-x86"]
+          YML
+          # config resolves ${...} now, so XEXAM_BIND must already be the value stack_check.py uses for this port.
+          # config also bakes in fixed names (project "xexam", networks / volumes "xexam_*"); explicit names beat the
+          # "-p xexamcheckXXXXXX" project name of stack_check.py and would put the test stack on the real xexam_* networks
+          # and volumes. So the names are stripped here (compose reads JSON); the absolute build contexts are kept.
+          XEXAM_BIND=127.0.0.1:18090 docker compose -f docker/docker-compose.build.yml -f "$RUNNER_TEMP/cache-override.yml" config --format json \
+            | python3 -I -c 'import json,sys; d=json.load(sys.stdin); d.pop("name",None); [v.pop("name",None) for k in ("networks","volumes") for v in (d.get(k) or {}).values() if isinstance(v,dict)]; json.dump(d,sys.stdout,indent=1)' \
+            > "$RUNNER_TEMP/compose.merged.json"
+          # guard: no fixed project, network or volume name may remain
+          python3 -I -c 'import json,sys; d=json.load(open(sys.argv[1])); bad=[k for k in ("networks","volumes") for n,v in (d.get(k) or {}).items() if isinstance(v,dict) and "name" in v]; assert "name" not in d and not bad, "merged compose still has fixed names: %s" % bad' "$RUNNER_TEMP/compose.merged.json"
+          ! grep -q 'xexam_' "$RUNNER_TEMP/compose.merged.json" || { echo "merged compose still mentions xexam_ names"; exit 1; }
+          cat "$RUNNER_TEMP/compose.merged.json"
+      - name: End to end (compose up, import, attempts, AI, persistence, docker stop)
+        env:
+          XEXAM_STACK_COMPOSE: ${{ runner.temp }}/compose.merged.json
+        run: python3 -I tests/integration/stack_check.py 18090
 
-  # (3) Only when every check has passed are the three images (amd64 + arm64) published, to Docker Hub (public; what
+  # (3) Only when every test and image build has passed are the three images (amd64 + arm64) published, to Docker Hub (public; what
   #     docker/docker-compose.yml pulls) and to ghcr.io (same tags, a mirror). Published from main only; pull requests and other
   #     branches never publish. Docker Hub needs two repository secrets: DOCKERHUB_USERNAME and DOCKERHUB_TOKEN (an access
   #     token with Read & Write). The namespace is DOCKERHUB_USERNAME, or the repository variable DOCKERHUB_NAMESPACE if set.
-  #     Two steps: "publish" builds every image on the native runner of each architecture (amd64: ubuntu-latest, arm64:
-  #     ubuntu-24.04-arm) and pushes it by digest only (no tags); "merge" then creates the multi-arch tags of each image.
+  #     Two steps: "image publish" builds every image on the native runner of each architecture (x86: ubuntu-latest, arm64:
+  #     ubuntu-24.04-arm) and pushes it by digest only (no tags); "image tags" then creates the multi-arch tags of each image.
+  #     The build cache scope is the one of the image-build-x86 / image-build-arm64 jobs of the same run ("<component>-<arch>"), so the layers are reused.
   publish:
-    name: build ${{ matrix.image }} (${{ matrix.arch }})
-    needs: [check, frontend, backend, ai-service, stack, arm64]
+    name: ${{ matrix.component }} · image publish (${{ matrix.arch }})
+    needs: [check, test-frontend, test-backend, test-ai-service, image-build-x86, image-build-arm64, nginx-test, end-to-end]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
@@ -351,19 +517,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [xexam-backend, xexam-frontend, xexam-ai-service]
-        arch: [amd64, arm64]
+        component: [frontend, backend, ai-service]
+        arch: [x86, arm64]
         include:
-          - image: xexam-backend
-            dockerfile: backend/Dockerfile
-          - image: xexam-frontend
+          - component: frontend
+            image: xexam-frontend
             dockerfile: nginx/Dockerfile
-          - image: xexam-ai-service
+          - component: backend
+            image: xexam-backend
+            dockerfile: backend/Dockerfile
+          - component: ai-service
+            image: xexam-ai-service
             dockerfile: ai-service/Dockerfile
-          - arch: amd64
+          - arch: x86
             runner: ubuntu-latest
+            platform: linux/amd64
           - arch: arm64
             runner: ubuntu-24.04-arm
+            platform: linux/arm64
     steps:
       - uses: actions/checkout@v7
 
@@ -426,12 +597,12 @@ jobs:
         with:
           context: .
           file: ${{ matrix.dockerfile }}
-          platforms: linux/${{ matrix.arch }}
+          platforms: ${{ matrix.platform }}
           provenance: false        # no extra unknown/unknown entry, so tools such as Synology, Raspberry Pi and Portainer do not break
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,"name=${{ env.HUB_IMAGE }},${{ env.IMAGE }}",push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.image }}-publish-${{ matrix.arch }}
-          cache-to: type=gha,scope=${{ matrix.image }}-publish-${{ matrix.arch }},mode=max
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }},mode=max
 
       - name: Export the digest
         env:
@@ -450,10 +621,10 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # (3b) One job per image: the two digests (amd64, arm64) become one multi-arch image with the tags latest, vX.Y and
+  # (3b) One job per image: the two digests (x86, arm64) become one multi-arch image with the tags latest, vX.Y and
   #      sha-<commit>, on both registries; then both registries are read back once.
   merge:
-    name: tags ${{ matrix.image }} (amd64 + arm64)
+    name: ${{ matrix.component }} · image tags
     needs: [check, publish]
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
@@ -464,7 +635,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [xexam-backend, xexam-frontend, xexam-ai-service]
+        include:
+          - component: frontend
+            image: xexam-frontend
+          - component: backend
+            image: xexam-backend
+          - component: ai-service
+            image: xexam-ai-service
     steps:
       - uses: actions/checkout@v7
 

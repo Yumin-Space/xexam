@@ -210,15 +210,16 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 | ジョブ | 内容 |
 |---|---|
 | `check` | `VERSION` に `CODE_VERSION=` と `RELEASE_VERSION=` の行が**ちょうど 1 つずつ**あり、どちらも `0.7` や `0.6.5` のような形で、`RELEASE_VERSION` が `CODE_VERSION` より新しくないこと。3 つの更新履歴（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）それぞれの最新の項目 = `CODE_VERSION` で、3 つとも同じ `### vX.Y — 日付` の見出しが同じ順に並ぶこと。どの README にも更新履歴の項目がなく、それぞれが自分の言語の更新履歴へリンクしていること。各 README の冒頭のリリースバッジ = `RELEASE_VERSION`。`backend/Cargo.toml`、`ai-service/Cargo.toml`、`frontend/package.json` が `CODE_VERSION` であること。配置（ルートの README は `README.md` だけ、残り 2 つの README は `README/`、compose ファイルと `.env.example` は `docker/`）、`docker/docker-compose.yml` が 3 つのイメージを Docker Hub から pull すること、ドキュメントのチェック（9 節）。このジョブの出力 `version`（`CODE_VERSION`）を後のジョブが使います |
-| `frontend` | 型チェック、単体テスト、ビルド |
-| `backend` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック。Rust キャッシュは毎回新しいキーを使い、同じ `Cargo.lock` の最新キャッシュを読み込む |
-| `ai-service` | fmt、clippy、ai-service の 383 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと。Rust キャッシュは `backend` と同じ扱い |
-| `stack` | `check` の直後、単体テストと並行して：`xexam-frontend` イメージをビルドして 141 項目の Nginx チェックを実行。compose スタック全体（3 つのイメージ、架空の AI プロバイダー）を起動して 314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
-| `arm64` | 3 つのイメージを arm64 向けにビルドし、GitHub の ARM ランナー（`ubuntu-24.04-arm`、エミュレーションなし）上でネイティブに起動して、`/api/info` が `aarch64` と `CODE_VERSION` を返すこと、ai-service が単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返すことを確認（最大 60 分） |
-| `publish` と `merge` | `main` のみ：`publish` が 3 つのイメージをそれぞれ専用のネイティブランナー（amd64 は `ubuntu-latest`、arm64 は `ubuntu-24.04-arm`、並行）でビルドしてダイジェストでプッシュし、`merge` が両者を 1 つのマルチアーキテクチャイメージにまとめて、タグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）に付け、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
-| `release` | `main` のみ（`merge` の後）：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `docs/en/changelog.md` から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
+| `frontend · test (x86)` | 型チェック、単体テスト、ビルド |
+| `backend · test (x86)` | fmt、clippy、382 件のテスト、および `progress.json` の移行チェック。Rust キャッシュは毎回新しいキーを使い、同じ `Cargo.lock` の最新キャッシュを読み込む |
+| `ai-service · test (x86)` | fmt、clippy、ai-service の 383 件のテスト、そして TLS ガード：`cargo tree` に `aws-lc`、`openssl-sys`、`native-tls` が含まれないこと。Rust キャッシュは `backend` と同じ扱い |
+| `<component> · image build (x86\|arm64)` | 1 つのマトリクスジョブ：3 つのイメージ（frontend、backend、ai-service）を、それぞれ両方のアーキテクチャでネイティブにビルド（x86 は `ubuntu-latest`、arm64 は `ubuntu-24.04-arm`、エミュレーションなし。最大 60 分）。`check` の直後、テストと並行して実行。各ビルドは、レイヤーを GitHub Actions のキャッシュにスコープ `<component>-<arch>`（たとえば `backend-x86`）で書き込み、その後イメージを起動して確認します：バックエンドは `/api/info` で正しいアーキテクチャ（`x86_64` または `aarch64`）と `CODE_VERSION` を返し、フロントエンドは `/healthz` に応答して `index.html` を配信し、ai-service は単独でヘルスチェック（`xexam-ai-service healthcheck`）に通り、`/healthz` で同じものを返す |
+| `Nginx · test (x86)` | x86 イメージのビルドの後：`frontend-x86` のキャッシュから `xexam-frontend` イメージをもう一度ビルドし（npm の作業なし）、141 項目の Nginx チェックを実行 |
+| `end-to-end · test (x86)` | x86 イメージのビルドの後：compose スタック全体を起動（3 つのイメージは、統合した compose ファイルと `crazy-max/ghaction-github-runtime` を通じて、同じキャッシュのスコープ `backend-x86`、`frontend-x86`、`ai-service-x86` からビルドされ、再コンパイルはなし。架空の AI プロバイダー）し、314 項目のエンドツーエンドのチェックを実行（最大 45 分） |
+| `<component> · image publish (x86\|arm64)` と `<component> · image tags` | `main` のみ。すべてのテスト、イメージのビルド、`Nginx · test`、`end-to-end · test` が通った後：`image publish` が 3 つのイメージをそれぞれ専用のネイティブランナー（amd64 は `ubuntu-latest`、arm64 は `ubuntu-24.04-arm`、並行。イメージのビルドの `<component>-<arch>` キャッシュのレイヤーを再利用）でビルドしてダイジェストでプッシュし、`image tags` が両者を 1 つのマルチアーキテクチャイメージにまとめて、タグ `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で Docker Hub（`docker.io/yuminspace/`、公開。`docker/docker-compose.yml` が pull するのはこちら）と ghcr.io（非公開のミラー）に付け、両方でマニフェストとタグを検証。リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（必要に応じて変数 `DOCKERHUB_NAMESPACE`）が必要で、ない場合は何もプッシュせずに止まる |
+| `release` | `main` のみ（`image tags` の後）：GitHub Release `v<CODE_VERSION>` を作成（または更新）。リリースノートは `docs/en/changelog.md` から取る（`scripts/release-notes.py`）。`main` にすでに記録されたリリースより古いバージョンの実行では、その Release を最新（latest）にしない。最後のステップでリリースを記録する（8.1 節） |
 
-`dev` へのプッシュと `main` へのプルリクエストでは、検査のジョブ（`check` から `arm64` まで）だけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
+`dev` へのプッシュと `main` へのプルリクエストでは、検査のジョブ（`check` から `end-to-end · test (x86)` まで）だけを実行し、**公開は一切行いません**。公開されるのは `main` へのプッシュだけです。手動で起動した場合は、実行対象のブランチへのプッシュと同じ動きになります。
 
 ### 8.1 リリースの後：ボットのコミット
 

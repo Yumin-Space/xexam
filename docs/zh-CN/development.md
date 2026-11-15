@@ -212,15 +212,16 @@ python tools/phone-walk/walk.py --out <dir> --chrome <path>
 | 任务 | 做什么 |
 |---|---|
 | `check` | `VERSION` 里**正好有一行** `CODE_VERSION=` 和**一行** `RELEASE_VERSION=`，两者都形如 `0.7` 或 `0.6.5`，而且 `RELEASE_VERSION` 不比 `CODE_VERSION` 新；三份更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md`、`docs/zh-CN/changelog.md`）各自最新的条目 = `CODE_VERSION`，三份的 `### vX.Y — 日期` 标题相同、顺序相同；README 里不再有更新日志条目，每份 README 都链接到自己语言的更新日志；每份 README 顶部的发布徽章 = `RELEASE_VERSION`；`backend/Cargo.toml`、`ai-service/Cargo.toml` 和 `frontend/package.json` 写的是 `CODE_VERSION`；文件布局（根目录只有 `README.md`，另外两份 README 在 `README/` 里，compose 文件和 `.env.example` 在 `docker/` 里）、`docker/docker-compose.yml` 从 Docker Hub 拉取三个镜像，以及文档检查（第 9 节）。它输出的 `version`（`CODE_VERSION`）供后面的任务使用 |
-| `frontend` | 类型检查、单元测试、构建 |
-| `backend` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查；Rust 缓存每次用新的键，并恢复同一份 `Cargo.lock` 最新的缓存 |
-| `ai-service` | fmt、clippy、ai-service 的 383 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls`；Rust 缓存的处理与 `backend` 相同 |
-| `stack` | 在 `check` 之后立即开始，与单元测试同时进行：构建 `xexam-frontend` 镜像，跑 141 项 Nginx 检查；启动完整的 compose 栈（三个镜像、虚构的 AI 服务商），跑 217 项端到端检查（最多 45 分钟） |
-| `arm64` | 为 arm64 构建三个镜像，在 GitHub 的 ARM runner（`ubuntu-24.04-arm`，不模拟）上原生启动它们，检查 `/api/info` 报告的是 `aarch64` 和 `CODE_VERSION`，并检查单独运行的 ai-service 通过它的健康检查（`xexam-ai-service healthcheck`）、在 `/healthz` 里报告同样的内容（最多 60 分钟） |
-| `publish` 和 `merge` | 只有 `main`：`publish` 让三个镜像各自在原生 runner 上并行构建（amd64 用 `ubuntu-latest`，arm64 用 `ubuntu-24.04-arm`）并按摘要推送；`merge` 再把两者合成每个镜像一个多架构镜像，以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签发布到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
-| `release` | 只有 `main`（在 `merge` 之后）：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `docs/en/changelog.md`（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |
+| `frontend · test (x86)` | 类型检查、单元测试、构建 |
+| `backend · test (x86)` | fmt、clippy、382 个测试，以及 `progress.json` 迁移检查；Rust 缓存每次用新的键，并恢复同一份 `Cargo.lock` 最新的缓存 |
+| `ai-service · test (x86)` | fmt、clippy、ai-service 的 383 个测试，以及 TLS 检查：`cargo tree` 里不能有 `aws-lc`、`openssl-sys` 或 `native-tls`；Rust 缓存的处理与 `backend` 相同 |
+| `<component> · image build (x86\|arm64)` | 一个矩阵任务：三个镜像（frontend、backend、ai-service）各自在两种架构上原生构建（x86 用 `ubuntu-latest`，arm64 用 `ubuntu-24.04-arm`，不模拟；最多 60 分钟），在 `check` 之后立即开始，与测试同时进行。每次构建都把镜像层写进 GitHub Actions 缓存，范围是 `<component>-<arch>`（例如 `backend-x86`）；然后启动镜像并检查：后端在 `/api/info` 里报告正确的架构（`x86_64` 或 `aarch64`）和 `CODE_VERSION`，前端响应 `/healthz` 并提供 `index.html`，单独运行的 ai-service 通过它的健康检查（`xexam-ai-service healthcheck`），并在 `/healthz` 里报告同样的内容 |
+| `Nginx · test (x86)` | 在 x86 镜像构建之后：用 `frontend-x86` 的缓存再构建一次 `xexam-frontend` 镜像（不再做 npm 的工作），跑 141 项 Nginx 检查 |
+| `end-to-end · test (x86)` | 在 x86 镜像构建之后：启动完整的 compose 栈（三个镜像通过合并后的 compose 文件和 `crazy-max/ghaction-github-runtime`，用同样的缓存范围 `backend-x86`、`frontend-x86`、`ai-service-x86` 构建，不再重新编译；虚构的 AI 服务商），跑 314 项端到端检查（最多 45 分钟） |
+| `<component> · image publish (x86\|arm64)` 和 `<component> · image tags` | 只有 `main`，在所有测试、镜像构建、`Nginx · test` 和 `end-to-end · test` 都通过之后：`image publish` 让三个镜像各自在原生 runner 上并行构建（amd64 用 `ubuntu-latest`，arm64 用 `ubuntu-24.04-arm`，复用镜像构建里 `<component>-<arch>` 缓存的镜像层）并按摘要推送；`image tags` 再把两者合成每个镜像一个多架构镜像，以 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>` 标签发布到 Docker Hub（`docker.io/yuminspace/`，公开，`docker/docker-compose.yml` 拉取的就是它）和 ghcr.io（私有镜像副本），并在两边都核对清单和标签。需要仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（变量 `DOCKERHUB_NAMESPACE` 可选）；没有它们时，会在推送任何东西之前停下 |
+| `release` | 只有 `main`（在 `image tags` 之后）：建立（或更新）GitHub Release `v<CODE_VERSION>`，说明取自 `docs/en/changelog.md`（`scripts/release-notes.py`）。比 `main` 上已经记录的发布更旧的版本的运行，不会把它的 Release 标成最新版。它的最后一步记录这次发布（第 8.1 节） |
 
-推送到 `dev` 和向 `main` 提拉取请求只跑检查任务（`check` 到 `arm64`），**从不发布**；只有推送到 `main` 才会发布。手动启动的运行，和推送到它所在的分支效果一样。
+推送到 `dev` 和向 `main` 提拉取请求只跑检查任务（`check` 到 `end-to-end · test (x86)`），**从不发布**；只有推送到 `main` 才会发布。手动启动的运行，和推送到它所在的分支效果一样。
 
 ### 8.1 发布之后：机器人的提交
 
