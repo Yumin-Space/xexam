@@ -325,7 +325,7 @@ async fn attempt(
     }];
     // the test keeps its v0.9.1 body: no token field for OpenAI-compatible services, the stored value for Anthropic
     let token = match cand.format {
-        Format::OpenAi => provider::TokenLimit::omit(),
+        Format::OpenAi | Format::Responses => provider::TokenLimit::omit(),
         Format::Anthropic => provider::TokenLimit::max_tokens(max_tokens),
     };
     let body = provider::chat_body(
@@ -407,6 +407,7 @@ async fn model_call(
         );
         let again = match &last.0 {
             Err(e) if e.code == UpCode::BadRequest && n + 1 < provider::TEST_ATTEMPTS => {
+                // Responses has no `stream_options`: usage always arrives in the terminal event
                 if cand.format == Format::OpenAi && usage_option {
                     usage_option = false;
                     true
@@ -851,7 +852,8 @@ pub async fn save(ctx: Ctx) -> Answer {
         && final_api.is_some()
         && matches!(
             (gateway_auth, format),
-            (GatewayAuth::Bearer, Format::OpenAi) | (GatewayAuth::XApiKey, Format::Anthropic)
+            (GatewayAuth::Bearer, Format::OpenAi | Format::Responses)
+                | (GatewayAuth::XApiKey, Format::Anthropic)
         )
     {
         return Err(ApiError::header_clash());

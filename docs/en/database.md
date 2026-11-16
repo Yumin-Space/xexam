@@ -449,6 +449,7 @@ erDiagram
         TEXT provider "openai · anthropic · gateway"
         TEXT base_url "default https://api.openai.com/v1"
         TEXT format "openai · anthropic (gateway only)"
+        INTEGER responses "1 = OpenAI Responses (format stays openai)"
         TEXT gateway_auth "bearer · x-api-key · cf-aig-authorization"
         TEXT model "'' = none"
         INTEGER manual_model "1 = typed by hand"
@@ -616,7 +617,7 @@ No file content is stored anywhere: an import file lives in memory while it is p
 
 The AI database moves from schema 6 to **schema 7** once (one transaction, one copy `backups/xexam-ai-schema6-<date-time>.db`), on the first start of the v1.3 ai-service.
 
-- **`connections`** (new): `id`, `name` (unique, 1 to 40 characters), `provider` (`openai`, `anthropic` or `gateway`), `base_url`, `format`, `gateway_auth`, `status` (`ok` or `broken`), `error_code`, `lists_models`, `tested_at`, `rev` (+1 on every save; the cache key and the lock), `sort`, and the creation and update facts. Up to 8 rows.
+- **`connections`** (new): `id`, `name` (unique, 1 to 40 characters), `provider` (`openai`, `anthropic` or `gateway`), `base_url`, `format`, `responses` (v1.8), `gateway_auth`, `status` (`ok` or `broken`), `error_code`, `lists_models`, `tested_at`, `rev` (+1 on every save; the cache key and the lock), `sort`, and the creation and update facts. Up to 8 rows.
 - **`connection_secrets`** (new): the encrypted `api_key` and `gateway_key` of a connection (key id, 24-byte nonce, ciphertext, a hint of the last characters, and `aad_ver` 2, which binds the ciphertext to the connection; migrated rows keep 1 until their next rotation). The old `secrets` table stays, unused.
 - **`models`** (new): the pool: one row per tested (connection, model), with `status`, `error_code`, `context`, `latency_ms`, `tested_at`, `manual`, and the call settings. **`model_slots`** (new): six rows (`default`, `chat`, `study`, `summary`, `generate`, `import`), each pointing to a pool model or to nothing (an empty feature slot uses the default).
 - **`study_shared`** (new): the shared hints and analyses, **without a user id**: `question_id`, `content_hash`, `kind` (`hint` or `explain`), `lang`, `content`, `model`, `connection`, token counts, `gen` (1 + replacements), `hits`, and times. Unique on (`question_id`, `content_hash`, `kind`, `lang`); at most 50 000 rows, unused ones removed after `study_share_days`.
@@ -640,6 +641,10 @@ A new file and an upgraded file end with the same tables. A v1.3 ai-service refu
 ### 8.2d Thinking strength (v1.6, no schema change)
 
 `model_slots` gets one nullable column, `effort TEXT`: the thinking strength of the slot as `"<family>:<level>"` (for example `anthropic:high`, `google:MEDIUM`, `responses:none`; family `anthropic`, `openai`, `google`, `responses` or `gemma`), or NULL for **Default** (nothing is sent). The column is added at start when it is missing (`ALTER TABLE ... ADD COLUMN`); **the AI schema stays 8, so there is no backup copy and no new migration step**, and a v1.5 ai-service opens the file as it is (it never reads the column). A value that does not parse is read as NULL. The page sets it with `POST /api/ai/admin/models/effort` (section 5.10 of [api.md](api.md)). The refusal memory of the parameter (and of structured output) is in memory only.
+
+### 8.2e OpenAI Responses format (v1.8, no schema change)
+
+`connections` gets one column, `responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))`: 1 marks a gateway connection that uses the OpenAI Responses API. Its `format` stays `openai`, because the `CHECK` on `format` allows only `openai` and `anthropic` and the table is not rebuilt. The column is added at start when it is missing (`ALTER TABLE ... ADD COLUMN`, the same way as `model_slots.effort`); **the AI schema stays 8, so there is no backup copy and no new migration step**. New and upgraded files end with the same tables. Saving a Responses connection writes `format = 'openai', responses = 1`, any other format writes `responses = 0`, and `format = 'openai' AND responses = 1` is read as Responses. A v1.7 ai-service opens the file as it is and never reads the column, so a rollback needs no restore, but a Responses connection then reads as OpenAI chat completions.
 
 ### 8.3 What the service does with it
 

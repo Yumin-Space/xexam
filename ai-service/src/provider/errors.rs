@@ -74,12 +74,14 @@ pub fn from_type(s: &str) -> Option<UpCode> {
         "authentication_error" | "permission_error" | "invalid_api_key" => UpCode::Auth,
         "billing_error" | "insufficient_quota" | "credit_balance_exhausted" => UpCode::Quota,
         "not_found_error" | "model_not_found" => UpCode::NotFound,
-        "rate_limit_error" => UpCode::RateLimit,
+        "rate_limit_error" | "rate_limit_exceeded" => UpCode::RateLimit,
         "overloaded_error" | "server_is_overloaded" | "service_unavailable_error" => {
             UpCode::Overloaded
         }
-        "api_error" => UpCode::Server,
-        "invalid_request_error" => UpCode::BadRequest,
+        "api_error" | "server_error" => UpCode::Server,
+        "invalid_request_error" | "invalid_prompt" | "invalid_image" | "invalid_base64_image" => {
+            UpCode::BadRequest
+        }
         _ => return None,
     })
 }

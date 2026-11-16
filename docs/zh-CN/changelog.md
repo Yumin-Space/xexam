@@ -6,6 +6,15 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.8 — 2026-11-16
+
+**发往 AI 服务商的请求不再带有写着 Xexam 的 User-Agent，网关连接现在可以使用 OpenAI Responses API。升级：拉取镜像即可；compose 多一个可选变量（`XEXAM_AI_USER_AGENT_NAME`）；AI 数据库启动时多一列，不需要备份副本，设置也不变。**
+
+- **不再向 AI 服务商发送 User-Agent**：ai-service 发往 AI 服务商或网关的所有请求（对话、提示、解释、总结、生成、导入、模型列表和连接检查）都不再带 `User-Agent` 请求头。以前发送的是 `xexam-ai-service/<版本>`，网关以及它后面的服务都能看到应用名和版本。发给 OpenAI 兼容服务商的结构化输出 schema 名称也改成了中性的 `answer`（原来是 `xexam_answer`）。栈内 ai-service 与后端之间的请求仍然是 `xexam-ai-service/<版本>`，外部 IP 所在地查询也一样。
+- **新的可选变量 `XEXAM_AI_USER_AGENT_NAME`**：不设或留空（默认）时保持上面的行为，完全不发 `User-Agent`。设置后，它的值会原样作为发往 AI 服务商和网关的每个请求的 `User-Agent`，例如让你自己的网关认出来的名字。可打印 ASCII，最多 256 个字符；无效的值会被忽略，并在日志里记一条警告（不发请求头）。栈内到后端的请求和 IP 所在地查询不受影响。
+- **网关的新连接格式“OpenAI Responses”**：Cloudflare AI Gateway 连接现在可以使用 OpenAI Responses API（**API 格式**）。对话发到 `POST {address}/responses`，模型列表是 `GET {address}/models`，服务商密钥和 OpenAI 格式一样放在 `Authorization: Bearer` 里（所以网关密钥和服务商密钥同样会冲突：请选 `cf-aig-authorization`，或者删除服务商密钥）。它只能手动选择：这个格式从不按地址自动填写，OpenAI 兼容这个服务商类型仍然是 chat completions。结构化输出以 `text.format` 发送；思考强度的 **Responses API** 系列原生发送 `reasoning.effort`；回答上限是 `max_output_tokens`；不发缓存标记（OpenAI 自动缓存），缓存命中的 token 从 `input_tokens_details` 读取。
+  - **数据库**：AI 数据库启动时多一列 `connections.responses`。schema 不变，也没有备份副本。回退到 v1.7 不需要恢复，但 Responses 连接之后会被读成 OpenAI chat completions。
+
 ### v1.7 — 2026-11-16
 
 **一道题坏了，不再让一次 AI 出题或导入白做；思考强度的级别从模型自己的默认值开始。升级：拉取镜像即可（数据库、设置、compose 都没有变化）。**

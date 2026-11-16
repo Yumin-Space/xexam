@@ -1012,8 +1012,10 @@ fn new_and_repaired_files_have_the_same_sqlite_master() {
     let pb = b.path().join(DB_FILE);
     {
         let c = rusqlite::Connection::open(&pb).expect("open");
-        c.execute_batch("ALTER TABLE model_slots DROP COLUMN effort;")
-            .expect("drop");
+        c.execute_batch(
+            "ALTER TABLE model_slots DROP COLUMN effort; ALTER TABLE connections DROP COLUMN responses;",
+        )
+        .expect("drop");
     }
     drop(Store::open(b.path(), JournalMode::Delete).expect("repair"));
     assert_eq!(master(&a.path().join(DB_FILE)), master(&pb));

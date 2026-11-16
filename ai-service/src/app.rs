@@ -410,6 +410,13 @@ impl App {
                 },
                 "the AI provider refused max_tokens; using max_completion_tokens".to_string(),
             ),
+            (crate::settings::Format::Responses, TokenField::Omit) => (
+                TokenMemo {
+                    field: TokenField::Omit,
+                    cap: None,
+                },
+                "the AI provider refused max_output_tokens; sending no token limit".to_string(),
+            ),
             (_, TokenField::Omit) => (
                 TokenMemo {
                     field: TokenField::Omit,
@@ -417,7 +424,7 @@ impl App {
                 },
                 "the AI provider refused max_completion_tokens; sending no token limit".to_string(),
             ),
-            (_, TokenField::MaxTokens) => return,
+            (_, TokenField::MaxTokens | TokenField::MaxOutputTokens) => return,
         };
         let mut m = self.token_memo.lock().unwrap_or_else(|e| e.into_inner());
         if m.get(key) != Some(&memo) {
@@ -515,7 +522,13 @@ impl App {
         let limits = store
             .read(tables::load_limits)
             .map_err(|e| format!("cannot read the AI limits: {e}"))?;
-        let client = crate::provider::provider_client(&cfg.version, &cfg.timeouts)?;
+        if cfg.ai_user_agent_invalid {
+            tracing::warn!(
+                "XEXAM_AI_USER_AGENT_NAME is not printable ASCII of at most {} characters; no User-Agent is sent to AI providers",
+                crate::config::MAX_USER_AGENT
+            );
+        }
+        let client = crate::provider::provider_client(cfg.ai_user_agent.as_deref(), &cfg.timeouts)?;
         let geo = crate::geo::GeoState::new(&cfg.version, &cfg.timeouts)?;
         geo.set_config(
             store

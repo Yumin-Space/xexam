@@ -124,6 +124,10 @@ services:
       # XEXAM_AI_SQLITE_JOURNAL:  (WAL)
       # Or: XEXAM_AI_SQLITE_JOURNAL:  delete (as XEXAM_SQLITE_JOURNAL)
       XEXAM_AI_SQLITE_JOURNAL:
+      # Not set = the default, no User-Agent header on requests to AI providers and gateways:
+      # XEXAM_AI_USER_AGENT_NAME:  (none)
+      # Or: XEXAM_AI_USER_AGENT_NAME:  MyGateway-Client/1.0 (any name your gateway should see; printable ASCII, at most 256 characters)
+      XEXAM_AI_USER_AGENT_NAME:
     volumes:
       - ai_data:/data
       # ai_auth: internal.token, the key backend and ai-service use to authenticate each other.

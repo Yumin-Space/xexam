@@ -6,6 +6,15 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.8 — 2026-11-16
+
+**AI プロバイダーへのリクエストに、Xexam を名乗る User-Agent が付かなくなり、Gateway の接続で OpenAI Responses API を使えるようになりました。アップグレード：イメージを pull します。compose の任意の変数が 1 つ増えます（`XEXAM_AI_USER_AGENT_NAME`）。AI データベースには起動時に列が 1 つ加わりますが、バックアップのコピーも設定の変更も不要です。**
+
+- **AI プロバイダーへ User-Agent を送りません**：ai-service が AI プロバイダーやゲートウェイに送るすべてのリクエスト（チャット、ヒント、解説、まとめ、問題作成、インポート、モデル一覧、接続確認）は、`User-Agent` ヘッダーなしで送られます。これまでは `xexam-ai-service/<バージョン>` を送っていたため、ゲートウェイとその先のサービスからアプリ名とバージョンが見えていました。OpenAI 互換のプロバイダーに送る構造化出力のスキーマ名も、中立的な `answer`（以前は `xexam_answer`）になりました。スタック内の ai-service とバックエンドの間のリクエストは、引き続き `xexam-ai-service/<バージョン>` を送り、外部の IP 所在地照会も同じです。
+- **任意の新しい変数 `XEXAM_AI_USER_AGENT_NAME`**：未設定または空（既定）なら上の動作のまま、`User-Agent` は一切付きません。設定すると、その値がそのまま、AI プロバイダーやゲートウェイへのすべてのリクエストの `User-Agent` として送られます。たとえば自分のゲートウェイで見分けるための名前です。印字可能な ASCII で最大 256 文字。無効な値はログに警告を 1 回出して無視されます（ヘッダーは送りません）。スタック内のバックエンドへのリクエストと IP 所在地照会は変わりません。
+- **Gateway の新しい接続形式「OpenAI Responses」**：Cloudflare AI Gateway の接続で、OpenAI Responses API を使えるようになりました（**API 形式**）。チャットは `POST {address}/responses` へ、モデル一覧は `GET {address}/models` で、プロバイダーのキーは OpenAI 形式と同じく `Authorization: Bearer` で送ります（そのため Gateway のキーとプロバイダーのキーも同じように衝突します。`cf-aig-authorization` を選ぶか、プロバイダーのキーを削除してください）。選べるのは手動のみで、アドレスから自動で入ることはなく、OpenAI 互換のプロバイダーの種類は引き続き chat completions です。構造化出力は `text.format` で送り、思考の強さの **Responses API** 系統は `reasoning.effort` をそのまま送り、回答の上限は `max_output_tokens` です。キャッシュのマーカーは送らず（OpenAI は自動でキャッシュします）、キャッシュされたトークンは `input_tokens_details` から読みます。
+  - **データベース**：AI データベースに列が 1 つ、`connections.responses` が起動時に加わります。スキーマは変わらず、バックアップのコピーもありません。v1.7 に戻すときも復元は不要ですが、その場合 Responses の接続は OpenAI の chat completions として読まれます。
+
 ### v1.7 — 2026-11-16
 
 **壊れた問題が 1 つあっても、AI 問題作成と AI インポートの 1 回分が丸ごと無駄になりません。思考の強さのレベルは、モデル自身の既定値から始まります。アップグレード：イメージを pull するだけです（データベース、設定、compose の変更はありません）。**

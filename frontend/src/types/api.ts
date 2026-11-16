@@ -782,7 +782,7 @@ export interface AiMemoriesAnswer {
 }
 
 export type AiProvider = 'openai' | 'anthropic' | 'gateway';
-export type AiFormat = 'openai' | 'anthropic';
+export type AiFormat = 'openai' | 'anthropic' | 'responses';
 export type AiGatewayAuth = 'bearer' | 'x-api-key' | 'cf-aig-authorization';
 /** The two key slots of the AI settings */
 export type AiKeySlot = 'apiKey' | 'gatewayKey';
@@ -987,7 +987,7 @@ export type AiState = 'setup' | 'off' | 'on' | 'paused';
 export interface AiKeyState { set: boolean; hint: string; unreadable: boolean }
 export interface AiConnection {
   id: number; rev: number; name: string; provider: 'openai' | 'anthropic' | 'gateway'; baseUrl: string; host: string;
-  format: 'openai' | 'anthropic'; gatewayAuth: 'bearer' | 'x-api-key' | 'cf-aig-authorization';
+  format: AiFormat; gatewayAuth: 'bearer' | 'x-api-key' | 'cf-aig-authorization';
   keys: { apiKey: AiKeyState; gatewayKey: AiKeyState };
   status: 'ok' | 'broken'; errorCode: string | null; testedAt: number | null; listsModels: boolean;
   insecureHttp: boolean; usedBy: AiSlot[];

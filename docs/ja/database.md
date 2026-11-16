@@ -449,6 +449,7 @@ erDiagram
         TEXT provider "openai · anthropic · gateway"
         TEXT base_url "既定 https://api.openai.com/v1"
         TEXT format "openai · anthropic（Gateway のみ）"
+        INTEGER responses "1 = OpenAI Responses（format は openai のまま）"
         TEXT gateway_auth "bearer · x-api-key · cf-aig-authorization"
         TEXT model "'' = なし"
         INTEGER manual_model "1 = 手入力"
@@ -616,7 +617,7 @@ AI データベースは、新しい ai-service の最初の起動時に、ス�
 
 AI データベースはスキーマ 6 から**スキーマ 7** へ、v1.3 の ai-service の最初の起動時に一度だけ移行します（1 つのトランザクション、コピーは `backups/xexam-ai-schema6-<日時>.db` の 1 つ）。
 
-- **`connections`**（新規）：`id`、`name`（一意、1〜40 文字）、`provider`（`openai`、`anthropic`、`gateway`）、`base_url`、`format`、`gateway_auth`、`status`（`ok` か `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（保存のたびに +1。キャッシュのキーでありロックでもある）、`sort`、作成と更新の情報。最大 8 行。
+- **`connections`**（新規）：`id`、`name`（一意、1〜40 文字）、`provider`（`openai`、`anthropic`、`gateway`）、`base_url`、`format`、`responses`（v1.8）、`gateway_auth`、`status`（`ok` か `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（保存のたびに +1。キャッシュのキーでありロックでもある）、`sort`、作成と更新の情報。最大 8 行。
 - **`connection_secrets`**（新規）：接続の暗号化された `api_key` と `gateway_key`（キー id、24 バイトの nonce、暗号文、末尾数文字のヒント、`aad_ver`。2 は暗号文を接続に結び付けます。移行された行は次の更新まで 1 のままです）。古い `secrets` テーブルは使われないまま残ります。
 - **`models`**（新規）：プール。テスト済みの（接続、モデル）ごとに 1 行で、`status`、`error_code`、`context`、`latency_ms`、`tested_at`、`manual`、呼び出しの設定を持ちます。**`model_slots`**（新規）：6 行（`default`、`chat`、`study`、`summary`、`generate`、`import`）。それぞれプールのモデルか空を指します（空の機能スロットは既定を使います）。
 - **`study_shared`**（新規）：共有されるヒントと解説。**ユーザー id なし**：`question_id`、`content_hash`、`kind`（`hint` か `explain`）、`lang`、`content`、`model`、`connection`、Token 数、`gen`（1 + 置き換え回数）、`hits`、時刻。（`question_id`、`content_hash`、`kind`、`lang`）で一意。最大 5 万行で、使われないものは `study_share_days` の後に削除されます。
@@ -644,6 +645,10 @@ AI データベースのスキーマ番号は変わりません。v1.6 の ai-se
 - **`model_slots.effort`**（TEXT。NULL 可）：機能（スロット）ごとの思考の強さ。`<系統>:<レベル>` の形の文字列で（例：`anthropic:high`、`google:MEDIUM`、`responses:none`。系統は `anthropic`、`openai`、`google`、`responses`、`gemma`）、NULL = 既定（何も送らない）です。読めない値は NULL として扱われます。設定を変えても、スロットのモデル（`model_id`）には触れません。管理者用のルート `POST /api/ai/admin/models/effort` が書き込み、`ai.settings.effort` がシステムログに記録されます（[api.md](api.md) の 5.2 節）。
 
 接続ごとの「このパラメーターは非対応」の記憶と、構造化出力が拒否されたことの記憶は、メモリ上だけにあり、ai-service を再起動すると消えます。
+
+### 8.2e OpenAI Responses 形式（v1.8。スキーマは変わりません）
+
+`connections` に列が 1 つ加わります：`responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))`。1 は OpenAI Responses API を使う Gateway の接続を表します。`format` は `openai` のままです。`format` の `CHECK` は `openai` と `anthropic` しか許さず、テーブルは作り直さないからです。列は、足りないときに起動時に追加します（`ALTER TABLE ... ADD COLUMN`。`model_slots.effort` と同じ方法）。**AI のスキーマは 8 のままなので、バックアップのコピーも新しい移行の手順もありません**。新しいファイルとアップグレードしたファイルは、同じテーブルで終わります。Responses の接続を保存すると `format = 'openai', responses = 1` が書かれ、ほかの形式では `responses = 0` が書かれます。`format = 'openai' AND responses = 1` は Responses として読まれます。v1.7 の ai-service はファイルをそのまま開き、この列を読まないので、戻すときに復元は不要ですが、その場合 Responses の接続は OpenAI の chat completions として読まれます。
 
 ### 8.3 サービスがこれをどう扱うか
 

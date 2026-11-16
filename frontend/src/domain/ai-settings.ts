@@ -12,7 +12,7 @@ import type {
 } from '../types/api.ts';
 
 export const PROVIDERS: readonly AiProvider[] = ['openai', 'anthropic', 'gateway'];
-export const FORMATS: readonly AiFormat[] = ['openai', 'anthropic'];
+export const FORMATS: readonly AiFormat[] = ['openai', 'anthropic', 'responses'];
 export const GATEWAY_AUTHS: readonly AiGatewayAuth[] = ['bearer', 'x-api-key', 'cf-aig-authorization'];
 export const KEY_SLOTS: readonly AiKeySlot[] = ['apiKey', 'gatewayKey'];
 /** The example address of a Cloudflare AI Gateway (a placeholder only; never a real address) */
@@ -56,7 +56,7 @@ export function urlAfterSwitch(url: string, from: AiProvider, to: AiProvider, de
   return url;
 }
 
-/** The API format a gateway address suggests: ".../anthropic" is Anthropic, anything else OpenAI */
+/** The API format a gateway address suggests: ".../anthropic" is Anthropic, anything else OpenAI (Responses is only ever picked by hand) */
 export function inferFormat(url: string): AiFormat {
   let path = normalizeUrl(url);
   try {
@@ -83,12 +83,12 @@ export function originOf(url: string): string | null {
 }
 
 /**
- * A gateway's key and the provider key would go in the same header: the bearer scheme with the OpenAI format, or x-api-key
+ * A gateway's key and the provider key would go in the same header: the bearer scheme with the OpenAI or Responses format, or x-api-key
  * with the Anthropic format, while a provider key is set (typed or saved). Only cf-aig-authorization leaves both free.
  */
 export function headerClash(form: Pick<ConnForm, 'provider' | 'format' | 'gatewayAuth'>, providerKeySet: boolean): boolean {
   if (form.provider !== 'gateway' || !providerKeySet) return false;
-  return (form.gatewayAuth === 'bearer' && form.format === 'openai') || (form.gatewayAuth === 'x-api-key' && form.format === 'anthropic');
+  return (form.gatewayAuth === 'bearer' && (form.format === 'openai' || form.format === 'responses')) || (form.gatewayAuth === 'x-api-key' && form.format === 'anthropic');
 }
 
 /**

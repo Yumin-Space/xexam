@@ -106,6 +106,10 @@ pub struct Config {
     pub log_filter: Option<String>,
     /// `XEXAM_AI_SQLITE_JOURNAL`
     pub journal: JournalMode,
+    /// `XEXAM_AI_USER_AGENT_NAME` (v1.8; empty or unset = no `User-Agent` header towards AI providers)
+    pub ai_user_agent: Option<String>,
+    /// `XEXAM_AI_USER_AGENT_NAME` was set but not usable (logged once at start; no header is sent)
+    pub ai_user_agent_invalid: bool,
     /// `XEXAM_VERSION`, else `CODE_VERSION` in `XEXAM_VERSION_FILE`, else the crate version
     pub version: String,
     /// Time limits (not configurable by the environment)
@@ -128,6 +132,7 @@ impl fmt::Debug for Config {
                 &self.secret_key.as_ref().map(|_| "<redacted>"),
             )
             .field("journal", &self.journal)
+            .field("ai_user_agent", &self.ai_user_agent)
             .field("version", &self.version)
             .finish_non_exhaustive()
     }
@@ -148,6 +153,7 @@ Environment variables:
   XEXAM_AI_SECRET_KEY      AI encryption key: 32 bytes as 64 hex digits or base64 (default: the key file secret.key)
   XEXAM_AI_LOG             log filter (default info)
   XEXAM_AI_SQLITE_JOURNAL  delete = rollback journal instead of WAL
+  XEXAM_AI_USER_AGENT_NAME User-Agent sent to AI providers (default: none; printable ASCII, at most 256 characters)
   XEXAM_VERSION            version reported by /healthz
   XEXAM_VERSION_FILE       file with CODE_VERSION=... (the image sets /VERSION)
   TZ                       time zone for the per-day usage statistics (for example TZ=UTC)";
@@ -190,6 +196,23 @@ fn non_empty(v: Option<String>) -> Option<String> {
     v.filter(|s| !s.trim().is_empty())
 }
 
+/// The longest `XEXAM_AI_USER_AGENT_NAME` accepted.
+pub const MAX_USER_AGENT: usize = 256;
+
+/// `XEXAM_AI_USER_AGENT_NAME`: `(None, false)` when unset or blank, `(Some(trimmed), false)` for printable ASCII
+/// (space to `~`) of at most [`MAX_USER_AGENT`] characters, `(None, true)` otherwise (then no header is sent).
+pub fn user_agent_value(v: Option<String>) -> (Option<String>, bool) {
+    let Some(v) = non_empty(v) else {
+        return (None, false);
+    };
+    let v = v.trim();
+    if v.len() <= MAX_USER_AGENT && v.chars().all(|c| (' '..='~').contains(&c)) {
+        (Some(v.to_string()), false)
+    } else {
+        (None, true)
+    }
+}
+
 impl Config {
     /// Reads the real process environment.
     pub fn from_env() -> Config {
@@ -208,6 +231,8 @@ impl Config {
             .map(|v| v.trim().to_string())
             .or_else(from_file)
             .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+        let (ai_user_agent, ai_user_agent_invalid) =
+            user_agent_value(get("XEXAM_AI_USER_AGENT_NAME"));
         Config {
             data_dir: PathBuf::from(
                 non_empty(get("XEXAM_AI_DATA")).unwrap_or_else(|| "data-ai".to_string()),
@@ -226,6 +251,8 @@ impl Config {
             secret_key: non_empty(get("XEXAM_AI_SECRET_KEY")).map(Zeroizing::new),
             log_filter: get("XEXAM_AI_LOG"),
             journal: JournalMode::from_env_value(get("XEXAM_AI_SQLITE_JOURNAL").as_deref()),
+            ai_user_agent,
+            ai_user_agent_invalid,
             version,
             timeouts: Timeouts::default(),
         }
@@ -265,6 +292,36 @@ mod tests {
         assert!(c.secret_key.is_none());
         assert_eq!(c.journal, JournalMode::Wal);
         assert_eq!(c.version, env!("CARGO_PKG_VERSION"));
+        assert!(c.ai_user_agent.is_none());
+        assert!(!c.ai_user_agent_invalid);
+    }
+
+    #[test]
+    fn the_ai_user_agent_is_optional_and_checked() {
+        let c = cfg(&[("XEXAM_AI_USER_AGENT_NAME", "  ")]);
+        assert!(c.ai_user_agent.is_none() && !c.ai_user_agent_invalid);
+        let c = cfg(&[(
+            "XEXAM_AI_USER_AGENT_NAME",
+            " MyGateway-Client/2.0 (made up) ",
+        )]);
+        assert_eq!(
+            c.ai_user_agent.as_deref(),
+            Some("MyGateway-Client/2.0 (made up)")
+        );
+        assert!(!c.ai_user_agent_invalid);
+        for bad in ["line\nbreak", "tab\there", "non-ascii \u{00e9}"] {
+            let c = cfg(&[("XEXAM_AI_USER_AGENT_NAME", bad)]);
+            assert!(
+                c.ai_user_agent.is_none() && c.ai_user_agent_invalid,
+                "{bad:?}"
+            );
+        }
+        let long = "a".repeat(MAX_USER_AGENT + 1);
+        let c = cfg(&[("XEXAM_AI_USER_AGENT_NAME", long.as_str())]);
+        assert!(c.ai_user_agent.is_none() && c.ai_user_agent_invalid);
+        let max = "a".repeat(MAX_USER_AGENT);
+        let c = cfg(&[("XEXAM_AI_USER_AGENT_NAME", max.as_str())]);
+        assert_eq!(c.ai_user_agent.as_deref(), Some(max.as_str()));
     }
 
     #[test]

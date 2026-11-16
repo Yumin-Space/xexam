@@ -1021,7 +1021,7 @@ paths:
         The history is sent in full, whatever mode each message was written in, but old messages are shortened: the newest 4 in
         full, older answers to 800 characters (then `…(shortened)`), older questions to 2000 characters (then `…`); stored
         messages never change. Prompt caching: in the Anthropic format the system block and the last history message carry a
-        `cache_control` breakpoint (`ephemeral`); in the OpenAI format the provider's own automatic caching applies. What the
+        `cache_control` breakpoint (`ephemeral`); in the OpenAI and OpenAI Responses formats the provider's own automatic caching applies (no markers are sent). What the
         provider served from its cache is stored and reported as `tokensCached` in /api/ai/admin/usage.
       requestBody:
         required: true
@@ -2604,7 +2604,7 @@ paths:
                 name: { type: string, minLength: 1, maxLength: 40 }
                 provider: { type: string, enum: [openai, anthropic, gateway] }
                 baseUrl: { type: string }
-                format: { type: string, enum: [openai, anthropic] }
+                format: { type: string, enum: [openai, anthropic, responses], description: "responses = OpenAI Responses API (v1.8; gateway connections only, picked by hand, never inferred from the address; stored as format openai plus responses=1)" }
                 gatewayAuth: { type: string, enum: [bearer, x-api-key, cf-aig-authorization] }
                 apiKey: { type: string, nullable: true, description: "absent = keep, null = remove, string = set" }
                 gatewayKey: { type: string, nullable: true }
@@ -3782,7 +3782,7 @@ components:
       properties:
         provider: { type: string, enum: [openai, anthropic, gateway] }
         baseUrl: { type: string, example: "https://api.openai.com/v1" }
-        format: { type: string, enum: [openai, anthropic], description: "The wire format in effect (the provider's own, or the gateway's choice)" }
+        format: { type: string, enum: [openai, anthropic, responses], description: "The wire format in effect (the provider's own, or the gateway's choice; responses = OpenAI Responses API, v1.8)" }
         gatewayAuth: { type: string, enum: [bearer, x-api-key, cf-aig-authorization] }
         model: { type: string, description: "\"\" = none" }
         manualModel: { type: boolean, description: "Typed by hand (not from the list)" }
@@ -3811,7 +3811,7 @@ components:
       properties:
         provider: { type: string, enum: [openai, anthropic, gateway] }
         baseUrl: { type: string, maxLength: 300, description: "Absolute http(s) URL without user, query or #; a trailing / is removed; for the Anthropic format also one trailing /v1" }
-        format: { type: string, enum: [openai, anthropic] }
+        format: { type: string, enum: [openai, anthropic, responses], description: "responses = OpenAI Responses API (v1.8; gateway connections only, picked by hand, never inferred from the address; stored as format openai plus responses=1)" }
         gatewayAuth: { type: string, enum: [bearer, x-api-key, cf-aig-authorization] }
         apiKey: { type: string, nullable: true, description: "A string replaces the key (1–400 printable ASCII, no spaces); null removes it" }
         gatewayKey: { type: string, nullable: true, description: As apiKey }

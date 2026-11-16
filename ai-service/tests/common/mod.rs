@@ -937,7 +937,100 @@ async fn stub_handler(State(sh): State<StubShared>, req: Request) -> Response {
     if anthropic {
         return anthropic_stream(sh, &model, &body);
     }
+    if path.ends_with("/responses") {
+        return responses_stream(sh, &model, &body);
+    }
     openai_stream(sh, &model, &body)
+}
+
+/// One Responses API event (`event:` line plus a JSON `data:` line carrying the same `type`).
+fn responses_event(data: Value) -> Bytes {
+    Bytes::from(format!(
+        "event: {}
+data: {data}
+
+",
+        data["type"].as_str().unwrap_or("")
+    ))
+}
+
+/// The last user item of a Responses body (`input` items with plain string content).
+fn responses_user(body: &Value) -> String {
+    body["input"]
+        .as_array()
+        .and_then(|m| m.iter().rev().find(|x| x["role"] == "user"))
+        .and_then(|m| m["content"].as_str())
+        .unwrap_or("")
+        .to_string()
+}
+
+/// The Responses API stub: `instructions` + `input` in, `response.output_text.delta` events out, usage in the terminal
+/// event. Models: `demo-cached` (8 cached tokens), `demo-length` (incomplete: max_output_tokens), `demo-nomax` (refuses
+/// `max_output_tokens`); the scripted provider (`StubState::script`) answers like the other formats.
+fn responses_stream(sh: StubShared, model: &str, body: &Value) -> Response {
+    let system = body["instructions"].as_str().unwrap_or("").to_string();
+    let user = responses_user(body);
+    let verify = system == "Reply with the single word OK.";
+    let (script, cached, reasoning) = {
+        let st = sh.state.lock().unwrap_or_else(|e| e.into_inner());
+        (st.script.clone(), st.cached_tokens, st.reasoning.clone())
+    };
+    let mut text = ANSWER.to_string();
+    let mut cut = model == "demo-length";
+    let mut cached = cached.or((model == "demo-cached").then_some(8));
+    if let (Some(f), false) = (script, verify) {
+        match f(&system, &user) {
+            genkit::Reply::Text(t) => text = t,
+            genkit::Reply::Cut(t) => {
+                text = t;
+                cut = true;
+            }
+            genkit::Reply::Status(code, b) => return text_answer(code, &b),
+            genkit::Reply::Fall => {}
+        }
+    }
+    if model == "demo-nomax" && body.get("max_output_tokens").is_some() && !verify {
+        return json_answer(
+            400,
+            &json!({"error": {"message": "Unsupported parameter: 'max_output_tokens' is not supported with this model.",
+                              "type": "invalid_request_error", "param": "max_output_tokens", "code": "unsupported_parameter"}}),
+        );
+    }
+    if verify {
+        cached = None;
+    }
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Bytes>();
+    let _ = tx.send(responses_event(
+        json!({"type": "response.created", "response": {"id": "resp_demo", "status": "in_progress"}}),
+    ));
+    if let Some(r) = reasoning {
+        let _ = tx.send(responses_event(
+            json!({"type": "response.output_item.added", "output_index": 0, "item": {"type": "reasoning", "id": "rs_demo"}}),
+        ));
+        let _ = tx.send(responses_event(
+            json!({"type": "response.reasoning_summary_text.delta", "item_id": "rs_demo", "delta": r}),
+        ));
+    }
+    for c in chunks_of(&text, 6) {
+        let _ = tx.send(responses_event(
+            json!({"type": "response.output_text.delta", "item_id": "msg_demo", "output_index": 1, "content_index": 0, "delta": c}),
+        ));
+    }
+    let _ = tx.send(responses_event(
+        json!({"type": "response.output_text.done", "item_id": "msg_demo", "text": text}),
+    ));
+    let mut usage = json!({"input_tokens": 21, "output_tokens": 13, "total_tokens": 34});
+    if let Some(n) = cached {
+        usage["input_tokens_details"] = json!({"cached_tokens": n});
+    }
+    let output = json!([{"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": text}]}]);
+    let end = if cut {
+        json!({"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}, "output": output, "usage": usage}})
+    } else {
+        json!({"type": "response.completed", "response": {"status": "completed", "output": output, "usage": usage}})
+    };
+    let _ = tx.send(responses_event(end));
+    sse_body(rx)
 }
 
 /// The test call of `POST /api/ai/admin/verify` (system prompt "Reply with the single word OK.").
@@ -1540,6 +1633,8 @@ fn config(dir: &std::path::Path, backend: &str, opts: &Opts) -> Config {
         secret_key: opts.secret_key.clone().map(Zeroizing::new),
         log_filter: None,
         journal: JournalMode::Wal,
+        ai_user_agent: None,
+        ai_user_agent_invalid: false,
         version: "0.8".into(),
         timeouts: opts.timeouts,
     }
@@ -1775,6 +1870,11 @@ impl TestApp {
     /// into the AI database and turns AI+ on. v1.3 has no single-settings route any more; the connection routes have
     /// their own tests. `url` is normalised like an administrator's input (an Anthropic address loses a trailing `/v1`).
     pub fn seed_route(&self, seed: Seed<'_>) {
+        self.seed_route_as(seed, None);
+    }
+
+    /// `seed_route` with the connection format given by hand (`Some("responses")`; a URL never infers it).
+    pub fn seed_route_as(&self, seed: Seed<'_>, format_override: Option<&str>) {
         use xexam_ai_service::secret::{SecretName, SecretRef};
         use xexam_ai_service::settings::{infer_format, normalize_url, strip_v1, Provider};
         use xexam_ai_service::store::conn::{self, ConnChange, NewConn, NewConnSecret, NewPool};
@@ -1788,7 +1888,7 @@ impl TestApp {
         let format = match provider {
             Provider::OpenAi => "openai",
             Provider::Anthropic => "anthropic",
-            Provider::Gateway => infer_format(&url).as_str(),
+            Provider::Gateway => format_override.unwrap_or_else(|| infer_format(&url).as_str()),
         };
         let now = xexam_ai_service::util::unix_now();
         app.store
@@ -1890,6 +1990,23 @@ impl TestApp {
             gateway_auth: "bearer",
             model,
         });
+        self.app.0.heartbeat_now().await;
+    }
+
+    /// v1.8: gateway connection in the Responses API format against the stub (`/gw/v1/responses`), a model, AI+ on.
+    /// The gateway key goes in `Authorization: Bearer` (a provider key would clash with it).
+    pub async fn configure_responses(&self, _admin: &Who, model: &str) {
+        self.seed_route_as(
+            Seed {
+                provider: "gateway",
+                url: format!("{}/gw/v1", self.stub.url),
+                api_key: None,
+                gateway_key: Some(GW_KEY),
+                gateway_auth: "bearer",
+                model,
+            },
+            Some("responses"),
+        );
         self.app.0.heartbeat_now().await;
     }
 

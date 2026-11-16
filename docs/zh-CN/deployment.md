@@ -72,12 +72,13 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_INTERNAL_TOKEN` | （不设：ai_auth 卷里的一个随机令牌） | 后端和 ai-service 共用的令牌，两者用同一个值：至少 32 个可打印的 ASCII 字符，不能有空格（`openssl rand -hex 32`）。见第 3.3 节 |
 | `XEXAM_AI_LOG` | （不设：`info`） | ai-service 的日志过滤，`docker compose logs ai-service` 和它发到系统日志的行都用它；规则和 `XEXAM_LOG` 一样（为空 = `info`，无效的值退回 `info` 并记一条警告） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （不设：WAL） | `delete` = AI 数据库用回滚日志，用于和 `XEXAM_SQLITE_JOURNAL` 一样的特殊存储 |
+| `XEXAM_AI_USER_AGENT_NAME` | （不设：不发） | *(v1.8)* ai-service 发给 AI 服务商和网关的 `User-Agent`，例如让你自己的网关认出来的名字。不设或留空时完全不发 `User-Agent` 请求头，上游看不到应用名和版本。只能是可打印的 ASCII，最多 256 个字符；其他值会被忽略，并在日志里警告一次（不发请求头）。栈内发给后端的请求和外部 IP 所在地查询不受影响（它们仍然是 `xexam-ai-service/<版本>`） |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | *（v1.3，默认值在 v1.4 改变，frontend 容器）* Nginx 信任其 `CF-Connecting-IP` 和位置头的代理地址或网段（写法见 3.5 节）。留空或空值 = 默认值；`none` = 谁都不信任 |
 | `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | *（v1.3）* 带访客地址的头：`CF-Connecting-IP`、`X-Forwarded-For` 或 `X-Real-IP` |
 | `XEXAM_BEHIND_PROXY` | 后端镜像里是 `1` | *（v1.3）* 告诉后端它在自带的 Nginx 后面，因此相信 `X-Real-IP` 和 `X-Geo-*`。已在镜像里设好，不要改。单独运行（不用 Docker、没有 Nginx）时不设它，改为记录连接地址（3.5 节） |
 | `TUNNEL_TOKEN` | 不设 | *（v1.3）* 可选 `cloudflared` 服务的令牌（`docker compose --profile tunnel up -d`） |
 
-v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG` 和 `XEXAM_AI_SQLITE_JOURNAL` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
+v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG`、`XEXAM_AI_SQLITE_JOURNAL` 和 `XEXAM_AI_USER_AGENT_NAME` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
 
 其余的变量由镜像自己设置，compose 文件不改动它们：
 
@@ -142,10 +143,10 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 |---|---|---|---|
 | **OpenAI 兼容 API**（默认） | 一开始是 `https://api.openai.com/v1`；任何提供 OpenAI chat completions API 的服务器都行，包括本地的（通常以 `/v1` 结尾） | `GET {地址}/models`（模型列表）、`POST {地址}/chat/completions`，带 `"stream": true` | `Authorization: Bearer <API 密钥>`；没有保存密钥时不带这个请求头（本地服务器） |
 | **Anthropic** | `https://api.anthropic.com`（末尾的 `/v1` 在保存时去掉） | `GET {地址}/v1/models?limit=1000`、`POST {地址}/v1/messages`，带 `"stream": true` | `x-api-key: <API 密钥>` 和 `anthropic-version: 2023-06-01` |
-| **Cloudflare AI Gateway** | 你的网关地址，例如 `https://ai-gateway.example.com/<route>`（`…/openai` 或 `…/anthropic`）；**API 格式** 是 OpenAI 或 Anthropic，按地址的最后一段自动填好 | 和所选格式一样，放在那个地址下面 | **网关 API 密钥** 按 **网关认证方式** 发送：`bearer` → `Authorization: Bearer <密钥>`，`x-api-key` → `x-api-key: <密钥>`，`cf-aig-authorization` → `cf-aig-authorization: Bearer <密钥>`；另外，只在网关需要时，按格式发送 **服务商密钥**（OpenAI 用 `Authorization: Bearer`，Anthropic 用 `x-api-key`） |
+| **Cloudflare AI Gateway** | 你的网关地址，例如 `https://ai-gateway.example.com/<route>`（`…/openai` 或 `…/anthropic`）；**API 格式** 是 OpenAI、OpenAI Responses 或 Anthropic，按地址的最后一段自动填好（OpenAI Responses 只能手动选） | 和所选格式一样，放在那个地址下面（OpenAI Responses：`GET {address}/models`，带 `"stream": true` 的 `POST {address}/responses`） | **网关 API 密钥** 按 **网关认证方式** 发送：`bearer` → `Authorization: Bearer <密钥>`，`x-api-key` → `x-api-key: <密钥>`，`cf-aig-authorization` → `cf-aig-authorization: Bearer <密钥>`；另外，只在网关需要时，按格式发送 **服务商密钥**（OpenAI 和 OpenAI Responses 用 `Authorization: Bearer`，Anthropic 用 `x-api-key`） |
 
-- **自带密钥（BYOK）**：网关自己保存了服务商的密钥时，**服务商密钥** 留空。两个密钥都需要时，请选认证方式 `cf-aig-authorization`：用 `bearer`（OpenAI 格式）或 `x-api-key`（Anthropic 格式）时，两个密钥要用同一个请求头，AI 设置会拒绝这种组合。
-- **发送什么**：模型、系统提示词（英语：回答要清楚，用用户写的语言回答，再加上日期和用户的记忆笔记）、对话里以前的消息（从最新的开始，默认最多大约 24 000 个字符）和新消息。不设置 temperature 或其他采样参数。OpenAI 格式用 `stream_options.include_usage` 请求返回 Token 数；Anthropic 格式的 `max_tokens` 是 8192。如果服务商在 **测试** 时拒绝了其中任何一项，测试会不带它（或者改用 4096）再试一次，并保留行得通的那种。
+- **自带密钥（BYOK）**：网关自己保存了服务商的密钥时，**服务商密钥** 留空。两个密钥都需要时，请选认证方式 `cf-aig-authorization`：用 `bearer`（OpenAI 或 OpenAI Responses 格式）或 `x-api-key`（Anthropic 格式）时，两个密钥要用同一个请求头，AI 设置会拒绝这种组合。
+- **发送什么**：模型、系统提示词（英语：回答要清楚，用用户写的语言回答，再加上日期和用户的记忆笔记）、对话里以前的消息（从最新的开始，默认最多大约 24 000 个字符）和新消息。不设置 temperature 或其他采样参数。OpenAI 格式用 `stream_options.include_usage` 请求返回 Token 数；Anthropic 格式的 `max_tokens` 是 8192。如果服务商在 **测试** 时拒绝了其中任何一项，测试会不带它（或者改用 4096）再试一次，并保留行得通的那种。OpenAI Responses 格式没有 `stream_options`（Token 数随最后一个事件到达），正常对话用 `max_output_tokens` 限制回答长度，但 Responses 连接的 **测试** 不发 Token 上限，也不带用量选项。
 - **时间限制**：连接 10 秒，回答的第一个字节 120 秒，最多 120 秒没有任何数据，整个回答 10 分钟（已经生成的文字保留）；模型列表 30 秒；测试一共最多 90 秒。
 - 服务商的**错误** 从不以它自己的文字显示：它们变成固定的错误码（`ai.up.auth`、`ai.up.quota`、`ai.up.rateLimit` 等，见 [api.md](api.md) 第 5 节），由页面翻译。因为设置而失败的测试（密钥、额度、模型、请求被拒绝、回应无法读取）会关闭 AI；临时的失败不会。
 - **你自己网络里的服务商**（例如本地的模型服务器）可以用 `http://`；ai-service 容器必须能连到它的地址。除非主机是 `localhost`、`127.0.0.1`、`[::1]` 或不带点的名字，AI 设置都会警告密钥以明文传输。

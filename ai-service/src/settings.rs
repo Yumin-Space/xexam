@@ -61,6 +61,8 @@ impl Provider {
 pub enum Format {
     OpenAi,
     Anthropic,
+    /// OpenAI Responses API (`POST {base}/responses`); picked by hand for a gateway, never inferred from a URL
+    Responses,
 }
 
 impl Format {
@@ -68,6 +70,7 @@ impl Format {
         match self {
             Format::OpenAi => "openai",
             Format::Anthropic => "anthropic",
+            Format::Responses => "responses",
         }
     }
 
@@ -75,6 +78,7 @@ impl Format {
         match s {
             "openai" => Some(Format::OpenAi),
             "anthropic" => Some(Format::Anthropic),
+            "responses" => Some(Format::Responses),
             _ => None,
         }
     }
@@ -382,7 +386,8 @@ pub fn plan_update(
     if next.provider == Provider::Gateway && api_set {
         let clash = matches!(
             (next.gateway_auth, next.format),
-            (GatewayAuth::Bearer, Format::OpenAi) | (GatewayAuth::XApiKey, Format::Anthropic)
+            (GatewayAuth::Bearer, Format::OpenAi | Format::Responses)
+                | (GatewayAuth::XApiKey, Format::Anthropic)
         );
         if clash {
             return Err(UpdateError::HeaderClash);

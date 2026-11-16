@@ -72,7 +72,11 @@ async fn openai_stream_is_saved_with_usage() {
         Some(format!("Bearer {KEY}").as_str())
     );
     assert_eq!(req.header("accept"), Some("text/event-stream"));
-    assert_eq!(req.header("user-agent"), Some("xexam-ai-service/0.8"));
+    assert_eq!(
+        req.header("user-agent"),
+        None,
+        "no User-Agent towards AI providers (v1.8)"
+    );
     assert_eq!(req.body["messages"][0]["role"], json!("system"));
     assert!(req.body["messages"][0]["content"]
         .as_str()

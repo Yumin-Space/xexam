@@ -138,6 +138,8 @@ fn link_test_config(
         secret_key: None,
         log_filter: None,
         journal: xexam_ai_service::config::JournalMode::Wal,
+        ai_user_agent: None,
+        ai_user_agent_invalid: false,
         version: "0.8".into(),
         timeouts: fast_timeouts(),
     }

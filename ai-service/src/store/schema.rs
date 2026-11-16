@@ -352,7 +352,16 @@ pub const LATE_COLUMNS: [(&str, &str, &str); 3] = [
 
 /// v1.6: thinking strength per slot (`"<family>:<level>"`, NULL = send nothing). Added after `V7_TABLES` creates
 /// `model_slots`; no schema version change.
-pub const V16_COLUMNS: [(&str, &str, &str); 1] = [("model_slots", "effort", "effort TEXT")];
+/// v1.8: `connections.responses` = 1 marks an OpenAI Responses API connection. The `format` CHECK only allows
+/// 'openai' / 'anthropic' and cannot be altered, so such a row stores `format = 'openai'` plus this flag.
+pub const V16_COLUMNS: [(&str, &str, &str); 2] = [
+    ("model_slots", "effort", "effort TEXT"),
+    (
+        "connections",
+        "responses",
+        "responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))",
+    ),
+];
 
 /// Tables of AI schema 7 (all `IF NOT EXISTS`; run after `V5_TABLES` and the late columns).
 pub const V7_TABLES: &str = "

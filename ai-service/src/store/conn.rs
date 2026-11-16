@@ -21,7 +21,7 @@ pub struct ConnRow {
     /// 'openai' | 'anthropic' | 'gateway'
     pub provider: String,
     pub base_url: String,
-    /// 'openai' | 'anthropic'
+    /// 'openai' | 'anthropic' | 'responses' (stored as 'openai' + `responses = 1`, see `stored_format`)
     pub format: String,
     /// 'bearer' | 'x-api-key' | 'cf-aig-authorization'
     pub gateway_auth: String,
@@ -108,7 +108,17 @@ pub struct NewConnSecret<'a> {
 
 const CONN_COLS: &str =
     "id, rev, name, provider, base_url, format, gateway_auth, status, error_code, lists_models,
-     tested_at, sort, created_at, updated_at, updated_by";
+     tested_at, sort, created_at, updated_at, updated_by, responses";
+
+/// The `(format, responses)` column pair of a logical format: `responses` is stored as `openai` + flag 1, because the
+/// `format` CHECK cannot be altered (no table rebuild).
+fn stored_format(format: &str) -> (&str, i64) {
+    if format == "responses" {
+        ("openai", 1)
+    } else {
+        (format, 0)
+    }
+}
 
 fn conn_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnRow> {
     Ok(ConnRow {
@@ -117,7 +127,14 @@ fn conn_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnRow> {
         name: r.get(2)?,
         provider: r.get(3)?,
         base_url: r.get(4)?,
-        format: r.get(5)?,
+        format: {
+            let f: String = r.get(5)?;
+            if f == "openai" && r.get::<_, i64>(15)? == 1 {
+                "responses".to_string()
+            } else {
+                f
+            }
+        },
         gateway_auth: r.get(6)?,
         status: r.get(7)?,
         error_code: r.get(8)?,
@@ -162,17 +179,18 @@ pub fn name_taken(c: &Connection, name: &str, except: Option<i64>) -> rusqlite::
 pub fn insert_connection(c: &Connection, n: &NewConn<'_>) -> rusqlite::Result<i64> {
     c.execute(
         "INSERT INTO connections (name, provider, base_url, format, gateway_auth, lists_models, sort, created_at,
-                                  updated_at, updated_by)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT COALESCE(MAX(sort), -1) + 1 FROM connections), ?7, ?7, ?8)",
+                                  updated_at, updated_by, responses)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT COALESCE(MAX(sort), -1) + 1 FROM connections), ?7, ?7, ?8, ?9)",
         params![
             n.name,
             n.provider,
             n.base_url,
-            n.format,
+            stored_format(n.format).0,
             n.gateway_auth,
             i64::from(n.lists_models),
             n.now,
-            n.by
+            n.by,
+            stored_format(n.format).1
         ],
     )?;
     Ok(c.last_insert_rowid())
@@ -188,7 +206,7 @@ pub fn update_connection(
 ) -> rusqlite::Result<bool> {
     Ok(c.execute(
         "UPDATE connections SET name = ?3, provider = ?4, base_url = ?5, format = ?6, gateway_auth = ?7,
-                lists_models = ?8, rev = rev + 1, updated_at = ?9, updated_by = ?10
+                lists_models = ?8, rev = rev + 1, updated_at = ?9, updated_by = ?10, responses = ?11
          WHERE id = ?1 AND rev = ?2",
         params![
             id,
@@ -196,11 +214,12 @@ pub fn update_connection(
             n.name,
             n.provider,
             n.base_url,
-            n.format,
+            stored_format(n.format).0,
             n.gateway_auth,
             i64::from(n.lists_models),
             n.now,
-            n.by
+            n.by,
+            stored_format(n.format).1
         ],
     )? > 0)
 }

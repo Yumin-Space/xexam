@@ -14,7 +14,7 @@ import {
   isRotation, keyAfter, keyLine, LENGTH_KEYS, limitIssue, limitProblem, LIMIT_KEYS, LIMIT_RANGES, limitsFormOf, limitsUpdate,
   modelGroups, modelKind, movesKeys, nameProblem, newDefaultChoices, orderModels, originOf, parseRefKey, perCall, rangeOf, refKey,
   refOf, retentionOf, reusableFrom, serviceCause, SERVER_KEYS, SHARE_KEYS, shownCode, slotModel, slotNote, slotUsing, SLOTS,
-  statusCards, suggestName, SUMMARY_KEYS, SVC_WAIT_MS, tabOfHash, testHint, urlAfterSwitch, blockTag, callsFigures, todayCell, convTotals,
+  FORMATS, statusCards, suggestName, SUMMARY_KEYS, SVC_WAIT_MS, tabOfHash, testHint, urlAfterSwitch, blockTag, callsFigures, todayCell, convTotals,
 } from './ai-settings.ts';
 import type { AiConnection, AiModelList, AiPoolModel, AiService, AiSettings } from '../types/api.ts';
 
@@ -42,6 +42,8 @@ test('a gateway address suggests its API format by the last path segment', () =>
   assert.equal(inferFormat('https://ai-gateway.example.com/Anthropic'), 'anthropic');
   assert.equal(inferFormat('https://ai-gateway.example.com/route/workers-ai'), 'openai');
   assert.equal(inferFormat('not a url /anthropic'), 'anthropic');
+  assert.equal(inferFormat('https://ai-gateway.example.com/responses'), 'openai', 'Responses is only picked by hand');
+  assert.deepEqual([...FORMATS], ['openai', 'anthropic', 'responses']);
 });
 
 test('origins: scheme, lower-case host and the default port filled in', () => {
@@ -382,6 +384,9 @@ test('the header clash, against the typed and the saved provider key', () => {
   assert.equal(headerClash(f, keyAfter(g, f, 'apiKey')), true, 'bearer + OpenAI format + a saved provider key');
   assert.equal(headerClash({ ...f, gatewayAuth: 'cf-aig-authorization' }, true), false);
   assert.equal(headerClash({ ...f, gatewayAuth: 'x-api-key', format: 'anthropic' }, true), true);
+  assert.equal(headerClash({ ...f, format: 'responses' }, true), true, 'bearer + Responses clashes like OpenAI');
+  assert.equal(headerClash({ ...f, format: 'responses', gatewayAuth: 'x-api-key' }, true), false);
+  assert.equal(headerClash({ ...f, format: 'responses', gatewayAuth: 'cf-aig-authorization' }, true), false);
   const removed = { ...f, remove: { apiKey: true, gatewayKey: false } };
   assert.equal(headerClash(removed, keyAfter(g, removed, 'apiKey')), false, 'removing the saved provider key resolves it');
   const noKey = conn({ provider: 'gateway', baseUrl: 'https://ai-gateway.example.com/openai', keys: { apiKey: NONE, gatewayKey: KEY() } });

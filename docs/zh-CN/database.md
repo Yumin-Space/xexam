@@ -450,6 +450,7 @@ erDiagram
         TEXT provider "openai · anthropic · gateway"
         TEXT base_url "默认 https://api.openai.com/v1"
         TEXT format "openai · anthropic（只用于网关）"
+        INTEGER responses "1 = OpenAI Responses（format 仍是 openai）"
         TEXT gateway_auth "bearer · x-api-key · cf-aig-authorization"
         TEXT model "'' = 没有"
         INTEGER manual_model "1 = 手动输入"
@@ -617,7 +618,7 @@ AI 数据库在 v1.1 的 ai-service 第一次启动时，从 schema 4 **升级�
 
 AI 数据库从 schema 6 升到 **schema 7**，只在 v1.3 ai-service 第一次启动时进行一次（一个事务，一份副本 `backups/xexam-ai-schema6-<日期-时间>.db`）。
 
-- **`connections`**（新）：`id`、`name`（唯一，1 到 40 个字符）、`provider`（`openai`、`anthropic` 或 `gateway`）、`base_url`、`format`、`gateway_auth`、`status`（`ok` 或 `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（每次保存 +1，是缓存键也是锁）、`sort`，以及创建和更新信息。最多 8 行。
+- **`connections`**（新）：`id`、`name`（唯一，1 到 40 个字符）、`provider`（`openai`、`anthropic` 或 `gateway`）、`base_url`、`format`、`responses`（v1.8）、`gateway_auth`、`status`（`ok` 或 `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（每次保存 +1，是缓存键也是锁）、`sort`，以及创建和更新信息。最多 8 行。
 - **`connection_secrets`**（新）：连接的加密 `api_key` 和 `gateway_key`（密钥 id、24 字节 nonce、密文、末几位提示，以及 `aad_ver`；2 把密文绑定到连接，迁移来的行在下次更换前保持 1）。旧的 `secrets` 表保留，不再使用。
 - **`models`**（新）：模型池：每个测试过的（连接，模型）一行，带 `status`、`error_code`、`context`、`latency_ms`、`tested_at`、`manual` 和调用设置。**`model_slots`**（新）：六行（`default`、`chat`、`study`、`summary`、`generate`、`import`），各自指向池里的一个模型或为空（空的功能槽位用默认）。
 - **`study_shared`**（新）：共享的提示和解析，**不带用户 id**：`question_id`、`content_hash`、`kind`（`hint` 或 `explain`）、`lang`、`content`、`model`、`connection`、Token 数、`gen`（1 + 替换次数）、`hits` 和时间。（`question_id`、`content_hash`、`kind`、`lang`）唯一；最多 5 万行，没人用的在 `study_share_days` 之后删除。
@@ -641,6 +642,10 @@ AI 数据库在 v1.4 ai-service 第一次启动时，从 schema 7 升到 **schem
 ### 8.2d model_slots.effort（v1.6）
 
 AI 数据库的 schema 仍是 **8**。ai-service 启动时给 `model_slots` 加一列可为 NULL 的 `effort`（TEXT）：每个功能的思考强度，保存为 `<一族>:<级别>`（一族是 `anthropic`、`openai`、`google`、`responses` 或 `gemma`；级别见 [usage.md](usage.md) 的 17.9 节），NULL = **默认**，什么都不发送。这一步只增不改，不需要备份副本；v1.5 的 ai-service 忽略这一列。修改走 `POST /api/ai/admin/models/effort`，写系统日志事件 `ai.settings.effort`。
+
+### 8.2e OpenAI Responses 格式（v1.8，schema 不变）
+
+`connections` 多一列：`responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))`。1 表示使用 OpenAI Responses API 的网关连接。它的 `format` 仍是 `openai`，因为 `format` 上的 `CHECK` 只允许 `openai` 和 `anthropic`，而表不会重建。缺这一列时在启动时添加（`ALTER TABLE ... ADD COLUMN`，与 `model_slots.effort` 的方式相同）；**AI schema 仍是 8，所以没有备份副本，也没有新的迁移步骤**。新建的文件和升级后的文件得到相同的表。保存 Responses 连接时写入 `format = 'openai', responses = 1`，其他格式写入 `responses = 0`，`format = 'openai' AND responses = 1` 读作 Responses。v1.7 的 ai-service 按原样打开文件，从不读这一列，所以回退不需要恢复，但 Responses 连接之后会被读成 OpenAI chat completions。
 
 ### 8.3 服务怎样使用它
 

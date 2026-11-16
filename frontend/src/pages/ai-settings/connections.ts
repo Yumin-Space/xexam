@@ -369,7 +369,7 @@ function connForm(s: AiSettings): HTMLElement {
           if (A.form) A.form = { ...A.form, format: (e.target as HTMLSelectElement).value as ConnForm['format'] };
           syncForm();
         },
-      }, FORMATS.map((x) => h('option', { value: x, selected: x === f.format ? 'selected' : null }, t(x === 'openai' ? 'ai.set.format.openai' : 'ai.set.format.anthropic'))))),
+      }, FORMATS.map((x) => h('option', { value: x, selected: x === f.format ? 'selected' : null }, t(x === 'openai' ? 'ai.set.format.openai' : x === 'responses' ? 'ai.set.format.responses' : 'ai.set.format.anthropic'))))),
     h('div', { class: 'fld' },
       h('label', { class: 'fld-l', for: 'ai-c-gwauth' }, t('ai.set.gatewayAuth')),
       h('select', {

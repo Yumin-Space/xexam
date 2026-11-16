@@ -18,12 +18,16 @@ use zeroize::Zeroizing;
 pub mod anthropic;
 pub mod errors;
 pub mod openai;
+pub mod responses;
 pub mod sse;
 
 pub use errors::{UpCode, UpError};
 
 /// Largest SSE event accepted.
 pub const MAX_EVENT: usize = 1 << 20;
+/// Largest SSE event accepted for the Responses format: `response.completed` repeats the whole output and the
+/// instructions, so it can be far larger than any other event.
+pub const RESPONSES_MAX_EVENT: usize = 8 << 20;
 /// Error bodies are read up to this size (and only parsed for a type / code).
 pub const MAX_ERROR_BODY: usize = 16 * 1024;
 /// Largest models list body.
@@ -112,26 +116,32 @@ pub fn tls_config() -> Result<rustls::ClientConfig, String> {
     Ok(cfg)
 }
 
-fn base_builder(version: &str) -> Result<reqwest::ClientBuilder, String> {
+fn base_builder() -> Result<reqwest::ClientBuilder, String> {
     Ok(reqwest::Client::builder()
         .tls_backend_preconfigured(tls_config()?)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
-        .http1_only()
-        .user_agent(format!("xexam-ai-service/{version}")))
+        .http1_only())
 }
 
 /// The client for AI providers (per-request time limits are applied by the callers).
-pub fn provider_client(version: &str, t: &Timeouts) -> Result<reqwest::Client, String> {
-    base_builder(version)?
-        .connect_timeout(t.connect)
+/// `user_agent` is `XEXAM_AI_USER_AGENT_NAME`: with `None` it sends no `User-Agent` header at all (reqwest adds none unless
+/// one is set), so gateways and providers do not learn the app name or its version.
+pub fn provider_client(user_agent: Option<&str>, t: &Timeouts) -> Result<reqwest::Client, String> {
+    let b = base_builder()?;
+    let b = match user_agent {
+        Some(ua) => b.user_agent(ua),
+        None => b,
+    };
+    b.connect_timeout(t.connect)
         .build()
         .map_err(|_| "cannot build the HTTP client for AI providers".to_string())
 }
 
 /// The client for the main backend (plain http).
 pub fn backend_client(version: &str, t: &Timeouts) -> Result<reqwest::Client, String> {
-    base_builder(version)?
+    base_builder()?
+        .user_agent(format!("xexam-ai-service/{version}"))
         .connect_timeout(t.backend_connect)
         .timeout(t.backend_total)
         .build()
@@ -165,12 +175,13 @@ impl Target {
         match self.format {
             Format::OpenAi => format!("{}/chat/completions", self.base),
             Format::Anthropic => format!("{}/v1/messages", self.base),
+            Format::Responses => format!("{}/responses", self.base),
         }
     }
 
     pub fn models_url(&self) -> String {
         match self.format {
-            Format::OpenAi => format!("{}/models", self.base),
+            Format::OpenAi | Format::Responses => format!("{}/models", self.base),
             Format::Anthropic => format!("{}/v1/models?limit=1000", self.base),
         }
     }
@@ -196,7 +207,7 @@ impl Target {
         }
         if let Some(k) = &self.api_key {
             match self.format {
-                Format::OpenAi => {
+                Format::OpenAi | Format::Responses => {
                     h.insert(AUTHORIZATION, bearer(k)?);
                 }
                 Format::Anthropic => {
@@ -249,6 +260,8 @@ pub enum TokenField {
     MaxTokens,
     /// OpenAI-compatible: `"max_completion_tokens"` (OpenAI's reasoning and newer models)
     MaxCompletionTokens,
+    /// Responses API: `"max_output_tokens"`
+    MaxOutputTokens,
     /// OpenAI-compatible: no token field at all (the body of v0.9.1)
     Omit,
 }
@@ -259,6 +272,7 @@ impl TokenField {
         match self {
             TokenField::MaxTokens => Some("max_tokens"),
             TokenField::MaxCompletionTokens => Some("max_completion_tokens"),
+            TokenField::MaxOutputTokens => Some("max_output_tokens"),
             TokenField::Omit => None,
         }
     }
@@ -301,6 +315,8 @@ pub fn chat_body(
     match format {
         Format::OpenAi => openai::body(model, system, turns, usage_option, token),
         Format::Anthropic => anthropic::body(model, system, turns, token.value),
+        // the Responses API always reports usage in its terminal event: no usage option
+        Format::Responses => responses::body(model, system, turns, token),
     }
 }
 
@@ -308,7 +324,13 @@ pub fn chat_body(
 /// with a `cache_control` breakpoint and the turn's own text after it; the `system` block carries its breakpoint
 /// already, so the system text and the prefix are the cached part. OpenAI-compatible: the prefix, a blank line, the text.
 pub fn put_prefix(format: Format, body: &mut Value, prefix: &str) {
-    let Some(messages) = body.get_mut("messages").and_then(Value::as_array_mut) else {
+    // the Responses API keeps the turns in `input`
+    let key = if format == Format::Responses {
+        "input"
+    } else {
+        "messages"
+    };
+    let Some(messages) = body.get_mut(key).and_then(Value::as_array_mut) else {
         return;
     };
     let Some(first) = messages
@@ -326,13 +348,15 @@ pub fn put_prefix(format: Format, body: &mut Value, prefix: &str) {
             {"type": "text", "text": prefix, "cache_control": {"type": "ephemeral"}},
             {"type": "text", "text": own}
         ]),
-        Format::OpenAi => Value::String(format!("{prefix}\n\n{own}")),
+        Format::OpenAi | Format::Responses => Value::String(format!("{prefix}\n\n{own}")),
     };
 }
 
 /// Like [`put_prefix`], with cache markers for the OpenAI-compatible format too (content-part shape, which LiteLLM and
 /// other Anthropic-backed gateways pass through): the first user message becomes `[{prefix + cache_control}, {own}]` and
 /// the system message `[{system + cache_control}]`, two breakpoints in all. Anthropic: the same as `put_prefix`.
+/// Responses: the same as `put_prefix` too, never any marker (OpenAI caches automatically and its `input_text` parts
+/// do not take `cache_control`).
 pub fn put_prefix_marked(format: Format, body: &mut Value, prefix: &str) {
     put_prefix(format, body, prefix);
     if format != Format::OpenAi {
@@ -394,8 +418,21 @@ pub fn first_token_limit(
     match format {
         Format::OpenAi if unlimited => TokenLimit::omit(),
         Format::OpenAi => TokenLimit {
-            field: memo.map_or(TokenField::MaxTokens, |m| m.field),
+            // a memo of another format's field must never leak into this one
+            field: memo
+                .map(|m| m.field)
+                .filter(|f| *f != TokenField::MaxOutputTokens)
+                .unwrap_or(TokenField::MaxTokens),
             value: want,
+        },
+        Format::Responses if unlimited => TokenLimit::omit(),
+        Format::Responses => TokenLimit {
+            field: memo
+                .map(|m| m.field)
+                .filter(|f| matches!(f, TokenField::MaxOutputTokens | TokenField::Omit))
+                .unwrap_or(TokenField::MaxOutputTokens),
+            // the API refuses a limit below 16
+            value: want.max(16),
         },
         Format::Anthropic => {
             // the API requires a value: the largest one a model accepts, lowered by the ladder when refused
@@ -421,7 +458,15 @@ pub fn ladder_after(format: Format, sent: &TokenLimit, stored_max: i64) -> Optio
                 field: TokenField::Omit,
                 value: sent.value,
             }),
+            // never sent on Chat Completions: nothing left to try
+            TokenField::MaxOutputTokens | TokenField::Omit => None,
+        },
+        Format::Responses => match sent.field {
             TokenField::Omit => None,
+            _ => Some(TokenLimit {
+                field: TokenField::Omit,
+                value: sent.value,
+            }),
         },
         Format::Anthropic => (stored_max < sent.value).then(|| TokenLimit::max_tokens(stored_max)),
     }
@@ -465,7 +510,7 @@ pub fn next_token_limit(
     let field = match (format, sent.field.key()) {
         (_, Some(k)) => k,
         (Format::Anthropic, None) => "max_tokens",
-        (Format::OpenAi, None) => return None,
+        (Format::OpenAi | Format::Responses, None) => return None,
     };
     if !body_names(error_body, field) {
         return None;
@@ -557,6 +602,17 @@ fn output_config(body: &mut Value) -> &mut serde_json::Map<String, Value> {
     }
 }
 
+/// The `text` object of a Responses body (created, or replaced when it is not an object).
+fn text_object(body: &mut Value) -> &mut serde_json::Map<String, Value> {
+    if !body.get("text").is_some_and(Value::is_object) {
+        body["text"] = json!({});
+    }
+    match body.get_mut("text").and_then(Value::as_object_mut) {
+        Some(m) => m,
+        None => unreachable!("text was just set to an object"),
+    }
+}
+
 /// Adds the thinking-strength parameter of `effort` to a body. Anthropic family: merges `"effort"` into
 /// `output_config` (next to a structured-output `format`); OpenAI family: `"reasoning_effort": <level>`; Responses family: `"reasoning": {"effort": <level>}` (merged into an existing `reasoning` object);
 /// Google / Gemma family: `"extra_body": {"google": {"thinking_config": {"thinking_level": <LEVEL>}}}` (merged into
@@ -607,8 +663,15 @@ fn put_schema(format: Format, body: &mut Value, schema: &Value) {
         Format::OpenAi => {
             body["response_format"] = json!({
                 "type": "json_schema",
-                "json_schema": {"name": "xexam_answer", "strict": true, "schema": schema}
+                "json_schema": {"name": "answer", "strict": true, "schema": schema}
             });
+        }
+        Format::Responses => {
+            // flat under `text.format`, no `json_schema` wrapper
+            text_object(body).insert(
+                "format".into(),
+                json!({"type": "json_schema", "name": "answer", "strict": true, "schema": schema}),
+            );
         }
     }
 }
@@ -640,7 +703,7 @@ pub fn cache_min_tokens(format: Format, model: &str) -> i64 {
                 4096
             }
         }
-        Format::OpenAi => {
+        Format::OpenAi | Format::Responses => {
             if m.starts_with("gpt-")
                 || m.starts_with("o1")
                 || m.starts_with("o3")
@@ -792,6 +855,7 @@ async fn read_capped(resp: &mut reqwest::Response, cap: usize, idle: Duration) -
 enum Handler {
     OpenAi(openai::State),
     Anthropic(anthropic::State),
+    Responses(responses::State),
 }
 
 impl Handler {
@@ -799,6 +863,7 @@ impl Handler {
         match self {
             Handler::OpenAi(s) => s.on_data(&ev.data, out),
             Handler::Anthropic(s) => s.on_event(&ev.name, &ev.data, out),
+            Handler::Responses(s) => s.on_event(&ev.name, &ev.data, out),
         }
     }
 
@@ -812,6 +877,7 @@ impl Handler {
         match self {
             Handler::OpenAi(s) => s.finish(),
             Handler::Anthropic(s) => s.finish(),
+            Handler::Responses(s) => s.finish(),
         }
     }
 }
@@ -1004,10 +1070,15 @@ async fn stream_once(
         };
         return Attempt::Refused { status, body };
     }
-    let mut parser = sse::SseParser::new(MAX_EVENT);
+    let mut parser = sse::SseParser::new(if format == Format::Responses {
+        RESPONSES_MAX_EVENT
+    } else {
+        MAX_EVENT
+    });
     let mut handler = match format {
         Format::OpenAi => Handler::OpenAi(openai::State::default()),
         Format::Anthropic => Handler::Anthropic(anthropic::State::default()),
+        Format::Responses => Handler::Responses(responses::State::default()),
     };
     let mut chars = 0usize;
     loop {
@@ -1232,7 +1303,7 @@ pub fn parse_models(body: &[u8], format: Format) -> Option<ModelList> {
             }
         }
     }
-    if format == Format::OpenAi {
+    if format != Format::Anthropic {
         ids.sort();
     }
     ids.truncate(MAX_MODELS);
@@ -1343,7 +1414,7 @@ mod tests {
 
     #[test]
     fn skip_cache_header_only_for_the_gateway_and_only_when_asked() {
-        let client = provider_client("0.9", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let body = serde_json::json!({"a": 1});
         let header = |t: &Target, skip: bool| {
             t.chat_request(&client, &body, skip)
@@ -1564,7 +1635,7 @@ mod tests {
     #[test]
     fn clients_build_without_a_process_crypto_provider() {
         let t = Timeouts::default();
-        assert!(provider_client("0.8", &t).is_ok());
+        assert!(provider_client(None, &t).is_ok());
         assert!(backend_client("0.8", &t).is_ok());
     }
 
@@ -1630,7 +1701,7 @@ mod tests {
     fn the_prefix_bytes_are_identical_for_two_different_tasks() {
         let a = one_turn("TASK RECOGNISE\nRecognise the file now.");
         let b = one_turn("TASK CONVERT\nSLOTS\n[]\n\nConvert the 3 questions now.");
-        for f in [Format::Anthropic, Format::OpenAi] {
+        for f in [Format::Anthropic, Format::OpenAi, Format::Responses] {
             let (mut x, mut y) = (
                 chat_body(f, "m", "rules", &a, true, TokenLimit::max_tokens(900)),
                 chat_body(f, "m", "rules", &b, true, TokenLimit::max_tokens(900)),
@@ -1640,9 +1711,11 @@ mod tests {
             let head = |v: &Value| match f {
                 Format::Anthropic => v["messages"][0]["content"][0].to_string(),
                 Format::OpenAi => v["messages"][1]["content"].as_str().unwrap()[..12].to_string(),
+                Format::Responses => v["input"][0]["content"].as_str().unwrap()[..12].to_string(),
             };
             assert_eq!(head(&x), head(&y));
             assert_eq!(x["system"], y["system"]);
+            assert_eq!(x["instructions"], y["instructions"]);
         }
     }
 
@@ -1797,10 +1870,63 @@ mod tests {
         assert!(!body.to_string().contains("cache_control"));
     }
 
+    /// Reads one request head from a local listener and answers 200, so the test sees the headers that really
+    /// go over the wire (reqwest merges client-wide headers only when a request is sent).
+    async fn wire_head(client: reqwest::Client) -> String {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let url = format!(
+            "http://{}/v1/chat/completions",
+            listener.local_addr().expect("addr")
+        );
+        let server = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().expect("accept");
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut chunk).expect("read");
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            sock.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
+                .expect("write");
+            String::from_utf8_lossy(&buf).to_ascii_lowercase()
+        });
+        client.post(url).body("{}").send().await.expect("send");
+        server.join().expect("server")
+    }
+
+    #[tokio::test]
+    async fn ai_provider_requests_carry_no_user_agent() {
+        let head = wire_head(provider_client(None, &Timeouts::default()).expect("client")).await;
+        assert!(head.starts_with("post /v1/chat/completions"), "{head}");
+        assert!(!head.contains("user-agent"), "{head}");
+        assert!(!head.contains("xexam"), "{head}");
+    }
+
+    #[tokio::test]
+    async fn a_configured_user_agent_is_sent_as_is() {
+        let ua = Some("MyGateway-Client/2.0 (made up)");
+        let head = wire_head(provider_client(ua, &Timeouts::default()).expect("client")).await;
+        assert!(
+            head.contains("user-agent: mygateway-client/2.0 (made up)\r\n"),
+            "{head}"
+        );
+        assert!(!head.contains("xexam"), "{head}");
+    }
+
+    #[tokio::test]
+    async fn backend_requests_still_name_the_ai_service() {
+        let head = wire_head(backend_client("9.9", &Timeouts::default()).expect("client")).await;
+        assert!(head.contains("user-agent: xexam-ai-service/9.9"), "{head}");
+    }
+
     #[tokio::test]
     async fn a_schema_adds_the_structured_output_field_and_an_unformatted_ladder() {
         let turns = one_turn("TASK");
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let schema = json!({"type": "object"});
         let first = TokenLimit::omit();
         let build = |t: &Target, with: bool, no: bool| {
@@ -1823,7 +1949,7 @@ mod tests {
         for (_, r) in &p.steps {
             let b = body_of(r);
             assert_eq!(b["response_format"]["type"], "json_schema");
-            assert_eq!(b["response_format"]["json_schema"]["name"], "xexam_answer");
+            assert_eq!(b["response_format"]["json_schema"]["name"], "answer");
             assert_eq!(b["response_format"]["json_schema"]["strict"], true);
             assert_eq!(b["response_format"]["json_schema"]["schema"], schema);
         }
@@ -1865,7 +1991,7 @@ mod tests {
 
     #[tokio::test]
     async fn build_plan_marks_only_openai_with_prefix_and_cache() {
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let turns = one_turn("TASK now");
         let t = openai_target("http://127.0.0.1:9/v1");
         let first = TokenLimit::omit();
@@ -1962,7 +2088,7 @@ mod tests {
 
     async fn run(plan: Plan) -> Vec<Up> {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         stream_plan(&client, plan, Timeouts::default(), tx).await;
         let mut out = Vec::new();
         while let Ok(u) = rx.try_recv() {
@@ -1974,7 +2100,7 @@ mod tests {
     #[tokio::test]
     async fn a_server_that_refuses_markers_gets_one_unmarked_retry_and_is_remembered() {
         let (base, seen) = marker_stub(true).await;
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let turns = one_turn("TASK now");
         let t = openai_target(&format!("{base}/v1"));
         let memo = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2020,7 +2146,7 @@ mod tests {
     #[tokio::test]
     async fn a_server_that_accepts_markers_is_asked_once_and_never_flagged() {
         let (base, seen) = marker_stub(false).await;
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let turns = one_turn("TASK now");
         let t = openai_target(&format!("{base}/v1"));
         let plan = build_plan(
@@ -2047,7 +2173,7 @@ mod tests {
     async fn a_broken_unmarked_retry_is_not_remembered() {
         // marked request: 400; unmarked retry: 200 with an in-stream error, so nothing proves the plain form works
         let (base, seen) = marker_stub_with(true, true).await;
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let turns = one_turn("TASK now");
         let t = openai_target(&format!("{base}/v1"));
         let plan = build_plan(
@@ -2111,7 +2237,7 @@ mod tests {
         use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
         let schema = json!({"type": "object"});
         let turns = one_turn("TASK now");
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         // (refuse markers, refuse schema, requests of the first call, markers remembered)
         for (markers, refuse_schema, sent, plain_memo) in
             [(false, true, 3, false), (true, true, 3, false)]
@@ -2191,7 +2317,7 @@ mod tests {
     }
 
     async fn plan_for(base: &str) -> (reqwest::Client, Plan) {
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let turns = one_turn("TASK now");
         let t = openai_target(base);
         let plan = build_plan(
@@ -2236,7 +2362,7 @@ mod tests {
 
     #[tokio::test]
     async fn collect_chat_drops_reasoning() {
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let base = fixed_stub(sse_of(&[
             json!({"reasoning_content": "zebra-secret-1 "}),
             json!({"content": "<thought>zebra-secret-2</thought>\n\nThe answer."}),
@@ -2375,7 +2501,7 @@ mod tests {
     #[test]
     fn no_effort_sends_no_parameter() {
         let turns = one_turn("T");
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let sp = spec(&turns, None, false);
         let oa = openai_target("http://127.0.0.1:9");
         let p = build_plan(
@@ -2413,7 +2539,7 @@ mod tests {
     #[test]
     fn build_plan_uneffort_ladders() {
         let turns = one_turn("TASK");
-        let client = provider_client("test", &Timeouts::default()).expect("client");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
         let schema = json!({"type": "object"});
         let oa = openai_target("http://127.0.0.1:9");
         let an = target(
@@ -2510,9 +2636,292 @@ mod tests {
 
     #[test]
     fn chat_body_has_no_effort() {
-        for f in [Format::OpenAi, Format::Anthropic] {
+        for f in [Format::OpenAi, Format::Anthropic, Format::Responses] {
             let b = plain_body(f);
             assert!(b.get("reasoning_effort").is_none() && b.get("output_config").is_none());
+            assert!(b.get("reasoning").is_none() && b.get("text").is_none());
         }
+    }
+
+    fn responses_target(base: &str) -> Target {
+        let mut t = target(
+            Provider::Gateway,
+            Format::Responses,
+            GatewayAuth::Bearer,
+            true,
+            false,
+        );
+        t.base = base.to_string();
+        t
+    }
+
+    #[test]
+    fn responses_urls_and_headers() {
+        let t = responses_target("https://gw.example.com/v1");
+        assert_eq!(t.chat_url(), "https://gw.example.com/v1/responses");
+        assert_eq!(t.models_url(), "https://gw.example.com/v1/models");
+        let h = t.auth_headers().expect("headers");
+        assert_eq!(h.get("authorization").map(|v| v.is_sensitive()), Some(true));
+        assert!(h.get("anthropic-version").is_none() && h.get("x-api-key").is_none());
+        assert_eq!(h.len(), 1);
+        // a gateway key as well
+        let mut g = target(
+            Provider::Gateway,
+            Format::Responses,
+            GatewayAuth::CfAig,
+            true,
+            true,
+        );
+        g.base = "https://gw.example.com/v1".into();
+        let h = g.auth_headers().expect("headers");
+        assert!(h.get("authorization").is_some() && h.get("cf-aig-authorization").is_some());
+        let body = br#"{"data":[{"id":"demo-b"},{"id":"demo-a"}]}"#;
+        let l = parse_models(body, Format::Responses).expect("list");
+        assert_eq!(l.models, vec!["demo-a".to_string(), "demo-b".to_string()]);
+    }
+
+    #[test]
+    fn responses_token_limits_and_ladder() {
+        let f = Format::Responses;
+        let mot = |v| TokenLimit {
+            field: TokenField::MaxOutputTokens,
+            value: v,
+        };
+        let omit = TokenLimit {
+            field: TokenField::Omit,
+            value: 1500,
+        };
+        // unlimited sends nothing; a small value is raised to 16; the memo is honoured for the Responses fields only
+        assert_eq!(
+            first_token_limit(f, crate::limits::UNLIMITED_TOKENS, 8192, None),
+            TokenLimit::omit()
+        );
+        assert_eq!(first_token_limit(f, 1500, 8192, None), mot(1500));
+        assert_eq!(first_token_limit(f, 3, 8192, None), mot(16));
+        let memo = |field| Some(TokenMemo { field, cap: None });
+        assert_eq!(
+            first_token_limit(f, 1500, 8192, memo(TokenField::Omit)).field,
+            TokenField::Omit
+        );
+        for stale in [TokenField::MaxTokens, TokenField::MaxCompletionTokens] {
+            assert_eq!(
+                first_token_limit(f, 1500, 8192, memo(stale)).field,
+                TokenField::MaxOutputTokens
+            );
+        }
+        // a Responses memo never reaches Chat Completions
+        assert_eq!(
+            first_token_limit(
+                Format::OpenAi,
+                1500,
+                8192,
+                memo(TokenField::MaxOutputTokens)
+            )
+            .field,
+            TokenField::MaxTokens
+        );
+        // the ladder: max_output_tokens, then nothing
+        assert_eq!(ladder_after(f, &mot(1500), 8192), Some(omit));
+        assert_eq!(ladder_after(f, &omit, 8192), None);
+        assert_eq!(ladder_after(Format::OpenAi, &mot(5), 8192), None);
+        let refused = r#"{"error":{"message":"Unsupported parameter: 'max_output_tokens'","type":"invalid_request_error","param":"max_output_tokens","code":"unsupported_parameter"}}"#;
+        assert_eq!(
+            next_token_limit(f, &mot(1500), 400, refused, 8192),
+            Some(omit)
+        );
+        assert_eq!(next_token_limit(f, &omit, 400, refused, 8192), None);
+        assert_eq!(next_token_limit(f, &mot(1500), 500, refused, 8192), None);
+        assert_eq!(
+            next_token_limit(
+                f,
+                &mot(1500),
+                400,
+                r#"{"error":{"param":"max_tokens"}}"#,
+                8192
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn responses_body_carries_only_its_token_field() {
+        let turns = one_turn("T");
+        for (field, sent) in [
+            (TokenField::MaxOutputTokens, true),
+            (TokenField::Omit, false),
+        ] {
+            let b = chat_body(
+                Format::Responses,
+                "m",
+                "rules",
+                &turns,
+                true,
+                TokenLimit { field, value: 1500 },
+            );
+            assert_eq!(b.get("max_output_tokens").is_some(), sent);
+            for k in ["max_tokens", "max_completion_tokens", "stream_options"] {
+                assert!(b.get(k).is_none(), "{k}");
+            }
+            assert_eq!(b["stream"], json!(true));
+            assert_eq!(b["store"], json!(false));
+        }
+    }
+
+    #[test]
+    fn responses_schema_goes_to_text_format() {
+        let schema = json!({"type": "object"});
+        let mut b = plain_body(Format::Responses);
+        put_schema(Format::Responses, &mut b, &schema);
+        assert_eq!(
+            b["text"],
+            json!({"format": {"type": "json_schema", "name": "answer", "strict": true, "schema": schema}})
+        );
+        assert!(b.get("response_format").is_none() && b.get("output_config").is_none());
+        // a non-object `text` is replaced, an existing one is kept and extended
+        let mut c = plain_body(Format::Responses);
+        c["text"] = json!("x");
+        put_schema(Format::Responses, &mut c, &schema);
+        assert_eq!(c["text"]["format"]["name"], "answer");
+        let mut d = plain_body(Format::Responses);
+        d["text"] = json!({"verbosity": "low"});
+        put_schema(Format::Responses, &mut d, &schema);
+        assert_eq!(d["text"]["verbosity"], "low");
+        assert_eq!(d["text"]["format"]["strict"], true);
+    }
+
+    #[test]
+    fn responses_effort_families_are_not_translated() {
+        let mut b = plain_body(Format::Responses);
+        put_effort(&mut b, eff(EffortFamily::Responses, "high"));
+        assert_eq!(b["reasoning"], json!({"effort": "high"}));
+        assert!(b["reasoning"].get("summary").is_none());
+        let mut c = plain_body(Format::Responses);
+        put_effort(&mut c, eff(EffortFamily::OpenAi, "low"));
+        assert_eq!(c["reasoning_effort"], "low");
+        assert!(c.get("reasoning").is_none());
+        let mut d = plain_body(Format::Responses);
+        put_effort(&mut d, eff(EffortFamily::Anthropic, "low"));
+        assert_eq!(d["output_config"], json!({"effort": "low"}));
+    }
+
+    #[test]
+    fn responses_prefix_goes_into_the_first_input_item_without_markers() {
+        let turns = one_turn("TASK now");
+        let plain = chat_body(
+            Format::Responses,
+            "m",
+            "rules",
+            &turns,
+            true,
+            TokenLimit::omit(),
+        );
+        for marked in [false, true] {
+            let mut b = plain.clone();
+            if marked {
+                put_prefix_marked(Format::Responses, &mut b, "FILE\nL1: made-up line");
+            } else {
+                put_prefix(Format::Responses, &mut b, "FILE\nL1: made-up line");
+            }
+            assert_eq!(
+                b["input"][0]["content"],
+                json!("FILE\nL1: made-up line\n\nTASK now")
+            );
+            assert!(b.get("messages").is_none());
+            assert_eq!(b["instructions"], json!("rules"));
+            assert!(!b.to_string().contains("cache_control"));
+        }
+        let mut s = plain.clone();
+        put_prefix(Format::Responses, &mut s, "P");
+        strip_cache_markers(&mut s);
+        assert_eq!(s["input"][0]["content"], json!("P\n\nTASK now"));
+    }
+
+    #[tokio::test]
+    async fn a_responses_plan_has_a_two_step_ladder_and_no_marker_ladder() {
+        let turns = one_turn("TASK");
+        let client = provider_client(None, &Timeouts::default()).expect("client");
+        let schema = json!({"type": "object"});
+        let t = responses_target("http://127.0.0.1:9/x");
+        let mut sp = spec(&turns, Some("PFX"), true);
+        sp.schema = Some(&schema);
+        sp.effort = Some(eff(EffortFamily::Responses, "low"));
+        let first = TokenLimit {
+            field: TokenField::MaxOutputTokens,
+            value: 800,
+        };
+        let p = build_plan(
+            &t, &client, &sp, first, 8192, None, false, None, false, None, false, None,
+        )
+        .expect("plan");
+        assert_eq!(p.steps.len(), 2);
+        assert!(p.plain.is_empty() && p.plain_uneffort.is_empty());
+        assert_eq!(p.uneffort.len(), 2);
+        assert_eq!(p.unformatted.len(), 2);
+        let b = body_of(&p.steps[0].1);
+        assert_eq!(b["max_output_tokens"], json!(800));
+        assert_eq!(b["reasoning"], json!({"effort": "low"}));
+        assert_eq!(b["text"]["format"]["name"], "answer");
+        assert_eq!(b["input"][0]["content"], json!("PFX\n\nTASK"));
+        assert!(!b.to_string().contains("cache_control"));
+        let b = body_of(&p.steps[1].1);
+        assert!(b.get("max_output_tokens").is_none());
+        let b = body_of(&p.uneffort[0].1);
+        assert!(b.get("reasoning").is_none() && b.get("text").is_some());
+        let b = body_of(&p.unformatted[0].1);
+        assert!(b.get("text").is_none() && b.get("reasoning").is_none());
+        assert_eq!(p.steps[0].1.url().path(), "/x/responses");
+    }
+
+    #[tokio::test]
+    async fn a_responses_stream_with_a_huge_completed_event_ends_in_done() {
+        let big = "x".repeat(2 << 20);
+        let completed = json!({"type": "response.completed", "response": {
+            "instructions": big,
+            "output": [{"type": "message", "content": [{"type": "output_text", "text": "Hello"}]}],
+            "usage": {"input_tokens": 10, "output_tokens": 2, "input_tokens_details": {"cached_tokens": 4}}
+        }});
+        let mut sse = String::new();
+        for (n, d) in [
+            ("response.created", json!({"type": "response.created"})),
+            (
+                "response.output_text.delta",
+                json!({"type": "response.output_text.delta", "delta": "Hello"}),
+            ),
+            ("response.completed", completed),
+        ] {
+            sse.push_str(&format!("event: {n}\ndata: {d}\n\n"));
+        }
+        let base = fixed_stub(sse).await;
+        let client = provider_client(None, &Timeouts::default()).expect("client");
+        let turns = one_turn("TASK now");
+        let t = responses_target(&base);
+        let plan = build_plan(
+            &t,
+            &client,
+            &spec(&turns, None, false),
+            TokenLimit::omit(),
+            8192,
+            None,
+            false,
+            None,
+            false,
+            None,
+            false,
+            None,
+        )
+        .expect("plan");
+        let ups = run(plan).await;
+        assert_eq!(
+            ups,
+            vec![
+                Up::Text("Hello".into()),
+                Up::Usage {
+                    input: Some(10),
+                    output: Some(2)
+                },
+                Up::Cached(4),
+                Up::Done
+            ]
+        );
     }
 }
