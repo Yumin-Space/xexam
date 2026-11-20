@@ -27,7 +27,7 @@ fail() {
 
 # The value cut to 200 printable characters, for the error message only.
 shown() {
-    printf '%s' "$1" | tr -cd '[:print:]' | cut -c1-200
+    printf '%s' "$1" | tr -cd ' -~' | cut -c1-200
 }
 
 # Quote characters (ASCII, curly and full-width) become spaces, then the ends are trimmed.
