@@ -6,7 +6,7 @@ use super::{body_id, ok, only_keys, query_text, Answer, Ctx};
 use crate::activity::Event;
 use crate::app::{AppState, ModelsCache};
 use crate::codes::ApiError;
-use crate::effort::{Effort, EffortFamily};
+use crate::effort::Effort;
 use crate::identity::Identity;
 use crate::provider::errors::UpError;
 use crate::provider::ModelList;
@@ -304,29 +304,33 @@ pub async fn pick(ctx: Ctx) -> Answer {
     ok(picked_answer(app, &picked)?)
 }
 
-/// `POST models/effort` `{"slot", "effort": null | {"family", "level"}}`: sets the thinking strength of a slot. The
-/// connection format is not checked (the choice only changes the request parameter); the slot's model is untouched.
-/// `family` is `anthropic | openai | google | responses`; the removed `gemma` family is a 400 (v1.9).
+/// `POST models/effort` `{"slot", "level": string | null}`: sets the thinking strength of a slot. The family is the one
+/// of the connection the slot effectively uses (its own model's connection, else the default slot's); 400 when the slot
+/// resolves to none or the level is not one of that family's levels. `null` is back to the model default (stored NULL).
 pub async fn effort(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["slot", "effort"])?;
+    only_keys(&ctx.body, &["slot", "level"])?;
     let slot = match ctx.body.get("slot") {
         Some(Value::String(s)) => Slot::parse(s).ok_or_else(ApiError::bad_request)?,
         _ => return Err(ApiError::bad_request()),
     };
-    let choice = match ctx.body.get("effort") {
+    let level = match ctx.body.get("level") {
         Some(Value::Null) => None,
-        Some(Value::Object(o)) if o.len() == 2 => {
-            let family = match o.get("family") {
-                Some(Value::String(f)) => EffortFamily::parse(f),
-                _ => None,
-            };
-            let level = o.get("level").and_then(Value::as_str);
-            match (family, level) {
-                (Some(f), Some(l)) => Some(Effort::new(f, l).ok_or_else(ApiError::bad_request)?),
-                _ => return Err(ApiError::bad_request()),
-            }
-        }
+        Some(Value::String(l)) => Some(l.as_str()),
         _ => return Err(ApiError::bad_request()),
+    };
+    // clearing needs no family (a stale tag of a slot that resolves to nothing must stay clearable)
+    let choice = match level {
+        None => None,
+        Some(l) => {
+            let family = ctx
+                .app
+                .0
+                .routes()?
+                .slot_effort(slot)
+                .map(|e| e.family())
+                .ok_or_else(ApiError::bad_request)?;
+            Some(Effort::new(family, l).ok_or_else(ApiError::bad_request)?)
+        }
     };
     let app = &ctx.app;
     let who = &ctx.who;

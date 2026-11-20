@@ -77,7 +77,7 @@ async fn the_pacing_keys_have_defaults_ranges_and_stay_apart_from_the_unlimited_
             v["limits"]["paceRpm"].clone(),
             v["limits"]["paceTpm"].clone()
         ),
-        (json!(1), json!(15), json!(250_000))
+        (json!(1), json!(13), json!(240_000))
     );
     assert_eq!(v["ranges"]["paceOn"], json!([0, 1]));
     assert_eq!(v["ranges"]["paceRpm"], json!([1, 10_000]));
@@ -198,8 +198,8 @@ async fn a_daily_quota_stops_an_import_job() {
 #[tokio::test]
 async fn the_calls_of_a_job_are_spread_over_the_window() {
     let e = env().await;
-    // 10 requests a minute = 9 with the margin; the window is shrunk to 6 s: one call every 667 ms
-    e.t.post("/api/ai/admin/limits", &e.admin, json!({"paceRpm": 10}))
+    // 9 requests a minute (used as entered); the window is shrunk to 6 s: one call every 667 ms
+    e.t.post("/api/ai/admin/limits", &e.admin, json!({"paceRpm": 9}))
         .await;
     e.t.app.0.knobs.pace_scale.store(10, SeqCst);
     let before = e.t.stub.count();

@@ -9,7 +9,7 @@ import type { StudyUiDeps } from './components/ai-study-ui.ts';
 import './components/ai-import.ts';
 import { brand } from './components/common.ts';
 import { githubLine } from './components/github-line.ts';
-import { afterShellRender, installShellHandlers, resetTopH, shell } from './components/shell.ts';
+import { afterShellRender, installShellHandlers, refreshThemeButton, resetTopH, shell } from './components/shell.ts';
 import { installTooltips } from './components/tooltip.ts';
 import { t, uiLang } from './i18n/index.ts';
 import { errorText, setAdminForTexts, studyErrorText } from './i18n/errors.ts';
@@ -186,7 +186,7 @@ function draw(): void {
 }
 
 applySettings(S.settings);
-watchSystemTheme();
+watchSystemTheme(refreshThemeButton);
 setRenderer(render);
 installShellHandlers();
 // v0.9: the AI+ panel (v1.0: a panel inside the page) and the AI summary window (in document.body, outside the page)

@@ -6,6 +6,21 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.1 — 2026-11-20
+
+**Thinking strength per connection, the AI Chat picker with a strength step, a light / dark button in the top bar, and a fix for the iPhone menu. Upgrading: pull the images; the AI database moves to schema 11 on start after a backup copy (rollback = restore `backups/xexam-ai-schema10-*.db`); the main database does not change.**
+
+- **Thinking strength follows the connection**: every connection has a **Thinking-strength parameter** (**Anthropic** `output_config.effort`, **OpenAI** `reasoning_effort`, **Google** `thinking_level`, **Responses API** `reasoning.effort`), chosen from the connection's format and address until you pick one by hand. One connection is one family; for a gateway that serves several vendors add one connection per vendor. The connection cards show the family.
+- **Model rows**: the **Default** button and the family buttons are gone. Each row shows the family icon of its connection and a level list; an untouched row sends the model's own default level (unknown model: `medium`), so every call carries a strength. A model that rejects the parameter no longer stops it for the other models of that connection.
+- **Master switch**: while AI+ is off, every model row is greyed and cannot be changed (switches show off, stored choices are kept); turning AI+ on shows them again.
+- **AI Chat picker**: administrators in free mode now choose **API**, then **Model**, then **Strength** (the levels of that connection's family, the model default marked). The choice is remembered per chat; the brain button shows a dot for a non-default strength.
+- **Top bar**: a moon / sun button left of your name switches between the dark and the light look and saves the same choice as **Settings → Appearance**.
+- **iPhone menu fix**: with a conversation open in AI Chat, a tap on a menu item no longer left you in AI Chat. Menu items also show a pressed shade while tapped.
+- **Clearer limit wording**: **AI safety** now says what each limit counts: the per-user caps count chat messages, hints, explanations, summaries and memory suggestions (not generation or import); the maximum calls of AI generation and AI import apply inside one job, for everyone including administrators; the **Server** tab says the rate limit is the provider's own and which functions it paces.
+- **Pacing used as entered**: the provider rate limit is no longer reduced by a hidden 10 %. New defaults are 13 requests and 240 000 tokens a minute. On upgrade, stored values on the old defaults (15 / 250 000) become 13 / 240 000 and others are multiplied by 0.9 (at least 1 and 1 000), so the pace stays the same.
+- **Database, AI (schema 10 to 11)**: new `connections.effort_family` (inferred from provider, format and model names; one log line per connection) and `chats.pick_effort`. Stored slot strengths that do not fit their connection's family are cleared (the model default is used). A backup copy `backups/xexam-ai-schema10-<date-time>.db` is written first. Details: section 8.2h of [database.md](database.md) and the v2.0 to v2.1 section of [migration.md](migration.md).
+- **Going back**: a v2.0 ai-service refuses schema 11: restore `backups/xexam-ai-schema10-<date-time>.db` into the AI volume (settings, chats and usage written after the upgrade are lost). The main database needs no restore.
+
 ### v2.0 — 2026-11-20
 
 **Database clean-up: foreign keys in the main database, legacy tables and columns removed, new indexes; no visible change in the app. Upgrading: pull the images; both databases move to a new schema on start, each after a backup copy (main 10 to 11, AI 9 to 10); keep about twice the size of the main database free. Going back to v1.9 needs the AI backup `backups/xexam-ai-schema9-*.db`; the main database needs no restore.**

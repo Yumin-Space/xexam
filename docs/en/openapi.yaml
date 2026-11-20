@@ -1034,6 +1034,10 @@ paths:
         messages never change. Prompt caching: in the Anthropic format the system block and the last history message carry a
         `cache_control` breakpoint (`ephemeral`); in the OpenAI and OpenAI Responses formats the provider's own automatic caching applies (no markers are sent). What the
         provider served from its cache is stored and reported as `tokensCached` in /api/ai/admin/usage.
+
+        (v2.1) Thinking strength: every call sends one (see POST /api/ai/admin/models/effort for the effective-strength rule). In
+        free mode an administrator may send `effort` (also on /api/ai/regenerate and /api/ai/edit); the chat's stored level
+        (`pickEffort`) is used when it is absent. Other users may send only `null` (accepted, no effect); the slot's strength applies.
       requestBody:
         required: true
         content:
@@ -1054,6 +1058,11 @@ paths:
                     Accepted for old clients and **ignored** whatever its value (no error, no effect): a chat has no mode, and the
                     mode of an answer is the administrator's free mode (`POST /api/ai/free`, `freeMode` in the status).
                   deprecated: true
+                effort:
+                  type: string
+                  nullable: true
+                  maxLength: 32
+                  description: "(v2.1) Thinking-strength level of this chat, administrators in free mode only (a non-null value from a non-administrator: 403 `ai.notAllowed`; outside free mode, or a level that is not one of the levels of the family of the connection the call uses: 400 `ai.badRequest`). `null` clears the stored level (accepted from any user; it has an effect only for administrators). Absent: the level stored on the chat is used (free mode only). The level is stored in `chats.pick_effort` (read back as `pickEffort`)."
       responses:
         "200": { $ref: "#/components/responses/AiStream" }
         "400": { $ref: "#/components/responses/AiError" }
@@ -2523,6 +2532,11 @@ paths:
                 messageId: { type: integer, minimum: 1 }
                 lang: { type: string, enum: [en, zh, ja, zh-CN] }
                 model: { type: object, nullable: true, description: "ModelRef `{connectionId, model}`; administrators in free mode only" }
+                effort:
+                  type: string
+                  nullable: true
+                  maxLength: 32
+                  description: "(v2.1) Thinking-strength level of this chat, administrators in free mode only (a non-null value from a non-administrator: 403 `ai.notAllowed`; outside free mode, or a level that is not one of the levels of the family of the connection the call uses: 400 `ai.badRequest`). `null` clears the stored level (accepted from any user; it has an effect only for administrators). Absent: the level stored on the chat is used (free mode only). The level is stored in `chats.pick_effort` (read back as `pickEffort`)."
       responses:
         "200": { $ref: "#/components/responses/AiStream" }
         "400": { $ref: "#/components/responses/AiError" }
@@ -2549,6 +2563,11 @@ paths:
                 text: { type: string }
                 lang: { type: string, enum: [en, zh, ja, zh-CN] }
                 model: { type: object, nullable: true, description: "ModelRef `{connectionId, model}`; administrators in free mode only" }
+                effort:
+                  type: string
+                  nullable: true
+                  maxLength: 32
+                  description: "(v2.1) Thinking-strength level of this chat, administrators in free mode only (a non-null value from a non-administrator: 403 `ai.notAllowed`; outside free mode, or a level that is not one of the levels of the family of the connection the call uses: 400 `ai.badRequest`). `null` clears the stored level (accepted from any user; it has an effect only for administrators). Absent: the level stored on the chat is used (free mode only). The level is stored in `chats.pick_effort` (read back as `pickEffort`)."
       responses:
         "200": { $ref: "#/components/responses/AiStream" }
         "400": { $ref: "#/components/responses/AiError" }
@@ -2585,6 +2604,8 @@ paths:
       x-access: AiAdmin
       description: |
         Administrators only (403 `ai.notAllowed`); a non-null model outside free mode is 400 `ai.badModel`. No request count, no usage row.
+
+        (v2.1) Optional `effort` (string or null): `effort` absent keeps the stored strength level of the chat, `null` clears it, a string is checked against the family of the connection the pick resolves to (the pick's, else the chat slot's) and stored in `chats.pick_effort`; a level outside free mode or not in that family is 400 `ai.badRequest`. Unknown body keys are 400.
       requestBody:
         required: true
         content:
@@ -2595,6 +2616,7 @@ paths:
               properties:
                 chatId: { type: integer, minimum: 1 }
                 model: { type: object, nullable: true, description: "ModelRef or null" }
+                effort: { type: string, nullable: true, maxLength: 32, description: "(v2.1) Level of the chat; absent = keep, null = clear" }
       responses:
         "200": { description: "`{\"chat\": …}`" }
         "400": { $ref: "#/components/responses/AiError" }
@@ -2627,6 +2649,7 @@ paths:
                 gatewayKey: { type: string, nullable: true }
                 reuseKeysFrom: { type: integer, description: "new connections only" }
                 confirmHost: { type: string, description: "The new host[:port], typed by the administrator; required for a key reuse" }
+                effortFamily: { type: string, enum: [anthropic, openai, google, responses], description: "(v2.1) Thinking-strength family of the connection. Absent or null: kept on a change, inferred on a create (provider or format anthropic = anthropic; format responses = responses; else google when more than half of the listed model ids contain gemini or gemma; else openai). Any other value: 400 `ai.badRequest`." }
       responses:
         "200": { description: "OK; the answer carries the new `settings` object (GET /api/ai/admin/settings)" }
         "400": { $ref: "#/components/responses/AiError" }
@@ -2733,11 +2756,14 @@ paths:
   /api/ai/admin/models/effort:
     post:
       tags: [ai-admin]
-      summary: "(v1.6) Set the thinking strength of a slot"
+      summary: "(v1.6, v2.1) Set the thinking strength of a slot"
       x-access: AiAdmin
       description: |
-        `{slot, effort}`, nothing else. `effort: null` is Default: no parameter is sent. Otherwise `{family, level}` with the
-        parameter and levels of the family:
+        (v2.1) `{slot, level}`, nothing else (unknown keys, including the old `{slot, effort: {family, level}}` form: 400
+        `ai.badRequest`). `level: null` is back to the model's default level (stored NULL). A string level must be one of the
+        levels of the family of the connection the slot effectively uses (the connection of the route the slot resolves to, which is the default slot's when its own model is unusable; when it does not resolve, for example a connection that is off, its own model's connection, else the default slot's;
+        the family is a property of the connection, `connections[].effortFamily`); a slot that resolves to no connection, or a
+        level outside that family (case-sensitive), is 400 `ai.badRequest`. Clearing needs no family.
 
         | family | parameter | levels |
         |---|---|---|
@@ -2746,29 +2772,26 @@ paths:
         | `google` | `extra_body.google.thinking_config.thinking_level` | MINIMAL, LOW, MEDIUM, HIGH, XHIGH |
         | `responses` | `reasoning.effort` (nested) | none, minimal, low, medium, high, xhigh, max |
 
-        (v1.9) The family `gemma` was removed (400 `ai.badRequest`); Gemma 4 uses `google` with HIGH or MINIMAL, and a stored
-        `gemma:` choice is rewritten on start. `slot` is one of seven names: `default`, `chat`, `hint`, `explain`, `summary`,
-        `generate`, `import` (`study` is a 400). A slot whose connection is off is a 409 `ai.connectionOff`.
+        Effective strength: every call sends a strength. The stored level is used when its family matches the family of the
+        connection the call goes to; otherwise the model's known default level in that family is sent (an unknown model:
+        the middle level, `medium`, `MEDIUM` for google). The settings answer shows it as `slots.<slot>.effortEffective` (`{family, level}`, null
+        only when the slot resolves to no connection); `slots.<slot>.effort` is the stored choice (or null).
 
-        The choice is not checked against the connection's format. A request that carries the parameter and is refused with
-        HTTP 400 or 422 is sent again without it and the connection is remembered as not supporting it (in memory). Activity
-        event `ai.settings.effort`. The settings answer carries `slots.<slot>.effort` and `effortLevels`.
+        `slot` is one of seven names: `default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import` (`study` is a 400).
+        A request that carries the parameter and is refused with HTTP 400 or 422 is sent again without it, and that connection + model + level is
+        remembered as not supporting it (in memory; cleared on any strength or connection change). Activity event `ai.settings.effort`. The settings answer also carries
+        `effortLevels` (the level list per family).
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [slot, effort]
+              required: [slot, level]
+              additionalProperties: false
               properties:
                 slot: { type: string, enum: [default, chat, hint, explain, summary, generate, import] }
-                effort:
-                  nullable: true
-                  type: object
-                  required: [family, level]
-                  properties:
-                    family: { type: string, enum: [anthropic, openai, google, responses] }
-                    level: { type: string, description: "One of the levels of the family, case-sensitive" }
+                level: { type: string, nullable: true, description: "A level of the slot connection's family, or null for the model default" }
       responses:
         "200": { description: "OK; the answer is `{settings}` (GET /api/ai/admin/settings)" }
         "400": { $ref: "#/components/responses/AiError" }
@@ -3796,7 +3819,14 @@ components:
       type: object
       required: [chat, messages]
       properties:
-        chat: { $ref: "#/components/schemas/AiChatSummary" }
+        chat:
+          allOf:
+            - { $ref: "#/components/schemas/AiChatSummary" }
+            - type: object
+              description: "Administrators also get `pick` and `pickEffort`"
+              properties:
+                pick: { type: object, nullable: true, description: "Stored model pick `{connectionId, model}`" }
+                pickEffort: { type: string, nullable: true, description: "(v2.1) Stored thinking-strength level of the chat (null = none); only used when its family matches the connection the call goes to" }
         messages: { type: array, items: { $ref: "#/components/schemas/AiMessage" } }
     AiMemory:
       type: object
@@ -3855,6 +3885,25 @@ components:
           properties:
             openai: { type: string, example: "https://api.openai.com/v1" }
             anthropic: { type: string, example: "https://api.anthropic.com" }
+        connections:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: integer }
+              enabled: { type: boolean }
+              effortFamily: { type: string, enum: [anthropic, openai, google, responses], description: "(v2.1) Thinking-strength family of the connection" }
+        slots:
+          type: object
+          description: "Per slot name (default, chat, hint, explain, summary, generate, import)"
+          additionalProperties:
+            type: object
+            properties:
+              modelId: { type: integer, nullable: true }
+              effort: { type: object, nullable: true, description: "Stored choice `{family, level}` (null = model default)" }
+              using: { type: object, nullable: true, description: "`{modelId, fallback}` of the model the slot resolves to; null when it resolves to none" }
+              effortEffective: { type: object, nullable: true, description: "(v2.1) What is sent now, `{family, level}`: the stored level when its family matches the slot connection's family, else the model's default level (unknown model: medium / MEDIUM); null only when the slot resolves to no connection" }
+        effortLevels: { type: object, description: "Level list per family (anthropic, openai, google, responses)" }
     AiSettingsUpdate:
       type: object
       additionalProperties: false
@@ -4016,9 +4065,9 @@ components:
         genMaxChunks: { type: integer, minimum: 1, maximum: 50, default: 8, description: "(v1.3) Most parts a source too big for one prompt may be split into" }
         summaryMaxItems: { type: integer, minimum: 10, maximum: 70, default: 40, description: "(v1.3) Most wrong answers one AI summary reads" }
         dailyTokenBudget: { type: integer, minimum: 0, maximum: 100000000, default: 0, description: "(v1.3) Site-wide tokens per day for normal users (input plus output); 0 = off" }
-        paceOn: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.9) 1 = send AI generation and import calls evenly within paceRpm and paceTpm (about 90 % of them are used, one call about every 60 / (0.9 x paceRpm) s over a sliding 60 s)" }
-        paceRpm: { type: integer, minimum: 1, maximum: 10000, default: 15, description: "(v1.9) Provider requests per minute" }
-        paceTpm: { type: integer, minimum: 1000, maximum: 100000000, default: 250000, description: "(v1.9) Provider tokens per minute (input plus output)" }
+        paceOn: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.9) 1 = send AI generation and import calls evenly within paceRpm and paceTpm (the values are used exactly as entered: one call every 60 / paceRpm s over a sliding 60 s; paces AI generation and AI import only)" }
+        paceRpm: { type: integer, minimum: 1, maximum: 10000, default: 13, description: "(v1.9) Provider requests per minute" }
+        paceTpm: { type: integer, minimum: 1000, maximum: 100000000, default: 240000, description: "(v1.9) Provider tokens per minute (input plus output)" }
     AiLimitsAnswer:
       type: object
       required: [limits, defaults, ranges]

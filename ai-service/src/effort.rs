@@ -1,7 +1,8 @@
 //! Thinking strength per feature (v1.6): which request parameter a slot sends, and at which level.
 //!
-//! The choice only decides the parameter put into the request body; it is never checked against the connection's
-//! wire format (a refusal is handled by the provider fallback). `None` everywhere means "send nothing".
+//! The family is a property of the connection (v2.1); the choice only decides the parameter put into the request body.
+//! A stored choice of another family is not used: `effective` gives the model's default level instead. Every call sends
+//! a strength explicitly (a refusal is handled by the provider fallback).
 use serde_json::{json, Value};
 
 /// The parameter family of a thinking-strength choice (what goes into the request body).
@@ -115,6 +116,20 @@ impl Effort {
     }
 }
 
+/// What one call sends: the stored choice when it belongs to the route's family, else the model's known default level
+/// (unknown model: the family's middle level). Always a value.
+pub fn effective(stored: Option<Effort>, family: EffortFamily, model: &str) -> Effort {
+    if let Some(e) = stored.filter(|e| e.family() == family) {
+        return e;
+    }
+    let level = crate::effort_defaults::level_for_family(
+        None,
+        family.levels(),
+        crate::effort_defaults::known_default(model),
+    );
+    Effort::new(family, level).expect("a level of the family")
+}
+
 /// `{"anthropic": [...], "openai": [...], "google": [...], "responses": [...]}`: the level lists for the settings answer.
 pub fn levels_json() -> Value {
     json!({
@@ -128,6 +143,33 @@ pub fn levels_json() -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn effective_uses_stored_only_in_the_family() {
+        use EffortFamily::*;
+        let hi = Effort::new(Anthropic, "max");
+        assert_eq!(
+            effective(hi, Anthropic, "claude-opus-5-5").tag(),
+            "anthropic:max"
+        );
+        // another family: the model default
+        assert_eq!(effective(hi, OpenAi, "gpt-5.5").tag(), "openai:medium");
+        assert_eq!(
+            effective(None, Anthropic, "claude-sonnet-5-5").tag(),
+            "anthropic:high"
+        );
+        // a known default the family does not offer, and an unknown model: the middle level
+        assert_eq!(effective(None, OpenAi, "gpt-5.4").tag(), "openai:medium");
+        assert_eq!(effective(None, Google, "unknown").tag(), "google:MEDIUM");
+        assert_eq!(
+            effective(None, Responses, "gpt-5.4").tag(),
+            "responses:none"
+        );
+        assert_eq!(
+            effective(None, Google, "gemma-4-31b-it").tag(),
+            "google:HIGH"
+        );
+    }
 
     #[test]
     fn effort_new_accepts_every_listed_level() {

@@ -9,7 +9,8 @@
 // (frames `reasoning` / `reasoningDone`, fields `reasoning*` of a message) is shown as a collapsible block above the answer:
 // `reasoningView` decides whether it is there, live (open while it streams) and open.
 import { modelRefText, parseModelRef } from '../api/model-ref.ts';
-import type { AiChatDetail, AiChatKind, AiMessage, AiModelList, ModelRef, UiLang } from '../types/api.ts';
+import type { AiChatDetail, AiChatKind, AiEffortFamily, AiMessage, AiModelList, AiSettings, AiSlot, ModelRef, UiLang } from '../types/api.ts';
+import { knownDefault, levelForFamily } from './effort-defaults.ts';
 
 /** A message as the page shows it: `thinking` (view only, never from the server) = a reasoning model thinks, no text yet */
 export type ViewMessage = AiMessage & { thinking?: boolean };
@@ -28,9 +29,11 @@ export interface ChatView {
    * messages before an optimistic cut (regenerate / edit), restored when the request fails before it starts. `model`: the
    * administrator's pick sent with it (undefined = unchanged, null = back to the default), kept as the chat's pick at the start.
    */
-  pending: { text: string; retry: boolean; prev?: ViewMessage[]; model?: ModelRef | null } | null;
+  pending: { text: string; retry: boolean; prev?: ViewMessage[]; model?: ModelRef | null; effort?: string | null } | null;
   /** v1.3, administrators: the model picked for this chat (null = the default) */
   pick: ModelRef | null;
+  /** v2.1, administrators: the thinking-strength level picked for this chat (null / absent = none) */
+  pickEffort?: string | null;
   /** The server is still writing an answer of this chat */
   running: boolean;
 }
@@ -51,40 +54,40 @@ export function chatOf(d: AiChatDetail): ChatView {
   const writing = d.chat.running ? lastWhere(messages, (m) => m.status === 'streaming') : undefined;
   return {
     chatId: d.chat.id, title: d.chat.title, kind: d.chat.kind ?? 'chat', messages, streamingId: writing?.id ?? null,
-    pending: null, pick: d.chat.pick ?? null, running: d.chat.running,
+    pending: null, pick: d.chat.pick ?? null, pickEffort: d.chat.pickEffort ?? null, running: d.chat.running,
   };
 }
 
 /** The page sends a message (or retries an answer): remembered until the stream starts */
-export function localSend(s: ChatView, text: string, retry = false, model?: ModelRef | null): ChatView {
-  return { ...s, pending: model === undefined ? { text, retry } : { text, retry, model } };
+export function localSend(s: ChatView, text: string, retry = false, model?: ModelRef | null, effort?: string | null): ChatView {
+  return { ...s, pending: { text, retry, ...(model !== undefined ? { model } : {}), ...(effort !== undefined ? { effort } : {}) } };
 }
 
 /** The id of the temporary question an edit shows until the server's start event (never a real message id) */
 export const TEMP_ID = -1;
 
-function withPrev(s: ChatView, text: string, retry: boolean, model: ModelRef | null | undefined, messages: ViewMessage[]): ChatView {
-  const p = localSend(s, text, retry, model).pending as NonNullable<ChatView['pending']>;
+function withPrev(s: ChatView, text: string, retry: boolean, model: ModelRef | null | undefined, messages: ViewMessage[], effort?: string | null): ChatView {
+  const p = localSend(s, text, retry, model, effort).pending as NonNullable<ChatView['pending']>;
   return { ...s, messages, pending: { ...p, prev: s.messages } };
 }
 
 /** Regenerate: the answer and everything after it leave the view at once (the new version streams in its place) */
-export function localRegenerate(s: ChatView, assistantId: number, model?: ModelRef | null): ChatView {
+export function localRegenerate(s: ChatView, assistantId: number, model?: ModelRef | null, effort?: string | null): ChatView {
   const i = s.messages.findIndex((m) => m.id === assistantId);
-  if (i < 0) return localSend(s, '', true, model);
-  return withPrev(s, '', true, model, s.messages.slice(0, i));
+  if (i < 0) return localSend(s, '', true, model, effort);
+  return withPrev(s, '', true, model, s.messages.slice(0, i), effort);
 }
 
 /** Edit: the edited question and everything after it leave the view; the new text stands in until the start event */
-export function localEdit(s: ChatView, messageId: number, text: string, model?: ModelRef | null, now = Math.floor(Date.now() / 1000)): ChatView {
+export function localEdit(s: ChatView, messageId: number, text: string, model?: ModelRef | null, now = Math.floor(Date.now() / 1000), effort?: string | null): ChatView {
   const i = s.messages.findIndex((m) => m.id === messageId);
-  if (i < 0) return localSend(s, text, false, model);
+  if (i < 0) return localSend(s, text, false, model, effort);
   const old = s.messages[i] as ViewMessage;
   const temp: ViewMessage = {
     id: TEMP_ID, role: 'user', content: text, status: 'done', error: null, truncated: false, model: null, createdAt: now, free: old.free,
     parentId: old.parentId ?? null,
   };
-  return withPrev(s, text, false, model, [...s.messages.slice(0, i), temp]);
+  return withPrev(s, text, false, model, [...s.messages.slice(0, i), temp], effort);
 }
 
 /** The request failed before the stream started (busy, refused, offline): nothing changed in the chat */
@@ -201,9 +204,12 @@ export function applyEvent(s: ChatView, ev: { event: string; data: unknown }, no
         messages = [...base.filter((m) => m.id !== d.userMessageId && m.id !== d.assistantMessageId && m.id !== TEMP_ID), user, assistant];
       }
       const picked = s.pending?.model;
+      const pickedEffort = s.pending?.effort;
       return {
         chatId: d.chatId, title: d.chatTitle || s.title, kind: d.chatKind ?? s.kind, messages, streamingId: d.assistantMessageId, pending: null,
-        pick: d.modelFallback ? null : picked !== undefined ? picked : s.pick, running: true,
+        pick: d.modelFallback ? null : picked !== undefined ? picked : s.pick,
+        // a fallback drops only the model pick; the server keeps the stored strength level, so the view does too
+        pickEffort: pickedEffort !== undefined ? pickedEffort : s.pickEffort ?? null, running: true,
       };
     }
     case 'thinking': {
@@ -295,7 +301,8 @@ export function pollResult(s: ChatView, d: AiChatDetail): ChatView {
   const writing = d.chat.running ? lastWhere(messages, (m) => m.status === 'streaming') : undefined;
   return {
     chatId: d.chat.id, title: d.chat.title, kind: d.chat.kind ?? 'chat', messages, streamingId: writing?.id ?? null,
-    pending: s.pending, pick: d.chat.pick !== undefined ? d.chat.pick : s.pick, running: d.chat.running,
+    pending: s.pending, pick: d.chat.pick !== undefined ? d.chat.pick : s.pick,
+    pickEffort: d.chat.pickEffort !== undefined ? d.chat.pickEffort : s.pickEffort ?? null, running: d.chat.running,
   };
 }
 
@@ -457,6 +464,63 @@ export function chooseValue(value: string, def: ChatDefault): string {
   return def && value === modelRefText({ connectionId: def.connectionId, model: def.model }) ? '' : value;
 }
 
+// ---------------------------------------------------------------- v2.1: the strength step of the picker
+
+/** The strength list of the picker: the levels of the chosen connection's family, the model default and the preselected level */
+export interface StrengthView { family: AiEffortFamily; levels: string[]; modelDefault: string; selected: string }
+
+/** Levels are compared exactly as sent (the server matches them the same way: `HIGH` is not `high`) */
+const sameLevel = (a: string, b: string): boolean => a === b;
+
+/** The connection and model a slot uses now (its own model, else the default slot's) */
+export function slotRoute(s: AiSettings, slot: AiSlot): ModelRef | null {
+  const id = s.slots[slot]?.modelId ?? s.slots.default?.modelId ?? null;
+  const m = id == null ? null : s.pool.find((x) => x.id === id);
+  return m ? { connectionId: m.connectionId, model: m.model } : null;
+}
+
+/**
+ * The strength step for the chosen connection + model, or null when it cannot be offered (no such connection, or the
+ * settings carry no levels). Preselected: the chat's own pick (`picked`, '' = none) when valid for the family, else the
+ * stored choice of the AI Chat row when it belongs to this family (the server applies it to any route of the family, so
+ * the picker shows what is sent), else the model default.
+ */
+export function strengthView(s: AiSettings | null, connId: number | null, model: string | null, picked: string): StrengthView | null {
+  if (!s || connId == null || !model) return null;
+  const conn = s.connections.find((c) => c.id === connId);
+  const levels = conn ? s.effortLevels?.[conn.effortFamily] : undefined;
+  if (!conn || !levels || !levels.length) return null;
+  const modelDefault = levelForFamily(null, levels, knownDefault(model));
+  const found = (x: string): string | undefined => levels.find((l) => sameLevel(l, x));
+  const own = picked !== '' ? found(picked) : undefined;
+  const stored = s.slots.chat?.effort;
+  const row = stored && stored.family === conn.effortFamily ? found(stored.level) : undefined;
+  return { family: conn.effortFamily, levels, modelDefault, selected: own ?? row ?? modelDefault };
+}
+
+/** Whether the AI page's popstate listener acts: only on the chat list of a one-pane phone, with no chat in the address,
+ *  and only while the NEW hash is still the AI page (a menu link changes the hash and popstate fires before hashchange) */
+export function handlesPopstate(s: { onPage: boolean; chatsTab: boolean; onePane: boolean; chatInUrl: boolean; hashName: string }): boolean {
+  return s.onPage && s.chatsTab && s.onePane && !s.chatInUrl && s.hashName === 'ai';
+}
+
+/** The level a request carries: undefined = nothing changed, null = no pick, else the level */
+export function effortArg(selected: string, stored: string | null | undefined): string | null | undefined {
+  const was = stored ?? '';
+  if (selected === was) return undefined;
+  return selected === '' ? null : selected;
+}
+
+/** The selection after the model changed: kept while the new family still has the level, else none */
+export function keepEffort(selected: string, v: StrengthView | null): string {
+  return selected !== '' && v && v.levels.some((l) => sameLevel(l, selected)) ? selected : '';
+}
+
+/** The brain button's dot also marks a strength other than the model default */
+export function effortMarks(selected: string, v: StrengthView | null): boolean {
+  return selected !== '' && v != null && !sameLevel(selected, v.modelDefault);
+}
+
 /** The model a request carries: undefined = nothing changed (the server uses the stored pick), null = back to the default */
 export function modelArg(selected: string, stored: ModelRef | null, parse: (text: string) => ModelRef | null): ModelRef | null | undefined {
   const was = stored ? modelRefText(stored) : '';
@@ -541,14 +605,18 @@ export interface SendBody {
   lang: AiLang;
   /** v1.3, administrators: the picked model (null = back to the default); absent = the stored pick */
   model?: ModelRef | null;
+  /** v2.1, administrators: the picked thinking-strength level (null = clear); absent = the stored pick */
+  effort?: string | null;
 }
 
 /**
  * The body of `POST /api/ai/send`: the chat (null starts one), the text and the reply language. Free mode is a state of the
  * administrator on the server (`POST /api/ai/free`), so the body never carries it.
  */
-export function sendBody(o: { chatId: number | null; text: string; lang: AiLang; model?: ModelRef | null }): SendBody {
-  return o.model === undefined ? { chatId: o.chatId, text: o.text, lang: o.lang } : { chatId: o.chatId, text: o.text, lang: o.lang, model: o.model };
+export function sendBody(o: { chatId: number | null; text: string; lang: AiLang; model?: ModelRef | null; effort?: string | null }): SendBody {
+  return {
+    chatId: o.chatId, text: o.text, lang: o.lang, ...(o.model !== undefined ? { model: o.model } : {}), ...(o.effort !== undefined ? { effort: o.effort } : {}),
+  };
 }
 
 /** The body of `POST /api/ai/retry` */

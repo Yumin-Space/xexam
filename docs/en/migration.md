@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.0 → v2.1** (section 00000000): no `docker-compose.yml` change and no new variable. The AI database moves to schema 11 on start after the copy `backups/xexam-ai-schema10-<date-time>.db`; the main database does not change. Rolling back to v2.0 needs that copy restored (section 00000000.4).
 > - **v1.9 → v2.0** (section 0000000): no `docker-compose.yml` change and no new variable; a database clean-up with nothing visible in the app. The main database moves to schema 11 and the AI database to schema 10 on start, each after its own backup copy (`backups/xexam-schema10-<date-time>.db`, `backups/xexam-ai-schema9-<date-time>.db`); keep about twice the size of the main database free. Rolling back to v1.9 needs the AI copy restored, the main database does not (section 0000000.4).
 > - **v1.8 → v1.9** (section 000000; also from v1.6 or v1.7, which share the AI schema 8): no required `docker-compose.yml` change for one host; the AI database moves to schema 9 on start after the copy `backups/xexam-ai-schema8-<date-time>.db`; the main database does not change. New optional variables and three per-machine compose files (section 12 of [deployment.md](deployment.md)). Rolling back needs that copy restored (section 000000.4).
 > - **v1.5 → v1.6** (section 00000): no new `docker-compose.yml` variable; the main database moves to schema 10 automatically after its own backup copy is written (additive: one column, `users.can_download_banks`). The AI database stays at schema 8 (one column, `model_slots.effort`, is added by itself, with no backup copy). Rolling back to v1.5 needs no restore.
@@ -24,6 +25,28 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 00000000. Upgrading from v2.0 to v2.1
+
+This section is numbered 00000000 because it is the newest one. The older sections keep their numbers.
+
+### 00000000.1 What changes
+
+- **The AI database** moves from schema 10 to **schema 11**, once, on the first start of the new ai-service, after the copy `backups/xexam-ai-schema10-<date-time>.db`. It adds `connections.effort_family` (inferred for each existing connection; check it in the connection form) and `chats.pick_effort`, and clears stored slot strengths that do not fit their connection's family. Details: section 8.2h of [database.md](database.md).
+- **The main database** does not change.
+- **Behaviour you will notice** (section 17.9 of [usage.md](usage.md)): the thinking strength is set per connection and every call sends a level (the model's default unless you chose one); the **Default** button is gone; model rows are greyed while AI+ is off; AI Chat has a **Strength** step; the top bar has a light / dark button.
+
+### 00000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. No compose change. Afterwards open **AI settings → Connections and models** and check the **Thinking-strength parameter** of each connection.
+
+### 00000000.3 Check
+
+The log of ai-service says it upgraded the database to schema 11 and prints one line per connection (id and family). **AI settings** shows the family on every connection card.
+
+### 00000000.4 Going back to v2.0
+
+Stop the stack, restore `backups/xexam-ai-schema10-<date-time>.db` into the AI volume (section 8.4 of [database.md](database.md)), change `:latest` to `:v2.0` for the three images and run `docker compose up -d`. Settings, chats and usage written after the upgrade are lost. The main database needs no restore.
 
 ## 0000000. Upgrading from v1.9 to v2.0
 
@@ -63,7 +86,7 @@ This section is numbered 000000 because it is the newest one. The older sections
 
 - **The AI database** moves from schema 8 to **schema 9**, once, on the first start of the new ai-service, after the copy `backups/xexam-ai-schema8-<date-time>.db`. The step adds `connections.enabled` (every connection stays **on**) and the three pacing columns of `limits` (`pace_on` 1, `pace_rpm` 15, `pace_tpm` 250 000), rebuilds `model_slots` (the `study` row is copied to both `hint` and `explain`: both start with the old study model and thinking strength) and rewrites stored Gemma thinking strengths to the Google family with the same request. Details: section 8.2f of [database.md](database.md).
 - **The main database** does not change.
-- **Behaviour you will notice** (section 17.10 of [usage.md](usage.md)): feature switches are now one per model row and apply to administrators too; the pacing of AI generation and import is on by default (15 requests and 250 000 tokens a minute, 90 % used); **AI safety** has seven sub-tabs; the **Gemma** thinking button is gone; requests to AI providers carry `xexam-ai-service/<version>` again as `User-Agent` unless `XEXAM_AI_USER_AGENT_NAME=none` (the v1.8 behaviour).
+- **Behaviour you will notice** (section 17.10 of [usage.md](usage.md)): feature switches are now one per model row and apply to administrators too; the pacing of AI generation and import is on by default (13 requests and 240 000 tokens a minute, used exactly as entered; since v2.1 there is no hidden 10 % margin, and an AI database upgraded to schema 11 converts stored values so the pace stays the same: 15 / 250 000 become 13 / 240 000, other values times 0.9); **AI safety** has seven sub-tabs; the **Gemma** thinking button is gone; requests to AI providers carry `xexam-ai-service/<version>` again as `User-Agent` unless `XEXAM_AI_USER_AGENT_NAME=none` (the v1.8 behaviour).
 - **Compose**: nothing is required for one host. The new variables (`XEXAM_FRONTEND_PEERS`, `XEXAM_INTERNAL_TOKEN_REQUIRED`, `XEXAM_BACKEND_UPSTREAM`, `XEXAM_AI_UPSTREAM`, `XEXAM_NGINX_RESOLVER`) and `docker-compose.frontend.yml`, `docker-compose.backend.yml`, `docker-compose.ai-service.yml` matter only when you run the services on different machines.
 
 ### 000000.2 Upgrade

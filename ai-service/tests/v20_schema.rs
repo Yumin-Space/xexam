@@ -1,4 +1,4 @@
-//! v2.0 AI database clean-up (schema 10): the retired `secrets` table and the retired `settings` / `limits` / `chats`
+//! v2.0 AI database clean-up (schema 10; since v2.1 the file is schema 11): the retired `secrets` table and the retired `settings` / `limits` / `chats`
 //! columns are dropped by every path; nothing else changes. Fresh and upgraded files are the same, a failed step changes
 //! nothing, the old key bytes leave the live files. All content is made up.
 mod common;
@@ -185,12 +185,12 @@ fn history_file(path: &Path, n: u32) {
 }
 
 #[test]
-fn a_fresh_database_is_schema_10_without_the_retired_items() {
+fn a_fresh_database_is_schema_11_without_the_retired_items() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     let c = raw(&dir.path().join(DB_FILE));
-    assert_eq!(schema::SCHEMA_VERSION, "10");
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema::SCHEMA_VERSION, "11");
+    assert_eq!(schema_of(&c), "11");
     assert!(!table_names(&c).contains(&"secrets".to_string()));
     assert_eq!(
         columns(&c, "settings"),
@@ -250,7 +250,7 @@ fn check_upgrade(dir: &Path, n: u32, fresh: &[MasterRow]) {
     drop(copy);
 
     // the live file: schema 10, the same objects as a new file, nothing retired left
-    assert_eq!(schema_of(&live), "10");
+    assert_eq!(schema_of(&live), "11");
     assert_eq!(
         master(&live),
         fresh,
@@ -316,7 +316,15 @@ fn check_upgrade(dir: &Path, n: u32, fresh: &[MasterRow]) {
                 |r| r.get(0),
             )
             .expect("old value");
-        assert_eq!(live_limits.get(d.key), was, "n = {n}: {}", d.key);
+        // the 10 -> 11 step converts the pace values of a schema-9 file (old defaults -> new, else x 0.9)
+        let want = match (d.column, was) {
+            ("pace_rpm", 15) => 13,
+            ("pace_tpm", 250_000) => 240_000,
+            ("pace_rpm", v) => (v * 9 / 10).max(1),
+            ("pace_tpm", v) => (v * 9 / 10).max(1000),
+            (_, v) => v,
+        };
+        assert_eq!(live_limits.get(d.key), want, "n = {n}: {}", d.key);
     }
     let by: String = live
         .query_row("SELECT updated_by FROM limits WHERE id = 1", [], |r| {
@@ -375,7 +383,7 @@ fn the_pre_release_schema_2_file_with_chats_free_upgrades_too() {
     }
     drop(open(dir.path()));
     let c = raw(&path);
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     assert!(!columns(&c, "chats").contains(&"free".to_string()));
     assert_eq!(master(&c), fresh);
     assert_eq!(backups(dir.path()).len(), 1);
@@ -451,7 +459,7 @@ fn the_repair_re_adds_a_missing_live_column_and_never_a_retired_one() {
             "{table}.{column}"
         );
     }
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     assert!(backups(dir.path()).is_empty(), "the repair makes no copy");
     drop(c);
     let bytes = std::fs::read(&path).expect("read");
@@ -497,7 +505,7 @@ fn a_failed_step_changes_nothing_and_the_next_start_upgrades() {
         .expect("drop trigger");
     drop(open(dir.path()));
     let c = raw(&path);
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     assert!(!table_names(&c).contains(&"secrets".to_string()));
 }
 
@@ -511,7 +519,7 @@ fn a_schema_9_file_without_import_max_50_upgrades() {
         .expect("delete");
     drop(open(dir.path()));
     let c = raw(&path);
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     let flag: i64 = c
         .query_row(
             "SELECT COUNT(*) FROM meta WHERE key = 'import_max_50'",
@@ -544,25 +552,25 @@ fn a_schema_9_file_without_the_unlimited_flag_takes_the_one_time_path() {
         )
         .expect("limits");
     assert_eq!((g, i), (1, 1));
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     // the upgrade copy and the one of the one-time step
     assert_eq!(backups(dir.path()).len(), 2);
 }
 
 #[test]
-fn a_newer_schema_is_refused_and_the_message_names_schema_10() {
+fn a_newer_schema_is_refused_and_the_message_names_schema_11() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     let path = dir.path().join(DB_FILE);
     raw(&path)
-        .execute("UPDATE meta SET value = '11' WHERE key = 'schema'", [])
+        .execute("UPDATE meta SET value = '12' WHERE key = 'schema'", [])
         .expect("set");
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 11 must be refused"),
+        Ok(_) => panic!("schema 12 must be refused"),
         Err(e) => e,
     };
-    assert!(err.contains("has schema 11"), "{err}");
-    assert!(err.contains("(schema 10)"), "{err}");
+    assert!(err.contains("has schema 12"), "{err}");
+    assert!(err.contains("(schema 11)"), "{err}");
 }
 
 fn contains(hay: &[u8], needle: &[u8]) -> bool {

@@ -288,6 +288,8 @@ impl AppState {
             Arc::new(move || app.0.remember_no_schema(&key));
         let (no_effort, on_no_effort) = match spec.effort {
             Some(e) => {
+                // per connection (id + revision), model and level: the route key already holds the model, so one model
+                // (or one level) that is rejected does not stop the parameter for the others
                 let key = format!("{}|{}", route.key, e.tag());
                 let refused = self.0.no_effort_of(&key);
                 let app = self.clone();
@@ -743,6 +745,16 @@ impl App {
     /// other pool model (owner: a warning only, no automatic switch).
     pub fn route(&self, slot: Slot, pick: Option<&Pick>) -> Result<Route, ApiError> {
         self.routes()?.resolve(slot, pick)
+    }
+
+    /// `route` with an administrator's own strength level of the chat (ignored when not valid for the route's family).
+    pub fn route_with(
+        &self,
+        slot: Slot,
+        pick: Option<&Pick>,
+        level: Option<&str>,
+    ) -> Result<Route, ApiError> {
+        self.routes()?.resolve_with(slot, pick, level)
     }
 
     /// `route(slot, None)` succeeds.

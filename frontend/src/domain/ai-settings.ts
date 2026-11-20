@@ -317,7 +317,7 @@ export const DEFAULT_LIMITS: Record<LimitKey, number> = {
   genWrongMulti: 6, genCallTokens: 20000, genRunning: 2, importMaxMb: 20, importMaxQuestions: 100, genMaxCalls: 15, importMaxCalls: 25, recognizeMaxCalls: 20,
   genUnlimited: 1, importUnlimited: 1,
   studyShare: 1, studyShareDays: 180, genMaxChunks: 8, summaryMaxItems: 40, dailyTokenBudget: 0,
-  paceOn: 1, paceRpm: 15, paceTpm: 250000,
+  paceOn: 1, paceRpm: 13, paceTpm: 240000,
 };
 export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
   callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], callsAdminsExempt: [0, 1], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
@@ -417,11 +417,9 @@ export function limitsUpdate(saved: LimitValues, form: LimitsForm): LimitValues 
   return u;
 }
 
-/** What the service really enforces of the typed provider limits: 90 % of each, and the even gap between two requests in seconds */
+/** The typed provider limits as entered (no hidden margin) and the even gap between two requests in seconds (60 / rpm) */
 export function paceEffective(rpm: number, tpm: number): { rpm: number; tpm: number; sec: number } {
-  const r = Math.max(1, Math.floor((rpm * 9) / 10));
-  const tk = Math.max(1000, Math.floor((tpm * 9) / 10));
-  return { rpm: r, tpm: tk, sec: Math.round(600 / r) / 10 };
+  return { rpm, tpm, sec: Math.round(600 / Math.max(1, rpm)) / 10 };
 }
 
 // ---------------------------------------------------------------- the sub-tabs of the safety tab (v1.9)

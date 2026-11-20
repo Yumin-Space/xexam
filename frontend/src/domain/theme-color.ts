@@ -18,3 +18,13 @@ export function barColor(theme: ThemeChoice, media: string | null, systemDark: b
   if (media && /light/.test(media)) return LIGHT_BAR;
   return systemDark ? DARK_BAR : LIGHT_BAR;
 }
+
+/** Whether a saved choice is drawn dark right now ("system" shows what the system asks for). */
+export function drawnDark(theme: ThemeChoice, systemDark: boolean): boolean {
+  return theme === 'dark' || (theme === 'system' && systemDark);
+}
+
+/** What one press of the top-bar toggle saves: the opposite of what is on screen, always a fixed value. */
+export function toggledTheme(theme: ThemeChoice, systemDark: boolean): 'light' | 'dark' {
+  return drawnDark(theme, systemDark) ? 'light' : 'dark';
+}

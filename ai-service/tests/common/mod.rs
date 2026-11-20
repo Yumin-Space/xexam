@@ -1933,6 +1933,8 @@ impl TestApp {
             Provider::Gateway => format_override.unwrap_or_else(|| infer_format(&url).as_str()),
         };
         let now = xexam_ai_service::util::unix_now();
+        // the thinking-strength family follows the provider and format like the server's inference on create
+        let family = conn::infer_family(seed.provider, format, &[seed.model]);
         app.store
             .write(|tx| -> rusqlite::Result<()> {
                 let id = match conn::connection(tx, 1)? {
@@ -1948,6 +1950,7 @@ impl TestApp {
                                 format,
                                 gateway_auth: seed.gateway_auth,
                                 lists_models: true,
+                                effort_family: family.as_str(),
                                 by: "test",
                                 now,
                             },
@@ -1964,6 +1967,7 @@ impl TestApp {
                             format,
                             gateway_auth: seed.gateway_auth,
                             lists_models: true,
+                            effort_family: family.as_str(),
                             by: "test",
                             now,
                         },

@@ -11,6 +11,7 @@ pub mod chat;
 pub mod codes;
 pub mod config;
 pub mod effort;
+pub mod effort_defaults;
 pub mod extract;
 pub mod features;
 pub mod gen;

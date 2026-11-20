@@ -6,6 +6,21 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.1 — 2026-11-20
+
+**思考强度按连接设置、AI Chat 选择器增加强度一步、顶栏明暗按钮，以及 iPhone 菜单的修复。升级：拉取镜像即可；AI 数据库启动时先写备份副本再升到 schema 11（回滚 = 恢复 `backups/xexam-ai-schema10-*.db`）；主数据库不变。**
+
+- **思考强度跟着连接走**：每个连接有一个 **思考强度参数**（**Anthropic** `output_config.effort`、**OpenAI** `reasoning_effort`、**Google** `thinking_level`、**Responses API** `reasoning.effort`），在你手动选之前按连接的格式和地址自动决定。一个连接就是一个家族；一个网关服务多个厂商时，每个厂商加一个连接。连接卡片上会显示家族。
+- **模型行**：**默认** 按钮和家族按钮都没有了。每行显示所用连接的家族图标和强度列表；没动过的行发送模型自己的默认强度（未知模型为 `medium`），所以每次调用都带强度参数。某个模型拒绝该参数，不再影响同一连接的其他模型。
+- **总开关**：AI+ 关闭时，所有模型行变灰、不能操作（开关显示为关，已存的选择保留）；打开 AI+ 后恢复。
+- **AI Chat 选择器**：自由模式下的管理员依次选 **API**、**模型**、**强度**（该连接家族的强度，模型默认有标记）。选择按对话记住；强度不是默认值时，大脑按钮上有一个小点。
+- **顶栏**：名字左边的月亮／太阳按钮在深色和浅色之间切换，保存的选择与 **设置 → 外观** 相同。
+- **iPhone 菜单修复**：在 AI Chat 里打开了一个对话时，点菜单项会停留在 AI Chat 的问题已修复。点按菜单项时还会显示按下的底色。
+- **限额说明更清楚**：**AI 安全** 里每个上限都写明计什么：每用户请求次数上限计入对话消息、提示、解析、总结和记忆建议（不含出题和导入）；AI 出题和 AI 导入的最大调用次数作用于单个任务内部，对所有人包括管理员；**服务器** 页写明速率限制是服务商自己的限额，以及它限制哪些功能。
+- **匀速发送按填写原样使用**：服务商速率限制不再被暗中扣掉 10%。新的默认值是每分钟 13 次请求、240 000 tokens。升级时，仍是旧默认值（15 / 250 000）的值变成 13 / 240 000，其他值乘以 0.9（至少 1 和 1 000），实际速度不变。
+- **数据库，AI（schema 10 到 11）**：新增 `connections.effort_family`（根据提供方、格式和模型名推断，每个连接记一行日志）和 `chats.pick_effort`。与所属连接家族不符的已存强度会被清除（改用模型默认）。先写备份副本 `backups/xexam-ai-schema10-<日期时间>.db`。详情：[database.md](database.md) 的 8.2h 节和 [migration.md](migration.md) 的 v2.0 到 v2.1 一节。
+- **回退**：v2.0 的 ai-service 拒绝 schema 11：把 `backups/xexam-ai-schema10-<日期时间>.db` 恢复到 AI 卷（升级之后写入的设置、对话和用量会丢失）。主数据库不用恢复。
+
 ### v2.0 — 2026-11-20
 
 **数据库整理：主数据库加上外键，删除不再使用的旧表和旧列，新增索引；程序里看不出任何变化。升级：拉取镜像即可；启动时两个数据库各自先备份、再升到新的 schema（主库 10 到 11，AI 库 9 到 10）；请留出约两倍主数据库大小的空闲空间。回到 v1.9 需要 AI 备份 `backups/xexam-ai-schema9-*.db`，主数据库不用恢复。**

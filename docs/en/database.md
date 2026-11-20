@@ -674,7 +674,7 @@ A new file and an upgraded file end with the same tables. A v1.3 ai-service refu
 The AI database moves from schema 8 to **schema 9** once, on the first start of the v1.9 ai-service, after one backup copy `backups/xexam-ai-schema8-<date-time>.db` (the same mechanism as every earlier step). The main database does not change.
 
 - **`connections.enabled`** (`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`): the on/off switch of a connection. Every existing row starts on. It is added like the earlier columns (at start, when `pragma_table_info` does not list it); the `status` check is untouched, "Off" is derived from `enabled`, and `connections` is not rebuilt (it has `CASCADE` children).
-- **`limits.pace_on`, `limits.pace_rpm`, `limits.pace_tpm`**: the provider rate-limit pacing of AI generation and import: `pace_on` 0 or 1 (default 1), `pace_rpm` 1 to 10 000 (default 15), `pace_tpm` 1 000 to 100 000 000 (default 250 000). They are the keys `paceOn`, `paceRpm` and `paceTpm` of the limits API. The unlimited switches never change them.
+- **`limits.pace_on`, `limits.pace_rpm`, `limits.pace_tpm`**: the provider rate-limit pacing of AI generation and import: `pace_on` 0 or 1 (default 1), `pace_rpm` 1 to 10 000 (default 13), `pace_tpm` 1 000 to 100 000 000 (default 240 000); the values are used exactly as entered. They are the keys `paceOn`, `paceRpm` and `paceTpm` of the limits API. The unlimited switches never change them.
 - **`model_slots` is rebuilt**: the `CHECK` on `slot` now allows `default`, `chat`, `hint`, `explain`, `summary`, `generate` and `import` (seven rows; `study` is gone). The upgrade copies the `study` row (model, time, author and thinking strength) into both `hint` and `explain`, then drops the old table; a new file creates the new table directly, so both end with the same `sqlite_master`. Nothing references `model_slots`, so the rebuild runs with `foreign_keys` on.
 - **Gemma folded into Google**: on every start, a stored thinking strength `gemma:HIGH` or `gemma:true` becomes `google:HIGH`, `gemma:MINIMAL` or `gemma:false` becomes `google:MINIMAL`, and any other `gemma:` value is cleared (NULL). The wire request is the same as before. The step only runs when a `gemma:` row exists. Families are now `anthropic`, `openai`, `google` and `responses`.
 - **Global switches are independent**: `settings.features_off` bits 2 (hint) and 4 (explain) are no longer kept equal, and a start never pairs them again; `users.features_off` still pairs them (a user with only one of the two off gets both). The step that pairs the user bits runs without touching the global bits.
@@ -694,6 +694,17 @@ The AI database moves from schema 9 to **schema 10** once, on the first start of
 **Not done, on purpose.** No new index (the scan of `chats WHERE pick_conn = ?` is a rare administrator action), no new `CHECK` and no table rebuild (a `CHECK` needs a rebuild of a parent or large table), no renames. The mismatches that stay are listed in 9.4.
 
 **Going back to v1.9** needs the backup: a v1.9 ai-service refuses schema 10 (`written by a newer ai-service`). Stop, restore `backups/xexam-ai-schema9-<date-time>.db` as in 8.4, run the v1.9 images; settings, chats and usage written after the upgrade are lost. That copy, like every older one, still holds the old key ciphertext (section 11 of [security.md](security.md)).
+
+### 8.2h Schema v11 (v2.1)
+
+The AI database moves from schema 10 to **schema 11** once, on the first start of the v2.1 ai-service, after one backup copy `backups/xexam-ai-schema10-<date-time>.db` (the same mechanism as every earlier step). The step runs in one transaction and only adds and clears:
+
+- **`connections.effort_family TEXT NOT NULL DEFAULT 'openai'`**: the thinking-strength family of the connection (`anthropic`, `openai`, `google` or `responses`, validated in code). Existing connections are inferred: provider `anthropic`, or a gateway with format `anthropic`, gives `anthropic`; the Responses format gives `responses`; otherwise the model ids of the connection (pool, `model_slots`, `chats.pick_model`) decide: `google` when `gemini` / `gemma` ids are the majority, else `openai` (no models also gives `openai`). The log has one line per connection with its id and inferred family, no names or addresses.
+- **`chats.pick_effort TEXT`**: the level an administrator picked in AI Chat (NULL = none); a level string only, the family is that of the route's connection at call time. A value that does not belong to that family is ignored.
+- **`model_slots.effort` cleaned**: a stored `<family>:<level>` is kept only when its family equals the family of the connection the slot effectively uses; otherwise it is set to NULL (NULL = the model's default level, which is sent). Then `meta.schema` becomes `11`.
+- **`limits.pace_rpm` / `limits.pace_tpm` converted**: pacing no longer keeps a hidden 10 % margin, so a row still on the old defaults (15 / 250 000) becomes 13 / 240 000 and any other stored value becomes `floor(value * 0.9)` (at least 1 request and 1 000 tokens a minute); the actual pace stays the same as in v2.0. The log says so. The column defaults are now 13 / 240 000.
+
+**Going back to v2.0** needs the backup: a v2.0 ai-service refuses schema 11. Stop, restore `backups/xexam-ai-schema10-<date-time>.db` as in 8.4, run the v2.0 images; settings, chats and usage written after the upgrade are lost. The new columns themselves are harmless to v2.0, but `chats.pick_effort` is ignored there.
 
 ### 8.3 What the service does with it
 
@@ -724,9 +735,9 @@ Restore it like the main volume: stop, remove `xexam-ai.db-wal` and `xexam-ai.db
 - A restored AI volume and a main volume from another point in time fit together: users that no longer exist lose their AI data at the next reconcile, and a user id that now belongs to another account is recognised by its stamp.
 - `xexam_ai_auth` needs no backup: it holds only `internal.token`, which the backend creates again when it is missing (the AI service picks up the new token by itself).
 
-## 9. Schema map of both databases (v2.0)
+## 9. Schema map of both databases (v2.1)
 
-A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 11 and the AI database at schema 10; table and column names are exactly as stored. Nothing here changes a table.
+A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 11 and the AI database at schema 11; table and column names are exactly as stored. Nothing here changes a table.
 
 ### 9.1 Main database `xexam.db` (backend)
 
@@ -1148,7 +1159,7 @@ erDiagram
 | `settings` | One row: the AI master switch `enabled`, `retention_days`, `features_off` (global switch bits) | PK `id = 1` | Since schema 10 only `id`, `enabled`, `retention_days`, `updated_at`, `updated_by` and `features_off` remain |
 | `limits` | One row: every limit (concurrency, chat and memory sizes, per-user call caps, answer length, generation and import limits, shared cache, daily token budget) and, since v1.9, the pacing settings | PK `id = 1`; every column has a range `CHECK` | The five retired length columns were dropped in schema 10 |
 | `users` | Mirror of the main users (`id` plus `stamp` = main `uid`) with `function_enabled` (paused), `free_mode` and `features_off` (per-user feature bits) | PK `id` (given by the main database) | A different stamp means a different person: the AI data is dropped |
-| `chats` | AI Chat conversations and the chat of each practice, exam or record summary | PK `id`; `user_id` to `users` (CASCADE) | `leaf_id` and `pick_conn` have no foreign key on purpose |
+| `chats` | AI Chat conversations (with the administrator's picked level `pick_effort`) and the chat of each practice, exam or record summary | PK `id`; `user_id` to `users` (CASCADE) | `leaf_id` and `pick_conn` have no foreign key on purpose |
 | `messages` | Messages and their branch versions; hints, analyses and summaries too | PK `id`; `chat_id` to `chats` (CASCADE) | Some columns only matter for one `kind` |
 | `memories` | Per-user memory notes | PK `id`; `user_id` to `users` (CASCADE) | |
 | `tasks` | Background jobs: AI generation and AI import | PK `id`; `user_id` to `users` (CASCADE) | `job_key` is a partial unique index |
@@ -1156,7 +1167,7 @@ erDiagram
 | `gen_calls` | Each model call of generation and import (tokens, time, result) | PK `id`; `task_id`, `user_id` (SET NULL) | |
 | `usage` | Every other model call, with tokens, time and status, never content | PK `id`; `user_id` (SET NULL) | |
 | `audit_outbox` | Activity rows waiting to be sent to the backend | PK `id` | A temporary queue |
-| `connections` | AI connections: address, format, gateway auth, status and the on/off switch `enabled` | PK `id`; `name` unique, case-insensitive | `format` allows `openai` and `anthropic`; OpenAI Responses is `openai` plus `responses = 1` |
+| `connections` | AI connections: address, format, gateway auth, thinking-strength family `effort_family`, status and the on/off switch `enabled` | PK `id`; `name` unique, case-insensitive | `format` allows `openai` and `anthropic`; OpenAI Responses is `openai` plus `responses = 1` |
 | `connection_secrets` | The sealed keys of a connection | PK `(connection_id, name)`; to `connections` (CASCADE) | |
 | `models` | The model pool: one row per tested connection and model | PK `id`; to `connections` (CASCADE); unique `(connection_id, model)` | |
 | `model_slots` | Which pool model each feature uses, and its thinking strength | PK `slot`; `model_id` to `models` (SET NULL) | |

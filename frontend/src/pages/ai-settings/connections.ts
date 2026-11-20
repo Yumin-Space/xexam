@@ -11,6 +11,7 @@ import { deleteConnection, fetchAiSettings, saveConnection, setConnectionEnabled
 import { field } from '../../components/fields.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { miniSwitch } from '../../components/mini-switch.ts';
+import { EFFORT_FAMILIES, EFFORT_PARAM, PROVIDER_NAME, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
 import { refreshAi } from '../../state/actions.ts';
 import {
   blankForm, confirmHostOf, connBad, connGroups, connOn, connPayload, connResult, defaultUrl, fieldOfError, fieldsOf, FORMATS, formOf, formProblem, GATEWAY_AUTHS,
@@ -23,6 +24,7 @@ import type { AiConnection, AiProvider, AiSettings, AiSlot, ModelRef } from '../
 import { ask, dialogTitleId } from '../../utils/dialog.ts';
 import { h } from '../../utils/dom.ts';
 import { toast } from '../../utils/toast.ts';
+import { followFamily, inferFamily, savedFamily, type FamilyChoice } from './family.ts';
 import { loadModels } from './models.ts';
 import { reasonText, aiDown } from './status.ts';
 import { A, adopt, listSep, redraw, setGroupOpen } from './state.ts';
@@ -58,6 +60,23 @@ function stopTicker(): void {
   A.connTimer = null;
 }
 
+// ---------------------------------------------------------------- the thinking-strength family of the open form (v2.1)
+
+/** The family chosen in the open form; it follows the format and address until chosen by hand (a saved connection: only when it differs from the inferred one) */
+let fam: FamilyChoice = { value: 'openai', byHand: false };
+
+/** Re-infers the family after the format, address or provider changed, and shows it in the select */
+function refollow(): void {
+  const f = A.form;
+  if (!f) return;
+  fam = followFamily(fam, f.provider, f.format, f.baseUrl);
+  const sel = document.getElementById('ai-c-family');
+  if (sel instanceof HTMLSelectElement) sel.value = fam.value;
+}
+
+/** The select label of a family: the provider and the parameter it sends */
+const famLabel = (k: EffortFamily): string => `${PROVIDER_NAME[k]} · ${EFFORT_PARAM[k]}`;
+
 // ---------------------------------------------------------------- opening, closing, saving
 
 function openForm(c: AiConnection | null): void {
@@ -65,6 +84,7 @@ function openForm(c: AiConnection | null): void {
   if (!s || A.connBusy) return;
   A.open = c ? c.id : 'new';
   A.form = c ? formOf(c) : blankForm(s.defaults);
+  fam = c ? savedFamily(c.effortFamily, A.form.provider, A.form.format, A.form.baseUrl) : { value: inferFamily(A.form.provider, A.form.format, A.form.baseUrl), byHand: false };
   A.fieldErr = {};
   A.connMsg = null;
   redraw();
@@ -103,7 +123,7 @@ async function saveForm(confirmHost?: string): Promise<void> {
     document.getElementById('ai-c-name')?.focus();
     return;
   }
-  if (saved && !isDirty(saved, f)) {
+  if (saved && !isDirty(saved, f) && fam.value === saved.effortFamily) {
     toast(t('ai.set.nothing'));
     closeForm();
     return;
@@ -116,7 +136,7 @@ async function saveForm(confirmHost?: string): Promise<void> {
   startTicker('ai-c-save');
   let again: string | null = null;
   try {
-    const a = await saveConnection(connPayload(saved, f, confirmHost));
+    const a = await saveConnection({ ...connPayload(saved, f, confirmHost), effortFamily: fam.value });
     adopt(a.settings);
     const r = connResult(a, rotation);
     if (a.ok && a.saved) {
@@ -322,6 +342,8 @@ function connCard(c: AiConnection): HTMLElement {
     h('p', { class: 'ais-conn-addr' },
       h('span', { class: 'ais-sum-p' }, t(PROVIDER_LABEL[c.provider]), h('span', { class: 'ais-sum-dot', 'aria-hidden': 'true' }, ' · ')),
       h('span', { class: 'ais-sum-host', title: c.baseUrl }, host)),
+    h('p', { class: 'ais-conn-fam', title: EFFORT_PARAM[c.effortFamily] }, providerIcon(c.effortFamily),
+      h('span', null, t('ai.set.conn.familyOf', { name: PROVIDER_NAME[c.effortFamily] }))),
     h('p', { class: 'ais-note ais-conn-keys' }, keyText(c)),
     c.usedBy.length ? h('p', { class: 'ais-note ais-conn-used' }, t('ai.set.conn.usedBy', { list: usedByText(c.usedBy) })) : null,
     c.insecureHttp ? h('p', { class: 'ais-note ais-conn-http' }, t('ai.set.conn.httpNote')) : null,
@@ -370,6 +392,7 @@ function connForm(s: AiSettings): HTMLElement {
     const url = urlAfterSwitch(prev.baseUrl, prev.provider, p, s.defaults);
     const follow = !saved && prev.name === suggestName(prev.baseUrl);
     A.form = { ...prev, provider: p, baseUrl: url, format: p === 'gateway' ? inferFormat(url) : prev.format, name: follow ? suggestName(url) : prev.name };
+    fam = followFamily(fam, A.form.provider, A.form.format, A.form.baseUrl);
     A.fieldErr = {};
     redraw();
   };
@@ -398,6 +421,7 @@ function connForm(s: AiSettings): HTMLElement {
       A.form = { ...prev, baseUrl: v, format: followed ? inferFormat(v) : prev.format, name: nameFollows ? suggestName(v) : prev.name };
       const sel = document.getElementById('ai-c-format');
       if (sel instanceof HTMLSelectElement) sel.value = A.form.format;
+      refollow();
       if (nameFollows) name.input.value = A.form.name;
       syncForm();
     },
@@ -413,6 +437,7 @@ function connForm(s: AiSettings): HTMLElement {
         id: 'ai-c-format', class: 'ais-select', disabled: busy,
         onchange: (e: Event) => {
           if (A.form) A.form = { ...A.form, format: (e.target as HTMLSelectElement).value as ConnForm['format'] };
+          refollow();
           syncForm();
         },
       }, FORMATS.map((x) => h('option', { value: x, selected: x === f.format ? 'selected' : null }, t(x === 'openai' ? 'ai.set.format.openai' : x === 'responses' ? 'ai.set.format.responses' : 'ai.set.format.anthropic'))))),
@@ -425,6 +450,16 @@ function connForm(s: AiSettings): HTMLElement {
           syncForm();
         },
       }, GATEWAY_AUTHS.map((x) => h('option', { value: x, selected: x === f.gatewayAuth ? 'selected' : null }, GATEWAY_AUTH_LABEL[x] ?? x))))) : null;
+
+  const family = h('div', { class: 'fld ais-family' },
+    h('label', { class: 'fld-l', for: 'ai-c-family' }, t('ai.set.conn.family')),
+    h('select', {
+      id: 'ai-c-family', class: 'ais-select', disabled: busy, 'aria-describedby': 'ai-c-family-help',
+      onchange: (e: Event) => {
+        fam = { value: (e.target as HTMLSelectElement).value as EffortFamily, byHand: true };
+      },
+    }, EFFORT_FAMILIES.map((k) => h('option', { value: k, selected: k === fam.value ? 'selected' : null }, famLabel(k)))),
+    h('p', { class: 'ais-note', id: 'ai-c-family-help' }, t('ai.set.conn.familyHelp')));
 
   const keyFields = fields.slots.map((slot) => {
     const label = slot === 'gatewayKey' ? t('ai.set.gatewayKey') : f.provider === 'gateway' ? t('ai.set.upstreamKey') : t('ai.set.apiKey');
@@ -487,6 +522,7 @@ function connForm(s: AiSettings): HTMLElement {
       h('p', { class: 'ais-warn', id: 'ai-c-http', hidden: !httpWarning(f.baseUrl) }, t('ai.set.conn.httpNote')),
       fieldError('baseUrl')),
     gateway,
+    family,
     reuse,
     h('div', { class: 'ais-keys' }, keyFields),
     h('p', { class: 'ais-ferr', id: 'ai-c-clash', hidden: !headerClash(f, keyAfter(saved, f, 'apiKey')) }, aiCodeText('ai.headerClash')),

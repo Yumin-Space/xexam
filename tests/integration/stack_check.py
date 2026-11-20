@@ -64,7 +64,7 @@ What is checked:
   D. Database shape (v2.0, the last step): backend and ai-service are stopped and both volumes are read through a throw-away
      python container (immutable=1, read-only): main meta.schema 11, foreign_key_check empty, the foreign keys of the nine
      rebuilt tables (all ON DELETE NO ACTION) and of no other table, no stats / settings table, idx_users_uid /
-     idx_user_stats_question / idx_imports_bank present; AI meta.schema 10, no secrets table, settings and limits hold none
+     idx_user_stats_question / idx_imports_bank present; AI meta.schema 11, no secrets table, settings and limits hold none
      of the retired columns (settings columns exactly id, enabled, retention_days, updated_at, updated_by, features_off)
 """
 import codecs
@@ -151,7 +151,7 @@ LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000
                   'genWrongSingle': 14, 'genWrongMulti': 6, 'genCallTokens': 20000, 'genMaxCalls': 15, 'importMaxCalls': 25,
                   'recognizeMaxCalls': 20, 'genUnlimited': 1, 'importUnlimited': 1, 'genRunning': 2, 'importMaxMb': 20,
                   'importMaxQuestions': 100, 'callsAdminsExempt': 1, 'studyShare': 1, 'studyShareDays': 180, 'genMaxChunks': 8,
-                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 15, 'paceTpm': 250000}
+                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 13, 'paceTpm': 240000}
 # v1.9: right after the defaults are checked the pacing is switched off, so the end-to-end AI jobs below are not spread over
 # minutes; from then on the stored limits equal the defaults except paceOn
 LIMIT_NOW = dict(LIMIT_DEFAULTS, paceOn=0)
@@ -769,29 +769,35 @@ try:
        and cfg['effortLevels']['google'] == ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH'] and 'gemma' not in cfg['effortLevels']
        and cfg['slots']['default'].get('effort') is None,
        'v1.9: the settings answer carries effortLevels (four families, no gemma; google has five levels) and slots.default.effort null. Actual %r' % cfg.get('effortLevels'))
+    ok(all(c.get('effortFamily') == 'openai' for c in cfg['connections'])
+       and cfg['slots']['default'].get('effortEffective') == {'family': 'openai', 'level': 'medium'},
+       'v2.1: the connection has its family (openai) and the default slot sends the model default (unknown model -> medium). Actual %r' % cfg['slots']['default'].get('effortEffective'))
     ok(list(cfg['slots'].keys()) == ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'] and 'study' not in cfg['slots'],
        'v1.9: seven model slots (study is split into hint and explain). Actual %r' % list(cfg['slots'].keys()))
     ok(all(c.get('enabled') is True for c in cfg['connections']), 'v1.9: every connection starts on (enabled true). Actual %r' % [c.get('enabled') for c in cfg['connections']])
-    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'study', 'effort': None})
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'study', 'level': None})
     ok(st == 400, 'v1.9: the old slot name study is refused by the effort route (400). Actual %d' % st)
     st, _, r = jreq('POST', '/api/ai/admin/models/pick', {'slot': 'study', 'connectionId': CONN, 'model': 'demo-chat-small'})
     ok(st == 400, 'v1.9: the old slot name study is refused by the pick route (400). Actual %d' % st)
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'level': 'high'})
+    ok(st == 200 and r['settings']['slots']['default']['effort'] == {'family': 'openai', 'level': 'high'}
+       and r['settings']['slots']['default']['effortEffective'] == {'family': 'openai', 'level': 'high'},
+       'v2.1: a level is saved with the family of the connection the slot uses. Actual %d %r' % (st, r))
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'level': 'max'})
+    ok(st == 400, 'v2.1: a level that the family of the connection does not have is 400. Actual %d' % st)
     st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'anthropic', 'level': 'high'}})
-    ok(st == 200 and r['settings']['slots']['default']['effort'] == {'family': 'anthropic', 'level': 'high'},
-       'v1.6: a thinking strength is saved on change. Actual %d %r' % (st, r))
-    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'google', 'level': 'max'}})
-    ok(st == 400, 'v1.6: a level that the family does not have is 400. Actual %d' % st)
-    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'gemma', 'level': 'HIGH'}})
-    ok(st == 400, 'v1.9: the removed gemma family is refused (400). Actual %d' % st)
-    ok(jreq('GET', '/api/ai/admin/settings')[2]['slots']['default']['effort'] == {'family': 'anthropic', 'level': 'high'},
-       'v1.9: the refused efforts changed nothing')
-    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': None})
-    ok(st == 200 and r['settings']['slots']['default']['effort'] is None, 'v1.6: Default clears the thinking strength. Actual %d %r' % (st, r))
+    ok(st == 400, 'v2.1: the old {family, level} body is refused (400). Actual %d' % st)
+    ok(jreq('GET', '/api/ai/admin/settings')[2]['slots']['default']['effort'] == {'family': 'openai', 'level': 'high'},
+       'v2.1: the refused efforts changed nothing')
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'level': None})
+    ok(st == 200 and r['settings']['slots']['default']['effort'] is None
+       and r['settings']['slots']['default']['effortEffective'] == {'family': 'openai', 'level': 'medium'},
+       'v2.1: null goes back to the model default. Actual %d %r' % (st, r))
     # -- A1b v1.0: the safety limits answer, the per-user call caps through Nginx --
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
        and lim.get('defaults') == LIMIT_DEFAULTS,
-       'GET /api/ai/admin/limits: the 36 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 15 / 250000, no messageChars. Actual %d %r' % (st, lim))
+       'GET /api/ai/admin/limits: the 36 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 13 / 240000, no messageChars. Actual %d %r' % (st, lim))
     ok(lim['ranges']['paceOn'] == [0, 1] and lim['ranges']['paceRpm'] == [1, 10000] and lim['ranges']['paceTpm'] == [1000, 100000000],
        'v1.9: the limits answer carries the ranges of the pacing keys. Actual %r' % {k: lim['ranges'].get(k) for k in ('paceOn', 'paceRpm', 'paceTpm')})
     for bad_key, bad in (('paceRpm', 0), ('paceRpm', 10001), ('paceTpm', 999), ('paceOn', 2)):
@@ -1516,8 +1522,8 @@ try:
     # Limits: 36 keys answer (v1.9), the AI banks tab keys are validated (composition rule)
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and len(lim['limits']) == 36 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20
-       and lim['limits']['paceOn'] == 0 and lim['limits']['paceRpm'] == 15 and lim['limits']['paceTpm'] == 250000,
-       'The limits answer has the 36 keys (pacing off, 15 / 250000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
+       and lim['limits']['paceOn'] == 0 and lim['limits']['paceRpm'] == 13 and lim['limits']['paceTpm'] == 240000,
+       'The limits answer has the 36 keys (pacing off, 13 / 240000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
     st, _, j = jreq('POST', '/api/ai/admin/limits', {'genBankSingle': 0, 'genBankMulti': 0})
     ok(st == 400 and j.get('code') == 'ai.genCount' and j.get('field') == 'genBankMulti', 'Single + multiple of 0 is refused (400 ai.genCount, field genBankMulti). Actual %d %r' % (st, j))
     st, _, u = jreq('GET', '/api/ai/admin/usage?days=7')
@@ -1784,7 +1790,7 @@ try:
                             'verified_at', 'verified_fp'],
                'limits': ['message_chars', 'memory_chars', 'reply_max_chars', 'gen_call_chars', 'import_max_questions'],
                'chats': ['free']}
-    ok(ai_db.get('schema') == '10', 'D. The AI database is schema 10. Actual %r' % ai_db)
+    ok(ai_db.get('schema') == '11', 'D. The AI database is schema 11. Actual %r' % ai_db)
     ok('secrets' not in ai_db.get('tables', ['secrets']), 'D. The AI database has no secrets table. Actual %r' % ai_db.get('tables'))
     ok(ai_db.get('settings') == ['id', 'enabled', 'retention_days', 'updated_at', 'updated_by', 'features_off'],
        'D. The AI settings table has exactly the columns id, enabled, retention_days, updated_at, updated_by, features_off. Actual %r' % ai_db.get('settings'))

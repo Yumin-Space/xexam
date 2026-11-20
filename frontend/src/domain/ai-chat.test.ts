@@ -7,11 +7,12 @@ import test from 'node:test';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerMaxLines, composerStatus, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isBusyElsewhere, isTerminal, isThinking, localFail, MIN_MSGS_PX,
   localEdit, localRegenerate, modelArg, chatMenu, chatShown, pickerView, chooseValue, regenerateLabelKey, editValid, versionInfo, TEMP_ID,
+  effortArg, effortMarks, keepEffort, strengthView, slotRoute, handlesPopstate,
   localSend, localStop, locksDocument, noAccessKey, pollResult, questionOf, readOnlyReason, retryBody, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, startOf, STOP_GUARD_MS, suggestBody,
   type ChatView, type KeyLike, type ViewMessage,
 } from './ai-chat.ts';
 import { parseModelRef } from '../api/model-ref.ts';
-import type { AiChatDetail, AiMessage, AiModelList } from '../types/api.ts';
+import type { AiChatDetail, AiMessage, AiModelList, AiSettings } from '../types/api.ts';
 import type { ChatDefault } from './ai-chat.ts';
 
 const NOW = 1_800_000_000;
@@ -659,10 +660,72 @@ test('the pick: a send keeps the model it carried as the chat pick; a fallback f
   assert.deepEqual(sent.pick, pick);
   const fell = applyEvent(localSend({ ...emptyChat(), pick }, 'hi'), startOf3({ userMessageId: 1, assistantMessageId: 2, modelFallback: true }), NOW);
   assert.equal(fell.pick, null);
+  const fellEff = applyEvent(localSend({ ...emptyChat(), pick, pickEffort: 'high' }, 'hi'), startOf3({ userMessageId: 1, assistantMessageId: 2, modelFallback: true }), NOW);
+  assert.equal(fellEff.pickEffort, 'high', 'the server keeps the stored level on a fallback');
   const kept = applyEvent(localSend({ ...emptyChat(), pick }, 'hi'), startOf3({ userMessageId: 1, assistantMessageId: 2 }), NOW);
   assert.deepEqual(kept.pick, pick);
   assert.deepEqual(sendBody({ chatId: null, text: 't', lang: 'en' }), { chatId: null, text: 't', lang: 'en' });
   assert.deepEqual(sendBody({ chatId: 1, text: 't', lang: 'en', model: null }), { chatId: 1, text: 't', lang: 'en', model: null });
   assert.deepEqual(chatOf({ chat: { ...detail(false, []).chat, pick }, messages: [] }).pick, pick);
   assert.equal(chatOf(detail(false, [])).pick, null);
+});
+
+// ---------------------------------------------------------------- v2.1: the strength step
+
+const LEVELS = {
+  anthropic: ['low', 'medium', 'high', 'max'], openai: ['none', 'low', 'medium', 'high'],
+  google: ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'], responses: ['low', 'medium', 'high'],
+};
+const SET = {
+  connections: [{ id: 1, effortFamily: 'anthropic' }, { id: 2, effortFamily: 'google' }],
+  pool: [{ id: 10, connectionId: 1, model: 'demo-a' }, { id: 11, connectionId: 2, model: 'demo-g' }],
+  slots: { default: { modelId: 10 }, chat: { modelId: null, effort: { family: 'anthropic', level: 'low' }, effortEffective: { family: 'anthropic', level: 'low' } } },
+  effortLevels: LEVELS,
+} as unknown as AiSettings;
+
+test('strengthView: own pick, else the chat row on its own route, else the model default', () => {
+  assert.deepEqual(slotRoute(SET, 'chat'), { connectionId: 1, model: 'demo-a' });
+  assert.equal(strengthView(SET, 1, 'demo-a', 'high')?.selected, 'high', 'a valid pick wins');
+  assert.equal(strengthView(SET, 1, 'demo-a', '')?.selected, 'low', 'the chat row route shows its effective level');
+  const other = strengthView(SET, 1, 'demo-b', '');
+  assert.equal(other?.selected, 'low', 'another model of the family: the row level, as the server sends it');
+  assert.equal(strengthView({ ...SET, slots: { ...SET.slots, chat: { modelId: null, effort: null } } } as unknown as AiSettings, 1, 'demo-b', '')?.selected, 'medium', 'nothing stored: the model default (unknown model -> medium)');
+  assert.equal(strengthView(SET, 1, 'claude-sonnet-5-5', '')?.modelDefault, 'high');
+  assert.equal(strengthView(SET, 2, 'demo-g', 'max')?.selected, 'MEDIUM', 'a level of another family is ignored');
+  assert.equal(strengthView(SET, 2, 'demo-g', 'high')?.family, 'google');
+  assert.equal(strengthView(SET, 9, 'x', ''), null);
+  assert.equal(strengthView(null, 1, 'x', ''), null);
+});
+
+test('handlesPopstate: a menu link (new hash is not the AI page) is left to the router', () => {
+  const on = { onPage: true, chatsTab: true, onePane: true, chatInUrl: false, hashName: 'ai' };
+  assert.equal(handlesPopstate(on), true, 'the back gesture from a pushed conversation');
+  assert.equal(handlesPopstate({ ...on, hashName: 'home' }), false, 'a menu tap must not send the user back to AI Chat');
+  assert.equal(handlesPopstate({ ...on, chatInUrl: true }), false);
+  assert.equal(handlesPopstate({ ...on, onePane: false }), false);
+  assert.equal(handlesPopstate({ ...on, chatsTab: false }), false);
+  assert.equal(handlesPopstate({ ...on, onPage: false }), false);
+});
+
+test('effortArg / keepEffort / effortMarks', () => {
+  assert.equal(effortArg('high', 'high'), undefined);
+  assert.equal(effortArg('', null), undefined);
+  assert.equal(effortArg('', 'high'), null);
+  assert.equal(effortArg('low', null), 'low');
+  const v = strengthView(SET, 1, 'demo-b', '');
+  assert.equal(keepEffort('high', v), 'high');
+  assert.equal(keepEffort('HIGH', v), '', 'levels are matched exactly, like the server does');
+  assert.equal(strengthView(SET, 2, 'demo-g', 'high')?.selected, 'MEDIUM', 'a level of the wrong case is not preselected');
+  assert.equal(keepEffort('none', v), '');
+  assert.equal(effortMarks('medium', v), false);
+  assert.equal(effortMarks('high', v), true);
+  assert.equal(effortMarks('', v), false);
+});
+
+test('sendBody carries effort only when given; the pick is kept at the start event', () => {
+  assert.deepEqual(sendBody({ chatId: 1, text: 'a', lang: 'en' }), { chatId: 1, text: 'a', lang: 'en' });
+  assert.deepEqual(sendBody({ chatId: 1, text: 'a', lang: 'en', effort: null }), { chatId: 1, text: 'a', lang: 'en', effort: null });
+  const s = localSend(emptyChat(), 'a', false, undefined, 'high');
+  assert.equal(s.pending?.effort, 'high');
+  assert.equal(s.pending?.model, undefined);
 });

@@ -3,10 +3,13 @@
 import '../styles/shell.css';
 import { shutdownApp } from '../api/import.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
+import { toggledTheme } from '../domain/theme-color.ts';
 import { barStep, initialBar } from '../domain/top-bar.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { routeHash, sectionOf, type NavSection, type Route } from '../router.ts';
-import { navigate, setNavOpen, signOut } from '../state/actions.ts';
+import { navigate, render, setNavOpen, signOut } from '../state/actions.ts';
+import { isDark, updateSettings } from '../state/preferences.ts';
+import { toast } from '../utils/toast.ts';
 import { aiStatus } from '../state/ai.ts';
 import { navAllowed, type NavNeed } from '../state/bank-access.ts';
 import { S, isAdmin } from '../state/store.ts';
@@ -60,6 +63,13 @@ export const ICONS = {
     { cx: 12, cy: 12, r: 3 }, { cx: 12, cy: 12, r: 6.2 },
     { d: 'M18.2 12h2.4' }, { d: 'M16.38 7.62l1.7-1.7' }, { d: 'M12 5.8V3.4' }, { d: 'M7.62 7.62l-1.7-1.7' },
     { d: 'M5.8 12H3.4' }, { d: 'M7.62 16.38l-1.7 1.7' }, { d: 'M12 18.2v2.4' }, { d: 'M16.38 16.38l1.7 1.7' },
+  ],
+  /** v2.1, top-bar theme toggle: the icon shows the current look (moon = dark, sun = light) */
+  moon: [{ d: 'M19.5 14.2A7.8 7.8 0 0 1 9.8 4.5a7.8 7.8 0 1 0 9.7 9.7Z' }],
+  sun: [
+    { cx: 12, cy: 12, r: 3.8 },
+    { d: 'M12 3.2v2' }, { d: 'M12 18.8v2' }, { d: 'M3.2 12h2' }, { d: 'M18.8 12h2' },
+    { d: 'M5.8 5.8l1.4 1.4' }, { d: 'M16.8 16.8l1.4 1.4' }, { d: 'M5.8 18.2l1.4-1.4' }, { d: 'M16.8 7.2l1.4-1.4' },
   ],
   menu: [{ d: 'M4 7h16' }, { d: 'M4 12h16' }, { d: 'M4 17h16' }],
   about: [{ cx: 12, cy: 12, r: 8.5 }, { d: 'M12 11v5.5' }, { d: 'M12 7.6v.4' }],
@@ -345,6 +355,16 @@ export function shell(content: HTMLElement): HTMLElement {
   admin ? h('span', { class: 'tag b acct-role' },
     h('span', { class: 'acct-role-l' }, roleName('admin')),
     h('span', { class: 'acct-role-s' }, t('role.admin.short'))) : null) : null;
+  // v2.1: one press switches light / dark and saves the same preference Settings uses
+  const dark = isDark();
+  const themeLabel = themeLabelOf(dark);
+  const themeBtn = user ? h('button', {
+    class: 'icon-btn theme-btn', id: 'theme-btn', type: 'button', 'aria-label': themeLabel, title: themeLabel,
+    onclick: () => {
+      updateSettings({ theme: toggledTheme(S.settings.theme, isDark()) }, render)
+        .catch((e: unknown) => toast(t('act.settings.saveFailed', { reason: e instanceof Error ? e.message : String(e) }), 6000));
+    },
+  }, icon(dark ? ICONS.moon : ICONS.sun)) : null;
   const accountTip = badgeTipText(badge, 'own', off);
   const accountBtn = accountBtn0 && accountTip ? holdTip(accountBtn0, accountTip, { touchOnly: true }) : accountBtn0;
 
@@ -356,7 +376,7 @@ export function shell(content: HTMLElement): HTMLElement {
     + (pinned && window.scrollY > 0 ? ' topbar-scrolled' : '');
   const header = h('header', { class: barClass },
     h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()),
-    h('div', { class: 'menu-wrap' }, accountBtn, menuBtn, menu));
+    h('div', { class: 'menu-wrap' }, themeBtn, accountBtn, menuBtn, menu));
 
   if (open && focusMenuOnOpen) {
     focusMenuOnOpen = false;
@@ -369,6 +389,8 @@ export function shell(content: HTMLElement): HTMLElement {
 
 /** Installs the closing behaviour of the menu (once): Esc, a click outside it. */
 export function installShellHandlers(): void {
+  // iOS applies :active (the pressed shade on menu items) only when the page has a touch listener
+  document.addEventListener('touchstart', () => {}, { passive: true });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && S.navOpen && !document.querySelector('dialog[open]')) {
       setNavOpen(false);
@@ -421,6 +443,22 @@ function pathOf(node: Node): number[] | null {
     n = parent;
   }
   return n ? out : null;
+}
+
+/** The toggle's label: it names the look a press switches to */
+function themeLabelOf(dark: boolean): string {
+  return t(dark ? 'nav.themeToLight' : 'nav.themeToDark');
+}
+
+/** Redraws the top bar's theme toggle in place (the system theme changed while "follow system" is saved); no page render */
+export function refreshThemeButton(): void {
+  const btn = document.getElementById('theme-btn');
+  if (!btn) return;
+  const dark = isDark();
+  const label = themeLabelOf(dark);
+  btn.setAttribute('aria-label', label);
+  btn.setAttribute('title', label);
+  btn.replaceChildren(icon(dark ? ICONS.moon : ICONS.sun));
 }
 
 /**

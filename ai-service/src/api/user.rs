@@ -225,6 +225,7 @@ pub(super) fn chat_json(app: &crate::app::App, admin: bool, chat: &data::ChatRow
                     |(c, model)| json!({"connectionId": c, "model": model}),
                 ),
             );
+            m.insert("pickEffort".into(), json!(chat.pick_effort));
         }
     }
     v
@@ -386,6 +387,8 @@ struct Req {
     lang: Lang,
     /// Outer None: no `model` key (use the stored pick); `Some(None)`: `null` (clear it); `Some(Some(p))`: set it
     pick: Option<Option<Pick>>,
+    /// Outer None: no `effort` key (use the stored level); `Some(None)`: `null` (clear it); `Some(Some(l))`: set it
+    effort: Option<Option<String>>,
 }
 
 /// The reply language of a send / retry / suggest body (round 2, 5.1): `"en"`, `"zh"` (alias `"zh-CN"`), `"ja"`;
@@ -420,6 +423,18 @@ fn pick_of(body: &Map<String, Value>, admin: bool) -> Result<Option<Option<Pick>
         Some(Value::Null) => Ok(Some(None)),
         Some(_) if !admin => Err(ApiError::not_allowed()),
         Some(v) => Ok(Some(Pick::from_json(v)?)),
+    }
+}
+
+/// The `effort` of a body (v2.1): a strength level of the chat, administrators only; `null` always means "clear".
+/// Whether the level is valid is checked against the route's family later.
+fn effort_of(body: &Map<String, Value>, admin: bool) -> Result<Option<Option<String>>, ApiError> {
+    match body.get("effort") {
+        None => Ok(None),
+        Some(Value::Null) => Ok(Some(None)),
+        Some(_) if !admin => Err(ApiError::not_allowed()),
+        Some(Value::String(l)) if !l.is_empty() && l.len() <= 32 => Ok(Some(Some(l.clone()))),
+        Some(_) => Err(ApiError::bad_request()),
     }
 }
 
@@ -727,6 +742,10 @@ fn prepare(
             let value = p.as_ref().map(|p| (p.connection_id, p.model.as_str()));
             data::set_chat_pick(tx, chat, value)?;
         }
+        // The strength level of the chat is stored on its own: clearing a pick keeps it unless `effort: null` is sent
+        if let Some(e) = &req.effort {
+            data::set_chat_pick_effort(tx, chat, e.as_deref())?;
+        }
     }
     let answer_row = |parent: i64| data::NewMessage {
         parent: Some(parent),
@@ -880,14 +899,15 @@ async fn generate(ctx: Ctx, req: Req) -> Answer {
     let who = &ctx.who;
     require_ai_access(&ctx.app, who)?;
     // The chat must be the caller's (404 before anything is taken); an administrator's stored pick comes from it
-    let stored = match req.chat {
+    let (stored, stored_effort) = match req.chat {
         Some(id) => {
-            app.store
+            let c = app
+                .store
                 .read(|c| data::chat(c, who.id, id))?
-                .ok_or_else(ApiError::not_found)?
-                .pick
+                .ok_or_else(ApiError::not_found)?;
+            (c.pick, c.pick_effort)
         }
-        None => None,
+        None => (None, None),
     };
     // The model menu exists in free mode only: outside it a named model is refused and a stored pick is not used
     let free = free_mode_of(app, who)?;
@@ -905,7 +925,22 @@ async fn generate(ctx: Ctx, req: Req) -> Answer {
     if let Some(Some(p)) = &req.pick {
         ensure_usable(app, p)?;
     }
-    let route = app.route(Slot::Chat, wanted.as_ref())?;
+    // The strength level follows the same gate as the model menu; a stored level that does not fit the route's family
+    // is ignored by the resolver
+    if matches!(&req.effort, Some(Some(_))) && !free {
+        return Err(ApiError::bad_request());
+    }
+    let level: Option<String> = match &req.effort {
+        Some(e) => e.clone(),
+        None if free => stored_effort,
+        None => None,
+    };
+    let route = app.route_with(Slot::Chat, wanted.as_ref(), level.as_deref())?;
+    if let Some(Some(l)) = &req.effort {
+        if crate::effort::Effort::new(route.family, l).is_none() {
+            return Err(ApiError::bad_request());
+        }
+    }
     let target = app.target(&route)?;
     let (slot, permit) = take_places(&ctx, Kind::Chat, req.chat, Feature::Chat, wanted.as_ref())?;
     let limits = app.limits();
@@ -917,7 +952,10 @@ async fn generate(ctx: Ctx, req: Req) -> Answer {
 }
 
 pub async fn send(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["chatId", "text", "lang", "free", "model"])?;
+    only_keys(
+        &ctx.body,
+        &["chatId", "text", "lang", "free", "model", "effort"],
+    )?;
     let chat = match ctx.body.get("chatId") {
         None | Some(Value::Null) => None,
         Some(_) => body_id(&ctx.body, "chatId")?,
@@ -930,12 +968,16 @@ pub async fn send(ctx: Ctx) -> Answer {
         text: text_of(&ctx.body)?,
         lang: lang_of(&ctx.body)?,
         pick: pick_of(&ctx.body, ctx.who.is_admin())?,
+        effort: effort_of(&ctx.body, ctx.who.is_admin())?,
     };
     generate(ctx, req).await
 }
 
 pub async fn regenerate(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["chatId", "messageId", "lang", "model"])?;
+    only_keys(
+        &ctx.body,
+        &["chatId", "messageId", "lang", "model", "effort"],
+    )?;
     let req = Req {
         mode: Mode::Regenerate,
         chat: Some(body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?),
@@ -943,12 +985,16 @@ pub async fn regenerate(ctx: Ctx) -> Answer {
         text: String::new(),
         lang: lang_of(&ctx.body)?,
         pick: pick_of(&ctx.body, ctx.who.is_admin())?,
+        effort: effort_of(&ctx.body, ctx.who.is_admin())?,
     };
     generate(ctx, req).await
 }
 
 pub async fn edit(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["chatId", "messageId", "text", "lang", "model"])?;
+    only_keys(
+        &ctx.body,
+        &["chatId", "messageId", "text", "lang", "model", "effort"],
+    )?;
     let req = Req {
         mode: Mode::Edit,
         chat: Some(body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?),
@@ -956,6 +1002,7 @@ pub async fn edit(ctx: Ctx) -> Answer {
         text: text_of(&ctx.body)?,
         lang: lang_of(&ctx.body)?,
         pick: pick_of(&ctx.body, ctx.who.is_admin())?,
+        effort: effort_of(&ctx.body, ctx.who.is_admin())?,
     };
     generate(ctx, req).await
 }
@@ -970,6 +1017,7 @@ pub async fn retry(ctx: Ctx) -> Answer {
         text: String::new(),
         lang: lang_of(&ctx.body)?,
         pick: None,
+        effort: None,
     };
     generate(ctx, req).await
 }
@@ -1000,26 +1048,42 @@ pub async fn branch(ctx: Ctx) -> Answer {
     ok(chat_view(app, ctx.who.is_admin(), &chat, &path, &versions))
 }
 
-/// `{chatId, model: {connectionId, model} | null}`: an administrator's model pick of one chat. No cap, no usage.
+/// `{chatId, model: {connectionId, model} | null, effort?: string | null}`: an administrator's model and strength pick of
+/// one chat. `effort` absent keeps the stored level, `null` clears it, a level is checked against the family of the
+/// connection the pick resolves to (the pick's, else the chat slot's) and stored in `chats.pick_effort`. No cap, no usage.
 pub async fn chat_model(ctx: Ctx) -> Answer {
-    only_keys(&ctx.body, &["chatId", "model"])?;
+    only_keys(&ctx.body, &["chatId", "model", "effort"])?;
     if !ctx.who.is_admin() {
         return Err(ApiError::not_allowed());
     }
     let chat_id = body_id(&ctx.body, "chatId")?.ok_or_else(ApiError::bad_request)?;
     let pick = Pick::from_json(ctx.body.get("model").ok_or_else(ApiError::bad_request)?)?;
+    let effort = effort_of(&ctx.body, true)?;
     let app = &ctx.app.0;
+    let free = free_mode_of(app, &ctx.who)?;
     if let Some(p) = &pick {
-        if !free_mode_of(app, &ctx.who)? {
+        if !free {
             return Err(ApiError::bad_model());
         }
         ensure_usable(app, p)?;
+    }
+    if let Some(Some(level)) = &effort {
+        if !free {
+            return Err(ApiError::bad_request());
+        }
+        let route = app.route(Slot::Chat, pick.as_ref())?;
+        if crate::effort::Effort::new(route.family, level).is_none() {
+            return Err(ApiError::bad_request());
+        }
     }
     let user = ctx.who.id;
     let chat = app.store.write(|tx| -> Result<data::ChatRow, ApiError> {
         data::chat(tx, user, chat_id)?.ok_or_else(ApiError::not_found)?;
         let value = pick.as_ref().map(|p| (p.connection_id, p.model.as_str()));
         data::set_chat_pick(tx, chat_id, value)?;
+        if let Some(e) = &effort {
+            data::set_chat_pick_effort(tx, chat_id, e.as_deref())?;
+        }
         data::chat(tx, user, chat_id)?.ok_or_else(ApiError::not_found)
     })?;
     ok(json!({"chat": chat_json(app, true, &chat)}))

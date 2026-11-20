@@ -678,7 +678,7 @@ AI データベースのスキーマ番号は変わりません。v1.6 の ai-se
 AI データベースは、v1.9 の ai-service の初回起動時に 1 回だけスキーマ 8 から **スキーマ 9** へ移行します。先にバックアップのコピー `backups/xexam-ai-schema8-<日時>.db` を作ります（これまでの各段階と同じ仕組みです）。メインのデータベースは変わりません。
 
 - **`connections.enabled`**（`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`）：接続のオン／オフのスイッチです。既存の行はすべてオンで始まります。これまでの列と同じく、起動時に `pragma_table_info` に無ければ追加します。`status` の CHECK は変えず、「無効」は `enabled` から導きます。`connections` は `CASCADE` の子テーブルを持つので作り直しません。
-- **`limits.pace_on`、`limits.pace_rpm`、`limits.pace_tpm`**：AI 問題作成と AI インポートのプロバイダーのレート制限に合わせた送信間隔です。`pace_on` は 0 または 1（既定 1）、`pace_rpm` は 1〜10 000（既定 15）、`pace_tpm` は 1 000〜100 000 000（既定 250 000）。上限 API のキー `paceOn`、`paceRpm`、`paceTpm` に対応します。無制限のスイッチがこれらを変えることはありません。
+- **`limits.pace_on`、`limits.pace_rpm`、`limits.pace_tpm`**：AI 問題作成と AI インポートのプロバイダーのレート制限に合わせた送信間隔です。`pace_on` は 0 または 1（既定 1）、`pace_rpm` は 1〜10 000（既定 13）、`pace_tpm` は 1 000〜100 000 000（既定 240 000）。値は入力したとおりに使われます。上限 API のキー `paceOn`、`paceRpm`、`paceTpm` に対応します。無制限のスイッチがこれらを変えることはありません。
 - **`model_slots` の作り直し**：`slot` の CHECK が `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import` を許します（7 行。`study` はなくなります）。アップグレードでは `study` の行（モデル、時刻、更新者、思考の強さ）を `hint` と `explain` の両方にコピーしてから、古いテーブルを削除します。新規のファイルは新しいテーブルを直接作るので、どちらも同じ `sqlite_master` になります。`model_slots` を参照するものは無いため、`foreign_keys` をオンのまま作り直します。
 - **Gemma を Google に統合**：起動のたびに、保存済みの思考の強さ `gemma:HIGH` と `gemma:true` は `google:HIGH` に、`gemma:MINIMAL` と `gemma:false` は `google:MINIMAL` になり、それ以外の `gemma:` の値は消去（NULL）されます。送られるリクエストは従来と同じです。この処理は `gemma:` の行があるときだけ実行されます。系統は `anthropic`、`openai`、`google`、`responses` の 4 つです。
 - **全体のスイッチは独立**：`settings.features_off` のビット 2（ヒント）とビット 4（解説）は常に同じ値には保たれなくなり、起動時に連動させ直すこともありません。`users.features_off` は従来どおり連動します（2 つのうち片方だけオフのユーザーは両方オフになります）。ユーザーのビットを連動させる処理は、全体のビットには触れません。
@@ -698,6 +698,17 @@ AI のデータベースは、v2.0 の ai-service を初めて起動したとき
 **あえてしないこと。** 新しいインデックスは作りません（`chats WHERE pick_conn = ?` の走査は管理者がたまに行う操作です）。新しい `CHECK` もテーブルの作り直しもしません（`CHECK` には親テーブルや大きなテーブルの作り直しが要ります）。名前の変更もしません。残る不一致は 9.4 にまとめてあります。
 
 **v1.9 に戻す**にはバックアップが必要です：v1.9 の ai-service はスキーマ 10 を拒否します（`written by a newer ai-service`）。停止し、8.4 のとおり `backups/xexam-ai-schema9-<日時>.db` を復元して、v1.9 のイメージを動かします。アップグレード後に書かれた設定、チャット、利用状況は失われます。そのコピーには、これより古いコピーと同じく、古いキーの暗号文が残っています（[security.md](security.md) の 11 節）。
+
+### 8.2h スキーマ v11（v2.1）
+
+AI データベースは、v2.1 の ai-service の最初の起動時に、バックアップのコピー `backups/xexam-ai-schema10-<日時>.db` を 1 つ取ってから、スキーマ 10 から**スキーマ 11** へ 1 回だけ移行します（これまでの手順と同じ仕組み）。この手順は 1 つのトランザクションで、追加と消去だけを行います。
+
+- **`connections.effort_family TEXT NOT NULL DEFAULT 'openai'`**：接続の思考強度ファミリー（`anthropic`、`openai`、`google`、`responses`。コードで検証）。既存の接続は推定されます：プロバイダーが `anthropic`、または形式が `anthropic` のゲートウェイは `anthropic`、Responses 形式は `responses`、それ以外は接続のモデル ID（プール、`model_slots`、`chats.pick_model`）で決めます。`gemini` / `gemma` の ID が過半数なら `google`、それ以外は `openai`（モデルがない場合も `openai`）。ログには接続ごとに ID と推定したファミリーの 1 行が出力され、名前やアドレスは含まれません。
+- **`chats.pick_effort TEXT`**：管理者が AI チャットで選んだレベル（NULL = なし）。レベルの文字列だけで、ファミリーは呼び出し時のルートの接続のものです。そのファミリーに属さない値は無視されます。
+- **`model_slots.effort` の整理**：保存済みの `<family>:<level>` は、そのファミリーがスロットが実際に使う接続のファミリーと同じ場合だけ残り、そうでなければ NULL にします（NULL = モデルの既定のレベルで、これが送信されます）。その後 `meta.schema` は `11` になります。
+- **`limits.pace_rpm` / `limits.pace_tpm` の変換**：送信間隔に隠れた 10 % の余裕がなくなったため、古い既定値（15 / 250 000）のままの行は 13 / 240 000 になり、それ以外の保存値は `floor(値 * 0.9)`（最低 1 リクエスト・1 000 Token / 分）になります。実際のペースは v2.0 と同じです。ログにも記録されます。列の既定値は 13 / 240 000 です。
+
+**v2.0 に戻す**にはバックアップが必要です。v2.0 の ai-service はスキーマ 11 を拒否します。停止し、8.4 のとおり `backups/xexam-ai-schema10-<日時>.db` を復元して v2.0 のイメージを起動してください。アップグレード後の設定、チャット、使用量は失われます。新しい列自体は v2.0 に無害ですが、`chats.pick_effort` は無視されます。
 
 ### 8.3 サービスがこれをどう扱うか
 
@@ -728,9 +739,9 @@ docker compose start
 - 復元した AI のボリュームと、別の時点のメインのボリュームを組み合わせても問題ありません：もう存在しないユーザーは次の照合で AI データを失い、別のアカウントのものになったユーザー id はスタンプで見分けられます。
 - `xexam_ai_auth` はバックアップ不要です：入っているのは `internal.token` だけで、ない場合はバックエンドがもう一度作ります（AI サービスは新しいトークンを自分で読み込みます）。
 
-## 9. 2 つのデータベースのスキーママップ（v2.0）
+## 9. 2 つのデータベースのスキーママップ（v2.1）
 
-どんなテーブルがあり、何のためにあり、どう関係しているかを読むための案内です。メインのデータベースはスキーマ 11、AI データベースはスキーマ 10 の内容で、テーブル名と列名は保存されているとおりです。ここに書いたことでテーブルが変わることはありません。
+どんなテーブルがあり、何のためにあり、どう関係しているかを読むための案内です。メインのデータベースはスキーマ 11、AI データベースはスキーマ 11 の内容で、テーブル名と列名は保存されているとおりです。ここに書いたことでテーブルが変わることはありません。
 
 ### 9.1 メインのデータベース `xexam.db`（バックエンド）
 
@@ -1152,7 +1163,7 @@ erDiagram
 | `settings` | 1 行。AI の総スイッチ `enabled`、`retention_days`、`features_off`（全体の機能スイッチのビット） | PK `id = 1` | スキーマ 10 からは `id`、`enabled`、`retention_days`、`updated_at`、`updated_by`、`features_off` だけが残る |
 | `limits` | 1 行。すべての上限（同時実行、チャットとメモリーの大きさ、ユーザーごとの呼び出し上限、回答の長さ、問題作成とインポートの上限、共有キャッシュ、1 日の Token 予算）と、v1.9 からは送信間隔の設定 | PK `id = 1`、各列に範囲の CHECK | 廃止された長さの 5 列はスキーマ 10 で削除された |
 | `users` | メインのユーザーの写し（`id` と `stamp` = メインの `uid`）に、`function_enabled`（一時停止）、`free_mode`、`features_off`（ユーザーごとの機能ビット）を足したもの | PK `id`（メインのデータベースが付ける） | `stamp` が違えば別人。その人の AI データは破棄される |
-| `chats` | AI チャットの会話と、練習・試験・記録まとめごとのチャット | PK `id`、`user_id` → `users`（CASCADE） | `leaf_id` と `pick_conn` はあえて外部キーなし |
+| `chats` | AI チャットの会話（管理者が選んだレベル `pick_effort` を含む）と、練習・試験・記録まとめごとのチャット | PK `id`、`user_id` → `users`（CASCADE） | `leaf_id` と `pick_conn` はあえて外部キーなし |
 | `messages` | メッセージとその枝のバージョン。ヒント・解説・まとめも含む | PK `id`、`chat_id` → `chats`（CASCADE） | 一部の列は特定の `kind` でだけ意味を持つ |
 | `memories` | ユーザーごとのメモリー | PK `id`、`user_id` → `users`（CASCADE） | |
 | `tasks` | バックグラウンドのジョブ：AI 問題作成と AI インポート | PK `id`、`user_id` → `users`（CASCADE） | `job_key` は部分ユニークインデックス |
@@ -1160,7 +1171,7 @@ erDiagram
 | `gen_calls` | 問題作成とインポートの各モデル呼び出し（Token、時間、結果） | PK `id`、`task_id`、`user_id`（SET NULL） | |
 | `usage` | それ以外のモデル呼び出し。Token、時間、状態のみで、内容は持たない | PK `id`、`user_id`（SET NULL） | |
 | `audit_outbox` | バックエンドへの送信待ちのアクティビティ行 | PK `id` | 一時的なキュー |
-| `connections` | AI の接続：アドレス、形式、ゲートウェイの認証、状態、オン／オフの `enabled` | PK `id`、`name` は大文字小文字を区別しない一意 | `format` は `openai` と `anthropic` のみ。OpenAI Responses は `openai` に `responses = 1` |
+| `connections` | AI の接続：アドレス、形式、ゲートウェイの認証、思考強度ファミリー `effort_family`、状態、オン／オフの `enabled` | PK `id`、`name` は大文字小文字を区別しない一意 | `format` は `openai` と `anthropic` のみ。OpenAI Responses は `openai` に `responses = 1` |
 | `connection_secrets` | 接続の暗号化されたキー | PK `(connection_id, name)`、`connections` へ（CASCADE） | |
 | `models` | モデルのプール。テスト済みの接続とモデルごとに 1 行 | PK `id`、`connections` へ（CASCADE）、一意 `(connection_id, model)` | |
 | `model_slots` | 各機能がプールのどのモデルを使うかと、思考の強さ | PK `slot`、`model_id` → `models`（SET NULL） | |

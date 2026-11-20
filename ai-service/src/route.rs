@@ -6,7 +6,7 @@
 //! saved and readable with the current encryption key. The resolver itself is pure (`View::resolve`), so the rules are
 //! tested without a database.
 use crate::codes::ApiError;
-use crate::effort::Effort;
+use crate::effort::{effective, Effort, EffortFamily};
 use crate::settings::{Format, Provider};
 use crate::store::conn::{ConnRow, PoolRow, SLOT_NAMES};
 use serde_json::{json, Value};
@@ -188,8 +188,18 @@ pub struct Route {
     pub fallback: Fallback,
     /// An administrator's pick was given but did not resolve (the chat sets `start.modelFallback`)
     pub pick_dropped: bool,
-    /// The thinking strength of the REQUESTED slot (not of the slot whose model is used); `None` = send nothing
+    /// The thinking-strength family of the route's connection
+    pub family: EffortFamily,
+    /// The EFFECTIVE thinking strength (v2.1): always `Some` after `resolve`: the chat level, else the REQUESTED slot's
+    /// stored choice (not the slot whose model is used), when it belongs to `family`; else the model's default
     pub effort: Option<Effort>,
+}
+
+impl ConnRow {
+    /// The thinking-strength family of the connection (an unreadable stored value reads as `openai`).
+    pub fn family(&self) -> EffortFamily {
+        EffortFamily::parse(&self.effort_family).unwrap_or(EffortFamily::OpenAi)
+    }
 }
 
 /// A slot's own model, as far as the resolver is concerned.
@@ -268,6 +278,7 @@ impl View {
             Provider::Anthropic => Format::Anthropic,
             Provider::Gateway => Format::parse(&c.format)?,
         };
+        let family = c.family();
         Some(Route {
             connection_id: c.id,
             connection_name: c.name.clone(),
@@ -281,8 +292,38 @@ impl View {
             key: format!("c{}r{}:{}", c.id, c.rev, model),
             fallback,
             pick_dropped: false,
-            effort: None,
+            family,
+            effort: Some(effective(None, family, model)),
         })
+    }
+
+    /// Sets the effective strength of a route for `slot`: `level` (the chat's choice) when it is valid for the family,
+    /// else the slot's stored choice, else the model default (`effective`).
+    fn put_effort(&self, r: &mut Route, slot: Slot, level: Option<&str>) {
+        let stored = level
+            .and_then(|l| Effort::new(r.family, l))
+            .or(self.efforts[slot.index()]);
+        r.effort = Some(effective(stored, r.family, &r.model));
+    }
+
+    /// The connection and the model a slot effectively uses for the settings page: its own model, else the default
+    /// slot's. Usability is not looked at.
+    pub fn slot_target(&self, slot: Slot) -> Option<(&ConnRow, &PoolRow)> {
+        [slot, Slot::Default].into_iter().find_map(|s| {
+            let m = self.slots[s.index()].and_then(|id| self.pool_row(id))?;
+            Some((self.conn(m.connection_id)?, m))
+        })
+    }
+
+    /// What the slot sends now: the effective strength of the route `resolve` would build (so a slot whose own model
+    /// is unusable shows the default slot's family), else the target of `slot_target` (a connection that is switched
+    /// off, say); `None` when the slot resolves to no connection at all.
+    pub fn slot_effort(&self, slot: Slot) -> Option<Effort> {
+        if let Ok(r) = self.resolve(slot, None) {
+            return r.effort;
+        }
+        self.slot_target(slot)
+            .map(|(c, m)| effective(self.efforts[slot.index()], c.family(), &m.model))
     }
 
     /// What a slot's own model amounts to: nothing set, on a connection that is off, set but unusable, or ready.
@@ -322,14 +363,24 @@ impl View {
     /// model or the default a slot follows) that sits on a connection which is switched off is kept and fails with
     /// `ai.connectionOff`: no fallback, no silent drop.
     pub fn resolve(&self, slot: Slot, pick: Option<&Pick>) -> Result<Route, ApiError> {
-        let effort = self.efforts[slot.index()];
+        self.resolve_with(slot, pick, None)
+    }
+
+    /// `resolve` with the chat's own strength level (an administrator's AI Chat choice); a level that is not valid for
+    /// the route's family is ignored.
+    pub fn resolve_with(
+        &self,
+        slot: Slot,
+        pick: Option<&Pick>,
+        level: Option<&str>,
+    ) -> Result<Route, ApiError> {
         let mut dropped = false;
         if let Some(p) = pick {
             if self.conn(p.connection_id).is_some_and(|c| !c.enabled) {
                 return Err(ApiError::connection_off());
             }
             if let Some(mut r) = self.pick_route(p) {
-                r.effort = effort;
+                self.put_effort(&mut r, slot, level);
                 return Ok(r);
             }
             dropped = true;
@@ -347,7 +398,7 @@ impl View {
         match found {
             Some(mut r) => {
                 r.pick_dropped = dropped;
-                r.effort = effort;
+                self.put_effort(&mut r, slot, level);
                 Ok(r)
             }
             None => Err(ApiError::disabled()),
@@ -395,6 +446,7 @@ mod tests {
             updated_at: 0,
             updated_by: String::new(),
             enabled: true,
+            effort_family: "openai".into(),
         }
     }
 
@@ -442,31 +494,33 @@ mod tests {
 
     #[test]
     fn resolve_carries_requested_slot_effort() {
-        use crate::effort::{Effort, EffortFamily};
         let hi = Effort::new(EffortFamily::OpenAi, "high");
         let lo = Effort::new(EffortFamily::Anthropic, "low");
         let md = Effort::new(EffortFamily::Google, "MEDIUM");
         let mut v = view();
-        // default: md, chat: hi (falls back to the default model), hint: lo (own model), summary: none
+        v.conns[1].effort_family = "anthropic".into();
+        // default: md (wrong family for its connection), chat: hi (falls back to the default model), hint: lo (own model)
         v.efforts = [md, hi, lo, None, None, None, None];
+        let tag = |r: &Route| r.effort.map(Effort::tag);
         // own model: the slot's effort
         let r = v.resolve(Slot::Hint, None).expect("study");
         assert_eq!((r.fallback, r.effort), (Fallback::None, lo));
         // Default fallback: the requested slot's effort, not Default's
         let r = v.resolve(Slot::Chat, None).expect("chat");
         assert_eq!((r.fallback, r.effort), (Fallback::Default, hi));
-        // no effort row: nothing, although the Default slot has one
+        // no effort row: the model default (unknown model: the middle level), although the Default slot has one
         let r = v.resolve(Slot::Summary, None).expect("summary");
-        assert_eq!(r.effort, None);
-        // the Default slot itself
-        assert_eq!(v.resolve(Slot::Default, None).expect("d").effort, md);
-        // an administrator's pick carries the Chat effort
+        assert_eq!(tag(&r).as_deref(), Some("openai:medium"));
+        // the Default slot itself holds a Google tag on an OpenAI connection: ignored
+        let d = v.resolve(Slot::Default, None).expect("d");
+        assert_eq!(tag(&d).as_deref(), Some("openai:medium"));
+        // an administrator's pick carries the Chat effort when the family matches, else the model default
         let pick = Pick {
             connection_id: 2,
-            model: "demo-claude".into(),
+            model: "claude-sonnet-5-5".into(),
         };
         let r = v.resolve(Slot::Chat, Some(&pick)).expect("pick");
-        assert_eq!(r.effort, hi);
+        assert_eq!(tag(&r).as_deref(), Some("anthropic:high"));
         // a dropped pick: still the slot's effort
         let bad = Pick {
             connection_id: 99,
@@ -475,6 +529,29 @@ mod tests {
         let r = v.resolve(Slot::Chat, Some(&bad)).expect("dropped");
         assert!(r.pick_dropped);
         assert_eq!(r.effort, hi);
+        // the chat's own level wins when valid for the family, is ignored otherwise
+        let r = v
+            .resolve_with(Slot::Chat, None, Some("xhigh"))
+            .expect("lvl");
+        assert_eq!(tag(&r).as_deref(), Some("openai:xhigh"));
+        let r = v.resolve_with(Slot::Chat, None, Some("HIGH")).expect("lvl");
+        assert_eq!(r.effort, hi);
+        let r = v
+            .resolve_with(Slot::Chat, Some(&pick), Some("max"))
+            .expect("lvl");
+        assert_eq!(tag(&r).as_deref(), Some("anthropic:max"));
+        assert_eq!(r.family, EffortFamily::Anthropic);
+    }
+
+    #[test]
+    fn slot_target_follows_own_model_then_default() {
+        let v = view();
+        let t = |s| v.slot_target(s).map(|(c, m)| (c.id, m.id));
+        assert_eq!(t(Slot::Hint), Some((2, 20)));
+        assert_eq!(t(Slot::Chat), Some((1, 10)));
+        let mut none = view();
+        none.slots = [None; 7];
+        assert!(none.slot_target(Slot::Chat).is_none());
     }
 
     #[test]

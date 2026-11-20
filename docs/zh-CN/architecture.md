@@ -366,7 +366,7 @@ sequenceDiagram
 ### v1.3 在结构上的变化
 
 - **连接、模型池和槽位。** AI 服务不再有一行设置：`connections`（带 `connection_secrets`）、`models` 模型池和`model_slots`（v1.9 起七个） 决定哪个功能用哪个模型；一个解析器（`App::route`）回答每一次调用（对话、学习、总结、出题、导入）。出题或导入任务在开始时固定它的路线。不会自动换模型：不可用的功能槽位只回退到默认槽位，默认不可用就显示警告。
-- **七个槽位和连接开关（v1.9）。** `model_slots` 有七行（`default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`；`study` 已拆开）。每个连接有启用开关：停用的连接不出现在任何选择器里，也不参与路由，落在它上面的槽位、跟随的槽位或对话选择**保留原来的选择，并以 `ai.connectionOff`（409）失败**；不会回退到别的连接（`admit()` 把路由错误原样传出去，所以不会变成 `ai.disabled`）。全局功能开关对管理员同样生效。出题和导入的调用在每次调用前都经过同一个 `Pacer`（带 60 秒滑动窗口的全局闸门，取设置里服务商限额的 90%）；服务商返回 429 时在调用内部等待后重试。
+- **七个槽位和连接开关（v1.9）。** `model_slots` 有七行（`default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`；`study` 已拆开）。每个连接有启用开关：停用的连接不出现在任何选择器里，也不参与路由，落在它上面的槽位、跟随的槽位或对话选择**保留原来的选择，并以 `ai.connectionOff`（409）失败**；不会回退到别的连接（`admit()` 把路由错误原样传出去，所以不会变成 `ai.disabled`）。全局功能开关对管理员同样生效。出题和导入的调用在每次调用前都经过同一个 `Pacer`（带 60 秒滑动窗口的全局闸门，取设置里的服务商限额，v2.1 起按填写原样使用）；服务商返回 429 时在调用内部等待后重试。
 - **服务分机器运行（v1.9）。** 前端镜像启动时读取 `XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM` 和 `XEXAM_NGINX_RESOLVER`（一个小的入口脚本写出 Nginx 的 `set` 行；默认值是单机的名字）。后端和 ai-service 可以设置 `XEXAM_FRONTEND_PEERS`：既不是回环地址、也不在名单里的来源得到 `404`（令牌路由 `/internal/*` 中除 `/internal/ai/auth` 以外的例外），`X-Real-IP` 和 `X-Geo-*` 只信任名单里的来源。`XEXAM_INTERNAL_TOKEN_REQUIRED=1` 让两者在没有共享令牌时拒绝启动。后端从不调用 ai-service，所以 ai-service 需要后端的地址（`XEXAM_AI_BACKEND_URL`，http 或 https），而后端不需要 ai-service 的地址。见 [deployment.md](deployment.md) 第 12 节。
 - **对话树。** 消息按 `parent_id` 组成树，`chats.leaf_id` 是当前显示的分支，显示或发给模型的是从叶子到根的路径。重新生成和编辑添加一个兄弟节点；切换版本只是移动叶子。
 - **共享回答。** `study_shared` 以题目文字、语言和种类为键存放提示和解析，不带用户 id。一次学习提问的顺序：解析、访问和功能检查（`App::admit`）、后端的题目调用（同时证明访问权限）、共享查找，只有未命中才占位、计数和调用模型。

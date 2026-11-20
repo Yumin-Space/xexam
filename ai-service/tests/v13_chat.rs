@@ -775,6 +775,7 @@ fn broken_connection(t: &TestApp) -> i64 {
                     format: "openai",
                     gateway_auth: "bearer",
                     lists_models: true,
+                    effort_family: "openai",
                     by: "admin",
                     now: 1_800_000_000,
                 },

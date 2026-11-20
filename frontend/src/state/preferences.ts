@@ -30,12 +30,15 @@ export function applySettings(s: Settings): void {
   }
 }
 
-/** Keeps the browser bar colour in step when the system theme changes while "follow system" is selected. */
-export function watchSystemTheme(): void {
+/** Keeps the browser bar colour in step when the system theme changes while "follow system" is selected; `after` then
+ *  refreshes what shows the look (the top bar's toggle). */
+export function watchSystemTheme(after?: () => void): void {
   if (typeof window.matchMedia !== 'function') return;
   const mq = window.matchMedia('(prefers-color-scheme: dark)');
   const onChange = (): void => {
-    if (S.settings.theme === 'system') applySettings(S.settings);
+    if (S.settings.theme !== 'system') return;
+    applySettings(S.settings);
+    after?.();
   };
   if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
 }

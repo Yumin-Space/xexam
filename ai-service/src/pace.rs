@@ -1,7 +1,7 @@
 //! Provider pacing for AI generation and import (v1.9, item 1h).
 //!
-//! One global setting (`paceOn`, `paceRpm`, `paceTpm`) describes the limits of the AI provider. The service uses 90 %
-//! of them, spreads the calls evenly over a sliding 60-second window, estimates the tokens of a call before it goes out
+//! One global setting (`paceOn`, `paceRpm`, `paceTpm`) describes the limits of the AI provider. The service uses them
+//! exactly as entered, spreads the calls evenly over a sliding 60-second window, estimates the tokens of a call before it goes out
 //! and shrinks the parallel width to what fits. [`Window`] is pure (the clock is passed in); [`Pacer`] is the shared
 //! state of the service; [`WaitMark`] shows "waiting for quota" on the job while a wait lasts.
 
@@ -25,13 +25,13 @@ pub const MAX_RETRY_WAIT_SECS: u64 = 300;
 /// A wait the provider names above this many seconds is taken as a daily quota.
 pub const DAILY_WAIT_SECS: u64 = 900;
 
-/// The pacing settings in force, already reduced by the safety margin.
+/// The pacing settings in force (used exactly as entered).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PaceCfg {
     pub on: bool,
-    /// Requests per window (margin applied)
+    /// Requests per window
     pub rpm: i64,
-    /// Tokens per window (margin applied)
+    /// Tokens per window
     pub tpm: i64,
     pub window: Duration,
 }
@@ -41,8 +41,8 @@ impl PaceCfg {
     pub fn of(l: &Limits, scale_pct: u64) -> PaceCfg {
         PaceCfg {
             on: l.pace_on != 0 && scale_pct > 0,
-            rpm: l.pace_rpm_eff(),
-            tpm: l.pace_tpm_eff(),
+            rpm: l.pace_rpm,
+            tpm: l.pace_tpm,
             window: Duration::from_secs_f64(WINDOW_SECS as f64 * scale_pct as f64 / 100.0),
         }
     }
@@ -400,7 +400,7 @@ mod tests {
     fn the_config_follows_the_limits_and_the_scale() {
         let l = Limits::default();
         let c = PaceCfg::of(&l, 100);
-        assert_eq!((c.on, c.rpm, c.tpm), (true, 13, 225_000));
+        assert_eq!((c.on, c.rpm, c.tpm), (true, 13, 240_000));
         assert_eq!(c.window, Duration::from_secs(60));
         assert_eq!(PaceCfg::of(&l, 10).window, Duration::from_secs(6));
         assert!(!PaceCfg::of(&l, 0).on);

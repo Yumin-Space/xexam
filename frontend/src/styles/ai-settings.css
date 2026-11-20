@@ -546,10 +546,8 @@ td.ais-usum { display: none; }
 .ais-slot.off .ais-slot-pick, .ais-slot.off .ais-effort { opacity: .55; }
 /* v1.6 thinking strength: the buttons, the muted model default and the level list, wrapping on narrow screens */
 .ais-effort { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
-.ais-effort-b { display: flex; flex-wrap: wrap; gap: 6px; }
-.ais-eb { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 32px; min-height: 32px; padding: 0 10px; font: inherit; font-size: 13px; color: var(--ink2); background: var(--fill); border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
-.ais-eb:disabled { opacity: .55; cursor: default; }
-.ais-eb.on { color: var(--ink); border-color: var(--ink2); background: var(--card, var(--fill)); box-shadow: inset 0 1px 3px rgba(0, 0, 0, .18); font-weight: 600; }
+/* The family mark of a row: not a button */
+.ais-fam { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; color: var(--ink2); }
 .ais-pi { flex: none; width: 16px; height: 16px; }
 .ais-effort-hint { font-size: 12px; color: var(--ink3); }
 .ais-effort-level { margin-left: auto; width: auto; min-width: 110px; max-width: 100%; }
@@ -574,7 +572,6 @@ td.ais-usum { display: none; }
   .ais-slot { grid-template-columns: minmax(0, 1fr); }
   .ais-slot > :not(.ais-slot-h):not(.ais-slot-pick) { grid-column: 1; }
   .ais-slot-pick { grid-column: 1; }
-  .ais-eb { min-height: 36px; }
   .ais-effort-level { margin-left: 0; }
   /* Phones: the model list is as wide as both pickers (model names are long) */
   .ais-slot-pick { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
@@ -615,3 +612,9 @@ td.ais-usum { display: none; }
 .ais-vnote { margin: 0 0 8px; }
 .ais-checkrow { display: grid; gap: 2px; margin: 8px 0; }
 .ais-caps-wrap { display: grid; }
+
+/* v2.1: the family line of a connection card and the family field of the form */
+.ais-conn-fam { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--ink3); }
+.ais-conn.off .ais-conn-fam { opacity: .7; }
+.ais-family .ais-select { width: 100%; min-width: 0; }
+.ais-family .ais-note { margin: 4px 0 0; }

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
-"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 10 (this version, v2.0), with Docker and made-up
+"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 11 (this version, v2.1), with Docker and made-up
 data only. Run by hand or at the final gate; it is not part of CI because it pulls published images.
 
 Usage: python -I tests/integration/ai_upgrade_check.py [--old-image IMAGE] [--v19-image IMAGE] [--new-image IMAGE]
   --old-image  the published v0.9.1 ai-service image (default docker.io/yuminspace/xexam-ai-service:v0.9.1; pulled when
                it is not on this machine, and removed again at the end only when this script pulled it)
   --v19-image  the published v1.9 ai-service image (default docker.io/yuminspace/xexam-ai-service:v1.9; pulled and removed
-               the same way): it writes the genuine schema-9 database of step 6 and must refuse schema 10
+               the same way): it writes the genuine schema-9 database of step 6 and must refuse schema 11
   --new-image  the ai-service image of this version (default: built from ai-service/Dockerfile under a temporary tag that
                is removed at the end)
 Uses only Docker and the standard library. Every container, volume and image this script creates carries the prefix
@@ -17,7 +17,7 @@ What is checked:
   1. v0.9.1 creates a schema-3 database on a fresh volume; the script then writes made-up rows into it (two users, a chat
      with a hint and a study chat of each kind, memories, usage rows, a changed set of limits; memory_chars left at the
      v0.9.1 default 300) and records every table's content
-  2. This version starts on the same volume: the log says the database was upgraded after a backup copy; schema 10; exactly
+  2. This version starts on the same volume: the log says the database was upgraded after a backup copy; schema 11; exactly
      one backups/xexam-ai-schema3-*.db that still holds schema 3, the old rows, the secrets table and the retired columns
      a schema-3 file has (the ten settings columns, limits message_chars / memory_chars; the other three limits columns came
      with schema 4 / 5);
@@ -28,21 +28,21 @@ What is checked:
      created from scratch; the seven model slots (default, chat, hint, explain, summary, generate, import; no study), every
      connection on, and the three pacing columns of limits (v1.9) at their defaults
   3. A second start writes no second backup, no second upgrade line and changes no row
-  4. v0.9.1 refuses the schema-10 database (its newer-schema message) and changes nothing: the rollback is the backup copy
+  4. v0.9.1 refuses the schema-11 database (its newer-schema message) and changes nothing: the rollback is the backup copy
   5. (v1.9) A schema-8 database (a fresh one taken back: the study slot with a made-up model choice and the removed
-     gemma:true thinking strength, none of the v1.9 columns) is upgraded to schema 10 with exactly one
+     gemma:true thinking strength, none of the v1.9 columns) is upgraded to schema 11 with exactly one
      backups/xexam-ai-schema8-*.db: hint and explain both hold the old study row (updated_at, updated_by, the effort now
      google:HIGH), no study slot, connections.enabled and the pacing columns exist with their defaults, the tables have the
      same columns as a new database, and a second start changes nothing
      (v2.0) The prepared schema-8 file also gets the retired items back (a secrets table with a made-up row, the ten settings
-     and five limits columns with made-up values), so it is a realistic schema 8: it is upgraded straight to schema 10 with one
+     and five limits columns with made-up values), so it is a realistic schema 8: it is upgraded straight to schema 11 with one
      xexam-ai-schema8-* backup that holds them, the live file has none of them, and sqlite_master equals that of a new database
   6. (v2.0) The published v1.9 image creates a genuine schema-9 database on a fresh volume; a made-up secrets row (ciphertext
      marker) and made-up old settings / limits values go in via sqlite3; this version upgrades it: one xexam-ai-schema9-*
-     backup, schema 10, the log line about the removed secrets table (1 row) and 15 columns, secrets and the retired columns gone
+     backup, schema 11, the log line about the removed secrets table (1 row) and 15 columns, secrets and the retired columns gone
      (the made-up marker is in neither xexam-ai.db nor its -wal; only the backup holds it), sqlite_master equal to a new
      database, enabled / retention / updated_* of settings unchanged, a second start changes nothing; then the v1.9 image
-     refuses schema 10 and changes nothing
+     refuses schema 11 and changes nothing
 """
 import argparse
 import hashlib
@@ -392,20 +392,20 @@ try:
     up = wait_up(c)
     code, logs1 = stop(c)
     ok(up and code == '0', 'This version starts on the schema-3 volume, answers its health check and stops cleanly. Exit code %s. Log:\n%s' % (code, logs1[-600:]))
-    ok(re.search(r'Upgraded the AI database to schema 10\. A copy of the previous version was saved first: \S*xexam-ai-schema3-', logs1) is not None,
-       'The log says the database was upgraded to schema 10 after a backup copy. Log:\n%s' % logs1[-600:])
+    ok(re.search(r'Upgraded the AI database to schema 11\. A copy of the previous version was saved first: \S*xexam-ai-schema3-', logs1) is not None,
+       'The log says the database was upgraded to schema 11 after a backup copy. Log:\n%s' % logs1[-600:])
     m = re.search(LOG_RETIRED, logs1)
     ok(m is not None and (int(m.group(1)), int(m.group(2))) == (0, 15),
        'The log says the unused legacy table secrets (0 rows) and 15 unused columns were removed (counts only). Log:\n%s' % logs1[-800:])
     after = report(VOL)
-    ok(after['schema'] == '10', 'meta.schema is 10. Actual %r' % after['schema'])
+    ok(after['schema'] == '11', 'meta.schema is 11. Actual %r' % after['schema'])
     ok(retired_gone(after), 'v2.0: the secrets table and the ten settings / five limits columns are gone from the live file. Actual %r' % after['retired'])
     SLOTS9 = ['chat', 'default', 'explain', 'generate', 'hint', 'import', 'summary']
     ok([r[0] for r in after['slots']] == SLOTS9 and "'study'" not in after['slot_sql'] and "'explain'" in after['slot_sql'],
        'v1.9: the seven model slots exist and study does not. Actual %r' % [r[0] for r in after['slots']])
     ok('enabled' in after['cols']['connections'] and all(c in after['cols']['limits'] for c in ('pace_on', 'pace_rpm', 'pace_tpm'))
-       and (after['limits']['pace_on'], after['limits']['pace_rpm'], after['limits']['pace_tpm']) == (1, 15, 250000),
-       'v1.9: connections.enabled exists and the pacing columns of limits hold 1 / 15 / 250000. Actual %r' % after['cols'])
+       and (after['limits']['pace_on'], after['limits']['pace_rpm'], after['limits']['pace_tpm']) == (1, 13, 240000),
+       'v1.9: connections.enabled exists and the pacing columns of limits hold 1 / 13 / 240000. Actual %r' % after['cols'])
     ok(len(after['backups']) == 1 and re.fullmatch(r'xexam-ai-schema3-\d{8}-\d{6}\.db', after['backups'][0]) is not None,
        'Exactly one backups/xexam-ai-schema3-<date-time>.db. Actual %r' % after['backups'])
     ok(all(after['settings'].get(k) == v for k, v in before['settings'].items()),
@@ -437,8 +437,8 @@ try:
     code, _ = stop(c)
     ok(up and code == '0', 'This version creates a fresh database on the second volume')
     fresh = report(VOL_FRESH)
-    ok(fresh['schema'] == '10' and fresh['backups'] == [] and fresh['limits']['memory_tokens'] == 200 and retired_gone(fresh),
-       'A new database is schema 10 with no backup, memoryTokens 200 and none of the retired items. Actual %r' % {k: fresh[k] for k in ('schema', 'backups', 'retired')})
+    ok(fresh['schema'] == '11' and fresh['backups'] == [] and fresh['limits']['memory_tokens'] == 200 and retired_gone(fresh),
+       'A new database is schema 11 with no backup, memoryTokens 200 and none of the retired items. Actual %r' % {k: fresh[k] for k in ('schema', 'backups', 'retired')})
     ok(fresh['master'] == after['master'], 'sqlite_master of the upgraded database equals that of a new one (%d objects)' % len(fresh['master']))
 
     # -- 3. the next start writes nothing --
@@ -452,18 +452,18 @@ try:
     ok(all(again[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and again['limits'] == after['limits']
        and again['master'] == after['master'], 'The next start changed no row, no limit and no table')
 
-    # -- 4. v0.9.1 refuses schema 10 --
+    # -- 4. v0.9.1 refuses schema 11 --
     c = start(OLD, VOL, 'old2')
     time.sleep(3)
     running = docker('inspect', '-f', '{{.State.Running}}', c).stdout.strip()
     code, logs3 = stop(c) if running == 'true' else (docker('inspect', '-f', '{{.State.ExitCode}}', c).stdout.strip(), (docker('logs', c).stdout + docker('logs', c).stderr))
-    ok(code != '0' and 'has schema 10' in logs3 and 'newer ai-service' in logs3,
-       'v0.9.1 refuses the schema-10 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs3[-400:]))
+    ok(code != '0' and 'has schema 11' in logs3 and 'newer ai-service' in logs3,
+       'v0.9.1 refuses the schema-11 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs3[-400:]))
     final = report(VOL)
-    ok(all(final[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and final['schema'] == '10'
+    ok(all(final[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and final['schema'] == '11'
        and final['backups'] == after['backups'], 'The refusal changed nothing; the rollback is the backup copy')
 
-    # -- 5. schema 8 -> 10 (v1.9 + v2.0): the study slot is split; the removed gemma strength is rewritten; the retired items go --
+    # -- 5. schema 8 -> 11 (v1.9 + v2.0 + v2.1): the study slot is split; the removed gemma strength is rewritten; the retired items go --
     ok(docker('volume', 'create', VOL8).returncode == 0, 'A third temporary volume is created')
     c = start(NEW, VOL8, 'seed8')
     up = wait_up(c)
@@ -482,13 +482,13 @@ try:
     up = wait_up(c)
     code, logs8 = stop(c)
     ok(up and code == '0', 'This version starts on the schema-8 volume and stops cleanly. Exit code %s. Log:\n%s' % (code, logs8[-600:]))
-    ok(re.search(r'Upgraded the AI database to schema 10\. A copy of the previous version was saved first: \S*xexam-ai-schema8-', logs8) is not None,
-       'The log says the database was upgraded to schema 10 after a backup copy named xexam-ai-schema8-. Log:\n%s' % logs8[-600:])
+    ok(re.search(r'Upgraded the AI database to schema 11\. A copy of the previous version was saved first: \S*xexam-ai-schema8-', logs8) is not None,
+       'The log says the database was upgraded to schema 11 after a backup copy named xexam-ai-schema8-. Log:\n%s' % logs8[-600:])
     m = re.search(LOG_RETIRED, logs8)
     ok(m is not None and (int(m.group(1)), int(m.group(2))) == (1, 15),
        'The log says the unused legacy table secrets (1 row) and 15 unused columns were removed. Log:\n%s' % logs8[-800:])
     new8 = report(VOL8)
-    ok(new8['schema'] == '10' and len(new8['backups']) == 1 and re.fullmatch(r'xexam-ai-schema8-\d{8}-\d{6}\.db', new8['backups'][0]) is not None,
+    ok(new8['schema'] == '11' and len(new8['backups']) == 1 and re.fullmatch(r'xexam-ai-schema8-\d{8}-\d{6}\.db', new8['backups'][0]) is not None,
        'meta.schema is 9 and there is exactly one backups/xexam-ai-schema8-<date-time>.db. Actual %r' % {k: new8[k] for k in ('schema', 'backups')})
     slots8 = {r[0]: r[1:] for r in new8['slots']}
     ok(sorted(slots8) == SLOTS9 and slots8['hint'] == slots8['explain'] == [None, 1234, 'old-admin', 'google:HIGH'],
@@ -500,8 +500,8 @@ try:
     ok(retired_gone(new8), 'v2.0: the secrets table and the retired columns are gone. Actual %r' % new8['retired'])
     ok(new8['master'] == fresh['master'], 'v2.0: sqlite_master of the upgraded schema-8 file equals that of a new database (%d objects)' % len(fresh['master']))
     ok(new8['settings'] == old8['settings'], 'v2.0: enabled, retention and who changed it are unchanged. Before %r, after %r' % (old8['settings'], new8['settings']))
-    ok((new8['limits']['pace_on'], new8['limits']['pace_rpm'], new8['limits']['pace_tpm']) == (1, 15, 250000),
-       'The pacing columns hold their defaults 1 / 15 / 250000. Actual %r' % new8['limits'])
+    ok((new8['limits']['pace_on'], new8['limits']['pace_rpm'], new8['limits']['pace_tpm']) == (1, 13, 240000),
+       'The pacing columns hold their defaults 1 / 13 / 240000. Actual %r' % new8['limits'])
     bk8 = report(VOL8, '/v/backups/' + new8['backups'][0])
     ok(bk8['schema'] == '8' and [r[0] for r in bk8['slots']] == ['chat', 'default', 'generate', 'import', 'study', 'summary']
        and dict((r[0], r[4]) for r in bk8['slots'])['study'] == 'gemma:true',
@@ -540,19 +540,22 @@ try:
     up = wait_up(c)
     code, logs19 = stop(c)
     ok(up and code == '0', 'This version starts on the schema-9 volume and stops cleanly. Exit code %s. Log:\n%s' % (code, logs19[-600:]))
-    ok(re.search(r'Upgraded the AI database to schema 10\. A copy of the previous version was saved first: \S*xexam-ai-schema9-', logs19) is not None,
-       'The log says the database was upgraded to schema 10 after a backup copy named xexam-ai-schema9-. Log:\n%s' % logs19[-600:])
+    ok(re.search(r'Upgraded the AI database to schema 11\. A copy of the previous version was saved first: \S*xexam-ai-schema9-', logs19) is not None,
+       'The log says the database was upgraded to schema 11 after a backup copy named xexam-ai-schema9-. Log:\n%s' % logs19[-600:])
     m = re.search(LOG_RETIRED, logs19)
     ok(m is not None and (int(m.group(1)), int(m.group(2))) == (1, 15),
        'The log says the unused legacy table secrets (1 row) and 15 unused columns were removed. Log:\n%s' % logs19[-800:])
     ok(MARKER not in logs19 and 'made-up-key-id' not in logs19 and 'made-up-fp' not in logs19, 'The log holds none of the made-up secret values')
     new19 = report(VOL19)
-    ok(new19['schema'] == '10' and len(new19['backups']) == 1 and re.fullmatch(r'xexam-ai-schema9-\d{8}-\d{6}\.db', new19['backups'][0]) is not None,
-       'meta.schema is 10 and there is exactly one backups/xexam-ai-schema9-<date-time>.db. Actual %r' % {k: new19[k] for k in ('schema', 'backups')})
+    ok(new19['schema'] == '11' and len(new19['backups']) == 1 and re.fullmatch(r'xexam-ai-schema9-\d{8}-\d{6}\.db', new19['backups'][0]) is not None,
+       'meta.schema is 11 and there is exactly one backups/xexam-ai-schema9-<date-time>.db. Actual %r' % {k: new19[k] for k in ('schema', 'backups')})
     ok(retired_gone(new19), 'The secrets table and the retired columns are gone from the live file. Actual %r' % new19['retired'])
     ok(new19['master'] == fresh['master'], 'sqlite_master of the upgraded v1.9 file equals that of a new database (%d objects)' % len(fresh['master']))
     ok(new19['settings'] == before19['settings'], 'enabled, retention and who changed it are unchanged. Before %r, after %r' % (before19['settings'], new19['settings']))
-    ok(all(new19['limits'][k] == before19['limits'][k] for k in new19['limits']), 'Every limit that still exists is unchanged')
+    # v2.1: the pacing keeps its actual pace (v1.9 used 90 %): the old defaults 15 / 250000 become 13 / 240000
+    ok(all(new19['limits'][k] == before19['limits'][k] for k in new19['limits'] if k not in ('pace_rpm', 'pace_tpm'))
+       and (new19['limits']['pace_rpm'], new19['limits']['pace_tpm']) == (13, 240000),
+       'Every limit that still exists is unchanged except the pacing (15 / 250000 -> 13 / 240000). Actual %r' % new19['limits'])
     seen = scan_marker(VOL19)
     ok(seen['xexam-ai.db'] is False and seen['xexam-ai.db-wal'] in (False, None),
        'The made-up ciphertext marker is in neither xexam-ai.db nor its -wal any more. Actual %r' % seen)
@@ -572,10 +575,10 @@ try:
     time.sleep(3)
     running = docker('inspect', '-f', '{{.State.Running}}', c).stdout.strip()
     code, logs19c = stop(c) if running == 'true' else (docker('inspect', '-f', '{{.State.ExitCode}}', c).stdout.strip(), (docker('logs', c).stdout + docker('logs', c).stderr))
-    ok(code != '0' and 'has schema 10' in logs19c and 'newer ai-service' in logs19c,
-       'The v1.9 image refuses the schema-10 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs19c[-400:]))
+    ok(code != '0' and 'has schema 11' in logs19c and 'newer ai-service' in logs19c,
+       'The v1.9 image refuses the schema-11 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs19c[-400:]))
     last19 = report(VOL19)
-    ok(last19['schema'] == '10' and last19['master'] == new19['master'] and last19['backups'] == new19['backups']
+    ok(last19['schema'] == '11' and last19['master'] == new19['master'] and last19['backups'] == new19['backups']
        and last19['settings'] == new19['settings'], 'The refusal changed nothing; going back to v1.9 needs the xexam-ai-schema9-* backup copy')
 finally:
     cleanup()

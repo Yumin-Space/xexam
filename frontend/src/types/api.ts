@@ -720,6 +720,8 @@ export interface AiChatSummary {
   leafId?: number | null;
   /** v1.3, administrators only: the picked model (null = default) */
   pick?: ModelRef | null;
+  /** v2.1, administrators only: the picked thinking-strength level (null = none) */
+  pickEffort?: string | null;
 }
 
 export type AiChatKind = 'chat' | 'practice' | 'exam' | 'summary';
@@ -1000,6 +1002,8 @@ export interface AiConnection {
   insecureHttp: boolean; usedBy: AiSlot[];
   /** v1.9: the on / off switch of the connection (missing = on) */
   enabled?: boolean;
+  /** v2.1: the thinking-strength family of the connection (one connection = one family) */
+  effortFamily: AiEffortFamily;
 }
 export interface AiPoolModel {
   id: number; connectionId: number; connectionName: string; model: string; manual: boolean;
@@ -1010,7 +1014,9 @@ export interface AiPoolModel {
 export type AiEffortFamily = 'anthropic' | 'openai' | 'google' | 'responses';
 export interface AiEffort { family: AiEffortFamily; level: string }
 /** `effort` is optional: an older ai-service does not send it */
-export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null; effort?: AiEffort | null }
+export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null; effort?: AiEffort | null;
+  /** v2.1: what is sent now (the stored choice, or the model default); null only when the slot does not resolve */
+  effortEffective: AiEffort | null }
 /** `GET /api/ai/admin/settings` (administrators; v1.3: connections, the model pool, six slots, global feature switches) */
 export interface AiSettings {
   enabled: boolean; effective: boolean; state: AiState; pauseReason: 'keyProblem' | 'noRoute' | null;
@@ -1024,6 +1030,8 @@ export interface AiSettings {
 export interface AiConnectionSave {
   id?: number; rev?: number; name: string; provider: string; baseUrl: string; format?: string; gatewayAuth?: string;
   apiKey?: string | null; gatewayKey?: string | null; reuseKeysFrom?: number; confirmHost?: string;
+  /** v2.1: exact lowercase family; omitted = inferred on create, unchanged on update */
+  effortFamily?: AiEffortFamily;
 }
 export interface AiTestAnswer {
   ok: boolean; saved?: boolean; connectionId?: number; latencyMs?: number | null; listed?: boolean; modelCount?: number;

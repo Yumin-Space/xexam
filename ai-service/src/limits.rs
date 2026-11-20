@@ -66,14 +66,11 @@ pub struct Limits {
     pub daily_token_budget: i64,
     /// 1 = AI generation and import requests are paced to the provider limits below (v1.9)
     pub pace_on: i64,
-    /// The provider's requests per minute (used at [`PACE_MARGIN_PCT`] %)
+    /// The provider's requests per minute (used exactly as entered)
     pub pace_rpm: i64,
-    /// The provider's tokens per minute, input + output (used at [`PACE_MARGIN_PCT`] %)
+    /// The provider's tokens per minute, input + output (used exactly as entered)
     pub pace_tpm: i64,
 }
-
-/// The share of the provider limits the pacing uses, in percent (the rest is kept free).
-pub const PACE_MARGIN_PCT: i64 = 90;
 
 /// One limit: JSON key, database column, default, minimum, maximum.
 pub struct LimitDef {
@@ -330,14 +327,14 @@ pub const DEFS: [LimitDef; 36] = [
     LimitDef {
         key: "paceRpm",
         column: "pace_rpm",
-        default: 15,
+        default: 13,
         min: 1,
         max: 10_000,
     },
     LimitDef {
         key: "paceTpm",
         column: "pace_tpm",
-        default: 250_000,
+        default: 240_000,
         min: 1000,
         max: 100_000_000,
     },
@@ -474,16 +471,6 @@ impl Limits {
         } else {
             self.gen_call_tokens
         }
-    }
-
-    /// Requests per minute the pacing actually uses: 90 % of the setting, at least 1 (15 -> 13).
-    pub fn pace_rpm_eff(&self) -> i64 {
-        (self.pace_rpm * PACE_MARGIN_PCT / 100).max(1)
-    }
-
-    /// Tokens per minute the pacing actually uses: 90 % of the setting, at least 1000 (250000 -> 225000).
-    pub fn pace_tpm_eff(&self) -> i64 {
-        (self.pace_tpm * PACE_MARGIN_PCT / 100).max(1000)
     }
 
     pub fn get(&self, key: &str) -> i64 {
@@ -821,8 +808,7 @@ mod tests {
     #[test]
     fn the_v19_pacing_limits_have_defaults_ranges_and_an_effective_value() {
         let l = Limits::default();
-        assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 15, 250_000));
-        assert_eq!((l.pace_rpm_eff(), l.pace_tpm_eff()), (13, 225_000));
+        assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 240_000));
         for (k, ok, bad) in [
             ("paceOn", 0, 2),
             ("paceRpm", 10_000, 10_001),
@@ -840,18 +826,18 @@ mod tests {
                 }))
             );
         }
-        // the floors keep a tiny setting usable
+        // a tiny setting is used as entered
         let tiny = l
             .apply_update(&obj(json!({"paceRpm": 1, "paceTpm": 1000})))
             .expect("in range");
-        assert_eq!((tiny.pace_rpm_eff(), tiny.pace_tpm_eff()), (1, 1000));
+        assert_eq!((tiny.pace_rpm, tiny.pace_tpm), (1, 1000));
         // the unlimited switches never touch the pacing
         let free = l
             .apply_update(&obj(json!({"genUnlimited": 0, "importUnlimited": 0})))
             .expect("ok");
         assert_eq!(
             (free.pace_on, free.pace_rpm, free.pace_tpm),
-            (1, 15, 250_000)
+            (1, 13, 240_000)
         );
     }
 

@@ -385,6 +385,7 @@ async fn validation_names_limits_and_header_clash() {
                         format: "openai",
                         gateway_auth: "bearer",
                         lists_models: true,
+                        effort_family: "openai",
                         by: "test",
                         now: 1,
                     },

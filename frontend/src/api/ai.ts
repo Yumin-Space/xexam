@@ -37,24 +37,26 @@ export const retryAnswer = (chatId: number, lang: AiLang, opts: StreamOptions): 
   postStream('/api/ai/retry', retryBody(chatId, lang), opts);
 
 /** v1.3: the body of a regenerate / edit (the optional `model` is the administrators' pick for this one answer) */
-export interface RegenerateBody { chatId: number; messageId: number; lang: AiLang; model?: ModelRef }
+export interface RegenerateBody { chatId: number; messageId: number; lang: AiLang; model?: ModelRef;
+  /** v2.1, administrators: the thinking-strength level (null = clear; absent = keep) */
+  effort?: string | null }
 export interface EditBody extends RegenerateBody { text: string }
 
 /** v1.3: a new version of an assistant message (streamed like a send; its start event has mode: 'regenerate') */
-export const regenerate = (chatId: number, messageId: number, lang: AiLang, opts: StreamOptions, model?: ModelRef): Promise<void> =>
-  postStream('/api/ai/regenerate', model ? { chatId, messageId, lang, model } : { chatId, messageId, lang }, opts);
+export const regenerate = (chatId: number, messageId: number, lang: AiLang, opts: StreamOptions, model?: ModelRef, effort?: string | null): Promise<void> =>
+  postStream('/api/ai/regenerate', { chatId, messageId, lang, ...(model ? { model } : {}), ...(effort !== undefined ? { effort } : {}) }, opts);
 
 /** v1.3: a new version of a user message and its answer (a new branch; mode: 'edit') */
-export const editMessage = (chatId: number, messageId: number, text: string, lang: AiLang, opts: StreamOptions, model?: ModelRef): Promise<void> =>
-  postStream('/api/ai/edit', model ? { chatId, messageId, text, lang, model } : { chatId, messageId, text, lang }, opts);
+export const editMessage = (chatId: number, messageId: number, text: string, lang: AiLang, opts: StreamOptions, model?: ModelRef, effort?: string | null): Promise<void> =>
+  postStream('/api/ai/edit', { chatId, messageId, text, lang, ...(model ? { model } : {}), ...(effort !== undefined ? { effort } : {}) }, opts);
 
 /** v1.3: shows another version (the branch that ends at `messageId`); no model call, no cap */
 export const switchBranch = (chatId: number, messageId: number): Promise<AiChatDetail> =>
   postJson<AiChatDetail>('/api/ai/branch', { chatId, messageId });
 
-/** v1.3, administrators: the model of one chat (null = the default) */
-export const setChatModel = (chatId: number, model: ModelRef | null): Promise<{ chat: AiChatSummary }> =>
-  postJson<{ chat: AiChatSummary }>('/api/ai/chat/model', { chatId, model });
+/** v1.3, administrators: the model of one chat (null = the default); v2.1: `effort` (null = clear, absent = keep) */
+export const setChatModel = (chatId: number, model: ModelRef | null, effort?: string | null): Promise<{ chat: AiChatSummary }> =>
+  postJson<{ chat: AiChatSummary }>('/api/ai/chat/model', effort !== undefined ? { chatId, model, effort } : { chatId, model });
 
 /**
  * Stops the running answer of a chat. Administrators may allow several running answers per user (safety limits), so the

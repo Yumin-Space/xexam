@@ -386,18 +386,18 @@ async fn a_newer_schema_is_refused() {
     t.app.0.store.release_file();
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '11' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '12' WHERE key = 'schema'", [])
             .expect("set");
     }
     let cfg = test_config(t.dir.path(), &t.backend.url, &Opts::default());
     let err = match xexam_ai_service::app::App::open(cfg) {
-        Ok(_) => panic!("a schema-11 database must be refused"),
+        Ok(_) => panic!("a schema-12 database must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 11, written by a newer ai-service; this version (schema 10) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 12, written by a newer ai-service; this version (schema 11) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

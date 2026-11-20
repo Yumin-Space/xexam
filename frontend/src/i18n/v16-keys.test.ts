@@ -4,7 +4,7 @@ import { afterEach, test } from 'node:test';
 import { setUiLang, t, type MsgKey } from './index.ts';
 
 afterEach(() => setUiLang('en'));
-const KEYS = ['label', 'default', 'defaultTip', 'levelOf', 'modelDefault'].map((k) => `ai.set.effort.${k}`);
+const KEYS = ['label', 'levelOf', 'modelDefault'].map((k) => `ai.set.effort.${k}`);
 
 test('thinking-strength keys exist in every language', () => {
   for (const lang of ['en', 'zh', 'ja'] as const) {
@@ -19,7 +19,6 @@ test('thinking-strength keys exist in every language', () => {
 test('binding zh texts', () => {
   setUiLang('zh');
   assert.equal(t('ai.set.effort.label'), '思考强度');
-  assert.equal(t('ai.set.effort.default'), '默认');
   assert.equal(t('act.a.ai.settings.effort' as MsgKey), '修改思考强度');
 });
 

@@ -515,17 +515,17 @@ fn a_newer_schema_is_refused_with_the_schema_5_line() {
     let path = dir.path().join(DB_FILE);
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '11' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '12' WHERE key = 'schema'", [])
             .expect("set");
     }
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 11 must be refused"),
+        Ok(_) => panic!("schema 12 must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 11, written by a newer ai-service; this version (schema 10) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 12, written by a newer ai-service; this version (schema 11) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

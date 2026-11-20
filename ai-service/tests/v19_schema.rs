@@ -71,6 +71,7 @@ fn new_conn(name: &str) -> NewConn<'_> {
         format: "openai",
         gateway_auth: "bearer",
         lists_models: true,
+        effort_family: "openai",
         by: "root",
         now: NOW,
     }
@@ -109,8 +110,8 @@ fn a_fresh_file_is_schema_9_with_seven_slots_and_the_new_columns() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     let c = raw(dir.path());
-    assert_eq!(schema::SCHEMA_VERSION, "10");
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema::SCHEMA_VERSION, "11");
+    assert_eq!(schema_of(&c), "11");
     for (table, column, _) in schema::V9_COLUMNS {
         assert!(has_column(&c, table, column), "{table}.{column}");
     }
@@ -125,7 +126,7 @@ fn a_fresh_file_is_schema_9_with_seven_slots_and_the_new_columns() {
         .expect("reopen")
         .read(tables::load_limits)
         .expect("limits");
-    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 15, 250_000));
+    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 240_000));
     // the slot CHECK refuses the removed name
     assert!(c
         .execute(
@@ -146,7 +147,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
                 tx,
                 &NewPool {
                     connection_id: id,
-                    model: "demo-model",
+                    model: "gemini-demo",
                     manual: true,
                     status: "ok",
                     error_code: None,
@@ -165,7 +166,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
 
     let store = open(dir.path());
     let c = raw(dir.path());
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     let rows = slot_rows(&c);
     let get = |name: &str| rows.iter().find(|r| r.0 == name).cloned().expect(name);
     assert!(rows.iter().all(|r| r.0 != "study"));
@@ -194,7 +195,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
         .expect("enabled");
     assert_eq!(on, 1);
     let l = store.read(tables::load_limits).expect("limits");
-    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 15, 250_000));
+    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 240_000));
     let left: i64 = c
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'model_slots_v8'",
@@ -272,7 +273,7 @@ fn a_v9_file_missing_a_v9_column_gets_it_back_without_a_backup() {
     drop(open(dir.path()));
     let c = raw(dir.path());
     assert!(has_column(&c, "limits", "pace_rpm"));
-    assert_eq!(schema_of(&c), "10");
+    assert_eq!(schema_of(&c), "11");
     assert!(backups(dir.path()).is_empty());
 }
 
@@ -318,8 +319,30 @@ fn the_gemma_effort_choices_fold_into_google_on_every_start() {
 #[test]
 fn a_gemma_choice_in_a_schema_8_file_folds_during_the_upgrade() {
     let dir = tempfile::tempdir().expect("dir");
-    drop(open(dir.path()));
-    make_v8(dir.path(), None, Some("gemma:true"));
+    let store = open(dir.path());
+    // the slots resolve to a Gemini-model connection (family google), so the folded tag survives the 10 -> 11 step
+    let model = store
+        .write(|tx| {
+            let id = conn::insert_connection(tx, &new_conn("Garden"))?;
+            conn::upsert_pool(
+                tx,
+                &NewPool {
+                    connection_id: id,
+                    model: "gemma-demo",
+                    manual: true,
+                    status: "ok",
+                    error_code: None,
+                    usage_option: true,
+                    max_tokens: 4096,
+                    context: None,
+                    latency_ms: None,
+                    tested_at: None,
+                },
+            )
+        })
+        .expect("conn + model");
+    drop(store);
+    make_v8(dir.path(), Some(model), Some("gemma:true"));
     drop(open(dir.path()));
     let rows = slot_rows(&raw(dir.path()));
     for name in ["hint", "explain"] {

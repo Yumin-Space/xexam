@@ -1,6 +1,7 @@
 // v1.6 thinking strength: the known-default lookup (exact, after normalization) and the level kept on a family change.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import { knownDefault, levelForFamily } from './effort-defaults.ts';
 
 const TABLE: Array<[string, string]> = [
@@ -98,4 +99,20 @@ test('the "none" hints of gpt-5.4 / 5.2 / 5.1 stay known but are never picked fo
   }
   // a family that does offer "none" (Responses API) may pick it
   assert.equal(levelForFamily(null, ['none', 'minimal', 'low', 'medium', 'high'], 'none'), 'none');
+});
+
+// Shared with the Rust port (ai-service includes the same JSON): the same table must give the same answers in both languages.
+const FIXTURE = JSON.parse(readFileSync(new URL('./effort-defaults.fixture.json', import.meta.url), 'utf8')) as {
+  knownDefault: Array<[string, string | null]>;
+  levels: Record<string, string[]>;
+  levelForFamily: Array<{ family: string; current: string | null; model: string; expect: string }>;
+};
+
+test('shared fixture: known defaults', () => {
+  for (const [m, l] of FIXTURE.knownDefault) assert.equal(knownDefault(m), l, m);
+});
+
+test('shared fixture: level per family', () => {
+  for (const c of FIXTURE.levelForFamily)
+    assert.equal(levelForFamily(c.current, FIXTURE.levels[c.family] ?? [], knownDefault(c.model)), c.expect, JSON.stringify(c));
 });

@@ -62,36 +62,44 @@ async fn settings(t: &TestApp, admin: &Who) -> Value {
     v
 }
 
-async fn set(e: &E, slot: &str, family: &str, level: &str) {
+/// Sets the level of a slot (the family is the one of the connection the slot uses).
+async fn set(e: &E, slot: &str, level: &str) {
     let (s, v) =
-        e.t.post(
-            EFFORT,
-            &e.admin,
-            json!({"slot": slot, "effort": {"family": family, "level": level}}),
-        )
-        .await;
+        e.t.post(EFFORT, &e.admin, json!({"slot": slot, "level": level}))
+            .await;
     assert_eq!(s, 200, "{slot}: {v}");
 }
 
-/// One distinct level per slot, so a call that used the wrong slot's row shows.
-const ROWS: [(&str, &str, &str); 7] = [
-    ("default", "openai", "max"),
-    ("chat", "openai", "high"),
-    ("hint", "google", "LOW"),
-    ("explain", "openai", "low"),
-    ("summary", "openai", "xhigh"),
-    ("generate", "openai", "medium"),
-    ("import", "google", "HIGH"),
+/// Changes the thinking-strength family of connection 1 (what the connection form saves).
+fn use_family(e: &E, family: &str) {
+    e.t.db()
+        .execute(
+            "UPDATE connections SET effort_family = ?1, rev = rev + 1 WHERE id = 1",
+            [family],
+        )
+        .expect("family");
+    e.t.app.0.forget_no_effort();
+}
+
+/// One level per slot (OpenAI family), so a call that used the wrong slot's row shows.
+const ROWS: [(&str, &str); 7] = [
+    ("default", "max"),
+    ("chat", "high"),
+    ("hint", "low"),
+    ("explain", "medium"),
+    ("summary", "xhigh"),
+    ("generate", "low"),
+    ("import", "high"),
 ];
 
 async fn set_all(e: &E) {
-    for (slot, family, level) in ROWS {
-        set(e, slot, family, level).await;
+    for (slot, level) in ROWS {
+        set(e, slot, level).await;
     }
 }
 
 fn level_of(slot: &str) -> &'static str {
-    ROWS.iter().find(|r| r.0 == slot).expect("slot").2
+    ROWS.iter().find(|r| r.0 == slot).expect("slot").1
 }
 
 /// The model calls the stub saw (not the model listings), from index `from`.
@@ -142,82 +150,94 @@ async fn effort_save_round_trip() {
         })
     );
     assert!(v["effortLevels"].get("gemma").is_none());
+    assert_eq!(v["connections"][0]["effortFamily"], "openai");
+    // untouched rows: nothing stored, the effective level is the model default (unknown model: medium)
     for slot in [
         "default", "chat", "hint", "explain", "summary", "generate", "import",
     ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
+        assert_eq!(
+            v["slots"][slot]["effortEffective"],
+            json!({"family": "openai", "level": "medium"}),
+            "{slot}"
+        );
     }
     let (s, v) =
-        e.t.post(
-            EFFORT,
-            &e.admin,
-            json!({"slot": "chat", "effort": {"family": "openai", "level": "high"}}),
-        )
-        .await;
+        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": "high"}))
+            .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(
         v["settings"]["slots"]["chat"]["effort"],
         json!({"family": "openai", "level": "high"})
     );
-    let v = settings(&e.t, &e.admin).await;
     assert_eq!(
-        v["slots"]["chat"]["effort"],
+        v["settings"]["slots"]["chat"]["effortEffective"],
         json!({"family": "openai", "level": "high"})
     );
+    let v = settings(&e.t, &e.admin).await;
     for slot in [
         "default", "hint", "explain", "summary", "generate", "import",
     ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
     }
-    // a family change and the reset to the default
-    set(&e, "chat", "anthropic", "max").await;
+    // another family on the connection: the stored tag stays, the effective level is the model default again
+    use_family(&e, "anthropic");
+    let v = settings(&e.t, &e.admin).await;
+    assert_eq!(v["connections"][0]["effortFamily"], "anthropic");
+    assert_eq!(
+        v["slots"]["chat"]["effort"],
+        json!({"family": "openai", "level": "high"})
+    );
+    assert_eq!(
+        v["slots"]["chat"]["effortEffective"],
+        json!({"family": "anthropic", "level": "medium"})
+    );
+    set(&e, "chat", "max").await;
     let v = settings(&e.t, &e.admin).await;
     assert_eq!(
         v["slots"]["chat"]["effort"],
         json!({"family": "anthropic", "level": "max"})
     );
+    // null: back to the model default (stored NULL)
     let (s, v) =
-        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "effort": null}))
+        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": null}))
             .await;
     assert_eq!(s, 200, "{v}");
     assert_eq!(v["settings"]["slots"]["chat"]["effort"], Value::Null);
+    let stored: Option<String> = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
+    assert_eq!(stored, None);
 }
 
 #[tokio::test]
 async fn effort_save_rejects_bad_input() {
     let e = env().await;
     let bad = [
-        json!({"slot": "chat", "effort": {"family": "mistral", "level": "high"}}),
-        json!({"slot": "chat", "effort": {"family": "anthropic", "level": "none"}}),
-        json!({"slot": "chat", "effort": {"family": "google", "level": "max"}}),
-        json!({"slot": "chat", "effort": {"family": "responses", "level": "turbo"}}),
-        json!({"slot": "chat", "effort": {"family": "responses", "level": "HIGH"}}),
-        json!({"slot": "chat", "effort": {"family": "deepseek", "level": "high"}}),
-        json!({"slot": "chat", "effort": {"family": "gemma", "level": "HIGH"}}),
-        json!({"slot": "chat", "effort": {"family": "gemma", "level": "MINIMAL"}}),
-        json!({"slot": "chat", "effort": {"family": "gemma", "level": "high"}}),
-        json!({"slot": "chat", "effort": {"family": "gemma", "level": "true"}}),
-        json!({"slot": "chat", "effort": {"family": "gemma", "level": "false"}}),
-        json!({"slot": "chat", "effort": {"family": "google", "level": "low"}}),
-        json!({"slot": "chat", "effort": {"family": "google", "level": "none"}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": "none"}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": "minimal"}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": "High"}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": " high"}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": 3}}),
-        json!({"slot": "chat", "effort": {"family": "openai"}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": "high", "x": 1}}),
-        json!({"slot": "chat", "effort": {"family": "openai", "level": "high"}, "extra": 1}),
-        json!({"slot": "nope", "effort": null}),
-        json!({"slot": 7, "effort": null}),
-        json!({"effort": null}),
+        // the old body form is gone
+        json!({"slot": "chat", "effort": {"family": "openai", "level": "high"}}),
+        json!({"slot": "chat", "effort": null}),
+        json!({"slot": "chat", "level": "high", "effort": null}),
+        // levels outside the connection's family (OpenAI here)
+        json!({"slot": "chat", "level": "none"}),
+        json!({"slot": "chat", "level": "minimal"}),
+        json!({"slot": "chat", "level": "HIGH"}),
+        json!({"slot": "chat", "level": "MINIMAL"}),
+        json!({"slot": "chat", "level": "High"}),
+        json!({"slot": "chat", "level": " high"}),
+        json!({"slot": "chat", "level": "openai:high"}),
+        json!({"slot": "chat", "level": "turbo"}),
+        json!({"slot": "chat", "level": ""}),
+        json!({"slot": "chat", "level": 3}),
+        json!({"slot": "chat", "level": ["high"]}),
+        json!({"slot": "chat", "level": "high", "extra": 1}),
+        json!({"slot": "nope", "level": null}),
+        json!({"slot": 7, "level": null}),
+        json!({"level": null}),
         json!({"slot": "chat"}),
-        json!({"slot": "chat", "effort": "high"}),
-        json!({"slot": "chat", "effort": "openai:high"}),
     ];
     for b in bad {
         let (s, v) = e.t.post(EFFORT, &e.admin, b.clone()).await;
         assert_eq!(s, 400, "{b}: {v}");
+        assert_eq!(v["code"], "ai.badRequest", "{b}: {v}");
     }
     let stored: i64 = q1(
         &e.t,
@@ -227,37 +247,58 @@ async fn effort_save_rejects_bad_input() {
 }
 
 #[tokio::test]
-async fn effort_save_ignores_connection_format() {
+async fn effort_save_uses_the_connection_family() {
     let e = env().await;
-    // the connection is OpenAI-compatible: the Anthropic family is still accepted and stored
-    set(&e, "chat", "anthropic", "xhigh").await;
-    let v = settings(&e.t, &e.admin).await;
-    assert_eq!(
-        v["slots"]["chat"]["effort"],
-        json!({"family": "anthropic", "level": "xhigh"})
-    );
-    // and an Anthropic-format connection takes the OpenAI family
+    // the connection is OpenAI-compatible: a Responses-only level is refused, then accepted after the family change
+    let (s, _) =
+        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": "none"}))
+            .await;
+    assert_eq!(s, 400);
+    use_family(&e, "responses");
+    set(&e, "chat", "none").await;
+    let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
+    assert_eq!(tag, "responses:none");
+    // and an Anthropic connection is Anthropic family from the start
     let e2 = env().await;
     e2.t.configure_anthropic(&e2.admin, "demo-claude").await;
-    set(&e2, "chat", "openai", "low").await;
     let v = settings(&e2.t, &e2.admin).await;
-    assert_eq!(
-        v["slots"]["chat"]["effort"],
-        json!({"family": "openai", "level": "low"})
-    );
+    assert_eq!(v["connections"][0]["effortFamily"], "anthropic");
+    set(&e2, "chat", "low").await;
+    let tag: String = q1(&e2.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
+    assert_eq!(tag, "anthropic:low");
+    let (s, _) =
+        e2.t.post(EFFORT, &e2.admin, json!({"slot": "chat", "level": "none"}))
+            .await;
+    assert_eq!(s, 400);
+}
+
+#[tokio::test]
+async fn effort_save_needs_a_resolving_slot() {
+    let t = start().await;
+    let admin = t.user("root", true, true);
+    // nothing configured: no connection for any slot
+    for slot in ["default", "chat"] {
+        let (s, v) = t
+            .post(EFFORT, &admin, json!({"slot": slot, "level": "high"}))
+            .await;
+        assert_eq!((s, v["code"].as_str()), (400, Some("ai.badRequest")), "{v}");
+        // clearing needs no connection: a stale tag stays removable
+        let (s, _) = t
+            .post(EFFORT, &admin, json!({"slot": slot, "level": null}))
+            .await;
+        assert_eq!(s, 200);
+    }
+    let (_, v) = t.get("/api/ai/admin/settings", &admin).await;
+    assert_eq!(v["slots"]["chat"]["effortEffective"], Value::Null);
 }
 
 #[tokio::test]
 async fn effort_save_is_admin_only() {
     let e = env().await;
-    set(&e, "chat", "openai", "high").await;
+    set(&e, "chat", "high").await;
     let (s, _) =
-        e.t.post(
-            EFFORT,
-            &e.user,
-            json!({"slot": "chat", "effort": {"family": "openai", "level": "low"}}),
-        )
-        .await;
+        e.t.post(EFFORT, &e.user, json!({"slot": "chat", "level": "low"}))
+            .await;
     assert_eq!(s, 403);
     let (s, _) = e.t.get("/api/ai/admin/settings", &e.user).await;
     assert_eq!(s, 403);
@@ -275,8 +316,9 @@ async fn effort_save_is_admin_only() {
 #[tokio::test]
 async fn responses_new_levels_round_trip() {
     let e = env().await;
+    use_family(&e, "responses");
     for lvl in ["minimal", "xhigh"] {
-        set(&e, "chat", "responses", lvl).await;
+        set(&e, "chat", lvl).await;
         let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
         assert_eq!(tag, format!("responses:{lvl}"));
         let v = settings(&e.t, &e.admin).await;
@@ -290,7 +332,8 @@ async fn responses_new_levels_round_trip() {
 #[tokio::test]
 async fn responses_effort_round_trip_and_wire() {
     let e = env().await;
-    set(&e, "chat", "responses", "max").await;
+    use_family(&e, "responses");
+    set(&e, "chat", "max").await;
     let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
     assert_eq!(tag, "responses:max");
     let v = settings(&e.t, &e.admin).await;
@@ -314,13 +357,14 @@ async fn responses_effort_round_trip_and_wire() {
 #[tokio::test]
 async fn google_effort_round_trip_and_wire() {
     let e = env().await;
+    use_family(&e, "google");
     for (fam, lvl) in [
         ("google", "HIGH"),
         ("google", "MINIMAL"),
         ("google", "MEDIUM"),
         ("google", "XHIGH"),
     ] {
-        set(&e, "chat", fam, lvl).await;
+        set(&e, "chat", lvl).await;
         let tag: String = q1(&e.t, "SELECT effort FROM model_slots WHERE slot = 'chat'");
         assert_eq!(tag, format!("{fam}:{lvl}"));
         let v = settings(&e.t, &e.admin).await;
@@ -356,7 +400,7 @@ async fn google_effort_round_trip_and_wire() {
 #[tokio::test]
 async fn legacy_stored_levels_read_in_the_new_form() {
     let e = env().await;
-    set(&e, "chat", "openai", "high").await;
+    set(&e, "chat", "high").await;
     for (old, want) in [
         ("google:low", json!({"family": "google", "level": "LOW"})),
         ("gemma:true", json!({"family": "google", "level": "HIGH"})),
@@ -397,7 +441,8 @@ async fn legacy_stored_levels_read_in_the_new_form() {
 #[tokio::test]
 async fn unnamed_google_refusal_retries_without_thinking_level() {
     let e = env().await;
-    set(&e, "chat", "google", "MINIMAL").await;
+    use_family(&e, "google");
+    set(&e, "chat", "MINIMAL").await;
     e.t.stub.refuse_if_body_has(Some((
         "thinking_level",
         400,
@@ -418,9 +463,10 @@ async fn unnamed_google_refusal_retries_without_thinking_level() {
 #[tokio::test]
 async fn effort_save_writes_activity_event() {
     let e = env().await;
-    set(&e, "summary", "google", "MINIMAL").await;
+    use_family(&e, "google");
+    set(&e, "summary", "MINIMAL").await;
     let (s, _) =
-        e.t.post(EFFORT, &e.admin, json!({"slot": "summary", "effort": null}))
+        e.t.post(EFFORT, &e.admin, json!({"slot": "summary", "level": null}))
             .await;
     assert_eq!(s, 200);
     e.t.app.0.deliver_outbox().await;
@@ -446,7 +492,7 @@ async fn effort_save_writes_activity_event() {
 #[tokio::test]
 async fn effort_and_model_pick_are_independent() {
     let e = env().await;
-    set(&e, "chat", "openai", "high").await;
+    set(&e, "chat", "high").await;
     // a pick of a model keeps the effort
     let (s, v) =
         e.t.post(
@@ -465,7 +511,7 @@ async fn effort_and_model_pick_are_independent() {
     let model_id = v["slots"]["chat"]["modelId"].clone();
     assert!(model_id.is_i64(), "{v}");
     // an effort save keeps the model
-    set(&e, "chat", "openai", "low").await;
+    set(&e, "chat", "low").await;
     let v = settings(&e.t, &e.admin).await;
     assert_eq!(v["slots"]["chat"]["modelId"], model_id);
     // clearing the slot keeps the effort
@@ -706,18 +752,18 @@ async fn import_calls_send_import_slot_effort() {
 }
 
 #[tokio::test]
-async fn default_row_sends_nothing() {
+async fn untouched_rows_send_the_model_default() {
     let e = env().await;
-    // rows set and reset: back to the default sends nothing; an untouched install never sent anything
+    // an untouched install sends the model's default explicitly (unknown model: medium), and so does a reset row
     let from = n_requests(&e.t);
     let ev =
         e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
             .await
             .expect("send");
     assert_eq!(terminal(&ev).0, "done");
-    set(&e, "chat", "anthropic", "high").await;
+    set(&e, "chat", "max").await;
     let (s, _) =
-        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "effort": null}))
+        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": null}))
             .await;
     assert_eq!(s, 200);
     let ev =
@@ -727,15 +773,7 @@ async fn default_row_sends_nothing() {
     assert_eq!(terminal(&ev).0, "done");
     let bodies = calls_from(&e.t, from);
     assert!(bodies.len() >= 2);
-    for b in bodies {
-        let s = b.to_string();
-        assert!(
-            !s.contains("reasoning_effort")
-                && !s.contains("output_config")
-                && !s.contains("effort"),
-            "{b}"
-        );
-    }
+    all_carry(&bodies, "medium");
 }
 
 #[tokio::test]
@@ -766,7 +804,7 @@ async fn connection_and_model_test_send_no_effort() {
 async fn anthropic_effort_and_schema_share_output_config() {
     let e = env().await;
     e.t.configure_anthropic(&e.admin, "demo-claude").await;
-    set(&e, "generate", "anthropic", "xhigh").await;
+    set(&e, "generate", "xhigh").await;
     let from = n_requests(&e.t);
     let done = run_generation(&e).await;
     assert_eq!(done["state"], "done", "{done}");
@@ -791,7 +829,7 @@ const NAMED: &str = r#"{"error":{"message":"Unrecognized request argument suppli
 #[tokio::test]
 async fn effort_refusal_retries_once_without_and_remembers() {
     let e = env().await;
-    set(&e, "chat", "openai", "high").await;
+    set(&e, "chat", "high").await;
     e.t.stub
         .refuse_if_body_has(Some(("reasoning_effort", 400, NAMED)));
     let before = captured_count("refused reasoning_effort");
@@ -831,7 +869,7 @@ async fn effort_refusal_retries_once_without_and_remembers() {
         }
     }
     // a new level is tried again (and refused again, once)
-    set(&e, "chat", "openai", "low").await;
+    set(&e, "chat", "low").await;
     let from = n_requests(&e.t);
     let ev =
         e.t.send_all(&e.user, json!({"text": "third", "lang": "en"}))
@@ -844,7 +882,7 @@ async fn effort_refusal_retries_once_without_and_remembers() {
     assert!(bodies[1].get("reasoning_effort").is_none());
     // when the provider accepts it again, a save lets the parameter through
     e.t.stub.refuse_if_body_has(None);
-    set(&e, "chat", "openai", "medium").await;
+    set(&e, "chat", "medium").await;
     let from = n_requests(&e.t);
     let ev =
         e.t.send_all(&e.user, json!({"text": "fourth", "lang": "en"}))
@@ -859,7 +897,7 @@ async fn effort_refusal_retries_once_without_and_remembers() {
 #[tokio::test]
 async fn unnamed_refusal_is_retried_without_effort() {
     let e = env().await;
-    set(&e, "chat", "openai", "high").await;
+    set(&e, "chat", "high").await;
     e.t.stub.refuse_if_body_has(Some((
         "reasoning_effort",
         400,
@@ -879,7 +917,8 @@ async fn unnamed_refusal_is_retried_without_effort() {
 #[tokio::test]
 async fn responses_refusal_retries_without_reasoning_object() {
     let e = env().await;
-    set(&e, "chat", "responses", "low").await;
+    use_family(&e, "responses");
+    set(&e, "chat", "low").await;
     e.t.stub.refuse_if_body_has(Some((
         "reasoning",
         400,
@@ -903,7 +942,7 @@ async fn generic_schema_refusal_does_not_drop_thinking_strength() {
     // a 400 that is about the structured output (not the thinking strength) is answered by the unformatted ladder; that
     // success must not turn the thinking strength off for the route
     let e = env().await;
-    set(&e, "generate", "openai", "high").await;
+    set(&e, "generate", "high").await;
     e.t.stub.refuse_if_body_has(Some((
         "response_format",
         400,
@@ -1032,7 +1071,7 @@ fn new_and_repaired_files_have_the_same_sqlite_master() {
     {
         let c = rusqlite::Connection::open(&pb).expect("open");
         c.execute_batch(
-            "ALTER TABLE connections DROP COLUMN enabled; ALTER TABLE connections DROP COLUMN responses;",
+            "ALTER TABLE connections DROP COLUMN enabled; ALTER TABLE connections DROP COLUMN responses; ALTER TABLE connections DROP COLUMN effort_family;",
         )
         .expect("drop");
     }

@@ -863,6 +863,7 @@ fn new_conn<'a>(name: &'a str, now: i64) -> NewConn<'a> {
         format: "openai",
         gateway_auth: "bearer",
         lists_models: true,
+        effort_family: "openai",
         by: "root",
         now,
     }
@@ -920,6 +921,7 @@ fn connections_are_created_ordered_saved_with_a_revision_and_deleted() {
         format: "anthropic",
         gateway_auth: "x-api-key",
         lists_models: false,
+        effort_family: "openai",
         by: "admin2",
         now: NOW + 5,
     };

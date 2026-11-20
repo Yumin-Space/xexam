@@ -11,20 +11,21 @@ import { fetchModels, pickModel, setEffort, setEnabled as setEnabledApi, setFeat
 import { miniIcon } from '../../components/mini-icons.ts';
 import { miniSwitch } from '../../components/mini-switch.ts';
 import { holdTip } from '../../components/tooltip.ts';
-import { EFFORT_FAMILIES, effortAria, effortTip, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
+import { effortAria, effortTip, providerIcon } from '../../components/provider-icons.ts';
 import {
   connOn, defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotFeature, slotModel, slotNote, slotOn,
   slotUsing, SLOTS, type ModelGroup,
 } from '../../domain/ai-settings.ts';
-import { knownDefault, levelForFamily } from '../../domain/effort-defaults.ts';
+import { knownDefault } from '../../domain/effort-defaults.ts';
 import { aiCodeText, errorText } from '../../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../../i18n/index.ts';
 import { onRouteChange, refreshAi } from '../../state/actions.ts';
 import { onClearUserData } from '../../state/store.ts';
-import type { AiEffort, AiSettings, AiSlot, ModelRef } from '../../types/api.ts';
+import type { AiSettings, AiSlot, ModelRef } from '../../types/api.ts';
 import { h, scrollToY, type Child } from '../../utils/dom.ts';
 import { matches, TOUCH_MQ } from '../../utils/media.ts';
 import { toast } from '../../utils/toast.ts';
+import { effortView, rowPaused } from './effort.ts';
 import { aiDown } from './status.ts';
 import { A, adopt, num, redraw } from './state.ts';
 
@@ -382,16 +383,16 @@ async function flipFeature(slot: AiSlot, on: boolean): Promise<void> {
   document.getElementById(`ai-sw-${slot}`)?.focus();
 }
 
-// ---------------------------------------------------------------- thinking strength (v1.6)
+// ---------------------------------------------------------------- thinking strength (v1.6, v2.1)
 
-/** Saves one slot's thinking strength at once (null = default, nothing sent); the row is busy meanwhile */
-async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string): Promise<void> {
+/** Saves one slot's thinking strength at once (null = back to the model default); the row is busy meanwhile */
+async function saveEffort(slot: AiSlot, level: string | null, focusId: string): Promise<void> {
   if (A.slotBusy[slot]) return;
   A.slotBusy[slot] = true;
   A.slotMsg[slot] = null;
   redraw();
   try {
-    const r = await setEffort({ slot, effort });
+    const r = await setEffort({ slot, level });
     adopt(r.settings);
   } catch (e) {
     if (!aiDown(e)) A.slotMsg[slot] = { ok: false, text: errorText(e) };
@@ -401,41 +402,30 @@ async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string
   document.getElementById(focusId)?.focus();
 }
 
-/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] [Responses API] and the level list; hidden on an older ai-service */
+/**
+ * The row above a slot's pickers (v2.1): the family icon of the connection the row uses (not a button; its tip is the
+ * parameter it sends), the level list of that family and the grey "model default" hint. The selected level is what is sent
+ * now. A row that does not resolve has an empty, disabled list; hidden on an older ai-service.
+ */
 function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string): HTMLElement | null {
-  const lists = s.effortLevels;
-  if (!lists) return null;
-  const cur = s.slots[slot].effort ?? null;
-  const fam = cur && lists[cur.family] ? cur.family : null;
-  const lvl = fam ? cur?.level ?? '' : '';
+  if (!s.effortLevels) return null;
+  const view = effortView(s, slot);
+  const fam = view?.family ?? null;
   const id = `ai-slot-${slot}-effort`;
   const dflt = knownDefault(slotUsing(s, slot)?.model);
-  // The tip shows on hover / keyboard focus and on tap-and-hold (touch): a family button's tip is the parameter it sends
-  const btn = (key: EffortFamily | 'default', pressed: boolean, label: Child[], name: string, tip: string, onClick: () => void): HTMLElement =>
-    holdTip(h('button', {
-      type: 'button', id: `${id}-${key}`, class: 'ais-eb' + (pressed ? ' on' : ''), 'aria-pressed': pressed ? 'true' : 'false',
-      'aria-label': name, disabled: busy, onclick: onClick,
-    }, ...label), tip);
-  const buttons = [
-    btn('default', fam === null, [t('ai.set.effort.default')], t('ai.set.effort.default'), t('ai.set.effort.defaultTip'),
-      () => void saveEffort(slot, null, `${id}-default`)),
-    ...EFFORT_FAMILIES.map((f) => btn(f, fam === f,
-      [providerIcon(f)],
-      effortAria(f), effortTip(f),
-      () => void saveEffort(slot, { family: f, level: levelForFamily(cur?.level, lists[f] ?? [], dflt) }, `${id}-${f}`))),
-  ];
   const select = h('select', {
     id: `${id}-level`, class: 'ais-select ais-effort-level', 'aria-label': t('ai.set.effort.levelOf', { slot: slotName }),
     disabled: busy || fam === null,
-    onchange: (e: Event) => {
-      if (fam) void saveEffort(slot, { family: fam, level: (e.target as HTMLSelectElement).value }, `${id}-level`);
-    },
+    onchange: (e: Event) => void saveEffort(slot, (e.target as HTMLSelectElement).value, `${id}-level`),
   }, fam === null
     ? h('option', { value: '' }, '')
-    : (lists[fam] ?? []).map((x) => h('option', { value: x, title: x }, x)));
-  if (fam) (select as HTMLSelectElement).value = lvl;
+    : (view?.levels ?? []).map((x) => h('option', { value: x, title: x }, x)));
+  if (view) (select as HTMLSelectElement).value = view.level;
+  const mark = fam
+    ? holdTip(h('span', { class: 'ais-fam', id: `${id}-fam`, role: 'img', 'aria-label': effortAria(fam) }, providerIcon(fam)), effortTip(fam))
+    : null;
   return h('div', { class: 'ais-effort' },
-    h('div', { class: 'ais-effort-b', role: 'group', 'aria-label': t('ai.set.effort.label') }, buttons),
+    mark,
     dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: dflt })) : null,
     select);
 }
@@ -450,7 +440,10 @@ function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
   // One message per row: a connection that is off already explains why the default cannot be used
   const bad = slot === 'default' && defaultUnusable(s) && note?.kind !== 'connOff';
   // v1.9: the feature of this row is switched off for everyone (the model choice stays, the pickers wait)
-  const off = !slotOn(s, slot);
+  const featureOff = !slotOn(s, slot);
+  // v2.1 master switch: while AI+ is off every row (the default one too) is greyed and shows its switch off; stored values stay
+  const paused = rowPaused(s);
+  const off = featureOff || paused;
   const locked = busy || off;
   const labelId = `ai-slot-${slot}-l`;
   const name = t(`ai.set.slot.${slot}` as MsgKey);
@@ -517,14 +510,15 @@ function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
       placeholder: canFollow ? '' : t('ai.set.slot.pickModel'), 'aria-label': t('ai.set.slot.modelOf', { slot: name }),
     }));
   const switched = slot === 'default' ? null : miniSwitch({
-    id: `ai-sw-${slot}`, checked: !off, label: t('ai.set.slot.swAria', { name }), disabled: busy, onToggle: (v) => void flipFeature(slot, v),
+    id: `ai-sw-${slot}`, checked: !off, label: t('ai.set.slot.swAria', { name }), disabled: busy || paused, onToggle: (v) => void flipFeature(slot, v),
   });
   return h('li', { class: 'ais-slot' + (off ? ' off' : (note?.kind === 'noRoute' || note?.kind === 'connOff' || bad ? ' warn' : '')), id: `ais-slot-${slot}` },
     h('div', { class: 'ais-slot-h' }, h('span', { class: 'ais-slot-l', id: labelId }, name), switched),
     effortRow(s, slot, locked, name),
     h('div', { class: 'ais-slot-pick', role: 'group', 'aria-labelledby': labelId }, sel, picker),
     busy && slot in picking ? h('p', { class: 'ais-note ais-slot-s', role: 'status' }, t(pick === null ? 'ai.set.slot.switching' : 'ai.set.slot.testing')) : null,
-    off ? h('p', { class: 'ais-note ais-slot-n' }, t('ai.set.slot.off')) : null,
+    paused ? h('p', { class: 'ais-note ais-slot-n' }, t('ai.set.slot.paused'))
+      : featureOff ? h('p', { class: 'ais-note ais-slot-n' }, t('ai.set.slot.off')) : null,
     msg ? h('p', { class: (msg.ok ? 'ais-ok' : 'ais-ferr') + ' ais-slot-s', role: msg.ok ? 'status' : 'alert' }, msg.text) : null,
     A.manualOpen === slot && conn ? manualRow(slot, conn.id, conn.name) : null,
     bad && own ? h('p', { class: 'ais-warn ais-slot-n' }, t('ai.set.card.model.bad', { conn: own.connectionName, model: own.model })) : null,

@@ -675,7 +675,7 @@ AI 数据库的 schema 仍是 **8**。ai-service 启动时给 `model_slots` 加�
 AI 数据库在 v1.9 的 ai-service 第一次启动时，从 schema 8 升级到 **schema 9**，只做一次，并先做一份备份副本 `backups/xexam-ai-schema8-<日期时间>.db`（和之前每一步的机制相同）。主数据库不变。
 
 - **`connections.enabled`**（`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`）：连接的启用开关。已有的行一开始都是启用。它和之前的列一样在启动时添加（`pragma_table_info` 里没有时才加）；`status` 的 CHECK 不动，“未启用”由 `enabled` 推出；`connections` 不重建（它有 `CASCADE` 子表）。
-- **`limits.pace_on`、`limits.pace_rpm`、`limits.pace_tpm`**：AI 出题和 AI 导入按服务商速率限制匀速发送的设置：`pace_on` 为 0 或 1（默认 1），`pace_rpm` 为 1 到 10 000（默认 15），`pace_tpm` 为 1 000 到 100 000 000（默认 250 000）。对应限额接口里的键 `paceOn`、`paceRpm`、`paceTpm`。“无限制”开关从不改动它们。
+- **`limits.pace_on`、`limits.pace_rpm`、`limits.pace_tpm`**：AI 出题和 AI 导入按服务商速率限制匀速发送的设置：`pace_on` 为 0 或 1（默认 1），`pace_rpm` 为 1 到 10 000（默认 13），`pace_tpm` 为 1 000 到 100 000 000（默认 240 000），数值按填写的原样使用。对应限额接口里的键 `paceOn`、`paceRpm`、`paceTpm`。“无限制”开关从不改动它们。
 - **重建 `model_slots`**：`slot` 的 `CHECK` 现在允许 `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`（七行，`study` 没有了）。升级时把 `study` 行（模型、时间、修改者和思考强度）复制成 `hint` 和 `explain` 两行，再删掉旧表；新建的文件直接建新表，所以两者的 `sqlite_master` 相同。没有任何表引用 `model_slots`，所以重建时 `foreign_keys` 可以保持开启。
 - **Gemma 并入 Google**：每次启动时，已保存的思考强度 `gemma:HIGH` 或 `gemma:true` 变成 `google:HIGH`，`gemma:MINIMAL` 或 `gemma:false` 变成 `google:MINIMAL`，其他 `gemma:` 的值清空（NULL）。发出的请求和以前一样。这一步只在存在 `gemma:` 行时才执行。系列现在是 `anthropic`、`openai`、`google` 和 `responses`。
 - **全局开关互相独立**：`settings.features_off` 的第 2 位（提示）和第 4 位（解析）不再保持相同，启动时也不会再把它们配成一对；`users.features_off` 仍然成对（只关了其中一个的用户会两个都关）。给用户位配对的步骤不会碰全局位。
@@ -695,6 +695,17 @@ AI 数据库在 v2.0 ai-service 第一次启动时，先写一份备份副本 `b
 **有意不做的。** 不加新索引（对 `chats WHERE pick_conn = ?` 的扫描是管理员偶尔才做的操作）；不加新的 `CHECK`，也不重建表（加 `CHECK` 要重建父表或大表）；不改名。留下的不一致列在 9.4。
 
 **回到 v1.9** 需要备份：v1.9 的 ai-service 拒绝 schema 10（`written by a newer ai-service`）。停掉，按 8.4 把 `backups/xexam-ai-schema9-<日期时间>.db` 恢复回去，运行 v1.9 的镜像；升级之后写入的设置、对话和用量会丢。这份副本和所有更早的副本一样，仍然保存着旧密钥的密文（见 [security.md](security.md) 第 11 节）。
+
+### 8.2h Schema v11（v2.1）
+
+AI 数据库在 v2.1 ai-service 第一次启动时，先写一份备份副本 `backups/xexam-ai-schema10-<日期时间>.db`，再从 schema 10 升到 **schema 11**，只升一次（机制与之前每一步相同）。这一步在一个事务里完成，只增加和清除：
+
+- **`connections.effort_family TEXT NOT NULL DEFAULT 'openai'`**：连接的思考强度家族（`anthropic`、`openai`、`google` 或 `responses`，由代码校验）。已有连接按推断填写：提供方为 `anthropic`，或网关且格式为 `anthropic`，得 `anthropic`；Responses 格式得 `responses`；其余看该连接的模型 id（池、`model_slots`、`chats.pick_model`）：`gemini` / `gemma` 的 id 占多数得 `google`，否则 `openai`（没有模型也得 `openai`）。日志每个连接一行，写 id 和推断出的家族，不含名称和地址。
+- **`chats.pick_effort TEXT`**：管理员在 AI Chat 里选的强度（NULL = 没选）；只存强度字符串，家族取调用时所走连接的家族。不属于该家族的值会被忽略。
+- **清理 `model_slots.effort`**：已存的 `<family>:<level>` 只有在其家族与该槽位实际使用的连接的家族相同时才保留，否则置为 NULL（NULL = 模型的默认强度，该强度会被发送）。然后 `meta.schema` 变为 `11`。
+- **转换 `limits.pace_rpm` / `limits.pace_tpm`**：匀速发送不再暗中留 10% 余量，所以仍是旧默认值（15 / 250 000）的行变成 13 / 240 000，其他已存的值变成 `floor(值 * 0.9)`（每分钟至少 1 次请求、1 000 tokens）；实际速度与 v2.0 相同。日志会记录这一步。这两列的默认值现在是 13 / 240 000。
+
+**回退到 v2.0** 需要备份：v2.0 的 ai-service 拒绝 schema 11。停止服务，按 8.4 恢复 `backups/xexam-ai-schema10-<日期时间>.db`，再运行 v2.0 镜像；升级之后写入的设置、对话和用量会丢失。新列本身对 v2.0 无害，但 v2.0 会忽略 `chats.pick_effort`。
 
 ### 8.3 服务怎样使用它
 
@@ -725,9 +736,9 @@ docker compose start
 - 恢复的 AI 卷和另一个时间点的主卷可以搭配使用：已经不存在的用户会在下一次对账时失去他们的 AI 数据，现在属于另一个账户的用户 id 会通过标记认出来。
 - `xexam_ai_auth` 不用备份：它里面只有 `internal.token`，缺少时后端会重新创建（AI 服务会自己用上新的令牌）。
 
-## 9. 两个数据库的表结构图（v2.0）
+## 9. 两个数据库的表结构图（v2.1）
 
-这是一份阅读指南：有哪些表、各自做什么、彼此怎么关联。内容对应主数据库 schema 11 和 AI 数据库 schema 10；表名和列名与实际存储的完全一致。这里的任何内容都不会改动表。
+这是一份阅读指南：有哪些表、各自做什么、彼此怎么关联。内容对应主数据库 schema 11 和 AI 数据库 schema 11；表名和列名与实际存储的完全一致。这里的任何内容都不会改动表。
 
 ### 9.1 主数据库 `xexam.db`（backend）
 
@@ -1149,7 +1160,7 @@ erDiagram
 | `settings` | 单行：AI 总开关 `enabled`、`retention_days`、`features_off`（全局功能开关位） | PK `id = 1` | 从 schema 10 起只剩 `id`、`enabled`、`retention_days`、`updated_at`、`updated_by` 和 `features_off` |
 | `limits` | 单行：所有上限（并发、对话和记忆的大小、每用户调用上限、回答长度、出题和导入的上限、共享缓存、每日 token 预算），v1.9 起还有匀速发送的设置 | PK `id = 1`；每列有范围 `CHECK` | 五个已退役的长度列在 schema 10 已删除 |
 | `users` | 主数据库用户的镜像（`id` 加 `stamp` = 主库 `uid`），带 `function_enabled`（暂停）、`free_mode` 和 `features_off`（每用户功能位） | PK `id`（由主数据库给） | stamp 不同就是另一个人：AI 数据会被丢弃 |
-| `chats` | AI 对话，以及每次练习、考试或记录总结的会话 | PK `id`；`user_id` → `users`（CASCADE） | `leaf_id` 和 `pick_conn` 故意没有外键 |
+| `chats` | AI 对话（含管理员选的强度 `pick_effort`），以及每次练习、考试或记录总结的会话 | PK `id`；`user_id` → `users`（CASCADE） | `leaf_id` 和 `pick_conn` 故意没有外键 |
 | `messages` | 消息及其分支版本；提示、解析和总结也存在这里 | PK `id`；`chat_id` → `chats`（CASCADE） | 有些列只对某一种 `kind` 有意义 |
 | `memories` | 每个用户的记忆 | PK `id`；`user_id` → `users`（CASCADE） | |
 | `tasks` | 后台任务：AI 出题和 AI 导入 | PK `id`；`user_id` → `users`（CASCADE） | `job_key` 是部分唯一索引 |
@@ -1157,7 +1168,7 @@ erDiagram
 | `gen_calls` | 出题和导入的每次模型调用（token、耗时、结果） | PK `id`；`task_id`、`user_id`（SET NULL） | |
 | `usage` | 其他所有模型调用，只有 token、耗时和状态，没有内容 | PK `id`；`user_id`（SET NULL） | |
 | `audit_outbox` | 等着发给后端的活动行 | PK `id` | 临时队列 |
-| `connections` | AI 连接：地址、格式、网关认证、状态，以及启用开关 `enabled` | PK `id`；`name` 唯一，不分大小写 | `format` 只允许 `openai` 和 `anthropic`；OpenAI Responses 是 `openai` 加 `responses = 1` |
+| `connections` | AI 连接：地址、格式、网关认证、思考强度家族 `effort_family`、状态，以及启用开关 `enabled` | PK `id`；`name` 唯一，不分大小写 | `format` 只允许 `openai` 和 `anthropic`；OpenAI Responses 是 `openai` 加 `responses = 1` |
 | `connection_secrets` | 连接的加密密钥 | PK `(connection_id, name)`；指向 `connections`（CASCADE） | |
 | `models` | 模型池：每个测试过的连接和模型一行 | PK `id`；指向 `connections`（CASCADE）；唯一 `(connection_id, model)` | |
 | `model_slots` | 每个功能用池里的哪个模型，以及思考强度 | PK `slot`；`model_id` → `models`（SET NULL） | |

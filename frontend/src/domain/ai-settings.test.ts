@@ -257,14 +257,14 @@ const KEY = (hint = '…ab12') => ({ set: true, hint, unreadable: false });
 const conn = (o: Partial<AiConnection> = {}): AiConnection => ({
   id: 1, rev: 3, name: 'main', provider: 'openai', baseUrl: 'https://api.example.com/v1', host: 'api.example.com', format: 'openai',
   gatewayAuth: 'bearer', keys: { apiKey: KEY(), gatewayKey: NONE }, status: 'ok', errorCode: null, testedAt: 1, listsModels: true,
-  insecureHttp: false, usedBy: [], ...o,
+  insecureHttp: false, usedBy: [], effortFamily: 'openai', ...o,
 });
 const pool = (id: number, connectionId: number, model: string, o: Partial<AiPoolModel> = {}): AiPoolModel => ({
   id, connectionId, connectionName: connectionId === 1 ? 'main' : 'second', model, manual: false, status: 'ok', errorCode: null,
   testedAt: 1, latencyMs: 400, context: 128000, usedBy: [], ...o,
 });
 const slot = (modelId: number | null, using: number | null, fallback: 'none' | 'default' = 'none') =>
-  ({ modelId, using: using == null ? null : { modelId: using, fallback } });
+  ({ modelId, using: using == null ? null : { modelId: using, fallback }, effortEffective: null });
 const v13 = (o: Partial<AiSettings> = {}): AiSettings => ({
   enabled: true, effective: true, state: 'on', pauseReason: null, keyProblem: null, retentionDays: 90, updatedAt: 0, updatedBy: 'admin',
   defaults: DEFAULTS, maxConnections: 8, connections: [conn()], pool: [pool(4, 1, 'demo-chat-small')],
@@ -677,12 +677,12 @@ test('v1.9 slot note connOff: the own model is on an off connection, or the row 
   assert.deepEqual(slotNote(follow, 'default'), { kind: 'connOff', conn: 'main' });
 });
 
-test('v1.9 pacing: keys, defaults, ranges and the effective figures (90 %, even gap)', () => {
+test('v1.9 pacing: keys, defaults, ranges and the figures as entered, even gap)', () => {
   assert.deepEqual([...PACE_KEYS], ['paceOn', 'paceRpm', 'paceTpm']);
-  assert.deepEqual([DEFAULT_LIMITS.paceOn, DEFAULT_LIMITS.paceRpm, DEFAULT_LIMITS.paceTpm], [1, 15, 250000]);
+  assert.deepEqual([DEFAULT_LIMITS.paceOn, DEFAULT_LIMITS.paceRpm, DEFAULT_LIMITS.paceTpm], [1, 13, 240000]);
   assert.deepEqual([LIMIT_RANGES.paceOn, LIMIT_RANGES.paceRpm, LIMIT_RANGES.paceTpm], [[0, 1], [1, 10000], [1000, 100000000]]);
   assert.deepEqual(AS_KEYS.slice(-3), ['paceOn', 'paceRpm', 'paceTpm']);
-  assert.deepEqual(paceEffective(15, 250000), { rpm: 13, tpm: 225000, sec: 4.6 });
+  assert.deepEqual(paceEffective(13, 240000), { rpm: 13, tpm: 240000, sec: 4.6 });
   assert.deepEqual(paceEffective(1, 1000), { rpm: 1, tpm: 1000, sec: 60 });
 });
 

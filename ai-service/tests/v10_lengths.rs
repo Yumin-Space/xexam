@@ -189,7 +189,7 @@ async fn a_changed_answer_length_forgets_the_remembered_step() {
 }
 
 #[tokio::test]
-async fn an_unrelated_400_is_not_retried() {
+async fn an_unrelated_400_is_retried_once_without_the_strength_only() {
     let e = env().await;
     e.t.stub.force(Some((
         400,
@@ -198,7 +198,11 @@ async fn an_unrelated_400_is_not_retried() {
     let before = chat_requests(&e.t).len();
     let ev = ask(&e.t, &e.user, hint_in("en", "q1", 1)).await;
     assert_eq!(terminal_name(&ev), "error");
-    assert_eq!(chat_requests(&e.t).len() - before, 1);
+    // every call sends a thinking strength (v2.1): the any-400 fallback retries once without it, then the error stands
+    let reqs = chat_requests(&e.t);
+    assert_eq!(reqs.len() - before, 2);
+    assert!(reqs[before].body.get("reasoning_effort").is_some());
+    assert!(reqs[before + 1].body.get("reasoning_effort").is_none());
 }
 
 async fn use_anthropic(e: &Env, model: &str) {

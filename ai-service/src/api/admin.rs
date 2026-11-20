@@ -80,6 +80,7 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
                     "gatewayKey": key_json(find(crate::secret::SecretName::GatewayKey), &key_id),
                 },
                 "enabled": c.enabled,
+                "effortFamily": c.family().as_str(),
                 "status": c.status,
                 "errorCode": c.error_code,
                 "testedAt": c.tested_at,
@@ -119,12 +120,16 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
             .resolve(s, None)
             .ok()
             .map(|r| json!({"modelId": r.pool_id, "fallback": r.fallback.as_str()}));
+        // what will be sent now: the stored choice when it belongs to the family of the connection the slot uses, else the
+        // model's default level; null only when the slot resolves to no connection at all
+        let effective = view.slot_effort(s).map(|e| e.to_json());
         slots.insert(
             s.as_str().to_string(),
             json!({
                 "modelId": view.slots[s.index()],
                 "using": using,
                 "effort": view.efforts[s.index()].map(crate::effort::Effort::to_json),
+                "effortEffective": effective,
             }),
         );
     }

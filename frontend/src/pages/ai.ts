@@ -29,7 +29,7 @@ import {
   addMemory, deleteAllChats, deleteAllMemories, deleteChat, deleteMemory, editMessage, fetchChat, fetchChats, fetchMemories, regenerate,
   sendMessage, setChatModel, stopAnswer, suggestMemory, switchBranch, updateMemory,
 } from '../api/ai.ts';
-import { fetchModels } from '../api/ai-admin.ts';
+import { fetchAiSettings, fetchModels } from '../api/ai-admin.ts';
 import { modelRefText, parseModelRef } from '../api/model-ref.ts';
 import { ApiError, isAbortError, type StreamEvent, type StreamOptions } from '../api/client.ts';
 import { badgeReasonText } from '../components/ai-badge.ts';
@@ -37,9 +37,10 @@ import { fillMarkdown, markdownEl } from '../components/ai-render.ts';
 import { iconButton } from '../components/icon-button.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
+import { EFFORT_PARAM, providerIcon } from '../components/provider-icons.ts';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerStatus, editValid, emptyChat, END_PX, fmtAiTime,
-  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, chatMenu, chatShown, chooseValue, modelArg, pickerView, regenerateLabelKey, startOf, versionInfo, whoParts,
+  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, chatMenu, chatShown, chooseValue, modelArg, pickerView, effortArg, effortMarks, keepEffort, strengthView, handlesPopstate, regenerateLabelKey, startOf, versionInfo, whoParts,
   isBusyElsewhere, isThinking, localSend, localStop, LOCK_MAX_WIDTH, locksDocument, MIN_MSGS_PX, noAccessKey, pollResult, readOnlyReason, questionOf,
   sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatDefault, type ChatMenu, type ChatView, type EditState, type ViewMessage,
 } from '../domain/ai-chat.ts';
@@ -54,7 +55,7 @@ import { parseHash } from '../router.ts';
 import { onRouteChange, onSignedIn, refreshAi, render } from '../state/actions.ts';
 import { aiFreeMode, aiStatus, callBlock, noteCallBlock, onCallBlockChange, recheckCallBlock } from '../state/ai.ts';
 import { S, isAdmin, onClearUserData } from '../state/store.ts';
-import type { AiCallBlock, AiChatKind, AiChatSummary, AiMemory, AiMessage, AiModelList, ModelRef } from '../types/api.ts';
+import type { AiCallBlock, AiChatKind, AiChatSummary, AiMemory, AiMessage, AiModelList, AiSettings, ModelRef } from '../types/api.ts';
 import { forgetStudyChats as forgetPanelChats } from '../components/ai-panel.ts';
 import { forgetStudyChats as forgetSummaryChats } from '../components/ai-summary.ts';
 import { copyText } from '../utils/clipboard.ts';
@@ -107,6 +108,10 @@ let edit: EditState | null = null;
 let modelList: AiModelList | null = null;
 let modelsLoading = false;
 let modelSel = '';
+/** v2.1: the picked thinking-strength level ('' = none picked), and the AI settings the strength step reads (levels, routes) */
+let effortSel = '';
+let aiSetAt = 0;
+let aiSet: AiSettings | null = null;
 /** v1.9: the picker's popover is open; the connection chosen in its first list before a model is chosen (null = none); when the
  *  model list was last asked for (Date.now(), 0 = never) */
 let modelPop = false;
@@ -252,6 +257,8 @@ function resetAll(): void {
   modelList = null;
   modelsLoading = false;
   modelSel = '';
+  effortSel = '';
+  aiSet = null;
   modelPop = false;
   pendingConn = null;
   modelsAt = 0;
@@ -316,7 +323,8 @@ function installOnce(): void {
   // Leaving #/ai: the document scrolls again (also covers a route change that did not go through onRouteChange)
   // The system back gesture from a pushed conversation (one-pane phone): the list pane, not another page
   window.addEventListener('popstate', () => {
-    if (!onPage() || tab !== 'chats' || !onePane() || chatInUrl() != null) return;
+    // A menu link moved the hash elsewhere (popstate fires before hashchange): leave it to the router
+    if (!handlesPopstate({ onPage: onPage(), chatsTab: tab === 'chats', onePane: onePane(), chatInUrl: chatInUrl() != null, hashName: parseHash(location.hash).name })) return;
     if (panesClass() === 'ai-panes on-conv') goList();
     else pushedConv = false;
   });
@@ -748,6 +756,7 @@ async function openChat(id: number): Promise<void> {
     if (view.chatId !== id) return;
     view = chatOf(d);
     modelSel = pickText(view.pick);
+    effortSel = view.pickEffort ?? '';
     if (view.running) startPolling();
   } catch (e) {
     if (view.chatId !== id) return;
@@ -774,6 +783,7 @@ function newChat(): void {
   closeModelPop(false);
   view = emptyChat();
   modelSel = '';
+  effortSel = '';
   setChatInUrl('new', fromList);
   opening = false;
   openError = null;
@@ -820,6 +830,7 @@ function onStreamEvent(ev: StreamEvent): void {
       // A sent edit is done with its banner (the earlier draft is dropped with the text that replaced it)
       if (sd?.mode === 'edit') cancelEdit(false);
       modelSel = pickText(view.pick);
+    effortSel = view.pickEffort ?? '';
       if (sd?.modelFallback) toast(t('ai.model.fallback'));
       sendError = null;
       pane = 'conv';
@@ -1005,13 +1016,15 @@ function send(): void {
   const lang = uiLang();
   const chatId = view.chatId;
   const model = modelToSend();
+  const effort = effortToSend();
   const ed = edit;
   if (ed && chatId != null && editValid(view, ed)) {
-    void runStream((o) => withModel(chatId, model, (m) => editMessage(chatId, ed.messageId, text, lang, o, m)), (v) => localEdit(v, ed.messageId, text, model));
+    void runStream((o) => withModel(chatId, model, effort, (m) => editMessage(chatId, ed.messageId, text, lang, o, m, effort)),
+      (v) => localEdit(v, ed.messageId, text, model, undefined, effort));
     return;
   }
-  const body = sendBody({ chatId, text, lang, model });
-  void runStream((o) => sendMessage(body, o), (v) => localSend(v, text, false, model));
+  const body = sendBody({ chatId, text, lang, model, effort });
+  void runStream((o) => sendMessage(body, o), (v) => localSend(v, text, false, model, effort));
 }
 
 /** The model this request carries (administrators only): undefined = unchanged, null = back to the default */
@@ -1019,10 +1032,15 @@ function modelToSend(): ModelRef | null | undefined {
   return isAdmin() && full() && aiFreeMode() ? modelArg(modelSel, view.pick, parseModelRef) : undefined;
 }
 
+/** The strength level this request carries (administrators only): undefined = unchanged, null = no pick */
+function effortToSend(): string | null | undefined {
+  return isAdmin() && full() && aiFreeMode() ? effortArg(effortSel, view.pickEffort) : undefined;
+}
+
 /** Runs a call that carries the model; going back to the default is a call of its own first (the regenerate / edit bodies
  *  only carry a model reference) */
-async function withModel(chatId: number, model: ModelRef | null | undefined, go: (m?: ModelRef) => Promise<void>): Promise<void> {
-  if (model === null) await setChatModel(chatId, null);
+async function withModel(chatId: number, model: ModelRef | null | undefined, effort: string | null | undefined, go: (m?: ModelRef) => Promise<void>): Promise<void> {
+  if (model === null) await setChatModel(chatId, null, effort);
   return go(model ?? undefined);
 }
 
@@ -1032,10 +1050,11 @@ function regen(m: ViewMessage): void {
   if (!full() || chatId == null || !canRegenerate(view, m)) return;
   const lang = uiLang();
   const model = modelToSend();
+  const effort = effortToSend();
   // The button goes away when the answer starts: keep the focus on the composer (it stays focused while an answer streams)
   if (document.activeElement instanceof HTMLElement && document.activeElement.classList.contains('ai-regen')) composer?.input.focus({ preventScroll: true });
   cancelEdit();
-  void runStream((o) => withModel(chatId, model, (mm) => regenerate(chatId, m.id, lang, o, mm)), (v) => localRegenerate(v, m.id, model));
+  void runStream((o) => withModel(chatId, model, effort, (mm) => regenerate(chatId, m.id, lang, o, mm, effort)), (v) => localRegenerate(v, m.id, model, effort));
 }
 
 /** Edit: the question goes into the composer under a banner; Send then starts a new branch from it */
@@ -1068,6 +1087,7 @@ async function reloadChat(said: boolean): Promise<void> {
     cancelEdit();
     view = chatOf(d);
     modelSel = pickText(view.pick);
+    effortSel = view.pickEffort ?? '';
     stick = true;
     paint();
     toBottom();
@@ -1093,6 +1113,7 @@ async function switchTo(fromId: number, toId: number): Promise<void> {
     suggestion = null;
     view = chatOf(d);
     modelSel = pickText(view.pick);
+    effortSel = view.pickEffort ?? '';
     stick = false;
     paint();
     const sc2 = scroller();
@@ -1118,7 +1139,11 @@ async function loadModels(force = false): Promise<void> {
   modelsLoading = true;
   modelsFailed = false;
   try {
-    modelList = await fetchModels(false);
+    // The strength step needs the families and levels; without them the picker still works (no strength step)
+    const [list, set] = await Promise.all([fetchModels(false), fetchAiSettings().catch(() => null)]);
+    modelList = list;
+    aiSet = set;
+    aiSetAt = Date.now();
   } catch {
     modelList = null;
     modelsFailed = true;
@@ -2118,17 +2143,19 @@ function closeModelPop(focusBtn: boolean): void {
 }
 
 /** The brain button: a dot for a choice other than the default (amber when its connection is off), tip and name say the model */
-function markModel(c: Composer, shown: string, off: boolean, offName: string | null, def: ChatDefault): void {
+function markModel(c: Composer, shown: string, off: boolean, offName: string | null, def: ChatDefault, strong: string | null): void {
   const ref = shown === '' ? null : parseModelRef(shown);
-  c.modelDot.hidden = shown === '';
+  c.modelDot.hidden = shown === '' && strong == null;
   c.modelDot.classList.toggle('warn', off);
-  const tip = off && ref
+  const base = off && ref
     ? t('ai.model.off', { conn: offName ?? '', model: ref.model })
     : ref
       ? t('ai.model.chosen', { name: ref.model })
       : def
         ? t('ai.model.default', { model: def.model })
         : t('ai.model.label');
+  // a strength other than the model default is named too (the dot marks it); the level is shown as sent
+  const tip = strong != null ? `${base} · ${strong}` : base;
   c.modelBtn.setAttribute('aria-label', tip);
   c.modelBtn.setAttribute('aria-expanded', String(modelPop));
   holdTip(c.modelBtn, tip);
@@ -2145,6 +2172,7 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
   const connSel = h('select', {
     class: 'ais-select ai-model-in', id: 'ai-model-conn', 'aria-labelledby': 'ai-model-conn-l', disabled: busy || (menu.conns.length === 0 && offId == null),
     onchange: () => {
+      // the strength stays until a model is chosen (backing out keeps it; a model of another family drops it)
       pendingConn = Number(connSel.value);
       syncModels(c);
       focusLater('ai-model-sel');
@@ -2163,6 +2191,8 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
     class: 'ais-select ai-model-in', id: 'ai-model-sel', 'aria-labelledby': 'ai-model-sel-l', disabled: busy || models.length === 0,
     onchange: () => {
       modelSel = chooseValue(modelSelEl.value, def);
+      const mr = parseModelRef(modelSelEl.value);
+      effortSel = keepEffort(effortSel, strengthView(aiSet, mr?.connectionId ?? null, mr?.model ?? null, effortSel));
       pendingConn = null;
       syncModels(c);
       focusLater('ai-model-sel');
@@ -2174,11 +2204,26 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
   modelSelEl.value = pv.modelValue;
   const close = iconButton({ icon: 'x', label: t('common.close'), tone: 'quiet', onClick: () => closeModelPop(true) });
   close.id = 'ai-model-close';
-  const useDefault = modelSel !== ''
+  const pickedRef = pv.modelValue === '' ? null : parseModelRef(pv.modelValue);
+  const sv = strengthView(aiSet, pickedRef?.connectionId ?? null, pickedRef?.model ?? null, effortSel);
+  const effortSelEl = sv
+    ? h('select', {
+      class: 'ais-select ai-model-in', id: 'ai-effort-sel', 'aria-label': t('ai.model.pick.strengthAria', { param: EFFORT_PARAM[sv.family] }), disabled: busy,
+      onchange: () => {
+        effortSel = effortSelEl?.value ?? '';
+        syncModels(c);
+        focusLater('ai-effort-sel');
+      },
+    },
+    ...sv.levels.map((l) => h('option', { value: l }, l === sv.modelDefault ? `${l} · ${t('ai.model.pick.defaultTag')}` : l)))
+    : null;
+  if (effortSelEl && sv) effortSelEl.value = sv.selected;
+  const useDefault = modelSel !== '' || effortSel !== ''
     ? h('div', { class: 'ai-model-foot' }, h('button', {
       class: 'btn quiet ai-mini', id: 'ai-model-default', type: 'button', disabled: busy,
       onclick: () => {
         modelSel = '';
+        effortSel = '';
         pendingConn = null;
         syncModels(c);
         focusLater('ai-model-conn');
@@ -2207,6 +2252,11 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
       h('span', null, t('ai.model.off', { conn: menu.off.name ?? '', model: ref.model }))) : null,
     h('div', { class: 'ai-model-f' }, h('label', { id: 'ai-model-conn-l', for: 'ai-model-conn' }, t('ai.model.api')), connSel),
     h('div', { class: 'ai-model-f' }, h('label', { id: 'ai-model-sel-l', for: 'ai-model-sel' }, t('ai.model.label')), modelSelEl),
+    sv && effortSelEl
+      ? h('div', { class: 'ai-model-f' },
+        h('label', { class: 'ai-model-sl', for: 'ai-effort-sel' }, providerIcon(sv.family, 'ais-pi'), h('span', null, t('ai.model.pick.strength', { param: EFFORT_PARAM[sv.family] }))),
+        effortSelEl)
+      : null,
     useDefault);
 }
 
@@ -2225,19 +2275,22 @@ function syncModels(c: Composer): void {
   // An unsent change that the list no longer offers falls back to the stored pick
   if (chatShown(modelSel, menu) !== modelSel && modelSel !== pickText(view.pick)) {
     modelSel = pickText(view.pick);
+    effortSel = view.pickEffort ?? '';
     menu = chatMenu(modelList, modelSel === '' ? null : parseModelRef(modelSel), def);
   }
   // A stored pick on a broken or removed connection shows as the default; modelSel keeps the pick, so the request says
   // "unchanged" and the server falls back and clears it
   const shown = chatShown(modelSel, menu);
   const busy = sending();
-  const sig = JSON.stringify([show, uiLang(), def, menu, shown, busy, modelPop, pendingConn, modelsLoading, modelsFailed]);
+  const sig = JSON.stringify([show, uiLang(), def, menu, shown, busy, modelPop, pendingConn, modelsLoading, modelsFailed, effortSel, aiSetAt]);
   if (sig === modelSig) return;
   modelSig = sig;
   c.models.hidden = !show;
   const inPop = c.models.querySelector('#ai-model-pop')?.contains(document.activeElement) ? document.activeElement?.id ?? '' : '';
   c.models.querySelector('#ai-model-pop')?.remove();
-  markModel(c, shown, menu.off != null, menu.off?.name ?? null, def);
+  const dotRef = shown !== '' ? parseModelRef(shown) : def ? { connectionId: def.connectionId, model: def.model } : null;
+  const dotView = strengthView(aiSet, dotRef?.connectionId ?? null, dotRef?.model ?? null, effortSel);
+  markModel(c, shown, menu.off != null, menu.off?.name ?? null, def, effortMarks(effortSel, dotView) ? effortSel : null);
   if (!show || !modelPop) return;
   c.models.append(modelPopover(c, menu, def, shown, busy));
   // A redraw (the list arrived, the language changed) keeps the focus where it was in the popover

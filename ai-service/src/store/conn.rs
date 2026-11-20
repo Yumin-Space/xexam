@@ -3,7 +3,7 @@
 //!
 //! Keys are only ever stored sealed (`connection_secrets`); nothing here sees a plain key. Slot names are the lower-case
 //! strings of `route::Slot::as_str` (`default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import`).
-use crate::effort::Effort;
+use crate::effort::{Effort, EffortFamily};
 use crate::secret::{Sealed, SecretName};
 use crate::store::tables::SecretRow;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -38,6 +38,8 @@ pub struct ConnRow {
     pub updated_by: String,
     /// v1.9: off = left out of every picker and of routing (settings, key and pool models are kept)
     pub enabled: bool,
+    /// v2.1: 'anthropic' | 'openai' | 'google' | 'responses' (the thinking-strength parameter this connection takes)
+    pub effort_family: String,
 }
 
 /// A connection to create (status `ok`, rev 1, sorted last).
@@ -49,6 +51,8 @@ pub struct NewConn<'a> {
     pub format: &'a str,
     pub gateway_auth: &'a str,
     pub lists_models: bool,
+    /// One of `EffortFamily::as_str` (refused with an error otherwise)
+    pub effort_family: &'a str,
     pub by: &'a str,
     pub now: i64,
 }
@@ -62,6 +66,8 @@ pub struct ConnChange<'a> {
     pub format: &'a str,
     pub gateway_auth: &'a str,
     pub lists_models: bool,
+    /// One of `EffortFamily::as_str` (refused with an error otherwise)
+    pub effort_family: &'a str,
     pub by: &'a str,
     pub now: i64,
 }
@@ -112,7 +118,7 @@ pub struct NewConnSecret<'a> {
 
 const CONN_COLS: &str =
     "id, rev, name, provider, base_url, format, gateway_auth, status, error_code, lists_models,
-     tested_at, sort, created_at, updated_at, updated_by, responses, enabled";
+     tested_at, sort, created_at, updated_at, updated_by, responses, enabled, effort_family";
 
 /// The `(format, responses)` column pair of a logical format: `responses` is stored as `openai` + flag 1, because the
 /// `format` CHECK cannot be altered (no table rebuild).
@@ -122,6 +128,118 @@ fn stored_format(format: &str) -> (&str, i64) {
     } else {
         (format, 0)
     }
+}
+
+/// The family column is validated here, not by a CHECK (the four names are `EffortFamily::as_str`).
+fn check_family(family: &str) -> rusqlite::Result<()> {
+    if EffortFamily::parse(family).is_none() {
+        return Err(rusqlite::Error::ToSqlConversionFailure(
+            "unknown thinking-strength family".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Lowercase, last path segment (`models/gemini-2.5-pro` -> `gemini-2.5-pro`): the form the family rules read.
+fn normalize_model(id: &str) -> String {
+    let id = id.trim().to_ascii_lowercase();
+    id.rsplit('/').next().unwrap_or("").to_string()
+}
+
+/// The family of a connection that was not told one (the 10 -> 11 upgrade and a create without `effortFamily`):
+/// Anthropic wire -> `anthropic`; Responses format -> `responses`; otherwise `google` when the model ids that mention
+/// `gemini` / `gemma` are the strict majority of the (distinct, normalized) ids, else `openai` (also with no model).
+pub fn infer_family(provider: &str, format: &str, models: &[&str]) -> EffortFamily {
+    if provider == "anthropic" || format == "anthropic" {
+        return EffortFamily::Anthropic;
+    }
+    if format == "responses" {
+        return EffortFamily::Responses;
+    }
+    let mut ids: Vec<String> = models.iter().map(|m| normalize_model(m)).collect();
+    ids.sort();
+    ids.dedup();
+    let google = ids
+        .iter()
+        .filter(|m| m.contains("gemini") || m.contains("gemma"))
+        .count();
+    if google * 2 > ids.len() {
+        EffortFamily::Google
+    } else {
+        EffortFamily::OpenAi
+    }
+}
+
+/// The 10 -> 11 upgrade (inside the upgrade transaction, after the columns exist): sets `effort_family` of every
+/// connection from [`infer_family`] (model ids = its pool, the models its slots use and its chat picks), then clears
+/// every `model_slots.effort` whose family differs from the family of the connection the slot effectively uses (its own
+/// model's connection, else the default slot's); one of a slot that resolves to no connection and an unreadable one are cleared too (NULL = model default).
+/// Returns `(connection id, family)` per connection and the number of cleared slot efforts. No name, URL or key is read.
+pub fn infer_families(c: &Connection) -> rusqlite::Result<(Vec<(i64, EffortFamily)>, usize)> {
+    let conns: Vec<(i64, String, String, i64)> = {
+        let mut st =
+            c.prepare("SELECT id, provider, format, responses FROM connections ORDER BY id")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut out = Vec::with_capacity(conns.len());
+    for (id, provider, format, responses) in conns {
+        let format = if format == "openai" && responses == 1 {
+            "responses".to_string()
+        } else {
+            format
+        };
+        let models: Vec<String> = {
+            let mut st = c.prepare(
+                "SELECT model FROM models WHERE connection_id = ?1
+                 UNION SELECT m.model FROM model_slots s JOIN models m ON m.id = s.model_id WHERE m.connection_id = ?1
+                 UNION SELECT pick_model FROM chats WHERE pick_conn = ?1 AND pick_model IS NOT NULL",
+            )?;
+            let rows = st.query_map([id], |r| r.get(0))?;
+            rows.collect::<rusqlite::Result<_>>()?
+        };
+        let refs: Vec<&str> = models.iter().map(String::as_str).collect();
+        let family = infer_family(&provider, &format, &refs);
+        c.execute(
+            "UPDATE connections SET effort_family = ?2 WHERE id = ?1",
+            params![id, family.as_str()],
+        )?;
+        out.push((id, family));
+    }
+    // the connection a slot effectively uses: its own model's, else the default slot's
+    let slot_conn = |slot: &str| -> rusqlite::Result<Option<i64>> {
+        c.query_row(
+            "SELECT m.connection_id FROM model_slots s JOIN models m ON m.id = s.model_id WHERE s.slot = ?1",
+            [slot],
+            |r| r.get(0),
+        )
+        .optional()
+    };
+    let default_conn = slot_conn("default")?;
+    let stored: Vec<(String, String)> = {
+        let mut st = c.prepare("SELECT slot, effort FROM model_slots WHERE effort IS NOT NULL")?;
+        let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    let mut cleared = 0usize;
+    for (slot, tag) in stored {
+        let used = slot_conn(&slot)?.or(default_conn);
+        let family = used.and_then(|id| out.iter().find(|(cid, _)| *cid == id).map(|(_, f)| *f));
+        let keep = match (Effort::parse_tag(&tag), family) {
+            (Some(e), Some(f)) => e.family() == f,
+            // no connection to compare with (the slot resolves to nothing): the choice goes (NULL = model default)
+            (Some(_), None) => false,
+            (None, _) => false,
+        };
+        if !keep {
+            c.execute(
+                "UPDATE model_slots SET effort = NULL WHERE slot = ?1",
+                [&slot],
+            )?;
+            cleared += 1;
+        }
+    }
+    Ok((out, cleared))
 }
 
 fn conn_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnRow> {
@@ -149,6 +267,7 @@ fn conn_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnRow> {
         updated_at: r.get(13)?,
         updated_by: r.get(14)?,
         enabled: r.get::<_, i64>(16)? != 0,
+        effort_family: r.get(17)?,
     })
 }
 
@@ -182,10 +301,11 @@ pub fn name_taken(c: &Connection, name: &str, except: Option<i64>) -> rusqlite::
 /// Creates a connection (status `ok`, rev 1, last in the order); returns its id. A duplicate name fails with a
 /// constraint error (check [`name_taken`] first for a friendly answer).
 pub fn insert_connection(c: &Connection, n: &NewConn<'_>) -> rusqlite::Result<i64> {
+    check_family(n.effort_family)?;
     c.execute(
         "INSERT INTO connections (name, provider, base_url, format, gateway_auth, lists_models, sort, created_at,
-                                  updated_at, updated_by, responses)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT COALESCE(MAX(sort), -1) + 1 FROM connections), ?7, ?7, ?8, ?9)",
+                                  updated_at, updated_by, responses, effort_family)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, (SELECT COALESCE(MAX(sort), -1) + 1 FROM connections), ?7, ?7, ?8, ?9, ?10)",
         params![
             n.name,
             n.provider,
@@ -195,7 +315,8 @@ pub fn insert_connection(c: &Connection, n: &NewConn<'_>) -> rusqlite::Result<i6
             i64::from(n.lists_models),
             n.now,
             n.by,
-            stored_format(n.format).1
+            stored_format(n.format).1,
+            n.effort_family
         ],
     )?;
     Ok(c.last_insert_rowid())
@@ -209,9 +330,11 @@ pub fn update_connection(
     rev: i64,
     n: &ConnChange<'_>,
 ) -> rusqlite::Result<bool> {
+    check_family(n.effort_family)?;
     Ok(c.execute(
         "UPDATE connections SET name = ?3, provider = ?4, base_url = ?5, format = ?6, gateway_auth = ?7,
-                lists_models = ?8, rev = rev + 1, updated_at = ?9, updated_by = ?10, responses = ?11
+                lists_models = ?8, rev = rev + 1, updated_at = ?9, updated_by = ?10, responses = ?11,
+                effort_family = ?12
          WHERE id = ?1 AND rev = ?2",
         params![
             id,
@@ -224,7 +347,8 @@ pub fn update_connection(
             i64::from(n.lists_models),
             n.now,
             n.by,
-            stored_format(n.format).1
+            stored_format(n.format).1,
+            n.effort_family
         ],
     )? > 0)
 }

@@ -499,3 +499,6 @@ html.no-doc-scroll .ai-list > .ai-notice-flow, html.no-doc-scroll .ai-memwrap > 
 @media (hover: hover) { .ai-rs-tog:hover { color: var(--ink2); } }
 @media (pointer: coarse), (max-width: 719.98px) { .ai-rs-tog { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .ai-rs-chev { transition: none; } }
+.ai-model-f label.ai-model-sl { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ai-model-sl .ais-pi { flex: none; width: 14px; height: 14px; }
+.ai-model-sl span { min-width: 0; overflow-wrap: anywhere; }

@@ -8,10 +8,10 @@
 //! `geo_settings` table (external IP-location lookup); nothing is backfilled.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "10";
+pub const SCHEMA_VERSION: &str = "11";
 
 /// The schema versions upgraded by this version (after a backup copy).
-pub const UPGRADABLE: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+pub const UPGRADABLE: [&str; 10] = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"];
 
 /// Retired before v2.0, dropped by the schema-10 step (only when present). The history lists `V*_COLUMNS` still add them
 /// (a new file and an upgrade replay the same steps); the same-version repair never re-adds them.
@@ -398,6 +398,18 @@ pub const V16_COLUMNS: [(&str, &str, &str); 2] = [
     ),
 ];
 
+/// v2.1 (schema 11): the thinking-strength family of a connection (`anthropic | openai | google | responses`, validated in
+/// code, no CHECK) and the administrator's per-chat level (NULL = no choice; the level string only, the family is the
+/// route's at call time). Added by every path after the history steps (a v1.9 / v2.0 file lacks them).
+pub const V21_COLUMNS: [(&str, &str, &str); 2] = [
+    (
+        "connections",
+        "effort_family",
+        "effort_family TEXT NOT NULL DEFAULT 'openai'",
+    ),
+    ("chats", "pick_effort", "pick_effort TEXT"),
+];
+
 /// v1.9 (schema 9), added at open like `V16_COLUMNS`: the per-connection on/off switch and the global provider pacing
 /// (one setting for AI generation and import).
 pub const V9_COLUMNS: [(&str, &str, &str); 4] = [
@@ -414,12 +426,12 @@ pub const V9_COLUMNS: [(&str, &str, &str); 4] = [
     (
         "limits",
         "pace_rpm",
-        "pace_rpm INTEGER NOT NULL DEFAULT 15 CHECK (pace_rpm BETWEEN 1 AND 10000)",
+        "pace_rpm INTEGER NOT NULL DEFAULT 13 CHECK (pace_rpm BETWEEN 1 AND 10000)",
     ),
     (
         "limits",
         "pace_tpm",
-        "pace_tpm INTEGER NOT NULL DEFAULT 250000 CHECK (pace_tpm BETWEEN 1000 AND 100000000)",
+        "pace_tpm INTEGER NOT NULL DEFAULT 240000 CHECK (pace_tpm BETWEEN 1000 AND 100000000)",
     ),
 ];
 

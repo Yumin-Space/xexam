@@ -188,6 +188,44 @@ fn build_history(tx: &Transaction, now: i64) -> rusqlite::Result<()> {
     Ok(())
 }
 
+/// What the upgrade transaction reports for the log after the commit (counts and ids only).
+struct UpgradeReport {
+    secret_rows: i64,
+    dropped: usize,
+    orphans: i64,
+    families: Vec<(i64, crate::effort::EffortFamily)>,
+    cleared: usize,
+    pace: Option<PaceChange>,
+}
+
+/// Pace values before and after the 10 -> 11 conversion: `((rpm, rpm'), (tpm, tpm'))`.
+type PaceChange = ((i64, i64), (i64, i64));
+
+/// The 10 -> 11 pace conversion (v2.1 uses `paceRpm` / `paceTpm` as entered): a value still on the old default
+/// (15 / 250000) becomes the new default (13 / 240000); any other value becomes floor(value * 0.9), at least the
+/// column minimum, so the actual pace of v2.0 stays the same.
+fn convert_pace(c: &Connection) -> rusqlite::Result<Option<PaceChange>> {
+    let old: Option<(i64, i64)> = c
+        .query_row("SELECT pace_rpm, pace_tpm FROM limits LIMIT 1", [], |r| {
+            Ok((r.get(0)?, r.get(1)?))
+        })
+        .optional()?;
+    let Some((rpm, tpm)) = old else {
+        return Ok(None);
+    };
+    let rpm2 = if rpm == 15 { 13 } else { (rpm * 9 / 10).max(1) };
+    let tpm2 = if tpm == 250_000 {
+        240_000
+    } else {
+        (tpm * 9 / 10).max(1000)
+    };
+    c.execute(
+        "UPDATE limits SET pace_rpm = ?1, pace_tpm = ?2",
+        [rpm2, tpm2],
+    )?;
+    Ok(Some(((rpm, rpm2), (tpm, tpm2))))
+}
+
 /// An error of the schema-10 step that is not a SQLite error.
 fn step_error(msg: String) -> rusqlite::Error {
     rusqlite::Error::ToSqlConversionFailure(msg.into())
@@ -454,6 +492,7 @@ impl Store {
                 let run = |tx: &Transaction| -> rusqlite::Result<()> {
                     build_history(tx, now)?;
                     drop_retired(tx)?;
+                    add_columns(tx, &schema::V21_COLUMNS)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?1)",
                         [schema::SCHEMA_VERSION],
@@ -474,6 +513,7 @@ impl Store {
                         .chain(schema::LATE_COLUMNS.iter())
                         .chain(schema::V16_COLUMNS.iter())
                         .chain(schema::V9_COLUMNS.iter())
+                        .chain(schema::V21_COLUMNS.iter())
                         .filter(|(t, col, _)| !schema::is_retired(t, col))
                     {
                         let present: bool = c.query_row(
@@ -498,6 +538,7 @@ impl Store {
                         .and_then(|()| tx.execute_batch(schema::V7_TABLES))
                         .and_then(|()| add_live_columns(&tx, &schema::V16_COLUMNS))
                         .and_then(|()| add_live_columns(&tx, &schema::V9_COLUMNS))
+                        .and_then(|()| add_live_columns(&tx, &schema::V21_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_INDEXES))
                         .and_then(|()| tx.execute_batch(schema::V8_TABLES))
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
@@ -538,25 +579,34 @@ impl Store {
                 let tx = conn
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
-                let run = |tx: &Transaction| -> rusqlite::Result<(i64, usize, i64)> {
-                    // adds what a '1' … '4' file lacks; a no-op for the rest
-                    add_columns(tx, &schema::V2_COLUMNS)?;
-                    add_columns(tx, &schema::V3_COLUMNS)?;
-                    add_columns(tx, &schema::V4_COLUMNS)?;
-                    add_columns(tx, &schema::V5_COLUMNS)?;
-                    add_columns(tx, &schema::V6_COLUMNS)?;
-                    add_columns(tx, &schema::V7_COLUMNS)?;
+                let run = |tx: &Transaction| -> rusqlite::Result<UpgradeReport> {
+                    let from: u32 = v.parse().unwrap_or(0);
+                    // adds what a '1' … '4' file lacks; a no-op for the rest. A schema-10 file already dropped its retired
+                    // columns: they must not come back
+                    let add = |tx: &Transaction, cols: &[(&str, &str, &str)]| {
+                        if from >= 10 {
+                            add_live_columns(tx, cols)
+                        } else {
+                            add_columns(tx, cols)
+                        }
+                    };
+                    add(tx, &schema::V2_COLUMNS)?;
+                    add(tx, &schema::V3_COLUMNS)?;
+                    add(tx, &schema::V4_COLUMNS)?;
+                    add(tx, &schema::V5_COLUMNS)?;
+                    add(tx, &schema::V6_COLUMNS)?;
+                    add(tx, &schema::V7_COLUMNS)?;
                     relax_memory_check(tx)?;
                     tx.execute_batch(schema::V3_INDEXES)?;
                     tx.execute_batch(schema::V5_TABLES)?;
-                    add_columns(tx, &schema::LATE_COLUMNS)?;
+                    add(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
-                    add_columns(tx, &schema::V16_COLUMNS)?;
-                    add_columns(tx, &schema::V9_COLUMNS)?;
+                    add(tx, &schema::V16_COLUMNS)?;
+                    add(tx, &schema::V9_COLUMNS)?;
+                    add_columns(tx, &schema::V21_COLUMNS)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
                     tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;
-                    let from: u32 = v.parse().unwrap_or(0);
                     // the character -> token conversion belongs to the 1 .. 5 -> 6 step only (a schema-6 file holds tokens)
                     if from < 6 {
                         tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
@@ -575,6 +625,19 @@ impl Store {
                     split_study_slot(tx, now)?;
                     // every reader of the retired items ran above; now they go (the backup holds them)
                     let (secret_rows, dropped) = if from < 10 { drop_retired(tx)? } else { (0, 0) };
+                    // the 10 -> 11 step (the number-based guard: a schema-11 file never gets here)
+                    let (families, cleared) = if from < 11 {
+                        conn::infer_families(tx)?
+                    } else {
+                        (Vec::new(), 0)
+                    };
+                    // the pace values lose the hidden 90 % margin: a schema-9 or -10 file keeps the same actual pace
+                    // (older files just got the new column defaults, so they need no conversion)
+                    let pace = if (9..11).contains(&from) {
+                        convert_pace(tx)?
+                    } else {
+                        None
+                    };
                     // informational only: the AI foreign keys have been enforced since v0.8, so nothing new appears
                     let orphans = {
                         let mut st = tx.prepare("PRAGMA foreign_key_check")?;
@@ -585,9 +648,23 @@ impl Store {
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
                     )?;
-                    Ok((secret_rows, dropped, orphans))
+                    Ok(UpgradeReport {
+                        secret_rows,
+                        dropped,
+                        orphans,
+                        families,
+                        cleared,
+                        pace,
+                    })
                 };
-                let (secret_rows, dropped, orphans) = run(&tx)
+                let UpgradeReport {
+                    secret_rows,
+                    dropped,
+                    orphans,
+                    families,
+                    cleared,
+                    pace,
+                } = run(&tx)
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 tx.commit()
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
@@ -596,9 +673,28 @@ impl Store {
                     schema::SCHEMA_VERSION,
                     copy.display()
                 );
-                tracing::info!(
-                    "Removed the unused legacy table secrets ({secret_rows} rows) and {dropped} unused columns (copy in the backup)."
-                );
+                // only the step to schema 10 removes legacy items; a schema-10 file has none left to report
+                if v.parse::<u32>().unwrap_or(0) < 10 {
+                    tracing::info!(
+                        "Removed the unused legacy table secrets ({secret_rows} rows) and {dropped} unused columns (copy in the backup)."
+                    );
+                }
+                for (id, family) in &families {
+                    tracing::info!(
+                        "Connection {id}: thinking-strength family set to {}.",
+                        family.as_str()
+                    );
+                }
+                if let Some(((r0, r1), (t0, t1))) = pace {
+                    tracing::info!(
+                        "Provider pacing is now used as entered: requests per minute {r0} -> {r1}, tokens per minute {t0} -> {t1}."
+                    );
+                }
+                if cleared > 0 {
+                    tracing::info!(
+                        "{cleared} stored thinking strengths of another family were reset to the model default."
+                    );
+                }
                 if orphans > 0 {
                     tracing::warn!(
                         "The AI database holds {orphans} rows that break a foreign key (kept as they are)."

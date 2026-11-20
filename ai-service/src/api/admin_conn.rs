@@ -614,6 +614,8 @@ struct Req {
     base_url: Option<String>,
     format: Option<Format>,
     gateway_auth: Option<GatewayAuth>,
+    /// The thinking-strength family: `None` = keep (update) or infer (create)
+    effort_family: Option<crate::effort::EffortFamily>,
     api: KeyChange,
     gw: KeyChange,
     reuse_from: Option<i64>,
@@ -684,6 +686,13 @@ fn parse(body: &Map<String, Value>) -> Result<Req, ApiError> {
         Some(Value::String(s)) => Some(s.trim().to_string()),
         Some(_) => return Err(ApiError::bad_request()),
     };
+    let effort_family = match body.get("effortFamily") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(s)) => {
+            Some(crate::effort::EffortFamily::parse(s).ok_or_else(ApiError::bad_request)?)
+        }
+        Some(_) => return Err(ApiError::bad_request()),
+    };
     Ok(Req {
         id,
         rev,
@@ -692,6 +701,7 @@ fn parse(body: &Map<String, Value>) -> Result<Req, ApiError> {
         base_url,
         format: enum_field(body, "format", Format::parse)?,
         gateway_auth: enum_field(body, "gatewayAuth", GatewayAuth::parse)?,
+        effort_family,
         api: key_field(body, SecretName::ApiKey)?,
         gw: key_field(body, SecretName::GatewayKey)?,
         reuse_from,
@@ -746,6 +756,7 @@ pub async fn save(ctx: Ctx) -> Answer {
             "baseUrl",
             "format",
             "gatewayAuth",
+            "effortFamily",
             "apiKey",
             "gatewayKey",
             "reuseKeysFrom",
@@ -934,6 +945,12 @@ pub async fn save(ctx: Ctx) -> Answer {
         if gateway_auth.as_str() != e.gateway_auth {
             changed.push("gatewayAuth");
         }
+        if req
+            .effort_family
+            .is_some_and(|f| f.as_str() != e.effort_family)
+        {
+            changed.push("effortFamily");
+        }
         if api_change != Change::None {
             changed.push("apiKey");
         }
@@ -999,6 +1016,20 @@ pub async fn save(ctx: Ctx) -> Answer {
         }
     };
 
+    // The thinking-strength family: the request's, else the stored one (update), else inferred (create) from the provider,
+    // the format and the model names the listing returned
+    let family = match (req.effort_family, &existing) {
+        (Some(f), _) => f,
+        (None, Some(e)) => e.family(),
+        (None, None) => {
+            let names: Vec<&str> = run
+                .listed()
+                .map(|l| l.models.iter().map(String::as_str).collect())
+                .unwrap_or_default();
+            conn::infer_family(provider.as_str(), format.as_str(), &names)
+        }
+    };
+
     // The event: one per request
     let ev = |failed: Option<&str>| {
         let (action, detail) = if reuse {
@@ -1009,7 +1040,7 @@ pub async fn save(ctx: Ctx) -> Answer {
         } else if existing.is_none() {
             (
                 "ai.settings.connectionAdd",
-                json!({"provider": provider.as_str(), "host": new_host}),
+                json!({"provider": provider.as_str(), "host": new_host, "family": family.as_str()}),
             )
         } else if changed == ["apiKey"] || changed == ["gatewayKey"] {
             let (name, ch) = if changed == ["apiKey"] {
@@ -1024,7 +1055,7 @@ pub async fn save(ctx: Ctx) -> Answer {
         } else {
             (
                 "ai.settings.connectionUpdate",
-                json!({"provider": provider.as_str(), "host": new_host, "changed": changed}),
+                json!({"provider": provider.as_str(), "host": new_host, "family": family.as_str(), "changed": changed}),
             )
         };
         let e = Event::new(Some(who), action, &ctx.client)
@@ -1074,6 +1105,7 @@ pub async fn save(ctx: Ctx) -> Answer {
                     format: format.as_str(),
                     gateway_auth: gateway_auth.as_str(),
                     lists_models,
+                    effort_family: family.as_str(),
                     by: &by,
                     now,
                 };
@@ -1097,6 +1129,7 @@ pub async fn save(ctx: Ctx) -> Answer {
                         format: format.as_str(),
                         gateway_auth: gateway_auth.as_str(),
                         lists_models,
+                        effort_family: family.as_str(),
                         by: &by,
                         now,
                     },
@@ -1147,6 +1180,7 @@ pub async fn save(ctx: Ctx) -> Answer {
     })?;
     app.0.recheck_keys();
     app.0.reset_strikes(id);
+    app.0.forget_no_effort();
     if was_broken {
         app.0.connection_changed(&req.name, false, None);
     }

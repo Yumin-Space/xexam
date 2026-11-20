@@ -361,6 +361,9 @@ input, select, textarea { font: inherit; color: var(--ink); }
 }
 @media (hover: hover) { .acct-btn:hover { background: var(--hover); color: var(--ink); } }
 .acct-btn[aria-expanded="true"] { color: var(--ink); }
+/* v2.1: light / dark toggle left of the account label; never dropped by the fitting steps */
+.theme-btn { color: var(--ink2); }
+.theme-btn .ico { width: 18px; height: 18px; }
 .acct-btn .acct-ico { width: 18px; height: 18px; flex: none; color: var(--ink3); }
 .acct-name { min-width: 0; max-width: 16em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .acct-role { flex: none; font-size: 11.5px; line-height: 1.6; }
@@ -394,6 +397,8 @@ input, select, textarea { font: inherit; color: var(--ink); }
 .nav-link .ico { width: 18px; height: 18px; flex: none; color: var(--ink3); }
 .nav-link:focus-visible { outline-offset: 0; }
 @media (hover: hover) { .nav-link:hover:not(.on) { background: var(--hover); } }
+/* v2.1: pressed shade on touch (iOS needs the touchstart listener in installShellHandlers) */
+.nav-link:active:not(.on) { background: var(--hover-strong); transition: none; }
 /* The current page: a soft fill and a heavier label, not a coloured block */
 .nav-link.on { background: var(--hover-strong); font-weight: 600; }
 .nav-link.on .ico { color: var(--ink2); }

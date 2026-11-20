@@ -40,6 +40,9 @@ pub struct ChatRow {
     /// The administrator's model pick (connection id, model id); None = the chat default (also for a stored pick whose
     /// connection no longer exists)
     pub pick: Option<(i64, String)>,
+    /// v2.1: the administrator's per-chat strength level (`chats.pick_effort`); None = no choice. The family is the
+    /// route's at call time; a level that is not one of it is ignored by the caller.
+    pub pick_effort: Option<String>,
 }
 
 impl ChatRow {
@@ -255,7 +258,7 @@ pub fn suspended_ids(c: &Connection, limit: usize) -> rusqlite::Result<Vec<i64>>
 /// The pick is read through `connections`: a pick whose connection is gone reads as no pick (the chat default).
 const CHAT_COLS: &str = "c.id, c.title, c.created_at, c.updated_at,
      (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id), c.kind, c.record_id, c.leaf_id,
-     (SELECT k.id FROM connections k WHERE k.id = c.pick_conn), c.pick_model";
+     (SELECT k.id FROM connections k WHERE k.id = c.pick_conn), c.pick_model, c.pick_effort";
 
 fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
     Ok(ChatRow {
@@ -271,6 +274,7 @@ fn chat_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ChatRow> {
             (Some(conn), Some(model)) => Some((conn, model)),
             _ => None,
         },
+        pick_effort: r.get(10)?,
     })
 }
 
@@ -457,6 +461,20 @@ pub fn set_chat_pick(c: &Connection, chat: i64, pick: Option<(i64, &str)>) -> ru
     c.execute(
         "UPDATE chats SET pick_conn = ?2, pick_model = ?3 WHERE id = ?1",
         params![chat, pick.map(|p| p.0), pick.map(|p| p.1)],
+    )?;
+    Ok(())
+}
+
+/// Stores (or clears, with None) the administrator's per-chat strength level. `updated_at` is untouched; the model
+/// pick is left alone.
+pub fn set_chat_pick_effort(
+    c: &Connection,
+    chat: i64,
+    level: Option<&str>,
+) -> rusqlite::Result<()> {
+    c.execute(
+        "UPDATE chats SET pick_effort = ?2 WHERE id = ?1",
+        params![chat, level],
     )?;
     Ok(())
 }
