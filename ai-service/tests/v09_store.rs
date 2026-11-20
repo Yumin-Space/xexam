@@ -138,7 +138,7 @@ fn a_fresh_database_is_schema_5_with_every_column_and_index() {
     let store = open(dir.path());
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "8");
+            assert_eq!(schema_of(c), "9");
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
@@ -193,7 +193,7 @@ fn upgraded_from(version: &str, with_rows: bool) {
     drop(copy);
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "8");
+            assert_eq!(schema_of(c), "9");
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
@@ -295,7 +295,7 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
         .starts_with("xexam-ai-schema3-"));
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "8");
+            assert_eq!(schema_of(c), "9");
             let l = xexam_ai_service::store::tables::load_limits(c)?;
             assert_eq!(
                 (
@@ -516,17 +516,17 @@ fn a_newer_schema_is_refused_with_the_schema_5_line() {
     let path = dir.path().join(DB_FILE);
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '9' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '10' WHERE key = 'schema'", [])
             .expect("set");
     }
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 9 must be refused"),
+        Ok(_) => panic!("schema 10 must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 9, written by a newer ai-service; this version (schema 8) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 10, written by a newer ai-service; this version (schema 9) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

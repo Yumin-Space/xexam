@@ -12,11 +12,12 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, Once};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 use tower::ServiceExt;
 use xexam_ai_service::app::{App, AppState};
-use xexam_ai_service::config::{Config, JournalMode, Timeouts};
+use xexam_ai_service::config::{AiUserAgent, Config, JournalMode, Timeouts};
+use xexam_ai_service::peers::PeerList;
 use zeroize::Zeroizing;
 
 pub mod genkit;
@@ -688,6 +689,8 @@ pub struct StubRequest {
     pub path: String,
     pub headers: Vec<(String, String)>,
     pub body: Value,
+    /// When the stub received the request
+    pub at: Instant,
 }
 
 impl StubRequest {
@@ -704,6 +707,9 @@ pub struct StubState {
     pub requests: Vec<StubRequest>,
     /// Answer every chat request with this status and body
     pub force: Option<(u16, String)>,
+    /// v1.9: answer the next chat requests (one entry each, front first) with this status, body and optional
+    /// `retry-after` header (seconds), before `force` and the stub's own behaviour
+    pub fail_next: std::collections::VecDeque<(u16, String, Option<String>)>,
     /// Refuse a chat request whose JSON body text contains the needle, with this status and body (v1.6)
     pub refuse_if_body_has: Option<(String, u16, String)>,
     /// Delay before the response headers (ms)
@@ -855,6 +861,7 @@ async fn stub_handler(State(sh): State<StubShared>, req: Request) -> Response {
             path: path.clone(),
             headers: headers.clone(),
             body: body.clone(),
+            at: Instant::now(),
         });
         (s.force.clone(), s.head_delay_ms)
     };
@@ -911,6 +918,20 @@ async fn stub_handler(State(sh): State<StubShared>, req: Request) -> Response {
                 {"id": "demo-error"}, {"id": "demo-length"}, {"id": "demo-chat-small"}]}),
             )
         };
+    }
+    let scripted_failure = sh
+        .state
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .fail_next
+        .pop_front();
+    if let Some((status, b, retry_after)) = scripted_failure {
+        let mut r = text_answer(status, &b);
+        if let Some(v) = retry_after {
+            r.headers_mut()
+                .insert("retry-after", v.parse().expect("retry-after value"));
+        }
+        return r;
     }
     if let Some((status, b)) = force {
         return text_answer(status, &b);
@@ -1591,6 +1612,8 @@ pub struct Opts {
     pub timeouts: Timeouts,
     /// Token in `XEXAM_INTERNAL_TOKEN` (true) or in the link file (false)
     pub token_env: bool,
+    /// What `XEXAM_AI_USER_AGENT_NAME` asks for (v1.9)
+    pub ai_user_agent: AiUserAgent,
 }
 
 impl Default for Opts {
@@ -1599,6 +1622,7 @@ impl Default for Opts {
             secret_key: None,
             timeouts: fast_timeouts(),
             token_env: true,
+            ai_user_agent: AiUserAgent::Default,
         }
     }
 }
@@ -1633,8 +1657,11 @@ fn config(dir: &std::path::Path, backend: &str, opts: &Opts) -> Config {
         secret_key: opts.secret_key.clone().map(Zeroizing::new),
         log_filter: None,
         journal: JournalMode::Wal,
-        ai_user_agent: None,
+        ai_user_agent: opts.ai_user_agent.clone(),
         ai_user_agent_invalid: false,
+        frontend_peers: PeerList::Any,
+        peer_warnings: vec![],
+        internal_token_required: false,
         version: "0.8".into(),
         timeouts: opts.timeouts,
     }
@@ -1663,6 +1690,11 @@ pub async fn start_with(opts: Opts) -> TestApp {
         .expect("token");
     }
     let app = App::open(config(dir.path(), &backend.url, &opts)).expect("open");
+    // v1.9: the tests do not pace generation / import calls (the pacer has its own tests)
+    app.0
+        .knobs
+        .pace_scale
+        .store(0, std::sync::atomic::Ordering::SeqCst);
     // The start report of the service (the heartbeat task is not running in these tests): the link is fresh
     app.0.heartbeat_now().await;
     TestApp {
@@ -1690,6 +1722,11 @@ impl TestApp {
     pub async fn restart(&mut self, opts: Opts) {
         let cfg = config(self.dir.path(), &self.backend.url, &opts);
         self.app = App::open(cfg).expect("reopen");
+        self.app
+            .0
+            .knobs
+            .pace_scale
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         self.app.0.heartbeat_now().await;
     }
 
@@ -1697,6 +1734,11 @@ impl TestApp {
     pub fn restart_without_report(&mut self, opts: Opts) {
         let cfg = config(self.dir.path(), &self.backend.url, &opts);
         self.app = App::open(cfg).expect("reopen");
+        self.app
+            .0
+            .knobs
+            .pace_scale
+            .store(0, std::sync::atomic::Ordering::SeqCst);
     }
 
     pub fn router(&self) -> Router {

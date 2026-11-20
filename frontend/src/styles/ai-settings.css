@@ -25,6 +25,9 @@
 .ais-chip.ok::before { background: var(--answer-right); }
 .ais-chip.fail { background: var(--danger-soft); color: var(--danger); }
 .ais-chip.fail::before { background: var(--danger); }
+/* v1.9: a connection that is switched off (grey: not a problem) */
+.ais-chip.off { background: var(--fill); color: var(--ink3); }
+.ais-chip.off::before { background: var(--ink3); }
 .ais-problem { flex-basis: 100%; font-size: 14px; }
 /* Round 2: the connection to ai-service under the chips, and the status panel while it is not connected */
 .ais-svc-ok { flex-basis: 100%; font-size: 13px; line-height: 1.55; color: var(--ink3); }
@@ -523,6 +526,8 @@ td.ais-usum { display: none; }
 .ais-conn.bad { border-color: var(--danger); }
 .ais-conn.open { border-color: var(--print); }
 .ais-conn-head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.ais-conn-head .mini-switch { margin-left: auto; flex: none; }
+.ais-conn.off .ais-conn-name, .ais-conn.off .ais-conn-addr { color: var(--ink3); }
 .ais-conn-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 700; }
 .ais-conn-addr { margin: 0; min-width: 0; font-size: 14px; color: var(--ink2); }
 .ais-conn-addr .ais-sum-host { font-family: var(--mono); font-size: 13px; }
@@ -536,6 +541,9 @@ td.ais-usum { display: none; }
 .ais-slots { display: grid; gap: 12px; margin: 0; padding: 0; list-style: none; }
 .ais-slot { display: grid; grid-template-columns: minmax(120px, 190px) minmax(0, 1fr); align-items: center; gap: 4px 12px; min-width: 0; }
 .ais-slot-l { font-size: 14px; font-weight: 600; }
+/* v1.9: the row label and its feature switch (the default row has none) */
+.ais-slot-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-width: 0; }
+.ais-slot.off .ais-slot-pick, .ais-slot.off .ais-effort { opacity: .55; }
 /* v1.6 thinking strength: the buttons, the muted model default and the level list, wrapping on narrow screens */
 .ais-effort { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .ais-effort-b { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -552,7 +560,7 @@ td.ais-usum { display: none; }
 .ais-slot-pick .ais-combo { min-width: 0; }
 .ais-slot-conn { min-width: 0; text-overflow: ellipsis; }
 .ais-model-follow:disabled { color: var(--ink3); -webkit-text-fill-color: var(--ink3); opacity: 1; background: var(--fill); text-overflow: ellipsis; }
-.ais-slot > :not(.ais-slot-l):not(.ais-slot-pick) { grid-column: 2; margin: 0; }
+.ais-slot > :not(.ais-slot-h):not(.ais-slot-pick) { grid-column: 2; margin: 0; }
 .ais-slot.warn .ais-model { border-color: var(--warn); }
 .ais-manual-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .ais-manual-row .ais-model { flex: 1 1 160px; }
@@ -564,7 +572,7 @@ td.ais-usum { display: none; }
 .ais-sechead .btn { flex: none; }
 @media (max-width: 600px) {
   .ais-slot { grid-template-columns: minmax(0, 1fr); }
-  .ais-slot > :not(.ais-slot-l):not(.ais-slot-pick) { grid-column: 1; }
+  .ais-slot > :not(.ais-slot-h):not(.ais-slot-pick) { grid-column: 1; }
   .ais-slot-pick { grid-column: 1; }
   .ais-eb { min-height: 36px; }
   .ais-effort-level { margin-left: 0; }
@@ -575,12 +583,28 @@ td.ais-usum { display: none; }
 /* Up to 520 px the two pickers stack (side by side the connection name and the muted default model would be cut) */
 @media (max-width: 520px) { .ais-slot-pick { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
 
-/* Global feature switches */
-.ais-sws { display: grid; gap: 2px; margin: 4px 0 8px; padding: 0; list-style: none; }
-.ais-sw { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 2px 0; border-bottom: 1px solid var(--line-soft); }
-.ais-sw-l { font-size: 14.5px; }
-.ais-sw-group { margin: 10px 0 0; }
-@media (pointer: coarse) { .ais-sw { min-height: 48px; } }
+/* v1.9: the connection list is two collapsible groups (enabled / not enabled) */
+.ais-cgroup + .ais-cgroup { margin-top: 8px; }
+.ais-cgroup { margin-bottom: 10px; }
+.ais-cgroup-h { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px; margin: 0 0 8px; padding: 0 2px; font: inherit; font-size: 14.5px; font-weight: 700; text-align: left; color: var(--ink); background: none; border: 0; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+.ais-cgroup-h:focus-visible { outline-offset: -2px; }
+.ais-cg-warn { margin-left: auto; padding: 2px 8px; font-size: 12.5px; font-weight: 600; line-height: 1.5; color: var(--warn); background: var(--warn-soft); border-radius: 999px; white-space: nowrap; }
+.ais-cg-chev { flex: none; width: 16px; height: 16px; color: var(--ink3); transform: rotate(-90deg); transition: transform .15s; }
+.ais-cgroup-h[aria-expanded="true"] .ais-cg-chev { transform: none; }
+.ais-conns[hidden] { display: none; }
+.ais-conns-tail { margin-top: 10px; }
+.ais-conns-tail:not(:has(*)) { display: none; }
+@media (pointer: coarse) { .ais-cgroup-h { min-height: 48px; } }
+@media (prefers-reduced-motion: reduce) { .ais-cg-chev { transition: none; } }
+
+/* v1.9: the sub-tabs of the safety tab (wrapping segmented row; a 4-column grid on phones) */
+.ais-subtabs { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; margin: 0 0 16px; }
+.ais-subtabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; min-height: 40px; padding-inline: 14px; }
+.ais-subtabs button:focus-visible { outline-offset: -2px; }
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  .ais-subtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; margin-bottom: 12px; }
+  .ais-subtabs button { min-height: 44px; padding: 4px 4px; font-size: 13px; white-space: normal; line-height: 1.2; text-align: center; }
+}
 
 .ais-shared, .ais-budget { margin: 2px 0 8px; }
 

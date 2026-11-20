@@ -64,7 +64,9 @@ function genJobsTable(): HTMLElement {
   if (!A.genJobs.length) return h('p', { class: 'ais-note' }, t('ai.set.gen.jobsEmpty'));
   const col = (k: MsgKey, cls = ''): HTMLElement => h('th', { scope: 'col', class: cls || null }, t(k));
   const state = (j: GenAdminJob): string =>
-    t(`ai.set.gen.state.${j.state}` as MsgKey) + (j.state === 'running' && (j.phase === 'reading' || j.phase === 'confirm') ? ` · ${t(`ai.set.gen.phase.${j.phase}` as MsgKey)}` : '');
+    t(`ai.set.gen.state.${j.state}` as MsgKey) + (j.state === 'running' && (j.phase === 'reading' || j.phase === 'confirm') ? ` · ${t(`ai.set.gen.phase.${j.phase}` as MsgKey)}` : '')
+    // v1.9: the job waits for the provider's quota
+    + ((j.state === 'queued' || j.state === 'running') && j.waiting ? ` · ${t('ai.set.gen.phase.waiting')}` : '');
   const source = (j: GenAdminJob): string =>
     j.source === 'file' ? t('ai.set.gen.source.file', { type: (j.file?.type ?? '').toUpperCase() }) : t(`ai.set.gen.source.${j.source}` as MsgKey);
   // the line's holdTip is the place of the exact numbers, so no title here

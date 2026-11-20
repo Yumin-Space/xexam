@@ -365,6 +365,29 @@ impl LinkLoad {
     }
 }
 
+/// The environment variable that makes the token mandatory (v1.9, split-host setups).
+pub const TOKEN_REQUIRED_ENV: &str = "XEXAM_INTERNAL_TOKEN_REQUIRED";
+
+/// `XEXAM_INTERNAL_TOKEN_REQUIRED=1`: the start must fail unless the token came from `XEXAM_INTERNAL_TOKEN` and is valid
+/// (a token file on one machine cannot be shared with the AI service on another). `Err` holds the English text to print;
+/// it never contains the token. Not required: always `Ok`.
+pub fn require_env_token(required: bool, load: &LinkLoad) -> Result<(), String> {
+    if !required {
+        return Ok(());
+    }
+    match load {
+        LinkLoad::Env(_) => Ok(()),
+        // The environment value was present but not a valid token
+        LinkLoad::Off(why) if why.starts_with(TOKEN_ENV) => {
+            let text = why.strip_suffix("; AI link off").unwrap_or(why);
+            Err(format!("{text} ({TOKEN_REQUIRED_ENV}=1)"))
+        }
+        LinkLoad::Off(_) | LinkLoad::File { .. } => Err(format!(
+            "{TOKEN_REQUIRED_ENV}=1 but {TOKEN_ENV} is not set: set the same value (at least {MIN_TOKEN_CHARS} printable ASCII characters, e.g. openssl rand -hex 32) on the backend and ai-service machines"
+        )),
+    }
+}
+
 /// Finds the internal token when `serve` starts (never in the command-line subcommands): `env_value` (the value of
 /// `XEXAM_INTERNAL_TOKEN`) when it is set and not blank, else the file `<link_dir>/internal.token`, created when it is
 /// missing. Whitespace around the value and around the file's content is ignored, exactly as the AI service does

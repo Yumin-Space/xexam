@@ -6,6 +6,22 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v1.9 — 2026-11-20
+
+**AI 设置页更清楚（连接启用开关、每个功能一个开关、七个安全子页），AI 出题和 AI 导入按服务商的速率限制匀速发送，AI 对话可选模型，下载题库可选语言，三个服务可以分别运行在不同的机器上。升级：拉取镜像即可；AI 数据库启动时升级到 schema 9，并先做备份副本（回滚 = 恢复 `backups/xexam-ai-schema8-*.db`）；单机 compose 不需要改；新增可选变量 `XEXAM_FRONTEND_PEERS`、`XEXAM_INTERNAL_TOKEN_REQUIRED`、`XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM`、`XEXAM_NGINX_RESOLVER`，以及三个按机器拆分的 compose 文件。主数据库不变。**
+
+- **发往 AI 服务商的 User-Agent（默认值改变）**：`XEXAM_AI_USER_AGENT_NAME` 不设、留空或只有空白时，重新发送 `xexam-ai-service/<版本>`（v1.8 什么都不发）。值为 `none`（不分大小写）时完全不发 `User-Agent` 请求头，这就是 v1.8 的行为，想让网关看不到应用名就用它。其他可打印 ASCII（最多 256 个字符）原样发送；无效的值在启动时警告一次（不会打印这个值），并发送默认值。发给后端的请求和 IP 所在地查询不变。
+- **首页：AI 总结按钮**（**最近一次成绩**）：AI 总结按钮改成和其他 AI 操作一致的扁平橙色（橙底白色粗体字，浅色和深色相同；手机上是橙色图标按钮）。不能使用时，外观和变灰的 **AI 生成题** 按钮一样，并带 **无法使用** 标签。没有新增颜色。
+- **AI 对话选模型**：自由模式下的管理员会看到一个带两个下拉框的小弹层：先选 **API**（连接），再选这个连接下的 **模型**。初始为这个对话记住的选择，否则是 AI 对话的默认；选标有 **（默认）** 的模型表示“跟随默认”。只改 API 不会改变实际发送的内容。选择器里没有思考强度。
+- **连接启用开关**（AI 设置 → 连接与模型）：每个连接有一个开关。停用后，它的所有设置、密钥和模型都保留，但这个连接不再出现在任何选择器里，也不参与路由。指向已停用连接的功能、默认或对话保留原来的选择，调用时给出清楚的提示并失败（`ai.connectionOff`，HTTP 409）；不会自动换连接，也不会悄悄丢掉选择。新连接和已有连接一开始都是启用。状态标签是 **正常启用**（绿色）或 **未启用**（灰色），列表分成两个可折叠的组 **已启用的连接** 和 **未启用的连接**，一开始都折叠（展开状态在本次浏览器会话里记住）。停用连接时会先确认，并列出正在使用它的功能。切换不会取消正在进行的调用；停用的连接仍然可以 **测试**。
+- **每个功能一个开关（管理员也受影响）**：单独的功能开关区域已删除。除 **默认** 外，每一行模型都带自己的开关，关闭的功能对所有人（包括管理员）都不可用（已选的模型保留，这一行的选择器变灰）。原来的 **学习** 行拆成 **提示** 和 **解析** 两行（解析也用于成绩和记录的分析）：升级时两者都沿用原来的学习模型和思考强度。全局开关现在互相独立（提示和解析不再成对）；“用户管理”里每位用户的单独勾选仍然把提示和解析绑在一起。
+- **移除 Gemma 思考强度系列**：**Gemma** 按钮没有了。已保存的 Gemma 选择会在启动时改写成请求相同的 Google 系列（`HIGH` 和 `true` 变成 Google 的 `HIGH`；`MINIMAL` 和 `false` 变成 Google 的 `MINIMAL`；其他的清空）。API 拒绝 `gemma` 系列（400）。Gemma 4 请用 **Google** 的 `HIGH` / `MINIMAL`。
+- **按服务商速率限制匀速发送**（AI 安全 → 服务器）：AI 出题和 AI 导入调用共用一个全局设置，默认 **开启**，每分钟 **15 次请求**、**250,000 tokens**（常见免费额度）。实际使用约 90%（每分钟 13 次、225,000 tokens），在 60 秒滑动窗口里均匀发送（约每 4.6 秒一次），每次调用发出前先估算 tokens，必要时减少同时进行的调用数。它与 **无限制** 开关互相独立。服务商返回“限速”（HTTP 429）时，按它给出的时间等待后重试（每次调用最多 10 次，不算错误，关闭匀速发送时同样有效）；用完当天额度时，任务会带着清楚的提示停止，也不扣费。任务等待 8 秒以上时显示 **等待额度…**。对有限制（非无限制）的任务，等待时间也计入它的 30 分钟期限。
+- **AI 安全拆成七个子页**：**安全上限**、**对话**、**提示和解析**、**总结**、**AI 出题**、**AI 导入**、**服务器**。子页写在地址里（`#/ai-settings?tab=safety&sub=<名称>`）；不带子页打开时，回到本次浏览器会话里最后用过的子页，否则是 **安全上限**。**保存** 会发送整个表单里所有改动过的值；**恢复默认** 只重置当前看到的子页。
+- **下载题库可选语言**：对话框在格式按钮上方有 **中文**、**English**、**日本語** 三个勾选框，默认全选，至少选一个（不会记住）。Excel 保持六列的位置不变，未勾选语言的单元格留空（不选 English 时文件不能再导入，对话框里有提示）；Word 只含勾选的语言，顺序是英文、中文、日文。三种都选时文件名不变，否则末尾加语言代码，例如 `Garden_en-zh.docx`。接口接受可选的 `langs=en,zh,ja`（不带 = 三种都要，其他写法返回 400），活动日志会记录语言。
+- **服务分机器运行**：前端、后端和 ai-service 可以分别跑在三台机器上。前端镜像读取 `XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM` 和 `XEXAM_NGINX_RESOLVER`（默认值不变）；后端和 ai-service 读取 `XEXAM_FRONTEND_PEERS`（前端地址的白名单；不设 = 和以前一样任何来源都行；其他来源得到 `404`，转发的客户端请求头只信任名单里的来源）和 `XEXAM_INTERNAL_TOKEN_REQUIRED=1`（没有有效的 `XEXAM_INTERNAL_TOKEN` 就拒绝启动）。`XEXAM_AI_BACKEND_URL` 现在 `http://` 和 `https://` 都可以。新增的 `docker-compose.frontend.yml`、`docker-compose.backend.yml` 和 `docker-compose.ai-service.yml` 是按机器拆分的版本，单机的 compose 不变。见 [deployment.md](deployment.md) 第 12 节。
+- **数据库**：AI schema 8 到 9（`connections.enabled`、`limits` 里三个匀速发送的列、重建 `model_slots`，用 `hint` 和 `explain` 取代 `study`），先做备份副本 `backups/xexam-ai-schema8-<日期时间>.db`。v1.8 不接受 schema 9：要回滚就恢复这个副本。详情见 [database.md](database.md) 的 8.2f 节，两个数据库的表结构图在第 9 节。
+
 ### v1.8 — 2026-11-16
 
 **发往 AI 服务商的请求不再带有写着 Xexam 的 User-Agent，网关连接现在可以使用 OpenAI Responses API。升级：拉取镜像即可；compose 多一个可选变量（`XEXAM_AI_USER_AGENT_NAME`）；AI 数据库启动时多一列，不需要备份副本，设置也不变。**

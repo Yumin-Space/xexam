@@ -250,7 +250,7 @@ async fn two_racing_misses_leave_one_row() {
 }
 
 #[tokio::test]
-async fn the_gates_apply_before_the_lookup_and_admins_pass_the_global_switch() {
+async fn the_gates_apply_before_the_lookup_and_the_global_switch_covers_admins() {
     let (e, kim) = shared_env().await;
     ask(&e.t, &e.user, hint_body(K1, "q1", 1)).await;
     stored(&e.t, 1).await;
@@ -272,7 +272,10 @@ async fn the_gates_apply_before_the_lookup_and_admins_pass_the_global_switch() {
     // the explanation switch is still on
     let ev = ask(&e.t, &kim, explain_body(K2, "q1", 1)).await;
     assert_eq!(terminal_name(&ev), "done");
-    // an administrator is not affected by the global switch and is served the shared answer
+    // the global switch covers administrators too (v1.9): refused although the answer exists
+    let (s, v) = refused(&e.t, &e.admin, STUDY_ASK, hint_body(K2, "q1", 2)).await;
+    assert_eq!((s, v["code"].as_str()), (403, Some("ai.featureOff")), "{v}");
+    global(0);
     let ev = ask(&e.t, &e.admin, hint_body(K2, "q1", 2)).await;
     assert_eq!(start_of(&ev)["shared"], true);
     global(0);

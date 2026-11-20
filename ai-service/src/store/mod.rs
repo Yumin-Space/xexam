@@ -75,6 +75,34 @@ fn apply_journal(conn: &Connection, want: JournalMode) -> String {
     }
 }
 
+/// Rebuilds `model_slots` for schema 9 when it still allows the slot `study` (a CHECK cannot be altered): `study`
+/// becomes `hint` and `explain` with the same model, time, author and effort. Then seeds the seven slots. The table is
+/// referenced by nothing (it is a child of `models` only), so `foreign_keys` may stay ON during the rebuild.
+fn split_study_slot(c: &Connection, now: i64) -> rusqlite::Result<()> {
+    let old: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'model_slots' AND sql LIKE '%study%')",
+        [],
+        |r| r.get(0),
+    )?;
+    if old {
+        let copy = |slot_expr: &str, filter: &str| {
+            format!(
+                "INSERT INTO model_slots (slot, model_id, updated_at, updated_by, effort)
+                 SELECT {slot_expr}, model_id, updated_at, updated_by, effort FROM model_slots_v8 WHERE {filter};"
+            )
+        };
+        c.execute_batch(&format!(
+            "ALTER TABLE model_slots RENAME TO model_slots_v8; {}; {} {} {} DROP TABLE model_slots_v8;",
+            schema::V9_MODEL_SLOTS,
+            copy("slot", "slot <> 'study'"),
+            copy("'hint'", "slot = 'study'"),
+            copy("'explain'", "slot = 'study'"),
+        ))?;
+    }
+    c.execute(schema::V9_SEED, [now])?;
+    Ok(())
+}
+
 /// Adds the listed columns that the tables lack (the same step for new and upgraded databases).
 fn add_columns(c: &Connection, cols: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
     for (table, column, def) in cols {
@@ -295,7 +323,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1 … 7 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1 … 8 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -325,9 +353,11 @@ impl Store {
                     add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
                     add_columns(tx, &schema::V16_COLUMNS)?;
+                    add_columns(tx, &schema::V9_COLUMNS)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
                     tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;
+                    split_study_slot(tx, now)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
                         [now],
@@ -353,6 +383,7 @@ impl Store {
                         .chain(schema::V7_COLUMNS.iter())
                         .chain(schema::LATE_COLUMNS.iter())
                         .chain(schema::V16_COLUMNS.iter())
+                        .chain(schema::V9_COLUMNS.iter())
                     {
                         let present: bool = c.query_row(
                             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
@@ -375,23 +406,24 @@ impl Store {
                         .and_then(|()| add_columns(&tx, &schema::LATE_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_TABLES))
                         .and_then(|()| add_columns(&tx, &schema::V16_COLUMNS))
+                        .and_then(|()| add_columns(&tx, &schema::V9_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_INDEXES))
                         .and_then(|()| tx.execute_batch(schema::V8_TABLES))
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                     tx.commit()
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 }
-                // a schema-7 file written by a v1.3 build from before the hint + analysis switch became one
+                // a file written by a v1.3 build from before the per-user hint + analysis switch became one (the global
+                // bits are independent since v1.9 and are never touched)
                 let split: bool = conn
                     .query_row(
-                        "SELECT EXISTS(SELECT 1 FROM users WHERE (features_off & 6) IN (2, 4))
-                             OR EXISTS(SELECT 1 FROM settings WHERE (features_off & 6) IN (2, 4))",
+                        "SELECT EXISTS(SELECT 1 FROM users WHERE (features_off & 6) IN (2, 4))",
                         [],
                         |r| r.get(0),
                     )
                     .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
                 if split {
-                    conn.execute_batch(schema::PAIR_STUDY_BITS)
+                    conn.execute_batch(schema::PAIR_USER_STUDY_BITS)
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 }
                 // a schema-7 file written by a v1.3 build that kept the chat picks of a removed connection
@@ -429,21 +461,27 @@ impl Store {
                     add_columns(tx, &schema::LATE_COLUMNS)?;
                     tx.execute_batch(schema::V7_TABLES)?;
                     add_columns(tx, &schema::V16_COLUMNS)?;
+                    add_columns(tx, &schema::V9_COLUMNS)?;
                     tx.execute_batch(schema::V7_INDEXES)?;
                     tx.execute_batch(schema::V8_TABLES)?;
                     tx.execute(schema::V7_SEED, [now])?;
+                    let from: u32 = v.parse().unwrap_or(0);
                     // the character -> token conversion belongs to the 1 .. 5 -> 6 step only (a schema-6 file holds tokens)
-                    if v != "6" && v != "7" {
+                    if from < 6 {
                         tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
                         tx.execute_batch(schema::V6_MIGRATE)?;
                     }
-                    // the 1 .. 6 -> 7 steps; a schema-7 file already has them (schema 8 only adds `geo_settings`)
-                    if v != "7" {
+                    // the 1 .. 6 -> 7 steps; a schema-7 or newer file already has them
+                    if from < 7 {
                         tx.execute_batch(schema::V7_MIGRATE)?;
                         tx.execute_batch(schema::PAIR_STUDY_BITS)?;
                         tx.execute_batch(schema::CLEAR_STALE_PICKS)?;
                         connect_old_settings(tx, now)?;
+                    } else {
+                        tx.execute_batch(schema::PAIR_USER_STUDY_BITS)?;
+                        tx.execute_batch(schema::CLEAR_STALE_PICKS)?;
                     }
+                    split_study_slot(tx, now)?;
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
@@ -478,7 +516,7 @@ impl Store {
         if !flagged {
             if matches!(
                 existing.as_deref(),
-                Some("7") | Some(schema::SCHEMA_VERSION)
+                Some("7") | Some("8") | Some(schema::SCHEMA_VERSION)
             ) {
                 let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
                     format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
@@ -529,6 +567,21 @@ impl Store {
                 [schema::IMPORT_MAX_KEY],
             )
             .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+        }
+        // v1.9: the Gemma thinking family is gone; its stored choices become the Google ones (same wire request)
+        let gemma: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM model_slots WHERE substr(effort, 1, 6) = 'gemma:'",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+        if gemma > 0 {
+            conn.execute_batch(schema::FOLD_GEMMA_EFFORT)
+                .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+            tracing::info!(
+                "moved {gemma} thinking-strength choices from the removed Gemma family to Google (same request)"
+            );
         }
         // Answers left 'streaming' by a crash (check first: reopening a clean database writes nothing)
         let left: i64 = conn
@@ -672,7 +725,7 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "8");
+            assert_eq!(v, "9");
         }
         let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
             .expect("backups")

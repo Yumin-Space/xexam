@@ -1,6 +1,8 @@
 //! Per-user AI+ feature switches (spec FP-1, FP-2, addendum P-9 / P-10): which AI features an administrator allowed for a
 //! plain user. The AI database keeps one integer per user (`users.features_off`): a set bit means the feature is OFF, so
-//! 0 (and a user without a row) means everything is allowed. Administrators always have every feature.
+//! 0 (and a user without a row) means everything is allowed. The per-user bits never apply to administrators. The global
+//! feature switches (`settings.features_off`, same bit layout) apply to everyone, administrators included, and since
+//! v1.9 each global bit moves alone.
 use serde_json::{Map, Value};
 
 /// An AI+ feature that can be switched off for one user.
@@ -61,7 +63,8 @@ impl Feature {
     }
 }
 
-/// AI hint and AI analysis (`explain`) are one switch in the UI (v1.3): the two bits always change together.
+/// Per-user boxes only: AI hint and AI analysis (`explain`) are one box in User management (v1.3), so the two bits of a
+/// user always change together. The global switches are independent since v1.9.
 pub const STUDY_PAIR: i64 = 2 | 4;
 
 /// `after` with the hint and explain bits made equal. When a request changed only one of the two, that one decides

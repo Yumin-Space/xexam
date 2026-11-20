@@ -1,5 +1,5 @@
 //! v1.3 admin routes: the settings object, connections (test before save, key rotation, key reuse confirmation, delete,
-//! order), the model pool (list cache, pick, test, remove), enable, the global feature switches (admins unaffected),
+//! order), the model pool (list cache, pick, test, remove), enable, the global feature switches (administrators included),
 //! limits, usage, clear, the chat viewer's `at`, one activity event per POST, the 90-second budget. Everything is made up.
 mod common;
 
@@ -140,7 +140,9 @@ async fn the_settings_object_has_the_v13_shape_and_never_a_key() {
     assert_eq!(s["slots"]["chat"]["modelId"], Value::Null);
     assert_eq!(s["slots"]["chat"]["using"]["fallback"], json!("default"));
     assert_eq!(s["featureSwitches"]["hint"], json!(true));
-    for slot in ["default", "chat", "study", "summary", "generate", "import"] {
+    for slot in [
+        "default", "chat", "hint", "explain", "summary", "generate", "import",
+    ] {
         let f = s["slots"][slot]["using"]["fallback"].as_str().unwrap_or("");
         assert!(f == "none" || f == "default", "{slot}: {f}");
     }
@@ -639,12 +641,12 @@ async fn pick_tests_unless_fresh_and_a_failed_pick_changes_nothing() {
         .post(
             "/api/ai/admin/models/pick",
             &admin,
-            pick("study", "demo-chat-large"),
+            pick("hint", "demo-chat-large"),
         )
         .await;
     assert_eq!(v["ok"], json!(true));
     assert_eq!(count_calls(&t, "POST /v1/chat/completions"), before + 1);
-    assert_eq!(v["settings"]["slots"]["study"]["modelId"], json!(pool_id));
+    assert_eq!(v["settings"]["slots"]["hint"]["modelId"], json!(pool_id));
     // a failing pick: no slot change, a new model is not added to the pool
     t.stub.force(Some((401, BAD_KEY_BODY)));
     let (s, v) = t
@@ -722,7 +724,7 @@ async fn an_unusable_default_warns_but_nothing_is_switched_and_ai_stays_on() {
         "the warning: the default has no route"
     );
     assert_eq!(
-        s["slots"]["study"]["using"],
+        s["slots"]["hint"]["using"],
         Value::Null,
         "nothing else is switched in"
     );
@@ -868,7 +870,7 @@ async fn enable_needs_a_tested_default_and_a_failing_test_leaves_ai_off() {
 }
 
 #[tokio::test]
-async fn a_global_switch_stops_normal_users_but_never_an_admin() {
+async fn a_global_switch_stops_everyone_administrators_included() {
     let (t, admin) = setup().await;
     let sam = t.user("sam", false, true);
     t.relax_caps();
@@ -886,17 +888,11 @@ async fn a_global_switch_stops_normal_users_but_never_an_admin() {
     let (s, v) = t.post("/api/ai/send", &sam, json!({"text": "hello"})).await;
     assert_eq!(s, 403, "{v}");
     assert_eq!(v["code"], json!("ai.featureOff"));
-    // an administrator is not affected: the call runs to its end
-    let ev = t
-        .send_all(&admin, json!({"text": "hello"}))
-        .await
-        .expect("send");
-    assert_eq!(
-        names(&ev).last().map(String::as_str),
-        Some("done"),
-        "{:?}",
-        names(&ev)
-    );
+    // an administrator is refused too (v1.9)
+    let (s, v) = t
+        .post("/api/ai/send", &admin, json!({"text": "hello"}))
+        .await;
+    assert_eq!((s, v["code"].clone()), (403, json!("ai.featureOff")), "{v}");
     // switching it on again
     let (_, v) = t
         .post(
@@ -1212,6 +1208,24 @@ async fn every_admin_post_leaves_exactly_one_event_and_never_a_secret() {
         )
     );
     step!(
+        "connection switch",
+        "ai.settings.connectionOff",
+        t.post(
+            "/api/ai/admin/connections/enabled",
+            &admin,
+            json!({"id": 1, "enabled": false})
+        )
+    );
+    step!(
+        "connection switch back",
+        "ai.settings.connectionOn",
+        t.post(
+            "/api/ai/admin/connections/enabled",
+            &admin,
+            json!({"id": 1, "enabled": true})
+        )
+    );
+    step!(
         "connection add (marker key)",
         "ai.settings.connectionAdd",
         t.post(
@@ -1356,13 +1370,14 @@ async fn every_admin_post_leaves_exactly_one_event_and_never_a_secret() {
         .find(|e| e["action"] == json!("ai.users.features") && e["detail"].get("off").is_some())
         .expect("features event");
     assert_eq!(uf["object"], json!("sam"));
-    // hint and explain are one switch: a request that names one moves both
+    // the per-user boxes pair hint and explain: a request that names one moves both
     assert_eq!(uf["detail"]["off"], json!(["hint", "explain"]));
     let sf = evs
         .iter()
         .find(|e| e["action"] == json!("ai.settings.features"))
         .expect("switches event");
-    assert_eq!(sf["detail"]["off"], json!(["hint", "explain"]));
+    // the global switches move alone: the request named only hint
+    assert_eq!(sf["detail"]["off"], json!(["hint"]));
 }
 
 #[tokio::test]
@@ -1413,10 +1428,10 @@ async fn the_admin_routes_are_for_administrators_only() {
     assert_eq!(conn_ids(&s), vec![1]);
 }
 
-// —— hint + analysis: one switch ————————————————————————————————————————————————————————————————————————————————————
+// —— hint and analysis: independent global switches ————————————————————————————————————————————————————————————————
 
 #[tokio::test]
-async fn the_hint_and_explain_switches_always_change_together() {
+async fn hint_and_explain_switches_are_independent() {
     let (t, admin) = setup().await;
     let pair = |v: &Value| {
         (
@@ -1425,27 +1440,24 @@ async fn the_hint_and_explain_switches_always_change_together() {
         )
     };
     let post = |body: Value| t.post("/api/ai/admin/feature-switches", &admin, body);
-    // what the page sends: both keys
-    let (s, v) = post(json!({"hint": false, "explain": false})).await;
+    // one key alone moves only that key
+    let (s, v) = post(json!({"hint": false})).await;
     assert_eq!(s, 200, "{v}");
+    assert_eq!(pair(&v), (json!(false), json!(true)));
+    let (_, v) = post(json!({"explain": false})).await;
     assert_eq!(pair(&v), (json!(false), json!(false)));
-    assert_eq!(v["featureSwitches"]["chat"], json!(true));
-    // one key alone moves both, in either direction
-    let (_, v) = post(json!({"explain": true})).await;
-    assert_eq!(pair(&v), (json!(true), json!(true)));
-    let (_, v) = post(json!({"hint": false})).await;
-    assert_eq!(pair(&v), (json!(false), json!(false)));
-    let (_, v) = post(json!({"hint": true, "summary": false})).await;
-    assert_eq!(pair(&v), (json!(true), json!(true)));
+    let (_, v) = post(json!({"hint": true})).await;
+    assert_eq!(pair(&v), (json!(true), json!(false)));
+    // two different values in one request are kept as asked
+    let (_, v) = post(json!({"hint": false, "explain": true, "summary": false})).await;
+    assert_eq!(pair(&v), (json!(false), json!(true)));
     assert_eq!(v["featureSwitches"]["summary"], json!(false));
-    // two different values in one request: the one that changes decides
-    let (_, v) = post(json!({"hint": true, "explain": false})).await;
-    assert_eq!(pair(&v), (json!(false), json!(false)));
+    assert_eq!(v["featureSwitches"]["chat"], json!(true));
     let bits: i64 = t
         .db()
         .query_row("SELECT features_off FROM settings WHERE id = 1", [], |r| {
             r.get(0)
         })
         .expect("bits");
-    assert_eq!(bits, 2 | 4 | 8);
+    assert_eq!(bits, 2 | 8);
 }

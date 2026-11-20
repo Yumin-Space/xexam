@@ -25,7 +25,9 @@ import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
 import { icon } from '../components/shell.ts';
 import { aiMetaLine } from '../domain/ai-gen.ts';
-import { fallbackFileName, FORMAT_CHOICES, type DownloadFormat } from '../domain/bank-download.ts';
+import {
+  canonicalLangs, DOWNLOAD_LANGS, fallbackFileName, FORMAT_CHOICES, LANG_LABEL, type DownloadFormat, type DownloadLang,
+} from '../domain/bank-download.ts';
 import { copyOutsidePrompt, outsidePrompt } from '../domain/outside-prompt.ts';
 import { retiredOnly } from '../domain/bank-status.ts';
 import { deletionPlan, selectionCount, sheetSelKey, type SelBank } from '../domain/bank-select.ts';
@@ -887,14 +889,40 @@ function importPanel(): HTMLElement {
  * v1.6: the Download button. The format dialog (Excel / Word) opens first; one tap on a format starts the download. The
  * server is the real check (403 without the right, 404 for a bank the user cannot see); the button is a convenience.
  */
+/**
+ * v1.9: the language checkboxes of the download dialog (中文 / English / 日本語, all ticked). With none ticked the format
+ * buttons are disabled and a short alert says why; without English a note says the Excel cannot be imported again.
+ */
+function langPicker(boxes: Map<DownloadLang, HTMLInputElement>, setPickable: (on: boolean) => void): HTMLElement {
+  const none = h('p', { class: 'bk-hint dl-none', role: 'alert', hidden: true }, t('banks.dl.langsNone'));
+  const noEn = h('p', { class: 'bk-hint dl-noen', hidden: true }, t('banks.dl.noEnglish'));
+  const sync = (): void => {
+    const any = DOWNLOAD_LANGS.some((l) => boxes.get(l)?.checked);
+    none.hidden = any;
+    noEn.hidden = boxes.get('en')?.checked !== false;
+    setPickable(any);
+  };
+  const lang = (l: DownloadLang): HTMLElement => {
+    const box = h('input', { type: 'checkbox', checked: true, id: `dlg-lang-${l}`, onchange: sync });
+    boxes.set(l, box);
+    const code = l === 'zh' ? 'zh-CN' : l;
+    return h('label', { class: 'dl-lang' }, box, h('span', { lang: code }, LANG_LABEL[l]));
+  };
+  return h('fieldset', { class: 'dl-langs' }, h('legend', null, t('banks.dl.langs')), DOWNLOAD_LANGS.map(lang), none, noEn);
+}
+
 async function chooseDownload(b: BankSummary): Promise<void> {
   if (asking || downloadingId !== null) return;
   asking = true;
   let fmt: DownloadFormat | null;
+  // v1.9: the language boxes (all ticked, not remembered); they stay readable after the dialog closed
+  const boxes = new Map<DownloadLang, HTMLInputElement>();
+  const ticked = (): DownloadLang[] => canonicalLangs(DOWNLOAD_LANGS.filter((l) => boxes.get(l)?.checked !== false));
   try {
     fmt = await askPick({
       title: t('banks.dl.title'),
       body: t('banks.dl.body', { name: b.name }),
+      extra: (setPickable) => langPicker(boxes, setPickable),
       choices: FORMAT_CHOICES.map((c) => ({ value: c.format, icon: c.icon, label: t(c.label), hint: t(c.hint), aria: t(c.aria, { name: b.name }) })),
       back: t('banks.dl.back'),
     });
@@ -906,8 +934,9 @@ async function chooseDownload(b: BankSummary): Promise<void> {
   downloadingId = b.id;
   if (onBanksPage()) render();
   try {
-    const f = await downloadBank(b.id, fmt);
-    const file = f.name ?? fallbackFileName(b.name, fmt);
+    const langs = ticked();
+    const f = await downloadBank(b.id, fmt, langs);
+    const file = f.name ?? fallbackFileName(b.name, fmt, langs);
     saveFile(f.blob, file);
     toast(t('banks.dl.done', { file }));
   } catch (e) {

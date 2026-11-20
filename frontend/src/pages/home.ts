@@ -472,7 +472,7 @@ function tagInsideButton(root: HTMLElement, state: ReturnType<typeof controlStat
       btn.replaceChild(lbl, n);
     }
   }
-  btn.append(h('span', { class: 'aip-na hm-ai-na', 'aria-hidden': 'true' }, tag.textContent));
+  btn.append(h('span', { class: 'gen-na hm-ai-na', 'aria-hidden': 'true' }, tag.textContent));
 }
 
 function latestCard(): HTMLElement {

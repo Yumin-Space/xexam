@@ -1354,7 +1354,7 @@ fn a_schema_7_file_is_backed_up_and_gets_only_the_geo_table() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "8");
+    assert_eq!(v, "9");
     // the same tables and indexes as a new file
     assert_eq!(master(&c), want);
     // one backup, still schema 7 and without the table

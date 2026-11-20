@@ -3,7 +3,7 @@
 // (it runs under `node --test`); message keys are returned as strings and the components translate them.
 import type { GenJob, GenStatus, ImportFileType } from '../types/api.ts';
 import type { ControlView } from './ai-features.ts';
-import { bankModeName, genView, stripName, type GenViewState } from './ai-gen.ts';
+import { bankModeName, genView, stripName, waitingNow, type GenViewState } from './ai-gen.ts';
 
 // ---------------------------------------------------------------- files
 
@@ -156,6 +156,8 @@ export function cardLines(job: GenJob | null, upload: UploadState | null, at: (u
   if (!job || job.source !== 'file') return null;
   const file = job.file?.name ?? '';
   const leave: CardLine = { key: 'aigen.card.leave', params: {}, muted: true };
+  // v1.9: while the job only waits for the provider's quota, a muted second line says so
+  const waitLine: CardLine[] = waitingNow(job) ? [{ key: 'aigen.card.waiting', params: {}, muted: true }] : [];
   const base = { titleKey: 'aigen.imp.card.title' as const, file };
   if (job.state === 'queued' && job.phase === 'writing') {
     return { ...base, kind: 'queuedWrite', bar: { mode: 'determinate', pct: 0 }, lines: [{ key: 'aigen.card.queued', params: {} }], actions: ['cancel'], cancelBodyKey: 'aigen.imp.card.cancelBodyQueued' };
@@ -178,7 +180,7 @@ export function cardLines(job: GenJob | null, upload: UploadState | null, at: (u
       const line: CardLine = job.mode === 'material'
         ? { key: 'aigen.card.writing', params: { made: job.made, goal: job.goal } }
         : { key: 'aigen.imp.card.writingQ', params: { made: job.made, goal: job.goal } };
-      return { ...base, kind: 'writing', bar: { mode: 'determinate', pct: pctOf(job.made, job.goal) }, lines: [line, leave], actions: ['cancel'], cancelBodyKey: 'aigen.card.cancelBody', ...(job.made > 0 && job.mode !== 'material' ? { cancelKeep: job.made } : {}) };
+      return { ...base, kind: 'writing', bar: { mode: 'determinate', pct: pctOf(job.made, job.goal) }, lines: [line, ...waitLine, leave], actions: ['cancel'], cancelBodyKey: 'aigen.card.cancelBody', ...(job.made > 0 && job.mode !== 'material' ? { cancelKeep: job.made } : {}) };
     }
     if (job.phase === 'saving') {
       return { ...base, kind: 'saving', bar: { mode: 'determinate', pct: 100 }, lines: [{ key: 'aigen.card.saving', params: {} }], actions: ['cancelDisabled'] };
@@ -187,11 +189,11 @@ export function cardLines(job: GenJob | null, upload: UploadState | null, at: (u
     if (job.read && job.read.total > 0) {
       return {
         ...base, kind: 'readingStep', bar: { mode: 'determinate', pct: pctOf(job.read.done, job.read.total) },
-        lines: [{ key: 'aigen.imp.card.readingStep', params: { done: job.read.done, total: job.read.total } }, leave],
+        lines: [{ key: 'aigen.imp.card.readingStep', params: { done: job.read.done, total: job.read.total } }, ...waitLine, leave],
         actions: ['cancel'], cancelBodyKey: 'aigen.imp.card.cancelBodyRead',
       };
     }
-    return { ...base, kind: 'reading', bar: { mode: 'indeterminate' }, lines: [{ key: 'aigen.imp.card.reading', params: {} }, leave], actions: ['cancel'], cancelBodyKey: 'aigen.imp.card.cancelBodyRead' };
+    return { ...base, kind: 'reading', bar: { mode: 'indeterminate' }, lines: [{ key: 'aigen.imp.card.reading', params: {} }, ...waitLine, leave], actions: ['cancel'], cancelBodyKey: 'aigen.imp.card.cancelBodyRead' };
   }
   if (job.state === 'done') {
     const skipped = job.skipped ?? [];

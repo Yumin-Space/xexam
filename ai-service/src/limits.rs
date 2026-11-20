@@ -64,7 +64,16 @@ pub struct Limits {
     pub summary_max_items: i64,
     /// Site-wide tokens per day for non-administrators (input + output); 0 = off
     pub daily_token_budget: i64,
+    /// 1 = AI generation and import requests are paced to the provider limits below (v1.9)
+    pub pace_on: i64,
+    /// The provider's requests per minute (used at [`PACE_MARGIN_PCT`] %)
+    pub pace_rpm: i64,
+    /// The provider's tokens per minute, input + output (used at [`PACE_MARGIN_PCT`] %)
+    pub pace_tpm: i64,
 }
+
+/// The share of the provider limits the pacing uses, in percent (the rest is kept free).
+pub const PACE_MARGIN_PCT: i64 = 90;
 
 /// One limit: JSON key, database column, default, minimum, maximum.
 pub struct LimitDef {
@@ -75,10 +84,10 @@ pub struct LimitDef {
     pub max: i64,
 }
 
-/// The 33 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones,
-/// then the six of v1.3).
+/// The 36 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones,
+/// then the six of v1.3, then the three pacing ones of v1.9).
 /// The retired `limits.message_chars` column is not listed: nothing reads or writes it any more.
-pub const DEFS: [LimitDef; 33] = [
+pub const DEFS: [LimitDef; 36] = [
     LimitDef {
         key: "perUserRunning",
         column: "per_user_running",
@@ -310,6 +319,27 @@ pub const DEFS: [LimitDef; 33] = [
         min: 0,
         max: 100_000_000,
     },
+    LimitDef {
+        key: "paceOn",
+        column: "pace_on",
+        default: 1,
+        min: 0,
+        max: 1,
+    },
+    LimitDef {
+        key: "paceRpm",
+        column: "pace_rpm",
+        default: 15,
+        min: 1,
+        max: 10_000,
+    },
+    LimitDef {
+        key: "paceTpm",
+        column: "pace_tpm",
+        default: 250_000,
+        min: 1000,
+        max: 100_000_000,
+    },
 ];
 
 /// Tokens of one Chinese / Japanese character, as 3 / 2: the factor the generation planner uses to turn a call's token
@@ -405,6 +435,9 @@ impl Default for Limits {
             gen_max_chunks: 0,
             summary_max_items: 0,
             daily_token_budget: 0,
+            pace_on: 0,
+            pace_rpm: 0,
+            pace_tpm: 0,
         };
         for d in &DEFS {
             l.set(d.key, d.default);
@@ -442,6 +475,16 @@ impl Limits {
         }
     }
 
+    /// Requests per minute the pacing actually uses: 90 % of the setting, at least 1 (15 -> 13).
+    pub fn pace_rpm_eff(&self) -> i64 {
+        (self.pace_rpm * PACE_MARGIN_PCT / 100).max(1)
+    }
+
+    /// Tokens per minute the pacing actually uses: 90 % of the setting, at least 1000 (250000 -> 225000).
+    pub fn pace_tpm_eff(&self) -> i64 {
+        (self.pace_tpm * PACE_MARGIN_PCT / 100).max(1000)
+    }
+
     pub fn get(&self, key: &str) -> i64 {
         match key {
             "perUserRunning" => self.per_user_running,
@@ -477,6 +520,9 @@ impl Limits {
             "genMaxChunks" => self.gen_max_chunks,
             "summaryMaxItems" => self.summary_max_items,
             "dailyTokenBudget" => self.daily_token_budget,
+            "paceOn" => self.pace_on,
+            "paceRpm" => self.pace_rpm,
+            "paceTpm" => self.pace_tpm,
             _ => 0,
         }
     }
@@ -516,6 +562,9 @@ impl Limits {
             "genMaxChunks" => self.gen_max_chunks = v,
             "summaryMaxItems" => self.summary_max_items = v,
             "dailyTokenBudget" => self.daily_token_budget = v,
+            "paceOn" => self.pace_on = v,
+            "paceRpm" => self.pace_rpm = v,
+            "paceTpm" => self.pace_tpm = v,
             _ => {}
         }
     }
@@ -566,7 +615,7 @@ impl Limits {
         }
     }
 
-    /// Applies an update (any subset of the 33 keys, integers only), all or nothing.
+    /// Applies an update (any subset of the 36 keys, integers only), all or nothing.
     pub fn apply_update(&self, body: &Map<String, Value>) -> Result<Limits, LimitError> {
         for k in body.keys() {
             if !DEFS.iter().any(|d| d.key == k) {
@@ -718,9 +767,10 @@ mod tests {
         let s = serde_json::to_string(&a).expect("json");
         assert!(s.starts_with("{\"limits\":{\"perUserRunning\":1,\"globalRunning\":16,"));
         assert!(s.contains("\"ranges\":{\"perUserRunning\":[1,4]"));
-        // 33 keys: v1.0's ten (the call caps, then the answer length), then generation, import, then the six of v1.3
+        // 36 keys: v1.0's ten (the call caps, then the answer length), then generation, import, the six of v1.3, then
+        // the three pacing ones of v1.9
         let keys: Vec<&String> = a["limits"].as_object().expect("object").keys().collect();
-        assert_eq!(keys.len(), 33);
+        assert_eq!(keys.len(), 36);
         assert_eq!(
             &keys[5..],
             &[
@@ -751,7 +801,10 @@ mod tests {
                 "studyShareDays",
                 "genMaxChunks",
                 "summaryMaxItems",
-                "dailyTokenBudget"
+                "dailyTokenBudget",
+                "paceOn",
+                "paceRpm",
+                "paceTpm"
             ]
         );
         assert_eq!(a["defaults"], a["limits"]);
@@ -762,6 +815,43 @@ mod tests {
         assert_eq!(a["ranges"]["callsPerHour"], json!([1, 2000]));
         assert_eq!(a["ranges"]["callsPerDay"], json!([1, 20000]));
         assert!(a["limits"].get("messageChars").is_none());
+    }
+
+    #[test]
+    fn the_v19_pacing_limits_have_defaults_ranges_and_an_effective_value() {
+        let l = Limits::default();
+        assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 15, 250_000));
+        assert_eq!((l.pace_rpm_eff(), l.pace_tpm_eff()), (13, 225_000));
+        for (k, ok, bad) in [
+            ("paceOn", 0, 2),
+            ("paceRpm", 10_000, 10_001),
+            ("paceRpm", 1, 0),
+            ("paceTpm", 100_000_000, 100_000_001),
+            ("paceTpm", 1000, 999),
+        ] {
+            assert!(l.apply_update(&obj(json!({ k: ok }))).is_ok(), "{k}");
+            assert_eq!(
+                l.apply_update(&obj(json!({ k: bad }))),
+                Err(LimitError::Range(match k {
+                    "paceOn" => "paceOn",
+                    "paceRpm" => "paceRpm",
+                    _ => "paceTpm",
+                }))
+            );
+        }
+        // the floors keep a tiny setting usable
+        let tiny = l
+            .apply_update(&obj(json!({"paceRpm": 1, "paceTpm": 1000})))
+            .expect("in range");
+        assert_eq!((tiny.pace_rpm_eff(), tiny.pace_tpm_eff()), (1, 1000));
+        // the unlimited switches never touch the pacing
+        let free = l
+            .apply_update(&obj(json!({"genUnlimited": 0, "importUnlimited": 0})))
+            .expect("ok");
+        assert_eq!(
+            (free.pace_on, free.pace_rpm, free.pace_tpm),
+            (1, 15, 250_000)
+        );
     }
 
     #[test]

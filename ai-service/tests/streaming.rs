@@ -74,8 +74,8 @@ async fn openai_stream_is_saved_with_usage() {
     assert_eq!(req.header("accept"), Some("text/event-stream"));
     assert_eq!(
         req.header("user-agent"),
-        None,
-        "no User-Agent towards AI providers (v1.8)"
+        Some("xexam-ai-service/0.8"),
+        "the default User-Agent names the service (v1.9)"
     );
     assert_eq!(req.body["messages"][0]["role"], json!("system"));
     assert!(req.body["messages"][0]["content"]

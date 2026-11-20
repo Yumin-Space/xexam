@@ -1,0 +1,95 @@
+# Xexam on different machines — MACHINE 2: the main backend (question banks, accounts, study records; Rust + SQLite).
+# Use this file together with docker-compose.frontend.yml (machine 1) and docker-compose.ai-service.yml (machine 3). Full guide: docs/en/deployment.md, section 12.
+# The backend never calls ai-service: the frontend asks it to check every AI request (/internal/ai/auth) and ai-service reports
+# its state to it, so ai-service needs to reach this machine, and this machine needs no address of ai-service.
+#
+# On this machine, create a file named .env next to this file (the template is .env.example) with at least:
+#       XEXAM_BACKEND_BIND=10.0.0.2:8765       # this machine's private address; the frontend's XEXAM_BACKEND_UPSTREAM points here
+#       XEXAM_FRONTEND_PEERS=10.0.0.1          # the frontend machine
+#       XEXAM_INTERNAL_TOKEN=...               # openssl rand -hex 32; the same value on the ai-service machine
+#       XEXAM_ALLOWED_HOSTS=xexam.example.com  # the host name browsers use; it is checked here, Nginx forwards it unchanged
+#   Start:   docker compose -f docker-compose.backend.yml up -d         (in a clone: -f docker/docker-compose.backend.yml)
+#   Update:  docker compose -f docker-compose.backend.yml pull && docker compose -f docker-compose.backend.yml up -d
+#
+# ⚠️ Do not run `docker compose down -v`: -v also deletes the data volume xexam_backend_data (question banks, users, records).
+
+name: xexam
+
+services:
+  backend:
+    image: docker.io/yuminspace/xexam-backend:latest
+    container_name: xexam-backend
+    restart: unless-stopped
+    environment:
+      # Not set = the default, the host's time zone (/etc/localtime is mounted below):
+      # TZ:  (the host's)
+      # Or: TZ:  UTC
+      TZ:
+      # Empty = the default, Xexam opens only as localhost / 127.0.0.1:
+      # XEXAM_ALLOWED_HOSTS:  (empty)
+      # Or: XEXAM_ALLOWED_HOSTS:  xexam.example.com / xexam.example.com,192.168.1.20
+      XEXAM_ALLOWED_HOSTS: "${XEXAM_ALLOWED_HOSTS:-}"
+      # Empty = the default; needed only when a reverse proxy rewrites the Host to the origin server:
+      # XEXAM_ALLOWED_ORIGINS:  (empty)
+      # Or: XEXAM_ALLOWED_ORIGINS:  https://xexam.example.com
+      XEXAM_ALLOWED_ORIGINS: "${XEXAM_ALLOWED_ORIGINS:-}"
+      # Empty = the default, the Host is checked:
+      # XEXAM_ALLOW_ANY_HOST:  0
+      # Or: XEXAM_ALLOW_ANY_HOST:  1 (only when authentication is already in front)
+      XEXAM_ALLOW_ANY_HOST: "${XEXAM_ALLOW_ANY_HOST:-0}"
+      # Empty = the default, at most 30 seconds to read one Excel file:
+      # XEXAM_PARSE_TIMEOUT_SECS:  30
+      # Or: XEXAM_PARSE_TIMEOUT_SECS:  60
+      XEXAM_PARSE_TIMEOUT_SECS: "${XEXAM_PARSE_TIMEOUT_SECS:-30}"
+      # Not set = the default, the SQLite WAL journal:
+      # XEXAM_SQLITE_JOURNAL:  (WAL)
+      # Or: XEXAM_SQLITE_JOURNAL:  delete (only for a network filesystem or a Windows folder bind-mounted into Docker)
+      XEXAM_SQLITE_JOURNAL:
+      # Not set = the default, the cookie gets Secure when the request came over HTTPS:
+      # XEXAM_COOKIE_SECURE:  (follows the request)
+      # Or: XEXAM_COOKIE_SECURE:  1 (always Secure; only when Xexam is always reached over HTTPS)
+      XEXAM_COOKIE_SECURE:
+      # Not set or empty = the default log filter:
+      # XEXAM_LOG:  info
+      # Or: XEXAM_LOG:  debug
+      XEXAM_LOG:
+      # Required on separate machines (there is no shared volume to hold a random one). The same value on the backend and the
+      # ai-service machines: the output of openssl rand -hex 32 (at least 32 printable ASCII characters, no spaces).
+      XEXAM_INTERNAL_TOKEN: "${XEXAM_INTERNAL_TOKEN:?set XEXAM_INTERNAL_TOKEN in .env, the same value on the backend and ai-service machines (for example the output of openssl rand -hex 32)}"
+      # 1 = the backend does not start unless the token above is set and valid (never a random fallback):
+      XEXAM_INTERNAL_TOKEN_REQUIRED: "1"
+      # Required: the frontend machine's address (or addresses / CIDRs, separated by commas or spaces). Only these peers (and
+      # loopback) may use this backend; everything else gets 404, and forwarded address headers are believed from them only:
+      # XEXAM_FRONTEND_PEERS:  10.0.0.1
+      # Or: XEXAM_FRONTEND_PEERS:  10.0.0.1,10.0.0.0/24
+      XEXAM_FRONTEND_PEERS: "${XEXAM_FRONTEND_PEERS:?set XEXAM_FRONTEND_PEERS in .env to the frontend machine's address, for example 10.0.0.1}"
+    volumes:
+      # backend_data: the question banks, accounts and study records (xexam.db); deleting or updating the container does not lose them
+      - backend_data:/data
+      # Follow the host's time zone (read only). Docker shares the host's clock anyway; this only gives the same zone.
+      # create_host_path: false = on a host without /etc/localtime, Compose stops with "bind source path does not exist"
+      # instead of creating an empty folder there (which cannot be mounted over the image's file). On such a host, remove
+      # these six lines (here and under ai-service) and set TZ in .env instead.
+      - type: bind
+        source: /etc/localtime
+        target: /etc/localtime
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      # Required: the PRIVATE address of this machine and the port, never 0.0.0.0 on a machine that has a public address.
+      # Docker publishes ports around ufw / firewalld, so XEXAM_FRONTEND_PEERS above is the check that counts.
+      # XEXAM_BACKEND_BIND:  10.0.0.2:8765
+      - "${XEXAM_BACKEND_BIND:?set XEXAM_BACKEND_BIND in .env to this machine's private address and port, for example 10.0.0.2:8765}:8765"
+    stop_grace_period: 15s
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    # Docker keeps container logs without any limit by default; keep at most 3 files of 10 MB per container
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  backend_data:

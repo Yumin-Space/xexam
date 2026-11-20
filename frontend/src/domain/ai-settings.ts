@@ -2,10 +2,12 @@
 // service enforces everything; this only decides what the page shows and sends. v1.3:
 //   · connections: the form of one connection (name, provider, address, keys), its save body (key fields: absent = keep,
 //     null = remove, string = set), the host a key reuse must be confirmed for, the result line of a save or a test;
-//   · the status cards, the six model slots (the model each uses, the "unusable" warning: nothing is switched on its own),
+//   · the status cards, the seven model slots (the model each uses, the "unusable" warning: nothing is switched on its own),
 //     the merged model list grouped by connection;
 //   · the safety limits form and the retention days; why ai-service is not connected (the status panel);
 //   · which listed models are probably not chat models; the category tabs; the per-user request counts.
+// v1.9: a connection can be switched off (`enabled`), the slot `study` is split into `hint` and `explain`, every model row has its
+//   own feature switch, one global pacing setting (`pace*`), and the safety limits are shown in seven sub-tabs.
 import type {
   AiConnection, AiConnectionSave, AiFeatureKey, AiFormat, AiGatewayAuth, AiKeySlot, AiModelList, AiPoolModel, AiProvider, AiService,
   AiSettings, AiSlot, AiTestAnswer, ModelRef,
@@ -270,7 +272,9 @@ export type LimitKey =
   | 'genWrongMulti' | 'genCallTokens' | 'genRunning' | 'importMaxMb' | 'importMaxQuestions'
   | 'genMaxCalls' | 'importMaxCalls' | 'recognizeMaxCalls' | 'genUnlimited' | 'importUnlimited'
   // v1.3: sharing of hints / explanations, the chunks of a big bank, the summary size, the site-wide daily budget
-  | 'studyShare' | 'studyShareDays' | 'genMaxChunks' | 'summaryMaxItems' | 'dailyTokenBudget';
+  | 'studyShare' | 'studyShareDays' | 'genMaxChunks' | 'summaryMaxItems' | 'dailyTokenBudget'
+  // v1.9: one pacing setting for AI generation and import calls (the provider's own rate limit)
+  | 'paceOn' | 'paceRpm' | 'paceTpm';
 /** The values of the limits; a key the service did not send falls back to its default where it is read */
 export type LimitValues = Partial<Record<LimitKey, number>>;
 export type LimitRanges = Partial<Record<LimitKey, [number, number]>>;
@@ -291,11 +295,14 @@ export const GEN_KEYS: readonly LimitKey[] = ['genPerDay', 'genAdminsExempt', 'g
 export const IMPORT_KEYS: readonly LimitKey[] = ['importMaxMb', 'importMaxQuestions', 'importMaxCalls', 'recognizeMaxCalls', 'importUnlimited'];
 /** The group "Server" */
 export const SERVER_KEYS: readonly LimitKey[] = ['perUserRunning', 'globalRunning', 'genRunning'];
+/** v1.9: the provider rate limit (shown in the Server sub-tab) */
+export const PACE_KEYS: readonly LimitKey[] = ['paceOn', 'paceRpm', 'paceTpm'];
 /** The "AI banks" tab keeps the content rules only */
 export const CONTENT_KEYS: readonly LimitKey[] = ['genMinSource', 'genMinWrong', 'genBankSingle', 'genBankMulti', 'genWrongSingle', 'genWrongMulti'];
 /** What the safety tab shows (its Reset fills these defaults) */
 export const AS_KEYS: readonly LimitKey[] = [
   ...CALLS_KEYS, ...CHAT_KEYS, ...LENGTH_KEYS, ...SHARE_KEYS, ...SUMMARY_KEYS, 'dailyTokenBudget', ...GEN_KEYS, ...IMPORT_KEYS, ...SERVER_KEYS,
+  ...PACE_KEYS,
 ];
 /** Every key of the limits row */
 export const LIMIT_KEYS: readonly LimitKey[] = [...AS_KEYS, ...CONTENT_KEYS];
@@ -310,6 +317,7 @@ export const DEFAULT_LIMITS: Record<LimitKey, number> = {
   genWrongMulti: 6, genCallTokens: 20000, genRunning: 2, importMaxMb: 20, importMaxQuestions: 100, genMaxCalls: 15, importMaxCalls: 25, recognizeMaxCalls: 20,
   genUnlimited: 1, importUnlimited: 1,
   studyShare: 1, studyShareDays: 180, genMaxChunks: 8, summaryMaxItems: 40, dailyTokenBudget: 0,
+  paceOn: 1, paceRpm: 15, paceTpm: 250000,
 };
 export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
   callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], callsAdminsExempt: [0, 1], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
@@ -319,6 +327,7 @@ export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
   importMaxMb: [1, 20], importMaxQuestions: [1, 300], genMaxCalls: [8, 40], importMaxCalls: [8, 40], recognizeMaxCalls: [8, 40],
   genUnlimited: [0, 1], importUnlimited: [0, 1],
   studyShare: [0, 1], studyShareDays: [7, 3650], genMaxChunks: [1, 50], summaryMaxItems: [10, 70], dailyTokenBudget: [0, 100000000],
+  paceOn: [0, 1], paceRpm: [1, 10000], paceTpm: [1000, 100000000],
 };
 
 export type LimitsForm = Record<LimitKey, string>;
@@ -407,6 +416,46 @@ export function limitsUpdate(saved: LimitValues, form: LimitsForm): LimitValues 
   }
   return u;
 }
+
+/** What the service really enforces of the typed provider limits: 90 % of each, and the even gap between two requests in seconds */
+export function paceEffective(rpm: number, tpm: number): { rpm: number; tpm: number; sec: number } {
+  const r = Math.max(1, Math.floor((rpm * 9) / 10));
+  const tk = Math.max(1000, Math.floor((tpm * 9) / 10));
+  return { rpm: r, tpm: tk, sec: Math.round(600 / r) / 10 };
+}
+
+// ---------------------------------------------------------------- the sub-tabs of the safety tab (v1.9)
+
+/** The seven sub-tabs of AI safety, in the order of the row */
+export const SAFETY_SUBS = ['caps', 'chat', 'study', 'summary', 'gen', 'import', 'server'] as const;
+export type SafetySub = (typeof SAFETY_SUBS)[number];
+
+/** The limits each sub-tab shows (together exactly AS_KEYS, each once) */
+export const SUB_KEYS: Record<SafetySub, readonly LimitKey[]> = {
+  caps: [...CALLS_KEYS, 'dailyTokenBudget', ...LENGTH_KEYS],
+  chat: CHAT_KEYS,
+  study: SHARE_KEYS,
+  summary: SUMMARY_KEYS,
+  gen: GEN_KEYS,
+  import: IMPORT_KEYS,
+  server: [...SERVER_KEYS, ...PACE_KEYS],
+};
+
+/** The sub-tab that shows a limit, or null for a key of no sub-tab (the AI banks tab keeps the content rules) */
+export function subOfKey(k: LimitKey): SafetySub | null {
+  return SAFETY_SUBS.find((sub) => SUB_KEYS[sub].includes(k)) ?? null;
+}
+
+/** The sub-tab a location hash names (`#/ai-settings?tab=safety&sub=server`); a missing or unknown value is null */
+export function subOfHash(hash: string): SafetySub | null {
+  const q = hash.indexOf('?');
+  if (q < 0) return null;
+  const v = new URLSearchParams(hash.slice(q + 1)).get('sub');
+  return (SAFETY_SUBS as readonly string[]).includes(v ?? '') ? (v as SafetySub) : null;
+}
+
+/** The hash of a safety sub-tab */
+export const hashOfSafety = (sub: SafetySub): string => `#/ai-settings?tab=safety&sub=${sub}`;
 
 // ---------------------------------------------------------------- the category tabs (FB-6, AS-9)
 
@@ -645,7 +694,27 @@ export function keyLine(c: Pick<AiConnection, 'provider' | 'keys'>): Array<{ slo
 
 // ---------------------------------------------------------------- status cards, slots and the merged model list (v1.3)
 
-export const SLOTS: readonly AiSlot[] = ['default', 'chat', 'study', 'summary', 'generate', 'import'];
+export const SLOTS: readonly AiSlot[] = ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'];
+
+/** A connection counts as on unless the service says `enabled: false` (an older service sends nothing) */
+export const connOn = (c: Pick<AiConnection, 'enabled'>): boolean => c.enabled !== false;
+
+/** A connection that is on and broken or whose key cannot be read (a connection that is off is never a problem) */
+export const connBad = (c: AiConnection): boolean => connOn(c) && (c.status === 'broken' || c.keys.apiKey.unreadable || c.keys.gatewayKey.unreadable);
+
+/** The connections split into the two groups of the list, each in the server's order */
+export function connGroups(s: Pick<AiSettings, 'connections'>): { on: AiConnection[]; off: AiConnection[] } {
+  return { on: s.connections.filter(connOn), off: s.connections.filter((c) => !connOn(c)) };
+}
+
+/** The global feature switch a model row carries (the default row has none) */
+export const slotFeature = (slot: AiSlot): AiFeatureKey | null => (slot === 'default' ? null : slot);
+
+/** Whether a slot's feature is switched on (the default slot has no switch: always on) */
+export function slotOn(s: Pick<AiSettings, 'featureSwitches'>, slot: AiSlot): boolean {
+  const f = slotFeature(slot);
+  return f == null || s.featureSwitches[f] !== false;
+}
 
 export interface StatusCard {
   id: 'main' | 'conn' | 'model' | 'features';
@@ -675,12 +744,16 @@ export function statusCards(s: AiSettings): StatusCard[] {
     : s.state === 'paused'
       ? (s.pauseReason === 'keyProblem' ? card('main', 'error', 'ai.set.card.main.pausedKey') : card('main', 'warn', 'ai.set.card.main.pausedNoRoute'))
       : s.state === 'setup' ? card('main', 'off', 'ai.set.card.main.setup') : card('main', 'off', 'ai.set.card.main.off');
-  const bad = s.connections.filter((c) => c.status === 'broken' || c.keys.apiKey.unreadable || c.keys.gatewayKey.unreadable).length;
+  // Only connections that are on count; one that is off is not a problem
+  const onConns = s.connections.filter(connOn);
+  const bad = onConns.filter((c) => c.status === 'broken' || c.keys.apiKey.unreadable || c.keys.gatewayKey.unreadable).length;
   const conn = !s.connections.length ? card('conn', 'off', 'ai.set.card.conn.none')
-    : bad ? card('conn', 'warn', 'ai.set.card.conn.someBad', { n: s.connections.length, bad })
-      : card('conn', 'ok', 'ai.set.card.conn.allOk', { n: s.connections.length });
+    : bad ? card('conn', 'warn', 'ai.set.card.conn.someBad', { n: onConns.length, bad })
+      : onConns.length < s.connections.length ? card('conn', 'ok', 'ai.set.card.conn.someOff', { n: s.connections.length, on: onConns.length })
+        : card('conn', 'ok', 'ai.set.card.conn.allOk', { n: s.connections.length });
   const def = slotModel(s, 'default');
   const model = !def ? card('model', 'off', 'ai.set.card.model.none')
+    : !connOnById(s, def.connectionId) ? card('model', 'warn', 'ai.set.card.model.off', { conn: def.connectionName, model: def.model })
     : defaultUnusable(s) ? card('model', 'warn', 'ai.set.card.model.bad', { conn: def.connectionName, model: def.model })
       : card('model', 'ok', 'ai.set.card.model.value', { conn: def.connectionName, model: def.model });
   const off = (Object.keys(s.featureSwitches) as AiFeatureKey[]).filter((k) => !s.featureSwitches[k]);
@@ -689,11 +762,23 @@ export function statusCards(s: AiSettings): StatusCard[] {
 }
 
 /** The line under a slot row: its own model is unusable and the default stands in, or nothing can be used at all */
-export type SlotNote = { kind: 'fallback'; conn: string } | { kind: 'noRoute' } | null;
+export type SlotNote = { kind: 'connOff'; conn: string } | { kind: 'fallback'; conn: string } | { kind: 'noRoute' } | null;
+
+/** Whether the connection with this id is on (an unknown id counts as on: the pool lists only existing connections) */
+export const connOnById = (s: Pick<AiSettings, 'connections'>, id: number): boolean => {
+  const c = s.connections.find((x) => x.id === id);
+  return c == null || connOn(c);
+};
 
 export function slotNote(s: AiSettings, slot: AiSlot): SlotNote {
   const own = slotModel(s, slot);
   const st = s.slots[slot];
+  // v1.9: the model the row really calls sits on a connection that is off (its own, or the default it follows): the call fails
+  if (own && !connOnById(s, own.connectionId)) return { kind: 'connOff', conn: own.connectionName };
+  if (!own && slot !== 'default') {
+    const def = slotModel(s, 'default');
+    if (def && !connOnById(s, def.connectionId)) return { kind: 'connOff', conn: def.connectionName };
+  }
   if (st.using == null) {
     // The default slot with nothing chosen yet is "not set up", not a problem
     if (slot === 'default' && !own) return null;
@@ -726,6 +811,7 @@ export interface ModelGroup {
 export function modelGroups(list: AiModelList | null, s: Pick<AiSettings, 'pool' | 'connections'>, query: string): ModelGroup[] {
   const out: ModelGroup[] = [];
   for (const c of s.connections) {
+    if (!connOn(c)) continue;
     const listed = list?.connections.find((x) => x.id === c.id);
     const byId = new Map<string, { id: string; context: number | null; inPool: boolean }>();
     for (const m of listed?.models ?? []) byId.set(m.id, { id: m.id, context: m.context, inPool: m.poolId != null && m.status === 'ok' });
@@ -742,7 +828,7 @@ export function modelGroups(list: AiModelList | null, s: Pick<AiSettings, 'pool'
   return out;
 }
 
-/** The model preselected for the first AI+ switch-on: the first likely chat model of the first working connection */
+/** The model preselected for the first AI+ switch-on: the first likely chat model of the first working connection that is on */
 export function firstChoice(list: AiModelList | null, s: Pick<AiSettings, 'pool' | 'connections'>): ModelRef | null {
   for (const g of modelGroups(list, s, '')) {
     if (g.status !== 'ok' || !g.models.length) continue;
@@ -752,9 +838,9 @@ export function firstChoice(list: AiModelList | null, s: Pick<AiSettings, 'pool'
   return null;
 }
 
-/** The pool models a deleted connection's default can move to: tested models of the other working connections */
+/** The pool models a deleted connection's default can move to: tested models of the other working connections that are on */
 export function newDefaultChoices(s: Pick<AiSettings, 'pool' | 'connections'>, deleting: number): AiPoolModel[] {
-  const ok = new Set(s.connections.filter((c) => c.id !== deleting && c.status === 'ok').map((c) => c.id));
+  const ok = new Set(s.connections.filter((c) => c.id !== deleting && c.status === 'ok' && connOn(c)).map((c) => c.id));
   return s.pool.filter((m) => ok.has(m.connectionId) && m.status === 'ok');
 }
 

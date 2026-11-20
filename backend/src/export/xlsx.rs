@@ -6,7 +6,7 @@
 //! What cannot round-trip is accepted: option or item text that itself looks like an option or number line, a hotspot
 //! choice that contains `/ ( ) ; ,`, a note that contains parentheses, text that holds a recognised `【…】` heading, and a
 //! sheet name that had to be changed for Excel (its questions then get new ids on a re-import).
-use super::{xml_text, ExportBank, ExportError};
+use super::{xml_text, ExportBank, ExportError, Langs};
 use crate::models::{Answer, Kind, Question, Zh};
 use std::collections::HashSet;
 use std::io::{Cursor, Write};
@@ -310,7 +310,20 @@ fn row_xml(row: usize, cells: &[String; 6], cut: &mut bool) -> String {
     s
 }
 
-fn sheet_xml(questions: &[Question], first: bool, cut: &mut bool) -> String {
+/// The six cells of `q` with the columns of unticked languages emptied (A and D English, B and E Chinese, C and F Japanese).
+pub fn question_cells_for(q: &Question, langs: Langs) -> [String; 6] {
+    let mut cells = question_cells(q);
+    for (on, cols) in [(langs.en, [0, 3]), (langs.zh, [1, 4]), (langs.ja, [2, 5])] {
+        if !on {
+            for c in cols {
+                cells[c].clear();
+            }
+        }
+    }
+    cells
+}
+
+fn sheet_xml(questions: &[Question], langs: Langs, first: bool, cut: &mut bool) -> String {
     let mut s = String::new();
     s.push_str(XML_DECL);
     s.push_str(&format!(r#"<worksheet xmlns="{NS_MAIN}">"#));
@@ -325,7 +338,7 @@ fn sheet_xml(questions: &[Question], first: bool, cut: &mut bool) -> String {
     let header: [String; 6] = HEADER.map(str::to_string);
     s.push_str(&row_xml(1, &header, cut));
     for (i, q) in questions.iter().enumerate() {
-        s.push_str(&row_xml(i + 2, &question_cells(q), cut));
+        s.push_str(&row_xml(i + 2, &question_cells_for(q, langs), cut));
     }
     s.push_str("</sheetData></worksheet>");
     s
@@ -410,8 +423,13 @@ fn workbook_rels(sheet_count: usize) -> String {
     s
 }
 
-/// The whole workbook.
+/// The whole workbook with all three languages.
 pub fn write_xlsx(bank: &ExportBank) -> Result<Vec<u8>, ExportError> {
+    write_xlsx_langs(bank, Langs::ALL)
+}
+
+/// The whole workbook; the header row is always complete, the cells of unticked languages are empty.
+pub fn write_xlsx_langs(bank: &ExportBank, langs: Langs) -> Result<Vec<u8>, ExportError> {
     let mut cut = false;
     // A bank without sheets still gets one worksheet (the header row only)
     let (names, sheets): (Vec<String>, Vec<&[Question]>) = if bank.sheets.is_empty() {
@@ -445,7 +463,7 @@ pub fn write_xlsx(bank: &ExportBank) -> Result<Vec<u8>, ExportError> {
     for (i, questions) in sheets.iter().enumerate() {
         put(
             &format!("xl/worksheets/sheet{}.xml", i + 1),
-            &sheet_xml(questions, i == 0, &mut cut),
+            &sheet_xml(questions, langs, i == 0, &mut cut),
         )?;
     }
     if cut {

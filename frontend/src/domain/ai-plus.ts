@@ -4,6 +4,7 @@
 import type { Role } from '../types/api.ts';
 import type { AiStatus } from '../state/ai.ts';
 import { badgeState } from './badge-state.ts';
+import { featureOffKey } from './ai-off.ts';
 import { offList, readFeatures, type FeatureKey, type Features } from './ai-features.ts';
 
 // ---------------------------------------------------------------- visibility (spec 7.2)
@@ -13,7 +14,7 @@ export type AiPlusReason = 'loading' | 'suspended' | 'off' | 'down' | 'unavailab
 export type AiPlusView =
   /** `features` is present only while some feature is switched off (FP-3), so a plain usable view stays `{ show, usable }` */
   | { show: false }
-  | { show: true; usable: true; features?: Features }
+  | { show: true; usable: true; features?: Features; admin?: true }
   | { show: true; usable: false; reason: AiPlusReason };
 
 /**
@@ -34,8 +35,11 @@ export function aiPlusView(i: { role: Role; service: boolean; status: AiStatus }
   });
   if (b.kind === 'none') return { show: false };
   if (b.kind === 'off') return { show: true, usable: false, reason: b.reason };
-  const features = ready && i.role !== 'admin' ? readFeatures(st.features) : null;
-  return features && offList(features).length > 0 ? { show: true, usable: true, features } : { show: true, usable: true };
+  // v1.9: the global feature switches apply to administrators too, so their view carries the features as well
+  const features = ready ? readFeatures(st.features) : null;
+  // `admin` is carried only with `features` (it only picks the wording of the switched-off tip)
+  const admin = i.role === 'admin' ? ({ admin: true } as const) : {};
+  return features && offList(features).length > 0 ? { show: true, usable: true, features, ...admin } : { show: true, usable: true };
 }
 
 // ---------------------------------------------------------------- control state (view + row-level reasons)
@@ -81,7 +85,7 @@ export function controlState(view: AiPlusView, extra: ExtraReason | null = null,
     return { show: true, usable: false, reason: r, tag: r !== 'loading', tip };
   }
   if (feature && view.features && view.features[feature] === false) {
-    return { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOff' } };
+    return { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: featureOffKey(view.admin === true) } };
   }
   if (extra) return { show: true, usable: false, reason: extra, tag: false, tip: { key: WHY_KEY[extra] } };
   return { show: true, usable: true };

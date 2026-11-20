@@ -1,6 +1,7 @@
 //! Configuration: `XEXAM_*` environment variables and command-line arguments. Based on `server.py main()` and `docs/zh-CN/history/migration-plan.md` §3.
 use crate::database::journal::{JournalMode, JOURNAL_ENV};
 use crate::security::parse_allowed_hosts;
+use crate::security::peers::{parse_peers, PeerList};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -27,6 +28,13 @@ pub struct Config {
     /// `X-Real-IP` and `X-Geo-*`, so they are trusted from any peer. Without it they are trusted only from a loopback peer
     /// (see `activity::trusts_forwarded`); a standalone run records the connecting address.
     pub behind_proxy: bool,
+    /// `XEXAM_FRONTEND_PEERS` (v1.9): the frontend addresses allowed to connect when the services run on different
+    /// machines. Unset = any peer (see `security::peers`).
+    pub frontend_peers: PeerList,
+    /// Warnings found while reading `XEXAM_FRONTEND_PEERS`, logged once at start.
+    pub peer_warnings: Vec<String>,
+    /// `XEXAM_INTERNAL_TOKEN_REQUIRED=1` (v1.9): start only when `XEXAM_INTERNAL_TOKEN` is set and valid.
+    pub internal_token_required: bool,
 }
 
 pub const MAX_UPLOAD: usize = 20 * 1024 * 1024;
@@ -110,6 +118,7 @@ impl Config {
                 .unwrap_or(false)
         };
         let any = flag("XEXAM_ALLOW_ANY_HOST");
+        let (frontend_peers, peer_warnings) = parse_peers(get("XEXAM_FRONTEND_PEERS").as_deref());
         let mut hosts: HashSet<String> = ["localhost", "127.0.0.1", "::1"]
             .iter()
             .map(|s| s.to_string())
@@ -141,6 +150,9 @@ impl Config {
                 .filter(|s| !s.trim().is_empty())
                 .map(PathBuf::from),
             behind_proxy: flag("XEXAM_BEHIND_PROXY"),
+            frontend_peers,
+            peer_warnings,
+            internal_token_required: flag("XEXAM_INTERNAL_TOKEN_REQUIRED"),
         }
     }
 
@@ -167,6 +179,20 @@ mod link_dir_tests {
             },
             "0.0.0".to_string(),
         )
+    }
+
+    #[test]
+    fn the_v19_split_host_settings_default_to_today() {
+        let c = cfg(&[]);
+        assert!(!c.frontend_peers.is_restricted());
+        assert!(c.peer_warnings.is_empty());
+        assert!(!c.internal_token_required);
+        let c = cfg(&[
+            ("XEXAM_FRONTEND_PEERS", "10.9.9.9"),
+            ("XEXAM_INTERNAL_TOKEN_REQUIRED", "1"),
+        ]);
+        assert_eq!(c.frontend_peers.len(), 1);
+        assert!(c.internal_token_required);
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v1.8 → v1.9**（000000 节；从 v1.6 或 v1.7 升级也一样，它们的 AI schema 都是 8）：单机的 `docker-compose.yml` 不需要任何必须的改动；AI 数据库在启动时先做副本 `backups/xexam-ai-schema8-<日期时间>.db`，再升级到 schema 9；主数据库不变。新增可选变量和三个按机器拆分的 compose 文件（见 [deployment.md](deployment.md) 第 12 节）。回滚需要恢复这个副本（000000.4 节）。
 > - **v1.5 → v1.6**（00000 节）：主数据库升到 schema 10（只增不改：`users.can_download_banks`，默认关），在写好备份副本后自动完成；AI 数据库仍是 schema 8，自动加上列 `model_slots.effort`。不需要新的 `docker-compose.yml`，卷不变。
 > - **v1.3 → v1.4**（0000 节）：主数据库升到 schema 9，AI 数据库升到 schema 8，各自在写好备份副本后自动完成（只增不改：最后活动的几列，以及外部所在地查询的表）。**Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`）：第一次启动 v1.4 之前，先把 `xexam_data` 复制到 `xexam_backend_data`，否则 Xexam 会以空数据库启动。回退到 v1.3 时重新使用 `xexam_data`；AI 数据库需要把它的备份副本放回去（0000.4 节）。
 > - **v1.2 → v1.3**（第 000 节）：建议使用新的 `docker-compose.yml`（为真实访客地址增加 `tunnel` 网络和可选的 `cloudflared` 服务）；主数据库升到 schema 8，AI 数据库升到 schema 7，各自在写好自己的备份副本之后自动进行。主数据库回退不需要恢复；AI 数据库需要把它的副本放回去（第 000.4 节）。
@@ -22,6 +23,32 @@
 > **从更早的版本直接升级到 v1.0**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 4）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v1.0 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `1.0`，ai-service 创建的数据库是 schema 4。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
+
+## 000000. 从 v1.8 升级到 v1.9
+
+这一节编号为 000000，因为它是最新的一节。旧的各节编号不变。从 v1.6 和 v1.7 升级的步骤相同：它们的 AI schema 都是 8。
+
+### 000000.1 有什么变化
+
+- **AI 数据库**在新 ai-service 第一次启动时，从 schema 8 升级到 **schema 9**，只做一次，并先做副本 `backups/xexam-ai-schema8-<日期时间>.db`。这一步添加 `connections.enabled`（所有连接保持**启用**）和 `limits` 里三个匀速发送的列（`pace_on` 1、`pace_rpm` 15、`pace_tpm` 250 000），重建 `model_slots`（`study` 行被复制成 `hint` 和 `explain` 两行：两者都沿用原来的学习模型和思考强度），并把已保存的 Gemma 思考强度改写成请求相同的 Google 系列。详情见 [database.md](database.md) 的 8.2f 节。
+- **主数据库**不变。
+- **你会注意到的行为**（[usage.md](usage.md) 第 17.10 节）：功能开关改成每行模型一个，对管理员同样生效；AI 出题和 AI 导入的匀速发送默认开启（每分钟 15 次请求、250 000 tokens，实际用 90%）；**AI 安全**分成七个子页；**Gemma** 思考按钮没有了；发往 AI 服务商的请求重新带上 `xexam-ai-service/<版本>` 作为 `User-Agent`，除非设成 `XEXAM_AI_USER_AGENT_NAME=none`（v1.8 的行为）。
+- **Compose**：单机不需要任何改动。新的变量（`XEXAM_FRONTEND_PEERS`、`XEXAM_INTERNAL_TOKEN_REQUIRED`、`XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM`、`XEXAM_NGINX_RESOLVER`）和 `docker-compose.frontend.yml`、`docker-compose.backend.yml`、`docker-compose.ai-service.yml` 只在把服务分到不同机器上运行时才有用。
+
+### 000000.2 升级
+
+1. **备份两个数据卷**（先停止，做法同 [README](../../README/README.zh-CN.md) 的升级一节）。
+2. `docker compose pull`，然后 `docker compose up -d`。
+
+### 000000.3 升级后的检查
+
+- `/api/info` 和 **关于 Xexam** 页面显示 `1.9`；ai-service 日志里有 `Upgraded the AI database to schema 9` 和它写下的副本。
+- **AI 设置** 里每个连接都有开关（已启用），除 **默认** 外每一行模型都有开关；**提示** 和 **解析** 是两行，模型和原来的 **学习** 行相同。
+
+### 000000.4 回滚到 v1.8
+
+- **主数据库**：不需要恢复。
+- **AI 数据库**：v1.8 的 ai-service 不接受 schema 9（`written by a newer ai-service`）。停止整套服务，按 [database.md](database.md) 的 8.4 节把 `backups/xexam-ai-schema8-<日期时间>.db` 恢复到 AI 卷里（删掉 `xexam-ai.db-wal` 和 `xexam-ai.db-shm`），把三个镜像改成 `:v1.8`，运行 `docker compose up -d`。升级之后写入的设置、对话和用量不在副本里，会丢失。
 
 ## 00000. 从 v1.5 升级到 v1.6
 

@@ -167,6 +167,11 @@ impl JobRow {
         // and the local count of answer choices disagree (A-OWNER-70)
         let found = m.get("total").cloned().unwrap_or(Value::Null);
         m.insert("found".into(), found);
+        // true only while the job is queued / running AND waiting for the provider's quota (`set_rate_wait`)
+        m.insert(
+            "waiting".into(),
+            json!(active && p.get("rateWait").and_then(Value::as_bool) == Some(true)),
+        );
         m.insert("made".into(), json!(self.made));
         m.insert("goal".into(), json!(self.goal));
         m.insert("calls".into(), json!(self.attempts));
@@ -380,6 +385,24 @@ pub fn update_payload(
     )
 }
 
+/// Marks (or clears) `payload.rateWait`, the transient "waiting for the provider's quota" flag. Atomic in SQL (no
+/// read-modify-write of the payload) and it never bumps `updated_at`. Only a queued / running job is marked.
+pub fn set_rate_wait(tx: &Transaction, id: i64, on: bool) -> rusqlite::Result<usize> {
+    if on {
+        tx.execute(
+            "UPDATE tasks SET payload = json_set(payload, '$.rateWait', json('true'))
+             WHERE id = ?1 AND state IN ('queued', 'running')",
+            [id],
+        )
+    } else {
+        tx.execute(
+            "UPDATE tasks SET payload = json_remove(payload, '$.rateWait')
+             WHERE id = ?1 AND json_type(payload, '$.rateWait') IS NOT NULL",
+            [id],
+        )
+    }
+}
+
 /// The confirm of an import: charged, phase writing, state queued again, `started_at` = now.
 pub fn confirm(tx: &Transaction, id: i64, now: i64) -> rusqlite::Result<usize> {
     tx.execute(
@@ -515,6 +538,50 @@ mod tests {
     }
 
     #[test]
+    fn the_rate_wait_flag_is_atomic_transient_and_shown_only_while_active() {
+        let (_d, s) = store();
+        let p = json!({"source": "bank", "name": "n", "from": ["Garden"]});
+        let id = s
+            .write(|tx| insert(tx, &new_job(1, "k1", &p, true)))
+            .expect("insert");
+        let before = s.read(|c| get(c, id)).expect("get").expect("row");
+        assert_eq!(before.to_json()["waiting"], json!(false));
+        assert_eq!(s.write(|tx| set_rate_wait(tx, id, true)).expect("on"), 1);
+        let on = s.read(|c| get(c, id)).expect("get").expect("row");
+        assert_eq!(on.to_json()["waiting"], json!(true));
+        // the other payload keys and `updated_at` are untouched
+        assert_eq!(on.payload["name"], json!("n"));
+        assert_eq!(on.updated_at, before.updated_at);
+        assert_eq!(s.write(|tx| set_rate_wait(tx, id, false)).expect("off"), 1);
+        let off = s.read(|c| get(c, id)).expect("get").expect("row");
+        assert!(off.payload.get("rateWait").is_none());
+        assert_eq!(off.to_json()["waiting"], json!(false));
+        assert_eq!(off.updated_at, before.updated_at);
+        // clearing a flag that is not set changes nothing; a finished job is not marked and never reads as waiting
+        assert_eq!(s.write(|tx| set_rate_wait(tx, id, false)).expect("off"), 0);
+        s.write(|tx| set_rate_wait(tx, id, true)).expect("on");
+        s.write(|tx| {
+            finish(
+                tx,
+                id,
+                &End {
+                    state: "done",
+                    error: None,
+                    charged: true,
+                    result: Some(&json!({"bankId": 5})),
+                    seen: false,
+                },
+                NOW,
+            )
+        })
+        .expect("finish");
+        let done = s.read(|c| get(c, id)).expect("get").expect("row");
+        assert_eq!(done.state, "done");
+        assert_eq!(done.to_json()["waiting"], json!(false));
+        assert_eq!(s.write(|tx| set_rate_wait(tx, id, true)).expect("no"), 0);
+    }
+
+    #[test]
     fn one_active_job_per_user_is_a_database_rule() {
         let (_d, s) = store();
         let p = json!({"source": "bank", "name": "n"});
@@ -615,6 +682,7 @@ mod tests {
                 "taken",
                 "approx",
                 "found",
+                "waiting",
                 "made",
                 "goal",
                 "calls",

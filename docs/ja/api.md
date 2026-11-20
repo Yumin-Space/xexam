@@ -499,6 +499,16 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 - **`POST /api/attempt`**：同じ保存の繰り返し（同じ `key`、`startedAt`、種類）は何も書かず、最初の応答に `"duplicate": true` を加えて返します。
 - **`GET /api/bank`**、**`GET /api/banks`**：応答に `ETag` と `Cache-Control: private, no-cache` が付き、一致する `If-None-Match` には本文なしの `304` を返します。
 
+### 公開ルートへの v1.9 の追加 *(v1.9)*
+
+**`GET` / `HEAD /api/banks/download?id=<int>&format=xlsx|docx[&langs=en,zh,ja]`** に任意の `langs` が加わりました。
+
+- **形式**：カンマ区切りで、各トークンは小文字の `en`、`zh`、`ja` のいずれかそのまま。トークンは 1〜3 個で、空のトークンも重複もなく、パラメーターは 1 回だけ。それ以外（`langs=`、`fr`、`zh,zh`、`ZH`、`zh,,en`、`langs` の二重指定）は **400** `请求的格式不对。` で、問題集の検索より前に判定され、アクティビティの行は書かれません。
+- **指定なし = 3 言語すべて**：ファイル名もバイト列も v1.8 とまったく同じです。
+- **`xlsx`** は 6 列をそのままにして、選ばれていない言語のセルを空にします（見出し行は常にすべて入ります。`en` を外すとそのファイルは再インポートできません）。**`docx`** には選ばれた言語だけが、必ず英語、中国語、日本語の順で入ります。
+- **ファイル名**：3 言語すべてなら `<stem>.<ext>`、一部なら `<stem>_<codes>.<ext>` で、コードは en、zh、ja の順に `-` でつなぎます（例：`Garden_en-zh.docx`）。ASCII の代替名は `xexam-bank-<id>_<codes>.<ext>` です。
+- **アクティビティ**：`bank.download` の詳細は `{"format", "langs": ["en", "zh", "ja"]（選ばれた部分をこの順で）, "sheets", "questions"}` です。
+
 ## 5. AI のルート（`/api/ai/*`、v0.8）
 
 `/api/ai/` の下のルートには、バックエンドではなく ai-service（`ai-service` コンテナ、イメージ `xexam-ai-service`）が応えます。Nginx はこうしたリクエストをすべて、まずバックエンドの認証ステップ（第 6 節）に送り、バックエンドが許可したときだけ、ブラウザの Cookie を除き、代わりにバックエンドの署名付きの本人確認の文（`X-Xexam-Identity`）を付けて渡します。そのため、クライアントはほかのルートとまったく同じように呼び出します：同じオリジンで、セッションの Cookie を付けて。本人確認を自分で設定することはできません（Nginx がこのヘッダーを常に上書きします）。
@@ -563,8 +573,9 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | POST | `/api/ai/admin/connections/test` | 管理者 | `{"id": <id>}` | `Settings` |
 | POST | `/api/ai/admin/connections/delete` | 管理者 | `{"id": <id>, "force"?, "newDefault"?}` | `Settings` |
 | POST | `/api/ai/admin/connections/order` | 管理者 | `{"ids": [<id>, …]}` | `Settings` |
+| POST | `/api/ai/admin/connections/enabled` | 管理者 | `{"id": <id>, "enabled": <bool>}` | `{"settings": Settings}` *(v1.9。5.11 節)* |
 | POST | `/api/ai/admin/models/pick` | 管理者 | `{"slot", "connectionId", "model", "manual"?}` または `{"slot", "clear": true}` | `Settings`。テストに失敗したときは `{"ok": false, "code", …}` |
-| POST | `/api/ai/admin/models/effort` | 管理者 | `{"slot", "effort": null \| {"family", "level"}}`（v1.6。`family`：`anthropic`、`openai`、`google`、`responses`、`gemma`。`null` = 既定で何も送らない） | `{"settings": Settings}`（`slots.<slot>.effort` と `effortLevels` を含む）。システムログの `ai.settings.effort` |
+| POST | `/api/ai/admin/models/effort` | 管理者 | `{"slot", "effort": null \| {"family", "level"}}`（v1.6。`family`：`anthropic`、`openai`、`google`、`responses`（`gemma` は v1.9 で廃止され、400 になります）。`null` = 既定で何も送らない） | `{"settings": Settings}`（`slots.<slot>.effort` と `effortLevels` を含む）。システムログの `ai.settings.effort` |
 | POST | `/api/ai/admin/models/test` | 管理者 | `{"connectionId": <id>, "model": "…"}` | `Settings` |
 | POST | `/api/ai/admin/models/remove` | 管理者 | `{"poolId": <id>}` | `Settings` |
 | POST | `/api/ai/admin/feature-switches` | 管理者 | `chat`、`hint`、`explain`、`summary`、`generate`、`import` のいずれか（真偽値） | `Settings` |
@@ -577,7 +588,7 @@ v0.5 からは、どの問題にも最後にキーが 1 つ追加されます。
 | GET | `/api/ai/admin/chat` | 管理者 | `?user=<ユーザーの id>&id=<チャットの id>` | `{"chat": ChatSummary, "messages": [Message]}`、**監査あり**。チャットはそのユーザーのものでなければならない（そうでなければ 404 で、監査の行なし） |
 | POST | `/api/ai/admin/clear` | 管理者 | `{"userId": <id>, "what": "chat", "chatId": <id>}`、または `{"userId": <id>, "what": "chats" \| "memories"}`、または `{"what": "shared"}` のみ（v1.3：共有のヒント・解説） | `{"deleted": <n>}`、**監査あり** |
 | GET | `/api/ai/admin/limits` | 管理者 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
-| POST | `/api/ai/admin/limits` | 管理者 | 33 の上限のキーのどれか（下の `admin/limits` と **機能のキーと上限** を参照）、整数 | GET と同じ |
+| POST | `/api/ai/admin/limits` | 管理者 | 36 の上限のキーのどれか（下の `admin/limits` と **機能のキーと上限** を参照）、整数 | GET と同じ |
 | GET | `/api/ai/admin/geo` | Admin | | 外部所在地照会の設定（*v1.4*、5.9 節） |
 | POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | 下書き、または `{}` | 5.9 節 |
 
@@ -757,6 +768,8 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.modelMissing` | 400 | 先にモデルを選んでください。 |
 | `ai.badRetention` | 400 | 保存期間は 1〜3650 日です。 |
 | `ai.limitRange` | 400 | 上限が、その範囲の整数ではありません（`field`）。 |
+| `ai.connectionOff` | 409 | 機能・既定・チャットの選択が使う AI 接続がオフです（v1.9）。 |
+| `ai.gen.providerDaily` | ジョブのエラー | プロバイダーの 1 日の利用枠を使い切ったため、ジョブは停止し、課金されませんでした（v1.9）。 |
 | `ai.interrupted` | （保存される） | 回答の作成中にサービスが再起動しました。 |
 | `ai.up.auth` | 502 | AI プロバイダーがキーを拒否しました。 |
 | `ai.up.quota` | 502 | AI アカウントのクレジットまたは利用枠が残っていません。 |
@@ -887,7 +900,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 見るかもしれない状態コード：`ai.gen.quota`（429、1 日の生成枠を使い切った。`Retry-After` が付く）、`ai.gen.busy`（409、同じユーザーのほかのジョブが実行中。`job` は `null` のことがある）、`ai.gen.aiSource`（422、AI 問題集は元にできない）、`ai.featureOff`（403、そのユーザーではその機能がオフ）、`ai.gen.forbidden`（403、ジョブの待機中に権限が失われた）、`ai.suspended`（403、そのユーザーでは AI が一時停止中）。
 
-**機能のキーと上限。** `GET /api/ai/status` と `POST /api/ai/admin/features` は、6 つの `features` キー（`chat`、`hint`、`explain`、`summary`、`generate`、`import`）を持ちます。v1.3 から、`hint` と `explain` は 1 つのスイッチ（**AI ヒント+解説**）です：ページは 2 つを常に同じ値で送り、サーバーも 2 つを同じ値に保ちます（片方だけを変えるリクエストは両方を変えます）。`GET` と `POST /api/ai/admin/limits` は 33 のキーを持ちます：v1.0 の 10 個、生成のキー（`genPerDay`、`genAdminsExempt`、`genMinSource`、`genMinWrong`、`genBankSingle`、`genBankMulti`、`genWrongSingle`、`genWrongMulti`、既定 20000 の `genCallTokens`（1000〜250000 トークン）、既定 15 の `genMaxCalls`）、既定 25 の `importMaxCalls`、既定 20 の `recognizeMaxCalls`（1 つのファイルの認識ステップで AI を呼び出せる最大数）、`genRunning`、既定 20 の `importMaxMb`、既定 100（1〜300）の `importMaxQuestions`。呼び出しの上限はどちらも 8〜40 で、管理者を含め全員に適用されます。v1.3 の 6 つのキー：`callsAdminsExempt`（0 か 1、既定 1：管理者はユーザーごとの呼び出し上限の対象外で、呼び出しは引き続き記録されます）、`studyShare`（0 か 1、既定 1）、`studyShareDays`（7〜3650、既定 180）、`genMaxChunks`（1〜50、既定 8）、`summaryMaxItems`（10〜70、既定 40）、`dailyTokenBudget`（0〜100000000、既定 0 = オフ）。
+**機能のキーと上限。** `GET /api/ai/status` と `POST /api/ai/admin/features` は、6 つの `features` キー（`chat`、`hint`、`explain`、`summary`、`generate`、`import`）を持ちます。v1.3 から v1.8 までは `hint` と `explain` が 1 つのスイッチでしたが、**v1.9 から 6 つの全体スイッチは独立しています**（片方だけを変えるリクエストは、その片方だけを変えます。ユーザー管理のユーザーごとのビットは従来どおり連動します）。`GET` と `POST /api/ai/admin/limits` は 36 のキーを持ちます（v1.9 で `paceOn`、`paceRpm`、`paceTpm` が加わりました。5.11 節）：v1.0 の 10 個、生成のキー（`genPerDay`、`genAdminsExempt`、`genMinSource`、`genMinWrong`、`genBankSingle`、`genBankMulti`、`genWrongSingle`、`genWrongMulti`、既定 20000 の `genCallTokens`（1000〜250000 トークン）、既定 15 の `genMaxCalls`）、既定 25 の `importMaxCalls`、既定 20 の `recognizeMaxCalls`（1 つのファイルの認識ステップで AI を呼び出せる最大数）、`genRunning`、既定 20 の `importMaxMb`、既定 100（1〜300）の `importMaxQuestions`。呼び出しの上限はどちらも 8〜40 で、管理者を含め全員に適用されます。v1.3 の 6 つのキー：`callsAdminsExempt`（0 か 1、既定 1：管理者はユーザーごとの呼び出し上限の対象外で、呼び出しは引き続き記録されます）、`studyShare`（0 か 1、既定 1）、`studyShareDays`（7〜3650、既定 180）、`genMaxChunks`（1〜50、既定 8）、`summaryMaxItems`（10〜70、既定 40）、`dailyTokenBudget`（0〜100000000、既定 0 = オフ）。
 
 **内部経路**（`/internal/*`、バックエンドと ai-service の間、トークンが必要）：`/internal/ai/gen/source`、`/internal/ai/gen/seeds`、`/internal/ai/gen/create`（10 MiB の本文を受け付ける唯一の経路。ほかの内部経路は 64 KiB のまま）、`/internal/ai/gen/lookup`、`/internal/ai/import/check`。
 
@@ -925,7 +938,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | `GET models?refresh=` | 使えるすべての接続のモデル（10 分キャッシュ） |
 | `POST models/pick`、`models/test`、`models/remove` | スロットへのモデル割り当て（先にテスト）、1 件のテスト、プールからの削除（`ai.modelInUse`） |
 | `POST enable` | `{"enabled", "default"}`。スロットが空の間は既定モデルが必須で、テストされます |
-| `POST feature-switches` | `chat`、`hint`、`explain`、`summary`、`generate`、`import` の任意のもの。一般ユーザーのみ。`hint` と `explain` は常に一緒に変わります |
+| `POST feature-switches` | `chat`、`hint`、`explain`、`summary`、`generate`、`import` の任意のもの。管理者を含む全員が対象（v1.9）。各キーは単独で変わります |
 | `GET/POST limits` | v1.2 の上限と `callsAdminsExempt`、`studyShare`、`studyShareDays`、`genMaxChunks`、`summaryMaxItems`、`dailyTokenBudget`。`importMaxQuestions` は 1〜300（既定 100） |
 | `GET usage` | `byConnection`、`shared`（行数、命中数）、`budget` も |
 | `POST clear` | スコープ `shared` も |
@@ -978,6 +991,18 @@ Cloudflare の所在地ヘッダーに代わる任意の手段です（[deployme
 
 **送信されないもの**：IPv4 では `0.0.0.0/8`、`10/8`、`100.64/10`、`127/8`、`169.254/16`、`172.16/12`、`192.0.0/24`、`192.0.2/24`、`192.168/16`、`198.18/15`、`198.51.100/24`、`203.0.113/24`、マルチキャスト、`240/4`（およびその `::ffff:` 形式）。IPv6 では `2000::/3` の外すべてと、`2001::/23`、`2001:db8::/32`、`2002::/16`、`3fff::/20`（コード `refused`）。
 
+
+### 5.11 接続のスイッチ、機能ごとのスイッチ、安全上限のグループ、送信間隔 *(v1.9)*
+
+- **`POST /api/ai/admin/connections/enabled`**（管理者）。ボディは正確に `{"id": <正の整数>, "enabled": <真偽値>}`。キーが欠けている、型が違う、余分なキーがある場合は 400 `ai.badRequest`、存在しない id は 404 `ai.notFound`。200 で `{"settings": Settings}` を返し、変更がなかったときも同じです。オフにしても、接続のすべての設定・キー・プールのモデルは残りますが、すべての選択肢とルーティングから外れます。接続の `rev` は増えず、実行中の呼び出しは取り消されず、ハートビートがすぐに送られます。アクティビティのイベントは `ai.settings.connectionOn` または `ai.settings.connectionOff`（対象：接続名、詳細 `{"provider", "host"}`）。オフの接続でも `connections/test` は使えます。
+- **`enabled`** は、Settings オブジェクトの `connections[]` の各要素と、`GET /api/ai/admin/models` の各接続にある真偽値です。オフの接続はそこで `{"id", "name", "provider", "status", "enabled": false, "listed": false, "error": null, "models": []}` として返り、プロバイダーへの呼び出しもキャッシュの読み出しもありません。
+- **`ai.connectionOff`（409）** は代替への切り替えの代わりです。オフの接続への選択（`models/pick`、既定の選択を伴う `admin/enable`、`chat/model`）はこれで拒否され、保存済みまたは指定された選択がオフの接続にある送信・再生成・編集・再試行、そしてスロット（または従う既定）がオフの接続にある学習・まとめ・問題作成・インポートの呼び出しも、これで失敗します。保存された選択は残ります（`chats.pick_conn` は変わりません）。
+- **スロット**：Settings オブジェクトの `slots` は 7 つのキーで、順に `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import` です（`study` はなくなり、`models/pick` と `models/effort` では 400 です）。`explain` は成績・記録の解析も担当します。`effortLevels` のキーは `anthropic`、`openai`、`google`、`responses` の 4 つです。
+- **機能スイッチ**：`POST feature-switches` のボディ（6 つのキーの任意の部分集合）は同じですが、各キーは単独で変わり、オフにした機能は**管理者を含む全員**が使えません。実行中の呼び出しは全員分取り消され、新しいリクエストは 403 `ai.featureOff` を返します。管理者向けの `GET /api/ai/status` の `features` は全体のスイッチを反映します（ユーザーごとのビットは管理者には適用されず、`hint` と `explain` は連動したままです）。
+- **上限**：`admin/limits` は 36 のキーで、v1.8 の 33 に加えて末尾に `paceOn`（0 または 1、既定 1）、`paceRpm`（1〜10 000、既定 15）、`paceTpm`（1 000〜100 000 000、既定 250 000）があります。範囲外は 400 `ai.limitRange`（`field` 付き）。`genUnlimited` と `importUnlimited` を変えてもこれらは変わりません。実効値は 90 %（15 なら 1 分に 13 リクエスト、250 000 なら 225 000 Token）で、呼び出しを 60 秒のスライディングウィンドウの中で均等に（60 / 13 秒、約 4.6 秒ごとに）送り、各呼び出しの Token は送る前に見積もり、並列数は収まるように減ります。対象は AI 問題作成と AI インポートだけです。
+- **プロバイダーからの 429**：レート制限の応答は、プロバイダーが示す時間だけ待って再試行します（1 回の呼び出しにつき最大 10 回。エラーとは数えず、`paceOn` が 0 でも常に有効）。1 日の利用枠を使い切ると、ジョブエラー `ai.gen.providerDaily`（課金なし）で停止します。画面には **AI プロバイダーの 1 日の利用枠を使い切ったため停止しました。明日もう一度試すか、管理者にモデルの変更を依頼してください。** と表示されます。
+- **ジョブの `waiting`**：すべてのジョブオブジェクト（`/api/ai/gen/job`、`/api/ai/admin/gen`、インポートの応答）に `"waiting": bool` があり、ジョブが待機中または実行中で、プロバイダーの利用枠を待っているあいだだけ true です。画面は 8 秒後に **利用枠の回復を待っています…** を表示します。
+- **新しい文言**（`error`。中国語で、画面は言語ごとの文言を表示します）：`ai.connectionOff` 这个功能使用的 AI 连接未启用，请联系管理员。 `ai.gen.providerDaily` AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。
 
 ## 6. 内部ルート（`/internal/*`、v0.8）
 
@@ -1188,6 +1213,12 @@ AI のルートだけが変わり、どの変更も追加か既定値です。�
 - **構造化出力**：問題の形の回答は、構造化出力（json_schema）を求め（Anthropic は `output_config.format`、OpenAI 互換は `response_format`、Responses は `text.format`）、拒否されたら通常のリクエストに戻ります（接続ごとに記憶）。問題は `answer` フィールドに正解を一度だけ書き、従来の `correct` の形も読めます。
 - **所在地の再照会**：外部 API への切り替えと、外部 API のままの設定の保存の後に、場所のない保存済みのアドレスをバックグラウンドで照会します（アドレスごとに 1 回、1 分 30 回、レート制限で 15 分休止、最大 3 回）。
 - **バージョン**：`GET /api/info` は `"version": "1.6"` を返し、AI サービスの `/healthz` も同じです。
+
+### v1.9 での変更（v1.8 との比較）
+
+- **追加**：`POST /api/ai/admin/connections/enabled`、接続の `enabled`、`ai.connectionOff`（409）と `ai.gen.providerDaily`、ジョブオブジェクトの `waiting`、`GET /api/banks/download` の `langs`。
+- **変更**：スロットは 7 つ（`study` を `hint` と `explain` に分割）、思考の強さの系統は 4 つ（`gemma` を廃止、400）、機能の全体スイッチは独立して管理者にも有効、`admin/limits` は 36 のキー、`bank.download` のアクティビティ詳細に `langs`。
+- **データベース**：AI データベースは起動時にバックアップのコピーを作ってからスキーマ 9 へ移行します（[database.md](database.md) の 8.2f 節）。メインのデータベースと、上に書いていない公開ルートは変わりません。
 
 ## 8. 呼び出し例
 

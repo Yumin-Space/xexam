@@ -25,6 +25,8 @@ test('importView: hidden / service reasons (tag) / feature off (tag) / busy and 
   assert.ok(paused.show && !paused.usable && paused.reason === 'paused' && paused.tag);
   const off = importView({ view: 'featureOff' }, gen(), false);
   assert.ok(off.show && !off.usable && off.reason === 'featureOff' && off.tag && off.key === 'ai.err.featureOff');
+  const offAdmin = importView({ view: 'featureOff', admin: true }, gen(), false);
+  assert.ok(offAdmin.show && !offAdmin.usable && offAdmin.key === 'ai.err.featureOffAdmin');
   const down = importView({ view: 'unavailable', reason: 'down' }, gen(), false);
   assert.ok(down.show && !down.usable && down.reason === 'down' && down.tag);
   const loading = importView({ view: 'unavailable', reason: 'loading' }, gen(), false);
@@ -116,6 +118,15 @@ test('cardLines: every row of IM-6', () => {
   assert.equal(r2?.kind, 'readingStep');
   assert.deepEqual(r2?.bar, { mode: 'determinate', pct: 50 });
   assert.deepEqual(r2?.lines[0], { key: 'aigen.imp.card.readingStep', params: { done: 2, total: 4 } });
+
+  // v1.9: waiting for the provider's quota adds a muted second line (reading, reading step, writing), never at confirm / saving
+  const rw = cardLines(job({ waiting: true }), null);
+  assert.deepEqual(rw?.lines.map((l) => l.key), ['aigen.imp.card.reading', 'aigen.card.waiting', 'aigen.card.leave']);
+  assert.equal(rw?.lines[1]?.muted, true);
+  assert.deepEqual(cardLines(job({ waiting: true, read: { done: 2, total: 4 } }), null)?.lines.map((l) => l.key), ['aigen.imp.card.readingStep', 'aigen.card.waiting', 'aigen.card.leave']);
+  assert.deepEqual(cardLines(job({ waiting: true, phase: 'writing', mode: 'questions', made: 1, goal: 5 }), null)?.lines.map((l) => l.key), ['aigen.imp.card.writingQ', 'aigen.card.waiting', 'aigen.card.leave']);
+  assert.ok(!cardLines(job({ waiting: false, phase: 'writing', mode: 'questions', made: 1, goal: 5 }), null)?.lines.some((l) => l.key === 'aigen.card.waiting'));
+  assert.ok(!cardLines(job({ waiting: true, phase: 'saving' }), null)?.lines.some((l) => l.key === 'aigen.card.waiting'));
 
   const cq = cardLines(job({ phase: 'confirm', mode: 'questions', goal: 45, confirmBy: 7 }), null, at);
   assert.equal(cq?.kind, 'confirm');

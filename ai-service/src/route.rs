@@ -15,12 +15,13 @@ use std::collections::HashMap;
 /// The wire format of a route's requests (`settings::Format`).
 pub type WireFormat = Format;
 
-/// The six model slots. `Default` is the model every other slot falls back to.
+/// The seven model slots. `Default` is the model every other slot falls back to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Slot {
     Default,
     Chat,
-    Study,
+    Hint,
+    Explain,
     Summary,
     Generate,
     Import,
@@ -28,21 +29,23 @@ pub enum Slot {
 
 impl Slot {
     /// Every slot, in the order of `store::conn::SLOT_NAMES`.
-    pub const ALL: [Slot; 6] = [
+    pub const ALL: [Slot; 7] = [
         Slot::Default,
         Slot::Chat,
-        Slot::Study,
+        Slot::Hint,
+        Slot::Explain,
         Slot::Summary,
         Slot::Generate,
         Slot::Import,
     ];
 
-    /// `default | chat | study | summary | generate | import`
+    /// `default | chat | hint | explain | summary | generate | import`
     pub fn as_str(self) -> &'static str {
         match self {
             Slot::Default => "default",
             Slot::Chat => "chat",
-            Slot::Study => "study",
+            Slot::Hint => "hint",
+            Slot::Explain => "explain",
             Slot::Summary => "summary",
             Slot::Generate => "generate",
             Slot::Import => "import",
@@ -58,21 +61,23 @@ impl Slot {
         match self {
             Slot::Default => 0,
             Slot::Chat => 1,
-            Slot::Study => 2,
-            Slot::Summary => 3,
-            Slot::Generate => 4,
-            Slot::Import => 5,
+            Slot::Hint => 2,
+            Slot::Explain => 3,
+            Slot::Summary => 4,
+            Slot::Generate => 5,
+            Slot::Import => 6,
         }
     }
 }
 
 impl crate::features::Feature {
-    /// The model slot a feature uses: hint and explanation share `study`.
+    /// The model slot a feature uses: hint and explanation each have their own (explain also serves result and record analysis).
     pub fn slot(self) -> Slot {
         use crate::features::Feature;
         match self {
             Feature::Chat => Slot::Chat,
-            Feature::Hint | Feature::Explain => Slot::Study,
+            Feature::Hint => Slot::Hint,
+            Feature::Explain => Slot::Explain,
             Feature::Summary => Slot::Summary,
             Feature::Generate => Slot::Generate,
             Feature::Import => Slot::Import,
@@ -187,6 +192,14 @@ pub struct Route {
     pub effort: Option<Effort>,
 }
 
+/// A slot's own model, as far as the resolver is concerned.
+enum Own {
+    Empty,
+    Off,
+    Unusable,
+    Ready(Route),
+}
+
 /// What the resolver needs to know about the keys of one connection (never key material).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct KeyState {
@@ -202,9 +215,9 @@ pub struct View {
     pub conns: Vec<ConnRow>,
     pub pool: Vec<PoolRow>,
     /// Pool id of each slot, in [`Slot::ALL`] order
-    pub slots: [Option<i64>; 6],
+    pub slots: [Option<i64>; 7],
     /// Thinking strength of each slot, in [`Slot::ALL`] order
-    pub efforts: [Option<Effort>; 6],
+    pub efforts: [Option<Effort>; 7],
     pub keys: HashMap<i64, KeyState>,
 }
 
@@ -219,7 +232,7 @@ impl View {
 
     /// The connection can serve calls: not broken, and the keys its provider needs are saved and readable.
     pub fn conn_usable(&self, c: &ConnRow) -> bool {
-        if c.status == "broken" {
+        if !c.enabled || c.status == "broken" {
             return false;
         }
         let Some(provider) = Provider::parse(&c.provider) else {
@@ -272,15 +285,27 @@ impl View {
         })
     }
 
-    /// The route of a slot's own pool model, when it is set and usable.
-    fn slot_route(&self, slot: Slot, fallback: Fallback) -> Option<Route> {
-        let id = (*self.slots.get(slot.index())?)?;
-        let m = self.pool_row(id)?;
-        if !self.model_usable(m) {
-            return None;
+    /// What a slot's own model amounts to: nothing set, on a connection that is off, set but unusable, or ready.
+    fn own(&self, slot: Slot, fallback: Fallback) -> Own {
+        let Some(id) = self.slots.get(slot.index()).copied().flatten() else {
+            return Own::Empty;
+        };
+        let Some(m) = self.pool_row(id) else {
+            return Own::Empty;
+        };
+        let Some(c) = self.conn(m.connection_id) else {
+            return Own::Unusable;
+        };
+        if !c.enabled {
+            return Own::Off;
         }
-        let c = self.conn(m.connection_id)?;
-        self.route_of(c, &m.model, Some(m), fallback)
+        if !self.model_usable(m) {
+            return Own::Unusable;
+        }
+        match self.route_of(c, &m.model, Some(m), fallback) {
+            Some(r) => Own::Ready(r),
+            None => Own::Unusable,
+        }
     }
 
     /// The pick of an administrator: a usable connection and any model of it (a model outside the pool is allowed).
@@ -293,22 +318,32 @@ impl View {
         self.route_of(c, &p.model, row, Fallback::None)
     }
 
-    /// pick -> the slot's model -> the default slot's model -> `ai.disabled`. Nothing else, ever.
+    /// pick -> the slot's model -> the default slot's model -> `ai.disabled`. Nothing else, ever. A choice (pick, own
+    /// model or the default a slot follows) that sits on a connection which is switched off is kept and fails with
+    /// `ai.connectionOff`: no fallback, no silent drop.
     pub fn resolve(&self, slot: Slot, pick: Option<&Pick>) -> Result<Route, ApiError> {
         let effort = self.efforts[slot.index()];
         let mut dropped = false;
         if let Some(p) = pick {
+            if self.conn(p.connection_id).is_some_and(|c| !c.enabled) {
+                return Err(ApiError::connection_off());
+            }
             if let Some(mut r) = self.pick_route(p) {
                 r.effort = effort;
                 return Ok(r);
             }
             dropped = true;
         }
-        let found = self.slot_route(slot, Fallback::None).or_else(|| {
-            (slot != Slot::Default)
-                .then(|| self.slot_route(Slot::Default, Fallback::Default))
-                .flatten()
-        });
+        let found = match self.own(slot, Fallback::None) {
+            Own::Ready(r) => Some(r),
+            Own::Off => return Err(ApiError::connection_off()),
+            Own::Empty | Own::Unusable if slot == Slot::Default => None,
+            Own::Empty | Own::Unusable => match self.own(Slot::Default, Fallback::Default) {
+                Own::Ready(r) => Some(r),
+                Own::Off => return Err(ApiError::connection_off()),
+                Own::Empty | Own::Unusable => None,
+            },
+        };
         match found {
             Some(mut r) => {
                 r.pick_dropped = dropped;
@@ -324,7 +359,7 @@ impl View {
         self.resolve(slot, None).is_ok()
     }
 
-    /// `true` when at least one of the six slots resolves.
+    /// `true` when at least one of the seven slots resolves.
     pub fn any(&self) -> bool {
         Slot::ALL.iter().any(|s| self.exists(*s))
     }
@@ -359,6 +394,7 @@ mod tests {
             created_at: 0,
             updated_at: 0,
             updated_by: String::new(),
+            enabled: true,
         }
     }
 
@@ -395,8 +431,8 @@ mod tests {
                 model(11, 1, "demo-large", "ok"),
                 model(20, 2, "demo-claude", "ok"),
             ],
-            slots: [Some(10), None, Some(20), None, None, None],
-            efforts: [None; 6],
+            slots: [Some(10), None, Some(20), None, None, None, None],
+            efforts: [None; 7],
             keys: HashMap::new(),
         };
         v.keys.insert(1, keys(false, false, true));
@@ -411,10 +447,10 @@ mod tests {
         let lo = Effort::new(EffortFamily::Anthropic, "low");
         let md = Effort::new(EffortFamily::Google, "MEDIUM");
         let mut v = view();
-        // default: md, chat: hi (falls back to the default model), study: lo (own model), summary: none
-        v.efforts = [md, hi, lo, None, None, None];
+        // default: md, chat: hi (falls back to the default model), hint: lo (own model), summary: none
+        v.efforts = [md, hi, lo, None, None, None, None];
         // own model: the slot's effort
-        let r = v.resolve(Slot::Study, None).expect("study");
+        let r = v.resolve(Slot::Hint, None).expect("study");
         assert_eq!((r.fallback, r.effort), (Fallback::None, lo));
         // Default fallback: the requested slot's effort, not Default's
         let r = v.resolve(Slot::Chat, None).expect("chat");
@@ -450,8 +486,10 @@ mod tests {
         }
         assert_eq!(Slot::parse("Default"), None);
         use crate::features::Feature;
-        assert_eq!(Feature::Hint.slot(), Slot::Study);
-        assert_eq!(Feature::Explain.slot(), Slot::Study);
+        assert_eq!(Feature::Hint.slot(), Slot::Hint);
+        assert_eq!(Feature::Explain.slot(), Slot::Explain);
+        assert_eq!(Slot::parse("study"), None);
+        assert_eq!(Slot::ALL.len(), SLOT_NAMES.len());
         assert_eq!(Feature::Chat.slot(), Slot::Chat);
         assert_eq!(Feature::Summary.slot(), Slot::Summary);
         assert_eq!(Feature::Generate.slot(), Slot::Generate);
@@ -461,8 +499,8 @@ mod tests {
     #[test]
     fn slot_own_model_then_default_then_nothing() {
         let v = view();
-        // study has its own model
-        let r = v.resolve(Slot::Study, None).expect("study");
+        // hint has its own model
+        let r = v.resolve(Slot::Hint, None).expect("study");
         assert_eq!(
             (r.model.as_str(), r.fallback),
             ("demo-claude", Fallback::None)
@@ -485,7 +523,7 @@ mod tests {
         assert_eq!(r.fallback, Fallback::None);
         // no default and no own model: nothing resolves, and other pool models are never picked up
         let mut none = view();
-        none.slots = [None; 6];
+        none.slots = [None; 7];
         for s in Slot::ALL {
             assert_eq!(
                 none.resolve(s, None).err().map(|e| e.code),
@@ -502,13 +540,13 @@ mod tests {
         v.pool[0].status = "failed".into();
         assert!(v.resolve(Slot::Chat, None).is_err());
         assert!(!v.exists(Slot::Default));
-        // study still has its own model: AI is not "no route" as a whole
-        assert!(v.exists(Slot::Study));
+        // hint still has its own model: AI is not "no route" as a whole
+        assert!(v.exists(Slot::Hint));
         assert!(v.any());
         // a feature whose own model is unusable falls back to the default when that one is fine
         let mut v = view();
         v.pool[2].status = "untested".into();
-        let r = v.resolve(Slot::Study, None).expect("study");
+        let r = v.resolve(Slot::Hint, None).expect("study");
         assert_eq!(
             (r.model.as_str(), r.fallback),
             ("demo-small", Fallback::Default)
@@ -523,15 +561,12 @@ mod tests {
         // a provider that needs a key without one saved
         let mut v = view();
         v.keys.insert(2, keys(false, false, true));
-        let r = v.resolve(Slot::Study, None).expect("falls back to default");
+        let r = v.resolve(Slot::Hint, None).expect("falls back to default");
         assert_eq!(r.fallback, Fallback::Default);
         // keys sealed with another encryption key
         let mut v = view();
         v.keys.insert(2, keys(true, false, false));
-        assert_eq!(
-            v.resolve(Slot::Study, None).expect("study").connection_id,
-            1
-        );
+        assert_eq!(v.resolve(Slot::Hint, None).expect("study").connection_id, 1);
         // a gateway needs the gateway key, not the provider key
         let mut v = view();
         v.conns.push(conn(3, "gateway", "ok"));
@@ -568,7 +603,7 @@ mod tests {
         // a pick of a broken or missing connection is dropped, the slot's model is used instead
         let mut b = view();
         b.conns[0].status = "broken".into();
-        let r = b.resolve(Slot::Study, Some(&p)).expect("study");
+        let r = b.resolve(Slot::Hint, Some(&p)).expect("study");
         assert_eq!((r.model.as_str(), r.pick_dropped), ("demo-claude", true));
         let gone = Pick {
             connection_id: 99,
@@ -579,8 +614,63 @@ mod tests {
         assert_eq!(r.fallback, Fallback::Default);
         // nothing resolves even without the pick
         let mut none = view();
-        none.slots = [None; 6];
+        none.slots = [None; 7];
         assert!(none.resolve(Slot::Chat, Some(&gone)).is_err());
+    }
+
+    #[test]
+    fn off_connection_keeps_the_choice_and_fails() {
+        let code = |r: Result<Route, ApiError>| r.err().map(|e| (e.status.as_u16(), e.code));
+        // own model on an OFF connection: no fallback to the default
+        let mut v = view();
+        v.conns[1].enabled = false;
+        assert_eq!(
+            code(v.resolve(Slot::Hint, None)),
+            Some((409, "ai.connectionOff"))
+        );
+        assert!(!v.exists(Slot::Hint));
+        // the default and the slots following it are fine
+        assert!(v.exists(Slot::Default));
+        assert!(v.exists(Slot::Chat));
+        assert!(v.any());
+        assert!(!v.conn_usable(&v.conns[1]));
+        // a slot that follows a default on an OFF connection
+        let mut v = view();
+        v.conns[0].enabled = false;
+        assert_eq!(
+            code(v.resolve(Slot::Chat, None)),
+            Some((409, "ai.connectionOff"))
+        );
+        assert_eq!(
+            code(v.resolve(Slot::Default, None)),
+            Some((409, "ai.connectionOff"))
+        );
+        // hint has its own ready model: still works
+        assert!(v.exists(Slot::Hint));
+        assert!(v.any());
+        // an OFF pick is kept and fails, not dropped
+        let mut v = view();
+        v.conns[1].enabled = false;
+        let p = Pick {
+            connection_id: 2,
+            model: "demo-claude".into(),
+        };
+        assert_eq!(
+            code(v.resolve(Slot::Chat, Some(&p))),
+            Some((409, "ai.connectionOff"))
+        );
+        // the default itself on an OFF connection and an own model elsewhere: the own model wins
+        v.conns[1].enabled = true;
+        v.conns[0].enabled = false;
+        v.slots[1] = Some(20);
+        assert_eq!(v.resolve(Slot::Chat, None).expect("own").connection_id, 2);
+        // nothing at all: still plain disabled
+        let mut none = view();
+        none.slots = [None; 7];
+        assert_eq!(
+            none.resolve(Slot::Chat, None).err().map(|e| e.code),
+            Some("ai.disabled")
+        );
     }
 
     #[test]

@@ -1,6 +1,10 @@
 //! v1.6 bank download: one question bank as an Excel workbook in the import format ([`xlsx`], imports again as it is) or as
 //! a Word document for reading and printing ([`docx`]). `GET /api/banks/download` reads the bank with
 //! `Store::export_bank_as` and builds the file with [`export`] in a blocking task.
+//!
+//! v1.9: the download can be limited to some of the three languages ([`Langs`], query `langs=en,zh,ja`). Excel keeps all
+//! six columns in place and leaves the cells of unticked languages empty; Word holds only the ticked languages. A subset
+//! adds `_<codes>` to the file name.
 use crate::models::Question;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
 
@@ -85,15 +89,95 @@ impl From<zip::result::ZipError> for ExportError {
     }
 }
 
-/// Builds the file of `bank` in `format`. `now` is the creation time written into the document properties.
+/// The languages a download holds (`langs=en,zh,ja`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Langs {
+    pub en: bool,
+    pub zh: bool,
+    pub ja: bool,
+}
+
+impl Langs {
+    /// All three languages (the v1.8 download).
+    pub const ALL: Langs = Langs {
+        en: true,
+        zh: true,
+        ja: true,
+    };
+
+    /// The `langs` query value: comma-separated, each token exactly `en`, `zh` or `ja`, 1-3 tokens, no empty token and no
+    /// duplicate. Anything else (empty value, other code, upper case, repeated code) is `None`.
+    pub fn parse(s: &str) -> Option<Langs> {
+        let mut l = Langs {
+            en: false,
+            zh: false,
+            ja: false,
+        };
+        for tok in s.split(',') {
+            let slot = match tok {
+                "en" => &mut l.en,
+                "zh" => &mut l.zh,
+                "ja" => &mut l.ja,
+                _ => return None,
+            };
+            if *slot {
+                return None;
+            }
+            *slot = true;
+        }
+        Some(l)
+    }
+
+    /// True when all three languages are set.
+    pub fn is_all(self) -> bool {
+        self.en && self.zh && self.ja
+    }
+
+    /// The set codes in `en`, `zh`, `ja` order.
+    pub fn codes(self) -> Vec<&'static str> {
+        let mut v = Vec::with_capacity(3);
+        if self.en {
+            v.push("en");
+        }
+        if self.zh {
+            v.push("zh");
+        }
+        if self.ja {
+            v.push("ja");
+        }
+        v
+    }
+
+    /// The file name suffix (`en-zh`); `None` when all three are set.
+    pub fn suffix(self) -> Option<String> {
+        if self.is_all() {
+            None
+        } else {
+            Some(self.codes().join("-"))
+        }
+    }
+}
+
+/// Builds the file of `bank` in `format` with all three languages. `now` is the creation time written into the document
+/// properties.
 pub fn export(
     bank: &ExportBank,
     format: ExportFormat,
     now: jiff::Timestamp,
 ) -> Result<Vec<u8>, ExportError> {
+    export_with(bank, format, Langs::ALL, now)
+}
+
+/// Builds the file of `bank` in `format` holding only `langs`.
+pub fn export_with(
+    bank: &ExportBank,
+    format: ExportFormat,
+    langs: Langs,
+    now: jiff::Timestamp,
+) -> Result<Vec<u8>, ExportError> {
     match format {
-        ExportFormat::Xlsx => xlsx::write_xlsx(bank),
-        ExportFormat::Docx => docx::write_docx(bank, now),
+        ExportFormat::Xlsx => xlsx::write_xlsx_langs(bank, langs),
+        ExportFormat::Docx => docx::write_docx_langs(bank, langs, now),
     }
 }
 
@@ -138,9 +222,12 @@ pub fn file_stem(name: &str) -> String {
     }
 }
 
-/// `<file_stem(name)>.<ext>`
-pub fn file_name(bank: &ExportBank, format: ExportFormat) -> String {
-    format!("{}.{}", file_stem(&bank.name), format.as_str())
+/// `<file_stem(name)>.<ext>`, or `<file_stem(name)>_<codes>.<ext>` when `langs` is a subset.
+pub fn file_name(bank: &ExportBank, format: ExportFormat, langs: Langs) -> String {
+    match langs.suffix() {
+        None => format!("{}.{}", file_stem(&bank.name), format.as_str()),
+        Some(sfx) => format!("{}_{sfx}.{}", file_stem(&bank.name), format.as_str()),
+    }
 }
 
 /// RFC 5987 `attr-char`: everything else is percent-encoded in `filename*`.
@@ -159,13 +246,16 @@ const ATTR_CHAR: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'~');
 
 /// `attachment; filename="<ascii>"; filename*=UTF-8''<percent-encoded file_name>` (RFC 6266 / RFC 5987). The ASCII
-/// fallback is the file name itself when it is printable ASCII, else `xexam-bank-<id>.<ext>`.
-pub fn content_disposition(bank: &ExportBank, format: ExportFormat) -> String {
-    let name = file_name(bank, format);
+/// fallback is the file name itself when it is printable ASCII, else `xexam-bank-<id>[_<codes>].<ext>`.
+pub fn content_disposition(bank: &ExportBank, format: ExportFormat, langs: Langs) -> String {
+    let name = file_name(bank, format, langs);
     let ascii = if name.bytes().all(|b| (0x20..0x7f).contains(&b)) {
         name.clone()
     } else {
-        format!("xexam-bank-{}.{}", bank.id, format.as_str())
+        match langs.suffix() {
+            None => format!("xexam-bank-{}.{}", bank.id, format.as_str()),
+            Some(sfx) => format!("xexam-bank-{}_{sfx}.{}", bank.id, format.as_str()),
+        }
     };
     format!(
         "attachment; filename=\"{ascii}\"; filename*=UTF-8''{}",

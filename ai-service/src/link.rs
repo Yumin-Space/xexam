@@ -206,27 +206,49 @@ fn token_problem(t: &str) -> Option<&'static str> {
     }
 }
 
+/// The start error when `XEXAM_INTERNAL_TOKEN_REQUIRED=1` and no token is set.
+pub const TOKEN_REQUIRED_MISSING: &str = "XEXAM_INTERNAL_TOKEN_REQUIRED=1 but XEXAM_INTERNAL_TOKEN is not set: set the same value (at least 32 printable ASCII characters, e.g. openssl rand -hex 32) on the backend and ai-service machines";
+
+/// `XEXAM_AI_BACKEND_URL`: http or https, a host, an optional port, and nothing else (a single trailing `/` is allowed).
+fn check_backend_url(url: &str) -> Result<(), String> {
+    const BAD: &str = "XEXAM_AI_BACKEND_URL must be http:// or https:// plus the main backend's host and port, with no path (for example http://10.0.0.2:8765)";
+    let u = reqwest::Url::parse(url).map_err(|_| BAD.to_string())?;
+    let ok = matches!(u.scheme(), "http" | "https")
+        && u.host_str().is_some()
+        && matches!(u.path(), "" | "/")
+        && u.query().is_none()
+        && u.fragment().is_none()
+        && u.username().is_empty()
+        && u.password().is_none();
+    if ok {
+        Ok(())
+    } else {
+        Err(BAD.to_string())
+    }
+}
+
 impl Link {
     /// Builds the link from the configuration (takes the token out of it).
     pub fn new(cfg: &mut Config) -> Result<Link, String> {
-        if !cfg.backend_url.starts_with("http://") {
-            return Err(
-                "XEXAM_AI_BACKEND_URL must be a plain http:// address of the main backend"
-                    .to_string(),
-            );
-        }
+        check_backend_url(&cfg.backend_url)?;
         // A set but invalid XEXAM_INTERNAL_TOKEN turns the link off, like in the main backend: falling back to the file
         // would make the two services disagree about the token (and the line below would not be true). Both services
         // read it the same way: a blank value is unset (the configuration drops it), whitespace around the value is
-        // removed (`str::trim`), and the rest is checked with the backend's rules and log texts.
+        // removed (`str::trim`), and the rest is checked with the backend's rules and log texts. With
+        // XEXAM_INTERNAL_TOKEN_REQUIRED=1 a missing or invalid token stops the start instead.
+        let required = cfg.internal_token_required;
         let (env_token, off) = match cfg.internal_token.take() {
             Some(t) => match token_problem(t.trim()) {
                 None => (Some(Zeroizing::new(t.trim().to_string())), false),
+                Some(line) if required => {
+                    return Err(format!("{line} (XEXAM_INTERNAL_TOKEN_REQUIRED=1)"));
+                }
                 Some(line) => {
                     tracing::warn!("{line}");
                     (None, true)
                 }
             },
+            None if required => return Err(TOKEN_REQUIRED_MISSING.to_string()),
             None => (None, false),
         };
         let link = Link {
@@ -775,5 +797,79 @@ mod tests {
         assert!(!link.is_connected());
         link.note_verified();
         assert!(!link.is_connected());
+    }
+
+    fn link_err(pairs: &[(&str, &str)]) -> String {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        let mut cfg = Config::from_env_with(&|k| map.get(k).cloned());
+        Link::new(&mut cfg)
+            .err()
+            .expect("the link must refuse this configuration")
+    }
+
+    #[test]
+    fn a_required_token_that_is_missing_or_invalid_stops_the_start_without_the_value() {
+        let msg = link_err(&[("XEXAM_INTERNAL_TOKEN_REQUIRED", "1")]);
+        assert_eq!(msg, TOKEN_REQUIRED_MISSING);
+        let secret = "fake-secret-with a space-0123456789abcdef";
+        let msg = link_err(&[
+            ("XEXAM_INTERNAL_TOKEN_REQUIRED", "1"),
+            ("XEXAM_INTERNAL_TOKEN", secret),
+        ]);
+        assert_eq!(
+            msg,
+            format!("{NOT_PRINTABLE} (XEXAM_INTERNAL_TOKEN_REQUIRED=1)")
+        );
+        assert!(!msg.contains("fake-secret"));
+        let msg = link_err(&[
+            ("XEXAM_INTERNAL_TOKEN_REQUIRED", "true"),
+            ("XEXAM_INTERNAL_TOKEN", "short-fake"),
+        ]);
+        assert_eq!(
+            msg,
+            format!("{TOO_SHORT} (XEXAM_INTERNAL_TOKEN_REQUIRED=1)")
+        );
+        assert!(!msg.contains("short-fake"));
+        // a valid token starts normally
+        let map: HashMap<&str, String> = [
+            ("XEXAM_INTERNAL_TOKEN_REQUIRED", "1".to_string()),
+            ("XEXAM_INTERNAL_TOKEN", "a".repeat(40)),
+        ]
+        .into_iter()
+        .collect();
+        let mut cfg = Config::from_env_with(&|k| map.get(k).cloned());
+        assert!(Link::new(&mut cfg).is_ok());
+    }
+
+    #[test]
+    fn the_backend_url_may_be_http_or_https_without_a_path() {
+        for ok in [
+            "http://10.0.0.2:8765",
+            "https://backend.example.test",
+            "https://backend.example.test:8443/",
+            "http://[fd00::2]:8765",
+        ] {
+            assert!(check_backend_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "ftp://10.0.0.2",
+            "10.0.0.2:8765",
+            "http://",
+            "http://10.0.0.2/api",
+            "http://10.0.0.2:8765?x=1",
+            "http://10.0.0.2:8765#frag",
+            "http://user:pw@10.0.0.2:8765",
+            "http://user@10.0.0.2:8765",
+        ] {
+            let msg = link_err(&[("XEXAM_AI_BACKEND_URL", bad)]);
+            assert!(
+                msg.starts_with("XEXAM_AI_BACKEND_URL must be http:// or https://"),
+                "{bad}"
+            );
+            assert!(!msg.contains("pw"), "{bad}");
+        }
     }
 }

@@ -169,14 +169,14 @@ fn a_schema_6_file_upgrades_to_7_keeping_every_row() {
         .expect("master");
     assert!(!has_conn);
     drop(b);
-    // schema 8 (7 plus the geo table); each chat is one line: the path equals the old ORDER BY id list
+    // schema 9 (v1.9); each chat is one line: the path equals the old ORDER BY id list
     store
         .read(|c| {
             let v: String =
                 c.query_row("SELECT value FROM meta WHERE key = 'schema'", [], |r| {
                     r.get(0)
                 })?;
-            assert_eq!(v, "8");
+            assert_eq!(v, "9");
             for (chat, want) in [(1, vec![1, 2, 3, 4]), (2, vec![5, 6, 7, 8]), (3, vec![])] {
                 let all: Vec<i64> = data::messages(c, chat)?.iter().map(|m| m.id).collect();
                 let line: Vec<i64> = data::path(c, chat, None)?.iter().map(|m| m.id).collect();
@@ -256,7 +256,7 @@ fn a_schema_6_file_upgrades_to_7_keeping_every_row() {
                 ("demo-chat", "ok", 4096)
             );
             let slots = conn::slots(c)?;
-            assert_eq!(slots, [Some(pool[0].id), None, None, None, None, None]);
+            assert_eq!(slots, [Some(pool[0].id), None, None, None, None, None, None]);
             let enabled: i64 = c.query_row("SELECT enabled FROM settings", [], |r| r.get(0))?;
             assert_eq!(enabled, 1);
             Ok(())
@@ -302,7 +302,7 @@ fn custom_limits_stay_and_an_unconfigured_file_gets_no_connection() {
         .read(|c| {
             assert!(conn::connections(c)?.is_empty());
             assert!(conn::pool(c)?.is_empty());
-            assert_eq!(conn::slots(c)?, [None; 6]);
+            assert_eq!(conn::slots(c)?, [None; 7]);
             Ok(())
         })
         .expect("read");
@@ -350,7 +350,7 @@ fn an_upgraded_file_has_the_shape_of_a_fresh_one() {
     let slots: i64 = c
         .query_row("SELECT COUNT(*) FROM model_slots", [], |r| r.get(0))
         .expect("slots");
-    assert_eq!(slots, 6);
+    assert_eq!(slots, 7);
     assert!(!fresh.path().join("backups").exists());
     drop(c);
     assert_eq!(limits_of(fresh.path()), (100, 200, 30));
@@ -1118,7 +1118,7 @@ fn the_pool_slots_and_the_cascade_of_a_removed_connection() {
         .expect("slots");
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [Some(m1), Some(m2), None, None, Some(m3), None]
+        [Some(m1), Some(m2), None, None, None, Some(m3), None]
     );
     assert!(store
         .write(|tx| conn::set_slot(tx, "bogus", Some(m1), "root"))
@@ -1127,7 +1127,7 @@ fn the_pool_slots_and_the_cascade_of_a_removed_connection() {
     store.write(|tx| conn::remove_pool(tx, m2)).expect("remove");
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [Some(m1), None, None, None, Some(m3), None]
+        [Some(m1), None, None, None, None, Some(m3), None]
     );
     // removing the connection takes its models; the slot that pointed at one becomes empty
     store
@@ -1135,7 +1135,7 @@ fn the_pool_slots_and_the_cascade_of_a_removed_connection() {
         .expect("delete");
     assert_eq!(
         store.read(conn::slots).expect("slots"),
-        [Some(m1), None, None, None, None, None]
+        [Some(m1), None, None, None, None, None, None]
     );
     assert_eq!(store.read(conn::pool).expect("pool").len(), 1);
     // usage rows keep the id of a removed connection (no foreign key)
@@ -1667,7 +1667,7 @@ fn tokens_today_ignores_missing_counts() {
 // Limits
 
 #[test]
-fn all_33_limits_round_trip_through_their_own_columns() {
+fn all_36_limits_round_trip_through_their_own_columns() {
     let dir = tempfile::tempdir().expect("dir");
     let store = open(dir.path());
     let mut m = serde_json::Map::new();
@@ -1685,7 +1685,7 @@ fn all_33_limits_round_trip_through_their_own_columns() {
     for d in &DEFS {
         assert_eq!(back.get(d.key), l.get(d.key), "{}", d.key);
     }
-    assert_eq!(DEFS.len(), 33);
+    assert_eq!(DEFS.len(), 36);
 }
 
 #[test]
@@ -1747,7 +1747,7 @@ fn the_upgrade_to_7_pairs_hint_and_explain_and_nobody_loses_access() {
 }
 
 #[test]
-fn a_schema_7_file_with_split_hint_and_explain_bits_is_paired_at_the_next_start() {
+fn a_file_with_split_per_user_hint_and_explain_bits_is_paired_at_the_next_start() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     add_feature_users(dir.path(), &[2, 6, 4 | 1]);
@@ -1757,7 +1757,8 @@ fn a_schema_7_file_with_split_hint_and_explain_bits_is_paired_at_the_next_start(
         .expect("global");
     let store = open(dir.path());
     assert_eq!(feature_bits(dir.path()), vec![(100, 0), (101, 6), (102, 1)]);
-    assert_eq!(store.read(conn::global_features_off).expect("read"), 32);
+    // the global bits are independent since v1.9: a stored hint-only / explain-only global switch is never re-paired
+    assert_eq!(store.read(conn::global_features_off).expect("read"), 4 | 32);
 }
 
 // —— v1.3 reasoning columns ——————————————————————————————————————————————————————————————————————————————————————————
@@ -1820,7 +1821,7 @@ fn a_schema_7_file_without_the_reasoning_columns_gets_them_on_open() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "8");
+    assert_eq!(v, "9");
 }
 
 #[test]

@@ -63,6 +63,19 @@ pub async fn list(ctx: Ctx) -> Answer {
     let jobs = view.conns.iter().map(|row| {
         let view = &view;
         async move {
+            // A connection that is switched off is listed without asking the provider (and without the cache)
+            if !row.enabled {
+                return json!({
+                    "id": row.id,
+                    "name": row.name,
+                    "provider": row.provider,
+                    "status": row.status,
+                    "enabled": false,
+                    "listed": false,
+                    "error": null,
+                    "models": [],
+                });
+            }
             // (list, error code)
             let (list, error): (Option<ModelList>, Option<String>) = if row.status == "broken" {
                 (None, Some(row.error_code.clone().unwrap_or_else(|| "ai.up.auth".into())))
@@ -105,6 +118,7 @@ pub async fn list(ctx: Ctx) -> Answer {
                 "name": row.name,
                 "provider": row.provider,
                 "status": row.status,
+                "enabled": true,
                 "listed": list.as_ref().is_some_and(|l| l.listed),
                 "error": error,
                 "models": models,
@@ -164,6 +178,9 @@ pub async fn pick_into(
         .cloned()
         .filter(|c| c.status != "broken")
         .ok_or_else(ApiError::bad_model)?;
+    if !row.enabled {
+        return Err(ApiError::connection_off());
+    }
     let pool: Option<PoolRow> = view
         .pool
         .iter()
@@ -289,6 +306,7 @@ pub async fn pick(ctx: Ctx) -> Answer {
 
 /// `POST models/effort` `{"slot", "effort": null | {"family", "level"}}`: sets the thinking strength of a slot. The
 /// connection format is not checked (the choice only changes the request parameter); the slot's model is untouched.
+/// `family` is `anthropic | openai | google | responses`; the removed `gemma` family is a 400 (v1.9).
 pub async fn effort(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["slot", "effort"])?;
     let slot = match ctx.body.get("slot") {

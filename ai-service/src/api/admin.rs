@@ -79,6 +79,7 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
                     "apiKey": key_json(find(crate::secret::SecretName::ApiKey), &key_id),
                     "gatewayKey": key_json(find(crate::secret::SecretName::GatewayKey), &key_id),
                 },
+                "enabled": c.enabled,
                 "status": c.status,
                 "errorCode": c.error_code,
                 "testedAt": c.tested_at,
@@ -297,8 +298,8 @@ pub async fn enable(ctx: Ctx) -> Answer {
 }
 
 /// `POST /api/ai/admin/feature-switches` (any subset of the six keys, booleans: `true` = on): the global switches. They
-/// apply to normal users only; administrators keep every feature. Running calls of normal users stop at their next
-/// access re-check.
+/// apply to everyone, administrators included, and each key moves alone. Running calls of a feature that was just
+/// switched off stop.
 pub async fn feature_switches(ctx: Ctx) -> Answer {
     let mut set: Vec<(crate::features::Feature, bool)> = Vec::new();
     for (k, v) in &ctx.body {
@@ -318,11 +319,9 @@ pub async fn feature_switches(ctx: Ctx) -> Answer {
             after |= f.bit();
         }
     }
-    // AI hint and AI analysis are one switch: the two bits change together
-    let after = crate::features::paired(before, after);
     if after != before {
         app.0.store.write(|tx| conn::set_features_off(tx, after))?;
-        // Normal users' running calls of a feature that was just switched off stop; administrators' calls go on.
+        // Running calls of a feature that was just switched off stop, administrators' calls included.
         let newly_off = after & !before;
         if newly_off != 0 {
             app.0.registry.cancel_features(newly_off);

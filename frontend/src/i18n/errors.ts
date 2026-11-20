@@ -11,7 +11,10 @@
 //     cap named, when it frees, and for administrators where to change it. Without a usable quota it is the plain sentence.
 //   · v1.1: the AI bank codes (`ai.gen.*`, `ai.import.*`, `ai.genCount`, I18N-4 / I18N-7) become their own texts, with the
 //     numbers of the answer (`need`, `have`, `limit`, `maxMb`, `ext`) or of a job (`errorArg`): see genCodeText().
+//   · v1.9: `ai.featureOff` and `ai.connectionOff` have an administrator wording (where to turn it on); `ai.gen.providerDaily`
+//     is the provider's daily quota stopping a job.
 import { ApiError } from '../api/client.ts';
+import { connectionOffKey, featureOffKey } from '../domain/ai-off.ts';
 import { DEFAULT_LIMITS } from '../domain/ai-settings.ts';
 import { formatBig } from '../domain/usage-bars.ts';
 import type { AiCallBlock } from '../types/api.ts';
@@ -116,6 +119,11 @@ export function genCodeText(code: string, args: GenCodeArgs = {}): string | null
     case 'ai.gen.quality': return t('aigen.err.quality');
     case 'ai.gen.stopped': return t('aigen.err.stopped');
     case 'ai.gen.timeout': return t('aigen.err.timeout');
+    // v1.9: the provider's daily quota stopped a generation / import job
+    case 'ai.gen.providerDaily': return t('aigen.err.providerDaily');
+    // v1.9: administrators are told where to fix it (a switched-off feature, a connection that is not enabled)
+    case 'ai.featureOff': return t(featureOffKey(isAdminForTexts()));
+    case 'ai.connectionOff': return t(connectionOffKey(isAdminForTexts()));
     case 'ai.gen.interrupted': return t('aigen.err.interrupted');
     case 'ai.gen.save': return t('aigen.err.save');
     case 'ai.import.type': return t('aigen.imp.err.type', { ext: args.ext ? `.${args.ext.replace(/^\./, '')}` : '', types: t('aigen.imp.types') });

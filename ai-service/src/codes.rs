@@ -444,6 +444,14 @@ impl ApiError {
         ApiError::new(409, "ai.connectionInUse", "有功能正在使用这个连接。")
             .with_extra("usedBy", used_by)
     }
+    /// The connection a feature, slot or chat pick uses is switched off (409); the choice itself is kept.
+    pub fn connection_off() -> ApiError {
+        ApiError::new(
+            409,
+            "ai.connectionOff",
+            "这个功能使用的 AI 连接未启用，请联系管理员。",
+        )
+    }
     pub fn default_needed() -> ApiError {
         ApiError::new(409, "ai.defaultNeeded", "请先选择新的默认模型。")
     }
@@ -529,6 +537,10 @@ pub fn text_of(code: &str) -> &'static str {
         "ai.badName" => "连接名称需要 1 到 40 个字。",
         "ai.conflict" => "设置已被其他人修改，请刷新后重试。",
         "ai.connectionInUse" => "有功能正在使用这个连接。",
+        "ai.connectionOff" => "这个功能使用的 AI 连接未启用，请联系管理员。",
+        "ai.gen.providerDaily" => {
+            "AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。"
+        }
         "ai.defaultNeeded" => "请先选择新的默认模型。",
         "ai.modelInUse" => "有功能正在使用这个模型。",
         "ai.keyReuseConfirm" => "已保存的密钥将发送到新的地址，请确认这是你信任的服务器。",
@@ -658,6 +670,7 @@ mod tests {
                 ApiError::connection_in_use(serde_json::json!(["chat"])),
                 409,
             ),
+            (ApiError::connection_off(), 409),
             (ApiError::default_needed(), 409),
             (ApiError::model_in_use(serde_json::json!(["default"])), 409),
             (
@@ -851,6 +864,7 @@ mod tests {
             "ai.gen.tooLate",
             "ai.gen.quality",
             "ai.gen.stopped",
+            "ai.gen.providerDaily",
             "ai.gen.timeout",
             "ai.gen.interrupted",
             "ai.gen.save",

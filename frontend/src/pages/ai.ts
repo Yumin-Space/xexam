@@ -39,12 +39,13 @@ import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerStatus, editValid, emptyChat, END_PX, fmtAiTime,
-  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, modelArg, modelMenu, modelShown, regenerateLabelKey, startOf, versionInfo, whoParts,
+  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, chatMenu, chatShown, chooseValue, modelArg, pickerView, regenerateLabelKey, startOf, versionInfo, whoParts,
   isBusyElsewhere, isThinking, localSend, localStop, LOCK_MAX_WIDTH, locksDocument, MIN_MSGS_PX, noAccessKey, pollResult, readOnlyReason, questionOf,
-  sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatView, type EditState, type ViewMessage,
+  sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatDefault, type ChatMenu, type ChatView, type EditState, type ViewMessage,
 } from '../domain/ai-chat.ts';
 import { chatDisplayTitle, popTitleKey } from '../domain/ai-plus.ts';
 import { memoryBoxChars, memoryLength, memoryTokenCount, wantsMemory } from '../domain/ai-memory.ts';
+import { featureOffKey } from '../domain/ai-off.ts';
 import { shownCode } from '../domain/ai-settings.ts';
 import { aiCodeText, callLimitText, errorText } from '../i18n/errors.ts';
 import { localeTag, t, tn, uiLang } from '../i18n/index.ts';
@@ -102,10 +103,17 @@ let composing = false;
 let stopSince = 0;
 /** v1.3: the question being edited in the composer (the draft the composer held is kept for Cancel) */
 let edit: EditState | null = null;
-/** v1.3, administrators: the models of the working connections (the composer's menu), and the menu's value (`<conn>:<model>`, '' = default) */
+/** v1.3, administrators: the models of the working connections (the composer's picker), and the picked value (`<conn>:<model>`, '' = follow the default) */
 let modelList: AiModelList | null = null;
 let modelsLoading = false;
 let modelSel = '';
+/** v1.9: the picker's popover is open; the connection chosen in its first list before a model is chosen (null = none); when the
+ *  model list was last asked for (Date.now(), 0 = never) */
+let modelPop = false;
+let pendingConn: number | null = null;
+let modelsAt = 0;
+/** The last model-list read failed (cleared when a read starts or succeeds) */
+let modelsFailed = false;
 /** A version switch is under way */
 let switching = false;
 /** The administrator notice (CH-3) shows its full text instead of one line */
@@ -127,9 +135,10 @@ interface Composer {
   banner: HTMLElement;
   /** The one rounded box: the input on top, one bar under it (the model button on the left; the counter and Send on the right) */
   box: HTMLElement;
-  /** The administrators' model button (hidden for everyone else): the brain icon with the native select laid invisibly over it */
+  /** The administrators' model picker (hidden for everyone else): the brain button and, while open, its popover */
   models: HTMLElement;
-  /** The dot on the model button: a model other than the default is chosen */
+  /** v1.9: the brain button that opens the picker's popover, and the dot on it (a model other than the default is chosen; amber when its connection is off) */
+  modelBtn: HTMLButtonElement;
   modelDot: HTMLElement;
   /** The fixed footer (CH-13): the form, and the administrator notice line under it */
   dock: HTMLElement;
@@ -243,6 +252,10 @@ function resetAll(): void {
   modelList = null;
   modelsLoading = false;
   modelSel = '';
+  modelPop = false;
+  pendingConn = null;
+  modelsAt = 0;
+  modelsFailed = false;
   switching = false;
   modelSig = '';
   copyState.clear();
@@ -277,6 +290,8 @@ onRouteChange((from, to) => {
     entered = false;
     pane = null;
     pushedConv = false;
+    modelPop = false;
+    pendingConn = null;
     sendError = null;
     memEdit = null;
     memFormError = null;
@@ -330,6 +345,16 @@ function installOnce(): void {
     if (e.target instanceof Element && e.target.closest('.ai-more-wrap')) return;
     listMenu = false;
     if (onPage()) paint();
+  });
+  // The model picker's popover: a press outside it or Esc closes it (the focus returns to the brain button)
+  document.addEventListener('pointerdown', (e) => {
+    if (!modelPop || !(e.target instanceof Node)) return;
+    if (e.target instanceof Element && e.target.closest('#ai-model-pick')) return;
+    closeModelPop(true);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !modelPop || !onPage() || e.isComposing) return;
+    closeModelPop(true);
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !listMenu || !onPage()) return;
@@ -705,6 +730,7 @@ async function openChat(id: number): Promise<void> {
   detachStream();
   stopPolling();
   cancelEdit();
+  closeModelPop(false);
   suggestion = null;
   sendError = null;
   openError = null;
@@ -745,6 +771,7 @@ function newChat(): void {
   stopPolling();
   const fromList = onePane() && panesClass() === 'ai-panes on-list';
   cancelEdit();
+  closeModelPop(false);
   view = emptyChat();
   modelSel = '';
   setChatInUrl('new', fromList);
@@ -903,7 +930,8 @@ async function runStream(call: (o: StreamOptions) => Promise<void>, begin: (v: C
         sendError = null;
         void reloadChat(true);
       }
-      if (e instanceof ApiError && e.code === 'ai.badModel') void loadModels(true);
+      // The pick stays (an off connection is the administrator's to fix); the list is read again so the picker tells the truth
+      if (e instanceof ApiError && (e.code === 'ai.badModel' || e.code === 'ai.connectionOff')) void loadModels(true);
       if (e instanceof ApiError && e.code === 'ai.notFound' && view.chatId != null) {
         view = emptyChat();
         void loadChats();
@@ -1088,11 +1116,14 @@ async function switchTo(fromId: number, toId: number): Promise<void> {
 async function loadModels(force = false): Promise<void> {
   if (!isAdmin() || !full() || !aiFreeMode() || modelsLoading || (modelList && !force)) return;
   modelsLoading = true;
+  modelsFailed = false;
   try {
     modelList = await fetchModels(false);
   } catch {
     modelList = null;
+    modelsFailed = true;
   } finally {
+    modelsAt = Date.now();
     modelsLoading = false;
     if (onPage()) syncComposer();
   }
@@ -1925,11 +1956,17 @@ function makeComposer(): Composer {
   btn.type = 'submit';
   const status = h('div', { class: 'ai-status', id: 'ai-status', hidden: true });
   const banner = h('div', { class: 'ai-edit-banner', id: 'ai-edit-banner', hidden: true });
-  // The model button: a round brain icon (decoration) under the real <select>, which syncModels lays over it with opacity 0,
-  // so a phone opens its own picker; no model name is shown, a dot marks a choice other than the default
+  // The model picker (v1.9): the brain button opens a small popover with two lists (API, then model); a dot marks a choice
+  // other than the default. The popover is drawn by syncModels as a child of the wrapper, which sits inside .ai-box.
   const modelDot = h('span', { class: 'ai-model-dot', hidden: true });
-  const models = h('span', { class: 'ai-model-btn', id: 'ai-model-pick', hidden: true },
-    h('span', { class: 'ibtn ai-model-face', 'aria-hidden': 'true' }, ico('brain', 'ibtn-ic'), modelDot));
+  const modelBtn = iconButton({ icon: 'brain', label: t('ai.model.label'), onClick: () => (modelPop ? closeModelPop(true) : openModelPop()) });
+  modelBtn.id = 'ai-model-btn';
+  modelBtn.classList.add('ai-model-face');
+  modelBtn.setAttribute('aria-haspopup', 'dialog');
+  modelBtn.setAttribute('aria-expanded', 'false');
+  modelBtn.setAttribute('aria-controls', 'ai-model-pop');
+  modelBtn.append(modelDot);
+  const models = h('span', { class: 'ai-model-wrap', id: 'ai-model-pick', hidden: true }, modelBtn);
   // One rounded box: the input on top; under it one bar with the model button (left) and the counter + Send (right)
   const box = h('div', {
     class: 'ai-box',
@@ -1965,7 +2002,7 @@ function makeComposer(): Composer {
     // The border box: html.kb-open changes only the footer's bottom padding (safe area -> 8 px), which the content box misses
     dockObserver.observe(dock, { box: 'border-box' });
   }
-  return { form, input, label, count, btn, status, banner, box, models, modelDot, latest, latestText, dock, notice };
+  return { form, input, label, count, btn, status, banner, box, models, modelBtn, modelDot, latest, latestText, dock, notice };
 }
 
 function toggleNotice(): void {
@@ -2050,53 +2087,161 @@ function syncStatus(c: Composer): void {
   }
 }
 
-/** What the model menu shows now (it is redrawn only when this changes, so an open list is not closed under a finger) */
+/** What the model picker shows now (it is redrawn only when this changes, so an open list is not closed under a finger) */
 let modelSig = '';
 
-/** The model button's dot, tip and name follow the select: "Model: <name>"; the dot only for a choice other than the default */
-function markModel(c: Composer, sel: HTMLSelectElement): void {
-  c.modelDot.hidden = sel.value === '';
-  const tip = t('ai.model.chosen', { name: sel.selectedOptions[0]?.textContent ?? '' });
-  sel.title = tip;
-  sel.setAttribute('aria-label', tip);
+/** The AI Chat default model of the status (null = none, or the status is not ready) */
+function chatDefault(): ChatDefault {
+  const st = aiStatus();
+  return st.state === 'ready' ? st.chatDefault ?? null : null;
 }
 
-/** The administrators' model menu: the default first, then the models grouped by connection; hidden for everyone else and read only */
+/** Opens the popover; the model list is read again when it is missing or older than a minute */
+function openModelPop(): void {
+  const c = composer;
+  if (!c || modelPop) return;
+  modelPop = true;
+  pendingConn = null;
+  if (!modelList || Date.now() - modelsAt > 60_000) void loadModels(true);
+  syncModels(c);
+  document.getElementById('ai-model-conn')?.focus();
+}
+
+/** Closes the popover (`focusBtn`: the focus returns to the brain button; false when the page moves on anyway) */
+function closeModelPop(focusBtn: boolean): void {
+  if (!modelPop) return;
+  modelPop = false;
+  pendingConn = null;
+  const c = composer;
+  if (c) syncModels(c);
+  if (focusBtn) c?.modelBtn.focus();
+}
+
+/** The brain button: a dot for a choice other than the default (amber when its connection is off), tip and name say the model */
+function markModel(c: Composer, shown: string, off: boolean, offName: string | null, def: ChatDefault): void {
+  const ref = shown === '' ? null : parseModelRef(shown);
+  c.modelDot.hidden = shown === '';
+  c.modelDot.classList.toggle('warn', off);
+  const tip = off && ref
+    ? t('ai.model.off', { conn: offName ?? '', model: ref.model })
+    : ref
+      ? t('ai.model.chosen', { name: ref.model })
+      : def
+        ? t('ai.model.default', { model: def.model })
+        : t('ai.model.label');
+  c.modelBtn.setAttribute('aria-label', tip);
+  c.modelBtn.setAttribute('aria-expanded', String(modelPop));
+  holdTip(c.modelBtn, tip);
+}
+
+/** The popover: the API (connection) first, then the model of that connection; picking the model marked default means "follow the default" */
+function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: string, busy: boolean): HTMLElement {
+  const pv = pickerView(shown, pendingConn, menu, def);
+  const ref = shown === '' ? null : parseModelRef(shown);
+  const offId = menu.off && ref ? ref.connectionId : null;
+  const focusLater = (id: string): void => {
+    document.getElementById(id)?.focus();
+  };
+  const connSel = h('select', {
+    class: 'ais-select ai-model-in', id: 'ai-model-conn', 'aria-labelledby': 'ai-model-conn-l', disabled: busy || (menu.conns.length === 0 && offId == null),
+    onchange: () => {
+      pendingConn = Number(connSel.value);
+      syncModels(c);
+      focusLater('ai-model-sel');
+    },
+  },
+  h('option', { value: '', hidden: true, disabled: true }, t('ai.model.apiPick')),
+  ...menu.conns.map((x) => h('option', { value: String(x.id) }, x.name)),
+  offId != null && !menu.conns.some((x) => x.id === offId)
+    ? h('option', { value: String(offId), disabled: true }, t('ai.model.offOpt', { name: menu.off?.name ?? '' }))
+    : null);
+  connSel.value = pv.connId == null ? '' : String(pv.connId);
+  const models = menu.conns.find((x) => x.id === pv.connId)?.models ?? [];
+  const noneAtAll = menu.conns.length === 0;
+  const offPick = offId != null && pv.connId === offId && pv.modelValue !== '';
+  const modelSelEl = h('select', {
+    class: 'ais-select ai-model-in', id: 'ai-model-sel', 'aria-labelledby': 'ai-model-sel-l', disabled: busy || models.length === 0,
+    onchange: () => {
+      modelSel = chooseValue(modelSelEl.value, def);
+      pendingConn = null;
+      syncModels(c);
+      focusLater('ai-model-sel');
+    },
+  },
+  h('option', { value: '', hidden: true, disabled: true }, noneAtAll ? t('ai.model.none') : t('ai.model.modelPick')),
+  ...models.map((m) => h('option', { value: m.value }, m.isDefault ? t('ai.model.isDefault', { model: m.label }) : m.label)),
+  offPick && ref ? h('option', { value: pv.modelValue, disabled: true }, ref.model) : null);
+  modelSelEl.value = pv.modelValue;
+  const close = iconButton({ icon: 'x', label: t('common.close'), tone: 'quiet', onClick: () => closeModelPop(true) });
+  close.id = 'ai-model-close';
+  const useDefault = modelSel !== ''
+    ? h('div', { class: 'ai-model-foot' }, h('button', {
+      class: 'btn quiet ai-mini', id: 'ai-model-default', type: 'button', disabled: busy,
+      onclick: () => {
+        modelSel = '';
+        pendingConn = null;
+        syncModels(c);
+        focusLater('ai-model-conn');
+      },
+    }, t('ai.model.useDefault')))
+    : null;
+  if (!menu.loaded) {
+    const failed = modelsFailed && !modelsLoading;
+    return h('div', { class: 'ai-model-pop', id: 'ai-model-pop', role: 'dialog', 'aria-labelledby': 'ai-model-pop-t' },
+      h('div', { class: 'ai-model-pop-h' }, h('h3', { id: 'ai-model-pop-t' }, t('ai.model.pick.title')), close),
+      failed
+        ? h('div', { class: 'ai-model-f', role: 'alert' },
+          h('p', { class: 'callout warn' }, ico('info'), h('span', null, t('ai.model.loadFail'))),
+          h('button', {
+            class: 'btn quiet ai-mini', id: 'ai-model-retry', type: 'button',
+            onclick: () => {
+              void loadModels(true);
+              syncModels(c);
+            },
+          }, t('common.retry')))
+        : h('p', { class: 'ai-model-f', role: 'status' }, t('ai.loading')));
+  }
+  return h('div', { class: 'ai-model-pop', id: 'ai-model-pop', role: 'dialog', 'aria-labelledby': 'ai-model-pop-t' },
+    h('div', { class: 'ai-model-pop-h' }, h('h3', { id: 'ai-model-pop-t' }, t('ai.model.pick.title')), close),
+    menu.off && ref ? h('p', { class: 'callout warn ai-model-off', role: 'status' }, ico('info'),
+      h('span', null, t('ai.model.off', { conn: menu.off.name ?? '', model: ref.model }))) : null,
+    h('div', { class: 'ai-model-f' }, h('label', { id: 'ai-model-conn-l', for: 'ai-model-conn' }, t('ai.model.api')), connSel),
+    h('div', { class: 'ai-model-f' }, h('label', { id: 'ai-model-sel-l', for: 'ai-model-sel' }, t('ai.model.label')), modelSelEl),
+    useDefault);
+}
+
+/** The administrators' model picker: the brain button and its popover; hidden for everyone else and read only */
 function syncModels(c: Composer): void {
   const show = isAdmin() && full() && aiFreeMode();
-  if (show && !modelList) void loadModels();
-  const st = aiStatus();
-  const def = st.state === 'ready' ? st.chatDefault ?? null : null;
-  const menu = modelMenu(modelList, view.pick);
-  // An unsent change stays in the select; a value that is neither the default nor offered falls back to the stored pick
-  if (modelShown(modelSel, menu) !== modelSel) modelSel = pickText(view.pick);
-  // A stored pick the menu does not offer (a broken or removed connection) shows as the default; modelSel keeps the pick,
-  // so the request says "unchanged" and the server falls back and clears it
-  const shown = modelShown(modelSel, menu);
+  if (!show && modelPop) {
+    modelPop = false;
+    pendingConn = null;
+  }
+  // A failed read is tried again after ten seconds at the earliest, so a broken connection to the server never loops
+  if (show && !modelList && Date.now() - modelsAt > 10_000) void loadModels();
+  const def = chatDefault();
+  // The menu follows the selection (at first the chat's stored pick): an off pick warns only while it is the selection
+  let menu = chatMenu(modelList, modelSel === '' ? null : parseModelRef(modelSel), def);
+  // An unsent change that the list no longer offers falls back to the stored pick
+  if (chatShown(modelSel, menu) !== modelSel && modelSel !== pickText(view.pick)) {
+    modelSel = pickText(view.pick);
+    menu = chatMenu(modelList, modelSel === '' ? null : parseModelRef(modelSel), def);
+  }
+  // A stored pick on a broken or removed connection shows as the default; modelSel keeps the pick, so the request says
+  // "unchanged" and the server falls back and clears it
+  const shown = chatShown(modelSel, menu);
   const busy = sending();
-  const sig = JSON.stringify([show, uiLang(), def?.model ?? null, menu, shown, busy]);
+  const sig = JSON.stringify([show, uiLang(), def, menu, shown, busy, modelPop, pendingConn, modelsLoading, modelsFailed]);
   if (sig === modelSig) return;
   modelSig = sig;
   c.models.hidden = !show;
-  if (!show) {
-    c.models.querySelector('select')?.remove();
-    return;
-  }
-  const sel = h('select', {
-    class: 'ai-model-sel', id: 'ai-model', 'aria-label': t('ai.model.label'), disabled: busy,
-    onchange: () => {
-      modelSel = sel.value;
-      markModel(c, sel);
-    },
-  },
-  h('option', { value: '' }, t('ai.model.default', { model: def?.model ?? '' })),
-  menu.extra ? h('option', { value: menu.extra.value }, menu.extra.label) : null,
-  ...menu.groups.map((g) => h('optgroup', { label: g.name }, ...g.options.map((o) => h('option', { value: o.value }, o.label)))));
-  sel.value = shown;
-  markModel(c, sel);
-  // Only the select is redrawn: the icon under it stays
-  c.models.querySelector('select')?.remove();
-  c.models.append(sel);
+  const inPop = c.models.querySelector('#ai-model-pop')?.contains(document.activeElement) ? document.activeElement?.id ?? '' : '';
+  c.models.querySelector('#ai-model-pop')?.remove();
+  markModel(c, shown, menu.off != null, menu.off?.name ?? null, def);
+  if (!show || !modelPop) return;
+  c.models.append(modelPopover(c, menu, def, shown, busy));
+  // A redraw (the list arrived, the language changed) keeps the focus where it was in the popover
+  if (inPop) document.getElementById(inPop)?.focus();
 }
 
 /** The banner above the input while a question is edited: what it means and Cancel */
@@ -2376,7 +2521,7 @@ function readOnlyLine(): HTMLElement {
   const text = paused
     ? t('ai.readOnly.paused')
     : reason === 'featureOff'
-      ? t('ai.err.featureOff')
+      ? t(featureOffKey(isAdmin()))
       : (reason === 'noFunction' ? t('ai.err.notAllowed') : badgeReasonText(reason, isAdmin())) + (uiLang() === 'en' ? ' ' : '') + t('ai.readOnlyTail');
   return h('p', { class: 'ai-readonly-line', id: 'ai-readonly' }, ico(paused ? 'pauseCircle' : 'info'), h('span', null, text));
 }

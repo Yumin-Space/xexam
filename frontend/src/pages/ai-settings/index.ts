@@ -4,7 +4,8 @@
 // v1.3 layout: four status cards on top of every tab, then five category tabs (the hash keeps the tab:
 // #/ai-settings?tab=feature | users | usage | safety | gen; a missing or unknown value is the first):
 //   · Connections and models (`feature`): 1 connections (cards + form, test before save), 2 the AI+ switch (a default model,
-//     tested), 3 six model rows, then the six global feature switches (they never stop administrators);
+//     tested), 3 seven model rows, each (except the default) with its own global feature switch (v1.9: it applies to everyone,
+//     administrators included);
 //   · Users: the AI+ users, their feature boxes, the viewer of their chats;   · Usage;   · Safety: retention and limits;
 //   · AI banks: content rules and the recent jobs.
 // One part per file under this folder; the state they share is in state.ts. Typed keys live only in that state and are
@@ -27,7 +28,6 @@ import { enableSection, forgetPending, loadModels, modelsSection } from './model
 import { loadLimits, safetySections } from './safety.ts';
 import { A, adopt, hooks, redraw, resetState } from './state.ts';
 import { checkService, keyProblemLine, serviceLine, servicePanel, statusCardsRow, stopRecheck, aiDown } from './status.ts';
-import { switchesSection } from './switches.ts';
 import { loadUsage, usageSection } from './usage.ts';
 import { loadUsers, usersSection } from './users.ts';
 
@@ -152,8 +152,8 @@ export function renderAiSettings(): HTMLElement {
       card = genSection();
       break;
     default:
-      // Owner's order (v1.6): connections, the AI+ master switch, the feature switches, then the models
-      card = [connectionsSection(s), enableSection(s), switchesSection(s), modelsSection(s)];
+      // Connections, the AI+ master switch, then the model rows (each with its feature switch, v1.9)
+      card = [connectionsSection(s), enableSection(s), modelsSection(s)];
   }
   return h('div', { class: 'page page-ais' },
     head,

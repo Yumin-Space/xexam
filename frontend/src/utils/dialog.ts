@@ -123,7 +123,18 @@ export function askChoice(o: AskChoiceOptions): Promise<'keep' | 'discard' | nul
 }
 
 export interface PickChoice<T extends string> { value: T; icon: MiniIcon; label: string; hint: string; aria: string }
-export interface AskPickOptions<T extends string> { title: string; body: string; choices: readonly PickChoice<T>[]; back: string }
+export interface AskPickOptions<T extends string> {
+  title: string;
+  body: string;
+  choices: readonly PickChoice<T>[];
+  back: string;
+  /**
+   * v1.9: content between the text and the choice buttons (for example the language checkboxes). It gets `setPickable`:
+   * `false` disables the choice buttons (nothing valid is selected), `true` enables them again. The elements stay readable
+   * after the dialog closed. Not used by the no-<dialog> fallback.
+   */
+  extra?: (setPickable: (on: boolean) => void) => Child;
+}
 
 /** v1.6: a dialog with large icon buttons (one per choice) and a back button; resolves with the chosen value, or null
  *  (back, Esc, closed from outside). One tap on a choice closes it and resolves at once. */
@@ -137,9 +148,13 @@ export function askPick<T extends string>(o: AskPickOptions<T>): Promise<T | nul
       return;
     }
     const titleId = dialogTitleId();
+    const setPickable = (on: boolean): void => {
+      for (const b of Array.from(d.querySelectorAll<HTMLButtonElement>('.picks .pick'))) b.disabled = !on;
+    };
     const d = h('dialog', { class: 'dlg dlg-pick', 'aria-labelledby': titleId },
       h('h3', { id: titleId, tabindex: '-1' }, o.title),
       h('p', null, o.body),
+      o.extra ? o.extra(setPickable) : null,
       h('div', { class: 'picks' }, o.choices.map((c) =>
         h('button', { class: 'btn pick', type: 'button', id: `dlg-pick-${c.value}`, 'aria-label': c.aria, onclick: () => d.close(c.value) },
           miniIcon(c.icon, 'pick-ico'),

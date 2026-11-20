@@ -6,8 +6,8 @@ use std::io::Read;
 use quick_xml::events::Event;
 use quick_xml::Reader;
 use serde_json::{json, Value};
-use xexam_backend::export::docx::write_docx;
-use xexam_backend::export::{ExportBank, ExportSheet};
+use xexam_backend::export::docx::{write_docx, write_docx_langs};
+use xexam_backend::export::{ExportBank, ExportSheet, Langs};
 use xexam_backend::models::Question;
 
 const NOW: &str = "2026-11-16T08:09:10Z";
@@ -695,5 +695,51 @@ fn write_files_of_a_local_bank() {
             bank.question_count(),
             bytes.len()
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// v1.9: language subsets
+
+fn build_langs(langs: &str) -> Vec<P> {
+    let l = Langs::parse(langs).expect("langs");
+    let bytes = write_docx_langs(&sample_bank(), l, now()).expect("docx");
+    let parts = read_parts(&bytes);
+    paragraphs(part(&parts, "word/document.xml"))
+}
+
+#[test]
+fn all_languages_through_the_langs_writer_is_unchanged() {
+    let a = write_docx(&sample_bank(), now()).expect("docx");
+    let b = write_docx_langs(&sample_bank(), Langs::ALL, now()).expect("docx");
+    assert_eq!(a, b);
+}
+
+#[test]
+fn chinese_only_has_one_section_without_a_page_break() {
+    let paras = build_langs("zh");
+    let h1: Vec<&P> = paras.iter().filter(|p| p.style == "Heading1").collect();
+    assert_eq!(h1.iter().map(|p| p.text()).collect::<Vec<_>>(), ["中文"]);
+    assert!(
+        !h1[0].page_break,
+        "the first section written follows the title"
+    );
+    assert!(paras.iter().any(|p| p.text() == "2. ［多选题］"));
+    assert!(!paras.iter().any(|p| p.text().contains("[Single choice]")));
+}
+
+#[test]
+fn english_and_japanese_break_only_before_the_second_section() {
+    let paras = build_langs("ja,en");
+    let h1: Vec<&P> = paras.iter().filter(|p| p.style == "Heading1").collect();
+    assert_eq!(
+        h1.iter().map(|p| p.text()).collect::<Vec<_>>(),
+        ["English", "日本語"]
+    );
+    assert!(!h1[0].page_break);
+    assert!(h1[1].page_break);
+    // Every sheet is still there in each section
+    for n in 1..=2 {
+        assert_eq!(sheet_names_in(&section(&paras, n)), ["Basics", "Extras"]);
     }
 }

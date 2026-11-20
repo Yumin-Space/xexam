@@ -18,7 +18,7 @@ const TABLE: Record<string, string> = {
 // deepseek model ids (Responses API family): effort high unless set (https://api-docs.deepseek.com/guides/thinking_mode/)
 const DEEPSEEK_DEFAULT = 'high';
 
-// Gemma thinks by default (observed live, 2026-11-16): thinking_level HIGH
+// Gemma models (sent through the Google family since v1.9) think by default (observed live, 2026-11-16): thinking_level HIGH
 const GEMMA_DEFAULT = 'HIGH';
 
 const ROUTING = /^(us|eu|apac|global|anthropic|google|openai)\./;
@@ -47,7 +47,7 @@ export function knownDefault(model: string | null | undefined): string | null {
  * The level after a family button: the current one when the new family has it (case-insensitive: "high" and "HIGH" are the
  * same level), else the model's known default when the family has it (a hint such as "none" is never picked when the family
  * does not offer it), else the family's middle level ("medium" / "MEDIUM"), or "high" / "HIGH" when that is missing
- * (Responses API, Gemma), or the first level
+ * (Responses API), or the first level
  */
 export function levelForFamily(
   current: string | null | undefined, levels: readonly string[], modelDefault?: string | null,

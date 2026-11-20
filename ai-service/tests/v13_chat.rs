@@ -988,7 +988,7 @@ async fn the_status_keys_follow_the_role_the_switches_and_the_slots() {
     let (_, s) = t.get("/api/ai/status", &sam).await;
     assert!(s.get("chatDefault").is_none() && s.get("chatModels").is_none());
     assert_eq!(s["features"]["chat"], json!(true));
-    // a global switch turns a feature off for a user and not for an administrator
+    // a global switch turns a feature off for everyone, administrators included (v1.9)
     t.app
         .0
         .store
@@ -998,7 +998,8 @@ async fn the_status_keys_follow_the_role_the_switches_and_the_slots() {
     assert_eq!(s["features"]["hint"], json!(false));
     assert_eq!(s["features"]["chat"], json!(true));
     let (_, a) = t.get("/api/ai/status", &admin).await;
-    assert_eq!(a["features"]["hint"], json!(true));
+    assert_eq!(a["features"]["hint"], json!(false));
+    assert_eq!(a["features"]["explain"], json!(true));
     // the per-user bit applies to the user only
     t.app
         .0

@@ -60,12 +60,109 @@ impl UpCode {
 pub struct UpError {
     pub code: UpCode,
     pub http: Option<u16>,
+    /// How long the provider asked to wait before the next try (a 429 only)
+    pub retry_ms: Option<u64>,
+    /// The 429 is about a daily quota: waiting a few seconds will not help
+    pub daily: bool,
 }
 
 impl UpError {
     pub fn new(code: UpCode, http: Option<u16>) -> UpError {
-        UpError { code, http }
+        UpError {
+            code,
+            http,
+            retry_ms: None,
+            daily: false,
+        }
     }
+}
+
+/// A wait longer than this (milliseconds) is treated like a daily quota.
+pub const DAILY_WAIT_MS: u64 = 900_000;
+
+/// `"34s"`, `"1.5s"` or `"34"` (seconds) as milliseconds.
+fn seconds_text_ms(t: &str) -> Option<u64> {
+    let t = t.trim();
+    let n = t.strip_suffix('s').unwrap_or(t).trim();
+    let secs: f64 = n.parse().ok()?;
+    (secs.is_finite() && (0.0..=1.0e9).contains(&secs)).then(|| (secs * 1000.0).round() as u64)
+}
+
+/// What a 429 body says: the first `retryDelay`, whether a quota id names a daily quota, and the error message.
+fn scan_retry(v: &Value, depth: u8, delay: &mut Option<u64>, daily: &mut bool) {
+    if depth > 8 {
+        return;
+    }
+    match v {
+        Value::Object(o) => {
+            for (k, x) in o {
+                match (k.as_str(), x) {
+                    ("retryDelay", Value::String(t)) => {
+                        if delay.is_none() {
+                            *delay = seconds_text_ms(t);
+                        }
+                    }
+                    ("quotaId" | "quotaMetric" | "quota_id", Value::String(t)) => {
+                        let t = t.to_ascii_lowercase();
+                        if t.contains("perday") || t.contains("per_day") || t.contains("daily") {
+                            *daily = true;
+                        }
+                    }
+                    _ => scan_retry(x, depth + 1, delay, daily),
+                }
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                scan_retry(x, depth + 1, delay, daily);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// `retry in 12.5s` in a message, as milliseconds.
+fn message_delay_ms(msg: &str) -> Option<u64> {
+    let lower = msg.to_ascii_lowercase();
+    let rest = &lower[lower.find("retry in ")? + "retry in ".len()..];
+    let end = rest
+        .find(|c: char| !(c.is_ascii_digit() || c == '.'))
+        .unwrap_or(rest.len());
+    let secs: f64 = rest.get(..end)?.parse().ok()?;
+    (secs.is_finite() && (0.0..=1.0e9).contains(&secs)).then(|| (secs * 1000.0).round() as u64)
+}
+
+/// For a 429: how long to wait (the response header first, then the body) and whether the quota is a daily one.
+/// Any other status gives `(None, false)`. A wait over 15 minutes counts as daily. Never reads or keeps provider text
+/// beyond these numbers.
+pub fn retry_hint(status: u16, body: &[u8], header_ms: Option<u64>) -> (Option<u64>, bool) {
+    if status != 429 {
+        return (None, false);
+    }
+    let mut delay = None;
+    let mut daily = false;
+    if let Ok(v) = serde_json::from_slice::<Value>(body) {
+        scan_retry(&v, 0, &mut delay, &mut daily);
+        let msg = v
+            .get("error")
+            .and_then(|e| e.get("message"))
+            .and_then(Value::as_str)
+            .or_else(|| v.get("message").and_then(Value::as_str));
+        if let Some(m) = msg {
+            if delay.is_none() {
+                delay = message_delay_ms(m);
+            }
+            let m = m.to_ascii_lowercase();
+            if m.contains("per day") || m.contains("perday") || m.contains("daily quota") {
+                daily = true;
+            }
+        }
+    }
+    let wait = header_ms.or(delay);
+    if wait.is_some_and(|w| w > DAILY_WAIT_MS) {
+        daily = true;
+    }
+    (wait, daily)
 }
 
 /// Maps an error type or code string found in a body.
@@ -261,5 +358,42 @@ mod tests {
         assert!(UpCode::Auth.is_config());
         assert!(!UpCode::Timeout.is_config());
         assert!(!UpCode::RateLimit.is_config());
+    }
+
+    #[test]
+    fn retry_hint_reads_the_wait_and_the_daily_flag_of_a_429() {
+        // Google: an array body with RetryInfo
+        let google = br#"[{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"@type":"x.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerMinutePerProjectPerModel-FreeTier"}]},{"@type":"x.RetryInfo","retryDelay":"34s"}]}}]"#;
+        assert_eq!(retry_hint(429, google, None), (Some(34_000), false));
+        // fractional seconds
+        let frac = br#"{"error":{"details":[{"retryDelay":"1.5s"}]}}"#;
+        assert_eq!(retry_hint(429, frac, None), (Some(1_500), false));
+        // a daily quota id
+        let daily = br#"{"error":{"details":[{"violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},{"retryDelay":"20s"}]}}"#;
+        assert_eq!(retry_hint(429, daily, None), (Some(20_000), true));
+        // the header wins over the body
+        assert_eq!(retry_hint(429, google, Some(2_000)), (Some(2_000), false));
+        // text fallbacks
+        let msg = br#"{"error":{"message":"Rate limited. Please retry in 12.5s."}}"#;
+        assert_eq!(retry_hint(429, msg, None), (Some(12_500), false));
+        let msg = br#"{"error":{"message":"You exceeded your current quota (requests per day)."}}"#;
+        assert_eq!(retry_hint(429, msg, None), (None, true));
+        let msg = br#"{"error":{"message":"Daily quota reached"}}"#;
+        assert_eq!(retry_hint(429, msg, None), (None, true));
+        // a very long wait is a daily quota
+        let long = br#"{"error":{"details":[{"retryDelay":"1000s"}]}}"#;
+        assert_eq!(retry_hint(429, long, None), (Some(1_000_000), true));
+        assert_eq!(retry_hint(429, b"", Some(901_000)), (Some(901_000), true));
+        // nothing known
+        assert_eq!(retry_hint(429, b"not json", None), (None, false));
+        // other statuses
+        assert_eq!(retry_hint(500, google, Some(5)), (None, false));
+        assert_eq!(retry_hint(503, daily, None), (None, false));
+        // deeply nested: the scan stops after eight levels
+        let mut deep = String::from(r#"{"retryDelay":"9s"}"#);
+        for _ in 0..12 {
+            deep = format!(r#"{{"a":{deep}}}"#);
+        }
+        assert_eq!(retry_hint(429, deep.as_bytes(), None), (None, false));
     }
 }

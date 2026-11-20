@@ -14,7 +14,8 @@ export const ALL_ON: Features = { chat: true, hint: true, explain: true, summary
 
 /**
  * The two groups of the AI+ users table (P-12) and of the global switches: line 1 and the "AI 题库：" line. One entry is one
- * box / switch. From v1.3 AI hint and AI analysis (`explain`) are ONE item, shown under `hint`: it writes both keys.
+ * box / switch. The per-user boxes keep hint and analysis (`explain`) as ONE item, shown under `hint`: it writes both keys.
+ * (The global switches of AI settings are independent per feature since v1.9.)
  */
 export const FEATURE_GROUPS: { main: readonly FeatureKey[]; banks: readonly FeatureKey[] } = {
   main: ['chat', 'hint', 'summary'],
@@ -79,14 +80,15 @@ export type UnavailableReason = 'loading' | 'off' | 'down' | 'unavailable';
  * hidden      — no AI+ feature, or a bank control without the bank-management permission: not rendered at all
  * paused      — AI+ granted but paused: shown greyed with the 无法使用 tag and the paused tip
  * unavailable — AI is off / not reachable / still loading: greyed with the 无法使用 tag (loading: no tag)
- * featureOff  — that feature is unticked: shown greyed with the 无法使用 tag and `ai.err.featureOff`
+ * featureOff  — that feature is switched off (a per-user box, or since v1.9 the global switch, which also applies to
+ *                administrators): shown greyed with the 无法使用 tag and `ai.err.featureOff` (`ai.err.featureOffAdmin` for admins)
  * ok          — usable
  */
 export type ControlView =
   | { view: 'hidden' }
   | { view: 'paused' }
   | { view: 'unavailable'; reason: UnavailableReason }
-  | { view: 'featureOff' }
+  | { view: 'featureOff'; admin?: boolean }
   | { view: 'ok' };
 
 export interface ControlContext {
@@ -100,7 +102,8 @@ export interface ControlContext {
 
 /**
  * M-7: decides one control. Usable only when AI+ is granted, not paused and the feature is ticked (plus, for the bank
- * controls, the bank-management permission). Administrators have every feature but see nothing while AI+ is not available.
+ * controls, the bank-management permission). Per-user boxes never limit administrators, but the global feature switches
+ * (v1.9) do; they see nothing while AI+ is not available.
  */
 export function aiControlView(feature: FeatureKey, needsBanks: boolean, ctx: ControlContext): ControlView {
   const admin = ctx.role === 'admin';
@@ -114,6 +117,6 @@ export function aiControlView(feature: FeatureKey, needsBanks: boolean, ctx: Con
     if (admin) return { view: 'hidden' };
     return { view: 'unavailable', reason: st.why === 'off' ? 'off' : st.why === 'link' ? 'down' : 'unavailable' };
   }
-  if (!admin && readFeatures(st.features)[feature] === false) return { view: 'featureOff' };
+  if (readFeatures(st.features)[feature] === false) return admin ? { view: 'featureOff', admin: true } : { view: 'featureOff' };
   return { view: 'ok' };
 }

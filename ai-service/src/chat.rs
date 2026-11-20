@@ -153,7 +153,7 @@ pub enum StopReason {
     UserRemoved,
     /// An administrator suspended the user's AI+ function (AI settings)
     Suspended,
-    /// An administrator switched the feature off for everyone (never stops an administrator's call)
+    /// An administrator switched the feature off for everyone (administrators' calls included)
     FeatureOff,
 }
 
@@ -184,10 +184,8 @@ struct Entry {
     kind: Kind,
     chat: Option<i64>,
     message: i64,
-    /// The feature bit of the call (0 until named) and whether the caller is an administrator: a global feature
-    /// switch-off stops the matching calls of normal users only
+    /// The feature bit of the call (0 until named): a global feature switch-off stops the matching calls of everyone
     feature_bit: i64,
-    admin: bool,
     seq: u64,
     /// When the call was reserved (unix seconds): its start for the per-user call caps
     started: i64,
@@ -231,11 +229,10 @@ impl Slot {
         }
     }
 
-    /// Names the feature of the call and whether its caller is an administrator.
-    pub fn set_feature(&self, feature_bit: i64, admin: bool) {
+    /// Names the feature of the call.
+    pub fn set_feature(&self, feature_bit: i64) {
         if let Some(e) = self.reg.lock().entries.get_mut(&self.id) {
             e.feature_bit = feature_bit;
-            e.admin = admin;
         }
     }
 
@@ -280,7 +277,6 @@ impl Registry {
                 chat,
                 message: 0,
                 feature_bit: 0,
-                admin: false,
                 seq: id,
                 started: crate::util::unix_now(),
                 cancel: cancel_tx,
@@ -402,13 +398,13 @@ impl Registry {
         waits
     }
 
-    /// Asks the running calls of normal users whose feature is in `bits` to stop (a global feature switch-off);
-    /// administrators' calls are never touched. Returns how many were asked.
+    /// Asks the running calls whose feature is in `bits` to stop (a global feature switch-off); administrators'
+    /// calls included. Returns how many were asked.
     pub fn cancel_features(&self, bits: i64) -> usize {
         let inner = self.lock();
         let mut n = 0;
         for e in inner.entries.values() {
-            if !e.admin && e.feature_bit & bits != 0 {
+            if e.feature_bit & bits != 0 {
                 e.cancel.send_if_modified(|v| {
                     if v.is_none() {
                         *v = Some(StopReason::FeatureOff);
@@ -871,6 +867,18 @@ mod tests {
         assert!(g.try_acquire().is_none());
         drop((a, b, c));
         assert_eq!(g.available(), 3);
+    }
+
+    #[tokio::test]
+    async fn cancel_features_stops_every_entry_of_the_feature() {
+        let reg = Arc::new(Registry::default());
+        let a = reg.reserve(1, Kind::Chat, None, 4).expect("a");
+        let b = reg.reserve(2, Kind::Chat, None, 4).expect("b");
+        a.set_feature(2);
+        b.set_feature(4);
+        assert_eq!(reg.cancel_features(2), 1);
+        assert_eq!(a.stopped(), Some(StopReason::FeatureOff));
+        assert_eq!(b.stopped(), None);
     }
 
     #[tokio::test]

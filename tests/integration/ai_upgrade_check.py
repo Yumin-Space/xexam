@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 8 (this version, v1.4), with Docker and made-up
+"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 9 (this version, v1.9), with Docker and made-up
 data only. Run by hand or at the final gate; it is not part of CI because it pulls a published image.
 
 Usage: python -I tests/integration/ai_upgrade_check.py [--old-image IMAGE] [--new-image IMAGE]
@@ -15,14 +15,20 @@ What is checked:
   1. v0.9.1 creates a schema-3 database on a fresh volume; the script then writes made-up rows into it (two users, a chat
      with a hint and a study chat of each kind, memories, usage rows, a changed set of limits; memory_chars left at the
      v0.9.1 default 300) and records every table's content
-  2. This version starts on the same volume: the log says the database was upgraded after a backup copy; schema 8; exactly
+  2. This version starts on the same volume: the log says the database was upgraded after a backup copy; schema 9; exactly
      one backups/xexam-ai-schema3-*.db that still holds schema 3 and the old rows; every made-up row unchanged; every old
      limit intact (the retired message_chars column keeps its value); memory_chars 300 reads 200 (3.10) and memoryTokens
      200 (schema 6: lengths in tokens, 1000; schema 7: the v1.3 default 200 because it was never changed); the v1.3 tables (connections, connection_secrets, models, model_slots, study_shared, gen_items)
      exist and every chat is a straight line (messages.parent_id = the message before, chats.leaf_id = the last message); the three call caps 5 / 20 / 100 and replyMaxTokens 3000 at their defaults; sqlite_master equals that of a database this version
-     created from scratch
+     created from scratch; the seven model slots (default, chat, hint, explain, summary, generate, import; no study), every
+     connection on, and the three pacing columns of limits (v1.9) at their defaults
   3. A second start writes no second backup, no second upgrade line and changes no row
-  4. v0.9.1 refuses the schema-8 database (its newer-schema message) and changes nothing: the rollback is the backup copy
+  4. v0.9.1 refuses the schema-9 database (its newer-schema message) and changes nothing: the rollback is the backup copy
+  5. (v1.9) A schema-8 database (a fresh one taken back: the study slot with a made-up model choice and the removed
+     gemma:true thinking strength, none of the v1.9 columns) is upgraded to schema 9 with exactly one
+     backups/xexam-ai-schema8-*.db: hint and explain both hold the old study row (updated_at, updated_by, the effort now
+     google:HIGH), no study slot, connections.enabled and the pacing columns exist with their defaults, the tables have the
+     same columns as a new database, and a second start changes nothing
 """
 import argparse
 import hashlib
@@ -39,6 +45,7 @@ RUN = uuid.uuid4().hex[:6]
 PREFIX = 'xexam-aiupgrade-' + RUN
 VOL = PREFIX + '-data'
 VOL_FRESH = PREFIX + '-fresh'
+VOL8 = PREFIX + '-schema8'   # v1.9: a schema-8 database, made from a fresh one
 # Made-up shared token (at least 32 printable characters): lets ai-service start with its link configured but no backend
 TOKEN = 'upgrade-check-made-up-token-0123456789'
 PY = 'python:3.12-slim'
@@ -51,7 +58,7 @@ OLD = ARGS.old_image
 NEW = ARGS.new_image or (PREFIX + ':new')
 
 results = []
-made = {'containers': [], 'volumes': [VOL, VOL_FRESH], 'images': []}
+made = {'containers': [], 'volumes': [VOL, VOL_FRESH, VOL8], 'images': []}
 
 
 def docker(*a, check=False):
@@ -117,6 +124,33 @@ db.close()
 print('seeded')
 '''
 
+# v1.9: takes a freshly created (schema 9) database back to what schema 8 looked like: no connections.enabled, no pacing
+# columns on limits, a model_slots table with the single study slot (a made-up choice and the removed gemma:true effort)
+DOWNGRADE = r'''
+import sqlite3
+db = sqlite3.connect('/v/xexam-ai.db')
+db.execute('PRAGMA foreign_keys = OFF')
+for table, column in (('connections', 'enabled'), ('limits', 'pace_on'), ('limits', 'pace_rpm'), ('limits', 'pace_tpm')):
+    db.execute('ALTER TABLE %s DROP COLUMN %s' % (table, column))
+db.executescript("""
+DROP TABLE model_slots;
+CREATE TABLE model_slots (
+  slot TEXT PRIMARY KEY NOT NULL CHECK (slot IN ('default', 'chat', 'study', 'summary', 'generate', 'import')),
+  model_id INTEGER REFERENCES models(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT '',
+  effort TEXT
+);
+INSERT INTO model_slots (slot, model_id, updated_at, updated_by, effort) VALUES
+  ('default', NULL, 1, '', NULL), ('chat', NULL, 1, '', NULL), ('study', NULL, 1234, 'old-admin', 'gemma:true'),
+  ('summary', NULL, 1, '', NULL), ('generate', NULL, 1, '', NULL), ('import', NULL, 1, '', NULL);
+UPDATE meta SET value = '8' WHERE key = 'schema';
+""")
+db.commit()
+db.close()
+print('downgraded')
+'''
+
 # One JSON report of a database: schema, content hashes and counts of every data table, limits, backups, sqlite_master
 REPORT = r'''
 import hashlib, json, os, sqlite3, sys
@@ -146,6 +180,11 @@ if 'parent_id' in cols_of('messages') and 'leaf_id' in cols_of('chats'):
         straight = straight and parents == [None] + ids[:-1] if ids else straight and leaf is None
         straight = straight and (leaf == (ids[-1] if ids else None))
     out['straight'] = straight
+has_slots = bool(db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'model_slots'").fetchone())
+out['slots'] = [list(r) for r in db.execute('SELECT slot, model_id, updated_at, updated_by, effort FROM model_slots ORDER BY slot')] if has_slots and 'effort' in cols_of('model_slots') else []
+out['slot_sql'] = (db.execute("SELECT sql FROM sqlite_master WHERE name = 'model_slots'").fetchone() or [''])[0]
+out['cols'] = {t: cols_of(t) for t in ('connections', 'limits', 'model_slots')}
+out['conn_enabled'] = [r[0] for r in db.execute('SELECT enabled FROM connections ORDER BY id')] if 'enabled' in cols_of('connections') else None
 out['v7_tables'] = sorted(t for t in ('connections', 'connection_secrets', 'models', 'model_slots', 'study_shared', 'gen_items')
                           if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (t,)).fetchone())
 out['backups'] = sorted(os.listdir('/v/backups')) if os.path.isdir('/v/backups') else []
@@ -235,10 +274,16 @@ try:
     up = wait_up(c)
     code, logs1 = stop(c)
     ok(up and code == '0', 'This version starts on the schema-3 volume, answers its health check and stops cleanly. Exit code %s. Log:\n%s' % (code, logs1[-600:]))
-    ok(re.search(r'Upgraded the AI database to schema 8\. A copy of the previous version was saved first: \S*xexam-ai-schema3-', logs1) is not None,
-       'The log says the database was upgraded to schema 8 after a backup copy. Log:\n%s' % logs1[-600:])
+    ok(re.search(r'Upgraded the AI database to schema 9\. A copy of the previous version was saved first: \S*xexam-ai-schema3-', logs1) is not None,
+       'The log says the database was upgraded to schema 9 after a backup copy. Log:\n%s' % logs1[-600:])
     after = report(VOL)
-    ok(after['schema'] == '8', 'meta.schema is 8. Actual %r' % after['schema'])
+    ok(after['schema'] == '9', 'meta.schema is 9. Actual %r' % after['schema'])
+    SLOTS9 = ['chat', 'default', 'explain', 'generate', 'hint', 'import', 'summary']
+    ok([r[0] for r in after['slots']] == SLOTS9 and "'study'" not in after['slot_sql'] and "'explain'" in after['slot_sql'],
+       'v1.9: the seven model slots exist and study does not. Actual %r' % [r[0] for r in after['slots']])
+    ok('enabled' in after['cols']['connections'] and all(c in after['cols']['limits'] for c in ('pace_on', 'pace_rpm', 'pace_tpm'))
+       and (after['limits']['pace_on'], after['limits']['pace_rpm'], after['limits']['pace_tpm']) == (1, 15, 250000),
+       'v1.9: connections.enabled exists and the pacing columns of limits hold 1 / 15 / 250000. Actual %r' % after['cols'])
     ok(len(after['backups']) == 1 and re.fullmatch(r'xexam-ai-schema3-\d{8}-\d{6}\.db', after['backups'][0]) is not None,
        'Exactly one backups/xexam-ai-schema3-<date-time>.db. Actual %r' % after['backups'])
     ok(after.get('v7_tables') == sorted(['connection_secrets', 'connections', 'gen_items', 'model_slots', 'models', 'study_shared']),
@@ -265,8 +310,8 @@ try:
     code, _ = stop(c)
     ok(up and code == '0', 'This version creates a fresh database on the second volume')
     fresh = report(VOL_FRESH)
-    ok(fresh['schema'] == '8' and fresh['backups'] == [] and fresh['limits']['memory_tokens'] == 200,
-       'A new database is schema 8 with no backup and memoryTokens 200. Actual %r' % {k: fresh[k] for k in ('schema', 'backups')})
+    ok(fresh['schema'] == '9' and fresh['backups'] == [] and fresh['limits']['memory_tokens'] == 200,
+       'A new database is schema 9 with no backup and memoryTokens 200. Actual %r' % {k: fresh[k] for k in ('schema', 'backups')})
     ok(fresh['master'] == after['master'], 'sqlite_master of the upgraded database equals that of a new one (%d objects)' % len(fresh['master']))
 
     # -- 3. the next start writes nothing --
@@ -280,16 +325,57 @@ try:
     ok(all(again[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and again['limits'] == after['limits']
        and again['master'] == after['master'], 'The next start changed no row, no limit and no table')
 
-    # -- 4. v0.9.1 refuses schema 8 --
+    # -- 4. v0.9.1 refuses schema 9 --
     c = start(OLD, VOL, 'old2')
     time.sleep(3)
     running = docker('inspect', '-f', '{{.State.Running}}', c).stdout.strip()
     code, logs3 = stop(c) if running == 'true' else (docker('inspect', '-f', '{{.State.ExitCode}}', c).stdout.strip(), (docker('logs', c).stdout + docker('logs', c).stderr))
-    ok(code != '0' and 'has schema 8' in logs3 and 'newer ai-service' in logs3,
-       'v0.9.1 refuses the schema-8 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs3[-400:]))
+    ok(code != '0' and 'has schema 9' in logs3 and 'newer ai-service' in logs3,
+       'v0.9.1 refuses the schema-9 database with its newer-schema message (exit code %s). Log:\n%s' % (code, logs3[-400:]))
     final = report(VOL)
-    ok(all(final[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and final['schema'] == '8'
+    ok(all(final[t] == after[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')) and final['schema'] == '9'
        and final['backups'] == after['backups'], 'The refusal changed nothing; the rollback is the backup copy')
+
+    # -- 5. schema 8 -> 9 (v1.9): the study slot is split; the removed gemma strength is rewritten --
+    ok(docker('volume', 'create', VOL8).returncode == 0, 'A third temporary volume is created')
+    c = start(NEW, VOL8, 'seed8')
+    up = wait_up(c)
+    code, _ = stop(c)
+    ok(up and code == '0', 'This version creates a database on the third volume')
+    r = helper(DOWNGRADE, VOL8, rw=True)
+    ok(r.returncode == 0 and 'downgraded' in r.stdout, 'The new database is taken back to schema 8 (study slot, no v1.9 columns). %s' % (r.stdout + r.stderr)[-400:])
+    old8 = report(VOL8)
+    ok(old8['schema'] == '8' and [r[0] for r in old8['slots']] == ['chat', 'default', 'generate', 'import', 'study', 'summary']
+       and 'enabled' not in old8['cols']['connections'] and 'pace_on' not in old8['cols']['limits'],
+       'The prepared database looks like schema 8. Actual %r' % {k: old8[k] for k in ('schema', 'cols')})
+    c = start(NEW, VOL8, 'up8')
+    up = wait_up(c)
+    code, logs8 = stop(c)
+    ok(up and code == '0', 'This version starts on the schema-8 volume and stops cleanly. Exit code %s. Log:\n%s' % (code, logs8[-600:]))
+    ok(re.search(r'Upgraded the AI database to schema 9\. A copy of the previous version was saved first: \S*xexam-ai-schema8-', logs8) is not None,
+       'The log says the database was upgraded to schema 9 after a backup copy named xexam-ai-schema8-. Log:\n%s' % logs8[-600:])
+    new8 = report(VOL8)
+    ok(new8['schema'] == '9' and len(new8['backups']) == 1 and re.fullmatch(r'xexam-ai-schema8-\d{8}-\d{6}\.db', new8['backups'][0]) is not None,
+       'meta.schema is 9 and there is exactly one backups/xexam-ai-schema8-<date-time>.db. Actual %r' % {k: new8[k] for k in ('schema', 'backups')})
+    slots8 = {r[0]: r[1:] for r in new8['slots']}
+    ok(sorted(slots8) == SLOTS9 and slots8['hint'] == slots8['explain'] == [None, 1234, 'old-admin', 'google:HIGH'],
+       'hint and explain both hold the old study row (updated_at 1234, updated_by old-admin) and gemma:true is now google:HIGH. Actual %r' % slots8)
+    ok(slots8['default'] == [None, 1, '', None] and slots8['chat'] == [None, 1, '', None] and slots8['summary'] == [None, 1, '', None],
+       'The other slots are unchanged. Actual %r' % slots8)
+    ok("'study'" not in new8['slot_sql'] and "'explain'" in new8['slot_sql'], 'The model_slots table no longer allows study')
+    ok(new8['cols'] == fresh['cols'], 'connections, limits and model_slots have the same columns as a new database. Actual %r' % new8['cols'])
+    ok((new8['limits']['pace_on'], new8['limits']['pace_rpm'], new8['limits']['pace_tpm']) == (1, 15, 250000),
+       'The pacing columns hold their defaults 1 / 15 / 250000. Actual %r' % new8['limits'])
+    bk8 = report(VOL8, '/v/backups/' + new8['backups'][0])
+    ok(bk8['schema'] == '8' and [r[0] for r in bk8['slots']] == ['chat', 'default', 'generate', 'import', 'study', 'summary']
+       and dict((r[0], r[4]) for r in bk8['slots'])['study'] == 'gemma:true',
+       'The backup copy is the schema-8 database as it was (study slot, gemma:true)')
+    c = start(NEW, VOL8, 'up8b')
+    up = wait_up(c)
+    code, logs8b = stop(c)
+    again8 = report(VOL8)
+    ok(up and code == '0' and 'Upgraded the AI database' not in logs8b and again8['backups'] == new8['backups'] and again8['slots'] == new8['slots']
+       and again8['limits'] == new8['limits'], 'The next start logs no upgrade, writes no second backup and changes no slot or limit')
 finally:
     cleanup()
 

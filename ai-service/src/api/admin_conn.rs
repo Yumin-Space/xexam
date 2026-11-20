@@ -1350,6 +1350,55 @@ pub async fn order(ctx: Ctx) -> Answer {
     ok(json!({"settings": settings_value(app)?}))
 }
 
+/// `POST connections/enabled` `{"id": N, "enabled": bool}`: turns a connection on or off. Off keeps every setting, key
+/// and pool model; the connection is left out of the pickers and of routing, and the choices that use it fail with
+/// `ai.connectionOff` until it is on again. Running calls go on and `rev` is not bumped. Also answers when nothing
+/// changed.
+pub async fn enabled(ctx: Ctx) -> Answer {
+    if ctx.body.len() != 2 {
+        return Err(ApiError::bad_request());
+    }
+    only_keys(&ctx.body, &["id", "enabled"])?;
+    let id = body_id(&ctx.body, "id")?.ok_or_else(ApiError::bad_request)?;
+    let Some(Value::Bool(on)) = ctx.body.get("enabled") else {
+        return Err(ApiError::bad_request());
+    };
+    let on = *on;
+    let app = &ctx.app;
+    let now = unix_now();
+    let by = ctx.who.username.clone();
+    let row = app
+        .0
+        .store
+        .write(|tx| -> rusqlite::Result<Option<ConnRow>> {
+            let Some(row) = conn::connection(tx, id)? else {
+                return Ok(None);
+            };
+            if !conn::set_connection_enabled(tx, id, on, &by, now)? {
+                return Ok(None);
+            }
+            Ok(Some(row))
+        })?
+        .ok_or_else(ApiError::not_found)?;
+    let (event, word) = if on {
+        ("ai.settings.connectionOn", "on")
+    } else {
+        ("ai.settings.connectionOff", "off")
+    };
+    app.0.activity(
+        Event::new(Some(&ctx.who), event, &ctx.client)
+            .object(row.name.clone())
+            .detail(json!({"provider": row.provider, "host": host_of(&row.base_url)})),
+    );
+    tracing::info!(
+        "user {:?} switched the AI connection {:?} {word}",
+        ctx.who.username,
+        row.name
+    );
+    app.0.heartbeat_now().await;
+    ok(json!({"settings": settings_value(app)?}))
+}
+
 /// A model id the pool and the picks accept.
 pub fn model_ok(m: &str) -> bool {
     crate::route::model_id_ok(m) && valid_model(m)

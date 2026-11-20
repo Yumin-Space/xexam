@@ -61,19 +61,30 @@
 
 /* ---------- AI 总结 button (Home, records) ---------- */
 .aip-sum-btn { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
-.btn.aip-sum-btn:not([aria-disabled="true"]) { border-color: var(--line); background-color: var(--card); color: var(--ink); }
+/* v1.9 (owner): same flat amber as AI 生成题 / AI import / Study records AI 总结 (ai-gen.css, records.css): #F59E0B, hover #D97706,
+   pressed #B45309, white bold text, light and dark the same; icon-only (phone) it is amber with a white icon. No new colour. */
+.btn.aip-sum-btn:not([aria-disabled="true"]) {
+  border-color: #F59E0B; background-color: #F59E0B; color: var(--ai-ink); font-weight: 700; text-shadow: 0 1px 0 rgba(110, 32, 0, .55);
+}
+.aip-sum-btn:not([aria-disabled="true"]) .aip-mi { color: inherit; }
+@media (hover: hover) {
+  .btn.aip-sum-btn:hover:not([aria-disabled="true"]) { background-color: #D97706; border-color: #D97706; color: var(--ai-ink); }
+}
+.btn.aip-sum-btn:active:not([aria-disabled="true"]) { background-color: #B45309; border-color: #B45309; color: var(--ai-ink); }
 .btn.aip-sum-btn.quiet { min-height: 30px; padding-inline: 8px; font-size: 13px; }
 .aip-sum-btn:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .aip-grp-inline { display: inline-flex; align-items: center; gap: 0; flex-wrap: wrap; }
 .aip-tipwrap { flex: none; }
 
-/* Greyed (SH-17): no fill, no edge, no shadow, --ink3 icon and text */
-.btn.aip-sum-btn[aria-disabled="true"], .btn.aip-sum-btn[aria-disabled="true"] .aip-mi {
-  background: transparent; background-image: none; border-color: transparent; box-shadow: none; color: var(--ink3);
+/* Greyed: exactly like a greyed AI 生成题 button (ai-gen.css); the 无法使用 tag sits inside the button */
+.btn.aip-sum-btn[aria-disabled="true"] {
+  border-color: var(--line); background: var(--hover-strong); background-image: none; box-shadow: none; color: var(--ink3);
+  text-shadow: none; font-weight: 500; cursor: not-allowed; opacity: 1;
 }
-.btn.aip-sum-btn[aria-disabled="true"] { cursor: not-allowed; }
+.btn.aip-sum-btn[aria-disabled="true"] .aip-mi { color: var(--ink3); }
+.btn.aip-sum-btn[aria-disabled="true"] .aip-na { background: var(--card); }
 @media (hover: hover) {
-  .btn.aip-sum-btn[aria-disabled="true"]:hover { background: transparent; background-image: none; color: var(--ink3); }
+  .btn.aip-sum-btn[aria-disabled="true"]:hover { background: var(--hover-strong); background-image: none; color: var(--ink3); }
 }
 
 /* ---------- The 无法使用 tag and the table note ---------- */

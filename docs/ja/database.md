@@ -3,7 +3,7 @@
 # データベース
 
 > データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースを引き継いでいます。元のテーブル定義（スキーマ v1）は**1 文字も変えずに**残し、その後のスキーマはどれも加えるだけです（新しいテーブルと新しい列。作り直しや書き換えは一切しません）：**スキーマ v2**（v0.5：問題集、試験の詳細、設定）、**スキーマ v3**（v0.6：ユーザーとログイン）、**スキーマ v4**（v0.7：ユーザーごとの問題集、問題集の所有者、練習の記録）、**スキーマ v5**（v0.8：ユーザーごとの AI+ 機能の付与と識別用のスタンプ）、**スキーマ v6**（v0.9：記録を保存した練習または試験のセッションのキーと開始時刻）。*v1.6* でメインデータベースはスキーマ **10**（ユーザーごとの問題集のダウンロード権限。第 6.16 節）になります。既存のデータベースは、新しいバージョンを初めて起動したときに、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード** で動きます（第 2 節）。
-> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v1.4 から **8**（v1.3 は 7、v1.1 は 6、v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
+> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v1.9 から **9**（v1.4 は 8、v1.3 は 7、v1.1 は 6、v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
 > 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集へのアクセス、リリース前のデータベースの変換、古い形式の問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習用ルート）でテストしています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`）と `ai-service/src/store/` の単体テストでテストしています。
 
 ## 1. ファイルの場所
@@ -642,13 +642,25 @@ AI データベースは、v1.4 の ai-service の最初の起動時に、スキ
 
 AI データベースのスキーマ番号は変わりません。v1.6 の ai-service は、起動時に不足している列を自動で追加します（`pragma_table_info` で確認し、あれば何もしません）：
 
-- **`model_slots.effort`**（TEXT。NULL 可）：機能（スロット）ごとの思考の強さ。`<系統>:<レベル>` の形の文字列で（例：`anthropic:high`、`google:MEDIUM`、`responses:none`。系統は `anthropic`、`openai`、`google`、`responses`、`gemma`）、NULL = 既定（何も送らない）です。読めない値は NULL として扱われます。設定を変えても、スロットのモデル（`model_id`）には触れません。管理者用のルート `POST /api/ai/admin/models/effort` が書き込み、`ai.settings.effort` がシステムログに記録されます（[api.md](api.md) の 5.2 節）。
+- **`model_slots.effort`**（TEXT。NULL 可）：機能（スロット）ごとの思考の強さ。`<系統>:<レベル>` の形の文字列で（例：`anthropic:high`、`google:MEDIUM`、`responses:none`。系統は `anthropic`、`openai`、`google`、`responses`。`gemma` は v1.9 で廃止、8.2f 節）、NULL = 既定（何も送らない）です。読めない値は NULL として扱われます。設定を変えても、スロットのモデル（`model_id`）には触れません。管理者用のルート `POST /api/ai/admin/models/effort` が書き込み、`ai.settings.effort` がシステムログに記録されます（[api.md](api.md) の 5.2 節）。
 
 接続ごとの「このパラメーターは非対応」の記憶と、構造化出力が拒否されたことの記憶は、メモリ上だけにあり、ai-service を再起動すると消えます。
 
 ### 8.2e OpenAI Responses 形式（v1.8。スキーマは変わりません）
 
 `connections` に列が 1 つ加わります：`responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))`。1 は OpenAI Responses API を使う Gateway の接続を表します。`format` は `openai` のままです。`format` の `CHECK` は `openai` と `anthropic` しか許さず、テーブルは作り直さないからです。列は、足りないときに起動時に追加します（`ALTER TABLE ... ADD COLUMN`。`model_slots.effort` と同じ方法）。**AI のスキーマは 8 のままなので、バックアップのコピーも新しい移行の手順もありません**。新しいファイルとアップグレードしたファイルは、同じテーブルで終わります。Responses の接続を保存すると `format = 'openai', responses = 1` が書かれ、ほかの形式では `responses = 0` が書かれます。`format = 'openai' AND responses = 1` は Responses として読まれます。v1.7 の ai-service はファイルをそのまま開き、この列を読まないので、戻すときに復元は不要ですが、その場合 Responses の接続は OpenAI の chat completions として読まれます。
+
+### 8.2f スキーマ v9（v1.9）
+
+AI データベースは、v1.9 の ai-service の初回起動時に 1 回だけスキーマ 8 から **スキーマ 9** へ移行します。先にバックアップのコピー `backups/xexam-ai-schema8-<日時>.db` を作ります（これまでの各段階と同じ仕組みです）。メインのデータベースは変わりません。
+
+- **`connections.enabled`**（`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`）：接続のオン／オフのスイッチです。既存の行はすべてオンで始まります。これまでの列と同じく、起動時に `pragma_table_info` に無ければ追加します。`status` の CHECK は変えず、「無効」は `enabled` から導きます。`connections` は `CASCADE` の子テーブルを持つので作り直しません。
+- **`limits.pace_on`、`limits.pace_rpm`、`limits.pace_tpm`**：AI 問題作成と AI インポートのプロバイダーのレート制限に合わせた送信間隔です。`pace_on` は 0 または 1（既定 1）、`pace_rpm` は 1〜10 000（既定 15）、`pace_tpm` は 1 000〜100 000 000（既定 250 000）。上限 API のキー `paceOn`、`paceRpm`、`paceTpm` に対応します。無制限のスイッチがこれらを変えることはありません。
+- **`model_slots` の作り直し**：`slot` の CHECK が `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import` を許します（7 行。`study` はなくなります）。アップグレードでは `study` の行（モデル、時刻、更新者、思考の強さ）を `hint` と `explain` の両方にコピーしてから、古いテーブルを削除します。新規のファイルは新しいテーブルを直接作るので、どちらも同じ `sqlite_master` になります。`model_slots` を参照するものは無いため、`foreign_keys` をオンのまま作り直します。
+- **Gemma を Google に統合**：起動のたびに、保存済みの思考の強さ `gemma:HIGH` と `gemma:true` は `google:HIGH` に、`gemma:MINIMAL` と `gemma:false` は `google:MINIMAL` になり、それ以外の `gemma:` の値は消去（NULL）されます。送られるリクエストは従来と同じです。この処理は `gemma:` の行があるときだけ実行されます。系統は `anthropic`、`openai`、`google`、`responses` の 4 つです。
+- **全体のスイッチは独立**：`settings.features_off` のビット 2（ヒント）とビット 4（解説）は常に同じ値には保たれなくなり、起動時に連動させ直すこともありません。`users.features_off` は従来どおり連動します（2 つのうち片方だけオフのユーザーは両方オフになります）。ユーザーのビットを連動させる処理は、全体のビットには触れません。
+- **ジョブの待機フラグ**：問題作成やインポートのジョブがプロバイダーの利用枠を待っている間、`tasks.payload` に一時的な `rateWait` フラグが付きます（`updated_at` は更新されません）。ジョブのオブジェクトの `waiting` フィールドがこれです。
+- **元に戻す**：v1.8 の ai-service はスキーマ 9 を受け付けません（`written by a newer ai-service`）。停止して、8.4 のとおり `backups/xexam-ai-schema8-<日時>.db` を復元し、v1.8 のイメージを動かしてください。アップグレード後に書かれた設定・チャット・利用状況はコピーに含まれず、失われます。
 
 ### 8.3 サービスがこれをどう扱うか
 
@@ -678,3 +690,475 @@ docker compose start
 - `XEXAM_AI_SECRET_KEY` を設定しているときは、キーファイルは使われません：その値は別にバックアップしてください（ボリュームには入っていません）。正しいキーがないと、復元したキーは復号できません。その場合、管理者がキーを入力し直すまで AI はオフのままですが、ほかに失われるものはありません。
 - 復元した AI のボリュームと、別の時点のメインのボリュームを組み合わせても問題ありません：もう存在しないユーザーは次の照合で AI データを失い、別のアカウントのものになったユーザー id はスタンプで見分けられます。
 - `xexam_ai_auth` はバックアップ不要です：入っているのは `internal.token` だけで、ない場合はバックエンドがもう一度作ります（AI サービスは新しいトークンを自分で読み込みます）。
+
+## 9. 2 つのデータベースのスキーママップ（v1.9）
+
+どんなテーブルがあり、何のためにあり、どう関係しているかを読むための案内です。メインのデータベースはスキーマ 10、AI データベースはスキーマ 9 の内容で、テーブル名と列名は保存されているとおりです。ここに書いたことでテーブルが変わることはありません。
+
+### 9.1 メインのデータベース `xexam.db`（バックエンド）
+
+| 領域 | テーブル | 補足 |
+|---|---|---|
+| 問題集 | `banks`、`questions`、`imports` | 問題集は取り込んだワークブック 1 つに当たります。ワークブックから消えた問題は削除ではなく廃止（`active = 0`）になります |
+| 学習記録と間違いノート | `attempts`、`attempt_items`、`user_stats` | `attempts` がアプリで「学習記録」と呼ぶもの（試験または練習）です |
+| ユーザーとアクセス | `users`、`sessions`、`user_banks`、`user_settings` | |
+| システム | `meta`、`system_settings`、`activity_log` | |
+| 旧式（未使用） | `stats`、`settings` | v0.6 の段階で `user_stats` と `user_settings` にコピー済み。スキーマ 2 以前からのアップグレードのときだけ読みます |
+
+メインのデータベースには**外部キーがありません**。以下の関係はコードが保ちます（削除は子の行から先に行います）。そのため図では点線で描いています。
+
+```mermaid
+erDiagram
+  users ||..o{ sessions : "user_id"
+  users ||..o{ attempts : "user_id (NULL = unclaimed old record)"
+  users ||..o{ user_stats : "user_id"
+  users ||..o{ user_settings : "user_id"
+  users ||..o{ user_banks : "user_id"
+  users ||..o{ banks : "owner_id"
+  users |o..o{ system_settings : "updated_by"
+  users |o..o{ activity_log : "user_id (snapshot, not linked)"
+  banks ||..o{ user_banks : "bank_id"
+  banks ||..o{ questions : "bank_id"
+  banks ||..o{ imports : "bank_id"
+  attempts ||..o{ attempt_items : "attempt_id"
+  questions |o..o{ attempt_items : "question_id (soft)"
+  questions |o..o{ user_stats : "question_id (soft)"
+
+  users {
+    int id PK
+    text username UK
+    text password_hash
+    text role
+    int disabled
+    int must_change_password
+    int new_banks
+    int can_manage_banks
+    int can_download_banks
+    int ai_enabled
+    text uid
+    text created_at
+    text last_login_at
+    text last_active_at
+  }
+  sessions {
+    text token_hash PK
+    int user_id
+    int started_at
+    int last_seen_at
+    int expires_at
+    int remember
+    text ip
+    text ua
+  }
+  banks {
+    int id PK
+    text name
+    text filename
+    int legacy_ids
+    int owner_id
+    text ai_job UK
+    text ai_meta
+    text created_at
+    text updated_at
+  }
+  questions {
+    text id PK
+    int bank_id
+    text sheet
+    int row_no
+    int seq
+    text data
+    int active
+    text added_at
+    text updated_at
+  }
+  imports {
+    int id PK
+    int bank_id
+    text at
+    text filename
+    int added
+    int updated
+    int removed
+    int restored
+    int skipped
+    int total
+  }
+  attempts {
+    int id PK
+    int user_id
+    text kind
+    text mode
+    text at
+    text sheets
+    text banks
+    int total
+    int correct
+    int percent
+    int seconds
+    text session_key
+    int started_at
+    int time_limit
+    text ended
+  }
+  attempt_items {
+    int attempt_id PK
+    int seq PK
+    text question_id
+    text answer
+    int correct
+  }
+  user_stats {
+    int user_id PK
+    text question_id PK
+    int attempts
+    int correct
+    int wrong
+    int streak
+    int last
+    text at
+  }
+  user_settings {
+    int user_id PK
+    text key PK
+    text value
+  }
+  user_banks {
+    int user_id PK
+    int bank_id PK
+  }
+  system_settings {
+    text key PK
+    text value
+    text updated_at
+    int updated_by
+  }
+  activity_log {
+    int id PK
+    int ts
+    int last_ts
+    int count
+    text actor
+    int user_id
+    text username
+    text role
+    text action
+    text object
+    text detail
+    text result
+    text reason
+    text source
+    text src_id UK
+  }
+  meta {
+    text key PK
+    text value
+  }
+  stats {
+    text question_id PK
+  }
+  settings {
+    text key PK
+  }
+```
+
+| テーブル | 用途 | キーと関係 | 補足 |
+|---|---|---|---|
+| `meta` | データベース単位のキーと値：`schema`、`banks_known`、`users_known`、`legacy_migrated` | PK `key` | |
+| `banks` | 問題集。AI 作成の問題集のジョブキーと情報も持つ | PK `id`、`owner_id` → `users` | `ai_job` は部分ユニークインデックス |
+| `questions` | 1 問 1 行。問題全体（全言語）が `data` の JSON | PK `id`（テキスト）、`bank_id` → `banks` | シート・問題集・並びのインデックス |
+| `imports` | Excel インポートごとの結果の件数 | PK `id`、`bank_id` → `banks` | |
+| `attempts` | 学習記録。試験または練習 1 回につき 1 行 | PK `id`、`user_id` → `users`（NULL は持ち主のいない古い記録） | `sheets` と `banks` はあえて JSON のスナップショット |
+| `attempt_items` | 記録の各問題への回答 | PK `(attempt_id, seq)`、`question_id` → `questions`（ゆるい関係） | 問題より記録のほうが長く残ることがある |
+| `user_stats` | ユーザーと問題ごとの挑戦・正解・不正解・連続正解（間違いノート） | PK `(user_id, question_id)` | |
+| `users` | アカウント、ロール、権限、AI+ のスイッチ、本人確認用の `uid`、最後のサインインと最後の操作（IP、場所、ユーザーエージェント） | PK `id`、`username` は大文字小文字を区別しない一意 | アカウント情報とサインインの記録が同居している |
+| `sessions` | サインインのセッション | PK `token_hash`、`user_id` → `users` | 時刻は UNIX 秒 |
+| `user_banks` | 一般ユーザーに見える問題集 | PK `(user_id, bank_id)` | |
+| `user_settings` | ユーザーごとの画面設定（値は JSON） | PK `(user_id, key)` | |
+| `system_settings` | サイト全体のスイッチ（アクティビティの保持、閲覧、サインイン情報、所在地の取得元） | PK `key`、`updated_by` はユーザー ID | |
+| `activity_log` | アクティビティ履歴。ai-service から転送された行も含む | PK `id`、`src_id` は部分ユニーク（重複排除） | `username` と `role` は当時の写しなので、ユーザーを削除しても履歴を読める |
+| `stats`、`settings` | 旧式。上を参照 | | |
+
+### 9.2 AI データベース `xexam-ai.db`（ai-service）
+
+| 領域 | テーブル | 補足 |
+|---|---|---|
+| AI 設定 | `settings`（1 行）、`limits`（1 行）、`connections`、`connection_secrets`、`models`、`model_slots`、`geo_settings`（1 行） | `model_slots` は 7 行：`default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import` |
+| ID | `users` | メインのユーザーの写しと、ユーザーごとの AI の状態 |
+| チャットと学習セッション | `chats`、`messages`、`memories` | `chats.kind` は `chat`、`practice`、`exam`、`summary` のいずれか |
+| 共有のヒントと解説 | `study_shared` | ユーザー ID なしで、ユーザー間で再利用される |
+| AI 問題作成と AI インポート | `tasks`、`gen_items`、`gen_calls` | `tasks.kind` はどちらも `bank_gen`。payload で区別する |
+| 利用量の記録 | `usage`（チャット、ヒント、解説、まとめ、確認）、`gen_calls`（問題作成とインポート） | あえて 2 つに分けている。ユーザーごとの呼び出し上限は `usage` だけを読む |
+| システム | `meta`、`audit_outbox` | |
+| 旧式 | `secrets`、`settings` の古い接続の列、`limits` の廃止された長さの 4 列 | 古いスキーマからのアップグレードのときだけ読む |
+
+実線は宣言された外部キー、点線はあえて外部キーを付けていない関係です（メッセージの枝、チャットで選んだ接続、利用履歴）。
+
+```mermaid
+erDiagram
+  users ||--o{ chats : "CASCADE"
+  users ||--o{ memories : "CASCADE"
+  users |o--o{ tasks : "CASCADE"
+  users |o--o{ usage : "SET NULL"
+  users |o--o{ gen_calls : "SET NULL"
+  chats ||--o{ messages : "CASCADE"
+  messages |o..o{ messages : "parent_id (no FK)"
+  chats |o..o| messages : "leaf_id (no FK)"
+  connections |o..o{ chats : "pick_conn (no FK)"
+  tasks ||--o{ gen_items : "CASCADE"
+  tasks |o--o{ gen_calls : "SET NULL"
+  connections ||--o{ connection_secrets : "CASCADE"
+  connections ||--o{ models : "CASCADE"
+  models |o--o{ model_slots : "SET NULL"
+  connections |o..o{ usage : "connection_id (no FK)"
+  connections |o..o{ gen_calls : "connection_id (no FK)"
+
+  users {
+    int id PK
+    text stamp
+    text username
+    int function_enabled
+    int free_mode
+    int features_off
+    int first_seen_at
+    int last_seen_at
+  }
+  chats {
+    int id PK
+    int user_id FK
+    text kind
+    text ref UK
+    int record_id
+    text title
+    int leaf_id
+    int pick_conn
+    text pick_model
+    int created_at
+    int updated_at
+  }
+  messages {
+    int id PK
+    int chat_id FK
+    int parent_id
+    text role
+    text kind
+    text content
+    text status
+    text error_code
+    int truncated
+    int free
+    text model
+    text connection
+    text question_id
+    int question_no
+    text source
+    text lang
+    text reasoning
+    int reasoning_ms
+    int reasoning_truncated
+    int created_at
+    int finished_at
+  }
+  memories {
+    int id PK
+    int user_id FK
+    text content
+    text source
+    int created_at
+    int updated_at
+  }
+  tasks {
+    int id PK
+    int user_id FK
+    text kind
+    text state
+    text payload
+    text result
+    text error_code
+    int attempts
+    int run_after
+    text job_key UK
+    int goal
+    int made
+    text phase
+    int charged
+    int seen
+    int created_at
+    int updated_at
+  }
+  gen_items {
+    int task_id PK
+    int no PK
+    int slot
+    text data
+    int at
+  }
+  gen_calls {
+    int id PK
+    int task_id FK
+    int user_id FK
+    text purpose
+    int at
+    text day
+    text provider
+    text model
+    int connection_id
+    text connection
+    int tokens_in
+    int tokens_out
+    int latency_ms
+    text status
+    text error_code
+    int asked
+    int accepted
+    int truncated
+  }
+  usage {
+    int id PK
+    int user_id FK
+    int at
+    text day
+    text kind
+    text purpose
+    text provider
+    text model
+    int connection_id
+    text connection
+    int tokens_in
+    int tokens_out
+    int latency_ms
+    text status
+    text error_code
+  }
+  connections {
+    int id PK
+    text name UK
+    text provider
+    text base_url
+    text format
+    int responses
+    int enabled
+    text gateway_auth
+    text status
+    text error_code
+    int lists_models
+    int tested_at
+    int rev
+    int sort
+  }
+  connection_secrets {
+    int connection_id PK
+    text name PK
+    text key_id
+    blob nonce
+    blob ciphertext
+    text hint
+    int rev
+    int aad_ver
+  }
+  models {
+    int id PK
+    int connection_id FK
+    text model
+    int manual
+    text status
+    text error_code
+    int usage_option
+    int max_tokens
+    int context
+    int latency_ms
+    int tested_at
+  }
+  model_slots {
+    text slot PK
+    int model_id FK
+    text effort
+    int updated_at
+    text updated_by
+  }
+  study_shared {
+    int id PK
+    text question_id
+    text content_hash
+    text kind
+    text lang
+    text content
+    text model
+    int gen
+    int hits
+    int last_hit_at
+  }
+  settings {
+    int id PK
+    int enabled
+    int retention_days
+    int features_off
+  }
+  limits {
+    int id PK
+    int pace_on
+    int pace_rpm
+    int pace_tpm
+  }
+  geo_settings {
+    int id PK
+    text preset
+    text url_template
+    blob key_ciphertext
+    int updated_by
+  }
+  secrets {
+    text name PK
+  }
+  meta {
+    text key PK
+    text value
+  }
+  audit_outbox {
+    int id PK
+    int at
+    text message
+  }
+```
+
+| テーブル | 用途 | キーと関係 | 補足 |
+|---|---|---|---|
+| `meta` | `schema`、`secret_rev`、一度きりのフラグ | PK `key` | |
+| `settings` | 1 行。AI の総スイッチ `enabled`、`retention_days`、`features_off`（全体の機能スイッチのビット） | PK `id = 1` | 単一接続だった頃の古い 11 列が残っており、古いアップグレードだけが読む |
+| `limits` | 1 行。すべての上限（同時実行、チャットとメモリーの大きさ、ユーザーごとの呼び出し上限、回答の長さ、問題作成とインポートの上限、共有キャッシュ、1 日の Token 予算）と、v1.9 からは送信間隔の設定 | PK `id = 1`、各列に範囲の CHECK | 廃止された長さの 4 列は未使用のまま残る |
+| `users` | メインのユーザーの写し（`id` と `stamp` = メインの `uid`）に、`function_enabled`（一時停止）、`free_mode`、`features_off`（ユーザーごとの機能ビット）を足したもの | PK `id`（メインのデータベースが付ける） | `stamp` が違えば別人。その人の AI データは破棄される |
+| `chats` | AI チャットの会話と、練習・試験・記録まとめごとのチャット | PK `id`、`user_id` → `users`（CASCADE） | `leaf_id` と `pick_conn` はあえて外部キーなし |
+| `messages` | メッセージとその枝のバージョン。ヒント・解説・まとめも含む | PK `id`、`chat_id` → `chats`（CASCADE） | 一部の列は特定の `kind` でだけ意味を持つ |
+| `memories` | ユーザーごとのメモリー | PK `id`、`user_id` → `users`（CASCADE） | |
+| `tasks` | バックグラウンドのジョブ：AI 問題作成と AI インポート | PK `id`、`user_id` → `users`（CASCADE） | `job_key` は部分ユニークインデックス |
+| `gen_items` | 実行中のジョブで採用された問題（再開用） | PK `(task_id, no)`、`tasks` へ（CASCADE） | |
+| `gen_calls` | 問題作成とインポートの各モデル呼び出し（Token、時間、結果） | PK `id`、`task_id`、`user_id`（SET NULL） | |
+| `usage` | それ以外のモデル呼び出し。Token、時間、状態のみで、内容は持たない | PK `id`、`user_id`（SET NULL） | |
+| `audit_outbox` | バックエンドへの送信待ちのアクティビティ行 | PK `id` | 一時的なキュー |
+| `connections` | AI の接続：アドレス、形式、ゲートウェイの認証、状態、オン／オフの `enabled` | PK `id`、`name` は大文字小文字を区別しない一意 | `format` は `openai` と `anthropic` のみ。OpenAI Responses は `openai` に `responses = 1` |
+| `connection_secrets` | 接続の暗号化されたキー | PK `(connection_id, name)`、`connections` へ（CASCADE） | |
+| `models` | モデルのプール。テスト済みの接続とモデルごとに 1 行 | PK `id`、`connections` へ（CASCADE）、一意 `(connection_id, model)` | |
+| `model_slots` | 各機能がプールのどのモデルを使うかと、思考の強さ | PK `slot`、`model_id` → `models`（SET NULL） | |
+| `study_shared` | ヒントと解説の共有キャッシュ | PK `id`、一意 `(question_id, content_hash, kind, lang)` | `lang` は `zh`、`messages.lang` は `zh-CN` |
+| `geo_settings` | 外部の所在地照会（1 行。テストに通ったときだけ書き込む） | PK `id = 1` | |
+| `secrets` | 旧式：スキーマ 7 より前のキー | PK `name` | 動作中のコードは使わない |
+
+### 9.3 2 つのデータベースの間の参照
+
+外部キーは 2 つのファイルをまたげないので、これらの関係は ID とコードで保ちます。
+
+| AI データベース | メインのデータベース | 一貫性を保つもの |
+|---|---|---|
+| `users.id` + `users.stamp` | `users.id` + `users.uid` | `stamp` が違えば別人。AI のデータは削除される |
+| `chats.ref` | `attempts.session_key`（または `r<recordId>@<at>`） | 検索キーとしてのみ使う |
+| `chats.record_id` | `attempts.id` | 表示のみで、検索には使わない（復元後は ID が再利用されうる） |
+| `messages.question_id`、`study_shared.question_id` | `questions.id` | ゆるい関係。`study_shared.content_hash` が問題の変更を防ぐ |
+| `tasks.job_key` | `banks.ai_job` | メインのデータベースの部分ユニークインデックスで、ジョブ 1 つにつき問題集 1 つ |
+| `audit_outbox` | `activity_log`（`source = 'ai'`、`src_id`） | `src_id` で重複を排除 |
+
+### 9.4 新しいテーブルと列の決まり
+
+- 時刻は `*_at INTEGER`（UNIX 秒、UTC）、真偽値は `INTEGER NOT NULL DEFAULT x CHECK (col IN (0, 1))`、列挙には `CHECK` を付けます。
+- 同じデータベース内を指す ID は `*_id` で外部キーを付け、`ON DELETE` を明記します。付けない場合は理由をコメントに書きます。
+- 新しい `updated_by` はユーザー ID、言語コードは `en`、`zh-CN`、`ja` です。
+- 既存の名前と、メインのデータベースの古いテキスト形式の時刻の列はそのままにします。

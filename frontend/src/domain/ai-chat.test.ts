@@ -6,12 +6,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerMaxLines, composerStatus, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isBusyElsewhere, isTerminal, isThinking, localFail, MIN_MSGS_PX,
-  localEdit, localRegenerate, modelArg, modelMenu, modelShown, regenerateLabelKey, editValid, versionInfo, TEMP_ID,
+  localEdit, localRegenerate, modelArg, chatMenu, chatShown, pickerView, chooseValue, regenerateLabelKey, editValid, versionInfo, TEMP_ID,
   localSend, localStop, locksDocument, noAccessKey, pollResult, questionOf, readOnlyReason, retryBody, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, startOf, STOP_GUARD_MS, suggestBody,
   type ChatView, type KeyLike, type ViewMessage,
 } from './ai-chat.ts';
 import { parseModelRef } from '../api/model-ref.ts';
 import type { AiChatDetail, AiMessage, AiModelList } from '../types/api.ts';
+import type { ChatDefault } from './ai-chat.ts';
 
 const NOW = 1_800_000_000;
 
@@ -547,34 +548,39 @@ const models: AiModelList = {
     { id: 3, name: 'edge', provider: 'gateway', status: 'ok', listed: true, error: null, models: [
       { id: 'demo:colon', context: null, poolId: 7, status: 'untested' }, { id: 'demo-listed-only', context: null, poolId: null, status: null }] },
     { id: 4, name: 'empty', provider: 'openai', status: 'ok', listed: true, error: null, models: [{ id: 'demo-only-bad', context: null, poolId: 9, status: 'failed' }] },
+    { id: 5, name: 'garden', provider: 'openai', status: 'ok', enabled: false, listed: false, error: null, models: [] },
   ],
 };
+const DEF: ChatDefault = { connectionId: 1, connectionName: 'main', model: 'demo-chat-small' };
 
-test('modelMenu: every listed model of working connections (pool and not-added), grouped, in the listing order; failed models, broken and empty connections are left out; an unlisted pick is added only while its connection works', () => {
-  const m = modelMenu(models, null);
-  assert.deepEqual(m.groups.map((g) => [g.name, g.options.map((o) => o.label)]), [['main', ['demo-chat-small', 'demo-chat-large']], ['edge', ['demo:colon', 'demo-listed-only']]]);
-  assert.deepEqual(m.groups[1]?.options[0], { value: '3:demo:colon', label: 'demo:colon' }, 'an untested pool model stays');
-  assert.deepEqual(m.groups[0]?.options[1], { value: '1:demo-chat-large', label: 'demo-chat-large' }, 'a listed model that was never added is in the menu');
-  assert.equal(m.extra, null);
-  assert.deepEqual(modelMenu(models, { connectionId: 1, model: 'demo-chat-small' }).extra, null);
-  assert.deepEqual(modelMenu(models, { connectionId: 1, model: 'demo-chat-large' }).extra, null);
-  // a stored pick that is not in the menu but whose connection works (a failed model, a model it no longer lists) shows as the extra entry
-  assert.deepEqual(modelMenu(models, { connectionId: 1, model: 'demo-bad' }).extra, { value: '1:demo-bad', label: 'demo-bad' });
-  assert.deepEqual(modelMenu(models, { connectionId: 1, model: 'demo-unlisted' }).extra, { value: '1:demo-unlisted', label: 'demo-unlisted' });
-  // a pick of a broken or removed connection is not shown: the select shows the default, and the groups are unchanged
+test('chatMenu: working enabled connections with usable models, in the listing order; failed models, broken, off and empty connections are left out; the default is marked', () => {
+  const m = chatMenu(models, null, DEF);
+  assert.equal(m.loaded, true);
+  assert.equal(m.off, null);
+  assert.deepEqual(m.conns.map((g) => [g.name, g.models.map((o) => o.label)]), [['main', ['demo-chat-small', 'demo-chat-large']], ['edge', ['demo:colon', 'demo-listed-only']]]);
+  assert.deepEqual(m.conns[1]?.models[0], { value: '3:demo:colon', label: 'demo:colon', isDefault: false }, 'a model id with a colon stays whole');
+  assert.deepEqual(m.conns[0]?.models.map((o) => o.isDefault), [true, false]);
+  assert.equal(chatMenu(models, null, null).conns[0]?.models[0]?.isDefault, false);
+  // an unlisted pick on a working connection comes first in its models; a listed pick is not repeated
+  const bad = chatMenu(models, { connectionId: 1, model: 'demo-bad' }, DEF);
+  assert.deepEqual(bad.conns[0]?.models.map((o) => o.label), ['demo-bad', 'demo-chat-small', 'demo-chat-large']);
+  assert.equal(chatMenu(models, { connectionId: 1, model: 'demo-unlisted' }, DEF).conns[0]?.models[0]?.value, '1:demo-unlisted');
+  assert.equal(chatMenu(models, { connectionId: 3, model: 'demo:colon' }, DEF).conns[1]?.models.length, 2);
+  assert.equal(chatMenu(models, { connectionId: 1, model: 'demo-chat-small' }, DEF).conns[0]?.models.length, 2);
+  // a pick on an off connection is reported with its name; a pick on a broken or missing connection is neither listed nor off
+  assert.deepEqual(chatMenu(models, { connectionId: 5, model: 'demo-x' }, DEF).off, { name: 'garden' });
   for (const pick of [{ connectionId: 2, model: 'demo-x' }, { connectionId: 9, model: 'gone' }]) {
-    assert.deepEqual(modelMenu(models, pick), m, JSON.stringify(pick));
+    assert.deepEqual(chatMenu(models, pick, DEF), chatMenu(models, null, DEF), JSON.stringify(pick));
   }
-  // a working connection with nothing to offer still counts as there
-  const bare: AiModelList = { connections: [{ id: 4, name: 'bare', provider: 'openai', status: 'ok', listed: true, error: null, models: [] }] };
-  assert.deepEqual(modelMenu(bare, { connectionId: 4, model: 'demo-typed' }), { groups: [], extra: { value: '4:demo-typed', label: 'demo-typed' } });
-  assert.deepEqual(modelMenu({ connections: [] }, { connectionId: 4, model: 'demo-typed' }), { groups: [], extra: null });
-  // the list is not loaded yet: the pick is kept until it is known
-  assert.deepEqual(modelMenu(null, { connectionId: 9, model: 'gone' }).extra, { value: '9:gone', label: 'gone' });
-  assert.deepEqual(modelMenu(null, null), { groups: [], extra: null });
+  // a connection without the `enabled` field counts as on
+  const bare: AiModelList = { connections: [{ id: 4, name: 'bare', provider: 'openai', status: 'ok', listed: true, error: null, models: [{ id: 'demo-typed', context: null, poolId: null, status: null }] }] };
+  assert.equal(chatMenu(bare, null, null).conns.length, 1);
+  assert.deepEqual(chatMenu({ connections: [] }, { connectionId: 4, model: 'demo-typed' }, null), { loaded: true, conns: [], off: null });
+  // not loaded: nothing offered, nothing off
+  assert.deepEqual(chatMenu(null, { connectionId: 9, model: 'gone' }, DEF), { loaded: false, conns: [], off: null });
 });
 
-test('modelMenu: a gateway that lists its whole catalogue shows all of it under each connection, minus the failed models', () => {
+test('chatMenu: a gateway that lists its whole catalogue shows all of it under each connection, minus the failed models', () => {
   const catalogue = Array.from({ length: 40 }, (_, i) => ({ id: `demo-catalogue-${i}`, context: null, poolId: null, status: null }));
   const list: AiModelList = {
     connections: [
@@ -585,15 +591,15 @@ test('modelMenu: a gateway that lists its whole catalogue shows all of it under 
         { id: 'demo-failed', context: null, poolId: 14, status: 'failed' }] },
     ],
   };
-  const m = modelMenu(list, null);
+  const m = chatMenu(list, null, null);
   const ids = catalogue.map((c) => c.id);
-  assert.deepEqual(m.groups.map((g) => [g.connectionId, g.name, g.options.map((o) => o.label)]), [
+  assert.deepEqual(m.conns.map((g) => [g.id, g.name, g.models.map((o) => o.label)]), [
     [5, 'gate', [...ids.slice(0, 20), 'demo-added', ...ids.slice(20)]],
     [6, 'other', [...ids, 'demo-added', 'demo-other']],
   ]);
-  assert.equal(m.groups[0]?.options.length, 41);
-  assert.equal(m.groups[1]?.options.length, 42);
-  assert.deepEqual(m.groups[1]?.options[0], { value: '6:demo-catalogue-0', label: 'demo-catalogue-0' });
+  assert.equal(m.conns[0]?.models.length, 41);
+  assert.equal(m.conns[1]?.models.length, 42);
+  assert.deepEqual(m.conns[1]?.models[0], { value: '6:demo-catalogue-0', label: 'demo-catalogue-0', isDefault: false });
 });
 
 test('modelArg: nothing changed sends no model, the default clears the pick, a model is sent as a reference', () => {
@@ -605,21 +611,46 @@ test('modelArg: nothing changed sends no model, the default clears the pick, a m
   assert.equal(modelArg('garbage', null, parseModelRef), undefined);
 });
 
-test('modelShown: a pick the menu does not offer (broken or removed connection) shows as the default and is still sent as unchanged', () => {
+test('chatShown: a pick the menu does not offer (broken or removed connection) shows as the default and is still sent as unchanged', () => {
   for (const pick of [{ connectionId: 2, model: 'demo-x' }, { connectionId: 9, model: 'gone' }]) {
     const text = `${pick.connectionId}:${pick.model}`;
-    assert.equal(modelShown(text, modelMenu(models, pick)), '', text);
-    // the select shows the default, yet nothing was changed: the server falls back and clears the pick itself
+    assert.equal(chatShown(text, chatMenu(models, pick, DEF)), '', text);
+    // the picker shows the default, yet nothing was changed: the server falls back and clears the pick itself
     assert.equal(modelArg(text, pick, parseModelRef), undefined, text);
   }
-  // offered values are shown as they are: the default, a listed model, the extra entry, an unsent change
+  // offered values are shown as they are: the default, a listed model, the unlisted pick, an unsent change
   const bad = { connectionId: 1, model: 'demo-bad' };
-  assert.equal(modelShown('', modelMenu(models, bad)), '');
-  assert.equal(modelShown('1:demo-bad', modelMenu(models, bad)), '1:demo-bad');
-  assert.equal(modelShown('3:demo:colon', modelMenu(models, bad)), '3:demo:colon');
-  assert.equal(modelShown('1:demo-chat-small', modelMenu(models, { connectionId: 1, model: 'demo-chat-small' })), '1:demo-chat-small');
+  assert.equal(chatShown('', chatMenu(models, bad, DEF)), '');
+  assert.equal(chatShown('1:demo-bad', chatMenu(models, bad, DEF)), '1:demo-bad');
+  assert.equal(chatShown('3:demo:colon', chatMenu(models, bad, DEF)), '3:demo:colon');
+  // a pick on an off connection is kept (the call fails with ai.connectionOff; nothing is dropped silently)
+  const off = { connectionId: 5, model: 'demo-x' };
+  assert.equal(chatShown('5:demo-x', chatMenu(models, off, DEF)), '5:demo-x');
   // the list is not loaded yet: the pick is kept
-  assert.equal(modelShown('9:gone', modelMenu(null, { connectionId: 9, model: 'gone' })), '9:gone');
+  assert.equal(chatShown('9:gone', chatMenu(null, { connectionId: 9, model: 'gone' }, DEF)), '9:gone');
+});
+
+test('pickerView: pending connection first, then the chosen model, then the default while its connection is listed', () => {
+  const menu = chatMenu(models, null, DEF);
+  assert.deepEqual(pickerView('1:demo-chat-large', 3, menu, DEF), { connId: 3, modelValue: '' }, 'only the API was changed: no model yet');
+  assert.deepEqual(pickerView('3:demo:colon', null, menu, DEF), { connId: 3, modelValue: '3:demo:colon' });
+  assert.deepEqual(pickerView('', null, menu, DEF), { connId: 1, modelValue: '1:demo-chat-small' }, 'the default is preselected');
+  assert.deepEqual(pickerView('', null, menu, null), { connId: null, modelValue: '' });
+  // the default's connection is not listed (off or broken): placeholders
+  const gone = chatMenu({ connections: models.connections.filter((c) => c.id !== 1) }, null, DEF);
+  assert.deepEqual(pickerView('', null, gone, DEF), { connId: null, modelValue: '' });
+  // a pick on an off connection shows that connection and model
+  assert.deepEqual(pickerView('5:demo-x', null, chatMenu(models, { connectionId: 5, model: 'demo-x' }, DEF), DEF), { connId: 5, modelValue: '5:demo-x' });
+  assert.deepEqual(pickerView('garbage', null, menu, DEF), { connId: null, modelValue: '' });
+});
+
+test('chooseValue: the model marked default means "follow the default"; any other model is kept as chosen', () => {
+  assert.equal(chooseValue('1:demo-chat-small', DEF), '');
+  assert.equal(chooseValue('1:demo-chat-large', DEF), '1:demo-chat-large');
+  assert.equal(chooseValue('3:demo:colon', DEF), '3:demo:colon');
+  assert.equal(chooseValue('1:demo-chat-small', null), '1:demo-chat-small');
+  // choosing the default after a custom pick clears the stored pick (null in the request)
+  assert.equal(modelArg(chooseValue('1:demo-chat-small', DEF), { connectionId: 3, model: 'demo:colon' }, parseModelRef), null);
 });
 
 test('the pick: a send keeps the model it carried as the chat pick; a fallback frame clears it; the body carries it only when set', () => {

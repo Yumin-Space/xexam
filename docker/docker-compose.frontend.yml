@@ -1,0 +1,100 @@
+# Xexam on different machines — MACHINE 1: the frontend (Nginx), the only part that faces browsers.
+# Use this file together with docker-compose.backend.yml (machine 2) and docker-compose.ai-service.yml (machine 3); the
+# one-host files (docker-compose.yml, docker-compose.build.yml) stay as they are for a single machine. Full guide: docs/en/deployment.md, section 12.
+#
+#   Browser ──> this machine: xexam-frontend (Nginx)
+#                 ├─ /api/    ──> XEXAM_BACKEND_UPSTREAM  (the backend machine, for example http://10.0.0.2:8765)
+#                 └─ /api/ai/ ──> checked by the backend first (/internal/ai/auth), then ──> XEXAM_AI_UPSTREAM (the ai-service machine,
+#                                  for example http://10.0.0.3:8766)
+# The links between the machines must be a private network, a VPN or TLS (an https upstream is verified against the system CA
+# bundle); never the open internet in plain http.
+#
+# On this machine, create a file named .env next to this file (the template is .env.example) with at least:
+#       XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765
+#       XEXAM_AI_UPSTREAM=http://10.0.0.3:8766
+#   Start:   docker compose -f docker-compose.frontend.yml up -d        (in a clone: -f docker/docker-compose.frontend.yml)
+#   Update:  docker compose -f docker-compose.frontend.yml pull && docker compose -f docker-compose.frontend.yml up -d
+
+name: xexam
+
+services:
+  frontend:
+    image: docker.io/yuminspace/xexam-frontend:latest
+    container_name: xexam-frontend
+    restart: unless-stopped
+    ports:
+      # Empty = the default, only this machine can connect:
+      # XEXAM_BIND:  127.0.0.1:8765
+      # Or: XEXAM_BIND:  0.0.0.0:8765 (other machines on the network too)
+      - "${XEXAM_BIND:-127.0.0.1:8765}:8080"
+    networks: [public, tunnel]
+    environment:
+      # Required: no default here, because the one-host names (backend, ai-service) do not resolve on this machine.
+      # XEXAM_BACKEND_UPSTREAM:  http://10.0.0.2:8765 (the backend machine, http:// or https:// plus host and port, no path)
+      XEXAM_BACKEND_UPSTREAM: "${XEXAM_BACKEND_UPSTREAM:?set XEXAM_BACKEND_UPSTREAM in .env to the backend machine, for example http://10.0.0.2:8765}"
+      # XEXAM_AI_UPSTREAM:  http://10.0.0.3:8766 (the ai-service machine, same format)
+      XEXAM_AI_UPSTREAM: "${XEXAM_AI_UPSTREAM:?set XEXAM_AI_UPSTREAM in .env to the ai-service machine, for example http://10.0.0.3:8766}"
+      # Empty = the default, Docker's built-in DNS (127.0.0.11). Only host names in the two upstreams above need it:
+      # XEXAM_NGINX_RESOLVER:  127.0.0.11
+      # Or: XEXAM_NGINX_RESOLVER:  10.0.0.53 (one or more DNS servers, IPv4 or IPv6, optional :port, separated by spaces or commas)
+      XEXAM_NGINX_RESOLVER: "${XEXAM_NGINX_RESOLVER:-}"
+      # Empty = the default, every private network:
+      # XEXAM_TRUSTED_PROXIES:  10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+      # Or: XEXAM_TRUSTED_PROXIES:  10.1.1.1 / 10.0.0.0/8，10.1.1.1 / none
+      XEXAM_TRUSTED_PROXIES: "${XEXAM_TRUSTED_PROXIES:-}"
+      # Empty = the default, Cloudflare's header:
+      # XEXAM_REAL_IP_HEADER:  CF-Connecting-IP
+      # Or: XEXAM_REAL_IP_HEADER:  X-Forwarded-For / X-Real-IP
+      XEXAM_REAL_IP_HEADER: "${XEXAM_REAL_IP_HEADER:-CF-Connecting-IP}"
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    # Docker keeps container logs without any limit by default; keep at most 3 files of 10 MB per container
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  # Optional Cloudflare Tunnel connector. Start it with the profile:   docker compose -f docker-compose.frontend.yml --profile tunnel up -d
+  # Put TUNNEL_TOKEN (from the Cloudflare dashboard) in .env, and set the tunnel's public hostname service to
+  # http://frontend:8080. It reaches the frontend over the tunnel network, so Nginx sees the real visitor address
+  # (CF-Connecting-IP) and Cloudflare's location headers with no setting. Without the profile it is never created.
+  cloudflared:
+    image: docker.io/cloudflare/cloudflared:2025.11.1
+    container_name: xexam-cloudflared
+    profiles: [tunnel]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      # Empty = the default, no tunnel (this service runs only with --profile tunnel):
+      # TUNNEL_TOKEN:  (empty)
+      # Or: TUNNEL_TOKEN:  the token of your Cloudflare Tunnel
+      TUNNEL_TOKEN: "${TUNNEL_TOKEN:-}"
+    depends_on: [frontend]
+    # tunnel: to the frontend; public: outbound internet to Cloudflare
+    networks:
+      tunnel:
+        ipv4_address: 172.31.254.2   # fixed, so the tunnel's address is stable (it is inside the default trusted range 172.16.0.0/12)
+      public:
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: ["/tmp"]
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+networks:
+  # Direct and LAN connections arrive here, and it is also the way out to the other two machines. The subnet is pinned so the
+  # gateway address (172.31.255.1, what a cloudflared on the host appears as) is stable; the default XEXAM_TRUSTED_PROXIES
+  # (172.16.0.0/12) already covers it.
+  public:
+    ipam:
+      config:
+        - subnet: 172.31.255.0/28
+          gateway: 172.31.255.1
+  # Only the frontend and cloudflared (inside the default XEXAM_TRUSTED_PROXIES range 172.16.0.0/12)
+  tunnel:
+    ipam:
+      config:
+        - subnet: 172.31.254.0/28

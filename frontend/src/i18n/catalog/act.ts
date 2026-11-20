@@ -130,6 +130,8 @@ export default defineCatalog({
     'act.reason.locked': 'Account locked',
     'act.reason.changed': 'Password change needed first',
     'act.reason.unknownUser': 'Unknown account',
+    'act.a.ai.settings.connectionOn': 'Turned a connection on',
+    'act.a.ai.settings.connectionOff': 'Turned a connection off',
   },
   zh: {
     'act.col.time': '时间',
@@ -257,6 +259,8 @@ export default defineCatalog({
     'act.reason.locked': '账号已锁定',
     'act.reason.changed': '需要先修改密码',
     'act.reason.unknownUser': '账号不存在',
+    'act.a.ai.settings.connectionOn': '启用连接',
+    'act.a.ai.settings.connectionOff': '停用连接',
   },
   ja: {
     'act.col.time': '日時',
@@ -384,5 +388,7 @@ export default defineCatalog({
     'act.reason.locked': 'アカウントはロック中',
     'act.reason.changed': '先にパスワードの変更が必要',
     'act.reason.unknownUser': 'アカウントが存在しない',
+    'act.a.ai.settings.connectionOn': '接続をオンに',
+    'act.a.ai.settings.connectionOff': '接続をオフに',
   },
 });

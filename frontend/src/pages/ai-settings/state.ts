@@ -2,7 +2,7 @@
 // and the hooks the entry file fills in (which breaks the import cycle between the entry and the sections). Typed keys live
 // only in this state: they are forgotten after a successful save, when the page is left and on sign-out.
 import type { UsagePeriod } from '../../api/ai-admin.ts';
-import { jobTime } from '../../domain/ai-settings.ts';
+import { jobTime, subOfHash, type SafetySub } from '../../domain/ai-settings.ts';
 import { parsePeriod } from '../../domain/usage-bars.ts';
 import type { ConnForm, LimitKey, LimitsForm, SettingsField, SvcCause } from '../../domain/ai-settings.ts';
 import { localeTag, t } from '../../i18n/index.ts';
@@ -26,6 +26,50 @@ function readPeriod(): UsagePeriod {
 export function writePeriod(p: UsagePeriod): void {
   try {
     localStorage.setItem(PERIOD_KEY, String(p));
+  } catch {
+    // not remembered
+  }
+}
+
+const GROUPS_KEY = 'xexam.ais.connGroups';
+const SUB_KEY = 'xexam.ais.safetySub';
+
+/** v1.9: which of the two connection groups are open, kept for the browser session (both closed when nothing is stored) */
+function readGroups(): { on: boolean; off: boolean } {
+  try {
+    const v: unknown = JSON.parse(sessionStorage.getItem(GROUPS_KEY) ?? 'null');
+    if (typeof v === 'object' && v !== null) {
+      const o = v as Record<string, unknown>;
+      return { on: o.on === true, off: o.off === true };
+    }
+  } catch {
+    // not remembered
+  }
+  return { on: false, off: false };
+}
+
+/** Opens or closes one connection group and remembers it for the browser session */
+export function setGroupOpen(k: 'on' | 'off', open: boolean): void {
+  A.connGroupOpen[k] = open;
+  try {
+    sessionStorage.setItem(GROUPS_KEY, JSON.stringify(A.connGroupOpen));
+  } catch {
+    // not remembered
+  }
+}
+
+/** v1.9: the safety sub-tab last used in this browser session, or null */
+export function readSafetySub(): SafetySub | null {
+  try {
+    return subOfHash(`?sub=${sessionStorage.getItem(SUB_KEY) ?? ''}`);
+  } catch {
+    return null;
+  }
+}
+
+export function writeSafetySub(sub: SafetySub): void {
+  try {
+    sessionStorage.setItem(SUB_KEY, sub);
   } catch {
     // not remembered
   }
@@ -64,6 +108,10 @@ export interface PageState {
   connMsg: Msg | null;
   /** Retest per connection id: busy, or the last result line */
   retest: Record<number, { busy: boolean; msg: Msg | null }>;
+  /** v1.9: the two groups of the connection list (enabled / not enabled), open or closed */
+  connGroupOpen: { on: boolean; off: boolean };
+  /** The connection whose on / off switch is being saved */
+  connOnBusy: number | null;
 
   // ---- models and the AI+ switch
   models: AiModelList | null;
@@ -78,8 +126,6 @@ export interface PageState {
   /** The slot whose "type a model name" row is open */
   manualOpen: AiSlot | null;
   featBusy: number | null;
-  switchBusy: boolean;
-  switchMsg: Msg | null;
 
   // ---- users, usage, limits, AI banks
   users: AiAdminUserRow[] | null;
@@ -112,8 +158,9 @@ function fresh(): PageState {
     settings: null, loadError: null, loading: false, wanted: true, phase: 'checking', svc: null, cause: null, svcBusy: false,
     svcTimer: null, panelSince: 0, failedAs: null, lastDownAt: 0, forbidden: false,
     open: null, form: null, fieldErr: {}, connBusy: false, connSecs: 0, connTimer: null, connMsg: null, retest: {},
+    connGroupOpen: readGroups(), connOnBusy: null,
     models: null, modelsBusy: false, modelsError: null, enableChoice: '', enableBusy: false, enableMsg: null, slotBusy: {}, slotMsg: {},
-    manualOpen: null, featBusy: null, switchBusy: false, switchMsg: null,
+    manualOpen: null, featBusy: null,
     users: null, usersError: null, fnBusy: null, usage: null, usageDays: readPeriod(), usageError: null,
     retentionText: '', retentionError: null, retentionSaving: false,
     limits: null, limitsForm: null, limitsError: null, limitsFieldErr: null, limitsSaveError: null, limitsSaving: false, limitsTab: 'safety',

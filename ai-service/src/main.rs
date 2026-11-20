@@ -87,6 +87,12 @@ async fn serve(cfg: Config) -> i32 {
     let host = cfg.host.clone();
     let port = cfg.port;
     let version = cfg.version.clone();
+    for w in &cfg.peer_warnings {
+        tracing::warn!("{w}");
+    }
+    if cfg.frontend_peers.is_restricted() {
+        tracing::info!("XEXAM_FRONTEND_PEERS: {} entries", cfg.frontend_peers.len());
+    }
     let app = match App::open(cfg) {
         Ok(a) => a,
         Err(e) => {
@@ -118,9 +124,12 @@ async fn serve(cfg: Config) -> i32 {
     let notify = std::sync::Arc::new(tokio::sync::Notify::new());
     let n2 = notify.clone();
     let mut server = tokio::spawn(async move {
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move { n2.notified().await })
-            .await
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move { n2.notified().await })
+        .await
     });
     let mut code = 0;
     tokio::select! {

@@ -139,7 +139,7 @@ async fn a_route_is_the_pick_then_the_slot_then_the_default_and_never_another_mo
         )
         .expect("ok");
     assert!(app.route_exists(Slot::Chat));
-    assert!(!app.route_exists(Slot::Study));
+    assert!(!app.route_exists(Slot::Hint));
     assert!(app.effective().expect("effective"));
 }
 
@@ -315,7 +315,7 @@ async fn live_calls_that_end_in_auth_errors_break_the_connection() {
 // —— who may use what ——————————————————————————————————————————————————————————————————————————————————————————————————
 
 #[tokio::test]
-async fn global_switches_stop_users_but_never_admins() {
+async fn global_switches_stop_everyone_and_per_user_bits_never_apply_to_admins() {
     let t = start().await;
     t.relax_caps();
     let admin = t.user("admin", true, false);
@@ -329,29 +329,29 @@ async fn global_switches_stop_users_but_never_admins() {
     // chat and hint off for everyone
     set_global_off(&t, Feature::Chat.bit() | Feature::Hint.bit());
     assert!(
-        app.feature_allowed(&a, Feature::Chat),
-        "admins are not affected"
+        !app.feature_allowed(&a, Feature::Chat),
+        "the global switch applies to administrators too (v1.9)"
     );
-    assert!(app.feature_allowed(&a, Feature::Hint));
+    assert!(!app.feature_allowed(&a, Feature::Hint));
     assert!(!app.feature_allowed(&s, Feature::Chat));
     assert!(!app.feature_allowed(&s, Feature::Hint));
     assert!(
         app.feature_allowed(&s, Feature::Explain),
         "the other bits are untouched"
     );
-    assert!(app.admit(&a, Feature::Chat).is_ok());
+    assert_eq!(
+        app.admit(&a, Feature::Chat).err().map(|e| e.code),
+        Some("ai.featureOff")
+    );
     assert_eq!(
         app.admit(&s, Feature::Chat).err().map(|e| e.code),
         Some("ai.featureOff")
     );
-    // over HTTP: the user is refused, the admin's call runs
+    // over HTTP: both are refused
     let (code, v) = t.post("/api/ai/send", &sam, json!({"text": "hi"})).await;
     assert_eq!((code, v["code"].clone()), (403, json!("ai.featureOff")));
-    let ev = t
-        .send_all(&admin, json!({"text": "hi"}))
-        .await
-        .expect("admin");
-    assert_eq!(terminal(&ev).0, "done");
+    let (code, v) = t.post("/api/ai/send", &admin, json!({"text": "hi"})).await;
+    assert_eq!((code, v["code"].clone()), (403, json!("ai.featureOff")));
     // the per-user bit does not apply to admins either, and still applies to users when the global one is clear
     set_global_off(&t, 0);
     t.app
@@ -377,7 +377,7 @@ async fn global_switches_stop_users_but_never_admins() {
     assert_eq!(terminal(&adm).0, "done");
     set_global_off(&t, Feature::Explain.bit());
     assert!(!app.feature_allowed(&s, Feature::Explain));
-    assert!(app.feature_allowed(&a, Feature::Explain));
+    assert!(!app.feature_allowed(&a, Feature::Explain));
 }
 
 #[tokio::test]
@@ -798,6 +798,7 @@ async fn admin_routes_answer_403_to_users() {
         "/api/ai/admin/connections/test",
         "/api/ai/admin/connections/delete",
         "/api/ai/admin/connections/order",
+        "/api/ai/admin/connections/enabled",
         "/api/ai/admin/models/pick",
         "/api/ai/admin/models/test",
         "/api/ai/admin/models/remove",

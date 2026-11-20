@@ -1,29 +1,32 @@
-// AI settings page, Safety tab: the chat retention and the safety limits in groups: AI requests (per-user caps, administrators
-// exempt, the site-wide daily budget), chat, the one answer length of chat / hint / explanation / summary, shared hints and
-// explanations (reuse, days, clear), summary size, AI question generation, AI import and the server. One Save for the whole
-// form. The field helpers here are shared with the AI banks tab (gen.ts).
+// AI settings page, Safety tab (v1.9): seven sub-tabs, one limits group each: Limits (per-user caps, administrators exempt, the
+// site-wide daily budget, the one answer length), Chat, Hints and analysis (shared reuse, days, clear), Summary, AI generation,
+// AI import and Server (calls and jobs at once, the provider rate limit, then the chat retention). The sub-tab is in the URL
+// (`&sub=`); without one the last sub-tab of this browser session is shown. One Save sends every changed limit of the whole form
+// (all seven sub-tabs share it); Reset fills the defaults of the shown sub-tab only. The field helpers here are shared with the
+// AI banks tab (gen.ts).
 import { clearAiData, fetchLimits, saveLimits, saveRetention as saveRetentionApi } from '../../api/ai-admin.ts';
 import { ApiError } from '../../api/client.ts';
 import { infoTip } from '../../components/tooltip.ts';
 import {
-  AS_KEYS, CAP_KEYS, DEFAULT_LIMITS, genCallLive, limitIssue, limitsFormOf, limitsUpdate, LIMIT_KEYS, rangeOf, retentionOf,
-  type LimitKey, type LimitRanges, type LimitValues,
+  CAP_KEYS, DEFAULT_LIMITS, genCallLive, hashOfSafety, limitIssue, limitsFormOf, limitsUpdate, LIMIT_KEYS, paceEffective, rangeOf,
+  retentionOf, SAFETY_SUBS, SUB_KEYS, subOfHash, subOfKey, type LimitKey, type LimitRanges, type LimitValues, type SafetySub,
 } from '../../domain/ai-settings.ts';
 import { aiCodeText, errorText } from '../../i18n/errors.ts';
 import { limitHintArgs } from '../../domain/usage-bars.ts';
 import { t, type MsgKey } from '../../i18n/index.ts';
+import { holdTip } from '../../components/tooltip.ts';
 import { refreshAi } from '../../state/actions.ts';
 import type { AiLimitsAnswer } from '../../types/api.ts';
 import { ask } from '../../utils/dialog.ts';
 import { h, type Child } from '../../utils/dom.ts';
 import { toast } from '../../utils/toast.ts';
 import { aiDown } from './status.ts';
-import { A, adopt, num, redraw } from './state.ts';
+import { A, adopt, num, readSafetySub, redraw, writeSafetySub } from './state.ts';
 import { loadUsage } from './usage.ts';
 import { loadUsers } from './users.ts';
 
 /** The limits counted in tokens (their range hint is shown compact) */
-const TOKEN_LIMITS: ReadonlySet<LimitKey> = new Set<LimitKey>(['replyMaxTokens', 'memoryTokens', 'genCallTokens', 'dailyTokenBudget']);
+const TOKEN_LIMITS: ReadonlySet<LimitKey> = new Set<LimitKey>(['replyMaxTokens', 'memoryTokens', 'genCallTokens', 'dailyTokenBudget', 'paceTpm']);
 
 export const LIMIT_LABEL: Record<LimitKey, MsgKey> = {
   callsPerMinute: 'ai.set.limit.callsPerMinute', callsPerHour: 'ai.set.limit.callsPerHour', callsPerDay: 'ai.set.limit.callsPerDay',
@@ -39,7 +42,54 @@ export const LIMIT_LABEL: Record<LimitKey, MsgKey> = {
   genUnlimited: 'ai.set.limit.unlimited', importUnlimited: 'ai.set.limit.unlimited',
   studyShare: 'ai.limits.studyShare', studyShareDays: 'ai.limits.studyShareDays', genMaxChunks: 'ai.limits.genMaxChunks',
   summaryMaxItems: 'ai.limits.summaryMaxItems', dailyTokenBudget: 'ai.limits.dailyTokenBudget',
+  paceOn: 'ai.limits.paceOn', paceRpm: 'ai.set.limit.paceRpm', paceTpm: 'ai.set.limit.paceTpm',
 };
+
+/** The label of a sub-tab: the full name and the short one (phones) */
+const SUB_LABEL: Record<SafetySub, { full: MsgKey; short: MsgKey }> = {
+  caps: { full: 'ai.set.safeTab.caps', short: 'ai.set.safeTab.capsShort' },
+  chat: { full: 'ai.set.safeTab.chat', short: 'ai.set.safeTab.chatShort' },
+  study: { full: 'ai.set.safeTab.study', short: 'ai.set.safeTab.studyShort' },
+  summary: { full: 'ai.set.safeTab.summary', short: 'ai.set.safeTab.summaryShort' },
+  gen: { full: 'ai.set.safeTab.gen', short: 'ai.set.safeTab.genShort' },
+  import: { full: 'ai.set.safeTab.import', short: 'ai.set.safeTab.importShort' },
+  server: { full: 'ai.set.safeTab.server', short: 'ai.set.safeTab.serverShort' },
+};
+
+// ---------------------------------------------------------------- the sub-tabs
+
+/** The sub-tab shown now: the one in the address, else the last one of this browser session, else the first */
+export const currentSub = (): SafetySub => subOfHash(window.location.hash) ?? readSafetySub() ?? 'caps';
+
+/** Makes a sub-tab the current one (address and session memory) without drawing; a field error of another sub-tab is dropped */
+function setSub(k: SafetySub): void {
+  try {
+    window.history.replaceState(window.history.state, '', hashOfSafety(k));
+  } catch {
+    window.location.hash = hashOfSafety(k);
+  }
+  writeSafetySub(k);
+  if (A.limitsFieldErr && subOfKey(A.limitsFieldErr.key) !== k) A.limitsFieldErr = null;
+}
+
+function selectSub(k: SafetySub): void {
+  if (k === currentSub() && subOfHash(window.location.hash) === k) return;
+  setSub(k);
+  redraw();
+  document.getElementById(`ais-sub-${k}`)?.focus();
+}
+
+/** The row of sub-tabs: full labels on wide screens, short ones on a phone (the full name is the tip and the accessible name) */
+function subTabsRow(sub: SafetySub): HTMLElement {
+  return h('div', { class: 'seg ais-subtabs', role: 'group', 'aria-label': t('ai.set.safeTab.aria') },
+    SAFETY_SUBS.map((k) => {
+      const b = h('button', {
+        type: 'button', id: `ais-sub-${k}`, 'aria-pressed': String(k === sub), 'aria-controls': 'ais-safety-panel', onclick: () => selectSub(k),
+      }, h('span', { class: 'ais-tl-full' }, t(SUB_LABEL[k].full)), h('span', { class: 'ais-tl-short', 'aria-hidden': 'true' }, t(SUB_LABEL[k].short)));
+      holdTip(b, t(SUB_LABEL[k].full));
+      return b;
+    }));
+}
 
 // ---------------------------------------------------------------- retention
 
@@ -125,14 +175,20 @@ export async function saveLimitsForm(tab: 'safety' | 'gen' = 'safety'): Promise<
   if (!l || !f || A.limitsSaving) return;
   const issue = limitIssue(f, l.ranges);
   if (issue) {
+    // The field may sit in another sub-tab (only the shown one is in the page): show that one first, then focus the field
+    const sub = tab === 'safety' ? subOfKey(issue.key) : null;
+    if (sub && sub !== currentSub()) setSub(sub);
     A.limitsFieldErr = { key: issue.key, text: limitFieldText(issue.key, issue.kind, l.ranges) };
     redraw();
-    const bad = document.getElementById(`ai-lim-${issue.key}`);
-    if (bad) {
-      // No default focus scroll: the pinned top bar would cover the field
-      bad.focus({ preventScroll: true });
-      bad.scrollIntoView({ block: 'center' });
-    }
+    const focusBad = (): void => {
+      const bad = document.getElementById(`ai-lim-${issue.key}`);
+      if (bad) {
+        // No default focus scroll: the pinned top bar would cover the field
+        bad.focus({ preventScroll: true });
+        bad.scrollIntoView({ block: 'center' });
+      }
+    };
+    window.requestAnimationFrame(focusBad);
     return;
   }
   const u = limitsUpdate(l.limits, f);
@@ -162,7 +218,11 @@ export async function saveLimitsForm(tab: 'safety' | 'gen' = 'safety'): Promise<
     const order = e instanceof ApiError && e.code === 'ai.limitOrder';
     const comp = e instanceof ApiError && e.code === 'ai.genCount';
     const key = named ?? (order ? 'callsPerHour' : undefined);
-    if (key) A.limitsFieldErr = { key, text: limitFieldText(key, comp ? 'comp' : order ? 'order' : 'range', l.ranges) };
+    if (key) {
+      const sub = A.limitsTab === 'safety' ? subOfKey(key) : null;
+      if (sub && sub !== currentSub()) setSub(sub);
+      A.limitsFieldErr = { key, text: limitFieldText(key, comp ? 'comp' : order ? 'order' : 'range', l.ranges) };
+    }
     else if (!aiDown(e)) A.limitsSaveError = errorText(e);
   }
   A.limitsSaving = false;
@@ -304,7 +364,106 @@ async function clearShared(): Promise<void> {
   document.getElementById('ai-share-clear')?.focus();
 }
 
-function limitsSection(): HTMLElement {
+/** v1.9: the provider rate limit of AI generation and import (one setting for every connection) */
+function paceGroup(l: AiLimitsAnswer, f: Record<LimitKey, string>): HTMLElement {
+  const live = h('p', { class: 'fld-hint ais-live', id: 'ai-pace-live', 'aria-live': 'polite' });
+  const offNote = h('p', { class: 'fld-hint', id: 'ai-pace-off' }, t('ai.limits.pace.offNote'));
+  const check = limitCheck('paceOn', 'ai.limits.paceOn');
+  const fields = h('div', { class: 'ais-limitgrid' }, limitField('paceRpm', l, f, null), limitField('paceTpm', l, f, null));
+  const box = check.querySelector<HTMLInputElement>('input');
+  const rpm = fields.querySelector<HTMLInputElement>('#ai-lim-paceRpm');
+  const tpm = fields.querySelector<HTMLInputElement>('#ai-lim-paceTpm');
+  const typed = (k: 'paceRpm' | 'paceTpm'): number | null => {
+    const v = A.limitsForm?.[k]?.trim() ?? '';
+    const [min, max] = rangeOf(l.ranges, k);
+    return /^\d{1,9}$/.test(v) && Number(v) >= min && Number(v) <= max ? Number(v) : null;
+  };
+  // The grey state and the live line follow the box and the typed numbers without a redraw (the caret stays)
+  const sync = (): void => {
+    const on = A.limitsForm?.paceOn === '1';
+    if (rpm) rpm.disabled = A.limitsSaving || !on;
+    if (tpm) tpm.disabled = A.limitsSaving || !on;
+    offNote.hidden = on;
+    const r = typed('paceRpm');
+    const k = typed('paceTpm');
+    if (!on || r == null || k == null) live.textContent = '';
+    else {
+      const e = paceEffective(r, k);
+      live.textContent = t('ai.limits.pace.live', { rpm: num(e.rpm), tpm: num(e.tpm), sec: String(e.sec) });
+    }
+  };
+  box?.addEventListener('change', sync);
+  fields.addEventListener('input', sync);
+  sync();
+  return group('ais-g-pace', 'ai.limits.group.pace', h('p', { class: 'fld-hint' }, t('ai.limits.pace.note')), check, fields, live, offNote);
+}
+
+/** The groups of one sub-tab (the same groups the single page had before v1.9) */
+function subGroups(sub: SafetySub, l: AiLimitsAnswer, f: Record<LimitKey, string>): Child[] {
+  switch (sub) {
+    case 'chat':
+      return [group('ais-g-chat', 'ai.limits.group.chat',
+        h('div', { class: 'ais-limitgrid' }, (['chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryTokens'] as const).map((k) => limitField(k, l, f, null))),
+        h('p', { class: 'fld-hint' }, t('ai.limits.memoryHint')))];
+    case 'study':
+      return [group('ais-g-study', 'ai.limits.group.study',
+        limitCheck('studyShare', 'ai.limits.studyShare'),
+        limitField('studyShareDays', l, f, null),
+        h('div', { class: 'acts' },
+          h('button', { class: 'btn danger', id: 'ai-share-clear', type: 'button', disabled: A.shareBusy || A.limitsSaving, onclick: () => void clearShared() }, t('ai.limits.studyShareClear'))))];
+    case 'summary':
+      return [group('ais-g-summary', 'ai.limits.group.summary', limitField('summaryMaxItems', l, f, null))];
+    case 'gen': {
+      const live = h('p', { class: 'fld-hint ais-live', id: 'ai-lim-genCallTokens-live', 'aria-live': 'polite' });
+      const liveText = (text: string): string => {
+        const v = genCallLive(text, l.ranges);
+        return v ? t('ai.set.limit.genCallLive', { q: v.q }) : '';
+      };
+      live.textContent = liveText(f.genCallTokens);
+      // the live line follows the typed length without a redraw (only while this sub-tab is shown)
+      const lengthField = limitField('genCallTokens', l, f, 'ai.set.limit.genCallTokensHint', [live]);
+      lengthField.addEventListener('input', (e) => {
+        if ((e.target as HTMLElement).id === 'ai-lim-genCallTokens') live.textContent = liveText((e.target as HTMLInputElement).value);
+      });
+      return [group('ais-g-gen', 'ai.limits.group.gen',
+        h('div', { class: 'ais-genrow' },
+          limitField('genPerDay', l, f, 'ai.set.limit.genPerDayHint'),
+          limitCheck('genAdminsExempt', 'ai.set.limit.genAdminsExempt')),
+        lengthField,
+        limitField('genMaxCalls', l, f, 'ai.set.limit.genMaxCallsHint', [], 'genUnlimited'),
+        limitField('genMaxChunks', l, f, null),
+        h('p', { class: 'ais-note' }, t('ai.set.imp.shared')))];
+    }
+    case 'import':
+      return [group('ais-g-import', 'ai.limits.group.import',
+        h('div', { class: 'ais-genrow' },
+          limitField('importMaxMb', l, f, 'ai.set.limit.importMaxMbHint'),
+          limitField('importMaxQuestions', l, f, 'ai.set.limit.importMaxQuestionsHint')),
+        limitField('recognizeMaxCalls', l, f, 'ai.set.limit.recognizeMaxCallsHint', [], 'importUnlimited', false),
+        limitField('importMaxCalls', l, f, 'ai.set.limit.importMaxCallsHint', [], 'importUnlimited'),
+        h('p', { class: 'ais-note' }, t('ai.set.imp.shared')))];
+    case 'server':
+      return [
+        group('ais-g-server', 'ai.limits.group.running',
+          h('div', { class: 'ais-limitgrid' }, (['perUserRunning', 'globalRunning', 'genRunning'] as const).map((k) => limitField(k, l, f, null)))),
+        paceGroup(l, f),
+      ];
+    default: {
+      const lengthTip = infoTip('ai-length-tip', t('ai.set.limits.lengthTipBtn'), t('ai.set.limits.lengthTip'));
+      return [
+        group('ais-g-calls', 'ai.limits.group.calls',
+          capsRow(l),
+          limitCheck('callsAdminsExempt', 'ai.limits.callsAdminsExempt', 'ai.limits.callsAdminsExempt.note'),
+          limitField('dailyTokenBudget', l, f, null, [h('p', { class: 'fld-hint' }, t('ai.limits.dailyTokenBudget.note'))])),
+        h('div', { class: 'ais-subgroup ais-length-group', role: 'group', 'aria-labelledby': 'ais-length-h' },
+          h('h3', { class: 'ais-h3', id: 'ais-length-h' }, t('ai.set.limits.length'), lengthTip.el),
+          limitField('replyMaxTokens', l, f, null, [h('p', { class: 'fld-hint' }, t('ai.limits.replyNote'))])),
+      ];
+    }
+  }
+}
+
+function limitsSection(sub: SafetySub): HTMLElement {
   const l = A.limits;
   const f = A.limitsForm;
   let body: Child;
@@ -313,69 +472,27 @@ function limitsSection(): HTMLElement {
       ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.set.limitsErr', { reason: errorText(A.limitsError) })))
       : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   } else {
-    const live = h('p', { class: 'fld-hint ais-live', id: 'ai-lim-genCallTokens-live', 'aria-live': 'polite' });
-    const liveText = (text: string): string => {
-      const v = genCallLive(text, l.ranges);
-      return v ? t('ai.set.limit.genCallLive', { q: v.q }) : '';
-    };
-    live.textContent = liveText(f.genCallTokens);
-    const lengthTip = infoTip('ai-length-tip', t('ai.set.limits.lengthTipBtn'), t('ai.set.limits.lengthTip'));
-    const form = h('form', {
+    body = h('form', {
       class: 'ais-limits', novalidate: true, 'aria-busy': A.limitsSaving ? 'true' : null,
       onsubmit: (e: SubmitEvent) => {
         e.preventDefault();
         void saveLimitsForm('safety');
       },
     },
-    group('ais-g-calls', 'ai.limits.group.calls',
-      capsRow(l),
-      limitCheck('callsAdminsExempt', 'ai.limits.callsAdminsExempt', 'ai.limits.callsAdminsExempt.note'),
-      limitField('dailyTokenBudget', l, f, null, [h('p', { class: 'fld-hint' }, t('ai.limits.dailyTokenBudget.note'))])),
-    group('ais-g-chat', 'ai.limits.group.chat',
-      h('div', { class: 'ais-limitgrid' },
-        (['chatsPerUser', 'messagesPerChat', 'memoriesPerUser', 'memoryTokens'] as const).map((k) => limitField(k, l, f, null))),
-      h('p', { class: 'fld-hint' }, t('ai.limits.memoryHint'))),
-    h('div', { class: 'ais-subgroup ais-length-group', role: 'group', 'aria-labelledby': 'ais-length-h' },
-      h('h3', { class: 'ais-h3', id: 'ais-length-h' }, t('ai.set.limits.length'), lengthTip.el),
-      limitField('replyMaxTokens', l, f, null, [h('p', { class: 'fld-hint' }, t('ai.limits.replyNote'))])),
-    group('ais-g-study', 'ai.limits.group.study',
-      limitCheck('studyShare', 'ai.limits.studyShare'),
-      limitField('studyShareDays', l, f, null),
-      h('div', { class: 'acts' },
-        h('button', { class: 'btn danger', id: 'ai-share-clear', type: 'button', disabled: A.shareBusy || A.limitsSaving, onclick: () => void clearShared() }, t('ai.limits.studyShareClear')))),
-    group('ais-g-summary', 'ai.limits.group.summary', limitField('summaryMaxItems', l, f, null)),
-    group('ais-g-gen', 'ai.limits.group.gen',
-      h('div', { class: 'ais-genrow' },
-        limitField('genPerDay', l, f, 'ai.set.limit.genPerDayHint'),
-        limitCheck('genAdminsExempt', 'ai.set.limit.genAdminsExempt')),
-      limitField('genCallTokens', l, f, 'ai.set.limit.genCallTokensHint', [live]),
-      limitField('genMaxCalls', l, f, 'ai.set.limit.genMaxCallsHint', [], 'genUnlimited'),
-      limitField('genMaxChunks', l, f, null)),
-    group('ais-g-import', 'ai.limits.group.import',
-      h('div', { class: 'ais-genrow' },
-        limitField('importMaxMb', l, f, 'ai.set.limit.importMaxMbHint'),
-        limitField('importMaxQuestions', l, f, 'ai.set.limit.importMaxQuestionsHint')),
-      limitField('recognizeMaxCalls', l, f, 'ai.set.limit.recognizeMaxCallsHint', [], 'importUnlimited', false),
-      limitField('importMaxCalls', l, f, 'ai.set.limit.importMaxCallsHint', [], 'importUnlimited'),
-      h('p', { class: 'ais-note' }, t('ai.set.imp.shared'))),
-    group('ais-g-server', 'ai.limits.group.server',
-      h('div', { class: 'ais-limitgrid' }, (['perUserRunning', 'globalRunning', 'genRunning'] as const).map((k) => limitField(k, l, f, null)))),
+    ...subGroups(sub, l, f),
     A.limitsSaveError ? h('div', { class: 'err', role: 'alert' }, h('p', null, A.limitsSaveError)) : null,
     h('div', { class: 'acts' },
       h('button', { class: 'btn primary', id: 'ai-limits-save', type: 'submit', disabled: A.limitsSaving }, t(A.limitsSaving ? 'common.saving' : 'ai.set.save')),
-      h('button', { class: 'btn', id: 'ai-limits-reset', type: 'button', disabled: A.limitsSaving, onclick: () => resetKeys(AS_KEYS) }, t('ai.set.limitsReset'))));
-    // the live line follows the typed length without a redraw
-    form.addEventListener('input', (e) => {
-      if ((e.target as HTMLElement).id === 'ai-lim-genCallTokens') live.textContent = liveText((e.target as HTMLInputElement).value);
-    });
-    body = form;
+      h('button', { class: 'btn', id: 'ai-limits-reset', type: 'button', disabled: A.limitsSaving, onclick: () => resetKeys(SUB_KEYS[sub]) }, t('ai.set.limit.resetSub'))));
   }
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-lim-h' },
     h('h2', { id: 'ais-lim-h' }, t('ai.set.sec.limits')),
-    h('p', { class: 'ais-lead' }, t('ai.set.limitsLeadV10')),
+    sub === 'caps' ? h('p', { class: 'ais-lead' }, t('ai.set.limitsLeadV10')) : null,
     body);
 }
 
 export function safetySections(): HTMLElement[] {
-  return [retentionSection(), limitsSection()];
+  const sub = currentSub();
+  // The chat retention is a server matter: it sits under the Server sub-tab's limits
+  return [subTabsRow(sub), h('div', { id: 'ais-safety-panel' }, limitsSection(sub), sub === 'server' ? retentionSection() : null)];
 }

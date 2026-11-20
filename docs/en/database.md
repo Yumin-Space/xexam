@@ -3,7 +3,7 @@
 # Database
 
 > The database is SQLite, **a single file, `xexam.db`**. The Rust backend reuses the old Python version's database: the original table definitions (schema v1) are kept **character for character**, and every later schema only adds to them (new tables and new columns; nothing is rebuilt or rewritten): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks), **schema v8** (v1.3: sessions, the activity log and system settings), **schema v9** (v1.4: the last-activity columns) and **schema v10** (v1.6: the per-user permission to download question banks). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
-> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **8** since v1.4 (7 since v1.3, 6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
+> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **9** since v1.9 (8 since v1.4, 7 since v1.3, 6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
 > Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5) and `v09_ai_study.rs` (v6, the study routes of the backend); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3) and the unit tests of `ai-service/src/store/`.
 
 ## 1. Where the file lives
@@ -640,11 +640,23 @@ A new file and an upgraded file end with the same tables. A v1.3 ai-service refu
 
 ### 8.2d Thinking strength (v1.6, no schema change)
 
-`model_slots` gets one nullable column, `effort TEXT`: the thinking strength of the slot as `"<family>:<level>"` (for example `anthropic:high`, `google:MEDIUM`, `responses:none`; family `anthropic`, `openai`, `google`, `responses` or `gemma`), or NULL for **Default** (nothing is sent). The column is added at start when it is missing (`ALTER TABLE ... ADD COLUMN`); **the AI schema stays 8, so there is no backup copy and no new migration step**, and a v1.5 ai-service opens the file as it is (it never reads the column). A value that does not parse is read as NULL. The page sets it with `POST /api/ai/admin/models/effort` (section 5.10 of [api.md](api.md)). The refusal memory of the parameter (and of structured output) is in memory only.
+`model_slots` gets one nullable column, `effort TEXT`: the thinking strength of the slot as `"<family>:<level>"` (for example `anthropic:high`, `google:MEDIUM`, `responses:none`; family `anthropic`, `openai`, `google` or `responses`; `gemma` was removed in v1.9, section 8.2f), or NULL for **Default** (nothing is sent). The column is added at start when it is missing (`ALTER TABLE ... ADD COLUMN`); **the AI schema stays 8, so there is no backup copy and no new migration step**, and a v1.5 ai-service opens the file as it is (it never reads the column). A value that does not parse is read as NULL. The page sets it with `POST /api/ai/admin/models/effort` (section 5.10 of [api.md](api.md)). The refusal memory of the parameter (and of structured output) is in memory only.
 
 ### 8.2e OpenAI Responses format (v1.8, no schema change)
 
 `connections` gets one column, `responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))`: 1 marks a gateway connection that uses the OpenAI Responses API. Its `format` stays `openai`, because the `CHECK` on `format` allows only `openai` and `anthropic` and the table is not rebuilt. The column is added at start when it is missing (`ALTER TABLE ... ADD COLUMN`, the same way as `model_slots.effort`); **the AI schema stays 8, so there is no backup copy and no new migration step**. New and upgraded files end with the same tables. Saving a Responses connection writes `format = 'openai', responses = 1`, any other format writes `responses = 0`, and `format = 'openai' AND responses = 1` is read as Responses. A v1.7 ai-service opens the file as it is and never reads the column, so a rollback needs no restore, but a Responses connection then reads as OpenAI chat completions.
+
+### 8.2f Schema v9 (v1.9)
+
+The AI database moves from schema 8 to **schema 9** once, on the first start of the v1.9 ai-service, after one backup copy `backups/xexam-ai-schema8-<date-time>.db` (the same mechanism as every earlier step). The main database does not change.
+
+- **`connections.enabled`** (`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`): the on/off switch of a connection. Every existing row starts on. It is added like the earlier columns (at start, when `pragma_table_info` does not list it); the `status` check is untouched, "Off" is derived from `enabled`, and `connections` is not rebuilt (it has `CASCADE` children).
+- **`limits.pace_on`, `limits.pace_rpm`, `limits.pace_tpm`**: the provider rate-limit pacing of AI generation and import: `pace_on` 0 or 1 (default 1), `pace_rpm` 1 to 10 000 (default 15), `pace_tpm` 1 000 to 100 000 000 (default 250 000). They are the keys `paceOn`, `paceRpm` and `paceTpm` of the limits API. The unlimited switches never change them.
+- **`model_slots` is rebuilt**: the `CHECK` on `slot` now allows `default`, `chat`, `hint`, `explain`, `summary`, `generate` and `import` (seven rows; `study` is gone). The upgrade copies the `study` row (model, time, author and thinking strength) into both `hint` and `explain`, then drops the old table; a new file creates the new table directly, so both end with the same `sqlite_master`. Nothing references `model_slots`, so the rebuild runs with `foreign_keys` on.
+- **Gemma folded into Google**: on every start, a stored thinking strength `gemma:HIGH` or `gemma:true` becomes `google:HIGH`, `gemma:MINIMAL` or `gemma:false` becomes `google:MINIMAL`, and any other `gemma:` value is cleared (NULL). The wire request is the same as before. The step only runs when a `gemma:` row exists. Families are now `anthropic`, `openai`, `google` and `responses`.
+- **Global switches are independent**: `settings.features_off` bits 2 (hint) and 4 (explain) are no longer kept equal, and a start never pairs them again; `users.features_off` still pairs them (a user with only one of the two off gets both). The step that pairs the user bits runs without touching the global bits.
+- **Job waiting flag**: while a generation or import job waits for provider quota, `tasks.payload` carries a transient `rateWait` flag (never bumps `updated_at`); it is the `waiting` field of the job objects.
+- **Going back**: a v1.8 ai-service refuses schema 9 (`written by a newer ai-service`): stop, restore `backups/xexam-ai-schema8-<date-time>.db` as in 8.4, and run the v1.8 images. Settings, chats and usage written after the upgrade are not in the copy and are lost.
 
 ### 8.3 What the service does with it
 
@@ -674,3 +686,475 @@ Restore it like the main volume: stop, remove `xexam-ai.db-wal` and `xexam-ai.db
 - With `XEXAM_AI_SECRET_KEY` set, the key file is not used: back up that value separately (it is not in the volume). Without the right key the restored keys cannot be decrypted; AI then stays off until an administrator enters the keys again, and nothing else is lost.
 - A restored AI volume and a main volume from another point in time fit together: users that no longer exist lose their AI data at the next reconcile, and a user id that now belongs to another account is recognised by its stamp.
 - `xexam_ai_auth` needs no backup: it holds only `internal.token`, which the backend creates again when it is missing (the AI service picks up the new token by itself).
+
+## 9. Schema map of both databases (v1.9)
+
+A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 10 and the AI database at schema 9; table and column names are exactly as stored. Nothing here changes a table.
+
+### 9.1 Main database `xexam.db` (backend)
+
+| Area | Tables | Note |
+|---|---|---|
+| Question banks | `banks`, `questions`, `imports` | A bank is one imported workbook; a question that leaves a workbook is retired (`active = 0`), not deleted |
+| Study records and the wrong-answer notebook | `attempts`, `attempt_items`, `user_stats` | `attempts` is what the app calls a study record (exam or practice) |
+| Users and access | `users`, `sessions`, `user_banks`, `user_settings` | |
+| System | `meta`, `system_settings`, `activity_log` | |
+| Legacy (unused) | `stats`, `settings` | Copied to `user_stats` and `user_settings` by the v0.6 step; read only when upgrading from schema 2 or older |
+
+The main database declares **no foreign keys**: the relations below are kept by the code (deletes run child rows first), so the diagram shows them dotted.
+
+```mermaid
+erDiagram
+  users ||..o{ sessions : "user_id"
+  users ||..o{ attempts : "user_id (NULL = unclaimed old record)"
+  users ||..o{ user_stats : "user_id"
+  users ||..o{ user_settings : "user_id"
+  users ||..o{ user_banks : "user_id"
+  users ||..o{ banks : "owner_id"
+  users |o..o{ system_settings : "updated_by"
+  users |o..o{ activity_log : "user_id (snapshot, not linked)"
+  banks ||..o{ user_banks : "bank_id"
+  banks ||..o{ questions : "bank_id"
+  banks ||..o{ imports : "bank_id"
+  attempts ||..o{ attempt_items : "attempt_id"
+  questions |o..o{ attempt_items : "question_id (soft)"
+  questions |o..o{ user_stats : "question_id (soft)"
+
+  users {
+    int id PK
+    text username UK
+    text password_hash
+    text role
+    int disabled
+    int must_change_password
+    int new_banks
+    int can_manage_banks
+    int can_download_banks
+    int ai_enabled
+    text uid
+    text created_at
+    text last_login_at
+    text last_active_at
+  }
+  sessions {
+    text token_hash PK
+    int user_id
+    int started_at
+    int last_seen_at
+    int expires_at
+    int remember
+    text ip
+    text ua
+  }
+  banks {
+    int id PK
+    text name
+    text filename
+    int legacy_ids
+    int owner_id
+    text ai_job UK
+    text ai_meta
+    text created_at
+    text updated_at
+  }
+  questions {
+    text id PK
+    int bank_id
+    text sheet
+    int row_no
+    int seq
+    text data
+    int active
+    text added_at
+    text updated_at
+  }
+  imports {
+    int id PK
+    int bank_id
+    text at
+    text filename
+    int added
+    int updated
+    int removed
+    int restored
+    int skipped
+    int total
+  }
+  attempts {
+    int id PK
+    int user_id
+    text kind
+    text mode
+    text at
+    text sheets
+    text banks
+    int total
+    int correct
+    int percent
+    int seconds
+    text session_key
+    int started_at
+    int time_limit
+    text ended
+  }
+  attempt_items {
+    int attempt_id PK
+    int seq PK
+    text question_id
+    text answer
+    int correct
+  }
+  user_stats {
+    int user_id PK
+    text question_id PK
+    int attempts
+    int correct
+    int wrong
+    int streak
+    int last
+    text at
+  }
+  user_settings {
+    int user_id PK
+    text key PK
+    text value
+  }
+  user_banks {
+    int user_id PK
+    int bank_id PK
+  }
+  system_settings {
+    text key PK
+    text value
+    text updated_at
+    int updated_by
+  }
+  activity_log {
+    int id PK
+    int ts
+    int last_ts
+    int count
+    text actor
+    int user_id
+    text username
+    text role
+    text action
+    text object
+    text detail
+    text result
+    text reason
+    text source
+    text src_id UK
+  }
+  meta {
+    text key PK
+    text value
+  }
+  stats {
+    text question_id PK
+  }
+  settings {
+    text key PK
+  }
+```
+
+| Table | Purpose | Key and links | Notes |
+|---|---|---|---|
+| `meta` | Database-level key/value: `schema`, `banks_known`, `users_known`, `legacy_migrated` | PK `key` | |
+| `banks` | Question banks, including the job key and facts of AI-generated banks | PK `id`; `owner_id` to `users` | `ai_job` is a partial unique index |
+| `questions` | One row per question; the whole question (all languages) is JSON in `data` | PK `id` (text); `bank_id` to `banks` | Indexes by sheet, bank and layout |
+| `imports` | Result counts of each Excel import | PK `id`; `bank_id` to `banks` | |
+| `attempts` | Study records: one row per exam or practice session | PK `id`; `user_id` to `users` (NULL = unclaimed old record) | `sheets` and `banks` are JSON snapshots on purpose |
+| `attempt_items` | The answer to each question of a record | PK `(attempt_id, seq)`; `question_id` to `questions` (soft) | A record may outlive its question |
+| `user_stats` | Per user and question: attempts, correct, wrong, streak (wrong-answer notebook) | PK `(user_id, question_id)` | |
+| `users` | Accounts, role, permissions, AI+ switch, identity stamp `uid`, last sign-in and last activity (IP, place, user agent) | PK `id`; `username` unique, case-insensitive | Mixes account data with sign-in telemetry |
+| `sessions` | Sign-in sessions | PK `token_hash`; `user_id` to `users` | Times are unix seconds |
+| `user_banks` | Which banks a plain user sees | PK `(user_id, bank_id)` | |
+| `user_settings` | Per-user interface settings (JSON values) | PK `(user_id, key)` | |
+| `system_settings` | Site-wide switches (activity retention, visits, sign-in info, location source) | PK `key`; `updated_by` is a user id | |
+| `activity_log` | Activity history, including the rows ai-service forwards | PK `id`; `src_id` partial unique (de-duplication) | `username` and `role` are snapshots, so the log stays readable after a user is deleted |
+| `stats`, `settings` | Legacy, see above | | |
+
+### 9.2 AI database `xexam-ai.db` (ai-service)
+
+| Area | Tables | Note |
+|---|---|---|
+| AI settings | `settings` (one row), `limits` (one row), `connections`, `connection_secrets`, `models`, `model_slots`, `geo_settings` (one row) | `model_slots` has seven rows: `default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import` |
+| Identity | `users` | A mirror of the main database's users plus per-user AI state |
+| Chats and study sessions | `chats`, `messages`, `memories` | `chats.kind` is `chat`, `practice`, `exam` or `summary` |
+| Shared hints and analyses | `study_shared` | Reused across users, without a user id |
+| AI generation and import | `tasks`, `gen_items`, `gen_calls` | `tasks.kind` is `bank_gen` for both; the payload tells them apart |
+| Metering | `usage` (chat, hint, analysis, summary, checks), `gen_calls` (generation and import) | Two tables on purpose: the per-user call caps read only `usage` |
+| System | `meta`, `audit_outbox` | |
+| Legacy | `secrets`; the old connection columns of `settings`; four retired length columns of `limits` | Read only when upgrading from an old schema |
+
+Solid lines are declared foreign keys; dotted lines are relations kept without a foreign key on purpose (message branches, a chat's chosen connection, usage history).
+
+```mermaid
+erDiagram
+  users ||--o{ chats : "CASCADE"
+  users ||--o{ memories : "CASCADE"
+  users |o--o{ tasks : "CASCADE"
+  users |o--o{ usage : "SET NULL"
+  users |o--o{ gen_calls : "SET NULL"
+  chats ||--o{ messages : "CASCADE"
+  messages |o..o{ messages : "parent_id (no FK)"
+  chats |o..o| messages : "leaf_id (no FK)"
+  connections |o..o{ chats : "pick_conn (no FK)"
+  tasks ||--o{ gen_items : "CASCADE"
+  tasks |o--o{ gen_calls : "SET NULL"
+  connections ||--o{ connection_secrets : "CASCADE"
+  connections ||--o{ models : "CASCADE"
+  models |o--o{ model_slots : "SET NULL"
+  connections |o..o{ usage : "connection_id (no FK)"
+  connections |o..o{ gen_calls : "connection_id (no FK)"
+
+  users {
+    int id PK
+    text stamp
+    text username
+    int function_enabled
+    int free_mode
+    int features_off
+    int first_seen_at
+    int last_seen_at
+  }
+  chats {
+    int id PK
+    int user_id FK
+    text kind
+    text ref UK
+    int record_id
+    text title
+    int leaf_id
+    int pick_conn
+    text pick_model
+    int created_at
+    int updated_at
+  }
+  messages {
+    int id PK
+    int chat_id FK
+    int parent_id
+    text role
+    text kind
+    text content
+    text status
+    text error_code
+    int truncated
+    int free
+    text model
+    text connection
+    text question_id
+    int question_no
+    text source
+    text lang
+    text reasoning
+    int reasoning_ms
+    int reasoning_truncated
+    int created_at
+    int finished_at
+  }
+  memories {
+    int id PK
+    int user_id FK
+    text content
+    text source
+    int created_at
+    int updated_at
+  }
+  tasks {
+    int id PK
+    int user_id FK
+    text kind
+    text state
+    text payload
+    text result
+    text error_code
+    int attempts
+    int run_after
+    text job_key UK
+    int goal
+    int made
+    text phase
+    int charged
+    int seen
+    int created_at
+    int updated_at
+  }
+  gen_items {
+    int task_id PK
+    int no PK
+    int slot
+    text data
+    int at
+  }
+  gen_calls {
+    int id PK
+    int task_id FK
+    int user_id FK
+    text purpose
+    int at
+    text day
+    text provider
+    text model
+    int connection_id
+    text connection
+    int tokens_in
+    int tokens_out
+    int latency_ms
+    text status
+    text error_code
+    int asked
+    int accepted
+    int truncated
+  }
+  usage {
+    int id PK
+    int user_id FK
+    int at
+    text day
+    text kind
+    text purpose
+    text provider
+    text model
+    int connection_id
+    text connection
+    int tokens_in
+    int tokens_out
+    int latency_ms
+    text status
+    text error_code
+  }
+  connections {
+    int id PK
+    text name UK
+    text provider
+    text base_url
+    text format
+    int responses
+    int enabled
+    text gateway_auth
+    text status
+    text error_code
+    int lists_models
+    int tested_at
+    int rev
+    int sort
+  }
+  connection_secrets {
+    int connection_id PK
+    text name PK
+    text key_id
+    blob nonce
+    blob ciphertext
+    text hint
+    int rev
+    int aad_ver
+  }
+  models {
+    int id PK
+    int connection_id FK
+    text model
+    int manual
+    text status
+    text error_code
+    int usage_option
+    int max_tokens
+    int context
+    int latency_ms
+    int tested_at
+  }
+  model_slots {
+    text slot PK
+    int model_id FK
+    text effort
+    int updated_at
+    text updated_by
+  }
+  study_shared {
+    int id PK
+    text question_id
+    text content_hash
+    text kind
+    text lang
+    text content
+    text model
+    int gen
+    int hits
+    int last_hit_at
+  }
+  settings {
+    int id PK
+    int enabled
+    int retention_days
+    int features_off
+  }
+  limits {
+    int id PK
+    int pace_on
+    int pace_rpm
+    int pace_tpm
+  }
+  geo_settings {
+    int id PK
+    text preset
+    text url_template
+    blob key_ciphertext
+    int updated_by
+  }
+  secrets {
+    text name PK
+  }
+  meta {
+    text key PK
+    text value
+  }
+  audit_outbox {
+    int id PK
+    int at
+    text message
+  }
+```
+
+| Table | Purpose | Key and links | Notes |
+|---|---|---|---|
+| `meta` | `schema`, `secret_rev`, one-time flags | PK `key` | |
+| `settings` | One row: the AI master switch `enabled`, `retention_days`, `features_off` (global switch bits) | PK `id = 1` | Eleven old single-connection columns remain, read only by old upgrades |
+| `limits` | One row: every limit (concurrency, chat and memory sizes, per-user call caps, answer length, generation and import limits, shared cache, daily token budget) and, since v1.9, the pacing settings | PK `id = 1`; every column has a range `CHECK` | Four retired length columns stay, unused |
+| `users` | Mirror of the main users (`id` plus `stamp` = main `uid`) with `function_enabled` (paused), `free_mode` and `features_off` (per-user feature bits) | PK `id` (given by the main database) | A different stamp means a different person: the AI data is dropped |
+| `chats` | AI Chat conversations and the chat of each practice, exam or record summary | PK `id`; `user_id` to `users` (CASCADE) | `leaf_id` and `pick_conn` have no foreign key on purpose |
+| `messages` | Messages and their branch versions; hints, analyses and summaries too | PK `id`; `chat_id` to `chats` (CASCADE) | Some columns only matter for one `kind` |
+| `memories` | Per-user memory notes | PK `id`; `user_id` to `users` (CASCADE) | |
+| `tasks` | Background jobs: AI generation and AI import | PK `id`; `user_id` to `users` (CASCADE) | `job_key` is a partial unique index |
+| `gen_items` | Accepted questions of a running job (resume) | PK `(task_id, no)`; to `tasks` (CASCADE) | |
+| `gen_calls` | Each model call of generation and import (tokens, time, result) | PK `id`; `task_id`, `user_id` (SET NULL) | |
+| `usage` | Every other model call, with tokens, time and status, never content | PK `id`; `user_id` (SET NULL) | |
+| `audit_outbox` | Activity rows waiting to be sent to the backend | PK `id` | A temporary queue |
+| `connections` | AI connections: address, format, gateway auth, status and the on/off switch `enabled` | PK `id`; `name` unique, case-insensitive | `format` allows `openai` and `anthropic`; OpenAI Responses is `openai` plus `responses = 1` |
+| `connection_secrets` | The sealed keys of a connection | PK `(connection_id, name)`; to `connections` (CASCADE) | |
+| `models` | The model pool: one row per tested connection and model | PK `id`; to `connections` (CASCADE); unique `(connection_id, model)` | |
+| `model_slots` | Which pool model each feature uses, and its thinking strength | PK `slot`; `model_id` to `models` (SET NULL) | |
+| `study_shared` | The shared cache of hints and analyses | PK `id`; unique `(question_id, content_hash, kind, lang)` | `lang` uses `zh`, while `messages.lang` uses `zh-CN` |
+| `geo_settings` | The external location lookup (one row, written only after a passing test) | PK `id = 1` | |
+| `secrets` | Legacy: the keys of schemas before 7 | PK `name` | Unused by the running code |
+
+### 9.3 References between the two databases
+
+A foreign key cannot cross two files, so these links are kept by identity and by code:
+
+| AI database | Main database | What keeps them consistent |
+|---|---|---|
+| `users.id` + `users.stamp` | `users.id` + `users.uid` | A different stamp means a different person: the AI data is deleted |
+| `chats.ref` | `attempts.session_key` (or `r<recordId>@<at>`) | A lookup key only |
+| `chats.record_id` | `attempts.id` | Shown only, never looked up (ids can be reused after a restore) |
+| `messages.question_id`, `study_shared.question_id` | `questions.id` | Soft links; `study_shared.content_hash` guards against a question that changed |
+| `tasks.job_key` | `banks.ai_job` | A partial unique index in the main database gives one bank per job |
+| `audit_outbox` | `activity_log` (`source = 'ai'`, `src_id`) | De-duplicated by `src_id` |
+
+### 9.4 Conventions for new tables and columns
+
+- Times are `*_at INTEGER` (unix seconds, UTC); booleans are `INTEGER NOT NULL DEFAULT x CHECK (col IN (0, 1))`; enumerations carry a `CHECK`.
+- An id that points into the same database is `*_id` with a foreign key and a stated `ON DELETE`; when there is none, a comment says why.
+- A new `updated_by` is a user id; language codes are `en`, `zh-CN` and `ja`.
+- Existing names and the older text time columns of the main database are kept as they are.

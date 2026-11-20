@@ -3,6 +3,7 @@
 // (it runs under `node --test`); message keys are returned as strings and the components translate them.
 import type { BankAi, GenItem, GenJob, GenJobAnswer, GenStatus } from '../types/api.ts';
 import type { ControlView, UnavailableReason } from './ai-features.ts';
+import { featureOffKey } from './ai-off.ts';
 
 // ---------------------------------------------------------------- names (GP-9 twins)
 
@@ -99,9 +100,9 @@ export type GenViewState =
     skippedNote: boolean;
   };
 
-const SERVICE_KEY: Record<'paused' | UnavailableReason | 'featureOff', string> = {
+const SERVICE_KEY: Record<'paused' | UnavailableReason, string> = {
   paused: 'ai.badge.tip.suspended', off: 'ai.badge.tip.off', down: 'ai.badge.tip.down', unavailable: 'ai.badge.unavailable',
-  loading: 'aiplus.why.loading', featureOff: 'ai.err.featureOff',
+  loading: 'aiplus.why.loading',
 };
 
 /** `genView` of GB-1: `view` is the M-7 decision of the `generate` feature (bank management needed) */
@@ -112,7 +113,7 @@ export function genView(view: ControlView, gen: GenStatus | null, ctx: GenViewCt
   if (view.view === 'unavailable') {
     return { show: true, usable: false, reason: view.reason, tag: view.reason !== 'loading', key: SERVICE_KEY[view.reason], ...none };
   }
-  if (view.view === 'featureOff') return { show: true, usable: false, reason: 'featureOff', tag: true, key: SERVICE_KEY.featureOff, ...none };
+  if (view.view === 'featureOff') return { show: true, usable: false, reason: 'featureOff', tag: true, key: featureOffKey(view.admin === true), ...none };
   const own = (reason: GenOwnReason, key: string, params: Record<string, number> = {}, skippedNote = false): GenViewState =>
     ({ show: true, usable: false, reason, tag: false, key, params, skippedNote });
   if (gen.job && (gen.job.state === 'queued' || gen.job.state === 'running')) return own('busy', 'aigen.why.busy');
@@ -280,3 +281,12 @@ export function placeholderOf(gen: GenStatus | null, route: string): { id: numbe
   if (!job || job.source === 'file') return null;
   return { id: job.id, name: job.name, made: job.made, goal: job.goal };
 }
+
+// ---------------------------------------------------------------- waiting for the provider's quota (v1.9)
+
+/**
+ * The job is running but only waiting for the provider's rate-limit quota (the service's `waiting`). Never while it saves or
+ * waits for the user's confirmation, even if a stale flag is still set.
+ */
+export const waitingNow = (j: GenJob): boolean =>
+  j.state === 'running' && j.waiting === true && j.phase !== 'saving' && j.phase !== 'confirm';

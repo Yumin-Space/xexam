@@ -5,9 +5,11 @@
 use std::io::{Cursor, Write};
 
 use serde_json::Value;
-use xexam_backend::export::xlsx::{question_cells, sheet_names, write_xlsx, HEADER};
+use xexam_backend::export::xlsx::{
+    question_cells, question_cells_for, sheet_names, write_xlsx, write_xlsx_langs, HEADER,
+};
 use xexam_backend::export::{
-    content_disposition, file_name, file_stem, ExportBank, ExportFormat, ExportSheet,
+    content_disposition, file_name, file_stem, ExportBank, ExportFormat, ExportSheet, Langs,
 };
 use xexam_backend::models::{ParsedWorkbook, Question};
 use xexam_backend::parser::{check_xlsx, parse_workbook};
@@ -476,25 +478,25 @@ fn file_stem_and_content_disposition() {
     assert_eq!(file_stem(""), "bank");
     assert_eq!(file_stem(&"x".repeat(200)).chars().count(), 120);
     assert_eq!(
-        file_name(&bank_named("Sample"), ExportFormat::Xlsx),
+        file_name(&bank_named("Sample"), ExportFormat::Xlsx, Langs::ALL),
         "Sample.xlsx"
     );
 
     assert_eq!(
-        content_disposition(&bank_named("Sample bank"), ExportFormat::Xlsx),
+        content_disposition(&bank_named("Sample bank"), ExportFormat::Xlsx, Langs::ALL),
         "attachment; filename=\"Sample bank.xlsx\"; filename*=UTF-8''Sample%20bank.xlsx"
     );
     assert_eq!(
-        content_disposition(&bank_named("示例题库"), ExportFormat::Docx),
+        content_disposition(&bank_named("示例题库"), ExportFormat::Docx, Langs::ALL),
         "attachment; filename=\"xexam-bank-7.docx\"; filename*=UTF-8''%E7%A4%BA%E4%BE%8B%E9%A2%98%E5%BA%93.docx"
     );
-    let full = content_disposition(&bank_named("/:*?\"<>|"), ExportFormat::Xlsx);
+    let full = content_disposition(&bank_named("/:*?\"<>|"), ExportFormat::Xlsx, Langs::ALL);
     assert_eq!(
         full,
         "attachment; filename=\"________.xlsx\"; filename*=UTF-8''________.xlsx"
     );
     assert_eq!(
-        content_disposition(&bank_named("..."), ExportFormat::Xlsx),
+        content_disposition(&bank_named("..."), ExportFormat::Xlsx, Langs::ALL),
         "attachment; filename=\"bank.xlsx\"; filename*=UTF-8''bank.xlsx"
     );
 }
@@ -510,4 +512,157 @@ fn format_parse_and_mime() {
     assert!(ExportFormat::Docx
         .mime()
         .ends_with("wordprocessingml.document"));
+}
+
+// ---------------------------------------------------------------- v1.9: language subsets
+
+fn langs(s: &str) -> Langs {
+    Langs::parse(s).unwrap_or_else(|| panic!("langs {s:?}"))
+}
+
+#[test]
+fn langs_parse_matrix() {
+    assert_eq!(Langs::parse("en,zh,ja"), Some(Langs::ALL));
+    assert_eq!(Langs::parse("ja,en,zh"), Some(Langs::ALL));
+    assert!(Langs::parse("zh").is_some_and(|l| l.zh && !l.en && !l.ja));
+    assert!(Langs::parse("en,ja").is_some_and(|l| l.en && !l.zh && l.ja));
+    for bad in [
+        "",
+        "fr",
+        "ZH",
+        "zh,zh",
+        "zh,,en",
+        ",",
+        "en,",
+        " en",
+        "en, zh",
+        "en;zh",
+        "en,zh,ja,en",
+        "zh-CN",
+        "english",
+    ] {
+        assert_eq!(Langs::parse(bad), None, "{bad:?}");
+    }
+}
+
+#[test]
+fn langs_codes_suffix_and_file_names() {
+    assert!(Langs::ALL.is_all());
+    assert_eq!(Langs::ALL.suffix(), None);
+    assert_eq!(Langs::ALL.codes(), ["en", "zh", "ja"]);
+    // The order is always en, zh, ja, whatever the order in the query
+    assert_eq!(langs("ja,en").codes(), ["en", "ja"]);
+    assert_eq!(langs("ja,en").suffix().as_deref(), Some("en-ja"));
+    assert_eq!(langs("zh,en").suffix().as_deref(), Some("en-zh"));
+    assert_eq!(langs("ja").suffix().as_deref(), Some("ja"));
+    let b = bank_named("Garden");
+    assert_eq!(
+        file_name(&b, ExportFormat::Docx, langs("en,zh")),
+        "Garden_en-zh.docx"
+    );
+    assert_eq!(file_name(&b, ExportFormat::Xlsx, Langs::ALL), "Garden.xlsx");
+    // The ASCII fallback keeps the suffix
+    assert_eq!(
+        content_disposition(&bank_named("示例题库"), ExportFormat::Xlsx, langs("zh")),
+        "attachment; filename=\"xexam-bank-7_zh.xlsx\"; filename*=UTF-8''%E7%A4%BA%E4%BE%8B%E9%A2%98%E5%BA%93_zh.xlsx"
+    );
+    assert_eq!(
+        content_disposition(&b, ExportFormat::Docx, langs("en,ja")),
+        "attachment; filename=\"Garden_en-ja.docx\"; filename*=UTF-8''Garden_en-ja.docx"
+    );
+}
+
+#[test]
+fn unticked_languages_leave_their_cells_empty() {
+    let source = parse_workbook(&source_workbook()).expect("parse source");
+    let q = source
+        .questions
+        .iter()
+        .find(|q| q.stem.starts_with("Which colour"))
+        .expect("single");
+    let all = question_cells(q);
+    assert_eq!(question_cells_for(q, Langs::ALL), all);
+    let zh_ja = question_cells_for(q, langs("zh,ja"));
+    assert!(zh_ja[0].is_empty() && zh_ja[3].is_empty());
+    assert_eq!((&zh_ja[1], &zh_ja[2]), (&all[1], &all[2]));
+    assert_eq!((&zh_ja[4], &zh_ja[5]), (&all[4], &all[5]));
+    let ja = question_cells_for(q, langs("ja"));
+    for i in [0, 1, 3, 4] {
+        assert!(ja[i].is_empty(), "column {i}");
+    }
+    assert_eq!((&ja[2], &ja[5]), (&all[2], &all[5]));
+}
+
+/// The text of the worksheet part `n` of an export.
+fn sheet_part(bytes: Vec<u8>, n: usize) -> String {
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut s = String::new();
+    std::io::Read::read_to_string(
+        &mut z
+            .by_name(&format!("xl/worksheets/sheet{n}.xml"))
+            .expect("sheet"),
+        &mut s,
+    )
+    .expect("read");
+    s
+}
+
+#[test]
+fn english_only_export_imports_again() {
+    let source = parse_workbook(&source_workbook()).expect("parse source");
+    let bank = bank_of("Sample bank", &source);
+    let bytes = write_xlsx_langs(&bank, langs("en")).expect("export");
+    check_xlsx(&bytes).expect("passes the upload check");
+    let again = parse_workbook(&bytes).expect("parse export");
+    assert_clean_parse(&again, "english only");
+    assert_eq!(again.questions.len(), source.questions.len());
+    for (a, b) in source.questions.iter().zip(&again.questions) {
+        assert_eq!(a.stem, b.stem);
+        assert_eq!(a.options, b.options);
+        assert_eq!(a.id, b.id, "the English text and sheet names keep the ids");
+        assert!(b.ja.is_none() && b.translation.is_empty());
+    }
+}
+
+#[test]
+fn chinese_and_japanese_only_keeps_the_header_and_drops_columns_a_and_d() {
+    let source = parse_workbook(&source_workbook()).expect("parse source");
+    let bank = bank_of("Sample bank", &source);
+    let bytes = write_xlsx_langs(&bank, langs("zh,ja")).expect("export");
+    let xml = sheet_part(bytes.clone(), 1);
+    // The header row is always complete
+    for col in ["A", "B", "C", "D", "E", "F"] {
+        assert!(xml.contains(&format!(r#"r="{col}1""#)), "header {col}");
+    }
+    let rows = bank.sheets[0].questions.len();
+    for row in 2..rows + 2 {
+        assert!(!xml.contains(&format!(r#"r="A{row}""#)), "A{row}");
+        assert!(!xml.contains(&format!(r#"r="D{row}""#)), "D{row}");
+    }
+    assert!(xml.contains(r#"r="B2""#));
+    // Without the English question the importer skips every row and says why
+    let again = parse_workbook(&bytes).expect("parse export");
+    assert!(again.questions.is_empty());
+    let skipped: Vec<String> = again
+        .sheets
+        .iter()
+        .flat_map(|s| s.skipped.iter().map(|k| format!("{k:?}")))
+        .collect();
+    assert!(!skipped.is_empty());
+    assert!(skipped.iter().all(|r| r.contains("没有英文题目")));
+}
+
+#[test]
+fn japanese_only_fills_columns_c_and_f_only() {
+    let source = parse_workbook(&source_workbook()).expect("parse source");
+    let mut bank = bank_of("Sample bank", &source);
+    bank.sheets.truncate(1);
+    let xml = sheet_part(write_xlsx_langs(&bank, langs("ja")).expect("export"), 1);
+    let rows = bank.sheets[0].questions.len();
+    assert!(xml.contains(r#"r="C2""#) && xml.contains(r#"r="F2""#));
+    for row in 2..rows + 2 {
+        for col in ["A", "B", "D", "E"] {
+            assert!(!xml.contains(&format!(r#"r="{col}{row}""#)), "{col}{row}");
+        }
+    }
 }

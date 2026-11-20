@@ -293,8 +293,11 @@ describe('v1.1: reasons off / down and the feature switch (BT-2, FP-3)', () => {
     assert.deepEqual(controlState(view, null, 'hint'), { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOff' } });
     assert.deepEqual(controlState(view, null, 'explain'), { show: true, usable: true });
     assert.deepEqual(controlState(view, 'noWrong', 'hint').show && (controlState(view, 'noWrong', 'hint') as { reason: string }).reason, 'featureOff');
+    // v1.9: the global switches apply to administrators too, with the administrator wording
     const admin = aiPlusView({ role: 'admin', service: true, status: st });
-    assert.deepEqual(controlState(admin, null, 'hint'), { show: true, usable: true });
+    assert.equal(admin.show && admin.usable && admin.features?.hint, false);
+    assert.deepEqual(controlState(admin, null, 'hint'), { show: true, usable: false, reason: 'featureOff', tag: true, tip: { key: 'ai.err.featureOffAdmin' } });
+    assert.deepEqual(controlState(admin, null, 'explain'), { show: true, usable: true });
     // no feature argument: not gated
     assert.deepEqual(controlState(view), { show: true, usable: true });
   });

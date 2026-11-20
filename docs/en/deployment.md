@@ -72,11 +72,18 @@ Create a `.env` file next to `docker-compose.yml`; in a clone that is `docker/.e
 | `XEXAM_INTERNAL_TOKEN` | (unset: a random token in the ai_auth volume) | The token the backend and ai-service share, the same value for both: at least 32 printable ASCII characters without spaces (`openssl rand -hex 32`). Section 3.3 |
 | `XEXAM_AI_LOG` | (unset: `info`) | ai-service's log filter, for `docker compose logs ai-service` and the lines it sends to the System log; same rules as `XEXAM_LOG` (empty means `info`, an invalid value falls back to `info` with one warning) |
 | `XEXAM_AI_SQLITE_JOURNAL` | (unset: WAL) | `delete` = the rollback journal for the AI database, for the same unusual storage as `XEXAM_SQLITE_JOURNAL` |
-| `XEXAM_AI_USER_AGENT_NAME` | (unset: none) | *(v1.8)* The `User-Agent` that ai-service sends to AI providers and gateways, for example a name your own gateway recognises. Unset or empty sends no `User-Agent` header at all, so the upstream does not learn the app name or version. Printable ASCII, at most 256 characters; any other value is ignored with one warning in the log (no header is sent). Requests to the backend inside the stack and the external IP-location lookup are not affected (they still say `xexam-ai-service/<version>`) |
+| `XEXAM_AI_USER_AGENT_NAME` | (unset: `xexam-ai-service/<version>`) | *(v1.8, default changed in v1.9)* The `User-Agent` that ai-service sends to AI providers and gateways. Unset, empty or blank sends `xexam-ai-service/<version>`; `none` (any case) sends no `User-Agent` header at all (the v1.8 behaviour, so the upstream does not learn the app name or version); any other printable ASCII value, at most 256 characters, is sent as is, for example a name your own gateway recognises. An invalid value is ignored with one warning at start (the value is never printed) and the default is sent. Requests to the backend inside the stack and the external IP-location lookup are not affected (they always say `xexam-ai-service/<version>`) |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | *(v1.3, default changed in v1.4; frontend container)* Addresses or networks of the proxies whose `CF-Connecting-IP` and location headers Nginx believes (forms in section 3.5). Empty or blank = the default; `none` = trust nobody |
 | `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | *(v1.3)* The header with the visitor's address: `CF-Connecting-IP`, `X-Forwarded-For` or `X-Real-IP` |
 | `XEXAM_BEHIND_PROXY` | `1` in the backend image | *(v1.3)* Tells the backend it sits behind the bundled Nginx, so it believes `X-Real-IP` and `X-Geo-*`. Set in the image: do not change it. A standalone run (no Docker, no Nginx) leaves it unset and records the connecting address instead (section 3.5) |
 | `TUNNEL_TOKEN` | unset | *(v1.3)* The token of the optional `cloudflared` service (`docker compose --profile tunnel up -d`) |
+| `XEXAM_AI_BACKEND_URL` | `http://backend:8765` (in the image) | *(ai-service; the address of the main backend)* `http://` or `https://` plus host and optional port, one trailing `/` allowed; no path, query, fragment or user name. Only needed on a separate machine (section 12) |
+| `XEXAM_FRONTEND_PEERS` | (unset: any peer) | *(v1.9; backend and ai-service)* The addresses (IPv4, IPv6 or CIDR) of the frontend machine that may use this service, separated by commas, `，`, `、`, semicolons or spaces. Unset = any peer, as before. Set: everything else that is not loopback gets `404 not found`, and `X-Real-IP` / `X-Geo-*` are believed only from listed peers. `/0`, `0.0.0.0` and `::` are refused; an invalid entry is skipped with a warning; no valid entry at all = loopback only, with a warning. Section 12 |
+| `XEXAM_INTERNAL_TOKEN_REQUIRED` | (unset: off) | *(v1.9; backend and ai-service)* `1` or `true` = the service does not start (exit 1) unless `XEXAM_INTERNAL_TOKEN` is set and valid, instead of falling back to a random token in a shared volume. Always on in the per-machine compose files |
+| `XEXAM_BACKEND_UPSTREAM` | `http://backend:8765` | *(v1.9; frontend container)* Where Nginx finds the backend: `http://` or `https://` plus host (name, IPv4 or `[IPv6]`) and optional port 1 to 65535, no path. A bad value stops the container with a message that names the variable |
+| `XEXAM_AI_UPSTREAM` | `http://ai-service:8766` | *(v1.9; frontend container)* Where Nginx finds ai-service; same format |
+| `XEXAM_NGINX_RESOLVER` | `127.0.0.11` | *(v1.9; frontend container)* The DNS server(s) Nginx uses to look up the two names above: IPv4 or IPv6 (plain or in brackets), optional `:port`, separated by spaces or commas. Docker's own resolver is the default |
+| `XEXAM_BACKEND_BIND`, `XEXAM_AI_BIND` | required in the per-machine files | *(v1.9)* The private `address:port` the backend (`10.0.0.2:8765`) or ai-service (`10.0.0.3:8766`) publishes on its machine. Never `0.0.0.0` (section 12) |
 
 v0.9 adds no variable and no compose change. After changing `.env`, run `docker compose up -d` (it recreates the containers as needed). The compose files pass `XEXAM_ALLOWED_HOSTS`, `XEXAM_ALLOWED_ORIGINS`, `XEXAM_ALLOW_ANY_HOST` and `XEXAM_PARSE_TIMEOUT_SECS` always (with the defaults above when `.env` does not set them); `TZ`, `XEXAM_SQLITE_JOURNAL`, `XEXAM_COOKIE_SECURE`, `XEXAM_LOG` and `XEXAM_INTERNAL_TOKEN` to the backend, and `TZ`, `XEXAM_AI_SECRET_KEY`, `XEXAM_INTERNAL_TOKEN`, `XEXAM_AI_LOG`, `XEXAM_AI_SQLITE_JOURNAL` and `XEXAM_AI_USER_AGENT_NAME` to the AI service, only when `.env` sets them (a line such as `XEXAM_LOG=` with nothing after it is passed as an empty value). The Host / Origin settings apply to the AI routes too: the backend checks every AI request before Nginx passes it on. `XEXAM_BIND` is used by Compose itself, for the published port. `xexam-backend --help` and `xexam-ai-service --help` list every variable each program reads.
 
@@ -85,7 +92,7 @@ The images set the rest themselves, and the compose file does not change them:
 | Image | Variables |
 |---|---|
 | `xexam-backend` | `XEXAM_DATA=/data`, `XEXAM_HOST=0.0.0.0`, `XEXAM_PORT=8765`, `XEXAM_VERSION_FILE=/VERSION`, `XEXAM_BEHIND_PROXY=1`, `XEXAM_LINK_DIR=/link` (where `internal.token` is written; without Docker the default is `link` inside the data directory) |
-| `ai-service` | `XEXAM_AI_DATA=/data`, `XEXAM_AI_HOST=0.0.0.0`, `XEXAM_AI_PORT=8766`, `XEXAM_AI_BACKEND_URL=http://backend:8765` (plain http only), `XEXAM_LINK_DIR=/link`, `XEXAM_VERSION_FILE=/VERSION` |
+| `ai-service` | `XEXAM_AI_DATA=/data`, `XEXAM_AI_HOST=0.0.0.0`, `XEXAM_AI_PORT=8766`, `XEXAM_AI_BACKEND_URL=http://backend:8765` (http or https), `XEXAM_LINK_DIR=/link`, `XEXAM_VERSION_FILE=/VERSION` |
 
 ### 3.1 Time zone
 
@@ -133,6 +140,7 @@ The backend and ai-service share one secret, the **internal token**: the backend
 - **`XEXAM_INTERNAL_TOKEN` in `.env`**: at least 32 printable ASCII characters without spaces, for example the output of `openssl rand -hex 32`. The compose file passes this one line to both services, so they always get the same value; the backend then writes no file and logs `AI link: using XEXAM_INTERNAL_TOKEN`. Whitespace around the value is ignored.
 - A value that breaks the rule turns the link off in **both** services with one of these lines: `XEXAM_INTERNAL_TOKEN is too short (at least 32 characters); AI link off` or `XEXAM_INTERNAL_TOKEN may contain only printable ASCII characters without spaces; AI link off`. AI Chat is then unavailable (`ai.backendDown`) until it is fixed.
 - When the two services disagree (for example a token set for only one of them when they are run without this compose file), ai-service logs `AI link: the main service refused the internal token (XEXAM_INTERNAL_TOKEN must be the same for both services)`, and requests that reach it without a valid statement are refused with `refused a request without a valid identity (requests must come through Nginx; XEXAM_INTERNAL_TOKEN must be the same for both services)`, at most once a minute.
+- **Separate machines (v1.9)**: there is no shared `ai_auth` volume, so the token must be set in the environment of both machines (the same value), and `XEXAM_INTERNAL_TOKEN_REQUIRED=1` makes each service refuse to start without it instead of using a random one. The per-machine compose files do both. A missing token stops the start with `XEXAM_INTERNAL_TOKEN_REQUIRED=1 but XEXAM_INTERNAL_TOKEN is not set: set the same value (at least 32 printable ASCII characters, e.g. openssl rand -hex 32) on the backend and ai-service machines`; the message never contains the value.
 - To change the token: stop both services, empty the ai_auth volume (`docker run --rm -v xexam_ai_auth:/link alpine rm -f /link/internal.token`) or change `XEXAM_INTERNAL_TOKEN`, and start again. ai-service also picks up a new token by itself within seconds.
 
 ### 3.4 AI providers (set in the app, not in `.env`)
@@ -360,3 +368,44 @@ ai-service's lines: its start (`Xexam AI service 0.9.1 listening on 0.0.0.0:8766
 On a push to `main`, [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) first runs the version, changelog and docs check, then five check groups (frontend, backend, ai-service, Nginx and full stack, arm64). Only if all of them pass does it publish the three images `xexam-frontend`, `xexam-backend` and `xexam-ai-service` (amd64 + arm64) to Docker Hub (`docker.io/yuminspace/`, public) and, as a private mirror, to `ghcr.io/yumin-space/`, both tagged `latest`, `v<CODE_VERSION>` and `sha-<commit>`, and create the matching GitHub Release (its notes list the Docker Hub pull commands first). Last, it records the release: `RELEASE_VERSION` in `VERSION` and the release badge of the READMEs, committed by the bot on `main` (and on `dev` when it can be fast-forwarded). Pushes to `dev` and pull requests into `main` run the same checks and never publish. Details: section 8 of [development.md](development.md).
 
 Docker Hub needs two repository secrets, `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` (an access token with **Read & Write**), and optionally the repository variable `DOCKERHUB_NAMESPACE`; without the secrets, or if `docker/docker-compose.yml` does not name the Docker Hub images of that namespace, the publish job stops before it pushes anything. On ghcr.io, the first time a new image name is published (for example `xexam-ai-service` with v0.8), add this repository under **Manage Actions access** in the GitHub package settings with the role **Admin**, otherwise the push is rejected (`permission_denied: write_package`). The Docker Hub token must be able to write to every one of the three repositories.
+
+## 12. Running the services on different machines (v1.9)
+
+By default the three services run on one host. When you want the frontend, the backend and ai-service on different machines (for example the frontend on a small edge machine, the databases on a machine you trust more), use the per-machine compose files. Nothing changes for a single host: [`docker-compose.yml`](../../docker/docker-compose.yml) is the same as before.
+
+```
+browser ──> frontend machine (Nginx, public side)
+              ├─ /api/    ──> backend machine    (XEXAM_BACKEND_UPSTREAM, for example http://10.0.0.2:8765)
+              └─ /api/ai/ ──> asks the backend first (/internal/ai/auth), then ai-service machine (XEXAM_AI_UPSTREAM, for example http://10.0.0.3:8766)
+ai-service machine ──> backend machine   (XEXAM_AI_BACKEND_URL: the state report and the checks it needs)
+```
+
+The backend never calls ai-service: the frontend asks the backend to check every AI request, and ai-service reports to the backend, so ai-service needs to reach the backend machine and the backend machine needs no address of ai-service. The two databases stay apart: `xexam_backend_data` is mounted only on the backend machine, `xexam_ai_data` only on the ai-service machine.
+
+### 12.1 Steps
+
+1. **Choose private addresses**, for example frontend `10.0.0.1`, backend `10.0.0.2`, ai-service `10.0.0.3`, on a private network (a VPN, a VLAN or a closed LAN), or put a TLS terminator that keeps the `Host` header unchanged in front of the backend and ai-service and use `https://` upstreams.
+2. **Pick the token once**: `openssl rand -hex 32`. The same value goes into `XEXAM_INTERNAL_TOKEN` on the backend and ai-service machines.
+3. **Backend machine**: copy [`docker-compose.backend.yml`](../../docker/docker-compose.backend.yml) and a `.env` with `XEXAM_BACKEND_BIND=10.0.0.2:8765`, `XEXAM_FRONTEND_PEERS=10.0.0.1`, `XEXAM_INTERNAL_TOKEN=...` and `XEXAM_ALLOWED_HOSTS=<the host name browsers use>` (Nginx forwards the Host unchanged, and the check happens here); `docker compose -f docker-compose.backend.yml up -d`.
+4. **ai-service machine**: [`docker-compose.ai-service.yml`](../../docker/docker-compose.ai-service.yml) with `XEXAM_AI_BIND=10.0.0.3:8766`, `XEXAM_AI_BACKEND_URL=http://10.0.0.2:8765`, `XEXAM_FRONTEND_PEERS=10.0.0.1` and the same `XEXAM_INTERNAL_TOKEN`.
+5. **Frontend machine**: [`docker-compose.frontend.yml`](../../docker/docker-compose.frontend.yml) with `XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765` and `XEXAM_AI_UPSTREAM=http://10.0.0.3:8766` (both required), the usual `XEXAM_BIND`, and, when a proxy or tunnel sits in front, `XEXAM_TRUSTED_PROXIES` (section 3.5). Set `XEXAM_NGINX_RESOLVER` only when the upstreams are host names that Docker's resolver cannot answer.
+6. Each machine needs only its own lines of `.env`; [`.env.example`](../../docker/.env.example) has a commented block for all of them. A missing required value stops `docker compose` with a message that names the variable.
+
+### 12.2 Security notes
+
+- **Bind to a private address, never `0.0.0.0`.** `XEXAM_BACKEND_BIND` and `XEXAM_AI_BIND` are required and should be the machine's private address. Docker publishes ports around `ufw` and `firewalld`, so the host firewall does not protect a published port: the peer list is the check that counts.
+- **`XEXAM_FRONTEND_PEERS` on both services.** Without it any machine that can reach the port could forge `X-Real-IP` / `X-Geo-*` and reach `/internal/ai/auth`. With it, other peers get `404`, and the forwarded headers are believed only from the listed addresses. The refusal is logged about once a minute, with the path and never the query: `refused a request from <ip>: the address is not in XEXAM_FRONTEND_PEERS`. Docker Desktop and the userland proxy may show the Docker gateway address instead of the real peer; list that address as well when you see it in the refusal line.
+- **Traffic between the machines is plain `http://` unless you add TLS.** Keep it on a private network, or terminate TLS in front of the backend and ai-service (a reverse proxy that keeps the `Host` header) and use `https://` for `XEXAM_BACKEND_UPSTREAM`, `XEXAM_AI_UPSTREAM` and `XEXAM_AI_BACKEND_URL`.
+- **Allowed hosts on the backend machine.** The Host / Origin guard runs in the backend, on the backend machine: set `XEXAM_ALLOWED_HOSTS` (and `XEXAM_ALLOWED_ORIGINS` when needed) there, as in section 4.
+- **The token** is required on both machines (`XEXAM_INTERNAL_TOKEN_REQUIRED=1` in the files); treat it like a password.
+- **Limitation**: in this layout the backend machine has outbound access to the internet like any other (for the optional IP-location lookup); only ai-service talks to AI providers.
+
+### 12.3 Moving the data volumes
+
+To move an existing single-host installation: stop it, back up as in section 5, create the volumes on the new machines **empty** (an unwanted file already in the target volume would be mixed in), copy `xexam_backend_data` to the backend machine and `xexam_ai_data` (which holds `xexam-ai.db`, `secret.key` and `backups/`) to the ai-service machine, then start the three machines. `xexam_ai_auth` is not needed any more (the token comes from the environment). If you had set `XEXAM_AI_SECRET_KEY`, set it on the ai-service machine too.
+
+### 12.4 Checking it
+
+- `docker compose -f <file> config -q` on each machine checks the file and its required values.
+- Open the app and sign in; open **AI settings** as an administrator: the AI service shows as connected once its state report reaches the backend (`AI link: connected to the main service` in the ai-service log).
+- The backend log has no `refused a request from` line while only the frontend machine talks to it.

@@ -10,6 +10,7 @@ use crate::gen::run::{attempt_line, Next, Run};
 use crate::gen::runner::{
     log_failed_slots, random_bytes, CallOpts, CallResult, Ctx, Stop, StopWhy,
 };
+use crate::pace::{PaceCfg, Window};
 use futures_util::stream::{FuturesUnordered, StreamExt};
 use std::future::Future;
 use std::pin::Pin;
@@ -142,10 +143,21 @@ async fn drive_inner<'a>(
         ctx.check()?;
         // fill the places
         loop {
+            // the width shrinks to what the provider's per-minute limits allow (v1.9 pacing)
             let limit = if par.cold && finished == 0 {
                 1
             } else {
-                par.width.max(1)
+                let l = app.0.limits();
+                let want = if par.generation {
+                    l.gen_tokens()
+                } else {
+                    l.import_tokens()
+                };
+                let est_one = par.wholes.iter().map(|w| w.tokens).max().unwrap_or(0)
+                    + TASK_SLACK_TOKENS
+                    + want.clamp(1, ANSWER_RESERVE_MAX);
+                let cfg = PaceCfg::of(&l, crate::app::Knobs::get(&app.0.knobs.pace_scale));
+                par.width.min(Window::width_for(&cfg, est_one)).max(1)
             };
             if flying.len() >= limit {
                 break;
@@ -201,22 +213,18 @@ async fn drive_inner<'a>(
             let schema = par.schema;
             flying.push(Box::pin(async move {
                 let r = async {
-                    let permit = ctx.place().await?;
-                    let r = ctx
-                        .call_opts(
-                            &whole.system,
-                            Some(&whole.prefix),
-                            &user,
-                            want,
-                            asked,
-                            CallOpts {
-                                schema,
-                                ..CallOpts::for_attempt(attempt)
-                            },
-                        )
-                        .await;
-                    drop(permit);
-                    r
+                    ctx.send(
+                        &whole.system,
+                        Some(&whole.prefix),
+                        &user,
+                        want,
+                        asked,
+                        CallOpts {
+                            schema,
+                            ..CallOpts::for_attempt(attempt)
+                        },
+                    )
+                    .await
                 }
                 .await;
                 (batch, r)
@@ -264,7 +272,7 @@ async fn drive_inner<'a>(
                     return Err(Stop::Cancelled(StopWhy::Purged));
                 }
             }
-            CallResult::Error { code, row } => {
+            CallResult::Error { code, row, .. } => {
                 run.on_provider_error(&batch, code.code());
                 let made = i64::try_from(run.made()).unwrap_or(0);
                 if !ctx.write_call(&row, Some(made), Some("writing")) {

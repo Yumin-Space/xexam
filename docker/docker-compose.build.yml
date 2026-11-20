@@ -17,6 +17,9 @@
 #                                   ├─ reports its state to the backend (at start, on changes, every 25 s)
 #                                   └─ SQLite + key file (named volume xexam_ai_data → /data); internet (egress) only here
 #
+# Services on different machines (frontend, backend and ai-service each on its own host): use the per-machine files
+# docker-compose.frontend.yml, docker-compose.backend.yml and docker-compose.ai-service.yml instead; see docs/en/deployment.md section 12.
+#
 # ⚠️ `docker compose down -v` deletes the two data volumes xexam_backend_data and xexam_ai_data as well.
 
 name: xexam
@@ -124,8 +127,9 @@ services:
       # XEXAM_AI_SQLITE_JOURNAL:  (WAL)
       # Or: XEXAM_AI_SQLITE_JOURNAL:  delete (as XEXAM_SQLITE_JOURNAL)
       XEXAM_AI_SQLITE_JOURNAL:
-      # Not set = the default, no User-Agent header on requests to AI providers and gateways:
-      # XEXAM_AI_USER_AGENT_NAME:  (none)
+      # Not set = the default, User-Agent xexam-ai-service/<version> on requests to AI providers and gateways:
+      # XEXAM_AI_USER_AGENT_NAME:  (xexam-ai-service/<version>)
+      # Or: XEXAM_AI_USER_AGENT_NAME:  none (no User-Agent header at all)
       # Or: XEXAM_AI_USER_AGENT_NAME:  MyGateway-Client/1.0 (any name your gateway should see; printable ASCII, at most 256 characters)
       XEXAM_AI_USER_AGENT_NAME:
     volumes:

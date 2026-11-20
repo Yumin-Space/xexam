@@ -2,8 +2,8 @@
 // paused (Pause / Resume, no confirmation; a paused user stays listed and keeps their data; this page never changes the AI+
 // feature of User management), counts, the request counts against the caps, the per-user feature boxes, the free-mode switch of
 // an administrator, and the read-only viewer of the user's chats and memories. Below 900 px each user is a small card. A box of
-// a feature that is switched off for everyone is shown disabled with the tip "Switched off for everyone" (administrators are not
-// affected by the global switches: their boxes are ticked and disabled as before).
+// a feature that is switched off for everyone is shown disabled with the tip "Switched off for everyone" (v1.9: the global
+// switches apply to administrators too; an administrator's boxes stay ticked and disabled, per-user boxes never limit them).
 import { fetchAiUsers, resumeAiUser, setAiAdminFree, setAiUserFeatures, suspendAiUser } from '../../api/ai.ts';
 import { aiBadge } from '../../components/ai-badge.ts';
 import { iconButton } from '../../components/icon-button.ts';
@@ -106,7 +106,7 @@ function callsCell(u: AiAdminUserRow): HTMLElement {
   return td;
 }
 
-/** A feature switched off for everyone (administrators are not affected: their boxes stay ticked) */
+/** A feature switched off for everyone (the box pairs hint + analysis: off when either global switch is off) */
 const globalOff = (k: FeatureKey): boolean => A.settings != null && !itemOn(A.settings.featureSwitches, k);
 
 /** The feature boxes of one user (FP-4): two groups, each on one row; administrators' are ticked and disabled. AI hint and AI

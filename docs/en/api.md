@@ -498,6 +498,16 @@ Like every backend message they are Chinese and stable (the frontend translates 
 - **`POST /api/attempt`**: a repeat of the same save (same `key`, `startedAt` and kind) writes nothing and answers the first answer plus `"duplicate": true`.
 - **`GET /api/bank`**, **`GET /api/banks`**: the answers carry `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` gets `304` without a body.
 
+### v1.9 additions to the public routes *(v1.9)*
+
+**`GET` / `HEAD /api/banks/download?id=<int>&format=xlsx|docx[&langs=en,zh,ja]`** has an optional `langs`:
+
+- **Format**: comma-separated, each token exactly `en`, `zh` or `ja` (lower case), one to three tokens, no empty token and no duplicate, and the parameter given once. Anything else (`langs=`, `fr`, `zh,zh`, `ZH`, `zh,,en`, or `langs` twice) is a **400** `请求的格式不对。`, checked before the bank lookup, with no activity row.
+- **Missing = all three**: the file name and the bytes are exactly those of v1.8.
+- **`xlsx`** keeps all six columns in place and leaves the cells of unticked languages empty (the header row is always full; without `en` the file cannot be imported again). **`docx`** holds only the chosen languages, always English, then Chinese, then Japanese.
+- **File name**: all three languages give `<stem>.<ext>`; a subset gives `<stem>_<codes>.<ext>` with the codes in en, zh, ja order joined by `-` (for example `Garden_en-zh.docx`); the ASCII fallback is `xexam-bank-<id>_<codes>.<ext>`.
+- **Activity**: `bank.download` has the detail `{"format", "langs": ["en", "zh", "ja"] (the chosen subset, in that order), "sheets", "questions"}`.
+
 ## 5. AI routes (`/api/ai/*`, v0.8)
 
 The routes under `/api/ai/` are answered by ai-service (the `ai-service` container, image `xexam-ai-service`), not by the backend. Nginx sends every such request first to the backend's auth step (section 6) and passes it on only when the backend allows it, without the browser's cookies and with the backend's signed identity statement (`X-Xexam-Identity`) instead. A client therefore calls them exactly like the other routes: same origin, with the session cookie; it cannot set the identity itself (Nginx always overwrites the header).
@@ -562,6 +572,7 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
 | POST | `/api/ai/admin/connections/test` | Admin | `{"id": <id>}` | `Settings` |
 | POST | `/api/ai/admin/connections/delete` | Admin | `{"id": <id>, "force"?, "newDefault"?}` | `Settings` |
 | POST | `/api/ai/admin/connections/order` | Admin | `{"ids": [<id>, …]}` | `Settings` |
+| POST | `/api/ai/admin/connections/enabled` | Admin | `{"id": <id>, "enabled": <bool>}` | `{"settings": Settings}` *(v1.9, section 5.11)* |
 | POST | `/api/ai/admin/models/effort` | Admin | `{"slot", "effort": null \| {"family", "level"}}` | `{"settings": Settings}` *(v1.6, section 5.10)* |
 | POST | `/api/ai/admin/models/pick` | Admin | `{"slot", "connectionId", "model", "manual"?}` or `{"slot", "clear": true}` | `Settings`, or `{"ok": false, "code", …}` when the test fails |
 | POST | `/api/ai/admin/models/test` | Admin | `{"connectionId": <id>, "model": "…"}` | `Settings` |
@@ -576,7 +587,7 @@ The routes under `/api/ai/` are answered by ai-service (the `ai-service` contain
 | GET | `/api/ai/admin/chat` | Admin | `?user=<user id>&id=<chat id>` | `{"chat": ChatSummary, "messages": [Message]}`, **audited**; the chat must belong to that user (else 404 and no audit line) |
 | POST | `/api/ai/admin/clear` | Admin | `{"userId": <id>, "what": "chat", "chatId": <id>}`, or `{"userId": <id>, "what": "chats" \| "memories"}`, or `{"what": "shared"}` alone (v1.3: the shared hints / analyses) | `{"deleted": <n>}`, **audited** |
 | GET | `/api/ai/admin/limits` | Admin | | `{"limits": {…}, "defaults": {…}, "ranges": {"<key>": [min, max], …}}` |
-| POST | `/api/ai/admin/limits` | Admin | any of the 33 limit keys (see `admin/limits` and **Feature keys and limits** below), integers | the same as GET |
+| POST | `/api/ai/admin/limits` | Admin | any of the 36 limit keys (see `admin/limits` and **Feature keys and limits** below), integers | the same as GET |
 | GET | `/api/ai/admin/geo` | Admin | | the external location lookup settings (*v1.4*, section 5.9) |
 | POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | a draft, or `{}` | section 5.9 |
 
@@ -756,6 +767,8 @@ The `error` texts are ai-service's (Chinese; `ai.serviceOff` is the backend's); 
 | `ai.modelMissing` | 400 | Choose a model first. |
 | `ai.badRetention` | 400 | Retention must be 1 to 3650 days. |
 | `ai.limitRange` | 400 | A limit is not an integer in its range (`field`). |
+| `ai.connectionOff` | 409 | The AI connection the feature, the default or the chat pick uses is switched off (v1.9). |
+| `ai.gen.providerDaily` | job error | The provider's daily quota is used up; the job stopped and was not charged (v1.9). |
 | `ai.interrupted` | (stored) | The service restarted while the answer was being written. |
 | `ai.up.auth` | 502 | The AI provider rejected the key. |
 | `ai.up.quota` | 502 | The AI account has no credit or quota left. |
@@ -886,7 +899,7 @@ All routes below follow the rules of section 5.1. The exact bodies and answers a
 
 Status codes you may meet: `ai.gen.quota` (429, the daily generation quota is used, `Retry-After` set), `ai.gen.busy` (409, another job of this user runs; `job` may be `null`), `ai.gen.aiSource` (422, an AI-generated bank is never a source), `ai.featureOff` (403, the feature is off for this user), `ai.gen.forbidden` (403, the permission was removed while the job waited), `ai.suspended` (403, AI is paused for this user).
 
-**Feature keys and limits.** `GET /api/ai/status` and `POST /api/ai/admin/features` carry six `features` keys: `chat`, `hint`, `explain`, `summary`, `generate`, `import`. From v1.3 `hint` and `explain` are one switch (**AI hint + analysis**): the page sends both with the same value, and the server keeps them equal (a request that changes only one of the two moves both). `GET` and `POST /api/ai/admin/limits` carry 33 keys: the ten of v1.0, the generation keys (`genPerDay`, `genAdminsExempt`, `genMinSource`, `genMinWrong`, `genBankSingle`, `genBankMulti`, `genWrongSingle`, `genWrongMulti`, `genCallTokens` default 20000 (1000 to 250000 tokens), `genMaxCalls` default 15), `importMaxCalls` (default 25), `recognizeMaxCalls` (default 20, the most AI calls the recognition step of one file may make), `genRunning`, `importMaxMb` (default 20) and `importMaxQuestions` (default 100, 1 to 300). Each call ceiling is 8 to 40, for everyone including administrators. The six keys of v1.3: `callsAdminsExempt` (0 or 1, default 1: administrators are exempt from the per-user call caps; their calls are still recorded), `studyShare` (0 or 1, default 1), `studyShareDays` (7 to 3650, default 180), `genMaxChunks` (1 to 50, default 8), `summaryMaxItems` (10 to 70, default 40) and `dailyTokenBudget` (0 to 100000000, default 0 = off).
+**Feature keys and limits.** `GET /api/ai/status` and `POST /api/ai/admin/features` carry six `features` keys: `chat`, `hint`, `explain`, `summary`, `generate`, `import`. From v1.3 to v1.8 `hint` and `explain` were one switch; **since v1.9 the six global switches are independent** (a request that changes only one moves only that one; the per-user bits in User management still pair them). `GET` and `POST /api/ai/admin/limits` carry 36 keys (v1.9 added `paceOn`, `paceRpm` and `paceTpm`, section 5.11): the ten of v1.0, the generation keys (`genPerDay`, `genAdminsExempt`, `genMinSource`, `genMinWrong`, `genBankSingle`, `genBankMulti`, `genWrongSingle`, `genWrongMulti`, `genCallTokens` default 20000 (1000 to 250000 tokens), `genMaxCalls` default 15), `importMaxCalls` (default 25), `recognizeMaxCalls` (default 20, the most AI calls the recognition step of one file may make), `genRunning`, `importMaxMb` (default 20) and `importMaxQuestions` (default 100, 1 to 300). Each call ceiling is 8 to 40, for everyone including administrators. The six keys of v1.3: `callsAdminsExempt` (0 or 1, default 1: administrators are exempt from the per-user call caps; their calls are still recorded), `studyShare` (0 or 1, default 1), `studyShareDays` (7 to 3650, default 180), `genMaxChunks` (1 to 50, default 8), `summaryMaxItems` (10 to 70, default 40) and `dailyTokenBudget` (0 to 100000000, default 0 = off).
 
 **Internal routes** (`/internal/*`, backend to ai-service and back, token required): `/internal/ai/gen/source`, `/internal/ai/gen/seeds`, `/internal/ai/gen/create` (the only route that accepts a 10 MiB body; every other internal route keeps 64 KiB), `/internal/ai/gen/lookup`, `/internal/ai/import/check`.
 
@@ -925,7 +938,7 @@ The `start` frame of the stream also has `mode` (`send`, `regenerate`, `edit`), 
 | `POST models/pick`, `models/test`, `models/remove` | Assign a model to a slot (tested first), test one, remove from the pool (`ai.modelInUse`) |
 | `POST models/effort` | *(v1.6)* Set the thinking strength of a slot (section 5.10) |
 | `POST enable` | `{"enabled", "default"}`; the default model is required while the slot is empty and tested |
-| `POST feature-switches` | Any of `chat`, `hint`, `explain`, `summary`, `generate`, `import`; normal users only. `hint` and `explain` always change together |
+| `POST feature-switches` | Any of `chat`, `hint`, `explain`, `summary`, `generate`, `import`; everyone, administrators included (v1.9). Each key changes alone |
 | `GET/POST limits` | The limits of v1.2 and `callsAdminsExempt`, `studyShare`, `studyShareDays`, `genMaxChunks`, `summaryMaxItems`, `dailyTokenBudget`; `importMaxQuestions` is 1 to 300 (default 100) |
 | `GET usage` | Also `byConnection`, `shared` (rows, hits) and `budget` |
 | `POST clear` | Also the scope `shared` |
@@ -981,7 +994,7 @@ Failure `code`s (also in the internal result route): `timeout`, `unreachable`, `
 
 ### 5.10 Thinking strength, structured answers and places in log rows *(v1.6)*
 
-**`POST /api/ai/admin/models/effort`** (Admin) `{"slot": "default" | "chat" | "study" | "summary" | "generate" | "import", "effort": null | {"family", "level"}}`; nothing else is accepted (400 `ai.badRequest`). `null` is **Default**: no parameter is sent. `family` is one of `anthropic`, `openai`, `google`, `responses`, `gemma` (lower case); `level` must be one of the family's levels (case-sensitive, as sent):
+**`POST /api/ai/admin/models/effort`** (Admin) `{"slot": "default" | "chat" | "hint" | "explain" | "summary" | "generate" | "import", "effort": null | {"family", "level"}}`; nothing else is accepted (400 `ai.badRequest`). `null` is **Default**: no parameter is sent. `family` is one of `anthropic`, `openai`, `google`, `responses` (lower case; `gemma` was removed in v1.9 and is a 400); `level` must be one of the family's levels (case-sensitive, as sent):
 
 | `family` | Request parameter | `level` |
 |---|---|---|
@@ -989,17 +1002,28 @@ Failure `code`s (also in the internal result route): `timeout`, `unreachable`, `
 | `openai` | `reasoning_effort` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `google` | `extra_body.google.thinking_config.thinking_level` | `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`, `XHIGH` |
 | `responses` | `reasoning.effort` (nested: `"reasoning": {"effort": …}`) | `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
-| `gemma` | `extra_body.google.thinking_config.thinking_level` | `HIGH`, `MINIMAL` |
 
 The choice is not checked against the connection's format: it only decides the parameter put into the request body of that slot's calls. A slot that follows the default model uses the default model with its own effort. Answer: `{"settings": Settings}`. Activity event `ai.settings.effort` (object: the slot; detail `{"family": "<family>" | "default", "level": "<level>" | null}`).
 
-`GET /api/ai/admin/settings` carries `slots.<slot>.effort` (`null` or `{"family", "level"}`) next to `modelId` and `using`, and a top-level `effortLevels` (`{"anthropic": [...], "openai": [...], "google": [...], "responses": [...], "gemma": [...]}`, the lists of the table above, for the page to draw).
+`GET /api/ai/admin/settings` carries `slots.<slot>.effort` (`null` or `{"family", "level"}`) next to `modelId` and `using`, and a top-level `effortLevels` (`{"anthropic": [...], "openai": [...], "google": [...], "responses": [...]}`, the lists of the table above, for the page to draw).
 
 **When a provider refuses it.** A request that carries the parameter and is answered with HTTP 400 or 422 is sent once more without it; the connection is remembered as not supporting it (in memory, until ai-service restarts or an effort is changed), and the answer is used as if **Default** were chosen. No error reaches the user.
 
 **Structured answers.** Questions-shaped answers (generation and import) ask for structured output: Anthropic connections send `output_config.format` with a JSON schema, OpenAI-compatible ones `response_format` of type `json_schema` with `strict: true`, Responses ones `text.format` (`{"type":"json_schema","name":"answer","strict":true,"schema":...}`). A provider that refuses it gets the plain request instead, remembered per connection in memory. The schema asks for one `answer` field per question, the letters of the correct options; ai-service sets the option flags from it. The older form (a boolean `correct` on every option) is still read, and an option without `correct` counts as false when another option is true. The token budget of a plan call is `min(22 000, 6 200 + 90 × questions)` (20 questions: 8 000) and that of the global plan 8 000.
 
 **Place in log rows.** In Cloudflare mode the events of `POST /internal/ai/activity` may carry optional `country`, `region` and `city` (the place from the request's `X-Geo-*` headers, which Nginx now passes to ai-service from trusted proxies only). The backend cleans them like the headers (a country is two letters, not `XX` or `T1`; region and city lose control characters and are cut at 64 characters; a non-string value is 400) and stores them with the address only while the sign-in info eye is open. In API mode they are ignored and the cached lookup of the address is used.
+
+### 5.11 Connection switch, per-feature switches, safety groups and pacing *(v1.9)*
+
+- **`POST /api/ai/admin/connections/enabled`** (Admin). Body exactly `{"id": <positive integer>, "enabled": <boolean>}`; a missing or wrong-typed key or any extra key is 400 `ai.badRequest`, an unknown id is 404 `ai.notFound`. Answer 200 `{"settings": Settings}`, also when nothing changed. Off keeps every setting, key and pool model of the connection but leaves it out of every picker and of routing. It does not bump the connection's `rev`, does not cancel running calls and wakes the heartbeat. Activity event `ai.settings.connectionOn` or `ai.settings.connectionOff` (object: the connection name; detail `{"provider", "host"}`). `connections/test` still works on an off connection.
+- **`enabled`** is a boolean on every entry of `connections[]` in the Settings object and on every connection of `GET /api/ai/admin/models`. An off connection is listed there as `{"id", "name", "provider", "status", "enabled": false, "listed": false, "error": null, "models": []}` with no call to the provider and no cache read.
+- **`ai.connectionOff` (409)** replaces any fallback: a pick on an off connection (`models/pick`, `admin/enable` with a default pick, `chat/model`) is refused with it; a send, regenerate, edit or retry whose stored or given pick sits on an off connection, and a study, summary, generation or import call whose slot (or the default it follows) sits on one, fail with it. The stored choice is kept (`chats.pick_conn` is unchanged).
+- **Slots**: `slots` in the Settings object has seven keys, in this order: `default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import` (`study` is gone and is a 400 in `models/pick` and `models/effort`). `explain` also serves result and record analysis. `effortLevels` has four keys: `anthropic`, `openai`, `google`, `responses`.
+- **Feature switches**: `POST feature-switches` keeps its body (any subset of the six keys) but each key now moves alone, and a switched-off feature is off for **everyone, administrators included**: running calls of it are cancelled for everyone and a new request answers 403 `ai.featureOff`. `GET /api/ai/status` `features` for an administrator reflects the global switches (the per-user bits still never apply to administrators; the per-user bits still pair `hint` and `explain`).
+- **Limits**: `admin/limits` has 36 keys, the 33 of v1.8 and, appended, `paceOn` (0 or 1, default 1), `paceRpm` (1 to 10 000, default 15) and `paceTpm` (1 000 to 100 000 000, default 250 000); out of range is 400 `ai.limitRange` with `field`. Changing `genUnlimited` or `importUnlimited` never touches them. Effective values: 90 % (15 gives 13 requests and 250 000 gives 225 000 tokens a minute), calls spread evenly (60 / 13 s, about 4.6 s) over a sliding 60 seconds, the tokens of each call estimated before it is sent, and the parallel width shrinks to fit. It paces AI generation and AI import only.
+- **429 from the provider**: a rate-limit answer waits the delay the provider names and retries (up to 10 times per call, not counted as an error, always on, also with `paceOn` 0). A daily quota stops the job with the job error `ai.gen.providerDaily` (not charged), shown as **The AI provider's daily quota is used up, so the job stopped. Try again tomorrow or ask an administrator to change the model.**
+- **Job `waiting`**: every job object (`/api/ai/gen/job`, `/api/ai/admin/gen`, the import answers) has `"waiting": bool`, true only while the job is queued or running and waiting for provider quota. The page shows **Waiting for the provider's quota…** after 8 seconds.
+- **New texts** (`error`, Chinese; the page shows its own wording per language): `ai.connectionOff` 这个功能使用的 AI 连接未启用，请联系管理员。 `ai.gen.providerDaily` AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。
 
 ## 6. Internal routes (`/internal/*`, v0.8)
 
@@ -1210,6 +1234,12 @@ Only the AI routes change, and every change is additive or a default; the other 
 - **Thinking strength**: `POST /api/ai/admin/models/effort`, `slots.<slot>.effort` and `effortLevels` in the settings answer, activity event `ai.settings.effort`.
 - **Places**: the backfill after the source becomes `api`; optional `country`, `region`, `city` in the events of `POST /internal/ai/activity`.
 - **Version**: `GET /api/info` reports `"version": "1.6"`, and the AI service's `/healthz` as well. The main database is schema 10.
+
+### Changes in v1.9 (relative to v1.8)
+
+- **New**: `POST /api/ai/admin/connections/enabled`; `enabled` on connections; `ai.connectionOff` (409) and `ai.gen.providerDaily`; `waiting` on job objects; `langs` on `GET /api/banks/download`.
+- **Changed**: seven slots (`study` split into `hint` and `explain`); four thinking-strength families (`gemma` removed, 400); global feature switches independent and effective for administrators; `admin/limits` 36 keys; the `bank.download` activity detail has `langs`.
+- **Database**: the AI database moves to schema 9 on start, after a backup copy (section 8.2f of [database.md](database.md)). The main database and every public route not listed above are unchanged.
 
 ## 8. Examples
 

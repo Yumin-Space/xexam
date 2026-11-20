@@ -40,7 +40,7 @@ const USAGE: &str = "Usage:
   xexam-backend import <question-bank.xlsx> [--data DIR]       (also accepts --import <question-bank.xlsx>)
   xexam-backend migrate-progress [progress.json] [--data DIR]
   xexam-backend reset-password <username> [--data DIR]      (see: xexam-backend reset-password --help)
-Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN XEXAM_BEHIND_PROXY";
+Environment variables: XEXAM_DATA XEXAM_HOST XEXAM_PORT XEXAM_ALLOWED_HOSTS XEXAM_ALLOWED_ORIGINS XEXAM_ALLOW_ANY_HOST XEXAM_COOKIE_SECURE XEXAM_PARSE_TIMEOUT_SECS XEXAM_LOG XEXAM_SQLITE_JOURNAL XEXAM_LINK_DIR XEXAM_INTERNAL_TOKEN XEXAM_BEHIND_PROXY XEXAM_FRONTEND_PEERS XEXAM_INTERNAL_TOKEN_REQUIRED";
 
 const RESET_PASSWORD_USAGE: &str = "Usage:
   xexam-backend reset-password <username> [--data DIR]
@@ -563,12 +563,32 @@ async fn serve(cfg: Config) -> i32 {
     ));
     // v0.8: the internal token shared with the AI service (`XEXAM_INTERNAL_TOKEN`, else `<link dir>/internal.token`,
     // created when missing). Only `serve` does this; the command-line subcommands never touch the link directory
-    let link = xexam_backend::api::internal::load_link(
-        std::env::var(xexam_backend::api::internal::TOKEN_ENV)
-            .ok()
-            .as_deref(),
-        &cfg.link_dir_or_default(),
-    );
+    let token_env = std::env::var(xexam_backend::api::internal::TOKEN_ENV).ok();
+    let link = if cfg.internal_token_required
+        && token_env.as_deref().is_none_or(|v| v.trim().is_empty())
+    {
+        // Required but not set: do not create a token file; the check below stops the start
+        xexam_backend::api::internal::LinkLoad::Off(String::new())
+    } else {
+        xexam_backend::api::internal::load_link(token_env.as_deref(), &cfg.link_dir_or_default())
+    };
+    // v1.9: XEXAM_INTERNAL_TOKEN_REQUIRED=1 makes a missing or invalid token a start error
+    if let Err(msg) =
+        xexam_backend::api::internal::require_env_token(cfg.internal_token_required, &link)
+    {
+        say(&msg);
+        tracing::error!("{msg}");
+        return 1;
+    }
+    for w in &cfg.peer_warnings {
+        tracing::warn!("{w}");
+    }
+    if cfg.frontend_peers.is_restricted() {
+        tracing::info!(
+            "XEXAM_FRONTEND_PEERS: {} entries (other peers get 404; loopback always allowed)",
+            cfg.frontend_peers.len()
+        );
+    }
     match &link {
         xexam_backend::api::internal::LinkLoad::Off(_) => tracing::warn!("{}", link.log_line()),
         _ => tracing::info!("{}", link.log_line()),

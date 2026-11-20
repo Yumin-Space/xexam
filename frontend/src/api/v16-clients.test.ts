@@ -18,8 +18,8 @@ afterEach(() => { globalThis.fetch = realFetch; });
 
 test('setEffort posts the slot and the choice, or null for the default', async () => {
   await setEffort({ slot: 'chat', effort: { family: 'openai', level: 'high' } });
-  await setEffort({ slot: 'study', effort: null });
+  await setEffort({ slot: 'hint', effort: null });
   assert.deepEqual(calls.map((c) => `${c.method} ${c.url}`), ['POST /api/ai/admin/models/effort', 'POST /api/ai/admin/models/effort']);
   assert.deepEqual(calls[0]?.body, { slot: 'chat', effort: { family: 'openai', level: 'high' } });
-  assert.deepEqual(calls[1]?.body, { slot: 'study', effort: null });
+  assert.deepEqual(calls[1]?.body, { slot: 'hint', effort: null });
 });

@@ -4,7 +4,7 @@
 import '../styles/ai-gen.css';
 import { aiControlView, type ControlContext, type ControlView } from '../domain/ai-features.ts';
 import {
-  checkName, cardJobs, genCount, genView, NAME_MAX_HOME, placeholderOf, runningLine, stampText, type GenMode, type GenViewState,
+  checkName, cardJobs, genCount, genView, NAME_MAX_HOME, placeholderOf, runningLine, stampText, waitingNow, type GenMode, type GenViewState,
 } from '../domain/ai-gen.ts';
 import { masterStreakOf, inNotebook } from '../domain/grading.ts';
 import { jobReasonText } from '../i18n/errors.ts';
@@ -316,6 +316,7 @@ function genCard(job: GenJob): HTMLElement {
       h('h3', { class: 'gen-title' }, t('aigen.card.title', { name: job.name })),
       bar(job.state === 'queued' ? 0 : line.pct, t('aigen.card.progressLabel')),
       h('p', { class: 'gen-line', 'aria-live': 'polite' }, t(line.key, { made: job.made, goal: job.goal })),
+      ...(waitingNow(job) ? [h('p', { class: 'gen-line gen-wait dim', 'aria-live': 'polite' }, t('aigen.card.waiting'))] : []),
       h('p', { class: 'dim gen-note' }, t('aigen.card.leave')),
       ...itemsList(job),
       ...usageNote(job),

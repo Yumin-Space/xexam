@@ -1,15 +1,17 @@
-//! Connections, their sealed keys, the model pool and the six model slots (schema 7). Every function takes the
+//! Connections, their sealed keys, the model pool and the seven model slots (schema 9). Every function takes the
 //! connection or transaction of the caller; the admin routes run the writes inside `Store::write`.
 //!
 //! Keys are only ever stored sealed (`connection_secrets`); nothing here sees a plain key. Slot names are the lower-case
-//! strings of `route::Slot::as_str` (`default`, `chat`, `study`, `summary`, `generate`, `import`).
+//! strings of `route::Slot::as_str` (`default`, `chat`, `hint`, `explain`, `summary`, `generate`, `import`).
 use crate::effort::Effort;
 use crate::secret::{Sealed, SecretName};
 use crate::store::tables::SecretRow;
 use rusqlite::{params, Connection, OptionalExtension};
 
 /// The model slots, in the order `slots` returns them.
-pub const SLOT_NAMES: [&str; 6] = ["default", "chat", "study", "summary", "generate", "import"];
+pub const SLOT_NAMES: [&str; 7] = [
+    "default", "chat", "hint", "explain", "summary", "generate", "import",
+];
 
 /// One connection as listed (never a key).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +36,8 @@ pub struct ConnRow {
     pub created_at: i64,
     pub updated_at: i64,
     pub updated_by: String,
+    /// v1.9: off = left out of every picker and of routing (settings, key and pool models are kept)
+    pub enabled: bool,
 }
 
 /// A connection to create (status `ok`, rev 1, sorted last).
@@ -108,7 +112,7 @@ pub struct NewConnSecret<'a> {
 
 const CONN_COLS: &str =
     "id, rev, name, provider, base_url, format, gateway_auth, status, error_code, lists_models,
-     tested_at, sort, created_at, updated_at, updated_by, responses";
+     tested_at, sort, created_at, updated_at, updated_by, responses, enabled";
 
 /// The `(format, responses)` column pair of a logical format: `responses` is stored as `openai` + flag 1, because the
 /// `format` CHECK cannot be altered (no table rebuild).
@@ -144,6 +148,7 @@ fn conn_from(r: &rusqlite::Row<'_>) -> rusqlite::Result<ConnRow> {
         created_at: r.get(12)?,
         updated_at: r.get(13)?,
         updated_by: r.get(14)?,
+        enabled: r.get::<_, i64>(16)? != 0,
     })
 }
 
@@ -222,6 +227,22 @@ pub fn update_connection(
             stored_format(n.format).1
         ],
     )? > 0)
+}
+
+/// Turns a connection on or off (v1.9). Keeps every setting, key and pool model; does NOT bump `rev` (a running call
+/// is not cancelled and the model cache stays valid). `false` = no such connection.
+pub fn set_connection_enabled(
+    c: &Connection,
+    id: i64,
+    on: bool,
+    by: &str,
+    now: i64,
+) -> rusqlite::Result<bool> {
+    let n = c.execute(
+        "UPDATE connections SET enabled = ?2, updated_at = ?3, updated_by = ?4 WHERE id = ?1",
+        params![id, i64::from(on), now, by],
+    )?;
+    Ok(n > 0)
 }
 
 /// Deletes a connection with its keys and pool models (cascade); the slots that pointed at one of its models become
@@ -445,8 +466,8 @@ pub fn remove_pool(c: &Connection, id: i64) -> rusqlite::Result<()> {
 }
 
 /// The pool id of every slot, in [`SLOT_NAMES`] order; None = empty.
-pub fn slots(c: &Connection) -> rusqlite::Result<[Option<i64>; 6]> {
-    let mut out = [None; 6];
+pub fn slots(c: &Connection) -> rusqlite::Result<[Option<i64>; 7]> {
+    let mut out = [None; 7];
     let mut st = c.prepare("SELECT slot, model_id FROM model_slots")?;
     let rows = st.query_map([], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<i64>>(1)?))
@@ -498,8 +519,8 @@ pub fn set_features_off(c: &Connection, bits: i64) -> rusqlite::Result<()> {
 }
 
 /// The thinking strength of every slot, in [`SLOT_NAMES`] order; `None` = send nothing (also for an unreadable value).
-pub fn efforts(c: &Connection) -> rusqlite::Result<[Option<Effort>; 6]> {
-    let mut out = [None; 6];
+pub fn efforts(c: &Connection) -> rusqlite::Result<[Option<Effort>; 7]> {
+    let mut out = [None; 7];
     let mut st = c.prepare("SELECT slot, effort FROM model_slots")?;
     let rows = st.query_map([], |r| {
         Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))

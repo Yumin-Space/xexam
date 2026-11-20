@@ -8,12 +8,21 @@ use std::io::{Cursor, Write};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
-use super::{xml_text, ExportBank, ExportError};
+use super::{xml_text, ExportBank, ExportError, Langs};
 use crate::models::{Answer, ExplainText, Kind, Question, Zh};
 
 /// The Word document of `bank` (see the v1.6 contract §4): bank title, then English, Chinese and Japanese, each with every
 /// sheet and every question with its answer and explanation. `now` goes into docProps/core.xml.
 pub fn write_docx(bank: &ExportBank, now: jiff::Timestamp) -> Result<Vec<u8>, ExportError> {
+    write_docx_langs(bank, Langs::ALL, now)
+}
+
+/// Like [`write_docx`] but holding only the ticked `langs`, in the order English, Chinese, Japanese.
+pub fn write_docx_langs(
+    bank: &ExportBank,
+    langs: Langs,
+    now: jiff::Timestamp,
+) -> Result<Vec<u8>, ExportError> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let parts: [(&str, String); 9] = [
@@ -21,7 +30,7 @@ pub fn write_docx(bank: &ExportBank, now: jiff::Timestamp) -> Result<Vec<u8>, Ex
         ("_rels/.rels", ROOT_RELS.to_string()),
         ("docProps/core.xml", core_xml(&bank.name, now)),
         ("docProps/app.xml", APP_XML.to_string()),
-        ("word/document.xml", document_xml(bank)),
+        ("word/document.xml", document_xml(bank, langs)),
         ("word/styles.xml", STYLES_XML.to_string()),
         ("word/settings.xml", SETTINGS_XML.to_string()),
         ("word/fontTable.xml", FONT_TABLE_XML.to_string()),
@@ -633,7 +642,7 @@ fn heading(style: &'static str, text: &str, lang: Lang, page_break: bool) -> Par
     }
 }
 
-fn document_xml(bank: &ExportBank) -> String {
+fn document_xml(bank: &ExportBank, langs: Langs) -> String {
     let mut body = String::new();
     body.push_str(
         &Para {
@@ -646,8 +655,18 @@ fn document_xml(bank: &ExportBank) -> String {
         }
         .xml(),
     );
-    for (li, lang) in [Lang::En, Lang::Zh, Lang::Ja].into_iter().enumerate() {
-        body.push_str(&heading("Heading1", lang.heading(), lang, li > 0).xml());
+    // A page break goes before every language section except the first one written
+    let mut written = 0usize;
+    for (lang, on) in [
+        (Lang::En, langs.en),
+        (Lang::Zh, langs.zh),
+        (Lang::Ja, langs.ja),
+    ] {
+        if !on {
+            continue;
+        }
+        body.push_str(&heading("Heading1", lang.heading(), lang, written > 0).xml());
+        written += 1;
         if bank.sheets.is_empty() {
             body.push_str(
                 &Para {

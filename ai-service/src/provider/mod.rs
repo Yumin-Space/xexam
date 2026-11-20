@@ -125,8 +125,9 @@ fn base_builder() -> Result<reqwest::ClientBuilder, String> {
 }
 
 /// The client for AI providers (per-request time limits are applied by the callers).
-/// `user_agent` is `XEXAM_AI_USER_AGENT_NAME`: with `None` it sends no `User-Agent` header at all (reqwest adds none unless
-/// one is set), so gateways and providers do not learn the app name or its version.
+/// `user_agent` is what `Config::provider_user_agent` resolved from `XEXAM_AI_USER_AGENT_NAME`: `Some` is sent as is (the
+/// default is `xexam-ai-service/<version>`); with `None` (`none`) it sends no `User-Agent` header at all (reqwest adds
+/// none unless one is set), so gateways and providers do not learn the app name or its version.
 pub fn provider_client(user_agent: Option<&str>, t: &Timeouts) -> Result<reqwest::Client, String> {
     let b = base_builder()?;
     let b = match user_agent {
@@ -615,7 +616,7 @@ fn text_object(body: &mut Value) -> &mut serde_json::Map<String, Value> {
 
 /// Adds the thinking-strength parameter of `effort` to a body. Anthropic family: merges `"effort"` into
 /// `output_config` (next to a structured-output `format`); OpenAI family: `"reasoning_effort": <level>`; Responses family: `"reasoning": {"effort": <level>}` (merged into an existing `reasoning` object);
-/// Google / Gemma family: `"extra_body": {"google": {"thinking_config": {"thinking_level": <LEVEL>}}}` (merged into
+/// Google family: `"extra_body": {"google": {"thinking_config": {"thinking_level": <LEVEL>}}}` (merged into
 /// whatever of that path already exists; a top-level `thinking_level` is rejected by the gateway).
 /// The connection's wire format does not matter (owner: the choice only changes the parameter).
 pub fn put_effort(body: &mut Value, effort: Effort) {
@@ -632,7 +633,7 @@ pub fn put_effort(body: &mut Value, effort: Effort) {
             }
             body["reasoning"]["effort"] = json!(effort.level());
         }
-        EffortFamily::Google | EffortFamily::Gemma => {
+        EffortFamily::Google => {
             let mut node = &mut *body;
             for key in ["extra_body", "google", "thinking_config"] {
                 if !node.is_object() {
@@ -886,13 +887,41 @@ impl Handler {
 /// any stream event (nothing was sent to the channel yet).
 enum Attempt {
     /// `ok`: a 2xx response whose stream ended in `Done`
-    Ran {
-        ok: bool,
-    },
+    Ran { ok: bool },
     Refused {
         status: u16,
         body: Vec<u8>,
+        /// `retry-after-ms` / `retry-after` of a 429, in milliseconds
+        retry_ms: Option<u64>,
     },
+}
+
+/// The final refusal of a ladder: the status, the error body and the wait the provider named in a header (429 only).
+struct Refusal {
+    status: u16,
+    body: Vec<u8>,
+    retry_ms: Option<u64>,
+}
+
+/// The failure to report for a refusal: the code of the answer, plus the wait and the daily flag of a 429.
+fn refusal_error(r: &Refusal) -> UpError {
+    let (retry_ms, daily) = errors::retry_hint(r.status, &r.body, r.retry_ms);
+    UpError {
+        retry_ms,
+        daily,
+        ..UpError::new(errors::from_body(r.status, &r.body), Some(r.status))
+    }
+}
+
+/// `retry-after-ms` (float milliseconds), else `retry-after` (integer or float seconds; an HTTP date is ignored).
+fn header_retry_ms(h: &reqwest::header::HeaderMap) -> Option<u64> {
+    let num = |name: &str| -> Option<f64> {
+        let v: f64 = h.get(name)?.to_str().ok()?.trim().parse().ok()?;
+        (v.is_finite() && (0.0..=1.0e9).contains(&v)).then_some(v)
+    };
+    num("retry-after-ms")
+        .map(|ms| ms.round() as u64)
+        .or_else(|| num("retry-after").map(|s| (s * 1000.0).round() as u64))
 }
 
 /// Sends a streaming chat request and reports what arrives on `tx`, ending with exactly one `Done` or `Fail`.
@@ -904,11 +933,17 @@ pub async fn stream_chat(
     t: Timeouts,
     tx: UnboundedSender<Up>,
 ) {
-    if let Attempt::Refused { status, body } = stream_once(client, req, format, t, &tx).await {
-        let _ = tx.send(Up::Fail(UpError::new(
-            errors::from_body(status, &body),
-            Some(status),
-        )));
+    if let Attempt::Refused {
+        status,
+        body,
+        retry_ms,
+    } = stream_once(client, req, format, t, &tx).await
+    {
+        let _ = tx.send(Up::Fail(refusal_error(&Refusal {
+            status,
+            body,
+            retry_ms,
+        })));
     }
 }
 
@@ -937,7 +972,7 @@ pub async fn stream_plan(
         remember_uneffort,
     } = plan;
     let args = (client, format, stored_max, t, &tx, &remember);
-    let (mut status, mut body, mut at) = match run_ladder(args, steps, 0).await {
+    let (mut last, mut at) = match run_ladder(args, steps, 0).await {
         Ok(_) => return,
         Err(r) => r,
     };
@@ -950,7 +985,7 @@ pub async fn stream_plan(
     // retry is remembered: the plain / unformatted ladders below also leave the parameter out, so their success says
     // nothing about it (a generic refusal may have been about the markers or the schema)
     let mut dropped = false;
-    if !uneffort.is_empty() && effort_refused(status, &String::from_utf8_lossy(&body)) {
+    if !uneffort.is_empty() && effort_refused(last.status, &String::from_utf8_lossy(&last.body)) {
         match run_ladder(args, uneffort, at).await {
             Ok(ok) => {
                 if ok {
@@ -958,14 +993,14 @@ pub async fn stream_plan(
                 }
                 return;
             }
-            Err((s, b, i)) => {
-                (status, body, at) = (s, b, i);
+            Err((r, i)) => {
+                (last, at) = (r, i);
                 dropped = true;
             }
         }
     }
     let plain = if dropped { plain_uneffort } else { plain };
-    if !plain.is_empty() && matches!(status, 400 | 422) {
+    if !plain.is_empty() && matches!(last.status, 400 | 422) {
         match run_ladder(args, plain, at).await {
             Ok(ok) => {
                 // Only a clean 2xx answer proves the unmarked form works; a timeout or a broken stream proves nothing
@@ -977,10 +1012,10 @@ pub async fn stream_plan(
                 return;
             }
             // the unformatted ladder starts at the token step the plain ladder reached
-            Err((s, b, i)) => (status, body, at) = (s, b, i),
+            Err((r, i)) => (last, at) = (r, i),
         }
     }
-    if !unformatted.is_empty() && matches!(status, 400 | 422) {
+    if !unformatted.is_empty() && matches!(last.status, 400 | 422) {
         match run_ladder(args, unformatted, at).await {
             Ok(ok) => {
                 if ok {
@@ -990,13 +1025,10 @@ pub async fn stream_plan(
                 }
                 return;
             }
-            Err((s, b, _)) => (status, body) = (s, b),
+            Err((r, _)) => last = r,
         }
     }
-    let _ = tx.send(Up::Fail(UpError::new(
-        errors::from_body(status, &body),
-        Some(status),
-    )));
+    let _ = tx.send(Up::Fail(refusal_error(&last)));
 }
 
 type LadderArgs<'a> = (
@@ -1015,7 +1047,7 @@ async fn run_ladder(
     (client, format, stored_max, t, tx, remember): LadderArgs<'_>,
     steps: Vec<(TokenLimit, reqwest::Request)>,
     skip: usize,
-) -> Result<bool, (u16, Vec<u8>, usize)> {
+) -> Result<bool, (Refusal, usize)> {
     let total = steps.len();
     for (i, (sent, req)) in steps.into_iter().enumerate().skip(skip) {
         match stream_once(client, req, format, t, tx).await {
@@ -1027,17 +1059,35 @@ async fn run_ladder(
                 }
                 return Ok(ok);
             }
-            Attempt::Refused { status, body } => {
+            Attempt::Refused {
+                status,
+                body,
+                retry_ms,
+            } => {
                 let text = String::from_utf8_lossy(&body);
                 let retry = i + 1 < total
                     && next_token_limit(format, &sent, status, &text, stored_max).is_some();
                 if !retry {
-                    return Err((status, body, i));
+                    return Err((
+                        Refusal {
+                            status,
+                            body,
+                            retry_ms,
+                        },
+                        i,
+                    ));
                 }
             }
         }
     }
-    Err((500, Vec::new(), total))
+    Err((
+        Refusal {
+            status: 500,
+            body: Vec::new(),
+            retry_ms: None,
+        },
+        total,
+    ))
 }
 
 async fn stream_once(
@@ -1061,6 +1111,11 @@ async fn stream_once(
     };
     let status = resp.status().as_u16();
     if !resp.status().is_success() {
+        let retry_ms = if status == 429 {
+            header_retry_ms(resp.headers())
+        } else {
+            None
+        };
         let body = if resp.status().is_redirection() {
             Vec::new()
         } else {
@@ -1068,7 +1123,11 @@ async fn stream_once(
                 .await
                 .unwrap_or_default()
         };
-        return Attempt::Refused { status, body };
+        return Attempt::Refused {
+            status,
+            body,
+            retry_ms,
+        };
     }
     let mut parser = sse::SseParser::new(if format == Format::Responses {
         RESPONSES_MAX_EVENT
@@ -1899,11 +1958,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ai_provider_requests_carry_no_user_agent() {
+    async fn none_sends_no_user_agent() {
         let head = wire_head(provider_client(None, &Timeouts::default()).expect("client")).await;
         assert!(head.starts_with("post /v1/chat/completions"), "{head}");
         assert!(!head.contains("user-agent"), "{head}");
         assert!(!head.contains("xexam"), "{head}");
+    }
+
+    #[tokio::test]
+    async fn the_default_user_agent_names_the_service() {
+        let mut cfg = crate::config::Config::from_env_with(&|k| {
+            (k == "XEXAM_VERSION").then(|| "9.9".to_string())
+        });
+        assert_eq!(
+            cfg.provider_user_agent().as_deref(),
+            Some("xexam-ai-service/9.9")
+        );
+        let ua = cfg.provider_user_agent();
+        let head =
+            wire_head(provider_client(ua.as_deref(), &Timeouts::default()).expect("client")).await;
+        assert!(head.contains("user-agent: xexam-ai-service/9.9"), "{head}");
+        cfg.ai_user_agent = crate::config::AiUserAgent::Off;
+        assert_eq!(cfg.provider_user_agent(), None);
     }
 
     #[tokio::test]
@@ -1915,6 +1991,33 @@ mod tests {
             "{head}"
         );
         assert!(!head.contains("xexam"), "{head}");
+    }
+
+    #[test]
+    fn retry_headers_of_a_429_are_read_in_milliseconds() {
+        let map = |pairs: &[(&str, &str)]| {
+            let mut h = reqwest::header::HeaderMap::new();
+            for (k, v) in pairs {
+                h.insert(
+                    reqwest::header::HeaderName::from_bytes(k.as_bytes()).expect("name"),
+                    v.parse().expect("value"),
+                );
+            }
+            h
+        };
+        assert_eq!(header_retry_ms(&map(&[("retry-after", "3")])), Some(3000));
+        assert_eq!(header_retry_ms(&map(&[("retry-after", "1.5")])), Some(1500));
+        assert_eq!(
+            header_retry_ms(&map(&[("retry-after-ms", "250.4"), ("retry-after", "9")])),
+            Some(250)
+        );
+        // an HTTP date or junk is ignored
+        assert_eq!(
+            header_retry_ms(&map(&[("retry-after", "Wed, 21 Oct 2026 07:28:00 GMT")])),
+            None
+        );
+        assert_eq!(header_retry_ms(&map(&[("retry-after", "-4")])), None);
+        assert_eq!(header_retry_ms(&map(&[])), None);
     }
 
     #[tokio::test]
@@ -2467,10 +2570,10 @@ mod tests {
     }
 
     #[test]
-    fn gemma_family_sends_thinking_level_only() {
+    fn google_high_and_minimal_send_thinking_level_only() {
         for l in ["HIGH", "MINIMAL"] {
             let mut b = plain_body(Format::OpenAi);
-            put_effort(&mut b, eff(EffortFamily::Gemma, l));
+            put_effort(&mut b, eff(EffortFamily::Google, l));
             assert_eq!(
                 b["extra_body"],
                 json!({"google": {"thinking_config": {"thinking_level": l}}})

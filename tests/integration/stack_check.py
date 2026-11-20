@@ -137,14 +137,19 @@ LIMIT_KEYS = ['perUserRunning', 'globalRunning', 'chatsPerUser', 'messagesPerCha
               'genWrongMulti', 'genCallTokens', 'genMaxCalls', 'importMaxCalls', 'recognizeMaxCalls', 'genUnlimited',
               'importUnlimited', 'genRunning', 'importMaxMb', 'importMaxQuestions',
               # v1.3: six more (33 keys); memoriesPerUser 30, memoryTokens 200 and importMaxQuestions 100 are the new defaults
-              'callsAdminsExempt', 'studyShare', 'studyShareDays', 'genMaxChunks', 'summaryMaxItems', 'dailyTokenBudget']
+              'callsAdminsExempt', 'studyShare', 'studyShareDays', 'genMaxChunks', 'summaryMaxItems', 'dailyTokenBudget',
+              # v1.9: three more (36 keys), appended at the end: the provider pacing of AI generation and import
+              'paceOn', 'paceRpm', 'paceTpm']
 LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000, 'messagesPerChat': 400, 'memoriesPerUser': 30,
                   'memoryTokens': 200, 'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'replyMaxTokens': 3000,
                   'genPerDay': 3, 'genAdminsExempt': 1, 'genMinSource': 30, 'genMinWrong': 10, 'genBankSingle': 14, 'genBankMulti': 6,
                   'genWrongSingle': 14, 'genWrongMulti': 6, 'genCallTokens': 20000, 'genMaxCalls': 15, 'importMaxCalls': 25,
                   'recognizeMaxCalls': 20, 'genUnlimited': 1, 'importUnlimited': 1, 'genRunning': 2, 'importMaxMb': 20,
                   'importMaxQuestions': 100, 'callsAdminsExempt': 1, 'studyShare': 1, 'studyShareDays': 180, 'genMaxChunks': 8,
-                  'summaryMaxItems': 40, 'dailyTokenBudget': 0}
+                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 15, 'paceTpm': 250000}
+# v1.9: right after the defaults are checked the pacing is switched off, so the end-to-end AI jobs below are not spread over
+# minutes; from then on the stored limits equal the defaults except paceOn
+LIMIT_NOW = dict(LIMIT_DEFAULTS, paceOn=0)
 
 env = dict(os.environ, XEXAM_BIND='127.0.0.1:%d' % PORT, COMPOSE_PROJECT_NAME=PROJECT, MSYS_NO_PATHCONV='1')
 for k in ('XEXAM_ALLOWED_HOSTS', 'XEXAM_ALLOWED_ORIGINS', 'XEXAM_ALLOW_ANY_HOST', 'XEXAM_INTERNAL_TOKEN', 'XEXAM_AI_SECRET_KEY'):
@@ -584,6 +589,57 @@ try:
     st, _, _ = req('GET', '/api/banks/download?format=xlsx')
     ok(st == 400, 'v1.6: a download without an id is 400. Actual %d' % st)
 
+    # v1.9: the languages of a download. Excel keeps all six columns (the header row stays full, an unticked language leaves its
+    # cells empty); Word holds only the chosen languages, English first, then Chinese, then Japanese; the file name carries the codes.
+    def xlsx_cells(b, row):
+        import io
+        with zipfile.ZipFile(io.BytesIO(b)) as z:
+            sheet = z.read('xl/worksheets/sheet1.xml').decode('utf-8')
+        m = re.search(r'<row r="%d"[^>]*>(.*?)</row>' % row, sheet, re.S)
+        found = {}
+        for ref, inner in re.findall(r'<c r="([A-Z]+)%d"[^>]*>(.*?)</c>' % row, m.group(1) if m else '', re.S):
+            found[ref] = ''.join(re.findall(r'<t[^>]*>(.*?)</t>', inner, re.S))
+        return sorted(k for k, v in found.items() if v.strip())
+
+    def docx_headings(b):
+        import io
+        with zipfile.ZipFile(io.BytesIO(b)) as z:
+            doc = z.read('word/document.xml').decode('utf-8')
+        out = []
+        for para in re.findall(r'<w:p>.*?</w:p>|<w:p [^>]*>.*?</w:p>', doc, re.S):
+            if 'w:val="Heading1"' in para:
+                out.append(''.join(re.findall(r'<w:t[^>]*>(.*?)</w:t>', para, re.S)))
+        return out
+
+    st, h, b = req('GET', '/api/banks/download?id=%s&format=xlsx' % GARDEN_ID)
+    ok(st == 200 and xlsx_cells(b, 1) == list('ABCDEF') and xlsx_cells(b, 2) == list('ABCDEF') and not re.search(r'_(en|zh|ja)[-.]', h.get('content-disposition', '')),
+       'v1.9: no langs = all three languages, all six cells filled, the file name unchanged. Actual %d %r %r' % (st, xlsx_cells(b, 2), h.get('content-disposition')))
+    st, h, b = req('GET', '/api/banks/download?id=%s&format=xlsx&langs=zh' % GARDEN_ID)
+    ok(st == 200 and xlsx_cells(b, 1) == list('ABCDEF') and xlsx_cells(b, 2) == ['B', 'E'] and '_zh.xlsx' in h.get('content-disposition', ''),
+       'v1.9: langs=zh in Excel: the header row is full, row 2 holds only B2 and E2, the file name ends _zh. Actual %d %r %r %r' % (
+           st, xlsx_cells(b, 1), xlsx_cells(b, 2), h.get('content-disposition')))
+    st, h, b = req('GET', '/api/banks/download?id=%s&format=docx&langs=en,ja' % GARDEN_ID)
+    ok(st == 200 and docx_headings(b) == ['English', '\u65e5\u672c\u8a9e'] and '_en-ja.docx' in h.get('content-disposition', ''),
+       'v1.9: langs=en,ja in Word: the Heading 1 sections are English then Japanese, the file name ends _en-ja. Actual %d %r %r' % (
+           st, docx_headings(b), h.get('content-disposition')))
+    st, h, b = req('GET', '/api/banks/download?id=%s&format=docx&langs=en,zh,ja' % GARDEN_ID)
+    ok(st == 200 and docx_headings(b) == ['English', '\u4e2d\u6587', '\u65e5\u672c\u8a9e'] and '_en-zh-ja' not in h.get('content-disposition', ''),
+       'v1.9: all three listed = the same as none (three sections, the plain file name). Actual %d %r %r' % (st, docx_headings(b), h.get('content-disposition')))
+    for bad in ('langs=', 'langs=fr', 'langs=zh,zh', 'langs=ZH', 'langs=zh,,en', 'langs=zh&langs=en', 'langs=en,zh,ja,en', 'langs=%20zh'):
+        st, _, _ = req('GET', '/api/banks/download?id=%s&format=xlsx&%s' % (GARDEN_ID, bad))
+        ok(st == 400, 'v1.9: a download with %s is 400. Actual %d' % (bad, st))
+    st, _, _ = req('GET', '/api/banks/download?id=999999&format=xlsx&langs=fr')
+    ok(st == 400, 'v1.9: a bad langs is refused before the bank lookup (400, not 404). Actual %d' % st)
+
+    # v1.9: the frontend container rendered its upstream file with the one-host defaults, and the backend (no
+    # XEXAM_FRONTEND_PEERS here) refused nobody
+    r = docker('exec', cid('frontend'), 'cat', '/tmp/xexam-upstreams.conf')
+    ok(r.returncode == 0 and 'resolver 127.0.0.11 valid=10s ipv6=off;' in r.stdout and 'default "http://backend:8765";' in r.stdout
+       and 'default "http://ai-service:8766";' in r.stdout and 'proxy_ssl' not in r.stdout,
+       'v1.9: /tmp/xexam-upstreams.conf in the frontend holds the one-host defaults. Actual %r' % r.stdout)
+    r = docker('logs', cid('backend'))
+    ok('XEXAM_FRONTEND_PEERS' not in (r.stdout + r.stderr), 'v1.9: the backend log has no peer refusal line (the peer list is not set here)')
+
     # -- 4 Results --
     ids = [q['id'] for q in bank_q] if (bank_q := jreq('GET', '/api/bank')[2]['questions']) else []
     st, _, p = jreq('POST', '/api/attempt', {'results': [{'id': ids[0], 'correct': True}, {'id': ids[1], 'correct': False}], 'sheets': ['demo'], 'mode': 'all', 'seconds': 12})
@@ -704,21 +760,42 @@ try:
        and [p['model'] for p in cfg['pool']] == ['demo-chat-small'],
        'AI is enabled with demo-chat-small as the default model. Actual %d %r' % (st, cfg))
     # -- A1a v1.6: thinking strength per feature --
-    ok(isinstance(cfg.get('effortLevels'), dict) and list(cfg['effortLevels'].keys()) == ['anthropic', 'openai', 'google', 'responses', 'gemma']
-       and cfg['effortLevels']['gemma'] == ['HIGH', 'MINIMAL'] and cfg['slots']['default'].get('effort') is None,
-       'v1.6: the settings answer carries effortLevels (five families) and slots.default.effort null. Actual %r' % cfg.get('effortLevels'))
+    ok(isinstance(cfg.get('effortLevels'), dict) and list(cfg['effortLevels'].keys()) == ['anthropic', 'openai', 'google', 'responses']
+       and cfg['effortLevels']['google'] == ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH', 'XHIGH'] and 'gemma' not in cfg['effortLevels']
+       and cfg['slots']['default'].get('effort') is None,
+       'v1.9: the settings answer carries effortLevels (four families, no gemma; google has five levels) and slots.default.effort null. Actual %r' % cfg.get('effortLevels'))
+    ok(list(cfg['slots'].keys()) == ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'] and 'study' not in cfg['slots'],
+       'v1.9: seven model slots (study is split into hint and explain). Actual %r' % list(cfg['slots'].keys()))
+    ok(all(c.get('enabled') is True for c in cfg['connections']), 'v1.9: every connection starts on (enabled true). Actual %r' % [c.get('enabled') for c in cfg['connections']])
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'study', 'effort': None})
+    ok(st == 400, 'v1.9: the old slot name study is refused by the effort route (400). Actual %d' % st)
+    st, _, r = jreq('POST', '/api/ai/admin/models/pick', {'slot': 'study', 'connectionId': CONN, 'model': 'demo-chat-small'})
+    ok(st == 400, 'v1.9: the old slot name study is refused by the pick route (400). Actual %d' % st)
     st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'anthropic', 'level': 'high'}})
     ok(st == 200 and r['settings']['slots']['default']['effort'] == {'family': 'anthropic', 'level': 'high'},
        'v1.6: a thinking strength is saved on change. Actual %d %r' % (st, r))
-    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'gemma', 'level': 'MEDIUM'}})
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'google', 'level': 'max'}})
     ok(st == 400, 'v1.6: a level that the family does not have is 400. Actual %d' % st)
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'gemma', 'level': 'HIGH'}})
+    ok(st == 400, 'v1.9: the removed gemma family is refused (400). Actual %d' % st)
+    ok(jreq('GET', '/api/ai/admin/settings')[2]['slots']['default']['effort'] == {'family': 'anthropic', 'level': 'high'},
+       'v1.9: the refused efforts changed nothing')
     st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': None})
     ok(st == 200 and r['settings']['slots']['default']['effort'] is None, 'v1.6: Default clears the thinking strength. Actual %d %r' % (st, r))
     # -- A1b v1.0: the safety limits answer, the per-user call caps through Nginx --
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
        and lim.get('defaults') == LIMIT_DEFAULTS,
-       'GET /api/ai/admin/limits: the 33 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, no messageChars. Actual %d %r' % (st, lim))
+       'GET /api/ai/admin/limits: the 36 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 15 / 250000, no messageChars. Actual %d %r' % (st, lim))
+    ok(lim['ranges']['paceOn'] == [0, 1] and lim['ranges']['paceRpm'] == [1, 10000] and lim['ranges']['paceTpm'] == [1000, 100000000],
+       'v1.9: the limits answer carries the ranges of the pacing keys. Actual %r' % {k: lim['ranges'].get(k) for k in ('paceOn', 'paceRpm', 'paceTpm')})
+    for bad_key, bad in (('paceRpm', 0), ('paceRpm', 10001), ('paceTpm', 999), ('paceOn', 2)):
+        st, _, e = jreq('POST', '/api/ai/admin/limits', {bad_key: bad})
+        ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitRange' and e.get('field') == bad_key,
+           'v1.9: %s %d -> 400 ai.limitRange, field %s. Actual %d %r' % (bad_key, bad, bad_key, st, e))
+    st, _, e = jreq('POST', '/api/ai/admin/limits', {'paceOn': 0})
+    ok(st == 200 and e['limits'] == LIMIT_NOW and e.get('defaults') == LIMIT_DEFAULTS,
+       'v1.9: the pacing is switched off for the rest of this run (only paceOn changes). Actual %d %r' % (st, e))
     ok(lim['ranges']['replyMaxTokens'] == [1, 250000] and lim['ranges']['memoryTokens'] == [50, 250000]
        and lim['ranges']['callsPerMinute'] == [1, 100] and lim['ranges']['callsPerHour'] == [1, 2000]
        and lim['ranges']['callsPerDay'] == [1, 20000] and 'messageChars' not in lim['ranges'],
@@ -730,7 +807,7 @@ try:
         st, _, e = jreq('POST', '/api/ai/admin/limits', {'replyMaxTokens': bad})
         ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitRange' and e.get('field') == 'replyMaxTokens',
            'replyMaxTokens %d -> 400 ai.limitRange, field replyMaxTokens. Actual %d %r' % (bad, st, e))
-    ok(jreq('GET', '/api/ai/admin/limits')[2]['limits'] == LIMIT_DEFAULTS, 'The refused updates changed no limit')
+    ok(jreq('GET', '/api/ai/admin/limits')[2]['limits'] == LIMIT_NOW, 'The refused updates changed no limit')
     st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 30})
     ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.limitOrder' and e.get('field') == 'callsPerHour',
        'callsPerMinute 30 above the hourly 20 -> 400 ai.limitOrder, field callsPerHour. Actual %d %r' % (st, e))
@@ -770,12 +847,46 @@ try:
     st, _, v = jreq('POST', '/api/ai/admin/models/test', {'connectionId': CONN, 'model': 'demo-chat-small'})
     ok(st == 200 and v['ok'] is True, 'The admin Test is not counted and still works while the cap is reached. Actual %d %r' % (st, v))
     st, _, e = jreq('POST', '/api/ai/admin/limits', {'callsPerMinute': 5, 'callsPerHour': 20, 'callsPerDay': 100, 'callsAdminsExempt': 1})
-    ok(st == 200 and e['limits'] == LIMIT_DEFAULTS, 'The limits are reset to the defaults. Actual %d %r' % (st, e))
+    ok(st == 200 and e['limits'] == LIMIT_NOW, 'The limits are reset to the defaults (pacing stays off). Actual %d %r' % (st, e))
     st, _, e = jreq('POST', '/api/ai/chats/delete', {'all': True})
     ok(st == 200, "The administrator's cap-check chats are deleted again. Actual %d %r" % (st, e))
     st, _, lim = jreq('POST', '/api/ai/admin/limits', CAPS_RELAXED)
     ok(st == 200 and all(lim.get('limits', {}).get(k) == v for k, v in CAPS_RELAXED.items()),
        'The administrator raises the per-user AI call caps for the rest of this check (v1.0). Actual %d %r' % (st, lim))
+    # -- v1.9: a connection can be switched off and on again; off keeps everything but the features on it cannot run --
+    for bad in ({'id': CONN}, {'enabled': False}, {'id': CONN, 'enabled': 'no'}, {'id': 0, 'enabled': False}, {'id': CONN, 'enabled': False, 'x': 1}):
+        st, _, e = jreq('POST', '/api/ai/admin/connections/enabled', bad)
+        ok(st == 400 and isinstance(e, dict) and e.get('code') == 'ai.badRequest', 'v1.9: connections/enabled with the body %r -> 400 ai.badRequest. Actual %d %r' % (bad, st, e))
+    st, _, e = jreq('POST', '/api/ai/admin/connections/enabled', {'id': 987654, 'enabled': False})
+    ok(st == 404 and isinstance(e, dict) and e.get('code') == 'ai.notFound', 'v1.9: an unknown connection id -> 404 ai.notFound. Actual %d %r' % (st, e))
+    st, _, cfg = jreq('GET', '/api/ai/admin/settings')
+    rev_before = [c['rev'] for c in cfg['connections']]
+    st, _, e = jreq('POST', '/api/ai/admin/connections/enabled', {'id': CONN, 'enabled': False})
+    off = e.get('settings', {}) if isinstance(e, dict) else {}
+    ok(st == 200 and [c['enabled'] for c in off.get('connections', [])] == [False] and [c['rev'] for c in off.get('connections', [])] == rev_before
+       and [p['model'] for p in off.get('pool', [])] == ['demo-chat-small'],
+       'v1.9: switching the connection off answers the settings; the revision and the pool model are kept. Actual %d %r' % (st, e))
+    st, _, m = jreq('GET', '/api/ai/admin/models?refresh=1')
+    mc = [c for c in m.get('connections', []) if c['id'] == CONN] if isinstance(m, dict) else []
+    ok(st == 200 and len(mc) == 1 and mc[0].get('enabled') is False and mc[0].get('listed') is False and mc[0].get('models') == [] and mc[0].get('error') is None,
+       'v1.9: an off connection is listed without models and without a call to the provider. Actual %d %r' % (st, mc))
+    st, _, e = jreq('POST', '/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'})
+    ok(st == 403 and isinstance(e, dict) and e.get('code') == 'ai.disabled',
+       'v1.9: AI Chat while the only connection is off -> 403 ai.disabled (no slot resolves, so AI is effectively off; ai.connectionOff needs a second working connection). Actual %d %r' % (st, e))
+    st, _, e = jreq('POST', '/api/ai/admin/enable', {'enabled': True, 'default': {'connectionId': CONN, 'model': 'demo-chat-small'}})
+    ok(st == 409 and isinstance(e, dict) and e.get('code') == 'ai.connectionOff', 'v1.9: picking a default model on an off connection -> 409 ai.connectionOff. Actual %d %r' % (st, e))
+    st, _, v = jreq('POST', '/api/ai/admin/connections/test', {'id': CONN})
+    ok(st == 200, 'v1.9: the connection test still works on an off connection. Actual %d %r' % (st, v))
+    st, _, e = jreq('POST', '/api/ai/admin/connections/enabled', {'id': CONN, 'enabled': False})
+    ok(st == 200 and [c['enabled'] for c in e['settings']['connections']] == [False], 'v1.9: switching an off connection off again is a no-op (200). Actual %d' % st)
+    st, _, e = jreq('POST', '/api/ai/admin/connections/enabled', {'id': CONN, 'enabled': True})
+    on = e.get('settings', {}) if isinstance(e, dict) else {}
+    ok(st == 200 and [c['enabled'] for c in on.get('connections', [])] == [True] and on.get('enabled') is True and on.get('state') == 'on',
+       'v1.9: switching the connection on again restores everything. Actual %d %r' % (st, e))
+    st, _, m = jreq('GET', '/api/ai/admin/models?refresh=1')
+    ok(st == 200 and any(c['id'] == CONN and c.get('enabled') is True and c['listed'] is True and 'demo-chat-small' in [x['id'] for x in c['models']]
+                         for c in m.get('connections', [])),
+       'v1.9: the models of the connection are listed again. Actual %d' % st)
     state = admin_state()
     svc = state.get('aiService') or {}
     ok(state.get('aiAvailable') is True and svc.get('connected') is True and svc.get('enabled') is True
@@ -842,11 +953,30 @@ try:
        'sam is refused with 403 ai.featureOff (feature chat) while the switch is off. Actual %d %r' % (st, e))
     sam_f = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})[2].get('features', {})
     adm_f = jreq('GET', '/api/ai/status')[2].get('features', {})
-    ok(sam_f.get('chat') is False and sam_f.get('hint') is True and adm_f.get('chat') is True,
-       "The status says chat off for sam and still on for the administrator (administrators are not affected). Actual %r %r" % (sam_f, adm_f))
+    ok(sam_f.get('chat') is False and sam_f.get('hint') is True and adm_f.get('chat') is False and adm_f.get('hint') is True,
+       "v1.9: the status says chat off for sam and for the administrator too (the global switches apply to administrators). Actual %r %r" % (sam_f, adm_f))
+    st, _, e = jreq('POST', '/api/ai/send', {'chatId': None, 'text': QUESTION, 'lang': 'en'})
+    ok(st == 403 and isinstance(e, dict) and e.get('code') == 'ai.featureOff' and e.get('feature') == 'chat',
+       'v1.9: the administrator is refused with 403 ai.featureOff (feature chat) while the switch is off. Actual %d %r' % (st, e))
     st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'chat': True})
-    ok(st == 200 and jreq('GET', '/api/ai/status', headers={'Cookie': SAM})[2].get('features', {}).get('chat') is True,
-       'Switched on again, sam has AI Chat back. Actual %d' % st)
+    ok(st == 200 and jreq('GET', '/api/ai/status', headers={'Cookie': SAM})[2].get('features', {}).get('chat') is True
+       and jreq('GET', '/api/ai/status')[2].get('features', {}).get('chat') is True,
+       'Switched on again, sam and the administrator have AI Chat back. Actual %d' % st)
+    # v1.9: hint and explain are separate global switches (they were paired before)
+    st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'hint': False})
+    fs = (cfg.get('settings', cfg) if isinstance(cfg, dict) else {}).get('featureSwitches', {})
+    sam_f = jreq('GET', '/api/ai/status', headers={'Cookie': SAM})[2].get('features', {})
+    adm_f = jreq('GET', '/api/ai/status')[2].get('features', {})
+    ok(st == 200 and fs.get('hint') is False and fs.get('explain') is True and sam_f.get('hint') is False and sam_f.get('explain') is True
+       and adm_f.get('hint') is False and adm_f.get('explain') is True,
+       'v1.9: switching hint off leaves explain on (no pairing), for sam and for the administrator. Actual %d %r %r %r' % (st, fs, sam_f, adm_f))
+    st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'explain': False})
+    fs = (cfg.get('settings', cfg) if isinstance(cfg, dict) else {}).get('featureSwitches', {})
+    ok(st == 200 and fs.get('hint') is False and fs.get('explain') is False, 'v1.9: explain moves alone as well. Actual %d %r' % (st, fs))
+    st, _, cfg = jreq('POST', '/api/ai/admin/feature-switches', {'hint': True, 'explain': True})
+    fs = (cfg.get('settings', cfg) if isinstance(cfg, dict) else {}).get('featureSwitches', {})
+    ok(st == 200 and all(fs.get(k) is True for k in ('chat', 'hint', 'explain', 'summary', 'generate', 'import')),
+       'v1.9: all six feature switches are on again. Actual %d %r' % (st, fs))
     st, _, chats = jreq('GET', '/api/ai/chats', headers={'Cookie': SAM})
     ok(st == 200 and [c['id'] for c in chats['chats']] == [chat_id], 'sam: GET /api/ai/chats lists the one chat. Actual %r' % chats)
     ok(list(chats['chats'][0].keys()) == CHAT_KEYS,
@@ -1378,9 +1508,11 @@ try:
     ok(st in (415, 429) and j.get('code') in ('ai.import.legacy', 'ai.gen.quota'), 'An old .doc is refused. Actual %d %r' % (st, j.get('code')))
     st, _, _ = req('GET', '/api/ai/import/upload', {'Cookie': SAM})
     ok(st in (403, 404, 405), 'GET on the upload route is not served. Actual %d' % st)
-    # Limits: 33 keys answer (v1.3), the AI banks tab keys are validated (composition rule)
+    # Limits: 36 keys answer (v1.9), the AI banks tab keys are validated (composition rule)
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
-    ok(st == 200 and len(lim['limits']) == 33 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20, 'The limits answer has the 33 keys. Actual %d %d' % (st, len(lim.get('limits', {}))))
+    ok(st == 200 and len(lim['limits']) == 36 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20
+       and lim['limits']['paceOn'] == 0 and lim['limits']['paceRpm'] == 15 and lim['limits']['paceTpm'] == 250000,
+       'The limits answer has the 36 keys (pacing off, 15 / 250000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
     st, _, j = jreq('POST', '/api/ai/admin/limits', {'genBankSingle': 0, 'genBankMulti': 0})
     ok(st == 400 and j.get('code') == 'ai.genCount' and j.get('field') == 'genBankMulti', 'Single + multiple of 0 is refused (400 ai.genCount, field genBankMulti). Actual %d %r' % (st, j))
     st, _, u = jreq('GET', '/api/ai/admin/usage?days=7')

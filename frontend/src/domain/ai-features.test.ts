@@ -86,9 +86,10 @@ test('feature off: greyed with the permission reason; usable only when granted, 
   assert.equal(aiControlView('import', true, ctx({ status: ready({ features: { import: false } }) })).view, 'featureOff');
 });
 
-test('administrators have every feature, and see nothing while AI+ is not available', () => {
+test('administrators follow the global switches, and see nothing while AI+ is not available', () => {
   const admin = (status: AiStatus): ControlContext => ctx({ role: 'admin', canManageBanks: false, status });
-  assert.equal(aiControlView('generate', true, admin(ready({ features: { generate: false } }))).view, 'ok');
+  assert.deepEqual(aiControlView('generate', true, admin(ready({ features: { generate: false } }))), { view: 'featureOff', admin: true });
+  assert.equal(aiControlView('chat', false, admin(ready({ features: { generate: false } }))).view, 'ok');
   assert.equal(aiControlView('generate', true, admin(ready({ enabled: false }))).view, 'hidden');
   assert.equal(aiControlView('chat', false, admin({ state: 'loading' })).view, 'hidden');
 });

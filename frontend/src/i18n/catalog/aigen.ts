@@ -186,6 +186,8 @@ export default defineCatalog({
     'aigen.items.note': 'The bank is saved only after every question is written and has passed the checks.',
     'aigen.placeholder': 'Generating {made} / {goal}',
     'aigen.tooBig': 'This bank is too large (about {tokens} tokens). Select fewer sheets and try again.',
+    'aigen.card.waiting': 'Waiting for the provider\'s quota…',
+    'aigen.err.providerDaily': 'The AI provider\'s daily quota is used up, so the job stopped. Try again tomorrow or ask an administrator to change the model.',
   },
   zh: {
     'aigen.bank.metaBank': 'AI 生成 · 来自「{from}」',
@@ -364,6 +366,8 @@ export default defineCatalog({
     'aigen.items.note': '全部写完并通过检查后才会保存为题库。',
     'aigen.placeholder': '生成中 {made} / {goal}',
     'aigen.tooBig': '题库太大（约 {tokens} tokens），请减少勾选的范围后再生成。',
+    'aigen.card.waiting': '等待额度…',
+    'aigen.err.providerDaily': 'AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。',
   },
   ja: {
     'aigen.bank.metaBank': 'AI 作成 ·「{from}」から',
@@ -542,5 +546,7 @@ export default defineCatalog({
     'aigen.items.note': 'すべての問題が作成され、チェックを通過してから問題集として保存されます。',
     'aigen.placeholder': '作成中 {made} / {goal}',
     'aigen.tooBig': '問題集が大きすぎます（約 {tokens} トークン）。選択範囲を減らしてからもう一度お試しください。',
+    'aigen.card.waiting': '利用枠の回復を待っています…',
+    'aigen.err.providerDaily': 'AI プロバイダーの 1 日の利用枠を使い切ったため停止しました。明日もう一度試すか、管理者にモデルの変更を依頼してください。',
   },
 });

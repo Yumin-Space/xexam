@@ -1,6 +1,6 @@
-//! v1.3 global feature switches while a call is running: turning a feature off ends the running calls of normal users
-//! (they are not completed), while the calls of administrators go on to their end (the owner's rule: administrators are
-//! not affected by the switches). Made-up texts only. The tests run with `TZ=UTC`.
+//! Global feature switches while a call is running: turning a feature off ends the running calls of everyone, normal
+//! users and administrators alike (v1.9; before v1.9 the calls of administrators went on). Made-up texts only. The tests
+//! run with `TZ=UTC`.
 mod common;
 
 #[path = "study_api/util.rs"]
@@ -58,21 +58,26 @@ fn status(e: &Env, id: i64) -> String {
 }
 
 #[tokio::test]
-async fn switching_a_feature_off_does_not_touch_the_running_call_of_an_administrator() {
+async fn switching_a_feature_off_ends_the_running_call_of_an_administrator_too() {
     let e = env().await;
     let (_, admin_events, _, admin_msg) = two_slow_hints(&e).await;
-    assert_eq!(
+    assert_ne!(
         terminal_name(&admin_events),
         "done",
-        "{:?}",
+        "the administrator's call must end too: {:?}",
         names(&admin_events)
     );
-    assert_eq!(status(&e, admin_msg), "done");
-    // from now on the user is refused, the administrator is not
+    assert_ne!(status(&e, admin_msg), "done");
+    assert_ne!(
+        status(&e, admin_msg),
+        "streaming",
+        "nothing is left running"
+    );
+    // from now on both are refused
     let (s, v) = refused(&e.t, &e.user, STUDY_ASK, hint_body(K1, "q1", 2)).await;
     assert_eq!((s, v["code"].clone()), (403, json!("ai.featureOff")), "{v}");
-    let ev = ask(&e.t, &e.admin, hint_body(K2, "q1", 2)).await;
-    assert_eq!(terminal_name(&ev), "done");
+    let (s, v) = refused(&e.t, &e.admin, STUDY_ASK, hint_body(K2, "q1", 2)).await;
+    assert_eq!((s, v["code"].clone()), (403, json!("ai.featureOff")), "{v}");
 }
 
 #[tokio::test]

@@ -6,12 +6,12 @@ import { fetchAuthState } from '../../api/auth.ts';
 import { ApiError, isSignInError } from '../../api/client.ts';
 import { miniIcon, type MiniIcon } from '../../components/mini-icons.ts';
 import { offLabelKeys } from '../../domain/ai-features.ts';
-import { aiServiceOf, serviceCause, statusCards, type StatusCard, type SvcCause, type SvcProbe } from '../../domain/ai-settings.ts';
+import { aiServiceOf, connBad, serviceCause, statusCards, type StatusCard, type SvcCause, type SvcProbe } from '../../domain/ai-settings.ts';
 import { aiCodeText } from '../../i18n/errors.ts';
 import { t, uiLang, type MsgKey } from '../../i18n/index.ts';
 import type { AiService, AiSettings } from '../../types/api.ts';
 import { h } from '../../utils/dom.ts';
-import { A, hooks, listSep, onPage, redraw, RECHECK_MS, when } from './state.ts';
+import { A, hooks, listSep, onPage, redraw, RECHECK_MS, setGroupOpen, when } from './state.ts';
 
 /** The text of each cause of the status panel (contracts 2.9 / 2.10) */
 const CAUSE_TEXT: Record<Exclude<SvcCause, 'connected'>, MsgKey> = {
@@ -161,9 +161,14 @@ const CARD_TITLE: Record<StatusCard['id'], MsgKey> = {
   main: 'ai.set.card.main', conn: 'ai.set.card.conn', model: 'ai.set.card.model', features: 'ai.set.card.features',
 };
 /** The section each card jumps to (all of them are on the first tab) */
-const CARD_TARGET: Record<StatusCard['id'], string> = { main: 'ais-enable-h', conn: 'ais-conn-h', model: 'ais-models-h', features: 'ais-switches-h' };
+const CARD_TARGET: Record<StatusCard['id'], string> = { main: 'ais-enable-h', conn: 'ais-conn-h', model: 'ais-models-h', features: 'ais-models-h' };
 
-function jump(id: StatusCard['id']): void {
+function jump(id: StatusCard['id'], s: AiSettings): void {
+  // A broken connection must not stay hidden in a collapsed group: open the enabled group before the jump
+  if (id === 'conn' && s.connections.some(connBad)) {
+    setGroupOpen('on', true);
+    redraw();
+  }
   hooks.selectTab('feature');
   window.setTimeout(() => {
     const el = document.getElementById(CARD_TARGET[id]);
@@ -185,7 +190,7 @@ export function cardText(c: StatusCard): string {
 export function statusCardsRow(s: AiSettings): HTMLElement {
   return h('div', { class: 'ais-cards4', role: 'group', 'aria-label': t('ai.set.tab.conn') },
     statusCards(s).map((c) => h('button', {
-      type: 'button', class: `ais-scard ${c.tone}`, id: `ais-scard-${c.id}`, onclick: () => jump(c.id),
+      type: 'button', class: `ais-scard ${c.tone}`, id: `ais-scard-${c.id}`, onclick: () => jump(c.id, s),
     },
     h('span', { class: 'ais-scard-ic', 'aria-hidden': 'true' }, miniIcon(CARD_ICON[c.id], 'ais-mi')),
     h('span', { class: 'ais-scard-t' }, t(CARD_TITLE[c.id])),

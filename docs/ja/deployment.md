@@ -72,11 +72,18 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_INTERNAL_TOKEN` | （未設定：ai_auth ボリューム内のランダムなトークン） | バックエンドと ai-service が共有するトークンで、両方に同じ値を使います：空白を含まない表示可能な ASCII 文字で 32 文字以上（`openssl rand -hex 32`）。3.3 節 |
 | `XEXAM_AI_LOG` | （未設定：`info`） | ai-service のログのフィルターで、`docker compose logs ai-service` とシステムログに送る行に効きます。規則は `XEXAM_LOG` と同じです（空なら `info`、正しくない値なら警告を 1 回出して `info`） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （未設定：WAL） | `delete` = AI のデータベースでロールバックジャーナルを使います。`XEXAM_SQLITE_JOURNAL` と同じく特殊なストレージのためです |
-| `XEXAM_AI_USER_AGENT_NAME` | （未設定：なし） | *(v1.8)* ai-service が AI プロバイダーやゲートウェイに送る `User-Agent`。たとえば自分のゲートウェイで見分けるための名前です。未設定または空なら `User-Agent` ヘッダーをまったく送らないので、上流にはアプリ名もバージョンも分かりません。印字可能な ASCII で 256 文字まで。それ以外の値はログに警告を 1 回出して無視します（ヘッダーは送りません）。スタック内のバックエンドへのリクエストと外部の IP 所在地照会には影響しません（どちらも `xexam-ai-service/<バージョン>` を名乗ります） |
+| `XEXAM_AI_USER_AGENT_NAME` | （未設定：`xexam-ai-service/<バージョン>`） | *(v1.8、既定は v1.9 で変更)* ai-service が AI プロバイダーやゲートウェイに送る `User-Agent`。未設定・空・空白のみなら `xexam-ai-service/<バージョン>` を送ります。`none`（大文字小文字は問いません）なら `User-Agent` ヘッダーをまったく送りません（v1.8 の動作。上流にアプリ名もバージョンも分かりません）。それ以外の印字可能な ASCII（256 文字まで）はそのまま送ります。たとえば自分のゲートウェイで見分けるための名前です。不正な値は起動時に警告を 1 回出して無視し（値は表示しません）、既定を送ります。スタック内のバックエンドへのリクエストと外部の IP 所在地照会には影響しません（どちらも常に `xexam-ai-service/<バージョン>` を名乗ります） |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | *（v1.3、既定値は v1.4 で変更、frontend コンテナ）* `CF-Connecting-IP` と位置ヘッダーを Nginx が信じるプロキシのアドレスまたはネットワーク（書き方は 3.5 節）。空欄または空 = 既定値、`none` = 誰も信頼しない |
 | `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | *（v1.3）* 訪問者のアドレスを持つヘッダー：`CF-Connecting-IP`、`X-Forwarded-For`、`X-Real-IP` |
 | `XEXAM_BEHIND_PROXY` | バックエンドのイメージでは `1` | *（v1.3）* 同梱の Nginx の内側にいることをバックエンドに伝え、`X-Real-IP` と `X-Geo-*` を信じさせます。イメージで設定済みなので変更しないでください。単独起動（Docker も Nginx もなし）では未設定のままにし、代わりに接続元アドレスを記録します（3.5 節） |
 | `TUNNEL_TOKEN` | 未設定 | *（v1.3）* 任意の `cloudflared` サービスのトークン（`docker compose --profile tunnel up -d`） |
+| `XEXAM_AI_BACKEND_URL` | `http://backend:8765`（イメージ内） | *（ai-service。メインのバックエンドのアドレス）* `http://` または `https://` にホストと任意のポート。末尾の `/` は 1 つまで。パス、クエリ、フラグメント、ユーザー名は不可。別のマシンに分けるときだけ必要です（12 節） |
+| `XEXAM_FRONTEND_PEERS` | （未設定：どのピアでも可） | *(v1.9。バックエンドと ai-service)* このサービスを使えるフロントエンドのマシンのアドレス（IPv4、IPv6、CIDR）。区切りはカンマ、`，`、`、`、セミコロン、空白。未設定なら従来どおりどのピアでも可。設定すると、ループバック以外でリストにないものは `404 not found` になり、`X-Real-IP` と `X-Geo-*` はリストのピアからだけ信用します。`/0`、`0.0.0.0`、`::` は拒否され、不正な項目は警告を出して飛ばされ、有効な項目が 1 つもなければ警告を出してループバックだけになります。12 節 |
+| `XEXAM_INTERNAL_TOKEN_REQUIRED` | （未設定：オフ） | *(v1.9。バックエンドと ai-service)* `1` または `true` なら、`XEXAM_INTERNAL_TOKEN` が設定されていて有効でない限り、共有ボリュームのランダムなトークンに切り替えずにサービスが起動しません（終了コード 1）。マシンごとの compose ファイルでは常にオンです |
+| `XEXAM_BACKEND_UPSTREAM` | `http://backend:8765` | *(v1.9。frontend コンテナ)* Nginx がバックエンドを探す場所：`http://` または `https://` にホスト（名前、IPv4、`[IPv6]`）と任意のポート 1〜65535。パスは不可。不正な値だと、変数名を示すメッセージを出してコンテナが停止します |
+| `XEXAM_AI_UPSTREAM` | `http://ai-service:8766` | *(v1.9。frontend コンテナ)* Nginx が ai-service を探す場所。形式は同じです |
+| `XEXAM_NGINX_RESOLVER` | `127.0.0.11` | *(v1.9。frontend コンテナ)* 上の 2 つの名前を引くために Nginx が使う DNS サーバー：IPv4 または IPv6（そのまま、または括弧付き）、任意の `:port`、区切りは空白またはカンマ。既定は Docker 自身のリゾルバーです |
+| `XEXAM_BACKEND_BIND`、`XEXAM_AI_BIND` | マシンごとのファイルでは必須 | *(v1.9)* バックエンド（`10.0.0.2:8765`）または ai-service（`10.0.0.3:8766`）が、そのマシンで公開するプライベートな `アドレス:ポート`。`0.0.0.0` は不可（12 節） |
 
 v0.9 では変数も compose の変更も加わりません。`.env` を変更したら、`docker compose up -d` を実行します（必要に応じてコンテナが再作成されます）。compose ファイルは、`XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST`、`XEXAM_PARSE_TIMEOUT_SECS` を常に渡します（`.env` で設定していなければ上の既定値で）。バックエンドには `TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG`、`XEXAM_INTERNAL_TOKEN` を、AI サービスには `TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG`、`XEXAM_AI_SQLITE_JOURNAL`、`XEXAM_AI_USER_AGENT_NAME` を、`.env` で設定したときだけ渡します（`XEXAM_LOG=` のように後ろに何もない行は、空の値として渡されます）。Host / Origin の設定は AI のルートにも適用されます：Nginx が AI のリクエストを渡す前に、バックエンドがそれをすべて確認します。`XEXAM_BIND` は Compose 自身が、公開するポートに使います。`xexam-backend --help` と `xexam-ai-service --help` で、それぞれのプログラムが読むすべての変数が表示されます。
 
@@ -85,7 +92,7 @@ v0.9 では変数も compose の変更も加わりません。`.env` を変更�
 | イメージ | 変数 |
 |---|---|
 | `xexam-backend` | `XEXAM_DATA=/data`、`XEXAM_HOST=0.0.0.0`、`XEXAM_PORT=8765`、`XEXAM_VERSION_FILE=/VERSION`、`XEXAM_BEHIND_PROXY=1`、`XEXAM_LINK_DIR=/link`（`internal.token` を書き込む場所。Docker を使わない場合の既定は、データディレクトリの中の `link`） |
-| `ai-service` | `XEXAM_AI_DATA=/data`、`XEXAM_AI_HOST=0.0.0.0`、`XEXAM_AI_PORT=8766`、`XEXAM_AI_BACKEND_URL=http://backend:8765`（素の http だけ）、`XEXAM_LINK_DIR=/link`、`XEXAM_VERSION_FILE=/VERSION` |
+| `ai-service` | `XEXAM_AI_DATA=/data`、`XEXAM_AI_HOST=0.0.0.0`、`XEXAM_AI_PORT=8766`、`XEXAM_AI_BACKEND_URL=http://backend:8765`（http または https）、`XEXAM_LINK_DIR=/link`、`XEXAM_VERSION_FILE=/VERSION` |
 
 ### 3.1 タイムゾーン
 
@@ -133,6 +140,7 @@ ai-service は、**AI 設定** で入力したプロバイダーのキーを暗�
 - **`.env` の `XEXAM_INTERNAL_TOKEN`**：空白を含まない表示可能な ASCII 文字で 32 文字以上。例：`openssl rand -hex 32` の出力。compose ファイルはこの 1 行を両方のサービスに渡すので、両者は常に同じ値を受け取ります。このときバックエンドはファイルを書かず、`AI link: using XEXAM_INTERNAL_TOKEN` とログに出します。値の前後の空白は無視されます。
 - 規則に合わない値では、**両方の** サービスで接続がオフになり、次のどちらかの行が出ます：`XEXAM_INTERNAL_TOKEN is too short (at least 32 characters); AI link off` または `XEXAM_INTERNAL_TOKEN may contain only printable ASCII characters without spaces; AI link off`。直すまで、AI チャットは使えません（`ai.backendDown`）。
 - 2 つのサービスの値が一致しないとき（たとえば、この compose ファイルを使わずに動かしていて、片方にだけトークンを設定したとき）、ai-service は `AI link: the main service refused the internal token (XEXAM_INTERNAL_TOKEN must be the same for both services)` とログに出し、有効な文なしで届いたリクエストは `refused a request without a valid identity (requests must come through Nginx; XEXAM_INTERNAL_TOKEN must be the same for both services)` で拒否します（多くても 1 分に 1 回）。
+- **別々のマシン（v1.9）**：共有の `ai_auth` ボリュームがないため、トークンは両方のマシンの環境変数に（同じ値で）設定する必要があります。`XEXAM_INTERNAL_TOKEN_REQUIRED=1` にすると、ランダムなトークンを使う代わりに、設定がなければ各サービスが起動を拒否します。マシンごとの compose ファイルはどちらも設定済みです。トークンがないと `XEXAM_INTERNAL_TOKEN_REQUIRED=1 but XEXAM_INTERNAL_TOKEN is not set: set the same value (at least 32 printable ASCII characters, e.g. openssl rand -hex 32) on the backend and ai-service machines` を出して起動が止まります。メッセージに値は含まれません。
 - トークンを変えるには：両方のサービスを停止し、ai_auth ボリュームを空にするか（`docker run --rm -v xexam_ai_auth:/link alpine rm -f /link/internal.token`）、`XEXAM_INTERNAL_TOKEN` を変えて、もう一度起動します。ai-service は、新しいトークンを数秒以内に自分でも読み込みます。
 
 ### 3.4 AI プロバイダー（`.env` ではなくアプリで設定）
@@ -357,3 +365,44 @@ ai-service の行：その起動（`Xexam AI service 0.9.1 listening on 0.0.0.0:
 `main` にプッシュすると、[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) がまずバージョン、更新履歴、ドキュメントの検査を行い、続いて 5 グループの検査（フロントエンド、バックエンド、ai-service、Nginx と全スタック、arm64）を実行します。すべて通過した場合にだけ、`xexam-frontend`、`xexam-backend`、`xexam-ai-service` の 3 つのイメージ（amd64 + arm64）を Docker Hub（`docker.io/yuminspace/`、公開）と、非公開のミラーとして `ghcr.io/yumin-space/` に公開します。タグはどちらも `latest`、`v<CODE_VERSION>`、`sha-<コミット>` で、対応する GitHub Release も作成します（そのリリースノートには、Docker Hub からの pull コマンドが最初に載ります）。最後にリリースを記録します：`VERSION` の `RELEASE_VERSION` と README のリリースバッジを、ボットが `main` に（早送りできるときは `dev` にも）コミットします。`dev` へのプッシュと `main` へのプルリクエストでは、同じ検査を行うだけで、公開はしません。詳しくは [development.md](development.md) の第 8 節を参照してください。
 
 Docker Hub には、リポジトリのシークレット `DOCKERHUB_USERNAME` と `DOCKERHUB_TOKEN`（**Read & Write** の権限を持つアクセストークン）の 2 つが必要で、必要に応じてリポジトリ変数 `DOCKERHUB_NAMESPACE` も設定できます。シークレットがない場合や、`docker/docker-compose.yml` がその名前空間の Docker Hub のイメージを指していない場合、公開ジョブは何もプッシュせずに止まります。ghcr.io では、新しいイメージ名を初めて公開するとき（たとえば v0.8 の `xexam-ai-service`）に、GitHub のパッケージ設定で、このリポジトリを **Manage Actions access** に追加し、ロールとして **Admin** を選んでください。そうしないとプッシュが拒否されます（`permission_denied: write_package`）。Docker Hub のトークンは、3 つのリポジトリのすべてに書き込めなければなりません。
+
+## 12. サービスを別々のマシンで動かす（v1.9）
+
+既定では 3 つのサービスは 1 台のホストで動きます。フロントエンド、バックエンド、ai-service を別々のマシンに置きたい場合（たとえばフロントエンドを小さな外向けのマシンに、データベースをより信頼できるマシンに）は、マシンごとの compose ファイルを使います。1 台で動かす場合は何も変わらず、[`docker-compose.yml`](../../docker/docker-compose.yml) は従来どおりです。
+
+```
+ブラウザー ──> フロントエンドのマシン（Nginx、公開側）
+                ├─ /api/    ──> バックエンドのマシン    （XEXAM_BACKEND_UPSTREAM。例：http://10.0.0.2:8765）
+                └─ /api/ai/ ──> まずバックエンドに確認（/internal/ai/auth）、次に ai-service のマシン（XEXAM_AI_UPSTREAM。例：http://10.0.0.3:8766）
+ai-service のマシン ──> バックエンドのマシン   （XEXAM_AI_BACKEND_URL：状態の報告と必要な確認）
+```
+
+バックエンドが ai-service を呼ぶことはありません。フロントエンドがすべての AI リクエストの確認をバックエンドに頼み、ai-service がバックエンドに状態を報告します。そのため ai-service はバックエンドのマシンに届く必要がありますが、バックエンドのマシンは ai-service のアドレスを知る必要がありません。2 つのデータベースは別々のままで、`xexam_backend_data` はバックエンドのマシンだけに、`xexam_ai_data` は ai-service のマシンだけにマウントされます。
+
+### 12.1 手順
+
+1. **プライベートなアドレスを決めます。** たとえばフロントエンド `10.0.0.1`、バックエンド `10.0.0.2`、ai-service `10.0.0.3`。VPN、VLAN、閉じた LAN などのプライベートネットワーク上に置くか、`Host` ヘッダーをそのまま保つ TLS 終端をバックエンドと ai-service の前に置いて、`https://` の上流を使います。
+2. **トークンを 1 回だけ決めます**：`openssl rand -hex 32`。バックエンドと ai-service のマシンの `XEXAM_INTERNAL_TOKEN` に同じ値を入れます。
+3. **バックエンドのマシン**：[`docker-compose.backend.yml`](../../docker/docker-compose.backend.yml) と、`XEXAM_BACKEND_BIND=10.0.0.2:8765`、`XEXAM_FRONTEND_PEERS=10.0.0.1`、`XEXAM_INTERNAL_TOKEN=...`、`XEXAM_ALLOWED_HOSTS=<ブラウザーが使うホスト名>` を書いた `.env` を用意します（Nginx は Host をそのまま転送し、確認はここで行います）。`docker compose -f docker-compose.backend.yml up -d`。
+4. **ai-service のマシン**：[`docker-compose.ai-service.yml`](../../docker/docker-compose.ai-service.yml) に、`XEXAM_AI_BIND=10.0.0.3:8766`、`XEXAM_AI_BACKEND_URL=http://10.0.0.2:8765`、`XEXAM_FRONTEND_PEERS=10.0.0.1`、同じ `XEXAM_INTERNAL_TOKEN` を設定します。
+5. **フロントエンドのマシン**：[`docker-compose.frontend.yml`](../../docker/docker-compose.frontend.yml) に、`XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765` と `XEXAM_AI_UPSTREAM=http://10.0.0.3:8766`（どちらも必須）、いつもの `XEXAM_BIND`、前段にプロキシやトンネルがあるときは `XEXAM_TRUSTED_PROXIES`（3.5 節）を設定します。`XEXAM_NGINX_RESOLVER` は、上流が Docker のリゾルバーで引けないホスト名のときだけ設定します。
+6. 各マシンに必要なのは、`.env` のそのマシン用の行だけです。[`.env.example`](../../docker/.env.example) に、すべてをコメント付きでまとめたブロックがあります。必須の値がないと、`docker compose` は変数名を示すメッセージを出して止まります。
+
+### 12.2 セキュリティの注意
+
+- **プライベートなアドレスに bind し、`0.0.0.0` にはしない。** `XEXAM_BACKEND_BIND` と `XEXAM_AI_BIND` は必須で、そのマシンのプライベートなアドレスにします。Docker は `ufw` や `firewalld` を迂回してポートを公開するため、ホストのファイアウォールでは公開したポートを守れません。守るのはピアのリストです。
+- **両方のサービスに `XEXAM_FRONTEND_PEERS`。** これがないと、ポートに届くどのマシンも `X-Real-IP` や `X-Geo-*` を偽装でき、`/internal/ai/auth` にも届いてしまいます。設定すると、それ以外のピアは `404` になり、転送されたヘッダーはリストのアドレスからだけ信用されます。拒否は 1 分に 1 回程度、パスだけ（クエリは含めず）でログに出ます：`refused a request from <ip>: the address is not in XEXAM_FRONTEND_PEERS`。Docker Desktop やユーザーランドプロキシでは、本当のピアの代わりに Docker のゲートウェイのアドレスが見えることがあります。拒否の行にそのアドレスが出たら、それもリストに加えてください。
+- **TLS を足さない限り、マシン間の通信は素の `http://` です。** プライベートネットワークの中に留めるか、バックエンドと ai-service の前で TLS を終端し（`Host` ヘッダーを保つリバースプロキシ）、`XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM`、`XEXAM_AI_BACKEND_URL` に `https://` を使ってください。
+- **許可するホストはバックエンドのマシンで。** Host / Origin の確認はバックエンドのマシンのバックエンドで行われます。4 節と同じように、そこに `XEXAM_ALLOWED_HOSTS`（必要なら `XEXAM_ALLOWED_ORIGINS`）を設定してください。
+- **トークン**は両方のマシンで必須です（ファイルでは `XEXAM_INTERNAL_TOKEN_REQUIRED=1`）。パスワードと同じように扱ってください。
+- **制限**：この構成でもバックエンドのマシンは、ほかのマシンと同じようにインターネットへの外向きの接続ができます（任意の IP 所在地照会のため）。AI プロバイダーと通信するのは ai-service だけです。
+
+### 12.3 データボリュームの移動
+
+1 台構成の既存の環境を移すには：停止し、5 節のとおりバックアップし、新しいマシンに**空の**ボリュームを作り（ターゲットのボリュームに余計なファイルがあると混ざります）、`xexam_backend_data` をバックエンドのマシンに、`xexam_ai_data`（`xexam-ai.db`、`secret.key`、`backups/` を含みます）を ai-service のマシンにコピーしてから、3 台を起動します。`xexam_ai_auth` はもう要りません（トークンは環境変数から来ます）。`XEXAM_AI_SECRET_KEY` を設定していた場合は、ai-service のマシンにも設定してください。
+
+### 12.4 確認
+
+- 各マシンで `docker compose -f <ファイル> config -q` を実行すると、ファイルと必須の値を確認できます。
+- アプリを開いてサインインし、管理者として **AI 設定** を開きます。状態の報告がバックエンドに届くと AI サービスは接続済みと表示されます（ai-service のログに `AI link: connected to the main service`）。
+- フロントエンドのマシンだけがバックエンドと通信しているあいだは、バックエンドのログに `refused a request from` の行は出ません。

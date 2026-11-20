@@ -23,6 +23,10 @@ export const deleteConnection = (id: number, opts: { force?: boolean; newDefault
 export const orderConnections = (ids: number[]): Promise<{ settings: AiSettings }> =>
   postJson<{ settings: AiSettings }>('/api/ai/admin/connections/order', { ids });
 
+/** v1.9: turn a connection on or off. Off keeps every setting; nothing is cancelled and `rev` does not change */
+export const setConnectionEnabled = (id: number, enabled: boolean): Promise<{ settings: AiSettings }> =>
+  postJson<{ settings: AiSettings }>('/api/ai/admin/connections/enabled', { id, enabled });
+
 /** The models of every connection (cached 10 min; `refresh` lists again); also read by the AI Chat model picker */
 export const fetchModels = (refresh = false): Promise<AiModelList> => getJson<AiModelList>(`/api/ai/admin/models?refresh=${refresh ? 1 : 0}`);
 
@@ -48,7 +52,7 @@ export const removeModel = (poolId: number): Promise<{ settings: AiSettings }> =
 /** `default` is required while the default slot is empty; a failing test answers `ok: false` and leaves AI+ off */
 export const setEnabled = (enabled: boolean, def?: ModelRef): Promise<PickAnswer> =>
   postJson<PickAnswer>('/api/ai/admin/enable', def ? { enabled, default: def } : { enabled });
-/** Any subset of the six switches; they apply to normal users only (administrators are not affected) */
+/** Any subset of the six switches; each moves alone and they apply to everyone, administrators included (v1.9) */
 export const setFeatureSwitches = (s: Partial<Record<AiFeatureKey, boolean>>): Promise<AiSettings> =>
   postJson<AiSettings>('/api/ai/admin/feature-switches', s);
 

@@ -72,11 +72,18 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | `XEXAM_INTERNAL_TOKEN` | （不设：ai_auth 卷里的一个随机令牌） | 后端和 ai-service 共用的令牌，两者用同一个值：至少 32 个可打印的 ASCII 字符，不能有空格（`openssl rand -hex 32`）。见第 3.3 节 |
 | `XEXAM_AI_LOG` | （不设：`info`） | ai-service 的日志过滤，`docker compose logs ai-service` 和它发到系统日志的行都用它；规则和 `XEXAM_LOG` 一样（为空 = `info`，无效的值退回 `info` 并记一条警告） |
 | `XEXAM_AI_SQLITE_JOURNAL` | （不设：WAL） | `delete` = AI 数据库用回滚日志，用于和 `XEXAM_SQLITE_JOURNAL` 一样的特殊存储 |
-| `XEXAM_AI_USER_AGENT_NAME` | （不设：不发） | *(v1.8)* ai-service 发给 AI 服务商和网关的 `User-Agent`，例如让你自己的网关认出来的名字。不设或留空时完全不发 `User-Agent` 请求头，上游看不到应用名和版本。只能是可打印的 ASCII，最多 256 个字符；其他值会被忽略，并在日志里警告一次（不发请求头）。栈内发给后端的请求和外部 IP 所在地查询不受影响（它们仍然是 `xexam-ai-service/<版本>`） |
+| `XEXAM_AI_USER_AGENT_NAME` | （不设：`xexam-ai-service/<版本>`） | *(v1.8，默认值在 v1.9 改变)* ai-service 发给 AI 服务商和网关的 `User-Agent`。不设、留空或只有空白时发送 `xexam-ai-service/<版本>`；`none`（不分大小写）完全不发 `User-Agent` 请求头（v1.8 的行为，上游看不到应用名和版本）；其他可打印的 ASCII（最多 256 个字符）原样发送，例如让你自己的网关认出来的名字。无效的值在启动时警告一次（不会打印这个值），并发送默认值。栈内发给后端的请求和外部 IP 所在地查询不受影响（它们始终是 `xexam-ai-service/<版本>`） |
 | `XEXAM_TRUSTED_PROXIES` | `10.0.0.0/8,172.16.0.0/12,192.168.0.0/16` | *（v1.3，默认值在 v1.4 改变，frontend 容器）* Nginx 信任其 `CF-Connecting-IP` 和位置头的代理地址或网段（写法见 3.5 节）。留空或空值 = 默认值；`none` = 谁都不信任 |
 | `XEXAM_REAL_IP_HEADER` | `CF-Connecting-IP` | *（v1.3）* 带访客地址的头：`CF-Connecting-IP`、`X-Forwarded-For` 或 `X-Real-IP` |
 | `XEXAM_BEHIND_PROXY` | 后端镜像里是 `1` | *（v1.3）* 告诉后端它在自带的 Nginx 后面，因此相信 `X-Real-IP` 和 `X-Geo-*`。已在镜像里设好，不要改。单独运行（不用 Docker、没有 Nginx）时不设它，改为记录连接地址（3.5 节） |
 | `TUNNEL_TOKEN` | 不设 | *（v1.3）* 可选 `cloudflared` 服务的令牌（`docker compose --profile tunnel up -d`） |
+| `XEXAM_AI_BACKEND_URL` | `http://backend:8765`（镜像内） | *（ai-service；主后端的地址）* `http://` 或 `https://` 加主机和可选端口，末尾最多一个 `/`；不能有路径、查询、片段或用户名。只在分机器运行时才需要（第 12 节） |
+| `XEXAM_FRONTEND_PEERS` | （不设：任何来源都行） | *(v1.9；后端和 ai-service)* 允许使用这个服务的前端机器地址（IPv4、IPv6 或 CIDR），用逗号、`，`、`、`、分号或空格分隔。不设 = 和以前一样任何来源都行。设置后，除回环地址外不在名单里的来源得到 `404 not found`，`X-Real-IP` 和 `X-Geo-*` 只信任名单里的来源。`/0`、`0.0.0.0` 和 `::` 会被拒绝；无效的项会被跳过并警告；一项有效的都没有时只允许回环，并警告。第 12 节 |
+| `XEXAM_INTERNAL_TOKEN_REQUIRED` | （不设：关） | *(v1.9；后端和 ai-service)* `1` 或 `true` = 除非设置了有效的 `XEXAM_INTERNAL_TOKEN`，否则服务不会启动（退出码 1），而不是退回到共享卷里的随机令牌。按机器拆分的 compose 文件里始终开启 |
+| `XEXAM_BACKEND_UPSTREAM` | `http://backend:8765` | *(v1.9；frontend 容器)* Nginx 在哪里找后端：`http://` 或 `https://` 加主机（名称、IPv4 或 `[IPv6]`）和可选端口 1 到 65535，不能有路径。值不对时容器会停止，并给出点名这个变量的提示 |
+| `XEXAM_AI_UPSTREAM` | `http://ai-service:8766` | *(v1.9；frontend 容器)* Nginx 在哪里找 ai-service；格式相同 |
+| `XEXAM_NGINX_RESOLVER` | `127.0.0.11` | *(v1.9；frontend 容器)* Nginx 解析上面两个名字用的 DNS 服务器：IPv4 或 IPv6（直接写或加方括号），可选 `:port`，用空格或逗号分隔。默认是 Docker 自己的解析器 |
+| `XEXAM_BACKEND_BIND`、`XEXAM_AI_BIND` | 按机器拆分的文件里必填 | *(v1.9)* 后端（`10.0.0.2:8765`）或 ai-service（`10.0.0.3:8766`）在自己机器上发布的私有 `地址:端口`。不能是 `0.0.0.0`（第 12 节） |
 
 v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` 之后运行 `docker compose up -d`（它会按需重新创建容器）。compose 文件总是传递 `XEXAM_ALLOWED_HOSTS`、`XEXAM_ALLOWED_ORIGINS`、`XEXAM_ALLOW_ANY_HOST` 和 `XEXAM_PARSE_TIMEOUT_SECS`（`.env` 里没有设置时用上面的默认值）；`TZ`、`XEXAM_SQLITE_JOURNAL`、`XEXAM_COOKIE_SECURE`、`XEXAM_LOG` 和 `XEXAM_INTERNAL_TOKEN` 传给后端，`TZ`、`XEXAM_AI_SECRET_KEY`、`XEXAM_INTERNAL_TOKEN`、`XEXAM_AI_LOG`、`XEXAM_AI_SQLITE_JOURNAL` 和 `XEXAM_AI_USER_AGENT_NAME` 传给 ai-service，都只在 `.env` 里设置了时才传递（像 `XEXAM_LOG=` 这样后面什么都没写的一行，会作为空值传递）。Host / Origin 的设置也适用于 AI 路由：Nginx 转发每个 AI 请求之前，后端都会先检查它。`XEXAM_BIND` 由 Compose 自己用来发布端口。`xexam-backend --help` 和 `xexam-ai-service --help` 分别列出各自读取的所有变量。
 
@@ -85,7 +92,7 @@ v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` �
 | 镜像 | 变量 |
 |---|---|
 | `xexam-backend` | `XEXAM_DATA=/data`、`XEXAM_HOST=0.0.0.0`、`XEXAM_PORT=8765`、`XEXAM_VERSION_FILE=/VERSION`、`XEXAM_BEHIND_PROXY=1`、`XEXAM_LINK_DIR=/link`（写入 `internal.token` 的地方；不用 Docker 时默认是数据目录里的 `link`） |
-| `ai-service` | `XEXAM_AI_DATA=/data`、`XEXAM_AI_HOST=0.0.0.0`、`XEXAM_AI_PORT=8766`、`XEXAM_AI_BACKEND_URL=http://backend:8765`（只能是普通的 http）、`XEXAM_LINK_DIR=/link`、`XEXAM_VERSION_FILE=/VERSION` |
+| `ai-service` | `XEXAM_AI_DATA=/data`、`XEXAM_AI_HOST=0.0.0.0`、`XEXAM_AI_PORT=8766`、`XEXAM_AI_BACKEND_URL=http://backend:8765`（http 或 https）、`XEXAM_LINK_DIR=/link`、`XEXAM_VERSION_FILE=/VERSION` |
 
 ### 3.1 时区
 
@@ -133,6 +140,7 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 - **`.env` 里的 `XEXAM_INTERNAL_TOKEN`**：至少 32 个可打印的 ASCII 字符，不能有空格，例如 `openssl rand -hex 32` 的输出。compose 文件把这一行传给两个服务，所以它们总是得到同一个值；这时后端不写文件，并记录 `AI link: using XEXAM_INTERNAL_TOKEN`。值前后的空白会被忽略。
 - 不符合规则的值会在**两个**服务里关闭这条连接，并记录下面其中一行：`XEXAM_INTERNAL_TOKEN is too short (at least 32 characters); AI link off` 或 `XEXAM_INTERNAL_TOKEN may contain only printable ASCII characters without spaces; AI link off`。改正之前 AI 对话不可用（`ai.backendDown`）。
 - 两个服务不一致时（例如不用这个 compose 文件运行时，只给其中一个设置了令牌），ai-service 记录 `AI link: the main service refused the internal token (XEXAM_INTERNAL_TOKEN must be the same for both services)`，没有有效声明就到达它的请求会被拒绝，并记录 `refused a request without a valid identity (requests must come through Nginx; XEXAM_INTERNAL_TOKEN must be the same for both services)`，最多每分钟一次。
+- **分机器运行（v1.9）**：没有共享的 `ai_auth` 卷，所以令牌必须在两台机器的环境里设置（同一个值），并用 `XEXAM_INTERNAL_TOKEN_REQUIRED=1` 让每个服务在没有令牌时拒绝启动，而不是使用随机令牌。按机器拆分的 compose 文件两件事都做了。缺少令牌时启动会停止，并输出 `XEXAM_INTERNAL_TOKEN_REQUIRED=1 but XEXAM_INTERNAL_TOKEN is not set: set the same value (at least 32 printable ASCII characters, e.g. openssl rand -hex 32) on the backend and ai-service machines`；这条信息里不会出现令牌的值。
 - 更换令牌：停止两个服务，清空 ai_auth 卷（`docker run --rm -v xexam_ai_auth:/link alpine rm -f /link/internal.token`）或修改 `XEXAM_INTERNAL_TOKEN`，然后再启动。ai-service 也会在几秒内自己用上新的令牌。
 
 ### 3.4 AI 服务商（在程序里设置，不在 `.env` 里）
@@ -358,3 +366,44 @@ ai-service 的日志行：它的启动（`Xexam AI service 0.9.1 listening on 0.
 推送到 `main` 时，[`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) 先做版本、更新日志和文档的检查，再跑五组检查（前端、后端、ai-service、Nginx 和整栈、arm64）。全部通过才把 `xexam-frontend`、`xexam-backend` 和 `xexam-ai-service` 三个镜像（amd64 + arm64）发布到 Docker Hub（`docker.io/yuminspace/`，公开），并作为私有镜像副本发布到 `ghcr.io/yumin-space/`，标签都是 `latest`、`v<CODE_VERSION>` 和 `sha-<提交>`，并建立对应的 GitHub Release（说明里最先列出从 Docker Hub 拉取的命令）。最后记录这次发布：`VERSION` 里的 `RELEASE_VERSION` 和 README 的发布徽章，由机器人提交到 `main`（能快进时也提交到 `dev`）。推送到 `dev` 和向 `main` 提的拉取请求跑同样的检查，从不发布。详见 [development.md](development.md) 第 8 节。
 
 Docker Hub 需要两个仓库机密 `DOCKERHUB_USERNAME` 和 `DOCKERHUB_TOKEN`（一个带 **Read & Write** 权限的访问令牌），另外可以设置仓库变量 `DOCKERHUB_NAMESPACE`（可选）；没有这两个机密，或者 `docker/docker-compose.yml` 里写的不是这个命名空间下的 Docker Hub 镜像，发布这一步会在推送任何东西之前停下。在 ghcr.io 上第一次发布一个新镜像名时（例如 v0.8 的 `xexam-ai-service`），要在 GitHub 的包设置里把本仓库加进 **Manage Actions access**，角色选 **Admin**，否则推送会被拒绝（`permission_denied: write_package`）。Docker Hub 的令牌必须能写入这三个仓库中的每一个。
+
+## 12. 把服务分到不同的机器上运行（v1.9）
+
+默认三个服务运行在同一台主机上。如果想把前端、后端和 ai-service 放在不同的机器上（例如前端放在一台对外的小机器上，数据库放在更可信的机器上），就用按机器拆分的 compose 文件。单机运行时什么都不变：[`docker-compose.yml`](../../docker/docker-compose.yml) 和以前一样。
+
+```
+浏览器 ──> 前端机器（Nginx，对外一侧）
+             ├─ /api/    ──> 后端机器    （XEXAM_BACKEND_UPSTREAM，例如 http://10.0.0.2:8765）
+             └─ /api/ai/ ──> 先问后端（/internal/ai/auth），再到 ai-service 机器（XEXAM_AI_UPSTREAM，例如 http://10.0.0.3:8766）
+ai-service 机器 ──> 后端机器   （XEXAM_AI_BACKEND_URL：状态汇报和它需要的校验）
+```
+
+后端从不调用 ai-service：前端让后端校验每个 AI 请求，ai-service 向后端汇报状态，所以 ai-service 要能访问后端机器，而后端机器不需要知道 ai-service 的地址。两个数据库仍然分开：`xexam_backend_data` 只挂在后端机器上，`xexam_ai_data` 只挂在 ai-service 机器上。
+
+### 12.1 步骤
+
+1. **定好私有地址**，例如前端 `10.0.0.1`、后端 `10.0.0.2`、ai-service `10.0.0.3`，放在私有网络里（VPN、VLAN 或封闭的局域网），或者在后端和 ai-service 前面放一个保持 `Host` 请求头不变的 TLS 终结点，上游用 `https://`。
+2. **令牌只生成一次**：`openssl rand -hex 32`。同一个值填到后端机器和 ai-service 机器的 `XEXAM_INTERNAL_TOKEN`。
+3. **后端机器**：复制 [`docker-compose.backend.yml`](../../docker/docker-compose.backend.yml) 和一个 `.env`，里面写 `XEXAM_BACKEND_BIND=10.0.0.2:8765`、`XEXAM_FRONTEND_PEERS=10.0.0.1`、`XEXAM_INTERNAL_TOKEN=...` 和 `XEXAM_ALLOWED_HOSTS=<浏览器用的主机名>`（Nginx 原样转发 Host，校验在这里做）；运行 `docker compose -f docker-compose.backend.yml up -d`。
+4. **ai-service 机器**：[`docker-compose.ai-service.yml`](../../docker/docker-compose.ai-service.yml)，设置 `XEXAM_AI_BIND=10.0.0.3:8766`、`XEXAM_AI_BACKEND_URL=http://10.0.0.2:8765`、`XEXAM_FRONTEND_PEERS=10.0.0.1` 和同一个 `XEXAM_INTERNAL_TOKEN`。
+5. **前端机器**：[`docker-compose.frontend.yml`](../../docker/docker-compose.frontend.yml)，设置 `XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765` 和 `XEXAM_AI_UPSTREAM=http://10.0.0.3:8766`（两个都必填）、平常的 `XEXAM_BIND`，前面有代理或隧道时还要设 `XEXAM_TRUSTED_PROXIES`（第 3.5 节）。只有上游是 Docker 解析器解析不了的主机名时，才需要设 `XEXAM_NGINX_RESOLVER`。
+6. 每台机器的 `.env` 只需要自己的那几行；[`.env.example`](../../docker/.env.example) 里有一个带注释的块，列出全部变量。缺少必填的值时，`docker compose` 会停下，并给出点名这个变量的提示。
+
+### 12.2 安全说明
+
+- **绑定到私有地址，不要用 `0.0.0.0`。** `XEXAM_BACKEND_BIND` 和 `XEXAM_AI_BIND` 必填，应填这台机器的私有地址。Docker 发布端口会绕过 `ufw` 和 `firewalld`，所以主机防火墙保护不了已发布的端口：真正起作用的是来源名单。
+- **两个服务都要设 `XEXAM_FRONTEND_PEERS`。** 不设的话，任何能连到端口的机器都可以伪造 `X-Real-IP` / `X-Geo-*`，并访问 `/internal/ai/auth`。设置后，其他来源得到 `404`，转发的请求头只信任名单里的地址。拒绝会大约每分钟记一次日志，只记路径、不记查询：`refused a request from <ip>: the address is not in XEXAM_FRONTEND_PEERS`。Docker Desktop 和 userland proxy 可能显示 Docker 网关地址，而不是真实来源；在拒绝日志里看到这个地址时，把它也加进名单。
+- **除非加上 TLS，机器之间的通信是明文 `http://`。** 请把它留在私有网络里，或者在后端和 ai-service 前面终结 TLS（保持 `Host` 请求头的反向代理），并把 `XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM` 和 `XEXAM_AI_BACKEND_URL` 都改成 `https://`。
+- **允许的主机在后端机器上设置。** Host / Origin 校验在后端机器的后端里运行：像第 4 节那样在那里设置 `XEXAM_ALLOWED_HOSTS`（需要时再设 `XEXAM_ALLOWED_ORIGINS`）。
+- **令牌**在两台机器上都是必填（文件里是 `XEXAM_INTERNAL_TOKEN_REQUIRED=1`）；把它当密码对待。
+- **局限**：这种布局下后端机器和其他机器一样可以访问外网（用于可选的 IP 所在地查询）；只有 ai-service 会和 AI 服务商通信。
+
+### 12.3 迁移数据卷
+
+要迁移已有的单机安装：先停止，按第 5 节备份，在新机器上创建**空的**卷（目标卷里已有的多余文件会混进去），把 `xexam_backend_data` 复制到后端机器，把 `xexam_ai_data`（含 `xexam-ai.db`、`secret.key` 和 `backups/`）复制到 ai-service 机器，然后启动三台机器。`xexam_ai_auth` 不再需要（令牌来自环境变量）。如果设置过 `XEXAM_AI_SECRET_KEY`，在 ai-service 机器上也要设置。
+
+### 12.4 检查
+
+- 在每台机器上运行 `docker compose -f <文件> config -q`，检查文件和必填的值。
+- 打开程序并登录，以管理员身份打开 **AI 设置**：ai-service 的状态汇报到达后端后，AI 服务会显示为已连接（ai-service 日志里有 `AI link: connected to the main service`）。
+- 只有前端机器在访问后端时，后端日志里没有 `refused a request from` 这一行。

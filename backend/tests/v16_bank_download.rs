@@ -467,7 +467,7 @@ async fn a_download_is_one_activity_event() {
     let detail: Value = serde_json::from_str(&detail.expect("detail")).expect("json");
     assert_eq!(
         detail,
-        json!({"format": "xlsx", "sheets": 2, "questions": 5})
+        json!({"format": "xlsx", "langs": ["en", "zh", "ja"], "sheets": 2, "questions": 5})
     );
 }
 
@@ -803,4 +803,103 @@ fn a_fresh_database_is_schema_10_and_a_schema_9_file_migrates_with_one_row() {
     drop(c);
     let s = dbc::open_fixed(&db);
     assert!(s.migration_backup().is_none());
+}
+
+// ---------------------------------------------------------------- v1.9: the `langs` query
+
+fn dl_langs(id: i64, format: &str, langs: &str) -> String {
+    format!("/api/banks/download?id={id}&format={format}&langs={langs}")
+}
+
+#[tokio::test]
+async fn a_language_subset_changes_the_file_name_and_the_activity_detail() {
+    let a = app();
+    let adm = admin(&a);
+    let id = import(&a, &adm, "new", "Soup bank.xlsx", &sample("one")).await;
+    // zh only: Excel, suffix `_zh`
+    let r = get(&a, &dl_langs(id, "xlsx", "zh"), &adm).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let cd = r.header("content-disposition").expect("disposition");
+    assert!(cd.contains("filename=\"Soup bank_zh.xlsx\""), "{cd}");
+    assert!(cd.contains("Soup%20bank_zh.xlsx"), "{cd}");
+    // en,ja given in another order and as an encoded comma: the suffix keeps en, zh, ja order
+    let r = get(&a, &dl_langs(id, "docx", "ja%2Cen"), &adm).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let cd = r.header("content-disposition").expect("disposition");
+    assert!(cd.contains("filename=\"Soup bank_en-ja.docx\""), "{cd}");
+    let mut z = zip::ZipArchive::new(Cursor::new(r.body.clone())).expect("zip");
+    let mut doc = String::new();
+    z.by_name("word/document.xml")
+        .expect("document.xml")
+        .read_to_string(&mut doc)
+        .expect("read");
+    assert!(doc.contains("日本語") && doc.contains("晴れた日") && !doc.contains("晴天时"));
+    // all three given explicitly = the plain name
+    let r = get(&a, &dl_langs(id, "xlsx", "en,zh,ja"), &adm).await;
+    assert_eq!(r.status, 200, "{}", r.text());
+    let cd = r.header("content-disposition").expect("disposition");
+    assert!(cd.contains("filename=\"Soup bank.xlsx\""), "{cd}");
+    // no `langs` = unchanged v1.8 name
+    let r = get(&a, &dl(id, "docx"), &adm).await;
+    let cd = r.header("content-disposition").expect("disposition");
+    assert!(cd.contains("filename=\"Soup bank.docx\""), "{cd}");
+    a.state.0.activity.flush().await;
+    let details: Vec<Value> = activity_rows(&a)
+        .into_iter()
+        .map(|r| serde_json::from_str(&r.3.expect("detail")).expect("json"))
+        .collect();
+    assert_eq!(
+        details,
+        vec![
+            json!({"format": "xlsx", "langs": ["zh"], "sheets": 2, "questions": 5}),
+            json!({"format": "docx", "langs": ["en", "ja"], "sheets": 2, "questions": 5}),
+            json!({"format": "xlsx", "langs": ["en", "zh", "ja"], "sheets": 2, "questions": 5}),
+            json!({"format": "docx", "langs": ["en", "zh", "ja"], "sheets": 2, "questions": 5}),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn bad_langs_are_400_before_the_bank_lookup_and_leave_no_activity_row() {
+    let a = app();
+    let adm = admin(&a);
+    let id = import(&a, &adm, "new", "one.xlsx", &sample("one")).await;
+    for langs in [
+        "", "fr", "ZH", "zh,zh", "zh,,en", "en,", "en%20,zh", "zh-CN",
+    ] {
+        let r = get(&a, &dl_langs(id, "xlsx", langs), &adm).await;
+        assert_eq!(r.status, 400, "langs={langs:?}: {}", r.text());
+    }
+    // given twice
+    let twice = format!("/api/banks/download?id={id}&format=xlsx&langs=zh&langs=en");
+    assert_eq!(get(&a, &twice, &adm).await.status, 400);
+    // checked before the lookup: a missing bank with bad langs is 400, not 404
+    assert_eq!(
+        get(&a, &dl_langs(9999, "xlsx", "fr"), &adm).await.status,
+        400
+    );
+    assert_eq!(
+        get(&a, &dl_langs(9999, "xlsx", "zh"), &adm).await.status,
+        404
+    );
+    a.state.0.activity.flush().await;
+    assert!(activity_rows(&a).is_empty());
+}
+
+#[tokio::test]
+async fn head_with_langs_matches_get_headers_and_has_no_body() {
+    let a = app();
+    let adm = admin(&a);
+    let id = import(&a, &adm, "new", "one.xlsx", &sample("one")).await;
+    let r = call(&a, "HEAD", &dl_langs(id, "docx", "en,zh"), Some(&adm)).await;
+    assert_eq!(r.status, 200);
+    assert!(r.body.is_empty());
+    let cd = r.header("content-disposition").expect("disposition");
+    assert!(cd.contains("filename=\"one_en-zh.docx\""), "{cd}");
+    assert_eq!(
+        call(&a, "HEAD", &dl_langs(id, "docx", "xx"), Some(&adm))
+            .await
+            .status,
+        400
+    );
 }

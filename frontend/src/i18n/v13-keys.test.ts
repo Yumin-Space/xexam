@@ -9,7 +9,7 @@ import { hasKey, setUiLang, t, type MsgKey } from './index.ts';
 afterEach(() => setUiLang('en'));
 
 const GROUPS = ['auth', 'users', 'banks', 'study', 'settings', 'visit', 'ai', 'system'];
-const SLOTS = ['default', 'chat', 'study', 'summary', 'generate', 'import'];
+const SLOTS = ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'];
 const ACTIONS = [
   'auth.signin', 'auth.signout', 'auth.expired', 'auth.password', 'auth.lock', 'users.create', 'users.update', 'users.password',
   'users.unlock', 'users.delete', 'users.signinInfo', 'users.signinInfoClear', 'bank.upload', 'bank.import', 'bank.importCancel', 'bank.delete',
@@ -62,7 +62,7 @@ const KEYS: string[] = [
   'ai.set.enable.first', 'ai.set.enable.needConn', 'ai.set.enable.on', ...SLOTS.map((s) => `ai.set.slot.${s}`),
   'ai.set.slot.connOf', 'ai.set.slot.modelOf', 'ai.set.slot.pickConn', 'ai.set.slot.pickModel', 'ai.set.slot.connBad',
   'ai.set.slot.follow', 'ai.set.slot.manual', 'ai.set.slot.testing', 'ai.set.slot.switched', 'ai.set.slot.failed',
-  'ai.set.slot.fallback', 'ai.set.slot.noRoute', 'ai.set.models.refresh', 'ai.set.switches.title', 'ai.set.switches.note',
+  'ai.set.slot.fallback', 'ai.set.slot.noRoute', 'ai.set.models.refresh',
   'ai.set.switches.globalOff', 'ai.err.timeout90',
   'ai.err.branchMoved', 'ai.err.badModel', 'ai.err.nameTaken', 'ai.err.badName', 'ai.err.conflict', 'ai.err.connectionLimit',
   'ai.err.connectionInUse', 'ai.err.defaultNeeded', 'ai.err.modelInUse', 'ai.err.modelMissing', 'ai.err.keyMissing',
@@ -88,18 +88,17 @@ test('binding zh texts of the contract are exact', () => {
     ['act.a.users.signinInfoClear', '清除登录 IP 和所在地记录'], ['logs.tab.activity', '活动记录'],
     ['logs.tab.service', '运行日志'], ['act.col.ip', 'IP / 所在地 / 设备'], ['act.merged', '×{n}'], ['act.a.auth.signin', '登录'],
     ['act.a.ai.settings.keyReuse', '密钥用于新地址'], ['ai.regenerate', '重新生成'], ['ai.version.of', '第 {n} 个版本，共 {total} 个'],
-    ['ai.set.slot.study', '提示 + 解析'], ['ai.feature.study', 'AI 提示+解析'], ['ai.feature.study.short', '提示+解析'],
+    ['ai.set.slot.hint', '提示'], ['ai.set.slot.explain', '解析'], ['ai.feature.study', 'AI 提示+解析'], ['ai.feature.study.short', '提示+解析'],
     ['aiplus.explain', 'AI 解析'], ['aiplus.analyze', 'AI 解析'], ['ai.set.usage.purpose.hint', 'AI 提示'], ['ai.set.usage.purpose.explain', 'AI 解析'],
     ['ai.set.slot.noRoute', '这个功能现在没有可用的模型，已暂停。'],
     ['ai.set.card.main.pausedNoRoute', '已暂停：没有可用的模型'], ['ai.set.reuse.ok', '确认使用'], ['aigen.placeholder', '生成中 {made} / {goal}'],
     ['ai.limits.callsAdminsExempt', '管理员不受 AI 请求次数限制'], ['result.unsaved.retry', '重试保存'],
-    ['ai.set.switches.note', '关闭后对所有普通用户生效，管理员不受影响；每位用户的单独开关在“用户”页。'],
   ];
   for (const [k, zh] of want) assert.equal(t(k as MsgKey), zh, k);
 });
 
 test('the sign-in info and global switch texts say what the owner decided (en)', () => {
-  assert.match(t('ai.set.switches.note'), /administrators are not affected/i);
+  assert.match(t('ai.set.feat.adminAll'), /apply to them too/i);
   assert.equal(t('users.signinInfo.title'), 'Sign-in IP and location');
   assert.match(t('users.signinInfo.desc'), /sign-in and last activity\. The location source is set below\./);
   assert.equal(t('users.signinInfo.state.label'), 'Status');
@@ -193,10 +192,9 @@ test('v1.3: one name for the analysis and one label for the hint + analysis swit
   };
   for (const lang of ['en', 'zh', 'ja'] as const) {
     setUiLang(lang);
-    const [name, pair, slot] = want[lang];
+    const [name, pair] = want[lang];
     for (const k of ['aiplus.explain', 'aiplus.analyze', 'ai.feature.explain', 'ai.set.usage.purpose.explain']) assert.equal(t(k as MsgKey), name, `${lang} ${k}`);
     assert.equal(t('ai.feature.study' as MsgKey), pair, lang);
-    assert.equal(t('ai.set.slot.study' as MsgKey), slot, lang);
     // the caps tip names the analysis once
     assert.equal(t('ai.set.caps.tip' as MsgKey).split(name).length - 1, 1, lang);
   }

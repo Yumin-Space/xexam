@@ -3,13 +3,17 @@
 // nothing is saved unless the connection answers, so a wrong key or address never replaces a working one. A key that would
 // move to another provider or address asks for a confirmation that names the host (the server answers 409 `ai.keyReuseConfirm`).
 // A connection address with http:// only gets a note; nothing is restricted. Typed keys are forgotten after a successful save.
+// v1.9: every card has an on / off switch. Off keeps all its settings; it is only left out of the pickers and of routing, and a
+// feature that uses it says so (nothing falls back to another connection). The list is two collapsible groups, "enabled" and
+// "not enabled", both closed at first; their open state is kept for the browser session.
 import { ApiError } from '../../api/client.ts';
-import { deleteConnection, fetchAiSettings, saveConnection, testConnection } from '../../api/ai-admin.ts';
+import { deleteConnection, fetchAiSettings, saveConnection, setConnectionEnabled, testConnection } from '../../api/ai-admin.ts';
 import { field } from '../../components/fields.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
+import { miniSwitch } from '../../components/mini-switch.ts';
 import { refreshAi } from '../../state/actions.ts';
 import {
-  blankForm, confirmHostOf, connPayload, connResult, defaultUrl, fieldOfError, fieldsOf, FORMATS, formOf, formProblem, GATEWAY_AUTHS,
+  blankForm, confirmHostOf, connBad, connGroups, connOn, connPayload, connResult, defaultUrl, fieldOfError, fieldsOf, FORMATS, formOf, formProblem, GATEWAY_AUTHS,
   GATEWAY_PLACEHOLDER, headerClash, hostOf, httpWarning, inferFormat, isDirty, isRotation, keyAfter, keyLine, newDefaultChoices,
   PROVIDERS, refKey, parseRefKey, reusableFrom, suggestName, urlAfterSwitch, type ConnForm, type ConnResult,
 } from '../../domain/ai-settings.ts';
@@ -21,7 +25,7 @@ import { h } from '../../utils/dom.ts';
 import { toast } from '../../utils/toast.ts';
 import { loadModels } from './models.ts';
 import { reasonText, aiDown } from './status.ts';
-import { A, adopt, listSep, redraw } from './state.ts';
+import { A, adopt, listSep, redraw, setGroupOpen } from './state.ts';
 
 const PROVIDER_LABEL: Record<AiProvider, MsgKey> = {
   openai: 'ai.set.provider.openai', anthropic: 'ai.set.provider.anthropic', gateway: 'ai.set.provider.gateway',
@@ -120,6 +124,8 @@ async function saveForm(confirmHost?: string): Promise<void> {
       A.open = null;
       A.form = null;
       A.connMsg = { ok: true, text: resultText(r) };
+      // The new connection starts on: its group opens so it can be seen
+      setGroupOpen('on', true);
       toast(resultText(r));
       A.models = null;
       void loadModels(false);
@@ -181,6 +187,38 @@ async function retest(c: AiConnection): Promise<void> {
   stopTicker();
   redraw();
   document.getElementById(`ai-c-retest-${c.id}`)?.focus();
+}
+
+// ---------------------------------------------------------------- on / off (v1.9)
+
+/** Switches a connection on or off. Turning off one that features use asks first; the answer only changes the switch (nothing is cancelled) */
+async function toggleConn(c: AiConnection, on: boolean): Promise<void> {
+  if (A.connOnBusy != null) return;
+  if (!on && c.usedBy.length) {
+    const go = await ask({
+      title: t('ai.set.conn.offConfirm', { name: c.name }), body: t('ai.set.conn.offConfirmBody', { list: usedByText(c.usedBy) }),
+      ok: t('ai.set.conn.offConfirmGo'), danger: true,
+    });
+    if (!go) {
+      document.getElementById(`ai-c-on-${c.id}`)?.focus();
+      return;
+    }
+  }
+  A.connOnBusy = c.id;
+  A.retest[c.id] = { busy: false, msg: null };
+  redraw();
+  try {
+    adopt((await setConnectionEnabled(c.id, on)).settings);
+    // The card moves to the other group: open that group so it does not disappear
+    setGroupOpen(on ? 'on' : 'off', true);
+    void refreshAi(true);
+    void loadModels(false);
+  } catch (e) {
+    if (!aiDown(e)) A.retest[c.id] = { busy: false, msg: { ok: false, text: errorText(e) } };
+  }
+  A.connOnBusy = null;
+  redraw();
+  document.getElementById(`ai-c-on-${c.id}`)?.focus();
 }
 
 // ---------------------------------------------------------------- delete
@@ -263,15 +301,23 @@ function keyText(c: AiConnection): string {
 
 function connCard(c: AiConnection): HTMLElement {
   const unreadable = c.keys.apiKey.unreadable || c.keys.gatewayKey.unreadable;
-  const bad = c.status === 'broken' || unreadable;
+  const on = connOn(c);
+  // A connection that is off is not a problem, whatever its last status was (no red border)
+  const bad = connBad(c);
   const host = hostOf(c.baseUrl);
   const rt = A.retest[c.id];
   const busy = rt?.busy === true;
-  return h('li', { class: 'ais-conn' + (bad ? ' bad' : ''), id: `ais-conn-${c.id}` },
+  const chip = !on ? h('span', { class: 'ais-chip off' }, t('ai.set.conn.statusOff'))
+    : h('span', { class: 'ais-chip ' + (bad ? 'fail' : 'ok') },
+      bad ? t('ai.set.conn.statusBad', { reason: unreadable ? aiCodeText('ai.keyProblem') : reasonText(c.errorCode) }) : t('ai.set.conn.statusOk'));
+  return h('li', { class: 'ais-conn' + (bad ? ' bad' : '') + (on ? '' : ' off'), id: `ais-conn-${c.id}` },
     h('div', { class: 'ais-conn-head' },
       h('span', { class: 'ais-conn-name' }, c.name),
-      h('span', { class: 'ais-chip ' + (bad ? 'fail' : 'ok') },
-        bad ? t('ai.set.conn.statusBad', { reason: unreadable ? aiCodeText('ai.keyProblem') : reasonText(c.errorCode) }) : t('ai.set.conn.statusOk'))),
+      chip,
+      miniSwitch({
+        id: `ai-c-on-${c.id}`, checked: on, label: t('ai.set.conn.enableAria', { name: c.name }), disabled: A.connOnBusy != null || busy || A.connBusy,
+        onToggle: (v) => void toggleConn(c, v),
+      })),
     // A-OWNER-95: provider and address are two parts; on a phone the address is on its own line and never split
     h('p', { class: 'ais-conn-addr' },
       h('span', { class: 'ais-sum-p' }, t(PROVIDER_LABEL[c.provider]), h('span', { class: 'ais-sum-dot', 'aria-hidden': 'true' }, ' · ')),
@@ -453,9 +499,35 @@ function connForm(s: AiSettings): HTMLElement {
 
 // ---------------------------------------------------------------- the section
 
+/** One collapsible group of the list (enabled / not enabled): a header button with the count, then the cards */
+function connGroup(s: AiSettings, k: 'on' | 'off', list: AiConnection[]): HTMLElement {
+  // A form that is open for one of its connections keeps the group open (the header then does nothing)
+  const forced = typeof A.open === 'number' && A.form != null && list.some((c) => c.id === A.open);
+  const open = A.connGroupOpen[k] || forced;
+  const id = `ais-cg-${k}`;
+  const problems = list.filter(connBad).length;
+  const items: HTMLElement[] = list.map((c) => (A.open === c.id && A.form ? connForm(s) : connCard(c)));
+  if (!items.length) items.push(h('li', { class: 'ais-note' }, t('ai.set.conn.groupEmpty')));
+  return h('div', { class: 'ais-cgroup' },
+    h('button', {
+      class: 'ais-cgroup-h' + (open ? ' open' : ''), id, type: 'button', 'aria-expanded': String(open), 'aria-controls': `${id}-list`,
+      onclick: () => {
+        if (forced) return;
+        setGroupOpen(k, !open);
+        redraw();
+        document.getElementById(id)?.focus();
+      },
+    }, miniIcon('chevDown', 'ais-cg-chev'), h('span', null, t(k === 'on' ? 'ai.set.conn.groupOn' : 'ai.set.conn.groupOff', { n: list.length })),
+      // A collapsed group must not hide a broken connection: the header carries a warning with the count
+      problems ? h('span', { class: 'ais-cg-warn' }, h('span', { 'aria-hidden': 'true' }, '! '), t('ai.set.conn.groupBad', { n: problems })) : null),
+    h('ul', { class: 'ais-conns', id: `${id}-list`, hidden: !open }, items));
+}
+
 export function connectionsSection(s: AiSettings): HTMLElement {
   const full = s.connections.length >= s.maxConnections;
-  const items: HTMLElement[] = s.connections.map((c) => (A.open === c.id && A.form ? connForm(s) : connCard(c)));
+  const groups = connGroups(s);
+  // The add tile and an open "new connection" form stay outside the groups
+  const items: HTMLElement[] = [];
   if (A.open === 'new' && A.form) items.push(connForm(s));
   else {
     items.push(h('li', { class: 'ais-conn ais-conn-add' },
@@ -469,5 +541,8 @@ export function connectionsSection(s: AiSettings): HTMLElement {
     h('h2', { id: 'ais-conn-h', tabindex: '-1' }, t('ai.set.card.conn')),
     // The result of the last save (the form is closed then); a failed save shows its line inside the form
     A.connMsg && A.open == null ? h('p', { class: A.connMsg.ok ? 'ais-ok' : 'ais-ferr', role: A.connMsg.ok ? 'status' : 'alert' }, A.connMsg.text) : null,
-    h('ul', { class: 'ais-conns' }, items));
+    // Two empty groups would only be noise before the first connection exists
+    s.connections.length ? connGroup(s, 'on', groups.on) : null,
+    s.connections.length ? connGroup(s, 'off', groups.off) : null,
+    h('ul', { class: 'ais-conns ais-conns-tail' }, items));
 }

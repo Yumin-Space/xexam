@@ -90,7 +90,7 @@ jobs:
           extra=$(find . -maxdepth 1 -name 'README*' ! -name README.md ! -name README; find README -mindepth 1 ! -name README.ja.md ! -name README.zh-CN.md)
           [ -z "$extra" ] || { echo "Only README.md stays at the root and README/ holds only README.ja.md and README.zh-CN.md; found: $extra"; exit 1; }
           # The compose files and the configuration template live in docker/ (the Dockerfiles stay in backend/ and nginx/)
-          for c in docker-compose.yml docker-compose.build.yml .env.example; do
+          for c in docker-compose.yml docker-compose.build.yml docker-compose.frontend.yml docker-compose.backend.yml docker-compose.ai-service.yml .env.example; do
             [ -f "docker/$c" ] || { echo "docker/$c is missing"; exit 1; }
             [ ! -e "$c" ] || { echo "$c belongs in docker/, not at the repository root"; exit 1; }
           done
@@ -99,6 +99,29 @@ jobs:
             grep -Eq "^[[:space:]]*image: docker\.io/[a-z0-9._-]+/$img:latest[[:space:]]*$" docker/docker-compose.yml || {
               echo "docker/docker-compose.yml must pull the image with image: docker.io/<namespace>/$img:latest"; exit 1; }
           done
+          # The per-machine files (services on different machines) pull their own image, from the same namespace as docker-compose.yml
+          for pair in frontend:xexam-frontend backend:xexam-backend ai-service:xexam-ai-service; do
+            f="docker/docker-compose.${pair%%:*}.yml"; img="${pair##*:}"
+            grep -Eq "^[[:space:]]*image: docker\.io/[a-z0-9._-]+/$img:latest[[:space:]]*$" "$f" || {
+              echo "$f must pull the image with image: docker.io/<namespace>/$img:latest"; exit 1; }
+            [ "$(grep -E "^[[:space:]]*image: " "$f" | grep -v cloudflared | sed -E 's|^[[:space:]]*image: docker\.io/([a-z0-9._-]+)/.*|\1|')" = "$(grep -E "^[[:space:]]*image: docker\.io/[a-z0-9._-]+/$img:latest" docker/docker-compose.yml | sed -E 's|^[[:space:]]*image: docker\.io/([a-z0-9._-]+)/.*|\1|')" ] || {
+              echo "$f must use the same Docker Hub namespace as docker/docker-compose.yml"; exit 1; }
+          done
+          # The per-machine compose files resolve with dummy values (10.0.0.x, a 40-character dummy token), and each one stops
+          # with a message that names the variable when a required one is missing (docker compose config needs no daemon)
+          tok=0123456789012345678901234567890123456789
+          XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765 XEXAM_AI_UPSTREAM=http://10.0.0.3:8766 \
+            docker compose -f docker/docker-compose.frontend.yml config -q
+          XEXAM_BACKEND_BIND=10.0.0.2:8765 XEXAM_FRONTEND_PEERS=10.0.0.1 XEXAM_INTERNAL_TOKEN=$tok \
+            docker compose -f docker/docker-compose.backend.yml config -q
+          XEXAM_AI_BIND=10.0.0.3:8766 XEXAM_AI_BACKEND_URL=http://10.0.0.2:8765 XEXAM_FRONTEND_PEERS=10.0.0.1 XEXAM_INTERNAL_TOKEN=$tok \
+            docker compose -f docker/docker-compose.ai-service.yml config -q
+          out=$(XEXAM_BACKEND_BIND=10.0.0.2:8765 XEXAM_FRONTEND_PEERS=10.0.0.1 docker compose -f docker/docker-compose.backend.yml config -q 2>&1) && {
+            echo "docker-compose.backend.yml must refuse to resolve without XEXAM_INTERNAL_TOKEN"; exit 1; }
+          printf '%s' "$out" | grep -q XEXAM_INTERNAL_TOKEN || { echo "The error for a missing token must name XEXAM_INTERNAL_TOKEN; got: $out"; exit 1; }
+          out=$(XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765 docker compose -f docker/docker-compose.frontend.yml config -q 2>&1) && {
+            echo "docker-compose.frontend.yml must refuse to resolve without XEXAM_AI_UPSTREAM"; exit 1; }
+          printf '%s' "$out" | grep -q XEXAM_AI_UPSTREAM || { echo "The error for a missing upstream must name XEXAM_AI_UPSTREAM; got: $out"; exit 1; }
           # The nine current docs exist in three languages, one folder per language (docs/en, docs/ja, docs/zh-CN); the changelog is one of them
           for d in api architecture changelog database deployment development migration security usage; do
             for l in en ja zh-CN; do
@@ -600,10 +623,13 @@ jobs:
           fi
           ns="${HUB_NAMESPACE:-$HUB_USER}"
           # docker/docker-compose.yml and the READMEs name the Docker Hub images; they must match the namespace pushed to
-          grep -q "image: docker.io/${ns,,}/$NAME:latest" docker/docker-compose.yml || {
-            echo "::error::docker/docker-compose.yml does not pull docker.io/${ns,,}/$NAME:latest (wrong DOCKERHUB_USERNAME / DOCKERHUB_NAMESPACE, or the file names another namespace)"
-            exit 1
-          }
+          # (also the per-machine file of this image: frontend / backend / ai-service)
+          for f in docker/docker-compose.yml "docker/docker-compose.${NAME#xexam-}.yml"; do
+            grep -q "image: docker.io/${ns,,}/$NAME:latest" "$f" || {
+              echo "::error::$f does not pull docker.io/${ns,,}/$NAME:latest (wrong DOCKERHUB_USERNAME / DOCKERHUB_NAMESPACE, or the file names another namespace)"
+              exit 1
+            }
+          done
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/$NAME" >> "$GITHUB_ENV"
           echo "HUB_IMAGE=docker.io/${ns,,}/$NAME" >> "$GITHUB_ENV"
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"

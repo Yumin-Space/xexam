@@ -74,10 +74,11 @@ async fn set(e: &E, slot: &str, family: &str, level: &str) {
 }
 
 /// One distinct level per slot, so a call that used the wrong slot's row shows.
-const ROWS: [(&str, &str, &str); 6] = [
+const ROWS: [(&str, &str, &str); 7] = [
     ("default", "openai", "max"),
     ("chat", "openai", "high"),
-    ("study", "google", "LOW"),
+    ("hint", "google", "LOW"),
+    ("explain", "openai", "low"),
     ("summary", "openai", "xhigh"),
     ("generate", "openai", "medium"),
     ("import", "google", "HIGH"),
@@ -115,7 +116,7 @@ fn q1<T: rusqlite::types::FromSql>(t: &TestApp, sql: &str) -> T {
 fn all_carry(bodies: &[Value], level: &str) {
     assert!(!bodies.is_empty(), "no model call");
     for b in bodies {
-        // OpenAI / Anthropic-style bodies carry reasoning_effort; Google / Gemma carry extra_body thinking_level
+        // OpenAI / Anthropic-style bodies carry reasoning_effort; Google carries extra_body thinking_level
         let got = b["reasoning_effort"]
             .as_str()
             .or_else(|| b["reasoning"]["effort"].as_str())
@@ -138,10 +139,12 @@ async fn effort_save_round_trip() {
             "openai": ["low", "medium", "high", "xhigh", "max"],
             "google": ["MINIMAL", "LOW", "MEDIUM", "HIGH", "XHIGH"],
             "responses": ["none", "minimal", "low", "medium", "high", "xhigh", "max"],
-            "gemma": ["HIGH", "MINIMAL"],
         })
     );
-    for slot in ["default", "chat", "study", "summary", "generate", "import"] {
+    assert!(v["effortLevels"].get("gemma").is_none());
+    for slot in [
+        "default", "chat", "hint", "explain", "summary", "generate", "import",
+    ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
     }
     let (s, v) =
@@ -161,7 +164,9 @@ async fn effort_save_round_trip() {
         v["slots"]["chat"]["effort"],
         json!({"family": "openai", "level": "high"})
     );
-    for slot in ["default", "study", "summary", "generate", "import"] {
+    for slot in [
+        "default", "hint", "explain", "summary", "generate", "import",
+    ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
     }
     // a family change and the reset to the default
@@ -188,6 +193,8 @@ async fn effort_save_rejects_bad_input() {
         json!({"slot": "chat", "effort": {"family": "responses", "level": "turbo"}}),
         json!({"slot": "chat", "effort": {"family": "responses", "level": "HIGH"}}),
         json!({"slot": "chat", "effort": {"family": "deepseek", "level": "high"}}),
+        json!({"slot": "chat", "effort": {"family": "gemma", "level": "HIGH"}}),
+        json!({"slot": "chat", "effort": {"family": "gemma", "level": "MINIMAL"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "high"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "true"}}),
         json!({"slot": "chat", "effort": {"family": "gemma", "level": "false"}}),
@@ -305,11 +312,11 @@ async fn responses_effort_round_trip_and_wire() {
 }
 
 #[tokio::test]
-async fn google_and_gemma_effort_round_trip_and_wire() {
+async fn google_effort_round_trip_and_wire() {
     let e = env().await;
     for (fam, lvl) in [
-        ("gemma", "HIGH"),
-        ("gemma", "MINIMAL"),
+        ("google", "HIGH"),
+        ("google", "MINIMAL"),
         ("google", "MEDIUM"),
         ("google", "XHIGH"),
     ] {
@@ -352,11 +359,17 @@ async fn legacy_stored_levels_read_in_the_new_form() {
     set(&e, "chat", "openai", "high").await;
     for (old, want) in [
         ("google:low", json!({"family": "google", "level": "LOW"})),
-        ("gemma:true", json!({"family": "gemma", "level": "HIGH"})),
+        ("gemma:true", json!({"family": "google", "level": "HIGH"})),
         (
             "gemma:false",
-            json!({"family": "gemma", "level": "MINIMAL"}),
+            json!({"family": "google", "level": "MINIMAL"}),
         ),
+        ("gemma:HIGH", json!({"family": "google", "level": "HIGH"})),
+        (
+            "gemma:MINIMAL",
+            json!({"family": "google", "level": "MINIMAL"}),
+        ),
+        ("gemma:LOW", Value::Null),
         (
             "deepseek:max",
             json!({"family": "responses", "level": "max"}),
@@ -384,7 +397,7 @@ async fn legacy_stored_levels_read_in_the_new_form() {
 #[tokio::test]
 async fn unnamed_google_refusal_retries_without_thinking_level() {
     let e = env().await;
-    set(&e, "chat", "gemma", "MINIMAL").await;
+    set(&e, "chat", "google", "MINIMAL").await;
     e.t.stub.refuse_if_body_has(Some((
         "thinking_level",
         400,
@@ -554,9 +567,10 @@ fn hint_body(kind: &str) -> Value {
 }
 
 #[tokio::test]
-async fn hint_and_explain_send_study_slot_effort() {
+async fn hint_and_explain_send_their_own_slot_effort() {
     let e = env().await;
     set_all(&e).await;
+    // each ask sends the thinking strength of its own slot (explain also serves result and record analysis)
     for kind in ["hint", "explain"] {
         let from = n_requests(&e.t);
         let ev =
@@ -566,7 +580,7 @@ async fn hint_and_explain_send_study_slot_effort() {
                 .all()
                 .await;
         assert_eq!(terminal(&ev).0, "done", "{kind}");
-        all_carry(&calls_from(&e.t, from), level_of("study"));
+        all_carry(&calls_from(&e.t, from), level_of(kind));
     }
 }
 
@@ -936,7 +950,7 @@ fn new_file_has_model_slots_effort() {
     drop(store);
     let path = dir.path().join(DB_FILE);
     assert!(has_effort_column(&path));
-    assert_eq!(schema_of(&path), "8");
+    assert_eq!(schema_of(&path), "9");
     let c = rusqlite::Connection::open(&path).expect("open");
     let n: i64 = c
         .query_row(
@@ -945,7 +959,7 @@ fn new_file_has_model_slots_effort() {
             |r| r.get(0),
         )
         .expect("count");
-    assert_eq!(n, 6, "every seeded slot starts at the default");
+    assert_eq!(n, 7, "every seeded slot starts at the default");
 }
 
 #[test]
@@ -961,7 +975,7 @@ fn schema_8_file_without_effort_column_gains_it() {
     assert!(!has_effort_column(&path));
     drop(Store::open(dir.path(), JournalMode::Delete).expect("reopen"));
     assert!(has_effort_column(&path));
-    assert_eq!(schema_of(&path), "8", "no version change");
+    assert_eq!(schema_of(&path), "9", "no version change");
     let c = rusqlite::Connection::open(&path).expect("open");
     let slots: i64 = c
         .query_row("SELECT COUNT(*) FROM model_slots", [], |r| r.get(0))
@@ -973,7 +987,7 @@ fn schema_8_file_without_effort_column_gains_it() {
             |r| r.get(0),
         )
         .expect("count");
-    assert_eq!((slots, nulls), (6, 6), "the slot rows read as the default");
+    assert_eq!((slots, nulls), (7, 7), "the slot rows read as the default");
 }
 
 #[test]
@@ -990,10 +1004,11 @@ fn upgrade_from_7_adds_effort_column() {
     }
     drop(Store::open(dir.path(), JournalMode::Delete).expect("upgrade"));
     assert!(has_effort_column(&path));
-    assert_eq!(schema_of(&path), "8");
+    assert_eq!(schema_of(&path), "9");
 }
 
 #[test]
+// since v1.9 a new file creates `model_slots` with `effort` in its DDL, so that column is not part of this comparison
 fn new_and_repaired_files_have_the_same_sqlite_master() {
     let master = |path: &std::path::Path| -> Vec<(String, String, Option<String>)> {
         let c = rusqlite::Connection::open(path).expect("open");
@@ -1013,7 +1028,7 @@ fn new_and_repaired_files_have_the_same_sqlite_master() {
     {
         let c = rusqlite::Connection::open(&pb).expect("open");
         c.execute_batch(
-            "ALTER TABLE model_slots DROP COLUMN effort; ALTER TABLE connections DROP COLUMN responses;",
+            "ALTER TABLE connections DROP COLUMN enabled; ALTER TABLE connections DROP COLUMN responses;",
         )
         .expect("drop");
     }

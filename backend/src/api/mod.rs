@@ -354,6 +354,30 @@ fn note_rejection(st: &AppState, what: String) {
     }
 }
 
+/// Logs a request refused by the peer allow-list (`XEXAM_FRONTEND_PEERS`), about one line a minute. Only the path is
+/// logged, never the query.
+fn note_peer_refusal(peer: Option<std::net::SocketAddr>, path: &str) {
+    // Process-wide (one backend per process), so the shared `Inner` literal in the test helpers stays unchanged
+    static REFUSALS: std::sync::LazyLock<crate::logs::BurstLog> =
+        std::sync::LazyLock::new(Default::default);
+    let ip = peer.map_or_else(
+        || "unknown".to_string(),
+        |p| crate::activity::normalize_ip(p.ip()).to_string(),
+    );
+    let what = format!(
+        "a request from {ip}: the address is not in XEXAM_FRONTEND_PEERS ({})",
+        safe_path(path)
+    );
+    if let Some(report) = REFUSALS.note(std::time::Instant::now(), what) {
+        match report {
+            crate::logs::BurstReport::One(w) => tracing::warn!("refused {w}"),
+            crate::logs::BurstReport::Many { count, last } => tracing::warn!(
+                "refused {count} request(s) from addresses that are not in XEXAM_FRONTEND_PEERS since the last report; the last one: {last}"
+            ),
+        }
+    }
+}
+
 async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
     let (mut parts, body) = req.into_parts();
     // v1.3: decide once whether X-Real-IP / X-Geo-* may be believed (see `activity::apply_peer_rule`)
@@ -361,7 +385,17 @@ async fn dispatch(State(st): State<AppState>, req: Request) -> Response {
         .extensions
         .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
         .map(|c| c.0);
-    crate::activity::apply_peer_rule(&mut parts.headers, peer, st.0.cfg.behind_proxy);
+    // v1.9: with XEXAM_FRONTEND_PEERS set, an unlisted non-loopback peer sees only the unknown-route answer. The token
+    // routes (`/internal/*` except `/internal/ai/auth`) stay reachable: the AI service calls them on its own and proves
+    // itself with the internal token. Forwarded headers are believed only from listed peers.
+    let listed = st.0.cfg.frontend_peers.allows(peer);
+    let token_route =
+        parts.uri.path().starts_with("/internal/") && parts.uri.path() != "/internal/ai/auth";
+    if !listed && !token_route {
+        note_peer_refusal(peer, parts.uri.path());
+        return text_resp(StatusCode::NOT_FOUND, "not found", false);
+    }
+    crate::activity::apply_peer_rule(&mut parts.headers, peer, st.0.cfg.behind_proxy && listed);
     // v0.8: the internal routes of the AI link, before the Host guard (see `internal`)
     if parts.uri.path().starts_with("/internal/") {
         return internal::dispatch(&st, &parts.method, parts.uri.path(), &parts.headers, body)
@@ -455,7 +489,7 @@ async fn viewer_of(st: &AppState, authed: Option<&Authed>) -> Result<Viewer, App
     }
 }
 
-/// `GET /api/banks/download?id=<bank id>&format=xlsx|docx` (v1.6): one bank as a file. `authorize` has checked the session
+/// `GET /api/banks/download?id=<bank id>&format=xlsx|docx[&langs=en,zh,ja]` (v1.6, `langs` v1.9): one bank as a file. `authorize` has checked the session
 /// and the download permission. 400 for a missing or bad `id` / `format` (any key twice too), 404 `MSG_BANK_NOT_FOUND` for a
 /// missing bank and an invisible one alike, 500 when building the file fails. The file is built outside the database lock,
 /// in a blocking task that holds a `parse_gate` permit. A successful download (not HEAD) is recorded in the activity log.
@@ -470,6 +504,11 @@ async fn download_bank(
         .as_deref()
         .and_then(export::ExportFormat::parse)
         .ok_or_else(bad_request)?;
+    // v1.9: `langs` is optional (missing = all three) and checked before the bank lookup
+    let langs = match query_once(query, "langs")? {
+        None => export::Langs::ALL,
+        Some(s) => export::Langs::parse(&s).ok_or_else(bad_request)?,
+    };
     let v = viewer_of(st, authed).await?;
     let store = st.0.store.clone();
     let bank = blocking(move || store.export_bank_as(&v, id))
@@ -483,7 +522,7 @@ async fn download_bank(
             .map_err(|_| AppError::Internal)?;
     let built = tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        let bytes = export::export(&bank, format, jiff::Timestamp::now());
+        let bytes = export::export_with(&bank, format, langs, jiff::Timestamp::now());
         (bank, bytes)
     })
     .await;
@@ -501,7 +540,7 @@ async fn download_bank(
     let resp = response::attachment(
         format.mime(),
         bytes,
-        &export::content_disposition(&bank, format),
+        &export::content_disposition(&bank, format, langs),
         head_only,
     );
     if !head_only {
@@ -512,15 +551,17 @@ async fn download_bank(
                     .object(bank.name.clone())
                     .detail(json!({
                         "format": format.as_str(),
+                        "langs": langs.codes(),
                         "sheets": bank.sheets.len(),
                         "questions": bank.question_count()
                     })),
             );
             tracing::info!(
-                "user {:?} downloaded bank {:?} as {}",
+                "user {:?} downloaded bank {:?} as {} ({})",
                 a.user.username,
                 bank.name,
-                format.as_str()
+                format.as_str(),
+                langs.codes().join(",")
             );
         }
     }

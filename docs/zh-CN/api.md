@@ -494,6 +494,16 @@ flowchart LR
 - **`POST /api/attempt`**：同一次保存的重复（相同的 `key`、`startedAt` 和种类）什么都不写，回答第一次的结果再加 `"duplicate": true`。
 - **`GET /api/bank`**、**`GET /api/banks`**：响应带 `ETag` 和 `Cache-Control: private, no-cache`；`If-None-Match` 匹配时回答不带正文的 `304`。
 
+### v1.9 对公开路由的补充 *(v1.9)*
+
+**`GET` / `HEAD /api/banks/download?id=<int>&format=xlsx|docx[&langs=en,zh,ja]`** 多了可选的 `langs`：
+
+- **格式**：逗号分隔，每个词必须恰好是小写的 `en`、`zh` 或 `ja`，一到三个词，没有空词、没有重复，参数只能给一次。其他写法（`langs=`、`fr`、`zh,zh`、`ZH`、`zh,,en`，或者 `langs` 给了两次）都是 **400** `请求的格式不对。`，在查题库之前就判断，也不写活动日志。
+- **不带 = 三种语言都要**：文件名和内容与 v1.8 完全相同。
+- **`xlsx`** 保持六列的位置不变，未选的语言的单元格留空（表头行始终是完整的；不含 `en` 时文件不能再导入）。**`docx`** 只含所选的语言，顺序始终是英文、中文、日文。
+- **文件名**：三种都选时是 `<stem>.<ext>`；子集是 `<stem>_<codes>.<ext>`，代码按 en、zh、ja 的顺序用 `-` 连接（例如 `Garden_en-zh.docx`）；ASCII 备用名是 `xexam-bank-<id>_<codes>.<ext>`。
+- **活动日志**：`bank.download` 的详情是 `{"format", "langs": ["en", "zh", "ja"]（所选子集，按这个顺序）, "sheets", "questions"}`。
+
 ## 5. AI 路由（`/api/ai/*`，v0.8）
 
 `/api/ai/` 下面的路由由 ai-service（`ai-service` 容器，镜像 `xexam-ai-service`）响应，而不是后端。Nginx 先把每个这样的请求交给后端的认证步骤（第 6 节），只有后端允许时才转发，而且去掉浏览器的 Cookie，换上后端签名的身份声明（`X-Xexam-Identity`）。所以客户端调用它们的方式和其他路由完全一样：同源，带会话 Cookie；客户端不能自己设置身份（Nginx 总会覆盖这个请求头）。
@@ -558,6 +568,7 @@ flowchart LR
 | POST | `/api/ai/admin/connections/test` | 管理员 | `{"id": <id>}` | `Settings` |
 | POST | `/api/ai/admin/connections/delete` | 管理员 | `{"id": <id>, "force"?, "newDefault"?}` | `Settings` |
 | POST | `/api/ai/admin/connections/order` | 管理员 | `{"ids": [<id>, …]}` | `Settings` |
+| POST | `/api/ai/admin/connections/enabled` | 管理员 | `{"id": <id>, "enabled": <bool>}` | `{"settings": Settings}` *(v1.9，5.11 节)* |
 | POST | `/api/ai/admin/models/pick` | 管理员 | `{"slot", "connectionId", "model", "manual"?}` 或 `{"slot", "clear": true}` | `Settings`；测试失败时为 `{"ok": false, "code", …}` |
 | POST | `/api/ai/admin/models/test` | 管理员 | `{"connectionId": <id>, "model": "…"}` | `Settings` |
 | POST | `/api/ai/admin/models/remove` | 管理员 | `{"poolId": <id>}` | `Settings` |
@@ -571,7 +582,7 @@ flowchart LR
 | GET | `/api/ai/admin/chat` | 管理员 | `?user=<用户 id>&id=<对话 id>` | `{"chat": ChatSummary, "messages": [Message]}`，**记入审计**；对话必须属于那个用户（否则 404，不写审计日志） |
 | POST | `/api/ai/admin/clear` | 管理员 | `{"userId": <id>, "what": "chat", "chatId": <id>}`，或 `{"userId": <id>, "what": "chats" \| "memories"}`，或只有 `{"what": "shared"}`（v1.3：共享的提示 / 解析） | `{"deleted": <n>}`，**记入审计** |
 | GET | `/api/ai/admin/limits` | 管理员 | | `{"limits": {…}, "defaults": {…}, "ranges": {"<键>": [min, max], …}}` |
-| POST | `/api/ai/admin/limits` | 管理员 | 33 个上限键（见下面的 `admin/limits` 和 **功能键与上限**）中的任意几个，整数 | 和 GET 一样 |
+| POST | `/api/ai/admin/limits` | 管理员 | 36 个上限键（见下面的 `admin/limits` 和 **功能键与上限**）中的任意几个，整数 | 和 GET 一样 |
 | GET | `/api/ai/admin/geo` | Admin | | 外部所在地查询的设置（*v1.4*，5.9 节） |
 | POST | `/api/ai/admin/geo/test` · `/save` · `/enable` · `/delete` | Admin | 草稿，或 `{}` | 5.9 节 |
 
@@ -751,6 +762,8 @@ data: {"status":"done","tokensIn":38,"tokensOut":112,"truncated":false}
 | `ai.modelMissing` | 400 | 请先选择模型。 |
 | `ai.badRetention` | 400 | 保留天数必须在 1 到 3650 之间。 |
 | `ai.limitRange` | 400 | 某个上限不是它范围内的整数（`field`）。 |
+| `ai.connectionOff` | 409 | 功能、默认模型或对话所选的 AI 连接已停用（v1.9）。 |
+| `ai.gen.providerDaily` | 任务错误 | 服务商当天的额度已用完，任务已停止，也没有计费（v1.9）。 |
 | `ai.interrupted` | （保存在数据库里） | 服务重启，回答被中断了。 |
 | `ai.up.auth` | 502 | AI 服务商拒绝了这个密钥。 |
 | `ai.up.quota` | 502 | AI 服务商账号的额度或余额不足。 |
@@ -881,7 +894,7 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 
 可能遇到的状态码：`ai.gen.quota`（429，当日生成配额已用完，附带 `Retry-After`）、`ai.gen.busy`（409，该用户的另一个任务正在运行；`job` 可能为 `null`）、`ai.gen.aiSource`（422，AI 题库永远不能作为来源）、`ai.featureOff`（403，该用户关闭了此功能）、`ai.gen.forbidden`（403，任务等待期间权限已被移除）、`ai.suspended`（403，该用户的 AI 已暂停）。
 
-**功能键与上限。** `GET /api/ai/status` 与 `POST /api/ai/admin/features` 携带六个 `features` 键：`chat`、`hint`、`explain`、`summary`、`generate`、`import`。从 v1.3 起，`hint` 和 `explain` 是同一个开关（**AI 提示+解析**）：页面总是把两者设成相同的值，服务端也保证两者相等（只改其中一个的请求会让两个一起变）。`GET` 与 `POST /api/ai/admin/limits` 携带 33 个键：v1.0 的十个，生成相关的键（`genPerDay`、`genAdminsExempt`、`genMinSource`、`genMinWrong`、`genBankSingle`、`genBankMulti`、`genWrongSingle`、`genWrongMulti`、默认 20000 的 `genCallTokens`（1000 到 250000 个 Token）、默认 15 的 `genMaxCalls`），默认 25 的 `importMaxCalls`、默认 20 的 `recognizeMaxCalls`（一个文件的识别步骤最多调用 AI 的次数）、`genRunning`、默认 20 的 `importMaxMb`，以及默认 100（1 到 300）的 `importMaxQuestions`。两个调用上限都是 8 到 40，对所有人生效，包括管理员。v1.3 的六个键：`callsAdminsExempt`（0 或 1，默认 1：管理员不受每用户调用上限限制，调用仍会记录）、`studyShare`（0 或 1，默认 1）、`studyShareDays`（7 到 3650，默认 180）、`genMaxChunks`（1 到 50，默认 8）、`summaryMaxItems`（10 到 70，默认 40）和 `dailyTokenBudget`（0 到 100000000，默认 0 = 关）。
+**功能键与上限。** `GET /api/ai/status` 与 `POST /api/ai/admin/features` 携带六个 `features` 键：`chat`、`hint`、`explain`、`summary`、`generate`、`import`。从 v1.3 到 v1.8 期间 `hint` 和 `explain` 是同一个开关；**从 v1.9 起六个全局开关互相独立**（只改其中一个的请求只改那一个；“用户管理”里每个用户的位仍然成对）。`GET` 与 `POST /api/ai/admin/limits` 携带 36 个键（v1.9 增加了 `paceOn`、`paceRpm` 和 `paceTpm`，见 5.11 节）：v1.0 的十个，生成相关的键（`genPerDay`、`genAdminsExempt`、`genMinSource`、`genMinWrong`、`genBankSingle`、`genBankMulti`、`genWrongSingle`、`genWrongMulti`、默认 20000 的 `genCallTokens`（1000 到 250000 个 Token）、默认 15 的 `genMaxCalls`），默认 25 的 `importMaxCalls`、默认 20 的 `recognizeMaxCalls`（一个文件的识别步骤最多调用 AI 的次数）、`genRunning`、默认 20 的 `importMaxMb`，以及默认 100（1 到 300）的 `importMaxQuestions`。两个调用上限都是 8 到 40，对所有人生效，包括管理员。v1.3 的六个键：`callsAdminsExempt`（0 或 1，默认 1：管理员不受每用户调用上限限制，调用仍会记录）、`studyShare`（0 或 1，默认 1）、`studyShareDays`（7 到 3650，默认 180）、`genMaxChunks`（1 到 50，默认 8）、`summaryMaxItems`（10 到 70，默认 40）和 `dailyTokenBudget`（0 到 100000000，默认 0 = 关）。
 
 **内部路由**（`/internal/*`，后端与 ai-service 之间，需要令牌）：`/internal/ai/gen/source`、`/internal/ai/gen/seeds`、`/internal/ai/gen/create`（唯一接受 10 MiB 正文的路由；其他内部路由仍为 64 KiB）、`/internal/ai/gen/lookup`、`/internal/ai/import/check`。
 
@@ -917,10 +930,10 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 | `POST connections/save` | 用 `id`、`rev`、`name`、`provider`、`baseUrl`、`format`、`gatewayAuth`、`apiKey`、`gatewayKey`、`reuseKeysFrom`、`confirmHost` 创建或修改连接。先测试；测试失败回答 `{"ok": false, "saved": false, "code": …}`。错误：`ai.badUrl`、`ai.badKey`、`ai.headerClash`、`ai.badName`、`ai.nameTaken`、`ai.conflict`、`ai.connectionLimit`、`ai.busy`、`ai.keyMissing`、`ai.keyReuseConfirm`（`host`、`oldHost`、`slots`） |
 | `POST connections/test`、`delete`、`order` | 测试、删除（`ai.connectionInUse`、`ai.defaultNeeded`、`newDefault`）和排序 |
 | `GET models?refresh=` | 每个可用连接的模型（缓存 10 分钟） |
-| `POST models/effort` | *(v1.6)* `{"slot", "effort"}`：`effort` 是 `null`（默认，什么都不发送）或 `{"family", "level"}`（`family`：`anthropic`、`openai`、`google`、`responses`、`gemma`；级别见 [usage.md](usage.md) 的 17.9 节）。保存后回答 `{"settings": …}`；系统日志事件 `ai.settings.effort`。不认识的键、一族或级别 → 400 |
+| `POST models/effort` | *(v1.6)* `{"slot", "effort"}`：`effort` 是 `null`（默认，什么都不发送）或 `{"family", "level"}`（`family`：`anthropic`、`openai`、`google`、`responses`（`gemma` 已在 v1.9 移除，返回 400）；级别见 [usage.md](usage.md) 的 17.9 节）。保存后回答 `{"settings": …}`；系统日志事件 `ai.settings.effort`。不认识的键、一族或级别 → 400 |
 | `POST models/pick`、`models/test`、`models/remove` | 给槽位指定模型（先测试）、测试一个、从池里移除（`ai.modelInUse`） |
 | `POST enable` | `{"enabled", "default"}`；槽位为空时必须给默认模型，并会测试 |
-| `POST feature-switches` | `chat`、`hint`、`explain`、`summary`、`generate`、`import` 中的任意几个；只针对普通用户。`hint` 和 `explain` 总是一起变 |
+| `POST feature-switches` | `chat`、`hint`、`explain`、`summary`、`generate`、`import` 中的任意几个；对所有人生效，包括管理员（v1.9）。每个键单独变化 |
 | `GET/POST limits` | v1.2 的上限，加上 `callsAdminsExempt`、`studyShare`、`studyShareDays`、`genMaxChunks`、`summaryMaxItems`、`dailyTokenBudget`；`importMaxQuestions` 为 1 到 300（默认 100） |
 | `GET usage` | 另有 `byConnection`、`shared`（行数、命中数）和 `budget` |
 | `POST clear` | 另有范围 `shared` |
@@ -979,6 +992,18 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **思考强度**：`GET settings` 的回答里，每个槽位多一个 `slots.<slot>.effort`（`null` 或 `{"family", "level"}`），顶层多一个 `effortLevels`（每一族可用的级别，按发送的写法）。参数：Anthropic `output_config.effort`，OpenAI `reasoning_effort`，Google `extra_body.google.thinking_config.thinking_level`，Responses API 嵌套的 `reasoning.effort`，Gemma `thinking_level`（和 Google 位置相同）。带参数的请求被拒绝（HTTP 400 / 422）时，去掉参数再发送一次，并在内存里记住这个连接不支持它；**默认**什么都不发送。
 - **结构化的题目回答**：要求回答是题目时，ai-service 向服务商要结构化输出（Anthropic `output_config.format` json_schema，OpenAI 兼容 `response_format` json_schema strict，OpenAI Responses `text.format`：`{"type":"json_schema","name":"answer","strict":true,"schema":...}`），服务商拒绝时改用普通请求（按连接记住）。每道题的正确选项只在 `answer` 字段里写一次（字母）；旧的每个选项一个 `correct` 的写法仍然能读。
 - **补查**：`POST /internal/ai/geo/source` 把来源设为 `api`（或 5.9 节的服务商设置被保存）之后，后端会把没有所在地的已存地址再查一遍（见 [usage.md](usage.md) 的 14.2 节）。补查走同一对 `geo/next` / `geo/result` 路由：实时查询优先，补查每分钟 30 次，限流时暂停 15 分钟，每个地址最多 3 次，已有的所在地从不被覆盖。
+
+### 5.11 连接开关、按功能的开关、安全上限分组和匀速发送 *(v1.9)*
+
+- **`POST /api/ai/admin/connections/enabled`**（管理员）。请求体恰好是 `{"id": <正整数>, "enabled": <布尔值>}`；缺键、类型不对或有多余的键是 400 `ai.badRequest`，id 不存在是 404 `ai.notFound`。返回 200 `{"settings": Settings}`，没有变化时也一样。停用后，连接的所有设置、密钥和池里的模型都保留，但它不再出现在任何选择器里，也不参与路由。它不会增加连接的 `rev`，不会取消正在进行的调用，并会立即触发一次心跳。活动事件是 `ai.settings.connectionOn` 或 `ai.settings.connectionOff`（对象：连接名；详情 `{"provider", "host"}`）。停用的连接仍然可以做 `connections/test`。
+- **`enabled`** 是 Settings 对象里 `connections[]` 每一项的布尔字段，也在 `GET /api/ai/admin/models` 的每个连接里。停用的连接在那里是 `{"id", "name", "provider", "status", "enabled": false, "listed": false, "error": null, "models": []}`，不调用服务商，也不读缓存。
+- **`ai.connectionOff`（409）** 取代任何回退：对已停用连接的选择（`models/pick`、带默认模型选择的 `admin/enable`、`chat/model`）会被它拒绝；已保存或给出的选择落在停用连接上的发送、重新生成、编辑、重试，以及槽位（或它跟随的默认）落在停用连接上的学习、总结、出题、导入调用，都会以它失败。已保存的选择保持不变（`chats.pick_conn` 不变）。
+- **槽位**：Settings 对象里的 `slots` 有七个键，顺序是 `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`（`study` 没有了，在 `models/pick` 和 `models/effort` 里是 400）。`explain` 也用于成绩和记录的分析。`effortLevels` 有四个键：`anthropic`、`openai`、`google`、`responses`。
+- **功能开关**：`POST feature-switches` 的请求体不变（六个键的任意子集），但每个键现在单独变化，关闭的功能对**所有人（包括管理员）**都不可用：正在进行的调用对所有人取消，新的请求返回 403 `ai.featureOff`。管理员的 `GET /api/ai/status` 里的 `features` 反映全局开关（每个用户的位仍然从不作用于管理员；每个用户的位仍然把 `hint` 和 `explain` 绑在一起）。
+- **限额**：`admin/limits` 有 36 个键，即 v1.8 的 33 个，外加追加在末尾的 `paceOn`（0 或 1，默认 1）、`paceRpm`（1 到 10 000，默认 15）和 `paceTpm`（1 000 到 100 000 000，默认 250 000）；超出范围是 400 `ai.limitRange`（带 `field`）。改 `genUnlimited` 或 `importUnlimited` 从不触及它们。实际生效值是 90%（15 对应每分钟 13 次请求，250 000 对应 225 000 tokens），调用在 60 秒滑动窗口里均匀发出（60 / 13 秒，约 4.6 秒一次），每次调用发出前先估算 tokens，并行宽度会缩小到刚好够用。它只控制 AI 出题和 AI 导入。
+- **服务商返回 429**：限速的回答会按服务商给出的时间等待后重试（每次调用最多 10 次，不算错误，始终有效，`paceOn` 为 0 时也一样）。当天额度用完时，任务以任务错误 `ai.gen.providerDaily` 停止（不计费），显示为 **AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。**
+- **任务的 `waiting`**：每个任务对象（`/api/ai/gen/job`、`/api/ai/admin/gen`、导入的返回）都有 `"waiting": bool`，只有任务排队或运行中、并且在等服务商额度时才为 true。页面在 8 秒后显示 **等待额度…**。
+- **新文案**（`error`，中文；页面按语言显示自己的文案）：`ai.connectionOff` 这个功能使用的 AI 连接未启用，请联系管理员。 `ai.gen.providerDaily` AI 服务商今天的额度已用完，任务已停止。请明天再试，或请管理员更换模型。
 
 ## 6. 内部路由（`/internal/*`，v0.8）
 
@@ -1188,6 +1213,12 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **AI 设置**：`POST /api/ai/admin/models/effort`；设置的回答带 `slots.<slot>.effort` 和 `effortLevels`；系统日志事件 `ai.settings.effort`。
 - **补查**：见 5.10 节；内部路由没有新增。
 - **版本**：`GET /api/info` 返回 `"version": "1.6"`，AI 服务的 `/healthz` 也一样。
+
+### v1.9 的变化（相对 v1.8）
+
+- **新增**：`POST /api/ai/admin/connections/enabled`；连接上的 `enabled`；`ai.connectionOff`（409）和 `ai.gen.providerDaily`；任务对象上的 `waiting`；`GET /api/banks/download` 的 `langs`。
+- **变化**：七个槽位（`study` 拆成 `hint` 和 `explain`）；四个思考强度系列（`gemma` 移除，返回 400）；全局功能开关互相独立，对管理员也生效；`admin/limits` 有 36 个键；`bank.download` 的活动详情里有 `langs`。
+- **数据库**：AI 数据库启动时先做备份副本，再升级到 schema 9（见 [database.md](database.md) 的 8.2f 节）。主数据库和上面没有列出的公开路由都不变。
 
 ## 8. 调用示例
 

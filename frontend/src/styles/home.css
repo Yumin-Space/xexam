@@ -278,7 +278,14 @@
 .home-latest-acts .home-cell > .aip-tipwrap, .home-latest-acts .home-cell > .aip-grp-inline { display: flex; flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
 .home-latest-acts .home-cell .aip-sum-btn { flex: 1 1 auto; white-space: normal; }
 .home-latest-acts .hm-fwd { width: 14px; height: 14px; flex: none; }
-.home-latest-acts .hm-short, .home-latest-acts .hm-ai-na { display: none; }
+.home-latest-acts .hm-short { display: none; }
+/* v1.9: a greyed AI summary carries its 无法使用 tag inside the button at every width; the tag after the button never shows */
+/* look = .gen-na of the greyed AI 生成题 button (ai-gen.css; this sheet may load without it); the button's own gap spaces it */
+.home-latest-acts .hm-ai-na {
+  display: inline-block; flex: none; margin: 0; padding: 1px 6px; border-radius: 4px; background: var(--card); color: var(--ink3);
+  font-size: 11px; font-weight: 600; line-height: 1.5; white-space: nowrap;
+}
+.home-latest-acts .home-cell .aip-grp-inline > .aip-na { display: none; }
 @media (pointer: coarse), (max-width: 480px) {
   .home-latest-acts > .btn, .home-latest-acts .home-cell .aip-sum-btn { min-height: 44px; }
 }
@@ -294,15 +301,13 @@
   .home-latest-acts .hm-full { display: none; }
   .home-latest-acts .hm-short { display: inline; }
   .home-latest-acts .hm-ai-lbl { display: none; }
-  .home-latest-acts .hm-ai-na { display: inline-block; margin: 0; }
-  .home-latest-acts .home-cell .aip-grp-inline > .aip-na { display: none; }
+  .home-latest-acts .hm-ai-na { margin: 0; }
 }
 @container (max-width: 440px) {
   .home-latest-acts .hm-full { display: none; }
   .home-latest-acts .hm-short { display: inline; }
   .home-latest-acts .hm-ai-lbl { display: none; }
-  .home-latest-acts .hm-ai-na { display: inline-block; margin: 0; }
-  .home-latest-acts .home-cell .aip-grp-inline > .aip-na { display: none; }
+  .home-latest-acts .hm-ai-na { margin: 0; }
 }
 @container (max-width: 330px) {
   .home-latest .acts.home-latest-acts { gap: 3px; }

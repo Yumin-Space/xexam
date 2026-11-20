@@ -11,7 +11,7 @@ const mk = (_ns: string, tag: string): El => {
 
 test('each family gives a monochrome hidden svg with a path', () => {
   (globalThis as unknown as { document: unknown }).document = { createElementNS: mk };
-  for (const f of ['anthropic', 'openai', 'google', 'responses', 'gemma'] as const) {
+  for (const f of ['anthropic', 'openai', 'google', 'responses'] as const) {
     const s = providerIcon(f) as unknown as El;
     assert.equal(s.tag, 'svg');
     assert.equal(s.attrs['aria-hidden'], 'true');
@@ -23,14 +23,15 @@ test('each family gives a monochrome hidden svg with a path', () => {
 });
 
 test('provider names', () => {
-  assert.deepEqual(PROVIDER_NAME, { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', responses: 'Responses API', gemma: 'Gemma' });
-  assert.deepEqual(Object.keys(PROVIDER_NAME), ['anthropic', 'openai', 'google', 'responses', 'gemma']);
-  assert.deepEqual(EFFORT_FAMILIES, ['anthropic', 'openai', 'google', 'responses', 'gemma'], 'row order after [Default]');
+  assert.deepEqual(PROVIDER_NAME, { anthropic: 'Anthropic', openai: 'OpenAI', google: 'Google', responses: 'Responses API' });
+  assert.deepEqual(Object.keys(PROVIDER_NAME), ['anthropic', 'openai', 'google', 'responses']);
+  assert.deepEqual(EFFORT_FAMILIES, ['anthropic', 'openai', 'google', 'responses'], 'row order after [Default]');
 });
 
 test('tooltip is the parameter sent, aria-label carries provider and parameter', () => {
-  assert.deepEqual(EFFORT_FAMILIES.map(effortTip), ['output_config.effort', 'reasoning_effort', 'thinking_level', 'reasoning.effort', 'thinking_level']);
+  assert.deepEqual(EFFORT_FAMILIES.map(effortTip), ['output_config.effort', 'reasoning_effort', 'thinking_level', 'reasoning.effort']);
   assert.equal(effortAria('anthropic'), 'Anthropic, output_config.effort');
   assert.equal(effortAria('responses'), 'Responses API, reasoning.effort');
-  assert.equal(effortAria('gemma'), 'Gemma, thinking_level');
+  assert.equal(effortAria('google'), 'Google, thinking_level');
+  assert.ok(!('gemma' in PROVIDER_NAME));
 });

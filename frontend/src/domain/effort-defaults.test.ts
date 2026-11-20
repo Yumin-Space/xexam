@@ -50,7 +50,7 @@ test('deepseek model ids default to high under the Responses API family; levels 
   assert.equal(levelForFamily('MINIMAL', ds), 'minimal');
 });
 
-test('Gemma models default to HIGH; the level list is HIGH / MINIMAL', () => {
+test('Gemma models default to HIGH (they use the Google level list HIGH / MINIMAL)', () => {
   for (const m of ['gemma-4-31b-it', '@cf/google/gemma-4-26b-a4b-it', 'google/gemma-3-27b']) assert.equal(knownDefault(m), 'HIGH', m);
   const g = ['HIGH', 'MINIMAL'];
   assert.equal(levelForFamily('MINIMAL', g), 'MINIMAL');

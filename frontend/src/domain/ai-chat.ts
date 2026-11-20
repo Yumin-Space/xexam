@@ -8,7 +8,7 @@
 // add a version, the version switcher moves between them, and administrators pick a model per chat. The model's reasoning
 // (frames `reasoning` / `reasoningDone`, fields `reasoning*` of a message) is shown as a collapsible block above the answer:
 // `reasoningView` decides whether it is there, live (open while it streams) and open.
-import { modelRefText } from '../api/model-ref.ts';
+import { modelRefText, parseModelRef } from '../api/model-ref.ts';
 import type { AiChatDetail, AiChatKind, AiMessage, AiModelList, ModelRef, UiLang } from '../types/api.ts';
 
 /** A message as the page shows it: `thinking` (view only, never from the server) = a reasoning model thinks, no text yet */
@@ -376,43 +376,85 @@ export function editValid(s: ChatView, e: EditState): boolean {
   return m != null && m.role === 'user' && (m.kind ?? 'chat') === 'chat' && m.id > 0;
 }
 
-// ---------------------------------------------------------------- the administrators' model menu (v1.3)
+// ---------------------------------------------------------------- the administrators' model picker (v1.3, v1.9)
 
-export interface ModelChoice { value: string; label: string }
-export interface ModelGroup { connectionId: number; name: string; options: ModelChoice[] }
+/** A model of the picker's second list; `value` is `<connectionId>:<model>`; `isDefault` marks the AI Chat default model */
+export interface ChatModelOpt { value: string; label: string; isDefault: boolean }
+/** A connection of the picker's first list (listed = enabled, working and with at least one usable model) */
+export interface ChatConnOpt { id: number; name: string; models: ChatModelOpt[] }
+/** The AI Chat default as the status gives it */
+export type ChatDefault = { connectionId: number; connectionName: string; model: string } | null;
+/**
+ * What the picker offers. `loaded` false = the model list is not here yet (the pick is kept, nothing is offered);
+ * `off` = the chat's pick sits on a connection that is switched off (`name` null when the list does not name it).
+ */
+export interface ChatMenu { loaded: boolean; conns: ChatConnOpt[]; off: { name: string | null } | null }
 
 /**
- * The menu's models: every model a working connection's model listing returns, grouped by connection and in the listing's
- * order: the pool models (the ones added to the connection in AI settings) and the models the provider's catalogue names
- * that were not added (`poolId` null, `status` null) alike. Left out: a pool model that failed its test, a broken connection
- * and a connection with nothing left. An untested pool model stays (the server routes a pick by its connection, not by the
- * model's status). A chat shows exactly one current model: its own pick while that is usable, else the default. So a stored
- * pick that is not in the menu is added on top (`extra`) only when its connection is listed and working (a model the
- * connection no longer lists, or one whose test failed); a pick of a removed or broken connection is not shown, and the
- * select shows the default (the server answers with it as well). While the list is not loaded yet (`null`) the pick is kept,
- * so a valid one does not flash as the default.
+ * The picker's lists. A listed connection is enabled (`enabled !== false`), working (`status` 'ok') and has at least one model
+ * that did not fail its test; the models come in the listing's order (pool models and catalogue models alike) and the one
+ * equal to `def` is marked. A stored pick that its listed connection no longer offers (a failed or unlisted model) comes first
+ * in that connection's models, so the chat's current model is always visible. A pick on a connection that is present but off
+ * is reported in `off`; a pick on a broken or removed connection is neither listed nor `off` (the server falls back to the
+ * default, and the picker shows the default). While the list is not loaded (`null`) the pick is kept.
  */
-export function modelMenu(list: AiModelList | null, pick: ModelRef | null): { groups: ModelGroup[]; extra: ModelChoice | null } {
-  const groups: ModelGroup[] = [];
-  for (const c of list?.connections ?? []) {
+export function chatMenu(list: AiModelList | null, pick: ModelRef | null, def: ChatDefault): ChatMenu {
+  if (!list) return { loaded: false, conns: [], off: null };
+  const defText = def ? modelRefText({ connectionId: def.connectionId, model: def.model }) : null;
+  const conns: ChatConnOpt[] = [];
+  let off: ChatMenu['off'] = null;
+  for (const c of list.connections) {
+    if (c.enabled === false) {
+      if (pick?.connectionId === c.id) off = { name: c.name };
+      continue;
+    }
     if (c.status !== 'ok') continue;
-    const options = c.models.filter((m) => m.status !== 'failed').map((m) => ({ value: modelRefText({ connectionId: c.id, model: m.id }), label: m.id }));
-    if (options.length) groups.push({ connectionId: c.id, name: c.name, options });
+    const models: ChatModelOpt[] = c.models.filter((m) => m.status !== 'failed').map((m) => {
+      const value = modelRefText({ connectionId: c.id, model: m.id });
+      return { value, label: m.id, isDefault: value === defText };
+    });
+    if (!models.length) continue;
+    if (pick?.connectionId === c.id && !models.some((m) => m.label === pick.model)) {
+      const value = modelRefText(pick);
+      models.unshift({ value, label: pick.model, isDefault: value === defText });
+    }
+    conns.push({ id: c.id, name: c.name, models });
   }
-  const text = pick ? modelRefText(pick) : null;
-  const known = text != null && groups.some((g) => g.options.some((o) => o.value === text));
-  const usable = !list || list.connections.some((c) => c.id === pick?.connectionId && c.status === 'ok');
-  return { groups, extra: pick && text != null && !known && usable ? { value: text, label: pick.model } : null };
+  return { loaded: true, conns, off };
 }
 
 /**
- * The value the select shows for `selected` (the unsent choice, at first the stored pick): itself while the menu offers it,
- * else '' (the default). A stored pick the menu does not offer (its connection is broken, or was removed while the chat was
- * open) shows as the default; the request still carries "unchanged" (`modelArg`), so the server falls back and clears it.
+ * The value the picker shows for `selected` (the unsent choice, at first the stored pick): itself while the menu offers it
+ * (or keeps it: list not loaded, or the pick is on an off connection), else '' (the default). A stored pick on a broken or
+ * removed connection shows as the default; the request still carries "unchanged" (`modelArg`), so the server falls back.
  */
-export function modelShown(selected: string, menu: { groups: ModelGroup[]; extra: ModelChoice | null }): string {
-  if (selected === '' || menu.extra?.value === selected) return selected;
-  return menu.groups.some((g) => g.options.some((o) => o.value === selected)) ? selected : '';
+export function chatShown(selected: string, menu: ChatMenu): string {
+  if (selected === '' || !menu.loaded || menu.off) return selected;
+  return menu.conns.some((c) => c.models.some((m) => m.value === selected)) ? selected : '';
+}
+
+/** What the two lists show: the connection (null = the placeholder) and the model value ('' = the placeholder) */
+export interface PickerView { connId: number | null; modelValue: string }
+
+/**
+ * Pending connection (only the first list was changed): that connection and no model. Else a chosen model: its connection
+ * and value. Else the AI Chat default while its connection is listed. Else nothing (both placeholders).
+ */
+export function pickerView(selected: string, pendingConn: number | null, menu: ChatMenu, def: ChatDefault): PickerView {
+  if (pendingConn != null) return { connId: pendingConn, modelValue: '' };
+  if (selected !== '') {
+    const ref = parseModelRef(selected);
+    return ref ? { connId: ref.connectionId, modelValue: selected } : { connId: null, modelValue: '' };
+  }
+  if (def && menu.conns.some((c) => c.id === def.connectionId)) {
+    return { connId: def.connectionId, modelValue: modelRefText({ connectionId: def.connectionId, model: def.model }) };
+  }
+  return { connId: null, modelValue: '' };
+}
+
+/** What a chosen model value means for the chat: the default model means "follow the default" ('') */
+export function chooseValue(value: string, def: ChatDefault): string {
+  return def && value === modelRefText({ connectionId: def.connectionId, model: def.model }) ? '' : value;
 }
 
 /** The model a request carries: undefined = nothing changed (the server uses the stored pick), null = back to the default */

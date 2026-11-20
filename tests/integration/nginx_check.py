@@ -35,6 +35,13 @@ v1.3 (N1): the header blocks of the proxied locations live in /etc/nginx/snippet
   /api/ai/admin/connections/test location; gzip on JSON and not on the event stream; ETag / If-None-Match / 304 pass through; coded
   error bodies (net.tooLarge, net.backendDown).
 
+v1.9: the upstreams and the DNS resolver are no longer fixed names in nginx.conf: 16-xexam-upstreams.sh renders
+  /tmp/xexam-upstreams.conf from XEXAM_BACKEND_UPSTREAM / XEXAM_AI_UPSTREAM / XEXAM_NGINX_RESOLVER (defaults = the one-host
+  names and Docker's DNS, no proxy_ssl lines). Checked here: the defaults and the `set` lines (read from nginx -T after every
+  1*-xexam-*.sh start-up script ran), routing to two other fakes by name and by IP literal (also the AI auth step), the value
+  parser matrix (good and bad values of all three variables, an https upstream turns the certificate check on, nothing is
+  left behind after a refusal, the message is cut to 200 characters) and a container with a bad value that exits non-zero.
+
 Usage: python -I tests/integration/nginx_check.py <image, default xexam-frontend:test> [port, default 18080]
 Uses only Docker and the standard library; the containers and the network carry the prefix xexam-nginxcheck- plus a random
 suffix and are removed at the end."""
@@ -61,6 +68,8 @@ AI = 'xexam-nginxcheck-ai-' + RUN
 WEB = 'xexam-nginxcheck-web-' + RUN
 WEB2 = 'xexam-nginxcheck-webt-' + RUN      # trusts the test client's address (real-IP matrix)
 WEB3 = 'xexam-nginxcheck-webi-' + RUN      # invalid XEXAM_TRUSTED_PROXIES (fail closed)
+BE_OTHER = 'xexam-nginxcheck-beo-' + RUN   # v1.9: a second fake backend (alias be-other, port 9765)
+AI_OTHER = 'xexam-nginxcheck-aio-' + RUN   # v1.9: a second fake AI service (alias ai-other, port 9766)
 
 # One fake for both upstreams. ECHO_NAME / ECHO_PORT choose the role; every answer carries X-Echo-Name, every request is
 # printed (method and path) to stdout.
@@ -75,11 +84,14 @@ ECHO = r'''
 import http.server, json, os, sys, time, urllib.parse
 NAME = os.environ.get("ECHO_NAME", "backend")
 PORT = int(os.environ.get("ECHO_PORT", "8765"))
+TAG = os.environ.get("ECHO_TAG", "")   # v1.9: tells two fakes of the same role apart (X-Echo-Tag)
 class H(http.server.BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     def _send(self, status, body=b"", headers=()):
         self.send_response(status)
         self.send_header("X-Echo-Name", NAME)
+        if TAG:
+            self.send_header("X-Echo-Tag", TAG)
         for k, v in headers:
             self.send_header(k, v)
         if status not in (204, 304):
@@ -164,13 +176,13 @@ def sh(*a, check=True):
 
 
 def cleanup():
-    for c in (WEB, WEB2, WEB3, BACK, AI):
+    for c in (WEB, WEB2, WEB3, BACK, AI, BE_OTHER, AI_OTHER):
         sh('docker', 'rm', '-f', c, check=False)
     sh('docker', 'network', 'rm', NET, check=False)
 
 
-def req(method, path, headers=None, body=None, host=None, timeout=15):
-    c = http.client.HTTPConnection('127.0.0.1', PORT, timeout=timeout)
+def req(method, path, headers=None, body=None, host=None, timeout=15, port=None):
+    c = http.client.HTTPConnection('127.0.0.1', port or PORT, timeout=timeout)
     h = dict(headers or {})
     if host is not None:
         h['Host'] = host
@@ -217,6 +229,16 @@ def jbody(b):
         return json.loads(b)
     except ValueError:
         return None
+
+
+def generated_file(conf, path):
+    """The text of one generated file in an nginx -T dump ('' when it is not there)."""
+    m = re.search(r'# configuration file %s:\n(.*?)(?=\n# configuration file |\Z)' % re.escape(path), conf, re.S)
+    return m.group(1) if m else ''
+
+
+def no_comments(text):
+    return re.sub(r'#[^\n]*', '', text)
 
 
 SNIPPETS = {}
@@ -281,9 +303,10 @@ try:
     ok('--with-http_auth_request_module' in (r.stdout + r.stderr), 'nginx -V lists --with-http_auth_request_module')
 
     # -- The three AI proxy locations: the same auth step, header rules and error pages (from the image's nginx -T) --
-    # (the real-IP file /tmp/xexam-realip.conf is rendered by the start-up script, so run it before nginx -T)
+    # (the generated files /tmp/xexam-realip.conf and /tmp/xexam-upstreams.conf are rendered by the start-up scripts, so run
+    # every 1*-xexam-*.sh before nginx -T)
     r = sh('docker', 'run', '--rm', '--tmpfs', '/tmp', '--entrypoint', 'sh', IMAGE, '-c',
-           '/docker-entrypoint.d/15-xexam-realip.sh && nginx -T', check=False)
+           'for f in /docker-entrypoint.d/1*-xexam-*.sh; do "$f" || exit 1; done && nginx -T', check=False)
     SNIPPETS.update(snippet_map(r.stdout))
     ok(set(SNIPPETS) >= {'ai-proxy.conf', 'api-proxy.conf'}, 'nginx -T lists the snippets api-proxy.conf and ai-proxy.conf. Found %r' % sorted(SNIPPETS))
     STREAM_SPEC = '~ ^/api/ai/(send|retry|regenerate|edit|study/ask|summary/ask)$'
@@ -320,8 +343,23 @@ try:
     same = lambda lines: [line for line in lines if line.startswith(shared)]
     ok(same(ai_prefix) == same(ai_stream) == same(ai_verify) and len(same(ai_prefix)) >= 20,
        'The three AI locations share their auth, proxy_set_header and error_page lines (%d lines)' % len(same(ai_prefix)))
-    ok(all('set $ai_upstream http://ai-service:8766;' in b for b in (ai_prefix, ai_stream, ai_verify)),
-       'The three AI locations proxy to the compose service ai-service (set $ai_upstream http://ai-service:8766;)')
+    ok(all('set $ai_upstream $xexam_ai_upstream;' in b for b in (ai_prefix, ai_stream, ai_verify)),
+       'The three AI locations proxy to the generated AI upstream (set $ai_upstream $xexam_ai_upstream;)')
+    # v1.9: the upstreams and the resolver come from the generated /tmp/xexam-upstreams.conf; the defaults are the one-host names
+    up_conf = generated_file(r.stdout, '/tmp/xexam-upstreams.conf')
+    up_lines = [' '.join(x.split()) for x in up_conf.splitlines() if x.strip() and not x.strip().startswith('#')]
+    ok(up_lines == ['resolver 127.0.0.11 valid=10s ipv6=off;',
+                    'map $host $xexam_backend_upstream { default "http://backend:8765"; }',
+                    'map $host $xexam_ai_upstream { default "http://ai-service:8766"; }'],
+       'Default /tmp/xexam-upstreams.conf: Docker DNS resolver, backend:8765 and ai-service:8766, no proxy_ssl lines. Actual %r' % up_lines)
+    own_conf = no_comments(r.stdout.replace(up_conf, ''))
+    ok(not re.search(r'^\s*resolver\s', own_conf, re.M), 'nginx.conf itself has no resolver line any more (the generated file has the only one)')
+    ok(r.stdout.count('set $backend_upstream $xexam_backend_upstream;') == 3
+       and 'set $ai_auth_upstream $xexam_backend_upstream/internal/ai/auth;' in r.stdout
+       and 'http://backend:8765' not in own_conf and 'http://ai-service:8766' not in own_conf,
+       'The three backend locations and /_ai_auth use $xexam_backend_upstream; no fixed service address is left in nginx.conf')
+    ok('connections/enabled' not in ADMIN_SPEC and 'connections/enabled' not in own_conf,
+       'The v1.9 route /api/ai/admin/connections/enabled has no location of its own: the /api/ai/ prefix location serves it')
     # v1.1 (IX-7, SEC-1): the exact upload location copies every proxy / header / auth / error line of /api/ai/
     ai_upload = location_block(r.stdout, '= /api/ai/import/upload')
     ok(ai_upload is not None, 'nginx -T shows the exact location = /api/ai/import/upload')
@@ -817,6 +855,122 @@ try:
     time.sleep(2)
     ok('XEXAM_REAL_IP_HEADER' in sh('docker', 'logs', WEB3, check=False).stderr, 'An invalid XEXAM_REAL_IP_HEADER also warns and trusts nobody')
     sh('docker', 'rm', '-f', WEB3, check=False)
+
+    # -- v1.9 upstreams: XEXAM_BACKEND_UPSTREAM / XEXAM_AI_UPSTREAM / XEXAM_NGINX_RESOLVER (16-xexam-upstreams.sh) --
+    # Two more fakes (other names and ports, tagged with X-Echo-Tag) stand for services on other machines.
+    sh('docker', 'run', '-d', '--name', BE_OTHER, '--network', NET, '--network-alias', 'be-other',
+       '-e', 'ECHO_NAME=backend', '-e', 'ECHO_PORT=9765', '-e', 'ECHO_TAG=be-other', 'python:3.12-slim', 'python', '-u', '-c', ECHO)
+    sh('docker', 'run', '-d', '--name', AI_OTHER, '--network', NET, '--network-alias', 'ai-other',
+       '-e', 'ECHO_NAME=ai-service', '-e', 'ECHO_PORT=9766', '-e', 'ECHO_TAG=ai-other', 'python:3.12-slim', 'python', '-u', '-c', ECHO)
+
+    def ip_of(name):
+        fmt = '{{(index .NetworkSettings.Networks "%s").IPAddress}}' % NET
+        return sh('docker', 'inspect', '-f', fmt, name).stdout.strip()
+
+    def routes_to_other(port, label):
+        """GET /api/info and a signed-in GET /api/ai/status through the Nginx on `port`: the answers must come from the
+        other fakes, the AI auth step must go to the other backend, and the original fakes must see nothing."""
+        orig_before = (echo_log(BACK).count('GET /api/info'), echo_log(AI).count('GET /api/ai/status'), echo_log(BACK).count('GET /internal/ai/auth'))
+        auth_before = echo_log(BE_OTHER).count('GET /internal/ai/auth')
+        st, hh, b = req('GET', '/api/info', host='localhost', port=port)
+        ok(st == 200 and hh.get('x-echo-name') == 'backend' and hh.get('x-echo-tag') == 'be-other',
+           '%s: /api/ in the other backend (be-other). Actual %d %r %r' % (label, st, hh.get('x-echo-name'), hh.get('x-echo-tag')))
+        st, hh, b = req('GET', '/api/ai/status', host='localhost:%d' % port, headers={'Cookie': 'xexam_session=good'}, port=port)
+        ok(st == 200 and hh.get('x-echo-name') == 'ai-service' and hh.get('x-echo-tag') == 'ai-other',
+           '%s: /api/ai/ in the other AI service (ai-other). Actual %d %r %r' % (label, st, hh.get('x-echo-name'), hh.get('x-echo-tag')))
+        ok(echo_log(BE_OTHER).count('GET /internal/ai/auth') == auth_before + 1,
+           '%s: the AI auth step (/_ai_auth) goes to the other backend' % label)
+        ok((echo_log(BACK).count('GET /api/info'), echo_log(AI).count('GET /api/ai/status'), echo_log(BACK).count('GET /internal/ai/auth')) == orig_before,
+           '%s: the original fake backend and AI service saw none of these requests' % label)
+
+    be_ip, ai_ip = ip_of(BE_OTHER), ip_of(AI_OTHER)
+    # by name (a trailing slash is removed), with an explicit resolver of the Docker DNS
+    start_web(WEB2, PORT + 1, {'XEXAM_TRUSTED_PROXIES': 'none', 'XEXAM_BACKEND_UPSTREAM': 'http://be-other:9765/',
+                               'XEXAM_AI_UPSTREAM': 'http://ai-other:9766', 'XEXAM_NGINX_RESOLVER': '127.0.0.11:53'})
+    routes_to_other(PORT + 1, 'Upstreams by name')
+    conf = sh('docker', 'exec', WEB2, 'cat', '/tmp/xexam-upstreams.conf').stdout
+    ok('resolver 127.0.0.11:53 valid=10s ipv6=off;' in conf and 'default "http://be-other:9765";' in conf and 'proxy_ssl' not in conf,
+       'Upstreams by name: the generated file holds the resolver with its port and the two upstreams (no trailing slash, no proxy_ssl). Actual %r' % conf)
+    sh('docker', 'rm', '-f', WEB2)
+    # by IP literal: no DNS needed at all (the resolver points at a closed port on purpose)
+    start_web(WEB3, PORT + 2, {'XEXAM_TRUSTED_PROXIES': 'none', 'XEXAM_BACKEND_UPSTREAM': 'http://%s:9765' % be_ip,
+                               'XEXAM_AI_UPSTREAM': 'http://%s:9766' % ai_ip, 'XEXAM_NGINX_RESOLVER': '127.0.0.1:5353'})
+    routes_to_other(PORT + 2, 'Upstreams by IP literal')
+    sh('docker', 'rm', '-f', WEB3)
+
+    # The value parser, run in the real image (busybox sed / grep / tr). The output file is pre-filled so that "nothing is
+    # left behind after a refusal" is visible.
+    def upstreams(env):
+        args = ['docker', 'run', '--rm', '--tmpfs', '/tmp', '-e', 'XEXAM_UPSTREAMS_OUT=/tmp/o.conf']
+        for k, v in env.items():
+            args += ['-e', '%s=%s' % (k, v)]
+        r = sh(*args, '--entrypoint', 'sh', IMAGE, '-c',
+               'echo old > /tmp/o.conf; /docker-entrypoint.d/16-xexam-upstreams.sh; echo "rc=$?" >&2; cat /tmp/o.conf 2>/dev/null; true')
+        rc = int(re.search(r'rc=(\d+)', r.stderr).group(1))
+        return rc, r.stdout, r.stderr
+
+    def up_good(label, env, backend=None, ai=None, resolver=None, tls=False):
+        rc, out, err = upstreams(env)
+        want_b = backend or 'http://backend:8765'
+        want_a = ai or 'http://ai-service:8766'
+        want_r = resolver or '127.0.0.11'
+        ok(rc == 0 and 'resolver %s valid=10s ipv6=off;' % want_r in out
+           and 'map $host $xexam_backend_upstream { default "%s"; }' % want_b in out
+           and 'map $host $xexam_ai_upstream { default "%s"; }' % want_a in out
+           and ('proxy_ssl_verify on;' in out) == tls and ('proxy_ssl_server_name on;' in out) == tls
+           and ('proxy_ssl_trusted_certificate /etc/ssl/certs/ca-certificates.crt;' in out) == tls,
+           'Upstream parser, %s: accepted as backend %s, ai %s, resolver %s%s. Actual rc=%d %r' % (
+               label, want_b, want_a, want_r, ', verified TLS' if tls else ', no TLS settings', rc, out))
+
+    def up_bad(label, env, name):
+        rc, out, err = upstreams(env)
+        ok(rc == 1 and out.strip() == '' and ('xexam-upstreams: %s must be ' % name) in err and "(got '" in err,
+           'Upstream parser, %s: refused (exit 1, the old output file removed, a message naming %s). Actual rc=%d out=%r err=%r' % (
+               label, name, rc, out, err.strip()))
+
+    B, A, R = 'XEXAM_BACKEND_UPSTREAM', 'XEXAM_AI_UPSTREAM', 'XEXAM_NGINX_RESOLVER'
+    up_good('nothing set', {})
+    up_good('empty values', {B: '', A: '', R: ''})
+    up_good('quotes and spaces only', {B: '""', A: '  ', R: "''"})
+    up_good('host name with port', {B: 'http://be.example.test:9765', A: 'http://ai.example.test:9766'}, 'http://be.example.test:9765', 'http://ai.example.test:9766')
+    up_good('trailing slash removed, quotes stripped', {B: '"http://10.0.0.2:8765/"', A: "'http://10.0.0.3:8766/'"}, 'http://10.0.0.2:8765', 'http://10.0.0.3:8766')
+    up_good('no port', {B: 'http://10.0.0.2', A: 'http://ai.example.test'}, 'http://10.0.0.2', 'http://ai.example.test')
+    up_good('IPv6 literal', {B: 'http://[fd00::2]:8765', A: 'http://[fd00::3]'}, 'http://[fd00::2]:8765', 'http://[fd00::3]')
+    up_good('https verifies the certificate', {B: 'https://be.example.test:8443'}, backend='https://be.example.test:8443', tls=True)
+    up_good('one https is enough for the TLS settings', {A: 'https://ai.example.test'}, ai='https://ai.example.test', tls=True)
+    up_good('port 65535', {B: 'http://10.0.0.2:65535'}, 'http://10.0.0.2:65535')
+    up_good('resolver IPv4 with port', {R: '10.0.0.53:5353'}, resolver='10.0.0.53:5353')
+    up_good('resolver list (comma and space, IPv6 plain and bracketed)', {R: '10.0.0.53, fd00::53 [fd00::54]:53'}, resolver='10.0.0.53 [fd00::53] [fd00::54]:53')
+    for label, v in (('a path', 'http://10.0.0.2:8765/api'), ('a query', 'http://10.0.0.2:8765?x=1'), ('a fragment', 'http://10.0.0.2:8765#x'),
+                     ('user info', 'http://user@10.0.0.2:8765'), ('a second slash', 'http://10.0.0.2:8765//'),
+                     ('no scheme', '10.0.0.2:8765'), ('ftp', 'ftp://10.0.0.2:8765'), ('an empty host', 'http://:8765'),
+                     ('a semicolon', 'http://a;b:8765'), ('a closing brace', 'http://a}b'), ('a dollar sign', 'http://a$b'),
+                     ('a double quote inside', 'http://a"b'), ('a space inside', 'http://a b'), ('an underscore', 'http://a_b:8765'),
+                     ('port 0', 'http://10.0.0.2:0'), ('port 65536', 'http://10.0.0.2:65536'), ('a long port', 'http://10.0.0.2:123456'),
+                     ('a text port', 'http://10.0.0.2:http'), ('a leading dot', 'http://.example.test'),
+                     ('a trailing dash', 'http://example-.test-'), ('a bare IPv6', 'http://fd00::2:8765'), ('upper-case scheme only text', 'HTTP2://x')):
+        up_bad(label, {B: v}, B)
+        up_bad(label + ' (AI)', {A: v}, A)
+    up_bad('a long host name', {B: 'http://%s.example.test' % ('a' * 260)}, B)
+    for label, v in (('a host name', 'ns.example.test'), ('an octet above 255', '10.0.0.256'), ('a path', '10.0.0.53/x'),
+                     ('a bracket without an address', '[]'), ('a bad port', '10.0.0.53:99999'), ('a semicolon', '10.0.0.53;10.0.0.54'),
+                     ('a brace', '10.0.0.53}'), ('a bad IPv6', 'fd00:::1'), ('a port on a bare IPv6', 'fd00::1:53x')):
+        up_bad('resolver ' + label, {R: v}, R)
+    rc, out, err = upstreams({B: 'http://10.0.0.2:8765/x' + 'y' * 300})
+    got = re.search(r"\(got '([^']*)'\)", err)
+    ok(rc == 1 and got and len(got.group(1)) == 200, 'A refused value is cut to 200 characters in the message. Actual %r' % (len(got.group(1)) if got else None))
+
+    # A container with a bad value stops with that message (the entrypoint stops at a failing script) and does not serve
+    sh('docker', 'rm', '-f', WEB3, check=False)
+    sh('docker', 'run', '-d', '--name', WEB3, '--network', NET, '--read-only', '--tmpfs', '/tmp', '--cap-drop', 'ALL',
+       '-e', 'XEXAM_BACKEND_UPSTREAM=http://10.0.0.2:8765/not-a-path', IMAGE)
+    code = sh('docker', 'wait', WEB3).stdout.strip()
+    logs = sh('docker', 'logs', WEB3, check=False)
+    ok(code not in ('', '0') and 'XEXAM_BACKEND_UPSTREAM must be http(s)://host[:port] with no path, for example http://10.0.0.2:8765' in logs.stderr
+       and "(got 'http://10.0.0.2:8765/not-a-path')" in logs.stderr,
+       'A container with a bad XEXAM_BACKEND_UPSTREAM exits non-zero with the message. Actual exit %r, stderr %r' % (code, logs.stderr[-300:]))
+    sh('docker', 'rm', '-f', WEB3, check=False)
+    sh('docker', 'rm', '-f', BE_OTHER, AI_OTHER, check=False)
 
     # -- Upload size --
     st, hh, b = req('POST', '/api/upload', host='localhost', headers={'Content-Type': 'application/octet-stream', 'X-Filename': 'a.xlsx'}, body=b'x' * (5 * 1024 * 1024))

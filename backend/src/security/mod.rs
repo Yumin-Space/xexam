@@ -7,6 +7,7 @@ use std::collections::HashSet;
 use subtle::ConstantTimeEq;
 
 pub mod body;
+pub mod peers;
 
 /// The set of code points for Python `str.isspace()` / regex `\s` (Unicode).
 pub fn is_py_space(c: char) -> bool {

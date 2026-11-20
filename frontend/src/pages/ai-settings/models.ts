@@ -1,18 +1,20 @@
 // AI settings page, steps 2 and 3. Step 2 turns AI+ on: a default model is chosen from the merged list and tested, and only a
-// passing test switches AI+ on (a failing one changes nothing). Step 3 is six model rows (default, chat, hint + explanation,
-// summary, AI questions, AI import). Choosing a model in a row tests it first (skipped when it passed in the last 10 minutes),
+// passing test switches AI+ on (a failing one changes nothing). Step 3 is seven model rows (default, chat, hint, analysis,
+// summary, AI questions, AI import). Every row except the default carries its own feature switch (v1.9): off means off for
+// everyone, administrators included, and the chosen model is kept (the pickers are disabled). A row whose model sits on a
+// connection that is switched off keeps its choice and says the feature cannot be used. Choosing a model in a row tests it first (skipped when it passed in the last 10 minutes),
 // then the row changes at once; running calls are not cancelled and AI+ is never switched off by a pick. When a row's model
 // cannot be used the default stands in (a note says so); when the default cannot be used either the row says it is paused.
 // Nothing is ever switched to another model automatically. Each row has two pickers: the connection on the left and, on the
 // right, the models of that connection only. Changing the connection does not switch the row; picking a model does.
-import { fetchModels, pickModel, setEffort, setEnabled as setEnabledApi } from '../../api/ai-admin.ts';
+import { fetchModels, pickModel, setEffort, setEnabled as setEnabledApi, setFeatureSwitches } from '../../api/ai-admin.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { miniSwitch } from '../../components/mini-switch.ts';
 import { holdTip } from '../../components/tooltip.ts';
 import { EFFORT_FAMILIES, effortAria, effortTip, providerIcon, type EffortFamily } from '../../components/provider-icons.ts';
 import {
-  defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotModel, slotNote, slotUsing, SLOTS,
-  type ModelGroup,
+  connOn, defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotFeature, slotModel, slotNote, slotOn,
+  slotUsing, SLOTS, type ModelGroup,
 } from '../../domain/ai-settings.ts';
 import { knownDefault, levelForFamily } from '../../domain/effort-defaults.ts';
 import { aiCodeText, errorText } from '../../i18n/errors.ts';
@@ -360,6 +362,26 @@ export function enableSection(s: AiSettings): HTMLElement {
     h('h2', { id: 'ais-enable-h', tabindex: '-1' }, t('ai.set.card.main')), body, msg);
 }
 
+// ---------------------------------------------------------------- the feature switch of a row (v1.9)
+
+/** Switches one feature for everyone (one key; the stored model stays) and redraws; the row waits meanwhile */
+async function flipFeature(slot: AiSlot, on: boolean): Promise<void> {
+  const f = slotFeature(slot);
+  if (!f || A.slotBusy[slot]) return;
+  A.slotBusy[slot] = true;
+  A.slotMsg[slot] = null;
+  redraw();
+  try {
+    adopt(await setFeatureSwitches({ [f]: on }));
+    void refreshAi(true);
+  } catch (e) {
+    if (!aiDown(e)) A.slotMsg[slot] = { ok: false, text: errorText(e) };
+  }
+  A.slotBusy[slot] = false;
+  redraw();
+  document.getElementById(`ai-sw-${slot}`)?.focus();
+}
+
 // ---------------------------------------------------------------- thinking strength (v1.6)
 
 /** Saves one slot's thinking strength at once (null = default, nothing sent); the row is busy meanwhile */
@@ -379,7 +401,7 @@ async function saveEffort(slot: AiSlot, effort: AiEffort | null, focusId: string
   document.getElementById(focusId)?.focus();
 }
 
-/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] [Responses API] [Gemma] and the level list; hidden on an older ai-service */
+/** The row above a slot's pickers: [Default] [Anthropic] [OpenAI] [Google] [Responses API] and the level list; hidden on an older ai-service */
 function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string): HTMLElement | null {
   const lists = s.effortLevels;
   if (!lists) return null;
@@ -418,14 +440,18 @@ function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string)
     select);
 }
 
-// ---------------------------------------------------------------- step 3: the six model rows
+// ---------------------------------------------------------------- step 3: the seven model rows
 
 function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
   const own = slotModel(s, slot);
   const busy = A.slotBusy[slot] === true;
   const note = slotNote(s, slot);
   const msg = A.slotMsg[slot];
-  const bad = slot === 'default' && defaultUnusable(s);
+  // One message per row: a connection that is off already explains why the default cannot be used
+  const bad = slot === 'default' && defaultUnusable(s) && note?.kind !== 'connOff';
+  // v1.9: the feature of this row is switched off for everyone (the model choice stays, the pickers wait)
+  const off = !slotOn(s, slot);
+  const locked = busy || off;
   const labelId = `ai-slot-${slot}-l`;
   const name = t(`ai.set.slot.${slot}` as MsgKey);
   const canFollow = slot !== 'default';
@@ -457,19 +483,22 @@ function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
     document.getElementById(`ai-slot-${slot}`)?.focus();
   };
   const sel = h('select', {
-    id: `ai-slot-${slot}-conn`, class: 'ais-select ais-slot-conn', 'aria-label': t('ai.set.slot.connOf', { slot: name }), disabled: busy,
+    id: `ai-slot-${slot}-conn`, class: 'ais-select ais-slot-conn', 'aria-label': t('ai.set.slot.connOf', { slot: name }), disabled: locked,
     onchange: onConn,
     // The focus left the row through this picker with no model picked (after the blur has settled, as on the right)
     onblur: () => window.setTimeout(() => dropPending(slot), 0),
   },
     canFollow ? h('option', { value: '0' }, t('ai.set.slot.follow')) : null,
     !canFollow && !connId ? h('option', { value: '0', disabled: true, hidden: true }, t('ai.set.slot.pickConn')) : null,
-    s.connections.map((c) => h('option', { value: String(c.id) },
-      c.status === 'broken' ? t('ai.set.slot.connBad', { name: c.name }) : c.name)));
+    // Connections that are on; the row's own connection stays as a disabled entry when it was switched off (the choice is kept)
+    s.connections.filter((c) => connOn(c) || c.id === connId).map((c) => (connOn(c)
+      ? h('option', { value: String(c.id) }, c.status === 'broken' ? t('ai.set.slot.connBad', { name: c.name }) : c.name)
+      : h('option', { value: String(c.id), disabled: true }, t('ai.set.slot.connOff', { name: c.name })))));
   sel.value = String(connId);
-  const picker = conn
+  const connIsOff = conn != null && !connOn(conn);
+  const picker = conn && !connIsOff
     ? modelPicker(s, {
-      id: `ai-slot-${slot}`, text, follow: false, disabled: busy, placeholder: t('ai.set.slot.pickModel'), connectionId: conn.id,
+      id: `ai-slot-${slot}`, text, follow: false, disabled: locked, placeholder: t('ai.set.slot.pickModel'), connectionId: conn.id,
       label: t('ai.set.slot.modelOf', { slot: name }),
       onPick: (r) => void pickSlot(slot, r),
       // After the blur has settled: the focus may only have moved inside the row
@@ -483,19 +512,25 @@ function slotRow(s: AiSettings, slot: AiSlot): HTMLElement {
     // Following the default (or no connection chosen yet): nothing to pick; the default's model shows, muted
     : h('div', { class: 'ais-combo' }, h('input', {
       type: 'text', id: `ai-slot-${slot}`, class: 'ais-model ais-model-follow', disabled: true,
-      value: canFollow ? labelOf(def ? { connectionId: def.connectionId, model: def.model } : null, s) : '',
+      // Its own model on a connection that is off: shown (kept), not editable; following the default: the default's model
+      value: connIsOff ? text : canFollow ? labelOf(def ? { connectionId: def.connectionId, model: def.model } : null, s) : '',
       placeholder: canFollow ? '' : t('ai.set.slot.pickModel'), 'aria-label': t('ai.set.slot.modelOf', { slot: name }),
     }));
-  return h('li', { class: 'ais-slot' + (note?.kind === 'noRoute' || bad ? ' warn' : ''), id: `ais-slot-${slot}` },
-    h('span', { class: 'ais-slot-l', id: labelId }, name),
-    effortRow(s, slot, busy, name),
+  const switched = slot === 'default' ? null : miniSwitch({
+    id: `ai-sw-${slot}`, checked: !off, label: t('ai.set.slot.swAria', { name }), disabled: busy, onToggle: (v) => void flipFeature(slot, v),
+  });
+  return h('li', { class: 'ais-slot' + (off ? ' off' : (note?.kind === 'noRoute' || note?.kind === 'connOff' || bad ? ' warn' : '')), id: `ais-slot-${slot}` },
+    h('div', { class: 'ais-slot-h' }, h('span', { class: 'ais-slot-l', id: labelId }, name), switched),
+    effortRow(s, slot, locked, name),
     h('div', { class: 'ais-slot-pick', role: 'group', 'aria-labelledby': labelId }, sel, picker),
-    busy ? h('p', { class: 'ais-note ais-slot-s', role: 'status' }, t(pick === null ? 'ai.set.slot.switching' : 'ai.set.slot.testing')) : null,
+    busy && slot in picking ? h('p', { class: 'ais-note ais-slot-s', role: 'status' }, t(pick === null ? 'ai.set.slot.switching' : 'ai.set.slot.testing')) : null,
+    off ? h('p', { class: 'ais-note ais-slot-n' }, t('ai.set.slot.off')) : null,
     msg ? h('p', { class: (msg.ok ? 'ais-ok' : 'ais-ferr') + ' ais-slot-s', role: msg.ok ? 'status' : 'alert' }, msg.text) : null,
     A.manualOpen === slot && conn ? manualRow(slot, conn.id, conn.name) : null,
     bad && own ? h('p', { class: 'ais-warn ais-slot-n' }, t('ai.set.card.model.bad', { conn: own.connectionName, model: own.model })) : null,
+    note?.kind === 'connOff' && !off ? h('p', { class: 'ais-warn ais-slot-n' }, t('ai.set.slot.connOffWarn', { conn: note.conn })) : null,
     note?.kind === 'fallback' ? h('p', { class: 'ais-note ais-slot-n' }, t('ai.set.slot.fallback', { conn: note.conn })) : null,
-    note?.kind === 'noRoute' && !bad ? h('p', { class: 'ais-warn ais-slot-n' }, t('ai.set.slot.noRoute')) : null);
+    note?.kind === 'noRoute' && !bad && !off ? h('p', { class: 'ais-warn ais-slot-n' }, t('ai.set.slot.noRoute')) : null);
 }
 
 export function modelsSection(s: AiSettings): HTMLElement {
@@ -512,6 +547,7 @@ export function modelsSection(s: AiSettings): HTMLElement {
       h('button', {
         class: 'btn', id: 'ai-models-refresh', type: 'button', disabled: A.modelsBusy || !s.connections.length, onclick: () => void loadModels(true),
       }, t('ai.set.models.refresh'))),
+    s.connections.length ? h('p', { class: 'ais-note' }, t('ai.set.models.note')) : null,
     s.connections.length
       ? h('ul', { class: 'ais-slots' }, SLOTS.map((k) => slotRow(s, k)))
       : h('p', { class: 'ais-note' }, t('ai.set.enable.needConn')),

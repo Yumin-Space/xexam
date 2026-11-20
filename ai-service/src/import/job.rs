@@ -728,14 +728,13 @@ impl<'a> Rec<'a> {
                     / 100.0;
                 ctx.sleep_checked(secs).await?;
             }
-            let permit = ctx.place().await?;
             self.take()?;
             let r = if attempt >= 2 {
                 let user = format!(
                     "{user}{}",
                     crate::gen::run::attempt_line(attempt, &crate::util::hex(&random_bytes::<4>()))
                 );
-                ctx.call_opts(
+                ctx.send(
                     system,
                     prefix,
                     &user,
@@ -745,16 +744,16 @@ impl<'a> Rec<'a> {
                 )
                 .await
             } else {
-                ctx.call_with(system, prefix, user, want, 0).await
+                ctx.send(system, prefix, user, want, 0, CallOpts::default())
+                    .await
             };
-            drop(permit);
             let r = r?;
             let (row, outcome) = match r {
                 CallResult::Answer { text, row, .. } => {
                     self.fails.store(0, Ordering::SeqCst);
                     (row, Ok(text))
                 }
-                CallResult::Error { code, row } => {
+                CallResult::Error { code, row, .. } => {
                     attempt += 1;
                     let n = self.fails.fetch_add(1, Ordering::SeqCst) + 1;
                     let c: UpCode = code;

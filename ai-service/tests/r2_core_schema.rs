@@ -171,7 +171,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
     assert_eq!(n, 2);
     drop(copy);
     assert!(captured_contains(&format!(
-        "Upgraded the AI database to schema 8. A copy of the previous version was saved first: {}.",
+        "Upgraded the AI database to schema 9. A copy of the previous version was saved first: {}.",
         copies[0].display()
     )));
 
@@ -182,7 +182,7 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "8");
+    assert_eq!(v, "9");
     for col in ["calls_per_minute", "calls_per_hour", "calls_per_day"] {
         assert!(has_column(&c, "limits", col), "{col}");
     }
@@ -353,18 +353,18 @@ async fn a_newer_schema_is_refused() {
     t.app.0.store.release_file();
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '9' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '10' WHERE key = 'schema'", [])
             .expect("set");
     }
     let cfg = test_config(t.dir.path(), &t.backend.url, &Opts::default());
     let err = match xexam_ai_service::app::App::open(cfg) {
-        Ok(_) => panic!("a schema-9 database must be refused"),
+        Ok(_) => panic!("a schema-10 database must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 9, written by a newer ai-service; this version (schema 8) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 10, written by a newer ai-service; this version (schema 9) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

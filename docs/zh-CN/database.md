@@ -3,7 +3,7 @@
 # 数据库
 
 > 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端沿用旧 Python 版的数据库：原来的建表语句（schema v1）**一字不差**地保留，之后的每个 schema 都只是往上加东西（新表和新列；不重建、不改写任何东西）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.4 起它的 schema 是 **8**（v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.9 起它的 schema 是 **9**（v1.4 是 8，v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
 > 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）和 `v09_ai_study.rs`（v6，后端的学习路由）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
@@ -641,11 +641,23 @@ AI 数据库在 v1.4 ai-service 第一次启动时，从 schema 7 升到 **schem
 
 ### 8.2d model_slots.effort（v1.6）
 
-AI 数据库的 schema 仍是 **8**。ai-service 启动时给 `model_slots` 加一列可为 NULL 的 `effort`（TEXT）：每个功能的思考强度，保存为 `<一族>:<级别>`（一族是 `anthropic`、`openai`、`google`、`responses` 或 `gemma`；级别见 [usage.md](usage.md) 的 17.9 节），NULL = **默认**，什么都不发送。这一步只增不改，不需要备份副本；v1.5 的 ai-service 忽略这一列。修改走 `POST /api/ai/admin/models/effort`，写系统日志事件 `ai.settings.effort`。
+AI 数据库的 schema 仍是 **8**。ai-service 启动时给 `model_slots` 加一列可为 NULL 的 `effort`（TEXT）：每个功能的思考强度，保存为 `<一族>:<级别>`（一族是 `anthropic`、`openai`、`google` 或 `responses`，`gemma` 已在 v1.9 移除，见 8.2f 节；级别见 [usage.md](usage.md) 的 17.9 节），NULL = **默认**，什么都不发送。这一步只增不改，不需要备份副本；v1.5 的 ai-service 忽略这一列。修改走 `POST /api/ai/admin/models/effort`，写系统日志事件 `ai.settings.effort`。
 
 ### 8.2e OpenAI Responses 格式（v1.8，schema 不变）
 
 `connections` 多一列：`responses INTEGER NOT NULL DEFAULT 0 CHECK (responses IN (0, 1))`。1 表示使用 OpenAI Responses API 的网关连接。它的 `format` 仍是 `openai`，因为 `format` 上的 `CHECK` 只允许 `openai` 和 `anthropic`，而表不会重建。缺这一列时在启动时添加（`ALTER TABLE ... ADD COLUMN`，与 `model_slots.effort` 的方式相同）；**AI schema 仍是 8，所以没有备份副本，也没有新的迁移步骤**。新建的文件和升级后的文件得到相同的表。保存 Responses 连接时写入 `format = 'openai', responses = 1`，其他格式写入 `responses = 0`，`format = 'openai' AND responses = 1` 读作 Responses。v1.7 的 ai-service 按原样打开文件，从不读这一列，所以回退不需要恢复，但 Responses 连接之后会被读成 OpenAI chat completions。
+
+### 8.2f Schema v9（v1.9）
+
+AI 数据库在 v1.9 的 ai-service 第一次启动时，从 schema 8 升级到 **schema 9**，只做一次，并先做一份备份副本 `backups/xexam-ai-schema8-<日期时间>.db`（和之前每一步的机制相同）。主数据库不变。
+
+- **`connections.enabled`**（`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`）：连接的启用开关。已有的行一开始都是启用。它和之前的列一样在启动时添加（`pragma_table_info` 里没有时才加）；`status` 的 CHECK 不动，“未启用”由 `enabled` 推出；`connections` 不重建（它有 `CASCADE` 子表）。
+- **`limits.pace_on`、`limits.pace_rpm`、`limits.pace_tpm`**：AI 出题和 AI 导入按服务商速率限制匀速发送的设置：`pace_on` 为 0 或 1（默认 1），`pace_rpm` 为 1 到 10 000（默认 15），`pace_tpm` 为 1 000 到 100 000 000（默认 250 000）。对应限额接口里的键 `paceOn`、`paceRpm`、`paceTpm`。“无限制”开关从不改动它们。
+- **重建 `model_slots`**：`slot` 的 `CHECK` 现在允许 `default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import`（七行，`study` 没有了）。升级时把 `study` 行（模型、时间、修改者和思考强度）复制成 `hint` 和 `explain` 两行，再删掉旧表；新建的文件直接建新表，所以两者的 `sqlite_master` 相同。没有任何表引用 `model_slots`，所以重建时 `foreign_keys` 可以保持开启。
+- **Gemma 并入 Google**：每次启动时，已保存的思考强度 `gemma:HIGH` 或 `gemma:true` 变成 `google:HIGH`，`gemma:MINIMAL` 或 `gemma:false` 变成 `google:MINIMAL`，其他 `gemma:` 的值清空（NULL）。发出的请求和以前一样。这一步只在存在 `gemma:` 行时才执行。系列现在是 `anthropic`、`openai`、`google` 和 `responses`。
+- **全局开关互相独立**：`settings.features_off` 的第 2 位（提示）和第 4 位（解析）不再保持相同，启动时也不会再把它们配成一对；`users.features_off` 仍然成对（只关了其中一个的用户会两个都关）。给用户位配对的步骤不会碰全局位。
+- **任务的等待标记**：出题或导入任务在等服务商额度时，`tasks.payload` 里带一个临时的 `rateWait` 标记（不更新 `updated_at`），也就是任务对象里的 `waiting` 字段。
+- **回退**：v1.8 的 ai-service 不接受 schema 9（`written by a newer ai-service`）：先停止，按 8.4 恢复 `backups/xexam-ai-schema8-<日期时间>.db`，再运行 v1.8 的镜像。升级之后写入的设置、对话和用量不在副本里，会丢失。
 
 ### 8.3 服务怎样使用它
 
@@ -675,3 +687,475 @@ docker compose start
 - 设置了 `XEXAM_AI_SECRET_KEY` 时不使用密钥文件：请单独备份这个值（它不在卷里）。没有正确的密钥，恢复出来的密钥就无法解密；这时 AI 保持关闭，直到管理员重新输入密钥，其他什么都不会丢。
 - 恢复的 AI 卷和另一个时间点的主卷可以搭配使用：已经不存在的用户会在下一次对账时失去他们的 AI 数据，现在属于另一个账户的用户 id 会通过标记认出来。
 - `xexam_ai_auth` 不用备份：它里面只有 `internal.token`，缺少时后端会重新创建（AI 服务会自己用上新的令牌）。
+
+## 9. 两个数据库的表结构图（v1.9）
+
+这是一份阅读指南：有哪些表、各自做什么、彼此怎么关联。内容对应主数据库 schema 10 和 AI 数据库 schema 9；表名和列名与实际存储的完全一致。这里的任何内容都不会改动表。
+
+### 9.1 主数据库 `xexam.db`（backend）
+
+| 功能域 | 表 | 备注 |
+|---|---|---|
+| 题库 | `banks`、`questions`、`imports` | 一个题库 = 一个导入的工作簿；从工作簿里消失的题目是停用（`active = 0`），不是删除 |
+| 学习记录和错题本 | `attempts`、`attempt_items`、`user_stats` | `attempts` 就是程序里说的“学习记录”（考试或练习） |
+| 用户与权限 | `users`、`sessions`、`user_banks`、`user_settings` | |
+| 系统 | `meta`、`system_settings`、`activity_log` | |
+| 遗留（不再使用） | `stats`、`settings` | v0.6 那一步已复制到 `user_stats` 和 `user_settings`；只在从 schema 2 或更老的版本升级时才读 |
+
+主数据库**没有声明任何外键**：下面的关系由代码维持（删除时先删子行），所以图里画成虚线。
+
+```mermaid
+erDiagram
+  users ||..o{ sessions : "user_id"
+  users ||..o{ attempts : "user_id (NULL = unclaimed old record)"
+  users ||..o{ user_stats : "user_id"
+  users ||..o{ user_settings : "user_id"
+  users ||..o{ user_banks : "user_id"
+  users ||..o{ banks : "owner_id"
+  users |o..o{ system_settings : "updated_by"
+  users |o..o{ activity_log : "user_id (snapshot, not linked)"
+  banks ||..o{ user_banks : "bank_id"
+  banks ||..o{ questions : "bank_id"
+  banks ||..o{ imports : "bank_id"
+  attempts ||..o{ attempt_items : "attempt_id"
+  questions |o..o{ attempt_items : "question_id (soft)"
+  questions |o..o{ user_stats : "question_id (soft)"
+
+  users {
+    int id PK
+    text username UK
+    text password_hash
+    text role
+    int disabled
+    int must_change_password
+    int new_banks
+    int can_manage_banks
+    int can_download_banks
+    int ai_enabled
+    text uid
+    text created_at
+    text last_login_at
+    text last_active_at
+  }
+  sessions {
+    text token_hash PK
+    int user_id
+    int started_at
+    int last_seen_at
+    int expires_at
+    int remember
+    text ip
+    text ua
+  }
+  banks {
+    int id PK
+    text name
+    text filename
+    int legacy_ids
+    int owner_id
+    text ai_job UK
+    text ai_meta
+    text created_at
+    text updated_at
+  }
+  questions {
+    text id PK
+    int bank_id
+    text sheet
+    int row_no
+    int seq
+    text data
+    int active
+    text added_at
+    text updated_at
+  }
+  imports {
+    int id PK
+    int bank_id
+    text at
+    text filename
+    int added
+    int updated
+    int removed
+    int restored
+    int skipped
+    int total
+  }
+  attempts {
+    int id PK
+    int user_id
+    text kind
+    text mode
+    text at
+    text sheets
+    text banks
+    int total
+    int correct
+    int percent
+    int seconds
+    text session_key
+    int started_at
+    int time_limit
+    text ended
+  }
+  attempt_items {
+    int attempt_id PK
+    int seq PK
+    text question_id
+    text answer
+    int correct
+  }
+  user_stats {
+    int user_id PK
+    text question_id PK
+    int attempts
+    int correct
+    int wrong
+    int streak
+    int last
+    text at
+  }
+  user_settings {
+    int user_id PK
+    text key PK
+    text value
+  }
+  user_banks {
+    int user_id PK
+    int bank_id PK
+  }
+  system_settings {
+    text key PK
+    text value
+    text updated_at
+    int updated_by
+  }
+  activity_log {
+    int id PK
+    int ts
+    int last_ts
+    int count
+    text actor
+    int user_id
+    text username
+    text role
+    text action
+    text object
+    text detail
+    text result
+    text reason
+    text source
+    text src_id UK
+  }
+  meta {
+    text key PK
+    text value
+  }
+  stats {
+    text question_id PK
+  }
+  settings {
+    text key PK
+  }
+```
+
+| 表 | 用途 | 键和关联 | 备注 |
+|---|---|---|---|
+| `meta` | 库级键值：`schema`、`banks_known`、`users_known`、`legacy_migrated` | PK `key` | |
+| `banks` | 题库，也保存 AI 生成题库的任务 key 和相关信息 | PK `id`；`owner_id` → `users` | `ai_job` 是部分唯一索引 |
+| `questions` | 一题一行；整道题（含各语言）是 `data` 里的 JSON | PK `id`（文本）；`bank_id` → `banks` | 有按工作表、题库、排布的索引 |
+| `imports` | 每次 Excel 导入的结果数量 | PK `id`；`bank_id` → `banks` | |
+| `attempts` | 学习记录：每次考试或练习一行 | PK `id`；`user_id` → `users`（NULL = 还没人认领的旧记录） | `sheets` 和 `banks` 故意是 JSON 快照 |
+| `attempt_items` | 记录里每道题的作答 | PK `(attempt_id, seq)`；`question_id` → `questions`（软关联） | 记录可能比题目活得更久 |
+| `user_stats` | 每个用户每道题的作答、答对、答错、连对次数（错题本） | PK `(user_id, question_id)` | |
+| `users` | 账号、角色、权限、AI+ 开关、身份戳 `uid`、最后登录和最后活动（IP、地点、浏览器） | PK `id`；`username` 唯一，不分大小写 | 账号数据和登录遥测混在一起 |
+| `sessions` | 登录会话 | PK `token_hash`；`user_id` → `users` | 时间是 unix 秒 |
+| `user_banks` | 普通用户能看到哪些题库 | PK `(user_id, bank_id)` | |
+| `user_settings` | 每个用户的界面设置（值是 JSON） | PK `(user_id, key)` | |
+| `system_settings` | 全站开关（活动日志保留期、访问记录、登录信息、定位来源） | PK `key`；`updated_by` 是用户 id | |
+| `activity_log` | 活动历史，包括 ai-service 转来的行 | PK `id`；`src_id` 部分唯一（去重） | `username` 和 `role` 是快照，所以用户删除后日志仍然可读 |
+| `stats`、`settings` | 遗留，见上 | | |
+
+### 9.2 AI 数据库 `xexam-ai.db`（ai-service）
+
+| 功能域 | 表 | 备注 |
+|---|---|---|
+| AI 设置 | `settings`（单行）、`limits`（单行）、`connections`、`connection_secrets`、`models`、`model_slots`、`geo_settings`（单行） | `model_slots` 有七行：`default`、`chat`、`hint`、`explain`、`summary`、`generate`、`import` |
+| 身份 | `users` | 主数据库用户的镜像，加每个用户的 AI 状态 |
+| 对话和学习会话 | `chats`、`messages`、`memories` | `chats.kind` 是 `chat`、`practice`、`exam` 或 `summary` |
+| 共享的提示和解析 | `study_shared` | 跨用户复用，不带用户 id |
+| AI 出题和 AI 导入 | `tasks`、`gen_items`、`gen_calls` | `tasks.kind` 两者都是 `bank_gen`，靠 payload 区分 |
+| 计量 | `usage`（对话、提示、解析、总结、校验）、`gen_calls`（出题和导入） | 故意分成两张：每用户的调用上限只读 `usage` |
+| 系统 | `meta`、`audit_outbox` | |
+| 遗留 | `secrets`；`settings` 里旧的连接列；`limits` 里四个已退役的长度列 | 只在从旧 schema 升级时才读 |
+
+实线是声明了的外键；虚线是故意不加外键、由代码维持的关系（消息分支、对话选的连接、用量历史）。
+
+```mermaid
+erDiagram
+  users ||--o{ chats : "CASCADE"
+  users ||--o{ memories : "CASCADE"
+  users |o--o{ tasks : "CASCADE"
+  users |o--o{ usage : "SET NULL"
+  users |o--o{ gen_calls : "SET NULL"
+  chats ||--o{ messages : "CASCADE"
+  messages |o..o{ messages : "parent_id (no FK)"
+  chats |o..o| messages : "leaf_id (no FK)"
+  connections |o..o{ chats : "pick_conn (no FK)"
+  tasks ||--o{ gen_items : "CASCADE"
+  tasks |o--o{ gen_calls : "SET NULL"
+  connections ||--o{ connection_secrets : "CASCADE"
+  connections ||--o{ models : "CASCADE"
+  models |o--o{ model_slots : "SET NULL"
+  connections |o..o{ usage : "connection_id (no FK)"
+  connections |o..o{ gen_calls : "connection_id (no FK)"
+
+  users {
+    int id PK
+    text stamp
+    text username
+    int function_enabled
+    int free_mode
+    int features_off
+    int first_seen_at
+    int last_seen_at
+  }
+  chats {
+    int id PK
+    int user_id FK
+    text kind
+    text ref UK
+    int record_id
+    text title
+    int leaf_id
+    int pick_conn
+    text pick_model
+    int created_at
+    int updated_at
+  }
+  messages {
+    int id PK
+    int chat_id FK
+    int parent_id
+    text role
+    text kind
+    text content
+    text status
+    text error_code
+    int truncated
+    int free
+    text model
+    text connection
+    text question_id
+    int question_no
+    text source
+    text lang
+    text reasoning
+    int reasoning_ms
+    int reasoning_truncated
+    int created_at
+    int finished_at
+  }
+  memories {
+    int id PK
+    int user_id FK
+    text content
+    text source
+    int created_at
+    int updated_at
+  }
+  tasks {
+    int id PK
+    int user_id FK
+    text kind
+    text state
+    text payload
+    text result
+    text error_code
+    int attempts
+    int run_after
+    text job_key UK
+    int goal
+    int made
+    text phase
+    int charged
+    int seen
+    int created_at
+    int updated_at
+  }
+  gen_items {
+    int task_id PK
+    int no PK
+    int slot
+    text data
+    int at
+  }
+  gen_calls {
+    int id PK
+    int task_id FK
+    int user_id FK
+    text purpose
+    int at
+    text day
+    text provider
+    text model
+    int connection_id
+    text connection
+    int tokens_in
+    int tokens_out
+    int latency_ms
+    text status
+    text error_code
+    int asked
+    int accepted
+    int truncated
+  }
+  usage {
+    int id PK
+    int user_id FK
+    int at
+    text day
+    text kind
+    text purpose
+    text provider
+    text model
+    int connection_id
+    text connection
+    int tokens_in
+    int tokens_out
+    int latency_ms
+    text status
+    text error_code
+  }
+  connections {
+    int id PK
+    text name UK
+    text provider
+    text base_url
+    text format
+    int responses
+    int enabled
+    text gateway_auth
+    text status
+    text error_code
+    int lists_models
+    int tested_at
+    int rev
+    int sort
+  }
+  connection_secrets {
+    int connection_id PK
+    text name PK
+    text key_id
+    blob nonce
+    blob ciphertext
+    text hint
+    int rev
+    int aad_ver
+  }
+  models {
+    int id PK
+    int connection_id FK
+    text model
+    int manual
+    text status
+    text error_code
+    int usage_option
+    int max_tokens
+    int context
+    int latency_ms
+    int tested_at
+  }
+  model_slots {
+    text slot PK
+    int model_id FK
+    text effort
+    int updated_at
+    text updated_by
+  }
+  study_shared {
+    int id PK
+    text question_id
+    text content_hash
+    text kind
+    text lang
+    text content
+    text model
+    int gen
+    int hits
+    int last_hit_at
+  }
+  settings {
+    int id PK
+    int enabled
+    int retention_days
+    int features_off
+  }
+  limits {
+    int id PK
+    int pace_on
+    int pace_rpm
+    int pace_tpm
+  }
+  geo_settings {
+    int id PK
+    text preset
+    text url_template
+    blob key_ciphertext
+    int updated_by
+  }
+  secrets {
+    text name PK
+  }
+  meta {
+    text key PK
+    text value
+  }
+  audit_outbox {
+    int id PK
+    int at
+    text message
+  }
+```
+
+| 表 | 用途 | 键和关联 | 备注 |
+|---|---|---|---|
+| `meta` | `schema`、`secret_rev`、一次性标记 | PK `key` | |
+| `settings` | 单行：AI 总开关 `enabled`、`retention_days`、`features_off`（全局功能开关位） | PK `id = 1` | 还留着 11 个单连接时代的旧列，只有旧版升级才读 |
+| `limits` | 单行：所有上限（并发、对话和记忆的大小、每用户调用上限、回答长度、出题和导入的上限、共享缓存、每日 token 预算），v1.9 起还有匀速发送的设置 | PK `id = 1`；每列有范围 `CHECK` | 四个已退役的长度列还在，不再使用 |
+| `users` | 主数据库用户的镜像（`id` 加 `stamp` = 主库 `uid`），带 `function_enabled`（暂停）、`free_mode` 和 `features_off`（每用户功能位） | PK `id`（由主数据库给） | stamp 不同就是另一个人：AI 数据会被丢弃 |
+| `chats` | AI 对话，以及每次练习、考试或记录总结的会话 | PK `id`；`user_id` → `users`（CASCADE） | `leaf_id` 和 `pick_conn` 故意没有外键 |
+| `messages` | 消息及其分支版本；提示、解析和总结也存在这里 | PK `id`；`chat_id` → `chats`（CASCADE） | 有些列只对某一种 `kind` 有意义 |
+| `memories` | 每个用户的记忆 | PK `id`；`user_id` → `users`（CASCADE） | |
+| `tasks` | 后台任务：AI 出题和 AI 导入 | PK `id`；`user_id` → `users`（CASCADE） | `job_key` 是部分唯一索引 |
+| `gen_items` | 正在进行的任务里已接受的题（断点续跑） | PK `(task_id, no)`；指向 `tasks`（CASCADE） | |
+| `gen_calls` | 出题和导入的每次模型调用（token、耗时、结果） | PK `id`；`task_id`、`user_id`（SET NULL） | |
+| `usage` | 其他所有模型调用，只有 token、耗时和状态，没有内容 | PK `id`；`user_id`（SET NULL） | |
+| `audit_outbox` | 等着发给后端的活动行 | PK `id` | 临时队列 |
+| `connections` | AI 连接：地址、格式、网关认证、状态，以及启用开关 `enabled` | PK `id`；`name` 唯一，不分大小写 | `format` 只允许 `openai` 和 `anthropic`；OpenAI Responses 是 `openai` 加 `responses = 1` |
+| `connection_secrets` | 连接的加密密钥 | PK `(connection_id, name)`；指向 `connections`（CASCADE） | |
+| `models` | 模型池：每个测试过的连接和模型一行 | PK `id`；指向 `connections`（CASCADE）；唯一 `(connection_id, model)` | |
+| `model_slots` | 每个功能用池里的哪个模型，以及思考强度 | PK `slot`；`model_id` → `models`（SET NULL） | |
+| `study_shared` | 提示和解析的共享缓存 | PK `id`；唯一 `(question_id, content_hash, kind, lang)` | `lang` 用 `zh`，而 `messages.lang` 用 `zh-CN` |
+| `geo_settings` | 外部 IP 定位接口（单行，测试通过后才写） | PK `id = 1` | |
+| `secrets` | 遗留：schema 7 之前的密钥 | PK `name` | 运行中的代码不再使用 |
+
+### 9.3 两个数据库之间的引用
+
+外键无法跨两个文件，所以这些关系靠身份和代码维持：
+
+| AI 数据库 | 主数据库 | 靠什么保持一致 |
+|---|---|---|
+| `users.id` + `users.stamp` | `users.id` + `users.uid` | stamp 不同就是另一个人：AI 数据会被删除 |
+| `chats.ref` | `attempts.session_key`（或 `r<recordId>@<at>`） | 只作查找键 |
+| `chats.record_id` | `attempts.id` | 只用于显示，不用来查找（恢复备份后 id 可能被复用） |
+| `messages.question_id`、`study_shared.question_id` | `questions.id` | 软关联；`study_shared.content_hash` 防止题目被改过 |
+| `tasks.job_key` | `banks.ai_job` | 主数据库的部分唯一索引保证一个任务一个题库 |
+| `audit_outbox` | `activity_log`（`source = 'ai'`、`src_id`） | 靠 `src_id` 去重 |
+
+### 9.4 新表和新列的约定
+
+- 时间一律 `*_at INTEGER`（unix 秒，UTC）；布尔一律 `INTEGER NOT NULL DEFAULT x CHECK (col IN (0, 1))`；枚举一律带 `CHECK`。
+- 指向本库的 id 一律 `*_id` 并加外键、写明 `ON DELETE`；不加外键时在注释里写理由。
+- 新的 `updated_by` 用用户 id；语言代码用 `en`、`zh-CN`、`ja`。
+- 已有的名字和主数据库较老的文本时间列保持不变。

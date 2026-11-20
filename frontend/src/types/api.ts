@@ -656,6 +656,8 @@ export interface GenJob {
   fromCount: number;
   file: { name: string; type: ImportFileType; size: number } | null;
   mode: 'questions' | 'material' | null;
+  /** v1.9: true while the job waits for the provider's quota */
+  waiting?: boolean;
   /** A-OWNER-70: questions found in the file (the service's `total`) and how many of them the import takes (`taken`); null while unknown */
   total?: number | null;
   taken?: number | null;
@@ -903,6 +905,10 @@ export interface AiLimits {
   genMaxChunks?: number;
   summaryMaxItems?: number;
   dailyTokenBudget?: number;
+  /** v1.9: one pacing setting for AI generation + import (requests / tokens per minute) */
+  paceOn?: number;
+  paceRpm?: number;
+  paceTpm?: number;
 }
 
 /** `GET` / `POST /api/ai/admin/limits` */
@@ -982,7 +988,8 @@ export type VisitPage = 'home' | 'banks' | 'users' | 'logs' | 'records' | 'recor
 
 export type AiSendMode = 'send' | 'regenerate' | 'edit';
 
-export type AiSlot = 'default' | 'chat' | 'study' | 'summary' | 'generate' | 'import';
+/** v1.9: the study slot is split into hint and explain */
+export type AiSlot = 'default' | 'chat' | 'hint' | 'explain' | 'summary' | 'generate' | 'import';
 export type AiState = 'setup' | 'off' | 'on' | 'paused';
 export interface AiKeyState { set: boolean; hint: string; unreadable: boolean }
 export interface AiConnection {
@@ -991,6 +998,8 @@ export interface AiConnection {
   keys: { apiKey: AiKeyState; gatewayKey: AiKeyState };
   status: 'ok' | 'broken'; errorCode: string | null; testedAt: number | null; listsModels: boolean;
   insecureHttp: boolean; usedBy: AiSlot[];
+  /** v1.9: the on / off switch of the connection (missing = on) */
+  enabled?: boolean;
 }
 export interface AiPoolModel {
   id: number; connectionId: number; connectionName: string; model: string; manual: boolean;
@@ -998,7 +1007,7 @@ export interface AiPoolModel {
   latencyMs: number | null; context: number | null; usedBy: AiSlot[];
 }
 /** v1.6: the thinking-strength families and the choice of one slot (null / missing = default, nothing sent) */
-export type AiEffortFamily = 'anthropic' | 'openai' | 'google' | 'responses' | 'gemma';
+export type AiEffortFamily = 'anthropic' | 'openai' | 'google' | 'responses';
 export interface AiEffort { family: AiEffortFamily; level: string }
 /** `effort` is optional: an older ai-service does not send it */
 export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null; effort?: AiEffort | null }
@@ -1022,7 +1031,7 @@ export interface AiTestAnswer {
   code?: string | null; httpStatus?: number | null; failedModel?: string | null; settings: AiSettings;
 }
 export interface AiModelList {
-  connections: { id: number; name: string; provider: string; status: 'ok' | 'broken'; listed: boolean;
+  connections: { id: number; name: string; provider: string; status: 'ok' | 'broken'; enabled?: boolean; listed: boolean;
     error: string | null; models: { id: string; context: number | null; poolId: number | null; status: string | null }[] }[];
 }
 export interface GenItem { no: number; kind: 'single' | 'multi' | 'multiple'; stem: string;

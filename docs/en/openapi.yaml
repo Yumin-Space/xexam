@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: Xexam API
-  version: "1.6"
+  version: "1.9"
   description: |
     The REST API of Xexam. The endpoints that existed in the legacy Python implementation behave as it did, and the Rust
     backend stays consistent with it (172 golden responses compared item by item, see tests/baseline/). The intentional
@@ -701,10 +701,21 @@ paths:
         Only active questions are exported. The file name is the bank name plus `.xlsx` / `.docx` (`Content-Disposition:
         attachment` with `filename` and `filename*`; the plain `filename` is `xexam-bank-<id>.<ext>` for a non-ASCII name).
 
-        A successful download writes the activity entry `bank.download` (detail `{format, sheets, questions}`).
+        (v1.9) `langs` chooses the languages: comma-separated, each token exactly `en`, `zh` or `ja`, one to three tokens, no
+        empty token and no duplicate; the parameter may be given once. Missing = all three, and the file name and bytes are
+        exactly those of v1.8. `xlsx` keeps all six columns in place and leaves the cells of unticked languages empty (the header
+        row is always full; without `en` the file cannot be imported again); `docx` holds only the chosen languages, always in the
+        order English, Chinese, Japanese. The file name is `<stem>.<ext>` for all three and `<stem>_<codes>.<ext>` for a subset
+        (codes in en, zh, ja order joined by `-`, for example `Garden_en-zh.docx`; the ASCII fallback is
+        `xexam-bank-<id>_<codes>.<ext>`). A bad `langs` (`langs=`, `fr`, `zh,zh`, `ZH`, `zh,,en`, or given twice) is a 400, checked
+        before the bank lookup, with no activity row.
+
+        A successful download writes the activity entry `bank.download` (detail `{format, langs, sheets, questions}`; `langs`
+        lists the chosen codes in en, zh, ja order).
       parameters:
         - { name: id, in: query, required: true, schema: { type: integer }, description: "The bank id" }
         - { name: format, in: query, required: true, schema: { type: string, enum: [xlsx, docx] } }
+        - { name: langs, in: query, required: false, schema: { type: string, example: "en,zh" }, description: "(v1.9) Languages: comma-separated en, zh, ja (default all three)" }
       responses:
         "200":
           description: The file
@@ -716,7 +727,7 @@ paths:
             application/vnd.openxmlformats-officedocument.wordprocessingml.document:
               schema: { type: string, format: binary }
         "400":
-          description: "`id` or `format` missing, malformed or unknown, or a key given twice: `请求的格式不对。`"
+          description: "`id`, `format` or (v1.9) `langs` missing where required, malformed or unknown, or a key given twice: `请求的格式不对。`"
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Error" }
@@ -1496,6 +1507,8 @@ paths:
       summary: "(v1.3) The models of every usable connection (also read by the AI Chat page for its free-mode menu)"
       x-access: AiAdmin
       description: |
+        (v1.9) Every connection object also has `"enabled"`; an off connection is `{"id", "name", "provider", "status", "enabled": false, "listed": false, "error": null, "models": []}` with no call to the provider and no cache read.
+
         Query `refresh=0|1`. Answer `{"connections": [{"id", "name", "provider", "status", "listed", "error", "models": [{"id", "context", "poolId", "status"}]}]}`. Cached per connection and revision for 10 minutes; refresh=1 lists again. Replaces the v1.2 POST of this path and POST /api/ai/admin/verify, which are gone.
       parameters:
         - { name: refresh, in: query, required: false, schema: { type: integer, enum: [0, 1] } }
@@ -1769,6 +1782,10 @@ paths:
       tags: [ai]
       summary: "(v1.1) The job: state, made / goal, progress and, on failure, the reason code and rejection counts"
       x-access: AiUser
+      description: |
+        (v1.9) Every job object (this route, `/api/ai/admin/gen` and the import answers) has `"waiting": bool`: true only while the
+        job is queued or running AND waiting for the provider's quota (pacing or a 429 delay). A provider's daily quota stops the
+        job with the job error `ai.gen.providerDaily` (not charged).
       responses:
         "200": { description: OK }
         "401": { $ref: "#/components/responses/AiSignIn" }
@@ -2662,6 +2679,35 @@ paths:
         "401": { $ref: "#/components/responses/AiSignIn" }
         "403": { $ref: "#/components/responses/AiForbidden" }
         "409": { $ref: "#/components/responses/AiError" }
+  /api/ai/admin/connections/enabled:
+    post:
+      tags: [ai-admin]
+      summary: "(v1.9) Turn a connection on or off"
+      x-access: AiAdmin
+      description: |
+        Body exactly `{"id": <positive integer>, "enabled": <boolean>}`; a missing or wrong-typed key or any extra key is a 400
+        `ai.badRequest`, an unknown id a 404 `ai.notFound`. Off keeps every setting, key and pool model of the connection, but it
+        leaves every picker and all routing: a slot, a following slot or a chat pick on an off connection keeps its choice and
+        the call fails with 409 `ai.connectionOff`. `connections/test` still works on an off connection. Switching does not bump
+        the connection's `rev` and does not cancel running calls. Also answers 200 when nothing changed. Activity event
+        `ai.settings.connectionOn` or `ai.settings.connectionOff` (object: the connection name; detail `{provider, host}`).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id, enabled]
+              properties:
+                id: { type: integer, minimum: 1 }
+                enabled: { type: boolean }
+      responses:
+        "200": { description: "OK; the answer is `{settings}` (GET /api/ai/admin/settings; every connection has `enabled`)" }
+        "400": { $ref: "#/components/responses/AiError" }
+        "401": { $ref: "#/components/responses/AiSignIn" }
+        "403": { $ref: "#/components/responses/AiForbidden" }
+        "404": { $ref: "#/components/responses/AiError" }
   /api/ai/admin/connections/order:
     post:
       tags: [ai-admin]
@@ -2699,7 +2745,10 @@ paths:
         | `openai` | `reasoning_effort` | low, medium, high, xhigh, max |
         | `google` | `extra_body.google.thinking_config.thinking_level` | MINIMAL, LOW, MEDIUM, HIGH, XHIGH |
         | `responses` | `reasoning.effort` (nested) | none, minimal, low, medium, high, xhigh, max |
-        | `gemma` | `extra_body.google.thinking_config.thinking_level` | HIGH, MINIMAL |
+
+        (v1.9) The family `gemma` was removed (400 `ai.badRequest`); Gemma 4 uses `google` with HIGH or MINIMAL, and a stored
+        `gemma:` choice is rewritten on start. `slot` is one of seven names: `default`, `chat`, `hint`, `explain`, `summary`,
+        `generate`, `import` (`study` is a 400). A slot whose connection is off is a 409 `ai.connectionOff`.
 
         The choice is not checked against the connection's format. A request that carries the parameter and is refused with
         HTTP 400 or 422 is sent again without it and the connection is remembered as not supporting it (in memory). Activity
@@ -2712,13 +2761,13 @@ paths:
               type: object
               required: [slot, effort]
               properties:
-                slot: { type: string, enum: [default, chat, study, summary, generate, import] }
+                slot: { type: string, enum: [default, chat, hint, explain, summary, generate, import] }
                 effort:
                   nullable: true
                   type: object
                   required: [family, level]
                   properties:
-                    family: { type: string, enum: [anthropic, openai, google, responses, gemma] }
+                    family: { type: string, enum: [anthropic, openai, google, responses] }
                     level: { type: string, description: "One of the levels of the family, case-sensitive" }
       responses:
         "200": { description: "OK; the answer is `{settings}` (GET /api/ai/admin/settings)" }
@@ -2731,7 +2780,7 @@ paths:
       summary: "(v1.3) Assign a model to a slot (tested first unless it passed within 10 minutes)"
       x-access: AiAdmin
       description: |
-        `{slot, connectionId, model, manual}` or `{slot, clear: true}` (the default slot cannot be cleared: 400). A failed test changes no slot and answers `{"ok": false, "code", …}`. Never switches AI+ off.
+        `{slot, connectionId, model, manual}` or `{slot, clear: true}` (the default slot cannot be cleared: 400). (v1.9) `slot` is one of the seven names (`study` is a 400); a connection that is off is a 409 `ai.connectionOff` (also for the default pick of `/api/ai/admin/enable`). A failed test changes no slot and answers `{"ok": false, "code", …}`. Never switches AI+ off.
       requestBody:
         required: true
         content:
@@ -2740,7 +2789,7 @@ paths:
               type: object
               required: [slot]
               properties:
-                slot: { type: string, enum: [default, chat, study, summary, generate, import] }
+                slot: { type: string, enum: [default, chat, hint, explain, summary, generate, import] }
                 connectionId: { type: integer }
                 model: { type: string }
                 manual: { type: boolean }
@@ -2799,11 +2848,13 @@ paths:
   /api/ai/admin/feature-switches:
     post:
       tags: [ai-admin]
-      summary: "(v1.3) Switch features on or off for everyone (normal users only)"
+      summary: "(v1.3, v1.9) Switch features on or off for everyone (administrators included since v1.9)"
       x-access: AiAdmin
       description: |
-        Any subset of the six keys. Administrators are not affected; running calls of the feature by normal users are cancelled.
-        `hint` and `explain` are one switch (AI hint + analysis): they always change together.
+        Any subset of the six keys. (v1.9) Each key moves alone (`hint` and `explain` are no longer paired) and a switched-off
+        feature is off for everyone, administrators included: running calls of that feature are cancelled for everyone and a new
+        request is a 403 `ai.featureOff`. The per-user feature bits are unchanged (they never apply to administrators, and
+        `hint` and `explain` stay paired there). `GET /api/ai/status` `features` for an administrator now reflect these switches.
       requestBody:
         required: true
         content:
@@ -3640,7 +3691,7 @@ components:
             auth.signin, auth.password, auth.guard (the auth step); ai.unavailable, ai.backendDown, ai.serverBusy, ai.internal,
             ai.disabled, ai.suspended, ai.notAllowed, ai.adminOnly, ai.adminAlways, ai.serviceOff (the backend's), ai.notFound, ai.busy, ai.tooLong, ai.messageLimit, ai.chatLimit,
             ai.notRetryable, ai.hintLeak (stream only), ai.noWrong, ai.noUsable, ai.noDetail, ai.badRequest, ai.memoryLimit, ai.memoryTooLong, ai.notVerified, ai.keyProblem, ai.badUrl, ai.badKey,
-            ai.headerClash, ai.keyMissing, ai.keyReenter, ai.modelMissing, ai.badRetention, ai.limitRange, ai.limitOrder, ai.callLimit (429, v1.0), ai.interrupted (stored
+            ai.headerClash, ai.keyMissing, ai.keyReenter, ai.modelMissing, ai.badRetention, ai.limitRange, ai.limitOrder, ai.connectionOff (409, v1.9), ai.gen.providerDaily (a job error, v1.9), ai.callLimit (429, v1.0), ai.interrupted (stored
             only), ai.up.auth, ai.up.quota, ai.up.notFound, ai.up.rateLimit, ai.up.overloaded, ai.up.server, ai.up.badRequest,
             ai.up.timeout, ai.up.connect, ai.up.protocol, ai.up.refused, ai.up.tooLong (stream only)
         field: { type: string, description: "apiKey or gatewayKey; for ai.limitRange and ai.limitOrder the limit's key" }
@@ -3931,7 +3982,7 @@ components:
     AiLimits:
       type: object
       additionalProperties: false
-      description: "The safety limits (all integers). POST: any subset; GET: all 33 keys (v1.0 ten, v1.1 and v1.2 seventeen more: the generation and import settings, with defaults as in section 5.7 of api.md, and v1.3 six more: callsAdminsExempt, studyShare, studyShareDays, genMaxChunks, summaryMaxItems and dailyTokenBudget). messageChars is not a key any more."
+      description: "The safety limits (all integers). POST: any subset; GET: all 36 keys (v1.9 added paceOn, paceRpm and paceTpm, the provider pacing of AI generation and import; v1.0 ten, v1.1 and v1.2 seventeen more: the generation and import settings, with defaults as in section 5.7 of api.md, and v1.3 six more: callsAdminsExempt, studyShare, studyShareDays, genMaxChunks, summaryMaxItems and dailyTokenBudget). messageChars is not a key any more."
       properties:
         perUserRunning: { type: integer, minimum: 1, maximum: 4, default: 1 }
         globalRunning: { type: integer, minimum: 1, maximum: 64, default: 16 }
@@ -3965,6 +4016,9 @@ components:
         genMaxChunks: { type: integer, minimum: 1, maximum: 50, default: 8, description: "(v1.3) Most parts a source too big for one prompt may be split into" }
         summaryMaxItems: { type: integer, minimum: 10, maximum: 70, default: 40, description: "(v1.3) Most wrong answers one AI summary reads" }
         dailyTokenBudget: { type: integer, minimum: 0, maximum: 100000000, default: 0, description: "(v1.3) Site-wide tokens per day for normal users (input plus output); 0 = off" }
+        paceOn: { type: integer, minimum: 0, maximum: 1, default: 1, description: "(v1.9) 1 = send AI generation and import calls evenly within paceRpm and paceTpm (about 90 % of them are used, one call about every 60 / (0.9 x paceRpm) s over a sliding 60 s)" }
+        paceRpm: { type: integer, minimum: 1, maximum: 10000, default: 15, description: "(v1.9) Provider requests per minute" }
+        paceTpm: { type: integer, minimum: 1000, maximum: 100000000, default: 250000, description: "(v1.9) Provider tokens per minute (input plus output)" }
     AiLimitsAnswer:
       type: object
       required: [limits, defaults, ranges]

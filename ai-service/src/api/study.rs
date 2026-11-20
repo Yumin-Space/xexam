@@ -363,7 +363,7 @@ pub async fn ask(ctx: Ctx) -> Answer {
         AskKind::Explain => crate::features::Feature::Explain,
     };
     // The gates come before the lookup: a shared answer is refused exactly when a new one would be (AI off or paused,
-    // user suspended, feature switched off for a normal user). Administrators pass the feature switches.
+    // user suspended, feature switched off: globally for everyone, or by the user's own box for a normal user).
     if !app.effective()? {
         return Err(ApiError::disabled());
     }

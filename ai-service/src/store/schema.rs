@@ -1,14 +1,15 @@
-//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 8: the tables of
+//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 9 (v1.9: the
+//! `V9_COLUMNS`, the rebuilt `model_slots` with `hint` + `explain` instead of `study`, the Gemma effort fold). Schema 8: the tables of
 //! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` … `V7_COLUMNS`, the indexes of `V3_INDEXES` and
 //! `V7_INDEXES` and the tables of `V5_TABLES`, `V7_TABLES` and `V8_TABLES`, added by the same additive steps on every
 //! path (new file, upgrade from 1 … 7), so `sqlite_master` is the same either way. Schema 8 (v1.4) only adds the
 //! `geo_settings` table (external IP-location lookup); nothing is backfilled.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "8";
+pub const SCHEMA_VERSION: &str = "9";
 
 /// The schema versions upgraded by this version (after a backup copy).
-pub const UPGRADABLE: [&str; 7] = ["1", "2", "3", "4", "5", "6", "7"];
+pub const UPGRADABLE: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
 
 /// Table of AI schema 8 (v1.4, all `IF NOT EXISTS`): the settings of the external IP-location lookup. A row exists only
 /// after a passing "test and save", so "saved" means "tested". The key (when there is one) is sealed with the AI master
@@ -363,7 +364,33 @@ pub const V16_COLUMNS: [(&str, &str, &str); 2] = [
     ),
 ];
 
-/// Tables of AI schema 7 (all `IF NOT EXISTS`; run after `V5_TABLES` and the late columns).
+/// v1.9 (schema 9), added at open like `V16_COLUMNS`: the per-connection on/off switch and the global provider pacing
+/// (one setting for AI generation and import).
+pub const V9_COLUMNS: [(&str, &str, &str); 4] = [
+    (
+        "connections",
+        "enabled",
+        "enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))",
+    ),
+    (
+        "limits",
+        "pace_on",
+        "pace_on INTEGER NOT NULL DEFAULT 1 CHECK (pace_on IN (0, 1))",
+    ),
+    (
+        "limits",
+        "pace_rpm",
+        "pace_rpm INTEGER NOT NULL DEFAULT 15 CHECK (pace_rpm BETWEEN 1 AND 10000)",
+    ),
+    (
+        "limits",
+        "pace_tpm",
+        "pace_tpm INTEGER NOT NULL DEFAULT 250000 CHECK (pace_tpm BETWEEN 1000 AND 100000000)",
+    ),
+];
+
+/// Tables of AI schema 7 (all `IF NOT EXISTS`; run after `V5_TABLES` and the late columns). History: the `model_slots`
+/// statement below is the schema-7 shape (slot `study`); every path rebuilds it after this (`store::split_study_slot`).
 pub const V7_TABLES: &str = "
 CREATE TABLE IF NOT EXISTS connections (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -452,10 +479,35 @@ CREATE TABLE IF NOT EXISTS gen_items (
 pub const V7_INDEXES: &str =
     "CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(chat_id, parent_id, id);";
 
-/// The six model slots, `model_id` NULL (every file, new or upgraded; idempotent). Bind `?1` = now.
+/// The six schema-7 model slots, `model_id` NULL (history; every path rebuilds `model_slots` after this). Bind `?1` = now.
 pub const V7_SEED: &str = "INSERT OR IGNORE INTO model_slots (slot, model_id, updated_at) VALUES
   ('default', NULL, ?1), ('chat', NULL, ?1), ('study', NULL, ?1),
   ('summary', NULL, ?1), ('generate', NULL, ?1), ('import', NULL, ?1)";
+
+/// `model_slots` of schema 9: `study` is split into `hint` and `explain`. The column order is the one a v1.8 file has
+/// after `V16_COLUMNS` added `effort`.
+pub const V9_MODEL_SLOTS: &str = "
+CREATE TABLE model_slots (
+  slot       TEXT PRIMARY KEY NOT NULL CHECK (slot IN ('default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import')),
+  model_id   INTEGER REFERENCES models(id) ON DELETE SET NULL,
+  updated_at INTEGER NOT NULL,
+  updated_by TEXT NOT NULL DEFAULT '',
+  effort     TEXT
+)";
+
+/// The seven model slots, `model_id` NULL (every file; idempotent). Bind `?1` = now.
+pub const V9_SEED: &str = "INSERT OR IGNORE INTO model_slots (slot, model_id, updated_at) VALUES
+  ('default', NULL, ?1), ('chat', NULL, ?1), ('hint', NULL, ?1), ('explain', NULL, ?1),
+  ('summary', NULL, ?1), ('generate', NULL, ?1), ('import', NULL, ?1)";
+
+/// The Gemma thinking family is gone (v1.9): its stored choices become the Google ones, which send the same wire request.
+/// Anything else of that family is cleared (send nothing). Run at the end of every `init()` when a `gemma:` row exists.
+pub const FOLD_GEMMA_EFFORT: &str = "
+UPDATE model_slots SET effort = CASE
+    WHEN effort IN ('gemma:HIGH', 'gemma:true') THEN 'google:HIGH'
+    WHEN effort IN ('gemma:MINIMAL', 'gemma:false') THEN 'google:MINIMAL'
+    ELSE NULL END
+WHERE substr(effort, 1, 6) = 'gemma:';";
 
 /// Run once in the upgrade transaction to schema 7 (never on a later start), steps 1 and 6 of the contract: every
 /// existing chat becomes one line, and the limits that were never changed move to the v1.3 defaults. Steps 2 - 5 (the
@@ -476,6 +528,11 @@ WHERE id = 1;";
 pub const PAIR_STUDY_BITS: &str = "
 UPDATE users SET features_off = features_off & ~6 WHERE (features_off & 6) IN (2, 4);
 UPDATE settings SET features_off = features_off & ~6 WHERE (features_off & 6) IN (2, 4);";
+
+/// The per-user half of [`PAIR_STUDY_BITS`]: from v1.9 the global hint and analysis switches are independent and are
+/// never re-paired; `users.features_off` still pairs them.
+pub const PAIR_USER_STUDY_BITS: &str =
+    "UPDATE users SET features_off = features_off & ~6 WHERE (features_off & 6) IN (2, 4);";
 
 /// A chat pick whose connection no longer exists is cleared (the chat is back on its default). Run in the upgrade to
 /// schema 7 and on every start of a schema-7 file (it changes nothing once no such pick is left).

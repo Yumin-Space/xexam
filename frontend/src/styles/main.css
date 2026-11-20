@@ -672,6 +672,14 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .dlg-pick .pick-l { font-weight: 700; font-size: 15px; }
 .dlg-pick .pick-h { font-size: 12.5px; line-height: 1.35; color: var(--ink3); }
 .dlg-pick .acts { margin-top: 14px; }
+.dlg-pick .pick:disabled { opacity: .5; cursor: not-allowed; }
+/* v1.9: the language boxes above the format buttons; 44 px tap rows, three in a row where they fit */
+.dlg-pick .dl-langs { display: flex; flex-wrap: wrap; gap: 4px 14px; min-width: 0; margin: 12px 0 0; padding: 0; border: 0; }
+.dlg-pick .dl-langs legend { padding: 0; margin-bottom: 2px; font-size: 13px; font-weight: 600; color: var(--ink2); }
+.dlg-pick .dl-lang { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; cursor: pointer; font-size: 15px; }
+.dlg-pick .dl-lang input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--print); }
+.dlg-pick .dl-langs .bk-hint { flex: 1 0 100%; margin: 0; font-size: 12.5px; }
+.dlg-pick .dl-langs .dl-none { color: var(--danger); font-weight: 600; }
 
 /* Dialog checkbox (askCheck) */
 .dlg-check {

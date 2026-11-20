@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v1.8 → v1.9** (section 000000; also from v1.6 or v1.7, which share the AI schema 8): no required `docker-compose.yml` change for one host; the AI database moves to schema 9 on start after the copy `backups/xexam-ai-schema8-<date-time>.db`; the main database does not change. New optional variables and three per-machine compose files (section 12 of [deployment.md](deployment.md)). Rolling back needs that copy restored (section 000000.4).
 > - **v1.5 → v1.6** (section 00000): no new `docker-compose.yml` variable; the main database moves to schema 10 automatically after its own backup copy is written (additive: one column, `users.can_download_banks`). The AI database stays at schema 8 (one column, `model_slots.effort`, is added by itself, with no backup copy). Rolling back to v1.5 needs no restore.
 > - **v1.3 → v1.4** (section 0000): the main database moves to schema 9 and the AI database to schema 8, each automatically after its own backup copy is written (additive: last-activity columns, and the table of the external location lookup). **The Docker volumes are renamed** (`xexam_data` → `xexam_backend_data`, `xexam_link` → `xexam_ai_auth`): copy `xexam_data` into `xexam_backend_data` before the first v1.4 start, or Xexam starts with an empty database. Rolling back to v1.3 uses `xexam_data` again; the AI database needs its copy back (section 0000.4).
 > - **v1.2 → v1.3** (section 000): a new `docker-compose.yml` is recommended (a `tunnel` network and the optional `cloudflared` service, for real client addresses); the main database moves to schema 8 and the AI database to schema 7, each automatically after its own backup copy is written. The main database rolls back without a restore; the AI database needs its copy back (section 000.4).
@@ -22,6 +23,32 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 000000. Upgrading from v1.8 to v1.9
+
+This section is numbered 000000 because it is the newest one. The older sections keep their numbers. The steps are the same from v1.6 and v1.7: they all have AI schema 8.
+
+### 000000.1 What changes
+
+- **The AI database** moves from schema 8 to **schema 9**, once, on the first start of the new ai-service, after the copy `backups/xexam-ai-schema8-<date-time>.db`. The step adds `connections.enabled` (every connection stays **on**) and the three pacing columns of `limits` (`pace_on` 1, `pace_rpm` 15, `pace_tpm` 250 000), rebuilds `model_slots` (the `study` row is copied to both `hint` and `explain`: both start with the old study model and thinking strength) and rewrites stored Gemma thinking strengths to the Google family with the same request. Details: section 8.2f of [database.md](database.md).
+- **The main database** does not change.
+- **Behaviour you will notice** (section 17.10 of [usage.md](usage.md)): feature switches are now one per model row and apply to administrators too; the pacing of AI generation and import is on by default (15 requests and 250 000 tokens a minute, 90 % used); **AI safety** has seven sub-tabs; the **Gemma** thinking button is gone; requests to AI providers carry `xexam-ai-service/<version>` again as `User-Agent` unless `XEXAM_AI_USER_AGENT_NAME=none` (the v1.8 behaviour).
+- **Compose**: nothing is required for one host. The new variables (`XEXAM_FRONTEND_PEERS`, `XEXAM_INTERNAL_TOKEN_REQUIRED`, `XEXAM_BACKEND_UPSTREAM`, `XEXAM_AI_UPSTREAM`, `XEXAM_NGINX_RESOLVER`) and `docker-compose.frontend.yml`, `docker-compose.backend.yml`, `docker-compose.ai-service.yml` matter only when you run the services on different machines.
+
+### 000000.2 Upgrade
+
+1. **Back up both data volumes** (stop first, as in the upgrade section of [README](../../README.md#upgrading)).
+2. `docker compose pull`, then `docker compose up -d`.
+
+### 000000.3 Checks after the upgrade
+
+- `/api/info` and the **About** page show `1.9`; the ai-service log has `Upgraded the AI database to schema 9` with the copy it wrote.
+- **AI settings** shows a switch on every connection (on) and a switch on every model row except **Default**; **Hint** and **Analysis** are separate rows with the same model as the old **Study** row.
+
+### 000000.4 Rollback to v1.8
+
+- **Main database**: nothing to restore.
+- **AI database**: a v1.8 ai-service refuses schema 9 (`written by a newer ai-service`). Stop the stack, restore `backups/xexam-ai-schema8-<date-time>.db` into the AI volume as in section 8.4 of [database.md](database.md) (remove `xexam-ai.db-wal` and `xexam-ai.db-shm`), change the three images to `:v1.8` and run `docker compose up -d`. Settings, chats and usage written after the upgrade are not in the copy and are lost.
 
 ## 00000. Upgrading from v1.5 to v1.6
 

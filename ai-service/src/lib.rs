@@ -20,6 +20,8 @@ pub mod import;
 pub mod limits;
 pub mod link;
 pub mod logs;
+pub mod pace;
+pub mod peers;
 pub mod prompt;
 pub mod provider;
 pub mod quota;

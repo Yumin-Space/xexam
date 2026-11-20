@@ -64,6 +64,7 @@ enum Route {
     ConnectionsTest,
     ConnectionsDelete,
     ConnectionsOrder,
+    ConnectionsEnabled,
     ModelsPick,
     ModelsEffort,
     ModelsTest,
@@ -148,6 +149,11 @@ const ROUTES: &[(&str, Option<Route>, Option<Route>)] = &[
         None,
         Some(Route::ConnectionsOrder),
     ),
+    (
+        "/api/ai/admin/connections/enabled",
+        None,
+        Some(Route::ConnectionsEnabled),
+    ),
     ("/api/ai/admin/models/pick", None, Some(Route::ModelsPick)),
     (
         "/api/ai/admin/models/effort",
@@ -208,6 +214,7 @@ impl Route {
             | Route::ConnectionsTest
             | Route::ConnectionsDelete
             | Route::ConnectionsOrder
+            | Route::ConnectionsEnabled
             | Route::ModelsPick
             | Route::ModelsEffort
             | Route::ModelsTest
@@ -261,6 +268,10 @@ pub const ADMIN_EVENTS: &[(&str, &[&str])] = &[
     (
         "/api/ai/admin/connections/order",
         &["ai.settings.connectionOrder"],
+    ),
+    (
+        "/api/ai/admin/connections/enabled",
+        &["ai.settings.connectionOn", "ai.settings.connectionOff"],
     ),
     ("/api/ai/admin/models/pick", &["ai.settings.model"]),
     ("/api/ai/admin/models/effort", &["ai.settings.effort"]),
@@ -447,6 +458,22 @@ async fn handle(app: AppState, req: Request) -> Answer {
             Err(ApiError::method_not_allowed())
         };
     }
+    // A peer that is not in `XEXAM_FRONTEND_PEERS` gets the answer of an unknown route (`/healthz` stays open above)
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0);
+    if !app.0.frontend_peers().allows(peer) {
+        if app.0.peer_log.allow() {
+            if let Some(p) = peer {
+                tracing::warn!(
+                    "refused a request from {}: the address is not in XEXAM_FRONTEND_PEERS",
+                    p.ip()
+                );
+            }
+        }
+        return Err(ApiError::not_found());
+    }
     let Some((_, get, post)) = ROUTES.iter().find(|(p, _, _)| *p == path) else {
         return Err(ApiError::not_found());
     };
@@ -507,6 +534,7 @@ async fn handle(app: AppState, req: Request) -> Answer {
         Route::ConnectionsTest => admin_conn::test(ctx).await,
         Route::ConnectionsDelete => admin_conn::delete(ctx).await,
         Route::ConnectionsOrder => admin_conn::order(ctx).await,
+        Route::ConnectionsEnabled => admin_conn::enabled(ctx).await,
         Route::ModelsPick => admin_models::pick(ctx).await,
         Route::ModelsEffort => admin_models::effort(ctx).await,
         Route::ModelsTest => admin_models::test(ctx).await,
@@ -543,15 +571,11 @@ async fn handle(app: AppState, req: Request) -> Answer {
     }
 }
 
-/// `AiUser` (5.1, round-2 contracts 0.3 / 2.7), checked in this order: the AI+ service effectively on (else 403
-/// `ai.disabled`); the main backend accepted a state report less than 60 s ago (else 503 `ai.backendDown`); the
-/// caller's AI+ service (else 403 `ai.notAllowed`); for a plain user, the AI+ function not suspended (else 403
-/// `ai.suspended`); then the route of `slot` (the model the call goes to, else 403 `ai.disabled`).
-pub fn require_ai_user(
-    app: &AppState,
-    who: &Identity,
-    slot: Slot,
-) -> Result<crate::route::Route, ApiError> {
+/// The access part of `AiUser` (5.1, round-2 contracts 0.3 / 2.7), checked in this order: the AI+ service effectively
+/// on (else 403 `ai.disabled`); the main backend accepted a state report less than 60 s ago (else 503
+/// `ai.backendDown`); the caller's AI+ service (else 403 `ai.notAllowed`); for a plain user, the AI+ function not
+/// suspended (else 403 `ai.suspended`). No model is looked at.
+pub fn require_ai_access(app: &AppState, who: &Identity) -> Result<(), ApiError> {
     if !app.0.effective()? {
         return Err(ApiError::disabled());
     }
@@ -564,6 +588,17 @@ pub fn require_ai_user(
     if app.0.suspended(who) {
         return Err(ApiError::suspended());
     }
+    Ok(())
+}
+
+/// [`require_ai_access`], then the route of `slot` (the model the call goes to: 403 `ai.disabled` when there is none,
+/// 409 `ai.connectionOff` when its connection is switched off).
+pub fn require_ai_user(
+    app: &AppState,
+    who: &Identity,
+    slot: Slot,
+) -> Result<crate::route::Route, ApiError> {
+    require_ai_access(app, who)?;
     app.0.route(slot, None)
 }
 
@@ -677,6 +712,7 @@ mod tests {
             "/api/ai/admin/connections/test",
             "/api/ai/admin/connections/delete",
             "/api/ai/admin/connections/order",
+            "/api/ai/admin/connections/enabled",
             "/api/ai/admin/models/pick",
             "/api/ai/admin/models/test",
             "/api/ai/admin/models/remove",

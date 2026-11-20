@@ -98,6 +98,12 @@ pub struct App {
     pub shutdown: watch::Receiver<bool>,
     shutdown_tx: watch::Sender<bool>,
     pub identity_log: Throttle,
+    /// At most one line a minute: a request refused because its peer is not in `XEXAM_FRONTEND_PEERS`
+    pub peer_log: Throttle,
+    /// The addresses allowed to reach this service (`XEXAM_FRONTEND_PEERS`; unset = any)
+    frontend_peers: crate::peers::PeerList,
+    /// Provider pacing of AI generation and import
+    pub pacer: crate::pace::Pacer,
     pub failures: FailureLog,
     /// Which chat a saved record belongs to (the study routes; never holds text)
     pub records: RecordCache,
@@ -170,6 +176,8 @@ pub struct Knobs {
     /// Test hook: the model context (tokens) the whole-file import fits its prefix into; 0 = the model listing's figure,
     /// else 128 000 (A-OWNER-71)
     pub import_context_tokens: std::sync::atomic::AtomicU64,
+    /// Percent of the provider pacing spacing and waits (100 = as set; tests use 0 = no pacing delay)
+    pub pace_scale: std::sync::atomic::AtomicU64,
     /// Location lookups per wall-clock minute (`geo::GEO_PER_MIN` = 30; tests lower it)
     pub geo_per_minute: std::sync::atomic::AtomicU64,
     /// Milliseconds the location worker asks the backend to wait for work (15 000; tests lower it)
@@ -191,6 +199,7 @@ impl Default for Knobs {
             backoff_scale: AtomicU64::new(100),
             place_poll_ms: AtomicU64::new(2000),
             import_context_tokens: AtomicU64::new(0),
+            pace_scale: AtomicU64::new(100),
             geo_per_minute: AtomicU64::new(crate::geo::GEO_PER_MIN),
             geo_wait_ms: AtomicU64::new(15_000),
             hang_child: AtomicBool::new(false),
@@ -523,12 +532,10 @@ impl App {
             .read(tables::load_limits)
             .map_err(|e| format!("cannot read the AI limits: {e}"))?;
         if cfg.ai_user_agent_invalid {
-            tracing::warn!(
-                "XEXAM_AI_USER_AGENT_NAME is not printable ASCII of at most {} characters; no User-Agent is sent to AI providers",
-                crate::config::MAX_USER_AGENT
-            );
+            tracing::warn!("XEXAM_AI_USER_AGENT_NAME is not printable ASCII of at most {} characters (or none); the default User-Agent xexam-ai-service/<version> is sent to AI providers", crate::config::MAX_USER_AGENT);
         }
-        let client = crate::provider::provider_client(cfg.ai_user_agent.as_deref(), &cfg.timeouts)?;
+        let ua = cfg.provider_user_agent();
+        let client = crate::provider::provider_client(ua.as_deref(), &cfg.timeouts)?;
         let geo = crate::geo::GeoState::new(&cfg.version, &cfg.timeouts)?;
         geo.set_config(
             store
@@ -560,6 +567,9 @@ impl App {
             shutdown,
             shutdown_tx,
             identity_log: Throttle::new(Duration::from_secs(60)),
+            peer_log: Throttle::new(Duration::from_secs(60)),
+            frontend_peers: cfg.frontend_peers.clone(),
+            pacer: crate::pace::Pacer::default(),
             failures: FailureLog::default(),
             records: RecordCache::default(),
             unreadable_log: Throttle::new(Duration::from_secs(60)),
@@ -671,6 +681,11 @@ impl App {
         })
     }
 
+    /// The peers allowed to reach this service (`XEXAM_FRONTEND_PEERS`).
+    pub fn frontend_peers(&self) -> &crate::peers::PeerList {
+        &self.frontend_peers
+    }
+
     /// The current limits.
     pub fn limits(&self) -> Limits {
         *self.limits.read().unwrap_or_else(|e| e.into_inner())
@@ -748,7 +763,7 @@ impl App {
             .is_ok_and(|s| s[Slot::Default.index()].is_some())
     }
 
-    /// AI+ is on: the switch is on, the keys are usable and at least one of the six slots resolves.
+    /// AI+ is on: the switch is on, the keys are usable and at least one of the seven slots resolves.
     pub fn effective(&self) -> rusqlite::Result<bool> {
         let snap = self.snapshot()?;
         if !snap.enabled || snap.key_problem.is_some() {
@@ -988,18 +1003,19 @@ impl App {
         }
     }
 
-    /// `false` when the feature is switched off for the user. Administrators always have every feature: neither the
-    /// global switch nor a per-user bit applies to them. For everyone else the global bit AND the user's own bit must be
-    /// clear. A database error counts as off (no AI use without a known state), like [`App::suspended`].
+    /// `false` when the feature is switched off. The global switch applies to everyone, administrators included; the
+    /// user's own bit applies to everyone except administrators. A database error counts as off (no AI use without a
+    /// known state), like [`App::suspended`].
     pub fn feature_allowed(&self, who: &Identity, f: Feature) -> bool {
-        if who.is_admin() {
-            return true;
-        }
+        let admin = who.is_admin();
         let read = self.store.read(|c| {
-            Ok((
-                conn::global_features_off(c)?,
-                data::features_off(c, who.id)?,
-            ))
+            let global = conn::global_features_off(c)?;
+            let user = if admin {
+                0
+            } else {
+                data::features_off(c, who.id)?
+            };
+            Ok((global, user))
         });
         match read {
             Ok((global, user)) => {
@@ -1012,8 +1028,20 @@ impl App {
         }
     }
 
-    /// AI effective, the user not suspended, the feature allowed and its slot resolves. No place, no quota.
+    /// AI effective, the user not suspended, the feature allowed and its slot resolves (a slot on a connection that is
+    /// switched off fails with `ai.connectionOff`). No place, no quota.
     pub fn admit(&self, who: &Identity, feature: Feature) -> Result<(), ApiError> {
+        self.admit_pick(who, feature, None)
+    }
+
+    /// `admit` for a call that routes through `pick` (an administrator's chat menu): the route actually used is checked,
+    /// not the slot's default.
+    pub fn admit_pick(
+        &self,
+        who: &Identity,
+        feature: Feature,
+        pick: Option<&Pick>,
+    ) -> Result<(), ApiError> {
         if !self.effective()? {
             return Err(ApiError::disabled());
         }
@@ -1023,9 +1051,7 @@ impl App {
         if !self.feature_allowed(who, feature) {
             return Err(ApiError::feature_off(feature));
         }
-        if !self.route_exists(feature.slot()) {
-            return Err(ApiError::disabled());
-        }
+        self.route(feature.slot(), pick)?;
         Ok(())
     }
 
@@ -1040,6 +1066,18 @@ impl App {
         chat: Option<i64>,
         feature: Feature,
     ) -> Result<Places, ApiError> {
+        self.take_places_pick(who, kind, chat, feature, None)
+    }
+
+    /// `take_places` for a call that routes through `pick`.
+    pub fn take_places_pick(
+        &self,
+        who: &Identity,
+        kind: Kind,
+        chat: Option<i64>,
+        feature: Feature,
+        pick: Option<&Pick>,
+    ) -> Result<Places, ApiError> {
         let l = self.limits();
         let slot = self
             .registry
@@ -1050,9 +1088,9 @@ impl App {
                 crate::limits::Limits::usize_of(l.per_user_running),
             )
             .ok_or_else(ApiError::busy)?;
-        slot.set_feature(feature.bit(), who.is_admin());
+        slot.set_feature(feature.bit());
         let permit = self.gate.try_acquire().ok_or_else(ApiError::server_busy)?;
-        self.admit(who, feature)?;
+        self.admit_pick(who, feature, pick)?;
         let now = crate::util::unix_now();
         // The per-user caps on model calls. The registry is read inside the same store read as the usage rows (lock order
         // store -> registry), and only the entries reserved before this one count.

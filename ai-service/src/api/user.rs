@@ -5,7 +5,9 @@
 //! send / regenerate / edit / retry / suggest carry the reply language (`lang`, the Settings language). Free mode is a state of the
 //! administrator (`POST /api/ai/free`, `freeMode` in the status): while it is on, every send / retry in any chat uses the
 //! language line alone as its system prompt and no memories.
-use super::{body_id, id_or_all, ok, only_keys, query_id, require_ai_user, Answer, Ctx};
+use super::{
+    body_id, id_or_all, ok, only_keys, query_id, require_ai_access, require_ai_user, Answer, Ctx,
+};
 use crate::chat::{self, Frame, Generation, Kind, StopReason};
 use crate::codes::ApiError;
 use crate::features::Feature;
@@ -90,18 +92,16 @@ pub async fn status(ctx: Ctx) -> Answer {
         m.insert("why".into(), why);
         // `features` and `gen` exactly when the user has the AI+ service, whether AI is enabled or not
         if who.ai_allowed {
-            // A feature is usable when its slot resolves; a normal user also needs the global switch and the own bit
-            // (administrators are not affected by either)
-            let (global, own) = if admin {
-                (0, 0)
-            } else {
-                app.store.read(|c| {
-                    Ok((
-                        crate::store::conn::global_features_off(c)?,
-                        data::features_off(c, who.id)?,
-                    ))
-                })?
-            };
+            // A feature is usable when its slot resolves and the global switch is on (administrators included); the
+            // user's own bit applies to everyone except administrators
+            let (global, own) = app.store.read(|c| {
+                let own = if admin {
+                    0
+                } else {
+                    data::features_off(c, who.id)?
+                };
+                Ok((crate::store::conn::global_features_off(c)?, own))
+            })?;
             let view = app.routes()?;
             let mut feats = Map::new();
             for f in crate::features::ALL {
@@ -423,16 +423,14 @@ fn pick_of(body: &Map<String, Value>, admin: bool) -> Result<Option<Option<Pick>
     }
 }
 
-/// The connection of a pick exists and can serve calls, else 400 `ai.badModel`. A model outside the pool is allowed.
+/// The connection of a pick exists and can serve calls, else 400 `ai.badModel`; a connection that is switched off is
+/// 409 `ai.connectionOff`. A model outside the pool is allowed.
 fn ensure_usable(app: &crate::app::App, p: &Pick) -> Result<(), ApiError> {
     let view = app.routes()?;
-    if view
-        .conn(p.connection_id)
-        .is_some_and(|c| view.conn_usable(c))
-    {
-        Ok(())
-    } else {
-        Err(ApiError::bad_model())
+    match view.conn(p.connection_id) {
+        Some(c) if !c.enabled => Err(ApiError::connection_off()),
+        Some(c) if view.conn_usable(c) => Ok(()),
+        _ => Err(ApiError::bad_model()),
     }
 }
 
@@ -633,8 +631,12 @@ pub(super) fn take_places(
     kind: Kind,
     chat: Option<i64>,
     feature: crate::features::Feature,
+    pick: Option<&Pick>,
 ) -> Result<(chat::Slot, chat::GatePermit), ApiError> {
-    let p = ctx.app.0.take_places(&ctx.who, kind, chat, feature)?;
+    let p = ctx
+        .app
+        .0
+        .take_places_pick(&ctx.who, kind, chat, feature, pick)?;
     Ok((p.slot, p.permit))
 }
 
@@ -876,7 +878,7 @@ fn prepare(
 async fn generate(ctx: Ctx, req: Req) -> Answer {
     let app = &ctx.app.0;
     let who = &ctx.who;
-    let default = require_ai_user(&ctx.app, who, Slot::Chat)?;
+    require_ai_access(&ctx.app, who)?;
     // The chat must be the caller's (404 before anything is taken); an administrator's stored pick comes from it
     let stored = match req.chat {
         Some(id) => {
@@ -903,12 +905,9 @@ async fn generate(ctx: Ctx, req: Req) -> Answer {
     if let Some(Some(p)) = &req.pick {
         ensure_usable(app, p)?;
     }
-    let route = match &wanted {
-        Some(p) => app.route(Slot::Chat, Some(p))?,
-        None => default,
-    };
+    let route = app.route(Slot::Chat, wanted.as_ref())?;
     let target = app.target(&route)?;
-    let (slot, permit) = take_places(&ctx, Kind::Chat, req.chat, Feature::Chat)?;
+    let (slot, permit) = take_places(&ctx, Kind::Chat, req.chat, Feature::Chat, wanted.as_ref())?;
     let limits = app.limits();
     let now = unix_now();
     let p = app
@@ -1179,7 +1178,7 @@ pub async fn memory_suggest(ctx: Ctx) -> Answer {
         return Err(ApiError::not_found());
     };
     let target = app.target(&route)?;
-    let (slot, permit) = take_places(&ctx, Kind::Suggest, None, Feature::Chat)?;
+    let (slot, permit) = take_places(&ctx, Kind::Suggest, None, Feature::Chat, None)?;
     let turns = [provider::Turn {
         role: Role::User,
         content: cut_chars(&text, prompt::SUGGEST_INPUT_CHARS),

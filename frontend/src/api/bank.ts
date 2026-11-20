@@ -1,5 +1,5 @@
 import type { Bank, BankDeleted, BanksResponse, BankSummary, Info } from '../types/api.ts';
-import { downloadPath, type DownloadFormat } from '../domain/bank-download.ts';
+import { downloadPath, type DownloadFormat, type DownloadLang } from '../domain/bank-download.ts';
 import { getFile, getJson, postJson, type FileDownload } from './client.ts';
 
 export const fetchInfo = (): Promise<Info> => getJson<Info>('/api/info');
@@ -17,6 +17,6 @@ export const deleteBank = (id: number, withRecords: boolean): Promise<BankDelete
 export const deleteSheets = (id: number, sheets: readonly string[], withRecords: boolean): Promise<BankDeleted> =>
   postJson<BankDeleted>('/api/banks/sheets/delete', { id, sheets, withRecords });
 
-/** v1.6: one bank as .xlsx (import format) or .docx (for reading). Default time limit 120 s. */
-export const downloadBank = (id: number, format: DownloadFormat): Promise<FileDownload> =>
-  getFile(downloadPath(id, format), { timeoutMs: 120_000 });
+/** v1.6: one bank as .xlsx (import format) or .docx (for reading). Default time limit 120 s. v1.9: `langs` = the ticked languages (missing = all three). */
+export const downloadBank = (id: number, format: DownloadFormat, langs?: readonly DownloadLang[]): Promise<FileDownload> =>
+  getFile(downloadPath(id, format, langs), { timeoutMs: 120_000 });

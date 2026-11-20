@@ -5,7 +5,7 @@ import type { BankAi, GenJob, GenStatus } from '../types/api.ts';
 import {
   aiOfBank,
   activeJob, aiMetaLine, aiSetTip, bankModeName, cardJobs, checkName, finishedBetween, genCount, genView, isHiddenFormat, minuteText,
-  pollInterval, runningLine, stampText, stripName,
+  pollInterval, runningLine, stampText, stripName, waitingNow,
 } from './ai-gen.ts';
 
 const gen = (o: Partial<GenStatus> = {}): GenStatus => ({
@@ -65,6 +65,8 @@ test('genView: hidden / service reasons carry the tag and win over everything', 
   assert.ok(loading.show && !loading.usable && loading.reason === 'loading' && !loading.tag);
   const fo = genView({ view: 'featureOff' }, gen(), ctx);
   assert.ok(fo.show && !fo.usable && fo.reason === 'featureOff' && fo.tag && fo.key === 'ai.err.featureOff');
+  const foAdmin = genView({ view: 'featureOff', admin: true }, gen(), ctx);
+  assert.ok(foAdmin.show && !foAdmin.usable && foAdmin.key === 'ai.err.featureOffAdmin');
 });
 
 test('genView: the own reasons in their order, no tag', () => {
@@ -182,4 +184,14 @@ test('badge word by origin (A-OWNER-53d)', async () => {
   assert.equal(aiSetWordKey(ai('scope')), 'aigen.badge.wordPractice');
   assert.equal(aiSetWordKey(ai('wrong')), 'aigen.badge.wordWrong');
   assert.equal(aiSetWordKey(ai('file')), 'aigen.badge.wordImport');
+});
+
+test('waitingNow: only a running job that waits for quota, never while saving or confirming', () => {
+  assert.equal(waitingNow(job({ waiting: true })), true);
+  assert.equal(waitingNow(job({ waiting: true, phase: 'reading' })), true);
+  assert.equal(waitingNow(job({ waiting: true, phase: 'saving' })), false);
+  assert.equal(waitingNow(job({ waiting: true, phase: 'confirm' })), false);
+  assert.equal(waitingNow(job({ waiting: true, state: 'queued' })), false);
+  assert.equal(waitingNow(job({ waiting: false })), false);
+  assert.equal(waitingNow(job()), false);
 });

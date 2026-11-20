@@ -17,6 +17,7 @@ use crate::gen::run::{FailCode, JobLimits, Next, Outcome, Run};
 use crate::gen::whole as whole_gen;
 use crate::gen::{SeedFull, Tri};
 use crate::identity::Identity;
+use crate::pace::{self, PaceCfg};
 use crate::provider::{self, Role, UpCode};
 use crate::quota::Day;
 use crate::store::jobs::{self, End};
@@ -321,7 +322,17 @@ pub enum CallResult {
     Error {
         code: UpCode,
         row: GenCallRow,
+        hint: RetryHint,
     },
+}
+
+/// What a provider error says about trying again (a 429 only).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RetryHint {
+    /// How long the provider asked to wait, in milliseconds
+    pub wait_ms: Option<u64>,
+    /// The quota is a daily one: waiting does not help
+    pub daily: bool,
 }
 
 impl Ctx {
@@ -388,6 +399,154 @@ impl Ctx {
             }
             let ms = Knobs::get(&self.app.0.knobs.place_poll_ms).max(1);
             tokio::time::sleep(Duration::from_millis(ms)).await;
+        }
+    }
+
+    /// Waits for the provider-rate pacing (v1.9): the calls of all jobs queue in order and each starts when the
+    /// sliding window has room for it. `Ok(None)` = pacing is off. Holds no gate place while waiting; cancel, shutdown
+    /// and the deadline end the wait.
+    pub async fn pace(&self, est: i64) -> Result<Option<u64>, Stop> {
+        let app = &self.app;
+        let pacer = &app.0.pacer;
+        let scale = Knobs::get(&app.0.knobs.pace_scale);
+        if !PaceCfg::of(&app.0.limits(), scale).on {
+            return Ok(None);
+        }
+        let mut cancel = self.cancel.clone();
+        let mut shutdown = app.0.shutdown.clone();
+        let turn = tokio::select! {
+            g = pacer.turn.lock() => Some(g),
+            _ = cancelled(&mut cancel) => None,
+            _ = shut(&mut shutdown) => None,
+            _ = tokio::time::sleep_until(self.deadline) => None,
+        };
+        let Some(_turn) = turn else {
+            self.check()?;
+            return Err(Stop::Fail(self.timeout_code));
+        };
+        let began = Instant::now();
+        let mut mark: Option<pace::WaitMark> = None;
+        loop {
+            self.check()?;
+            let scale = Knobs::get(&app.0.knobs.pace_scale);
+            let cfg = PaceCfg::of(&app.0.limits(), scale);
+            if !cfg.on {
+                return Ok(None);
+            }
+            let now = Instant::now();
+            match pacer.with_window(|w| w.admit(&cfg, est, now)) {
+                Ok(a) => {
+                    if a.oversize {
+                        tracing::warn!(
+                            "an AI call of about {est} tokens is above the paced token limit of {} a minute; it goes out alone",
+                            cfg.tpm
+                        );
+                    }
+                    return Ok(Some(a.id));
+                }
+                Err(at) => {
+                    let left = at.saturating_duration_since(now);
+                    let total = now.saturating_duration_since(began) + left;
+                    if mark.is_none() && total.as_secs_f64() >= pace::SHOW_WAIT_SECS {
+                        mark = Some(pacer.mark(app, self.task));
+                    }
+                    self.sleep_checked(left.min(Duration::from_secs(1)).as_secs_f64())
+                        .await?;
+                }
+            }
+        }
+    }
+
+    /// One paced model call of a job: wait for the pacing, take a place of the gate, send, give the place back. A 429
+    /// waits the time the provider names and sends again (up to [`pace::MAX_LIMITED_RETRIES`] times, not counted as an
+    /// error); a daily quota stops the job with `ai.gen.providerDaily`.
+    pub async fn send(
+        &self,
+        system: &str,
+        prefix: Option<&str>,
+        user: &str,
+        want: i64,
+        asked: usize,
+        opts: CallOpts,
+    ) -> Result<CallResult, Stop> {
+        let app = &self.app;
+        let pacer = &app.0.pacer;
+        let est = pace::estimate(system, prefix, user, want);
+        let mut limited = 0u32;
+        loop {
+            let stamp = self.pace(est).await?;
+            let permit = self.place().await?;
+            if let Some(id) = stamp {
+                pacer.with_window(|w| w.stamp(id, Instant::now()));
+            }
+            let r = self
+                .call_opts(system, prefix, user, want, asked, opts)
+                .await;
+            drop(permit);
+            let settle = |tokens: Option<i64>| {
+                if let Some(id) = stamp {
+                    pacer.with_window(|w| w.settle(id, tokens));
+                }
+            };
+            let r = match r {
+                Ok(r) => r,
+                Err(e) => {
+                    settle(None);
+                    return Err(e);
+                }
+            };
+            match r {
+                CallResult::Answer { ref row, .. } => {
+                    settle(Some(
+                        row.tokens_in.unwrap_or(0) + row.tokens_out.unwrap_or(0),
+                    ));
+                    return Ok(r);
+                }
+                CallResult::Error {
+                    code: UpCode::RateLimit,
+                    row,
+                    hint,
+                } => {
+                    settle(None);
+                    if hint.daily {
+                        if !self.write_call(&row, None, None) {
+                            return Err(Stop::Cancelled(StopWhy::Purged));
+                        }
+                        return Err(Stop::Fail("ai.gen.providerDaily"));
+                    }
+                    if limited >= pace::MAX_LIMITED_RETRIES {
+                        return Ok(CallResult::Error {
+                            code: UpCode::RateLimit,
+                            row,
+                            hint,
+                        });
+                    }
+                    limited += 1;
+                    let secs = hint
+                        .wait_ms
+                        .map(|ms| ms.div_ceil(1000))
+                        .unwrap_or_else(|| u64::from((20 * limited).min(60)))
+                        .clamp(1, pace::MAX_RETRY_WAIT_SECS);
+                    let scale = Knobs::get(&app.0.knobs.pace_scale);
+                    let wait = secs as f64 * scale as f64 / 100.0;
+                    if PaceCfg::of(&app.0.limits(), scale).on {
+                        let until = Instant::now() + Duration::from_secs_f64(wait);
+                        pacer.with_window(|w| w.pause_until(until));
+                    }
+                    if !self.write_call(&row, None, None) {
+                        return Err(Stop::Cancelled(StopWhy::Purged));
+                    }
+                    tracing::info!(
+                        "an AI job call hit the provider rate limit; waiting {secs} s (try {limited})"
+                    );
+                    let _mark = (wait >= pace::SHOW_WAIT_SECS).then(|| pacer.mark(app, self.task));
+                    self.sleep_checked(wait).await?;
+                }
+                other => {
+                    settle(None);
+                    return Ok(other);
+                }
+            }
         }
     }
 
@@ -563,7 +722,15 @@ impl Ctx {
                     .note(&self.who.username, e.code.code(), e.http);
                 let mut row = base_row("error");
                 row.error_code = Some(e.code.short().to_string());
-                Ok(CallResult::Error { code: e.code, row })
+                let hint = RetryHint {
+                    wait_ms: e.retry_ms,
+                    daily: e.daily,
+                };
+                Ok(CallResult::Error {
+                    code: e.code,
+                    row,
+                    hint,
+                })
             }
             Err(stop) => {
                 let row = base_row("stopped");
@@ -632,7 +799,6 @@ pub async fn drive(
             Next::Ask(b) => b,
         };
         ctx.sleep_checked(backoff(app, run.backoff_secs())).await?;
-        let permit = ctx.place().await?;
         let (prompt, want) = prompt_for(run, &batch);
         let attempt = run.attempt_of(&batch);
         let mut user = prompt.user;
@@ -643,7 +809,7 @@ pub async fn drive(
             ));
         }
         let result = ctx
-            .call_opts(
+            .send(
                 &prompt.system,
                 None,
                 &user,
@@ -655,7 +821,6 @@ pub async fn drive(
                 },
             )
             .await;
-        drop(permit);
         match result? {
             CallResult::Answer {
                 text,
@@ -676,7 +841,7 @@ pub async fn drive(
                     return Err(Stop::Cancelled(StopWhy::Purged));
                 }
             }
-            CallResult::Error { code, row } => {
+            CallResult::Error { code, row, .. } => {
                 run.on_provider_error(&batch, code.code());
                 let made = i64::try_from(run.made()).unwrap_or(0);
                 if !ctx.write_call(&row, Some(made), Some("writing")) {
@@ -869,7 +1034,6 @@ async fn plan_call(
 ) -> Result<Option<String>, Stop> {
     ctx.check()?;
     ctx.recheck().await?;
-    let permit = ctx.place().await?;
     let user = if attempt >= 2 {
         format!(
             "{user}{}",
@@ -884,8 +1048,7 @@ async fn plan_call(
         purpose: Some("plan"),
         schema: Some(schema),
     };
-    let r = ctx.call_opts(system, prefix, &user, want, 0, opts).await;
-    drop(permit);
+    let r = ctx.send(system, prefix, &user, want, 0, opts).await;
     let (row, text) = match r? {
         CallResult::Answer { text, row, .. } => (row, Some(text)),
         CallResult::Error { row, .. } => (row, None),
