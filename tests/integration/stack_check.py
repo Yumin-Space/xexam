@@ -783,7 +783,7 @@ try:
     ok(st == 200 and r['settings']['slots']['default']['effort'] == {'family': 'openai', 'level': 'high'}
        and r['settings']['slots']['default']['effortEffective'] == {'family': 'openai', 'level': 'high'},
        'v2.1: a level is saved with the family of the connection the slot uses. Actual %d %r' % (st, r))
-    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'level': 'max'})
+    st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'level': 'none'})
     ok(st == 400, 'v2.1: a level that the family of the connection does not have is 400. Actual %d' % st)
     st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'effort': {'family': 'anthropic', 'level': 'high'}})
     ok(st == 400, 'v2.1: the old {family, level} body is refused (400). Actual %d' % st)
