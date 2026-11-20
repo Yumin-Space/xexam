@@ -67,7 +67,7 @@ fn raw_rows(path: &Path) -> Value {
     for (t, order) in [
         ("questions", "id"),
         ("attempts", "id"),
-        ("stats", "question_id"),
+        ("user_stats", "user_id, question_id"),
         ("imports", "id"),
         ("meta", "key"),
     ] {
@@ -406,13 +406,57 @@ fn sqlite_master(path: &Path) -> Vec<Value> {
     .collect()
 }
 
+/// The type and name of every object a schema-11 database has, in `sqlite_master` rowid order (v2.0).
+const SCHEMA_11_OBJECTS: [(&str, &str); 41] = [
+    ("table", "meta"),
+    ("index", "sqlite_autoindex_meta_1"),
+    ("table", "sqlite_sequence"),
+    ("table", "users"),
+    ("index", "sqlite_autoindex_users_1"),
+    ("table", "activity_log"),
+    ("index", "idx_activity_ts"),
+    ("index", "idx_activity_user"),
+    ("index", "idx_activity_action"),
+    ("index", "idx_activity_prune"),
+    ("index", "idx_activity_src"),
+    ("table", "system_settings"),
+    ("index", "sqlite_autoindex_system_settings_1"),
+    ("index", "idx_users_uid"),
+    ("table", "banks"),
+    ("index", "idx_banks_owner"),
+    ("index", "idx_banks_ai_job"),
+    ("table", "questions"),
+    ("index", "sqlite_autoindex_questions_1"),
+    ("index", "idx_questions_sheet"),
+    ("index", "idx_questions_bank"),
+    ("index", "idx_questions_layout"),
+    ("table", "imports"),
+    ("index", "idx_imports_bank"),
+    ("table", "attempts"),
+    ("index", "idx_attempts_user"),
+    ("index", "idx_attempts_session"),
+    ("table", "attempt_items"),
+    ("index", "sqlite_autoindex_attempt_items_1"),
+    ("index", "idx_attempt_items_question"),
+    ("table", "sessions"),
+    ("index", "sqlite_autoindex_sessions_1"),
+    ("index", "idx_sessions_user"),
+    ("table", "user_stats"),
+    ("index", "sqlite_autoindex_user_stats_1"),
+    ("index", "idx_user_stats_question"),
+    ("table", "user_settings"),
+    ("index", "sqlite_autoindex_user_settings_1"),
+    ("table", "user_banks"),
+    ("index", "sqlite_autoindex_user_banks_1"),
+    ("index", "idx_user_banks_bank"),
+];
+
 #[test]
-fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
-    // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Intended difference (v0.5): the backend
-    // still executes that v1 text byte for byte, then migrates to schema 2 (new tables/indexes; three columns added with
-    // ALTER TABLE, which SQLite records by appending them to the stored CREATE TABLE text). A fresh database and a migrated v1
-    // database must end up with identical schemas. Intended difference (v0.6): schema 3 adds the user tables after the v2 objects
-    // and one more column to attempts (user_id).
+fn schema_11_is_the_same_for_a_fresh_file_and_the_python_sample() {
+    // tests/baseline/fixtures/sample.db was built by the old Python implementation (schema 1). Since v2.0 (schema 11) the
+    // "v1 text identical to the Python version" guarantee is given up: the v1 text is only the start of the upgrade chain, and
+    // nine tables are rebuilt with foreign keys. A fresh database and the migrated Python sample must still end up with
+    // identical schemas (type, name, table, SQL text, rowid order).
     let dir = tmp();
     let rs_db = dir.path().join("rs.db");
     drop(open_fixed(&rs_db));
@@ -441,72 +485,53 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         sqlite_master(&migrated),
         "fresh and migrated databases must have the same schema"
     );
-    // The v1 part: same objects in the same order; the text is Python's, except the three tables that gained a column
-    let added = [
-        ("questions", ", bank_id INTEGER"),
-        (
-            "attempts",
-            ", banks TEXT NOT NULL DEFAULT '[]', user_id INTEGER, \
-             kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice')), \
-             session_key TEXT, started_at INTEGER, \
-             time_limit INTEGER CHECK (time_limit IS NULL OR (time_limit BETWEEN 60 AND 36000 AND kind = 'exam')), \
-             ended TEXT CHECK (CASE WHEN ended IS NULL THEN time_limit IS NULL \
-             ELSE kind = 'exam' AND (ended = 'submit' OR (ended = 'timeUp' AND time_limit IS NOT NULL)) END)",
-        ),
-        ("imports", ", bank_id INTEGER"),
-    ];
-    for (old, new) in v1.iter().zip(&fresh) {
-        let name = old[1].as_str().expect("name");
-        let mut want = old.clone();
-        if let Some((_, col)) = added.iter().find(|(t, _)| *t == name) {
-            let text = old[3].as_str().expect("sql");
-            let body = text.strip_suffix(')').expect("ends with )");
-            want[3] = json!(format!("{body}{col})"));
-        }
-        assert_eq!(new, &want, "{name}");
-    }
-    let v2_objects: Vec<(&str, &str)> = fresh[10..]
+    // The full list of objects, in order
+    let objects: Vec<(&str, &str)> = fresh
         .iter()
         .map(|r| (r[0].as_str().expect("type"), r[1].as_str().expect("name")))
         .collect();
+    assert_eq!(objects, SCHEMA_11_OBJECTS);
+    let sql_of = |name: &str| -> String {
+        fresh
+            .iter()
+            .find(|r| r[1] == name)
+            .and_then(|r| r[3].as_str())
+            .unwrap_or_else(|| panic!("no sql for {name}"))
+            .to_string()
+    };
+    // Each rebuilt table is stored as CREATE TABLE "<t>" followed by the body of its `create` text
+    for r in &xexam_backend::database::schema::V11_REBUILDS {
+        let body = r
+            .create
+            .strip_prefix(&format!("CREATE TABLE new_{} ", r.table))
+            .expect("create text starts with the new_ name");
+        assert_eq!(
+            sql_of(r.table),
+            format!("CREATE TABLE \"{}\" {body}", r.table),
+            "{}",
+            r.table
+        );
+    }
+    // The users table is the v3 text with the later columns appended by ALTER TABLE; it is not rebuilt
+    let users = sql_of("users");
+    let v3 = xexam_backend::database::schema::MIGRATE_V3_TABLES;
+    let v3_users = &v3[v3.find("CREATE TABLE IF NOT EXISTS users").expect("users")..];
+    let v3_users = &v3_users[..v3_users.find(");").expect("end")];
+    let v3_users = v3_users.replace("CREATE TABLE IF NOT EXISTS users", "CREATE TABLE users");
+    assert!(users.starts_with(&v3_users), "users keeps the v3 text");
+    for col in [
+        "new_banks",
+        "can_manage_banks",
+        "ai_enabled",
+        "uid",
+        "last_active_at",
+        "can_download_banks",
+    ] {
+        assert!(users.contains(col), "{col}");
+    }
     assert_eq!(
-        v2_objects,
-        [
-            ("table", "banks"),
-            ("table", "attempt_items"),
-            ("index", "sqlite_autoindex_attempt_items_1"),
-            ("index", "idx_attempt_items_question"),
-            ("table", "settings"),
-            ("index", "sqlite_autoindex_settings_1"),
-            ("index", "idx_questions_bank"),
-            ("table", "users"),
-            ("index", "sqlite_autoindex_users_1"),
-            ("table", "sessions"),
-            ("index", "sqlite_autoindex_sessions_1"),
-            ("index", "idx_sessions_user"),
-            ("table", "user_stats"),
-            ("index", "sqlite_autoindex_user_stats_1"),
-            ("table", "user_settings"),
-            ("index", "sqlite_autoindex_user_settings_1"),
-            ("index", "idx_attempts_user"),
-            ("table", "user_banks"),
-            ("index", "sqlite_autoindex_user_banks_1"),
-            ("index", "idx_user_banks_bank"),
-            ("index", "idx_banks_owner"),
-            // v1.1 (schema 7): the AI-bank job key and the covering index of the bank list
-            ("index", "idx_banks_ai_job"),
-            ("index", "idx_questions_layout"),
-            // v1.3 (schema 8): the activity log, the system settings and the idempotent-save index
-            ("table", "activity_log"),
-            ("index", "idx_activity_ts"),
-            ("index", "idx_activity_user"),
-            ("index", "idx_activity_action"),
-            ("index", "idx_activity_prune"),
-            ("index", "idx_activity_src"),
-            ("table", "system_settings"),
-            ("index", "sqlite_autoindex_system_settings_1"),
-            ("index", "idx_attempts_session"),
-        ]
+        sql_of("idx_users_uid"),
+        "CREATE UNIQUE INDEX idx_users_uid ON users(uid) WHERE uid <> ''"
     );
     // Intended difference (v0.7): the backend switches the database to WAL, which is stored in the file (the Python-written
     // sample is in DELETE mode); user_version is untouched
@@ -527,7 +552,10 @@ fn schema_is_the_python_v1_text_plus_the_v2_v3_and_v4_migrations() {
         meta,
         vec![
             ("banks_known".to_string(), "0".to_string()),
-            ("schema".to_string(), "10".to_string()),
+            (
+                "schema".to_string(),
+                xexam_backend::database::schema::SCHEMA_VERSION.to_string()
+            ),
             ("users_known".to_string(), "1".to_string())
         ]
     );

@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v1.9 → v2.0**（0000000 节）：不用改 `docker-compose.yml`，没有新变量；这是一次数据库整理，程序里看不出变化。启动时主数据库升到 schema 11、AI 数据库升到 schema 10，各自先写自己的备份副本（`backups/xexam-schema10-<日期时间>.db`、`backups/xexam-ai-schema9-<日期时间>.db`）；请留出约两倍主数据库大小的空闲空间。回滚到 v1.9 需要恢复 AI 的副本，主数据库不用（0000000.4 节）。
 > - **v1.8 → v1.9**（000000 节；从 v1.6 或 v1.7 升级也一样，它们的 AI schema 都是 8）：单机的 `docker-compose.yml` 不需要任何必须的改动；AI 数据库在启动时先做副本 `backups/xexam-ai-schema8-<日期时间>.db`，再升级到 schema 9；主数据库不变。新增可选变量和三个按机器拆分的 compose 文件（见 [deployment.md](deployment.md) 第 12 节）。回滚需要恢复这个副本（000000.4 节）。
 > - **v1.5 → v1.6**（00000 节）：主数据库升到 schema 10（只增不改：`users.can_download_banks`，默认关），在写好备份副本后自动完成；AI 数据库仍是 schema 8，自动加上列 `model_slots.effort`。不需要新的 `docker-compose.yml`，卷不变。
 > - **v1.3 → v1.4**（0000 节）：主数据库升到 schema 9，AI 数据库升到 schema 8，各自在写好备份副本后自动完成（只增不改：最后活动的几列，以及外部所在地查询的表）。**Docker 卷改名了**（`xexam_data` → `xexam_backend_data`，`xexam_link` → `xexam_ai_auth`）：第一次启动 v1.4 之前，先把 `xexam_data` 复制到 `xexam_backend_data`，否则 Xexam 会以空数据库启动。回退到 v1.3 时重新使用 `xexam_data`；AI 数据库需要把它的备份副本放回去（0000.4 节）。
@@ -23,6 +24,36 @@
 > **从更早的版本直接升级到 v1.0**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 4）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v1.0 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `1.0`，ai-service 创建的数据库是 schema 4。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
+
+## 0000000. 从 v1.9 升级到 v2.0
+
+这一节编号为 0000000，因为它是最新的一节。较旧的各节保持原来的编号。v2.0 是一次数据库整理：Xexam 的外观和行为都不变。
+
+### 0000000.1 有什么变化
+
+- **主数据库**在新后端第一次启动时，先写一份副本 `backups/xexam-schema10-<日期时间>.db`，再从 schema 10 升到 **schema 11**，只升一次。九张表带外键重建，指向不存在对象的行按固定规则删除或脱开（计数并写进日志，副本里有这些行），没用的旧表 `stats` 和 `settings` 被删除，新增三个索引（其中一个是 `users.uid` 上的唯一索引，两个用户标记相同时会跳过并给出警告）。整个步骤是一个事务，遇到任何意外都回滚。详情见 [database.md](database.md) 的 6.17 节。
+- **AI 数据库**在新 ai-service 第一次启动时，先写一份副本 `backups/xexam-ai-schema9-<日期时间>.db`，再从 schema 9 升到 **schema 10**，只升一次。旧表 `secrets` 和 `settings`、`limits`、`chats` 里十六个没用的列被删除（日志只写数量，绝不写值）。详情见 [database.md](database.md) 的 8.2g 节。
+- **没有别的变化**：没有新设置，API 不变，compose 不变；界面和回答都一样。
+- **磁盘和时间**：`xexam_backend_data` 所在的卷请留出约两倍主数据库大小的空闲空间（备份加重建的表），`xexam_ai_data` 所在的卷留出和 AI 数据库差不多的空间。学习记录很多时第一次启动会更久；服务器要等两个升级都完成后才开始监听。
+
+### 0000000.2 升级
+
+1. **备份两个数据卷**（先停止，做法同 [README](../../README/README.zh-CN.md) 的升级一节），并检查剩余磁盘空间。
+2. `docker compose pull`，再 `docker compose up -d`。
+
+### 0000000.3 升级后的检查
+
+- `/api/info` 和**关于**页面显示 `2.0`。
+- 后端日志里有 `Upgraded the database to schema 11` 和它写的副本；只有清理过东西时才有：`Removed <n> orphaned rows of <relation> (copy in the backup).`、`Detached <n> questions from a missing bank; they are kept in the legacy bank.` 和 `Removed the unused legacy table <stats|settings> (<n> rows, …)`。以 `Warning: <n> user identity stamps are shared by more than one user` 开头的一行表示有重复：见 6.17。
+- ai-service 日志里有 `Upgraded the AI database to schema 10` 和 `Removed the unused legacy table secrets (<n> rows) and <k> unused columns (copy in the backup).`
+- 如果升级失败，日志写 `cannot open database: the upgrade to schema 11 stopped (<原因>). Nothing was changed; the copy <路径> was written.`（AI 一侧是 `cannot upgrade the AI database`）。文件原封不动，副本保留，下次启动再试。
+
+### 0000000.4 回滚到 v1.9
+
+- **主数据库**：不用恢复。v1.9 的后端能原样打开 schema 11 的文件；它重新建出来的空 `stats` 表，之后 v2.0 会再删掉（见 [database.md](database.md) 的 6.18 节）。
+- **AI 数据库**：v1.9 的 ai-service 拒绝 schema 10（`written by a newer ai-service`）。停掉整个栈，按 [database.md](database.md) 的 8.4 节把 `backups/xexam-ai-schema9-<日期时间>.db` 恢复到 AI 卷（删掉 `xexam-ai.db-wal` 和 `xexam-ai.db-shm`），把三个镜像改成 `:v1.9`，再 `docker compose up -d`。升级之后写入的设置、对话和用量不在副本里，会丢。
+- **比 v1.9 更早**：还要恢复主数据库的副本 `xexam-schema10-<日期时间>.db`，并按你要回到的那个版本的回滚步骤（下面各节）操作。
+- 升级前的备份里仍有旧的服务商密钥（AI 副本里的表 `secrets`）：请妥善保管，不需要时删除（见 [security.md](security.md) 第 11 节）。
 
 ## 000000. 从 v1.8 升级到 v1.9
 

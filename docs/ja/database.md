@@ -2,9 +2,9 @@
 
 # データベース
 
-> データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースを引き継いでいます。元のテーブル定義（スキーマ v1）は**1 文字も変えずに**残し、その後のスキーマはどれも加えるだけです（新しいテーブルと新しい列。作り直しや書き換えは一切しません）：**スキーマ v2**（v0.5：問題集、試験の詳細、設定）、**スキーマ v3**（v0.6：ユーザーとログイン）、**スキーマ v4**（v0.7：ユーザーごとの問題集、問題集の所有者、練習の記録）、**スキーマ v5**（v0.8：ユーザーごとの AI+ 機能の付与と識別用のスタンプ）、**スキーマ v6**（v0.9：記録を保存した練習または試験のセッションのキーと開始時刻）。*v1.6* でメインデータベースはスキーマ **10**（ユーザーごとの問題集のダウンロード権限。第 6.16 節）になります。既存のデータベースは、新しいバージョンを初めて起動したときに、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード** で動きます（第 2 節）。
-> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v1.9 から **9**（v1.4 は 8、v1.3 は 7、v1.1 は 6、v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
-> 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集へのアクセス、リリース前のデータベースの変換、古い形式の問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習用ルート）でテストしています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`）と `ai-service/src/store/` の単体テストでテストしています。
+> データベースは SQLite で、**ファイルは `xexam.db` の 1 つだけ**です。Rust バックエンドは旧 Python 版のデータベースから始まりました。元のテーブル定義（スキーマ v1）は 1 文字も変えずに残し、v10 までのスキーマはどれも加えるだけでした（新しいテーブルと新しい列）：**スキーマ v2**（v0.5：問題集、試験の詳細、設定）、**スキーマ v3**（v0.6：ユーザーとログイン）、**スキーマ v4**（v0.7：ユーザーごとの問題集、問題集の所有者、練習の記録）、**スキーマ v5**（v0.8：ユーザーごとの AI+ 機能の付与と識別用のスタンプ）、**スキーマ v6**（v0.9：記録を保存した練習または試験のセッションのキーと開始時刻）。*v1.6* でメインデータベースはスキーマ **10**（ユーザーごとの問題集のダウンロード権限。第 6.16 節）になります。*v2.0* でスキーマ **11**（データベースの整理：9 つのテーブルを外部キー付きで作り直し、旧テーブルを削除。第 6.17 節）になります。既存のデータベースは、新しいバージョンを初めて起動したときに、バックアップのコピーを書き出してから自動的に移行されます（第 6 節）。v0.7 からデータベースは **WAL モード** で動きます（第 2 節）。
+> v0.8 からは、ai-service が専用のボリュームに **2 つ目の、別のデータベース** `xexam-ai.db` を持ちます（第 8 節）。そのスキーマは v2.0 から **10**（v1.9 は 9、v1.4 は 8、v1.3 は 7、v1.1 は 6、v1.0 は 4、v0.9 までは 3）です。2 つのサービスが互いのデータベースを開くことはありません。**v1.1 はメインのデータベースをスキーマ v7 に上げます**（第 6 節）。
+> 根拠：[audit/database.md](../zh-CN/history/audit/database.md)。突き合わせテスト：`backend/tests/db_golden.rs`（旧 Python 実装で作成した `tests/baseline/fixtures/sample.db` と、コミット済みのスナップショットを使用）。移行とそのバックアップは、`backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 の問題集へのアクセス、リリース前のデータベースの変換、古い形式の問題の出題停止）、`v07_wal_and_logs.rs`（WAL モード）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6、バックエンドの学習用ルート）、`v20_db.rs`（v11、整理）でテストしています。AI のデータベースは `ai-service/tests/`（スキーマ 3 は `v09_store.rs`、スキーマ 10 は `v20_schema.rs`）と `ai-service/src/store/` の単体テストでテストしています。
 
 ## 1. ファイルの場所
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | `journal_mode` | `WAL`（v0.7 から）。`XEXAM_SQLITE_JOURNAL=delete` のときは `DELETE` | コミットは `-wal` ファイルにだけ書き込み、読み取り側（たとえばサーバーの横で起動したコマンドラインツール）が書き込み側を止めません。2.1 を参照 |
 | `synchronous` | `FULL` | コミットのたびに、ディスクに書かれるまで待ちます（WAL モードでは `-wal` ファイルの fsync 1 回）。そのため、停電してもコミット済みのものは失われません |
-| `foreign_keys` | `ON` | （スキーマには実際には外部キーがありません。旧版と同じにしています） |
+| `foreign_keys` | `ON` | スキーマ 11 からメインのデータベースは外部キーを宣言し（第 3 節）、それが強制されます。子の行を残してしまう削除は、孤児を残さずに失敗します。スキーマ 11 へのアップグレードは、自分のトランザクションの間だけこれをオフにし、必ずオンに戻します（6.17） |
 | `busy_timeout` | 5000 ms | 他の接続にロックされているとき、最大 5 秒待ちます |
 | 自動チェックポイント | SQLite の既定（1000 ページごと） | バックエンドの動作中、`-wal` ファイルを小さく保ちます |
 | トランザクション | `BEGIN IMMEDIATE … COMMIT`、失敗時は `ROLLBACK`（`COMMIT` に失敗した場合もロールバック） | すべて成功するか、何も変わらないかのどちらかです |
@@ -169,18 +169,19 @@ erDiagram
     users ||--o{ user_settings : "user_settings.user_id"
 ```
 
-13 のテーブルで、今も**外部キー制約はありません**。つながりはコードが保ち、削除のときは、それに属する行を同じトランザクションで削除します。図にない以前のスキーマのテーブルが 2 つあります：`stats`（v0.5 以前の問題ごとの統計）と `settings`（v0.5 の設定）です。v3 への移行のときに、その行は最初の管理者にコピーされました（`user_stats`、`user_settings`）。ロールバックを「バックアップを復元する」だけにしておくため、使われないまま残してあります。
+13 のテーブルです。スキーマ 11（v2.0）から、そのうち 9 つが**外部キー**付きで宣言され、すべて `ON DELETE NO ACTION` と明記されています（子の行を残してしまう削除は失敗します。コードはこれまでどおり、同じトランザクションの中で子の行を先に削除します）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（NULL 可）、`banks.owner_id`（NULL 可）→ `users(id)`、`attempt_items.attempt_id` → `attempts(id)`、`questions.bank_id`（NULL 可）、`imports.bank_id`（NULL 可）、`user_banks.bank_id` → `banks(id)`。意図的に**つないでいない**もの（テーブル定義にもその旨のコメントがあります）：`attempt_items.question_id` と `user_stats.question_id`（記録は削除された問題より長く残り、v0.5 より前の問題集は問題集ごとに区別しない id を使うため）、`activity_log.user_id`（ログは監査用のスナップショット）、`system_settings.updated_by`（書き込むだけの監査用の項目。つなぐと、サイトのスイッチを一度でも変更した管理者を削除できなくなります）。旧テーブルの `stats`（v0.5 以前の問題ごとの統計）と `settings`（v0.5 の設定）はスキーマ 11 からありません。その行は v3 への移行のときに最初の管理者にコピー済みです（`user_stats`、`user_settings`）。作り直した 9 つのテーブルは、名前を引用符で囲んだ `CREATE TABLE "banks" (…)` の形で保存されます（SQLite が名前を変えたテーブルをこう記録します）。
 
 各スキーマで加わったもの：
 
-- **v1**（旧 Python 版。そのまま保持）：`meta`、`questions`、`attempts`、`stats`、`imports`。
+- **v1**（旧 Python 版。その文は履歴としてコードに残してあります）：`meta`、`questions`、`attempts`、`stats`、`imports`。`stats` はスキーマ 11 で削除されます。
 - **v2**（v0.5）：テーブル `banks`、`attempt_items`、`settings`。列 `questions.bank_id INTEGER`（NULL になるのは古いバイナリが書き込んだ行だけです。6.6 を参照）、`attempts.banks TEXT NOT NULL DEFAULT '[]'`（その試験の出題元になった問題集の JSON スナップショット。`[{"id": 1, "name": "…"}]`）、`imports.bank_id INTEGER`。インデックス `idx_questions_bank (bank_id, active)` と `idx_attempt_items_question (question_id)`。
 - **v3**（v0.6）：テーブル `users`、`sessions`、`user_stats`、`user_settings`。列 `attempts.user_id INTEGER`。インデックス `idx_sessions_user` と `idx_attempts_user`。
 - **v5**（v0.8）：列 `users.ai_enabled INTEGER NOT NULL DEFAULT 0`（ユーザーごとの **AI+ 機能** の付与：AI+ 機能がオンで利用可能な間、そのユーザーは AI チャットを使えます。管理者にも保存しますが、常に使える管理者では無視します）と `users.uid TEXT NOT NULL DEFAULT ''`（小文字の 16 進数 32 桁のランダムな識別用のスタンプ。アカウントを作るときに設定し、決して変えません。AI サービスはこれをユーザー id の隣に保存し、スタンプの違う AI データを捨てます。8.3 節）。ほかにはありません：AI 設定、チャット、メモは AI のデータベースにあります。
 - **v4**（v0.7）：テーブル `user_banks`。列 `users.new_banks INTEGER NOT NULL DEFAULT 0`、`users.can_manage_banks INTEGER NOT NULL DEFAULT 0`、`banks.owner_id INTEGER`、`attempts.kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))`。インデックス `idx_user_banks_bank (bank_id)` と `idx_banks_owner (owner_id)`。`meta` のキー `users_known` と `banks_known`（6.6 節）。v0.7 の 6 列形式のワークブックには、列は必要ありませんでした。言語ごとの文は `questions.data` に入ります（4.7 節）。v0.7 のリリース前のビルドには、`users.new_banks` の代わりに `users.all_banks` がありました。そうしたデータベースは、開いたときに変換されます（6.5 節）。
 - **v6**（v0.9）：列 `attempts.session_key TEXT`（その記録を保存した練習または試験のセッションのランダムなキー。小文字の 16 進数 32 桁。AI サービスはこれでそのセッションのチャットに名前を付けます。8.2 節）と `attempts.started_at INTEGER`（そのセッションが始まった時刻。ブラウザーの時計での unix 秒）。v0.9 より前に保存したすべての記録と、ブラウザーが有効な値を送らなかった保存では、どちらも NULL です。2 つはそれぞれ別に判定され、無効なほうは NULL として保存し、そのために保存を拒否することはありません。インデックスも制約もありません。この列で記録を探すことはなく（記録は常に `attempts.id` で見つかります）、キーが一意であることも保証しません：それに頼る処理はありません。メインのデータベースで変わったのはそれだけです：AI のチャットとその文、タイトルは AI のデータベースにあります。
+- **v11**（v2.0）：新しい列はありません。上の外部キー付きで 9 つのテーブルを作り直し、新しいインデックス `idx_user_stats_question (question_id)`、`idx_imports_bank (bank_id)`、ユニークな `idx_users_uid ON users(uid) WHERE uid <> ''` を加え、`stats` と `settings` を削除します（6.17）。
 
-v1 のテーブル作成文は `backend/src/database/schema.rs`（`SCHEMA`）に一字一句そのまま保存されており、旧版 `app/db.py` の `SCHEMA` と同じです。この文は今も起動のたびに最初に実行されます。その後の追加分はそのすぐ隣にあります（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、…、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`）。どれも `IF NOT EXISTS` を使うか、先に確認してから実行するため、最新のデータベースを開いても**何も書き込みません**（テスト済み：データベースファイルとその `-wal` ファイルは、どちらも 1 バイトも変わりません）。SQLite は `ALTER TABLE … ADD COLUMN` を、保存済みの `CREATE TABLE` の文の末尾に列を書き足す形で記録します。そのため、`questions`、`attempts`、`imports` の `sqlite_master` の文は、v1 の文に追加した列が付いたものになります（`users` のものは、v3 の文に v4 と v5 の列が付いたもの）。新しく作ったデータベースと移行したデータベースのスキーマは完全に同じです（`db_golden.rs` でテスト済み）。
+v1 のテーブル作成文は `backend/src/database/schema.rs`（`SCHEMA`）に履歴として残してあり、その後の追加分はそのすぐ隣にあります（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、…、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`。v2.0 からは `V11_REBUILDS`：9 つのテーブルの定義とそのインデックス）。`SCHEMA` は、ファイルが新しいか、スキーマ 11 より古いときだけ起動時に実行されます（そのため、開くたびに `stats` を作り直すことはありません）。そのあとアップグレードの手順が走ります。どれも `IF NOT EXISTS` を使うか、先に確認してから実行するため、最新のデータベースを開いても**何も書き込みません**（テスト済み：データベースファイルとその `-wal` ファイルは、どちらも 1 バイトも変わりません）。SQLite は `ALTER TABLE … ADD COLUMN` を、保存済みの `CREATE TABLE` の文の末尾に列を書き足す形で記録します。そのため `users` の保存された文は v3 の文に追加した列が付いたものになり、作り直した 9 つのテーブルは `V11_REBUILDS` の定数から、列の順を整えて作られます。新しく作ったデータベースとアップグレードしたデータベースのスキーマは完全に同じです（`db_golden.rs` と、古い各スキーマからの `v20_db.rs` でテスト済み）。
 
 ## 4. 学習記録を左右する細かな仕様
 
@@ -278,10 +279,10 @@ docker compose start
 
 ## 6. スキーマの移行と古いバージョンへの戻し方
 
-`meta.schema` は、そのデータベースのスキーマを示します（v0.4 までは `1`、v0.5 は `2`、v0.6 は `3`、v0.7 と v0.7.5 は `4`、v0.8 は `5`、v0.9 は `6`、v1.1 は `7`、v1.3 は `8`、v1.4 は `9`、v1.6 は `10`）。あるバージョンが古いスキーマのデータベースを開くと、そのバージョンのスキーマまで一度に引き上げます。
+`meta.schema` は、そのデータベースのスキーマを示します（v0.4 までは `1`、v0.5 は `2`、v0.6 は `3`、v0.7 と v0.7.5 は `4`、v0.8 は `5`、v0.9 は `6`、v1.1 は `7`、v1.3 は `8`、v1.4 は `9`、v1.6 は `10`、v2.0 は `11`）。あるバージョンが古いスキーマのデータベースを開くと、そのバージョンのスキーマまで一度に引き上げます。
 
-1. **バックアップ。** データベースに何かデータが入っていれば、SQLite の `VACUUM INTO` で整合性のとれたコピーを、`xexam.db` と同じ場所の `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` に書き出します。`<N>` は、今回の起動の前にファイルが持っていたスキーマです（既存のファイルは上書きせず、代わりに `-2`、`-3`……を付けます）。段階がいくつ続いても、バックアップは常に **1 つ** です。コピーは古いスキーマの、それだけで完結した 1 つのファイルで、`-wal` ファイルにまだあった変更も含みます。`VACUUM INTO` は完全なファイルを書き出すので、アップグレードの前に**データベースと同じくらいの空きディスク容量**を確保してください。コピーが自動で削除されることはなく、後で削除したもの（記録、問題集、ユーザー）も残るので、それが問題になるときは古いコピーを自分で削除してください。**コピーを書き出せない場合**（ディスクがいっぱい、権限がないなど）、プログラムは起動せず、何も変更しません。理由はログに出ます。
-2. **移行。** **1 つの** `BEGIN IMMEDIATE` トランザクションの中で、古いスキーマから現在のスキーマまでのすべての段階を行い（6.1、6.4、6.5、6.8、6.10、そしてリリース前の v4 のデータベースの変換）、最後に `meta.schema` を設定します。
+1. **バックアップ。** データベースに何かデータが入っていれば、SQLite の `VACUUM INTO` で整合性のとれたコピーを、`xexam.db` と同じ場所の `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` に書き出します。`<N>` は、今回の起動の前にファイルが持っていたスキーマです（既存のファイルは上書きせず、代わりに `-2`、`-3`……を付けます）。段階がいくつ続いても、バックアップは常に **1 つ** です。コピーは古いスキーマの、それだけで完結した 1 つのファイルで、`-wal` ファイルにまだあった変更も含みます。`VACUUM INTO` は完全なファイルを書き出すので、アップグレードの前に**データベースと同じくらいの空きディスク容量**を確保してください（スキーマ 11 へのアップグレードはテーブルも作り直すので**約 2 倍**、6.17）。コピーが自動で削除されることはなく、後で削除したもの（記録、問題集、ユーザー）も残るので、それが問題になるときは古いコピーを自分で削除してください。**コピーを書き出せない場合**（ディスクがいっぱい、権限がないなど）、プログラムは起動せず、何も変更しません。理由はログに出ます。
+2. **移行。** **1 つの** `BEGIN IMMEDIATE` トランザクションの中で、古いスキーマから現在のスキーマまでのすべての段階を行い（6.1、6.4、6.5、6.8、6.10、6.17、そしてリリース前の v4 のデータベースの変換）、最後に `meta.schema` を設定します。
 3. **ジャーナルモード。** その後で初めて、バックエンドはファイルを WAL に切り替えます（2.1 節）。
 
 ログにはコピーの名前が出ます：`Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-….db (restore it if you ever go back to an older version).`（「データベースをスキーマ 6 に更新しました。先に以前のバージョンのコピーを保存しました……（古いバージョンに戻すときは、これを復元してください）」）。新規のデータベースも同じ手順を通ります（バックアップはなく、レガシー問題集も作りません）。そのため、新しいデータベースと移行したデータベースは同じ構造になります。
@@ -300,11 +301,11 @@ v2 のファイルは、v0.4 でも旧 Python 版でも開けます。新しい�
 
 ### 6.3 旧 Python 実装との互換性
 
-v0.4 までは、2 つの実装が**同じファイル、同じスキーマ**を使っていました。当初は合成データを使って、この往復を一通り実際に確かめました（旧 Python でデータベースを作成 → Rust で読み書き → 旧 Python で読み戻し。原本の sha256 は前後で変わらず、`PRAGMA integrity_check` も通りました）。旧 Python のコードを削除した後は、残りの保証をテストが守っています。`sample.db`（旧実装が書き出したデータベース）は現在のスキーマに移行され、問題 id、統計、試験記録、インポートはすべてそのまま残ります。そのバックアップは今もスキーマ 1 のままで、中身は元の行とまったく同じです。移行したファイルは、その後に開いて読み取り、閉じても 1 バイトも変わりません。また、新しいデータベースの `sqlite_master` は、旧実装の文にその後の追加分を加えたものです。実際に Python 版へロールバックするには、スキーマ 1 のバックアップを復元し（6.2）、旧イメージ（`ghcr.io/yumin-space/xexam:v0.2.2`。非公開の GHCR にしかないので、先に `docker login ghcr.io` を実行します）で開きます。
+v0.4 までは、2 つの実装が**同じファイル、同じスキーマ**を使っていました。当初は合成データを使って、この往復を一通り実際に確かめました（旧 Python でデータベースを作成 → Rust で読み書き → 旧 Python で読み戻し。原本の sha256 は前後で変わらず、`PRAGMA integrity_check` も通りました）。**v2.0（スキーマ 11）からは、この保証をあえて手放しました**：テーブルを外部キー付きで作り直し、旧テーブルを削除したので、旧 Python 版は現在のファイルをもう開けず、新しいデータベースにも旧実装の文はありません。テストが今も守っているのは次の点です。`sample.db`（旧実装が書き出したデータベース）は現在のスキーマに移行され、問題 id、統計、試験記録、インポートはすべてそのまま残ります。そのバックアップは今もスキーマ 1 のままで、中身は元の行とまったく同じです。移行したファイルは、その後に開いて読み取り、閉じても 1 バイトも変わりません。新しいデータベースの `sqlite_master` は、移行したものと同じです。**Python 版に戻す唯一の方法はスキーマ 1 のバックアップです**：それを復元し（6.2）、旧イメージ（`ghcr.io/yumin-space/xexam:v0.2.2`。非公開の GHCR にしかないので、先に `docker login ghcr.io` を実行します）で開きます。
 
 ### 6.4 スキーマ v3（v0.6）
 
-`meta.schema` が `2` のとき（バックアップは `xexam-schema2-<YYYYmmdd-HHMMSS>.db`）、または `1` のときは 6.1 と同じトランザクションの中で行います。v3 の段階では、`users`、`sessions`、`user_stats`、`user_settings` を作成し、`attempts.user_id` を追加します。ユーザーがまだいなければ、既定の管理者 `admin`（パスワード `admin`。最初のログインで変更が必要）を作成し、既存のデータをこの管理者のものにします：ユーザーのないすべての試験記録、`stats` のすべての行の `user_stats` へのコピー、`settings` のすべての行の `user_settings` へのコピーです。古い `stats` と `settings` テーブルは、使われないまま残ります。
+`meta.schema` が `2` のとき（バックアップは `xexam-schema2-<YYYYmmdd-HHMMSS>.db`）、または `1` のときは 6.1 と同じトランザクションの中で行います。v3 の段階では、`users`、`sessions`、`user_stats`、`user_settings` を作成し、`attempts.user_id` を追加します。ユーザーがまだいなければ、既定の管理者 `admin`（パスワード `admin`。最初のログインで変更が必要）を作成し、既存のデータをこの管理者のものにします：ユーザーのないすべての試験記録、`stats` のすべての行の `user_stats` へのコピー、`settings` のすべての行の `user_settings` へのコピーです。古い `stats` と `settings` テーブルは、この段階では使われないまま残ります（スキーマ 11 で削除されます。6.17）。
 
 ### 6.5 スキーマ v4（v0.7）
 
@@ -333,6 +334,10 @@ v0.4 までは、2 つの実装が**同じファイル、同じスキーマ**を
 - **古いバージョンが作ったユーザー**：`meta.users_known` には、このバージョンが知っている最大のユーザー id が入ります。v4 への移行のときと、このバージョンがユーザーを作るたびに書き込みます（ユーザー id は再利用しません）。それより大きい id のユーザーは、ロールバックの後に古いバージョンが `user_banks` の行なしで作ったものです。そうしたユーザーには、アップグレードのときのユーザーと同じく、既存のすべての問題集の行と `new_banks = 1` を設定し、マークを進めます。
 - マークがない場合（マークを書かないビルドが最初に開いたデータベース）は、そうした問題集やユーザーを見分けられないので、マークだけを書き込みます。
 - **識別用のスタンプのないユーザー**（`uid = ''`、v0.8）：ロールバックの後に v0.7.5 が作ったユーザーにはスタンプがないので、スタンプを設定します。その AI+ はオフです（列の既定値）。
+
+- **古いバージョンが作り直した旧テーブル**（スキーマ 11 以降）：v1.9 のバックエンドは開くたびに v1 の `SCHEMA` を実行するので、ロールバックの後に空の `stats` テーブルを作り直します。空の `stats` や `settings` はもう一度削除されます。行が入っているものは残され、ログに `Warning: the legacy table <t> was re-created by an older version and holds <n> rows; it was kept.` と出ます。
+- **`users.uid` のユニークインデックス**：`idx_users_uid` がなく（重複のために作成を見送った場合。6.17）、重複するスタンプがもうなければ、作成します。
+- 起動のたびに `foreign_key_check` を丸ごと実行することはしません。強制によって新しい孤児は生まれませんし、記録が増えるほどその検査には時間がかかるからです。最新のファイルには書き込みません。
 
 その後、古い形式の問題を出題停止にします（4.2 節）。
 
@@ -409,6 +414,44 @@ v0.7.5 はスキーマ 5 のファイルそのものも開けます（スキー�
 
 ログの行は `system.migrate`、`{"from": 9, "to": 10}` です（より古いスキーマからの移行でも 1 行）。v1.5 のバックエンドはスキーマ 10 のファイルをそのまま開けます（新しい列は無視されます）。戻すときに復元は不要です。
 
+### 6.17 スキーマ v11（v2.0）
+
+メインのデータベースは、v2.0 のバックエンドを初めて起動したときに、バックアップのコピー `backups/xexam-schema10-<日時>.db` を取ってから、スキーマ 10 から**スキーマ 11** へ 1 回だけ移ります（もっと古いスキーマからは、その古いスキーマのバックアップ 1 つだけを取って、そのまま 11 まで進みます）。列、名前、型、値は変わらず、アプリの見た目も変わりません。この段階は整合性のためのものです。サーバーが待ち受けを始める前に、1 つの `BEGIN IMMEDIATE` トランザクションの中で実行され、`foreign_keys` はトランザクションの外でオフにされます（ガードがどんな場合も、エラーのときもオンに戻し、戻せなければ起動に失敗します）。バックアップができるまでは何も書き込みません。
+
+1. **孤児**を数え、決まったルールで片付けます（下の表）。
+2. **旧テーブル**：`stats` と `settings` を削除します（その行は v0.6 で最初の管理者にコピー済みで、スキーマ 3 より古いファイルでは同じトランザクションの少し前にコピーされます）。行数はログに出ます。
+3. **`users.uid`**：ユニークインデックス `idx_users_uid ON users(uid) WHERE uid <> ''` を作ります（重複の場合は後述）。
+4. **9 つのテーブルを作り直します**。順番は `banks`、`questions`、`imports`、`attempts`、`attempt_items`、`sessions`、`user_stats`、`user_settings`、`user_banks` で、それぞれ SQLite の手順に従います：外部キー付きの `new_<テーブル>` を作り、列を明示してすべての行をコピーし、古いテーブルを削除し、名前を付け替え、AUTOINCREMENT のカウンタ（`sqlite_sequence`）を戻し（id は再利用されません。`meta.banks_known` と記録の id はそれに頼っています）、インデックスを作ります（新しい 2 つも含みます）。定義にない列があればアップグレードは止まります（黙って捨てることはありません）。すべてのテーブルの行数を前後で比べ、違えばアップグレードは止まります。
+5. ファイル全体に **`PRAGMA foreign_key_check`** を実行します。1 行でも出れば止まります。
+6. アクティビティの行 `system.migrate` を 1 つ書き（`{"from":10,"to":11}`。行を削除したときは `"orphansRemoved"` も付きます）、`meta.schema` を `11` にします。
+
+どこで止まっても、トランザクション全体がロールバックされます：ファイルはスキーマ 10 とその内容のまま、バックアップは残り、次の起動でもう一度試します（新しいバックアップも書きます）。ログには `cannot open database: the upgrade to schema 11 stopped (<理由>). Nothing was changed; the copy <パス> was written.` と出ます。成功したときは `Upgraded the database to schema 11. A copy of the previous version was saved first: <パス> (restore it if you ever go back to an older version).` と出ます。
+
+**孤児のルール。** 削除された行はすべてバックアップに残っています。
+
+| 関係 | ルール | ログの行 |
+|---|---|---|
+| `attempts.user_id` があるのにユーザーがいない | その記録の `attempt_items`、続いて記録を削除 | `Removed <n> orphaned rows of attempts.user_id (copy in the backup).` |
+| `attempt_items.attempt_id` があるのに記録がない | 削除 | `Removed <n> orphaned rows of attempt_items.attempt_id (copy in the backup).`（上の行で削除した記録の項目も数えます） |
+| `sessions`、`user_stats`、`user_settings`：ユーザーがいない | 削除 | `Removed <n> orphaned rows of sessions.user_id (copy in the backup).`。`user_stats.user_id`、`user_settings.user_id` も同様 |
+| `user_banks`：ユーザーまたは問題集がない | 削除（6.6 の確認と同じルール） | `Removed <n> orphaned rows of user_banks (copy in the backup).` |
+| `banks.owner_id` があるのにユーザーがいない | NULL にして、最初の管理者のものにする（管理者がいなければ NULL のまま。あとで 6.6 の確認が扱う） | `Gave <n> banks whose owner no longer exists to the first administrator.` |
+| `questions.bank_id`、`imports.bank_id` があるのに問題集がない | NULL にする（内容は残す）。6.6 の確認がレガシー問題集に結び付ける | `Detached <n> questions from a missing bank; they are kept in the legacy bank.`、`Detached <n> import records from a missing bank; they are kept in the legacy bank.` |
+
+許されている NULL（`attempts.user_id`、`questions.bank_id`、`imports.bank_id`、`banks.owner_id`）はそのままです。行が残っていた旧テーブルについては `Removed the unused legacy table <stats|settings> (<n> rows, already copied to the first administrator in v0.6; copy in the backup).` と出ます。空のもの（新しいファイルには両方あります）は行を出さずに削除されます。
+
+**識別用のスタンプの重複。** 2 人のユーザーが同じ空でない `uid` を持っている場合（手で編集したか、ファイルをコピーしたときだけ起こります）、アップグレードは成功しますが、`idx_users_uid` は作られず、`uid` は 1 つも変更されず（新しいスタンプにすると、AI サービスがそのユーザーの AI データを破棄してしまうため。8.3）、ログに `Warning: <n> user identity stamps are shared by more than one user; the unique index on users.uid was not created. Fix the duplicates (see database.md) and restart.` と出ます。直すには、バックエンドを止めてボリュームをコピーし、`sqlite3 xexam.db "SELECT uid, group_concat(username) FROM users WHERE uid <> '' GROUP BY uid HAVING COUNT(*) > 1"` で一覧を出し、新しい識別を与えたいユーザーごとに `UPDATE users SET uid = '' WHERE id = <id>;` を実行します（スタンプが変わるので、そのユーザーの AI データは破棄されます）。次の起動で空の `uid` に新しいランダムなスタンプが付き（6.6）、その次の起動でインデックスが作られます。
+
+**ディスクと時間。** **データベースの約 2 倍**の空きを確保してください（バックアップと、作り直したテーブルとそのログの分）。大きなデータベースでは最初の起動に時間がかかります。大半は `attempt_items` で、すべての行を 1 回コピーするためです。サーバーが待ち受けを始めるのはそのあとです。
+
+テストは `backend/tests/v20_db.rs`（古いすべてのスキーマ、孤児、AUTOINCREMENT の値、スタンプの重複、何も変えずに終わる失敗した作り直し、強制される外部キー、ロールバックへの耐性、新しいファイル）と、`tests/integration/migrate_check.py` のステップ O です。
+
+### 6.18 v1.9 に戻す
+
+**メインのデータベースは復元不要**です。v1.9 のバックエンドはスキーマ 11 のファイルをそのまま開きます（新しいスキーマを現在のものとして扱います）。外部キーは強制されるようになりますが、v1.9 の削除処理は以前から子の行を先に削除しています。起動時に v1 の `SCHEMA` を実行するので空の `stats` テーブルが作り直されますが、v2.0 は次の起動でそれを再び削除します（行が入っていれば残し、警告を出します。6.6）。`backups/xexam-schema10-….db` を復元することもできますが、それ以降に書かれたものはすべて失われます。これが**必要なのは v1.9 より古いバージョンに戻す場合だけ**です。
+
+**AI のデータベースは別です**：v1.9 の ai-service はスキーマ 10 を拒否するので、戻すには AI のバックアップ `backups/xexam-ai-schema9-<日時>.db` を復元し（8.4 節、[migration.md](migration.md)）、アップグレード後に書かれた設定、チャット、メモリー、利用状況の行をすべて失います。
+
 ## 7. 旧 `progress.json`
 
 さらに古いバージョンでは、成績を `progress.json` に保存していました。旧 Python 版と同じく、**起動のたびに**データディレクトリにそのファイルがあるかを確認します。ファイルがあり、かつデータベースにまだ学習記録がなく、移行も行われていない場合に、それをデータベースへ（最初の管理者の記録として）移行します。`meta` の `legacy_migrated` マークによって移行は一度だけになり、すでにある学習記録が上書きされることはありません。
@@ -427,7 +470,7 @@ docker compose start
 
 > ⚠️ v0.1 からアップグレードする場合：データベースファイルの名前が変わり、新しいバージョンは `xexam.db` だけを読み込みます。データディレクトリに別の `.db` ファイルがあって `xexam.db` がない場合は、起動ログでお知らせします。そのファイルを `xexam.db` に名前変更してから起動してください（古いファイルは削除も読み取りもされません）。
 
-## 8. AI のデータベース（`xexam-ai.db`、v0.8。v1.1 からスキーマ 6）
+## 8. AI のデータベース（`xexam-ai.db`、v0.8。v2.0 からスキーマ 10）
 
 ai-service は、AI のものをすべて **専用の** SQLite データベースに保存します。このデータベースを開いて移行するのは ai-service だけです。バックエンドはこれを決して読まず、ai-service も `xexam.db` を決して開きません（データの境界。[architecture.md](architecture.md) の 5 節）。
 
@@ -440,36 +483,17 @@ ai-service は、AI のものをすべて **専用の** SQLite データベー�
 
 メインのデータベースと同じです：`busy_timeout` 5000 ms、`foreign_keys=ON`（ここではスキーマが実際に外部キーを使います。下を参照）、`synchronous=FULL`、WAL モード（`XEXAM_AI_SQLITE_JOURNAL=delete` でロールバックジャーナルのまま。規則は 2.1 節と同じ）、それに加えて **`secure_delete=ON`**。接続は 1 つでミューテックスの後ろに置き、書き込みはどれも `BEGIN IMMEDIATE … COMMIT` で行い、ロックは `.await` をまたぎません。起動時のログには `AI database: /data/xexam-ai.db (journal: wal)` と出ます。
 
-### 8.2 テーブル（スキーマ v4）
+### 8.2 テーブル（スキーマ 10 時点）
 
 ```mermaid
 erDiagram
     settings {
         INTEGER id PK "常に 1"
-        TEXT provider "openai · anthropic · gateway"
-        TEXT base_url "既定 https://api.openai.com/v1"
-        TEXT format "openai · anthropic（Gateway のみ）"
-        INTEGER responses "1 = OpenAI Responses（format は openai のまま）"
-        TEXT gateway_auth "bearer · x-api-key · cf-aig-authorization"
-        TEXT model "'' = なし"
-        INTEGER manual_model "1 = 手入力"
-        INTEGER usage_option "OpenAI 形式：1 = トークンの使用量を求める"
-        INTEGER max_tokens "Anthropic 形式：4096 · 8192"
         INTEGER enabled "AI+ 機能のスイッチ"
-        INTEGER verified_at "最後に通ったテストの unix 秒"
-        TEXT verified_fp "そのテストの設定のフィンガープリント"
         INTEGER retention_days "1-3650、既定 90"
-        INTEGER updated_at "unix 秒"
+        INTEGER updated_at "UNIX 秒"
         TEXT updated_by "管理者のユーザー名"
-    }
-    secrets {
-        TEXT name PK "api_key · gateway_key"
-        TEXT key_id "暗号化キーの id（16 進 16 桁）"
-        BLOB nonce "24 バイト"
-        BLOB ciphertext "タグ付きの XChaCha20-Poly1305"
-        TEXT hint "最後の 4 文字、短いキーでは ''"
-        INTEGER rev "変更のたびに増える"
-        INTEGER updated_at "unix 秒"
+        INTEGER features_off "全体の機能スイッチのビット"
     }
     limits {
         INTEGER id PK "常に 1"
@@ -478,12 +502,11 @@ erDiagram
         INTEGER chats_per_user "10-100000、既定 1000"
         INTEGER messages_per_chat "20-5000、既定 400"
         INTEGER memories_per_user "1-1000、既定 50"
-        INTEGER memory_tokens "50-250000、既定 1000（v1.1。以前の上限は 200 文字：200 のままの値は 1000 に、ほかの値は schema 6 への移行時に 1 回だけ 1.5 倍）"
-        INTEGER message_chars "v1.0 から未使用（以前は 1000-32000、既定 16000）。残しますが、読み書きは決してしません"
+        INTEGER memory_tokens "50-250000、既定 1000（v1.1。200 のままだった値は 1000 に、ほかの値は schema 6 への移行時に 1 回だけ 1.5 倍にしました）"
         INTEGER calls_per_minute "1-100、既定 5（v1.0）"
         INTEGER calls_per_hour "1-2000、既定 20（v1.0）"
         INTEGER calls_per_day "1-20000、既定 100（v1.0）"
-        INTEGER reply_max_tokens "1-250000、既定 3000：回答の長さ（トークン数、v1.1。reply_max_chars は v1.0 の 1000 文字で、使われません）"
+        INTEGER reply_max_tokens "1-250000、既定 3000：回答の長さ（トークン数、v1.1）"
         INTEGER updated_at "unix 秒"
         TEXT updated_by "ユーザー名"
     }
@@ -577,8 +600,8 @@ erDiagram
     users |o--o{ usage : "usage.user_id"
 ```
 
-- **`settings`**（1 行）が秘密を持つことは決してありません。**`secrets`** は API キーと Gateway のキーを暗号化して持ちます（[security.md](security.md) の 11 節）。`key_id` はどの暗号化キーで封じた値かを示し、`rev` はフィンガープリントに使います。**`limits`**（1 行）は AI 設定の安全上限を持ち、それぞれの範囲を `CHECK` で確かめます。これらはフィンガープリントに含まれないので、変えても AI がオフになることはありません。
-- **フィンガープリント** は、プロバイダー、アドレス、（Gateway の）形式と認証方式、モデル、キーのリビジョン、現在の暗号化キーの id に対する SHA-256 で、キーそのものは決して含みません。AI がオンとみなされるのは、`enabled = 1` で、`verified_fp` が現在のフィンガープリントと等しく、キーを復号できる間だけです。フィンガープリントが変わる設定の変更は、同じトランザクションで `enabled` と `verified_*` を消去します。
+- **`settings`**（1 行）は、AI+ 機能のスイッチ `enabled`、`retention_days`、`features_off`（全体の機能スイッチのビット）と、いつ誰が変更したかを持ちます。秘密も接続も持ちません。それらは `connections` と `connection_secrets` にあります（[security.md](security.md) の 11 節）。封印されたキーの `key_id` は、どの暗号化キーで封印したかを示します。**`limits`**（1 行）は AI 設定の安全上限を持ち、それぞれに範囲の `CHECK` があります。これを変えても AI がオフになることはありません。
+- **スキーマ 10（v2.0）で廃止されたもの**：`settings` の単一接続だった頃の列、AI のオン・オフの条件だったフィンガープリント（`verified_at`、`verified_fp`）、テーブル `secrets`、`limits` の長さの 5 列。もう読むものはありません（8.2g 節）。
 - **`users`** には、ai-service が見たことのあるユーザーだけが入ります（メインのデータベースの id と識別用のスタンプ、最後に分かった名前）。行が書かれるのは、そのユーザーの最初のチャット、メモ、呼び出しのときで、見ただけでは書かれません。**`function_enabled`**（v2、既定 1）は、AI+ 機能のユーザーごとの **一時停止** です：0 は管理者がそのユーザーを一時停止した（AI 設定の **一時停止**）、1 は有効という意味で、行のないユーザーは有効、管理者が 0 になることはありません。これは AI+ 機能の付与（メインのデータベースの `users.ai_enabled`）とは別です：機能をオフにしてもう一度オンにしても一時停止は解除されず、解除するのは **再開** だけです。0 の id が、ハートビートでバックエンドに報告されるものです（[architecture.md](architecture.md) の 5 節）。**`free_mode`**（v2、既定 0）は管理者の **フリーモード** で、チャットではなくユーザーの状態です。設定の **AI 対話モード** で選び（`POST /api/ai/free`、管理者のみ）、読まれるのは管理者に対してだけなので、元管理者に残った値は何も起こしません。
 - **`chats`**、**`messages`**、**`memories`** がユーザーの内容です。チャットにはモードがありません：管理者のフリーモードがオンの間は、古いものも新しいものも、どのチャットのどのメッセージにもフリーモードで答えます。どのメッセージにも、書かれたときのモードを記録します（**`messages.free`**、v2、既定 0）。そのため、モードが変わったときに履歴からモデルに伝えられます（[architecture.md](architecture.md) の 5 節）。ユーザーの行を削除すると、そのチャット、メッセージ、メモ、タスクも削除されます（`ON DELETE CASCADE`）。その **`usage`** の行は `user_id` を NULL にして残るので、モデルごと、日ごとの合計は正しいままです。`memories.content` は v1.1 以降、最大 2000000 文字（メモの上限の最大値、250000 トークン）まで入り、現在の上限はサービスが確認します。学習用のメッセージ（下記）は `free = 0` で書かれます。
 - **`usage`** には、モデルの呼び出し（チャット、テスト、モデルの一覧、メモの作成、v0.9 からは学習用の回答）ごとに 1 行あり、トークン、時間、状態を持ちますが、内容、キー、アドレスは決して持ちません。**`tokens_cached`**（v2）は、入力トークンのうちプロバイダーがプロンプトキャッシュから提供した分です（AI 設定の使用量の **Cached** 列）。NULL はプロバイダーが報告しなかったことを示します。**`purpose`**（v3）は、学習機能のモデル呼び出しでは `hint`、`explain`、`summary` のいずれかで、AI チャットとチャットのない呼び出しでは NULL です。使用量の **機能別** の表は、チャットの行をこれでまとめます（AI チャット、ヒント、解説、要約。4 行は 0 でも常にあります。`GET /api/ai/admin/usage` は `byPurpose` として返します）。その行は残します（保存期間なし）。小さな行です。**利用者ごとのリクエスト上限（v1.0）** は、この表を読みます（独自のカウンターは持ちません）：利用者の、直近 1 分・直近 1 時間・サーバーのタイムゾーンの 0:00 以降の呼び出しは、その利用者の `chat` と `memory` の行（どの状態も数えます）に、メモリー上で実行中の呼び出しを足したものです。数えるのに既存の `idx_usage_user` を使い、新しいインデックスもテーブルも加えません。
@@ -618,13 +641,13 @@ AI データベースは、新しい ai-service の最初の起動時に、ス�
 AI データベースはスキーマ 6 から**スキーマ 7** へ、v1.3 の ai-service の最初の起動時に一度だけ移行します（1 つのトランザクション、コピーは `backups/xexam-ai-schema6-<日時>.db` の 1 つ）。
 
 - **`connections`**（新規）：`id`、`name`（一意、1〜40 文字）、`provider`（`openai`、`anthropic`、`gateway`）、`base_url`、`format`、`responses`（v1.8）、`gateway_auth`、`status`（`ok` か `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（保存のたびに +1。キャッシュのキーでありロックでもある）、`sort`、作成と更新の情報。最大 8 行。
-- **`connection_secrets`**（新規）：接続の暗号化された `api_key` と `gateway_key`（キー id、24 バイトの nonce、暗号文、末尾数文字のヒント、`aad_ver`。2 は暗号文を接続に結び付けます。移行された行は次の更新まで 1 のままです）。古い `secrets` テーブルは使われないまま残ります。
+- **`connection_secrets`**（新規）：接続の暗号化された `api_key` と `gateway_key`（キー id、24 バイトの nonce、暗号文、末尾数文字のヒント、`aad_ver`。2 は暗号文を接続に結び付けます。移行された行は次の更新まで 1 のままです）。古い `secrets` テーブルはスキーマ 10 で削除されました（8.2g）。
 - **`models`**（新規）：プール。テスト済みの（接続、モデル）ごとに 1 行で、`status`、`error_code`、`context`、`latency_ms`、`tested_at`、`manual`、呼び出しの設定を持ちます。**`model_slots`**（新規）：6 行（`default`、`chat`、`study`、`summary`、`generate`、`import`）。それぞれプールのモデルか空を指します（空の機能スロットは既定を使います）。
 - **`study_shared`**（新規）：共有されるヒントと解説。**ユーザー id なし**：`question_id`、`content_hash`、`kind`（`hint` か `explain`）、`lang`、`content`、`model`、`connection`、Token 数、`gen`（1 + 置き換え回数）、`hits`、時刻。（`question_id`、`content_hash`、`kind`、`lang`）で一意。最大 5 万行で、使われないものは `study_share_days` の後に削除されます。
 - **`gen_items`**（新規）：**実行中**の生成ジョブで採用された問題（`task_id`、`no`、`data`）。ジョブが終わると削除されます。削除された問題の番号は再利用されません。
 - `messages`：`reasoning`、`reasoning_ms`、`reasoning_truncated`（下記）、`parent_id` と `connection`（呼び出し時の接続名）。`chats`：`leaf_id`（表示中のブランチ）と `pick_conn`、`pick_model`（フリーモードのチャットの管理者のモデル。外部キーはなく、接続を削除するとそれを指す選択は消去され、存在しない接続を指す選択は起動時に消去されます）。インデックス `idx_messages_parent`。チャットは `parent_id` によるツリーで、表示やモデルへの送信に使われるのは葉から根までの道筋であり、`messages_per_chat` はすべての版を数えます。
 - `settings.features_off`（6 つの全体スイッチのビットマスク。ヒントと解説のビットは常に同じ値です）。`usage` と `gen_calls` に `connection_id` と `connection`。
-- `limits`：`calls_admins_exempt`（1）、`study_share`（1）、`study_share_days`（180）、`gen_max_chunks`（8）、`summary_max_items`（40）、`import_file_questions`（1〜300。上限 50 だった古い `import_max_questions` は使われないまま残る）、`daily_token_budget`（0 = オフ）。
+- `limits`：`calls_admins_exempt`（1）、`study_share`（1）、`study_share_days`（180）、`gen_max_chunks`（8）、`summary_max_items`（40）、`import_file_questions`（1〜300。上限 50 だった古い `import_max_questions` はスキーマ 10 で削除された）、`daily_token_budget`（0 = オフ）。
 
 一度だけ実行される文が、6 つのスロット、チャットのツリー（`parent_id` = 1 つ前のメッセージ、`leaf_id` = 最後のメッセージ）、キー付きの接続 1 と既定スロット、`users.features_off` のヒントと解説のビット（片方だけがオフだったユーザーは両方オンになります）、そして [migration.md](migration.md) の 000.1 節のとおりの上限を設定します。新しいファイルとアップグレードしたファイルは同じテーブルで終わります。v1.2 の ai-service はスキーマ 7 のファイルを拒否します。戻すにはスキーマ 6 のコピーを復元してください。
 
@@ -662,6 +685,20 @@ AI データベースは、v1.9 の ai-service の初回起動時に 1 回だけ
 - **ジョブの待機フラグ**：問題作成やインポートのジョブがプロバイダーの利用枠を待っている間、`tasks.payload` に一時的な `rateWait` フラグが付きます（`updated_at` は更新されません）。ジョブのオブジェクトの `waiting` フィールドがこれです。
 - **元に戻す**：v1.8 の ai-service はスキーマ 9 を受け付けません（`written by a newer ai-service`）。停止して、8.4 のとおり `backups/xexam-ai-schema8-<日時>.db` を復元し、v1.8 のイメージを動かしてください。アップグレード後に書かれた設定・チャット・利用状況はコピーに含まれず、失われます。
 
+### 8.2g スキーマ v10（v2.0）
+
+AI のデータベースは、v2.0 の ai-service を初めて起動したときに、バックアップのコピー `backups/xexam-ai-schema9-<日時>.db` を取ってから、スキーマ 9 から**スキーマ 10** へ 1 回だけ移ります（これまでの段階と同じ仕組みです。コピーを書き出せなければサービスは起動せず、何も変更しません）。この段階が行うのは、もうどのコードも読まないものの削除だけです。設定、API の応答、動作は変わりません。**1 つのトランザクション**の中で行います。
+
+- **テーブル `secrets`** を削除します：スキーマ 7 より前のプロバイダーのキーです。v1.2 から動作中のキーは `connection_secrets` にあり、スキーマ 7 への移行で古いキーを接続 1 にコピー済みなので、`secrets` を読むものはありません。ログには `Removed the unused legacy table secrets (<n> rows) and <k> unused columns (copy in the backup).` と、件数だけが出ます（値は決して出しません）。
+- **16 個の列**を `ALTER TABLE … DROP COLUMN` で削除します（それぞれ、あるときだけ）：`settings` の 10 列（`provider`、`base_url`、`format`、`gateway_auth`、`model`、`manual_model`、`usage_option`、`max_tokens`、`verified_at`、`verified_fp`：単一接続だった頃のもの）、`limits` の 5 列（`message_chars`、`memory_chars`、`reply_max_chars`、`gen_call_chars`、`import_max_questions`：文字数の長さと、問題数 50 の古い上限）、`chats.free`（スキーマ 2 のリリース前のビルドだけが持っていた列）。そのあと `settings` には `id`、`enabled`、`retention_days`、`updated_at`、`updated_by`、`features_off` が残ります。
+- **コミット前の確認**：`settings` と `limits` はそれぞれちょうど 1 行のままでなければならず（そうでなければトランザクションはロールバックされます）、`PRAGMA foreign_key_check` を実行してその件数をログに出します（止めはしません。AI の外部キーは v0.8 から強制されています）。そのあと `meta.schema` を `10` にします。コミットの後、WAL モードでは `wal_checkpoint(TRUNCATE)` を 1 回実行し、`secure_delete` で上書きされた `secrets` の解放ページが `-wal` ファイルからも消えるようにします。
+
+**安全な理由。** これらを今も読む古い段階（スキーマ 7 より前からの古い設定とキーの接続 1 への移し替え、スキーマ 5 と 6 の長さの変換）は、同じトランザクションの前のほうで実行されます。そのため、どんな古いスキーマのファイルでも、接続、キー、既定のモデルが残ったままになります。新しいデータベースも同じ履歴の手順と同じ削除で作られるので、新しいファイルとアップグレードしたファイルの `sqlite_master` は同じです。同じバージョンで足りない列を補う修復は廃止された列を飛ばすので、それらが戻ってくることはありません。meta のフラグ `import_max_50` はもう書かれません（実際の上限は `import_file_questions`）。既存の meta の行は残ります。削除される列を使うユーザー作成のトリガーやビューがあると、アップグレードは分かりやすいメッセージで失敗してロールバックされます。それを取り除いてからもう一度起動してください。
+
+**あえてしないこと。** 新しいインデックスは作りません（`chats WHERE pick_conn = ?` の走査は管理者がたまに行う操作です）。新しい `CHECK` もテーブルの作り直しもしません（`CHECK` には親テーブルや大きなテーブルの作り直しが要ります）。名前の変更もしません。残る不一致は 9.4 にまとめてあります。
+
+**v1.9 に戻す**にはバックアップが必要です：v1.9 の ai-service はスキーマ 10 を拒否します（`written by a newer ai-service`）。停止し、8.4 のとおり `backups/xexam-ai-schema9-<日時>.db` を復元して、v1.9 のイメージを動かします。アップグレード後に書かれた設定、チャット、利用状況は失われます。そのコピーには、これより古いコピーと同じく、古いキーの暗号文が残っています（[security.md](security.md) の 11 節）。
+
 ### 8.3 サービスがこれをどう扱うか
 
 - **開くとき**：テーブルを作成し（`IF NOT EXISTS`）、`settings` と `limits` の行を既定値で加え、新しいデータベースでは `meta.schema` を `4` にします。`meta.schema` が `1`、`2`、`3` のデータベースはアップグレードします（下の「移行」を参照）。より新しい ai-service が書いたデータベース（`meta.schema` が `4` より大きい）は拒否します：サービスはログに 1 行出して起動しないので、古いイメージが新しいファイルを開くことはありません。クラッシュや強制終了で `streaming` のまま残った回答は、コード `ai.interrupted` 付きで `error` にします（そうした回答があるときだけ。`idx_messages_streaming` がそれを見つけます）。
@@ -670,9 +707,9 @@ AI データベースは、v1.9 の ai-service の初回起動時に 1 回だけ
 - **削除した内容**：`secure_delete=ON` で解放されたページは上書きされ、ユーザーの内容を削除するたびに、サービスは `PRAGMA wal_checkpoint(TRUNCATE)` を実行します（多くても 10 秒に 1 回）。古いページが `xexam-ai.db-wal` に残らないようにするためです。バックアップとボリュームのスナップショットには、削除したものがまだ残ります。
 - **停止**：正常に停止するときは、作成中の回答を停止したものとして保存し、その後チェックポイントを実行します。
 - **移行**：スキーマ v1 が最初のスキーマでした（リリース前の v0.8 のビルド）。**スキーマ v2**（v0.8）が加えたのは 4 つの列です：`users.function_enabled`（既定 1）、`users.free_mode`（既定 0）、`messages.free`（既定 0）、`usage.tokens_cached`（NULL）。**スキーマ v3**（v0.9）が加えるのは **12 の列と 3 つのインデックス** だけです：`chats.kind`（既定 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（既定 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong`、`usage.purpose`（NULL）、そして `idx_chats_ref`、`idx_messages_study`、`idx_messages_streaming` です。書き換えられる行はなく、意味が変わる行もありません：古いチャットとメッセージはすべて `chat` で、古い使用量の行はどれも purpose を持ちません。同じ追加だけのステップで、新しいデータベースを作ることも古いものをアップグレードすることもできるので、どちらも同じテーブルと同じ `sqlite_master` になります。**スキーマ 1、2 または 3 のデータベースは、すべて先にコピーします**：`VACUUM INTO` で AI のデータディレクトリの中の `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` にコピーし（`<N>` はそのデータベースが持っていたスキーマで、v0.8 のデータベースなら `xexam-ai-schema2-…`、v0.9 または v0.9.1 のデータベースなら `xexam-ai-schema3-…`。ディレクトリのモード 0700。時刻はコンテナのローカル時刻。名前が使われていれば `-2`、`-3`… を付けます。空のデータベースもコピーします）、その後 1 つのトランザクションでアップグレードし、コピーの名前を 1 行のログに出します：`Upgraded the AI database to schema 4. A copy of the previous version was saved first: <path>.` コピーを作れないときは、サービスは起動せず、何も変更しません。v2 の列の一部がないリリース前のビルドのスキーマ 2 のファイルは、同じステップでそれらが追加されます。スキーマ 3 のデータベースを開き直しても何も書き込みません。コピーのために **AI のデータベースと同じくらいの空きディスク容量** を確保してください。コピーが自動で削除されることはなく、後で削除したチャットやメモも残るので、それが問題になるときは自分で削除してください（[security.md](security.md) の 11 節）。**v0.8 に戻すにはこのコピーが必要です**：v0.8 の ai-service はスキーマ 3 を拒否し（`written by a newer ai-service … restore a backup`）、終了するので、8.4 のとおり `xexam-ai-schema2-….db` を復元してください。アップグレード以降に書き込まれたチャット、メモ、設定、使用量は、そこにはなく失われます。
-- **スキーマ 4（v1.0）** が加えるのは **4 つの列** だけです：`limits.calls_per_minute`（既定 5）、`limits.calls_per_hour`（既定 20）、`limits.calls_per_day`（既定 100）、`limits.reply_max_chars`（既定 1000）。それぞれに範囲の `CHECK` が付きます（範囲はアプリケーションの上限の一覧と同じです）。何も削除しません：`limits.message_chars` はテーブルに残り、使われません。同じトランザクションで 1 回だけ `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300` を実行し、メモリーの長さの古い既定値を新しい既定値へ移します。管理者が選んだそれ以外の値はそのまま残ります。この処理は新しいデータベースでも、スキーマ 1、2、3 からのアップグレードでも実行され、どちらも同じ `sqlite_master` になり、後の起動では二度と実行されません。スキーマ 1、2、3 からアップグレードしたデータベースは、新しい 4 つの列に既定値を得ます。古い値から導くものはありません。**スキーマ 3 のデータベースのコピー（`backups/xexam-ai-schema3-<日時>.db`）は保管してください**：v0.9.1 の ai-service は、スキーマ 4 を既存のメッセージで拒否するので、戻るにはそのコピーを復元して v0.9.1 のイメージを動かします（8.4 節と [migration.md](migration.md)）。
+- **スキーマ 4（v1.0）** が加えるのは **4 つの列** だけです：`limits.calls_per_minute`（既定 5）、`limits.calls_per_hour`（既定 20）、`limits.calls_per_day`（既定 100）、`limits.reply_max_chars`（既定 1000）。それぞれに範囲の `CHECK` が付きます（範囲はアプリケーションの上限の一覧と同じです）。この段階では何も削除しません（`limits.message_chars` は使われないままテーブルに残り、スキーマ 10 で削除されました）。同じトランザクションで 1 回だけ `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300` を実行し、メモリーの長さの古い既定値を新しい既定値へ移します。管理者が選んだそれ以外の値はそのまま残ります。この処理は新しいデータベースでも、スキーマ 1、2、3 からのアップグレードでも実行され、どちらも同じ `sqlite_master` になり、後の起動では二度と実行されません。スキーマ 1、2、3 からアップグレードしたデータベースは、新しい 4 つの列に既定値を得ます。古い値から導くものはありません。**スキーマ 3 のデータベースのコピー（`backups/xexam-ai-schema3-<日時>.db`）は保管してください**：v0.9.1 の ai-service は、スキーマ 4 を既存のメッセージで拒否するので、戻るにはそのコピーを復元して v0.9.1 のイメージを動かします（8.4 節と [migration.md](migration.md)）。
 
-- **スキーマ 5 から 6（v1.1）**：長さをトークン数に変えます。3 つの列を、それぞれ独自の `CHECK` の範囲つきで追加します：`limits.reply_max_tokens`（1〜250000、既定 3000）、`limits.memory_tokens`（50〜250000、既定 1000）、`limits.gen_call_tokens`（1000〜250000、既定 20000）。`reply_max_chars`、`memory_chars`、`gen_call_chars` は表に残りますが使われません。同じトランザクションで 1 回だけ：旧既定値のままの値は新しい既定値に、ほかの値は 1.5 倍して範囲内に収めます。`memories` 表は 1 回作り直します（行と id は保持）。1 件のメモは最大 2000000 文字になります。スキーマ 5 から上げるときは、先に `backups/xexam-ai-schema5-<日付時刻>.db` を書き出します。
+- **スキーマ 5 から 6（v1.1）**：長さをトークン数に変えます。3 つの列を、それぞれ独自の `CHECK` の範囲つきで追加します：`limits.reply_max_tokens`（1〜250000、既定 3000）、`limits.memory_tokens`（50〜250000、既定 1000）、`limits.gen_call_tokens`（1000〜250000、既定 20000）。`reply_max_chars`、`memory_chars`、`gen_call_chars` はこの段階では表に残ります（スキーマ 10 で削除されました）。同じトランザクションで 1 回だけ：旧既定値のままの値は新しい既定値に、ほかの値は 1.5 倍して範囲内に収めます。`memories` 表は 1 回作り直します（行と id は保持）。1 件のメモは最大 2000000 文字になります。スキーマ 5 から上げるときは、先に `backups/xexam-ai-schema5-<日付時刻>.db` を書き出します。
 
 ### 8.4 AI のボリュームのバックアップと復元
 
@@ -691,9 +728,9 @@ docker compose start
 - 復元した AI のボリュームと、別の時点のメインのボリュームを組み合わせても問題ありません：もう存在しないユーザーは次の照合で AI データを失い、別のアカウントのものになったユーザー id はスタンプで見分けられます。
 - `xexam_ai_auth` はバックアップ不要です：入っているのは `internal.token` だけで、ない場合はバックエンドがもう一度作ります（AI サービスは新しいトークンを自分で読み込みます）。
 
-## 9. 2 つのデータベースのスキーママップ（v1.9）
+## 9. 2 つのデータベースのスキーママップ（v2.0）
 
-どんなテーブルがあり、何のためにあり、どう関係しているかを読むための案内です。メインのデータベースはスキーマ 10、AI データベースはスキーマ 9 の内容で、テーブル名と列名は保存されているとおりです。ここに書いたことでテーブルが変わることはありません。
+どんなテーブルがあり、何のためにあり、どう関係しているかを読むための案内です。メインのデータベースはスキーマ 11、AI データベースはスキーマ 10 の内容で、テーブル名と列名は保存されているとおりです。ここに書いたことでテーブルが変わることはありません。
 
 ### 9.1 メインのデータベース `xexam.db`（バックエンド）
 
@@ -703,26 +740,25 @@ docker compose start
 | 学習記録と間違いノート | `attempts`、`attempt_items`、`user_stats` | `attempts` がアプリで「学習記録」と呼ぶもの（試験または練習）です |
 | ユーザーとアクセス | `users`、`sessions`、`user_banks`、`user_settings` | |
 | システム | `meta`、`system_settings`、`activity_log` | |
-| 旧式（未使用） | `stats`、`settings` | v0.6 の段階で `user_stats` と `user_settings` にコピー済み。スキーマ 2 以前からのアップグレードのときだけ読みます |
 
-メインのデータベースには**外部キーがありません**。以下の関係はコードが保ちます（削除は子の行から先に行います）。そのため図では点線で描いています。
+スキーマ 11 からメインのデータベースは外部キーを宣言しており、すべて `ON DELETE NO ACTION` で、図では実線で描いています（子の行を残してしまう削除は失敗します。コードはこれまでどおり子の行を先に削除します）。点線は、あえて外部キーを付けていない関係です（`attempt_items`、`user_stats`、`system_settings`、`activity_log` の補足を参照）。
 
 ```mermaid
 erDiagram
-  users ||..o{ sessions : "user_id"
-  users ||..o{ attempts : "user_id (NULL = unclaimed old record)"
-  users ||..o{ user_stats : "user_id"
-  users ||..o{ user_settings : "user_id"
-  users ||..o{ user_banks : "user_id"
-  users ||..o{ banks : "owner_id"
-  users |o..o{ system_settings : "updated_by"
-  users |o..o{ activity_log : "user_id (snapshot, not linked)"
-  banks ||..o{ user_banks : "bank_id"
-  banks ||..o{ questions : "bank_id"
-  banks ||..o{ imports : "bank_id"
-  attempts ||..o{ attempt_items : "attempt_id"
-  questions |o..o{ attempt_items : "question_id (soft)"
-  questions |o..o{ user_stats : "question_id (soft)"
+  users ||--o{ sessions : "user_id"
+  users |o--o{ attempts : "user_id (NULL = 持ち主のいない古い記録)"
+  users ||--o{ user_stats : "user_id"
+  users ||--o{ user_settings : "user_id"
+  users ||--o{ user_banks : "user_id"
+  users |o--o{ banks : "owner_id"
+  users |o..o{ system_settings : "updated_by (FK なし)"
+  users |o..o{ activity_log : "user_id (スナップショット、つなげない)"
+  banks ||--o{ user_banks : "bank_id"
+  banks |o--o{ questions : "bank_id"
+  banks |o--o{ imports : "bank_id"
+  attempts ||--o{ attempt_items : "attempt_id"
+  questions |o..o{ attempt_items : "question_id (ゆるい関係)"
+  questions |o..o{ user_stats : "question_id (ゆるい関係)"
 
   users {
     int id PK
@@ -854,30 +890,23 @@ erDiagram
     text key PK
     text value
   }
-  stats {
-    text question_id PK
-  }
-  settings {
-    text key PK
-  }
 ```
 
 | テーブル | 用途 | キーと関係 | 補足 |
 |---|---|---|---|
 | `meta` | データベース単位のキーと値：`schema`、`banks_known`、`users_known`、`legacy_migrated` | PK `key` | |
-| `banks` | 問題集。AI 作成の問題集のジョブキーと情報も持つ | PK `id`、`owner_id` → `users` | `ai_job` は部分ユニークインデックス |
-| `questions` | 1 問 1 行。問題全体（全言語）が `data` の JSON | PK `id`（テキスト）、`bank_id` → `banks` | シート・問題集・並びのインデックス |
-| `imports` | Excel インポートごとの結果の件数 | PK `id`、`bank_id` → `banks` | |
-| `attempts` | 学習記録。試験または練習 1 回につき 1 行 | PK `id`、`user_id` → `users`（NULL は持ち主のいない古い記録） | `sheets` と `banks` はあえて JSON のスナップショット |
-| `attempt_items` | 記録の各問題への回答 | PK `(attempt_id, seq)`、`question_id` → `questions`（ゆるい関係） | 問題より記録のほうが長く残ることがある |
-| `user_stats` | ユーザーと問題ごとの挑戦・正解・不正解・連続正解（間違いノート） | PK `(user_id, question_id)` | |
-| `users` | アカウント、ロール、権限、AI+ のスイッチ、本人確認用の `uid`、最後のサインインと最後の操作（IP、場所、ユーザーエージェント） | PK `id`、`username` は大文字小文字を区別しない一意 | アカウント情報とサインインの記録が同居している |
+| `banks` | 問題集。AI 作成の問題集のジョブキーと情報も持つ | PK `id`、`owner_id` → `users`（NULL 可） | `ai_job` は部分ユニークインデックス、`idx_banks_owner` |
+| `questions` | 1 問 1 行。問題全体（全言語）が `data` の JSON | PK `id`（テキスト）、`bank_id` → `banks`（NULL 可） | シート・問題集・並びのインデックス（`idx_questions_sheet` は従来どおり残す） |
+| `imports` | Excel インポートごとの結果の件数 | PK `id`、`bank_id` → `banks`（NULL 可） | スキーマ 11 から `idx_imports_bank` |
+| `attempts` | 学習記録。試験または練習 1 回につき 1 行 | PK `id`、`user_id` → `users`（NULL は持ち主のいない古い記録） | `sheets` と `banks` はあえて JSON のスナップショット。`mode` に `CHECK` はない（古い記録には任意の JSON が入りうる） |
+| `attempt_items` | 記録の各問題への回答 | PK `(attempt_id, seq)`、`attempt_id` → `attempts`、`question_id` → `questions`（ゆるい関係、**外部キーなし**） | 問題より記録のほうが長く残ることがあり、レガシーの問題集は問題集ごとに区別しない id を使う |
+| `user_stats` | ユーザーと問題ごとの挑戦・正解・不正解・連続正解（間違いノート） | PK `(user_id, question_id)`、`user_id` → `users`、`question_id` はゆるい関係（**外部キーなし**） | スキーマ 11 から `idx_user_stats_question`（問題集の削除は問題で行を探す） |
+| `users` | アカウント、ロール、権限、AI+ のスイッチ、本人確認用の `uid`、最後のサインインと最後の操作（IP、場所、ユーザーエージェント） | PK `id`、`username` は大文字小文字を区別しない一意 | アカウント情報とサインインの記録が同居している。`uid` は空でない値の中で一意（`idx_users_uid`） |
 | `sessions` | サインインのセッション | PK `token_hash`、`user_id` → `users` | 時刻は UNIX 秒 |
 | `user_banks` | 一般ユーザーに見える問題集 | PK `(user_id, bank_id)` | |
 | `user_settings` | ユーザーごとの画面設定（値は JSON） | PK `(user_id, key)` | |
-| `system_settings` | サイト全体のスイッチ（アクティビティの保持、閲覧、サインイン情報、所在地の取得元） | PK `key`、`updated_by` はユーザー ID | |
+| `system_settings` | サイト全体のスイッチ（アクティビティの保持、閲覧、サインイン情報、所在地の取得元） | PK `key`、`updated_by` はユーザー ID（**外部キーなし**） | 書き込むだけの監査用の項目。つなぐと、サイトのスイッチを一度でも変更した管理者を削除できなくなる |
 | `activity_log` | アクティビティ履歴。ai-service から転送された行も含む | PK `id`、`src_id` は部分ユニーク（重複排除） | `username` と `role` は当時の写しなので、ユーザーを削除しても履歴を読める |
-| `stats`、`settings` | 旧式。上を参照 | | |
 
 ### 9.2 AI データベース `xexam-ai.db`（ai-service）
 
@@ -890,7 +919,6 @@ erDiagram
 | AI 問題作成と AI インポート | `tasks`、`gen_items`、`gen_calls` | `tasks.kind` はどちらも `bank_gen`。payload で区別する |
 | 利用量の記録 | `usage`（チャット、ヒント、解説、まとめ、確認）、`gen_calls`（問題作成とインポート） | あえて 2 つに分けている。ユーザーごとの呼び出し上限は `usage` だけを読む |
 | システム | `meta`、`audit_outbox` | |
-| 旧式 | `secrets`、`settings` の古い接続の列、`limits` の廃止された長さの 4 列 | 古いスキーマからのアップグレードのときだけ読む |
 
 実線は宣言された外部キー、点線はあえて外部キーを付けていない関係です（メッセージの枝、チャットで選んだ接続、利用履歴）。
 
@@ -1107,9 +1135,6 @@ erDiagram
     blob key_ciphertext
     int updated_by
   }
-  secrets {
-    text name PK
-  }
   meta {
     text key PK
     text value
@@ -1124,8 +1149,8 @@ erDiagram
 | テーブル | 用途 | キーと関係 | 補足 |
 |---|---|---|---|
 | `meta` | `schema`、`secret_rev`、一度きりのフラグ | PK `key` | |
-| `settings` | 1 行。AI の総スイッチ `enabled`、`retention_days`、`features_off`（全体の機能スイッチのビット） | PK `id = 1` | 単一接続だった頃の古い 11 列が残っており、古いアップグレードだけが読む |
-| `limits` | 1 行。すべての上限（同時実行、チャットとメモリーの大きさ、ユーザーごとの呼び出し上限、回答の長さ、問題作成とインポートの上限、共有キャッシュ、1 日の Token 予算）と、v1.9 からは送信間隔の設定 | PK `id = 1`、各列に範囲の CHECK | 廃止された長さの 4 列は未使用のまま残る |
+| `settings` | 1 行。AI の総スイッチ `enabled`、`retention_days`、`features_off`（全体の機能スイッチのビット） | PK `id = 1` | スキーマ 10 からは `id`、`enabled`、`retention_days`、`updated_at`、`updated_by`、`features_off` だけが残る |
+| `limits` | 1 行。すべての上限（同時実行、チャットとメモリーの大きさ、ユーザーごとの呼び出し上限、回答の長さ、問題作成とインポートの上限、共有キャッシュ、1 日の Token 予算）と、v1.9 からは送信間隔の設定 | PK `id = 1`、各列に範囲の CHECK | 廃止された長さの 5 列はスキーマ 10 で削除された |
 | `users` | メインのユーザーの写し（`id` と `stamp` = メインの `uid`）に、`function_enabled`（一時停止）、`free_mode`、`features_off`（ユーザーごとの機能ビット）を足したもの | PK `id`（メインのデータベースが付ける） | `stamp` が違えば別人。その人の AI データは破棄される |
 | `chats` | AI チャットの会話と、練習・試験・記録まとめごとのチャット | PK `id`、`user_id` → `users`（CASCADE） | `leaf_id` と `pick_conn` はあえて外部キーなし |
 | `messages` | メッセージとその枝のバージョン。ヒント・解説・まとめも含む | PK `id`、`chat_id` → `chats`（CASCADE） | 一部の列は特定の `kind` でだけ意味を持つ |
@@ -1141,7 +1166,6 @@ erDiagram
 | `model_slots` | 各機能がプールのどのモデルを使うかと、思考の強さ | PK `slot`、`model_id` → `models`（SET NULL） | |
 | `study_shared` | ヒントと解説の共有キャッシュ | PK `id`、一意 `(question_id, content_hash, kind, lang)` | `lang` は `zh`、`messages.lang` は `zh-CN` |
 | `geo_settings` | 外部の所在地照会（1 行。テストに通ったときだけ書き込む） | PK `id = 1` | |
-| `secrets` | 旧式：スキーマ 7 より前のキー | PK `name` | 動作中のコードは使わない |
 
 ### 9.3 2 つのデータベースの間の参照
 
@@ -1161,4 +1185,6 @@ erDiagram
 - 時刻は `*_at INTEGER`（UNIX 秒、UTC）、真偽値は `INTEGER NOT NULL DEFAULT x CHECK (col IN (0, 1))`、列挙には `CHECK` を付けます。
 - 同じデータベース内を指す ID は `*_id` で外部キーを付け、`ON DELETE` を明記します。付けない場合は理由をコメントに書きます。
 - 新しい `updated_by` はユーザー ID、言語コードは `en`、`zh-CN`、`ja` です。
+- メインのデータベースの外部キーは `ON DELETE NO ACTION` と明記します：親は子を削除してからでないと削除できません（`CASCADE` も `SET NULL` も使いません）。AI のデータベースは 9.2 に書いたとおり `CASCADE` と `SET NULL` を使います。
 - 既存の名前と、メインのデータベースの古いテキスト形式の時刻の列はそのままにします。
+- **あえて残した不一致**（記録しただけで、v2.0 では変えていません）：メインのデータベースは時刻をテキスト（`YYYY-MM-DD HH:MM:SS`）で、AI のデータベースは UNIX 秒で持ちます。`updated_by` は `system_settings` ではユーザー ID、AI のデータベースではユーザー名（TEXT）です。`study_shared.lang` は `zh`、`messages.lang` は `zh-CN` を使います。名前には歴史的なものがあります（`attempts` はアプリでいう学習記録、`legacy_ids`、`banks.filename`）。

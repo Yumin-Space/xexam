@@ -109,8 +109,8 @@ fn a_fresh_file_is_schema_9_with_seven_slots_and_the_new_columns() {
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
     let c = raw(dir.path());
-    assert_eq!(schema::SCHEMA_VERSION, "9");
-    assert_eq!(schema_of(&c), "9");
+    assert_eq!(schema::SCHEMA_VERSION, "10");
+    assert_eq!(schema_of(&c), "10");
     for (table, column, _) in schema::V9_COLUMNS {
         assert!(has_column(&c, table, column), "{table}.{column}");
     }
@@ -165,7 +165,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
 
     let store = open(dir.path());
     let c = raw(dir.path());
-    assert_eq!(schema_of(&c), "9");
+    assert_eq!(schema_of(&c), "10");
     let rows = slot_rows(&c);
     let get = |name: &str| rows.iter().find(|r| r.0 == name).cloned().expect(name);
     assert!(rows.iter().all(|r| r.0 != "study"));
@@ -272,7 +272,7 @@ fn a_v9_file_missing_a_v9_column_gets_it_back_without_a_backup() {
     drop(open(dir.path()));
     let c = raw(dir.path());
     assert!(has_column(&c, "limits", "pace_rpm"));
-    assert_eq!(schema_of(&c), "9");
+    assert_eq!(schema_of(&c), "10");
     assert!(backups(dir.path()).is_empty());
 }
 

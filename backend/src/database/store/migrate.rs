@@ -1,4 +1,4 @@
-//! Schema v1 → v2 (v0.5), run by `Store::open`.
+//! Schema v1 → v2 (v0.5), run by `Store::open` (the whole chain below ends at schema 11).
 //!
 //! - `meta.schema` missing or `"1"`: if the database holds any data, first write a consistent copy with `VACUUM INTO` to
 //!   `<dir of the database>/backups/xexam-schema1-<YYYYmmdd-HHMMSS>.db` (never overwriting: `-2`, `-3`, … suffixes). If that fails,
@@ -73,15 +73,36 @@
 //! the five `users.last_active_*` columns (NULL for every existing row), writes the ONE `system.migrate` activity row of the
 //! upgrade and stamps the schema `"9"`. A v1.3 binary opens a v9 file unchanged.
 //!
-//! Schema v9 → v10 (v1.6), in the same way: the v10 step adds `users.can_download_banks` (0 for every existing row), writes
-//! the ONE `system.migrate` activity row of the upgrade (`{"from": <old schema>, "to": 10}`, only when the file held data)
+//! Schema v9 → v10 (v1.6), in the same way: the v10 step adds `users.can_download_banks` (0 for every existing row)
 //! and stamps the schema `"10"`. A v1.5 binary opens a v10 file unchanged.
+//!
+//! Schema v10 → v11 (v2.0), the database clean-up: the same single backup (`backups/xexam-schema<N>-<time>.db`, written
+//! before anything else), then ONE transaction with foreign keys switched off around it (a guard switches them on again on
+//! every path and the setting is read back). The v11 step, in this order:
+//! 1. Orphans, counted first, fixed by fixed rules: records of a missing user (items first), items of a missing record,
+//!    sessions / per-user stats / per-user settings of a missing user, `user_banks` rows of a missing user or bank are
+//!    DELETED (the backup holds them); a bank of a missing owner is cleared and given to the first administrator;
+//!    questions / imports of a missing bank are detached (kept; the open attaches them to the legacy bank). Allowed NULLs
+//!    (`attempts.user_id`, `questions.bank_id`, `imports.bank_id`, `banks.owner_id`) stay.
+//! 2. The legacy `stats` / `settings` tables are dropped (their rows were copied in v0.6; counted, and in the backup).
+//! 3. `idx_users_uid` (unique, non-empty stamps) is created; when stamps are shared it is skipped with a warning and no
+//!    stamp is changed (a new stamp would make the AI service drop that user's AI data). A later open creates it once the
+//!    duplicates are gone.
+//! 4. The nine tables of `schema::V11_REBUILDS` are rebuilt (12-step procedure: new table, copy by explicit column list,
+//!    drop, rename, indexes after the rename): an unknown column stops the upgrade, the row count must be equal, and the
+//!    AUTOINCREMENT high-water mark is restored (ids are never reused).
+//! 5. `PRAGMA foreign_key_check` must be empty, the one `system.migrate` activity row `{"from": N, "to": 11}` (plus
+//!    `orphansRemoved` when rows were deleted; only when the file held data) is written and the schema is stamped `"11"`.
+//!
+//! Any surprise rolls the whole transaction back: the file is unchanged, the backup stays, `meta.schema` is unchanged and the
+//! next start tries again (with a new backup). A v1.9 binary opens a v11 file as it is (it treats a newer schema as
+//! current), but it re-creates an empty `stats` on every open; the every-open checks drop it again.
 use super::super::pyjson;
 use super::super::schema::{
-    MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
+    Rebuild, MIGRATE_V2_INDEXES, MIGRATE_V2_TABLES, MIGRATE_V3_INDEXES, MIGRATE_V3_TABLES,
     MIGRATE_V4_INDEXES, MIGRATE_V4_TABLES, MIGRATE_V7_INDEXES, MIGRATE_V8_INDEXES,
-    MIGRATE_V8_TABLES, SCHEMA_VERSION, V10_COLUMNS, V2_COLUMNS, V3_COLUMNS, V4_COLUMNS, V5_COLUMNS,
-    V6_COLUMNS, V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
+    MIGRATE_V8_TABLES, SCHEMA_VERSION, V10_COLUMNS, V11_REBUILDS, V11_USERS_UID_INDEX, V2_COLUMNS,
+    V3_COLUMNS, V4_COLUMNS, V5_COLUMNS, V6_COLUMNS, V7_COLUMNS, V8_COLUMNS, V9_COLUMNS,
 };
 use super::super::timefmt::{local_file_stamp, Clock};
 use super::{banks, get_meta, run_tx, users};
@@ -102,9 +123,11 @@ pub(super) struct Upgrade {
     pub created_admin: bool,
     /// A pre-release v4 database (`users.all_banks`) was converted to the released v4 shape (`users.new_banks`)
     pub converted_prerelease: bool,
+    /// What the v11 step and the every-open checks fixed, dropped or kept
+    pub report: MigrationReport,
 }
 
-/// Brings the database opened at `db_path` up to schema v10.
+/// Brings the database opened at `db_path` up to schema v11.
 pub(super) fn upgrade(
     conn: &Connection,
     db_path: &Path,
@@ -121,47 +144,54 @@ pub(super) fn upgrade(
         Some("7") => 7,
         Some("8") => 8,
         Some("9") => 9,
-        // "10", or a newer schema written by a later version: nothing to migrate
-        Some(_) => 10,
+        Some("10") => 10,
+        // "11", or a newer schema written by a later version: nothing to migrate
+        Some(_) => 11,
     };
     // Read-only check, before anything is written
     let pre = from == 4 && is_prerelease_v4(conn)?;
-    if from < 10 || pre {
+    if from < 11 || pre {
         // ONE backup of the state before this open, named after the schema the file had
         let had_data = has_any_data(conn)?;
         if had_data {
             out.backup = Some(write_backup(conn, db_path, from)?);
         }
         let now = clock.now();
-        out.created_admin = run_tx(conn, |c| {
-            if from < 2 {
-                migrate_v2(c, &now)?;
-            }
-            let created = if from < 3 {
-                migrate_v3(c, &now)?
-            } else {
-                false
-            };
-            if from < 4 {
-                migrate_v4(c)?;
-            }
-            if pre {
-                convert_prerelease_v4(c)?;
-            }
-            if from < 5 {
-                migrate_v5(c)?;
-            }
-            if from < 6 {
-                migrate_v6(c)?;
-            }
-            migrate_v7(c)?;
-            if from < 8 {
-                migrate_v8(c)?;
-            }
-            migrate_v9(c)?;
-            migrate_v10(c, from, had_data)?;
-            Ok(created)
+        // Foreign keys are switched off OUTSIDE the transaction (the pragma is a no-op inside one) and always back on after it
+        let (created, report) = with_foreign_keys_off(conn, |conn| {
+            run_tx(conn, |c| {
+                if from < 2 {
+                    migrate_v2(c, &now)?;
+                }
+                let created = if from < 3 {
+                    migrate_v3(c, &now)?
+                } else {
+                    false
+                };
+                if from < 4 {
+                    migrate_v4(c)?;
+                }
+                if pre {
+                    convert_prerelease_v4(c)?;
+                }
+                if from < 5 {
+                    migrate_v5(c)?;
+                }
+                if from < 6 {
+                    migrate_v6(c)?;
+                }
+                migrate_v7(c)?;
+                if from < 8 {
+                    migrate_v8(c)?;
+                }
+                migrate_v9(c)?;
+                migrate_v10(c)?;
+                let report = migrate_v11(c, from, had_data).map_err(stopped)?;
+                Ok((created, report))
+            })
         })?;
+        out.created_admin = created;
+        out.report = report;
         out.converted_prerelease = pre;
     }
     // Before anything that may create a bank (the attach below): banks an older binary created are found by their id
@@ -183,6 +213,7 @@ pub(super) fn upgrade(
     if needs_uid_fixup(conn)? {
         run_tx(conn, fill_missing_uids)?;
     }
+    post_checks(conn, &mut out.report)?;
     Ok(out)
 }
 
@@ -392,7 +423,7 @@ fn migrate_v7(c: &Connection) -> Result<(), DbError> {
 /// The v8 DDL and its backfill (inside the caller's transaction): the columns, the activity log and `system_settings`, the
 /// attempts index, `sessions.started_at` = now and `users.last_active_at` = `last_login_at` for the rows that exist. No IP
 /// or location is written here: the sign-in info switch starts off. The upgrade's activity row and the schema stamp are
-/// written by [`migrate_v10`] (one row per upgrade).
+/// written by [`migrate_v11`] (one row per upgrade).
 fn migrate_v8(c: &Connection) -> Result<(), DbError> {
     for (table, column, definition) in V8_COLUMNS {
         if !has_column(c, table, column)? {
@@ -415,7 +446,7 @@ fn migrate_v8(c: &Connection) -> Result<(), DbError> {
 }
 
 /// The v9 DDL (inside the caller's transaction): the five `users.last_active_*` columns (each only when missing). Nothing is
-/// backfilled. The upgrade's activity row and the final schema stamp are written by [`migrate_v10`].
+/// backfilled. The upgrade's activity row and the final schema stamp are written by [`migrate_v11`].
 fn migrate_v9(c: &Connection) -> Result<(), DbError> {
     for (table, column, definition) in V9_COLUMNS {
         if !has_column(c, table, column)? {
@@ -425,23 +456,15 @@ fn migrate_v9(c: &Connection) -> Result<(), DbError> {
     set_schema(c, "9")
 }
 
-/// The v10 DDL (inside the caller's transaction): the `users.can_download_banks` column (only when missing), the one
-/// activity row of the upgrade (`system.migrate` `{"from": <old schema>, "to": 10}`, only when the file held data), then the
-/// schema version.
-fn migrate_v10(c: &Connection, from: u32, had_data: bool) -> Result<(), DbError> {
+/// The v10 DDL (inside the caller's transaction): the `users.can_download_banks` column (only when missing), then the schema
+/// version `"10"`. The upgrade's one activity row is written by [`migrate_v11`] (it used to be written here up to v1.9).
+fn migrate_v10(c: &Connection) -> Result<(), DbError> {
     for (table, column, definition) in V10_COLUMNS {
         if !has_column(c, table, column)? {
             c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))?;
         }
     }
-    if had_data && from < 10 {
-        let unix = jiff::Timestamp::now().as_second();
-        c.execute(
-            "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result)              VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
-            params![unix, json!({ "from": from, "to": 10 }).to_string()],
-        )?;
-    }
-    set_schema(c, SCHEMA_VERSION)
+    set_schema(c, "10")
 }
 
 /// Gives every user without an identity stamp a random one (32 lower-case hex digits; inside the caller's transaction).
@@ -729,6 +752,376 @@ fn attach_unassigned(c: &Connection, now: &str) -> Result<Option<(i64, String)>,
         params![id],
     )?;
     Ok(Some((id, name)))
+}
+
+/// What the schema-11 step and the every-open checks of one open found. Every list holds only non-zero items; all of them
+/// are empty for an up-to-date file. `main.rs` turns them into log lines.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MigrationReport {
+    /// Orphaned rows fixed by the v11 step, keyed by relation (`attempts.user_id`, `attempt_items.attempt_id`,
+    /// `sessions.user_id`, `user_stats.user_id`, `user_settings.user_id`, `user_banks`: rows deleted; `banks.owner_id`: owner
+    /// cleared and given to the first administrator; `questions.bank_id`, `imports.bank_id`: detached from the missing bank,
+    /// kept). Every deleted row is in the backup.
+    pub orphans: Vec<(&'static str, i64)>,
+    /// Legacy tables (`stats`, `settings`) with rows that the v11 step dropped, with their row count (already copied in v0.6;
+    /// also in the backup). Empty legacy tables are dropped as well but not listed.
+    pub legacy_rows: Vec<(&'static str, i64)>,
+    /// Number of non-empty `users.uid` values shared by more than one user; the unique index is then not created (no uid is
+    /// ever changed).
+    pub uid_duplicates: i64,
+    /// A legacy table that an older version re-created and that holds rows: kept (name, rows).
+    pub kept_legacy: Vec<(&'static str, i64)>,
+}
+
+impl MigrationReport {
+    /// The rows the v11 step deleted as orphans (what the `system.migrate` row calls `orphansRemoved`): detached questions /
+    /// imports and re-owned banks are not deleted rows.
+    pub fn orphans_removed(&self) -> i64 {
+        self.orphans
+            .iter()
+            .filter(|(rel, _)| {
+                !matches!(
+                    *rel,
+                    "banks.owner_id" | "questions.bank_id" | "imports.bank_id"
+                )
+            })
+            .map(|(_, n)| n)
+            .sum()
+    }
+}
+
+/// Sets `PRAGMA foreign_keys=OFF`, runs `f`, and ALWAYS switches it on again (also when `f` fails or panics: the guard's `Drop`
+/// does it). `PRAGMA foreign_keys` is a no-op inside a transaction, so this must be called with none open. Both switches are
+/// read back: if the pragma did not take effect the upgrade stops instead of running with the wrong setting.
+fn with_foreign_keys_off<T>(
+    conn: &Connection,
+    f: impl FnOnce(&Connection) -> Result<T, DbError>,
+) -> Result<T, DbError> {
+    struct Guard<'a>(&'a Connection);
+    impl Drop for Guard<'_> {
+        fn drop(&mut self) {
+            let _ = self.0.pragma_update(None, "foreign_keys", "ON");
+        }
+    }
+    fn setting(c: &Connection) -> Result<i64, DbError> {
+        Ok(c.query_row("PRAGMA foreign_keys", [], |r| r.get(0))?)
+    }
+    conn.pragma_update(None, "foreign_keys", "OFF")?;
+    let result = {
+        let _guard = Guard(conn);
+        if setting(conn)? != 0 {
+            return Err(DbError::Migration(
+                "foreign keys could not be switched off".to_string(),
+            ));
+        }
+        f(conn)
+    };
+    // The guard has switched them on again; read it back
+    if setting(conn)? != 1 {
+        return Err(DbError::Migration(
+            "foreign keys could not be switched back on".to_string(),
+        ));
+    }
+    result
+}
+
+fn count(c: &Connection, sql: &str) -> Result<i64, DbError> {
+    Ok(c.query_row(sql, [], |r| r.get(0))?)
+}
+
+/// Runs a DELETE / UPDATE that must touch exactly `expected` rows (counted just before); anything else is a surprise and
+/// stops the upgrade (the whole transaction rolls back).
+fn exec_expect(c: &Connection, sql: &str, expected: i64, what: &str) -> Result<(), DbError> {
+    let n = c.execute(sql, [])?;
+    if i64::try_from(n).ok() != Some(expected) {
+        return Err(DbError::Migration(format!(
+            "{what}: expected {expected} rows, changed {n}"
+        )));
+    }
+    Ok(())
+}
+
+const ORPHAN_ATTEMPTS: &str =
+    "SELECT id FROM attempts WHERE user_id IS NOT NULL AND user_id NOT IN (SELECT id FROM users)";
+
+/// Step a of the v11 step: fixes every orphaned row by the fixed rules (see the module documentation), counts first and
+/// checks the number of changed rows. Allowed NULLs stay.
+fn fix_orphans(c: &Connection) -> Result<Vec<(&'static str, i64)>, DbError> {
+    let mut out: Vec<(&'static str, i64)> = Vec::new();
+    let mut note = |rel: &'static str, n: i64| {
+        if n > 0 {
+            out.push((rel, n));
+        }
+    };
+    // Records of a missing user: the items first, then the records; then items of a missing record
+    let items_of_orphans = count(
+        c,
+        &format!("SELECT COUNT(*) FROM attempt_items WHERE attempt_id IN ({ORPHAN_ATTEMPTS})"),
+    )?;
+    let attempts = count(c, &format!("SELECT COUNT(*) FROM ({ORPHAN_ATTEMPTS})"))?;
+    exec_expect(
+        c,
+        &format!("DELETE FROM attempt_items WHERE attempt_id IN ({ORPHAN_ATTEMPTS})"),
+        items_of_orphans,
+        "items of orphaned attempts",
+    )?;
+    exec_expect(
+        c,
+        &format!("DELETE FROM attempts WHERE id IN ({ORPHAN_ATTEMPTS})"),
+        attempts,
+        "orphaned attempts",
+    )?;
+    note("attempts.user_id", attempts);
+    let items = count(
+        c,
+        "SELECT COUNT(*) FROM attempt_items WHERE attempt_id NOT IN (SELECT id FROM attempts)",
+    )?;
+    exec_expect(
+        c,
+        "DELETE FROM attempt_items WHERE attempt_id NOT IN (SELECT id FROM attempts)",
+        items,
+        "orphaned attempt items",
+    )?;
+    note("attempt_items.attempt_id", items_of_orphans + items);
+    for (table, rel) in [
+        ("sessions", "sessions.user_id"),
+        ("user_stats", "user_stats.user_id"),
+        ("user_settings", "user_settings.user_id"),
+    ] {
+        let cond = "user_id NOT IN (SELECT id FROM users)";
+        let n = count(c, &format!("SELECT COUNT(*) FROM {table} WHERE {cond}"))?;
+        exec_expect(c, &format!("DELETE FROM {table} WHERE {cond}"), n, rel)?;
+        note(rel, n);
+    }
+    let cond = "user_id NOT IN (SELECT id FROM users) OR bank_id NOT IN (SELECT id FROM banks)";
+    let n = count(c, &format!("SELECT COUNT(*) FROM user_banks WHERE {cond}"))?;
+    exec_expect(
+        c,
+        &format!("DELETE FROM user_banks WHERE {cond}"),
+        n,
+        "user_banks",
+    )?;
+    note("user_banks", n);
+    // Banks of a missing owner: cleared, then given to the first administrator (stays NULL when there is none; the every-open
+    // owner fix-up handles that)
+    let cond = "owner_id IS NOT NULL AND owner_id NOT IN (SELECT id FROM users)";
+    let n = count(c, &format!("SELECT COUNT(*) FROM banks WHERE {cond}"))?;
+    exec_expect(
+        c,
+        &format!("UPDATE banks SET owner_id=NULL WHERE {cond}"),
+        n,
+        "banks.owner_id",
+    )?;
+    give_ownerless_banks(c)?;
+    note("banks.owner_id", n);
+    // Content of a missing bank is kept, detached; the every-open `attach_unassigned` attaches it to the legacy bank
+    for (table, rel) in [
+        ("questions", "questions.bank_id"),
+        ("imports", "imports.bank_id"),
+    ] {
+        let cond = "bank_id IS NOT NULL AND bank_id NOT IN (SELECT id FROM banks)";
+        let n = count(c, &format!("SELECT COUNT(*) FROM {table} WHERE {cond}"))?;
+        exec_expect(
+            c,
+            &format!("UPDATE {table} SET bank_id=NULL WHERE {cond}"),
+            n,
+            rel,
+        )?;
+        note(rel, n);
+    }
+    Ok(out)
+}
+
+/// Number of non-empty `users.uid` values that more than one user holds.
+fn uid_duplicates(c: &Connection) -> Result<i64, DbError> {
+    count(
+        c,
+        "SELECT COUNT(*) FROM (SELECT uid FROM users WHERE uid <> '' GROUP BY uid HAVING COUNT(*) > 1)",
+    )
+}
+
+/// Rebuilds one table by the 12-step procedure (inside the caller's transaction, foreign keys off): refuses an unknown
+/// column, copies by explicit column list, checks the row count, restores the AUTOINCREMENT high-water mark.
+fn rebuild_table(c: &Connection, r: &Rebuild) -> Result<(), DbError> {
+    let t = r.table;
+    let known: Vec<&str> = r.columns.split(',').map(str::trim).collect();
+    let mut st = c.prepare("SELECT name FROM pragma_table_info(?1)")?;
+    let old: Vec<String> = st
+        .query_map(params![t], |row| row.get::<_, String>(0))?
+        .collect::<Result<_, _>>()?;
+    for col in &old {
+        if !known.contains(&col.as_str()) {
+            return Err(DbError::Migration(format!("unexpected column {t}.{col}")));
+        }
+    }
+    let n0 = count(c, &format!("SELECT COUNT(*) FROM {t}"))?;
+    let s0: Option<i64> = c
+        .query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name=?1",
+            params![t],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let copied = c.execute_batch(r.create).and_then(|()| {
+        c.execute_batch(&format!(
+            "INSERT INTO new_{t}({cols}) SELECT {cols} FROM {t};
+             DROP TABLE {t};
+             ALTER TABLE new_{t} RENAME TO {t};",
+            cols = r.columns
+        ))
+    });
+    copied.map_err(|e| DbError::Migration(format!("rebuilding {t}: {e}")))?;
+    if let Some(s0) = s0 {
+        // The AUTOINCREMENT high-water mark: ids are never reused (`meta.banks_known` and the record ids rely on it)
+        let changed = c.execute(
+            "UPDATE sqlite_sequence SET seq=MAX(seq, ?2) WHERE name=?1",
+            params![t, s0],
+        )?;
+        if changed == 0 {
+            c.execute(
+                "INSERT INTO sqlite_sequence(name, seq) VALUES(?1, ?2)",
+                params![t, s0],
+            )?;
+        }
+    }
+    if !r.indexes.is_empty() {
+        c.execute_batch(r.indexes)?;
+    }
+    if count(c, &format!("SELECT COUNT(*) FROM {t}"))? != n0 {
+        return Err(DbError::Migration(format!("row count of {t} changed")));
+    }
+    Ok(())
+}
+
+/// Turns a SQLite error of the v11 step into [`DbError::Migration`] (so the start-up message names the stopped upgrade and
+/// says that nothing was changed); other errors pass through.
+fn stopped(e: DbError) -> DbError {
+    match e {
+        DbError::Sqlite(e) => DbError::Migration(e.to_string()),
+        other => other,
+    }
+}
+
+/// The v11 step (inside the caller's transaction, foreign keys off); see the module documentation. Returns what it fixed.
+fn migrate_v11(c: &Connection, from: u32, had_data: bool) -> Result<MigrationReport, DbError> {
+    let mut report = MigrationReport::default();
+    // A trigger on a rebuilt table would be dropped silently with the old table: stop instead
+    if let Some(name) = c
+        .query_row(
+            "SELECT name FROM sqlite_master WHERE type='trigger' LIMIT 1",
+            [],
+            |r| r.get::<_, String>(0),
+        )
+        .optional()?
+    {
+        return Err(DbError::Migration(format!("unexpected trigger {name}")));
+    }
+    // a. orphans
+    report.orphans = fix_orphans(c)?;
+    // b. legacy tables (their rows were copied in v0.6 / by `migrate_v3`; the backup holds them as well)
+    for table in ["stats", "settings"] {
+        if table_exists(c, table)? {
+            let n = count(c, &format!("SELECT COUNT(*) FROM {table}"))?;
+            // an empty table (every fresh file: the v1 text creates both) is dropped without a report line
+            if n > 0 {
+                report.legacy_rows.push((table, n));
+            }
+            c.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+        }
+    }
+    // c. the unique uid index, before the rebuilds (fixed `sqlite_master` order); duplicates: skipped, nothing changed
+    report.uid_duplicates = uid_duplicates(c)?;
+    if report.uid_duplicates == 0 {
+        c.execute_batch(V11_USERS_UID_INDEX)?;
+    }
+    // d. the nine rebuilds
+    for r in &V11_REBUILDS {
+        rebuild_table(c, r)?;
+    }
+    // e. nothing may be left over
+    let mut st = c.prepare("PRAGMA foreign_key_check")?;
+    let bad: Vec<String> = st
+        .query_map([], |r| r.get::<_, String>(0))?
+        .collect::<Result<_, _>>()?;
+    if let Some(first) = bad.first() {
+        let n = bad.iter().filter(|t| *t == first).count();
+        return Err(DbError::Migration(format!(
+            "foreign key check: {first} {n} rows"
+        )));
+    }
+    drop(st);
+    // f. the one activity row of the upgrade
+    if had_data {
+        let unix = jiff::Timestamp::now().as_second();
+        let removed = report.orphans_removed();
+        let detail = if removed > 0 {
+            json!({ "from": from, "to": 11, "orphansRemoved": removed })
+        } else {
+            json!({ "from": from, "to": 11 })
+        };
+        c.execute(
+            "INSERT INTO activity_log(ts, last_ts, actor, action, detail, result)              VALUES(?1, ?1, 'system', 'system.migrate', ?2, 'ok')",
+            params![unix, detail.to_string()],
+        )?;
+    }
+    // g.
+    set_schema(c, SCHEMA_VERSION)?;
+    Ok(report)
+}
+
+/// Whether `Store::open` must run the v1 `SCHEMA` text: the file is new, or `meta.schema` is missing or below 11. Read-only.
+/// Running it on an up-to-date file would re-create the dropped `stats` table.
+pub(super) fn needs_v1_schema(c: &Connection) -> Result<bool, DbError> {
+    if !table_exists(c, "meta")? {
+        return Ok(true);
+    }
+    Ok(!matches!(
+        get_meta(c, "schema")?.and_then(|v| v.parse::<u32>().ok()),
+        Some(n) if n >= 11
+    ))
+}
+
+/// Every-open checks of a schema-11 file (read-only first; a write only when something needs fixing, so an up-to-date file
+/// stays byte-identical):
+/// - `stats` / `settings` re-created by an older version after a rollback (v1.9 runs the v1 `SCHEMA` on every open): dropped
+///   when empty, kept (and reported) when they hold rows;
+/// - `idx_users_uid` missing: created once no non-empty stamp is shared; while some are, the count is reported.
+///
+/// No full `foreign_key_check` here: its cost grows with `attempt_items`, and enforcement keeps new orphans out.
+fn post_checks(c: &Connection, report: &mut MigrationReport) -> Result<(), DbError> {
+    if get_meta(c, "schema")?.as_deref() != Some("11") {
+        return Ok(());
+    }
+    for table in ["stats", "settings"] {
+        if !table_exists(c, table)? {
+            continue;
+        }
+        let n = count(c, &format!("SELECT COUNT(*) FROM {table}"))?;
+        if n == 0 {
+            run_tx(c, |c| {
+                c.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+                Ok(())
+            })?;
+        } else {
+            report.kept_legacy.push((table, n));
+        }
+    }
+    if table_exists(c, "users")? && has_column(c, "users", "uid")? {
+        let has_index: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='idx_users_uid')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_index {
+            let dups = uid_duplicates(c)?;
+            if dups == 0 {
+                run_tx(c, |c| Ok(c.execute_batch(V11_USERS_UID_INDEX)?))?;
+            } else {
+                report.uid_duplicates = dups;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

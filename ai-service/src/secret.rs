@@ -41,7 +41,7 @@ pub enum SecretName {
 impl SecretName {
     pub const ALL: [SecretName; 2] = [SecretName::ApiKey, SecretName::GatewayKey];
 
-    /// The row name in `secrets`.
+    /// The row name in `connection_secrets` (the same names the retired `secrets` table used).
     pub fn db(self) -> &'static str {
         match self {
             SecretName::ApiKey => "api_key",

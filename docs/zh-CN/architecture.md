@@ -92,12 +92,12 @@ ai-service/     AI 服务（v0.8）：Rust（Axum 0.8 + Tokio + rusqlite + 使�
                   （v0.9：学习路由）
   src/chat.rs     生成一个回答的任务：闸门、每个用户的登记表、取消、保存、每 2 秒的重新检查
   src/provider/   OpenAI 兼容、OpenAI Responses 和 Anthropic 适配器（网关可用其中任一种格式）、事件流解析、错误映射
-  src/store/      AI 数据库：schema v4（v1.0 起）、settings / secrets / limits 行、users / chats / messages / memories（包括学习对话
+  src/store/      AI 数据库：schema 10（v2.0 起）、settings / limits / connection_secrets 行、users / chats / messages / memories（包括学习对话
                   和它们保存的回答）、用量统计（按用途）和审计发件箱
   src/study/      v0.9：提示、解析和总结的提示词、提示守卫（guard/）、对话标题、后端数据路由的严格类型（wire.rs）
                   和记录身份缓存（cache.rs）
   src/identity.rs, link.rs  身份声明；内部令牌和对 /internal/ai/* 的调用（包括心跳）
-  src/secret.rs, settings.rs  密钥加密和密钥文件；服务商、URL 规则、指纹、设置的更新
+  src/secret.rs, settings.rs  密钥加密和密钥文件；服务商、URL 规则、设置的校验
   src/limits.rs, prompt.rs, retention.rs, logs.rs, codes.rs, config.rs  安全上限（包括回答和记忆的字数，以及字数到 token 的换算）；
                   系统提示词和历史；保留、对账和发件箱；日志和转发；错误码和它们的文字；环境变量
   src/quota.rs   v1.0：每个用户的请求上限（每分钟和每小时滚动计算，每天从服务器时区的 0:00 开始）
@@ -249,7 +249,7 @@ AI 对话、AI 记忆和 AI 设置由第三个容器 `ai-service`（镜像 `xexa
 - **没有任何 SQLite 文件会被两个容器同时打开。** `xexam_backend_data`（里面是 `xexam.db`）只挂载到后端，`xexam_ai_data`（里面是 `xexam-ai.db` 和密钥文件 `secret.key`）只挂载到 `ai-service`。前端不挂载任何卷。
 - **ai-service 只通过后端的 API 访问主程序的数据**：带令牌的路由 `/internal/ai/introspect`、`/internal/ai/users`、`/internal/ai/log` 和 `/internal/ai/heartbeat`（某个会话属于谁、有哪些用户、谁有 AI+ 功能，它要写进系统日志的行，以及它自己的状态），从 v0.9 起还有 `/internal/ai/question`、`/internal/ai/record` 和 `/internal/ai/record-info`。这三个路由交出的是**调用者能看到的一道题，或者调用者自己的一条记录，而且只在带着调用者的有效会话来问时才交**：后端把会话绑定到用户，对另一个用户的会话、用户看不到的题库里的题、或不是调用者自己的记录，一律不回答（这几种情况都是同一个「未找到」）。它仍然不会自己去读题库、记录或设置，也不会拿到这三种投影之外的东西（见下面的「AI+ 学习帮助」一节）。
 - **后端只通过 ai-service 的 API 访问 AI 数据**，而在 v0.8 里它从不这样做：它根本不调用 ai-service。心跳是反方向的（ai-service 告诉后端，见下文）；后端对 AI 所知的，只是它收到的最后一次报告，而且只保存在内存里。
-- **每个数据库只由它自己的服务迁移**：后端迁移 `xexam.db`（schema v6，v1.0 没有变化），ai-service 创建并打开 `xexam-ai.db`（v1.0 起是 schema v4，见 [database.md](database.md) 第 8 节）。
+- **每个数据库只由它自己的服务迁移**：后端迁移 `xexam.db`（v2.0 起是 schema 11），ai-service 创建并打开 `xexam-ai.db`（v2.0 起是 schema 10，见 [database.md](database.md) 第 8 节）。
 - **唯一共用的卷 `xexam_ai_auth` 里只有一个文件 `internal.token`**，从不放数据库。后端写入它；ai-service 以只读方式挂载它。
 
 所以 `xexam_backend_data` 的备份里没有 AI 机密，也没有对话；`xexam_ai_data` 的备份里没有题库、密码或学习记录。
@@ -346,7 +346,7 @@ sequenceDiagram
 | 提示词缓存 | Anthropic 格式：在系统块和最后一条历史消息（新问题之前的那一条）上各放一个 `cache_control` 断点；OpenAI 格式：聊天不发送任何东西（自动缓存的服务商自己会缓存）；带缓存前缀的调用（AI 导入和出题）把系统消息和第一条用户消息作为 content-part 数组发送，前缀部分带 `cache_control` 断点（共 2 个断点；LiteLLM 这类基于 Anthropic 的网关会透传）。这样的请求被 400 / 422 拒绝时，会不带标记（普通字符串）重试一次，成功后在内存里记住该连接不带标记，直到服务重启。服务商报告的缓存命中的输入 token 存进 `usage.tokens_cached`，在用量里显示为 **缓存命中**。OpenAI Responses 格式：完全不带标记（自动缓存）；缓存命中的 token 来自 `input_tokens_details` |
 | 对外的 HTTP | `reqwest`，带 rustls、ring 提供者和编译进程序的 Mozilla 根证书（没有 OpenSSL、aws-lc 或 native-tls，CI 会检查）；不用代理，不跟随重定向，HTTP/1.1 |
 | 密钥 | XChaCha20-Poly1305，密钥来自 `XEXAM_AI_SECRET_KEY` 或密钥文件；解密后的密钥只在构建一次发给服务商的请求时存在（见 [security.md](security.md) 第 11 节） |
-| 开启 | AI+ 功能只有存储的开关是开着的、当前设置的测试已通过（服务商、地址、格式、认证方式、模型、密钥版本和加密密钥 id 的指纹），而且密钥能解密时，才是开启的。保存对其中任何一项的修改都会对所有人关闭它，直到管理员再次测试并开启 |
+| 开启 | AI+ 功能只有存储的开关 `settings.enabled` 开着时才是开启的。管理员只有在密钥能解密、并且有可用的默认模型时才能开启它（默认的选择会像选模型那样被测试）；关闭它会让所有正在写的回答都停下来 |
 | 日志 | `tracing` 输出到 stderr（`docker compose logs ai-service`），过滤器是 `XEXAM_AI_LOG`；服务本身的日志行还会成批发到后端的系统日志（`AI: …`）。与后端的链接每建立一次连接只写一次 `AI link: connected to the main service`（只有在 `AI link: lost the main service` 之后才会再写），所以长时间的中断是一对日志行，而不是每次重试一行。审计日志（管理员查看或清除某个用户的 AI 数据）会马上发送，或者保存在 `audit_outbox` 表里，直到后端取走；它们从不丢弃 |
 | 后台工作 | 对话保留（启动 60 秒后，之后每小时一次；从 v0.9 起分批进行，每批 20 个对话，批间短暂停顿，在阻塞线程上运行）、和后端的对账（启动时，之后每 10 分钟一次：删除已删除用户的 AI 数据）、审计发件箱（每 30 秒）和删除后的 WAL 检查点（最多每 10 秒一次） |
 | 关闭 | 收到 SIGTERM 时，每个正在生成的回答都以 `stopped` 结束，并在 8 秒内保存；compose 最多等 15 秒 |

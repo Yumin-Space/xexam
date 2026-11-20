@@ -135,7 +135,7 @@ For a user who does not see every bank, every route follows the same rule:
 
 ### `GET /api/info`
 ```json
-{"version": "0.9", "arch": "x86_64", "canShutdown": false}
+{"version": "2.0", "arch": "x86_64", "canShutdown": false}
 ```
 Public. The version number is `CODE_VERSION` from the `VERSION` file (or `XEXAM_VERSION`); `arch` is the CPU architecture of the server; `canShutdown` is `true` only when the program was started with `--allow-shutdown`. *(v0.7.5)* The key `bankCount` (the number of active questions in the whole library) is gone: the route is public, and signed-in pages count the questions they may see from `GET /api/bank` and `GET /api/banks`. The route still reads the database, so it answers 500 when the database cannot be read, and the container health check (which asks this route) reports the backend as unhealthy.
 
@@ -1240,6 +1240,12 @@ Only the AI routes change, and every change is additive or a default; the other 
 - **New**: `POST /api/ai/admin/connections/enabled`; `enabled` on connections; `ai.connectionOff` (409) and `ai.gen.providerDaily`; `waiting` on job objects; `langs` on `GET /api/banks/download`.
 - **Changed**: seven slots (`study` split into `hint` and `explain`); four thinking-strength families (`gemma` removed, 400); global feature switches independent and effective for administrators; `admin/limits` 36 keys; the `bank.download` activity detail has `langs`.
 - **Database**: the AI database moves to schema 9 on start, after a backup copy (section 8.2f of [database.md](database.md)). The main database and every public route not listed above are unchanged.
+
+### Changes in v2.0 (relative to v1.9)
+
+- **No route changes.** No new route, field, code or message; every answer is the same.
+- **Version**: `GET /api/info` reports `"version": "2.0"`, and the AI service's `/healthz` as well. The main database is schema 11.
+- **Database**: the AI database is schema 10 (it moves on start, after a backup copy: section 8.2g of [database.md](database.md); the main database does the same, section 6.17).
 
 ## 8. Examples
 

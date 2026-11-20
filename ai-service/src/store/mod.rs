@@ -118,6 +118,17 @@ fn add_columns(c: &Connection, cols: &[(&str, &str, &str)]) -> rusqlite::Result<
     Ok(())
 }
 
+/// The same-version repair of [`add_columns`]: skips the retired columns (the history lists still name some of them, and
+/// a schema-10 file must never get them back).
+fn add_live_columns(c: &Connection, cols: &[(&str, &str, &str)]) -> rusqlite::Result<()> {
+    let live: Vec<(&str, &str, &str)> = cols
+        .iter()
+        .filter(|(t, col, _)| !schema::is_retired(t, col))
+        .copied()
+        .collect();
+    add_columns(c, &live)
+}
+
 /// A memory note may be as long as the memory length setting allows (up to 250,000 tokens, A-OWNER-43b), but the
 /// schema-1 table limits `content` to 2000 characters. A CHECK cannot be altered, so the table is rebuilt once with
 /// the wider bound (rows and ids kept). The same step for new and upgraded databases; a no-op when already wide.
@@ -145,6 +156,107 @@ fn relax_memory_check(c: &Connection) -> rusqlite::Result<()> {
          DROP TABLE memories_old;
          CREATE INDEX IF NOT EXISTS idx_memories_user ON memories(user_id, id);",
     )
+}
+
+/// Every additive step of schemas 1 - 9 on an empty file, in the order of the upgrade: the tables, columns, indexes and
+/// seed rows of a v1.9 file. No drop and no `meta.schema` stamp (the callers add what they need).
+fn build_history(tx: &Transaction, now: i64) -> rusqlite::Result<()> {
+    tx.execute_batch(schema::SCHEMA)?;
+    add_columns(tx, &schema::V2_COLUMNS)?;
+    add_columns(tx, &schema::V3_COLUMNS)?;
+    add_columns(tx, &schema::V4_COLUMNS)?;
+    add_columns(tx, &schema::V5_COLUMNS)?;
+    add_columns(tx, &schema::V6_COLUMNS)?;
+    add_columns(tx, &schema::V7_COLUMNS)?;
+    relax_memory_check(tx)?;
+    tx.execute_batch(schema::V3_INDEXES)?;
+    tx.execute_batch(schema::V5_TABLES)?;
+    add_columns(tx, &schema::LATE_COLUMNS)?;
+    tx.execute_batch(schema::V7_TABLES)?;
+    add_columns(tx, &schema::V16_COLUMNS)?;
+    add_columns(tx, &schema::V9_COLUMNS)?;
+    tx.execute_batch(schema::V7_INDEXES)?;
+    tx.execute_batch(schema::V8_TABLES)?;
+    tx.execute(schema::V7_SEED, [now])?;
+    split_study_slot(tx, now)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
+        [now],
+    )?;
+    tx.execute(schema::V7_NEW_LIMITS, [now])?;
+    tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
+    Ok(())
+}
+
+/// An error of the schema-10 step that is not a SQLite error.
+fn step_error(msg: String) -> rusqlite::Error {
+    rusqlite::Error::ToSqlConversionFailure(msg.into())
+}
+
+fn table_exists(c: &Connection, name: &str) -> rusqlite::Result<bool> {
+    c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+        [name],
+        |r| r.get(0),
+    )
+}
+
+fn count_rows(c: &Connection, table: &str) -> rusqlite::Result<i64> {
+    c.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
+}
+
+/// The schema-10 step: drops the retired `secrets` table (the keys live in `connection_secrets` since schema 7) and the
+/// retired columns of `settings`, `limits` and `chats` (only those present). Returns (rows of `secrets`, columns
+/// dropped). Counts only; no value is read. `settings` and `limits` must keep their row count, else the error rolls the
+/// transaction back.
+fn drop_retired(c: &Connection) -> rusqlite::Result<(i64, usize)> {
+    let secret_rows = if table_exists(c, "secrets")? {
+        count_rows(c, "secrets")?
+    } else {
+        0
+    };
+    let settings0 = count_rows(c, "settings")?;
+    let limits0 = count_rows(c, "limits")?;
+    let mut dropped = 0usize;
+    for (table, column) in schema::RETIRED_COLUMNS {
+        let present: bool = c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
+            [table, column],
+            |r| r.get(0),
+        )?;
+        if present {
+            c.execute_batch(&format!("ALTER TABLE {table} DROP COLUMN {column};"))?;
+            dropped += 1;
+        }
+    }
+    for table in schema::RETIRED_TABLES {
+        c.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+    }
+    for (table, before) in [("settings", settings0), ("limits", limits0)] {
+        let after = count_rows(c, table)?;
+        if after != before {
+            return Err(step_error(format!(
+                "the row count of {table} changed ({before} -> {after})"
+            )));
+        }
+    }
+    Ok((secret_rows, dropped))
+}
+
+/// A file shaped like a v1.9 one (schema 9, with the retired items), for tests of the upgrade.
+#[doc(hidden)]
+pub fn write_schema9_fixture(path: &Path) -> rusqlite::Result<()> {
+    let mut conn = Connection::open(path)?;
+    conn.pragma_update(None, "foreign_keys", "ON")?;
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    build_history(&tx, crate::util::unix_now())?;
+    // what the v1.9 open added after its schema stamp: the two one-time flags
+    tx.execute_batch(
+        "INSERT INTO meta (key, value) VALUES ('schema', '9');
+         INSERT INTO meta (key, value) VALUES ('unlimited_default', '1');
+         INSERT INTO meta (key, value) VALUES ('import_max_50', '1');",
+    )?;
+    tx.commit()
 }
 
 /// Copies the whole database (`VACUUM INTO`) to `<backups>/xexam-ai-schema<from>-<YYYYMMDD-HHMMSS>.db` (local time;
@@ -323,7 +435,7 @@ impl Store {
         Ok(store)
     }
 
-    /// Creates a new database, upgrades a schema-1 … 8 database (after a backup copy), or refuses an unknown schema; then
+    /// Creates a new database, upgrades a schema-1 … 9 database (after a backup copy), or refuses an unknown schema; then
     /// repairs answers left `streaming` by a crash. Reopening a current database writes nothing.
     fn init(&self, backups: &Path) -> Result<(), String> {
         let mut conn = self.lock();
@@ -340,30 +452,8 @@ impl Store {
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|e| format!("cannot open the AI database {{path}}: {e}"))?;
                 let run = |tx: &Transaction| -> rusqlite::Result<()> {
-                    tx.execute_batch(schema::SCHEMA)?;
-                    add_columns(tx, &schema::V2_COLUMNS)?;
-                    add_columns(tx, &schema::V3_COLUMNS)?;
-                    add_columns(tx, &schema::V4_COLUMNS)?;
-                    add_columns(tx, &schema::V5_COLUMNS)?;
-                    add_columns(tx, &schema::V6_COLUMNS)?;
-                    add_columns(tx, &schema::V7_COLUMNS)?;
-                    relax_memory_check(tx)?;
-                    tx.execute_batch(schema::V3_INDEXES)?;
-                    tx.execute_batch(schema::V5_TABLES)?;
-                    add_columns(tx, &schema::LATE_COLUMNS)?;
-                    tx.execute_batch(schema::V7_TABLES)?;
-                    add_columns(tx, &schema::V16_COLUMNS)?;
-                    add_columns(tx, &schema::V9_COLUMNS)?;
-                    tx.execute_batch(schema::V7_INDEXES)?;
-                    tx.execute_batch(schema::V8_TABLES)?;
-                    tx.execute(schema::V7_SEED, [now])?;
-                    split_study_slot(tx, now)?;
-                    tx.execute(
-                        "INSERT OR IGNORE INTO settings (id, updated_at) VALUES (1, ?1)",
-                        [now],
-                    )?;
-                    tx.execute(schema::V7_NEW_LIMITS, [now])?;
-                    tx.execute_batch(schema::V4_MEMORY_DEFAULT)?;
+                    build_history(tx, now)?;
+                    drop_retired(tx)?;
                     tx.execute(
                         "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?1)",
                         [schema::SCHEMA_VERSION],
@@ -384,6 +474,7 @@ impl Store {
                         .chain(schema::LATE_COLUMNS.iter())
                         .chain(schema::V16_COLUMNS.iter())
                         .chain(schema::V9_COLUMNS.iter())
+                        .filter(|(t, col, _)| !schema::is_retired(t, col))
                     {
                         let present: bool = c.query_row(
                             "SELECT EXISTS(SELECT 1 FROM pragma_table_info(?1) WHERE name = ?2)",
@@ -400,13 +491,13 @@ impl Store {
                     let tx = conn
                         .transaction_with_behavior(TransactionBehavior::Immediate)
                         .map_err(|e| format!("cannot open the AI database {{path}}: {e}"))?;
-                    add_columns(&tx, &schema::V5_COLUMNS)
-                        .and_then(|()| add_columns(&tx, &schema::V6_COLUMNS))
-                        .and_then(|()| add_columns(&tx, &schema::V7_COLUMNS))
-                        .and_then(|()| add_columns(&tx, &schema::LATE_COLUMNS))
+                    add_live_columns(&tx, &schema::V5_COLUMNS)
+                        .and_then(|()| add_live_columns(&tx, &schema::V6_COLUMNS))
+                        .and_then(|()| add_live_columns(&tx, &schema::V7_COLUMNS))
+                        .and_then(|()| add_live_columns(&tx, &schema::LATE_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_TABLES))
-                        .and_then(|()| add_columns(&tx, &schema::V16_COLUMNS))
-                        .and_then(|()| add_columns(&tx, &schema::V9_COLUMNS))
+                        .and_then(|()| add_live_columns(&tx, &schema::V16_COLUMNS))
+                        .and_then(|()| add_live_columns(&tx, &schema::V9_COLUMNS))
                         .and_then(|()| tx.execute_batch(schema::V7_INDEXES))
                         .and_then(|()| tx.execute_batch(schema::V8_TABLES))
                         .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
@@ -447,7 +538,7 @@ impl Store {
                 let tx = conn
                     .transaction_with_behavior(TransactionBehavior::Immediate)
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
-                let run = |tx: &Transaction| -> rusqlite::Result<()> {
+                let run = |tx: &Transaction| -> rusqlite::Result<(i64, usize, i64)> {
                     // adds what a '1' … '4' file lacks; a no-op for the rest
                     add_columns(tx, &schema::V2_COLUMNS)?;
                     add_columns(tx, &schema::V3_COLUMNS)?;
@@ -482,13 +573,22 @@ impl Store {
                         tx.execute_batch(schema::CLEAR_STALE_PICKS)?;
                     }
                     split_study_slot(tx, now)?;
+                    // every reader of the retired items ran above; now they go (the backup holds them)
+                    let (secret_rows, dropped) = if from < 10 { drop_retired(tx)? } else { (0, 0) };
+                    // informational only: the AI foreign keys have been enforced since v0.8, so nothing new appears
+                    let orphans = {
+                        let mut st = tx.prepare("PRAGMA foreign_key_check")?;
+                        let rows = st.query_map([], |_| Ok(()))?;
+                        rows.count() as i64
+                    };
                     tx.execute(
                         "UPDATE meta SET value = ?1 WHERE key = 'schema'",
                         [schema::SCHEMA_VERSION],
                     )?;
-                    Ok(())
+                    Ok((secret_rows, dropped, orphans))
                 };
-                run(&tx).map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                let (secret_rows, dropped, orphans) = run(&tx)
+                    .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 tx.commit()
                     .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
                 tracing::info!(
@@ -496,6 +596,18 @@ impl Store {
                     schema::SCHEMA_VERSION,
                     copy.display()
                 );
+                tracing::info!(
+                    "Removed the unused legacy table secrets ({secret_rows} rows) and {dropped} unused columns (copy in the backup)."
+                );
+                if orphans > 0 {
+                    tracing::warn!(
+                        "The AI database holds {orphans} rows that break a foreign key (kept as they are)."
+                    );
+                }
+                // the freed `secrets` pages were zeroed (secure_delete); let them leave the -wal file too
+                if self.journal == "wal" {
+                    let _ = conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()));
+                }
             }
             Some(v) => {
                 return Err(format!(
@@ -514,10 +626,8 @@ impl Store {
             )
             .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
         if !flagged {
-            if matches!(
-                existing.as_deref(),
-                Some("7") | Some("8") | Some(schema::SCHEMA_VERSION)
-            ) {
+            let existing_num: Option<u32> = existing.as_deref().and_then(|v| v.parse().ok());
+            if matches!(existing_num, Some(n) if n >= 7) {
                 let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
                     format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
                 })?;
@@ -531,40 +641,6 @@ impl Store {
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, '1')",
                 [schema::UNLIMITED_DEFAULT_KEY],
-            )
-            .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
-        }
-        // A-OWNER-58b: one import takes at most 50 questions. A file written while the ceiling was 100 keeps a larger
-        // stored value until this one-time step (after a backup copy) lowers it.
-        let flagged: bool = conn
-            .query_row(
-                "SELECT EXISTS(SELECT 1 FROM meta WHERE key = ?1)",
-                [schema::IMPORT_MAX_KEY],
-                |r| r.get(0),
-            )
-            .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
-        if !flagged {
-            let high: bool = conn
-                .query_row(
-                    "SELECT EXISTS(SELECT 1 FROM limits WHERE id = 1 AND import_max_questions > 50)",
-                    [],
-                    |r| r.get(0),
-                )
-                .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
-            if high {
-                let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
-                    format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
-                })?;
-                conn.execute_batch(schema::IMPORT_MAX_SET)
-                    .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
-                tracing::info!(
-                    "The AI import limit is now at most 50 questions. A copy of the previous database was saved first: {}.",
-                    copy.display()
-                );
-            }
-            conn.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, '1')",
-                [schema::IMPORT_MAX_KEY],
             )
             .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
         }
@@ -717,6 +793,7 @@ mod tests {
                 .chain(schema::V5_COLUMNS.iter())
                 .chain(schema::V6_COLUMNS.iter())
                 .chain(schema::LATE_COLUMNS.iter())
+                .filter(|(t, c, _)| !schema::is_retired(t, c))
             {
                 assert!(has_column(&c, table, column), "{table}.{column}");
             }
@@ -725,7 +802,7 @@ mod tests {
                     r.get(0)
                 })
                 .expect("schema");
-            assert_eq!(v, "9");
+            assert_eq!(v, schema::SCHEMA_VERSION);
         }
         let copies: Vec<_> = std::fs::read_dir(dir.path().join(BACKUP_DIR))
             .expect("backups")

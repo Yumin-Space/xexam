@@ -1,6 +1,6 @@
 //! Safety limits that administrators can adjust (spec 14.1). They protect the server; they are not usage limits.
 //!
-//! Stored in the single-row table `limits` (not part of the settings fingerprint, so changing them never switches AI
+//! Stored in the single-row table `limits` (changing them never switches AI
 //! off). Lowering a limit never deletes or truncates existing data; it only refuses new items beyond it.
 use serde_json::{Map, Value};
 
@@ -86,7 +86,8 @@ pub struct LimitDef {
 
 /// The 36 limits, in the order of the JSON answers (the ten of v1.0, then the generation settings, then the import ones,
 /// then the six of v1.3, then the three pacing ones of v1.9).
-/// The retired `limits.message_chars` column is not listed: nothing reads or writes it any more.
+/// The retired `limits` columns (`message_chars`, `memory_chars`, `reply_max_chars`, `gen_call_chars`,
+/// `import_max_questions`) are not listed: AI schema 10 dropped them.
 pub const DEFS: [LimitDef; 36] = [
     LimitDef {
         key: "perUserRunning",

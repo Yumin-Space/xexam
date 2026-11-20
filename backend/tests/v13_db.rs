@@ -58,14 +58,6 @@ fn user(s: &Store, name: &str, role: Role) -> i64 {
     }
 }
 
-/// Everything the schema-8 step added, removed again: a fresh database becomes a schema-7 one.
-const DOWNGRADE_TO_7: &str = "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; ALTER TABLE users DROP COLUMN can_download_banks; \
-    ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
-    ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
-    ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
-    ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
-    ALTER TABLE sessions DROP COLUMN ua; UPDATE meta SET value = '7' WHERE key = 'schema';";
-
 fn master(p: &Path) -> Vec<(String, String, Option<String>)> {
     let c = raw(p);
     let mut st = c
@@ -86,29 +78,13 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
     let fresh = dir.path().join("fresh").join("xexam.db");
     drop(open(&fresh));
     {
-        let s = open(&db);
-        let id = user(&s, "ann", Role::User);
-        s.create_session(&NewSession {
-            token_hash: "tok1",
-            user_id: id,
-            now: NOW,
-            expires_at: NOW + 100,
-            remember: true,
-            ip: None,
-            ua: None,
-        })
-        .expect("session");
-        s.note_signin(id, "2026-11-01 08:00", None).expect("note");
-    }
-    {
+        // A genuine schema-7 file (v2.0: built from the history constants, not by taking columns off a fresh file)
+        dbc::historic(&db, 7);
         let c = raw(&db);
-        c.execute_batch(DOWNGRADE_TO_7).expect("downgrade");
-        // a fresh database has a backup-less open; this one now has data
-        c.execute(
-            "UPDATE users SET last_login_at = '2026-11-01 08:00' WHERE username = 'ann'",
-            [],
+        c.execute_batch(
+            "INSERT INTO users(id, username, password_hash, role, created_at, password_changed_at, new_banks)                VALUES(1, 'admin', 'placeholder-hash', 'admin', '2026-11-01 07:00', '2026-11-01 07:00', 1),                      (2, 'ann', 'placeholder-hash', 'user', '2026-11-01 07:00', '2026-11-01 07:00', 1);              INSERT INTO sessions(token_hash, user_id, created_at, last_seen_at, expires_at)                VALUES('tok1', 2, '2026-11-01 08:00', 1794000000, 1794000100);              UPDATE users SET last_login_at = '2026-11-01 08:00' WHERE username = 'ann';",
         )
-        .expect("login");
+        .expect("seed the schema-7 file");
     }
     let s = open(&db);
     let backup = s
@@ -123,7 +99,10 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
     );
     drop(s);
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     // the backfill
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM sessions WHERE started_at IS NULL"),
@@ -147,7 +126,7 @@ fn a_v7_file_migrates_to_v8_with_a_backup_and_the_backfill() {
             &c,
             "SELECT actor || '|' || action || '|' || detail || '|' || result FROM activity_log"
         ),
-        "system|system.migrate|{\"from\":7,\"to\":10}|ok"
+        "system|system.migrate|{\"from\":7,\"to\":11}|ok"
     );
     // fresh == migrated
     assert_eq!(master(&db), master(&fresh));

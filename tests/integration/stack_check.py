@@ -61,6 +61,11 @@ What is checked:
       hint or summary text and no session key
   9. Volumes (v0.8): the AI volume holds secret.key (mode 600, uid 10001) and xexam-ai.db; the main volume holds no AI
      secret and no AI table, and users has ai_enabled and uid; the ai_auth volume holds internal.token (mode 600)
+  D. Database shape (v2.0, the last step): backend and ai-service are stopped and both volumes are read through a throw-away
+     python container (immutable=1, read-only): main meta.schema 11, foreign_key_check empty, the foreign keys of the nine
+     rebuilt tables (all ON DELETE NO ACTION) and of no other table, no stats / settings table, idx_users_uid /
+     idx_user_stats_question / idx_imports_bank present; AI meta.schema 10, no secrets table, settings and limits hold none
+     of the retired columns (settings columns exactly id, enabled, retention_days, updated_at, updated_by, features_off)
 """
 import codecs
 import http.client
@@ -1739,6 +1744,52 @@ try:
         "print(json.dumps({'files': sorted(os.listdir('/v')), 'mode': t and oct(stat.S_IMODE(t.st_mode))}))"))
     ok(ai_auth_vol.get('files') == ['internal.token'] and ai_auth_vol.get('mode') == '0o600',
        'The ai_auth volume holds only internal.token (mode 600). Actual %r' % ai_auth_vol)
+
+    # -- D Database shape (v2.0): stop both services, then read both volumes (immutable, read-only) --
+    dc('stop', 'backend', 'ai-service', check=False)
+    main_db = volume_report(PROJECT + '_backend_data', (
+        "import json, sqlite3\n"
+        "c = sqlite3.connect('file:/v/xexam.db?immutable=1', uri=True)\n"
+        "names = lambda kind: sorted(r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type = ? AND name NOT LIKE 'sqlite_%'\", (kind,)))\n"
+        "tables = names('table')\n"
+        "fks = {}\n"
+        "for t in tables:\n"
+        "    rows = c.execute('SELECT \"from\", \"table\", \"to\", on_delete FROM pragma_foreign_key_list(?) ORDER BY \"from\"', (t,)).fetchall()\n"
+        "    if rows:\n"
+        "        fks[t] = [list(r) for r in rows]\n"
+        "print(json.dumps({'schema': c.execute(\"SELECT value FROM meta WHERE key = 'schema'\").fetchone()[0], 'tables': tables,\n"
+        "                  'indexes': names('index'), 'fks': fks, 'fk_check': [list(r) for r in c.execute('PRAGMA foreign_key_check')]}))"))
+    NA = 'NO ACTION'
+    want_fks = {'banks': [['owner_id', 'users', 'id', NA]], 'questions': [['bank_id', 'banks', 'id', NA]],
+                'imports': [['bank_id', 'banks', 'id', NA]], 'attempts': [['user_id', 'users', 'id', NA]],
+                'attempt_items': [['attempt_id', 'attempts', 'id', NA]], 'sessions': [['user_id', 'users', 'id', NA]],
+                'user_stats': [['user_id', 'users', 'id', NA]], 'user_settings': [['user_id', 'users', 'id', NA]],
+                'user_banks': [['bank_id', 'banks', 'id', NA], ['user_id', 'users', 'id', NA]]}
+    ok(main_db.get('schema') == '11', 'D. The main database is schema 11. Actual %r' % main_db)
+    ok(main_db.get('fk_check') == [], 'D. PRAGMA foreign_key_check on the main database is empty. Actual %r' % main_db.get('fk_check'))
+    ok(main_db.get('fks') == want_fks,
+       'D. The nine rebuilt tables have exactly the expected foreign keys (all ON DELETE NO ACTION) and no other table has one. Actual %r' % main_db.get('fks'))
+    ok('stats' not in main_db.get('tables', ['stats']) and 'settings' not in main_db.get('tables', ['settings']),
+       'D. The legacy tables stats and settings are gone from the main database. Actual %r' % main_db.get('tables'))
+    ok(all(i in main_db.get('indexes', []) for i in ('idx_users_uid', 'idx_user_stats_question', 'idx_imports_bank')),
+       'D. The indexes idx_users_uid, idx_user_stats_question and idx_imports_bank exist. Actual %r' % main_db.get('indexes'))
+    ai_db = volume_report(PROJECT + '_ai_data', (
+        "import json, sqlite3\n"
+        "c = sqlite3.connect('file:/v/xexam-ai.db?immutable=1', uri=True)\n"
+        "cols = lambda t: [r[1] for r in c.execute('PRAGMA table_info(%s)' % t)]\n"
+        "print(json.dumps({'schema': c.execute(\"SELECT value FROM meta WHERE key = 'schema'\").fetchone()[0],\n"
+        "                  'tables': sorted(r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type = 'table'\")),\n"
+        "                  'settings': cols('settings'), 'limits': cols('limits'), 'chats': cols('chats')}))"))
+    retired = {'settings': ['provider', 'base_url', 'format', 'gateway_auth', 'model', 'manual_model', 'usage_option', 'max_tokens',
+                            'verified_at', 'verified_fp'],
+               'limits': ['message_chars', 'memory_chars', 'reply_max_chars', 'gen_call_chars', 'import_max_questions'],
+               'chats': ['free']}
+    ok(ai_db.get('schema') == '10', 'D. The AI database is schema 10. Actual %r' % ai_db)
+    ok('secrets' not in ai_db.get('tables', ['secrets']), 'D. The AI database has no secrets table. Actual %r' % ai_db.get('tables'))
+    ok(ai_db.get('settings') == ['id', 'enabled', 'retention_days', 'updated_at', 'updated_by', 'features_off'],
+       'D. The AI settings table has exactly the columns id, enabled, retention_days, updated_at, updated_by, features_off. Actual %r' % ai_db.get('settings'))
+    ok(all(c not in ai_db.get(t, [c]) for t, cs in retired.items() for c in cs),
+       'D. None of the retired columns is left in settings, limits or chats. Actual %r' % {t: ai_db.get(t) for t in retired})
 
 finally:
     cleanup()

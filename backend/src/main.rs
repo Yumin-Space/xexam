@@ -251,6 +251,17 @@ fn open_store(data_dir: &Path, journal: JournalMode) -> Result<Arc<Store>, Strin
             "cannot open database: {e}. The database was NOT upgraded and is unchanged. Make sure {} can be created and written (disk space, permissions), then start again.",
             data_dir.join(xexam_backend::database::BACKUP_DIR).display()
         ),
+        DbError::Migration(_) => {
+            // The copy written before the upgrade stays; the newest file in the backup directory is that copy
+            let dir = data_dir.join(xexam_backend::database::BACKUP_DIR);
+            match newest_backup(&dir) {
+                Some(copy) => format!(
+                    "cannot open database: {e}. Nothing was changed; the copy {} was written.",
+                    copy.display()
+                ),
+                None => format!("cannot open database: {e}. Nothing was changed."),
+            }
+        }
         other => format!("cannot open database: {other}"),
     })?;
     let store = Arc::new(opened);
@@ -271,6 +282,7 @@ fn open_store(data_dir: &Path, journal: JournalMode) -> Result<Arc<Store>, Strin
         ),
         (None, false) => {}
     }
+    report_migration(store.migration_report());
     if store.created_default_admin() {
         say("Created the default administrator 'admin' (password 'admin'); sign in and choose a new password.");
     }
@@ -295,6 +307,57 @@ fn open_store(data_dir: &Path, journal: JournalMode) -> Result<Arc<Store>, Strin
         }
     }
     Ok(store)
+}
+
+/// The most recently written file of the backup directory (the copy of the upgrade that just failed), if any.
+fn newest_backup(dir: &Path) -> Option<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_str()
+                .is_some_and(|n| n.starts_with("xexam-schema") && n.ends_with(".db"))
+        })
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max()
+        .map(|(_, p)| p)
+}
+
+/// One log line per non-zero item of the schema-11 upgrade and of the every-open checks (see `MigrationReport`).
+fn report_migration(r: &xexam_backend::database::MigrationReport) {
+    for (relation, n) in &r.orphans {
+        match *relation {
+            "questions.bank_id" => say(&format!(
+                "Detached {n} questions from a missing bank; they are kept in the legacy bank."
+            )),
+            "imports.bank_id" => say(&format!(
+                "Detached {n} import records from a missing bank; they are kept in the legacy bank."
+            )),
+            "banks.owner_id" => say(&format!(
+                "Gave {n} banks whose owner no longer exists to the first administrator."
+            )),
+            _ => say(&format!(
+                "Removed {n} orphaned rows of {relation} (copy in the backup)."
+            )),
+        }
+    }
+    for (table, n) in &r.legacy_rows {
+        say(&format!(
+            "Removed the unused legacy table {table} ({n} rows, already copied to the first administrator in v0.6; copy in the backup)."
+        ));
+    }
+    if r.uid_duplicates > 0 {
+        say(&format!(
+            "Warning: {} user identity stamps are shared by more than one user; the unique index on users.uid was not created. Fix the duplicates (see database.md) and restart.",
+            r.uid_duplicates
+        ));
+    }
+    for (table, n) in &r.kept_legacy {
+        say(&format!(
+            "Warning: the legacy table {table} was re-created by an older version and holds {n} rows; it was kept."
+        ));
+    }
 }
 
 /// v0.7: retires the questions of the old 3- / 4-column layouts (see `Store::retire_old_layout_questions`), on every start of

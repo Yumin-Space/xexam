@@ -322,8 +322,8 @@ pub fn conn_secrets(c: &Connection, id: i64) -> rusqlite::Result<Vec<SecretRow>>
     rows.collect()
 }
 
-/// Writes (replaces) a sealed key of a connection with a new revision from the one counter that the old `secrets`
-/// table used too (a revision is never reused); returns the revision.
+/// Writes (replaces) a sealed key of a connection with a new revision from the `meta.secret_rev` counter (a revision is
+/// never reused; the counter started with the retired `secrets` table); returns the revision.
 pub fn put_conn_secret(c: &Connection, id: i64, s: &NewConnSecret<'_>) -> rusqlite::Result<i64> {
     let last: i64 = c
         .query_row("SELECT value FROM meta WHERE key = 'secret_rev'", [], |r| {

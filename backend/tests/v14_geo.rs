@@ -1063,10 +1063,6 @@ async fn the_cap_keeps_a_flood_of_sign_ins_from_hammering_the_provider() {
 
 // ---------------------------------------------------------------- the migration to schema 9
 
-const DOWNGRADE_TO_8: &str = "ALTER TABLE users DROP COLUMN can_download_banks; ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; \
-    ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; \
-    ALTER TABLE users DROP COLUMN last_active_ua; UPDATE meta SET value = '8' WHERE key = 'schema';";
-
 fn open_fixed(db: &Path) -> Store {
     Store::open_with_clock(db, Arc::new(FixedClock("2026-11-15 07:20".to_string()))).expect("open")
 }
@@ -1088,18 +1084,13 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
     let db = dir.path().join("xexam.db");
     let fresh = dir.path().join("fresh").join("xexam.db");
     drop(open_fixed(&fresh));
-    {
-        let s = open_fixed(&db);
-        match s
-            .create_user("ann", "placeholder-hash", Role::User)
-            .expect("user")
-        {
-            UserChange::Done(_) => {}
-            other => panic!("{other:?}"),
-        }
-        s.note_signin(2, "2026-11-01 08:00", None).expect("note");
-    }
-    raw(&db).execute_batch(DOWNGRADE_TO_8).expect("downgrade");
+    // A genuine schema-8 file (v2.0: built from the history constants, not by taking columns off a fresh file)
+    dbc::historic(&db, 8);
+    raw(&db)
+        .execute_batch(
+            "INSERT INTO users(id, username, password_hash, role, created_at, password_changed_at, new_banks, last_login_at) VALUES                (1, 'admin', 'placeholder-hash', 'admin', '2026-11-01 07:00', '2026-11-01 07:00', 1, NULL),                (2, 'ann', 'placeholder-hash', 'user', '2026-11-01 07:00', '2026-11-01 07:00', 1, '2026-11-01 08:00');",
+        )
+        .expect("schema-8 users");
     let s = open_fixed(&db);
     let backup = s
         .migration_backup()
@@ -1114,7 +1105,7 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "10");
+    assert_eq!(schema, xexam_backend::database::schema::SCHEMA_VERSION);
     // data intact, the new columns empty
     let (login, ip, ua): (Option<String>, Option<String>, Option<String>) = c
         .query_row(
@@ -1133,7 +1124,7 @@ fn a_schema_8_file_with_data_migrates_to_9_with_one_backup_and_one_row() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(rows, vec![r#"{"from":8,"to":10}"#.to_string()]);
+    assert_eq!(rows, vec![r#"{"from":8,"to":11}"#.to_string()]);
     // fresh == migrated, and the next open changes nothing
     assert_eq!(master(&db), master(&fresh));
     drop(c);
@@ -1163,7 +1154,7 @@ fn a_fresh_database_is_schema_9_without_a_migrate_row() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(schema, "10");
+    assert_eq!(schema, xexam_backend::database::schema::SCHEMA_VERSION);
     let n: i64 = c
         .query_row("SELECT COUNT(*) FROM activity_log", [], |r| r.get(0))
         .expect("count");

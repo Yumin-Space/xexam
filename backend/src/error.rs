@@ -68,6 +68,11 @@ pub enum DbError {
     /// The consistent copy (`VACUUM INTO`) written before a schema migration could not be made; the database was not migrated.
     #[error("backup before the schema migration failed: {0}")]
     Backup(String),
+    /// The upgrade to schema 11 hit something it must not paper over (an unexpected column, a changed row count, a foreign key
+    /// violation left after the clean-up, a foreign-keys switch that did not stick). The whole transaction was rolled back;
+    /// the backup written before stays and the next start tries again.
+    #[error("the upgrade to schema 11 stopped ({0})")]
+    Migration(String),
     /// Argon2 hashing failed (only for the default administrator created by the schema-v3 migration).
     #[error("{0}")]
     Password(String),

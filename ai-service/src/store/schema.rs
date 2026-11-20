@@ -1,4 +1,6 @@
-//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 9 (v1.9: the
+//! Schema of the AI database `xexam-ai.db` (spec 2.2, plus the `limits` table of 14.1). Schema version 10 (v2.0: the
+//! retired `secrets` table and the retired `settings` / `limits` / `chats` columns are dropped, see `RETIRED_TABLES` and
+//! `RETIRED_COLUMNS`; the history texts below still create them, every path drops them at the end). Schema 9 (v1.9: the
 //! `V9_COLUMNS`, the rebuilt `model_slots` with `hint` + `explain` instead of `study`, the Gemma effort fold). Schema 8: the tables of
 //! version 1 (`SCHEMA`, unchanged) plus the columns of `V2_COLUMNS` … `V7_COLUMNS`, the indexes of `V3_INDEXES` and
 //! `V7_INDEXES` and the tables of `V5_TABLES`, `V7_TABLES` and `V8_TABLES`, added by the same additive steps on every
@@ -6,10 +8,42 @@
 //! `geo_settings` table (external IP-location lookup); nothing is backfilled.
 
 /// Value of `meta.schema` written by this version.
-pub const SCHEMA_VERSION: &str = "9";
+pub const SCHEMA_VERSION: &str = "10";
 
 /// The schema versions upgraded by this version (after a backup copy).
-pub const UPGRADABLE: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
+pub const UPGRADABLE: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+
+/// Retired before v2.0, dropped by the schema-10 step (only when present). The history lists `V*_COLUMNS` still add them
+/// (a new file and an upgrade replay the same steps); the same-version repair never re-adds them.
+pub const RETIRED_COLUMNS: [(&str, &str); 16] = [
+    ("settings", "provider"),
+    ("settings", "base_url"),
+    ("settings", "format"),
+    ("settings", "gateway_auth"),
+    ("settings", "model"),
+    ("settings", "manual_model"),
+    ("settings", "usage_option"),
+    ("settings", "max_tokens"),
+    ("settings", "verified_at"),
+    ("settings", "verified_fp"),
+    ("limits", "message_chars"),
+    ("limits", "memory_chars"),
+    ("limits", "reply_max_chars"),
+    ("limits", "gen_call_chars"),
+    ("limits", "import_max_questions"),
+    // pre-release schema-2 build only
+    ("chats", "free"),
+];
+
+/// Retired tables dropped by the schema-10 step.
+pub const RETIRED_TABLES: [&str; 1] = ["secrets"];
+
+/// `true` for a column in [`RETIRED_COLUMNS`].
+pub fn is_retired(table: &str, column: &str) -> bool {
+    RETIRED_COLUMNS
+        .iter()
+        .any(|(t, c)| *t == table && *c == column)
+}
 
 /// Table of AI schema 8 (v1.4, all `IF NOT EXISTS`): the settings of the external IP-location lookup. A row exists only
 /// after a passing "test and save", so "saved" means "tested". The key (when there is one) is sealed with the AI master
@@ -107,7 +141,7 @@ pub const V3_COLUMNS: [(&str, &str, &str); 12] = [
 ];
 
 /// Columns added by AI schema 4 (the ranges equal `limits::DEFS`): the per-user caps on AI model calls and the answer
-/// length in characters. The retired `limits.message_chars` column (version 1) stays in the table, unused.
+/// length in characters. The retired `limits.message_chars` column (version 1) is dropped by the schema-10 step.
 pub const V4_COLUMNS: [(&str, &str, &str); 4] = [
     (
         "limits",
@@ -245,7 +279,7 @@ pub const V5_COLUMNS: [(&str, &str, &str); 27] = [
 ];
 
 /// Columns added by AI schema 6 (A-OWNER-43): the answer-length settings in tokens. They replace `reply_max_chars`,
-/// `gen_call_chars` and `memory_chars`, which stay in the table, unused (a column's CHECK range cannot be altered).
+/// `gen_call_chars` and `memory_chars`, which the schema-10 step drops.
 pub const V6_COLUMNS: [(&str, &str, &str); 4] = [
     // Input tokens the provider wrote to its prompt cache (NULL = not reported)
     ("usage", "tokens_cache_write", "tokens_cache_write INTEGER"),
@@ -547,14 +581,6 @@ pub const V7_NEW_LIMITS: &str = "INSERT OR IGNORE INTO limits
 
 /// `meta` key of the one-time move of the two "unlimited" switches to their v1.1 default (on, A-OWNER-48).
 pub const UNLIMITED_DEFAULT_KEY: &str = "unlimited_default";
-
-/// `meta` key of the one-time lowering of `import_max_questions` to the v1.1 ceiling of 50 (A-OWNER-58b).
-pub const IMPORT_MAX_KEY: &str = "import_max_50";
-
-/// Run once on a file whose column was created with the earlier range 1 ..= 100 (a column's CHECK cannot be altered, so
-/// the stored value is lowered; the new range is enforced by the limits code).
-pub const IMPORT_MAX_SET: &str =
-    "UPDATE limits SET import_max_questions = 50 WHERE id = 1 AND import_max_questions > 50";
 
 /// Run once (after a backup copy) on a schema-6 database written before the switches defaulted to on: both go on.
 pub const UNLIMITED_DEFAULT_SET: &str =

@@ -6,6 +6,15 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.0 — 2026-11-20
+
+**データベースの整理：メインのデータベースに外部キーを追加し、使われなくなったテーブルと列を削除し、インデックスを追加しました。アプリの見た目や動作は変わりません。アップグレード：イメージを pull するだけです。起動時に 2 つのデータベースがそれぞれバックアップを取ってから新しいスキーマへ移行します（メイン 10 → 11、AI 9 → 10）。メインのデータベースの約 2 倍の空き容量を確保してください。v1.9 に戻すには AI のバックアップ `backups/xexam-ai-schema9-*.db` が必要で、メインのデータベースは復元不要です。**
+
+- **データベース、メイン（スキーマ 10 → 11）**：9 つのテーブル（`banks`、`questions`、`imports`、`attempts`、`attempt_items`、`sessions`、`user_stats`、`user_settings`、`user_banks`）を外部キー付きで作り直します（すべて `ON DELETE NO ACTION`。コードは以前から子の行を先に削除しています）。`attempt_items.question_id`、`user_stats.question_id`、`activity_log.user_id`、`system_settings.updated_by` には意図的に外部キーを付けません（記録は問題やアカウントより長く残ります。`updated_by` に付けると、サイトのスイッチを変更したことのある管理者を削除できなくなります）。参照先のない行（孤児）は決まったルールで削除または切り離し、件数を数えてログに残します。使われていない旧テーブル `stats` と `settings` は削除します（行は v0.6 でコピー済み）。新しいインデックス：`idx_user_stats_question`、`idx_imports_bank`、`users.uid` の一意インデックス（2 人のユーザーが同じ識別子を持つ場合は警告を出して作成を見送り、何も変更しません）。列・値・画面は変わりません。先にバックアップ `backups/xexam-schema10-<日時>.db` を保存します。全体が 1 つのトランザクションで、想定外のことがあればすべてロールバックされます（コミットの前に行数を比較し、外部キーの検査を行います）。
+- **データベース、AI（スキーマ 9 → 10）**：テーブル `secrets`（古いプロバイダーのキー）、`settings` の古い単一接続の列 10 個、`limits` の古い長さの列 5 個、`chats.free` を削除します。いずれも読むコードはもうありません。バックアップ `backups/xexam-ai-schema9-<日時>.db` のあと 1 つのトランザクションで実行し、古いキーのコピーは稼働中のファイルから消去されます（バックアップには残るので、人に渡さないか、不要になったら削除してください）。ログには削除した行数と列数だけを出し、内容は出しません。
+- **アップグレード**：`docker compose pull` のあと `docker compose up -d`。メインのデータベースの約 2 倍の空き容量を確保してください（バックアップと作り直したテーブルの分）。学習記録が多いと最初の起動に時間がかかることがあります。サーバーはアップグレードが終わってから待ち受けを始めます。詳細：[database.md](database.md) の 6.17 と [migration.md](migration.md) の v1.9 → v2.0 の節。
+- **戻す場合**：v1.9 のバックエンドはスキーマ 11 のメインのデータベースをそのまま開けます（復元不要。v1.9 が空の `stats` テーブルを作り直しても、v2.0 が次回また削除します）。v1.9 の ai-service はスキーマ 10 を拒否します。`backups/xexam-ai-schema9-<日時>.db` を AI のボリュームに復元してください（アップグレード後に書かれた設定・チャット・利用状況は失われます）。v1.9 より古いバージョンに戻す場合は、メインのバックアップも必要です。
+
 ### v1.9 — 2026-11-20
 
 **AI 設定ページがわかりやすくなりました（接続のオン／オフ、機能ごとのスイッチ、7 つのセキュリティのサブタブ）。AI 問題作成と AI インポートにプロバイダーのレート制限に合わせた送信間隔、AI チャットのモデル選択、問題集ダウンロードの言語選択が加わり、3 つのサービスを別々のマシンで動かせるようになりました。アップグレード：イメージを pull するだけです。AI データベースは起動時にスキーマ 9 へ移行し、先にバックアップのコピーを作ります（元に戻すには `backups/xexam-ai-schema8-*.db` を復元）。1 台構成の compose は変更不要です。任意の新しい変数 `XEXAM_FRONTEND_PEERS`、`XEXAM_INTERNAL_TOKEN_REQUIRED`、`XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM`、`XEXAM_NGINX_RESOLVER` と、マシンごとの compose ファイル 3 つが加わります。メインのデータベースは変わりません。**

@@ -2,9 +2,9 @@
 
 # 数据库
 
-> 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端沿用旧 Python 版的数据库：原来的建表语句（schema v1）**一字不差**地保留，之后的每个 schema 都只是往上加东西（新表和新列；不重建、不改写任何东西）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
-> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v1.9 起它的 schema 是 **9**（v1.4 是 8，v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
-> 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）和 `v09_ai_study.rs`（v6，后端的学习路由）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`）和 `ai-service/src/store/` 的单元测试里测试。
+> 数据库是 SQLite，**只有一个文件 `xexam.db`**。Rust 后端从旧 Python 版的数据库起步：原来的建表语句（schema v1）一字不差地保留，直到 v10 的每个 schema 都只是往上加东西（新表和新列）：**schema v2**（v0.5：题库、考试详情、设置）、**schema v3**（v0.6：用户和登录）、**schema v4**（v0.7：按用户设置题库、题库所有者、练习记录）、**schema v5**（v0.8：每个用户的 AI+ 功能授权和一个身份标记）和 **schema v6**（v0.9：一条记录是从哪次练习或考试会话保存的，即那次会话的 key 和开始时间）。*v1.6* 起主数据库是 schema **10**（每用户的题库下载权限，第 6.16 节），*v2.0* 起是 schema **11**（数据库整理：九张表带外键重建，旧表删除，第 6.17 节）。新版本第一次启动时，会先写一份备份副本，再自动迁移已有的数据库（第 6 节）。从 v0.7 起，数据库以 **WAL 模式**运行（第 2 节）。
+> 从 v0.8 起，ai-service 有**第二个、独立的数据库** `xexam-ai.db`，放在它自己的卷里（第 8 节）；从 v2.0 起它的 schema 是 **10**（v1.9 是 9，v1.4 是 8，v1.3 是 7，v1.1 是 6，v1.0 是 4，v0.9 是 3）。两个服务从不打开对方的数据库。**v1.1 把主数据库升级到 schema v7**（第 6 节）；AI 数据库不影响它。
+> 依据：[audit/database.md](history/audit/database.md)；黄金测试：`backend/tests/db_golden.rs`（对着 `tests/baseline/fixtures/sample.db`（由旧的 Python 实现生成）和已提交的快照运行）。迁移和它们的备份在 `backend/tests/v05_banks_records_settings.rs`（v2）、`v06_users_and_sign_in.rs`（v3）、`v065_bank_access_and_practice.rs`（v4）、`v07_bank_access_and_layouts.rs`（v4 的题库权限、预发布版数据库的转换、旧格式题目的下架）、`v07_wal_and_logs.rs`（WAL 模式）、`v08_ai_link.rs`（v5）、`v09_ai_study.rs`（v6，后端的学习路由）和 `v20_db.rs`（v11，整理）里测试；AI 数据库在 `ai-service/tests/`（schema 3 见 `v09_store.rs`，schema 10 见 `v20_schema.rs`）和 `ai-service/src/store/` 的单元测试里测试。
 
 ## 1. 文件在哪里
 
@@ -37,7 +37,7 @@
 |---|---|---|
 | `journal_mode` | `WAL`（从 v0.7 起）；设了 `XEXAM_SQLITE_JOURNAL=delete` 时是 `DELETE` | 提交只写 `-wal` 文件，读的一方（例如在服务器旁边启动的命令行工具）不会挡住写的一方。见 2.1 |
 | `synchronous` | `FULL` | 每次提交都等数据写到磁盘上（WAL 模式下：对 `-wal` 文件做一次 fsync），所以已经提交的东西停电也不会丢 |
-| `foreign_keys` | `ON` | （schema 里其实没有外键；和旧版保持一致） |
+| `foreign_keys` | `ON` | 从 schema 11 起主数据库声明了外键（第 3 节），并且强制执行：会留下子行的删除会失败，不会留下孤儿。升到 schema 11 的那一步只在它自己的事务期间把外键关掉，之后一定再打开（6.17） |
 | `busy_timeout` | 5000 ms | 别的连接持有锁时，最多等 5 秒 |
 | 自动检查点 | SQLite 的默认值（每 1000 页） | 后端运行时让 `-wal` 文件保持小巧 |
 | 事务 | `BEGIN IMMEDIATE … COMMIT`，失败时 `ROLLBACK`（`COMMIT` 失败也会回滚） | 要么全部成功，要么什么都不变 |
@@ -169,18 +169,19 @@ erDiagram
     users ||--o{ user_settings : "user_settings.user_id"
 ```
 
-十三张表，仍然**没有外键约束**：关联由代码维护，每次删除都在同一个事务里删掉属于它的行。图里没有画以前 schema 的两张表：`stats`（v0.5 及更早版本的每道题统计）和 `settings`（v0.5 的设置）。迁移到 v3 时，它们的行被复制给了第一个管理员（`user_stats`、`user_settings`）；它们仍然保留但不再使用，这样回退就仍然是「恢复备份」。
+十三张表。从 schema 11（v2.0）起其中九张声明了**外键**，全部明确写成 `ON DELETE NO ACTION`（会留下子行的删除会失败；代码照旧先在同一个事务里删子行）：`sessions.user_id`、`user_stats.user_id`、`user_settings.user_id`、`user_banks.user_id`、`attempts.user_id`（可为空）和 `banks.owner_id`（可为空）→ `users(id)`；`attempt_items.attempt_id` → `attempts(id)`；`questions.bank_id`（可为空）、`imports.bank_id`（可为空）和 `user_banks.bank_id` → `banks(id)`。特意**不加**外键的（建表语句里也有注释）：`attempt_items.question_id` 和 `user_stats.question_id`（记录比被删的题目活得久，v0.5 之前的题库用的是不分题库的 id）、`activity_log.user_id`（日志是审计快照）和 `system_settings.updated_by`（只写不读的审计字段：加了外键，就删不掉曾经改过站点开关的管理员）。旧表 `stats`（v0.5 及更早版本的每道题统计）和 `settings`（v0.5 的设置）从 schema 11 起不再存在；它们的行在 v3 迁移时已经复制给第一个管理员（`user_stats`、`user_settings`）。重建的九张表以带引号的名字存成 `CREATE TABLE "banks" (…)`，这是 SQLite 记录改过名的表的方式。
 
 每个 schema 新增了什么：
 
-- **v1**（旧的 Python 版，原样保留）：`meta`、`questions`、`attempts`、`stats`、`imports`。
+- **v1**（旧的 Python 版；它的文本作为历史留在代码里）：`meta`、`questions`、`attempts`、`stats`、`imports`。`stats` 在 schema 11 被删除。
 - **v2**（v0.5）：表 `banks`、`attempt_items` 和 `settings`；列 `questions.bank_id INTEGER`（只有旧程序写的行才是 NULL，见 6.6）、`attempts.banks TEXT NOT NULL DEFAULT '[]'`（一场考试所用题库的 JSON 快照，`[{"id": 1, "name": "…"}]`）和 `imports.bank_id INTEGER`；索引 `idx_questions_bank (bank_id, active)` 和 `idx_attempt_items_question (question_id)`。
 - **v3**（v0.6）：表 `users`、`sessions`、`user_stats` 和 `user_settings`；列 `attempts.user_id INTEGER`；索引 `idx_sessions_user` 和 `idx_attempts_user`。
 - **v5**（v0.8）：列 `users.ai_enabled INTEGER NOT NULL DEFAULT 0`（每个用户的 **AI+ 功能** 授权：AI+ 功能开启并且可用时，这个用户可以使用 AI 对话；管理员也会保存这个值，但对他们不起作用，他们始终拥有）和 `users.uid TEXT NOT NULL DEFAULT ''`（一个随机的身份标记，32 位小写十六进制数字，在创建账户时设置，永不改变；AI 服务把它和用户 id 存在一起，并删除标记不一致的 AI 数据，见第 8.3 节）。别的都没有：AI 设置、对话和记忆都在 AI 数据库里。
 - **v4**（v0.7）：表 `user_banks`；列 `users.new_banks INTEGER NOT NULL DEFAULT 0`、`users.can_manage_banks INTEGER NOT NULL DEFAULT 0`、`banks.owner_id INTEGER` 和 `attempts.kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))`；索引 `idx_user_banks_bank (bank_id)` 和 `idx_banks_owner (owner_id)`；`meta` 的键 `users_known` 和 `banks_known`（第 6.6 节）。v0.7 的六列工作簿格式不需要新列：各语言的文字放在 `questions.data` 里（第 4.7 节）。v0.7 的预发布版用的是 `users.all_banks` 而不是 `users.new_banks`；这样的数据库在打开时会被转换（第 6.5 节）。
 - **v6**（v0.9）：列 `attempts.session_key TEXT`（保存这条记录的那次练习或考试会话的随机 key：32 位小写十六进制数字；AI 服务用它给那次会话的对话命名，第 8.2 节）和 `attempts.started_at INTEGER`（那次会话的开始时间，Unix 秒，按浏览器的时钟）。v0.9 之前保存的每条记录，以及浏览器没有发来有效值的那次保存，这两列都是 NULL：两个值各自单独判断，无效的存为 NULL，保存从不因此被拒绝。没有索引，也没有约束。这两列从不用来查找记录（记录始终按 `attempts.id` 找），也不保证 key 唯一：没有任何东西依赖这一点。主数据库里别的都没有变：AI 对话、它们的文字和标题都在 AI 数据库里。
+- **v11**（v2.0）：没有新列。九张表带上面的外键重建；新索引 `idx_user_stats_question (question_id)`、`idx_imports_bank (bank_id)` 和唯一的 `idx_users_uid ON users(uid) WHERE uid <> ''`；删除 `stats` 和 `settings`（6.17）。
 
-v1 的建表语句原样保存在 `backend/src/database/schema.rs`（`SCHEMA`）里，和旧版 `app/db.py` 里的 `SCHEMA` 完全一样，每次启动时仍然最先执行；后来新增的部分放在它旁边（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、… `MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`）。所有语句都用 `IF NOT EXISTS` 或者先检查，所以打开一个已经是最新的数据库**什么都不写**（已测试：数据库文件连同它的 `-wal` 文件逐字节不变）。因为 SQLite 记录 `ALTER TABLE … ADD COLUMN` 的方式是把这一列追加到保存着的 `CREATE TABLE` 文本后面，所以 `questions`、`attempts` 和 `imports` 在 `sqlite_master` 里的文本是 v1 的文本加上新增的列（`users` 的则是 v3 的文本加上 v4 和 v5 的列）；新建的数据库和迁移过来的数据库 schema 完全一样（在 `db_golden.rs` 里测试）。
+v1 的建表语句作为历史保存在 `backend/src/database/schema.rs`（`SCHEMA`）里，后来新增的部分放在它旁边（`MIGRATE_V2_TABLES`、`V2_COLUMNS`、……、`MIGRATE_V4_INDEXES`、`V5_COLUMNS`、`V6_COLUMNS`，v2.0 起还有 `V11_REBUILDS`：九张表的定义和它们的索引）。`SCHEMA` 只在文件是新的或比 schema 11 旧时才在启动时执行（所以不会再在每次打开时重新建出 `stats`），然后执行升级的各步。全部用 `IF NOT EXISTS` 或先检查，所以打开一个已经是最新的数据库**什么都不写**（有测试：数据库文件连同它的 `-wal` 文件一字节都不变）。因为 SQLite 记录 `ALTER TABLE … ADD COLUMN` 的方式是把新列追加到已存的 `CREATE TABLE` 文本末尾，所以 `users` 存的文本是 v3 的文本加上后来加的列，而重建的九张表来自 `V11_REBUILDS` 里的常量，列顺序已规整；全新的数据库和升级来的数据库 schema 完全相同（在 `db_golden.rs` 里测试，从每个更老的 schema 升级的情形在 `v20_db.rs` 里测试）。
 
 ## 4. 决定学习记录命运的细节
 
@@ -278,10 +279,10 @@ docker compose start
 
 ## 6. schema 迁移和回退
 
-`meta.schema` 表示一个数据库是哪个 schema（v0.4 及以前是 `1`，v0.5 是 `2`，v0.6 是 `3`，v0.7 和 v0.7.5 是 `4`，v0.8 是 `5`，从 v0.9 起是 `6`）。一个版本打开 schema 更旧的数据库时，会一次性把它升级到自己的 schema：
+`meta.schema` 表示一个数据库是哪个 schema（v0.4 及以前是 `1`，v0.5 是 `2`，v0.6 是 `3`，v0.7 和 v0.7.5 是 `4`，v0.8 是 `5`，从 v0.9 起是 `6`，v1.1 是 `7`，v1.3 是 `8`，v1.4 是 `9`，v1.6 是 `10`，v2.0 是 `11`）。一个版本打开 schema 更旧的数据库时，会一次性把它升级到自己的 schema：
 
-1. **备份。** 如果数据库里有任何数据，就用 SQLite 的 `VACUUM INTO` 往 `xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` 写一份一致的副本，`<N>` 是这次启动之前文件的 schema（已有的文件永远不会被覆盖，而是依次加上 `-2`、`-3`……）。即使后面有好几步，也总是只写**一份**备份。副本是一个独立的、旧 schema 的文件；当时还在 `-wal` 文件里的修改也包含在内。`VACUUM INTO` 写的是一个完整的文件，所以升级之前请**留出大约和数据库一样大的可用磁盘空间**；副本从不清理，而且它会保留你以后删除的东西（记录、题库、用户），所以在这有关系时请自己删掉旧副本。**副本写不出来时**（磁盘满、没有权限），程序拒绝启动，什么都不改；日志里写明原因。
-2. **迁移**，在**一个** `BEGIN IMMEDIATE` 事务里完成：从旧 schema 到当前 schema 的每一步（6.1、6.4、6.5、6.8、6.10，以及预发布版 v4 数据库的转换），然后设置 `meta.schema`。
+1. **备份。** 如果数据库里有任何数据，就用 SQLite 的 `VACUUM INTO` 往 `xexam.db` 旁边的 `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` 写一份一致的副本，`<N>` 是这次启动之前文件的 schema（已有的文件永远不会被覆盖，而是依次加上 `-2`、`-3`……）。即使后面有好几步，也总是只写**一份**备份。副本是一个独立的、旧 schema 的文件；当时还在 `-wal` 文件里的修改也包含在内。`VACUUM INTO` 写的是一个完整的文件，所以升级之前请**留出大约和数据库一样大的可用磁盘空间**（升到 schema 11 还要重建表，要**大约两倍**，6.17）；副本从不清理，而且它会保留你以后删除的东西（记录、题库、用户），所以在这有关系时请自己删掉旧副本。**副本写不出来时**（磁盘满、没有权限），程序拒绝启动，什么都不改；日志里写明原因。
+2. **迁移**，在**一个** `BEGIN IMMEDIATE` 事务里完成：从旧 schema 到当前 schema 的每一步（6.1、6.4、6.5、6.8、6.10、6.17，以及预发布版 v4 数据库的转换），然后设置 `meta.schema`。
 3. **日志模式。** 这之后，后端才把文件切换到 WAL（第 2.1 节）。
 
 日志里会写出副本的名字：`Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-….db (restore it if you ever go back to an older version).`（意思是：数据库已升级到 schema 6，升级前先保存了旧版本的副本；以后回到旧版本时请恢复它。）全新的数据库也走同样的步骤（没有备份，也没有旧题库），所以新建的和迁移过来的数据库结构相同。
@@ -300,11 +301,11 @@ v2 的文件仍然可以被 v0.4 和旧的 Python 版打开：新的列都可以
 
 ### 6.3 和旧 Python 实现的兼容
 
-直到 v0.4，两个实现用的都是**同一个文件、同一个 schema**。这个往返最初用合成数据演练过（旧 Python 建库 → Rust 读写 → 旧 Python 再读回来；原件的 sha256 前后不变，`PRAGMA integrity_check` 通过）。旧 Python 代码删掉之后，由测试守住剩下的保证：`sample.db`（旧实现写的数据库）迁移到当前 schema 时保留每一个题目 id、统计、考试记录和导入记录，它的备份仍然报告 schema 1、行和原来完全一样，迁移后的文件之后再打开、读取、关闭都逐字节不变；新建数据库的 `sqlite_master` 是旧实现的文本加上后来新增的部分。要真正回退到 Python 版，请恢复 schema 1 的备份（6.2），用旧镜像打开它（`ghcr.io/yumin-space/xexam:v0.2.2`，只在私有的 GHCR 上，所以先 `docker login ghcr.io`）。
+直到 v0.4，两个实现用的都是**同一个文件、同一个 schema**。这个往返最初用合成数据演练过（旧 Python 建库 → Rust 读写 → 旧 Python 读回；原件的 sha256 前后不变，`PRAGMA integrity_check` 通过）。**从 v2.0（schema 11）起这个保证被有意放弃了**：表带外键重建、旧表删除，旧的 Python 版已经打不开当前的文件，全新的数据库也不再是旧实现的文本。测试仍然守住的：`sample.db`（旧实现写出的数据库）迁移到当前 schema 后，每个题目 id、统计、考试记录和导入都原样保留，它的备份仍报告 schema 1、行和原来一模一样，迁移后的文件之后无论怎么打开、读取、关闭都一字节不变，全新数据库的 `sqlite_master` 和迁移来的相同。**回到 Python 版的唯一办法是 schema 1 的备份**：把它恢复回去（6.2），用旧镜像（`ghcr.io/yumin-space/xexam:v0.2.2`，只在私有的 GHCR 上，所以要先 `docker login ghcr.io`）打开。
 
 ### 6.4 schema v3（v0.6）
 
-从 `meta.schema` `2`（备份 `xexam-schema2-<YYYYmmdd-HHMMSS>.db`）开始，或者从 `1` 开始、和 6.1 在同一个事务里。v3 这一步创建 `users`、`sessions`、`user_stats` 和 `user_settings`，并加上 `attempts.user_id`。如果还没有用户，就创建默认管理员 `admin`，密码 `admin`（第一次登录时必须修改），并把已有的数据给它：每条没有用户的考试记录、`stats` 每一行在 `user_stats` 里的副本，以及 `settings` 每一行在 `user_settings` 里的副本。旧的 `stats` 和 `settings` 表保留，不再使用。
+从 `meta.schema` `2`（备份 `xexam-schema2-<YYYYmmdd-HHMMSS>.db`）开始，或者从 `1` 开始、和 6.1 在同一个事务里。v3 这一步创建 `users`、`sessions`、`user_stats` 和 `user_settings`，并加上 `attempts.user_id`。如果还没有用户，就创建默认管理员 `admin`，密码 `admin`（第一次登录时必须修改），并把已有的数据给它：每条没有用户的考试记录、`stats` 每一行在 `user_stats` 里的副本，以及 `settings` 每一行在 `user_settings` 里的副本。旧的 `stats` 和 `settings` 表在这一步保留，不再使用（在 schema 11 删除，6.17）。
 
 ### 6.5 schema v4（v0.7）
 
@@ -333,6 +334,10 @@ v2 的文件仍然可以被 v0.4 和旧的 Python 版打开：新的列都可以
 - **旧版本创建的用户**：`meta.users_known` 保存这个版本知道的最大用户 id；它由 v4 迁移写入，这个版本每创建一个用户时也会更新（用户 id 永不重复使用）。比它大的用户是回退后由旧版本创建的，没有任何 `user_banks` 行；这样的用户会得到每个已有题库的一行和 `new_banks = 1`，和升级时的用户一样，然后标记往前移。
 - 没有标记时（数据库第一次是被一个不写标记的构建打开的），这样的题库和用户分辨不出来，所以只写入标记。
 - **没有身份标记的用户**（`uid = ''`，v0.8）：回退之后由 v0.7.5 创建的用户没有标记；它会得到一个。它的 AI+ 是关闭的（列的默认值）。
+
+- **旧版本重新建出的旧表**（schema 11 或更新）：v1.9 的后端每次打开都会执行 v1 的 `SCHEMA`，所以回退之后会重新建出一张空的 `stats` 表。空的 `stats` 或 `settings` 会再次删掉；里面有行的就保留，日志里有 `Warning: the legacy table <t> was re-created by an older version and holds <n> rows; it was kept.`。
+- **`users.uid` 上的唯一索引**：如果缺 `idx_users_uid`（因为有重复而跳过了，6.17），并且已经没有重复的标记，就把它建出来。
+- 每次启动不做完整的 `foreign_key_check`：强制外键已经防止出现新的孤儿，而记录越多这个检查越费时间。已是最新的文件不会被写入。
 
 然后下架旧格式的题（第 4.2 节）。
 
@@ -410,6 +415,44 @@ v0.7.5 也能直接打开 schema 5 的文件（它把 schema `5` 当作更新的
 
 日志行是 `system.migrate`，带 `{"from": 9, "to": 10}`。v1.5 的后端可以原样打开 schema 10 的文件（新列会被忽略）。
 
+### 6.17 Schema v11（v2.0）
+
+主数据库在 v2.0 后端第一次启动时，先写一份备份副本 `backups/xexam-schema10-<日期时间>.db`，再从 schema 10 升到 **schema 11**，只升一次（从更老的 schema 升级时，只写那个更老 schema 的一份备份，一步升到 11）。列、名字、类型、值都不变，程序里看不出任何变化：这一步是为了完整性。它在服务器开始监听之前运行，在一个 `BEGIN IMMEDIATE` 事务里，`foreign_keys` 在事务之外关掉（一个守卫保证无论如何都会再打开，出错时也一样，如果没能打开就启动失败）。备份写好之前什么都不写。
+
+1. **孤儿**先计数，再按固定规则清理（见下表）。
+2. **旧表**：删除 `stats` 和 `settings`（它们的行在 v0.6 已复制给第一个管理员；比 schema 3 更老的文件则是在同一事务稍早的地方复制）；行数写进日志。
+3. **`users.uid`**：创建唯一索引 `idx_users_uid ON users(uid) WHERE uid <> ''`（有重复时见下）。
+4. **重建九张表**，顺序是 `banks`、`questions`、`imports`、`attempts`、`attempt_items`、`sessions`、`user_stats`、`user_settings`、`user_banks`，每张都按 SQLite 的标准做法：创建带外键的 `new_<表>`，用明确的列清单复制每一行，删掉旧表，改名，恢复 AUTOINCREMENT 计数器（`sqlite_sequence`，这样 id 绝不会被重用：`meta.banks_known` 和记录 id 依赖这一点），再建索引（包括新增的两个）。定义里没有的列会让升级停下来（不会悄悄丢掉任何东西）；每张表的行数在前后比对，不一致也会让升级停下来。
+5. 对整个文件执行 **`PRAGMA foreign_key_check`**：只要有一行就停下来。
+6. 写一行活动记录 `system.migrate`，内容 `{"from":10,"to":11}`（删了行的话还有 `"orphansRemoved"`），并把 `meta.schema` 设为 `11`。
+
+任何一处停下来，整个事务都回滚：文件仍是 schema 10 和它的全部内容，备份保留，下次启动再试（并写一份新的备份）。日志写 `cannot open database: the upgrade to schema 11 stopped (<原因>). Nothing was changed; the copy <路径> was written.`。成功时写 `Upgraded the database to schema 11. A copy of the previous version was saved first: <路径> (restore it if you ever go back to an older version).`。
+
+**孤儿规则。** 被删掉的行全都在备份里。
+
+| 关系 | 规则 | 日志行 |
+|---|---|---|
+| `attempts.user_id` 有值，但用户不存在 | 先删这条记录的 `attempt_items`，再删记录 | `Removed <n> orphaned rows of attempts.user_id (copy in the backup).` |
+| `attempt_items.attempt_id` 有值，但记录不存在 | 删除 | `Removed <n> orphaned rows of attempt_items.attempt_id (copy in the backup).`（也包括上一行删掉的记录的题目项） |
+| `sessions`、`user_stats`、`user_settings`：用户不存在 | 删除 | `Removed <n> orphaned rows of sessions.user_id (copy in the backup).`；`user_stats.user_id`、`user_settings.user_id` 同理 |
+| `user_banks`：用户或题库不存在 | 删除（和 6.6 的检查规则相同） | `Removed <n> orphaned rows of user_banks (copy in the backup).` |
+| `banks.owner_id` 有值，但用户不存在 | 设为 NULL，再交给第一个管理员（没有管理员时保持 NULL，之后由 6.6 的检查处理） | `Gave <n> banks whose owner no longer exists to the first administrator.` |
+| `questions.bank_id`、`imports.bank_id` 有值，但题库不存在 | 设为 NULL，内容保留；6.6 的检查会把它们挂到遗留题库 | `Detached <n> questions from a missing bank; they are kept in the legacy bank.` 和 `Detached <n> import records from a missing bank; they are kept in the legacy bank.` |
+
+允许为空的字段（`attempts.user_id`、`questions.bank_id`、`imports.bank_id`、`banks.owner_id`）保持原样。还有数据的旧表会写 `Removed the unused legacy table <stats|settings> (<n> rows, already copied to the first administrator in v0.6; copy in the backup).`；空的旧表（每个新文件都有这两张）直接删除，不写日志。
+
+**身份标记重复。** 如果两个用户的 `uid` 非空且相同（只可能是手工改过或复制了文件），升级照样成功，但**不会**创建 `idx_users_uid`，不改任何 `uid`（新标记会让 AI 服务丢弃该用户的 AI 数据，8.3），日志写 `Warning: <n> user identity stamps are shared by more than one user; the unique index on users.uid was not created. Fix the duplicates (see database.md) and restart.`。处理办法：停掉后端，复制卷，用 `sqlite3 xexam.db "SELECT uid, group_concat(username) FROM users WHERE uid <> '' GROUP BY uid HAVING COUNT(*) > 1"` 列出来，对每个要换新身份的用户执行 `UPDATE users SET uid = '' WHERE id = <id>;`（标记变了，所以该用户的 AI 数据会被丢弃）。下次启动会给空的 `uid` 生成新的随机标记（6.6），再下一次启动创建索引。
+
+**磁盘和时间。** 请留出**大约两倍数据库大小**的空闲空间（备份加重建的表和它们的日志）。数据库大时第一次启动会更久，大部分花在 `attempt_items` 上，因为每一行都要复制一次；服务器要等这之后才开始监听。
+
+测试在 `backend/tests/v20_db.rs`（每个更老的 schema、孤儿、AUTOINCREMENT 计数、身份标记重复、什么都不改的失败重建、强制执行的外键、对回退的容忍、全新文件）和 `tests/integration/migrate_check.py` 的步骤 O。
+
+### 6.18 回到 v1.9
+
+**主数据库不用恢复**：v1.9 的后端能原样打开 schema 11 的文件（它把更新的 schema 当作当前的）。外键现在会强制执行，而它的删除路径本来就先删子行。它启动时会执行 v1 的 `SCHEMA`，所以会重新建出一张空的 `stats` 表；v2.0 下次启动时再把它删掉（里面有行就保留并给出警告，6.6）。恢复 `backups/xexam-schema10-….db` 也行，但会丢掉之后写入的所有东西；**只有回到比 v1.9 更早的版本才必须这样做**。
+
+**AI 数据库不一样**：v1.9 的 ai-service 拒绝 schema 10，所以回退要恢复 AI 备份 `backups/xexam-ai-schema9-<日期时间>.db`（第 8.4 节，[migration.md](migration.md)），升级之后写入的所有设置、对话、记忆和用量行都会丢。
+
 ## 7. 旧的 `progress.json`
 
 更早的版本把成绩保存在 `progress.json` 里。和旧的 Python 版一样，程序**每次启动时**都会检查数据目录里有没有它：如果有，而且数据库里还没有学习记录、以前也没有迁移过，就把它迁移进数据库（迁到第一个管理员的记录里）。`meta` 里的 `legacy_migrated` 标记保证它只迁移一次，已有的学习记录永远不会被覆盖。
@@ -428,7 +471,7 @@ docker compose start
 
 > ⚠️ 从 v0.1 升级时：数据库的文件名改了，新版本只读取 `xexam.db`。如果数据目录里有别的 `.db` 文件、却没有 `xexam.db`，启动日志会提醒你；把那个文件改名为 `xexam.db` 再启动（旧文件既不会被删除，也不会被读取）。
 
-## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v1.1 起 schema 6）
+## 8. AI 数据库（`xexam-ai.db`，v0.8；从 v2.0 起 schema 10）
 
 ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只有它打开和迁移这个数据库；后端从不读取它，ai-service 也从不打开 `xexam.db`（数据边界，见 [architecture.md](architecture.md) 第 5 节）。
 
@@ -441,36 +484,17 @@ ai-service 把 AI 的一切都放在它**自己的** SQLite 数据库里，只�
 
 和主数据库一样：`busy_timeout` 5000 ms、`foreign_keys=ON`（这里的 schema 确实用了外键，见下文）、`synchronous=FULL`、WAL 模式（`XEXAM_AI_SQLITE_JOURNAL=delete` 保留回滚日志，规则和 2.1 一样），另外还有 **`secure_delete=ON`**。一个连接放在互斥锁后面，每次写入都在 `BEGIN IMMEDIATE … COMMIT` 里，锁从不跨 `.await` 持有。启动日志里会写 `AI database: /data/xexam-ai.db (journal: wal)`。
 
-### 8.2 表（schema v4）
+### 8.2 表（schema 10 时的样子）
 
 ```mermaid
 erDiagram
     settings {
-        INTEGER id PK "总是 1"
-        TEXT provider "openai · anthropic · gateway"
-        TEXT base_url "默认 https://api.openai.com/v1"
-        TEXT format "openai · anthropic（只用于网关）"
-        INTEGER responses "1 = OpenAI Responses（format 仍是 openai）"
-        TEXT gateway_auth "bearer · x-api-key · cf-aig-authorization"
-        TEXT model "'' = 没有"
-        INTEGER manual_model "1 = 手动输入"
-        INTEGER usage_option "OpenAI 格式：1 = 请求返回 Token 用量"
-        INTEGER max_tokens "Anthropic 格式：4096 · 8192"
-        INTEGER enabled "AI+ 功能的开关"
-        INTEGER verified_at "上次测试通过时的 Unix 秒"
-        TEXT verified_fp "那次测试的设置指纹"
+        INTEGER id PK "恒为 1"
+        INTEGER enabled "AI+ 功能开关"
         INTEGER retention_days "1-3650，默认 90"
-        INTEGER updated_at "Unix 秒"
+        INTEGER updated_at "unix 秒"
         TEXT updated_by "管理员的用户名"
-    }
-    secrets {
-        TEXT name PK "api_key · gateway_key"
-        TEXT key_id "加密密钥的 id（16 位十六进制）"
-        BLOB nonce "24 字节"
-        BLOB ciphertext "XChaCha20-Poly1305，带认证标签"
-        TEXT hint "最后 4 个字符，短密钥为 ''"
-        INTEGER rev "每次修改都加一"
-        INTEGER updated_at "Unix 秒"
+        INTEGER features_off "全局功能开关位"
     }
     limits {
         INTEGER id PK "总是 1"
@@ -479,12 +503,11 @@ erDiagram
         INTEGER chats_per_user "10-100000，默认 1000"
         INTEGER messages_per_chat "20-5000，默认 400"
         INTEGER memories_per_user "1-1000，默认 50"
-        INTEGER memory_tokens "50-250000，默认 1000（v1.1；之前的上限是 200 个字符：仍为 200 的值改为 1000，其他值在升级到 schema 6 时一次性乘以 1.5；memory_chars 不再使用）"
-        INTEGER message_chars "自 v1.0 起不再使用（原为 1000-32000，默认 16000）；保留，从不读取或写入"
+        INTEGER memory_tokens "50-250000，默认 1000（v1.1；仍为 200 的值改成了 1000，其他值在升级到 schema 6 时一次性乘以 1.5）"
         INTEGER calls_per_minute "1-100，默认 5（v1.0）"
         INTEGER calls_per_hour "1-2000，默认 20（v1.0）"
         INTEGER calls_per_day "1-20000，默认 100（v1.0）"
-        INTEGER reply_max_tokens "1-250000，默认 3000：回答长度（Token 数，v1.1；reply_max_chars 为 v1.0 的 1000 字符，保留不用）"
+        INTEGER reply_max_tokens "1-250000，默认 3000：回答长度（Token 数，v1.1）"
         INTEGER updated_at "Unix 秒"
         TEXT updated_by "用户名"
     }
@@ -578,8 +601,8 @@ erDiagram
     users |o--o{ usage : "usage.user_id"
 ```
 
-- **`settings`**（一行）从不保存机密。**`secrets`** 加密保存 API 密钥和网关密钥（见 [security.md](security.md) 第 11 节）；`key_id` 说明一个值是用哪个加密密钥封存的，`rev` 用于计算指纹。**`limits`**（一行）保存 AI 设置里的安全上限，每一项都有一个检查其范围的 `CHECK`；它们不属于指纹，所以修改它们从不关闭 AI。
-- **指纹** 是对服务商、地址、格式和认证方式（网关时）、模型、密钥的版本号和当前加密密钥 id 计算的 SHA-256，从不包含密钥本身。只有 `enabled = 1`、`verified_fp` 等于当前指纹而且密钥能解密时，AI 才算开启。改变指纹的设置修改会在同一个事务里清除 `enabled` 和 `verified_*`。
+- **`settings`**（一行）保存 AI+ 功能开关 `enabled`、`retention_days`、`features_off`（全局功能开关位），以及谁在什么时候改的。它从不保存机密，也不保存连接：那些在 `connections` 和 `connection_secrets` 里（见 [security.md](security.md) 第 11 节）；封存的密钥上的 `key_id` 说明它是用哪个加密密钥封存的。**`limits`**（一行）保存 AI 设置里的安全上限，每个都带范围 `CHECK`；改它们从不会把 AI 关掉。
+- **在 schema 10（v2.0）退役的**：`settings` 里单连接时代的列、过去用来决定 AI 能否开启的指纹（`verified_at`、`verified_fp`）、表 `secrets`，以及 `limits` 里五个长度列。已经没有任何东西读它们（第 8.2g 节）。
 - **`users`** 只保存 ai-service 见过的用户（他们在主数据库里的 id 和身份标记，以及最后知道的名字）；这个用户第一次对话、写记忆或调用时才写入一行，只是看看不会写入。**`function_enabled`**（v2，默认 1）是每个用户 AI+ 功能的**暂停**：0 表示管理员暂停了这个用户（AI 设置里的 **暂停**），1 表示使用中；没有行的用户是使用中的，管理员永远不会被设为 0。它和 AI+ 功能的授权（主数据库里的 `users.ai_enabled`）是分开的：把功能关掉再打开，不会清除暂停，只有 **恢复** 才会。值为 0 的 id 就是心跳向后端报告的内容（见 [architecture.md](architecture.md) 第 5 节）。**`free_mode`**（v2，默认 0）是管理员的**自由模式**：是用户的状态，不是对话的状态。它在设置里的 **AI 对话模式** 下设置（`POST /api/ai/free`，只有管理员），并且只对管理员读取，所以留在以前的管理员身上的值不起作用。
 - **`chats`**、**`messages`** 和 **`memories`** 是用户的内容。对话没有模式：管理员的自由模式开启期间，任何对话（旧的或新的）里的每条消息都以自由模式回答。每条消息都记录它是在哪种模式下写的（**`messages.free`**，v2，默认 0），所以历史可以在模式改变时告诉模型（见 [architecture.md](architecture.md) 第 5 节）。删除一个用户的行会删除他的对话、消息、记忆和任务（`ON DELETE CASCADE`）；他的 **`usage`** 行保留，`user_id` 变成 NULL，所以按模型和按天的合计仍然正确。`memories.content` 自 v1.1 起最多允许 2000000 个字符（记忆上限能设的最大值，250000 个 Token）；当前的上限由服务检查。学习消息（见下）以 `free = 0` 写入。
 - **`usage`** 每次模型调用一行（对话、测试、模型列表、记忆笔记，从 v0.9 起还有学习回答），带 Token、时间和状态，从不包含任何内容、密钥或地址。**`tokens_cached`**（v2）是服务商从它的提示词缓存里提供的那部分输入 token（AI 设置里用量的 **缓存命中** 一列）；NULL 表示服务商没有报告。**`purpose`**（v3）对学习功能的模型调用是 `hint`、`explain` 或 `summary`，对 AI 对话和没有对话的调用是 NULL；AI 设置里用量的 **按功能** 表按它给对话的行分组（AI 对话、提示、解析、总结；这四行始终都在，零也列出；`GET /api/ai/admin/usage` 把它们作为 `byPurpose` 返回）。它的行一直保留（没有保留期）；它们很小。 **每用户请求上限（v1.0）** 读取这张表，而不是自己的计数器：用户在最近一分钟、最近一小时以及服务器时区 0:00 以来的调用，是该用户的 `chat` 和 `memory` 行（每种状态都计入），加上内存里仍在运行的调用。计数用的是现有的 `idx_usage_user` 索引，没有新增索引或表。
@@ -619,13 +642,13 @@ AI 数据库在 v1.1 的 ai-service 第一次启动时，从 schema 4 **升级�
 AI 数据库从 schema 6 升到 **schema 7**，只在 v1.3 ai-service 第一次启动时进行一次（一个事务，一份副本 `backups/xexam-ai-schema6-<日期-时间>.db`）。
 
 - **`connections`**（新）：`id`、`name`（唯一，1 到 40 个字符）、`provider`（`openai`、`anthropic` 或 `gateway`）、`base_url`、`format`、`responses`（v1.8）、`gateway_auth`、`status`（`ok` 或 `broken`）、`error_code`、`lists_models`、`tested_at`、`rev`（每次保存 +1，是缓存键也是锁）、`sort`，以及创建和更新信息。最多 8 行。
-- **`connection_secrets`**（新）：连接的加密 `api_key` 和 `gateway_key`（密钥 id、24 字节 nonce、密文、末几位提示，以及 `aad_ver`；2 把密文绑定到连接，迁移来的行在下次更换前保持 1）。旧的 `secrets` 表保留，不再使用。
+- **`connection_secrets`**（新）：连接的加密 `api_key` 和 `gateway_key`（密钥 id、24 字节 nonce、密文、末几位提示，以及 `aad_ver`；2 把密文绑定到连接，迁移来的行在下次更换前保持 1）。旧的 `secrets` 表已在 schema 10 删除（8.2g）。
 - **`models`**（新）：模型池：每个测试过的（连接，模型）一行，带 `status`、`error_code`、`context`、`latency_ms`、`tested_at`、`manual` 和调用设置。**`model_slots`**（新）：六行（`default`、`chat`、`study`、`summary`、`generate`、`import`），各自指向池里的一个模型或为空（空的功能槽位用默认）。
 - **`study_shared`**（新）：共享的提示和解析，**不带用户 id**：`question_id`、`content_hash`、`kind`（`hint` 或 `explain`）、`lang`、`content`、`model`、`connection`、Token 数、`gen`（1 + 替换次数）、`hits` 和时间。（`question_id`、`content_hash`、`kind`、`lang`）唯一；最多 5 万行，没人用的在 `study_share_days` 之后删除。
 - **`gen_items`**（新）：**正在运行**的出题任务已采纳的题（`task_id`、`no`、`data`），任务结束时删除。被删掉的题保留它的编号。
 - `messages`：`reasoning`、`reasoning_ms` 和 `reasoning_truncated`（见下），`parent_id` 和 `connection`（调用时的连接名）；`chats`：`leaf_id`（当前显示的分支）以及 `pick_conn`、`pick_model`（管理员在自由模式对话里选的模型；没有外键：删除连接时清除指向它的选择，启动时清除指向不存在连接的选择）。索引 `idx_messages_parent`。对话按 `parent_id` 成树；显示或发给模型的是从叶子到根的那条路径，`messages_per_chat` 统计每个版本。
 - `settings.features_off`（六个全局开关的位掩码；提示和解析两个位总是相同）；`usage` 和 `gen_calls` 增加 `connection_id` 和 `connection`。
-- `limits`：`calls_admins_exempt`（1）、`study_share`（1）、`study_share_days`（180）、`gen_max_chunks`（8）、`summary_max_items`（40）、`import_file_questions`（1 到 300；旧的上限为 50 的 `import_max_questions` 保留不用）和 `daily_token_budget`（0 = 关）。
+- `limits`：`calls_admins_exempt`（1）、`study_share`（1）、`study_share_days`（180）、`gen_max_chunks`（8）、`summary_max_items`（40）、`import_file_questions`（1 到 300；旧的上限为 50 的 `import_max_questions` 已在 schema 10 删除）和 `daily_token_budget`（0 = 关）。
 
 一次性语句填入六个槽位、对话树（`parent_id` = 前一条消息，`leaf_id` = 最后一条）、带密钥的连接 1 和默认槽位、`users.features_off` 里的提示和解析两个位（只关了其中一个的用户，两个都变成开启），以及 [migration.md](migration.md) 的 000.1 节所述的上限。新文件和升级后的文件最终有相同的表。v1.2 的 ai-service 会拒绝 schema 7 的文件；要回退，恢复 schema 6 的副本。
 
@@ -659,6 +682,20 @@ AI 数据库在 v1.9 的 ai-service 第一次启动时，从 schema 8 升级到 
 - **任务的等待标记**：出题或导入任务在等服务商额度时，`tasks.payload` 里带一个临时的 `rateWait` 标记（不更新 `updated_at`），也就是任务对象里的 `waiting` 字段。
 - **回退**：v1.8 的 ai-service 不接受 schema 9（`written by a newer ai-service`）：先停止，按 8.4 恢复 `backups/xexam-ai-schema8-<日期时间>.db`，再运行 v1.8 的镜像。升级之后写入的设置、对话和用量不在副本里，会丢失。
 
+### 8.2g Schema v10（v2.0）
+
+AI 数据库在 v2.0 ai-service 第一次启动时，先写一份备份副本 `backups/xexam-ai-schema9-<日期时间>.db`，再从 schema 9 升到 **schema 10**，只升一次（机制和之前每一步相同；副本写不出来时服务不启动，什么都不改）。这一步只删除已经没有任何代码再读的东西：没有设置、API 回答或行为改变。在**一个事务**里完成：
+
+- **删除表 `secrets`**：schema 7 之前的服务商密钥。从 v1.2 起在用的密钥在 `connection_secrets` 里，升到 schema 7 时旧密钥已复制到连接 1，所以没有东西再读 `secrets`。日志写 `Removed the unused legacy table secrets (<n> rows) and <k> unused columns (copy in the backup).`，只有数量，绝不写值。
+- **用 `ALTER TABLE … DROP COLUMN` 删除十六列**（各自只在存在时才删）：`settings` 的十列（`provider`、`base_url`、`format`、`gateway_auth`、`model`、`manual_model`、`usage_option`、`max_tokens`、`verified_at`、`verified_fp`：单连接时代的）、`limits` 的五列（`message_chars`、`memory_chars`、`reply_max_chars`、`gen_call_chars`、`import_max_questions`：按字符计的长度，以及旧的 50 题上限）和 `chats.free`（只有预发布的 schema 2 构建有过）。之后 `settings` 只有 `id`、`enabled`、`retention_days`、`updated_at`、`updated_by` 和 `features_off`。
+- **提交前的检查**：`settings` 和 `limits` 必须各自仍然正好一行（否则事务回滚），并执行 `PRAGMA foreign_key_check`，把数量写进日志（不会拦住升级：AI 的外键从 v0.8 起就是强制的）。然后 `meta.schema` 变成 `10`。提交之后，在 WAL 模式下执行一次 `wal_checkpoint(TRUNCATE)`，让 `secrets` 释放出来的页（已被 `secure_delete` 覆盖）也离开 `-wal` 文件。
+
+**为什么安全。** 仍然读这些东西的旧步骤（从 schema 7 之前把旧设置和旧密钥搬进连接 1，schema 5 和 6 的长度换算）都在同一事务的更早处执行，所以来自任何更老 schema 的文件，最后依然有它的连接、密钥和默认模型。全新的数据库用同样的历史步骤再加同样的删除来建，所以新文件和升级来的文件 `sqlite_master` 相同。同一版本里补缺失列的修复会跳过退役的列，所以它们不会被加回来。meta 标记 `import_max_50` 不再写入（实际的上限是 `import_file_questions`）；已有的 meta 行保留。如果用户自己建的触发器或视图用到了被删的列，升级会带着清楚的提示失败并回滚；把它去掉再启动即可。
+
+**有意不做的。** 不加新索引（对 `chats WHERE pick_conn = ?` 的扫描是管理员偶尔才做的操作）；不加新的 `CHECK`，也不重建表（加 `CHECK` 要重建父表或大表）；不改名。留下的不一致列在 9.4。
+
+**回到 v1.9** 需要备份：v1.9 的 ai-service 拒绝 schema 10（`written by a newer ai-service`）。停掉，按 8.4 把 `backups/xexam-ai-schema9-<日期时间>.db` 恢复回去，运行 v1.9 的镜像；升级之后写入的设置、对话和用量会丢。这份副本和所有更早的副本一样，仍然保存着旧密钥的密文（见 [security.md](security.md) 第 11 节）。
+
 ### 8.3 服务怎样使用它
 
 - **打开**：创建表（`IF NOT EXISTS`），用默认值加上 `settings` 和 `limits` 两行，新数据库把 `meta.schema` 设为 `4`。`meta.schema` 为 `1`、`2` 或 `3` 的数据库会被升级（见下面的迁移）。更新的 ai-service 写的数据库（`meta.schema` 大于 `4`）会被拒绝：服务记一行日志，不启动，所以旧镜像永远不会打开更新的文件。因崩溃或被强行终止而停在 `streaming` 的回答会被标记为 `error`，错误码 `ai.interrupted`（只在有这样的回答时；`idx_messages_streaming` 负责找出它们）。
@@ -667,9 +704,9 @@ AI 数据库在 v1.9 的 ai-service 第一次启动时，从 schema 8 升级到 
 - **删除的内容**：`secure_delete=ON` 时释放的页会被覆盖，每次删除用户内容之后，服务还会执行 `PRAGMA wal_checkpoint(TRUNCATE)`（最多每 10 秒一次），这样旧的页不会留在 `xexam-ai.db-wal` 里。备份和卷快照里仍然有删掉的内容。
 - **停止**：正常停止时，正在生成的回答会保存为已停止，然后执行检查点。
 - **迁移**：schema v1 是第一个 schema（v0.8 的预发布构建）；**schema v2**（v0.8）新增了四个列：`users.function_enabled`（默认 1）、`users.free_mode`（默认 0）、`messages.free`（默认 0）和 `usage.tokens_cached`（NULL）；**schema v3**（v0.9）新增**十二个列和三个索引**，别的都没有：`chats.kind`（默认 `chat`）、`chats.ref`、`chats.record_id`、`messages.kind`（默认 `chat`）、`messages.question_id`、`messages.question_no`、`messages.source`、`messages.lang`、`messages.sample_used`、`messages.sample_usable`、`messages.sample_wrong` 和 `usage.purpose`（NULL），加上 `idx_chats_ref`、`idx_messages_study` 和 `idx_messages_streaming`。没有任何一行被改写，也没有任何一行改变含义：每个旧的对话和消息都是 `chat`，每个旧的用量行都没有 purpose。同一步新增既用于创建新数据库，也用于升级旧数据库，所以两者最后的表和 `sqlite_master` 都相同。**每个 schema 1、2 或 3 的数据库都会先复制**：用 `VACUUM INTO` 复制到 AI 数据目录里的 `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db`（`<N>` 是它原来的 schema，所以 v0.8 的数据库是 `xexam-ai-schema2-…`；目录权限 0700；时间是容器的本地时间；名字已被占用时加 `-2`、`-3`…… 后缀；空数据库也会复制），然后在一个事务里升级，并用一行日志写出这份副本的名字：`Upgraded the AI database to schema 3. A copy of the previous version was saved first: <path>.`。如果副本写不出来，服务不启动，也什么都不改。较早的预发布构建写的 schema 2 文件缺少一些 v2 的列，会在同一步里补上。重新打开 schema 3 的数据库什么都不写。**请留出大约和 AI 数据库一样大的可用磁盘空间**用于副本；副本从不清理，而且会保留后来被删除的对话和记忆（在这有关系时请自己删除，见 [security.md](security.md) 第 11 节）。**回到 v0.8 需要这份副本**：v0.8 的 ai-service 会拒绝 schema 3（`written by a newer ai-service … restore a backup`）并退出，所以请像 8.4 那样恢复 `xexam-ai-schema2-….db`；升级之后写入的对话、记忆、设置和用量不在其中，会丢失。
-- **Schema 4（v1.0）** 新增**四个列**，别的都没有：`limits.calls_per_minute`（默认 5）、`limits.calls_per_hour`（默认 20）、`limits.calls_per_day`（默认 100）和 `limits.reply_max_chars`（默认 1000），每个都带有其范围的 `CHECK`。什么都没有删掉：`limits.message_chars` 保留在表里，不再使用。同一事务里执行一次 `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300`，把记忆长度的旧默认值改成新的默认值；管理员设的其他值保持不变。新数据库和从 1、2 或 3 升级的数据库都执行这一步，之后的启动不会再执行。从 1、2 或 3 升级的数据库，四个新列取默认值，不从旧值推导。**保留 schema 3 数据库的副本**（`backups/xexam-ai-schema3-<日期时间>.db`）：v0.9.1 的 ai-service 会按现有的提示拒绝 schema 4，所以要回退，就得恢复那份副本并运行 v0.9.1 的镜像（第 8.4 节和 [migration.md](migration.md)）。
+- **Schema 4（v1.0）** 新增**四个列**，别的都没有：`limits.calls_per_minute`（默认 5）、`limits.calls_per_hour`（默认 20）、`limits.calls_per_day`（默认 100）和 `limits.reply_max_chars`（默认 1000），每个都带有其范围的 `CHECK`。这一步什么都没有删（`limits.message_chars` 一直不用地留在表里，直到 schema 10 才删掉）。同一事务里执行一次 `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300`，把记忆长度的旧默认值改成新的默认值；管理员设的其他值保持不变。新数据库和从 1、2 或 3 升级的数据库都执行这一步，之后的启动不会再执行。从 1、2 或 3 升级的数据库，四个新列取默认值，不从旧值推导。**保留 schema 3 数据库的副本**（`backups/xexam-ai-schema3-<日期时间>.db`）：v0.9.1 的 ai-service 会按现有的提示拒绝 schema 4，所以要回退，就得恢复那份副本并运行 v0.9.1 的镜像（第 8.4 节和 [migration.md](migration.md)）。
 
-- **schema 5 到 6（v1.1）**：长度改为 Token 数。新增三列，各有自己的 `CHECK` 范围：`limits.reply_max_tokens`（1 到 250000，默认 3000）、`limits.memory_tokens`（50 到 250000，默认 1000）和 `limits.gen_call_tokens`（1000 到 250000，默认 20000）。`reply_max_chars`、`memory_chars` 和 `gen_call_chars` 保留在表里但不再使用。在同一个事务里一次性处理：仍为旧默认值的改为新默认值，其他值乘以 1.5 并限制在范围内。`memories` 表重建一次（保留行和 id），让一条记忆最多可存 2000000 个字符。从 schema 5 升级时，先写副本 `backups/xexam-ai-schema5-<日期时间>.db`。
+- **schema 5 到 6（v1.1）**：长度改为 Token 数。新增三列，各有自己的 `CHECK` 范围：`limits.reply_max_tokens`（1 到 250000，默认 3000）、`limits.memory_tokens`（50 到 250000，默认 1000）和 `limits.gen_call_tokens`（1000 到 250000，默认 20000）。`reply_max_chars`、`memory_chars` 和 `gen_call_chars` 在这一步仍留在表里（schema 10 把它们删掉了）。在同一个事务里一次性处理：仍为旧默认值的改为新默认值，其他值乘以 1.5 并限制在范围内。`memories` 表重建一次（保留行和 id），让一条记忆最多可存 2000000 个字符。从 schema 5 升级时，先写副本 `backups/xexam-ai-schema5-<日期时间>.db`。
 
 ### 8.4 AI 卷的备份和恢复
 
@@ -688,9 +725,9 @@ docker compose start
 - 恢复的 AI 卷和另一个时间点的主卷可以搭配使用：已经不存在的用户会在下一次对账时失去他们的 AI 数据，现在属于另一个账户的用户 id 会通过标记认出来。
 - `xexam_ai_auth` 不用备份：它里面只有 `internal.token`，缺少时后端会重新创建（AI 服务会自己用上新的令牌）。
 
-## 9. 两个数据库的表结构图（v1.9）
+## 9. 两个数据库的表结构图（v2.0）
 
-这是一份阅读指南：有哪些表、各自做什么、彼此怎么关联。内容对应主数据库 schema 10 和 AI 数据库 schema 9；表名和列名与实际存储的完全一致。这里的任何内容都不会改动表。
+这是一份阅读指南：有哪些表、各自做什么、彼此怎么关联。内容对应主数据库 schema 11 和 AI 数据库 schema 10；表名和列名与实际存储的完全一致。这里的任何内容都不会改动表。
 
 ### 9.1 主数据库 `xexam.db`（backend）
 
@@ -700,26 +737,25 @@ docker compose start
 | 学习记录和错题本 | `attempts`、`attempt_items`、`user_stats` | `attempts` 就是程序里说的“学习记录”（考试或练习） |
 | 用户与权限 | `users`、`sessions`、`user_banks`、`user_settings` | |
 | 系统 | `meta`、`system_settings`、`activity_log` | |
-| 遗留（不再使用） | `stats`、`settings` | v0.6 那一步已复制到 `user_stats` 和 `user_settings`；只在从 schema 2 或更老的版本升级时才读 |
 
-主数据库**没有声明任何外键**：下面的关系由代码维持（删除时先删子行），所以图里画成虚线。
+从 schema 11 起主数据库声明了外键，全部是 `ON DELETE NO ACTION`，图里画成实线（会留下子行的删除会失败；代码照旧先删子行）。虚线是特意不加外键的关系（见 `attempt_items`、`user_stats`、`system_settings` 和 `activity_log` 的备注）。
 
 ```mermaid
 erDiagram
-  users ||..o{ sessions : "user_id"
-  users ||..o{ attempts : "user_id (NULL = unclaimed old record)"
-  users ||..o{ user_stats : "user_id"
-  users ||..o{ user_settings : "user_id"
-  users ||..o{ user_banks : "user_id"
-  users ||..o{ banks : "owner_id"
-  users |o..o{ system_settings : "updated_by"
-  users |o..o{ activity_log : "user_id (snapshot, not linked)"
-  banks ||..o{ user_banks : "bank_id"
-  banks ||..o{ questions : "bank_id"
-  banks ||..o{ imports : "bank_id"
-  attempts ||..o{ attempt_items : "attempt_id"
-  questions |o..o{ attempt_items : "question_id (soft)"
-  questions |o..o{ user_stats : "question_id (soft)"
+  users ||--o{ sessions : "user_id"
+  users |o--o{ attempts : "user_id (NULL = 还没人认领的旧记录)"
+  users ||--o{ user_stats : "user_id"
+  users ||--o{ user_settings : "user_id"
+  users ||--o{ user_banks : "user_id"
+  users |o--o{ banks : "owner_id"
+  users |o..o{ system_settings : "updated_by (无外键)"
+  users |o..o{ activity_log : "user_id (快照，不关联)"
+  banks ||--o{ user_banks : "bank_id"
+  banks |o--o{ questions : "bank_id"
+  banks |o--o{ imports : "bank_id"
+  attempts ||--o{ attempt_items : "attempt_id"
+  questions |o..o{ attempt_items : "question_id (软关联)"
+  questions |o..o{ user_stats : "question_id (软关联)"
 
   users {
     int id PK
@@ -851,30 +887,23 @@ erDiagram
     text key PK
     text value
   }
-  stats {
-    text question_id PK
-  }
-  settings {
-    text key PK
-  }
 ```
 
 | 表 | 用途 | 键和关联 | 备注 |
 |---|---|---|---|
 | `meta` | 库级键值：`schema`、`banks_known`、`users_known`、`legacy_migrated` | PK `key` | |
-| `banks` | 题库，也保存 AI 生成题库的任务 key 和相关信息 | PK `id`；`owner_id` → `users` | `ai_job` 是部分唯一索引 |
-| `questions` | 一题一行；整道题（含各语言）是 `data` 里的 JSON | PK `id`（文本）；`bank_id` → `banks` | 有按工作表、题库、排布的索引 |
-| `imports` | 每次 Excel 导入的结果数量 | PK `id`；`bank_id` → `banks` | |
-| `attempts` | 学习记录：每次考试或练习一行 | PK `id`；`user_id` → `users`（NULL = 还没人认领的旧记录） | `sheets` 和 `banks` 故意是 JSON 快照 |
-| `attempt_items` | 记录里每道题的作答 | PK `(attempt_id, seq)`；`question_id` → `questions`（软关联） | 记录可能比题目活得更久 |
-| `user_stats` | 每个用户每道题的作答、答对、答错、连对次数（错题本） | PK `(user_id, question_id)` | |
-| `users` | 账号、角色、权限、AI+ 开关、身份戳 `uid`、最后登录和最后活动（IP、地点、浏览器） | PK `id`；`username` 唯一，不分大小写 | 账号数据和登录遥测混在一起 |
+| `banks` | 题库，也保存 AI 生成题库的任务 key 和相关信息 | PK `id`；`owner_id` → `users`（可为空） | `ai_job` 是部分唯一索引；`idx_banks_owner` |
+| `questions` | 一题一行；整道题（含各语言）是 `data` 里的 JSON | PK `id`（文本）；`bank_id` → `banks`（可为空） | 有按工作表、题库、排布的索引（`idx_questions_sheet` 照旧保留） |
+| `imports` | 每次 Excel 导入的结果数量 | PK `id`；`bank_id` → `banks`（可为空） | 从 schema 11 起有 `idx_imports_bank` |
+| `attempts` | 学习记录：每次考试或练习一行 | PK `id`；`user_id` → `users`（NULL = 还没人认领的旧记录） | `sheets` 和 `banks` 故意是 JSON 快照；`mode` 没有 `CHECK`（旧记录里可能是任意 JSON） |
+| `attempt_items` | 记录里每道题的作答 | PK `(attempt_id, seq)`；`attempt_id` → `attempts`；`question_id` → `questions`（软关联，**没有外键**） | 记录可能比题目活得更久，遗留题库用的是不分题库的 id |
+| `user_stats` | 每个用户每道题的作答、答对、答错、连对次数（错题本） | PK `(user_id, question_id)`；`user_id` → `users`；`question_id` 是软关联，**没有外键** | 从 schema 11 起有 `idx_user_stats_question`（删题库时按题目查行） |
+| `users` | 账号、角色、权限、AI+ 开关、身份戳 `uid`、最后登录和最后活动（IP、地点、浏览器） | PK `id`；`username` 唯一，不分大小写 | 账号数据和登录遥测混在一起；`uid` 在非空值中唯一（`idx_users_uid`） |
 | `sessions` | 登录会话 | PK `token_hash`；`user_id` → `users` | 时间是 unix 秒 |
 | `user_banks` | 普通用户能看到哪些题库 | PK `(user_id, bank_id)` | |
 | `user_settings` | 每个用户的界面设置（值是 JSON） | PK `(user_id, key)` | |
-| `system_settings` | 全站开关（活动日志保留期、访问记录、登录信息、定位来源） | PK `key`；`updated_by` 是用户 id | |
+| `system_settings` | 全站开关（活动日志保留期、访问记录、登录信息、定位来源） | PK `key`；`updated_by` 是用户 id，**没有外键** | 只写不读的审计字段；加了外键，就删不掉曾经改过站点开关的管理员 |
 | `activity_log` | 活动历史，包括 ai-service 转来的行 | PK `id`；`src_id` 部分唯一（去重） | `username` 和 `role` 是快照，所以用户删除后日志仍然可读 |
-| `stats`、`settings` | 遗留，见上 | | |
 
 ### 9.2 AI 数据库 `xexam-ai.db`（ai-service）
 
@@ -887,7 +916,6 @@ erDiagram
 | AI 出题和 AI 导入 | `tasks`、`gen_items`、`gen_calls` | `tasks.kind` 两者都是 `bank_gen`，靠 payload 区分 |
 | 计量 | `usage`（对话、提示、解析、总结、校验）、`gen_calls`（出题和导入） | 故意分成两张：每用户的调用上限只读 `usage` |
 | 系统 | `meta`、`audit_outbox` | |
-| 遗留 | `secrets`；`settings` 里旧的连接列；`limits` 里四个已退役的长度列 | 只在从旧 schema 升级时才读 |
 
 实线是声明了的外键；虚线是故意不加外键、由代码维持的关系（消息分支、对话选的连接、用量历史）。
 
@@ -1104,9 +1132,6 @@ erDiagram
     blob key_ciphertext
     int updated_by
   }
-  secrets {
-    text name PK
-  }
   meta {
     text key PK
     text value
@@ -1121,8 +1146,8 @@ erDiagram
 | 表 | 用途 | 键和关联 | 备注 |
 |---|---|---|---|
 | `meta` | `schema`、`secret_rev`、一次性标记 | PK `key` | |
-| `settings` | 单行：AI 总开关 `enabled`、`retention_days`、`features_off`（全局功能开关位） | PK `id = 1` | 还留着 11 个单连接时代的旧列，只有旧版升级才读 |
-| `limits` | 单行：所有上限（并发、对话和记忆的大小、每用户调用上限、回答长度、出题和导入的上限、共享缓存、每日 token 预算），v1.9 起还有匀速发送的设置 | PK `id = 1`；每列有范围 `CHECK` | 四个已退役的长度列还在，不再使用 |
+| `settings` | 单行：AI 总开关 `enabled`、`retention_days`、`features_off`（全局功能开关位） | PK `id = 1` | 从 schema 10 起只剩 `id`、`enabled`、`retention_days`、`updated_at`、`updated_by` 和 `features_off` |
+| `limits` | 单行：所有上限（并发、对话和记忆的大小、每用户调用上限、回答长度、出题和导入的上限、共享缓存、每日 token 预算），v1.9 起还有匀速发送的设置 | PK `id = 1`；每列有范围 `CHECK` | 五个已退役的长度列在 schema 10 已删除 |
 | `users` | 主数据库用户的镜像（`id` 加 `stamp` = 主库 `uid`），带 `function_enabled`（暂停）、`free_mode` 和 `features_off`（每用户功能位） | PK `id`（由主数据库给） | stamp 不同就是另一个人：AI 数据会被丢弃 |
 | `chats` | AI 对话，以及每次练习、考试或记录总结的会话 | PK `id`；`user_id` → `users`（CASCADE） | `leaf_id` 和 `pick_conn` 故意没有外键 |
 | `messages` | 消息及其分支版本；提示、解析和总结也存在这里 | PK `id`；`chat_id` → `chats`（CASCADE） | 有些列只对某一种 `kind` 有意义 |
@@ -1138,7 +1163,6 @@ erDiagram
 | `model_slots` | 每个功能用池里的哪个模型，以及思考强度 | PK `slot`；`model_id` → `models`（SET NULL） | |
 | `study_shared` | 提示和解析的共享缓存 | PK `id`；唯一 `(question_id, content_hash, kind, lang)` | `lang` 用 `zh`，而 `messages.lang` 用 `zh-CN` |
 | `geo_settings` | 外部 IP 定位接口（单行，测试通过后才写） | PK `id = 1` | |
-| `secrets` | 遗留：schema 7 之前的密钥 | PK `name` | 运行中的代码不再使用 |
 
 ### 9.3 两个数据库之间的引用
 
@@ -1158,4 +1182,6 @@ erDiagram
 - 时间一律 `*_at INTEGER`（unix 秒，UTC）；布尔一律 `INTEGER NOT NULL DEFAULT x CHECK (col IN (0, 1))`；枚举一律带 `CHECK`。
 - 指向本库的 id 一律 `*_id` 并加外键、写明 `ON DELETE`；不加外键时在注释里写理由。
 - 新的 `updated_by` 用用户 id；语言代码用 `en`、`zh-CN`、`ja`。
+- 主数据库的外键一律明确写成 `ON DELETE NO ACTION`：先删子行才能删父行（不用 `CASCADE`，也不用 `SET NULL`）。AI 数据库按 9.2 所列使用 `CASCADE` 和 `SET NULL`。
 - 已有的名字和主数据库较老的文本时间列保持不变。
+- **有意保留的不一致**（只做了记录，v2.0 没有改）：主数据库的时间存成文本（`YYYY-MM-DD HH:MM:SS`），AI 数据库存 unix 秒；`updated_by` 在 `system_settings` 里是用户 id，在 AI 数据库里是用户名（TEXT）；`study_shared.lang` 用 `zh`，`messages.lang` 用 `zh-CN`；有些名字是历史遗留（`attempts` 在程序里叫学习记录，`legacy_ids`，`banks.filename`）。

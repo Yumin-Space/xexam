@@ -8,7 +8,7 @@ use rusqlite::Connection;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use xexam_ai_service::secret::{self, MasterKey, SecretName};
-use xexam_ai_service::store::{schema, tables, DB_FILE};
+use xexam_ai_service::store::{schema, DB_FILE};
 
 /// The encryption key of the fixture (made up).
 const MASTER: [u8; 32] = [7; 32];
@@ -45,15 +45,24 @@ fn write_v1_fixture(data_dir: &Path) -> PathBuf {
         },
         KEY.as_bytes(),
     );
-    tables::put_secret(
-        &c,
-        SecretName::ApiKey,
-        m.key_id(),
-        &sealed,
-        &secret::hint(KEY),
-        now,
+    // the retired single-connection table of v1.2 (raw rows; the code no longer writes it)
+    c.execute(
+        "INSERT INTO secrets (name, key_id, nonce, ciphertext, hint, rev, updated_at)
+         VALUES ('api_key', ?1, ?2, ?3, ?4, 1, ?5)",
+        rusqlite::params![
+            m.key_id(),
+            sealed.nonce.as_slice(),
+            sealed.ciphertext,
+            secret::hint(KEY),
+            now
+        ],
     )
     .expect("secret");
+    c.execute(
+        "INSERT INTO meta (key, value) VALUES ('secret_rev', '1')",
+        [],
+    )
+    .expect("secret_rev");
     c.execute(
         "INSERT INTO users (id, stamp, username, first_seen_at, last_seen_at) VALUES (5, ?1, 'sam', ?2, ?2)",
         // the stamp the test users get (`TestApp::user_with_id`)
@@ -171,9 +180,22 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
     assert_eq!(n, 2);
     drop(copy);
     assert!(captured_contains(&format!(
-        "Upgraded the AI database to schema 9. A copy of the previous version was saved first: {}.",
+        "Upgraded the AI database to schema {}. A copy of the previous version was saved first: {}.",
+        schema::SCHEMA_VERSION,
         copies[0].display()
     )));
+    assert!(captured_contains(
+        "Removed the unused legacy table secrets (1 rows) and 15 unused columns (copy in the backup)."
+    ));
+    // the copy still holds the retired items (a key row and the old connection columns)
+    let copy = Connection::open(&copies[0]).expect("copy");
+    let held: i64 = copy
+        .query_row("SELECT COUNT(*) FROM secrets", [], |r| r.get(0))
+        .expect("secrets");
+    assert_eq!(held, 1);
+    assert!(has_column(&copy, "settings", "verified_fp"));
+    assert!(has_column(&copy, "limits", "message_chars"));
+    drop(copy);
 
     // the upgraded database: schema 2, the rows kept, the new columns with their defaults
     let c = t.db();
@@ -182,7 +204,18 @@ async fn a_schema_1_database_is_backed_up_then_upgraded() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "9");
+    assert_eq!(v, schema::SCHEMA_VERSION);
+    let gone: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'secrets'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("secrets table");
+    assert_eq!(gone, 0, "the retired secrets table is dropped");
+    for (table, column) in schema::RETIRED_COLUMNS {
+        assert!(!has_column(&c, table, column), "{table}.{column}");
+    }
     for col in ["calls_per_minute", "calls_per_hour", "calls_per_day"] {
         assert!(has_column(&c, "limits", col), "{col}");
     }
@@ -353,18 +386,18 @@ async fn a_newer_schema_is_refused() {
     t.app.0.store.release_file();
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '10' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '11' WHERE key = 'schema'", [])
             .expect("set");
     }
     let cfg = test_config(t.dir.path(), &t.backend.url, &Opts::default());
     let err = match xexam_ai_service::app::App::open(cfg) {
-        Ok(_) => panic!("a schema-10 database must be refused"),
+        Ok(_) => panic!("a schema-11 database must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 10, written by a newer ai-service; this version (schema 9) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 11, written by a newer ai-service; this version (schema 10) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

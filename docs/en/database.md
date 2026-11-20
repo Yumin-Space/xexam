@@ -2,9 +2,9 @@
 
 # Database
 
-> The database is SQLite, **a single file, `xexam.db`**. The Rust backend reuses the old Python version's database: the original table definitions (schema v1) are kept **character for character**, and every later schema only adds to them (new tables and new columns; nothing is rebuilt or rewritten): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks), **schema v8** (v1.3: sessions, the activity log and system settings), **schema v9** (v1.4: the last-activity columns) and **schema v10** (v1.6: the per-user permission to download question banks). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
-> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **9** since v1.9 (8 since v1.4, 7 since v1.3, 6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
-> Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5) and `v09_ai_study.rs` (v6, the study routes of the backend); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3) and the unit tests of `ai-service/src/store/`.
+> The database is SQLite, **a single file, `xexam.db`**. The Rust backend started from the old Python version's database: the original table definitions (schema v1) were kept character for character, and every later schema up to v10 only added to them (new tables and new columns): **schema v2** (v0.5: question banks, exam detail, settings), **schema v3** (v0.6: users and sign-in), **schema v4** (v0.7: question banks per user, bank owners, practice records), **schema v5** (v0.8: the per-user AI+ feature grant and an identity stamp) and **schema v6** (v0.9: the key and start time of the practice or exam session a record was saved from), and **schema v7** (v1.1: the time limit and the end of an exam, and the AI-generated banks), **schema v8** (v1.3: sessions, the activity log and system settings), **schema v9** (v1.4: the last-activity columns) **schema v10** (v1.6: the per-user permission to download question banks) and **schema v11** (v2.0: database clean-up, nine tables rebuilt with foreign keys, the legacy tables dropped). An existing database is migrated automatically at the first start of a newer version, after a backup copy is written (section 6). Since v0.7 the database runs in **WAL mode** (section 2).
+> Since v0.8 ai-service has a **second, separate database**, `xexam-ai.db`, in its own volume (section 8); its schema is **10** since v2.0 (9 since v1.9, 8 since v1.4, 7 since v1.3, 6 since v1.1, 4 since v1.0, 3 since v0.9). The two services never open each other's database. **v1.1 changes the main database** to schema v7 (section 6); the AI database does not touch it.
+> Evidence: [audit/database.md](../zh-CN/history/audit/database.md); golden tests: `backend/tests/db_golden.rs` (run against `tests/baseline/fixtures/sample.db`, built by the old Python implementation, and the committed snapshots). The migrations and their backups are tested in `backend/tests/v05_banks_records_settings.rs` (v2), `v06_users_and_sign_in.rs` (v3), `v065_bank_access_and_practice.rs` (v4), `v07_bank_access_and_layouts.rs` (the bank access of v4, the conversion of pre-release databases, the retirement of old-layout questions), `v07_wal_and_logs.rs` (WAL mode), `v08_ai_link.rs` (v5), `v09_ai_study.rs` (v6, the study routes of the backend) and `v20_db.rs` (v11, the clean-up); the AI database in `ai-service/tests/` (`v09_store.rs` for schema 3, `v20_schema.rs` for schema 10) and the unit tests of `ai-service/src/store/`.
 
 ## 1. Where the file lives
 
@@ -37,7 +37,7 @@ What is kept where:
 |---|---|---|
 | `journal_mode` | `WAL` (since v0.7); `DELETE` with `XEXAM_SQLITE_JOURNAL=delete` | A commit writes only to the `-wal` file, and a reader (for example a command-line tool started next to the server) does not block the writer. See 2.1 |
 | `synchronous` | `FULL` | Each commit waits until it is on disk (in WAL mode: one fsync of the `-wal` file), so nothing committed is lost on a power failure |
-| `foreign_keys` | `ON` | (The schema actually has no foreign keys; kept the same as the old version) |
+| `foreign_keys` | `ON` | Since schema 11 the main database declares foreign keys (section 3) and they are enforced: a delete that would leave a child row behind fails instead of leaving an orphan. The upgrade to schema 11 switches them off for its own transaction and always back on (6.17) |
 | `busy_timeout` | 5000 ms | When another connection holds a lock, wait up to 5 seconds |
 | Automatic checkpoint | SQLite's default (every 1000 pages) | Keeps the `-wal` file small while the backend runs |
 | Transactions | `BEGIN IMMEDIATE … COMMIT`, `ROLLBACK` on failure (a failed `COMMIT` is also rolled back) | Either everything succeeds or nothing changes |
@@ -170,18 +170,19 @@ erDiagram
     users ||--o{ user_settings : "user_settings.user_id"
 ```
 
-Thirteen tables, still **without foreign key constraints**: the links are kept by the code, and every delete removes the rows that belong to it in the same transaction. Two tables of earlier schemas are not shown: `stats` (the per-question statistics of v0.5 and older) and `settings` (the settings of v0.5). At the v3 migration their rows were copied to the first administrator (`user_stats`, `user_settings`); they are kept, unused, so that a rollback stays "restore the backup".
+Thirteen tables. Since schema 11 (v2.0) nine of them are declared with **foreign keys**, all written out as `ON DELETE NO ACTION` (a delete that would leave a child row behind fails; the code deletes child rows first, in the same transaction, as it always did): `sessions.user_id`, `user_stats.user_id`, `user_settings.user_id`, `user_banks.user_id`, `attempts.user_id` (nullable) and `banks.owner_id` (nullable) to `users(id)`; `attempt_items.attempt_id` to `attempts(id)`; `questions.bank_id` (nullable), `imports.bank_id` (nullable) and `user_banks.bank_id` to `banks(id)`. Deliberately **not** linked, and commented so in the table definitions: `attempt_items.question_id` and `user_stats.question_id` (a record outlives a deleted question, and banks from before v0.5 use unscoped ids), `activity_log.user_id` (the log is an audit snapshot) and `system_settings.updated_by` (a write-only audit field: a link would block deleting an administrator who once changed a site switch). The legacy tables `stats` (the per-question statistics of v0.5 and older) and `settings` (the settings of v0.5) are gone since schema 11; their rows were copied to the first administrator (`user_stats`, `user_settings`) at the v3 migration. The nine rebuilt tables are stored as `CREATE TABLE "banks" (…)` with the name in quotes, which is how SQLite records a renamed table.
 
 What each schema added:
 
-- **v1** (the old Python version, kept verbatim): `meta`, `questions`, `attempts`, `stats`, `imports`.
+- **v1** (the old Python version; its text is kept in the code as history): `meta`, `questions`, `attempts`, `stats`, `imports`. `stats` is dropped at schema 11.
 - **v2** (v0.5): the tables `banks`, `attempt_items` and `settings`; the columns `questions.bank_id INTEGER` (NULL only for rows written by an older binary, see 6.6), `attempts.banks TEXT NOT NULL DEFAULT '[]'` (JSON snapshot of the banks an exam drew from, `[{"id": 1, "name": "…"}]`) and `imports.bank_id INTEGER`; the indexes `idx_questions_bank (bank_id, active)` and `idx_attempt_items_question (question_id)`.
 - **v3** (v0.6): the tables `users`, `sessions`, `user_stats` and `user_settings`; the column `attempts.user_id INTEGER`; the indexes `idx_sessions_user` and `idx_attempts_user`.
 - **v5** (v0.8): the columns `users.ai_enabled INTEGER NOT NULL DEFAULT 0` (the per-user **AI+ feature** grant: the user may use AI Chat while the AI+ feature is on and available; stored for administrators too, but ignored for them, who always have it) and `users.uid TEXT NOT NULL DEFAULT ''` (a random identity stamp of 32 lower-case hex digits, set when the account is created and never changed; the AI service stores it next to the user id and drops AI data whose stamp differs, section 8.3). Nothing else: AI settings, chats and memories live in the AI database.
 - **v4** (v0.7): the table `user_banks`; the columns `users.new_banks INTEGER NOT NULL DEFAULT 0`, `users.can_manage_banks INTEGER NOT NULL DEFAULT 0`, `banks.owner_id INTEGER` and `attempts.kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice'))`; the indexes `idx_user_banks_bank (bank_id)` and `idx_banks_owner (owner_id)`; the `meta` keys `users_known` and `banks_known` (section 6.6). The six-column workbook layout of v0.7 needed no column: its per-language texts live in `questions.data` (section 4.7). Pre-release builds of v0.7 had `users.all_banks` instead of `users.new_banks`; such a database is converted when it is opened (section 6.5).
 - **v6** (v0.9): the columns `attempts.session_key TEXT` (the random key of the practice or exam session the record was saved from: 32 lower-case hex digits; the AI service names the session's chat by it, section 8.2) and `attempts.started_at INTEGER` (when that session started, unix seconds on the browser's clock). Both are NULL for every record saved before v0.9, and for a save in which the browser sent no valid value: each of the two is judged on its own, an invalid one is stored as NULL, and the save is never refused for it. There is no index and no constraint. The columns are never used to look a record up (a record is always found by `attempts.id`), and a key is not guaranteed to be unique: nothing relies on that. Nothing else changed in the main database: the AI chats, their texts and their titles live in the AI database.
+- **v11** (v2.0): no new column. Nine tables rebuilt with the foreign keys above; new indexes `idx_user_stats_question (question_id)`, `idx_imports_bank (bank_id)` and the unique `idx_users_uid ON users(uid) WHERE uid <> ''`; `stats` and `settings` dropped (section 6.17).
 
-The v1 table-creation statements are stored verbatim in `backend/src/database/schema.rs` (`SCHEMA`), identical to `SCHEMA` in the old version's `app/db.py`, and are still executed first on every start; the later additions are next to them (`MIGRATE_V2_TABLES`, `V2_COLUMNS`, … `MIGRATE_V4_INDEXES`, `V5_COLUMNS`, `V6_COLUMNS`). Everything uses `IF NOT EXISTS` or is checked first, so opening an up-to-date database **writes nothing** (tested: the database file together with its `-wal` file stays byte for byte the same). Because SQLite records `ALTER TABLE … ADD COLUMN` by appending the column to the stored `CREATE TABLE` text, the `sqlite_master` text of `questions`, `attempts` and `imports` is the v1 text plus the added columns (and that of `users` the v3 text plus the v4 and v5 columns); a new database and a migrated one have exactly the same schema (tested in `db_golden.rs`).
+The v1 table-creation statements are kept in `backend/src/database/schema.rs` (`SCHEMA`) as history, with the later additions next to them (`MIGRATE_V2_TABLES`, `V2_COLUMNS`, … `MIGRATE_V4_INDEXES`, `V5_COLUMNS`, `V6_COLUMNS`, and since v2.0 `V11_REBUILDS`, the nine table definitions with their indexes). `SCHEMA` runs on a start only when the file is new or older than schema 11 (so it no longer re-creates `stats` on every open); then the upgrade chain runs. Everything uses `IF NOT EXISTS` or is checked first, so opening an up-to-date database **writes nothing** (tested: the database file together with its `-wal` file stays byte for byte the same). Because SQLite records `ALTER TABLE … ADD COLUMN` by appending the column to the stored `CREATE TABLE` text, the stored text of `users` is the v3 text plus the added columns, while the nine rebuilt tables come from the constants of `V11_REBUILDS` with a normalised column order; a new database and an upgraded one have exactly the same schema (tested in `db_golden.rs` and, from every older schema, in `v20_db.rs`).
 
 ## 4. Details that decide the fate of your study records
 
@@ -279,10 +280,10 @@ The files in `backups/` are part of the volume, so a volume backup includes them
 
 ## 6. Schema migrations and going back
 
-`meta.schema` says which schema a database has (`1` up to v0.4, `2` in v0.5, `3` in v0.6, `4` in v0.7 and v0.7.5, `5` in v0.8, `6` in v0.9 and v1.0, up to `10` since v1.6: sections 6.12 to 6.16). When a version opens a database with an older schema, it brings it up to its own schema in one go:
+`meta.schema` says which schema a database has (`1` up to v0.4, `2` in v0.5, `3` in v0.6, `4` in v0.7 and v0.7.5, `5` in v0.8, `6` in v0.9 and v1.0, up to `11` since v2.0: sections 6.12 to 6.17). When a version opens a database with an older schema, it brings it up to its own schema in one go:
 
-1. **Backup.** If the database contains any data, a consistent copy is written with SQLite's `VACUUM INTO` to `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db`, where `<N>` is the schema the file had before this start (an existing file is never overwritten; `-2`, `-3`, … are appended instead). There is always **one** backup, also when several steps follow. The copy is one self-contained file in the old schema; changes that were still in the `-wal` file are in it too. `VACUUM INTO` writes a complete file, so **keep free disk space of about the size of the database** before you upgrade; the copy is never pruned, and it keeps what you delete later (records, banks, users), so remove old copies yourself when that matters. **If the copy cannot be written** (disk full, no permission), the program refuses to start and changes nothing; the log says why.
-2. **Migration**, in **one** `BEGIN IMMEDIATE` transaction: every step from the old schema to the current one (6.1, 6.4, 6.5, 6.8, 6.10, and the conversion of a pre-release v4 database), then `meta.schema` is set.
+1. **Backup.** If the database contains any data, a consistent copy is written with SQLite's `VACUUM INTO` to `backups/xexam-schema<N>-<YYYYmmdd-HHMMSS>.db` next to `xexam.db`, where `<N>` is the schema the file had before this start (an existing file is never overwritten; `-2`, `-3`, … are appended instead). There is always **one** backup, also when several steps follow. The copy is one self-contained file in the old schema; changes that were still in the `-wal` file are in it too. `VACUUM INTO` writes a complete file, so **keep free disk space of about the size of the database** before you upgrade (**about twice** for the upgrade to schema 11, which also rebuilds tables, 6.17); the copy is never pruned, and it keeps what you delete later (records, banks, users), so remove old copies yourself when that matters. **If the copy cannot be written** (disk full, no permission), the program refuses to start and changes nothing; the log says why.
+2. **Migration**, in **one** `BEGIN IMMEDIATE` transaction: every step from the old schema to the current one (6.1, 6.4, 6.5, 6.8, 6.10, 6.17, and the conversion of a pre-release v4 database), then `meta.schema` is set.
 3. **Journal mode.** Only after that does the backend switch the file to WAL (section 2.1).
 
 The log names the copy: `Upgraded the database to schema 6. A copy of the previous version was saved first: /data/backups/xexam-schema5-….db (restore it if you ever go back to an older version).` A brand-new database goes through the same steps (without a backup, and without a legacy bank), so new and migrated databases have the same structure.
@@ -301,11 +302,11 @@ If an older version did write to the file anyway, the next start of v0.5 or late
 
 ### 6.3 Compatibility with the old Python implementation
 
-Up to v0.4 both implementations used **the same file and the same schema**. This round trip was originally rehearsed with synthetic data (old Python creates the database → Rust reads and writes → old Python reads it back; the original's sha256 was unchanged before and after, and `PRAGMA integrity_check` passed). Since the old Python code was removed, tests keep the remaining guarantees in place: `sample.db` (a database written by the old implementation) migrates to the current schema keeping every question id, statistic, exam record and import, its backup still reports schema 1 with exactly the original rows, and the migrated file is byte-for-byte unchanged by any later open, read and close; and the `sqlite_master` of a new database is the old implementation's text plus the later additions. To actually roll back to the Python version, restore the schema-1 backup (6.2) and open it with the old image (`ghcr.io/yumin-space/xexam:v0.2.2`, only on the private GHCR, so `docker login ghcr.io` first).
+Up to v0.4 both implementations used **the same file and the same schema**. This round trip was originally rehearsed with synthetic data (old Python creates the database → Rust reads and writes → old Python reads it back; the original's sha256 was unchanged before and after, and `PRAGMA integrity_check` passed). **Since v2.0 (schema 11) that guarantee is given up on purpose**: the tables are rebuilt with foreign keys and the legacy tables are dropped, so the old Python version can no longer open a current file, and a fresh database no longer has the old text. What tests still keep in place: `sample.db` (a database written by the old implementation) migrates to the current schema keeping every question id, statistic, exam record and import, its backup still reports schema 1 with exactly the original rows, the migrated file is byte-for-byte unchanged by any later open, read and close, and a new database has the same `sqlite_master` as a migrated one. **The only way back to the Python version is the schema-1 backup**: restore it (6.2) and open it with the old image (`ghcr.io/yumin-space/xexam:v0.2.2`, only on the private GHCR, so `docker login ghcr.io` first).
 
 ### 6.4 Schema v3 (v0.6)
 
-From `meta.schema` `2` (backup `xexam-schema2-<YYYYmmdd-HHMMSS>.db`), or from `1` in the same transaction as 6.1. The v3 step creates `users`, `sessions`, `user_stats` and `user_settings` and adds `attempts.user_id`. If there are no users yet, it creates the default administrator `admin` with the password `admin` (which must be changed at the first sign-in) and gives it the existing data: every exam record without a user, a copy of every `stats` row in `user_stats` and of every `settings` row in `user_settings`. The old `stats` and `settings` tables stay, unused.
+From `meta.schema` `2` (backup `xexam-schema2-<YYYYmmdd-HHMMSS>.db`), or from `1` in the same transaction as 6.1. The v3 step creates `users`, `sessions`, `user_stats` and `user_settings` and adds `attempts.user_id`. If there are no users yet, it creates the default administrator `admin` with the password `admin` (which must be changed at the first sign-in) and gives it the existing data: every exam record without a user, a copy of every `stats` row in `user_stats` and of every `settings` row in `user_settings`. The old `stats` and `settings` tables stay at this step, unused (they are dropped at schema 11, 6.17).
 
 ### 6.5 Schema v4 (v0.7)
 
@@ -334,6 +335,10 @@ On every start, after any migration, the backend checks (read-only) for rows tha
 - **Users created by an older version**: `meta.users_known` holds the highest user id this version knows; it is written by the v4 migration and whenever this version creates a user (user ids are never reused). A user above it was created by an older version after a rollback, without any `user_banks` row; such users get a row for every existing bank and `new_banks = 1`, like the users of the upgrade, and the mark moves.
 - Without a mark (a database first opened by a build that did not write it), such banks and users cannot be told apart, so only the mark is written.
 - **Users without an identity stamp** (`uid = ''`, v0.8): a user that v0.7.5 created after a rollback has no stamp; it gets one. Its AI+ is off (the column default).
+
+- **Legacy tables re-created by an older version** (schema 11 or newer): a v1.9 backend runs the v1 `SCHEMA` on every open and so re-creates an empty `stats` table after a rollback. An empty `stats` or `settings` table is dropped again; one that holds rows is kept, and the log says `Warning: the legacy table <t> was re-created by an older version and holds <n> rows; it was kept.`
+- **The unique index on `users.uid`**: if `idx_users_uid` is missing (it was skipped because of duplicates, 6.17) and there are no duplicate stamps any more, it is created.
+- There is no full `foreign_key_check` on every start: enforcement prevents new orphans, and the check would cost more as the records grow. An up-to-date file is never written to.
 
 Then the questions of the old layouts are retired (section 4.2).
 
@@ -409,6 +414,44 @@ The main database moves from schema 9 to **schema 10** once, on the first start 
 
 The log row is `system.migrate` with `{"from": 9, "to": 10}` (one row, also when upgrading from an older schema, only when the file held data). A v1.5 backend opens a schema-10 file as it is: the new column is ignored (its own inserts get the default `0`).
 
+### 6.17 Schema v11 (v2.0)
+
+The main database moves from schema 10 to **schema 11** once, on the first start of the v2.0 backend, after one backup copy `backups/xexam-schema10-<date-time>.db` (from an older schema the upgrade goes straight to 11 with the one backup of that older schema). No column, name, type or value changes, and nothing visible changes in the app: the step is about integrity. It runs before the server listens, in one `BEGIN IMMEDIATE` transaction, with `foreign_keys` switched off outside the transaction (a guard switches them back on in every case, also on an error, and the start fails if that did not work). Nothing is written before the backup exists.
+
+1. **Orphans** are counted and then cleaned by fixed rules (table below).
+2. **Legacy tables**: `stats` and `settings` are dropped (their rows were copied to the first administrator in v0.6, or earlier in the same transaction for a file older than schema 3); their row counts are logged.
+3. **`users.uid`**: the unique index `idx_users_uid ON users(uid) WHERE uid <> ''` is created (duplicates: below).
+4. **Nine tables are rebuilt**, in the order `banks`, `questions`, `imports`, `attempts`, `attempt_items`, `sessions`, `user_stats`, `user_settings`, `user_banks`, each by SQLite's recipe: create `new_<table>` with the foreign keys, copy every row with an explicit column list, drop the old table, rename, restore the AUTOINCREMENT counter (`sqlite_sequence`, so ids are never reused: `meta.banks_known` and record ids rely on that) and create the indexes, including the two new ones. A column the definition does not know stops the upgrade (nothing is dropped silently); the row count of every table is compared before and after, and a difference stops the upgrade.
+5. **`PRAGMA foreign_key_check`** over the whole file: any row stops the upgrade.
+6. One activity row `system.migrate` with `{"from":10,"to":11}` (plus `"orphansRemoved"` when rows were removed) and `meta.schema` = `11`.
+
+Any stop rolls the whole transaction back: the file keeps schema 10 and all its content, the backup stays, and the next start tries again (and writes a new backup). The log says `cannot open database: the upgrade to schema 11 stopped (<reason>). Nothing was changed; the copy <path> was written.` On success it says `Upgraded the database to schema 11. A copy of the previous version was saved first: <path> (restore it if you ever go back to an older version).`
+
+**Orphan rules.** The backup holds every row that is removed.
+
+| Relation | Rule | Log line |
+|---|---|---|
+| `attempts.user_id` set, user missing | the record's `attempt_items`, then the record, are deleted | `Removed <n> orphaned rows of attempts.user_id (copy in the backup).` |
+| `attempt_items.attempt_id`, record missing | deleted | `Removed <n> orphaned rows of attempt_items.attempt_id (copy in the backup).` (also counts the items of the records removed in the row above) |
+| `sessions`, `user_stats`, `user_settings`: user missing | deleted | `Removed <n> orphaned rows of sessions.user_id (copy in the backup).`, likewise `user_stats.user_id` and `user_settings.user_id` |
+| `user_banks`: user or bank missing | deleted (the rule of the check in 6.6) | `Removed <n> orphaned rows of user_banks (copy in the backup).` |
+| `banks.owner_id` set, user missing | set to NULL, then given to the first administrator (stays NULL when there is none; the check of 6.6 handles it later) | `Gave <n> banks whose owner no longer exists to the first administrator.` |
+| `questions.bank_id`, `imports.bank_id` set, bank missing | set to NULL, content kept; the check of 6.6 attaches them to the legacy bank | `Detached <n> questions from a missing bank; they are kept in the legacy bank.` and `Detached <n> import records from a missing bank; they are kept in the legacy bank.` |
+
+The allowed NULLs (`attempts.user_id`, `questions.bank_id`, `imports.bank_id`, `banks.owner_id`) stay as they are. A legacy table that still had rows gives `Removed the unused legacy table <stats|settings> (<n> rows, already copied to the first administrator in v0.6; copy in the backup).`; an empty one (every fresh file has both) is dropped without a line.
+
+**Duplicate identity stamps.** If two users share a non-empty `uid` (only possible by hand edits or a copied file), the upgrade still succeeds, `idx_users_uid` is **not** created, no `uid` is changed (a new stamp would make the AI service drop that user's AI data, 8.3) and the log says `Warning: <n> user identity stamps are shared by more than one user; the unique index on users.uid was not created. Fix the duplicates (see database.md) and restart.` To fix it: stop the backend, copy the volume, list them with `sqlite3 xexam.db "SELECT uid, group_concat(username) FROM users WHERE uid <> '' GROUP BY uid HAVING COUNT(*) > 1"`, and for every user that should get a new identity run `UPDATE users SET uid = '' WHERE id = <id>;` (the AI data of that user is dropped, because the stamp changes). The next start gives an empty `uid` a new random stamp (6.6), and the start after that creates the index.
+
+**Disk and time.** Keep about **twice the size of the database** free (the backup plus the rebuilt tables and their log). On a large database the first start takes longer, most of it for `attempt_items`, because every row is copied once; the server listens only afterwards.
+
+Tested in `backend/tests/v20_db.rs` (every older schema, orphans, AUTOINCREMENT marks, duplicate stamps, a failed rebuild that changes nothing, enforced foreign keys, the rollback tolerance, a fresh file) and by step O of `tests/integration/migrate_check.py`.
+
+### 6.18 Going back to v1.9
+
+The **main database needs no restore**: a v1.9 backend opens a schema-11 file as it is (it treats a newer schema as current). Foreign keys are now enforced, and its delete paths already run child rows first. Its start runs the v1 `SCHEMA` and so re-creates an empty `stats` table; v2.0 drops it again at its next start (with rows in it, it is kept and a warning is logged, 6.6). Restoring `backups/xexam-schema10-….db` also works but throws away everything written since; it is **required only for versions older than v1.9**.
+
+The **AI database is different**: a v1.9 ai-service refuses schema 10, so going back means restoring the AI backup `backups/xexam-ai-schema9-<date-time>.db` (section 8.4, [migration.md](migration.md)) and losing every setting, chat, memory and usage row written since the upgrade.
+
 ## 7. The old `progress.json`
 
 Earlier versions kept scores in `progress.json`. As in the old Python version, **on every startup** the app checks whether the data directory contains it: if it does, and the database has no study records yet and has not been migrated before, it is migrated into the database (into the records of the first administrator). The `legacy_migrated` flag in `meta` guarantees it is migrated only once, and existing study records are never overwritten.
@@ -427,7 +470,7 @@ docker compose start
 
 > ⚠️ When upgrading from v0.1: the database file name changed, and the new version only reads `xexam.db`. If the data directory has another `.db` file but no `xexam.db`, the startup log will warn you; rename that file to `xexam.db` and start again (the old file is neither deleted nor read).
 
-## 8. The AI database (`xexam-ai.db`, v0.8; schema 6 since v1.1)
+## 8. The AI database (`xexam-ai.db`, v0.8; schema 10 since v2.0)
 
 ai-service keeps everything of AI in its **own** SQLite database, which only it opens and migrates; the backend never reads it, and ai-service never opens `xexam.db` (the data boundary, section 5 of [architecture.md](architecture.md)).
 
@@ -440,36 +483,17 @@ ai-service keeps everything of AI in its **own** SQLite database, which only it 
 
 Like the main database: `busy_timeout` 5000 ms, `foreign_keys=ON` (here the schema does use foreign keys, see below), `synchronous=FULL`, WAL mode (`XEXAM_AI_SQLITE_JOURNAL=delete` keeps the rollback journal, with the same rules as 2.1), and in addition **`secure_delete=ON`**. One connection behind a mutex, every write in `BEGIN IMMEDIATE … COMMIT`, the lock never held across an `.await`. The start-up log says `AI database: /data/xexam-ai.db (journal: wal)`.
 
-### 8.2 Tables (schema v4)
+### 8.2 Tables (as of schema 10)
 
 ```mermaid
 erDiagram
     settings {
         INTEGER id PK "always 1"
-        TEXT provider "openai · anthropic · gateway"
-        TEXT base_url "default https://api.openai.com/v1"
-        TEXT format "openai · anthropic (gateway only)"
-        INTEGER responses "1 = OpenAI Responses (format stays openai)"
-        TEXT gateway_auth "bearer · x-api-key · cf-aig-authorization"
-        TEXT model "'' = none"
-        INTEGER manual_model "1 = typed by hand"
-        INTEGER usage_option "OpenAI format: 1 = ask for token usage"
-        INTEGER max_tokens "Anthropic format: 4096 · 8192"
         INTEGER enabled "the AI+ feature switch"
-        INTEGER verified_at "unix seconds of the last passed test"
-        TEXT verified_fp "settings fingerprint of that test"
         INTEGER retention_days "1-3650, default 90"
         INTEGER updated_at "unix seconds"
         TEXT updated_by "username of the administrator"
-    }
-    secrets {
-        TEXT name PK "api_key · gateway_key"
-        TEXT key_id "id of the encryption key (16 hex)"
-        BLOB nonce "24 bytes"
-        BLOB ciphertext "XChaCha20-Poly1305 with tag"
-        TEXT hint "last 4 characters, '' for short keys"
-        INTEGER rev "counts every change"
-        INTEGER updated_at "unix seconds"
+        INTEGER features_off "global feature switch bits"
     }
     limits {
         INTEGER id PK "always 1"
@@ -478,12 +502,11 @@ erDiagram
         INTEGER chats_per_user "10-100000, default 1000"
         INTEGER messages_per_chat "20-5000, default 400"
         INTEGER memories_per_user "1-1000, default 50"
-        INTEGER memory_tokens "50-250000, default 1000 (v1.1; before v1.1 the limit was 200 characters: a value still at 200 becomes 1000, any other value is multiplied by 1.5 once, at the upgrade to schema 6; memory_chars stays unused)"
-        INTEGER message_chars "unused since v1.0 (was 1000-32000, default 16000); kept, never read or written"
+        INTEGER memory_tokens "50-250000, default 1000 (v1.1; a value still at 200 became 1000, any other value was multiplied by 1.5 once, at the upgrade to schema 6)"
         INTEGER calls_per_minute "1-100, default 5 (v1.0)"
         INTEGER calls_per_hour "1-2000, default 20 (v1.0)"
         INTEGER calls_per_day "1-20000, default 100 (v1.0)"
-        INTEGER reply_max_tokens "1-250000, default 3000: the answer length in tokens (v1.1; reply_max_chars, 1000 characters in v1.0, stays unused)"
+        INTEGER reply_max_tokens "1-250000, default 3000: the answer length in tokens (v1.1)"
         INTEGER updated_at "unix seconds"
         TEXT updated_by "username"
     }
@@ -577,8 +600,8 @@ erDiagram
     users |o--o{ usage : "usage.user_id"
 ```
 
-- **`settings`** (one row) never holds a secret. **`secrets`** holds the API key and the gateway key encrypted (section 11 of [security.md](security.md)); `key_id` tells which encryption key sealed a value, and `rev` feeds the fingerprint. **`limits`** (one row) holds the safety limits of AI settings, each with a `CHECK` of its range; they are not part of the fingerprint, so changing them never switches AI off.
-- **The fingerprint** is a SHA-256 over the provider, the address, the format and auth scheme (for a gateway), the model, the revisions of the keys and the current encryption key id, never over key material. AI counts as on only while `enabled = 1`, `verified_fp` equals the current fingerprint and the keys can be decrypted. A settings change that changes the fingerprint clears `enabled` and `verified_*` in the same transaction.
+- **`settings`** (one row) holds the AI+ feature switch `enabled`, `retention_days`, `features_off` (the global feature switch bits) and who changed it when. It never holds a secret or a connection: those live in `connections` and `connection_secrets` (section 11 of [security.md](security.md)); `key_id` of a sealed key tells which encryption key sealed it. **`limits`** (one row) holds the safety limits of AI settings, each with a `CHECK` of its range; changing them never switches AI off.
+- **Retired in schema 10 (v2.0)**: the single-connection columns of `settings`, the fingerprint that used to gate AI (`verified_at`, `verified_fp`), the table `secrets` and five length columns of `limits`. Nothing reads them any more (section 8.2g).
 - **`users`** holds only the users ai-service has seen (their id and identity stamp from the main database, and the last known name); a row is written at the first chat, memory or call of that user, not when they merely look. **`function_enabled`** (v2, default 1) is the per-user **pause** of the AI+ feature: 0 means an administrator paused the user (**Pause** in AI settings), 1 means active; a user without a row is active, and administrators are never set to 0. It is separate from the AI+ grant (`users.ai_enabled` in the main database): switching the feature off and on again does not clear a pause, only **Resume** does. The ids with 0 are what the heartbeat reports to the backend (section 5 of [architecture.md](architecture.md)). **`free_mode`** (v2, default 0) is the administrator's **free mode**: a state of the user, not of a chat. It is set in Settings under **AI chat mode** (`POST /api/ai/free`, administrators only) and is read only for administrators, so a value left on a former administrator does nothing.
 - **`chats`**, **`messages`** and **`memories`** are the user content. A chat has no mode: while an administrator's free mode is on, every message in any chat, old or new, is answered in free mode. Every message records the mode it was written in (**`messages.free`**, v2, default 0), so the history can tell the model when the mode changed (section 5 of [architecture.md](architecture.md)). Deleting a user's row deletes their chats, messages, memories and tasks (`ON DELETE CASCADE`); their **`usage`** rows stay with `user_id` NULL, so the totals per model and per day stay right. `memories.content` allows up to 2000000 characters since v1.1 (the highest memory limit, 250000 tokens); the current limit is checked by the service. Study messages (below) are written with `free = 0`.
 - **`usage`** has one row per model call (chats, tests, model lists, memory notes, and since v0.9 the study answers), with tokens, times and status, never any content, key or address. **`tokens_cached`** (v2) is the part of the input tokens that the provider served from its prompt cache (the **Cached** column of Usage in AI settings); NULL means the provider did not report it. **`purpose`** (v3) is `hint`, `explain` or `summary` for the model calls of the study features and NULL for AI Chat and for the calls without a chat; the **By feature** table of Usage groups the chat rows by it (AI Chat, hint, explain, summary; the four rows are always there, zeros included; `GET /api/ai/admin/usage` returns them as `byPurpose`). Its rows are kept (no retention); they are small. **The per-user request caps (v1.0)** read this table, not a counter of their own: the calls of a user in the last minute, the last hour and since 0:00 of the server's time zone are the `chat` and `memory` rows of that user (every status counts), plus the calls still running in memory. The count uses the existing `idx_usage_user` and no new index or table is added.
@@ -618,13 +641,13 @@ No file content is stored anywhere: an import file lives in memory while it is p
 The AI database moves from schema 6 to **schema 7** once (one transaction, one copy `backups/xexam-ai-schema6-<date-time>.db`), on the first start of the v1.3 ai-service.
 
 - **`connections`** (new): `id`, `name` (unique, 1 to 40 characters), `provider` (`openai`, `anthropic` or `gateway`), `base_url`, `format`, `responses` (v1.8), `gateway_auth`, `status` (`ok` or `broken`), `error_code`, `lists_models`, `tested_at`, `rev` (+1 on every save; the cache key and the lock), `sort`, and the creation and update facts. Up to 8 rows.
-- **`connection_secrets`** (new): the encrypted `api_key` and `gateway_key` of a connection (key id, 24-byte nonce, ciphertext, a hint of the last characters, and `aad_ver` 2, which binds the ciphertext to the connection; migrated rows keep 1 until their next rotation). The old `secrets` table stays, unused.
+- **`connection_secrets`** (new): the encrypted `api_key` and `gateway_key` of a connection (key id, 24-byte nonce, ciphertext, a hint of the last characters, and `aad_ver` 2, which binds the ciphertext to the connection; migrated rows keep 1 until their next rotation). The old `secrets` table was dropped in schema 10 (8.2g).
 - **`models`** (new): the pool: one row per tested (connection, model), with `status`, `error_code`, `context`, `latency_ms`, `tested_at`, `manual`, and the call settings. **`model_slots`** (new): six rows (`default`, `chat`, `study`, `summary`, `generate`, `import`), each pointing to a pool model or to nothing (an empty feature slot uses the default).
 - **`study_shared`** (new): the shared hints and analyses, **without a user id**: `question_id`, `content_hash`, `kind` (`hint` or `explain`), `lang`, `content`, `model`, `connection`, token counts, `gen` (1 + replacements), `hits`, and times. Unique on (`question_id`, `content_hash`, `kind`, `lang`); at most 50 000 rows, unused ones removed after `study_share_days`.
 - **`gen_items`** (new): the accepted questions of a **running** generation job (`task_id`, `no`, `data`), deleted when the job ends. A removed question keeps its number.
 - `messages`: `reasoning`, `reasoning_ms` and `reasoning_truncated` (below), `parent_id` and `connection` (the connection name at call time); `chats`: `leaf_id` (the shown branch) and `pick_conn`, `pick_model` (an administrator's model for a free-mode chat; no foreign key: removing a connection clears the picks that point to it, and a start clears any that point to a missing connection). Index `idx_messages_parent`. A chat is a tree by `parent_id`; what is shown or sent to the model is the path from the leaf up to the root, and `messages_per_chat` counts every version.
 - `settings.features_off` (bit mask of the six global switches; the hint and explain bits are always equal); `usage` and `gen_calls` get `connection_id` and `connection`.
-- `limits`: `calls_admins_exempt` (1), `study_share` (1), `study_share_days` (180), `gen_max_chunks` (8), `summary_max_items` (40), `import_file_questions` (1 to 300; the old 50-capped `import_max_questions` stays unused) and `daily_token_budget` (0 = off).
+- `limits`: `calls_admins_exempt` (1), `study_share` (1), `study_share_days` (180), `gen_max_chunks` (8), `summary_max_items` (40), `import_file_questions` (1 to 300; the old 50-capped `import_max_questions` was dropped in schema 10) and `daily_token_budget` (0 = off).
 
 The one-time statements fill the six slots, the chat tree (`parent_id` = the message before, `leaf_id` = the last one), connection 1 with its keys and the default slot, the hint and explain bits of `users.features_off` (a user with only one of the two off gets both on), and the limits as described in section 000.1 of [migration.md](migration.md). A new file and an upgraded file end with the same tables. A v1.2 ai-service refuses a schema-7 file; restore the schema-6 copy to go back.
 
@@ -658,6 +681,20 @@ The AI database moves from schema 8 to **schema 9** once, on the first start of 
 - **Job waiting flag**: while a generation or import job waits for provider quota, `tasks.payload` carries a transient `rateWait` flag (never bumps `updated_at`); it is the `waiting` field of the job objects.
 - **Going back**: a v1.8 ai-service refuses schema 9 (`written by a newer ai-service`): stop, restore `backups/xexam-ai-schema8-<date-time>.db` as in 8.4, and run the v1.8 images. Settings, chats and usage written after the upgrade are not in the copy and are lost.
 
+### 8.2g Schema v10 (v2.0)
+
+The AI database moves from schema 9 to **schema 10** once, on the first start of the v2.0 ai-service, after one backup copy `backups/xexam-ai-schema9-<date-time>.db` (the same mechanism as every earlier step; if the copy cannot be written the service does not start and nothing is changed). The step only removes what no code reads any more: no setting, API answer or behaviour changes. In **one transaction**:
+
+- **The table `secrets`** is dropped: the provider keys of the schemas before 7. Since v1.2 the live keys are in `connection_secrets`, and the upgrade to schema 7 copied the old key into connection 1, so nothing reads `secrets`. The log says `Removed the unused legacy table secrets (<n> rows) and <k> unused columns (copy in the backup).`, counts only, never values.
+- **Sixteen columns are dropped** with `ALTER TABLE … DROP COLUMN`, each only when present: ten of `settings` (`provider`, `base_url`, `format`, `gateway_auth`, `model`, `manual_model`, `usage_option`, `max_tokens`, `verified_at`, `verified_fp`: the single-connection era), five of `limits` (`message_chars`, `memory_chars`, `reply_max_chars`, `gen_call_chars`, `import_max_questions`: the lengths in characters and the old 50-question cap) and `chats.free` (only a pre-release build of schema 2 had it). After it `settings` has `id`, `enabled`, `retention_days`, `updated_at`, `updated_by` and `features_off`.
+- **Checks before the commit**: `settings` and `limits` must still hold exactly one row each (otherwise the transaction rolls back), and `PRAGMA foreign_key_check` is run and its count logged (it does not block: the AI foreign keys have been enforced since v0.8). Then `meta.schema` becomes `10`. After the commit, in WAL mode, one `wal_checkpoint(TRUNCATE)` runs, so that the freed pages of `secrets` (overwritten by `secure_delete`) leave the `-wal` file too.
+
+**Why it is safe.** The older steps that still read these items (moving the old settings and key into connection 1 from schemas before 7, the length conversions of schemas 5 and 6) run earlier in the same transaction, so a file from any older schema still ends with its connection, its key and its default model. A new database is built by the same history steps followed by the same drop, so a new and an upgraded file have the same `sqlite_master`. The repair that adds a missing column at the same version skips the retired columns, so they are never added back. The meta flag `import_max_50` is no longer written (the live limit is `import_file_questions`); existing meta rows stay. A user-made trigger or view that uses a dropped column makes the upgrade fail with a clear message and roll back; remove it and start again.
+
+**Not done, on purpose.** No new index (the scan of `chats WHERE pick_conn = ?` is a rare administrator action), no new `CHECK` and no table rebuild (a `CHECK` needs a rebuild of a parent or large table), no renames. The mismatches that stay are listed in 9.4.
+
+**Going back to v1.9** needs the backup: a v1.9 ai-service refuses schema 10 (`written by a newer ai-service`). Stop, restore `backups/xexam-ai-schema9-<date-time>.db` as in 8.4, run the v1.9 images; settings, chats and usage written after the upgrade are lost. That copy, like every older one, still holds the old key ciphertext (section 11 of [security.md](security.md)).
+
 ### 8.3 What the service does with it
 
 - **Opening**: the tables are created (`IF NOT EXISTS`), the `settings` and `limits` rows are added with their defaults, and `meta.schema` is set to `4` on a new database. A database with `meta.schema` `1`, `2` or `3` is upgraded (see Migrations below). A database written by a newer ai-service (`meta.schema` above `4`) is refused: the service logs one line and does not start, so an older image never opens a newer file. Answers left `streaming` by a crash or a kill are marked `error` with the code `ai.interrupted` (only when there are any; `idx_messages_streaming` finds them).
@@ -666,9 +703,9 @@ The AI database moves from schema 8 to **schema 9** once, on the first start of 
 - **Deleted content**: with `secure_delete=ON` freed pages are overwritten, and after every delete of user content the service runs `PRAGMA wal_checkpoint(TRUNCATE)` (at most once every 10 seconds) so that the old pages do not remain in `xexam-ai.db-wal`. Backups and volume snapshots still have what was deleted.
 - **Stopping**: on a normal stop the running answers are saved as stopped, then a checkpoint runs.
 - **Migrations**: schema v1 was the first schema (a pre-release v0.8 build); **schema v2** (v0.8) added four columns: `users.function_enabled` (default 1), `users.free_mode` (default 0), `messages.free` (default 0) and `usage.tokens_cached` (NULL); **schema v3** (v0.9) adds **twelve columns and three indexes** and nothing else: `chats.kind` (default `chat`), `chats.ref`, `chats.record_id`, `messages.kind` (default `chat`), `messages.question_id`, `messages.question_no`, `messages.source`, `messages.lang`, `messages.sample_used`, `messages.sample_usable`, `messages.sample_wrong` and `usage.purpose` (NULL), plus `idx_chats_ref`, `idx_messages_study` and `idx_messages_streaming`. No row is rewritten and no row changes meaning: every old chat and message is `chat` and every old usage row has no purpose. The same additive step creates a new database and upgrades an old one, so both end up with the same tables and the same `sqlite_master`. **Every database of schema 1, 2 or 3 is copied first** with `VACUUM INTO` to `backups/xexam-ai-schema<N>-<YYYYMMDD-HHMMSS>.db` inside the AI data directory (`<N>` is the schema it had, so `xexam-ai-schema2-…` for a v0.8 database and `xexam-ai-schema3-…` for a v0.9 or v0.9.1 database; directory mode 0700; the time is the container's local time; a `-2`, `-3`… suffix if the name is taken; an empty database is copied too), then upgraded in one transaction, and one log line names the copy: `Upgraded the AI database to schema 4. A copy of the previous version was saved first: <path>.` If the copy cannot be made the service does not start and nothing is changed. A schema-2 file of an earlier pre-release build that lacks some of the v2 columns gets them added in the same step. Reopening a schema-3 database writes nothing. **Keep free disk space of about the size of the AI database** for the copy; copies are never pruned and keep chats and memories that were deleted later (delete them yourself when that matters, section 11 of [security.md](security.md)). **Going back to v0.8 needs the copy**: a v0.8 ai-service refuses schema 3 (`written by a newer ai-service … restore a backup`) and exits, so restore `xexam-ai-schema2-….db` as in 8.4; chats, memories, settings and usage written after the upgrade are not in it and are lost.
-- **Schema 4 (v1.0)** adds **four columns** and nothing else: `limits.calls_per_minute` (default 5), `limits.calls_per_hour` (default 20), `limits.calls_per_day` (default 100) and `limits.reply_max_chars` (default 1000), each with a `CHECK` of its range (the ranges are the same as in the application's list of limits). Nothing is dropped: `limits.message_chars` stays in the table, unused. Once, in the same transaction, `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300` moves the old default of the memory length to the new one; any other value an administrator chose stays. The same step runs on a new database and on an upgrade from 1, 2 or 3, so both end up with the same `sqlite_master`, and never again on a later start. A database upgraded from 1, 2 or 3 gets the defaults for the four new columns; nothing is derived from old values. **Keep the copy of the schema-3 database** (`backups/xexam-ai-schema3-<date-time>.db`): a v0.9.1 ai-service refuses schema 4 with its existing message, so going back means restoring that copy and running the v0.9.1 images (section 8.4 and [migration.md](migration.md)).
+- **Schema 4 (v1.0)** adds **four columns** and nothing else: `limits.calls_per_minute` (default 5), `limits.calls_per_hour` (default 20), `limits.calls_per_day` (default 100) and `limits.reply_max_chars` (default 1000), each with a `CHECK` of its range (the ranges are the same as in the application's list of limits). Nothing is dropped at this step (`limits.message_chars` stayed in the table unused, until schema 10 dropped it). Once, in the same transaction, `UPDATE limits SET memory_chars = 200 WHERE memory_chars = 300` moves the old default of the memory length to the new one; any other value an administrator chose stays. The same step runs on a new database and on an upgrade from 1, 2 or 3, so both end up with the same `sqlite_master`, and never again on a later start. A database upgraded from 1, 2 or 3 gets the defaults for the four new columns; nothing is derived from old values. **Keep the copy of the schema-3 database** (`backups/xexam-ai-schema3-<date-time>.db`): a v0.9.1 ai-service refuses schema 4 with its existing message, so going back means restoring that copy and running the v0.9.1 images (section 8.4 and [migration.md](migration.md)).
 
-- **Schema 5 to 6 (v1.1)** moves the lengths to tokens. Three columns are added with their own `CHECK` ranges: `limits.reply_max_tokens` (1 to 250000, default 3000), `limits.memory_tokens` (50 to 250000, default 1000) and `limits.gen_call_tokens` (1000 to 250000, default 20000). `reply_max_chars`, `memory_chars` and `gen_call_chars` stay in the table, unused. Once, in the same transaction: a value still at its old default becomes the new default, any other value is multiplied by 1.5 and clamped to its range. The `memories` table is rebuilt once (rows and ids kept) so that one memory may hold up to 2000000 characters. Upgrading from schema 5 writes the copy `backups/xexam-ai-schema5-<date-time>.db` first.
+- **Schema 5 to 6 (v1.1)** moves the lengths to tokens. Three columns are added with their own `CHECK` ranges: `limits.reply_max_tokens` (1 to 250000, default 3000), `limits.memory_tokens` (50 to 250000, default 1000) and `limits.gen_call_tokens` (1000 to 250000, default 20000). `reply_max_chars`, `memory_chars` and `gen_call_chars` stay in the table at this step (schema 10 dropped them). Once, in the same transaction: a value still at its old default becomes the new default, any other value is multiplied by 1.5 and clamped to its range. The `memories` table is rebuilt once (rows and ids kept) so that one memory may hold up to 2000000 characters. Upgrading from schema 5 writes the copy `backups/xexam-ai-schema5-<date-time>.db` first.
 
 ### 8.4 Backup and restore of the AI volume
 
@@ -687,9 +724,9 @@ Restore it like the main volume: stop, remove `xexam-ai.db-wal` and `xexam-ai.db
 - A restored AI volume and a main volume from another point in time fit together: users that no longer exist lose their AI data at the next reconcile, and a user id that now belongs to another account is recognised by its stamp.
 - `xexam_ai_auth` needs no backup: it holds only `internal.token`, which the backend creates again when it is missing (the AI service picks up the new token by itself).
 
-## 9. Schema map of both databases (v1.9)
+## 9. Schema map of both databases (v2.0)
 
-A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 10 and the AI database at schema 9; table and column names are exactly as stored. Nothing here changes a table.
+A reading guide: which tables exist, what each is for, and how they relate. It describes the main database at schema 11 and the AI database at schema 10; table and column names are exactly as stored. Nothing here changes a table.
 
 ### 9.1 Main database `xexam.db` (backend)
 
@@ -699,24 +736,23 @@ A reading guide: which tables exist, what each is for, and how they relate. It d
 | Study records and the wrong-answer notebook | `attempts`, `attempt_items`, `user_stats` | `attempts` is what the app calls a study record (exam or practice) |
 | Users and access | `users`, `sessions`, `user_banks`, `user_settings` | |
 | System | `meta`, `system_settings`, `activity_log` | |
-| Legacy (unused) | `stats`, `settings` | Copied to `user_stats` and `user_settings` by the v0.6 step; read only when upgrading from schema 2 or older |
 
-The main database declares **no foreign keys**: the relations below are kept by the code (deletes run child rows first), so the diagram shows them dotted.
+Since schema 11 the main database declares foreign keys, all `ON DELETE NO ACTION`, shown as solid lines (a delete that would leave a child row behind fails; the code deletes child rows first, as before). Dotted lines are relations kept without a foreign key on purpose (see the notes of `attempt_items`, `user_stats`, `system_settings` and `activity_log`).
 
 ```mermaid
 erDiagram
-  users ||..o{ sessions : "user_id"
-  users ||..o{ attempts : "user_id (NULL = unclaimed old record)"
-  users ||..o{ user_stats : "user_id"
-  users ||..o{ user_settings : "user_id"
-  users ||..o{ user_banks : "user_id"
-  users ||..o{ banks : "owner_id"
-  users |o..o{ system_settings : "updated_by"
+  users ||--o{ sessions : "user_id"
+  users |o--o{ attempts : "user_id (NULL = unclaimed old record)"
+  users ||--o{ user_stats : "user_id"
+  users ||--o{ user_settings : "user_id"
+  users ||--o{ user_banks : "user_id"
+  users |o--o{ banks : "owner_id"
+  users |o..o{ system_settings : "updated_by (no FK)"
   users |o..o{ activity_log : "user_id (snapshot, not linked)"
-  banks ||..o{ user_banks : "bank_id"
-  banks ||..o{ questions : "bank_id"
-  banks ||..o{ imports : "bank_id"
-  attempts ||..o{ attempt_items : "attempt_id"
+  banks ||--o{ user_banks : "bank_id"
+  banks |o--o{ questions : "bank_id"
+  banks |o--o{ imports : "bank_id"
+  attempts ||--o{ attempt_items : "attempt_id"
   questions |o..o{ attempt_items : "question_id (soft)"
   questions |o..o{ user_stats : "question_id (soft)"
 
@@ -850,30 +886,23 @@ erDiagram
     text key PK
     text value
   }
-  stats {
-    text question_id PK
-  }
-  settings {
-    text key PK
-  }
 ```
 
 | Table | Purpose | Key and links | Notes |
 |---|---|---|---|
 | `meta` | Database-level key/value: `schema`, `banks_known`, `users_known`, `legacy_migrated` | PK `key` | |
-| `banks` | Question banks, including the job key and facts of AI-generated banks | PK `id`; `owner_id` to `users` | `ai_job` is a partial unique index |
-| `questions` | One row per question; the whole question (all languages) is JSON in `data` | PK `id` (text); `bank_id` to `banks` | Indexes by sheet, bank and layout |
-| `imports` | Result counts of each Excel import | PK `id`; `bank_id` to `banks` | |
-| `attempts` | Study records: one row per exam or practice session | PK `id`; `user_id` to `users` (NULL = unclaimed old record) | `sheets` and `banks` are JSON snapshots on purpose |
-| `attempt_items` | The answer to each question of a record | PK `(attempt_id, seq)`; `question_id` to `questions` (soft) | A record may outlive its question |
-| `user_stats` | Per user and question: attempts, correct, wrong, streak (wrong-answer notebook) | PK `(user_id, question_id)` | |
-| `users` | Accounts, role, permissions, AI+ switch, identity stamp `uid`, last sign-in and last activity (IP, place, user agent) | PK `id`; `username` unique, case-insensitive | Mixes account data with sign-in telemetry |
+| `banks` | Question banks, including the job key and facts of AI-generated banks | PK `id`; `owner_id` to `users` (nullable) | `ai_job` is a partial unique index; `idx_banks_owner` |
+| `questions` | One row per question; the whole question (all languages) is JSON in `data` | PK `id` (text); `bank_id` to `banks` (nullable) | Indexes by sheet, bank and layout (`idx_questions_sheet` is kept as it was) |
+| `imports` | Result counts of each Excel import | PK `id`; `bank_id` to `banks` (nullable) | `idx_imports_bank` since schema 11 |
+| `attempts` | Study records: one row per exam or practice session | PK `id`; `user_id` to `users` (NULL = unclaimed old record) | `sheets` and `banks` are JSON snapshots on purpose; `mode` has no `CHECK` (old records may hold any JSON) |
+| `attempt_items` | The answer to each question of a record | PK `(attempt_id, seq)`; `attempt_id` to `attempts`; `question_id` to `questions` (soft, **no foreign key**) | A record may outlive its question, and legacy banks use unscoped ids |
+| `user_stats` | Per user and question: attempts, correct, wrong, streak (wrong-answer notebook) | PK `(user_id, question_id)`; `user_id` to `users`; `question_id` soft, **no foreign key** | `idx_user_stats_question` since schema 11 (deleting a bank looks rows up by question) |
+| `users` | Accounts, role, permissions, AI+ switch, identity stamp `uid`, last sign-in and last activity (IP, place, user agent) | PK `id`; `username` unique, case-insensitive | Mixes account data with sign-in telemetry; `uid` is unique among non-empty values (`idx_users_uid`) |
 | `sessions` | Sign-in sessions | PK `token_hash`; `user_id` to `users` | Times are unix seconds |
 | `user_banks` | Which banks a plain user sees | PK `(user_id, bank_id)` | |
 | `user_settings` | Per-user interface settings (JSON values) | PK `(user_id, key)` | |
-| `system_settings` | Site-wide switches (activity retention, visits, sign-in info, location source) | PK `key`; `updated_by` is a user id | |
+| `system_settings` | Site-wide switches (activity retention, visits, sign-in info, location source) | PK `key`; `updated_by` is a user id, **no foreign key** | A write-only audit field; a link would block deleting an administrator who once changed a site switch |
 | `activity_log` | Activity history, including the rows ai-service forwards | PK `id`; `src_id` partial unique (de-duplication) | `username` and `role` are snapshots, so the log stays readable after a user is deleted |
-| `stats`, `settings` | Legacy, see above | | |
 
 ### 9.2 AI database `xexam-ai.db` (ai-service)
 
@@ -886,7 +915,6 @@ erDiagram
 | AI generation and import | `tasks`, `gen_items`, `gen_calls` | `tasks.kind` is `bank_gen` for both; the payload tells them apart |
 | Metering | `usage` (chat, hint, analysis, summary, checks), `gen_calls` (generation and import) | Two tables on purpose: the per-user call caps read only `usage` |
 | System | `meta`, `audit_outbox` | |
-| Legacy | `secrets`; the old connection columns of `settings`; four retired length columns of `limits` | Read only when upgrading from an old schema |
 
 Solid lines are declared foreign keys; dotted lines are relations kept without a foreign key on purpose (message branches, a chat's chosen connection, usage history).
 
@@ -1103,9 +1131,6 @@ erDiagram
     blob key_ciphertext
     int updated_by
   }
-  secrets {
-    text name PK
-  }
   meta {
     text key PK
     text value
@@ -1120,8 +1145,8 @@ erDiagram
 | Table | Purpose | Key and links | Notes |
 |---|---|---|---|
 | `meta` | `schema`, `secret_rev`, one-time flags | PK `key` | |
-| `settings` | One row: the AI master switch `enabled`, `retention_days`, `features_off` (global switch bits) | PK `id = 1` | Eleven old single-connection columns remain, read only by old upgrades |
-| `limits` | One row: every limit (concurrency, chat and memory sizes, per-user call caps, answer length, generation and import limits, shared cache, daily token budget) and, since v1.9, the pacing settings | PK `id = 1`; every column has a range `CHECK` | Four retired length columns stay, unused |
+| `settings` | One row: the AI master switch `enabled`, `retention_days`, `features_off` (global switch bits) | PK `id = 1` | Since schema 10 only `id`, `enabled`, `retention_days`, `updated_at`, `updated_by` and `features_off` remain |
+| `limits` | One row: every limit (concurrency, chat and memory sizes, per-user call caps, answer length, generation and import limits, shared cache, daily token budget) and, since v1.9, the pacing settings | PK `id = 1`; every column has a range `CHECK` | The five retired length columns were dropped in schema 10 |
 | `users` | Mirror of the main users (`id` plus `stamp` = main `uid`) with `function_enabled` (paused), `free_mode` and `features_off` (per-user feature bits) | PK `id` (given by the main database) | A different stamp means a different person: the AI data is dropped |
 | `chats` | AI Chat conversations and the chat of each practice, exam or record summary | PK `id`; `user_id` to `users` (CASCADE) | `leaf_id` and `pick_conn` have no foreign key on purpose |
 | `messages` | Messages and their branch versions; hints, analyses and summaries too | PK `id`; `chat_id` to `chats` (CASCADE) | Some columns only matter for one `kind` |
@@ -1137,7 +1162,6 @@ erDiagram
 | `model_slots` | Which pool model each feature uses, and its thinking strength | PK `slot`; `model_id` to `models` (SET NULL) | |
 | `study_shared` | The shared cache of hints and analyses | PK `id`; unique `(question_id, content_hash, kind, lang)` | `lang` uses `zh`, while `messages.lang` uses `zh-CN` |
 | `geo_settings` | The external location lookup (one row, written only after a passing test) | PK `id = 1` | |
-| `secrets` | Legacy: the keys of schemas before 7 | PK `name` | Unused by the running code |
 
 ### 9.3 References between the two databases
 
@@ -1157,4 +1181,6 @@ A foreign key cannot cross two files, so these links are kept by identity and by
 - Times are `*_at INTEGER` (unix seconds, UTC); booleans are `INTEGER NOT NULL DEFAULT x CHECK (col IN (0, 1))`; enumerations carry a `CHECK`.
 - An id that points into the same database is `*_id` with a foreign key and a stated `ON DELETE`; when there is none, a comment says why.
 - A new `updated_by` is a user id; language codes are `en`, `zh-CN` and `ja`.
+- Foreign keys of the main database are `ON DELETE NO ACTION`, written out: a parent is deleted only after its children (no `CASCADE`, no `SET NULL`). The AI database uses `CASCADE` and `SET NULL` as listed in 9.2.
 - Existing names and the older text time columns of the main database are kept as they are.
+- **Mismatches kept on purpose** (documented, not changed in v2.0): the main database stores times as text (`YYYY-MM-DD HH:MM:SS`) and the AI database as unix seconds; `updated_by` is a user id in `system_settings` and a username (TEXT) in the AI database; `study_shared.lang` uses `zh` while `messages.lang` uses `zh-CN`; some names are historical (`attempts` is what the app calls a study record, `legacy_ids`, `banks.filename`).

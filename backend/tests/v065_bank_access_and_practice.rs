@@ -362,7 +362,10 @@ fn v3_database_migrates_to_v4_with_a_backup_everyone_keeping_every_bank() {
         assert_eq!(count(&b, "SELECT COUNT(*) FROM attempts"), 2);
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     // every user that existed keeps seeing every bank (a row for each, 3 users x 2 banks) and gets the banks imported later
     // (v0.7: the two settings are independent); nobody gets the bank permission
     assert_eq!(count(&c, "SELECT COUNT(*) FROM users WHERE new_banks=1"), 3);
@@ -438,7 +441,10 @@ fn a_fresh_database_is_schema_4_and_its_default_administrator_sees_everything() 
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none(), "nothing to back up");
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     // the default administrator exists at the v4 step of a new database: it gets "banks imported later" like every user
     assert_eq!(count(&c, "SELECT new_banks FROM users WHERE id=1"), 1);
     assert_eq!(s.viewer(1).expect("viewer"), Viewer::admin(1));
@@ -461,8 +467,9 @@ fn open_gives_ownerless_banks_to_the_first_administrator_and_drops_stale_assignm
     {
         // what an older binary could leave behind after a rollback
         let c = raw(&db);
+        // (an older binary does not enforce foreign keys; the raw connection does, so switch them off to plant the damage)
         c.execute_batch(&format!(
-            "UPDATE banks SET owner_id=NULL WHERE id={b1}; UPDATE banks SET owner_id=77 WHERE id={b2}; \
+            "PRAGMA foreign_keys=OFF; UPDATE banks SET owner_id=NULL WHERE id={b1}; UPDATE banks SET owner_id=77 WHERE id={b2}; \
              DELETE FROM user_banks; INSERT INTO user_banks(user_id, bank_id) VALUES (1, {b1}), (55, {b1}), (1, 99);"
         ))
         .expect("damage");

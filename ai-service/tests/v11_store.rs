@@ -89,12 +89,12 @@ fn an_upgraded_schema_4_file_equals_a_fresh_schema_5_file() {
     assert_eq!((name.as_str(), off), ("kept", 0));
     let limits: (i64, i64, i64, i64) = c
         .query_row(
-            "SELECT gen_per_day, gen_running, import_max_mb, import_max_questions FROM limits WHERE id = 1",
+            "SELECT gen_per_day, gen_running, import_max_mb, import_file_questions FROM limits WHERE id = 1",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )
         .expect("limits");
-    assert_eq!(limits, (3, 2, 20, 50));
+    assert_eq!(limits, (3, 2, 20, 100));
 }
 
 #[test]
@@ -271,45 +271,4 @@ fn the_unlimited_switches_default_on_and_an_older_schema_6_file_is_moved_once_af
     drop(c);
     drop(open(dir.path()));
     assert_eq!(read(dir.path()).0, 0);
-}
-
-#[test]
-fn a_stored_import_limit_above_fifty_is_lowered_once_after_a_backup() {
-    let dir = tempfile::tempdir().expect("dir");
-    drop(open(dir.path()));
-    let read = |p: &std::path::Path| -> i64 {
-        Connection::open(p.join(DB_FILE))
-            .expect("open")
-            .query_row(
-                "SELECT import_max_questions FROM limits WHERE id = 1",
-                [],
-                |r| r.get(0),
-            )
-            .expect("limit")
-    };
-    // a fresh file: the default 50 and no backup
-    assert_eq!(read(dir.path()), 50);
-    assert!(!dir.path().join("backups").exists());
-    // a file written while the ceiling was 100 (the old CHECK allowed it; no marker)
-    let c = Connection::open(dir.path().join(DB_FILE)).expect("open");
-    c.execute_batch(
-        "PRAGMA ignore_check_constraints = ON; UPDATE limits SET import_max_questions = 100;",
-    )
-    .expect("old value");
-    c.execute("DELETE FROM meta WHERE key = 'import_max_50'", [])
-        .expect("marker");
-    drop(c);
-    drop(open(dir.path()));
-    assert_eq!(read(dir.path()), 50);
-    let copies = std::fs::read_dir(dir.path().join("backups"))
-        .expect("backups")
-        .count();
-    assert_eq!(copies, 1, "the backup of the old file");
-    // a value an administrator set later (below the ceiling) stays across restarts
-    let c = Connection::open(dir.path().join(DB_FILE)).expect("open");
-    c.execute("UPDATE limits SET import_max_questions = 30", [])
-        .expect("admin choice");
-    drop(c);
-    drop(open(dir.path()));
-    assert_eq!(read(dir.path()), 30);
 }

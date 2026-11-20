@@ -380,7 +380,7 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
     );
     assert!(u.password_hash.starts_with("$argon2id$"));
     assert!(auth::verify_password("admin", &u.password_hash));
-    // the claim: attempts, a copy of stats and settings (the old tables stay)
+    // the claim: attempts, a copy of stats and settings (the old tables are dropped at schema 11, v2.0)
     let c = raw(&db);
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempts WHERE user_id IS NOT 1"),
@@ -400,16 +400,31 @@ fn v2_database_migrates_to_v3_with_a_backup_an_admin_and_the_data_claimed() {
         ),
         before[1]
     );
+    // v2.0: the legacy `stats` / `settings` tables are dropped at schema 11; their rows live on in the administrator's
+    // rows (above) and in the backup (checked above)
     assert_eq!(
-        rows(&c, "SELECT * FROM stats ORDER BY question_id"),
+        rows(
+            &c,
+            "SELECT question_id, attempts, correct, wrong, streak, last, at FROM user_stats              WHERE user_id=1 ORDER BY question_id"
+        ),
         before[0]
     );
+    for t in ["stats", "settings"] {
+        assert_eq!(
+            count(
+                &c,
+                &format!("SELECT COUNT(*) FROM sqlite_master WHERE name='{t}'")
+            ),
+            0,
+            "{t} is gone"
+        );
+    }
     assert_eq!(
         c.query_row("SELECT value FROM meta WHERE key='schema'", [], |r| r
             .get::<_, String>(0))
             .expect("schema"),
         // v0.6.5: v2 → v3 → v4 in one go (v4: tests/v065_bank_access_and_practice.rs); v0.8: → v5 as well; v0.9: → v6; v1.1: → v7; v1.3: → v8; v1.4: → v9
-        "10"
+        xexam_backend::database::schema::SCHEMA_VERSION
     );
     // what the API shows for the administrator: the old data, in the old order
     let p = s.progress(1).expect("progress");

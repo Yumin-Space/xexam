@@ -134,7 +134,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.9", "arch": "x86_64", "canShutdown": false}
+{"version": "2.0", "arch": "x86_64", "canShutdown": false}
 ```
 公開。バージョン番号は `VERSION` ファイルの `CODE_VERSION`（または `XEXAM_VERSION`）です。`arch` はサーバーの CPU アーキテクチャ、`canShutdown` はプログラムが `--allow-shutdown` 付きで起動されたときだけ `true` です。*(v0.7.5)* キー `bankCount`（ライブラリ全体の有効な問題の数）はなくなりました。このルートは公開で、ログインしたページは見られる問題の数を `GET /api/bank` と `GET /api/banks` から数えるためです。このルートは今もデータベースを読むので、データベースを読めないときは 500 を返し、（このルートに問い合わせる）コンテナのヘルスチェックはバックエンドを unhealthy と報告します。
 
@@ -1219,6 +1219,12 @@ AI のルートだけが変わり、どの変更も追加か既定値です。�
 - **追加**：`POST /api/ai/admin/connections/enabled`、接続の `enabled`、`ai.connectionOff`（409）と `ai.gen.providerDaily`、ジョブオブジェクトの `waiting`、`GET /api/banks/download` の `langs`。
 - **変更**：スロットは 7 つ（`study` を `hint` と `explain` に分割）、思考の強さの系統は 4 つ（`gemma` を廃止、400）、機能の全体スイッチは独立して管理者にも有効、`admin/limits` は 36 のキー、`bank.download` のアクティビティ詳細に `langs`。
 - **データベース**：AI データベースは起動時にバックアップのコピーを作ってからスキーマ 9 へ移行します（[database.md](database.md) の 8.2f 節）。メインのデータベースと、上に書いていない公開ルートは変わりません。
+
+### v2.0 での変更（v1.9 との比較）
+
+- **ルートの変更はありません。** 新しいルート、フィールド、コード、メッセージはなく、応答はすべて同じです。
+- **バージョン**：`GET /api/info` は `"version": "2.0"` を返し、AI サービスの `/healthz` も同じです。メインのデータベースはスキーマ 11 です。
+- **データベース**：AI データベースはスキーマ 10 です（起動時にバックアップのコピーを作ってから移行します。[database.md](database.md) の 8.2g 節。メインのデータベースも同様です。6.17 節）。
 
 ## 8. 呼び出し例
 

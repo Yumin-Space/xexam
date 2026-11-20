@@ -142,15 +142,24 @@ fn fresh_database_is_schema_2_without_a_legacy_bank() {
     let c = raw(&db);
     // intended difference (v0.6, v0.6.5, v0.8): a new database goes straight to the current schema (tests/v06_users_and_sign_in.rs,
     // tests/v065_bank_access_and_practice.rs, tests/v08_ai_link.rs)
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     assert_eq!(count(&c, "SELECT COUNT(*) FROM banks"), 0);
-    for t in ["banks", "attempt_items", "settings"] {
+    for (t, want) in [
+        ("banks", 1),
+        ("attempt_items", 1),
+        // v2.0 (schema 11): the legacy tables are gone from a new database
+        ("settings", 0),
+        ("stats", 0),
+    ] {
         assert_eq!(
             count(
                 &c,
                 &format!("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='{t}'")
             ),
-            1,
+            want,
             "{t}"
         );
     }
@@ -245,7 +254,22 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
     // the migrated database: every question id / stat / attempt / import unchanged, all attached to one legacy bank
     let c = raw(&db);
     assert_eq!(rows(&c, Q_COLS), q0);
-    assert_eq!(rows(&c, "SELECT * FROM stats ORDER BY question_id"), s0);
+    // v2.0: the legacy `stats` table is dropped at schema 11; its rows are the administrator's `user_stats` (the backup
+    // above still holds the table)
+    assert_eq!(
+        rows(
+            &c,
+            "SELECT question_id, attempts, correct, wrong, streak, last, at FROM user_stats              WHERE user_id=1 ORDER BY question_id"
+        ),
+        s0
+    );
+    assert_eq!(
+        count(
+            &c,
+            "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('stats', 'settings')"
+        ),
+        0
+    );
     assert_eq!(rows(&c, ATTEMPT_COLS), a0);
     assert_eq!(rows(&c, IMPORT_COLS), i0);
     assert_eq!(
@@ -279,7 +303,10 @@ fn migrating_the_python_sample_keeps_every_row_and_writes_a_backup() {
     );
     // intended difference (v0.6, v0.6.5, v0.8): v1 → v2 → v3 → v4 → v5 in one go (one schema-1 backup); v3 / v4 / v5 are
     // covered in tests/v06_users_and_sign_in.rs, tests/v065_bank_access_and_practice.rs and tests/v08_ai_link.rs
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM attempt_items"),
         0,

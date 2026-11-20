@@ -727,7 +727,7 @@ async fn can_download_banks_in_the_users_api_and_the_auth_state() {
 // ---------------------------------------------------------------- migration
 
 #[test]
-fn a_fresh_database_is_schema_10_and_a_schema_9_file_migrates_with_one_row() {
+fn a_fresh_database_is_the_current_schema_and_a_schema_9_file_migrates_with_one_row() {
     let dir = dbc::tmp();
     let fresh = dir.path().join("fresh").join("xexam.db");
     drop(dbc::open_fixed(&fresh));
@@ -738,7 +738,7 @@ fn a_fresh_database_is_schema_10_and_a_schema_9_file_migrates_with_one_row() {
         .expect("schema")
     };
     let c = raw(&fresh);
-    assert_eq!(schema(&c), "10");
+    assert_eq!(schema(&c), xexam_backend::database::schema::SCHEMA_VERSION);
     let n: i64 = c
         .query_row("SELECT COUNT(*) FROM activity_log", [], |r| r.get(0))
         .expect("count");
@@ -746,23 +746,13 @@ fn a_fresh_database_is_schema_10_and_a_schema_9_file_migrates_with_one_row() {
     drop(c);
 
     let db = dir.path().join("xexam.db");
-    {
-        let s = dbc::open_fixed(&db);
-        match s
-            .create_user("ann", "placeholder-hash", Role::User)
-            .expect("user")
-        {
-            UserChange::Done(_) => {}
-            other => panic!("{other:?}"),
-        }
-    }
-    // What a v1.5 binary leaves: schema 9 and no `can_download_banks`
+    // A genuine schema-9 file (what a v1.5 binary leaves; v2.0: built from the schema history)
+    dbc::historic(&db, 9);
     raw(&db)
         .execute_batch(
-            "ALTER TABLE users DROP COLUMN can_download_banks;
-             UPDATE meta SET value='9' WHERE key='schema';",
+            "INSERT INTO users(id, username, password_hash, role, created_at, password_changed_at, new_banks) VALUES                (1, 'admin', 'placeholder-hash', 'admin', '2026-11-01 07:00', '2026-11-01 07:00', 1),                (2, 'ann', 'placeholder-hash', 'user', '2026-11-01 07:00', '2026-11-01 07:00', 1);",
         )
-        .expect("downgrade");
+        .expect("schema-9 users");
     let s = dbc::open_fixed(&db);
     let backup = s.migration_backup().expect("a backup").to_path_buf();
     assert!(backup
@@ -773,7 +763,7 @@ fn a_fresh_database_is_schema_10_and_a_schema_9_file_migrates_with_one_row() {
     assert!(!ann.can_download_banks);
     drop(s);
     let c = raw(&db);
-    assert_eq!(schema(&c), "10");
+    assert_eq!(schema(&c), xexam_backend::database::schema::SCHEMA_VERSION);
     let stored: i64 = c
         .query_row(
             "SELECT can_download_banks FROM users WHERE username='ann'",
@@ -789,7 +779,7 @@ fn a_fresh_database_is_schema_10_and_a_schema_9_file_migrates_with_one_row() {
         .expect("query")
         .map(|r| r.expect("row"))
         .collect();
-    assert_eq!(rows, vec![r#"{"from":9,"to":10}"#.to_string()]);
+    assert_eq!(rows, vec![r#"{"from":9,"to":11}"#.to_string()]);
     // fresh and migrated databases have the same users columns, and the next open writes nothing
     let cols = |c: &Connection| -> Vec<String> {
         c.prepare("SELECT name FROM pragma_table_info('users') ORDER BY name")

@@ -411,7 +411,10 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
     assert!(s.created_default_admin());
     assert!(s.migration_backup().is_none());
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     // the v5 columns come after the v4 ones, the v8 ones (five) and the v9 ones (five) after them, then the v10 one
     let columns: Vec<String> = c
         .prepare("SELECT name FROM pragma_table_info('users') ORDER BY cid")
@@ -466,35 +469,15 @@ fn a_fresh_database_is_schema_5_and_every_user_gets_a_stamp() {
     assert_eq!(dbc::db_bytes(&db), bytes);
 }
 
-/// A schema-4 database (v0.7.5) with data, made from a schema-5 one the way `tests/integration/migrate_check.py` does:
-/// the two v5 columns dropped and the schema set back to 4. Users: admin (1), ann (2), ben (3, AI+ was on, dropped).
+/// A genuine schema-4 database (v0.7.5) with data, built from the schema history (v2.0). Users: admin (1), ann (2), ben (3,
+/// AI+ was on; the column does not exist at schema 4, so it is gone).
 fn write_v4_database(db: &Path) {
-    let s = Store::open(db).expect("open");
-    for (name, ai) in [("ann", false), ("ben", true)] {
-        s.create_user_opts(
-            name,
-            "placeholder-hash",
-            Role::User,
-            &BankAccess::Only(Vec::new()),
-            true,
-            false,
-            ai,
-        )
-        .expect("create");
-    }
-    drop(s);
+    dbc::historic(db, 4);
     raw(db)
         .execute_batch(
-            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; ALTER TABLE users DROP COLUMN can_download_banks; \
-             ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
-             ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
-             ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
-             ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
-             ALTER TABLE sessions DROP COLUMN ua; \
-             ALTER TABLE users DROP COLUMN ai_enabled; ALTER TABLE users DROP COLUMN uid; \
-             UPDATE meta SET value = '4' WHERE key = 'schema';",
+            "INSERT INTO users(id, username, password_hash, role, created_at, password_changed_at, new_banks) VALUES                (1, 'admin', 'placeholder-hash', 'admin', '2026-01-01 10:00', '2026-01-01 10:00', 1),                (2, 'ann', 'placeholder-hash', 'user', '2026-01-01 10:00', '2026-01-01 10:00', 1),                (3, 'ben', 'placeholder-hash', 'user', '2026-01-01 10:00', '2026-01-01 10:00', 1);",
         )
-        .expect("back to schema 4");
+        .expect("schema-4 users");
 }
 
 #[test]
@@ -533,7 +516,10 @@ fn a_v4_database_is_upgraded_to_schema_5_after_one_backup() {
         );
     }
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     // every user: AI+ off (also ben, whose earlier switch went with the dropped column), a unique 32-hex stamp
     assert_eq!(
         count(&c, "SELECT COUNT(*) FROM users WHERE ai_enabled = 0"),

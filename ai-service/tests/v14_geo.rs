@@ -8,7 +8,7 @@ use common::*;
 use serde_json::{json, Value};
 use std::time::Duration;
 use xexam_ai_service::config::{JournalMode, Timeouts};
-use xexam_ai_service::store::Store;
+use xexam_ai_service::store::{schema, Store};
 
 /// The key of the tests (obviously fake, only unreserved characters).
 const GEO_KEY: &str = "TESTKEY-geo-0123456789abcdef";
@@ -1354,7 +1354,7 @@ fn a_schema_7_file_is_backed_up_and_gets_only_the_geo_table() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "9");
+    assert_eq!(v, schema::SCHEMA_VERSION);
     // the same tables and indexes as a new file
     assert_eq!(master(&c), want);
     // one backup, still schema 7 and without the table

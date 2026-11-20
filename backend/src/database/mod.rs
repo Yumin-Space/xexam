@@ -1,5 +1,7 @@
-//! SQLite storage. **Interface contract (do not change signatures).** The v1 table schema and SQL semantics are verbatim identical to
-//! `app/db.py`: synchronous=FULL, foreign_keys=ON, busy_timeout=5000, `BEGIN IMMEDIATE`. v0.5 adds schema v2 on top
+//! SQLite storage. **Interface contract (do not change signatures).** The SQL semantics follow `app/db.py`:
+//! synchronous=FULL, foreign_keys=ON, busy_timeout=5000, `BEGIN IMMEDIATE`. The v1 table text is kept as history (the upgrade
+//! chain starts from it); since schema 11 (v2.0) nine tables are rebuilt with foreign keys and the "identical to the Python
+//! version" guarantee is given up. v0.5 added schema v2 on top
 //! (additive: question banks, per-question exam detail, settings; see `schema` and `docs/en/database.md`). Since v0.7 the
 //! journal mode is WAL instead of DELETE, with the opt-out `XEXAM_SQLITE_JOURNAL=delete` (see `journal`).
 //!
@@ -8,7 +10,7 @@
 //!
 //! File layout:
 //! - `journal`          journal mode (WAL by default, the DELETE opt-out) and the checkpoint run at shutdown
-//! - `schema`           table schema text (v1 verbatim identical to the old version) and the v2 additions
+//! - `schema`           table schema text (the v1 text as history, the v2 .. v10 additions, the v11 rebuilds)
 //! - `store`            the `Store` itself: open (+ schema v2 migration), question banks, import, study records, settings
 //! - `legacy_progress`  reading and item-by-item conversion of the old progress.json (Python `int()` / truthiness semantics)
 //! - `timefmt`          local time `%Y-%m-%d %H:%M` and a replaceable `Clock`
@@ -25,10 +27,10 @@ pub use journal::{Checkpoint, JournalMode};
 pub use store::{
     percent_round_half_even, scoped_id, ActiveFacts, ActivityEntry, ActivityFilter, ActivityPage,
     ActivityRow, ActivitySource, AiUserRow, EndedSession, FacetUser, LegacyMigration, Merge,
-    NewSession, Place, RetiredBank, SessionRow, SessionUser, SigninInfo, Store, Touch, UpdatedUser,
-    UserChange, UserFilter, UserRow, UserUpdate, ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS,
-    BACKUP_DIR, DEFAULT_RETENTION_DAYS, GEO_SOURCE, MAX_RETENTION_DAYS, MIN_RETENTION_DAYS,
-    SIGNIN_INFO,
+    MigrationReport, NewSession, Place, RetiredBank, SessionRow, SessionUser, SigninInfo, Store,
+    Touch, UpdatedUser, UserChange, UserFilter, UserRow, UserUpdate, ACTIVITY_RETENTION_DAYS,
+    ACTIVITY_USER_VISITS, BACKUP_DIR, DEFAULT_RETENTION_DAYS, GEO_SOURCE, MAX_RETENTION_DAYS,
+    MIN_RETENTION_DAYS, SIGNIN_INFO,
 };
 pub use timefmt::{Clock, FixedClock, FnClock, SystemClock};
 

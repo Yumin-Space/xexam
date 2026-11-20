@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 use std::sync::atomic::Ordering::SeqCst;
 use std::time::Duration;
 use xexam_ai_service::config::JournalMode;
-use xexam_ai_service::store::{Store, DB_FILE};
+use xexam_ai_service::store::{schema, Store, DB_FILE};
 
 const EFFORT: &str = "/api/ai/admin/models/effort";
 
@@ -950,7 +950,7 @@ fn new_file_has_model_slots_effort() {
     drop(store);
     let path = dir.path().join(DB_FILE);
     assert!(has_effort_column(&path));
-    assert_eq!(schema_of(&path), "9");
+    assert_eq!(schema_of(&path), schema::SCHEMA_VERSION);
     let c = rusqlite::Connection::open(&path).expect("open");
     let n: i64 = c
         .query_row(
@@ -975,7 +975,11 @@ fn schema_8_file_without_effort_column_gains_it() {
     assert!(!has_effort_column(&path));
     drop(Store::open(dir.path(), JournalMode::Delete).expect("reopen"));
     assert!(has_effort_column(&path));
-    assert_eq!(schema_of(&path), "9", "no version change");
+    assert_eq!(
+        schema_of(&path),
+        schema::SCHEMA_VERSION,
+        "no version change"
+    );
     let c = rusqlite::Connection::open(&path).expect("open");
     let slots: i64 = c
         .query_row("SELECT COUNT(*) FROM model_slots", [], |r| r.get(0))
@@ -1004,7 +1008,7 @@ fn upgrade_from_7_adds_effort_column() {
     }
     drop(Store::open(dir.path(), JournalMode::Delete).expect("upgrade"));
     assert!(has_effort_column(&path));
-    assert_eq!(schema_of(&path), "9");
+    assert_eq!(schema_of(&path), schema::SCHEMA_VERSION);
 }
 
 #[test]

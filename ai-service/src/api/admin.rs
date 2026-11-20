@@ -168,17 +168,11 @@ pub async fn settings_post(ctx: Ctx) -> Answer {
     };
     let now = unix_now();
     let by = ctx.who.username.clone();
-    let changed = ctx.app.0.store.write(|tx| -> rusqlite::Result<bool> {
-        let mut cur = tables::load_settings(tx)?;
-        if cur.retention_days == days {
-            return Ok(false);
-        }
-        cur.retention_days = days;
-        cur.updated_at = now;
-        cur.updated_by = by.clone();
-        tables::save_settings(tx, &cur)?;
-        Ok(true)
-    })?;
+    let changed = ctx
+        .app
+        .0
+        .store
+        .write(|tx| -> rusqlite::Result<bool> { tables::set_retention(tx, days, &by, now) })?;
     if changed {
         tracing::info!(
             "user {:?} set the AI data retention to {days} days",
@@ -247,15 +241,10 @@ pub async fn enable(ctx: Ctx) -> Answer {
             return Err(ApiError::not_verified());
         }
     }
-    let changed = app.0.store.write(|tx| -> rusqlite::Result<bool> {
-        let mut cur = tables::load_settings(tx)?;
-        if cur.enabled == on {
-            return Ok(false);
-        }
-        cur.enabled = on;
-        tables::save_settings(tx, &cur)?;
-        Ok(true)
-    })?;
+    let changed = app
+        .0
+        .store
+        .write(|tx| -> rusqlite::Result<bool> { tables::set_enabled(tx, on) })?;
     if changed {
         tracing::info!(
             "user {:?} {} AI",

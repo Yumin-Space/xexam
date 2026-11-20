@@ -737,6 +737,8 @@ async fn a_question_is_found_only_inside_the_callers_banks_with_one_answer_for_e
     grant(&c, ula.id, granted);
     grant(&c, ula.id, gone);
     // the bank row is deleted; the question and the grant stay behind (as after an interrupted delete by an older binary)
+    // (an older binary does not enforce foreign keys; switch them off on this raw connection to leave the damage behind)
+    c.execute_batch("PRAGMA foreign_keys=OFF").expect("fk off");
     c.execute("DELETE FROM banks WHERE id = ?1", params![gone])
         .expect("delete bank");
 
@@ -1139,14 +1141,22 @@ fn the_store_answers_a_question_ask_without_a_route() {
     let db = dir.path().join("xexam.db");
     let store = Store::open(&db).expect("store");
     let c = raw(&db);
-    put_q(&c, "q1", Some(1), true, &six("Which fruit is yellow?"), 1);
+    let bank = put_bank(&c, "Fruit");
+    put_q(
+        &c,
+        "q1",
+        Some(bank),
+        true,
+        &six("Which fruit is yellow?"),
+        1,
+    );
     let ask = QuestionAsk {
         question_id: "q1".into(),
         qlang: StudyLang::En,
         elang: StudyLang::En,
         record: None,
     };
-    // the default administrator (id 1) sees every bank, even a bank id that has no row
+    // the default administrator (id 1) sees every bank (since v2.0 a question can only name a bank that exists)
     let v = store.study_question(1, &ask).expect("ok").expect("found");
     assert_eq!(v["ok"], json!(true));
     // a user id that does not exist sees nothing
@@ -1844,12 +1854,15 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
     let fresh = dir.path().join("fresh").join("xexam.db");
     std::fs::create_dir_all(fresh.parent().expect("parent")).expect("mkdir");
     drop(Store::open(&fresh).expect("fresh"));
-    // A v5 database: what a fresh one is minus the two v6 columns, stamped "5", with some data
+    // A genuine v5 database (v2.0: built from the schema history), with some data
     let db = dir.path().join("xexam.db");
-    let s = Store::open(&db).expect("open");
-    drop(s);
+    dbc::historic(&db, 5);
     {
         let c = raw(&db);
+        c.execute_batch(
+            "INSERT INTO users(id, username, password_hash, role, created_at, password_changed_at, new_banks)              VALUES(1, 'admin', 'placeholder-hash', 'admin', '2026-01-01 10:00', '2026-01-01 10:00', 1);",
+        )
+        .expect("admin");
         let bank = put_bank(&c, "Fruit");
         put_q(
             &c,
@@ -1859,32 +1872,11 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
             &six("Which fruit is yellow?"),
             1,
         );
-        let rec = put_record(
-            &c,
-            1,
-            "exam",
-            "2026-03-04 05:06",
-            &[row("q1", Some("[\"A\"]"), false)],
-            None,
-            None,
-        );
-        assert!(rec > 0);
-        // (v1.1: a fresh database also has the v7 columns and indexes, which go first: `ended`'s CHECK names `time_limit`)
+        // (a schema-5 record has no session columns, so it is written by hand, not with `put_record`)
         c.execute_batch(
-            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; ALTER TABLE users DROP COLUMN can_download_banks; \
-             ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
-             ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
-             ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
-             ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
-             ALTER TABLE sessions DROP COLUMN ua; \
-             DROP INDEX idx_banks_ai_job; DROP INDEX idx_questions_layout; \
-             ALTER TABLE attempts DROP COLUMN ended; ALTER TABLE attempts DROP COLUMN time_limit; \
-             ALTER TABLE banks DROP COLUMN ai_meta; ALTER TABLE banks DROP COLUMN ai_job; \
-             ALTER TABLE attempts DROP COLUMN session_key; \
-             ALTER TABLE attempts DROP COLUMN started_at; \
-             UPDATE meta SET value = '5' WHERE key = 'schema';",
+            "INSERT INTO attempts(at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind)              VALUES('2026-03-04 05:06', '[\"S\"]', 'all', 1, 0, 0, 60, '[]', 1, 'exam');              INSERT INTO attempt_items(attempt_id, seq, question_id, answer, correct) VALUES(1, 0, 'q1', '[\"A\"]', 0);",
         )
-        .expect("downgrade");
+        .expect("record");
         assert_eq!(count(&c, "SELECT COUNT(*) FROM pragma_table_info('attempts') WHERE name IN ('session_key', 'started_at')"), 0);
     }
     assert!(backups(dir.path()).is_empty());
@@ -1913,7 +1905,7 @@ fn a_schema_5_database_is_upgraded_after_one_backup_and_keeps_every_record() {
             r.get(0)
         })
         .expect("schema");
-    assert_eq!(v, "10");
+    assert_eq!(v, xexam_backend::database::schema::SCHEMA_VERSION);
     // the existing record is intact and has no session
     assert_eq!(
         count(

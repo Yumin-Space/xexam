@@ -152,3 +152,87 @@ pub fn sheets_json(s: &[ParsedSheet]) -> Value {
 pub fn py_dumps(v: &Value) -> String {
     xexam_backend::database::pyjson::to_string(v).expect("dumps")
 }
+
+// ---------------------------------------------------------------- historic schemas (v2.0)
+
+/// Adds each `(table, column, definition)` of a history list that the table does not have yet.
+fn add_columns(c: &rusqlite::Connection, list: &[(&str, &str, &str)], skip: &[&str]) {
+    for (table, column, definition) in list {
+        if skip.contains(column) {
+            continue;
+        }
+        c.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {definition};"))
+            .expect("add column");
+    }
+}
+
+fn build_historic(path: &Path, n: u32, prerelease_v4: bool) {
+    use xexam_backend::database::schema as sc;
+    assert!((1..=10).contains(&n), "schema {n}");
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).expect("create dir");
+    }
+    let c = rusqlite::Connection::open(path).expect("open historic");
+    // (foreign keys are not part of any historic schema)
+    c.execute_batch(sc::SCHEMA).expect("v1");
+    if n >= 2 {
+        c.execute_batch(sc::MIGRATE_V2_TABLES).expect("v2 tables");
+        add_columns(&c, &sc::V2_COLUMNS, &[]);
+        c.execute_batch(sc::MIGRATE_V2_INDEXES).expect("v2 indexes");
+    }
+    if n >= 3 {
+        c.execute_batch(sc::MIGRATE_V3_TABLES).expect("v3 tables");
+        add_columns(&c, &sc::V3_COLUMNS, &[]);
+        c.execute_batch(sc::MIGRATE_V3_INDEXES).expect("v3 indexes");
+    }
+    if n >= 4 {
+        c.execute_batch(sc::MIGRATE_V4_TABLES).expect("v4 tables");
+        // The pre-release v4 stored `users.all_banks` instead of `users.new_banks`
+        let skip: &[&str] = if prerelease_v4 { &["new_banks"] } else { &[] };
+        add_columns(&c, &sc::V4_COLUMNS, skip);
+        if prerelease_v4 {
+            c.execute_batch("ALTER TABLE users ADD COLUMN all_banks INTEGER NOT NULL DEFAULT 0;")
+                .expect("all_banks");
+        }
+        c.execute_batch(sc::MIGRATE_V4_INDEXES).expect("v4 indexes");
+    }
+    if n >= 5 {
+        add_columns(&c, &sc::V5_COLUMNS, &[]);
+    }
+    if n >= 6 {
+        add_columns(&c, &sc::V6_COLUMNS, &[]);
+    }
+    if n >= 7 {
+        add_columns(&c, &sc::V7_COLUMNS, &[]);
+        c.execute_batch(sc::MIGRATE_V7_INDEXES).expect("v7 indexes");
+    }
+    if n >= 8 {
+        add_columns(&c, &sc::V8_COLUMNS, &[]);
+        c.execute_batch(sc::MIGRATE_V8_TABLES).expect("v8 tables");
+        c.execute_batch(sc::MIGRATE_V8_INDEXES).expect("v8 indexes");
+    }
+    if n >= 9 {
+        add_columns(&c, &sc::V9_COLUMNS, &[]);
+    }
+    if n >= 10 {
+        add_columns(&c, &sc::V10_COLUMNS, &[]);
+    }
+    // schema 1 files may have no stamp at all; a stamp "1" is read the same way
+    c.execute(
+        "INSERT INTO meta(key, value) VALUES('schema', ?1) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        rusqlite::params![n.to_string()],
+    )
+    .expect("stamp");
+}
+
+/// A genuine, empty schema-`n` file (1..=10) built from the public schema constants in chain order, with `meta.schema = n`.
+/// No default administrator and no `meta` marks: tests add self-made rows with raw rusqlite (the bundled SQLite has foreign keys ON on a raw
+/// connection: switch them off first to plant orphans).
+pub fn historic(path: &Path, n: u32) {
+    build_historic(path, n, false);
+}
+
+/// The pre-release variant of schema 4 (v0.7 builds before its release): `users.all_banks` instead of `users.new_banks`.
+pub fn historic_prerelease_v4(path: &Path) {
+    build_historic(path, 4, true);
+}

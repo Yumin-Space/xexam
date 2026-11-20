@@ -868,7 +868,10 @@ fn a_fresh_database_is_schema_7_with_four_columns_and_two_indexes() {
     let db = dir.path().join("xexam.db");
     drop(Store::open(&db).expect("open"));
     let c = raw(&db);
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     let cols = |t: &str| -> Vec<String> {
         let mut st = c
             .prepare(&format!("SELECT name FROM pragma_table_info('{t}')"))
@@ -952,9 +955,14 @@ fn a_schema_6_database_is_upgraded_after_one_backup_and_keeps_every_record() {
     std::fs::create_dir_all(fresh.parent().expect("parent")).expect("mkdir");
     drop(Store::open(&fresh).expect("fresh"));
     let db = dir.path().join("xexam.db");
-    drop(Store::open(&db).expect("open"));
+    // A genuine v6 database (v2.0: built from the schema history), with some data
+    dbc::historic(&db, 6);
     {
         let c = raw(&db);
+        c.execute_batch(
+            "INSERT INTO users(id, username, password_hash, role, created_at, password_changed_at, new_banks)              VALUES(1, 'admin', 'placeholder-hash', 'admin', '2026-01-01 10:00', '2026-01-01 10:00', 1);",
+        )
+        .expect("admin");
         let bank = put_bank(&c, "Kitchen basics");
         put_q(&c, "q1", bank, "Utensils", 1, "Which tool is one?");
         c.execute(
@@ -968,20 +976,6 @@ fn a_schema_6_database_is_upgraded_after_one_backup_and_keeps_every_record() {
             [],
         )
         .expect("item");
-        // a v6 database: a fresh one minus the v7 objects (the CHECK of `ended` names `time_limit`, so it goes first)
-        c.execute_batch(
-            "DROP INDEX idx_attempts_session; DROP TABLE activity_log; DROP TABLE system_settings; ALTER TABLE users DROP COLUMN can_download_banks; \
-             ALTER TABLE users DROP COLUMN last_active_ip; ALTER TABLE users DROP COLUMN last_active_country; ALTER TABLE users DROP COLUMN last_active_region; ALTER TABLE users DROP COLUMN last_active_city; ALTER TABLE users DROP COLUMN last_active_ua; ALTER TABLE users DROP COLUMN last_active_at; ALTER TABLE users DROP COLUMN last_login_ip; \
-             ALTER TABLE users DROP COLUMN last_login_country; ALTER TABLE users DROP COLUMN last_login_region; \
-             ALTER TABLE users DROP COLUMN last_login_city; ALTER TABLE sessions DROP COLUMN started_at; \
-             ALTER TABLE sessions DROP COLUMN remember; ALTER TABLE sessions DROP COLUMN ip; \
-             ALTER TABLE sessions DROP COLUMN ua; \
-             DROP INDEX idx_banks_ai_job; DROP INDEX idx_questions_layout; \
-             ALTER TABLE attempts DROP COLUMN ended; ALTER TABLE attempts DROP COLUMN time_limit; \
-             ALTER TABLE banks DROP COLUMN ai_meta; ALTER TABLE banks DROP COLUMN ai_job; \
-             UPDATE meta SET value = '6' WHERE key = 'schema';",
-        )
-        .expect("downgrade");
     }
     assert!(backups(dir.path()).is_empty());
     let s = Store::open(&db).expect("upgrade");
@@ -1010,7 +1004,10 @@ fn a_schema_6_database_is_upgraded_after_one_backup_and_keeps_every_record() {
         ),
         2
     );
-    assert_eq!(text(&c, "SELECT value FROM meta WHERE key='schema'"), "10");
+    assert_eq!(
+        text(&c, "SELECT value FROM meta WHERE key='schema'"),
+        xexam_backend::database::schema::SCHEMA_VERSION
+    );
     // the old record is intact: untimed, no `ended` (v1.0 rule), and the views show no new keys
     assert_eq!(
         count(

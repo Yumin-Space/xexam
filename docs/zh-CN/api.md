@@ -134,7 +134,7 @@ flowchart LR
 
 ### `GET /api/info`
 ```json
-{"version": "0.9", "arch": "x86_64", "canShutdown": false}
+{"version": "2.0", "arch": "x86_64", "canShutdown": false}
 ```
 公开。版本号是 `VERSION` 文件里的 `CODE_VERSION`（或 `XEXAM_VERSION`）；`arch` 是服务器的 CPU 架构；只有程序带着 `--allow-shutdown` 启动时，`canShutdown` 才是 `true`。*(v0.7.5)* 键 `bankCount`（整个题库里上架的题数）去掉了：这个路由是公开的，登录后的页面根据 `GET /api/bank` 和 `GET /api/banks` 自己数它们能看到的题。这个路由仍然会读取数据库，所以数据库读不出来时它回答 500，容器的健康检查（问的就是这个路由）会报告后端不健康。
 
@@ -1219,6 +1219,12 @@ data: {"chatId":12,"chatTitle":"2026-11-12 09:30","userMessageId":41,"assistantM
 - **新增**：`POST /api/ai/admin/connections/enabled`；连接上的 `enabled`；`ai.connectionOff`（409）和 `ai.gen.providerDaily`；任务对象上的 `waiting`；`GET /api/banks/download` 的 `langs`。
 - **变化**：七个槽位（`study` 拆成 `hint` 和 `explain`）；四个思考强度系列（`gemma` 移除，返回 400）；全局功能开关互相独立，对管理员也生效；`admin/limits` 有 36 个键；`bank.download` 的活动详情里有 `langs`。
 - **数据库**：AI 数据库启动时先做备份副本，再升级到 schema 9（见 [database.md](database.md) 的 8.2f 节）。主数据库和上面没有列出的公开路由都不变。
+
+### v2.0 的变化（相对 v1.9）
+
+- **没有路由变化。** 没有新路由、字段、代码或提示，所有回答都和之前一样。
+- **版本**：`GET /api/info` 报告 `"version": "2.0"`，AI 服务的 `/healthz` 也一样。主数据库是 schema 11。
+- **数据库**：AI 数据库是 schema 10（启动时先做备份副本再升级，见 [database.md](database.md) 的 8.2g 节；主数据库也一样，见 6.17 节）。
 
 ## 8. 调用示例
 

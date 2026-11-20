@@ -1,7 +1,8 @@
 //! Table schema.
 //!
-//! - `SCHEMA` is schema v1: **verbatim identical** to `SCHEMA` in `app/db.py` (including the Chinese comments; `sqlite_master.sql`
-//!   stores this exact text). Do not change it; it is still executed first on every open.
+//! - `SCHEMA` is schema v1, kept as history: it was word for word the `SCHEMA` text of `app/db.py` (including the Chinese
+//!   comments). Do not change it. Since schema 11 it is executed only for a new file or a file older than 11 (the upgrade
+//!   chain starts from it); an up-to-date file is never touched by it, so the legacy `stats` table is not re-created.
 //! - Schema v2 (v0.5) is purely additive: `MIGRATE_V2_TABLES` plus the columns in `V2_COLUMNS`, applied by `store::migrate` in one
 //!   transaction (a brand-new database goes through the same migration, so fresh and migrated databases have the same structure).
 //!   Older binaries can still open a v2 file (the new columns are nullable or have defaults), but must not be used once there is
@@ -38,7 +39,13 @@
 //!   question banks the user can see (`users.can_download_banks`, default 0; administrators always may). A v1.5 binary
 //!   opens a v10 file unchanged, and its own inserts get the default 0.
 
-pub const SCHEMA_VERSION: &str = "10";
+//! - Schema v11 (v2.0) is the database clean-up: nine tables are rebuilt with explicit foreign keys (`V11_REBUILDS`, all
+//!   `ON DELETE NO ACTION`), two indexes and a unique index on `users.uid` are added, and the legacy `stats` / `settings`
+//!   tables are dropped. No column, type, default or CHECK changes. See `store::migrate` and docs/en/database.md.
+//!   Deliberately NOT linked (records outlive their questions; audit snapshots): `attempt_items.question_id`,
+//!   `user_stats.question_id`, `activity_log.user_id`, `system_settings.updated_by`.
+
+pub const SCHEMA_VERSION: &str = "11";
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -346,3 +353,137 @@ pub const V10_COLUMNS: [(&str, &str, &str); 1] = [
         "can_download_banks INTEGER NOT NULL DEFAULT 0",
     ),
 ];
+
+/// One table rebuilt by the schema-v11 step (the 12-step procedure of the SQLite documentation, see `store::migrate`).
+pub struct Rebuild {
+    pub table: &'static str,
+    /// `CREATE TABLE new_<table> (…)`; after the rename SQLite stores it as `CREATE TABLE "<table>" (…)`.
+    pub create: &'static str,
+    /// The explicit column list, in table order (also the list copied from the old table).
+    pub columns: &'static str,
+    /// Index statements, run AFTER the rename (never on `new_<table>`, so the stored text is `ON <table>(…)`).
+    pub indexes: &'static str,
+}
+
+/// The nine tables rebuilt by schema v11, in the fixed order (parents before children). Column names, order, types, DEFAULTs
+/// and CHECKs are those of the schema-v10 tables; the only additions are the `REFERENCES … ON DELETE NO ACTION` clauses
+/// (NO ACTION is written out on purpose: deleting a parent that still has children is an error, never a silent cascade) and
+/// the comments. Not linked on purpose: `attempt_items.question_id` and `user_stats.question_id` (a record outlives a deleted
+/// question; legacy banks use unscoped ids), `activity_log.user_id` (audit snapshot), `system_settings.updated_by` (a
+/// write-only audit field that must not block deleting an administrator).
+pub const V11_REBUILDS: [Rebuild; 9] = [
+    Rebuild {
+        table: "banks",
+        create: "CREATE TABLE new_banks (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  name       TEXT NOT NULL,
+  filename   TEXT NOT NULL,
+  legacy_ids INTEGER NOT NULL DEFAULT 0,   -- 1 = question ids are the unscoped parser ids (data from before v0.5)
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  owner_id   INTEGER REFERENCES users(id) ON DELETE NO ACTION, -- NULL only from an older binary (given to the first administrator on open)
+  ai_job     TEXT,
+  ai_meta    TEXT CHECK ((ai_meta IS NULL) = (ai_job IS NULL))
+)",
+        columns: "id, name, filename, legacy_ids, created_at, updated_at, owner_id, ai_job, ai_meta",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_banks_owner ON banks(owner_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_banks_ai_job ON banks(ai_job) WHERE ai_job IS NOT NULL;",
+    },
+    Rebuild {
+        table: "questions",
+        create: "CREATE TABLE new_questions (
+  id TEXT PRIMARY KEY NOT NULL, sheet TEXT NOT NULL, row_no INTEGER NOT NULL, seq INTEGER NOT NULL, data TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1, added_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  bank_id INTEGER REFERENCES banks(id) ON DELETE NO ACTION  -- NULL only from an older binary (attached to the legacy bank on open)
+)",
+        columns: "id, sheet, row_no, seq, data, active, added_at, updated_at, bank_id",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_questions_sheet ON questions(sheet, active);
+CREATE INDEX IF NOT EXISTS idx_questions_bank ON questions(bank_id, active);
+CREATE INDEX IF NOT EXISTS idx_questions_layout ON questions(bank_id, sheet, active, seq);",
+    },
+    Rebuild {
+        table: "imports",
+        create: "CREATE TABLE new_imports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, filename TEXT NOT NULL, added INTEGER NOT NULL, updated INTEGER NOT NULL,
+  removed INTEGER NOT NULL, restored INTEGER NOT NULL, skipped INTEGER NOT NULL, total INTEGER NOT NULL,
+  bank_id INTEGER REFERENCES banks(id) ON DELETE NO ACTION
+)",
+        columns: "id, at, filename, added, updated, removed, restored, skipped, total, bank_id",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_imports_bank ON imports(bank_id);",
+    },
+    Rebuild {
+        table: "attempts",
+        create: "CREATE TABLE new_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, sheets TEXT NOT NULL, mode TEXT NOT NULL, total INTEGER NOT NULL,
+  correct INTEGER NOT NULL, percent INTEGER NOT NULL, seconds INTEGER NOT NULL,
+  banks TEXT NOT NULL DEFAULT '[]',
+  user_id INTEGER REFERENCES users(id) ON DELETE NO ACTION,  -- NULL = unclaimed old record (claimed by the first administrator on open)
+  kind TEXT NOT NULL DEFAULT 'exam' CHECK (kind IN ('exam', 'practice')),
+  session_key TEXT, started_at INTEGER,
+  time_limit INTEGER CHECK (time_limit IS NULL OR (time_limit BETWEEN 60 AND 36000 AND kind = 'exam')),
+  ended TEXT CHECK (CASE WHEN ended IS NULL THEN time_limit IS NULL ELSE kind = 'exam' AND (ended = 'submit' OR (ended = 'timeUp' AND time_limit IS NOT NULL)) END)
+)",
+        columns: "id, at, sheets, mode, total, correct, percent, seconds, banks, user_id, kind, session_key, started_at, time_limit, ended",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_attempts_user ON attempts(user_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_session ON attempts(user_id, session_key) WHERE session_key IS NOT NULL;",
+    },
+    Rebuild {
+        table: "attempt_items",
+        create: "CREATE TABLE new_attempt_items (
+  attempt_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE NO ACTION,
+  seq INTEGER NOT NULL,
+  question_id TEXT NOT NULL,   -- no foreign key: a record outlives a deleted question; legacy banks use unscoped ids
+  answer TEXT, correct INTEGER NOT NULL,
+  PRIMARY KEY (attempt_id, seq)
+)",
+        columns: "attempt_id, seq, question_id, answer, correct",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_attempt_items_question ON attempt_items(question_id);",
+    },
+    Rebuild {
+        table: "sessions",
+        create: "CREATE TABLE new_sessions (
+  token_hash TEXT PRIMARY KEY NOT NULL,
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
+  created_at TEXT NOT NULL, last_seen_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+  started_at INTEGER, remember INTEGER NOT NULL DEFAULT 1, ip TEXT, ua TEXT
+)",
+        columns: "token_hash, user_id, created_at, last_seen_at, expires_at, started_at, remember, ip, ua",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);",
+    },
+    Rebuild {
+        table: "user_stats",
+        create: "CREATE TABLE new_user_stats (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
+  question_id TEXT NOT NULL,   -- no foreign key (see attempt_items)
+  attempts INTEGER NOT NULL DEFAULT 0, correct INTEGER NOT NULL DEFAULT 0, wrong INTEGER NOT NULL DEFAULT 0,
+  streak INTEGER NOT NULL DEFAULT 0, last INTEGER, at TEXT,
+  PRIMARY KEY (user_id, question_id)
+)",
+        columns: "user_id, question_id, attempts, correct, wrong, streak, last, at",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_user_stats_question ON user_stats(question_id);",
+    },
+    Rebuild {
+        table: "user_settings",
+        create: "CREATE TABLE new_user_settings (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE NO ACTION, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (user_id, key)
+)",
+        columns: "user_id, key, value",
+        indexes: "",
+    },
+    Rebuild {
+        table: "user_banks",
+        create: "CREATE TABLE new_user_banks (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE NO ACTION,
+  bank_id INTEGER NOT NULL REFERENCES banks(id) ON DELETE NO ACTION,
+  PRIMARY KEY (user_id, bank_id)
+)",
+        columns: "user_id, bank_id",
+        indexes: "CREATE INDEX IF NOT EXISTS idx_user_banks_bank ON user_banks(bank_id);",
+    },
+];
+
+/// The unique index on `users.uid` (non-empty stamps only: an empty stamp is a user an older binary created, which the
+/// open fixes). Created by the v11 step BEFORE the rebuilds when no non-empty stamp is shared, otherwise skipped with a
+/// warning (see `store::migrate`); the every-open check creates it later once the duplicates are gone.
+pub const V11_USERS_UID_INDEX: &str =
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_uid ON users(uid) WHERE uid <> ''";

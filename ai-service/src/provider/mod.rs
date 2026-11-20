@@ -398,7 +398,7 @@ pub fn put_prefix_marked(format: Format, body: &mut Value, prefix: &str) {
     ]);
 }
 
-/// What a settings fingerprint learned about the token limit (kept in memory only, see `App`).
+/// What a route (connection, model and format) learned about the token limit (kept in memory only, see `App`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenMemo {
     pub field: TokenField,
@@ -407,7 +407,7 @@ pub struct TokenMemo {
 }
 
 /// The first request's limit: the answer length converted to tokens (`want`), in the field the remembered step of this
-/// settings fingerprint says (OpenAI-compatible), or clamped to what the model is known to accept (Anthropic: the
+/// route says (OpenAI-compatible), or clamped to what the model is known to accept (Anthropic: the
 /// remembered cap, else 4096 when the stored connection test found 8192 too large).
 pub fn first_token_limit(
     format: Format,
@@ -530,7 +530,7 @@ pub struct Plan {
     /// The stored result of the connection test (the Anthropic ceiling)
     pub stored_max: i64,
     pub steps: Vec<(TokenLimit, reqwest::Request)>,
-    /// The app remembers the accepted step per settings fingerprint
+    /// The app remembers the accepted step per route
     pub remember: Option<Remember>,
     /// OpenAI-compatible request with cache markers: the same ladder without markers (empty when the steps carry none).
     /// Used once when a 400 / 422 refuses the marked request for another reason than the token field.

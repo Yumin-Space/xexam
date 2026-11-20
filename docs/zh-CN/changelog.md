@@ -6,6 +6,15 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.0 — 2026-11-20
+
+**数据库整理：主数据库加上外键，删除不再使用的旧表和旧列，新增索引；程序里看不出任何变化。升级：拉取镜像即可；启动时两个数据库各自先备份、再升到新的 schema（主库 10 到 11，AI 库 9 到 10）；请留出约两倍主数据库大小的空闲空间。回到 v1.9 需要 AI 备份 `backups/xexam-ai-schema9-*.db`，主数据库不用恢复。**
+
+- **数据库，主库（schema 10 到 11）**：九张表（`banks`、`questions`、`imports`、`attempts`、`attempt_items`、`sessions`、`user_stats`、`user_settings`、`user_banks`）带着外键重建（全部 `ON DELETE NO ACTION`；代码本来就先删子行）。`attempt_items.question_id`、`user_stats.question_id`、`activity_log.user_id` 和 `system_settings.updated_by` 特意不加外键（记录比题目和账号活得久；给 `updated_by` 加外键会让改过站点开关的管理员删不掉）。指向不存在对象的行（孤儿）按固定规则删除或脱开，计数并写进日志。没用的旧表 `stats` 和 `settings` 被删除（它们的行在 v0.6 已经复制走）。新索引：`idx_user_stats_question`、`idx_imports_bank`，以及 `users.uid` 上的唯一索引（两个用户的标识相同时跳过并给出警告，不改任何东西）。列、值、界面都不变。先写一份备份 `backups/xexam-schema10-<日期时间>.db`；整个步骤是一个事务，遇到任何意外全部回滚（提交前会比对行数并做外键检查）。
+- **数据库，AI 库（schema 9 到 10）**：删除表 `secrets`（旧的服务商密钥）、`settings` 里 10 个旧的单连接列、`limits` 里 5 个旧的长度列和 `chats.free`；已经没有代码再读它们。升级在备份 `backups/xexam-ai-schema9-<日期时间>.db` 之后用一个事务完成，旧的密钥副本会从在用的文件里清掉（备份里仍有，请妥善保管，不需要时删除）。日志只写删了多少行、多少列，不写内容。
+- **升级**：`docker compose pull`，再 `docker compose up -d`。请留出约两倍主数据库大小的空闲空间（备份加重建的表）；学习记录很多时第一次启动可能更久，服务器要等升级完成后才开始监听。详情：[database.md](database.md) 的 6.17 和 [migration.md](migration.md) 的 v1.9 到 v2.0 一节。
+- **回退**：v1.9 的 backend 能直接打开 schema 11 的主数据库（不用恢复；如果 v1.9 又建出一张空的 `stats` 表，v2.0 下次启动会再删掉）。v1.9 的 ai-service 拒绝 schema 10：把 `backups/xexam-ai-schema9-<日期时间>.db` 恢复到 AI 卷（升级后写入的设置、对话和用量会丢）。回到比 v1.9 更早的版本，还需要主库的备份。
+
 ### v1.9 — 2026-11-20
 
 **AI 设置页更清楚（连接启用开关、每个功能一个开关、七个安全子页），AI 出题和 AI 导入按服务商的速率限制匀速发送，AI 对话可选模型，下载题库可选语言，三个服务可以分别运行在不同的机器上。升级：拉取镜像即可；AI 数据库启动时升级到 schema 9，并先做备份副本（回滚 = 恢复 `backups/xexam-ai-schema8-*.db`）；单机 compose 不需要改；新增可选变量 `XEXAM_FRONTEND_PEERS`、`XEXAM_INTERNAL_TOKEN_REQUIRED`、`XEXAM_BACKEND_UPSTREAM`、`XEXAM_AI_UPSTREAM`、`XEXAM_NGINX_RESOLVER`，以及三个按机器拆分的 compose 文件。主数据库不变。**

@@ -138,12 +138,13 @@ fn a_fresh_database_is_schema_5_with_every_column_and_index() {
     let store = open(dir.path());
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "9");
+            assert_eq!(schema_of(c), schema::SCHEMA_VERSION);
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
                 .chain(schema::V4_COLUMNS.iter())
                 .chain(schema::V5_COLUMNS.iter())
+                .filter(|(t, c, _)| !schema::is_retired(t, c))
             {
                 assert!(has_column(c, table, column), "{table}.{column}");
             }
@@ -193,12 +194,13 @@ fn upgraded_from(version: &str, with_rows: bool) {
     drop(copy);
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "9");
+            assert_eq!(schema_of(c), schema::SCHEMA_VERSION);
             for (table, column, _) in schema::V2_COLUMNS
                 .iter()
                 .chain(schema::V3_COLUMNS.iter())
                 .chain(schema::V4_COLUMNS.iter())
                 .chain(schema::V5_COLUMNS.iter())
+                .filter(|(t, c, _)| !schema::is_retired(t, c))
             {
                 assert!(has_column(c, table, column), "{table}.{column}");
             }
@@ -295,7 +297,7 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
         .starts_with("xexam-ai-schema3-"));
     store
         .read(|c| {
-            assert_eq!(schema_of(c), "9");
+            assert_eq!(schema_of(c), schema::SCHEMA_VERSION);
             let l = xexam_ai_service::store::tables::load_limits(c)?;
             assert_eq!(
                 (
@@ -314,12 +316,8 @@ fn a_schema_3_file_keeps_every_row_and_old_limit_and_gets_the_default_caps() {
             );
             // The answer length was at its old default: it moves to the new default (A-OWNER-43)
             assert_eq!(l.reply_max_tokens, 3000);
-            // The retired column keeps what it had (nothing reads or writes it any more)
-            let retired: i64 =
-                c.query_row("SELECT message_chars FROM limits WHERE id = 1", [], |r| {
-                    r.get(0)
-                })?;
-            assert_eq!(retired, 4321);
+            // The retired column is gone (the backup keeps what it had)
+            assert!(!has_column(c, "limits", "message_chars"));
             let counts: (i64, i64, i64, i64) = c.query_row(
                 "SELECT (SELECT COUNT(*) FROM chats), (SELECT COUNT(*) FROM messages),
                         (SELECT COUNT(*) FROM memories), (SELECT COUNT(*) FROM usage)",
@@ -389,7 +387,8 @@ fn the_memory_length_moves_to_tokens_once() {
 fn a_schema_5_file_gets_its_three_lengths_in_tokens_with_a_backup() {
     let tokens_after = |reply: i64, gen: i64, mem: i64| -> (i64, i64, i64) {
         let dir = tempfile::tempdir().expect("dir");
-        drop(open(dir.path()));
+        // a v1.9-shaped file still has the retired character columns
+        xexam_ai_service::store::write_schema9_fixture(&dir.path().join(DB_FILE)).expect("fixture");
         {
             let c = Connection::open(dir.path().join(DB_FILE)).expect("open");
             c.execute(
@@ -516,17 +515,17 @@ fn a_newer_schema_is_refused_with_the_schema_5_line() {
     let path = dir.path().join(DB_FILE);
     {
         let c = Connection::open(&path).expect("open");
-        c.execute("UPDATE meta SET value = '10' WHERE key = 'schema'", [])
+        c.execute("UPDATE meta SET value = '11' WHERE key = 'schema'", [])
             .expect("set");
     }
     let err = match Store::open(dir.path(), JournalMode::Delete) {
-        Ok(_) => panic!("schema 10 must be refused"),
+        Ok(_) => panic!("schema 11 must be refused"),
         Err(e) => e,
     };
     assert_eq!(
         err,
         format!(
-            "The AI database {} has schema 10, written by a newer ai-service; this version (schema 9) cannot open it. Run the newer version, or restore a backup.",
+            "The AI database {} has schema 11, written by a newer ai-service; this version (schema 10) cannot open it. Run the newer version, or restore a backup.",
             path.display()
         )
     );

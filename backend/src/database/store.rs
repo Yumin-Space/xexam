@@ -26,7 +26,11 @@
 //! - Schema v5 (v0.8): two columns on `users`, the AI+ switch and the identity stamp the AI service keeps next to the user
 //!   id (see `users`); AI chats, memories and settings live in the AI service's own database, never in this one.
 //!
-//! Submodules (they extend `impl Store`): `migrate` (v1 → v2 → v3 → v4 → v5, backups, fix-ups), `banks` (bank list, delete,
+//! - Schema v11 (v2.0): the v1 `SCHEMA` text is kept as history for upgrades (it runs only for a new file or one older than 11);
+//!   since schema 11 the nine tables are rebuilt with foreign keys (`ON DELETE NO ACTION`), the legacy `stats` / `settings` tables
+//!   are dropped and every delete path stays child-first.
+//!
+//! Submodules (they extend `impl Store`): `migrate` (v1 → … → v11, backups, fix-ups), `banks` (bank list, delete,
 //! import targets, bank-scoped ids, viewers), `records` (exam records and their per-question detail), `settings`, `users`
 //! (accounts, sessions, the users the AI service asks about).
 use super::journal::{self, Checkpoint, JournalMode};
@@ -68,7 +72,7 @@ pub use ai_gen::{
     GenSourceReq, GenStratum, Tri, AI_BANKS_AUTO_SHARE, AI_SHEET,
 };
 pub use banks::scoped_id;
-pub use migrate::BACKUP_DIR;
+pub use migrate::{MigrationReport, BACKUP_DIR};
 pub use study::{QuestionAsk, StudyLang, MAX_SAMPLE, TEXT_BUDGET};
 pub use system_settings::{
     ACTIVITY_RETENTION_DAYS, ACTIVITY_USER_VISITS, DEFAULT_RETENTION_DAYS, GEO_SOURCE,
@@ -107,6 +111,8 @@ pub struct Store {
     created_default_admin: bool,
     /// This open converted a pre-release v4 database (`users.all_banks`) to the released shape (`users.new_banks`)
     converted_prerelease: bool,
+    /// What the schema-11 step and the every-open checks found and removed (all empty for an up-to-date file)
+    migration_report: MigrationReport,
     /// The journal mode SQLite reported after the open (lower case)
     journal_mode: String,
 }
@@ -739,7 +745,10 @@ impl Store {
         conn.busy_timeout(Duration::from_millis(5000))?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
-        conn.execute_batch(SCHEMA)?;
+        // The v1 text only for a new file or one older than 11: running it on an up-to-date file would re-create `stats`
+        if migrate::needs_v1_schema(&conn)? {
+            conn.execute_batch(SCHEMA)?;
+        }
         // Check first, then write: the content of an up-to-date database stays unchanged
         let upgrade = migrate::upgrade(&conn, path, clock.as_ref())?;
         // WAL by default (v0.7): one fsync per commit with synchronous=FULL, readers and the writer do not block each other.
@@ -753,6 +762,7 @@ impl Store {
             migration_backup: upgrade.backup,
             created_default_admin: upgrade.created_admin,
             converted_prerelease: upgrade.converted_prerelease,
+            migration_report: upgrade.report,
             journal_mode,
         })
     }
@@ -775,6 +785,12 @@ impl Store {
     /// The backup written before this open migrated the database to the current schema, if any.
     pub fn migration_backup(&self) -> Option<&Path> {
         self.migration_backup.as_deref()
+    }
+
+    /// What the upgrade to schema 11 and the every-open checks of this open removed, detached or kept (see
+    /// [`MigrationReport`]); empty when nothing happened.
+    pub fn migration_report(&self) -> &MigrationReport {
+        &self.migration_report
     }
 
     /// Whether this open converted a database of a v0.7 pre-release build (schema 4 with `users.all_banks`) to the released
