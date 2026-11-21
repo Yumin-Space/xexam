@@ -19,7 +19,7 @@ export default defineCatalog({
     'result.metaPrev': '{mode} · {n} questions · {time} · last {prev}%',
     'result.metaPrev_one': '{mode} · {n} question · {time} · last {prev}%',
     'result.retryWrong': 'Retry wrong answers only',
-    'result.again': 'Take it again',
+    'result.again': 'Retake exam',
     'result.againPractice': 'Retake practice',
     'result.viewRecord': 'View study record',
     'result.home': 'Back to home',

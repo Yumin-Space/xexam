@@ -16,14 +16,14 @@
 .lg-searchslot > .ibtn[hidden] { display: none; }
 .lg-searchbox { display: flex; align-items: center; gap: 2px; flex: 1; min-width: 0; }
 .lg-searchbox[hidden] { display: none; }
-.lg-search { flex: 1 1 auto; min-width: 0; min-height: 34px; padding: 4px 10px; font-size: 16px; }
+.lg-search { flex: 1 1 auto; min-width: 0; min-height: 38px; padding: 6px 10px; font-size: 15px; }
 .lg-run { display: flex; align-items: center; gap: 8px; margin-left: auto; }
 .lg-run-btn { display: inline-flex; }
 .lg-status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; color: var(--ink2); white-space: nowrap; }
 .lg-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--print); }
 .lg-status.off { color: var(--ink3); }
 .lg-status.off .lg-dot { background: transparent; box-shadow: inset 0 0 0 1.5px var(--ink3); }
-.lg-meta { display: flex; align-items: center; gap: 6px; margin: 10px 0 6px; font-size: 12.5px; color: var(--ink3); }
+.lg-meta { display: flex; align-items: center; gap: 6px; margin: 10px 0 6px; font-size: 13.5px; color: var(--ink3); }
 .lg-info { vertical-align: middle; }
 .page-logs .lg-err { margin: 0 0 10px; font-size: 14px; line-height: 1.6; }
 
@@ -50,7 +50,7 @@
 /* An error line gets a soft tint over the whole row, so it is found when scrolling */
 .lg-line.lv-error { background: var(--danger-soft); }
 .lg-gap { margin: 4px 0; padding-block: 3px; text-indent: 0; padding-left: 12px; font-family: inherit; font-size: 12.5px; font-style: italic; color: var(--ink2); border-block: 1px dashed var(--line); }
-.lg-empty { padding: 12px; font-size: 14px; color: var(--ink3); }
+.lg-empty { padding: 12px; color: var(--ink2); }
 .lg-day { display: none; }
 /* Jump to latest: icon + text at the box's bottom right */
 .lg-jump { position: absolute; right: 12px; bottom: 12px; z-index: 2; border: 1px solid var(--line); background: var(--card); color: var(--ink); box-shadow: var(--shadow-pop); }
@@ -126,7 +126,8 @@
 }
 
 @media (pointer: coarse), (max-width: 480px) {
-  .lg-search { min-height: 40px; }
+  .lg-search { min-height: 44px; font-size: 16px; }
+  .act-sel { min-height: 44px; font-size: 16px; }
   .lg-segb { min-width: 44px; }
   /* The (i) tip's 44 px tap area stays inside its own row */
   .lg-meta { min-height: 44px; margin: 0; }
@@ -134,10 +135,9 @@
 
 /* ---------- Activity tab (v1.3) ---------- */
 .lg-tabs { margin: 0 0 12px; }
-.lg-tabs button { min-height: 40px; }
+.lg-tabs button { min-height: var(--tab-h, 40px); }
 .act-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
 .act-sel { min-height: 38px; max-width: 100%; font-size: 15px; }
-.act-seg button { min-height: 38px; }
 .act-tools { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; }
 /* v1.4 (owner): the "show all details" eye, the same look as the sign-in eye of User management (users.css .us-eye):
    light: a solid circle (green on, grey off) with a white eye; dark: no fill, a green or grey outline eye */
@@ -187,7 +187,7 @@
 .act-detail { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 12px; margin: 0; padding: 4px 10px 10px; font-size: 13.5px; }
 .act-detail dt { color: var(--ink3); }
 .act-detail dd { margin: 0; overflow-wrap: anywhere; }
-.act-more { justify-self: start; min-height: 44px; }
+.act-more { justify-self: center; }
 /* NARROW LOG AREA (under 900px of its own width, also on wide windows): one card per entry, like on phones. The phone media
    query below stays for browsers without container queries (Safari 15). */
 @container (max-width: 899px) {
@@ -210,6 +210,6 @@
   .act-obj { grid-area: obj; color: var(--ink2); }
   /* v1.4: the address column (IP · place · device) sits under the action on the full row width and may wrap */
   .act-dev { grid-area: dev; color: var(--ink3); font-size: 13px; min-width: 0; overflow-wrap: anywhere; }
-  .act-sel { flex: 1 1 40%; min-height: 44px; }
-  .act-seg button { min-height: 44px; min-width: 44px; }
+  .act-sel { flex: 1 1 40%; }
+  .act-seg button { min-width: 44px; }
 }

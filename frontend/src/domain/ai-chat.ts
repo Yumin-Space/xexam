@@ -10,7 +10,6 @@
 // `reasoningView` decides whether it is there, live (open while it streams) and open.
 import { modelRefText, parseModelRef } from '../api/model-ref.ts';
 import type { AiChatDetail, AiChatKind, AiEffortFamily, AiMessage, AiModelList, AiSettings, AiSlot, ModelRef, UiLang } from '../types/api.ts';
-import { knownDefault, levelForFamily } from './effort-defaults.ts';
 
 /** A message as the page shows it: `thinking` (view only, never from the server) = a reasoning model thinks, no text yet */
 export type ViewMessage = AiMessage & { thinking?: boolean };
@@ -466,8 +465,14 @@ export function chooseValue(value: string, def: ChatDefault): string {
 
 // ---------------------------------------------------------------- v2.1: the strength step of the picker
 
-/** The strength list of the picker: the levels of the chosen connection's family, the model default and the preselected level */
-export interface StrengthView { family: AiEffortFamily; levels: string[]; modelDefault: string; selected: string }
+/**
+ * The strength menu of the composer's strength button: the family's levels and the shown choice. `options` starts with
+ * 'default' (= send no strength parameter), then the levels as the family writes them.
+ */
+export interface StrengthView { family: AiEffortFamily; levels: string[]; options: string[]; selected: string }
+
+/** The pick that means "send no strength parameter" */
+export const EFFORT_DEFAULT = 'default';
 
 /** Levels are compared exactly as sent (the server matches them the same way: `HIGH` is not `high`) */
 const sameLevel = (a: string, b: string): boolean => a === b;
@@ -480,22 +485,21 @@ export function slotRoute(s: AiSettings, slot: AiSlot): ModelRef | null {
 }
 
 /**
- * The strength step for the chosen connection + model, or null when it cannot be offered (no such connection, or the
- * settings carry no levels). Preselected: the chat's own pick (`picked`, '' = none) when valid for the family, else the
- * stored choice of the AI Chat row when it belongs to this family (the server applies it to any route of the family, so
- * the picker shows what is sent), else the model default.
+ * The strength menu for the chosen connection + model, or null when it cannot be offered (no such connection, or the
+ * settings carry no levels). Shown: the chat's own pick (`picked`, '' = none) when valid ('default' or a level of the
+ * family), else the stored choice of the AI Chat row when it belongs to this family (the server applies it to any route
+ * of the family), else 'default' (nothing is sent). There is no model default any more.
  */
 export function strengthView(s: AiSettings | null, connId: number | null, model: string | null, picked: string): StrengthView | null {
   if (!s || connId == null || !model) return null;
   const conn = s.connections.find((c) => c.id === connId);
   const levels = conn ? s.effortLevels?.[conn.effortFamily] : undefined;
   if (!conn || !levels || !levels.length) return null;
-  const modelDefault = levelForFamily(null, levels, knownDefault(model));
   const found = (x: string): string | undefined => levels.find((l) => sameLevel(l, x));
-  const own = picked !== '' ? found(picked) : undefined;
+  const own = picked === EFFORT_DEFAULT ? EFFORT_DEFAULT : picked !== '' ? found(picked) : undefined;
   const stored = s.slots.chat?.effort;
   const row = stored && stored.family === conn.effortFamily ? found(stored.level) : undefined;
-  return { family: conn.effortFamily, levels, modelDefault, selected: own ?? row ?? modelDefault };
+  return { family: conn.effortFamily, levels, options: [EFFORT_DEFAULT, ...levels], selected: own ?? row ?? EFFORT_DEFAULT };
 }
 
 /** Whether the AI page's popstate listener acts: only on the chat list of a one-pane phone, with no chat in the address,
@@ -504,21 +508,18 @@ export function handlesPopstate(s: { onPage: boolean; chatsTab: boolean; onePane
   return s.onPage && s.chatsTab && s.onePane && !s.chatInUrl && s.hashName === 'ai';
 }
 
-/** The level a request carries: undefined = nothing changed, null = no pick, else the level */
+/** The strength a request carries: undefined = nothing changed, null = reset to the Chat row, 'default' = Default (nothing
+ *  is sent to the model), else the level */
 export function effortArg(selected: string, stored: string | null | undefined): string | null | undefined {
   const was = stored ?? '';
   if (selected === was) return undefined;
   return selected === '' ? null : selected;
 }
 
-/** The selection after the model changed: kept while the new family still has the level, else none */
+/** The selection after the model changed: kept while the new family has the level ('default' is always kept), else none */
 export function keepEffort(selected: string, v: StrengthView | null): string {
+  if (selected === EFFORT_DEFAULT) return selected;
   return selected !== '' && v && v.levels.some((l) => sameLevel(l, selected)) ? selected : '';
-}
-
-/** The brain button's dot also marks a strength other than the model default */
-export function effortMarks(selected: string, v: StrengthView | null): boolean {
-  return selected !== '' && v != null && !sameLevel(selected, v.modelDefault);
 }
 
 /** The model a request carries: undefined = nothing changed (the server uses the stored pick), null = back to the default */

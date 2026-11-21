@@ -214,9 +214,9 @@ export function usageNote(job: GenJob): HTMLElement[] {
   const cell = (cls: string, ...kids: Array<string | HTMLElement>): HTMLElement => h('span', { class: cls }, ...kids);
   const rows: HTMLElement[] = [
     cell('gu-n', tn('aigen.card.calls', u.calls, { calls: f(u.calls) }), cell('gu-c', t('aigen.card.callsSep'))),
-    cell('gu-l', t('aigen.card.ioLabel')), cell('gu-v', `${io} Token`),
+    cell('gu-l', t('aigen.card.ioLabel')), cell('gu-v', t('aigen.card.tokens', { n: io })),
   ];
-  if (cache) rows.push(cell('gu-n gu-e', ''), cell('gu-l', t('aigen.card.cacheLabel')), cell('gu-v', `${cache} Token`));
+  if (cache) rows.push(cell('gu-n gu-e', ''), cell('gu-l', t('aigen.card.cacheLabel')), cell('gu-v', t('aigen.card.tokens', { n: cache })));
   const p: HTMLElement = h('div', { class: 'dim gen-note gen-usage', tabindex: '0', 'aria-describedby': id }, ...rows);
   // Never break a row: when the three columns do not fit, the call count takes its own line (no comma) and the label rows sit
   // under each other; if even that is too wide the type shrinks a little

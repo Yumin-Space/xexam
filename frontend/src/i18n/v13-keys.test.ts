@@ -130,7 +130,7 @@ test('the sign-in info eye stops recording, keeps what is saved, and the clear c
   assert.match(t('users.signinInfo.clear.ask'), /无法撤销/);
   assert.equal(t('users.signinInfo.clear.ask').includes('删除'), false);
   assert.equal(t('act.ipOff').includes('未记录'), false);
-  assert.equal(t('act.note').includes('IP 和大致所在地只在“用户管理”里的眼睛打开时才记录；隐藏期间不再记录新的内容，已保存的记录会保留。'), true);
+  assert.equal(t('act.note').includes('IP 和大致所在地只在「用户管理」里的眼睛打开时才记录；隐藏期间不再记录新的内容，已保存的记录会保留。'), true);
   setUiLang('ja');
   assert.equal(t('users.signinInfo.clear'), '記録を消去');
   assert.match(t('users.signinInfo.clear.ask'), /元に戻せません/);

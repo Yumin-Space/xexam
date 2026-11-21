@@ -3,18 +3,17 @@
    PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), as in every stylesheet. */
 
 /* ---------- .ibtn ----------
-   36 x 36 px visual on a mouse device, 40 x 40 on touch; an invisible ::after makes the hit area 44 x 44 on touch (it
-   grows by 2 px per side, so it never reaches a neighbour that is at least 4 px away). */
+   --ibtn-size (main.css): 36 x 36 px with a mouse, 44 x 44 on touch (the same box as .btn); radius 6 px like .btn. */
 .ibtn {
   position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none;
-  width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--ink2);
-  font: inherit; font-size: 13.5px; font-weight: 500; line-height: 1; white-space: nowrap; cursor: pointer;
+  width: var(--ibtn-size); height: var(--ibtn-size); padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--ink2);
+  font: inherit; font-size: 14.5px; font-weight: 400; line-height: 1; white-space: nowrap; cursor: pointer;
   -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
   transition: background-color .12s ease, color .12s ease;
 }
 .ibtn .ibtn-ic { width: 18px; height: 18px; flex: none; color: inherit; }
-.ibtn-label { width: auto; min-width: 36px; padding: 0 10px; }
+.ibtn-label { width: auto; min-width: var(--ibtn-size); padding: 0 10px; }
 .ibtn[aria-pressed="true"] { background: var(--hover-strong); color: var(--ink); }
 .ibtn:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 
@@ -33,14 +32,6 @@
   background: transparent; border-color: transparent; box-shadow: none; color: var(--ink3); cursor: not-allowed;
 }
 .ibtn:disabled:not([aria-disabled]) { opacity: .45; }
-
-@media (pointer: coarse) {
-  .ibtn { width: 40px; height: 40px; }
-  .ibtn-label { width: auto; min-width: 40px; }
-  .ibtn::after { content: ""; position: absolute; inset: -2px; }
-  /* The outlined tone has a 1 px border and the ::after is placed from inside it: one more pixel gives the same 44 px */
-  .ibtn-ai::after { inset: -3px; }
-}
 
 @media (forced-colors: active) {
   .ibtn[aria-disabled="true"], .ibtn:disabled { border: 1px dashed GrayText; color: GrayText; }

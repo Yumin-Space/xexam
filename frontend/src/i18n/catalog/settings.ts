@@ -49,7 +49,7 @@ export default defineCatalog({
     'settings.auto.desc': 'Moves on after a single-choice answer or a fully answered hotspot; never after multiple choice.',
     'settings.auto.note': 'Off by default. While it is on, the exam page shows “{label}” at the top.',
 
-    'settings.aiMode': 'AI chat mode',
+    'settings.aiMode': 'AI Chat mode',
     'settings.aiMode.normal': 'Normal',
     'settings.aiMode.free': 'Free',
     'settings.aiMode.hint': 'Normal: the AI answers as the study assistant and uses AI memories. Free: you talk to the model directly, without the study-assistant instructions and AI memories. It applies to all your AI chats.',

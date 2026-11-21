@@ -6,6 +6,22 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.2 — 2026-11-21
+
+**A "Default" thinking strength that sends nothing, an AI Chat strength button, server pacing of 13 requests / 230 000 tokens a minute, and a site-wide consistency pass on phones and desktop. Upgrading: pull the images; the AI database stays at schema 11 and a one-time step moves the pacing default after a backup copy; rolling back to v2.1 needs no restore.**
+
+- **Thinking strength "Default"**: every strength dropdown in **AI settings → Connections and models** now starts with **Default (no strength parameter sent)**. Rows you never touched are Default too: v2.1 sent the model's default level, v2.2 sends nothing. Any other level sends its parameter as before.
+- **AI Chat**: the brain button picks **API**, then **Model** only; strength has its own button beside it. Its menu lists **Default**, the levels of the connection's family and, when the chat has its own choice, **Follow AI settings (now: …)**.
+- **Pacing defaults 13 requests / 230 000 tokens a minute**, with no 0.9 factor anywhere. On upgrade, a value still on the old defaults moves to the new ones and values you entered are kept. A schema-11 file still on the v2.1 default 13 / 240 000 moves once to 13 / 230 000 after a backup copy.
+- **Phone top bar**: the account name is hidden; you see the person icon, the **AI+** badge and a short admin tag without overlap. Tapping the account button shows a tip with your name, role and AI+ state, and the menu opens from the ≡ button. Desktop is unchanged. The top-left brand is the word **Xexam** (no logo icon), it never hides, and the bar sits in the same place on every page, AI Chat included.
+- **Theme button on the practice / exam screen**: the sun / moon button is there too.
+- **AI banks tab**: **Recent AI bank jobs** pages like the AI users tab (search, sort, 10 per page, up to 200 jobs), and each job opens a details block (kind, source, mode, made / goal, calls, tokens, cached tokens, times, state / reason, bank made).
+- **Phones and layout**: in practice and exam on a phone the option letter starts the first line and the text wraps to the left edge; review options likewise. The answer sheet starts closed every time you enter the quiz screen. The **Start exam** and **Start practice** buttons on Home always have the same width. The AI Chat admin notice wraps on phones, and the footer disclaimer is centered when it fits on one line.
+- **Consistency pass**: top bar placement, title sizes, button heights and radius, tab and segmented control heights, checkbox size, field heights (16 px text in touch fields, so iPhone does not zoom), touch targets of at least 44 px, menu and dialog frames, empty-state text, search boxes, count lines, the version written "Xexam vX.Y" everywhere, and wording and punctuation in English, Chinese and Japanese were unified on every page at 375, 393, 768 and 1280 px.
+- **One-host Docker Compose**: `docker-compose.yml` and `docker-compose.build.yml` show the internal ports and addresses (`XEXAM_BACKEND_PORT` 8765 and `XEXAM_AI_PORT` 8766 in `.env`, with the upstream addresses of Nginx following them); backend and ai-service still publish no ports.
+- **Database, AI**: no schema change (still 11). The one-time pacing step is marked by `meta.pace_default_230k`. Details: section 8.2i of [database.md](database.md) and the v2.1 to v2.2 section of [migration.md](migration.md).
+- **Going back**: v2.1 opens the database as it is; no restore is needed.
+
 ### v2.1 — 2026-11-20
 
 **Thinking strength per connection, the AI Chat picker with a strength step, a light / dark button in the top bar, and a fix for the iPhone menu. Upgrading: pull the images; the AI database moves to schema 11 on start after a backup copy (rollback = restore `backups/xexam-ai-schema10-*.db`); the main database does not change.**

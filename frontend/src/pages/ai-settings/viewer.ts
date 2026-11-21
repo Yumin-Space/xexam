@@ -258,8 +258,7 @@ export async function openViewer(u: AiAdminUserRow, onChanged: () => void): Prom
           ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('chat') }, t('ai.set.user.clearChat'))
           : null,
         dt.chats.length ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('chats') }, t('ai.set.user.clearChats')) : null,
-        dt.memories.length ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('memories') }, t('ai.set.user.clearMemories')) : null,
-        h('button', { class: 'btn', type: 'button', onclick: () => d.close() }, t('common.close')))]));
+        dt.memories.length ? h('button', { class: 'btn danger', type: 'button', disabled: busy, onclick: () => void clear('memories') }, t('ai.set.user.clearMemories')) : null)]));
   }
 
   // A turn of the phone between portrait and landscape (or a resize across 600 px) draws the other layout

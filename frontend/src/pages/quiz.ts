@@ -18,6 +18,7 @@ import { shortLabel } from '../components/icon-button.ts';
 import { langSwitch } from '../components/lang-switch.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { answerReview, explainBlocks } from '../components/review.ts';
+import { themeButton } from '../components/shell.ts';
 import { holdTip } from '../components/tooltip.ts';
 import { t, type MsgKey } from '../i18n/index.ts';
 import { S, type Session } from '../state/store.ts';
@@ -104,8 +105,10 @@ export function renderQuiz(): HTMLElement {
   const flagsPart = (): string => (se.flags.size > 0 ? t('quiz.sum.flags', { f: se.flags.size }) : '');
   onRefresh(() => {
     const answered = se.qs.filter((x) => stateOf(x, answerOf(x.id)) === 2).length;
-    topCountFull.textContent = t('quiz.top.answered', { a: answered, n });
-    topCountShort.textContent = `${answered}/${n}`;
+    // The top count shows the same number as the answer sheet: checked questions in a practice, answered ones in an exam
+    const topN = practice ? practiceCounts(se.qs, se.answers, se.checked).checked : answered;
+    topCountFull.textContent = t(practice ? 'quiz.top.checked' : 'quiz.top.answered', { a: topN, n });
+    topCountShort.textContent = `${topN} / ${n}`;
     if (practice) {
       const c = practiceCounts(se.qs, se.answers, se.checked);
       meterFill.style.width = (100 * c.checked) / n + '%';
@@ -328,11 +331,16 @@ export function renderQuiz(): HTMLElement {
     rail.classList.toggle('open', open);
     toggle.setAttribute('aria-expanded', String(open));
   };
-  setSheetOpen(readSheetOpen());
+  // v2.2 (owner): the sheet starts closed every time the quiz screen is entered (a new start or a resume); it stays as the
+  // examinee set it only while they are on this screen (redraws after an answer keep it), never remembered across visits
+  if (!document.querySelector('#app .qz')) {
+    sheetOpenNow = false;
+    forgetStoredSheetOpen();
+  }
+  setSheetOpen(sheetOpenNow);
   toggle.addEventListener('click', () => {
-    const open = !rail.classList.contains('open');
-    setSheetOpen(open);
-    writeSheetOpen(open);
+    sheetOpenNow = !rail.classList.contains('open');
+    setSheetOpen(sheetOpenNow);
   });
 
   // TL-3: a timed exam shows the time left (countdown); an untimed exam and a practice keep the count-up
@@ -388,6 +396,7 @@ export function renderQuiz(): HTMLElement {
       topSubmit,
       h('span', { class: 'qtime' + (limit != null ? ' timed' : ''), title: limit != null ? t('quiz.timeLeftTip', { min: Math.round(limit / 60) }) : t('quiz.time') },
         miniIcon(limit != null ? 'hourglass' : 'clock', 'mi'), h('span', { class: 'sr-only' }, t(limit != null ? 'quiz.timeLeft' : 'quiz.time')), timerEl),
+      themeButton('qtheme'),
       exit),
     h('div', { class: 'meter', 'aria-hidden': 'true' }, meterFill));
 
@@ -496,22 +505,16 @@ function barButton(o: {
   return btn;
 }
 
-// ---- the answer sheet's open state on phones (QZ-5): per user and browser, every access guarded, works without storage ----
-function readSheetOpen(): boolean {
-  try {
-    const id = S.user?.id;
-    return id != null && window.localStorage.getItem(sheetOpenKey(id)) === '1';
-  } catch {
-    return false;
-  }
-}
+// ---- the answer sheet's open state on phones (QZ-5): only while the quiz screen is shown (v2.2: no longer stored) ----
+let sheetOpenNow = false;
 
-function writeSheetOpen(open: boolean): void {
+/** Removes the open state that builds before v2.2 kept in the browser (storage may be blocked) */
+function forgetStoredSheetOpen(): void {
   try {
     const id = S.user?.id;
-    if (id != null) window.localStorage.setItem(sheetOpenKey(id), open ? '1' : '0');
+    if (id != null) window.localStorage.removeItem(sheetOpenKey(id));
   } catch {
-    // storage blocked: the sheet still opens and closes, it is just not remembered
+    // storage blocked: nothing was stored either
   }
 }
 
@@ -524,9 +527,15 @@ function syncTopH(): void {
   const right = row && row.isConnected ? row.querySelector<HTMLElement>('.r') : null;
   const left = row && row.isConnected ? row.querySelector<HTMLElement>('.ql') : null;
   if (row && right && left) {
-    row.classList.remove('tight');
-    const over = left.scrollWidth > left.clientWidth + 1 || right.offsetTop > left.offsetTop + 4 || row.scrollWidth > row.clientWidth + 1;
-    row.classList.toggle('tight', over);
+    // Steps (styles/quiz.css): short labels and count, then smaller gaps and no clock icon, then no tag / finish icon; each
+    // only while something is still clipped or pushed onto a second line
+    row.classList.remove('tight', 'tighter', 'tightest');
+    const lastEnd = (): number => (left.lastElementChild?.getBoundingClientRect().right ?? 0) - left.getBoundingClientRect().right;
+    const over = (): boolean => left.scrollWidth > left.clientWidth + 1 || lastEnd() > 0.5 || right.offsetTop > left.offsetTop + 4 || row.scrollWidth > row.clientWidth + 1;
+    for (const step of ['tight', 'tighter', 'tightest']) {
+      if (!over()) break;
+      row.classList.add(step);
+    }
   }
   const px = row && row.isConnected && matches(PHONE_MQ) ? row.offsetHeight : 0;
   document.documentElement.style.setProperty('--top-h', `${px}px`);

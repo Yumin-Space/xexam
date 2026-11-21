@@ -6,6 +6,22 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.2 — 2026-11-21
+
+**什么都不发送的“默认”思考强度、AI 对话的强度按钮、服务器匀速发送默认每分钟 13 次请求 / 230 000 tokens，以及手机和电脑上的全站一致性整理。升级：拉取镜像即可；AI 数据库仍是 schema 11，先做一份备份副本，再一次性调整匀速发送的默认值；回退到 v2.1 不需要还原。**
+
+- **思考强度“默认”**：**AI 设置 → 连接与模型** 里每个强度下拉框的第一项都是 **默认（不发送强度参数）**。从没动过的行也是默认：v2.1 在这里发送模型的默认强度，v2.2 什么都不发送。选其他强度时，仍照常发送对应参数。
+- **AI 对话**：大脑按钮现在只选 **API** 和 **模型**，强度有旁边单独的按钮。它的菜单列出 **默认**、该连接家族的强度，以及对话有自己的选择时的 **跟随 AI 设置（当前：…）**。
+- **匀速发送默认 13 次请求 / 230 000 tokens 每分钟**，任何地方都不再乘 0.9。升级时，仍是旧默认值的数值改成新默认值，你自己填的数值原样保留。仍是 v2.1 默认值 13 / 240 000 的 schema 11 文件，先备份，再一次性改成 13 / 230 000。
+- **手机顶栏**：账户名隐藏，显示人形图标、**AI+** 徽章和简短的管理员标签，互不重叠。点账户按钮会显示一条提示，写着你的名字、角色和 AI+ 状态；菜单从 ≡ 按钮打开。电脑上不变。左上角的品牌是文字 **Xexam**（没有标志图标），始终不隐藏，顶栏在每个页面（包括 AI 对话）都在同一个位置。
+- **练习 / 考试页也有主题按钮**：太阳 / 月亮按钮在这里也能用。
+- **AI 题库标签页**：**最近的 AI 题库任务** 像 AI 用户标签页一样分页（搜索、排序、每页 10 条、最多 200 条），每个任务可以展开详情（类型、来源、方式、已生成 / 目标、调用、tokens、缓存 tokens、时间、状态 / 原因、生成的题库）。
+- **手机与布局**：手机上的练习和考试里，选项字母在第一行开头，文字折行后回到最左边；回顾里的选项也一样。答题卡每次进入答题页都是收起的。主页上的 **开始考试** 和 **开始练习** 始终一样宽。AI 对话里给管理员的提示在手机上会折行，页脚的免责声明在一行放得下时居中。
+- **一致性整理**：顶栏位置、标题字号、按钮高度和圆角、标签页和分段控件的高度、复选框大小、输入框高度（触屏输入框用 16 px 文字，iPhone 不会自动放大）、不小于 44 px 的触控区、菜单和对话框的外框、空状态文字、搜索框、计数行、处处写成“Xexam vX.Y”的版本号，以及中文、英文、日文的措辞和标点，都在每个页面按 375、393、768、1280 px 的宽度实测并统一。
+- **单机 Docker Compose**：`docker-compose.yml` 和 `docker-compose.build.yml` 里写明了内部端口和地址（`.env` 里的 `XEXAM_BACKEND_PORT` 8765 和 `XEXAM_AI_PORT` 8766，Nginx 的上游地址跟着它们走）；后端和 ai-service 仍不对外发布端口。
+- **数据库，AI**：没有 schema 变化（仍是 11）。一次性的匀速发送调整用 `meta.pace_default_230k` 标记。详见 [database.md](database.md) 的 8.2i 节和 [migration.md](migration.md) 的 v2.1 到 v2.2 一节。
+- **回退**：v2.1 可以直接打开这个数据库，不需要还原。
+
 ### v2.1 — 2026-11-20
 
 **思考强度按连接设置、AI Chat 选择器增加强度一步、顶栏明暗按钮，以及 iPhone 菜单的修复。升级：拉取镜像即可；AI 数据库启动时先写备份副本再升到 schema 11（回滚 = 恢复 `backups/xexam-ai-schema10-*.db`）；主数据库不变。**

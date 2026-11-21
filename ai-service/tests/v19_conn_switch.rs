@@ -389,3 +389,28 @@ async fn an_admin_pick_on_an_on_connection_works_while_the_chat_default_is_off()
     assert_eq!(terminal_name(&ev), "done");
     assert_eq!(e.t.stub.last().body["model"], json!("demo-chat-large"));
 }
+
+#[tokio::test]
+async fn effort_family_is_reported_even_when_the_connection_is_off() {
+    let e = env_two().await;
+    let s = settings(&e.t, &e.admin).await;
+    assert_eq!(s["slots"]["hint"]["effortFamily"], json!("openai"));
+    assert_eq!(s["slots"]["chat"]["effortFamily"], json!("openai"));
+    switch(&e, 2, false).await;
+    let s = settings(&e.t, &e.admin).await;
+    assert_eq!(s["slots"]["hint"]["using"], Value::Null);
+    assert_eq!(
+        s["slots"]["hint"]["effortFamily"],
+        json!("openai"),
+        "the target connection's family stays visible"
+    );
+    // the family is the one POST models/effort checks against
+    let (st, v) =
+        e.t.post(
+            "/api/ai/admin/models/effort",
+            &e.admin,
+            json!({"slot": "hint", "level": "low"}),
+        )
+        .await;
+    assert_eq!(st, 200, "{v}");
+}

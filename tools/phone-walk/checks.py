@@ -3607,8 +3607,9 @@ from checks_v12_ai import GROUPS_V12_AI  # noqa: E402
 from checks_v12_tokens import GROUPS_V12_TOKENS  # noqa: E402
 from checks_v12_charts import GROUPS_V12_CHARTS  # noqa: E402
 from checks_v13 import GROUPS_V13  # noqa: E402
+from checks_v22 import GROUPS_V22  # noqa: E402
 
-GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22
 
 
 def run(walk):

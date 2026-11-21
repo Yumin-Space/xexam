@@ -117,7 +117,7 @@ export default defineCatalog({
     'auth.password.new': '新しいパスワード',
     'auth.password.repeat': '新しいパスワード（確認）',
     'auth.password.submit': '保存して続ける',
-    'auth.password.busy': '保存しています…',
+    'auth.password.busy': '保存中…',
     'auth.password.signOut': 'ログアウト',
     'auth.password.saved': '新しいパスワードを保存しました。',
     'auth.password.elsewhere': '別のタブまたはウィンドウで新しいパスワードがすでに保存されています。今後はそのパスワードを使ってください。',

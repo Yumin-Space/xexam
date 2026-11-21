@@ -1,7 +1,7 @@
 /* Settings page: theme cards with previews, the interface language as a segmented control, the auto-advance switch
    row, reset. Colour tokens only (see main.css), so the page looks right in the light and the dark theme. */
 
-.page-settings { max-width: 880px; }
+.page-settings { max-width: var(--page-narrow, 880px); }
 .page-settings .page-acts { min-height: 1.7em; align-items: center; }
 .set-status { font-size: 13.5px; color: var(--ink3); }
 
@@ -127,8 +127,9 @@
 }
 /* Language options stay slim to look at; an invisible margin makes them 44px+ to tap */
 @media (pointer: coarse), (max-width: 480px) {
-  .set-langs .set-card { min-height: 40px; padding-inline: 16px; }
-  .set-langs .set-card::after { content: ""; position: absolute; inset: -4px -1px; }
+  /* 44 px chips themselves: when the three wrap onto two rows (en at 320 px) a hit margin would overlap the other row */
+  .set-langs .set-card { min-height: 44px; padding-inline: 16px; font-size: 13.5px; }
+  .set-langs .set-card::after { content: ""; position: absolute; inset: 0 -1px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .set-card, .set-switch, .set-track, .set-knob { transition: none; }
@@ -152,8 +153,7 @@
 
 /* ---------- v1.0 (F15): saved slot, collapsed password row, theme segmented control ---------- */
 /* ST-4: "Saved" (check icon + text) next to the section that changed, for 2 s */
-.set-saved { display: inline-flex; align-items: center; gap: 4px; min-height: 1.4em; font-size: 13px; font-weight: 600; color: var(--answer-right); }
-.set-saved-ic { width: 14px; height: 14px; flex: none; }
+/* (.saved-note, main.css, is the shared look) */
 
 /* ST-1: "Change password >" is one 44 px row; the fields open in place */
 .set-pw-h { margin: 0; font-size: 15px; font-weight: 600; }

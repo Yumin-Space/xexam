@@ -134,6 +134,22 @@ fn all_carry(bodies: &[Value], level: &str) {
     }
 }
 
+/// No strength parameter in any of the bodies (v2.2 Default).
+fn none_carry(bodies: &[Value]) {
+    assert!(!bodies.is_empty(), "no model call");
+    for b in bodies {
+        let t = b.to_string();
+        for needle in [
+            "reasoning_effort",
+            "\"effort\"",
+            "\"reasoning\"",
+            "thinking_level",
+        ] {
+            assert!(!t.contains(needle), "{needle} in {b}");
+        }
+    }
+}
+
 // —— the admin route ——————————————————————————————————————————————————————————————————————————————————————————————————
 
 #[tokio::test]
@@ -151,16 +167,12 @@ async fn effort_save_round_trip() {
     );
     assert!(v["effortLevels"].get("gemma").is_none());
     assert_eq!(v["connections"][0]["effortFamily"], "openai");
-    // untouched rows: nothing stored, the effective level is the model default (unknown model: medium)
+    // untouched rows: nothing stored, nothing is sent (Default)
     for slot in [
         "default", "chat", "hint", "explain", "summary", "generate", "import",
     ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
-        assert_eq!(
-            v["slots"][slot]["effortEffective"],
-            json!({"family": "openai", "level": "medium"}),
-            "{slot}"
-        );
+        assert_eq!(v["slots"][slot]["effortEffective"], Value::Null, "{slot}");
     }
     let (s, v) =
         e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": "high"}))
@@ -180,7 +192,7 @@ async fn effort_save_round_trip() {
     ] {
         assert_eq!(v["slots"][slot]["effort"], Value::Null, "{slot}");
     }
-    // another family on the connection: the stored tag stays, the effective level is the model default again
+    // another family on the connection: the stored tag stays, nothing is sent
     use_family(&e, "anthropic");
     let v = settings(&e.t, &e.admin).await;
     assert_eq!(v["connections"][0]["effortFamily"], "anthropic");
@@ -188,17 +200,14 @@ async fn effort_save_round_trip() {
         v["slots"]["chat"]["effort"],
         json!({"family": "openai", "level": "high"})
     );
-    assert_eq!(
-        v["slots"]["chat"]["effortEffective"],
-        json!({"family": "anthropic", "level": "medium"})
-    );
+    assert_eq!(v["slots"]["chat"]["effortEffective"], Value::Null);
     set(&e, "chat", "max").await;
     let v = settings(&e.t, &e.admin).await;
     assert_eq!(
         v["slots"]["chat"]["effort"],
         json!({"family": "anthropic", "level": "max"})
     );
-    // null: back to the model default (stored NULL)
+    // null: Default (stored NULL)
     let (s, v) =
         e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": null}))
             .await;
@@ -752,9 +761,9 @@ async fn import_calls_send_import_slot_effort() {
 }
 
 #[tokio::test]
-async fn untouched_rows_send_the_model_default() {
+async fn untouched_rows_send_no_strength_parameter() {
     let e = env().await;
-    // an untouched install sends the model's default explicitly (unknown model: medium), and so does a reset row
+    // an untouched install sends no strength parameter, and neither does a reset row
     let from = n_requests(&e.t);
     let ev =
         e.t.send_all(&e.user, json!({"text": "hello", "lang": "en"}))
@@ -773,7 +782,7 @@ async fn untouched_rows_send_the_model_default() {
     assert_eq!(terminal(&ev).0, "done");
     let bodies = calls_from(&e.t, from);
     assert!(bodies.len() >= 2);
-    all_carry(&bodies, "medium");
+    none_carry(&bodies);
 }
 
 #[tokio::test]

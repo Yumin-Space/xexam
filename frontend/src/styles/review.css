@@ -17,7 +17,7 @@
 .score .acts { grid-area: acts; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 6px; }
 /* Icon actions with a text label beside the icon; phones hide the label (RS-1), the name stays the aria-label */
 .score .acts .res-act { width: auto; padding-inline: 10px 14px; gap: 6px; }
-.score .acts .res-act .lbl { font-size: 14px; white-space: nowrap; }
+.score .acts .res-act .lbl { font-size: 14.5px; font-weight: 400; white-space: nowrap; }
 
 /* One small key per question (36 px visual; a 44 px hit area on touch). On phones the keys fold behind the summary row (RS-2) */
 .strip-toggle { display: none; }
@@ -45,11 +45,13 @@
 .badge.open { color: var(--warn); background: transparent; box-shadow: inset 0 0 0 1px var(--warn); }
 
 .rvhead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
-.rvhead h2 { font-size: 18px; font-weight: 600; }
+.rvhead h2 { font-size: 16.5px; font-weight: 600; }
 
 /* Review cards: soft blocks with a short coloured marker on the left edge, beside the "Question 6" heading row
    (orange wrong, green right). Its top follows the block's top padding (28px; 20px on narrow screens; 16px on a gone card). */
 .rv { margin-bottom: 16px; scroll-margin-top: calc(var(--top-h, 0px) + 12px); }
+/* the footer's own margin gives the 20 px every page has */
+.rvlist > .rv:last-child { margin-bottom: 0; }
 .rv .phead { margin-bottom: 6px; }
 /* The AI+ dock of a card sits under the answer line; the panel (ai-panel.css) draws what is inside it */
 .rv .aip-dock { margin-top: 12px; }

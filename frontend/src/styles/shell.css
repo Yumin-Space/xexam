@@ -39,6 +39,23 @@
   .topbar-pin.topbar-hide { transform: translateY(-100%); box-shadow: none; }
   /* A focused element scrolled into view stays below the bar, which comes back on an upward scroll (WCAG 2.4.11) */
   html { scroll-padding-top: calc(44px + env(safe-area-inset-top) + 8px); }
+
+  /* v2.2: the account button is the person icon, the compact AI+ badge and the short admin tag, in one flex row (nothing
+     positioned over anything else); the name is in the tip a tap shows. The badge's hung "+" gets its room on the right. */
+  .acct-name { display: none; }
+  .acct-btn { gap: 4px; padding-inline: 6px; min-width: 44px; justify-content: center; }
+  .acct-btn .ai-badge { margin-left: 0; margin-right: 2px; }
+  /* The badge's tip wrapper never shrinks under the badge's own width (a shrunk wrapper let the badge be drawn over the
+     admin tag, and hid the overflow from the fitting steps of components/shell.ts fitBar) */
+  .acct-btn .ai-badge-tip { flex: none; }
+  .acct-role { display: inline-flex; align-items: center; }
+  .acct-role-l { display: none; }
+  .acct-role-s { display: inline; }
+  .acct-tipwrap > .tip { white-space: pre-line; }
+}
+/* The account tip belongs to phones: on a wide screen the button opens the menu and the badge has its own tip */
+@media (min-width: 601px) and (not ((orientation: landscape) and (max-height: 500px))) {
+  .acct-tipwrap > .tip { display: none !important; }
 }
 
 @media (orientation: landscape) and (max-height: 500px) { /* SHORT_LANDSCAPE */
@@ -74,4 +91,3 @@
    for screen readers) */
 .topbar.fit-1 .acct-ico { display: none; }
 .topbar.fit-2 .acct-role { display: none; }
-.topbar.fit-3 .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

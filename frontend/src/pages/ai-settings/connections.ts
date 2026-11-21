@@ -263,8 +263,8 @@ function deleteDialog(c: AiConnection, s: AiSettings): Promise<{ go: boolean; ne
       h('h3', { id: titleId, tabindex: '-1' }, t('ai.set.del.title', { name: c.name })),
       ...body,
       h('div', { class: 'acts' },
-        h('button', { class: 'btn danger solid', type: 'button', onclick: () => d.close('go') }, t('ai.set.conn.delete')),
-        h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, t('common.cancel'))));
+        h('button', { class: 'btn', type: 'button', onclick: () => d.close('cancel') }, t('common.cancel')),
+        h('button', { class: 'btn danger solid', type: 'button', onclick: () => d.close('go') }, t('ai.set.conn.delete'))));
     d.addEventListener('close', () => {
       const go = d.returnValue === 'go';
       const pick = choices.length ? parseRefKey(select.value) : null;
@@ -276,6 +276,13 @@ function deleteDialog(c: AiConnection, s: AiSettings): Promise<{ go: boolean; ne
     else d.setAttribute('open', '');
     document.getElementById(titleId)?.focus();
   });
+}
+
+/** A save / test result: success is the green status line, a failure is the shared red .err block */
+function msgBlock(m: { ok: boolean; text: string }): HTMLElement {
+  return m.ok
+    ? h('p', { class: 'ais-ok', role: 'status' }, m.text)
+    : h('div', { class: 'err', role: 'alert' }, h('p', null, m.text));
 }
 
 async function removeConnection(c: AiConnection): Promise<void> {
@@ -347,7 +354,7 @@ function connCard(c: AiConnection): HTMLElement {
     h('p', { class: 'ais-note ais-conn-keys' }, keyText(c)),
     c.usedBy.length ? h('p', { class: 'ais-note ais-conn-used' }, t('ai.set.conn.usedBy', { list: usedByText(c.usedBy) })) : null,
     c.insecureHttp ? h('p', { class: 'ais-note ais-conn-http' }, t('ai.set.conn.httpNote')) : null,
-    rt?.msg ? h('p', { class: rt.msg.ok ? 'ais-ok' : 'ais-ferr', role: rt.msg.ok ? 'status' : 'alert' }, rt.msg.text) : null,
+    rt?.msg ? msgBlock(rt.msg) : null,
     h('div', { class: 'acts ais-conn-acts' },
       h('button', { class: 'btn', id: `ai-c-edit-${c.id}`, type: 'button', disabled: A.connBusy, onclick: () => openForm(c) }, t('ai.set.conn.edit')),
       h('button', { class: 'btn', id: `ai-c-retest-${c.id}`, type: 'button', disabled: busy || A.connBusy, onclick: () => void retest(c) },
@@ -459,7 +466,7 @@ function connForm(s: AiSettings): HTMLElement {
         fam = { value: (e.target as HTMLSelectElement).value as EffortFamily, byHand: true };
       },
     }, EFFORT_FAMILIES.map((k) => h('option', { value: k, selected: k === fam.value ? 'selected' : null }, famLabel(k)))),
-    h('p', { class: 'ais-note', id: 'ai-c-family-help' }, t('ai.set.conn.familyHelp')));
+    h('p', { class: 'fld-hint', id: 'ai-c-family-help' }, t('ai.set.conn.familyHelp')));
 
   const keyFields = fields.slots.map((slot) => {
     const label = slot === 'gatewayKey' ? t('ai.set.gatewayKey') : f.provider === 'gateway' ? t('ai.set.upstreamKey') : t('ai.set.apiKey');
@@ -526,7 +533,7 @@ function connForm(s: AiSettings): HTMLElement {
     reuse,
     h('div', { class: 'ais-keys' }, keyFields),
     h('p', { class: 'ais-ferr', id: 'ai-c-clash', hidden: !headerClash(f, keyAfter(saved, f, 'apiKey')) }, aiCodeText('ai.headerClash')),
-    A.connMsg ? h('p', { class: A.connMsg.ok ? 'ais-ok' : 'ais-ferr', role: A.connMsg.ok ? 'status' : 'alert' }, A.connMsg.text) : null,
+    A.connMsg ? msgBlock(A.connMsg) : null,
     h('div', { class: 'acts' },
       h('button', { class: 'btn primary', id: 'ai-c-save', type: 'submit', disabled: busy },
         busy ? t('ai.set.conn.testing', { n: A.connSecs }) : t('ai.set.conn.save')),
@@ -570,13 +577,13 @@ export function connectionsSection(s: AiSettings): HTMLElement {
       h('button', {
         class: 'btn', id: 'ai-c-add', type: 'button', disabled: full || A.connBusy, title: full ? t('ai.set.conn.addFull', { n: s.maxConnections }) : null,
         onclick: () => openForm(null),
-      }, t('ai.set.conn.add')),
+      }, miniIcon('plus', 'ais-add-ic'), t('ai.set.conn.add')),
       full ? h('p', { class: 'ais-note' }, t('ai.set.conn.addFull', { n: s.maxConnections })) : null));
   }
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-conn-h' },
     h('h2', { id: 'ais-conn-h', tabindex: '-1' }, t('ai.set.card.conn')),
     // The result of the last save (the form is closed then); a failed save shows its line inside the form
-    A.connMsg && A.open == null ? h('p', { class: A.connMsg.ok ? 'ais-ok' : 'ais-ferr', role: A.connMsg.ok ? 'status' : 'alert' }, A.connMsg.text) : null,
+    A.connMsg && A.open == null ? msgBlock(A.connMsg) : null,
     // Two empty groups would only be noise before the first connection exists
     s.connections.length ? connGroup(s, 'on', groups.on) : null,
     s.connections.length ? connGroup(s, 'off', groups.off) : null,

@@ -203,8 +203,8 @@ test('the category tabs live in the hash; a missing or unknown value is the firs
 
 test('the calls line, the block tag and the today cell of an AI+ user', () => {
   const calls = { used: { minute: 2, hour: 7, day: 37 }, blocked: null };
-  assert.deepEqual(callsFigures(calls, { callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100 }), { minute: '2/5', hour: '7/20', day: '37/100' });
-  assert.deepEqual(callsFigures(calls, undefined), { minute: '2/5', hour: '7/20', day: '37/100' });
+  assert.deepEqual(callsFigures(calls, { callsPerMinute: 5, callsPerHour: 20, callsPerDay: 100 }), { minute: '2 / 5', hour: '7 / 20', day: '37 / 100' });
+  assert.deepEqual(callsFigures(calls, undefined), { minute: '2 / 5', hour: '7 / 20', day: '37 / 100' });
   assert.equal(callsFigures(undefined, undefined), null);
   assert.equal(blockTag(calls), null);
   assert.equal(blockTag(undefined), null);
@@ -679,10 +679,10 @@ test('v1.9 slot note connOff: the own model is on an off connection, or the row 
 
 test('v1.9 pacing: keys, defaults, ranges and the figures as entered, even gap)', () => {
   assert.deepEqual([...PACE_KEYS], ['paceOn', 'paceRpm', 'paceTpm']);
-  assert.deepEqual([DEFAULT_LIMITS.paceOn, DEFAULT_LIMITS.paceRpm, DEFAULT_LIMITS.paceTpm], [1, 13, 240000]);
+  assert.deepEqual([DEFAULT_LIMITS.paceOn, DEFAULT_LIMITS.paceRpm, DEFAULT_LIMITS.paceTpm], [1, 13, 230000]);
   assert.deepEqual([LIMIT_RANGES.paceOn, LIMIT_RANGES.paceRpm, LIMIT_RANGES.paceTpm], [[0, 1], [1, 10000], [1000, 100000000]]);
   assert.deepEqual(AS_KEYS.slice(-3), ['paceOn', 'paceRpm', 'paceTpm']);
-  assert.deepEqual(paceEffective(13, 240000), { rpm: 13, tpm: 240000, sec: 4.6 });
+  assert.deepEqual(paceEffective(13, 230000), { rpm: 13, tpm: 230000, sec: 4.6 });
   assert.deepEqual(paceEffective(1, 1000), { rpm: 1, tpm: 1000, sec: 60 });
 });
 

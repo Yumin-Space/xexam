@@ -60,6 +60,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `XEXAM_BIND` | `127.0.0.1:8765` | 在宿主机上发布的「地址:端口」，给 Nginx 用。必须写成 `IP:端口`。`0.0.0.0:8765` = 局域网能连。⚠️ 只写端口号 = 所有网卡 |
+| `XEXAM_BACKEND_PORT`、`XEXAM_AI_PORT` | `8765`、`8766` | *（v2.2）* 后端和 ai-service 在 Docker 私有网络内使用的端口（不发布到宿主机）。每个端口只有一个值：服务监听它，Nginx（对后端来说还有 ai-service）也连接它，所以改过的值各处都生效。只有单机 compose 文件使用它们（分机文件在各自的变量里设置端口） |
 | `XEXAM_ALLOWED_HOSTS` | 空 | 允许用哪些域名 / IP 访问，用逗号、空格或分号分隔 |
 | `XEXAM_ALLOWED_ORIGINS` | 空 | 代理把 Host 改写成源站地址时：填公网域名（带 `https://`） |
 | `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = 不检查 Host（只在前面已经有身份验证时用） |

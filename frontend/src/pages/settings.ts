@@ -79,7 +79,7 @@ const statusText = (): string => (pending > 0 ? t('common.saving') : savedShown 
 function showStatus(): void {
   if (statusEl) statusEl.textContent = statusText();
   for (const [key, el] of Object.entries(sectionStatus) as Array<[SavedSection, HTMLElement]>) {
-    el.replaceChildren(...(savedShown && savedSection === key ? [miniIcon('check', 'set-saved-ic'), t('common.saved')] : []));
+    el.replaceChildren(...(savedShown && savedSection === key ? [miniIcon('check', 'saved-ic'), t('common.saved')] : []));
   }
 }
 
@@ -286,7 +286,7 @@ function accountSection(): HTMLElement | null {
 function sectionHead(id: string, title: string, key?: SavedSection): HTMLElement {
   let slot: HTMLElement | null = null;
   if (key) {
-    slot = h('span', { class: 'set-saved', role: 'status', 'aria-live': 'polite' });
+    slot = h('span', { class: 'saved-note', role: 'status', 'aria-live': 'polite' });
     sectionStatus[key] = slot;
   }
   return h('div', { class: 'set-sechead' }, h('h2', { id }, title), slot);

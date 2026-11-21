@@ -28,7 +28,7 @@ import {
   type Level, type LevelFilter, type LogLine, type LogState,
 } from '../domain/logs.ts';
 import { errorText } from '../i18n/errors.ts';
-import { t, tn, type MsgKey } from '../i18n/index.ts';
+import { localeTag, t, tn, type MsgKey } from '../i18n/index.ts';
 import { onRouteChange, onSignedIn, render } from '../state/actions.ts';
 import { S, isAdmin } from '../state/store.ts';
 import { h, keepInView, scrollToY } from '../utils/dom.ts';
@@ -192,7 +192,7 @@ function phoneLineEl(l: LogLine): HTMLLIElement {
 }
 
 function gapEl(seq: number): HTMLLIElement {
-  return h('li', { class: 'lg-gap', 'data-seq': String(seq) }, t('logs.gap', { n: LOG_CAP }));
+  return h('li', { class: 'lg-gap', 'data-seq': String(seq) }, t('logs.gap', { n: LOG_CAP.toLocaleString(localeTag()) }));
 }
 
 /** A date divider row (phones: the lines show no date, LG-4) */
@@ -267,7 +267,7 @@ function refreshMeta(): void {
   if (!v) return;
   const n = log.lines.length;
   const shown = shownCount();
-  v.count.textContent = shown === n ? tn('logs.countAll', n) : t('logs.count', { shown, n });
+  v.count.textContent = shown === n ? tn('logs.countAll', n, { n: n.toLocaleString(localeTag()) }) : t('logs.count', { shown: shown.toLocaleString(localeTag()), n: n.toLocaleString(localeTag()) });
   // Before the first answer: "Reading the log…" (nothing while the first read failed: the error says why)
   v.empty.hidden = loaded ? shown > 0 : readError != null;
   v.empty.textContent = !loaded ? t('logs.loading') : n ? t('logs.noMatch') : t('logs.empty');
@@ -330,7 +330,7 @@ function showError(): void {
 
 /** The lead and the note on what is kept as one plain text for the (i) tip (the `backtick` marks of the command are dropped) */
 function tipText(): string {
-  return `${t('logs.lead')} ${t('logs.note', { n: LOG_CAP }).replace(/`/g, '')}`;
+  return `${t('logs.lead')} ${t('logs.note', { n: LOG_CAP.toLocaleString(localeTag()) }).replace(/`/g, '')}`;
 }
 
 // ---------------------------------------------------------------- page

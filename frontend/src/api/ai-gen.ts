@@ -61,9 +61,13 @@ export function jobOfError(e: unknown): GenJob | null {
   return e instanceof ApiError ? jobOf(e.body?.['job']) : null;
 }
 
-/** `GET /api/ai/admin/gen?limit=` (administrators) */
-export async function fetchAdminGen(limit = 50): Promise<GenAdminJob[]> {
-  const a = await getJson<{ jobs?: unknown }>(`/api/ai/admin/gen?limit=${limit}`);
+/** The most jobs the server returns for `GET /api/ai/admin/gen` */
+export const ADMIN_GEN_MAX = 200;
+
+/** `GET /api/ai/admin/gen?limit=` (administrators; v2.2: the server maximum by default, the table pages it) */
+export async function fetchAdminGen(limit = ADMIN_GEN_MAX): Promise<GenAdminJob[]> {
+  const n = Math.min(ADMIN_GEN_MAX, Math.max(1, Math.floor(limit) || ADMIN_GEN_MAX));
+  const a = await getJson<{ jobs?: unknown }>(`/api/ai/admin/gen?limit=${n}`);
   const rows = Array.isArray(a.jobs) ? a.jobs : [];
   return rows.flatMap((r): GenAdminJob[] => {
     const j = jobOf(r);

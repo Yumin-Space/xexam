@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
-"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 11 (this version, v2.1), with Docker and made-up
+"""AI database upgrade, end to end: schema 3 (the published v0.9.1 image) -> schema 11 (this version, v2.2), with Docker and made-up
 data only. Run by hand or at the final gate; it is not part of CI because it pulls published images.
 
-Usage: python -I tests/integration/ai_upgrade_check.py [--old-image IMAGE] [--v19-image IMAGE] [--new-image IMAGE]
+Usage: python -I tests/integration/ai_upgrade_check.py [--old-image IMAGE] [--v19-image IMAGE] [--v21-image IMAGE] [--new-image IMAGE]
   --old-image  the published v0.9.1 ai-service image (default docker.io/yuminspace/xexam-ai-service:v0.9.1; pulled when
                it is not on this machine, and removed again at the end only when this script pulled it)
   --v19-image  the published v1.9 ai-service image (default docker.io/yuminspace/xexam-ai-service:v1.9; pulled and removed
                the same way): it writes the genuine schema-9 database of step 6 and must refuse schema 11
+  --v21-image  the published v2.1 ai-service image (default docker.io/yuminspace/xexam-ai-service:v2.1; pulled and removed
+               the same way): it writes the schema-11 file of step 7 that still holds the pacing 13 / 240000
   --new-image  the ai-service image of this version (default: built from ai-service/Dockerfile under a temporary tag that
                is removed at the end)
 Uses only Docker and the standard library. Every container, volume and image this script creates carries the prefix
@@ -61,6 +63,7 @@ VOL = PREFIX + '-data'
 VOL_FRESH = PREFIX + '-fresh'
 VOL8 = PREFIX + '-schema8'   # v1.9: a schema-8 database, made from a fresh one
 VOL19 = PREFIX + '-v19'      # v2.0: a genuine schema-9 database written by the v1.9 image
+VOL21 = PREFIX + '-v21'      # v2.2: a genuine schema-11 database written by the v2.1 image (pacing 13 / 240000)
 # Made-up shared token (at least 32 printable characters): lets ai-service start with its link configured but no backend
 TOKEN = 'upgrade-check-made-up-token-0123456789'
 PY = 'python:3.12-slim'
@@ -68,14 +71,16 @@ PY = 'python:3.12-slim'
 ap = argparse.ArgumentParser()
 ap.add_argument('--old-image', default='docker.io/yuminspace/xexam-ai-service:v0.9.1')
 ap.add_argument('--v19-image', default='docker.io/yuminspace/xexam-ai-service:v1.9')
+ap.add_argument('--v21-image', default='docker.io/yuminspace/xexam-ai-service:v2.1')
 ap.add_argument('--new-image', default='')
 ARGS = ap.parse_args()
 OLD = ARGS.old_image
 V19 = ARGS.v19_image
+V21 = ARGS.v21_image
 NEW = ARGS.new_image or (PREFIX + ':new')
 
 results = []
-made = {'containers': [], 'volumes': [VOL, VOL_FRESH, VOL8, VOL19], 'images': []}
+made = {'containers': [], 'volumes': [VOL, VOL_FRESH, VOL8, VOL19, VOL21], 'images': []}
 
 
 def docker(*a, check=False):
@@ -260,6 +265,7 @@ out['cols'] = {t: cols_of(t) for t in ('connections', 'limits', 'model_slots')}
 out['conn_enabled'] = [r[0] for r in db.execute('SELECT enabled FROM connections ORDER BY id')] if 'enabled' in cols_of('connections') else None
 out['v7_tables'] = sorted(t for t in ('connections', 'connection_secrets', 'models', 'model_slots', 'study_shared', 'gen_items')
                           if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (t,)).fetchone())
+out['pace_flag'] = db.execute("SELECT value FROM meta WHERE key = 'pace_default_230k'").fetchone()
 out['backups'] = sorted(os.listdir('/v/backups')) if os.path.isdir('/v/backups') else []
 print(json.dumps(out))
 '''
@@ -404,8 +410,8 @@ try:
     ok([r[0] for r in after['slots']] == SLOTS9 and "'study'" not in after['slot_sql'] and "'explain'" in after['slot_sql'],
        'v1.9: the seven model slots exist and study does not. Actual %r' % [r[0] for r in after['slots']])
     ok('enabled' in after['cols']['connections'] and all(c in after['cols']['limits'] for c in ('pace_on', 'pace_rpm', 'pace_tpm'))
-       and (after['limits']['pace_on'], after['limits']['pace_rpm'], after['limits']['pace_tpm']) == (1, 13, 240000),
-       'v1.9: connections.enabled exists and the pacing columns of limits hold 1 / 13 / 240000. Actual %r' % after['cols'])
+       and (after['limits']['pace_on'], after['limits']['pace_rpm'], after['limits']['pace_tpm']) == (1, 13, 230000),
+       'v1.9: connections.enabled exists and the pacing columns of limits hold 1 / 13 / 230000. Actual %r' % after['cols'])
     ok(len(after['backups']) == 1 and re.fullmatch(r'xexam-ai-schema3-\d{8}-\d{6}\.db', after['backups'][0]) is not None,
        'Exactly one backups/xexam-ai-schema3-<date-time>.db. Actual %r' % after['backups'])
     ok(all(after['settings'].get(k) == v for k, v in before['settings'].items()),
@@ -500,8 +506,8 @@ try:
     ok(retired_gone(new8), 'v2.0: the secrets table and the retired columns are gone. Actual %r' % new8['retired'])
     ok(new8['master'] == fresh['master'], 'v2.0: sqlite_master of the upgraded schema-8 file equals that of a new database (%d objects)' % len(fresh['master']))
     ok(new8['settings'] == old8['settings'], 'v2.0: enabled, retention and who changed it are unchanged. Before %r, after %r' % (old8['settings'], new8['settings']))
-    ok((new8['limits']['pace_on'], new8['limits']['pace_rpm'], new8['limits']['pace_tpm']) == (1, 13, 240000),
-       'The pacing columns hold their defaults 1 / 13 / 240000. Actual %r' % new8['limits'])
+    ok((new8['limits']['pace_on'], new8['limits']['pace_rpm'], new8['limits']['pace_tpm']) == (1, 13, 230000),
+       'The pacing columns hold their defaults 1 / 13 / 230000. Actual %r' % new8['limits'])
     bk8 = report(VOL8, '/v/backups/' + new8['backups'][0])
     ok(bk8['schema'] == '8' and [r[0] for r in bk8['slots']] == ['chat', 'default', 'generate', 'import', 'study', 'summary']
        and dict((r[0], r[4]) for r in bk8['slots'])['study'] == 'gemma:true',
@@ -552,10 +558,10 @@ try:
     ok(retired_gone(new19), 'The secrets table and the retired columns are gone from the live file. Actual %r' % new19['retired'])
     ok(new19['master'] == fresh['master'], 'sqlite_master of the upgraded v1.9 file equals that of a new database (%d objects)' % len(fresh['master']))
     ok(new19['settings'] == before19['settings'], 'enabled, retention and who changed it are unchanged. Before %r, after %r' % (before19['settings'], new19['settings']))
-    # v2.1: the pacing keeps its actual pace (v1.9 used 90 %): the old defaults 15 / 250000 become 13 / 240000
+    # v2.1: the pacing is kept as entered (v2.2: no 0.9 factor): the old defaults 15 / 250000 become 13 / 230000
     ok(all(new19['limits'][k] == before19['limits'][k] for k in new19['limits'] if k not in ('pace_rpm', 'pace_tpm'))
-       and (new19['limits']['pace_rpm'], new19['limits']['pace_tpm']) == (13, 240000),
-       'Every limit that still exists is unchanged except the pacing (15 / 250000 -> 13 / 240000). Actual %r' % new19['limits'])
+       and (new19['limits']['pace_rpm'], new19['limits']['pace_tpm']) == (13, 230000),
+       'Every limit that still exists is unchanged except the pacing (15 / 250000 -> 13 / 230000). Actual %r' % new19['limits'])
     seen = scan_marker(VOL19)
     ok(seen['xexam-ai.db'] is False and seen['xexam-ai.db-wal'] in (False, None),
        'The made-up ciphertext marker is in neither xexam-ai.db nor its -wal any more. Actual %r' % seen)
@@ -580,6 +586,53 @@ try:
     last19 = report(VOL19)
     ok(last19['schema'] == '11' and last19['master'] == new19['master'] and last19['backups'] == new19['backups']
        and last19['settings'] == new19['settings'], 'The refusal changed nothing; going back to v1.9 needs the xexam-ai-schema9-* backup copy')
+
+    # -- 7. (v2.2) a genuine schema-11 file written by the published v2.1 image: pacing left at its default 13 / 240000 --
+    if docker('image', 'inspect', V21).returncode != 0:
+        pulled = docker('pull', V21)
+        ok(pulled.returncode == 0, 'The published v2.1 image %s is pulled. %s' % (V21, pulled.stderr.strip()[-300:]))
+        made['images'].append(V21)
+    ok(docker('volume', 'create', VOL21).returncode == 0, 'A fifth temporary volume is created')
+    c = start(V21, VOL21, 'v21a')
+    up = wait_up(c)
+    code, _ = stop(c)
+    ok(up and code == '0', 'The v2.1 image creates its database on the fifth volume')
+    g21 = report(VOL21)
+    ok(g21['schema'] == '11' and g21['backups'] == [] and g21['pace_flag'] is None
+       and (g21['limits']['pace_rpm'], g21['limits']['pace_tpm']) == (13, 240000),
+       'The v2.1 image wrote a genuine schema-11 database with the pacing 13 / 240000, no backup and no pacing flag. Actual %r'
+       % {k: g21[k] for k in ('schema', 'backups', 'pace_flag')})
+    c = start(NEW, VOL21, 'up21')
+    up = wait_up(c)
+    code, logs21 = stop(c)
+    ok(up and code == '0', 'This version starts on the v2.1 volume and stops cleanly. Exit code %s. Log:\n%s' % (code, logs21[-600:]))
+    ok(re.search(r'Provider pacing default is now 13 requests / 230,000 tokens a minute .* A copy of the previous database was saved first: \S*xexam-ai-schema11-', logs21) is not None,
+       'The log says the pacing default moved after a backup copy named xexam-ai-schema11-. Log:\n%s' % logs21[-600:])
+    new21 = report(VOL21)
+    ok(new21['schema'] == '11' and len(new21['backups']) == 1 and re.fullmatch(r'xexam-ai-schema11-\d{8}-\d{6}\.db', new21['backups'][0]) is not None
+       and new21['pace_flag'] == ['1'], 'meta.schema stays 11, there is exactly one backups/xexam-ai-schema11-<date-time>.db and the meta flag is set. Actual %r'
+       % {k: new21[k] for k in ('schema', 'backups', 'pace_flag')})
+    ok((new21['limits']['pace_rpm'], new21['limits']['pace_tpm']) == (13, 230000)
+       and all(new21['limits'][k] == g21['limits'][k] for k in new21['limits'] if k != 'pace_tpm')
+       and new21['master'] == g21['master'] and new21['settings'] == g21['settings']
+       and all(new21[t] == g21[t] for t in ('users', 'chats', 'messages', 'memories', 'usage')),
+       'The pacing is now 13 / 230000 and nothing else changed. Actual %r' % new21['limits'])
+    bk21 = report(VOL21, '/v/backups/' + new21['backups'][0])
+    ok(bk21['schema'] == '11' and bk21['limits'] == g21['limits'], 'The backup copy holds the file as it was (13 / 240000)')
+    c = start(NEW, VOL21, 'up21b')
+    up = wait_up(c)
+    code, logs21b = stop(c)
+    again21 = report(VOL21)
+    ok(up and code == '0' and 'Provider pacing default' not in logs21b and again21['backups'] == new21['backups']
+       and again21['limits'] == new21['limits'] and again21['master'] == new21['master'] and again21['pace_flag'] == new21['pace_flag'],
+       'The next start changes nothing and writes no second backup')
+    c = start(V21, VOL21, 'v21b')
+    up = wait_up(c)
+    code, logs21c = stop(c)
+    last21 = report(VOL21)
+    ok(up and code == '0' and last21['schema'] == '11' and last21['master'] == new21['master'] and last21['backups'] == new21['backups']
+       and last21['limits'] == new21['limits'],
+       'The v2.1 image still opens the file (schema stays 11) and changes nothing. Exit code %s. Log:\n%s' % (code, logs21c[-400:]))
 finally:
     cleanup()
 

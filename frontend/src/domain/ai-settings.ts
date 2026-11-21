@@ -317,7 +317,7 @@ export const DEFAULT_LIMITS: Record<LimitKey, number> = {
   genWrongMulti: 6, genCallTokens: 20000, genRunning: 2, importMaxMb: 20, importMaxQuestions: 100, genMaxCalls: 15, importMaxCalls: 25, recognizeMaxCalls: 20,
   genUnlimited: 1, importUnlimited: 1,
   studyShare: 1, studyShareDays: 180, genMaxChunks: 8, summaryMaxItems: 40, dailyTokenBudget: 0,
-  paceOn: 1, paceRpm: 13, paceTpm: 240000,
+  paceOn: 1, paceRpm: 13, paceTpm: 230000,
 };
 export const LIMIT_RANGES: Record<LimitKey, [number, number]> = {
   callsPerMinute: [1, 100], callsPerHour: [1, 2000], callsPerDay: [1, 20000], callsAdminsExempt: [0, 1], replyMaxTokens: [1, 250000], memoryTokens: [50, 250000],
@@ -491,14 +491,14 @@ export function blockTag(c: Pick<UserCalls, 'blocked'> | undefined): { kind: 'ti
   return { kind: b.cap === 'day' ? 'today' : 'timed', retryAt: b.retryAt };
 }
 
-/** The figures of a user's line "1 min 2/5 · 1 h 7/20 · today 37/100": "used/limit" for each window */
+/** The figures of a user's line "1 min 2 / 5 · 1 h 7 / 20 · today 37 / 100": "used / limit" for each window */
 export function callsFigures(c: UserCalls | undefined, limits: LimitValues | undefined): { minute: string; hour: string; day: string } | null {
   if (!c) return null;
   const cap = (k: 'callsPerMinute' | 'callsPerHour' | 'callsPerDay'): number => limits?.[k] ?? DEFAULT_LIMITS[k];
   return {
-    minute: `${c.used.minute}/${cap('callsPerMinute')}`,
-    hour: `${c.used.hour}/${cap('callsPerHour')}`,
-    day: `${c.used.day}/${cap('callsPerDay')}`,
+    minute: `${c.used.minute} / ${cap('callsPerMinute')}`,
+    hour: `${c.used.hour} / ${cap('callsPerHour')}`,
+    day: `${c.used.day} / ${cap('callsPerDay')}`,
   };
 }
 

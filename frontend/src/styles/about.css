@@ -1,6 +1,6 @@
 /* About page: intro + facts, then what is new per version (the newest open, the earlier ones as quiet toggle rows).
    Colours come only from the tokens in main.css. */
-.page-about .panel { max-width: 860px; }
+.page-about .panel { max-width: var(--page-narrow, 880px); }
 .ab-intro p { max-width: 46em; }
 /* The facts: the shared property list (.props); only the version is set in a heavier weight */
 .ab-facts { margin: 16px 0 0; }

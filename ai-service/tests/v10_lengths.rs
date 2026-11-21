@@ -191,6 +191,15 @@ async fn a_changed_answer_length_forgets_the_remembered_step() {
 #[tokio::test]
 async fn an_unrelated_400_is_retried_once_without_the_strength_only() {
     let e = env().await;
+    // an explicit level is needed: Default (v2.2) sends no strength, so there is nothing to retry without
+    let (c, _) =
+        e.t.post(
+            "/api/ai/admin/models/effort",
+            &e.admin,
+            serde_json::json!({"slot": "hint", "level": "high"}),
+        )
+        .await;
+    assert_eq!(c, 200);
     e.t.stub.force(Some((
         400,
         r#"{"error":{"type":"invalid_request_error","message":"model not found"}}"#,
@@ -198,7 +207,7 @@ async fn an_unrelated_400_is_retried_once_without_the_strength_only() {
     let before = chat_requests(&e.t).len();
     let ev = ask(&e.t, &e.user, hint_in("en", "q1", 1)).await;
     assert_eq!(terminal_name(&ev), "error");
-    // every call sends a thinking strength (v2.1): the any-400 fallback retries once without it, then the error stands
+    // an explicit strength is sent: the any-400 fallback retries once without it, then the error stands
     let reqs = chat_requests(&e.t);
     assert_eq!(reqs.len() - before, 2);
     assert!(reqs[before].body.get("reasoning_effort").is_some());

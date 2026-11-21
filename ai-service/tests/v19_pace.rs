@@ -77,7 +77,7 @@ async fn the_pacing_keys_have_defaults_ranges_and_stay_apart_from_the_unlimited_
             v["limits"]["paceRpm"].clone(),
             v["limits"]["paceTpm"].clone()
         ),
-        (json!(1), json!(13), json!(240_000))
+        (json!(1), json!(13), json!(230_000))
     );
     assert_eq!(v["ranges"]["paceOn"], json!([0, 1]));
     assert_eq!(v["ranges"]["paceRpm"], json!([1, 10_000]));

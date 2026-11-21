@@ -16,7 +16,6 @@ import {
   connOn, defaultUnusable, firstChoice, modelGroups, modelKind, parseRefKey, refKey, slotFeature, slotModel, slotNote, slotOn,
   slotUsing, SLOTS, type ModelGroup,
 } from '../../domain/ai-settings.ts';
-import { knownDefault } from '../../domain/effort-defaults.ts';
 import { aiCodeText, errorText } from '../../i18n/errors.ts';
 import { t, tn, type MsgKey } from '../../i18n/index.ts';
 import { onRouteChange, refreshAi } from '../../state/actions.ts';
@@ -25,7 +24,7 @@ import type { AiSettings, AiSlot, ModelRef } from '../../types/api.ts';
 import { h, scrollToY, type Child } from '../../utils/dom.ts';
 import { matches, TOUCH_MQ } from '../../utils/media.ts';
 import { toast } from '../../utils/toast.ts';
-import { effortView, rowPaused } from './effort.ts';
+import { effortPost, effortView, rowPaused } from './effort.ts';
 import { aiDown } from './status.ts';
 import { A, adopt, num, redraw } from './state.ts';
 
@@ -385,7 +384,7 @@ async function flipFeature(slot: AiSlot, on: boolean): Promise<void> {
 
 // ---------------------------------------------------------------- thinking strength (v1.6, v2.1)
 
-/** Saves one slot's thinking strength at once (null = back to the model default); the row is busy meanwhile */
+/** Saves one slot's thinking strength at once (null = Default: no strength parameter is sent); the row is busy meanwhile */
 async function saveEffort(slot: AiSlot, level: string | null, focusId: string): Promise<void> {
   if (A.slotBusy[slot]) return;
   A.slotBusy[slot] = true;
@@ -404,29 +403,27 @@ async function saveEffort(slot: AiSlot, level: string | null, focusId: string): 
 
 /**
  * The row above a slot's pickers (v2.1): the family icon of the connection the row uses (not a button; its tip is the
- * parameter it sends), the level list of that family and the grey "model default" hint. The selected level is what is sent
- * now. A row that does not resolve has an empty, disabled list; hidden on an older ai-service.
+ * parameter it sends), the level list of that family (Default first: nothing is sent) and a grey hint saying so. Untouched rows show Default. A row that does not resolve has an empty, disabled list; hidden on an older ai-service.
  */
 function effortRow(s: AiSettings, slot: AiSlot, busy: boolean, slotName: string): HTMLElement | null {
   if (!s.effortLevels) return null;
   const view = effortView(s, slot);
   const fam = view?.family ?? null;
   const id = `ai-slot-${slot}-effort`;
-  const dflt = knownDefault(slotUsing(s, slot)?.model);
   const select = h('select', {
     id: `${id}-level`, class: 'ais-select ais-effort-level', 'aria-label': t('ai.set.effort.levelOf', { slot: slotName }),
     disabled: busy || fam === null,
-    onchange: (e: Event) => void saveEffort(slot, (e.target as HTMLSelectElement).value, `${id}-level`),
+    onchange: (e: Event) => void saveEffort(slot, effortPost((e.target as HTMLSelectElement).value), `${id}-level`),
   }, fam === null
     ? h('option', { value: '' }, '')
-    : (view?.levels ?? []).map((x) => h('option', { value: x, title: x }, x)));
+    : [h('option', { value: '', title: t('ai.set.effort.defaultTip') }, t('ai.set.effort.default')),
+      ...(view?.levels ?? []).map((x) => h('option', { value: x, title: x }, x))]);
   if (view) (select as HTMLSelectElement).value = view.level;
   const mark = fam
     ? holdTip(h('span', { class: 'ais-fam', id: `${id}-fam`, role: 'img', 'aria-label': effortAria(fam) }, providerIcon(fam)), effortTip(fam))
     : null;
   return h('div', { class: 'ais-effort' },
     mark,
-    dflt ? h('span', { class: 'ais-effort-hint' }, t('ai.set.effort.modelDefault', { level: dflt })) : null,
     select);
 }
 

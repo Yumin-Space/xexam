@@ -12,7 +12,7 @@
   .bk-grid { grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); }
 }
 .page-banks .panel { scroll-margin-top: 16px; }
-.page-banks .panel > h2 { margin-bottom: 12px; overflow-wrap: anywhere; }
+.page-banks .panel > h2 { margin-bottom: 14px; overflow-wrap: anywhere; }
 
 /* Heading row: the title on the left, small controls on its right (they move under the title when there is no room) */
 .bk-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
@@ -180,9 +180,9 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
 .bk-expand .ibtn-ic { transition: transform .15s ease; }
 .bk-expand[aria-expanded="true"] .ibtn-ic { transform: rotate(180deg); }
 .bk-bankfacts { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--ink3); overflow-wrap: anywhere; }
-/* The checkbox of a bank or a sheet: 20 px box, 44 px tap area */
+/* The checkbox of a bank or a sheet: global box, 44 px tap area */
 .bk-check { display: inline-flex; align-items: center; justify-content: center; width: 44px; min-height: 44px; margin-left: -10px; cursor: pointer; }
-.bk-box { width: 20px; height: 20px; margin: 0; accent-color: var(--primary); cursor: pointer; }
+.bk-box { margin: 0; accent-color: var(--primary); cursor: pointer; }
 .bk-box:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 /* On phones and tablets the AI+ marker sits on its own line under the name (the name keeps the full row); the actions follow */
 @media (max-width: 900px) {
@@ -344,6 +344,10 @@ details[open] > summary .bk-chev { transform: rotate(180deg); }
      (padding, because a margin would collapse into the heading row's 12px) */
   .bk-head + .bk-hint, .bk-head + .bk-pick[hidden] + .bk-hint { padding-top: 6px; }
   .bk-droprow .btn, .bk-acts .btn { min-height: 44px; }
+  /* A bank's actions: the box is 44 px tall itself and the rows touch, so no tap area is covered by the row above or below */
+  .bk-bankacts { row-gap: 0; }
+  .bk-act { height: 44px; }
+  .bk-act::after { inset: 0 -2px; }
   .bk-pick select { min-height: 44px; }
   .bk-skip > summary { min-height: 44px; }
 }

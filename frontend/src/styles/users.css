@@ -4,24 +4,23 @@
    tinted block at the top of the list. Colours come only from the tokens in main.css, so the page follows the light and dark
    themes. PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px), as in every stylesheet. */
 
-.page-users { max-width: 880px; }
+.page-users { max-width: var(--page-narrow, 880px); }
 
 /* Heading row: title with the count and the page's (i) tip, "Add user" on the right */
 .us-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px; margin-bottom: 8px; }
 .page-users .panel .us-head h2 { display: flex; align-items: center; gap: 8px; margin: 0; }
-.us-count { font-size: 13px; font-weight: 400; color: var(--ink3); }
+.us-count { font-size: 13.5px; font-weight: 400; color: var(--ink3); }
 .us-tip { vertical-align: middle; }
-.page-users .us-addbtn { box-shadow: inset 0 0 0 1px var(--line); background: var(--card); }
-@media (hover: hover) { .page-users .us-addbtn:hover:not(:disabled) { background: var(--hover); } }
-.us-search { width: 100%; max-width: 28em; min-height: 34px; margin: 0 0 8px; padding: 4px 10px; font-size: 14px; }
-.us-nomatch { margin: 8px 0 0; font-size: 14px; }
+.us-add-svg { width: 16px; height: 16px; flex: none; }
+.us-search { width: 100%; max-width: 28em; min-height: 38px; margin: 0 0 8px; padding: 6px 10px; font-size: 15px; }
+.us-nomatch { margin: 8px 0 0; }
 .us-nomatch[hidden], .us-rows > li[hidden] { display: none; }
 
 /* ---------- Rows ---------- */
 .us-rows { list-style: none; margin: 0; padding: 0; }
 .us-row {
   display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 4px 12px; align-items: start;
-  margin: 0 -8px; padding: 10px 8px; border-top: 1px solid var(--line-soft); border-radius: 8px;
+  margin: 0; padding: 10px 0; border-top: 1px solid var(--line-soft);
 }
 .us-row:first-child { border-top: 0; }
 .us-row:last-child { padding-bottom: 4px; }
@@ -76,7 +75,7 @@
 .us-icons .ibtn[aria-disabled="true"] { opacity: .45; }
 .us-ai-l { font-size: 12.5px; font-weight: 700; letter-spacing: .02em; color: var(--ink2); white-space: nowrap; }
 /* The row of a user just created: tinted for 2 s (the page removes the class) */
-.us-row.us-new { background: var(--print-soft); animation: us-flash 2s ease-out; }
+.us-row.us-new { border-radius: 8px; background: var(--print-soft); animation: us-flash 2s ease-out; }
 @keyframes us-flash { from { background: var(--print-soft); } to { background: transparent; } }
 @media (prefers-reduced-motion: reduce) { .us-row.us-new { animation: none; } }
 
@@ -116,7 +115,7 @@
   position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; font-size: 13.5px; line-height: 1.4; color: var(--ink2);
   cursor: pointer; white-space: nowrap; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
 }
-.us-tool input { width: 16px; height: 16px; margin: 0; flex: none; accent-color: var(--print); }
+.us-tool input { margin: 0; flex: none; accent-color: var(--print); }
 .us-tool:has(input:disabled) { cursor: default; opacity: .55; }
 /* "Deselect all" with nothing ticked: shown ticked, dimmed, the click does nothing (still focusable) */
 .us-tool:has(input[aria-disabled="true"]) { cursor: default; color: var(--ink3); }
@@ -126,7 +125,7 @@
   -webkit-touch-callout: none;
 }
 @media (hover: hover) { .us-bank:hover:not(:has(input:disabled)) { background: var(--hover); } }
-.us-bank input { width: 17px; height: 17px; margin: 1px 0 0; flex: none; accent-color: var(--print); }
+.us-bank input { margin: 1px 0 0; flex: none; accent-color: var(--print); }
 .us-bank:has(input:disabled) { cursor: default; }
 .us-bank .us-mi { margin-top: 2px; }
 /* The name, and who uploaded the bank in small grey text after it (under it when the line is full) */
@@ -214,13 +213,13 @@ dialog .us-banklist { max-height: none; overflow: visible; }
      each other or the bank row above (US-3) */
   .us-acts { min-height: 44px; }
   .us-ailine, .us-icons { min-height: 44px; }
-  .us-seg-o { min-height: 40px; }
-  .us-bank { padding-block: 10px; }
+  .us-seg-o { min-height: 44px; }
+  .us-bank { min-height: 44px; padding-block: 10px; }
   .us-tool { min-height: 40px; }
   .us-tool::after { content: ""; position: absolute; inset: -2px -2px; }
   .us-ai-paused::after { content: ""; position: absolute; inset: -12px -2px; }
   .us-search { min-height: 44px; font-size: 16px; }
-  .us-sort select { min-height: 44px; }
+  .us-sort select { min-height: 44px; font-size: 16px; }
 }
 
 /* Short landscape: the tinted add form stays small */
@@ -249,12 +248,12 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .us-eye.on .us-eye-txt { color: var(--answer-right); }
 @media (max-width: 380px) { .us-eye-txt { margin-inline-start: 6px; padding-inline-end: 2px; } .us-eye-lbl { font-size: 11px; } .us-eye-val { font-size: 14px; } .btn.us-signin-clear { padding-inline: 10px; } }
 /* v1.3: the eye toggle (persistent setting) and the red Clear records button; 44 px targets */
-.us-eye { display: inline-flex; align-items: center; gap: 0; min-height: 44px; padding: 0; border: 0; border-radius: 22px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; text-align: start; cursor: pointer; flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.us-eye { display: inline-flex; align-items: center; gap: 0; min-height: 44px; padding: 0 4px; border: 0; border-radius: 22px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; font-weight: 600; text-align: start; cursor: pointer; flex: 0 1 auto; min-width: 0; max-width: 100%; }
 /* Eye colours. Light: a solid circle (green shown, grey hidden) with a white eye. Dark: no fill, a green or grey outline eye. */
 .us-eye { --eye-bg: var(--field-line); --eye-bg-hover: var(--ink3); --eye-fg: #FFFFFF; }
 .us-eye.on { --eye-bg: var(--answer-right-solid); --eye-bg-hover: var(--answer-right-solid-hover); }
-.us-eye-ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; border-radius: 50%; border: 1.5px solid transparent; background: var(--eye-bg); color: var(--eye-fg); }
-.us-eye-svg { width: 26px; height: 26px; }
+.us-eye-ico { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 50%; border: 1.5px solid transparent; background: var(--eye-bg); color: var(--eye-fg); }
+.us-eye-svg { width: 22px; height: 22px; }
 .us-eye:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .us-eye:disabled { opacity: .6; cursor: default; }
 @media (hover: hover) { .us-eye:not(:disabled):hover .us-eye-ico { background: var(--eye-bg-hover); } }
@@ -272,7 +271,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 .btn.us-signin-clear:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .us-del-svg { width: 18px; height: 18px; flex: none; }
 .us-sort { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink3); margin-left: auto; }
-.us-sort select { font: inherit; color: var(--ink); background: var(--card, transparent); border: 1px solid var(--line, currentColor); border-radius: 6px; padding: 4px 6px; max-width: 150px; }
+.us-sort select { min-height: 38px; padding: 6px 10px; font-size: 15px; max-width: 150px; }
 
 /* v1.4: the location source block inside the sign-in info panel (radio pair, optional external lookup form) */
 .us-geo { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); display: grid; gap: 8px; min-width: 0; }
@@ -317,7 +316,7 @@ dialog .us-banklist { max-height: none; overflow: visible; }
 /* v1.4: the two tabs (users / sign-in IP and location), like the AI settings tabs */
 .us-tabs { display: flex; width: fit-content; max-width: 100%; margin: 0 0 16px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .us-tabs::-webkit-scrollbar { display: none; }
-.us-tabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: 40px; padding-inline: 14px; }
+.us-tabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: var(--tab-h, 40px); padding-inline: 14px; font-size: 13.5px; }
 .us-tabs button:focus-visible { outline-offset: -2px; }
 .us-tab-ic { width: 16px; height: 16px; flex: none; }
 .us-tl-short { display: none; }
@@ -326,5 +325,5 @@ dialog .us-banklist { max-height: none; overflow: visible; }
   .us-tl-short { display: inline; }
   .us-tl-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .us-tabs { width: 100%; margin-bottom: 12px; }
-  .us-tabs button { flex: 1 1 0; min-height: 44px; gap: 4px; padding-inline: 6px; font-size: 13px; }
+  .us-tabs button { flex: 1 1 0; min-height: 44px; gap: 4px; padding-inline: 6px; }
 }

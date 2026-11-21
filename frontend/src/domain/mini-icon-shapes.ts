@@ -68,6 +68,8 @@ export const MINI = {
     { d: 'M8 3.7a1.9 1.9 0 0 1 3.5-.8 2 2 0 0 1 1.5 2.9 2.2 2.2 0 0 1 .3 3.6 2.1 2.1 0 0 1-1.7 2.7A1.9 1.9 0 0 1 8 12.3' },
     { d: 'M8 6.3a1.7 1.7 0 0 1-1.7 1.7' }, { d: 'M8 8.4a1.7 1.7 0 0 0 1.7 1.7' },
   ],
+  /** Three rising bars: the thinking strength of the AI Chat composer */
+  strength: [{ d: 'M3.5 13V10' }, { d: 'M8 13V7' }, { d: 'M12.5 13V3.5' }],
   /** A bookmark: memories */
   memory: [{ d: 'M4.5 2.5h7v11L8 10.8 4.5 13.5Z' }],
   /** Three dots: more actions */

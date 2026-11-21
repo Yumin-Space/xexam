@@ -306,7 +306,7 @@ pub async fn pick(ctx: Ctx) -> Answer {
 
 /// `POST models/effort` `{"slot", "level": string | null}`: sets the thinking strength of a slot. The family is the one
 /// of the connection the slot effectively uses (its own model's connection, else the default slot's); 400 when the slot
-/// resolves to none or the level is not one of that family's levels. `null` is back to the model default (stored NULL).
+/// resolves to none or the level is not one of that family's levels. `null` is Default: no strength parameter is sent (stored NULL).
 pub async fn effort(ctx: Ctx) -> Answer {
     only_keys(&ctx.body, &["slot", "level"])?;
     let slot = match ctx.body.get("slot") {
@@ -326,8 +326,7 @@ pub async fn effort(ctx: Ctx) -> Answer {
                 .app
                 .0
                 .routes()?
-                .slot_effort(slot)
-                .map(|e| e.family())
+                .slot_family(slot)
                 .ok_or_else(ApiError::bad_request)?;
             Some(Effort::new(family, l).ok_or_else(ApiError::bad_request)?)
         }

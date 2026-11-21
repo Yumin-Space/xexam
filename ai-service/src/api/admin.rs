@@ -120,8 +120,8 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
             .resolve(s, None)
             .ok()
             .map(|r| json!({"modelId": r.pool_id, "fallback": r.fallback.as_str()}));
-        // what will be sent now: the stored choice when it belongs to the family of the connection the slot uses, else the
-        // model's default level; null only when the slot resolves to no connection at all
+        // what will be sent now: the stored choice when it belongs to the family of the connection the slot uses; null
+        // when nothing is sent (Default)
         let effective = view.slot_effort(s).map(|e| e.to_json());
         slots.insert(
             s.as_str().to_string(),
@@ -130,6 +130,8 @@ pub fn settings_value(app: &AppState) -> Result<Value, ApiError> {
                 "using": using,
                 "effort": view.efforts[s.index()].map(crate::effort::Effort::to_json),
                 "effortEffective": effective,
+                // the family of the connection the slot effectively targets (also when that connection is switched off)
+                "effortFamily": view.slot_family(s).map(|f| f.as_str()),
             }),
         );
     }

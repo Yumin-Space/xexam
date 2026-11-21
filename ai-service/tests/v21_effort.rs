@@ -1,5 +1,5 @@
 //! v2.1 thinking-strength family per connection: the connection answer and bodies (`effortFamily`), the effective level of
-//! a model call (the stored choice of the connection's family, else the model default), the AI Chat strength of an
+//! a model call (the stored choice of the connection's family, else nothing: v2.2 Default), the AI Chat strength of an
 //! administrator (`effort` next to `model`, `chats.pick_effort`, `pickEffort`), and the refusal memo per model.
 //! Everything is made up.
 mod common;
@@ -205,7 +205,7 @@ async fn connection_save_takes_and_answers_the_family() {
 }
 
 #[tokio::test]
-async fn a_family_change_keeps_stored_slot_efforts_and_shows_the_default() {
+async fn a_family_change_keeps_stored_slot_efforts_and_sends_nothing() {
     let e = env().await;
     let (c, _) =
         e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": "xhigh"}))
@@ -228,17 +228,13 @@ async fn a_family_change_keeps_stored_slot_efforts_and_shows_the_default() {
         slot["effort"],
         json!({"family": "openai", "level": "xhigh"})
     );
-    assert_eq!(
-        slot["effortEffective"],
-        json!({"family": "anthropic", "level": "medium"})
-    );
-    // the call sends the Anthropic parameter with the model default
+    assert_eq!(slot["effortEffective"], Value::Null);
+    // the call sends no strength parameter
     let (_, _, ev, calls) = send(&e, &e.user, None, json!({})).await.expect("send");
     assert_eq!(terminal(&ev).0, "done");
     assert!(!calls.is_empty());
     for b in &calls {
-        assert_eq!(b["output_config"]["effort"], "medium", "{b}");
-        assert!(b.get("reasoning_effort").is_none(), "{b}");
+        assert!(level_of(b).is_none(), "{b}");
     }
 }
 
@@ -286,13 +282,12 @@ async fn chat_effort_is_sent_stored_and_read() {
         chat_read(&e.t, &e.admin, chat).await["chat"]["pickEffort"],
         "low"
     );
-    // null clears it: the model default (unknown model: medium) goes out
+    // null clears it: the Chat row (untouched = Default) decides, so nothing goes out
     let (_, _, _, calls) = send(&e, &e.admin, Some(chat), json!({"effort": Value::Null}))
         .await
         .expect("send");
-    assert!(calls
-        .iter()
-        .all(|b| level_of(b).as_deref() == Some("medium")));
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|b| level_of(b).is_none()));
     assert_eq!(
         chat_read(&e.t, &e.admin, chat).await["chat"]["pickEffort"],
         Value::Null
@@ -339,9 +334,8 @@ async fn chat_effort_is_checked_and_gated() {
         .await
         .expect("null");
     assert_eq!(terminal(&ev).0, "done");
-    assert!(calls
-        .iter()
-        .all(|b| level_of(b).as_deref() == Some("medium")));
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|b| level_of(b).is_none()));
     // the read of a plain user never shows it
     let (chat, _, _, _) = send(&e, &e.user, None, json!({})).await.expect("send");
     assert!(chat_read(&e.t, &e.user, chat).await["chat"]
@@ -356,7 +350,7 @@ async fn a_stored_level_of_another_family_is_ignored_at_call_time() {
     let (chat, _, _, _) = send(&e, &e.admin, None, json!({"effort": "max"}))
         .await
         .expect("send");
-    // the connection becomes Google: "max" is no Google level; no error, the model default goes out
+    // the connection becomes Google: "max" is no Google level; no error, nothing goes out
     e.t.db()
         .execute(
             "UPDATE connections SET effort_family = 'google', rev = rev + 1 WHERE id = 1",
@@ -367,9 +361,8 @@ async fn a_stored_level_of_another_family_is_ignored_at_call_time() {
         .await
         .expect("send");
     assert_eq!(terminal(&ev).0, "done", "{ev:?}");
-    assert!(calls
-        .iter()
-        .all(|b| level_of(b).as_deref() == Some("MEDIUM")));
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|b| level_of(b).is_none()));
     // garbage in the column is ignored the same way
     e.t.db()
         .execute("UPDATE chats SET pick_effort = 'turbo'", [])
@@ -453,6 +446,11 @@ async fn the_chat_model_route_stores_the_level() {
 async fn a_refused_strength_is_remembered_per_model_not_per_connection() {
     let e = env().await;
     free_on(&e).await;
+    // an explicit level is needed: Default sends nothing, so nothing can be refused
+    let (c, _) =
+        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": "high"}))
+            .await;
+    assert_eq!(c, 200);
     e.t.stub
         .refuse_if_body_has(Some(("reasoning_effort", 400, NAMED)));
     let large = json!({"model": {"connectionId": 1, "model": "demo-chat-large"}});
@@ -486,4 +484,99 @@ async fn a_refused_strength_is_remembered_per_model_not_per_connection() {
     .await
     .expect("send");
     assert_eq!(calls.len(), 2, "tried again after the save: {calls:?}");
+}
+
+// —— v2.2 Default = no strength parameter ————————————————————————————————————————————————————————————————————————————
+
+#[tokio::test]
+async fn untouched_slot_sends_no_parameter_and_reports_null() {
+    let e = env().await;
+    let v = settings(&e.t, &e.admin).await;
+    assert_eq!(v["slots"]["chat"]["effortEffective"], Value::Null);
+    assert_eq!(v["slots"]["chat"]["effort"], Value::Null);
+    let (_, _, ev, calls) = send(&e, &e.user, None, json!({})).await.expect("send");
+    assert_eq!(terminal(&ev).0, "done");
+    assert!(!calls.is_empty());
+    for b in &calls {
+        let t = b.to_string();
+        for n in [
+            "reasoning_effort",
+            "\"effort\"",
+            "\"reasoning\"",
+            "thinking_level",
+        ] {
+            assert!(!t.contains(n), "{n} in {b}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn chat_default_sends_none_even_with_a_chat_row_level() {
+    let e = env().await;
+    free_on(&e).await;
+    let (c, _) =
+        e.t.post(EFFORT, &e.admin, json!({"slot": "chat", "level": "high"}))
+            .await;
+    assert_eq!(c, 200);
+    // no own choice: the Chat row's level goes out
+    let (chat, _, _, calls) = send(&e, &e.admin, None, json!({})).await.expect("send");
+    assert!(calls.iter().all(|b| level_of(b).as_deref() == Some("high")));
+    // the chat's own level overrides the row
+    let (_, _, _, calls) = send(&e, &e.admin, Some(chat), json!({"effort": "low"}))
+        .await
+        .expect("send");
+    assert!(calls.iter().all(|b| level_of(b).as_deref() == Some("low")));
+    // "default": nothing goes out, and it is stored as 'default'
+    let (_, _, _, calls) = send(&e, &e.admin, Some(chat), json!({"effort": "default"}))
+        .await
+        .expect("send");
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|b| level_of(b).is_none()));
+    assert_eq!(
+        chat_read(&e.t, &e.admin, chat).await["chat"]["pickEffort"],
+        "default"
+    );
+    // stored 'default' is kept for the next send
+    let (_, _, _, calls) = send(&e, &e.admin, Some(chat), json!({}))
+        .await
+        .expect("send");
+    assert!(calls.iter().all(|b| level_of(b).is_none()));
+    // null clears it: back to the Chat row
+    let (_, _, _, calls) = send(&e, &e.admin, Some(chat), json!({"effort": Value::Null}))
+        .await
+        .expect("send");
+    assert!(calls.iter().all(|b| level_of(b).as_deref() == Some("high")));
+}
+
+#[tokio::test]
+async fn chat_invalid_level_is_400_and_default_is_ok_for_every_family() {
+    let e = env().await;
+    free_on(&e).await;
+    let (chat, _, _, _) = send(&e, &e.admin, None, json!({})).await.expect("send");
+    let (c, _) = send(&e, &e.admin, Some(chat), json!({"effort": "turbo"}))
+        .await
+        .expect_err("bad level");
+    assert_eq!(c, 400);
+    for family in ["anthropic", "openai", "google", "responses"] {
+        e.t.db()
+            .execute(
+                "UPDATE connections SET effort_family = ?1, rev = rev + 1 WHERE id = 1",
+                [family],
+            )
+            .expect("family");
+        let (c, v) =
+            e.t.post(
+                "/api/ai/chat/model",
+                &e.admin,
+                json!({"chatId": chat, "model": Value::Null, "effort": "default"}),
+            )
+            .await;
+        assert_eq!(c, 200, "{family}: {v}");
+        assert_eq!(v["chat"]["pickEffort"], "default", "{family}");
+        let (_, _, ev, calls) = send(&e, &e.admin, Some(chat), json!({"effort": "default"}))
+            .await
+            .expect("send");
+        assert_eq!(terminal(&ev).0, "done", "{family}");
+        assert!(calls.iter().all(|b| level_of(b).is_none()), "{family}");
+    }
 }

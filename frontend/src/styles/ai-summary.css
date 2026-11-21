@@ -23,7 +23,7 @@ dialog.aip-sum::backdrop { background: var(--scrim-soft); }
   display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'title right' 'meta meta';
   align-items: center; column-gap: 12px; padding: 12px 12px 0 20px;
 }
-.aip-sum-head h2 { grid-area: title; min-width: 0; margin: 0; font-size: 18px; font-weight: 600; line-height: 1.4; }
+.aip-sum-head h2 { grid-area: title; min-width: 0; margin: 0; font-size: 17px; font-weight: 600; line-height: 1.4; }
 /* At least 12 px between Regenerate / Stop and the x, so a thumb aimed at one never hits the other */
 .aip-sum-right { grid-area: right; display: inline-flex; align-items: center; gap: 12px; }
 .aip-sum-acts { display: inline-flex; align-items: center; }
@@ -70,7 +70,7 @@ html.aip-lock { overflow: hidden; }
   .aip-sum-noterow { padding-left: 14px; padding-right: 14px; }
   .aip-sum-body { padding: 10px 14px 14px; }
   .aip-sum-bar { padding-left: 14px; padding-right: 8px; }
-  dialog.aip-sum .ibtn.aip-sum-act { width: 40px; padding: 0; }
+  dialog.aip-sum .ibtn.aip-sum-act { width: 44px; padding: 0; }
   dialog.aip-sum .ibtn.aip-sum-act .lbl { display: none; }
 }
 

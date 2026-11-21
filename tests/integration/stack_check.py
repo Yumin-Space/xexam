@@ -151,7 +151,7 @@ LIMIT_DEFAULTS = {'perUserRunning': 1, 'globalRunning': 16, 'chatsPerUser': 1000
                   'genWrongSingle': 14, 'genWrongMulti': 6, 'genCallTokens': 20000, 'genMaxCalls': 15, 'importMaxCalls': 25,
                   'recognizeMaxCalls': 20, 'genUnlimited': 1, 'importUnlimited': 1, 'genRunning': 2, 'importMaxMb': 20,
                   'importMaxQuestions': 100, 'callsAdminsExempt': 1, 'studyShare': 1, 'studyShareDays': 180, 'genMaxChunks': 8,
-                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 13, 'paceTpm': 240000}
+                  'summaryMaxItems': 40, 'dailyTokenBudget': 0, 'paceOn': 1, 'paceRpm': 13, 'paceTpm': 230000}
 # v1.9: right after the defaults are checked the pacing is switched off, so the end-to-end AI jobs below are not spread over
 # minutes; from then on the stored limits equal the defaults except paceOn
 LIMIT_NOW = dict(LIMIT_DEFAULTS, paceOn=0)
@@ -770,8 +770,8 @@ try:
        and cfg['slots']['default'].get('effort') is None,
        'v1.9: the settings answer carries effortLevels (four families, no gemma; google has five levels) and slots.default.effort null. Actual %r' % cfg.get('effortLevels'))
     ok(all(c.get('effortFamily') == 'openai' for c in cfg['connections'])
-       and cfg['slots']['default'].get('effortEffective') == {'family': 'openai', 'level': 'medium'},
-       'v2.1: the connection has its family (openai) and the default slot sends the model default (unknown model -> medium). Actual %r' % cfg['slots']['default'].get('effortEffective'))
+       and cfg['slots']['default'].get('effortEffective') is None and cfg['slots']['default'].get('effortFamily') == 'openai',
+       'v2.2: the connection has its family (openai); an untouched slot is Default and sends no strength parameter (effortEffective null, effortFamily openai). Actual %r' % cfg['slots']['default'])
     ok(list(cfg['slots'].keys()) == ['default', 'chat', 'hint', 'explain', 'summary', 'generate', 'import'] and 'study' not in cfg['slots'],
        'v1.9: seven model slots (study is split into hint and explain). Actual %r' % list(cfg['slots'].keys()))
     ok(all(c.get('enabled') is True for c in cfg['connections']), 'v1.9: every connection starts on (enabled true). Actual %r' % [c.get('enabled') for c in cfg['connections']])
@@ -791,13 +791,13 @@ try:
        'v2.1: the refused efforts changed nothing')
     st, _, r = jreq('POST', '/api/ai/admin/models/effort', {'slot': 'default', 'level': None})
     ok(st == 200 and r['settings']['slots']['default']['effort'] is None
-       and r['settings']['slots']['default']['effortEffective'] == {'family': 'openai', 'level': 'medium'},
-       'v2.1: null goes back to the model default. Actual %d %r' % (st, r))
+       and r['settings']['slots']['default']['effortEffective'] is None,
+       'v2.2: null = Default, no strength parameter sent (effortEffective null). Actual %d %r' % (st, r))
     # -- A1b v1.0: the safety limits answer, the per-user call caps through Nginx --
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and isinstance(lim, dict) and list(lim.get('limits', {}).keys()) == LIMIT_KEYS and lim['limits'] == LIMIT_DEFAULTS
        and lim.get('defaults') == LIMIT_DEFAULTS,
-       'GET /api/ai/admin/limits: the 36 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 13 / 240000, no messageChars. Actual %d %r' % (st, lim))
+       'GET /api/ai/admin/limits: the 36 keys in order, replyMaxTokens 3000, memoryTokens 200, calls 5 / 20 / 100, pacing on 13 / 230000, no messageChars. Actual %d %r' % (st, lim))
     ok(lim['ranges']['paceOn'] == [0, 1] and lim['ranges']['paceRpm'] == [1, 10000] and lim['ranges']['paceTpm'] == [1000, 100000000],
        'v1.9: the limits answer carries the ranges of the pacing keys. Actual %r' % {k: lim['ranges'].get(k) for k in ('paceOn', 'paceRpm', 'paceTpm')})
     for bad_key, bad in (('paceRpm', 0), ('paceRpm', 10001), ('paceTpm', 999), ('paceOn', 2)):
@@ -1522,8 +1522,8 @@ try:
     # Limits: 36 keys answer (v1.9), the AI banks tab keys are validated (composition rule)
     st, _, lim = jreq('GET', '/api/ai/admin/limits')
     ok(st == 200 and len(lim['limits']) == 36 and lim['limits']['genPerDay'] == 3 and lim['limits']['importMaxMb'] == 20
-       and lim['limits']['paceOn'] == 0 and lim['limits']['paceRpm'] == 13 and lim['limits']['paceTpm'] == 240000,
-       'The limits answer has the 36 keys (pacing off, 13 / 240000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
+       and lim['limits']['paceOn'] == 0 and lim['limits']['paceRpm'] == 13 and lim['limits']['paceTpm'] == 230000,
+       'The limits answer has the 36 keys (pacing off, 13 / 230000 kept). Actual %d %d' % (st, len(lim.get('limits', {}))))
     st, _, j = jreq('POST', '/api/ai/admin/limits', {'genBankSingle': 0, 'genBankMulti': 0})
     ok(st == 400 and j.get('code') == 'ai.genCount' and j.get('field') == 'genBankMulti', 'Single + multiple of 0 is refused (400 ai.genCount, field genBankMulti). Actual %d %r' % (st, j))
     st, _, u = jreq('GET', '/api/ai/admin/usage?days=7')

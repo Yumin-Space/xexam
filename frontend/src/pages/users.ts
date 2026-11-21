@@ -627,7 +627,7 @@ function addForm(): HTMLElement {
   h('div', { class: 'acts' },
     h('button', { class: 'btn primary', type: 'submit', disabled: add.busy }, t(add.busy ? 'users.creating' : 'users.create')),
     h('button', {
-      class: 'btn quiet', type: 'button', disabled: add.busy,
+      class: 'btn', type: 'button', disabled: add.busy,
       onclick: () => {
         resetAdd();
         focusNext = 'us-add-btn';
@@ -932,7 +932,7 @@ function signinPanel(): HTMLElement | null {
         h('span', { class: 'us-eye-val' }, signinInfo ? t('users.signinInfo.state.on') : t('users.signinInfo.state.off'))),
       h('span', { class: 'sr-only', id: 'us-signin-l' }, t('users.signinInfo.name'))),
       h('button', {
-        class: 'btn danger solid us-signin-clear', id: 'us-signin-clear', type: 'button', disabled: signinBusy,
+        class: 'btn danger us-signin-clear', id: 'us-signin-clear', type: 'button', disabled: signinBusy,
         'aria-label': t('users.signinInfo.clear.name'), title: t('users.signinInfo.clear.tip'), onclick: () => void clearSignin(),
       }, miniIcon('trash', 'us-del-svg'), h('span', null, t('users.signinInfo.clear')))),
     geoBlock());
@@ -1603,16 +1603,15 @@ function userRow(u: UserRow, list: readonly UserRow[]): HTMLElement {
 }
 
 function addButton(list: UsersList['users'] | null): HTMLElement {
-  const b = iconButton({
-    icon: 'plus', label: t('users.add'), showLabel: true, onClick: () => {
+  // The same build as "New chat" on the AI Chat page: a .btn with a 16 px plus icon and the label
+  const b = h('button', {
+    class: 'btn us-addbtn', id: 'us-add-btn', type: 'button', disabled: !list,
+    onclick: () => {
       add.open = true;
       focusNext = 'us-add-name';
       render();
     },
-  });
-  b.id = 'us-add-btn';
-  b.classList.add('us-addbtn');
-  b.disabled = !list;
+  }, miniIcon('plus', 'us-add-svg'), h('span', null, t('users.add')));
   return b;
 }
 
@@ -1633,7 +1632,7 @@ function listPanel(): HTMLElement {
       : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   } else {
     const rows = h('ul', { class: 'us-rows' }, sortUsers(list, sortBy).map((u) => userRow(u, list)));
-    const none = h('p', { class: 'dim us-nomatch', role: 'status', hidden: true }, t('users.search.none'));
+    const none = h('p', { class: 'empty us-nomatch', role: 'status', hidden: true }, t('users.search.none'));
     // US-11: a search field above a long list; it hides rows in place (no redraw, the field keeps its focus)
     const apply = (): void => {
       const keep = new Set(filterUsers(list, searchText).map((u) => u.username.toLowerCase()));

@@ -37,10 +37,10 @@ import { fillMarkdown, markdownEl } from '../components/ai-render.ts';
 import { iconButton } from '../components/icon-button.ts';
 import { miniIcon, type MiniIcon } from '../components/mini-icons.ts';
 import { holdTip } from '../components/tooltip.ts';
-import { EFFORT_PARAM, providerIcon } from '../components/provider-icons.ts';
+import { EFFORT_PARAM } from '../components/provider-icons.ts';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerStatus, editValid, emptyChat, END_PX, fmtAiTime,
-  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, chatMenu, chatShown, chooseValue, modelArg, pickerView, effortArg, effortMarks, keepEffort, strengthView, handlesPopstate, regenerateLabelKey, startOf, versionInfo, whoParts,
+  footerOf, reasoningView, ignoreSendClick, isTerminal, localEdit, localFail, localRegenerate, chatShowsModel, chatMenu, chatShown, chooseValue, modelArg, pickerView, effortArg, keepEffort, strengthView, EFFORT_DEFAULT, type StrengthView, handlesPopstate, regenerateLabelKey, startOf, versionInfo, whoParts,
   isBusyElsewhere, isThinking, localSend, localStop, LOCK_MAX_WIDTH, locksDocument, MIN_MSGS_PX, noAccessKey, pollResult, readOnlyReason, questionOf,
   sendBody, shouldSend, showsEmptyHint, showsTwoPanes, type ChatDefault, type ChatMenu, type ChatView, type EditState, type ViewMessage,
 } from '../domain/ai-chat.ts';
@@ -110,6 +110,8 @@ let modelsLoading = false;
 let modelSel = '';
 /** v2.1: the picked thinking-strength level ('' = none picked), and the AI settings the strength step reads (levels, routes) */
 let effortSel = '';
+/** v2.2: the strength menu (the button beside the brain button) is open */
+let effortPop = false;
 let aiSetAt = 0;
 let aiSet: AiSettings | null = null;
 /** v1.9: the picker's popover is open; the connection chosen in its first list before a model is chosen (null = none); when the
@@ -121,8 +123,6 @@ let modelsAt = 0;
 let modelsFailed = false;
 /** A version switch is under way */
 let switching = false;
-/** The administrator notice (CH-3) shows its full text instead of one line */
-let noticeOpen = false;
 /** The "more" menu of the chat list (CH-6) is open */
 let listMenu = false;
 
@@ -145,6 +145,10 @@ interface Composer {
   /** v1.9: the brain button that opens the picker's popover, and the dot on it (a model other than the default is chosen; amber when its connection is off) */
   modelBtn: HTMLButtonElement;
   modelDot: HTMLElement;
+  /** v2.2: the strength button beside the brain button (its text is the current choice) and the menu wrapper it opens */
+  effortBtn: HTMLButtonElement;
+  effortLbl: HTMLElement;
+  effortHost: HTMLElement;
   /** The fixed footer (CH-13): the form, and the administrator notice line under it */
   dock: HTMLElement;
   notice: HTMLElement;
@@ -260,6 +264,7 @@ function resetAll(): void {
   effortSel = '';
   aiSet = null;
   modelPop = false;
+  effortPop = false;
   pendingConn = null;
   modelsAt = 0;
   modelsFailed = false;
@@ -271,7 +276,6 @@ function resetAll(): void {
   dockObserver = null;
   lockDocument(false);
   listMenu = false;
-  noticeOpen = false;
   memories = null;
   memError = null;
   memLoading = false;
@@ -298,6 +302,7 @@ onRouteChange((from, to) => {
     pane = null;
     pushedConv = false;
     modelPop = false;
+    effortPop = false;
     pendingConn = null;
     sendError = null;
     memEdit = null;
@@ -359,6 +364,16 @@ function installOnce(): void {
     if (!modelPop || !(e.target instanceof Node)) return;
     if (e.target instanceof Element && e.target.closest('#ai-model-pick')) return;
     closeModelPop(true);
+  });
+  // The strength menu: a press outside it or Esc closes it (Esc returns the focus to its button)
+  document.addEventListener('pointerdown', (e) => {
+    if (!effortPop || !(e.target instanceof Node)) return;
+    if (e.target instanceof Element && e.target.closest('#ai-effort-wrap')) return;
+    closeEffortPop(false);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !effortPop || !onPage() || e.isComposing) return;
+    closeEffortPop(true);
   });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape' || !modelPop || !onPage() || e.isComposing) return;
@@ -617,7 +632,8 @@ async function loadMemories(): Promise<void> {
 function enter(): void {
   entered = true;
   if (!chatsLoading) void loadChats();
-  void loadModels();
+  // coming back to the page: the AI settings (the Chat row's strength) may have changed meanwhile
+  void loadModels(modelList != null);
   memWanted = true;
   const st = aiStatus();
   const running = st.state === 'ready' ? st.running : null;
@@ -1255,7 +1271,7 @@ function forgetStudyChats(chatId: number | null): void {
 
 async function removeChat(c: Pick<AiChatSummary, 'id' | 'title' | 'kind'>): Promise<void> {
   const title = chatTitleText(c);
-  if (!(await ask({ title: t('ai.delete'), body: t('ai.delete.ask', { title }), ok: t('common.delete'), danger: true }))) return;
+  if (!(await ask({ title: t('ai.delete.title'), body: t('ai.delete.ask', { title }), ok: t('ai.delete'), danger: true }))) return;
   const idx = chats?.findIndex((x) => x.id === c.id) ?? -1;
   let deleted = false;
   try {
@@ -1288,7 +1304,7 @@ async function removeChat(c: Pick<AiChatSummary, 'id' | 'title' | 'kind'>): Prom
 async function removeAllChats(): Promise<void> {
   const n = chats?.length ?? 0;
   if (!n) return;
-  if (!(await ask({ title: t('ai.deleteAll'), body: tn('ai.deleteAll.ask', n), ok: t('common.delete'), danger: true }))) return;
+  if (!(await ask({ title: t('ai.deleteAll.title'), body: tn('ai.deleteAll.ask', n), ok: t('ai.deleteAll'), danger: true }))) return;
   try {
     await deleteAllChats();
     forgetStudyChats(null);
@@ -1547,7 +1563,7 @@ function listRows(): Child[] {
     out.push(chatsError
       ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.err.load', { reason: errorText(chatsError) })),
         h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => void loadChats() }, t('common.retry'))))
-      : h('p', { class: 'dim ai-list-note', role: 'status' }, t('ai.loading')));
+      : h('p', { class: 'dim', role: 'status' }, t('common.loading')));
     return out;
   }
   if (!chats.length) {
@@ -1615,16 +1631,15 @@ function moreMenu(): HTMLElement {
 function convHead(): Child[] {
   const title = view.chatId == null ? t('ai.new') : chatTitleText(view);
   // [back icon + "All chats" (up to 900 px)] [title, at most 2 lines] [red trash icon]
-  const back = iconButton({
-    icon: 'back', label: t('ai.back'), showLabel: true,
-    onClick: () => {
+  // The same quiet button as the record detail's back button
+  const back = h('button', {
+    class: 'btn quiet ai-back', id: 'ai-back', type: 'button',
+    onclick: () => {
       // The conversation was pushed as an entry: going back pops it (the popstate listener shows the list)
       if (pushedConv) history.back();
       else goList();
     },
-  });
-  back.id = 'ai-back';
-  back.classList.add('ai-back');
+  }, miniIcon('back', 'ai-mi'), t('ai.back'));
   let del: HTMLButtonElement | null = null;
   if (view.chatId != null) {
     const c = { id: view.chatId, title: view.title, kind: view.kind };
@@ -1860,7 +1875,7 @@ function versionSwitch(m: ViewMessage, pos: number): HTMLElement | null {
 }
 
 function msgsBody(): Child[] {
-  if (opening && !view.messages.length) return [h('p', { class: 'dim ai-conv-note', role: 'status' }, t('ai.loading'))];
+  if (opening && !view.messages.length) return [h('p', { class: 'dim', role: 'status' }, t('common.loading'))];
   if (openError) {
     return [h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.err.load', { reason: errorText(openError) })))];
   }
@@ -1991,7 +2006,14 @@ function makeComposer(): Composer {
   modelBtn.setAttribute('aria-expanded', 'false');
   modelBtn.setAttribute('aria-controls', 'ai-model-pop');
   modelBtn.append(modelDot);
-  const models = h('span', { class: 'ai-model-wrap', id: 'ai-model-pick', hidden: true }, modelBtn);
+  // v2.2: the thinking strength is its own button beside the brain button; a small menu opens above it
+  const effortLbl = h('span', { class: 'ai-effort-t' });
+  const effortBtn = h('button', {
+    class: 'ai-effort-btn', id: 'ai-effort-btn', type: 'button', hidden: true, 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-controls': 'ai-effort-pop',
+    onclick: () => (effortPop ? closeEffortPop(true) : openEffortPop()),
+  }, ico('strength', 'ai-effort-ic'), effortLbl);
+  const effortHost = h('span', { class: 'ai-effort-wrap', id: 'ai-effort-wrap' }, effortBtn);
+  const models = h('span', { class: 'ai-model-wrap', id: 'ai-model-pick', hidden: true }, modelBtn, effortHost);
   // One rounded box: the input on top; under it one bar with the model button (left) and the counter + Send (right)
   const box = h('div', {
     class: 'ai-box',
@@ -2027,23 +2049,13 @@ function makeComposer(): Composer {
     // The border box: html.kb-open changes only the footer's bottom padding (safe area -> 8 px), which the content box misses
     dockObserver.observe(dock, { box: 'border-box' });
   }
-  return { form, input, label, count, btn, status, banner, box, models, modelBtn, modelDot, latest, latestText, dock, notice };
+  return { form, input, label, count, btn, status, banner, box, models, modelBtn, modelDot, effortBtn, effortLbl, effortHost, latest, latestText, dock, notice };
 }
 
-function toggleNotice(): void {
-  noticeOpen = !noticeOpen;
-  for (const b of document.querySelectorAll<HTMLElement>('.ai-notice-btn')) {
-    b.classList.toggle('open', noticeOpen);
-    b.setAttribute('aria-expanded', String(noticeOpen));
-  }
-  syncComposerHeight();
-}
-
-/** The administrator notice as one muted line with the info icon (ellipsis); a tap shows the full text in place (CH-3) */
-function noticeButton(extra: string): HTMLButtonElement {
-  return h('button', {
-    type: 'button', class: `ai-notice-btn ${extra}` + (noticeOpen ? ' open' : ''), 'aria-expanded': String(noticeOpen), onclick: toggleNotice,
-  }, ico('info'), h('span', null, t('ai.adminNotice')));
+/** The administrator notice: one muted line with the info icon that wraps to show the whole text (owner, v2.2: never cut
+ *  off with an ellipsis on phones; before v2.2 a tap opened the cut text) */
+function noticeButton(extra: string): HTMLElement {
+  return h('p', { class: `ai-notice-btn ${extra}` }, ico('info'), h('span', null, t('ai.adminNotice')));
 }
 
 function syncCount(): void {
@@ -2125,11 +2137,14 @@ function chatDefault(): ChatDefault {
 function openModelPop(): void {
   const c = composer;
   if (!c || modelPop) return;
+  effortPop = false;
   modelPop = true;
   pendingConn = null;
   if (!modelList || Date.now() - modelsAt > 60_000) void loadModels(true);
   syncModels(c);
-  document.getElementById('ai-model-conn')?.focus();
+  // Touch: the heading takes the focus (no ring on the first select), as the dialogs do
+  if (window.matchMedia('(pointer: coarse)').matches) document.getElementById('ai-model-pop-t')?.focus({ preventScroll: true });
+  else document.getElementById('ai-model-conn')?.focus();
 }
 
 /** Closes the popover (`focusBtn`: the focus returns to the brain button; false when the page moves on anyway) */
@@ -2142,10 +2157,97 @@ function closeModelPop(focusBtn: boolean): void {
   if (focusBtn) c?.modelBtn.focus();
 }
 
+/** v2.2: opens the strength menu (the brain popover closes first) */
+function openEffortPop(): void {
+  const c = composer;
+  if (!c || effortPop) return;
+  if (modelPop) closeModelPop(false);
+  // the shown level comes from the AI settings: read them again when stale, so it matches what the server applies
+  if (!modelList || Date.now() - aiSetAt > 60_000) void loadModels(true);
+  effortPop = true;
+  syncModels(c);
+  (document.querySelector('#ai-effort-pop [aria-checked="true"]') as HTMLElement | null)?.focus();
+}
+
+/** Closes the strength menu (`focusBtn`: the focus returns to its button) */
+function closeEffortPop(focusBtn: boolean): void {
+  if (!effortPop) return;
+  effortPop = false;
+  const c = composer;
+  if (c) syncModels(c);
+  if (focusBtn) c?.effortBtn.focus();
+}
+
+/** The strength menu of the current route: the options (Default first) as radio items, the shown one checked */
+function effortMenu(c: Composer, sv: StrengthView, route: ModelRef | null): HTMLElement {
+  const items: HTMLButtonElement[] = sv.options.map((o) => {
+    const isDef = o === EFFORT_DEFAULT;
+    const b = h('button', {
+      class: 'ai-effort-item', type: 'button', role: 'menuitemradio', 'aria-checked': String(sv.selected === o), tabindex: sv.selected === o ? '0' : '-1',
+      'data-v': o,
+      onclick: () => {
+        // the shown item is the inherited one while the chat follows the AI settings: nothing changes, the chat keeps following
+        if (!(effortSel === '' && sv.selected === o)) effortSel = o;
+        effortPop = false;
+        syncModels(c);
+        c.effortBtn.focus();
+      },
+    }, h('span', { class: 'ai-effort-chk', 'aria-hidden': 'true' }, sv.selected === o ? ico('check') : null),
+    h('span', { class: 'ai-effort-lbl' }, isDef ? t('ai.effort.defaultOption') : o));
+    return b;
+  });
+  // last item: drop the chat's own choice and follow the Chat row of the AI settings again (sends null)
+  if (effortSel !== '') {
+    const inherited = strengthView(aiSet, route?.connectionId ?? null, route?.model ?? null, '')?.selected ?? EFFORT_DEFAULT;
+    items.push(h('button', {
+      class: 'ai-effort-item', type: 'button', role: 'menuitemradio', 'aria-checked': 'false', tabindex: '-1', 'data-v': '',
+      onclick: () => {
+        effortSel = '';
+        effortPop = false;
+        syncModels(c);
+        c.effortBtn.focus();
+      },
+    }, h('span', { class: 'ai-effort-chk', 'aria-hidden': 'true' }),
+    h('span', { class: 'ai-effort-lbl' }, t('ai.effort.follow', { level: inherited === EFFORT_DEFAULT ? t('ai.effort.default') : inherited }))));
+  }
+  return h('div', {
+    class: 'ai-model-pop ai-effort-pop', id: 'ai-effort-pop', role: 'menu', 'aria-label': t('ai.model.pick.strengthAria', { param: EFFORT_PARAM[sv.family] }),
+    onkeydown: (e: KeyboardEvent) => {
+      const at = items.indexOf(document.activeElement as HTMLButtonElement);
+      const to = e.key === 'ArrowDown' ? at + 1 : e.key === 'ArrowUp' ? at - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? items.length - 1 : null;
+      if (to == null) return;
+      e.preventDefault();
+      items[(to + items.length) % items.length]?.focus();
+    },
+  }, ...items);
+}
+
+/** The strength button beside the brain button: shown while the picker is usable and the route's family is known */
+function syncEffort(c: Composer, show: boolean, route: ModelRef | null, busy: boolean): void {
+  const sv = show ? strengthView(aiSet, route?.connectionId ?? null, route?.model ?? null, effortSel) : null;
+  c.effortBtn.hidden = sv == null;
+  c.effortHost.querySelector('#ai-effort-pop')?.remove();
+  if (!sv) {
+    effortPop = false;
+    return;
+  }
+  const param = EFFORT_PARAM[sv.family];
+  const shownText = sv.selected === EFFORT_DEFAULT ? t('ai.effort.default') : sv.selected;
+  c.effortLbl.textContent = shownText;
+  const tip = `${t('ai.model.pick.strengthAria', { param })}: ${shownText}`;
+  c.effortBtn.setAttribute('aria-label', tip);
+  c.effortBtn.setAttribute('aria-expanded', String(effortPop));
+  c.effortBtn.disabled = busy;
+  c.effortBtn.classList.toggle('on', sv.selected !== EFFORT_DEFAULT);
+  holdTip(c.effortBtn, tip);
+  if (effortPop && !busy) c.effortHost.append(effortMenu(c, sv, route));
+  else effortPop = false;
+}
+
 /** The brain button: a dot for a choice other than the default (amber when its connection is off), tip and name say the model */
-function markModel(c: Composer, shown: string, off: boolean, offName: string | null, def: ChatDefault, strong: string | null): void {
+function markModel(c: Composer, shown: string, off: boolean, offName: string | null, def: ChatDefault): void {
   const ref = shown === '' ? null : parseModelRef(shown);
-  c.modelDot.hidden = shown === '' && strong == null;
+  c.modelDot.hidden = shown === '';
   c.modelDot.classList.toggle('warn', off);
   const base = off && ref
     ? t('ai.model.off', { conn: offName ?? '', model: ref.model })
@@ -2154,11 +2256,9 @@ function markModel(c: Composer, shown: string, off: boolean, offName: string | n
       : def
         ? t('ai.model.default', { model: def.model })
         : t('ai.model.label');
-  // a strength other than the model default is named too (the dot marks it); the level is shown as sent
-  const tip = strong != null ? `${base} · ${strong}` : base;
-  c.modelBtn.setAttribute('aria-label', tip);
+  c.modelBtn.setAttribute('aria-label', base);
   c.modelBtn.setAttribute('aria-expanded', String(modelPop));
-  holdTip(c.modelBtn, tip);
+  holdTip(c.modelBtn, base);
 }
 
 /** The popover: the API (connection) first, then the model of that connection; picking the model marked default means "follow the default" */
@@ -2172,7 +2272,6 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
   const connSel = h('select', {
     class: 'ais-select ai-model-in', id: 'ai-model-conn', 'aria-labelledby': 'ai-model-conn-l', disabled: busy || (menu.conns.length === 0 && offId == null),
     onchange: () => {
-      // the strength stays until a model is chosen (backing out keeps it; a model of another family drops it)
       pendingConn = Number(connSel.value);
       syncModels(c);
       focusLater('ai-model-sel');
@@ -2192,6 +2291,7 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
     onchange: () => {
       modelSel = chooseValue(modelSelEl.value, def);
       const mr = parseModelRef(modelSelEl.value);
+      // the strength choice stays when the new family has the level ('default' always stays), else it is dropped
       effortSel = keepEffort(effortSel, strengthView(aiSet, mr?.connectionId ?? null, mr?.model ?? null, effortSel));
       pendingConn = null;
       syncModels(c);
@@ -2204,26 +2304,13 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
   modelSelEl.value = pv.modelValue;
   const close = iconButton({ icon: 'x', label: t('common.close'), tone: 'quiet', onClick: () => closeModelPop(true) });
   close.id = 'ai-model-close';
-  const pickedRef = pv.modelValue === '' ? null : parseModelRef(pv.modelValue);
-  const sv = strengthView(aiSet, pickedRef?.connectionId ?? null, pickedRef?.model ?? null, effortSel);
-  const effortSelEl = sv
-    ? h('select', {
-      class: 'ais-select ai-model-in', id: 'ai-effort-sel', 'aria-label': t('ai.model.pick.strengthAria', { param: EFFORT_PARAM[sv.family] }), disabled: busy,
-      onchange: () => {
-        effortSel = effortSelEl?.value ?? '';
-        syncModels(c);
-        focusLater('ai-effort-sel');
-      },
-    },
-    ...sv.levels.map((l) => h('option', { value: l }, l === sv.modelDefault ? `${l} · ${t('ai.model.pick.defaultTag')}` : l)))
-    : null;
-  if (effortSelEl && sv) effortSelEl.value = sv.selected;
-  const useDefault = modelSel !== '' || effortSel !== ''
+  const useDefault = modelSel !== ''
     ? h('div', { class: 'ai-model-foot' }, h('button', {
       class: 'btn quiet ai-mini', id: 'ai-model-default', type: 'button', disabled: busy,
       onclick: () => {
         modelSel = '';
-        effortSel = '';
+        // the default route may be of another family: a level it cannot take is dropped, never sent
+        effortSel = keepEffort(effortSel, strengthView(aiSet, def?.connectionId ?? null, def?.model ?? null, effortSel));
         pendingConn = null;
         syncModels(c);
         focusLater('ai-model-conn');
@@ -2233,7 +2320,7 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
   if (!menu.loaded) {
     const failed = modelsFailed && !modelsLoading;
     return h('div', { class: 'ai-model-pop', id: 'ai-model-pop', role: 'dialog', 'aria-labelledby': 'ai-model-pop-t' },
-      h('div', { class: 'ai-model-pop-h' }, h('h3', { id: 'ai-model-pop-t' }, t('ai.model.pick.title')), close),
+      h('div', { class: 'ai-model-pop-h' }, h('h3', { id: 'ai-model-pop-t', tabindex: '-1' }, t('ai.model.pick.title')), close),
       failed
         ? h('div', { class: 'ai-model-f', role: 'alert' },
           h('p', { class: 'callout warn' }, ico('info'), h('span', null, t('ai.model.loadFail'))),
@@ -2247,24 +2334,20 @@ function modelPopover(c: Composer, menu: ChatMenu, def: ChatDefault, shown: stri
         : h('p', { class: 'ai-model-f', role: 'status' }, t('ai.loading')));
   }
   return h('div', { class: 'ai-model-pop', id: 'ai-model-pop', role: 'dialog', 'aria-labelledby': 'ai-model-pop-t' },
-    h('div', { class: 'ai-model-pop-h' }, h('h3', { id: 'ai-model-pop-t' }, t('ai.model.pick.title')), close),
+    h('div', { class: 'ai-model-pop-h' }, h('h3', { id: 'ai-model-pop-t', tabindex: '-1' }, t('ai.model.pick.title')), close),
     menu.off && ref ? h('p', { class: 'callout warn ai-model-off', role: 'status' }, ico('info'),
       h('span', null, t('ai.model.off', { conn: menu.off.name ?? '', model: ref.model }))) : null,
     h('div', { class: 'ai-model-f' }, h('label', { id: 'ai-model-conn-l', for: 'ai-model-conn' }, t('ai.model.api')), connSel),
     h('div', { class: 'ai-model-f' }, h('label', { id: 'ai-model-sel-l', for: 'ai-model-sel' }, t('ai.model.label')), modelSelEl),
-    sv && effortSelEl
-      ? h('div', { class: 'ai-model-f' },
-        h('label', { class: 'ai-model-sl', for: 'ai-effort-sel' }, providerIcon(sv.family, 'ais-pi'), h('span', null, t('ai.model.pick.strength', { param: EFFORT_PARAM[sv.family] }))),
-        effortSelEl)
-      : null,
     useDefault);
 }
 
 /** The administrators' model picker: the brain button and its popover; hidden for everyone else and read only */
 function syncModels(c: Composer): void {
   const show = isAdmin() && full() && aiFreeMode();
-  if (!show && modelPop) {
+  if (!show && (modelPop || effortPop)) {
     modelPop = false;
+    effortPop = false;
     pendingConn = null;
   }
   // A failed read is tried again after ten seconds at the earliest, so a broken connection to the server never loops
@@ -2282,15 +2365,17 @@ function syncModels(c: Composer): void {
   // "unchanged" and the server falls back and clears it
   const shown = chatShown(modelSel, menu);
   const busy = sending();
-  const sig = JSON.stringify([show, uiLang(), def, menu, shown, busy, modelPop, pendingConn, modelsLoading, modelsFailed, effortSel, aiSetAt]);
+  const sig = JSON.stringify([show, uiLang(), def, menu, shown, busy, modelPop, pendingConn, modelsLoading, modelsFailed, effortSel, effortPop, aiSetAt]);
   if (sig === modelSig) return;
   modelSig = sig;
   c.models.hidden = !show;
   const inPop = c.models.querySelector('#ai-model-pop')?.contains(document.activeElement) ? document.activeElement?.id ?? '' : '';
   c.models.querySelector('#ai-model-pop')?.remove();
   const dotRef = shown !== '' ? parseModelRef(shown) : def ? { connectionId: def.connectionId, model: def.model } : null;
-  const dotView = strengthView(aiSet, dotRef?.connectionId ?? null, dotRef?.model ?? null, effortSel);
-  markModel(c, shown, menu.off != null, menu.off?.name ?? null, def, effortMarks(effortSel, dotView) ? effortSel : null);
+  markModel(c, shown, menu.off != null, menu.off?.name ?? null, def);
+  const inEffort = c.effortHost.contains(document.activeElement);
+  syncEffort(c, show, dotRef, busy);
+  if (inEffort && effortPop) (document.querySelector('#ai-effort-pop [aria-checked="true"]') as HTMLElement | null)?.focus();
   if (!show || !modelPop) return;
   c.models.append(modelPopover(c, menu, def, shown, busy));
   // A redraw (the list arrived, the language changed) keeps the focus where it was in the popover
@@ -2406,7 +2491,7 @@ async function saveMemEdit(): Promise<void> {
 }
 
 async function removeMem(m: AiMemory): Promise<void> {
-  if (!(await ask({ title: t('ai.mem.delete'), body: t('ai.mem.delete.ask'), ok: t('common.delete'), danger: true }))) return;
+  if (!(await ask({ title: t('ai.mem.delete.title'), body: t('ai.mem.delete.ask'), ok: t('ai.mem.delete'), danger: true }))) return;
   try {
     await deleteMemory(m.id);
     memories = (memories ?? []).filter((x) => x.id !== m.id);
@@ -2422,7 +2507,7 @@ async function removeMem(m: AiMemory): Promise<void> {
 async function removeAllMem(): Promise<void> {
   const n = memories?.length ?? 0;
   if (!n) return;
-  if (!(await ask({ title: t('ai.mem.deleteAll'), body: tn('ai.mem.deleteAll.ask', n), ok: t('common.delete'), danger: true }))) return;
+  if (!(await ask({ title: t('ai.mem.deleteAll.title'), body: tn('ai.mem.deleteAll.ask', n), ok: t('ai.mem.deleteAll'), danger: true }))) return;
   try {
     await deleteAllMemories();
     memories = [];
@@ -2498,7 +2583,7 @@ function memoryView(): HTMLElement {
     body = memError
       ? h('div', { class: 'err', role: 'alert' }, h('p', null, t('ai.mem.errLoad', { reason: errorText(memError) })),
         h('div', { class: 'acts' }, h('button', { class: 'btn', type: 'button', onclick: () => void loadMemories() }, t('common.retry'))))
-      : h('p', { class: 'dim', role: 'status' }, t('ai.loading'));
+      : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   } else {
     body = [
       list.length ? h('ul', { class: 'ai-mems' }, list.map(memoryRow)) : h('p', { class: 'ai-list-note' }, t('ai.mem.empty')),

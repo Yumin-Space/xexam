@@ -400,7 +400,7 @@ mod tests {
     fn the_config_follows_the_limits_and_the_scale() {
         let l = Limits::default();
         let c = PaceCfg::of(&l, 100);
-        assert_eq!((c.on, c.rpm, c.tpm), (true, 13, 240_000));
+        assert_eq!((c.on, c.rpm, c.tpm), (true, 13, 230_000));
         assert_eq!(c.window, Duration::from_secs(60));
         assert_eq!(PaceCfg::of(&l, 10).window, Duration::from_secs(6));
         assert!(!PaceCfg::of(&l, 0).on);

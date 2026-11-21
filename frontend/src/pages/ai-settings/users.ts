@@ -8,6 +8,7 @@ import { fetchAiUsers, resumeAiUser, setAiAdminFree, setAiUserFeatures, suspendA
 import { aiBadge } from '../../components/ai-badge.ts';
 import { iconButton } from '../../components/icon-button.ts';
 import { pagedTable, type PtColumn } from '../../components/paged-table.ts';
+import { miniIcon } from '../../components/mini-icons.ts';
 import { roleName } from '../../components/shell.ts';
 import { ALL_ON, FEATURE_GROUPS, featureLabelKey, itemOn, offList, readFeatures, withItem, type FeatureKey } from '../../domain/ai-features.ts';
 import { badgeState, serviceReason } from '../../domain/badge-state.ts';
@@ -264,6 +265,6 @@ export function usersSection(s: AiSettings): HTMLElement {
   return h('section', { class: 'panel ais-sec', 'aria-labelledby': 'ais-users-h' },
     h('h2', { id: 'ais-users-h' }, t('ai.set.sec.users')),
     // the polite text after a features change (no toast, FP-4)
-    h('p', { class: 'ais-note ais-feat-saved', role: 'status', 'aria-live': 'polite' }, A.featSaved),
+    h('p', { class: 'saved-note ais-feat-saved', role: 'status', 'aria-live': 'polite' }, ...(A.featSaved ? [miniIcon('check', 'saved-ic'), A.featSaved] : [])),
     body);
 }

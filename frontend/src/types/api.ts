@@ -721,6 +721,7 @@ export interface AiChatSummary {
   /** v1.3, administrators only: the picked model (null = default) */
   pick?: ModelRef | null;
   /** v2.1, administrators only: the picked thinking-strength level (null = none) */
+  /** a level of the route's family, or 'default' (v2.2: Default, no strength parameter sent) */
   pickEffort?: string | null;
 }
 
@@ -1015,8 +1016,10 @@ export type AiEffortFamily = 'anthropic' | 'openai' | 'google' | 'responses';
 export interface AiEffort { family: AiEffortFamily; level: string }
 /** `effort` is optional: an older ai-service does not send it */
 export interface AiSlotState { modelId: number | null; using: { modelId: number; fallback: 'none' | 'default' } | null; effort?: AiEffort | null;
-  /** v2.1: what is sent now (the stored choice, or the model default); null only when the slot does not resolve */
-  effortEffective: AiEffort | null }
+  /** v2.2: what is sent now: the stored choice, or null when nothing is sent (Default) */
+  effortEffective: AiEffort | null;
+  /** v2.2: the strength family of the row's target (also when its connection is switched off); null when none; absent on older answers */
+  effortFamily?: AiEffortFamily | null }
 /** `GET /api/ai/admin/settings` (administrators; v1.3: connections, the model pool, six slots, global feature switches) */
 export interface AiSettings {
   enabled: boolean; effective: boolean; state: AiState; pauseReason: 'keyProblem' | 'noRoute' | null;

@@ -331,11 +331,11 @@ test('JSON errors of the AI routes: code and field; the guard and the texts in t
   assert.ok(e instanceof ApiError);
   assert.equal(e.code, 'ai.badKey');
   assert.equal(e.field, 'gatewayKey');
-  assert.equal(errorText(e), 'A key may have 1–400 visible characters and no spaces.');
+  assert.equal(errorText(e), 'The key format is invalid: 1–400 visible ASCII characters, no spaces.');
   setUiLang('zh');
-  assert.equal(errorText(e), '密钥格式不对：只能是 1–400 个可见的英文字符，不能有空格。');
+  assert.equal(errorText(e), '密钥格式无效：1–400 个可见 ASCII 字符，不含空格。');
   setUiLang('ja');
-  assert.equal(errorText(e), 'キーは空白を含まない表示可能な文字で 1〜400 文字にしてください。');
+  assert.equal(errorText(e), 'キーの形式が無効です（空白を含まない 1〜400 文字の表示可能な ASCII）。');
   setUiLang('en');
 
   reply(json(403, { error: '被拒绝：这个请求的 Host 或 Origin 不在允许的列表里，请检查 XEXAM_ALLOWED_HOSTS 和 XEXAM_ALLOWED_ORIGINS。', code: 'auth.guard' }));

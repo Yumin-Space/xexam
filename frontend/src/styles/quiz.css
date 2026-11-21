@@ -14,7 +14,13 @@
 }
 
 /* ---------- Top row (QZ-1): "Question 3 of 25", the practice tag, the clock, Save and exit; the meter is its bottom edge ---------- */
-.qbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; row-gap: 6px; margin-bottom: 20px; }
+.qbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; row-gap: 6px; min-height: 48px; margin: 0 -6px 20px 0; }
+/* v2.2: the same frame as the shell: 12 px above the bar (the bar is 48 px), so the content starts at y=80 */
+.wrap.qz { padding-top: max(12px, env(safe-area-inset-top)); }
+/* With a mouse the theme toggle is as tall as the exit button next to it (36 px); touch keeps the 44 px of the phone rules below */
+@media (hover: hover) and (pointer: fine) {
+  .qbar .theme-btn { width: 36px; height: 36px; }
+}
 .qbar .ql { display: flex; align-items: baseline; gap: 10px; min-width: 0; font-size: 18px; }
 /* The "Question 3 of 25" text is the page heading (h1); it keeps the look of plain text */
 .qbar h1.l { margin: 0; font-size: 18px; font-weight: 400; line-height: 1.35; display: flex; align-items: baseline; gap: 8px; }
@@ -80,7 +86,7 @@
 .phead-sheet { min-width: 0; overflow-wrap: anywhere; }
 
 /* ---------- Action bar (QZ-3) ----------
-   Wide (> 880 px), inside the card: [‹ Previous] [Check answer] [Next ›] [AI hint] [AI analysis] … [⚑ Mark to revisit].
+   Wide (> 880 px), inside the card: [‹ Previous] [Check answer] [Next ›] [AI hint] [AI analysis] … [⚑ Revisit].
    Check answer and Next are two separate buttons in fixed places (an exam has only Next). */
 .pfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
 .pfoot .bar-main { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
@@ -191,7 +197,7 @@
   .pfoot .bbtn[data-slot="flag"] .lbl { display: none; }
   .pfoot [data-slot="hint"], .pfoot [data-slot="explain"] { flex: none; }
   /* The sheet sits under the panel, in its place in the flow */
-  .rail { position: static; max-height: none; padding: 14px 16px; }
+  .rail { position: static; max-height: none; padding: 20px 16px; }
   .rail-body { overflow: visible; }
   .rail-sum { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 8px; }
   /* A-OWNER-25: the sheet card has no finish button here; the top row has the count and the 交卷 / 完成 button */
@@ -213,8 +219,8 @@
   .wrap.qz { --qz-gl: max(12px, env(safe-area-inset-left)); --qz-gr: max(12px, env(safe-area-inset-right)); }
   .qbar {
     position: sticky; top: 0; z-index: 6; flex-wrap: nowrap; justify-content: space-between; gap: 8px;
-    box-sizing: border-box; height: calc(44px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) var(--qz-gr) 0 var(--qz-gl);
-    margin: 0 calc(-1 * var(--qz-gr)) 8px calc(-1 * var(--qz-gl)); background: var(--sheet);
+    box-sizing: border-box; height: calc(44px + env(safe-area-inset-top)); padding: env(safe-area-inset-top) calc(var(--qz-gr) - 6px) 0 var(--qz-gl);
+    min-height: 0; margin: 0 calc(-1 * var(--qz-gr)) 8px calc(-1 * var(--qz-gl)); background: var(--sheet);
   }
   /* one line always (A-OWNER rule): "1 / 12" never breaks; when the row is too narrow the finish pill drops its label (.tight) */
   .qbar .ql { gap: 8px; flex: 1 1 auto; white-space: nowrap; }
@@ -230,9 +236,9 @@
   /* A-OWNER-81: the label is always visible; the pill is a little smaller here, and .tight (row too narrow) only swaps in the short label */
   .btn.qsubmit { min-width: 30px; padding: 0 8px; gap: 3px; font-size: 12.5px; justify-content: center; }
   .btn.qsubmit .mi { width: 14px; height: 14px; }
-  .qbar.tight .btn.qsubmit { padding: 0 7px; }
-  .qbar.tight .qsubmit .lbl { display: none; }
-  .qbar.tight .qsubmit .lbl-s { display: inline; }
+  /* v2.2: the same form in practice and exam: the short Finish label on every phone; .tight only shortens the count */
+  .btn.qsubmit .lbl { display: none; }
+  .btn.qsubmit .lbl-s { display: inline; }
   .qtime { align-items: center; }
   .qtime .mi { display: inline; width: 16px; height: 16px; color: var(--ink3); }
   .meter { position: absolute; left: 0; right: 0; bottom: 0; flex: none; height: 3px; margin: 0; border-radius: 0; }
@@ -243,7 +249,24 @@
   .qauto-l { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   /* Save and exit: the icon (the label is its name and its tip) */
   .btn.quiet.qexit { width: 44px; min-width: 44px; padding: 0; }
-  .qexit .mi { display: inline; width: 20px; height: 20px; }
+  /* v2.2: the theme toggle left of it. Its box IS the 44 x 44 tap area (no ::after that a neighbour could cover): the side
+     margins eat the row gap, so its box touches the neighbours' boxes without overlapping them. When the row is tight (the quiz
+     page sets .tight, .tighter, .tightest one after the other until nothing is clipped) the count takes its short form "3/50",
+     then the gaps and the clock icon go, so the position "4 / 50" always keeps its room */
+  .qbar .theme-btn { position: relative; width: 44px; height: 44px; margin-inline: -8px; }
+  .qbar.tight .qcount-l { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .qbar.tight .qcount-s { display: inline; }
+  .qbar.tight .qcount { margin-right: 0; }
+  .qbar.tighter .r { gap: 4px; }
+  .qbar.tighter .theme-btn { margin-inline: -4px; }
+  .qbar.tighter .qtime .mi { display: none; }
+  .qbar.tightest .qkind { display: none; }
+  /* Last resort on the narrowest phones (320 px, 100 questions): the answered count leaves the row (the meter under it shows it;
+     the screen-reader text stays), which pays for the theme toggle's full 44 px tap area */
+  .qbar.tightest .qcount { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+  .qbar.tightest .qcount-s { display: none; }
+  .qbar.tightest .qsubmit .mi { display: none; }
+  .qexit .mi { display: inline; width: 22px; height: 22px; }
   .qexit .lbl { display: none; }
 
   /* The card: one header line (QZ-2), the stem a little larger and tighter */
@@ -262,11 +285,12 @@
   .pfoot .bar-main > .btn { padding-inline: 12px; font-size: 15px; }
 
   /* The answer sheet: folded under the panel, the chevron opens it */
+  .rail { padding: 14px 12px; }
   .rail-toggle {
     position: relative; display: inline-flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 0;
-    border: 0; border-radius: 8px; background: transparent; color: var(--ink2);
+    border: 0; border-radius: 6px; background: transparent; color: var(--ink2);
   }
-  .rail-toggle .mi { width: 20px; height: 20px; transition: transform .15s ease; }
+  .rail-toggle .mi { width: 18px; height: 18px; transition: transform .15s ease; }
   .rail.open .rail-toggle .mi { transform: rotate(180deg); }
   .rail:not(.open) .rail-body { display: none; }
   .rail h2 { margin: 0; font-size: 14px; }
@@ -343,6 +367,11 @@
   .qbar .btn.quiet.qexit::after { content: ""; position: absolute; inset: -4px -3px -9px; }
   /* A-OWNER-22 / 60: the 交卷 / 完成 pill (28 px) fits the 36 px row; its 44 px tap area reaches below it */
   .btn.qsubmit { min-height: 28px; }
+  /* The theme toggle: a 36 px box on the 36 px row; its tap area reaches 9 px below it. The save-and-exit tap area (::after,
+     3 px to the left) covers the toggle's neighbouring 3 px, so the toggle's right margin leaves those 3 px free */
+  .qbar .theme-btn { height: 36px; margin-inline: -8px -5px; }
+  .qbar .theme-btn::after { content: ""; position: absolute; inset: 0 0 -9px; }
+  .qbar.tighter .theme-btn { margin-inline: -4px -1px; }
   .qbar .btn.qsubmit::after { inset: -4px -4px -12px; }
   .wrap.qz .paper { padding: 8px 12px; }
   .wrap.qz .phead { min-height: 28px; margin-bottom: 4px; }

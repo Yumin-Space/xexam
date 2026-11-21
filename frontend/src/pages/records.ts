@@ -284,7 +284,7 @@ function recordTable(rows: readonly RecordSummary[], view: AiPlusView, onDelete:
 /** A labelled filter control (explicit for/id, so the accessible name is just the label) */
 function field(id: string, label: string, control: HTMLElement): HTMLElement {
   control.id = id;
-  return h('div', { class: 'rec-field' }, h('label', { for: id }, label), control);
+  return h('div', { class: 'fld rec-field' }, h('label', { class: 'fld-l', for: id }, label), control);
 }
 
 function clearFilters(): void {

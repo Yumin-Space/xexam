@@ -173,7 +173,7 @@ pub fn infer_family(provider: &str, format: &str, models: &[&str]) -> EffortFami
 /// The 10 -> 11 upgrade (inside the upgrade transaction, after the columns exist): sets `effort_family` of every
 /// connection from [`infer_family`] (model ids = its pool, the models its slots use and its chat picks), then clears
 /// every `model_slots.effort` whose family differs from the family of the connection the slot effectively uses (its own
-/// model's connection, else the default slot's); one of a slot that resolves to no connection and an unreadable one are cleared too (NULL = model default).
+/// model's connection, else the default slot's); one of a slot that resolves to no connection and an unreadable one are cleared too (NULL = Default, no strength parameter sent).
 /// Returns `(connection id, family)` per connection and the number of cleared slot efforts. No name, URL or key is read.
 pub fn infer_families(c: &Connection) -> rusqlite::Result<(Vec<(i64, EffortFamily)>, usize)> {
     let conns: Vec<(i64, String, String, i64)> = {
@@ -227,7 +227,7 @@ pub fn infer_families(c: &Connection) -> rusqlite::Result<(Vec<(i64, EffortFamil
         let family = used.and_then(|id| out.iter().find(|(cid, _)| *cid == id).map(|(_, f)| *f));
         let keep = match (Effort::parse_tag(&tag), family) {
             (Some(e), Some(f)) => e.family() == f,
-            // no connection to compare with (the slot resolves to nothing): the choice goes (NULL = model default)
+            // no connection to compare with (the slot resolves to nothing): the choice goes (NULL = Default, no strength parameter sent)
             (Some(_), None) => false,
             (None, _) => false,
         };

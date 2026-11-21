@@ -119,7 +119,7 @@ export function pagedTable<T>(o: PagedTableOptions<T>): HTMLElement {
   const table = h('table', { class: `${o.tableClass} ptb-table`, ...role('table') },
     h('thead', role('rowgroup'), h('tr', role('row'), headCells)), tbody);
   const wrap = h('div', { class: 'ais-tablewrap' }, table);
-  const none = h('p', { class: 'ais-note ptb-none', role: 'status', hidden: '' }, t('ai.set.tbl.none'));
+  const none = h('p', { class: 'empty ptb-none', role: 'status', hidden: '' }, t('ai.set.tbl.none'));
 
   const status = h('p', { class: 'sr-only', role: 'status', 'aria-live': 'polite' });
   const pagerNav = h('nav', { class: 'ptb-pager', 'aria-label': t('ai.set.tbl.pager') });

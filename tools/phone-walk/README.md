@@ -173,3 +173,18 @@ covers a control) next to what the screen must show:
 
 The stack's AI is set up the v1.3 way by `tools/screenshots/seed.py`: a connection with the made-up provider and key, a second
 connection that reuses its key, the default model picked and AI+ switched on.
+
+## v2.2 checks
+
+`checks_v22.py` (group `g_v22`, registered at the end of `checks.py`; run alone with `--only 'W-V22-*'`), zh / en / ja at
+393x852, 360x740, 320x640 and 1280x800. Every case saves screenshots (`<id>-<page>-<user>-<lang>-<theme>-<w>x<h>-<state>.png`)
+into the output folder, passed or not; a check that cannot run (no AI job on the stack yet) is reported as `skipped`.
+
+| Check | What |
+|---|---|
+| W-V22-AB | Phone top bar (admin, sam, alex, riley): the account button shows the person icon, the compact AI+ badge and the short admin tag with no overlap (inside the button, clear of the menu / theme buttons), the user name hidden, 44 px high; a tap shows the name tip (inside the screen, names the user, opens no menu), a tap elsewhere and Esc close it, the menu button opens the menu; at 1280 the name is shown and the button opens the menu |
+| W-V22-QT | Quiz top row, practice and exam: the theme toggle is in the right group, 44 px on phones, nothing in the row overlaps or leaves the screen (position, count, finish, timer, toggle, exit), a tap switches dark / light (page colour and label change), a second tap restores it |
+| W-V22-CS | AI Chat (administrator, free mode): the strength button is on the same row right of the brain button, no overlap with the brain button or Send, nothing overflows the composer bar / box; its menu opens with Default first, one item checked, items inside the menu and the screen, Esc closes it |
+| W-V22-MS | AI settings, model rows: every strength dropdown has Default (empty value) first, its text says in brackets that no parameter is sent, fits the row and the screen |
+| W-V22-GJ | AI settings > AI bank tab: the jobs list is a paged table (search, sort, pager when more than 10 jobs), cards on phones, no sideways overflow; the details toggle opens the details (several fields, inside the screen) and closes them again |
+| W-V22-FT | Footer disclaimer on Home and Settings: centered (equal gaps) when it fits on one line; when it wraps it is not wider than the page and reads left to right; the shutdown button, when shown, is centered |

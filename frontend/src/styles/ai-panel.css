@@ -34,14 +34,17 @@
 .aip-ask[hidden] { display: none; }
 
 .aip-chev {
-  display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; padding: 0;
+  display: inline-grid; place-items: center; flex: none; width: var(--ibtn-size); height: var(--ibtn-size); padding: 0;
   border: 0; border-radius: 6px; background: transparent; color: var(--ink2); cursor: pointer;
 }
 @media (hover: hover) { .aip-chev:hover { background: var(--hover); color: var(--ink); } }
 .aip-chev:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
-@media (pointer: coarse) { .aip-chev { width: 44px; height: 44px; } }
-.aip-chev-i { width: 9px; height: 9px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; transform: translateY(2px) rotate(-135deg); transition: transform .15s; }
-.aip-panel.collapsed .aip-chev-i { transform: translateY(-2px) rotate(45deg); }
+@media (max-width: 600px) { .aip-chev { width: 44px; height: 44px; } }
+/* phones: the chevron ends at the same x as the answer sheet's chevron (the phone rail card pads 12 px) */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { .aip-panel-head { padding-right: 12px; } }
+.aip-chev-i { width: 18px; height: 18px; transition: transform .15s ease; }
+.aip-panel:not(.collapsed) .aip-chev-i { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .aip-chev-i { transition: none; } }
 
 /* At 400 px and below the saved-state text of a collapsed panel shrinks to one ellipsised line (it never wraps and the buttons
    never move); it hides only below 360 px, where a pulsing dot takes its place while requesting or writing (spec 2.2). */
@@ -128,7 +131,8 @@
   .aip-panel-foot { padding-left: 8px; }
 }
 @media (max-width: 600px) and (pointer: coarse), (orientation: landscape) and (max-height: 500px) and (pointer: coarse) { /* PHONE, touch */
-  .aip-panel .aip-slot { width: 40px; min-width: 40px; }
+  /* 44 px boxes: the shared .ibtn has no hit margin any more (v2.2 consistency pass) */
+  .aip-panel .aip-slot { width: var(--ibtn-size); min-width: var(--ibtn-size); }
 }
 
 @media (prefers-reduced-motion: reduce) {

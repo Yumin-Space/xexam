@@ -431,7 +431,7 @@ pub const V9_COLUMNS: [(&str, &str, &str); 4] = [
     (
         "limits",
         "pace_tpm",
-        "pace_tpm INTEGER NOT NULL DEFAULT 240000 CHECK (pace_tpm BETWEEN 1000 AND 100000000)",
+        "pace_tpm INTEGER NOT NULL DEFAULT 230000 CHECK (pace_tpm BETWEEN 1000 AND 100000000)",
     ),
 ];
 
@@ -593,6 +593,9 @@ pub const V7_NEW_LIMITS: &str = "INSERT OR IGNORE INTO limits
 
 /// `meta` key of the one-time move of the two "unlimited" switches to their v1.1 default (on, A-OWNER-48).
 pub const UNLIMITED_DEFAULT_KEY: &str = "unlimited_default";
+
+/// `meta` key of the one-time v2.2 move of the pacing default 13 / 240000 -> 13 / 230000.
+pub const PACE_DEFAULT_KEY: &str = "pace_default_230k";
 
 /// Run once (after a backup copy) on a schema-6 database written before the switches defaulted to on: both go on.
 pub const UNLIMITED_DEFAULT_SET: &str =

@@ -11,7 +11,7 @@ describe('footer links', () => {
   });
   it('the version comes from /api/info, never a literal', () => {
     const src = readFileSync(new URL('../components/github-line.ts', import.meta.url), 'utf8');
-    assert.ok(src.includes("t('footer.release', { version: S.info.version })"));
+    assert.ok(src.includes("t('footer.version', { version: S.info.version })"));
     assert.equal(/Xexam \d/.test(src), false);
   });
   it('every page kind draws the line', () => {

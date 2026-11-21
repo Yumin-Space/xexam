@@ -30,7 +30,7 @@ export const setConnectionEnabled = (id: number, enabled: boolean): Promise<{ se
 /** The models of every connection (cached 10 min; `refresh` lists again); also read by the AI Chat model picker */
 export const fetchModels = (refresh = false): Promise<AiModelList> => getJson<AiModelList>(`/api/ai/admin/models?refresh=${refresh ? 1 : 0}`);
 
-/** v2.1 `POST /api/ai/admin/models/effort`: the level of one slot (the family comes from its connection; null = model default) */
+/** v2.1 `POST /api/ai/admin/models/effort`: the level of one slot (the family comes from its connection; null = Default: no strength parameter sent) */
 export type EffortBody = { slot: AiSlot; level: string | null };
 export const setEffort = (b: EffortBody): Promise<{ settings: AiSettings }> =>
   postJson<{ settings: AiSettings }>('/api/ai/admin/models/effort', b);

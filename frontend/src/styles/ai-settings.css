@@ -5,7 +5,7 @@
    usage tables are cards up to 560 px (AS-3); the provider is a vertical list up to 480 px (AS-6); the viewer is a
    full-screen sheet under PHONE (AS-7). PHONE = (max-width: 600px), (orientation: landscape) and (max-height: 500px). */
 
-.page-ais { max-width: 920px; }
+.page-ais { max-width: var(--page-narrow, 880px); }
 .page-ais [hidden] { display: none !important; }
 .ais-sec h2 { margin-bottom: 14px; }
 
@@ -54,7 +54,7 @@
 .ais-row2, .ais-keys { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 16px; align-items: start; }
 .ais-select { width: 100%; min-height: 38px; padding: 6px 10px; font-size: 15px; }
 .ais-remove { display: inline-flex; align-items: center; gap: 6px; justify-self: start; font-size: 13px; color: var(--ink2); cursor: pointer; }
-.ais-remove input { width: 16px; height: 16px; margin: 0; accent-color: var(--danger); }
+.ais-remove input { margin: 0; accent-color: var(--danger); }
 .ais-warn { font-size: 12.5px; font-weight: 600; line-height: 1.5; color: var(--warn); }
 .ais-ferr { font-size: 13px; line-height: 1.5; color: var(--danger); }
 .ais-note { font-size: 13px; line-height: 1.55; color: var(--ink3); }
@@ -72,12 +72,12 @@
 .ais-combo { position: relative; flex: 1 1 240px; min-width: 0; display: flex; }
 .ais-combo .ais-model { flex: 1 1 auto; }
 .ais-combo-list {
-  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); max-height: 280px; overflow-y: auto;
-  overscroll-behavior: contain; margin: 0; padding: 4px; list-style: none; background: var(--card);
-  border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-pop);
+  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 6px); max-height: 280px; overflow-y: auto;
+  overscroll-behavior: contain; margin: 0; padding: var(--pop-pad, 6px); list-style: none; background: var(--card);
+  border: 1px solid var(--pop-border, var(--line-soft)); border-radius: var(--pop-radius, 10px); box-shadow: var(--shadow-pop);
 }
 .ais-combo-o {
-  display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: 6px; font-size: 13.5px; line-height: 1.45;
+  display: flex; align-items: baseline; gap: 8px; padding: 6px 10px; border-radius: var(--pop-item-radius, 6px); font-size: 13.5px; line-height: 1.45;
   color: var(--ink); cursor: pointer; white-space: nowrap;
 }
 .ais-combo-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--mono); }
@@ -125,7 +125,7 @@
 .ais-bar i { display: block; height: 100%; border-radius: 4px; background: var(--print); }
 
 /* ---------- Retention and safety limits ---------- */
-.ais-num { width: 112px; min-height: 38px; padding: 6px 10px; font-size: 15px; font-variant-numeric: tabular-nums; }
+.ais-num { width: 6.5em; min-height: 38px; padding: 6px 10px; font-size: 15px; font-variant-numeric: tabular-nums; }
 .ais-retention { gap: 8px 10px; }
 .ais-retention .fld-l { margin-right: -4px; }
 .ais-limitgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 14px 16px; margin-bottom: 14px; }
@@ -191,7 +191,7 @@ dialog.dlg-viewer[open] { display: flex; flex-direction: column; gap: 12px; }
    ever needs more room, never the page */
 .ais-tabs { display: flex; width: fit-content; max-width: 100%; margin: 0 0 16px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; }
 .ais-tabs::-webkit-scrollbar { display: none; }
-.ais-tabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: 40px; padding-inline: 14px; }
+.ais-tabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; gap: 6px; white-space: nowrap; min-height: var(--tab-h, 40px); padding-inline: 14px; font-size: 13.5px; }
 .ais-tabs button:focus-visible { outline-offset: -2px; }
 .ais-tab-ic { width: 16px; height: 16px; flex: none; }
 .ais-tl-short { display: none; }
@@ -280,7 +280,7 @@ td.ais-usum { display: none; }
 @media (max-width: 560px) { .ais-lengths { grid-template-columns: minmax(0, 1fr); } }
 
 /* The model list opens above its field when there is little room below (AS-5) */
-.ais-combo-list.up { top: auto; bottom: calc(100% + 4px); }
+.ais-combo-list.up { top: auto; bottom: calc(100% + 6px); }
 
 /* Provider as a vertical list with a check mark up to 480 px (AS-6) */
 .ais-seg-ck { display: none; width: 16px; height: 16px; flex: none; }
@@ -295,7 +295,7 @@ td.ais-usum { display: none; }
   .ais-tl-short { display: inline; }
   .ais-tl-full { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
   .ais-tabs { width: 100%; }
-  .ais-tabs button { flex: 1 1 auto; min-height: 44px; gap: 4px; padding-inline: 6px; font-size: 13px; }
+  .ais-tabs button { flex: 1 1 auto; min-height: var(--tab-h, 44px); gap: 4px; padding-inline: 6px; }
   .ais-caps { gap: 8px; }
   .ais-cap { flex: 1 1 0; }
   .ais-cap .ais-num { width: 100%; }
@@ -306,12 +306,12 @@ td.ais-usum { display: none; }
     padding: max(10px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
   }
   .vw-head { gap: 2px; }
-  .vw-head h3 { font-size: 16px; }
+  .vw-head h3 { font-size: 17px; }
   .vw-menu {
     position: absolute; z-index: 5; top: calc(max(10px, env(safe-area-inset-top)) + 44px); right: max(14px, env(safe-area-inset-right));
-    min-width: 12em; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); box-shadow: var(--shadow-pop);
+    min-width: 12em; padding: var(--pop-pad, 6px); border: 1px solid var(--pop-border, var(--line-soft)); border-radius: var(--pop-radius, 10px); background: var(--card); box-shadow: var(--shadow-pop);
   }
-  .vw-menu-i { display: block; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: var(--danger); font: inherit; font-size: 14.5px; text-align: left; cursor: pointer; }
+  .vw-menu-i { display: block; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: var(--pop-item-radius, 6px); background: transparent; color: var(--danger); font: inherit; font-size: 14.5px; text-align: left; cursor: pointer; }
   .vw-menu-i:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
 }
 @media (hover: hover) { .vw-menu-i:hover { background: var(--danger-soft); } }
@@ -345,7 +345,7 @@ td.ais-usum { display: none; }
 .ais-fg-l { flex: none; font-size: 12.5px; font-weight: 600; color: var(--ink3); }
 .ais-fl { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; white-space: nowrap; cursor: pointer; }
 .ais-fl:has(input:disabled) { cursor: default; color: var(--ink3); }
-.ais-fbox { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+.ais-fbox { margin: 0; accent-color: var(--primary); }
 .ais-fbox:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .ais-feat-err { flex-basis: 100%; margin: 0; }
 .ais-feat-saved:empty { display: none; }
@@ -357,15 +357,15 @@ td.ais-usum { display: none; }
 @media (max-width: 400px) { .ais-fg { gap: 0 6px; } .ais-fl { gap: 3px; font-size: 12.5px; } }
 
 /* ---------- v1.1 (GS-2, IS-2): the AI banks tab ---------- */
-.ais-gentitle { display: flex; align-items: center; gap: 6px; margin: 0 0 10px; }
-.ais-gen-h { margin: 0; font-size: 16px; }
+.ais-gentitle { display: flex; align-items: center; gap: 6px; margin: 0 0 14px; }
+.ais-gen-h { margin: 0; font-size: 16.5px; }
 .ais-pre { white-space: pre-line; }
 .ais-gencard { margin-bottom: 14px; }
 .ais-subcard { margin: 0 0 14px; }
 .ais-subcard + .ais-subcard { padding-top: 12px; border-top: 1px solid var(--line-soft); }
 .ais-subh { margin: 0 0 8px; font-size: 14px; font-weight: 600; }
 .ais-genrow { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 14px 16px; align-items: start; margin-bottom: 10px; }
-.ais-genfld .ais-num { width: 6.5em; max-width: 100%; font-size: 16px; }
+.ais-genfld .ais-num { width: 6.5em; max-width: 100%; }
 .ais-check { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; align-self: center; }
 .ais-comp { margin-bottom: 14px; }
 .ais-comp-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; margin-bottom: 6px; }
@@ -373,7 +373,7 @@ td.ais-usum { display: none; }
 .ais-comp-hint { margin: 0; }
 .ais-comp-fields { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
 .ais-comp-f { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
-.ais-comp-f .ais-num { width: 5em; font-size: 16px; }
+.ais-comp-f .ais-num { width: 5em; }
 .ais-comp-total { font-size: 13.5px; color: var(--ink2); font-variant-numeric: tabular-nums; }
 .ais-comp-total.bad { color: var(--danger); }
 .ais-genacts { margin: 4px 0 18px; }
@@ -426,16 +426,20 @@ td.ais-usum { display: none; }
   .ais-genjobs .ais-srcm { display: inline; font-size: 13px; color: var(--ink2); }
   .ais-genjobs .ais-srcm::after { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 8px 1px 7px; border: solid var(--ink3); border-width: 1.5px 1.5px 0 0; transform: rotate(45deg); }
   .ais-genjobs .ais-genmade { grid-column: 1; grid-row: 3; }
-  .ais-genjobs .ais-gencalls { grid-column: 2 / -1; grid-row: 3; }
+  .ais-genjobs .ais-gencalls { grid-column: 2; grid-row: 3; }
+  .ais-genjobs .ais-genmore { grid-column: 3; grid-row: 3; justify-self: end; }
   .ais-genjobs td.ais-genmade, .ais-genjobs td.ais-gencalls { font-size: 12.5px; color: var(--ink3); text-align: left; white-space: nowrap; }
   .ais-genjobs .ais-stats { justify-content: flex-start; min-height: 24px; }
   .ais-genjobs .ais-d { display: none; }
   .ais-genjobs tbody tr.ais-gendetail { display: none; }
   /* a job with skipped questions: the count and its "skipped" note share one full-width line, the figures go under it */
   .ais-genjobs tr:has(.ais-skipn) .ais-genmade { grid-column: 1 / -1; }
-  .ais-genjobs tr:has(.ais-skipn) .ais-gencalls { grid-column: 1 / -1; grid-row: 4; }
+  .ais-genjobs tr:has(.ais-skipn) .ais-gencalls { grid-column: 1 / 3; grid-row: 4; }
+  .ais-genjobs tr:has(.ais-skipn) .ais-genmore { grid-row: 4; }
   .ais-genjobs tr:has(.ais-skipn) .ais-genwhy { grid-row: 5; }
   .ais-genjobs .ais-skipn { display: inline; margin-left: 8px; }
+  .ais-genjobs tbody tr.ais-genfull { padding: 0 0 10px; border-top: 0; }
+  .ais-genjobs tbody tr.ais-genfull > td { grid-column: 1 / -1; }
   .ais-genjobs .ais-genwhy { grid-column: 1 / -1; grid-row: 4; display: block; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 
@@ -456,7 +460,7 @@ td.ais-usum { display: none; }
 .uc-ctrls { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 6px 10px; max-width: 100%; margin-left: auto; }
 .uc-switch { display: inline-flex; gap: 2px; padding: 2px; border: 0; border-radius: 8px; background: var(--fill); flex: none; max-width: 100%; }
 .uc-sw-btn {
-  position: relative; min-height: 28px; padding: 2px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3);
+  position: relative; min-height: var(--seg-h, 30px); padding: 2px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--ink3);
   font: inherit; font-size: 13px; font-weight: 400; line-height: 1.4; white-space: nowrap; cursor: pointer;
   -webkit-tap-highlight-color: transparent; touch-action: manipulation;
   transition: background-color .12s ease, color .12s ease, box-shadow .12s ease;
@@ -470,7 +474,7 @@ td.ais-usum { display: none; }
 @media (max-width: 400px) {
   .uc-ctrls { gap: 4px; }
   .uc-switch { gap: 1px; padding: 1px; }
-  .uc-sw-btn { padding: 2px 5px; font-size: 11.5px; }
+  .uc-sw-btn { padding: 2px 5px; }
   .uc-sw-btn::after { inset: -8px -0.5px; }
 }
 @media (max-width: 340px) { .uc-sw-btn { padding: 2px 3px; font-size: 10.5px; } }
@@ -549,7 +553,6 @@ td.ais-usum { display: none; }
 /* The family mark of a row: not a button */
 .ais-fam { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; color: var(--ink2); }
 .ais-pi { flex: none; width: 16px; height: 16px; }
-.ais-effort-hint { font-size: 12px; color: var(--ink3); }
 .ais-effort-level { margin-left: auto; width: auto; min-width: 110px; max-width: 100%; }
 .ais-effort-level:disabled { color: var(--ink3); background: var(--fill); }
 .ais-slot-pick { grid-column: 2; }
@@ -572,7 +575,7 @@ td.ais-usum { display: none; }
   .ais-slot { grid-template-columns: minmax(0, 1fr); }
   .ais-slot > :not(.ais-slot-h):not(.ais-slot-pick) { grid-column: 1; }
   .ais-slot-pick { grid-column: 1; }
-  .ais-effort-level { margin-left: 0; }
+  .ais-effort-level { margin-left: 0; flex: 0 1 auto; }
   /* Phones: the model list is as wide as both pickers (model names are long) */
   .ais-slot-pick { grid-template-columns: minmax(0, 2fr) minmax(0, 3fr); }
   .ais-slot-pick .ais-combo { position: static; }
@@ -596,11 +599,11 @@ td.ais-usum { display: none; }
 
 /* v1.9: the sub-tabs of the safety tab (wrapping segmented row; a 4-column grid on phones) */
 .ais-subtabs { display: flex; flex-wrap: wrap; width: fit-content; max-width: 100%; margin: 0 0 16px; }
-.ais-subtabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; min-height: 40px; padding-inline: 14px; }
+.ais-subtabs button { flex: 0 1 auto; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; min-height: var(--tab-h, 40px); padding-inline: 14px; font-size: 13.5px; }
 .ais-subtabs button:focus-visible { outline-offset: -2px; }
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
   .ais-subtabs { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; margin-bottom: 12px; }
-  .ais-subtabs button { min-height: 44px; padding: 4px 4px; font-size: 13px; white-space: normal; line-height: 1.2; text-align: center; }
+  .ais-subtabs button { min-height: var(--tab-h, 44px); padding: 4px 4px; white-space: normal; line-height: 1.2; text-align: center; }
 }
 
 .ais-shared, .ais-budget { margin: 2px 0 8px; }
@@ -617,4 +620,30 @@ td.ais-usum { display: none; }
 .ais-conn-fam { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12px; color: var(--ink3); }
 .ais-conn.off .ais-conn-fam { opacity: .7; }
 .ais-family .ais-select { width: 100%; min-width: 0; }
-.ais-family .ais-note { margin: 4px 0 0; }
+
+/* v2.2: the details toggle of a job and its detail block (all widths) */
+.ais-genjobs td.ais-genmore { width: 1%; text-align: right; white-space: nowrap; }
+.ais-genmore-b { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border: 1px solid var(--line-soft); border-radius: 8px; background: transparent; color: var(--ink2); cursor: pointer; }
+.ais-genmore-b:hover { background: var(--line-soft); }
+.ais-genmore-b:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
+.ais-genchev { width: 7px; height: 7px; border: solid currentColor; border-width: 0 1.8px 1.8px 0; transform: translateY(-2px) rotate(45deg); transition: transform .15s; }
+.ais-genmore-b.on .ais-genchev { transform: translateY(2px) rotate(-135deg); }
+.ais-genjobs tbody tr.ais-genfull[hidden] { display: none; }
+.ais-genjobs .ais-genfull > td { padding: 2px 8px 12px; border-top: 0; white-space: normal; }
+.ais-gendl { display: grid; grid-template-columns: repeat(auto-fill, minmax(15em, 1fr)); gap: 6px 18px; margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--line-soft); font-size: 12.5px; line-height: 1.4; }
+.ais-gendl-r { display: flex; flex-direction: column; min-width: 0; }
+.ais-gendl dt { color: var(--ink3); font-size: 11.5px; }
+.ais-gendl dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+@media (max-width: 560px) {
+  .ais-gendl { grid-template-columns: 1fr 1fr; gap: 6px 12px; }
+}
+@media (pointer: coarse) {
+  .ais-genmore-b { width: 44px; height: 44px; }
+}
+
+/* the inline "Saved" note of the auto-saving switches: the shared .saved-note (main.css), as a block line */
+.ais-feat-saved { display: flex; margin: 0 0 8px; }
+.ais-feat-saved:empty { display: none; }
+/* the add button: one 16 px plus like the other "new" buttons */
+.ais-add-ic { width: 16px; height: 16px; flex: none; }
+#ai-c-add { display: inline-flex; align-items: center; gap: 6px; }

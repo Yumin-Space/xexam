@@ -26,9 +26,9 @@ export function recordBankNames(banks: readonly RecordBank[]): string {
 }
 
 /** The logo (v0.8: the app icon, /icon.svg) and the name; used by the top bar, the loading page and the sign-in page */
-export function brand(): HTMLElement {
+export function brand(logo = true): HTMLElement {
   return h('div', { class: 'brand' },
-    h('img', { class: 'logo', src: '/icon.svg', alt: '', width: '28', height: '28', 'aria-hidden': 'true' }),
+    logo ? h('img', { class: 'logo', src: '/icon.svg', alt: '', width: '28', height: '28', 'aria-hidden': 'true' }) : null,
     h('span', { class: 'brand-name' }, t('app.name')));
 }
 

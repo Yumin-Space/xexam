@@ -401,33 +401,98 @@ fn pace_of(c: &Connection) -> (i64, i64) {
     .expect("pace")
 }
 
+fn set_pace(dir: &Path, rpm: i64, tpm: i64) {
+    raw(dir)
+        .execute("UPDATE limits SET pace_rpm = ?1, pace_tpm = ?2", [rpm, tpm])
+        .expect("set pace");
+}
+
 #[test]
-fn the_ten_to_eleven_upgrade_converts_the_pace_values_once() {
+fn the_ten_to_eleven_upgrade_moves_only_the_old_pace_defaults() {
     // still on the old defaults -> the new defaults
     let dir = tempfile::tempdir().expect("dir");
     drop(open(dir.path()));
-    raw(dir.path())
-        .execute("UPDATE limits SET pace_rpm = 15, pace_tpm = 250000", [])
-        .expect("old defaults");
+    set_pace(dir.path(), 15, 250_000);
     downgrade_to_10(dir.path());
     drop(open(dir.path()));
-    assert_eq!(pace_of(&raw(dir.path())), (13, 240_000));
+    assert_eq!(pace_of(&raw(dir.path())), (13, 230_000));
     // reopening changes nothing
     drop(open(dir.path()));
-    assert_eq!(pace_of(&raw(dir.path())), (13, 240_000));
-    // any other value -> floor(value * 0.9), never below the column minimum
-    for ((rpm, tpm), want) in [
-        ((20, 100_000), (18, 90_000)),
-        ((1, 1000), (1, 1000)),
-        ((14, 250_000), (12, 240_000)),
-    ] {
+    assert_eq!(pace_of(&raw(dir.path())), (13, 230_000));
+    // each value moves on its own: only 15 / 250000 change
+    set_pace(dir.path(), 14, 250_000);
+    downgrade_to_10(dir.path());
+    drop(open(dir.path()));
+    assert_eq!(pace_of(&raw(dir.path())), (14, 230_000));
+    // any other value is kept as entered (no x 0.9), also the v2.1 default of a 9 / 10 file
+    for (rpm, tpm) in [(20, 100_000), (1, 1000), (14, 240_000), (13, 240_000)] {
         let dir = tempfile::tempdir().expect("dir");
         drop(open(dir.path()));
-        raw(dir.path())
-            .execute("UPDATE limits SET pace_rpm = ?1, pace_tpm = ?2", [rpm, tpm])
-            .expect("set");
+        set_pace(dir.path(), rpm, tpm);
         downgrade_to_10(dir.path());
         drop(open(dir.path()));
-        assert_eq!(pace_of(&raw(dir.path())), want, "{rpm} / {tpm}");
+        assert_eq!(pace_of(&raw(dir.path())), (rpm, tpm), "{rpm} / {tpm}");
     }
+}
+
+/// A schema-11 file as v2.1 wrote it: the given pace and no v2.2 flag.
+fn v21_file(dir: &Path, rpm: i64, tpm: i64) {
+    drop(open(dir));
+    set_pace(dir, rpm, tpm);
+    raw(dir)
+        .execute(
+            "DELETE FROM meta WHERE key = ?1",
+            [schema::PACE_DEFAULT_KEY],
+        )
+        .expect("drop flag");
+}
+
+#[test]
+fn a_v21_default_pace_moves_to_230k_once_after_a_backup() {
+    let dir = tempfile::tempdir().expect("dir");
+    v21_file(dir.path(), 13, 240_000);
+    assert!(backups(dir.path()).is_empty());
+    drop(open(dir.path()));
+    assert_eq!(pace_of(&raw(dir.path())), (13, 230_000));
+    assert_eq!(schema_of(&raw(dir.path())), "11");
+    let b = backups(dir.path());
+    assert_eq!(b.len(), 1);
+    assert_eq!(
+        pace_of(&Connection::open(&b[0]).expect("backup")),
+        (13, 240_000)
+    );
+    // an administrator entering 13 / 240000 again stays (the flag is present)
+    set_pace(dir.path(), 13, 240_000);
+    drop(open(dir.path()));
+    assert_eq!(pace_of(&raw(dir.path())), (13, 240_000));
+    assert_eq!(backups(dir.path()).len(), 1);
+}
+
+#[test]
+fn another_v21_pace_is_left_alone_without_a_backup() {
+    let dir = tempfile::tempdir().expect("dir");
+    v21_file(dir.path(), 12, 216_000);
+    drop(open(dir.path()));
+    assert_eq!(pace_of(&raw(dir.path())), (12, 216_000));
+    assert!(backups(dir.path()).is_empty());
+    // the flag is set: a later 13 / 240000 stays
+    set_pace(dir.path(), 13, 240_000);
+    drop(open(dir.path()));
+    assert_eq!(pace_of(&raw(dir.path())), (13, 240_000));
+}
+
+#[test]
+fn a_fresh_file_has_the_new_pace_default_and_the_flag() {
+    let dir = tempfile::tempdir().expect("dir");
+    drop(open(dir.path()));
+    let c = raw(dir.path());
+    assert_eq!(pace_of(&c), (13, 230_000));
+    let n: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM meta WHERE key = ?1",
+            [schema::PACE_DEFAULT_KEY],
+            |r| r.get(0),
+        )
+        .expect("flag");
+    assert_eq!(n, 1);
 }

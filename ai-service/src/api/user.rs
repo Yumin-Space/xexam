@@ -426,7 +426,8 @@ fn pick_of(body: &Map<String, Value>, admin: bool) -> Result<Option<Option<Pick>
     }
 }
 
-/// The `effort` of a body (v2.1): a strength level of the chat, administrators only; `null` always means "clear".
+/// The `effort` of a body (v2.1): a strength level of the chat or the literal `"default"` (no parameter), administrators only; `null`
+/// always means "clear" (follow the Chat row).
 /// Whether the level is valid is checked against the route's family later.
 fn effort_of(body: &Map<String, Value>, admin: bool) -> Result<Option<Option<String>>, ApiError> {
     match body.get("effort") {
@@ -937,7 +938,7 @@ async fn generate(ctx: Ctx, req: Req) -> Answer {
     };
     let route = app.route_with(Slot::Chat, wanted.as_ref(), level.as_deref())?;
     if let Some(Some(l)) = &req.effort {
-        if crate::effort::Effort::new(route.family, l).is_none() {
+        if l != "default" && crate::effort::Effort::new(route.family, l).is_none() {
             return Err(ApiError::bad_request());
         }
     }
@@ -1072,7 +1073,7 @@ pub async fn chat_model(ctx: Ctx) -> Answer {
             return Err(ApiError::bad_request());
         }
         let route = app.route(Slot::Chat, pick.as_ref())?;
-        if crate::effort::Effort::new(route.family, level).is_none() {
+        if level != "default" && crate::effort::Effort::new(route.family, level).is_none() {
             return Err(ApiError::bad_request());
         }
     }

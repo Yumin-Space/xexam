@@ -316,12 +316,10 @@ fn check_upgrade(dir: &Path, n: u32, fresh: &[MasterRow]) {
                 |r| r.get(0),
             )
             .expect("old value");
-        // the 10 -> 11 step converts the pace values of a schema-9 file (old defaults -> new, else x 0.9)
+        // the 10 -> 11 step moves the old pace defaults of a schema-9 file (15 / 250000 -> 13 / 230000), others stay
         let want = match (d.column, was) {
             ("pace_rpm", 15) => 13,
-            ("pace_tpm", 250_000) => 240_000,
-            ("pace_rpm", v) => (v * 9 / 10).max(1),
-            ("pace_tpm", v) => (v * 9 / 10).max(1000),
+            ("pace_tpm", 250_000) => 230_000,
             (_, v) => v,
         };
         assert_eq!(live_limits.get(d.key), want, "n = {n}: {}", d.key);

@@ -674,7 +674,7 @@ A new file and an upgraded file end with the same tables. A v1.3 ai-service refu
 The AI database moves from schema 8 to **schema 9** once, on the first start of the v1.9 ai-service, after one backup copy `backups/xexam-ai-schema8-<date-time>.db` (the same mechanism as every earlier step). The main database does not change.
 
 - **`connections.enabled`** (`INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1))`): the on/off switch of a connection. Every existing row starts on. It is added like the earlier columns (at start, when `pragma_table_info` does not list it); the `status` check is untouched, "Off" is derived from `enabled`, and `connections` is not rebuilt (it has `CASCADE` children).
-- **`limits.pace_on`, `limits.pace_rpm`, `limits.pace_tpm`**: the provider rate-limit pacing of AI generation and import: `pace_on` 0 or 1 (default 1), `pace_rpm` 1 to 10 000 (default 13), `pace_tpm` 1 000 to 100 000 000 (default 240 000); the values are used exactly as entered. They are the keys `paceOn`, `paceRpm` and `paceTpm` of the limits API. The unlimited switches never change them.
+- **`limits.pace_on`, `limits.pace_rpm`, `limits.pace_tpm`**: the provider rate-limit pacing of AI generation and import: `pace_on` 0 or 1 (default 1), `pace_rpm` 1 to 10 000 (default 13), `pace_tpm` 1 000 to 100 000 000 (default 230 000); the values are used exactly as entered. They are the keys `paceOn`, `paceRpm` and `paceTpm` of the limits API. The unlimited switches never change them.
 - **`model_slots` is rebuilt**: the `CHECK` on `slot` now allows `default`, `chat`, `hint`, `explain`, `summary`, `generate` and `import` (seven rows; `study` is gone). The upgrade copies the `study` row (model, time, author and thinking strength) into both `hint` and `explain`, then drops the old table; a new file creates the new table directly, so both end with the same `sqlite_master`. Nothing references `model_slots`, so the rebuild runs with `foreign_keys` on.
 - **Gemma folded into Google**: on every start, a stored thinking strength `gemma:HIGH` or `gemma:true` becomes `google:HIGH`, `gemma:MINIMAL` or `gemma:false` becomes `google:MINIMAL`, and any other `gemma:` value is cleared (NULL). The wire request is the same as before. The step only runs when a `gemma:` row exists. Families are now `anthropic`, `openai`, `google` and `responses`.
 - **Global switches are independent**: `settings.features_off` bits 2 (hint) and 4 (explain) are no longer kept equal, and a start never pairs them again; `users.features_off` still pairs them (a user with only one of the two off gets both). The step that pairs the user bits runs without touching the global bits.
@@ -705,6 +705,16 @@ The AI database moves from schema 10 to **schema 11** once, on the first start o
 - **`limits.pace_rpm` / `limits.pace_tpm` converted**: pacing no longer keeps a hidden 10 % margin, so a row still on the old defaults (15 / 250 000) becomes 13 / 240 000 and any other stored value becomes `floor(value * 0.9)` (at least 1 request and 1 000 tokens a minute); the actual pace stays the same as in v2.0. The log says so. The column defaults are now 13 / 240 000.
 
 **Going back to v2.0** needs the backup: a v2.0 ai-service refuses schema 11. Stop, restore `backups/xexam-ai-schema10-<date-time>.db` as in 8.4, run the v2.0 images; settings, chats and usage written after the upgrade are lost. The new columns themselves are harmless to v2.0, but `chats.pick_effort` is ignored there.
+
+### 8.2i v2.2 (no schema change)
+
+The AI database stays at **schema 11**, and the main database does not change. Three things differ from v2.1:
+
+- **Pacing default 13 / 230 000**: the column defaults of `limits.pace_rpm` / `limits.pace_tpm` are 13 and 230 000, and the conversion of old values no longer multiplies by 0.9. A file upgraded from schema 9 or 10 moves each value that is still on the old default (15 / 250 000) to 13 / 230 000 and keeps every other value as entered. A schema-11 file written by v2.1 whose values are still the v2.1 defaults (13 / 240 000) moves **once** to 13 / 230 000 on the first start of the v2.2 ai-service, after the backup copy `backups/xexam-ai-schema11-<date-time>.db`. The step is marked by the `meta` flag `pace_default_230k`, so it never runs twice, and a value you changed is never touched.
+- **Thinking strength Default**: `model_slots.effort` NULL now means Default (no strength parameter is sent); in v2.1 it meant the model's default level. No data is rewritten.
+- **`chats.pick_effort`** may also hold the literal `default` (send nothing, any family).
+
+**Going back to v2.1** needs no restore: the schema is the same. The flag `pace_default_230k` is ignored there, and `default` in `chats.pick_effort` is ignored like any other value that does not fit.
 
 ### 8.3 What the service does with it
 

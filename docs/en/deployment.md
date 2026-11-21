@@ -60,6 +60,7 @@ Create a `.env` file next to `docker-compose.yml`; in a clone that is `docker/.e
 | Variable | Default | Purpose |
 |---|---|---|
 | `XEXAM_BIND` | `127.0.0.1:8765` | The "address:port" published on the host, for Nginx. It must be written as `IP:port`. `0.0.0.0:8765` = reachable from the LAN. ⚠️ A bare port number = all network interfaces |
+| `XEXAM_BACKEND_PORT`, `XEXAM_AI_PORT` | `8765`, `8766` | *(v2.2)* The internal ports of the backend and ai-service on the private Docker network (not published to the host). One value per port: the service listens on it, and Nginx (and ai-service, for the backend) connect to it, so a changed value works everywhere. Only the one-host compose files use them (the per-machine files set the ports in their own variables) |
 | `XEXAM_ALLOWED_HOSTS` | empty | Which domain names / IPs may be used to access it, separated by commas, spaces or semicolons |
 | `XEXAM_ALLOWED_ORIGINS` | empty | When a proxy rewrites Host to the origin server's address: enter the public domain (including `https://`) |
 | `XEXAM_ALLOW_ANY_HOST` | `0` | `1` = do not check Host (only when authentication is already in front) |

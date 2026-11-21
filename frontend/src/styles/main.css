@@ -135,6 +135,17 @@
   /* Icon buttons (SH-2, drawn by styles/icon-button.css): the visual size, and the least size of the tap area */
   --ibtn-size: 36px;
   --ibtn-hit: 44px;
+  /* v2.2 shared sizes: page tab rows, option segments, checkboxes; touch / phone values are set in the touch block below */
+  --tab-h: 40px;
+  --seg-h: 30px;
+  --check-size: 18px;
+  --page-narrow: 880px; /* single-column form pages (Settings, Users, AI settings, About) */
+  /* Pop-up menus (nav, AI Chat, viewer, combo lists) share one frame */
+  --pop-border: var(--line-soft);
+  --pop-radius: 10px;
+  --pop-pad: 6px;
+  --pop-gap: 6px;
+  --pop-item-radius: 6px;
   /* The knob of every on / off switch (SH-9): .mini-switch here, .set-switch in settings.css */
   --switch-knob: #FFFFFF;
 }
@@ -322,11 +333,12 @@ input, select, textarea { font: inherit; color: var(--ink); }
   border-color: var(--print); box-shadow: 0 0 0 1px var(--print), 0 0 0 4px var(--print-ring);
 }
 :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--print); }
+:where(input[type="checkbox"]) { width: var(--check-size); height: var(--check-size); flex: none; }
 
 /* The quiz page (no shell) */
 .wrap {
   max-width: 1120px; margin: 0 auto; padding: 28px 20px 72px;
-  padding: max(24px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
+  padding: max(12px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) calc(72px + env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
 }
 /* Loading / fatal error / shut down */
 .solo { max-width: 600px; margin: 0 auto; padding: max(12vh, env(safe-area-inset-top)) 20px 40px; }
@@ -381,9 +393,9 @@ input, select, textarea { font: inherit; color: var(--ink); }
 @media (hover: hover) { .icon-btn.danger:hover { background: var(--danger-soft); color: var(--danger-hover); } }
 .menu-btn.on { background: var(--hover-strong); color: var(--ink); }
 .nav-pop {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 40;
-  min-width: 224px; max-width: calc(100vw - 24px); padding: 6px;
-  background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; box-shadow: var(--shadow-pop);
+  position: absolute; top: calc(100% + var(--pop-gap)); right: 0; z-index: 40;
+  min-width: 224px; max-width: calc(100vw - 24px); padding: var(--pop-pad);
+  background: var(--card); border: 1px solid var(--pop-border); border-radius: var(--pop-radius); box-shadow: var(--shadow-pop);
   animation: nav-pop-in .12s ease-out;
 }
 @keyframes nav-pop-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
@@ -433,6 +445,17 @@ input, select, textarea { font: inherit; color: var(--ink); }
   .topbar { margin-bottom: 12px; }
   .page-head { margin-bottom: var(--sp-3); }
   .page-head h1, .page-head h1:lang(zh), .page-head h1:lang(ja) { font-size: var(--fs-h); line-height: 1.3; }
+  /* A 44 px button must not make the row taller than the title: the title keeps its place under the bar on every page */
+  /* 1 px less pulled up than down, so the button never reaches into the top bar's 8 px gap edge (it would cover the bar's buttons) */
+  .page-head > .btn, .page-head .page-acts .btn { margin-block: calc((var(--fs-h) * 1.3 - 44px) / 2 + 1px) calc((var(--fs-h) * 1.3 - 44px) / 2 - 1px); }
+  /* When the row wraps, the negative margins would eat the gap: the row gaps give it back */
+  .page-head { row-gap: calc(12px + (44px - var(--fs-h) * 1.3) / 2); }
+  .page-head .page-acts { row-gap: calc(8px + 44px - var(--fs-h) * 1.3); }
+}
+@media (pointer: coarse) and (min-width: 481px) and (max-width: 900px) {
+  .page-head > .btn, .page-head .page-acts .btn { margin-block: calc((26px * 1.25 - 44px) / 2 + 1px) calc((26px * 1.25 - 44px) / 2 - 1px); }
+  .page-head { row-gap: calc(12px + (44px - 26px * 1.25) / 2); }
+  .page-head .page-acts { row-gap: calc(8px + 44px - 26px * 1.25); }
 }
 
 /* ---------- Buttons ----------
@@ -587,7 +610,7 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .inline { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 24px; margin-bottom: 20px; }
 .inline label { display: inline-flex; align-items: center; gap: 8px; }
 .inline input[type="number"] { width: 84px; min-height: 36px; padding: 4px 10px; border: 1px solid var(--field-line); border-radius: 6px; background: var(--card); font: 600 15px var(--num); }
-.inline input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--print); }
+.inline input[type="checkbox"] { accent-color: var(--print); }
 
 /* ---------- Tags ----------
    Small, square-ish (radius 4px), soft background, no border. .g a correct answer (green), .r the danger colour (for example a
@@ -642,8 +665,8 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 /* v1.0 footer: the disclaimer (small, muted) and, as the last line of the page, the centered GitHub line; compact, the page's bottom */
 /* A-OWNER-20 (v1.1), from the bottom up: the GitHub line, one blank text line, the disclaimer, one blank text line, the divider */
 .foot { margin-top: 20px; padding-top: 1.55em; border-top: 1px solid var(--line-soft); display: flex; flex-direction: column; align-items: stretch; gap: 0; color: var(--ink3); font-size: 12px; line-height: 1.55; }
-.foot-note { margin: 0; }
-.foot .btn.quiet { align-self: flex-start; min-height: 30px; margin-top: 4px; font-size: 13px; color: var(--ink3); }
+.foot-note { margin: 0; width: fit-content; max-width: 100%; margin-inline: auto; }
+.foot .btn.quiet { align-self: center; min-height: 30px; margin-top: 4px; font-size: 13px; color: var(--ink3); }
 .foot > .gh-line { margin-top: calc(12px * 1.55); }
 
 /* ---------- Labelled form fields (sign-in pages, Settings > Account, User management) ----------
@@ -794,6 +817,18 @@ legend { padding: 0; margin-bottom: 8px; font-weight: 600; }
 .opt.is-ans .tag, .opt.is-bad .tag { background: var(--on-answer-solid); }
 .opt.is-ans .tag.g, .opt.is-ans .tag.k { color: var(--answer-right-solid); }
 .opt.is-bad .tag.ng { color: var(--answer-wrong-solid); }
+/* v2.2 (owner): on phones the letter does not take a column of its own: it starts the first line and the text runs on
+   after it, wrapping back to the left edge, so a long option uses the full width and a short one stays one line. The
+   bubble (26 px) sits inside the first 28 px text line; review options keep their tags beside it. */
+@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) {
+  .opt { display: flow-root; padding: 10px 12px; }
+  .opt .bubble { float: left; width: 26px; height: 26px; margin: 1px 10px 0 0; font-size: 12px; }
+  .opt .t { display: block; padding-top: 0; }
+  .opt.review .body { display: block; }
+  /* a review option with tags: the bubble and the tags make the first line, the text starts on the next one */
+  .opt.review .tags { min-height: 28px; align-items: center; margin-bottom: 2px; }
+  .opt.review .tags + .t { clear: left; }
+}
 
 /* Hotspot statements in a review: neutral blocks instead of hairline rows (v0.7). The result is carried by the solid green /
    orange keys of the choices and by the tag, so a right and a wrong statement get the same plain fill */
@@ -911,7 +946,7 @@ dialog.dlg :is(ul, ol, .rows) { max-height: none; overflow: visible; }
 
 /* PHONE (spec, "How to read it"): cards and panels get tighter padding so the content has the room (SH-1) */
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
-  .panel, .paper { padding: 14px 12px; }
+  .panel, .paper, .rail { padding: 14px 12px; }
 }
 
 /* Short landscape (a phone turned sideways, SH-12): the page title, the cards and the dialogs (sheets, above) get smaller */
@@ -958,8 +993,18 @@ dialog.dlg :is(ul, ol, .rows) { max-height: none; overflow: visible; }
    .tip-btn, .mini-switch, a page's mini buttons) keep theirs: those rules are more specific. Inline links in running text,
    <summary> rows and the answer-sheet tiles on desktop are exempt. */
 @media (pointer: coarse) {
-  :root { --ibtn-size: 40px; }
+  :root { --ibtn-size: 44px; --seg-h: 36px; --check-size: 20px; }
   .btn, .chip { position: relative; }
   /* inset: min(0, 50% - 22px) grows a box smaller than 44px to exactly 44px (from the padding box) and leaves a bigger one alone */
   .btn::after, .chip::after, .fld-eye::after { content: ""; position: absolute; inset: min(0px, calc(50% - var(--ibtn-hit) / 2)); }
 }
+
+/* Page tab rows are 44 px tall on touch / phones, 40 px with a mouse (--tab-h) */
+@media (pointer: coarse), (max-width: 600px) { :root { --tab-h: 44px; } }
+
+/* Small grey table headers: Microsoft YaHei has no semibold, so zh uses the regular weight on every table */
+html:lang(zh-CN) :is(.rec-table th, .ais-table thead th, .bk-cols thead th) { font-weight: 400; }
+
+/* The inline "Saved" note (check icon + text): Settings, AI settings */
+.saved-note { display: inline-flex; align-items: center; gap: 4px; min-height: 1.4em; font-size: 13px; font-weight: 600; color: var(--answer-right); }
+.saved-ic { width: 14px; height: 14px; flex: none; }

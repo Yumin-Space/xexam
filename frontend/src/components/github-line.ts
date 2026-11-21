@@ -10,5 +10,5 @@ export function githubLine(): HTMLElement {
   return h('p', { class: 'gh-line' },
     h('a', { class: 'gh-link', href: GITHUB_URL, target: '_blank', rel: LINK_REL }, miniIcon('github', 'gh-ic'), t('footer.github')),
     S.info.version ? [h('span', { class: 'gh-sep', 'aria-hidden': 'true' }, '|'),
-      h('a', { class: 'gh-link', href: RELEASES_URL, target: '_blank', rel: LINK_REL }, t('footer.release', { version: S.info.version }))] : null);
+      h('a', { class: 'gh-link', href: RELEASES_URL, target: '_blank', rel: LINK_REL }, t('footer.version', { version: S.info.version }))] : null);
 }

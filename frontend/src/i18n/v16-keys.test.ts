@@ -4,7 +4,7 @@ import { afterEach, test } from 'node:test';
 import { setUiLang, t, type MsgKey } from './index.ts';
 
 afterEach(() => setUiLang('en'));
-const KEYS = ['label', 'levelOf', 'modelDefault'].map((k) => `ai.set.effort.${k}`);
+const KEYS = ['label', 'levelOf', 'default', 'defaultTip'].map((k) => `ai.set.effort.${k}`);
 
 test('thinking-strength keys exist in every language', () => {
   for (const lang of ['en', 'zh', 'ja'] as const) {
@@ -22,13 +22,14 @@ test('binding zh texts', () => {
   assert.equal(t('act.a.ai.settings.effort' as MsgKey), '修改思考强度');
 });
 
-test('known-default hint shows the raw English level in every language', () => {
+test('Default option texts', () => {
   setUiLang('zh');
-  assert.equal(t('ai.set.effort.modelDefault', { level: 'HIGH' }), '模型默认：HIGH');
+  assert.equal(t('ai.set.effort.default'), '默认（不发送强度参数）');
+  assert.equal(t('ai.set.effort.defaultTip'), '默认（不发送强度参数，由模型自行决定）');
   setUiLang('ja');
-  assert.equal(t('ai.set.effort.modelDefault', { level: 'xhigh' }), 'モデルの既定：xhigh');
+  assert.equal(t('ai.set.effort.default'), '既定（強さのパラメーターを送らない）');
   setUiLang('en');
-  assert.equal(t('ai.set.effort.modelDefault', { level: 'low' }), 'Model default: low');
+  assert.equal(t('ai.set.effort.default'), 'Default (no strength parameter sent)');
 });
 
 test('translated level labels and Gemma hints are gone from every catalog', () => {

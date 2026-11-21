@@ -1,8 +1,8 @@
 /* Search, sortable headers and pager of the long admin tables (v1.1 L-54). Colours are the theme tokens (light / dark). */
 .ptb-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-bottom: 8px; min-height: 40px; }
-.ptb-q { flex: 1 1 14em; min-width: 0; max-width: 26em; min-height: 40px; padding: 6px 10px; font-size: 15px; }
+.ptb-q { flex: 1 1 14em; min-width: 0; max-width: 26em; min-height: 38px; padding: 6px 10px; font-size: 15px; }
 .ptb-sortsel { display: none; align-items: center; gap: 6px; }
-.ptb-sel { min-height: 40px; padding: 6px 10px; font-size: 15px; max-width: 14em; }
+.ptb-sel { min-height: 38px; padding: 6px 10px; font-size: 15px; max-width: 14em; }
 .ptb-dir, .ptb-pg {
   display: inline-flex; align-items: center; justify-content: center; min-width: 40px; min-height: 40px; padding: 0 10px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; font-size: 15px; cursor: pointer;
@@ -65,7 +65,9 @@ th.n .ptb-sort { justify-content: flex-end; }
   html:lang(ja) .ptb-mini .ptb-table thead th { line-break: strict; }
   .ptb-mini .ptb-table td.n { white-space: nowrap; }
   .ptb-mini .ptb-table td.ais-today { word-spacing: -.3em; }
-  .ptb-mini .ptb-sort { min-height: 32px; gap: 1px; padding-inline: 0; text-align: left; white-space: normal; }
+  .ptb-mini .ptb-sort { position: relative; min-height: 32px; gap: 1px; padding-inline: 0; text-align: left; white-space: normal; }
+  /* The header row stays slim; an invisible margin gives the 44 px tap height */
+  .ptb-mini .ptb-sort::after { content: ""; position: absolute; inset: -6px -2px; }
   .ptb-mini .ptb-arrow { width: .6em; font-size: 8px; }
   .ptb-mini .ptb-table tbody th, .ptb-mini .ptb-table thead th:first-child {
     position: sticky; left: 0; z-index: 1; background: var(--card); max-width: 4.6em; overflow: hidden; text-overflow: ellipsis;

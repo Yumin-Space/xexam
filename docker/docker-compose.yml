@@ -7,12 +7,12 @@
 # (The same images are also on ghcr.io/yumin-space as a private mirror; that one needs docker login ghcr.io first.)
 # Then open http://localhost:8765 in a browser
 #
-#   Browser ──> xexam-frontend (Nginx, the only externally exposed entry point)
+#   Browser ──> xexam-frontend (Nginx, :8080, published as XEXAM_BIND; the only externally exposed entry point)
 #                 ├─ frontend static files (baked into the image at build time)
-#                 ├─ /api/    ──> xexam-backend (Rust, private network, no published port, no internet)
+#                 ├─ /api/    ──> xexam-backend (Rust, :8765 = XEXAM_BACKEND_PORT, private network, no published port, no internet)
 #                 │                 ├─ SQLite (named volume xexam_backend_data → /data/xexam.db)
 #                 │                 └─ writes the internal token (named volume xexam_ai_auth → /link/internal.token)
-#                 └─ /api/ai/ ──> checked by xexam-backend first, then ──> ai-service (Rust, no published port)
+#                 └─ /api/ai/ ──> checked by xexam-backend first, then ──> ai-service (Rust, :8766 = XEXAM_AI_PORT, no published port)
 #                                   ├─ SQLite + its key file (named volume xexam_ai_data → /data)
 #                                   ├─ reads the internal token (xexam_ai_auth, read only)
 #                                   ├─ reports its state to the backend (at start, on changes, every 25 s)
@@ -49,6 +49,10 @@ services:
       # TZ:  (the host's)
       # Or: TZ:  UTC
       TZ:
+      # Empty = the default, the port the backend listens on inside the private network (nothing is published; Nginx and ai-service use the same value below):
+      # XEXAM_PORT:  8765
+      # Or: XEXAM_PORT:  9000 (set XEXAM_BACKEND_PORT=9000 in .env; Nginx and ai-service follow it)
+      XEXAM_PORT: "${XEXAM_BACKEND_PORT:-8765}"
       # Empty = the default, Xexam opens only as localhost / 127.0.0.1:
       # XEXAM_ALLOWED_HOSTS:  (empty)
       # Or: XEXAM_ALLOWED_HOSTS:  xexam.example.com / xexam.example.com,192.168.1.20
@@ -98,6 +102,7 @@ services:
         bind:
           create_host_path: false
     networks: [internal]
+    expose: ["${XEXAM_BACKEND_PORT:-8765}"]   # visible only on the private network (nothing is published to the host)
     # Note: there are no ports. The backend is only on the private network and cannot be reached from the host or from outside.
     stop_grace_period: 15s
     security_opt: ["no-new-privileges:true"]
@@ -121,6 +126,14 @@ services:
       # TZ:  (the host's)
       # Or: TZ:  UTC
       TZ:
+      # Empty = the default, the port ai-service listens on inside the private network (nothing is published; Nginx uses the same value below):
+      # XEXAM_AI_PORT:  8766
+      # Or: XEXAM_AI_PORT:  9001 (set XEXAM_AI_PORT=9001 in .env; Nginx follows it)
+      XEXAM_AI_PORT: "${XEXAM_AI_PORT:-8766}"
+      # Follows XEXAM_BACKEND_PORT (not set on its own): where the main backend is, same machine, service name backend:
+      # XEXAM_AI_BACKEND_URL:  http://backend:8765
+      # Or: XEXAM_AI_BACKEND_URL:  http://10.0.0.2:8765 (a backend on another machine; then use docker-compose.ai-service.yml instead)
+      XEXAM_AI_BACKEND_URL: "http://backend:${XEXAM_BACKEND_PORT:-8765}"
       # Not set = the default, a random key file in the AI data volume encrypts the saved AI keys:
       # XEXAM_AI_SECRET_KEY:  (key file)
       # Or: XEXAM_AI_SECRET_KEY:  the output of openssl rand -base64 32 (32 bytes as 64 hex digits or base64)
@@ -157,6 +170,7 @@ services:
           create_host_path: false
     # internal: Nginx and the backend; egress: outbound internet, for the AI provider only (the backend has none)
     networks: [internal, egress]
+    expose: ["${XEXAM_AI_PORT:-8766}"]   # visible only on the private network (nothing is published to the host)
     # Note: there are no ports. Nginx reaches it on the private network.
     stop_grace_period: 15s
     security_opt: ["no-new-privileges:true"]
@@ -183,6 +197,18 @@ services:
       - "${XEXAM_BIND:-127.0.0.1:8765}:8080"
     networks: [internal, public, tunnel]
     environment:
+      # Follows XEXAM_BACKEND_PORT (not set on its own): where Nginx finds the backend, same machine, service name backend:
+      # XEXAM_BACKEND_UPSTREAM:  http://backend:8765
+      # Or: XEXAM_BACKEND_UPSTREAM:  http://10.0.0.2:8765 (a backend on another machine; then use docker-compose.frontend.yml instead)
+      XEXAM_BACKEND_UPSTREAM: "http://backend:${XEXAM_BACKEND_PORT:-8765}"
+      # Follows XEXAM_AI_PORT (not set on its own): where Nginx finds ai-service, same machine, service name ai-service:
+      # XEXAM_AI_UPSTREAM:  http://ai-service:8766
+      # Or: XEXAM_AI_UPSTREAM:  http://10.0.0.3:8766 (an ai-service on another machine; then use docker-compose.frontend.yml instead)
+      XEXAM_AI_UPSTREAM: "http://ai-service:${XEXAM_AI_PORT:-8766}"
+      # Empty = the default, Docker's built-in DNS (127.0.0.11), which resolves backend and ai-service:
+      # XEXAM_NGINX_RESOLVER:  127.0.0.11
+      # Or: XEXAM_NGINX_RESOLVER:  10.0.0.53 (only when an upstream above is a host name Docker cannot resolve)
+      XEXAM_NGINX_RESOLVER: "${XEXAM_NGINX_RESOLVER:-}"
       # Empty = the default, every private network:
       # XEXAM_TRUSTED_PROXIES:  10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
       # Or: XEXAM_TRUSTED_PROXIES:  10.1.1.1 / 10.0.0.0/8，10.1.1.1 / none

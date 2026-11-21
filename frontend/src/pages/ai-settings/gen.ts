@@ -1,22 +1,24 @@
 // AI settings page, AI banks tab: the content rules of AI question generation (the smallest source bank, the smallest number of wrong
 // answers, the composition of single / multiple-choice questions per mode) with its own Save, and the recent AI bank jobs.
 // The quotas, call ceilings, chunks and import limits are on the Safety tab.
-import { fetchAdminGen } from '../../api/ai-gen.ts';
+import { ADMIN_GEN_MAX, fetchAdminGen } from '../../api/ai-gen.ts';
+import { pagedTable, type PtColumn } from '../../components/paged-table.ts';
 import { holdTip, infoTip } from '../../components/tooltip.ts';
 import { miniIcon } from '../../components/mini-icons.ts';
 import { compBad, compTotal, BANK_KEYS, jobTime, type LimitKey } from '../../domain/ai-settings.ts';
 import { tokenLabel } from '../../domain/usage-bars.ts';
 import { errorText, jobReasonText } from '../../i18n/errors.ts';
-import { t, type MsgKey } from '../../i18n/index.ts';
+import { localeTag, t, type MsgKey } from '../../i18n/index.ts';
 import type { GenAdminJob } from '../../types/api.ts';
 import { h, type Child } from '../../utils/dom.ts';
 import { limitField, limitInput, resetKeys, saveLimitsForm } from './safety.ts';
 import { aiDown } from './status.ts';
 import { A, num, redraw } from './state.ts';
+import { jobDetailRows, sourceText, stateRank, stateText } from '../../domain/gen-jobs.ts';
 
 export async function loadGenJobs(): Promise<void> {
   try {
-    A.genJobs = await fetchAdminGen(50);
+    A.genJobs = await fetchAdminGen(ADMIN_GEN_MAX);
     A.genJobsError = null;
   } catch (e) {
     if (aiDown(e)) return;
@@ -55,23 +57,23 @@ function compRow(mode: 'bank' | 'wrong', f: Record<LimitKey, string>): HTMLEleme
       total));
 }
 
+/** Jobs whose detail block is open; kept here so paging, sorting and redraws do not close them */
+const openJobs = new Set<number>();
+
+function detailBlock(j: GenAdminJob): HTMLElement {
+  return h('dl', { class: 'ais-gendl' }, jobDetailRows(j).map(([k, v]) => h('div', { class: 'ais-gendl-r' }, h('dt', null, t(k)), h('dd', null, v))));
+}
+
 function genJobsTable(): HTMLElement {
   if (!A.genJobs) {
     return A.genJobsError
       ? h('div', { class: 'err', role: 'alert' }, h('p', null, errorText(A.genJobsError)))
       : h('p', { class: 'dim', role: 'status' }, t('common.loading'));
   }
-  if (!A.genJobs.length) return h('p', { class: 'ais-note' }, t('ai.set.gen.jobsEmpty'));
-  const col = (k: MsgKey, cls = ''): HTMLElement => h('th', { scope: 'col', class: cls || null }, t(k));
-  const state = (j: GenAdminJob): string =>
-    t(`ai.set.gen.state.${j.state}` as MsgKey) + (j.state === 'running' && (j.phase === 'reading' || j.phase === 'confirm') ? ` · ${t(`ai.set.gen.phase.${j.phase}` as MsgKey)}` : '')
-    // v1.9: the job waits for the provider's quota
-    + ((j.state === 'queued' || j.state === 'running') && j.waiting ? ` · ${t('ai.set.gen.phase.waiting')}` : '');
-  const source = (j: GenAdminJob): string =>
-    j.source === 'file' ? t('ai.set.gen.source.file', { type: (j.file?.type ?? '').toUpperCase() }) : t(`ai.set.gen.source.${j.source}` as MsgKey);
+  if (!A.genJobs.length) return h('p', { class: 'empty' }, t('ai.set.gen.jobsEmpty'));
   // the line's holdTip is the place of the exact numbers, so no title here
   const big = (n: number): HTMLElement => { const l = tokenLabel(n, num); return h('span', null, h('span', { 'aria-hidden': 'true' }, l.text), h('span', { class: 'sr-only' }, l.title)); };
-  const rows = A.genJobs.map((j) => {
+  const renderRow = (j: GenAdminJob): HTMLElement[] => {
     const why = j.state === 'failed' || (j.state === 'cancelled' && j.error) ? jobReasonText(j) : null;
     const whyEl = why ? holdTip(h('span', { class: 'ais-genwhy', tabindex: '0' }, h('span', { class: 'ais-d' }, ' — '), why), why) : null;
     const cr = j.usage?.tokensCached ?? 0;
@@ -87,28 +89,62 @@ function genJobsTable(): HTMLElement {
     const skipText = j.skipped && j.skipped.length > 0 ? t('ai.set.gen.skipped', { n: j.skipped.length, list: j.skipped.join(',') }) : null;
     // v1.2 (owner): on wide screens the failure reason and the skipped note go on one full-width line under the job
     // (like the phone card) instead of squeezing the state and count columns; phones keep them inside the card
-    const detail = why || skipText
-      ? h('tr', { class: 'ais-gendetail ' + j.state },
-        h('td', { colspan: '7' },
+    const note = why || skipText
+      ? h('tr', { role: 'row', class: 'ais-gendetail ' + j.state },
+        h('td', { role: 'cell', colspan: '8' },
           why ? h('span', { class: 'ais-genwhy-w' }, why) : null,
           skipText ? h('span', { class: 'ais-skipn-w' }, skipText) : null))
       : null;
-    const row = h('tr', { class: 'ais-genjob ' + j.state + (detail ? ' has-detail' : '') },
-      h('td', { class: 'ais-when', 'data-l': t('ai.set.gen.col.at') }, jobTime(j.createdAt)),
-      h('th', { scope: 'row', class: 'ais-uname' }, j.username),
-      h('td', { class: 'ais-gensrc', 'data-l': t('ai.set.gen.col.source') }, source(j)),
-      h('td', { class: 'ais-genname', 'data-l': t('ai.set.gen.col.name') },
-        h('span', { class: 'ais-srcm' }, source(j)), h('span', { class: j.state === 'done' ? 'ais-nm' : 'ais-nm dim' }, nameText)),
-      h('td', { class: 'ais-genst', 'data-l': t('ai.set.gen.col.state') }, h('span', { class: 'ais-jchip ' + j.state }, state(j)), whyEl),
-      h('td', { class: 'n ais-genmade', 'data-l': t('ai.set.gen.col.made') }, `${num(j.made)} / ${num(j.goal)}`,
+    // v2.2: the details toggle opens a block with every field of the job (all widths)
+    const open = openJobs.has(j.id);
+    const full = h('tr', { role: 'row', class: 'ais-genfull', hidden: !open },
+      h('td', { role: 'cell', colspan: '8' }, detailBlock(j)));
+    const label = (on: boolean): string => `${t(on ? 'ai.set.gen.d.hide' : 'ai.set.gen.d.show')} · ${t('ai.set.gen.d.aria', { user: j.username, time: jobTime(j.createdAt) })}`;
+    const toggle = h('button', {
+      type: 'button', class: 'ais-genmore-b' + (open ? ' on' : ''), 'aria-expanded': open ? 'true' : 'false',
+      'aria-label': label(open), title: t(open ? 'ai.set.gen.d.hide' : 'ai.set.gen.d.show'),
+      onclick: () => {
+        const on = !openJobs.has(j.id);
+        if (on) openJobs.add(j.id); else openJobs.delete(j.id);
+        full.hidden = !on;
+        toggle.setAttribute('aria-expanded', on ? 'true' : 'false');
+        toggle.classList.toggle('on', on);
+        toggle.setAttribute('aria-label', label(on));
+        toggle.title = t(on ? 'ai.set.gen.d.hide' : 'ai.set.gen.d.show');
+      },
+    }, h('span', { class: 'ais-genchev', 'aria-hidden': 'true' }));
+    const row = h('tr', { role: 'row', class: 'ais-genjob ' + j.state + (note ? ' has-detail' : '') },
+      h('td', { role: 'cell', class: 'ais-when', 'data-l': t('ai.set.gen.col.at') }, jobTime(j.createdAt)),
+      h('th', { scope: 'row', role: 'rowheader', class: 'ais-uname' }, j.username),
+      h('td', { role: 'cell', class: 'ais-gensrc', 'data-l': t('ai.set.gen.col.source') }, sourceText(j)),
+      h('td', { role: 'cell', class: 'ais-genname', 'data-l': t('ai.set.gen.col.name') },
+        h('span', { class: 'ais-srcm' }, sourceText(j)), h('span', { class: j.state === 'done' ? 'ais-nm' : 'ais-nm dim' }, nameText)),
+      h('td', { role: 'cell', class: 'ais-genst', 'data-l': t('ai.set.gen.col.state') }, h('span', { class: 'ais-jchip ' + j.state }, stateText(j)), whyEl),
+      h('td', { role: 'cell', class: 'n ais-genmade', 'data-l': t('ai.set.gen.col.made') }, `${num(j.made)} / ${num(j.goal)}`,
         skipText ? h('span', { class: 'ais-skipn' }, skipText) : null),
-      h('td', { class: 'n ais-gencalls', 'data-l': t('ai.set.gen.col.calls') }, stats));
-    return detail ? [row, detail] : [row];
-  }).flat();
-  return h('div', { class: 'ais-tablewrap' }, h('table', { class: 'ais-table ais-genjobs' },
-    h('thead', null, h('tr', null, col('ai.set.gen.col.at'), col('ai.set.gen.col.user'), col('ai.set.gen.col.source'), col('ai.set.gen.col.name'),
-      col('ai.set.gen.col.state'), col('ai.set.gen.col.made', 'n'), col('ai.set.gen.col.calls', 'n'))),
-    h('tbody', null, rows)));
+      h('td', { role: 'cell', class: 'n ais-gencalls', 'data-l': t('ai.set.gen.col.calls') }, stats),
+      h('td', { role: 'cell', class: 'ais-genmore' }, toggle));
+    return note ? [row, note, full] : [row, full];
+  };
+  const c = (key: string, label: MsgKey, cls = '', text = false): PtColumn => ({ key, label: t(label), cls, text });
+  const plain = (key: string, label: MsgKey, cls = ''): PtColumn => ({ key, label: t(label), cls, plain: true });
+  return pagedTable<GenAdminJob>({
+    id: 'ai-genjobs', rows: A.genJobs, name: (j) => j.username, cardsAt: 900, roles: true, tableClass: 'ais-table ais-genjobs',
+    defaultSort: { key: 'at', dir: 'desc' },
+    columns: [
+      c('at', 'ai.set.gen.col.at'), c('user', 'ai.set.gen.col.user', '', true), plain('source', 'ai.set.gen.col.source'), plain('name', 'ai.set.gen.col.name'),
+      c('state', 'ai.set.gen.col.state'), plain('made', 'ai.set.gen.col.made', 'n'), plain('calls', 'ai.set.gen.col.calls', 'n'),
+      { key: 'more', label: t('ai.set.gen.d.show'), cls: 'ais-genmore', plain: true, srOnly: true },
+    ],
+    cmp: {
+      at: (a, b) => a.createdAt - b.createdAt || a.id - b.id,
+      user: (a, b) => a.username.localeCompare(b.username, localeTag()),
+      // The first click on a non-text column is descending: running first, then waiting, done, failed, cancelled;
+      // inside one state the newest job comes first
+      state: (a, b) => stateRank(b) - stateRank(a) || a.createdAt - b.createdAt || a.id - b.id,
+    },
+    renderRow,
+  });
 }
 
 /** The fifth tab, "AI banks": the content rules, one Save, the recent jobs */

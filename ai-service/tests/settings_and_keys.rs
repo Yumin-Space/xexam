@@ -21,7 +21,7 @@ async fn safety_limits_routes() {
                "genCallTokens": 20000, "genMaxCalls": 15, "importMaxCalls": 25, "recognizeMaxCalls": 20, "genUnlimited": 1, "importUnlimited": 1, "genRunning": 2, "importMaxMb": 20, "importMaxQuestions": 100,
                "callsAdminsExempt": 1, "studyShare": 1, "studyShareDays": 180, "genMaxChunks": 8,
                "summaryMaxItems": 40, "dailyTokenBudget": 0,
-               "paceOn": 1, "paceRpm": 13, "paceTpm": 240000})
+               "paceOn": 1, "paceRpm": 13, "paceTpm": 230000})
     );
     let keys: Vec<&String> = v["limits"].as_object().expect("object").keys().collect();
     assert_eq!(keys.len(), 36);

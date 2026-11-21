@@ -201,9 +201,9 @@ struct UpgradeReport {
 /// Pace values before and after the 10 -> 11 conversion: `((rpm, rpm'), (tpm, tpm'))`.
 type PaceChange = ((i64, i64), (i64, i64));
 
-/// The 10 -> 11 pace conversion (v2.1 uses `paceRpm` / `paceTpm` as entered): a value still on the old default
-/// (15 / 250000) becomes the new default (13 / 240000); any other value becomes floor(value * 0.9), at least the
-/// column minimum, so the actual pace of v2.0 stays the same.
+/// The 10 -> 11 pace conversion (v2.1 uses `paceRpm` / `paceTpm` as entered, v2.2 keeps them so): each value
+/// still on its old default (15, 250000) moves to its new one (13, 230000) on its own; any other value is kept unchanged. Returns
+/// `None` (no log line) when nothing changed.
 fn convert_pace(c: &Connection) -> rusqlite::Result<Option<PaceChange>> {
     let old: Option<(i64, i64)> = c
         .query_row("SELECT pace_rpm, pace_tpm FROM limits LIMIT 1", [], |r| {
@@ -213,12 +213,11 @@ fn convert_pace(c: &Connection) -> rusqlite::Result<Option<PaceChange>> {
     let Some((rpm, tpm)) = old else {
         return Ok(None);
     };
-    let rpm2 = if rpm == 15 { 13 } else { (rpm * 9 / 10).max(1) };
-    let tpm2 = if tpm == 250_000 {
-        240_000
-    } else {
-        (tpm * 9 / 10).max(1000)
-    };
+    let rpm2 = if rpm == 15 { 13 } else { rpm };
+    let tpm2 = if tpm == 250_000 { 230_000 } else { tpm };
+    if (rpm2, tpm2) == (rpm, tpm) {
+        return Ok(None);
+    }
     c.execute(
         "UPDATE limits SET pace_rpm = ?1, pace_tpm = ?2",
         [rpm2, tpm2],
@@ -631,8 +630,8 @@ impl Store {
                     } else {
                         (Vec::new(), 0)
                     };
-                    // the pace values lose the hidden 90 % margin: a schema-9 or -10 file keeps the same actual pace
-                    // (older files just got the new column defaults, so they need no conversion)
+                    // the old pace defaults move to the new ones, other values stay as entered (older files just got the new
+                    // column defaults, so they need no conversion)
                     let pace = if (9..11).contains(&from) {
                         convert_pace(tx)?
                     } else {
@@ -687,12 +686,12 @@ impl Store {
                 }
                 if let Some(((r0, r1), (t0, t1))) = pace {
                     tracing::info!(
-                        "Provider pacing is now used as entered: requests per minute {r0} -> {r1}, tokens per minute {t0} -> {t1}."
+                        "Provider pacing default is now 13 requests / 230,000 tokens a minute: requests per minute {r0} -> {r1}, tokens per minute {t0} -> {t1}."
                     );
                 }
                 if cleared > 0 {
                     tracing::info!(
-                        "{cleared} stored thinking strengths of another family were reset to the model default."
+                        "{cleared} stored thinking strengths of another family were reset to Default (no strength parameter sent)."
                     );
                 }
                 if orphans > 0 {
@@ -737,6 +736,42 @@ impl Store {
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, '1')",
                 [schema::UNLIMITED_DEFAULT_KEY],
+            )
+            .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+        }
+        // v2.2: the pacing default moved from 13 / 240000 to 13 / 230000 (no schema bump, so v2.1 still opens the file).
+        // One-time: only a schema-11 file still holding exactly the v2.1 default is moved (after a backup copy); any
+        // other value stays as entered. Fresh files and 9 / 10 upgrades already carry the new default.
+        let pace_flagged: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM meta WHERE key = ?1)",
+                [schema::PACE_DEFAULT_KEY],
+                |r| r.get(0),
+            )
+            .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+        if !pace_flagged {
+            if existing.as_deref() == Some(schema::SCHEMA_VERSION) {
+                let cur: Option<(i64, i64)> = conn
+                    .query_row("SELECT pace_rpm, pace_tpm FROM limits LIMIT 1", [], |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })
+                    .optional()
+                    .map_err(|e| format!("cannot read the AI database {{path}}: {e}"))?;
+                if cur == Some((13, 240_000)) {
+                    let copy = backup_copy(&conn, backups, schema::SCHEMA_VERSION).map_err(|e| {
+                        format!("cannot back up the AI database before the upgrade ({e}); nothing was changed")
+                    })?;
+                    conn.execute("UPDATE limits SET pace_tpm = 230000", [])
+                        .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
+                    tracing::info!(
+                        "Provider pacing default is now 13 requests / 230,000 tokens a minute (was 13 / 240,000). A copy of the previous database was saved first: {}.",
+                        copy.display()
+                    );
+                }
+            }
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?1, '1')",
+                [schema::PACE_DEFAULT_KEY],
             )
             .map_err(|e| format!("cannot upgrade the AI database {{path}}: {e}"))?;
         }

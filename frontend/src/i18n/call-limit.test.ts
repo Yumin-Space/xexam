@@ -67,11 +67,11 @@ test('administrators are pointed to AI settings > Safety limits instead of "ask 
   const q = { cap: 'day', limit: 100, retryAt: NOW + 3600 } as const;
   try {
     setUiLang('zh');
-    assert.equal(callLimitText(q, true, NOW), '你的 AI 请求额度已用完（每天 100 次）。可以在「AI 设置 › 安全上限」里调整。明天 0 点后可以再次使用。');
+    assert.equal(callLimitText(q, true, NOW), '你的 AI 请求额度已用完（每天 100 次）。可以在「AI 设置 › AI 安全 › 安全上限」里调整。明天 0 点后可以再次使用。');
     setUiLang('en');
-    assert.match(callLimitText(q, true, NOW), /You can change the limits in AI settings › Safety limits\./);
+    assert.match(callLimitText(q, true, NOW), /You can change the limits in AI settings › AI safety › Safety limits\./);
     setUiLang('ja');
-    assert.match(callLimitText(q, true, NOW), /「AI 設定 › セキュリティ上限」で変更できます。/);
+    assert.match(callLimitText(q, true, NOW), /「AI 設定 › AI セキュリティ › セキュリティ上限」で変更できます。/);
   } finally {
     setUiLang('en');
   }
@@ -91,7 +91,7 @@ test('errorText and studyErrorText use the quota first (admin from setAdminForTe
     assert.equal(errorText(plain), 'You have used up your AI requests. Ask an administrator to change the AI request limits.');
     assert.doesNotMatch(errorText(plain), /\{|\}/, 'no placeholder leaks');
     setAdminForTexts(() => true);
-    assert.match(errorText(withQuota), /AI settings › Safety limits/);
+    assert.match(errorText(withQuota), /AI settings › AI safety › Safety limits/);
     assert.match(studyErrorText({ status: 429, code: 'ai.callLimit', limit: 100, quota: { cap: 'hour', limit: 20, retryAt } }), /\(20 per hour\)\. You can change the limits in AI settings/);
     assert.equal(studyErrorText({ status: 429, code: 'ai.callLimit', limit: 100 }), 'You have used up your AI requests. Ask an administrator to change the AI request limits.');
   } finally {

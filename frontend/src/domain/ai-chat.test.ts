@@ -7,7 +7,7 @@ import test from 'node:test';
 import {
   applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerMaxLines, composerStatus, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isBusyElsewhere, isTerminal, isThinking, localFail, MIN_MSGS_PX,
   localEdit, localRegenerate, modelArg, chatMenu, chatShown, pickerView, chooseValue, regenerateLabelKey, editValid, versionInfo, TEMP_ID,
-  effortArg, effortMarks, keepEffort, strengthView, slotRoute, handlesPopstate,
+  effortArg, keepEffort, strengthView, slotRoute, handlesPopstate,
   localSend, localStop, locksDocument, noAccessKey, pollResult, questionOf, readOnlyReason, retryBody, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, startOf, STOP_GUARD_MS, suggestBody,
   type ChatView, type KeyLike, type ViewMessage,
 } from './ai-chat.ts';
@@ -683,15 +683,17 @@ const SET = {
   effortLevels: LEVELS,
 } as unknown as AiSettings;
 
-test('strengthView: own pick, else the chat row on its own route, else the model default', () => {
+test('strengthView: own pick, else the chat row on its own family, else Default (no model default any more)', () => {
   assert.deepEqual(slotRoute(SET, 'chat'), { connectionId: 1, model: 'demo-a' });
   assert.equal(strengthView(SET, 1, 'demo-a', 'high')?.selected, 'high', 'a valid pick wins');
-  assert.equal(strengthView(SET, 1, 'demo-a', '')?.selected, 'low', 'the chat row route shows its effective level');
-  const other = strengthView(SET, 1, 'demo-b', '');
-  assert.equal(other?.selected, 'low', 'another model of the family: the row level, as the server sends it');
-  assert.equal(strengthView({ ...SET, slots: { ...SET.slots, chat: { modelId: null, effort: null } } } as unknown as AiSettings, 1, 'demo-b', '')?.selected, 'medium', 'nothing stored: the model default (unknown model -> medium)');
-  assert.equal(strengthView(SET, 1, 'claude-sonnet-5-5', '')?.modelDefault, 'high');
-  assert.equal(strengthView(SET, 2, 'demo-g', 'max')?.selected, 'MEDIUM', 'a level of another family is ignored');
+  assert.equal(strengthView(SET, 1, 'demo-a', '')?.selected, 'low', 'the chat row level is shown');
+  assert.equal(strengthView(SET, 1, 'demo-b', '')?.selected, 'low', 'another model of the family: the row level, as the server sends it');
+  const none = { ...SET, slots: { ...SET.slots, chat: { modelId: null, effort: null } } } as unknown as AiSettings;
+  assert.equal(strengthView(none, 1, 'claude-sonnet-5-5', '')?.selected, 'default', 'nothing stored: Default, whatever the model');
+  assert.equal(strengthView(SET, 1, 'demo-a', 'default')?.selected, 'default', 'the own Default beats the row level');
+  assert.deepEqual(strengthView(SET, 1, 'demo-a', '')?.options, ['default', 'low', 'medium', 'high', 'max'], 'Default first, then the levels');
+  assert.equal(strengthView(SET, 2, 'demo-g', 'max')?.selected, 'default', 'a level of another family is ignored; the row is another family too');
+  assert.equal(strengthView(SET, 2, 'demo-g', 'HIGH')?.selected, 'HIGH');
   assert.equal(strengthView(SET, 2, 'demo-g', 'high')?.family, 'google');
   assert.equal(strengthView(SET, 9, 'x', ''), null);
   assert.equal(strengthView(null, 1, 'x', ''), null);
@@ -707,19 +709,38 @@ test('handlesPopstate: a menu link (new hash is not the AI page) is left to the 
   assert.equal(handlesPopstate({ ...on, onPage: false }), false);
 });
 
-test('effortArg / keepEffort / effortMarks', () => {
+test('effortArg / keepEffort', () => {
   assert.equal(effortArg('high', 'high'), undefined);
   assert.equal(effortArg('', null), undefined);
-  assert.equal(effortArg('', 'high'), null);
+  assert.equal(effortArg('', 'high'), null, 'an explicit reset');
   assert.equal(effortArg('low', null), 'low');
+  assert.equal(effortArg('default', null), 'default', 'picking Default is sent as "default"');
+  assert.equal(effortArg('default', 'default'), undefined);
+  assert.equal(effortArg('default', 'high'), 'default');
+  assert.equal(effortArg('high', 'default'), 'high');
   const v = strengthView(SET, 1, 'demo-b', '');
   assert.equal(keepEffort('high', v), 'high');
   assert.equal(keepEffort('HIGH', v), '', 'levels are matched exactly, like the server does');
-  assert.equal(strengthView(SET, 2, 'demo-g', 'high')?.selected, 'MEDIUM', 'a level of the wrong case is not preselected');
   assert.equal(keepEffort('none', v), '');
-  assert.equal(effortMarks('medium', v), false);
-  assert.equal(effortMarks('high', v), true);
-  assert.equal(effortMarks('', v), false);
+  assert.equal(keepEffort('default', v), 'default', 'Default is kept for every family');
+  assert.equal(keepEffort('default', null), 'default');
+  assert.equal(keepEffort('high', null), '');
+});
+
+test('use default (brain popover): a stale level of another family is dropped, so no 400 is sent', () => {
+  // Anthropic 'high' picked, then back to the Google default route
+  const google = strengthView(SET, 2, 'demo-g', 'high');
+  const kept = keepEffort('high', google);
+  assert.equal(kept, '');
+  assert.equal(effortArg(kept, null), undefined, 'nothing is sent');
+  assert.equal(effortArg(kept, 'high'), null, 'a stored own choice is reset, never a wrong level');
+  assert.equal(keepEffort('default', google), 'default');
+});
+
+test('follow AI settings: selected "" shows the inherited level and sends null only when a choice was stored', () => {
+  assert.equal(strengthView(SET, 1, 'demo-a', '')?.selected, 'low');
+  assert.equal(effortArg('', 'high'), null);
+  assert.equal(effortArg('', null), undefined, 'clicking the inherited item while following changes nothing');
 });
 
 test('sendBody carries effort only when given; the pick is kept at the start event', () => {

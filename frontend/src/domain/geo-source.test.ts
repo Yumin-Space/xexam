@@ -215,5 +215,5 @@ test('the privacy line and the source labels exist in all three languages', () =
     }
   }
   setUiLang('en');
-  assert.match(t('users.geo.api.hint'), /visitor's IP address is sent to the chosen provider/);
+  assert.match(t('users.geo.api.hint'), /visitor’s IP address is sent to the chosen provider/);
 });

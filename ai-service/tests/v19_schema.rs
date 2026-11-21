@@ -126,7 +126,7 @@ fn a_fresh_file_is_schema_9_with_seven_slots_and_the_new_columns() {
         .expect("reopen")
         .read(tables::load_limits)
         .expect("limits");
-    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 240_000));
+    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 230_000));
     // the slot CHECK refuses the removed name
     assert!(c
         .execute(
@@ -195,7 +195,7 @@ fn a_schema_8_file_is_backed_up_and_study_becomes_hint_and_explain() {
         .expect("enabled");
     assert_eq!(on, 1);
     let l = store.read(tables::load_limits).expect("limits");
-    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 240_000));
+    assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 230_000));
     let left: i64 = c
         .query_row(
             "SELECT COUNT(*) FROM sqlite_master WHERE name = 'model_slots_v8'",

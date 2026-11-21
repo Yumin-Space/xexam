@@ -367,7 +367,7 @@ function chevButton(isCollapsed: boolean, onClick: () => void): HTMLButtonElemen
       e.stopPropagation();
       onClick();
     },
-  }, h('span', { class: 'aip-chev-i', 'aria-hidden': 'true' }));
+  }, miniIcon('chevDown', 'aip-chev-i'));
 }
 
 /** Where the keyboard focus sits when it is inside a card's collapsed bar (the bar is replaced when the panel moves in) */

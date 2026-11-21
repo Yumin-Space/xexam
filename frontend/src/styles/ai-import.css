@@ -17,7 +17,7 @@
 .gen-impbtn.ibtn { width: auto; height: auto; min-height: 36px; padding: 6px 14px; border-radius: 6px; font-size: 14.5px; font-weight: 700; line-height: 1.4; }
 .gen-impbusy { display: inline-flex; align-items: center; gap: 6px; min-height: 40px; color: var(--ai-3); }
 
-@media (max-width: 600px), (orientation: landscape) and (max-height: 500px) {
+@media (pointer: coarse), (max-width: 600px), (orientation: landscape) and (max-height: 500px) {
   /* the same size as the Excel button (A-OWNER-29b): only the 44 px touch height */
   .bk-aidrop .ibtn-label, .bk-aidrop .gen-impbtn.ibtn, .gen-impbusy { min-height: 44px; }
 }
@@ -32,7 +32,7 @@
 
 /* The keep / discard / back dialog of an import cancel (A-OWNER-66): 44 px buttons that wrap on a phone */
 .dlg-choice .acts { flex-wrap: wrap; }
-.dlg-choice .acts .btn { min-height: 44px; }
+@media (pointer: coarse) { .dlg-choice .acts .btn { min-height: 44px; } }
 
 /* A-OWNER-72 / 73: the file's question count and the limit, two labels (red background, white text when over the limit) */
 .gen-counts { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 0 0 8px; }

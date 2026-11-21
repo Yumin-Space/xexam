@@ -24,10 +24,9 @@
 
 /* ---------- Filters: calm form fields (border, radius and focus ring come from the form base in main.css) ---------- */
 .rec-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 12px 16px; }
-.rec-field { display: grid; gap: 6px; min-width: 0; }
-.rec-field > label { font-size: 13px; font-weight: 600; line-height: 1.4; color: var(--ink2); }
+.rec-field { min-width: 0; }
 /* A fixed height: a date field is taller than a select by nature, and the four sit in one row */
-.rec-field select, .rec-field input { width: 100%; min-width: 0; height: 36px; padding: 4px 10px; font-size: 14.5px; }
+.rec-field select, .rec-field input { width: 100%; min-width: 0; height: 38px; padding: 6px 10px; font-size: 15px; }
 @media (hover: hover) { .rec-field select:hover:not(:focus), .rec-field input:hover:not(:focus) { border-color: var(--ink3); } }
 /* "From" after "To": a small red callout under the fields */
 .rec-warn {
@@ -57,8 +56,7 @@
   text-align: left; padding: 6px 10px; font-size: 12.5px; font-weight: 600; color: var(--ink3);
   border-bottom: 1px solid var(--line-soft); white-space: nowrap;
 }
-/* Microsoft YaHei has no semibold: its bold would make the small grey headings heavy */
-html:lang(zh-CN) .rec-table th { font-weight: 400; }
+/* Microsoft YaHei has no semibold: its bold would make the small grey headings heavy (zh table heads: one shared rule in main.css) */
 .rec-table td { padding: 10px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
 .rec-table tbody tr { cursor: pointer; transition: background-color .12s ease; }
 @media (hover: hover) { .rec-table tbody tr:hover { background: var(--rec-row-hover); } }
@@ -92,7 +90,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .ibtn.rec-lblbtn { width: auto; min-width: 36px; padding: 0 10px; border: 1px solid var(--line); background: var(--card); }
 .ibtn.rec-lblbtn.ibtn-danger { background: var(--card); }
 .ibtn.rec-lblbtn[aria-disabled="true"] { border-color: transparent; background: transparent; }
-.rec-lbl { font-size: 13px; font-weight: 500; }
+.rec-lbl { font-size: 14.5px; font-weight: 400; }
 /* v1.4 (owner): the AI 总结 button uses the same flat amber as the other AI+ action buttons (AI 生成题, AI import; ai-gen.css):
    #F59E0B, hover #D97706, pressed #B45309, white bold text; greyed it looks exactly like a greyed AI 生成题 button */
 .ibtn.rec-lblbtn.rec-ai-btn.ibtn-ai:not([aria-disabled="true"]) {
@@ -111,9 +109,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 /* the 无法使用 tag, as .gen-na in ai-gen.css (that sheet is not loaded on this page); hidden where only the icon fits */
 .rec-na { flex: none; margin-left: 6px; padding: 1px 6px; border-radius: 4px; background: var(--card); color: var(--ink3); font-size: 11px; font-weight: 600; line-height: 1.5; }
 @media (pointer: coarse) {
-  .ibtn.rec-lblbtn { min-width: 40px; }
-  /* Outlined like .ibtn-ai: the ::after is placed from inside the 1 px border, so one more pixel gives the 44 px tap area */
-  .ibtn.rec-lblbtn::after { inset: -3px; }
+  .ibtn.rec-lblbtn { min-width: 44px; }
 }
 
 /* Stacked cards whenever the list is narrower than the table needs: up to 900px (the AI 总结 column needs about that much
@@ -162,8 +158,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
   .rec-table .rec-ai .ibtn.rec-lblbtn { width: 36px; padding: 0; }
 }
 @media (max-width: 900px) and (pointer: coarse) {
-  .rec-table .rec-ai .ibtn.rec-lblbtn { width: 40px; }
-  /* ✦ and the trash keep apart by their tap margins (3 + 2 px), so neither takes a strip of the other's 44 px */
+  .rec-table .rec-ai .ibtn.rec-lblbtn { width: 44px; }
   .rec-table td.rec-ai { margin-inline-end: 6px; }
   /* The date link keeps its 31 px line in the card; an invisible margin above and below makes it 44 px to tap */
   .rec-table .rec-time a { position: relative; }
@@ -199,7 +194,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
   .rec-acts .ibtn.rec-lblbtn { width: 36px; padding: 0; }
 }
 @media (pointer: coarse) and (max-width: 600px), (pointer: coarse) and (orientation: landscape) and (max-height: 500px) {
-  .rec-acts .ibtn.rec-lblbtn { width: 40px; }
+  .rec-acts .ibtn.rec-lblbtn { width: 44px; }
 }
 /* The score block (phones): the number and the summary line side by side, the facts and the actions across the full width */
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
@@ -223,7 +218,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
 .wr-intro { max-width: 48em; margin-bottom: 16px; color: var(--ink2); }
 .wr-tools { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 12px 20px; margin-bottom: 16px; }
 .wr-tools .rec-field { width: min(320px, 100%); }
-.wr-count { font-size: 13.5px; font-weight: 600; color: var(--ink2); }
+.wr-count { font-size: 13.5px; font-weight: 400; color: var(--ink3); }
 /* The stats and the "still missing" chip share one row (RC-10); the chip is neutral, not a blue line */
 .wr-stats { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .wr-left {
@@ -256,7 +251,7 @@ html:lang(zh-CN) .rec-table th { font-weight: 400; }
   .rec-filter > h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .rec-filter { padding-block: 8px; }
   .rec-bar { order: 0; flex-wrap: nowrap; justify-content: flex-start; gap: 4px 10px; margin-top: 0; }
-  .rec-bar .rec-count { flex: 1 1 auto; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rec-bar .rec-count { flex: 1 1 auto; min-width: 0; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .rec-bar .rec-ftoggle { display: inline-flex; flex: none; gap: 6px; padding-inline: 10px; }
   .rec-bar .rec-reset, .rec-bar > .btn.quiet { flex: none; padding-inline: 8px; }
   .rec-ftoggle .rec-fi { width: 16px; height: 16px; flex: none; }

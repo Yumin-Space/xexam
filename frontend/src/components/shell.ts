@@ -2,6 +2,7 @@
 // dropdown) + the centered page + footer. The quiz page and the sign-in pages do not use the shell.
 import '../styles/shell.css';
 import { shutdownApp } from '../api/import.ts';
+import { joinAccountTip } from '../domain/account-tip.ts';
 import { ownBadgeState } from '../domain/badge-state.ts';
 import { toggledTheme } from '../domain/theme-color.ts';
 import { barStep, initialBar } from '../domain/top-bar.ts';
@@ -20,7 +21,7 @@ import { matches, PHONE_MQ } from '../utils/media.ts';
 import { offList, readFeatures } from '../domain/ai-features.ts';
 import { aiBadge, badgeReasonText, badgeTipText } from './ai-badge.ts';
 import { brand } from './common.ts';
-import { holdTip } from './tooltip.ts';
+import { holdTip, tipEl, withTip } from './tooltip.ts';
 import { githubLine } from './github-line.ts';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
@@ -223,10 +224,14 @@ function fitBar(): void {
   const el = barEl();
   const acct = el?.querySelector<HTMLElement>('.acct-btn');
   if (!el || !acct) return;
-  el.classList.remove('fit-1', 'fit-2', 'fit-3');
+  el.classList.remove('fit-1', 'fit-2');
   // scrollWidth rounds up and clientWidth down: 1 px is the rounding of a box that fits exactly
   const tight = (): boolean => acct.scrollWidth > acct.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1;
-  for (const step of ['fit-1', 'fit-2', 'fit-3']) {
+  // v2.2 (owner): the top bar shows the name "Xexam" as text, without the logo icon, and the name never goes (people should
+  // see which app this is). On a phone the account's name is already hidden and the icon, the AI+ badge and the short admin
+  // tag ARE the account: the tag goes first (its text is in the tip), then the icon. Wider screens keep the v1.2 order.
+  const steps = matches(PHONE_MQ) ? ['fit-2', 'fit-1'] : ['fit-1', 'fit-2'];
+  for (const step of steps) {
     if (!tight()) return;
     el.classList.add(step);
   }
@@ -261,6 +266,71 @@ let focusMenuOnOpen = false;
 let opener: 'menu-btn' | 'acct-btn' = 'menu-btn';
 
 /**
+ * The account button of the top bar: a menu button on wide screens, and on a phone a tap target that shows a tip (the menu
+ * button opens the menu). `phone` is decided here, so a redraw (refreshAccountControl) follows the window across PHONE_MQ.
+ */
+function accountControl(open: boolean): HTMLElement | null {
+  const user = S.user;
+  const admin = isAdmin();
+  const ai = aiStatus();
+  const badge = ownBadgeState(user, ai);
+  const off = ai.state === 'ready' && user?.role !== 'admin' ? offList(readFeatures(ai.features)) : [];
+  // The account label left of the menu button: who is signed in (and "Administrator"); a click opens the same menu
+  // (v0.8: with the badge the label says "AI+ on" too, because the aria-label replaces what the button shows; round 2: with
+  // the dark badge it says why AI+ cannot be used now, since nothing inside a button can be focused to read its tooltip)
+  const accountLabel = !user ? ''
+    : badge.kind === 'on' ? t('nav.accountLabelAi', { name: user.username, role: roleText(user) })
+      : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: user.username, role: roleText(user), reason: badgeReasonText(badge.reason) })
+        : t('nav.accountLabel', { name: user.username, role: roleText(user) });
+  // v1.1 (BT-6): no native title on the button (it would cover the badge's tip); on touch the badge tip is a tap-and-hold
+  // v2.2: on a phone the account button opens no menu (the menu button does): a tap shows a tip with the signed-in name, the
+  // role and the AI+ state, the same tip look as the AI+ badge (components/tooltip.ts `.tip-tap`; a tap elsewhere or Esc closes it)
+  const phone = matches(PHONE_MQ);
+  const accountTip = badgeTipText(badge, 'own', off);
+  const accTipId = 'acct-tip';
+  const accountBtn0 = user ? h('button', {
+    class: 'acct-btn' + (open ? ' on' : '') + (badge.kind !== 'none' ? ' has-ai' : ''), id: 'acct-btn', type: 'button',
+    'aria-label': accountLabel,
+    ...(phone ? { 'aria-describedby': accTipId } : { 'aria-haspopup': 'true', 'aria-expanded': String(open), 'aria-controls': 'nav-menu' }),
+    onclick: (e: MouseEvent) => {
+      // Re-asked at click time: the window may have been turned or resized since the bar was drawn
+      if (matches(PHONE_MQ)) return;
+      focusMenuOnOpen = !open && e.detail === 0;
+      opener = 'acct-btn';
+      setNavOpen(!open);
+    },
+  },
+  icon(ICONS.user, 'ico acct-ico'),
+  h('span', { class: 'acct-name' }, user.username),
+  aiBadge(badge, { inButton: true, off }),
+  // Phones show the short form ("Admin"), so the username keeps its room; the full role is in the label and in the menu
+  admin ? h('span', { class: 'tag b acct-role' },
+    h('span', { class: 'acct-role-l' }, roleName('admin')),
+    h('span', { class: 'acct-role-s' }, t('role.admin.short'))) : null) : null;
+  const accountBtn = !accountBtn0 || !user ? accountBtn0
+    : phone ? withTip(accountBtn0, tipEl(accTipId, accountTipText(user, accountTip)), 'tip-tap acct-tipwrap')
+      : accountTip ? holdTip(accountBtn0, accountTip, { touchOnly: true }) : accountBtn0;
+  if (accountBtn && phone) {
+    // One tip at a time: the badge inside the phone account button gives up its own tip wrapper (the account tip already
+    // says the AI+ state), so a hover or focus on the badge shows the one placed account tip, never a second unplaced one
+    const wrap = accountBtn0?.querySelector('.ai-badge-tip');
+    const bd = wrap?.querySelector('.ai-badge');
+    if (wrap && bd) wrap.replaceWith(bd);
+  }
+  return accountBtn;
+}
+
+/** Draws the account button again in place (the window crossed PHONE_MQ: its behaviour and tip wrapper differ) */
+function refreshAccountControl(): void {
+  const cur = document.getElementById('acct-btn');
+  if (!cur) return;
+  const outer = cur.closest('.acct-tipwrap') ?? cur;
+  const next = accountControl(S.navOpen);
+  if (next) outer.replaceWith(next);
+  afterShellRender();
+}
+
+/**
  * Wraps a page in the shell: a slim header with the menu button and the brand, the page (centered), the footer.
  * The navigation is a small dropdown that opens from the menu button and closes again after a choice, a click outside or Esc,
  * so the page itself keeps the whole width.
@@ -269,7 +339,6 @@ export function shell(content: HTMLElement): HTMLElement {
   const active = sectionOf(S.route);
   const open = S.navOpen;
   const user = S.user;
-  const admin = isAdmin();
   const ai = aiStatus();
   // v0.8: the AI+ badge (round 2: bright while the user can use AI now, dark while they have the AI+ service but cannot use
   // it now, none without the service; domain/badge-state.ts)
@@ -330,43 +399,8 @@ export function shell(content: HTMLElement): HTMLElement {
     },
   }, icon(open ? ICONS.close : ICONS.menu));
 
-  // The account label left of the menu button: who is signed in (and "Administrator"); a click opens the same menu
-  // (v0.8: with the badge the label says "AI+ on" too, because the aria-label replaces what the button shows; round 2: with
-  // the dark badge it says why AI+ cannot be used now, since nothing inside a button can be focused to read its tooltip)
-  const accountLabel = !user ? ''
-    : badge.kind === 'on' ? t('nav.accountLabelAi', { name: user.username, role: roleText(user) })
-      : badge.kind === 'off' ? t('nav.accountLabelAiOff', { name: user.username, role: roleText(user), reason: badgeReasonText(badge.reason) })
-        : t('nav.accountLabel', { name: user.username, role: roleText(user) });
-  // v1.1 (BT-6): no native title on the button (it would cover the badge's tip); on touch the badge tip is a tap-and-hold
-  const accountBtn0 = user ? h('button', {
-    class: 'acct-btn' + (open ? ' on' : '') + (badge.kind !== 'none' ? ' has-ai' : ''), id: 'acct-btn', type: 'button',
-    'aria-label': accountLabel,
-    'aria-haspopup': 'true', 'aria-expanded': String(open), 'aria-controls': 'nav-menu',
-    onclick: (e: MouseEvent) => {
-      focusMenuOnOpen = !open && e.detail === 0;
-      opener = 'acct-btn';
-      setNavOpen(!open);
-    },
-  },
-  icon(ICONS.user, 'ico acct-ico'),
-  h('span', { class: 'acct-name' }, user.username),
-  aiBadge(badge, { inButton: true, off }),
-  // Phones show the short form ("Admin"), so the username keeps its room; the full role is in the label and in the menu
-  admin ? h('span', { class: 'tag b acct-role' },
-    h('span', { class: 'acct-role-l' }, roleName('admin')),
-    h('span', { class: 'acct-role-s' }, t('role.admin.short'))) : null) : null;
-  // v2.1: one press switches light / dark and saves the same preference Settings uses
-  const dark = isDark();
-  const themeLabel = themeLabelOf(dark);
-  const themeBtn = user ? h('button', {
-    class: 'icon-btn theme-btn', id: 'theme-btn', type: 'button', 'aria-label': themeLabel, title: themeLabel,
-    onclick: () => {
-      updateSettings({ theme: toggledTheme(S.settings.theme, isDark()) }, render)
-        .catch((e: unknown) => toast(t('act.settings.saveFailed', { reason: e instanceof Error ? e.message : String(e) }), 6000));
-    },
-  }, icon(dark ? ICONS.moon : ICONS.sun)) : null;
-  const accountTip = badgeTipText(badge, 'own', off);
-  const accountBtn = accountBtn0 && accountTip ? holdTip(accountBtn0, accountTip, { touchOnly: true }) : accountBtn0;
+  const themeBtn = user ? themeButton() : null;
+  const accountBtn = accountControl(open);
 
   // The logo on the left, the account label and the menu button on the right (the dropdown opens towards the left,
   // aligned to the right edge)
@@ -375,7 +409,7 @@ export function shell(content: HTMLElement): HTMLElement {
   const barClass = 'topbar' + (pinned ? ' topbar-pin' : '') + (pinned && bar.hidden && !open ? ' topbar-hide' : '')
     + (pinned && window.scrollY > 0 ? ' topbar-scrolled' : '');
   const header = h('header', { class: barClass },
-    h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()),
+    h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand(false)),
     h('div', { class: 'menu-wrap' }, themeBtn, accountBtn, menuBtn, menu));
 
   if (open && focusMenuOnOpen) {
@@ -423,6 +457,9 @@ export function installShellHandlers(): void {
   // The top bar (SH-7): hides on a scroll down, comes back on a scroll up, on focus inside it and while the menu is open
   window.addEventListener('scroll', onPageScroll, { passive: true });
   window.addEventListener('resize', afterShellRender);
+  // The account button differs on a phone (a tip, no menu): redrawn in place when the window crosses that line, so it never
+  // keeps the behaviour it was drawn with (a desktop window narrowed, a tablet pane resized, a phone turned)
+  if (typeof window.matchMedia === 'function') window.matchMedia(PHONE_MQ).addEventListener('change', refreshAccountControl);
   // The bar is measured again once the web fonts are in (A-OWNER-83)
   void document.fonts?.ready.then(afterShellRender);
   document.addEventListener('focusin', (e) => {
@@ -445,9 +482,32 @@ function pathOf(node: Node): number[] | null {
   return n ? out : null;
 }
 
+/** The text of the phone account tip: who is signed in with the role, then the AI+ state line when there is one */
+export function accountTipText(user: Pick<AuthUser, 'username' | 'role' | 'canManageBanks'>, aiTip: string | null): string {
+  const who = t('nav.accountLabel', { name: user.username, role: roleText(user) });
+  return joinAccountTip(who, aiTip);
+}
+
 /** The toggle's label: it names the look a press switches to */
 function themeLabelOf(dark: boolean): string {
   return t(dark ? 'nav.themeToLight' : 'nav.themeToDark');
+}
+
+/**
+ * v2.1 / v2.2: the light / dark toggle (moon when dark, sun when light). One press switches the look and saves the same
+ * preference Settings uses. The shell's top bar and the quiz page's top row both use it (the quiz has no shell); the id lets
+ * `refreshThemeButton` redraw whichever one is on the screen.
+ */
+export function themeButton(extraClass = ''): HTMLButtonElement {
+  const dark = isDark();
+  const label = themeLabelOf(dark);
+  return h('button', {
+    class: 'icon-btn theme-btn' + (extraClass ? ' ' + extraClass : ''), id: 'theme-btn', type: 'button', 'aria-label': label, title: label,
+    onclick: () => {
+      updateSettings({ theme: toggledTheme(S.settings.theme, isDark()) }, render)
+        .catch((e: unknown) => toast(t('act.settings.saveFailed', { reason: e instanceof Error ? e.message : String(e) }), 6000));
+    },
+  }, icon(dark ? ICONS.moon : ICONS.sun));
 }
 
 /** Redraws the top bar's theme toggle in place (the system theme changed while "follow system" is saved); no page render */

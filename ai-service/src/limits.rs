@@ -334,7 +334,7 @@ pub const DEFS: [LimitDef; 36] = [
     LimitDef {
         key: "paceTpm",
         column: "pace_tpm",
-        default: 240_000,
+        default: 230_000,
         min: 1000,
         max: 100_000_000,
     },
@@ -808,7 +808,7 @@ mod tests {
     #[test]
     fn the_v19_pacing_limits_have_defaults_ranges_and_an_effective_value() {
         let l = Limits::default();
-        assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 240_000));
+        assert_eq!((l.pace_on, l.pace_rpm, l.pace_tpm), (1, 13, 230_000));
         for (k, ok, bad) in [
             ("paceOn", 0, 2),
             ("paceRpm", 10_000, 10_001),
@@ -837,7 +837,7 @@ mod tests {
             .expect("ok");
         assert_eq!(
             (free.pace_on, free.pace_rpm, free.pace_tpm),
-            (1, 13, 240_000)
+            (1, 13, 230_000)
         );
     }
 
