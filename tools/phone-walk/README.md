@@ -188,3 +188,34 @@ into the output folder, passed or not; a check that cannot run (no AI job on the
 | W-V22-MS | AI settings, model rows: every strength dropdown has Default (empty value) first, its text says in brackets that no parameter is sent, fits the row and the screen |
 | W-V22-GJ | AI settings > AI bank tab: the jobs list is a paged table (search, sort, pager when more than 10 jobs), cards on phones, no sideways overflow; the details toggle opens the details (several fields, inside the screen) and closes them again |
 | W-V22-FT | Footer disclaimer on Home and Settings: centered (equal gaps) when it fits on one line; when it wraps it is not wider than the page and reads left to right; the shutdown button, when shown, is centered |
+
+## v2.3 checks
+
+`checks_v23.py` (group `g_v23`, registered at the end of `checks.py`; run alone with `--only 'W-V23-*'`), zh / en / ja. AI Chat is
+laid out like a chat app: `#/ai` always opens a new chat, the history is a drawer behind the menu button (`#ai-drawer-btn`) on
+phones (< 720 px) and an always-visible sidebar (`aside.ai-list`) on tablets / desktops. Screenshots are saved as in v2.2.
+
+| Check | What |
+|---|---|
+| W-V23-EN | `#/ai` opens a new chat at 393 / 360 / 320 px, 768 and 1280: address `#/ai/new`, greeting and composer on screen, no history list on a phone (menu button shown), the sidebar on a tablet / desktop (no menu button) |
+| W-V23-DR | Phone drawer: the menu button opens it, width about min(320, 82 %), inside the screen, nearly full height, dialog semantics (`role`, `aria-modal`, label), focus on the drawer itself (not the search box), a backdrop and a free strip beside it; a backdrop tap, Esc and the back button each close it (back stays on AI Chat), the focus returns to the menu button |
+| W-V23-SE | The search box (`#ai-search`) filters the rows live and case-insensitively, a made-up word leaves no row, clearing restores every row (393 and 1280) |
+| W-V23-MEM | The memory row (`#ai-mem-open`) opens the memories view (the phone drawer closes), the back-to-chat control is 44 px high and inside the screen and returns to the conversation |
+| W-V23-HD | Phone chat header row (new chat and an open chat; the administrator in free mode too): menu button, title, free-mode tag, new-chat and more buttons (`#ai-chat-more`, only for an existing chat) without overlap or overflow at 320 px, 44 px targets, row at most 44 px high |
+| W-V23-SB | Tablet 768 / desktop 1280: the sidebar is visible and inside the screen (240 / 272 px), no menu button, search box, new chat button, memory row, rows with group headings and a row menu button (`#ai-cmenu-<id>`) each |
+| W-V23-DL | Delete from the phone drawer: the confirm dialog keeps Tab and Esc (the drawer does not take them); deleting the open chat or all chats ends on a clean new chat whose address stays `#/ai/new` after the drawer closes and after a reload, never an error; the red items have no shadow |
+| W-V23-GONE | A chat id that no longer exists opens a real new-chat draft (`#/ai/new`) without an error, also after opening and closing the drawer |
+| W-V23-RO | A paused (read-only) user: the latest chat opens, no new-chat button in the header, the paused line is shown, no greeting |
+| W-V23-FW | Closing the drawer leaves no dead forward entry (Forward twice, then Back, leaves AI Chat) |
+| W-V23-KB | The drawer's bottom follows the keyboard height (`--kb`) |
+| W-V23-LS | Phones turned sideways (568x320, 667x375): the whole drawer scrolls as one, Delete all and the GitHub line are reachable |
+| W-V23-LT | "Jump to latest" scrolls to the end and the focus goes to the message list, never to the input |
+| W-V23-CTR | An empty new chat: greeting, composer and reply-language hint are one group centred in the visible area under the chat head (composer centre in the middle third, greeting above, hint below, no line above the composer, same background as the conversation), above an emulated keyboard (`--vvh` / `--kb`); an open chat with messages has the composer at the bottom |
+| W-V23-CMP | Composer growth: empty = one compact pill row (input and send on one line, fully rounded); a long line = expanded layout (input at the full width above the controls row, radius 16-32 px, focus kept); many lines grow it up to 8 lines / 40 % of the visible height, then it scrolls inside; clearing returns to the compact row (393, 320, 1280) |
+| W-V23-NT | The administrator notice is under the composer on one line at 375 / 393 / 430 px, and not in the drawer |
+
+W-V22-AB also checks the top bar's brand: the word Xexam without the logo icon on phones, with it on wider screens.
+
+Older checks that assumed the list-first phone flow or the Chats / Memory tabs now open the drawer first (`open_sidebar`) and use
+the memory row (`open_memories`), both in `checks.py`: W-CH-2 (phone header row instead of the title row), W-CH-4, W-CH-5,
+W-CH-82 and W-CH-83.

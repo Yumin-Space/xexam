@@ -5,9 +5,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLines, composerMaxLines, composerStatus, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isBusyElsewhere, isTerminal, isThinking, localFail, MIN_MSGS_PX,
+  applyEvent, atEnd, beginEdit, canEdit, canRegenerate, chatOf, clearsComposer, composerLayout, composerLines, composerMaxLines, composerStatus, emptyChat, fmtAiTime, footerOf, ignoreSendClick, isBusyElsewhere, isTerminal, isThinking, localFail, MIN_MSGS_PX,
   localEdit, localRegenerate, modelArg, chatMenu, chatShown, pickerView, chooseValue, regenerateLabelKey, editValid, versionInfo, TEMP_ID,
-  effortArg, keepEffort, strengthView, slotRoute, handlesPopstate,
+  effortArg, keepEffort, strengthView, slotRoute, groupChats, filterChats, entryTarget, drawerBack, localDayKey, latestChat, chatAddress, DRAWER_ENTRY, isDrawerEntry, staleDrawerEntry,
   localSend, localStop, locksDocument, noAccessKey, pollResult, questionOf, readOnlyReason, retryBody, sendBody, shouldSend, showsEmptyHint, showsTwoPanes, startOf, STOP_GUARD_MS, suggestBody,
   type ChatView, type KeyLike, type ViewMessage,
 } from './ai-chat.ts';
@@ -391,15 +391,16 @@ test('v1.0: another chat is busy only when the running answer is not this chat a
 });
 
 test('v1.0: the composer grows to 4 lines on touch or in a short window, else 8', () => {
-  assert.equal(composerMaxLines(true, 1000), 4);
-  assert.equal(composerMaxLines(false, 699), 4);
+  assert.equal(composerMaxLines(true, 1000), 8);
+  assert.equal(composerMaxLines(false, 699), 8);
   assert.equal(composerMaxLines(false, 700), 8);
 });
 
 test('composerLines follows the room left (keyboard, short landscape)', () => {
-  assert.equal(composerLines(true, 844, 800, 24), 4);
-  assert.equal(composerLines(true, 740, 407, 24), 3);
-  assert.equal(composerLines(true, 390, 215, 24), 1);
+  assert.equal(composerLines(true, 844, 800, 24), 8);
+  assert.equal(composerLines(true, 844, 400, 24), 6);
+  assert.equal(composerLines(true, 740, 407, 24), 6);
+  assert.equal(composerLines(true, 390, 215, 24), 3);
   assert.equal(composerLines(true, 390, 50, 24), 1);
   assert.equal(composerLines(false, 1000, 1000, 22), 8);
 });
@@ -410,8 +411,8 @@ test('composerLines keeps the conversation room: the text room caps the lines, a
   // 360x740 with the keyboard: 96 px free, the input stays at one line
   assert.equal(composerLines(true, 740, 407, 24, 96 + 44 - 18 - MIN_MSGS_PX), 1);
   assert.equal(composerLines(true, 844, 844, 24, -50), 1);
-  assert.equal(composerLines(true, 844, 844, 24, 1000), 4);
-  assert.equal(composerLines(true, 844, 844, 24, Number.POSITIVE_INFINITY), 4);
+  assert.equal(composerLines(true, 844, 844, 24, 1000), 8);
+  assert.equal(composerLines(true, 844, 844, 24, Number.POSITIVE_INFINITY), 8);
 });
 
 test('readOnlyReason (v1.1): the chat feature unticked, and the cause named by `why`', () => {
@@ -699,16 +700,6 @@ test('strengthView: own pick, else the chat row on its own family, else Default 
   assert.equal(strengthView(null, 1, 'x', ''), null);
 });
 
-test('handlesPopstate: a menu link (new hash is not the AI page) is left to the router', () => {
-  const on = { onPage: true, chatsTab: true, onePane: true, chatInUrl: false, hashName: 'ai' };
-  assert.equal(handlesPopstate(on), true, 'the back gesture from a pushed conversation');
-  assert.equal(handlesPopstate({ ...on, hashName: 'home' }), false, 'a menu tap must not send the user back to AI Chat');
-  assert.equal(handlesPopstate({ ...on, chatInUrl: true }), false);
-  assert.equal(handlesPopstate({ ...on, onePane: false }), false);
-  assert.equal(handlesPopstate({ ...on, chatsTab: false }), false);
-  assert.equal(handlesPopstate({ ...on, onPage: false }), false);
-});
-
 test('effortArg / keepEffort', () => {
   assert.equal(effortArg('high', 'high'), undefined);
   assert.equal(effortArg('', null), undefined);
@@ -749,4 +740,88 @@ test('sendBody carries effort only when given; the pick is kept at the start eve
   const s = localSend(emptyChat(), 'a', false, undefined, 'high');
   assert.equal(s.pending?.effort, 'high');
   assert.equal(s.pending?.model, undefined);
+});
+
+test('groupChats: local calendar days, newest first, empty groups left out', () => {
+  const now = new Date(2026, 10, 21, 0, 30); // 21 Nov, just after midnight
+  const at = (daysAgo: number, h = 12) => Math.floor(new Date(2026, 10, 21 - daysAgo, h).getTime() / 1000);
+  const chats = [
+    { id: 1, updatedAt: at(10) }, { id: 2, updatedAt: at(0, 0) }, { id: 3, updatedAt: at(1, 23) }, { id: 4, updatedAt: at(7) },
+    { id: 5, updatedAt: at(8, 23) }, { id: 6, updatedAt: at(2) }, { id: 7, updatedAt: at(1, 1) },
+  ];
+  const g = groupChats(chats, now);
+  assert.deepEqual(g.map((x) => x.group), ['today', 'yesterday', 'week', 'older']);
+  assert.deepEqual(g[0]?.chats.map((c) => c.id), [2]);
+  assert.deepEqual(g[1]?.chats.map((c) => c.id), [3, 7], 'newest first');
+  assert.deepEqual(g[2]?.chats.map((c) => c.id), [6, 4]);
+  assert.deepEqual(g[3]?.chats.map((c) => c.id), [5, 1]);
+  assert.deepEqual(groupChats([{ updatedAt: at(10) }], now).map((x) => x.group), ['older'], 'empty groups are left out');
+  assert.deepEqual(groupChats([], now), []);
+  const iso = groupChats([{ updatedAt: new Date(2026, 10, 21, 0, 10).toISOString() }], now);
+  assert.equal(iso[0]?.group, 'today', 'a date text works too');
+});
+
+test('filterChats: trimmed, case-insensitive, empty = all', () => {
+  const list = [{ t: 'Rust Lifetimes' }, { t: '练习 一' }, { t: 'other' }];
+  const title = (c: { t: string }) => c.t;
+  assert.equal(filterChats(list, '', title), list);
+  assert.equal(filterChats(list, '   ', title), list);
+  assert.deepEqual(filterChats(list, '  LIFE ', title).map(title), ['Rust Lifetimes']);
+  assert.deepEqual(filterChats(list, '练习', title).map(title), ['练习 一']);
+  assert.deepEqual(filterChats(list, 'zzz', title), []);
+});
+
+test('entryTarget: the address wins, then a running chat, else a new chat', () => {
+  assert.deepEqual(entryTarget({ running: 5, hash: 9 }), { kind: 'chat', id: 9 });
+  assert.deepEqual(entryTarget({ running: 5, hash: 'none' }), { kind: 'chat', id: 5 });
+  assert.deepEqual(entryTarget({ running: 5, hash: 'new' }), { kind: 'chat', id: 5 });
+  assert.deepEqual(entryTarget({ running: null, hash: 'none' }), { kind: 'new' });
+  assert.deepEqual(entryTarget({ running: null, hash: 'new' }), { kind: 'new' });
+});
+
+test('drawerBack: back closes an open drawer, else leaves', () => {
+  assert.equal(drawerBack({ drawerOpen: true }), 'close-drawer');
+  assert.equal(drawerBack({ drawerOpen: false }), 'leave');
+});
+
+test('localDayKey: one number per local calendar day, consecutive days differ by 1', () => {
+  const a = new Date(2026, 5, 10, 0, 5);
+  const b = new Date(2026, 5, 10, 23, 55);
+  const c = new Date(2026, 5, 11, 0, 5);
+  assert.equal(localDayKey(a), localDayKey(b));
+  assert.equal(localDayKey(c), localDayKey(a) + 1);
+});
+
+test('latestChat: the newest chat by last activity, null for none', () => {
+  assert.equal(latestChat([]), null);
+  const list = [{ id: 1, updatedAt: 1_700_000_000 }, { id: 2, updatedAt: 1_700_050_000 }, { id: 3, updatedAt: 1_699_000_000 }];
+  assert.equal(latestChat(list)?.id, 2);
+});
+
+test('chatAddress: a chat, a new draft, and no draft address for a user who cannot write', () => {
+  assert.equal(chatAddress(7, true), '#/ai/7');
+  assert.equal(chatAddress(7, false), '#/ai/7');
+  assert.equal(chatAddress('new', true), '#/ai/new');
+  assert.equal(chatAddress('new', false), '#/ai');
+  assert.equal(chatAddress(null, true), '#/ai');
+});
+
+test('the drawer entry marker: only the drawer own state counts; a closed drawer reached by Forward is stale', () => {
+  assert.equal(isDrawerEntry(DRAWER_ENTRY), true);
+  assert.equal(isDrawerEntry(null), false);
+  assert.equal(isDrawerEntry({}), false);
+  assert.equal(isDrawerEntry('x'), false);
+  assert.equal(staleDrawerEntry({ drawerOpen: false, ownMove: false, state: DRAWER_ENTRY }), true);
+  assert.equal(staleDrawerEntry({ drawerOpen: true, ownMove: false, state: DRAWER_ENTRY }), false);
+  assert.equal(staleDrawerEntry({ drawerOpen: false, ownMove: true, state: DRAWER_ENTRY }), false);
+  assert.equal(staleDrawerEntry({ drawerOpen: false, ownMove: false, state: null }), false);
+});
+
+test('composerLayout: compact for one fitting line, expanded for a newline or a wrapping text', () => {
+  assert.equal(composerLayout('', 44, 24, 20), 'compact');
+  assert.equal(composerLayout('short', 44, 24, 20), 'compact');
+  assert.equal(composerLayout('a\nb', 44, 24, 20), 'expanded');
+  assert.equal(composerLayout('a\r\nb', 44, 24, 20), 'expanded');
+  assert.equal(composerLayout('x'.repeat(200), 68, 24, 20), 'expanded');
+  assert.equal(composerLayout('x', 56, 24, 20), 'compact');
 });

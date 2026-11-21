@@ -3,7 +3,7 @@
 // while the page is forced light. No DOM, so it runs under `node --test`.
 
 export const LIGHT_BAR = '#F6F8FA';
-export const DARK_BAR = '#0D1117';
+export const DARK_BAR = '#000000';
 
 export type ThemeChoice = 'system' | 'light' | 'dark';
 

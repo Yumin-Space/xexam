@@ -7,7 +7,7 @@ rows, the GitHub line, the list header, the title row, the top bar and the memor
 scrolls (up / down) and never sideways; the conversation keeps the v1.1 rule (a vertical drag on its head is cancelled, a
 sideways one is left to the browser). Real CDP touch swipes move no frame, no document scroll and no visual viewport.
 
-W-CH-83 (A-OWNER-83): the AI Chat title row (title, free-mode tag, Chats / Memory) and the top bar (brand, account label,
+W-CH-83 (A-OWNER-83): the AI Chat header (v2.3 phone: menu button, title, free-mode tag, new chat, more; wider: title row) and the top bar (brand, account label,
 menu button) never overlap or spill, in zh / en / ja, for an administrator with and without free mode and for a user, at
 text zoom 1, 1.25 and 1.5 (iOS text size).
 
@@ -20,7 +20,7 @@ iOS layout (the window keeps its height; --vvh / --kb / html.kb-open as utils/do
 """
 import time
 
-from checks import CHECKS_JS, LANGS, goto, until  # noqa: F401
+from checks import CHECKS_JS, LANGS, ai_send, goto, open_memories, open_sidebar, until  # noqa: F401
 
 SIZES = [(320, 640), (360, 740), (375, 667), (390, 844), (393, 852), (402, 874), (430, 932)]
 GUARD_SIZES = [(320, 640), (375, 667), (393, 852), (430, 932)]
@@ -30,7 +30,7 @@ GUARD_SIZES = [(320, 640), (375, 667), (393, 852), (430, 932)]
 ROWS = """(n => { const ul = document.querySelector('.ai-chats'); if (!ul || !ul.firstElementChild) return -1;
   const rows = Array.from(ul.children); rows.slice(n).forEach(r => r.remove());
   for (let i = ul.children.length; i < n; i++) ul.appendChild(rows[0].cloneNode(true));
-  document.querySelectorAll('.ai-list-body > :not(.ai-chats):not(.gh-line)').forEach(e => { e.style.display = 'none' });
+  document.querySelectorAll('.ai-list-body > :not(.ai-chats-wrap):not(.gh-line)').forEach(e => { e.style.display = 'none' });
   return ul.children.length })"""
 
 # A synthetic, cancelable one-finger drag: touchstart and three moves of (dx, dy) each at a point of `sel` ('top', 'mid' or
@@ -56,8 +56,6 @@ STATE = """(() => { const r = s => { const e = document.querySelector(s); if (!e
     st: lb ? lb.scrollTop : -1, sl: lb ? lb.scrollLeft : -1, over: lb ? lb.scrollHeight - lb.clientHeight : -1 } })()"""
 
 DIRS = (('up', 0, -20), ('down', 0, 20), ('left', -20, 0), ('right', 20, 0), ('diag', 14, -14), ('diag2', -14, 14))
-MEMORY_TAB = """(() => { const b = ['ai-tab', 'ai-ltab', 'ai-mtab'].map(p => document.getElementById(p + '-memory')).find(e => e && e.offsetParent);
-  if (b) b.click(); return !!b })()"""
 
 
 def touch_swipe(d, x, y, dx, dy, steps=8):
@@ -77,6 +75,8 @@ def fixed_case(rc, lang, theme, size):
     rc.chat_id('sam')
     problems = []
     goto(d, '#/ai', 2.0)
+    open_sidebar(d)     # v2.3: the history list is the phone drawer
+    phone_drawer = d.js("!!document.getElementById('ai-drawer-btn') && document.getElementById('ai-drawer-btn').getClientRects().length > 0")
     if d.js_call(ROWS, 5) != 5:
         rc.rec('W-CH-82', 'ai', 'fixed-frame', 'sam', size, lang, theme, False, 'no history list on screen', d)
         return
@@ -91,20 +91,31 @@ def fixed_case(rc, lang, theme, size):
              ('.ai-list-head', 'top', 'list header'), ('.ai-head', 'top', 'title row'), ('.topbar', 'top', 'top bar'))
     for sel, at, name in spots:
         for dn, dx, dy in DIRS:
-            if d.js_call(DRAG, sel, at, dx, dy) is not True:
+            res = d.js_call(DRAG, sel, at, dx, dy)
+            if res is None and name in ('list header', 'title row'):
+                break       # v2.3: no such element on a phone any more (the drawer has no head row, the title row is gone)
+            if res is not True:
                 problems.append('%s: %s drag not cancelled' % (name, dn))
     # Real touch swipes on the owner's spot: nothing moves
     before = d.js(STATE)
     p = d.js("""(() => { const ul = document.querySelector('.ai-chats').getBoundingClientRect(); const gh = document.querySelector('.ai-list-body > .gh-line').getBoundingClientRect();
       return [innerWidth / 2, (ul.bottom + gh.top) / 2] })()""")
     for dn, dx, dy in DIRS:
+        if dn == 'left' and phone_drawer:
+            continue        # v2.3: a left swipe of the phone drawer closes it (checked below)
         touch_swipe(d, p[0], p[1], dx * 6, dy * 6)
     after = d.js(STATE)
     for k in ('frame', 'win', 'st', 'sl'):
         if before[k] != after[k]:
             problems.append('swipes on the empty area moved %s (%s -> %s)' % (k, before[k], after[k]))
+    if phone_drawer:
+        touch_swipe(d, p[0], p[1], -120, 0)
+        time.sleep(0.8)
+        if d.js("document.getElementById('ai-drawer-btn').getAttribute('aria-expanded')") != 'false':
+            problems.append('a left swipe did not close the drawer')
     # A long list scrolls up / down, never sideways
     goto(d, '#/ai', 1.5)
+    open_sidebar(d)
     d.js_call(ROWS, 40)
     time.sleep(0.3)
     d.js("document.querySelector('.ai-list-body').scrollTop = 40")
@@ -118,7 +129,7 @@ def fixed_case(rc, lang, theme, size):
     r = d.rect('.ai-list-body', 0, scroll=False)
     touch_swipe(d, r['cx'], r['cy'], 0, -200)
     mid = d.js(STATE)
-    touch_swipe(d, r['cx'], r['cy'], -160, 4)
+    touch_swipe(d, r['cx'], r['cy'], 160 if phone_drawer else -160, 4)     # v2.3: a left swipe closes the drawer, so it swipes right
     after = d.js(STATE)
     if mid['st'] <= before['st']:
         problems.append('long list did not scroll (%s -> %s)' % (before['st'], mid['st']))
@@ -126,13 +137,14 @@ def fixed_case(rc, lang, theme, size):
         problems.append('long list swipes moved the frame or went sideways')
     # Memory: a fixed frame too
     goto(d, '#/ai', 1.5)
-    d.js(MEMORY_TAB)
-    time.sleep(0.6)
+    open_memories(d, 0.6)
     for sel, at, name in (('.ai-mem', 'mid', 'memory pane'), ('.ai-head', 'top', 'memory title row')):
         for dn, dx, dy in DIRS:
             res = d.js_call(DRAG, sel, at, dx, dy)
             follow = d.js("(() => { const e = document.querySelector('.ai-mem'); return !!e && e.scrollHeight - e.clientHeight >= 4 })()")
             if res is None:
+                if name != 'memory pane':
+                    break       # v2.3: the memory header is the chat-style header row, not the old title row
                 problems.append('%s: not on screen' % name)
                 break
             if res is not True and not (follow and dn in ('up', 'down', 'diag', 'diag2') and name == 'memory pane'):
@@ -155,11 +167,16 @@ HEAD_JS = """(() => { const vis = e => e && e.getClientRects().length && getComp
   const pairs = (row, parts, tag) => { const rr = R(row); for (let i = 0; i < parts.length; i++) { const a = R(parts[i]);
     if (a.left < rr.left - 0.5 || a.right > rr.right + 0.5) bad.push(tag + ' outside: ' + (parts[i].className || parts[i].tagName));
     for (let j = i + 1; j < parts.length; j++) if (hit(a, R(parts[j]))) bad.push(tag + ' overlap: ' + (parts[i].className || parts[i].tagName) + ' / ' + (parts[j].className || parts[j].tagName)); } };
-  const head = document.querySelector('.page-ai .ai-head');
+  // v2.3: a phone has the chat header row (menu button, title, free-mode tag, new chat, more); wider screens keep the title row
+  const phoneHead = document.querySelector('.page-ai .ai-conv-head');
+  const head = innerWidth < 720 && vis(phoneHead) ? phoneHead : document.querySelector('.page-ai .ai-head');
   if (vis(head)) {
-    pairs(head, [head.querySelector('.ai-title h1'), head.querySelector('.ai-mode-tag'), ...head.querySelectorAll('.ai-tabs button')].filter(vis), 'title row');
-    for (const e of [...head.querySelectorAll('.ai-mode-tag > [aria-hidden], .ai-tab-l')].filter(vis))
-      if (R(e).right > R(e.closest('button, .ai-mode-tag')).right + 0.5) bad.push('title row: cut ' + e.className);
+    const isChat = head === phoneHead;
+    const parts = isChat ? ['#ai-drawer-btn', '.ai-conv-title, #ai-conv-t, h2, h1', '.ai-mode-tag', '#ai-new', '#ai-chat-more'].map(q => head.querySelector(q)).filter(vis)
+      : [head.querySelector('.ai-title h1'), head.querySelector('.ai-mode-tag')].filter(vis);
+    pairs(head, parts, 'title row');
+    for (const e of [...head.querySelectorAll('.ai-mode-tag > [aria-hidden]')].filter(vis))
+      if (R(e).right > R(e.closest('.ai-mode-tag')).right + 0.5) bad.push('title row: cut ' + e.className);
   }
   const bar = document.querySelector('.topbar');
   if (vis(bar)) {
@@ -241,7 +258,16 @@ def kb_moved(a, b):
 
 def kb_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
-    goto(d, '#/ai/%d' % rc.chat_id('sam'), 2.2)
+    cid = rc.chat_id('sam')
+    if 'kb-long-chat' not in rc.cache:
+        # the chat must overflow a tall phone screen: two more made-up exchanges (once per run)
+        rc.cache['kb-long-chat'] = True
+        for text in ('Please list three more tips about knife care.', 'And three tips about pan care, in short lines.'):
+            try:
+                ai_send(rc.walk.base, rc.walk.stack.cookie('sam'), text, 'zh', cid)
+            except Exception:
+                break
+    goto(d, '#/ai/%d' % cid, 2.2)
     kb = round(size[1] * 0.4)
     problems, notes = [], []
     first = d.js(KB_SNAP)

@@ -502,12 +502,6 @@ export function strengthView(s: AiSettings | null, connId: number | null, model:
   return { family: conn.effortFamily, levels, options: [EFFORT_DEFAULT, ...levels], selected: own ?? row ?? EFFORT_DEFAULT };
 }
 
-/** Whether the AI page's popstate listener acts: only on the chat list of a one-pane phone, with no chat in the address,
- *  and only while the NEW hash is still the AI page (a menu link changes the hash and popstate fires before hashchange) */
-export function handlesPopstate(s: { onPage: boolean; chatsTab: boolean; onePane: boolean; chatInUrl: boolean; hashName: string }): boolean {
-  return s.onPage && s.chatsTab && s.onePane && !s.chatInUrl && s.hashName === 'ai';
-}
-
 /** The strength a request carries: undefined = nothing changed, null = reset to the Chat row, 'default' = Default (nothing
  *  is sent to the model), else the level */
 export function effortArg(selected: string, stored: string | null | undefined): string | null | undefined {
@@ -752,14 +746,25 @@ export function isBusyElsewhere(running: { chatId: number } | null | undefined, 
   return running != null && !sendingHere && running.chatId !== openChatId;
 }
 
-/** How many lines the composer's input grows to before it scrolls: 4 on touch screens or in a window under 700 px tall, else 8 */
-export const composerMaxLines = (coarsePointer: boolean, windowHeight: number): number => (coarsePointer || windowHeight < 700 ? 4 : 8);
+/** How many lines the composer's input grows to before it scrolls (v2.3: 8 everywhere; the viewport caps it below) */
+export const composerMaxLines = (_coarsePointer: boolean, _windowHeight: number): number => 8;
+
+/**
+ * v2.3: the composer's box is ONE compact row (brain, input, send) while the text is a single line that fits there, and the
+ * expanded layout (text on top at the full width, the controls in a row under it) as soon as it holds a newline or would wrap
+ * in the compact row. `scrollHeight` is the input's content height measured while it is laid out compact (padding included):
+ * more than one line plus half a line of room means the text wraps.
+ */
+export function composerLayout(value: string, scrollHeight: number, lineHeight: number, paddingPx: number): 'compact' | 'expanded' {
+  if (value.includes('\n') || value.includes('\r')) return 'expanded';
+  return scrollHeight > paddingPx + Math.max(1, lineHeight) * 1.5 ? 'expanded' : 'compact';
+}
 
 /** The full-height chat screen keeps at least this much of the conversation (px) visible while the input grows */
 export const MIN_MSGS_PX = 100;
 
 /**
- * How many lines the input may grow to given the room left: at most `composerMaxLines`, never more than about 22% of the
+ * How many lines the input may grow to given the room left: at most `composerMaxLines`, never more than about 40% of the
  * visual viewport, and never more than `textRoomPx` (the px its text may take so that MIN_MSGS_PX of the conversation stay
  * visible above the composer: the open keyboard, a short landscape screen); at least 1.
  */
@@ -767,7 +772,90 @@ export function composerLines(coarsePointer: boolean, windowHeight: number, view
   textRoomPx = Number.POSITIVE_INFINITY): number {
   const lh = Math.max(1, lineHeight);
   const cap = composerMaxLines(coarsePointer, windowHeight);
-  const room = Math.floor((0.22 * viewportHeight) / lh);
+  const room = Math.floor((0.4 * viewportHeight) / lh);
   const fit = Number.isFinite(textRoomPx) ? Math.floor(textRoomPx / lh) : cap;
   return Math.max(1, Math.min(cap, room, fit));
 }
+
+// ---------------------------------------------------------------- v2.3: the chat sidebar / drawer
+
+/** The history groups of the sidebar, newest first */
+export type ChatGroup = 'today' | 'yesterday' | 'week' | 'older';
+
+/** The time of a chat's last activity in ms: a number is unix seconds (as the server sends it), a string is a date text */
+const activityMs = (v: string | number): number => (typeof v === 'number' ? v * 1000 : Date.parse(v));
+
+/** The local calendar day number (days since an arbitrary epoch, DST-safe) of a date */
+const dayNumber = (d: Date): number => Math.round(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86_400_000);
+
+/**
+ * The chats grouped by the LOCAL calendar day of their last activity: today, yesterday, week (2-7 days ago), older. Newest
+ * first inside a group, empty groups left out. A chat with an unreadable time goes to `older`; a future time counts as today.
+ */
+export function groupChats<T extends { updatedAt: string | number }>(chats: T[], now: Date): Array<{ group: ChatGroup; chats: T[] }> {
+  const today = dayNumber(now);
+  const buckets: Record<ChatGroup, Array<{ chat: T; ms: number }>> = { today: [], yesterday: [], week: [], older: [] };
+  for (const chat of chats) {
+    const ms = activityMs(chat.updatedAt);
+    let group: ChatGroup = 'older';
+    if (Number.isFinite(ms)) {
+      const age = today - dayNumber(new Date(ms));
+      group = age <= 0 ? 'today' : age === 1 ? 'yesterday' : age <= 7 ? 'week' : 'older';
+    }
+    buckets[group].push({ chat, ms: Number.isFinite(ms) ? ms : Number.NEGATIVE_INFINITY });
+  }
+  const order: ChatGroup[] = ['today', 'yesterday', 'week', 'older'];
+  return order
+    .filter((g) => buckets[g].length > 0)
+    .map((g) => ({ group: g, chats: buckets[g].slice().sort((a, b) => b.ms - a.ms).map((x) => x.chat) }));
+}
+
+/** The chats whose title contains the query: trimmed, case-insensitive; an empty query keeps all of them */
+export function filterChats<T>(chats: T[], query: string, title: (c: T) => string): T[] {
+  const q = query.trim().toLocaleLowerCase();
+  if (q === '') return chats;
+  return chats.filter((c) => title(c).toLocaleLowerCase().includes(q));
+}
+
+/** Entering AI Chat: a chat id in the address wins, then a running chat, else a NEW chat (never a list) */
+export function entryTarget(s: { running: number | null; hash: 'none' | 'new' | number }): { kind: 'chat'; id: number } | { kind: 'new' } {
+  if (typeof s.hash === 'number') return { kind: 'chat', id: s.hash };
+  if (s.running != null) return { kind: 'chat', id: s.running };
+  return { kind: 'new' };
+}
+
+/** The phone's back button: with the drawer open it closes the drawer, else it leaves AI Chat like any page */
+export function drawerBack(s: { drawerOpen: boolean }): 'close-drawer' | 'leave' {
+  return s.drawerOpen ? 'close-drawer' : 'leave';
+}
+
+/** The local calendar day of a date as a number: the sidebar's list signature carries it, so the day groups are drawn again
+ *  once midnight has passed */
+export const localDayKey = (d: Date): number => dayNumber(d);
+
+/** The most recently active chat (what a read-only user, who cannot start a new chat, opens on entering), or null */
+export function latestChat<T extends { updatedAt: string | number }>(chats: T[]): T | null {
+  return groupChats(chats, new Date())[0]?.chats[0] ?? null;
+}
+
+/**
+ * The address of the chat screen: `#/ai/<id>` for a chat, `#/ai/new` for a new chat not sent yet, plain `#/ai` when there is no
+ * chat to name (a read-only user without chats cannot start one, so no draft address). The one place the address is built, so
+ * the drawer's history entry can be made to agree with the open chat again (a chat deleted while the drawer was open).
+ */
+export function chatAddress(id: number | 'new' | null, canWrite: boolean): string {
+  if (typeof id === 'number') return `#/ai/${id}`;
+  return id === 'new' && canWrite ? '#/ai/new' : '#/ai';
+}
+
+/** The state object of the history entry the phone drawer pushes (its marker tells a dead forward entry from a real page) */
+export const DRAWER_ENTRY = { aiDrawer: true } as const;
+
+/** A history state is the drawer's own entry */
+export const isDrawerEntry = (state: unknown): boolean =>
+  typeof state === 'object' && state !== null && (state as { aiDrawer?: unknown }).aiDrawer === true;
+
+/** A popstate landed on the drawer's entry while the drawer is closed and this page did not make the move itself: the forward
+ *  button reached the entry a closed drawer left behind. It does nothing useful, so the page steps back over it again */
+export const staleDrawerEntry = (s: { drawerOpen: boolean; ownMove: boolean; state: unknown }): boolean =>
+  !s.drawerOpen && !s.ownMove && isDrawerEntry(s.state);

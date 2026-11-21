@@ -9,7 +9,7 @@
    hairlines inside a block, soft hover fills, small tinted tags and callouts. Radii 6 / 8 / 10 / 12, spacing 4 / 8 / 12 / 16 / 24.
    Owner decisions (2026-11-11), keep them: the palette follows GitHub Light / Dark colorblind; the light page is GitHub's
    soft grey-white (#F6F8FA) with white blocks; the light primary button is navy (Primer blue-8 #0A3069), not the bright
-   blue; the dark theme is GitHub's near-black (canvas #0D1117, blocks #151B23) with a filled blue primary button. */
+   blue; the dark theme (v2.3): black page #000000, surfaces #212121, controls #303030, white-alpha hairlines, blue primary #3C6CF0. */
 
 :root {
   --sa-t: env(safe-area-inset-top); --sa-r: env(safe-area-inset-right); --sa-l: env(safe-area-inset-left);
@@ -153,45 +153,45 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     color-scheme: dark;
-    --page: #010409;
-    --sheet: #0D1117;
-    --card: #151B23;
-    --tint: #212830;
-    --line: #3D444D;
-    --ink: #F0F6FC;
-    --ink2: #C9D1D9;
-    --ink3: #9198A1;
-    --on-ink: #0D1117;
+    --page: #000000;
+    --sheet: #000000;
+    --card: #212121;
+    --tint: #303030;
+    --line: rgba(255, 255, 255, .15);
+    --ink: #FFFFFF;
+    --ink2: #B4B4B4;
+    --ink3: #9A9A9A;
+    --on-ink: #000000;
     --ink-hover: #FFFFFF;
-    --print: #4493F8;
-    --print-soft: rgba(56, 139, 253, .15);
-    --graphite: #C9D1D9;
-    --on-graphite: #0D1117;
-    --on-solid: #010409;
-    --success: #4493F8;
-    --success-soft: rgba(56, 139, 253, .15);
+    --print: #7098F6;
+    --print-soft: rgba(60, 108, 240, .2);
+    --graphite: #CFCFCF;
+    --on-graphite: #000000;
+    --on-solid: #000000;
+    --success: #7098F6;
+    --success-soft: rgba(60, 108, 240, .2);
     --warn: #F0883E;
     --warn-soft: rgba(219, 109, 40, .15);
     --mark: #D29922;
     --mnemo-bg: rgba(187, 128, 9, .15);
-    --scrim: rgba(1, 4, 9, .8);
-    --shadow: rgba(1, 4, 9, .85);
-    --line-soft: rgba(61, 68, 77, .7);
-    --hover: rgba(101, 108, 118, .2);
-    --hover-strong: rgba(101, 108, 118, .3);
-    --fill: #212830;
-    --seg-on: #2A313C;
-    --print-hover: #58A6FF;
-    --primary: #1F6FEB;
-    --primary-hover: #1158C7;
+    --scrim: rgba(0, 0, 0, .8);
+    --shadow: rgba(0, 0, 0, .5);
+    --line-soft: rgba(255, 255, 255, .15);
+    --hover: rgba(65, 65, 65, .5);
+    --hover-strong: rgba(80, 80, 80, .7);
+    --fill: #303030;
+    --seg-on: #454545;
+    --print-hover: #8FAEF8;
+    --primary: #3C6CF0;
+    --primary-hover: #2F58D0;
     --on-primary: #FFFFFF;
-    --print-ring: rgba(31, 111, 235, .45);
-    --scrim-soft: rgba(1, 4, 9, .6);
-    --shadow-xs: 0 1px 0 rgba(1, 4, 9, .4);
-    --shadow-sm: 0 1px 1px rgba(1, 4, 9, .6), 0 0 0 1px #3D444D;
-    --shadow-pop: 0 0 0 1px #3D444D, 0 6px 12px -3px rgba(1, 4, 9, .4), 0 6px 18px rgba(1, 4, 9, .4);
-    --field-line: #656C76;
-    --seg-on-line: #9198A1;
+    --print-ring: rgba(60, 108, 240, .45);
+    --scrim-soft: rgba(0, 0, 0, .6);
+    --shadow-xs: none;
+    --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .2);
+    --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .15), 0 8px 24px rgba(0, 0, 0, .5);
+    --field-line: rgba(255, 255, 255, .2);
+    --seg-on-line: #8A8A8A;
     --answer-right: #3FB950;
     --answer-right-soft: rgba(46, 160, 67, .15);
     --answer-wrong: #F0883E;
@@ -211,53 +211,53 @@
     --ai-ink: #FFFFFF;
     --ai-glow: rgba(255, 170, 60, .55);
     /* #E6EAF0 on #3A4250 is 8.4:1; the hairline ring sets it off from the dark sheet */
-    --ai-off-bg: #3A4250;
-    --ai-off-ink: #E6EAF0;
+    --ai-off-bg: #3F3F3F;
+    --ai-off-ink: #E6E6E6;
     --ai-off-ring: var(--line);
     --switch-knob: var(--ink);
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --page: #010409;
-  --sheet: #0D1117;
-  --card: #151B23;
-  --tint: #212830;
-  --line: #3D444D;
-  --ink: #F0F6FC;
-  --ink2: #C9D1D9;
-  --ink3: #9198A1;
-  --on-ink: #0D1117;
+  --page: #000000;
+  --sheet: #000000;
+  --card: #212121;
+  --tint: #303030;
+  --line: rgba(255, 255, 255, .15);
+  --ink: #FFFFFF;
+  --ink2: #B4B4B4;
+  --ink3: #9A9A9A;
+  --on-ink: #000000;
   --ink-hover: #FFFFFF;
-  --print: #4493F8;
-  --print-soft: rgba(56, 139, 253, .15);
-  --graphite: #C9D1D9;
-  --on-graphite: #0D1117;
-  --on-solid: #010409;
-  --success: #4493F8;
-  --success-soft: rgba(56, 139, 253, .15);
+  --print: #7098F6;
+  --print-soft: rgba(60, 108, 240, .2);
+  --graphite: #CFCFCF;
+  --on-graphite: #000000;
+  --on-solid: #000000;
+  --success: #7098F6;
+  --success-soft: rgba(60, 108, 240, .2);
   --warn: #F0883E;
   --warn-soft: rgba(219, 109, 40, .15);
   --mark: #D29922;
   --mnemo-bg: rgba(187, 128, 9, .15);
-  --scrim: rgba(1, 4, 9, .8);
-  --shadow: rgba(1, 4, 9, .85);
-  --line-soft: rgba(61, 68, 77, .7);
-  --hover: rgba(101, 108, 118, .2);
-  --hover-strong: rgba(101, 108, 118, .3);
-  --fill: #212830;
-  --seg-on: #2A313C;
-  --print-hover: #58A6FF;
-  --primary: #1F6FEB;
-  --primary-hover: #1158C7;
+  --scrim: rgba(0, 0, 0, .8);
+  --shadow: rgba(0, 0, 0, .5);
+  --line-soft: rgba(255, 255, 255, .15);
+  --hover: rgba(65, 65, 65, .5);
+  --hover-strong: rgba(80, 80, 80, .7);
+  --fill: #303030;
+  --seg-on: #454545;
+  --print-hover: #8FAEF8;
+  --primary: #3C6CF0;
+  --primary-hover: #2F58D0;
   --on-primary: #FFFFFF;
-  --print-ring: rgba(31, 111, 235, .45);
-  --scrim-soft: rgba(1, 4, 9, .6);
-  --shadow-xs: 0 1px 0 rgba(1, 4, 9, .4);
-  --shadow-sm: 0 1px 1px rgba(1, 4, 9, .6), 0 0 0 1px #3D444D;
-  --shadow-pop: 0 0 0 1px #3D444D, 0 6px 12px -3px rgba(1, 4, 9, .4), 0 6px 18px rgba(1, 4, 9, .4);
-  --field-line: #656C76;
-  --seg-on-line: #9198A1;
+  --print-ring: rgba(60, 108, 240, .45);
+  --scrim-soft: rgba(0, 0, 0, .6);
+  --shadow-xs: none;
+  --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .2);
+  --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .15), 0 8px 24px rgba(0, 0, 0, .5);
+  --field-line: rgba(255, 255, 255, .2);
+  --seg-on-line: #8A8A8A;
   --answer-right: #3FB950;
   --answer-right-soft: rgba(46, 160, 67, .15);
   --answer-wrong: #F0883E;
@@ -276,8 +276,8 @@
   --ai-3: #E2531A;
   --ai-ink: #FFFFFF;
   --ai-glow: rgba(255, 170, 60, .55);
-  --ai-off-bg: #3A4250;
-  --ai-off-ink: #E6EAF0;
+  --ai-off-bg: #3F3F3F;
+  --ai-off-ink: #E6E6E6;
   --ai-off-ring: var(--line);
   --switch-knob: var(--ink);
 }

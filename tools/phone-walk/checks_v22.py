@@ -3,7 +3,7 @@
 AI settings model rows, the AI jobs list and the centered footer. Every case takes screenshots into the output folder (rc.rec
 with the device), passed or not.
 
-  W-V22-AB   phone top bar: the account button shows the person icon, the compact AI+ badge and the short admin tag without any
+  W-V22-AB   phone top bar: the brand is the word Xexam without the logo icon (wider screens show the icon), the account button shows the person icon, the compact AI+ badge and the short admin tag without any
              overlap, the user name is hidden; a tap shows the name tip (closes on a tap elsewhere and on Esc); the menu button
              opens the menu; on a desktop width the name is shown and the button opens the menu
   W-V22-QT   quiz top row (practice and exam): the theme toggle is there, switches dark / light and back, and overlaps nothing
@@ -69,7 +69,8 @@ ACCT_JS = """const b = document.getElementById('acct-btn'); if (!b) return null;
   const nameEl = b.querySelector('.acct-name'), ico = b.querySelector('.acct-ico'), badge = b.querySelector('.ai-badge'), role = b.querySelector('.acct-role');
   const parts = [ico, badge, role].filter((e) => vis(e)); const bb = box(b);
   const others = ['#menu-btn', '#theme-btn', '.logo', '.brand'].map((s) => document.querySelector(s)).filter((e) => vis(e) && !b.contains(e));
-  return {nameShown: vis(nameEl) && box(nameEl).w > 1, icon: vis(ico), badge: vis(badge), role: vis(role),
+  const logo = document.querySelector('.top-brand .logo'), bname = document.querySelector('.top-brand .brand-name');
+  return {logoShown: vis(logo) && box(logo).w > 1, brandNameShown: vis(bname) && box(bname).w > 1, nameShown: vis(nameEl) && box(nameEl).w > 1, icon: vis(ico), badge: vis(badge), role: vis(role),
     inside: inView(bb), h: bb.h, w: bb.w, partOverlap: overlaps(parts), partsOut: parts.filter((e) => { const r = box(e); return r.l < bb.l - 0.5 || r.r > bb.r + 0.5; }).map(nm),
     barOverlap: overlaps([b].concat(others)), scrollW: b.scrollWidth, clientW: b.clientWidth, menuOpen: !!document.getElementById('nav-menu')};"""
 
@@ -93,6 +94,11 @@ def ab_case(rc, lang, theme, size):
         if phone(size):
             if a['nameShown']:
                 p.append('the user name is still shown on a phone')
+            # v2.3 (owner): the brand is the word "Xexam" only on a phone; the logo icon shows on wider screens
+            if a['logoShown']:
+                p.append('the logo icon is shown in the top bar of a phone')
+            if not a['brandNameShown']:
+                p.append('the brand name Xexam is missing in the top bar of a phone')
             if not a['icon']:
                 p.append('no person icon')
             if ai is True and not a['badge']:
@@ -147,6 +153,10 @@ def ab_case(rc, lang, theme, size):
         else:
             if not a['nameShown']:
                 p.append('the user name is hidden on a desktop width')
+            if not a['logoShown']:
+                p.append('the logo icon is missing in the top bar on a desktop width')
+            if not a['brandNameShown']:
+                p.append('the brand name Xexam is missing in the top bar on a desktop width')
             d.tap_sel('#acct-btn', wait=0.6)
             if not d.js("!!document.getElementById('nav-menu')"):
                 p.append('the account button did not open the menu on a desktop width')
@@ -159,7 +169,13 @@ def ab_case(rc, lang, theme, size):
 QBAR_JS = """const bar = document.querySelector('.qbar'); if (!bar) return null; const r = bar.querySelector('.r'); const tb = document.getElementById('theme-btn');
   const kids = r ? [...r.children].filter(vis) : []; const ql = bar.querySelector('.ql');
   const els = kids.concat(ql && vis(ql) ? [ql] : []);
-  return {has: !!tb && vis(tb), inRight: !!tb && !!r && r.contains(tb), label: tb ? (tb.getAttribute('aria-label') || '') : '', h: tb ? box(tb).h : 0, w: tb ? box(tb).w : 0,
+  // the area a thumb gets (the box plus an invisible ::after extension), like W-SH-3: elementFromPoint around the centre
+  const hit = (e) => { const r = e.getBoundingClientRect(); const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    const inside = (x, y) => { const h = document.elementFromPoint(x, y); return !!h && (e === h || e.contains(h)); };
+    if (!inside(cx, cy)) return {w: 0, h: 0};
+    const reach = (dx, dy) => { let n = 0; while (n < 40 && inside(cx + dx * (n + 1), cy + dy * (n + 1))) n++; return n; };
+    return {w: reach(-1, 0) + reach(1, 0) + 1, h: reach(0, -1) + reach(0, 1) + 1}; };
+  return {has: !!tb && vis(tb), inRight: !!tb && !!r && r.contains(tb), label: tb ? (tb.getAttribute('aria-label') || '') : '', h: tb ? hit(tb).h : 0, w: tb ? hit(tb).w : 0,
     overlap: overlaps(els), out: els.filter((e) => box(e).l < -0.5 || box(e).r > innerWidth + 0.5).map(nm), sideways: document.documentElement.scrollWidth - innerWidth,
     bg: getComputedStyle(document.body).backgroundColor, timer: !!bar.querySelector('.qtime')};"""
 
@@ -206,10 +222,10 @@ def qt_case(rc, lang, theme, size):
 
 # ------------------------------------------------------------------------------------------------ W-V22-CS
 COMPOSER_JS = """const q = (s) => document.querySelector(s); const br = q('#ai-model-btn'), ef = q('#ai-effort-btn'), send = q('#ai-send'), bar = q('#ai-composer .ai-bar'), box0 = q('#ai-composer .ai-box');
-  if (!br || !bar) return null; const parts = [br, ef, send].filter(vis); const bb = box(bar);
+  if (!br || !bar) return null; const parts = [br, ef, send].filter(vis); const bb = box(bar).w > 0 ? box(bar) : box(box0);
   return {effort: !!ef && vis(ef), text: ef ? ef.textContent.trim() : '', label: ef ? (ef.getAttribute('aria-label') || '') : '', overlap: overlaps(parts),
     brainLeftOfEffort: !!ef && vis(ef) && box(br).r <= box(ef).l + 0.5, sameRow: !!ef && vis(ef) && Math.abs((box(br).t + box(br).b) / 2 - (box(ef).t + box(ef).b) / 2) <= 2,
-    effortH: ef && vis(ef) ? box(ef).h : 0, inBar: parts.every((e) => { const r = box(e); return r.l >= bb.l - 0.5 && r.r <= bb.r + 0.5; }),
+    effortH: ef && vis(ef) ? box(ef).h : 0, effortW: ef && vis(ef) ? box(ef).w : 0, compact: !!box0 && box0.classList.contains('compact'), inBar: parts.every((e) => { const r = box(e); return r.l >= bb.l - 0.5 && r.r <= bb.r + 0.5; }),
     barScroll: bar.scrollWidth - bar.clientWidth, boxScroll: box0 ? box0.scrollWidth - box0.clientWidth : 0, sideways: document.documentElement.scrollWidth - innerWidth};"""
 
 POP_JS = """const pop = document.getElementById('ai-effort-pop'); if (!pop) return null; const items = [...pop.querySelectorAll('.ai-effort-item')]; const pb = box(pop);
@@ -217,6 +233,14 @@ POP_JS = """const pop = document.getElementById('ai-effort-pop'); if (!pop) retu
     popInside: inView(pb), itemsOut: items.filter((e) => { const r = box(e); return r.l < pb.l - 0.5 || r.r > pb.r + 0.5 || !inView(r); }).length,
     smallest: Math.min.apply(null, items.map((e) => box(e).h)), scrollW: pop.scrollWidth - pop.clientWidth, sideways: document.documentElement.scrollWidth - innerWidth,
     expanded: (document.getElementById('ai-effort-btn') || {getAttribute: () => null}).getAttribute('aria-expanded')};"""
+
+
+SECTION_JS = """const pop = document.getElementById('ai-model-pop'); const sel = document.getElementById('ai-model-str');
+  if (!pop || !sel) return null; const pb = box(pop); const sb = box(sel); const lab = document.getElementById('ai-model-str-l');
+  const cn = document.getElementById('ai-model-conn'); const ms = document.getElementById('ai-model-sel');
+  return {pop: true, n: sel.options.length, first: sel.options[0].textContent.trim(), value: sel.value, h: sb.h, w: sb.w, label: lab ? lab.textContent.trim() : '',
+    sameStyle: !!cn && getComputedStyle(cn).fontSize === getComputedStyle(sel).fontSize && getComputedStyle(cn).borderTopWidth === getComputedStyle(sel).borderTopWidth && Math.abs(box(cn).h - sb.h) < 1,
+    after: !!ms && box(ms).b <= sb.t + 1, inside: sb.l >= pb.l - 0.5 && sb.r <= pb.r + 0.5, sideways: document.documentElement.scrollWidth - innerWidth};"""
 
 
 def cs_case(rc, lang, theme, size):
@@ -228,6 +252,54 @@ def cs_case(rc, lang, theme, size):
         goto(d, '#/ai', 2.2)
         d.js("(() => { const b = document.querySelector('.ai-new, #ai-new'); if (b) b.click(); return 1 })()")
         time.sleep(1.2)
+        if phone(size):
+            # owner (v2.3): in the compact one-row box the strength is the last section of the brain picker; there is no button
+            c0 = js(d, COMPOSER_JS)
+            if not c0:
+                skip(rc, 'W-V22-CS', 'ai', 'composer', 'admin', size, lang, theme, 'no composer on the AI Chat page')
+                return
+            k = []
+            if not c0['compact']:
+                k.append('the empty box is not compact')
+            if c0['effort']:
+                k.append('the separate strength button is shown in the compact row')
+            d.tap_sel('#ai-model-btn', wait=0.7)
+            m0 = js(d, SECTION_JS)
+            if not m0:
+                k.append('the brain picker has no strength dropdown in the compact row')
+            else:
+                if not DEFAULT_RE.search(m0['first']):
+                    k.append('the first strength option is not Default: %r' % m0['first'])
+                if m0['n'] < 2:
+                    k.append('%d strength options' % m0['n'])
+                if not m0['sameStyle']:
+                    k.append('the strength dropdown does not look like the API / model dropdowns')
+                if not m0['after']:
+                    k.append('the strength dropdown is not below the model dropdown')
+                if m0['h'] < 36:
+                    k.append('the strength dropdown is %d px high' % m0['h'])
+                if not m0['inside'] or m0['sideways'] > 1:
+                    k.append('the strength dropdown sticks out of the picker / the page')
+                d.js("(() => { const s = document.getElementById('ai-model-str'); s.selectedIndex = 1; s.dispatchEvent(new Event('change', {bubbles: true})); return 1 })()")
+                time.sleep(0.5)
+                m1 = js(d, SECTION_JS)
+                if not m1:
+                    k.append('the picker closed after a strength pick')
+                elif m1['value'] == m0['value']:
+                    k.append('the pick did not change the strength dropdown')
+            rc.rec('W-V22-CS', 'ai', 'compact-picker', 'admin', size, lang, theme, not k, '; '.join(k) or 'strength is the last section of the brain picker, 44 px items, no button in the row', d)
+            d.key('Escape', 'Escape', 27)
+            time.sleep(0.4)
+            d.js("(() => { const p = document.getElementById('ai-model-pop'); const b = document.getElementById('ai-model-close'); if (p && b) b.click(); return 1 })()")
+            # two lines of text expand the box: the labelled strength button appears, the picker has no strength section any more
+            d.js("(() => { const t = document.getElementById('ai-input'); if (t) { t.focus(); t.value = 'a' + String.fromCharCode(10) + 'b'; t.dispatchEvent(new Event('input', {bubbles: true})); } return 1 })()")
+            time.sleep(0.6)
+            d.tap_sel('#ai-model-btn', wait=0.7)
+            m2 = js(d, SECTION_JS)
+            if m2:
+                rc.rec('W-V22-CS', 'ai', 'expanded-picker', 'admin', size, lang, theme, False, 'the brain picker still has the strength section in the expanded box', d)
+            d.js("(() => { const b = document.getElementById('ai-model-close'); if (b) b.click(); return 1 })()")
+            time.sleep(0.4)
         c = js(d, COMPOSER_JS)
         if not c:
             skip(rc, 'W-V22-CS', 'ai', 'composer', 'admin', size, lang, theme, 'no composer on the AI Chat page')
@@ -247,6 +319,8 @@ def cs_case(rc, lang, theme, size):
             p.append('composer overflow (bar %d, box %d, page %d px)' % (c['barScroll'], c['boxScroll'], c['sideways']))
         if phone(size) and c['effortH'] < 36:
             p.append('the strength button is %d px high' % c['effortH'])
+        if phone(size) and c['compact'] and (c['effortH'] < 43.5 or c['effortW'] < 43.5 or c['effortW'] > 60):
+            p.append('the icon-only strength button of the compact row is %dx%d px (want 44x44)' % (c['effortW'], c['effortH']))
         if not c['label'] or not c['text']:
             p.append('the strength button has no text or no name (%r / %r)' % (c['text'], c['label']))
         p += ['measure ' + x for x in common(d, size)]

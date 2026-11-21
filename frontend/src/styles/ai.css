@@ -1,8 +1,9 @@
-/* AI Chat (v0.8): the title with the Chats / Memory switch, an always-visible line about what administrators can see, then
-   the chat list and the conversation side by side. Wider than 900px the conversation scrolls in its own box of fixed
+/* AI Chat (v0.8; v2.3: redesigned chat page): the title row, an always-visible line about what administrators
+   can see, then the sidebar (history, New chat, Memory) and the conversation side by side; on a phone (< 720 px) the sidebar
+   is a drawer that slides in from the left and the chat header (menu, title, new chat, more) takes the title row's place. Wider than 900px the conversation scrolls in its own box of fixed
    height with the composer at its bottom (owner's request). v1.0, up to 900px: a full-height chat screen. The document is
    locked (html.no-doc-scroll, set by pages/ai.ts), only the lists scroll, the composer is a fixed footer lifted by the
-   on-screen keyboard (--kb, set from the visual viewport) so the page never slides up (CH-13, the ChatGPT mobile web's
+   on-screen keyboard (--kb, set from the visual viewport) so the page never slides up (CH-13, the common mobile web
    technique). Colours only from the tokens of main.css, so the light and dark themes follow. */
 
 .page-ai { max-width: 1120px; }
@@ -28,7 +29,7 @@
 .ai-notice-btn .ai-mi { flex: none; margin-top: 2px; }
 .ai-notice-btn span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 /* CH-8: a paused user with chats: one muted line in the composer's place */
-.ai-readonly-line { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 12px 16px 4px; border-top: 1px solid var(--line-soft); font-size: 13.5px; line-height: 1.5; color: var(--ink2); }
+.ai-readonly-line { display: flex; align-items: flex-start; gap: 8px; margin: 0; padding: 12px 16px 4px; font-size: 13.5px; line-height: 1.5; color: var(--ink2); }
 .ai-readonly-line .ai-mi { margin-top: 2px; }
 /* The AI service cannot be reached (#/ai): the reason and Retry */
 .ai-unavail { max-width: 46em; margin-top: 12px; }
@@ -38,29 +39,72 @@
 .ai-noaccess p { margin: 0; line-height: 1.6; }
 
 /* ---------- Two panes ---------- */
-.ai-panes { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: 16px; align-items: start; }
+.ai-panes { display: grid; grid-template-columns: 272px minmax(0, 1fr); gap: 16px; align-items: stretch; }
 .ai-list, .ai-conv { min-width: 0; background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; box-shadow: var(--shadow-xs); }
-.ai-list { padding: 12px; }
-.ai-list-body { display: grid; gap: 8px; }
-.ai-list-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.ai-list { display: flex; flex-direction: column; padding: 12px; }
+/* Wider than 900px the sidebar is as tall as the conversation box beside it (its own content never makes the row taller) and
+   its body scrolls */
+@media (min-width: 901px) { .ai-list { contain: size; min-height: 360px; } }
+/* Wider than 900px the memory view is a card of the same height as the conversation card (pages/ai.ts takes it when the view
+   opens), so the sidebar does not shrink and the columns keep their top edge; Back to chat sits in the card's head row and the
+   memory box scrolls inside */
+@media (min-width: 901px) {
+  .ai-memwrap { height: var(--ai-mem-h, 609px); overflow: hidden; background: var(--card); border: 1px solid var(--line-soft); border-radius: 10px; box-shadow: var(--shadow-xs); }
+  .ai-memwrap .ai-mem-bar { flex: none; min-height: 52px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line-soft); }
+  .ai-memwrap .ai-mem { flex: 1; min-height: 0; max-width: none; overflow-y: auto; overscroll-behavior: contain; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+}
+.ai-list:focus { outline: none; }
+.ai-list-body { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+/* The top of the sidebar: New chat, the Memory row (the search box goes above them) */
+.ai-list-top { display: grid; flex: none; gap: 2px; margin-bottom: 8px; }
+/* The search box: a magnifier inside the left edge of a plain field */
+.ai-search { position: relative; display: block; margin-bottom: 4px; }
+.ai-search .ai-mi { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--ink3); pointer-events: none; }
+.ai-search-in {
+  display: block; width: 100%; box-sizing: border-box; min-height: 36px; margin: 0; padding: 6px 10px 6px 32px; border: 1px solid var(--line);
+  border-radius: 8px; background: var(--card); color: var(--ink); font: inherit; font-size: 14px; -webkit-appearance: none; appearance: none;
+}
+.ai-search-in::placeholder { color: var(--ink3); opacity: 1; }
+.ai-search-in:focus-visible { outline: 2px solid var(--print); outline-offset: 1px; }
+@media (pointer: coarse), (max-width: 719.98px) { .ai-search-in { min-height: 44px; } }
+/* History group headings (Today / Yesterday / Previous 7 days / Older) */
+.ai-group-h { margin: 10px 0 2px; padding: 0 8px; font-size: 12px; font-weight: 600; line-height: 1.5; color: var(--ink3); }
+.ai-chats-wrap > .ai-group-h:first-child { margin-top: 2px; }
+.ai-chats-wrap { flex: none; }
+.ai-list-head { display: flex; align-items: center; gap: 8px; }
 .btn.ai-new { justify-content: flex-start; width: 100%; }
 .ai-list-title { font-weight: 600; }
-/* The more menu of the list header: Delete all chats (red text) and the retention note */
+/* A plain row of the sidebar (Memory): icon + text, the selected one filled like the open chat */
+.ai-side-row {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; min-height: 40px; padding: 6px 10px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--ink); font: inherit; font-size: 14px; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.ai-side-row .ai-mi { color: var(--ink2); }
+.ai-side-row.on { background: var(--hover-strong); font-weight: 600; }
+.ai-side-row:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
+@media (hover: hover) { .ai-side-row:not(.on):hover { background: var(--hover); } }
+@media (pointer: coarse) { .ai-side-row { min-height: 44px; } }
+/* The foot of the sidebar's list: Delete all chats (red text) and the retention note */
+.ai-side-foot { display: grid; flex: none; gap: 4px; margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.ai-side-foot .btn.danger.ai-delall { justify-self: stretch; justify-content: flex-start; min-height: 36px; font-size: 14px; border-color: transparent; background: transparent; box-shadow: none; color: var(--danger); }
+@media (pointer: coarse) { .ai-side-foot .btn.danger.ai-delall { min-height: 44px; font-size: 15px; } }
+@media (hover: hover) { .ai-side-foot .btn.danger.ai-delall:hover:not(:disabled) { background: var(--danger-soft); border-color: transparent; box-shadow: none; } }
+.ai-side-foot .ai-retention { padding: 0 10px; }
+/* The phone drawer's button, backdrop and menu live under 720 px (below) */
+.ibtn.ai-drawer-btn, .ai-backdrop { display: none; }
+/* The chat header's ⋯ menu (phones): Delete this chat */
 .ai-more-wrap { position: relative; flex: none; margin-left: auto; }
 .ai-menu {
   position: absolute; z-index: 20; top: calc(100% + 6px); right: 0; display: grid; gap: var(--pop-gap, 6px); width: min(280px, 80vw); padding: var(--pop-pad, 6px);
   border: 1px solid var(--pop-border, var(--line-soft)); border-radius: var(--pop-radius, 10px); background: var(--card); box-shadow: var(--shadow-pop);
 }
-.ai-menu .btn.danger.ai-delall { justify-self: stretch; justify-content: flex-start; min-height: 36px; font-size: 14px; border-color: transparent; background: transparent; color: var(--danger); }
-@media (pointer: coarse) { .ai-menu .btn.danger.ai-delall { min-height: 44px; font-size: 15px; } }
-@media (hover: hover) { .ai-menu .btn.danger.ai-delall:hover:not(:disabled) { background: var(--danger-soft); border-color: transparent; } }
-.ai-menu .ai-retention { padding: 2px 10px 4px; }
-/* The Chats / Memory switch: icon + short label; the sets of the list header and the memory head show in short landscape only */
-.ai-tabs button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: var(--tab-h); }
-.ai-tabs .ai-mi { width: 16px; height: 16px; }
-.ai-ltabs { display: none; }
+/* A history row's menu is fixed to the screen (top / bottom / right are set from the button), so no scroller clips it */
+.ai-row-menu { position: fixed; z-index: 60; width: min(220px, 70vw); }
+.ai-menu .btn.danger.ai-delthis { justify-self: stretch; justify-content: flex-start; gap: 8px; min-height: 36px; font-size: 14px; border-color: transparent; background: transparent; box-shadow: none; color: var(--danger); }
+@media (pointer: coarse) { .ai-menu .btn.danger.ai-delthis { min-height: 44px; font-size: 15px; } }
+@media (hover: hover) { .ai-menu .btn.danger.ai-delthis:hover:not(:disabled) { background: var(--danger-soft); border-color: transparent; box-shadow: none; } }
 .ai-list-note { padding: 4px 2px; font-size: 13.5px; line-height: 1.55; color: var(--ink2); }
-.ai-chats { list-style: none; margin: 0 -4px; padding: 0 4px; display: grid; gap: 1px; max-height: clamp(240px, calc(100dvh - 380px), 760px); overflow-y: auto; overscroll-behavior: contain; }
+.ai-chats { list-style: none; margin: 0; padding: 0; display: grid; gap: 1px; }
 .ai-chat { display: flex; align-items: center; gap: 4px; border-radius: 6px; }
 .ai-chat.on, .ai-chat-open.on { background: var(--hover-strong); }
 .ai-chat-open {
@@ -75,25 +119,36 @@
 .ai-chat-at { font-size: 12px; line-height: 1.4; color: var(--ink3); }
 /* On the selected row's darker fill --ink3 is only 4.47:1 (light) and 3.67:1 (dark): --ink2 clears 4.5:1 in both */
 .ai-chat.on .ai-chat-at, .ai-chat-open.on .ai-chat-at { color: var(--ink2); }
-.ibtn.ai-chat-del { flex: none; }
+.ibtn.ai-chat-more { flex: none; }
 .btn.danger.ai-delall { justify-self: start; min-height: 30px; padding-inline: 10px; font-size: 13px; }
 .ai-retention { padding: 0 2px; font-size: 12px; line-height: 1.5; color: var(--ink3); }
 
 /* ---------- The conversation ---------- */
 .ai-conv { display: flex; flex-direction: column; }
 .ai-conv-head { display: flex; align-items: center; gap: 8px; min-height: 52px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line-soft); }
-/* CH-4: back (up to 900px) · title, at most 2 lines · red trash */
+/* CH-4: title, at most 2 lines · red trash (phones: menu · title · free tag · new chat · more) */
 .ai-conv-t {
   flex: 1; min-width: 0; margin: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
   overflow-wrap: anywhere; font-size: 15px; line-height: 1.35; font-weight: 600;
 }
-.btn.ai-back { display: none; padding-inline: 10px 14px; gap: 4px; }
-.btn.ai-back .ai-mi { width: 16px; height: 16px; flex: none; }
+/* The memory view's bar: [menu on a phone] ... [Back to chat] */
+.ai-mem-bar { border-bottom: 0; padding-inline: 0; }
+.ai-head-sp { display: none; }
+.ai-mem-bar-t { display: none; }
+.btn.ai-mem-back { margin-left: auto; padding-inline: 10px 14px; gap: 4px; }
+.btn.ai-mem-back .ai-mi { width: 16px; height: 16px; flex: none; }
 .ai-scroll { height: clamp(320px, calc(100dvh - 360px), 900px); overflow-y: auto; overscroll-behavior: contain; padding: 16px; }
 /* The box is a focusable region (arrow keys and PageUp / PageDown scroll it); the ring stays inside so the box does not clip it */
 .ai-scroll:focus-visible { outline: 2px solid var(--print); outline-offset: -2px; }
 .ai-empty-hint { margin: 0; font-size: 14px; line-height: 1.55; color: var(--ink3); }
+/* An empty new chat: the greeting and the reply-language hint centred in the free space above the composer */
+.ai-scroll:has(.ai-welcome) { display: flex; flex-direction: column; }
+.ai-msgs-wrap:has(.ai-welcome) { display: flex; flex: 1 0 auto; flex-direction: column; justify-content: center; }
+.ai-welcome { padding: 8px 12px 24px; text-align: center; }
+.ai-greeting { margin: 0 0 8px; font-size: 26px; line-height: 1.3; font-weight: 600; overflow-wrap: anywhere; }
+.ai-welcome .ai-empty-hint { max-width: 32em; margin-inline: auto; }
 .ai-conv-note { margin-bottom: 12px; font-size: 13px; color: var(--ink3); }
+.ai-msgs:focus { outline: none; }
 .ai-msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 18px; }
 .ai-msg { min-width: 0; overflow-wrap: anywhere; }
 /* A sent message: "You" and the time right above the bubble's edge, the buttons right under it (owner's request) */
@@ -133,7 +188,7 @@
 .btn.ai-mini.primary { font-weight: 600; }
 
 /* "Save to memory?" under an answer */
-.ai-suggest { display: grid; gap: 8px; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--fill); }
+.ai-suggest { display: grid; gap: 8px; margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--card); }
 .ai-suggest-l { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; color: var(--ink); }
 .ai-suggest-l .ai-mi { color: var(--ai-3); }
 .ai-suggest-in { width: 100%; min-height: 36px; padding: 6px 10px; font-size: 14.5px; }
@@ -143,10 +198,10 @@
 /* ---------- The composer ---------- */
 /* .ai-composer is the footer of the conversation (the form and the notice line); wider than 900px it is part of the card,
    up to 900px it is the fixed footer of CH-13 (below) */
-.ai-composer { background: var(--card); border-radius: 0 0 10px 10px; }
+.ai-composer { background: transparent; border-radius: 0 0 10px 10px; }
 .ai-form {
   position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0;
-  padding: 12px 16px; border-top: 1px solid var(--line-soft); border-radius: 0 0 10px 10px; background: var(--card);
+  padding: 12px 16px; border-top: 0; border-radius: 0 0 10px 10px; background: transparent;
 }
 .ai-send-err { margin: 0; padding: 6px 10px; font-size: 13.5px; line-height: 1.45; }
 .ai-send-err p { margin: 0; }
@@ -162,17 +217,19 @@
 /* ONE rounded box (v1.3): the input on top; under it one bar with the model button (left; administrators in free mode only)
    and the counter + Send (right). The box carries the field's edge and focus ring; the textarea inside is bare. */
 .ai-box {
-  position: relative; flex: none; min-width: 0; padding: 6px; border: 1px solid var(--field-line); border-radius: 24px; background: var(--card);
-  box-shadow: var(--shadow-xs); cursor: text; transition: border-color .12s ease, box-shadow .12s ease;
+  position: relative; flex: none; min-width: 0; padding: 6px; border: 1px solid var(--line); border-radius: 26px; background: var(--card);
+  box-shadow: none; cursor: text; transition: border-color .12s ease, box-shadow .12s ease;
 }
 .ai-box:has(.ai-input:focus) { border-color: var(--print); box-shadow: 0 0 0 1px var(--print), 0 0 0 4px var(--print-ring); }
-.ai-input { display: block; width: 100%; min-height: 40px; padding: 8px 10px; resize: none; overflow-y: hidden; font-size: 15px; line-height: 1.5; }
+.ai-input { display: block; width: 100%; min-height: 40px; padding: 8px 10px; resize: none; overflow-y: hidden; font-size: 15px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .ai-box .ai-input, .ai-box .ai-input:focus {
   padding: 9px 12px 5px; border: 0; border-radius: 18px 18px 4px 4px; background: transparent; box-shadow: none; outline: none;
 }
 .ai-bar { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; padding: 0 2px; }
 .ai-bar-r { display: flex; flex: 1; align-items: center; justify-content: flex-end; gap: 8px; min-width: 0; }
 .ai-bar .ibtn { border-radius: 50%; }
+.ai-bar .ibtn:not(.ai-send) { background: var(--fill); }
+@media (hover: hover) { .ai-bar .ibtn:not(.ai-send):hover:not([aria-disabled="true"]) { background: var(--hover-strong); } }
 .ai-bar .ibtn .ibtn-ic { width: 18px; height: 18px; }
 /* The model picker (v1.9): the brain button opens a popover with two lists (API, model); the popover is drawn above the box */
 .ai-model-wrap { display: inline-flex; flex: none; }
@@ -192,7 +249,7 @@
 .ai-effort-btn:hover:not(:disabled) { background: var(--hover, rgba(127, 127, 127, 0.1)); }
 .ai-effort-btn:active:not(:disabled) { background: var(--hover, rgba(127, 127, 127, 0.18)); }
 .ai-effort-btn:disabled { cursor: not-allowed; opacity: 0.6; }
-.ai-effort-btn.on { color: var(--ai-3); border-color: var(--ai-3); }
+/* v2.3: neutral for every level (the label says which one is picked) */
 .ai-effort-btn:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
 .ai-effort-ic { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
 .ai-effort-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -265,7 +322,7 @@
 
 /* ---------- Memory ---------- */
 .ai-mem { max-width: var(--page-narrow); }
-.ai-memwrap { display: contents; }
+.ai-memwrap { display: flex; flex-direction: column; min-width: 0; }
 .ai-mem-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
 .panel .ai-mem-head h2 { margin-bottom: 4px; }
 .ai-mem-n { font-size: 13px; color: var(--ink3); font-variant-numeric: tabular-nums; }
@@ -293,13 +350,17 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
 /* v1.2 (A-OWNER-82): the history list and memory screens are fixed frames. A one-finger drag on their non-scrolling parts
    (title row, list header, empty area, a short list, the gutters, the top bar) is no browser pan at all; pinch-zoom stays.
    touch-action stops at every scroll container (WebKit and Blink), so the lists inside still scroll. Phones show one pane:
-   the whole screen while no conversation is open (.conv-on); 720-900 px: the title row and the list / memory panes only.
+   the memory view (no .conv-on); 720-900 px: the title row and the sidebar / memory pane only.
    The conversation pane keeps its v1.1 behaviour (owner) and has no rule here. */
 @media (max-width: 719.98px) {
   html.no-doc-scroll:has(.page-ai:not(.conv-on)), html.no-doc-scroll:has(.page-ai:not(.conv-on)) body { touch-action: pinch-zoom; }
 }
 @media (min-width: 720px) and (max-width: 900px) {
   html.no-doc-scroll .page-ai .ai-head, html.no-doc-scroll .ai-list, html.no-doc-scroll .ai-memwrap { touch-action: pinch-zoom; }
+}
+/* The phone drawer too (not when it is itself the scroller, in short landscape: touch-action would stop its own pan) */
+@media (max-width: 719.98px) and (min-height: 501px) {
+  html.no-doc-scroll .page-ai .ai-list { touch-action: pinch-zoom; }
 }
 @media (max-width: 900px) {
   html.no-doc-scroll { --ai-gl: max(20px, env(safe-area-inset-left)); --ai-gr: max(20px, env(safe-area-inset-right)); }
@@ -314,30 +375,27 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
     position: relative; top: auto; flex: none; min-height: 44px; margin: 0; padding: 0 calc(var(--ai-gr) - 6px) 0 calc(var(--ai-gl) - 4px); transform: none;
   }
   html.no-doc-scroll .page-ai { display: flex; flex: 1; flex-direction: column; min-height: 0; max-width: none; padding: 0 var(--ai-gr) 0 var(--ai-gl); }
-  /* Title row: h1 + free-mode tag + the tabs, one row of at most 44px */
+  /* Title row (720-900 px): h1 + free-mode tag, one row of at most 44px */
   html.no-doc-scroll .page-ai .page-head.ai-head { flex: none; flex-wrap: nowrap; gap: 8px; min-height: 44px; margin: 0; }
   html.no-doc-scroll .page-ai .ai-head .ai-title { flex: 1; flex-wrap: nowrap; gap: 8px; }
   /* A-OWNER-83: the title is the one part that may shrink (ellipsis, the last resort); pages/ai.ts fitHead first switches
-     the tabs to icons (.fit-icons), then the tag to its short text (.fit-short), so nothing is drawn over the tabs */
+     the tag to its short text (.fit-short), so nothing is drawn over it */
   html.no-doc-scroll .page-ai .ai-head .ai-title h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 26px; line-height: 1.3; white-space: nowrap; }
   html.no-doc-scroll .ai-mode-tag { flex: none; font-size: 12px; padding: 1px 8px; }
-  html.no-doc-scroll .ai-tabs { flex: none; }
-  html.no-doc-scroll .ai-head.fit-icons .ai-tab-l { display: none; }
-  html.no-doc-scroll .ai-head.fit-icons .ai-tabs button { width: 44px; padding-inline: 0; }
   html.no-doc-scroll .ai-head.fit-short .ai-mode-l { display: none; }
   html.no-doc-scroll .ai-head.fit-short .ai-mode-s { display: inline; }
   .ai-notice-top { display: none; }
   .ai-notice-btn { display: flex; }
   .ai-msg.user { max-width: 92%; }
 
-  /* Panes: one at a time, flat (no card), filling the rest of the screen */
+  /* Panes: the sidebar and the conversation (or the memory view) flat (no card), filling the rest of the screen; under 720 px
+     the sidebar is a drawer (below) and the one column is the conversation */
   html.no-doc-scroll .ai-panes { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); gap: 0; min-height: 0; align-items: stretch; }
-  .ai-panes.on-list .ai-conv, .ai-panes.on-conv .ai-list { display: none; }
-  .btn.ai-back { display: inline-flex; }
-  html.no-doc-scroll .ai-list, html.no-doc-scroll .ai-conv { min-height: 0; border: 0; border-radius: 0; box-shadow: none; background: transparent; }
+  html.no-doc-scroll .ai-list, html.no-doc-scroll .ai-conv, html.no-doc-scroll .ai-memwrap { min-height: 0; }
+  html.no-doc-scroll .ai-list, html.no-doc-scroll .ai-conv { border: 0; border-radius: 0; box-shadow: none; background: transparent; }
   html.no-doc-scroll .ai-list { display: flex; flex-direction: column; padding: 0; }
-  html.no-doc-scroll .ai-list-head { flex: none; min-height: 44px; margin-bottom: 0; }
-  html.no-doc-scroll .btn.ai-new { width: auto; }
+  html.no-doc-scroll .ai-list-top { flex: none; margin-bottom: 4px; }
+  html.no-doc-scroll .ai-list-head { flex: none; min-height: 44px; }
   /* The list body is the scroller under the header row; the GitHub line is its last item (it scrolls with the list) */
   html.no-doc-scroll .ai-list-body { display: flex; flex: 1; flex-direction: column; gap: 4px; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: none; }
   /* align-content: the rows stay at the top (a stretched grid would centre one chat in the middle of the pane) */
@@ -350,7 +408,6 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
 
   /* The conversation: head, the list (the only scroller), and room for the fixed composer */
   html.no-doc-scroll .ai-conv { display: flex; flex-direction: column; padding-bottom: var(--composer-h, 76px); }
-  html.no-doc-scroll .ai-panes.on-list .ai-conv, html.no-doc-scroll .ai-panes.on-conv .ai-list { display: none; }
   /* 44 px inside its 1 px hairline, so the 40 px buttons sit on whole pixels and their tap margin stays inside the head */
   html.no-doc-scroll .ai-conv-head { flex: none; min-height: 45px; padding: 0; }
   /* Owner (v1.1, A-OWNER-46): a little inner gutter, so answers and bubbles never touch the screen edge */
@@ -365,16 +422,16 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
   html.no-doc-scroll .ai-composer {
     position: fixed; z-index: 6; right: 0; left: var(--ai-conv-left, 0px); bottom: max(var(--kb, 0px), env(keyboard-inset-height, 0px));
     padding: 0 var(--ai-gr) env(safe-area-inset-bottom) var(--ai-dock-pl, var(--ai-gl));
-    border-radius: 0; border-top: 1px solid var(--line-soft); background: var(--sheet);
+    border-radius: 0; border-top: 0; background: var(--sheet);
   }
   html.no-doc-scroll.kb-open .ai-composer { padding-bottom: 8px; }
   html.no-doc-scroll .ai-form { padding: 8px 0 4px; border: 0; border-radius: 0; background: transparent; }
   /* Touch sizes in the footer: the input at least 44 px; the notice line 40 px with a 2 px invisible margin (44 px to tap)
      that stays inside the 4 px under the form, clear of Send's own tap margin */
-  html.no-doc-scroll .ai-input { min-height: 44px; max-height: max(44px, calc(var(--vvh, 100dvh) * .22 + 18px)); }
+  html.no-doc-scroll .ai-input { min-height: 44px; max-height: max(44px, calc(var(--vvh, 100dvh) * .4 + 18px)); }
   html.no-doc-scroll .ai-box .ai-input { padding: 10px 12px 6px; }
   /* With the keyboard open the input grows less, so a long draft still leaves at least 90 px of conversation */
-  html.no-doc-scroll.kb-open .ai-input { max-height: max(44px, calc(var(--vvh, 100dvh) * .18 + 10px)); }
+  html.no-doc-scroll.kb-open .ai-input { max-height: max(44px, calc(var(--vvh, 100dvh) * .4 + 18px)); }
   /* The composer never covers the conversation head: under the safe area the top bar (44), the title row (44) and the head
      (45) take 133 px (89 in short landscape, below; one-pane phones hide the title row in a conversation, FB-8, so there the
      reserve keeps 44 px more of the conversation), and 40 px of the conversation stay; past that it scrolls inside, never
@@ -400,14 +457,10 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
   html.no-doc-scroll .ai-composer .ai-notice-btn { justify-content: center; }
   html.no-doc-scroll .ai-composer .ai-notice-btn span { flex: 0 1 auto; }
   html.no-doc-scroll .ai-notice-btn { min-height: 40px; }
-  /* The tabs sit 4 px under the top bar: their tap margin reaches up to it, never into the menu button's */
-  /* the tabs are 44 px themselves (--tab-h): a hit margin above would cover the top bar's buttons */
-  html.no-doc-scroll .ai-tabs button::after { inset: 0 -1px; }
-
   /* Memory: its own scroller above the notice line */
   html.no-doc-scroll .ai-memwrap { display: flex; flex: 1; flex-direction: column; min-height: 0; }
   html.no-doc-scroll .ai-mem { flex: 1; min-height: 0; max-width: none; overflow-x: hidden; overflow-y: auto; overscroll-behavior: none; }
-  html.no-doc-scroll .ai-mtabs { align-self: flex-start; flex: none; margin: 4px 0 8px; }
+  html.no-doc-scroll .ai-mem-bar { flex: none; min-height: 45px; padding: 0; }
 }
 /* The full-height chat (up to 900 px, and on a phone turned sideways) has no room for the footer: it never cuts the chat */
 @media (max-width: 900px), (orientation: landscape) and (max-height: 500px) {
@@ -426,32 +479,55 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
 @media (min-width: 720px) and (max-width: 900px) {
   html.no-doc-scroll { --ai-conv-left: calc(var(--ai-gl) + 252px); --ai-dock-pl: 12px; }
   html.no-doc-scroll .ai-panes { grid-template-columns: 240px minmax(0, 1fr); gap: 12px; }
-  html.no-doc-scroll .ai-panes.on-list .ai-conv, html.no-doc-scroll .ai-panes.on-conv .ai-list { display: flex; }
   html.no-doc-scroll .ai-list { padding-right: 12px; border-right: 1px solid var(--line-soft); }
-  html.no-doc-scroll .btn.ai-back { display: none; }
-  html.no-doc-scroll .ai-list .ai-notice-flow { display: none; }
 }
+/* v2.3 phones (< 720 px): no title row and no list pane. The chat header is one 44 px row [menu] [title + free tag] [new chat]
+   [more]; the sidebar is a drawer (80 % of the width, at most 320 px) that slides in from the left over a dimmed backdrop */
 @media (max-width: 719.98px) {
-  /* FB-8: inside a conversation the conversation head is the only header (the title row and tabs return on the list pane) */
-  html.no-doc-scroll .page-ai.conv-on .page-head.ai-head { display: none; }
+  html.no-doc-scroll .page-ai .page-head.ai-head { display: none; }
   .ai-mem-row { grid-template-columns: auto minmax(0, 1fr); }
   .ai-mem-acts { grid-column: 2; }
+  /* 44 px targets (a narrow desktop window has a mouse, where .ibtn is 36 px) */
+  html.no-doc-scroll .ai-conv-head .ibtn, html.no-doc-scroll .ai-mem-bar .ibtn { flex: none; width: 44px; height: 44px; }
+  /* -6 px on the left only: a negative right margin would make the row 6 px wider than its container (the buttons' own 44 px
+     boxes already leave the icon a gutter on the right) */
+  html.no-doc-scroll .ai-conv-head, html.no-doc-scroll .ai-mem-bar { gap: 0; margin-inline: -6px 0; }
+  .ibtn.ai-drawer-btn { display: inline-flex; }
+  .ai-mem-bar-t { display: block; flex: 1; min-width: 0; overflow: hidden; padding-inline: 4px; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; font-weight: 600; }
+  /* The bar says "Memory n / max"; the panel's own heading and count stay for screen readers only */
+  .ai-mem-head h2, .ai-mem-head .ai-mem-n { position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  /* The title keeps its own width (it shrinks, with an ellipsis, only when the row is full); the free-mode tag sits right after
+     it, and the spacer pushes [new chat] [more] to the right edge */
+  html.no-doc-scroll .ai-conv-t { flex: 0 1 auto; padding-inline: 4px; }
+  .ai-head-sp { display: block; flex: 1 1 0; min-width: 0; }
+  .ai-head-tag { flex: none; margin-inline: 2px 4px; font-size: 12px; padding: 1px 8px; }
+  .ai-head-tag .ai-mode-s { display: inline; }
+  html.no-doc-scroll .ai-more-wrap { margin-left: 0; }
+  html.no-doc-scroll .btn.ai-mem-back { min-height: 44px; }
+  html.no-doc-scroll .page-ai .ai-list {
+    position: fixed; z-index: 40; top: env(safe-area-inset-top, 0px); bottom: max(var(--kb, 0px), env(keyboard-inset-height, 0px)); left: 0; box-sizing: border-box; width: min(320px, 82vw);
+    padding: 8px 12px 0 max(12px, env(safe-area-inset-left)); border-right: 1px solid var(--line-soft); background: var(--sheet);
+    box-shadow: var(--shadow-pop); transform: translateX(-102%); visibility: hidden;
+    transition: transform .22s ease, visibility 0s linear .22s;
+  }
+  html.no-doc-scroll .page-ai .ai-list.open { transform: none; visibility: visible; transition: transform .22s ease, visibility 0s; }
+  .ai-backdrop { display: block; position: fixed; z-index: 39; inset: 0; background: rgba(0, 0, 0, .45); animation: ai-fade .2s ease; }
+  @keyframes ai-fade { from { opacity: 0; } to { opacity: 1; } }
 }
-/* Narrow phones: the tabs are icons only, 44px segments (their name is the aria-label and the tip) */
-@media (max-width: 380px) {
-  .ai-tab-l { display: none; }
-  .ai-tabs button { width: 44px; padding-inline: 0; }
+/* A small phone held sideways (under 720 px wide, short): the whole drawer content scrolls as one (search, New chat, Memory,
+   the list, the foot), so the history rows are usable instead of a 100 px strip between fixed blocks */
+@media (max-width: 719.98px) and (max-height: 500px) {
+  html.no-doc-scroll .page-ai .ai-list { overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; }
+  html.no-doc-scroll .page-ai .ai-list > * { flex: none; }
+  html.no-doc-scroll .page-ai .ai-list .ai-list-body { flex: none; min-height: auto; overflow: visible; }
 }
-/* A phone turned sideways: the title row hides, the tabs move into the list header and the memory head (CH-11) */
+@media (prefers-reduced-motion: reduce) {
+  html.no-doc-scroll .page-ai .ai-list, html.no-doc-scroll .page-ai .ai-list.open { transition: none; }
+  .ai-backdrop { animation: none; }
+}
+/* A phone turned sideways (>= 720 px wide: the sidebar mode): the title row hides, the sidebar sits beside the chat (CH-11) */
 @media (orientation: landscape) and (max-height: 500px) {
   html.no-doc-scroll .page-ai .page-head.ai-head { display: none; }
-  .ai-ltabs { display: inline-flex; }
-  /* The list header holds New chat, the tabs and More: all icons here (names = aria-labels and tap-and-hold tips) */
-  .ai-ltabs .ai-tab-l, html.no-doc-scroll .ai-list-head .ai-new-l { display: none; }
-  .ai-ltabs button { width: 44px; padding-inline: 0; }
-  html.no-doc-scroll .ai-list-head .btn.ai-new { flex: none; width: 44px; padding: 0; justify-content: center; }
-  html.no-doc-scroll .ai-list-head .ai-ltabs { margin-left: auto; }
-  html.no-doc-scroll .ai-list-head .ai-more-wrap { margin-left: 0; }
   html.no-doc-scroll .ai-composer { max-height: max(64px, calc(var(--vvh, 100dvh) - env(safe-area-inset-top) - 89px - 40px)); }
 }
 /* A landscape phone with the keyboard open (the only screens this short; iOS: html.kb-open): a compact composer, so it fits
@@ -482,12 +558,12 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
 }
 /* 16px text in the fields: iOS zooms into smaller ones */
 @media (pointer: coarse), (max-width: 900px) {
-  .ai-input, .ai-mem-in, .ai-suggest-in, .ai-model-in { font-size: 16px; }
+  .ai-input, .ai-mem-in, .ai-suggest-in, .ai-model-in, .ai-search-in { font-size: 16px; }
 }
 /* Touch: a chat row's trash is 44 px wide, so the list's edge (it clips sideways) never cuts its tap area. The icons
    under a message are 28 px tall and 44 px wide (no gap), so their 44 x 44 tap areas never overlap */
 @media (pointer: coarse) {
-  .ibtn.ai-chat-del { width: 44px; }
+  .ibtn.ai-chat-more { width: 44px; }
   .ai-meta { min-height: 36px; }
   .ai-meta { gap: 0; }
   .ai-meta .ibtn { width: 44px; }
@@ -505,11 +581,11 @@ html.no-doc-scroll, html.no-doc-scroll body { height: 100%; overflow: hidden; ov
    chats became a scroller with 2 px of travel, and iOS dragged and bounced the whole box from its empty area. */
 .ai-list-body > .gh-line, .ai-memwrap > .gh-line { display: none; }
 html.no-doc-scroll .ai-list-body > .gh-line, html.no-doc-scroll .ai-memwrap > .gh-line {
-  display: flex; flex: none; margin-top: auto; padding-top: 16px; padding-bottom: 14px;
+  display: flex; flex: none; margin-top: 0; padding-top: 16px; padding-bottom: 14px;
 }
-/* The notice line under the list takes the safe area */
-html.no-doc-scroll .ai-list > .ai-notice-flow, html.no-doc-scroll .ai-memwrap > .ai-notice-flow { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
-/* Tablets and short landscape (720-900 px) hide the list notice, so the GitHub line takes the bottom safe area itself (after the
+/* The notice line under the memory box takes the safe area */
+html.no-doc-scroll .ai-memwrap > .ai-notice-flow { padding-bottom: calc(6px + env(safe-area-inset-bottom)); }
+/* Tablets and short landscape (720-900 px): the GitHub line takes the bottom safe area itself (after the
    base rule above, which it must override) */
 @media (min-width: 720px) and (max-width: 900px) {
   html.no-doc-scroll .ai-list-body > .gh-line, html.no-doc-scroll .ai-memwrap > .gh-line { padding-bottom: max(14px, calc(6px + env(safe-area-inset-bottom))); }
@@ -554,3 +630,73 @@ html.no-doc-scroll .ai-list > .ai-notice-flow, html.no-doc-scroll .ai-memwrap > 
 @media (hover: hover) { .ai-rs-tog:hover { color: var(--ink2); } }
 @media (pointer: coarse), (max-width: 719.98px) { .ai-rs-tog { min-height: 44px; } }
 @media (prefers-reduced-motion: reduce) { .ai-rs-chev { transition: none; } }
+/* A short screen (a phone turned sideways): a smaller greeting, so the hint and the composer keep their room */
+@media (max-height: 500px) {
+  .ai-welcome { padding-bottom: 8px; }
+  .ai-greeting { font-size: 20px; margin-bottom: 4px; }
+}
+
+/* v2.3 (owner): an EMPTY new chat has no conversation to show, so the greeting, the composer (form), the reply
+   language hint and the admin notice are one group centred in the free area under the chat head. The composer stays the same
+   element: only its box is dropped (display: contents), so the form and the notice become flex items of .ai-conv and the
+   scroller's greeting / hint sit between them (order). As soon as the chat has a message (or a chat opens) none of these
+   rules match (:has(.ai-greeting)) and the composer is the footer again (the fixed dock on phones, the card's foot beyond).
+   The area is as tall as the visual viewport on phones (.shell height is --vvh), so with the keyboard open the group is
+   centred above it; two equal spacers centre it, and when it does not fit it simply starts under the head. */
+.ai-conv:has(.ai-greeting) { padding-bottom: 0; }
+.ai-conv:has(.ai-greeting) .ai-scroll, .ai-conv:has(.ai-greeting) .ai-msgs-wrap, .ai-conv:has(.ai-greeting) .ai-welcome,
+.ai-conv:has(.ai-greeting) .ai-composer { display: contents; }
+.ai-conv:has(.ai-greeting) .ai-msgs { display: none; }
+.ai-conv:has(.ai-greeting)::before, .ai-conv:has(.ai-greeting)::after { content: ""; flex: 1 1 0; min-height: 0; }
+.ai-conv:has(.ai-greeting)::before { order: 1; }
+/* the admin notice is not part of the centred group: the lower spacer comes before it, so it keeps the very bottom */
+.ai-conv:has(.ai-greeting)::after { order: 5; }
+.ai-conv:has(.ai-greeting) .ai-greeting { order: 2; flex: none; margin: 0 0 16px var(--ai-dock-pl, 0px); padding: 0 12px; }
+.ai-conv:has(.ai-greeting) .ai-form { order: 3; flex: none; margin-left: var(--ai-dock-pl, 0px); padding: 0 16px; border: 0; border-radius: 0; background: transparent; }
+.ai-conv:has(.ai-greeting) .ai-notice-btn { order: 6; flex: none; padding-bottom: calc(4px + env(safe-area-inset-bottom)); margin-left: var(--ai-dock-pl, 0px); padding-inline: 16px; justify-content: center; }
+.ai-conv:has(.ai-greeting) .ai-notice-btn span { flex: 0 1 auto; }
+/* Beyond 900 px the card keeps the height it has with a conversation (the scroller + head + footer), so it does not jump */
+@media (min-width: 901px) {
+  .ai-conv:has(.ai-greeting) { min-height: calc(clamp(320px, calc(100dvh - 360px), 900px) + 190px); }
+}
+/* Phones and tablets (full-height chat): no side padding of the old fixed footer (the page frame already is the gutter); the
+   model picker opens above the box as in the wide layout instead of being fixed over the footer */
+@media (max-width: 900px) {
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) { padding-bottom: 0; }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-form { padding: 0; }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-greeting { padding: 0 4px; }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-notice-btn { padding-inline: 0; }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop {
+    position: absolute; left: 0; right: auto; bottom: calc(100% + 6px); width: min(340px, 100%);
+    max-height: min(420px, calc(var(--vvh, 100dvh) * .4));
+  }
+  html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop.ai-effort-pop { width: min(300px, 100%); }
+}
+/* A short visible area (a phone turned sideways, or the keyboard open on a small phone): only the composer is kept */
+@media (max-height: 500px) {
+  /* v2.3: in a short window the strength menu has no room above or below the box: it is fixed to the top of the visible area
+     (it scrolls when it is taller than the area) */
+  html.no-doc-scroll .ai-conv .ai-model-pop.ai-effort-pop, html.no-doc-scroll .ai-conv:has(.ai-greeting) .ai-model-pop.ai-effort-pop {
+    position: fixed; z-index: 45; top: calc(env(safe-area-inset-top, 0px) + 8px); bottom: auto; right: auto;
+    left: calc(var(--ai-conv-left, 0px) + var(--ai-dock-pl, var(--ai-gl, 12px)));
+    max-height: calc(var(--vvh, 100dvh) - env(safe-area-inset-top, 0px) - 16px);
+  }
+  html.no-doc-scroll.kb-open .ai-conv:has(.ai-greeting) .ai-greeting,
+  html.no-doc-scroll.kb-open .ai-conv:has(.ai-greeting) .ai-notice-btn { display: none; }
+}
+
+/* v2.3 (owner): the box is ONE compact pill row while the text is a single short line (brain, input, send); the
+   expanded layout (the base rules above: text on top at the full width, controls in a row under it, a large rounded rectangle)
+   takes over as soon as the text holds a newline or would wrap (pages/ai.ts layoutBox sets .compact). The thinking-strength
+   button stays in the bottom row of the expanded layout when the pill is too narrow for it. */
+.ai-box.compact { display: flex; align-items: center; gap: 4px; padding: 2px 4px; border-radius: 999px; }
+.ai-box.compact .ai-bar, .ai-box.compact .ai-bar-r { display: contents; }
+.ai-box.compact .ai-model-wrap { order: 0; }
+.ai-box.compact .ai-input, .ai-box.compact .ai-input:focus { order: 1; flex: 1; width: auto; min-width: 0; padding: 9px 8px 9px 12px; border-radius: 22px; }
+.ai-box.compact .ai-count { order: 2; flex: 0 1 auto; align-self: center; }
+.ai-box.compact .ai-send { order: 3; }
+/* On a phone the compact row has no room for the strength button: the strength choice is the last section of the brain picker
+   instead (pages/ai.ts modelPopover); the expanded box shows the button again */
+@media (max-width: 719.98px) {
+  .ai-box.compact .ai-effort-wrap { display: none; }
+}

@@ -72,6 +72,8 @@ export const MINI = {
   strength: [{ d: 'M3.5 13V10' }, { d: 'M8 13V7' }, { d: 'M12.5 13V3.5' }],
   /** A bookmark: memories */
   memory: [{ d: 'M4.5 2.5h7v11L8 10.8 4.5 13.5Z' }],
+  /** Two lines of unequal length: the AI Chat history drawer, not the app menu's three lines */
+  sideLines: [{ d: 'M2.5 5h11' }, { d: 'M2.5 11h6.5' }],
   /** Three dots: more actions */
   more: [{ d: 'M3.5 8h.01' }, { d: 'M8 8h.01' }, { d: 'M12.5 8h.01' }],
   /** A key with a circular arrow: reset a password */

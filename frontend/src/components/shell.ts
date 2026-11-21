@@ -224,13 +224,31 @@ function fitBar(): void {
   const el = barEl();
   const acct = el?.querySelector<HTMLElement>('.acct-btn');
   if (!el || !acct) return;
-  el.classList.remove('fit-1', 'fit-2');
+  el.classList.remove('fit-1', 'fit-2', 'fit-3', 'fit-4');
   // scrollWidth rounds up and clientWidth down: 1 px is the rounding of a box that fits exactly
-  const tight = (): boolean => acct.scrollWidth > acct.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1;
-  // v2.2 (owner): the top bar shows the name "Xexam" as text, without the logo icon, and the name never goes (people should
-  // see which app this is). On a phone the account's name is already hidden and the icon, the AI+ badge and the short admin
+  // v2.3: scrollWidth does not see content that overflows to the LEFT of a centred row, and the account's wrapper may shrink
+  // under its button (a very large text size on a 320 px phone), so the boxes are compared too: the AI+ badge inside its button,
+  // and the brand, theme, account and menu buttons never overlap each other.
+  const parts = (): HTMLElement[] => [
+    el.querySelector<HTMLElement>('.top-brand'), el.querySelector<HTMLElement>('.theme-btn'), acct, el.querySelector<HTMLElement>('.menu-wrap > .menu-btn'),
+  ].filter((e): e is HTMLElement => e != null && e.getClientRects().length > 0);
+  const crowded = (): boolean => {
+    const a = acct.getBoundingClientRect();
+    for (const k of Array.from(acct.children)) {
+      if (k.getClientRects().length === 0) continue;
+      const r = k.getBoundingClientRect();
+      if (r.left < a.left - 0.5 || r.right > a.right + 0.5) return true;
+    }
+    const rs = parts().map((e) => e.getBoundingClientRect());
+    return rs.some((x, i) => rs.slice(i + 1).some((y) => x.left < y.right - 0.5 && y.left < x.right - 0.5));
+  };
+  const tight = (): boolean => acct.scrollWidth > acct.clientWidth + 1 || el.scrollWidth > el.clientWidth + 1 || crowded();
+  // v2.2 / v2.3 (owner): the name "Xexam" never goes (people should see which app this is); the logo icon shows on wider
+  // screens and is left out on phones (styles/shell.css). On a phone the account's name is already hidden and the icon, the AI+ badge and the short admin
   // tag ARE the account: the tag goes first (its text is in the tip), then the icon. Wider screens keep the v1.2 order.
-  const steps = matches(PHONE_MQ) ? ['fit-2', 'fit-1'] : ['fit-1', 'fit-2'];
+  // Last resorts (only with a very large text size on a narrow phone): the name gets smaller (fit-3), and only if even that
+  // does not fit it is left out (fit-4) rather than letting the buttons overlap.
+  const steps = matches(PHONE_MQ) ? ['fit-2', 'fit-1', 'fit-3', 'fit-4'] : ['fit-1', 'fit-2', 'fit-3', 'fit-4'];
   for (const step of steps) {
     if (!tight()) return;
     el.classList.add(step);
@@ -409,7 +427,7 @@ export function shell(content: HTMLElement): HTMLElement {
   const barClass = 'topbar' + (pinned ? ' topbar-pin' : '') + (pinned && bar.hidden && !open ? ' topbar-hide' : '')
     + (pinned && window.scrollY > 0 ? ' topbar-scrolled' : '');
   const header = h('header', { class: barClass },
-    h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand(false)),
+    h('a', { class: 'top-brand', href: '#/', onclick: (e: MouseEvent) => { e.preventDefault(); navigate({ name: 'home' }); } }, brand()),
     h('div', { class: 'menu-wrap' }, themeBtn, accountBtn, menuBtn, menu));
 
   if (open && focusMenuOnOpen) {

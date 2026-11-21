@@ -41,6 +41,6 @@ test('quiz top row steps down (short count, tighter gaps, no clock icon) before 
 });
 
 test('phone top bar keeps the brand name and drops the admin tag first, then the icon', () => {
-  assert.match(src('../components/shell.ts'), /matches\(PHONE_MQ\) \? \['fit-2', 'fit-1'\]/);
+  assert.match(src('../components/shell.ts'), /matches\(PHONE_MQ\) \? \['fit-2', 'fit-1', 'fit-3', 'fit-4'\]/);
   assert.match(src('../styles/shell.css'), /min-width: 44px; justify-content: center;/);
 });

@@ -22,6 +22,8 @@
 .nav-paused { margin: 0; padding: 0 10px 6px 36px; font-size: 12.5px; line-height: 1.4; color: var(--ink3); }
 
 @media (max-width: 600px), (orientation: landscape) and (max-height: 500px) { /* PHONE */
+  /* v2.3 (owner): the logo icon shows on wider screens; on phones the brand is the word "Xexam" only */
+  .top-brand .logo { display: none; }
   /* The bar is 44 px tall (the logo 28 px, the label and the menu button as before), 8 px above the page */
   .topbar { min-height: 44px; margin-bottom: 8px; }
   /* On every page except AI Chat it stays at the top of the screen: the safe area is its own padding, so the page
@@ -91,3 +93,6 @@
    for screen readers) */
 .topbar.fit-1 .acct-ico { display: none; }
 .topbar.fit-2 .acct-role { display: none; }
+/* last resorts of fitBar for a very large text size: a smaller name, then no name (the logo / bar still lead home) */
+.topbar.fit-3 .brand-name { font-size: 16px; }
+.topbar.fit-4 .brand-name { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

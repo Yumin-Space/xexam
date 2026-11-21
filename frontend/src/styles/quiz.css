@@ -152,7 +152,7 @@
 .sheet-chip[aria-pressed="true"] { background: var(--hover-strong); border-color: var(--ink2); color: var(--ink); font-weight: 600; }
 .sheet-chip:disabled { opacity: .5; cursor: default; }
 .sheet-chip:focus-visible { outline: 2px solid var(--print); outline-offset: 2px; }
-@media (pointer: coarse) { .sheet-chip { min-height: 44px; } }
+@media (pointer: coarse) { .sheet-chip { min-height: 44px; min-width: 44px; } }
 .tiles .tile[hidden] { display: none; }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 12px 0; font-size: 12.5px; color: var(--ink3); }
 .legend span { display: flex; align-items: center; gap: 6px; }

@@ -62,6 +62,26 @@ def sz(s):
     return '%dx%d' % tuple(s)
 
 
+# v2.3: on a phone the AI Chat history lives in a drawer behind the menu button (#ai-drawer-btn); on a tablet / desktop the
+# sidebar is always there (no button). Opens the drawer when it is closed; answers whether a sidebar is on screen afterwards.
+OPEN_SIDEBAR = """(() => { const b = document.getElementById('ai-drawer-btn');
+  const vis = (e) => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+  if (vis(b) && b.getAttribute('aria-expanded') !== 'true') b.click(); return true })()"""
+
+
+def open_sidebar(d, wait=0.6):
+    d.js(OPEN_SIDEBAR)
+    time.sleep(wait)
+    return d.js("(() => { const a = document.querySelector('aside.ai-list'); return !!a && a.getClientRects().length > 0 })()")
+
+
+def open_memories(d, wait=0.8):
+    """Opens the memories view: the 记忆 row of the sidebar (inside the drawer on a phone)."""
+    open_sidebar(d, 0.5)
+    d.js("(() => { const b = document.getElementById('ai-mem-open'); if (b) b.click(); return !!b })()")
+    time.sleep(wait)
+
+
 # ---------------------------------------------------------------------------------------------------- the run
 class Run:
     """Dimensions, devices, fixtures and the report of one walk."""
@@ -1042,12 +1062,20 @@ def chat_layout_case(rc, lang, theme, size):
 
 
 def chat_title_case(rc, lang, theme, size):
+    """W-CH-2: on a phone the only header is the chat header row (44 px, no h1 title row); wider, the title row stays 44 px."""
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.0)
-    r = d.js("""(() => { const h = [...document.querySelectorAll('h1')].find(e => e.offsetParent); if (!h) return null;
-      const row = h.parentElement; return {h: row.getBoundingClientRect().height, n: h.getBoundingClientRect().height} })()""")
-    ok = bool(r) and r['h'] <= 44.5
-    rc.rec('W-CH-2', 'ai', 'title-row', 'sam', size, lang, theme, ok, 'title row %s px high (limit 44)' % (round(r['h'], 1) if r else '?'), d if not ok else None)
+    r = d.js("""(() => { const vis = e => !!e && e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+      const h = [...document.querySelectorAll('h1')].find(vis); const c = document.querySelector('.ai-conv-head');
+      const row = h ? h.parentElement : null;
+      return {h1: !!h, row: row ? row.getBoundingClientRect().height : null, chat: vis(c) ? c.getBoundingClientRect().height : null} })()""")
+    if size[0] < 720:
+        ok = not r['h1'] and r['chat'] is not None and r['chat'] <= 44.5
+        detail = 'phone chat header %s px high (limit 44), title row %s' % (round(r['chat'], 1) if r['chat'] else '?', 'shown' if r['h1'] else 'hidden')
+    else:
+        ok = r['row'] is not None and r['row'] <= 44.5
+        detail = 'title row %s px high (limit 44)' % (round(r['row'], 1) if r['row'] else '?')
+    rc.rec('W-CH-2', 'ai', 'title-row', 'sam', size, lang, theme, ok, detail, d if not ok else None)
 
 
 def chat_keyboard_case(rc, lang, theme, size):
@@ -1459,6 +1487,7 @@ def ch5_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.0)
     d.js(CHECKS_JS)
+    open_sidebar(d)     # v2.3: the history list is the phone drawer
     problems = []
     sel = '.ai-list-body'
     if not d.js("(() => { const e = document.querySelector('.ai-list-body'); return !!e && e.offsetParent !== null })()"):
@@ -1469,6 +1498,7 @@ def ch5_case(rc, lang, theme, size):
     for label, n in (('short', 5), ('long', 40)):
         goto(d, '#/ai', 1.5)
         d.js(CHECKS_JS)
+        open_sidebar(d)
         d.js_call(tmpl, n)
         if label == 'short':
             d.js("Array.from(document.querySelectorAll('.ai-list-body > :not(.ai-chats):not(.gh-line)')).forEach(e => { e.style.display = 'none' })")
@@ -1543,8 +1573,7 @@ SET_VALUE = """((sel, v) => { const e = document.querySelector(sel); if (!e) ret
 def ch4_case(rc, lang, theme, size):
     d = rc.dev('sam', lang, theme, size)
     goto(d, '#/ai', 2.0)
-    d.js("(() => { const b = ['ai-tab', 'ai-ltab', 'ai-mtab'].map(p => document.getElementById(p + '-memory')).find(e => e && e.offsetParent); if (b) b.click(); return !!b })()")
-    time.sleep(0.8)
+    open_memories(d)    # v2.3: the 记忆 row replaces the Chats / Memory tabs
     problems = []
     count = d.js("(document.getElementById('ai-mem-count') || {}).innerText || ''")
     if digits(count) != '01000':
@@ -3608,8 +3637,9 @@ from checks_v12_tokens import GROUPS_V12_TOKENS  # noqa: E402
 from checks_v12_charts import GROUPS_V12_CHARTS  # noqa: E402
 from checks_v13 import GROUPS_V13  # noqa: E402
 from checks_v22 import GROUPS_V22  # noqa: E402
+from checks_v23 import GROUPS_V23  # noqa: E402
 
-GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22
+GROUPS = GROUPS + GROUPS_V12_QUIZ + GROUPS_V12_AI + GROUPS_V12_TOKENS + GROUPS_V12_CHARTS + GROUPS_V13 + GROUPS_V22 + GROUPS_V23
 
 
 def run(walk):

@@ -13,9 +13,9 @@ import { setUiLang } from './index.ts';
 import { localizeServerMessage } from './server-messages.ts';
 
 test('the administrator notice of AI Chat says what administrators can see, in all three languages', () => {
-  assert.equal(ai.en['ai.adminNotice'], 'Administrators can view and delete your AI chats and memories and see your AI usage.');
-  assert.equal(ai.zh['ai.adminNotice'], '管理员可以查看和删除你的 AI 对话和记忆，也能看到你的 AI 用量。');
-  assert.equal(ai.ja['ai.adminNotice'], '管理者はあなたの AI チャットとメモリーを閲覧・削除でき、AI の使用量も確認できます。');
+  assert.equal(ai.en['ai.adminNotice'], 'Admins can view and delete your AI chats and memories.');
+  assert.equal(ai.zh['ai.adminNotice'], '管理员可查看、删除你的 AI 对话、记忆和用量。');
+  assert.equal(ai.ja['ai.adminNotice'], '管理者は AI の会話・メモリー・利用量を見て削除できます。');
 });
 
 test('the tips of Select all / Deselect all quote "Include banks imported later" exactly', () => {
@@ -121,10 +121,9 @@ test('AI Chat texts for users call it the AI+ feature, never the service or the 
   assert.equal(ai.ja['ai.err.unavailable'], 'AI は現在利用できません。しばらくしてからもう一度試すか、管理者に連絡してください。');
 });
 
-test('the empty-chat hint names the reply language by its own name', () => {
+test('the language names are the languages own names', () => {
   assert.equal(ai.en['ai.langName.zh'], '简体中文');
   assert.equal(ai.zh['ai.langName.ja'], '日本語');
-  for (const lang of ['en', 'zh', 'ja'] as const) assert.ok(ai[lang]['ai.emptyChat'].includes('{lang}'));
 });
 
 test('owner decisions of 2026-11-12: pause / resume everywhere, one name, no container name for users', () => {

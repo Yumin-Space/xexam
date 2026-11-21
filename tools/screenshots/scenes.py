@@ -370,16 +370,22 @@ JS_USER_TABS = r"""((expected) => {
 JS_AI_FUNCTIONS = r"""(() => [...new Set([...document.querySelectorAll('[id^="ais-feat-"]')].map(b => b.closest('tr, li')?.innerText
   .replace(/\s+/g, ' ').trim().slice(0, 60)))].join(' | ') || 'no feature boxes')()"""
 
-# AI Chat: open the chat whose title starts like `title` in the chat list
+# AI Chat: open the chat whose title starts like `title` in the chat list (on a phone the list is the history drawer: it is
+# opened with the menu button first when it is closed; picking a chat closes it again)
 JS_AI_OPEN = r"""(async (title) => {
   const list = document.querySelector('.ai-list');
-  if (!list || !window.__shown(list)) {
+  if (!list) return 'no chat list';
+  if (!window.__shown(list)) {
+    const btn = document.querySelector('#ai-drawer-btn');
+    if (btn && window.__shown(btn)) { btn.click(); await window.__wait(600); }
+  }
+  if (!window.__shown(list)) {
     return document.querySelectorAll('.ai-msg').length ? document.querySelectorAll('.ai-msg').length + ' messages shown (already open)' : 'no chat list';
   }
   const key = title.replace(/\s+/g, ' ').slice(0, 16);
   const item = [...list.querySelectorAll('button, a, [role="button"]')].find(el => (el.innerText || '').includes(key));
   if (!item) return 'chat not found';
-  item.click(); await window.__wait(900);
+  item.click(); await window.__wait(1500);
   return document.querySelectorAll('.ai-msg').length + ' messages shown';
 })"""
 
@@ -1323,11 +1329,16 @@ def _phone_scenes(s, base, cookie, code):
         seed.delete_ai_chats(base, cookie)
         seed.ai_chat(base, cookie, first, code)
         s.nav('#/ai', settle=2.4)
+        # v2.3: the list is the history drawer on a phone; open it, check its footer, then pick the seeded chat in it (the
+        # drawer closes) so the shot shows the conversation
+        s.js("(async () => { const b = document.querySelector('#ai-drawer-btn'); if (b && window.__shown(b)) { b.click(); await window.__wait(600); } return 'drawer'; })()")
         if s.js("window.__shown('.ai-list')"):
-            _footer(s, 'AI Chat list pane', root='.ai-list', touch=True)
+            _footer(s, 'AI Chat history drawer', root='.ai-list', touch=True)
         else:
-            print('  footer (AI Chat list pane): the list is not shown on this screen; not checked')
-        print('  ai chat (phone):', s.js('(%s)(%s)' % (JS_AI_OPEN, json.dumps(first))))
+            print('  footer (AI Chat history drawer): the drawer is not shown on this screen; not checked')
+        opened = s.js('(%s)(%s)' % (JS_AI_OPEN, json.dumps(first)))
+        print('  ai chat (phone):', opened)
+        _expect([] if str(opened).split(' ')[0].isdigit() and int(str(opened).split(' ')[0]) > 0 else ['the seeded chat is not open (%s)' % opened], 'AI Chat on a phone')
         problems = s.js("(() => { const bad = []; if (document.querySelector('.ai-conv .gh-line')) bad.push('the GitHub line is inside the conversation'); "
                         "const de = document.documentElement; if (de.scrollWidth > de.clientWidth + 1) bad.push('the page scrolls horizontally'); return bad; })()")
         _expect(problems, 'AI Chat on a phone')
