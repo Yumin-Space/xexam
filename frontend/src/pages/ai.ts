@@ -1238,6 +1238,9 @@ function send(): void {
   const model = modelToSend();
   const effort = effortToSend();
   const ed = edit;
+  // v2.4 (owner): on a touch screen sending closes the keyboard, so the conversation gets the whole screen back; the box
+  // shrinks to its one-row form when the sent text leaves it (the "start" event). A mouse / keyboard user keeps the focus.
+  if (window.matchMedia('(pointer: coarse)').matches) composer.input.blur();
   if (ed && chatId != null && editValid(view, ed)) {
     void runStream((o) => withModel(chatId, model, effort, (m) => editMessage(chatId, ed.messageId, text, lang, o, m, effort)),
       (v) => localEdit(v, ed.messageId, text, model, undefined, effort));
@@ -1473,6 +1476,25 @@ function forgetStudyChats(chatId: number | null): void {
   forgetSummaryChats(chatId);
 }
 
+// v2.4 (owner): whether the last input was a tap / click (true) or a key (false). After a delete the focus moves to the next
+// row only for a keyboard user; a tap or click would get a blue focus ring around a row it never touched.
+let pointerInput = true;
+if (typeof document !== 'undefined') {
+  document.addEventListener('pointerdown', () => { pointerInput = true; }, true);
+  document.addEventListener('keydown', () => { pointerInput = false; }, true);
+}
+
+/** After a delete: a keyboard user's focus goes to `target`; after a tap or click the drawer keeps it (no ring) or, on a
+ *  wide screen, nothing is focused */
+function focusAfterDelete(target: HTMLElement | null): void {
+  if (!pointerInput) {
+    target?.focus({ preventScroll: true });
+    return;
+  }
+  if (drawerOpen) drawerEl()?.focus({ preventScroll: true });
+  else if (document.activeElement instanceof HTMLElement && document.activeElement !== document.body) document.activeElement.blur();
+}
+
 /** A confirm dialog was cancelled: the focus goes back to the control that started it when that is gone (its menu closed) */
 function focusAfterCancel(...ids: string[]): void {
   window.setTimeout(() => {
@@ -1517,7 +1539,7 @@ async function removeChat(c: Pick<AiChatSummary, 'id' | 'title' | 'kind'>): Prom
     // The row is gone: the focus goes to the next row (else the previous one, else New chat) and the result is announced
     const rows = Array.from(document.querySelectorAll<HTMLElement>('.ai-chats .ai-chat-open'));
     const target = rows[Math.min(Math.max(idx, 0), rows.length - 1)] ?? (drawerOpen ? document.getElementById('ai-side-new') : null) ?? document.getElementById('ai-new');
-    target?.focus({ preventScroll: true });
+    focusAfterDelete(target);
     announce(t('ai.delete.done'));
   }
 }
@@ -1544,7 +1566,7 @@ async function removeAllChats(): Promise<void> {
   await loadChats();
   void refreshAi(true);
   // The foot button is gone: the focus goes to New chat (in the drawer when it is open)
-  if (onPage()) (document.getElementById(drawerOpen ? 'ai-side-new' : 'ai-new') ?? drawerEl())?.focus({ preventScroll: true });
+  if (onPage()) focusAfterDelete(document.getElementById(drawerOpen ? 'ai-side-new' : 'ai-new') ?? drawerEl());
 }
 
 // ---------------------------------------------------------------- scrolling

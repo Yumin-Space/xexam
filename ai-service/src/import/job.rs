@@ -658,6 +658,8 @@ struct Rec<'a> {
     max: usize,
     /// Provider errors in a row (three fail the job)
     fails: AtomicUsize,
+    /// The errors of the current streak that will not pass by waiting
+    hard: AtomicUsize,
     /// Set by the first failing window of a wave: its siblings start no new call
     abort: AtomicBool,
     first_err: Mutex<Option<Stop>>,
@@ -670,6 +672,7 @@ impl<'a> Rec<'a> {
             used: AtomicUsize::new(0),
             max,
             fails: AtomicUsize::new(0),
+            hard: AtomicUsize::new(0),
             abort: AtomicBool::new(false),
             first_err: Mutex::new(None),
         }
@@ -696,8 +699,9 @@ impl<'a> Rec<'a> {
         *self.first_err.lock().unwrap_or_else(|x| x.into_inner())
     }
 
-    /// One recognising call with the provider-error rules: three errors in a row fail the job with the provider's code,
-    /// the backoff grows by 15 s per error.
+    /// One recognising call with the provider-error rules of a generation: three errors in a row that will not pass by
+    /// waiting fail the job with the provider's code, six passing ones (overloaded, rate limited, …) too; the backoff is
+    /// 15, 30, then 60 s.
     async fn call(&self, prompt: &Prompt, want: i64) -> Result<String, Stop> {
         self.call_with(&prompt.system, None, &prompt.user, want, 1)
             .await
@@ -723,7 +727,7 @@ impl<'a> Rec<'a> {
             ctx.recheck().await?;
             let fails = self.fails.load(Ordering::SeqCst);
             if fails > 0 {
-                let secs = (15 * fails as u64).min(60) as f64
+                let secs = crate::gen::run::backoff_after(fails) as f64
                     * Knobs::get(&ctx.app.0.knobs.backoff_scale) as f64
                     / 100.0;
                 ctx.sleep_checked(secs).await?;
@@ -751,15 +755,21 @@ impl<'a> Rec<'a> {
             let (row, outcome) = match r {
                 CallResult::Answer { text, row, .. } => {
                     self.fails.store(0, Ordering::SeqCst);
+                    self.hard.store(0, Ordering::SeqCst);
                     (row, Ok(text))
                 }
                 CallResult::Error { code, row, .. } => {
                     attempt += 1;
                     let n = self.fails.fetch_add(1, Ordering::SeqCst) + 1;
                     let c: UpCode = code;
+                    let h = if crate::gen::run::transient(c.code()) {
+                        self.hard.load(Ordering::SeqCst)
+                    } else {
+                        self.hard.fetch_add(1, Ordering::SeqCst) + 1
+                    };
                     (
                         row,
-                        Err((n >= 3).then(|| Stop::Fail(static_up_code(c.code())))),
+                        Err((h >= 3 || n >= 6).then(|| Stop::Fail(static_up_code(c.code())))),
                     )
                 }
             };

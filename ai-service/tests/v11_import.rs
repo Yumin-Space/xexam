@@ -901,7 +901,7 @@ async fn recognising_failures_are_free() {
         ),
         2
     );
-    // three provider errors in a row
+    // v2.4: a server error passes with waiting, so six in a row
     let e = env().await;
     e.t.stub.st().script = Some(Arc::new(|_, _| Reply::Status(500, "boom".into())));
     let j = failure_of(&e, "course.docx", docx_of(&six())).await;
@@ -911,7 +911,7 @@ async fn recognising_failures_are_free() {
             &e.t,
             "SELECT COUNT(*) FROM gen_calls WHERE status = 'error'"
         ),
-        3
+        6
     );
 }
 

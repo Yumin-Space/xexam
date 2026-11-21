@@ -2,9 +2,11 @@
 //! builds the prompt, calls the model and feeds the result back with `on_answer` or `on_provider_error`; this file
 //! never does I/O and keeps no clock.
 //!
-//! Owner rule (A-OWNER-13c): a job always delivers exactly `goal` valid questions. Missing or invalid slots are asked
-//! again in smaller batches until every slot is valid; the only way out without a bank is the safety stop (twice the
-//! planned number of calls at the current batch size, or three provider errors in a row). There is no partial result.
+//! Owner rule (A-OWNER-13c): a job delivers `goal` valid questions. Missing or invalid slots are asked again in smaller
+//! batches until every slot is valid; the way out without a bank is the safety stop (the call ceiling, or provider
+//! errors in a row: three that will not pass by waiting, six that may). v2.4 (`with_partial`, AI bank generation only):
+//! a slot that used up its quality budget is left out instead of ending the job, and a run with at least half of the
+//! questions ends `Partial`; an AI import of material keeps the old rule (its create route needs exactly `goal`).
 
 use std::collections::{HashMap, VecDeque};
 
@@ -121,6 +123,23 @@ fn plain_reason(code: &str) -> &'static str {
     }
 }
 
+/// The wait after `n` provider errors in a row: 0, then 15, 30 and 60 seconds (60 from then on).
+pub(crate) fn backoff_after(n: usize) -> u64 {
+    match n {
+        0 => 0,
+        n => (15u64 << (n.min(3) - 1)).min(60),
+    }
+}
+
+/// Provider errors that may pass by waiting (they get the longer streak before a job stops). A timeout is not one: a
+/// whole-answer call has already waited minutes before it.
+pub(crate) fn transient(code: &str) -> bool {
+    matches!(
+        code,
+        "ai.up.overloaded" | "ai.up.rateLimit" | "ai.up.connect" | "ai.up.server"
+    )
+}
+
 pub struct Run {
     plan: Plan,
     filled: Vec<Option<FinalQuestion>>,
@@ -136,6 +155,8 @@ pub struct Run {
     /// Rejections by reason code, for the job's INFO line
     reasons: std::collections::BTreeMap<&'static str, usize>,
     fails_in_row: usize,
+    /// The errors of the current streak that will not pass by waiting (a key, a quota, a missing model, a bad request)
+    hard_in_row: usize,
     per_call: usize,
     deduper: Deduper,
     limits: JobLimits,
@@ -152,6 +173,11 @@ pub struct Run {
     sends: Vec<u32>,
     /// Group of each slot (the chunk of a chunked generation): a batch never mixes groups
     groups: Option<Vec<usize>>,
+    /// Generation slots given up after their quality budget: the job goes on without them and ends partial
+    dropped: Vec<bool>,
+    /// v2.4: a slot that used up its quality budget is left out (`dropped`) instead of ending the job, and the run may end
+    /// `Partial` (AI bank generation only; set by `with_partial`)
+    partial_ok: bool,
 }
 
 /// The convert policy's state: the regions, the size budget, which slots were given up, and the output sizes asked for.
@@ -202,6 +228,7 @@ impl Run {
             answers: 0,
             reasons: std::collections::BTreeMap::new(),
             fails_in_row: 0,
+            hard_in_row: 0,
             per_call,
             deduper,
             limits,
@@ -213,6 +240,8 @@ impl Run {
             convert: None,
             sends: vec![0; n],
             groups: None,
+            dropped: vec![false; n],
+            partial_ok: false,
         }
     }
 
@@ -266,6 +295,14 @@ impl Run {
     /// Three provider errors in a row still end the job (`max_fails_in_row`), and the runner still honours a cancel.
     pub fn with_unlimited(mut self, on: bool) -> Run {
         self.unlimited = on;
+        self
+    }
+
+    /// v2.4, AI bank generation only: a slot that used up its quality budget is left out and the job goes on; the run
+    /// ends `Partial` when at least half of the questions are valid. Without it (an AI import of material) such a slot
+    /// ends the job as before.
+    pub fn with_partial(mut self, on: bool) -> Run {
+        self.partial_ok = on;
         self
     }
 
@@ -350,24 +387,42 @@ impl Run {
     fn finished(&self) -> bool {
         match &self.convert {
             Some(_) => self.open_slots().is_empty(),
-            None => self.all_filled(),
+            None => (0..self.plan.slots.len()).all(|i| self.filled[i].is_some() || self.dropped[i]),
         }
     }
 
     fn stopped(&self) -> bool {
         self.finished()
             || (!self.unlimited && self.answers >= self.limits.max_calls.min(self.hard_cap))
-            || self.fails_in_row >= self.limits.max_fails_in_row
-            || self.slot_budget_spent()
+            || self.provider_stop()
+            || (!self.partial_ok && self.slot_budget_spent())
+            || (self.partial_ok && self.partial_hopeless())
     }
 
-    /// A generation slot that has used up its quality budget ends the job (the bank needs every slot).
+    /// With `with_partial`, the run stops as soon as a partial bank is out of reach: a slot was left out before any slot
+    /// passed (the model is not delivering at all), or the slots left out leave fewer than half of the goal possible.
+    fn partial_hopeless(&self) -> bool {
+        let dropped = self.dropped.iter().filter(|d| **d).count();
+        dropped > 0
+            && (self.made() == 0 || (self.goal() - dropped.min(self.goal())) * 2 < self.goal())
+    }
+
+    /// Without `with_partial`, a generation slot that has used up its quality budget ends the job (the bank needs every
+    /// slot).
     fn slot_budget_spent(&self) -> bool {
         let cap = self.limits.max_slot_rejects as u32;
         cap > 0
             && self.convert.is_none()
             && (0..self.plan.slots.len())
                 .any(|i| self.filled[i].is_none() && self.rejects[i] >= cap)
+    }
+
+    /// The provider errors in a row end the job: `max_fails_in_row` errors that will not pass by waiting, or twice as many
+    /// passing ones (overloaded, rate limited, no connection, server error: about four minutes of backoff; a timeout counts as one that
+    /// will not pass, a whole answer already waited minutes for it).
+    fn provider_stop(&self) -> bool {
+        self.hard_in_row >= self.limits.max_fails_in_row
+            || self.fails_in_row >= self.limits.max_fails_in_row.saturating_mul(2)
     }
 
     /// Rejection counts by reason code (`Reject::code`, plus `missing` for a slot an answer did not deliver), sorted.
@@ -409,7 +464,7 @@ impl Run {
             if fresh.len() >= self.per_call {
                 break;
             }
-            if self.asked[i] || self.filled[i].is_some() {
+            if self.asked[i] || self.filled[i].is_some() || self.dropped[i] {
                 continue;
             }
             if fresh
@@ -433,7 +488,7 @@ impl Run {
             let Some(i) = self.queue.pop_front() else {
                 break;
             };
-            if self.filled[i].is_some() {
+            if self.filled[i].is_some() || self.dropped[i] {
                 self.in_queue[i] = false;
                 continue;
             }
@@ -505,7 +560,7 @@ impl Run {
     }
 
     fn requeue(&mut self, i: usize) {
-        if self.filled[i].is_none() && !self.in_queue[i] {
+        if self.filled[i].is_none() && !self.in_queue[i] && !self.dropped[i] {
             self.in_queue[i] = true;
             self.queue.push_back(i);
         }
@@ -566,7 +621,12 @@ impl Run {
                 self.switch_seed(idx);
                 let cap = self.limits.max_slot_rejects as u32;
                 if cap > 0 && self.rejects[idx] >= cap {
-                    self.requeue(idx);
+                    if self.partial_ok {
+                        // one stuck slot no longer stops the job: it is left out and the bank is made without it
+                        self.dropped[idx] = true;
+                    } else {
+                        self.requeue(idx);
+                    }
                     return true;
                 }
             }
@@ -619,6 +679,7 @@ impl Run {
         self.calls += 1;
         self.answers += 1;
         self.fails_in_row = 0;
+        self.hard_in_row = 0;
         if truncated {
             self.shrink(batch);
         }
@@ -692,6 +753,18 @@ impl Run {
             return;
         }
         let slot = self.plan.slots[idx].clone();
+        // letter references ("选项 C", "(B) is wrong") would point at the wrong option once the options are shuffled:
+        // they are rewritten to the option texts instead of refusing the question
+        let mut raw = raw;
+        match self.convert.as_ref().map(|c| c.specs[idx].choices) {
+            None => crate::gen::check::repair_letter_refs(&mut raw, false),
+            // an import: only the explanation of a question whose options are made (and shuffled); kept options keep
+            // the file's order, so its explanation stays exactly as written
+            Some(crate::import::convert::Choices::Make) => {
+                crate::gen::check::repair_letter_refs(&mut raw, true)
+            }
+            Some(_) => {}
+        }
         if let Some(c) = &self.convert {
             let spec = c.specs[idx].clone();
             match check_convert(&raw, &slot, &spec) {
@@ -739,6 +812,9 @@ impl Run {
     pub fn on_provider_error(&mut self, batch: &[usize], code: &str) {
         self.calls += 1;
         self.fails_in_row += 1;
+        if !transient(code) {
+            self.hard_in_row += 1;
+        }
         self.last_error = Some(code.to_string());
         for &i in batch {
             self.requeue(i);
@@ -801,9 +877,9 @@ impl Run {
         }
     }
 
-    /// Seconds to wait before the next call: after provider errors `min(15 x errors in a row, 60)`, else 0.
+    /// Seconds to wait before the next call after provider errors in a row: 15, 30, then 60 each time; else 0.
     pub fn backoff_secs(&self) -> u64 {
-        (15 * self.fails_in_row as u64).min(60)
+        backoff_after(self.fails_in_row)
     }
 
     /// Answered calls the safety stop and the ceiling still allow (`usize::MAX` for an unlimited job). A driver with
@@ -871,7 +947,7 @@ impl Run {
             if self.all_filled() {
                 return Outcome::Full;
             }
-            if self.fails_in_row >= self.limits.max_fails_in_row {
+            if self.provider_stop() {
                 return Outcome::Failed(FailCode::Provider(
                     self.last_error.clone().unwrap_or_default(),
                 ));
@@ -886,10 +962,15 @@ impl Run {
         }
         if self.all_filled() {
             Outcome::Full
-        } else if self.fails_in_row >= self.limits.max_fails_in_row {
+        } else if self.provider_stop() {
             Outcome::Failed(FailCode::Provider(
                 self.last_error.clone().unwrap_or_default(),
             ))
+        } else if self.partial_ok && self.made() > 0 && self.made() * 2 >= self.goal() {
+            // at least half of the questions: the bank is made with what is valid (the stuck slots are left out)
+            Outcome::Partial {
+                skipped: self.skipped(),
+            }
         } else {
             Outcome::Failed(FailCode::Quality)
         }
@@ -1134,6 +1215,49 @@ RETRY
     }
 
     #[test]
+    fn one_stuck_slot_is_left_out_and_the_run_ends_partial() {
+        // slot no 3 always comes back with one option too few; every other slot is valid
+        let mut run = make_run(14, 6, 5).with_partial(true);
+        let mut calls = 0;
+        while let Next::Ask(b) = run.next() {
+            let raws: Vec<_> = b
+                .iter()
+                .map(|&i| {
+                    let s = run.plan().slots[i].clone();
+                    let mut r = raw_for(&s, s.no);
+                    if s.no == 3 {
+                        r.options.pop();
+                    }
+                    r
+                })
+                .collect();
+            run.on_answer(&b, &answer_json(&raws), false);
+            calls += 1;
+            assert!(calls <= 100);
+        }
+        assert_eq!(run.made(), 19);
+        assert_eq!(run.outcome(), Outcome::Partial { skipped: vec![3] });
+        assert_eq!(run.questions().len(), 19);
+        // without `with_partial` (an AI import of material) the stuck slot still ends the job as a quality failure
+        let mut run = make_run(14, 6, 5);
+        while let Next::Ask(b) = run.next() {
+            let raws: Vec<_> = b
+                .iter()
+                .map(|&i| {
+                    let s = run.plan().slots[i].clone();
+                    let mut r = raw_for(&s, s.no);
+                    if s.no == 3 {
+                        r.options.pop();
+                    }
+                    r
+                })
+                .collect();
+            run.on_answer(&b, &answer_json(&raws), false);
+        }
+        assert_eq!(run.outcome(), Outcome::Failed(FailCode::Quality));
+    }
+
+    #[test]
     fn a_model_that_delivers_one_slot_per_call_stays_within_five_times_the_slot_count() {
         for per_call in [5usize, 3] {
             let mut run = make_run(14, 6, per_call);
@@ -1211,8 +1335,35 @@ RETRY
         for k in 1..=6u64 {
             let Next::Ask(b) = run.next() else { panic!() };
             run.on_provider_error(&b, "ai.up.down");
-            assert_eq!(run.backoff_secs(), (15 * k).min(60));
+            assert_eq!(run.backoff_secs(), [15, 30, 60, 60, 60, 60][k as usize - 1]);
         }
+    }
+
+    #[test]
+    fn passing_errors_get_six_in_a_row_before_the_job_stops() {
+        let mut run = make_run(14, 6, 5);
+        for k in 1..=5 {
+            let Next::Ask(b) = run.next() else {
+                panic!("call {k}")
+            };
+            run.on_provider_error(&b, "ai.up.overloaded");
+        }
+        let Next::Ask(b) = run.next() else {
+            panic!("sixth call")
+        };
+        run.on_provider_error(&b, "ai.up.overloaded");
+        assert_eq!(run.next(), Next::Finish);
+        assert_eq!(
+            run.outcome(),
+            Outcome::Failed(FailCode::Provider("ai.up.overloaded".into()))
+        );
+        // a key problem still stops after three, even inside a streak of passing errors
+        let mut run = make_run(14, 6, 5);
+        for code in ["ai.up.overloaded", "ai.up.auth", "ai.up.auth", "ai.up.auth"] {
+            let Next::Ask(b) = run.next() else { panic!() };
+            run.on_provider_error(&b, code);
+        }
+        assert_eq!(run.next(), Next::Finish);
     }
 
     #[test]
@@ -1966,7 +2117,8 @@ RETRY
         assert_eq!(run.outcome(), Outcome::Failed(FailCode::Quality));
         assert_eq!(run.skipped(), vec![1, 2, 3]);
         let mut run = convert_run(&regions);
-        for _ in 0..3 {
+        // a passing error (rate limit) gets six in a row; three that will not pass stop it as before
+        for _ in 0..6 {
             let Next::Ask(b) = run.next() else { panic!() };
             run.on_provider_error(&b, "ai.up.rateLimit");
         }
@@ -1975,7 +2127,13 @@ RETRY
             run.outcome(),
             Outcome::Failed(FailCode::Provider("ai.up.rateLimit".into()))
         );
-        assert_eq!(run.backoff_secs(), 45);
+        assert_eq!(run.backoff_secs(), 60);
+        let mut run = convert_run(&regions);
+        for _ in 0..3 {
+            let Next::Ask(b) = run.next() else { panic!() };
+            run.on_provider_error(&b, "ai.up.quota");
+        }
+        assert_eq!(run.next(), Next::Finish);
         // errors that are not in a row do not stop it, and they never count against a slot
         let mut run = convert_run(&regions);
         run.limits.max_calls = 100; // the safety stop is tested elsewhere

@@ -329,12 +329,22 @@ def set_count(d, n):
       i.dispatchEvent(new Event('input', {bubbles: true})); i.dispatchEvent(new Event('change', {bubbles: true})); i.blur(); return 1 })()""" % n)
 
 
+TICK_ALL_JS = """(() => { const boxes = [...document.querySelectorAll('.home-picklist input[type=checkbox]')];
+  if (boxes.some((b) => b.checked)) return 0;
+  const all = document.querySelector('.home-pickacts .btn');
+  if (all) all.click(); else boxes.forEach((b) => { if (!b.checked) b.click() });
+  return 1 })()"""
+
+
 def start_quiz(d, kind, count=None):
     # v1.1 (TL-6): leaving a quiz page saves its session on pagehide, so the saved session is cleared only after leaving it
     goto(d, '#/', 0.8)
     d.js(CLEAR_SESSION)
     d.reload(1.4)
     d.js(CHECKS_JS)
+    # v2.4: Home ticks nothing by default; tick every bank first (Select all, or the only bank's box)
+    d.js(TICK_ALL_JS)
+    time.sleep(0.3)
     if count:
         set_count(d, count)
     d.js("window.__start('%s')" % kind)
@@ -1096,12 +1106,13 @@ def chat_keyboard_case(rc, lang, theme, size):
     d.type('\n'.join('Made-up draft line %d' % (i + 1) for i in range(6)))
     time.sleep(0.5)
     rc.rec('W-CH-3', 'ai', 'keyboard-draft', 'sam', size, lang, theme, *keyboard_room(W(d, 'chat'), 90), d=d)
-    # Send with the keyboard open: the focus stays in the input (the keyboard would close otherwise)
+    # Send with the keyboard open: v2.4 (owner) on a touch screen the input lets go of the focus, so the keyboard closes and
+    # the conversation gets the whole screen back
     d.tap_sel('#ai-send', wait=0.6)
     active = d.js('document.activeElement && document.activeElement.id')
     until(d, "!document.querySelector('#ai-send.stop')", 20)
-    rc.rec('W-CH-3', 'ai', 'keyboard-send-focus', 'sam', size, lang, theme, active == 'ai-input',
-           'focus after Send: %s' % (active or 'none'), d if active != 'ai-input' else None)
+    rc.rec('W-CH-3', 'ai', 'keyboard-send-focus', 'sam', size, lang, theme, active != 'ai-input',
+           'focus after Send: %s' % (active or 'none'), d if active == 'ai-input' else None)
     d.keyboard(False)
     time.sleep(0.5)
     back = W(d, 'chat')
@@ -1818,9 +1829,10 @@ FOOTER_JS = """(async (ver) => {
     const r = a.getBoundingClientRect(); const h = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
     if (!h || !(h === a || a.contains(h))) out.problems.push('link ' + (i + 1) + ' covered by ' + (h ? h.tagName + '.' + h.className : 'nothing'));
   });
-  if (links[1] && links[1].innerText.trim() !== 'Xexam ' + ver) out.problems.push('version link reads ' + links[1].innerText.trim());
+  // the link reads "Xexam v<version>" (footer.version); an old separate version line would be a second "Xexam v" outside it
+  if (links[1] && links[1].innerText.trim() !== 'Xexam v' + ver) out.problems.push('version link reads ' + links[1].innerText.trim());
   const foot = g.closest('footer') || g.parentElement;
-  if (/Xexam v\\d/.test(foot.innerText)) out.problems.push('the old "Xexam v" line is still there');
+  if ((foot.innerText.match(/Xexam v\\d/g) || []).length > 1) out.problems.push('the old "Xexam v" line is still there');
   const rg = document.createRange(); rg.selectNodeContents(g); const cr = rg.getBoundingClientRect();
   const lh = parseFloat(getComputedStyle(g).lineHeight) || 20;
   if (cr.height > lh * 1.6) out.problems.push('the line wraps (' + Math.round(cr.height) + ' px)');
@@ -2301,6 +2313,9 @@ def aibtn_case(rc, lang, theme, size):
     seen = []
     # Home: no AI+ bank ticked -> usable orange; one ticked -> grey with the tip only
     goto(d, '#/', 2.0)
+    # v2.4: nothing is ticked at first; tick every bank, then untick the AI+ ones
+    d.js(TICK_ALL_JS)
+    time.sleep(0.3)
     d.js(AIBTN_UNTICK)
     time.sleep(0.5)
     if aibtn_look(d, '.home-setup-head .gen-btn', 'Home usable', problems, False, coarse):

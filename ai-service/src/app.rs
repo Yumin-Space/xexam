@@ -133,6 +133,9 @@ pub struct App {
     token_memo: Mutex<std::collections::HashMap<String, crate::provider::TokenMemo>>,
     /// Route keys whose OpenAI-compatible server refused cache markers (content parts with `cache_control`); memory only
     no_markers: Mutex<std::collections::HashSet<String>>,
+    /// v2.4: route keys whose whole-answer request (`"stream": false`) of a background job timed out or got a gateway
+    /// timeout (504 / 524: a proxy that cuts a quiet response); their jobs stream again. Memory only
+    no_whole: Mutex<std::collections::HashSet<String>>,
     /// Route keys whose provider refused structured output (`output_config` / `response_format`); memory only
     no_schema: Mutex<std::collections::HashSet<String>>,
     /// Route keys + thinking strength (`<key>|<family>:<level>`) the provider refused; memory only
@@ -323,6 +326,26 @@ impl App {
     fn token_memo_of(&self, key: &str) -> Option<crate::provider::TokenMemo> {
         let m = self.token_memo.lock().unwrap_or_else(|e| e.into_inner());
         m.get(key).copied()
+    }
+
+    /// `true` when a whole-answer request of this route timed out earlier (its background jobs stream again).
+    pub fn no_whole_of(&self, key: &str) -> bool {
+        let m = self.no_whole.lock().unwrap_or_else(|e| e.into_inner());
+        m.contains(key)
+    }
+
+    /// Remembers that a whole-answer request of this route key timed out or got a gateway timeout (one INFO line,
+    /// English, no key, URL or content). At most [`MEMO_CAP`] keys are kept.
+    pub fn remember_no_whole(&self, key: &str) {
+        let mut m = self.no_whole.lock().unwrap_or_else(|e| e.into_inner());
+        if m.len() >= MEMO_CAP && !m.contains(key) {
+            m.clear();
+        }
+        if m.insert(key.to_string()) {
+            tracing::info!(
+                "a whole AI answer timed out on this connection; its background jobs stream again"
+            );
+        }
     }
 
     /// `true` when this route's server refused cache markers earlier (the requests go out without them).
@@ -579,6 +602,7 @@ impl App {
             cap_episodes: Mutex::new(std::collections::HashMap::new()),
             token_memo: Mutex::new(std::collections::HashMap::new()),
             no_markers: Mutex::new(std::collections::HashSet::new()),
+            no_whole: Mutex::new(std::collections::HashSet::new()),
             no_schema: Mutex::new(std::collections::HashSet::new()),
             no_effort: Mutex::new(std::collections::HashSet::new()),
             gen_per_call: Mutex::new(std::collections::HashMap::new()),

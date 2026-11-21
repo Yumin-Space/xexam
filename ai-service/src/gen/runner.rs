@@ -655,7 +655,11 @@ impl Ctx {
             }),
             schema: opts.schema,
             effort: route.effort,
+            // background job: the whole answer at once (streams of some services stop mid-answer), unless a whole answer
+            // of this route timed out before (a proxy that cuts a quiet response): then it streams
+            whole: !app.0.no_whole_of(&route.key),
         };
+        let whole = spec.whole && route.format == crate::settings::Format::OpenAi;
         let planned = app.token_plan(route, &target, &spec, want);
         drop(target);
         let provider_name = route.provider.as_str();
@@ -717,6 +721,11 @@ impl Ctx {
                 })
             }
             Ok(Err(e)) => {
+                if whole
+                    && (e.code == provider::UpCode::Timeout || matches!(e.http, Some(504 | 524)))
+                {
+                    app.0.remember_no_whole(&route.key);
+                }
                 app.0
                     .failures
                     .note(&self.who.username, e.code.code(), e.http);
@@ -1170,7 +1179,9 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
     )
     .with_hard_cap(hard_cap)
     .with_unlimited(unlimited)
-    .with_groups(job.groups.clone());
+    .with_groups(job.groups.clone())
+    // v2.4: a stuck question is left out; the bank is made with at least half of the questions
+    .with_partial(true);
     let driven = drive_generation(&ctx, &job, &mut run).await;
     drop(place);
     let calls = run.calls();
@@ -1186,14 +1197,15 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
         Err(Stop::Cancelled(_)) | Err(Stop::Shutdown) => {}
         Err(Stop::Fail(code)) => gen_failed(&app, &job, code, calls, &run_detail(&run)),
         Ok(()) => match run.outcome() {
-            // a generation never ends partial (A-OWNER-13c); the arm only keeps the match total
-            Outcome::Failed(FailCode::Quality) | Outcome::Partial { .. } => {
+            Outcome::Failed(FailCode::Quality) => {
                 gen_failed(&app, &job, "ai.gen.quality", calls, &run_detail(&run))
             }
             Outcome::Failed(FailCode::Provider(code)) => {
                 gen_failed(&app, &job, static_up_code(&code), calls, &run_detail(&run))
             }
-            Outcome::Full => {
+            Outcome::Full | Outcome::Partial { .. } => {
+                // a partial run (some stuck slots were left out) saves what is valid: `made` questions
+                let made = run.made();
                 // saving: the compare-and-set on the phase decides against a cancel that came first
                 let now = unix_now();
                 let set = app
@@ -1212,13 +1224,14 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
                     &job.name,
                     &job.source,
                     &job.from_ids,
-                    run.goal(),
+                    made,
                     &job.at,
                     &questions,
                 );
                 match create_bank(&app, &ctx.cancel, &payload).await {
                     Ok(reply) => {
-                        let result = json!({"bankId": reply.bank_id, "name": reply.name, "made": run.goal()});
+                        let result =
+                            json!({"bankId": reply.bank_id, "name": reply.name, "made": made});
                         let now = unix_now();
                         let n = app
                             .0
@@ -1226,7 +1239,7 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
                             .write(|tx| -> rusqlite::Result<usize> {
                                 tx.execute(
                                     "UPDATE tasks SET made = ?2 WHERE id = ?1",
-                                    rusqlite::params![job.task, run.goal() as i64],
+                                    rusqlite::params![job.task, made as i64],
                                 )?;
                                 jobs::finish(
                                     tx,
@@ -1250,12 +1263,12 @@ async fn run_generation(app: AppState, job: GenJob, mut cancel: watch::Receiver<
                                     &job.client,
                                 )
                                 .object(reply.name.clone())
-                                .detail(json!({"questions": run.goal()})),
+                                .detail(json!({"questions": made})),
                             );
                             tracing::info!(
                                 "user {:?} finished an AI bank generation ({} questions, {} model calls)",
                                 job.who.username,
-                                run.goal(),
+                                made,
                                 calls
                             );
                         }

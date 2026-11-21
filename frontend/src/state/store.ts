@@ -170,16 +170,14 @@ export function usableSheetKeys(): string[] {
   return S.banks.flatMap((b) => b.sheets.filter((s) => s.usable > 0).map((s) => sheetKey(b.id, s.name)));
 }
 
-/** The banks changed (after load, import or delete): keep the selection in sync - new sheets are selected by default, vanished ones are removed. */
+/** The banks changed (after load, import or delete): keep the selection in sync - vanished sheets are removed. v2.4 (owner):
+ *  nothing is ticked by default, neither on opening Home nor for a bank that appears later; the user ticks what to use. */
 export function syncSelection(): void {
   const keys = usableSheetKeys();
   const c = S.cfg;
   if (!c.selected) {
-    c.selected = new Set(keys);
+    c.selected = new Set<string>();
   } else {
-    // A-OWNER-64.2: a new AI bank appears in the list unticked (so AI generation is not greyed by it); other new banks are ticked
-    const aiKeys = new Set(S.banks.filter((b) => b.ai).flatMap((b) => b.sheets.map((s) => sheetKey(b.id, s.name))));
-    for (const k of keys) if (!c.known.includes(k) && !aiKeys.has(k)) c.selected.add(k);
     for (const k of [...c.selected]) if (!keys.includes(k)) c.selected.delete(k);
   }
   c.known = keys;

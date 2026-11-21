@@ -159,6 +159,206 @@ pub fn has_letter_ref(s: &str) -> bool {
     false
 }
 
+/// The option index of an option letter (A..F, full width too).
+fn letter_index(c: char) -> Option<usize> {
+    match c {
+        'A'..='F' => Some(c as usize - 'A' as usize),
+        'Ａ'..='Ｆ' => Some(c as usize - 'Ａ' as usize),
+        _ => None,
+    }
+}
+
+/// A separator inside a list of option letters at `i` ("、", ",", "/", "和", "と", " and ", " or " …): its length.
+fn list_separator(v: &[char], i: usize) -> Option<usize> {
+    if i < v.len()
+        && matches!(
+            v[i],
+            '、' | ',' | '，' | '/' | '／' | '和' | '与' | '及' | 'と' | 'や' | '&' | '＆'
+        )
+    {
+        return Some(1);
+    }
+    for w in ["and", "or"] {
+        if let Some(len) = starts_with_ci(v, i, w) {
+            let before = i == 0 || !v[i - 1].is_alphabetic();
+            let after = i + len >= v.len() || !v[i + len].is_alphabetic();
+            if before && after {
+                return Some(len);
+            }
+        }
+    }
+    None
+}
+
+/// A bare option letter at `j`: not glued to another ASCII letter or digit on either side.
+fn bare_letter(v: &[char], j: usize) -> bool {
+    j < v.len()
+        && is_option_letter(v[j])
+        && (j == 0 || !v[j - 1].is_ascii_alphanumeric())
+        && !(j + 1 < v.len() && v[j + 1].is_ascii_alphanumeric())
+}
+
+/// Positions of the letters the repair rewrites: the patterns of [`has_letter_ref`], a little stricter where a pattern
+/// is also the start of an ordinary word ("A项目" is project A, "Cが正常" is "C works normally"), plus the other letters
+/// of a list around a matched one ("Options A and B", "A、B项", "AとBが正しい").
+fn letter_ref_positions(v: &[char]) -> Vec<usize> {
+    let mut out = Vec::new();
+    let letter_at = |j: usize, ascii_only: bool| {
+        j < v.len()
+            && is_option_letter(v[j])
+            && !(j + 1 < v.len()
+                && if ascii_only {
+                    v[j + 1].is_ascii_alphabetic()
+                } else {
+                    v[j + 1].is_alphabetic()
+                })
+    };
+    for i in 0..v.len() {
+        let word_ok = i == 0 || !v[i - 1].is_alphabetic();
+        if word_ok {
+            for w in ["options", "option", "choice", "answer"] {
+                if let Some(len) = starts_with_ci(v, i, w) {
+                    let j = skip(v, i + len, |c| is_space(c) || c == ':' || c == '：');
+                    if letter_at(j, false) {
+                        out.push(j);
+                    }
+                    break;
+                }
+            }
+        }
+        if starts_with_at(v, i, "选项") {
+            let j = skip(v, i + 2, is_space);
+            if letter_at(j, true) {
+                out.push(j);
+            }
+        }
+        if starts_with_at(v, i, "選択肢") {
+            let j = skip(v, i + 3, is_space);
+            if letter_at(j, true) {
+                out.push(j);
+            }
+        }
+        if is_option_letter(v[i]) && (i == 0 || !v[i - 1].is_ascii_alphanumeric()) {
+            let j = skip(v, i + 1, is_space);
+            let at = |s: &str, not_next: &[char]| {
+                let n = s.chars().count();
+                starts_with_at(v, j, s) && !(j + n < v.len() && not_next.contains(&v[j + n]))
+            };
+            if at("选项", &[])
+                || at("项", &['目'])
+                || at("が正", &['常'])
+                || at("は正", &['常'])
+                || at("が誤", &[])
+                || at("は誤", &[])
+                || at("が不正", &[])
+                || at("は不正", &[])
+            {
+                out.push(i);
+            }
+        }
+    }
+    // the other letters of a list around each matched one
+    let mut more = Vec::new();
+    for &p in &out {
+        let mut k = p;
+        loop {
+            let a = skip(v, k + 1, is_space);
+            let Some(len) = list_separator(v, a) else {
+                break;
+            };
+            let b = skip(v, a + len, is_space);
+            if !bare_letter(v, b) {
+                break;
+            }
+            more.push(b);
+            k = b;
+        }
+        let mut k = p;
+        loop {
+            // walk back over spaces, one separator, spaces, to a bare letter
+            let mut a = k;
+            while a > 0 && is_space(v[a - 1]) {
+                a -= 1;
+            }
+            let sep = (1..=3).find(|&len| a >= len && list_separator(v, a - len) == Some(len));
+            let Some(len) = sep else { break };
+            let mut b = a - len;
+            while b > 0 && is_space(v[b - 1]) {
+                b -= 1;
+            }
+            if b == 0 || !bare_letter(v, b - 1) {
+                break;
+            }
+            more.push(b - 1);
+            k = b - 1;
+        }
+    }
+    out.extend(more);
+    out.sort_unstable();
+    out.dedup();
+    out
+}
+
+/// Replaces each option letter a text refers to (see [`has_letter_ref`]) by the quoted text of that option in the
+/// same language (`lang`: 0 en, 1 zh, 2 ja), so the reference survives the shuffled option order. A letter without
+/// such an option stays (the check still refuses it).
+pub fn fix_letter_refs(s: &str, options: &[&str], lang: usize) -> String {
+    let v: Vec<char> = s.chars().collect();
+    let pos = letter_ref_positions(&v);
+    if pos.is_empty() {
+        return s.to_string();
+    }
+    let (open, close) = match lang {
+        0 => ("\"", "\""),
+        1 => ("“", "”"),
+        _ => ("「", "」"),
+    };
+    let mut out = String::with_capacity(s.len() + 64);
+    for (i, c) in v.iter().enumerate() {
+        let text = pos
+            .binary_search(&i)
+            .ok()
+            .and_then(|_| letter_index(*c))
+            .and_then(|k| options.get(k))
+            .map(|t| t.trim().trim_end_matches(['.', '。', '．']))
+            .filter(|t| !t.is_empty());
+        match text {
+            Some(t) => {
+                out.push_str(open);
+                out.push_str(t);
+                out.push_str(close);
+            }
+            None => out.push(*c),
+        }
+    }
+    out
+}
+
+/// The option text without its label when the label is exactly the option's own: the letter of position `index`
+/// (A, B, …; full width too) as "A. text" / "A) text" / "A、text" (punctuation then a space, or a CJK mark) or "(A) text";
+/// `None` otherwise ("E. coli" at position 1, "C:/Windows", "A.I. ethics" stay as they are).
+pub fn strip_own_label(s: &str, index: usize) -> Option<String> {
+    let v: Vec<char> = s.trim().chars().collect();
+    let own = |c: char| letter_index(c) == Some(index);
+    if v.len() >= 3 && matches!(v[0], '(' | '（') && own(v[1]) && matches!(v[2], ')' | '）') {
+        let rest: String = v[3..].iter().collect();
+        return Some(rest.trim().to_string());
+    }
+    if v.len() >= 3 && own(v[0]) {
+        let j = skip(&v, 1, is_space);
+        if j < v.len() {
+            let cjk = matches!(v[j], '．' | '、' | '：' | '）');
+            let ascii = matches!(v[j], '.' | ')' | ':') && j + 1 < v.len() && is_space(v[j + 1]);
+            if cjk || ascii {
+                let rest: String = v[j + 1..].iter().collect();
+                let rest = rest.trim().to_string();
+                return (!rest.is_empty()).then_some(rest);
+            }
+        }
+    }
+    None
+}
+
 /// An option text that starts with its own label ("A. ...", "B) ...", "（C）...").
 pub fn has_option_label(s: &str) -> bool {
     let v: Vec<char> = s.trim().chars().collect();
@@ -202,6 +402,75 @@ pub fn has_positional(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn letter_references_become_option_texts() {
+        let en = ["Water", "Light", "Sand", "Salt"];
+        let fixed = fix_letter_refs("Option B is right; option A is not.", &en, 0);
+        assert_eq!(fixed, "Option \"Light\" is right; option \"Water\" is not.");
+        assert!(!has_letter_ref(&fixed));
+        let zh = ["水", "光", "沙", "盐"];
+        let fixed = fix_letter_refs("选项B正确，C项错误。", &zh, 1);
+        assert_eq!(fixed, "选项“光”正确，“沙”项错误。");
+        assert!(!has_letter_ref(&fixed));
+        let ja = ["水", "光", "砂", "塩"];
+        let fixed = fix_letter_refs("Ｄが正しい。選択肢Aは誤り。", &ja, 2);
+        assert_eq!(fixed, "「塩」が正しい。選択肢「水」は誤り。");
+        assert!(!has_letter_ref(&fixed));
+        // no such option: unchanged; plain words untouched
+        assert_eq!(
+            fix_letter_refs("Option F is odd.", &en, 0),
+            "Option F is odd."
+        );
+        assert_eq!(
+            fix_letter_refs("A plant needs light.", &en, 0),
+            "A plant needs light."
+        );
+    }
+
+    #[test]
+    fn only_a_label_of_the_options_own_position_is_stripped() {
+        assert_eq!(strip_own_label("A. Water", 0).as_deref(), Some("Water"));
+        assert_eq!(strip_own_label("（C）沙子", 2).as_deref(), Some("沙子"));
+        assert_eq!(strip_own_label("B) Light", 1).as_deref(), Some("Light"));
+        assert_eq!(strip_own_label("Ｄ、塩", 3).as_deref(), Some("塩"));
+        assert_eq!(strip_own_label("Water", 0), None);
+        assert_eq!(strip_own_label("E. coli", 1), None);
+        assert_eq!(strip_own_label("C:/Windows", 2), None);
+        assert_eq!(strip_own_label("A.I. ethics", 0), None);
+    }
+
+    #[test]
+    fn lists_of_letters_are_rewritten_whole_and_ordinary_words_stay() {
+        let en = ["Water", "Light", "Sand", "Salt"];
+        let zh = ["水", "光", "沙", "盐"];
+        let ja = ["水", "光", "砂", "塩"];
+        assert_eq!(
+            fix_letter_refs("Options A and B are both correct.", &en, 0),
+            "Options \"Water\" and \"Light\" are both correct."
+        );
+        assert_eq!(
+            fix_letter_refs("选项A和B都正确。", &zh, 1),
+            "选项“水”和“光”都正确。"
+        );
+        assert_eq!(
+            fix_letter_refs("A、B项正确。", &zh, 1),
+            "“水”、“光”项正确。"
+        );
+        assert_eq!(
+            fix_letter_refs("AとBが正しい。", &ja, 2),
+            "「水」と「光」が正しい。"
+        );
+        // project A / vitamin C are not option references
+        assert_eq!(
+            fix_letter_refs("A项目的净现值高于B项目。", &zh, 1),
+            "A项目的净现值高于B项目。"
+        );
+        assert_eq!(
+            fix_letter_refs("ビタミンCが正常に働く。", &ja, 2),
+            "ビタミンCが正常に働く。"
+        );
+    }
 
     #[test]
     fn kana_and_han_ranges() {

@@ -28,6 +28,8 @@ pub const MAX_EVENT: usize = 1 << 20;
 /// Largest SSE event accepted for the Responses format: `response.completed` repeats the whole output and the
 /// instructions, so it can be far larger than any other event.
 pub const RESPONSES_MAX_EVENT: usize = 8 << 20;
+/// Largest whole (non-streamed) answer body.
+pub const MAX_WHOLE_BODY: usize = 8 << 20;
 /// Error bodies are read up to this size (and only parsed for a type / code).
 pub const MAX_ERROR_BODY: usize = 16 * 1024;
 /// Largest models list body.
@@ -243,11 +245,16 @@ impl Target {
             );
         }
         let bytes = serde_json::to_vec(body).map_err(|_| UpError::new(UpCode::Protocol, None))?;
+        let accept = if body.get("stream") == Some(&Value::Bool(false)) {
+            "application/json"
+        } else {
+            "text/event-stream"
+        };
         client
             .post(self.chat_url())
             .headers(headers)
             .header(CONTENT_TYPE, "application/json")
-            .header(ACCEPT, "text/event-stream")
+            .header(ACCEPT, accept)
             .body(bytes)
             .build()
             .map_err(|_| UpError::new(UpCode::Connect, None))
@@ -550,6 +557,8 @@ pub struct Plan {
     pub plain_uneffort: Vec<(TokenLimit, reqwest::Request)>,
     /// Called when the retry without the parameter (the `uneffort` ladder) succeeded cleanly: the route must not get it
     pub remember_uneffort: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// The requests ask for the whole answer at once (see [`ChatSpec::whole`])
+    pub whole: bool,
 }
 
 impl Plan {
@@ -567,6 +576,7 @@ impl Plan {
             uneffort: Vec::new(),
             plain_uneffort: Vec::new(),
             remember_uneffort: None,
+            whole: false,
         }
     }
 }
@@ -590,6 +600,9 @@ pub struct ChatSpec<'a> {
     pub schema: Option<&'a serde_json::Value>,
     /// Thinking strength to send (`None` = nothing). Put into the body by [`put_effort`] regardless of the wire format.
     pub effort: Option<Effort>,
+    /// Ask for the whole answer at once instead of a stream (OpenAI-compatible format only; the other formats always
+    /// stream, their streams end with an explicit terminal event). The background jobs set it.
+    pub whole: bool,
 }
 
 /// The `output_config` object of a body (created, or replaced when it is not an object).
@@ -768,6 +781,7 @@ pub fn build_plan(
     let mut uneffort = Vec::new();
     let mut plain_uneffort = Vec::new();
     let schema = spec.schema.filter(|_| !no_schema);
+    let whole = spec.whole && target.format == Format::OpenAi;
     let effort = spec.effort.filter(|_| !no_effort);
     let mut limit = Some(first);
     while let Some(l) = limit {
@@ -779,6 +793,9 @@ pub fn build_plan(
             spec.usage_option,
             l,
         );
+        if whole {
+            openai::make_whole(&mut body);
+        }
         let mut fallback = None;
         if let Some(p) = spec.prefix {
             if marked {
@@ -833,6 +850,7 @@ pub fn build_plan(
         uneffort,
         plain_uneffort,
         remember_uneffort: on_no_effort,
+        whole,
     })
 }
 
@@ -937,7 +955,7 @@ pub async fn stream_chat(
         status,
         body,
         retry_ms,
-    } = stream_once(client, req, format, t, &tx).await
+    } = stream_once(client, req, format, false, t, &tx).await
     {
         let _ = tx.send(Up::Fail(refusal_error(&Refusal {
             status,
@@ -970,8 +988,9 @@ pub async fn stream_plan(
         uneffort,
         plain_uneffort,
         remember_uneffort,
+        whole,
     } = plan;
-    let args = (client, format, stored_max, t, &tx, &remember);
+    let args = (client, format, whole, stored_max, t, &tx, &remember);
     let (mut last, mut at) = match run_ladder(args, steps, 0).await {
         Ok(_) => return,
         Err(r) => r,
@@ -1034,6 +1053,7 @@ pub async fn stream_plan(
 type LadderArgs<'a> = (
     &'a reqwest::Client,
     Format,
+    bool,
     i64,
     Timeouts,
     &'a UnboundedSender<Up>,
@@ -1044,13 +1064,13 @@ type LadderArgs<'a> = (
 /// `clean` = 2xx and finished with `Done`), else the
 /// final refusal (status, body, index of the step).
 async fn run_ladder(
-    (client, format, stored_max, t, tx, remember): LadderArgs<'_>,
+    (client, format, whole, stored_max, t, tx, remember): LadderArgs<'_>,
     steps: Vec<(TokenLimit, reqwest::Request)>,
     skip: usize,
 ) -> Result<bool, (Refusal, usize)> {
     let total = steps.len();
     for (i, (sent, req)) in steps.into_iter().enumerate().skip(skip) {
-        match stream_once(client, req, format, t, tx).await {
+        match stream_once(client, req, format, whole, t, tx).await {
             Attempt::Ran { ok } => {
                 if i > 0 {
                     if let Some(r) = remember {
@@ -1094,11 +1114,18 @@ async fn stream_once(
     client: &reqwest::Client,
     req: reqwest::Request,
     format: Format,
+    whole: bool,
     t: Timeouts,
     tx: &UnboundedSender<Up>,
 ) -> Attempt {
     let fail = |code: UpCode, http: Option<u16>| Up::Fail(UpError::new(code, http));
-    let mut resp = match tokio::time::timeout(t.first_byte, client.execute(req)).await {
+    // a whole answer sends its headers only when the model has finished: wait as long as a whole chat answer may take
+    let wait = if whole {
+        t.total.max(t.first_byte)
+    } else {
+        t.first_byte
+    };
+    let mut resp = match tokio::time::timeout(wait, client.execute(req)).await {
         Err(_) => {
             let _ = tx.send(fail(UpCode::Timeout, None));
             return Attempt::Ran { ok: false };
@@ -1140,6 +1167,34 @@ async fn stream_once(
         Format::Responses => Handler::Responses(responses::State::default()),
     };
     let mut chars = 0usize;
+    // a whole answer (a JSON body, not an event stream: a server that ignores `"stream": false` still streams) is read
+    // in one piece and handed to the stream state as one chunk
+    let is_stream = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"));
+    if whole && format == Format::OpenAi && !is_stream {
+        let body = match read_whole(&mut resp, t.idle).await {
+            Ok(b) => b,
+            Err(code) => {
+                let _ = tx.send(fail(code, Some(status)));
+                return Attempt::Ran { ok: false };
+            }
+        };
+        let mut items = Vec::new();
+        let mut state = openai::State::default();
+        match serde_json::from_slice::<Value>(&body) {
+            Ok(v) => {
+                state.on_data(&openai::whole_as_chunk(&v).to_string(), &mut items);
+                if !matches!(items.last(), Some(Item::Done | Item::Fail(_))) {
+                    state.on_data("[DONE]", &mut items);
+                }
+            }
+            Err(_) => items.push(Item::Fail(UpCode::Protocol)),
+        }
+        return send_items(items, tx, status, &mut chars).unwrap_or(Attempt::Ran { ok: false });
+    }
     loop {
         let chunk = match tokio::time::timeout(t.idle, resp.chunk()).await {
             Err(_) => {
@@ -1205,6 +1260,63 @@ async fn stream_once(
             return Attempt::Ran { ok: false };
         }
     }
+}
+
+/// Reads a whole answer body (each read within `idle`): a stall is `Timeout`, a broken connection the code of the
+/// network error, a body over [`MAX_WHOLE_BODY`] `TooLong`.
+async fn read_whole(resp: &mut reqwest::Response, idle: Duration) -> Result<Vec<u8>, UpCode> {
+    let mut buf = Vec::new();
+    loop {
+        match tokio::time::timeout(idle, resp.chunk()).await {
+            Err(_) => return Err(UpCode::Timeout),
+            Ok(Err(e)) => return Err(errors::from_reqwest(&e)),
+            Ok(Ok(None)) => return Ok(buf),
+            Ok(Ok(Some(b))) => {
+                if buf.len() + b.len() > MAX_WHOLE_BODY {
+                    return Err(UpCode::TooLong);
+                }
+                buf.extend_from_slice(&b);
+            }
+        }
+    }
+}
+
+/// Sends the items of a whole answer to the channel (the same rules as the stream loop); `Some` once it ended.
+fn send_items(
+    items: Vec<Item>,
+    tx: &UnboundedSender<Up>,
+    status: u16,
+    chars: &mut usize,
+) -> Option<Attempt> {
+    let fail = |code: UpCode, http: Option<u16>| Up::Fail(UpError::new(code, http));
+    for item in items {
+        let up = match item {
+            Item::Text(s) => {
+                *chars += s.chars().count();
+                if *chars > MAX_ANSWER_CHARS {
+                    let _ = tx.send(fail(UpCode::TooLong, Some(status)));
+                    return Some(Attempt::Ran { ok: false });
+                }
+                Up::Text(s)
+            }
+            Item::Reasoning(s) => Up::Reasoning(s),
+            Item::Thinking => Up::Thinking,
+            Item::Usage { input, output } => Up::Usage { input, output },
+            Item::Cached(n) => Up::Cached(n),
+            Item::CacheWrite(n) => Up::CacheWrite(n),
+            Item::Truncated => Up::Truncated,
+            Item::Done => {
+                let _ = tx.send(Up::Done);
+                return Some(Attempt::Ran { ok: true });
+            }
+            Item::Fail(code) => {
+                let _ = tx.send(fail(code, Some(status)));
+                return Some(Attempt::Ran { ok: false });
+            }
+        };
+        let _ = tx.send(up);
+    }
+    None
 }
 
 /// A finished, collected answer (verify and memory suggestion).
@@ -1882,6 +1994,7 @@ mod tests {
             cache,
             schema: None,
             effort: None,
+            whole: false,
         }
     }
 

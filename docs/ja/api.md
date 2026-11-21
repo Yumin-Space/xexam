@@ -1211,7 +1211,7 @@ AI のルートだけが変わり、どの変更も追加か既定値です。�
 
 - **問題集のダウンロード**：`GET /api/banks/download?id=<bank>&format=xlsx|docx`（上記）、ユーザーの `canDownloadBanks`（`GET /api/users`、`GET /api/auth/state` の `user`、`POST /api/users/create`、`POST /api/users/update`）、システムログのイベント `bank.download`。メインデータベースはスキーマ 10。
 - **AI 設定**：`POST /api/ai/admin/models/effort`（機能ごとの思考の強さ）、設定の応答に `slots.<slot>.effort`（`null` または `{"family", "level"}`）と `effortLevels`（系統ごとのレベルの一覧）、システムログのイベント `ai.settings.effort`。思考の強さのパラメーター付きのリクエストが 400 / 422 で拒否されたときは、パラメーターなしで一度だけ送り直し、その接続は記憶されます。
-- **構造化出力**：問題の形の回答は、構造化出力（json_schema）を求め（Anthropic は `output_config.format`、OpenAI 互換は `response_format`、Responses は `text.format`）、拒否されたら通常のリクエストに戻ります（接続ごとに記憶）。問題は `answer` フィールドに正解を一度だけ書き、従来の `correct` の形も読めます。
+- **構造化出力**：問題の形の回答は、構造化出力（json_schema）を求め（Anthropic は `output_config.format`、OpenAI 互換は `response_format`、Responses は `text.format`）、拒否されたら通常のリクエストに戻ります（接続ごとに記憶）。問題は `answer` フィールドに正解を一度だけ書き、従来の `correct` の形も読めます。*（v2.4）* OpenAI 互換の接続では、これらの呼び出しは `"stream": false` を送り、回答全体を一度に読みます。この呼び出しがタイムアウトするか HTTP 504 / 524 を受けると、その接続とモデルのバックグラウンドのジョブは、ai-service が再起動するまで再びストリームを使います（メモリーのみ）。AI チャットと学習の質問は常にストリームです。選択肢を記号で指す参照（「Option B」「选项B」「C项」「AとB」）は、問題を不合格にせず、同じ言語の選択肢の文（かぎかっこ付き）に書き換えます。「A项目」のような普通の言葉はそのままです。`A.` や `(B)` のような選択肢のラベルは、すべての選択肢が自分の記号で順番どおりに始まるときだけ取り除きます。問題のインポートでは、4 つの選択肢を AI が作る問題の解説だけを直し、ファイルの選択肢をそのまま使う問題には手を加えません。
 - **所在地の再照会**：外部 API への切り替えと、外部 API のままの設定の保存の後に、場所のない保存済みのアドレスをバックグラウンドで照会します（アドレスごとに 1 回、1 分 30 回、レート制限で 15 分休止、最大 3 回）。
 - **バージョン**：`GET /api/info` は `"version": "1.6"` を返し、AI サービスの `/healthz` も同じです。
 

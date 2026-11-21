@@ -173,6 +173,13 @@ PRELUDE = r"""
   };
   // Start exam / Start practice from Home in bank order (shuffle off), so every language shows the same questions
   window.__start = async (kind) => {
+    // v2.4: Home ticks nothing by default: tick every bank first (Select all, or the only bank's box)
+    const boxes = [...document.querySelectorAll('.home-picklist input[type=checkbox]')];
+    if (!boxes.some((b) => b.checked)) {
+      const all = document.querySelector('.home-pickacts .btn');
+      if (all) all.click(); else boxes.forEach((b) => { if (!b.checked) b.click(); });
+      await window.__wait(250);
+    }
     const sh = document.querySelector('.home-shuffle input');
     if (sh && sh.checked) sh.click();
     document.querySelector(kind === 'practice' ? '.page-home .home-go-btns .btn.big:not(.primary)' : '.page-home .home-go-btns .btn.primary.big').click();

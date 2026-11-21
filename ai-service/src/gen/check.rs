@@ -95,6 +95,57 @@ pub(crate) fn language_rule(t: &Tri) -> Result<(), Reject> {
     }
 }
 
+/// Repairs what C8 would refuse: option labels ("A. ...") are dropped, and every letter reference in the options and
+/// the explanation becomes the quoted text of that option in the same language. `explanation_only`: the options stay
+/// as they are (the import keeps the source's option texts verbatim).
+pub fn repair_letter_refs(q: &mut crate::gen::parse::RawQuestion, explanation_only: bool) {
+    use crate::gen::text::{fix_letter_refs, strip_own_label};
+    if !explanation_only {
+        // labels go only when EVERY option of a language starts with its own letter ("A. …", "B. …", …)
+        for lang in 0..3 {
+            let stripped: Option<Vec<String>> = q
+                .options
+                .iter()
+                .enumerate()
+                .map(|(i, o)| strip_own_label(o.text.all()[lang], i))
+                .collect();
+            if let Some(all) = stripped {
+                for (o, t) in q.options.iter_mut().zip(all) {
+                    match lang {
+                        0 => o.text.en = t,
+                        1 => o.text.zh = t,
+                        _ => o.text.ja = t,
+                    }
+                }
+            }
+        }
+    }
+    for lang in 0..3 {
+        let texts: Vec<String> = q
+            .options
+            .iter()
+            .map(|o| o.text.all()[lang].to_string())
+            .collect();
+        let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+        let fix = |s: &mut String| *s = fix_letter_refs(s, &refs, lang);
+        match lang {
+            0 => fix(&mut q.explanation.en),
+            1 => fix(&mut q.explanation.zh),
+            _ => fix(&mut q.explanation.ja),
+        }
+        if !explanation_only {
+            for o in &mut q.options {
+                let t = match lang {
+                    0 => &mut o.text.en,
+                    1 => &mut o.text.zh,
+                    _ => &mut o.text.ja,
+                };
+                *t = fix_letter_refs(t, &refs, lang);
+            }
+        }
+    }
+}
+
 /// C2 .. C8 for one question.
 pub fn check(q: &RawQuestion, slot: &Slot) -> Result<(), Reject> {
     // C2, C3

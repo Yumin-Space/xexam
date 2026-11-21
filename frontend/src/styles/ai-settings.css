@@ -211,10 +211,15 @@ dialog.dlg-viewer[open] { display: flex; flex-direction: column; gap: 12px; }
 }
 
 /* Users with AI+ (AS-2): the table above 900 px */
-.ais-users th.ais-user { max-width: 14em; white-space: normal; overflow-wrap: anywhere; }
+/* v2.4: a name stays on one line (an e-mail address was broken into many short lines); a very long one ends in an
+   ellipsis, the full name is the cell's tooltip */
+.ais-users th.ais-user { white-space: nowrap; }
+.ais-users th.ais-user .ais-uname { display: block; max-width: 10em; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 .ais-users td.ais-role { white-space: normal; }
 .ais-role .tag + .tag { margin-left: 4px; }
-.ais-users td.ais-calls { min-width: 11em; white-space: nowrap; }
+.ais-users td.ais-calls { min-width: 7em; white-space: normal; }
+/* v2.4: the three figures wrap between each other (never inside one), so the table fits its card next to one-line names */
+.ais-users .ais-calls-fig { white-space: nowrap; }
 .ais-users th, .ais-users td { padding-inline: 6px; }
 .ais-users th.ais-acts, .ais-users td.ais-acts { width: 1%; text-align: right; white-space: nowrap; }
 .ais-users td.ais-acts .ibtn + .ibtn { margin-left: 2px; }
@@ -237,6 +242,7 @@ dialog.dlg-viewer[open] { display: flex; flex-direction: column; gap: 12px; }
   .ais-users tbody tr::before { content: ""; order: 4; flex-basis: 100%; height: 0; }
   .ais-users tbody th, .ais-users tbody td { display: block; min-width: 0; max-width: none; padding: 0; border-top: 0; white-space: normal; text-align: left; }
   .ais-users tbody th.ais-user { order: 1; font-size: 15px; max-width: calc(100% - 110px); }
+  .ais-users tbody th.ais-user .ais-uname { max-width: none; }
   .ais-users tbody td.ais-badge { order: 2; }
   .ais-users tbody td.ais-role { order: 5; }
   .ais-users tbody td.ais-state { order: 6; }
@@ -427,15 +433,16 @@ td.ais-usum { display: none; }
   .ais-genjobs .ais-srcm::after { content: ""; display: inline-block; width: 5px; height: 5px; margin: 0 8px 1px 7px; border: solid var(--ink3); border-width: 1.5px 1.5px 0 0; transform: rotate(45deg); }
   .ais-genjobs .ais-genmade { grid-column: 1; grid-row: 3; }
   .ais-genjobs .ais-gencalls { grid-column: 2; grid-row: 3; }
-  .ais-genjobs .ais-genmore { grid-column: 3; grid-row: 3; justify-self: end; }
+  /* width: auto undoes the wide table's 1 % cell width, which in this grid squeezed the cell to 1 px and let the 44 px button stick out */
+  .ais-genjobs tbody td.ais-genmore { grid-column: 3; grid-row: 3; justify-self: end; width: auto; }
   .ais-genjobs td.ais-genmade, .ais-genjobs td.ais-gencalls { font-size: 12.5px; color: var(--ink3); text-align: left; white-space: nowrap; }
   .ais-genjobs .ais-stats { justify-content: flex-start; min-height: 24px; }
   .ais-genjobs .ais-d { display: none; }
   .ais-genjobs tbody tr.ais-gendetail { display: none; }
   /* a job with skipped questions: the count and its "skipped" note share one full-width line, the figures go under it */
-  .ais-genjobs tr:has(.ais-skipn) .ais-genmade { grid-column: 1 / -1; }
+  .ais-genjobs tr:has(.ais-skipn) .ais-genmade { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }
   .ais-genjobs tr:has(.ais-skipn) .ais-gencalls { grid-column: 1 / 3; grid-row: 4; }
-  .ais-genjobs tr:has(.ais-skipn) .ais-genmore { grid-row: 4; }
+  .ais-genjobs tbody tr:has(.ais-skipn) td.ais-genmore { grid-row: 4; }
   .ais-genjobs tr:has(.ais-skipn) .ais-genwhy { grid-row: 5; }
   .ais-genjobs .ais-skipn { display: inline; margin-left: 8px; }
   .ais-genjobs tbody tr.ais-genfull { padding: 0 0 10px; border-top: 0; }

@@ -9,7 +9,8 @@
    hairlines inside a block, soft hover fills, small tinted tags and callouts. Radii 6 / 8 / 10 / 12, spacing 4 / 8 / 12 / 16 / 24.
    Owner decisions (2026-11-11), keep them: the palette follows GitHub Light / Dark colorblind; the light page is GitHub's
    soft grey-white (#F6F8FA) with white blocks; the light primary button is navy (Primer blue-8 #0A3069), not the bright
-   blue; the dark theme (v2.3): black page #000000, surfaces #212121, controls #303030, white-alpha hairlines, blue primary #3C6CF0. */
+   blue; the dark theme (v2.3; v2.4 blue-grey surfaces): black page #000000, cards #0E1117, fills #1A2029, controls #303030,
+   white-alpha hairlines, blue primary #3C6CF0. */
 
 :root {
   --sa-t: env(safe-area-inset-top); --sa-r: env(safe-area-inset-right); --sa-l: env(safe-area-inset-left);
@@ -114,6 +115,9 @@
   /* The dark AI+ badge (v0.8 round 2, .ai-badge.off): the user has the AI+ service but cannot use AI now. A neutral dark
      tag, no gradient or glow; white on #4B5563 is 7.6:1. */
   --ai-off-bg: #4B5563;
+  /* v2.4: the AI Chat message box: no edge line, told apart by its fill (dark) or a faint shadow (light) */
+  --compose-bg: var(--card);
+  --compose-shadow: 0 0 0 1px rgba(0, 0, 0, .07), 0 2px 8px rgba(0, 0, 0, .06);
   --ai-off-ink: #FFFFFF;
   --ai-off-ring: transparent;
 
@@ -155,8 +159,8 @@
     color-scheme: dark;
     --page: #000000;
     --sheet: #000000;
-    --card: #212121;
-    --tint: #303030;
+    --card: #0E1117;
+    --tint: #1A2029;
     --line: rgba(255, 255, 255, .15);
     --ink: #FFFFFF;
     --ink2: #B4B4B4;
@@ -177,10 +181,10 @@
     --scrim: rgba(0, 0, 0, .8);
     --shadow: rgba(0, 0, 0, .5);
     --line-soft: rgba(255, 255, 255, .15);
-    --hover: rgba(65, 65, 65, .5);
-    --hover-strong: rgba(80, 80, 80, .7);
-    --fill: #303030;
-    --seg-on: #454545;
+    --hover: rgba(110, 118, 129, .18);
+    --hover-strong: rgba(110, 118, 129, .3);
+    --fill: #1A2029;
+    --seg-on: #2A313C;
     --print-hover: #8FAEF8;
     --primary: #3C6CF0;
     --primary-hover: #2F58D0;
@@ -191,7 +195,7 @@
     --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .2);
     --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .15), 0 8px 24px rgba(0, 0, 0, .5);
     --field-line: rgba(255, 255, 255, .2);
-    --seg-on-line: #8A8A8A;
+    --seg-on-line: #6E7681;
     --answer-right: #3FB950;
     --answer-right-soft: rgba(46, 160, 67, .15);
     --answer-wrong: #F0883E;
@@ -211,7 +215,9 @@
     --ai-ink: #FFFFFF;
     --ai-glow: rgba(255, 170, 60, .55);
     /* #E6EAF0 on #3A4250 is 8.4:1; the hairline ring sets it off from the dark sheet */
-    --ai-off-bg: #3F3F3F;
+    --ai-off-bg: #2A313C;
+    --compose-bg: #1A2029;
+    --compose-shadow: none;
     --ai-off-ink: #E6E6E6;
     --ai-off-ring: var(--line);
     --switch-knob: var(--ink);
@@ -221,8 +227,8 @@
   color-scheme: dark;
   --page: #000000;
   --sheet: #000000;
-  --card: #212121;
-  --tint: #303030;
+  --card: #0E1117;
+  --tint: #1A2029;
   --line: rgba(255, 255, 255, .15);
   --ink: #FFFFFF;
   --ink2: #B4B4B4;
@@ -243,10 +249,10 @@
   --scrim: rgba(0, 0, 0, .8);
   --shadow: rgba(0, 0, 0, .5);
   --line-soft: rgba(255, 255, 255, .15);
-  --hover: rgba(65, 65, 65, .5);
-  --hover-strong: rgba(80, 80, 80, .7);
-  --fill: #303030;
-  --seg-on: #454545;
+  --hover: rgba(110, 118, 129, .18);
+  --hover-strong: rgba(110, 118, 129, .3);
+  --fill: #1A2029;
+  --seg-on: #2A313C;
   --print-hover: #8FAEF8;
   --primary: #3C6CF0;
   --primary-hover: #2F58D0;
@@ -257,7 +263,7 @@
   --shadow-sm: 0 0 0 1px rgba(255, 255, 255, .2);
   --shadow-pop: 0 0 0 1px rgba(255, 255, 255, .15), 0 8px 24px rgba(0, 0, 0, .5);
   --field-line: rgba(255, 255, 255, .2);
-  --seg-on-line: #8A8A8A;
+  --seg-on-line: #6E7681;
   --answer-right: #3FB950;
   --answer-right-soft: rgba(46, 160, 67, .15);
   --answer-wrong: #F0883E;
@@ -276,7 +282,9 @@
   --ai-3: #E2531A;
   --ai-ink: #FFFFFF;
   --ai-glow: rgba(255, 170, 60, .55);
-  --ai-off-bg: #3F3F3F;
+  --ai-off-bg: #2A313C;
+  --compose-bg: #1A2029;
+  --compose-shadow: none;
   --ai-off-ink: #E6E6E6;
   --ai-off-ring: var(--line);
   --switch-knob: var(--ink);

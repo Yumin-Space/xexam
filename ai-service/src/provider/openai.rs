@@ -29,6 +29,32 @@ pub fn body(
     Value::Object(m)
 }
 
+/// Turns a streaming body into a whole-answer one (`"stream": false`, no `stream_options`): the background jobs
+/// (AI generation and import) wait for the complete answer, which some OpenAI-compatible services cut short when
+/// streamed (the stream just stops, without a `finish_reason`).
+pub fn make_whole(body: &mut Value) {
+    if let Some(m) = body.as_object_mut() {
+        m.insert("stream".into(), Value::Bool(false));
+        m.remove("stream_options");
+    }
+}
+
+/// A whole (non-streamed) chat completion rewritten as one stream chunk (`message` becomes `delta`), so the stream
+/// state reads it exactly like a streamed answer (inline reasoning spans, refusals, finish reason, usage).
+pub fn whole_as_chunk(v: &Value) -> Value {
+    let mut c = v.clone();
+    if let Some(choices) = c.get_mut("choices").and_then(Value::as_array_mut) {
+        for ch in choices {
+            if let Some(m) = ch.as_object_mut() {
+                if let Some(msg) = m.remove("message") {
+                    m.insert("delta".into(), msg);
+                }
+            }
+        }
+    }
+    c
+}
+
 /// Stream state.
 #[derive(Default)]
 pub struct State {
@@ -273,6 +299,35 @@ mod tests {
         }
         let out = run(&[r#"{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":2}}"#]);
         assert!(!out.iter().any(|i| matches!(i, Item::CacheWrite(_))));
+    }
+
+    #[test]
+    fn whole_answers_read_like_one_chunk() {
+        let mut b = body("m", "s", &[], true, TokenLimit::omit());
+        make_whole(&mut b);
+        assert_eq!(b["stream"], json!(false));
+        assert!(b.get("stream_options").is_none());
+        let whole = json!({"choices": [{"message": {"content": "<think>hm</think>Hello"}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 3, "prompt_tokens_details": {"cached_tokens": 4}}});
+        let mut s = State::default();
+        let mut out = Vec::new();
+        s.on_data(&whole_as_chunk(&whole).to_string(), &mut out);
+        s.on_data("[DONE]", &mut out);
+        assert_eq!(
+            out,
+            vec![
+                Item::Thinking,
+                Item::Reasoning("hm".into()),
+                Item::Text("Hello".into()),
+                Item::Truncated,
+                Item::Usage {
+                    input: Some(9),
+                    output: Some(3)
+                },
+                Item::Cached(4),
+                Item::Done
+            ]
+        );
     }
 
     #[test]

@@ -373,7 +373,7 @@ async fn a_truncated_answer_never_fails_the_job() {
 }
 
 #[tokio::test]
-async fn three_provider_errors_in_a_row_fail_the_job_without_a_bank_or_a_charge() {
+async fn six_server_errors_in_a_row_fail_the_job_without_a_bank_or_a_charge() {
     let e = env().await;
     e.t.stub.st().script = Some(std::sync::Arc::new(|_, _| {
         Reply::Status(500, "boom".into())
@@ -383,17 +383,18 @@ async fn three_provider_errors_in_a_row_fail_the_job_without_a_bank_or_a_charge(
         (done["state"].clone(), done["error"].clone()),
         (json!("failed"), json!("ai.up.server"))
     );
-    // v1.3: the plan call fails twice first (a plan failure never fails the job), then three writing calls
+    // v1.3: the plan call fails twice first (a plan failure never fails the job); v2.4: a server error passes with
+    // waiting, so six writing calls in a row before the job stops
     assert_eq!(
         (done["charged"].clone(), done["calls"].clone()),
-        (json!(false), json!(5))
+        (json!(false), json!(8))
     );
     assert!(e.t.backend.st().gen.created.is_empty());
     let errors: i64 = q1(
         &e.t,
         "SELECT COUNT(*) FROM gen_calls WHERE status = 'error' AND error_code = 'server'",
     );
-    assert_eq!(errors, 5);
+    assert_eq!(errors, 8);
     let (_, v) = e.t.get("/api/ai/status", &e.user).await;
     assert_eq!(v["gen"]["used"], 0, "a failure is never counted");
     assert_eq!(
@@ -402,7 +403,7 @@ async fn three_provider_errors_in_a_row_fail_the_job_without_a_bank_or_a_charge(
         "the failure shows as a card"
     );
     assert!(captured_contains(
-        "AI job failed: 0/20 questions passed the checks; rejected for: none (ai.up.server, 3 model calls, user"
+        "AI job failed: 0/20 questions passed the checks; rejected for: none (ai.up.server, 6 model calls, user"
     ));
 }
 

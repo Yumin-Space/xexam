@@ -329,7 +329,8 @@ function genCard(job: GenJob): HTMLElement {
   card.append(dismissButton(job));
   if (job.state === 'done') {
     card.append(
-      h('p', { class: 'gen-line gen-done' }, miniIcon('check', 'gen-ic'), t('aigen.card.done', { name: job.name, made: job.made })),
+      h('p', { class: 'gen-line gen-done' }, miniIcon('check', 'gen-ic'), // v2.4: a bank with fewer questions than asked (questions that kept failing the checks were left out) says so
+      t(job.goal > job.made ? 'aigen.card.donePartial' : 'aigen.card.done', { name: job.name, made: job.made, goal: job.goal, n: job.goal - job.made })),
       ...usageNote(job),
       h('div', { class: 'acts gen-acts' },
         h('button', { type: 'button', class: 'btn primary', onclick: () => practiceBank(job) }, t('aigen.card.practice'))));
