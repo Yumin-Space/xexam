@@ -37,7 +37,7 @@
 # ⚠️ Do not run `docker compose down -v`: -v also deletes the two data volumes xexam_backend_data (question banks, users, records)
 #    and xexam_ai_data (AI settings, encrypted keys, chats, memories).
 
-name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in (volumes xexam_*; containers xexam-backend, ai-service, xexam-frontend)
+name: xexam                          # Compose project name: pinned so it is the same no matter which folder it lives in (volumes xexam_*; containers xexam-backend, xexam-ai-service, xexam-frontend)
 
 services:
   backend:
@@ -116,7 +116,7 @@ services:
 
   ai-service:
     image: docker.io/yuminspace/xexam-ai-service:latest
-    container_name: ai-service
+    container_name: xexam-ai-service
     restart: unless-stopped
     depends_on:
       backend:

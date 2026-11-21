@@ -6,6 +6,14 @@ The changes in each version of Xexam, newest first. The **About Xexam** page of 
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.3.1 — 2026-11-22
+
+**The AI service's container is now called `xexam-ai-service`, like the other two. A naming change only: no database, variable or screen changes. Upgrading: pull the images and run `docker compose up -d`; rolling back to v2.3 needs no restore.**
+
+- **Container name**: the container of the AI service was called `ai-service`; it is now `xexam-ai-service`, matching `xexam-backend` and `xexam-frontend`. The Compose **service** keeps the name `ai-service`, so `docker compose logs ai-service`, `docker compose exec ai-service …`, the internal address `http://ai-service:8766` and `XEXAM_AI_UPSTREAM` are unchanged.
+- **On upgrade** nothing has to be done: `docker compose up -d` replaces the old `ai-service` container with the new name. The data volumes (`xexam_backend_data`, `xexam_ai_data`) are unchanged.
+- **Scripts** that call `docker logs ai-service` or `docker restart ai-service` by container name must use `xexam-ai-service` now. `docker compose` commands by service name keep working.
+
 ### v2.3 — 2026-11-21
 
 **AI Chat redesigned like a chat app: a new chat on every visit, a sidebar on tablets and desktops, a drawer on phones, and a tidier top bar. A change to the screens only: no server, database or variable changes. Upgrading: pull the images; rolling back to v2.2 needs no restore.**

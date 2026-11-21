@@ -6,6 +6,14 @@ Xexam 每个版本的变化，最新的版本排在最前面。程序里的 **�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.3.1 — 2026-11-22
+
+**AI 服务的容器现在和另外两个一样，叫 `xexam-ai-service`。只是改了名字：数据库、变量和界面都没有变化。升级：拉取新镜像并运行 `docker compose up -d`；回退到 v2.3 也不需要还原。**
+
+- **容器名**：AI 服务的容器原来叫 `ai-service`，现在叫 `xexam-ai-service`，与 `xexam-backend`、`xexam-frontend` 保持一致。Compose 的**服务名**仍是 `ai-service`，所以 `docker compose logs ai-service`、`docker compose exec ai-service …`、内部地址 `http://ai-service:8766` 和 `XEXAM_AI_UPSTREAM` 都不变。
+- **升级时**什么都不用做：`docker compose up -d` 会把旧的 `ai-service` 容器换成新名字的容器。数据卷（`xexam_backend_data`、`xexam_ai_data`）不变。
+- 按容器名调用 `docker logs ai-service` 或 `docker restart ai-service` 的脚本，现在要改成 `xexam-ai-service`。按服务名使用的 `docker compose` 命令照常可用。
+
 ### v2.3 — 2026-11-21
 
 **AI 对话重新设计成聊天应用的样子：每次进入都是新对话，平板和电脑上有侧边栏，手机上有抽屉，顶栏也更整齐。只改了界面：服务器、数据库和变量都没有变化。升级：拉取镜像即可；回退到 v2.2 不需要还原。**

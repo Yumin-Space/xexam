@@ -35,8 +35,8 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 
 | | |
 |---|---|
-| 当前版本 | **v2.3**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v2.3**） |
-| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v2.3` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
+| 当前版本 | **v2.3.1**（见 [更新日志](../docs/zh-CN/changelog.md)，也可以在仓库的 [Releases](../../../releases) 页看；在程序里：菜单 → **Xexam v2.3.1**） |
+| 镜像 | 共三个，在 Docker Hub 上（公开，不用登录）：`docker.io/yuminspace/xexam-frontend`、`docker.io/yuminspace/xexam-backend` 和 `docker.io/yuminspace/xexam-ai-service`，标签 `latest` / `v2.3.1` / `sha-<提交>`（`sha-` 标签用来排查问题）。镜像副本：`ghcr.io/yumin-space/xexam-frontend`、`ghcr.io/yumin-space/xexam-backend` 和 `ghcr.io/yumin-space/xexam-ai-service`（私有，标签相同） |
 | CPU 架构 | `linux/amd64`、`linux/arm64`（同一个标签里自动选对的） |
 | 端口 | `8765`（默认只绑定本机） |
 | 许可证 | [MIT](../LICENSE) |
@@ -63,7 +63,7 @@ Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自�
 - **三种语言**：界面有英语、中文、日语三种，每道题、每个答案和每段解析都可以在 **English**、**中文** 和 **日本語** 之间切换。
 - **学习记录和错题本**：每场考试和每次练习都连同作答保存下来；答错的题留在错题本里，直到连续答对两次。
 - **多人共用一个 Xexam**：每个人都登录使用，有自己的学习记录和设置。管理员决定谁能看到哪些题库、谁可以导入题库（可管理题库的用户），还可以查看 **系统日志**。
-- **AI 对话**（可选，管理员设置好之前是关闭的）：管理员在 **AI 设置** 里接入 OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway，测试后开启 **AI+ 功能**，再在 **用户管理** 里为每个可以使用的用户开通 **AI+ 功能**。在 **AI 设置** 里，他们可以 **暂停** 和 **恢复** 某个用户的 **AI+ 功能**，而不用收回它。回答边生成边显示（推理模型工作时显示 **正在思考…**），关掉页面也会继续生成；AI 用 **设置** 里选的语言回答；对话会保存下来（默认在 90 天后自动删除）；**记忆** 保存一些简短的笔记，AI 会在以后的对话里参考；管理员可以在 **设置** 的 **AI 对话模式** 里选 **自由模式**，不带学习助手的指示、直接和模型对话。管理员能看到用量统计，也能查看和删除拥有 AI+ 功能的用户的对话和记忆，AI 对话页面会把这一点告诉每个用户。AI 在自己的容器 `ai-service` 里运行，有自己的数据库；服务商的密钥加密保存。
+- **AI 对话**（可选，管理员设置好之前是关闭的）：管理员在 **AI 设置** 里接入 OpenAI 兼容 API、Anthropic 或 Cloudflare AI Gateway，测试后开启 **AI+ 功能**，再在 **用户管理** 里为每个可以使用的用户开通 **AI+ 功能**。在 **AI 设置** 里，他们可以 **暂停** 和 **恢复** 某个用户的 **AI+ 功能**，而不用收回它。回答边生成边显示（推理模型工作时显示 **正在思考…**），关掉页面也会继续生成；AI 用 **设置** 里选的语言回答；对话会保存下来（默认在 90 天后自动删除）；**记忆** 保存一些简短的笔记，AI 会在以后的对话里参考；管理员可以在 **设置** 的 **AI 对话模式** 里选 **自由模式**，不带学习助手的指示、直接和模型对话。管理员能看到用量统计，也能查看和删除拥有 AI+ 功能的用户的对话和记忆，AI 对话页面会把这一点告诉每个用户。AI 在自己的容器 `xexam-ai-service` 里运行，有自己的数据库；服务商的密钥加密保存。
 - **学习时的 AI 帮助**（给有 **AI+ 功能** 的用户；考试进行中没有）：练习时，**AI 提示** 和 **AI 解析** 都在题目下面的一个面板里；成绩页和学习记录的详情页上，每道题都有 **AI 解析**，在 **学习记录** 和 **主页** 上，可以对一条记录里答错的题生成 **AI 总结**。每个回答都保存在 **AI 对话** 里，面板里的任何东西都不会离开页面。每个用户对 AI 的请求都有每分钟、每小时和每天的上限，由管理员设置。
 - **手机优先**：每个页面在手机宽度下都不会横向滚动；只有图标的按钮按住就能看到名字，触控区域至少 44 px；每个页面末尾有一行居中的、带项目链接的小字，问题和回答获得大部分空间。宽屏上页面居中显示。
 
@@ -89,7 +89,7 @@ curl -fLO https://raw.githubusercontent.com/Yumin-Space/xexam/main/docker/docker
 docker compose up -d
 ```
 
-这会拉取三个镜像，并启动**三个容器**：`xexam-frontend`（Nginx，唯一能从外面连到的）、`xexam-backend`（Rust，在不能上网的私有网络里）和 `ai-service`（Rust，AI 服务；唯一能连到互联网的容器，而且只用来调用管理员设置的 AI 服务商）。它每 25 秒向后端报告一次，所以 Xexam 知道 AI 能不能用。没有 `ai-service`，Xexam 也照样能用，只是没有 AI 对话，**AI 设置** 里会写明 ai-service 没有运行。
+这会拉取三个镜像，并启动**三个容器**：`xexam-frontend`（Nginx，唯一能从外面连到的）、`xexam-backend`（Rust，在不能上网的私有网络里）和 `xexam-ai-service`（Rust，AI 服务；唯一能连到互联网的容器，而且只用来调用管理员设置的 AI 服务商）。它每 25 秒向后端报告一次，所以 Xexam 知道 AI 能不能用。没有 `ai-service`，Xexam 也照样能用，只是没有 AI 对话，**AI 设置** 里会写明 ai-service 没有运行。
 
 **3. 登录。** 在同一台机器上用浏览器打开 <http://localhost:8765>，用用户名 `admin`、密码 `admin` 登录。Xexam 会接着要求你设置自己的密码：请马上设置，因为在那之前，能打开这个页面的人都能用默认密码登录。
 
@@ -100,7 +100,7 @@ docker compose up -d
 | 操作 | 命令 |
 |---|---|
 | 更新到最新版本 | 先 `docker compose pull`，再 `docker compose up -d`（请先看 [升级](#升级)） |
-| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v2.3`，再 `docker compose up -d` |
+| 固定在某个版本 | 把 `docker-compose.yml` 里三个镜像的 `:latest` 都改成 `:v2.3.1`，再 `docker compose up -d` |
 | 查看状态 | `docker compose ps`（三个容器都应该是 `healthy`） |
 | 停止 / 再启动 | `docker compose stop` / `docker compose start` |
 | 看日志 | `docker compose logs -f backend` 和 `docker compose logs -f ai-service`（管理员也可以在菜单里打开 **系统日志**；那里也显示 AI 服务的日志） |

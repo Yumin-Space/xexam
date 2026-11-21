@@ -219,7 +219,7 @@ flowchart LR
 - `main.rs` 安装一个 `tracing` subscriber，只有**一个过滤器**（`XEXAM_LOG`，默认 `info`）和两个输出：stderr，也就是 `docker compose logs backend` 显示的内容；以及 `logs.rs` 的 `BufferLayer`。`main.rs` 在启动和关闭时打印到 stdout 的普通状态行也会加进缓冲区；`reset-password` 打印的新密码不会（这个命令本来就在它自己的进程里运行）。
 - 缓冲区是一个**保存最后 2000 行的环**，只在内存里：重启后又是空的，什么都不写进数据库。每一行有一个序号（进程的第一行是 1）、带秒的本地时间、级别、目标（模块）以及带字段的消息；一条消息超过 4000 个字符会截断。
 - `GET /api/logs?after=<seq>&boot=<id>`（只有管理员）返回 `after` 之后的行、最新的序号（`last`）、`after` 和保留着的最早一行之间有没有被丢掉的行（`dropped`），以及 `boot`，后端进程的一个随机 id。重启后序号从 1 重新开始，所以发来重启前的 `boot` 的客户端会得到保留着的所有行。
-- **AI 服务的日志行** 通过 `POST /internal/ai/log` 送来（每次最多 50 行，每行截断到 2000 个字符，去掉控制字符），以目标 `xexam_ai_service` 和前缀 `AI: ` 加进同一个缓冲区。它们不打印到后端的 stderr；ai-service 容器自己打印自己的。
+- **AI 服务的日志行** 通过 `POST /internal/ai/log` 送来（每次最多 50 行，每行截断到 2000 个字符，去掉控制字符），以目标 `xexam_ai_service` 和前缀 `AI: ` 加进同一个缓冲区。它们不打印到后端的 stderr；xexam-ai-service 容器自己打印自己的。
 - **BurstLog。** 任何能连到服务器的人不用登录就能引起的日志行，都经过一个 `BurstLog`：被 Host / Origin 检查拒绝的请求、失败的登录，以及没有账户的用户名被锁定。安静了一分钟之后的第一个事件马上记录；之后的事件只计数，最多每分钟汇总成一行，由下一个事件或者每分钟运行一次的服务器定时器写出来，所以即使后面没有任何事件，一阵请求的结尾也会在一分钟左右之内记录下来。被拒绝（429）的登录由登录限制用同样的方式汇总。所以大量这样的请求挤不掉 2000 行里的其他内容。
 
 ### 版本
@@ -240,13 +240,13 @@ xexam-backend reset-password <用户名> [--data DIR]  新的随机密码（只�
 
 ## 5. AI 服务（v0.8，学习功能 v0.9，手机与请求上限 v1.0）
 
-AI 对话、AI 记忆和 AI 设置由第三个容器 `ai-service`（镜像 `xexam-ai-service`）响应：一个单独的 Rust 程序（`ai-service/`，和后端一样是 Axum + Tokio + rusqlite），有自己的 SQLite 数据库。后端没有加入 HTTP 客户端、TLS 或 AI 代码；它保持「不能上网」的保证，只为 ai-service 响应几个小的内部路由：Nginx 用的认证步骤和七个带令牌的路由（v0.8 起四个，v0.9 起又加了三个，把学习功能需要的题目和记录交给它）。
+AI 对话、AI 记忆和 AI 设置由第三个容器 `xexam-ai-service`（镜像 `xexam-ai-service`）响应：一个单独的 Rust 程序（`ai-service/`，和后端一样是 Axum + Tokio + rusqlite），有自己的 SQLite 数据库。后端没有加入 HTTP 客户端、TLS 或 AI 代码；它保持「不能上网」的保证，只为 ai-service 响应几个小的内部路由：Nginx 用的认证步骤和七个带令牌的路由（v0.8 起四个，v0.9 起又加了三个，把学习功能需要的题目和记录交给它）。
 
 ### 数据边界
 
 所有者定下的规则，代码和 compose 文件都遵守它：
 
-- **没有任何 SQLite 文件会被两个容器同时打开。** `xexam_backend_data`（里面是 `xexam.db`）只挂载到后端，`xexam_ai_data`（里面是 `xexam-ai.db` 和密钥文件 `secret.key`）只挂载到 `ai-service`。前端不挂载任何卷。
+- **没有任何 SQLite 文件会被两个容器同时打开。** `xexam_backend_data`（里面是 `xexam.db`）只挂载到后端，`xexam_ai_data`（里面是 `xexam-ai.db` 和密钥文件 `secret.key`）只挂载到 `xexam-ai-service`。前端不挂载任何卷。
 - **ai-service 只通过后端的 API 访问主程序的数据**：带令牌的路由 `/internal/ai/introspect`、`/internal/ai/users`、`/internal/ai/log` 和 `/internal/ai/heartbeat`（某个会话属于谁、有哪些用户、谁有 AI+ 功能，它要写进系统日志的行，以及它自己的状态），从 v0.9 起还有 `/internal/ai/question`、`/internal/ai/record` 和 `/internal/ai/record-info`。这三个路由交出的是**调用者能看到的一道题，或者调用者自己的一条记录，而且只在带着调用者的有效会话来问时才交**：后端把会话绑定到用户，对另一个用户的会话、用户看不到的题库里的题、或不是调用者自己的记录，一律不回答（这几种情况都是同一个「未找到」）。它仍然不会自己去读题库、记录或设置，也不会拿到这三种投影之外的东西（见下面的「AI+ 学习帮助」一节）。
 - **后端只通过 ai-service 的 API 访问 AI 数据**，而在 v0.8 里它从不这样做：它根本不调用 ai-service。心跳是反方向的（ai-service 告诉后端，见下文）；后端对 AI 所知的，只是它收到的最后一次报告，而且只保存在内存里。
 - **每个数据库只由它自己的服务迁移**：后端迁移 `xexam.db`（v2.0 起是 schema 11），ai-service 创建并打开 `xexam-ai.db`（v2.0 起是 schema 10，见 [database.md](database.md) 第 8 节）。

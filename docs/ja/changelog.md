@@ -6,6 +6,14 @@ Xexam のバージョンごとの変更点です。新しいバージョンが�
 
 <!-- Every update adds one entry at the very top of all three changelogs (docs/en, docs/ja and docs/zh-CN): ### vX.Y — date, with the version equal to CODE_VERSION in VERSION and the same headings in all three (CI checks this). The About page shows the entries and the GitHub Release notes come from the English one, so keep to simple Markdown: paragraphs, "- " bullets, nested "  - " bullets, **bold** and `code`. Links are relative to this folder. -->
 
+### v2.3.1 — 2026-11-22
+
+**AI サービスのコンテナ名を、ほかの 2 つと同じ `xexam-ai-service` にしました。名前だけの変更で、データベース、変数、画面は変わりません。アップグレード：新しいイメージを取得して `docker compose up -d` を実行してください。v2.3 に戻す場合も復元は要りません。**
+
+- **コンテナ名**：AI サービスのコンテナはこれまで `ai-service` でしたが、`xexam-backend`、`xexam-frontend` にそろえて `xexam-ai-service` になりました。Compose の**サービス**名は `ai-service` のままなので、`docker compose logs ai-service`、`docker compose exec ai-service …`、内部アドレス `http://ai-service:8766`、`XEXAM_AI_UPSTREAM` は変わりません。
+- **アップグレード時**にすることはありません。`docker compose up -d` が、古い `ai-service` コンテナを新しい名前のものに置き換えます。データボリューム（`xexam_backend_data`、`xexam_ai_data`）は変わりません。
+- コンテナ名で `docker logs ai-service` や `docker restart ai-service` を呼んでいるスクリプトは、`xexam-ai-service` に直す必要があります。サービス名を使う `docker compose` コマンドはそのまま使えます。
+
 ### v2.3 — 2026-11-21
 
 **AI チャットをチャットアプリのように作り直しました：開くたびに新しいチャット、タブレットとパソコンではサイドバー、スマートフォンではドロワー、そして整ったトップバー。画面だけの変更で、サーバー、データベース、変数は変わりません。アップグレード：イメージを pull するだけです。v2.2 に戻すときに復元は要りません。**

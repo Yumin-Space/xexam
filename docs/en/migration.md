@@ -4,6 +4,7 @@
 
 > This document covers every upgrade path, newest first:
 >
+> - **v2.3 → v2.3.1** (section 00000000000): nothing to do besides `docker compose pull` and `docker compose up -d`. The AI service's container is renamed from `ai-service` to `xexam-ai-service` (the Compose service keeps its name); no variable, no `docker-compose.yml` edit and no database change. Rolling back to v2.3 needs no restore.
 > - **v2.2 → v2.3** (section 0000000000): nothing to do. A change to the screens only (AI Chat layout and the top bar): no `docker-compose.yml` change, no new variable, and neither database changes. Rolling back to v2.2 needs no restore.
 > - **v2.1 → v2.2** (section 000000000): no `docker-compose.yml` change is required and no new variable (the compose files only show the internal ports). The AI database stays at schema 11; a one-time step moves the pacing default to 13 / 230 000 after the copy `backups/xexam-ai-schema11-<date-time>.db`. Rolling back to v2.1 needs no restore.
 > - **v2.0 → v2.1** (section 00000000): no `docker-compose.yml` change and no new variable. The AI database moves to schema 11 on start after the copy `backups/xexam-ai-schema10-<date-time>.db`; the main database does not change. Rolling back to v2.0 needs that copy restored (section 00000000.4).
@@ -27,6 +28,27 @@
 > **Going straight to v1.0 from an older version** applies every step of the sections below in one go with the current images: one backup named after the schema the database had, then the migration to the current schema (6 for the main database, 4 for the AI database). The sections below are written for the version they lead to, so where one says schema 5, v1.0 ends at schema 6, the log says `Upgraded the database to schema 6`, `/api/info` shows `1.0` and ai-service creates its database at schema 4.
 >
 > **Every upgrade from v0.6 or older retires all your questions.** Since v0.7 only the six-column Excel layout can be imported, and every start retires the questions that were imported from the three- and four-column layouts of earlier versions; every question of v0.6 and older is in one of those. The banks, the study records and the statistics stay. Prepare a six-column version of each workbook before you upgrade (section 12 of [usage.md](usage.md)), and update each bank with it afterwards (section 2.4).
+
+## 00000000000. Upgrading from v2.3 to v2.3.1
+
+This section is numbered 00000000000 because it is the newest one. The older sections keep their numbers.
+
+### 00000000000.1 What changes
+
+- **Only a name.** The container of the AI service is now called `xexam-ai-service` (it was `ai-service`), like `xexam-backend` and `xexam-frontend`. The Compose service is still `ai-service`, so `docker compose logs ai-service`, `docker compose exec ai-service …`, `http://ai-service:8766` and `XEXAM_AI_UPSTREAM` do not change. Neither database changes, there is no new variable, and `docker-compose.yml` needs no edit besides the `container_name` in the new file.
+- **Scripts**: anything that calls `docker logs ai-service`, `docker restart ai-service` or `docker exec ai-service …` by container name must use `xexam-ai-service` now.
+
+### 00000000000.2 Upgrade
+
+`docker compose pull`, then `docker compose up -d`. Compose replaces the old `ai-service` container with the one under the new name; the data volumes stay as they are.
+
+### 00000000000.3 Check
+
+The app menu shows **Xexam v2.3.1**, and `docker compose ps` lists `xexam-frontend`, `xexam-backend` and `xexam-ai-service`, all `healthy`.
+
+### 00000000000.4 Going back to v2.3
+
+Change `:latest` to `:v2.3` for the three images (and the container name in your compose file back to `ai-service` if you changed it) and run `docker compose up -d`. No restore is needed: nothing in the data changed.
 
 ## 0000000000. Upgrading from v2.2 to v2.3
 

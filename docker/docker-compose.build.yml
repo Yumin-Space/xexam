@@ -106,7 +106,7 @@ services:
       context: ..                      # the repository root (paths are relative to this file)
       dockerfile: ai-service/Dockerfile
     image: xexam-ai-service:local
-    container_name: ai-service
+    container_name: xexam-ai-service
     restart: unless-stopped
     depends_on:
       backend:

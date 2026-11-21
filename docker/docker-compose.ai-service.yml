@@ -17,7 +17,7 @@ name: xexam
 services:
   ai-service:
     image: docker.io/yuminspace/xexam-ai-service:latest
-    container_name: ai-service
+    container_name: xexam-ai-service
     restart: unless-stopped
     environment:
       # Not set = the default, the host's time zone (the same as the backend):

@@ -4,6 +4,7 @@
 
 > 本文覆盖每一条升级路径，最新的在前：
 >
+> - **v2.3 → v2.3.1**（00000000000 节）：除了 `docker compose pull` 和 `docker compose up -d`，什么都不用做。AI 服务的容器从 `ai-service` 改名为 `xexam-ai-service`（Compose 服务名不变）；没有新变量，不用改 `docker-compose.yml`，数据库也没有变化。回退到 v2.3 不需要还原。
 > - **v2.2 → v2.3**（0000000000 节）：什么都不用做。只改了界面（AI 对话的布局和顶栏）：不改 `docker-compose.yml`，没有新变量，两个数据库都不变。回退到 v2.2 不需要还原。
 > - **v2.1 → v2.2**（000000000 节）：不要求改 `docker-compose.yml`，也没有新变量（compose 文件只是写明内部端口）。AI 数据库仍是 schema 11；先做备份副本 `backups/xexam-ai-schema11-<日期时间>.db`，再一次性把匀速发送的默认值改成 13 / 230 000。回退到 v2.1 不需要还原。
 > - **v2.0 → v2.1**（00000000 节）：不用改 `docker-compose.yml`，没有新变量。启动时 AI 数据库先写备份副本 `backups/xexam-ai-schema10-<日期时间>.db`，再升到 schema 11；主数据库不变。回滚到 v2.0 需要恢复该副本（00000000.4 节）。
@@ -27,6 +28,27 @@
 > **从更早的版本直接升级到 v1.0**，用当前的镜像会一次做完下面各节的每一步：写一份以数据库原来的 schema 命名的备份，然后迁移到当前的 schema（主数据库是 6，AI 数据库是 4）。下面各节是为它们升级到的那个版本写的，所以某一节写 schema 5 的地方，v1.0 最后停在 schema 6，日志里会写 `Upgraded the database to schema 6`，`/api/info` 显示 `1.0`，ai-service 创建的数据库是 schema 4。
 >
 > **从 v0.6 或更早的版本升级，都会下架你所有的题。** 从 v0.7 起只能导入六列 Excel 格式，每次启动都会下架从以前版本的三列和四列格式导入的题；v0.6 及更早版本的每道题都是这两种格式之一。题库、学习记录和统计保留。升级之前请为每份工作簿准备好六列格式的版本（见 [usage.md](usage.md) 第 12 节），升级之后用它更新每个题库（第 2.4 节）。
+
+## 00000000000. 从 v2.3 升级到 v2.3.1
+
+这一节编号 00000000000，因为它是最新的。旧各节的编号不变。
+
+### 00000000000.1 有什么变化
+
+- **只是名字。** AI 服务的容器现在叫 `xexam-ai-service`（原来是 `ai-service`），与 `xexam-backend`、`xexam-frontend` 一致。Compose 服务名仍是 `ai-service`，所以 `docker compose logs ai-service`、`docker compose exec ai-service …`、`http://ai-service:8766` 和 `XEXAM_AI_UPSTREAM` 都不变。两个数据库都不变，没有新变量，除了新文件里的 `container_name`，`docker-compose.yml` 也不用改。
+- **脚本**：凡是按容器名调用 `docker logs ai-service`、`docker restart ai-service` 或 `docker exec ai-service …` 的，现在都要改成 `xexam-ai-service`。
+
+### 00000000000.2 升级
+
+`docker compose pull`，然后 `docker compose up -d`。Compose 会把旧的 `ai-service` 容器换成新名字的容器；数据卷保持不变。
+
+### 00000000000.3 检查
+
+应用菜单显示 **Xexam v2.3.1**，`docker compose ps` 列出 `xexam-frontend`、`xexam-backend` 和 `xexam-ai-service`，都是 `healthy`。
+
+### 00000000000.4 回退到 v2.3
+
+把三个镜像的 `:latest` 改成 `:v2.3`（如果改过 compose 文件里的容器名，也改回 `ai-service`），再 `docker compose up -d`。不需要还原：数据没有任何变化。
 
 ## 0000000000. 从 v2.2 升级到 v2.3
 

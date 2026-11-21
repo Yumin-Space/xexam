@@ -25,7 +25,7 @@
 docker compose up -d
 ```
 
-`docker compose up -d` 拉取并启动**三个容器**：`xexam-frontend`（Nginx，唯一对外）、`xexam-backend`（Rust，私有网络，不能上网）和 `ai-service`（Rust，AI 服务，镜像 `xexam-ai-service`：私有网络加上 `egress`，可以向外访问互联网，连到 AI 服务商）。后端一健康，前端就启动；它不等 ai-service，没有 ai-service Xexam 也能用。然后用浏览器打开 <http://localhost:8765>，用 `admin` / `admin` 登录；Xexam 会马上请你设置自己的密码（第 10 节）。打开菜单（右上角三条横线的按钮），选 **Question banks**（中文界面里叫 **题库管理**），导入你的 Excel 文件（六列格式，见 [usage.md](usage.md) 第 12 节）。界面一开始是英语；可以在 **Settings**（中文界面里是 **设置**）里，或者在登录页上换成中文或日语。
+`docker compose up -d` 拉取并启动**三个容器**：`xexam-frontend`（Nginx，唯一对外）、`xexam-backend`（Rust，私有网络，不能上网）和 `xexam-ai-service`（Rust，AI 服务，镜像 `xexam-ai-service`：私有网络加上 `egress`，可以向外访问互联网，连到 AI 服务商）。后端一健康，前端就启动；它不等 ai-service，没有 ai-service Xexam 也能用。然后用浏览器打开 <http://localhost:8765>，用 `admin` / `admin` 登录；Xexam 会马上请你设置自己的密码（第 10 节）。打开菜单（右上角三条横线的按钮），选 **Question banks**（中文界面里叫 **题库管理**），导入你的 Excel 文件（六列格式，见 [usage.md](usage.md) 第 12 节）。界面一开始是英语；可以在 **Settings**（中文界面里是 **设置**）里，或者在登录页上换成中文或日语。
 
 ### 从源码构建（改代码时用）
 
@@ -39,7 +39,7 @@ docker compose -f docker/docker-compose.build.yml up -d --build
 
 前端镜像需要三份更新日志（`docs/en/changelog.md`、`docs/ja/changelog.md` 和 `docs/zh-CN/changelog.md`）：**关于 Xexam** 页面显示它们，它们是构建进前端的。所以 `nginx/Dockerfile` 把它们复制进它的构建阶段，`.dockerignore` 把 `docs/` 排除在构建上下文之外，只把这三个文件放回来。最终镜像里只有构建出的静态文件。
 
-下面的命令用的是 Compose 的**服务名** `backend`、`ai-service` 和 `frontend`。容器的名字是 `xexam-backend`、`ai-service` 和 `xexam-frontend`；普通的 `docker` 命令（`docker logs`、`docker exec`）要用容器名。`docker/docker-compose.build.yml` 把 `ai-service/Dockerfile` 构建成镜像 `xexam-ai-service:local`。
+下面的命令用的是 Compose 的**服务名** `backend`、`ai-service` 和 `frontend`。容器的名字是 `xexam-backend`、`xexam-ai-service` 和 `xexam-frontend`；普通的 `docker` 命令（`docker logs`、`docker exec`）要用容器名。`docker/docker-compose.build.yml` 把 `ai-service/Dockerfile` 构建成镜像 `xexam-ai-service:local`。
 
 | 操作 | 命令 |
 |---|---|
@@ -97,7 +97,7 @@ v0.9 没有新增任何变量，compose 文件也没有改动。改了 `.env` �
 
 ### 3.1 时区
 
-后端写入不带时区标记的本地时间（[database.md](database.md) 第 4.6 节），ai-service 按本地的日期统计用量。compose 文件用长格式的卷语法，把宿主机的 `/etc/localtime` 以只读方式挂载进后端容器和 ai-service 容器：
+后端写入不带时区标记的本地时间（[database.md](database.md) 第 4.6 节），ai-service 按本地的日期统计用量。compose 文件用长格式的卷语法，把宿主机的 `/etc/localtime` 以只读方式挂载进后端容器和 xexam-ai-service 容器：
 
 ```yaml
       - type: bind
@@ -146,7 +146,7 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 
 ### 3.4 AI 服务商（在程序里设置，不在 `.env` 里）
 
-服务商、它的地址、密钥和模型由管理员在 **AI 设置**（见 [usage.md](usage.md) 第 17 节）里选择，保存在 AI 数据库里。只有 `ai-service` 容器连接它们，经过 `egress` 网络，使用 HTTPS（rustls，内置 Mozilla 根证书；忽略代理变量 `HTTP_PROXY` / `HTTPS_PROXY`，不跟随重定向）。
+服务商、它的地址、密钥和模型由管理员在 **AI 设置**（见 [usage.md](usage.md) 第 17 节）里选择，保存在 AI 数据库里。只有 `xexam-ai-service` 容器连接它们，经过 `egress` 网络，使用 HTTPS（rustls，内置 Mozilla 根证书；忽略代理变量 `HTTP_PROXY` / `HTTPS_PROXY`，不跟随重定向）。
 
 | AI 设置里的服务商 | 地址 | 请求 | 认证 |
 |---|---|---|---|
@@ -158,7 +158,7 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 - **发送什么**：模型、系统提示词（英语：回答要清楚，用用户写的语言回答，再加上日期和用户的记忆笔记）、对话里以前的消息（从最新的开始，默认最多大约 24 000 个字符）和新消息。不设置 temperature 或其他采样参数。OpenAI 格式用 `stream_options.include_usage` 请求返回 Token 数；Anthropic 格式的 `max_tokens` 是 8192。如果服务商在 **测试** 时拒绝了其中任何一项，测试会不带它（或者改用 4096）再试一次，并保留行得通的那种。OpenAI Responses 格式没有 `stream_options`（Token 数随最后一个事件到达），正常对话用 `max_output_tokens` 限制回答长度，但 Responses 连接的 **测试** 不发 Token 上限，也不带用量选项。
 - **时间限制**：连接 10 秒，回答的第一个字节 120 秒，最多 120 秒没有任何数据，整个回答 10 分钟（已经生成的文字保留）；模型列表 30 秒；测试一共最多 90 秒。
 - 服务商的**错误** 从不以它自己的文字显示：它们变成固定的错误码（`ai.up.auth`、`ai.up.quota`、`ai.up.rateLimit` 等，见 [api.md](api.md) 第 5 节），由页面翻译。因为设置而失败的测试（密钥、额度、模型、请求被拒绝、回应无法读取）会关闭 AI；临时的失败不会。
-- **你自己网络里的服务商**（例如本地的模型服务器）可以用 `http://`；ai-service 容器必须能连到它的地址。除非主机是 `localhost`、`127.0.0.1`、`[::1]` 或不带点的名字，AI 设置都会警告密钥以明文传输。
+- **你自己网络里的服务商**（例如本地的模型服务器）可以用 `http://`；xexam-ai-service 容器必须能连到它的地址。除非主机是 `localhost`、`127.0.0.1`、`[::1]` 或不带点的名字，AI 设置都会警告密钥以明文传输。
 
 ### 3.5 真实访客地址和所在地（v1.3）
 
@@ -188,7 +188,7 @@ ai-service 把在 **AI 设置** 里输入的服务商密钥加密保存（见 [s
 
 **所在地。** 所在地来自 Cloudflare 添加的请求头。国家（`CF-IPCountry`）默认开启；地区和城市需要 Cloudflare 的 **Managed Transform > Add visitor location headers**。没有 Cloudflare 就没有来自请求头的所在地：请使用下面的外部查询，否则 Xexam 只显示地址。纬度、经度和邮编的头永远不会转发。所在地是大致的（访客所在网络的所在地，往往是运营商的，而不是本人的）。
 
-**没有 Cloudflare 时：外部所在地查询（v1.4）。** 在**用户管理**的**登录 IP 和所在地**区块里，可以把**所在地来源**从 **Cloudflare 请求头**（默认，不向任何地方发送数据）切换为**外部查询 API**（见 [usage.md](usage.md) 的 14.2 节）。切换后，在眼睛打开时，登录成功后以及用户最后活动的地址变化时，Xexam 会向服务商（ipinfo、ip-api、ipapi.co、ipwho.is、ip.sb，或你自己的地址模板）查询访客 IP。**访客 IP 会发送给该服务商。** 查询由 **`ai-service` 容器**发出，因为只有这个容器接入了能访问互联网的网络（`egress`）；后端按设计只在内部网络上，没有互联网。所以 ai-service 必须在运行（并且能连到服务商），此外不需要别的：AI+ 功能可以是关闭的，也不必设置 AI 服务商，这些查询也不计入 AI 额度和用量。后端从不调用 ai-service：由 ai-service 通过内部令牌链路向后端取待查的地址，再把所在地送回。设置在应用里完成（密钥用 `XEXAM_AI_SECRET_KEY` 加密保存，见 3.2 节），不写在 `.env` 里；没有新的环境变量，`docker-compose.yml` 和 Nginx 也不用改。访客 IP 本身仍按上面的可信代理规则取得。该模式下 Cloudflare 的所在地请求头会被忽略；在 Cloudflare 模式下从不连接外部服务商。
+**没有 Cloudflare 时：外部所在地查询（v1.4）。** 在**用户管理**的**登录 IP 和所在地**区块里，可以把**所在地来源**从 **Cloudflare 请求头**（默认，不向任何地方发送数据）切换为**外部查询 API**（见 [usage.md](usage.md) 的 14.2 节）。切换后，在眼睛打开时，登录成功后以及用户最后活动的地址变化时，Xexam 会向服务商（ipinfo、ip-api、ipapi.co、ipwho.is、ip.sb，或你自己的地址模板）查询访客 IP。**访客 IP 会发送给该服务商。** 查询由 **`xexam-ai-service` 容器**发出，因为只有这个容器接入了能访问互联网的网络（`egress`）；后端按设计只在内部网络上，没有互联网。所以 ai-service 必须在运行（并且能连到服务商），此外不需要别的：AI+ 功能可以是关闭的，也不必设置 AI 服务商，这些查询也不计入 AI 额度和用量。后端从不调用 ai-service：由 ai-service 通过内部令牌链路向后端取待查的地址，再把所在地送回。设置在应用里完成（密钥用 `XEXAM_AI_SECRET_KEY` 加密保存，见 3.2 节），不写在 `.env` 里；没有新的环境变量，`docker-compose.yml` 和 Nginx 也不用改。访客 IP 本身仍按上面的可信代理规则取得。该模式下 Cloudflare 的所在地请求头会被忽略；在 Cloudflare 模式下从不连接外部服务商。
 
 **眼睛按钮。** 地址和所在地只在**用户**页的眼睛按钮打开时才记录（默认隐藏）。隐藏期间不再记录新的内容，任何路由也不返回已保存的（数据库里仍然保存），打开眼睛即可再次看到。旁边的红色**清除记录**按钮会清除已存的内容。见 [security.md](security.md) 的 5.1 节。
 
@@ -282,7 +282,7 @@ Nginx 把浏览器（或隧道）发来的 `Host` **原样**转给后端，并�
 - 位置：命名卷 `xexam_backend_data` → 容器里的 `/data/xexam.db`。更新、重建或删除容器都不会丢。数据库里有题库、账户、学习记录和设置。
 - 后端运行时，数据库旁边有 SQLite 的 `xexam.db-wal` 和 `xexam.db-shm`（WAL 模式，从 v0.7 起）。正常停止时，后端把所有内容复制进 `xexam.db`，并清空 `xexam.db-wal`；这两个文件可能空着留在旁边，没有害处。
 - 卷里还可能有一个 `/data/backups/` 文件夹，里面是 schema 迁移前写的副本（第 6 节）。程序永远不会删除这些文件。查看它们：`docker run --rm -v xexam_backend_data:/data alpine ls -l /data /data/backups`。
-- **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）；从 v0.9 起，它的对话里还包括 AI+ 学习功能的练习、考试和记录总结对话，其中有题目文字和 AI 的回答，卷里还会有一个文件夹 `/data/backups/`，放着 AI schema 升级前写的副本（第 6 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_backend_data`。
+- **AI 服务的数据**（v0.8）在它自己的命名卷 `xexam_ai_data` 里 → `xexam-ai-service` 容器里的 `/data`：`xexam-ai.db`（AI 设置、加密的服务商密钥、安全上限、对话、记忆、用量统计；WAL 模式，带它的 `-wal` / `-shm` 文件）和密钥文件 `secret.key`（第 3.2 节）；从 v0.9 起，它的对话里还包括 AI+ 学习功能的练习、考试和记录总结对话，其中有题目文字和 AI 的回答，卷里还会有一个文件夹 `/data/backups/`，放着 AI schema 升级前写的副本（第 6 节）。后端从不挂载它，ai-service 也从不挂载 `xexam_backend_data`。
 - **ai_auth 卷** `xexam_ai_auth` → `/link` 里只有 `internal.token`（第 3.3 节）；后端以读写方式挂载它，ai-service 以只读方式挂载。
 - **备份**：先停止 Xexam（`docker compose stop`），打包**两个数据卷**，再启动：命令见 [database.md](database.md) 第 5 节和第 8.4 节。后端运行时只复制 `xexam.db`，可能会漏掉还在 `xexam.db-wal` 里的最新修改；不能停止时，请把 `xexam.db`、`xexam.db-wal` 和 `xexam.db-shm` 一起复制（`xexam-ai.db` 也一样）。备份卷时也会备份 `backups/`。`xexam_ai_data` 的备份里有密钥文件，它能解密已保存的 AI 密钥：请像对待密钥一样妥善保管，或者设置 `XEXAM_AI_SECRET_KEY`，让密钥不在卷里。删除了的对话仍然留在你以前做的备份里。`xexam_ai_auth` 不用备份：它为空时后端会写一个新令牌。
 - 不用 Docker、直接运行后端（开发时）：见 [development.md](development.md)。

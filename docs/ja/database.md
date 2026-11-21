@@ -476,7 +476,7 @@ ai-service は、AI のものをすべて **専用の** SQLite データベー�
 
 | 実行方法 | 場所 |
 |---|---|
-| Docker（推奨） | 名前付きボリューム `xexam_ai_data`。`ai-service` コンテナの `/data` にマウントします（ディレクトリのモード 0700）：`/data/xexam-ai.db`、動作中はその `-wal` / `-shm` のファイル、キーファイル `/data/secret.key` |
+| Docker（推奨） | 名前付きボリューム `xexam_ai_data`。`xexam-ai-service` コンテナの `/data` にマウントします（ディレクトリのモード 0700）：`/data/xexam-ai.db`、動作中はその `-wal` / `-shm` のファイル、キーファイル `/data/secret.key` |
 | Docker なし | ディレクトリ `XEXAM_AI_DATA`（既定 `./data-ai`） |
 
 ### 8.1 接続の設定
