@@ -135,3 +135,8 @@ with an AI+ badge) by eye before it is committed: only the made-up values above 
 
 The app icons in `frontend/public/` are made by a separate script, `tools/icons/make_icons.py`, which uses
 `browser.py` from this folder.
+
+The README gallery images (`docs/<lang>/screenshots/readme/`) are cut from the screenshots by `readme_shots.py`
+(top of the page at the screen size, scaled down, a thin grey frame; needs Pillow). Run it after retaking
+`desktop-1-home`, `desktop-3-result`, `desktop-14-ai-chat`, `iphone-1-home`, `iphone-2-quiz`, `iphone-6-result` or
+`iphone-7-ai-chat`: `python tools/screenshots/readme_shots.py`.

@@ -30,17 +30,17 @@
 Xexam is a self-hosted app for practising exam questions in the browser. You import your own Excel question banks, then take exams or practise with them, and review the questions you got wrong. If an administrator connects an AI provider and gives them the **AI+ feature**, users can also ask an AI model in **AI Chat** and get AI help while they study: hints in practice, an AI analysis of any question in practice and on result pages, an AI summary of their wrong answers and a short AI study assessment on Home. Home shows a leaderboard and your most missed questions, and the app has a hand-written look that can be switched to normal text with one button. It works on computers and on phones (iPhone).
 
 <p align="center">
-  <img src="docs/en/screenshots/desktop-1-home.png" alt="Home: the Exam & practice tile, the page tiles, the leaderboard, the most missed questions and the AI study assessment" width="420">
-  <img src="docs/en/screenshots/desktop-3-result.png" alt="A result: red pen circles and crosses for every question, the answers and the explanation" width="420">
+  <img src="docs/en/screenshots/readme/desktop-home.png" alt="Home: Exam & practice, the page tiles, the leaderboard and the most missed questions" width="100%">
 </p>
 <p align="center">
-  <img src="docs/en/screenshots/desktop-14-ai-chat.png" alt="AI Chat" width="420">
-  <img src="docs/en/screenshots/desktop-2-quiz.png" alt="The exam page with the English / 中文 / 日本語 switch and the answer sheet" width="420">
+  <img src="docs/en/screenshots/readme/desktop-result.png" alt="A result with red pen circles and crosses" width="49%">
+  <img src="docs/en/screenshots/readme/desktop-ai-chat.png" alt="AI Chat" width="49%">
 </p>
 <p align="center">
-  <img src="docs/en/screenshots/iphone-1-home.png" alt="Home on a phone" width="220">
-  <img src="docs/en/screenshots/iphone-2-quiz.png" alt="The exam page on a phone" width="220">
-  <img src="docs/en/screenshots/iphone-7-ai-chat.png" alt="AI Chat on a phone" width="220">
+  <img src="docs/en/screenshots/readme/phone-home.png" alt="Home on a phone" width="24%">
+  <img src="docs/en/screenshots/readme/phone-quiz.png" alt="The exam page on a phone" width="24%">
+  <img src="docs/en/screenshots/readme/phone-result.png" alt="A result on a phone" width="24%">
+  <img src="docs/en/screenshots/readme/phone-ai-chat.png" alt="AI Chat on a phone" width="24%">
 </p>
 
 The repository contains **no questions**. Xexam only provides the tools to import, organize and practise questions; your question banks are your own Excel files and are never committed (`.gitignore` excludes them). The screenshots use made-up demo banks, not content from any real exam.

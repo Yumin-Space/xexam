@@ -30,17 +30,17 @@
 Xexam は、ブラウザで使うセルフホスト型の問題演習アプリです。ご自身の Excel 問題集をインポートして試験や練習に使い、間違えた問題を復習できます。管理者が AI プロバイダーを接続し、**AI+ 機能** を付与すれば、ユーザーは **AI チャット** で AI モデルに質問できるほか、学習中の AI サポートも使えます：練習中の AI ヒント、練習中と結果ページでの各問題の AI 解説、間違えた問題の AI まとめ、ホームの短い AI 学習状況の評価。ホームにはランキングとよく間違える問題が並び、アプリ全体はボタン 1 つで通常の文字に切り替えられる手書き風の見た目です。パソコンでもスマートフォン（iPhone）でも使えます。
 
 <p align="center">
-  <img src="../docs/ja/screenshots/desktop-1-home.png" alt="ホーム：試験・練習のタイル、各ページのタイル、ランキング、よく間違える問題、AI 学習状況の評価" width="420">
-  <img src="../docs/ja/screenshots/desktop-3-result.png" alt="結果ページ：各問題に赤ペンの丸とバツ、解答と解説" width="420">
+  <img src="../docs/ja/screenshots/readme/desktop-home.png" alt="ホーム：試験・練習、各ページのタイル、ランキング、よく間違える問題" width="100%">
 </p>
 <p align="center">
-  <img src="../docs/ja/screenshots/desktop-14-ai-chat.png" alt="AI チャット" width="420">
-  <img src="../docs/ja/screenshots/desktop-2-quiz.png" alt="English / 中文 / 日本語 の切り替えと解答用紙のある試験ページ" width="420">
+  <img src="../docs/ja/screenshots/readme/desktop-result.png" alt="赤ペンの丸とバツが付いた結果ページ" width="49%">
+  <img src="../docs/ja/screenshots/readme/desktop-ai-chat.png" alt="AI チャット" width="49%">
 </p>
 <p align="center">
-  <img src="../docs/ja/screenshots/iphone-1-home.png" alt="スマートフォンのホーム" width="220">
-  <img src="../docs/ja/screenshots/iphone-2-quiz.png" alt="スマートフォンの試験ページ" width="220">
-  <img src="../docs/ja/screenshots/iphone-7-ai-chat.png" alt="スマートフォンの AI チャット" width="220">
+  <img src="../docs/ja/screenshots/readme/phone-home.png" alt="スマートフォンのホーム" width="24%">
+  <img src="../docs/ja/screenshots/readme/phone-quiz.png" alt="スマートフォンの試験ページ" width="24%">
+  <img src="../docs/ja/screenshots/readme/phone-result.png" alt="スマートフォンの結果ページ" width="24%">
+  <img src="../docs/ja/screenshots/readme/phone-ai-chat.png" alt="スマートフォンの AI チャット" width="24%">
 </p>
 
 リポジトリには**問題は含まれていません**。Xexam が提供するのは、問題をインポートし、整理し、練習するための機能だけです。問題集はご自身の Excel ファイルであり、コミットされません（`.gitignore` で除外済み）。スクリーンショットには架空のデモ用問題集を使っており、実際の試験の内容ではありません。

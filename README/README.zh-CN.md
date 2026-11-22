@@ -30,17 +30,17 @@
 Xexam 是一个自己部署、在浏览器里用的刷题程序。你导入自己的 Excel 题库，用它们考试或练习，再复习答错的题。如果管理员接入了 AI 服务商并为用户开通了 **AI+ 功能**，用户还可以在 **AI 对话** 里向 AI 模型提问，并在学习时得到 AI 帮助：练习中的 AI 提示、练习中和成绩页上对每道题的 AI 解析，对答错题目的 AI 总结，以及主页上简短的 AI 学习状态评估。主页有学习排行和你最常错的题；整个程序是手写风格，一个按钮就能切换回普通文字。电脑和手机（iPhone）都能用。
 
 <p align="center">
-  <img src="../docs/zh-CN/screenshots/desktop-1-home.png" alt="主页：考试&练习、各页面按钮、学习排行、最常错的题和 AI 学习状态评估" width="420">
-  <img src="../docs/zh-CN/screenshots/desktop-3-result.png" alt="成绩页：每道题用红笔画圈或打叉，附答案和解析" width="420">
+  <img src="../docs/zh-CN/screenshots/readme/desktop-home.png" alt="主页：考试&练习、各页面按钮、学习排行和最常错的题" width="100%">
 </p>
 <p align="center">
-  <img src="../docs/zh-CN/screenshots/desktop-14-ai-chat.png" alt="AI 对话" width="420">
-  <img src="../docs/zh-CN/screenshots/desktop-2-quiz.png" alt="答题页：English / 中文 / 日本語 切换和答题卡" width="420">
+  <img src="../docs/zh-CN/screenshots/readme/desktop-result.png" alt="用红笔画圈打叉的成绩页" width="49%">
+  <img src="../docs/zh-CN/screenshots/readme/desktop-ai-chat.png" alt="AI 对话" width="49%">
 </p>
 <p align="center">
-  <img src="../docs/zh-CN/screenshots/iphone-1-home.png" alt="手机上的主页" width="220">
-  <img src="../docs/zh-CN/screenshots/iphone-2-quiz.png" alt="手机上的答题页" width="220">
-  <img src="../docs/zh-CN/screenshots/iphone-7-ai-chat.png" alt="手机上的 AI 对话" width="220">
+  <img src="../docs/zh-CN/screenshots/readme/phone-home.png" alt="手机上的主页" width="24%">
+  <img src="../docs/zh-CN/screenshots/readme/phone-quiz.png" alt="手机上的答题页" width="24%">
+  <img src="../docs/zh-CN/screenshots/readme/phone-result.png" alt="手机上的成绩页" width="24%">
+  <img src="../docs/zh-CN/screenshots/readme/phone-ai-chat.png" alt="手机上的 AI 对话" width="24%">
 </p>
 
 仓库里**没有题目**。Xexam 只提供导入、整理和练习题目的工具；题库是你自己的 Excel 文件，不会被提交（`.gitignore` 已排除）。截图里用的是虚构的演示题库，不是任何真实考试的内容。
